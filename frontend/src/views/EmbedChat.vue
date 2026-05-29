@@ -1019,6 +1019,7 @@
         @reorder-commands="handleReorderCommands"
         @select-skill="openSkillSelector"
         @select-knowledge-base="showKnowledgeBaseSelector = true"
+        @select-local-fs="showFileBrowserModal = true"
       >
       </ChatInput>
     </div>
@@ -1029,6 +1030,13 @@
       type="dataset"
       :initial-selected="getSelectedKnowledgeBaseIds()"
       @select="handleSelectKnowledgeBase"
+    />
+
+    <FileBrowserModal
+      v-if="showFileBrowserModal"
+      :show="showFileBrowserModal"
+      @close="showFileBrowserModal = false"
+      @select="handleSelectLocalFs"
     />
 
     <!-- 技能工作流选择弹窗 (Skill Selector Modal) -->
@@ -1714,6 +1722,7 @@ import ChatSettings from "@/components/embed/ChatSettings.vue";
 import ChatInput from "@/components/embed/ChatInput.vue";
 import WelcomeDashboard from "@/components/embed/WelcomeDashboard.vue";
 import RagFlowResourceSelector from "@/components/RagFlowResourceSelector.vue";
+import FileBrowserModal from "@/components/embed/FileBrowserModal.vue";
 import { modelApi, type AIModel } from "@/api/model";
 // --- Types ---
 interface LogEntry {
@@ -1891,6 +1900,7 @@ const hideEmbedLikeDislike = computed(() => {
 const chatInputRef = ref<any>(null);
 const userInput = ref("");
 const showKnowledgeBaseSelector = ref(false);
+const showFileBrowserModal = ref(false);
 
 const getSelectedKnowledgeBaseIds = () => {
   const attached = chatInputRef.value?.uploadedFiles?.find((f: any) => f.type === "knowledge_base");
@@ -1970,6 +1980,21 @@ const handleSelectKnowledgeBase = async (val: string | string[]) => {
   showKnowledgeBaseSelector.value = false;
 };
 
+const handleSelectLocalFs = (payload: { type: 'local_file' | 'local_dir'; path: string; name: string; size: number; ext: string }) => {
+  if (!chatInputRef.value) return;
+  const files = chatInputRef.value.uploadedFiles || [];
+  const exists = files.some((f: any) => f.type === payload.type && f.url === payload.path);
+  if (!exists) {
+    chatInputRef.value.uploadedFiles.push({
+      type: payload.type,
+      url: payload.path,
+      filename: payload.name,
+      size: payload.size,
+      ext: payload.ext
+    });
+  }
+};
+
 const isImageFile = (file: any) => {
   const ext = (file.ext || '').toLowerCase();
   return ['.png', '.jpg', '.jpeg', '.webp', '.gif'].includes(ext);
@@ -1987,6 +2012,9 @@ const getServerAttachmentPath = (file: ChatFile) => {
   if (file.type === "skill") {
     return `/app/data/skills/${file.url}/SKILL.md`;
   }
+  if (file.type === "local_file" || file.type === "local_dir") {
+    return file.url;
+  }
   const fileName = file.url.split("/").filter(Boolean).pop() || file.filename;
   return `/app/data/uploads/${fileName}`;
 };
@@ -2002,9 +2030,15 @@ const appendAttachmentContext = (content: string, files: ChatFile[]) => {
     const path = getServerAttachmentPath(file);
     if (file.type === "skill") {
       const skillName = file.filename.replace(" (技能)", "");
-      return `用户选择了技能：${skillName}，路径是：${path}`;
+      return `用户本轮已调用生态技能工作流：${skillName}，对应的物理描述文件绝对路径是：${path}。`;
     }
-    return `用户上传了文件：${file.filename}，路径是：${path}`;
+    if (file.type === "local_file") {
+      return `用户本轮已挂载服务器本地文件：${file.filename}，其真实的绝对路径是：${path}。你可以直接通过系统级执行工具访问或读取此绝对路径的资料以解答用户的问题。`;
+    }
+    if (file.type === "local_dir") {
+      return `用户本轮已挂载服务器本地目录：${file.filename}，其真实的绝对路径是：${path}。你可以直接通过系统级执行工具访问、遍历或检索此绝对路径目录下的资料以解答用户的问题。`;
+    }
+    return `用户本轮已上传文件附件：${file.filename}，其安全托管后的服务器绝对路径是：${path}。`;
   });
 
   const contextBlock = contextLines.filter(Boolean).join("\n\n");
@@ -3425,11 +3459,24 @@ const sendMessage = async () => {
   }
   userInput.value = "";
   showCommandMenu.value = false;
+  
+  // 解耦呈现与传输：用户气泡内仅展示纯净可读的内容或挂载动作描述，避免物理绝对路径及底层指令暴露在聊天气泡中
+  let displayContent = content;
+  if (!displayContent && files.length > 0) {
+    displayContent = files.map(f => {
+      if (f.type === 'local_file') return `💻 已挂载本地文件：${f.filename}`;
+      if (f.type === 'local_dir') return `📁 已挂载本地目录：${f.filename}`;
+      if (f.type === 'skill') return `⚙️ 已调用技能：${f.filename}`;
+      if (f.type === 'knowledge_base') return `📚 已选择知识库：${f.filename}`;
+      return `📄 已挂载附件：${f.filename}`;
+    }).join('、');
+  }
+
   // 1. User Message
   messages.value.push({
     id: Date.now(),
     role: "user",
-    content: messageContent,
+    content: displayContent,
     files: files.length > 0 ? files : undefined,
     timestamp: new Date().toISOString(),
   });
@@ -3493,9 +3540,14 @@ const sendMessage = async () => {
       messages: messages.value
         .filter((m) => !m.isThinking && (m.content || m.files))
         .map((m) => {
+          let reqContent = m.content || "";
+          // 传输时在消息体中动态织入服务器物理挂载路径与安全拦截指令给 AI 智能体，确保核心逻辑平稳实现
+          if (m.role === "user" && m.files && m.files.length > 0) {
+            reqContent = appendAttachmentContext(m.content, m.files);
+          }
           const msgObj: any = {
             role: m.role === "agent" ? "assistant" : m.role,
-            content: m.content || "",
+            content: reqContent,
           };
           if (m.files) {
             msgObj.files = m.files;

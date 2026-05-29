@@ -92,3 +92,4 @@
 | 记忆检索时间优化 (Memory Search Date Parse) | `tests/test_memory_search_date_parsing.py` | **记忆检索时间敏感优化**：验证包含“今天/昨天/前天/X天前/绝对日期”的时间敏感查询的日期提取与格式化，以及将每日摘要和当日会话摘要融合成结构化文本返回的拼装效果。 | 🛠 待验证 | 2026-05-29 |
 | 智能体双重优化机制 (Agent Combo Optimization) | `tests/test_combo_memory_and_search.py` | **记忆前置与百度联动提取双重优化**：验证当用户提问包含时间或回忆词时系统前置静默调阅记忆并无感注入 System Prompt 的机制；验证百度检索后台并发重定向拉取真实网页并自动清洗去噪提取深度正文切片返回。 | 🛠 待验证 | 2026-05-29 |
 | 物理表权限报错信息中显示用户身份标签 (SQL Permission User Label) | `tests/services/test_sql_permission_messages.py` | **SQL 执行权限报错提示优化**：验证物理表权限拦截时报错信息正确包含用户名和用户ID等身份标签（形如 `chenxiaolong(4)`），以提升故障排查体验。 | ✅ 已完成 | 2026-05-29 |
+| 服务器文件系统浏览选择 (Server File Browser) | `tests/api/v1/test_fs_browser.py`, `FileBrowserModal.vue`, `ChatInput.vue`, `EmbedChat.vue` | **本地文件系统安全浏览与Tab选择**：验证双 Tab（选择文件与选择目录）面板交互；验证绝对路径与面包屑智能穿梭下钻；验证以 `/app/data` 为安全根（本地开发平滑降级 `./data`）的防路径穿越安全越权拦截。 | ✅ 已完成 | 2026-05-30 |

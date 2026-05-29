@@ -27,6 +27,7 @@ const emit = defineEmits<{
   (e: 'reorder-commands', data: any[]): void;
   (e: 'select-skill'): void;
   (e: 'select-knowledge-base'): void;
+  (e: 'select-local-fs'): void;
 }>();
 
 const inputRef = ref<HTMLTextAreaElement | null>(null);
@@ -397,6 +398,14 @@ defineExpose({
                 <div v-else-if="file.type === 'skill'" class="w-8 h-8 rounded bg-amber-500/10 dark:bg-amber-500/20 flex items-center justify-center text-amber-500 text-sm flex-shrink-0 mr-2 font-mono">
                     ⚙️
                 </div>
+                <!-- Server File Icon -->
+                <div v-else-if="file.type === 'local_file'" class="w-8 h-8 rounded bg-blue-500/10 dark:bg-blue-500/20 flex items-center justify-center text-blue-500 text-sm flex-shrink-0 mr-2">
+                    💻
+                </div>
+                <!-- Server Dir Icon -->
+                <div v-else-if="file.type === 'local_dir'" class="w-8 h-8 rounded bg-yellow-500/10 dark:bg-yellow-500/20 flex items-center justify-center text-yellow-500 text-sm flex-shrink-0 mr-2">
+                    📁
+                </div>
                 <!-- File Icon -->
                 <div v-else class="w-8 h-8 rounded bg-primary/10 dark:bg-primary/20 flex items-center justify-center text-primary text-sm flex-shrink-0 mr-2">
                     📄
@@ -404,7 +413,15 @@ defineExpose({
                 <!-- Metadata -->
                 <div class="flex-1 min-w-0 flex flex-col">
                     <span class="text-xs font-bold text-gray-700 dark:text-gray-200 truncate">{{ file.filename }}</span>
-                    <span class="text-[9px] text-gray-400 font-mono">{{ file.type === 'skill' ? '生态技能' : file.type === 'knowledge_base' ? '知识库' : formatSize(file.size) }}</span>
+                    <span class="text-[9px] text-gray-400 font-mono">
+                        {{ 
+                          file.type === 'skill' ? '生态技能' : 
+                          file.type === 'knowledge_base' ? '知识库' : 
+                          file.type === 'local_file' ? '服务器文件' :
+                          file.type === 'local_dir' ? '服务器目录' :
+                          formatSize(file.size) 
+                        }}
+                    </span>
                 </div>
                 <!-- Remove Button -->
                 <button @click="removeFile(idx)" class="absolute right-1 top-1/2 -translate-y-1/2 w-5 h-5 flex items-center justify-center rounded-full bg-gray-200/50 hover:bg-red-500 hover:text-white dark:bg-gray-700/50 text-gray-500 dark:text-gray-400 opacity-0 group-hover:opacity-100 transition-all duration-150 focus:outline-none">
@@ -449,6 +466,12 @@ defineExpose({
                         <button @click="triggerFileInput" class="w-full flex items-center space-x-3 px-3 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-primary/10 dark:hover:bg-primary/20 hover:text-primary transition-all duration-150">
                             <span class="text-lg">📁</span>
                             <span class="font-medium text-left">上传本地文件</span>
+                        </button>
+
+                        <!-- Browse Server Files (Active) -->
+                        <button @click="showPlusMenu = false; emit('select-local-fs');" class="w-full flex items-center space-x-3 px-3 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-primary/10 dark:hover:bg-primary/20 hover:text-primary transition-all duration-150">
+                            <span class="text-lg">💻</span>
+                            <span class="font-medium text-left">浏览服务器文件</span>
                         </button>
                         
                         <!-- Knowledge Base -->
