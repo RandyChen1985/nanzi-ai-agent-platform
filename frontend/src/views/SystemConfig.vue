@@ -231,7 +231,7 @@ interface ConfigItem {
 const configGroups = ref<{ [category: string]: ConfigItem[] }>({})
 const orderedCategories = computed(() => {
   if (!configGroups.value) return []
-  const order = ['agent', 'llm', 'data_api', 'metadata', 'general']
+  const order = ['agent', 'data_api', 'metadata', 'general']
   const keys = Object.keys(configGroups.value)
   return keys.sort((a, b) => {
     const idxA = order.indexOf(a)
@@ -300,7 +300,6 @@ const toggleSecret = (key: string) => {
 
 const getCategoryLabel = (cat: string) => {
   const map: Record<string, string> = {
-    'llm': '大语言模型 (Large Language Model)',
     'data_api': '智能报表 (ChatBI)',
     'metadata': '元数据与 RAG 设置 (Metadata & RAG)',
     'agent': '智能体设置 (AI Agent)',
@@ -312,7 +311,6 @@ const getCategoryLabel = (cat: string) => {
 
 const getCategoryIcon = (cat: string) => {
   const map: Record<string, any> = {
-    'llm': SparklesIcon,
     'data_api': CircleStackIcon,
     'agent': CpuChipIcon,
     'metadata': SparklesIcon,
