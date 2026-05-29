@@ -69,11 +69,21 @@ The platform revolves around the following core capability matrix:
 
 ## 🖼️ Interface Snapshots
 
-| 💬 AI Chat | 🤖 Agent Management |
+| 📊 Overview Dashboard | 💬 AI Chat |
 | :---: | :---: |
-| ![AI Chat](docs/snapshot/ai-chat.png) | ![Agent Management](docs/snapshot/bot-list.png) |
-| **📊 Metadata Management** | **⚙️ System Config** |
-| ![Metadata Management](docs/snapshot/meta-list.png) | ![System Config](docs/snapshot/system.png) |
+| ![Dashboard Overview](docs/snapshot/overview.png) | ![AI Chat](docs/snapshot/ai-chat.png) |
+| **🧠 Memory & LTM** | **🔍 Memory Control Console** |
+| ![Memory & LTM](docs/snapshot/chat-with-memory.png) | ![Memory Management](docs/snapshot/memory-manage.png) |
+| **🛠️ Trace Timeline** | **📚 Knowledge Base Workbench** |
+| ![Trace Details](docs/snapshot/chat-debug.png) | ![Knowledge Hub](docs/snapshot/knowledge.png) |
+| **🤖 Agent Studio** | **📝 Prompt Playground** |
+| ![Agent Management](docs/snapshot/bot-list.png) | ![Prompt Studio](docs/snapshot/prompt_studio.png) |
+| **🔌 Direct Data Sources** | **📊 Metadata Management** |
+| ![Data Sources](docs/snapshot/datasource.png) | ![Metadata Management](docs/snapshot/meta-list.png) |
+| **⚡ Dynamic Agent Skills** | **⚙️ System Settings** |
+| ![Agent Skills](docs/snapshot/skills-manage.png) | ![System Config](docs/snapshot/system.png) |
+
+
 
 ---
 

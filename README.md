@@ -73,11 +73,21 @@
 
 ## 🖼️ 界面预览 (Interface Snapshots)
 
-| 💬 智能助手 (AI Chat) | 🤖 智能体管理 (Agent Management) |
+| 📊 仪表盘概览 (Overview Dashboard) | 💬 智能助手对话 (AI Chat) |
 | :---: | :---: |
-| ![智能助手](docs/snapshot/ai-chat.png) | ![智能体管理](docs/snapshot/bot-list.png) |
-| **📊 元数据管理 (Metadata)** | **⚙️ 系统配置 (System Config)** |
-| ![元数据管理](docs/snapshot/meta-list.png) | ![系统配置](docs/snapshot/system.png) |
+| ![仪表盘概览](docs/snapshot/overview.png) | ![智能助手](docs/snapshot/ai-chat.png) |
+| **🧠 长期记忆与无感回忆 (Memory & LTM)** | **🔍 记忆管理控制台 (Memory Manage)** |
+| ![记忆与偏好](docs/snapshot/chat-with-memory.png) | ![记忆管理控制台](docs/snapshot/memory-manage.png) |
+| **🛠️ 决策链路调试 (Trace Timeline)** | **📚 知识库工作台 (Knowledge Hub)** |
+| ![调试链路](docs/snapshot/chat-debug.png) | ![知识库](docs/snapshot/knowledge.png) |
+| **🤖 智能体编排 (Agent Studio)** | **📝 提示词游乐场 (Prompt Playground)** |
+| ![智能体](docs/snapshot/bot-list.png) | ![提示词](docs/snapshot/prompt_studio.png) |
+| **🔌 直连物理数据源 (Data Sources)** | **📊 元数据智能构建 (Metadata)** |
+| ![数据源](docs/snapshot/datasource.png) | ![元数据](docs/snapshot/meta-list.png) |
+| **⚡ 智能体动态技能 (Agent Skills)** | **⚙️ 系统管理设置 (System Settings)** |
+| ![技能](docs/snapshot/skills-manage.png) | ![系统配置](docs/snapshot/system.png) |
+
+
 
 
 ---
