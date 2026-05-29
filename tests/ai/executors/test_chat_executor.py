@@ -185,48 +185,6 @@ async def test_xml_tool_call_parsing(chat_config, mock_tool):
         mock_tool.ainvoke.assert_called_once_with({"query": "xml_query"})
 
 @pytest.mark.asyncio
-async def test_chatbi_interception(chat_config, mock_tool):
-    """测试 ChatBI 的元数据拦截逻辑"""
-    chat_config.agent_name = "ChatBI" # Trigger interceptor
-    executor = GeneralChatExecutor(config=chat_config, trace_id="test-trace-4", trace_buffer=[])
-    
-    # 1. LLM tries to answer directly (bad)
-    # 2. Executor intercepts, sends System Warning
-    # 3. LLM tries again, this time calling tool (good)
-    # 4. Final answer
-    
-    msg_bad = AIMessage(content="Direct answer without checking metadata.")
-    msg_good_tool = AIMessage(
-        content="Okay, checking metadata.", 
-        tool_calls=[{"name": "test_tool", "args": {}, "id": "call_2"}]
-    )
-    msg_final = AIMessage(content="Final correct answer.")
-    
-    mock_llm = MockLLM([msg_bad, msg_good_tool, msg_final])
-    
-    with patch("app.services.ai.config.AgentConfigProvider.get_configured_llm", new_callable=AsyncMock) as mock_get_llm, \
-         patch("app.services.ai.tools.registry.ToolRegistry.get_tools", new_callable=AsyncMock) as mock_get_tools, \
-         patch("app.services.config_service.ConfigService.get", new_callable=AsyncMock) as mock_config_get:
-         
-        mock_get_llm.return_value = mock_llm
-        mock_get_tools.return_value = [mock_tool]
-        mock_config_get.return_value = "5"
-        
-        history = [{"role": "user", "content": "Analyze data"}]
-        
-        events = []
-        async for chunk in executor.execute(history):
-            events.append(chunk)
-            
-        # Check for Interception Log
-        intercept_logs = [e for e in events if e.get("id", "").startswith("system_intercept")]
-        assert len(intercept_logs) == 1
-        assert intercept_logs[0]["title"] == "流程守护: 强制元数据查询"
-        
-        # Verify Tool eventually called
-        mock_tool.ainvoke.assert_called()
-
-@pytest.mark.asyncio
 async def test_max_steps_limit(chat_config, mock_tool):
     """测试最大执行步数限制"""
     executor = GeneralChatExecutor(config=chat_config, trace_id="test-trace-5", trace_buffer=[])

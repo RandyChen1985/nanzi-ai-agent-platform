@@ -277,14 +277,6 @@ class GeneralChatExecutor:
             ))
 
             if not current_tool_calls:
-                 # ChatBI interception
-                 if self.config.agent_name.lower() == "chatbi" and not any(getattr(m, "tool_calls", None) for m in langchain_messages):
-                     yield {"type": "log", "id": f"system_intercept_{step}", "title": "流程守护: 强制元数据查询", "details": "拦截并纠正编造数据行为...", "status": "warning"}
-                     correction_msg = "你必须先调用 `get_dataset_schema` 获取结构。禁止直接回答。"
-                     langchain_messages.append(response)
-                     langchain_messages.append(SystemMessage(content=correction_msg))
-                     continue
-
                  if force_memory_recall:
                      yield {
                          "type": "log",

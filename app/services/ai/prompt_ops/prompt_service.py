@@ -13,15 +13,11 @@ from app.core.llm.client import get_llm_async
 logger = logging.getLogger(__name__)
 
 # 定义系统级 Prompt 的映射注册表
-# 注意：router_system_prompt（编排路由引擎）已内置到代码 RouterService.DEFAULT_SYSTEM_PROMPT，
-# 不再通过数据库配置管理，故不在此注册（避免运营在配置页误改导致路由失准）。
-SYSTEM_PROMPT_REGISTRY = {
-    "intent_recognition_prompt": {
-        "name": "意图识别引擎 (Intent Recognition)",
-        "description": "负责解析用户输入的自然语言，识别其核心业务意图。",
-        "category": "System"
-    }
-}
+# 注意：路由相关的两层系统提示词均已内置到代码，不再通过数据库配置管理
+# （避免运营在配置页误改导致路由/意图识别失准）：
+#   - router_system_prompt   -> RouterService.DEFAULT_SYSTEM_PROMPT（第一层智能体路由）
+#   - intent_recognition_prompt -> IntentService.DEFAULT_SYSTEM_PROMPT（第二层意图识别）
+SYSTEM_PROMPT_REGISTRY = {}
 
 class PromptService:
     @staticmethod
