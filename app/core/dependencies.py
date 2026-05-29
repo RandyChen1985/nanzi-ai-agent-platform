@@ -112,7 +112,7 @@ async def verify_v1_api_access(
     
     # Whitelist Core Endpoints (Allow all authenticated users)
     # 1. All Chat related endpoints
-    if "/chat" in path_template:
+    if "/chat" in path_template and not path_template.startswith("/api/v1/chatbi"):
         return user_info
     
     # 2. All Task related endpoints (User-owned resources)

@@ -151,6 +151,9 @@ async def chatbi_sql_execute(
 
     await _enforce_openclaw_session_sql_auth(db, body)
 
+    is_openclaw_user = bool(_openclaw_openai_username_from_sessionid(body.sessionid))
+    bypass_table_auth = not is_openclaw_user
+
     result_str = await execute_sql_query_core(
         db,
         sql=body.sql,
@@ -163,6 +166,7 @@ async def chatbi_sql_execute(
         agent_context=None,
         dry_run=False,
         is_admin=user_info.get("role") == "admin",
+        bypass_table_auth=bypass_table_auth,
     )
 
     # 动态判定当前物理执行分流模式

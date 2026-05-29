@@ -577,7 +577,11 @@ async def get_available_resources(
     # Filter: Only show /users/ and /schema endpoints (Hide /chat as they are globally whitelisted)
     apis = [
         api for api in all_apis 
-        if api["path"].startswith("/api/v1/users") or api["path"].startswith("/api/v1/schema")
+        if (
+            api["path"].startswith("/api/v1/users") or 
+            api["path"].startswith("/api/v1/schema") or
+            api["path"] == "/api/v1/chatbi/sql/execute"
+        )
     ]
     # Format APIs to match UI expectation if needed, or keep as is.
     # ApiDiscoveryService returns dict with id, name, description, group.

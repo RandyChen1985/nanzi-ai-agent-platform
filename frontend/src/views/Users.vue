@@ -1719,6 +1719,21 @@ const saveUser = async () => {
       );
       createdApiKey.value = res.data.api_key;
       fetchUsers();
+
+      // 自动关闭“创建用户”主弹窗
+      closeDialogs();
+
+      // 自动拉起独立的查看 API Key 弹窗以供复制
+      userToViewKey.value = {
+        id: res.data.id,
+        user_name: res.data.user_name,
+        real_name: res.data.real_name
+      };
+      viewedApiKey.value = res.data.api_key;
+      loadingViewKey.value = false;
+      showViewKeyDialog.value = true;
+
+      showToast("创建用户成功", "success");
     }
   } catch (e: any) {
     error.value = e.response?.data?.message || "操作失败";

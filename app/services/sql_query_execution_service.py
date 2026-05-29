@@ -195,6 +195,7 @@ async def execute_sql_query_core(
     dry_run: Optional[bool] = None,
     is_admin: bool = False,
     auth_check_only: bool = False,
+    bypass_table_auth: bool = False,
 ) -> str:
     """
     在给定 DB 会话下完成权限重写与执行；调用方负责会话生命周期。
@@ -241,15 +242,16 @@ async def execute_sql_query_core(
 
     dialect = dialect_from_data_source(data_source)
 
-    perm_err = await enforce_physical_table_permissions_for_select(
-        session,
-        sql=sql,
-        dialect=dialect,
-        user_id_eff=user_id_eff,
-        is_admin_eff=is_admin_eff,
-    )
-    if perm_err:
-        return perm_err
+    if not bypass_table_auth:
+        perm_err = await enforce_physical_table_permissions_for_select(
+            session,
+            sql=sql,
+            dialect=dialect,
+            user_id_eff=user_id_eff,
+            is_admin_eff=is_admin_eff,
+        )
+        if perm_err:
+            return perm_err
 
     if ds and ds.enable_data_perm:
         _append_trace(
