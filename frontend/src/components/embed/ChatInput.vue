@@ -134,7 +134,7 @@ const handleKeydown = (e: KeyboardEvent) => {
     if (e.key === "Escape") { showCommandMenu.value = false; return; }
   }
   if (e.key === "Enter" && !e.shiftKey) {
-    if (!props.modelValue.trim() && uploadedFiles.value.length === 0) return;
+    if (!props.modelValue.trim()) return;
     e.preventDefault();
     emit('send');
   }
@@ -492,7 +492,7 @@ defineExpose({
             </div>
             
             <textarea ref="inputRef" :value="modelValue" @input="handleInput" @keydown="handleKeydown" @compositionstart="handleCompositionStart" @compositionend="handleCompositionEnd" @paste="handlePaste" rows="1" class="flex-1 bg-transparent border-none outline-none focus:ring-0 text-base sm:text-sm placeholder:text-sm py-2 px-2 resize-none max-h-32 text-gray-900 dark:text-gray-100 placeholder-gray-400 peer z-10 relative" :placeholder="windowWidth < 640 ? '输入消息，或 \'/\' 使用快捷指令...' : '输入消息...'"></textarea>
-            <button @click="isProcessing ? emit('stop') : emit('send')" :disabled="!modelValue.trim() && uploadedFiles.length === 0 && !isProcessing" class="flex-shrink-0 mb-1 ml-2 p-1.5 rounded-lg text-white hover:opacity-90 disabled:opacity-50 transition-all z-10 relative" :style="{ backgroundColor: 'var(--primary-color, #1677ff)' }">
+            <button @click="isProcessing ? emit('stop') : emit('send')" :disabled="!isProcessing && !modelValue.trim()" class="flex-shrink-0 mb-1 ml-2 p-1.5 rounded-lg text-white hover:opacity-90 disabled:opacity-50 transition-all z-10 relative" :style="{ backgroundColor: 'var(--primary-color, #1677ff)' }">
                 <svg v-if="isProcessing" class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20"><rect x="5" y="5" width="10" height="10" /></svg>
                 <svg v-else class="w-4 h-4 transform rotate-90" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" /></svg>
             </button>
