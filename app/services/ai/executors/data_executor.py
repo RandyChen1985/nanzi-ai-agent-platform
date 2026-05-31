@@ -343,6 +343,17 @@ class DataQueryExecutor(BaseExecutor):
         ))
 
     async def execute(self, history: List[Dict[str, str]]) -> AsyncGenerator[Dict[str, Any], None]:
+        from app.services.ai.multimodal_support import (
+            ensure_multimodal_compatible,
+            resolve_runtime_model_name,
+        )
+
+        model_name = resolve_runtime_model_name(self.config, prefer_synthesis=True)
+        incompatible_msg = await ensure_multimodal_compatible(history, model_name)
+        if incompatible_msg:
+            yield {"content": incompatible_msg, "status": "error"}
+            return
+
         TOOL_LABEL_MAP = {"get_dataset_schema": "检索数据集定义", "execute_sql_query": "执行 SQL 查询", "update_dashboard_context": "更新看板关联状态"}
         import json
         import re

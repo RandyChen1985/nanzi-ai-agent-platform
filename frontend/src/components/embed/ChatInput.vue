@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { ref, reactive, nextTick, computed, watch, onMounted, onUnmounted } from "vue";
 import MentionList from "@/components/agent/MentionList.vue";
+import AttachmentImageThumb from "@/components/embed/AttachmentImageThumb.vue";
+import { isImageAttachment } from "@/utils/attachmentImages";
 
 const props = defineProps<{
   modelValue: string;
@@ -134,7 +136,7 @@ const handleKeydown = (e: KeyboardEvent) => {
     if (e.key === "Escape") { showCommandMenu.value = false; return; }
   }
   if (e.key === "Enter" && !e.shiftKey) {
-    if (!props.modelValue.trim()) return;
+    if (!canSend.value) return;
     e.preventDefault();
     emit('send');
   }
@@ -168,6 +170,11 @@ import axios from "@/utils/axios";
 
 // 附件上传状态
 const uploadedFiles = ref<any[]>([]);
+
+const canSend = computed(
+  () => !!props.modelValue.trim() || uploadedFiles.value.length > 0,
+);
+
 const plusMenuContainerRef = ref<HTMLElement | null>(null);
 
 const handleGlobalClick = (event: MouseEvent) => {
@@ -204,9 +211,10 @@ const triggerFileInput = () => {
   fileInputRef.value?.click();
 };
 
-const isImage = (file: any) => {
-  const ext = (file.ext || '').toLowerCase();
-  return ['.png', '.jpg', '.jpeg', '.webp', '.gif'].includes(ext);
+const isImage = isImageAttachment;
+
+const openImagePreview = (url: string) => {
+  window.open(url, "_blank");
 };
 
 const formatSize = (bytes: number) => {
@@ -387,9 +395,13 @@ defineExpose({
         <div v-if="uploadedFiles.length > 0" class="flex flex-wrap gap-2 px-1 mb-2 max-h-36 overflow-y-auto no-scrollbar py-1">
             <div v-for="(file, idx) in uploadedFiles" :key="idx" class="relative flex items-center group bg-gray-100/80 dark:bg-gray-800/80 border border-gray-200/30 dark:border-gray-700/30 rounded-lg p-1.5 pr-8 max-w-[200px] transition-all hover:bg-white dark:hover:bg-gray-800 hover:shadow-sm">
                 <!-- Image Preview -->
-                <div v-if="isImage(file)" class="w-8 h-8 rounded bg-gray-200 dark:bg-gray-700 overflow-hidden flex-shrink-0 mr-2 border border-gray-200/30 dark:border-gray-700/30">
-                    <img :src="file.url" class="w-full h-full object-cover" />
-                </div>
+                <AttachmentImageThumb
+                  v-if="isImage(file)"
+                  :file="file"
+                  clickable
+                  class="mr-2"
+                  @click="openImagePreview"
+                />
                 <!-- Knowledge Base Icon -->
                 <div v-else-if="file.type === 'knowledge_base'" class="w-8 h-8 rounded bg-emerald-500/10 dark:bg-emerald-500/20 flex items-center justify-center text-emerald-500 text-sm flex-shrink-0 mr-2">
                     📚
@@ -417,7 +429,7 @@ defineExpose({
                         {{ 
                           file.type === 'skill' ? '生态技能' : 
                           file.type === 'knowledge_base' ? '知识库' : 
-                          file.type === 'local_file' ? '服务器文件' :
+                          file.type === 'local_file' ? (isImage(file) ? '服务器图片' : '服务器文件') :
                           file.type === 'local_dir' ? '服务器目录' :
                           formatSize(file.size) 
                         }}
@@ -492,7 +504,7 @@ defineExpose({
             </div>
             
             <textarea ref="inputRef" :value="modelValue" @input="handleInput" @keydown="handleKeydown" @compositionstart="handleCompositionStart" @compositionend="handleCompositionEnd" @paste="handlePaste" rows="1" class="flex-1 bg-transparent border-none outline-none focus:ring-0 text-base sm:text-sm placeholder:text-sm py-2 px-2 resize-none max-h-32 text-gray-900 dark:text-gray-100 placeholder-gray-400 peer z-10 relative" :placeholder="windowWidth < 640 ? '输入消息，或 \'/\' 使用快捷指令...' : '输入消息...'"></textarea>
-            <button @click="isProcessing ? emit('stop') : emit('send')" :disabled="!isProcessing && !modelValue.trim()" class="flex-shrink-0 mb-1 ml-2 p-1.5 rounded-lg text-white hover:opacity-90 disabled:opacity-50 transition-all z-10 relative" :style="{ backgroundColor: 'var(--primary-color, #1677ff)' }">
+            <button @click="isProcessing ? emit('stop') : emit('send')" :disabled="!isProcessing && !canSend" class="flex-shrink-0 mb-1 ml-2 p-1.5 rounded-lg text-white hover:opacity-90 disabled:opacity-50 transition-all z-10 relative" :style="{ backgroundColor: 'var(--primary-color, #1677ff)' }">
                 <svg v-if="isProcessing" class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20"><rect x="5" y="5" width="10" height="10" /></svg>
                 <svg v-else class="w-4 h-4 transform rotate-90" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" /></svg>
             </button>

@@ -354,8 +354,8 @@
               >
                 <template v-for="parts in [splitUserMessageContent(msg.content)]" :key="'user-parts'">
                   <template v-if="parts.hasContext">
-                    <div class="whitespace-pre-wrap">{{ parts.userPart }}</div>
-                    <div class="my-2.5 border-t border-white/30" role="separator" />
+                    <div v-if="parts.userPart" class="whitespace-pre-wrap">{{ parts.userPart }}</div>
+                    <div v-if="parts.userPart" class="my-2.5 border-t border-white/30" role="separator" />
                     <div class="whitespace-pre-wrap text-[11px] text-white/90 leading-relaxed opacity-95">
                       {{ parts.contextPart }}
                     </div>
@@ -367,9 +367,13 @@
                 <div v-if="msg.files && msg.files.length > 0" class="mt-2 space-y-2 border-t border-white/20 pt-2">
                     <div v-for="(file, fIdx) in msg.files" :key="fIdx" class="flex items-center bg-white/10 rounded-lg p-1.5 max-w-xs select-none">
                         <!-- Image Thumb -->
-                        <div v-if="isImageFile(file)" class="w-8 h-8 rounded bg-white/20 overflow-hidden flex-shrink-0 mr-2 border border-white/10">
-                            <img :src="file.url" class="w-full h-full object-cover cursor-pointer" @click="previewImage(file.url)" />
-                        </div>
+                        <AttachmentImageThumb
+                          v-if="isImageFile(file)"
+                          :file="file"
+                          clickable
+                          class="mr-2 border-white/10"
+                          @click="previewImage"
+                        />
                         <!-- Skill Icon -->
                         <div v-else-if="file.type === 'skill'" class="w-8 h-8 rounded bg-white/20 flex items-center justify-center text-white text-sm flex-shrink-0 mr-2 font-mono">
                             ⚙️
@@ -1736,6 +1740,8 @@ import ChatInput from "@/components/embed/ChatInput.vue";
 import WelcomeDashboard from "@/components/embed/WelcomeDashboard.vue";
 import RagFlowResourceSelector from "@/components/RagFlowResourceSelector.vue";
 import FileBrowserModal from "@/components/embed/FileBrowserModal.vue";
+import AttachmentImageThumb from "@/components/embed/AttachmentImageThumb.vue";
+import { isImageAttachment } from "@/utils/attachmentImages";
 import { modelApi, type AIModel } from "@/api/model";
 import {
   filterLogsForTurn,
@@ -2028,10 +2034,7 @@ const handleSelectLocalFs = (payload: { type: 'local_file' | 'local_dir'; path: 
   }
 };
 
-const isImageFile = (file: any) => {
-  const ext = (file.ext || '').toLowerCase();
-  return ['.png', '.jpg', '.jpeg', '.webp', '.gif'].includes(ext);
-};
+const isImageFile = isImageAttachment;
 
 const formatBytes = (bytes: number) => {
   if (bytes === 0) return '0 B';
@@ -2052,6 +2055,13 @@ const getServerAttachmentPath = (file: ChatFile) => {
   return `/app/data/uploads/${fileName}`;
 };
 
+const buildImageAttachmentHint = (file: ChatFile, path: string) => {
+  if (file.type === "local_file") {
+    return `用户本轮已从服务器挂载图片：${file.filename}，该图片已作为视觉多模态输入随消息一并发送（源路径：${path}）。`;
+  }
+  return `用户本轮已上传图片：${file.filename}，该图片已作为视觉多模态输入随消息一并发送（托管路径：${path}）。`;
+};
+
 const appendAttachmentContext = (content: string, files: ChatFile[]) => {
   if (files.length === 0) return content;
 
@@ -2065,6 +2075,9 @@ const appendAttachmentContext = (content: string, files: ChatFile[]) => {
       const skillName = file.filename.replace(" (技能)", "");
       return `用户本轮已调用生态技能工作流：${skillName}，对应的物理描述文件绝对路径是：${path}。`;
     }
+    if (isImageAttachment(file)) {
+      return buildImageAttachmentHint(file, path);
+    }
     if (file.type === "local_file") {
       return `用户本轮已挂载服务器本地文件：${file.filename}，其真实的绝对路径是：${path}。你可以直接通过系统级执行工具访问或读取此绝对路径的资料以解答用户的问题。`;
     }
@@ -2077,8 +2090,45 @@ const appendAttachmentContext = (content: string, files: ChatFile[]) => {
   const contextBlock = contextLines.filter(Boolean).join("\n\n");
   const userPart = (content || "").trim();
   if (!contextBlock) return userPart;
-  if (!userPart) return contextBlock;
+  if (!userPart) return `${USER_MESSAGE_CONTEXT_DIVIDER}${contextBlock}`;
   return `${userPart}${USER_MESSAGE_CONTEXT_DIVIDER}${contextBlock}`;
+};
+
+const resolveReqContent = (msg: Message) => {
+  let reqContent = msg.content || "";
+  if (msg.role === "user" && msg.files && msg.files.length > 0) {
+    if (!reqContent.includes(USER_MESSAGE_CONTEXT_DIVIDER)) {
+      reqContent = appendAttachmentContext(msg.content, msg.files);
+    }
+  }
+  return reqContent;
+};
+
+/** 发给 API 的消息：仅当前轮 user 保留附件，历史轮次只传纯文字 */
+const buildOutboundMessages = () => {
+  const sendable = messages.value.filter((m) => !m.isThinking && (m.content || m.files));
+  const lastUserIdx = sendable.reduce(
+    (last, m, i) => (m.role === "user" ? i : last),
+    -1,
+  );
+
+  return sendable.map((m, idx) => {
+    const role = m.role === "agent" ? "assistant" : m.role;
+    if (m.role === "user" && idx !== lastUserIdx) {
+      return {
+        role,
+        content: splitUserMessageContent(m.content || "").userPart,
+      };
+    }
+    const msgObj: any = {
+      role,
+      content: m.role === "user" ? resolveReqContent(m) : (m.content || ""),
+    };
+    if (m.role === "user" && m.files?.length) {
+      msgObj.files = m.files;
+    }
+    return msgObj;
+  });
 };
 
 const previewImage = (url: string) => {
@@ -2499,7 +2549,7 @@ const editingMsgId = ref<number | null>(null);
 const editContent = ref("");
 const startEdit = (msg: Message) => {
   editingMsgId.value = msg.id;
-  editContent.value = msg.content;
+  editContent.value = splitUserMessageContent(msg.content).userPart;
 };
 const cancelEdit = () => {
   editingMsgId.value = null;
@@ -2509,6 +2559,7 @@ const saveAndResend = async () => {
   if (editingMsgId.value === null) return;
   const msgIndex = messages.value.findIndex(m => m.id === editingMsgId.value);
   if (msgIndex === -1) return;
+  const originalMsg = messages.value[msgIndex];
   const newContent = editContent.value.trim();
   if (!newContent) return;
   // Truncate history: keep up to this message
@@ -2518,6 +2569,9 @@ const saveAndResend = async () => {
   editContent.value = "";
   // Send
   userInput.value = newContent;
+  if (originalMsg.files?.length && chatInputRef.value) {
+    chatInputRef.value.uploadedFiles = [...originalMsg.files];
+  }
   await sendMessage();
 };
 const confirmDeleteTrace = async () => {
@@ -3367,7 +3421,10 @@ const regenerate = () => {
     if (lastMsg && lastMsg.role === "agent") {
       messages.value.pop();
     }
-    userInput.value = lastUserMsg.content;
+    userInput.value = splitUserMessageContent(lastUserMsg.content).userPart;
+    if (lastUserMsg.files?.length && chatInputRef.value) {
+      chatInputRef.value.uploadedFiles = [...lastUserMsg.files];
+    }
     sendMessage();
   }
 };
@@ -3479,7 +3536,7 @@ const sendMessage = async () => {
   const content = userInput.value.trim();
   const files = chatInputRef.value?.uploadedFiles ? Array.from(chatInputRef.value.uploadedFiles) as ChatFile[] : [];
   if ((!content && files.length === 0) || isProcessing.value) return;
-  const messageContent = appendAttachmentContext(content, files);
+  const messageContent = files.length > 0 ? appendAttachmentContext(content, files) : content;
 
   // 全局兜底：确保一定存在会话 ID
   if (!conversationId.value) {
@@ -3493,24 +3550,12 @@ const sendMessage = async () => {
   }
   userInput.value = "";
   showCommandMenu.value = false;
-  
-  // 解耦呈现与传输：用户气泡内仅展示纯净可读的内容或挂载动作描述，避免物理绝对路径及底层指令暴露在聊天气泡中
-  let displayContent = content;
-  if (!displayContent && files.length > 0) {
-    displayContent = files.map(f => {
-      if (f.type === 'local_file') return `💻 已挂载本地文件：${f.filename}`;
-      if (f.type === 'local_dir') return `📁 已挂载本地目录：${f.filename}`;
-      if (f.type === 'skill') return `⚙️ 已调用技能：${f.filename}`;
-      if (f.type === 'knowledge_base') return `📚 已选择知识库：${f.filename}`;
-      return `📄 已挂载附件：${f.filename}`;
-    }).join('、');
-  }
 
-  // 1. User Message
+  // 1. User Message（content 含 --- 分隔的隐式系统指令，气泡内分区展示）
   messages.value.push({
     id: Date.now(),
     role: "user",
-    content: displayContent,
+    content: messageContent,
     files: files.length > 0 ? files : undefined,
     timestamp: new Date().toISOString(),
   });
@@ -3571,23 +3616,7 @@ const sendMessage = async () => {
   abortController = new AbortController();
   try {
     const body = {
-      messages: messages.value
-        .filter((m) => !m.isThinking && (m.content || m.files))
-        .map((m) => {
-          let reqContent = m.content || "";
-          // 传输时在消息体中动态织入服务器物理挂载路径与安全拦截指令给 AI 智能体，确保核心逻辑平稳实现
-          if (m.role === "user" && m.files && m.files.length > 0) {
-            reqContent = appendAttachmentContext(m.content, m.files);
-          }
-          const msgObj: any = {
-            role: m.role === "agent" ? "assistant" : m.role,
-            content: reqContent,
-          };
-          if (m.files) {
-            msgObj.files = m.files;
-          }
-          return msgObj;
-        }),
+      messages: buildOutboundMessages(),
               stream: true,
               agent_id: (config.routingMode === "expert" && config.expertAgentId) ? config.expertAgentId : (config.overrideAgentId || config.agentId),
               enable_multi_agent: config.enableMultiAgent,

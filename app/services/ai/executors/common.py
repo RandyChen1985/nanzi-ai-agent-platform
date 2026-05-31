@@ -11,8 +11,78 @@ from typing import Any, Dict, List, Optional
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
 
 from app.services.ai.executors.prompts import SharedPrompts
+from app.utils.fs_paths import get_data_base_dir, normalize_under_base
 
 logger = logging.getLogger(__name__)
+
+IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
+USER_MESSAGE_CONTEXT_DIVIDER = "\n\n---\n\n"
+
+
+def _plain_user_text(content: str) -> str:
+    """历史轮次仅保留用户可见纯文字，剥离附件系统指令块。"""
+    raw = content or ""
+    idx = raw.find(USER_MESSAGE_CONTEXT_DIVIDER)
+    if idx == -1:
+        return raw.strip()
+    return raw[:idx].strip()
+
+
+def _normalize_file_ext(ext: str = "", url: str = "") -> str:
+    if not ext and url:
+        ext = os.path.splitext(url)[1]
+    ext = ext.lower().strip()
+    if ext and not ext.startswith("."):
+        ext = f".{ext}"
+    return ext
+
+
+def _is_image_attachment(file_obj: Dict[str, Any]) -> bool:
+    if file_obj.get("type") in ("skill", "knowledge_base", "local_dir"):
+        return False
+    return _normalize_file_ext(file_obj.get("ext", ""), file_obj.get("url", "")) in IMAGE_EXTENSIONS
+
+
+def _resolve_image_local_path(file_obj: Dict[str, Any]) -> Optional[str]:
+    url = file_obj.get("url", "")
+    if not url:
+        return None
+
+    if url.startswith("/static/uploads/"):
+        local_path = os.path.join("data", "uploads", os.path.basename(url))
+        return local_path if os.path.isfile(local_path) else None
+
+    if file_obj.get("type") == "local_file" or os.path.isabs(url):
+        safe_path = normalize_under_base(url, get_data_base_dir())
+        if safe_path and os.path.isfile(safe_path):
+            return safe_path
+
+    return None
+
+
+def _encode_image_data_url(local_path: str, ext: str = "") -> Optional[str]:
+    if not ext:
+        ext = os.path.splitext(local_path)[1]
+    ext_cleaned = _normalize_file_ext(ext).lstrip(".")
+    if ext_cleaned == "jpg":
+        ext_cleaned = "jpeg"
+    try:
+        with open(local_path, "rb") as image_file:
+            encoded_string = base64.b64encode(image_file.read()).decode("utf-8")
+        return f"data:image/{ext_cleaned};base64,{encoded_string}"
+    except Exception as e:
+        logger.warning("Failed to read local image for vision: %s", e)
+        return None
+
+
+def _attachment_abs_path(file_obj: Dict[str, Any]) -> str:
+    url = file_obj.get("url", "")
+    ftype = file_obj.get("type")
+    if ftype in ("local_file", "local_dir"):
+        return url
+    if url.startswith("/static/uploads/"):
+        return f"/app/data/uploads/{os.path.basename(url)}"
+    return url or "/app/data/uploads/unknown"
 
 
 def extract_tokens_from_message(msg: Any) -> dict:
@@ -43,22 +113,29 @@ def extract_tokens_from_message(msg: Any) -> dict:
 def convert_history_to_messages(history: List[Dict[str, str]]) -> List[BaseMessage]:
     """将平台 messages 转为 LangChain BaseMessage 列表（含附件/多模态）。"""
     messages: List[BaseMessage] = []
-    for m in history:
+    last_user_idx: Optional[int] = None
+    for idx in range(len(history) - 1, -1, -1):
+        if history[idx].get("role") == "user":
+            last_user_idx = idx
+            break
+
+    for idx, m in enumerate(history):
         role = m["role"]
         content = m["content"]
         if role == "user":
+            # 历史轮：仅纯文字，不带附件/图片/系统指令
+            if idx != last_user_idx:
+                messages.append(HumanMessage(content=_plain_user_text(content)))
+                continue
+
             files = m.get("files")
-            img_extensions = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
-            img_files = []
-            non_img_files = []
+            img_files: List[Dict[str, Any]] = []
+            non_img_files: List[Dict[str, Any]] = []
             if files:
                 for f in files:
                     if f.get("type") in ("skill", "knowledge_base"):
                         continue
-                    ext = f.get("ext", "")
-                    if not ext and f.get("url"):
-                        ext = os.path.splitext(f["url"])[1]
-                    if ext and ext.lower() in img_extensions:
+                    if _is_image_attachment(f):
                         img_files.append(f)
                     else:
                         non_img_files.append(f)
@@ -67,13 +144,11 @@ def convert_history_to_messages(history: List[Dict[str, str]]) -> List[BaseMessa
             if non_img_files:
                 lines = [SharedPrompts.NON_IMAGE_ATTACHMENT_HEADER]
                 for f in non_img_files:
-                    url = f.get("url", "")
                     filename = f.get("filename", "未知文件")
                     size_str = (
                         f"{(f.get('size', 0) / 1024):.1f} KB" if f.get("size") else "未知大小"
                     )
-                    unique_name = os.path.basename(url)
-                    abs_path = f"/app/data/uploads/{unique_name}"
+                    abs_path = _attachment_abs_path(f)
                     lines.append(f"- 文件名: {filename} (大小: {size_str})")
                     lines.append(f"  服务器内绝对路径: {abs_path}")
                 lines.append(SharedPrompts.NON_IMAGE_ATTACHMENT_FOOTER)
@@ -84,23 +159,13 @@ def convert_history_to_messages(history: List[Dict[str, str]]) -> List[BaseMessa
             if img_files:
                 multimodal_content = [{"type": "text", "text": final_text}]
                 for f in img_files:
-                    url = f.get("url", "")
-                    base64_data = None
-                    if url.startswith("/static/uploads/"):
-                        filename = os.path.basename(url)
-                        local_path = os.path.join("data/uploads", filename)
-                        if os.path.exists(local_path):
-                            try:
-                                with open(local_path, "rb") as image_file:
-                                    encoded_string = base64.b64encode(image_file.read()).decode("utf-8")
-                                ext_cleaned = f.get("ext", "png").lower().strip(".")
-                                if ext_cleaned == "jpg":
-                                    ext_cleaned = "jpeg"
-                                mime_type = f"image/{ext_cleaned}"
-                                base64_data = f"data:{mime_type};base64,{encoded_string}"
-                            except Exception as e:
-                                logger.warning("Failed to read local image for vision: %s", e)
-                    img_url = base64_data if base64_data else url
+                    local_path = _resolve_image_local_path(f)
+                    base64_data = (
+                        _encode_image_data_url(local_path, f.get("ext", ""))
+                        if local_path
+                        else None
+                    )
+                    img_url = base64_data or f.get("url", "")
                     if img_url:
                         multimodal_content.append(
                             {"type": "image_url", "image_url": {"url": img_url}}

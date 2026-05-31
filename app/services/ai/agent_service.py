@@ -565,7 +565,13 @@ class AgentService:
         except Exception as e:
             logger.error(f"Execution Error: {str(e)}", exc_info=True)
             execution_status = "error"
-            yield {"content": AgentServicePrompts.execution_error(str(e)), "status": "error"}
+            from app.services.ai.multimodal_support import format_execution_error
+
+            model_name = getattr(agent_config, "model_name", None) if agent_config else None
+            yield {
+                "content": format_execution_error(str(e), model_name=model_name),
+                "status": "error",
+            }
         
         finally:
             end_time = asyncio.get_running_loop().time()

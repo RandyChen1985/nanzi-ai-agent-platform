@@ -186,9 +186,9 @@ const formatDate = (ts?: number | string) => {
     @close="close"
     size="max-w-3xl"
   >
-    <div class="min-h-[300px] flex flex-col">
+    <div class="flex flex-col max-h-[calc(85vh-10rem)] min-h-[320px]">
       <div
-        class="mb-4 flex items-center justify-between gap-3 rounded-xl border px-4 py-3 text-xs"
+        class="mb-3 flex-shrink-0 flex items-center justify-between gap-3 rounded-xl border px-4 py-3 text-xs"
         :class="{
           'border-blue-200 bg-blue-50 text-blue-700': engineStatus === 'checking',
           'border-emerald-200 bg-emerald-50 text-emerald-700': engineStatus === 'connected',
@@ -217,7 +217,7 @@ const formatDate = (ts?: number | string) => {
       <!-- Loading -->
       <div
         v-if="loading"
-        class="flex-1 flex flex-col items-center justify-center text-gray-400"
+        class="flex-1 min-h-0 flex flex-col items-center justify-center text-gray-400"
       >
         <svg
           class="animate-spin h-8 w-8 text-primary mb-2"
@@ -245,7 +245,7 @@ const formatDate = (ts?: number | string) => {
       <!-- Error -->
       <div
         v-else-if="errorMsg"
-        class="flex-1 flex flex-col items-center justify-center p-8 text-center"
+        class="flex-1 min-h-0 flex flex-col items-center justify-center p-8 text-center overflow-y-auto"
       >
         <div class="bg-red-50 p-4 rounded-full mb-3">
           <svg
@@ -276,8 +276,8 @@ const formatDate = (ts?: number | string) => {
         </button>
       </div>
 
-      <!-- List -->
-      <div v-else class="flex-1 overflow-y-auto max-h-[500px] space-y-2 p-1">
+      <!-- List（仅此区域滚动，底部按钮始终可见） -->
+      <div v-else class="flex-1 min-h-0 overflow-y-auto space-y-2 p-1 custom-scrollbar">
         <!-- Agent List -->
         <template v-if="type === 'agent'">
           <div
@@ -416,21 +416,42 @@ const formatDate = (ts?: number | string) => {
 
       <!-- Footer (Multi-select only) -->
       <div
-        v-if="type === 'dataset'"
-        class="pt-4 border-t border-gray-100 flex justify-between items-center"
+        v-if="type === 'dataset' && !loading"
+        class="flex-shrink-0 pt-3 mt-3 border-t border-gray-100 flex justify-between items-center bg-white"
       >
         <span class="text-xs text-gray-500"
           >已选: {{ selectedIds.length }} 个</span
         >
-        <button
-          @click="confirmSelection"
-          :disabled="engineStatus !== 'connected'"
-          class="px-6 py-2 bg-primary text-white rounded hover:bg-primary-dark transition-colors font-medium text-sm"
-          :class="{ 'opacity-50 cursor-not-allowed': engineStatus !== 'connected' }"
-        >
-          确认选择
-        </button>
+        <div class="flex items-center gap-2">
+          <button
+            @click="close"
+            class="px-4 py-2 text-sm text-gray-600 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
+          >
+            取消
+          </button>
+          <button
+            @click="confirmSelection"
+            :disabled="engineStatus !== 'connected'"
+            class="px-6 py-2 bg-primary text-white rounded-lg hover:bg-primary-dark transition-colors font-medium text-sm shadow-sm"
+            :class="{ 'opacity-50 cursor-not-allowed': engineStatus !== 'connected' }"
+          >
+            确认选择
+          </button>
+        </div>
       </div>
     </div>
   </Modal>
 </template>
+
+<style scoped>
+.custom-scrollbar::-webkit-scrollbar {
+  width: 6px;
+}
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.12);
+  border-radius: 10px;
+}
+</style>

@@ -2,11 +2,22 @@ import os
 import time
 from typing import List, Optional, Dict, Any
 from fastapi import APIRouter, HTTPException, Depends, Query
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from app.schemas.response import StandardResponse
 from app.core.dependencies import require_api_key
+from app.utils.fs_paths import get_data_base_dir, normalize_under_base
 
 router = APIRouter()
+
+IMAGE_PREVIEW_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
+IMAGE_MEDIA_TYPES = {
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".webp": "image/webp",
+    ".gif": "image/gif",
+}
 
 class FileItem(BaseModel):
     name: str = Field(..., description="文件名或目录名")
@@ -21,14 +32,31 @@ class FileListResponse(BaseModel):
     is_root: bool = Field(..., description="是否已在安全根目录")
     items: List[FileItem] = Field(..., description="子文件和子目录列表")
 
+
+class FileSearchResponse(BaseModel):
+    items: List[FileItem] = Field(..., description="匹配的文件/目录")
+    query: str = Field(..., description="搜索关键词")
+    search_root: str = Field(..., description="搜索起始目录")
+    truncated: bool = Field(False, description="结果是否因上限被截断")
+
+
+def _append_fs_entry(results: List[FileItem], entry_path: str, is_dir: bool) -> None:
+    try:
+        stat = os.stat(entry_path)
+        results.append(
+            FileItem(
+                name=os.path.basename(entry_path),
+                path=entry_path,
+                is_dir=is_dir,
+                size=0 if is_dir else stat.st_size,
+                mtime=stat.st_mtime,
+            )
+        )
+    except OSError:
+        pass
+
 def get_base_dir() -> str:
-    # 默认使用容器内绝对路径 /app/data
-    base = "/app/data"
-    # 如果不存在或不可写，则平滑降级到当前工作目录下的 data 目录，保证本地开发平稳健康运行
-    if not os.path.exists(base):
-        base = os.path.abspath("data")
-    os.makedirs(base, exist_ok=True)
-    return base
+    return get_data_base_dir()
 
 @router.get("/list",
     response_model=StandardResponse[FileListResponse],
@@ -114,3 +142,95 @@ async def list_files(
         is_root=is_root,
         items=items
     ))
+
+
+@router.get(
+    "/preview",
+    summary="预览服务器图片",
+    description="在安全根目录内读取图片文件，供 EmbedChat 缩略图展示及多模态链路校验。",
+)
+async def preview_file(
+    path: str = Query(..., description="图片绝对路径，须在安全根目录内"),
+    user_info: Dict[str, Any] = Depends(require_api_key),
+):
+    safe_path = normalize_under_base(path)
+    if not safe_path:
+        raise HTTPException(status_code=403, detail="安全越权拦截：禁止访问安全根目录以外的文件。")
+    if not os.path.isfile(safe_path):
+        raise HTTPException(status_code=404, detail="文件不存在。")
+
+    ext = os.path.splitext(safe_path)[1].lower()
+    if ext not in IMAGE_PREVIEW_EXTENSIONS:
+        raise HTTPException(status_code=400, detail="仅支持预览图片文件。")
+
+    return FileResponse(
+        safe_path,
+        media_type=IMAGE_MEDIA_TYPES.get(ext, "application/octet-stream"),
+    )
+
+
+@router.get(
+    "/search",
+    response_model=StandardResponse[FileSearchResponse],
+    summary="搜索服务器文件",
+    description="在指定目录及其子目录中按文件名模糊搜索（安全根目录内）。",
+)
+async def search_files(
+    q: str = Query(..., min_length=1, max_length=100, description="搜索关键词"),
+    path: Optional[str] = Query(None, description="搜索起始目录，默认安全根目录"),
+    max_results: int = Query(80, ge=1, le=200, description="最大返回条数"),
+    user_info: Dict[str, Any] = Depends(require_api_key),
+):
+    base_dir = get_base_dir()
+    if path:
+        search_root = normalize_under_base(os.path.abspath(path), base_dir)
+    else:
+        search_root = base_dir
+
+    if not search_root or not os.path.isdir(search_root):
+        raise HTTPException(status_code=404, detail="搜索起始目录不存在。")
+
+    keyword = q.strip().lower()
+    if not keyword:
+        raise HTTPException(status_code=400, detail="搜索关键词不能为空。")
+
+    results: List[FileItem] = []
+    truncated = False
+
+    for root, dirs, files in os.walk(search_root):
+        norm_root = os.path.normpath(root)
+        if not norm_root.startswith(base_dir):
+            continue
+
+        dirs[:] = sorted(d for d in dirs if not d.startswith("."))
+
+        for name in sorted(dirs):
+            if keyword in name.lower():
+                _append_fs_entry(results, os.path.join(root, name), True)
+                if len(results) >= max_results:
+                    truncated = True
+                    break
+        if truncated:
+            break
+
+        for name in sorted(files):
+            if name.startswith("."):
+                continue
+            if keyword in name.lower():
+                _append_fs_entry(results, os.path.join(root, name), False)
+                if len(results) >= max_results:
+                    truncated = True
+                    break
+        if truncated:
+            break
+
+    results.sort(key=lambda x: (not x.is_dir, x.name.lower()))
+
+    return StandardResponse(
+        data=FileSearchResponse(
+            items=results,
+            query=q.strip(),
+            search_root=search_root,
+            truncated=truncated,
+        )
+    )

@@ -1,8 +1,13 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, watch, onUnmounted } from 'vue'
 import Modal from '@/components/Modal.vue'
 import axios from '@/utils/axios'
 import { useToast } from '@/composables/useToast'
+import {
+  resolveFileTypeVisual,
+  FILE_TYPE_LEGEND,
+  getCategoryStyle,
+} from '@/utils/fileTypeVisual'
 
 const props = defineProps<{
   show: boolean
@@ -25,11 +30,122 @@ const { showToast } = useToast()
 
 // 选中的项 (针对文件 Tab 选择文件，针对目录 Tab 选择子目录)
 const selectedItem = ref<any | null>(null)
+const searchQuery = ref('')
+const includeSubdirs = ref(true)
+const searchLoading = ref(false)
+const recursiveSearchResults = ref<any[]>([])
+const searchTruncated = ref(false)
+let searchDebounceTimer: ReturnType<typeof setTimeout> | null = null
+
+const clearSearch = () => {
+  searchQuery.value = ''
+  recursiveSearchResults.value = []
+  searchTruncated.value = false
+}
+
+const resetSearchState = () => {
+  clearSearch()
+  if (searchDebounceTimer) {
+    clearTimeout(searchDebounceTimer)
+    searchDebounceTimer = null
+  }
+}
+
+const fetchRecursiveSearch = async () => {
+  const q = searchQuery.value.trim()
+  if (!q || !includeSubdirs.value) {
+    recursiveSearchResults.value = []
+    searchTruncated.value = false
+    return
+  }
+
+  searchLoading.value = true
+  try {
+    const res = await axios.get('/api/v1/chat/fs/search', {
+      params: {
+        q,
+        path: currentPath.value || undefined,
+        max_results: 80,
+      },
+    })
+    if (res.data?.data) {
+      recursiveSearchResults.value = res.data.data.items || []
+      searchTruncated.value = !!res.data.data.truncated
+    }
+  } catch (error) {
+    console.error('Failed to search files:', error)
+    recursiveSearchResults.value = []
+    showToast('搜索失败，请稍后重试', 'error')
+  } finally {
+    searchLoading.value = false
+  }
+}
+
+watch(searchQuery, () => {
+  selectedItem.value = null
+  if (searchDebounceTimer) clearTimeout(searchDebounceTimer)
+
+  const q = searchQuery.value.trim()
+  if (!q) {
+    recursiveSearchResults.value = []
+    searchTruncated.value = false
+    return
+  }
+
+  if (includeSubdirs.value) {
+    searchDebounceTimer = setTimeout(fetchRecursiveSearch, 300)
+  } else {
+    recursiveSearchResults.value = []
+    searchTruncated.value = false
+  }
+})
+
+watch(includeSubdirs, () => {
+  selectedItem.value = null
+  if (searchQuery.value.trim() && includeSubdirs.value) {
+    if (searchDebounceTimer) clearTimeout(searchDebounceTimer)
+    searchDebounceTimer = setTimeout(fetchRecursiveSearch, 200)
+  } else {
+    recursiveSearchResults.value = []
+    searchTruncated.value = false
+  }
+})
+
+const filteredCurrentItems = computed(() => {
+  const q = searchQuery.value.trim().toLowerCase()
+  if (!q) return items.value
+  return items.value.filter((item) => item.name.toLowerCase().includes(q))
+})
+
+const isSearchActive = computed(() => searchQuery.value.trim().length > 0)
+
+const displayItems = computed(() => {
+  if (!isSearchActive.value) return items.value
+  if (includeSubdirs.value) return recursiveSearchResults.value
+  return filteredCurrentItems.value
+})
+
+const displayEmptyHint = computed(() => {
+  if (!isSearchActive.value) return '暂无子文件或子目录'
+  if (includeSubdirs.value && searchLoading.value) return ''
+  return '未找到匹配的文件或目录'
+})
+
+const getItemLocationHint = (itemPath: string) => {
+  const parent = itemPath.split('/').slice(0, -1).join('/')
+  if (!parent || parent === currentPath.value) return ''
+  const base = baseDir.value || currentPath.value
+  const rel = parent.startsWith(base) ? parent.slice(base.length).replace(/^\//, '') : parent
+  return rel || parent.split('/').pop() || ''
+}
+
+onUnmounted(resetSearchState)
 
 // 载入目录列表
 const fetchDirectory = async (pathUrl: string = '') => {
   loading.value = true
-  selectedItem.value = null // 切换目录时清除历史选中
+  selectedItem.value = null
+  resetSearchState()
   try {
     const res = await axios.get('/api/v1/chat/fs/list', {
       params: { path: pathUrl }
@@ -91,6 +207,14 @@ const getFileExt = (filename: string) => {
   return parts.length > 1 ? '.' + parts.pop()?.toLowerCase() : ''
 }
 
+const getItemVisual = (item: { name: string; is_dir: boolean }) =>
+  resolveFileTypeVisual(item.name, item.is_dir)
+
+const legendItems = FILE_TYPE_LEGEND.map((category) => ({
+  category,
+  ...getCategoryStyle(category),
+}))
+
 // 极客感面包屑计算属性
 const breadcrumbs = computed(() => {
   const base = baseDir.value
@@ -132,6 +256,15 @@ const handleDoubleClick = (item: any) => {
   if (item.is_dir) {
     fetchDirectory(item.path)
   }
+}
+
+const navigateToItemDirectory = (item: any) => {
+  if (item.is_dir) {
+    fetchDirectory(item.path)
+    return
+  }
+  const parent = item.path.split('/').slice(0, -1).join('/')
+  if (parent) fetchDirectory(parent)
 }
 
 // 单击行：选中该项
@@ -218,7 +351,7 @@ const handleConfirm = () => {
       </div>
 
       <!-- 2. 面包屑路径导航栏 -->
-      <div class="flex items-center space-x-2 px-2 py-1.5 bg-gray-50 dark:bg-gray-800/50 rounded-lg border border-gray-100 dark:border-gray-800 mb-3 overflow-x-auto no-scrollbar">
+      <div class="flex items-center space-x-2 px-2 py-1.5 bg-gray-50 dark:bg-gray-800/50 rounded-lg border border-gray-100 dark:border-gray-800 mb-2 overflow-x-auto no-scrollbar">
         <!-- 后退按钮 -->
         <button 
           @click="parentPath && fetchDirectory(parentPath)" 
@@ -249,17 +382,79 @@ const handleConfirm = () => {
         </div>
       </div>
 
+      <!-- 搜索栏 -->
+      <div class="flex items-center gap-2 mb-2">
+        <div class="relative flex-1">
+          <span class="absolute inset-y-0 left-0 pl-2.5 flex items-center pointer-events-none text-gray-400">
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+            </svg>
+          </span>
+          <input
+            v-model="searchQuery"
+            type="text"
+            placeholder="搜索文件名..."
+            class="w-full pl-8 pr-8 py-2 text-xs bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg focus:ring-2 focus:ring-primary/30 focus:border-primary focus:outline-none transition-all"
+          />
+          <button
+            v-if="searchQuery"
+            type="button"
+            @click="clearSearch"
+            class="absolute inset-y-0 right-0 pr-2.5 flex items-center text-gray-400 hover:text-gray-600 dark:hover:text-gray-200"
+            title="清除搜索"
+          >
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+        <button
+          type="button"
+          @click="includeSubdirs = !includeSubdirs"
+          class="flex-shrink-0 px-2.5 py-2 rounded-lg text-[10px] font-bold border transition-all focus:outline-none"
+          :class="includeSubdirs
+            ? 'bg-primary/10 border-primary/30 text-primary'
+            : 'bg-gray-50 dark:bg-gray-800 border-gray-200 dark:border-gray-700 text-gray-500'"
+        >
+          含子目录
+        </button>
+      </div>
+      <div v-if="isSearchActive" class="flex items-center justify-between px-1 mb-2 text-[10px] text-gray-400">
+        <span>
+          <template v-if="includeSubdirs && searchLoading">正在搜索...</template>
+          <template v-else>找到 {{ displayItems.length }} 项</template>
+          <span v-if="searchTruncated" class="text-amber-600 dark:text-amber-400 ml-1">（结果已截断）</span>
+        </span>
+        <span v-if="includeSubdirs" class="font-mono truncate max-w-[50%]">{{ currentPath }}</span>
+        <span v-else>仅当前目录</span>
+      </div>
+
+      <!-- 类型图例 -->
+      <div class="flex flex-wrap items-center gap-1.5 px-1 mb-3">
+        <span class="text-[10px] font-black text-gray-400 tracking-wider mr-0.5">类型</span>
+        <span
+          v-for="item in legendItems"
+          :key="item.category"
+          class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[9px] font-bold"
+          :class="[item.badgeBg, item.badgeText]"
+        >
+          <span class="text-[10px] leading-none">{{ item.icon }}</span>
+          {{ item.label }}
+        </span>
+      </div>
+
       <!-- 3. 文件及文件夹网格列表 -->
       <div class="flex-1 border border-gray-100 dark:border-gray-800 rounded-xl overflow-hidden flex flex-col relative bg-gray-50/10">
         <!-- 表头 -->
         <div class="grid grid-cols-12 gap-2 px-4 py-2 border-b border-gray-100 dark:border-gray-800 bg-gray-50/50 dark:bg-gray-900/20 text-[10px] font-black text-gray-400 tracking-wider">
-          <div class="col-span-7 sm:col-span-8">名称</div>
-          <div class="col-span-2 text-right">大小</div>
-          <div class="col-span-3 text-right">修改时间</div>
+          <div class="col-span-6 sm:col-span-5">名称</div>
+          <div class="col-span-2 hidden sm:block">类型</div>
+          <div class="col-span-2 sm:col-span-2 text-right">大小</div>
+          <div class="col-span-4 sm:col-span-3 text-right">修改时间</div>
         </div>
 
         <!-- 载入层 -->
-        <div v-if="loading" class="absolute inset-0 bg-white/70 dark:bg-gray-900/70 z-10 flex items-center justify-center">
+        <div v-if="loading || (isSearchActive && includeSubdirs && searchLoading)" class="absolute inset-0 bg-white/70 dark:bg-gray-900/70 z-10 flex items-center justify-center">
           <div class="flex flex-col items-center space-y-2">
             <div class="w-8 h-8 border-4 border-primary border-t-transparent rounded-full animate-spin"></div>
             <span class="text-xs text-gray-400 font-medium">正在读取文件系统...</span>
@@ -268,18 +463,18 @@ const handleConfirm = () => {
 
         <!-- 数据体 -->
         <div class="flex-1 overflow-y-auto custom-scrollbar p-1">
-          <div v-if="items.length === 0" class="h-full flex flex-col items-center justify-center text-gray-400 py-12">
-            <span class="text-4xl mb-2">📂</span>
-            <span class="text-xs font-bold">暂无子文件或子目录</span>
+          <div v-if="displayItems.length === 0 && !searchLoading" class="h-full flex flex-col items-center justify-center text-gray-400 py-12">
+            <span class="text-4xl mb-2">{{ isSearchActive ? '🔍' : '📂' }}</span>
+            <span class="text-xs font-bold">{{ displayEmptyHint }}</span>
           </div>
           
           <div v-else class="space-y-0.5">
             <div 
-              v-for="item in items" 
+              v-for="item in displayItems" 
               :key="item.path"
               @click="handleSelectRow(item)"
-              @dblclick="handleDoubleClick(item)"
-              class="grid grid-cols-12 gap-2 px-3 py-2.5 rounded-lg cursor-pointer transition-all duration-150 select-none group"
+              @dblclick="isSearchActive && includeSubdirs ? navigateToItemDirectory(item) : handleDoubleClick(item)"
+              class="grid grid-cols-12 gap-2 px-3 py-2 rounded-lg cursor-pointer transition-all duration-150 select-none group items-center"
               :class="[
                 selectedItem?.path === item.path 
                   ? 'bg-primary/10 dark:bg-primary/20 ring-1 ring-primary/20' 
@@ -289,26 +484,65 @@ const handleConfirm = () => {
                   : ''
               ]"
             >
-              <!-- 图标 & 名称 -->
-              <div class="col-span-7 sm:col-span-8 flex items-center space-x-2.5 min-w-0">
-                <span class="text-base flex-shrink-0">
-                  {{ item.is_dir ? '📁' : '📄' }}
-                </span>
-                <span 
-                  class="text-xs truncate font-medium text-gray-700 dark:text-gray-200"
-                  :class="selectedItem?.path === item.path ? 'text-primary font-bold' : ''"
-                >
-                  {{ item.name }}
-                </span>
-              </div>
+              <template v-for="visual in [getItemVisual(item)]" :key="item.path + '-visual'">
+                <!-- 图标 & 名称 -->
+                <div class="col-span-6 sm:col-span-5 flex items-center gap-2.5 min-w-0">
+                  <div
+                    class="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 ring-1 text-sm"
+                    :class="[visual.iconBg, visual.iconRing]"
+                  >
+                    {{ visual.icon }}
+                  </div>
+                  <div class="min-w-0 flex-1">
+                    <div class="flex items-center gap-1.5 min-w-0">
+                      <span 
+                        class="text-xs truncate font-medium text-gray-700 dark:text-gray-200"
+                        :class="selectedItem?.path === item.path ? 'text-primary font-bold' : ''"
+                      >
+                        {{ item.name }}
+                      </span>
+                      <!-- 移动端类型标签 -->
+                      <span
+                        class="sm:hidden flex-shrink-0 px-1.5 py-0.5 rounded text-[9px] font-bold"
+                        :class="[visual.badgeBg, visual.badgeText]"
+                      >
+                        {{ visual.label }}
+                      </span>
+                    </div>
+                    <div
+                      v-if="visual.ext && !item.is_dir"
+                      class="text-[9px] font-mono text-gray-400 dark:text-gray-500 mt-0.5 uppercase"
+                    >
+                      .{{ visual.ext }}
+                    </div>
+                    <div
+                      v-if="isSearchActive && includeSubdirs && getItemLocationHint(item.path)"
+                      class="text-[9px] text-gray-400 dark:text-gray-500 mt-0.5 truncate font-mono"
+                      :title="item.path"
+                    >
+                      📂 {{ getItemLocationHint(item.path) }}
+                    </div>
+                  </div>
+                </div>
+
+                <!-- 类型（桌面端） -->
+                <div class="col-span-2 hidden sm:flex items-center">
+                  <span
+                    class="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold whitespace-nowrap"
+                    :class="[visual.badgeBg, visual.badgeText]"
+                  >
+                    {{ visual.label }}
+                  </span>
+                </div>
+              </template>
               
               <!-- 大小 -->
-              <div class="col-span-2 text-right text-[10px] font-mono text-gray-400 dark:text-gray-500 self-center">
-                {{ formatSize(item.size) }}
+              <div class="col-span-2 text-right text-[10px] font-mono text-gray-400 dark:text-gray-500">
+                {{ item.is_dir ? '—' : formatSize(item.size) }}
               </div>
               
               <!-- 修改时间 -->
-              <div class="col-span-3 text-right text-[10px] font-mono text-gray-400 dark:text-gray-500 self-center">
+              <div class="col-span-4 sm:col-span-3 text-right text-[10px] font-mono text-gray-400 dark:text-gray-500">
                 {{ formatTime(item.mtime) }}
               </div>
             </div>
@@ -323,7 +557,21 @@ const handleConfirm = () => {
           <div class="text-[10px] font-black text-gray-400 uppercase tracking-widest">当前已选择</div>
           <div class="text-xs truncate font-bold text-gray-700 dark:text-gray-200 mt-0.5">
             <template v-if="selectedItem">
-              <span class="text-primary">{{ selectedItem.is_dir ? '📁' : '📄' }}</span> {{ selectedItem.path }}
+              <span class="inline-flex items-center gap-1.5">
+                <span
+                  class="inline-flex w-5 h-5 rounded items-center justify-center text-[10px] ring-1 flex-shrink-0"
+                  :class="[getItemVisual(selectedItem).iconBg, getItemVisual(selectedItem).iconRing]"
+                >
+                  {{ getItemVisual(selectedItem).icon }}
+                </span>
+                <span
+                  class="px-1.5 py-0.5 rounded text-[9px] font-bold flex-shrink-0"
+                  :class="[getItemVisual(selectedItem).badgeBg, getItemVisual(selectedItem).badgeText]"
+                >
+                  {{ getItemVisual(selectedItem).label }}
+                </span>
+                <span class="truncate text-gray-500 dark:text-gray-400 font-mono font-normal">{{ selectedItem.path }}</span>
+              </span>
             </template>
             <template v-else-if="activeTab === 'directory'">
               <span class="text-primary">📁</span> {{ currentPath }} <span class="text-[10px] font-bold text-primary px-1.5 py-0.5 bg-primary/10 rounded ml-1.5">当前浏览</span>

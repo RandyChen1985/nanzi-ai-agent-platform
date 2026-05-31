@@ -75,6 +75,19 @@ class AgentServicePrompts:
         return f"\n\n[系统错误] 执行过程中发生异常: {err}"
 
     @staticmethod
+    def multimodal_unsupported_message(model_name: str) -> str:
+        """当前模型不支持图片/视觉输入时的用户提示。"""
+        return (
+            "**⚠️ 当前模型不支持图片理解**\n\n"
+            f"您本轮消息包含图片附件，但当前使用的模型 **{model_name}** 仅支持纯文本，"
+            "无法以视觉方式识图。\n\n"
+            "**您可以尝试：**\n"
+            "1. 在对话设置或智能体配置中，切换到支持多模态（Vision）的模型；\n"
+            "2. 在「模型注册表」中将该模型类型设为 **Multimodal**（若其实支持识图）；\n"
+            "3. 移除图片附件，改用文字描述图片内容后再提问。"
+        )
+
+    @staticmethod
     def user_context_message(raw_name: str, dept: Optional[str], role: Optional[str]) -> str:
         """构建用户画像 & 礼仪 + 交互/安全规则的 System 消息正文。"""
         content = (
