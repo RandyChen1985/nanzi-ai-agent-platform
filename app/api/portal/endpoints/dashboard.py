@@ -442,7 +442,7 @@ async def get_agent_stats(
     stmt_trend = stmt_trend.group_by("hour_key")
     
     trend_rows = (await db.execute(stmt_trend)).all()
-    trend_map = {str(r.hour_key): float(r.avg_ms) for r in trend_rows}
+    trend_map = {str(r.hour_key): float(r.avg_ms) if r.avg_ms else 0 for r in trend_rows}
     
     performance_trend = []
     for i in range(24):

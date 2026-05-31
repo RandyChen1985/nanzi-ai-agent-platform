@@ -702,7 +702,7 @@
                                   class="mt-2"
                                 >
                                   <span 
-                                    class="inline-flex items-center space-x-1.5 px-2.5 py-1 rounded-full bg-blue-100/80 dark:bg-blue-900/40 border border-blue-200/80 dark:border-blue-900/50 text-[11px] text-blue-600 dark:text-blue-300 select-none animate-fade-in align-middle backdrop-blur-sm shadow-sm"
+                                    class="inline-flex items-center space-x-1.5 px-2.5 py-1 rounded-full bg-blue-200/55 dark:bg-blue-900/55 border border-blue-200/80 dark:border-blue-900/50 text-[11px] text-blue-600 dark:text-blue-300 select-none animate-fade-in align-middle backdrop-blur-sm shadow-sm"
                                   >
                                     <svg class="w-3 h-3 text-blue-500 animate-spin flex-shrink-0" fill="none" viewBox="0 0 24 24">
                                       <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="3"></circle>
@@ -3552,6 +3552,7 @@ const handleShowCitation = (msg: Message, citeId: string) => {
 };
 
 const handleQuickQuestion = (content: string) => {
+  if (isProcessing.value) return;
   if (handleSystemCommand(content)) return;
   userInput.value = content;
   sendMessage();

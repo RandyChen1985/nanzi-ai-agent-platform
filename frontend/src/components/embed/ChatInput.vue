@@ -93,7 +93,17 @@ const handleDrop = (_e: DragEvent, targetCmd: any, type: string) => {
 
 watch(() => props.modelValue, (val) => { if (!val && inputRef.value) inputRef.value.style.height = "auto"; });
 
+watch(() => props.isProcessing, (processing) => {
+  if (processing) {
+    showPlusMenu.value = false;
+    isDrawerExpanded.value = false;
+    showCommandMenu.value = false;
+    showMentionList.value = false;
+  }
+});
+
 const handleInput = (e: Event) => {
+  if (props.isProcessing) return;
   emit('update:modelValue', (e.target as HTMLTextAreaElement).value);
   const target = e.target as HTMLTextAreaElement;
   const val = target.value;
@@ -127,6 +137,7 @@ const handleInput = (e: Event) => {
 };
 
 const handleKeydown = (e: KeyboardEvent) => {
+  if (props.isProcessing) return;
   if (e.isComposing || isComposing.value) return;
   if (showMentionList.value && mentionListRef.value && mentionListRef.value.handleKeydown(e)) return;
   if (showCommandMenu.value) {
@@ -142,7 +153,12 @@ const handleKeydown = (e: KeyboardEvent) => {
   }
 };
 
-const selectCommand = (cmd: any) => { emit('update:modelValue', cmd.command); showCommandMenu.value = false; emit('send'); };
+const selectCommand = (cmd: any) => {
+  if (props.isProcessing) return;
+  emit('update:modelValue', cmd.command);
+  showCommandMenu.value = false;
+  emit('send');
+};
 
 const handleMentionSelect = (agent: any) => {
   const target = inputRef.value;
@@ -161,7 +177,7 @@ const handleMentionSelect = (agent: any) => {
 };
 
 const handleShortcutClick = (cmd: any) => {
-    if (!cmd) return;
+    if (props.isProcessing || !cmd) return;
     emit('update:modelValue', cmd.command);
     emit('send');
 };
@@ -203,6 +219,7 @@ const isUploading = ref(false);
 const fileInputRef = ref<HTMLInputElement | null>(null);
 
 const togglePlusMenu = () => {
+  if (props.isProcessing) return;
   showPlusMenu.value = !showPlusMenu.value;
 };
 
@@ -231,6 +248,7 @@ const removeFile = (index: number) => {
 
 // 核心文件上传逻辑
 const uploadSingleFile = async (file: File) => {
+  if (props.isProcessing) return;
   if (file.size > 20 * 1024 * 1024) {
     alert("文件大小不能超过 20MB");
     return;
@@ -278,6 +296,7 @@ const handleFileChange = async (e: Event) => {
 
 // 拖拽与粘贴
 const handlePaste = async (e: ClipboardEvent) => {
+  if (props.isProcessing) return;
   const items = e.clipboardData?.items;
   if (!items) return;
   for (const item of Array.from(items)) {
@@ -292,6 +311,7 @@ const handlePaste = async (e: ClipboardEvent) => {
 };
 
 const handleDropFile = async (e: DragEvent) => {
+  if (props.isProcessing) return;
   e.preventDefault();
   const files = e.dataTransfer?.files;
   if (!files) return;
@@ -312,7 +332,7 @@ defineExpose({
 
       <div class="p-3 pb-2">
         <!-- Shortcut Bar -->
-        <div v-if="showShortcuts" class="flex items-center space-x-2 mb-2 px-1 relative h-8">
+        <div v-if="showShortcuts" class="flex items-center space-x-2 mb-2 px-1 relative h-8" :class="{ 'opacity-50 pointer-events-none select-none': isProcessing }">
             <!-- 1. Left Toggle Button (Visible on all devices now) -->
             <div @click="emit('toggle-shortcuts')" class="flex items-center space-x-1 cursor-pointer select-none group flex-shrink-0 bg-white dark:bg-gray-900 pr-2 z-10">
                 <span class="text-[10px] font-black text-gray-400 group-hover:text-primary transition-colors tracking-tighter">⚡️ 快捷指令</span>
@@ -456,7 +476,7 @@ defineExpose({
             
             <!-- Plus Button & Menu (Premium Glassmorphism Style) -->
             <div ref="plusMenuContainerRef" class="relative flex-shrink-0 z-30 mr-1 self-center">
-                <button @click="togglePlusMenu" class="w-8 h-8 flex items-center justify-center rounded-lg text-gray-400 hover:text-primary hover:bg-gray-100 dark:hover:bg-gray-700 transition-all duration-200 focus:outline-none" :class="{ 'text-primary bg-gray-100 dark:bg-gray-700 rotate-45': showPlusMenu }">
+                <button @click="togglePlusMenu" :disabled="isProcessing" class="w-8 h-8 flex items-center justify-center rounded-lg text-gray-400 hover:text-primary hover:bg-gray-100 dark:hover:bg-gray-700 transition-all duration-200 focus:outline-none disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-gray-400" :class="{ 'text-primary bg-gray-100 dark:bg-gray-700 rotate-45': showPlusMenu && !isProcessing }">
                     <svg class="w-5 h-5 transition-transform duration-200" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M12 4v16m8-8H4" />
                     </svg>
@@ -503,7 +523,7 @@ defineExpose({
                 </transition>
             </div>
             
-            <textarea ref="inputRef" :value="modelValue" @input="handleInput" @keydown="handleKeydown" @compositionstart="handleCompositionStart" @compositionend="handleCompositionEnd" @paste="handlePaste" rows="1" class="flex-1 bg-transparent border-none outline-none focus:ring-0 text-base sm:text-sm placeholder:text-sm py-2 px-2 resize-none max-h-32 text-gray-900 dark:text-gray-100 placeholder-gray-400 peer z-10 relative" :placeholder="windowWidth < 640 ? '输入消息，或 \'/\' 使用快捷指令...' : '输入消息...'"></textarea>
+            <textarea ref="inputRef" :value="modelValue" :disabled="isProcessing" @input="handleInput" @keydown="handleKeydown" @compositionstart="handleCompositionStart" @compositionend="handleCompositionEnd" @paste="handlePaste" rows="1" class="flex-1 bg-transparent border-none outline-none focus:ring-0 text-base sm:text-sm placeholder:text-sm py-2 px-2 resize-none max-h-32 text-gray-900 dark:text-gray-100 placeholder-gray-400 peer z-10 relative disabled:cursor-not-allowed disabled:opacity-60" :placeholder="isProcessing ? 'AI 正在生成回复...' : (windowWidth < 640 ? '输入消息，或 \'/\' 使用快捷指令...' : '输入消息...')"></textarea>
             <button @click="isProcessing ? emit('stop') : emit('send')" :disabled="!isProcessing && !canSend" class="flex-shrink-0 mb-1 ml-2 p-1.5 rounded-lg text-white hover:opacity-90 disabled:opacity-50 transition-all z-10 relative" :style="{ backgroundColor: 'var(--primary-color, #1677ff)' }">
                 <svg v-if="isProcessing" class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20"><rect x="5" y="5" width="10" height="10" /></svg>
                 <svg v-else class="w-4 h-4 transform rotate-90" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" /></svg>
@@ -513,7 +533,7 @@ defineExpose({
       </div>
 
       <div
-        v-if="showCommandMenu && filteredCommands.length > 0"
+        v-if="showCommandMenu && filteredCommands.length > 0 && !isProcessing"
         class="fixed z-[100] bg-white dark:bg-gray-800 rounded-xl shadow-2xl border border-gray-200 dark:border-gray-700 overflow-hidden flex flex-col animate-fade-in-up"
         :class="[
           'w-[calc(100vw-2rem)] sm:w-64'
