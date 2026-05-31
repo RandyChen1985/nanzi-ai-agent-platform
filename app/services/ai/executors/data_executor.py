@@ -55,6 +55,7 @@ class DataQueryExecutor(BaseExecutor):
         # 届时关闭“必须先查库”的强制护栏，允许直接基于上下文调用工具或作答。
         self._requires_fresh_data = True
         self._skip_few_shot = False
+        self._skill_matched = False
         self._skill_ready = False
         self._needs_skill_prep = False
         self._sql_plan_block_used = False
@@ -577,11 +578,14 @@ class DataQueryExecutor(BaseExecutor):
             langchain_messages.append(SystemMessage(content=DataQueryPrompts.FOLLOWUP_REUSE_CONSTRAINT))
             self._sql_plan_enforcement_added = True
 
-        # 技能执行：口头指定「使用 XX 技能」时，须先就绪技能指令再进入查数护栏。
-        self._skill_ready = self._active_skills_in_system_prompt(system_prompt)
-        self._needs_skill_prep = looks_like_skill_execution(self._current_user_question) and not self._skill_ready
-        if self._skill_ready:
-            langchain_messages.append(SystemMessage(content=DataQueryPrompts.SKILL_EXECUTION_GUIDE))
+        # 技能：摘要已注入 [Active Skills Loaded] 时，全文须 read_skill_instruction 后才算就绪。
+        self._skill_matched = self._active_skills_in_system_prompt(system_prompt)
+        self._skill_ready = False
+        self._needs_skill_prep = self._skill_matched or looks_like_skill_execution(
+            self._current_user_question
+        )
+        if self._skill_matched and not self._skill_ready:
+            langchain_messages.append(SystemMessage(content=DataQueryPrompts.MUST_READ_MATCHED_SKILLS))
 
         # K3（对已有结果做动作/可直接基于上下文作答）：注入上一轮结构化结果并放宽“先查库”约束，
         # 让模型可以直接调用工具（保存/导出/记忆/创建技能等）或基于上下文作答，而非机械重查。

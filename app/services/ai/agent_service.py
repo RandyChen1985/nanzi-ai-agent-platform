@@ -235,50 +235,60 @@ class AgentService:
 
             if active_skills:
                 import os
+                from app.core.config import settings
+                from app.utils.skill_metadata import parse_skill_frontmatter
+
                 for skill_obj in active_skills:
                     skill_id = skill_obj.get("url")
-                    skill_name = skill_obj.get("filename", skill_id).replace(" (技能)", "")
-                    
-                    from app.core.config import settings
-                    skill_path = os.path.join(settings.SKILLS_DIR, skill_id)
-                    skill_md_path = os.path.join(skill_path, "SKILL.md")
-                    
-                    if os.path.exists(skill_md_path):
-                        try:
-                            with open(skill_md_path, "r", encoding="utf-8") as f:
-                                skill_content = f.read()
-                            skills_injection.append(
-                                AgentServicePrompts.skill_injection_block(skill_name, skill_id, skill_content)
-                            )
-                            logger.info(f"[Skills] Successfully loaded and injected skill {skill_id} instruction.")
-                        except Exception as read_err:
-                            logger.error(f"[Skills] Failed to read skill markdown for {skill_id}: {read_err}")
+                    if not skill_id:
+                        continue
+                    skill_md_path = os.path.join(settings.SKILLS_DIR, skill_id, "SKILL.md")
+                    meta_override = skill_obj.get("skillMeta") or skill_obj.get("skill_meta")
+                    if meta_override and isinstance(meta_override, dict):
+                        skill_name = str(meta_override.get("name") or skill_id)
+                        description = str(meta_override.get("description") or "")
+                    elif os.path.exists(skill_md_path):
+                        meta = parse_skill_frontmatter(skill_id, skill_md_path)
+                        skill_name = meta.get("name") or skill_obj.get("filename", skill_id).replace(" (技能)", "")
+                        description = meta.get("description") or ""
                     else:
-                        logger.warning(f"[Skills] Skill markdown file not found at {skill_md_path}")
+                        skill_name = skill_obj.get("filename", skill_id).replace(" (技能)", "")
+                        description = ""
+                        logger.warning("[Skills] Skill markdown not found at %s", skill_md_path)
 
-            # 用户口头指定「使用 XX 技能」但未在输入框挂载时，按 name/id 自动解析并注入。
+                    skills_injection.append(
+                        AgentServicePrompts.skill_summary_injection_block(
+                            skill_name, skill_id, description
+                        )
+                    )
+                    logger.info("[Skills] Matched mounted skill %s (summary only).", skill_id)
+
+            # 用户口头指定「使用 XX 技能」但未在输入框挂载时，按 name/id 自动解析并注入摘要。
             if user_query:
                 try:
-                    from app.services.ai.skill_resolver import resolve_skills_from_query, load_skill_md_content
+                    from app.services.ai.skill_resolver import resolve_skills_from_query
 
                     for skill_meta in resolve_skills_from_query(user_query):
                         skill_id = skill_meta.get("id")
                         if not skill_id or skill_id in mounted_skill_ids:
                             continue
-                        skill_content = load_skill_md_content(skill_id)
-                        if not skill_content:
-                            continue
                         skill_name = skill_meta.get("name") or skill_id
+                        description = skill_meta.get("description") or ""
                         skills_injection.append(
-                            AgentServicePrompts.skill_injection_block(skill_name, skill_id, skill_content)
+                            AgentServicePrompts.skill_summary_injection_block(
+                                skill_name, skill_id, description
+                            )
                         )
                         mounted_skill_ids.add(skill_id)
-                        logger.info("[Skills] Auto-resolved and injected skill %s from user query.", skill_id)
+                        logger.info("[Skills] Auto-resolved skill %s from query (summary only).", skill_id)
                         yield {
                             "type": "log",
                             "id": f"skill_load_{skill_id}",
-                            "title": f"已加载技能: {skill_name}",
-                            "details": f"已从技能库匹配并注入技能「{skill_name}」(ID: {skill_id})，将按技能指令执行。",
+                            "title": f"已匹配技能: {skill_name}",
+                            "details": (
+                                f"已从技能库匹配「{skill_name}」(ID: {skill_id})。"
+                                f"已注入摘要；模型须调用 read_skill_instruction 读取 SKILL.md 全文后再执行。"
+                            ),
                             "status": "success",
                         }
                 except Exception as resolve_err:

@@ -72,10 +72,16 @@ class DataQueryPrompts:
 
     # 用户要求使用技能但尚未加载技能指令时，优先读取技能而非直接查 Schema
     MUST_LOAD_SKILL_FIRST = (
-        "用户明确要求使用某个技能。请先调用 list_available_skills 定位技能 ID，"
-        "再调用 read_skill_instruction(skill_id) 读取完整技能指令；"
-        "若 System Prompt 中已存在 [Active Skills Loaded] 技能块，则直接严格按技能流程执行。"
-        "在技能指令尚未就绪前，禁止跳过技能直接调用 get_dataset_schema。"
+        "用户明确要求使用某个技能，或 System Prompt 中已有 [Active Skills Loaded] 摘要块。"
+        "请先对目标 skill_id 调用 read_skill_instruction 读取完整 SKILL.md；"
+        "若尚不知 skill_id，可先 list_available_skills 再 read_skill_instruction。"
+        "在 read_skill_instruction 成功返回前，禁止跳过技能直接调用 get_dataset_schema。"
+    )
+
+    MUST_READ_MATCHED_SKILLS = (
+        "【技能已匹配（仅摘要）】[Active Skills Loaded] 中不含 SKILL.md 全文。"
+        "执行任何技能 workflow 前，必须对块内每个 skill_id 调用 read_skill_instruction。"
+        "未获得工具返回前，禁止编造技能步骤或直接进入查数。"
     )
 
     # 技能已注入/已读取后，优先遵循技能流程再进入查数

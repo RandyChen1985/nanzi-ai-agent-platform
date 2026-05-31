@@ -49,7 +49,8 @@ class AgentServicePrompts:
 | 「我的偏好/记住的设定」 | 先看上文 **[Memory Profile]**（若已注入）；不足再 **fetch_user_long_term_memory** |
 | 用户要求「记住…」 | **update_user_preference**（勿虚构已写入） |
 | 制度/SOP/操作指引、已选知识库 | **search_knowledge_base**（未绑定则不得编造文档内容） |
-| 可能需要技能流程 | **list_available_skills** → **read_skill_instruction**（或遵循 **[Active Skills Loaded]**） |
+| 已匹配技能（**[Active Skills Loaded]** 摘要） | 必须先 **read_skill_instruction(skill_id)** 读全文再执行 |
+| 可能需要技能但未匹配 | **list_available_skills** → **read_skill_instruction** |
 
 - 不要把「当前会话 messages 为空」等同于「用户从未对话」；跨会话摘要可能在其他 conversation_id 中。
 
@@ -156,21 +157,29 @@ class AgentServicePrompts:
         return content
 
     @staticmethod
-    def skill_injection_block(skill_name: str, skill_id: str, skill_content: str) -> str:
-        """单个已装载技能的注入块。"""
+    def skill_summary_injection_block(
+        skill_name: str,
+        skill_id: str,
+        description: str = "",
+    ) -> str:
+        """单个已匹配技能的摘要块（不含 SKILL.md 全文，全文须 read_skill_instruction）。"""
+        desc_line = f"- **Description**: {description.strip()}\n" if (description or "").strip() else ""
         return (
-            f"=== 已装载的技能: {skill_name} (ID: {skill_id}) ===\n"
-            f"技能规则与执守指令如下：\n"
-            f"{skill_content}\n"
+            f"=== 已匹配技能: {skill_name} (ID: {skill_id}) ===\n"
+            f"- **skill_id**（调用 read_skill_instruction 时必传）: `{skill_id}`\n"
+            f"{desc_line}"
+            f"- **完整指令**: 未预载；执行前必须调用 read_skill_instruction(skill_id=\"{skill_id}\")\n"
             f"=================================================="
         )
 
     @staticmethod
     def skills_profile(skills_injection: List[str]) -> str:
-        """已激活技能集合的 System Prompt 头部。"""
+        """已匹配技能集合的 System Prompt 头部（仅摘要，强制按需读取全文）。"""
         return (
             f"[Active Skills Loaded]\n"
-            f"用户在当前对话中显式挂载并激活了以下技能。你必须在当前会话中严格感知、遵循并执行以下技能的设定和规则限制：\n\n"
+            f"用户已挂载或点名以下技能（**仅 Frontmatter 摘要，不含 SKILL.md 全文**）。\n"
+            f"在对任一技能执行 workflow 之前，必须先对该技能的 skill_id 调用 **read_skill_instruction**，"
+            f"并以工具返回的完整指令为准；在未获得 read_skill_instruction 返回前，禁止凭摘要编造步骤或跳过读技能直接查数/作答。\n\n"
             + "\n\n".join(skills_injection)
         )
 

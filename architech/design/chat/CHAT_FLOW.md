@@ -515,7 +515,7 @@ session summary 写入成功后，会由 `DailySummaryService.refresh_for_date(u
 
 ### C. 嵌入页 + 挂载技能
 
-用户从弹框选技能 → `files` 含 `type: skill` → 前端拼路径说明 + 后端读 `SKILL.md` 注入 system_prompt → 本轮对话遵循技能规则。
+用户从弹框选技能 → `files` 含 `type: skill` → 前端拼路径说明 + 后端注入技能 **Frontmatter 摘要**（`[Active Skills Loaded]`）→ 模型须 `read_skill_instruction` 读全文后再执行。
 
 ---
 

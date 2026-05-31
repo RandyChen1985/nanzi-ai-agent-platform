@@ -36,7 +36,7 @@
 
 | 顺序（代码先后） | 块 | 条件 |
 |------------------|-----|------|
-| 1 | `[Active Skills Loaded]` + SKILL.md | 挂载或口头解析技能 |
+| 1 | `[Active Skills Loaded]` + 技能摘要（**非** SKILL.md 全文） | 挂载或口头解析；全文须 `read_skill_instruction` |
 | 2 | `[Skill Discovery Hint]` | 未加载任何技能 |
 | 3 | — | `resolve_turn_for_session`（不直接改 prompt） |
 | 4 | `[Memory Profile]` LTM JSON | `should_inject_ltm` |
@@ -53,7 +53,7 @@
 [跨会话记忆检索]               ← 可选
 [Memory Profile]               ← 可选
 [Skill Discovery Hint]         ← 可选
-[Active Skills Loaded]         ← 可选
+[Active Skills Loaded]（摘要）  ← 可选；全文走 read_skill_instruction
 ────────────────────────────
 智能体 DB system_prompt        ← 领域专规（栈底）
 ```
