@@ -848,7 +848,7 @@
               <!-- Time -->
               <span v-if="msg.timestamp" class="text-[10px] text-gray-400 dark:text-gray-500 select-none mr-1">{{ formatBubbleTime(msg.timestamp) }}</span>
               <button
-                v-if="index === messages.length - 1 && !isProcessing"
+                v-if="msg === lastAgentMessage && !isProcessing"
                 @click="regenerate"
                 class="flex items-center space-x-1 text-[10px] text-gray-400 hover:text-primary transition-colors px-1.5 py-0.5 rounded hover:bg-gray-100 dark:hover:bg-gray-800"
               >
@@ -867,6 +867,22 @@
                 </svg>
                 <span>重新生成</span>
               </button>
+              <!-- Token 消耗显示 -->
+              <span
+                v-if="msg.prompt_tokens !== undefined || msg.completion_tokens !== undefined"
+                class="flex items-center space-x-1.5 text-[10px] text-gray-400 dark:text-gray-500 bg-gray-50 dark:bg-gray-800/40 px-1.5 py-0.5 rounded border border-gray-100/50 dark:border-gray-800/20 select-none font-mono cursor-help ml-1"
+                title="本次大模型交互消耗的 Token 数量，包括输入提示词（Input）和输出回答（Output）。"
+              >
+                <span class="flex items-center space-x-0.5">
+                  <span class="scale-90 text-[9px] text-gray-400/80">in:</span>
+                  <span class="font-medium text-gray-500 dark:text-gray-400">{{ msg.prompt_tokens || 0 }}</span>
+                </span>
+                <span class="text-gray-300 dark:text-gray-700">/</span>
+                <span class="flex items-center space-x-0.5">
+                  <span class="scale-90 text-[9px] text-gray-400/80">out:</span>
+                  <span class="font-medium text-gray-500 dark:text-gray-400">{{ msg.completion_tokens || 0 }}</span>
+                </span>
+              </span>
               <!-- Feedback Buttons（托管引擎不展示点赞踩） -->
               <div v-if="!hideEmbedLikeDislike" class="flex items-center space-x-1 ml-auto">
                 <button
@@ -1793,6 +1809,9 @@ interface Message {
   agentName?: string;
   agentDisplayName?: string;
   turnType?: TurnType | string;
+  prompt_tokens?: number;
+  completion_tokens?: number;
+  total_tokens?: number;
   feedback?: "up" | "down" | null;
   timestamp?: string;
   isTimeLabel?: boolean;
@@ -3302,6 +3321,9 @@ const fetchConversationHistory = async (isLoadMore = false) => {
                   logs: [],
                   isThinking: false,
                   feedback: null, 
+                  prompt_tokens: item.prompt_tokens ?? undefined,
+                  completion_tokens: item.completion_tokens ?? undefined,
+                  total_tokens: item.total_tokens ?? undefined,
                   timestamp: item.created_at
               });
           }
@@ -3794,6 +3816,12 @@ const sendMessage = async () => {
               } else {
                 agentMsg.value.isThoughtExpanded = defaultThoughtExpanded(data.turn_type);
               }
+            }
+            if (data.prompt_tokens !== undefined) {
+              agentMsg.value.prompt_tokens = data.prompt_tokens;
+            }
+            if (data.completion_tokens !== undefined) {
+              agentMsg.value.completion_tokens = data.completion_tokens;
             }
           } else if (data.type === "retraction") {
             agentMsg.value.content = data.content;

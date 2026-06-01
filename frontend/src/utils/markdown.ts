@@ -89,6 +89,45 @@ md.renderer.rules.link_open = function (tokens, idx, options, _env, self) {
   return defaultRender(tokens, idx, options, _env, self);
 };
 
+const normalizePipeTables = (content: string) => {
+  return content
+    .split('\n')
+    .map((line) => {
+      const trimmed = line.trim();
+      if (!trimmed.startsWith('|') || !trimmed.endsWith('|') || !trimmed.includes('||')) {
+        return line;
+      }
+
+      const cells = trimmed
+        .slice(1, -1)
+        .split(/\s*\|\|\s*/)
+        .map((cell) => cell.trim())
+        .filter(Boolean);
+
+      const firstSeparator = cells.findIndex((cell) => /^:?-{3,}:?$/.test(cell));
+      if (firstSeparator <= 0) return line;
+
+      const columnCount = firstSeparator;
+      const separatorCount = cells
+        .slice(firstSeparator, firstSeparator + columnCount)
+        .filter((cell) => /^:?-{3,}:?$/.test(cell)).length;
+      const bodyCells = cells.slice(firstSeparator + columnCount);
+      if (separatorCount !== columnCount || bodyCells.length === 0 || bodyCells.length % columnCount !== 0) {
+        return line;
+      }
+
+      const rows = [
+        cells.slice(0, columnCount),
+        cells.slice(firstSeparator, firstSeparator + columnCount),
+      ];
+      for (let i = 0; i < bodyCells.length; i += columnCount) {
+        rows.push(bodyCells.slice(i, i + columnCount));
+      }
+      return rows.map((row) => `| ${row.join(' | ')} |`).join('\n');
+    })
+    .join('\n');
+};
+
 export const renderMarkdown = (content: string) => {
-  return md.render(content)
+  return md.render(normalizePipeTables(content))
 }

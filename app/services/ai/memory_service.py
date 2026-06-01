@@ -83,10 +83,10 @@ class MemoryService:
 
         return history
 
-    async def add_message(self, user_id: str, conversation_id: str, role: str, content: str, trace_id: Optional[str] = None, files: Optional[List[Dict[str, Any]]] = None, agent_name: Optional[str] = None):
+    async def add_message(self, user_id: str, conversation_id: str, role: str, content: str, trace_id: Optional[str] = None, files: Optional[List[Dict[str, Any]]] = None, agent_name: Optional[str] = None, prompt_tokens: Optional[int] = 0, completion_tokens: Optional[int] = 0):
         """
         Append a single message to the conversation history.
-        Now supports trace_id and attachment files.
+        Now supports trace_id, attachment files, and token usage values.
 
         agent_name: 处理该轮的智能体 name(slug)。仅对 assistant 消息记录，
         用于后续路由的会话粘性（让追问沿用上一轮智能体）。
@@ -109,6 +109,10 @@ class MemoryService:
             message["files"] = files
         if agent_name:
             message["agent_name"] = agent_name
+        if prompt_tokens:
+            message["prompt_tokens"] = prompt_tokens
+        if completion_tokens:
+            message["completion_tokens"] = completion_tokens
 
         
         # Push to list

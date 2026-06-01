@@ -114,6 +114,9 @@ class AgentExecutionHistoryResponse(BaseModel):
     agent_version: Optional[str] = None
     model_id: Optional[str] = None
     execution_time_ms: Optional[float] = None
+    prompt_tokens: Optional[int] = 0
+    completion_tokens: Optional[int] = 0
+    total_tokens: Optional[int] = 0
     turn_count: Optional[int] = None # 新增：对话轮数
     created_at: datetime
 

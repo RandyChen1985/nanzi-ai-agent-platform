@@ -795,6 +795,21 @@ class DataQueryExecutor(BaseExecutor):
                     response = AIMessage(content="", tool_calls=pending_sql)
                 else:
                     self._no_tool_call_streak += 1
+                    if self._no_tool_call_streak >= 3:
+                        yield {
+                            "type": "log",
+                            "id": f"streak_melt_{uuid.uuid4().hex[:8]}",
+                            "title": "🧭 触发空转熔断保护",
+                            "details": (
+                                f"检测到大模型已连续 {self._no_tool_call_streak} 轮决策未产生工具调用，触发空转熔断保护以规避 Token 爆炸与长连接挂起异常。\n"
+                                "系统将强行终止决策循环并转入整合输出阶段。若回答未达到预期，请检查当前智能体的模型选型、系统提示词或绑定的数据集配置。"
+                            ),
+                            "status": "warning",
+                            "execution_time_ms": (time.time() - start_thought) * 1000,
+                        }
+                        langchain_messages.append(response)
+                        break
+
                     if self._no_tool_call_streak in (2, 4):
                         yield {
                             "type": "log",

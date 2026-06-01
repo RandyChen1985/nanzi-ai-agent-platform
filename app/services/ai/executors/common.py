@@ -187,6 +187,26 @@ def extract_tokens_from_message(msg: Any) -> dict:
     return res
 
 
+def structurize_user_content(content: str) -> str:
+    """将前端通过 '---' 拼接的系统注入数据进行结构化 XML 包裹，以提升隔离度与安全性。"""
+    if not content:
+        return ""
+    if "---" not in content:
+        return content
+    parts = content.split("---", 1)
+    user_text = parts[0].strip()
+    system_injected = parts[1].strip()
+    if not system_injected:
+        return content
+    
+    return (
+        f"{user_text}\n\n"
+        f"<system_injected_attachments>\n"
+        f"{system_injected}\n"
+        f"</system_injected_attachments>"
+    )
+
+
 def convert_history_to_messages(history: List[Dict[str, str]]) -> List[BaseMessage]:
     """将平台 messages 转为 LangChain BaseMessage 列表（含附件/多模态）。"""
     messages: List[BaseMessage] = []
@@ -219,7 +239,11 @@ def convert_history_to_messages(history: List[Dict[str, str]]) -> List[BaseMessa
 
             attachment_prompt = ""
             if non_img_files:
-                lines = [SharedPrompts.NON_IMAGE_ATTACHMENT_HEADER]
+                lines = [
+                    "",
+                    "<backend_injected_attachments>",
+                    "用户随附上传了非图片附件信息，已保存在服务器：",
+                ]
                 for f in non_img_files:
                     filename = f.get("filename", "未知文件")
                     size_str = (
@@ -228,10 +252,10 @@ def convert_history_to_messages(history: List[Dict[str, str]]) -> List[BaseMessa
                     abs_path = _attachment_abs_path(f)
                     lines.append(f"- 文件名: {filename} (大小: {size_str})")
                     lines.append(f"  服务器内绝对路径: {abs_path}")
-                lines.append(SharedPrompts.NON_IMAGE_ATTACHMENT_FOOTER)
+                lines.append("</backend_injected_attachments>")
                 attachment_prompt = "\n".join(lines)
 
-            final_text = content + attachment_prompt
+            final_text = structurize_user_content(content) + attachment_prompt
 
             if img_files:
                 multimodal_content = [{"type": "text", "text": final_text}]
@@ -279,12 +303,34 @@ def normalize_messages_for_llm(messages: List[BaseMessage]) -> List[BaseMessage]
         else:
             non_system_messages.append(message)
 
-    if not system_parts:
-        if saw_system:
-            return [SystemMessage(content="")] + non_system_messages
-        return list(non_system_messages)
+    # 用高度结构化的双横线与标识符，在单一 SystemMessage 中做强边界区隔
+    formatted_parts = []
+    for idx, part in enumerate(system_parts, 1):
+        # 探测是哪种类型的系统消息，以加上结构化 Markdown 标题与 XML 区隔（兼容多系统消息，提升注意力聚焦与 API 兼容）
+        title = "系统指令"
+        if "[云枢智能体平台 · 全局守则]" in part:
+            title = "平台守则与安全约束"
+        elif "# Active User Profile" in part:
+            title = "当前用户画像"
+        elif "# Session Runtime Context" in part:
+            title = "会话运行时上下文"
+        elif "[Active Skills Loaded]" in part:
+            title = "已匹配挂载技能"
+        elif "[Memory Profile]" in part:
+            title = "长期记忆设定"
+        elif "[System Preloaded Memories]" in part:
+            title = "主动预加载记忆"
 
-    merged_system = SystemMessage(content="\n\n".join(system_parts))
+        formatted_parts.append(
+            f"<!-- SYSTEM_BLOCK_START: {title} -->\n"
+            f"=========================================\n"
+            f"## SECTION {idx}: {title}\n"
+            f"=========================================\n"
+            f"{part}\n"
+            f"<!-- SYSTEM_BLOCK_END: {title} -->"
+        )
+
+    merged_system = SystemMessage(content="\n\n".join(formatted_parts))
     return [merged_system] + non_system_messages
 
 

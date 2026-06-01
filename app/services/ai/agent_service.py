@@ -295,6 +295,14 @@ class AgentService:
                     logger.warning("[Skills] Failed to auto-resolve skills from query: %s", resolve_err)
 
             if skills_injection:
+                # 限制最大技能预载摘要数，防止 token 爆炸（Lost in the Middle 优化）
+                MAX_PRELOAD_SKILLS = 5
+                if len(skills_injection) > MAX_PRELOAD_SKILLS:
+                    logger.info(f"[Skills] Too many skills ({len(skills_injection)}), truncating to top {MAX_PRELOAD_SKILLS}")
+                    skills_injection = skills_injection[:MAX_PRELOAD_SKILLS]
+                    skills_injection.append(
+                        "=== [已截断] 系统中已挂载或解析出更多可用技能，出于上下文性能优化，其余技能摘要未全部载入。如有需要，模型应通过调用 list_available_skills 工具获取其余技能详细摘要 ==="
+                    )
                 skills_profile = AgentServicePrompts.skills_profile(skills_injection)
                 if agent_config.system_prompt:
                     agent_config.system_prompt = f"{skills_profile}\n\n{agent_config.system_prompt}"
@@ -444,7 +452,8 @@ class AgentService:
             # --- 平台全局 System Prompt（置于 system_prompt 栈最顶；仅 LOCAL 引擎）---
             if (agent_config.engine_type or "LOCAL") == "LOCAL":
                 agent_config.system_prompt = AgentServicePrompts.prepend_platform_global_system_prompt(
-                    agent_config.system_prompt
+                    agent_config.system_prompt,
+                    agent_config=agent_config
                 )
 
             # --- Debug Overrides ---
@@ -579,12 +588,37 @@ class AgentService:
                         full_response_content += chunk["content"]
                     yield chunk
 
+            # 聚合本轮消耗的 Token 并 yield meta 给前端，同时传给 add_message
+            p_tokens, c_tokens, t_tokens = 0, 0, 0
+            try:
+                from app.services.ai.audit import aggregate_tokens_from_trace_buffer
+                p_tokens, c_tokens, t_tokens = aggregate_tokens_from_trace_buffer(trace_buffer) if trace_buffer else (0, 0, 0)
+            except Exception as agg_err:
+                logger.warning(f"Failed to aggregate tokens for session: {agg_err}")
+
+            if p_tokens or c_tokens:
+                yield {
+                    "type": "meta",
+                    "prompt_tokens": p_tokens,
+                    "completion_tokens": c_tokens,
+                    "total_tokens": t_tokens
+                }
+
             # 5. Save Assistant Response to Memory
             if conversation_id and full_response_content:
                 u_id = user_info.get("user_id") if user_info else None
                 # 记录处理本轮的智能体 name(slug)，供下一轮路由做会话粘性
                 handled_by = getattr(agent_config, "agent_name", None) if agent_config else None
-                asyncio.create_task(memory_service.add_message(u_id, conversation_id, "assistant", full_response_content, trace_id=trace_id, agent_name=handled_by))
+                asyncio.create_task(memory_service.add_message(
+                    u_id, 
+                    conversation_id, 
+                    "assistant", 
+                    full_response_content, 
+                    trace_id=trace_id, 
+                    agent_name=handled_by,
+                    prompt_tokens=p_tokens,
+                    completion_tokens=c_tokens
+                ))
 
         except Exception as e:
             logger.error(f"Execution Error: {str(e)}", exc_info=True)
