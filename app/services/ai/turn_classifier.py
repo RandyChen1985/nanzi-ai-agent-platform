@@ -195,9 +195,36 @@ def classify_turn_from_intent(
     intent_info: IntentResponse,
     *,
     can_do_data: bool,
+    user_query: str = "",
+    has_last_data_result: bool = False,
 ) -> TurnClassification:
     """将意图 LLM 结果映射为统一轮次分类。"""
     if can_do_data and intent_info.intent == IntentType.DATA_QUERY:
+        is_followup_semantics = False
+        try:
+            from app.services.ai.intent_service import _FOLLOWUP_KEYWORDS
+            is_followup_semantics = (
+                "追问" in (intent_info.reasoning or "")
+                or "可视化" in (intent_info.reasoning or "")
+                or "上一轮" in (intent_info.reasoning or "")
+                or "分析" in (intent_info.reasoning or "")
+                or "图表" in (intent_info.reasoning or "")
+                or any(w in (user_query or "").lower() for w in _FOLLOWUP_KEYWORDS)
+            )
+        except Exception:
+            pass
+
+        if has_last_data_result and is_followup_semantics:
+            return TurnClassification(
+                turn_type=TurnType.K2_REUSE_RESULT,
+                reasoning=f"意图大模型识别为查数大类，检测到缓存数据且符合广义追问语义，无缝升级为 K2: {intent_info.reasoning}",
+                requires_fresh_data=False,
+                requires_few_shot=False,
+                use_data_executor=True,
+                skip_intent_llm=False,
+                intent=IntentType.DATA_QUERY,
+            )
+
         return TurnClassification(
             turn_type=TurnType.K1_NEW_QUERY,
             reasoning=intent_info.reasoning,
@@ -311,7 +338,12 @@ async def resolve_turn_classification(
         prior_messages = messages[:-1] if messages else None
         intent_info = await intent_service.identify_intent(user_query, history=prior_messages)
         intent_elapsed_ms = (time.time() - intent_start) * 1000
-        classification = classify_turn_from_intent(intent_info, can_do_data=can_do_data)
+        classification = classify_turn_from_intent(
+            intent_info,
+            can_do_data=can_do_data,
+            user_query=user_query,
+            has_last_data_result=has_last_data_result,
+        )
 
     return classification, intent_info, intent_elapsed_ms
 
