@@ -93,6 +93,19 @@ class DataQueryPrompts:
     # 未拿到 Schema 时强制先检索 Schema
     MUST_FETCH_SCHEMA = "你处于数据查询模式，禁止在未查数前给出回答。请先调用 get_dataset_schema(keywords) 获取 Schema。"
 
+    # Schema 检索未命中时，仅允许换关键词重试一次
+    SCHEMA_MISS_RETRY = (
+        "刚才 get_dataset_schema 未找到相关数据集定义。禁止直接生成 SQL 或进入总结。"
+        "请换一组更宽泛/更贴近业务实体的关键词，再调用 get_dataset_schema 重试一次。"
+        "关键词应包含用户问题中的业务对象、指标、地点/组织/系统名，以及可能的同义词。"
+    )
+
+    SCHEMA_MISS_ABORT_CONTENT = (
+        "⚠️ 未找到与本次问题相关的数据集定义，因此无法生成可靠 SQL 或执行数据查询。"
+        "请补充更明确的数据集名称、表名、业务系统、指标口径，并确保您有相关数据集的权限；"
+        "或联系管理员同步/完善元数据后重试。"
+    )
+
     # 用户要求使用技能但尚未加载技能指令时，提醒模型读取技能；不得阻断 DataExecutor 查数主线
     MUST_LOAD_SKILL_FIRST = (
         "用户明确要求使用某个技能，或 System Prompt 中已有 [Active Skills Loaded] 摘要块。"

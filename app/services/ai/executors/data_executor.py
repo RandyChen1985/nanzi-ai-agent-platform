@@ -67,6 +67,9 @@ class DataQueryExecutor(BaseExecutor):
         self._empty_result_final_sql_pending = False
         self._schema_fetched_ok = False
         self._schema_no_authorized = False
+        self._schema_miss_retry_used = False
+        self._schema_miss_retry_pending = False
+        self._schema_retry_keywords = ""
         self._metadata_unavailable = False
         self._sql_attempted = False
         self._sql_succeeded = False
@@ -281,6 +284,30 @@ class DataQueryExecutor(BaseExecutor):
     def _is_no_authorized_schema(self, tool_output: Any) -> bool:
         s = str(tool_output or "")
         return ("No authorized datasets found" in s) or ("未找到相关的授权数据集" in s)
+
+    def _is_no_relevant_schema(self, tool_output: Any) -> bool:
+        s = str(tool_output or "")
+        return (
+            "No relevant schema info found" in s
+            or "未找到相关数据集定义" in s
+            or "未找到相关的元数据" in s
+        )
+
+    def _build_schema_retry_keywords(self, original_keywords: Any = None) -> str:
+        candidates = [
+            str(original_keywords or "").strip(),
+            (self._standalone_query or "").strip(),
+            (self._current_user_question or "").strip(),
+        ]
+        suffix = "数据集 表 字段 指标 维度 物理表 业务口径 机房 机柜 机架 机位"
+        seen = set()
+        parts = []
+        for item in candidates + [suffix]:
+            if not item or item in seen:
+                continue
+            seen.add(item)
+            parts.append(item)
+        return " ".join(parts)[:300]
 
     def _convert_history(self, history: List[Dict[str, str]]) -> List[BaseMessage]:
         return convert_history_to_messages(history)
@@ -709,6 +736,9 @@ class DataQueryExecutor(BaseExecutor):
         self._empty_result_final_sql_pending = False
         self._schema_fetched_ok = False
         self._schema_no_authorized = False
+        self._schema_miss_retry_used = False
+        self._schema_miss_retry_pending = False
+        self._schema_retry_keywords = ""
         self._metadata_unavailable = False
         self._sql_attempted = False
         self._sql_succeeded = False
@@ -1011,6 +1041,31 @@ class DataQueryExecutor(BaseExecutor):
                 # get_dataset_schema，避免模型空转几轮后熔断，或下一轮直接跳到 execute_sql_query。
                 if (
                     current_stage == DataQueryStage.NEED_SCHEMA
+                    and self._schema_miss_retry_pending
+                ):
+                    schema_keywords = self._schema_retry_keywords or (self._standalone_query or self._current_user_question or "").strip()
+                    self._schema_miss_retry_pending = False
+                    response = AIMessage(
+                        content="",
+                        tool_calls=[{
+                            "name": "get_dataset_schema",
+                            "args": {"keywords": schema_keywords},
+                            "id": f"retry_schema_{uuid.uuid4().hex[:8]}",
+                        }],
+                    )
+                    yield {
+                        "type": "log",
+                        "id": f"retry_schema_{uuid.uuid4().hex[:8]}",
+                        "title": "重试检索数据集定义",
+                        "details": (
+                            "上一次元数据检索未命中；系统已换用更宽泛关键词重试 "
+                            f"get_dataset_schema(keywords={schema_keywords!r})。"
+                        ),
+                        "status": "warning",
+                        "execution_time_ms": 0,
+                    }
+                elif (
+                    current_stage == DataQueryStage.NEED_SCHEMA
                     and "get_dataset_schema" in tool_names
                 ):
                     schema_keywords = (self._standalone_query or self._current_user_question or "").strip()
@@ -1115,6 +1170,13 @@ class DataQueryExecutor(BaseExecutor):
                     continue
 
             self._no_tool_call_streak = 0
+
+            if self._schema_miss_retry_pending:
+                has_schema_call = any(tc.get("name") == "get_dataset_schema" for tc in response.tool_calls)
+                if not has_schema_call:
+                    langchain_messages.append(response)
+                    append_system_instruction(langchain_messages, DataQueryPrompts.SCHEMA_MISS_RETRY)
+                    continue
 
             # --- [Plan Policy] Enforce plan only for high-risk queries; otherwise just nudge ---
             plan_blocked = False
@@ -1298,6 +1360,41 @@ class DataQueryExecutor(BaseExecutor):
                     if "[元数据服务不可用]" in schema_out_str:
                         self._metadata_unavailable = True
                         tool_status = "error"
+                    if self._is_no_relevant_schema(schema_out_str):
+                        tool_status = "error"
+                        if self._schema_miss_retry_used:
+                            yield {
+                                "type": "log",
+                                "id": f"schema_miss_abort_{uuid.uuid4().hex[:8]}",
+                                "title": "元数据未命中，终止查询",
+                                "details": (
+                                    "已在首次未命中后换关键词重试，但仍未找到相关数据集定义；"
+                                    "为避免编造表结构或 SQL，已终止本次查询。"
+                                ),
+                                "status": "error",
+                                "execution_time_ms": 0,
+                            }
+                            yield {"content": DataQueryPrompts.SCHEMA_MISS_ABORT_CONTENT}
+                            return
+
+                        self._schema_miss_retry_used = True
+                        self._schema_miss_retry_pending = True
+                        self._schema_retry_keywords = self._build_schema_retry_keywords(
+                            tool_call.get("args", {}).get("keywords")
+                            or tool_call.get("args", {}).get("query")
+                        )
+                        yield {
+                            "type": "log",
+                            "id": f"schema_miss_retry_{uuid.uuid4().hex[:8]}",
+                            "title": "元数据未命中，准备重试",
+                            "details": (
+                                "get_dataset_schema 未找到相关数据集定义；系统将只换关键词重试一次。"
+                                f"\n重试关键词: {self._schema_retry_keywords}"
+                            ),
+                            "status": "warning",
+                            "execution_time_ms": 0,
+                        }
+                        append_system_instruction(langchain_messages, DataQueryPrompts.SCHEMA_MISS_RETRY)
                     if tool_status == "success" and not self._metadata_unavailable:
                         self._schema_fetched_ok = True
                         if self._is_no_authorized_schema(tool_output):

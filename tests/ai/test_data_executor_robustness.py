@@ -305,6 +305,72 @@ async def test_data_executor_rewrites_contextual_new_data_query_for_schema_fallb
 
 
 @pytest.mark.asyncio
+async def test_data_executor_retries_schema_miss_once_then_aborts_without_sql():
+    """Schema 未命中时只换关键词重试一次；仍未命中则终止，不进入空转或 SQL 阶段。"""
+    mock_config = MagicMock()
+    mock_config.agent_name = "ChatBI"
+    mock_config.system_prompt = "You are a Data Analysis Assistant. {dataset_menu}"
+    mock_config.tools = ["get_dataset_schema", "execute_sql_query"]
+    mock_config.model_name = "test-model"
+    mock_config.temperature = 0.0
+    mock_config.synthesis_model_name = None
+    mock_config.synthesis_temperature = None
+    mock_config.capabilities = ["data_query"]
+
+    executor = DataQueryExecutor(mock_config, "trace-schema-miss-abort", [], {"dry_run": False})
+
+    first_schema_call = {
+        "name": "get_dataset_schema",
+        "args": {"keywords": "机房 临港 数据中心 机柜 机架 机位"},
+        "id": "call_schema_1",
+    }
+    first_response = MagicMock(spec=AIMessage)
+    first_response.content = ""
+    first_response.tool_calls = [first_schema_call]
+
+    retry_response = MagicMock(spec=AIMessage)
+    retry_response.content = "我会换一组关键词重新检索元数据。"
+    retry_response.tool_calls = []
+
+    model_with_tools = MagicMock()
+
+    async def gen_1(*args, **kwargs):
+        yield first_response
+
+    async def gen_2(*args, **kwargs):
+        yield retry_response
+
+    model_with_tools.astream.side_effect = [gen_1(), gen_2()]
+    bound_model = MagicMock()
+    bound_model.bind_tools.return_value = model_with_tools
+
+    schema_miss = "No relevant schema info found for '机房 临港 数据中心 机柜 机架 机位'.\nDebug Logs:"
+    schema_tool = MagicMock(name="get_dataset_schema", spec=["name", "ainvoke"])
+    schema_tool.name = "get_dataset_schema"
+    sql_tool = MagicMock(name="execute_sql_query", spec=["name", "ainvoke"])
+    sql_tool.name = "execute_sql_query"
+
+    with patch("app.services.ai.config.AgentConfigProvider.get_configured_llm", AsyncMock(return_value=bound_model)), \
+         patch("app.services.ai.config.AgentConfigProvider.get_dataset_menu", AsyncMock(return_value="Dataset: Test")), \
+         patch("app.services.ai.tools.registry.ToolRegistry.get_tools", AsyncMock(return_value=[schema_tool, sql_tool])), \
+         patch("app.services.chatbi_example_service.ExampleService.search_examples", AsyncMock(return_value=[])), \
+         patch("app.services.config_service.ConfigService.get", AsyncMock(return_value="5")):
+
+        async def dispatch_side_effect(tool_call, tools):
+            return tool_call, schema_miss, 4.0
+
+        executor._dispatch_tool_safe = AsyncMock(side_effect=dispatch_side_effect)
+        events = []
+        async for chunk in executor.execute([{"role": "user", "content": "查询临港数据中心机房机柜机位"}]):
+            events.append(chunk)
+
+    assert executor._dispatch_tool_safe.await_count == 2
+    assert all(call.args[0]["name"] != "execute_sql_query" for call in executor._dispatch_tool_safe.await_args_list)
+    assert any("元数据未命中" in chunk.get("title", "") for chunk in events if chunk.get("type") == "log")
+    assert any("未找到与本次问题相关的数据集定义" in chunk.get("content", "") for chunk in events)
+
+
+@pytest.mark.asyncio
 async def test_data_executor_resolves_standalone_query_with_recent_history():
     """上下文依赖的新数据查询短句应改写成可独立检索的完整查数问题。"""
     mock_config = MagicMock()
