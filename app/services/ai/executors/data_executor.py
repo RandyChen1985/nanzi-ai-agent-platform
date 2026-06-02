@@ -294,7 +294,21 @@ class DataQueryExecutor(BaseExecutor):
     ) -> str:
         """Rewrite contextual new data-query follow-up into a standalone retrieval query for examples/schema."""
         q = (user_question or "").strip()
-        if not q or not self._should_rewrite_contextual_new_data_query(q, langchain_messages):
+        
+        sys_prompt = getattr(self.config, "system_prompt", None)
+        if not isinstance(sys_prompt, str):
+            sys_prompt = ""
+        ltm_match = re.search(r"(\[Memory Profile\][\s\S]*?)(?=\n\n\[|\Z)", sys_prompt)
+        ltm_context = ltm_match.group(1).strip() if ltm_match else ""
+
+        has_ltm = False
+        if ltm_context:
+            content_part = ltm_context.replace("[Memory Profile]", "").strip()
+            if content_part:
+                has_ltm = True
+
+        need_rewrite = has_ltm or self._should_rewrite_contextual_new_data_query(q, langchain_messages)
+        if not q or not need_rewrite:
             return q
 
         recent_history = []
@@ -310,19 +324,33 @@ class DataQueryExecutor(BaseExecutor):
             role = "用户" if isinstance(msg, HumanMessage) else "助手"
             recent_history.append(f"{role}: {content[:220]}")
 
-        if not recent_history:
+        if not recent_history and not has_ltm:
             return q
 
+        instructions = [
+            "1. 只补全上下文缺失的查询对象、指标、维度、时间范围或筛选条件。",
+            "2. 必须保留最新提问新增或修改的条件。",
+            "3. 不要生成 SQL，不要选择表名/字段名，不要解释。",
+            "4. 如果无法可靠补全，原样返回最新提问。"
+        ]
+
+        ltm_section = ""
+        if has_ltm:
+            instructions.append("5. 结合【用户个性化偏好与记忆】，将最新提问中的俗称、别名、旧称转换为对应的标准名称。")
+            ltm_section = f"\n\n【用户个性化偏好与记忆】\n{ltm_context}"
+
         prompt = (
-            "你是 ChatBI 查询改写器。请根据最近对话，把【最新提问】改写成一句独立、完整、适合检索元数据和历史 SQL 案例的查数问题。\n"
+            "你是 ChatBI 查询改写器。请根据最近对话和用户偏好，把【最新提问】改写成一句独立、完整、适合检索元数据和历史 SQL 案例的查数问题。\n"
             "要求：\n"
-            "1. 只补全上下文缺失的查询对象、指标、维度、时间范围或筛选条件。\n"
-            "2. 必须保留最新提问新增或修改的条件。\n"
-            "3. 不要生成 SQL，不要选择表名/字段名，不要解释。\n"
-            "4. 如果无法可靠补全，原样返回最新提问。\n\n"
-            "【最近对话】\n"
-            + "\n".join(recent_history)
-            + "\n\n【最新提问】\n"
+            + "\n".join(instructions)
+            + ltm_section
+        )
+
+        if recent_history:
+            prompt += f"\n\n【最近对话】\n" + "\n".join(recent_history)
+
+        prompt += (
+            f"\n\n【最新提问】\n"
             + q
             + "\n\n【改写后的独立查数问题】"
         )

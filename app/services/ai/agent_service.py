@@ -606,7 +606,7 @@ class AgentService:
                 
                 yield {
                     "type": "log",
-                    "title": "ChatBI 用户请求类别意图识别分析",
+                    "title": "分析用户请求并进行意图识别",
                     "details": f"{turn_display_label}。{turn_classification.reasoning}",
                     "status": "success",
                     "category": "intent",
@@ -757,7 +757,7 @@ class AgentService:
             tc, _, tc_elapsed = session_turn
             yield {
                 "type": "log",
-                "title": "ChatBI 用户请求类别意图识别分析",
+                "title": "分析用户请求并进行意图识别",
                 "details": f"{turn_type_label(tc.turn_type)}。{tc.reasoning}",
                 "status": "success",
                 "category": "intent",
