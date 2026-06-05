@@ -173,6 +173,10 @@ class MemoryIndexService:
         if embedding:
             mapping["embedding"] = _vector_to_bytes(embedding)
         await redis.hset(key, mapping=mapping)
+        try:
+            await redis.hsetnx(key, "reference_count", "0")
+        except Exception as ex:
+            logger.warning("[MemoryIndex] failed to hsetnx reference_count for %s: %s", key, ex)
         await redis.expire(key, await MemoryIndexService.summary_ttl_seconds())
         await MemoryIndexService.ensure_index()
 
@@ -217,6 +221,10 @@ class MemoryIndexService:
                 out["_embedding_vec"] = None
         out["last_active"] = int(out.get("last_active") or 0)
         out["turn_count"] = int(out.get("turn_count") or 0)
+        try:
+            out["reference_count"] = int(out.get("reference_count") or 0)
+        except (TypeError, ValueError):
+            out["reference_count"] = 0
         return out
 
     @staticmethod
@@ -346,7 +354,7 @@ class MemoryIndexService:
             "SORTBY",
             "score",
             "RETURN",
-            "14",
+            "15",
             "user_id",
             "conversation_id",
             "title",
@@ -361,6 +369,7 @@ class MemoryIndexService:
             "decisions",
             "open_items",
             "entities",
+            "reference_count",
             "DIALECT",
             "2",
         )

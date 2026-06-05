@@ -43,6 +43,7 @@ type SummaryRow = {
   session_count?: number
   has_history?: boolean
   has_embedding?: boolean
+  reference_count?: number
   score?: number
   key_facts?: string | string[]
   topics?: string | string[]
@@ -92,6 +93,38 @@ const CONFIG_FIELD_TYPES: Record<string, ConfigFieldType> = {
   memory_summarize_debounce_seconds: 'number',
   memory_search_knn_top_k: 'number',
   memory_summarize_min_assistant_chars: 'number',
+}
+
+const CONFIG_LABELS: Record<string, string> = {
+  memory_service_enabled: '启用记忆服务',
+  memory_summary_enabled: '启用会话摘要',
+  memory_embedding_base_url: 'Embedding 接口地址',
+  memory_embedding_api_key: 'Embedding 密钥 (API Key)',
+  memory_embedding_model: 'Embedding 模型',
+  memory_embedding_dimensions: 'Embedding 向量维度',
+  memory_summary_max_sessions: '每用户最大摘要数',
+  memory_summary_ttl_days: '会话摘要有效期 (TTL)',
+  memory_history_ttl_days: '会话历史有效期 (TTL)',
+  memory_summarize_debounce_turns: '触发摘要最少对话轮数',
+  memory_summarize_debounce_seconds: '触发摘要最短间隔',
+  memory_search_knn_top_k: '默认记忆检索数量 (Top-K)',
+  memory_summarize_min_assistant_chars: '触发摘要最少字符数',
+}
+
+const CONFIG_TIPS: Record<string, string> = {
+  memory_service_enabled: '控制跨会话长期记忆（Long-Term Memory）服务的总开关。启用后，系统会记录并利用历史会话摘要；关闭后，对话将不再写入摘要，且大模型的 memory_search 工具将提示服务未启用。',
+  memory_summary_enabled: '控制会话摘要自动提取与向量索引写入。启用后，系统会在满足防抖条件时自动使用 LLM 总结历史对话并生成向量索引；关闭后，已有摘要数据变为只读，不再更新。',
+  memory_embedding_base_url: '生成记忆向量所使用的 Embedding 服务的 API 基础地址（OpenAI 兼容接口）。如果留空，系统将自动回退使用系统的 llm_base_url 配置。',
+  memory_embedding_api_key: '调用 Embedding 服务进行向量化所需的身份验证令牌（API Key）。为保障安全已进行脱敏处理。如果留空，系统将自动回退使用系统的 llm_api_key。',
+  memory_embedding_model: '生成向量所使用的具体 Embedding 模型名称（例如 text-embedding-3-small）。请确保该模型与下面的向量维度（Dimensions）匹配。',
+  memory_embedding_dimensions: '所选 Embedding 模型输出的向量长度（如 1536 或 384）。更改此项后，必须在上方点击“检查/创建索引”重建 RediSearch 向量索引，否则搜索时会报错。',
+  memory_summary_max_sessions: '每个用户在 Redis 中最多保留的会话摘要（Session Summary）文档数量。超过限制后，系统会根据时间顺序淘汰最早的摘要，防止占用过多缓存内存。',
+  memory_summary_ttl_days: '会话摘要文档 in Redis 中的物理留存天数。默认 30 天，超时后将自动过期释放。若希望永久保留，可适当设置较大值，或修改 Redis 的过期淘汰策略。',
+  memory_history_ttl_days: '用于摘要提取的原始对话历史（List 格式）在 Redis 中的最大留存天数。该期限过后，历史对话列表会自动过期，不再参与摘要合并。',
+  memory_summarize_debounce_turns: '触发自动摘要的对话轮数阈值。当用户与智能体交互达到设定的轮数（如 3 轮）后，系统才会在对话空闲时触发 LLM 自动生成或更新该会话的摘要。',
+  memory_summarize_debounce_seconds: '两次自动执行摘要提取的最小时间间隔（秒），避免短时间内用户频繁说话导致系统重复、高频地调用 LLM 生成摘要，起到接口防抖与节约 Token 的作用。',
+  memory_search_knn_top_k: '通过大模型调用 memory_search 工具或者在检索测试时，默认返回的与当前对话最相似的记忆片段的最大数量（K值）。推荐设置为 3 至 5。',
+  memory_summarize_min_assistant_chars: '只有当智能体的回复字符数达到该设定值时，该轮对话才会被计入触发摘要的轮数中。防止“好的”、“收到”等短小的无意义回复触发频繁摘要生成，节约模型算力。',
 }
 
 const CONFIG_GROUPS: {
@@ -221,6 +254,7 @@ const visibleConfigGroups = computed(() =>
 const configFieldType = (key: string): ConfigFieldType => CONFIG_FIELD_TYPES[key] || 'text'
 
 const configLabel = (key: string) => {
+  if (CONFIG_LABELS[key]) return CONFIG_LABELS[key]
   const item = getConfigItem(key)
   if (!item) return key
   const short = item.description?.split('（')[0]?.split('；')[0]?.trim()
@@ -553,6 +587,24 @@ const runSearchTest = async () => {
   }
 }
 
+const copyToClipboard = (text: string) => {
+  if (!text) return
+  navigator.clipboard.writeText(text).then(() => {
+    showToast('会话 ID 已复制到剪贴板', 'success')
+  }).catch(() => {
+    showToast('复制失败，请手动选择复制', 'error')
+  })
+}
+
+const activeHelpKey = ref<string | null>(null)
+const toggleHelp = (key: string) => {
+  if (activeHelpKey.value === key) {
+    activeHelpKey.value = null
+  } else {
+    activeHelpKey.value = key
+  }
+}
+
 onMounted(async () => {
   if (!canViewAllUsers.value && currentUserId.value) {
     filterUserId.value = Number(currentUserId.value)
@@ -751,7 +803,27 @@ onMounted(async () => {
                   class="flex items-center justify-between gap-4 py-1"
                 >
                   <div class="min-w-0">
-                    <p class="text-sm font-medium text-gray-800 dark:text-gray-200">{{ configLabel(key) }}</p>
+                    <div class="flex items-center gap-1">
+                      <span class="text-sm font-medium text-gray-800 dark:text-gray-200">{{ configLabel(key) }}</span>
+                      <div class="relative group inline-flex items-center">
+                        <button
+                          v-if="CONFIG_TIPS[key] || getConfigItem(key)?.description"
+                          type="button"
+                          class="text-gray-400 hover:text-blue-500 dark:hover:text-blue-400 transition-colors p-0.5 inline-flex items-center focus:outline-none"
+                        >
+                          <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                          </svg>
+                        </button>
+                        <!-- 悬浮提示框 -->
+                        <div class="absolute left-full top-1/2 -translate-y-1/2 ml-2.5 hidden group-hover:block w-72 p-3 bg-gray-900/95 dark:bg-gray-950/95 text-white text-xs rounded-xl shadow-xl border border-gray-800 dark:border-gray-800 backdrop-blur-sm z-[100] pointer-events-none">
+                           <div class="leading-relaxed text-left font-normal normal-case break-words whitespace-normal font-sans">
+                              {{ CONFIG_TIPS[key] || getConfigItem(key)!.description }}
+                           </div>
+                           <div class="absolute right-full top-1/2 -translate-y-1/2 border-4 border-transparent border-r-gray-900/95 dark:border-r-gray-950/95"></div>
+                        </div>
+                      </div>
+                    </div>
                     <p class="text-xs text-gray-400 mt-0.5 font-mono">{{ key }}</p>
                   </div>
                   <label class="relative inline-flex items-center cursor-pointer shrink-0">
@@ -770,7 +842,27 @@ onMounted(async () => {
 
                 <!-- 数字 -->
                 <div v-else-if="configFieldType(key) === 'number'" class="space-y-1">
-                  <label class="block text-sm font-medium text-gray-800 dark:text-gray-200">{{ configLabel(key) }}</label>
+                  <div class="flex items-center gap-1">
+                    <label class="block text-sm font-medium text-gray-800 dark:text-gray-200">{{ configLabel(key) }}</label>
+                    <div class="relative group inline-flex items-center">
+                      <button
+                        v-if="CONFIG_TIPS[key] || getConfigItem(key)?.description"
+                        type="button"
+                        class="text-gray-400 hover:text-blue-500 dark:hover:text-blue-400 transition-colors p-0.5 inline-flex items-center focus:outline-none"
+                      >
+                        <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                          <path stroke-linecap="round" stroke-linejoin="round" d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                        </svg>
+                      </button>
+                      <!-- 悬浮提示框 -->
+                      <div class="absolute left-full top-1/2 -translate-y-1/2 ml-2.5 hidden group-hover:block w-72 p-3 bg-gray-900/95 dark:bg-gray-950/95 text-white text-xs rounded-xl shadow-xl border border-gray-800 dark:border-gray-800 backdrop-blur-sm z-[100] pointer-events-none">
+                         <div class="leading-relaxed text-left font-normal normal-case break-words whitespace-normal font-sans">
+                            {{ CONFIG_TIPS[key] || getConfigItem(key)!.description }}
+                         </div>
+                         <div class="absolute right-full top-1/2 -translate-y-1/2 border-4 border-transparent border-r-gray-900/95 dark:border-r-gray-950/95"></div>
+                      </div>
+                    </div>
+                  </div>
                   <p class="text-xs text-gray-400 font-mono">{{ key }}</p>
                   <input
                     type="number"
@@ -785,7 +877,27 @@ onMounted(async () => {
 
                 <!-- 密钥 -->
                 <div v-else-if="configFieldType(key) === 'secret'" class="space-y-1">
-                  <label class="block text-sm font-medium text-gray-800 dark:text-gray-200">{{ configLabel(key) }}</label>
+                  <div class="flex items-center gap-1">
+                    <label class="block text-sm font-medium text-gray-800 dark:text-gray-200">{{ configLabel(key) }}</label>
+                    <div class="relative group inline-flex items-center">
+                      <button
+                        v-if="CONFIG_TIPS[key] || getConfigItem(key)?.description"
+                        type="button"
+                        class="text-gray-400 hover:text-blue-500 dark:hover:text-blue-400 transition-colors p-0.5 inline-flex items-center focus:outline-none"
+                      >
+                        <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                          <path stroke-linecap="round" stroke-linejoin="round" d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                        </svg>
+                      </button>
+                      <!-- 悬浮提示框 -->
+                      <div class="absolute left-full top-1/2 -translate-y-1/2 ml-2.5 hidden group-hover:block w-72 p-3 bg-gray-900/95 dark:bg-gray-950/95 text-white text-xs rounded-xl shadow-xl border border-gray-800 dark:border-gray-800 backdrop-blur-sm z-[100] pointer-events-none">
+                         <div class="leading-relaxed text-left font-normal normal-case break-words whitespace-normal font-sans">
+                            {{ CONFIG_TIPS[key] || getConfigItem(key)!.description }}
+                         </div>
+                         <div class="absolute right-full top-1/2 -translate-y-1/2 border-4 border-transparent border-r-gray-900/95 dark:border-r-gray-950/95"></div>
+                      </div>
+                    </div>
+                  </div>
                   <p class="text-xs text-gray-400 font-mono">{{ key }}</p>
                   <div class="flex gap-2">
                     <input
@@ -807,7 +919,27 @@ onMounted(async () => {
 
                 <!-- 文本 -->
                 <div v-else class="space-y-1">
-                  <label class="block text-sm font-medium text-gray-800 dark:text-gray-200">{{ configLabel(key) }}</label>
+                  <div class="flex items-center gap-1">
+                    <label class="block text-sm font-medium text-gray-800 dark:text-gray-200">{{ configLabel(key) }}</label>
+                    <div class="relative group inline-flex items-center">
+                      <button
+                        v-if="CONFIG_TIPS[key] || getConfigItem(key)?.description"
+                        type="button"
+                        class="text-gray-400 hover:text-blue-500 dark:hover:text-blue-400 transition-colors p-0.5 inline-flex items-center focus:outline-none"
+                      >
+                        <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                          <path stroke-linecap="round" stroke-linejoin="round" d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                        </svg>
+                      </button>
+                      <!-- 悬浮提示框 -->
+                      <div class="absolute left-full top-1/2 -translate-y-1/2 ml-2.5 hidden group-hover:block w-72 p-3 bg-gray-900/95 dark:bg-gray-950/95 text-white text-xs rounded-xl shadow-xl border border-gray-800 dark:border-gray-800 backdrop-blur-sm z-[100] pointer-events-none">
+                         <div class="leading-relaxed text-left font-normal normal-case break-words whitespace-normal font-sans">
+                            {{ CONFIG_TIPS[key] || getConfigItem(key)!.description }}
+                         </div>
+                         <div class="absolute right-full top-1/2 -translate-y-1/2 border-4 border-transparent border-r-gray-900/95 dark:border-r-gray-950/95"></div>
+                      </div>
+                    </div>
+                  </div>
                   <p class="text-xs text-gray-400 font-mono">{{ key }}</p>
                   <input
                     v-model="getConfigItem(key)!.value"
@@ -816,6 +948,8 @@ onMounted(async () => {
                     class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none dark:bg-gray-900 dark:border-gray-600"
                   />
                 </div>
+
+
               </div>
             </template>
           </div>
@@ -980,6 +1114,7 @@ onMounted(async () => {
                   <th class="text-left px-3 py-2.5 font-medium whitespace-nowrap">会话 ID</th>
                   <th class="text-left px-3 py-2.5 font-medium whitespace-nowrap">向量</th>
                   <th class="text-left px-3 py-2.5 font-medium whitespace-nowrap">History</th>
+                  <th class="text-left px-3 py-2.5 font-medium whitespace-nowrap">引用</th>
                   <th class="text-left px-3 py-2.5 font-medium whitespace-nowrap">最后活跃</th>
                   <th class="text-left px-3 py-2.5 font-medium w-28">操作</th>
                 </tr>
@@ -1000,8 +1135,23 @@ onMounted(async () => {
                       {{ row.summary }}
                     </div>
                   </td>
-                  <td class="px-3 py-2.5 font-mono text-xs text-gray-600 whitespace-nowrap" :title="row.conversation_id">
-                    {{ row.conversation_id }}
+                   <td class="px-3 py-2.5 whitespace-nowrap">
+                    <div class="flex items-center gap-1.5">
+                      <span class="font-mono text-xs text-gray-500 dark:text-gray-400" :title="row.conversation_id">
+                        {{ row.conversation_id ? `${row.conversation_id.slice(0, 8)}...` : '-' }}
+                      </span>
+                      <button
+                        v-if="row.conversation_id"
+                        type="button"
+                        class="text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 p-0.5 rounded transition-colors"
+                        title="复制完整会话 ID"
+                        @click.stop="copyToClipboard(row.conversation_id)"
+                      >
+                        <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                          <path stroke-linecap="round" stroke-linejoin="round" d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3" />
+                        </svg>
+                      </button>
+                    </div>
                   </td>
                   <td class="px-3 py-2.5 whitespace-nowrap">
                     <span
@@ -1017,6 +1167,11 @@ onMounted(async () => {
                       :class="row.has_history ? 'bg-blue-100 text-blue-800' : 'bg-gray-100 text-gray-500'"
                     >
                       {{ row.has_history ? '有' : '无' }}
+                    </span>
+                  </td>
+                  <td class="px-3 py-2.5 whitespace-nowrap">
+                    <span class="text-xs text-gray-700 dark:text-gray-300 font-mono font-semibold bg-gray-100 dark:bg-gray-700/80 px-2 py-0.5 rounded">
+                      {{ row.reference_count ?? 0 }} 次
                     </span>
                   </td>
                   <td class="px-3 py-2.5 text-xs text-gray-500 whitespace-nowrap">{{ formatTime(row.last_active) }}</td>
@@ -1135,24 +1290,36 @@ onMounted(async () => {
         <div class="w-8 h-8 border-4 border-blue-600 border-t-transparent rounded-full animate-spin" />
       </div>
       <div v-else class="space-y-4">
-        <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+        <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-3 text-xs">
           <div>
             <span class="text-gray-400 block">用户</span>
-            <span class="font-medium">{{ detailSummary?.display_name || detailSummary?.user_name || '-' }}</span>
+            <span class="font-medium text-gray-900 dark:text-gray-200">{{ detailSummary?.display_name || detailSummary?.user_name || '-' }}</span>
           </div>
           <div>
             <span class="text-gray-400 block">用户 ID</span>
-            <span class="font-mono">{{ detailSummary?.user_id }}</span>
+            <span class="font-mono text-gray-900 dark:text-gray-200">{{ detailSummary?.user_id }}</span>
           </div>
           <div>
             <span class="text-gray-400 block">向量</span>
-            <span :class="detailSummary?.has_embedding ? 'text-green-600' : 'text-gray-500'">
+            <span :class="detailSummary?.has_embedding ? 'text-green-600 font-semibold' : 'text-gray-500'">
               {{ detailSummary?.has_embedding ? '已向量化' : '无向量' }}
             </span>
           </div>
           <div>
+            <span class="text-gray-400 block">被引用</span>
+            <span class="font-mono text-gray-900 dark:text-gray-200 font-semibold">
+              {{ detailSummary?.summary_type === 'daily' ? '-' : `${detailSummary?.reference_count ?? 0} 次` }}
+            </span>
+          </div>
+          <div>
+            <span class="text-gray-400 block">对话轮数</span>
+            <span class="font-mono text-gray-900 dark:text-gray-200">
+              {{ detailSummary?.summary_type === 'daily' ? `${detailSummary?.session_count ?? 0} 个会话` : `${detailSummary?.turn_count ?? 0} 轮` }}
+            </span>
+          </div>
+          <div>
             <span class="text-gray-400 block">{{ detailSummary?.summary_type === 'daily' ? '最后刷新' : '最后活跃' }}</span>
-            <span>{{ formatTime(detailSummary?.last_active) }}</span>
+            <span class="text-gray-900 dark:text-gray-200">{{ formatTime(detailSummary?.last_active) }}</span>
           </div>
         </div>
         <div v-if="detailSummary?.summary_type !== 'daily'">

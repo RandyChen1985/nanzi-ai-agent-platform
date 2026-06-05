@@ -172,6 +172,20 @@ class SessionSummaryService:
             result["summaries"] = await MemoryIndexService.search_summaries(
                 uid, query=query, query_embedding=query_embedding, limit=limit
             )
+            # Increment reference_count for each recalled summary
+            redis = await get_redis()
+            if redis and result["summaries"]:
+                for s in result["summaries"]:
+                    cid = s.get("conversation_id")
+                    if cid:
+                        key = f"memory:summary:{uid}:{cid}"
+                        try:
+                            # Increment reference_count in Redis
+                            await redis.hincrby(key, "reference_count", 1)
+                            # Update reference_count value in the current in-memory object
+                            s["reference_count"] = int(s.get("reference_count") or 0) + 1
+                        except Exception as ex:
+                            logger.warning("[SessionSummary] failed to incr reference_count for key %s: %s", key, ex)
 
         if scope in ("history", "both"):
             cid = conversation_id

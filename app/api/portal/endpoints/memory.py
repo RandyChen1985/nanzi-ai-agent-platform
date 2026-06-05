@@ -297,11 +297,16 @@ async def list_summaries(
             _attach_user_labels(items, names, str(matched_ids[0]))
             items = _filter_items_by_username(items, username_q)
             for item in items:
+                cid = item.get("conversation_id")
+                if not cid:
+                    continue
                 uid_str = str(item.get("user_id") or "")
                 item["has_history"] = await memory_service.history_exists(
-                    uid_str, item["conversation_id"]
+                    uid_str, cid
                 )
                 item.pop("_embedding_vec", None)
+            # Filter out items without conversation_id
+            items = [i for i in items if i.get("conversation_id")]
             return {"status": "success", "data": items}
 
     uid = await _resolve_target_user_id(user, user_id)
@@ -320,11 +325,16 @@ async def list_summaries(
     if username_q:
         items = _filter_items_by_username(items, username_q)
     for item in items:
+        cid = item.get("conversation_id")
+        if not cid:
+            continue
         item_uid = str(item.get("user_id") or uid)
         item["has_history"] = await memory_service.history_exists(
-            item_uid, item["conversation_id"]
+            item_uid, cid
         )
         item.pop("_embedding_vec", None)
+    # Filter out items without conversation_id
+    items = [i for i in items if i.get("conversation_id")]
     return {"status": "success", "data": items}
 
 
@@ -527,10 +537,15 @@ async def list_my_summaries(
     names = await _user_display_names([int(uid)])
     _attach_user_labels(items, names, uid)
     for item in items:
+        cid = item.get("conversation_id")
+        if not cid:
+            continue
         item["has_history"] = await memory_service.history_exists(
-            uid, item["conversation_id"]
+            uid, cid
         )
         item.pop("_embedding_vec", None)
+    # Filter out items without conversation_id
+    items = [i for i in items if i.get("conversation_id")]
     return {"status": "success", "data": items}
 
 
