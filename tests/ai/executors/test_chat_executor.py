@@ -334,6 +334,102 @@ async def test_general_runner_uses_agentscope_native_agent_for_runtime_tools(cha
 
 
 @pytest.mark.asyncio
+async def test_general_runner_restored_state_only_sends_latest_user_message(chat_config):
+    """恢复 AgentState 后，只应向 AgentScope 追加本轮最新用户消息，避免重复灌入历史。"""
+    from agentscope.message import Msg, TextBlock
+    from agentscope.state import AgentState
+
+    from app.core.llm.client import AgentScopeLLMHandle
+    from app.services.ai.runners.general_agent_runner import GeneralAgentRunner
+    from app.services.ai.runtime.agentscope.agent_runtime import build_tools_fingerprint
+    from app.services.ai.runtime.agentscope.state_store import RuntimeStateEnvelope, SCHEMA_VERSION
+    from app.services.ai.runtime.agentscope.tools import RuntimeToolSpec
+
+    async def runtime_tool(query: str):
+        return f"runtime:{query}"
+
+    runtime_spec = RuntimeToolSpec(
+        name="test_tool",
+        description="Runtime test tool",
+        parameters_schema={
+            "type": "object",
+            "properties": {"query": {"type": "string"}},
+            "required": ["query"],
+        },
+        source_type="static",
+        callable=runtime_tool,
+        permission_scope="read",
+    )
+    restored_state = AgentState(
+        session_id="session-restored",
+        reply_id="reply-restored",
+        context=[
+            Msg(name="user", role="user", content=[TextBlock(text="old user")]),
+            Msg(name="assistant", role="assistant", content=[TextBlock(text="old assistant")]),
+        ],
+    )
+    captured_inputs = []
+
+    class DeltaEvent:
+        type = "TEXT_BLOCK_DELTA"
+        delta = "restored ok"
+
+    class FakeAgent:
+        def __init__(self, state):
+            self.state = state
+
+        async def reply_stream(self, inputs):
+            captured_inputs.extend(inputs)
+            yield DeltaEvent()
+
+    class FakeNativeModel:
+        model = "fake-native-general"
+
+    handle = AgentScopeLLMHandle(
+        native_model=FakeNativeModel(),
+        model_name="fake-native-general",
+        temperature=0.0,
+        streaming=True,
+    )
+    runner = GeneralAgentRunner(
+        config=chat_config,
+        trace_id="test-state-restore-inputs",
+        trace_buffer=[],
+        user_info={"user_id": "u-state"},
+        conversation_id="c-state",
+    )
+    fingerprint = build_tools_fingerprint(chat_config, [runtime_spec])
+    envelope = RuntimeStateEnvelope(
+        schema_version=SCHEMA_VERSION,
+        agent_name=chat_config.agent_name,
+        agent_version=chat_config.agent_version,
+        tools_fingerprint=fingerprint,
+        model_name="fake-native-general",
+        updated_at="2026-06-08T00:00:00Z",
+        state=restored_state.model_dump(mode="json"),
+    )
+
+    with patch("app.services.ai.config.AgentConfigProvider.get_configured_llm", AsyncMock(return_value=handle)), \
+         patch("app.services.ai.tools.registry.ToolRegistry.get_runtime_tools", AsyncMock(return_value=[runtime_spec])), \
+         patch("app.services.ai.tools.registry.ToolRegistry.get_system_implicit_tools", return_value=[]), \
+         patch("app.services.config_service.ConfigService.get", AsyncMock(return_value="5")), \
+         patch("app.services.ai.runners.general_agent_runner.agent_state_store.load", AsyncMock(return_value=envelope)), \
+         patch("app.services.ai.runners.general_agent_runner.agent_state_store.save", AsyncMock()), \
+         patch.object(runner, "_build_native_agent", AsyncMock(return_value=FakeAgent(restored_state))):
+        events = []
+        async for chunk in runner.execute([
+            {"role": "user", "content": "old user"},
+            {"role": "assistant", "content": "old assistant"},
+            {"role": "user", "content": "latest user"},
+        ]):
+            events.append(chunk)
+
+    assert [msg.role for msg in captured_inputs] == ["user"]
+    assert captured_inputs[0].get_text_content() == "latest user"
+    assert "restored ok" in "".join(e["content"] for e in events if "content" in e)
+
+
+@pytest.mark.asyncio
 async def test_general_runner_emits_permission_required_for_agentscope_ask_tool(chat_config):
     """AgentScope ASK 权限事件应转换成现有 SSE 可消费的确认事件，且不执行工具。"""
     from agentscope.credential import CredentialBase
@@ -520,6 +616,120 @@ async def test_general_runner_resumes_agentscope_ask_tool_after_confirmation(cha
 
     assert invocations == ["hello"]
     assert "confirmed final: sent:hello" in "".join(
+        e["content"] for e in resume_events if "content" in e and "type" not in e
+    )
+
+
+@pytest.mark.asyncio
+async def test_agent_service_resumes_agentscope_ask_from_snapshot(chat_config):
+    """进程内 live Agent 丢失后，应能基于 pending snapshot 重建 runner 并继续 ASK。"""
+    from agentscope.credential import CredentialBase
+    from agentscope.message import TextBlock, ToolCallBlock
+    from agentscope.model import ChatModelBase, ChatResponse
+
+    from app.core.llm.client import AgentScopeLLMHandle
+    from app.services.ai.agent_service import AgentService
+    from app.services.ai.runtime.agentscope.confirmations import (
+        pending_agentscope_confirmations,
+    )
+    from app.services.ai.runtime.agentscope.tools import RuntimeToolSpec
+
+    pending_agentscope_confirmations.clear()
+
+    class FakeCredential(CredentialBase):
+        @classmethod
+        def get_chat_model_class(cls):
+            return FakeModel
+
+    class FakeModel(ChatModelBase):
+        class Parameters(BaseModel):
+            pass
+
+        async def _call_api(self, model_name, messages, tools=None, tool_choice=None, **kwargs):
+            if not any(msg.has_content_blocks("tool_result") for msg in messages):
+                return ChatResponse(
+                    content=[
+                        ToolCallBlock(
+                            id="call_requires_confirm_snapshot",
+                            name="send_message",
+                            input='{"message": "snapshot"}',
+                        )
+                    ],
+                    is_last=True,
+                )
+            tool_result = next(
+                block
+                for msg in messages
+                for block in msg.get_content_blocks("tool_result")
+            )
+            return ChatResponse(
+                content=[TextBlock(text=f"snapshot final: {tool_result.output[0].text}")],
+                is_last=True,
+            )
+
+    invocations = []
+
+    async def send_message(message: str):
+        invocations.append(message)
+        return f"sent:{message}"
+
+    runtime_spec = RuntimeToolSpec(
+        name="send_message",
+        description="Send a message",
+        parameters_schema={
+            "type": "object",
+            "properties": {"message": {"type": "string"}},
+            "required": ["message"],
+        },
+        source_type="static",
+        callable=send_message,
+        permission_scope="ask",
+    )
+    handle = AgentScopeLLMHandle(
+        native_model=FakeModel(
+            credential=FakeCredential(),
+            model="fake-native-general",
+            parameters=FakeModel.Parameters(),
+            stream=False,
+            max_retries=0,
+        ),
+        model_name="fake-native-general",
+        temperature=0.0,
+        streaming=True,
+    )
+    executor = GeneralChatExecutor(
+        config=chat_config,
+        trace_id="test-native-resume-snapshot",
+        trace_buffer=[],
+        user_info={"user_id": "u-snapshot"},
+        conversation_id="c-snapshot",
+    )
+
+    with patch("app.services.ai.config.AgentConfigProvider.get_configured_llm", AsyncMock(return_value=handle)), \
+         patch("app.services.ai.tools.registry.ToolRegistry.get_runtime_tools", AsyncMock(return_value=[runtime_spec])), \
+         patch("app.services.ai.tools.registry.ToolRegistry.get_system_implicit_tools", return_value=[]), \
+         patch("app.services.config_service.ConfigService.get", AsyncMock(return_value="5")), \
+         patch("app.services.ai.runners.general_agent_runner.get_local_workspace", AsyncMock(return_value=None)), \
+         patch("app.services.memory_config_service.MemoryConfigService.get_bool", AsyncMock(return_value=False)):
+        events = []
+        async for chunk in executor.execute([{"role": "user", "content": "Send snapshot"}]):
+            events.append(chunk)
+
+        permission_event = next(event for event in events if event.get("type") == "permission_required")
+        # Simulate another worker/process: no live Agent handle, only Redis/in-memory snapshot remains.
+        pending_agentscope_confirmations._items.clear()
+
+        resume_events = []
+        async for chunk in AgentService().resume_agentscope_permission_stream(
+            permission_request_id=permission_event["permission_request_id"],
+            confirmed=True,
+            user_info={"user_id": "u-snapshot"},
+        ):
+            resume_events.append(chunk)
+
+    assert invocations == ["snapshot"]
+    assert any(event.get("type") == "permission_result" for event in resume_events)
+    assert "snapshot final: sent:snapshot" in "".join(
         e["content"] for e in resume_events if "content" in e and "type" not in e
     )
 
