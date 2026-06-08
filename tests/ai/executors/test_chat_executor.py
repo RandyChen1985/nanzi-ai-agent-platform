@@ -72,6 +72,45 @@ def mock_tool():
 # --- Tests ---
 
 @pytest.mark.asyncio
+async def test_general_chat_executor_delegates_to_general_agent_runner(chat_config):
+    """Executor 只做接入壳，实际执行委托给 GeneralAgentRunner。"""
+    trace_buffer = []
+    executor = GeneralChatExecutor(
+        config=chat_config,
+        trace_id="trace-runner",
+        trace_buffer=trace_buffer,
+        debug_options={"return_raw_prompt": True},
+        user_info={"id": "u1"},
+        conversation_id="c1",
+        route_hints={"turn_labels": ["same_topic"]},
+    )
+
+    runner_instance = MagicMock()
+
+    async def fake_execute(history):
+        yield {"content": f"runner:{history[0]['content']}"}
+
+    runner_instance.execute = fake_execute
+
+    with patch("app.services.ai.executors.chat_executor.GeneralAgentRunner", return_value=runner_instance) as runner_cls:
+        events = []
+        async for chunk in executor.execute([{"role": "user", "content": "hello"}]):
+            events.append(chunk)
+
+    assert events == [{"content": "runner:hello"}]
+    runner_cls.assert_called_once()
+    _, kwargs = runner_cls.call_args
+    assert kwargs["config"] is chat_config
+    assert kwargs["trace_id"] == "trace-runner"
+    assert kwargs["trace_buffer"] is trace_buffer
+    assert kwargs["debug_options"] == {"return_raw_prompt": True}
+    assert kwargs["user_info"] == {"id": "u1"}
+    assert kwargs["conversation_id"] == "c1"
+    assert kwargs["route_hints"] == {"turn_labels": ["same_topic"]}
+    assert executor.step_counter == runner_instance.step_counter
+
+
+@pytest.mark.asyncio
 async def test_simple_chat_no_tools(chat_config):
     """测试无工具的简单对话模式"""
     chat_config.tools = [] # Disable tools
