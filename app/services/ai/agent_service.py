@@ -620,6 +620,8 @@ class AgentService:
                         full_response_content += chunk["content"]
                     if chunk.get("type") == "permission_required":
                         execution_status = "awaiting_permission"
+                    elif chunk.get("type") == "error" or chunk.get("status") == "error":
+                        execution_status = "error"
                     yield chunk
 
             # 聚合本轮消耗的 Token 并 yield meta 给前端，同时传给 add_message
@@ -747,7 +749,14 @@ class AgentService:
             pending_agentscope_confirmations,
         )
 
-        pending = pending_agentscope_confirmations.pop(permission_request_id)
+        current_user_id = None
+        if user_info:
+            current_user_id = user_info.get("user_id") or user_info.get("id")
+
+        pending = await pending_agentscope_confirmations.pop_async(
+            permission_request_id,
+            user_id=current_user_id,
+        )
         if not pending:
             yield {
                 "type": "error",
@@ -756,9 +765,6 @@ class AgentService:
             }
             return
 
-        current_user_id = None
-        if user_info:
-            current_user_id = user_info.get("user_id") or user_info.get("id")
         if pending.user_id and current_user_id and str(current_user_id) != str(pending.user_id):
             yield {
                 "type": "error",
@@ -766,6 +772,26 @@ class AgentService:
                 "content": "当前用户无权确认该工具调用。",
             }
             return
+
+        if pending.snapshot.kind == "external":
+            yield {
+                "type": "error",
+                "status": "error",
+                "content": "该请求为外部执行挂起，请使用 external execution 恢复接口。",
+            }
+            return
+
+        runner = pending.runner
+        if runner is None:
+            from app.services.ai.runners.general_agent_runner import GeneralAgentRunner
+
+            runner = GeneralAgentRunner.from_runner_context(
+                runner_context=pending.snapshot.runner_context,
+                trace_id=pending.trace_id,
+                trace_buffer=[],
+                user_info=user_info,
+                conversation_id=pending.snapshot.conversation_id,
+            )
 
         yield {
             "type": "permission_result",
@@ -777,7 +803,7 @@ class AgentService:
         full_response_content = ""
         execution_status = "success" if confirmed else "rejected"
         start_time = asyncio.get_running_loop().time()
-        async for chunk in pending.runner.resume_agentscope_native_confirmation(
+        async for chunk in runner.resume_agentscope_native_confirmation(
             pending,
             confirmed=confirmed,
         ):
@@ -786,12 +812,11 @@ class AgentService:
             yield chunk
 
         p_tokens, c_tokens, t_tokens = 0, 0, 0
+        trace_buffer = runner.trace_buffer
         try:
             from app.services.ai.audit import aggregate_tokens_from_trace_buffer
-            trace_buffer = pending.runner.trace_buffer
             p_tokens, c_tokens, t_tokens = aggregate_tokens_from_trace_buffer(trace_buffer) if trace_buffer else (0, 0, 0)
         except Exception as agg_err:
-            trace_buffer = pending.runner.trace_buffer
             logger.warning(f"Failed to aggregate tokens after permission resume: {agg_err}")
 
         if p_tokens or c_tokens:
@@ -802,10 +827,9 @@ class AgentService:
                 "total_tokens": t_tokens,
             }
 
-        agent_config = pending.runner.config
-        conversation_id = pending.runner.conversation_id
-        trace_buffer = pending.runner.trace_buffer
-        user_query = pending.state.get("user_query") or ""
+        agent_config = runner.config
+        conversation_id = runner.conversation_id or pending.snapshot.conversation_id
+        user_query = (pending.state or {}).get("user_query") or ""
 
         if conversation_id and full_response_content:
             u_id = user_info.get("user_id") if user_info else pending.user_id

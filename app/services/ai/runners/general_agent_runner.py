@@ -26,7 +26,17 @@ from app.services.ai.executors.common import (
     is_retryable_stream_error,
 )
 from app.services.ai.executors.prompts import GeneralChatPrompts
+from app.services.ai.runtime.agentscope.agent_runtime import (
+    build_model_config,
+    build_tools_fingerprint,
+    load_context_config,
+)
 from app.services.ai.runtime.agentscope.chat import compat_to_runtime_messages, to_agentscope_messages
+from app.services.ai.runtime.agentscope.state_store import agent_state_store
+from app.services.ai.runtime.agentscope.workspace import (
+    build_workspace_toolkit,
+    get_local_workspace,
+)
 from app.services.ai.runtime.agentscope.tools import RuntimeToolSpec, runtime_tool_spec_from_legacy_tool
 from app.services.ai.runtime.agentscope.tools import build_toolkit
 from app.services.ai.turn_classifier import TurnType
@@ -51,6 +61,49 @@ class GeneralAgentRunner(BaseExecutor):
         self.turn_classification = None
         self._requires_knowledge_search = False
         self.route_hints = route_hints or {}
+
+    def _runtime_user_id(self) -> str | None:
+        if not self.user_info:
+            return None
+        return str(self.user_info.get("user_id") or self.user_info.get("id") or "") or None
+
+    def _runtime_agent_name(self) -> str:
+        return self.config.agent_name or "GeneralAgent"
+
+    def _runner_context(self, *, system_content: str, max_steps: int) -> Dict[str, Any]:
+        return {
+            "config": self.config.model_dump(),
+            "debug_options": self.debug_options,
+            "system_content": system_content,
+            "max_steps": max_steps,
+            "route_hints": self.route_hints,
+            "requires_knowledge_search": self._requires_knowledge_search,
+        }
+
+    @classmethod
+    def from_runner_context(
+        cls,
+        *,
+        runner_context: Dict[str, Any],
+        trace_id: str,
+        trace_buffer: List[AgentExecutionStep] | None = None,
+        user_info: Optional[Dict[str, Any]] = None,
+        conversation_id: Optional[str] = None,
+    ) -> "GeneralAgentRunner":
+        config = ChatConfig(**runner_context["config"])
+        runner = cls(
+            config=config,
+            trace_id=trace_id,
+            trace_buffer=trace_buffer or [],
+            debug_options=runner_context.get("debug_options"),
+            user_info=user_info,
+            conversation_id=conversation_id,
+            route_hints=runner_context.get("route_hints"),
+        )
+        runner._requires_knowledge_search = bool(
+            runner_context.get("requires_knowledge_search")
+        )
+        return runner
 
     async def execute(
         self,
@@ -250,17 +303,44 @@ class GeneralAgentRunner(BaseExecutor):
         runtime_messages: List[BaseMessage],
         max_steps: int,
     ) -> AsyncGenerator[Dict[str, Any], None]:
-        from agentscope.agent import Agent, ReActConfig
-
-        agent = Agent(
-            name=self.config.agent_name or "GeneralAgent",
-            system_prompt=system_content,
-            model=native_model,
-            toolkit=build_toolkit(tools),
-            react_config=ReActConfig(max_iters=max_steps),
+        agent_name = self._runtime_agent_name()
+        tools_fingerprint = build_tools_fingerprint(self.config, tools)
+        model_name = getattr(native_model, "model", self.config.model_name)
+        persisted = await agent_state_store.load(
+            self._runtime_user_id(),
+            self.conversation_id,
+            agent_name,
         )
-        inputs = to_agentscope_messages(compat_to_runtime_messages(runtime_messages[1:]))
-        state = self._new_agentscope_native_stream_state()
+        restored_state = None
+        if persisted and persisted.matches(
+            tools_fingerprint=tools_fingerprint,
+            agent_name=agent_name,
+        ):
+            try:
+                from agentscope.state import AgentState
+
+                restored_state = AgentState.model_validate(persisted.state)
+            except Exception as exc:
+                logger.warning("[GeneralAgentRunner] Failed to restore AgentState: %s", exc)
+
+        agent = await self._build_native_agent(
+            native_model=native_model,
+            tools=tools,
+            system_content=system_content,
+            max_steps=max_steps,
+            restored_state=restored_state,
+            primary_model_name=str(model_name or ""),
+        )
+        if restored_state and restored_state.context:
+            latest_user_messages = self._latest_user_runtime_messages(runtime_messages)
+            inputs = to_agentscope_messages(compat_to_runtime_messages(latest_user_messages))
+        else:
+            inputs = to_agentscope_messages(compat_to_runtime_messages(runtime_messages[1:]))
+
+        state = self._new_agentscope_native_stream_state(
+            system_content=system_content,
+            max_steps=max_steps,
+        )
         state["user_query"] = next(
             (
                 str(getattr(message, "content", ""))
@@ -269,6 +349,7 @@ class GeneralAgentRunner(BaseExecutor):
             ),
             "",
         )
+        interrupted = False
         async for chunk in self._stream_agentscope_native_events(
             event_stream=agent.reply_stream(inputs),
             agent=agent,
@@ -276,13 +357,78 @@ class GeneralAgentRunner(BaseExecutor):
             native_model=native_model,
             state=state,
         ):
+            if chunk.get("type") in {"permission_required", "external_execution_required"} or chunk.get("status") == "error":
+                interrupted = True
             yield chunk
 
-    def _new_agentscope_native_stream_state(self) -> Dict[str, Any]:
+        if not interrupted and self.conversation_id:
+            await agent_state_store.save(
+                user_id=self._runtime_user_id(),
+                conversation_id=self.conversation_id,
+                agent_name=agent_name,
+                agent_version=self.config.agent_version,
+                tools_fingerprint=tools_fingerprint,
+                model_name=str(model_name) if model_name else None,
+                state=agent.state,
+            )
+
+    async def _build_native_agent(
+        self,
+        *,
+        native_model: Any,
+        tools: List[RuntimeToolSpec],
+        system_content: str,
+        max_steps: int,
+        restored_state: Any = None,
+        primary_model_name: str,
+    ) -> Any:
+        from agentscope.agent import Agent, ReActConfig
+
+        context_config = await load_context_config()
+        model_config = await build_model_config(
+            config=self.config,
+            primary_model_name=primary_model_name,
+        )
+        workspace = await get_local_workspace(
+            user_id=self._runtime_user_id(),
+            conversation_id=self.conversation_id,
+        )
+        if workspace is not None:
+            toolkit = await build_workspace_toolkit(workspace, tools)
+        else:
+            toolkit = build_toolkit(tools)
+        return Agent(
+            name=self._runtime_agent_name(),
+            system_prompt=system_content,
+            model=native_model,
+            toolkit=toolkit,
+            state=restored_state,
+            offloader=workspace,
+            model_config=model_config,
+            context_config=context_config,
+            react_config=ReActConfig(max_iters=max_steps),
+        )
+
+    @staticmethod
+    def _latest_user_runtime_messages(
+        runtime_messages: List[BaseMessage],
+    ) -> List[BaseMessage]:
+        for message in reversed(runtime_messages):
+            if isinstance(message, HumanMessage):
+                return [message]
+        return []
+
+    def _new_agentscope_native_stream_state(
+        self,
+        *,
+        system_content: str = "",
+        max_steps: int = 5,
+    ) -> Dict[str, Any]:
         return {
             "tool_names": {},
             "tool_args_text": {},
             "tool_outputs": {},
+            "tool_data": {},
             "tool_started_at": {},
             "content_emitted": False,
             "used_tools": False,
@@ -290,6 +436,8 @@ class GeneralAgentRunner(BaseExecutor):
             "full_content": "",
             "start_synthesis": time.time(),
             "synthesis_recorded": False,
+            "system_content": system_content,
+            "max_steps": max_steps,
         }
 
     async def _stream_agentscope_native_events(
@@ -304,6 +452,7 @@ class GeneralAgentRunner(BaseExecutor):
         tool_names: Dict[str, str] = state["tool_names"]
         tool_args_text: Dict[str, str] = state["tool_args_text"]
         tool_outputs: Dict[str, str] = state["tool_outputs"]
+        tool_data: Dict[str, List[Dict[str, Any]]] = state.setdefault("tool_data", {})
         tool_started_at: Dict[str, float] = state["tool_started_at"]
 
         async for event in event_stream:
@@ -337,6 +486,22 @@ class GeneralAgentRunner(BaseExecutor):
                 tool_outputs[tool_id] = tool_outputs.get(tool_id, "") + str(getattr(event, "delta", ""))
                 continue
 
+            if event_type == "TOOL_RESULT_DATA_DELTA":
+                tool_id = getattr(event, "tool_call_id", "")
+                payload = {
+                    "block_id": getattr(event, "block_id", ""),
+                    "media_type": getattr(event, "media_type", ""),
+                    "data": getattr(event, "data", None),
+                    "url": getattr(event, "url", None),
+                }
+                tool_data.setdefault(tool_id, []).append(payload)
+                yield {
+                    "type": "tool_result_data",
+                    "tool_call_id": tool_id,
+                    **payload,
+                }
+                continue
+
             if event_type == "TOOL_RESULT_END":
                 tool_id = getattr(event, "tool_call_id", "")
                 tool_name = tool_names.get(tool_id, "")
@@ -346,6 +511,11 @@ class GeneralAgentRunner(BaseExecutor):
                 except Exception:
                     tool_args = {"input": raw_args}
                 output = tool_outputs.get(tool_id, "")
+                if tool_data.get(tool_id):
+                    output = {
+                        "text": output,
+                        "data_blocks": tool_data.get(tool_id, []),
+                    }
                 duration_ms = (time.time() - tool_started_at.get(tool_id, time.time())) * 1000
                 result = self._build_tool_observation(
                     tool_id=tool_id,
@@ -364,47 +534,25 @@ class GeneralAgentRunner(BaseExecutor):
                     self.trace_buffer.append(result["trace"])
                 continue
 
-            if event_type == "REQUIRE_USER_CONFIRM":
-                from app.services.ai.runtime.agentscope.confirmations import (
-                    pending_agentscope_confirmations,
-                )
+            if event_type == "REQUIRE_EXTERNAL_EXECUTION":
+                yield {
+                    "type": "error",
+                    "status": "error",
+                    "content": "当前版本尚未开放 AgentScope external execution 恢复接口，请改用 ASK 权限工具或平台托管工具执行。",
+                }
+                return
 
-                for tool_call in getattr(event, "tool_calls", []) or []:
-                    tool_id = getattr(tool_call, "id", "") or f"call_{uuid.uuid4().hex[:8]}"
-                    tool_name = getattr(tool_call, "name", "")
-                    raw_args = getattr(tool_call, "input", "") or "{}"
-                    try:
-                        tool_args = json.loads(raw_args) if isinstance(raw_args, str) else raw_args
-                    except Exception:
-                        tool_args = {"input": raw_args}
-                    if not isinstance(tool_args, dict):
-                        tool_args = {"input": tool_args}
-                    pending = pending_agentscope_confirmations.register(
-                        agent=agent,
-                        runner=self,
-                        tools=tools,
-                        native_model=native_model,
-                        tool_call=tool_call,
-                        reply_id=str(getattr(event, "reply_id", "")),
-                        trace_id=self.trace_id,
-                        user_id=(self.user_info or {}).get("user_id") or (self.user_info or {}).get("id"),
-                        state=state,
-                    )
-                    yield {
-                        "type": "permission_required",
-                        "status": "pending",
-                        "id": tool_id,
-                        "permission_request_id": pending.request_id,
-                        "reply_id": pending.reply_id,
-                        "expires_in_seconds": 600,
-                        "title": f"需要确认工具调用: {tool_name}",
-                        "details": f"参数: {json.dumps(tool_args, ensure_ascii=False)}",
-                        "tool_call": {
-                            "id": tool_id,
-                            "name": tool_name,
-                            "args": tool_args,
-                        },
-                    }
+            if event_type == "REQUIRE_USER_CONFIRM":
+                async for pending_chunk in self._register_pending_tool_interrupt(
+                    event=event,
+                    agent=agent,
+                    tools=tools,
+                    native_model=native_model,
+                    state=state,
+                    kind="permission",
+                    sse_type="permission_required",
+                ):
+                    yield pending_chunk
                 return
 
             if event_type == "TEXT_BLOCK_DELTA":
@@ -450,6 +598,121 @@ class GeneralAgentRunner(BaseExecutor):
                 timestamp=datetime.fromtimestamp(state["start_synthesis"]),
             ))
 
+    async def _register_pending_tool_interrupt(
+        self,
+        *,
+        event: Any,
+        agent: Any,
+        tools: List[RuntimeToolSpec],
+        native_model: Any,
+        state: Dict[str, Any],
+        kind: str,
+        sse_type: str,
+    ) -> AsyncGenerator[Dict[str, Any], None]:
+        from app.services.ai.runtime.agentscope.confirmations import (
+            pending_agentscope_confirmations,
+        )
+
+        for tool_call in getattr(event, "tool_calls", []) or []:
+            tool_id = getattr(tool_call, "id", "") or f"call_{uuid.uuid4().hex[:8]}"
+            tool_name = getattr(tool_call, "name", "")
+            raw_args = getattr(tool_call, "input", "") or "{}"
+            try:
+                tool_args = json.loads(raw_args) if isinstance(raw_args, str) else raw_args
+            except Exception:
+                tool_args = {"input": raw_args}
+            if not isinstance(tool_args, dict):
+                tool_args = {"input": tool_args}
+            pending = await pending_agentscope_confirmations.register(
+                kind=kind,
+                agent=agent,
+                runner=self,
+                tools=tools,
+                native_model=native_model,
+                tool_call=tool_call,
+                reply_id=str(getattr(event, "reply_id", "")),
+                trace_id=self.trace_id,
+                user_id=self._runtime_user_id(),
+                conversation_id=self.conversation_id,
+                agent_name=self._runtime_agent_name(),
+                state=state,
+                runner_context=self._runner_context(
+                    system_content=state.get("system_content", ""),
+                    max_steps=int(state.get("max_steps", 5)),
+                ),
+            )
+            yield {
+                "type": sse_type,
+                "status": "pending",
+                "id": tool_id,
+                "permission_request_id": pending.request_id,
+                "reply_id": pending.reply_id,
+                "expires_in_seconds": 600,
+                "title": (
+                    f"需要确认工具调用: {tool_name}"
+                    if kind == "permission"
+                    else f"需要外部执行工具: {tool_name}"
+                ),
+                "details": f"参数: {json.dumps(tool_args, ensure_ascii=False)}",
+                "tool_call": {
+                    "id": tool_id,
+                    "name": tool_name,
+                    "args": tool_args,
+                },
+            }
+
+    async def _resolve_pending_runtime(
+        self,
+        pending: Any,
+    ) -> tuple[Any, List[RuntimeToolSpec], Any, Dict[str, Any]]:
+        if pending.agent is not None and pending.tools and pending.native_model is not None:
+            return pending.agent, pending.tools, pending.native_model, pending.state
+
+        ctx = pending.snapshot.runner_context
+        tools = await self._resolve_runtime_tools_from_config()
+        native_model_handle = await AgentConfigProvider.get_configured_llm(
+            streaming=True,
+            config=self.config,
+        )
+        native_model = getattr(native_model_handle, "native_model", None)
+        if native_model is None:
+            raise RuntimeError("当前模型适配器未提供 AgentScope native_model，无法恢复挂起执行。")
+
+        from agentscope.state import AgentState
+
+        restored_state = AgentState.model_validate(pending.snapshot.agent_state)
+        agent = await self._build_native_agent(
+            native_model=native_model,
+            tools=tools,
+            system_content=str(ctx.get("system_content", "")),
+            max_steps=int(ctx.get("max_steps", 5)),
+            restored_state=restored_state,
+            primary_model_name=str(getattr(native_model, "model", self.config.model_name) or ""),
+        )
+        state = pending.state or dict(pending.snapshot.stream_state or {})
+        if "tool_data" not in state:
+            state["tool_data"] = {}
+        return agent, tools, native_model, state
+
+    async def _resolve_runtime_tools_from_config(self) -> List[RuntimeToolSpec]:
+        configured_tools = self.config.tools or []
+        tools: List[RuntimeToolSpec] = []
+        if configured_tools:
+            tools = await ToolRegistry.get_runtime_tools(configured_tools)
+
+        system_tools = ToolRegistry.get_system_implicit_tools()
+        if system_tools:
+            tools.extend(
+                runtime_tool_spec_from_legacy_tool(tool, source_type="system")
+                for tool in system_tools
+            )
+
+        if self._requires_knowledge_search and not tools_include_named(tools, "search_knowledge_base"):
+            kb_tool = await ToolRegistry.get_runtime_tool("search_knowledge_base")
+            if kb_tool:
+                tools.append(kb_tool)
+        return tools
+
     async def resume_agentscope_native_confirmation(
         self,
         pending: Any,
@@ -458,6 +721,7 @@ class GeneralAgentRunner(BaseExecutor):
     ) -> AsyncGenerator[Dict[str, Any], None]:
         from agentscope.event import ConfirmResult, UserConfirmResultEvent
 
+        agent, tools, native_model, state = await self._resolve_pending_runtime(pending)
         event = UserConfirmResultEvent(
             reply_id=pending.reply_id,
             confirm_results=[
@@ -467,14 +731,66 @@ class GeneralAgentRunner(BaseExecutor):
                 )
             ],
         )
+        interrupted = False
         async for chunk in self._stream_agentscope_native_events(
-            event_stream=pending.agent.reply_stream(event),
-            agent=pending.agent,
-            tools=pending.tools,
-            native_model=pending.native_model,
-            state=pending.state,
+            event_stream=agent.reply_stream(event),
+            agent=agent,
+            tools=tools,
+            native_model=native_model,
+            state=state,
         ):
+            if chunk.get("type") in {"permission_required", "external_execution_required"} or chunk.get("status") == "error":
+                interrupted = True
             yield chunk
+
+        if not interrupted and self.conversation_id:
+            tools_fingerprint = build_tools_fingerprint(self.config, tools)
+            await agent_state_store.save(
+                user_id=self._runtime_user_id(),
+                conversation_id=self.conversation_id,
+                agent_name=self._runtime_agent_name(),
+                agent_version=self.config.agent_version,
+                tools_fingerprint=tools_fingerprint,
+                model_name=str(getattr(native_model, "model", self.config.model_name) or ""),
+                state=agent.state,
+            )
+
+    async def resume_agentscope_external_execution(
+        self,
+        pending: Any,
+        *,
+        execution_results: List[Any],
+    ) -> AsyncGenerator[Dict[str, Any], None]:
+        from agentscope.event import ExternalExecutionResultEvent
+
+        agent, tools, native_model, state = await self._resolve_pending_runtime(pending)
+        event = ExternalExecutionResultEvent(
+            reply_id=pending.reply_id,
+            execution_results=execution_results,
+        )
+        interrupted = False
+        async for chunk in self._stream_agentscope_native_events(
+            event_stream=agent.reply_stream(event),
+            agent=agent,
+            tools=tools,
+            native_model=native_model,
+            state=state,
+        ):
+            if chunk.get("type") in {"permission_required", "external_execution_required"} or chunk.get("status") == "error":
+                interrupted = True
+            yield chunk
+
+        if not interrupted and self.conversation_id:
+            tools_fingerprint = build_tools_fingerprint(self.config, tools)
+            await agent_state_store.save(
+                user_id=self._runtime_user_id(),
+                conversation_id=self.conversation_id,
+                agent_name=self._runtime_agent_name(),
+                agent_version=self.config.agent_version,
+                tools_fingerprint=tools_fingerprint,
+                model_name=str(getattr(native_model, "model", self.config.model_name) or ""),
+                state=agent.state,
+            )
 
     def _build_tool_observation(
         self,
