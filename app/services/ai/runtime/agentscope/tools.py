@@ -135,7 +135,7 @@ class AgentScopeRuntimeTool:
             return None
         return PermissionDecision(
             behavior=PermissionBehavior.ALLOW,
-            reason="runtime permission checks are handled by platform middleware",
+            message="runtime permission checks are handled by platform middleware",
         )
 
     async def check_read_only(self, tool_input: dict[str, Any]) -> bool:
@@ -144,8 +144,14 @@ class AgentScopeRuntimeTool:
     def match_rule(self, rule_content: str | None, tool_input: dict[str, Any]) -> bool:
         return rule_content is None
 
-    async def __call__(self, **kwargs: Any) -> str:
-        return str(await self.spec.invoke(kwargs))
+    async def __call__(self, **kwargs: Any) -> Any:
+        from agentscope.message import TextBlock, ToolResultState
+        from agentscope.tool import ToolChunk
+
+        return ToolChunk(
+            content=[TextBlock(text=str(await self.spec.invoke(kwargs)))],
+            state=ToolResultState.SUCCESS,
+        )
 
 
 def _load_agentscope_toolkit():

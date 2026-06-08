@@ -36,9 +36,9 @@
 
 ## 5. 通用对话执行器重建
 
-- [x] 5.1 新建 `GeneralAgentRunner`，承接通用对话 runner 边界。
+- [x] 5.1 新建 `GeneralAgentRunner`，承接通用对话 runner 边界，并在 runtime tool/native model 条件下接入 AgentScope Agent + Toolkit 原生 ReAct。
 - [ ] 5.2 保留无工具直接回答路径。
-- [x] 5.3 保留有工具 ReAct 路径、XML tool call 兜底兼容、工具结果总结。
+- [x] 5.3 保留有工具 ReAct 路径、XML tool call 兜底兼容、工具结果总结；General runtime tool 路径已优先走 AgentScope Agent 原生 ReAct，legacy/mock 路径保留 fallback。
 - [ ] 5.4 保留知识库 citation、记忆检索强制调用、工具失败用户可读提示。
 - [x] 5.5 将 `chat_executor.py` 改为调用 `GeneralAgentRunner`。
 - [x] 5.6 迁移 `tests/ai/executors/test_chat_executor.py` 到 AgentScope/runtime 测试桩。

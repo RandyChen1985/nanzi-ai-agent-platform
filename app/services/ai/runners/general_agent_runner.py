@@ -31,7 +31,9 @@ from app.services.ai.executors.common import (
     is_retryable_stream_error,
 )
 from app.services.ai.executors.prompts import GeneralChatPrompts
+from app.services.ai.runtime.agentscope.chat import compat_to_runtime_messages, to_agentscope_messages
 from app.services.ai.runtime.agentscope.tools import RuntimeToolSpec, runtime_tool_spec_from_legacy_tool
+from app.services.ai.runtime.agentscope.tools import build_toolkit
 from app.services.ai.turn_classifier import TurnType
 
 logger = logging.getLogger(__name__)
@@ -215,6 +217,25 @@ class GeneralAgentRunner(BaseExecutor):
             self._requires_knowledge_search
             and tools_include_named(tools, "search_knowledge_base")
         )
+
+        if (
+            not recall_query_pending
+            and not knowledge_search_pending
+            and tools
+            and all(isinstance(t, RuntimeToolSpec) for t in tools)
+        ):
+            native_model_handle = await AgentConfigProvider.get_configured_llm(streaming=True, config=self.config)
+            native_model = getattr(native_model_handle, "native_model", None)
+            if native_model is not None:
+                async for chunk in self._execute_with_agentscope_native_agent(
+                    native_model=native_model,
+                    tools=tools,
+                    system_content=system_content,
+                    runtime_messages=runtime_messages,
+                    max_steps=MAX_STEPS,
+                ):
+                    yield chunk
+                return
 
         while step < MAX_STEPS:
             step += 1
@@ -492,6 +513,135 @@ class GeneralAgentRunner(BaseExecutor):
         if step >= MAX_STEPS:
              yield {"content": GeneralChatPrompts.MAX_STEPS_REACHED}
 
+    async def _execute_with_agentscope_native_agent(
+        self,
+        *,
+        native_model: Any,
+        tools: List[RuntimeToolSpec],
+        system_content: str,
+        runtime_messages: List[BaseMessage],
+        max_steps: int,
+    ) -> AsyncGenerator[Dict[str, Any], None]:
+        from agentscope.agent import Agent, ReActConfig
+
+        agent = Agent(
+            name=self.config.agent_name or "GeneralAgent",
+            system_prompt=system_content,
+            model=native_model,
+            toolkit=build_toolkit(tools),
+            react_config=ReActConfig(max_iters=max_steps),
+        )
+        inputs = to_agentscope_messages(compat_to_runtime_messages(runtime_messages[1:]))
+        tool_names: Dict[str, str] = {}
+        tool_args_text: Dict[str, str] = {}
+        tool_outputs: Dict[str, str] = {}
+        tool_started_at: Dict[str, float] = {}
+        content_emitted = False
+        used_tools = False
+        synthesis_log_emitted = False
+        full_content = ""
+        start_synthesis = time.time()
+
+        async for event in agent.reply_stream(inputs):
+            event_type = str(getattr(event, "type", ""))
+            if event_type == "THINKING_BLOCK_DELTA":
+                yield {"type": "thinking", "status": "continuing"}
+                continue
+
+            if event_type == "TOOL_CALL_START":
+                used_tools = True
+                tool_id = getattr(event, "tool_call_id", "")
+                tool_name = getattr(event, "tool_call_name", "")
+                tool_names[tool_id] = tool_name
+                tool_started_at[tool_id] = time.time()
+                yield {
+                    "type": "log",
+                    "id": tool_id,
+                    "title": f"调用工具: {tool_name}",
+                    "details": "参数: {}",
+                    "status": "pending",
+                }
+                continue
+
+            if event_type == "TOOL_CALL_DELTA":
+                tool_id = getattr(event, "tool_call_id", "")
+                tool_args_text[tool_id] = tool_args_text.get(tool_id, "") + str(getattr(event, "delta", ""))
+                continue
+
+            if event_type == "TOOL_RESULT_TEXT_DELTA":
+                tool_id = getattr(event, "tool_call_id", "")
+                tool_outputs[tool_id] = tool_outputs.get(tool_id, "") + str(getattr(event, "delta", ""))
+                continue
+
+            if event_type == "TOOL_RESULT_END":
+                tool_id = getattr(event, "tool_call_id", "")
+                tool_name = tool_names.get(tool_id, "")
+                raw_args = tool_args_text.get(tool_id, "") or "{}"
+                try:
+                    tool_args = json.loads(raw_args)
+                except Exception:
+                    tool_args = {"input": raw_args}
+                output = tool_outputs.get(tool_id, "")
+                duration_ms = (time.time() - tool_started_at.get(tool_id, time.time())) * 1000
+                result = self._build_tool_observation(
+                    tool_id=tool_id,
+                    tool_name=tool_name,
+                    tool_args=tool_args,
+                    tool_output=output,
+                    duration_tool=duration_ms,
+                    target_tool=next((t for t in tools if t.name == tool_name), None),
+                    tool_index=0,
+                )
+                if result.get("log"):
+                    yield result["log"]
+                if result.get("citation"):
+                    yield result["citation"]
+                if result.get("trace"):
+                    self.trace_buffer.append(result["trace"])
+                continue
+
+            if event_type == "TEXT_BLOCK_DELTA":
+                if used_tools and not synthesis_log_emitted:
+                    synthesis_log_emitted = True
+                    yield {
+                        "type": "log",
+                        "id": f"synthesis_native_{uuid.uuid4().hex[:8]}",
+                        "title": "📝 汇总工具结果",
+                        "details": "已获取所需数据，正在组织语言...",
+                        "status": "success",
+                    }
+                    yield {"type": "thinking", "status": "continuing"}
+                if not content_emitted:
+                    content_emitted = True
+                    yield {
+                        "type": "log",
+                        "id": f"gen_start_{uuid.uuid4().hex[:8]}",
+                        "title": "✨ 开始生成回复",
+                        "status": "success",
+                    }
+                delta = str(getattr(event, "delta", ""))
+                full_content += delta
+                yield {"content": delta}
+                continue
+
+            if event_type == "EXCEED_MAX_ITERS":
+                yield {"content": GeneralChatPrompts.MAX_STEPS_REACHED}
+                return
+
+        if full_content:
+            self._increment_step()
+            self.trace_buffer.append(AgentExecutionStep(
+                step_number=self.step_counter,
+                event_type="synthesis",
+                agent_name=self.config.agent_name,
+                model=getattr(native_model, "model", self.config.model_name),
+                temperature=self.config.synthesis_temperature or self.config.temperature,
+                tool_output={"content": full_content},
+                raw_log=full_content,
+                execution_time_ms=(time.time() - start_synthesis) * 1000,
+                timestamp=datetime.fromtimestamp(start_synthesis),
+            ))
+
     async def _execute_single_tool_safe(self, tool_call: Dict, tools: List[Any], index: int) -> Dict[str, Any]:
         tool_name = tool_call["name"]; tool_args = tool_call["args"]; tool_id = tool_call["id"]
         start_tool = time.time(); tool_output = f"[TOOL_ERROR] Unknown tool: {tool_name}"
@@ -513,8 +663,33 @@ class GeneralAgentRunner(BaseExecutor):
                     tool_output = f"Error executing {tool_name}: {str(e)}"; break
         
         duration_tool = (time.time() - start_tool) * 1000
+        result = self._build_tool_observation(
+            tool_id=tool_id,
+            tool_name=tool_name,
+            tool_args=tool_args,
+            tool_output=tool_output,
+            duration_tool=duration_tool,
+            target_tool=target_tool,
+            tool_index=index,
+        )
+        return {
+            **result,
+            "message": ToolMessage(content=result["final_tool_message_content"], tool_call_id=tool_id),
+        }
+
+    def _build_tool_observation(
+        self,
+        *,
+        tool_id: str,
+        tool_name: str,
+        tool_args: Dict[str, Any],
+        tool_output: Any,
+        duration_tool: float,
+        target_tool: Any,
+        tool_index: int,
+    ) -> Dict[str, Any]:
         is_error = "Error" in str(tool_output)
-        
+
         runtime_cfg = getattr(target_tool, "_runtime_config", None)
         t_model = getattr(runtime_cfg, "model_name", self.config.model_name)
         t_temp = getattr(runtime_cfg, "temperature", self.config.temperature)
@@ -528,7 +703,7 @@ class GeneralAgentRunner(BaseExecutor):
             model=t_model, temperature=t_temp, tool_name=tool_name, tool_input=tool_args,
             tool_output=tool_output if isinstance(tool_output, (dict, list)) else {"raw": str(tool_output)},
             execution_time_ms=duration_tool, status="success" if not is_error else "error",
-            timestamp=datetime.fromtimestamp(start_tool)
+            timestamp=datetime.fromtimestamp(time.time() - duration_tool / 1000)
         )
         
         log_event = {"type": "log", "id": tool_id, "title": f"工具完成: {tool_name} ({duration_tool:.0f}ms)", "details": str(tool_output)[:5000], "status": "success" if not is_error else "error", "model": t_model, "temperature": t_temp}
@@ -573,8 +748,8 @@ class GeneralAgentRunner(BaseExecutor):
                 logger.warning(f"Failed to extract citations from {tool_name}: {e}")
 
         return {
-            "index": index, 
-            "message": ToolMessage(content=final_tool_message_content, tool_call_id=tool_id), 
+            "index": tool_index,
+            "final_tool_message_content": final_tool_message_content,
             "trace": trace_step, 
             "log": log_event,
             "citation": citation_event

@@ -121,7 +121,9 @@ async def test_agentscope_tool_wrapper_exposes_tool_shape_and_invokes_spec():
     assert tool.description == "Add two numbers"
     assert tool.input_schema["required"] == ["left", "right"]
     assert tool.is_read_only is True
-    assert await tool(left=1, right=2) == "3"
+    chunk = await tool(left=1, right=2)
+    assert chunk.content[0].text == "3"
+    assert chunk.state == "success"
 
 
 def test_build_toolkit_returns_agent_scope_toolkit_when_available(monkeypatch):

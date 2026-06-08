@@ -1,6 +1,7 @@
 import pytest
 import asyncio
 from unittest.mock import MagicMock, AsyncMock, patch
+from pydantic import BaseModel
 from app.services.ai.runtime.agentscope.compat import AIMessage
 from app.services.ai.executors.chat_executor import GeneralChatExecutor
 from app.schemas.agent import ChatConfig
@@ -269,6 +270,87 @@ async def test_general_runner_executes_runtime_tool_specs(chat_config):
     assert invocations == [{"query": "runtime"}]
     assert any(e.get("title", "").startswith("工具完成: test_tool") for e in events)
     assert "Here is the result: Runtime Tool Result" in "".join(
+        e["content"] for e in events if "content" in e and "type" not in e
+    )
+
+
+@pytest.mark.asyncio
+async def test_general_runner_uses_agentscope_native_agent_for_runtime_tools(chat_config):
+    """当具备 AgentScope native model 和 RuntimeToolSpec 时，General 应走原生 Agent/Toolkit。"""
+    from agentscope.credential import CredentialBase
+    from agentscope.message import TextBlock, ToolCallBlock
+    from agentscope.model import ChatModelBase, ChatResponse
+
+    from app.core.llm.client import AgentScopeLLMHandle
+    from app.services.ai.runtime.agentscope.tools import RuntimeToolSpec
+    from app.services.ai.runners.general_agent_runner import GeneralAgentRunner
+
+    class FakeCredential(CredentialBase):
+        @classmethod
+        def get_chat_model_class(cls):
+            return FakeModel
+
+    class FakeModel(ChatModelBase):
+        class Parameters(BaseModel):
+            pass
+
+        async def _call_api(self, model_name, messages, tools=None, tool_choice=None, **kwargs):
+            if not any(msg.has_content_blocks("tool_result") for msg in messages):
+                return ChatResponse(
+                    content=[
+                        ToolCallBlock(
+                            id="call_native_general",
+                            name="test_tool",
+                            input='{"query": "native"}',
+                        )
+                    ],
+                    is_last=True,
+                )
+            return ChatResponse(
+                content=[TextBlock(text="Native final answer")],
+                is_last=True,
+            )
+
+    async def runtime_tool(query: str):
+        return f"runtime:{query}"
+
+    runtime_spec = RuntimeToolSpec(
+        name="test_tool",
+        description="Runtime test tool",
+        parameters_schema={
+            "type": "object",
+            "properties": {"query": {"type": "string"}},
+            "required": ["query"],
+        },
+        source_type="static",
+        callable=runtime_tool,
+    )
+    handle = AgentScopeLLMHandle(
+        native_model=FakeModel(
+            credential=FakeCredential(),
+            model="fake-native-general",
+            parameters=FakeModel.Parameters(),
+            stream=False,
+            max_retries=0,
+        ),
+        model_name="fake-native-general",
+        temperature=0.0,
+        streaming=True,
+    )
+    executor = GeneralChatExecutor(config=chat_config, trace_id="test-native-general", trace_buffer=[])
+
+    with patch("app.services.ai.config.AgentConfigProvider.get_configured_llm", AsyncMock(return_value=handle)), \
+         patch("app.services.ai.tools.registry.ToolRegistry.get_runtime_tools", AsyncMock(return_value=[runtime_spec])), \
+         patch("app.services.ai.tools.registry.ToolRegistry.get_system_implicit_tools", return_value=[]), \
+         patch("app.services.config_service.ConfigService.get", AsyncMock(return_value="5")), \
+         patch.object(GeneralAgentRunner, "_execute_single_tool_safe", side_effect=AssertionError("manual tool execution should not run")):
+        events = []
+        async for chunk in executor.execute([{"role": "user", "content": "Use native"}]):
+            events.append(chunk)
+
+    assert any(e.get("title", "").startswith("调用工具: test_tool") for e in events)
+    assert any(e.get("title", "").startswith("工具完成: test_tool") for e in events)
+    assert "Native final answer" in "".join(
         e["content"] for e in events if "content" in e and "type" not in e
     )
 
