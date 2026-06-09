@@ -319,6 +319,8 @@ class DataQueryPrompts:
             "【上一轮结构化查询结果】\n"
             f"{result_json}\n\n"
             "请只基于上一轮结构化查询结果完成分析或可视化，不要声称已重新查询数据库。\n"
+            "这是基于已有结果的追问：不要重复上一轮已展示过的图表、表格或核心结论，只输出本轮追问的新增分析或可视化。\n"
+            "整段回答只输出一次，禁止将相同内容重复输出两遍。\n"
             "如果适合可视化，请输出 markdown 结论并附带 ```chart JSON``` 图表配置。\n\n"
             f"{SharedPrompts.MARKDOWN_OUTPUT_FORMAT}"
         )

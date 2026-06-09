@@ -1,6 +1,7 @@
 import pytest
 
 from app.services.ai.runtime.agentscope.stream_reconcile import (
+    collapse_repeated_reply,
     compute_stream_reconcile_gap,
     needs_tool_synthesis_fallback,
     truncate_for_context,
@@ -54,3 +55,15 @@ def test_synthesis_for_transitional_sentence_after_tools():
         used_tools=True,
         min_complete_chars=32,
     )
+
+
+def test_collapse_repeated_reply_exact_duplicate_halves():
+    block = "### 核心结论\n" + ("业务洞察内容 " * 30)
+    duplicated = block + "\n\n" + block
+    collapsed = collapse_repeated_reply(duplicated)
+    assert collapsed.strip() == block.strip()
+
+
+def test_collapse_repeated_reply_keeps_unique_content():
+    text = "唯一回答 " * 20
+    assert collapse_repeated_reply(text) == text

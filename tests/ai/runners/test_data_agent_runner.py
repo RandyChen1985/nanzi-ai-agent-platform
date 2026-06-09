@@ -214,6 +214,153 @@ async def test_data_agent_runner_reuses_previous_result_without_native_agent(dat
 
 
 @pytest.mark.asyncio
+async def test_data_agent_runner_reuse_synthesis_skips_previous_assistant_history(
+    data_config, monkeypatch
+):
+    from app.services.ai.data_query_turn_classifier import (
+        DataQueryTurnClassification,
+        DataQueryTurnType,
+    )
+    from app.services.ai.intent_service import IntentType
+    from app.services.ai.runners.data_agent_runner import DataAgentRunner
+    from app.services.ai.runtime.agentscope.compat import AIMessage, HumanMessage
+
+    reuse_turn = DataQueryTurnClassification(
+        turn_type=DataQueryTurnType.REUSE_PREVIOUS_RESULT,
+        reasoning="测试：复用上一轮查询结果",
+        requires_fresh_data=False,
+        requires_few_shot=False,
+        skip_intent_llm=True,
+        intent=IntentType.DATA_QUERY,
+    )
+    last_result = {
+        "sql": "select 1",
+        "dataset_name": "demo",
+        "data_source": "mysql_aiagent",
+        "rows": [{"total": 1}],
+    }
+    captured_messages = []
+
+    async def fake_resolve(*args, **kwargs):
+        return reuse_turn, None, 12.0
+
+    async def fake_get_last(user_id, conversation_id):
+        return last_result
+
+    class FakeSynthesisLLM:
+        model_name = "synthesis-model"
+
+        async def astream(self, messages):
+            captured_messages.extend(messages)
+            yield AIMessage(content="新增分析。")
+
+    monkeypatch.setattr(
+        "app.services.ai.runners.data_agent_runner.resolve_data_query_turn_classification",
+        fake_resolve,
+    )
+    monkeypatch.setattr(
+        "app.services.ai.memory_service.memory_service.get_last_data_result",
+        fake_get_last,
+    )
+    monkeypatch.setattr(
+        "app.services.ai.runners.data_agent_runner.AgentConfigProvider.get_synthesis_llm",
+        AsyncMock(return_value=FakeSynthesisLLM()),
+    )
+
+    runner = DataAgentRunner(
+        config=data_config,
+        trace_id="trace-reuse-history",
+        trace_buffer=[],
+        user_info={"user_id": 42},
+        conversation_id="conv-1",
+    )
+
+    async for _chunk in runner.execute(
+        [
+            {"role": "assistant", "content": "上一轮完整图表与表格内容。"},
+            {"role": "user", "content": "可视化分析一下"},
+        ]
+    ):
+        pass
+
+    assert not any(isinstance(message, AIMessage) for message in captured_messages)
+    assert any(
+        isinstance(message, HumanMessage) and "可视化分析一下" in str(message.content)
+        for message in captured_messages
+    )
+
+
+@pytest.mark.asyncio
+async def test_data_agent_runner_reuse_synthesis_collapses_duplicated_output(
+    data_config, monkeypatch
+):
+    from app.services.ai.data_query_turn_classifier import (
+        DataQueryTurnClassification,
+        DataQueryTurnType,
+    )
+    from app.services.ai.intent_service import IntentType
+    from app.services.ai.runners.data_agent_runner import DataAgentRunner
+    from app.services.ai.runtime.agentscope.compat import AIMessage
+
+    reuse_turn = DataQueryTurnClassification(
+        turn_type=DataQueryTurnType.REUSE_PREVIOUS_RESULT,
+        reasoning="测试：复用上一轮查询结果",
+        requires_fresh_data=False,
+        requires_few_shot=False,
+        skip_intent_llm=True,
+        intent=IntentType.DATA_QUERY,
+    )
+    last_result = {
+        "sql": "select 1",
+        "dataset_name": "demo",
+        "data_source": "mysql_aiagent",
+        "rows": [{"total": 1}],
+    }
+    duplicate_block = "### 核心结论\n" + ("Top5 功能点趋势分析 " * 30)
+
+    async def fake_resolve(*args, **kwargs):
+        return reuse_turn, None, 12.0
+
+    async def fake_get_last(user_id, conversation_id):
+        return last_result
+
+    class FakeSynthesisLLM:
+        model_name = "synthesis-model"
+
+        async def astream(self, messages):
+            yield AIMessage(content=duplicate_block + "\n\n" + duplicate_block)
+
+    monkeypatch.setattr(
+        "app.services.ai.runners.data_agent_runner.resolve_data_query_turn_classification",
+        fake_resolve,
+    )
+    monkeypatch.setattr(
+        "app.services.ai.memory_service.memory_service.get_last_data_result",
+        fake_get_last,
+    )
+    monkeypatch.setattr(
+        "app.services.ai.runners.data_agent_runner.AgentConfigProvider.get_synthesis_llm",
+        AsyncMock(return_value=FakeSynthesisLLM()),
+    )
+
+    runner = DataAgentRunner(
+        config=data_config,
+        trace_id="trace-reuse-dedupe",
+        trace_buffer=[],
+        user_info={"user_id": 42},
+        conversation_id="conv-1",
+    )
+
+    events = []
+    async for chunk in runner.execute([{"role": "user", "content": "分析一下"}]):
+        events.append(chunk)
+
+    retraction = next(event for event in events if event.get("type") == "retraction")
+    assert retraction["content"].strip() == duplicate_block.strip()
+    assert runner.trace_buffer[-1].tool_output["content"].strip() == duplicate_block.strip()
+
+
+@pytest.mark.asyncio
 async def test_data_agent_runner_reports_missing_reusable_result(data_config, monkeypatch):
     from app.services.ai.data_query_turn_classifier import (
         DataQueryTurnClassification,

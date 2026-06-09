@@ -44,7 +44,10 @@ from app.services.ai.runtime.agentscope.event_stream import (
     is_interrupt_sse_chunk,
     map_standard_agentscope_event,
 )
-from app.services.ai.runtime.agentscope.stream_reconcile import truncate_for_context
+from app.services.ai.runtime.agentscope.stream_reconcile import (
+    collapse_repeated_reply,
+    truncate_for_context,
+)
 from app.services.ai.runtime.agentscope.session_lock import (
     SessionLockTimeout,
     agentscope_session_lock,
@@ -979,14 +982,15 @@ class DataAgentRunner(BaseExecutor):
         if len(result_json) > 30000:
             result_json = result_json[:30000] + "\n... [上一轮结果过长已截断]"
 
+        from app.services.ai.runtime.agentscope.compat import HumanMessage
+
         synthesis_messages = [SystemMessage(content=prompt_without_menu)]
+        # 只保留用户追问，不把上一轮 assistant 全文（含图表/表格）塞进 prompt，避免模型照抄两遍。
         synthesis_messages.extend(
             message
             for message in runtime_messages[-6:-1]
-            if getattr(message, "content", None)
+            if isinstance(message, HumanMessage) and getattr(message, "content", None)
         )
-        from app.services.ai.runtime.agentscope.compat import HumanMessage
-
         synthesis_messages.append(
             HumanMessage(content=DataQueryPrompts.followup_synthesis_user_message(user_question, result_json))
         )
@@ -1035,6 +1039,17 @@ class DataAgentRunner(BaseExecutor):
                 "status": "error",
             }
             yield {"content": fallback}
+
+        deduped_synthesis = collapse_repeated_reply(full_synthesis_content)
+        if deduped_synthesis != full_synthesis_content:
+            logger.warning(
+                "[DataAgentRunner] Collapsed duplicated follow-up synthesis output (len %s -> %s)",
+                len(full_synthesis_content),
+                len(deduped_synthesis),
+            )
+            full_synthesis_content = deduped_synthesis
+            if content_emitted:
+                yield {"type": "retraction", "content": full_synthesis_content}
 
         synthesis_tokens = extract_tokens_from_message(last_synthesis_chunk)
         self._increment_step()

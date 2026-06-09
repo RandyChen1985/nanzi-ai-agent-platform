@@ -23,6 +23,15 @@ logger = logging.getLogger(__name__)
 AWAITING_RESUME_STATUSES = frozenset({"awaiting_permission", "awaiting_external_execution"})
 
 
+def _accumulate_stream_content(full: str, chunk: Dict[str, Any]) -> str:
+    """合并 SSE chunk 到会话正文；retraction 表示用新正文整体替换。"""
+    if chunk.get("type") == "retraction":
+        return str(chunk.get("content") or "")
+    if "content" in chunk:
+        return full + str(chunk["content"])
+    return full
+
+
 class AgentService:
     """
     Unified Orchestrator for AI Agent interactions.
@@ -590,8 +599,7 @@ class AgentService:
                     session_turn,
                     route_hints,
                 ):
-                    if "content" in chunk:
-                        full_response_content += chunk["content"]
+                    full_response_content = _accumulate_stream_content(full_response_content, chunk)
                     yield chunk
             else:
                 # --- Standard Single Agent Mode ---
@@ -622,8 +630,7 @@ class AgentService:
 
                 # Execution
                 async for chunk in executor.execute(messages):
-                    if "content" in chunk:
-                        full_response_content += chunk["content"]
+                    full_response_content = _accumulate_stream_content(full_response_content, chunk)
                     if chunk.get("type") == "permission_required":
                         execution_status = "awaiting_permission"
                     elif chunk.get("type") == "external_execution_required":
@@ -807,8 +814,7 @@ class AgentService:
             pending,
             confirmed=confirmed,
         ):
-            if "content" in chunk:
-                full_response_content += chunk["content"]
+            full_response_content = _accumulate_stream_content(full_response_content, chunk)
             yield chunk
 
         p_tokens, c_tokens, t_tokens = 0, 0, 0
@@ -985,8 +991,7 @@ class AgentService:
             pending,
             execution_results=execution_results,
         ):
-            if "content" in chunk:
-                full_response_content += chunk["content"]
+            full_response_content = _accumulate_stream_content(full_response_content, chunk)
             if chunk.get("status") == "error":
                 execution_status = "error"
             yield chunk
