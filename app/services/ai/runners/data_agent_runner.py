@@ -1295,6 +1295,24 @@ class DataAgentRunner(BaseExecutor):
                 "请先用诊断 SQL 复查筛选值、时间范围、子查询或 JOIN 条件，再执行最终 SQL。"
                 "在最终 SQL 返回有效结果前禁止直接回答用户。"
             )
+        if (
+            state.requires_fresh_data
+            and state.blocked_content.strip()
+            and not state.ready_to_answer
+        ):
+            if not state.schema_completed:
+                return (
+                    "【查数顺序要求】本轮新数据查询尚未完成 get_dataset_schema 与 execute_sql_query，"
+                    "禁止直接回答用户。\n"
+                    f"{DataQueryPrompts.MUST_FETCH_SCHEMA}\n"
+                    "请先调用 get_dataset_schema 获取数据集定义，再调用 execute_sql_query 查数。"
+                )
+            if not state.sql_completed:
+                return (
+                    "【查数顺序要求】你已获取数据集 Schema，但尚未执行 execute_sql_query。\n"
+                    f"{DataQueryPrompts.MUST_EXECUTE_SQL_AFTER_SCHEMA}\n"
+                    "禁止直接回答用户，必须先完成 SQL 查数。"
+                )
         return ""
 
     def _build_repair_title(self, state: _DataRunState) -> str:
@@ -1304,6 +1322,15 @@ class DataAgentRunner(BaseExecutor):
             return "重试检索数据集定义"
         if state.sql_plan_missing:
             return "补充 SQL 计划"
+        if (
+            state.requires_fresh_data
+            and state.blocked_content.strip()
+            and not state.ready_to_answer
+        ):
+            if not state.schema_completed:
+                return "必须先完成查数流程"
+            if not state.sql_completed:
+                return "必须先执行 SQL 查数"
         return "修正 SQL 查询"
 
     def _has_sql_plan(self, text: str) -> bool:

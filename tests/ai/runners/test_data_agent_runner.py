@@ -1131,6 +1131,39 @@ async def test_data_agent_runner_blocks_final_answer_before_required_sql(data_co
     )
 
 
+def test_build_repair_message_when_answer_blocked_without_tools(data_config):
+    from app.services.ai.runners.data_agent_runner import DataAgentRunner, _DataRunState
+
+    runner = DataAgentRunner(config=data_config, trace_id="trace-repair-skip", trace_buffer=[])
+    state = _DataRunState(requires_fresh_data=True, blocked_content="没有查库也能回答")
+    repair = runner._build_repair_message(state)
+    assert "get_dataset_schema" in repair
+    assert "execute_sql_query" in repair
+    assert runner._build_repair_title(state) == "必须先完成查数流程"
+
+
+def test_build_repair_message_when_schema_done_sql_missing(data_config):
+    from app.services.ai.runners.data_agent_runner import DataAgentRunner, _DataRunState
+
+    runner = DataAgentRunner(config=data_config, trace_id="trace-repair-no-sql", trace_buffer=[])
+    state = _DataRunState(
+        requires_fresh_data=True,
+        schema_completed=True,
+        blocked_content="直接总结",
+    )
+    repair = runner._build_repair_message(state)
+    assert "execute_sql_query" in repair
+    assert runner._build_repair_title(state) == "必须先执行 SQL 查数"
+
+
+def test_build_repair_message_empty_when_no_blocked_content(data_config):
+    from app.services.ai.runners.data_agent_runner import DataAgentRunner, _DataRunState
+
+    runner = DataAgentRunner(config=data_config, trace_id="trace-no-repair", trace_buffer=[])
+    state = _DataRunState(requires_fresh_data=True, blocked_content="")
+    assert runner._build_repair_message(state) == ""
+
+
 @pytest.mark.asyncio
 async def test_data_agent_runner_rejects_sql_before_schema(data_config):
     from types import SimpleNamespace
