@@ -783,15 +783,27 @@ class AgentService:
 
         runner = pending.runner
         if runner is None:
-            from app.services.ai.runners.general_agent_runner import GeneralAgentRunner
+            ctx = pending.snapshot.runner_context or {}
+            if ctx.get("runner_type") == "data":
+                from app.services.ai.runners.data_agent_runner import DataAgentRunner
 
-            runner = GeneralAgentRunner.from_runner_context(
-                runner_context=pending.snapshot.runner_context,
-                trace_id=pending.trace_id,
-                trace_buffer=[],
-                user_info=user_info,
-                conversation_id=pending.snapshot.conversation_id,
-            )
+                runner = DataAgentRunner.from_runner_context(
+                    runner_context=ctx,
+                    trace_id=pending.trace_id,
+                    trace_buffer=[],
+                    user_info=user_info,
+                    conversation_id=pending.snapshot.conversation_id,
+                )
+            else:
+                from app.services.ai.runners.general_agent_runner import GeneralAgentRunner
+
+                runner = GeneralAgentRunner.from_runner_context(
+                    runner_context=ctx,
+                    trace_id=pending.trace_id,
+                    trace_buffer=[],
+                    user_info=user_info,
+                    conversation_id=pending.snapshot.conversation_id,
+                )
 
         yield {
             "type": "permission_result",

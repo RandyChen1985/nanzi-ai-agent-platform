@@ -35,8 +35,16 @@ from app.services.ai.runtime.agentscope.chat import (
 )
 from app.services.ai.runtime.agentscope.agent_runtime import (
     build_model_config,
+    build_tools_fingerprint,
     load_context_config,
 )
+from app.services.ai.runtime.agentscope.event_stream import (
+    EXTERNAL_EXECUTION_UNAVAILABLE_CHUNK,
+    map_tool_result_data_delta,
+    stream_pending_tool_interrupt,
+)
+from app.services.ai.runtime.agentscope.state_store import agent_state_store
+from app.services.ai.runtime.agentscope.workspace import get_local_workspace
 from app.services.ai.runtime.agentscope.compat import AIMessage, HumanMessage, SystemMessage
 from app.services.ai.runtime.agentscope.data_runtime import DATA_QUERY_MAX_STEPS_CAP
 from app.services.ai.runtime.agentscope.data_tools import build_chatbi_toolkit
@@ -111,6 +119,53 @@ class DataAgentRunner(BaseExecutor):
     def _runtime_agent_name(self) -> str:
         return self.config.agent_name or "DataAgent"
 
+    def _runtime_user_id(self) -> str | None:
+        user_id = self._current_user_id()
+        return str(user_id) if user_id is not None else None
+
+    def _runner_context(self, *, system_content: str, max_steps: int) -> Dict[str, Any]:
+        return {
+            "runner_type": "data",
+            "config": self.config.model_dump(),
+            "debug_options": self.debug_options,
+            "system_content": system_content,
+            "max_steps": max_steps,
+            "standalone_query": self._standalone_query,
+            "schema_search_keywords": self._schema_search_keywords,
+            "requires_fresh_data": self._requires_fresh_data,
+        }
+
+    @classmethod
+    def from_runner_context(
+        cls,
+        *,
+        runner_context: Dict[str, Any],
+        trace_id: str,
+        trace_buffer: List[AgentExecutionStep] | None = None,
+        user_info: Optional[Dict[str, Any]] = None,
+        conversation_id: Optional[str] = None,
+    ) -> "DataAgentRunner":
+        config = ChatConfig(**runner_context["config"])
+        runner = cls(
+            config=config,
+            trace_id=trace_id,
+            trace_buffer=trace_buffer or [],
+            debug_options=runner_context.get("debug_options"),
+            user_info=user_info,
+            conversation_id=conversation_id,
+        )
+        runner._standalone_query = str(runner_context.get("standalone_query") or "")
+        runner._schema_search_keywords = str(runner_context.get("schema_search_keywords") or "")
+        runner._requires_fresh_data = bool(runner_context.get("requires_fresh_data", True))
+        return runner
+
+    @staticmethod
+    def _latest_user_runtime_messages(runtime_messages: List[Any]) -> List[Any]:
+        for message in reversed(runtime_messages):
+            if isinstance(message, HumanMessage):
+                return [message]
+        return []
+
     def _current_user_id(self) -> Optional[int]:
         if not self.user_info:
             return None
@@ -179,6 +234,7 @@ class DataAgentRunner(BaseExecutor):
         system_content: str,
         max_steps: int,
         primary_model_name: str,
+        restored_state: Any = None,
     ) -> Any:
         toolkit, _ = await build_chatbi_toolkit([tool.name for tool in tools])
         context_config = await load_context_config()
@@ -186,13 +242,21 @@ class DataAgentRunner(BaseExecutor):
             config=self.config,
             primary_model_name=primary_model_name,
         )
-        kwargs = {
+        workspace = await get_local_workspace(
+            user_id=self._current_user_id(),
+            conversation_id=self.conversation_id,
+        )
+        kwargs: Dict[str, Any] = {
             "name": self._runtime_agent_name(),
             "system_prompt": system_content,
             "model": native_model,
             "toolkit": toolkit,
             "react_config": ReActConfig(max_iters=max_steps),
         }
+        if restored_state is not None:
+            kwargs["state"] = restored_state
+        if workspace is not None:
+            kwargs["offloader"] = workspace
         if model_config is not None:
             kwargs["model_config"] = model_config
         if context_config is not None:
@@ -343,11 +407,32 @@ class DataAgentRunner(BaseExecutor):
             }
             return
 
+        agent_name = self._runtime_agent_name()
+        tools_fingerprint = build_tools_fingerprint(self.config, tools)
+        model_name = getattr(native_model, "model", self.config.model_name)
+        persisted = await agent_state_store.load(
+            self._runtime_user_id(),
+            self.conversation_id,
+            agent_name,
+        )
+        restored_state = None
+        if persisted and persisted.matches(
+            tools_fingerprint=tools_fingerprint,
+            agent_name=agent_name,
+        ):
+            try:
+                from agentscope.state import AgentState
+
+                restored_state = AgentState.model_validate(persisted.state)
+            except Exception as exc:
+                logger.warning("[DataAgentRunner] Failed to restore AgentState: %s", exc)
+
         agent = await self._build_native_agent(
             native_model=native_model,
             tools=tools,
             system_content=system_content,
             max_steps=max_steps,
+            restored_state=restored_state,
             primary_model_name=str(getattr(llm_handle, "model_name", self.config.model_name) or ""),
         )
         if self._standalone_query and self._standalone_query != user_question:
@@ -355,20 +440,46 @@ class DataAgentRunner(BaseExecutor):
                 *runtime_messages[:-1],
                 HumanMessage(content=self._standalone_query),
             ]
-        inputs = to_agentscope_messages(compat_to_runtime_messages(runtime_messages))
+        if restored_state and restored_state.context:
+            inputs = to_agentscope_messages(
+                compat_to_runtime_messages(self._latest_user_runtime_messages(runtime_messages))
+            )
+        else:
+            inputs = to_agentscope_messages(compat_to_runtime_messages(runtime_messages))
         state = _DataRunState()
         state.requires_fresh_data = turn_cls.requires_fresh_data
         state.requires_sql_plan = self._should_require_sql_plan(user_question)
+        stream_meta = {
+            "system_content": system_content,
+            "max_steps": max_steps,
+        }
+        interrupted = False
 
         async for chunk in self._stream_agentscope_events(
             event_stream=agent.reply_stream(inputs),
+            agent=agent,
             tools=tools,
             native_model=native_model,
             state=state,
+            stream_meta=stream_meta,
             emit_final_guard=False,
         ):
+            if chunk.get("type") in {"permission_required", "external_execution_required"} or chunk.get("status") == "error":
+                interrupted = True
             yield chunk
+        if interrupted:
+            return
         if state.full_content:
+            if self.conversation_id:
+                await agent_state_store.save(
+                    user_id=self._runtime_user_id(),
+                    conversation_id=self.conversation_id,
+                    agent_name=agent_name,
+                    agent_version=self.config.agent_version,
+                    tools_fingerprint=tools_fingerprint,
+                    model_name=str(model_name) if model_name else None,
+                    state=agent.state,
+                )
             return
 
         repair_message = self._build_repair_message(state)
@@ -392,16 +503,40 @@ class DataAgentRunner(BaseExecutor):
             repair_inputs = to_agentscope_messages(compat_to_runtime_messages(repair_message))
             async for chunk in self._stream_agentscope_events(
                 event_stream=agent.reply_stream(repair_inputs),
+                agent=agent,
                 tools=tools,
                 native_model=native_model,
                 state=state,
+                stream_meta=stream_meta,
                 emit_final_guard=True,
             ):
+                if chunk.get("type") in {"permission_required", "external_execution_required"} or chunk.get("status") == "error":
+                    interrupted = True
                 yield chunk
+            if not interrupted and self.conversation_id:
+                await agent_state_store.save(
+                    user_id=self._runtime_user_id(),
+                    conversation_id=self.conversation_id,
+                    agent_name=agent_name,
+                    agent_version=self.config.agent_version,
+                    tools_fingerprint=tools_fingerprint,
+                    model_name=str(model_name) if model_name else None,
+                    state=agent.state,
+                )
             return
 
         async for chunk in self._emit_final_guard(state):
             yield chunk
+        if self.conversation_id and not interrupted:
+            await agent_state_store.save(
+                user_id=self._runtime_user_id(),
+                conversation_id=self.conversation_id,
+                agent_name=agent_name,
+                agent_version=self.config.agent_version,
+                tools_fingerprint=tools_fingerprint,
+                model_name=str(model_name) if model_name else None,
+                state=agent.state,
+            )
 
     async def _inject_few_shot_examples(
         self,
@@ -775,20 +910,74 @@ class DataAgentRunner(BaseExecutor):
             f"{context_action_prompt}"
         )
 
+    @staticmethod
+    def _data_run_state_to_pending_state(
+        state: _DataRunState,
+        stream_meta: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        from dataclasses import asdict
+
+        return {
+            **stream_meta,
+            "data_run_state": asdict(state),
+        }
+
+    @staticmethod
+    def _pending_state_to_data_run_state(pending_state: Dict[str, Any]) -> tuple[_DataRunState, Dict[str, Any]]:
+        from dataclasses import fields
+
+        raw = pending_state.get("data_run_state") or {}
+        valid_keys = {field.name for field in fields(_DataRunState)}
+        kwargs = {key: raw[key] for key in valid_keys if key in raw}
+        data_state = _DataRunState(**kwargs)
+        stream_meta = {
+            key: pending_state[key]
+            for key in ("system_content", "max_steps")
+            if key in pending_state
+        }
+        return data_state, stream_meta
+
     async def _stream_agentscope_events(
         self,
         *,
         event_stream: Any,
+        agent: Any | None = None,
         tools: list[RuntimeToolSpec],
         native_model: Any,
         state: _DataRunState | None = None,
+        stream_meta: Dict[str, Any] | None = None,
         emit_final_guard: bool = True,
     ) -> AsyncGenerator[Dict[str, Any], None]:
         state = state or _DataRunState()
+        stream_meta = stream_meta or {}
         self._last_run_state = state
+        pending_state = self._data_run_state_to_pending_state(state, stream_meta)
 
         async for event in event_stream:
             event_type = str(getattr(event, "type", ""))
+            if event_type == "TOOL_RESULT_DATA_DELTA":
+                yield map_tool_result_data_delta(event, pending_state)
+                continue
+
+            if event_type == "REQUIRE_EXTERNAL_EXECUTION":
+                yield EXTERNAL_EXECUTION_UNAVAILABLE_CHUNK
+                return
+
+            if event_type == "REQUIRE_USER_CONFIRM":
+                if agent is not None:
+                    async for pending_chunk in stream_pending_tool_interrupt(
+                        event=event,
+                        agent=agent,
+                        runner=self,
+                        tools=tools,
+                        native_model=native_model,
+                        state=pending_state,
+                        kind="permission",
+                        sse_type="permission_required",
+                    ):
+                        yield pending_chunk
+                return
+
             if event_type == "TOOL_CALL_START":
                 tool_id = getattr(event, "tool_call_id", "") or f"call_{uuid.uuid4().hex[:8]}"
                 tool_name = getattr(event, "tool_call_name", "")
@@ -1087,3 +1276,81 @@ class DataAgentRunner(BaseExecutor):
         if any(re.search(pattern, text, flags=re.IGNORECASE) for pattern in error_patterns):
             return True, text[:1000]
         return False, ""
+
+    async def _resolve_pending_runtime(
+        self,
+        pending: Any,
+    ) -> tuple[Any, list[RuntimeToolSpec], Any, _DataRunState, Dict[str, Any]]:
+        if pending.agent is not None and pending.tools and pending.native_model is not None:
+            data_state, stream_meta = self._pending_state_to_data_run_state(pending.state or {})
+            return pending.agent, pending.tools, pending.native_model, data_state, stream_meta
+
+        ctx = pending.snapshot.runner_context
+        tools = await self._resolve_runtime_tools_from_config()
+        native_model_handle = await AgentConfigProvider.get_configured_llm(
+            streaming=True,
+            config=self.config,
+        )
+        native_model = getattr(native_model_handle, "native_model", None)
+        if native_model is None:
+            raise RuntimeError("当前模型适配器未提供 AgentScope native_model，无法恢复挂起执行。")
+
+        from agentscope.state import AgentState
+
+        restored_state = AgentState.model_validate(pending.snapshot.agent_state)
+        agent = await self._build_native_agent(
+            native_model=native_model,
+            tools=tools,
+            system_content=str(ctx.get("system_content", "")),
+            max_steps=int(ctx.get("max_steps", 5)),
+            restored_state=restored_state,
+            primary_model_name=str(getattr(native_model, "model", self.config.model_name) or ""),
+        )
+        data_state, stream_meta = self._pending_state_to_data_run_state(
+            pending.state or dict(pending.snapshot.stream_state or {})
+        )
+        return agent, tools, native_model, data_state, stream_meta
+
+    async def resume_agentscope_native_confirmation(
+        self,
+        pending: Any,
+        *,
+        confirmed: bool,
+    ) -> AsyncGenerator[Dict[str, Any], None]:
+        from agentscope.event import ConfirmResult, UserConfirmResultEvent
+
+        agent, tools, native_model, data_state, stream_meta = await self._resolve_pending_runtime(pending)
+        event = UserConfirmResultEvent(
+            reply_id=pending.reply_id,
+            confirm_results=[
+                ConfirmResult(
+                    confirmed=confirmed,
+                    tool_call=pending.tool_call,
+                )
+            ],
+        )
+        interrupted = False
+        async for chunk in self._stream_agentscope_events(
+            event_stream=agent.reply_stream(event),
+            agent=agent,
+            tools=tools,
+            native_model=native_model,
+            state=data_state,
+            stream_meta=stream_meta,
+            emit_final_guard=True,
+        ):
+            if chunk.get("type") in {"permission_required", "external_execution_required"} or chunk.get("status") == "error":
+                interrupted = True
+            yield chunk
+
+        if not interrupted and self.conversation_id:
+            tools_fingerprint = build_tools_fingerprint(self.config, tools)
+            await agent_state_store.save(
+                user_id=self._runtime_user_id(),
+                conversation_id=self.conversation_id,
+                agent_name=self._runtime_agent_name(),
+                agent_version=self.config.agent_version,
+                tools_fingerprint=tools_fingerprint,
+                model_name=str(getattr(native_model, "model", self.config.model_name) or ""),
+                state=agent.state,
+            )

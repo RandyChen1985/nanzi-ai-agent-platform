@@ -86,10 +86,12 @@ async def test_agentscope_native_tool_execution_flow():
     )
 
     with patch("app.services.ai.config.AgentConfigProvider.get_configured_llm", new_callable=AsyncMock) as mock_get_orch, \
+         patch("app.services.ai.config.AgentConfigProvider.get_fallback_llm", new_callable=AsyncMock, return_value=None), \
          patch("app.services.ai.config.AgentConfigProvider.get_synthesis_llm", new_callable=AsyncMock) as mock_get_syn, \
          patch("app.services.ai.tools.registry.ToolRegistry.get_runtime_tools", new_callable=AsyncMock) as mock_get_runtime_tools, \
          patch("app.services.ai.tools.registry.ToolRegistry.get_tools", AsyncMock(side_effect=AssertionError("legacy tools should not be loaded"))), \
          patch("app.services.ai.tools.registry.ToolRegistry.get_system_implicit_tools", return_value=[]), \
+         patch("app.services.ai.runners.general_agent_runner.get_local_workspace", new_callable=AsyncMock, return_value=None), \
          patch("app.services.config_service.ConfigService.get", new_callable=AsyncMock) as mock_config_get:
 
         mock_get_orch.return_value = native_handle

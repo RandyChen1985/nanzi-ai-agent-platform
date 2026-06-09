@@ -136,7 +136,7 @@ async def test_get_dataset_schema_tool():
         mock_export.return_value = "tables: [users]"
         
         # 使用 invoke 调用工具
-        result = await get_dataset_schema.ainvoke({"dataset_name": "user_stats"})
+        result = await get_dataset_schema.ainvoke({"keywords": "user_stats"})
         assert "--- Dataset: User Stats (user_stats) ---" in result
         assert "tables: [users]" in result
 

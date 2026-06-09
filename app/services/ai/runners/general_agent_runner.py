@@ -33,6 +33,10 @@ from app.services.ai.runtime.agentscope.agent_runtime import (
 )
 from app.services.ai.runtime.agentscope.chat import compat_to_runtime_messages, to_agentscope_messages
 from app.services.ai.runtime.agentscope.state_store import agent_state_store
+from app.services.ai.runtime.agentscope.event_stream import (
+    map_standard_agentscope_event,
+    new_native_stream_state,
+)
 from app.services.ai.runtime.agentscope.workspace import (
     build_workspace_toolkit,
     get_local_workspace,
@@ -72,6 +76,7 @@ class GeneralAgentRunner(BaseExecutor):
 
     def _runner_context(self, *, system_content: str, max_steps: int) -> Dict[str, Any]:
         return {
+            "runner_type": "general",
             "config": self.config.model_dump(),
             "debug_options": self.debug_options,
             "system_content": system_content,
@@ -337,7 +342,7 @@ class GeneralAgentRunner(BaseExecutor):
         else:
             inputs = to_agentscope_messages(compat_to_runtime_messages(runtime_messages[1:]))
 
-        state = self._new_agentscope_native_stream_state(
+        state = new_native_stream_state(
             system_content=system_content,
             max_steps=max_steps,
         )
@@ -418,28 +423,6 @@ class GeneralAgentRunner(BaseExecutor):
                 return [message]
         return []
 
-    def _new_agentscope_native_stream_state(
-        self,
-        *,
-        system_content: str = "",
-        max_steps: int = 5,
-    ) -> Dict[str, Any]:
-        return {
-            "tool_names": {},
-            "tool_args_text": {},
-            "tool_outputs": {},
-            "tool_data": {},
-            "tool_started_at": {},
-            "content_emitted": False,
-            "used_tools": False,
-            "synthesis_log_emitted": False,
-            "full_content": "",
-            "start_synthesis": time.time(),
-            "synthesis_recorded": False,
-            "system_content": system_content,
-            "max_steps": max_steps,
-        }
-
     async def _stream_agentscope_native_events(
         self,
         *,
@@ -455,133 +438,74 @@ class GeneralAgentRunner(BaseExecutor):
         tool_data: Dict[str, List[Dict[str, Any]]] = state.setdefault("tool_data", {})
         tool_started_at: Dict[str, float] = state["tool_started_at"]
 
-        async for event in event_stream:
-            event_type = str(getattr(event, "type", ""))
-            if event_type == "THINKING_BLOCK_DELTA":
-                yield {"type": "thinking", "status": "continuing"}
-                continue
+        async def on_tool_result_end(event: Any) -> AsyncGenerator[Dict[str, Any], None]:
+            tool_id = getattr(event, "tool_call_id", "")
+            tool_name = tool_names.get(tool_id, "")
+            raw_args = tool_args_text.get(tool_id, "") or "{}"
+            try:
+                tool_args = json.loads(raw_args)
+            except Exception:
+                tool_args = {"input": raw_args}
+            output = tool_outputs.get(tool_id, "")
+            if tool_data.get(tool_id):
+                output = {
+                    "text": output,
+                    "data_blocks": tool_data.get(tool_id, []),
+                }
+            duration_ms = (time.time() - tool_started_at.get(tool_id, time.time())) * 1000
+            result = self._build_tool_observation(
+                tool_id=tool_id,
+                tool_name=tool_name,
+                tool_args=tool_args,
+                tool_output=output,
+                duration_tool=duration_ms,
+                target_tool=next((t for t in tools if t.name == tool_name), None),
+                tool_index=0,
+            )
+            if result.get("log"):
+                yield result["log"]
+            if result.get("citation"):
+                yield result["citation"]
+            if result.get("trace"):
+                self.trace_buffer.append(result["trace"])
 
-            if event_type == "TOOL_CALL_START":
-                state["used_tools"] = True
-                tool_id = getattr(event, "tool_call_id", "")
-                tool_name = getattr(event, "tool_call_name", "")
-                tool_names[tool_id] = tool_name
-                tool_started_at[tool_id] = time.time()
+        async def on_text_block_delta(event: Any) -> AsyncGenerator[Dict[str, Any], None]:
+            if state["used_tools"] and not state["synthesis_log_emitted"]:
+                state["synthesis_log_emitted"] = True
                 yield {
                     "type": "log",
-                    "id": tool_id,
-                    "title": f"调用工具: {tool_name}",
-                    "details": "参数: {}",
-                    "status": "pending",
+                    "id": f"synthesis_native_{uuid.uuid4().hex[:8]}",
+                    "title": "📝 汇总工具结果",
+                    "details": "已获取所需数据，正在组织语言...",
+                    "status": "success",
                 }
-                continue
-
-            if event_type == "TOOL_CALL_DELTA":
-                tool_id = getattr(event, "tool_call_id", "")
-                tool_args_text[tool_id] = tool_args_text.get(tool_id, "") + str(getattr(event, "delta", ""))
-                continue
-
-            if event_type == "TOOL_RESULT_TEXT_DELTA":
-                tool_id = getattr(event, "tool_call_id", "")
-                tool_outputs[tool_id] = tool_outputs.get(tool_id, "") + str(getattr(event, "delta", ""))
-                continue
-
-            if event_type == "TOOL_RESULT_DATA_DELTA":
-                tool_id = getattr(event, "tool_call_id", "")
-                payload = {
-                    "block_id": getattr(event, "block_id", ""),
-                    "media_type": getattr(event, "media_type", ""),
-                    "data": getattr(event, "data", None),
-                    "url": getattr(event, "url", None),
-                }
-                tool_data.setdefault(tool_id, []).append(payload)
+                yield {"type": "thinking", "status": "continuing"}
+            if not state["content_emitted"]:
+                state["content_emitted"] = True
                 yield {
-                    "type": "tool_result_data",
-                    "tool_call_id": tool_id,
-                    **payload,
+                    "type": "log",
+                    "id": f"gen_start_{uuid.uuid4().hex[:8]}",
+                    "title": "✨ 开始生成回复",
+                    "status": "success",
                 }
-                continue
+            delta = str(getattr(event, "delta", ""))
+            state["full_content"] += delta
+            yield {"content": delta}
 
-            if event_type == "TOOL_RESULT_END":
-                tool_id = getattr(event, "tool_call_id", "")
-                tool_name = tool_names.get(tool_id, "")
-                raw_args = tool_args_text.get(tool_id, "") or "{}"
-                try:
-                    tool_args = json.loads(raw_args)
-                except Exception:
-                    tool_args = {"input": raw_args}
-                output = tool_outputs.get(tool_id, "")
-                if tool_data.get(tool_id):
-                    output = {
-                        "text": output,
-                        "data_blocks": tool_data.get(tool_id, []),
-                    }
-                duration_ms = (time.time() - tool_started_at.get(tool_id, time.time())) * 1000
-                result = self._build_tool_observation(
-                    tool_id=tool_id,
-                    tool_name=tool_name,
-                    tool_args=tool_args,
-                    tool_output=output,
-                    duration_tool=duration_ms,
-                    target_tool=next((t for t in tools if t.name == tool_name), None),
-                    tool_index=0,
-                )
-                if result.get("log"):
-                    yield result["log"]
-                if result.get("citation"):
-                    yield result["citation"]
-                if result.get("trace"):
-                    self.trace_buffer.append(result["trace"])
-                continue
-
-            if event_type == "REQUIRE_EXTERNAL_EXECUTION":
-                yield {
-                    "type": "error",
-                    "status": "error",
-                    "content": "当前版本尚未开放 AgentScope external execution 恢复接口，请改用 ASK 权限工具或平台托管工具执行。",
-                }
-                return
-
-            if event_type == "REQUIRE_USER_CONFIRM":
-                async for pending_chunk in self._register_pending_tool_interrupt(
-                    event=event,
-                    agent=agent,
-                    tools=tools,
-                    native_model=native_model,
-                    state=state,
-                    kind="permission",
-                    sse_type="permission_required",
-                ):
-                    yield pending_chunk
-                return
-
-            if event_type == "TEXT_BLOCK_DELTA":
-                if state["used_tools"] and not state["synthesis_log_emitted"]:
-                    state["synthesis_log_emitted"] = True
-                    yield {
-                        "type": "log",
-                        "id": f"synthesis_native_{uuid.uuid4().hex[:8]}",
-                        "title": "📝 汇总工具结果",
-                        "details": "已获取所需数据，正在组织语言...",
-                        "status": "success",
-                    }
-                    yield {"type": "thinking", "status": "continuing"}
-                if not state["content_emitted"]:
-                    state["content_emitted"] = True
-                    yield {
-                        "type": "log",
-                        "id": f"gen_start_{uuid.uuid4().hex[:8]}",
-                        "title": "✨ 开始生成回复",
-                        "status": "success",
-                    }
-                delta = str(getattr(event, "delta", ""))
-                state["full_content"] += delta
-                yield {"content": delta}
-                continue
-
-            if event_type == "EXCEED_MAX_ITERS":
-                yield {"content": GeneralChatPrompts.MAX_STEPS_REACHED}
-                return
+        async for event in event_stream:
+            async for chunk in map_standard_agentscope_event(
+                event,
+                state=state,
+                on_tool_result_end=on_tool_result_end,
+                on_text_block_delta=on_text_block_delta,
+                agent=agent,
+                runner=self,
+                tools=tools,
+                native_model=native_model,
+            ):
+                yield chunk
+                if chunk.get("type") == "error" or chunk.get("type") == "permission_required":
+                    return
 
         if state["full_content"] and not state["synthesis_recorded"]:
             state["synthesis_recorded"] = True
@@ -597,69 +521,6 @@ class GeneralAgentRunner(BaseExecutor):
                 execution_time_ms=(time.time() - state["start_synthesis"]) * 1000,
                 timestamp=datetime.fromtimestamp(state["start_synthesis"]),
             ))
-
-    async def _register_pending_tool_interrupt(
-        self,
-        *,
-        event: Any,
-        agent: Any,
-        tools: List[RuntimeToolSpec],
-        native_model: Any,
-        state: Dict[str, Any],
-        kind: str,
-        sse_type: str,
-    ) -> AsyncGenerator[Dict[str, Any], None]:
-        from app.services.ai.runtime.agentscope.confirmations import (
-            pending_agentscope_confirmations,
-        )
-
-        for tool_call in getattr(event, "tool_calls", []) or []:
-            tool_id = getattr(tool_call, "id", "") or f"call_{uuid.uuid4().hex[:8]}"
-            tool_name = getattr(tool_call, "name", "")
-            raw_args = getattr(tool_call, "input", "") or "{}"
-            try:
-                tool_args = json.loads(raw_args) if isinstance(raw_args, str) else raw_args
-            except Exception:
-                tool_args = {"input": raw_args}
-            if not isinstance(tool_args, dict):
-                tool_args = {"input": tool_args}
-            pending = await pending_agentscope_confirmations.register(
-                kind=kind,
-                agent=agent,
-                runner=self,
-                tools=tools,
-                native_model=native_model,
-                tool_call=tool_call,
-                reply_id=str(getattr(event, "reply_id", "")),
-                trace_id=self.trace_id,
-                user_id=self._runtime_user_id(),
-                conversation_id=self.conversation_id,
-                agent_name=self._runtime_agent_name(),
-                state=state,
-                runner_context=self._runner_context(
-                    system_content=state.get("system_content", ""),
-                    max_steps=int(state.get("max_steps", 5)),
-                ),
-            )
-            yield {
-                "type": sse_type,
-                "status": "pending",
-                "id": tool_id,
-                "permission_request_id": pending.request_id,
-                "reply_id": pending.reply_id,
-                "expires_in_seconds": 600,
-                "title": (
-                    f"需要确认工具调用: {tool_name}"
-                    if kind == "permission"
-                    else f"需要外部执行工具: {tool_name}"
-                ),
-                "details": f"参数: {json.dumps(tool_args, ensure_ascii=False)}",
-                "tool_call": {
-                    "id": tool_id,
-                    "name": tool_name,
-                    "args": tool_args,
-                },
-            }
 
     async def _resolve_pending_runtime(
         self,
