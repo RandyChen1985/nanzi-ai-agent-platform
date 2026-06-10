@@ -7,6 +7,7 @@ from app.services.ai.turn_classifier import (
     adapt_classification_for_agent,
     classify_turn_heuristic,
     classify_turn_from_intent,
+    resolve_turn_for_session,
     turn_type_label,
     should_inject_user_context,
 )
@@ -79,6 +80,77 @@ def test_classify_turn_from_intent_knowledge():
         entities=[],
     )
     result = classify_turn_from_intent(intent, can_do_data=True)
+    assert result.turn_type == TurnType.KNOWLEDGE
+    assert result.requires_knowledge_search is True
+
+
+def test_classify_turn_from_intent_data_query_on_non_data_agent():
+    intent = IntentResponse(
+        intent=IntentType.DATA_QUERY,
+        confidence=0.9,
+        reasoning="用户想查业务指标",
+        entities=[],
+    )
+    result = classify_turn_from_intent(intent, can_do_data=False)
+    assert result.turn_type == TurnType.GENERAL
+    assert result.intent == IntentType.DATA_QUERY
+    assert "无 data_query 能力" in result.reasoning
+
+
+@pytest.mark.asyncio
+async def test_resolve_turn_for_session_non_data_agent_uses_intent_llm_when_heuristic_misses():
+    with patch(
+        "app.services.ai.turn_classifier.intent_service.identify_intent",
+        AsyncMock(
+            return_value=IntentResponse(
+                intent=IntentType.KNOWLEDGE_BASE,
+                confidence=0.91,
+                reasoning="用户在询问处理指引",
+                entities=[],
+            )
+        ),
+    ) as mock_identify:
+        classification, intent_info, elapsed_ms = await resolve_turn_for_session(
+            "机房温度过高时应该注意什么",
+            [{"role": "user", "content": "机房温度过高时应该注意什么"}],
+            can_do_data=False,
+        )
+
+    mock_identify.assert_awaited_once()
+    assert classification.turn_type == TurnType.KNOWLEDGE
+    assert classification.requires_knowledge_search is True
+    assert classification.skip_intent_llm is False
+    assert intent_info.intent == IntentType.KNOWLEDGE_BASE
+    assert elapsed_ms >= 0
+
+
+@pytest.mark.asyncio
+async def test_resolve_turn_for_session_non_data_agent_skips_intent_llm_on_heuristic_hit():
+    with patch(
+        "app.services.ai.turn_classifier.intent_service.identify_intent",
+        AsyncMock(),
+    ) as mock_identify:
+        classification, intent_info, elapsed_ms = await resolve_turn_for_session(
+            "高温告警的标准处理流程是什么",
+            [{"role": "user", "content": "高温告警的标准处理流程是什么"}],
+            can_do_data=False,
+        )
+
+    mock_identify.assert_not_awaited()
+    assert classification.turn_type == TurnType.KNOWLEDGE
+    assert classification.skip_intent_llm is True
+    assert intent_info is None
+    assert elapsed_ms == 0.0
+
+
+def test_classify_turn_from_intent_knowledge_non_data_agent():
+    intent = IntentResponse(
+        intent=IntentType.KNOWLEDGE_BASE,
+        confidence=0.88,
+        reasoning="问 SOP",
+        entities=[],
+    )
+    result = classify_turn_from_intent(intent, can_do_data=False)
     assert result.turn_type == TurnType.KNOWLEDGE
     assert result.requires_knowledge_search is True
 

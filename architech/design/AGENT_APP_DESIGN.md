@@ -39,7 +39,7 @@
 - **入口**: `app/api/v1/endpoints/chat.py`
 - **核心服务**:
     - `AgentService`: 编排层，负责组装 Prompt、调用 LLM、执行工具。
-    - `DataQueryExecutor` / `GeneralChatExecutor`: 具体的执行器。
+    - `DataQueryExecutor` / `KnowledgeExecutor` / `AssistantExecutor`: 具体的执行器。
     - `RouterService`: 路由层。
 - **通信协议**: HTTP + SSE (text/event-stream)。
 

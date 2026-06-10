@@ -29,7 +29,7 @@
     - **单 Agent**: 走原有流程 (Direct Stream)。
     - **多 Agent** (且开关开启): 进入并行流程 (Parallel Execution)。
 3.  **并行执行**:
-    - 实例化多个 `GeneralChatExecutor`。
+    - 实例化多个 `AssistantExecutor`。
     - 使用 `asyncio.create_task` 启动每个 Executor。
     - **日志处理**: 由于 SSE 是单通道，需要拦截每个 Executor 的 `yield`，给日志加上 `[AgentName]` 前缀后转发给前端。
     - **结果捕获**: 收集每个 Executor 的最终文本输出（非流式部分）。

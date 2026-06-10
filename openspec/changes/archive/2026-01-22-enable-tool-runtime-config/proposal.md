@@ -9,4 +9,4 @@
 ## 拟议解决方案
 1.  **Schema 更新**：修改 `ChatConfig.tools` 和 `AIAgentVersion.tools`，以支持结构化配置对象 (`ToolConfigItem`) 而不仅仅是简单的字符串名称。
 2.  **UI/UX**：更新“工具设置”模态框，允许用户为每个工具选择“执行模型”和“温度”。
-3.  **执行器逻辑**：更新 `GeneralChatExecutor` 和 `ToolRegistry` 以遵循这些覆盖配置。在为会话初始化/获取工具时，如果存在配置覆盖，则该工具将配置有特定的 LLM。
+3.  **执行器逻辑**：更新 `AssistantExecutor` 和 `ToolRegistry` 以遵循这些覆盖配置。在为会话初始化/获取工具时，如果存在配置覆盖，则该工具将配置有特定的 LLM。

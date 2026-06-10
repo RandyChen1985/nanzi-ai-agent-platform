@@ -1,0 +1,202 @@
+"""KnowledgeAgentRunner：知识库问答专用执行链路。"""
+from __future__ import annotations
+
+import inspect
+import logging
+import time
+import uuid
+from typing import Any, AsyncGenerator, Dict, List
+from app.services.ai.config import AgentConfigProvider
+from app.services.ai.executors.common import (
+    convert_history_to_messages,
+    normalize_messages_for_llm,
+    tools_include_named,
+)
+from app.services.ai.executors.prompts import KnowledgeChatPrompts
+from app.services.ai.runners.assistant_agent_runner import AssistantAgentRunner
+from app.services.ai.runtime.agentscope.compat import HumanMessage, SystemMessage
+from app.services.ai.runtime.agentscope.tools import RuntimeToolSpec, runtime_tool_spec_from_legacy_tool
+from app.services.ai.tools.registry import ToolRegistry
+
+logger = logging.getLogger(__name__)
+
+
+class KnowledgeAgentRunner(AssistantAgentRunner):
+    """知识库问答 Runner：自动检索 + AgentScope ReAct，可扩展挂载业务工具。"""
+
+    def _runtime_agent_name(self) -> str:
+        return self.config.agent_name or "KnowledgeAgent"
+
+    async def _resolve_knowledge_tools(self) -> List[RuntimeToolSpec]:
+        configured_tools = self.config.tools or []
+        tools: List[RuntimeToolSpec] = []
+        if configured_tools:
+            tools = await ToolRegistry.get_runtime_tools(configured_tools)
+
+        system_tools = ToolRegistry.get_system_implicit_tools()
+        if system_tools:
+            tools.extend(
+                runtime_tool_spec_from_legacy_tool(tool, source_type="system")
+                for tool in system_tools
+            )
+
+        if not tools_include_named(tools, "search_knowledge_base"):
+            kb_tool = await ToolRegistry.get_runtime_tool("search_knowledge_base")
+            if kb_tool:
+                tools.append(kb_tool)
+        return tools
+
+    async def _auto_invoke_search_knowledge_base(
+        self,
+        *,
+        query: str,
+        tools: List[RuntimeToolSpec],
+    ) -> AsyncGenerator[Dict[str, Any], None]:
+        """ReAct 开始前平台侧自动执行 search_knowledge_base。"""
+        kb_spec = next((tool for tool in tools if tool.name == "search_knowledge_base"), None)
+        if kb_spec is None:
+            logger.warning("[KnowledgeAgentRunner] search_knowledge_base tool missing; skip auto prefetch")
+            return
+
+        tool_id = f"kb_prefetch_{uuid.uuid4().hex[:8]}"
+        started_at = time.time()
+        yield {
+            "type": "log",
+            "id": tool_id,
+            "title": "自动检索知识库",
+            "details": f"平台自动调用 search_knowledge_base(query={query or 'None'})",
+            "status": "pending",
+            "category": "tool",
+            "started_at": int(started_at * 1000),
+        }
+
+        output = ""
+        try:
+            result = kb_spec.callable(query=query or "")
+            if inspect.isawaitable(result):
+                result = await result
+            output = str(result or "")
+        except Exception as exc:
+            logger.error("[KnowledgeAgentRunner] Auto search_knowledge_base failed: %s", exc)
+            output = f"[TOOL_ERROR] 自动检索知识库失败: {exc}"
+
+        duration_ms = (time.time() - started_at) * 1000
+        self._increment_step()
+        observation = self._build_tool_observation(
+            tool_id=tool_id,
+            tool_name="search_knowledge_base",
+            tool_args={"query": query},
+            tool_output=output,
+            duration_tool=duration_ms,
+            target_tool=kb_spec,
+            tool_index=0,
+        )
+        if observation.get("trace"):
+            self.trace_buffer.append(observation["trace"])
+        yield {
+            "type": "log",
+            "id": tool_id,
+            "title": "工具完成: search_knowledge_base",
+            "details": observation.get("log", {}).get("details", output[:500]),
+            "status": "success",
+            "category": "tool",
+            "execution_time_ms": duration_ms,
+        }
+        if observation.get("citation"):
+            yield observation["citation"]
+        yield {
+            "__knowledge_output__": observation.get("final_tool_message_content") or output,
+        }
+
+    async def execute(
+        self,
+        history: List[Dict[str, str]],
+    ) -> AsyncGenerator[Dict[str, Any], None]:
+        from app.services.ai.multimodal_support import (
+            ensure_multimodal_compatible,
+            resolve_runtime_model_name,
+        )
+        from app.services.config_service import ConfigService
+
+        model_name = resolve_runtime_model_name(self.config, prefer_synthesis=True)
+        incompatible_msg = await ensure_multimodal_compatible(history, model_name)
+        if incompatible_msg:
+            yield {"content": incompatible_msg, "status": "error"}
+            return
+
+        tools = await self._resolve_knowledge_tools()
+        if not tools_include_named(tools, "search_knowledge_base"):
+            yield {
+                "type": "error",
+                "status": "error",
+                "content": "知识库工具 search_knowledge_base 不可用，无法执行知识库问答。",
+            }
+            return
+
+        user_question = next(
+            (str(message.get("content") or "") for message in reversed(history) if message.get("role") == "user"),
+            "",
+        ).strip()
+
+        system_content = self.config.system_prompt or ""
+        system_content = f"{KnowledgeChatPrompts.TURN_SYSTEM_HINT}\n\n{system_content}"
+
+        prefetched_knowledge_output: str | None = None
+        async for chunk in self._auto_invoke_search_knowledge_base(
+            query=user_question,
+            tools=tools,
+        ):
+            if chunk.get("__knowledge_output__") is not None:
+                prefetched_knowledge_output = str(chunk["__knowledge_output__"])
+                continue
+            yield chunk
+
+        if prefetched_knowledge_output:
+            system_content += (
+                "\n\n"
+                + KnowledgeChatPrompts.prefetched_knowledge_context(
+                    user_question,
+                    prefetched_knowledge_output,
+                )
+            )
+
+        runtime_messages = [SystemMessage(content=system_content)]
+        runtime_messages.extend(convert_history_to_messages(history))
+        runtime_messages = normalize_messages_for_llm(runtime_messages)
+
+        max_steps_str = await ConfigService.get("agent_max_iterations")
+        max_steps = int(max_steps_str) if max_steps_str else 5
+
+        native_system_content = (
+            f"{KnowledgeChatPrompts.SEARCH_CORRECTION_MSG}\n\n{system_content}"
+        )
+
+        if not all(isinstance(tool, RuntimeToolSpec) for tool in tools):
+            yield {
+                "type": "error",
+                "status": "error",
+                "content": "Knowledge 工具链必须使用 AgentScope RuntimeToolSpec。",
+            }
+            return
+
+        native_model_handle = await AgentConfigProvider.get_configured_llm(
+            streaming=True,
+            config=self.config,
+        )
+        native_model = getattr(native_model_handle, "native_model", None)
+        if native_model is None:
+            yield {
+                "type": "error",
+                "status": "error",
+                "content": "当前模型适配器未提供 AgentScope native_model，无法执行知识库 AgentScope 原生工具链。",
+            }
+            return
+
+        async for chunk in self._execute_with_agentscope_native_agent(
+            native_model=native_model,
+            tools=tools,
+            system_content=native_system_content,
+            runtime_messages=runtime_messages,
+            max_steps=max_steps,
+        ):
+            yield chunk

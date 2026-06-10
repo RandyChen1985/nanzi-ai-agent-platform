@@ -3,7 +3,7 @@ import asyncio
 from unittest.mock import MagicMock, AsyncMock, patch
 from pydantic import BaseModel
 from app.services.ai.runtime.agentscope.compat import AIMessage
-from app.services.ai.executors.chat_executor import GeneralChatExecutor
+from app.services.ai.executors.assistant_executor import AssistantExecutor
 from app.schemas.agent import ChatConfig
 
 # --- Mocks ---
@@ -76,9 +76,9 @@ def mock_tool():
 
 @pytest.mark.asyncio
 async def test_general_chat_executor_delegates_to_general_agent_runner(chat_config):
-    """Executor 只做接入壳，实际执行委托给 GeneralAgentRunner。"""
+    """Executor 只做接入壳，实际执行委托给 AssistantAgentRunner。"""
     trace_buffer = []
-    executor = GeneralChatExecutor(
+    executor = AssistantExecutor(
         config=chat_config,
         trace_id="trace-runner",
         trace_buffer=trace_buffer,
@@ -95,7 +95,7 @@ async def test_general_chat_executor_delegates_to_general_agent_runner(chat_conf
 
     runner_instance.execute = fake_execute
 
-    with patch("app.services.ai.executors.chat_executor.GeneralAgentRunner", return_value=runner_instance) as runner_cls:
+    with patch("app.services.ai.executors.assistant_executor.AssistantAgentRunner", return_value=runner_instance) as runner_cls:
         events = []
         async for chunk in executor.execute([{"role": "user", "content": "hello"}]):
             events.append(chunk)
@@ -117,7 +117,7 @@ async def test_general_chat_executor_delegates_to_general_agent_runner(chat_conf
 async def test_simple_chat_no_tools(chat_config):
     """测试无工具的简单对话模式"""
     chat_config.tools = [] # Disable tools
-    executor = GeneralChatExecutor(config=chat_config, trace_id="test-trace-1", trace_buffer=[])
+    executor = AssistantExecutor(config=chat_config, trace_id="test-trace-1", trace_buffer=[])
 
     # Mock LLM streaming response
     mock_chunks = [
@@ -150,7 +150,7 @@ async def test_general_chat_injects_route_hints_as_weak_system_hint(chat_config)
             captured["messages"] = messages
             yield AIMessage(content="ok")
 
-    executor = GeneralChatExecutor(
+    executor = AssistantExecutor(
         config=chat_config,
         trace_id="test-route-hints",
         trace_buffer=[],
@@ -179,7 +179,7 @@ async def test_general_chat_injects_route_hints_as_weak_system_hint(chat_config)
 async def test_standard_tool_call(chat_config, mock_tool):
     """系统隐式 legacy 工具应转 RuntimeToolSpec，不再触发手写 ReAct。"""
     chat_config.tools = []
-    executor = GeneralChatExecutor(config=chat_config, trace_id="test-trace-2", trace_buffer=[])
+    executor = AssistantExecutor(config=chat_config, trace_id="test-trace-2", trace_buffer=[])
 
     class NoNativeModelHandle:
         native_model = None
@@ -210,7 +210,7 @@ async def test_general_runner_runtime_tool_specs_do_not_fallback_to_legacy_tools
     """RuntimeToolSpec 工具链缺 native_model 时应显式失败，不再回落 legacy 工具执行。"""
     from app.services.ai.runtime.agentscope.tools import RuntimeToolSpec
 
-    executor = GeneralChatExecutor(config=chat_config, trace_id="test-runtime-tool", trace_buffer=[])
+    executor = AssistantExecutor(config=chat_config, trace_id="test-runtime-tool", trace_buffer=[])
 
     async def runtime_tool(query: str):
         return "Runtime Tool Result"
@@ -260,7 +260,7 @@ async def test_general_runner_uses_agentscope_native_agent_for_runtime_tools(cha
     from agentscope.model import ChatModelBase, ChatResponse
 
     from app.core.llm.client import AgentScopeLLMHandle
-    from app.services.ai.executors.prompts import GeneralChatPrompts
+    from app.services.ai.executors.prompts import AssistantPrompts
     from app.services.ai.runtime.agentscope.tools import RuntimeToolSpec
 
     class FakeCredential(CredentialBase):
@@ -316,7 +316,7 @@ async def test_general_runner_uses_agentscope_native_agent_for_runtime_tools(cha
         temperature=0.0,
         streaming=True,
     )
-    executor = GeneralChatExecutor(config=chat_config, trace_id="test-native-general", trace_buffer=[])
+    executor = AssistantExecutor(config=chat_config, trace_id="test-native-general", trace_buffer=[])
 
     with patch("app.services.ai.config.AgentConfigProvider.get_configured_llm", AsyncMock(return_value=handle)), \
          patch("app.services.ai.tools.registry.ToolRegistry.get_runtime_tools", AsyncMock(return_value=[runtime_spec])), \
@@ -340,7 +340,7 @@ async def test_general_runner_recovers_reply_when_text_block_delta_missing(chat_
     from agentscope.state import AgentState
     from types import SimpleNamespace
 
-    from app.services.ai.runners.general_agent_runner import GeneralAgentRunner
+    from app.services.ai.runners.assistant_agent_runner import AssistantAgentRunner
     from app.services.ai.runtime.agentscope.event_stream import new_native_stream_state
 
     class FakeAgent:
@@ -377,7 +377,7 @@ async def test_general_runner_recovers_reply_when_text_block_delta_missing(chat_
         )
         yield SimpleNamespace(type="REPLY_END", reply_id="r1", session_id="s1")
 
-    runner = GeneralAgentRunner(
+    runner = AssistantAgentRunner(
         config=chat_config,
         trace_id="test-missed-text-delta",
         trace_buffer=[],
@@ -410,7 +410,7 @@ async def test_general_runner_synthesis_fallback_when_no_text_and_no_context(cha
     from agentscope.state import AgentState
     from types import SimpleNamespace
 
-    from app.services.ai.runners.general_agent_runner import GeneralAgentRunner
+    from app.services.ai.runners.assistant_agent_runner import AssistantAgentRunner
     from app.services.ai.runtime.agentscope.compat import AIMessage
     from app.services.ai.runtime.agentscope.event_stream import new_native_stream_state
 
@@ -436,7 +436,7 @@ async def test_general_runner_synthesis_fallback_when_no_text_and_no_context(cha
         async def astream(self, messages):
             yield AIMessage(content="synthesis fallback answer")
 
-    runner = GeneralAgentRunner(
+    runner = AssistantAgentRunner(
         config=chat_config,
         trace_id="test-synthesis-fallback",
         trace_buffer=[],
@@ -473,7 +473,7 @@ async def test_general_runner_synthesis_after_transitional_text_and_more_tools(c
     from agentscope.state import AgentState
     from types import SimpleNamespace
 
-    from app.services.ai.runners.general_agent_runner import GeneralAgentRunner
+    from app.services.ai.runners.assistant_agent_runner import AssistantAgentRunner
     from app.services.ai.runtime.agentscope.compat import AIMessage
     from app.services.ai.runtime.agentscope.event_stream import new_native_stream_state
 
@@ -514,7 +514,7 @@ async def test_general_runner_synthesis_after_transitional_text_and_more_tools(c
         async def astream(self, messages):
             yield AIMessage(content="未能获取实时企业数据，建议使用官方 API 查询。")
 
-    runner = GeneralAgentRunner(
+    runner = AssistantAgentRunner(
         config=chat_config,
         trace_id="test-partial-then-tools",
         trace_buffer=[],
@@ -548,7 +548,7 @@ async def test_general_runner_synthesis_when_empty_delta_after_tools_clears_pend
     from agentscope.state import AgentState
     from types import SimpleNamespace
 
-    from app.services.ai.runners.general_agent_runner import GeneralAgentRunner
+    from app.services.ai.runners.assistant_agent_runner import AssistantAgentRunner
     from app.services.ai.runtime.agentscope.compat import AIMessage
     from app.services.ai.runtime.agentscope.event_stream import new_native_stream_state
 
@@ -593,7 +593,7 @@ async def test_general_runner_synthesis_when_empty_delta_after_tools_clears_pend
         async def astream(self, messages):
             yield AIMessage(content="synthesis after empty think delta")
 
-    runner = GeneralAgentRunner(
+    runner = AssistantAgentRunner(
         config=chat_config,
         trace_id="test-empty-delta-after-tools",
         trace_buffer=[],
@@ -626,7 +626,7 @@ async def test_general_runner_static_fallback_when_synthesis_returns_empty(chat_
     from agentscope.state import AgentState
     from types import SimpleNamespace
 
-    from app.services.ai.runners.general_agent_runner import GeneralAgentRunner
+    from app.services.ai.runners.assistant_agent_runner import AssistantAgentRunner
     from app.services.ai.runtime.agentscope.compat import AIMessage
     from app.services.ai.runtime.agentscope.event_stream import new_native_stream_state
 
@@ -662,7 +662,7 @@ async def test_general_runner_static_fallback_when_synthesis_returns_empty(chat_
         async def astream(self, messages):
             yield AIMessage(content="")
 
-    runner = GeneralAgentRunner(
+    runner = AssistantAgentRunner(
         config=chat_config,
         trace_id="test-static-fallback",
         trace_buffer=[],
@@ -696,7 +696,7 @@ async def test_general_runner_restored_state_only_sends_latest_user_message(chat
     from agentscope.state import AgentState
 
     from app.core.llm.client import AgentScopeLLMHandle
-    from app.services.ai.runners.general_agent_runner import GeneralAgentRunner
+    from app.services.ai.runners.assistant_agent_runner import AssistantAgentRunner
     from app.services.ai.runtime.agentscope.agent_runtime import build_tools_fingerprint
     from app.services.ai.runtime.agentscope.state_store import RuntimeStateEnvelope, SCHEMA_VERSION
     from app.services.ai.runtime.agentscope.tools import RuntimeToolSpec
@@ -747,7 +747,7 @@ async def test_general_runner_restored_state_only_sends_latest_user_message(chat
         temperature=0.0,
         streaming=True,
     )
-    runner = GeneralAgentRunner(
+    runner = AssistantAgentRunner(
         config=chat_config,
         trace_id="test-state-restore-inputs",
         trace_buffer=[],
@@ -769,8 +769,8 @@ async def test_general_runner_restored_state_only_sends_latest_user_message(chat
          patch("app.services.ai.tools.registry.ToolRegistry.get_runtime_tools", AsyncMock(return_value=[runtime_spec])), \
          patch("app.services.ai.tools.registry.ToolRegistry.get_system_implicit_tools", return_value=[]), \
          patch("app.services.config_service.ConfigService.get", AsyncMock(return_value="5")), \
-         patch("app.services.ai.runners.general_agent_runner.agent_state_store.load", AsyncMock(return_value=envelope)), \
-         patch("app.services.ai.runners.general_agent_runner.agent_state_store.save", AsyncMock()), \
+         patch("app.services.ai.runners.assistant_agent_runner.agent_state_store.load", AsyncMock(return_value=envelope)), \
+         patch("app.services.ai.runners.assistant_agent_runner.agent_state_store.save", AsyncMock()), \
          patch.object(runner, "_build_native_agent", AsyncMock(return_value=FakeAgent(restored_state))):
         events = []
         async for chunk in runner.execute([
@@ -793,7 +793,7 @@ async def test_general_runner_emits_permission_required_for_agentscope_ask_tool(
     from agentscope.model import ChatModelBase, ChatResponse
 
     from app.core.llm.client import AgentScopeLLMHandle
-    from app.services.ai.runners.general_agent_runner import GeneralAgentRunner
+    from app.services.ai.runners.assistant_agent_runner import AssistantAgentRunner
     from app.services.ai.runtime.agentscope.tools import RuntimeToolSpec
 
     class FakeCredential(CredentialBase):
@@ -848,7 +848,7 @@ async def test_general_runner_emits_permission_required_for_agentscope_ask_tool(
         temperature=0.0,
         streaming=True,
     )
-    executor = GeneralChatExecutor(config=chat_config, trace_id="test-native-ask", trace_buffer=[])
+    executor = AssistantExecutor(config=chat_config, trace_id="test-native-ask", trace_buffer=[])
 
     with patch("app.services.ai.config.AgentConfigProvider.get_configured_llm", AsyncMock(return_value=handle)), \
          patch("app.services.ai.tools.registry.ToolRegistry.get_runtime_tools", AsyncMock(return_value=[runtime_spec])), \
@@ -951,7 +951,7 @@ async def test_general_runner_resumes_agentscope_ask_tool_after_confirmation(cha
         temperature=0.0,
         streaming=True,
     )
-    executor = GeneralChatExecutor(config=chat_config, trace_id="test-native-resume", trace_buffer=[])
+    executor = AssistantExecutor(config=chat_config, trace_id="test-native-resume", trace_buffer=[])
 
     with patch("app.services.ai.config.AgentConfigProvider.get_configured_llm", AsyncMock(return_value=handle)), \
          patch("app.services.ai.tools.registry.ToolRegistry.get_runtime_tools", AsyncMock(return_value=[runtime_spec])), \
@@ -1053,7 +1053,7 @@ async def test_agent_service_resumes_agentscope_ask_from_snapshot(chat_config):
         temperature=0.0,
         streaming=True,
     )
-    executor = GeneralChatExecutor(
+    executor = AssistantExecutor(
         config=chat_config,
         trace_id="test-native-resume-snapshot",
         trace_buffer=[],
@@ -1065,7 +1065,7 @@ async def test_agent_service_resumes_agentscope_ask_from_snapshot(chat_config):
          patch("app.services.ai.tools.registry.ToolRegistry.get_runtime_tools", AsyncMock(return_value=[runtime_spec])), \
          patch("app.services.ai.tools.registry.ToolRegistry.get_system_implicit_tools", return_value=[]), \
          patch("app.services.config_service.ConfigService.get", AsyncMock(return_value="5")), \
-         patch("app.services.ai.runners.general_agent_runner.get_local_workspace", AsyncMock(return_value=None)), \
+         patch("app.services.ai.runners.assistant_agent_runner.get_local_workspace", AsyncMock(return_value=None)), \
          patch("app.services.memory_config_service.MemoryConfigService.get_bool", AsyncMock(return_value=False)):
         events = []
         async for chunk in executor.execute([{"role": "user", "content": "Send snapshot"}]):
@@ -1091,14 +1091,14 @@ async def test_agent_service_resumes_agentscope_ask_from_snapshot(chat_config):
 
 
 @pytest.mark.asyncio
-async def test_general_runner_knowledge_guard_uses_agentscope_native_agent(chat_config):
-    """知识库强制检索轮次也应走 AgentScope 原生 Agent，不再回落手写 ReAct。"""
+async def test_knowledge_runner_uses_agentscope_native_agent(chat_config):
+    """KnowledgeAgentRunner 应自动检索知识库并走 AgentScope 原生 Agent。"""
     from agentscope.credential import CredentialBase
     from agentscope.message import TextBlock, ToolCallBlock
     from agentscope.model import ChatModelBase, ChatResponse
 
     from app.core.llm.client import AgentScopeLLMHandle
-    from app.services.ai.runners.general_agent_runner import GeneralAgentRunner
+    from app.services.ai.runners.knowledge_agent_runner import KnowledgeAgentRunner
     from app.services.ai.runtime.agentscope.tools import RuntimeToolSpec
 
     class FakeCredential(CredentialBase):
@@ -1145,26 +1145,27 @@ async def test_general_runner_knowledge_guard_uses_agentscope_native_agent(chat_
     handle = AgentScopeLLMHandle(
         native_model=FakeModel(
             credential=FakeCredential(),
-            model="fake-native-general",
+            model="fake-native-knowledge",
             parameters=FakeModel.Parameters(),
             stream=False,
             max_retries=0,
         ),
-        model_name="fake-native-general",
+        model_name="fake-native-knowledge",
         temperature=0.0,
         streaming=True,
     )
-    runner = GeneralAgentRunner(config=chat_config, trace_id="test-native-kb", trace_buffer=[])
-    runner._requires_knowledge_search = True
+    runner = KnowledgeAgentRunner(config=chat_config, trace_id="test-native-kb", trace_buffer=[])
 
     with patch("app.services.ai.config.AgentConfigProvider.get_configured_llm", AsyncMock(return_value=handle)), \
          patch("app.services.ai.tools.registry.ToolRegistry.get_runtime_tools", AsyncMock(return_value=[runtime_spec])), \
          patch("app.services.ai.tools.registry.ToolRegistry.get_system_implicit_tools", return_value=[]), \
+         patch("app.services.ai.runners.assistant_agent_runner.get_local_workspace", AsyncMock(return_value=None)), \
          patch("app.services.config_service.ConfigService.get", AsyncMock(return_value="5")):
         events = []
         async for chunk in runner.execute([{"role": "user", "content": "知识库问题"}]):
             events.append(chunk)
 
+    assert any(e.get("title") == "自动检索知识库" for e in events)
     assert any(e.get("title", "").startswith("调用工具: search_knowledge_base") for e in events)
     assert "knowledge final" in "".join(
         e["content"] for e in events if "content" in e and "type" not in e
@@ -1179,7 +1180,7 @@ async def test_general_runner_memory_guard_uses_agentscope_native_agent(chat_con
     from agentscope.model import ChatModelBase, ChatResponse
 
     from app.core.llm.client import AgentScopeLLMHandle
-    from app.services.ai.runners.general_agent_runner import GeneralAgentRunner
+    from app.services.ai.runners.assistant_agent_runner import AssistantAgentRunner
     from app.services.ai.runtime.agentscope.tools import RuntimeToolSpec
 
     class FakeCredential(CredentialBase):
@@ -1236,7 +1237,7 @@ async def test_general_runner_memory_guard_uses_agentscope_native_agent(chat_con
         temperature=0.0,
         streaming=True,
     )
-    runner = GeneralAgentRunner(config=chat_config, trace_id="test-native-memory", trace_buffer=[])
+    runner = AssistantAgentRunner(config=chat_config, trace_id="test-native-memory", trace_buffer=[])
 
     with patch("app.services.ai.config.AgentConfigProvider.get_configured_llm", AsyncMock(return_value=handle)), \
          patch("app.services.ai.tools.registry.ToolRegistry.get_runtime_tools", AsyncMock(return_value=[runtime_spec])), \
@@ -1256,7 +1257,7 @@ async def test_general_runner_memory_guard_uses_agentscope_native_agent(chat_con
 @pytest.mark.asyncio
 async def test_general_runner_runtime_tools_require_agentscope_native_model(chat_config):
     """RuntimeToolSpec 工具链缺少 native_model 时应显式报错，而不是静默回落手写 ReAct。"""
-    from app.services.ai.runners.general_agent_runner import GeneralAgentRunner
+    from app.services.ai.runners.assistant_agent_runner import AssistantAgentRunner
     from app.services.ai.runtime.agentscope.tools import RuntimeToolSpec
 
     async def test_tool(query: str):
@@ -1281,7 +1282,7 @@ async def test_general_runner_runtime_tools_require_agentscope_native_model(chat
         def bind_tools(self, tools):
             raise AssertionError("LangChain bind_tools fallback should not run")
 
-    runner = GeneralAgentRunner(config=chat_config, trace_id="test-native-required", trace_buffer=[])
+    runner = AssistantAgentRunner(config=chat_config, trace_id="test-native-required", trace_buffer=[])
 
     with patch("app.services.ai.config.AgentConfigProvider.get_configured_llm", AsyncMock(return_value=NoNativeModelHandle())), \
          patch("app.services.ai.tools.registry.ToolRegistry.get_runtime_tools", AsyncMock(return_value=[runtime_spec])), \
@@ -1329,7 +1330,7 @@ async def test_agent_service_resume_permission_returns_error_for_missing_request
 @pytest.mark.asyncio
 async def test_xml_tool_call_parsing(chat_config, mock_tool):
     """旧手写 ReAct 的 XML function_calls 解析已移除，不再执行 legacy tool。"""
-    executor = GeneralChatExecutor(config=chat_config, trace_id="test-trace-3", trace_buffer=[])
+    executor = AssistantExecutor(config=chat_config, trace_id="test-trace-3", trace_buffer=[])
 
     class NoNativeModelHandle:
         native_model = None
@@ -1358,10 +1359,10 @@ async def test_max_steps_limit(chat_config, mock_tool):
     from agentscope.model import ChatModelBase, ChatResponse
 
     from app.core.llm.client import AgentScopeLLMHandle
-    from app.services.ai.executors.prompts import GeneralChatPrompts
+    from app.services.ai.executors.prompts import AssistantPrompts
     from app.services.ai.runtime.agentscope.tools import RuntimeToolSpec
 
-    executor = GeneralChatExecutor(config=chat_config, trace_id="test-trace-5", trace_buffer=[])
+    executor = AssistantExecutor(config=chat_config, trace_id="test-trace-5", trace_buffer=[])
 
     class FakeCredential(CredentialBase):
         @classmethod
@@ -1420,14 +1421,14 @@ async def test_max_steps_limit(chat_config, mock_tool):
         async for chunk in executor.execute([{"role": "user", "content": "Loop"}]):
             events.append(chunk)
 
-    assert any(GeneralChatPrompts.MAX_STEPS_REACHED in event.get("content", "") for event in events)
+    assert any(AssistantPrompts.MAX_STEPS_REACHED in event.get("content", "") for event in events)
 
 
 @pytest.mark.asyncio
 async def test_chat_executor_simple_mode_retries_on_stream_error(chat_config):
     """无工具模式下流式 transient 失败应自动重试。"""
     chat_config.tools = []
-    executor = GeneralChatExecutor(config=chat_config, trace_id="test-chat-retry", trace_buffer=[])
+    executor = AssistantExecutor(config=chat_config, trace_id="test-chat-retry", trace_buffer=[])
 
     stream_calls = {"count": 0}
 

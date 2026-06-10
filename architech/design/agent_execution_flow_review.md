@@ -1,7 +1,7 @@
 # 智能体执行流程架构评审
 
-> 文档日期：2026-05-30（评审记录）；2026-06-01 更新 ChatBI 请求类别拆分；2026-06-02 更新路由通用 hint 消费边界
-> 范围：EmbedChat -> AgentService -> Dispatcher -> Executors（Data / GeneralChat / RAG / OpenClaw）
+> 文档日期：2026-05-30（评审记录）；2026-06-01 更新 ChatBI 请求类别拆分；2026-06-02 更新路由通用 hint 消费边界；2026-06-09 更新 Assistant / Knowledge 独立 Executor
+> 范围：EmbedChat -> AgentService -> Dispatcher -> Executors（Data / Knowledge / Assistant / RAG / OpenClaw）
 > 关联改动：`turn_classifier.py` 通用化、`data_query_turn_classifier.py`、Dispatcher 只做执行器选择、DataQueryExecutor 内部请求类别分析
 
 **规范文档（请以代码同步维护）**：
@@ -30,15 +30,16 @@ flowchart TB
 
     subgraph EX["Executor"]
         D["DataQueryExecutor"]
-        G["GeneralChatExecutor"]
+        K["KnowledgeExecutor"]
+        A["AssistantExecutor"]
         R["RAGExecutor"]
         O["OpenClawExecutor"]
     end
 
     U --> M
     M --> CM --> INJ --> DP
-    DP --> D & G & R & O
-    D & G & R & O --> SSE["流式 content / log"]
+    DP --> D & K & A & R & O
+    D & K & A & R & O --> SSE["流式 content / log"]
 ```
 
 **一轮请求的主路径**：Redis 读历史 -> 路由选智能体 -> 注入上下文 -> Dispatcher 选 Executor -> ReAct/合成 -> 写回 Redis + Trace。
@@ -46,8 +47,8 @@ flowchart TB
 当前分类边界：
 
 - `TurnClassification` 是通用会话请求分类，只表达 `DATA_QUERY_REQUEST / CONTEXT_ACTION / SKILL_EXECUTION / META_ACTION / GENERAL / KNOWLEDGE` 等跨执行器概念。
-- `shared_turn` 只给非 ChatBI 执行器复用通用分类，避免重复意图调用；ChatBI 不再消费 `shared_turn` 决定查数流程。
-- 路由层输出的 `turn_labels / relation_to_previous / user_action_type` 是通用 hint，可被 executor 参考；当前 General 只把它注入为弱提示词，不做硬分支。
+- `shared_turn` 由 `resolve_turn_for_session` 统一产出（启发式 + 意图 LLM），供 Dispatcher 与各 Executor 复用，避免重复意图调用。
+- 路由层输出的 `turn_labels / relation_to_previous / user_action_type` 是通用 hint，可被 Assistant 参考；当前仅把它注入为弱提示词，不做硬分支。
 - ChatBI 专用请求类别由 `DataQueryTurnClassifier` 在 `DataQueryExecutor` 内部执行，结果为「新数据查询 / 复用上一轮结果 / 上下文动作 / 技能执行」。
 
 ---
@@ -59,11 +60,11 @@ flowchart TB
 | 类型 | 含义 | 典型用户说法 | 主要消费者 |
 |------|------|--------------|------------|
 | `DATA_QUERY_REQUEST` | 数据查询类请求 | 「查用户列表」「查 PUE 并可视化」 | AgentService 日志、上下文注入裁剪 |
-| `CONTEXT_ACTION` | 对已有上下文做动作 | 「保存这个结果」「导出上面表格」 | GeneralChat/Knowledge 类执行器 |
-| `SKILL_EXECUTION` | 显式使用技能 | 「使用用户列表查询技能」 | GeneralChat/技能护栏 |
-| `META_ACTION` | 创建/保存技能等元操作 | 「把流程保存为技能」 | GeneralChatExecutor |
-| `KNOWLEDGE` | 知识库/SOP | 「处理流程是什么」 | GeneralChatExecutor，强制 `search_knowledge_base` |
-| `GENERAL` | 闲聊/通用 | 「你好」 | GeneralChatExecutor |
+| `CONTEXT_ACTION` | 对已有上下文做动作 | 「保存这个结果」「导出上面表格」 | Assistant / Knowledge 类执行器 |
+| `SKILL_EXECUTION` | 显式使用技能 | 「使用用户列表查询技能」 | DataQuery / Assistant |
+| `META_ACTION` | 创建/保存技能等元操作 | 「把流程保存为技能」 | AssistantExecutor |
+| `KNOWLEDGE` | 知识库/SOP | 「处理流程是什么」 | **KnowledgeExecutor**（自动 `search_knowledge_base`） |
+| `GENERAL` | 通用助手 | 「你好」、工具调用、元操作等 | **AssistantExecutor** |
 
 ### 2.2 ChatBI 专用请求类别（`data_query_turn_classifier.py`）
 
@@ -87,14 +88,15 @@ flowchart TD
     A["用户本轮消息"] --> B{"engine_type?"}
     B -->|"RAGFLOW"| R["RAGExecutor"]
     B -->|"OPENCLAW"| O["OpenClawExecutor"]
-    B -->|"默认"| C{"agent 有 data_query 能力?"}
-    C -->|"是"| D["DataQueryExecutor"]
-    C -->|"否"| H["resolve_turn_for_session 通用分类"]
-    H --> G["GeneralChatExecutor"]
+    B -->|"LOCAL"| H["resolve_turn_for_session<br/>启发式 + 意图 LLM"]
+    H -->|"KNOWLEDGE"| K["KnowledgeExecutor"]
+    H -->|"其他 + data_query 能力"| D["DataQueryExecutor"]
+    H -->|"其他"| AS["AssistantExecutor"]
     D --> Q["DataQueryTurnClassifier"]
     Q --> N["新数据查询: Schema -> SQL -> 汇总"]
     Q --> P["复用上一轮结果: 跳过 Schema/SQL -> 合成"]
     Q --> A2["上下文动作: 注入上一轮结果并放宽查库护栏"]
+    K --> KB["自动 search_knowledge_base -> ReAct 回答"]
 ```
 
 实现位置：`turn_classifier.py`、`data_query_turn_classifier.py`、`dispatcher.py`、`executors/data_executor.py`。
@@ -109,10 +111,11 @@ Dispatcher 当前只负责选择执行器：
 |------|------|
 | `engine_type=RAGFLOW` | RAGExecutor |
 | `engine_type=OPENCLAW` | OpenClawExecutor |
+| `TurnType=KNOWLEDGE` | **KnowledgeExecutor**（优先于 ChatBI，即使 agent 有 `data_query`） |
 | 具备 `data_query` 能力 | DataQueryExecutor（ChatBI 内部再分析请求类别） |
-| 无 `data_query` 能力 | GeneralChatExecutor（复用 `shared_turn` 通用分类，并参考路由通用 hint） |
+| 其余 | **AssistantExecutor**（复用 `shared_turn`，并参考路由通用 hint） |
 
-AgentService 统一输出「轮次分类」日志；ChatBI 场景外层显示「ChatBI 请求类别分析」，DataQueryExecutor 再输出「ChatBI 请求类别分析结果」。
+AgentService 统一输出「轮次分类」日志；ChatBI 场景在 `DATA_QUERY_REQUEST` 时外层显示「ChatBI 请求类别分析」，DataQueryExecutor 再输出「ChatBI 请求类别分析结果」。
 
 ---
 
@@ -139,47 +142,56 @@ AgentService 统一输出「轮次分类」日志；ChatBI 场景外层显示「
 | 问题 | 建议 |
 |------|------|
 | ReAct 步数 + 多层护栏叠加 | 按 `DataQueryTurnClassification` 进一步裁剪步骤上限 |
-| 与 GeneralChat 大量重复代码 | 继续沉淀到 `executors/common.py` |
+| 与 Assistant 大量重复代码 | 继续沉淀到 `executors/common.py` |
 | 合成阶段与 ReAct 双 LLM | 简单新数据查询结果允许最后一轮 thought 直出（可选） |
 
 ---
 
-## 5. GeneralChatExecutor
+## 5. KnowledgeExecutor
 
+- 独立执行器：`KnowledgeExecutor` → `KnowledgeAgentRunner`（继承 Assistant 的 AgentScope 流式/citation 能力）。
+- ReAct 开始前平台侧**自动**调用 `search_knowledge_base`，检索结果注入 system prompt（类似 ChatBI 自动 Schema）。
+- 可挂载 agent 配置的业务工具，用于后续知识库相关扩展。
+- 不再由 Assistant 绑定或护栏 `search_knowledge_base`。
+
+## 6. AssistantExecutor
+
+- 通用助手执行器：`AssistantExecutor` → `AssistantAgentRunner`。
 - 系统隐式工具（create_skills、memory_search、任务等）是元操作、上下文动作、技能的正确归宿。
-- KNOWLEDGE 请求在 Step 1 强制 `search_knowledge_base`，避免未检索直接回答。
-- 非 ChatBI 执行器可以复用 `shared_turn`，但它只包含通用分类，不包含 ChatBI 请求类别。
-- `turn_labels / relation_to_previous / user_action_type` 会作为“路由层通用理解”注入 system prompt。该 hint 只帮助 LLM 理解上下文连续性，不覆盖用户当前问题，也不替代 General 自己的 ReAct/工具判断。
+- 非 ChatBI / 非 Knowledge 的 `GENERAL`、`META_ACTION`、`CONTEXT_ACTION` 等轮次走此链路。
+- `turn_labels / relation_to_previous / user_action_type` 会作为「路由层通用理解」注入 system prompt；仅弱 hint，不驱动硬分支。
 
 ---
 
-## 6. 跨 Executor 对比
+## 7. 跨 Executor 对比
 
 ```text
-┌─────────────────┬──────────────┬──────────────┬─────────────┐
-│                 │ DataQuery    │ GeneralChat  │ RAG/OpenClaw│
-├─────────────────┼──────────────┼──────────────┼─────────────┤
-│ BaseExecutor    │ ✓            │ ✗            │ ✓           │
-│ 系统隐式工具    │ ✓            │ ✓            │ N/A         │
-│ 请求分类        │ 内部专用     │ 通用分类     │ 远程/专用   │
-│ 工具错误分析    │ 强           │ 弱/分散      │ 远程        │
-│ 历史/附件转换   │ common       │ common       │ 简单        │
-│ MAX_STEPS 默认  │ 6            │ 5            │ -           │
-└─────────────────┴──────────────┴──────────────┴─────────────┘
+┌─────────────────┬──────────────┬──────────────┬──────────────┬─────────────┐
+│                 │ DataQuery    │ Knowledge    │ Assistant    │ RAG/OpenClaw│
+├─────────────────┼──────────────┼──────────────┼──────────────┼─────────────┤
+│ BaseExecutor    │ ✓            │ ✓            │ ✓            │ ✓           │
+│ 系统隐式工具    │ ✓            │ 可选         │ ✓            │ N/A         │
+│ 请求分类        │ 内部专用     │ 通用 KNOWLEDGE│ 通用其余    │ 远程/专用   │
+│ 知识库检索      │ ✗            │ 自动 prefetch │ ✗            │ N/A         │
+│ 工具错误分析    │ 强           │ 中           │ 弱/分散      │ 远程        │
+│ 历史/附件转换   │ common       │ common       │ common       │ 简单        │
+│ MAX_STEPS 默认  │ 6            │ 5            │ 5            │ -           │
+└─────────────────┴──────────────┴──────────────┴──────────────┴─────────────┘
 ```
 
 ---
 
-## 7. 优化优先级
+## 8. 优化优先级
 
 ### 已落地
 
 1. 通用 `TurnClassification` 与 ChatBI `DataQueryTurnClassification` 拆分
 2. Dispatcher 只按执行器能力分发，ChatBI 请求类别由 DataQueryExecutor 内部决定
 3. DataQueryExecutor：非新数据查询跳过经验库检索
-4. KNOWLEDGE_BASE 强制 `search_knowledge_base`
-5. 多智能体共享 `session_turn`（仅通用分类）
-6. RAGExecutor：`conversation_id` 修复
+4. KNOWLEDGE 独立 `KnowledgeExecutor`，自动 `search_knowledge_base`
+5. `GeneralChat*` 重命名为 `Assistant*`（通用助手，非闲聊专用）
+6. 多智能体共享 `session_turn`（通用分类 + 意图 LLM）
+7. RAGExecutor：`conversation_id` 修复
 
 ### 后续可选
 
@@ -189,10 +201,10 @@ AgentService 统一输出「轮次分类」日志；ChatBI 场景外层显示「
 
 ---
 
-## 8. 总结
+## 9. 总结
 
 整体架构已收敛为：
 
-`AgentService 编排 -> Dispatcher 选 Executor -> Executor 内部执行自己的请求类别/工具策略`
+`AgentService 编排 -> resolve_turn_for_session（启发式 + 意图 LLM）-> Dispatcher 选 Executor -> Executor 内部执行自己的工具/护栏策略`
 
-其中 ChatBI 不再把内部查数请求类别塞进通用 `shared_turn`，Knowledge/General 未来如果需要自己的细分类，也应在各自 executor 内部扩展，而不是复用 ChatBI 的分类模型。
+三条 LOCAL 专属链路并列：**Knowledge**（知识库）、**DataQuery**（ChatBI）、**Assistant**（通用助手）。ChatBI 不再把内部查数请求类别塞进通用 `shared_turn`；Knowledge / Assistant 若需更细分类，应在各自 executor 内部扩展。

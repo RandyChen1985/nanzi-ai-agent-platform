@@ -226,6 +226,73 @@ async def test_route_query_low_confidence_fallback(mock_agents_metadata):
         assert "Not sure." in result.reasoning
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("fallback_name,expected_id", [
+    ("assistant", "agent-assistant"),
+    ("main", "agent-main"),
+    ("general-chat", "agent-general"),
+])
+async def test_fallback_matches_multiple_general_agent_slugs(fallback_name, expected_id):
+    """兜底逻辑应支持 assistant / main / general-chat 多种 slug。"""
+    service = RouterService()
+    agents = [
+        {"id": "agent-chatbi", "name": "ChatBI", "description": "SQL", "capabilities": []},
+        {"id": expected_id, "name": fallback_name, "description": "General", "capabilities": ["chat"]},
+    ]
+
+    llm_resp_content = json.dumps({
+        "thought": "Not sure.",
+        "agent_name": "ChatBI",
+        "confidence": 0.4,
+    })
+
+    mock_llm = object()
+    mock_chat = _mock_chat_client(llm_resp_content)
+
+    with patch.object(service, "_fetch_agents_from_db", new_callable=AsyncMock) as mock_fetch, \
+         patch("app.services.ai.router_service.get_llm_async", new_callable=AsyncMock) as mock_get_llm, \
+         patch("app.services.ai.router_service.chat_client_from_handle") as mock_chat_factory:
+
+        mock_fetch.return_value = agents
+        mock_get_llm.return_value = mock_llm
+        mock_chat_factory.return_value = mock_chat
+
+        result = await service.route_query("Hello")
+
+    assert result.agent_id == expected_id
+    assert "Low confidence" in result.reasoning
+
+
+@pytest.mark.asyncio
+async def test_fallback_prefers_assistant_over_general_chat():
+    """多个兜底 slug 同时存在时，按 FALLBACK_AGENT_NAMES 优先级取首个。"""
+    service = RouterService()
+    agents = [
+        {"id": "agent-general", "name": "general-chat", "description": "Legacy", "capabilities": []},
+        {"id": "agent-assistant", "name": "assistant", "description": "New", "capabilities": []},
+    ]
+
+    llm_resp_content = json.dumps({
+        "thought": "Unknown.",
+        "agent_name": "missing-agent",
+        "confidence": 0.99,
+    })
+
+    mock_chat = _mock_chat_client(llm_resp_content)
+
+    with patch.object(service, "_fetch_agents_from_db", new_callable=AsyncMock) as mock_fetch, \
+         patch("app.services.ai.router_service.get_llm_async", new_callable=AsyncMock) as mock_get_llm, \
+         patch("app.services.ai.router_service.chat_client_from_handle") as mock_chat_factory:
+
+        mock_fetch.return_value = agents
+        mock_get_llm.return_value = object()
+        mock_chat_factory.return_value = mock_chat
+
+        result = await service.route_query("Hi")
+
+    assert result.agent_id == "agent-assistant"
+
+
+@pytest.mark.asyncio
 async def test_route_query_unknown_agent_fallback(mock_agents_metadata):
     """测试 LLM 返回未知 Agent 名称时的回退"""
     service = RouterService()

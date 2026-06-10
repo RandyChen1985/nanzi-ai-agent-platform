@@ -26,7 +26,7 @@ from app.services.ai.executors.common import (
     extract_tokens_from_message,
     normalize_messages_for_llm,
 )
-from app.services.ai.executors.prompts import DataQueryPrompts, GeneralChatPrompts
+from app.services.ai.executors.prompts import DataQueryPrompts
 from app.services.ai.multimodal_support import (
     ensure_multimodal_compatible,
     resolve_runtime_model_name,

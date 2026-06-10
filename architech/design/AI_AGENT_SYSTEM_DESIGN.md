@@ -104,8 +104,8 @@ app/
 ├── services/ai/
 │   ├── agent_service.py          # 编排中枢
 │   ├── dispatcher.py             # Executor 分发
-│   ├── executors/                # 薄封装（chat / data / rag / openclaw）
-│   ├── runners/                  # GeneralAgentRunner、DataAgentRunner
+│   ├── executors/                # 薄封装（assistant / knowledge / data / rag / openclaw）
+│   ├── runners/                  # AssistantAgentRunner、KnowledgeAgentRunner、DataAgentRunner
 │   ├── runtime/agentscope/       # 模型、工具、事件、权限、AgentState
 │   └── tools/                    # 业务工具 + ToolRegistry
 ```
@@ -113,9 +113,10 @@ app/
 #### 5.1.2 核心流程
 1. **统一入口**：`POST /api/v1/chat/completions`。
 2. **路由**：`RouterService` / `AgentDispatcher` 选择 Executor。
-3. **本地执行**：
-   - **General**：无工具直出；有工具 → `GeneralAgentRunner` → AgentScope `reply_stream`。
+3. **本地执行**（`TurnType=KNOWLEDGE` 优先）：
+   - **Knowledge**：`KnowledgeAgentRunner` → 自动知识库检索 + AgentScope ReAct。
    - **ChatBI**：`DataAgentRunner` → AgentScope ReAct + ChatBI 守卫（schema 前置、SQL 自愈）。
+   - **Assistant**：无工具直出；有工具 → `AssistantAgentRunner` → AgentScope `reply_stream`。
 4. **流式响应**：`map_standard_agentscope_event()` 将 AgentScope 事件转为 SSE chunk。
 
 #### 5.1.3 核心调用链路 (ChatBI 时序图)

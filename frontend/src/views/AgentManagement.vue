@@ -1010,6 +1010,7 @@ const getAgentEmoji = (agent: AIAgent) => {
     "chat-bi": "📊",
     "metadata-specialist": "💎",
     "knowledge-base": "📚",
+    "main": "💬",
     "general-chat": "💬",
   };
   if (emojiMap[agent.name]) return emojiMap[agent.name];

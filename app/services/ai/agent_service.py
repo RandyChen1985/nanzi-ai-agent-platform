@@ -354,7 +354,6 @@ class AgentService:
 
             # --- 按轮次类型裁剪上下文注入（与会话级 Turn 分类共用，不重复调意图 LLM）---
             from app.services.ai.turn_classifier import (
-                TurnClassification,
                 TurnType,
                 resolve_turn_for_session,
                 should_inject_ltm,
@@ -364,19 +363,17 @@ class AgentService:
                 turn_type_label,
                 default_thought_expanded,
             )
-            from app.services.ai.intent_service import IntentType
 
             can_do_data = "data_query" in (agent_config.capabilities or [])
             if can_do_data:
-                turn_classification = TurnClassification(
-                    turn_type=TurnType.DATA_QUERY_REQUEST,
-                    reasoning="ChatBI 正在分析本轮请求类别，后续由数据查询执行器完成精确处理",
-                    skip_intent_llm=True,
-                    intent=IntentType.DATA_QUERY,
+                turn_classification, turn_intent_info, turn_intent_elapsed_ms = await resolve_turn_for_session(
+                    user_query,
+                    messages,
+                    can_do_data=True,
+                    user_info=user_info,
+                    conversation_id=conversation_id,
                 )
-                turn_intent_info = None
-                turn_intent_elapsed_ms = 0.0
-                session_turn = None
+                session_turn = (turn_classification, turn_intent_info, turn_intent_elapsed_ms)
             else:
                 turn_classification, turn_intent_info, turn_intent_elapsed_ms = await resolve_turn_for_session(
                     user_query,
@@ -387,7 +384,10 @@ class AgentService:
                 )
                 session_turn = (turn_classification, turn_intent_info, turn_intent_elapsed_ms)
             early_turn_type = turn_classification.turn_type
-            turn_display_label = "ChatBI 请求类别分析" if can_do_data else turn_type_label(turn_classification.turn_type)
+            if can_do_data and turn_classification.turn_type == TurnType.DATA_QUERY_REQUEST:
+                turn_display_label = "ChatBI 请求类别分析"
+            else:
+                turn_display_label = turn_type_label(turn_classification.turn_type)
 
             # --- Long-Term Memory (LTM) Injection ---
             if should_inject_ltm(early_turn_type) and user_info:
@@ -900,15 +900,18 @@ class AgentService:
                 conversation_id=pending.snapshot.conversation_id,
             )
 
-        from app.services.ai.runners.general_agent_runner import GeneralAgentRunner
+        from app.services.ai.runners.assistant_agent_runner import AssistantAgentRunner
 
-        return GeneralAgentRunner.from_runner_context(
-            runner_context=ctx,
-            trace_id=pending.trace_id,
-            trace_buffer=[],
-            user_info=user_info,
-            conversation_id=pending.snapshot.conversation_id,
-        )
+        if ctx.get("runner_type") in ("assistant", "general"):
+            return AssistantAgentRunner.from_runner_context(
+                runner_context=ctx,
+                trace_id=pending.trace_id,
+                trace_buffer=[],
+                user_info=user_info,
+                conversation_id=pending.snapshot.conversation_id,
+            )
+
+        raise ValueError(f"Unsupported runner_type for resume: {ctx.get('runner_type')!r}")
 
     @staticmethod
     def _build_external_execution_results(results: List[Dict[str, Any]]) -> List[Any]:

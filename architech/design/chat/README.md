@@ -20,7 +20,7 @@
 ## 代码入口（速查）
 
 - 编排：`app/services/ai/agent_service.py`
-- Runner：`app/services/ai/runners/general_agent_runner.py`、`data_agent_runner.py`
+- Runner：`assistant_agent_runner.py`、`knowledge_agent_runner.py`、`data_agent_runner.py`
 - AgentScope：`app/services/ai/runtime/agentscope/`
 - 平台全局提示词：`app/services/ai/agent_prompts.py` → `PLATFORM_GLOBAL_SYSTEM_PROMPT`
 - 执行器提示词：`app/services/ai/executors/prompts.py`

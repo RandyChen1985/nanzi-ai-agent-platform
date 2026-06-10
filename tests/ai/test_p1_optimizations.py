@@ -1,6 +1,6 @@
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
-from app.services.ai.executors.chat_executor import GeneralChatExecutor
+from app.services.ai.executors.knowledge_executor import KnowledgeExecutor
 from app.services.ai.intent_service import IntentResponse, IntentType
 from app.services.ai.turn_classifier import TurnClassification, TurnType, attach_turn_classification
 from app.services.ai.turn_classifier import (
@@ -37,7 +37,7 @@ def chat_config():
 
 @pytest.mark.asyncio
 async def test_knowledge_turn_forces_search_before_answer(chat_config):
-    """知识库轮次应走 AgentScope 原生 Agent，并调用 search_knowledge_base。"""
+    """知识库轮次应走 KnowledgeExecutor，并自动调用 search_knowledge_base。"""
     from pydantic import BaseModel
     from agentscope.credential import CredentialBase
     from agentscope.message import TextBlock, ToolCallBlock
@@ -46,7 +46,7 @@ async def test_knowledge_turn_forces_search_before_answer(chat_config):
     from app.core.llm.client import AgentScopeLLMHandle
     from app.services.ai.runtime.agentscope.tools import RuntimeToolSpec
 
-    executor = GeneralChatExecutor(
+    executor = KnowledgeExecutor(
         config=chat_config, trace_id="test-knowledge", trace_buffer=[], conversation_id="c1"
     )
     classification = TurnClassification(
@@ -56,7 +56,7 @@ async def test_knowledge_turn_forces_search_before_answer(chat_config):
         intent=IntentType.KNOWLEDGE_BASE,
     )
     attach_turn_classification(executor, classification)
-    assert executor._requires_knowledge_search is True
+    assert executor.turn_classification.turn_type == TurnType.KNOWLEDGE
 
     invocations: list[str] = []
 
@@ -119,7 +119,7 @@ async def test_knowledge_turn_forces_search_before_answer(chat_config):
          patch("app.services.ai.config.AgentConfigProvider.get_fallback_llm", AsyncMock(return_value=None)), \
          patch("app.services.ai.tools.registry.ToolRegistry.get_runtime_tools", AsyncMock(return_value=[runtime_spec])), \
          patch("app.services.ai.tools.registry.ToolRegistry.get_system_implicit_tools", return_value=[]), \
-         patch("app.services.ai.runners.general_agent_runner.get_local_workspace", AsyncMock(return_value=None)), \
+         patch("app.services.ai.runners.assistant_agent_runner.get_local_workspace", AsyncMock(return_value=None)), \
          patch("app.services.config_service.ConfigService.get", AsyncMock(return_value="5")), \
          patch("app.services.memory_config_service.MemoryConfigService.get_bool", AsyncMock(return_value=False)):
         history = [{"role": "user", "content": "高温告警处理流程是什么"}]
@@ -127,8 +127,9 @@ async def test_knowledge_turn_forces_search_before_answer(chat_config):
         async for chunk in executor.execute(history):
             events.append(chunk)
 
-    assert invocations == ["高温告警处理流程"]
-    assert any(e.get("title", "").startswith("调用工具: search_knowledge_base") for e in events)
+    assert invocations
+    assert "高温告警" in invocations[0]
+    assert any(e.get("title") == "自动检索知识库" for e in events)
     assert "知识库检索后的回答" in "".join(
         e["content"] for e in events if "content" in e and "type" not in e
     )

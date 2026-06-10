@@ -1,6 +1,6 @@
 import pytest
 from unittest.mock import AsyncMock, patch
-from app.services.ai.executors.chat_executor import GeneralChatExecutor
+from app.services.ai.executors.assistant_executor import AssistantExecutor
 from app.schemas.agent import ChatConfig
 
 @pytest.mark.no_infrastructure
@@ -91,14 +91,14 @@ async def test_agentscope_native_tool_execution_flow():
          patch("app.services.ai.tools.registry.ToolRegistry.get_runtime_tools", new_callable=AsyncMock) as mock_get_runtime_tools, \
          patch("app.services.ai.tools.registry.ToolRegistry.get_tools", AsyncMock(side_effect=AssertionError("legacy tools should not be loaded"))), \
          patch("app.services.ai.tools.registry.ToolRegistry.get_system_implicit_tools", return_value=[]), \
-         patch("app.services.ai.runners.general_agent_runner.get_local_workspace", new_callable=AsyncMock, return_value=None), \
+         patch("app.services.ai.runners.assistant_agent_runner.get_local_workspace", new_callable=AsyncMock, return_value=None), \
          patch("app.services.config_service.ConfigService.get", new_callable=AsyncMock) as mock_config_get:
 
         mock_get_orch.return_value = native_handle
         mock_get_runtime_tools.return_value = [runtime_spec]
         mock_config_get.return_value = "5"
 
-        executor = GeneralChatExecutor(config=config, trace_id="trace-dual", trace_buffer=[])
+        executor = AssistantExecutor(config=config, trace_id="trace-dual", trace_buffer=[])
         
         events = []
         async for chunk in executor.execute([{"role": "user", "content": "Help me"}]):

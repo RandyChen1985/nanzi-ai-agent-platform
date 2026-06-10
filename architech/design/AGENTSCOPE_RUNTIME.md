@@ -1,21 +1,22 @@
 # AgentScope 运行时架构
 
-> 自 2026-06 起，本地智能体（General / ChatBI）执行层已迁移至 **AgentScope 2.x**，不再依赖 LangChain。RAGFlow、OpenClaw 仍保持各自直连实现。
+> 自 2026-06 起，本地智能体（Assistant / Knowledge / ChatBI）执行层已迁移至 **AgentScope 2.x**，不再依赖 LangChain。RAGFlow、OpenClaw 仍保持各自直连实现。
 
 ## 1. 分层结构
 
 ```text
 AgentService.chat_completion_stream()
   → AgentDispatcher.dispatch()
-    → GeneralChatExecutor  → GeneralAgentRunner  → AgentScope Agent
-    → DataQueryExecutor    → DataAgentRunner     → AgentScope Agent + ChatBI 守卫
+    → KnowledgeExecutor    → KnowledgeAgentRunner  → AgentScope Agent + 自动知识库检索
+    → DataQueryExecutor    → DataAgentRunner       → AgentScope Agent + ChatBI 守卫
+    → AssistantExecutor    → AssistantAgentRunner  → AgentScope Agent
     → RAGExecutor          → RAGFlow 直连
     → OpenClawExecutor     → OpenClaw API 代理
 ```
 
-**薄 Executor**：`app/services/ai/executors/chat_executor.py`、`data_executor.py` 仅转发到 Runner。
+**薄 Executor**：`assistant_executor.py`、`knowledge_executor.py`、`data_executor.py` 仅转发到 Runner。
 
-**Runner**：`app/services/ai/runners/general_agent_runner.py`、`data_agent_runner.py` 负责消息准备、工具解析、事件流消费、状态持久化。
+**Runner**：`assistant_agent_runner.py`、`knowledge_agent_runner.py`、`data_agent_runner.py` 负责消息准备、工具解析、事件流消费、状态持久化。
 
 **Runtime 层**：`app/services/ai/runtime/agentscope/` — 模型、消息、工具、事件映射、权限挂起、会话锁、AgentState 存储。
 
@@ -29,6 +30,8 @@ AgentService.chat_completion_stream()
 6. 正常结束 → `agent_state_store.save()`；挂起 → `pending_agentscope_confirmations.register()`
 
 **会话锁**：`agentscope_session_lock.hold()` 防止同会话并发破坏 AgentState。
+
+**runner_type 持久化**：Assistant 为 `"assistant"`（resume 仍兼容历史 `"general"`）。
 
 ## 3. 事件映射（AgentScope → SSE）
 
@@ -59,24 +62,31 @@ AgentService.chat_completion_stream()
 
 `RuntimeToolSpec` 字段：`name`、`description`、`parameters_schema`、`callable`、`permission_scope`（read / ask / dangerous）。
 
-## 5. General Agent 流程摘要
+## 5. Assistant Agent 流程摘要
 
 - **无工具**：`synthesis_llm.astream()` 直出，不走 AgentScope Agent。
-- **有工具**：AgentScope ReAct；系统隐式工具（Bash/Read/Write/Grep 等）映射为 AgentScope 内置工具名。
+- **有工具**：AgentScope ReAct；仅挂载 agent 配置的工具 + 系统隐式工具。
 - **ASK 工具挂起**：用户确认后 `POST /api/v1/chat/permissions/{id}/confirm` → `UserConfirmResultEvent` → 继续 `reply_stream`。
+- **不绑定** `search_knowledge_base`（知识库走 KnowledgeExecutor）。
 
-## 6. ChatBI 流程摘要
+## 6. Knowledge Agent 流程摘要
+
+- ReAct 前平台自动 `search_knowledge_base`，结果注入 prompt。
+- 继承 Assistant 的 AgentScope 流式与 citation 解析。
+- 可扩展挂载 agent 配置的业务工具。
+
+## 7. ChatBI 流程摘要
 
 在 AgentScope ReAct 之上，`DataAgentRunner._DataRunState` 显式守卫：
 
-- 必须先 `get_dataset_schema` 再 `execute_sql_query`
+- 新查数：平台自动 `get_dataset_schema`，再 `execute_sql_query`
 - 查数完成前拦截最终回答（`blocked_content`）
 - SQL 错误 / 空结果 / 缺 SQL 计划 → `repair_message` 再跑一轮 `reply_stream`
 - 复用上一轮结果 → 跳过 Agent，走 `synthesis_llm` 直出
 
 详见 [CHAT_BI_DESIGN.md](./CHAT_BI_DESIGN.md)、[agent_execution_flow_review.md](./agent_execution_flow_review.md)。
 
-## 7. 相关文档
+## 8. 相关文档
 
 | 文档 | 说明 |
 |------|------|

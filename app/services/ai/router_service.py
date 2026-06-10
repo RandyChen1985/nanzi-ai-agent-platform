@@ -28,6 +28,8 @@ class LLMRouterResponse(BaseModel):
     user_action_type: str = "unknown"
 
 class RouterService:
+    # 兜底通用助手 slug，按优先级匹配 DB 中 ai_agents.name（首个命中即用）
+    FALLBACK_AGENT_NAMES = ("assistant", "main", "general-chat")
 
     DEFAULT_SYSTEM_PROMPT = """# Role: 云枢智能体平台 · 智能路由助手 (Smart Router V7 · 清单驱动)
 
@@ -54,7 +56,7 @@ class RouterService:
 - 逐一对照清单中每个智能体的 name / 中文名 / Description / Capabilities，选出职责与用户真实意图最吻合的那一个。
 - 你对"领域/职责"的判断必须来自上面清单里的描述，【禁止】脑补清单之外的智能体或领域。
 - 区分"业务数据指标查询"与"当前运行环境诊断"：
-  - 用户询问当前系统/本机/这台机器/服务器运行状态、负载、CPU、内存、磁盘、进程、端口、网络连通性、服务状态、日志、或要求执行命令时，这是平台运行环境诊断/工具执行意图，应选择 general-chat。
+  - 用户询问当前系统/本机/这台机器/服务器运行状态、负载、CPU、内存、磁盘、进程、端口、网络连通性、服务状态、日志、或要求执行命令时，这是平台运行环境诊断/工具执行意图，应选择 {fallback_agent_name}。
   - 用户询问机房、设备、业务系统、报表、趋势、统计、同比环比、PUE、能耗、温湿度、负载率/利用率等历史或业务指标时，才按清单匹配数据查询类智能体。
   - 不要因为出现"负载/利用率/CPU/内存"等词就直接判为数据查询；必须先判断用户是在看"当前这台机器"还是查"业务/监控数据指标"。
 
@@ -80,8 +82,8 @@ class RouterService:
 
 ## 4. 硬性约束 (Hard Constraints)
 - agent_name 与 secondary_agents 中的每个值，【必须】与清单中某个智能体的 name 字段完全一致（英文 slug，如 chat-bi）。严禁使用中文名、领域名或清单里不存在的名称。
-- 当没有任何业务智能体明显匹配（纯打招呼/闲聊/无法归类）时，选择兜底智能体 general-chat。
-- confidence 表示你对"主智能体选择"的把握：能明确匹配某业务智能体时应 >= 0.7；只有完全无法归类时才走 general-chat 并给较低分。
+- 当没有任何业务智能体明显匹配（纯打招呼/闲聊/无法归类）时，选择兜底智能体 {fallback_agent_name}。
+- confidence 表示你对"主智能体选择"的把握：能明确匹配某业务智能体时应 >= 0.7；只有完全无法归类时才走 {fallback_agent_name} 并给较低分。
 
 ## 5. 输出格式 (Output Format)
 必须返回纯 JSON，严禁包含 Markdown 标记或额外文字。
@@ -96,7 +98,7 @@ class RouterService:
 }
 
 ## 6. 示例 (名称以"清单"为准，下例仅示意格式)
-- 用户："你好" -> {"thought": "纯打招呼，无业务意图。", "agent_name": "general-chat", "secondary_agents": [], "confidence": 0.9, "turn_labels": ["general_chat"], "relation_to_previous": "standalone", "user_action_type": "chat"}
+- 用户："你好" -> {"thought": "纯打招呼，无业务意图。", "agent_name": "{fallback_agent_name}", "secondary_agents": [], "confidence": 0.9, "turn_labels": ["general_chat"], "relation_to_previous": "standalone", "user_action_type": "chat"}
 - 上一轮由 data-agent 处理，用户："那再画个柱状图" -> {"thought": "追问且无新领域意图，沿用上一轮 data-agent。", "agent_name": "data-agent", "secondary_agents": [], "confidence": 0.92, "turn_labels": ["continuation_followup", "business_related", "same_topic"], "relation_to_previous": "followup", "user_action_type": "transform_context"}"""
 
     ALLOWED_TURN_LABELS = {
@@ -181,7 +183,13 @@ class RouterService:
         agents_str = self._build_agents_context(agents_metadata)
         history_str = self._build_history_context(history, last_agent_name)
         
-        formatted_prompt = system_prompt.replace("{agents_context}", agents_str).replace("{history_context}", history_str)
+        fallback_agent_name = self._resolve_fallback_agent_name(agents_metadata)
+        formatted_prompt = (
+            system_prompt
+            .replace("{agents_context}", agents_str)
+            .replace("{history_context}", history_str)
+            .replace("{fallback_agent_name}", fallback_agent_name)
+        )
         messages = [
             RuntimeMessage(
                 role="system",
@@ -436,8 +444,23 @@ class RouterService:
             agents_str += f"  Capabilities: {agent['capabilities']}\n\n"
         return agents_str
 
+    @classmethod
+    def _find_fallback_agent(cls, agents: List[dict]) -> Optional[dict]:
+        by_name = {str(a.get("name", "")).lower(): a for a in agents}
+        for fallback_name in cls.FALLBACK_AGENT_NAMES:
+            agent = by_name.get(fallback_name)
+            if agent:
+                return agent
+        return None
+
+    def _resolve_fallback_agent_name(self, agents: List[dict]) -> str:
+        agent = self._find_fallback_agent(agents)
+        if agent:
+            return str(agent["name"])
+        return self.FALLBACK_AGENT_NAMES[-1]
+
     def _fallback_to_general(self, agents: List[dict], reason: str) -> Optional[RouteResult]:
-        fallback_agent = next((a for a in agents if a['name'] == 'general-chat'), None)
+        fallback_agent = self._find_fallback_agent(agents)
         if fallback_agent:
             return RouteResult(
                 agent_id=fallback_agent['id'],

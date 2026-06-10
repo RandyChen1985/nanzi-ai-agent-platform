@@ -19,13 +19,12 @@ from app.services.ai.executors.common import (
     convert_history_to_messages,
     extract_tokens_from_message,
     normalize_messages_for_llm,
-    tools_include_named,
     MODEL_STREAM_MAX_RETRIES,
     build_stream_retry_log,
     build_stream_error_log,
     is_retryable_stream_error,
 )
-from app.services.ai.executors.prompts import GeneralChatPrompts
+from app.services.ai.executors.prompts import AssistantPrompts
 from app.services.ai.runtime.agentscope.agent_runtime import (
     build_model_config,
     build_tools_fingerprint,
@@ -53,12 +52,11 @@ from app.services.ai.runtime.agentscope.session_lock import (
 from app.services.ai.runtime.agentscope.workspace import get_local_workspace
 from app.services.ai.runtime.agentscope.tools import RuntimeToolSpec, runtime_tool_spec_from_legacy_tool
 from app.services.ai.runtime.agentscope.tools import build_toolkit
-from app.services.ai.turn_classifier import TurnType
 
 logger = logging.getLogger(__name__)
 
 
-class GeneralAgentRunner(BaseExecutor):
+class AssistantAgentRunner(BaseExecutor):
     def __init__(
         self,
         config: ChatConfig,
@@ -74,7 +72,6 @@ class GeneralAgentRunner(BaseExecutor):
         self.intent_info = None
         self.intent_elapsed_ms = 0.0
         self.turn_classification = None
-        self._requires_knowledge_search = False
         self.route_hints = route_hints or {}
 
     def _runtime_user_id(self) -> str | None:
@@ -83,18 +80,17 @@ class GeneralAgentRunner(BaseExecutor):
         return str(self.user_info.get("user_id") or self.user_info.get("id") or "") or None
 
     def _runtime_agent_name(self) -> str:
-        return self.config.agent_name or "GeneralAgent"
+        return self.config.agent_name or "AssistantAgent"
 
     def _runner_context(self, *, system_content: str, max_steps: int) -> Dict[str, Any]:
         return {
-            "runner_type": "general",
+            "runner_type": "assistant",
             "config": self.config.model_dump(),
             "debug_options": self.debug_options,
             "permission_options": self.permission_options,
             "system_content": system_content,
             "max_steps": max_steps,
             "route_hints": self.route_hints,
-            "requires_knowledge_search": self._requires_knowledge_search,
         }
 
     @classmethod
@@ -106,7 +102,7 @@ class GeneralAgentRunner(BaseExecutor):
         trace_buffer: List[AgentExecutionStep] | None = None,
         user_info: Optional[Dict[str, Any]] = None,
         conversation_id: Optional[str] = None,
-    ) -> "GeneralAgentRunner":
+    ) -> "AssistantAgentRunner":
         config = ChatConfig(**runner_context["config"])
         runner = cls(
             config=config,
@@ -117,9 +113,6 @@ class GeneralAgentRunner(BaseExecutor):
             user_info=user_info,
             conversation_id=conversation_id,
             route_hints=runner_context.get("route_hints"),
-        )
-        runner._requires_knowledge_search = bool(
-            runner_context.get("requires_knowledge_search")
         )
         return runner
 
@@ -151,24 +144,11 @@ class GeneralAgentRunner(BaseExecutor):
                 for tool in system_tools
             )
 
-        if self._requires_knowledge_search or (
-            getattr(self, "turn_classification", None)
-            and self.turn_classification.turn_type == TurnType.KNOWLEDGE
-        ):
-            self._requires_knowledge_search = True
-
-        if self._requires_knowledge_search and not tools_include_named(tools, "search_knowledge_base"):
-            kb_tool = await ToolRegistry.get_runtime_tool("search_knowledge_base")
-            if kb_tool:
-                tools.append(kb_tool)
-
         # 2. Build Messages
         system_content = self.config.system_prompt or ""
-        route_hint = GeneralChatPrompts.route_hints(self.route_hints)
+        route_hint = AssistantPrompts.route_hints(self.route_hints)
         if route_hint:
             system_content = f"{route_hint}\n\n{system_content}"
-        if self._requires_knowledge_search:
-            system_content = f"{GeneralChatPrompts.KNOWLEDGE_TURN_SYSTEM_HINT}\n\n{system_content}"
         runtime_messages = [SystemMessage(content=system_content)]
         runtime_messages.extend(convert_history_to_messages(history))
         runtime_messages = normalize_messages_for_llm(runtime_messages)
@@ -204,7 +184,7 @@ class GeneralAgentRunner(BaseExecutor):
                     break
                 except Exception as stream_err:
                     logger.error(
-                        f"[GeneralAgentRunner] Simple mode stream failed "
+                        f"[AssistantAgentRunner] Simple mode stream failed "
                         f"(attempt {stream_attempt + 1}/{MODEL_STREAM_MAX_RETRIES}): {stream_err}"
                     )
                     if (
@@ -266,17 +246,7 @@ class GeneralAgentRunner(BaseExecutor):
                     last_user_message_text(history)
                 )
 
-        knowledge_search_pending = (
-            self._requires_knowledge_search
-            and tools_include_named(tools, "search_knowledge_base")
-        )
-
         native_system_content = system_content
-        if knowledge_search_pending:
-            native_system_content = (
-                f"{GeneralChatPrompts.KNOWLEDGE_SEARCH_CORRECTION_MSG}\n\n"
-                f"{native_system_content}"
-            )
         if recall_query_pending:
             native_system_content = (
                 f"{MEMORY_SEARCH_CORRECTION_MSG}\n\n"
@@ -309,7 +279,7 @@ class GeneralAgentRunner(BaseExecutor):
         yield {
             "type": "error",
             "status": "error",
-            "content": "GeneralChat 工具链必须使用 AgentScope RuntimeToolSpec；旧 ReAct fallback 已移除。",
+            "content": "Assistant 工具链必须使用 AgentScope RuntimeToolSpec；旧 ReAct fallback 已移除。",
         }
 
     async def _execute_with_agentscope_native_agent(
@@ -345,7 +315,7 @@ class GeneralAgentRunner(BaseExecutor):
 
                         restored_state = AgentState.model_validate(persisted.state)
                     except Exception as exc:
-                        logger.warning("[GeneralAgentRunner] Failed to restore AgentState: %s", exc)
+                        logger.warning("[AssistantAgentRunner] Failed to restore AgentState: %s", exc)
 
                 agent = await self._build_native_agent(
                     native_model=native_model,
@@ -609,7 +579,7 @@ class GeneralAgentRunner(BaseExecutor):
         gap = compute_stream_reconcile_gap(streamed, agent_text)
         if gap.strip():
             logger.info(
-                "[GeneralAgentRunner] Stream reconcile gap chars=%d streamed=%d agent=%d",
+                "[AssistantAgentRunner] Stream reconcile gap chars=%d streamed=%d agent=%d",
                 len(gap),
                 len(streamed),
                 len(agent_text),
@@ -625,7 +595,7 @@ class GeneralAgentRunner(BaseExecutor):
         ):
             if not streamed.strip() and not agent_text.strip():
                 logger.warning(
-                    "[GeneralAgentRunner] Reply ended without assistant text"
+                    "[AssistantAgentRunner] Reply ended without assistant text"
                 )
             return
 
@@ -651,7 +621,7 @@ class GeneralAgentRunner(BaseExecutor):
             for tool_id in tool_names
         ]
         if not review_lines:
-            logger.warning("[GeneralAgentRunner] Synthesis skipped: no tool review lines")
+            logger.warning("[AssistantAgentRunner] Synthesis skipped: no tool review lines")
             state["full_content"] = (state.get("full_content") or "") + GENERIC_SYNTHESIS_EMPTY_FALLBACK
             yield {"content": GENERIC_SYNTHESIS_EMPTY_FALLBACK}
             return
@@ -659,7 +629,7 @@ class GeneralAgentRunner(BaseExecutor):
         user_query = str(state.get("user_query") or "")
         execution_review = "【执行过程回顾】\n" + "\n".join(review_lines)
         logger.warning(
-            "[GeneralAgentRunner] Synthesis fallback after stream reconcile tools=%d",
+            "[AssistantAgentRunner] Synthesis fallback after stream reconcile tools=%d",
             len(review_lines),
         )
 
@@ -683,7 +653,7 @@ class GeneralAgentRunner(BaseExecutor):
             messages = normalize_messages_for_llm([
                 SystemMessage(content=str(state.get("system_content") or self.config.system_prompt or "")),
                 HumanMessage(
-                    content=GeneralChatPrompts.synthesis_user_message(user_query, execution_review)
+                    content=AssistantPrompts.synthesis_user_message(user_query, execution_review)
                 ),
             ])
             async for chunk in llm.astream(messages):
@@ -703,10 +673,10 @@ class GeneralAgentRunner(BaseExecutor):
                 state["full_content"] = (state.get("full_content") or "") + content
                 yield {"content": content}
         except Exception as exc:
-            logger.error("[GeneralAgentRunner] Synthesis fallback failed: %s", exc, exc_info=True)
+            logger.error("[AssistantAgentRunner] Synthesis fallback failed: %s", exc, exc_info=True)
 
         if not emitted_any:
-            logger.warning("[GeneralAgentRunner] Synthesis produced no visible text")
+            logger.warning("[AssistantAgentRunner] Synthesis produced no visible text")
             state["full_content"] = (state.get("full_content") or "") + GENERIC_SYNTHESIS_EMPTY_FALLBACK
             yield {"content": GENERIC_SYNTHESIS_EMPTY_FALLBACK}
             return
@@ -775,11 +745,6 @@ class GeneralAgentRunner(BaseExecutor):
                 runtime_tool_spec_from_legacy_tool(tool, source_type="system")
                 for tool in system_tools
             )
-
-        if self._requires_knowledge_search and not tools_include_named(tools, "search_knowledge_base"):
-            kb_tool = await ToolRegistry.get_runtime_tool("search_knowledge_base")
-            if kb_tool:
-                tools.append(kb_tool)
         return tools
 
     async def _resume_agentscope_native_stream(

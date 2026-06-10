@@ -36,7 +36,7 @@ TURN_TYPE_LABELS: dict[TurnType, str] = {
     TurnType.CONTEXT_ACTION: "上下文动作",
     TurnType.SKILL_EXECUTION: "技能执行",
     TurnType.META_ACTION: "元操作",
-    TurnType.GENERAL: "通用对话",
+    TurnType.GENERAL: "通用助手",
     TurnType.KNOWLEDGE: "知识库问答",
 }
 
@@ -216,6 +216,16 @@ def classify_turn_from_intent(
             intent=IntentType.KNOWLEDGE_BASE,
         )
 
+    if not can_do_data and intent_info.intent == IntentType.DATA_QUERY:
+        return TurnClassification(
+            turn_type=TurnType.GENERAL,
+            reasoning=(
+                f"{intent_info.reasoning}（当前 Agent 无 data_query 能力，按通用对话处理）"
+            ),
+            skip_intent_llm=False,
+            intent=IntentType.DATA_QUERY,
+        )
+
     return TurnClassification(
         turn_type=TurnType.GENERAL,
         reasoning=intent_info.reasoning,
@@ -244,9 +254,6 @@ def attach_turn_classification(
             reasoning=classification.reasoning,
             entities=[],
         )
-
-    if hasattr(executor, "_requires_knowledge_search"):
-        executor._requires_knowledge_search = classification.requires_knowledge_search
 
     return executor
 
@@ -337,26 +344,11 @@ async def resolve_turn_for_session(
     user_info: Optional[Dict[str, Any]] = None,
     conversation_id: Optional[str] = None,
 ) -> SharedTurn:
-    """AgentService 统一入口：查数 Agent 走完整分类，其余 Agent 启发式优先。"""
-    if can_do_data:
-        return await resolve_turn_classification(
-            user_query,
-            messages,
-            can_do_data=True,
-            user_info=user_info,
-            conversation_id=conversation_id,
-        )
-
-    classification = classify_turn_heuristic(
+    """AgentService 统一入口：启发式优先，判不准则调用意图 LLM。"""
+    return await resolve_turn_classification(
         user_query,
-        can_do_data=False,
-        has_last_data_result=False,
+        messages,
+        can_do_data=can_do_data,
+        user_info=user_info,
+        conversation_id=conversation_id,
     )
-    if classification is None:
-        classification = TurnClassification(
-            turn_type=TurnType.GENERAL,
-            reasoning="通用对话（非数据智能体，跳过意图识别）",
-            skip_intent_llm=True,
-            intent=IntentType.GENERAL,
-        )
-    return classification, None, 0.0

@@ -2,10 +2,12 @@ from typing import Any, AsyncGenerator, Dict, List, Optional
 
 from app.schemas.agent import AgentExecutionStep, ChatConfig
 from app.services.ai.executors.base import BaseExecutor
-from app.services.ai.runners.general_agent_runner import GeneralAgentRunner
+from app.services.ai.runners.knowledge_agent_runner import KnowledgeAgentRunner
 
 
-class GeneralChatExecutor(BaseExecutor):
+class KnowledgeExecutor(BaseExecutor):
+    """知识库问答专用 Executor。"""
+
     def __init__(
         self,
         config: ChatConfig,
@@ -15,20 +17,25 @@ class GeneralChatExecutor(BaseExecutor):
         user_info: Optional[Dict[str, Any]] = None,
         conversation_id: Optional[str] = None,
         permission_options: Dict[str, Any] = None,
-        route_hints: Optional[Dict[str, Any]] = None,
     ):
-        super().__init__(config, trace_id, trace_buffer, debug_options, user_info, conversation_id, permission_options)
+        super().__init__(
+            config,
+            trace_id,
+            trace_buffer,
+            debug_options,
+            user_info,
+            conversation_id,
+            permission_options,
+        )
         self.intent_info = None
         self.intent_elapsed_ms = 0.0
         self.turn_classification = None
-        self._requires_knowledge_search = False
-        self.route_hints = route_hints or {}
 
     async def execute(
         self,
         history: List[Dict[str, str]],
     ) -> AsyncGenerator[Dict[str, Any], None]:
-        runner = GeneralAgentRunner(
+        runner = KnowledgeAgentRunner(
             config=self.config,
             trace_id=self.trace_id,
             trace_buffer=self.trace_buffer,
@@ -36,12 +43,10 @@ class GeneralChatExecutor(BaseExecutor):
             permission_options=self.permission_options,
             user_info=self.user_info,
             conversation_id=self.conversation_id,
-            route_hints=self.route_hints,
         )
         runner.intent_info = self.intent_info
         runner.intent_elapsed_ms = self.intent_elapsed_ms
         runner.turn_classification = self.turn_classification
-        runner._requires_knowledge_search = self._requires_knowledge_search
         runner.step_counter = self.step_counter
 
         async for chunk in runner.execute(history):
@@ -51,4 +56,3 @@ class GeneralChatExecutor(BaseExecutor):
         self.intent_info = runner.intent_info
         self.intent_elapsed_ms = runner.intent_elapsed_ms
         self.turn_classification = runner.turn_classification
-        self._requires_knowledge_search = runner._requires_knowledge_search

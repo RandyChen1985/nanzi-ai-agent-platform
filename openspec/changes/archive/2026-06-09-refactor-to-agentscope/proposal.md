@@ -11,7 +11,7 @@
 - **消息结构替换**：用平台内部中立消息结构承接历史、附件、多模态内容、系统指令和工具结果，再转换为 AgentScope `Msg` / block 格式。
 - **工具体系替换**：将静态工具、通用 API 工具、MCP 工具、Jira 工具、知识库工具、记忆工具、系统执行工具统一包装为 AgentScope `ToolBase` / `Toolkit`，不再暴露 LangChain Tool 对象。
 - **执行器重建**：
-  - 通用对话重建为 `GeneralAgentRunner`。
+  - 通用对话重建为 `AssistantAgentRunner`。
   - ChatBI 重建为 `DataAgentRunner`，以 AgentScope native Agent + Toolkit 和显式运行状态守卫承接现有 ChatBI 约束。
   - RAG 不重建 Runner，保留现有 RAGFlow 直连能力和引用事件，仅清理 LangChain 残留并做兼容性验证。
   - OpenClaw 不重建 Runner，保留现有 OpenClaw API 代理与总结链路，仅清理 LangChain 残留并做兼容性验证。

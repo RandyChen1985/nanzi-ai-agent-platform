@@ -166,7 +166,7 @@ def looks_like_knowledge_query(user_question: str) -> bool:
 
 
 # 元操作（Meta-Action）：对已有对话/结果做封装、保存、记忆等管理动作，本身不查询业务数据。
-# 命中后 dispatcher 直接走 GeneralChatExecutor，避免被数据查询执行器的“先查库”护栏拖入冗余流程。
+# 命中后 dispatcher 直接走 AssistantExecutor，避免被数据查询执行器的“先查库”护栏拖入冗余流程。
 _META_ACTION_PATTERNS = [
     re.compile(r"(创建|新建|建个|建一个|做个|做一个|生成|封装|做成|保存|存为|存成|固化|固定).{0,4}(技能|skill)", re.I),
     re.compile(r"(技能|skill).{0,6}(固定|保存|存下来|记下来|沉淀)", re.I),

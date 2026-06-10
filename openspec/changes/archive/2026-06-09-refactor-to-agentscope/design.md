@@ -30,7 +30,7 @@
 
 旧目录 `app/services/ai/executors/` 保留模块边界，但替换实现：
 
-- `chat_executor.py`：改为薄封装，调用 `GeneralAgentRunner`。保留现有“无工具直接回答 / 有工具 ReAct / 工具结果总结 / citation”语义。
+- `assistant_executor.py`：改为薄封装，调用 `AssistantAgentRunner`。保留现有“无工具直接回答 / 有工具 ReAct / 工具结果总结 / citation”语义。
 - `data_executor.py`：改为薄封装，调用 `DataAgentRunner`。ChatBI 内部采用 AgentScope native Agent + Toolkit，并辅以显式运行状态守卫：
   1. `QuestionNormalizer`：判断追问、复用上一轮结构化结果、生成独立查询。
   2. `ContextPreparation`：构建 dataset menu、上下文动作和 few-shot/schema 检索词。

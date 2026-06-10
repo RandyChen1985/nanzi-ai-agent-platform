@@ -118,10 +118,12 @@ graph TD
     B --> C{Intent Recognition}
     
     C -- Data Query --> D[DataQueryExecutor]
-    C -- Chat --> E[GeneralChatExecutor]
+    C -- Knowledge --> KE[KnowledgeExecutor]
+    C -- Assistant --> E[AssistantExecutor]
     
     D --> DR[DataAgentRunner]
-    E --> GR[GeneralAgentRunner]
+    KE --> KR[KnowledgeAgentRunner]
+    E --> AR[AssistantAgentRunner]
     
     subgraph AgentScope [AgentScope ReAct]
         DR --> AS[Agent.reply_stream]

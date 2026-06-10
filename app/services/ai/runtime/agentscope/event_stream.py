@@ -434,7 +434,7 @@ async def map_standard_agentscope_event(
         return
 
     if event_type == "EXCEED_MAX_ITERS":
-        from app.services.ai.executors.prompts import GeneralChatPrompts
+        from app.services.ai.executors.prompts import AssistantPrompts
 
-        yield {"content": GeneralChatPrompts.MAX_STEPS_REACHED}
+        yield {"content": AssistantPrompts.MAX_STEPS_REACHED}
         return

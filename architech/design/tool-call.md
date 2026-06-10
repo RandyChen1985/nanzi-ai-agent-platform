@@ -91,7 +91,8 @@ Agent 内部维护 `AgentState` 与消息块（`TextBlock`、`ToolCallBlock`、`
 | 工具注册与 RuntimeSpec | `app/services/ai/tools/registry.py` |
 | Toolkit 构建 | `app/services/ai/runtime/agentscope/tools.py` |
 | 事件 → SSE | `app/services/ai/runtime/agentscope/event_stream.py` |
-| General 执行 | `app/services/ai/runners/general_agent_runner.py` |
+| General 执行 | `app/services/ai/runners/assistant_agent_runner.py` |
+| Knowledge 执行 | `app/services/ai/runners/knowledge_agent_runner.py` |
 | ChatBI 执行 + 守卫 | `app/services/ai/runners/data_agent_runner.py` |
 | 权限挂起恢复 | `app/services/ai/runtime/agentscope/confirmations.py` |
 | 工具开发指南 | [../tools-schemal/README.md](../tools-schemal/README.md) |

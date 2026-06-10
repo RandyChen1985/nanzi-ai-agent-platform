@@ -3,6 +3,7 @@ from typing import List, Dict, Any, Optional
 from app.schemas.agent import AgentExecutionStep, ChatConfig
 from app.services.ai.turn_classifier import (
     SharedTurn,
+    TurnType,
     adapt_classification_for_agent,
     attach_turn_classification,
     resolve_turn_for_session,
@@ -10,7 +11,8 @@ from app.services.ai.turn_classifier import (
 )
 from app.services.ai.executors.base import BaseExecutor
 from app.services.ai.executors.data_executor import DataQueryExecutor
-from app.services.ai.executors.chat_executor import GeneralChatExecutor
+from app.services.ai.executors.assistant_executor import AssistantExecutor
+from app.services.ai.executors.knowledge_executor import KnowledgeExecutor
 from app.services.ai.executors.rag_executor import RAGExecutor
 from app.services.ai.executors.openclaw_executor import OpenClawExecutor
 
@@ -65,11 +67,48 @@ class AgentDispatcher:
 
         can_do_data = "data_query" in (agent_config.capabilities or [])
 
-        # ChatBI/DataQueryExecutor owns its internal data-query request classification.
-        # Dispatcher only chooses the executor based on agent capability.
+        # 2. 会话级轮次分类：知识库问答优先于 ChatBI / General 分流
+        if shared_turn is not None:
+            classification, intent_info, intent_elapsed_ms = shared_turn
+            classification = adapt_classification_for_agent(classification, can_do_data=can_do_data)
+        else:
+            classification, intent_info, intent_elapsed_ms = await resolve_turn_for_session(
+                user_query,
+                messages,
+                can_do_data=can_do_data,
+                user_info=user_info,
+                conversation_id=conversation_id,
+            )
+            classification = adapt_classification_for_agent(classification, can_do_data=can_do_data)
+
+        if classification.turn_type == TurnType.KNOWLEDGE:
+            logger.info(
+                "[Dispatcher] turn=%s executor=Knowledge skip_intent=%s agent=%s",
+                turn_type_label(classification.turn_type),
+                classification.skip_intent_llm,
+                agent_config.agent_name,
+            )
+            executor = KnowledgeExecutor(
+                agent_config,
+                trace_id,
+                trace_buffer,
+                debug_options,
+                user_info,
+                conversation_id,
+                permission_options=permission_options,
+            )
+            attach_turn_classification(
+                executor,
+                classification,
+                intent_info=intent_info,
+                intent_elapsed_ms=intent_elapsed_ms,
+            )
+            return executor
+
         if can_do_data:
             logger.info(
-                "[Dispatcher] executor=DataQuery agent=%s (data_query capability)",
+                "[Dispatcher] turn=%s executor=DataQuery agent=%s (data_query capability)",
+                turn_type_label(classification.turn_type),
                 agent_config.agent_name,
             )
             return DataQueryExecutor(
@@ -82,29 +121,14 @@ class AgentDispatcher:
                 permission_options=permission_options,
             )
 
-        # 2. 非数据执行器保留现有粗分类，用于知识库护栏等非 ChatBI 流程。
-        if shared_turn is not None:
-            classification, intent_info, intent_elapsed_ms = shared_turn
-            classification = adapt_classification_for_agent(classification, can_do_data=can_do_data)
-        else:
-            classification, intent_info, intent_elapsed_ms = await resolve_turn_for_session(
-                user_query,
-                messages,
-                can_do_data=False,
-                user_info=user_info,
-                conversation_id=conversation_id,
-            )
-            classification = adapt_classification_for_agent(classification, can_do_data=False)
-
         logger.info(
-            "[Dispatcher] turn=%s executor=%s skip_intent=%s agent=%s",
+            "[Dispatcher] turn=%s executor=Assistant skip_intent=%s agent=%s",
             turn_type_label(classification.turn_type),
-            "GeneralChat",
             classification.skip_intent_llm,
             agent_config.agent_name,
         )
 
-        executor = GeneralChatExecutor(
+        executor = AssistantExecutor(
             agent_config,
             trace_id,
             trace_buffer,

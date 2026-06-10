@@ -18,11 +18,11 @@ def isolate_general_runtime(monkeypatch):
 
     monkeypatch.setattr("app.core.redis.get_redis", _no_redis)
     monkeypatch.setattr(
-        "app.services.ai.runners.general_agent_runner.get_local_workspace",
+        "app.services.ai.runners.assistant_agent_runner.get_local_workspace",
         AsyncMock(return_value=None),
     )
     monkeypatch.setattr(
-        "app.services.ai.runners.general_agent_runner.agentscope_session_lock.hold",
+        "app.services.ai.runners.assistant_agent_runner.agentscope_session_lock.hold",
         _noop_session_lock_hold,
     )
 
@@ -32,7 +32,7 @@ async def test_general_runner_uses_configured_tools_only_when_workspace_exists(m
     from unittest.mock import MagicMock
 
     from app.schemas.agent import ChatConfig
-    from app.services.ai.runners.general_agent_runner import GeneralAgentRunner
+    from app.services.ai.runners.assistant_agent_runner import AssistantAgentRunner
     from app.services.ai.runtime.agentscope.tools import RuntimeToolSpec
 
     fake_workspace = MagicMock()
@@ -45,23 +45,23 @@ async def test_general_runner_uses_configured_tools_only_when_workspace_exists(m
         return MagicMock(name="AgentInstance")
 
     monkeypatch.setattr(
-        "app.services.ai.runners.general_agent_runner.get_local_workspace",
+        "app.services.ai.runners.assistant_agent_runner.get_local_workspace",
         AsyncMock(return_value=fake_workspace),
     )
     monkeypatch.setattr(
-        "app.services.ai.runners.general_agent_runner.build_toolkit",
+        "app.services.ai.runners.assistant_agent_runner.build_toolkit",
         build_toolkit,
     )
     monkeypatch.setattr(
-        "app.services.ai.runners.general_agent_runner.Agent",
+        "app.services.ai.runners.assistant_agent_runner.Agent",
         fake_agent,
     )
     monkeypatch.setattr(
-        "app.services.ai.runners.general_agent_runner.load_context_config",
+        "app.services.ai.runners.assistant_agent_runner.load_context_config",
         AsyncMock(return_value=None),
     )
     monkeypatch.setattr(
-        "app.services.ai.runners.general_agent_runner.build_model_config",
+        "app.services.ai.runners.assistant_agent_runner.build_model_config",
         AsyncMock(return_value=None),
     )
 
@@ -74,7 +74,7 @@ async def test_general_runner_uses_configured_tools_only_when_workspace_exists(m
         system_prompt="You are a general agent.",
         tools=["search_knowledge_base"],
     )
-    runner = GeneralAgentRunner(
+    runner = AssistantAgentRunner(
         config=config,
         trace_id="trace-toolkit",
         trace_buffer=[],
@@ -113,7 +113,7 @@ async def test_general_runner_second_turn_skips_repeat_read_with_restored_state(
     from agentscope.state import AgentState
 
     from app.core.llm.client import AgentScopeLLMHandle
-    from app.services.ai.runners.general_agent_runner import GeneralAgentRunner
+    from app.services.ai.runners.assistant_agent_runner import AssistantAgentRunner
     from app.services.ai.runtime.agentscope.agent_runtime import build_tools_fingerprint
     from app.services.ai.runtime.agentscope.state_store import RuntimeStateEnvelope, SCHEMA_VERSION
     from app.services.ai.runtime.agentscope.tools import RuntimeToolSpec
@@ -243,7 +243,7 @@ async def test_general_runner_second_turn_skips_repeat_read_with_restored_state(
         state=restored_state.model_dump(mode="json"),
     )
 
-    runner = GeneralAgentRunner(
+    runner = AssistantAgentRunner(
         config=config,
         trace_id="trace-multiturn",
         trace_buffer=[],
@@ -264,10 +264,10 @@ async def test_general_runner_second_turn_skips_repeat_read_with_restored_state(
         "app.services.config_service.ConfigService.get",
         AsyncMock(return_value="5"),
     ), patch(
-        "app.services.ai.runners.general_agent_runner.agent_state_store.load",
+        "app.services.ai.runners.assistant_agent_runner.agent_state_store.load",
         AsyncMock(return_value=saved_envelope),
     ), patch(
-        "app.services.ai.runners.general_agent_runner.agent_state_store.save",
+        "app.services.ai.runners.assistant_agent_runner.agent_state_store.save",
         AsyncMock(return_value=None),
     ):
         turn2_events = []

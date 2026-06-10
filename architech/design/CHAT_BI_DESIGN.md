@@ -67,8 +67,9 @@ sequenceDiagram
 - **规则**：
   - `engine_type=RAGFLOW` -> `RAGExecutor`
   - `engine_type=OPENCLAW` -> `OpenClawExecutor`
+  - `TurnType=KNOWLEDGE` -> `KnowledgeExecutor`
   - agent 具备 `data_query` capability -> `DataQueryExecutor`
-  - 其他本地 agent -> `GeneralChatExecutor`
+  - 其他本地 agent -> `AssistantExecutor`
 
 Dispatcher 不再根据 ChatBI 内部请求类别决定是否进入 DataQueryExecutor。
 
