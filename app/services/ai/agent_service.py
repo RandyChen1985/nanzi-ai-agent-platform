@@ -15,10 +15,22 @@ from app.services.ai.dispatcher import AgentDispatcher
 from app.services.ai.memory_service import memory_service
 from app.services.ai.agent_prompts import AgentServicePrompts
 from app.services.ai.executors.common import extract_tokens_from_message
-from langchain_core.messages import SystemMessage, HumanMessage
+from app.services.ai.runtime.agentscope.compat import HumanMessage, SystemMessage
 from app.core.orm import AsyncSessionLocal
 
 logger = logging.getLogger(__name__)
+
+AWAITING_RESUME_STATUSES = frozenset({"awaiting_permission", "awaiting_external_execution"})
+
+
+def _accumulate_stream_content(full: str, chunk: Dict[str, Any]) -> str:
+    """合并 SSE chunk 到会话正文；retraction 表示用新正文整体替换。"""
+    if chunk.get("type") == "retraction":
+        return str(chunk.get("content") or "")
+    if "content" in chunk:
+        return full + str(chunk["content"])
+    return full
+
 
 class AgentService:
     """
@@ -54,7 +66,8 @@ class AgentService:
         user_info: Optional[Dict[str, Any]] = None,
         api_key: Optional[str] = None,
         enable_multi_agent: bool = True,
-        debug_options: Optional[Dict[str, Any]] = None
+        debug_options: Optional[Dict[str, Any]] = None,
+        permission_options: Optional[Dict[str, Any]] = None,
     ) -> AsyncGenerator[Dict[str, Any], None]:
         """
         Main entry point for streaming chat.
@@ -341,7 +354,6 @@ class AgentService:
 
             # --- 按轮次类型裁剪上下文注入（与会话级 Turn 分类共用，不重复调意图 LLM）---
             from app.services.ai.turn_classifier import (
-                TurnClassification,
                 TurnType,
                 resolve_turn_for_session,
                 should_inject_ltm,
@@ -351,19 +363,17 @@ class AgentService:
                 turn_type_label,
                 default_thought_expanded,
             )
-            from app.services.ai.intent_service import IntentType
 
             can_do_data = "data_query" in (agent_config.capabilities or [])
             if can_do_data:
-                turn_classification = TurnClassification(
-                    turn_type=TurnType.DATA_QUERY_REQUEST,
-                    reasoning="ChatBI 正在分析本轮请求类别，后续由数据查询执行器完成精确处理",
-                    skip_intent_llm=True,
-                    intent=IntentType.DATA_QUERY,
+                turn_classification, turn_intent_info, turn_intent_elapsed_ms = await resolve_turn_for_session(
+                    user_query,
+                    messages,
+                    can_do_data=True,
+                    user_info=user_info,
+                    conversation_id=conversation_id,
                 )
-                turn_intent_info = None
-                turn_intent_elapsed_ms = 0.0
-                session_turn = None
+                session_turn = (turn_classification, turn_intent_info, turn_intent_elapsed_ms)
             else:
                 turn_classification, turn_intent_info, turn_intent_elapsed_ms = await resolve_turn_for_session(
                     user_query,
@@ -374,7 +384,10 @@ class AgentService:
                 )
                 session_turn = (turn_classification, turn_intent_info, turn_intent_elapsed_ms)
             early_turn_type = turn_classification.turn_type
-            turn_display_label = "ChatBI 请求类别分析" if can_do_data else turn_type_label(turn_classification.turn_type)
+            if can_do_data and turn_classification.turn_type == TurnType.DATA_QUERY_REQUEST:
+                turn_display_label = "ChatBI 请求类别分析"
+            else:
+                turn_display_label = turn_type_label(turn_classification.turn_type)
 
             # --- Long-Term Memory (LTM) Injection ---
             if should_inject_ltm(early_turn_type) and user_info:
@@ -579,14 +592,14 @@ class AgentService:
                     trace_id,
                     trace_buffer,
                     debug_options,
+                    permission_options,
                     user_info,
                     api_key,
                     conversation_id,
                     session_turn,
                     route_hints,
                 ):
-                    if "content" in chunk:
-                        full_response_content += chunk["content"]
+                    full_response_content = _accumulate_stream_content(full_response_content, chunk)
                     yield chunk
             else:
                 # --- Standard Single Agent Mode ---
@@ -598,6 +611,7 @@ class AgentService:
                     trace_id,
                     trace_buffer,
                     debug_options,
+                    permission_options,
                     user_info,
                     conversation_id,
                     shared_turn=session_turn,
@@ -616,8 +630,13 @@ class AgentService:
 
                 # Execution
                 async for chunk in executor.execute(messages):
-                    if "content" in chunk:
-                        full_response_content += chunk["content"]
+                    full_response_content = _accumulate_stream_content(full_response_content, chunk)
+                    if chunk.get("type") == "permission_required":
+                        execution_status = "awaiting_permission"
+                    elif chunk.get("type") == "external_execution_required":
+                        execution_status = "awaiting_external_execution"
+                    elif chunk.get("type") == "error" or chunk.get("status") == "error":
+                        execution_status = "error"
                     yield chunk
 
             # 聚合本轮消耗的 Token 并 yield meta 给前端，同时传给 add_message
@@ -668,11 +687,12 @@ class AgentService:
             duration = (end_time - start_time) * 1000
             
             # 6. Async Audit Logging & History
-            asyncio.create_task(AuditManager.log_transaction(
-                 trace_id, agent_config, user_query, full_response_content,
-                 user_info, execution_status, duration, trace_buffer,
-                 conversation_id=conversation_id
-            ))
+            if execution_status not in AWAITING_RESUME_STATUSES:
+                asyncio.create_task(AuditManager.log_transaction(
+                     trace_id, agent_config, user_query, full_response_content,
+                     user_info, execution_status, duration, trace_buffer,
+                     conversation_id=conversation_id
+                ))
 
             if (
                 conversation_id
@@ -699,7 +719,8 @@ class AgentService:
         conversation_id: Optional[str] = None,
         user_info: Optional[Dict[str, Any]] = None,
         api_key: Optional[str] = None,
-        enable_multi_agent: bool = True
+        enable_multi_agent: bool = True,
+        permission_options: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """
         Non-streaming wrapper for chat completion.
@@ -717,7 +738,8 @@ class AgentService:
             conversation_id=conversation_id,
             user_info=user_info,
             api_key=api_key,
-            enable_multi_agent=enable_multi_agent
+            enable_multi_agent=enable_multi_agent,
+            permission_options=permission_options,
         ):
             if "trace_id" in chunk and chunk.get("status") == "init":
                 trace_id = chunk["trace_id"]
@@ -733,6 +755,297 @@ class AgentService:
             "agent_name": agent_name_resp
         }
 
+    async def resume_agentscope_permission_stream(
+        self,
+        *,
+        permission_request_id: str,
+        confirmed: bool,
+        user_info: Optional[Dict[str, Any]] = None,
+    ) -> AsyncGenerator[Dict[str, Any], None]:
+        from app.services.ai.runtime.agentscope.confirmations import (
+            pending_agentscope_confirmations,
+        )
+
+        current_user_id = None
+        if user_info:
+            current_user_id = user_info.get("user_id") or user_info.get("id")
+
+        pending = await pending_agentscope_confirmations.pop_async(
+            permission_request_id,
+            user_id=current_user_id,
+        )
+        if not pending:
+            yield {
+                "type": "error",
+                "status": "error",
+                "content": "工具确认请求不存在或已过期，请重新发起本轮对话。",
+            }
+            return
+
+        if pending.user_id and current_user_id and str(current_user_id) != str(pending.user_id):
+            yield {
+                "type": "error",
+                "status": "error",
+                "content": "当前用户无权确认该工具调用。",
+            }
+            return
+
+        if pending.snapshot.kind == "external":
+            yield {
+                "type": "error",
+                "status": "error",
+                "content": "该请求为外部执行挂起，请使用 external execution 恢复接口。",
+            }
+            return
+
+        runner = self._build_agentscope_runner_from_pending(pending, user_info=user_info)
+
+        yield {
+            "type": "permission_result",
+            "status": "success" if confirmed else "rejected",
+            "permission_request_id": permission_request_id,
+            "tool_call_id": getattr(pending.tool_call, "id", None),
+        }
+
+        full_response_content = ""
+        execution_status = "success" if confirmed else "rejected"
+        start_time = asyncio.get_running_loop().time()
+        async for chunk in runner.resume_agentscope_native_confirmation(
+            pending,
+            confirmed=confirmed,
+        ):
+            full_response_content = _accumulate_stream_content(full_response_content, chunk)
+            yield chunk
+
+        p_tokens, c_tokens, t_tokens = 0, 0, 0
+        trace_buffer = runner.trace_buffer
+        try:
+            from app.services.ai.audit import aggregate_tokens_from_trace_buffer
+            p_tokens, c_tokens, t_tokens = aggregate_tokens_from_trace_buffer(trace_buffer) if trace_buffer else (0, 0, 0)
+        except Exception as agg_err:
+            logger.warning(f"Failed to aggregate tokens after permission resume: {agg_err}")
+
+        if p_tokens or c_tokens:
+            yield {
+                "type": "meta",
+                "prompt_tokens": p_tokens,
+                "completion_tokens": c_tokens,
+                "total_tokens": t_tokens,
+            }
+
+        agent_config = runner.config
+        conversation_id = runner.conversation_id or pending.snapshot.conversation_id
+        user_query = (pending.state or {}).get("user_query") or ""
+
+        if conversation_id and full_response_content:
+            u_id = user_info.get("user_id") if user_info else pending.user_id
+            handled_by = getattr(agent_config, "agent_name", None) if agent_config else None
+            asyncio.create_task(memory_service.add_message(
+                u_id,
+                conversation_id,
+                "assistant",
+                full_response_content,
+                trace_id=pending.trace_id,
+                agent_name=handled_by,
+                prompt_tokens=p_tokens,
+                completion_tokens=c_tokens,
+            ))
+
+        duration = (asyncio.get_running_loop().time() - start_time) * 1000
+        asyncio.create_task(AuditManager.log_transaction(
+            pending.trace_id,
+            agent_config,
+            user_query,
+            full_response_content,
+            user_info,
+            execution_status,
+            duration,
+            trace_buffer,
+            conversation_id=conversation_id,
+        ))
+
+        if (
+            conversation_id
+            and execution_status == "success"
+            and full_response_content
+            and user_info
+            and user_info.get("user_id")
+        ):
+            from app.services.ai.session_summary_service import SessionSummaryService
+            asyncio.create_task(
+                SessionSummaryService.merge_session_summary(
+                    str(user_info.get("user_id")), conversation_id, full_response_content
+                )
+            )
+
+    def _build_agentscope_runner_from_pending(
+        self,
+        pending: Any,
+        *,
+        user_info: Optional[Dict[str, Any]] = None,
+    ) -> Any:
+        runner = pending.runner
+        if runner is not None:
+            return runner
+
+        ctx = pending.snapshot.runner_context or {}
+        if ctx.get("runner_type") == "data":
+            from app.services.ai.runners.data_agent_runner import DataAgentRunner
+
+            return DataAgentRunner.from_runner_context(
+                runner_context=ctx,
+                trace_id=pending.trace_id,
+                trace_buffer=[],
+                user_info=user_info,
+                conversation_id=pending.snapshot.conversation_id,
+            )
+
+        from app.services.ai.runners.assistant_agent_runner import AssistantAgentRunner
+
+        if ctx.get("runner_type") in ("assistant", "general"):
+            return AssistantAgentRunner.from_runner_context(
+                runner_context=ctx,
+                trace_id=pending.trace_id,
+                trace_buffer=[],
+                user_info=user_info,
+                conversation_id=pending.snapshot.conversation_id,
+            )
+
+        raise ValueError(f"Unsupported runner_type for resume: {ctx.get('runner_type')!r}")
+
+    @staticmethod
+    def _build_external_execution_results(results: List[Dict[str, Any]]) -> List[Any]:
+        from agentscope.message import ToolResultBlock, ToolResultState
+
+        state_map = {
+            "success": ToolResultState.SUCCESS,
+            "error": ToolResultState.ERROR,
+            "running": ToolResultState.RUNNING,
+            "interrupted": ToolResultState.INTERRUPTED,
+            "denied": ToolResultState.DENIED,
+        }
+        return [
+            ToolResultBlock(
+                id=str(item.get("id") or ""),
+                name=str(item.get("name") or ""),
+                output=str(item.get("output") or ""),
+                state=state_map.get(str(item.get("state") or "success").lower(), ToolResultState.SUCCESS),
+            )
+            for item in results
+        ]
+
+    async def resume_agentscope_external_execution_stream(
+        self,
+        *,
+        external_execution_request_id: str,
+        results: List[Dict[str, Any]],
+        user_info: Optional[Dict[str, Any]] = None,
+    ) -> AsyncGenerator[Dict[str, Any], None]:
+        from app.services.ai.runtime.agentscope.confirmations import (
+            pending_agentscope_confirmations,
+        )
+
+        current_user_id = None
+        if user_info:
+            current_user_id = user_info.get("user_id") or user_info.get("id")
+
+        pending = await pending_agentscope_confirmations.pop_async(
+            external_execution_request_id,
+            user_id=current_user_id,
+        )
+        if not pending:
+            yield {
+                "type": "error",
+                "status": "error",
+                "content": "外部执行请求不存在或已过期，请重新发起本轮对话。",
+            }
+            return
+
+        if pending.user_id and current_user_id and str(current_user_id) != str(pending.user_id):
+            yield {
+                "type": "error",
+                "status": "error",
+                "content": "当前用户无权提交该外部执行结果。",
+            }
+            return
+
+        if pending.snapshot.kind != "external":
+            yield {
+                "type": "error",
+                "status": "error",
+                "content": "该请求不是外部执行挂起，请使用 permission confirm 接口。",
+            }
+            return
+
+        runner = self._build_agentscope_runner_from_pending(pending, user_info=user_info)
+        execution_results = self._build_external_execution_results(results)
+
+        yield {
+            "type": "external_execution_result",
+            "status": "success",
+            "external_execution_request_id": external_execution_request_id,
+            "tool_call_id": getattr(pending.tool_call, "id", None),
+        }
+
+        full_response_content = ""
+        execution_status = "success"
+        start_time = asyncio.get_running_loop().time()
+        async for chunk in runner.resume_agentscope_external_execution(
+            pending,
+            execution_results=execution_results,
+        ):
+            full_response_content = _accumulate_stream_content(full_response_content, chunk)
+            if chunk.get("status") == "error":
+                execution_status = "error"
+            yield chunk
+
+        p_tokens, c_tokens, t_tokens = 0, 0, 0
+        trace_buffer = runner.trace_buffer
+        try:
+            from app.services.ai.audit import aggregate_tokens_from_trace_buffer
+            p_tokens, c_tokens, t_tokens = aggregate_tokens_from_trace_buffer(trace_buffer) if trace_buffer else (0, 0, 0)
+        except Exception as agg_err:
+            logger.warning(f"Failed to aggregate tokens after external resume: {agg_err}")
+
+        if p_tokens or c_tokens:
+            yield {
+                "type": "meta",
+                "prompt_tokens": p_tokens,
+                "completion_tokens": c_tokens,
+                "total_tokens": t_tokens,
+            }
+
+        agent_config = runner.config
+        conversation_id = runner.conversation_id or pending.snapshot.conversation_id
+        user_query = (pending.state or {}).get("user_query") or ""
+
+        if conversation_id and full_response_content:
+            u_id = user_info.get("user_id") if user_info else pending.user_id
+            handled_by = getattr(agent_config, "agent_name", None) if agent_config else None
+            asyncio.create_task(memory_service.add_message(
+                u_id,
+                conversation_id,
+                "assistant",
+                full_response_content,
+                trace_id=pending.trace_id,
+                agent_name=handled_by,
+                prompt_tokens=p_tokens,
+                completion_tokens=c_tokens,
+            ))
+
+        duration = (asyncio.get_running_loop().time() - start_time) * 1000
+        asyncio.create_task(AuditManager.log_transaction(
+            pending.trace_id,
+            agent_config,
+            user_query,
+            full_response_content,
+            user_info,
+            execution_status,
+            duration,
+            trace_buffer,
+            conversation_id=conversation_id,
+        ))
+
     async def _execute_multi_agent(
         self,
         primary_config: ChatConfig,
@@ -742,6 +1055,7 @@ class AgentService:
         trace_id: str,
         trace_buffer: List[AgentExecutionStep],
         debug_options: Dict[str, Any],
+        permission_options: Optional[Dict[str, Any]],
         user_info: Optional[Dict[str, Any]],
         api_key: Optional[str],
         conversation_id: Optional[str] = None,
@@ -784,6 +1098,7 @@ class AgentService:
                 trace_id,
                 trace_buffer,
                 debug_options,
+                permission_options,
                 user_info,
                 conversation_id,
                 shared_turn=session_turn,

@@ -5,7 +5,7 @@
 > **Enterprise-grade AI Agent Orchestration and Execution Platform**  
 > *Connect Data. Orchestrate Intelligence.*
 
-[![Python](https://img.shields.io/badge/Python-3.10%2B-blue.svg?logo=python&logoColor=white)](https://www.python.org/) [![FastAPI](https://img.shields.io/badge/FastAPI-0.109%2B-009688.svg?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/) [![Vue](https://img.shields.io/badge/Vue-3.x-4FC08D.svg?logo=vue.js&logoColor=white)](https://vuejs.org/) [![TailwindCSS](https://img.shields.io/badge/Tailwind-3.x-38B2AC.svg?logo=tailwind-css&logoColor=white)](https://tailwindcss.com/) [![ClickHouse](https://img.shields.io/badge/ClickHouse-Ready-FFCC00.svg?logo=clickhouse&logoColor=black)](https://clickhouse.com/) [![Redis](https://img.shields.io/badge/Redis-Active-DC382D.svg?logo=redis&logoColor=white)](https://redis.io/) [![MCP](https://img.shields.io/badge/MCP-Supported-orange.svg?logo=anthropic)](https://modelcontextprotocol.org/) [![License](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
+[![Python](https://img.shields.io/badge/Python-3.11%2B-blue.svg?logo=python&logoColor=white)](https://www.python.org/) [![FastAPI](https://img.shields.io/badge/FastAPI-0.109%2B-009688.svg?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/) [![Vue](https://img.shields.io/badge/Vue-3.x-4FC08D.svg?logo=vue.js&logoColor=white)](https://vuejs.org/) [![TailwindCSS](https://img.shields.io/badge/Tailwind-3.x-38B2AC.svg?logo=tailwind-css&logoColor=white)](https://tailwindcss.com/) [![ClickHouse](https://img.shields.io/badge/ClickHouse-Ready-FFCC00.svg?logo=clickhouse&logoColor=black)](https://clickhouse.com/) [![Redis](https://img.shields.io/badge/Redis-Active-DC382D.svg?logo=redis&logoColor=white)](https://redis.io/) [![MCP](https://img.shields.io/badge/MCP-Supported-orange.svg?logo=anthropic)](https://modelcontextprotocol.org/) [![License](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
 
 <img src="docs/images/banner.png" alt="Banner" width="600" />
 
@@ -54,7 +54,7 @@ The platform revolves around the following core capability matrix:
 ┌──────────▼─────────────────────▼─────────────────▼────────┐
 │                     Execution Engines                    │
 │  ┌──────────────────┐  ┌──────────────┐  ┌─────────────┐  │
-│  │ Self-R&D ReAct   │  │RAGFlow Agent │  │  OpenClaw🦞 │  │
+│  │ AgentScope ReAct │  │RAGFlow Agent │  │  OpenClaw🦞 │  │
 │  │ (Loop & SelfSQL) │  │(Managed Bot) │  │(AUTHContext)│  │
 │  └────────┬─────────┘  └──────┬───────┘  └──────┬──────┘  │
 └───────────┼───────────────────┼─────────────────┼─────────┘
@@ -91,7 +91,7 @@ The platform revolves around the following core capability matrix:
 
 ### 1. 🧠 Multi-Engine & Hybrid Orchestration
 *   **Multi-Intent Orchestration**: The system automatically breaks down complex user queries into subtasks (e.g., "Check PUE from last week and compare with SOP" -> ChatBI + RAG), orchestrating parallel execution across expert agents, with a Synthesizer aggregating results into a coherent final response.
-*   **Self-R&D ReAct Engine**: The executor follows a closed-loop "Reasoning-Action-Observation-Reflection" lifecycle, enabling autonomous decision-making and adaptive scheduling of local tool chains.
+*   **AgentScope ReAct Engine**: General and ChatBI agents run on AgentScope Agent + Toolkit, following a closed-loop "Reasoning-Action-Observation-Reflection" lifecycle with permission suspend/resume support.
 *   **RAGFlow Managed Agent**: One-click connection to RAGFlow online-hosted knowledge agents, leveraging their robust parallel retrieval and stream-dialogue infrastructure.
 *   **OpenClaw🦞 LLM Security Gateway**: Proxied through the OpenClaw API gateway, it utilizes `AUTH_CONTEXT` (Authorization Context) to pass through the current user's identity, channel, and accessible metadata/dataset lists, ensuring enterprise-grade data isolation and security.
 
@@ -135,7 +135,7 @@ The system operates on a cyclic **"Routing -> Dispatch -> Execution -> Synthesis
 ├── app/                  # Backend core code (FastAPI)
 │   ├── api/              # API router layer (Portal admin & Client V1 APIs)
 │   ├── services/         # Business service layer (Auth, RAG knowledge, MCP plugin services)
-│   │   └── ai/           # 🤖 AI Orchestration Center (Self-R&D ReAct, OpenClaw execution & intent dispatch)
+│   │   └── ai/           # 🤖 AI Orchestration Center (AgentScope Runners, OpenClaw execution & intent dispatch)
 │   └── models/           # SQLAlchemy ORM models
 ├── frontend/             # Admin console and embedded Chat SDK project (Vue 3 + Tailwind)
 ├── .agent/               # Agent-specific dev skills & workflow configs (opsx, etc.)

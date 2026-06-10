@@ -54,7 +54,7 @@ class ChatConfig(BaseModel):
 
 1.  **请求**：收到 `ChatCompletionRequest`。
 2.  **上下文**：`AgentContextManager` 解析 `ChatConfig`。它现在从数据库加载丰富的工具列表（数据库存储也将适配 JSON 格式）。
-3.  **执行器**：`GeneralChatExecutor` 调用 `ToolRegistry.get_tools(self.config.tools)`。
+3.  **执行器**：`AssistantExecutor` 调用 `ToolRegistry.get_tools(self.config.tools)`。
 4.  **运行时**：返回的工具已预绑定了正确的 LLM 客户端（如果适用）。当调用 `ainvoke` 时，它们使用指定的模型。
 
 ## 4. 数据库存储考虑

@@ -30,11 +30,13 @@ async def test_router_context_awareness():
         mock_config.return_value = RouterService.DEFAULT_SYSTEM_PROMPT
         
         # Mock LLM
-        with patch('app.services.ai.router_service.get_llm_async') as mock_get_llm:
+        with patch('app.services.ai.router_service.get_llm_async') as mock_get_llm, \
+             patch('app.services.ai.router_service.chat_client_from_handle') as mock_chat_factory:
             mock_llm_instance = MagicMock()
-            mock_llm_instance.ainvoke = AsyncMock()
-            mock_llm_instance.ainvoke.return_value = MagicMock(content='{"thought": "test", "agent_name": "chat-bi", "confidence": 0.9}')
+            mock_chat = AsyncMock()
+            mock_chat.generate_text.return_value = '{"thought": "test", "agent_name": "chat-bi", "confidence": 0.9}'
             mock_get_llm.return_value = mock_llm_instance
+            mock_chat_factory.return_value = mock_chat
             
             # Scenario: User asked about room temperatures (chat-bi), then asked "how about there?"
             history = [
@@ -47,9 +49,9 @@ async def test_router_context_awareness():
             await router.route_query(user_input, history=history)
             
             # Check the call to LLM
-            called_messages = mock_llm_instance.ainvoke.call_args[0][0]
-            system_msg = called_messages[0].content
-            human_msg = called_messages[1].content
+            called_messages = mock_chat.generate_text.call_args[0][0]
+            system_msg = called_messages[0].content[0].text
+            human_msg = called_messages[1].content[0].text
             
             assert "Conversation History" in system_msg
             assert "IDC Room 1" in system_msg
@@ -64,16 +66,18 @@ async def test_router_heuristic_bypass_history():
     router = RouterService()
     
     with patch.object(router, '_fetch_agents_from_db', new_callable=AsyncMock) as mock_fetch, \
-         patch('app.services.ai.router_service.get_llm_async') as mock_get_llm:
+         patch('app.services.ai.router_service.get_llm_async') as mock_get_llm, \
+         patch('app.services.ai.router_service.chat_client_from_handle') as mock_chat_factory:
         
         mock_fetch.return_value = [
             {"id": "1", "name": "chat-bi", "description": "Query database", "capabilities": ["data_query"]}
         ]
         
         mock_llm_instance = MagicMock()
-        mock_llm_instance.ainvoke = AsyncMock()
-        mock_llm_instance.ainvoke.return_value = MagicMock(content='{"thought": "Standard Routing", "agent_name": "chat-bi", "confidence": 0.9}')
+        mock_chat = AsyncMock()
+        mock_chat.generate_text.return_value = '{"thought": "Standard Routing", "agent_name": "chat-bi", "confidence": 0.9}'
         mock_get_llm.return_value = mock_llm_instance
+        mock_chat_factory.return_value = mock_chat
         
         # This input previously triggered heuristic
         user_input = "查一下机房温度" 

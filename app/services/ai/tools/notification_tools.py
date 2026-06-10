@@ -7,7 +7,7 @@ import base64
 import urllib.parse
 import httpx
 from typing import Any, Dict, Optional, Type
-from langchain_core.tools import BaseTool
+from app.services.ai.tools.tool_compat import BaseTool
 from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)

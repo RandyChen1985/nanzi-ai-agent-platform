@@ -17,7 +17,7 @@ RUN if [ "$PREBUILD_FRONTEND" = "1" ]; then \
     fi
 
 # --- 阶段 2: Python 环境构建 ---
-FROM python:3.10-slim
+FROM python:3.11-slim
 
 WORKDIR /app
 

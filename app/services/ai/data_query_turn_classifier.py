@@ -13,8 +13,6 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Dict, List, Optional
 
-from langchain_core.messages import SystemMessage
-
 from app.services.ai.intent_service import (
     IntentResponse,
     IntentType,
@@ -23,6 +21,8 @@ from app.services.ai.intent_service import (
     looks_like_pure_result_followup,
     looks_like_skill_execution,
 )
+from app.services.ai.runtime.agentscope.chat import chat_client_from_handle
+from app.services.ai.runtime.agentscope.messages import RuntimeContentBlock, RuntimeMessage
 from app.services.ai.turn_classifier import (
     load_last_data_result,
 )
@@ -187,8 +187,16 @@ JSON 格式：
         from app.services.ai.config import AgentConfigProvider
 
         llm = await AgentConfigProvider.get_configured_llm(streaming=False)
-        response = await llm.ainvoke([SystemMessage(content=prompt)])
-        data = _parse_llm_json(getattr(response, "content", "") or "")
+        chat_client = chat_client_from_handle(llm)
+        content = await chat_client.generate_text(
+            [
+                RuntimeMessage(
+                    role="system",
+                    content=[RuntimeContentBlock(type="text", text=prompt)],
+                )
+            ]
+        )
+        data = _parse_llm_json(content)
         raw_turn_type = str(data.get("turn_type") or "").strip()
         reasoning = str(data.get("reasoning") or "ChatBI 请求类别由大模型兜底识别").strip()
         turn_type = DataQueryTurnType(raw_turn_type)

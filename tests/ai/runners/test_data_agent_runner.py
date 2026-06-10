@@ -1,0 +1,2951 @@
+import json
+import pytest
+from contextlib import asynccontextmanager
+from unittest.mock import AsyncMock
+from pydantic import BaseModel
+
+from app.schemas.agent import ChatConfig
+from app.services.ai.runtime.agentscope.compat import AIMessage
+from app.services.ai.data_query_turn_classifier import DataQueryTurnClassification, DataQueryTurnType
+from app.services.ai.intent_service import IntentType
+
+
+pytestmark = pytest.mark.no_infrastructure
+
+
+@pytest.fixture
+def data_config():
+    return ChatConfig(
+        agent_id="data-agent-id",
+        agent_name="DataAgent",
+        agent_version=None,
+        model_name="gpt-4o",
+        temperature=0.0,
+        system_prompt="You are a data agent.",
+        tools=["update_dashboard_context"],
+    )
+
+
+@pytest.fixture(autouse=True)
+def isolate_data_agent_runtime(monkeypatch):
+    async def _no_redis():
+        return None
+
+    @asynccontextmanager
+    async def _noop_session_lock_hold(**kwargs):
+        yield True
+
+    monkeypatch.setattr("app.core.redis.get_redis", _no_redis)
+    monkeypatch.setattr(
+        "app.services.ai.runners.data_agent_runner.get_local_workspace",
+        AsyncMock(return_value=None),
+    )
+    monkeypatch.setattr(
+        "app.services.ai.runners.data_agent_runner.agentscope_session_lock.hold",
+        _noop_session_lock_hold,
+    )
+    monkeypatch.setattr(
+        "app.services.ai.runners.data_agent_runner.agent_state_store.load",
+        AsyncMock(return_value=None),
+    )
+    monkeypatch.setattr(
+        "app.services.ai.runners.data_agent_runner.agent_state_store.save",
+        AsyncMock(return_value=None),
+    )
+
+
+@pytest.fixture(autouse=True)
+def default_data_agent_turn_classification(monkeypatch):
+    classification = DataQueryTurnClassification(
+        turn_type=DataQueryTurnType.NEW_DATA_QUERY,
+        reasoning="测试默认：新数据查询",
+        requires_fresh_data=True,
+        requires_few_shot=False,
+        skip_intent_llm=True,
+        intent=IntentType.DATA_QUERY,
+    )
+
+    async def fake_resolve(*args, **kwargs):
+        return classification, None, 0.0
+
+    monkeypatch.setattr(
+        "app.services.ai.runners.data_agent_runner.resolve_data_query_turn_classification",
+        fake_resolve,
+    )
+
+
+@pytest.mark.asyncio
+async def test_data_agent_runner_resolves_chatbi_runtime_tools(data_config):
+    from app.services.ai.runners.data_agent_runner import DataAgentRunner
+
+    runner = DataAgentRunner(config=data_config, trace_id="trace-data", trace_buffer=[])
+
+    tools = await runner._resolve_runtime_tools_from_config()
+
+    assert [tool.name for tool in tools] == [
+        "update_dashboard_context",
+        "get_dataset_schema",
+        "execute_sql_query",
+    ]
+    assert [tool.permission_scope for tool in tools] == ["read", "read", "read"]
+
+
+@pytest.mark.asyncio
+async def test_data_agent_runner_auto_invokes_schema_before_react(data_config, monkeypatch):
+    from app.services.ai.runners.data_agent_runner import DataAgentRunner
+
+    schema_calls: list[dict] = []
+
+    async def fake_schema(**kwargs):
+        schema_calls.append(kwargs)
+        return "dataset: demo\ntable_name: demo\ncolumns: id"
+
+    async def empty_agent_turn(*args, **kwargs):
+        assert schema_calls, "schema prefetch must happen before react"
+        if False:
+            yield {}
+
+    monkeypatch.setitem(
+        __import__("app.services.ai.tools.registry", fromlist=["ToolRegistry"]).ToolRegistry._registry,
+        "get_dataset_schema",
+        fake_schema,
+    )
+    monkeypatch.setattr(
+        "app.services.ai.runners.data_agent_runner.DataAgentRunner._run_native_agent_turn",
+        empty_agent_turn,
+    )
+
+    runner = DataAgentRunner(config=data_config, trace_id="trace-schema-prefetch", trace_buffer=[])
+    events = []
+    async for chunk in runner.execute([{"role": "user", "content": "查一下本月商机"}]):
+        events.append(chunk)
+
+    assert len(schema_calls) == 1
+    assert "商机" in str(schema_calls[0].get("keywords", ""))
+    assert any(event.get("title") == "自动获取数据集定义" for event in events)
+    assert any(event.get("title") == "工具完成: get_dataset_schema" for event in events)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "output,flag_name",
+    [
+        (
+            __import__(
+                "app.services.metadata_rag_service",
+                fromlist=["MetadataRagService"],
+            ).MetadataRagService.unavailable_hint("RAGFlow HTTP Error 502: "),
+            "schema_service_unavailable",
+        ),
+        (
+            "No authorized datasets found. You do not have permission to view any data.",
+            "no_authorized_schema",
+        ),
+        (
+            "Authorized datasets found, but none are synced to RAG knowledge base.",
+            "rag_not_synced",
+        ),
+    ],
+)
+async def test_apply_schema_tool_result_does_not_mark_completed_on_fatal_errors(
+    data_config,
+    output,
+    flag_name,
+):
+    from app.services.ai.runners.data_agent_runner import DataAgentRunner, _DataRunState
+
+    state = _DataRunState()
+    runner = DataAgentRunner(
+        config=data_config,
+        trace_id="trace-apply-schema",
+        trace_buffer=[],
+    )
+    runner._apply_schema_tool_result(state, output)
+
+    assert getattr(state, flag_name) is True
+    assert state.schema_completed is False
+    assert runner._is_schema_fatal(state) is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "schema_output,expected_title,content_snippet",
+    [
+        (
+            __import__(
+                "app.services.metadata_rag_service",
+                fromlist=["MetadataRagService"],
+            ).MetadataRagService.unavailable_hint("RAGFlow HTTP Error 502: "),
+            "元数据服务不可用",
+            "元数据检索服务当前不可用",
+        ),
+        (
+            "No authorized datasets found. You do not have permission to view any data.",
+            "无授权数据集",
+            "没有可访问的数据集权限",
+        ),
+        (
+            "Authorized datasets found, but none are synced to RAG knowledge base.",
+            "元数据未同步知识库",
+            "尚未同步到元数据知识库",
+        ),
+    ],
+)
+async def test_data_agent_runner_stops_on_fatal_schema_errors(
+    data_config,
+    monkeypatch,
+    schema_output,
+    expected_title,
+    content_snippet,
+):
+    from app.services.ai.runners.data_agent_runner import DataAgentRunner
+
+    async def fake_schema(**kwargs):
+        return schema_output
+
+    react_called = False
+
+    async def fake_agent_turn(*args, **kwargs):
+        nonlocal react_called
+        react_called = True
+        if False:
+            yield {}
+
+    monkeypatch.setitem(
+        __import__("app.services.ai.tools.registry", fromlist=["ToolRegistry"]).ToolRegistry._registry,
+        "get_dataset_schema",
+        fake_schema,
+    )
+    monkeypatch.setattr(
+        "app.services.ai.runners.data_agent_runner.DataAgentRunner._run_native_agent_turn",
+        fake_agent_turn,
+    )
+
+    runner = DataAgentRunner(config=data_config, trace_id="trace-schema-fatal", trace_buffer=[])
+    events = []
+    async for chunk in runner.execute([{"role": "user", "content": "查一下智能体用户表"}]):
+        events.append(chunk)
+
+    assert react_called is False
+    assert any(event.get("title") == expected_title for event in events)
+    assert any(content_snippet in str(event.get("content", "")) for event in events if event.get("content"))
+    assert not any("必须先执行 SQL 查数" in str(event.get("title", "")) for event in events)
+
+
+@pytest.mark.asyncio
+async def test_data_agent_runner_skips_schema_prefetch_for_context_action(data_config, monkeypatch):
+    from app.services.ai.data_query_turn_classifier import (
+        DataQueryTurnClassification,
+        DataQueryTurnType,
+    )
+    from app.services.ai.intent_service import IntentType
+    from app.services.ai.runners.data_agent_runner import DataAgentRunner
+
+    context_turn = DataQueryTurnClassification(
+        turn_type=DataQueryTurnType.CONTEXT_ACTION,
+        reasoning="测试：上下文动作",
+        requires_fresh_data=False,
+        requires_few_shot=False,
+        skip_intent_llm=True,
+        intent=IntentType.GENERAL,
+    )
+
+    async def fake_resolve(*args, **kwargs):
+        return context_turn, None, 0.0
+
+    async def fake_schema(**kwargs):
+        raise AssertionError("context action must not auto invoke schema")
+
+    monkeypatch.setattr(
+        "app.services.ai.runners.data_agent_runner.resolve_data_query_turn_classification",
+        fake_resolve,
+    )
+    monkeypatch.setitem(
+        __import__("app.services.ai.tools.registry", fromlist=["ToolRegistry"]).ToolRegistry._registry,
+        "get_dataset_schema",
+        fake_schema,
+    )
+    async def empty_agent_turn(*args, **kwargs):
+        if False:
+            yield {}
+
+    monkeypatch.setattr(
+        "app.services.ai.runners.data_agent_runner.DataAgentRunner._run_native_agent_turn",
+        empty_agent_turn,
+    )
+
+    runner = DataAgentRunner(config=data_config, trace_id="trace-no-prefetch", trace_buffer=[])
+    events = []
+    async for chunk in runner.execute([{"role": "user", "content": "保存上面的结果"}]):
+        events.append(chunk)
+
+    assert not any(event.get("title") == "自动获取数据集定义" for event in events)
+
+
+@pytest.mark.asyncio
+async def test_data_agent_runner_builds_chatbi_toolkit_without_workspace_file_tools(
+    data_config, monkeypatch
+):
+    from unittest.mock import MagicMock
+
+    from app.services.ai.runners.data_agent_runner import DataAgentRunner
+
+    fake_workspace = MagicMock()
+    fake_toolkit = MagicMock()
+    build_chatbi = AsyncMock(return_value=(fake_toolkit, []))
+    captured_agent_kwargs: dict = {}
+
+    def fake_agent(**kwargs):
+        captured_agent_kwargs.update(kwargs)
+        return MagicMock(name="AgentInstance")
+
+    monkeypatch.setattr(
+        "app.services.ai.runners.data_agent_runner.get_local_workspace",
+        AsyncMock(return_value=fake_workspace),
+    )
+    monkeypatch.setattr(
+        "app.services.ai.runners.data_agent_runner.build_chatbi_toolkit",
+        build_chatbi,
+    )
+    monkeypatch.setattr(
+        "app.services.ai.runners.data_agent_runner.Agent",
+        fake_agent,
+    )
+    monkeypatch.setattr(
+        "app.services.ai.runners.data_agent_runner.load_context_config",
+        AsyncMock(return_value=None),
+    )
+    monkeypatch.setattr(
+        "app.services.ai.runners.data_agent_runner.build_model_config",
+        AsyncMock(return_value=None),
+    )
+
+    runner = DataAgentRunner(config=data_config, trace_id="trace-toolkit", trace_buffer=[])
+    tools = await runner._resolve_runtime_tools_from_config()
+    agent = await runner._build_native_agent(
+        native_model=MagicMock(model="fake"),
+        tools=tools,
+        system_content="system",
+        max_steps=3,
+        primary_model_name="fake-model",
+    )
+
+    build_chatbi.assert_awaited_once()
+    assert captured_agent_kwargs["toolkit"] is fake_toolkit
+    assert captured_agent_kwargs["offloader"] is fake_workspace
+    assert agent.name == "AgentInstance"
+
+
+@pytest.mark.asyncio
+async def test_data_agent_runner_system_content_includes_data_guardrails(data_config):
+    from app.services.ai.executors.prompts import DataQueryPrompts
+    from app.services.ai.runners.data_agent_runner import DataAgentRunner
+
+    runner = DataAgentRunner(config=data_config, trace_id="trace-data", trace_buffer=[])
+
+    system_content = await runner._build_system_content()
+
+    assert DataQueryPrompts.GLOBAL_GUARDRAILS in system_content
+    assert DataQueryPrompts.SQL_PLAN_ENFORCEMENT in system_content
+    assert DataQueryPrompts.FOLLOWUP_REUSE_CONSTRAINT in system_content
+    assert data_config.system_prompt in system_content
+
+
+@pytest.mark.asyncio
+async def test_data_agent_runner_system_content_replaces_dataset_menu(data_config, monkeypatch):
+    from app.services.ai.runners.data_agent_runner import DataAgentRunner
+
+    captured = {}
+
+    async def fake_get_dataset_menu(user_id=None, is_admin=False):
+        captured["user_id"] = user_id
+        captured["is_admin"] = is_admin
+        return "数据集菜单: demo"
+
+    monkeypatch.setattr(
+        "app.services.ai.runners.data_agent_runner.AgentConfigProvider.get_dataset_menu",
+        fake_get_dataset_menu,
+    )
+    data_config.system_prompt = "Use {dataset_menu}"
+    runner = DataAgentRunner(
+        config=data_config,
+        trace_id="trace-menu",
+        trace_buffer=[],
+        user_info={"user_id": 42, "role": "admin"},
+    )
+
+    system_content = await runner._build_system_content()
+
+    assert "{dataset_menu}" not in system_content
+    assert "数据集菜单: demo" in system_content
+    assert captured == {"user_id": 42, "is_admin": True}
+
+
+@pytest.mark.asyncio
+async def test_data_agent_runner_reuses_previous_result_without_native_agent(data_config, monkeypatch):
+    from app.services.ai.data_query_turn_classifier import (
+        DataQueryTurnClassification,
+        DataQueryTurnType,
+    )
+    from app.services.ai.intent_service import IntentType
+    from app.services.ai.runners.data_agent_runner import DataAgentRunner
+
+    reuse_turn = DataQueryTurnClassification(
+        turn_type=DataQueryTurnType.REUSE_PREVIOUS_RESULT,
+        reasoning="测试：复用上一轮查询结果",
+        requires_fresh_data=False,
+        requires_few_shot=False,
+        skip_intent_llm=True,
+        intent=IntentType.DATA_QUERY,
+    )
+    last_result = {
+        "sql": "select status, count(*) total_count from users group by status",
+        "dataset_name": "users",
+        "data_source": "mysql_oa",
+        "rows": [{"status": "启用", "total_count": 8}],
+    }
+
+    async def fake_resolve(*args, **kwargs):
+        return reuse_turn, None, 12.0
+
+    async def fake_get_last(user_id, conversation_id):
+        assert user_id == 42
+        assert conversation_id == "conv-1"
+        return last_result
+
+    class FakeSynthesisLLM:
+        model_name = "synthesis-model"
+
+        async def astream(self, messages):
+            assert "上一轮结构化查询结果" in messages[-1].content
+            yield AIMessage(content="已基于上一轮结果完成分析。")
+
+    async def forbidden_build_agent(*args, **kwargs):
+        raise AssertionError("reuse flow must not build the native AgentScope agent")
+
+    monkeypatch.setattr(
+        "app.services.ai.runners.data_agent_runner.resolve_data_query_turn_classification",
+        fake_resolve,
+    )
+    monkeypatch.setattr(
+        "app.services.ai.memory_service.memory_service.get_last_data_result",
+        fake_get_last,
+    )
+    monkeypatch.setattr(
+        "app.services.ai.runners.data_agent_runner.AgentConfigProvider.get_synthesis_llm",
+        AsyncMock(return_value=FakeSynthesisLLM()),
+    )
+    runner = DataAgentRunner(
+        config=data_config,
+        trace_id="trace-reuse",
+        trace_buffer=[],
+        user_info={"user_id": 42},
+        conversation_id="conv-1",
+    )
+    monkeypatch.setattr(runner, "_build_native_agent", forbidden_build_agent)
+
+    events = []
+    async for chunk in runner.execute(
+        [
+            {"role": "assistant", "content": "上一轮返回了用户状态。"},
+            {"role": "user", "content": "分析一下"},
+        ]
+    ):
+        events.append(chunk)
+
+    assert any(chunk.get("title") == "ChatBI 请求类别分析结果" for chunk in events)
+    assert any(chunk.get("title") == "复用上一轮查询结果" for chunk in events)
+    assert any(chunk.get("content") == "已基于上一轮结果完成分析。" for chunk in events)
+    assert runner.turn_classification is reuse_turn
+
+
+@pytest.mark.asyncio
+async def test_data_agent_runner_reuse_synthesis_skips_previous_assistant_history(
+    data_config, monkeypatch
+):
+    from app.services.ai.data_query_turn_classifier import (
+        DataQueryTurnClassification,
+        DataQueryTurnType,
+    )
+    from app.services.ai.intent_service import IntentType
+    from app.services.ai.runners.data_agent_runner import DataAgentRunner
+    from app.services.ai.runtime.agentscope.compat import AIMessage, HumanMessage
+
+    reuse_turn = DataQueryTurnClassification(
+        turn_type=DataQueryTurnType.REUSE_PREVIOUS_RESULT,
+        reasoning="测试：复用上一轮查询结果",
+        requires_fresh_data=False,
+        requires_few_shot=False,
+        skip_intent_llm=True,
+        intent=IntentType.DATA_QUERY,
+    )
+    last_result = {
+        "sql": "select 1",
+        "dataset_name": "demo",
+        "data_source": "mysql_aiagent",
+        "rows": [{"total": 1}],
+    }
+    captured_messages = []
+
+    async def fake_resolve(*args, **kwargs):
+        return reuse_turn, None, 12.0
+
+    async def fake_get_last(user_id, conversation_id):
+        return last_result
+
+    class FakeSynthesisLLM:
+        model_name = "synthesis-model"
+
+        async def astream(self, messages):
+            captured_messages.extend(messages)
+            yield AIMessage(content="新增分析。")
+
+    monkeypatch.setattr(
+        "app.services.ai.runners.data_agent_runner.resolve_data_query_turn_classification",
+        fake_resolve,
+    )
+    monkeypatch.setattr(
+        "app.services.ai.memory_service.memory_service.get_last_data_result",
+        fake_get_last,
+    )
+    monkeypatch.setattr(
+        "app.services.ai.runners.data_agent_runner.AgentConfigProvider.get_synthesis_llm",
+        AsyncMock(return_value=FakeSynthesisLLM()),
+    )
+
+    runner = DataAgentRunner(
+        config=data_config,
+        trace_id="trace-reuse-history",
+        trace_buffer=[],
+        user_info={"user_id": 42},
+        conversation_id="conv-1",
+    )
+
+    async for _chunk in runner.execute(
+        [
+            {"role": "assistant", "content": "上一轮完整图表与表格内容。"},
+            {"role": "user", "content": "可视化分析一下"},
+        ]
+    ):
+        pass
+
+    assert not any(isinstance(message, AIMessage) for message in captured_messages)
+    assert any(
+        isinstance(message, HumanMessage) and "可视化分析一下" in str(message.content)
+        for message in captured_messages
+    )
+
+
+@pytest.mark.asyncio
+async def test_data_agent_runner_reuse_synthesis_collapses_duplicated_output(
+    data_config, monkeypatch
+):
+    from app.services.ai.data_query_turn_classifier import (
+        DataQueryTurnClassification,
+        DataQueryTurnType,
+    )
+    from app.services.ai.intent_service import IntentType
+    from app.services.ai.runners.data_agent_runner import DataAgentRunner
+    from app.services.ai.runtime.agentscope.compat import AIMessage
+
+    reuse_turn = DataQueryTurnClassification(
+        turn_type=DataQueryTurnType.REUSE_PREVIOUS_RESULT,
+        reasoning="测试：复用上一轮查询结果",
+        requires_fresh_data=False,
+        requires_few_shot=False,
+        skip_intent_llm=True,
+        intent=IntentType.DATA_QUERY,
+    )
+    last_result = {
+        "sql": "select 1",
+        "dataset_name": "demo",
+        "data_source": "mysql_aiagent",
+        "rows": [{"total": 1}],
+    }
+    duplicate_block = "### 核心结论\n" + ("Top5 功能点趋势分析 " * 30)
+
+    async def fake_resolve(*args, **kwargs):
+        return reuse_turn, None, 12.0
+
+    async def fake_get_last(user_id, conversation_id):
+        return last_result
+
+    class FakeSynthesisLLM:
+        model_name = "synthesis-model"
+
+        async def astream(self, messages):
+            yield AIMessage(content=duplicate_block + "\n\n" + duplicate_block)
+
+    monkeypatch.setattr(
+        "app.services.ai.runners.data_agent_runner.resolve_data_query_turn_classification",
+        fake_resolve,
+    )
+    monkeypatch.setattr(
+        "app.services.ai.memory_service.memory_service.get_last_data_result",
+        fake_get_last,
+    )
+    monkeypatch.setattr(
+        "app.services.ai.runners.data_agent_runner.AgentConfigProvider.get_synthesis_llm",
+        AsyncMock(return_value=FakeSynthesisLLM()),
+    )
+
+    runner = DataAgentRunner(
+        config=data_config,
+        trace_id="trace-reuse-dedupe",
+        trace_buffer=[],
+        user_info={"user_id": 42},
+        conversation_id="conv-1",
+    )
+
+    events = []
+    async for chunk in runner.execute([{"role": "user", "content": "分析一下"}]):
+        events.append(chunk)
+
+    retraction = next(event for event in events if event.get("type") == "retraction")
+    assert retraction["content"].strip() == duplicate_block.strip()
+    assert runner.trace_buffer[-1].tool_output["content"].strip() == duplicate_block.strip()
+
+
+@pytest.mark.asyncio
+async def test_data_agent_runner_reports_missing_reusable_result(data_config, monkeypatch):
+    from app.services.ai.data_query_turn_classifier import (
+        DataQueryTurnClassification,
+        DataQueryTurnType,
+    )
+    from app.services.ai.executors.prompts import DataQueryPrompts
+    from app.services.ai.intent_service import IntentType
+    from app.services.ai.runners.data_agent_runner import DataAgentRunner
+
+    reuse_turn = DataQueryTurnClassification(
+        turn_type=DataQueryTurnType.REUSE_PREVIOUS_RESULT,
+        reasoning="测试：复用上一轮查询结果",
+        requires_fresh_data=False,
+        requires_few_shot=False,
+        skip_intent_llm=True,
+        intent=IntentType.DATA_QUERY,
+    )
+
+    async def fake_resolve(*args, **kwargs):
+        return reuse_turn, None, 0.0
+
+    monkeypatch.setattr(
+        "app.services.ai.runners.data_agent_runner.resolve_data_query_turn_classification",
+        fake_resolve,
+    )
+    monkeypatch.setattr(
+        "app.services.ai.memory_service.memory_service.get_last_data_result",
+        AsyncMock(return_value=None),
+    )
+    runner = DataAgentRunner(
+        config=data_config,
+        trace_id="trace-reuse-miss",
+        trace_buffer=[],
+        user_info={"user_id": 42},
+        conversation_id="conv-1",
+    )
+
+    events = []
+    async for chunk in runner.execute([{"role": "user", "content": "可视化一下"}]):
+        events.append(chunk)
+
+    assert any(chunk.get("title") == "缺少可复用查询结果" for chunk in events)
+    assert any(chunk.get("content") == DataQueryPrompts.NO_REUSABLE_RESULT for chunk in events)
+
+
+@pytest.mark.asyncio
+async def test_data_agent_runner_checks_multimodal_compatibility_before_native_model(
+    data_config,
+    monkeypatch,
+):
+    from app.services.ai.runners.data_agent_runner import DataAgentRunner
+
+    async def fake_ensure_multimodal_compatible(history, model_name):
+        assert history == [{"role": "user", "content": [{"type": "image_url", "image_url": {"url": "x"}}]}]
+        assert model_name == "vision-check-model"
+        return "当前模型不支持图片输入。"
+
+    monkeypatch.setattr(
+        "app.services.ai.runners.data_agent_runner.resolve_runtime_model_name",
+        lambda config, prefer_synthesis=True: "vision-check-model",
+    )
+    monkeypatch.setattr(
+        "app.services.ai.runners.data_agent_runner.ensure_multimodal_compatible",
+        fake_ensure_multimodal_compatible,
+    )
+    monkeypatch.setattr(
+        "app.services.ai.runners.data_agent_runner.AgentConfigProvider.get_configured_llm",
+        AsyncMock(side_effect=AssertionError("must not initialize native model when multimodal check fails")),
+    )
+    runner = DataAgentRunner(config=data_config, trace_id="trace-mm", trace_buffer=[])
+
+    events = []
+    async for chunk in runner.execute(
+        [{"role": "user", "content": [{"type": "image_url", "image_url": {"url": "x"}}]}]
+    ):
+        events.append(chunk)
+
+    assert events == [{"content": "当前模型不支持图片输入。", "status": "error"}]
+
+
+@pytest.mark.asyncio
+async def test_data_agent_runner_caps_max_steps_at_data_limit(data_config, monkeypatch):
+    from app.services.ai.executors.data_executor import DATA_QUERY_MAX_STEPS_CAP
+    from app.services.ai.runners.data_agent_runner import DataAgentRunner
+
+    async def fake_get(key):
+        assert key == "agent_max_iterations"
+        return "99"
+
+    monkeypatch.setattr("app.services.ai.runners.data_agent_runner.ConfigService.get", fake_get)
+    runner = DataAgentRunner(config=data_config, trace_id="trace-data", trace_buffer=[])
+
+    assert await runner._resolve_max_steps() == DATA_QUERY_MAX_STEPS_CAP
+
+
+@pytest.mark.asyncio
+async def test_data_agent_runner_builds_native_agent_with_chatbi_toolkit(
+    data_config,
+    monkeypatch,
+):
+    from app.services.ai.runners.data_agent_runner import DataAgentRunner
+
+    captured = {}
+
+    class FakeAgent:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    class FakeReActConfig:
+        def __init__(self, max_iters):
+            self.max_iters = max_iters
+
+    async def fake_load_context_config():
+        return None
+
+    monkeypatch.setattr(
+        "app.services.ai.runners.data_agent_runner.load_context_config",
+        fake_load_context_config,
+    )
+
+    async def fake_build_model_config(**kwargs):
+        return {"fallback_model": None}
+
+    monkeypatch.setattr(
+        "app.services.ai.runners.data_agent_runner.build_model_config",
+        fake_build_model_config,
+    )
+    monkeypatch.setattr(
+        "app.services.ai.runners.data_agent_runner.Agent",
+        FakeAgent,
+    )
+    monkeypatch.setattr(
+        "app.services.ai.runners.data_agent_runner.ReActConfig",
+        FakeReActConfig,
+    )
+
+    runner = DataAgentRunner(config=data_config, trace_id="trace-data", trace_buffer=[])
+    tools = await runner._resolve_runtime_tools_from_config()
+    agent = await runner._build_native_agent(
+        native_model=object(),
+        tools=tools,
+        system_content="system",
+        max_steps=7,
+        primary_model_name="gpt-4o",
+    )
+
+    assert isinstance(agent, FakeAgent)
+    assert captured["name"] == "DataAgent"
+    assert captured["system_prompt"] == "system"
+    assert captured["react_config"].max_iters == 7
+    schemas = await captured["toolkit"].get_tool_schemas()
+    assert [item["function"]["name"] for item in schemas] == [
+        "update_dashboard_context",
+        "get_dataset_schema",
+        "execute_sql_query",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_data_agent_runner_execute_streams_agentscope_native_text(
+    data_config,
+    monkeypatch,
+):
+    from agentscope.credential import CredentialBase
+    from agentscope.message import TextBlock, ToolCallBlock
+    from agentscope.model import ChatModelBase, ChatResponse
+
+    from app.core.llm.client import AgentScopeLLMHandle
+    from app.services.ai.runners.data_agent_runner import DataAgentRunner
+
+    class FakeCredential(CredentialBase):
+        @classmethod
+        def get_chat_model_class(cls):
+            return FakeModel
+
+    class FakeModel(ChatModelBase):
+        class Parameters(BaseModel):
+            pass
+
+        async def _call_api(self, model_name, messages, tools=None, tool_choice=None, **kwargs):
+            assert tools
+            assert [tool["function"]["name"] for tool in tools] == [
+                "update_dashboard_context",
+                "get_dataset_schema",
+                "execute_sql_query",
+            ]
+            tool_results = [
+                block
+                for msg in messages
+                for block in msg.get_content_blocks("tool_result")
+            ]
+            if not tool_results:
+                return ChatResponse(
+                    content=[
+                        ToolCallBlock(
+                            id="call_schema",
+                            name="get_dataset_schema",
+                            input='{"keywords": "机房"}',
+                        )
+                    ],
+                    is_last=True,
+                )
+            if len(tool_results) == 1:
+                return ChatResponse(
+                    content=[
+                        ToolCallBlock(
+                            id="call_sql",
+                            name="execute_sql_query",
+                            input='{"sql": "SELECT 1", "data_source": "mysql_aiagent", "dataset_name": "demo"}',
+                        )
+                    ],
+                    is_last=True,
+                )
+            return ChatResponse(
+                content=[TextBlock(text="Data native answer")],
+                is_last=True,
+            )
+
+    async def fake_load_context_config():
+        return None
+
+    async def fake_build_model_config(**kwargs):
+        return None
+
+    async def fake_config_get(key):
+        return "5"
+
+    handle = AgentScopeLLMHandle(
+        native_model=FakeModel(
+            credential=FakeCredential(),
+            model="fake-native-data",
+            parameters=FakeModel.Parameters(),
+            stream=False,
+            max_retries=0,
+        ),
+        model_name="fake-native-data",
+        temperature=0.0,
+        streaming=True,
+    )
+
+    async def fake_get_configured_llm(**kwargs):
+        return handle
+
+    monkeypatch.setattr(
+        "app.services.ai.runners.data_agent_runner.AgentConfigProvider.get_configured_llm",
+        fake_get_configured_llm,
+    )
+    monkeypatch.setattr(
+        "app.services.ai.runners.data_agent_runner.load_context_config",
+        fake_load_context_config,
+    )
+    monkeypatch.setattr(
+        "app.services.ai.runners.data_agent_runner.build_model_config",
+        fake_build_model_config,
+    )
+    monkeypatch.setattr(
+        "app.services.ai.runners.data_agent_runner.ConfigService.get",
+        fake_config_get,
+    )
+
+    runner = DataAgentRunner(config=data_config, trace_id="trace-native-data", trace_buffer=[])
+
+    events = []
+    async for chunk in runner.execute([{"role": "user", "content": "查一下数据"}]):
+        events.append(chunk)
+
+    assert "Data native answer" in "".join(
+        event["content"] for event in events if "content" in event and "type" not in event
+    )
+    assert any(event.get("title") == "工具完成: get_dataset_schema" for event in events)
+    assert any(event.get("title") == "工具完成: execute_sql_query" for event in events)
+
+
+@pytest.mark.asyncio
+async def test_data_agent_runner_stores_successful_sql_result_for_followups(
+    data_config,
+    monkeypatch,
+):
+    from agentscope.credential import CredentialBase
+    from agentscope.message import TextBlock, ToolCallBlock
+    from agentscope.model import ChatModelBase, ChatResponse
+
+    from app.core.llm.client import AgentScopeLLMHandle
+    from app.services.ai.runners.data_agent_runner import DataAgentRunner
+
+    class FakeCredential(CredentialBase):
+        @classmethod
+        def get_chat_model_class(cls):
+            return FakeModel
+
+    class FakeModel(ChatModelBase):
+        class Parameters(BaseModel):
+            pass
+
+        async def _call_api(self, model_name, messages, tools=None, tool_choice=None, **kwargs):
+            tool_results = [
+                block
+                for msg in messages
+                for block in msg.get_content_blocks("tool_result")
+            ]
+            if not tool_results:
+                return ChatResponse(
+                    content=[
+                        ToolCallBlock(
+                            id="call_schema",
+                            name="get_dataset_schema",
+                            input='{"keywords": "用户状态"}',
+                        )
+                    ],
+                    is_last=True,
+                )
+            if len(tool_results) == 1:
+                return ChatResponse(
+                    content=[
+                        ToolCallBlock(
+                            id="call_sql",
+                            name="execute_sql_query",
+                            input=(
+                                '{"sql": "SELECT status, count(*) total_count FROM users GROUP BY status", '
+                                '"data_source": "mysql_oa", "dataset_name": "users"}'
+                            ),
+                        )
+                    ],
+                    is_last=True,
+                )
+            return ChatResponse(content=[TextBlock(text="查好了")], is_last=True)
+
+    async def fake_load_context_config():
+        return None
+
+    async def fake_build_model_config(**kwargs):
+        return None
+
+    async def fake_config_get(key):
+        return "5"
+
+    handle = AgentScopeLLMHandle(
+        native_model=FakeModel(
+            credential=FakeCredential(),
+            model="fake-native-data",
+            parameters=FakeModel.Parameters(),
+            stream=False,
+            max_retries=0,
+        ),
+        model_name="fake-native-data",
+        temperature=0.0,
+        streaming=True,
+    )
+
+    async def fake_get_configured_llm(**kwargs):
+        return handle
+
+    async def fake_schema(keywords=None):
+        return "table_name: users\ncolumns: status"
+
+    sql_rows = [{"status": "启用", "total_count": 8}]
+
+    async def fake_sql(sql, data_source, dataset_name):
+        return sql_rows
+
+    from app.services.ai.tools.registry import ToolRegistry
+
+    monkeypatch.setattr(
+        "app.services.ai.runners.data_agent_runner.AgentConfigProvider.get_configured_llm",
+        fake_get_configured_llm,
+    )
+    monkeypatch.setattr(
+        "app.services.ai.runners.data_agent_runner.load_context_config",
+        fake_load_context_config,
+    )
+    monkeypatch.setattr(
+        "app.services.ai.runners.data_agent_runner.build_model_config",
+        fake_build_model_config,
+    )
+    monkeypatch.setattr(
+        "app.services.ai.runners.data_agent_runner.ConfigService.get",
+        fake_config_get,
+    )
+    monkeypatch.setitem(ToolRegistry._registry, "get_dataset_schema", fake_schema)
+    monkeypatch.setitem(ToolRegistry._registry, "execute_sql_query", fake_sql)
+    mock_set_last = AsyncMock()
+    monkeypatch.setattr(
+        "app.services.ai.memory_service.memory_service.get_last_data_result",
+        AsyncMock(return_value=None),
+    )
+    monkeypatch.setattr(
+        "app.services.ai.memory_service.memory_service.set_last_data_result",
+        mock_set_last,
+    )
+
+    runner = DataAgentRunner(
+        config=data_config,
+        trace_id="trace-save-last",
+        trace_buffer=[],
+        user_info={"user_id": 42},
+        conversation_id="conv-1",
+    )
+
+    events = []
+    async for chunk in runner.execute([{"role": "user", "content": "统计用户状态"}]):
+        events.append(chunk)
+
+    assert any(chunk.get("content") == "查好了" for chunk in events)
+    mock_set_last.assert_awaited_once()
+    user_id, conversation_id, payload = mock_set_last.await_args.args
+    assert user_id == 42
+    assert conversation_id == "conv-1"
+    assert payload["sql"] == "SELECT status, count(*) total_count FROM users GROUP BY status"
+    assert payload["data_source"] == "mysql_oa"
+    assert payload["dataset_name"] == "users"
+    assert payload["rows"] == sql_rows
+    assert payload["trace_id"] == "trace-save-last"
+
+
+@pytest.mark.asyncio
+async def test_data_agent_runner_injects_few_shot_examples(
+    data_config,
+    monkeypatch,
+):
+    from agentscope.credential import CredentialBase
+    from agentscope.message import TextBlock, ToolCallBlock
+    from agentscope.model import ChatModelBase, ChatResponse
+
+    from app.core.llm.client import AgentScopeLLMHandle
+    from app.services.ai.runners.data_agent_runner import DataAgentRunner
+
+    examples = [
+        {
+            "id": 1001,
+            "question": "统计用户状态分布",
+            "sql": "SELECT status, count(*) FROM users GROUP BY status",
+            "similarity": 0.91,
+        }
+    ]
+    few_shot_turn = DataQueryTurnClassification(
+        turn_type=DataQueryTurnType.NEW_DATA_QUERY,
+        reasoning="测试：需要经验库",
+        requires_fresh_data=True,
+        requires_few_shot=True,
+        skip_intent_llm=True,
+        intent=IntentType.DATA_QUERY,
+    )
+
+    async def fake_resolve(*args, **kwargs):
+        return few_shot_turn, None, 0.0
+
+    class FakeCredential(CredentialBase):
+        @classmethod
+        def get_chat_model_class(cls):
+            return FakeModel
+
+    class FakeModel(ChatModelBase):
+        class Parameters(BaseModel):
+            pass
+
+        async def _call_api(self, model_name, messages, tools=None, tool_choice=None, **kwargs):
+            system_text = "\n".join(
+                str(getattr(block, "text", ""))
+                for msg in messages
+                for block in msg.get_content_blocks("text")
+            )
+            assert system_text.startswith("FEW SHOT SQL EXAMPLES")
+            tool_results = [
+                block
+                for msg in messages
+                for block in msg.get_content_blocks("tool_result")
+            ]
+            if not tool_results:
+                return ChatResponse(
+                    content=[
+                        ToolCallBlock(
+                            id="call_schema",
+                            name="get_dataset_schema",
+                            input='{"keywords": "用户状态"}',
+                        )
+                    ],
+                    is_last=True,
+                )
+            if len(tool_results) == 1:
+                return ChatResponse(
+                    content=[
+                        ToolCallBlock(
+                            id="call_sql",
+                            name="execute_sql_query",
+                            input='{"sql": "SELECT status, count(*) FROM users GROUP BY status", "data_source": "mysql_oa", "dataset_name": "users"}',
+                        )
+                    ],
+                    is_last=True,
+                )
+            return ChatResponse(content=[TextBlock(text="参考案例查好了")], is_last=True)
+
+    async def fake_load_context_config():
+        return None
+
+    async def fake_build_model_config(**kwargs):
+        return None
+
+    async def fake_config_get(key):
+        return "5"
+
+    handle = AgentScopeLLMHandle(
+        native_model=FakeModel(
+            credential=FakeCredential(),
+            model="fake-native-data",
+            parameters=FakeModel.Parameters(),
+            stream=False,
+            max_retries=0,
+        ),
+        model_name="fake-native-data",
+        temperature=0.0,
+        streaming=True,
+    )
+
+    async def fake_get_configured_llm(**kwargs):
+        return handle
+
+    async def fake_schema(keywords=None):
+        return "table_name: users\ncolumns: status"
+
+    async def fake_sql(sql, data_source, dataset_name):
+        return [{"status": "启用", "count": 8}]
+
+    from app.services.ai.tools.registry import ToolRegistry
+
+    mock_search = AsyncMock(return_value=examples)
+    mock_record = AsyncMock()
+    monkeypatch.setattr(
+        "app.services.ai.runners.data_agent_runner.resolve_data_query_turn_classification",
+        fake_resolve,
+    )
+    monkeypatch.setattr(
+        "app.services.chatbi_example_service.ExampleService.search_examples",
+        mock_search,
+    )
+    monkeypatch.setattr(
+        "app.services.chatbi_example_service.ExampleService.build_few_shot_prompt",
+        lambda matched: "FEW SHOT SQL EXAMPLES",
+    )
+    monkeypatch.setattr(
+        "app.services.chatbi_example_service.ExampleService.record_usage",
+        mock_record,
+    )
+    monkeypatch.setattr(
+        "app.services.ai.runners.data_agent_runner.AgentConfigProvider.get_configured_llm",
+        fake_get_configured_llm,
+    )
+    monkeypatch.setattr(
+        "app.services.ai.runners.data_agent_runner.load_context_config",
+        fake_load_context_config,
+    )
+    monkeypatch.setattr(
+        "app.services.ai.runners.data_agent_runner.build_model_config",
+        fake_build_model_config,
+    )
+    monkeypatch.setattr(
+        "app.services.ai.runners.data_agent_runner.ConfigService.get",
+        fake_config_get,
+    )
+    monkeypatch.setitem(ToolRegistry._registry, "get_dataset_schema", fake_schema)
+    monkeypatch.setitem(ToolRegistry._registry, "execute_sql_query", fake_sql)
+
+    runner = DataAgentRunner(config=data_config, trace_id="trace-few-shot", trace_buffer=[])
+
+    events = []
+    async for chunk in runner.execute([{"role": "user", "content": "统计用户状态"}]):
+        events.append(chunk)
+
+    mock_search.assert_awaited_once()
+    assert mock_search.await_args.kwargs["top_k"] == 5
+    assert any("命中经验库案例" in str(chunk.get("title", "")) for chunk in events)
+    mock_record.assert_awaited_once()
+    assert any(chunk.get("content") == "参考案例查好了" for chunk in events)
+
+
+@pytest.mark.asyncio
+async def test_data_agent_runner_rewrites_contextual_query_and_plans_schema_keywords(
+    data_config,
+    monkeypatch,
+):
+    from agentscope.credential import CredentialBase
+    from agentscope.message import TextBlock, ToolCallBlock
+    from agentscope.model import ChatModelBase, ChatResponse
+
+    from app.core.llm.client import AgentScopeLLMHandle
+    from app.services.ai.data_query_turn_classifier import (
+        DataQueryTurnClassification,
+        DataQueryTurnType,
+    )
+    from app.services.ai.intent_service import IntentType
+    from app.services.ai.runtime.agentscope.compat import AIMessage
+    from app.services.ai.runners.data_agent_runner import DataAgentRunner
+
+    new_query_turn = DataQueryTurnClassification(
+        turn_type=DataQueryTurnType.NEW_DATA_QUERY,
+        reasoning="测试：上下文新查数",
+        requires_fresh_data=True,
+        requires_few_shot=True,
+        skip_intent_llm=True,
+        intent=IntentType.DATA_QUERY,
+    )
+
+    async def fake_resolve(*args, **kwargs):
+        return new_query_turn, None, 0.0
+
+    class FakePlannerLLM:
+        def __init__(self):
+            self.prompts = []
+
+        async def ainvoke(self, messages):
+            prompt = messages[0].content
+            self.prompts.append(prompt)
+            if "查询改写器" in prompt:
+                return AIMessage(content="查询上海机房本月 PUE 趋势")
+            if "元数据检索词规划器" in prompt:
+                assert "查询上海机房本月 PUE 趋势" in prompt
+                return AIMessage(content='{"keywords":"上海机房 PUE 本月 趋势 pue_daily room_name"}')
+            return AIMessage(content="")
+
+    planner = FakePlannerLLM()
+
+    class FakeCredential(CredentialBase):
+        @classmethod
+        def get_chat_model_class(cls):
+            return FakeModel
+
+    class FakeModel(ChatModelBase):
+        class Parameters(BaseModel):
+            pass
+
+        async def _call_api(self, model_name, messages, tools=None, tool_choice=None, **kwargs):
+            system_text = "\n".join(
+                str(getattr(block, "text", ""))
+                for msg in messages
+                for block in msg.get_content_blocks("text")
+            )
+            assert "【Schema 检索词规划】" in system_text
+            assert "上海机房 PUE 本月 趋势 pue_daily room_name" in system_text
+            assert "查询上海机房本月 PUE 趋势" in system_text
+            tool_results = [
+                block
+                for msg in messages
+                for block in msg.get_content_blocks("tool_result")
+            ]
+            if not tool_results:
+                return ChatResponse(
+                    content=[
+                        ToolCallBlock(
+                            id="call_schema",
+                            name="get_dataset_schema",
+                            input='{"keywords": "上海机房 PUE 本月 趋势 pue_daily room_name"}',
+                        )
+                    ],
+                    is_last=True,
+                )
+            if len(tool_results) == 1:
+                return ChatResponse(
+                    content=[
+                        ToolCallBlock(
+                            id="call_sql",
+                            name="execute_sql_query",
+                            input='{"sql": "SELECT 1", "data_source": "mysql_oa", "dataset_name": "pue"}',
+                        )
+                    ],
+                    is_last=True,
+                )
+            return ChatResponse(content=[TextBlock(text="本月 PUE 查好了")], is_last=True)
+
+    handle = AgentScopeLLMHandle(
+        native_model=FakeModel(
+            credential=FakeCredential(),
+            model="fake-native-data",
+            parameters=FakeModel.Parameters(),
+            stream=False,
+            max_retries=0,
+        ),
+        model_name="fake-native-data",
+        temperature=0.0,
+        streaming=True,
+    )
+
+    async def fake_get_configured_llm(**kwargs):
+        if kwargs.get("streaming") is False:
+            return planner
+        return handle
+
+    async def fake_load_context_config():
+        return None
+
+    async def fake_build_model_config(**kwargs):
+        return None
+
+    async def fake_config_get(key):
+        return "5"
+
+    examples = [
+        {
+            "id": 2001,
+            "question": "查询上海机房 PUE 趋势",
+            "dataset_name": "pue",
+            "sql": "SELECT day, pue FROM pue_daily WHERE room_name='上海机房'",
+            "similarity": 0.88,
+        }
+    ]
+
+    async def fake_schema(keywords=None):
+        assert keywords == "上海机房 PUE 本月 趋势 pue_daily room_name"
+        return "table_name: pue_daily\ncolumns: day, pue, room_name"
+
+    async def fake_sql(sql, data_source, dataset_name):
+        return [{"ok": 1}]
+
+    from app.services.ai.tools.registry import ToolRegistry
+
+    mock_search = AsyncMock(return_value=examples)
+    monkeypatch.setattr(
+        "app.services.ai.runners.data_agent_runner.resolve_data_query_turn_classification",
+        fake_resolve,
+    )
+    monkeypatch.setattr(
+        "app.services.ai.runners.data_agent_runner.AgentConfigProvider.get_configured_llm",
+        fake_get_configured_llm,
+    )
+    monkeypatch.setattr(
+        "app.services.ai.runners.data_agent_runner.load_context_config",
+        fake_load_context_config,
+    )
+    monkeypatch.setattr(
+        "app.services.ai.runners.data_agent_runner.build_model_config",
+        fake_build_model_config,
+    )
+    monkeypatch.setattr(
+        "app.services.ai.runners.data_agent_runner.ConfigService.get",
+        fake_config_get,
+    )
+    monkeypatch.setattr(
+        "app.services.chatbi_example_service.ExampleService.search_examples",
+        mock_search,
+    )
+    monkeypatch.setattr(
+        "app.services.chatbi_example_service.ExampleService.build_few_shot_prompt",
+        lambda matched: "FEW SHOT PUE",
+    )
+    monkeypatch.setattr(
+        "app.services.chatbi_example_service.ExampleService.record_usage",
+        AsyncMock(),
+    )
+    monkeypatch.setitem(ToolRegistry._registry, "get_dataset_schema", fake_schema)
+    monkeypatch.setitem(ToolRegistry._registry, "execute_sql_query", fake_sql)
+
+    runner = DataAgentRunner(config=data_config, trace_id="trace-standalone-plan", trace_buffer=[])
+
+    events = []
+    async for chunk in runner.execute(
+        [
+            {"role": "user", "content": "查询上海机房上周 PUE 趋势"},
+            {"role": "assistant", "content": "上海机房上周 PUE 趋势如下。"},
+            {"role": "user", "content": "那本月呢"},
+        ]
+    ):
+        events.append(chunk)
+
+    assert mock_search.await_args.args[0] == "查询上海机房本月 PUE 趋势"
+    assert any(chunk.get("title") == "用户需求分析" for chunk in events)
+    assert any("pue_daily" in chunk.get("details", "") for chunk in events if chunk.get("title") == "用户需求分析")
+    assert any(chunk.get("content") == "本月 PUE 查好了" for chunk in events)
+
+
+@pytest.mark.asyncio
+async def test_data_agent_runner_context_action_can_answer_without_sql(
+    data_config,
+    monkeypatch,
+):
+    from agentscope.credential import CredentialBase
+    from agentscope.message import TextBlock
+    from agentscope.model import ChatModelBase, ChatResponse
+
+    from app.core.llm.client import AgentScopeLLMHandle
+    from app.services.ai.data_query_turn_classifier import (
+        DataQueryTurnClassification,
+        DataQueryTurnType,
+    )
+    from app.services.ai.intent_service import IntentType
+    from app.services.ai.runners.data_agent_runner import DataAgentRunner
+
+    context_turn = DataQueryTurnClassification(
+        turn_type=DataQueryTurnType.CONTEXT_ACTION,
+        reasoning="测试：上下文动作",
+        requires_fresh_data=False,
+        requires_few_shot=False,
+        skip_intent_llm=True,
+        intent=IntentType.GENERAL,
+    )
+    last_result = {
+        "sql": "select status, count(*) total_count from users group by status",
+        "rows": [{"status": "启用", "total_count": 8}],
+    }
+
+    async def fake_resolve(*args, **kwargs):
+        return context_turn, None, 0.0
+
+    class FakeCredential(CredentialBase):
+        @classmethod
+        def get_chat_model_class(cls):
+            return FakeModel
+
+    class FakeModel(ChatModelBase):
+        class Parameters(BaseModel):
+            pass
+
+        async def _call_api(self, model_name, messages, tools=None, tool_choice=None, **kwargs):
+            system_text = "\n".join(
+                str(getattr(block, "text", ""))
+                for msg in messages
+                for block in msg.get_content_blocks("text")
+            )
+            assert "本轮为上下文动作" in system_text
+            assert "可复用的上一轮结构化查询结果" in system_text
+            return ChatResponse(content=[TextBlock(text="已基于当前结果记录。")], is_last=True)
+
+    async def fake_load_context_config():
+        return None
+
+    async def fake_build_model_config(**kwargs):
+        return None
+
+    async def fake_config_get(key):
+        return "5"
+
+    handle = AgentScopeLLMHandle(
+        native_model=FakeModel(
+            credential=FakeCredential(),
+            model="fake-native-data",
+            parameters=FakeModel.Parameters(),
+            stream=False,
+            max_retries=0,
+        ),
+        model_name="fake-native-data",
+        temperature=0.0,
+        streaming=True,
+    )
+
+    async def fake_get_configured_llm(**kwargs):
+        return handle
+
+    monkeypatch.setattr(
+        "app.services.ai.runners.data_agent_runner.resolve_data_query_turn_classification",
+        fake_resolve,
+    )
+    monkeypatch.setattr(
+        "app.services.ai.memory_service.memory_service.get_last_data_result",
+        AsyncMock(return_value=last_result),
+    )
+    monkeypatch.setattr(
+        "app.services.ai.runners.data_agent_runner.AgentConfigProvider.get_configured_llm",
+        fake_get_configured_llm,
+    )
+    monkeypatch.setattr(
+        "app.services.ai.runners.data_agent_runner.load_context_config",
+        fake_load_context_config,
+    )
+    monkeypatch.setattr(
+        "app.services.ai.runners.data_agent_runner.build_model_config",
+        fake_build_model_config,
+    )
+    monkeypatch.setattr(
+        "app.services.ai.runners.data_agent_runner.ConfigService.get",
+        fake_config_get,
+    )
+
+    runner = DataAgentRunner(
+        config=data_config,
+        trace_id="trace-context-action",
+        trace_buffer=[],
+        user_info={"user_id": 42},
+        conversation_id="conv-1",
+    )
+
+    events = []
+    async for chunk in runner.execute([{"role": "user", "content": "帮我记住这个结果"}]):
+        events.append(chunk)
+
+    content = "".join(event["content"] for event in events if "content" in event and "type" not in event)
+    assert "已基于当前结果记录。" in content
+    assert not any(event.get("title") == "阻止未查数回答" for event in events)
+
+
+@pytest.mark.asyncio
+async def test_data_agent_runner_blocks_final_answer_before_required_sql(data_config):
+    from types import SimpleNamespace
+
+    from app.services.ai.runners.data_agent_runner import DataAgentRunner
+
+    async def fake_events():
+        yield SimpleNamespace(type="TEXT_BLOCK_DELTA", delta="没有查库也能回答")
+
+    runner = DataAgentRunner(config=data_config, trace_id="trace-guard-data", trace_buffer=[])
+
+    events = []
+    async for chunk in runner._stream_agentscope_events(
+        event_stream=fake_events(),
+        tools=[],
+        native_model=SimpleNamespace(model="fake-native-data"),
+    ):
+        events.append(chunk)
+
+    assert not any(
+        event.get("content") == "没有查库也能回答"
+        for event in events
+        if isinstance(event, dict)
+    )
+    assert any(
+        "必须先完成数据集定义检索和 SQL 查询" in event.get("content", "")
+        for event in events
+        if isinstance(event, dict)
+    )
+
+
+def test_build_repair_message_when_answer_blocked_without_tools(data_config):
+    from app.services.ai.runners.data_agent_runner import DataAgentRunner, _DataRunState
+
+    runner = DataAgentRunner(config=data_config, trace_id="trace-repair-skip", trace_buffer=[])
+    state = _DataRunState(requires_fresh_data=True, blocked_content="没有查库也能回答")
+    repair = runner._build_repair_message(state)
+    assert "get_dataset_schema" in repair
+    assert "execute_sql_query" in repair
+    assert runner._build_repair_title(state) == "必须先完成查数流程"
+
+
+def test_build_repair_message_when_schema_done_sql_missing(data_config):
+    from app.services.ai.runners.data_agent_runner import DataAgentRunner, _DataRunState
+
+    runner = DataAgentRunner(config=data_config, trace_id="trace-repair-no-sql", trace_buffer=[])
+    state = _DataRunState(
+        requires_fresh_data=True,
+        schema_completed=True,
+        blocked_content="直接总结",
+    )
+    repair = runner._build_repair_message(state)
+    assert "execute_sql_query" in repair
+    assert "下一步强制动作" in repair
+    assert runner._build_repair_title(state) == "必须先执行 SQL 查数"
+
+
+def test_resolve_repair_tool_choice_forces_sql_after_schema(data_config):
+    from agentscope.tool import ToolChoice
+
+    from app.services.ai.runners.data_agent_runner import DataAgentRunner, _DataRunState
+
+    runner = DataAgentRunner(config=data_config, trace_id="trace-force-sql", trace_buffer=[])
+    state = _DataRunState(
+        requires_fresh_data=True,
+        schema_completed=True,
+        blocked_content="直接总结",
+    )
+    choice = runner._resolve_repair_tool_choice(state)
+    assert isinstance(choice, ToolChoice)
+    assert choice.mode == "execute_sql_query"
+
+
+def test_resolve_repair_tool_choice_forces_schema_when_missing(data_config):
+    from agentscope.tool import ToolChoice
+
+    from app.services.ai.runners.data_agent_runner import DataAgentRunner, _DataRunState
+
+    runner = DataAgentRunner(config=data_config, trace_id="trace-force-schema", trace_buffer=[])
+    state = _DataRunState(requires_fresh_data=True, blocked_content="直接回答")
+    choice = runner._resolve_repair_tool_choice(state)
+    assert isinstance(choice, ToolChoice)
+    assert choice.mode == "get_dataset_schema"
+
+
+def test_build_repair_message_empty_when_no_blocked_content(data_config):
+    from app.services.ai.runners.data_agent_runner import DataAgentRunner, _DataRunState
+
+    runner = DataAgentRunner(config=data_config, trace_id="trace-no-repair", trace_buffer=[])
+    state = _DataRunState(requires_fresh_data=True, blocked_content="")
+    assert runner._build_repair_message(state) == ""
+
+
+@pytest.mark.asyncio
+async def test_data_agent_runner_rejects_sql_before_schema(data_config):
+    from types import SimpleNamespace
+
+    from app.services.ai.runners.data_agent_runner import DataAgentRunner
+
+    async def fake_events():
+        yield SimpleNamespace(type="TOOL_CALL_START", tool_call_id="call_sql", tool_call_name="execute_sql_query")
+        yield SimpleNamespace(
+            type="TOOL_CALL_DELTA",
+            tool_call_id="call_sql",
+            delta='{"sql": "SELECT 1", "data_source": "mysql_aiagent", "dataset_name": "demo"}',
+        )
+        yield SimpleNamespace(type="TOOL_RESULT_TEXT_DELTA", tool_call_id="call_sql", delta="[{'one': 1}]")
+        yield SimpleNamespace(type="TOOL_RESULT_END", tool_call_id="call_sql")
+        yield SimpleNamespace(type="TEXT_BLOCK_DELTA", delta="结果是 1")
+
+    runner = DataAgentRunner(config=data_config, trace_id="trace-sql-before-schema", trace_buffer=[])
+
+    events = []
+    async for chunk in runner._stream_agentscope_events(
+        event_stream=fake_events(),
+        tools=[],
+        native_model=SimpleNamespace(model="fake-native-data"),
+    ):
+        events.append(chunk)
+
+    assert not any(event.get("content") == "结果是 1" for event in events if isinstance(event, dict))
+    assert any(
+        "必须先调用 get_dataset_schema" in event.get("content", "")
+        for event in events
+        if isinstance(event, dict)
+    )
+
+
+@pytest.mark.asyncio
+async def test_data_agent_runner_schema_gate_blocks_sql_tool(data_config):
+    from app.services.ai.runners.data_agent_runner import DataAgentRunner, _DataRunState
+    from app.services.ai.runtime.agentscope.tools import RuntimeToolSpec
+
+    invoked = False
+
+    async def fake_sql(**kwargs):
+        nonlocal invoked
+        invoked = True
+        return [{"ok": 1}]
+
+    spec = RuntimeToolSpec(
+        name="execute_sql_query",
+        description="sql",
+        parameters_schema={"type": "object", "properties": {}},
+        source_type="static",
+        callable=fake_sql,
+        permission_scope="read",
+    )
+    state = _DataRunState(requires_fresh_data=True, schema_completed=False)
+    runner = DataAgentRunner(config=data_config, trace_id="trace-schema-gate", trace_buffer=[])
+    wrapped = runner._wrap_tools_with_schema_gate([spec], state)[0]
+
+    result = await wrapped.invoke(
+        {"sql": "SELECT 1", "data_source": "mysql_aiagent", "dataset_name": "demo"}
+    )
+
+    assert invoked is False
+    assert "[SCHEMA_GATE]" in str(result)
+    state.schema_completed = True
+    result2 = await wrapped.invoke(
+        {"sql": "SELECT 1", "data_source": "mysql_aiagent", "dataset_name": "demo"}
+    )
+    assert invoked is True
+    assert result2 == [{"ok": 1}]
+
+
+@pytest.mark.asyncio
+async def test_data_agent_runner_sql_repeat_gate_blocks_second_sql(data_config):
+    from app.services.ai.runners.data_agent_runner import DataAgentRunner, _DataRunState
+    from app.services.ai.runtime.agentscope.tools import RuntimeToolSpec
+
+    call_count = 0
+
+    async def fake_sql(**kwargs):
+        nonlocal call_count
+        call_count += 1
+        return '{"columns": [{"name": "id"}], "items": [[1]]}'
+
+    spec = RuntimeToolSpec(
+        name="execute_sql_query",
+        description="sql",
+        parameters_schema={"type": "object", "properties": {}},
+        source_type="static",
+        callable=fake_sql,
+        permission_scope="read",
+    )
+    state = _DataRunState(
+        requires_fresh_data=True,
+        schema_completed=True,
+        sql_completed=True,
+        empty_sql_result=False,
+        sql_error=False,
+    )
+    runner = DataAgentRunner(config=data_config, trace_id="trace-sql-repeat-gate", trace_buffer=[])
+    wrapped = runner._wrap_tools_with_schema_gate([spec], state)[0]
+
+    result = await wrapped.invoke(
+        {"sql": "SELECT 2", "data_source": "mysql_aiagent", "dataset_name": "demo"}
+    )
+
+    assert call_count == 0
+    assert "[SQL_REPEAT_GATE]" in str(result)
+
+
+@pytest.mark.asyncio
+async def test_data_agent_runner_sql_repeat_gate_allows_after_empty_result(data_config):
+    from app.services.ai.runners.data_agent_runner import DataAgentRunner, _DataRunState
+    from app.services.ai.runtime.agentscope.tools import RuntimeToolSpec
+
+    call_count = 0
+
+    async def fake_sql(**kwargs):
+        nonlocal call_count
+        call_count += 1
+        return '{"rows": [], "total": 0}'
+
+    spec = RuntimeToolSpec(
+        name="execute_sql_query",
+        description="sql",
+        parameters_schema={"type": "object", "properties": {}},
+        source_type="static",
+        callable=fake_sql,
+        permission_scope="read",
+    )
+    state = _DataRunState(
+        requires_fresh_data=True,
+        schema_completed=True,
+        sql_completed=True,
+        empty_sql_result=True,
+        empty_sql_reason="SQL 返回的行容器为空，未命中任何数据行",
+        sql_error=False,
+    )
+    runner = DataAgentRunner(config=data_config, trace_id="trace-sql-repeat-empty", trace_buffer=[])
+    wrapped = runner._wrap_tools_with_schema_gate([spec], state)[0]
+
+    result = await wrapped.invoke(
+        {"sql": "SELECT 1", "data_source": "mysql_aiagent", "dataset_name": "demo"}
+    )
+
+    assert call_count == 1
+    assert "[SQL_REPEAT_GATE]" not in str(result)
+
+
+@pytest.mark.asyncio
+async def test_data_agent_runner_syncs_data_run_state_before_interrupt(data_config, monkeypatch):
+    from types import SimpleNamespace
+
+    from app.services.ai.runners.data_agent_runner import DataAgentRunner, _DataRunState
+
+    captured_states: list[dict] = []
+
+    async def fake_interrupt(**kwargs):
+        captured_states.append(dict(kwargs.get("state") or {}))
+        yield {
+            "type": kwargs.get("sse_type"),
+            "status": "pending",
+            "id": "call_perm",
+            "permission_request_id": "perm_test",
+        }
+
+    monkeypatch.setattr(
+        "app.services.ai.runtime.agentscope.event_stream.stream_pending_tool_interrupt",
+        fake_interrupt,
+    )
+
+    class FakeAgent:
+        class State:
+            def model_dump(self, mode="json"):
+                return {"context": []}
+
+        state = State()
+
+    async def fake_events():
+        yield SimpleNamespace(
+            type="TOOL_CALL_START",
+            tool_call_id="call_schema",
+            tool_call_name="get_dataset_schema",
+        )
+        yield SimpleNamespace(
+            type="TOOL_RESULT_TEXT_DELTA",
+            tool_call_id="call_schema",
+            delta='{"dataset": "demo", "columns": ["id"]}',
+        )
+        yield SimpleNamespace(type="TOOL_RESULT_END", tool_call_id="call_schema")
+        yield SimpleNamespace(
+            type="REQUIRE_USER_CONFIRM",
+            reply_id="reply-1",
+            tool_calls=[SimpleNamespace(id="call_perm", name="danger_tool", input="{}")],
+        )
+
+    runner = DataAgentRunner(config=data_config, trace_id="trace-pending-sync", trace_buffer=[])
+    state = _DataRunState(requires_fresh_data=True)
+
+    async for _ in runner._stream_agentscope_events(
+        event_stream=fake_events(),
+        agent=FakeAgent(),
+        tools=[],
+        native_model=SimpleNamespace(model="fake-native-data"),
+        state=state,
+    ):
+        pass
+
+    assert state.schema_completed is True
+    assert captured_states
+    assert captured_states[0]["data_run_state"]["schema_completed"] is True
+
+
+@pytest.mark.asyncio
+async def test_data_agent_runner_repair_after_sql_before_schema(data_config):
+    from types import SimpleNamespace
+
+    from app.services.ai.runners.data_agent_runner import DataAgentRunner, _DataRunState
+
+    async def fake_events():
+        yield SimpleNamespace(type="TOOL_CALL_START", tool_call_id="call_sql", tool_call_name="execute_sql_query")
+        yield SimpleNamespace(
+            type="TOOL_CALL_DELTA",
+            tool_call_id="call_sql",
+            delta='{"sql": "SELECT 1", "data_source": "mysql_aiagent", "dataset_name": "demo"}',
+        )
+        yield SimpleNamespace(
+            type="TOOL_RESULT_TEXT_DELTA",
+            tool_call_id="call_sql",
+            delta="[SCHEMA_GATE] 必须先调用 get_dataset_schema",
+        )
+        yield SimpleNamespace(type="TOOL_RESULT_END", tool_call_id="call_sql")
+
+    runner = DataAgentRunner(config=data_config, trace_id="trace-schema-repair", trace_buffer=[])
+    state = _DataRunState(requires_fresh_data=True)
+
+    async for chunk in runner._stream_agentscope_events(
+        event_stream=fake_events(),
+        tools=[],
+        native_model=SimpleNamespace(model="fake-native-data"),
+        state=state,
+    ):
+        pass
+
+    repair = runner._build_repair_message(state)
+    assert state.sql_before_schema is True
+    assert state.sql_completed is False
+    assert "Schema 顺序要求" in repair
+    assert runner._build_repair_title(state) == "必须先检索数据集定义"
+
+
+@pytest.mark.asyncio
+async def test_data_agent_runner_marks_schema_miss_and_empty_sql_result(data_config):
+    from types import SimpleNamespace
+
+    from app.services.ai.runners.data_agent_runner import DataAgentRunner
+
+    async def fake_events():
+        yield SimpleNamespace(type="TOOL_CALL_START", tool_call_id="call_schema", tool_call_name="get_dataset_schema")
+        yield SimpleNamespace(type="TOOL_RESULT_TEXT_DELTA", tool_call_id="call_schema", delta="No relevant schema info found")
+        yield SimpleNamespace(type="TOOL_RESULT_END", tool_call_id="call_schema")
+        yield SimpleNamespace(type="TOOL_CALL_START", tool_call_id="call_sql", tool_call_name="execute_sql_query")
+        yield SimpleNamespace(
+            type="TOOL_CALL_DELTA",
+            tool_call_id="call_sql",
+            delta='{"sql": "SELECT * FROM demo WHERE id=-1", "data_source": "mysql_aiagent", "dataset_name": "demo"}',
+        )
+        yield SimpleNamespace(type="TOOL_RESULT_TEXT_DELTA", tool_call_id="call_sql", delta='{"rows": [], "total": 0}')
+        yield SimpleNamespace(type="TOOL_RESULT_END", tool_call_id="call_sql")
+        yield SimpleNamespace(type="TEXT_BLOCK_DELTA", delta="没有查到数据")
+
+    runner = DataAgentRunner(config=data_config, trace_id="trace-result-state", trace_buffer=[])
+
+    events = []
+    async for chunk in runner._stream_agentscope_events(
+        event_stream=fake_events(),
+        tools=[],
+        native_model=SimpleNamespace(model="fake-native-data"),
+    ):
+        events.append(chunk)
+
+    assert runner._last_run_state.schema_miss is True
+    assert runner._last_run_state.empty_sql_result is True
+    assert runner._last_run_state.empty_sql_reason == "SQL 返回的行容器为空，未命中任何数据行"
+    assert any("SQL 返回的行容器为空" in event.get("details", "") for event in events if isinstance(event, dict))
+
+
+@pytest.mark.asyncio
+async def test_data_agent_runner_marks_no_authorized_schema_and_sql_error(data_config):
+    from types import SimpleNamespace
+
+    from app.services.ai.runners.data_agent_runner import DataAgentRunner
+
+    async def fake_events():
+        yield SimpleNamespace(type="TOOL_CALL_START", tool_call_id="call_schema", tool_call_name="get_dataset_schema")
+        yield SimpleNamespace(type="TOOL_RESULT_TEXT_DELTA", tool_call_id="call_schema", delta="No authorized datasets found")
+        yield SimpleNamespace(type="TOOL_RESULT_END", tool_call_id="call_schema")
+        yield SimpleNamespace(type="TOOL_CALL_START", tool_call_id="call_sql", tool_call_name="execute_sql_query")
+        yield SimpleNamespace(
+            type="TOOL_CALL_DELTA",
+            tool_call_id="call_sql",
+            delta='{"sql": "SELECT bad_col FROM demo", "data_source": "mysql_aiagent", "dataset_name": "demo"}',
+        )
+        yield SimpleNamespace(type="TOOL_RESULT_TEXT_DELTA", tool_call_id="call_sql", delta="Unknown column 'bad_col'")
+        yield SimpleNamespace(type="TOOL_RESULT_END", tool_call_id="call_sql")
+
+    runner = DataAgentRunner(config=data_config, trace_id="trace-error-state", trace_buffer=[])
+
+    async for _ in runner._stream_agentscope_events(
+        event_stream=fake_events(),
+        tools=[],
+        native_model=SimpleNamespace(model="fake-native-data"),
+    ):
+        pass
+
+    assert runner._last_run_state.no_authorized_schema is True
+    assert runner._last_run_state.schema_completed is False
+    assert runner._is_schema_fatal(runner._last_run_state) is True
+    assert runner._last_run_state.sql_error is True
+    assert "Unknown column" in runner._last_run_state.sql_error_message
+
+
+def test_format_tool_details_truncates_long_output(data_config):
+    from app.services.ai.runners.data_agent_runner import DataAgentRunner, _DataRunState
+
+    runner = DataAgentRunner(config=data_config, trace_id="trace-trunc", trace_buffer=[])
+    details = runner._format_tool_details("execute_sql_query", "x" * 2000, _DataRunState())
+    assert details == "x" * 1000 + "\n… [输出已截断]"
+
+
+def test_format_tool_details_appends_detection_after_truncation(data_config):
+    from app.services.ai.runners.data_agent_runner import DataAgentRunner, _DataRunState
+
+    runner = DataAgentRunner(config=data_config, trace_id="trace-trunc-detect", trace_buffer=[])
+    state = _DataRunState(empty_sql_reason="SQL 返回的行容器为空，未命中任何数据行")
+    tool_args = {"sql": "SELECT 1", "data_source": "mysql_aiagent", "dataset_name": "demo"}
+    details = runner._format_tool_details("execute_sql_query", "y" * 2000, state, tool_args)
+    assert details.startswith("[Executed SQL]:\nSELECT 1\n\n--- 结果 ---\n")
+    assert "y" * 1000 + "\n… [输出已截断]" in details
+    assert details.endswith("\n\n[系统检测] SQL 返回的行容器为空，未命中任何数据行")
+
+
+def test_format_tool_details_includes_sql_on_success(data_config):
+    from app.services.ai.runners.data_agent_runner import DataAgentRunner, _DataRunState
+
+    runner = DataAgentRunner(config=data_config, trace_id="trace-sql-prefix", trace_buffer=[])
+    payload = json.dumps({"columns": [], "items": [["a"]]}, ensure_ascii=False)
+    tool_args = {
+        "sql": "SELECT metric FROM demo LIMIT 10",
+        "data_source": "clickhouse_ops",
+        "dataset_name": "demo",
+    }
+    details = runner._format_tool_details("execute_sql_query", payload, _DataRunState(), tool_args)
+    assert details.startswith("[Executed SQL]:\nSELECT metric FROM demo LIMIT 10\n\n--- 结果 ---\n")
+    assert '\n  "items"' in details or '\n  "columns"' in details
+
+
+def test_format_sql_result_pretty_print_with_row_cap(data_config):
+    from app.services.ai.runners.data_agent_runner import DataAgentRunner
+
+    runner = DataAgentRunner(config=data_config, trace_id="trace-pretty-rows", trace_buffer=[])
+    payload = {
+        "columns": [{"name": "id", "type": "Int32"}],
+        "items": [[i] for i in range(20)],
+    }
+    text = runner._format_sql_result_for_display(json.dumps(payload, ensure_ascii=False))
+    parsed = json.loads(text)
+    assert len(parsed["items"]) == 15
+    assert parsed["_display_note"] == "仅展示前 15 行，共 20 行"
+    assert "\n  " in text
+
+
+def test_format_tool_details_normalizes_sql_error_output(data_config):
+    from app.services.ai.runners.data_agent_runner import DataAgentRunner, _DataRunState
+
+    runner = DataAgentRunner(config=data_config, trace_id="trace-sql-error-fmt", trace_buffer=[])
+    output = "[TOOL_ERROR] 本地执行 SQL 失败，错误信息: Unknown column 'bad_col'\n\n[Executed SQL]:\nSELECT bad_col FROM demo"
+    state = _DataRunState(sql_error=True, sql_error_message=output[:200])
+    details = runner._format_tool_details("execute_sql_query", output, state, {"sql": "SELECT bad_col FROM demo"})
+    assert details.startswith("[Executed SQL]:\nSELECT bad_col FROM demo\n\n--- 错误 ---\n")
+    assert "Unknown column 'bad_col'" in details
+    assert details.count("[Executed SQL]:") == 1
+
+
+def test_format_tool_details_builds_error_layout_from_plain_text(data_config):
+    from app.services.ai.runners.data_agent_runner import DataAgentRunner, _DataRunState
+
+    runner = DataAgentRunner(config=data_config, trace_id="trace-sql-error-plain", trace_buffer=[])
+    output = "Unknown column 'bad_col' in 'field list'"
+    state = _DataRunState(sql_error=True, sql_error_message=output)
+    tool_args = {"sql": "SELECT bad_col FROM demo", "data_source": "mysql", "dataset_name": "demo"}
+    details = runner._format_tool_details("execute_sql_query", output, state, tool_args)
+    assert details.startswith("[Executed SQL]:\nSELECT bad_col FROM demo\n\n--- 错误 ---\n")
+    assert "Unknown column" in details
+
+
+def test_format_tool_details_skips_sql_prefix_when_already_in_output(data_config):
+    from app.services.ai.runners.data_agent_runner import DataAgentRunner, _DataRunState
+
+    runner = DataAgentRunner(config=data_config, trace_id="trace-sql-dup", trace_buffer=[])
+    output = "[TOOL_ERROR] timeout\n\n[Executed SQL]:\nSELECT 1"
+    state = _DataRunState(sql_error=True, sql_error_message=output)
+    tool_args = {"sql": "SELECT 1"}
+    details = runner._format_tool_details("execute_sql_query", output, state, tool_args)
+    assert details.count("[Executed SQL]:") == 1
+    assert details.startswith("[Executed SQL]:\nSELECT 1\n\n--- 错误 ---\n")
+    assert "[TOOL_ERROR] timeout" in details
+
+
+def test_format_tool_details_skips_sql_on_schema_gate(data_config):
+    from app.services.ai.runners.data_agent_runner import DataAgentRunner, _DataRunState
+
+    runner = DataAgentRunner(config=data_config, trace_id="trace-sql-gate", trace_buffer=[])
+    output = "[SCHEMA_GATE] 必须先调用 get_dataset_schema"
+    tool_args = {"sql": "SELECT 1"}
+    details = runner._format_tool_details("execute_sql_query", output, _DataRunState(), tool_args)
+    assert "[Executed SQL]:" not in details
+    assert "[系统检测] 已拦截" in details
+
+
+def test_detect_sql_error_ignores_failure_keyword_in_result_rows(data_config):
+    from app.services.ai.runners.data_agent_runner import DataAgentRunner
+
+    runner = DataAgentRunner(config=data_config, trace_id="trace-false-positive", trace_buffer=[])
+    payload = json.dumps(
+        {
+            "columns": [{"name": "metric_name", "type": "String"}],
+            "items": [["2G12-机组 GB 合闸失败", "2026-06-09T15:35:00", 300, 1752]],
+        },
+        ensure_ascii=False,
+    )
+    is_error, message = runner._detect_sql_error(payload)
+    assert is_error is False
+    assert message == ""
+
+
+def test_detect_sql_error_still_flags_tool_error_prefix(data_config):
+    from app.services.ai.runners.data_agent_runner import DataAgentRunner
+
+    runner = DataAgentRunner(config=data_config, trace_id="trace-tool-error", trace_buffer=[])
+    text = "[TOOL_ERROR] 本地执行 SQL 失败，错误信息: timeout\n\n[Executed SQL]:\nSELECT 1"
+    is_error, message = runner._detect_sql_error(text)
+    assert is_error is True
+    assert message.startswith("[TOOL_ERROR]")
+
+
+@pytest.mark.asyncio
+async def test_data_agent_runner_blocks_final_answer_after_sql_error(data_config):
+    from types import SimpleNamespace
+
+    from app.services.ai.runners.data_agent_runner import DataAgentRunner
+
+    async def fake_events():
+        yield SimpleNamespace(type="TOOL_CALL_START", tool_call_id="call_schema", tool_call_name="get_dataset_schema")
+        yield SimpleNamespace(type="TOOL_RESULT_TEXT_DELTA", tool_call_id="call_schema", delta="table_name: demo\ncolumns: id")
+        yield SimpleNamespace(type="TOOL_RESULT_END", tool_call_id="call_schema")
+        yield SimpleNamespace(type="TOOL_CALL_START", tool_call_id="call_sql", tool_call_name="execute_sql_query")
+        yield SimpleNamespace(
+            type="TOOL_CALL_DELTA",
+            tool_call_id="call_sql",
+            delta='{"sql": "SELECT bad_col FROM demo", "data_source": "mysql_aiagent", "dataset_name": "demo"}',
+        )
+        yield SimpleNamespace(type="TOOL_RESULT_TEXT_DELTA", tool_call_id="call_sql", delta="Unknown column 'bad_col'")
+        yield SimpleNamespace(type="TOOL_RESULT_END", tool_call_id="call_sql")
+        yield SimpleNamespace(type="TEXT_BLOCK_DELTA", delta="查到了")
+
+    runner = DataAgentRunner(config=data_config, trace_id="trace-sql-error-block", trace_buffer=[])
+
+    events = []
+    async for chunk in runner._stream_agentscope_events(
+        event_stream=fake_events(),
+        tools=[],
+        native_model=SimpleNamespace(model="fake-native-data"),
+    ):
+        events.append(chunk)
+
+    assert not any(event.get("content") == "查到了" for event in events if isinstance(event, dict))
+    assert any(
+        "SQL 执行失败" in event.get("content", "")
+        for event in events
+        if isinstance(event, dict)
+    )
+
+
+@pytest.mark.asyncio
+async def test_data_agent_runner_blocks_final_answer_after_empty_sql_result(data_config):
+    from types import SimpleNamespace
+
+    from app.services.ai.runners.data_agent_runner import DataAgentRunner
+
+    async def fake_events():
+        yield SimpleNamespace(type="TOOL_CALL_START", tool_call_id="call_schema", tool_call_name="get_dataset_schema")
+        yield SimpleNamespace(type="TOOL_RESULT_TEXT_DELTA", tool_call_id="call_schema", delta="table_name: demo\ncolumns: id")
+        yield SimpleNamespace(type="TOOL_RESULT_END", tool_call_id="call_schema")
+        yield SimpleNamespace(type="TOOL_CALL_START", tool_call_id="call_sql", tool_call_name="execute_sql_query")
+        yield SimpleNamespace(
+            type="TOOL_CALL_DELTA",
+            tool_call_id="call_sql",
+            delta='{"sql": "SELECT * FROM demo WHERE id=-1", "data_source": "mysql_aiagent", "dataset_name": "demo"}',
+        )
+        yield SimpleNamespace(type="TOOL_RESULT_TEXT_DELTA", tool_call_id="call_sql", delta='{"rows": [], "total": 0}')
+        yield SimpleNamespace(type="TOOL_RESULT_END", tool_call_id="call_sql")
+        yield SimpleNamespace(type="TEXT_BLOCK_DELTA", delta="没有数据")
+
+    runner = DataAgentRunner(config=data_config, trace_id="trace-empty-block", trace_buffer=[])
+
+    events = []
+    async for chunk in runner._stream_agentscope_events(
+        event_stream=fake_events(),
+        tools=[],
+        native_model=SimpleNamespace(model="fake-native-data"),
+    ):
+        events.append(chunk)
+
+    assert not any(event.get("content") == "没有数据" for event in events if isinstance(event, dict))
+    assert any(
+        "SQL 返回空结果" in event.get("content", "")
+        for event in events
+        if isinstance(event, dict)
+    )
+
+
+@pytest.mark.asyncio
+async def test_data_agent_runner_detects_split_sql_plan_before_sql(data_config):
+    from types import SimpleNamespace
+
+    from app.services.ai.runners.data_agent_runner import DataAgentRunner, _DataRunState
+
+    async def fake_events():
+        yield SimpleNamespace(type="TOOL_CALL_START", tool_call_id="call_schema", tool_call_name="get_dataset_schema")
+        yield SimpleNamespace(type="TOOL_RESULT_TEXT_DELTA", tool_call_id="call_schema", delta="table_name: demo\ncolumns: room, used, total")
+        yield SimpleNamespace(type="TOOL_RESULT_END", tool_call_id="call_schema")
+        yield SimpleNamespace(type="TEXT_BLOCK_DELTA", delta="<thought><sql_plan>{\"dataset_name\":\"demo\",")
+        yield SimpleNamespace(type="TEXT_BLOCK_DELTA", delta="\"data_source\":\"mysql_aiagent\"}</sql_plan></thought>")
+        yield SimpleNamespace(type="TOOL_CALL_START", tool_call_id="call_sql", tool_call_name="execute_sql_query")
+        yield SimpleNamespace(
+            type="TOOL_CALL_DELTA",
+            tool_call_id="call_sql",
+            delta='{"sql": "SELECT room, SUM(used) FROM demo GROUP BY room", "data_source": "mysql_aiagent", "dataset_name": "demo"}',
+        )
+        yield SimpleNamespace(type="TOOL_RESULT_TEXT_DELTA", tool_call_id="call_sql", delta='[{"room": "A", "used": 8}]')
+        yield SimpleNamespace(type="TOOL_RESULT_END", tool_call_id="call_sql")
+        yield SimpleNamespace(type="TEXT_BLOCK_DELTA", delta="计划后结果是 8")
+
+    runner = DataAgentRunner(config=data_config, trace_id="trace-split-plan", trace_buffer=[])
+    state = _DataRunState(requires_sql_plan=True)
+
+    events = []
+    async for chunk in runner._stream_agentscope_events(
+        event_stream=fake_events(),
+        tools=[],
+        native_model=SimpleNamespace(model="fake-native-data"),
+        state=state,
+    ):
+        events.append(chunk)
+
+    assert state.sql_plan_seen is True
+    assert state.sql_plan_missing is False
+    assert any(event.get("content") == "计划后结果是 8" for event in events if isinstance(event, dict))
+    assert not any(event.get("title") == "阻止未查数回答" for event in events if isinstance(event, dict))
+
+
+@pytest.mark.asyncio
+async def test_data_agent_runner_suppresses_duplicate_final_answer_text_blocks(data_config):
+    from types import SimpleNamespace
+
+    from app.services.ai.runners.data_agent_runner import DataAgentRunner
+
+    async def fake_events():
+        yield SimpleNamespace(type="TOOL_CALL_START", tool_call_id="call_schema", tool_call_name="get_dataset_schema")
+        yield SimpleNamespace(type="TOOL_RESULT_TEXT_DELTA", tool_call_id="call_schema", delta="table_name: demo\ncolumns: id")
+        yield SimpleNamespace(type="TOOL_RESULT_END", tool_call_id="call_schema")
+        yield SimpleNamespace(type="TOOL_CALL_START", tool_call_id="call_sql", tool_call_name="execute_sql_query")
+        yield SimpleNamespace(
+            type="TOOL_CALL_DELTA",
+            tool_call_id="call_sql",
+            delta='{"sql": "SELECT id FROM demo", "data_source": "mysql_aiagent", "dataset_name": "demo"}',
+        )
+        yield SimpleNamespace(type="TOOL_RESULT_TEXT_DELTA", tool_call_id="call_sql", delta='[{"id": 1}]')
+        yield SimpleNamespace(type="TOOL_RESULT_END", tool_call_id="call_sql")
+        yield SimpleNamespace(type="TEXT_BLOCK_START", block_id="answer-1")
+        yield SimpleNamespace(type="TEXT_BLOCK_DELTA", block_id="answer-1", delta="最终回答")
+        yield SimpleNamespace(type="TEXT_BLOCK_END", block_id="answer-1")
+        yield SimpleNamespace(type="TEXT_BLOCK_START", block_id="answer-2")
+        yield SimpleNamespace(type="TEXT_BLOCK_DELTA", block_id="answer-2", delta="重复最终回答")
+        yield SimpleNamespace(type="TEXT_BLOCK_END", block_id="answer-2")
+
+    runner = DataAgentRunner(config=data_config, trace_id="trace-dup-answer", trace_buffer=[])
+
+    events = []
+    async for chunk in runner._stream_agentscope_events(
+        event_stream=fake_events(),
+        tools=[],
+        native_model=SimpleNamespace(model="fake-native-data"),
+    ):
+        events.append(chunk)
+
+    content = "".join(
+        event["content"] for event in events if "content" in event and "type" not in event
+    )
+    assert content == "最终回答"
+    assert "重复最终回答" not in content
+
+
+@pytest.mark.asyncio
+async def test_data_agent_runner_allows_final_answer_after_tool_calls_following_partial_text(
+    data_config,
+):
+    from types import SimpleNamespace
+
+    from app.services.ai.runners.data_agent_runner import DataAgentRunner
+
+    async def fake_events():
+        yield SimpleNamespace(type="TOOL_CALL_START", tool_call_id="call_schema", tool_call_name="get_dataset_schema")
+        yield SimpleNamespace(type="TOOL_RESULT_TEXT_DELTA", tool_call_id="call_schema", delta="table_name: demo\ncolumns: id")
+        yield SimpleNamespace(type="TOOL_RESULT_END", tool_call_id="call_schema")
+        yield SimpleNamespace(type="TOOL_CALL_START", tool_call_id="call_sql_1", tool_call_name="execute_sql_query")
+        yield SimpleNamespace(
+            type="TOOL_CALL_DELTA",
+            tool_call_id="call_sql_1",
+            delta='{"sql": "SELECT role FROM demo", "data_source": "mysql_aiagent", "dataset_name": "demo"}',
+        )
+        yield SimpleNamespace(type="TOOL_RESULT_TEXT_DELTA", tool_call_id="call_sql_1", delta='[{"role": "admin"}]')
+        yield SimpleNamespace(type="TOOL_RESULT_END", tool_call_id="call_sql_1")
+        yield SimpleNamespace(type="TEXT_BLOCK_START", block_id="partial-1")
+        yield SimpleNamespace(type="TEXT_BLOCK_DELTA", block_id="partial-1", delta="让我再查询一下按日期分布的注册情况：")
+        yield SimpleNamespace(type="TEXT_BLOCK_END", block_id="partial-1")
+        yield SimpleNamespace(type="TOOL_CALL_START", tool_call_id="call_sql_2", tool_call_name="execute_sql_query")
+        yield SimpleNamespace(
+            type="TOOL_CALL_DELTA",
+            tool_call_id="call_sql_2",
+            delta='{"sql": "SELECT DATE(created_at) AS day FROM demo", "data_source": "mysql_aiagent", "dataset_name": "demo"}',
+        )
+        yield SimpleNamespace(type="TOOL_RESULT_TEXT_DELTA", tool_call_id="call_sql_2", delta='[{"day": "2026-05-31"}]')
+        yield SimpleNamespace(type="TOOL_RESULT_END", tool_call_id="call_sql_2")
+        yield SimpleNamespace(type="TEXT_BLOCK_START", block_id="final-1")
+        yield SimpleNamespace(type="TEXT_BLOCK_DELTA", block_id="final-1", delta="按日期分布如下：")
+        yield SimpleNamespace(type="TEXT_BLOCK_END", block_id="final-1")
+
+    runner = DataAgentRunner(config=data_config, trace_id="trace-partial-then-final", trace_buffer=[])
+
+    events = []
+    async for chunk in runner._stream_agentscope_events(
+        event_stream=fake_events(),
+        tools=[],
+        native_model=SimpleNamespace(model="fake-native-data"),
+    ):
+        events.append(chunk)
+
+    content = "".join(
+        event["content"] for event in events if "content" in event and "type" not in event
+    )
+    assert "让我再查询一下按日期分布的注册情况：" in content
+    assert "按日期分布如下：" in content
+
+
+@pytest.mark.asyncio
+async def test_data_agent_runner_execute_repairs_sql_error_before_final_answer(
+    data_config,
+    monkeypatch,
+):
+    from agentscope.credential import CredentialBase
+    from agentscope.message import TextBlock, ToolCallBlock
+    from agentscope.model import ChatModelBase, ChatResponse
+
+    from app.core.llm.client import AgentScopeLLMHandle
+    from app.services.ai.runners.data_agent_runner import DataAgentRunner
+
+    class FakeCredential(CredentialBase):
+        @classmethod
+        def get_chat_model_class(cls):
+            return FakeModel
+
+    class FakeModel(ChatModelBase):
+        class Parameters(BaseModel):
+            pass
+
+        def __init__(self, **kwargs):
+            super().__init__(**kwargs)
+            self.calls = 0
+
+        async def _call_api(self, model_name, messages, tools=None, tool_choice=None, **kwargs):
+            self.calls += 1
+            if self.calls == 1:
+                return ChatResponse(
+                    content=[
+                        ToolCallBlock(
+                            id="call_schema",
+                            name="get_dataset_schema",
+                            input='{"keywords": "demo"}',
+                        )
+                    ],
+                    is_last=True,
+                )
+            if self.calls == 2:
+                return ChatResponse(
+                    content=[
+                        ToolCallBlock(
+                            id="call_bad_sql",
+                            name="execute_sql_query",
+                            input='{"sql": "SELECT bad_col FROM demo", "data_source": "mysql_aiagent", "dataset_name": "demo"}',
+                        )
+                    ],
+                    is_last=True,
+                )
+            if self.calls == 3:
+                return ChatResponse(
+                    content=[TextBlock(text="错误 SQL 也直接回答")],
+                    is_last=True,
+                )
+            if self.calls == 4:
+                return ChatResponse(
+                    content=[
+                        ToolCallBlock(
+                            id="call_fixed_sql",
+                            name="execute_sql_query",
+                            input='{"sql": "SELECT id FROM demo", "data_source": "mysql_aiagent", "dataset_name": "demo"}',
+                        )
+                    ],
+                    is_last=True,
+                )
+            return ChatResponse(
+                content=[TextBlock(text="修正后结果是 1")],
+                is_last=True,
+            )
+
+    async def fake_load_context_config():
+        return None
+
+    async def fake_build_model_config(**kwargs):
+        return None
+
+    async def fake_config_get(key):
+        return "5"
+
+    fake_model = FakeModel(
+        credential=FakeCredential(),
+        model="fake-native-data",
+        parameters=FakeModel.Parameters(),
+        stream=False,
+        max_retries=0,
+    )
+    handle = AgentScopeLLMHandle(
+        native_model=fake_model,
+        model_name="fake-native-data",
+        temperature=0.0,
+        streaming=True,
+    )
+
+    async def fake_get_configured_llm(**kwargs):
+        return handle
+
+    monkeypatch.setattr(
+        "app.services.ai.runners.data_agent_runner.AgentConfigProvider.get_configured_llm",
+        fake_get_configured_llm,
+    )
+    monkeypatch.setattr(
+        "app.services.ai.runners.data_agent_runner.load_context_config",
+        fake_load_context_config,
+    )
+    monkeypatch.setattr(
+        "app.services.ai.runners.data_agent_runner.build_model_config",
+        fake_build_model_config,
+    )
+    monkeypatch.setattr(
+        "app.services.ai.runners.data_agent_runner.ConfigService.get",
+        fake_config_get,
+    )
+
+    async def fake_schema(keywords=None):
+        return "table_name: demo\ncolumns: id"
+
+    async def fake_sql(sql, data_source, dataset_name):
+        if "bad_col" in sql:
+            return "Unknown column 'bad_col'"
+        return [{"id": 1}]
+
+    from app.services.ai.tools.registry import ToolRegistry
+
+    monkeypatch.setitem(ToolRegistry._registry, "get_dataset_schema", fake_schema)
+    monkeypatch.setitem(ToolRegistry._registry, "execute_sql_query", fake_sql)
+
+    runner = DataAgentRunner(config=data_config, trace_id="trace-sql-repair", trace_buffer=[])
+
+    events = []
+    async for chunk in runner.execute([{"role": "user", "content": "查 demo"}]):
+        events.append(chunk)
+
+    content = "".join(event["content"] for event in events if "content" in event and "type" not in event)
+    assert "错误 SQL 也直接回答" not in content
+    assert "修正后结果是 1" in content
+    assert any(event.get("title") == "修正 SQL 查询" for event in events if isinstance(event, dict))
+    assert any(event.get("title") == "工具完成: execute_sql_query" for event in events if isinstance(event, dict))
+
+
+@pytest.mark.asyncio
+async def test_data_agent_runner_double_repair_when_model_skips_sql_twice(
+    data_config,
+    monkeypatch,
+):
+    from agentscope.credential import CredentialBase
+    from agentscope.message import TextBlock, ToolCallBlock
+    from agentscope.model import ChatModelBase, ChatResponse
+
+    from app.core.llm.client import AgentScopeLLMHandle
+    from app.services.ai.runners.data_agent_runner import DataAgentRunner
+
+    class FakeCredential(CredentialBase):
+        @classmethod
+        def get_chat_model_class(cls):
+            return FakeModel
+
+    class FakeModel(ChatModelBase):
+        class Parameters(BaseModel):
+            pass
+
+        def __init__(self, **kwargs):
+            super().__init__(**kwargs)
+            self.calls = 0
+            self.tool_choices = []
+
+        async def _call_api(self, model_name, messages, tools=None, tool_choice=None, **kwargs):
+            self.calls += 1
+            self.tool_choices.append(tool_choice)
+            if self.calls == 1:
+                return ChatResponse(
+                    content=[
+                        ToolCallBlock(
+                            id="call_schema",
+                            name="get_dataset_schema",
+                            input='{"keywords": "demo"}',
+                        )
+                    ],
+                    is_last=True,
+                )
+            if self.calls == 2:
+                return ChatResponse(
+                    content=[TextBlock(text="第一次跳过 SQL 直接回答")],
+                    is_last=True,
+                )
+            if self.calls == 3:
+                return ChatResponse(
+                    content=[TextBlock(text="第一次 repair 仍跳过 SQL")],
+                    is_last=True,
+                )
+            if self.calls == 4:
+                return ChatResponse(
+                    content=[
+                        ToolCallBlock(
+                            id="call_sql",
+                            name="execute_sql_query",
+                            input='{"sql": "SELECT id FROM demo", "data_source": "mysql_aiagent", "dataset_name": "demo"}',
+                        )
+                    ],
+                    is_last=True,
+                )
+            return ChatResponse(
+                content=[TextBlock(text="第二次 repair 后查数成功，结果是 1")],
+                is_last=True,
+            )
+
+    async def fake_load_context_config():
+        return None
+
+    async def fake_build_model_config(**kwargs):
+        return None
+
+    async def fake_config_get(key):
+        return "5"
+
+    fake_model = FakeModel(
+        credential=FakeCredential(),
+        model="fake-native-data",
+        parameters=FakeModel.Parameters(),
+        stream=False,
+        max_retries=0,
+    )
+    handle = AgentScopeLLMHandle(
+        native_model=fake_model,
+        model_name="fake-native-data",
+        temperature=0.0,
+        streaming=True,
+    )
+
+    async def fake_get_configured_llm(**kwargs):
+        return handle
+
+    monkeypatch.setattr(
+        "app.services.ai.runners.data_agent_runner.AgentConfigProvider.get_configured_llm",
+        fake_get_configured_llm,
+    )
+    monkeypatch.setattr(
+        "app.services.ai.runners.data_agent_runner.load_context_config",
+        fake_load_context_config,
+    )
+    monkeypatch.setattr(
+        "app.services.ai.runners.data_agent_runner.build_model_config",
+        fake_build_model_config,
+    )
+    monkeypatch.setattr(
+        "app.services.ai.runners.data_agent_runner.ConfigService.get",
+        fake_config_get,
+    )
+
+    async def fake_schema(keywords=None):
+        return "table_name: demo\ncolumns: id"
+
+    async def fake_sql(sql, data_source, dataset_name):
+        return [{"id": 1}]
+
+    from app.services.ai.tools.registry import ToolRegistry
+
+    monkeypatch.setitem(ToolRegistry._registry, "get_dataset_schema", fake_schema)
+    monkeypatch.setitem(ToolRegistry._registry, "execute_sql_query", fake_sql)
+
+    runner = DataAgentRunner(config=data_config, trace_id="trace-double-repair", trace_buffer=[])
+
+    events = []
+    async for chunk in runner.execute([{"role": "user", "content": "查 demo"}]):
+        events.append(chunk)
+
+    content = "".join(event["content"] for event in events if "content" in event and "type" not in event)
+    assert "第一次跳过 SQL 直接回答" not in content
+    assert "第一次 repair 仍跳过 SQL" not in content
+    assert "第二次 repair 后查数成功，结果是 1" in content
+    repair_titles = [
+        event.get("title")
+        for event in events
+        if isinstance(event, dict) and event.get("title") == "必须先执行 SQL 查数"
+    ]
+    assert len(repair_titles) == 2
+    assert fake_model.tool_choices[2] is not None
+    assert getattr(fake_model.tool_choices[2], "mode", None) == "execute_sql_query"
+    assert fake_model.tool_choices[3] is not None
+    assert getattr(fake_model.tool_choices[3], "mode", None) == "execute_sql_query"
+
+
+@pytest.mark.asyncio
+async def test_data_agent_runner_execute_rechecks_empty_sql_before_final_answer(
+    data_config,
+    monkeypatch,
+):
+    from agentscope.credential import CredentialBase
+    from agentscope.message import TextBlock, ToolCallBlock
+    from agentscope.model import ChatModelBase, ChatResponse
+
+    from app.core.llm.client import AgentScopeLLMHandle
+    from app.services.ai.runners.data_agent_runner import DataAgentRunner
+
+    class FakeCredential(CredentialBase):
+        @classmethod
+        def get_chat_model_class(cls):
+            return FakeModel
+
+    class FakeModel(ChatModelBase):
+        class Parameters(BaseModel):
+            pass
+
+        def __init__(self, **kwargs):
+            super().__init__(**kwargs)
+            self.calls = 0
+
+        async def _call_api(self, model_name, messages, tools=None, tool_choice=None, **kwargs):
+            self.calls += 1
+            if self.calls == 1:
+                return ChatResponse(
+                    content=[
+                        ToolCallBlock(
+                            id="call_schema",
+                            name="get_dataset_schema",
+                            input='{"keywords": "demo"}',
+                        )
+                    ],
+                    is_last=True,
+                )
+            if self.calls == 2:
+                return ChatResponse(
+                    content=[
+                        ToolCallBlock(
+                            id="call_empty_sql",
+                            name="execute_sql_query",
+                            input='{"sql": "SELECT * FROM demo WHERE id=-1", "data_source": "mysql_aiagent", "dataset_name": "demo"}',
+                        )
+                    ],
+                    is_last=True,
+                )
+            if self.calls == 3:
+                return ChatResponse(
+                    content=[TextBlock(text="直接说没有数据")],
+                    is_last=True,
+                )
+            if self.calls == 4:
+                return ChatResponse(
+                    content=[
+                        ToolCallBlock(
+                            id="call_final_sql",
+                            name="execute_sql_query",
+                            input='{"sql": "SELECT * FROM demo WHERE id=1", "data_source": "mysql_aiagent", "dataset_name": "demo"}',
+                        )
+                    ],
+                    is_last=True,
+                )
+            return ChatResponse(
+                content=[TextBlock(text="复查后结果是 1")],
+                is_last=True,
+            )
+
+    async def fake_load_context_config():
+        return None
+
+    async def fake_build_model_config(**kwargs):
+        return None
+
+    async def fake_config_get(key):
+        return "5"
+
+    fake_model = FakeModel(
+        credential=FakeCredential(),
+        model="fake-native-data",
+        parameters=FakeModel.Parameters(),
+        stream=False,
+        max_retries=0,
+    )
+    handle = AgentScopeLLMHandle(
+        native_model=fake_model,
+        model_name="fake-native-data",
+        temperature=0.0,
+        streaming=True,
+    )
+
+    async def fake_get_configured_llm(**kwargs):
+        return handle
+
+    monkeypatch.setattr(
+        "app.services.ai.runners.data_agent_runner.AgentConfigProvider.get_configured_llm",
+        fake_get_configured_llm,
+    )
+    monkeypatch.setattr(
+        "app.services.ai.runners.data_agent_runner.load_context_config",
+        fake_load_context_config,
+    )
+    monkeypatch.setattr(
+        "app.services.ai.runners.data_agent_runner.build_model_config",
+        fake_build_model_config,
+    )
+    monkeypatch.setattr(
+        "app.services.ai.runners.data_agent_runner.ConfigService.get",
+        fake_config_get,
+    )
+
+    async def fake_schema(keywords=None):
+        return "table_name: demo\ncolumns: id"
+
+    async def fake_sql(sql, data_source, dataset_name):
+        if "id=-1" in sql:
+            return {"rows": [], "total": 0}
+        return [{"id": 1}]
+
+    from app.services.ai.tools.registry import ToolRegistry
+
+    monkeypatch.setitem(ToolRegistry._registry, "get_dataset_schema", fake_schema)
+    monkeypatch.setitem(ToolRegistry._registry, "execute_sql_query", fake_sql)
+
+    runner = DataAgentRunner(config=data_config, trace_id="trace-empty-recheck", trace_buffer=[])
+
+    events = []
+    async for chunk in runner.execute([{"role": "user", "content": "查 demo"}]):
+        events.append(chunk)
+
+    content = "".join(event["content"] for event in events if "content" in event and "type" not in event)
+    assert "直接说没有数据" not in content
+    assert "复查后结果是 1" in content
+    assert any(event.get("title") == "修正 SQL 查询" for event in events if isinstance(event, dict))
+
+
+@pytest.mark.asyncio
+async def test_data_agent_runner_execute_retries_schema_miss_before_sql(
+    data_config,
+    monkeypatch,
+):
+    from agentscope.credential import CredentialBase
+    from agentscope.message import TextBlock, ToolCallBlock
+    from agentscope.model import ChatModelBase, ChatResponse
+
+    from app.core.llm.client import AgentScopeLLMHandle
+    from app.services.ai.runners.data_agent_runner import DataAgentRunner
+
+    class FakeCredential(CredentialBase):
+        @classmethod
+        def get_chat_model_class(cls):
+            return FakeModel
+
+    class FakeModel(ChatModelBase):
+        class Parameters(BaseModel):
+            pass
+
+        def __init__(self, **kwargs):
+            super().__init__(**kwargs)
+            self.calls = 0
+
+        async def _call_api(self, model_name, messages, tools=None, tool_choice=None, **kwargs):
+            self.calls += 1
+            if self.calls == 1:
+                return ChatResponse(
+                    content=[
+                        ToolCallBlock(
+                            id="call_schema_miss",
+                            name="get_dataset_schema",
+                            input='{"keywords": "unknown"}',
+                        )
+                    ],
+                    is_last=True,
+                )
+            if self.calls == 2:
+                return ChatResponse(
+                    content=[TextBlock(text="没找到 schema 也回答")],
+                    is_last=True,
+                )
+            if self.calls == 3:
+                return ChatResponse(
+                    content=[
+                        ToolCallBlock(
+                            id="call_schema_retry",
+                            name="get_dataset_schema",
+                            input='{"keywords": "demo 数据集 表 字段"}',
+                        )
+                    ],
+                    is_last=True,
+                )
+            if self.calls == 4:
+                return ChatResponse(
+                    content=[
+                        ToolCallBlock(
+                            id="call_sql_after_schema",
+                            name="execute_sql_query",
+                            input='{"sql": "SELECT id FROM demo", "data_source": "mysql_aiagent", "dataset_name": "demo"}',
+                        )
+                    ],
+                    is_last=True,
+                )
+            return ChatResponse(
+                content=[TextBlock(text="schema 重试后结果是 1")],
+                is_last=True,
+            )
+
+    async def fake_load_context_config():
+        return None
+
+    async def fake_build_model_config(**kwargs):
+        return None
+
+    async def fake_config_get(key):
+        return "5"
+
+    fake_model = FakeModel(
+        credential=FakeCredential(),
+        model="fake-native-data",
+        parameters=FakeModel.Parameters(),
+        stream=False,
+        max_retries=0,
+    )
+    handle = AgentScopeLLMHandle(
+        native_model=fake_model,
+        model_name="fake-native-data",
+        temperature=0.0,
+        streaming=True,
+    )
+
+    async def fake_get_configured_llm(**kwargs):
+        return handle
+
+    monkeypatch.setattr(
+        "app.services.ai.runners.data_agent_runner.AgentConfigProvider.get_configured_llm",
+        fake_get_configured_llm,
+    )
+    monkeypatch.setattr(
+        "app.services.ai.runners.data_agent_runner.load_context_config",
+        fake_load_context_config,
+    )
+    monkeypatch.setattr(
+        "app.services.ai.runners.data_agent_runner.build_model_config",
+        fake_build_model_config,
+    )
+    monkeypatch.setattr(
+        "app.services.ai.runners.data_agent_runner.ConfigService.get",
+        fake_config_get,
+    )
+
+    schema_calls = 0
+
+    async def fake_schema(keywords=None):
+        nonlocal schema_calls
+        schema_calls += 1
+        if schema_calls == 1:
+            return "No relevant schema info found"
+        return "table_name: demo\ncolumns: id"
+
+    async def fake_sql(sql, data_source, dataset_name):
+        return [{"id": 1}]
+
+    from app.services.ai.tools.registry import ToolRegistry
+
+    monkeypatch.setitem(ToolRegistry._registry, "get_dataset_schema", fake_schema)
+    monkeypatch.setitem(ToolRegistry._registry, "execute_sql_query", fake_sql)
+
+    runner = DataAgentRunner(config=data_config, trace_id="trace-schema-retry", trace_buffer=[])
+
+    events = []
+    async for chunk in runner.execute([{"role": "user", "content": "查 demo"}]):
+        events.append(chunk)
+
+    content = "".join(event["content"] for event in events if "content" in event and "type" not in event)
+    assert "没找到 schema 也回答" not in content
+    assert "schema 重试后结果是 1" in content
+    assert schema_calls == 2
+    assert any(event.get("title") == "重试检索数据集定义" for event in events if isinstance(event, dict))
+
+
+@pytest.mark.asyncio
+async def test_data_agent_runner_execute_requires_sql_plan_for_high_risk_query(
+    data_config,
+    monkeypatch,
+):
+    from agentscope.credential import CredentialBase
+    from agentscope.message import TextBlock, ToolCallBlock
+    from agentscope.model import ChatModelBase, ChatResponse
+
+    from app.core.llm.client import AgentScopeLLMHandle
+    from app.services.ai.runners.data_agent_runner import DataAgentRunner
+
+    class FakeCredential(CredentialBase):
+        @classmethod
+        def get_chat_model_class(cls):
+            return FakeModel
+
+    class FakeModel(ChatModelBase):
+        class Parameters(BaseModel):
+            pass
+
+        def __init__(self, **kwargs):
+            super().__init__(**kwargs)
+            self.calls = 0
+
+        async def _call_api(self, model_name, messages, tools=None, tool_choice=None, **kwargs):
+            self.calls += 1
+            if self.calls == 1:
+                return ChatResponse(
+                    content=[
+                        ToolCallBlock(
+                            id="call_schema",
+                            name="get_dataset_schema",
+                            input='{"keywords": "demo 利用率"}',
+                        )
+                    ],
+                    is_last=True,
+                )
+            if self.calls == 2:
+                return ChatResponse(
+                    content=[
+                        ToolCallBlock(
+                            id="call_sql_without_plan",
+                            name="execute_sql_query",
+                            input='{"sql": "SELECT room, used/total AS ratio FROM demo", "data_source": "mysql_aiagent", "dataset_name": "demo"}',
+                        )
+                    ],
+                    is_last=True,
+                )
+            if self.calls == 3:
+                return ChatResponse(
+                    content=[TextBlock(text="没有计划也直接回答")],
+                    is_last=True,
+                )
+            if self.calls == 4:
+                return ChatResponse(
+                    content=[
+                        TextBlock(
+                            text=(
+                                "<thought><sql_plan>{\"dataset_name\":\"demo\","
+                                "\"data_source\":\"mysql_aiagent\",\"grain_keys\":[\"room\"],"
+                                "\"time_window\":{},\"metrics_hit\":[\"利用率\"],"
+                                "\"joins\":[],\"ratio\":{\"numerator\":\"used\","
+                                "\"denominator\":\"total\",\"denominator_semantics\":\"aggregate\"}}"
+                                "</sql_plan></thought>"
+                            )
+                        ),
+                        ToolCallBlock(
+                            id="call_sql_with_plan",
+                            name="execute_sql_query",
+                            input='{"sql": "SELECT room, SUM(used)/SUM(total) AS ratio FROM demo GROUP BY room", "data_source": "mysql_aiagent", "dataset_name": "demo"}',
+                        ),
+                    ],
+                    is_last=True,
+                )
+            return ChatResponse(
+                content=[TextBlock(text="计划后结果是 80%")],
+                is_last=True,
+            )
+
+    async def fake_load_context_config():
+        return None
+
+    async def fake_build_model_config(**kwargs):
+        return None
+
+    async def fake_config_get(key):
+        return "5"
+
+    fake_model = FakeModel(
+        credential=FakeCredential(),
+        model="fake-native-data",
+        parameters=FakeModel.Parameters(),
+        stream=False,
+        max_retries=0,
+    )
+    handle = AgentScopeLLMHandle(
+        native_model=fake_model,
+        model_name="fake-native-data",
+        temperature=0.0,
+        streaming=True,
+    )
+
+    async def fake_get_configured_llm(**kwargs):
+        return handle
+
+    monkeypatch.setattr(
+        "app.services.ai.runners.data_agent_runner.AgentConfigProvider.get_configured_llm",
+        fake_get_configured_llm,
+    )
+    monkeypatch.setattr(
+        "app.services.ai.runners.data_agent_runner.load_context_config",
+        fake_load_context_config,
+    )
+    monkeypatch.setattr(
+        "app.services.ai.runners.data_agent_runner.build_model_config",
+        fake_build_model_config,
+    )
+    monkeypatch.setattr(
+        "app.services.ai.runners.data_agent_runner.ConfigService.get",
+        fake_config_get,
+    )
+
+    async def fake_schema(keywords=None):
+        return "table_name: demo\ncolumns: room, used, total"
+
+    async def fake_sql(sql, data_source, dataset_name):
+        return [{"room": "A", "ratio": 0.8}]
+
+    from app.services.ai.tools.registry import ToolRegistry
+
+    monkeypatch.setitem(ToolRegistry._registry, "get_dataset_schema", fake_schema)
+    monkeypatch.setitem(ToolRegistry._registry, "execute_sql_query", fake_sql)
+
+    runner = DataAgentRunner(config=data_config, trace_id="trace-plan-required", trace_buffer=[])
+
+    events = []
+    async for chunk in runner.execute([{"role": "user", "content": "按机房统计利用率"}]):
+        events.append(chunk)
+
+    content = "".join(event["content"] for event in events if "content" in event and "type" not in event)
+    assert "没有计划也直接回答" not in content
+    assert "计划后结果是 80%" in content
+    assert any(event.get("title") == "补充 SQL 计划" for event in events if isinstance(event, dict))

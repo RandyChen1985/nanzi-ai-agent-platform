@@ -148,7 +148,7 @@ class ExampleService:
         异步调用 LLM 对经验进行“意图增强”和“背景总结”。
         """
         from app.services.ai.config import AgentConfigProvider
-        from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
+        from app.services.ai.runtime.agentscope.compat import SystemMessage
 
         async with AsyncSessionLocal() as db:
             try:
@@ -496,7 +496,7 @@ class ExampleService:
         利用 LLM 进行搜索意图改写，去除对上下文的依赖。
         """
         from app.services.ai.config import AgentConfigProvider
-        from langchain_core.messages import HumanMessage, SystemMessage
+        from app.services.ai.runtime.agentscope.compat import SystemMessage
         
         # 仅取最近 3 轮历史
         recent_history = history[-6:] if len(history) > 6 else history

@@ -5,7 +5,7 @@ import re
 from datetime import date, datetime, timedelta
 from typing import Optional
 
-from langchain_core.tools import tool
+from app.services.ai.tools.tool_compat import tool
 
 from app.core.context import get_current_agent_context
 from app.services.ai.daily_summary_service import DailySummaryService
@@ -189,4 +189,3 @@ async def memory_search(
             lines.append(f"- **{role}**: {content}\n")
 
     return "\n".join(lines) if lines else "无记忆数据。"
-

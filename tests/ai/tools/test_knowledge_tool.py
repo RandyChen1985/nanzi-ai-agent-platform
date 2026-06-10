@@ -97,3 +97,21 @@ async def test_search_knowledge_base_parameter_priority():
         
         args, kwargs = mock_retrieve.call_args
         assert kwargs["similarity_threshold"] == 0.8 # 应当采用上下文覆盖的值
+
+
+@pytest.mark.asyncio
+async def test_search_knowledge_base_reports_service_unavailable_on_502():
+    """RAGFlow 502 时应返回明确的「知识库服务不可用」提示，而非泛化 Tool Error。"""
+    rid = "4525d66cec7111f0a3d00242ac120006"
+    with patch("app.services.ai.ragflow_client.RagFlowClient.retrieve", new_callable=AsyncMock) as mock_retrieve, \
+         patch("app.services.config_service.ConfigService.get", new_callable=AsyncMock) as mock_config:
+        mock_retrieve.side_effect = Exception("RAGFlow Retrieve failed: HTTP 502 Bad Gateway")
+        mock_config.return_value = None
+
+        result = await search_knowledge_base.ainvoke(
+            {"query": "换电流程", "dataset_ids": rid}
+        )
+
+    assert "知识库服务不可用" in result
+    assert "Failed to search knowledge base" not in result
+    assert mock_retrieve.call_count == 1

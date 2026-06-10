@@ -110,6 +110,68 @@ async def test_chat_completion_stream(db_session, mock_agent_dispatcher):
             full_content = "".join([c.get("content", "") for c in chunks])
             assert "Hello, world!" in full_content
 
+
+@pytest.mark.no_infrastructure
+@pytest.mark.asyncio
+async def test_chat_completion_stream_sse_snapshot(monkeypatch):
+    """
+    API streaming keeps the existing SSE envelope for all frontend-consumed chunk types.
+    """
+    from app.api.v1.endpoints import chat as chat_endpoint
+    from app.core.orm import get_db_session
+
+    async def fake_require_api_key():
+        return {"user_id": "u-sse", "role": "user"}
+
+    async def fake_db_session():
+        yield None
+
+    async def fake_chat_completion_stream(*args, **kwargs):
+        yield {"type": "log", "title": "调用工具: search_knowledge_base", "status": "pending"}
+        yield {"content": "Hello"}
+        yield {"type": "citation", "data": [{"id": "doc-1", "text": "Source 1"}]}
+        yield {"type": "context_update", "data": {"room_name": "A101"}}
+        yield {"type": "error", "status": "error", "content": "可读错误"}
+
+    monkeypatch.setattr(
+        chat_endpoint.agent_service,
+        "chat_completion_stream",
+        fake_chat_completion_stream,
+    )
+    app.dependency_overrides[chat_endpoint.require_api_key] = fake_require_api_key
+    app.dependency_overrides[get_db_session] = fake_db_session
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            payload = {
+                "messages": [{"role": "user", "content": "Hi"}],
+                "stream": True,
+                "conversation_id": "conv-sse",
+                "enable_multi_agent": False,
+                "debug_options": {"return_raw_prompt": True},
+            }
+            async with client.stream(
+                "POST",
+                "/api/v1/chat/completions",
+                json=payload,
+                headers={"X-API-Key": "test-key"},
+            ) as resp:
+                assert resp.status_code == 200
+                assert "text/event-stream" in resp.headers["content-type"]
+                lines = [line async for line in resp.aiter_lines() if line.startswith("data: ")]
+    finally:
+        app.dependency_overrides.pop(chat_endpoint.require_api_key, None)
+        app.dependency_overrides.pop(get_db_session, None)
+
+    assert lines[-1] == "data: [DONE]"
+    events = [json.loads(line.removeprefix("data: ")) for line in lines[:-1]]
+    assert events == [
+        {"type": "log", "title": "调用工具: search_knowledge_base", "status": "pending"},
+        {"content": "Hello"},
+        {"type": "citation", "data": [{"id": "doc-1", "text": "Source 1"}]},
+        {"type": "context_update", "data": {"room_name": "A101"}},
+        {"type": "error", "status": "error", "content": "可读错误"},
+    ]
+
 @pytest.mark.asyncio
 async def test_chat_auth_required(db_session):
     """

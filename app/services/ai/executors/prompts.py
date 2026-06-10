@@ -7,7 +7,7 @@
 
 分组：
 - :class:`DataQueryPrompts` —— DataQueryExecutor（数据查询/ChatBI）
-- :class:`GeneralChatPrompts` —— GeneralChatExecutor（通用对话）
+- :class:`AssistantPrompts` —— AssistantExecutor（通用助手）
 - :class:`OpenClawPrompts` —— OpenClawExecutor（安全审计）
 - :class:`SharedPrompts` —— 多个执行器复用的片段（如附件提示）
 """
@@ -106,6 +106,21 @@ class DataQueryPrompts:
         "或联系管理员同步/完善元数据后重试。"
     )
 
+    SCHEMA_SERVICE_UNAVAILABLE_CONTENT = (
+        "⚠️ 元数据检索服务当前不可用，无法获取数据集结构，本次查数已终止。\n"
+        "请检查元数据服务（如 RAGFlow）运行状态与网络连通性，稍后重试；若问题持续，请联系管理员。"
+    )
+
+    NO_AUTHORIZED_SCHEMA_CONTENT = (
+        "⚠️ 当前账号没有可访问的数据集权限，无法继续查数，本次请求已终止。\n"
+        "请确认您已被授予相关数据集权限，或联系管理员开通后重试。"
+    )
+
+    RAG_NOT_SYNCED_CONTENT = (
+        "⚠️ 虽有数据集授权，但尚未同步到元数据知识库（RAGFlow），无法检索表结构，本次查数已终止。\n"
+        "请联系管理员完成元数据同步后重试。"
+    )
+
     # 用户要求使用技能但尚未加载技能指令时，提醒模型读取技能；不得阻断 DataExecutor 查数主线
     MUST_LOAD_SKILL_FIRST = (
         "用户明确要求使用某个技能，或 System Prompt 中已有 [Active Skills Loaded] 摘要块。"
@@ -165,6 +180,20 @@ class DataQueryPrompts:
     MUST_EXECUTE_SQL_AFTER_SCHEMA = (
         "你已经拿到数据集 Schema。下一步必须执行 SQL 查数（调用 execute_sql_query），禁止直接进入总结或输出结论。"
     )
+
+    @staticmethod
+    def prefetched_schema_context(keywords: str, schema_text: str) -> str:
+        """平台在 ReAct 开始前自动执行 get_dataset_schema 后注入的上下文。"""
+        raw = str(schema_text or "")
+        if len(raw) > 20000:
+            raw = raw[:20000] + "\n... [Schema 过长已截断]"
+        return (
+            f"【已自动执行 get_dataset_schema】检索词：{keywords}\n"
+            f"【数据集定义】\n{raw}\n\n"
+            "平台已在 Agent 推理开始前自动完成 Schema 检索。你现在应基于以上内容构建 SQL，"
+            "并调用 execute_sql_query 查数；除非结果明显不匹配，禁止再次调用 get_dataset_schema，"
+            "禁止使用 Grep/Read/Bash 等文件工具查找元数据。"
+        )
 
     # get_dataset_schema 成功后强制进入 execute_sql_query
     FORCE_SQL_AFTER_SCHEMA = (
@@ -319,6 +348,8 @@ class DataQueryPrompts:
             "【上一轮结构化查询结果】\n"
             f"{result_json}\n\n"
             "请只基于上一轮结构化查询结果完成分析或可视化，不要声称已重新查询数据库。\n"
+            "这是基于已有结果的追问：不要重复上一轮已展示过的图表、表格或核心结论，只输出本轮追问的新增分析或可视化。\n"
+            "整段回答只输出一次，禁止将相同内容重复输出两遍。\n"
             "如果适合可视化，请输出 markdown 结论并附带 ```chart JSON``` 图表配置。\n\n"
             f"{SharedPrompts.MARKDOWN_OUTPUT_FORMAT}"
         )
@@ -335,26 +366,15 @@ class DataQueryPrompts:
         )
 
 
-class GeneralChatPrompts:
-    """GeneralChatExecutor 使用的系统级提示词。"""
+class AssistantPrompts:
+    """AssistantExecutor 使用的系统级提示词。"""
 
     # 达到最大执行步骤的提示
     MAX_STEPS_REACHED = "[系统提示] 达到最大执行步骤，停止执行。"
 
-    KNOWLEDGE_SEARCH_CORRECTION_MSG = (
-        "【必须执行】本轮为知识库/SOP 类问答。"
-        "请先调用 search_knowledge_base，query 填用户问题的关键词；"
-        "在未获得工具返回前，禁止凭记忆编造流程或制度内容。"
-    )
-
-    KNOWLEDGE_TURN_SYSTEM_HINT = (
-        "【知识库问答模式】用户正在询问文档/SOP/操作指引。"
-        "若工具集中有 search_knowledge_base，必须先检索再作答。"
-    )
-
     @staticmethod
     def route_hints(route_hints: dict | None) -> str:
-        """路由层通用理解，仅给 General LLM 作为弱参考，不驱动硬分支。"""
+        """路由层通用理解，仅给 Assistant LLM 作为弱参考，不驱动硬分支。"""
         if not route_hints:
             return ""
         labels = route_hints.get("turn_labels") or []
@@ -374,13 +394,46 @@ class GeneralChatPrompts:
 
     @staticmethod
     def synthesis_user_message(user_question: str, execution_review: str) -> str:
-        """通用对话 ReAct 后最终合成阶段的用户消息。"""
+        """通用助手 ReAct 后最终合成阶段的用户消息。"""
         return (
             f"【当前追问】：{user_question}\n\n"
             f"{execution_review}\n\n"
             "请结合上述【执行过程回顾】和最新结果，为用户提供准确、连贯的最终回答。\n"
             "注：如果执行过程主要是执行了一个外部动作（如发送钉钉消息、创建任务等），请直接简洁地告知执行结果即可，无需重复发送的具体内容或进行冗长的总结。\n\n"
             f"{SharedPrompts.MARKDOWN_OUTPUT_FORMAT}"
+        )
+
+
+class KnowledgeChatPrompts:
+    """KnowledgeExecutor 使用的系统级提示词。"""
+
+    TURN_SYSTEM_HINT = (
+        "【知识库问答模式】用户正在询问文档/SOP/操作指引。"
+        "请基于知识库检索结果作答；若检索无结果，应明确说明未找到相关内容，禁止编造流程或制度。"
+    )
+
+    SEARCH_CORRECTION_MSG = (
+        "【必须执行】本轮为知识库/SOP 类问答。"
+        "若尚未检索或需补充检索，请调用 search_knowledge_base；"
+        "在未获得工具返回前，禁止凭记忆编造流程或制度内容。"
+    )
+
+    KNOWLEDGE_SERVICE_UNAVAILABLE_CONTENT = (
+        "⚠️ 知识库检索服务当前不可用，无法检索文档内容，本次问答已终止。\n"
+        "请检查知识库服务（如 RAGFlow）运行状态与网络连通性，稍后重试；若问题持续，请联系管理员。"
+    )
+
+    @staticmethod
+    def prefetched_knowledge_context(query: str, knowledge_text: str) -> str:
+        """平台在 ReAct 开始前自动执行 search_knowledge_base 后注入的上下文。"""
+        raw = str(knowledge_text or "")
+        if len(raw) > 20000:
+            raw = raw[:20000] + "\n... [检索结果过长已截断]"
+        return (
+            f"【已自动执行 search_knowledge_base】检索词：{query}\n"
+            f"【知识库检索结果】\n{raw}\n\n"
+            "平台已在 Agent 推理开始前自动完成知识库检索。请优先基于以上内容组织回答，"
+            "并在回答中引用关键依据；若结果不足以回答，可再次调用 search_knowledge_base 补充检索。"
         )
 
 

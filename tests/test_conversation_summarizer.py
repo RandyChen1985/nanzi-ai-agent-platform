@@ -8,8 +8,7 @@ from app.services.ai.conversation_summarizer import ConversationSummarizer
 pytestmark = pytest.mark.no_infrastructure
 
 
-class FakeResponse:
-    content = """
+FAKE_CONTENT = """
     {
       "title": "记忆设计",
       "summary": "讨论了 session summary 和 daily summary 的分层设计。",
@@ -24,13 +23,17 @@ class FakeResponse:
 
 @pytest.mark.asyncio
 async def test_summarize_returns_structured_memory_fields():
-    llm = AsyncMock()
-    llm.ainvoke = AsyncMock(return_value=FakeResponse())
+    llm = object()
+    chat_client = AsyncMock()
+    chat_client.generate_text.return_value = FAKE_CONTENT
 
     with patch(
         "app.services.ai.conversation_summarizer.get_llm_async",
         new_callable=AsyncMock,
         return_value=llm,
+    ), patch(
+        "app.services.ai.conversation_summarizer.chat_client_from_handle",
+        return_value=chat_client,
     ):
         result = await ConversationSummarizer.summarize(
             [{"role": "user", "content": "记忆 summary 设计怎么做？"}]
@@ -43,7 +46,7 @@ async def test_summarize_returns_structured_memory_fields():
     assert result["open_items"] == ["后续补管理 UI"]
     assert result["entities"] == ["memory_search", "Redis"]
     assert result["memory_type"] == "project"
-    prompt = llm.ainvoke.await_args.args[0][0].content
+    prompt = chat_client.generate_text.await_args.args[0][0].content[0].text
     assert "key_facts" in prompt
     assert "decisions" in prompt
     assert "open_items" in prompt
@@ -51,12 +54,13 @@ async def test_summarize_returns_structured_memory_fields():
 
 @pytest.mark.asyncio
 async def test_summarize_retries_on_transient_errors_then_succeeds():
-    llm = AsyncMock()
-    llm.ainvoke = AsyncMock(
+    llm = object()
+    chat_client = AsyncMock()
+    chat_client.generate_text = AsyncMock(
         side_effect=[
             ConnectionError("connection error"),
             TimeoutError("timeout"),
-            FakeResponse(),
+            FAKE_CONTENT,
         ]
     )
 
@@ -64,10 +68,13 @@ async def test_summarize_retries_on_transient_errors_then_succeeds():
         "app.services.ai.conversation_summarizer.get_llm_async",
         new_callable=AsyncMock,
         return_value=llm,
+    ), patch(
+        "app.services.ai.conversation_summarizer.chat_client_from_handle",
+        return_value=chat_client,
     ):
         result = await ConversationSummarizer.summarize(
             [{"role": "user", "content": "请总结一下"}]
         )
 
     assert result["title"] == "记忆设计"
-    assert llm.ainvoke.await_count == 3
+    assert chat_client.generate_text.await_count == 3

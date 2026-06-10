@@ -38,7 +38,7 @@ class AgentServicePrompts:
 5. **安全代码**：拒绝生成明显破坏性、恶意或越权的服务器/系统操作指令。
 
 ## 工具调用（通用）
-- **仅调用已绑定工具**：本轮工具列表里出现的名称才可调用；未出现在列表中的工具名不得声称已使用。参数与用法以各工具的 description 为准（平台为 LangChain 标准 tool call，无需手写命令格式）。
+- **仅调用已绑定工具**：本轮工具列表里出现的名称才可调用；未出现在列表中的工具名不得声称已使用。参数与用法以各工具的 description 为准（平台为标准 tool call，无需手写命令格式）。
 - 需要实时业务数据、文档知识、历史对话或用户偏好时，**必须先调工具再回答**；工具不可用或返回为空则如实说明，禁止编造查询结果。
 - 文件路径、文本搜索、Shell、进程类能力（如 read_file、write_file、search_text、exec_command、list_process、manage_process）仅在该工具已绑定时使用，并严格遵守工具说明中的路径沙箱与安全限制。
 - 用户要求搜索、查找、grep、定位文本、查日志关键字、查代码引用、查配置项、找报错堆栈、找包含某字符串的文件时，若 search_text 已绑定，应优先调用 search_text；需要组合复杂 shell 管道时再使用 exec_command。
@@ -156,6 +156,16 @@ class AgentServicePrompts:
             if getattr(agent_config, "capabilities", None) and "knowledge_base" in agent_config.capabilities:
                 tool_names.add("search_knowledge_base")
 
+        agentscope_tool_aliases = {
+            "exec_command": "Bash",
+            "read_file": "Read",
+            "write_file": "Write",
+            "search_text": "Grep",
+            "edit_file": "Edit",
+            "glob_files": "Glob",
+        }
+        tool_names = {agentscope_tool_aliases.get(name, name) for name in tool_names}
+
         # 1. 基础部分
         prompt_parts = []
         prompt_parts.append("""[云枢智能体平台 · 全局守则]
@@ -177,39 +187,43 @@ class AgentServicePrompts:
 5. **安全代码**：拒绝生成明显破坏性、恶意或越权的服务器/系统操作指令。
 
 ## 工具调用（通用）
-- **仅调用已绑定工具**：本轮工具列表里出现的名称才可调用；未出现在列表中的工具名不得声称已使用。参数与用法以各工具的 description 为准（平台为 LangChain 标准 tool call，无需手写命令格式）。
+- **仅调用已绑定工具**：本轮工具列表里出现的名称才可调用；未出现在列表中的工具名不得声称已使用。参数与用法以各工具的 description 为准（平台为标准 tool call，无需手写命令格式）。
 - 需要实时业务数据、文档知识、历史对话或用户偏好时，**必须先调工具再回答**；工具不可用或返回为空则如实说明，禁止编造查询结果。""")
 
         # 2. 高敏感工具规范（动态）
         sensitive_rules = []
-        has_file_tools = "read_file" in tool_names or "write_file" in tool_names or "search_text" in tool_names
-        has_cmd_tools = "exec_command" in tool_names
+        has_file_tools = bool({"Read", "Write", "Edit", "Grep", "Glob"} & tool_names)
+        has_cmd_tools = "Bash" in tool_names
         has_proc_tools = "list_process" in tool_names or "manage_process" in tool_names
         
         if has_file_tools or has_cmd_tools or has_proc_tools:
             mentioned = []
-            if "read_file" in tool_names: mentioned.append("read_file")
-            if "write_file" in tool_names: mentioned.append("write_file")
-            if "search_text" in tool_names: mentioned.append("search_text")
-            if "exec_command" in tool_names: mentioned.append("exec_command")
+            if "Read" in tool_names: mentioned.append("Read")
+            if "Write" in tool_names: mentioned.append("Write")
+            if "Edit" in tool_names: mentioned.append("Edit")
+            if "Grep" in tool_names: mentioned.append("Grep")
+            if "Glob" in tool_names: mentioned.append("Glob")
+            if "Bash" in tool_names: mentioned.append("Bash")
             if "list_process" in tool_names: mentioned.append("list_process")
             if "manage_process" in tool_names: mentioned.append("manage_process")
             
             tool_str = "、".join(mentioned)
             sensitive_rules.append(f"- 文件路径、文本搜索、Shell、进程类能力（如 {tool_str}）仅在该工具已绑定时使用，并严格遵守工具说明中的路径沙箱与安全限制。")
             
-        if "search_text" in tool_names or "exec_command" in tool_names:
+        if "Grep" in tool_names or "Glob" in tool_names or "Bash" in tool_names:
             parts = []
-            if "search_text" in tool_names:
-                parts.append("若 search_text 已绑定，应优先调用 search_text")
-            if "exec_command" in tool_names:
-                parts.append("需要组合复杂 shell 管道时再使用 exec_command")
+            if "Grep" in tool_names:
+                parts.append("若 Grep 已绑定，应优先调用 Grep")
+            if "Glob" in tool_names:
+                parts.append("需要按文件名模式查找文件时优先调用 Glob")
+            if "Bash" in tool_names:
+                parts.append("需要组合复杂 shell 管道时再使用 Bash")
             parts_str = "；".join(parts)
             sensitive_rules.append(f"- 用户要求搜索、查找、grep、定位文本、查日志关键字、查代码引用、查配置项、找报错堆栈、找包含某字符串的文件时，{parts_str}。")
             
-        if "exec_command" in tool_names or "list_process" in tool_names or "manage_process" in tool_names:
+        if "Bash" in tool_names or "list_process" in tool_names or "manage_process" in tool_names:
             tools_ref = []
-            if "exec_command" in tool_names: tools_ref.append("exec_command")
+            if "Bash" in tool_names: tools_ref.append("Bash")
             if "list_process" in tool_names: tools_ref.append("list_process")
             if "manage_process" in tool_names: tools_ref.append("manage_process")
             tools_ref_str = "/".join(tools_ref)

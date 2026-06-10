@@ -1,7 +1,7 @@
 import logging
 import json
 from typing import Optional, List
-from langchain_core.tools import tool
+from app.services.ai.tools.tool_compat import tool
 from app.core.context import get_current_agent_context
 from app.services.task_center_service import TaskCenterService
 from app.core.orm import AsyncSessionLocal

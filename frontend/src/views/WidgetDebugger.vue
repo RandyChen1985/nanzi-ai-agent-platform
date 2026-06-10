@@ -302,7 +302,7 @@ const config = reactive({
 });
 
 const contextPayload = ref('{\n  "user_name": "陈小龙",\n  "user_dept": "数字化转型部",\n  "user_role": "系统管理员"\n}');
-	const commandInput = ref('/clear');
+	const commandInput = ref('/new');
 
     const integrationTabs: IntegrationTab[] = [
         {

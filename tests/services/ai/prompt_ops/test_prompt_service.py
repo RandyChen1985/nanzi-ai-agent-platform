@@ -4,7 +4,15 @@ from unittest.mock import MagicMock, AsyncMock, patch
 from app.services.ai.prompt_ops.prompt_service import PromptService
 from app.schemas.prompt import PromptSource
 
+pytestmark = pytest.mark.no_infrastructure
+
 # --- Tests ---
+
+
+def _mock_chat_client(content: str):
+    chat_client = AsyncMock()
+    chat_client.generate_text.return_value = content
+    return chat_client
 
 def test_extract_variables():
     """测试提示词变量提取"""
@@ -43,10 +51,11 @@ async def test_test_prompt_logic():
     content = "You are {role}. Input: {input}"
     variables = {"role": "Assistant", "input": "Hello"}
     
-    mock_llm = AsyncMock()
-    mock_llm.ainvoke.return_value = MagicMock(content="Mock Response")
+    mock_llm = object()
+    mock_chat = _mock_chat_client("Mock Response")
     
-    with patch("app.services.ai.prompt_ops.prompt_service.get_llm_async", new_callable=AsyncMock) as mock_get_llm:
+    with patch("app.services.ai.prompt_ops.prompt_service.get_llm_async", new_callable=AsyncMock) as mock_get_llm, \
+         patch("app.services.ai.prompt_ops.prompt_service.chat_client_from_handle", return_value=mock_chat):
         mock_get_llm.return_value = mock_llm
         
         resp = await PromptService.test_prompt(content, variables, user_input="User Msg")
@@ -56,10 +65,10 @@ async def test_test_prompt_logic():
         assert resp.raw_output == "Mock Response"
         
         # 验证 LLM 调用参数
-        args, kwargs = mock_llm.ainvoke.call_args
+        args, kwargs = mock_chat.generate_text.call_args
         messages = args[0]
-        assert messages[0].content == "You are Assistant. Input: Hello"
-        assert messages[1].content == "User Msg"
+        assert messages[0].content[0].text == "You are Assistant. Input: Hello"
+        assert messages[1].content[0].text == "User Msg"
 
 @pytest.mark.asyncio
 async def test_optimize_prompt_parsing():
@@ -71,11 +80,12 @@ async def test_optimize_prompt_parsing():
         ]
     }
     
-    mock_llm = AsyncMock()
+    mock_llm = object()
     # 模拟包含 Markdown 代码块的返回
-    mock_llm.ainvoke.return_value = MagicMock(content=f"```json\n{json.dumps(mock_json_resp)}\n```")
+    mock_chat = _mock_chat_client(f"```json\n{json.dumps(mock_json_resp)}\n```")
     
-    with patch("app.services.ai.prompt_ops.prompt_service.get_llm_async", new_callable=AsyncMock) as mock_get_llm:
+    with patch("app.services.ai.prompt_ops.prompt_service.get_llm_async", new_callable=AsyncMock) as mock_get_llm, \
+         patch("app.services.ai.prompt_ops.prompt_service.chat_client_from_handle", return_value=mock_chat):
         mock_get_llm.return_value = mock_llm
         
         data = await PromptService.optimize_prompt(content)

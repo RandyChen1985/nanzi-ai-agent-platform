@@ -52,7 +52,7 @@
 ### 2.1 开发步骤
 
 #### 第一步：编写工具函数
-在 `app/services/ai/tools/` 目录下创建新文件（或使用现有文件），使用 LangChain 的 `@tool` 装饰器定义函数。
+在 `app/services/ai/tools/` 目录下创建新文件（或使用现有文件），使用平台兼容的 `@tool` 装饰器定义函数（`app/services/ai/tools/tool_compat.py`，非 LangChain）。
 
 **规范要求**:
 - 必须有清晰的 Python 类型提示（Type Hints）。
@@ -61,7 +61,7 @@
 **示例**:
 ```python
 # app/services/ai/tools/server_tools.py
-from langchain_core.tools import tool
+from app.services.ai.tools.tool_compat import tool
 
 @tool
 def reboot_server(server_id: str, reason: str = "maintenance"):
@@ -118,20 +118,25 @@ graph TD
     B --> C{Intent Recognition}
     
     C -- Data Query --> D[DataQueryExecutor]
-    C -- Chat --> E[GeneralChatExecutor]
+    C -- Knowledge --> KE[KnowledgeExecutor]
+    C -- Assistant --> E[AssistantExecutor]
     
-    subgraph DataQueryExecutor [ReAct Loop]
-        D --> F[LLM (Think)]
+    D --> DR[DataAgentRunner]
+    KE --> KR[KnowledgeAgentRunner]
+    E --> AR[AssistantAgentRunner]
+    
+    subgraph AgentScope [AgentScope ReAct]
+        DR --> AS[Agent.reply_stream]
+        GR --> AS
+        AS --> F[LLM (Think)]
         F --> G{Call Tool?}
-        G -- Yes --> H[Dispatcher]
-        
-        H --> I{Tool Registry}
-        I -- Lookup --> J[Tool Function]
-        
+        G -- Yes --> I[ToolRegistry → RuntimeToolSpec]
+        I --> J[AgentScopeRuntimeTool.invoke]
         J --> K[Execution & Validation]
-        K --> L[Result Analysis / Self-Healing]
+        K --> L[Result → AgentState]
         L -- Feedback --> F
-        
-        G -- No (Final Answer) --> M[Response Stream]
+        G -- No (Final Answer) --> M[SSE Response Stream]
     end
 ```
+
+运行时事件映射与权限挂起见 [../design/AGENTSCOPE_RUNTIME.md](../design/AGENTSCOPE_RUNTIME.md)。

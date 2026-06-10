@@ -57,3 +57,33 @@ def test_aggregate_includes_followup_and_multi_agent_synthesis():
     ]
     p, c, t = aggregate_tokens_from_trace_buffer(buffer)
     assert (p, c, t) == (60, 30, 90)
+
+
+def test_aggregate_sums_agentscope_model_calls():
+    buffer = [
+        _step("model_call", prompt=10000, completion=200, total=10200),
+        _step("model_call", prompt=85000, completion=900, total=85900),
+        _step("tool_call", prompt=999, completion=999, total=999),
+        _step("synthesis", prompt=0, completion=0, total=0),
+    ]
+    p, c, t = aggregate_tokens_from_trace_buffer(buffer)
+    assert (p, c, t) == (95000, 1100, 96100)
+
+
+def test_aggregate_model_calls_plus_zero_token_synthesis_no_double_count():
+    buffer = [
+        _step("model_call", prompt=500, completion=50, total=550),
+        _step("synthesis", prompt=0, completion=0, total=0),
+    ]
+    p, c, t = aggregate_tokens_from_trace_buffer(buffer)
+    assert (p, c, t) == (500, 50, 550)
+
+
+def test_aggregate_model_calls_plus_followup_synthesis_are_both_counted():
+    """ReAct 多轮 model_call + 独立 synthesis LLM（如 fallback）应分别计入。"""
+    buffer = [
+        _step("model_call", prompt=1000, completion=100, total=1100),
+        _step("synthesis", prompt=200, completion=20, total=220),
+    ]
+    p, c, t = aggregate_tokens_from_trace_buffer(buffer)
+    assert (p, c, t) == (1200, 120, 1320)

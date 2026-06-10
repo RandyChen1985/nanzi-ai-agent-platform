@@ -4,6 +4,13 @@ import MentionList from "@/components/agent/MentionList.vue";
 import AttachmentImageThumb from "@/components/embed/AttachmentImageThumb.vue";
 import { isImageAttachment } from "@/utils/attachmentImages";
 
+type ApprovalMode = "ask" | "allow" | "deny";
+type ModelOption = {
+  id?: string;
+  name?: string;
+  model_id: string;
+};
+
 const props = defineProps<{
   modelValue: string;
   isProcessing: boolean;
@@ -12,10 +19,15 @@ const props = defineProps<{
   allowedAgents: any[];
   currentUser: any;
   windowWidth: number;
+  approvalMode?: ApprovalMode;
+  selectedModel?: string;
+  availableModels?: ModelOption[];
 }>();
 
 const emit = defineEmits<{
   (e: 'update:modelValue', val: string): void;
+  (e: 'update:approvalMode', val: ApprovalMode): void;
+  (e: 'update:selectedModel', val: string): void;
   (e: 'send'): void;
   (e: 'stop'): void;
   (e: 'toggle-shortcuts'): void;
@@ -113,8 +125,8 @@ const handleInput = (e: Event) => {
     inputRef.value.style.height = "auto";
     inputRef.value.style.height = Math.min(inputRef.value.scrollHeight, 120) + "px";
   }
-  // Don't show command menu during composition
-  if (val.startsWith("/") && props.windowWidth < 640 && !isComposing.value) {
+  // Don't show command menu during IME composition
+  if (val.startsWith("/") && !isComposing.value) {
     showCommandMenu.value = true;
     activeCommandIndex.value = 0;
   } else {
@@ -191,6 +203,12 @@ const uploadedFiles = ref<any[]>([]);
 const canSend = computed(
   () => !!props.modelValue.trim() || uploadedFiles.value.length > 0,
 );
+
+const modelLabel = computed(() => {
+  if (!props.selectedModel) return "模型";
+  const model = props.availableModels?.find((item) => item.model_id === props.selectedModel);
+  return model?.name || props.selectedModel;
+});
 
 const plusMenuContainerRef = ref<HTMLElement | null>(null);
 
@@ -480,115 +498,147 @@ defineExpose({
         </div>
 
         <!-- Input Box -->
-        <div @dragover.prevent @drop="handleDropFile" class="relative flex items-end bg-gray-50 dark:bg-gray-800 rounded-xl px-2 py-2 border border-gray-200 dark:border-gray-700 transition-all duration-500" :class="{ 'ring-2 ring-primary/20 border-primary/30 bg-white dark:bg-gray-900 shadow-lg shadow-primary/5': isProcessing }">
+        <div @dragover.prevent @drop="handleDropFile" class="relative flex flex-col bg-gray-50 dark:bg-gray-800 rounded-2xl px-3 py-2.5 border border-gray-200 dark:border-gray-700 transition-all duration-500" :class="{ 'ring-2 ring-primary/20 border-primary/30 bg-white dark:bg-gray-900 shadow-lg shadow-primary/5': isProcessing }">
             <div v-if="isProcessing" class="absolute inset-0 rounded-xl opacity-40 pointer-events-none overflow-hidden">
                 <div class="absolute inset-0 bg-gradient-to-r from-transparent via-primary/20 to-transparent w-[200%] animate-scan"></div>
             </div>
-            
-            <!-- Plus Button & Menu (Premium Glassmorphism Style) -->
-            <div ref="plusMenuContainerRef" class="relative flex-shrink-0 z-30 mr-1 self-center">
-                <button @click="togglePlusMenu" :disabled="isProcessing" class="w-8 h-8 flex items-center justify-center rounded-lg text-gray-400 hover:text-primary hover:bg-gray-100 dark:hover:bg-gray-700 transition-all duration-200 focus:outline-none disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-gray-400" :class="{ 'text-primary bg-gray-100 dark:bg-gray-700 rotate-45': showPlusMenu && !isProcessing }">
-                    <svg class="w-5 h-5 transition-transform duration-200" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M12 4v16m8-8H4" />
-                    </svg>
-                </button>
-                
-                <input type="file" multiple ref="fileInputRef" @change="handleFileChange" class="hidden" />
 
-                <!-- Menu Dropdown -->
-                <transition 
-                  enter-active-class="transition ease-out duration-100" 
-                  enter-from-class="transform opacity-0 scale-95" 
-                  enter-to-class="transform opacity-100 scale-100" 
-                  leave-active-class="transition ease-in duration-75" 
-                  leave-from-class="transform opacity-100 scale-100" 
-                  leave-to-class="transform opacity-0 scale-95"
+            <div
+              v-if="showCommandMenu && filteredCommands.length > 0 && !isProcessing"
+              class="absolute bottom-full left-0 right-0 z-[100] mb-2 flex max-h-72 flex-col overflow-hidden rounded-xl border border-gray-200 bg-white shadow-2xl animate-fade-in-up dark:border-gray-700 dark:bg-gray-800 sm:max-w-sm"
+            >
+              <div class="flex items-center justify-between border-b border-gray-100 bg-gray-50 px-3 py-2 dark:border-gray-600 dark:bg-gray-700">
+                <div class="flex items-center space-x-2">
+                  <span class="text-[10px] font-black uppercase tracking-widest text-gray-400">快捷指令库</span>
+                  <span class="rounded-md bg-primary/10 px-1.5 py-0.5 text-[9px] font-bold text-primary">{{ filteredCommands.length }} 匹配</span>
+                </div>
+              </div>
+              <div class="overflow-y-auto p-1 custom-scrollbar">
+                <div
+                  v-for="(cmd, index) in filteredCommands"
+                  :key="cmd.id"
+                  @click="selectCommand(cmd)"
+                  class="flex cursor-pointer items-center space-x-3 rounded-lg px-3 py-2 transition-all"
+                  :class="index === activeCommandIndex ? 'bg-primary/10 ring-1 ring-primary/20 dark:bg-primary/20' : 'hover:bg-gray-50 dark:hover:bg-gray-700'"
                 >
-                    <div v-if="showPlusMenu" class="absolute bottom-full left-0 mb-2 w-52 bg-white/95 dark:bg-gray-800/95 backdrop-blur-md rounded-xl shadow-xl border border-gray-200/50 dark:border-gray-700/50 py-1.5 z-50 animate-fade-in-up">
-                        <!-- Upload File (Active) -->
-                        <button @click="triggerFileInput" class="w-full flex items-center space-x-3 px-3 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-primary/10 dark:hover:bg-primary/20 hover:text-primary transition-all duration-150">
-                            <span class="text-lg">📁</span>
-                            <span class="font-medium text-left">上传本地文件</span>
-                        </button>
-
-                        <!-- Browse Server Files (Active) -->
-                        <button @click="showPlusMenu = false; emit('select-local-fs');" class="w-full flex items-center space-x-3 px-3 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-primary/10 dark:hover:bg-primary/20 hover:text-primary transition-all duration-150">
-                            <span class="text-lg">💻</span>
-                            <span class="font-medium text-left">浏览服务器文件</span>
-                        </button>
-                        
-                        <!-- Knowledge Base -->
-                        <button @click="showPlusMenu = false; emit('select-knowledge-base');" class="w-full flex items-center justify-between px-3 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-primary/10 dark:hover:bg-primary/20 hover:text-primary transition-all duration-150">
-                            <div class="flex items-center space-x-3">
-                                <span class="text-lg">📚</span>
-                                <span class="font-medium text-left">选择知识库</span>
-                            </div>
-                        </button>
-                        
-                        <!-- Skills (Active) -->
-                        <button @click="showPlusMenu = false; emit('select-skill');" class="w-full flex items-center space-x-3 px-3 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-primary/10 dark:hover:bg-primary/20 hover:text-primary transition-all duration-150">
-                            <span class="text-lg">⚙️</span>
-                            <span class="font-medium text-left">调用技能工作流</span>
-                        </button>
-
-                        <!-- Memory Records -->
-                        <button @click="showPlusMenu = false; emit('select-memory');" class="w-full flex items-center space-x-3 px-3 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-primary/10 dark:hover:bg-primary/20 hover:text-primary transition-all duration-150">
-                            <span class="text-lg">🧠</span>
-                            <span class="font-medium text-left">选择记忆记录</span>
-                        </button>
+                  <div class="min-w-0 flex-1">
+                    <div class="flex items-center space-x-2">
+                      <span class="truncate text-sm font-bold text-gray-900 dark:text-gray-100" :class="index === activeCommandIndex ? 'text-primary' : ''">
+                        {{ cmd.label }}
+                      </span>
+                      <span v-if="String(cmd.id).startsWith('sys_')" class="rounded border border-gray-200 bg-gray-100 px-1 py-0.5 text-[8px] font-black uppercase tracking-tighter text-gray-500 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-400">SYS</span>
                     </div>
-                </transition>
+                    <div class="truncate font-mono text-[10px] text-gray-400 opacity-70">
+                      {{ cmd.command }}
+                    </div>
+                  </div>
+                </div>
+              </div>
             </div>
-            
-            <textarea ref="inputRef" :value="modelValue" :disabled="isProcessing" @input="handleInput" @keydown="handleKeydown" @compositionstart="handleCompositionStart" @compositionend="handleCompositionEnd" @paste="handlePaste" rows="1" class="flex-1 bg-transparent border-none outline-none focus:ring-0 text-base sm:text-sm placeholder:text-sm py-2 px-2 resize-none max-h-32 text-gray-900 dark:text-gray-100 placeholder-gray-400 peer z-10 relative disabled:cursor-not-allowed disabled:opacity-60" :placeholder="isProcessing ? 'AI 正在生成回复...' : (windowWidth < 640 ? '输入消息，或 \'/\' 使用快捷指令...' : '输入消息...')"></textarea>
-            <button @click="isProcessing ? emit('stop') : emit('send')" :disabled="!isProcessing && !canSend" class="flex-shrink-0 mb-1 ml-2 p-1.5 rounded-lg text-white hover:opacity-90 disabled:opacity-50 transition-all z-10 relative" :style="{ backgroundColor: 'var(--primary-color, #1677ff)' }">
-                <svg v-if="isProcessing" class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20"><rect x="5" y="5" width="10" height="10" /></svg>
-                <svg v-else class="w-4 h-4 transform rotate-90" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" /></svg>
-            </button>
-        </div>
-        <div class="mt-1 text-center"><span class="text-[10px] text-gray-300 dark:text-gray-600">Powered by Yunshu AI</span></div>
-      </div>
 
-      <div
-        v-if="showCommandMenu && filteredCommands.length > 0 && !isProcessing"
-        class="fixed z-[100] bg-white dark:bg-gray-800 rounded-xl shadow-2xl border border-gray-200 dark:border-gray-700 overflow-hidden flex flex-col animate-fade-in-up"
-        :class="[
-          'w-[calc(100vw-2rem)] sm:w-64'
-        ]"
-        :style="{ 
-          bottom: '80px',
-          left: windowWidth < 640 ? '1rem' : 'auto',
-          right: windowWidth < 640 ? 'auto' : '1rem',
-          maxHeight: windowWidth < 640 ? '40vh' : '18rem' 
-        }"
-      >
-        <div class="px-3 py-2 bg-gray-50 dark:bg-gray-700 border-b border-gray-100 dark:border-gray-600 flex justify-between items-center">
-          <div class="flex items-center space-x-2">
-            <span class="text-[10px] font-black text-gray-400 dark:text-gray-400 uppercase tracking-widest">快捷指令库</span>
-            <span class="px-1.5 py-0.5 bg-primary/10 text-primary text-[9px] font-bold rounded-md">{{ filteredCommands.length }} 匹配</span>
-          </div>
-        </div>
-        
-        <div class="overflow-y-auto custom-scrollbar p-1">
-          <div
-            v-for="(cmd, index) in filteredCommands"
-            :key="cmd.id"
-            @click="selectCommand(cmd)"
-            class="flex items-center space-x-3 px-3 py-2 rounded-lg cursor-pointer transition-all"
-            :class="index === activeCommandIndex ? 'bg-primary/10 dark:bg-primary/20 ring-1 ring-primary/20' : 'hover:bg-gray-50 dark:hover:bg-gray-700'"
-          >
-            <div class="flex-1 min-w-0">
-              <div class="flex items-center space-x-2">
-                <span class="text-sm font-bold text-gray-900 dark:text-gray-100 truncate" :class="index === activeCommandIndex ? 'text-primary' : ''">
-                  {{ cmd.label }}
-                </span>
-                <span v-if="String(cmd.id).startsWith('sys_')" class="px-1 py-0.5 rounded text-[8px] bg-gray-100 text-gray-500 border border-gray-200 dark:bg-gray-700 dark:border-gray-600 dark:text-gray-400 font-black uppercase tracking-tighter">SYS</span>
-              </div>
-              <div class="text-[10px] text-gray-400 truncate font-mono opacity-70">
-                {{ cmd.command }}
-              </div>
+            <textarea ref="inputRef" :value="modelValue" :disabled="isProcessing" @input="handleInput" @keydown="handleKeydown" @compositionstart="handleCompositionStart" @compositionend="handleCompositionEnd" @paste="handlePaste" rows="1" class="w-full min-h-[46px] bg-transparent border-none outline-none focus:ring-0 text-base sm:text-sm placeholder:text-sm px-0 py-1 resize-none max-h-32 text-gray-900 dark:text-gray-100 placeholder-gray-400 peer z-10 relative disabled:cursor-not-allowed disabled:opacity-60" :placeholder="isProcessing ? 'AI 正在生成回复...' : '输入消息，或 \'/\' 使用快捷指令...'"></textarea>
+
+            <div class="relative z-20 mt-1 flex min-h-9 items-center gap-2">
+                <!-- Plus Button & Menu (Premium Glassmorphism Style) -->
+                <div ref="plusMenuContainerRef" class="relative flex-shrink-0 z-30">
+                    <button @click="togglePlusMenu" :disabled="isProcessing" class="w-8 h-8 flex items-center justify-center rounded-full text-gray-400 hover:text-primary hover:bg-gray-100 dark:hover:bg-gray-700 transition-all duration-200 focus:outline-none disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-gray-400" :class="{ 'text-primary bg-gray-100 dark:bg-gray-700 rotate-45': showPlusMenu && !isProcessing }" title="添加附件或上下文">
+                        <svg class="w-5 h-5 transition-transform duration-200" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M12 4v16m8-8H4" />
+                        </svg>
+                    </button>
+
+                    <input type="file" multiple ref="fileInputRef" @change="handleFileChange" class="hidden" />
+
+                    <!-- Menu Dropdown -->
+                    <transition
+                      enter-active-class="transition ease-out duration-100"
+                      enter-from-class="transform opacity-0 scale-95"
+                      enter-to-class="transform opacity-100 scale-100"
+                      leave-active-class="transition ease-in duration-75"
+                      leave-from-class="transform opacity-100 scale-100"
+                      leave-to-class="transform opacity-0 scale-95"
+                    >
+                        <div v-if="showPlusMenu" class="absolute bottom-full left-0 mb-2 w-52 bg-white/95 dark:bg-gray-800/95 backdrop-blur-md rounded-xl shadow-xl border border-gray-200/50 dark:border-gray-700/50 py-1.5 z-50 animate-fade-in-up">
+                            <!-- Upload File (Active) -->
+                            <button @click="triggerFileInput" class="w-full flex items-center space-x-3 px-3 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-primary/10 dark:hover:bg-primary/20 hover:text-primary transition-all duration-150">
+                                <span class="text-lg">📁</span>
+                                <span class="font-medium text-left">上传本地文件</span>
+                            </button>
+
+                            <!-- Browse Server Files (Active) -->
+                            <button @click="showPlusMenu = false; emit('select-local-fs');" class="w-full flex items-center space-x-3 px-3 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-primary/10 dark:hover:bg-primary/20 hover:text-primary transition-all duration-150">
+                                <span class="text-lg">💻</span>
+                                <span class="font-medium text-left">浏览服务器文件</span>
+                            </button>
+
+                            <!-- Knowledge Base -->
+                            <button @click="showPlusMenu = false; emit('select-knowledge-base');" class="w-full flex items-center justify-between px-3 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-primary/10 dark:hover:bg-primary/20 hover:text-primary transition-all duration-150">
+                                <div class="flex items-center space-x-3">
+                                    <span class="text-lg">📚</span>
+                                    <span class="font-medium text-left">选择知识库</span>
+                                </div>
+                            </button>
+
+                            <!-- Skills (Active) -->
+                            <button @click="showPlusMenu = false; emit('select-skill');" class="w-full flex items-center space-x-3 px-3 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-primary/10 dark:hover:bg-primary/20 hover:text-primary transition-all duration-150">
+                                <span class="text-lg">⚙️</span>
+                                <span class="font-medium text-left">调用技能工作流</span>
+                            </button>
+
+                            <!-- Memory Records -->
+                            <button @click="showPlusMenu = false; emit('select-memory');" class="w-full flex items-center space-x-3 px-3 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-primary/10 dark:hover:bg-primary/20 hover:text-primary transition-all duration-150">
+                                <span class="text-lg">🧠</span>
+                                <span class="font-medium text-left">选择记忆记录</span>
+                            </button>
+                        </div>
+                    </transition>
+                </div>
+
+                <label class="relative flex items-center gap-1.5 rounded-full px-2 py-1 text-xs font-semibold text-gray-500 transition-colors hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-700/70">
+                    <span class="pointer-events-none">请求批准</span>
+                    <select
+                      :value="approvalMode || 'ask'"
+                      :disabled="isProcessing"
+                      class="approval-mode-select absolute inset-0 cursor-pointer opacity-0 disabled:cursor-not-allowed"
+                      aria-label="批准方式"
+                      @change="emit('update:approvalMode', (($event.target as HTMLSelectElement).value as ApprovalMode))"
+                    >
+                        <option value="ask">ASK</option>
+                        <option value="allow">ALLOW</option>
+                        <option value="deny">DENY</option>
+                    </select>
+                    <span class="pointer-events-none text-gray-700 dark:text-gray-200">{{ (approvalMode || 'ask').toUpperCase() }}</span>
+                    <svg class="pointer-events-none h-3.5 w-3.5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 9l6 6 6-6" />
+                    </svg>
+                </label>
+
+                <div class="flex-1"></div>
+
+                <label class="relative flex max-w-[9rem] items-center gap-1 rounded-full px-2 py-1 text-xs font-semibold text-gray-600 transition-colors hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-700/70 sm:max-w-[14rem]" :title="selectedModel ? `覆盖模型: ${selectedModel}` : '使用智能体默认模型'">
+                    <span class="pointer-events-none max-w-[7rem] truncate sm:max-w-[12rem]">{{ modelLabel }}</span>
+                    <select
+                      :value="selectedModel || ''"
+                      :disabled="isProcessing"
+                      class="model-select absolute inset-0 cursor-pointer opacity-0 disabled:cursor-not-allowed"
+                      aria-label="模型选择"
+                      @change="emit('update:selectedModel', ($event.target as HTMLSelectElement).value)"
+                    >
+                        <option value="">使用默认模型</option>
+                        <option v-for="model in (availableModels || [])" :key="model.id || model.model_id" :value="model.model_id">
+                            {{ model.name || model.model_id }}
+                        </option>
+                    </select>
+                    <svg class="pointer-events-none h-3.5 w-3.5 flex-shrink-0 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 9l6 6 6-6" />
+                    </svg>
+                </label>
+
+                <button @click="isProcessing ? emit('stop') : emit('send')" :disabled="!isProcessing && !canSend" class="flex-shrink-0 w-8 h-8 flex items-center justify-center rounded-full text-white hover:opacity-90 disabled:opacity-50 transition-all shadow-sm z-10 relative" :style="{ backgroundColor: 'var(--primary-color, #1677ff)' }" :title="isProcessing ? '停止生成' : '发送'">
+                    <svg v-if="isProcessing" class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20"><rect x="5" y="5" width="10" height="10" /></svg>
+                    <svg v-else class="w-4 h-4 -rotate-90" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.4" d="M5 12h14M13 6l6 6-6 6" /></svg>
+                </button>
             </div>
-          </div>
         </div>
       </div>
 

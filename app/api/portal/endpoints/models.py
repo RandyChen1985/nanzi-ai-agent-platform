@@ -92,6 +92,8 @@ async def test_model(
         raise HTTPException(status_code=404, detail="Model not found")
 
     from app.core.llm.client import get_llm_async
+    from app.services.ai.runtime.agentscope.chat import chat_client_from_handle
+    from app.services.ai.runtime.agentscope.messages import RuntimeContentBlock, RuntimeMessage
     try:
         # Create LLM instance with these specific credentials
         llm = await get_llm_async(
@@ -107,12 +109,23 @@ async def test_model(
 
         # Simple ping-style check
         import asyncio
-        response = await asyncio.wait_for(llm.ainvoke("say 'pong'"), timeout=15.0)
+        chat_client = chat_client_from_handle(llm)
+        response = await asyncio.wait_for(
+            chat_client.generate_text(
+                [
+                    RuntimeMessage(
+                        role="user",
+                        content=[RuntimeContentBlock(type="text", text="say 'pong'")],
+                    )
+                ]
+            ),
+            timeout=15.0,
+        )
         
         return {
             "status": "success", 
             "message": "连接成功", 
-            "response": response.content[:100]
+            "response": response[:100]
         }
     except Exception as e:
         import logging

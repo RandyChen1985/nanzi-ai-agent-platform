@@ -2,7 +2,7 @@ import logging
 from typing import Optional, List, Dict, Any
 from app.core.orm import AsyncSessionLocal
 from app.services.ai.agent_manager import AgentManagerService
-from app.services.ai.router_service import router_service
+from app.services.ai.router_service import router_service, RouterService
 from app.core.context import set_debug_context, set_agent_context, AgentContext
 from app.schemas.agent import ChatConfig
 from app.services.ai.agent_prompts import ContextManagerPrompts
@@ -79,13 +79,24 @@ class AgentContextManager:
                 if route_result and route_result.agent_id:
                     agent_config = await AgentManagerService.get_active_agent_config(session, agent_id=route_result.agent_id)
 
-        # Fallback: If no config found (Routing failed or ID invalid), default to General Chat
+        # Fallback: try known general-assistant slugs in DB before synthetic config
+        if not agent_config:
+            async with AsyncSessionLocal() as session:
+                for fallback_name in RouterService.FALLBACK_AGENT_NAMES:
+                    agent_config = await AgentManagerService.get_active_agent_config(
+                        session, agent_name=fallback_name
+                    )
+                    if agent_config:
+                        logger.info("Resolved fallback agent from DB: %s", fallback_name)
+                        break
+
         if not agent_config:
             from app.services.config_service import ConfigService
             default_model = await ConfigService.get("llm_model_name") or "DeepSeek-V3.2"
-            
+            fallback_slug = RouterService.FALLBACK_AGENT_NAMES[-1]
+
             agent_config = ChatConfig(
-                agent_id="general-chat",
+                agent_id=fallback_slug,
                 agent_name="General Chat",
                 agent_version="default",
                 model_name=default_model,

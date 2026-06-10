@@ -5,9 +5,9 @@ import re
 import asyncio
 from typing import Any, Dict, List
 
-from langchain_core.messages import HumanMessage, SystemMessage
-
 from app.core.llm.client import get_llm_async
+from app.services.ai.runtime.agentscope.chat import chat_client_from_handle
+from app.services.ai.runtime.agentscope.messages import RuntimeContentBlock, RuntimeMessage
 
 logger = logging.getLogger(__name__)
 
@@ -77,11 +77,11 @@ class ConversationSummarizer:
         return any(m in msg for m in retry_markers)
 
     @staticmethod
-    async def _ainvoke_with_retry(llm: Any, messages: List[Any], *, max_retries: int = 3) -> Any:
+    async def _generate_with_retry(chat_client: Any, messages: List[RuntimeMessage], *, max_retries: int = 3) -> str:
         last_err: Exception | None = None
         for attempt in range(max_retries):
             try:
-                return await llm.ainvoke(messages)
+                return await chat_client.generate_text(messages)
             except Exception as e:
                 last_err = e
                 if attempt >= max_retries - 1 or not ConversationSummarizer._is_retryable_llm_error(e):
@@ -158,15 +158,21 @@ class ConversationSummarizer:
                 {"summary": transcript[:500]}, transcript[:500]
             )
 
-        resp = await ConversationSummarizer._ainvoke_with_retry(
-            llm,
+        chat_client = chat_client_from_handle(llm)
+        raw = await ConversationSummarizer._generate_with_retry(
+            chat_client,
             [
-                SystemMessage(content=SYSTEM_PROMPT),
-                HumanMessage(content=f"请为以下对话生成摘要：\n\n{transcript}"),
+                RuntimeMessage(
+                    role="system",
+                    content=[RuntimeContentBlock(type="text", text=SYSTEM_PROMPT)],
+                ),
+                RuntimeMessage(
+                    role="user",
+                    content=[RuntimeContentBlock(type="text", text=f"请为以下对话生成摘要：\n\n{transcript}")],
+                ),
             ],
             max_retries=3,
         )
-        raw = resp.content if hasattr(resp, "content") else str(resp)
         try:
             match = re.search(r"\{[\s\S]*\}", raw)
             if match:
@@ -209,15 +215,21 @@ class ConversationSummarizer:
                 {"summary": transcript[:500]}, transcript[:500]
             )
 
-        resp = await ConversationSummarizer._ainvoke_with_retry(
-            llm,
+        chat_client = chat_client_from_handle(llm)
+        raw = await ConversationSummarizer._generate_with_retry(
+            chat_client,
             [
-                SystemMessage(content=DAILY_SYSTEM_PROMPT),
-                HumanMessage(content=f"请汇总以下同一天的会话摘要：\n\n{transcript}"),
+                RuntimeMessage(
+                    role="system",
+                    content=[RuntimeContentBlock(type="text", text=DAILY_SYSTEM_PROMPT)],
+                ),
+                RuntimeMessage(
+                    role="user",
+                    content=[RuntimeContentBlock(type="text", text=f"请汇总以下同一天的会话摘要：\n\n{transcript}")],
+                ),
             ],
             max_retries=3,
         )
-        raw = resp.content if hasattr(resp, "content") else str(resp)
         try:
             match = re.search(r"\{[\s\S]*\}", raw)
             if match:

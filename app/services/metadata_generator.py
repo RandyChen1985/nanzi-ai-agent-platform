@@ -2,9 +2,7 @@ from typing import Dict, Any, List
 import logging
 import json
 from pydantic import BaseModel, Field
-from app.core.llm.client import get_llm
-from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.output_parsers import JsonOutputParser
+from app.services.ai.runtime.agentscope.compat import HumanMessage, SystemMessage
 from app.services.ai.agent_manager import AgentManagerService
 from app.services.ai.config import AgentConfigProvider
 from app.core.orm import AsyncSessionLocal
@@ -53,6 +51,51 @@ class DatasetEnhanceResult(BaseModel):
     tags: List[str] = Field(description="数据集的标签列表，如 ['财务', '生产', '核心数据']")
 
 class MetadataGeneratorService:
+    @staticmethod
+    def _format_instructions(model_cls: type[BaseModel]) -> str:
+        schema = json.dumps(model_cls.model_json_schema(), ensure_ascii=False)
+        return (
+            "必须只返回一个 JSON 对象，不要 Markdown，不要解释文字。"
+            f"JSON Schema:\n{schema}"
+        )
+
+    @staticmethod
+    def _extract_json(raw: str) -> Dict[str, Any]:
+        text = (raw or "").strip()
+        if text.startswith("```"):
+            lines = text.splitlines()
+            text = "\n".join(lines[1:-1]).strip()
+        try:
+            return json.loads(text)
+        except Exception:
+            import re
+
+            match = re.search(r"\{[\s\S]*\}", text)
+            if not match:
+                raise
+            return json.loads(match.group())
+
+    @staticmethod
+    async def _invoke_json(
+        llm: Any,
+        result_model: type[BaseModel],
+        system_prompt_template: str,
+        user_prompt: str,
+    ) -> Dict[str, Any]:
+        system_prompt = system_prompt_template.replace(
+            "{format_instructions}",
+            MetadataGeneratorService._format_instructions(result_model),
+        )
+        response = await llm.ainvoke(
+            [
+                SystemMessage(content=system_prompt),
+                HumanMessage(content=user_prompt),
+            ]
+        )
+        raw = getattr(response, "content", "") or str(response)
+        data = MetadataGeneratorService._extract_json(raw)
+        return result_model.model_validate(data).model_dump()
+
     @staticmethod
     async def _save_trace_log(trace_id: str, step: int, event: str, output: Any, error: str = None, execution_time: float = 0):
         """Helper to save a single trace log entry"""
@@ -132,22 +175,17 @@ class MetadataGeneratorService:
                 if "{format_instructions}" not in system_prompt_template:
                     system_prompt_template += "\n\n{format_instructions}"
 
-            # 5. 构建 Prompt
-            # 初始化解析器
-            parser = JsonOutputParser(pydantic_object=ImportResult)
-
-            prompt = ChatPromptTemplate.from_messages([
-                ("system", system_prompt_template),
-                ("user", "请分析以下内容并生成元数据：\n\n{content}")
-            ]).partial(format_instructions=parser.get_format_instructions())
-
             logger.info(f"Generating metadata for content (first 100 chars): {content[:100]}...")
             
             
             # 3. 调用 LLM
             start_llm = time.time()
-            chain = prompt | llm | parser
-            result = await chain.ainvoke({"content": content})
+            result = await MetadataGeneratorService._invoke_json(
+                llm,
+                ImportResult,
+                system_prompt_template,
+                f"请分析以下内容并生成元数据：\n\n{content}",
+            )
             
             duration_llm = (time.time() - start_llm) * 1000
             
@@ -217,17 +255,14 @@ class MetadataGeneratorService:
                 "{format_instructions}"
             )
             
-            parser = JsonOutputParser(pydantic_object=MetricRecommendationResult)
-            
-            prompt = ChatPromptTemplate.from_messages([
-                ("system", system_prompt),
-                ("user", "Schema 定义如下：\n\n{schema}")
-            ]).partial(format_instructions=parser.get_format_instructions())
-
             # 4. Invoke
             start_llm = time.time()
-            chain = prompt | llm | parser
-            result = await chain.ainvoke({"schema": schema_context})
+            result = await MetadataGeneratorService._invoke_json(
+                llm,
+                MetricRecommendationResult,
+                system_prompt,
+                f"Schema 定义如下：\n\n{schema_context}",
+            )
             duration_llm = (time.time() - start_llm) * 1000
             
             # 5. Log Success
@@ -279,17 +314,14 @@ class MetadataGeneratorService:
                 "{format_instructions}"
             )
             
-            parser = JsonOutputParser(pydantic_object=DatasetEnhanceResult)
-            
-            prompt = ChatPromptTemplate.from_messages([
-                ("system", system_prompt),
-                ("user", "该数据集包含以下表信息：\n\n{tables_summary}")
-            ]).partial(format_instructions=parser.get_format_instructions())
-
             # 4. Invoke
             start_llm = time.time()
-            chain = prompt | llm | parser
-            result = await chain.ainvoke({"tables_summary": tables_summary})
+            result = await MetadataGeneratorService._invoke_json(
+                llm,
+                DatasetEnhanceResult,
+                system_prompt,
+                f"该数据集包含以下表信息：\n\n{tables_summary}",
+            )
             duration_llm = (time.time() - start_llm) * 1000
             
             # 5. Log Success

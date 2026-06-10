@@ -298,22 +298,32 @@ const availableTools = [
   },
   {
     name: "read_file",
-    description: "安全本地文件分页/Tail读取，有效防止大文件 Token 撑破",
+    description: "AgentScope Read：按行读取文件内容，运行时替代旧 read_file",
     isSystem: true,
   },
   {
     name: "write_file",
-    description: "本地文件物理写入与覆盖，若父级目录缺失将自动补全",
+    description: "AgentScope Write：创建或覆写文件，运行时替代旧 write_file",
+    isSystem: true,
+  },
+  {
+    name: "edit_file",
+    description: "AgentScope Edit：在文件中做精确字符串替换，要求先读取目标文件",
     isSystem: true,
   },
   {
     name: "search_text",
-    description: "安全文本搜索 / grep，支持日志关键字、代码引用、配置项与报错堆栈定位",
+    description: "AgentScope Grep：基于 ripgrep 搜索文件内容，运行时替代旧 search_text",
+    isSystem: true,
+  },
+  {
+    name: "glob_files",
+    description: "AgentScope Glob：按 glob 模式查找文件",
     isSystem: true,
   },
   {
     name: "exec_command",
-    description: "系统 shell 命令执行，强制 30 秒超时拦截防挂死",
+    description: "AgentScope Bash：执行 shell 命令，运行时替代旧 exec_command",
     isSystem: true,
   },
   {
@@ -419,6 +429,8 @@ const groupedTools = computed(() => {
       name.includes('system_command') ||
       name.includes('system_process') ||
       name.includes('search_text') ||
+      name.includes('edit_file') ||
+      name.includes('glob_files') ||
       name.includes('exec_command') ||
       name.includes('list_process') ||
       name.includes('manage_process') ||
@@ -998,6 +1010,7 @@ const getAgentEmoji = (agent: AIAgent) => {
     "chat-bi": "📊",
     "metadata-specialist": "💎",
     "knowledge-base": "📚",
+    "main": "💬",
     "general-chat": "💬",
   };
   if (emojiMap[agent.name]) return emojiMap[agent.name];

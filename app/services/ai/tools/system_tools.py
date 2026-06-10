@@ -6,7 +6,7 @@ import socket
 import pytz
 from datetime import datetime
 from urllib.parse import urlparse
-from langchain_core.tools import tool
+from app.services.ai.tools.tool_compat import tool
 from app.services.ai.tools.task_manager_tools import (
     create_recurring_task, get_my_tasks, cancel_task, 
     start_task, pause_task, run_task_manually

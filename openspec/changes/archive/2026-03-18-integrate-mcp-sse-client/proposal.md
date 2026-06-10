@@ -8,7 +8,7 @@
 - **全局 MCP 服务管理**: 在系统管理后台新增 MCP 服务端配置，支持配置多个 SSE 目标地址及全局认证信息。
 - **工具自动发现与同步**: 自动从配置的 MCP Server 获取工具元数据（Name, Description, Schema）并缓存，无需手动录入。
 - **智能体级工具集成**: 智能体配置页面支持勾选已发现的 MCP 工具，并允许为特定智能体覆盖全局配置（如使用不同的 API Token）。
-- **Executor 增强**: 升级 `ToolRegistry` 和 `GeneralChatExecutor`，支持动态路由和执行 MCP 类型的工具调用。
+- **Executor 增强**: 升级 `ToolRegistry` 和 `AssistantExecutor`，支持动态路由和执行 MCP 类型的工具调用。
 
 ## Capabilities
 
@@ -25,4 +25,4 @@
 - **数据库**: 新增 `sys_mcp_servers` 表（存储服务端配置）和 `sys_mcp_tool_cache` 表（存储同步的工具元数据）。
 - **API**: 新增 `/api/portal/tools/mcp/*` 系列接口，用于管理服务端及同步状态。
 - **系统架构**: 引入对长连接（SSE）的生命周期管理，需要考虑连接池和异常重连机制。
-- **智能体执行**: `GeneralChatExecutor` 的 ReAct 循环将增加对 `mcp:` 前缀工具的处理分支。
+- **智能体执行**: `AssistantExecutor` 的 ReAct 循环将增加对 `mcp:` 前缀工具的处理分支。

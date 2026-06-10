@@ -9,8 +9,7 @@ import re
 import uuid
 from typing import Any, AsyncIterator, Callable, Dict, List, Optional, TypeVar
 
-from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
-
+from app.services.ai.runtime.agentscope.compat import AIMessage, BaseMessage, HumanMessage, SystemMessage
 from app.services.ai.executors.prompts import SharedPrompts
 from app.utils.fs_paths import get_data_base_dir, normalize_under_base
 
@@ -163,7 +162,7 @@ async def stream_with_retry(
 
 
 def extract_tokens_from_message(msg: Any) -> dict:
-    """从 LangChain message/chunk 提取 token 用量。"""
+    """从 runtime message/chunk 提取 token 用量。"""
     res = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
     if not msg:
         return res
@@ -208,7 +207,7 @@ def structurize_user_content(content: str) -> str:
 
 
 def convert_history_to_messages(history: List[Dict[str, str]]) -> List[BaseMessage]:
-    """将平台 messages 转为 LangChain BaseMessage 列表（含附件/多模态）。"""
+    """将平台 messages 转为 runtime BaseMessage 列表（含附件/多模态）。"""
     messages: List[BaseMessage] = []
     last_user_idx: Optional[int] = None
     for idx in range(len(history) - 1, -1, -1):

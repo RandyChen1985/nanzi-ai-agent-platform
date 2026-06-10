@@ -2,7 +2,7 @@ import json
 import logging
 from typing import Dict, Any
 from pydantic import create_model, Field
-from langchain_core.tools import StructuredTool
+from app.services.ai.tools.tool_compat import StructuredTool
 from app.models.mcp import McpToolCache
 from app.services.ai.tools.mcp_client import McpClientService
 
@@ -12,7 +12,7 @@ class McpToolFactory:
     @staticmethod
     def create_tool(tool_record: McpToolCache) -> StructuredTool:
         """
-        Creates a LangChain StructuredTool from a cached MCP tool record.
+        Creates a runtime StructuredTool-compatible wrapper from a cached MCP tool record.
         """
         
         # 1. Parse JSON Schema from MCP
@@ -53,7 +53,7 @@ class McpToolFactory:
         
         _execute.__doc__ = tool_record.tool_description or f"MCP tool: {tool_record.tool_name}"
         
-        # Tool name for LangChain should ideally be our full name to avoid collisions
+        # Tool name should ideally be our full name to avoid collisions
         return StructuredTool.from_function(
             func=None,
             coroutine=_execute,

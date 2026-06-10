@@ -2,11 +2,16 @@ import sys
 import os
 import json
 
+import pytest
+
 # Add project root to path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from app.services.ai.executors.data_executor import DataQueryExecutor
-from app.schemas.agent import ChatConfig
+from app.services.ai.executors.common import parse_xml_tool_calls
+
+
+pytestmark = pytest.mark.no_infrastructure
+
 
 def test_xml_parsing():
     content = """我来帮您查询所有机房的列表。首先让我获取相关的元数据信息。
@@ -17,18 +22,7 @@ def test_xml_parsing():
 </invoke>
 </function_calls>"""
 
-    # Mock config
-    config = ChatConfig(
-        agent_id="1",
-        agent_name="test",
-        model_name="test-model",
-        temperature=0.0,
-        system_prompt="test",
-        tools=["get_dataset_schema"]
-    )
-    
-    executor = DataQueryExecutor(config, trace_id="test-trace", trace_buffer=[])
-    tool_calls = executor._parse_xml_tool_calls(content)
+    tool_calls = parse_xml_tool_calls(content)
     
     print(f"Parsed Tool Calls: {json.dumps(tool_calls, indent=2, ensure_ascii=False)}")
     

@@ -2,7 +2,7 @@ import base64
 import os
 
 import pytest
-from langchain_core.messages import HumanMessage, SystemMessage
+from app.services.ai.runtime.agentscope.compat import HumanMessage, SystemMessage
 
 from app.services.ai.executors.common import (
     append_system_instruction,

@@ -1,0 +1,462 @@
+from __future__ import annotations
+
+import asyncio
+import inspect
+import time
+from dataclasses import dataclass
+from typing import Any, Callable, Literal
+
+from app.services.ai.runtime.agentscope.errors import RuntimeToolError, RuntimeTimeoutError
+
+
+ToolSourceType = Literal["static", "generic_api", "mcp", "class", "system"]
+RuntimePermissionScope = Literal["read", "write", "ask", "dangerous"]
+RuntimeApprovalMode = Literal["ask", "allow", "deny"]
+RuntimeToolAuditStatus = Literal["start", "success", "error"]
+
+
+READ_ONLY_TOOL_NAMES = {
+    "get_dataset_schema",
+    "search_knowledge_base",
+    "memory_search",
+    "fetch_user_long_term_memory",
+    "get_my_tasks",
+    "jira_search",
+    "jira_get_projects",
+    "read_file",
+    "search_text",
+    "list_process",
+    "list_available_skills",
+    "read_skill_instruction",
+    "directory_tree_navigator",
+    "web_renderer_and_snapshot",
+    "code_syntax_linter",
+    "fetch_static_web_url",
+    "web_search_baidu",
+}
+
+@dataclass(frozen=True)
+class RuntimeToolAuditEvent:
+    tool_name: str
+    status: RuntimeToolAuditStatus
+    source_type: ToolSourceType
+    permission_scope: RuntimePermissionScope
+    arguments: dict[str, Any]
+    elapsed_ms: float | None = None
+    result_preview: str | None = None
+    error: str | None = None
+
+
+@dataclass(frozen=True)
+class RuntimeToolSpec:
+    name: str
+    description: str
+    parameters_schema: dict[str, Any]
+    source_type: ToolSourceType
+    callable: Callable[..., Any]
+    permission_scope: RuntimePermissionScope = "ask"
+    timeout_seconds: float | None = None
+    audit_callback: Callable[[RuntimeToolAuditEvent], Any] | None = None
+    native_tool: Any | None = None
+
+    @property
+    def is_read_only(self) -> bool:
+        return self.permission_scope == "read"
+
+    async def invoke(self, arguments: dict[str, Any] | None = None) -> Any:
+        arguments = arguments or {}
+        start = time.perf_counter()
+        await self._emit_audit(
+            RuntimeToolAuditEvent(
+                tool_name=self.name,
+                status="start",
+                source_type=self.source_type,
+                permission_scope=self.permission_scope,
+                arguments=arguments,
+            )
+        )
+        try:
+            result = self.callable(**arguments)
+            if inspect.isawaitable(result):
+                if self.timeout_seconds:
+                    result = await asyncio.wait_for(result, timeout=self.timeout_seconds)
+                else:
+                    result = await result
+            await self._emit_audit(
+                RuntimeToolAuditEvent(
+                    tool_name=self.name,
+                    status="success",
+                    source_type=self.source_type,
+                    permission_scope=self.permission_scope,
+                    arguments=arguments,
+                    elapsed_ms=(time.perf_counter() - start) * 1000,
+                    result_preview=_preview_result(result),
+                )
+            )
+            return result
+        except TimeoutError as exc:
+            wrapped = RuntimeTimeoutError(
+                f"Tool '{self.name}' timed out",
+                cause=exc,
+                details={"tool_name": self.name, "timeout_seconds": self.timeout_seconds},
+            )
+            await self._emit_error_audit(arguments, start, wrapped)
+            raise wrapped from exc
+        except Exception as exc:
+            wrapped = RuntimeToolError(
+                f"Tool '{self.name}' failed: {exc}",
+                cause=exc,
+                details={"tool_name": self.name},
+            )
+            await self._emit_error_audit(arguments, start, wrapped)
+            raise wrapped from exc
+
+    async def _emit_error_audit(
+        self,
+        arguments: dict[str, Any],
+        start: float,
+        exc: Exception,
+    ) -> None:
+        await self._emit_audit(
+            RuntimeToolAuditEvent(
+                tool_name=self.name,
+                status="error",
+                source_type=self.source_type,
+                permission_scope=self.permission_scope,
+                arguments=arguments,
+                elapsed_ms=(time.perf_counter() - start) * 1000,
+                error=str(exc),
+            )
+        )
+
+    async def _emit_audit(self, event: RuntimeToolAuditEvent) -> None:
+        if not self.audit_callback:
+            return
+        result = self.audit_callback(event)
+        if inspect.isawaitable(result):
+            await result
+
+
+class AgentScopeRuntimeTool:
+    is_concurrency_safe = False
+    is_external_tool = False
+    is_state_injected = False
+    is_mcp = False
+    mcp_name = None
+
+    def __init__(
+        self,
+        spec: RuntimeToolSpec,
+        approval_mode: RuntimeApprovalMode | str | None = None,
+    ) -> None:
+        self.spec = spec
+        self.name = spec.name
+        self.description = spec.description
+        self.input_schema = spec.parameters_schema
+        self.is_read_only = spec.is_read_only
+        self.approval_mode = _normalize_runtime_approval_mode(approval_mode)
+
+    async def check_permissions(self, tool_input: dict[str, Any], context: Any) -> Any:
+        try:
+            from agentscope.permission import PermissionBehavior, PermissionDecision
+        except Exception:
+            return None
+        if self.spec.permission_scope == "read":
+            return PermissionDecision(
+                behavior=PermissionBehavior.ALLOW,
+                message=f"Tool '{self.name}' is read-only and can run automatically.",
+            )
+        if self.spec.permission_scope == "dangerous":
+            return PermissionDecision(
+                behavior=PermissionBehavior.DENY,
+                message=f"Tool '{self.name}' is marked dangerous and cannot run automatically.",
+                decision_reason="dangerous runtime tool scope",
+                bypass_immune=True,
+            )
+        if self.approval_mode == "allow":
+            return PermissionDecision(
+                behavior=PermissionBehavior.ALLOW,
+                message=f"Tool '{self.name}' is allowed by runtime approval mode.",
+                decision_reason=f"runtime approval mode: {self.approval_mode}",
+            )
+        if self.approval_mode == "deny":
+            return PermissionDecision(
+                behavior=PermissionBehavior.DENY,
+                message=f"Tool '{self.name}' is denied by runtime approval mode.",
+                decision_reason=f"runtime approval mode: {self.approval_mode}",
+                bypass_immune=True,
+            )
+        return PermissionDecision(
+            behavior=PermissionBehavior.ASK,
+            message=f"Tool '{self.name}' requires user confirmation before execution.",
+            decision_reason=f"runtime tool scope: {self.spec.permission_scope}",
+        )
+
+    async def check_read_only(self, tool_input: dict[str, Any]) -> bool:
+        return self.is_read_only
+
+    def match_rule(self, rule_content: str | None, tool_input: dict[str, Any]) -> bool:
+        return rule_content is None
+
+    def generate_suggestions(self, tool_input: dict[str, Any]) -> list[Any]:
+        return []
+
+    async def __call__(self, **kwargs: Any) -> Any:
+        from agentscope.message import TextBlock, ToolResultState
+        from agentscope.tool import ToolChunk
+
+        return ToolChunk(
+            content=[TextBlock(text=str(await self.spec.invoke(kwargs)))],
+            state=ToolResultState.SUCCESS,
+        )
+
+
+class AgentScopeNativeApprovalTool:
+    """Apply runtime approval mode to AgentScope native tools such as Bash."""
+
+    def __init__(
+        self,
+        native_tool: Any,
+        *,
+        approval_mode: RuntimeApprovalMode | str | None = None,
+        permission_scope: RuntimePermissionScope | None = None,
+    ) -> None:
+        self.native_tool = native_tool
+        self.name = getattr(native_tool, "name", "")
+        self.description = getattr(native_tool, "description", "")
+        self.input_schema = getattr(native_tool, "input_schema", {"type": "object", "properties": {}})
+        self.is_read_only = bool(getattr(native_tool, "is_read_only", False))
+        self.approval_mode = _normalize_runtime_approval_mode(approval_mode)
+        self.permission_scope = permission_scope or _infer_native_permission_scope(native_tool)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self.native_tool, name)
+
+    async def check_permissions(self, tool_input: dict[str, Any], context: Any) -> Any:
+        try:
+            from agentscope.permission import PermissionBehavior, PermissionDecision
+        except Exception:
+            return None
+        if self.permission_scope == "read":
+            return PermissionDecision(
+                behavior=PermissionBehavior.ALLOW,
+                message=f"Tool '{self.name}' is read-only and can run automatically.",
+            )
+        if self.permission_scope == "dangerous":
+            return PermissionDecision(
+                behavior=PermissionBehavior.DENY,
+                message=f"Tool '{self.name}' is marked dangerous and cannot run automatically.",
+                decision_reason="dangerous runtime tool scope",
+                bypass_immune=True,
+            )
+        if self.approval_mode == "allow":
+            return PermissionDecision(
+                behavior=PermissionBehavior.ALLOW,
+                message=f"Tool '{self.name}' is allowed by runtime approval mode.",
+                decision_reason=f"runtime approval mode: {self.approval_mode}",
+            )
+        if self.approval_mode == "deny":
+            return PermissionDecision(
+                behavior=PermissionBehavior.DENY,
+                message=f"Tool '{self.name}' is denied by runtime approval mode.",
+                decision_reason=f"runtime approval mode: {self.approval_mode}",
+                bypass_immune=True,
+            )
+        native_check = getattr(self.native_tool, "check_permissions", None)
+        if native_check:
+            result = native_check(tool_input, context)
+            if inspect.isawaitable(result):
+                return await result
+            return result
+        return PermissionDecision(
+            behavior=PermissionBehavior.ASK,
+            message=f"Tool '{self.name}' requires user confirmation before execution.",
+            decision_reason=f"runtime tool scope: {self.permission_scope}",
+        )
+
+    async def check_read_only(self, tool_input: dict[str, Any]) -> bool:
+        native_check = getattr(self.native_tool, "check_read_only", None)
+        if native_check:
+            result = native_check(tool_input)
+            if inspect.isawaitable(result):
+                return bool(await result)
+            return bool(result)
+        return self.permission_scope == "read"
+
+    def match_rule(self, rule_content: str | None, tool_input: dict[str, Any]) -> bool:
+        native_match = getattr(self.native_tool, "match_rule", None)
+        if native_match:
+            return bool(native_match(rule_content, tool_input))
+        return rule_content is None
+
+    def generate_suggestions(self, tool_input: dict[str, Any]) -> list[Any]:
+        native_generate = getattr(self.native_tool, "generate_suggestions", None)
+        if native_generate:
+            return native_generate(tool_input)
+        return []
+
+    async def __call__(self, **kwargs: Any) -> Any:
+        result = self.native_tool(**kwargs)
+        if inspect.isawaitable(result):
+            return await result
+        return result
+
+
+def _load_agentscope_toolkit():
+    from agentscope.tool import Toolkit
+
+    return Toolkit
+
+
+def _preview_result(result: Any, max_length: int = 500) -> str:
+    text = str(result)
+    if len(text) <= max_length:
+        return text
+    return text[: max_length - 3] + "..."
+
+
+def _normalize_runtime_approval_mode(
+    approval_mode: RuntimeApprovalMode | str | None,
+) -> RuntimeApprovalMode:
+    if approval_mode in {"allow", "deny", "ask"}:
+        return approval_mode
+    return "ask"
+
+
+def _infer_native_permission_scope(native_tool: Any) -> RuntimePermissionScope:
+    if bool(getattr(native_tool, "is_read_only", False)):
+        return "read"
+    name = str(getattr(native_tool, "name", "") or "")
+    if name in {"Read", "Glob", "Grep"}:
+        return "read"
+    return "ask"
+
+
+def runtime_tool_from_spec(
+    spec: RuntimeToolSpec,
+    *,
+    approval_mode: RuntimeApprovalMode | str | None = None,
+) -> Any:
+    if spec.native_tool is not None:
+        return AgentScopeNativeApprovalTool(
+            spec.native_tool,
+            approval_mode=approval_mode,
+            permission_scope=spec.permission_scope,
+        )
+    return AgentScopeRuntimeTool(
+        spec,
+        approval_mode=approval_mode,
+    )
+
+
+def runtime_tool_from_native(
+    native_tool: Any,
+    *,
+    approval_mode: RuntimeApprovalMode | str | None = None,
+) -> Any:
+    return AgentScopeNativeApprovalTool(native_tool, approval_mode=approval_mode)
+
+
+def build_toolkit(
+    tool_specs: list[RuntimeToolSpec],
+    *,
+    approval_mode: RuntimeApprovalMode | str | None = None,
+):
+    toolkit_cls = _load_agentscope_toolkit()
+    tools = [runtime_tool_from_spec(spec, approval_mode=approval_mode) for spec in tool_specs]
+    return toolkit_cls(tools=tools)
+
+
+def _schema_from_legacy_tool(tool: Any) -> dict[str, Any]:
+    args_schema = getattr(tool, "args_schema", None)
+    if args_schema is not None and hasattr(args_schema, "model_json_schema"):
+        return args_schema.model_json_schema()
+    input_schema = getattr(tool, "input_schema", None)
+    if isinstance(input_schema, dict):
+        return input_schema
+    return {"type": "object", "properties": {}}
+
+
+def runtime_tool_spec_from_legacy_tool(
+    tool: Any,
+    source_type: ToolSourceType,
+    permission_scope: RuntimePermissionScope | None = None,
+) -> RuntimeToolSpec:
+    async def _invoke(**kwargs: Any) -> Any:
+        if hasattr(tool, "ainvoke"):
+            return await tool.ainvoke(kwargs)
+        if hasattr(tool, "arun"):
+            return await tool.arun(**kwargs)
+        if callable(tool):
+            result = tool(**kwargs)
+            if inspect.isawaitable(result):
+                return await result
+            return result
+        raise TypeError(f"Tool {getattr(tool, 'name', repr(tool))} is not callable")
+
+    name = getattr(tool, "name", None) or getattr(tool, "__name__", None)
+    if not name:
+        raise ValueError("Legacy tool is missing a name")
+    resolved_scope = permission_scope or infer_runtime_permission_scope(name, source_type)
+
+    return RuntimeToolSpec(
+        name=name,
+        description=getattr(tool, "description", None) or getattr(tool, "__doc__", "") or "",
+        parameters_schema=_schema_from_legacy_tool(tool),
+        source_type=source_type,
+        callable=_invoke,
+        permission_scope=resolved_scope,
+    )
+
+
+def runtime_tool_spec_from_native_agentscope_tool(
+    tool: Any,
+    *,
+    source_type: ToolSourceType = "system",
+    permission_scope: RuntimePermissionScope | None = None,
+) -> RuntimeToolSpec:
+    async def _invoke(**kwargs: Any) -> Any:
+        result = tool(**kwargs)
+        if inspect.isawaitable(result):
+            result = await result
+        if inspect.isasyncgen(result):
+            parts = []
+            async for chunk in result:
+                parts.append(_tool_chunk_to_text(chunk))
+            return "".join(parts)
+        return _tool_chunk_to_text(result)
+
+    resolved_scope = permission_scope or ("read" if getattr(tool, "is_read_only", False) else "ask")
+    return RuntimeToolSpec(
+        name=getattr(tool, "name"),
+        description=getattr(tool, "description", ""),
+        parameters_schema=getattr(tool, "input_schema", {"type": "object", "properties": {}}),
+        source_type=source_type,
+        callable=_invoke,
+        permission_scope=resolved_scope,
+        native_tool=tool,
+    )
+
+
+def _tool_chunk_to_text(result: Any) -> str:
+    content = getattr(result, "content", None)
+    if isinstance(content, list):
+        parts = []
+        for block in content:
+            text = getattr(block, "text", None)
+            if text is not None:
+                parts.append(str(text))
+        if parts:
+            return "".join(parts)
+    return str(result)
+
+
+def infer_runtime_permission_scope(
+    tool_name: str,
+    source_type: ToolSourceType,
+) -> RuntimePermissionScope:
+    if tool_name in READ_ONLY_TOOL_NAMES:
+        return "read"
+    if source_type in {"generic_api", "mcp"}:
+        return "ask"
+    return "ask"

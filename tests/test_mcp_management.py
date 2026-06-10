@@ -139,7 +139,7 @@ async def test_mcp_tool_execute(client: AsyncClient, admin_api_key: str, db_sess
     ))
     await session.commit()
 
-    # Mock McpToolFactory.create_tool and the LangChain tool execution
+    # Mock McpToolFactory.create_tool and the runtime tool execution
     with patch("app.api.portal.endpoints.mcp.McpToolFactory.create_tool") as mock_factory:
         mock_tool_instance = AsyncMock()
         mock_tool_instance.ainvoke.return_value = "Hello World"

@@ -132,7 +132,7 @@ sequenceDiagram
 | `STOP_GENERATION` | - | 强制停止 AI 正在生成的回复。 |
 | `CLEAR_SESSION` | - | 清空当前对话记录，开启新会话。 |
 | `RESET_SESSION` | `new_token` (可选) | 重置会话，并允许更新鉴权 Token。 |
-| `SEND_COMMAND` | `command` | 触发组件内部指令，如 `/clear` 或 `/history`。 |
+| `SEND_COMMAND` | `command` | 触发组件内部指令，如 `/new`（新会话）或 `/history`。 |
 
 #### 上行事件 (Widget -> Host)
 

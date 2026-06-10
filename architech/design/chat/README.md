@@ -4,8 +4,9 @@
 
 | 文档 | 说明 |
 |------|------|
-| [CHAT_FLOW.md](./CHAT_FLOW.md) | 业务流：前端 → API → AgentService → Dispatcher → Executor；Redis 记忆、`memory_search`、权限 |
+| [CHAT_FLOW.md](./CHAT_FLOW.md) | 业务流：前端 → API → AgentService → Dispatcher → Executor → Runner；Redis 记忆、`memory_search`、权限 |
 | [PROMPT_LAYERS.md](./PROMPT_LAYERS.md) | 提示词流：`system_prompt` 栈、独立 system 消息、执行器追加、路由/意图 LLM |
+| [../AGENTSCOPE_RUNTIME.md](../AGENTSCOPE_RUNTIME.md) | AgentScope 事件映射、工具挂起恢复、AgentState |
 
 ## 相关文档（其他目录）
 
@@ -19,8 +20,10 @@
 ## 代码入口（速查）
 
 - 编排：`app/services/ai/agent_service.py`
+- Runner：`assistant_agent_runner.py`、`knowledge_agent_runner.py`、`data_agent_runner.py`
+- AgentScope：`app/services/ai/runtime/agentscope/`
 - 平台全局提示词：`app/services/ai/agent_prompts.py` → `PLATFORM_GLOBAL_SYSTEM_PROMPT`
 - 执行器提示词：`app/services/ai/executors/prompts.py`
 - 路由 / 意图：`router_service.py`、`intent_service.py`（内置代码，不进主对话 messages）
 
-*文档版本：2026-05-31*
+*文档版本：2026-06-09*

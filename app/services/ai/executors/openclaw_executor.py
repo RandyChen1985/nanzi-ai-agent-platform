@@ -11,6 +11,7 @@ from app.services.ai.executors.prompts import OpenClawPrompts
 from app.services.ai.openclaw_client import OpenClawClient
 from app.schemas.agent import AgentExecutionStep, ChatConfig
 from app.core.llm.client import get_llm_async
+from app.services.ai.runtime.agentscope.compat import HumanMessage, SystemMessage
 from app.services.ai.executors.common import (
     MODEL_STREAM_MAX_RETRIES,
     build_stream_retry_log,
@@ -30,9 +31,10 @@ class OpenClawExecutor(BaseExecutor):
         trace_buffer: List[AgentExecutionStep],
         debug_options: Optional[Dict[str, Any]] = None,
         user_info: Optional[Dict[str, Any]] = None,
-        conversation_id: Optional[str] = None
+        conversation_id: Optional[str] = None,
+        permission_options: Optional[Dict[str, Any]] = None,
     ):
-        super().__init__(agent_config, trace_id, trace_buffer, debug_options, user_info, conversation_id)
+        super().__init__(agent_config, trace_id, trace_buffer, debug_options, user_info, conversation_id, permission_options)
         self.client = OpenClawClient()
 
     async def execute(self, history: List[Dict[str, Any]]) -> AsyncGenerator[Dict[str, Any], None]:
@@ -279,7 +281,6 @@ class OpenClawExecutor(BaseExecutor):
             else:
                 system_prompt = custom_prompt
 
-            from langchain_core.messages import SystemMessage, HumanMessage
             messages = [
                 SystemMessage(content=system_prompt),
                 HumanMessage(content=f"用户输入：{query}")

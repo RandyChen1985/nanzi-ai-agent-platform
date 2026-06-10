@@ -7,7 +7,7 @@
 
 
 
-[![Python](https://img.shields.io/badge/Python-3.10%2B-blue.svg?logo=python&logoColor=white)](https://www.python.org/) [![FastAPI](https://img.shields.io/badge/FastAPI-0.109%2B-009688.svg?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/) [![Vue](https://img.shields.io/badge/Vue-3.x-4FC08D.svg?logo=vue.js&logoColor=white)](https://vuejs.org/) [![TailwindCSS](https://img.shields.io/badge/Tailwind-3.x-38B2AC.svg?logo=tailwind-css&logoColor=white)](https://tailwindcss.com/) [![ClickHouse](https://img.shields.io/badge/ClickHouse-Ready-FFCC00.svg?logo=clickhouse&logoColor=black)](https://clickhouse.com/) [![Redis](https://img.shields.io/badge/Redis-Active-DC382D.svg?logo=redis&logoColor=white)](https://redis.io/) [![MCP](https://img.shields.io/badge/MCP-Supported-orange.svg?logo=anthropic)](https://modelcontextprotocol.org/) [![License](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
+[![Python](https://img.shields.io/badge/Python-3.11%2B-blue.svg?logo=python&logoColor=white)](https://www.python.org/) [![FastAPI](https://img.shields.io/badge/FastAPI-0.109%2B-009688.svg?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/) [![Vue](https://img.shields.io/badge/Vue-3.x-4FC08D.svg?logo=vue.js&logoColor=white)](https://vuejs.org/) [![TailwindCSS](https://img.shields.io/badge/Tailwind-3.x-38B2AC.svg?logo=tailwind-css&logoColor=white)](https://tailwindcss.com/) [![ClickHouse](https://img.shields.io/badge/ClickHouse-Ready-FFCC00.svg?logo=clickhouse&logoColor=black)](https://clickhouse.com/) [![Redis](https://img.shields.io/badge/Redis-Active-DC382D.svg?logo=redis&logoColor=white)](https://redis.io/) [![MCP](https://img.shields.io/badge/MCP-Supported-orange.svg?logo=anthropic)](https://modelcontextprotocol.org/) [![License](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
 
 
 <img src="docs/images/banner.png" alt="Banner" width="600" />
@@ -58,7 +58,7 @@
 ┌──────────▼─────────────────────▼─────────────────▼────────┐
 │                智能体运行引擎 (Execution Engines)         │
 │  ┌──────────────────┐  ┌──────────────┐  ┌─────────────┐  │
-│  │ 自研 ReAct 引擎  │  │ RAGFlow Agent│  │  OpenClaw🦞 │  │
+│  │ AgentScope ReAct │  │ RAGFlow Agent│  │  OpenClaw🦞 │  │
 │  │ (Loop & 自愈SQL) │  │  (托管智能体) │  │ (AUTH上下文) │  │
 │  └────────┬─────────┘  └──────┬───────┘  └──────┬──────┘  │
 └───────────┼───────────────────┼─────────────────┼─────────┘
@@ -96,7 +96,7 @@
 
 ### 1. 🧠 多引擎与混合编排 (Multi-Engine & Hybrid Orchestration)
 *   **多意图编排**：系统自动将复杂问题拆解为多个子任务（如：“查上周 PUE 并对比 SOP” -> 拆解为 ChatBI + RAG），支持专家 Agent 异步并行工作，由 Synthesizer 聚合生成逻辑一致的最终回复。
-*   **自研 ReAct 思考引擎**：执行器遵循“思考-行动-观察-反思”闭环循环，支持本地工具链的自主调用决策与自适应调度。
+*   **AgentScope ReAct 引擎**：General / ChatBI 基于 AgentScope Agent + Toolkit，遵循“思考-行动-观察-反思”闭环，支持本地工具链自主调度与权限挂起恢复。
 *   **RAGFlow 托管 Agent 驱动**：一键对接 RAGFlow 在线托管的知识智能体，直接利用其强大的并行检索和流式对话底座。
 *   **OpenClaw🦞 大模型安全网关**：对接小龙虾 API 网关代理，利用 `AUTH_CONTEXT` (授权上下文) 在请求模型时透传当前用户的真实身份、频道及可访问的元数据/数据集列表，确保企业级数据隔离与安全。
 
@@ -142,7 +142,7 @@
 ├── app/                  # 后端核心代码 (FastAPI)
 │   ├── api/              # API 接口层 (Portal 运营端与 V1 客户端 API)
 │   ├── services/         # 业务引擎服务 (Auth 鉴权、RAG 知识、MCP 插件服务)
-│   │   └── ai/           # 🤖 AI 编排中心 (自研 ReAct、OpenClaw 执行器与意图分发器)
+│   │   └── ai/           # 🤖 AI 编排中心 (AgentScope Runner、OpenClaw 执行器与意图分发器)
 │   └── models/           # SQLAlchemy 数据库 ORM 映射模型
 ├── frontend/             # 前端管理后台与内嵌聊天 SDK 工程 (Vue 3 + Tailwind)
 ├── .agent/               # Agent 专属自动化开发技能与工作流程配置 (opsx 等)

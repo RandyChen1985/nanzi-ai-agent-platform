@@ -8,8 +8,10 @@
 
 | 文档 | 说明 |
 |------|------|
+| [AGENTSCOPE_RUNTIME.md](./design/AGENTSCOPE_RUNTIME.md) | **AgentScope 运行时**（事件映射、工具、权限、ChatBI 守卫） |
+| [tool-call.md](./design/tool-call.md) | 工具调用协议与 SSE 格式 |
 | [GLOBAL_SYSTEM_OVERVIEW.md](./design/GLOBAL_SYSTEM_OVERVIEW.md) | 全局系统概览 |
-| [AI_AGENT_SYSTEM_DESIGN.md](./design/AI_AGENT_SYSTEM_DESIGN.md) | AI 智能体系统设计（偏早期总览） |
+| [AI_AGENT_SYSTEM_DESIGN.md](./design/AI_AGENT_SYSTEM_DESIGN.md) | AI 智能体系统设计（偏早期总览，含历史 LangChain 章节） |
 | [AGENT_ROUTING_DESIGN.md](./design/AGENT_ROUTING_DESIGN.md) | 智能体路由 |
 | [AGENT_APP_DESIGN.md](./design/AGENT_APP_DESIGN.md) | Embed / V1 API |
 | [agent_execution_flow_review.md](./design/agent_execution_flow_review.md) | 执行流评审（K1/K2/K3） |

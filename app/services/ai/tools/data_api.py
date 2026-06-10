@@ -2,7 +2,7 @@ import logging
 import httpx
 import json
 from typing import Optional
-from langchain_core.tools import tool
+from app.services.ai.tools.tool_compat import tool
 from app.core.config import settings
 import re
 import asyncio

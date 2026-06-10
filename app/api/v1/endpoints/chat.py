@@ -52,6 +52,7 @@ class ChatCompletionRequest(BaseModel):
     conversation_id: Optional[str] = None  # 服务端对话记忆 ID
     enable_multi_agent: bool = True        # 是否启用多智能体协同
     debug_options: Optional[Dict[str, Any]] = None
+    permission_options: Optional[Dict[str, Any]] = None
 
 class ChatCompletionResponse(BaseModel):
     content: str
@@ -60,6 +61,24 @@ class ChatCompletionResponse(BaseModel):
     reasoning: Optional[str] = None
     model: Optional[str] = None
     trace_id: Optional[str] = None
+
+
+class ToolPermissionConfirmRequest(BaseModel):
+    confirmed: bool = Field(..., description="是否允许执行该工具调用")
+
+
+class ExternalExecutionResultItem(BaseModel):
+    id: str = Field(..., description="tool_call id")
+    name: str = Field(..., description="tool name")
+    output: str = Field(..., description="tool execution output text")
+    state: str = Field(default="success", description="tool result state")
+
+
+class ExternalExecutionResumeRequest(BaseModel):
+    results: list[ExternalExecutionResultItem] = Field(
+        ...,
+        description="外部执行工具返回结果列表",
+    )
 
 
 from app.schemas.response import StandardResponse
@@ -206,7 +225,8 @@ async def create_chat_completion(
                 user_info=user_info,
                 api_key=api_key_str,
                 enable_multi_agent=completion_request.enable_multi_agent,
-                debug_options=completion_request.debug_options
+                debug_options=completion_request.debug_options,
+                permission_options=completion_request.permission_options,
             ):
                 # Format each chunk as an SSE data event
                 yield f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n"
@@ -232,9 +252,55 @@ async def create_chat_completion(
             conversation_id=completion_request.conversation_id,
             user_info=user_info,
             api_key=api_key_str,
-            enable_multi_agent=completion_request.enable_multi_agent
+            enable_multi_agent=completion_request.enable_multi_agent,
+            permission_options=completion_request.permission_options,
         )
         return StandardResponse(data=result)
+
+
+@router.post(
+    "/permissions/{permission_request_id}/confirm",
+    summary="确认或拒绝待执行工具调用",
+    description="确认 AgentScope ASK 工具调用后继续原 Agent 运行，流式返回后续 SSE。",
+)
+async def confirm_tool_permission(
+    permission_request_id: str,
+    confirm_request: ToolPermissionConfirmRequest,
+    user_info: Dict[str, Any] = Depends(require_api_key),
+):
+    async def sse_generator() -> AsyncGenerator[str, None]:
+        async for chunk in agent_service.resume_agentscope_permission_stream(
+            permission_request_id=permission_request_id,
+            confirmed=confirm_request.confirmed,
+            user_info=user_info,
+        ):
+            yield f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n"
+        yield "data: [DONE]\n\n"
+
+    return StreamingResponse(sse_generator(), media_type="text/event-stream")
+
+
+@router.post(
+    "/external-executions/{external_execution_request_id}/resume",
+    summary="提交外部执行工具结果并恢复 Agent",
+    description="客户端执行 external tool 后，通过此接口回传结果并继续原 Agent 运行。",
+)
+async def resume_external_execution(
+    external_execution_request_id: str,
+    resume_request: ExternalExecutionResumeRequest,
+    user_info: Dict[str, Any] = Depends(require_api_key),
+):
+    async def sse_generator() -> AsyncGenerator[str, None]:
+        async for chunk in agent_service.resume_agentscope_external_execution_stream(
+            external_execution_request_id=external_execution_request_id,
+            results=[item.model_dump() for item in resume_request.results],
+            user_info=user_info,
+        ):
+            yield f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n"
+        yield "data: [DONE]\n\n"
+
+    return StreamingResponse(sse_generator(), media_type="text/event-stream")
+
 
 @router.get("/history", 
     response_model=StandardResponse[AgentExecutionHistoryListResponse],

@@ -27,9 +27,10 @@ class RAGExecutor(BaseExecutor):
         trace_buffer: List[AgentExecutionStep],
         debug_options: Optional[Dict[str, Any]] = None,
         user_info: Optional[Dict[str, Any]] = None,
-        conversation_id: Optional[str] = None
+        conversation_id: Optional[str] = None,
+        permission_options: Optional[Dict[str, Any]] = None,
     ):
-        super().__init__(agent_config, trace_id, trace_buffer, debug_options, user_info, conversation_id)
+        super().__init__(agent_config, trace_id, trace_buffer, debug_options, user_info, conversation_id, permission_options)
         self.client = RagFlowClient()
 
     async def execute(self, history: List[Dict[str, Any]]) -> AsyncGenerator[Dict[str, Any], None]:

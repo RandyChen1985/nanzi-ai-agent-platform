@@ -6,16 +6,19 @@ from app.models.audit import AgentExecutionTrace
 
 logger = logging.getLogger(__name__)
 
-# 仅这些步骤类型对应真实的 LLM API 调用；tool_call 等不计入 Token
-_LLM_TOKEN_STEP_EVENTS = frozenset({"thought", "synthesis"})
+# 仅这些步骤类型对应真实的 LLM API 调用；tool_call / router 等不计入 Token。
+# model_call：AgentScope ReAct 每次 MODEL_CALL_END 一条，与前端 SSE 累加口径一致。
+# thought / synthesis：直连 LLM 或总结阶段（无 model_call 时由 synthesis 承载单次调用）。
+_LLM_TOKEN_STEP_EVENTS = frozenset({"thought", "synthesis", "model_call"})
 
 
 def aggregate_tokens_from_trace_buffer(trace_buffer: List[AgentExecutionStep]) -> tuple[int, int, int]:
     """
     从 trace 步骤汇总会话级 Token。
-    - 优先累加有分项的 prompt/completion
-    - 仅有 total_tokens、无分项的步骤计入总量（无法拆分 input/output）
-    - total 始终以 prompt+completion 为准，保证看板三项一致
+    - 每条 LLM API 调用只应出现一次（model_call 或带 usage 的 synthesis/thought）
+    - ReAct 路径：多次 model_call 累加；末尾 synthesis 若为 0 token 则自动忽略
+    - 无 AgentScope 的单次直答：仅 synthesis/thought 带 usage
+    - 仅有 total_tokens、无分项的步骤计入 orphan 总量
     """
     if not trace_buffer:
         return 0, 0, 0
@@ -30,6 +33,8 @@ def aggregate_tokens_from_trace_buffer(trace_buffer: List[AgentExecutionStep]) -
         p = int(getattr(step, "prompt_tokens", 0) or 0)
         c = int(getattr(step, "completion_tokens", 0) or 0)
         t = int(getattr(step, "total_tokens", 0) or 0)
+        if p <= 0 and c <= 0 and t <= 0:
+            continue
         if p > 0 or c > 0:
             prompt_sum += p
             completion_sum += c

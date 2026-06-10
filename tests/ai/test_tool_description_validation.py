@@ -3,7 +3,10 @@ import asyncio
 from typing import List
 from app.services.ai.tools.registry import ToolRegistry
 from app.schemas.agent import ToolConfigItem
-from langchain_core.utils.function_calling import convert_to_openai_function
+from app.services.ai.runtime.agentscope.chat import legacy_tools_to_openai_schemas
+
+pytestmark = pytest.mark.no_infrastructure
+
 
 @pytest.mark.asyncio
 async def test_dingtalk_tool_description_preservation():
@@ -35,7 +38,7 @@ async def test_dingtalk_tool_description_preservation():
     # 4. Simulate the conversion to OpenAI function (which LLMs use)
     # This is where the 400 error usually happens during validation
     try:
-        openai_fn = convert_to_openai_function(target_tool)
+        openai_fn = legacy_tools_to_openai_schemas([target_tool])[0]["function"]
         print(f"DEBUG: OpenAI Function Schema = {openai_fn}")
         assert openai_fn["description"] is not None
         assert openai_fn["description"] == target_tool.description
@@ -61,5 +64,5 @@ async def test_all_registry_tools_descriptions():
         assert isinstance(t.description, str), f"Tool {t.name} description is not string"
         
         # Ensure it passes the OpenAI schema validation
-        fn = convert_to_openai_function(t)
+        fn = legacy_tools_to_openai_schemas([t])[0]["function"]
         assert fn["description"], f"OpenAI conversion for {t.name} resulted in empty description"

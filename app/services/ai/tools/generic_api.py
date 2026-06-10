@@ -3,7 +3,7 @@ import httpx
 import json
 from typing import Dict, Any, Type
 from pydantic import create_model, Field
-from langchain_core.tools import StructuredTool
+from app.services.ai.tools.tool_compat import StructuredTool
 from app.models.tool import SysApiTool
 
 logger = logging.getLogger(__name__)
@@ -12,7 +12,7 @@ class GenericApiToolFactory:
     @staticmethod
     def create_tool(tool_config: SysApiTool) -> StructuredTool:
         """
-        Creates a LangChain StructuredTool from a SysApiTool configuration.
+        Creates a runtime StructuredTool-compatible wrapper from a SysApiTool configuration.
         """
         
         # 1. Define the args schema dynamically

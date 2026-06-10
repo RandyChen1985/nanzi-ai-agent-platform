@@ -9,6 +9,8 @@ from app.services.config_service import ConfigService
 from app.services.ai.agent_manager import AgentManagerService
 from app.schemas.prompt import PromptMetadata, PromptSource, PromptVersionSummary, PromptDetail, PromptTestResponse
 from app.core.llm.client import get_llm_async
+from app.services.ai.runtime.agentscope.chat import chat_client_from_handle
+from app.services.ai.runtime.agentscope.messages import RuntimeContentBlock, RuntimeMessage
 
 logger = logging.getLogger(__name__)
 
@@ -193,22 +195,33 @@ class PromptService:
             llm = await get_llm_async(model=model_name)
             if not llm:
                 raise Exception("LLM not configured properly")
-            
+            chat_client = chat_client_from_handle(llm)
+
             # Use user_input as user message if provided
             if user_input:
-                from langchain_core.messages import SystemMessage, HumanMessage
                 messages = [
-                    SystemMessage(content=interpolated),
-                    HumanMessage(content=user_input)
+                    RuntimeMessage(
+                        role="system",
+                        content=[RuntimeContentBlock(type="text", text=interpolated)],
+                    ),
+                    RuntimeMessage(
+                        role="user",
+                        content=[RuntimeContentBlock(type="text", text=user_input)],
+                    ),
                 ]
-                response = await llm.ainvoke(messages)
             else:
-                response = await llm.ainvoke(interpolated)
+                messages = [
+                    RuntimeMessage(
+                        role="user",
+                        content=[RuntimeContentBlock(type="text", text=interpolated)],
+                    )
+                ]
+            raw_output = await chat_client.generate_text(messages)
             
             latency = (time.time() - start_time) * 1000
             
             return PromptTestResponse(
-                raw_output=response.content if hasattr(response, 'content') else str(response),
+                raw_output=raw_output,
                 interpolated_prompt=interpolated,
                 latency_ms=latency
             )
@@ -330,16 +343,20 @@ class PromptService:
             if not llm:
                 raise Exception("LLM not configured")
 
-            from langchain_core.messages import SystemMessage, HumanMessage
             import json
 
+            chat_client = chat_client_from_handle(llm)
             messages = [
-                SystemMessage(content=system_prompt),
-                HumanMessage(content=f"原始提示词如下：\n\n{content}")
+                RuntimeMessage(
+                    role="system",
+                    content=[RuntimeContentBlock(type="text", text=system_prompt)],
+                ),
+                RuntimeMessage(
+                    role="user",
+                    content=[RuntimeContentBlock(type="text", text=f"原始提示词如下：\n\n{content}")],
+                ),
             ]
-            response = await llm.ainvoke(messages)
-            
-            raw_text = response.content if hasattr(response, 'content') else str(response)
+            raw_text = await chat_client.generate_text(messages)
             
             # 清理 Markdown 代码块包裹
             clean_text = raw_text.strip()

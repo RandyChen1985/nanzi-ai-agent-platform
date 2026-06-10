@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import { renderMarkdown } from '@/utils/markdown';
+import { parseQuickButtons, postProcessQuickButtonHtml } from '@/utils/quickButtons';
 import { mergeChartDefaults, parseChartOptions } from '@/utils/chartRenderer';
 import MermaidRenderer from './MermaidRenderer.vue';
 
@@ -60,47 +61,11 @@ interface ContentSegment {
 }
 
   /**
-   * 核心：解析 Quick 按钮的通用逻辑
-   * 这是一个极其稳健的正则，支持 Markdown、中括号、HTML 源码以及转义后的 HTML。
-   */
-  const parseQuickButtons = (text: string) => {
-    if (!text) return '';
-    
-    let processed = text;
-  
-    // 1. 处理 Markdown 格式: [Label](quick:Target) 或 【Label】(quick:Target)
-    // 在渲染前执行，确保 Markdown 引擎不会把它当成普通文本
-    processed = processed.replace(/(?:\[|【)([^\]】]+?)(?:\]|】)\s*\((?:<)?quick:([^)>]+?)(?:>)?\)/gi, (_match, label, target) => {
-      // 避免重复编码
-      const encodedTarget = target.trim().includes('%') ? target.trim() : encodeURIComponent(target.trim());
-      return `<a class="quick-action-btn" href="quick:${encodedTarget}">${label.trim()}</a>`;
-    });
-  
-    // 2. 处理可能已经存在的 HTML 源码 (AI直接输出的情况)
-    // 改进正则：允许 href 前后有其他属性，且更宽容地匹配引号
-    processed = processed.replace(/<a\s+[\s\S]*?href=["']quick:([^"']+)["'][\s\S]*?>([\s\S]*?)<\/a>/gi, (match, target, label) => {
-      if (!match.includes('quick-action-btn')) {
-        return `<a class="quick-action-btn" href="quick:${target}">${label}</a>`;
-      }
-      return match;
-    });
-  
-    return processed;
-  };
-  
-  /**
    * 后处理：修复被 Markdown 引擎“误杀”转义的 HTML
    */
   const postProcessHtml = (html: string) => {
     if (!html) return '';
-    let res = html;
-    
-    // 救回被转义的 &lt;a ... href="quick:..." &gt;
-    // 改进正则：使用 [\s\S]*? 非贪婪匹配，不再使用 [^&]，从而支持 class="arg" 被转义为 class=&quot;arg&quot; 的情况
-    // 同时支持 href=&quot;quick:...&quot;
-    res = res.replace(/&lt;a\s+[\s\S]*?href=(?:['"]|&quot;)quick:((?:(?!['"]|&quot;).)+)(?:['"]|&quot;)[\s\S]*?&gt;([\s\S]*?)&lt;\/a&gt;/gi, (_match, target, label) => {
-      return `<a class="quick-action-btn" href="quick:${target}">${label}</a>`;
-    });
+    let res = postProcessQuickButtonHtml(html);
   
     // 处理 RAGFlow 引用的展示样式
     res = res.replace(/(?:[\[【]ID:(\w+)[\]】])|(?:Fig\.\s*(\d+))/gi, (match, id, figNum) => {

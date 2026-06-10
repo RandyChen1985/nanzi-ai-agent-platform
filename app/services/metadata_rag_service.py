@@ -57,6 +57,18 @@ class MetadataRagService:
         return base
 
     @staticmethod
+    def knowledge_unavailable_hint(detail: str = "") -> str:
+        """统一的「知识库服务不可用」用户/模型可读提示。"""
+        base = (
+            "[知识库服务不可用] 知识库检索服务（RAGFlow）当前无法访问，暂时无法检索文档内容。"
+            "请直接告知用户「知识库服务暂时不可用，请稍后重试或联系管理员」，"
+            "不要重复调用本工具，也不要凭记忆编造流程或制度内容。"
+        )
+        if detail:
+            base += f"\n（错误详情：{detail}）"
+        return base
+
+    @staticmethod
     def generate_table_content(dataset: MetaDataset, table: MetaTable, relationships: List[Any] = []) -> str:
         """
         Generate SQL-optimized YAML for a table (One Table per Chunk).

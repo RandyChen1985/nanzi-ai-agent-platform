@@ -20,7 +20,7 @@
     - 在 `get_tools` 时，根据 `ToolConfigItem` 里的配置，如果发现有 `model_name` 或 `temperature` 覆盖，则为该工具创建一个专用的 LLM 实例或配置。
     - 对于 `GenericApiTool`（通过 HTTP 调用的工具），可能需要支持在 Header 中透传模型选择（如果后端 API 支持）。
 3.  **Executor 适配**：
-    - 确保 `GeneralChatExecutor` 在调用工具时，传递的是已经配置好的工具实例。
+    - 确保 `AssistantExecutor` 在调用工具时，传递的是已经配置好的工具实例。
 
 ### 前端部分
 1.  **UI 升级**：

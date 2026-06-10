@@ -1,5 +1,7 @@
 # 云枢・智维・AI 平台 - AI智能体系统设计文档
 
+> **运行时更新（2026-06）**：本地智能体（General / ChatBI）已迁移至 **AgentScope 2.x**，不再使用 LangChain LCEL / `bind_tools`。请以 [AGENTSCOPE_RUNTIME.md](./AGENTSCOPE_RUNTIME.md)、[chat/CHAT_FLOW.md](./chat/CHAT_FLOW.md) 为准；下文 §3.2.4、§4.1、§5.1 中 LangChain 描述为历史快照。
+
 ## 1. 文档信息
 
 - **文档名称**：AI智能体系统设计文档
@@ -65,10 +67,10 @@
 - 数据适配器：多数据源适配
 - 连接池管理：数据库连接管理
 
-#### 3.2.4 AI模型层（LangChain Core）
-- **模型工厂**：统一管理 LLM Gateway，支持 OpenAI 协议适配
-- **工具链 (Tools)**：ChatBI 查数工具、知识库检索工具
-- **编排引擎 (LCEL)**：LangChain Expression Language 定义意图识别与执行流
+#### 3.2.4 AI 模型层（AgentScope Runtime）
+- **模型工厂**：`app/core/llm/client.py` → AgentScope `ChatModelBase`（OpenAI 协议兼容网关）
+- **工具链 (Tools)**：`ToolRegistry` → `RuntimeToolSpec` → AgentScope `Toolkit`
+- **编排引擎**：AgentScope `Agent` + `ReActConfig`；事件经 `event_stream.py` 映射为平台 SSE
 
 ### 3.3 Agent Orchestrator 层（已实现）
 - **AgentService**：作为 V1 接口的核心调度中枢，负责：
@@ -81,15 +83,15 @@
 ## 4. 技术选型 (Updated)
 
 ### 4.1 AI/ML技术栈
-- **核心框架**：LangChain (Orchestration), LCEL
+- **核心框架**：AgentScope 2.x（`agentscope[service,storage,workspace]`）
 - **大语言模型**：内部私有化部署网关 (OpenAI Compatible)
-- **工具协议**：OpenAI Function Calling / Tool Calling
+- **工具协议**：OpenAI Function Calling（经 AgentScope Toolkit）
 - **流式协议**：Server-Sent Events (SSE)
 
 ### 4.2 后端技术栈
 - **API框架**：FastAPI (Async/Await)
 - **数据库**：ClickHouse (业务数据), Redis (会话缓存), MySQL (元数据)
-- **运行环境**：Python 3.10+, Docker
+- **运行环境**：Python 3.11+, Docker
 
 ## 5. 详细设计
 
@@ -98,25 +100,24 @@
 #### 5.1.1 服务结构
 ```
 app/
-├── api/
-│   └── v1/                 # 统一对外接口
-│       └── endpoints/
-│           └── chat.py     # POST /chat/completions
-├── services/
-│   └── ai/
-│       ├── agent_service.py   # 中枢调度器 (Orchestrator)
-│       ├── intent_service.py  # 意图识别链 (LCEL)
-│       └── tools/             # LangChain 工具包
-│           └── data_api.py    # ChatBI 查数工具
+├── api/v1/endpoints/chat.py
+├── services/ai/
+│   ├── agent_service.py          # 编排中枢
+│   ├── dispatcher.py             # Executor 分发
+│   ├── executors/                # 薄封装（assistant / knowledge / data / rag / openclaw）
+│   ├── runners/                  # AssistantAgentRunner、KnowledgeAgentRunner、DataAgentRunner
+│   ├── runtime/agentscope/       # 模型、工具、事件、权限、AgentState
+│   └── tools/                    # 业务工具 + ToolRegistry
 ```
 
 #### 5.1.2 核心流程
-1. **统一入口**：用户调用 `/api/v1/chat/completions`。
-2. **意图识别**：`IntentService` 快速判断请求类型（如查数、闲聊）。
-3. **路由分发**：
-   - **GENERAL**: 直接调用 LLM 进行对话。
-   - **DATA_QUERY**: 激活 `model_with_tools`，模型自主决定调用 `data_api` 获取数据，并生成自然语言总结。
-4. **流式响应**: 通过 `sse_generator` 将思考过程、工具结果和最终回答以 SSE 事件流形式返回。
+1. **统一入口**：`POST /api/v1/chat/completions`。
+2. **路由**：`RouterService` / `AgentDispatcher` 选择 Executor。
+3. **本地执行**（`TurnType=KNOWLEDGE` 优先）：
+   - **Knowledge**：`KnowledgeAgentRunner` → 自动知识库检索 + AgentScope ReAct。
+   - **ChatBI**：`DataAgentRunner` → AgentScope ReAct + ChatBI 守卫（schema 前置、SQL 自愈）。
+   - **Assistant**：无工具直出；有工具 → `AssistantAgentRunner` → AgentScope `reply_stream`。
+4. **流式响应**：`map_standard_agentscope_event()` 将 AgentScope 事件转为 SSE chunk。
 
 #### 5.1.3 核心调用链路 (ChatBI 时序图)
 
@@ -142,12 +143,12 @@ sequenceDiagram
     end
     
     rect rgb(235, 255, 235)
-        Note right of Agent: 第二阶段: 工具决策与执行 (Tool Execution)
-        Agent->>Agent: 挂载 Tools (bind_tools)
-        Agent->>LLM: "用户想查华东PUE..."
-        LLM-->>Agent: 决策 Call Tool(name="query_metrics", args={room="华东"})
-        Agent->>Tool: 执行函数 query_metrics(...)
-        Tool-->>Agent: 返回数据: "PUE: 1.25"
+        Note right of Agent: 第二阶段: AgentScope ReAct
+        Agent->>Agent: build_toolkit + Agent.reply_stream
+        Agent->>LLM: get_dataset_schema / execute_sql_query
+        LLM-->>Agent: TOOL_CALL events
+        Agent->>Tool: RuntimeToolSpec.invoke()
+        Tool-->>Agent: TOOL_RESULT → AgentState
     end
     
     rect rgb(255, 245, 230)

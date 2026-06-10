@@ -1,14 +1,13 @@
 import pytest
-import re
 from unittest.mock import MagicMock, patch, AsyncMock
-from langchain_core.messages import SystemMessage, AIMessage
-from app.services.ai.executors.data_executor import DataQueryExecutor
+from app.services.ai.runtime.agentscope.compat import SystemMessage, AIMessage
+from app.services.ai.runners.data_agent_runner import DataAgentRunner
 
 @pytest.mark.no_infrastructure
 @pytest.mark.asyncio
 async def test_chatbi_ltm_rewrite_success():
     """
-    验证 DataQueryExecutor 能够正确地从 system_prompt 中提取 [Memory Profile] 块，
+    验证 DataAgentRunner 能够正确地从 system_prompt 中提取 [Memory Profile] 块，
     并把偏好信息传递给改写大模型，从而将别名 '临港' 改写为 '书院'。
     """
     mock_config = MagicMock()
@@ -26,7 +25,7 @@ async def test_chatbi_ltm_rewrite_success():
         "一些无关的规则"
     )
 
-    executor = DataQueryExecutor(mock_config, "trace-ltm-rewrite", [])
+    runner = DataAgentRunner(mock_config, "trace-ltm-rewrite", [])
 
     # Mock 改写 LLM 的返回值
     rewrite_response = MagicMock(spec=AIMessage)
@@ -36,7 +35,7 @@ async def test_chatbi_ltm_rewrite_success():
 
     # 用 mock_get_llm 替换掉 get_configured_llm，拦截 LLM 的实例化
     with patch("app.services.ai.config.AgentConfigProvider.get_configured_llm", AsyncMock(return_value=llm)):
-        result = await executor._resolve_standalone_query_for_new_data_query("查询临港机房数据", [])
+        result = await runner._resolve_standalone_query_for_new_data_query("查询临港机房数据", [])
 
     # 1. 验证改写后的结果是否成功转换
     assert result == "查询书院机房数据"
@@ -74,10 +73,10 @@ async def test_chatbi_ltm_rewrite_no_ltm_no_rewrite():
         "一些无关的规则"
     )
 
-    executor = DataQueryExecutor(mock_config, "trace-no-ltm", [])
+    runner = DataAgentRunner(mock_config, "trace-no-ltm", [])
 
     with patch("app.services.ai.config.AgentConfigProvider.get_configured_llm", AsyncMock()) as mock_get_llm:
-        result = await executor._resolve_standalone_query_for_new_data_query("查询临港机房数据", [])
+        result = await runner._resolve_standalone_query_for_new_data_query("查询临港机房数据", [])
 
     # 应该直接原样返回，不调用 LLM
     assert result == "查询临港机房数据"

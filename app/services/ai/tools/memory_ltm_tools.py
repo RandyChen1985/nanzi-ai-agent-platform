@@ -1,6 +1,6 @@
 import logging
 import json
-from langchain_core.tools import tool
+from app.services.ai.tools.tool_compat import tool
 from app.services.ai.memory_service import ltm_service
 
 logger = logging.getLogger(__name__)
@@ -58,4 +58,3 @@ async def delete_user_preference(user_id: str, key: str) -> str:
             return "提示：删除记忆失败，可能是 Redis 服务不可用。"
     except Exception as e:
         return f"清除长期记忆操作异常: {str(e)}"
-

@@ -9,7 +9,7 @@ import ast
 from bs4 import BeautifulSoup
 from playwright.async_api import async_playwright
 from typing import Optional, Dict, List, Any, Tuple
-from langchain_core.tools import tool
+from app.services.ai.tools.tool_compat import tool
 
 logger = logging.getLogger(__name__)
 
@@ -49,7 +49,10 @@ def sqlite_scratchpad(sql: str, session_id: str, import_data: str = None) -> str
             df_res = pd.read_sql_query(sql, conn)
             if df_res.empty:
                 return "执行成功，查询结果为空。"
-            return df_res.to_markdown(index=False)
+            try:
+                return df_res.to_markdown(index=False)
+            except ImportError:
+                return df_res.to_string(index=False)
         else:
             cursor = conn.cursor()
             cursor.execute(sql)
@@ -412,4 +415,3 @@ async def web_search_baidu(query: str, max_results: int = 6) -> str:
         
     except Exception as e:
         return f"百度网页检索异常失败: {str(e)}"
-

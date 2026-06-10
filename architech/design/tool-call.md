@@ -1,43 +1,38 @@
 # 云枢智能体平台工具调用规范与格式文档
 
-本文档详细描述了云枢智能体平台（Yunshu AI Agent Platform）在与大语言模型（LLM）交互时，工具调用（Tool Calling）的完整报文格式、交互协议及实现细节。
+本文档描述平台在与大语言模型交互时，工具定义、AgentScope ReAct 执行与 SSE 对外协议。自 AgentScope 迁移后，**运行时不再使用 LangChain `bind_tools`**。
 
 ## 1. 整体架构概览
 
-平台基于 **LangChain** 框架构建，兼容 **OpenAI Tool Call** 标准协议。工具的执行遵循 **ReAct (Reasoning and Acting)** 循环模式：
-1. **思考 (Thought)**: 模型决定是否需要调用工具。
-2. **行动 (Act)**: 模型输出结构化指令。
-3. **观察 (Observe)**: 系统执行工具并返回结果。
-4. **决策 (Finalize)**: 模型根据观察结果生成最终回答。
+本地智能体（General / ChatBI）基于 **AgentScope Agent + Toolkit**，对外仍兼容 **OpenAI Function Calling** 形态的 JSON Schema。执行遵循 **ReAct** 循环：
+
+1. **推理**：模型在 `MODEL_CALL` 中决定是否调用工具。
+2. **行动**：输出 `TOOL_CALL_*` 事件，平台执行 `RuntimeToolSpec.invoke()`。
+3. **观察**：`TOOL_RESULT_*` 回注 Agent 上下文。
+4. **收尾**：`TEXT_BLOCK_DELTA` 流式输出最终回答；或触发 `REQUIRE_USER_CONFIRM` 挂起。
+
+事件消费与 SSE 映射见 [AGENTSCOPE_RUNTIME.md](./AGENTSCOPE_RUNTIME.md)。
 
 ---
 
 ## 2. 工具定义格式 (Registration Format)
 
-当模型实例启动并调用 `bind_tools` 时，系统会将工具元数据转换为 JSON Schema 发送给 LLM。
+工具元数据由 `RuntimeToolSpec.parameters_schema` 提供，经 AgentScope Toolkit 发给 LLM（OpenAI tools 兼容结构）。
 
 ### 2.1 标准 JSON 结构
+
 ```json
 {
   "type": "function",
   "function": {
     "name": "execute_sql_query",
-    "description": "针对指定的数据源执行只读的 SQL SELECT 查询，并在指定的数据集权限范围内进行校验。",
+    "description": "针对指定数据源执行只读 SQL SELECT，并在数据集权限范围内校验。",
     "parameters": {
       "type": "object",
       "properties": {
-        "sql": {
-          "type": "string",
-          "description": "要执行的 SQL SELECT 查询语句。"
-        },
-        "data_source": {
-          "type": "string",
-          "description": "数据源标识符（如 'mysql_oa'），用于决定数据库连接和 SQL 方言。"
-        },
-        "dataset_name": {
-          "type": "string",
-          "description": "数据集名称（如 'energy_usage'），用于权限校验。"
-        }
+        "sql": { "type": "string", "description": "只读 SELECT 语句" },
+        "data_source": { "type": "string", "description": "数据源标识，如 mysql_oa" },
+        "dataset_name": { "type": "string", "description": "数据集名，用于权限校验" }
       },
       "required": ["sql", "data_source", "dataset_name"]
     }
@@ -45,85 +40,76 @@
 }
 ```
 
-### 2.2 动态参数映射 (Dynamic Tools)
-对于从数据库 `sys_api_tools` 加载的工具，系统会通过 `GenericApiToolFactory` 动态生成 Pydantic 模型，确保 `parameter_schema` 正确转换为上述 JSON 定义。
+### 2.2 工具来源
+
+| 类型 | 注册方式 |
+|------|----------|
+| 静态 Python 工具 | `ToolRegistry._registry` + `get_runtime_tool()` |
+| ChatBI 核心工具 | `_create_chatbi_runtime_tool_spec()` |
+| 通用 API 工具 | DB `sys_api_tools` → `GenericApiToolFactory` → `runtime_tool_spec_from_legacy_tool()` |
+| MCP 工具 | `McpToolFactory` |
+| AgentScope 内置 | `exec_command`→`Bash`、`read_file`→`Read` 等别名 |
 
 ---
 
-## 3. 交互报文协议 (Interaction Messages)
+## 3. 运行时消息与事件（AgentScope）
 
-在多轮 ReAct 交互中，消息序列的完整结构如下：
+Agent 内部维护 `AgentState` 与消息块（`TextBlock`、`ToolCallBlock`、`ToolResultBlock`）。平台通过 `reply_stream` 消费事件，**不**再手工拼装 LangChain 的 `assistant.tool_calls` / `tool` 消息对。
 
-| 角色 (Role) | 内容 (Content) | 附加字段 (Additional Fields) | 说明 |
-| :--- | :--- | :--- | :--- |
-| **system** | `system_prompt` | - | 包含 Agent 的人格定义和工作流约束。 |
-| **user** | 用户提问内容 | - | 原始输入。 |
-| **assistant** | `null` 或 思考文本 | `tool_calls: [...]` | 模型生成的工具调用请求，包含 `id`、`name` 和 `args`。 |
-| **tool** | 工具执行结果 (JSON/Text) | `tool_call_id: "..."` | **关键字段**：必须与 `assistant` 消息中的 `id` 严格匹配。 |
+对外 SSE 仍包含：
 
-### 报文示例 (以 ChatBI 为例)
-```json
-[
-  { "role": "system", "content": "你是一个数据分析专家..." },
-  { "role": "user", "content": "帮我查一下去年的能耗趋势" },
-  {
-    "role": "assistant",
-    "content": "为了准确回答您的问题，我需要先了解能耗数据集的结构。",
-    "tool_calls": [
-      {
-        "id": "call_qwer123",
-        "type": "function",
-        "function": {
-          "name": "get_dataset_schema",
-          "arguments": "{\"keywords\": \"energy\"}"
-        }
-      }
-    ]
-  },
-  {
-    "role": "tool",
-    "tool_call_id": "call_qwer123",
-    "content": "{\"dataset\": \"energy_stats\", \"columns\": [\"usage\", \"time\"]}"
-  }
-]
-```
+| SSE 类型 | 含义 |
+|----------|------|
+| `type: log` | 工具开始/完成、步骤日志 |
+| `content` | 流式正文 |
+| `permission_required` | ASK 工具需用户确认 |
+| `external_execution_required` | 需外部执行后回填 |
+| `tool_result_data` | 工具返回的二进制/结构化块 |
+
+权限恢复：`UserConfirmResultEvent` + `POST /permissions/{id}/confirm`。
 
 ---
 
-## 4. 特殊模式：XML 兼容解析
+## 4. 权限范围 (permission_scope)
 
-针对部分未完全适配 OpenAI Tool Call 协议或在复杂 Prompt 下倾向于输出标签的模型（如 DeepSeek V3/R1 在某些配置下），平台在 `GeneralChatExecutor` 中实现了 XML 自动捕获。
+`RuntimeToolSpec.permission_scope` 决定 AgentScope 工具执行前行为：
 
-**模型输出格式：**
-```xml
-<function_calls>
-  <invoke name="execute_sql_query">
-    <parameter name="sql">SELECT sum(usage) FROM energy_table</parameter>
-    <parameter name="data_source">clickhouse_prod</parameter>
-    <parameter name="dataset_name">energy_usage</parameter>
-  </invoke>
-</function_calls>
-```
+| scope | 行为 |
+|-------|------|
+| `read` | 自动执行（如 `get_dataset_schema`、只读 Bash） |
+| `ask` | 发出 `REQUIRE_USER_CONFIRM`，等待用户确认 |
+| `dangerous` | 拒绝自动执行 |
 
-**处理逻辑：**
-1. 正则或 `ElementTree` 识别 `<function_calls>` 代码块。
-2. 提取 `invoke` 的 `name` 和 `parameter`。
-3. 伪造一个 `tool_call_id` 并将其注入到标准的 LangChain 执行流中。
+实现：`app/services/ai/runtime/agentscope/tools.py` → `AgentScopeRuntimeTool.check_permissions()`。
 
 ---
 
-## 5. 核心逻辑实现参考
+## 5. 核心实现参考
 
-- **工具绑定**: `app/services/ai/executors/data_executor.py` 中的 `model_with_tools.bind_tools(tools)`。
-- **动态实例化**: `app/services/ai/tools/generic_api.py` 的 `GenericApiToolFactory`。
-- **隐式注入**: `app/services/ai/tools/registry.py` 的 `get_system_implicit_tools()`（如 `get_current_time`）。
+| 能力 | 路径 |
+|------|------|
+| 工具注册与 RuntimeSpec | `app/services/ai/tools/registry.py` |
+| Toolkit 构建 | `app/services/ai/runtime/agentscope/tools.py` |
+| 事件 → SSE | `app/services/ai/runtime/agentscope/event_stream.py` |
+| General 执行 | `app/services/ai/runners/assistant_agent_runner.py` |
+| Knowledge 执行 | `app/services/ai/runners/knowledge_agent_runner.py` |
+| ChatBI 执行 + 守卫 | `app/services/ai/runners/data_agent_runner.py` |
+| 权限挂起恢复 | `app/services/ai/runtime/agentscope/confirmations.py` |
+| 工具开发指南 | [../tools-schemal/README.md](../tools-schemal/README.md) |
 
 ---
 
-## 6. 安全与权限 (Security)
+## 6. 安全与权限
 
-在发送和执行过程中，平台会强制进行以下校验：
-- **SQL 安全**: 使用 `sqlglot` 校验 AST，严禁非 SELECT 语句。
-- **物理隔离**: 通过 `dataset_name` 在执行层强制进行用户权限校验，防止模型“越权”调用不属于当前用户的数据源。
-- **SSRF 防御**: 通用 HTTP 工具会对 `url_template` 进行白名单和内部 IP 过滤。
-```
+- **SQL 安全**：`sqlglot` 校验 AST，仅允许只读语句；`execute_sql_query` 走权限服务校验 `dataset_name`。
+- **物理隔离**：元数据检索按用户授权数据集过滤。
+- **SSRF 防御**：通用 HTTP 工具对 `url_template` 做白名单与内网 IP 过滤。
+
+---
+
+## 7. 历史说明
+
+- LangChain `bind_tools`、手工 `ToolMessage` 链、`data_executor.bind_tools` 等描述仅适用于迁移前版本。
+- `parse_xml_tool_calls()`（`executors/common.py`）为遗留兼容代码，**General AgentScope 路径不再依赖 XML 工具块解析**；模型应通过标准 function calling / AgentScope 工具协议调用。
+
+*文档版本：2026-06-09*

@@ -19,7 +19,7 @@ class AgentConfigProvider:
         temp_override: Optional[float] = None
     ):
         """
-        Instantiates a LangChain LLM based on system config, agent-specific overrides, or runtime overrides.
+        Instantiates an AgentScope LLM based on system config, agent-specific overrides, or runtime overrides.
         
         Priority:
         1. Runtime Override (model_override/temp_override from Tool Runtime Config)
@@ -131,6 +131,33 @@ class AgentConfigProvider:
             streaming=streaming,
             config=config
         )
+
+    @staticmethod
+    async def get_fallback_llm(
+        streaming: bool = True,
+        config: Optional[ChatConfig] = None,
+        exclude_model: Optional[str] = None,
+    ):
+        """Fallback native model for AgentScope ModelConfig: system default only."""
+        try:
+            llm_config = await ConfigService.get_all_from_db()
+        except Exception:
+            llm_config = {}
+
+        def get_val(key, default=None):
+            return llm_config.get(key, {}).get("value") or default
+
+        candidate = get_val("llm_model_name")
+        if not candidate or (exclude_model and candidate == exclude_model):
+            return None
+        try:
+            return await AgentConfigProvider.get_configured_llm(
+                streaming=streaming,
+                config=config,
+                model_override=candidate,
+            )
+        except Exception:
+            return None
 
     @staticmethod
     async def _generate_dataset_menu_content(user_id: Optional[int] = None, is_admin: bool = False) -> str:

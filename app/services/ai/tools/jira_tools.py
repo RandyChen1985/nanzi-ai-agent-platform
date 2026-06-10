@@ -1,6 +1,6 @@
 from typing import Optional, Type, List, Dict, Any
 from pydantic import BaseModel, Field
-from langchain_core.tools import BaseTool
+from app.services.ai.tools.tool_compat import BaseTool
 from atlassian import Jira
 import os
 import json

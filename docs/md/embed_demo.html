@@ -222,7 +222,7 @@
             更新上下文
           </button>
           <button onclick="sendQuickCommand()" class="secondary">
-            发送指令 (/clear)
+            发送指令 (/new)
           </button>
         </div>
 
@@ -301,7 +301,7 @@
 
       // 3. Send Command
       function sendQuickCommand() {
-        postMessageToWidget("SEND_COMMAND", { command: "/clear" });
+        postMessageToWidget("SEND_COMMAND", { command: "/new" });
       }
 
       // Toggle Minimize (Simulated)

@@ -109,10 +109,8 @@ class MemoryService:
             message["files"] = files
         if agent_name:
             message["agent_name"] = agent_name
-        if prompt_tokens:
-            message["prompt_tokens"] = prompt_tokens
-        if completion_tokens:
-            message["completion_tokens"] = completion_tokens
+        message["prompt_tokens"] = int(prompt_tokens or 0)
+        message["completion_tokens"] = int(completion_tokens or 0)
 
         
         # Push to list
@@ -179,6 +177,11 @@ class MemoryService:
     async def delete_session_memory(self, user_id: str, conversation_id: str, include_summary: bool = True):
         """Delete LIST history and optionally summary index doc."""
         await self.clear_history(user_id, conversation_id)
+        from app.services.ai.runtime.agentscope.state_store import agent_state_store
+        from app.services.ai.runtime.agentscope.workspace import delete_workspace_for_session
+
+        await agent_state_store.delete(user_id, conversation_id)
+        await delete_workspace_for_session(user_id, conversation_id)
         if include_summary:
             from app.services.ai.memory_index_service import MemoryIndexService
             await MemoryIndexService.delete_summary(str(user_id), conversation_id)

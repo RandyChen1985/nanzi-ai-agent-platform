@@ -2,10 +2,11 @@ import ast
 import logging
 import json
 import re
-from langchain_core.tools import tool
+from app.services.ai.tools.tool_compat import tool
 from typing import Any, Optional, List, Union
 from app.services.ai.ragflow_client import RagFlowClient
 from app.services.config_service import ConfigService
+from app.services.metadata_rag_service import MetadataRagService
 
 logger = logging.getLogger(__name__)
 
@@ -239,5 +240,8 @@ async def search_knowledge_base(query: str, dataset_ids: Optional[str] = None) -
         return json.dumps(result, ensure_ascii=False)
         
     except Exception as e:
+        err_msg = str(e)
         logger.error(f"Knowledge Search Failed: {e}", exc_info=True)
-        return f"[Tool Error] Failed to search knowledge base: {str(e)}"
+        if MetadataRagService._is_service_unavailable(err_msg):
+            return MetadataRagService.knowledge_unavailable_hint(err_msg)
+        return f"[Tool Error] Failed to search knowledge base: {err_msg}"

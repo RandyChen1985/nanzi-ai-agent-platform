@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { onMounted, onUnmounted, ref } from 'vue'
+
 interface Props {
   title: string
   message: string
@@ -17,10 +19,38 @@ const emit = defineEmits<{
   (e: 'confirm'): void
   (e: 'cancel'): void
 }>()
+
+const confirmButtonRef = ref<HTMLButtonElement | null>(null)
+
+const handleKeydown = (e: KeyboardEvent) => {
+  if (e.key === 'Enter') {
+    e.preventDefault()
+    e.stopPropagation()
+    emit('confirm')
+  } else if (e.key === 'Escape') {
+    e.preventDefault()
+    e.stopPropagation()
+    emit('cancel')
+  }
+}
+
+onMounted(() => {
+  confirmButtonRef.value?.focus()
+  document.addEventListener('keydown', handleKeydown, true)
+})
+
+onUnmounted(() => {
+  document.removeEventListener('keydown', handleKeydown, true)
+})
 </script>
 
 <template>
-  <div class="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm" @click.self="$emit('cancel')">
+  <div
+    class="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm"
+    role="dialog"
+    aria-modal="true"
+    @click.self="$emit('cancel')"
+  >
     <div class="bg-white rounded-xl shadow-2xl max-w-sm w-full overflow-hidden scale-100 transition-transform duration-200">
       <div class="p-6 text-center">
         <div class="mx-auto flex items-center justify-center h-12 w-12 rounded-full mb-4" :class="{
@@ -36,9 +66,10 @@ const emit = defineEmits<{
         <p class="text-sm text-gray-500 mt-2">{{ message }}</p>
       </div>
       <div class="bg-gray-50 px-4 py-3 sm:px-6 sm:flex sm:flex-row-reverse">
-        <button 
-          @click="$emit('confirm')" 
-          type="button" 
+        <button
+          ref="confirmButtonRef"
+          @click="$emit('confirm')"
+          type="button"
           class="w-full inline-flex justify-center rounded-md border border-transparent shadow-sm px-4 py-2 text-base font-medium text-white sm:ml-3 sm:w-auto sm:text-sm transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2"
           :class="{
             'bg-red-600 hover:bg-red-700 focus:ring-red-500': type === 'danger',

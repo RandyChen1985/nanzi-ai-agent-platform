@@ -666,8 +666,30 @@
                              </div>
                           </div>                          <!-- Details -->
                           <div v-if="log.details && log.isExpanded" class="mt-2 pt-2 border-t border-gray-100 dark:border-gray-700/50">
-                            <!-- SQL Detection & Pretty Print -->
-                            <div v-if="log.details && (log.details.includes('SELECT ') || log.details.includes('[Executed SQL]:') || log.details.includes('SQL:'))" class="space-y-1.5 mb-1">
+                            <template v-if="splitSqlToolLogDetails(log.details)">
+                              <div class="space-y-1.5 mb-1">
+                                <div class="p-2 bg-gray-900 rounded border border-gray-800 font-mono text-[10px] text-emerald-400 leading-relaxed overflow-x-auto relative group/sql">
+                                  <div class="flex justify-between items-center mb-1 text-[9px] text-gray-500 font-sans uppercase tracking-tight">
+                                    <span>SQL Query</span>
+                                    <button @click.stop="copyMessage(splitSqlToolLogDetails(log.details)!.sqlPart)" class="text-gray-600 hover:text-emerald-400 transition-colors uppercase">Copy</button>
+                                  </div>
+                                  <pre class="whitespace-pre-wrap break-all">{{ splitSqlToolLogDetails(log.details)!.sqlPart }}</pre>
+                                </div>
+                                <div class="p-2 rounded border font-mono text-[10px] leading-relaxed overflow-x-auto"
+                                     :class="splitSqlToolLogDetails(log.details)!.bodyKind === 'error'
+                                       ? 'bg-red-50 dark:bg-red-950/30 border-red-200 dark:border-red-900/40 text-red-700 dark:text-red-300'
+                                       : 'bg-gray-50 dark:bg-gray-900/60 border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-300'">
+                                  <div class="mb-1 text-[9px] font-sans uppercase tracking-tight"
+                                       :class="splitSqlToolLogDetails(log.details)!.bodyKind === 'error' ? 'text-red-500' : 'text-gray-500'">
+                                    {{ sqlToolLogBodyLabel(splitSqlToolLogDetails(log.details)!.bodyKind) }}
+                                  </div>
+                                  <pre class="whitespace-pre-wrap break-all">{{ splitSqlToolLogDetails(log.details)!.bodyPart }}</pre>
+                                </div>
+                                <pre v-if="splitSqlToolLogDetails(log.details)!.trailingPart" class="font-mono text-[10px] text-amber-600 dark:text-amber-400 whitespace-pre-wrap break-all">{{ splitSqlToolLogDetails(log.details)!.trailingPart }}</pre>
+                              </div>
+                            </template>
+                            <!-- SQL Detection & Pretty Print (legacy / error-only logs) -->
+                            <div v-else-if="log.details && isSqlLikeToolLogDetails(log.details)" class="space-y-1.5 mb-1">
                                 <div class="p-2 bg-gray-900 rounded border border-gray-800 font-mono text-[10px] text-emerald-400 leading-relaxed overflow-x-auto relative group/sql">
                                     <div class="flex justify-between items-center mb-1 text-[9px] text-gray-500 font-sans uppercase tracking-tight">
                                       <span>SQL Query</span>
@@ -683,6 +705,117 @@
                     </div>
                   </div>
                 </transition>
+              </div>
+              <!-- Tool Permission Confirmation -->
+              <div
+                v-if="msg.pendingPermission"
+                class="mt-3 rounded-lg border border-amber-200 dark:border-amber-900/50 bg-amber-50/80 dark:bg-amber-900/20 p-3 text-xs"
+              >
+                <div class="flex items-start gap-2">
+                  <div class="mt-0.5 flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-md bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300">
+                    <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v4m0 4h.01M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+                    </svg>
+                  </div>
+                  <div class="min-w-0 flex-1">
+                    <div class="flex items-center justify-between gap-3">
+                      <div class="font-bold text-amber-900 dark:text-amber-100 truncate">
+                        {{ msg.pendingPermission.title || '工具调用确认' }}
+                      </div>
+                      <span
+                        class="rounded-full px-2 py-0.5 text-[10px] font-bold uppercase"
+                        :class="{
+                          'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300': msg.pendingPermission.status === 'pending',
+                          'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300': msg.pendingPermission.status === 'approved',
+                          'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-300': msg.pendingPermission.status === 'rejected',
+                          'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300': msg.pendingPermission.status === 'error' || msg.pendingPermission.status === 'expired'
+                        }"
+                      >
+                        {{ formatPermissionStatus(msg.pendingPermission.status) }}
+                      </span>
+                    </div>
+                    <div class="mt-1 text-amber-800/80 dark:text-amber-200/80 break-words">
+                      {{ msg.pendingPermission.details }}
+                    </div>
+                    <div
+                      v-if="msg.pendingPermission.tool_call?.name"
+                      class="mt-2 rounded-md bg-white/70 dark:bg-gray-950/30 border border-amber-100 dark:border-amber-900/40 p-2 font-mono text-[10px] text-gray-600 dark:text-gray-300 overflow-x-auto"
+                    >
+                      <span>{{ msg.pendingPermission.tool_call.name }}</span>
+                      <span v-if="msg.pendingPermission.tool_call.args"> {{ JSON.stringify(msg.pendingPermission.tool_call.args) }}</span>
+                    </div>
+                    <div v-if="msg.pendingPermission.status === 'pending'" class="mt-3 flex items-center gap-2">
+                      <button
+                        @click="confirmPendingPermission(msg, true)"
+                        :disabled="msg.pendingPermission.isSubmitting"
+                        class="inline-flex items-center gap-1.5 rounded-md bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white shadow-sm hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.2" d="m5 13 4 4L19 7" />
+                        </svg>
+                        允许
+                      </button>
+                      <button
+                        @click="confirmPendingPermission(msg, false)"
+                        :disabled="msg.pendingPermission.isSubmitting"
+                        class="inline-flex items-center gap-1.5 rounded-md bg-white px-3 py-1.5 text-xs font-bold text-gray-700 border border-gray-200 shadow-sm hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60 dark:bg-gray-800 dark:text-gray-200 dark:border-gray-700 dark:hover:bg-gray-700"
+                      >
+                        <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.2" d="M6 18 18 6M6 6l12 12" />
+                        </svg>
+                        拒绝
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <!-- External Tool Execution -->
+              <div
+                v-if="msg.pendingExternalExecution"
+                class="mt-3 rounded-lg border border-sky-200 dark:border-sky-900/50 bg-sky-50/80 dark:bg-sky-900/20 p-3 text-xs"
+              >
+                <div class="flex items-start gap-2">
+                  <div class="mt-0.5 flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-md bg-sky-100 dark:bg-sky-900/40 text-sky-700 dark:text-sky-300">
+                    <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                    </svg>
+                  </div>
+                  <div class="min-w-0 flex-1">
+                    <div class="flex items-center justify-between gap-3">
+                      <div class="font-bold text-sky-900 dark:text-sky-100 truncate">
+                        {{ msg.pendingExternalExecution.title || '外部工具执行' }}
+                      </div>
+                      <span class="rounded-full px-2 py-0.5 text-[10px] font-bold uppercase bg-sky-100 text-sky-700 dark:bg-sky-900/40 dark:text-sky-300">
+                        {{ formatExternalExecutionStatus(msg.pendingExternalExecution.status) }}
+                      </span>
+                    </div>
+                    <div class="mt-1 text-sky-800/80 dark:text-sky-200/80 break-words">
+                      {{ msg.pendingExternalExecution.details }}
+                    </div>
+                    <div
+                      v-if="msg.pendingExternalExecution.tool_call?.name"
+                      class="mt-2 rounded-md bg-white/70 dark:bg-gray-950/30 border border-sky-100 dark:border-sky-900/40 p-2 font-mono text-[10px] text-gray-600 dark:text-gray-300 overflow-x-auto"
+                    >
+                      <span>{{ msg.pendingExternalExecution.tool_call.name }}</span>
+                      <span v-if="msg.pendingExternalExecution.tool_call.args"> {{ JSON.stringify(msg.pendingExternalExecution.tool_call.args) }}</span>
+                    </div>
+                    <div v-if="msg.pendingExternalExecution.status === 'pending'" class="mt-3 space-y-2">
+                      <textarea
+                        v-model="msg.pendingExternalExecution.outputDraft"
+                        rows="4"
+                        placeholder="在此粘贴客户端执行该工具后的输出结果..."
+                        class="w-full rounded-md border border-sky-200 dark:border-sky-800 bg-white/90 dark:bg-gray-950/40 px-3 py-2 text-xs text-gray-700 dark:text-gray-200"
+                      />
+                      <button
+                        @click="submitPendingExternalExecution(msg)"
+                        :disabled="msg.pendingExternalExecution.isSubmitting"
+                        class="inline-flex items-center gap-1.5 rounded-md bg-sky-600 px-3 py-1.5 text-xs font-bold text-white shadow-sm hover:bg-sky-700 disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        提交结果并继续
+                      </button>
+                    </div>
+                  </div>
+                </div>
               </div>
               <!-- Main Content -->
               <div v-if="msg.content" class="relative group/content mt-2">
@@ -1042,6 +1175,11 @@
         :allowed-agents="allowedAgents"
         :current-user="currentUser"
         :window-width="windowWidth"
+        :approval-mode="config.approvalMode"
+        :selected-model="config.overrideModel"
+        :available-models="availableModels"
+        @update:approval-mode="(mode) => { config.approvalMode = mode; saveRoutingSettings(); }"
+        @update:selected-model="(model) => { config.overrideModel = model; saveRoutingSettings(); }"
         @send="sendMessage"
         @stop="stopGeneration"
         @toggle-shortcuts="toggleShortcuts"
@@ -1941,6 +2079,8 @@ import RagFlowResourceSelector from "@/components/RagFlowResourceSelector.vue";
 import FileBrowserModal from "@/components/embed/FileBrowserModal.vue";
 import AttachmentImageThumb from "@/components/embed/AttachmentImageThumb.vue";
 import { isImageAttachment } from "@/utils/attachmentImages";
+import { sanitizeStreamContent } from "@/utils/streamContentSanitize";
+import { createSseLineParser } from "@/utils/chartRenderer";
 import { modelApi, type AIModel } from "@/api/model";
 import {
   filterLogsForTurn,
@@ -1949,6 +2089,16 @@ import {
   countHiddenLogs,
   type TurnType,
 } from "@/utils/turnLogDisplay";
+import { splitSqlToolLogDetails, isSqlLikeToolLogDetails, sqlToolLogBodyLabel } from "@/utils/toolLogDisplay";
+import {
+  dispatchAgentscopeStreamEvent,
+  formatExternalExecutionStatus,
+  formatPermissionStatus,
+  handlePermissionRequired as applyPermissionRequiredEvent,
+  resumeExternalExecutionStream,
+  type PendingExternalExecution,
+  type PendingToolPermission,
+} from "@/utils/agentscopeSseHandlers";
 // --- Types ---
 interface LogEntry {
   id: number | string;
@@ -1957,7 +2107,7 @@ interface LogEntry {
   status: "pending" | "success" | "error";
   isExpanded: boolean;
   isRouter?: boolean;
-  category?: 'router' | 'sql' | 'knowledge' | 'tool' | 'intent' | 'permission' | 'default';
+  category?: 'router' | 'sql' | 'knowledge' | 'tool' | 'intent' | 'permission' | 'external' | 'model' | 'agent' | 'context' | 'default';
   execution_time_ms?: number | null;
   elapsed_time_ms?: number | null;
   started_at?: number | null;
@@ -1999,6 +2149,9 @@ interface Message {
   feedback?: "up" | "down" | null;
   timestamp?: string;
   isTimeLabel?: boolean;
+  pendingPermission?: PendingToolPermission;
+  pendingExternalExecution?: PendingExternalExecution;
+  toolResultData?: Record<string, Array<{ block_id?: string; media_type?: string; data?: unknown; url?: string | null }>>;
 }
 // Helper: Check Role
 const checkRole = (msg: Message, role: string): boolean => {
@@ -2382,6 +2535,7 @@ const config = reactive({
   theme: "light",
   welcomeMessage: "",
   overrideModel: "", // To override default model
+  approvalMode: "ask" as "ask" | "allow" | "deny",
   overrideAgentId: "", // To override agent via @mention
   userAvatar: "", // Custom user avatar URL
   routingMode: "auto", // 'auto' | 'expert'
@@ -2399,6 +2553,7 @@ const saveRoutingSettings = () => {
     localStorage.setItem("yovole_enable_multi_agent", config.enableMultiAgent ? "1" : "0");
     localStorage.setItem("yovole_show_shortcuts", config.showShortcuts ? "1" : "0");
     localStorage.setItem("yovole_override_model", config.overrideModel || "");
+    localStorage.setItem("yovole_approval_mode", config.approvalMode || "ask");
     localStorage.setItem("yovole_embed_theme", config.theme || "light");
 };
 const triggerMultiAgentHint = (enabled: boolean) => {
@@ -2544,7 +2699,7 @@ const resetStallTimer = () => {
 const showCommandMenu = ref(false);
 const slashCommands = ref<any[]>([
   { id: "sys_history", command: "/history", label: "🕒 历史", sort_order: -20 },
-  { id: "sys_clear", command: "/clear", label: "💬 新会话", sort_order: -18 },
+  { id: "sys_clear", command: "/new", label: "💬 新会话", sort_order: -18 },
   { id: "sys_settings", command: "/settings", label: "⚙️ 设置", sort_order: -15 },
 ]);
 // History Sidebar State
@@ -3378,7 +3533,7 @@ const fetchSlashCommands = async () => {
       // 定义系统命令
       const systemCommands = [
         { id: "sys_history", command: "/history", label: "🕒 历史", sort_order: -20 },
-        { id: "sys_clear", command: "/clear", label: "💬 新会话", sort_order: -18 },
+        { id: "sys_clear", command: "/new", label: "💬 新会话", sort_order: -18 },
         { id: "sys_settings", command: "/settings", label: "⚙️ 设置", sort_order: -15 }
       ];
       // 合并系统命令和用户命令，并按 sort_order 排序
@@ -3390,7 +3545,7 @@ const fetchSlashCommands = async () => {
       // 如果API没有返回数据，至少确保系统命令存在
       const systemCommands = [
         { id: "sys_history", command: "/history", label: "🕒 历史", sort_order: -20 },
-        { id: "sys_clear", command: "/clear", label: "💬 新会话", sort_order: -18 },
+        { id: "sys_clear", command: "/new", label: "💬 新会话", sort_order: -18 },
         { id: "sys_settings", command: "/settings", label: "⚙️ 设置", sort_order: -15 }
       ];
       slashCommands.value = systemCommands;
@@ -3401,7 +3556,7 @@ const fetchSlashCommands = async () => {
     const systemCommands = [
       { id: "sys_history", command: "/history", label: "🕒 历史", sort_order: -20 },
       { id: "sys_settings", command: "/settings", label: "⚙️ 设置", sort_order: -15 },
-      { id: "sys_clear", command: "/clear", label: "💬 新会话", sort_order: -10 }
+      { id: "sys_clear", command: "/new", label: "💬 新会话", sort_order: -10 }
     ];
     slashCommands.value = systemCommands;
   }
@@ -3678,7 +3833,8 @@ const handleSystemCommand = (cmd: string): boolean => {
     case "/settings":
       showSettings.value = true;
       return true;
-    case "/clear":
+    case "/new":
+    case "/clear": // legacy alias
       showConfirmModal.value = true;
       return true;
   }
@@ -3872,6 +4028,229 @@ const handleQuickQuestion = (content: string) => {
   userInput.value = content;
   sendMessage();
 };
+
+const addEmbedLogFromStream = (msg: Message, data: any) => {
+  if (!msg.logs) msg.logs = [];
+  const logId = data.id || Date.now() + Math.random();
+  const existingIdx = msg.logs.findIndex((l) => l.id === logId);
+  const title = data.title || "";
+  let category: LogEntry["category"] = data.category || "default";
+  if (category === "default") {
+    if (title.includes("路由")) category = "router";
+    else if (title.includes("SQL") || title.includes("sql") || title.includes("数据")) category = "sql";
+    else if (title.includes("知识") || title.includes("检索") || title.includes("引用") || title.includes("来源") || title.includes("分析")) category = "knowledge";
+    else if (title.includes("工具") || title.includes("调用")) category = "tool";
+    else if (title.includes("意图") || title.includes("轮次分类")) category = "intent";
+    else if (title.includes("权限") || title.includes("permission") || title.includes("确认")) category = "permission";
+  }
+  if (existingIdx > -1) {
+    const currentLog = msg.logs[existingIdx];
+    if (!currentLog) return;
+    msg.logs[existingIdx] = {
+      ...currentLog,
+      title: data.title || currentLog.title,
+      details: data.details ?? currentLog.details,
+      status: (data.status as any) || currentLog.status || "success",
+      category: category !== "default" ? category : currentLog.category,
+      execution_time_ms: data.execution_time_ms ?? currentLog.execution_time_ms,
+      elapsed_time_ms: data.elapsed_time_ms ?? currentLog.elapsed_time_ms,
+      started_at: currentLog.started_at ?? (data.status === "pending" ? Date.now() : data.started_at),
+    };
+    return;
+  }
+  msg.logs.push({
+    id: logId,
+    title: data.title || "Log Info",
+    details: data.details || "",
+    status: (data.status as any) || "success",
+    isExpanded: false,
+    category,
+    execution_time_ms: data.execution_time_ms ?? null,
+    elapsed_time_ms: data.elapsed_time_ms ?? null,
+    started_at: data.status === "pending" ? Date.now() : (data.started_at ?? null),
+  });
+};
+
+const applyPermissionStreamEvent = (msg: Message, data: any) => {
+  if (data.trace_id) msg.trace_id = data.trace_id;
+  if (data.data?.trace_id) msg.trace_id = data.data.trace_id;
+
+  if (dispatchAgentscopeStreamEvent(msg, data, addEmbedLogFromStream)) {
+    if (data.type === "error") {
+      if (msg.pendingPermission) msg.pendingPermission.status = "error";
+      if (msg.pendingExternalExecution) msg.pendingExternalExecution.status = "error";
+      msg.isThinking = false;
+      msg.content += "\n\n> 服务异常: " + (data.content || "未知错误");
+    } else if (data.content) {
+      const piece = sanitizeStreamContent(String(data.content || ""));
+      if (piece) {
+        if (msg.isThinking && msg.isThoughtExpanded) msg.isThoughtExpanded = false;
+        msg.content += piece;
+        if (msg.isThinking) msg.isThinking = false;
+        resetStallTimer();
+      }
+    }
+    return;
+  }
+
+  if (data.type === "log") {
+    addEmbedLogFromStream(msg, data);
+  } else if (data.type === "citation" && Array.isArray(data.data)) {
+    const newCitations = [...(msg.citations || [])];
+    data.data.forEach((newRef: any) => {
+      const exists = newCitations.some(c => c.chunk_id === newRef.chunk_id || (c.content === newRef.content && c.doc_name === newRef.doc_name));
+      if (!exists) newCitations.push(newRef);
+    });
+    msg.citations = newCitations;
+  } else if (data.type === "router_log") {
+    const thoughtText = data.thought || "No reasoning provided.";
+    const agentName = data.selected_agent || "Unknown";
+    const conf = data.confidence !== undefined ? `(置信度: ${data.confidence})` : "";
+    addEmbedLogFromStream(msg, {
+      id: "router_" + Date.now(),
+      title: "智能路由决策",
+      details: `思考过程:\n${thoughtText}\n\n最终选择: ${agentName} ${conf}`,
+      status: "success",
+      isRouter: true,
+      category: "router",
+      execution_time_ms: data.execution_time_ms ?? null,
+    });
+  } else if (data.type === "meta") {
+    if (data.agent_name) msg.agentName = data.agent_name;
+    if (data.agent_display_name) msg.agentDisplayName = data.agent_display_name;
+    if (data.turn_type) msg.turnType = data.turn_type;
+    if (data.prompt_tokens !== undefined) msg.prompt_tokens = data.prompt_tokens;
+    if (data.completion_tokens !== undefined) msg.completion_tokens = data.completion_tokens;
+  } else if (data.type === "error") {
+    if (msg.pendingPermission) msg.pendingPermission.status = "error";
+    msg.isThinking = false;
+    msg.content += "\n\n> 服务异常: " + (data.content || "未知错误");
+  } else if (data.content) {
+    const piece = sanitizeStreamContent(String(data.content || ""));
+    if (piece) {
+      if (msg.isThinking && msg.isThoughtExpanded) msg.isThoughtExpanded = false;
+      msg.content += piece;
+      if (msg.isThinking) msg.isThinking = false;
+      resetStallTimer();
+    }
+  }
+};
+
+const handlePermissionRequired = (msg: Message, data: any) => {
+  applyPermissionRequiredEvent(msg, data, addEmbedLogFromStream);
+  if (thoughtTimer) {
+    clearInterval(thoughtTimer);
+    thoughtTimer = null;
+  }
+};
+
+const submitPendingExternalExecution = async (msg: Message) => {
+  const pending = msg.pendingExternalExecution;
+  if (!pending || pending.status !== "pending") return;
+  pending.isSubmitting = true;
+  isProcessing.value = true;
+  msg.isThinking = true;
+  msg.thoughtStartTime = Date.now();
+  msg.thoughtDuration = "0.0";
+  msg.thinkingText = "正在提交外部执行结果...";
+  resetStallTimer();
+
+  try {
+    await resumeExternalExecutionStream({
+      requestId: pending.external_execution_request_id,
+      toolCall: pending.tool_call,
+      output: pending.outputDraft || "(empty external result)",
+      headers: embedAuthHeaders() || {},
+      credentials: "include",
+      onEvent: (data) => applyPermissionStreamEvent(msg, data),
+    });
+  } catch (error: any) {
+    pending.status = "error";
+    msg.content += `\n[外部执行恢复失败: ${error.message || "Unknown error"}]`;
+  } finally {
+    pending.isSubmitting = false;
+    isProcessing.value = msg.pendingExternalExecution?.status === "pending" || msg.pendingPermission?.status === "pending";
+    msg.isThinking = false;
+    clearStallTimer();
+    showStalledPrompt.value = false;
+    if (thoughtTimer) {
+      clearInterval(thoughtTimer);
+      thoughtTimer = null;
+    }
+    if (msg.logs) {
+      msg.logs.forEach((l) => {
+        if (l.status === "pending" && l.category !== "permission" && l.category !== "external") l.status = "success";
+      });
+    }
+    scrollToBottom();
+    nextTick(() => chatInputRef.value?.focus());
+  }
+};
+
+const confirmPendingPermission = async (msg: Message, confirmed: boolean) => {
+  const pending = msg.pendingPermission;
+  if (!pending || pending.status !== "pending") return;
+  pending.isSubmitting = true;
+  isProcessing.value = true;
+  if (confirmed) {
+    msg.isThinking = true;
+    msg.thoughtStartTime = Date.now();
+    msg.thoughtDuration = "0.0";
+    msg.thinkingText = "正在继续执行...";
+    resetStallTimer();
+  }
+
+  try {
+    const response = await fetch(`/api/v1/chat/permissions/${pending.permission_request_id}/confirm`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(embedAuthHeaders() || {}),
+      },
+      body: JSON.stringify({ confirmed }),
+      credentials: "include",
+    });
+    if (!response.ok) throw new Error(response.statusText);
+    const reader = response.body?.getReader();
+    if (!reader) throw new Error("No body");
+    const decoder = new TextDecoder();
+    const parser = createSseLineParser();
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      const dataLines = parser.feed(decoder.decode(value, { stream: true }));
+      for (const dataStr of dataLines) {
+        if (dataStr === "[DONE]") continue;
+        applyPermissionStreamEvent(msg, JSON.parse(dataStr));
+      }
+      scrollToBottom();
+    }
+    for (const dataStr of parser.flush()) {
+      if (dataStr !== "[DONE]") applyPermissionStreamEvent(msg, JSON.parse(dataStr));
+    }
+  } catch (error: any) {
+    pending.status = "error";
+    msg.content += `\n[工具确认失败: ${error.message || "Unknown error"}]`;
+  } finally {
+    pending.isSubmitting = false;
+    isProcessing.value = msg.pendingPermission?.status === "pending" || msg.pendingExternalExecution?.status === "pending";
+    msg.isThinking = false;
+    clearStallTimer();
+    showStalledPrompt.value = false;
+    if (thoughtTimer) {
+      clearInterval(thoughtTimer);
+      thoughtTimer = null;
+    }
+    if (msg.logs) {
+      msg.logs.forEach((l) => {
+        if (l.status === "pending" && l.category !== "permission") l.status = "success";
+      });
+    }
+    scrollToBottom();
+    nextTick(() => chatInputRef.value?.focus());
+  }
+};
+
 const sendMessage = async () => {
   const content = userInput.value.trim();
   const files = chatInputRef.value?.uploadedFiles ? Array.from(chatInputRef.value.uploadedFiles) as ChatFile[] : [];
@@ -3963,6 +4342,9 @@ const sendMessage = async () => {
               conversation_id: conversationId.value,      debug_options: {
         injected_context: injectedContext.value,
         model: config.overrideModel || undefined,
+      },
+      permission_options: {
+        approval_mode: config.approvalMode || "ask",
       },
     };
     const headers: any = {
@@ -4094,8 +4476,12 @@ const sendMessage = async () => {
                 execution_time_ms: data.execution_time_ms ?? null,
               });
             }
-          }
-          else if (data.type === "meta") {
+          } else if (dispatchAgentscopeStreamEvent(agentMsg.value, data, addEmbedLogFromStream)) {
+            if (data.type === "permission_required" && thoughtTimer) {
+              clearInterval(thoughtTimer);
+              thoughtTimer = null;
+            }
+          } else if (data.type === "meta") {
             if (data.agent_name) {
               agentMsg.value.agentName = data.agent_name;
               if (data.agent_display_name) {
@@ -4125,28 +4511,18 @@ const sendMessage = async () => {
             (agentMsg.value as any).status = "error";
             agentMsg.value.content += "\n\n> ❌ **服务异常**: " + (data.content || "未知错误");
           } else if (data.type === "answer" || data.content) {
-            // Handle both direct data.content (legacy) and data.type === "answer"
-            const content = data.content || "";
-            if (content) {
-              // --- [SMART TIMER STOP] ---
-              // Only stop thinking UI if we actually started receiving the final answer content.
-              // We check if it is NOT an XML tag (which might be leaked Orchestrator content)
-              const isRealContent = !content.includes('<function_calls') && !content.includes('<think');
-              if (isRealContent) {
-                if (agentMsg.value.isThinking && agentMsg.value.isThoughtExpanded) {
-                   // Always auto-collapse thought process when content starts
-                   agentMsg.value.isThoughtExpanded = false;
-                }
-                agentMsg.value.content += content;
-                resetStallTimer();
-                // Stop the timer and hidden thinking status once real content flows
-                if (agentMsg.value.isThinking) {
-                  agentMsg.value.isThinking = false;
-                  // Stop the interval timer as well to freeze the number
-                  if (thoughtTimer) {
-                    clearInterval(thoughtTimer);
-                    thoughtTimer = null;
-                  }
+            const piece = sanitizeStreamContent(String(data.content || ""));
+            if (piece) {
+              if (agentMsg.value.isThinking && agentMsg.value.isThoughtExpanded) {
+                agentMsg.value.isThoughtExpanded = false;
+              }
+              agentMsg.value.content += piece;
+              resetStallTimer();
+              if (agentMsg.value.isThinking) {
+                agentMsg.value.isThinking = false;
+                if (thoughtTimer) {
+                  clearInterval(thoughtTimer);
+                  thoughtTimer = null;
                 }
               }
             }
@@ -4180,7 +4556,7 @@ const sendMessage = async () => {
     // Final cleanup: stop any remaining log spinners
     if (agentMsg.value.logs) {
       agentMsg.value.logs.forEach((l) => {
-        if (l.status === "pending") l.status = "success";
+        if (l.status === "pending" && l.category !== "permission") l.status = "success";
       });
     }
     scrollToBottom();
@@ -4313,6 +4689,10 @@ onMounted(() => {
   if (savedShortcuts !== null) config.showShortcuts = savedShortcuts === "1";
   const savedOverrideModel = localStorage.getItem("yovole_override_model");
   if (savedOverrideModel) config.overrideModel = savedOverrideModel;
+  const savedApprovalMode = localStorage.getItem("yovole_approval_mode");
+  if (savedApprovalMode === "ask" || savedApprovalMode === "allow" || savedApprovalMode === "deny") {
+    config.approvalMode = savedApprovalMode;
+  }
   const savedTheme = localStorage.getItem("yovole_embed_theme");
   if (savedTheme) {
     config.theme = savedTheme;

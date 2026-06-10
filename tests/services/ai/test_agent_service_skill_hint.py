@@ -11,6 +11,16 @@ class _NoopExecutor:
         yield {"content": "ok"}
 
 
+class _ExternalPendingExecutor:
+    async def execute(self, messages):
+        yield {
+            "type": "external_execution_required",
+            "status": "pending",
+            "id": "call_ext",
+            "external_execution_request_id": "ext_req_1",
+        }
+
+
 async def _noop_audit(*args, **kwargs):
     return None
 
@@ -141,3 +151,67 @@ async def test_chatbi_agent_defers_turn_classification_to_data_executor():
     assert meta["turn_type"] == "data_query_request"
     assert meta["turn_type_label"] == "ChatBI 请求类别分析"
     assert captured["shared_turn"] is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.no_infrastructure
+async def test_chat_stream_skips_audit_on_external_execution_required():
+    service = AgentService()
+    agent_config = ChatConfig(
+        agent_id="agent-1",
+        agent_name="helper",
+        agent_display_name="Helper",
+        model_name="test-model",
+        temperature=0,
+        system_prompt="Base prompt",
+        tools=[],
+    )
+    audit_calls: list[tuple] = []
+
+    async def capture_audit(*args, **kwargs):
+        audit_calls.append(args)
+
+    async def fake_dispatch(config, *args, **kwargs):
+        return _ExternalPendingExecutor()
+
+    with (
+        patch(
+            "app.services.ai.context_manager.AgentContextManager.resolve_agent_config",
+            AsyncMock(return_value=(agent_config, None)),
+        ),
+        patch(
+            "app.services.ai.context_manager.AgentContextManager.setup_context",
+            AsyncMock(),
+        ),
+        patch(
+            "app.services.memory_config_service.MemoryConfigService.get_bool",
+            AsyncMock(return_value=False),
+        ),
+        patch(
+            "app.services.ai.memory_service.ltm_service.fetch_memory",
+            AsyncMock(return_value=None),
+        ),
+        patch(
+            "app.services.config_service.ConfigService.get",
+            AsyncMock(return_value=None),
+        ),
+        patch(
+            "app.services.ai.agent_service.AgentDispatcher.dispatch",
+            side_effect=fake_dispatch,
+        ),
+        patch(
+            "app.services.ai.agent_service.AuditManager.log_transaction",
+            side_effect=capture_audit,
+        ),
+        patch("app.core.config.Settings.SKILLS_DIR", "/app/data/skills"),
+    ):
+        chunks = []
+        async for chunk in service.chat_completion_stream(
+            [{"role": "user", "content": "运行外部工具"}],
+            user_info={"user_id": "1", "role": "admin", "user_name": "admin"},
+            enable_multi_agent=False,
+        ):
+            chunks.append(chunk)
+
+    assert any(chunk.get("type") == "external_execution_required" for chunk in chunks)
+    assert audit_calls == []

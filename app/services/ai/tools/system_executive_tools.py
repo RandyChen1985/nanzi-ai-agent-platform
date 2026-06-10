@@ -7,7 +7,7 @@ import psutil
 import json
 import re
 import fnmatch
-from langchain_core.tools import tool
+from app.services.ai.tools.tool_compat import tool
 
 logger = logging.getLogger(__name__)
 

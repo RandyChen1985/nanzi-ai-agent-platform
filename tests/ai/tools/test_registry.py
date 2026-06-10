@@ -11,6 +11,7 @@ pytestmark = pytest.mark.no_infrastructure
 def clear_registry_cache():
     """每个测试前清理缓存，确保测试隔离"""
     ToolRegistry._db_tool_cache.clear()
+    ToolRegistry._db_tool_source_cache.clear()
     ToolRegistry._db_tool_ids_fetched_at.clear()
     yield
 
