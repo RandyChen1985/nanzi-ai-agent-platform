@@ -643,19 +643,25 @@ class DataAgentRunner(BaseExecutor):
             "max_steps": max_steps,
         }
         interrupted = False
-
-        async for chunk in self._stream_agentscope_events(
-            event_stream=agent.reply_stream(inputs),
-            agent=agent,
-            tools=guarded_tools,
-            native_model=native_model,
-            state=state,
-            stream_meta=stream_meta,
-            emit_final_guard=False,
-        ):
-            if is_interrupt_sse_chunk(chunk):
-                interrupted = True
-            yield chunk
+        initial_tool_choice = self._resolve_initial_tool_choice(state)
+        original_model = agent.model
+        if initial_tool_choice is not None:
+            agent.model = _ForcedFirstToolChoiceModel(original_model, initial_tool_choice)
+        try:
+            async for chunk in self._stream_agentscope_events(
+                event_stream=agent.reply_stream(inputs),
+                agent=agent,
+                tools=guarded_tools,
+                native_model=native_model,
+                state=state,
+                stream_meta=stream_meta,
+                emit_final_guard=False,
+            ):
+                if is_interrupt_sse_chunk(chunk):
+                    interrupted = True
+                yield chunk
+        finally:
+            agent.model = original_model
         if interrupted:
             return
         if self._is_schema_fatal(state):
@@ -1583,6 +1589,22 @@ class DataAgentRunner(BaseExecutor):
         state.sql_plan_missing = False
         state.sql_before_schema = False
 
+    def _resolve_force_execute_sql_tool_choice(self, state: _DataRunState) -> Any | None:
+        from agentscope.tool import ToolChoice
+
+        if (
+            state.requires_fresh_data
+            and state.schema_completed
+            and not self._is_schema_fatal(state)
+            and not state.sql_completed
+        ):
+            return ToolChoice(mode="execute_sql_query")
+        return None
+
+    def _resolve_initial_tool_choice(self, state: _DataRunState) -> Any | None:
+        """Schema 已就绪时，首轮 Agent 第一次模型调用强制 execute_sql_query。"""
+        return self._resolve_force_execute_sql_tool_choice(state)
+
     def _resolve_repair_tool_choice(self, state: _DataRunState) -> Any | None:
         from agentscope.tool import ToolChoice
 
@@ -1601,8 +1623,7 @@ class DataAgentRunner(BaseExecutor):
         ):
             if not state.schema_completed:
                 return ToolChoice(mode="get_dataset_schema")
-            if not state.sql_completed:
-                return ToolChoice(mode="execute_sql_query")
+            return self._resolve_force_execute_sql_tool_choice(state)
         return None
 
     def _build_repair_title(self, state: _DataRunState) -> str:

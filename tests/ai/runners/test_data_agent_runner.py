@@ -1566,6 +1566,34 @@ def test_resolve_repair_tool_choice_forces_sql_after_schema(data_config):
     assert choice.mode == "execute_sql_query"
 
 
+def test_resolve_initial_tool_choice_forces_sql_after_prefetched_schema(data_config):
+    from agentscope.tool import ToolChoice
+
+    from app.services.ai.runners.data_agent_runner import DataAgentRunner, _DataRunState
+
+    runner = DataAgentRunner(config=data_config, trace_id="trace-initial-force-sql", trace_buffer=[])
+    state = _DataRunState(requires_fresh_data=True, schema_completed=True)
+    choice = runner._resolve_initial_tool_choice(state)
+    assert isinstance(choice, ToolChoice)
+    assert choice.mode == "execute_sql_query"
+
+
+def test_resolve_initial_tool_choice_skips_without_fresh_data_or_schema(data_config):
+    from app.services.ai.runners.data_agent_runner import DataAgentRunner, _DataRunState
+
+    runner = DataAgentRunner(config=data_config, trace_id="trace-initial-no-force", trace_buffer=[])
+
+    assert runner._resolve_initial_tool_choice(
+        _DataRunState(requires_fresh_data=False, schema_completed=True)
+    ) is None
+    assert runner._resolve_initial_tool_choice(
+        _DataRunState(requires_fresh_data=True, schema_completed=False)
+    ) is None
+    assert runner._resolve_initial_tool_choice(
+        _DataRunState(requires_fresh_data=True, schema_completed=True, sql_completed=True)
+    ) is None
+
+
 def test_resolve_repair_tool_choice_forces_schema_when_missing(data_config):
     from agentscope.tool import ToolChoice
 
@@ -2413,26 +2441,15 @@ async def test_data_agent_runner_double_repair_when_model_skips_sql_twice(
             self.tool_choices.append(tool_choice)
             if self.calls == 1:
                 return ChatResponse(
-                    content=[
-                        ToolCallBlock(
-                            id="call_schema",
-                            name="get_dataset_schema",
-                            input='{"keywords": "demo"}',
-                        )
-                    ],
+                    content=[TextBlock(text="第一次跳过 SQL 直接回答")],
                     is_last=True,
                 )
             if self.calls == 2:
                 return ChatResponse(
-                    content=[TextBlock(text="第一次跳过 SQL 直接回答")],
-                    is_last=True,
-                )
-            if self.calls == 3:
-                return ChatResponse(
                     content=[TextBlock(text="第一次 repair 仍跳过 SQL")],
                     is_last=True,
                 )
-            if self.calls == 4:
+            if self.calls == 3:
                 return ChatResponse(
                     content=[
                         ToolCallBlock(
@@ -2518,10 +2535,12 @@ async def test_data_agent_runner_double_repair_when_model_skips_sql_twice(
         if isinstance(event, dict) and event.get("title") == "必须先执行 SQL 查数"
     ]
     assert len(repair_titles) == 2
+    assert fake_model.tool_choices[0] is not None
+    assert getattr(fake_model.tool_choices[0], "mode", None) == "execute_sql_query"
+    assert fake_model.tool_choices[1] is not None
+    assert getattr(fake_model.tool_choices[1], "mode", None) == "execute_sql_query"
     assert fake_model.tool_choices[2] is not None
     assert getattr(fake_model.tool_choices[2], "mode", None) == "execute_sql_query"
-    assert fake_model.tool_choices[3] is not None
-    assert getattr(fake_model.tool_choices[3], "mode", None) == "execute_sql_query"
 
 
 @pytest.mark.asyncio
