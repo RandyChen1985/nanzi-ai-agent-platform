@@ -607,7 +607,12 @@ defineExpose({
         </div>
 
         <!-- Input Box -->
-        <div @dragover.prevent @drop="handleDropFile" class="relative flex flex-col bg-gray-50 dark:bg-gray-800 rounded-2xl px-3 py-2.5 border border-gray-200 dark:border-gray-700 transition-all duration-500" :class="{ 'ring-2 ring-primary/20 border-primary/30 bg-white dark:bg-gray-900 shadow-lg shadow-primary/5': isProcessing }">
+        <div
+          @dragover.prevent
+          @drop="handleDropFile"
+          class="relative flex flex-col rounded-2xl border border-gray-200 bg-white px-3 py-2.5 transition-all duration-200 focus-within:border-primary focus-within:ring-2 focus-within:ring-primary/25 dark:border-gray-700 dark:bg-gray-800 dark:focus-within:ring-primary/30"
+          :class="{ 'ring-2 ring-primary/20 border-primary shadow-lg shadow-primary/5 dark:bg-gray-900': isProcessing }"
+        >
             <div v-if="isProcessing" class="absolute inset-0 rounded-xl opacity-40 pointer-events-none overflow-hidden">
                 <div class="absolute inset-0 bg-gradient-to-r from-transparent via-primary/20 to-transparent w-[200%] animate-scan"></div>
             </div>
@@ -776,13 +781,16 @@ defineExpose({
                               @click="showApprovalMenu = false"
                             >
                                 <div
-                                  v-if="isMobileViewport"
-                                  class="absolute inset-0 bg-black/20 backdrop-blur-[1px]"
+                                  class="absolute inset-0"
+                                  :class="isMobileViewport ? 'bg-black/50' : 'bg-black/15'"
                                 />
                                 <div
                                   ref="approvalMenuPanelRef"
-                                  class="absolute overflow-hidden rounded-xl border border-gray-200/60 bg-white/98 shadow-2xl backdrop-blur-md dark:border-gray-700/60 dark:bg-gray-800/98"
-                                  :style="{
+                                  class="overflow-hidden shadow-2xl"
+                                  :class="isMobileViewport
+                                    ? 'absolute inset-x-0 bottom-0 rounded-t-2xl border-t border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-800'
+                                    : 'absolute rounded-xl border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-800'"
+                                  :style="isMobileViewport ? {} : {
                                     bottom: `${approvalMenuPosition.bottom}px`,
                                     left: `${approvalMenuPosition.left}px`,
                                     width: `${approvalMenuPosition.width}px`,
@@ -791,18 +799,30 @@ defineExpose({
                                   aria-label="工具批准方式"
                                   @click.stop
                                 >
-                                    <div class="border-b border-gray-100 px-3 py-2.5 dark:border-gray-700/60">
-                                        <p class="text-xs font-semibold text-gray-800 dark:text-gray-100">应如何批准工具操作？</p>
+                                    <div
+                                      class="border-b border-gray-100 dark:border-gray-700"
+                                      :class="isMobileViewport ? 'px-4 py-3.5' : 'px-3 py-2.5'"
+                                    >
+                                        <p
+                                          class="font-semibold text-gray-900 dark:text-gray-100"
+                                          :class="isMobileViewport ? 'text-sm' : 'text-xs'"
+                                        >应如何批准工具操作？</p>
                                     </div>
-                                    <div class="max-h-[min(50vh,280px)] overflow-y-auto py-1 custom-scrollbar">
+                                    <div
+                                      class="overflow-y-auto py-1 custom-scrollbar"
+                                      :class="isMobileViewport ? 'max-h-[min(70vh,420px)] pb-[max(0.75rem,env(safe-area-inset-bottom))]' : 'max-h-[min(50vh,280px)]'"
+                                    >
                                         <button
                                           v-for="option in APPROVAL_MODE_OPTIONS"
                                           :key="option.value"
                                           type="button"
                                           role="option"
                                           :aria-selected="activeApprovalMode === option.value"
-                                          class="flex w-full items-start gap-2.5 px-3 py-2.5 text-left transition-colors hover:bg-primary/5 dark:hover:bg-primary/10"
-                                          :class="activeApprovalMode === option.value ? 'bg-primary/5 dark:bg-primary/10' : ''"
+                                          class="flex w-full items-start gap-2.5 text-left transition-colors hover:bg-gray-50 dark:hover:bg-gray-700/50"
+                                          :class="[
+                                            isMobileViewport ? 'px-4 py-3.5' : 'px-3 py-2.5',
+                                            activeApprovalMode === option.value ? 'bg-primary/10 dark:bg-primary/20' : '',
+                                          ]"
                                           @click="selectApprovalMode(option.value)"
                                         >
                                             <div class="mt-0.5 flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-md bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-300">
@@ -818,7 +838,10 @@ defineExpose({
                                             </div>
                                             <div class="min-w-0 flex-1">
                                                 <div class="flex items-center justify-between gap-2">
-                                                    <span class="text-sm font-semibold text-gray-800 dark:text-gray-100">{{ option.label }}</span>
+                                                    <span
+                                                      class="font-semibold text-gray-900 dark:text-gray-100"
+                                                      :class="isMobileViewport ? 'text-base' : 'text-sm'"
+                                                    >{{ option.label }}</span>
                                                     <svg
                                                       v-if="activeApprovalMode === option.value"
                                                       class="h-4 w-4 flex-shrink-0 text-primary"
@@ -829,7 +852,10 @@ defineExpose({
                                                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7" />
                                                     </svg>
                                                 </div>
-                                                <p class="mt-0.5 text-[11px] leading-snug text-gray-500 dark:text-gray-400">{{ option.description }}</p>
+                                                <p
+                                                  class="mt-1 leading-snug text-gray-600 dark:text-gray-300"
+                                                  :class="isMobileViewport ? 'text-xs' : 'text-[11px]'"
+                                                >{{ option.description }}</p>
                                             </div>
                                         </button>
                                     </div>
