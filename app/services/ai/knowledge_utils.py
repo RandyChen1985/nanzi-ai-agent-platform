@@ -116,6 +116,56 @@ def parse_knowledge_tool_payload(tool_output: Any) -> Dict[str, Any]:
     return parsed if isinstance(parsed, dict) else {}
 
 
+def format_knowledge_tool_log_display(
+    tool_output: Any,
+    *,
+    max_len: int = 1200,
+) -> str:
+    """将 search_knowledge_base 结果格式化为可读日志文本后再截断。"""
+    from app.services.ai.runtime.agentscope.stream_reconcile import truncate_for_context
+
+    payload = parse_knowledge_tool_payload(tool_output)
+    if not payload:
+        return truncate_for_context(str(tool_output or ""), max_len=max_len)
+
+    lines: List[str] = []
+    status = payload.get("status")
+    if status == "empty":
+        lines.append(str(payload.get("content") or "未找到与用户问题高度相关的文档片段。"))
+        return truncate_for_context("\n".join(lines), max_len=max_len)
+
+    content = str(payload.get("content") or "").strip()
+    if content:
+        lines.append("【检索摘要（供模型阅读）】")
+        lines.append(content)
+
+    citations = payload.get("citations")
+    if isinstance(citations, list) and citations:
+        lines.append("")
+        lines.append(f"【引用片段】共 {len(citations)} 条")
+        for idx, chunk in enumerate(citations, start=1):
+            if not isinstance(chunk, dict):
+                continue
+            ref_id = str(chunk.get("id") or idx)
+            doc_name = (
+                chunk.get("doc_name")
+                or chunk.get("document_name")
+                or "Unknown Document"
+            )
+            similarity = chunk.get("similarity")
+            sim_suffix = ""
+            if isinstance(similarity, (int, float)):
+                sim_suffix = f" · {float(similarity) * 100:.0f}%"
+            body = str(chunk.get("content") or "").strip()
+            lines.append(f"--- [ID:{ref_id}] {doc_name}{sim_suffix} ---")
+            if body:
+                lines.append(body)
+
+    if not lines:
+        return truncate_for_context(str(tool_output or ""), max_len=max_len)
+    return truncate_for_context("\n".join(lines), max_len=max_len)
+
+
 def knowledge_prefetch_had_citations(tool_output: Any) -> bool:
     """预检索是否返回了可引用的文档片段。"""
     payload = parse_knowledge_tool_payload(tool_output)

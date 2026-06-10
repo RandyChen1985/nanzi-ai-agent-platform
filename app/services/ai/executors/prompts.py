@@ -428,8 +428,8 @@ class KnowledgeChatPrompts:
 
     PREFETCH_DONE_CORRECTION_MSG = (
         "【平台已预检索】系统已在推理前自动完成 search_knowledge_base，"
-        "请直接基于【知识库检索结果】组织回答，无需重复调用同一检索。"
-        "仅当用户问题与预检索词明显不同、或预检索结果明确不足时，才可补充调用 search_knowledge_base。"
+        "请直接基于【知识库检索结果】组织回答，默认不要再调用 search_knowledge_base。"
+        "仅当用户问题与预检索词明显不同、或预检索结果明确不足时，才可补充调用一次。"
     )
 
     KNOWLEDGE_SERVICE_UNAVAILABLE_CONTENT = (

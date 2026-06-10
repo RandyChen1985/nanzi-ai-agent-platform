@@ -29,6 +29,8 @@ import AttachmentImageThumb from "@/components/embed/AttachmentImageThumb.vue";
 import { isImageAttachment } from "@/utils/attachmentImages";
 import { sanitizeStreamContent } from "@/utils/streamContentSanitize";
 import { splitSqlToolLogDetails, isSqlLikeToolLogDetails, sqlToolLogBodyLabel } from "@/utils/toolLogDisplay";
+import KnowledgeToolLogDetails from "@/components/KnowledgeToolLogDetails.vue";
+import { isKnowledgeToolLog } from "@/utils/knowledgeToolLog";
 
 const route = useRoute();
 const { showToast } = useToast();
@@ -2269,19 +2271,6 @@ const tryRenderTable = (text: string) => {
   return null;
 };
 
-const tryRenderCitations = (text: string) => {
-  try {
-    const data = JSON.parse(text);
-    // Check if it looks like RAGFlow references (array of objects with doc_name/content)
-    if (Array.isArray(data) && data.length > 0 && (data[0].doc_name || data[0].content)) {
-        return data;
-    }
-  } catch (e) {
-    return null;
-  }
-  return null;
-};
-
 onUnmounted(() => {
   if (abortController) abortController.abort();
 });
@@ -3074,21 +3063,11 @@ onUnmounted(() => {
 
                             <!-- Card Body (Details) -->
                             <div v-show="log.isExpanded" class="mt-2 pt-2 border-t border-gray-100">
-                                 <!-- 1. Citation Rendering -->
-                                <div v-if="tryRenderCitations(log.details)" class="space-y-2">
-                                    <div v-for="(ref, idx) in tryRenderCitations(log.details)" :key="idx" class="p-2 bg-blue-50/30 rounded border border-blue-100/50 text-xs">
-                                        <div class="font-bold text-blue-700 mb-1 flex justify-between items-center">
-                                            <div class="flex items-center space-x-1">
-                                                <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
-                                                <span class="truncate max-w-[150px]">{{ ref.doc_name || 'Unknown Document' }}</span>
-                                            </div>
-                                            <span v-if="ref.similarity" class="bg-white px-1.5 py-0.5 rounded text-[10px] text-blue-600 font-medium border border-blue-100 shadow-sm">{{ (ref.similarity * 100).toFixed(0) }}%</span>
-                                        </div>
-                                        <div class="text-gray-600 leading-relaxed" :title="ref.content">
-                                            {{ ref.content }}
-                                        </div>
-                                    </div>
-                                </div>
+                                 <!-- 1. Knowledge tool log -->
+                                <KnowledgeToolLogDetails
+                                  v-if="isKnowledgeToolLog(log.details)"
+                                  :details="log.details"
+                                />
 
                                 <!-- 2. Auto Table Rendering -->
                                 <div v-else-if="tryRenderTable(log.details)" class="overflow-x-auto border rounded-lg bg-white">

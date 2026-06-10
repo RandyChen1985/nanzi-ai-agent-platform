@@ -69,6 +69,15 @@ interface ContentSegment {
     });
   };
 
+  const isInsideCitationBadge = (html: string, offset: number) => {
+    const before = html.slice(0, offset);
+    const lastBadge = before.lastIndexOf('citation-badge');
+    if (lastBadge === -1) return false;
+    const lastOpen = before.lastIndexOf('<span', lastBadge);
+    const lastClose = before.lastIndexOf('</span>');
+    return lastOpen > lastClose;
+  };
+
   /**
    * 后处理：修复被 Markdown 引擎“误杀”转义的 HTML
    */
@@ -76,11 +85,17 @@ interface ContentSegment {
     if (!html) return '';
     let res = postProcessQuickButtonHtml(html);
 
-    // 兜底：HTML 中残留的 [ID:n] 再转一次
-    res = res.replace(/(?:[\[【]ID:(\w+)[\]】])|(?:Fig\.\s*(\d+))/gi, (match, id, figNum) => {
-      const finalId = id || figNum;
-      return `<span class="citation-badge" data-cite-id="${finalId}">${match}</span>`;
-    });
+    // 兜底：仅包裹尚未在 citation-badge 内的裸 [ID:n]，避免双层徽章
+    res = res.replace(
+      /(?:[\[【]ID:(\w+)[\]】])|(?:Fig\.\s*(\d+))/gi,
+      (match, id, figNum, offset) => {
+        if (typeof offset === 'number' && isInsideCitationBadge(res, offset)) {
+          return match;
+        }
+        const finalId = id || figNum;
+        return `<span class="citation-badge" data-cite-id="${finalId}">${match}</span>`;
+      },
+    );
 
     return res;
   };

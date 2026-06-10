@@ -864,7 +864,12 @@ class AssistantAgentRunner(BaseExecutor):
             timestamp=datetime.fromtimestamp(time.time() - duration_tool / 1000)
         )
         
-        display_output = truncate_for_context(str(tool_output), max_len=500)
+        if tool_name == "search_knowledge_base" and not is_error:
+            from app.services.ai.knowledge_utils import format_knowledge_tool_log_display
+
+            display_output = format_knowledge_tool_log_display(tool_output, max_len=1200)
+        else:
+            display_output = truncate_for_context(str(tool_output), max_len=500)
         log_event = {
             "type": "log",
             "id": tool_id,

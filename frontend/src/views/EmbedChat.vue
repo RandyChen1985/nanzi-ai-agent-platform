@@ -669,7 +669,12 @@
                              </div>
                           </div>                          <!-- Details -->
                           <div v-if="log.details && log.isExpanded" class="mt-2 pt-2 border-t border-gray-100 dark:border-gray-700/50">
-                            <template v-if="splitSqlToolLogDetails(log.details)">
+                            <KnowledgeToolLogDetails
+                              v-if="isKnowledgeToolLog(log.details)"
+                              :details="log.details"
+                              class="mb-1"
+                            />
+                            <template v-else-if="splitSqlToolLogDetails(log.details)">
                               <div class="space-y-1.5 mb-1">
                                 <div class="p-2 bg-gray-900 rounded border border-gray-800 font-mono text-[10px] text-emerald-400 leading-relaxed overflow-x-auto relative group/sql">
                                   <div class="flex justify-between items-center mb-1 text-[9px] text-gray-500 font-sans uppercase tracking-tight">
@@ -2014,6 +2019,8 @@ import {
   type TurnType,
 } from "@/utils/turnLogDisplay";
 import { splitSqlToolLogDetails, isSqlLikeToolLogDetails, sqlToolLogBodyLabel } from "@/utils/toolLogDisplay";
+import KnowledgeToolLogDetails from "@/components/KnowledgeToolLogDetails.vue";
+import { isKnowledgeToolLog } from "@/utils/knowledgeToolLog";
 import {
   dispatchAgentscopeStreamEvent,
   formatExternalExecutionStatus,

@@ -9,6 +9,7 @@ from app.services.ai.knowledge_utils import (
     extract_dataset_ids_from_message,
     filter_invalid_citation_markers,
     format_dataset_ids_for_tool,
+    format_knowledge_tool_log_display,
     knowledge_prefetch_had_citations,
     merge_request_knowledge_dataset_ids,
     resolve_knowledge_dataset_ids,
@@ -30,6 +31,26 @@ def test_format_dataset_ids_for_tool():
     rid_b = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
     assert format_dataset_ids_for_tool([rid_a]) == rid_a
     assert rid_a in format_dataset_ids_for_tool([rid_a, rid_b])
+
+
+def test_format_knowledge_tool_log_display_before_truncation():
+    payload = {
+        "content": "summary for llm",
+        "citations": [
+            {
+                "id": "1",
+                "doc_name": "EC6 用户手册.pdf",
+                "similarity": 0.82,
+                "content": "换电流程说明",
+            }
+        ],
+    }
+    raw = json.dumps(payload, ensure_ascii=False)
+    formatted = format_knowledge_tool_log_display(raw, max_len=500)
+    assert "【引用片段】" in formatted
+    assert "[ID:1] EC6 用户手册.pdf" in formatted
+    assert "换电流程说明" in formatted
+    assert not formatted.startswith("{")
 
 
 def test_knowledge_prefetch_had_citations_and_filter_markers():

@@ -265,12 +265,14 @@ class KnowledgeAgentRunner(AssistantAgentRunner):
             native_system_content = (
                 f"{KnowledgeChatPrompts.PREFETCH_DONE_CORRECTION_MSG}\n\n{system_content}"
             )
-            react_tools = [tool for tool in tools if tool.name != "search_knowledge_base"]
         else:
             native_system_content = (
                 f"{KnowledgeChatPrompts.SEARCH_CORRECTION_MSG}\n\n{system_content}"
             )
-            react_tools = tools
+
+        # 预检索成功后仍保留 search_knowledge_base 注册，避免模型受用户附件/系统提示
+        # 强制调用约束时触发 AgentScope ToolNotFoundError。
+        react_tools = tools
 
         if not all(isinstance(tool, RuntimeToolSpec) for tool in react_tools):
             yield {

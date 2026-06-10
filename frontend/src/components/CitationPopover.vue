@@ -21,6 +21,37 @@ const emit = defineEmits<{
   (e: "copy", content: string): void;
 }>();
 
+const copyState = ref<"idle" | "success" | "error">("idle");
+let copyResetTimer: ReturnType<typeof setTimeout> | null = null;
+
+const resetCopyState = () => {
+  copyState.value = "idle";
+  if (copyResetTimer) {
+    clearTimeout(copyResetTimer);
+    copyResetTimer = null;
+  }
+};
+
+const handleCopy = async () => {
+  const text = props.citation?.content || "";
+  if (!text.trim()) {
+    copyState.value = "error";
+    copyResetTimer = setTimeout(resetCopyState, 2000);
+    return;
+  }
+  try {
+    await navigator.clipboard.writeText(text);
+    copyState.value = "success";
+    emit("copy", text);
+    if (copyResetTimer) clearTimeout(copyResetTimer);
+    copyResetTimer = setTimeout(resetCopyState, 2000);
+  } catch (err) {
+    console.error("Failed to copy citation:", err);
+    copyState.value = "error";
+    copyResetTimer = setTimeout(resetCopyState, 2000);
+  }
+};
+
 const POPOVER_WIDTH = 380;
 const POPOVER_MAX_HEIGHT = 320;
 const GAP = 8;
@@ -143,6 +174,7 @@ watch(
       bindListeners();
     } else {
       unbindListeners();
+      resetCopyState();
     }
   }
 );
@@ -156,6 +188,7 @@ watch(
 
 onUnmounted(() => {
   unbindListeners();
+  resetCopyState();
 });
 </script>
 
@@ -206,12 +239,35 @@ onUnmounted(() => {
         {{ citation.content }}
       </div>
 
-      <div class="flex items-center justify-end gap-2 px-3 py-2 border-t border-gray-100 dark:border-gray-700/60 flex-shrink-0">
+      <div class="flex items-center justify-between gap-2 px-3 py-2 border-t border-gray-100 dark:border-gray-700/60 flex-shrink-0">
+        <span
+          v-if="copyState === 'success'"
+          class="text-[10px] text-emerald-600 dark:text-emerald-400 font-medium"
+        >已复制到剪贴板</span>
+        <span
+          v-else-if="copyState === 'error'"
+          class="text-[10px] text-red-500 font-medium"
+        >复制失败，请重试</span>
+        <span v-else class="text-[10px] text-transparent select-none">.</span>
         <button
-          @click="emit('copy', citation.content || '')"
-          class="px-2.5 py-1 text-[11px] font-bold text-gray-500 hover:text-primary rounded-md hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors"
+          @click="handleCopy"
+          class="px-2.5 py-1 text-[11px] font-bold rounded-md transition-colors flex items-center gap-1"
+          :class="copyState === 'success'
+            ? 'text-emerald-600 bg-emerald-50 dark:bg-emerald-900/20'
+            : copyState === 'error'
+              ? 'text-red-500 bg-red-50 dark:bg-red-900/20'
+              : 'text-gray-500 hover:text-primary hover:bg-gray-50 dark:hover:bg-gray-700/50'"
         >
-          复制
+          <svg
+            v-if="copyState === 'success'"
+            class="w-3 h-3"
+            fill="none"
+            stroke="currentColor"
+            viewBox="0 0 24 24"
+          >
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7" />
+          </svg>
+          {{ copyState === 'success' ? '已复制' : copyState === 'error' ? '重试' : '复制' }}
         </button>
       </div>
     </div>
