@@ -434,22 +434,25 @@
             <div
               class="flex justify-end items-center space-x-2 mt-1 pr-10"
             >
-              <!-- Actions (Hover Only) -->
-              <div class="flex items-center space-x-2 transition-opacity" :class="windowWidth < 640 ? 'opacity-100' : 'opacity-0 group-hover/msg:opacity-100'">
+              <!-- Actions -->
+              <div class="flex flex-nowrap items-center space-x-2">
               <button
                 @click="startEdit(msg)"
-                class="flex items-center space-x-1 text-[10px] text-gray-400 hover:text-primary transition-colors rounded hover:bg-gray-100 dark:hover:bg-gray-800"
+                class="flex shrink-0 items-center space-x-1 text-[10px] text-gray-400 hover:text-primary transition-colors rounded hover:bg-gray-100 dark:hover:bg-gray-800"
                 :class="windowWidth < 640 ? 'p-2.5' : 'px-1.5 py-0.5'"
+                title="编辑"
                 :disabled="isProcessing"
               >
                 <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
                 </svg>
-                <span>编辑</span>
+                <span class="hidden sm:inline">编辑</span>
               </button>
               <button
                 @click="copyMessage(msg.content)"
-                class="flex items-center space-x-1 text-[10px] text-gray-400 hover:text-primary transition-colors px-1.5 py-0.5 rounded hover:bg-gray-100 dark:hover:bg-gray-800"
+                class="flex shrink-0 items-center space-x-1 text-[10px] text-gray-400 hover:text-primary transition-colors rounded hover:bg-gray-100 dark:hover:bg-gray-800"
+                :class="windowWidth < 640 ? 'p-2.5' : 'px-1.5 py-0.5'"
+                title="复制"
               >
                 <svg
                   class="w-3 h-3"
@@ -464,7 +467,7 @@
                     d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3"
                   />
                 </svg>
-                <span>复制</span>
+                <span class="hidden sm:inline">复制</span>
               </button>
               <!-- Time -->
               <span v-if="msg.timestamp" class="text-[10px] text-gray-400 dark:text-gray-500 select-none ml-1">{{ formatBubbleTime(msg.timestamp) }}</span>
@@ -952,14 +955,12 @@
                                                                                             </div>
                                                             </div>
             <!-- Agent Message Actions (Overlay/Bottom) -->
-            <div
-              class="flex items-center space-x-2 mt-1.5 transition-opacity"
-              :class="windowWidth < 640 ? 'opacity-100' : 'opacity-0 group-hover/msg:opacity-100'"
-            >
+            <div class="flex flex-nowrap items-center space-x-2 mt-1.5">
               <button
                 @click="copyMessage(msg.content)"
-                class="flex items-center space-x-1 text-[10px] text-gray-400 hover:text-primary transition-colors rounded hover:bg-gray-100 dark:hover:bg-gray-800"
+                class="flex shrink-0 items-center space-x-1 text-[10px] text-gray-400 hover:text-primary transition-colors rounded hover:bg-gray-100 dark:hover:bg-gray-800"
                 :class="windowWidth < 640 ? 'p-2.5' : 'px-1.5 py-0.5'"
+                title="复制"
               >
                 <svg
                   class="w-3 h-3"
@@ -974,7 +975,7 @@
                     d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3"
                   />
                 </svg>
-                <span>复制</span>
+                <span class="hidden sm:inline">复制</span>
               </button>
               <!-- Export Data Button -->
               <button
@@ -994,7 +995,9 @@
               <button
                 v-if="msg === lastAgentMessage && !isProcessing"
                 @click="regenerate"
-                class="flex items-center space-x-1 text-[10px] text-gray-400 hover:text-primary transition-colors px-1.5 py-0.5 rounded hover:bg-gray-100 dark:hover:bg-gray-800"
+                class="flex shrink-0 items-center space-x-1 text-[10px] text-gray-400 hover:text-primary transition-colors rounded hover:bg-gray-100 dark:hover:bg-gray-800"
+                :class="windowWidth < 640 ? 'p-2.5' : 'px-1.5 py-0.5'"
+                title="重新生成"
               >
                 <svg
                   class="w-3 h-3"
@@ -1009,12 +1012,12 @@
                     d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
                   />
                 </svg>
-                <span>重新生成</span>
+                <span class="hidden sm:inline">重新生成</span>
               </button>
               <!-- Token 消耗显示 -->
               <span
                 v-if="msg.prompt_tokens !== undefined || msg.completion_tokens !== undefined"
-                class="flex items-center space-x-1.5 text-[10px] text-gray-400 dark:text-gray-500 bg-gray-50 dark:bg-gray-800/40 px-1.5 py-0.5 rounded border border-gray-100/50 dark:border-gray-800/20 select-none font-mono cursor-help ml-1"
+                class="flex shrink-0 items-center space-x-1.5 text-[10px] text-gray-400 dark:text-gray-500 bg-gray-50 dark:bg-gray-800/40 px-1.5 py-0.5 rounded border border-gray-100/50 dark:border-gray-800/20 select-none font-mono cursor-help ml-1"
                 title="本次大模型交互消耗的 Token 数量，包括输入提示词（Input）和输出回答（Output）。"
               >
                 <span class="flex items-center space-x-0.5">

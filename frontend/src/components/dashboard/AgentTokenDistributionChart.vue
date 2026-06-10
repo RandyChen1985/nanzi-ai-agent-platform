@@ -1,12 +1,12 @@
 <template>
-  <div class="bg-white rounded-2xl shadow-sm p-4 sm:p-6 border border-gray-100">
-    <div class="flex items-center justify-between mb-4">
+  <div class="bg-white rounded-2xl shadow-sm p-4 sm:p-6 border border-gray-100 h-full flex flex-col">
+    <div class="flex items-center justify-between mb-4 flex-shrink-0">
       <h2 class="text-base sm:text-lg font-bold text-gray-900 flex items-center">
         <span class="w-1.5 h-1.5 rounded-full bg-primary mr-2"></span>
         智能体 Token 消耗分布
       </h2>
     </div>
-    <div class="h-80 w-full relative flex items-center justify-center">
+    <div class="flex-1 min-h-0 w-full relative flex items-center justify-center">
       <div v-if="!data || data.length === 0" class="text-gray-400 text-sm">
         暂无 Token 消耗数据
       </div>

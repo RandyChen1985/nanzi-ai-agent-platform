@@ -168,11 +168,11 @@
       <AgentHealthPanel :agent-stats="agentStats" />
 
       <!-- Agent Performance and Token Distribution -->
-      <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <div class="lg:col-span-2">
+      <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 items-stretch">
+        <div class="lg:col-span-2 h-full">
           <AgentPerformancePanel :agent-stats="agentStats" />
         </div>
-        <div>
+        <div class="h-full">
           <AgentTokenDistributionChart :data="agentTokens" />
         </div>
       </div>
@@ -301,11 +301,11 @@
       <AgentHealthPanel :agent-stats="agentStats" />
 
       <!-- Agent Performance and Token Distribution (Rich View) -->
-      <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <div class="lg:col-span-2">
+      <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 items-stretch">
+        <div class="lg:col-span-2 h-full">
           <AgentPerformancePanel :agent-stats="agentStats" />
         </div>
-        <div>
+        <div class="h-full">
           <AgentTokenDistributionChart :data="agentTokens" />
         </div>
       </div>
