@@ -129,6 +129,7 @@ class _DataRunState:
     text_blocks_emitted_since_last_tool: int = 0
     current_text_block_emitted: bool = False
     last_successful_sql_output: Any = None
+    successful_sqls: dict[str, Any] = field(default_factory=dict)
 
     @property
     def has_successful_nonempty_sql(self) -> bool:
@@ -333,18 +334,18 @@ class DataAgentRunner(BaseExecutor):
                         f"{SCHEMA_GATE_PREFIX} 为保证数据准确性，必须先调用 get_dataset_schema "
                         "获取数据集定义，再执行 execute_sql_query。"
                     )
-                if state.has_successful_nonempty_sql:
-                    cached_output = getattr(state, "last_successful_sql_output", None)
-                    if cached_output is not None:
-                        return (
-                            f"{SQL_REPEAT_GATE_PREFIX} 本轮已成功获取非空查数结果，禁止再次 execute_sql_query。"
-                            "为保证正常输出，系统已自动为您加载上一次查询成功的缓存数据结果，请直接基于此数据进行回答，无需再次调用查数工具：\n\n"
-                            f"{cached_output}"
-                        )
+
+                current_sql = str(kwargs.get("sql") or kwargs.get("query") or "").strip()
+                current_sql_normalized = " ".join(current_sql.lower().split())
+
+                if current_sql_normalized and current_sql_normalized in state.successful_sqls:
+                    cached_output = state.successful_sqls[current_sql_normalized]
                     return (
-                        f"{SQL_REPEAT_GATE_PREFIX} 本轮已成功获取非空查数结果，禁止再次 execute_sql_query。"
-                        "请直接基于现有结果生成回答；如需重新查数，请调整条件后由用户发起新一轮提问。"
+                        f"{SQL_REPEAT_GATE_PREFIX} 本轮已成功执行过相同的 SQL 查询，禁止重复 execute_sql_query。\n"
+                        "为保证正常输出，系统已自动为您加载该 SQL 上一次查询成功的缓存数据结果，请直接基于此数据进行回答，无需再次调用查数工具：\n\n"
+                        f"{cached_output}"
                     )
+
                 result = _original(**kwargs)
                 if inspect.isawaitable(result):
                     result = await result
@@ -355,6 +356,8 @@ class DataAgentRunner(BaseExecutor):
                         empty_reason = self._detect_empty_result(parsed_output)
                         sql_error, _ = self._detect_sql_error(result)
                         if not sql_error and not empty_reason:
+                            if current_sql_normalized:
+                                state.successful_sqls[current_sql_normalized] = result
                             state.last_successful_sql_output = result
                 except Exception:
                     pass
@@ -921,13 +924,21 @@ class DataAgentRunner(BaseExecutor):
             )
         return "\n\n".join(blocks)
 
+    @staticmethod
+    def _clean_schema_fallback_query(text: str) -> str:
+        stop_words = ["分析", "统计", "查询", "获取", "列出", "展示", "显示", "查一下", "情况", "关于", "的", "在", "内", "后"]
+        cleaned = text
+        for word in stop_words:
+            cleaned = cleaned.replace(word, " ")
+        return " ".join(cleaned.split())
+
     async def _plan_schema_search_keywords(
         self,
         user_question: str,
         standalone_query: str,
         examples: List[Dict[str, Any]],
     ) -> str:
-        fallback_query = (standalone_query or user_question or "").strip()[:300]
+        fallback_query = self._clean_schema_fallback_query((standalone_query or user_question or "").strip())[:300]
         if len(fallback_query) < 12 and re.match(r"^[\u4e00-\u9fa5\w\s-]+$", fallback_query):
             query_lower = fallback_query.lower()
             sql_keywords = {"select", "show", "list", "查询", "列出", "展示", "显示", "获取", "查一下", "统计"}
@@ -941,13 +952,16 @@ class DataAgentRunner(BaseExecutor):
             "你是 ChatBI 的元数据检索词规划器。你的任务不是生成 SQL，而是为 get_dataset_schema(keywords) "
             "生成最适合检索数据集/表/字段/指标定义的短关键词。\n\n"
             "要求：\n"
-            "1. 结合用户原始问题、独立查数问题和命中的历史案例；若没有历史案例，也必须从用户需求中抽取关键词。\n"
+            "1. 结合用户原始问题、独立查数问题 and 命中的历史案例；若没有历史案例，也必须从用户需求中抽取关键词。\n"
             "2. 优先保留业务对象/实体、指标、维度、时间字段含义，以及历史案例中出现过的物理表名/字段名。\n"
             "3. 去掉无助于元数据检索的动作词、礼貌词、排序数量描述和 SQL 生成意图。\n"
             "4. 不要生成 SQL，不要编造案例中没有出现的新物理表名。\n"
             "5. keywords 必须是空格分隔的关键词短语，优先 3 到 10 个词；不要输出完整查询句子。\n"
-            "6. 只返回 JSON。示例：{\"keywords\":\"商品 销售额 省份 product_order_detail product_name sales_amount\"}。\n"
-            "7. keywords 不能为空，禁止输出 `...`、`关键词`、`N/A` 这类占位符。\n\n"
+            "6. 严禁直接输出用户原始的长句子或问题原句，必须将其拆解为多个空格分隔的核心业务名词。\n"
+            "   - 反例：如果输入为“分析注册用户在注册后 7 天内的活跃情况”，你绝对不能返回 `{\"keywords\": \"分析注册用户在注册后 7 天内的活跃情况\"}`。\n"
+            "   - 正例：高品质的输出应为 `{\"keywords\": \"注册用户 活跃\"}`。\n"
+            "7. 只返回 JSON。示例：{\"keywords\":\"商品 销售额 省份 product_order_detail product_name sales_amount\"}。\n"
+            "8. keywords 不能为空，禁止输出 `...`、`关键词`、`N/A` 这类占位符。\n\n"
             f"【用户原始问题】\n{user_question}\n\n"
             f"【独立查数问题】\n{standalone_query}\n\n"
             f"【命中的历史案例线索】\n{self._example_schema_keyword_context(examples)}"
@@ -1682,6 +1696,7 @@ class DataAgentRunner(BaseExecutor):
         state.sql_before_schema = False
         # 彻底清空上一轮的 SQL 缓存，并重置 Schema 未命中状态，防范修复过程中的 Gate 误拦截
         state.last_successful_sql_output = None
+        state.successful_sqls = {}
         state.schema_miss = False
 
     def _resolve_force_execute_sql_tool_choice(self, state: _DataRunState) -> Any | None:
@@ -1864,7 +1879,7 @@ class DataAgentRunner(BaseExecutor):
         state.no_authorized_schema = self._is_no_authorized_schema(output)
         state.rag_not_synced = self._is_rag_not_synced(output)
         state.schema_miss = self._is_no_relevant_schema(output)
-        if self._is_schema_fatal(state) or not str(output or "").strip():
+        if self._is_schema_fatal(state) or state.schema_miss or not str(output or "").strip():
             state.schema_completed = False
             state.sql_before_schema = False
             return
