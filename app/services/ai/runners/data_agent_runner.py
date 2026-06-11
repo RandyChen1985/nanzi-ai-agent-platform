@@ -128,6 +128,7 @@ class _DataRunState:
     active_text_block_id: str = ""
     text_blocks_emitted_since_last_tool: int = 0
     current_text_block_emitted: bool = False
+    last_successful_sql_output: Any = None
 
     @property
     def has_successful_nonempty_sql(self) -> bool:
@@ -333,13 +334,31 @@ class DataAgentRunner(BaseExecutor):
                         "获取数据集定义，再执行 execute_sql_query。"
                     )
                 if state.has_successful_nonempty_sql:
+                    cached_output = getattr(state, "last_successful_sql_output", None)
+                    if cached_output is not None:
+                        return (
+                            f"{SQL_REPEAT_GATE_PREFIX} 本轮已成功获取非空查数结果，禁止再次 execute_sql_query。"
+                            "为保证正常输出，系统已自动为您加载上一次查询成功的缓存数据结果，请直接基于此数据进行回答，无需再次调用查数工具：\n\n"
+                            f"{cached_output}"
+                        )
                     return (
                         f"{SQL_REPEAT_GATE_PREFIX} 本轮已成功获取非空查数结果，禁止再次 execute_sql_query。"
                         "请直接基于现有结果生成回答；如需重新查数，请调整条件后由用户发起新一轮提问。"
                     )
                 result = _original(**kwargs)
                 if inspect.isawaitable(result):
-                    return await result
+                    result = await result
+
+                try:
+                    if result and not self._is_schema_gate_block(result) and not self._is_sql_repeat_gate_block(result):
+                        parsed_output = self._try_parse_json_output(result)
+                        empty_reason = self._detect_empty_result(parsed_output)
+                        sql_error, _ = self._detect_sql_error(result)
+                        if not sql_error and not empty_reason:
+                            state.last_successful_sql_output = result
+                except Exception:
+                    pass
+
                 return result
 
             wrapped.append(replace(spec, callable=invoke_sql_gated))
@@ -369,12 +388,24 @@ class DataAgentRunner(BaseExecutor):
             config=self.config,
             primary_model_name=primary_model_name,
         )
+        middlewares = []
+        if self.conversation_id:
+            from app.services.ai.runtime.agentscope.middleware import ModelCallStatsMiddleware
+            middlewares.append(
+                ModelCallStatsMiddleware(
+                    user_id=self._current_user_id(),
+                    conversation_id=self.conversation_id,
+                    agent_name=self._runtime_agent_name(),
+                    trace_id=self.trace_id,
+                )
+            )
         kwargs: Dict[str, Any] = {
             "name": self._runtime_agent_name(),
             "system_prompt": system_content,
             "model": native_model,
             "toolkit": toolkit,
             "react_config": ReActConfig(max_iters=max_steps),
+            "middlewares": middlewares,
         }
         if restored_state is not None:
             kwargs["state"] = restored_state
@@ -829,7 +860,10 @@ class DataAgentRunner(BaseExecutor):
             example_ids = [ex["id"] for ex in examples if ex.get("id")]
             similarities = [ex.get("similarity", 0) for ex in examples if ex.get("id")]
             if example_ids:
-                await ExampleService.record_usage(example_ids, self.trace_id, similarities=similarities)
+                try:
+                    await ExampleService.record_usage(example_ids, self.trace_id, similarities=similarities)
+                except Exception as ex_rec:
+                    logger.warning("[DataAgentRunner] Failed to record few-shot example usage stats: %s", ex_rec)
 
             self._pending_few_shot_log = {
                 "type": "log",
@@ -1370,6 +1404,8 @@ class DataAgentRunner(BaseExecutor):
                     state.sql_error, state.sql_error_message = self._detect_sql_error(output)
                     if not state.sql_error:
                         await self._save_last_data_result_for_followups(tool_args, parsed_output)
+                        if not state.empty_sql_result:
+                            state.last_successful_sql_output = output
             self._sync_pending_data_run_state(state, stream_state)
             self._increment_step()
             self.trace_buffer.append(
@@ -1644,6 +1680,9 @@ class DataAgentRunner(BaseExecutor):
         state.empty_sql_reason = ""
         state.sql_plan_missing = False
         state.sql_before_schema = False
+        # 彻底清空上一轮的 SQL 缓存，并重置 Schema 未命中状态，防范修复过程中的 Gate 误拦截
+        state.last_successful_sql_output = None
+        state.schema_miss = False
 
     def _resolve_force_execute_sql_tool_choice(self, state: _DataRunState) -> Any | None:
         from agentscope.tool import ToolChoice
@@ -1848,10 +1887,13 @@ class DataAgentRunner(BaseExecutor):
         try:
             return json.loads(text)
         except Exception:
-            try:
-                return ast.literal_eval(text)
-            except Exception:
-                return tool_output
+            # 限制字符串长度在 5000 以内才使用 ast.literal_eval 兜底，防止解析畸形超大报文时引起 CPU 挂起和 Event Loop 阻塞
+            if len(text) < 5000:
+                try:
+                    return ast.literal_eval(text)
+                except Exception:
+                    pass
+            return tool_output
 
     def _extract_result_row_lists(self, parsed: Any, depth: int = 0) -> list[list[Any]]:
         if depth > 4:
@@ -1922,6 +1964,7 @@ class DataAgentRunner(BaseExecutor):
         if self._is_structured_sql_result(parsed):
             return False, ""
 
+        # 剔除可能会误判成功数据集明细中包含“失败/错误”普通文本记录的过宽正则，仅保留系统/数据库底层强报错特征词
         error_patterns = [
             r"unknown column",
             r"unknown table",
@@ -1930,10 +1973,6 @@ class DataAgentRunner(BaseExecutor):
             r"access denied",
             r"permission denied",
             r"unauthorized",
-            r"^报错[:：]",
-            r"^错误[:：]",
-            r"^异常[:：]",
-            r"^失败[:：]",
             r"SQL Syntax Error",
             r"SQL Validation Failed",
         ]

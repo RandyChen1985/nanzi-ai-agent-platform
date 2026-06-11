@@ -400,6 +400,7 @@ class AssistantAgentRunner(BaseExecutor):
         primary_model_name: str,
     ) -> Any:
         from agentscope.agent import Agent, ReActConfig
+        from app.services.ai.runtime.agentscope.middleware import ModelCallStatsMiddleware
 
         context_config = await load_context_config()
         model_config = await build_model_config(
@@ -415,6 +416,16 @@ class AssistantAgentRunner(BaseExecutor):
             tools,
             approval_mode=self.permission_options.get("approval_mode"),
         )
+        middlewares = []
+        if self.conversation_id:
+            middlewares.append(
+                ModelCallStatsMiddleware(
+                    user_id=self._runtime_user_id(),
+                    conversation_id=self.conversation_id,
+                    agent_name=self._runtime_agent_name(),
+                    trace_id=self.trace_id,
+                )
+            )
         return Agent(
             name=self._runtime_agent_name(),
             system_prompt=system_content,
@@ -425,6 +436,7 @@ class AssistantAgentRunner(BaseExecutor):
             model_config=model_config,
             context_config=context_config,
             react_config=ReActConfig(max_iters=max_steps),
+            middlewares=middlewares,
         )
 
     @staticmethod

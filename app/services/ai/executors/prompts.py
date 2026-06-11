@@ -197,19 +197,11 @@ class DataQueryPrompts:
 
     # get_dataset_schema 成功后强制进入 execute_sql_query
     FORCE_SQL_AFTER_SCHEMA = (
-        "【下一步强制动作】你已经拿到 Schema。现在禁止输出任何解释性文字，必须立刻调用 execute_sql_query 查数。\n"
+        "【下一步强制动作】你已经拿到 Schema。现在禁止输出任何解释性文字，必须立刻发起 execute_sql_query 查数。\n"
         "要求：\n"
-        "1) 先输出 <sql_plan>{...}</sql_plan>（简短即可），grain_keys 必须明确；\n"
-        "2) 随后直接发起 execute_sql_query 工具调用；\n"
-        "3) SQL 必须遵循 Grain-first：先聚合到 grain_keys，再 JOIN，再计算。\n"
-        "工具调用示例（参数名必须是 sql/data_source/dataset_name）：\n"
-        "<function_calls>\n"
-        "  <invoke name=\"execute_sql_query\">\n"
-        "    <parameter name=\"sql\">SELECT 1 LIMIT 1</parameter>\n"
-        "    <parameter name=\"data_source\">your_data_source</parameter>\n"
-        "    <parameter name=\"dataset_name\">your_dataset</parameter>\n"
-        "  </invoke>\n"
-        "</function_calls>"
+        "1) 先在 <thought> 中输出 <sql_plan>{...}</sql_plan>（简短即可，至少包含 dataset_name/data_source/grain_keys/time_window/joins/ratio）；\n"
+        "2) 随后直接通过大模型底层的原生 tools 参数发起 execute_sql_query 工具调用，切忌直接在文本中手写 XML 结构；\n"
+        "3) SQL 必须遵循 Grain-first：先聚合到 grain_keys，再 JOIN，再计算。"
     )
 
     # 元数据服务（RAGFlow）不可用时的硬终止回复

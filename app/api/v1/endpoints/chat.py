@@ -169,6 +169,66 @@ async def finalize_conversation(
     )
 
 
+class ModelCallStatDetail(BaseModel):
+    call_index: int = Field(..., description="调用序号")
+    timestamp: str = Field(..., description="时间戳")
+    conversation_id: str = Field(..., description="会话ID")
+    agent_name: str = Field(..., description="智能体名称")
+    model_name: str = Field(..., description="使用的模型名称")
+    input_message_count: int = Field(..., description="输入消息轮数")
+    has_tools_bound: bool = Field(..., description="是否绑定了工具")
+    input_tokens: int = Field(..., description="输入 Token 数")
+    output_tokens: int = Field(..., description="输出 Token 数")
+    cache_input_tokens: int = Field(..., description="缓存命中输入 Token")
+    total_tokens: int = Field(..., description="总 Token")
+    has_tool_calls: bool = Field(..., description="是否触发了工具调用")
+    tool_names: List[str] = Field(..., description="调用的工具名称列表")
+    elapsed_ms: float = Field(..., description="调用耗时(ms)")
+    trace_id: Optional[str] = Field(None, description="本次运行的 Trace ID")
+
+
+class ModelCallStatsResponse(BaseModel):
+    stats: List[ModelCallStatDetail] = Field(..., description="大模型调用指标列表")
+
+
+@router.get("/conversation/{conversation_id}/model_calls",
+    response_model=StandardResponse[ModelCallStatsResponse],
+    summary="获取会话的大模型调用明细",
+    description="从服务端的 Redis 列表中获取当前会话的大模型调用指标，支持通过 trace_id 过滤。"
+)
+async def get_conversation_model_calls(
+    conversation_id: str,
+    trace_id: Optional[str] = None,
+    user_info: Dict[str, Any] = Depends(require_api_key)
+):
+    user_id = user_info.get("user_id") if user_info else None
+    uid = str(user_id) if user_id else "anonymous"
+
+    from app.services.ai.runtime.agentscope.middleware import STATS_KEY_SUFFIX
+    from app.services.ai.memory_service import memory_service
+    from app.core.redis import get_redis
+
+    key = f"{memory_service.KEY_PREFIX}:{uid}:{conversation_id}:{STATS_KEY_SUFFIX}"
+    redis = await get_redis()
+    if not redis:
+        return StandardResponse(data=ModelCallStatsResponse(stats=[]))
+
+    raw_data = await redis.lrange(key, 0, -1)
+    stats = []
+    for item in raw_data:
+        try:
+            if isinstance(item, bytes):
+                item = item.decode("utf-8")
+            record = json.loads(item)
+            if trace_id and record.get("trace_id") != trace_id:
+                continue
+            stats.append(record)
+        except Exception:
+            continue
+
+    return StandardResponse(data=ModelCallStatsResponse(stats=stats))
+
+
 @router.post("/completions",
     response_model=StandardResponse[ChatCompletionResponse],
     summary="发送对话请求",

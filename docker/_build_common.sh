@@ -98,7 +98,29 @@ ensure_buildx() {
     exit 1
   fi
   if ! "${BUILDX[@]}" inspect yunshu-builder >/dev/null 2>&1; then
-    "${BUILDX[@]}" create --name yunshu-builder --use
+    # 智能代理检测：由于 buildx 容器（docker-container 驱动）独立运行且默认不继承宿主机代理，
+    # 当检测到当前终端配置了 http_proxy 时，自动将其转换为虚拟机可访问的宿主机地址（Colima/Docker Desktop 自动适配）并注入构建器中，
+    # 如果没有代理配置则保持原默认创建行为，保证团队协作兼容性。
+    create_args=(create --name yunshu-builder)
+    local proxy_url=""
+    if [ -n "${http_proxy:-}" ]; then
+      proxy_url="$http_proxy"
+    elif [ -n "${HTTP_PROXY:-}" ]; then
+      proxy_url="$HTTP_PROXY"
+    fi
+
+    if [ -n "$proxy_url" ]; then
+      local host_domain="host.docker.internal"
+      if docker context show 2>/dev/null | grep -q "colima"; then
+        host_domain="host.lima.internal"
+      fi
+      local resolved_proxy
+      resolved_proxy=$(echo "$proxy_url" | sed -E "s/127\.0\.0\.1|localhost/$host_domain/g")
+      create_args=("${create_args[@]}" --driver-opt "env.http_proxy=$resolved_proxy" --driver-opt "env.https_proxy=$resolved_proxy")
+      echo "=== 检测到终端配置了代理，已自动为 buildx 注入代理: $resolved_proxy ==="
+    fi
+
+    "${BUILDX[@]}" "${create_args[@]}" --use
   else
     "${BUILDX[@]}" use yunshu-builder >/dev/null
   fi

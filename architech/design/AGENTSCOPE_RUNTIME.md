@@ -28,6 +28,7 @@ AgentService.chat_completion_stream()
 4. `async for event in agent.reply_stream(inputs):` — `inputs` 为 `UserMsg` / 历史 `Msg`，或恢复事件 `UserConfirmResultEvent`
 5. `map_standard_agentscope_event()` 将事件转为平台 SSE chunk
 6. 正常结束 → `agent_state_store.save()`；挂起 → `pending_agentscope_confirmations.register()`
+7. 拦截统计 → `ModelCallStatsMiddleware` 拦截并异步向 Redis 写入 Token 消耗与时间戳数据
 
 **会话锁**：`agentscope_session_lock.hold()` 防止同会话并发破坏 AgentState。
 
@@ -45,7 +46,7 @@ AgentService.chat_completion_stream()
 | `REQUIRE_USER_CONFIRM` | `permission_required` |
 | `REQUIRE_EXTERNAL_EXECUTION` | `external_execution_required` |
 | `REPLY_START/END` | `agent_reply` |
-| `MODEL_CALL_START/END` | `model_call`（含 token、耗时） |
+| `MODEL_CALL_START/END` | `model_call`（含 token、耗时）；流式结束时中间件将其异步追加写入 Redis 统计列表 |
 | `THINKING_BLOCK_*` | `thinking` |
 | `EXCEED_MAX_ITERS` | 超出步数提示文案 |
 
