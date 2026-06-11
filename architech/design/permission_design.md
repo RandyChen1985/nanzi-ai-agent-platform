@@ -54,7 +54,7 @@
 *   `verify_v1_api_access`: V1 接口专属的资源权限拦截器。
 
 ## 5. 缓存策略
-*   **缓存位置**：Redis (`sys:auth:permissions:user:{user_id}`)
+*   **缓存位置**：Redis (`sys:auth:permissions:v3:user:{user_id}`)
 *   **失效触发**：
     *   修改用户角色关联时。
     *   修改用户直接权限时。

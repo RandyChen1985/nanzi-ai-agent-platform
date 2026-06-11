@@ -162,20 +162,20 @@ sequenceDiagram
 
 
 #### 5.1.2 API路由设计
+
+> 💡 **架构更新提示**：系统已重构为统一的 Agent 调度中枢，早期的零散 API（如 `/chatbi/query`、`/nlp/parse`）已被整合废弃。当前的对话入口与意图识别均统一收拢于 Agent 的 Executor 链路中。
+
 ```
-# ChatBI API
-POST /api/v1/chatbi/query        # 自然语言查询
-POST /api/v1/chatbi/chat         # 聊天接口
-GET /api/v1/chatbi/history/{session_id}  # 获取历史记录
+# 统一对话与调度入口
+POST /api/v1/chat/completions            # 核心对话接口，自动路由（ChatBI / Knowledge / Assistant）
+GET  /api/v1/chat/conversation/{id}      # 获取会话历史（包含多轮消息）
 
-# NLP API
-POST /api/v1/nlp/parse           # 语义解析
-POST /api/v1/nlp/intent          # 意图识别
-POST /api/v1/nlp/entity          # 实体提取
-
-# 可视化API
-POST /api/v1/visual/generate     # 生成图表
-GET /api/v1/visual/types         # 获取图表类型
+# 会话管理与审计
+GET    /api/v1/chat/history              # 查询已持久化的历史记录
+DELETE /api/v1/chat/history/{trace_id}   # 单条删除历史记录
+POST   /api/v1/chat/history/batch-delete # 批量删除历史记录
+GET    /api/v1/chat/logs/{trace_id}      # 获取单次请求的执行链路（Trace）
+GET    /api/v1/chat/conversation/{id}/model_calls # 获取 LLM 调用指标统计（Token、耗时等）
 ```
 
 ### 5.2 自然语言理解设计

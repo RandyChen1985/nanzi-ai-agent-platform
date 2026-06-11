@@ -368,22 +368,23 @@ workspace = LocalWorkspace(
 - 意图改写触发的历史截断（当 `standalone_query ≠ user_question` 时，只保留最近 3 轮 Human/AI 对话，6 条消息）
 - DataBlock 图表块提取（`data_tools.py`，从工具结果中解析可视化数据）
 
-### 4.3 KnowledgeAgentRunner ❌（未使用 AgentScope Agent）
+### 4.3 KnowledgeAgentRunner ✅（深度集成）
 
-KnowledgeAgentRunner 走的是传统 LLM 调用链路，不使用 AgentScope Agent：
+KnowledgeAgentRunner 已继承自 `AssistantAgentRunner`，并使用了 `AgentScope Agent`，通过自动检索 + ReAct 的模式进行工作：
 
 ```
-runtime_messages → LLM → 回复
+search_knowledge_base 自动前置检索 → AgentScope ReAct → 回复
 ```
 
-**未使用的 AgentScope 能力**：
-- ❌ 无 AgentState 持久化
-- ❌ 无 ContextConfig 自适应压缩
-- ❌ 无工具审批系统
-- ❌ 无 Agent 推理-行动循环（RAG 知识库工具是静态调用）
+**使用的 AgentScope 能力**：
+- ✅ Agent 原生推理-行动循环（`Agent.reply_stream`）
+- ✅ AgentState 持久化/恢复（Redis，含工具指纹校验）
+- ✅ ContextConfig 自适应上下文压缩
+- ✅ 完整的工具审批系统与流式事件映射
 
-**平台自行实现的历史管理**：
-- `history[-10:]`（保留最近 5 轮）
+**平台补充的历史与注入管理**：
+- ReAct 开始前平台侧**自动**调用 `search_knowledge_base`，检索结果注入 system prompt。
+- 历史截断：`history[-10:]`（保留最近 5 轮）
 - `strip_thought=True`（清洗思考块）
 
 ---
