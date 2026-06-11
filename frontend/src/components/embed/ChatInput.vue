@@ -610,11 +610,17 @@ defineExpose({
         <div
           @dragover.prevent
           @drop="handleDropFile"
-          class="relative flex flex-col rounded-2xl border border-gray-200 bg-white px-3 py-2.5 transition-all duration-200 focus-within:border-primary focus-within:ring-2 focus-within:ring-primary/25 dark:border-gray-700 dark:bg-gray-800 dark:focus-within:ring-primary/30"
-          :class="{ 'ring-2 ring-primary/20 border-primary shadow-lg shadow-primary/5 dark:bg-gray-900': isProcessing }"
+          class="relative flex flex-col rounded-2xl border bg-white px-3 py-2.5 transition-all duration-300 focus-within:border-primary focus-within:ring-2 focus-within:ring-primary/25 dark:bg-gray-800 dark:focus-within:ring-primary/30"
+          :class="isProcessing
+            ? 'border-primary/60 bg-blue-50/30 dark:bg-blue-950/20 dark:border-primary/50 input-glow-processing'
+            : 'border-gray-200 dark:border-gray-700'"
         >
-            <div v-if="isProcessing" class="absolute inset-0 rounded-xl opacity-40 pointer-events-none overflow-hidden">
-                <div class="absolute inset-0 bg-gradient-to-r from-transparent via-primary/20 to-transparent w-[200%] animate-scan"></div>
+            <!-- 三点跳动 Loading 指示器 -->
+            <div v-if="isProcessing" class="absolute top-3 left-3 flex items-center space-x-1.5 pointer-events-none z-20">
+                <span class="ai-dot" style="animation-delay: 0ms"></span>
+                <span class="ai-dot" style="animation-delay: 150ms"></span>
+                <span class="ai-dot" style="animation-delay: 300ms"></span>
+                <span class="ml-1.5 text-[11px] font-medium text-primary/70 select-none">AI 正在生成回复…</span>
             </div>
 
             <div
@@ -650,7 +656,7 @@ defineExpose({
               </div>
             </div>
 
-            <textarea ref="inputRef" :value="modelValue" :disabled="isProcessing" @input="handleInput" @keydown="handleKeydown" @compositionstart="handleCompositionStart" @compositionend="handleCompositionEnd" @paste="handlePaste" rows="1" class="w-full min-h-[46px] bg-transparent border-none outline-none focus:ring-0 text-base sm:text-sm placeholder:text-sm px-0 py-1 resize-none max-h-32 text-gray-900 dark:text-gray-100 placeholder-gray-400 peer z-10 relative disabled:cursor-not-allowed disabled:opacity-60" :placeholder="isProcessing ? 'AI 正在生成回复...' : '输入消息，或 \'/\' 使用快捷指令...'"></textarea>
+            <textarea ref="inputRef" :value="modelValue" :disabled="isProcessing" @input="handleInput" @keydown="handleKeydown" @compositionstart="handleCompositionStart" @compositionend="handleCompositionEnd" @paste="handlePaste" rows="1" class="w-full bg-transparent border-none outline-none focus:ring-0 text-base sm:text-sm placeholder:text-sm px-0 py-1 resize-none max-h-32 text-gray-900 dark:text-gray-100 placeholder-gray-400 peer z-10 relative disabled:cursor-not-allowed" :class="isProcessing ? 'min-h-[46px] opacity-0 pointer-events-none' : 'min-h-[46px] opacity-100'" :placeholder="isProcessing ? '' : '输入消息，或 \'/\' 使用快捷指令...'"></textarea>
 
             <div class="relative z-20 mt-1 flex min-h-9 flex-wrap items-center gap-1.5 sm:gap-2">
                 <!-- Plus Button & Menu (Premium Glassmorphism Style) -->
@@ -899,10 +905,34 @@ defineExpose({
 </template>
 
 <style scoped>
-@keyframes scan { from { transform: translateX(-100%); } to { transform: translateX(100%); } }
-.animate-scan { animation: scan 2s linear infinite; }
+/* ── 原有动画保留 ── */
 @keyframes slide-up { from { transform: translateY(100%); } to { transform: translateY(0); } }
 .animate-slide-up { animation: slide-up 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
+
+/* ── AI 生成中：三点跳动 ── */
+@keyframes ai-bounce {
+  0%, 80%, 100% { transform: translateY(0); opacity: 0.4; }
+  40%           { transform: translateY(-5px); opacity: 1; }
+}
+.ai-dot {
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background-color: var(--primary-color, #1677ff);
+  animation: ai-bounce 1.2s ease-in-out infinite;
+}
+
+/* ── AI 生成中：边框呼吸光晕 ── */
+@keyframes glow-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(22, 119, 255, 0); }
+  50%       { box-shadow: 0 0 0 4px rgba(22, 119, 255, 0.15), 0 0 16px 2px rgba(22, 119, 255, 0.10); }
+}
+.input-glow-processing {
+  animation: glow-pulse 2s ease-in-out infinite;
+}
+
+/* ── 滚动条 ── */
 .custom-scrollbar::-webkit-scrollbar { width: 4px; }
 .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
 .custom-scrollbar::-webkit-scrollbar-thumb { background-color: rgba(156, 163, 175, 0.5); border-radius: 2px; }
