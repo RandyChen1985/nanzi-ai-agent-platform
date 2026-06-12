@@ -92,8 +92,15 @@ export const metadataApi = {
     axios.post<any>(`${API_BASE}/datasets/${id}/rag/sync`),
   getDatasetYaml: (id: number) =>
     axios.get<any>(`${API_BASE}/datasets/${id}/yaml`),
-  testRetrieval: (query: string) =>
-    axios.post<any>("/api/v1/schema", { query }),
+  testRetrieval: (
+    query: string,
+    params?: {
+      metadata_provider?: string;
+      ragflow_metadata_top_k?: number;
+      ragflow_similarity_threshold?: number;
+      ragflow_vector_weight?: number;
+    }
+  ) => axios.post<any>("/api/v1/schema", { query, ...params }),
 
   // Tables
   saveTable: (datasetId: number, tableData: Table) =>

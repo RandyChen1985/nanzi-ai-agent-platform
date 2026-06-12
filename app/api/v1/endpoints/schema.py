@@ -15,6 +15,10 @@ from app.schemas.response import StandardResponse
 
 class SchemaRequest(BaseModel):
     query: Optional[str] = Field(None, description="检索关键词", example="销售数据")
+    metadata_provider: Optional[str] = Field(None, description="临时指定元数据提供方 (local/ragflow)")
+    ragflow_metadata_top_k: Optional[int] = Field(None, description="临时指定 Top K 数量")
+    ragflow_similarity_threshold: Optional[float] = Field(None, description="临时指定相似度阈值")
+    ragflow_vector_weight: Optional[float] = Field(None, description="临时指定混合检索中向量检索权重")
 
 class SchemaHit(BaseModel):
     id: int = Field(..., description="数据集ID")
@@ -47,7 +51,7 @@ async def get_database_schema(
     
     trace_logs = []
     
-    provider = await ConfigService.get("metadata_provider", default="local")
+    provider = request.metadata_provider or await ConfigService.get("metadata_provider", default="local")
     msg = f"[Metadata Gateway] Routing request to provider: {provider.upper()}"
     logger.info(msg)
     trace_logs.append(msg)
@@ -77,9 +81,20 @@ async def get_database_schema(
         rag_url = await ConfigService.get("ragflow_api_url")
         
         # Load Parameters
-        threshold = float(await ConfigService.get("ragflow_similarity_threshold") or 0.2)
-        weight = float(await ConfigService.get("ragflow_vector_weight") or 0.3)
-        top_k = 5 # Adjusted from 10 to 5
+        if request.ragflow_similarity_threshold is not None:
+            threshold = float(request.ragflow_similarity_threshold)
+        else:
+            threshold = float(await ConfigService.get("ragflow_similarity_threshold") or 0.2)
+
+        if request.ragflow_vector_weight is not None:
+            weight = float(request.ragflow_vector_weight)
+        else:
+            weight = float(await ConfigService.get("ragflow_vector_weight") or 0.3)
+
+        if request.ragflow_metadata_top_k is not None:
+            top_k = int(request.ragflow_metadata_top_k)
+        else:
+            top_k = 5
         
         trace_logs.append(f"RAGFlow Endpoint: {rag_url}")
         trace_logs.append(f"Params: threshold={threshold}, weight={weight}, top_k={top_k}")

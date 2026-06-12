@@ -56,6 +56,7 @@ const { hasPermission } = useUser()
 const loading = ref(false)
 const syncing = ref(false)
 const engineStatus = ref<'checking' | 'connected' | 'disconnected'>('checking')
+const showErrorBanner = ref(true)
 const datasets = ref<KnowledgeBase[]>([])
 const errorMessage = ref('')
 const ragflowConfig = ref<RagFlowConfigSummary | null>(null)
@@ -228,6 +229,7 @@ const fetchDatasets = async () => {
   } catch (err) {
     errorMessage.value = extractError(err)
     engineStatus.value = 'disconnected'
+    showErrorBanner.value = true
   } finally {
     loading.value = false
   }
@@ -758,7 +760,7 @@ onMounted(async () => {
     </div>
 
     <!-- Error Banner -->
-    <div v-if="errorMessage" class="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800 shadow-sm flex items-start gap-3">
+    <div v-if="errorMessage && showErrorBanner" class="relative rounded-2xl border border-amber-200 bg-amber-50 p-4 pr-10 text-sm text-amber-800 shadow-sm flex items-start gap-3">
       <svg class="w-5 h-5 text-amber-500 shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
       </svg>
@@ -770,6 +772,12 @@ onMounted(async () => {
           <div class="mt-0.5">错误日志: {{ errorMessage }}</div>
         </div>
       </div>
+      <!-- 右上角关闭按钮 -->
+      <button @click="showErrorBanner = false" class="absolute top-4 right-4 text-amber-500 hover:text-amber-700 transition-colors" title="关闭">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+        </svg>
+      </button>
     </div>
 
     <!-- Main Workspace Layout -->

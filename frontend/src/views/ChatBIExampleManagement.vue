@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted } from "vue";
+import { ref, onMounted, computed } from "vue";
 import axios from "@/utils/axios";
 import { useToast } from "../composables/useToast";
 import { useUser } from "../composables/useUser";
@@ -250,16 +250,124 @@ const getRagStatusDisplay = (ex: ChatBIExample) => {
   return getRagStatusLabel(ex.rag_sync_status);
 };
 
+// --- RAGFlow 连通性探测及配置 ---
+type RagFlowConfigSummary = {
+  api_url: string;
+  api_key_configured: boolean;
+}
+
+const ragflowConfig = ref<RagFlowConfigSummary | null>(null);
+const engineStatus = ref<'checking' | 'connected' | 'disconnected'>('checking');
+const errorMessage = ref('');
+const showErrorBanner = ref(true);
+
+const isEngineReady = computed(() => engineStatus.value === 'connected' && !loading.value);
+const engineStatusText = computed(() => {
+  if (engineStatus.value === 'checking') return '连接中...';
+  if (engineStatus.value === 'connected') return '已连接';
+  return '未连接';
+});
+
+const ragflowApiUrl = computed(() => ragflowConfig.value?.api_url || '未配置');
+
+const friendlyRagFlowError = computed(() => {
+  if (!errorMessage.value) return '';
+  const lower = errorMessage.value.toLowerCase();
+  if (
+    lower.includes('ragflow') ||
+    lower.includes('api_key') ||
+    lower.includes('connect') ||
+    lower.includes('refused')
+  ) {
+    return '当前无法连接 RAGFlow 服务，请确认 RAGFlow 服务是否可访问、网关是否正常，以及系统配置中的 RAGFlow 地址/API Key 是否正确。';
+  }
+  return errorMessage.value;
+});
+
+const fetchRagFlowConfig = async () => {
+  try {
+    const response = await axios.get('/api/portal/ragflow/config');
+    ragflowConfig.value = response.data?.data || null;
+  } catch (e) {
+    ragflowConfig.value = null;
+  }
+};
+
+const checkRagFlowConnectivity = async () => {
+  engineStatus.value = 'checking';
+  errorMessage.value = '';
+  try {
+    await axios.get('/api/portal/ragflow/datasets', { params: { page_size: 1 } });
+    engineStatus.value = 'connected';
+  } catch (err: any) {
+    errorMessage.value = err.response?.data?.detail || err.message || '连接失败';
+    engineStatus.value = 'disconnected';
+    showErrorBanner.value = true;
+  }
+};
+
 onMounted(() => {
   fetchExamples();
+  fetchRagFlowConfig();
+  checkRagFlowConnectivity();
 });
 </script>
 
 <template>
   <div class="space-y-6">
-    <!-- Header -->
-    <div class="flex items-center justify-between">
-      <h1 class="text-2xl font-semibold text-gray-900">案例集管理</h1>
+    <!-- Header Section -->
+    <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white p-5 rounded-2xl border border-gray-200/80 shadow-sm mb-6">
+      <div>
+        <h1 class="text-2xl font-bold text-gray-900 tracking-tight">案例集管理</h1>
+        <p class="text-sm text-gray-500 mt-1">管理 AI 执行的 ChatBI 问答经验样本及 RAG 语义对齐案例。</p>
+        <p class="text-xs text-gray-400 mt-2 flex items-center gap-1">
+          <span>当前 RAGFlow 引擎：</span>
+          <a :href="ragflowApiUrl" target="_blank" rel="noopener noreferrer" class="font-mono text-primary bg-gray-100 px-1.5 py-0.5 rounded hover:underline">{{ ragflowApiUrl }}</a>
+          <span v-if="ragflowConfig && !ragflowConfig.api_key_configured" class="ml-2 text-amber-600 font-medium">⚠️ API Key 未配置</span>
+        </p>
+      </div>
+      <div class="flex items-center gap-3">
+        <!-- 引擎连接指示器 -->
+        <div
+          class="flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs border transition-colors shrink-0"
+          :class="{
+            'border-blue-200 bg-blue-50/50 text-blue-700': engineStatus === 'checking',
+            'border-emerald-200 bg-emerald-50/50 text-emerald-700': engineStatus === 'connected',
+            'border-amber-200 bg-amber-50/50 text-amber-700': engineStatus === 'disconnected'
+          }"
+        >
+          <span
+            class="inline-block w-2 h-2 rounded-full"
+            :class="{
+              'bg-blue-500 animate-pulse': engineStatus === 'checking',
+              'bg-emerald-500': engineStatus === 'connected',
+              'bg-amber-500': engineStatus === 'disconnected'
+            }"
+          ></span>
+          <span class="font-medium">引擎 {{ engineStatusText }}</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Error Banner -->
+    <div v-if="errorMessage && showErrorBanner" class="relative rounded-2xl border border-amber-200 bg-amber-50 p-4 pr-10 text-sm text-amber-800 shadow-sm flex items-start gap-3 mb-6">
+      <svg class="w-5 h-5 text-amber-500 shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+      </svg>
+      <div>
+        <div class="font-semibold text-amber-900">RAGFlow 服务连通性故障</div>
+        <div class="mt-1 text-amber-800/90">{{ friendlyRagFlowError }}</div>
+        <div class="mt-2 text-xs font-mono text-amber-700 bg-amber-100/50 p-2 rounded-lg">
+          <div>连接地址: <a :href="ragflowApiUrl" target="_blank" rel="noopener noreferrer" class="hover:underline">{{ ragflowApiUrl }}</a></div>
+          <div class="mt-0.5">错误日志: {{ errorMessage }}</div>
+        </div>
+      </div>
+      <!-- 右上角关闭按钮 -->
+      <button @click="showErrorBanner = false" class="absolute top-4 right-4 text-amber-500 hover:text-amber-700 transition-colors" title="关闭">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+        </svg>
+      </button>
     </div>
 
     <!-- Filters -->
@@ -322,9 +430,10 @@ onMounted(() => {
           </button>
           <button
             v-if="hasPermission('element:chatbi_example:sync')"
-            @click="showSyncAllConfirm = true"
-            :disabled="loading"
-            class="inline-flex items-center px-4 py-2 border border-indigo-200 rounded-md shadow-sm text-sm font-medium text-indigo-700 bg-indigo-50 hover:bg-indigo-100 active:scale-95 transition-all duration-200 disabled:opacity-50"
+            @click="isEngineReady && (showSyncAllConfirm = true)"
+            :disabled="loading || !isEngineReady"
+            class="inline-flex items-center px-4 py-2 border border-indigo-200 rounded-md shadow-sm text-sm font-medium text-indigo-700 bg-indigo-50 hover:bg-indigo-100 active:scale-95 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+            :title="!isEngineReady ? 'RAGFlow 服务未就绪' : '一键同步至 RAGFlow'"
           >
             <CloudArrowUpIcon class="h-5 w-5 text-indigo-600 mr-2" :class="{ 'animate-pulse': loading }" />
             一键同步至 RAGFlow
@@ -411,7 +520,7 @@ onMounted(() => {
                     <button v-if="hasPermission('element:chatbi_example:audit') && ex.status === 'pending'" @click="auditExample(ex.id, 'rejected')" class="p-1.5 rounded-full text-red-600 hover:bg-red-50 active:scale-90 transition-all duration-200" title="驳回">
                       <XCircleIcon class="w-5 h-5" />
                     </button>
-                    <button v-if="hasPermission('element:chatbi_example:sync') && ex.status === 'approved'" @click="syncToRag(ex.id)" class="p-1.5 rounded-full text-indigo-600 hover:bg-indigo-50 active:scale-90 transition-all duration-200" title="同步到 RAGFlow">
+                    <button v-if="hasPermission('element:chatbi_example:sync') && ex.status === 'approved'" @click="isEngineReady && syncToRag(ex.id)" :disabled="!isEngineReady" class="p-1.5 rounded-full text-indigo-600 hover:bg-indigo-50 active:scale-90 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed" :title="!isEngineReady ? 'RAGFlow 服务未就绪' : '同步到 RAGFlow'">
                       <CloudArrowUpIcon class="w-5 h-5" />
                     </button>
                     <button v-if="hasPermission('element:chatbi_example:delete') && ex.status !== 'deprecated'" @click="auditExample(ex.id, 'deprecated')" class="p-1.5 rounded-full text-gray-400 hover:bg-gray-100 active:scale-90 transition-all duration-200" title="废弃">

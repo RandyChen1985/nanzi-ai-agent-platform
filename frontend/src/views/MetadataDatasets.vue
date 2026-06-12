@@ -501,6 +501,13 @@ const filteredDatasets = computed(() => {
 const testQuery = ref('')
 const testLoading = ref(false)
 const testResult = ref<any>(null)
+const showAdvancedSettings = ref(false)
+const tempProvider = ref<'default' | 'local' | 'ragflow'>('default')
+const tempTopK = ref(5)
+const tempThreshold = ref(0.2)
+const tempVectorWeight = ref(0.3)
+
+const showRagParams = computed(() => tempProvider.value === 'ragflow' || tempProvider.value === 'default')
 
 const newDataset = ref({
   name: '',
@@ -752,7 +759,15 @@ const handleTestRetrieval = async () => {
   testLoading.value = true
   testResult.value = null
   try {
-    const res = await metadataApi.testRetrieval(testQuery.value)
+    const params: any = {}
+    if (tempProvider.value !== 'default') {
+      params.metadata_provider = tempProvider.value
+    }
+    params.ragflow_metadata_top_k = tempTopK.value
+    params.ragflow_similarity_threshold = tempThreshold.value
+    params.ragflow_vector_weight = tempVectorWeight.value
+
+    const res = await metadataApi.testRetrieval(testQuery.value, params)
     const data = res.data.data
     testResult.value = {
       found: data.hits && data.hits.length > 0,
@@ -777,22 +792,103 @@ const getDatasetEmoji = (name: string) => {
   const index = Math.abs(hash) % emojis.length
   return emojis[index]
 }
+// --- RAGFlow 连通性探测及配置 ---
+type RagFlowConfigSummary = {
+  api_url: string
+  api_key_configured: boolean
+}
+
+const ragflowConfig = ref<RagFlowConfigSummary | null>(null)
+const engineStatus = ref<'checking' | 'connected' | 'disconnected'>('checking')
+const errorMessage = ref('')
+const showErrorBanner = ref(true)
+
+const isEngineReady = computed(() => engineStatus.value === 'connected' && !loading.value)
+const engineStatusText = computed(() => {
+  if (engineStatus.value === 'checking') return '连接中...'
+  if (engineStatus.value === 'connected') return '已连接'
+  return '未连接'
+})
+
+const ragflowApiUrl = computed(() => ragflowConfig.value?.api_url || '未配置')
+
+const friendlyRagFlowError = computed(() => {
+  if (!errorMessage.value) return ''
+  const lower = errorMessage.value.toLowerCase()
+  if (
+    lower.includes('ragflow') ||
+    lower.includes('api_key') ||
+    lower.includes('connect') ||
+    lower.includes('refused')
+  ) {
+    return '当前无法连接 RAGFlow 服务，请确认 RAGFlow 服务是否可访问、网关是否正常，以及系统配置中的 RAGFlow 地址/API Key 是否正确。'
+  }
+  return errorMessage.value
+})
+
+const fetchRagFlowConfig = async () => {
+  try {
+    const response = await axios.get('/api/portal/ragflow/config')
+    ragflowConfig.value = response.data?.data || null
+  } catch (e) {
+    ragflowConfig.value = null
+  }
+}
+
+const checkRagFlowConnectivity = async () => {
+  engineStatus.value = 'checking'
+  errorMessage.value = ''
+  try {
+    await axios.get('/api/portal/ragflow/datasets', { params: { page_size: 1 } })
+    engineStatus.value = 'connected'
+  } catch (err: any) {
+    errorMessage.value = err.response?.data?.detail || err.message || '连接失败'
+    engineStatus.value = 'disconnected'
+    showErrorBanner.value = true
+  }
+}
 
 onMounted(() => {
     fetchSystemConfig()
     fetchDatasets()
     fetchDbConnections()
+    fetchRagFlowConfig()
+    checkRagFlowConnectivity()
 })
 </script>
 
 <template>
   <div class="space-y-6">
-    <div class="flex justify-between items-center">
+    <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white p-5 rounded-2xl border border-gray-200/80 shadow-sm mb-6">
       <div>
         <h1 class="text-2xl font-bold text-gray-900 font-mono tracking-tight">元数据管理 <span class="text-primary-500">:: Datasets</span></h1>
         <p class="text-gray-500 text-sm mt-1">管理业务数据集及其表结构语义。</p>
+        <p class="text-xs text-gray-400 mt-2 flex items-center gap-1">
+          <span>当前 RAGFlow 引擎：</span>
+          <a :href="ragflowApiUrl" target="_blank" rel="noopener noreferrer" class="font-mono text-primary bg-gray-100 px-1.5 py-0.5 rounded hover:underline">{{ ragflowApiUrl }}</a>
+          <span v-if="ragflowConfig && !ragflowConfig.api_key_configured" class="ml-2 text-amber-600 font-medium">⚠️ API Key 未配置</span>
+        </p>
       </div>
-      <div class="flex gap-3">
+      <div class="flex items-center gap-3">
+        <!-- 引擎连接指示器 -->
+        <div
+          class="flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs border transition-colors shrink-0"
+          :class="{
+            'border-blue-200 bg-blue-50/50 text-blue-700': engineStatus === 'checking',
+            'border-emerald-200 bg-emerald-50/50 text-emerald-700': engineStatus === 'connected',
+            'border-amber-200 bg-amber-50/50 text-amber-700': engineStatus === 'disconnected'
+          }"
+        >
+          <span
+            class="inline-block w-2 h-2 rounded-full"
+            :class="{
+              'bg-blue-500 animate-pulse': engineStatus === 'checking',
+              'bg-emerald-500': engineStatus === 'connected',
+              'bg-amber-500': engineStatus === 'disconnected'
+            }"
+          ></span>
+          <span class="font-medium">引擎 {{ engineStatusText }}</span>
+        </div>
         <button 
           @click="showTestModal = true"
           class="bg-white border border-gray-200 text-gray-600 hover:bg-gray-50 px-4 py-2 rounded-lg transition-all flex items-center gap-2 font-medium"
@@ -824,6 +920,27 @@ onMounted(() => {
           新建数据集
         </button>
       </div>
+    </div>
+
+    <!-- Error Banner -->
+    <div v-if="errorMessage && showErrorBanner" class="relative rounded-2xl border border-amber-200 bg-amber-50 p-4 pr-10 text-sm text-amber-800 shadow-sm flex items-start gap-3 mb-6">
+      <svg class="w-5 h-5 text-amber-500 shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+      </svg>
+      <div>
+        <div class="font-semibold text-amber-900">RAGFlow 服务连通性故障</div>
+        <div class="mt-1 text-amber-800/90">{{ friendlyRagFlowError }}</div>
+        <div class="mt-2 text-xs font-mono text-amber-700 bg-amber-100/50 p-2 rounded-lg">
+          <div>连接地址: <a :href="ragflowApiUrl" target="_blank" rel="noopener noreferrer" class="hover:underline">{{ ragflowApiUrl }}</a></div>
+          <div class="mt-0.5">错误日志: {{ errorMessage }}</div>
+        </div>
+      </div>
+      <!-- 右上角关闭按钮 -->
+      <button @click="showErrorBanner = false" class="absolute top-4 right-4 text-amber-500 hover:text-amber-700 transition-colors" title="关闭">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+        </svg>
+      </button>
     </div>
 
     <!-- Toolbar -->
@@ -991,19 +1108,21 @@ onMounted(() => {
           <div class="flex items-center gap-2">
              <!-- Action Buttons: Admin or specific permission -->
              <div class="flex items-center gap-2">
-               <button 
-                 v-if="hasPermission('element:metadata:sync')"
-                 @click.stop="openSyncModal(ds)" 
-                 class="transition-colors p-1.5 rounded-md border border-transparent hover:shadow-sm"
-                 :class="{ 
-                    'text-gray-400 hover:text-indigo-500 hover:bg-white hover:border-gray-200': ds.status === 1,
-                    'text-gray-300 cursor-not-allowed opacity-50': ds.status !== 1,
-                    'animate-spin text-indigo-500 pointer-events-none': syncingId === ds.id || ds.rag_sync_status === 1 
-                 }"
-                 :title="ds.status === 1 ? '同步到 RAGFlow' : '数据集已禁用，无法同步'"
-               >
-                 <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 16h5v5"/></svg>
-               </button>
+                <button 
+                  v-if="hasPermission('element:metadata:sync')"
+                  @click.stop="isEngineReady && ds.status === 1 && openSyncModal(ds)" 
+                  class="transition-colors p-1.5 rounded-md border border-transparent hover:shadow-sm"
+                  :class="{ 
+                     'text-gray-400 hover:text-indigo-500 hover:bg-white hover:border-gray-200': ds.status === 1 && isEngineReady,
+                     'text-gray-300 cursor-not-allowed opacity-50': ds.status !== 1 || !isEngineReady,
+                     'pointer-events-none': syncingId === ds.id || ds.rag_sync_status === 1 
+                  }"
+                  :disabled="!isEngineReady || ds.status !== 1"
+                  :title="!isEngineReady ? 'RAGFlow 服务未就绪' : (ds.status === 1 ? '同步到 RAGFlow' : '数据集已禁用，无法同步')"
+                >
+                  <svg v-if="syncingId === ds.id || ds.rag_sync_status === 1" class="w-4 h-4 animate-spin text-indigo-500" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 16h5v5"/></svg>
+                  <svg v-else class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M12 16.5V9.75m0 0 3 3m-3-3-3 3M6.75 19.5a4.5 4.5 0 0 1-1.41-8.775 5.25 5.25 0 0 1 10.233-2.33 3 3 0 0 1 3.758 3.848A3.752 3.752 0 0 1 18 19.5H6.75Z"/></svg>
+                </button>
                <!-- Permission Config Entry -->
                <button 
                  v-if="hasPermission('element:metadata:edit')"
@@ -1130,18 +1249,20 @@ onMounted(() => {
              <!-- Actions -->
              <div class="col-span-2 flex justify-end items-center gap-1.5">
                 <!-- Action Buttons: Admin or specific permission -->
-                <button 
-                   v-if="hasPermission('element:metadata:sync')"
-                   @click.stop="ds.status === 1 && openSyncModal(ds)" 
-                   class="p-1.5 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded transition-colors"
-                   :class="{ 
-                     'opacity-30 cursor-not-allowed': ds.status !== 1,
-                     'animate-spin text-indigo-500': syncingId === ds.id || ds.rag_sync_status === 1
-                   }"
-                   :title="ds.status === 1 ? '同步 RAG' : '已禁用一线'"
-                >
-                   <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 16h5v5"/></svg>
-                </button>
+                 <button 
+                    v-if="hasPermission('element:metadata:sync')"
+                    @click.stop="isEngineReady && ds.status === 1 && openSyncModal(ds)" 
+                    class="p-1.5 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded transition-colors"
+                    :class="{ 
+                      'opacity-30 cursor-not-allowed': ds.status !== 1 || !isEngineReady,
+                      'pointer-events-none': syncingId === ds.id || ds.rag_sync_status === 1
+                    }"
+                    :disabled="!isEngineReady || ds.status !== 1"
+                    :title="!isEngineReady ? 'RAGFlow 服务未就绪' : (ds.status === 1 ? '同步 RAG' : '已禁用一线')"
+                 >
+                    <svg v-if="syncingId === ds.id || ds.rag_sync_status === 1" class="w-4 h-4 animate-spin text-indigo-500" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 16h5v5"/></svg>
+                    <svg v-else class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M12 16.5V9.75m0 0 3 3m-3-3-3 3M6.75 19.5a4.5 4.5 0 0 1-1.41-8.775 5.25 5.25 0 0 1 10.233-2.33 3 3 0 0 1 3.758 3.848A3.752 3.752 0 0 1 18 19.5H6.75Z"/></svg>
+                 </button>
                 <button 
                    v-if="hasPermission('element:metadata:edit')"
                    @click.stop="openPermConfigModal(ds)" 
@@ -1217,7 +1338,7 @@ onMounted(() => {
 
     <!-- Test Retrieval Modal -->
     <div v-if="showTestModal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" @click.self="showTestModal = false">
-      <div class="bg-white rounded-xl shadow-2xl w-full max-w-4xl h-[80vh] flex flex-col overflow-hidden border border-gray-100 animate-fade-in-up">
+      <div class="bg-white rounded-xl shadow-2xl w-full max-w-6xl h-[88vh] flex flex-col overflow-hidden border border-gray-100 animate-fade-in-up">
         <!-- Header -->
         <div class="p-6 border-b border-gray-100 flex justify-between items-center bg-amber-50/30">
           <div class="flex items-center gap-3">
@@ -1236,21 +1357,119 @@ onMounted(() => {
 
         <div class="flex-1 overflow-hidden flex flex-col">
            <!-- Search Bar -->
-           <div class="p-6 bg-white border-b border-gray-100 flex gap-4">
-              <input 
-                v-model="testQuery" 
-                @keyup.enter="handleTestRetrieval"
-                class="flex-1 bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-amber-500 transition-all"
-                placeholder="输入用户问题，例如：'查询上海机房的PUE'..."
-              >
-              <button 
-                @click="handleTestRetrieval"
-                :disabled="testLoading || !testQuery"
-                class="px-6 py-3 bg-amber-500 hover:bg-amber-600 text-white rounded-xl font-bold shadow-lg shadow-amber-500/20 transition-all disabled:opacity-50 flex items-center gap-2"
-              >
-                <svg v-if="testLoading" class="animate-spin h-5 w-5 text-white" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
-                <span v-else>执行检索</span>
-              </button>
+           <div class="p-6 bg-white border-b border-gray-100 flex flex-col gap-4">
+              <div class="flex gap-4">
+                 <input 
+                   v-model="testQuery" 
+                   @keyup.enter="handleTestRetrieval"
+                   class="flex-1 bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-amber-500 transition-all"
+                   placeholder="输入用户问题，例如：'查询上海机房的PUE'..."
+                 >
+                 <button 
+                   @click="handleTestRetrieval"
+                   :disabled="testLoading || !testQuery"
+                   class="px-6 py-3 bg-amber-500 hover:bg-amber-600 text-white rounded-xl font-bold shadow-lg shadow-amber-500/20 transition-all disabled:opacity-50 flex items-center gap-2"
+                 >
+                   <svg v-if="testLoading" class="animate-spin h-5 w-5 text-white" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                   <span v-else>执行检索</span>
+                 </button>
+              </div>
+
+              <!-- 折叠触发按钮 -->
+              <div class="flex items-center">
+                <button 
+                  @click="showAdvancedSettings = !showAdvancedSettings"
+                  class="text-xs text-gray-500 hover:text-amber-600 transition-colors flex items-center gap-1 font-medium cursor-pointer"
+                >
+                  <svg 
+                    class="w-4 h-4 transition-transform duration-200" 
+                    :class="{ 'rotate-90': showAdvancedSettings }"
+                    fill="none" stroke="currentColor" viewBox="0 0 24 24"
+                  >
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
+                  </svg>
+                  高级参数配置 (仅临时测试)
+                </button>
+              </div>
+
+              <!-- 折叠面板内容 -->
+              <div v-if="showAdvancedSettings" class="p-4 bg-gray-50/80 rounded-xl border border-gray-100 grid grid-cols-1 md:grid-cols-2 gap-4 text-xs transition-all duration-300">
+                <!-- Provider -->
+                <div class="flex items-center gap-3">
+                  <span class="w-24 text-gray-600 font-medium shrink-0">元数据提供方:</span>
+                  <select 
+                    v-model="tempProvider"
+                    class="bg-white border border-gray-200 rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-1 focus:ring-amber-500 flex-1 cursor-pointer"
+                  >
+                    <option value="default">系统默认配置</option>
+                    <option value="local">本地检索模式 (local)</option>
+                    <option value="ragflow">知识库检索模式 (ragflow)</option>
+                  </select>
+                </div>
+
+                <!-- Top K -->
+                <div v-if="showRagParams" class="flex items-center gap-3">
+                  <span class="w-24 text-gray-600 font-medium shrink-0 flex items-center gap-1">
+                    Top K 数量:
+                    <span class="group relative cursor-pointer text-gray-400 hover:text-gray-600">
+                      <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                      <span class="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 hidden group-hover:block w-48 bg-slate-900 text-white text-[10px] p-2 rounded shadow-xl leading-normal z-50">
+                        RAGFlow 元数据检索时返回的 Top K 数量，控制 AI 可感知的表结构上限
+                      </span>
+                    </span>
+                  </span>
+                  <div class="flex items-center gap-2 flex-1">
+                    <input 
+                      type="range" min="1" max="20" step="1"
+                      v-model.number="tempTopK"
+                      class="flex-1 accent-amber-500 cursor-pointer"
+                    >
+                    <span class="w-8 text-right font-mono font-semibold text-gray-700 bg-white border border-gray-200 rounded px-1 py-0.5">{{ tempTopK }}</span>
+                  </div>
+                </div>
+
+                <!-- Similarity Threshold -->
+                <div v-if="showRagParams" class="flex items-center gap-3">
+                  <span class="w-24 text-gray-600 font-medium shrink-0 flex items-center gap-1">
+                    相似度阈值:
+                    <span class="group relative cursor-pointer text-gray-400 hover:text-gray-600">
+                      <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                      <span class="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 hidden group-hover:block w-48 bg-slate-900 text-white text-[10px] p-2 rounded shadow-xl leading-normal z-50">
+                        RAGFlow 语义检索的最低相似度阈值 (0-1)，越低召回率越高但越不精准
+                      </span>
+                    </span>
+                  </span>
+                  <div class="flex items-center gap-2 flex-1">
+                    <input 
+                      type="range" min="0" max="1" step="0.05"
+                      v-model.number="tempThreshold"
+                      class="flex-1 accent-amber-500 cursor-pointer"
+                    >
+                    <span class="w-8 text-right font-mono font-semibold text-gray-700 bg-white border border-gray-200 rounded px-1 py-0.5">{{ tempThreshold.toFixed(2) }}</span>
+                  </div>
+                </div>
+
+                <!-- Vector Weight -->
+                <div v-if="showRagParams" class="flex items-center gap-3">
+                  <span class="w-24 text-gray-600 font-medium shrink-0 flex items-center gap-1">
+                    向量检索权重:
+                    <span class="group relative cursor-pointer text-gray-400 hover:text-gray-600">
+                      <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                      <span class="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 hidden group-hover:block w-48 bg-slate-900 text-white text-[10px] p-2 rounded shadow-xl leading-normal z-50">
+                        RAGFlow 混合检索中向量检索的权重 (0-1)，剩余为全文检索权重
+                      </span>
+                    </span>
+                  </span>
+                  <div class="flex items-center gap-2 flex-1">
+                    <input 
+                      type="range" min="0" max="1" step="0.05"
+                      v-model.number="tempVectorWeight"
+                      class="flex-1 accent-amber-500 cursor-pointer"
+                    >
+                    <span class="w-8 text-right font-mono font-semibold text-gray-700 bg-white border border-gray-200 rounded px-1 py-0.5">{{ tempVectorWeight.toFixed(2) }}</span>
+                  </div>
+                </div>
+              </div>
            </div>
 
            <!-- Results -->
