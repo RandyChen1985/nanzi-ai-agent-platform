@@ -136,14 +136,14 @@ build_frontend_on_host() {
   (
     cd "$PROJECT_ROOT/frontend"
     npm ci || npm install
-    NODE_OPTIONS="${NODE_OPTIONS:---max-old-space-size=4096}" npx vite build
+    NODE_OPTIONS="${NODE_OPTIONS:---max-old-space-size=4096}" VITE_APP_VERSION="$VERSION" npx vite build
   )
   test -f "$PROJECT_ROOT/frontend/dist/index.html"
   echo "=== 前端预构建完成: frontend/dist ==="
 }
 
 docker_build_args() {
-  DOCKER_BUILD_ARGS=(-f "$SCRIPT_DIR/Dockerfile" -t "$IMAGE_NAME")
+  DOCKER_BUILD_ARGS=(-f "$SCRIPT_DIR/Dockerfile" -t "$IMAGE_NAME" --build-arg "APP_VERSION=$VERSION")
   if [[ "${PREBUILD_FRONTEND:-0}" == "1" ]]; then
     DOCKER_BUILD_ARGS+=(--build-arg "PREBUILD_FRONTEND=1")
   fi

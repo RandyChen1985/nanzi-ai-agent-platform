@@ -39,7 +39,7 @@ VALUES
 ('sys-agent-chatbi', 'chat-bi', '数据智能助手', '专注于数据查询、SQL 生成与报表分析的智能助手。当用户询问具体指标、数据统计、或数据库 schema 相关问题时使用。', '["data_query", "sql_generation", "reporting"]', 1, 'admin'),
 ('sys-agent-metadata', 'metadata-specialist', '元数据专家', '专注于数据库 DDL 解析、业务口径定义与元数据治理。当用户提供 SQL 建表语句或询问表结构定义时使用。', '["metadata_parsing", "ddl_analysis", "schema_governance"]', 1, 'admin'),
 ('sys-agent-kb', 'knowledge-base', '知识库助手', '专注于解答运维规范、操作文档、故障排查流程等问题。基于企业内部 Wiki 和文档库进行检索问答。', '["knowledge_retrieval", "document_search", "qa"]', 1, 'admin'),
-('sys-agent-chat', 'main', '通用对话助手', '处理日常闲聊、通用问答、代码编写辅助以及无法明确分类的请求。作为系统的兜底助手。', '["general_chat", "coding", "creative_writing"]', 1, 'admin');
+('sys-agent-chat', 'main', '主助手(Main)', '处理日常闲聊、通用问答、代码编写辅助以及无法明确分类的请求。作为系统的兜底助手。', '["general_chat", "coding", "creative_writing"]', 1, 'admin');
 
 -- 4. Seed Published Versions
 

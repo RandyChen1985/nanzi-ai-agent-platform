@@ -1,8 +1,10 @@
 # --- 阶段 1: 前端构建 ---
 # PREBUILD_FRONTEND=1：宿主机已执行 vite build，仅 COPY dist（Mac 跨平台打 x86 包时推荐，避免容器 OOM）
 ARG PREBUILD_FRONTEND=0
+ARG APP_VERSION=dev
 FROM node:20-slim AS frontend-builder
 ARG PREBUILD_FRONTEND
+ARG APP_VERSION
 WORKDIR /app/frontend
 
 COPY frontend/package*.json ./
@@ -13,7 +15,7 @@ RUN if [ "$PREBUILD_FRONTEND" = "1" ]; then \
       test -f dist/index.html || (echo "ERROR: PREBUILD_FRONTEND=1 但未找到 frontend/dist/index.html，请先在宿主机执行前端构建" && exit 1); \
       echo "使用宿主机预构建的前端产物"; \
     else \
-      NODE_OPTIONS="--max-old-space-size=2048" npx vite build; \
+      NODE_OPTIONS="--max-old-space-size=2048" VITE_APP_VERSION="$APP_VERSION" npx vite build; \
     fi
 
 # --- 阶段 2: Python 环境构建 ---
@@ -25,14 +27,9 @@ WORKDIR /app
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 
-# 安装系统依赖 (Oracle Client + Playwright/Chromium headless 运行环境)
+# 安装系统依赖 (Oracle Client)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libaio1 \
-    # Playwright Chromium 在 Linux 下所需的系统库
-    libnss3 libnspr4 libatk1.0-0 libatk-bridge2.0-0 libcups2 \
-    libdrm2 libxkbcommon0 libxcomposite1 libxdamage1 libxfixes3 \
-    libxrandr2 libgbm1 libasound2 \
-    fonts-liberation \
     || true \
     && apt-get install -y --no-install-recommends libaio1t64 \
     && ln -s /usr/lib/x86_64-linux-gnu/libaio.so.1t64 /usr/lib/x86_64-linux-gnu/libaio.so.1 || true \
@@ -46,9 +43,9 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     pip install --upgrade pip && \
     pip install -r requirements.txt
 
-# 安装 Playwright 浏览器内核（Chromium headless，供网页检索工具使用，约 260 MiB）
-# 注意：不使用 cache mount，浏览器二进制必须持久化进镜像层
-RUN playwright install chromium
+# 安装 Playwright 浏览器内核及系统依赖（Chromium headless，约 260 MiB）
+# 使用 --with-deps 选项，Playwright 会自动补全当前版本 Chromium 运行所需的全部底层 Linux 系统库，确保绝对完整
+RUN playwright install --with-deps chromium
 
 # 复制项目代码
 COPY . .

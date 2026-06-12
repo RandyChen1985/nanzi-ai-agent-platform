@@ -173,6 +173,45 @@ data: [DONE]
 | `data.steps[].tool_input` | object | 工具入参 |
 | `data.steps[].tool_output` | object | 工具出参 |
 
+### 2.6 获取模型调用指标 (Model Calls)
+获取会话中的大模型调用指标（如 Token 消耗、耗时、时间戳等）。
+
+*   **URL**: `/v1/chat/conversation/{conversation_id}/model_calls`
+*   **Method**: `GET`
+
+#### 参数 (Parameters)
+
+| 参数名 | 位置 | 类型 | 必填 | 说明 |
+| :--- | :--- | :--- | :--- | :--- |
+| `conversation_id` | Path | string | 是 | 会话 ID |
+| `trace_id` | Query | string | 否 | 过滤指定的 trace_id |
+
+### 2.7 删除历史记录
+单条或批量删除持久化的对话历史。
+
+*   **URL**: `/v1/chat/history/{trace_id}` (DELETE 单条)
+*   **URL**: `/v1/chat/history/batch-delete` (POST 批量)
+
+#### 请求体 (仅批量删除)
+```json
+{
+  "trace_ids": ["uuid1", "uuid2"]
+}
+```
+
+### 2.8 导出对话数据
+获取单次对话的导出数据格式。
+
+*   **URL**: `/v1/chat/export/data/{trace_id}`
+*   **Method**: `GET`
+
+### 2.9 上传附件
+对话中的附件上传。
+
+*   **URL**: `/v1/chat/upload`
+*   **Method**: `POST`
+*   **Body**: `multipart/form-data` 包含 `file`
+
 ---
 
 ## 3. 用户服务 (Users)

@@ -53,7 +53,7 @@
 - **响应**: `{"greeting": "..."}`
 
 ### 4.2 获取可用智能体列表
-- **URL**: `GET /api/portal/agents/`
+- **URL**: `GET /api/portal/agents/` (注：此接口由云枢・业务服务后端 `yovole-yunshu-dataweb-backend` 提供，不在 AI 平台核心服务内)
 - **功能**: 获取用于“指定智能体”模式的下拉列表。
 
 ### 4.3 发送对话 (核心)

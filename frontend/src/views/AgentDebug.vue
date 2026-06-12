@@ -3062,61 +3062,62 @@ onUnmounted(() => {
                     v-show="msg.isThoughtExpanded"
                     class="overflow-hidden"
                   >
-                    <div class="relative ml-2 pl-4 py-2 space-y-3 border-l-2 border-gray-100">
+                    <div class="relative ml-2 pl-4 py-2 space-y-1.5 border-l border-gray-200">
                       <div
                         v-for="(log, idx) in msg.logs"
                         :key="log.id"
                         class="relative group/log"
                       >
-                        <!-- Timeline Numbered Badge -->
-                        <div class="absolute -left-[26px] top-1.5 w-5 h-5 rounded-full border border-gray-200 dark:border-gray-700 shadow-sm flex items-center justify-center text-[10px] font-black text-white group-hover/log:scale-110 transition-all z-10 select-none"
+                        <!-- Timeline Numbered Badge (Soft) -->
+                        <div class="absolute -left-[23px] top-2 w-[18px] h-[18px] rounded-full flex items-center justify-center text-[9px] font-bold group-hover/log:scale-110 transition-all z-10 select-none ring-4 ring-white"
                              :class="{
-                               'bg-blue-500': log.category === 'router',
-                               'bg-violet-500': log.category === 'intent',
-                               'bg-yellow-500': log.category === 'sql',
-                               'bg-amber-500': log.category === 'knowledge',
-                               'bg-indigo-500': log.category === 'tool',
-                               'bg-emerald-500': log.category === 'permission',
-                               'bg-gray-500': !log.category || log.category === 'default',
+                               'bg-red-50 text-red-500 border border-red-200': log.status === 'error',
+                               'bg-gray-100 text-gray-500 border border-gray-200': log.status !== 'error',
                                'animate-pulse': log.status === 'pending'
                              }"
                         >
                           {{ Number(idx) + 1 }}
                         </div>
 
-                        <!-- Log Card -->
+                        <!-- Log Card (Lightweight Row) -->
                         <div 
-                            class="rounded-md border p-2.5 text-xs transition-all cursor-pointer hover:shadow-sm"
+                            class="rounded-lg p-2 text-xs transition-colors cursor-pointer"
                             :class="{
-                               'bg-blue-50/50 border-blue-100': log.category === 'router',
-                               'bg-violet-50/50 border-violet-100': log.category === 'intent',
-                               'bg-yellow-50/50 border-yellow-100': log.category === 'sql',
-                               'bg-amber-50/50 border-amber-100': log.category === 'knowledge',
-                               'bg-indigo-50/50 border-indigo-100': log.category === 'tool',
-                               'bg-emerald-50/50 border-emerald-100': log.category === 'permission',
-                               'bg-white border-gray-200': !log.category || log.category === 'default'
+                               'bg-transparent hover:bg-gray-50': log.status !== 'error',
+                               'bg-red-50/30 hover:bg-red-50/50 border border-red-100': log.status === 'error'
                             }"
                             @click="toggleLog(log)"
                         >
                             <!-- Card Header -->
-                            <div class="flex items-start justify-between gap-2">
-                                <div class="flex-1 min-w-0">
-                                    <div class="flex items-center gap-1.5 flex-wrap">
+                            <div class="flex items-center justify-between gap-2">
+                                <div class="flex-1 min-w-0 flex items-center gap-2">
+                                    <!-- Semantic Icon -->
+                                    <span class="text-[13px] flex-shrink-0" :class="{ 'animate-pulse': log.status === 'pending' }">
+                                        <template v-if="log.status === 'error'">⚠️</template>
+                                        <template v-else-if="log.category === 'router'">🧠</template>
+                                        <template v-else-if="log.category === 'tool' || log.category === 'sql' || log.category === 'knowledge'">🛠️</template>
+                                        <template v-else-if="log.category === 'permission'">🔒</template>
+                                        <template v-else-if="log.category === 'intent'">🎯</template>
+                                        <template v-else>🤖</template>
+                                    </span>
+
+                                    <!-- Title & Meta -->
+                                    <div class="flex items-center gap-1.5 flex-wrap min-w-0">
                                         <!-- Title -->
-                                        <span class="font-medium text-gray-700 flex items-center gap-1">
+                                        <span class="font-medium flex items-center gap-1 truncate" :class="log.status === 'error' ? 'text-red-700' : 'text-gray-700'">
                                             <span>{{ log.title }}</span>
                                             <span v-if="log.status === 'pending'" class="text-[10px] text-gray-400 animate-pulse">...</span>
                                         </span>
                                         
                                         <!-- Category Badge -->
-                                        <span v-if="log.category && log.category !== 'default'" class="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider text-white shadow-sm"
+                                        <span v-if="log.category && log.category !== 'default'" class="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider"
                                           :class="{
-                                            'bg-blue-500': log.category === 'router',
-                                            'bg-violet-500': log.category === 'intent',
-                                            'bg-yellow-500': log.category === 'sql',
-                                            'bg-amber-500': log.category === 'knowledge',
-                                            'bg-indigo-500': log.category === 'tool',
-                                            'bg-emerald-500': log.category === 'permission'
+                                            'bg-blue-50 text-blue-600 border border-blue-200': log.category === 'router',
+                                            'bg-violet-50 text-violet-600 border border-violet-200': log.category === 'intent',
+                                            'bg-yellow-50 text-yellow-600 border border-yellow-200': log.category === 'sql',
+                                            'bg-amber-50 text-amber-600 border border-amber-200': log.category === 'knowledge',
+                                            'bg-indigo-50 text-indigo-600 border border-indigo-200': log.category === 'tool',
+                                            'bg-emerald-50 text-emerald-600 border border-emerald-200': log.category === 'permission'
                                           }"
                                         >
                                           {{ log.category }}
@@ -3137,7 +3138,7 @@ onUnmounted(() => {
                                 </div>
                                 
                                 <!-- Chevron & Copy Actions -->
-                                <div class="flex items-center gap-2">
+                                <div class="flex items-center gap-2 flex-shrink-0">
                                   <button 
                                     v-if="log.details && log.isExpanded"
                                     @click.stop="copyContent(log.details, $event)"
@@ -3148,7 +3149,7 @@ onUnmounted(() => {
                                       <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
                                     </svg>
                                   </button>
-                                  <svg v-if="log.details" class="w-3 h-3 text-gray-400 flex-shrink-0 transition-transform" :class="{ 'rotate-180': log.isExpanded }" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" /></svg>
+                                  <svg v-if="log.details" class="w-3 h-3 text-gray-400 transition-transform" :class="{ 'rotate-180': log.isExpanded }" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" /></svg>
                                 </div>
                             </div>
 

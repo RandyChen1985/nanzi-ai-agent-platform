@@ -118,6 +118,8 @@ class _DataRunState:
     empty_sql_reason: str = ""
     sql_error: bool = False
     sql_error_message: str = ""
+    sql_fatal_error: bool = False
+    sql_fatal_message: str = ""
     requires_sql_plan: bool = False
     sql_plan_seen: bool = False
     sql_plan_missing: bool = False
@@ -130,6 +132,9 @@ class _DataRunState:
     current_text_block_emitted: bool = False
     last_successful_sql_output: Any = None
     successful_sqls: dict[str, Any] = field(default_factory=dict)
+    ratio_anomaly: bool = False          # SQL 结果含超阈值比率（>1.5 或负值），触发对账修复
+    ratio_anomaly_reason: str = ""       # 异常说明，用于修复提示词
+    schema_miss_count: int = 0           # 累计 schema_miss 次数（含 prefetch + ReAct 内）
 
     @property
     def has_successful_nonempty_sql(self) -> bool:
@@ -147,6 +152,8 @@ class _DataRunState:
     def ready_to_answer(self) -> bool:
         if not self.requires_fresh_data:
             return True
+        if self.sql_fatal_error:
+            return True
         return (
             self.schema_completed
             and self.sql_completed
@@ -154,6 +161,7 @@ class _DataRunState:
             and not self.sql_error
             and not self.empty_sql_result
             and not self.sql_plan_missing
+            and not self.ratio_anomaly
         )
 
 
@@ -748,6 +756,14 @@ class DataAgentRunner(BaseExecutor):
                 yield chunk
             return
         if state.full_content:
+            deduped = collapse_repeated_reply(state.full_content)
+            if deduped != state.full_content:
+                logger.warning(
+                    "[DataAgentRunner] Collapsed duplicated main-loop content (%d -> %d chars)",
+                    len(state.full_content), len(deduped),
+                )
+                state.full_content = deduped
+                yield {"type": "retraction", "content": deduped}
             if self.conversation_id:
                 await agent_state_store.save(
                     user_id=self._runtime_user_id(),
@@ -761,6 +777,8 @@ class DataAgentRunner(BaseExecutor):
             return
 
         for _ in range(MAX_DATA_REPAIR_ROUNDS):
+            if state.sql_fatal_error:
+                break
             repair_message = self._build_repair_message(state)
             if not repair_message:
                 break
@@ -798,7 +816,17 @@ class DataAgentRunner(BaseExecutor):
                 async for chunk in self._yield_schema_fatal_abort(state):
                     yield chunk
                 return
+            if state.sql_fatal_error:
+                return
             if state.full_content:
+                deduped = collapse_repeated_reply(state.full_content)
+                if deduped != state.full_content:
+                    logger.warning(
+                        "[DataAgentRunner] Collapsed duplicated repair-loop content (%d -> %d chars)",
+                        len(state.full_content), len(deduped),
+                    )
+                    state.full_content = deduped
+                    yield {"type": "retraction", "content": deduped}
                 if self.conversation_id:
                     await agent_state_store.save(
                         user_id=self._runtime_user_id(),
@@ -1100,11 +1128,12 @@ class DataAgentRunner(BaseExecutor):
             "本月呢", "上月呢", "今天呢", "昨天呢", "本周呢", "上周呢",
             "再按", "再看", "再查", "换成", "改成", "只看", "只查", "也看", "也查",
             "then", "this", "that", "it", "previous", "last one", "what about",
+            "还是", "刚才的", "之前那个", "不是", "用这个", "数据查询", "数据需求", "查数据", "查数", "数据智能体"
         ]
         if any(marker in q_lower for marker in context_markers):
             return True
         query_verbs = ["查询", "查", "统计", "列出", "展示", "显示", "获取", "select", "show", "list"]
-        return len(q) < 8 and not any(verb in q_lower for verb in query_verbs)
+        return len(q) < 12 and not any(verb in q_lower for verb in query_verbs)
 
     async def _resolve_standalone_query_for_new_data_query(
         self,
@@ -1144,11 +1173,12 @@ class DataAgentRunner(BaseExecutor):
             "1. 只补全上下文缺失的查询对象、指标、维度、时间范围或筛选条件。",
             "2. 必须保留最新提问新增或修改的条件。",
             "3. 不要生成 SQL，不要选择表名/字段名，不要解释。",
-            "4. 如果无法可靠补全，原样返回最新提问。",
+            "4. 【纠错与澄清回溯】：如果【最新提问】本身没有具体的数据查询业务诉求，而只是为了纠正意图、强调是数据查询、或澄清需求（例如：'还是数据查询需求'、'不对，是查数'、'用数据查'、'重新用数据查一下'），说明它是一个‘意图校准信号’。此时，你必须回溯并找出最近对话中【用户上一次提出的真实查询诉求】（即被系统误判的那个真实业务问题，如'查一下我的信息'），并结合更前文的历史数据背景（如'统计近一年入职员工数据'），合并生成一个独立的、完整的业务查数问题。",
+            "5. 如果无法可靠补全，原样返回最新提问。",
         ]
         ltm_section = ""
         if has_ltm:
-            instructions.append("5. 结合【用户个性化偏好与记忆】，将最新提问中的俗称、别名、旧称转换为对应的标准名称。")
+            instructions.append("6. 结合【用户个性化偏好与记忆】，将最新提问中的俗称、别名、旧称转换为对应的标准名称。")
             ltm_section = f"\n\n【用户个性化偏好与记忆】\n{ltm_context}"
 
         time_anchor = build_data_query_time_anchor_block()
@@ -1438,7 +1468,14 @@ class DataAgentRunner(BaseExecutor):
                             state.last_successful_sql_output = output
                     
                     state.sql_error, state.sql_error_message = self._detect_sql_error(output)
+                    if state.sql_error and self._is_sql_fatal_error(state.sql_error_message):
+                        state.sql_fatal_error = True
+                        state.sql_fatal_message = state.sql_error_message
                     if not state.sql_error:
+                        ratio_anomaly, anomaly_reason = self._detect_ratio_anomaly(parsed_output)
+                        if ratio_anomaly and not is_diag:
+                            state.ratio_anomaly = True
+                            state.ratio_anomaly_reason = anomaly_reason
                         await self._save_last_data_result_for_followups(tool_args, parsed_output)
             self._sync_pending_data_run_state(state, stream_state)
             self._increment_step()
@@ -1538,6 +1575,20 @@ class DataAgentRunner(BaseExecutor):
                 yield chunk
                 if is_interrupt_sse_chunk(chunk):
                     return
+            if state.sql_fatal_error:
+                logger.info("[DataAgentRunner] Fatal SQL error detected during ReAct. Terminating execution immediately.")
+                yield {
+                    "type": "log",
+                    "id": f"fatal_sql_{uuid.uuid4().hex[:8]}",
+                    "title": "SQL 执行致命错误",
+                    "details": state.sql_fatal_message,
+                    "status": "error",
+                }
+                yield {
+                    "content": f"数据查询发生致命错误，已终止：\n\n{state.sql_fatal_message}",
+                    "status": "error",
+                }
+                return
 
         if emit_final_guard:
             guard_emitted = False
@@ -1569,6 +1620,7 @@ class DataAgentRunner(BaseExecutor):
             state.schema_service_unavailable
             or state.no_authorized_schema
             or state.rag_not_synced
+            or state.schema_miss_count >= 2  # 连续两次未命中（含换词重试）→ 硬终止
         )
 
     def _schema_fatal_response(self, state: _DataRunState) -> tuple[str, str]:
@@ -1586,6 +1638,11 @@ class DataAgentRunner(BaseExecutor):
             return (
                 "元数据未同步知识库",
                 DataQueryPrompts.RAG_NOT_SYNCED_CONTENT,
+            )
+        if state.schema_miss_count >= 2:
+            return (
+                "连续未命中数据集定义",
+                DataQueryPrompts.SCHEMA_MISS_EXHAUSTED_CONTENT,
             )
         return (
             "Schema 获取失败",
@@ -1626,6 +1683,8 @@ class DataAgentRunner(BaseExecutor):
             content = "SQL 返回空结果，必须先用诊断 SQL 复查筛选条件或 JOIN 条件，再执行最终 SQL 后才能回答。"
         elif state.sql_plan_missing:
             content = "高风险数据查询必须先补充 SQL 计划，再执行 SQL 查询并确认结果后才能回答。"
+        elif state.ratio_anomaly:
+            content = "比率/占比结果疑似异常，必须先完成对账 SQL 复核后才能回答。"
         else:
             content = "为保证数据准确性，必须先完成数据集定义检索和 SQL 查询后才能回答。"
         yield {
@@ -1679,6 +1738,8 @@ class DataAgentRunner(BaseExecutor):
                 "请先用诊断 SQL 复查筛选值、时间范围、子查询或 JOIN 条件，再执行最终 SQL。"
                 "在最终 SQL 返回有效结果前禁止直接回答用户。"
             )
+        if state.ratio_anomaly:
+            return DataQueryPrompts.ratio_anomaly_recheck(state.ratio_anomaly_reason)
         if (
             state.requires_fresh_data
             and state.blocked_content.strip()
@@ -1714,10 +1775,13 @@ class DataAgentRunner(BaseExecutor):
         state.empty_sql_reason = ""
         state.sql_plan_missing = False
         state.sql_before_schema = False
+        state.ratio_anomaly = False          # 比率异常状态清除（每轮重新检测）
+        state.ratio_anomaly_reason = ""
         # 彻底清空上一轮的 SQL 缓存，并重置 Schema 未命中状态，防范修复过程中的 Gate 误拦截
         state.last_successful_sql_output = None
         state.successful_sqls = {}
         state.schema_miss = False
+        # schema_miss_count 不重置，跨轮累计用于连续未命中达到阈值后终止
 
     def _resolve_force_execute_sql_tool_choice(self, state: _DataRunState) -> Any | None:
         from agentscope.tool import ToolChoice
@@ -1744,6 +1808,8 @@ class DataAgentRunner(BaseExecutor):
             return ToolChoice(mode="get_dataset_schema")
         if state.sql_plan_missing:
             return None
+        if state.ratio_anomaly:
+            return ToolChoice(mode="required")  # 强制调用工具补充对账 SQL
         if state.sql_error or state.empty_sql_result:
             return ToolChoice(mode="required")
         if (
@@ -1763,6 +1829,8 @@ class DataAgentRunner(BaseExecutor):
             return "重试检索数据集定义"
         if state.sql_plan_missing:
             return "补充 SQL 计划"
+        if state.ratio_anomaly:
+            return "比率/占比异常复核"
         if (
             state.requires_fresh_data
             and state.blocked_content.strip()
@@ -1784,10 +1852,15 @@ class DataAgentRunner(BaseExecutor):
         if not question:
             return False
         high_risk_keywords = [
+            # 中文
             "率", "占比", "比例", "比率", "负载", "利用率", "pue", "成功率", "转化率", "人均", "单价",
             "同比", "环比", "趋势", "变化", "增长", "下降",
             "top", "排名", "排行", "分组", "维度", "group", "join",
             "p95", "p90", "分位", "中位", "median", "percentile",
+            # 英文
+            "rate", "ratio", "percentage", "percent", "proportion",
+            "trend", "growth", "decline", "change", "yoy", "mom",
+            "ranking", "rank", "distribution", "utilization", "utilisation",
         ]
         if any(keyword in question for keyword in high_risk_keywords):
             return True
@@ -1899,6 +1972,8 @@ class DataAgentRunner(BaseExecutor):
         state.no_authorized_schema = self._is_no_authorized_schema(output)
         state.rag_not_synced = self._is_rag_not_synced(output)
         state.schema_miss = self._is_no_relevant_schema(output)
+        if state.schema_miss:
+            state.schema_miss_count += 1
         if self._is_schema_fatal(state) or state.schema_miss or not str(output or "").strip():
             state.schema_completed = False
             state.sql_before_schema = False
@@ -2038,6 +2113,73 @@ class DataAgentRunner(BaseExecutor):
         ]
         if any(re.search(pattern, text, flags=re.IGNORECASE | re.MULTILINE) for pattern in error_patterns):
             return True, text[:1000]
+        return False, ""
+
+    @staticmethod
+    def _is_sql_fatal_error(text: str) -> bool:
+        q = str(text or "").strip()
+        if not q:
+            return False
+        fatal_prefixes = (
+            "[Permission Denied]",
+            "[Security Error]",
+            "[Validation Failed]",
+            "Error: Dataset",
+        )
+        if any(q.startswith(prefix) for prefix in fatal_prefixes):
+            return True
+        fatal_keywords = [
+            "未在元数据中注册",
+            "拒绝执行",
+            "没有表",
+            "权限不足",
+            "表不存在",
+            "table does not exist",
+            "access denied",
+            "permission denied"
+        ]
+        q_lower = q.lower()
+        return any(kw in q_lower for kw in fatal_keywords)
+
+    @staticmethod
+    def _detect_ratio_anomaly(parsed: Any) -> tuple[bool, str]:
+        """对 execute_sql_query 结果做比率合理性检测。
+
+        规则：字段名含 rate/ratio/占比/利用率/成功率 等语义词，且值 > 1.5 或 < -0.1，
+        则认为可能存在 JOIN 放大或分母口径错误，触发对账修复轮。
+        阈值使用 1.5（不是 1.0）以避免合法的"完成率 102%"误触。
+        只检查前 50 行，不阻塞大结果集场景。
+        """
+        ratio_col_pattern = re.compile(
+            r"(rate|ratio|pct|percent|proportion|utilization|utilisation|"
+            r"\u7387|\u5360\u6bd4|\u6bd4\u4f8b|\u8d1f\u8f7d\u7387|\u5229\u7528\u7387|\u6210\u529f\u7387|\u8f6c\u5316\u7387|\u5b8c\u6210\u7387)",
+            re.IGNORECASE,
+        )
+        rows: list[dict] = []
+        if isinstance(parsed, list):
+            rows = [r for r in parsed if isinstance(r, dict)]
+        elif isinstance(parsed, dict):
+            for key in ("items", "rows", "data", "records"):
+                val = parsed.get(key)
+                if isinstance(val, list):
+                    rows = [r for r in val if isinstance(r, dict)]
+                    break
+
+        if not rows:
+            return False, ""
+
+        for row in rows[:50]:
+            for col, val in row.items():
+                if not ratio_col_pattern.search(str(col)):
+                    continue
+                try:
+                    fval = float(val)
+                except (TypeError, ValueError):
+                    continue
+                if fval > 1.5:
+                    return True, f"\u5b57\u6bb5 `{col}` \u503c\u4e3a {fval:.4f}\uff08\u8d85\u8fc7 150%\uff0c\u7591\u4f3c JOIN \u653e\u5927\u6216\u5206\u6bcd\u9519\u8bef\uff09"
+                if fval < -0.1:
+                    return True, f"\u5b57\u6bb5 `{col}` \u503c\u4e3a {fval:.4f}\uff08\u51fa\u73b0\u8d1f\u503c\uff0c\u7591\u4f3c\u8ba1\u7b97\u53e3\u5f84\u9519\u8bef\uff09"
         return False, ""
 
     async def _resolve_pending_runtime(

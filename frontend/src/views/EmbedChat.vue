@@ -613,46 +613,49 @@
                     v-show="msg.isThoughtExpanded"
                     class="overflow-hidden"
                   >
-                    <div class="relative ml-2 pl-4 py-2 space-y-3 border-l-2 border-gray-100 dark:border-gray-700/50">
+                    <div class="relative ml-2 pl-4 py-2 space-y-1.5 border-l border-gray-200 dark:border-gray-700/50">
                       <div
                         v-for="(log, idx) in getDisplayLogs(msg)"
                         :key="idx"
                         class="relative group/log"
                       >
-                        <!-- Timeline Numbered Badge -->
-                        <div class="absolute -left-[26px] top-1.5 w-5 h-5 rounded-full border border-gray-200 dark:border-gray-700 shadow-sm flex items-center justify-center text-[10px] font-black text-white group-hover/log:scale-110 transition-all z-10 select-none"
+                        <!-- Timeline Numbered Badge (Soft) -->
+                        <div class="absolute -left-[23px] top-2 w-[18px] h-[18px] rounded-full flex items-center justify-center text-[9px] font-bold group-hover/log:scale-110 transition-all z-10 select-none ring-4 ring-white dark:ring-gray-800"
                              :class="{
-                               'bg-blue-500': log.category === 'router',
-                               'bg-indigo-500': log.category === 'tool',
-                               'bg-emerald-500': log.category === 'permission' || (!['router', 'tool', 'permission'].includes(log.category || '') && log.status === 'success'),
-                               'bg-amber-500': log.status === 'error',
-                               'bg-gray-500': log.status === 'pending' || (!log.category && log.status !== 'error' && log.status !== 'success'),
+                               'bg-red-50 text-red-500 border border-red-200 dark:bg-red-900/30 dark:border-red-800/50': log.status === 'error',
+                               'bg-gray-100 text-gray-500 border border-gray-200 dark:bg-gray-800 dark:text-gray-400 dark:border-gray-700': log.status !== 'error',
                                'animate-pulse': log.status === 'pending'
                              }"
                         >
                           {{ Number(idx) + 1 }}
                         </div>
-                        <!-- Log Card -->
+                        <!-- Log Card (Lightweight Row) -->
                         <div 
-                          class="rounded-md border p-2.5 text-xs transition-all cursor-pointer hover:shadow-sm"
+                          class="rounded-lg p-2 text-xs transition-colors cursor-pointer"
                           :class="{
-                             'bg-blue-50/50 dark:bg-blue-900/10 border-blue-100 dark:border-blue-900/30': log.category === 'router',
-                             'bg-indigo-50/50 dark:bg-indigo-900/10 border-indigo-100 dark:border-indigo-900/30': log.category === 'tool',
-                             'bg-yellow-50/50 dark:bg-yellow-900/10 border-yellow-100 dark:border-yellow-900/30': log.category === 'sql',
-                             'bg-emerald-50/50 dark:bg-emerald-900/10 border-emerald-100 dark:border-emerald-900/30': log.category === 'permission',
-                             'bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700': !log.category || log.category === 'default'
+                             'bg-transparent hover:bg-gray-50 dark:hover:bg-gray-700/30': log.status !== 'error',
+                             'bg-red-50/30 hover:bg-red-50/50 dark:bg-red-900/10 dark:hover:bg-red-900/20 border border-red-100 dark:border-red-900/30': log.status === 'error'
                           }"
                           @click="log.details ? (log.isExpanded = !log.isExpanded) : null"
                         >
-                          <div class="flex items-start justify-between gap-2">
-                             <div class="font-medium text-gray-700 dark:text-gray-300 flex items-center gap-1.5 flex-1">
-                               <span>{{ log.title }}</span>
-                               <span v-if="log.status === 'pending'" class="text-[10px] text-gray-400 animate-pulse">...</span>
+                          <div class="flex items-center justify-between gap-2">
+                             <div class="font-medium flex items-center gap-2 flex-1 min-w-0"
+                                  :class="log.status === 'error' ? 'text-red-700 dark:text-red-400' : 'text-gray-700 dark:text-gray-300'">
+                               <!-- Semantic Icon -->
+                               <span class="text-[13px] flex-shrink-0" :class="{ 'animate-pulse': log.status === 'pending' }">
+                                 <template v-if="log.status === 'error'">⚠️</template>
+                                 <template v-else-if="log.category === 'router'">🧠</template>
+                                 <template v-else-if="log.category === 'tool' || log.category === 'sql'">🛠️</template>
+                                 <template v-else-if="log.category === 'permission'">🔒</template>
+                                 <template v-else>🤖</template>
+                               </span>
+                               <!-- Main Text -->
+                               <span class="truncate">{{ log.title }}</span>
                              </div>
-                             <div class="flex items-center gap-2">
+                             <div class="flex items-center gap-2 flex-shrink-0">
                                <span
                                  v-if="formatLogDuration(log)"
-                                 class="text-[10px] font-mono px-1.5 py-0.5 rounded bg-white/70 dark:bg-gray-900/50 text-gray-500 border border-gray-100 dark:border-gray-700 flex-shrink-0"
+                                 class="text-[10px] font-mono text-gray-400 dark:text-gray-500"
                                  :title="log.status === 'pending' ? '当前步骤已等待时间' : '当前步骤耗时'"
                                >
                                  {{ formatLogDuration(log) }}
@@ -665,7 +668,7 @@
                                >
                                  <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012-2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3" /></svg>
                                </button>
-                               <svg v-if="log.details" class="w-3 h-3 text-gray-400 flex-shrink-0 transition-transform" :class="{ 'rotate-180': log.isExpanded }" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" /></svg>
+                               <svg v-if="log.details" class="w-3 h-3 text-gray-400 transition-transform" :class="{ 'rotate-180': log.isExpanded }" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" /></svg>
                              </div>
                           </div>                          <!-- Details -->
                           <div v-if="log.details && log.isExpanded" class="mt-2 pt-2 border-t border-gray-100 dark:border-gray-700/50">
@@ -2889,8 +2892,8 @@ const resetStallTimer = () => {
 // Slash Commands
 const showCommandMenu = ref(false);
 const slashCommands = ref<any[]>([
+  { id: "sys_clear", command: "/new", label: "💬 新会话", sort_order: -30 },
   { id: "sys_history", command: "/history", label: "🕒 历史", sort_order: -20 },
-  { id: "sys_clear", command: "/new", label: "💬 新会话", sort_order: -18 },
   { id: "sys_settings", command: "/settings", label: "⚙️ 设置", sort_order: -15 },
 ]);
 // History Sidebar State
@@ -3697,8 +3700,8 @@ const fetchSlashCommands = async () => {
       const userCommands = Array.isArray(res.data) ? res.data : [];
       // 定义系统命令
       const systemCommands = [
+        { id: "sys_clear", command: "/new", label: "💬 新会话", sort_order: -30 },
         { id: "sys_history", command: "/history", label: "🕒 历史", sort_order: -20 },
-        { id: "sys_clear", command: "/new", label: "💬 新会话", sort_order: -18 },
         { id: "sys_settings", command: "/settings", label: "⚙️ 设置", sort_order: -15 }
       ];
       // 合并系统命令和用户命令，并按 sort_order 排序
@@ -3709,8 +3712,8 @@ const fetchSlashCommands = async () => {
     } else {
       // 如果API没有返回数据，至少确保系统命令存在
       const systemCommands = [
+        { id: "sys_clear", command: "/new", label: "💬 新会话", sort_order: -30 },
         { id: "sys_history", command: "/history", label: "🕒 历史", sort_order: -20 },
-        { id: "sys_clear", command: "/new", label: "💬 新会话", sort_order: -18 },
         { id: "sys_settings", command: "/settings", label: "⚙️ 设置", sort_order: -15 }
       ];
       slashCommands.value = systemCommands;
@@ -3719,9 +3722,9 @@ const fetchSlashCommands = async () => {
     console.warn("Slash commands fetch failed", e);
     // 如果API调用失败，至少确保系统命令存在
     const systemCommands = [
+      { id: "sys_clear", command: "/new", label: "💬 新会话", sort_order: -30 },
       { id: "sys_history", command: "/history", label: "🕒 历史", sort_order: -20 },
-      { id: "sys_settings", command: "/settings", label: "⚙️ 设置", sort_order: -15 },
-      { id: "sys_clear", command: "/new", label: "💬 新会话", sort_order: -10 }
+      { id: "sys_settings", command: "/settings", label: "⚙️ 设置", sort_order: -15 }
     ];
     slashCommands.value = systemCommands;
   }
