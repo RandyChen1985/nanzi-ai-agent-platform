@@ -367,6 +367,7 @@ class AgentService:
             # --- 按轮次类型裁剪上下文注入（与会话级 Turn 分类共用，不重复调意图 LLM）---
             from app.services.ai.turn_classifier import (
                 TurnType,
+                TurnClassification,
                 resolve_turn_for_session,
                 should_inject_ltm,
                 should_inject_memory_recall_hint,
@@ -375,6 +376,7 @@ class AgentService:
                 turn_type_label,
                 default_thought_expanded,
             )
+            from app.services.ai.intent_service import IntentType
 
             can_do_data = "data_query" in (agent_config.capabilities or [])
             agent_engine_config = agent_config.engine_config or {}
@@ -391,7 +393,18 @@ class AgentService:
                 "knowledge_dataset_ids": request_knowledge_dataset_ids or None,
                 "agent_has_knowledge_binding": agent_has_knowledge_binding,
             }
-            if can_do_data:
+            explicit_knowledge_context = bool(request_knowledge_dataset_ids or agent_has_knowledge_binding)
+            if can_do_data and not explicit_knowledge_context:
+                turn_classification = TurnClassification(
+                    turn_type=TurnType.DATA_QUERY_REQUEST,
+                    reasoning="ChatBI 轮次由 DataQueryExecutor 内部请求类别分析器最终判定",
+                    skip_intent_llm=True,
+                    intent=IntentType.DATA_QUERY,
+                )
+                turn_intent_info = None
+                turn_intent_elapsed_ms = 0.0
+                session_turn = None
+            elif can_do_data:
                 turn_classification, turn_intent_info, turn_intent_elapsed_ms = await resolve_turn_for_session(
                     **turn_kwargs,
                     can_do_data=True,

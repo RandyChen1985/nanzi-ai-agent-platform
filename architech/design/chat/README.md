@@ -15,7 +15,7 @@
 | [../agent_execution_flow_review.md](../agent_execution_flow_review.md) | 执行流评审与请求类别边界（非主规范，含历史 P0/P1 状态） |
 | [../AGENT_ROUTING_DESIGN.md](../AGENT_ROUTING_DESIGN.md) | 智能体路由产品设计 |
 | [../AGENT_APP_DESIGN.md](../AGENT_APP_DESIGN.md) | V1 API、Embed、`debug_options` |
-| [../../prompts/README.md](../../prompts/README.md) | 运营侧智能体提示词草稿（ChatBI V7、DevOps V5 等） |
+| [../../prompts/README.md](../../prompts/README.md) | 运营侧智能体提示词草稿（ChatBI V8、DevOps V5 等） |
 
 ## 代码入口（速查）
 

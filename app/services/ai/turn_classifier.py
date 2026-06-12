@@ -52,6 +52,7 @@ class TurnClassification:
     requires_knowledge_search: bool = False
     skip_intent_llm: bool = False
     intent: Optional[IntentType] = None
+    knowledge_preemption_allowed: bool = False
 
 
 def should_inject_ltm(turn_type: Optional[TurnType]) -> bool:
@@ -155,6 +156,7 @@ def classify_turn_heuristic(
             requires_knowledge_search=True,
             skip_intent_llm=True,
             intent=IntentType.KNOWLEDGE_BASE,
+            knowledge_preemption_allowed=True,
         )
 
     if looks_like_knowledge_query(q):
@@ -228,23 +230,13 @@ def classify_turn_from_intent(
             or "search_knowledge" in reasoning
             or "知识库" in reasoning
         ):
-            # Agent 未绑定任何知识库时降级为通用对话，避免进入知识库链路后报"未指定知识库"错误
-            if not has_knowledge_binding:
-                return TurnClassification(
-                    turn_type=TurnType.GENERAL,
-                    reasoning=(
-                        f"{reasoning}（Agent 未绑定知识库，降级为通用对话处理）"
-                    ),
-                    requires_knowledge_search=False,
-                    skip_intent_llm=False,
-                    intent=IntentType.GENERAL,
-                )
             return TurnClassification(
                 turn_type=TurnType.KNOWLEDGE,
                 reasoning=reasoning or "识别为知识库问答",
                 requires_knowledge_search=True,
                 skip_intent_llm=False,
                 intent=IntentType.KNOWLEDGE_BASE,
+                knowledge_preemption_allowed=has_knowledge_binding,
             )
 
     if not can_do_data and intent_info.intent == IntentType.DATA_QUERY:
@@ -370,6 +362,7 @@ def adapt_classification_for_agent(
         requires_knowledge_search=knowledge,
         skip_intent_llm=classification.skip_intent_llm,
         intent=classification.intent,
+        knowledge_preemption_allowed=classification.knowledge_preemption_allowed,
     )
 
 

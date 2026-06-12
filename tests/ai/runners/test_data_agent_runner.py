@@ -1636,6 +1636,43 @@ def test_build_repair_message_empty_when_no_blocked_content(data_config):
     assert runner._build_repair_message(state) == ""
 
 
+def test_low_confidence_schema_prefetch_requests_refinement(data_config):
+    from app.services.ai.runners.data_agent_runner import DataAgentRunner, _DataRunState
+
+    runner = DataAgentRunner(config=data_config, trace_id="trace-schema-refine", trace_buffer=[])
+    state = _DataRunState(requires_fresh_data=True)
+
+    runner._apply_schema_tool_result(
+        state,
+        "[置信度: 0.22]\n--- Source: unknown.md ---\n字段片段较弱",
+    )
+
+    assert state.schema_completed is False
+    assert state.schema_needs_refinement is True
+    assert runner._build_repair_title(state) == "优化数据集定义检索"
+    assert "相关性不足" in runner._build_repair_message(state)
+
+
+def test_repair_budget_is_tracked_by_error_type(data_config):
+    from app.services.ai.runners.data_agent_runner import DataAgentRunner, _DataRunState
+
+    runner = DataAgentRunner(config=data_config, trace_id="trace-repair-budget", trace_buffer=[])
+    state = _DataRunState(
+        requires_fresh_data=True,
+        schema_completed=True,
+        blocked_content="第一次跳过 SQL",
+    )
+
+    assert runner._current_repair_kind(state) == "missing_sql"
+    assert runner._repair_budget_exhausted(state) is False
+    runner._record_repair_attempt(state)
+    assert state.repair_attempts["missing_sql"] == 1
+    assert runner._repair_budget_exhausted(state) is False
+    runner._record_repair_attempt(state)
+    assert state.repair_attempts["missing_sql"] == 2
+    assert runner._repair_budget_exhausted(state) is True
+
+
 @pytest.mark.asyncio
 async def test_data_agent_runner_rejects_sql_before_schema(data_config):
     from types import SimpleNamespace
@@ -2122,7 +2159,7 @@ async def test_data_agent_runner_blocks_final_answer_after_sql_error(data_config
 
 
 @pytest.mark.asyncio
-async def test_data_agent_runner_blocks_final_answer_after_empty_sql_result(data_config):
+async def test_data_agent_runner_allows_final_answer_after_trusted_empty_sql_result(data_config):
     from types import SimpleNamespace
 
     from app.services.ai.runners.data_agent_runner import DataAgentRunner
@@ -2142,6 +2179,39 @@ async def test_data_agent_runner_blocks_final_answer_after_empty_sql_result(data
         yield SimpleNamespace(type="TEXT_BLOCK_DELTA", delta="没有数据")
 
     runner = DataAgentRunner(config=data_config, trace_id="trace-empty-block", trace_buffer=[])
+
+    events = []
+    async for chunk in runner._stream_agentscope_events(
+        event_stream=fake_events(),
+        tools=[],
+        native_model=SimpleNamespace(model="fake-native-data"),
+    ):
+        events.append(chunk)
+
+    assert any(event.get("content") == "没有数据" for event in events if isinstance(event, dict))
+
+
+@pytest.mark.asyncio
+async def test_data_agent_runner_blocks_complex_empty_sql_result_for_recheck(data_config):
+    from types import SimpleNamespace
+
+    from app.services.ai.runners.data_agent_runner import DataAgentRunner
+
+    async def fake_events():
+        yield SimpleNamespace(type="TOOL_CALL_START", tool_call_id="call_schema", tool_call_name="get_dataset_schema")
+        yield SimpleNamespace(type="TOOL_RESULT_TEXT_DELTA", tool_call_id="call_schema", delta="table_name: demo\ncolumns: room, used, total")
+        yield SimpleNamespace(type="TOOL_RESULT_END", tool_call_id="call_schema")
+        yield SimpleNamespace(type="TOOL_CALL_START", tool_call_id="call_sql", tool_call_name="execute_sql_query")
+        yield SimpleNamespace(
+            type="TOOL_CALL_DELTA",
+            tool_call_id="call_sql",
+            delta='{"sql": "SELECT room, SUM(used) / SUM(total) AS utilization_rate FROM demo GROUP BY room", "data_source": "mysql_aiagent", "dataset_name": "demo"}',
+        )
+        yield SimpleNamespace(type="TOOL_RESULT_TEXT_DELTA", tool_call_id="call_sql", delta='{"rows": [], "total": 0}')
+        yield SimpleNamespace(type="TOOL_RESULT_END", tool_call_id="call_sql")
+        yield SimpleNamespace(type="TEXT_BLOCK_DELTA", delta="没有数据")
+
+    runner = DataAgentRunner(config=data_config, trace_id="trace-complex-empty-block", trace_buffer=[])
 
     events = []
     async for chunk in runner._stream_agentscope_events(
@@ -2609,7 +2679,7 @@ async def test_data_agent_runner_execute_rechecks_empty_sql_before_final_answer(
                         ToolCallBlock(
                             id="call_empty_sql",
                             name="execute_sql_query",
-                            input='{"sql": "SELECT * FROM demo WHERE id=-1", "data_source": "mysql_aiagent", "dataset_name": "demo"}',
+                            input='{"sql": "SELECT room, SUM(used) / SUM(total) AS utilization_rate FROM demo WHERE id=-1 GROUP BY room", "data_source": "mysql_aiagent", "dataset_name": "demo"}',
                         )
                     ],
                     is_last=True,
@@ -2625,7 +2695,7 @@ async def test_data_agent_runner_execute_rechecks_empty_sql_before_final_answer(
                         ToolCallBlock(
                             id="call_final_sql",
                             name="execute_sql_query",
-                            input='{"sql": "SELECT * FROM demo WHERE id=1", "data_source": "mysql_aiagent", "dataset_name": "demo"}',
+                            input='{"sql": "SELECT room, SUM(used) / SUM(total) AS utilization_rate FROM demo WHERE id=1 GROUP BY room", "data_source": "mysql_aiagent", "dataset_name": "demo"}',
                         )
                     ],
                     is_last=True,
@@ -2694,7 +2764,7 @@ async def test_data_agent_runner_execute_rechecks_empty_sql_before_final_answer(
     runner = DataAgentRunner(config=data_config, trace_id="trace-empty-recheck", trace_buffer=[])
 
     events = []
-    async for chunk in runner.execute([{"role": "user", "content": "查 demo"}]):
+    async for chunk in runner.execute([{"role": "user", "content": "查 demo 明细"}]):
         events.append(chunk)
 
     content = "".join(event["content"] for event in events if "content" in event and "type" not in event)

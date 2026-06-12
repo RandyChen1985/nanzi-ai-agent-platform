@@ -3,6 +3,7 @@ from typing import List, Dict, Any, Optional
 from app.schemas.agent import AgentExecutionStep, ChatConfig
 from app.services.ai.turn_classifier import (
     SharedTurn,
+    TurnClassification,
     TurnType,
     adapt_classification_for_agent,
     attach_turn_classification,
@@ -71,6 +72,14 @@ class AgentDispatcher:
         if shared_turn is not None:
             classification, intent_info, intent_elapsed_ms = shared_turn
             classification = adapt_classification_for_agent(classification, can_do_data=can_do_data)
+        elif can_do_data:
+            classification = TurnClassification(
+                turn_type=TurnType.DATA_QUERY_REQUEST,
+                reasoning="ChatBI 轮次由 DataQueryExecutor 内部请求类别分析器最终判定",
+                skip_intent_llm=True,
+            )
+            intent_info = None
+            intent_elapsed_ms = 0.0
         else:
             classification, intent_info, intent_elapsed_ms = await resolve_turn_for_session(
                 user_query,
@@ -81,7 +90,14 @@ class AgentDispatcher:
             )
             classification = adapt_classification_for_agent(classification, can_do_data=can_do_data)
 
-        if classification.turn_type == TurnType.KNOWLEDGE:
+        knowledge_preempts_data = (
+            classification.turn_type == TurnType.KNOWLEDGE
+            and (
+                not can_do_data
+                or classification.knowledge_preemption_allowed
+            )
+        )
+        if knowledge_preempts_data:
             logger.info(
                 "[Dispatcher] turn=%s executor=Knowledge skip_intent=%s agent=%s",
                 turn_type_label(classification.turn_type),
