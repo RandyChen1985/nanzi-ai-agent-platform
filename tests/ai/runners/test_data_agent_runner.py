@@ -1204,6 +1204,67 @@ async def test_data_agent_runner_injects_few_shot_examples(
 
 
 @pytest.mark.asyncio
+async def test_data_agent_runner_logs_empty_few_shot_search(
+    data_config,
+    monkeypatch,
+):
+    from app.services.ai.runners.data_agent_runner import DataAgentRunner
+
+    mock_search = AsyncMock(return_value=[])
+    monkeypatch.setattr(
+        "app.services.chatbi_example_service.ExampleService.search_examples",
+        mock_search,
+    )
+
+    runner = DataAgentRunner(config=data_config, trace_id="trace-few-shot-empty", trace_buffer=[])
+    system_content = await runner._inject_few_shot_examples(
+        "SYSTEM",
+        user_question="统计用户状态",
+        runtime_messages=[],
+    )
+
+    assert system_content == "SYSTEM"
+    assert runner._fewshot_examples == []
+    assert runner._pending_few_shot_log is not None
+    assert runner._pending_few_shot_log["title"] == "未命中经验库案例"
+    assert "继续基于用户问题和数据集定义生成 SQL" in runner._pending_few_shot_log["details"]
+    assert runner.trace_buffer[-1].event_type == "few_shot"
+    assert runner.trace_buffer[-1].tool_output == {"examples": []}
+    mock_search.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_data_agent_runner_logs_few_shot_search_failure(
+    data_config,
+    monkeypatch,
+):
+    from app.services.ai.runners.data_agent_runner import DataAgentRunner
+
+    mock_search = AsyncMock(side_effect=RuntimeError("rag unavailable"))
+    monkeypatch.setattr(
+        "app.services.chatbi_example_service.ExampleService.search_examples",
+        mock_search,
+    )
+
+    runner = DataAgentRunner(config=data_config, trace_id="trace-few-shot-failure", trace_buffer=[])
+    system_content = await runner._inject_few_shot_examples(
+        "SYSTEM",
+        user_question="统计用户状态",
+        runtime_messages=[],
+    )
+
+    assert system_content == "SYSTEM"
+    assert runner._fewshot_examples == []
+    assert runner._pending_few_shot_log is not None
+    assert runner._pending_few_shot_log["title"] == "经验库检索不可用"
+    assert "已自动跳过案例注入" in runner._pending_few_shot_log["details"]
+    assert runner.trace_buffer[-1].event_type == "few_shot"
+    assert runner.trace_buffer[-1].raw_log
+    assert "rag unavailable" in runner.trace_buffer[-1].raw_log
+    mock_search.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_data_agent_runner_rewrites_contextual_query_and_plans_schema_keywords(
     data_config,
     monkeypatch,
@@ -1594,7 +1655,11 @@ def test_resolve_initial_tool_choice_forces_sql_after_prefetched_schema(data_con
     from app.services.ai.runners.data_agent_runner import DataAgentRunner, _DataRunState
 
     runner = DataAgentRunner(config=data_config, trace_id="trace-initial-force-sql", trace_buffer=[])
-    state = _DataRunState(requires_fresh_data=True, schema_completed=True)
+    state = _DataRunState(
+        requires_fresh_data=True,
+        schema_completed=True,
+        expecting_final_sql_after_diagnostic=True,
+    )
     choice = runner._resolve_initial_tool_choice(state)
     assert isinstance(choice, ToolChoice)
     assert choice.mode == "execute_sql_query"
@@ -1634,6 +1699,137 @@ def test_build_repair_message_empty_when_no_blocked_content(data_config):
     runner = DataAgentRunner(config=data_config, trace_id="trace-no-repair", trace_buffer=[])
     state = _DataRunState(requires_fresh_data=True, blocked_content="")
     assert runner._build_repair_message(state) == ""
+
+
+def test_low_confidence_schema_prefetch_requests_refinement(data_config):
+    from app.services.ai.runners.data_agent_runner import DataAgentRunner, _DataRunState
+
+    runner = DataAgentRunner(config=data_config, trace_id="trace-schema-refine", trace_buffer=[])
+    state = _DataRunState(requires_fresh_data=True)
+
+    runner._apply_schema_tool_result(
+        state,
+        "[置信度: 0.22]\n--- Source: unknown.md ---\n字段片段较弱",
+    )
+
+    assert state.schema_completed is False
+    assert state.schema_needs_refinement is True
+    assert runner._build_repair_title(state) == "优化数据集定义检索"
+    assert "相关性不足" in runner._build_repair_message(state)
+
+
+def test_high_confidence_schema_candidates_require_clarification(data_config):
+    from app.services.ai.runners.data_agent_runner import DataAgentRunner, _DataRunState
+
+    runner = DataAgentRunner(config=data_config, trace_id="trace-schema-ambiguous", trace_buffer=[])
+    state = _DataRunState(requires_fresh_data=True)
+
+    runner._apply_schema_tool_result(
+        state,
+        "[置信度: 0.88]\n--- Source: access_log.md ---\n数据集: 访问日志\n"
+        "\n[置信度: 0.86]\n--- Source: audit_log.md ---\n数据集: 操作审计\n",
+    )
+
+    assert state.schema_completed is False
+    assert state.schema_ambiguous is True
+    assert state.ready_to_answer is True
+    assert runner._resolve_initial_tool_choice(state) is None
+    assert runner._resolve_repair_tool_choice(state) is None
+    assert "多个高置信度" in runner._build_repair_message(state)
+
+
+def test_diagnostic_sql_success_requires_final_sql_before_answer(data_config):
+    from app.services.ai.runners.data_agent_runner import DataAgentRunner, _DataRunState
+
+    runner = DataAgentRunner(config=data_config, trace_id="trace-diag-final", trace_buffer=[])
+    state = _DataRunState(
+        requires_fresh_data=True,
+        schema_completed=True,
+        expecting_final_sql_after_diagnostic=True,
+    )
+    parsed = {"rows": [{"room_name": "A101"}]}
+
+    runner._apply_sql_tool_result(
+        state,
+        tool_args={"sql": "SELECT DISTINCT room_name FROM demo LIMIT 10"},
+        output=parsed,
+    )
+
+    assert state.sql_completed is True
+    assert state.diagnostic_sql_pending_final is True
+    assert state.ready_to_answer is False
+    assert runner._current_repair_kind(state) == "diagnostic_sql_pending_final"
+    assert "诊断 SQL" in runner._build_repair_message(state)
+
+    runner._apply_sql_tool_result(
+        state,
+        tool_args={"sql": "SELECT room_name, count(*) AS total_count FROM demo GROUP BY room_name LIMIT 100"},
+        output={"rows": [{"room_name": "A101", "total_count": 3}]},
+    )
+
+    assert state.diagnostic_sql_pending_final is False
+    assert state.ready_to_answer is True
+
+
+@pytest.mark.asyncio
+async def test_execute_sql_wrapper_blocks_high_risk_sql_before_tool_call(data_config):
+    from app.services.ai.runners.data_agent_runner import (
+        DataAgentRunner,
+        RuntimeToolSpec,
+        SQL_STATIC_GATE_PREFIX,
+        _DataRunState,
+    )
+
+    called = False
+
+    async def fake_execute(**kwargs):
+        nonlocal called
+        called = True
+        return {"rows": []}
+
+    runner = DataAgentRunner(config=data_config, trace_id="trace-sql-static-risk", trace_buffer=[])
+    state = _DataRunState(requires_fresh_data=True, schema_completed=True)
+    [wrapped] = runner._wrap_tools_with_schema_gate([
+        RuntimeToolSpec(
+            name="execute_sql_query",
+            description="execute",
+            parameters_schema={},
+            source_type="static",
+            callable=fake_execute,
+            permission_scope="read",
+        )
+    ], state)
+
+    output = await wrapped.callable(
+        sql="SELECT * FROM very_large_fact",
+        data_source="mysql_aiagent",
+        dataset_name="demo",
+    )
+
+    assert called is False
+    assert str(output).startswith(SQL_STATIC_GATE_PREFIX)
+    assert state.sql_static_risk is True
+    assert "SELECT *" in state.sql_static_risk_reason
+
+
+def test_repair_budget_is_tracked_by_error_type(data_config):
+    from app.services.ai.runners.data_agent_runner import DataAgentRunner, _DataRunState
+
+    runner = DataAgentRunner(config=data_config, trace_id="trace-repair-budget", trace_buffer=[])
+    state = _DataRunState(
+        requires_fresh_data=True,
+        schema_completed=True,
+        blocked_content="第一次跳过 SQL",
+    )
+
+    assert runner._current_repair_kind(state) == "missing_sql"
+    assert runner._repair_budget_exhausted(state) is False
+    runner._record_repair_attempt(state)
+    assert state.repair_attempts["missing_sql"] == 1
+    assert runner._repair_budget_exhausted(state) is False
+    runner._record_repair_attempt(state)
+    assert state.repair_attempts["missing_sql"] == 2
+    assert runner._repair_budget_exhausted(state) is True
 
 
 @pytest.mark.asyncio
@@ -1745,6 +1941,35 @@ async def test_data_agent_runner_sql_repeat_gate_blocks_second_sql(data_config):
 
     assert call_count == 0
     assert "[SQL_REPEAT_GATE]" in str(result)
+
+
+@pytest.mark.asyncio
+async def test_data_agent_runner_sql_repeat_gate_updates_state_completed(data_config):
+    from app.services.ai.runners.data_agent_runner import DataAgentRunner, _DataRunState
+
+    runner = DataAgentRunner(config=data_config, trace_id="trace-sql-repeat-state", trace_buffer=[])
+    state = _DataRunState(
+        requires_fresh_data=True,
+        schema_completed=True,
+        sql_completed=False,
+    )
+
+    repeat_gate_output = (
+        "[SQL_REPEAT_GATE] 本轮已成功执行过相同的 SQL 查询，禁止重复 execute_sql_query。\n"
+        "为保证正常输出，系统已自动为您加载该 SQL 上一次查询成功的缓存数据结果...\n\n"
+        '{"columns": [{"name": "id"}], "items": [[1]]}'
+    )
+
+    parsed, should_save = runner._apply_sql_tool_result(
+        state,
+        tool_args={"sql": "SELECT 1"},
+        output=repeat_gate_output,
+    )
+
+    assert state.sql_completed is True
+    assert state.last_successful_sql_output == '{"columns": [{"name": "id"}], "items": [[1]]}'
+    assert parsed == {"columns": [{"name": "id"}], "items": [[1]]}
+    assert should_save is False
 
 
 @pytest.mark.asyncio
@@ -2122,7 +2347,7 @@ async def test_data_agent_runner_blocks_final_answer_after_sql_error(data_config
 
 
 @pytest.mark.asyncio
-async def test_data_agent_runner_blocks_final_answer_after_empty_sql_result(data_config):
+async def test_data_agent_runner_allows_final_answer_after_trusted_empty_sql_result(data_config):
     from types import SimpleNamespace
 
     from app.services.ai.runners.data_agent_runner import DataAgentRunner
@@ -2142,6 +2367,39 @@ async def test_data_agent_runner_blocks_final_answer_after_empty_sql_result(data
         yield SimpleNamespace(type="TEXT_BLOCK_DELTA", delta="没有数据")
 
     runner = DataAgentRunner(config=data_config, trace_id="trace-empty-block", trace_buffer=[])
+
+    events = []
+    async for chunk in runner._stream_agentscope_events(
+        event_stream=fake_events(),
+        tools=[],
+        native_model=SimpleNamespace(model="fake-native-data"),
+    ):
+        events.append(chunk)
+
+    assert any(event.get("content") == "没有数据" for event in events if isinstance(event, dict))
+
+
+@pytest.mark.asyncio
+async def test_data_agent_runner_blocks_complex_empty_sql_result_for_recheck(data_config):
+    from types import SimpleNamespace
+
+    from app.services.ai.runners.data_agent_runner import DataAgentRunner
+
+    async def fake_events():
+        yield SimpleNamespace(type="TOOL_CALL_START", tool_call_id="call_schema", tool_call_name="get_dataset_schema")
+        yield SimpleNamespace(type="TOOL_RESULT_TEXT_DELTA", tool_call_id="call_schema", delta="table_name: demo\ncolumns: room, used, total")
+        yield SimpleNamespace(type="TOOL_RESULT_END", tool_call_id="call_schema")
+        yield SimpleNamespace(type="TOOL_CALL_START", tool_call_id="call_sql", tool_call_name="execute_sql_query")
+        yield SimpleNamespace(
+            type="TOOL_CALL_DELTA",
+            tool_call_id="call_sql",
+            delta='{"sql": "SELECT room, SUM(used) / SUM(total) AS utilization_rate FROM demo GROUP BY room", "data_source": "mysql_aiagent", "dataset_name": "demo"}',
+        )
+        yield SimpleNamespace(type="TOOL_RESULT_TEXT_DELTA", tool_call_id="call_sql", delta='{"rows": [], "total": 0}')
+        yield SimpleNamespace(type="TOOL_RESULT_END", tool_call_id="call_sql")
+        yield SimpleNamespace(type="TEXT_BLOCK_DELTA", delta="没有数据")
+
+    runner = DataAgentRunner(config=data_config, trace_id="trace-complex-empty-block", trace_buffer=[])
 
     events = []
     async for chunk in runner._stream_agentscope_events(
@@ -2353,7 +2611,7 @@ async def test_data_agent_runner_execute_repairs_sql_error_before_final_answer(
                         ToolCallBlock(
                             id="call_fixed_sql",
                             name="execute_sql_query",
-                            input='{"sql": "SELECT id FROM demo", "data_source": "mysql_aiagent", "dataset_name": "demo"}',
+                            input='{"sql": "SELECT id FROM demo LIMIT 100", "data_source": "mysql_aiagent", "dataset_name": "demo"}',
                         )
                     ],
                     is_last=True,
@@ -2477,7 +2735,7 @@ async def test_data_agent_runner_double_repair_when_model_skips_sql_twice(
                         ToolCallBlock(
                             id="call_sql",
                             name="execute_sql_query",
-                            input='{"sql": "SELECT id FROM demo", "data_source": "mysql_aiagent", "dataset_name": "demo"}',
+                            input='{"sql": "SELECT id FROM demo LIMIT 100", "data_source": "mysql_aiagent", "dataset_name": "demo"}',
                         )
                     ],
                     is_last=True,
@@ -2609,7 +2867,7 @@ async def test_data_agent_runner_execute_rechecks_empty_sql_before_final_answer(
                         ToolCallBlock(
                             id="call_empty_sql",
                             name="execute_sql_query",
-                            input='{"sql": "SELECT * FROM demo WHERE id=-1", "data_source": "mysql_aiagent", "dataset_name": "demo"}',
+                            input='{"sql": "SELECT room, SUM(used) / SUM(total) AS utilization_rate FROM demo WHERE id=-1 GROUP BY room", "data_source": "mysql_aiagent", "dataset_name": "demo"}',
                         )
                     ],
                     is_last=True,
@@ -2625,7 +2883,7 @@ async def test_data_agent_runner_execute_rechecks_empty_sql_before_final_answer(
                         ToolCallBlock(
                             id="call_final_sql",
                             name="execute_sql_query",
-                            input='{"sql": "SELECT * FROM demo WHERE id=1", "data_source": "mysql_aiagent", "dataset_name": "demo"}',
+                            input='{"sql": "SELECT room, SUM(used) / SUM(total) AS utilization_rate FROM demo WHERE id=1 GROUP BY room", "data_source": "mysql_aiagent", "dataset_name": "demo"}',
                         )
                     ],
                     is_last=True,
@@ -2694,7 +2952,7 @@ async def test_data_agent_runner_execute_rechecks_empty_sql_before_final_answer(
     runner = DataAgentRunner(config=data_config, trace_id="trace-empty-recheck", trace_buffer=[])
 
     events = []
-    async for chunk in runner.execute([{"role": "user", "content": "查 demo"}]):
+    async for chunk in runner.execute([{"role": "user", "content": "查 demo 明细"}]):
         events.append(chunk)
 
     content = "".join(event["content"] for event in events if "content" in event and "type" not in event)
@@ -2763,7 +3021,7 @@ async def test_data_agent_runner_execute_retries_schema_miss_before_sql(
                         ToolCallBlock(
                             id="call_sql_after_schema",
                             name="execute_sql_query",
-                            input='{"sql": "SELECT id FROM demo", "data_source": "mysql_aiagent", "dataset_name": "demo"}',
+                            input='{"sql": "SELECT id FROM demo LIMIT 100", "data_source": "mysql_aiagent", "dataset_name": "demo"}',
                         )
                     ],
                     is_last=True,
@@ -2842,7 +3100,7 @@ async def test_data_agent_runner_execute_retries_schema_miss_before_sql(
     content = "".join(event["content"] for event in events if "content" in event and "type" not in event)
     assert "没找到 schema 也回答" not in content
     assert "schema 重试后结果是 1" in content
-    assert schema_calls == 2
+    assert schema_calls == 3
     assert any(event.get("title") == "重试检索数据集定义" for event in events if isinstance(event, dict))
 
 

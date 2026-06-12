@@ -13,7 +13,7 @@ def load_prompt_from_file():
     """Reads the prompt content from the associated markdown file."""
     prompt_path = os.path.join(
         os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-        "architech", "prompts", "system_agents", "chatbi", "chatbi.md"
+        "architech", "prompts", "system_agents", "chatbi", "V8_chatbi_runner_aligned.md"
     )
     try:
         with open(prompt_path, "r", encoding="utf-8") as f:

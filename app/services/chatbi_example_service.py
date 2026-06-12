@@ -148,7 +148,7 @@ class ExampleService:
         异步调用 LLM 对经验进行“意图增强”和“背景总结”。
         """
         from app.services.ai.config import AgentConfigProvider
-        from app.services.ai.runtime.agentscope.compat import SystemMessage
+        from app.services.ai.runtime.agentscope.compat import HumanMessage
 
         async with AsyncSessionLocal() as db:
             try:
@@ -189,7 +189,7 @@ class ExampleService:
                 )
 
                 llm = await AgentConfigProvider.get_configured_llm(streaming=False)
-                response = await llm.ainvoke([SystemMessage(content=prompt)])
+                response = await llm.ainvoke([HumanMessage(content=prompt)])
                 
                 # 4. 解析结果
                 import re
@@ -496,7 +496,7 @@ class ExampleService:
         利用 LLM 进行搜索意图改写，去除对上下文的依赖。
         """
         from app.services.ai.config import AgentConfigProvider
-        from app.services.ai.runtime.agentscope.compat import SystemMessage
+        from app.services.ai.runtime.agentscope.compat import HumanMessage
         
         # 仅取最近 3 轮历史
         recent_history = history[-6:] if len(history) > 6 else history
@@ -518,7 +518,7 @@ class ExampleService:
         )
         
         llm = await AgentConfigProvider.get_configured_llm(streaming=False)
-        response = await llm.ainvoke([SystemMessage(content=prompt)])
+        response = await llm.ainvoke([HumanMessage(content=prompt)])
         return response.content.strip().strip('"').strip("'")
     def build_few_shot_prompt(examples: List[Dict[str, Any]]) -> str:
         """

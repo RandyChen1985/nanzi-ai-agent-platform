@@ -19,7 +19,7 @@
 
 | 智能体 | 文件 | 说明 |
 |--------|------|------|
-| ChatBI | [system_agents/chatbi/V7_chatbi_optimized.md](system_agents/chatbi/V7_chatbi_optimized.md) | 当前保留的最新 ChatBI 草稿 |
+| ChatBI | [system_agents/chatbi/V8_chatbi_runner_aligned.md](system_agents/chatbi/V8_chatbi_runner_aligned.md) | 面向 DataAgentRunner 门控分工优化的 ChatBI 草稿 |
 | DevOps | [system_agents/devops/system_prompt_V5.md](system_agents/devops/system_prompt_V5.md) | 当前保留的最新运维助手草稿 |
 | 通用对话 | [system_agents/generl/general_chat_v2.md](system_agents/generl/general_chat_v2.md) | 通用对话 v2（目录名 `generl` 为历史拼写） |
 | 知识库 | [system_agents/knowledge/knowledge_base.md](system_agents/knowledge/knowledge_base.md) | 知识库助手 |

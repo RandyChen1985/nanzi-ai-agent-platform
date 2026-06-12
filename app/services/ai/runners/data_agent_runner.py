@@ -70,7 +70,22 @@ logger = logging.getLogger(__name__)
 
 SCHEMA_GATE_PREFIX = "[SCHEMA_GATE]"
 SQL_REPEAT_GATE_PREFIX = "[SQL_REPEAT_GATE]"
+SQL_STATIC_GATE_PREFIX = "[SQL_STATIC_GATE]"
 MAX_DATA_REPAIR_ROUNDS = 2
+DATA_REPAIR_BUDGETS = {
+    "sql_before_schema": 1,
+    "schema_miss": 1,
+    "schema_refinement": 1,
+    "schema_ambiguous": 1,
+    "sql_plan_missing": 1,
+    "sql_static_risk": 1,
+    "sql_error": 2,
+    "empty_sql_result": 1,
+    "ratio_anomaly": 1,
+    "diagnostic_sql_pending_final": 1,
+    "missing_schema": 1,
+    "missing_sql": 2,
+}
 _SQL_RESULT_DISPLAY_MAX_ROWS = 15
 _SQL_RESULT_ROW_KEYS = ("items", "rows", "data", "records")
 _SQL_TOOL_RESULT_DELIMITER = "--- 结果 ---"
@@ -113,13 +128,20 @@ class _DataRunState:
     sql_completed: bool = False
     sql_before_schema: bool = False
     schema_miss: bool = False
+    schema_needs_refinement: bool = False
+    schema_ambiguous: bool = False
+    schema_ambiguous_reason: str = ""
     no_authorized_schema: bool = False
     empty_sql_result: bool = False
     empty_sql_reason: str = ""
+    expecting_final_sql_after_diagnostic: bool = False
+    diagnostic_sql_pending_final: bool = False
     sql_error: bool = False
     sql_error_message: str = ""
     sql_fatal_error: bool = False
     sql_fatal_message: str = ""
+    sql_static_risk: bool = False
+    sql_static_risk_reason: str = ""
     requires_sql_plan: bool = False
     sql_plan_seen: bool = False
     sql_plan_missing: bool = False
@@ -135,6 +157,7 @@ class _DataRunState:
     ratio_anomaly: bool = False          # SQL 结果含超阈值比率（>1.5 或负值），触发对账修复
     ratio_anomaly_reason: str = ""       # 异常说明，用于修复提示词
     schema_miss_count: int = 0           # 累计 schema_miss 次数（含 prefetch + ReAct 内）
+    repair_attempts: dict[str, int] = field(default_factory=dict)
 
     @property
     def has_successful_nonempty_sql(self) -> bool:
@@ -154,12 +177,16 @@ class _DataRunState:
             return True
         if self.sql_fatal_error:
             return True
+        if self.schema_ambiguous and not self.sql_before_schema and not self.sql_error:
+            return True
         return (
             self.schema_completed
             and self.sql_completed
             and not self.sql_before_schema
+            and not self.sql_static_risk
             and not self.sql_error
             and not self.empty_sql_result
+            and not self.diagnostic_sql_pending_final
             and not self.sql_plan_missing
             and not self.ratio_anomaly
         )
@@ -320,6 +347,10 @@ class DataAgentRunner(BaseExecutor):
     def _is_sql_repeat_gate_block(output: Any) -> bool:
         return str(output or "").startswith(SQL_REPEAT_GATE_PREFIX)
 
+    @staticmethod
+    def _is_sql_static_gate_block(output: Any) -> bool:
+        return str(output or "").startswith(SQL_STATIC_GATE_PREFIX)
+
     def _wrap_tools_with_schema_gate(
         self,
         tools: list[RuntimeToolSpec],
@@ -337,6 +368,11 @@ class DataAgentRunner(BaseExecutor):
             original_callable = spec.callable
 
             async def invoke_sql_gated(*, _original=original_callable, **kwargs: Any) -> Any:
+                if state.schema_ambiguous:
+                    return (
+                        f"{SCHEMA_GATE_PREFIX} 当前 Schema 检索返回多个高置信度候选，"
+                        "需要先请用户确认具体数据集或指标口径，禁止直接执行 SQL。"
+                    )
                 if not state.schema_completed:
                     return (
                         f"{SCHEMA_GATE_PREFIX} 为保证数据准确性，必须先调用 get_dataset_schema "
@@ -345,6 +381,17 @@ class DataAgentRunner(BaseExecutor):
 
                 current_sql = str(kwargs.get("sql") or kwargs.get("query") or "").strip()
                 current_sql_normalized = " ".join(current_sql.lower().split())
+
+                static_risk = ""
+                if not (state.requires_sql_plan and not state.sql_plan_seen):
+                    static_risk = self._detect_sql_static_risk(current_sql)
+                if static_risk:
+                    state.sql_static_risk = True
+                    state.sql_static_risk_reason = static_risk
+                    return (
+                        f"{SQL_STATIC_GATE_PREFIX} SQL 存在高风险执行特征，已阻止执行：{static_risk}\n"
+                        "请收窄时间范围、补充 LIMIT、避免 SELECT *，或修正 JOIN 条件后重新调用 execute_sql_query。"
+                    )
 
                 if current_sql_normalized and current_sql_normalized in state.successful_sqls:
                     cached_output = state.successful_sqls[current_sql_normalized]
@@ -359,7 +406,12 @@ class DataAgentRunner(BaseExecutor):
                     result = await result
 
                 try:
-                    if result and not self._is_schema_gate_block(result) and not self._is_sql_repeat_gate_block(result):
+                    if (
+                        result
+                        and not self._is_schema_gate_block(result)
+                        and not self._is_sql_repeat_gate_block(result)
+                        and not self._is_sql_static_gate_block(result)
+                    ):
                         parsed_output = self._try_parse_json_output(result)
                         empty_reason = self._detect_empty_result(parsed_output)
                         sql_error, _ = self._detect_sql_error(result)
@@ -776,8 +828,11 @@ class DataAgentRunner(BaseExecutor):
                 )
             return
 
-        for _ in range(MAX_DATA_REPAIR_ROUNDS):
+        max_repair_rounds = max(sum(DATA_REPAIR_BUDGETS.values()), MAX_DATA_REPAIR_ROUNDS)
+        for _ in range(max_repair_rounds):
             if state.sql_fatal_error:
+                break
+            if self._repair_budget_exhausted(state):
                 break
             repair_message = self._build_repair_message(state)
             if not repair_message:
@@ -790,6 +845,7 @@ class DataAgentRunner(BaseExecutor):
                 "details": repair_message,
                 "status": "warning",
             }
+            self._record_repair_attempt(state)
             self._reset_state_for_repair(state)
             repair_inputs = to_agentscope_messages(compat_to_runtime_messages(repair_message))
             original_model = agent.model
@@ -859,6 +915,7 @@ class DataAgentRunner(BaseExecutor):
         user_question: str,
         runtime_messages: List[Any],
     ) -> str:
+        search_start = time.time()
         try:
             from app.services.chatbi_example_service import ExampleService
 
@@ -870,6 +927,31 @@ class DataAgentRunner(BaseExecutor):
             )
             self._fewshot_examples = examples or []
             if not examples:
+                elapsed_ms = (time.time() - search_start) * 1000
+                self.trace_buffer.append(
+                    AgentExecutionStep(
+                        step_number=self._increment_step(),
+                        event_type="few_shot",
+                        agent_name=self.config.agent_name,
+                        model=str(self.config.model_name),
+                        temperature=float(self.config.temperature or 0),
+                        tool_output={"examples": []},
+                        raw_log=f"未命中经验库案例，检索问题：{user_question}",
+                        execution_time_ms=elapsed_ms,
+                        timestamp=datetime.now(),
+                    )
+                )
+                self._pending_few_shot_log = {
+                    "type": "log",
+                    "id": f"fewshot_{uuid.uuid4().hex[:6]}",
+                    "title": "未命中经验库案例",
+                    "details": (
+                        "已完成经验库检索，但未找到足够相似的历史优质 SQL 案例。\n"
+                        "本轮将继续基于用户问题和数据集定义生成 SQL。"
+                    ),
+                    "status": "success",
+                    "execution_time_ms": elapsed_ms,
+                }
                 return system_content
 
             max_sim = max([ex.get("similarity", 0) for ex in examples])
@@ -913,11 +995,38 @@ class DataAgentRunner(BaseExecutor):
                     + f"\n\n当前最高相似度: {max_sim:.2f}。这些案例将作为强制性参考引导模型生成 SQL，以减少冗余迭代。"
                 ),
                 "status": "success",
+                "execution_time_ms": (time.time() - search_start) * 1000,
             }
             return system_content
         except Exception as e:
             self._fewshot_examples = []
             logger.warning("[DataAgentRunner] Failed to search/inject few-shot examples: %s", e)
+            elapsed_ms = (time.time() - search_start) * 1000
+            self.trace_buffer.append(
+                AgentExecutionStep(
+                    step_number=self._increment_step(),
+                    event_type="few_shot",
+                    agent_name=self.config.agent_name,
+                    model=str(self.config.model_name),
+                    temperature=float(self.config.temperature or 0),
+                    tool_output={"examples": []},
+                    raw_log=f"经验库检索不可用，已跳过案例注入：{e}",
+                    execution_time_ms=elapsed_ms,
+                    status="success",
+                    timestamp=datetime.now(),
+                )
+            )
+            self._pending_few_shot_log = {
+                "type": "log",
+                "id": f"fewshot_{uuid.uuid4().hex[:6]}",
+                "title": "经验库检索不可用",
+                "details": (
+                    "经验库检索本轮未完成，已自动跳过案例注入。\n"
+                    "本轮将继续基于用户问题和数据集定义生成 SQL。"
+                ),
+                "status": "success",
+                "execution_time_ms": elapsed_ms,
+            }
             return system_content
 
     @staticmethod
@@ -1003,7 +1112,7 @@ class DataAgentRunner(BaseExecutor):
         )
         try:
             model = await AgentConfigProvider.get_configured_llm(streaming=False, config=self.config)
-            response = await model.ainvoke([SystemMessage(content=prompt)])
+            response = await model.ainvoke([HumanMessage(content=prompt)])
             tokens = extract_tokens_from_message(response)
             self.record_llm_token_usage(
                 prompt_tokens=tokens["prompt_tokens"],
@@ -1195,7 +1304,7 @@ class DataAgentRunner(BaseExecutor):
 
         try:
             model = await AgentConfigProvider.get_configured_llm(streaming=False, config=self.config)
-            response = await model.ainvoke([SystemMessage(content=prompt)])
+            response = await model.ainvoke([HumanMessage(content=prompt)])
             tokens = extract_tokens_from_message(response)
             self.record_llm_token_usage(
                 prompt_tokens=tokens["prompt_tokens"],
@@ -1441,42 +1550,13 @@ class DataAgentRunner(BaseExecutor):
             if tool_name == "get_dataset_schema":
                 self._apply_schema_tool_result(state, output)
             elif tool_name == "execute_sql_query":
-                if self._is_sql_repeat_gate_block(output):
-                    pass
-                elif self._is_schema_gate_block(output) or not state.schema_completed:
-                    state.sql_before_schema = True
-                else:
-                    if state.requires_sql_plan and not state.sql_plan_seen:
-                        state.sql_plan_missing = True
-                    state.sql_completed = True
-                    parsed_output = self._try_parse_json_output(output)
-                    empty_reason = self._detect_empty_result(parsed_output) or ""
-                    
-                    sql_text = ""
-                    if isinstance(tool_args, dict):
-                        sql_text = tool_args.get("sql") or tool_args.get("query") or ""
-                    
-                    is_diag = self._is_diagnostic_sql(sql_text)
-                    
-                    if empty_reason:
-                        state.empty_sql_reason = empty_reason
-                        state.empty_sql_result = True
-                    else:
-                        if not is_diag:
-                            state.empty_sql_reason = ""
-                            state.empty_sql_result = False
-                            state.last_successful_sql_output = output
-                    
-                    state.sql_error, state.sql_error_message = self._detect_sql_error(output)
-                    if state.sql_error and self._is_sql_fatal_error(state.sql_error_message):
-                        state.sql_fatal_error = True
-                        state.sql_fatal_message = state.sql_error_message
-                    if not state.sql_error:
-                        ratio_anomaly, anomaly_reason = self._detect_ratio_anomaly(parsed_output)
-                        if ratio_anomaly and not is_diag:
-                            state.ratio_anomaly = True
-                            state.ratio_anomaly_reason = anomaly_reason
-                        await self._save_last_data_result_for_followups(tool_args, parsed_output)
+                parsed_output, should_save_followup = self._apply_sql_tool_result(
+                    state,
+                    tool_args=tool_args,
+                    output=output,
+                )
+                if should_save_followup:
+                    await self._save_last_data_result_for_followups(tool_args, parsed_output)
             self._sync_pending_data_run_state(state, stream_state)
             self._increment_step()
             self.trace_buffer.append(
@@ -1683,8 +1763,12 @@ class DataAgentRunner(BaseExecutor):
             content = "SQL 返回空结果，必须先用诊断 SQL 复查筛选条件或 JOIN 条件，再执行最终 SQL 后才能回答。"
         elif state.sql_plan_missing:
             content = "高风险数据查询必须先补充 SQL 计划，再执行 SQL 查询并确认结果后才能回答。"
+        elif state.sql_static_risk:
+            content = "SQL 存在高风险执行特征，必须先修正 SQL 后才能继续查数。"
         elif state.ratio_anomaly:
             content = "比率/占比结果疑似异常，必须先完成对账 SQL 复核后才能回答。"
+        elif state.diagnostic_sql_pending_final:
+            content = "诊断 SQL 只能用于定位问题，必须执行修正后的最终 SQL 后才能回答。"
         else:
             content = "为保证数据准确性，必须先完成数据集定义检索和 SQL 查询后才能回答。"
         yield {
@@ -1698,6 +1782,53 @@ class DataAgentRunner(BaseExecutor):
             "content": content,
             "status": "error",
         }
+
+    def _current_repair_kind(self, state: _DataRunState) -> str:
+        if self._is_schema_fatal(state):
+            return ""
+        if state.schema_ambiguous:
+            return "schema_ambiguous"
+        if state.requires_fresh_data and state.sql_before_schema and not state.schema_completed:
+            return "sql_before_schema"
+        if state.schema_miss and not state.no_authorized_schema:
+            return "schema_miss"
+        if state.schema_needs_refinement:
+            return "schema_refinement"
+        if state.sql_plan_missing:
+            return "sql_plan_missing"
+        if state.sql_static_risk:
+            return "sql_static_risk"
+        if state.sql_error:
+            return "sql_error"
+        if state.empty_sql_result:
+            return "empty_sql_result"
+        if state.ratio_anomaly:
+            return "ratio_anomaly"
+        if state.diagnostic_sql_pending_final:
+            return "diagnostic_sql_pending_final"
+        if (
+            state.requires_fresh_data
+            and state.blocked_content.strip()
+            and not state.ready_to_answer
+        ):
+            if not state.schema_completed:
+                return "missing_schema"
+            if not state.sql_completed:
+                return "missing_sql"
+        return ""
+
+    def _repair_budget_exhausted(self, state: _DataRunState) -> bool:
+        kind = self._current_repair_kind(state)
+        if not kind:
+            return False
+        budget = DATA_REPAIR_BUDGETS.get(kind, MAX_DATA_REPAIR_ROUNDS)
+        return state.repair_attempts.get(kind, 0) >= budget
+
+    def _record_repair_attempt(self, state: _DataRunState) -> None:
+        kind = self._current_repair_kind(state)
+        if not kind:
+            return
+        state.repair_attempts[kind] = state.repair_attempts.get(kind, 0) + 1
 
     def _build_repair_message(self, state: _DataRunState) -> str:
         if self._is_schema_fatal(state):
@@ -1716,6 +1847,18 @@ class DataAgentRunner(BaseExecutor):
                 "并可追加：数据集 表 字段 指标 维度 物理表 业务口径。"
                 "在获得有效 schema 前禁止生成或执行 SQL，也禁止直接回答用户。"
             )
+        if state.schema_needs_refinement:
+            return (
+                "【Schema 相关性不足】上一轮 get_dataset_schema 返回了低置信度或目录型结果，"
+                "尚不足以可靠生成 SQL。请换用更具体的业务对象、指标、维度、系统名或同义词重新调用 get_dataset_schema。"
+                "在获得相关性更明确的 schema 前禁止执行 SQL 或直接回答用户。"
+            )
+        if state.schema_ambiguous:
+            return (
+                "【Schema 歧义澄清要求】上一轮 get_dataset_schema 返回多个高置信度候选，"
+                f"{state.schema_ambiguous_reason}。请停止生成 SQL，先用自然语言和 quick 按钮请用户确认"
+                "具体数据集、指标口径或业务对象；确认前禁止执行 SQL。"
+            )
         if state.sql_plan_missing:
             return (
                 "【SQL 计划补充要求】本轮问题属于高风险数据查询（如比率/趋势/排名/分组）。"
@@ -1723,6 +1866,13 @@ class DataAgentRunner(BaseExecutor):
                 "请先输出 <thought><sql_plan>{...}</sql_plan></thought>，至少包含 dataset_name、data_source、"
                 "grain_keys、time_window、metrics_hit、joins、ratio，然后重新调用 execute_sql_query。"
                 "在补充计划并重新执行 SQL 成功前禁止直接回答用户。"
+            )
+        if state.sql_static_risk:
+            return (
+                "【SQL 静态风险修正要求】上一轮 execute_sql_query 被平台拦截，"
+                f"原因：{state.sql_static_risk_reason}\n"
+                "请修正 SQL 后重新调用 execute_sql_query，例如补充时间范围、限制返回行数、避免 SELECT *、"
+                "或补齐 JOIN 条件。修正并执行成功前禁止直接回答用户。"
             )
         if state.sql_error:
             return (
@@ -1740,6 +1890,13 @@ class DataAgentRunner(BaseExecutor):
             )
         if state.ratio_anomaly:
             return DataQueryPrompts.ratio_anomaly_recheck(state.ratio_anomaly_reason)
+        if state.diagnostic_sql_pending_final:
+            return (
+                "【最终 SQL 执行要求】上一轮 execute_sql_query 是诊断 SQL，只能用于定位候选值、"
+                "时间范围、子查询或 JOIN 问题，不能作为最终业务结论。"
+                "请基于诊断证据修正原查询，并立即调用 execute_sql_query 执行最终 SQL；"
+                "最终 SQL 成功前禁止直接回答用户。"
+            )
         if (
             state.requires_fresh_data
             and state.blocked_content.strip()
@@ -1761,6 +1918,7 @@ class DataAgentRunner(BaseExecutor):
         return ""
 
     def _reset_state_for_repair(self, state: _DataRunState) -> None:
+        repair_kind = self._current_repair_kind(state)
         state.blocked_content = ""
         state.full_content = ""
         state.content_emitted = False
@@ -1775,12 +1933,18 @@ class DataAgentRunner(BaseExecutor):
         state.empty_sql_reason = ""
         state.sql_plan_missing = False
         state.sql_before_schema = False
+        state.sql_static_risk = False
+        state.sql_static_risk_reason = ""
+        if repair_kind in {"empty_sql_result", "ratio_anomaly"}:
+            state.expecting_final_sql_after_diagnostic = True
+        state.diagnostic_sql_pending_final = False
         state.ratio_anomaly = False          # 比率异常状态清除（每轮重新检测）
         state.ratio_anomaly_reason = ""
         # 彻底清空上一轮的 SQL 缓存，并重置 Schema 未命中状态，防范修复过程中的 Gate 误拦截
         state.last_successful_sql_output = None
         state.successful_sqls = {}
         state.schema_miss = False
+        state.schema_needs_refinement = False
         # schema_miss_count 不重置，跨轮累计用于连续未命中达到阈值后终止
 
     def _resolve_force_execute_sql_tool_choice(self, state: _DataRunState) -> Any | None:
@@ -1806,11 +1970,17 @@ class DataAgentRunner(BaseExecutor):
             return ToolChoice(mode="get_dataset_schema")
         if state.schema_miss and not state.no_authorized_schema:
             return ToolChoice(mode="get_dataset_schema")
+        if state.schema_needs_refinement:
+            return ToolChoice(mode="get_dataset_schema")
+        if state.schema_ambiguous:
+            return None
         if state.sql_plan_missing:
             return None
+        if state.sql_static_risk:
+            return ToolChoice(mode="execute_sql_query")
         if state.ratio_anomaly:
             return ToolChoice(mode="required")  # 强制调用工具补充对账 SQL
-        if state.sql_error or state.empty_sql_result:
+        if state.sql_error or state.empty_sql_result or state.diagnostic_sql_pending_final:
             return ToolChoice(mode="required")
         if (
             state.requires_fresh_data
@@ -1827,10 +1997,18 @@ class DataAgentRunner(BaseExecutor):
             return "必须先检索数据集定义"
         if state.schema_miss and not state.no_authorized_schema:
             return "重试检索数据集定义"
+        if state.schema_needs_refinement:
+            return "优化数据集定义检索"
+        if state.schema_ambiguous:
+            return "确认数据集或指标口径"
         if state.sql_plan_missing:
             return "补充 SQL 计划"
+        if state.sql_static_risk:
+            return "修正高风险 SQL"
         if state.ratio_anomaly:
             return "比率/占比异常复核"
+        if state.diagnostic_sql_pending_final:
+            return "执行最终 SQL"
         if (
             state.requires_fresh_data
             and state.blocked_content.strip()
@@ -1945,12 +2123,18 @@ class DataAgentRunner(BaseExecutor):
             details = f"{details}\n\n[系统检测] 已拦截：未先获取数据集定义，SQL 未执行。"
         if tool_name == "execute_sql_query" and self._is_sql_repeat_gate_block(output):
             details = f"{details}\n\n[系统检测] 已有成功非空查数结果，已拦截重复 SQL 执行。"
+        if tool_name == "execute_sql_query" and self._is_sql_static_gate_block(output):
+            details = f"{details}\n\n[系统检测] SQL 存在高风险执行特征，已拦截执行。"
         if tool_name == "execute_sql_query" and state.empty_sql_reason:
             details = f"{details}\n\n[系统检测] {state.empty_sql_reason}"
         if tool_name == "execute_sql_query" and state.sql_error_message:
             details = f"{details}\n\n[系统检测] SQL 执行异常: {state.sql_error_message[:500]}"
         if tool_name == "get_dataset_schema" and state.schema_miss:
             details = f"{details}\n\n[系统检测] 未命中相关数据集定义。"
+        if tool_name == "get_dataset_schema" and state.schema_needs_refinement:
+            details = f"{details}\n\n[系统检测] Schema 检索结果相关性不足，将换关键词重试。"
+        if tool_name == "get_dataset_schema" and state.schema_ambiguous:
+            details = f"{details}\n\n[系统检测] Schema 检索结果存在歧义，需要用户确认后再查数。"
         if tool_name == "get_dataset_schema" and state.no_authorized_schema:
             details = f"{details}\n\n[系统检测] 当前用户没有可用授权数据集，已终止查数流程。"
         if tool_name == "get_dataset_schema" and state.schema_service_unavailable:
@@ -1972,14 +2156,143 @@ class DataAgentRunner(BaseExecutor):
         state.no_authorized_schema = self._is_no_authorized_schema(output)
         state.rag_not_synced = self._is_rag_not_synced(output)
         state.schema_miss = self._is_no_relevant_schema(output)
+        state.schema_needs_refinement = self._schema_needs_refinement(output)
+        state.schema_ambiguous, state.schema_ambiguous_reason = self._detect_schema_ambiguity(output)
         if state.schema_miss:
             state.schema_miss_count += 1
-        if self._is_schema_fatal(state) or state.schema_miss or not str(output or "").strip():
+        if (
+            self._is_schema_fatal(state)
+            or state.schema_miss
+            or state.schema_needs_refinement
+            or state.schema_ambiguous
+            or not str(output or "").strip()
+        ):
             state.schema_completed = False
             state.sql_before_schema = False
             return
         state.schema_completed = True
         state.sql_before_schema = False
+
+    def _apply_sql_tool_result(
+        self,
+        state: _DataRunState,
+        *,
+        tool_args: dict[str, Any],
+        output: Any,
+    ) -> tuple[Any, bool]:
+        if self._is_sql_repeat_gate_block(output):
+            state.sql_completed = True
+            text = str(output or "")
+            cached_text = text
+            if "\n\n" in text:
+                parts = text.split("\n\n", 1)
+                cached_text = parts[1]
+            state.last_successful_sql_output = cached_text
+            parsed = self._try_parse_json_output(cached_text)
+            return parsed, False
+        if self._is_sql_static_gate_block(output):
+            state.sql_static_risk = True
+            state.sql_error = False
+            state.sql_error_message = ""
+            return output, False
+        if self._is_schema_gate_block(output) or not state.schema_completed:
+            state.sql_before_schema = True
+            return output, False
+
+        if state.requires_sql_plan and not state.sql_plan_seen:
+            state.sql_plan_missing = True
+        state.sql_completed = True
+
+        parsed_output = self._try_parse_json_output(output)
+        empty_reason = self._detect_empty_result(parsed_output) or ""
+        sql_text = ""
+        if isinstance(tool_args, dict):
+            sql_text = str(tool_args.get("sql") or tool_args.get("query") or "")
+        is_diag = self._is_diagnostic_sql(sql_text)
+
+        state.sql_error, state.sql_error_message = self._detect_sql_error(output)
+        if state.sql_error and self._is_sql_fatal_error(state.sql_error_message):
+            state.sql_fatal_error = True
+            state.sql_fatal_message = state.sql_error_message
+        if state.sql_error:
+            return parsed_output, False
+
+        if empty_reason:
+            if self._is_trusted_empty_result(sql_text, state):
+                state.empty_sql_reason = ""
+                state.empty_sql_result = False
+                state.last_successful_sql_output = output
+                state.diagnostic_sql_pending_final = False
+            else:
+                state.empty_sql_reason = empty_reason
+                state.empty_sql_result = True
+            return parsed_output, False
+
+        state.empty_sql_reason = ""
+        state.empty_sql_result = False
+        if is_diag and state.expecting_final_sql_after_diagnostic:
+            state.diagnostic_sql_pending_final = True
+            return parsed_output, False
+
+        state.expecting_final_sql_after_diagnostic = False
+        state.diagnostic_sql_pending_final = False
+        state.sql_static_risk = False
+        state.sql_static_risk_reason = ""
+        state.last_successful_sql_output = output
+        ratio_anomaly, anomaly_reason = self._detect_ratio_anomaly(parsed_output)
+        if ratio_anomaly:
+            state.ratio_anomaly = True
+            state.ratio_anomaly_reason = anomaly_reason
+        return parsed_output, True
+
+    @staticmethod
+    def _schema_needs_refinement(tool_output: Any) -> bool:
+        text = str(tool_output or "").strip()
+        if not text:
+            return False
+        if "Available Datasets (Please provide keywords" in text:
+            return True
+        confidence_values = [
+            float(value)
+            for value in re.findall(r"置信度[:：]\s*([0-9]+(?:\.[0-9]+)?)", text)
+        ]
+        if confidence_values and max(confidence_values) < 0.45:
+            return True
+        return False
+
+    @staticmethod
+    def _detect_schema_ambiguity(tool_output: Any) -> tuple[bool, str]:
+        text = str(tool_output or "").strip()
+        if not text:
+            return False, ""
+        candidates: list[tuple[float, str]] = []
+        pattern = re.compile(
+            r"\[置信度[:：]\s*([0-9]+(?:\.[0-9]+)?)\]\s*"
+            r"(?:\n|\r\n)--- Source:\s*([^\n\r]+?)\s*---",
+            re.IGNORECASE,
+        )
+        for score_text, source in pattern.findall(text):
+            try:
+                score = float(score_text)
+            except ValueError:
+                continue
+            source_norm = source.strip().lower()
+            if source_norm:
+                candidates.append((score, source_norm))
+        if len(candidates) < 2:
+            return False, ""
+
+        candidates.sort(reverse=True)
+        top_score, top_source = candidates[0]
+        close_candidates = [
+            (score, source)
+            for score, source in candidates[1:]
+            if score >= 0.75 and top_score - score <= 0.08 and source != top_source
+        ]
+        if top_score >= 0.75 and close_candidates:
+            display = ", ".join([top_source, *[source for _, source in close_candidates[:2]]])
+            return True, f"多个高置信度 Schema 候选分数接近：{display}"
+        return False, ""
 
     @staticmethod
     def _is_diagnostic_sql(sql: str) -> bool:
@@ -2005,6 +2318,24 @@ class DataAgentRunner(BaseExecutor):
             except Exception:
                 pass
         return False
+
+    @staticmethod
+    def _detect_sql_static_risk(sql: str) -> str:
+        sql_text = str(sql or "").strip()
+        if not sql_text:
+            return "SQL 为空"
+        sql_upper = " ".join(sql_text.upper().split())
+        if not sql_upper.startswith(("SELECT ", "WITH ")):
+            return "只允许执行只读 SELECT 查询"
+        if re.search(r"\bSELECT\s+\*", sql_upper):
+            return "SELECT * 会扩大返回范围，请只查询必要字段"
+        if " JOIN " in f" {sql_upper} " and not re.search(r"\bJOIN\b[\s\S]{1,240}\bON\b", sql_upper):
+            return "JOIN 缺少明确 ON 条件，存在笛卡尔积风险"
+        has_limit = bool(re.search(r"\bLIMIT\s+\d+\b", sql_upper) or re.search(r"\bROWNUM\s*<=\s*\d+\b", sql_upper))
+        has_aggregation = any(marker in sql_upper for marker in (" GROUP BY ", " COUNT(", " SUM(", " AVG(", " MAX(", " MIN("))
+        if not has_limit and not has_aggregation:
+            return "缺少 LIMIT 或聚合约束，可能返回过多明细行"
+        return ""
 
     @staticmethod
     def _is_rag_not_synced(tool_output: Any) -> bool:
@@ -2114,6 +2445,40 @@ class DataAgentRunner(BaseExecutor):
         if any(re.search(pattern, text, flags=re.IGNORECASE | re.MULTILINE) for pattern in error_patterns):
             return True, text[:1000]
         return False, ""
+
+    def _is_trusted_empty_result(self, sql: str, state: _DataRunState) -> bool:
+        """Allow simple successful empty results to be summarized as "no data"."""
+        if state.requires_sql_plan:
+            return False
+        sql_upper = " ".join(str(sql or "").upper().split())
+        if not sql_upper:
+            return False
+        complex_markers = (
+            " JOIN ",
+            " GROUP BY ",
+            " HAVING ",
+            " UNION ",
+            " INTERSECT ",
+            " EXCEPT ",
+            " WITH ",
+            " OVER ",
+        )
+        if any(marker in f" {sql_upper} " for marker in complex_markers):
+            return False
+        ratio_markers = (
+            "RATE",
+            "RATIO",
+            "PCT",
+            "PERCENT",
+            "UTILIZATION",
+            "利用率",
+            "占比",
+            "比率",
+            "比例",
+        )
+        if any(marker in sql_upper for marker in ratio_markers):
+            return False
+        return True
 
     @staticmethod
     def _is_sql_fatal_error(text: str) -> bool:

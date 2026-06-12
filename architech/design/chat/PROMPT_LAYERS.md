@@ -190,4 +190,4 @@ HumanMessage       ← 本轮用户（见 §4）
 | 跨会话 hint | `app/services/ai/memory_recall_policy.py` |
 | 通用请求分类裁剪 | `app/services/ai/turn_classifier.py` |
 | ChatBI 请求类别分析 | `app/services/ai/data_query_turn_classifier.py` |
-| 运营草稿（ChatBI V7 等） | `architech/prompts/system_agents/` |
+| 运营草稿（ChatBI V8 等） | `architech/prompts/system_agents/` |

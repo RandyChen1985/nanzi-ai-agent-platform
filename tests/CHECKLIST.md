@@ -121,4 +121,4 @@
 | 通用智能体联网预检索与上下文注入 (Assistant Web Pre-Search) | `router_service.py`, `agent_service.py`, `assistant_agent_runner.py`, `tests/ai/executors/test_chat_executor.py` | **方案 A 联网预检索与注入**：验证智能路由层对时效/事实类 Query 的 requires_web_search 的前置判定；验证在 Agent 执行推理前自动调用百度检索并注入 SystemMessage，防范多轮追问时由于 LLM 工具惰性而导致的回答失准与幻觉。 | ✅ 通过 | 2026-06-11 |
 | ChatBI 意图纠错与回溯改写优化 (ChatBI Intent Correction Rewrite) | `app/services/ai/runners/data_agent_runner.py` | **指代消解与纠错回溯**：验证在 `_should_rewrite_contextual_new_data_query` 判定中新增意图校准特征词并扩大短问题长度判定；在改写 Prompt 中引入“纠错与澄清回溯”指令，自动在上轮误判时回溯最近对话中前一轮的真实查数诉求，合并历史上下文精准改写业务独立提问。 | ✅ 已完成 | 2026-06-11 |
 | ChatBI 致命 SQL 错误熔断与防卡死优化 (ChatBI Fatal SQL Error Melt) | `app/services/ai/runners/data_agent_runner.py` | **致命错误快速熔断**：新增致命 SQL 错误判定（如未注册表、权限不足等 `Permission Denied` 系列错误），在 ReAct 执行中检测到后立刻通过 event_stream 抛出日志并 return 提前终止当前循环，跳过后续修复重试，放行 final guard 拦截，防范大模型在无权限时死循环迭代，节约 Token。 | ✅ 已完成 | 2026-06-11 |
-
+| ChatBI 系统提示词 V8 对齐 (ChatBI Prompt V8 Alignment) | `tests/test_chatbi_prompt_assets.py` | **对齐 DataAgentRunner 门控分工的 V8 提示词**：验证 ChatBI V8 系统提示词的内容，检查更新脚本及迁移 SQL 语法的完整性与初始化脚本的一致性，防止旧的分类决策逻辑造成二次污染。 | ✅ 通过 | 2026-06-12 |
