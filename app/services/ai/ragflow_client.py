@@ -356,12 +356,12 @@ class RagFlowClient:
         # [Log] Request Payload
         logger.info(f"[RAGFlowClient] Retrieval Request Payload: {json.dumps(payload, ensure_ascii=False)}")
         
-        max_attempts = 3
+        max_attempts = 2
         last_exception = None
         
         for attempt in range(1, max_attempts + 1):
             try:
-                async with httpx.AsyncClient(timeout=30.0) as client:
+                async with httpx.AsyncClient(timeout=3.0) as client:
                     response = await client.post(url, headers=self._get_headers(), json=payload)
                     
                     if response.status_code == 200:
