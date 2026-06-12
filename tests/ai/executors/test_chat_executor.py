@@ -1310,6 +1310,109 @@ async def test_knowledge_runner_stops_on_service_unavailable(chat_config):
 
 
 @pytest.mark.asyncio
+async def test_general_runner_without_tools_intercepts_hallucination(chat_config):
+    """通用助手在没有调用工具时，如果生成了包含表格或 IP 的回复，应予以拦截。"""
+    from app.services.ai.runners.assistant_agent_runner import AssistantAgentRunner
+    
+    # 模拟大模型直接生成带 IP 表格的内容
+    hallucinated_text = (
+        "为您查询到以下机器配置信息：\n"
+        "| 主机名 | IP 地址 | 配置 |\n"
+        "| --- | --- | --- |\n"
+        "| app-01 | 192.168.1.10 | 8C16G |\n"
+    )
+    
+    class FakeLLM:
+        async def astream(self, messages, *args, **kwargs):
+            class Chunk:
+                content = hallucinated_text
+            yield Chunk()
+            
+    runner = AssistantAgentRunner(config=chat_config, trace_id="test-hallucination-intercept", trace_buffer=[])
+    runner.config.tools = [] # 确保无工具，走 Simple Mode
+    
+    with patch("app.services.ai.config.AgentConfigProvider.get_synthesis_llm", AsyncMock(return_value=FakeLLM())), \
+         patch("app.services.ai.tools.registry.ToolRegistry.get_system_implicit_tools", return_value=[]):
+        events = []
+        async for chunk in runner.execute([{"role": "user", "content": "查一下我机器的 IP 地址"}]):
+            events.append(chunk)
+            
+    assert any(e.get("title") == "拦截虚构业务数据" for e in events)
+    assert any("请使用 **数据智能助手 (ChatBI)** 进行查询" in str(e.get("content", "")) for e in events)
+
+
+@pytest.mark.asyncio
+async def test_knowledge_runner_with_rag_but_no_citations_intercepts_hallucination(chat_config):
+    """知识库助手有文档召回，但大模型脑补了不带任何引用的长事实回复，应予以拦截。"""
+    from agentscope.credential import CredentialBase
+    from agentscope.message import TextBlock
+    from agentscope.model import ChatModelBase, ChatResponse
+    from app.core.llm.client import AgentScopeLLMHandle
+    from app.services.ai.runners.knowledge_agent_runner import KnowledgeAgentRunner
+    from app.services.ai.runtime.agentscope.tools import RuntimeToolSpec
+
+    class FakeCredential(CredentialBase):
+        @classmethod
+        def get_chat_model_class(cls):
+            return FakeModel
+
+    class FakeModel(ChatModelBase):
+        class Parameters(BaseModel):
+            pass
+
+        async def _call_api(self, model_name, messages, tools=None, tool_choice=None, **kwargs):
+            # 模拟模型生成长文描述，但完全没有 [1] 类似的引用标签
+            brain_text = "根据配置要求，您需要首先登录系统后台，在设置中心找到网络连接，输入正确的子网掩码并保存，然后再重启网卡即可。"
+            return ChatResponse(content=[TextBlock(text=brain_text)], is_last=True)
+
+    async def search_knowledge_base(query: str, dataset_ids: str | None = None):
+        # 模拟有正常内容返回
+        return '{"content": "知识库的真实内容", "citations": [{"id": "1", "content": "真实内容"}]}'
+
+    runtime_spec = RuntimeToolSpec(
+        name="search_knowledge_base",
+        description="Search knowledge base",
+        parameters_schema={
+            "type": "object",
+            "properties": {
+                "query": {"type": "string"},
+                "dataset_ids": {"type": "string"},
+            },
+            "required": ["query"],
+        },
+        source_type="static",
+        callable=search_knowledge_base,
+        permission_scope="read",
+    )
+    handle = AgentScopeLLMHandle(
+        native_model=FakeModel(
+            credential=FakeCredential(),
+            model="fake-native-knowledge",
+            parameters=FakeModel.Parameters(),
+            stream=False,
+            max_retries=0,
+        ),
+        model_name="fake-native-knowledge",
+        temperature=0.0,
+        streaming=True,
+    )
+    
+    runner = KnowledgeAgentRunner(config=chat_config, trace_id="test-kb-no-citation", trace_buffer=[])
+    
+    with patch("app.services.ai.config.AgentConfigProvider.get_configured_llm", AsyncMock(return_value=handle)), \
+         patch("app.services.ai.tools.registry.ToolRegistry.get_runtime_tools", AsyncMock(return_value=[runtime_spec])), \
+         patch("app.services.ai.tools.registry.ToolRegistry.get_system_implicit_tools", return_value=[]), \
+         patch("app.services.ai.runners.assistant_agent_runner.get_local_workspace", AsyncMock(return_value=None)), \
+         patch("app.services.config_service.ConfigService.get", AsyncMock(return_value="5")):
+        events = []
+        async for chunk in runner.execute([{"role": "user", "content": "怎么配置网络"}]):
+            events.append(chunk)
+
+    assert any("无任何来源引用的事实回答" in str(e.get("details", "")) for e in events)
+    assert any("⚠️ 抱歉，在系统知识库中未检索到相关内容" in str(e.get("content", "")) for e in events)
+
+
+@pytest.mark.asyncio
 async def test_general_runner_memory_guard_uses_agentscope_native_agent(chat_config):
     """跨会话记忆召回轮次也应走 AgentScope 原生 Agent，不再回落手写 ReAct。"""
     from agentscope.credential import CredentialBase

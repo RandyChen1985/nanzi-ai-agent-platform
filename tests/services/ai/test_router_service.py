@@ -392,3 +392,34 @@ async def test_route_query_filters_candidates_by_user_permission(mock_agents_met
     assert "ID: KnowledgeBase" in system_prompt
     assert "UUID: agent-rag" in system_prompt
     assert "UUID: agent-chatbi" not in system_prompt
+
+
+@pytest.mark.asyncio
+async def test_route_query_datacenter_list_uses_chatbi(mock_agents_metadata):
+    """查询机房列表或基础数据列表，应路由给 ChatBI 智能体进行 SQL 数据查询，而不是误判为知识库检索。"""
+    service = RouterService()
+    llm_resp_content = json.dumps({
+        "thought": "Query asks for a list of server rooms (physical data list), which requires SQL query.",
+        "agent_name": "ChatBI",
+        "confidence": 0.95
+    })
+
+    mock_llm = object()
+    mock_chat = _mock_chat_client(llm_resp_content)
+
+    with patch.object(service, "_fetch_agents_from_db", new_callable=AsyncMock) as mock_fetch, \
+         patch("app.services.ai.router_service.get_llm_async", new_callable=AsyncMock) as mock_get_llm, \
+         patch("app.services.ai.router_service.chat_client_from_handle") as mock_chat_factory:
+
+        mock_fetch.return_value = mock_agents_metadata
+        mock_get_llm.return_value = mock_llm
+        mock_chat_factory.return_value = mock_chat
+
+        result = await service.route_query("查一下所有机房的列表")
+
+    assert result.agent_id == "agent-chatbi"
+    assert result.confidence == 0.95
+
+    routed_messages = mock_chat.generate_text.call_args[0][0]
+    system_prompt = routed_messages[0].content[0].text
+    assert "机房列表、设备清单、工单记录、告警/故障历史、操作日志等离散记录或数据列表" in system_prompt

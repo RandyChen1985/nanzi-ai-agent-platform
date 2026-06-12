@@ -15,6 +15,7 @@ from app.schemas.agent import ChatConfig, AgentExecutionStep
 from app.services.ai.tools.registry import ToolRegistry
 from app.services.ai.config import AgentConfigProvider
 from app.services.ai.executors.base import BaseExecutor
+from app.services.ai.intent_service import IntentType
 from app.services.ai.executors.common import (
     convert_history_to_messages,
     extract_tokens_from_message,
@@ -116,7 +117,71 @@ class AssistantAgentRunner(BaseExecutor):
         )
         return runner
 
+    def _is_hallucinated_data_reply(self, text: str) -> bool:
+        text_clean = text.strip()
+        if not text_clean:
+            return False
+        # 1. 包含表格结构，但在通用对话中未调用查数工具，判定为编造的数据库列表
+        if "|" in text_clean and "---" in text_clean:
+            return True
+        # 2. 包含典型的数据库列表特征或大量虚构字段/IP等
+        ip_pattern = r"\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b"
+        import re
+        if re.search(ip_pattern, text_clean):
+            return True
+        return False
+
     async def execute(
+        self,
+        history: List[Dict[str, str]]
+    ) -> AsyncGenerator[Dict[str, Any], None]:
+        is_downgraded_data_query = (
+            self.turn_classification is not None
+            and self.turn_classification.intent == IntentType.DATA_QUERY
+        )
+
+        chunks_buffer = []
+        full_text = ""
+        has_called_data_tool = False
+
+        async for chunk in self._execute_core(history):
+            if chunk.get("type") == "log" and chunk.get("category") == "tool":
+                tool_name = chunk.get("title", "")
+                if "memory_search" not in tool_name:
+                    has_called_data_tool = True
+
+            if "content" in chunk:
+                full_text += chunk["content"]
+                chunks_buffer.append(chunk)
+            else:
+                yield chunk
+
+        should_intercept = False
+        if is_downgraded_data_query:
+            should_intercept = self._is_hallucinated_data_reply(full_text)
+        elif not has_called_data_tool:
+            should_intercept = self._is_hallucinated_data_reply(full_text)
+
+        if should_intercept:
+            logger.warning(
+                f"[AssistantAgentRunner] Hallucination detected! "
+                f"is_downgraded={is_downgraded_data_query}, has_tool={has_called_data_tool}. "
+                f"Generated: {full_text[:200]}..."
+            )
+            yield {
+                "type": "log",
+                "id": f"data_general_guard_{uuid.uuid4().hex[:8]}",
+                "title": "拦截虚构业务数据",
+                "details": "检测到您正在查询系统内部数据，通用助手未连接数据库，已拦截可能存在的编造回复。",
+                "status": "warning",
+            }
+            refusal_content = "⚠️ 抱歉，检测到您正在查询系统内部数据或资产列表。通用助手未连接数据库，为保证数据真实性已拦截该回答。请使用 **数据智能助手 (ChatBI)** 进行查询。"
+            yield {"content": refusal_content}
+        else:
+            for chunk in chunks_buffer:
+                yield chunk
+
+    async def _execute_core(
         self,
         history: List[Dict[str, str]]
     ) -> AsyncGenerator[Dict[str, Any], None]:

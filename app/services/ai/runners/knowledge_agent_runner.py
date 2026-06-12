@@ -37,6 +37,49 @@ class KnowledgeAgentRunner(AssistantAgentRunner):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self._valid_citation_ids: Set[str] = set()
+        self._rag_empty = False
+
+    def _is_hallucinated_knowledge_reply(self, text: str) -> bool:
+        text_clean = text.strip()
+        if not text_clean:
+            return False
+        # 1. 包含表格结构视为事实性回答
+        if "|" in text_clean and "---" in text_clean:
+            return True
+        # 2. 较长且包含列表项标记，视为详细步骤脑补
+        if len(text_clean) > 120 and ("-" in text_clean or "1." in text_clean):
+            return True
+        # 3. 较长且无任何拒绝/无法找到相关词汇的陈述，视为编造
+        refusal_keywords = ["未找到", "没有找到", "暂无", "无法", "抱歉", "没有", "换个关键词", "换关键词", "不具备", "不能"]
+        has_refusal = any(kw in text_clean for kw in refusal_keywords)
+        if len(text_clean) > 100 and not has_refusal:
+            return True
+        return False
+
+    def _is_hallucinated_with_rag_reply(self, text: str) -> bool:
+        text_clean = text.strip()
+        if not text_clean:
+            return False
+        # 1. 检查是否存在有效的引用标记（如 [1] 等）
+        import re
+        citation_markers = re.findall(r"\[\d+\]", text_clean)
+        if citation_markers:
+            return False
+        # 2. 如果没有任何引用，且是偏事实性描述或表格/列表，且没有拒绝词，判定为幻觉
+        refusal_keywords = ["未找到", "没有找到", "暂无", "无法", "抱歉", "没有", "换个关键词", "换关键词", "不具备", "不能", "未提及", "未在"]
+        has_refusal = any(kw in text_clean for kw in refusal_keywords)
+
+        is_factual = False
+        if "|" in text_clean and "---" in text_clean:
+            is_factual = True
+        elif len(text_clean) > 100 and ("-" in text_clean or "1." in text_clean):
+            is_factual = True
+        elif len(text_clean) > 120:
+            is_factual = True
+
+        if is_factual and not has_refusal:
+            return True
+        return False
 
     def _build_synthesis_user_message(self, user_query: str, execution_review: str) -> str:
         return KnowledgeChatPrompts.synthesis_user_message(user_query, execution_review)
@@ -245,7 +288,15 @@ class KnowledgeAgentRunner(AssistantAgentRunner):
                 yield chunk
             return
 
+        self._rag_empty = False
         if prefetched_knowledge_output:
+            try:
+                import json
+                parsed = json.loads(prefetched_knowledge_output)
+                if isinstance(parsed, dict) and parsed.get("status") == "empty":
+                    self._rag_empty = True
+            except Exception:
+                pass
             system_content += (
                 "\n\n"
                 + KnowledgeChatPrompts.prefetched_knowledge_context(
@@ -297,6 +348,8 @@ class KnowledgeAgentRunner(AssistantAgentRunner):
             }
             return
 
+        chunks_buffer = []
+        full_text = ""
         async for chunk in self._execute_with_agentscope_native_agent(
             native_model=native_model,
             tools=react_tools,
@@ -304,10 +357,39 @@ class KnowledgeAgentRunner(AssistantAgentRunner):
             runtime_messages=runtime_messages,
             max_steps=max_steps,
         ):
-            if "content" in chunk and self._valid_citation_ids:
+            if "content" in chunk:
+                content = str(chunk.get("content") or "")
+                if self._valid_citation_ids:
+                    content = filter_invalid_citation_markers(content, self._valid_citation_ids)
+                full_text += content
                 chunk = dict(chunk)
-                chunk["content"] = filter_invalid_citation_markers(
-                    str(chunk.get("content") or ""),
-                    self._valid_citation_ids,
-                )
-            yield chunk
+                chunk["content"] = content
+            chunks_buffer.append(chunk)
+
+        is_hallucinated = False
+        if self._rag_empty:
+            is_hallucinated = self._is_hallucinated_knowledge_reply(full_text)
+        else:
+            is_hallucinated = self._is_hallucinated_with_rag_reply(full_text)
+
+        if is_hallucinated:
+            logger.warning(
+                f"[KnowledgeAgentRunner] Hallucination detected! RAG empty={self._rag_empty}, "
+                f"but model generated: {full_text[:200]}..."
+            )
+            yield {
+                "type": "log",
+                "id": f"kb_guard_{uuid.uuid4().hex[:8]}",
+                "title": "阻止无依据回答",
+                "details": (
+                    "知识库中未检索到相关文档，大模型尝试直接脑补回答，已拦截该输出。"
+                    if self._rag_empty else
+                    "检索到知识库文档，但模型生成了无任何来源引用的事实回答，已拦截该输出以防幻觉。"
+                ),
+                "status": "warning",
+            }
+            refusal_content = "⚠️ 抱歉，在系统知识库中未检索到相关内容，无法回答该问题。建议您更换关键词重新检索。"
+            yield {"content": refusal_content}
+        else:
+            for chunk in chunks_buffer:
+                yield chunk

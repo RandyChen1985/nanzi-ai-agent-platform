@@ -123,4 +123,6 @@
 | ChatBI 致命 SQL 错误熔断与防卡死优化 (ChatBI Fatal SQL Error Melt) | `app/services/ai/runners/data_agent_runner.py` | **致命错误快速熔断**：新增致命 SQL 错误判定（如未注册表、权限不足等 `Permission Denied` 系列错误），在 ReAct 执行中检测到后立刻通过 event_stream 抛出日志并 return 提前终止当前循环，跳过后续修复重试，放行 final guard 拦截，防范大模型在无权限时死循环迭代，节约 Token。 | ✅ 已完成 | 2026-06-11 |
 | ChatBI 系统提示词 V8 对齐 (ChatBI Prompt V8 Alignment) | `tests/test_chatbi_prompt_assets.py` | **对齐 DataAgentRunner 门控分工 the V8 提示词**：验证 ChatBI V8 系统提示词的内容，检查更新脚本及迁移 SQL 语法的完整性与初始化脚本的一致性，防止旧的分类决策逻辑造成二次污染。 | ✅ 通过 | 2026-06-12 |
 | 艾宾浩斯长时记忆遗忘重排与归并 (Ebbinghaus Memory & Consolidation) | `tests/test_memory_ebbinghaus_consolidation.py` | **长期记忆智能重排与凌晨归并降噪**：验证艾宾浩斯保留度对数放大算法、KNN 及 Fallback 路径的后置重排打分排序；验证凌晨 3:00 后台定时任务的 Redis NX 分布式锁独占保护；验证基于 Cosine 相似度连通图聚类、大模型归纳合并（小于 50 字）、新记忆写入、引用数继承及旧碎片物理清扫全流程。 | ✅ 通过 | 2026-06-12 |
+| 智能路由资产列表分流优化 (Smart Router Asset List Routing Fix) | `tests/services/ai/test_router_service.py` | **资产列表查询分流优化**：优化智能路由决策提示词，明确将物理设施/资产列表（如机房列表、设备清单等）查询归入数据智能助手（ChatBI）的数据查询范畴，防止被误路由至无查数能力的知识库助手引发模型幻觉；新增单元测试覆盖该场景并验证提示词更新。 | ✅ 通过 | 2026-06-12 |
+| 智能会话防幻觉拦截门禁 (Guardrails Plan) | `assistant_agent_runner.py`, `knowledge_agent_runner.py`, `tests/ai/executors/test_chat_executor.py` | **防幻觉与编造拦截门禁**：对通用助手在无工具调用时的生成内容进行表格和 IP 拦截防范，防范无真实数据的脑补；对知识库助手重构并在有召回但无任何有效引用时进行拦截，阻止脱离检索文档无依据脑补事实回答。 | ✅ 通过 | 2026-06-12 |
 
