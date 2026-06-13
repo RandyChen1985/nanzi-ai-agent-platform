@@ -72,6 +72,13 @@ async def lifespan(app: FastAPI):
         await MetadataIndexService.sync_all_datasets()
     except Exception as e:
         logging.warning("Metadata RediSearch index/sync init skipped: %s", e)
+
+    try:
+        from app.services.ai.example_index_service import ExampleIndexService
+        await ExampleIndexService.ensure_index()
+        await ExampleIndexService.sync_all_examples()
+    except Exception as e:
+        logging.warning("Example RediSearch index/sync init skipped: %s", e)
     
     yield
     # Shutdown

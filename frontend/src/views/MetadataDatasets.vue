@@ -796,6 +796,7 @@ const getDatasetEmoji = (name: string) => {
 type RagFlowConfigSummary = {
   api_url: string
   api_key_configured: boolean
+  metadata_provider?: string
 }
 
 const ragflowConfig = ref<RagFlowConfigSummary | null>(null)
@@ -803,8 +804,13 @@ const engineStatus = ref<'checking' | 'connected' | 'disconnected'>('checking')
 const errorMessage = ref('')
 const showErrorBanner = ref(true)
 
-const isEngineReady = computed(() => engineStatus.value === 'connected' && !loading.value)
+const isLocalMode = computed(() => ragflowConfig.value?.metadata_provider === 'local')
+const isEngineReady = computed(() => {
+  if (isLocalMode.value) return false
+  return engineStatus.value === 'connected' && !loading.value
+})
 const engineStatusText = computed(() => {
+  if (isLocalMode.value) return '本地已就绪'
   if (engineStatus.value === 'checking') return '连接中...'
   if (engineStatus.value === 'connected') return '已连接'
   return '未连接'
@@ -848,12 +854,16 @@ const checkRagFlowConnectivity = async () => {
   }
 }
 
-onMounted(() => {
+onMounted(async () => {
     fetchSystemConfig()
     fetchDatasets()
     fetchDbConnections()
-    fetchRagFlowConfig()
-    checkRagFlowConnectivity()
+    await fetchRagFlowConfig()
+    if (!isLocalMode.value) {
+        checkRagFlowConnectivity()
+    } else {
+        engineStatus.value = 'connected'
+    }
 })
 </script>
 
@@ -864,9 +874,15 @@ onMounted(() => {
         <h1 class="text-2xl font-bold text-gray-900 font-mono tracking-tight">元数据管理 <span class="text-primary-500">:: Datasets</span></h1>
         <p class="text-gray-500 text-sm mt-1">管理业务数据集及其表结构语义。</p>
         <p class="text-xs text-gray-400 mt-2 flex items-center gap-1">
-          <span>当前 RAGFlow 引擎：</span>
-          <a :href="ragflowApiUrl" target="_blank" rel="noopener noreferrer" class="font-mono text-primary bg-gray-100 px-1.5 py-0.5 rounded hover:underline">{{ ragflowApiUrl }}</a>
-          <span v-if="ragflowConfig && !ragflowConfig.api_key_configured" class="ml-2 text-amber-600 font-medium">⚠️ API Key 未配置</span>
+          <template v-if="isLocalMode">
+            <span>向量服务引擎：</span>
+            <span class="font-mono text-emerald-600 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-100 font-medium">local-redis 向量语义搜索</span>
+          </template>
+          <template v-else>
+            <span>当前 RAGFlow 引擎：</span>
+            <a :href="ragflowApiUrl" target="_blank" rel="noopener noreferrer" class="font-mono text-primary bg-gray-100 px-1.5 py-0.5 rounded hover:underline">{{ ragflowApiUrl }}</a>
+            <span v-if="ragflowConfig && !ragflowConfig.api_key_configured" class="ml-2 text-amber-600 font-medium">⚠️ API Key 未配置</span>
+          </template>
         </p>
       </div>
       <div class="flex items-center gap-3">
@@ -874,17 +890,17 @@ onMounted(() => {
         <div
           class="flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs border transition-colors shrink-0"
           :class="{
-            'border-blue-200 bg-blue-50/50 text-blue-700': engineStatus === 'checking',
-            'border-emerald-200 bg-emerald-50/50 text-emerald-700': engineStatus === 'connected',
-            'border-amber-200 bg-amber-50/50 text-amber-700': engineStatus === 'disconnected'
+            'border-blue-200 bg-blue-50/50 text-blue-700': !isLocalMode && engineStatus === 'checking',
+            'border-emerald-200 bg-emerald-50/50 text-emerald-700': isLocalMode || engineStatus === 'connected',
+            'border-amber-200 bg-amber-50/50 text-amber-700': !isLocalMode && engineStatus === 'disconnected'
           }"
         >
           <span
             class="inline-block w-2 h-2 rounded-full"
             :class="{
-              'bg-blue-500 animate-pulse': engineStatus === 'checking',
-              'bg-emerald-500': engineStatus === 'connected',
-              'bg-amber-500': engineStatus === 'disconnected'
+              'bg-blue-500 animate-pulse': !isLocalMode && engineStatus === 'checking',
+              'bg-emerald-500': isLocalMode || engineStatus === 'connected',
+              'bg-amber-500': !isLocalMode && engineStatus === 'disconnected'
             }"
           ></span>
           <span class="font-medium">引擎 {{ engineStatusText }}</span>
@@ -923,7 +939,7 @@ onMounted(() => {
     </div>
 
     <!-- Error Banner -->
-    <div v-if="errorMessage && showErrorBanner" class="relative rounded-2xl border border-amber-200 bg-amber-50 p-4 pr-10 text-sm text-amber-800 shadow-sm flex items-start gap-3 mb-6">
+    <div v-if="errorMessage && showErrorBanner && !isLocalMode" class="relative rounded-2xl border border-amber-200 bg-amber-50 p-4 pr-10 text-sm text-amber-800 shadow-sm flex items-start gap-3 mb-6">
       <svg class="w-5 h-5 text-amber-500 shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
       </svg>
@@ -1110,15 +1126,15 @@ onMounted(() => {
              <div class="flex items-center gap-2">
                 <button 
                   v-if="hasPermission('element:metadata:sync')"
-                  @click.stop="isEngineReady && ds.status === 1 && openSyncModal(ds)" 
+                  @click.stop="isEngineReady && ds.status === 1 && !isLocalMode && openSyncModal(ds)" 
                   class="transition-colors p-1.5 rounded-md border border-transparent hover:shadow-sm"
                   :class="{ 
-                     'text-gray-400 hover:text-indigo-500 hover:bg-white hover:border-gray-200': ds.status === 1 && isEngineReady,
-                     'text-gray-300 cursor-not-allowed opacity-50': ds.status !== 1 || !isEngineReady,
+                     'text-gray-400 hover:text-indigo-500 hover:bg-white hover:border-gray-200': ds.status === 1 && isEngineReady && !isLocalMode,
+                     'text-gray-300 cursor-not-allowed opacity-50': ds.status !== 1 || !isEngineReady || isLocalMode,
                      'pointer-events-none': syncingId === ds.id || ds.rag_sync_status === 1 
                   }"
-                  :disabled="!isEngineReady || ds.status !== 1"
-                  :title="!isEngineReady ? 'RAGFlow 服务未就绪' : (ds.status === 1 ? '同步到 RAGFlow' : '数据集已禁用，无法同步')"
+                  :disabled="!isEngineReady || ds.status !== 1 || isLocalMode"
+                  :title="isLocalMode ? '本地向量模式下已自动同步，无需手动上传' : (!isEngineReady ? 'RAGFlow 服务未就绪' : (ds.status === 1 ? '同步到 RAGFlow' : '数据集已禁用，无法同步'))"
                 >
                   <svg v-if="syncingId === ds.id || ds.rag_sync_status === 1" class="w-4 h-4 animate-spin text-indigo-500" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 16h5v5"/></svg>
                   <svg v-else class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M12 16.5V9.75m0 0 3 3m-3-3-3 3M6.75 19.5a4.5 4.5 0 0 1-1.41-8.775 5.25 5.25 0 0 1 10.233-2.33 3 3 0 0 1 3.758 3.848A3.752 3.752 0 0 1 18 19.5H6.75Z"/></svg>
@@ -1210,7 +1226,6 @@ onMounted(() => {
                   </span>
                 </div>
              </div>
-
              <!-- Stats -->
              <div class="col-span-2 flex items-center gap-3">
                 <div class="text-center">
@@ -1251,14 +1266,14 @@ onMounted(() => {
                 <!-- Action Buttons: Admin or specific permission -->
                  <button 
                     v-if="hasPermission('element:metadata:sync')"
-                    @click.stop="isEngineReady && ds.status === 1 && openSyncModal(ds)" 
+                    @click.stop="isEngineReady && ds.status === 1 && !isLocalMode && openSyncModal(ds)" 
                     class="p-1.5 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded transition-colors"
                     :class="{ 
-                      'opacity-30 cursor-not-allowed': ds.status !== 1 || !isEngineReady,
+                      'opacity-30 cursor-not-allowed': ds.status !== 1 || !isEngineReady || isLocalMode,
                       'pointer-events-none': syncingId === ds.id || ds.rag_sync_status === 1
                     }"
-                    :disabled="!isEngineReady || ds.status !== 1"
-                    :title="!isEngineReady ? 'RAGFlow 服务未就绪' : (ds.status === 1 ? '同步 RAG' : '已禁用一线')"
+                    :disabled="!isEngineReady || ds.status !== 1 || isLocalMode"
+                    :title="isLocalMode ? '本地向量模式下已自动同步，无需手动上传' : (!isEngineReady ? 'RAGFlow 服务未就绪' : (ds.status === 1 ? '同步 RAG' : '已禁用一线'))"
                  >
                     <svg v-if="syncingId === ds.id || ds.rag_sync_status === 1" class="w-4 h-4 animate-spin text-indigo-500" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 16h5v5"/></svg>
                     <svg v-else class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M12 16.5V9.75m0 0 3 3m-3-3-3 3M6.75 19.5a4.5 4.5 0 0 1-1.41-8.775 5.25 5.25 0 0 1 10.233-2.33 3 3 0 0 1 3.758 3.848A3.752 3.752 0 0 1 18 19.5H6.75Z"/></svg>

@@ -254,6 +254,7 @@ const getRagStatusDisplay = (ex: ChatBIExample) => {
 type RagFlowConfigSummary = {
   api_url: string;
   api_key_configured: boolean;
+  metadata_provider?: string;
 }
 
 const ragflowConfig = ref<RagFlowConfigSummary | null>(null);
@@ -261,8 +262,13 @@ const engineStatus = ref<'checking' | 'connected' | 'disconnected'>('checking');
 const errorMessage = ref('');
 const showErrorBanner = ref(true);
 
-const isEngineReady = computed(() => engineStatus.value === 'connected' && !loading.value);
+const isLocalMode = computed(() => ragflowConfig.value?.metadata_provider === 'local');
+const isEngineReady = computed(() => {
+  if (isLocalMode.value) return false;
+  return engineStatus.value === 'connected' && !loading.value;
+});
 const engineStatusText = computed(() => {
+  if (isLocalMode.value) return '本地已就绪';
   if (engineStatus.value === 'checking') return '连接中...';
   if (engineStatus.value === 'connected') return '已连接';
   return '未连接';
@@ -306,10 +312,14 @@ const checkRagFlowConnectivity = async () => {
   }
 };
 
-onMounted(() => {
+onMounted(async () => {
   fetchExamples();
-  fetchRagFlowConfig();
-  checkRagFlowConnectivity();
+  await fetchRagFlowConfig();
+  if (!isLocalMode.value) {
+    checkRagFlowConnectivity();
+  } else {
+    engineStatus.value = 'connected';
+  }
 });
 </script>
 
@@ -321,9 +331,15 @@ onMounted(() => {
         <h1 class="text-2xl font-bold text-gray-900 tracking-tight">案例集管理</h1>
         <p class="text-sm text-gray-500 mt-1">管理 AI 执行的 ChatBI 问答经验样本及 RAG 语义对齐案例。</p>
         <p class="text-xs text-gray-400 mt-2 flex items-center gap-1">
-          <span>当前 RAGFlow 引擎：</span>
-          <a :href="ragflowApiUrl" target="_blank" rel="noopener noreferrer" class="font-mono text-primary bg-gray-100 px-1.5 py-0.5 rounded hover:underline">{{ ragflowApiUrl }}</a>
-          <span v-if="ragflowConfig && !ragflowConfig.api_key_configured" class="ml-2 text-amber-600 font-medium">⚠️ API Key 未配置</span>
+          <template v-if="isLocalMode">
+            <span>向量服务引擎：</span>
+            <span class="font-mono text-emerald-600 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-100 font-medium">local-redis 向量语义搜索</span>
+          </template>
+          <template v-else>
+            <span>当前 RAGFlow 引擎：</span>
+            <a :href="ragflowApiUrl" target="_blank" rel="noopener noreferrer" class="font-mono text-primary bg-gray-100 px-1.5 py-0.5 rounded hover:underline">{{ ragflowApiUrl }}</a>
+            <span v-if="ragflowConfig && !ragflowConfig.api_key_configured" class="ml-2 text-amber-600 font-medium">⚠️ API Key 未配置</span>
+          </template>
         </p>
       </div>
       <div class="flex items-center gap-3">
@@ -331,17 +347,17 @@ onMounted(() => {
         <div
           class="flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs border transition-colors shrink-0"
           :class="{
-            'border-blue-200 bg-blue-50/50 text-blue-700': engineStatus === 'checking',
-            'border-emerald-200 bg-emerald-50/50 text-emerald-700': engineStatus === 'connected',
-            'border-amber-200 bg-amber-50/50 text-amber-700': engineStatus === 'disconnected'
+            'border-blue-200 bg-blue-50/50 text-blue-700': !isLocalMode && engineStatus === 'checking',
+            'border-emerald-200 bg-emerald-50/50 text-emerald-700': isLocalMode || engineStatus === 'connected',
+            'border-amber-200 bg-amber-50/50 text-amber-700': !isLocalMode && engineStatus === 'disconnected'
           }"
         >
           <span
             class="inline-block w-2 h-2 rounded-full"
             :class="{
-              'bg-blue-500 animate-pulse': engineStatus === 'checking',
-              'bg-emerald-500': engineStatus === 'connected',
-              'bg-amber-500': engineStatus === 'disconnected'
+              'bg-blue-500 animate-pulse': !isLocalMode && engineStatus === 'checking',
+              'bg-emerald-500': isLocalMode || engineStatus === 'connected',
+              'bg-amber-500': !isLocalMode && engineStatus === 'disconnected'
             }"
           ></span>
           <span class="font-medium">引擎 {{ engineStatusText }}</span>
@@ -350,7 +366,7 @@ onMounted(() => {
     </div>
 
     <!-- Error Banner -->
-    <div v-if="errorMessage && showErrorBanner" class="relative rounded-2xl border border-amber-200 bg-amber-50 p-4 pr-10 text-sm text-amber-800 shadow-sm flex items-start gap-3 mb-6">
+    <div v-if="errorMessage && showErrorBanner && !isLocalMode" class="relative rounded-2xl border border-amber-200 bg-amber-50 p-4 pr-10 text-sm text-amber-800 shadow-sm flex items-start gap-3 mb-6">
       <svg class="w-5 h-5 text-amber-500 shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
       </svg>
@@ -430,10 +446,10 @@ onMounted(() => {
           </button>
           <button
             v-if="hasPermission('element:chatbi_example:sync')"
-            @click="isEngineReady && (showSyncAllConfirm = true)"
-            :disabled="loading || !isEngineReady"
+            @click="isEngineReady && !isLocalMode && (showSyncAllConfirm = true)"
+            :disabled="loading || !isEngineReady || isLocalMode"
             class="inline-flex items-center px-4 py-2 border border-indigo-200 rounded-md shadow-sm text-sm font-medium text-indigo-700 bg-indigo-50 hover:bg-indigo-100 active:scale-95 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
-            :title="!isEngineReady ? 'RAGFlow 服务未就绪' : '一键同步至 RAGFlow'"
+            :title="isLocalMode ? '本地向量模式下已自动同步，无需手动上传' : (!isEngineReady ? 'RAGFlow 服务未就绪' : '一键同步至 RAGFlow')"
           >
             <CloudArrowUpIcon class="h-5 w-5 text-indigo-600 mr-2" :class="{ 'animate-pulse': loading }" />
             一键同步至 RAGFlow
@@ -520,7 +536,7 @@ onMounted(() => {
                     <button v-if="hasPermission('element:chatbi_example:audit') && ex.status === 'pending'" @click="auditExample(ex.id, 'rejected')" class="p-1.5 rounded-full text-red-600 hover:bg-red-50 active:scale-90 transition-all duration-200" title="驳回">
                       <XCircleIcon class="w-5 h-5" />
                     </button>
-                    <button v-if="hasPermission('element:chatbi_example:sync') && ex.status === 'approved'" @click="isEngineReady && syncToRag(ex.id)" :disabled="!isEngineReady" class="p-1.5 rounded-full text-indigo-600 hover:bg-indigo-50 active:scale-90 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed" :title="!isEngineReady ? 'RAGFlow 服务未就绪' : '同步到 RAGFlow'">
+                    <button v-if="hasPermission('element:chatbi_example:sync') && ex.status === 'approved'" @click="isEngineReady && !isLocalMode && syncToRag(ex.id)" :disabled="!isEngineReady || isLocalMode" class="p-1.5 rounded-full text-indigo-600 hover:bg-indigo-50 active:scale-90 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed" :title="isLocalMode ? '本地向量模式下已自动同步，无需手动上传' : (!isEngineReady ? 'RAGFlow 服务未就绪' : '同步到 RAGFlow')">
                       <CloudArrowUpIcon class="w-5 h-5" />
                     </button>
                     <button v-if="hasPermission('element:chatbi_example:delete') && ex.status !== 'deprecated'" @click="auditExample(ex.id, 'deprecated')" class="p-1.5 rounded-full text-gray-400 hover:bg-gray-100 active:scale-90 transition-all duration-200" title="废弃">

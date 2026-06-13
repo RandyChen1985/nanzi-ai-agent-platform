@@ -294,6 +294,40 @@ class ExampleService:
                 example.rag_sync_status = "syncing"
                 await db.commit()
 
+                # 联动本地 Redis 同步与清理
+                try:
+                    from app.services.ai.example_index_service import ExampleIndexService
+                    from app.services.ai.embedding_client import EmbeddingClient
+                    if example.status == "approved" and example.feedback_type != "down":
+                        dataset_name = "通用数据集"
+                        try:
+                            stmt_ds = select(MetaDataset.display_name).where(MetaDataset.id == example.dataset_id)
+                            res_ds = await db.execute(stmt_ds)
+                            dataset_name = res_ds.scalar() or "通用数据集"
+                        except Exception:
+                            pass
+
+                        text_to_embed = example.refined_query or example.user_query
+                        if text_to_embed:
+                            embedding = await EmbeddingClient.embed_text(text_to_embed)
+                            await ExampleIndexService.upsert_vector(
+                                example_id=example.id,
+                                dataset_id=example.dataset_id or 0,
+                                dataset_name=dataset_name,
+                                question=example.refined_query or example.user_query,
+                                raw_query=example.user_query,
+                                context_summary=example.context_summary or "",
+                                sql_text=example.sql_text,
+                                trace_id=example.trace_id or "",
+                                agent_id=example.agent_id or "",
+                                sql_metadata=example.sql_metadata,
+                                embedding=embedding
+                            )
+                    elif example.status in ["deprecated", "rejected"] or example.feedback_type == "down":
+                        await ExampleIndexService.delete_vector(example.id)
+                except Exception as redis_err:
+                    logger.error(f"[ExampleSync] Local Redis sync failed for example {example_id}: {redis_err}")
+
                 # 2. 环境检查
                 if example.status not in ["approved", "deprecated"]:
                     example.rag_sync_status = "pending"
@@ -413,12 +447,6 @@ class ExampleService:
         try:
             logger.info(f"[ExampleSearch] >>> Start searching examples for query: '{query}'")
             
-            try:
-                target_kb_id = await ExampleService.ensure_chatbi_sample_kb_id()
-            except Exception as e:
-                logger.warning(f"[ExampleSearch] Skip: Failed to ensure 'chatbi_sample_knowledge_base': {e}")
-                return []
-
             # 1. 意图改写：如果 query 太短或包含代词，尝试根据 history 进行改写
             search_query = query
             if history and (len(query) < 8 or any(p in query for p in ["那", "它", "这个", "之前", "上一个", "刚才", "统计结果"])):
@@ -428,7 +456,41 @@ class ExampleService:
                 except Exception as ree:
                     logger.warning(f"[ExampleSearch] Intent rewrite failed: {ree}")
 
-            # 2. 动态获取检索配置
+            # 2. 判断服务模式
+            metadata_provider = await ConfigService.get("metadata_provider")
+            if metadata_provider == "local":
+                logger.info("[ExampleSearch] Using Local Redis HNSW Vector Search")
+                try:
+                    from app.services.ai.example_index_service import ExampleIndexService
+                    from app.services.ai.embedding_client import EmbeddingClient
+                    
+                    query_embedding = await EmbeddingClient.embed_text(search_query)
+                    authorized_dataset_ids = [dataset_id] if dataset_id is not None else None
+                    
+                    examples = await ExampleIndexService.search_knn(
+                        query_embedding=query_embedding,
+                        authorized_dataset_ids=authorized_dataset_ids,
+                        top_k=top_k
+                    )
+                    
+                    logger.info(f"[ExampleSearch] Local Redis search returned {len(examples)} examples.")
+                    if examples:
+                        return examples
+                    
+                    logger.info("[ExampleSearch] Local Redis search returned empty. Falling back to MySQL LIKE search.")
+                    return await ExampleService._search_mysql_fallback(search_query, dataset_id, top_k)
+                except Exception as local_err:
+                    logger.warning(f"[ExampleSearch] Local Redis search failed: {local_err}. Falling back to MySQL LIKE search.")
+                    return await ExampleService._search_mysql_fallback(search_query, dataset_id, top_k)
+
+            # 3. 走 RAGFlow 检索逻辑
+            try:
+                target_kb_id = await ExampleService.ensure_chatbi_sample_kb_id()
+            except Exception as e:
+                logger.warning(f"[ExampleSearch] Skip: Failed to ensure 'chatbi_sample_knowledge_base': {e}")
+                return []
+
+            # 动态获取检索配置
             threshold_str = await ConfigService.get("chatbi_sample_similarity_threshold")
             weight_str = await ConfigService.get("chatbi_sample_vector_similarity_weight")
             
@@ -489,6 +551,61 @@ class ExampleService:
         except Exception as e:
             logger.error(f"[ExampleSearch] Search execution exception: {e}", exc_info=True)
             return []
+
+    @staticmethod
+    async def _search_mysql_fallback(query: str, dataset_id: int = None, top_k: int = 5) -> List[Dict[str, Any]]:
+        """
+        MySQL keyword search fallback for ChatBI examples.
+        """
+        from sqlalchemy import or_
+        from app.models.metadata import MetaDataset
+        async with AsyncSessionLocal() as db:
+            try:
+                stmt = select(ChatBIExample).where(
+                    ChatBIExample.status == "approved"
+                )
+                if dataset_id is not None:
+                    stmt = stmt.where(ChatBIExample.dataset_id == dataset_id)
+                    
+                words = [w for w in query.split() if w.strip()]
+                if words:
+                    conds = []
+                    for w in words:
+                        conds.append(ChatBIExample.user_query.like(f"%{w}%"))
+                        conds.append(ChatBIExample.refined_query.like(f"%{w}%"))
+                        conds.append(ChatBIExample.sql_text.like(f"%{w}%"))
+                    stmt = stmt.where(or_(*conds))
+                
+                stmt = stmt.limit(top_k)
+                res = await db.execute(stmt)
+                examples = res.scalars().all()
+                
+                # Fetch dataset names
+                dataset_ids = list(set([ex.dataset_id for ex in examples if ex.dataset_id]))
+                dataset_name_map = {}
+                if dataset_ids:
+                    stmt_ds = select(MetaDataset.id, MetaDataset.display_name).where(MetaDataset.id.in_(dataset_ids))
+                    res_ds = await db.execute(stmt_ds)
+                    for row in res_ds.all():
+                        dataset_name_map[row[0]] = row[1]
+                        
+                result_list = []
+                for ex in examples:
+                    result_list.append({
+                        "id": ex.id,
+                        "question": ex.refined_query or ex.user_query,
+                        "sql": ex.sql_text,
+                        "context_summary": ex.context_summary or "",
+                        "dataset_name": dataset_name_map.get(ex.dataset_id) or "通用数据集",
+                        "trace_id": ex.trace_id or "",
+                        "sql_metadata": ex.sql_metadata,
+                        "similarity": 0.35
+                    })
+                logger.info(f"[ExampleSearch] MySQL Fallback retrieved {len(result_list)} examples.")
+                return result_list
+            except Exception as db_err:
+                logger.error(f"[ExampleSearch] MySQL Fallback search failed: {db_err}")
+                return []
 
     @staticmethod
     async def _rewrite_query_for_search(query: str, history: List[Any]) -> str:
@@ -598,8 +715,6 @@ class ExampleService:
             "3. 若案例表名在当前 Schema 中确实不存在，才可改用其他表，并需在思考中说明原因\n"
         )
         return "\n".join(prompt_lines)
-
-    @staticmethod
 
     @staticmethod
     def build_few_shot_reminder(examples: List[Dict[str, Any]]) -> str:

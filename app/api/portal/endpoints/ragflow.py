@@ -179,6 +179,7 @@ async def _grant_dataset_to_creator(db: AsyncSession, user: dict, dataset_id: st
 async def get_ragflow_config_summary():
     base_url = await ConfigService.get("ragflow_api_url")
     api_key = await ConfigService.get("ragflow_api_key")
+    metadata_provider = await ConfigService.get("metadata_provider", default="ragflow")
     api_url = base_url.rstrip("/") + "/" if base_url else ""
     return {
         "code": 0,
@@ -186,6 +187,7 @@ async def get_ragflow_config_summary():
             "api_url": api_url,
             "api_key_configured": bool(api_key),
             "configured": bool(api_url and api_key),
+            "metadata_provider": metadata_provider,
         },
     }
 
