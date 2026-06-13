@@ -641,7 +641,21 @@ class MemoryIndexService:
             return {"available": False, "index_name": idx, "message": "Redis 不可用"}
         try:
             info = await redis.execute_command("FT.INFO", idx)
-            return {"available": True, "index_name": idx, "info": info}
+            
+            # 清理嵌套结构中可能存在的非标准浮点数（如 NaN, Infinity），以防止 JSON 序列化失败
+            import math
+            def _sanitize(obj: Any) -> Any:
+                if isinstance(obj, float):
+                    if math.isnan(obj) or math.isinf(obj):
+                        return None
+                    return obj
+                elif isinstance(obj, dict):
+                    return {k: _sanitize(v) for k, v in obj.items()}
+                elif isinstance(obj, (list, tuple)):
+                    return [_sanitize(x) for x in obj]
+                return obj
+
+            return {"available": True, "index_name": idx, "info": _sanitize(info)}
         except Exception as e:
             return {"available": False, "index_name": idx, "message": str(e)}
 

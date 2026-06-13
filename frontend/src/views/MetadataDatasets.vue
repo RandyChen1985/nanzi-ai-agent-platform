@@ -914,14 +914,14 @@ onMounted(async () => {
         </div>
         <button 
           @click="showTestModal = true"
-          class="bg-white border border-gray-200 text-gray-600 hover:bg-gray-50 px-4 py-2 rounded-lg transition-all flex items-center gap-2 font-medium"
+          class="bg-white border border-gray-200 text-gray-600 hover:bg-gray-50 px-4 py-2 rounded-lg transition-all flex items-center gap-2 text-sm font-medium"
         >
           <svg class="w-5 h-5 text-amber-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
           测试
         </button>
         <button 
           @click="showSpecModal = true"
-          class="border border-purple-200 text-purple-600 hover:bg-purple-50 px-4 py-2 rounded-lg transition-all flex items-center gap-2 font-medium"
+          class="border border-purple-200 text-purple-600 hover:bg-purple-50 px-4 py-2 rounded-lg transition-all flex items-center gap-2 text-sm font-medium"
         >
           <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 17.5 5s3.332.477 4.5 1.253v13C20.832 18.477 19.246 18 17.5 18c-1.746 0-3.332.477-4.5 1.253"/></svg>
           规范
@@ -929,7 +929,7 @@ onMounted(async () => {
         <button 
           v-has-perm="'element:metadata:import'"
           @click="showImportModal = true" 
-          class="flex items-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg shadow-lg shadow-indigo-200 transition-all active:scale-95 text-sm font-bold tracking-wide"
+          class="flex items-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg shadow-md transition-all active:scale-95 text-sm font-medium"
         >
           <svg class="w-5 h-5 text-indigo-100" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
           智能导入 (DDL)
@@ -937,7 +937,7 @@ onMounted(async () => {
         <button 
           @click="showCreateModal = true"
           v-if="hasPermission('element:metadata:edit')"
-          class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg transition-all shadow-md flex items-center gap-2 font-medium"
+          class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg transition-all shadow-md flex items-center gap-2 text-sm font-medium"
         >
           <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
           新建数据集
