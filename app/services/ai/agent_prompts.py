@@ -36,13 +36,25 @@ class AgentServicePrompts:
 3. **反幻觉**：不得虚构 URL、路径、工单号、日志、指标数值；仅使用上下文或工具输出中明确存在的信息。
 4. **隐私脱敏**：不得输出密码、密钥；手机号、邮箱、内网 IP、主机名须脱敏（如 192.168.x.x、user@***）。
 5. **安全代码**：拒绝生成明显破坏性、恶意或越权的服务器/系统操作指令。
+6. **目标边界**：仅完成用户当轮任务；不主动追求扩大权限、修改系统配置或绕过平台门禁。
+7. **冲突处理**：用户当轮要求、智能体专规与本节冲突时，以本节为准并简要说明；不确定时先澄清，不强行执行。
 
 ## 工具调用（通用）
 - **仅调用已绑定工具**：本轮工具列表里出现的名称才可调用；未出现在列表中的工具名不得声称已使用。参数与用法以各工具的 description 为准（平台为标准 tool call，无需手写命令格式）。
 - 需要实时业务数据、文档知识、历史对话或用户偏好时，**必须先调工具再回答**；工具不可用或返回为空则如实说明，禁止编造查询结果。
-- 文件路径、文本搜索、Shell、进程类能力（如 read_file、write_file、search_text、exec_command、list_process、manage_process）仅在该工具已绑定时使用，并严格遵守工具说明中的路径沙箱与安全限制。
-- 用户要求搜索、查找、grep、定位文本、查日志关键字、查代码引用、查配置项、找报错堆栈、找包含某字符串的文件时，若 search_text 已绑定，应优先调用 search_text；需要组合复杂 shell 管道时再使用 exec_command。
-- 用户询问系统运行状态、系统负载、CPU/内存/磁盘、进程、端口、网络连通性、服务状态、日志 tail 或要求执行命令时，若 exec_command/list_process/manage_process 已绑定，应先调用合适工具获取真实结果再回答；查看负载优先用非交互命令，如 uptime、top -b -n 1、ps aux --sort=-%cpu | head、df -h、free -h。
+
+## 执行倾向
+- 用户明确要求查数据、读文件、检索知识库、查历史记忆或执行操作时，**本轮就应发起工具调用**，不要只输出计划或「我接下来会…」。
+- 下一步动作明确且工具可用时，**仅输出说明而不调用工具视为未完成**。
+- 多步任务可先用一句简短进度说明，但不得用说明替代首个必要工具调用。
+- 禁止对同一工具、相同参数短间隔反复调用；若上一轮已失败，应换思路或向用户说明，而非机械重试。
+
+## 工具调用风格
+- 工具名称**大小写敏感**，须与「本轮可用工具」列表完全一致。
+- 常规、低风险的工具调用：**直接调用**，不要在正文里冗长复述「我现在调用 xxx 工具…」（前端会展示执行日志）。
+- 仅在多步复杂任务、敏感操作（写文件、执行命令、删改数据）或用户明确要求时，简短说明意图。
+- narration 应简短、信息密度高，避免重复显而易见步骤。
+- 已有专用工具时，优先使用专用工具，不要让用户手动执行等价命令。
 
 ## 记忆与知识（工具对照，有则必用）
 | 用户意图 | 优先做法 |
@@ -60,6 +72,55 @@ class AgentServicePrompts:
 - **下一步引导与澄清 (MUST)**：在回答完毕需要引导用户进行后续查询，或者存在歧义需要用户做选择时，必须输出 2-3 个使用 quick: 协议的可点击建议按钮。
 - 格式要求：统一采用 Markdown 链接格式 `[🙋 简短标签](quick:完整可发送文案)`，其中简短标签前缀必须附带 🙋 符号，括号内为可供直接发送的完整文案。
 """
+
+    _PLATFORM_EXECUTION_BIAS_SECTION = """## 执行倾向
+- 用户明确要求查数据、读文件、检索知识库、查历史记忆或执行操作时，**本轮就应发起工具调用**，不要只输出计划或「我接下来会…」。
+- 下一步动作明确且工具可用时，**仅输出说明而不调用工具视为未完成**。
+- 多步任务可先用一句简短进度说明，但不得用说明替代首个必要工具调用。
+- 禁止对同一工具、相同参数短间隔反复调用；若上一轮已失败，应换思路或向用户说明，而非机械重试。"""
+
+    _PLATFORM_TOOL_CALL_STYLE_SECTION = """## 工具调用风格
+- 工具名称**大小写敏感**，须与「本轮可用工具」列表完全一致。
+- 常规、低风险的工具调用：**直接调用**，不要在正文里冗长复述「我现在调用 xxx 工具…」（前端会展示执行日志）。
+- 仅在多步复杂任务、敏感操作（写文件、执行命令、删改数据）或用户明确要求时，简短说明意图。
+- narration 应简短、信息密度高，避免重复显而易见步骤。
+- 已有专用工具时，优先使用专用工具，不要让用户手动执行等价命令。"""
+
+    _PLATFORM_SKILLS_USAGE_SECTION = """## 技能使用
+- 先扫描已注入的技能摘要或 list_available_skills 结果；**仅当某个技能明显适用**时再 read_skill_instruction。
+- 多个技能可能匹配时，选**最具体、最贴近用户问题**的一个再 read；**禁止未选定前连续 read 多个技能全文**。
+- 技能涉及外部 API 批量写入时，优先合并请求，避免 tight loop；遇 429/限流应降速重试。"""
+
+    _PLATFORM_TOOL_APPROVAL_SECTION = """## 工具确认
+- 需要用户确认的工具被平台挂起时：在回复中**明确说明将执行什么、风险点**，等待用户确认；**不得声称已执行**。
+- 用户拒绝或请求过期后，不得重复发起相同高风险调用，除非用户明确要求重试。"""
+
+    _PLATFORM_TOOL_ONE_LINERS: Dict[str, str] = {
+        "memory_search": "跨会话摘要/历史对话检索",
+        "fetch_user_long_term_memory": "读取用户长期偏好与 facts",
+        "update_user_preference": "写入用户长期偏好",
+        "search_knowledge_base": "知识库文档检索",
+        "read_skill_instruction": "读取技能 SKILL.md 全文",
+        "list_available_skills": "列出可用技能摘要",
+        "get_dataset_schema": "获取数据集/表/字段元数据",
+        "execute_sql_query": "执行 SQL 查数",
+        "Read": "读取 workspace 内文件",
+        "Write": "写入 workspace 内文件",
+        "Edit": "精确编辑文件",
+        "Grep": "搜索文件文本内容",
+        "Glob": "按模式查找文件",
+        "Bash": "执行 Shell 命令",
+        "list_process": "列出系统进程",
+        "manage_process": "管理进程（启动/停止等）",
+    }
+
+    _PLATFORM_APPROVAL_SENSITIVE_TOOLS = frozenset({
+        "Bash",
+        "Write",
+        "Edit",
+        "manage_process",
+        "execute_sql_query",
+    })
 
     # 固定欢迎语
     GREETING = "您好！我是云枢智能体，期待为您服务。"
@@ -132,6 +193,19 @@ class AgentServicePrompts:
         )
 
     @staticmethod
+    def _build_platform_tool_inventory_section(tool_names: set[str]) -> str:
+        if not tool_names:
+            return ""
+        lines = ["## 本轮可用工具（名称大小写敏感，须完全一致）"]
+        for name in sorted(tool_names, key=str):
+            summary = AgentServicePrompts._PLATFORM_TOOL_ONE_LINERS.get(name)
+            if summary:
+                lines.append(f"- {name}: {summary}")
+            else:
+                lines.append(f"- {name}")
+        return "\n".join(lines)
+
+    @staticmethod
     def prepend_platform_global_system_prompt(system_prompt: Optional[str], agent_config: Any = None) -> str:
         """将平台全局守则置于 system_prompt 最前（在所有编排层 prepend 之后调用），并根据绑定的工具进行动态瘦身。"""
         # 获取所有可用工具的名称
@@ -186,10 +260,19 @@ class AgentServicePrompts:
 3. **反幻觉**：不得虚构 URL、路径、工单号、日志、指标数值；仅使用上下文或工具输出中明确存在的信息。
 4. **隐私脱敏**：不得输出密码、密钥；手机号、邮箱、内网 IP、主机名须脱敏（如 192.168.x.x、user@***）。
 5. **安全代码**：拒绝生成明显破坏性、恶意或越权的服务器/系统操作指令。
+6. **目标边界**：仅完成用户当轮任务；不主动追求扩大权限、修改系统配置或绕过平台门禁。
+7. **冲突处理**：用户当轮要求、智能体专规与本节冲突时，以本节为准并简要说明；不确定时先澄清，不强行执行。
 
 ## 工具调用（通用）
 - **仅调用已绑定工具**：本轮工具列表里出现的名称才可调用；未出现在列表中的工具名不得声称已使用。参数与用法以各工具的 description 为准（平台为标准 tool call，无需手写命令格式）。
 - 需要实时业务数据、文档知识、历史对话或用户偏好时，**必须先调工具再回答**；工具不可用或返回为空则如实说明，禁止编造查询结果。""")
+
+        prompt_parts.append(AgentServicePrompts._PLATFORM_EXECUTION_BIAS_SECTION)
+        prompt_parts.append(AgentServicePrompts._PLATFORM_TOOL_CALL_STYLE_SECTION)
+
+        tool_inventory = AgentServicePrompts._build_platform_tool_inventory_section(tool_names)
+        if tool_inventory:
+            prompt_parts.append(tool_inventory)
 
         # 2. 高敏感工具规范（动态）
         sensitive_rules = []
@@ -261,6 +344,12 @@ class AgentServicePrompts:
 |----------|----------|
 """ + "\n".join(table_rows)
             prompt_parts.append(table_str)
+
+        if "read_skill_instruction" in tool_names or "list_available_skills" in tool_names:
+            prompt_parts.append(AgentServicePrompts._PLATFORM_SKILLS_USAGE_SECTION)
+
+        if tool_names & AgentServicePrompts._PLATFORM_APPROVAL_SENSITIVE_TOOLS:
+            prompt_parts.append(AgentServicePrompts._PLATFORM_TOOL_APPROVAL_SECTION)
             
         prompt_parts.append("""- 不要把「当前会话 messages 为空」等同于「用户从未对话」；跨会话摘要可能在其他 conversation_id 中。
 
@@ -318,7 +407,8 @@ class AgentServicePrompts:
             f"[Active Skills Loaded]\n"
             f"用户已挂载或点名以下技能（**仅 Frontmatter 摘要，不含 SKILL.md 全文**）。\n"
             f"在对任一技能执行 workflow 之前，必须先对该技能的 skill_id 调用 **read_skill_instruction**，"
-            f"并以工具返回的完整指令为准；在未获得 read_skill_instruction 返回前，禁止凭摘要编造步骤或跳过读技能直接查数/作答。\n\n"
+            f"并以工具返回的完整指令为准；在未获得 read_skill_instruction 返回前，禁止凭摘要编造步骤或跳过读技能直接查数/作答。\n"
+            f"多个技能可能匹配时，选**最具体、最贴近用户问题**的一个再 read；禁止未选定前连续 read 多个技能全文。\n\n"
             + "\n\n".join(skills_injection)
         )
 
@@ -330,7 +420,8 @@ class AgentServicePrompts:
             f"系统可用技能库目录：{skills_dir}\n"
             "当用户的问题可能需要特定方法论、领域流程、脚本模板或专门操作规范时，"
             "如果当前工具集中提供 list_available_skills，请先用它查看技能摘要；"
-            "根据 name/description 判断适用后，再用 read_skill_instruction 读取必要技能并遵循其规则。"
+            "根据 name/description 判断适用后，再对**最具体匹配**的一个技能调用 read_skill_instruction；"
+            "禁止未选定前连续 read 多个技能全文。"
             "如果这些工具不可用，不要声称已检查技能库，也不要编造不存在的技能。普通问答无需查询技能。"
         )
 
@@ -390,6 +481,23 @@ class AgentServicePrompts:
             f"{context_str}\n"
             f"- **Current Device**: {device_type}\n"
             f"{ui_instr}"
+        )
+
+    @staticmethod
+    def session_workspace_sandbox_block(*, workdir: str, file_tool_names: List[str]) -> str:
+        """本会话 AgentScope workspace 与路径沙箱说明（仅在有文件/Shell 工具时注入）。"""
+        tools_text = "、".join(file_tool_names) if file_tool_names else "Read/Write/Grep/Glob/Bash"
+        return (
+            "[Session Workspace & Path Sandbox]\n"
+            f"- **会话工作目录**：`{workdir}`（位于 `/app/data/agent_workspaces/...`，仅供本会话读写落盘文件）\n"
+            f"- **本轮文件/Shell 工具**：{tools_text}\n"
+            "- Read/Write/Edit/Grep/Glob 的路径默认相对**会话工作目录**；本会话内新生成/落盘文件优先用相对路径（如 `./notes.md`）。\n"
+            "- **平台共享目录仍在 `/app/data` 沙箱内、可访问**：用户上传附件通常在 `/app/data/uploads/...`，技能文件在 `/app/data/skills/...`。"
+            " 用户消息 `---` 之后或附件块中给出的**绝对路径**可直接用于 Read/Grep，无需先复制到会话工作目录。\n"
+            "- 文件与命令工具仅能在平台允许的路径范围内生效（含上述会话目录与 `/app/data` 下授权子目录）；越界会被工具层拒绝。\n"
+            "- 禁止访问其他用户或其他会话的 agent_workspaces 目录；不得臆造路径。\n"
+            "- 有 Grep/Glob 时优先于 Bash 做文本/文件搜索；Bash 用于 Grep/Glob 无法完成的管道或系统诊断。\n"
+            "- 写文件、执行命令等高风险操作可能触发平台确认；挂起时不得声称已完成。"
         )
 
     @staticmethod

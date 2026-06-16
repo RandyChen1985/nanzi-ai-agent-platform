@@ -6,7 +6,8 @@ import time
 from dataclasses import dataclass
 from typing import Any, Callable, Literal
 
-from app.services.ai.runtime.agentscope.errors import RuntimeToolError, RuntimeTimeoutError
+from app.services.ai.runtime.agentscope.errors import RuntimeToolError, RuntimeTimeoutError, ToolLoopFuseError
+from app.services.ai.runtime.tool_loop_detector import ToolLoopDetector
 
 
 ToolSourceType = Literal["static", "generic_api", "mcp", "class", "system"]
@@ -150,6 +151,7 @@ class AgentScopeRuntimeTool:
         self,
         spec: RuntimeToolSpec,
         approval_mode: RuntimeApprovalMode | str | None = None,
+        loop_detector: ToolLoopDetector | None = None,
     ) -> None:
         self.spec = spec
         self.name = spec.name
@@ -157,6 +159,14 @@ class AgentScopeRuntimeTool:
         self.input_schema = spec.parameters_schema
         self.is_read_only = spec.is_read_only
         self.approval_mode = _normalize_runtime_approval_mode(approval_mode)
+        self.loop_detector = loop_detector
+
+    def _check_tool_loop(self, tool_input: dict[str, Any]) -> None:
+        if not self.loop_detector:
+            return
+        verdict = self.loop_detector.record(self.name, tool_input)
+        if verdict.fused:
+            raise ToolLoopFuseError(verdict.message)
 
     async def check_permissions(self, tool_input: dict[str, Any], context: Any) -> Any:
         try:
@@ -207,6 +217,7 @@ class AgentScopeRuntimeTool:
         from agentscope.message import TextBlock, ToolResultState
         from agentscope.tool import ToolChunk
 
+        self._check_tool_loop(kwargs)
         return ToolChunk(
             content=[TextBlock(text=str(await self.spec.invoke(kwargs)))],
             state=ToolResultState.SUCCESS,
@@ -222,6 +233,7 @@ class AgentScopeNativeApprovalTool:
         *,
         approval_mode: RuntimeApprovalMode | str | None = None,
         permission_scope: RuntimePermissionScope | None = None,
+        loop_detector: ToolLoopDetector | None = None,
     ) -> None:
         self.native_tool = native_tool
         self.name = getattr(native_tool, "name", "")
@@ -230,6 +242,14 @@ class AgentScopeNativeApprovalTool:
         self.is_read_only = bool(getattr(native_tool, "is_read_only", False))
         self.approval_mode = _normalize_runtime_approval_mode(approval_mode)
         self.permission_scope = permission_scope or _infer_native_permission_scope(native_tool)
+        self.loop_detector = loop_detector
+
+    def _check_tool_loop(self, tool_input: dict[str, Any]) -> None:
+        if not self.loop_detector:
+            return
+        verdict = self.loop_detector.record(self.name, tool_input)
+        if verdict.fused:
+            raise ToolLoopFuseError(verdict.message)
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self.native_tool, name)
@@ -298,6 +318,7 @@ class AgentScopeNativeApprovalTool:
         return []
 
     async def __call__(self, **kwargs: Any) -> Any:
+        self._check_tool_loop(kwargs)
         result = self.native_tool(**kwargs)
         if inspect.isawaitable(result):
             return await result
@@ -338,16 +359,19 @@ def runtime_tool_from_spec(
     spec: RuntimeToolSpec,
     *,
     approval_mode: RuntimeApprovalMode | str | None = None,
+    loop_detector: ToolLoopDetector | None = None,
 ) -> Any:
     if spec.native_tool is not None:
         return AgentScopeNativeApprovalTool(
             spec.native_tool,
             approval_mode=approval_mode,
             permission_scope=spec.permission_scope,
+            loop_detector=loop_detector,
         )
     return AgentScopeRuntimeTool(
         spec,
         approval_mode=approval_mode,
+        loop_detector=loop_detector,
     )
 
 
@@ -363,9 +387,13 @@ def build_toolkit(
     tool_specs: list[RuntimeToolSpec],
     *,
     approval_mode: RuntimeApprovalMode | str | None = None,
+    loop_detector: ToolLoopDetector | None = None,
 ):
     toolkit_cls = _load_agentscope_toolkit()
-    tools = [runtime_tool_from_spec(spec, approval_mode=approval_mode) for spec in tool_specs]
+    tools = [
+        runtime_tool_from_spec(spec, approval_mode=approval_mode, loop_detector=loop_detector)
+        for spec in tool_specs
+    ]
     return toolkit_cls(tools=tools)
 
 

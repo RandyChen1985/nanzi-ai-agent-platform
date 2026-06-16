@@ -131,4 +131,6 @@
 | 本地经验案例向量搜索 (Local Example Vector Search) | `tests/services/test_example_vector_search.py` | **本地 ChatBI 优质案例 HNSW 向量索引与同步**：验证 Redis 案例索引初始化、案例状态审核/同步时本地 Redis 增量同步与彻底清除；验证基于 dataset_id 的有权前置过滤和格式对齐 RAGFlow；验证 Redis 故障时优雅降级为 MySQL 关键字 LIKE 模糊匹配案例检索。 | 🛠 待验证 | 2026-06-13 |
 | 全局 Embedding 服务配置 (Global Embedding Configuration) | `tests/services/test_global_embedding_config.py` | **全局 Embedding 配置与在线测试**：验证系统参数中 embed_* 全局 Embedding 参数加载与连通性测试接口；验证在 local 模式下元数据与案例检索使用全局 Embedding 向量生成及降级兜底；验证 `/redis/rebuild-vectors` 向量索引重建与一键重新同步接口的正确性。 | ✅ 已完成 | 2026-06-13 |
 | 知识库 RAGFlow 配置解耦 (Knowledge Base RAG Decoupling) | `tests/ai/tools/test_knowledge_tool.py` | **知识库与元数据 RAGFlow 配置拆分解耦**：验证常规知识库问答检索工具切换读取 `knowledge_ragflow_` 系列配置键，确保知识库检索配置不受 `metadata_provider = local` 状态影响；验证数据库升级脚本 `V77-add_knowledge_ragflow_configs.sql` 正确插入新配置并平滑继承已有 RAG 链接。 | 🛠 待验证 | 2026-06-13 |
-
+| 会话分布式串行锁 (Conversation Run Lane) | `tests/ai/runtime/test_session_run_lane.py` | **分布式防并发会话锁**：验证通过 Redis 锁机制对同一 `(user_id, conversation_id)` 下的并发 turn 执行排他串行化；验证获取锁失败时的 `ConversationRunBusyError` 错误抛出与降级回退；验证在无会话 ID 时跳过锁控制。 | ✅ 通过 | 2026-06-16 |
+| 工具死循环熔断器 (Tool Loop Detector) | `tests/ai/runtime/test_tool_loop_detector.py` | **工具死循环检测熔断器**：验证通过参数归一化算法（支持键排序与首尾空格脱水）识别重复的工具调用签名；验证当同一工具和相同参数连续/重复调用超过阈值时的熔断与熔断异常拦截。 | ✅ 通过 | 2026-06-16 |
+| 系统提示词缓存重排 (Prompt Cache Assembler) | `tests/ai/test_prompt_assembler.py` | **System Prompt 缓存重排与装配**：验证装配逻辑；验证在 `cache_reorder_enabled` 时将静态稳定的 prompt 前置而将 LTM、预加载记忆等动态片段移至 boundary 之后，最大化 Prompt Cache 命中率。 | ✅ 通过 | 2026-06-16 |

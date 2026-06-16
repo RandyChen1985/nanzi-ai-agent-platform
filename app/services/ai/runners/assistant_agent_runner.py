@@ -51,8 +51,10 @@ from app.services.ai.runtime.agentscope.session_lock import (
     agentscope_session_lock,
 )
 from app.services.ai.runtime.agentscope.workspace import get_local_workspace
+from app.services.ai.runtime.agentscope.errors import ToolLoopFuseError
 from app.services.ai.runtime.agentscope.tools import RuntimeToolSpec, runtime_tool_spec_from_legacy_tool
 from app.services.ai.runtime.agentscope.tools import build_toolkit
+from app.services.ai.runtime.tool_loop_detector import ToolLoopDetector
 
 logger = logging.getLogger(__name__)
 
@@ -214,15 +216,16 @@ class AssistantAgentRunner(BaseExecutor):
         route_hint = AssistantPrompts.route_hints(self.route_hints)
         if route_hint:
             system_content = f"{route_hint}\n\n{system_content}"
-        # 仅保留最近 10 轮原始历史（20 条消息），防止长对话 Token 无限累积
-        pruned_history = history[-20:] if history else history
-        runtime_messages = [SystemMessage(content=system_content)]
-        runtime_messages.extend(convert_history_to_messages(pruned_history, strip_thought=True))
-        runtime_messages = normalize_messages_for_llm(runtime_messages)
 
         # 3. Execution Mode Selection
         if not tools:
             # --- Simple Mode (No Tools) ---
+            # 仅保留最近 10 轮原始历史（20 条消息），防止长对话 Token 无限累积
+            pruned_history = history[-20:] if history else history
+            runtime_messages = [SystemMessage(content=system_content)]
+            runtime_messages.extend(convert_history_to_messages(pruned_history, strip_thought=True))
+            runtime_messages = normalize_messages_for_llm(runtime_messages)
+
             start_synthesis = time.time()
             yield {"type": "log", "id": f"syn_s_{uuid.uuid4().hex[:8]}", "title": "📝 准备回答", "details": "正在生成回答...", "status": "success"}
             
@@ -287,6 +290,21 @@ class AssistantAgentRunner(BaseExecutor):
             ))
             return
 
+        from app.services.ai.runtime.agentscope.workspace import (
+            append_session_workspace_sandbox_to_system_prompt,
+        )
+
+        system_content = await append_session_workspace_sandbox_to_system_prompt(
+            system_content,
+            user_id=self._runtime_user_id(),
+            conversation_id=self.conversation_id,
+            tools=tools,
+        )
+        pruned_history = history[-20:] if history else history
+        runtime_messages = [SystemMessage(content=system_content)]
+        runtime_messages.extend(convert_history_to_messages(pruned_history, strip_thought=True))
+        runtime_messages = normalize_messages_for_llm(runtime_messages)
+
         # --- ReAct Mode (With Tools) ---
         from app.services.config_service import ConfigService
         max_steps_str = await ConfigService.get("agent_max_iterations")
@@ -349,6 +367,19 @@ class AssistantAgentRunner(BaseExecutor):
             "content": "Assistant 工具链必须使用 AgentScope RuntimeToolSpec；旧 ReAct fallback 已移除。",
         }
 
+    @staticmethod
+    async def _create_tool_loop_detector() -> ToolLoopDetector:
+        from app.services.config_service import ConfigService
+
+        enabled_raw = await ConfigService.get("agent_tool_loop_detection_enabled", "true")
+        threshold_raw = await ConfigService.get("agent_tool_loop_fuse_threshold", "3")
+        enabled = str(enabled_raw or "").strip().lower() in {"1", "true", "yes", "on"}
+        try:
+            threshold = max(1, int(threshold_raw))
+        except (TypeError, ValueError):
+            threshold = 3
+        return ToolLoopDetector(threshold=threshold, enabled=enabled)
+
     async def _execute_with_agentscope_native_agent(
         self,
         *,
@@ -361,6 +392,7 @@ class AssistantAgentRunner(BaseExecutor):
         agent_name = self._runtime_agent_name()
         tools_fingerprint = build_tools_fingerprint(self.config, tools)
         model_name = getattr(native_model, "model", self.config.model_name)
+        loop_detector = await self._create_tool_loop_detector()
         try:
             async with agentscope_session_lock.hold(
                 user_id=self._runtime_user_id(),
@@ -406,6 +438,7 @@ class AssistantAgentRunner(BaseExecutor):
                     max_steps=max_steps,
                     restored_state=restored_state,
                     primary_model_name=str(model_name or ""),
+                    loop_detector=loop_detector,
                 )
                 if restored_state and restored_state.context:
                     latest_user_messages = self._latest_user_runtime_messages(runtime_messages)
@@ -453,6 +486,12 @@ class AssistantAgentRunner(BaseExecutor):
                 "status": "error",
                 "content": "当前会话正在处理中，请稍后再试。",
             }
+        except ToolLoopFuseError as fuse_err:
+            yield {
+                "type": "error",
+                "status": "error",
+                "content": f"检测到工具重复调用循环，已停止继续执行。{fuse_err}",
+            }
 
     async def _build_native_agent(
         self,
@@ -463,6 +502,7 @@ class AssistantAgentRunner(BaseExecutor):
         max_steps: int,
         restored_state: Any = None,
         primary_model_name: str,
+        loop_detector: ToolLoopDetector | None = None,
     ) -> Any:
         from agentscope.agent import Agent, ReActConfig
         from app.services.ai.runtime.agentscope.middleware import ModelCallStatsMiddleware
@@ -480,6 +520,7 @@ class AssistantAgentRunner(BaseExecutor):
         toolkit = build_toolkit(
             tools,
             approval_mode=self.permission_options.get("approval_mode"),
+            loop_detector=loop_detector,
         )
         middlewares = []
         if self.conversation_id:
@@ -800,6 +841,8 @@ class AssistantAgentRunner(BaseExecutor):
     async def _resolve_pending_runtime(
         self,
         pending: Any,
+        *,
+        loop_detector: ToolLoopDetector | None = None,
     ) -> tuple[Any, List[RuntimeToolSpec], Any, Dict[str, Any]]:
         if pending.agent is not None and pending.tools and pending.native_model is not None:
             return pending.agent, pending.tools, pending.native_model, pending.state
@@ -824,6 +867,7 @@ class AssistantAgentRunner(BaseExecutor):
             max_steps=int(ctx.get("max_steps", 5)),
             restored_state=restored_state,
             primary_model_name=str(getattr(native_model, "model", self.config.model_name) or ""),
+            loop_detector=loop_detector,
         )
         state = pending.state or dict(pending.snapshot.stream_state or {})
         if "tool_data" not in state:
@@ -851,6 +895,7 @@ class AssistantAgentRunner(BaseExecutor):
         resume_event: Any,
     ) -> AsyncGenerator[Dict[str, Any], None]:
         agent_name = self._runtime_agent_name()
+        loop_detector = await self._create_tool_loop_detector()
         try:
             async with agentscope_session_lock.hold(
                 user_id=self._runtime_user_id(),
@@ -858,7 +903,10 @@ class AssistantAgentRunner(BaseExecutor):
                 agent_name=agent_name,
                 ttl_seconds=300,
             ):
-                agent, tools, native_model, state = await self._resolve_pending_runtime(pending)
+                agent, tools, native_model, state = await self._resolve_pending_runtime(
+                    pending,
+                    loop_detector=loop_detector,
+                )
                 interrupted = False
                 async for chunk in self._stream_agentscope_native_events(
                     event_stream=agent.reply_stream(resume_event),
@@ -887,6 +935,12 @@ class AssistantAgentRunner(BaseExecutor):
                 "type": "error",
                 "status": "error",
                 "content": "当前会话正在处理中，请稍后再试。",
+            }
+        except ToolLoopFuseError as fuse_err:
+            yield {
+                "type": "error",
+                "status": "error",
+                "content": f"检测到工具重复调用循环，已停止继续执行。{fuse_err}",
             }
 
     async def resume_agentscope_native_confirmation(

@@ -305,6 +305,17 @@ class KnowledgeAgentRunner(AssistantAgentRunner):
                 )
             )
 
+        from app.services.ai.runtime.agentscope.workspace import (
+            append_session_workspace_sandbox_to_system_prompt,
+        )
+
+        system_content = await append_session_workspace_sandbox_to_system_prompt(
+            system_content,
+            user_id=self._runtime_user_id(),
+            conversation_id=self.conversation_id,
+            tools=tools,
+        )
+
         # 仅保留最近 5 轮历史对话（最多 10 条消息）
         history = history[-10:]
         runtime_messages = [SystemMessage(content=system_content)]
