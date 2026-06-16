@@ -146,22 +146,23 @@ class DataQueryPrompts:
 
     @staticmethod
     def dataset_navigation_generation_prompt(dataset_menu: str) -> str:
-        return f"""你是 ChatBI 数据能力导航生成模块。
+        return f"""你是 ChatBI 我的数据门户生成模块。
 
 用户执行了 `/dataset_menu` 指令，希望了解当前账号**有权访问**哪些数据、能问什么问题。
 下方【可用数据集目录】与 ChatBI 智能体 system prompt 中的 `{{dataset_menu}}` **完全一致**，请仅基于其中信息生成导航，不要编造未列出的数据集、表或指标。
 
 任务：
 1. 开头用**引用块**（`>` 开头）做整体概要：用 1-2 句话说明数据集数量、覆盖的主要业务域与整体能查询的能力范围。
-2. **按 Dataset 逐个分组展示**（每个 `- Dataset: xxx` 对应一个独立分组），**禁止**按 tags 合并多个数据集。
-3. 分组标题格式：`#### {{中文展示名}} ({{Dataset 英文名}})`；优先用 `Display Name`，无则用 Dataset 英文名。
-4. 标题下紧跟一段**引用块**（`>` 开头）介绍该数据集包含哪些内容、适合问哪类问题（结合 Description 与表业务范围）。
-5. 引用块之后用 **Markdown 表格**逐表展示该数据集的表，表头严格为：`| 表名 | 业务范围 | 示例问题 |`，并紧跟分隔行 `| --- | --- | --- |`。
-   - **表名**列：优先中文术语（`Table Details` 中的中文 term），无中文时才用物理表名。
-   - **业务范围**列：用一句话概括该表用途，来源于 `Table Details` 的中文备注（可适当精简，不要整段照抄）。
-   - **示例问题**列：放**一个内联 quick 追问按钮**，格式严格为 `[🙋 简短标签](quick:完整可发送问题)`，标签 6-12 字，`quick:` 内为引用真实表术语的完整中文问题。
-6. 有 `Metrics` 时，在该数据集表格下方补一行围绕指标的查询/趋势分析追问（同样用内联 quick 按钮）。
-7. 文末提供全局快捷入口（含重新查看导航）。
+2. 把数据目录改写成用户看得懂的**业务场景卡片**，不要只罗列表名。每个卡片标题应是业务动作或分析场景，例如“智能体运行分析”“权限审计分析”“运维监控分析”。
+3. 每张业务场景卡片必须包含：
+   - `#### 场景标题`
+   - 一段引用块概要，说明适合解决什么业务问题。
+   - `**你可以这样问：**`，下面给 2-4 个 quick 示例问题。
+   - `**相关数据：**`，列出真实 Dataset 展示名与相关表中文术语。
+   - `**继续追问：**`，给 1-2 个围绕该场景继续探索的 quick 按钮。
+4. 示例问题必须可直接发送给 ChatBI，问题中优先使用中文表术语、业务对象、指标或时间范围。
+5. 有 `Metrics` 时，补充围绕指标的趋势、排名、同比环比或异常分析追问。
+6. 文末提供全局快捷入口（含重新查看导航）。
 
 命名与文案要求：
 - **有中文备注/术语时一律优先用中文**：Display Name、表 term、Table Details 中的中文描述。
@@ -169,12 +170,11 @@ class DataQueryPrompts:
 
 输出要求：
 - 只输出 Markdown，不要 JSON，不要用代码块包裹全文。
-- 以 `### 📚 数据能力导航` 开头，用 `---` 分隔区块。
-- 整体概要与每个数据集介绍必须使用引用块（`>` 开头）。
-- 表格的**示例问题**单元格内必须是内联 quick 按钮：`[🙋 简短标签](quick:完整可发送问题)`，**不要**在单元格内加 `- ` 列表前缀。
-- **严禁**在表格单元格（含 quick 问题）中出现竖线 `|`，以免破坏表格结构。
-- 文末必须包含 `### 💬 您可能还想了解`，其中至少包含一行列表项：`- [🙋 重新查看数据导航](quick:/dataset_menu)`。
-- quick 追问按钮（除表格内联示例外的“您可能还想了解”区块）必须放在整段回答最末尾。
+- 以 `### 📚 我的数据门户` 开头，用 `---` 分隔区块。
+- 整体概要与每个场景介绍必须使用引用块（`>` 开头）。
+- quick 示例问题必须使用列表项格式：`- [🙋 简短标签](quick:完整可发送问题)`。
+- 文末必须包含 `### 💬 您可能还想了解`，其中至少包含一行列表项：`- [🙋 重新查看数据门户](quick:/dataset_menu)`。
+- “继续追问”属于每张业务场景卡片内部；全局“您可能还想了解”区块必须放在整段回答最末尾。
 - 不要编造目录中未出现的具体数值、表名或指标名。
 
 【可用数据集目录】
@@ -258,56 +258,192 @@ class DataQueryPrompts:
             cleaned = cleaned[:max_len] + "..."
         return cleaned
 
+    @staticmethod
+    def _slugify_scene_id(text: str) -> str:
+        slug = re.sub(r"[^0-9A-Za-z\u4e00-\u9fff]+", "_", str(text or "").strip()).strip("_")
+        return slug[:48] or "dataset_scene"
+
+    @classmethod
+    def _infer_dataset_scene(cls, block: dict[str, Any]) -> dict[str, Any]:
+        name = str(block.get("name") or "").strip()
+        display_name = str(block.get("display_name") or "").strip()
+        description = str(block.get("description") or "").strip()
+        table_terms = [str(t.get("term") or "").strip() for t in block.get("tables") or []]
+        haystack = " ".join([name, display_name, description, *table_terms]).lower()
+
+        if any(k in haystack for k in ("智能体", "agent", "对话", "模型", "trace", "链路", "token")):
+            return {
+                "title": "智能体运行分析",
+                "summary": "适合查看智能体访问、对话、执行链路、模型配置等运行情况，帮助定位使用量、失败原因与链路表现。",
+                "tags": ["调用统计", "对话追踪", "模型配置"],
+            }
+        if any(k in haystack for k in ("权限", "角色", "用户", "审计", "登录", "账号")):
+            return {
+                "title": "权限审计分析",
+                "summary": "适合查询账号、角色、权限变更与访问审计，帮助确认谁能访问哪些资源以及是否存在异常操作。",
+                "tags": ["账号权限", "角色审计", "访问记录"],
+            }
+        if any(k in haystack for k in ("告警", "机房", "设备", "pue", "容量", "资源", "运维", "监控")):
+            return {
+                "title": "运维监控分析",
+                "summary": "适合查看资源容量、设备状态、告警记录与趋势变化，帮助发现异常、定位风险和跟踪运维指标。",
+                "tags": ["告警趋势", "容量分析", "设备监控"],
+            }
+        if any(k in haystack for k in ("收入", "订单", "客户", "合同", "回款", "销售", "费用", "成本")):
+            return {
+                "title": "经营指标分析",
+                "summary": "适合查询收入、订单、客户、合同、回款或成本费用等经营指标，帮助做趋势、排名与对比分析。",
+                "tags": ["经营趋势", "客户分析", "收入成本"],
+            }
+
+        base = display_name or name or "业务数据"
+        return {
+            "title": f"{base}数据分析",
+            "summary": f"适合围绕{base}中的表和指标发起明细查询、统计汇总、趋势变化与字段探索。",
+            "tags": ["明细查询", "统计汇总", "趋势分析"],
+        }
+
+    @classmethod
+    def _question_templates_for_group(
+        cls,
+        *,
+        scene_title: str,
+        tables: list[dict[str, Any]],
+        metrics: list[str],
+    ) -> list[dict[str, str]]:
+        table_terms = [str(t.get("term") or "").strip() for t in tables if str(t.get("term") or "").strip()]
+        primary = table_terms[0] if table_terms else scene_title
+        secondary = table_terms[1] if len(table_terms) > 1 else primary
+        questions: list[dict[str, str]] = [
+            {
+                "label": "查看概览",
+                "query": f"统计{primary}最近30天的数据概览和关键变化",
+                "type": "summary",
+            },
+            {
+                "label": "查询明细",
+                "query": f"查询{primary}最近100条明细记录",
+                "type": "detail",
+            },
+            {
+                "label": "趋势分析",
+                "query": f"分析{secondary}最近一个月的变化趋势",
+                "type": "trend",
+            },
+        ]
+        if metrics:
+            metric = str(metrics[0]).strip()
+            if metric:
+                questions.append(
+                    {
+                        "label": "指标趋势",
+                        "query": f"查询{scene_title}最近6个月的{metric}趋势",
+                        "type": "metric",
+                    }
+                )
+        return questions
+
+    @classmethod
+    def build_dataset_navigation_groups(cls, dataset_menu: str) -> list[dict[str, Any]]:
+        groups: list[dict[str, Any]] = []
+        for block in cls._parse_dataset_blocks(dataset_menu):
+            tables = [t for t in (block.get("tables") or []) if str(t.get("term") or "").strip()]
+            metrics = [str(m).strip() for m in (block.get("metrics") or []) if str(m).strip()]
+            scene = cls._infer_dataset_scene(block)
+            name = str(block.get("name") or "").strip()
+            display_name = str(block.get("display_name") or "").strip() or name or "未命名数据集"
+            scene_id = cls._slugify_scene_id(f"{name}_{scene['title']}")
+            table_terms = [str(t.get("term") or "").strip() for t in tables if str(t.get("term") or "").strip()]
+            table_descriptions = [
+                {
+                    "name": str(t.get("term") or "").strip(),
+                    "description": str(t.get("desc") or "").strip(),
+                }
+                for t in tables
+                if str(t.get("term") or "").strip()
+            ]
+            groups.append(
+                {
+                    "id": scene_id,
+                    "title": scene["title"],
+                    "summary": scene["summary"],
+                    "tags": scene["tags"],
+                    "questions": cls._question_templates_for_group(
+                        scene_title=scene["title"],
+                        tables=tables,
+                        metrics=metrics,
+                    ),
+                    "related_data": [
+                        {
+                            "dataset": name,
+                            "display_name": display_name,
+                            "tables": table_terms,
+                            "table_descriptions": table_descriptions,
+                        }
+                    ],
+                    "followups": [
+                        {
+                            "label": "更多问题",
+                            "query": f"围绕{scene['title']}，推荐我还能问哪些数据问题",
+                        },
+                        {
+                            "label": "字段说明",
+                            "query": f"说明{display_name}里有哪些可查询字段和适合的分析口径",
+                        },
+                    ],
+                }
+            )
+        return groups
+
     @classmethod
     def _fallback_dataset_section(cls, block: dict[str, Any]) -> list[str]:
-        """单个数据集分组：标题 + 引用块介绍 + 表名/业务范围/示例问题 表格。"""
-        heading = cls._dataset_heading(block)
-        lines: list[str] = [f"#### {heading}"]
-
-        desc = re.sub(r"\s+", " ", str(block.get("description") or "").strip())
-        if desc and desc != "No description":
-            if len(desc) > 120:
-                desc = desc[:120] + "..."
-            lines.append(f"> {desc}")
-        else:
-            lines.append("> 暂无数据集描述，可点击下方示例问题快速查询。")
-        lines.append("")
-
-        templates = (
-            ("查看明细", "查询{table}最近100条记录"),
-            ("统计分析", "统计{table}的数据量和关键指标"),
-            ("趋势变化", "分析{table}最近一个月的变化趋势"),
-            ("字段概览", "查询{table}的主要字段与样例数据"),
+        """单个业务场景卡片：标题 + 示例问题 + 相关数据 + 继续追问。"""
+        groups = cls.build_dataset_navigation_groups(
+            "\n".join(
+                [
+                    f"- Dataset: {block.get('name') or ''}",
+                    f"  Display Name: {block.get('display_name') or ''}",
+                    f"  Description: {block.get('description') or ''}",
+                    "  Includes Tables: "
+                    + ", ".join(str(t.get("term") or "") for t in block.get("tables") or []),
+                    "  Table Details:",
+                    *[
+                        f"    - {t.get('term')}: {t.get('desc')}"
+                        for t in block.get("tables") or []
+                        if str(t.get("term") or "").strip()
+                    ],
+                    "  Metrics: " + ", ".join(str(m) for m in block.get("metrics") or []),
+                ]
+            )
         )
-        tables = [t for t in (block.get("tables") or []) if str(t.get("term") or "").strip()]
-        if tables:
-            lines.append("| 表名 | 业务范围 | 示例问题 |")
-            lines.append("| --- | --- | --- |")
-            for idx, tbl in enumerate(tables):
-                term = str(tbl.get("term") or "").strip()
-                scope = cls._sanitize_table_cell(tbl.get("desc")) or "—"
-                label, query_tpl = templates[idx % len(templates)]
-                question = query_tpl.format(table=term).replace("|", "/")
-                example = cls.quick_link_inline(label, question)
-                lines.append(f"| {term} | {scope} | {example} |")
-
-        metrics = [str(m).strip() for m in (block.get("metrics") or []) if str(m).strip()]
-        if metrics:
-            metric = metrics[0]
-            short_name = (
-                str(block.get("display_name") or "").strip()
-                or str(block.get("name") or "").strip()
-                or "该数据集"
-            )
-            lines.append("")
-            lines.append(
-                "> 指标分析："
-                + cls.quick_link_inline(
-                    f"{metric}趋势",
-                    f"查询{short_name}最近6个月的{metric}趋势",
-                )
-            )
-
+        if not groups:
+            return []
+        group = groups[0]
+        related = group["related_data"][0]
+        related_name = related.get("display_name") or related.get("dataset") or "相关数据"
+        dataset_name = related.get("dataset") or ""
+        tables = related.get("tables") or []
+        lines: list[str] = [f"#### {group['title']}"]
+        lines.append(f"> {group['summary']}")
+        if group.get("tags"):
+            lines.append("> 标签：" + "、".join(group["tags"]))
+        lines.append("")
+        lines.append("**你可以这样问：**")
+        for question in group.get("questions") or []:
+            lines.append(cls.quick_button(question.get("label") or "提问", question.get("query") or ""))
+        lines.append("")
+        related_title = f"{related_name} ({dataset_name})" if dataset_name and dataset_name != related_name else related_name
+        lines.append(f"**相关数据：** {related_title}")
+        for table in related.get("table_descriptions") or []:
+            desc = str(table.get("description") or "").strip()
+            suffix = f"：{cls._sanitize_table_cell(desc, max_len=80)}" if desc else ""
+            lines.append(f"- {table.get('name')}{suffix}")
+        if not tables:
+            lines.append("- 暂无表信息")
+        lines.append("")
+        lines.append("**继续追问：**")
+        for followup in group.get("followups") or []:
+            lines.append(cls.quick_button(followup.get("label") or "继续追问", followup.get("query") or ""))
         return lines
 
     @classmethod
@@ -315,20 +451,23 @@ class DataQueryPrompts:
         menu = str(dataset_menu or "").strip()
         if not menu or "No authorized datasets" in menu:
             return (
-                "### 📚 数据能力导航\n"
+                "### 📚 我的数据门户\n"
                 "---\n"
                 "> 当前账号暂无可查询的数据集。请联系管理员开通数据权限后，再使用 `/dataset_menu` 查看导航。\n\n"
                 "### 💬 您可能还想了解\n"
                 "---\n"
-                f"{cls.quick_button('重新查看数据导航', '/dataset_menu')}\n"
+                f"{cls.quick_button('重新查看数据门户', '/dataset_menu')}\n"
             )
 
         blocks = cls._parse_dataset_blocks(menu)
         if blocks:
+            groups = cls.build_dataset_navigation_groups(menu)
+            scene_titles = "、".join(group.get("title", "") for group in groups[:4] if group.get("title"))
             lines = [
-                "### 📚 数据能力导航",
+                "### 📚 我的数据门户",
                 "---",
-                f"> 您当前可访问 **{len(blocks)}** 个数据集，可通过下方各数据集表格中的示例问题快速发起查询。",
+                f"> 您当前可访问 **{len(blocks)}** 个数据集，已整理为业务场景卡片。"
+                + (f"主要覆盖：{scene_titles}。" if scene_titles else ""),
                 "",
             ]
             for block in blocks:
@@ -339,7 +478,7 @@ class DataQueryPrompts:
                 [
                     "### 💬 您可能还想了解",
                     "---",
-                    cls.quick_button("重新查看数据导航", "/dataset_menu"),
+                    cls.quick_button("重新查看数据门户", "/dataset_menu"),
                     "",
                 ]
             )
@@ -350,7 +489,7 @@ class DataQueryPrompts:
             body = body[:2400] + "\n... [目录过长已截断]"
 
         return (
-            "### 📚 数据能力导航\n"
+            "### 📚 我的数据门户\n"
             "---\n"
             "暂时无法自动生成导航建议，以下为当前账号可访问的数据集目录（与 ChatBI 一致）：\n\n"
             "```\n"
@@ -359,7 +498,7 @@ class DataQueryPrompts:
             "您可以直接用自然语言提问，或点击下方按钮重试。\n\n"
             "### 💬 您可能还想了解\n"
             "---\n"
-            f"{cls.quick_button('重新查看数据导航', '/dataset_menu')}\n"
+            f"{cls.quick_button('重新查看数据门户', '/dataset_menu')}\n"
         )
 
     @classmethod

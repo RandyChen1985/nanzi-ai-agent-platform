@@ -6,6 +6,7 @@ import TraceLogViewer from "@/components/TraceLogViewer.vue";
 import DebugConfigPanel from "@/components/DebugConfigPanel.vue";
 import ChatHistorySidebar from "@/components/ChatHistorySidebar.vue";
 import MessageRenderer from "@/components/MessageRenderer.vue";
+import DatasetCapabilityMenu from "@/components/chatbi/DatasetCapabilityMenu.vue";
 import CitationPopover from "@/components/CitationPopover.vue";
 import MentionList from "@/components/agent/MentionList.vue"; // New Import
 import axios from "@/utils/axios";
@@ -377,7 +378,7 @@ watch(
 const agents = ref<any[]>([]);
 const debugMode = ref<"auto" | "specific">("auto");
 const SYSTEM_SLASH_COMMANDS = [
-  { id: "sys_dataset_menu", command: "/dataset_menu", label: "📚 数据导航", sort_order: -35 },
+  { id: "sys_dataset_menu", command: "/dataset_menu", label: "📚 数据门户", sort_order: -35 },
   { id: "sys_clear", command: "/new", label: "💬 新会话", sort_order: -30 },
   { id: "sys_history", command: "/history", label: "🕒 历史", sort_order: -20 },
   { id: "sys_settings", command: "/settings", label: "⚙️ 设置", sort_order: -15 },
@@ -721,6 +722,35 @@ interface ChatFile {
   memoryMeta?: any[];
 }
 
+interface DatasetCapabilityQuestion {
+  label: string;
+  query: string;
+  type?: string;
+  click_count?: number;
+  last_clicked_at?: string;
+}
+
+interface DatasetNavigationPayload {
+  dataset_count?: number;
+  dataset_menu_hash?: string;
+  generated_at?: string;
+  groups?: Array<{
+    id?: string;
+    title: string;
+    summary: string;
+    tags?: string[];
+    questions?: DatasetCapabilityQuestion[];
+    related_data?: Array<{
+      dataset?: string;
+      display_name?: string;
+      tables?: string[];
+      table_descriptions?: Array<{ name: string; description?: string }>;
+    }>;
+    followups?: DatasetCapabilityQuestion[];
+  }>;
+  markdown?: string;
+}
+
 interface Message {
   id: number;
   role: "user" | "agent" | "system";
@@ -747,6 +777,7 @@ interface Message {
   pendingPermission?: PendingToolPermission;
   pendingExternalExecution?: PendingExternalExecution;
   toolResultData?: Record<string, Array<{ block_id?: string; media_type?: string; data?: unknown; url?: string | null }>>;
+  datasetNavigation?: DatasetNavigationPayload;
   prompt_tokens?: number;
   completion_tokens?: number;
 }
@@ -1521,6 +1552,55 @@ const handleSwitchMode = (agent: any) => {
   agentParams.agent_id = agent.id;
 };
 
+const findDataQueryAgent = () => {
+  return agents.value.find((agent: any) => {
+    const capabilities = Array.isArray(agent?.capabilities) ? agent.capabilities : [];
+    if (capabilities.includes("data_query")) return true;
+    const label = `${agent?.name || ""} ${agent?.display_name || ""} ${agent?.description || ""}`;
+    return /数据查询|ChatBI|DataQuery/i.test(label);
+  });
+};
+
+const lockToDataQueryAgentForDatasetMenu = async () => {
+  if (!agents.value.length) {
+    await fetchAgents();
+  }
+  const dataQueryAgent = findDataQueryAgent();
+  if (!dataQueryAgent) return;
+  handleSwitchMode(dataQueryAgent);
+};
+
+const fetchDatasetMenuNavigationPayload = async (refresh = false) => {
+  const res = await axios.get("/api/v1/chat/dataset-menu", {
+    headers: debugAuthHeaders(),
+    params: refresh ? { refresh: true } : undefined,
+  });
+  return res.data?.data || {};
+};
+
+const recordDatasetMenuQuestionClick = async (
+  navigation: DatasetNavigationPayload | undefined,
+  payload: { query: string; label?: string; group_id?: string }
+) => {
+  const datasetMenuHash = navigation?.dataset_menu_hash;
+  const query = String(payload?.query || "").trim();
+  if (!datasetMenuHash || !query) return;
+  try {
+    await axios.post(
+      "/api/v1/chat/dataset-menu/click",
+      {
+        dataset_menu_hash: datasetMenuHash,
+        query,
+        label: payload.label,
+        group_id: payload.group_id,
+      },
+      { headers: debugAuthHeaders() }
+    );
+  } catch (error) {
+    console.warn("Failed to record dataset menu question click", error);
+  }
+};
+
 const openImagePreview = (url: string) => {
   window.open(url, "_blank");
 };
@@ -1602,6 +1682,7 @@ const showDatasetMenuNavigation = async () => {
   if (!conversationId.value) {
     generateNewConversation();
   }
+  await lockToDataQueryAgentForDatasetMenu();
 
   messages.value.push({
     id: Date.now(),
@@ -1615,9 +1696,9 @@ const showDatasetMenuNavigation = async () => {
     role: "agent",
     content: "",
     agentName: "sys_dataset_menu",
-    agentDisplayName: "系统 · 数据导航",
+    agentDisplayName: "系统 · 数据门户",
     isThinking: true,
-    thinkingText: "正在生成数据能力导航...",
+    thinkingText: "正在生成我的数据门户，请稍后...",
     logs: [],
     thoughtStartTime: Date.now(),
     thoughtDuration: "0.0",
@@ -1638,16 +1719,15 @@ const showDatasetMenuNavigation = async () => {
   scrollToBottom(true);
 
   try {
-    const res = await axios.get("/api/v1/chat/dataset-menu", {
-      headers: debugAuthHeaders(),
-    });
-    const markdown = res.data?.data?.markdown || "";
+    const payload = await fetchDatasetMenuNavigationPayload();
+    navMsg.value.datasetNavigation = payload;
+    const markdown = payload?.markdown || "";
     navMsg.value.content = markdown || "当前暂无可展示的数据集导航，请联系管理员开通数据权限。";
   } catch (error) {
     console.warn("Failed to load dataset menu navigation", error);
     navMsg.value.content = (
-      "暂时无法加载数据能力导航，请稍后重试。\n\n"
-      + "- [🙋 重新加载数据导航](quick:/dataset_menu)"
+      "暂时无法加载我的数据门户，请稍后重试。\n\n"
+      + "- [🙋 重新加载数据门户](quick:/dataset_menu)"
     );
   } finally {
     navMsg.value.isThinking = false;
@@ -1660,6 +1740,27 @@ const showDatasetMenuNavigation = async () => {
     isProcessing.value = false;
     await nextTick();
     scrollToBottom(true);
+  }
+};
+
+const refreshDatasetMenuNavigation = async (msg: Message) => {
+  if (datasetMenuLoading.value || isProcessing.value) {
+    return;
+  }
+  datasetMenuLoading.value = true;
+  isProcessing.value = true;
+  try {
+    const payload = await fetchDatasetMenuNavigationPayload(true);
+    msg.datasetNavigation = payload;
+    msg.content = payload?.markdown || "当前暂无可展示的数据集导航，请联系管理员开通数据权限。";
+    await nextTick();
+    scrollToBottom(true);
+  } catch (error) {
+    console.warn("Failed to refresh dataset menu navigation", error);
+    showToast("刷新数据门户失败，请稍后重试", "error");
+  } finally {
+    datasetMenuLoading.value = false;
+    isProcessing.value = false;
   }
 };
 
@@ -3472,6 +3573,7 @@ onUnmounted(() => {
               >
                 <!-- Floating Copy Button -->
                 <button
+                  v-if="!msg.datasetNavigation?.groups?.length"
                   @click="copyContent(msg.content, $event)"
                   class="absolute -top-1 -right-1 p-1.5 text-gray-400 bg-white/90 dark:bg-gray-700/90 hover:bg-gray-100 dark:hover:bg-gray-600 hover:text-primary rounded-md transition-all opacity-0 group-hover/content:opacity-100 focus:opacity-100 z-10 shadow-sm border border-gray-100 dark:border-gray-600"
                   title="复制内容"
@@ -3490,7 +3592,19 @@ onUnmounted(() => {
                     />
                   </svg>
                 </button>
-                <MessageRenderer :content="msg.content" @quick-question="handleQuickQuestion" @show-citation="(payload) => handleShowCitation(msg, payload.id, payload.anchor)" />
+                <MessageRenderer
+                  v-if="!msg.datasetNavigation?.groups?.length"
+                  :content="msg.content"
+                  @quick-question="handleQuickQuestion"
+                  @show-citation="(payload) => handleShowCitation(msg, payload.id, payload.anchor)"
+                />
+                <DatasetCapabilityMenu
+                  v-else
+                  :payload="msg.datasetNavigation"
+                  @quick-question="handleQuickQuestion"
+                  @record-question-click="(payload) => recordDatasetMenuQuestionClick(msg.datasetNavigation, payload)"
+                  @refresh="refreshDatasetMenuNavigation(msg)"
+                />
                 <!-- 导出 / 点赞踩（托管 RAGFlow、OpenClaw 不展示点赞踩） -->
                 <div
                   v-if="msg.role === 'agent' && !msg.isThinking && (msg.trace_id || !hideDebugLikeDislikeForHostedAgent)"

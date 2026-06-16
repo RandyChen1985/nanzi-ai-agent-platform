@@ -832,6 +832,7 @@
               <div v-if="msg.content" class="relative group/content mt-2">
                 <!-- Floating Copy Button (Moved here to avoid overlap) -->
                 <button
+                  v-if="!msg.datasetNavigation?.groups?.length"
                   @click="copyMessage(msg.content)"
                   class="absolute -top-1 -right-1 p-1.5 text-gray-400 bg-white/90 dark:bg-gray-700/90 hover:bg-gray-100 dark:hover:bg-gray-600 hover:text-primary rounded-md opacity-0 group-hover/content:opacity-100 transition-all z-10 shadow-sm border border-gray-100 dark:border-gray-600"
                   title="复制内容"
@@ -839,9 +840,17 @@
                   <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"></path></svg>
                 </button>
                                                                 <MessageRenderer
+                                                                  v-if="!msg.datasetNavigation?.groups?.length"
                                                                   :content="msg.content"
                                                                   @quick-question="handleQuickQuestion"
                                                                   @show-citation="(payload) => handleShowCitation(msg, payload.id, payload.anchor)"
+                                                                />
+                                                                <DatasetCapabilityMenu
+                                                                  v-else
+                                                                  :payload="msg.datasetNavigation"
+                                                                  @quick-question="handleQuickQuestion"
+                                                                  @record-question-click="(payload) => recordDatasetMenuQuestionClick(msg.datasetNavigation, payload)"
+                                                                  @refresh="refreshDatasetMenuNavigation(msg)"
                                                                 />
                                 <!-- Typewriter Cursor -->
                                 <span 
@@ -1699,7 +1708,7 @@
                   <div>
                     <div class="text-[11px] font-black text-gray-800 dark:text-gray-200 uppercase mb-0.5">快捷指令</div>
                     <p class="text-[10px] text-gray-500 mb-2">Web 端支持<b>直接点击</b>快捷按钮；移动端输入斜杠 <span class="font-mono text-blue-500">/</span> 即可快速唤起。</p>
-                    <p class="text-[10px] text-gray-500 mb-2"><span class="font-mono text-blue-500">/dataset_menu</span> 会基于与 ChatBI 相同的数据集目录，由 AI 生成分组导航与可点击追问按钮。</p>
+                    <p class="text-[10px] text-gray-500 mb-2"><span class="font-mono text-blue-500">/dataset_menu</span> 会基于与 ChatBI 相同的数据集目录，由 AI 生成我的数据门户与可点击追问按钮。</p>
                     <div class="flex flex-wrap gap-1.5">
                       <span class="px-1.5 py-0.5 bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 text-[9px] rounded border border-blue-100 dark:border-blue-800 font-medium">/dataset_menu</span>
                       <span class="px-1.5 py-0.5 bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 text-[9px] rounded border border-blue-100 dark:border-blue-800 font-medium">/new</span>
@@ -2187,6 +2196,7 @@ import { useToast } from "../composables/useToast";
 const toast = useToast();
 const showToast = toast.showToast;
 import MessageRenderer from "@/components/MessageRenderer.vue";
+import DatasetCapabilityMenu from "@/components/chatbi/DatasetCapabilityMenu.vue";
 import CitationPopover from "@/components/CitationPopover.vue";
 import ChatHistorySidebar from "@/components/ChatHistorySidebar.vue";
 import ConfirmModal from "@/components/ConfirmModal.vue";
@@ -2247,6 +2257,33 @@ interface ChatFile {
   skillMeta?: SkillMeta;
   memoryMeta?: any[];
 }
+interface DatasetCapabilityQuestion {
+  label: string;
+  query: string;
+  type?: string;
+  click_count?: number;
+  last_clicked_at?: string;
+}
+interface DatasetNavigationPayload {
+  dataset_count?: number;
+  dataset_menu_hash?: string;
+  generated_at?: string;
+  groups?: Array<{
+    id?: string;
+    title: string;
+    summary: string;
+    tags?: string[];
+    questions?: DatasetCapabilityQuestion[];
+    related_data?: Array<{
+      dataset?: string;
+      display_name?: string;
+      tables?: string[];
+      table_descriptions?: Array<{ name: string; description?: string }>;
+    }>;
+    followups?: DatasetCapabilityQuestion[];
+  }>;
+  markdown?: string;
+}
 interface Message {
   id: number;
   trace_id?: string;
@@ -2273,6 +2310,7 @@ interface Message {
   pendingPermission?: PendingToolPermission;
   pendingExternalExecution?: PendingExternalExecution;
   toolResultData?: Record<string, Array<{ block_id?: string; media_type?: string; data?: unknown; url?: string | null }>>;
+  datasetNavigation?: DatasetNavigationPayload;
 }
 // Helper: Check Role
 const checkRole = (msg: Message, role: string): boolean => {
@@ -2857,6 +2895,53 @@ const handleSwitchMode = (agent: any) => {
     config.overrideAgentId = "";
     showAutoRoutingHint.value = false;
 };
+
+const findDataQueryAgent = () => {
+    return allowedAgents.value.find((agent: any) => {
+        const capabilities = Array.isArray(agent?.capabilities) ? agent.capabilities : [];
+        if (capabilities.includes("data_query")) return true;
+        const label = `${agent?.name || ""} ${agent?.display_name || ""} ${agent?.description || ""}`;
+        return /数据查询|ChatBI|DataQuery/i.test(label);
+    });
+};
+
+const lockToDataQueryAgentForDatasetMenu = async () => {
+    await fetchAllowedAgents();
+    const dataQueryAgent = findDataQueryAgent();
+    if (!dataQueryAgent) return;
+    handleSwitchMode(dataQueryAgent);
+};
+
+const fetchDatasetMenuNavigationPayload = async (refresh = false) => {
+  const res = await axios.get("/api/v1/chat/dataset-menu", {
+    headers: embedAuthHeaders(),
+    params: refresh ? { refresh: true } : undefined,
+  });
+  return res.data?.data || {};
+};
+
+const recordDatasetMenuQuestionClick = async (
+  navigation: DatasetNavigationPayload | undefined,
+  payload: { query: string; label?: string; group_id?: string }
+) => {
+  const datasetMenuHash = navigation?.dataset_menu_hash;
+  const query = String(payload?.query || "").trim();
+  if (!datasetMenuHash || !query) return;
+  try {
+    await axios.post(
+      "/api/v1/chat/dataset-menu/click",
+      {
+        dataset_menu_hash: datasetMenuHash,
+        query,
+        label: payload.label,
+        group_id: payload.group_id,
+      },
+      { headers: embedAuthHeaders() }
+    );
+  } catch (error) {
+    console.warn("Failed to record dataset menu question click", error);
+  }
+};
 const handleReorderCommands = async (reorderData: any[]) => {
     try {
         await axios.post("/api/portal/slash-commands/reorder", { items: reorderData });
@@ -2896,7 +2981,7 @@ const resetStallTimer = () => {
 };
 // Slash Commands
 const SYSTEM_SLASH_COMMANDS = [
-  { id: "sys_dataset_menu", command: "/dataset_menu", label: "📚 数据导航", sort_order: -35 },
+  { id: "sys_dataset_menu", command: "/dataset_menu", label: "📚 数据门户", sort_order: -35 },
   { id: "sys_clear", command: "/new", label: "💬 新会话", sort_order: -30 },
   { id: "sys_history", command: "/history", label: "🕒 历史", sort_order: -20 },
   { id: "sys_settings", command: "/settings", label: "⚙️ 设置", sort_order: -15 },
@@ -3982,6 +4067,27 @@ const fetchConversationHistory = async (isLoadMore = false) => {
   }
 };
 // --- Logic ---
+const refreshDatasetMenuNavigation = async (msg: Message) => {
+  if (datasetMenuLoading.value || isProcessing.value) {
+    return;
+  }
+  datasetMenuLoading.value = true;
+  isProcessing.value = true;
+  try {
+    const payload = await fetchDatasetMenuNavigationPayload(true);
+    msg.datasetNavigation = payload;
+    msg.content = payload?.markdown || "当前暂无可展示的数据集导航，请联系管理员开通数据权限。";
+    await nextTick();
+    scrollToBottom(true);
+  } catch (error) {
+    console.warn("Failed to refresh dataset menu navigation", error);
+    showToast("刷新数据门户失败，请稍后重试", "error");
+  } finally {
+    datasetMenuLoading.value = false;
+    isProcessing.value = false;
+  }
+};
+
 const showDatasetMenuNavigation = async () => {
   if (datasetMenuLoading.value || isProcessing.value) {
     return;
@@ -3992,6 +4098,7 @@ const showDatasetMenuNavigation = async () => {
   if (!conversationId.value) {
     generateNewConversation();
   }
+  await lockToDataQueryAgentForDatasetMenu();
 
   messages.value.push({
     id: Date.now(),
@@ -4005,9 +4112,9 @@ const showDatasetMenuNavigation = async () => {
     role: "agent",
     content: "",
     agentName: "sys_dataset_menu",
-    agentDisplayName: "系统 · 数据导航",
+    agentDisplayName: "系统 · 数据门户",
     isThinking: true,
-    thinkingText: "正在生成数据能力导航...",
+    thinkingText: "正在生成我的数据门户，请稍后...",
     logs: [],
     thoughtStartTime: Date.now(),
     thoughtDuration: "0.0",
@@ -4029,16 +4136,15 @@ const showDatasetMenuNavigation = async () => {
   scrollToBottom(true);
 
   try {
-    const res = await axios.get("/api/v1/chat/dataset-menu", {
-      headers: embedAuthHeaders(),
-    });
-    const markdown = res.data?.data?.markdown || "";
+    const payload = await fetchDatasetMenuNavigationPayload();
+    navMsg.value.datasetNavigation = payload;
+    const markdown = payload?.markdown || "";
     navMsg.value.content = markdown || "当前暂无可展示的数据集导航，请联系管理员开通数据权限。";
   } catch (error) {
     console.warn("Failed to load dataset menu navigation", error);
     navMsg.value.content = (
-      "暂时无法加载数据能力导航，请稍后重试。\n\n"
-      + "- [🙋 重新加载数据导航](quick:/dataset_menu)"
+      "暂时无法加载我的数据门户，请稍后重试。\n\n"
+      + "- [🙋 重新加载数据门户](quick:/dataset_menu)"
     );
   } finally {
     navMsg.value.isThinking = false;
