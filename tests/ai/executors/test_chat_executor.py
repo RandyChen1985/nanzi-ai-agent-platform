@@ -1310,6 +1310,45 @@ async def test_knowledge_runner_stops_on_service_unavailable(chat_config):
 
 
 @pytest.mark.asyncio
+async def test_general_runner_greeting_with_table_not_intercepted(chat_config):
+    """纯问候语场景下，模型用表格做能力引导时不应误触反幻觉拦截。"""
+    from app.services.ai.intent_service import IntentType
+    from app.services.ai.runners.assistant_agent_runner import AssistantAgentRunner
+    from app.services.ai.turn_classifier import TurnClassification, TurnType
+
+    greeting_reply = (
+        "您好！我是云枢智能助手。\n"
+        "| 我能帮您 | 示例 |\n"
+        "| --- | --- |\n"
+        "| 闲聊问答 | 今天天气怎么样 |\n"
+        "| 查业务数据 | 请使用数据智能助手 |\n"
+    )
+
+    class FakeLLM:
+        async def astream(self, messages, *args, **kwargs):
+            class Chunk:
+                content = greeting_reply
+            yield Chunk()
+
+    runner = AssistantAgentRunner(config=chat_config, trace_id="test-greeting-table", trace_buffer=[])
+    runner.config.tools = []
+    runner.turn_classification = TurnClassification(
+        turn_type=TurnType.GENERAL,
+        reasoning="用户仅打招呼",
+        intent=IntentType.GENERAL,
+    )
+
+    with patch("app.services.ai.config.AgentConfigProvider.get_synthesis_llm", AsyncMock(return_value=FakeLLM())), \
+         patch("app.services.ai.tools.registry.ToolRegistry.get_system_implicit_tools", return_value=[]):
+        events = []
+        async for chunk in runner.execute([{"role": "user", "content": "你好"}]):
+            events.append(chunk)
+
+    assert not any(e.get("title") == "拦截虚构业务数据" for e in events)
+    assert any(greeting_reply in str(e.get("content", "")) for e in events if e.get("content"))
+
+
+@pytest.mark.asyncio
 async def test_general_runner_without_tools_intercepts_hallucination(chat_config):
     """通用助手在没有调用工具时，如果生成了包含表格或 IP 的回复，应予以拦截。"""
     from app.services.ai.runners.assistant_agent_runner import AssistantAgentRunner

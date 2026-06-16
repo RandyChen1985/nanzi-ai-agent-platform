@@ -176,6 +176,24 @@ class RouterService:
             logger.warning("No routeable agents available for user %s.", user_id)
             return None
 
+        from app.services.ai.intent_service import looks_like_greeting
+
+        if looks_like_greeting(user_input):
+            fallback_agent = self._find_fallback_agent(agents_metadata)
+            if fallback_agent:
+                logger.info(
+                    "Greeting shortcut: routing to %s without LLM",
+                    fallback_agent["name"],
+                )
+                return RouteResult(
+                    agent_id=fallback_agent["id"],
+                    confidence=0.95,
+                    reasoning="纯问候/寒暄，启发式短路至通用助手（跳过路由 LLM）",
+                    turn_labels=["general_chat"],
+                    relation_to_previous="standalone",
+                    user_action_type="chat",
+                )
+
         # 2. Unified LLM Routing
         # 路由提示词内置在代码中（DEFAULT_SYSTEM_PROMPT），不再从数据库配置读取，
         # 避免运营在配置页误改导致路由失准。

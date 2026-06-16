@@ -3,6 +3,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from app.schemas.agent import ChatConfig
+from app.services.ai.context_compaction import COMPACTION_MARKER
 from app.services.ai.agent_service import AgentService
 
 
@@ -215,3 +216,105 @@ async def test_chat_stream_skips_audit_on_external_execution_required():
 
     assert any(chunk.get("type") == "external_execution_required" for chunk in chunks)
     assert audit_calls == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.no_infrastructure
+async def test_chat_stream_injects_compacted_overflow_without_persisting_digest():
+    service = AgentService()
+    agent_config = ChatConfig(
+        agent_id="agent-1",
+        agent_name="helper",
+        agent_display_name="Helper",
+        model_name="test-model",
+        temperature=0,
+        system_prompt="Base prompt",
+        tools=[],
+    )
+    history = [
+        {"role": "user", "content": "第一轮：查机房列表"},
+        {"role": "assistant", "content": "第一轮结果：A 机房、B 机房"},
+        {"role": "user", "content": "第二轮：看 A 机房"},
+        {"role": "assistant", "content": "第二轮结果：A 机房正常"},
+    ]
+    captured = {}
+
+    class CaptureExecutor:
+        async def execute(self, messages):
+            captured["messages"] = messages
+            yield {"content": "ok"}
+
+    async def fake_config_get(key, default=None):
+        values = {
+            "agent_max_context_messages": "2",
+            "agent_context_compaction_enabled": "true",
+            "agent_context_compaction_max_chars": "500",
+        }
+        return values.get(key, default)
+
+    add_message = AsyncMock()
+
+    async def fake_dispatch(config, *args, **kwargs):
+        return CaptureExecutor()
+
+    with (
+        patch(
+            "app.services.ai.context_manager.AgentContextManager.resolve_agent_config",
+            AsyncMock(return_value=(agent_config, None)),
+        ),
+        patch(
+            "app.services.ai.context_manager.AgentContextManager.setup_context",
+            AsyncMock(),
+        ),
+        patch(
+            "app.services.memory_config_service.MemoryConfigService.get_bool",
+            AsyncMock(return_value=False),
+        ),
+        patch(
+            "app.services.ai.memory_service.ltm_service.fetch_memory",
+            AsyncMock(return_value=None),
+        ),
+        patch(
+            "app.services.config_service.ConfigService.get",
+            side_effect=fake_config_get,
+        ),
+        patch(
+            "app.services.ai.memory_service.memory_service.get_history",
+            AsyncMock(return_value=history),
+        ),
+        patch(
+            "app.services.ai.memory_service.memory_service.add_message",
+            add_message,
+        ),
+        patch(
+            "app.services.ai.agent_service.AgentDispatcher.dispatch",
+            side_effect=fake_dispatch,
+        ),
+        patch(
+            "app.services.ai.agent_service.AuditManager.log_transaction",
+            side_effect=_noop_audit,
+        ),
+        patch(
+            "app.services.ai.session_summary_service.SessionSummaryService.merge_session_summary",
+            AsyncMock(),
+        ),
+        patch("app.core.redis.get_redis", AsyncMock(return_value=None)),
+        patch("app.core.config.Settings.SKILLS_DIR", "/app/data/skills"),
+    ):
+        chunks = []
+        async for chunk in service.chat_completion_stream(
+            [{"role": "user", "content": "第三轮：再搜一下"}],
+            user_info={"user_id": "1", "role": "admin", "user_name": "admin"},
+            conversation_id="conv-compact",
+            enable_multi_agent=False,
+        ):
+            chunks.append(chunk)
+
+    assert any(chunk.get("content") == "ok" for chunk in chunks)
+    assert any(
+        message.get("role") == "system" and COMPACTION_MARKER in message.get("content", "")
+        for message in captured["messages"]
+    )
+    assert captured["messages"][-1] == {"role": "user", "content": "第三轮：再搜一下"}
+    persisted_contents = [call.args[3] for call in add_message.call_args_list if len(call.args) >= 4]
+    assert all(COMPACTION_MARKER not in str(content) for content in persisted_contents)

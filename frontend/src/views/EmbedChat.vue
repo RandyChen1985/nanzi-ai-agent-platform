@@ -5156,6 +5156,12 @@ onUnmounted(() => {
   padding-left: 1.5em;
   margin-bottom: 1em;
 }
+:deep(.markdown-body ol) {
+  list-style-type: decimal;
+}
+:deep(.markdown-body ul) {
+  list-style-type: disc;
+}
 :deep(.markdown-body li) {
   margin-bottom: 0.4em;
 }

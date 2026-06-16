@@ -14,6 +14,15 @@ from app.services.ai.context_manager import AgentContextManager
 from app.services.ai.dispatcher import AgentDispatcher
 from app.services.ai.memory_service import memory_service
 from app.services.ai.agent_prompts import AgentServicePrompts
+from app.services.ai.prompt_assembler import (
+    PromptAssemblyInput,
+    assemble_system_prompt,
+    resolve_prompt_assembler_flags,
+)
+from app.services.ai.runtime.session_run_lane import (
+    ConversationRunBusyError,
+    conversation_run_lane,
+)
 from app.services.ai.executors.common import extract_tokens_from_message
 from app.services.ai.runtime.agentscope.compat import HumanMessage, SystemMessage
 from app.core.orm import AsyncSessionLocal
@@ -79,75 +88,177 @@ class AgentService:
         
         # 1. Initial Identity Chunk
         yield {"trace_id": trace_id, "status": "init"}
-        
-        full_response_content = ""
-        
-        # --- Memory Integration ---
-        # If conversation_id is provided, we use server-side history
-        if conversation_id:
-            u_id = user_info.get("user_id") if user_info else None
-            server_history = await memory_service.get_history(u_id, conversation_id)
-            # The current messages likely only contains the latest user prompt
-            # But we should be careful to take only the last user message if it's a follow-up
-            user_msg = messages[-1] if messages else None
-            
-            if user_msg and user_msg.get("role") == "user":
-                # Save user message to memory asynchronously
-                asyncio.create_task(memory_service.add_message(
-                    u_id, 
-                    conversation_id, 
-                    "user", 
-                    user_msg["content"], 
-                    files=user_msg.get("files")
-                ))
-                
-                # --- Context Window Optimization ---
-                # We limit the number of history messages sent to LLM to save tokens
-                # but keep the full 100 in Redis for UI display.
-                from app.services.config_service import ConfigService
-                max_context = await ConfigService.get("agent_max_context_messages", "20")
-                try:
-                    max_context = int(max_context)
-                except ValueError:
-                    max_context = 20
-                
-                context_history = server_history[-max_context:] if server_history else []
-                # Combine history + new message
-                messages = context_history + [user_msg]
-            else:
-                # If no new user message in request, just use history
-                # Also apply limit here for consistency if needed
-                from app.services.config_service import ConfigService
-                max_context = await ConfigService.get("agent_max_context_messages", "20")
-                try:
-                    max_context = int(max_context)
-                except ValueError:
-                    max_context = 20
-                messages = server_history[-max_context:] if server_history else []
 
-        from app.utils.skill_metadata import enrich_messages_with_skill_meta
+        lane_user_id = user_info.get("user_id") if user_info else None
 
-        enrich_messages_with_skill_meta(messages)
+        try:
+            async with conversation_run_lane.hold(
+                user_id=lane_user_id,
+                conversation_id=conversation_id,
+                trace_id=trace_id,
+            ):
+                # --- Memory Integration ---
+                # If conversation_id is provided, we use server-side history
+                if conversation_id:
+                    u_id = lane_user_id
+                    server_history = await memory_service.get_history(u_id, conversation_id)
+                    user_msg = messages[-1] if messages else None
 
-        user_query = messages[-1]["content"] if messages else ""
-        
-        # --- Handle explicit @mention in text ---
-        import re
-        if user_query and not (agent_id or agent_name):
-            mention_match = re.match(r'^[@＠]([^\s]+)\s+(.*)$', user_query, re.DOTALL)
-            if mention_match:
-                agent_name = mention_match.group(1)
-                user_query = mention_match.group(2).strip()
-                if messages:
-                    messages[-1]["content"] = user_query
-                logger.info(f"Intercepted explicit @mention, routing directly to agent: {agent_name}")
+                    if user_msg and user_msg.get("role") == "user":
+                        await memory_service.add_message(
+                            u_id,
+                            conversation_id,
+                            "user",
+                            user_msg["content"],
+                            files=user_msg.get("files"),
+                        )
 
-        execution_status = "success"
-        start_time = asyncio.get_running_loop().time()
+                        from app.services.config_service import ConfigService
+                        max_context = await ConfigService.get("agent_max_context_messages", "20")
+                        try:
+                            max_context = int(max_context)
+                        except ValueError:
+                            max_context = 20
 
-        if not messages:
-            yield {"content": AgentServicePrompts.EMPTY_REQUEST}
+                        context_history = server_history[-max_context:] if server_history else []
+                        context_history = await self._maybe_compact_overflow(
+                            server_history, context_history
+                        )
+                        messages = context_history + [user_msg]
+                    else:
+                        from app.services.config_service import ConfigService
+                        max_context = await ConfigService.get("agent_max_context_messages", "20")
+                        try:
+                            max_context = int(max_context)
+                        except ValueError:
+                            max_context = 20
+                        window = server_history[-max_context:] if server_history else []
+                        messages = await self._maybe_compact_overflow(server_history, window)
+
+                from app.utils.skill_metadata import enrich_messages_with_skill_meta
+
+                enrich_messages_with_skill_meta(messages)
+
+                user_query = messages[-1]["content"] if messages else ""
+
+                # --- Handle explicit @mention in text ---
+                import re
+                if user_query and not (agent_id or agent_name):
+                    mention_match = re.match(r'^[@＠]([^\s]+)\s+(.*)$', user_query, re.DOTALL)
+                    if mention_match:
+                        agent_name = mention_match.group(1)
+                        user_query = mention_match.group(2).strip()
+                        if messages:
+                            messages[-1]["content"] = user_query
+                        logger.info(f"Intercepted explicit @mention, routing directly to agent: {agent_name}")
+
+                if not messages:
+                    yield {"content": AgentServicePrompts.EMPTY_REQUEST}
+                    return
+
+                async for chunk in self._run_chat_turn_stream(
+                    messages=messages,
+                    user_query=user_query,
+                    agent_id=agent_id,
+                    agent_name=agent_name,
+                    version_id=version_id,
+                    conversation_id=conversation_id,
+                    user_info=user_info,
+                    api_key=api_key,
+                    enable_multi_agent=enable_multi_agent,
+                    debug_options=debug_options,
+                    permission_options=permission_options,
+                    knowledge_dataset_ids=knowledge_dataset_ids,
+                    trace_id=trace_id,
+                    trace_buffer=trace_buffer,
+                    start_time=asyncio.get_running_loop().time(),
+                ):
+                    yield chunk
+        except ConversationRunBusyError:
+            yield {
+                "type": "error",
+                "status": "error",
+                "content": "当前会话正在处理中，请稍后再试。",
+            }
             return
+
+    @staticmethod
+    async def _maybe_compact_overflow(
+        full_history: List[Dict[str, Any]],
+        window: List[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        """超出上下文窗口时，把被丢弃的旧消息压缩成一条 system 摘录注入窗口最前。
+
+        确定性、无额外 LLM 调用；由配置 ``agent_context_compaction_enabled`` 控制（默认开启）。
+        """
+        if not full_history or len(full_history) <= len(window):
+            return window
+        try:
+            from app.services.config_service import ConfigService
+
+            enabled_raw = await ConfigService.get("agent_context_compaction_enabled", "true")
+            if str(enabled_raw or "").strip().lower() not in {"1", "true", "yes", "on"}:
+                return window
+            max_chars_raw = await ConfigService.get("agent_context_compaction_max_chars", "1200")
+            try:
+                max_chars = max(200, int(max_chars_raw))
+            except (TypeError, ValueError):
+                max_chars = 1200
+
+            from app.services.ai.context_compaction import apply_context_compaction
+
+            compacted = apply_context_compaction(
+                full_history=full_history,
+                window=window,
+                max_chars=max_chars,
+            )
+            if len(compacted) != len(window):
+                logger.info(
+                    "[Compaction] Injected overflow digest: dropped=%d kept=%d",
+                    len(full_history) - len(window),
+                    len(window),
+                )
+            return compacted
+        except Exception as exc:
+            logger.warning("[Compaction] Failed to compact overflow history: %s", exc)
+            return window
+
+    @staticmethod
+    async def _maybe_empty_response_fallback() -> Optional[str]:
+        """模型本轮无可见文本时返回兜底话术；由配置开关控制（默认开启）。"""
+        try:
+            from app.services.config_service import ConfigService
+
+            enabled_raw = await ConfigService.get("agent_empty_response_fallback_enabled", "true")
+            if str(enabled_raw or "").strip().lower() not in {"1", "true", "yes", "on"}:
+                return None
+        except Exception:
+            pass
+        return AgentServicePrompts.EMPTY_RESPONSE_FALLBACK
+
+    async def _run_chat_turn_stream(
+        self,
+        *,
+        messages: List[Dict[str, str]],
+        user_query: str,
+        agent_id: Optional[str],
+        agent_name: Optional[str],
+        version_id: Optional[str],
+        conversation_id: Optional[str],
+        user_info: Optional[Dict[str, Any]],
+        api_key: Optional[str],
+        enable_multi_agent: bool,
+        debug_options: Optional[Dict[str, Any]],
+        permission_options: Optional[Dict[str, Any]],
+        knowledge_dataset_ids: Optional[List[str]],
+        trace_id: str,
+        trace_buffer: List[AgentExecutionStep],
+        start_time: float,
+    ) -> AsyncGenerator[Dict[str, Any], None]:
+        """Internal turn runner; must be called inside conversation run lane when enabled."""
+        agent_config = None
+        full_response_content = ""
+        execution_status = "success"
 
         try:
             # 2. Context Preparation (Loading Config)
@@ -343,26 +454,9 @@ class AgentService:
                     skills_injection.append(
                         "=== [已截断] 系统中已挂载或解析出更多可用技能，出于上下文性能优化，其余技能摘要未全部载入。如有需要，模型应通过调用 list_available_skills 工具获取其余技能详细摘要 ==="
                     )
-                skills_profile = AgentServicePrompts.skills_profile(skills_injection)
-                if agent_config.system_prompt:
-                    agent_config.system_prompt = f"{skills_profile}\n\n{agent_config.system_prompt}"
-                else:
-                    agent_config.system_prompt = skills_profile
 
             # --- Global Skill Discovery Hint（已有挂载/解析技能时省略，减少 prompt 噪声）---
             skills_already_loaded = bool(skills_injection) or bool(mounted_skill_ids)
-            if not skills_already_loaded:
-                try:
-                    from app.core.config import settings
-
-                    skills_dir = settings.SKILLS_DIR
-                    skill_discovery_hint = AgentServicePrompts.skill_discovery_hint(skills_dir)
-                    if agent_config.system_prompt:
-                        agent_config.system_prompt = f"{skill_discovery_hint}\n\n{agent_config.system_prompt}"
-                    else:
-                        agent_config.system_prompt = skill_discovery_hint
-                except Exception as skill_hint_err:
-                    logger.warning("[Skills] Failed to inject skill discovery hint: %s", skill_hint_err)
 
             # --- 按轮次类型裁剪上下文注入（与会话级 Turn 分类共用，不重复调意图 LLM）---
             from app.services.ai.turn_classifier import (
@@ -438,42 +532,35 @@ class AgentService:
                 )
 
             # --- Long-Term Memory (LTM) Injection ---
+            ltm_profile: Optional[str] = None
             if should_inject_ltm(early_turn_type) and user_info:
                 u_id = user_info.get("user_id", user_info.get("id"))
                 if u_id:
                     try:
                         from app.services.ai.memory_service import ltm_service
-                        # 200ms 极短超时控制防网络拖延
                         ltm_data = await asyncio.wait_for(ltm_service.fetch_memory(str(u_id)), timeout=0.2)
                         if ltm_data:
                             import json
                             ltm_formatted = json.dumps(ltm_data, ensure_ascii=False, indent=2)
-                            memory_profile = AgentServicePrompts.ltm_memory_profile(ltm_formatted)
-                            if agent_config.system_prompt:
-                                agent_config.system_prompt = f"{memory_profile}\n\n{agent_config.system_prompt}"
-                            else:
-                                agent_config.system_prompt = memory_profile
-                            logger.info(f"[LTM] Successfully injected memory profile into System Prompt for user {u_id}")
+                            ltm_profile = AgentServicePrompts.ltm_memory_profile(ltm_formatted)
+                            logger.info(f"[LTM] Successfully loaded memory profile for user {u_id}")
                     except Exception as ltm_err:
                         logger.warning(f"[LTM] Failed to inject long-term memory for user {u_id}: {ltm_err}")
 
             # --- Cross-session memory recall hint (memory_search tool) ---
+            memory_recall_hint: Optional[str] = None
             if should_inject_memory_recall_hint(early_turn_type):
                 try:
                     from app.services.memory_config_service import MemoryConfigService
                     from app.services.ai.memory_recall_policy import CROSS_SESSION_MEMORY_SYSTEM_HINT
 
                     if await MemoryConfigService.get_bool("memory_service_enabled", True):
-                        if agent_config.system_prompt:
-                            agent_config.system_prompt = (
-                                f"{CROSS_SESSION_MEMORY_SYSTEM_HINT}\n\n{agent_config.system_prompt}"
-                            )
-                        else:
-                            agent_config.system_prompt = CROSS_SESSION_MEMORY_SYSTEM_HINT
+                        memory_recall_hint = CROSS_SESSION_MEMORY_SYSTEM_HINT
                 except Exception as mem_hint_err:
                     logger.warning("[Memory] Failed to inject cross-session recall hint: %s", mem_hint_err)
 
             # --- Dynamic Auto-Memory Ingest (Active Memory) ---
+            preloaded_memories_text: Optional[str] = None
             if should_run_active_memory_preload(early_turn_type) and user_info and user_query:
                 u_id = user_info.get("user_id", user_info.get("id"))
                 if u_id:
@@ -526,26 +613,43 @@ class AgentService:
                             
                             # 3. 拼接注入 System Prompt 头部
                             if preloaded_memories:
-                                memory_preloaded_str = AgentServicePrompts.preloaded_memories(preloaded_memories)
-                                if agent_config.system_prompt:
-                                    agent_config.system_prompt = f"{memory_preloaded_str}\n\n{agent_config.system_prompt}"
-                                else:
-                                    agent_config.system_prompt = memory_preloaded_str
+                                preloaded_memories_text = AgentServicePrompts.preloaded_memories(preloaded_memories)
                                 logger.info(f"[ActiveMemory] Successfully preloaded memory context for user {u_id}")
                     except Exception as recall_err:
                         logger.warning(f"[ActiveMemory] Failed to preload memory context: {recall_err}", exc_info=True)
+
+            from app.core.config import settings
+
+            cache_boundary_enabled, cache_reorder_enabled = await resolve_prompt_assembler_flags()
+            assembled_prompt = assemble_system_prompt(
+                PromptAssemblyInput(
+                    agent_system_prompt=agent_config.system_prompt,
+                    agent_config=agent_config,
+                    engine_type=agent_config.engine_type or "LOCAL",
+                    skills_injection=skills_injection,
+                    skills_already_loaded=skills_already_loaded,
+                    skills_dir=settings.SKILLS_DIR,
+                    ltm_profile=ltm_profile,
+                    memory_recall_hint=memory_recall_hint,
+                    preloaded_memories=preloaded_memories_text,
+                    cache_boundary_enabled=cache_boundary_enabled,
+                    cache_reorder_enabled=cache_reorder_enabled,
+                )
+            )
+            agent_config.system_prompt = assembled_prompt.full_text
+            if debug_options and debug_options.get("return_raw_prompt"):
+                debug_options.setdefault("prompt_assembler_meta", {})
+                debug_options["prompt_assembler_meta"] = {
+                    "stable_chars": len(assembled_prompt.stable_prefix),
+                    "dynamic_chars": len(assembled_prompt.dynamic_suffix),
+                    "cache_boundary_enabled": assembled_prompt.cache_boundary_enabled,
+                    "cache_reorder_enabled": assembled_prompt.cache_reorder_enabled,
+                }
 
             # --- User Identity Injection（查数轮次可省略以减 prompt 噪声）---
             if should_inject_user_context(early_turn_type) and user_info:
                 id_msg = await self._build_user_context_msg(user_info)
                 messages.insert(0, id_msg)
-
-            # --- 平台全局 System Prompt（置于 system_prompt 栈最顶；仅 LOCAL 引擎）---
-            if (agent_config.engine_type or "LOCAL") == "LOCAL":
-                agent_config.system_prompt = AgentServicePrompts.prepend_platform_global_system_prompt(
-                    agent_config.system_prompt,
-                    agent_config=agent_config
-                )
 
             # --- Debug Overrides ---
             if debug_options:
@@ -696,6 +800,16 @@ class AgentService:
                     elif chunk.get("type") == "error" or chunk.get("status") == "error":
                         execution_status = "error"
                     yield chunk
+
+            # --- 空响应兜底：本轮成功但模型未产出任何可见文本时，发一条兜底话术，避免前端空白 ---
+            if (
+                execution_status == "success"
+                and not (full_response_content or "").strip()
+            ):
+                fallback_text = await self._maybe_empty_response_fallback()
+                if fallback_text:
+                    full_response_content = fallback_text
+                    yield {"content": fallback_text, "status": "success"}
 
             # 聚合本轮消耗的 Token 并 yield meta 给前端，同时传给 add_message
             p_tokens, c_tokens, t_tokens = 0, 0, 0
@@ -870,12 +984,28 @@ class AgentService:
         full_response_content = ""
         execution_status = "success" if confirmed else "rejected"
         start_time = asyncio.get_running_loop().time()
-        async for chunk in runner.resume_agentscope_native_confirmation(
-            pending,
-            confirmed=confirmed,
-        ):
-            full_response_content = _accumulate_stream_content(full_response_content, chunk)
-            yield chunk
+        conversation_id = runner.conversation_id or pending.snapshot.conversation_id
+        lane_user_id = current_user_id or pending.user_id
+
+        try:
+            async with conversation_run_lane.hold(
+                user_id=lane_user_id,
+                conversation_id=conversation_id,
+                trace_id=pending.trace_id,
+            ):
+                async for chunk in runner.resume_agentscope_native_confirmation(
+                    pending,
+                    confirmed=confirmed,
+                ):
+                    full_response_content = _accumulate_stream_content(full_response_content, chunk)
+                    yield chunk
+        except ConversationRunBusyError:
+            yield {
+                "type": "error",
+                "status": "error",
+                "content": "当前会话正在处理中，请稍后再试。",
+            }
+            return
 
         p_tokens, c_tokens, t_tokens = 0, 0, 0
         trace_buffer = runner.trace_buffer
@@ -1050,14 +1180,30 @@ class AgentService:
         full_response_content = ""
         execution_status = "success"
         start_time = asyncio.get_running_loop().time()
-        async for chunk in runner.resume_agentscope_external_execution(
-            pending,
-            execution_results=execution_results,
-        ):
-            full_response_content = _accumulate_stream_content(full_response_content, chunk)
-            if chunk.get("status") == "error":
-                execution_status = "error"
-            yield chunk
+        conversation_id = runner.conversation_id or pending.snapshot.conversation_id
+        lane_user_id = current_user_id or pending.user_id
+
+        try:
+            async with conversation_run_lane.hold(
+                user_id=lane_user_id,
+                conversation_id=conversation_id,
+                trace_id=pending.trace_id,
+            ):
+                async for chunk in runner.resume_agentscope_external_execution(
+                    pending,
+                    execution_results=execution_results,
+                ):
+                    full_response_content = _accumulate_stream_content(full_response_content, chunk)
+                    if chunk.get("status") == "error":
+                        execution_status = "error"
+                    yield chunk
+        except ConversationRunBusyError:
+            yield {
+                "type": "error",
+                "status": "error",
+                "content": "当前会话正在处理中，请稍后再试。",
+            }
+            return
 
         p_tokens, c_tokens, t_tokens = 0, 0, 0
         trace_buffer = runner.trace_buffer

@@ -41,6 +41,10 @@ class RuntimeToolError(AgentScopeRuntimeError):
     kind: RuntimeErrorKind = "tool"
 
 
+class ToolLoopFuseError(RuntimeToolError):
+    """Raised when repeated identical tool calls exceed the fuse threshold."""
+
+
 class RuntimePermissionError(AgentScopeRuntimeError):
     kind: RuntimeErrorKind = "permission"
 

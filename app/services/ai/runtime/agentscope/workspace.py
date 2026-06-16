@@ -14,6 +14,7 @@ logger = logging.getLogger(__name__)
 WORKSPACE_BUILTIN_TOOL_NAMES = frozenset(
     {"Bash", "Read", "Write", "Edit", "Glob", "Grep"}
 )
+WORKSPACE_PROMPT_TOOL_NAMES = WORKSPACE_BUILTIN_TOOL_NAMES
 WORKSPACE_REPLACED_PLATFORM_TOOL_NAMES = frozenset(
     {
         *WORKSPACE_BUILTIN_TOOL_NAMES,
@@ -165,6 +166,64 @@ async def delete_workspace_for_session(
 
 def clear_workspace_cache() -> None:
     _workspace_cache.clear()
+
+
+def normalize_workspace_tool_names(tool_names: set[str] | frozenset[str]) -> set[str]:
+    aliases = {
+        "exec_command": "Bash",
+        "read_file": "Read",
+        "write_file": "Write",
+        "search_text": "Grep",
+        "edit_file": "Edit",
+        "glob_files": "Glob",
+    }
+    normalized: set[str] = set()
+    for name in tool_names:
+        canonical = aliases.get(name, name)
+        normalized.add(canonical)
+    return normalized
+
+
+def collect_workspace_file_tool_names(tools: list[Any]) -> set[str]:
+    names: set[str] = set()
+    for tool in tools or []:
+        tool_name = getattr(tool, "name", None)
+        if tool_name:
+            names.add(str(tool_name))
+    return normalize_workspace_tool_names(names) & WORKSPACE_PROMPT_TOOL_NAMES
+
+
+async def append_session_workspace_sandbox_to_system_prompt(
+    system_content: str,
+    *,
+    user_id: str | int | None,
+    conversation_id: str | None,
+    tools: list[Any],
+) -> str:
+    """Append session workspace + path sandbox guidance when file/shell tools are bound."""
+    file_tools = collect_workspace_file_tool_names(tools)
+    if not conversation_id or not file_tools:
+        return system_content
+
+    if "[Session Workspace & Path Sandbox]" in (system_content or ""):
+        return system_content
+
+    from app.services.ai.agent_prompts import AgentServicePrompts
+
+    root = await resolve_workspace_root()
+    workdir = resolve_session_workdir(
+        root=root,
+        user_id=user_id,
+        conversation_id=conversation_id,
+    )
+    block = AgentServicePrompts.session_workspace_sandbox_block(
+        workdir=workdir,
+        file_tool_names=sorted(file_tools),
+    )
+    base = (system_content or "").strip()
+    if base:
+        return f"{base}\n\n{block}"
+    return block
 
 
 def is_workspace_managed_tool_spec(spec: Any) -> bool:

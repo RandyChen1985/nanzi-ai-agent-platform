@@ -44,6 +44,113 @@ def test_classify_turn_heuristic_fixed_cases(query, expected):
     assert result.turn_type == expected
 
 
+@pytest.mark.parametrize(
+    "query",
+    [
+        "联网搜索一下有孚网络的最新信息",
+        "上网查查这家公司的最新新闻",
+        "百度一下今天的科技资讯",
+        "帮我搜索一下 GPT 的最新进展",
+        "有孚网络最新消息",
+        "搜索有孚网络的最新信息",
+    ],
+)
+def test_web_search_query_routes_to_general(query):
+    result = classify_turn_heuristic(query, can_do_data=False, has_last_data_result=False)
+    assert result is not None
+    assert result.turn_type == TurnType.GENERAL
+    assert result.intent == IntentType.GENERAL
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "查一下目前的库存",
+        "查一下现在有多少告警",
+        "统计本月的订单数量",
+    ],
+)
+def test_data_query_not_misrouted_as_web_search(query):
+    # 查数语句不应被联网搜索启发式短路（仍交给意图 LLM 处理）
+    result = classify_turn_heuristic(query, can_do_data=True, has_last_data_result=False)
+    assert result is None or result.turn_type != TurnType.GENERAL
+
+
+def test_internal_sop_still_classified_as_knowledge():
+    result = classify_turn_heuristic(
+        "高温告警的标准处理流程是什么",
+        can_do_data=False,
+        has_last_data_result=False,
+    )
+    assert result is not None
+    assert result.turn_type == TurnType.KNOWLEDGE
+
+
+def test_classify_turn_from_intent_web_search_overrides_knowledge_without_binding():
+    intent = IntentResponse(
+        intent=IntentType.KNOWLEDGE_BASE,
+        confidence=0.8,
+        reasoning="用户想查有孚网络的最新信息",
+        entities=["有孚网络"],
+    )
+    result = classify_turn_from_intent(
+        intent,
+        can_do_data=False,
+        user_query="搜索一下有孚网络的最新信息",
+        has_knowledge_binding=False,
+    )
+    assert result.turn_type == TurnType.GENERAL
+    assert result.intent == IntentType.GENERAL
+
+
+def test_classify_turn_from_intent_keeps_knowledge_when_bound():
+    intent = IntentResponse(
+        intent=IntentType.KNOWLEDGE_BASE,
+        confidence=0.8,
+        reasoning="用户想查最新信息",
+        entities=[],
+    )
+    result = classify_turn_from_intent(
+        intent,
+        can_do_data=False,
+        user_query="搜索一下最新信息",
+        has_knowledge_binding=True,
+    )
+    assert result.turn_type == TurnType.KNOWLEDGE
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "你好",
+        "您好",
+        "hello",
+        "你是谁",
+        "谢谢",
+    ],
+)
+def test_greeting_routes_to_general_without_intent_llm(query):
+    result = classify_turn_heuristic(query, can_do_data=False, has_last_data_result=False)
+    assert result is not None
+    assert result.turn_type == TurnType.GENERAL
+    assert result.skip_intent_llm is True
+    assert result.intent == IntentType.GENERAL
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "你好，查一下机房列表",
+        "您好，高温告警处理流程是什么",
+    ],
+)
+def test_greeting_compound_not_short_circuited(query):
+    result = classify_turn_heuristic(query, can_do_data=False, has_last_data_result=False)
+    assert result is None or not (
+        result.skip_intent_llm and result.reasoning and "问候" in result.reasoning
+    )
+
+
 def test_reuse_previous_result_requires_cached_result():
     result = classify_turn_heuristic(
         "把刚才的结果画成柱状图",

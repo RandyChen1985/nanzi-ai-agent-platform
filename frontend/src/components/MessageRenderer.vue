@@ -278,6 +278,9 @@ const segments = computed<ContentSegment[]>(() => {
 .markdown-body :deep(.citation-badge) { display: inline-flex; align-items: center; justify-content: center; font-size: 10px; font-weight: 700; color: #3b82f6; background-color: #eff6ff; border: 1px solid #dbeafe; border-radius: 4px; padding: 0 4px; margin: 0 2px; cursor: pointer; vertical-align: super; transition: all 0.2s ease; }
 .markdown-body :deep(.citation-badge:hover) { background-color: #3b82f6; color: white; transform: scale(1.1); }
 .markdown-body { overflow-wrap: break-word; }
+.markdown-body :deep(ol) { list-style-type: decimal; padding-left: 1.5em; margin-bottom: 1em; }
+.markdown-body :deep(ul) { list-style-type: disc; padding-left: 1.5em; margin-bottom: 1em; }
+.markdown-body :deep(li) { margin-bottom: 0.35em; }
 .markdown-body :deep(pre), .markdown-body :deep(code) { white-space: pre-wrap; overflow-x: auto; }
 
 /* Analysis Block Styling - Refined for clarity and "thinking" vibe */

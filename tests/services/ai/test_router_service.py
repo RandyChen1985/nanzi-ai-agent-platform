@@ -218,7 +218,7 @@ async def test_route_query_low_confidence_fallback(mock_agents_metadata):
         mock_chat_factory.return_value = mock_chat
         mock_config.return_value = "System Prompt"
         
-        result = await service.route_query("Hello")
+        result = await service.route_query("嗯，随便聊聊")
         
         # Should fallback to general-chat
         assert result.agent_id == "agent-general"
@@ -256,9 +256,9 @@ async def test_fallback_matches_multiple_general_agent_slugs(fallback_name, expe
         mock_get_llm.return_value = mock_llm
         mock_chat_factory.return_value = mock_chat
 
-        result = await service.route_query("Hello")
+        result = await service.route_query("嗯，随便聊聊")
 
-    assert result.agent_id == expected_id
+        assert result.agent_id == expected_id
     assert "Low confidence" in result.reasoning
 
 
@@ -423,3 +423,54 @@ async def test_route_query_datacenter_list_uses_chatbi(mock_agents_metadata):
     routed_messages = mock_chat.generate_text.call_args[0][0]
     system_prompt = routed_messages[0].content[0].text
     assert "机房列表、设备清单、工单记录、告警/故障历史、操作日志等离散记录或数据列表" in system_prompt
+
+
+@pytest.mark.asyncio
+async def test_route_query_greeting_shortcut_skips_llm(mock_agents_metadata):
+    """纯问候应短路至通用助手，不调用路由 LLM。"""
+    service = RouterService()
+    mock_chat = _mock_chat_client("{}")
+
+    with patch.object(service, "_fetch_agents_from_db", new_callable=AsyncMock) as mock_fetch, \
+         patch("app.services.ai.router_service.get_llm_async", new_callable=AsyncMock) as mock_get_llm, \
+         patch("app.services.ai.router_service.chat_client_from_handle") as mock_chat_factory:
+
+        mock_fetch.return_value = mock_agents_metadata
+        mock_get_llm.return_value = object()
+        mock_chat_factory.return_value = mock_chat
+
+        result = await service.route_query("你好")
+
+    assert result is not None
+    assert result.agent_id == "agent-general"
+    assert result.confidence >= 0.9
+    assert "问候" in result.reasoning or "寒暄" in result.reasoning
+    assert result.turn_labels == ["general_chat"]
+    assert result.user_action_type == "chat"
+    mock_get_llm.assert_not_called()
+    mock_chat.generate_text.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_route_query_greeting_compound_still_calls_llm(mock_agents_metadata):
+    """问候 + 业务诉求的复合句不应走路由短路。"""
+    service = RouterService()
+    llm_resp_content = json.dumps({
+        "thought": "User wants room list.",
+        "agent_name": "ChatBI",
+        "confidence": 0.9,
+    })
+    mock_chat = _mock_chat_client(llm_resp_content)
+
+    with patch.object(service, "_fetch_agents_from_db", new_callable=AsyncMock) as mock_fetch, \
+         patch("app.services.ai.router_service.get_llm_async", new_callable=AsyncMock) as mock_get_llm, \
+         patch("app.services.ai.router_service.chat_client_from_handle") as mock_chat_factory:
+
+        mock_fetch.return_value = mock_agents_metadata
+        mock_get_llm.return_value = object()
+        mock_chat_factory.return_value = mock_chat
+
+        result = await service.route_query("你好，查一下所有机房的列表")
+
+    assert result.agent_id == "agent-chatbi"
+    mock_chat.generate_text.assert_called_once()

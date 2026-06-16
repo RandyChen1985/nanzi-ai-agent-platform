@@ -168,3 +168,32 @@ def test_prepend_platform_global_system_prompt_with_tool_config_items():
     # 验证全局守则和业务提示词均被正确合并拼装
     assert "[云枢智能体平台 · 全局守则]" in result
     assert "My custom prompt" in result
+    assert "## 执行倾向" in result
+    assert "## 工具调用风格" in result
+    assert "## 本轮可用工具" in result
+    assert "get_dataset_schema" in result
+    assert "execute_sql_query" in result
+    assert "## 技能使用" in result
+    assert "## 工具确认" in result
+    assert "目标边界" in result
+
+
+def test_platform_global_prompt_skills_section_without_skill_tools(monkeypatch):
+    from app.services.ai.agent_prompts import AgentServicePrompts
+    from unittest.mock import MagicMock
+
+    monkeypatch.setattr(
+        "app.services.ai.tools.registry.ToolRegistry.get_system_implicit_tools",
+        lambda: [],
+    )
+
+    mock_config = MagicMock()
+    mock_config.tools = ["memory_search"]
+    mock_config.capabilities = []
+
+    result = AgentServicePrompts.prepend_platform_global_system_prompt(
+        system_prompt="Base",
+        agent_config=mock_config,
+    )
+    assert "## 技能使用" not in result
+    assert "## 工具确认" not in result

@@ -386,6 +386,8 @@ def normalize_messages_for_llm(messages: List[BaseMessage]) -> List[BaseMessage]
             title = "长期记忆设定"
         elif "[System Preloaded Memories]" in part:
             title = "主动预加载记忆"
+        elif "[早前对话摘录]" in part:
+            title = "早前对话摘录（上下文压缩）"
 
         formatted_parts.append(
             f"<!-- SYSTEM_BLOCK_START: {title} -->\n"
