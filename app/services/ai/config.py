@@ -1,4 +1,5 @@
 import logging
+import re
 from typing import Optional, Dict
 from app.schemas.agent import ChatConfig
 from app.core.llm.client import get_llm
@@ -186,21 +187,55 @@ class AgentConfigProvider:
             else:
                 for ds in datasets:
                     name = getattr(ds, "name", "unknown")
+                    display_name = str(getattr(ds, "display_name", "") or "").strip()
                     desc = getattr(ds, "description", "No description")
                     tags = getattr(ds, "tags", [])
 
-                    # 提取表信息
-                    table_terms = []
-                    # search_datasets 返回的对象可能没有预加载 tables，视情况处理
-                    if hasattr(ds, "tables") and ds.tables:
-                        for tbl in ds.tables:
-                            term = getattr(tbl, "term", tbl.physical_name)
-                            table_terms.append(term)
-
                     tag_str = f" [{', '.join(tags)}]" if isinstance(tags, list) and tags else ""
-                    menu += f"- Dataset: {name}{tag_str}\n  Description: {desc}\n"
+                    menu += f"- Dataset: {name}{tag_str}\n"
+                    if display_name and display_name != name:
+                        menu += f"  Display Name: {display_name}\n"
+                    menu += f"  Description: {desc}\n"
+
+                    active_tables = [
+                        tbl for tbl in (getattr(ds, "tables", None) or [])
+                        if getattr(tbl, "status", 1) != 0
+                    ]
+                    table_terms: list[str] = []
+                    for tbl in active_tables:
+                        term = str(getattr(tbl, "term", None) or getattr(tbl, "physical_name", "") or "").strip()
+                        if term:
+                            table_terms.append(term)
                     if table_terms:
                         menu += f"  Includes Tables: {', '.join(table_terms)}\n"
+                        menu += "  Table Details:\n"
+                        for tbl in active_tables:
+                            term = str(getattr(tbl, "term", None) or getattr(tbl, "physical_name", "") or "").strip()
+                            if not term:
+                                continue
+                            table_desc = re.sub(
+                                r"\s+",
+                                " ",
+                                str(getattr(tbl, "description", "") or "").strip(),
+                            )
+                            if table_desc:
+                                menu += f"    - {term}: {table_desc}\n"
+                            else:
+                                menu += f"    - {term}\n"
+
+                    metrics = [
+                        m for m in (getattr(ds, "metrics", None) or [])
+                        if getattr(m, "display_name", None) or getattr(m, "name", None)
+                    ]
+                    if metrics:
+                        metric_labels = [
+                            str(getattr(m, "display_name", None) or getattr(m, "name", "")).strip()
+                            for m in metrics
+                        ]
+                        metric_labels = [label for label in metric_labels if label]
+                        if metric_labels:
+                            menu += f"  Metrics: {', '.join(metric_labels)}\n"
+
                     menu += "\n"
                 return menu
         except Exception as e:

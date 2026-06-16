@@ -551,7 +551,7 @@
                 <!-- Status Indicator Dot (Removed to reduce visual noise) -->
                 <!-- Text -->
                 <span>{{ msg.agentDisplayName || msg.agentName }}</span>
-                <span class="opacity-70 font-normal">· 正在服务</span>
+                <span class="opacity-70 font-normal">{{ String(msg.agentName || '').startsWith('sys_') ? '· 系统指令' : '· 正在服务' }}</span>
               </div>
             </div>
             <div
@@ -1699,8 +1699,10 @@
                   <div>
                     <div class="text-[11px] font-black text-gray-800 dark:text-gray-200 uppercase mb-0.5">快捷指令</div>
                     <p class="text-[10px] text-gray-500 mb-2">Web 端支持<b>直接点击</b>快捷按钮；移动端输入斜杠 <span class="font-mono text-blue-500">/</span> 即可快速唤起。</p>
+                    <p class="text-[10px] text-gray-500 mb-2"><span class="font-mono text-blue-500">/dataset_menu</span> 会基于与 ChatBI 相同的数据集目录，由 AI 生成分组导航与可点击追问按钮。</p>
                     <div class="flex flex-wrap gap-1.5">
-                      <span class="px-1.5 py-0.5 bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 text-[9px] rounded border border-blue-100 dark:border-blue-800 font-medium">/new_chat</span>
+                      <span class="px-1.5 py-0.5 bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 text-[9px] rounded border border-blue-100 dark:border-blue-800 font-medium">/dataset_menu</span>
+                      <span class="px-1.5 py-0.5 bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 text-[9px] rounded border border-blue-100 dark:border-blue-800 font-medium">/new</span>
                       <span class="px-1.5 py-0.5 bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 text-[9px] rounded border border-blue-100 dark:border-blue-800 font-medium">/history</span>
                     </div>
                   </div>
@@ -2319,6 +2321,7 @@ function getDisplayLogs(msg: Message) {
 }
 
 function getThoughtPanelTitle(msg: Message) {
+  if (msg.isThinking && msg.thinkingText) return msg.thinkingText;
   return getTurnPanelTitle(msg.turnType, msg.isThinking);
 }
 
@@ -2890,12 +2893,14 @@ const resetStallTimer = () => {
   }
 };
 // Slash Commands
-const showCommandMenu = ref(false);
-const slashCommands = ref<any[]>([
+const SYSTEM_SLASH_COMMANDS = [
+  { id: "sys_dataset_menu", command: "/dataset_menu", label: "📚 数据导航", sort_order: -35 },
   { id: "sys_clear", command: "/new", label: "💬 新会话", sort_order: -30 },
   { id: "sys_history", command: "/history", label: "🕒 历史", sort_order: -20 },
   { id: "sys_settings", command: "/settings", label: "⚙️ 设置", sort_order: -15 },
-]);
+];
+const showCommandMenu = ref(false);
+const slashCommands = ref<any[]>([...SYSTEM_SLASH_COMMANDS]);
 // History Sidebar State
 const showHistorySidebar = ref(false);
 const showAgentSelector = ref(false);
@@ -3698,35 +3703,17 @@ const fetchSlashCommands = async () => {
     if (res.data) {
       // 获取用户命令
       const userCommands = Array.isArray(res.data) ? res.data : [];
-      // 定义系统命令
-      const systemCommands = [
-        { id: "sys_clear", command: "/new", label: "💬 新会话", sort_order: -30 },
-        { id: "sys_history", command: "/history", label: "🕒 历史", sort_order: -20 },
-        { id: "sys_settings", command: "/settings", label: "⚙️ 设置", sort_order: -15 }
-      ];
       // 合并系统命令和用户命令，并按 sort_order 排序
       slashCommands.value = [
-        ...systemCommands,
+        ...SYSTEM_SLASH_COMMANDS,
         ...userCommands
       ].sort((a, b) => (a.sort_order || 999) - (b.sort_order || 999));
     } else {
-      // 如果API没有返回数据，至少确保系统命令存在
-      const systemCommands = [
-        { id: "sys_clear", command: "/new", label: "💬 新会话", sort_order: -30 },
-        { id: "sys_history", command: "/history", label: "🕒 历史", sort_order: -20 },
-        { id: "sys_settings", command: "/settings", label: "⚙️ 设置", sort_order: -15 }
-      ];
-      slashCommands.value = systemCommands;
+      slashCommands.value = [...SYSTEM_SLASH_COMMANDS];
     }
   } catch (e) {
     console.warn("Slash commands fetch failed", e);
-    // 如果API调用失败，至少确保系统命令存在
-    const systemCommands = [
-      { id: "sys_clear", command: "/new", label: "💬 新会话", sort_order: -30 },
-      { id: "sys_history", command: "/history", label: "🕒 历史", sort_order: -20 },
-      { id: "sys_settings", command: "/settings", label: "⚙️ 设置", sort_order: -15 }
-    ];
-    slashCommands.value = systemCommands;
+    slashCommands.value = [...SYSTEM_SLASH_COMMANDS];
   }
 };
 const fetchModels = async () => {
@@ -3993,8 +3980,63 @@ const fetchConversationHistory = async (isLoadMore = false) => {
   }
 };
 // --- Logic ---
-const handleSystemCommand = (cmd: string): boolean => {
+const showDatasetMenuNavigation = async () => {
+  if (!conversationId.value) {
+    generateNewConversation();
+  }
+
+  messages.value.push({
+    id: Date.now(),
+    role: "user",
+    content: "/dataset_menu",
+    timestamp: new Date().toISOString(),
+  });
+
+  const navMsg = ref<Message>({
+    id: Date.now() + 1,
+    role: "agent",
+    content: "",
+    agentName: "sys_dataset_menu",
+    agentDisplayName: "系统 · 数据导航",
+    isThinking: true,
+    thinkingText: "正在生成数据能力导航...",
+    logs: [],
+    thoughtStartTime: Date.now(),
+    thoughtDuration: "0.0",
+    isThoughtExpanded: false,
+    isCitationsExpanded: false,
+    timestamp: new Date().toISOString(),
+  });
+  messages.value.push(navMsg.value);
+  autoScrollEnabled.value = true;
+  await nextTick();
+  scrollToBottom(true);
+
+  try {
+    const res = await axios.get("/api/v1/chat/dataset-menu", {
+      headers: embedAuthHeaders(),
+    });
+    const markdown = res.data?.data?.markdown || "";
+    navMsg.value.content = markdown || "当前暂无可展示的数据集导航，请联系管理员开通数据权限。";
+  } catch (error) {
+    console.warn("Failed to load dataset menu navigation", error);
+    navMsg.value.content = (
+      "暂时无法加载数据能力导航，请稍后重试。\n\n"
+      + "- [🙋 重新加载数据导航](quick:/dataset_menu)"
+    );
+  } finally {
+    navMsg.value.isThinking = false;
+    navMsg.value.thinkingText = "";
+    await nextTick();
+    scrollToBottom(true);
+  }
+};
+
+const handleSystemCommand = async (cmd: string): Promise<boolean> => {
   switch (cmd) {
+    case "/dataset_menu":
+      await showDatasetMenuNavigation();
+      return true;
     case "/history":
       showHistorySidebar.value = !showHistorySidebar.value;
       return true;
@@ -4243,9 +4285,9 @@ const handleShowCitation = async (msg: Message, citeId: string, anchor?: HTMLEle
   }
 };
 
-const handleQuickQuestion = (content: string) => {
+const handleQuickQuestion = async (content: string) => {
   if (isProcessing.value) return;
-  if (handleSystemCommand(content)) return;
+  if (await handleSystemCommand(content)) return;
   userInput.value = content;
   sendMessage();
 };
@@ -4483,7 +4525,7 @@ const sendMessage = async () => {
       generateNewConversation();
   }
 
-  if (handleSystemCommand(content)) {
+  if (await handleSystemCommand(content)) {
     userInput.value = "";
     showCommandMenu.value = false;
     return;

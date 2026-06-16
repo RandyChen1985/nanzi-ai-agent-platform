@@ -164,8 +164,11 @@ class MetadataService:
                 MetaDataset.display_name.ilike(f"%{query}%")
             ))
             
-        # Pre-load tables to avoid DetachedInstanceError in external loops
-        stmt = stmt.options(selectinload(MetaDataset.tables))
+        # Pre-load tables/metrics to avoid DetachedInstanceError in external loops
+        stmt = stmt.options(
+            selectinload(MetaDataset.tables),
+            selectinload(MetaDataset.metrics),
+        )
             
         result = await db.execute(stmt)
         return result.scalars().all()

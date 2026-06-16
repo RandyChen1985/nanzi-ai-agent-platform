@@ -14,7 +14,7 @@
 from __future__ import annotations
 
 import re
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 
 class SharedPrompts:
@@ -138,6 +138,203 @@ class DataQueryPrompts:
 【当前用户问题】
 {user_question}
 """
+
+    @staticmethod
+    def dataset_navigation_generation_prompt(dataset_menu: str) -> str:
+        return f"""你是 ChatBI 数据能力导航生成模块。
+
+用户执行了 `/dataset_menu` 指令，希望了解当前账号**有权访问**哪些数据、能问什么问题。
+下方【可用数据集目录】与 ChatBI 智能体 system prompt 中的 `{{dataset_menu}}` **完全一致**，请仅基于其中信息生成导航，不要编造未列出的数据集、表或指标。
+
+任务：
+1. 用 1-2 句话概括用户当前可查询的数据范围（数据集数量、主要业务域）。
+2. **按 Dataset 逐个分组展示**（每个 `- Dataset: xxx` 对应一个独立分组），**禁止**按 tags 合并多个数据集。
+3. 分组标题格式：`#### {{中文展示名}} ({{Dataset 英文名}})`；优先用 `Display Name`，无则用 Dataset 英文名。
+4. 每个分组内简要列出 Description；若有 `Table Details`，展示关键表的中文术语与备注摘要（可截断，不要整段粘贴所有表）。
+5. **为每个 Dataset 生成足够多的追问按钮**（见下方数量要求），必须结合该数据集的 Description、`Table Details` 中文备注、`Includes Tables` 业务术语与 `Metrics`。
+6. 文末提供全局快捷入口（含重新查看导航）。
+
+追问按钮数量要求（每个 Dataset 单独计算）：
+- 默认至少 **4** 个不同追问按钮。
+- `Includes Tables` 有 3-8 张表：至少 **6** 个按钮，尽量覆盖不同表术语。
+- `Includes Tables` 超过 8 张表：至少 **8** 个按钮，覆盖主要业务表（如访问日志、对话历史、执行链路、模型配置、权限等）。
+- 有 `Metrics` 时，至少 1 个按钮应围绕指标查询/趋势分析。
+- 每个按钮应指向**不同**业务对象或查询意图，避免重复。
+
+命名与文案要求：
+- **有中文备注/术语时一律优先用中文**：Display Name、表 term、Table Details 中的中文描述。
+- 按钮标签用简短中文（6-12 字）；`quick:` 内为完整可发送的中文问题，引用真实表术语或指标名。
+- 不要输出英文物理表名，除非目录中没有中文术语。
+
+输出要求：
+- 只输出 Markdown，不要 JSON，不要用代码块包裹全文。
+- 以 `### 📚 数据能力导航` 开头，用 `---` 分隔区块。
+- 每个追问建议必须是列表项，格式严格为：`- [🙋 简短标签](quick:完整可发送问题)`。
+- 每个 Dataset 的追问按钮紧跟在该 Dataset 分组正文之后，再开始下一个 Dataset 分组。
+- 文末必须包含 `### 💬 您可能还想了解`，其中至少包含：`- [🙋 重新查看数据导航](quick:/dataset_menu)`。
+- quick 追问按钮区块必须放在整段回答最末尾。
+- 不要编造目录中未出现的具体数值、表名或指标名。
+
+【可用数据集目录】
+{dataset_menu}
+"""
+
+    @classmethod
+    def _parse_dataset_blocks(cls, dataset_menu: str) -> list[dict[str, Any]]:
+        blocks: list[dict[str, Any]] = []
+        current: dict[str, Any] | None = None
+        in_table_details = False
+
+        for raw_line in str(dataset_menu or "").splitlines():
+            line = raw_line.rstrip()
+            if line.startswith("- Dataset:"):
+                if current:
+                    blocks.append(current)
+                match = re.match(r"- Dataset:\s*(\S+)", line)
+                current = {
+                    "name": match.group(1) if match else "",
+                    "display_name": "",
+                    "description": "",
+                    "tables": [],
+                    "metrics": [],
+                }
+                in_table_details = False
+                continue
+            if not current:
+                continue
+            if line.startswith("  Display Name:"):
+                current["display_name"] = line.split(":", 1)[1].strip()
+            elif line.startswith("  Description:"):
+                current["description"] = line.split(":", 1)[1].strip()
+            elif line.startswith("  Includes Tables:"):
+                tables_part = line.split(":", 1)[1].strip()
+                current["tables"] = [t.strip() for t in tables_part.split(",") if t.strip()]
+                in_table_details = False
+            elif line.strip() == "Table Details:":
+                in_table_details = True
+            elif in_table_details and line.startswith("    - "):
+                detail = line[6:].strip()
+                term = detail.split(":", 1)[0].strip()
+                if term and term not in current["tables"]:
+                    current["tables"].append(term)
+            elif line.startswith("  Metrics:"):
+                metrics_part = line.split(":", 1)[1].strip()
+                current["metrics"] = [m.strip() for m in metrics_part.split(",") if m.strip()]
+                in_table_details = False
+
+        if current:
+            blocks.append(current)
+        return blocks
+
+    @classmethod
+    def _dataset_heading(cls, block: dict[str, Any]) -> str:
+        name = str(block.get("name") or "").strip()
+        display_name = str(block.get("display_name") or "").strip()
+        if display_name and display_name != name:
+            return f"{display_name} ({name})"
+        return name or "未命名数据集"
+
+    @classmethod
+    def _fallback_buttons_for_dataset(cls, block: dict[str, Any], *, max_buttons: int = 8) -> list[str]:
+        heading = cls._dataset_heading(block)
+        buttons: list[str] = []
+        seen: set[str] = set()
+
+        def add_button(label: str, query: str) -> None:
+            target = query.strip()
+            if not target or target in seen or len(buttons) >= max_buttons:
+                return
+            seen.add(target)
+            buttons.append(cls.quick_button(label, target))
+
+        add_button(f"{heading}概览", f"查询{heading}的核心数据概览")
+
+        for metric in block.get("metrics") or []:
+            add_button(f"{metric}趋势", f"查询{heading}最近6个月的{metric}趋势")
+
+        table_count = len(block.get("tables") or [])
+        target_count = 4
+        if table_count > 8:
+            target_count = 8
+        elif table_count > 2:
+            target_count = 6
+
+        templates = (
+            ("最近记录", "查询{table}最近100条记录"),
+            ("统计分析", "统计{table}的数据量和关键指标"),
+            ("趋势变化", "分析{table}最近一个月的变化趋势"),
+            ("明细筛选", "查询{table}的明细数据并列出主要字段"),
+        )
+        for table in block.get("tables") or []:
+            if len(buttons) >= target_count:
+                break
+            template = templates[len(buttons) % len(templates)]
+            add_button(
+                f"{table}{template[0]}",
+                template[1].format(table=table),
+            )
+
+        return buttons
+
+    @classmethod
+    def build_dataset_navigation_fallback(cls, dataset_menu: str) -> str:
+        menu = str(dataset_menu or "").strip()
+        if not menu or "No authorized datasets" in menu:
+            return (
+                "### 📚 数据能力导航\n"
+                "---\n"
+                "当前账号暂无可查询的数据集。请联系管理员开通数据权限后，再使用 `/dataset_menu` 查看导航。\n\n"
+                "### 💬 您可能还想了解\n"
+                "---\n"
+                f"{cls.quick_button('重新查看数据导航', '/dataset_menu')}\n"
+            )
+
+        blocks = cls._parse_dataset_blocks(menu)
+        if blocks:
+            lines = [
+                "### 📚 数据能力导航",
+                "---",
+                f"您当前可访问 **{len(blocks)}** 个数据集。以下为基于目录自动整理的查询入口：",
+                "",
+            ]
+            for block in blocks:
+                heading = cls._dataset_heading(block)
+                lines.append(f"#### {heading}")
+                desc = re.sub(r"\s+", " ", str(block.get("description") or "").strip())
+                if desc and desc != "No description":
+                    if len(desc) > 120:
+                        desc = desc[:120] + "..."
+                    lines.append(desc)
+                    lines.append("")
+                lines.extend(cls._fallback_buttons_for_dataset(block))
+                lines.append("")
+
+            lines.extend(
+                [
+                    "### 💬 您可能还想了解",
+                    "---",
+                    cls.quick_button("重新查看数据导航", "/dataset_menu"),
+                    "",
+                ]
+            )
+            return "\n".join(lines).strip() + "\n"
+
+        body = menu
+        if len(body) > 2400:
+            body = body[:2400] + "\n... [目录过长已截断]"
+
+        return (
+            "### 📚 数据能力导航\n"
+            "---\n"
+            "暂时无法自动生成导航建议，以下为当前账号可访问的数据集目录（与 ChatBI 一致）：\n\n"
+            "```\n"
+            f"{body}\n"
+            "```\n\n"
+            "您可以直接用自然语言提问，或点击下方按钮重试。\n\n"
+            "### 💬 您可能还想了解\n"
+            "---\n"
+            f"{cls.quick_button('重新查看数据导航', '/dataset_menu')}\n"
+        )
 
     @classmethod
     def build_clarification_fallback(

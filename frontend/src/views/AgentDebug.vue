@@ -376,7 +376,13 @@ watch(
 // Agents State for Dropdown
 const agents = ref<any[]>([]);
 const debugMode = ref<"auto" | "specific">("auto");
-const slashCommands = ref<any[]>([]); // Dynamic commands
+const SYSTEM_SLASH_COMMANDS = [
+  { id: "sys_dataset_menu", command: "/dataset_menu", label: "📚 数据导航", sort_order: -35 },
+  { id: "sys_clear", command: "/new", label: "💬 新会话", sort_order: -30 },
+  { id: "sys_history", command: "/history", label: "🕒 历史", sort_order: -20 },
+  { id: "sys_settings", command: "/settings", label: "⚙️ 设置", sort_order: -15 },
+];
+const slashCommands = ref<any[]>([...SYSTEM_SLASH_COMMANDS]);
 
 const fetchAgents = async () => {
   try {
@@ -399,9 +405,14 @@ const hideDebugLikeDislikeForHostedAgent = computed(() => {
 const fetchSlashCommands = async () => {
   try {
     const res = await axios.get("/api/portal/slash-commands/");
-    if (res.data) slashCommands.value = res.data;
+    const userCommands = Array.isArray(res.data) ? res.data : [];
+    slashCommands.value = [
+      ...SYSTEM_SLASH_COMMANDS,
+      ...userCommands,
+    ].sort((a, b) => (a.sort_order || 999) - (b.sort_order || 999));
   } catch (e) {
     console.error("Failed to fetch slash commands", e);
+    slashCommands.value = [...SYSTEM_SLASH_COMMANDS];
   }
 };
 
@@ -1579,8 +1590,79 @@ watch(
   }
 );
 
-const handleQuickQuestion = (question: string) => {
-  if (!question) return;
+const showDatasetMenuNavigation = async () => {
+  if (!conversationId.value) {
+    generateNewConversation();
+  }
+
+  messages.value.push({
+    id: Date.now(),
+    role: "user",
+    content: "/dataset_menu",
+    timestamp: new Date().toISOString(),
+  });
+
+  const navMsg = ref<Message>({
+    id: Date.now() + 1,
+    role: "agent",
+    content: "",
+    agentName: "sys_dataset_menu",
+    agentDisplayName: "系统 · 数据导航",
+    isThinking: true,
+    thinkingText: "正在生成数据能力导航...",
+    logs: [],
+    thoughtStartTime: Date.now(),
+    thoughtDuration: "0.0",
+    isThoughtExpanded: false,
+    isCitationsExpanded: false,
+    timestamp: new Date().toISOString(),
+  });
+  messages.value.push(navMsg.value);
+  await nextTick();
+  scrollToBottom(true);
+
+  try {
+    const res = await axios.get("/api/v1/chat/dataset-menu", {
+      headers: debugAuthHeaders(),
+    });
+    const markdown = res.data?.data?.markdown || "";
+    navMsg.value.content = markdown || "当前暂无可展示的数据集导航，请联系管理员开通数据权限。";
+  } catch (error) {
+    console.warn("Failed to load dataset menu navigation", error);
+    navMsg.value.content = (
+      "暂时无法加载数据能力导航，请稍后重试。\n\n"
+      + "- [🙋 重新加载数据导航](quick:/dataset_menu)"
+    );
+  } finally {
+    navMsg.value.isThinking = false;
+    navMsg.value.thinkingText = "";
+    await nextTick();
+    scrollToBottom(true);
+  }
+};
+
+const handleSystemCommand = async (cmd: string): Promise<boolean> => {
+  switch (cmd) {
+    case "/dataset_menu":
+      await showDatasetMenuNavigation();
+      return true;
+    case "/history":
+      showHistorySidebar.value = !showHistorySidebar.value;
+      return true;
+    case "/settings":
+      showConfigPanel.value = !showConfigPanel.value;
+      return true;
+    case "/new":
+    case "/clear":
+      generateNewConversation(true);
+      return true;
+  }
+  return false;
+};
+
+const handleQuickQuestion = async (question: string) => {
+  if (!question || isProcessing.value) return;
+  if (await handleSystemCommand(question)) return;
   userInput.value = question;
   sendMessage();
 };
@@ -1726,6 +1808,14 @@ const sendMessage = async () => {
   const content = userInput.value.trim();
   if (!content && files.length === 0) return;
   if (isProcessing.value) return;
+
+  if (await handleSystemCommand(content)) {
+    userInput.value = "";
+    if (chatInputRef.value) {
+      chatInputRef.value.uploadedFiles = [];
+    }
+    return;
+  }
 
   // 1. Add User Message
   messages.value.push({
@@ -2926,7 +3016,7 @@ onUnmounted(() => {
                       d="M19.428 15.428a2 2 0 00-1.022-.547l-2.384-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z"
                     />
                   </svg>
-                  <span>{{ getAgentDisplayName(msg) ? `${getAgentDisplayName(msg)} · 正在服务` : (msg.agentName || '智能调度中...') }}</span>
+                  <span>{{ getAgentDisplayName(msg) ? `${getAgentDisplayName(msg)} · ${String(msg.agentName || '').startsWith('sys_') ? '系统指令' : '正在服务'}` : (msg.agentName || '智能调度中...') }}</span>
                 </div>
 
                 <!-- Full Logs -->
@@ -3028,9 +3118,12 @@ onUnmounted(() => {
                   <div class="flex-1 flex items-center justify-between min-w-0">
                     <div class="flex items-center space-x-2 overflow-hidden">
                       <span class="text-xs font-semibold text-gray-700 truncate">
-                        {{ msg.isThinking ? '思考中...' : '深度思考过程' }}
+                        {{ msg.isThinking ? (msg.thinkingText || '思考中...') : '深度思考过程' }}
                       </span>
-                      <span class="text-[10px] px-1.5 py-0.5 rounded-full bg-gray-100 text-gray-500 font-mono">
+                      <span
+                        v-if="msg.logs.length > 0"
+                        class="text-[10px] px-1.5 py-0.5 rounded-full bg-gray-100 text-gray-500 font-mono"
+                      >
                         {{ msg.logs.length }} 步骤
                       </span>
                     </div>

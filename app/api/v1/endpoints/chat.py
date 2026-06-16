@@ -90,6 +90,13 @@ from app.schemas.response import StandardResponse
 class GreetingResponse(BaseModel):
     greeting: str = Field(..., description="欢迎语内容")
 
+
+class DatasetNavigationResponse(BaseModel):
+    dataset_count: int = Field(..., description="当前用户可访问的数据集数量")
+    groups: List[Dict[str, Any]] = Field(default_factory=list, description="按标签分组的数据集导航")
+    markdown: str = Field(..., description="含 quick 按钮的 Markdown 导航内容")
+
+
 @router.get("/greeting", 
     response_model=StandardResponse[GreetingResponse],
     summary="获取欢迎语",
@@ -102,6 +109,30 @@ async def get_greeting():
     greeting = await agent_service.generate_greeting()
     # return {"greeting": greeting} -> Wrap
     return StandardResponse(data=GreetingResponse(greeting=greeting))
+
+
+@router.get(
+    "/dataset-menu",
+    response_model=StandardResponse[DatasetNavigationResponse],
+    summary="获取数据集能力导航",
+    description="基于当前用户授权的 {dataset_menu} 目录，由 LLM 生成分组导航与 quick 追问建议，供 /dataset_menu 系统指令使用。",
+)
+async def get_dataset_menu_navigation(
+    db: AsyncSession = Depends(get_db_session),
+    user_info: Dict[str, Any] = Depends(require_api_key),
+):
+    from app.services.dataset_navigation_service import DatasetNavigationService
+
+    raw_user_id = user_info.get("user_id") or user_info.get("id")
+    user_id = int(raw_user_id) if raw_user_id is not None else None
+    is_admin = user_info.get("role") == "admin"
+    payload = await DatasetNavigationService.build_navigation_for_user(
+        db,
+        user_id=user_id,
+        is_admin=is_admin,
+    )
+    return StandardResponse(data=DatasetNavigationResponse(**payload))
+
 
 class ConversationHistoryResponse(BaseModel):
     conversation_id: str = Field(..., description="会话ID")
