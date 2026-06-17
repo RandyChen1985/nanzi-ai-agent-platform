@@ -8,7 +8,7 @@ class MetaChangelog(Base):
 
     id = Column(BigInteger, primary_key=True, index=True, autoincrement=True, comment='主键ID')
     resource_type = Column(String(20), nullable=False, index=True, comment='资源类型: dataset/table/column/metric/relationship')
-    resource_id = Column(String(50), nullable=False, index=True, comment='资源ID')
+    resource_id = Column(String(270), nullable=False, index=True, comment='资源ID')
     operation = Column(String(20), nullable=False, index=True, comment='操作类型: create/update/delete')
     old_data = Column(JSON, nullable=True, comment='变更前数据')
     new_data = Column(JSON, nullable=True, comment='变更后数据')

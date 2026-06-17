@@ -66,7 +66,7 @@ def test_parse_dataset_blocks_captures_table_descriptions():
 
 
 @pytest.mark.no_infrastructure
-def test_build_dataset_navigation_groups_merges_same_scene_title():
+def test_build_dataset_navigation_groups_one_card_per_dataset():
     menu = """Available Datasets:
 - Dataset: ops_alerts
   Display Name: 机房告警
@@ -81,17 +81,32 @@ def test_build_dataset_navigation_groups_merges_same_scene_title():
     - 设备状态表: 设备运行状态
 """
     groups = DataQueryPrompts.build_dataset_navigation_groups(menu)
-    assert len(groups) == 1
-    assert groups[0]["title"] == "运维监控分析"
-    assert len(groups[0]["related_data"]) == 2
+    assert len(groups) == 2
+    assert groups[0]["title"] == "机房告警"
+    assert groups[1]["title"] == "设备监控"
+    assert len(groups[0]["related_data"]) == 1
     assert groups[0]["related_data"][0]["dataset"] == "ops_alerts"
-    assert groups[0]["related_data"][1]["dataset"] == "ops_devices"
-    assert "机房告警表" in groups[0]["related_data"][0]["tables"]
-    assert "设备状态表" in groups[0]["related_data"][1]["tables"]
+    assert groups[1]["related_data"][0]["dataset"] == "ops_devices"
+    assert groups[0]["tags"] == ["机房告警表"]
+    assert groups[1]["tags"] == ["设备状态表"]
 
 
 @pytest.mark.no_infrastructure
-def test_build_dataset_navigation_fallback_deduplicates_scene_cards():
+def test_build_dataset_navigation_groups_prefers_metrics_as_tags():
+    menu = """Available Datasets:
+- Dataset: sales_kpi
+  Display Name: 销售指标
+  Metrics: 收入, 回款率
+  Includes Tables: 销售订单表
+"""
+    groups = DataQueryPrompts.build_dataset_navigation_groups(menu)
+    assert len(groups) == 1
+    assert groups[0]["title"] == "销售指标"
+    assert groups[0]["tags"] == ["收入", "回款率"]
+
+
+@pytest.mark.no_infrastructure
+def test_build_dataset_navigation_fallback_uses_one_card_per_dataset():
     menu = """Available Datasets:
 - Dataset: ops_alerts
   Display Name: 机房告警
@@ -102,7 +117,8 @@ def test_build_dataset_navigation_fallback_deduplicates_scene_cards():
   Includes Tables: 设备状态表
 """
     markdown = DataQueryPrompts.build_dataset_navigation_fallback(menu)
-    assert markdown.count("#### 运维监控分析") == 1
+    assert markdown.count("#### 机房告警") == 1
+    assert markdown.count("#### 设备监控") == 1
     assert "机房告警 (ops_alerts)" in markdown
     assert "设备监控 (ops_devices)" in markdown
 
@@ -113,9 +129,10 @@ def test_build_dataset_navigation_groups_from_dataset_menu():
     assert len(groups) == 2
     first_group = groups[0]
     assert first_group["id"]
-    assert "智能体" in first_group["title"]
+    assert first_group["title"] == "智能体元数据"
     assert first_group["summary"]
     assert first_group["tags"]
+    assert "智能体访问日志" in first_group["tags"]
     assert len(first_group["questions"]) >= 3
     assert first_group["questions"][0]["query"]
     assert first_group["followups"]
@@ -127,7 +144,7 @@ def test_build_dataset_navigation_groups_from_dataset_menu():
 def test_build_dataset_navigation_fallback_uses_business_scene_cards():
     markdown = DataQueryPrompts.build_dataset_navigation_fallback(SAMPLE_MENU)
     assert "### 📚 我的数据门户" in markdown
-    assert "#### 智能体运行分析" in markdown
+    assert "#### 智能体元数据" in markdown
     assert "> 您当前可访问 **2** 个数据集" in markdown
     assert "**你可以这样问：**" in markdown
     assert "**相关数据：** 智能体元数据 (ai_agent_meta)" in markdown
@@ -325,7 +342,7 @@ async def test_record_question_click_stores_redis_rank_and_metadata():
             dataset_menu_hash="abc123",
             query="查询智能体访问日志最近10条明细记录",
             label="查询明细",
-            group_id="ai_agent_meta_智能体运行分析",
+            group_id="ai_agent_meta",
         )
 
     redis.zincrby.assert_awaited_once()
@@ -333,12 +350,31 @@ async def test_record_question_click_stores_redis_rank_and_metadata():
     assert redis.expire.await_count == 2
 
 
+@pytest.mark.asyncio
+@pytest.mark.no_infrastructure
+async def test_clear_question_click_removes_redis_rank_and_metadata():
+    redis = AsyncMock()
+    redis.zrem = AsyncMock(return_value=1)
+    redis.hdel = AsyncMock(return_value=1)
+    with patch("app.services.dataset_navigation_service.get_redis", AsyncMock(return_value=redis)):
+        cleared = await DatasetNavigationService.clear_question_click(
+            user_id=7,
+            is_admin=False,
+            dataset_menu_hash="abc123",
+            query="查询智能体访问日志最近10条明细记录",
+        )
+
+    assert cleared is True
+    redis.zrem.assert_awaited_once()
+    redis.hdel.assert_awaited_once()
+
+
 @pytest.mark.no_infrastructure
 def test_parse_groups_from_markdown_success():
     static_groups = [
         {
-            "id": "ai_agent_meta_智能体运行分析",
-            "title": "智能体运行分析",
+            "id": "ai_agent_meta",
+            "title": "智能体元数据",
             "summary": "静态描述",
             "questions": [{"label": "静态问题", "query": "静态查询"}],
             "followups": [{"label": "静态追问", "query": "静态追问查询"}],
@@ -349,7 +385,7 @@ def test_parse_groups_from_markdown_success():
         "---\n"
         "> 整体描述\n"
         "\n"
-        "#### 智能体运行分析\n"
+        "#### 智能体元数据\n"
         "> 这是动态生成的智能体分析摘要，帮助分析性能。\n"
         "\n"
         "**你可以这样问：**\n"
@@ -367,7 +403,7 @@ def test_parse_groups_from_markdown_success():
     parsed = DatasetNavigationService.parse_groups_from_markdown(markdown, static_groups)
     assert len(parsed) == 1
     group = parsed[0]
-    assert group["title"] == "智能体运行分析"
+    assert group["title"] == "智能体元数据"
     assert group["summary"] == "这是动态生成的智能体分析摘要，帮助分析性能。"
     assert len(group["questions"]) == 2
     assert group["questions"][0]["label"] == "访问热度"
@@ -459,7 +495,7 @@ async def test_refresh_group_questions_success():
     ):
         questions = await DatasetNavigationService.refresh_group_questions(
             mock_db,
-            group_title="智能体运行分析",
+            group_title="智能体元数据",
             tables=["智能体访问日志"]
         )
 

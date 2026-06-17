@@ -203,6 +203,30 @@ async def record_dataset_menu_question_click(
 
 
 @router.post(
+    "/dataset-menu/click/clear",
+    response_model=StandardResponse[Dict[str, bool]],
+    summary="从我的常问中移除问题",
+    description="清除用户在数据门户中对某条 quick 问题的点击记录，用于「我常问」个性化列表的删除清理。",
+)
+async def clear_dataset_menu_question_click(
+    request: DatasetMenuClickRequest,
+    user_info: Dict[str, Any] = Depends(require_api_key),
+):
+    from app.services.dataset_navigation_service import DatasetNavigationService
+
+    raw_user_id = user_info.get("user_id") or user_info.get("id")
+    user_id = int(raw_user_id) if raw_user_id is not None else None
+    is_admin = user_info.get("role") == "admin"
+    cleared = await DatasetNavigationService.clear_question_click(
+        user_id=user_id,
+        is_admin=is_admin,
+        dataset_menu_hash=request.dataset_menu_hash,
+        query=request.query,
+    )
+    return StandardResponse(data={"success": cleared})
+
+
+@router.post(
     "/dataset-menu/refresh-group-questions",
     response_model=StandardResponse[DatasetGroupRefreshResponse],
     summary="局部刷新当前数据门户场景卡片下的推荐问题",

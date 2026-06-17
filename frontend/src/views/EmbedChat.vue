@@ -850,6 +850,7 @@
                                                                   :payload="msg.datasetNavigation"
                                                                   @quick-question="handleQuickQuestion"
                                                                   @record-question-click="(payload) => recordDatasetMenuQuestionClick(msg.datasetNavigation, payload)"
+                                                                  @clear-question-click="(payload) => clearDatasetMenuQuestionClick(msg.datasetNavigation, payload)"
                                                                   @refresh="refreshDatasetMenuNavigation(msg)"
                                                                 />
                                 <!-- Typewriter Cursor -->
@@ -2246,7 +2247,7 @@
               <div class="flex items-center gap-2 flex-shrink-0">
                 <label
                   class="hidden sm:flex items-center gap-1.5 text-[10px] text-gray-500 dark:text-gray-400 cursor-pointer select-none whitespace-nowrap"
-                  title="开启后点击问题不会关闭抽屉，可连续提问"
+                  title="开启后点击问题不会关闭抽屉，可连续提问（仅桌面端生效）"
                 >
                   <input
                     v-model="portalKeepOpenOnQuestion"
@@ -2270,12 +2271,12 @@
             <!-- 抽屉内容 -->
             <div class="flex-1 overflow-y-auto p-3 sm:p-4 bg-white dark:bg-gray-900/60">
               <DatasetCapabilityMenu
-                ref="portalMenuRef"
                 :payload="portalNavigationPayload || { groups: [] }"
                 :initial-loading="portalLoading && !portalNavigationPayload"
                 :background-refreshing="portalBackgroundRefreshing"
                 @quick-question="handlePortalQuickQuestion"
                 @record-question-click="(payload) => recordDatasetMenuQuestionClick(portalNavigationPayload, payload)"
+                @clear-question-click="(payload) => clearDatasetMenuQuestionClick(portalNavigationPayload, payload)"
                 @refresh="refreshPortalNavigation"
               />
             </div>
@@ -3043,6 +3044,46 @@ const recordDatasetMenuQuestionClick = async (
     );
   } catch (error) {
     console.warn("Failed to record dataset menu question click", error);
+  }
+};
+
+const clearNavigationQuestionClickStats = (
+  navigation: DatasetNavigationPayload | undefined,
+  query: string,
+) => {
+  const normalized = String(query || "").trim();
+  if (!navigation?.groups || !normalized) return;
+  for (const group of navigation.groups) {
+    for (const question of group.questions || []) {
+      if (String(question.query || "").trim() !== normalized) continue;
+      question.click_count = 0;
+      delete question.last_clicked_at;
+    }
+  }
+};
+
+const clearDatasetMenuQuestionClick = async (
+  navigation: DatasetNavigationPayload | undefined,
+  payload: { query: string },
+) => {
+  const datasetMenuHash = navigation?.dataset_menu_hash;
+  const query = String(payload?.query || "").trim();
+  if (!datasetMenuHash || !query) return;
+  try {
+    await axios.post(
+      "/api/v1/chat/dataset-menu/click/clear",
+      {
+        dataset_menu_hash: datasetMenuHash,
+        query,
+      },
+      { headers: embedAuthHeaders() }
+    );
+    clearNavigationQuestionClickStats(navigation, query);
+    if (navigation === portalNavigationPayload.value && portalNavigationPayload.value) {
+      portalNavigationPayload.value = { ...portalNavigationPayload.value };
+    }
+  } catch (error) {
+    console.warn("Failed to clear dataset menu question click", error);
   }
 };
 const handleReorderCommands = async (reorderData: any[]) => {
@@ -4201,7 +4242,6 @@ const portalNavigationPayload = ref<any>(null);
 const portalLoading = ref(false);
 const portalSilentRefreshing = ref(false);
 const portalPrefetchInFlight = ref(false);
-const portalMenuRef = ref<InstanceType<typeof DatasetCapabilityMenu> | null>(null);
 const hasSilentlyRefreshed = ref(false);
 let silentRefreshTimer: any = null;
 
@@ -4210,6 +4250,13 @@ const portalKeepOpenOnQuestion = ref(localStorage.getItem(PORTAL_KEEP_OPEN_KEY) 
 watch(portalKeepOpenOnQuestion, (val) => {
   localStorage.setItem(PORTAL_KEEP_OPEN_KEY, val ? "1" : "0");
 });
+
+const isMobileViewport = () =>
+  typeof window !== "undefined" && window.matchMedia("(max-width: 639px)").matches;
+
+/** 移动端点击问题后始终关闭抽屉；桌面端尊重「提问后保持」开关。 */
+const shouldClosePortalAfterQuestion = () =>
+  isMobileViewport() || !portalKeepOpenOnQuestion.value;
 
 // 数据门户初始化加载温馨提示词轮播
 const portalLoadingTips = [
@@ -4269,8 +4316,6 @@ const openPortalDrawer = async () => {
   } else if (portalNavigationPayload.value.is_fallback) {
     await fetchPortalNavigationData(false, false);
   }
-  await nextTick();
-  portalMenuRef.value?.focusSearch();
 };
 
 const fetchPortalNavigationData = async (refresh = false, silent = false) => {
@@ -4330,8 +4375,6 @@ watch(showPortalDrawer, (val) => {
       silentRefreshTimer = null;
     }
     stopPortalLoadingTips();
-  } else {
-    nextTick(() => portalMenuRef.value?.focusSearch());
   }
 });
 
@@ -4340,7 +4383,7 @@ const refreshPortalNavigation = async () => {
 };
 
 const handlePortalQuickQuestion = (query: string) => {
-  if (!portalKeepOpenOnQuestion.value) {
+  if (shouldClosePortalAfterQuestion()) {
     showPortalDrawer.value = false;
   }
   handleQuickQuestion(query);

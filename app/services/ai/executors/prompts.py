@@ -161,7 +161,7 @@ class DataQueryPrompts:
 
 任务：
 1. 开头用**引用块**（`>` 开头）做整体概要：用 1-2 句话说明数据集数量、覆盖的主要业务域与整体能查询的能力范围。
-2. 把数据目录改写成用户看得懂的**业务场景卡片**，不要只罗列表名。每个卡片标题应是业务动作或分析场景，例如“智能体运行分析”“权限审计分析”“运维监控分析”。
+2. **每个授权数据集对应一张独立的业务场景卡片**，卡片标题必须使用该数据集的 **Display Name**（若无则使用 Dataset 名）；不要将多个数据集合并到同一张卡片。
 3. 每张业务场景卡片必须包含：
    - `#### 场景标题`
    - 一段引用块概要，说明适合解决什么业务问题。
@@ -338,43 +338,63 @@ class DataQueryPrompts:
         return slug[:48] or "dataset_scene"
 
     @classmethod
-    def _infer_dataset_scene(cls, block: dict[str, Any]) -> dict[str, Any]:
-        name = str(block.get("name") or "").strip()
+    def _dataset_scene_title(cls, block: dict[str, Any]) -> str:
         display_name = str(block.get("display_name") or "").strip()
+        name = str(block.get("name") or "").strip()
+        return display_name or name or "未命名数据集"
+
+    @classmethod
+    def _extract_dataset_tags(cls, block: dict[str, Any], *, max_tags: int = 4) -> list[str]:
+        tags: list[str] = []
+        seen: set[str] = set()
+
+        def add(tag: str) -> None:
+            cleaned = str(tag or "").strip()
+            if not cleaned or cleaned in seen:
+                return
+            seen.add(cleaned)
+            tags.append(cleaned)
+
+        for metric in block.get("metrics") or []:
+            add(str(metric))
+            if len(tags) >= max_tags:
+                return tags[:max_tags]
+
+        for table in block.get("tables") or []:
+            add(str(table.get("term") or ""))
+            if len(tags) >= max_tags:
+                break
+
+        if not tags:
+            return ["明细查询", "统计汇总"]
+        return tags[:max_tags]
+
+    @classmethod
+    def _infer_dataset_scene(cls, block: dict[str, Any]) -> dict[str, Any]:
+        title = cls._dataset_scene_title(block)
         description = str(block.get("description") or "").strip()
-        table_terms = [str(t.get("term") or "").strip() for t in block.get("tables") or []]
-        haystack = " ".join([name, display_name, description, *table_terms]).lower()
-
-        if any(k in haystack for k in ("智能体", "agent", "对话", "模型", "trace", "链路", "token")):
-            return {
-                "title": "智能体运行分析",
-                "summary": "适合查看智能体访问、对话、执行链路、模型配置等运行情况，帮助定位使用量、失败原因与链路表现。",
-                "tags": ["调用统计", "对话追踪", "模型配置"],
-            }
-        if any(k in haystack for k in ("权限", "角色", "用户", "审计", "登录", "账号")):
-            return {
-                "title": "权限审计分析",
-                "summary": "适合查询账号、角色、权限变更与访问审计，帮助确认谁能访问哪些资源以及是否存在异常操作。",
-                "tags": ["账号权限", "角色审计", "访问记录"],
-            }
-        if any(k in haystack for k in ("告警", "机房", "设备", "pue", "容量", "资源", "运维", "监控")):
-            return {
-                "title": "运维监控分析",
-                "summary": "适合查看资源容量、设备状态、告警记录与趋势变化，帮助发现异常、定位风险和跟踪运维指标。",
-                "tags": ["告警趋势", "容量分析", "设备监控"],
-            }
-        if any(k in haystack for k in ("收入", "订单", "客户", "合同", "回款", "销售", "费用", "成本")):
-            return {
-                "title": "经营指标分析",
-                "summary": "适合查询收入、订单、客户、合同、回款或成本费用等经营指标，帮助做趋势、排名与对比分析。",
-                "tags": ["经营趋势", "客户分析", "收入成本"],
-            }
-
-        base = display_name or name or "业务数据"
+        tables = [
+            str(t.get("term") or "").strip()
+            for t in block.get("tables") or []
+            if str(t.get("term") or "").strip()
+        ]
+        table_hint = "、".join(tables[:3]) if tables else "相关表"
+        generic_descriptions = {
+            "no description",
+            "imported via smart wizard",
+            "无",
+            "暂无描述",
+        }
+        if description and description.lower() not in generic_descriptions:
+            summary = f"适合围绕「{title}」查询与分析。{description}"
+        else:
+            summary = (
+                f"适合围绕「{title}」中的{table_hint}发起明细查询、统计汇总与趋势分析。"
+            )
         return {
-            "title": f"{base}数据分析",
-            "summary": f"适合围绕{base}中的表和指标发起明细查询、统计汇总、趋势变化与字段探索。",
-            "tags": ["明细查询", "统计汇总", "趋势分析"],
+            "title": title,
+            "summary": summary,
+            "tags": cls._extract_dataset_tags(block),
         }
 
     @classmethod
@@ -419,84 +439,56 @@ class DataQueryPrompts:
 
     @classmethod
     def build_dataset_navigation_groups(cls, dataset_menu: str) -> list[dict[str, Any]]:
-        """按业务场景标题合并数据集，避免多个数据集命中同一场景时出现重复卡片。"""
-        grouped_blocks: dict[str, list[dict[str, Any]]] = {}
-        group_order: list[str] = []
+        """每个授权数据集生成一张独立场景卡片，标题与标签来自数据集元数据。"""
+        groups: list[dict[str, Any]] = []
 
         for block in cls._parse_dataset_blocks(dataset_menu):
-            scene_title = cls._infer_dataset_scene(block)["title"]
-            if scene_title not in grouped_blocks:
-                grouped_blocks[scene_title] = []
-                group_order.append(scene_title)
-            grouped_blocks[scene_title].append(block)
+            scene = cls._infer_dataset_scene(block)
+            name = str(block.get("name") or "").strip()
+            display_name = str(block.get("display_name") or "").strip() or name or "未命名数据集"
+            scene_title = scene["title"]
+            tables = [t for t in (block.get("tables") or []) if str(t.get("term") or "").strip()]
+            metrics = [str(m).strip() for m in (block.get("metrics") or []) if str(m).strip()]
 
-        groups: list[dict[str, Any]] = []
-        for scene_title in group_order:
-            blocks = grouped_blocks[scene_title]
-            scene = cls._infer_dataset_scene(blocks[0])
-
-            merged_tables: list[dict[str, Any]] = []
-            seen_table_terms: set[str] = set()
-            merged_metrics: list[str] = []
-            seen_metrics: set[str] = set()
-            related_data: list[dict[str, Any]] = []
-
-            for block in blocks:
-                name = str(block.get("name") or "").strip()
-                display_name = str(block.get("display_name") or "").strip() or name or "未命名数据集"
-                tables = [t for t in (block.get("tables") or []) if str(t.get("term") or "").strip()]
-                metrics = [str(m).strip() for m in (block.get("metrics") or []) if str(m).strip()]
-
-                table_terms: list[str] = []
-                table_descriptions: list[dict[str, str]] = []
-                for table in tables:
-                    term = str(table.get("term") or "").strip()
-                    if not term or term in seen_table_terms:
-                        continue
-                    seen_table_terms.add(term)
-                    merged_tables.append(table)
-                    table_terms.append(term)
-                    table_descriptions.append(
-                        {
-                            "name": term,
-                            "description": str(table.get("desc") or "").strip(),
-                        }
-                    )
-
-                for metric in metrics:
-                    if metric not in seen_metrics:
-                        seen_metrics.add(metric)
-                        merged_metrics.append(metric)
-
-                related_data.append(
+            table_terms: list[str] = []
+            table_descriptions: list[dict[str, str]] = []
+            for table in tables:
+                term = str(table.get("term") or "").strip()
+                table_terms.append(term)
+                table_descriptions.append(
                     {
-                        "dataset": name,
-                        "display_name": display_name,
-                        "tables": table_terms,
-                        "table_descriptions": table_descriptions,
+                        "name": term,
+                        "description": str(table.get("desc") or "").strip(),
                     }
                 )
 
             groups.append(
                 {
-                    "id": cls._slugify_scene_id(scene_title),
+                    "id": cls._slugify_scene_id(name or display_name),
                     "title": scene_title,
                     "summary": scene["summary"],
                     "tags": scene["tags"],
                     "questions": cls._question_templates_for_group(
                         scene_title=scene_title,
-                        tables=merged_tables,
-                        metrics=merged_metrics,
+                        tables=tables,
+                        metrics=metrics,
                     ),
-                    "related_data": related_data,
+                    "related_data": [
+                        {
+                            "dataset": name,
+                            "display_name": display_name,
+                            "tables": table_terms,
+                            "table_descriptions": table_descriptions,
+                        }
+                    ],
                     "followups": [
                         {
                             "label": "更多问题",
-                            "query": f"围绕{scene_title}，推荐我还能问哪些数据问题",
+                            "query": f"围绕「{scene_title}」，推荐我还能问哪些数据问题",
                         },
                         {
                             "label": "字段说明",
-                            "query": f"说明{scene_title}相关数据里有哪些可查询字段和适合的分析口径",
+                            "query": f"说明「{scene_title}」里有哪些可查询字段和适合的分析口径",
                         },
                     ],
                 }
