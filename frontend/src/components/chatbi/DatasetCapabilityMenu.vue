@@ -15,7 +15,7 @@
     </div>
 
     <!-- Header -->
-    <div class="bg-gray-50/40 dark:bg-gray-800/10 backdrop-blur-sm border border-gray-150 dark:border-gray-800/80 rounded-xl p-3 flex flex-col sm:flex-row justify-between sm:items-center gap-3">
+    <div class="bg-gray-50/40 dark:bg-gray-800/10 backdrop-blur-sm border border-gray-150 dark:border-gray-800/80 rounded-xl p-3 flex flex-row items-center justify-between gap-2">
       <div class="flex items-center gap-2.5 min-w-0">
         <div class="flex items-center justify-center w-8 h-8 rounded-lg bg-blue-600 dark:bg-blue-500 text-white shadow-sm flex-shrink-0">
           <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -67,7 +67,6 @@
           </svg>
         </span>
         <input
-          ref="searchInputRef"
           v-model="searchQuery"
           type="text"
           placeholder="搜索场景、表名或指标..."
@@ -122,16 +121,31 @@
         <span>🔥</span> 我常问
       </div>
       <div class="flex flex-wrap gap-2">
-        <button
+        <div
           v-for="item in frequentQuestions"
           :key="item.question.query"
-          type="button"
-          class="inline-flex items-center gap-1.5 rounded-lg border border-amber-200/70 dark:border-amber-800/50 bg-white/80 dark:bg-gray-900/40 px-2.5 py-1.5 text-left text-[11px] font-semibold text-amber-900 dark:text-amber-100 hover:bg-amber-50 dark:hover:bg-amber-950/40 transition-all active:scale-95"
-          @click="handleFrequentQuestionClick(item)"
+          class="inline-flex items-stretch rounded-lg border border-amber-200/70 dark:border-amber-800/50 bg-white/80 dark:bg-gray-900/40 overflow-hidden"
         >
-          <span class="truncate max-w-[220px]">{{ item.question.label }}</span>
-          <span class="text-[9px] font-bold text-amber-600 dark:text-amber-400">{{ item.question.click_count }}次</span>
-        </button>
+          <button
+            type="button"
+            class="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-left text-[11px] font-semibold text-amber-900 dark:text-amber-100 hover:bg-amber-50 dark:hover:bg-amber-950/40 transition-all active:scale-95"
+            @click="handleFrequentQuestionClick(item)"
+          >
+            <span class="truncate max-w-[200px] sm:max-w-[220px]">{{ item.question.label }}</span>
+            <span class="text-[9px] font-bold text-amber-600 dark:text-amber-400">{{ item.question.click_count }}次</span>
+          </button>
+          <button
+            type="button"
+            class="flex items-center justify-center px-1.5 text-amber-500/80 dark:text-amber-400/80 border-l border-amber-200/70 dark:border-amber-800/50 hover:bg-amber-100/80 dark:hover:bg-amber-950/60 hover:text-amber-700 dark:hover:text-amber-200 transition-colors"
+            title="从常问中移除"
+            aria-label="从常问中移除"
+            @click.stop="handleClearFrequentQuestion(item)"
+          >
+            <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
       </div>
     </div>
 
@@ -592,11 +606,11 @@ const formatGroupSummary = (text: string): string => {
 const emit = defineEmits<{
   (event: "quick-question", query: string): void;
   (event: "record-question-click", payload: { query: string; label?: string; group_id?: string }): void;
+  (event: "clear-question-click", payload: { query: string }): void;
   (event: "refresh"): void;
 }>();
 
 const menuContainer = ref<HTMLElement | null>(null);
-const searchInputRef = ref<HTMLInputElement | null>(null);
 const isRefreshing = ref(false);
 let refreshSafetyTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -815,11 +829,11 @@ const handleFrequentQuestionClick = (item: { question: DatasetCapabilityQuestion
   handleQuestionClick(item.question, item.group);
 };
 
-const focusSearch = () => {
-  nextTick(() => searchInputRef.value?.focus());
+const handleClearFrequentQuestion = (item: { question: DatasetCapabilityQuestion; group: DatasetCapabilityGroup }) => {
+  const query = String(item.question.query || "").trim();
+  if (!query) return;
+  emit("clear-question-click", { query });
 };
-
-defineExpose({ focusSearch });
 
 // 动态去重提取出当前有权访问的所有卡片 tags
 const allTags = computed(() => {

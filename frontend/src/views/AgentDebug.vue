@@ -1604,6 +1604,43 @@ const recordDatasetMenuQuestionClick = async (
   }
 };
 
+const clearNavigationQuestionClickStats = (
+  navigation: DatasetNavigationPayload | undefined,
+  query: string,
+) => {
+  const normalized = String(query || "").trim();
+  if (!navigation?.groups || !normalized) return;
+  for (const group of navigation.groups) {
+    for (const question of group.questions || []) {
+      if (String(question.query || "").trim() !== normalized) continue;
+      question.click_count = 0;
+      delete question.last_clicked_at;
+    }
+  }
+};
+
+const clearDatasetMenuQuestionClick = async (
+  navigation: DatasetNavigationPayload | undefined,
+  payload: { query: string },
+) => {
+  const datasetMenuHash = navigation?.dataset_menu_hash;
+  const query = String(payload?.query || "").trim();
+  if (!datasetMenuHash || !query) return;
+  try {
+    await axios.post(
+      "/api/v1/chat/dataset-menu/click/clear",
+      {
+        dataset_menu_hash: datasetMenuHash,
+        query,
+      },
+      { headers: debugAuthHeaders() }
+    );
+    clearNavigationQuestionClickStats(navigation, query);
+  } catch (error) {
+    console.warn("Failed to clear dataset menu question click", error);
+  }
+};
+
 const openImagePreview = (url: string) => {
   window.open(url, "_blank");
 };
@@ -3657,6 +3694,7 @@ onUnmounted(() => {
                   :payload="msg.datasetNavigation"
                   @quick-question="handleQuickQuestion"
                   @record-question-click="(payload) => recordDatasetMenuQuestionClick(msg.datasetNavigation, payload)"
+                  @clear-question-click="(payload) => clearDatasetMenuQuestionClick(msg.datasetNavigation, payload)"
                   @refresh="refreshDatasetMenuNavigation(msg)"
                 />
                 <!-- 导出 / 点赞踩（托管 RAGFlow、OpenClaw 不展示点赞踩） -->

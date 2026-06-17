@@ -20,7 +20,7 @@ from app.services.ai.runtime.agentscope.stream_reconcile import finalize_visible
 logger = logging.getLogger(__name__)
 
 _NAV_CACHE_TTL_SECONDS = 600
-_NAV_PROMPT_VERSION = "v3"
+_NAV_PROMPT_VERSION = "v4"
 _CLICK_STATS_TTL_SECONDS = 90 * 24 * 60 * 60
 
 
@@ -258,6 +258,39 @@ class DatasetNavigationService:
             await redis.expire(meta_key, _CLICK_STATS_TTL_SECONDS)
         except Exception as e:
             logger.warning("Dataset navigation click stats write failed: %s", e)
+
+    @staticmethod
+    async def clear_question_click(
+        *,
+        user_id: Optional[int],
+        is_admin: bool,
+        dataset_menu_hash: str,
+        query: str,
+    ) -> bool:
+        clean_hash = str(dataset_menu_hash or "").strip()
+        clean_query = str(query or "").strip()
+        if not clean_hash or not clean_query:
+            return False
+        try:
+            redis = await get_redis()
+            if not redis:
+                return False
+            user_key = _user_cache_key(user_id=user_id, is_admin=is_admin)
+            question_id = _question_hash(clean_query)
+            rank_key = DatasetNavigationService._click_rank_key(
+                user_key=user_key,
+                dataset_menu_hash=clean_hash,
+            )
+            meta_key = DatasetNavigationService._click_meta_key(
+                user_key=user_key,
+                dataset_menu_hash=clean_hash,
+            )
+            removed_rank = int(await redis.zrem(rank_key, question_id) or 0)
+            removed_meta = int(await redis.hdel(meta_key, question_id) or 0)
+            return removed_rank > 0 or removed_meta > 0
+        except Exception as e:
+            logger.warning("Dataset navigation click stats clear failed: %s", e)
+            return False
 
     @staticmethod
     def parse_groups_from_markdown(
