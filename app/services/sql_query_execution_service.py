@@ -187,7 +187,7 @@ async def enforce_physical_table_permissions_for_select(
         subject = f"{user_identity_label} " if user_identity_label else ""
         if lk in registered_lower:
             return f"[Permission Denied] {subject}无权访问表 '{display}'"
-        return f"[Permission Denied] {subject}表 '{display}' 未在元数据中注册，拒绝执行"
+        return f"[Validation Failed] {subject}物理表 '{display}' 未在元数据中注册或不存在。请使用 get_dataset_schema 工具确认当前数据集的可查询表，严禁凭空猜测表名！"
 
     return None
 
@@ -258,6 +258,18 @@ async def execute_sql_query_core(
     dialect = dialect_from_data_source(data_source)
 
     if not bypass_table_auth:
+        # 1. 强一致性校验：SQL 中的表必须属于当前指定的数据集
+        if ds:
+            err_ref, refs = extract_physical_table_refs_from_select_sql(sql, dialect)
+            if err_ref:
+                return f"[Validation Failed] {err_ref}"
+            if refs:
+                dataset_tables = {tb.physical_name.lower() for tb in ds.tables if tb.status == 1}
+                for lk, display in refs.items():
+                    if lk not in dataset_tables:
+                        return f"[Validation Failed] 表 '{display}' 不属于当前指定的数据集 '{dataset_name}'。请重新通过 get_dataset_schema 确认该数据集下的有效表定义，严禁跨数据集或凭空猜表！"
+
+        # 2. 物理表全局可访问权限校验
         perm_err = await enforce_physical_table_permissions_for_select(
             session,
             sql=sql,

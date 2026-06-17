@@ -140,5 +140,7 @@
 | 数据门户降级兜底静默自愈刷新 (Dataset Menu Fallback Silent Self-Healing) | `EmbedChat.vue`, `AgentDebug.vue`, `chat.py`, `dataset_navigation_service.py`, `test_dataset_navigation_service.py` | **大模型冷启动超时兜底的静默自愈刷新**：后端在数据门户 API 的返回中新增 `is_fallback` 标识；当前端首次加载数据门户（在聊天页抽屉或调试页指令消息中）若检测到返回的数据是降级兜底内容（`is_fallback: true`），则在后台 3 秒后自动、无感知地静默发起一次大模型刷新请求，待生成成功后自动平滑更新，解决由于大模型冷启动耗时导致的首次打开只显示兜底模板的用户痛点。 | ✅ 通过 | 2026-06-17 |
 | 智能调试页 SSE 撤回去重事件处理 (Agent Debug Page Retraction Event Handling) | `AgentDebug.vue` | **调试页流式数据撤回覆盖与防重复修复**：在 `AgentDebug.vue` 调试页面的主消息事件流处理器和授权恢复事件流处理器中，新增对 `type: "retraction"`（内容撤回）事件的处理分支。若接收到撤回通知，则用 `data.content` 覆盖原消息正文并重置 isThinking 状态，从而修复因异常修复轮次或去除主循环重复导致调试页面在流式输出中意外拼接产生重复“分析解读与折线图”的交互 Bug。 | ✅ 已完成 | 2026-06-17 |
 | 数据门户卡片换一批推荐问题 (Dataset Group Questions Refresh) | `tests/services/test_dataset_navigation_service.py`, `tests/api/v1/test_chat_refresh_group_questions.py`, `DatasetCapabilityMenu.vue` | **卡片推荐问题在线实时刷新**：验证前端卡片标题右侧“🔄 换一批”按钮点击交互；验证后端根据卡片场景与表定义上下文，通过 `build_group_questions_refresh_prompt` 实时调用大模型生成并返回 3 个新提问；验证局部 Loading 骨架屏动画与数据平滑覆盖。 | ✅ 通过 | 2026-06-17 |
+| ChatBI 物理表防猜表与一致性强校验 (ChatBI SQL Table Gating & Consistency) | `tests/services/test_sql_permission_messages.py`, `sql_query_execution_service.py` | **防猜表与强一致性拦截**：验证物理表未注册/不存在时拦截并返回 `[Validation Failed]` 报错，并包含明确的 Schema 引导提示词；验证指定 `dataset_name` 下 SQL 查询的物理表一致性强校验，若跨数据集或拼空猜表则直接予以拦截并报错。 | ✅ 通过 | 2026-06-17 |
+
 
 
