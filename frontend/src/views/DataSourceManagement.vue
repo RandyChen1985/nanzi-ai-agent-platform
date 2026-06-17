@@ -135,6 +135,37 @@ const editConfig = (item: DbConnectionConfig) => {
   connError.value = ''
 }
 
+const stripCopySuffix = (name: string) => name.replace(/_copy(?:_\d+)?$/i, '')
+
+const buildUniqueCopyName = (baseName: string) => {
+  const root = stripCopySuffix(baseName) || baseName
+  const existing = new Set(configs.value.map((config) => config.name))
+  let candidate = `${root}_copy`
+  if (!existing.has(candidate)) return candidate
+  let n = 2
+  while (existing.has(`${root}_copy_${n}`)) n += 1
+  return `${root}_copy_${n}`
+}
+
+const copyConfig = (item: DbConnectionConfig) => {
+  editingId.value = null
+  form.name = buildUniqueCopyName(item.name)
+  form.type = item.db_type
+  form.host = item.host
+  form.port = item.port
+  form.user = item.db_user
+  form.password = item.password
+  form.database = item.database_name
+  const copyNote = `（复制自 ${item.name}）`
+  const description = (item.description || '').trim()
+  form.description = description.includes(copyNote)
+    ? description
+    : `${description}${description ? ' ' : ''}${copyNote}`.trim()
+  testPassed.value = false
+  connError.value = ''
+  showToast('已复制到左侧表单，请确认名称后测试并保存', 'success')
+}
+
 const toConfigPayload = () => ({
   name: form.name.trim(),
   db_type: form.type,
@@ -442,8 +473,9 @@ onMounted(() => {
                   <span class="line-clamp-2">{{ item.description }}</span>
                 </div>
               </div>
-              <div class="flex items-center gap-2 flex-shrink-0">
+              <div class="flex flex-wrap items-center justify-end gap-2 flex-shrink-0">
                 <button @click="editConfig(item)" class="px-3 py-1.5 rounded-lg bg-white border border-gray-200 text-gray-600 hover:bg-gray-100 text-xs font-bold">编辑</button>
+                <button @click="copyConfig(item)" class="px-3 py-1.5 rounded-lg bg-violet-50 border border-violet-100 text-violet-600 hover:bg-violet-100 text-xs font-bold">复制</button>
                 <button @click="testSavedConnection(item)" class="px-3 py-1.5 rounded-lg bg-blue-50 border border-blue-100 text-blue-600 hover:bg-blue-100 text-xs font-bold">测试</button>
                 <button @click="openSqlDebug(item)" class="px-3 py-1.5 rounded-lg bg-emerald-50 border border-emerald-100 text-emerald-600 hover:bg-emerald-100 text-xs font-bold">调试</button>
                 <button

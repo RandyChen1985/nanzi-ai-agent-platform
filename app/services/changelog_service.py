@@ -42,14 +42,15 @@ class ChangelogService:
                 user_name=user_name,
                 reason=reason
             )
-            
-            db.add(changelog)
-            await db.flush()  # 确保日志记录成功，但不立即提交
+
+            async with db.begin_nested():
+                db.add(changelog)
+                await db.flush()
             logger.info(f"记录变更日志: {resource_type}:{resource_id} - {operation} by {user_name}")
-            
+
         except Exception as e:
             logger.error(f"记录变更日志失败: {e}")
-            # 不抛出异常，避免影响主业务
+            # 不抛出异常，避免影响主业务；使用 savepoint 防止 flush 失败污染外层事务
             
     @staticmethod
     def _calculate_changed_fields(old_data: Dict[str, Any], new_data: Dict[str, Any]) -> List[str]:

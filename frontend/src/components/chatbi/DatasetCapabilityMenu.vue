@@ -816,7 +816,7 @@ const tagFilterClass = (tag: string) => {
     return "bg-gray-50 dark:bg-gray-800/40 border-gray-150 dark:border-gray-800 text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800";
   }
   const owner = (props.payload.groups || []).find((group) => (group.tags || []).includes(tag));
-  const theme = getGroupVisuals(0, owner?.title || tag);
+  const theme = owner ? getGroupVisuals(owner, 0) : getGroupVisuals({ id: tag, title: tag }, 0);
   return `${theme.tag} ring-1 ring-current/20 shadow-xs`;
 };
 
@@ -983,20 +983,22 @@ const CARD_THEMES: GroupVisualTheme[] = [
   },
 ];
 
-const resolveThemeKey = (index: number, title: string): string => {
-  const titleStr = title || "";
-  if (titleStr.includes("智能体") || titleStr.includes("Agent") || titleStr.includes("大模型") || titleStr.includes("AI")) return "violet";
-  if (titleStr.includes("权限") || titleStr.includes("审计") || titleStr.includes("安全") || titleStr.includes("合规")) return "amber";
-  if (titleStr.includes("运维") || titleStr.includes("告警") || titleStr.includes("机房") || titleStr.includes("监控")) return "emerald";
-  if (titleStr.includes("用户") || titleStr.includes("客户") || titleStr.includes("订单") || titleStr.includes("会员")) return "rose";
-  if (titleStr.includes("数据") || titleStr.includes("看板") || titleStr.includes("报表") || titleStr.includes("门户")) return "cyan";
-  if (titleStr.includes("分析") || titleStr.includes("日志") || titleStr.includes("诊断") || titleStr.includes("统计")) return "blue";
-  return CARD_THEMES[index % CARD_THEMES.length].key;
+const hashThemeIndex = (seed: string): number => {
+  const normalized = seed.trim();
+  if (!normalized) return 0;
+  let hash = 0;
+  for (let i = 0; i < normalized.length; i += 1) {
+    hash = (hash * 31 + normalized.charCodeAt(i)) >>> 0;
+  }
+  return hash % CARD_THEMES.length;
 };
 
-const getGroupVisuals = (index: number, title: string): GroupVisualTheme => {
-  const key = resolveThemeKey(index, title);
-  return CARD_THEMES.find((theme) => theme.key === key) || CARD_THEMES[index % CARD_THEMES.length];
+const getGroupVisuals = (
+  group: Pick<DatasetCapabilityGroup, "id" | "title">,
+  fallbackIndex = 0,
+): GroupVisualTheme => {
+  const seed = String(group.id || group.title || fallbackIndex);
+  return CARD_THEMES[hashThemeIndex(seed)];
 };
 
 // 计算属性：联合搜索与过滤
@@ -1053,7 +1055,7 @@ const displayGroups = computed(() => {
   );
   return sorted.map((group, idx) => ({
     group,
-    visuals: getGroupVisuals(idx, group.title),
+    visuals: getGroupVisuals(group, idx),
   }));
 });
 
