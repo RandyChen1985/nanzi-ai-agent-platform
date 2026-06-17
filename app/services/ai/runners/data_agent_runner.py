@@ -86,7 +86,7 @@ DATA_REPAIR_BUDGETS = {
     "schema_ambiguous": 1,
     "sql_plan_missing": 1,
     "sql_static_risk": 1,
-    "sql_error": 2,
+    "sql_error": 5,
     "empty_sql_result": 1,
     "ratio_anomaly": 1,
     "duration_anomaly": 1,

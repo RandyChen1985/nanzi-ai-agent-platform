@@ -249,36 +249,36 @@ class PermissionService:
             'ai_chat': '智能助手',
             'metadata': '元数据管理',
             'Metadata': '元数据管理',
-            'agent_management': '智能体管理',
-            'Agent_management': '智能体管理',
-            'skills_management': '技能管理',
-            'agent_debug': '智能体测试',
-            'playground': 'API调试',
+            'agent_management': '智能体中心',
+            'Agent_management': '智能体中心',
+            'skills_management': '技能工作台',
+            'agent_debug': '智能体测评',
+            'playground': '接口调试台',
             'chat_logs': '聊天日志',
             'chatbi_examples': '用户反馈管理',
             'users': '用户管理',
             'roles': '角色管理',
             'config': '系统配置',
             'audit': '审计日志',
-            'prompts': '提示词工作室',
-            'widget_debug': '组件测试',
-            'task_center': '任务调度中心',
+            'prompts': '提示词工坊',
+            'widget_debug': '组件调试台',
+            'task_center': '任务调度台',
             'knowledge_management': '知识库管理',
             'knowledge_retrieval_test': '检索测试',
-            'memory_management': '记忆管理中心'
+            'memory_management': '记忆工作台'
         }
         
         element_module_mapping = {
             'metadata': '元数据管理',
-            'agent': '智能体管理',
+            'agent': '智能体中心',
             'chat_logs': '聊天日志',
-            'prompts': '提示词工作室',
+            'prompts': '提示词工坊',
             'user': '用户管理',
             'role': '角色管理',
             'system': '系统管理',
             'chatbi_example': '用户反馈管理',
             'knowledge': '知识库开发平台',
-            'memory': '记忆管理中心'
+            'memory': '记忆工作台'
         }
         
         element_action_mapping = {

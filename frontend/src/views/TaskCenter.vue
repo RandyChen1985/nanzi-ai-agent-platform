@@ -388,7 +388,7 @@ onMounted(() => { fetchTasks(true); fetchAgents() })
     <!-- Header Section -->
     <div class="flex flex-col md:flex-row md:items-center justify-between gap-4">
       <div>
-        <h1 class="text-2xl font-bold text-gray-900">任务中心</h1>
+        <h1 class="text-2xl font-bold text-gray-900">任务调度台</h1>
         <p class="text-gray-500 mt-1 text-sm hidden sm:block">管理并监控智能体的定时自动化巡检与报表任务</p>
         <p class="text-gray-500 mt-1 text-xs sm:hidden">智能体定时任务与巡检管理</p>
       </div>

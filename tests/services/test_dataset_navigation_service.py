@@ -472,3 +472,43 @@ async def test_refresh_group_questions_success():
     assert questions[2]["label"] == "失败原因分布"
     assert questions[2]["query"] == "统计最近24小时的失败原因分布"
 
+
+@pytest.mark.asyncio
+@pytest.mark.no_infrastructure
+async def test_recommend_table_questions_uses_frontend_columns_without_db_lookup():
+    llm_output = (
+        "- [🙋 用户增长趋势](quick:统计最近30天每日新增用户数)\n"
+        "- [🙋 角色分布](quick:按角色统计当前用户数量分布)\n"
+        "- [🙋 最近登录](quick:查询最近7天登录过的用户数量)"
+    )
+    mock_client = MagicMock()
+    mock_client.generate_text = AsyncMock(return_value=llm_output)
+    mock_db = AsyncMock()
+
+    with patch(
+        "app.services.dataset_navigation_service.AgentConfigProvider.get_configured_llm",
+        AsyncMock(return_value=object()),
+    ), patch(
+        "app.services.dataset_navigation_service.chat_client_from_handle",
+        return_value=mock_client,
+    ):
+        questions = await DatasetNavigationService.recommend_table_questions(
+            mock_db,
+            table="智能体用户表",
+            physical_table_name="ai_agent_users",
+            dataset_name="智能体数据集",
+            columns=[
+                {
+                    "name": "id",
+                    "term": "用户ID",
+                    "type": "bigint",
+                    "description": "主键",
+                }
+            ],
+        )
+
+    assert len(questions) == 3
+    assert questions[0]["label"] == "用户增长趋势"
+    assert questions[0]["query"] == "统计最近30天每日新增用户数"
+    mock_db.execute.assert_not_called()
+

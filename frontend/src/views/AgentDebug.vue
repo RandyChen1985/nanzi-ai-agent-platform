@@ -2793,7 +2793,7 @@ onUnmounted(() => {
             />
           </svg>
           <span class="font-medium text-gray-800"
-            >智能体调试 (Real-Time Agent)</span
+            >智能体测评</span
           >
         </div>
         <div class="flex items-center space-x-4">

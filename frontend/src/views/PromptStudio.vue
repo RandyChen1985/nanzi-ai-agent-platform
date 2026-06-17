@@ -702,7 +702,7 @@ watch(
     <div class="mb-6 flex justify-between items-center">
       <div>
         <h1 class="text-2xl font-bold text-gray-900">
-          提示词工作室 (Prompt Studio)
+          提示词工坊 (Prompt Studio)
         </h1>
         <p class="text-gray-500 text-sm mt-1">
           统一管理、编辑和测试系统及智能体的提示词。
@@ -723,7 +723,7 @@ watch(
     >
       <ArrowPathIcon class="w-12 h-12 text-primary animate-spin mb-4" />
       <h2 class="text-xl font-medium text-gray-700">加载中...</h2>
-      <p class="mt-2 text-sm text-gray-500">正在初始化提示词工作室</p>
+      <p class="mt-2 text-sm text-gray-500">正在初始化提示词工坊</p>
     </div>
 
     <!-- Initial Error State -->

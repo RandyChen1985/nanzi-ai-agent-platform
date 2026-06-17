@@ -353,7 +353,7 @@ onMounted(() => {
     <!-- Header 头部栏 -->
     <div class="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
       <div class="flex items-center space-x-3">
-        <h1 class="text-2xl font-bold tracking-normal text-gray-900">智能体技能管理中心</h1>
+        <h1 class="text-2xl font-bold tracking-normal text-gray-900">技能工作台</h1>
 
         <!-- 「？」呼吸帮助按钮 -->
         <button 

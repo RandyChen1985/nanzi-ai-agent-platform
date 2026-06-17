@@ -1086,7 +1086,7 @@ const formatDate = (dateStr: string) => {
     <div class="flex justify-between items-center">
       <div>
         <div class="flex items-center space-x-3">
-          <h1 class="text-xl sm:text-2xl font-bold text-gray-900">智能体管理</h1>
+          <h1 class="text-xl sm:text-2xl font-bold text-gray-900">智能体中心</h1>
           <!-- 「？」帮助按钮 -->
           <button 
             @click="showHelp = true"

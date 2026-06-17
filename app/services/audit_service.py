@@ -17,7 +17,7 @@ class AuditService:
     # API Endpoint to Feature Name Mapping
     FEATURE_MAP = {
         "/api/portal/auth/login": "用户登录",
-        "/api/portal/agents": "智能体管理",
+        "/api/portal/agents": "智能体中心",
         "/api/portal/prompts": "提示词工程",
         "/api/portal/models": "模型管理",
         "/api/portal/tools": "工具中心",

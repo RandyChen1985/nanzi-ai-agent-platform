@@ -163,13 +163,13 @@ const router = createRouter({
           path: 'skills',
           name: 'SkillsManagement',
           component: () => import('../views/SkillsManagement.vue'),
-          meta: { perm: 'menu:skills_management', title: '技能管理' }
+          meta: { perm: 'menu:skills_management', title: '技能工作台' }
         },
         {
           path: 'memory',
           name: 'MemoryManagement',
           component: () => import('../views/MemoryManagement.vue'),
-          meta: { perm: 'menu:memory_management', title: '记忆管理中心' }
+          meta: { perm: 'menu:memory_management', title: '记忆工作台' }
         },
 
         {

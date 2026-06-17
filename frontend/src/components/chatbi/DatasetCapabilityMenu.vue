@@ -40,8 +40,12 @@
       </div>
       <button
         type="button"
-        class="w-8 h-8 flex-shrink-0 flex items-center justify-center rounded-lg border border-transparent bg-gray-100 hover:bg-gray-200/70 dark:bg-gray-800 dark:hover:bg-gray-750 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 transition-all active:scale-90 cursor-pointer"
-        :title="refreshButtonTitle"
+        class="w-8 h-8 flex-shrink-0 flex items-center justify-center rounded-lg border border-transparent bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-400 transition-all"
+        :class="refreshDisabled
+          ? 'opacity-50 cursor-not-allowed'
+          : 'hover:bg-gray-200/70 dark:hover:bg-gray-750 hover:text-gray-700 dark:hover:text-gray-200 active:scale-90 cursor-pointer'"
+        :disabled="refreshDisabled"
+        :title="refreshDisabled && props.initialLoading ? '数据门户首次加载中，请稍候' : refreshButtonTitle"
         @click="handleRefreshClick"
       >
         <svg 
@@ -337,12 +341,11 @@
                         v-for="table in related.tables || []"
                         :key="table"
                         class="relative inline-block overflow-visible"
-                        @mouseenter="handleMouseEnter($event, `${group.id || group.title}_${related.dataset || related.display_name || ''}_${table}`)"
-                        @mouseleave="handleMouseLeave"
                       >
                         <span
-                          class="inline-flex items-center gap-1 rounded bg-white dark:bg-gray-800 px-2 py-0.5 text-[10px] font-medium text-gray-600 dark:text-gray-300 ring-1 ring-gray-100 dark:ring-gray-700/60 shadow-sm hover:scale-102 hover:shadow-xs transition-all duration-200 cursor-pointer select-none active:scale-95"
-                          @click.stop="handleClick($event, `${group.id || group.title}_${related.dataset || related.display_name || ''}_${table}`)"
+                          class="inline-flex items-center gap-1 rounded bg-white dark:bg-gray-800 px-2 py-0.5 text-[10px] font-medium text-gray-600 dark:text-gray-300 ring-1 ring-gray-100 dark:ring-gray-700/60 shadow-sm hover:shadow-xs transition-all duration-200 cursor-pointer select-none active:scale-95"
+                          :class="pinnedTableDictionary === buildTableDictionaryKey(group, related, table) ? 'ring-2 ring-primary/35 text-primary dark:text-primary' : 'hover:scale-102'"
+                          @click.stop="handleTableDictionaryClick($event, group, related, table)"
                         >
                           <svg class="w-2.5 h-2.5 text-gray-400 dark:text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.2" d="M3 10h18M3 14h18m-9-4v8m-7 0h14a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"/>
@@ -360,9 +363,9 @@
                           leave-to-class="opacity-0 translate-y-1 scale-95"
                         >
                           <div 
-                            v-if="(activeTableDictionary === `${group.id || group.title}_${related.dataset || related.display_name || ''}_${table}` || pinnedTableDictionary === `${group.id || group.title}_${related.dataset || related.display_name || ''}_${table}`) && related.table_columns?.[table]?.length" 
+                            v-if="pinnedTableDictionary === buildTableDictionaryKey(group, related, table) && related.table_columns?.[table]?.length" 
                             class="absolute z-45 bottom-full mb-2 w-72 bg-white dark:bg-gray-850 border border-gray-150 dark:border-gray-750 rounded-xl p-3 shadow-xl text-left select-none ring-1 ring-black/5"
-                            :style="popoverStyles[`${group.id || group.title}_${related.dataset || related.display_name || ''}_${table}`] || { left: '50%', transform: 'translateX(-50%)' }"
+                            :style="popoverStyles[buildTableDictionaryKey(group, related, table)] || { left: '50%', transform: 'translateX(-50%)' }"
                             @click.stop
                           >
                             <h5 class="text-[10px] font-bold text-gray-800 dark:text-gray-250 mb-2 border-b border-gray-100 dark:border-gray-750 pb-1 flex items-center justify-between">
@@ -375,7 +378,7 @@
                               <button 
                                 type="button" 
                                 class="text-gray-400 hover:text-gray-650 dark:hover:text-gray-200 w-4 h-4 flex items-center justify-center rounded-full hover:bg-gray-100 dark:hover:bg-gray-750 transition-colors flex-shrink-0 cursor-pointer"
-                                @click.stop="pinnedTableDictionary = null; activeTableDictionary = null"
+                                @click.stop="pinnedTableDictionary = null"
                               >
                                 &times;
                               </button>
@@ -418,12 +421,47 @@
                               </button>
                               <button
                                 type="button"
-                                class="flex-1 flex items-center justify-center gap-0.5 py-1 px-1.5 text-[9px] font-bold rounded bg-amber-50 hover:bg-amber-100 dark:bg-amber-950/30 dark:hover:bg-amber-900/40 text-amber-600 dark:text-amber-400 border border-amber-100/50 dark:border-amber-900/30 transition-all cursor-pointer active:scale-95 whitespace-nowrap"
-                                title="推荐业务分析问题"
-                                @click.stop="handleQuickQuestionClick('recommend', table, related)"
+                                class="flex-1 flex items-center justify-center gap-0.5 py-1 px-1.5 text-[9px] font-bold rounded bg-amber-50 hover:bg-amber-100 dark:bg-amber-950/30 dark:hover:bg-amber-900/40 text-amber-600 dark:text-amber-400 border border-amber-100/50 dark:border-amber-900/30 transition-all cursor-pointer active:scale-95 whitespace-nowrap disabled:opacity-60 disabled:cursor-not-allowed"
+                                title="基于字段定义推荐业务分析问题"
+                                :disabled="tableRecommendState[buildTableDictionaryKey(group, related, table)]?.loading"
+                                @click.stop="handleRecommendQuestions(group, related, table)"
                               >
-                                <span>💡 推荐提问</span>
+                                <span v-if="tableRecommendState[buildTableDictionaryKey(group, related, table)]?.loading">生成中…</span>
+                                <span v-else>💡 推荐提问</span>
                               </button>
+                            </div>
+                            <div
+                              v-if="tableRecommendState[buildTableDictionaryKey(group, related, table)]"
+                              class="mt-2 pt-2 border-t border-gray-100 dark:border-gray-750 space-y-1.5"
+                            >
+                              <div
+                                v-if="tableRecommendState[buildTableDictionaryKey(group, related, table)]?.loading"
+                                class="flex items-center gap-1.5 text-[9px] text-amber-700/80 dark:text-amber-300/80"
+                              >
+                                <svg class="w-3 h-3 animate-spin flex-shrink-0" fill="none" viewBox="0 0 24 24">
+                                  <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                                  <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                                </svg>
+                                正在基于字段定义生成推荐提问…
+                              </div>
+                              <div
+                                v-else-if="tableRecommendState[buildTableDictionaryKey(group, related, table)]?.error"
+                                class="text-[9px] text-rose-600 dark:text-rose-400 leading-relaxed"
+                              >
+                                {{ tableRecommendState[buildTableDictionaryKey(group, related, table)]?.error }}
+                              </div>
+                              <template v-else>
+                                <div class="text-[9px] font-bold text-gray-500 dark:text-gray-400">推荐业务提问</div>
+                                <button
+                                  v-for="question in tableRecommendState[buildTableDictionaryKey(group, related, table)]?.questions || []"
+                                  :key="question.query"
+                                  type="button"
+                                  class="w-full text-left rounded-lg border border-amber-100/80 dark:border-amber-900/40 bg-amber-50/50 dark:bg-amber-950/20 px-2 py-1.5 text-[9px] font-semibold text-amber-900 dark:text-amber-100 hover:bg-amber-100/70 dark:hover:bg-amber-950/40 transition-all active:scale-[0.99]"
+                                  @click.stop="handleRecommendedQuestionClick(question)"
+                                >
+                                  🙋 {{ question.label }}
+                                </button>
+                              </template>
                             </div>
                           </div>
                         </transition>
@@ -563,6 +601,7 @@ const isRefreshing = ref(false);
 let refreshSafetyTimer: ReturnType<typeof setTimeout> | null = null;
 
 const showRefreshBusy = computed(() => isRefreshing.value || props.backgroundRefreshing);
+const refreshDisabled = computed(() => props.initialLoading || showRefreshBusy.value);
 
 const clearRefreshBusy = () => {
   isRefreshing.value = false;
@@ -573,17 +612,19 @@ const clearRefreshBusy = () => {
 };
 const expandedGroups = ref<Record<string, boolean>>({});
 const refreshingGroupIds = ref<Record<string, boolean>>({});
-const activeTableDictionary = ref<string | null>(null);
 const pinnedTableDictionary = ref<string | null>(null);
 const popoverStyles = ref<Record<string, Record<string, string>>>({});
+const tableRecommendState = ref<Record<string, {
+  loading: boolean;
+  questions: Array<{ label: string; query: string }>;
+  error?: string;
+}>>({});
 
-const toggleTablePin = (uniqueId: string) => {
-  if (pinnedTableDictionary.value === uniqueId) {
-    pinnedTableDictionary.value = null;
-  } else {
-    pinnedTableDictionary.value = uniqueId;
-  }
-};
+const buildTableDictionaryKey = (
+  group: DatasetCapabilityGroup,
+  related: DatasetCapabilityRelatedData,
+  table: string,
+) => `${group.id || group.title}_${related.dataset || related.display_name || ""}_${table}`;
 
 const handleGlobalClick = () => {
   pinnedTableDictionary.value = null;
@@ -637,20 +678,18 @@ const updatePopoverStyle = (badgeEl: HTMLElement, uniqueId: string) => {
   };
 };
 
-const handleMouseEnter = (event: MouseEvent, uniqueId: string) => {
-  activeTableDictionary.value = uniqueId;
-  const target = event.currentTarget as HTMLElement;
-  if (target) {
-    updatePopoverStyle(target, uniqueId);
+const handleTableDictionaryClick = (
+  event: MouseEvent,
+  group: DatasetCapabilityGroup,
+  related: DatasetCapabilityRelatedData,
+  table: string,
+) => {
+  const uniqueId = buildTableDictionaryKey(group, related, table);
+  if (pinnedTableDictionary.value === uniqueId) {
+    pinnedTableDictionary.value = null;
+    return;
   }
-};
-
-const handleMouseLeave = () => {
-  activeTableDictionary.value = null;
-};
-
-const handleClick = (event: MouseEvent, uniqueId: string) => {
-  toggleTablePin(uniqueId);
+  pinnedTableDictionary.value = uniqueId;
   const target = event.currentTarget as HTMLElement;
   if (target) {
     updatePopoverStyle(target, uniqueId);
@@ -1005,6 +1044,7 @@ const displayGroups = computed(() => {
 });
 
 const handleRefreshClick = () => {
+  if (refreshDisabled.value) return;
   isRefreshing.value = true;
   emit("refresh");
   if (refreshSafetyTimer) clearTimeout(refreshSafetyTimer);
@@ -1071,9 +1111,9 @@ watch(
       searchQuery.value = "";
       selectedTag.value = "All";
     }
-    activeTableDictionary.value = null;
     pinnedTableDictionary.value = null;
     refreshingGroupIds.value = {};
+    tableRecommendState.value = {};
   },
 );
 
@@ -1100,7 +1140,7 @@ const handleQuestionClick = (question: DatasetCapabilityQuestion, group: Dataset
 };
 
 // 数据表数据字典快捷提问处理器
-const handleQuickQuestionClick = (type: 'structure' | 'query' | 'recommend', table: string, related: DatasetCapabilityRelatedData) => {
+const handleQuickQuestionClick = (type: 'structure' | 'query', table: string, related: DatasetCapabilityRelatedData) => {
   const physicalName = related.table_physical_names?.[table] || "";
   const tableWithPhysical = physicalName ? `‘${table}’（物理表名：${physicalName}）` : `‘${table}’`;
 
@@ -1109,8 +1149,6 @@ const handleQuickQuestionClick = (type: 'structure' | 'query' | 'recommend', tab
     queryText = `说明数据表${tableWithPhysical}的字段结构和分析口径`;
   } else if (type === 'query') {
     queryText = `查询数据表${tableWithPhysical}最近10条明细数据`;
-  } else if (type === 'recommend') {
-    queryText = `根据数据表${tableWithPhysical}的字段定义，推荐 3 个最适合的业务分析提问。生成的问题以 \`- [🙋 推荐问题描述](quick:提问具体指令)\` 的格式输出这 3 个问题，以便我一键点击触发提问。`;
   }
   
   if (queryText) {
@@ -1119,7 +1157,55 @@ const handleQuickQuestionClick = (type: 'structure' | 'query' | 'recommend', tab
   
   // 收起浮窗
   pinnedTableDictionary.value = null;
-  activeTableDictionary.value = null;
+};
+
+const handleRecommendQuestions = async (
+  group: DatasetCapabilityGroup,
+  related: DatasetCapabilityRelatedData,
+  table: string,
+) => {
+  const uniqueId = buildTableDictionaryKey(group, related, table);
+  pinnedTableDictionary.value = uniqueId;
+  tableRecommendState.value[uniqueId] = { loading: true, questions: [] };
+
+  try {
+    const columns = related.table_columns?.[table] || [];
+    const res = await axios.post("/api/v1/chat/dataset-menu/recommend-table-questions", {
+      table,
+      physical_table_name: related.table_physical_names?.[table] || "",
+      dataset_name: related.display_name || related.dataset || "",
+      columns: columns.map((col) => ({
+        name: col.name,
+        term: col.term,
+        type: col.type,
+        description: col.description,
+      })),
+    });
+    const questions = res.data?.data?.questions || [];
+    if (!questions.length) {
+      tableRecommendState.value[uniqueId] = {
+        loading: false,
+        questions: [],
+        error: "暂未生成可用推荐提问，请稍后重试",
+      };
+      return;
+    }
+    tableRecommendState.value[uniqueId] = { loading: false, questions };
+  } catch (error) {
+    console.warn("Failed to recommend table questions", error);
+    tableRecommendState.value[uniqueId] = {
+      loading: false,
+      questions: [],
+      error: "生成推荐提问失败，请稍后重试",
+    };
+  }
+};
+
+const handleRecommendedQuestionClick = (question: { label: string; query: string }) => {
+  const query = String(question.query || "").trim();
+  if (!query) return;
+  emitQuickQuestion(query);
+  pinnedTableDictionary.value = null;
 };
 </script>
 

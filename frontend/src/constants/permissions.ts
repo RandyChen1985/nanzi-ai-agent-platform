@@ -35,7 +35,7 @@ export const MENU_TREE = [
     },
     {
         id: 'menu:agent_management',
-        label: '智能体管理',
+        label: '智能体中心',
         children: [
             { id: 'element:agent:create', label: '创建智能体' },
             { id: 'element:agent:edit', label: '编辑配置' },
@@ -44,12 +44,12 @@ export const MENU_TREE = [
     },
     {
         id: 'menu:skills_management',
-        label: '技能管理',
+        label: '技能工作台',
         children: []
     },
     {
         id: 'menu:memory_management',
-        label: '记忆管理中心',
+        label: '记忆工作台',
         children: [
             { id: 'element:memory:config_save', label: '保存服务配置' },
             { id: 'element:memory:config_index', label: '索引检查与重建' },
@@ -89,12 +89,12 @@ export const MENU_TREE = [
     },
     {
         id: 'menu:agent_debug',
-        label: '智能体调试',
+        label: '智能体测评',
         children: []
     },
     {
         id: 'menu:playground',
-        label: 'API 调试',
+        label: '接口调试台',
         children: []
     },
     {
@@ -123,21 +123,21 @@ export const MENU_TREE = [
     },
     {
         id: 'menu:prompts',
-        label: '提示词工作室',
+        label: '提示词工坊',
         children: [
             { id: 'element:prompts:optimize', label: 'AI 优化建议' }
         ]
     },
     {
         id: 'menu:task_center',
-        label: '任务中心',
+        label: '任务调度台',
         children: [
             { id: 'element:task:manage', label: '任务管理 (增删改执行)' }
         ]
     },
     {
         id: 'menu:widget_debug',
-        label: '组件调试',
+        label: '组件调试台',
         children: []
     }
 ];

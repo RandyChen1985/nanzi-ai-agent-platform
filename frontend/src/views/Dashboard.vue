@@ -263,15 +263,15 @@ const menuGroups: MenuGroup[] = [
   {
     title: '智能体开发平台',
     items: [
-      { name: '智能体管理', to: '/dashboard/agent-management', icon: 'agent_mgmt', perm: 'menu:agent_management', activeNames: ['AgentManagement'] },
-      { name: '技能管理中心', to: '/dashboard/skills', icon: 'skills', perm: 'menu:skills_management', activeNames: ['SkillsManagement'] },
-      { name: '记忆管理中心', to: '/dashboard/memory', icon: 'memory', perm: 'menu:memory_management', activeNames: ['MemoryManagement'] },
-      { name: '提示词工作室', to: '/dashboard/prompts', icon: 'prompts', perm: 'menu:prompts', desktopOnly: true, activeNames: ['PromptStudio'] },
+      { name: '智能体中心', to: '/dashboard/agent-management', icon: 'agent_mgmt', perm: 'menu:agent_management', activeNames: ['AgentManagement'] },
+      { name: '技能工作台', to: '/dashboard/skills', icon: 'skills', perm: 'menu:skills_management', activeNames: ['SkillsManagement'] },
+      { name: '记忆工作台', to: '/dashboard/memory', icon: 'memory', perm: 'menu:memory_management', activeNames: ['MemoryManagement'] },
+      { name: '提示词工坊', to: '/dashboard/prompts', icon: 'prompts', perm: 'menu:prompts', desktopOnly: true, activeNames: ['PromptStudio'] },
 
-      { name: '任务调度中心', to: '/dashboard/tasks', icon: 'tasks', perm: 'menu:task_center', activeNames: ['TaskCenter'] },
-      { name: '智能体测试', to: '/dashboard/agent-debug', icon: 'agent_debug', perm: 'menu:agent_debug', desktopOnly: true, activeNames: ['AgentDebug'] },
-      { name: 'API调试', to: '/dashboard/playground', icon: 'playground', perm: 'menu:playground', desktopOnly: true, activeNames: ['Playground'] },
-      { name: '组件测试', to: '/dashboard/widget-debug', icon: 'widget', perm: 'menu:widget_debug', desktopOnly: true, activeNames: ['WidgetDebugger'] }
+      { name: '任务调度台', to: '/dashboard/tasks', icon: 'tasks', perm: 'menu:task_center', activeNames: ['TaskCenter'] },
+      { name: '智能体测评', to: '/dashboard/agent-debug', icon: 'agent_debug', perm: 'menu:agent_debug', desktopOnly: true, activeNames: ['AgentDebug'] },
+      { name: '接口调试台', to: '/dashboard/playground', icon: 'playground', perm: 'menu:playground', desktopOnly: true, activeNames: ['Playground'] },
+      { name: '组件调试台', to: '/dashboard/widget-debug', icon: 'widget', perm: 'menu:widget_debug', desktopOnly: true, activeNames: ['WidgetDebugger'] }
     ]
   },
   {

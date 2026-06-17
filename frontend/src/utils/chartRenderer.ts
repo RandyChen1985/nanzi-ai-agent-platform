@@ -142,7 +142,6 @@ export function mergeChartDefaults(options: Record<string, any>): Record<string,
       ...defaults.legend,
       ...(options.legend || {}),
       textStyle: {
-        color: axisNameReadableColor,
         fontSize: 11,
         ...((options.legend || {}).textStyle || {}),
         color: normalizeReadableTextColor(
@@ -158,7 +157,6 @@ export function mergeChartDefaults(options: Record<string, any>): Record<string,
       ? options.title.map((item: any) => ({
           ...item,
           textStyle: {
-            color: titleReadableColor,
             fontSize: 13,
             fontWeight: 600,
             ...(item?.textStyle || {}),
@@ -168,7 +166,6 @@ export function mergeChartDefaults(options: Record<string, any>): Record<string,
       : {
           ...options.title,
           textStyle: {
-            color: titleReadableColor,
             fontSize: 13,
             fontWeight: 600,
             ...(options.title?.textStyle || {}),

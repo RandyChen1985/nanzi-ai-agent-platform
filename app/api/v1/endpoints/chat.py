@@ -112,6 +112,20 @@ class DatasetGroupRefreshRequest(BaseModel):
     tables: List[str] = Field(..., description="关联的数据表术语列表")
 
 
+class DatasetTableColumnInfo(BaseModel):
+    name: str = Field(..., description="物理字段名")
+    term: str = Field(default="", description="业务字段名")
+    type: str = Field(default="", description="字段类型")
+    description: str = Field(default="", description="字段描述")
+
+
+class DatasetTableRecommendRequest(BaseModel):
+    table: str = Field(..., description="数据表业务术语名")
+    physical_table_name: Optional[str] = Field(default=None, description="物理表名")
+    dataset_name: Optional[str] = Field(default=None, description="所属数据集名称")
+    columns: List[DatasetTableColumnInfo] = Field(default_factory=list, description="门户已下发的字段定义")
+
+
 class DatasetGroupQuestion(BaseModel):
     label: str = Field(..., description="问题短标签")
     query: str = Field(..., description="点击触发的完整查询指令")
@@ -205,6 +219,29 @@ async def refresh_group_questions(
         db,
         group_title=request.group_title,
         tables=request.tables,
+    )
+    return StandardResponse(data=DatasetGroupRefreshResponse(questions=questions))
+
+
+@router.post(
+    "/dataset-menu/recommend-table-questions",
+    response_model=StandardResponse[DatasetGroupRefreshResponse],
+    summary="基于单表字段定义生成推荐提问",
+    description="数据门户表级「推荐提问」专用接口：仅依据字段元数据生成 quick 按钮，不触发 ChatBI 查数。",
+)
+async def recommend_table_questions(
+    request: DatasetTableRecommendRequest,
+    db: AsyncSession = Depends(get_db_session),
+    user_info: Dict[str, Any] = Depends(require_api_key),
+):
+    from app.services.dataset_navigation_service import DatasetNavigationService
+
+    questions = await DatasetNavigationService.recommend_table_questions(
+        db,
+        table=request.table,
+        physical_table_name=request.physical_table_name or "",
+        dataset_name=request.dataset_name or "",
+        columns=[col.model_dump() for col in request.columns],
     )
     return StandardResponse(data=DatasetGroupRefreshResponse(questions=questions))
 

@@ -657,7 +657,7 @@ onMounted(async () => {
     <!-- Header（与技能管理顶格一致，由 Dashboard main 统一留白） -->
     <div class="flex flex-col lg:flex-row lg:items-end lg:justify-between gap-4">
       <div class="min-w-0">
-        <h1 class="text-2xl font-bold tracking-normal text-gray-900 dark:text-white">记忆管理中心</h1>
+        <h1 class="text-2xl font-bold tracking-normal text-gray-900 dark:text-white">记忆工作台</h1>
         <p class="text-sm text-gray-500 mt-1">跨会话摘要、向量检索与 Redis 会话明细管理（配置独立于系统设置）</p>
       </div>
       <div class="flex gap-1 border-b border-gray-200 dark:border-gray-700 shrink-0">
