@@ -21,6 +21,16 @@ from app.services.permission_service import PermissionService
 
 logger = logging.getLogger(__name__)
 
+# 方言内置虚拟表：不参与数据集归属与元数据注册校验（如 Oracle 的 dual）
+_DIALECT_BUILTIN_TABLE_EXEMPTIONS: dict[str, frozenset[str]] = {
+    "oracle": frozenset({"dual"}),
+}
+
+
+def _is_exempt_builtin_table(table_lower: str, dialect: str) -> bool:
+    exemptions = _DIALECT_BUILTIN_TABLE_EXEMPTIONS.get(str(dialect or "").lower(), frozenset())
+    return table_lower in exemptions
+
 
 def _effective_dry_run(dry_run: Optional[bool]) -> bool:
     if dry_run is not None:
@@ -130,6 +140,8 @@ def extract_physical_table_refs_from_select_sql(sql: str, dialect: str) -> Tuple
             continue
         lk = frag.lower()
         if lk in skip_aliases:
+            continue
+        if _is_exempt_builtin_table(lk, dialect):
             continue
         if lk not in refs:
             refs[lk] = frag

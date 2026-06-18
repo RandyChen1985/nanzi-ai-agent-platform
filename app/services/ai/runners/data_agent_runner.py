@@ -2249,6 +2249,7 @@ class DataAgentRunner(BaseExecutor):
         time_anchor = build_data_query_time_anchor_block()
         return (
             f"{DataQueryPrompts.GLOBAL_GUARDRAILS}\n\n"
+            f"{DataQueryPrompts.SQL_PAGINATION_SYNTAX_GUIDE}\n\n"
             f"{time_anchor}\n\n"
             f"{DataQueryPrompts.FOLLOWUP_REUSE_CONSTRAINT}\n\n"
             f"{system_prompt}"
@@ -2779,12 +2780,16 @@ class DataAgentRunner(BaseExecutor):
                 "或补齐 JOIN 条件。修正并执行成功前禁止直接回答用户。"
             )
         if state.sql_error:
-            return (
+            repair = (
                 "【SQL 修正要求】上一轮 execute_sql_query 执行失败。"
                 f"错误信息：{state.sql_error_message[:800]}\n"
                 "请基于已获得的 get_dataset_schema 结果修正 SQL，并再次调用 execute_sql_query。"
                 "在 SQL 成功前禁止直接回答用户。"
             )
+            err_lower = state.sql_error_message.lower()
+            if "invalid expression" in err_lower or "unexpected token" in err_lower:
+                repair += f"\n\n{DataQueryPrompts.SQL_PAGINATION_SYNTAX_GUIDE}"
+            return repair
         if state.empty_sql_result:
             return (
                 "【空结果复查要求】上一轮 execute_sql_query 执行成功但返回空结果。"
@@ -3314,6 +3319,12 @@ class DataAgentRunner(BaseExecutor):
             return "只允许执行只读 SELECT 查询"
         if re.search(r"\bSELECT\s+\*", sql_upper):
             return "SELECT * 会扩大返回范围，请只查询必要字段"
+        if re.search(r"\bORDER\s+BY\b[\s\S]{0,400}\bAND\b[\s\S]{0,120}\b(ROWNUM|LIMIT)\b", sql_upper):
+            return (
+                "ORDER BY 后不能接 AND ROWNUM/LIMIT；"
+                "Oracle TopN 请用子查询包一层排序后外层 ROWNUM，或 FETCH FIRST N ROWS ONLY；"
+                "MySQL/ClickHouse 请用 ORDER BY ... LIMIT N"
+            )
         if " JOIN " in f" {sql_upper} " and not re.search(r"\bJOIN\b[\s\S]{1,240}\bON\b", sql_upper):
             return "JOIN 缺少明确 ON 条件，存在笛卡尔积风险"
         has_limit = bool(re.search(r"\bLIMIT\s+\d+\b", sql_upper) or re.search(r"\bROWNUM\s*<=\s*\d+\b", sql_upper))

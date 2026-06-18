@@ -207,31 +207,35 @@
 
           <!-- Card Header -->
           <div class="relative space-y-2.5">
-            <div class="flex flex-col sm:flex-row sm:items-start justify-between gap-2.5">
-              <div class="flex items-start gap-2.5 min-w-0 flex-1">
-                <!-- Icon -->
-                <div 
-                  class="portal-card-icon flex-shrink-0 flex items-center justify-center w-9 h-9 rounded-xl shadow-sm border text-white"
-                  :class="visuals.iconBorder"
-                  :data-theme="visuals.key"
-                  v-html="visuals.icon"
-                ></div>
-                <h4 class="text-sm font-bold leading-normal pt-1.5" :class="visuals.title">
-                  {{ group.title }}
-                </h4>
-              </div>
-              
-              <!-- Tags -->
-              <div v-if="group.tags?.length" class="flex flex-wrap gap-1 sm:justify-end flex-shrink-0">
-                <span
-                  v-for="tag in group.tags.slice(0, 3)"
-                  :key="tag"
-                  class="rounded-full border px-2 py-0.5 text-[9px] font-bold"
-                  :class="visuals.tag"
-                >
-                  {{ tag }}
-                </span>
-              </div>
+            <div class="flex items-start gap-2.5 min-w-0">
+              <div
+                class="portal-card-icon flex-shrink-0 flex items-center justify-center w-9 h-9 rounded-xl shadow-sm border text-white"
+                :class="visuals.iconBorder"
+                :data-theme="visuals.key"
+                v-html="visuals.icon"
+              />
+              <h4
+                class="flex-1 min-w-0 text-sm font-bold leading-snug break-words pt-0.5"
+                :class="visuals.title"
+                :title="group.title"
+              >
+                {{ group.title }}
+              </h4>
+            </div>
+
+            <div
+              v-if="group.tags?.length"
+              class="flex flex-wrap gap-1 pl-11 min-w-0"
+            >
+              <span
+                v-for="tag in group.tags.slice(0, 3)"
+                :key="tag"
+                class="inline-block max-w-full rounded-full border px-2 py-0.5 text-[9px] font-bold leading-tight line-clamp-2 break-all"
+                :class="visuals.tag"
+                :title="tag"
+              >
+                {{ formatTagLabel(tag) }}
+              </span>
             </div>
 
             <blockquote
@@ -682,6 +686,13 @@ const formatGroupSummary = (text: string): string => {
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;");
   return escaped.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
+};
+
+const formatTagLabel = (tag: string, maxLen = 18): string => {
+  const cleaned = String(tag || "").trim();
+  if (!cleaned) return "";
+  if (cleaned.length <= maxLen) return cleaned;
+  return `${cleaned.slice(0, maxLen)}…`;
 };
 
 const emit = defineEmits<{

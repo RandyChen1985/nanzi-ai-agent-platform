@@ -31,3 +31,28 @@ def test_extract_invalid_sql():
     err, refs = extract_physical_table_refs_from_select_sql("SELECT * FROM (", dialect="mysql")
     assert err is not None
     assert refs == {}
+
+
+def test_extract_skips_oracle_dual_builtin():
+    err, refs = extract_physical_table_refs_from_select_sql(
+        "SELECT LEVEL FROM dual CONNECT BY LEVEL <= 3",
+        dialect="oracle",
+    )
+    assert err is None
+    assert refs == {}
+
+    err2, refs2 = extract_physical_table_refs_from_select_sql(
+        """
+        WITH all_months AS (
+          SELECT TO_CHAR(ADD_MONTHS(DATE '2025-12-01', LEVEL - 1), 'YYYY-MM') AS month_label
+          FROM dual
+          CONNECT BY LEVEL <= 7
+        )
+        SELECT am.month_label, c.total FROM all_months am
+        LEFT JOIN clue_monthly c ON am.month_label = c.month_label
+        """,
+        dialect="oracle",
+    )
+    assert err2 is None
+    assert "dual" not in refs2
+    assert "clue_monthly" in refs2

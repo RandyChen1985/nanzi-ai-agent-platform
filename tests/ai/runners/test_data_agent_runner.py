@@ -403,6 +403,7 @@ async def test_data_agent_runner_system_content_includes_data_guardrails(data_co
     system_content = await runner._build_system_content()
 
     assert DataQueryPrompts.GLOBAL_GUARDRAILS in system_content
+    assert DataQueryPrompts.SQL_PAGINATION_SYNTAX_GUIDE in system_content
     assert "[当前时间锚点]" in system_content
     assert "【相对时间 SQL 规则】" in system_content
     assert DataQueryPrompts.SQL_PLAN_ENFORCEMENT not in system_content
@@ -2085,6 +2086,50 @@ async def test_execute_sql_wrapper_blocks_high_risk_sql_before_tool_call(data_co
     assert str(output).startswith(SQL_STATIC_GATE_PREFIX)
     assert state.sql_static_risk is True
     assert "SELECT *" in state.sql_static_risk_reason
+
+
+@pytest.mark.asyncio
+async def test_execute_sql_wrapper_blocks_order_by_and_rownum_antipattern(data_config):
+    from app.services.ai.runners.data_agent_runner import (
+        DataAgentRunner,
+        RuntimeToolSpec,
+        SQL_STATIC_GATE_PREFIX,
+        _DataRunState,
+    )
+
+    called = False
+
+    async def fake_execute(**kwargs):
+        nonlocal called
+        called = True
+        return {"rows": []}
+
+    runner = DataAgentRunner(config=data_config, trace_id="trace-sql-order-rownum", trace_buffer=[])
+    state = _DataRunState(requires_fresh_data=True, schema_completed=True)
+    [wrapped] = runner._wrap_tools_with_schema_gate([
+        RuntimeToolSpec(
+            name="execute_sql_query",
+            description="execute",
+            parameters_schema={},
+            source_type="static",
+            callable=fake_execute,
+            permission_scope="read",
+        )
+    ], state)
+
+    output = await wrapped.callable(
+        sql=(
+            "SELECT opp_code, create_date FROM view_demo "
+            "WHERE clue_flag = 0 ORDER BY create_date DESC AND ROWNUM <= 20"
+        ),
+        data_source="oracle_ds",
+        dataset_name="demo",
+    )
+
+    assert called is False
+    assert str(output).startswith(SQL_STATIC_GATE_PREFIX)
+    assert state.sql_static_risk is True
+    assert "ORDER BY 后不能接 AND ROWNUM" in state.sql_static_risk_reason
 
 
 @pytest.mark.asyncio

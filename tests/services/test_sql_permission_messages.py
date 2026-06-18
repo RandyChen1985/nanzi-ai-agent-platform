@@ -56,6 +56,20 @@ async def test_table_unregistered_validation_failed_message(monkeypatch):
 
 @pytest.mark.asyncio
 @pytest.mark.no_infrastructure
+async def test_oracle_dual_skips_table_permission_check():
+    result = await sql_service.enforce_physical_table_permissions_for_select(
+        AsyncMock(),
+        sql="SELECT LEVEL FROM dual CONNECT BY LEVEL <= 3",
+        dialect="oracle",
+        user_id_eff=4,
+        is_admin_eff=False,
+        user_identity_label="tester(4)",
+    )
+    assert result is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.no_infrastructure
 async def test_dataset_table_consistency_validation_failed(monkeypatch):
     class FakeTable:
         def __init__(self, physical_name, status=1):
@@ -154,4 +168,25 @@ async def test_dataset_table_consistency_validation_failed(monkeypatch):
     assert "[Validation Failed]" in result_ds
     assert "是数据集名称" in result_ds
 
-
+    # 5. Oracle dual 为内置虚拟表，不参与数据集归属校验
+    result_dual = await sql_service.execute_sql_query_core(
+        mock_session,
+        sql="""
+        WITH all_months AS (
+          SELECT TO_CHAR(ADD_MONTHS(DATE '2025-12-01', LEVEL - 1), 'YYYY-MM') AS month_label
+          FROM dual
+          CONNECT BY LEVEL <= 7
+        )
+        SELECT * FROM all_months am
+        LEFT JOIN allowed_table_1 t ON 1=1
+        """,
+        data_source="oracle_datasource",
+        dataset_name="test_dataset",
+        user_id=4,
+        dry_run=True,
+        is_admin=False,
+        bypass_table_auth=False,
+    )
+    assert "[DRY_RUN]" in result_dual
+    assert "不属于当前指定的数据集" not in result_dual
+    assert "表 'dual'" not in result_dual
