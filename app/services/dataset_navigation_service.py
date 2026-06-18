@@ -14,7 +14,7 @@ from app.core.redis import get_redis
 from app.services.ai.config import AgentConfigProvider
 from app.services.ai.executors.prompts import DataQueryPrompts
 from app.services.ai.runtime.agentscope.chat import chat_client_from_handle
-from app.services.ai.runtime.agentscope.messages import RuntimeContentBlock, RuntimeMessage
+from app.services.ai.runtime.agentscope.messages import system_user_prompt_messages
 from app.services.ai.runtime.agentscope.stream_reconcile import finalize_visible_reply
 
 logger = logging.getLogger(__name__)
@@ -122,17 +122,10 @@ class DatasetNavigationService:
             llm = await AgentConfigProvider.get_configured_llm(streaming=False)
             chat_client = chat_client_from_handle(llm)
             content = await chat_client.generate_text(
-                [
-                    RuntimeMessage(
-                        role="system",
-                        content=[
-                            RuntimeContentBlock(
-                                type="text",
-                                text=DataQueryPrompts.dataset_navigation_generation_prompt(dataset_menu),
-                            )
-                        ],
-                    )
-                ]
+                system_user_prompt_messages(
+                    DataQueryPrompts.dataset_navigation_generation_prompt(dataset_menu),
+                    user_prompt="请生成完整的数据门户 Markdown。",
+                )
             )
             cleaned = str(content or "").strip()
             if cleaned and DataQueryPrompts.has_quick_suggestions(cleaned):
@@ -639,12 +632,10 @@ class DatasetNavigationService:
             llm = await AgentConfigProvider.get_configured_llm(streaming=False)
             chat_client = chat_client_from_handle(llm)
             content = await chat_client.generate_text(
-                [
-                    RuntimeMessage(
-                        role="system",
-                        content=[RuntimeContentBlock(type="text", text=prompt)],
-                    )
-                ]
+                system_user_prompt_messages(
+                    prompt,
+                    user_prompt="请生成推荐问题。",
+                )
             )
             return DatasetNavigationService._parse_quick_questions_from_llm(content)
         except Exception as e:

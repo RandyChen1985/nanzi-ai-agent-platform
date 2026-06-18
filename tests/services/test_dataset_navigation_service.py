@@ -197,6 +197,33 @@ async def test_generate_navigation_markdown_uses_llm():
     assert "我的数据门户" in markdown
     assert "(quick:统计最近一周机房告警记录)" in markdown
     mock_client.generate_text.assert_awaited_once()
+    messages = mock_client.generate_text.await_args.args[0]
+    assert len(messages) == 2
+    assert messages[0].role == "system"
+    assert messages[1].role == "user"
+
+
+@pytest.mark.asyncio
+@pytest.mark.no_infrastructure
+async def test_generate_questions_via_llm_includes_user_message():
+    llm_output = "- [🙋 测试问题](quick:统计最近7天的访问量)"
+    mock_client = MagicMock()
+    mock_client.generate_text = AsyncMock(return_value=llm_output)
+
+    with patch(
+        "app.services.dataset_navigation_service.AgentConfigProvider.get_configured_llm",
+        AsyncMock(return_value=object()),
+    ), patch(
+        "app.services.dataset_navigation_service.chat_client_from_handle",
+        return_value=mock_client,
+    ):
+        questions = await DatasetNavigationService._generate_questions_via_llm("system prompt")
+
+    assert len(questions) == 1
+    messages = mock_client.generate_text.await_args.args[0]
+    assert messages[0].role == "system"
+    assert messages[1].role == "user"
+    assert "推荐问题" in messages[1].content[0].text
 
 
 @pytest.mark.asyncio

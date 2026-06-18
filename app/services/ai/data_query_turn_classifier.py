@@ -22,7 +22,7 @@ from app.services.ai.intent_service import (
     looks_like_skill_execution,
 )
 from app.services.ai.runtime.agentscope.chat import chat_client_from_handle
-from app.services.ai.runtime.agentscope.messages import RuntimeContentBlock, RuntimeMessage
+from app.services.ai.runtime.agentscope.messages import system_user_prompt_messages
 from app.services.ai.turn_classifier import (
     load_last_data_result,
 )
@@ -358,12 +358,7 @@ JSON 格式：
         llm = await AgentConfigProvider.get_configured_llm(streaming=False)
         chat_client = chat_client_from_handle(llm)
         content = await chat_client.generate_text(
-            [
-                RuntimeMessage(
-                    role="system",
-                    content=[RuntimeContentBlock(type="text", text=prompt)],
-                )
-            ]
+            system_user_prompt_messages(prompt, user_prompt=user_query)
         )
         data = _parse_llm_json(content)
         raw_turn_type = str(data.get("turn_type") or "").strip()
