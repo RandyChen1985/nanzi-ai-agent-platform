@@ -708,6 +708,7 @@ defineExpose({ fetchMetrics })
       :dataset-id="datasetId"
       :dataset-display-name="dataset?.display_name"
       :dataset-physical-name="dataset?.name"
+      :imported-table-names="tables.map((t) => t.physical_name)"
       @close="showImportModal = false"
       @saved="fetchDatasetInfo"
     />

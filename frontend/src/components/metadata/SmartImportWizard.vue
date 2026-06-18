@@ -9,7 +9,8 @@ const props = defineProps<{
   show: boolean,
   datasetId?: number,
   datasetDisplayName?: string,
-  datasetPhysicalName?: string
+  datasetPhysicalName?: string,
+  importedTableNames?: string[],
 }>()
 
 const emit = defineEmits(['close', 'saved'])
@@ -652,6 +653,7 @@ const normalizeType = (rawType: string): string => {
   />
   <DatabaseImportModal 
     :show="showDbImportModal"
+    :imported-table-names="importedTableNames || []"
     @close="showDbImportModal = false"
     @confirm="handleDbDdlConfirm"
   />

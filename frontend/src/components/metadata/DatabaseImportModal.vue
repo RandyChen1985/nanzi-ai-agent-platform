@@ -4,9 +4,13 @@ import { useRouter } from 'vue-router'
 import { metadataApi, type DbConnectionConfig } from '../../api/metadata'
 import { useToast } from '../../composables/useToast'
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   show: boolean
-}>()
+  /** 当前数据集内已存在的物理表名，用于禁用重复导入 */
+  importedTableNames?: string[]
+}>(), {
+  importedTableNames: () => [],
+})
 
 const emit = defineEmits(['close', 'confirm'])
 
@@ -103,16 +107,44 @@ const handleTestConnection = async () => {
 // ─── 加载表列表（Step 2） ──────────────────────────────────────────────────────
 const tables = ref<{name: string, comment: string, type?: 'table' | 'view'}[]>([])
 const searchQuery = ref('')
+const importFilter = ref<'all' | 'unimported'>('unimported')
 const selectedTables = ref<string[]>([])
 
+const importedTableSet = computed(() => {
+  const set = new Set<string>()
+  for (const name of props.importedTableNames || []) {
+    const normalized = String(name || '').trim().toLowerCase()
+    if (normalized) set.add(normalized)
+  }
+  return set
+})
+
+const isTableImported = (tableName: string) => {
+  return importedTableSet.value.has(String(tableName || '').trim().toLowerCase())
+}
+
+const importableTables = computed(() => tables.value.filter((t) => !isTableImported(t.name)))
+
 const filteredTables = computed(() => {
-  if (!searchQuery.value) return tables.value
+  let list = tables.value
+  if (importFilter.value === 'unimported') {
+    list = list.filter((t) => !isTableImported(t.name))
+  }
+  if (!searchQuery.value) return list
   const q = searchQuery.value.toLowerCase()
-  return tables.value.filter(t =>
+  return list.filter(t =>
     t.name.toLowerCase().includes(q) ||
     (t.comment && t.comment.toLowerCase().includes(q))
   )
 })
+
+const selectableFilteredTables = computed(() =>
+  filteredTables.value.filter((t) => !isTableImported(t.name)),
+)
+
+const importedCountInRemote = computed(() =>
+  tables.value.filter((t) => isTableImported(t.name)).length,
+)
 
 const handleNext = async () => {
   loading.value = true
@@ -120,6 +152,8 @@ const handleNext = async () => {
   try {
     const res = await metadataApi.listDbTables(config.value)
     tables.value = res.data.data
+    selectedTables.value = selectedTables.value.filter((name) => !isTableImported(name))
+    importFilter.value = importedCountInRemote.value > 0 ? 'unimported' : 'all'
     step.value = 2
   } catch (e: any) {
     connError.value = e.response?.data?.detail || e.message || '获取表列表失败'
@@ -147,6 +181,7 @@ const handleConfirm = async () => {
 }
 
 const toggleTable = (tableName: string) => {
+  if (isTableImported(tableName)) return
   const idx = selectedTables.value.indexOf(tableName)
   if (idx > -1) {
     selectedTables.value.splice(idx, 1)
@@ -156,16 +191,22 @@ const toggleTable = (tableName: string) => {
 }
 
 const toggleAll = () => {
-  if (selectedTables.value.length === filteredTables.value.length) {
-    selectedTables.value = []
+  const selectable = selectableFilteredTables.value.map((t) => t.name)
+  if (selectable.length === 0) return
+  const allSelected = selectable.every((name) => selectedTables.value.includes(name))
+  if (allSelected) {
+    selectedTables.value = selectedTables.value.filter((name) => !selectable.includes(name))
   } else {
-    selectedTables.value = filteredTables.value.map(t => t.name)
+    const merged = new Set([...selectedTables.value, ...selectable])
+    selectedTables.value = Array.from(merged)
   }
 }
 
 const handleClose = () => {
   step.value = 1
   selectedTables.value = []
+  searchQuery.value = ''
+  importFilter.value = 'unimported'
   testPassed.value = false
   connError.value = ''
   emit('close')
@@ -298,11 +339,27 @@ const dbTypeColor = (type: string) => {
 
         <!-- Step 2: Select Tables -->
         <div v-else class="h-full flex flex-col gap-4">
-          <div class="flex items-center gap-3 bg-gray-50 p-2 rounded-xl border border-gray-200">
-            <svg class="w-5 h-5 text-gray-400 ml-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
-            <input v-model="searchQuery" type="text" class="flex-1 bg-transparent border-none focus:ring-0 text-sm py-1" placeholder="搜索表名...">
-            <button @click="toggleAll" class="text-primary text-xs font-bold px-3 py-1 hover:bg-white rounded-lg transition-colors border border-transparent hover:border-gray-200">
-              {{ selectedTables.length === filteredTables.length ? '全部取消' : '全选' }}
+          <div class="flex items-center gap-2 bg-gray-50 p-2 rounded-xl border border-gray-200">
+            <svg class="w-5 h-5 text-gray-400 ml-2 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+            <input v-model="searchQuery" type="text" class="flex-1 min-w-0 bg-transparent border-none focus:ring-0 text-sm py-1" placeholder="搜索表名...">
+            <select
+              v-model="importFilter"
+              class="text-xs font-semibold text-gray-600 bg-white border border-gray-200 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-primary/20 shrink-0"
+            >
+              <option value="unimported">未导入</option>
+              <option value="all">全部</option>
+            </select>
+            <button
+              @click="toggleAll"
+              :disabled="selectableFilteredTables.length === 0"
+              class="text-primary text-xs font-bold px-3 py-1 hover:bg-white rounded-lg transition-colors border border-transparent hover:border-gray-200 disabled:opacity-40 disabled:cursor-not-allowed shrink-0"
+            >
+              {{
+                selectableFilteredTables.length > 0
+                && selectableFilteredTables.every((t) => selectedTables.includes(t.name))
+                  ? '全部取消'
+                  : '全选'
+              }}
             </button>
           </div>
 
@@ -311,17 +368,31 @@ const dbTypeColor = (type: string) => {
                v-for="table in filteredTables"
                :key="table.name"
                @click="toggleTable(table.name)"
-               class="p-4 flex items-center gap-4 hover:bg-blue-50/30 cursor-pointer transition-colors"
+               class="p-4 flex items-center gap-4 transition-colors"
+               :class="isTableImported(table.name)
+                 ? 'bg-gray-50/80 cursor-not-allowed opacity-70'
+                 : 'hover:bg-blue-50/30 cursor-pointer'"
              >
-                <div class="w-5 h-5 rounded border-2 flex items-center justify-center transition-all"
-                     :class="selectedTables.includes(table.name) ? 'bg-primary border-primary' : 'border-gray-200 bg-white'">
-                   <svg v-if="selectedTables.includes(table.name)" class="w-3 h-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/></svg>
+                <div class="w-5 h-5 rounded border-2 flex items-center justify-center transition-all shrink-0"
+                     :class="isTableImported(table.name)
+                       ? 'border-gray-200 bg-gray-100'
+                       : selectedTables.includes(table.name)
+                         ? 'bg-primary border-primary'
+                         : 'border-gray-200 bg-white'">
+                   <svg v-if="!isTableImported(table.name) && selectedTables.includes(table.name)" class="w-3 h-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/></svg>
+                   <svg v-else-if="isTableImported(table.name)" class="w-3 h-3 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/></svg>
                 </div>
                 <div class="flex flex-col gap-0.5 min-w-0 flex-1">
-                  <div class="flex items-center gap-2">
-                    <span class="text-sm font-mono text-gray-700 truncate">{{ table.name }}</span>
+                  <div class="flex items-center gap-2 flex-wrap">
+                    <span class="text-sm font-mono truncate" :class="isTableImported(table.name) ? 'text-gray-400' : 'text-gray-700'">{{ table.name }}</span>
                     <span
-                      v-if="table.type"
+                      v-if="isTableImported(table.name)"
+                      class="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider bg-gray-100 text-gray-500 border border-gray-200"
+                    >
+                      已导入
+                    </span>
+                    <span
+                      v-else-if="table.type"
                       class="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider"
                       :class="table.type === 'view' ? 'bg-amber-100 text-amber-700 border border-amber-200' : 'bg-blue-100 text-blue-700 border border-blue-200'"
                     >
@@ -332,12 +403,18 @@ const dbTypeColor = (type: string) => {
                 </div>
              </div>
              <div v-if="filteredTables.length === 0" class="p-12 text-center text-gray-400 text-sm italic">
-                未找到匹配的表
+                {{ importFilter === 'unimported' ? '暂无可导入的新表' : '未找到匹配的表' }}
              </div>
           </div>
 
-          <div class="text-xs text-gray-400 font-medium px-2">
-            已选择 <span class="text-primary font-bold">{{ selectedTables.length }}</span> / {{ tables.length }} 个表
+          <div class="text-xs text-gray-400 font-medium px-2 space-y-0.5">
+            <div>
+              已选择 <span class="text-primary font-bold">{{ selectedTables.length }}</span>
+              / 可导入 {{ importableTables.length }} 个表
+            </div>
+            <div v-if="importedCountInRemote > 0" class="text-[11px] text-gray-400">
+              当前数据集已有 {{ importedCountInRemote }} 张表，已自动禁用重复导入
+            </div>
           </div>
         </div>
       </div>
