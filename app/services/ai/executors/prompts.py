@@ -16,6 +16,8 @@ from __future__ import annotations
 import re
 from typing import Any, Dict, List, Optional
 
+from app.services.ai.time_anchor import build_data_query_time_anchor_block
+
 
 class SharedPrompts:
     """多个执行器复用的提示词片段。"""
@@ -48,6 +50,15 @@ class SharedPrompts:
 
 class DataQueryPrompts:
     """DataQueryExecutor 使用的系统级提示词。"""
+
+    @staticmethod
+    def _portal_time_recommendation_rules() -> str:
+        return (
+            f"{build_data_query_time_anchor_block()}\n\n"
+            "【相对时间推荐规则】\n"
+            "生成示例问题时，若使用「今天/昨天/本周/上周/本月/上月/最近7天/本季度」等相对时间表述，"
+            "必须与上方【当前时间锚点】中的具体日期或区间一致，并在问题中尽量写出明确日期范围。"
+        )
 
     # 复用上一轮结果时，用于替换 system_prompt 中的 {dataset_menu} 占位符
     REUSE_DATASET_MENU_PLACEHOLDER = "本轮复用上一轮结构化查询结果，不重新检索数据集。"
@@ -197,6 +208,8 @@ class DataQueryPrompts:
 - “继续追问”属于每张业务场景卡片内部；全局“您可能还想了解”区块必须放在整段回答最末尾。
 - 不要编造目录中未出现的具体数值、表名或指标名。
 
+{DataQueryPrompts._portal_time_recommendation_rules()}
+
 【可用数据集目录】
 {dataset_menu}
 """
@@ -336,6 +349,7 @@ class DataQueryPrompts:
         return (
             f"你是一个专业的 ChatBI 数据分析专家。\n"
             f"请针对以下业务分析场景，推荐 3 个最适合的高频业务分析提问：\n\n"
+            f"{DataQueryPrompts._portal_time_recommendation_rules()}\n\n"
             f"【业务场景】：'{group_title}'\n"
             f"【关联数据表结构】：\n{ctx}\n"
             f"【输出格式要求】：\n"
@@ -370,6 +384,7 @@ class DataQueryPrompts:
         return (
             f"你是一个专业的 ChatBI 数据分析专家。\n"
             f"请针对业务场景「{group_title}」，生成 2 条**继续探索**型追问，帮助用户在该场景下延伸分析。\n\n"
+            f"{DataQueryPrompts._portal_time_recommendation_rules()}\n\n"
             f"【关联数据表结构】：\n{ctx}\n"
             f"【输出要求】：\n"
             f"- 2 条追问应偏「还能问什么 / 字段口径 / 关联维度」，不要与常见统计明细重复。\n"

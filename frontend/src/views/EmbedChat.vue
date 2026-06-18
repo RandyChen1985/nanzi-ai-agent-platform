@@ -2237,6 +2237,7 @@ import { ref, reactive, onMounted, onUnmounted, nextTick, watch, computed } from
 import axios from "@/utils/axios";
 import { finalizeConversation } from "@/utils/conversationFinalize";
 import { useToast } from "../composables/useToast";
+import { useDatasetPortal } from "@/composables/useDatasetPortal";
 
 const toast = useToast();
 const showToast = toast.showToast;
@@ -2968,76 +2969,6 @@ const lockToDataQueryAgentForDatasetMenu = async () => {
     handleSwitchMode(dataQueryAgent);
 };
 
-const fetchDatasetMenuNavigationPayload = async (refresh = false) => {
-  const res = await axios.get("/api/v1/chat/dataset-menu", {
-    headers: embedAuthHeaders(),
-    params: refresh ? { refresh: true } : undefined,
-  });
-  return res.data?.data || {};
-};
-
-const recordDatasetMenuQuestionClick = async (
-  navigation: DatasetNavigationPayload | undefined,
-  payload: { query: string; label?: string; group_id?: string }
-) => {
-  const datasetMenuHash = navigation?.dataset_menu_hash;
-  const query = String(payload?.query || "").trim();
-  if (!datasetMenuHash || !query) return;
-  try {
-    await axios.post(
-      "/api/v1/chat/dataset-menu/click",
-      {
-        dataset_menu_hash: datasetMenuHash,
-        query,
-        label: payload.label,
-        group_id: payload.group_id,
-      },
-      { headers: embedAuthHeaders() }
-    );
-  } catch (error) {
-    console.warn("Failed to record dataset menu question click", error);
-  }
-};
-
-const clearNavigationQuestionClickStats = (
-  navigation: DatasetNavigationPayload | undefined,
-  query: string,
-) => {
-  const normalized = String(query || "").trim();
-  if (!navigation?.groups || !normalized) return;
-  for (const group of navigation.groups) {
-    for (const question of group.questions || []) {
-      if (String(question.query || "").trim() !== normalized) continue;
-      question.click_count = 0;
-      delete question.last_clicked_at;
-    }
-  }
-};
-
-const clearDatasetMenuQuestionClick = async (
-  navigation: DatasetNavigationPayload | undefined,
-  payload: { query: string },
-) => {
-  const datasetMenuHash = navigation?.dataset_menu_hash;
-  const query = String(payload?.query || "").trim();
-  if (!datasetMenuHash || !query) return;
-  try {
-    await axios.post(
-      "/api/v1/chat/dataset-menu/click/clear",
-      {
-        dataset_menu_hash: datasetMenuHash,
-        query,
-      },
-      { headers: embedAuthHeaders() }
-    );
-    clearNavigationQuestionClickStats(navigation, query);
-    if (navigation === portalNavigationPayload.value && portalNavigationPayload.value) {
-      portalNavigationPayload.value = { ...portalNavigationPayload.value };
-    }
-  } catch (error) {
-    console.warn("Failed to clear dataset menu question click", error);
-  }
-};
 const handleReorderCommands = async (reorderData: any[]) => {
     try {
         await axios.post("/api/portal/slash-commands/reorder", { items: reorderData });
@@ -3055,7 +2986,6 @@ const connectionStatus = ref<"connected" | "disconnected" | "reconnecting">(
 let abortController: AbortController | null = null;
 let thoughtTimer: any = null;
 let stallTimer: any = null;
-let datasetMenuThoughtTimer: ReturnType<typeof setInterval> | null = null;
 const showStalledPrompt = ref(false);
 const clearStallTimer = () => {
   if (stallTimer) {
@@ -4163,267 +4093,6 @@ const fetchConversationHistory = async (isLoadMore = false) => {
   }
 };
 // --- Logic ---
-const refreshDatasetMenuNavigation = async (msg: Message) => {
-  if (datasetMenuLoading.value || isProcessing.value) {
-    return;
-  }
-  datasetMenuLoading.value = true;
-  isProcessing.value = true;
-  try {
-    const payload = await fetchDatasetMenuNavigationPayload(true);
-    msg.datasetNavigation = payload;
-    msg.content = payload?.markdown || "当前暂无可展示的数据集导航，请联系管理员开通数据权限。";
-    isProcessing.value = false;
-    showToast("数据门户刷新成功", "success");
-    await nextTick();
-    scrollToBottom(true);
-  } catch (error) {
-    console.warn("Failed to refresh dataset menu navigation", error);
-    showToast("刷新数据门户失败，请稍后重试", "error");
-    if (msg.datasetNavigation) {
-      msg.datasetNavigation = { ...msg.datasetNavigation, _failed_at: new Date().toISOString() };
-    }
-  } finally {
-    datasetMenuLoading.value = false;
-    isProcessing.value = false;
-  }
-};
-
-const showPortalDrawer = ref(false);
-const portalNavigationPayload = ref<any>(null);
-const portalLoading = ref(false);
-const portalSilentRefreshing = ref(false);
-const portalPrefetchInFlight = ref(false);
-const hasSilentlyRefreshed = ref(false);
-let silentRefreshTimer: any = null;
-
-const PORTAL_KEEP_OPEN_KEY = "embed_portal_keep_open";
-const portalKeepOpenOnQuestion = ref(localStorage.getItem(PORTAL_KEEP_OPEN_KEY) === "1");
-watch(portalKeepOpenOnQuestion, (val) => {
-  localStorage.setItem(PORTAL_KEEP_OPEN_KEY, val ? "1" : "0");
-});
-
-const PORTAL_PIN_KEY = "embed_portal_pinned";
-const portalPinned = ref(localStorage.getItem(PORTAL_PIN_KEY) === "1");
-watch(portalPinned, (val) => {
-  localStorage.setItem(PORTAL_PIN_KEY, val ? "1" : "0");
-});
-
-const isMobileViewport = () =>
-  typeof window !== "undefined" && window.matchMedia("(max-width: 639px)").matches;
-
-/** 移动端点击问题后始终关闭抽屉；桌面端尊重「提问后保持」开关。 */
-const shouldClosePortalAfterQuestion = () =>
-  isMobileViewport() || !portalKeepOpenOnQuestion.value;
-
-// 数据门户初始化加载温馨提示词轮播
-const portalLoadingTips = [
-  "正在为数据集唤醒大模型并进行资源初始化... 🧠",
-  "AI 正在深度解析物理表的业务语义与指标口径... 📊",
-  "首次加载需探索物理库表，耗时稍长（约15-30秒），请耐心稍候喔 ✨",
-  "正在基于大模型智构最适合该数据集的场景分析提问... 🚀",
-  "云枢大模型正在努力推理计算中，马上就好... 🔄"
-];
-const currentPortalLoadingTip = ref(portalLoadingTips[0]);
-let portalLoadingTipTimer: any = null;
-
-const startPortalLoadingTips = () => {
-  if (portalLoadingTipTimer) clearInterval(portalLoadingTipTimer);
-  let index = 0;
-  currentPortalLoadingTip.value = portalLoadingTips[0];
-  portalLoadingTipTimer = setInterval(() => {
-    index = (index + 1) % portalLoadingTips.length;
-    currentPortalLoadingTip.value = portalLoadingTips[index];
-  }, 4000);
-};
-
-const stopPortalLoadingTips = () => {
-  if (portalLoadingTipTimer) {
-    clearInterval(portalLoadingTipTimer);
-    portalLoadingTipTimer = null;
-  }
-};
-
-const prefetchPortalNavigationIfEligible = async () => {
-  if (portalNavigationPayload.value || portalPrefetchInFlight.value || portalLoading.value) return;
-  if (!findDataQueryAgent()) return;
-  portalPrefetchInFlight.value = true;
-  try {
-    await fetchPortalNavigationData(false, true);
-  } catch {
-    // 静默预加载失败不影响主流程
-  } finally {
-    portalPrefetchInFlight.value = false;
-  }
-};
-
-const portalBackgroundRefreshing = computed(
-  () => portalSilentRefreshing.value || (portalLoading.value && !!portalNavigationPayload.value),
-);
-
-const openPortalDrawer = async () => {
-  showPortalDrawer.value = true;
-  hasSilentlyRefreshed.value = false;
-  if (silentRefreshTimer) {
-    clearTimeout(silentRefreshTimer);
-    silentRefreshTimer = null;
-  }
-  await lockToDataQueryAgentForDatasetMenu();
-  if (!portalNavigationPayload.value) {
-    await fetchPortalNavigationData();
-  } else if (portalNavigationPayload.value.is_fallback) {
-    await fetchPortalNavigationData(false, false);
-  }
-};
-
-const fetchPortalNavigationData = async (refresh = false, silent = false) => {
-  if (!silent) {
-    if (portalLoading.value) return;
-    portalLoading.value = true;
-    startPortalLoadingTips();
-  } else if (refresh) {
-    portalSilentRefreshing.value = true;
-  }
-  try {
-    const wasFallback = portalNavigationPayload.value?.is_fallback === true;
-    const payload = await fetchDatasetMenuNavigationPayload(refresh);
-    portalNavigationPayload.value = payload;
-    
-    // 如果获取的数据为降级兜底数据，且当前不是主动刷新、也不是静默刷新，且本轮还未发生过静默刷新
-    if (payload?.is_fallback && !refresh && !silent && !hasSilentlyRefreshed.value) {
-      hasSilentlyRefreshed.value = true;
-      if (silentRefreshTimer) clearTimeout(silentRefreshTimer);
-      silentRefreshTimer = setTimeout(async () => {
-        if (showPortalDrawer.value || portalNavigationPayload.value) {
-          await fetchPortalNavigationData(true, true);
-        }
-      }, 3000);
-    }
-
-    if (silent && wasFallback && payload && !payload.is_fallback) {
-      showToast("数据门户已更新为完整 AI 推荐", "success");
-    }
-    
-    if (refresh && !silent) {
-      showToast("数据门户刷新成功", "success");
-    }
-  } catch (error) {
-    console.warn("Failed to load portal navigation data", error);
-    if (!silent) {
-      showToast(refresh ? "刷新数据门户失败，请稍后重试" : "加载数据门户失败，请稍后重试", "error");
-    }
-    if (refresh && portalNavigationPayload.value) {
-      portalNavigationPayload.value = { ...portalNavigationPayload.value, _failed_at: new Date().toISOString() };
-    }
-  } finally {
-    if (!silent) {
-      portalLoading.value = false;
-      stopPortalLoadingTips();
-    } else if (refresh) {
-      portalSilentRefreshing.value = false;
-    }
-  }
-};
-
-const handlePortalDrawerKeydown = (event: KeyboardEvent) => {
-  if (event.key === "Escape" && showPortalDrawer.value) {
-    showPortalDrawer.value = false;
-  }
-};
-
-watch(showPortalDrawer, (val) => {
-  if (!val) {
-    if (silentRefreshTimer) {
-      clearTimeout(silentRefreshTimer);
-      silentRefreshTimer = null;
-    }
-    stopPortalLoadingTips();
-  }
-});
-
-const refreshPortalNavigation = async () => {
-  await fetchPortalNavigationData(true);
-};
-
-const handlePortalQuickQuestion = (query: string) => {
-  if (shouldClosePortalAfterQuestion()) {
-    showPortalDrawer.value = false;
-  }
-  handleQuickQuestion(query);
-};
-
-const showDatasetMenuNavigation = async () => {
-  if (datasetMenuLoading.value || isProcessing.value) {
-    return;
-  }
-  datasetMenuLoading.value = true;
-  isProcessing.value = true;
-
-  if (!conversationId.value) {
-    generateNewConversation();
-  }
-  await lockToDataQueryAgentForDatasetMenu();
-
-  messages.value.push({
-    id: Date.now(),
-    role: "user",
-    content: "/dataset_menu",
-    timestamp: new Date().toISOString(),
-  });
-
-  const navMsg = ref<Message>({
-    id: Date.now() + 1,
-    role: "agent",
-    content: "",
-    agentName: "sys_dataset_menu",
-    agentDisplayName: "系统 · 数据门户",
-    isThinking: true,
-    thinkingText: "正在生成我的数据门户，请稍后...",
-    logs: [],
-    thoughtStartTime: Date.now(),
-    thoughtDuration: "0.0",
-    isThoughtExpanded: false,
-    isCitationsExpanded: false,
-    timestamp: new Date().toISOString(),
-  });
-  messages.value.push(navMsg.value);
-  datasetMenuThoughtTimer = setInterval(() => {
-    if (navMsg.value.thoughtStartTime) {
-      navMsg.value.thoughtDuration = (
-        (Date.now() - navMsg.value.thoughtStartTime) /
-        1000
-      ).toFixed(1);
-    }
-  }, 100);
-  autoScrollEnabled.value = true;
-  await nextTick();
-  scrollToBottom(true);
-
-  try {
-    const payload = await fetchDatasetMenuNavigationPayload();
-    navMsg.value.datasetNavigation = payload;
-    const markdown = payload?.markdown || "";
-    navMsg.value.content = markdown || "当前暂无可展示的数据集导航，请联系管理员开通数据权限。";
-  } catch (error) {
-    console.warn("Failed to load dataset menu navigation", error);
-    navMsg.value.content = (
-      "暂时无法加载我的数据门户，请稍后重试。\n\n"
-      + "- [🙋 重新加载数据门户](quick:/dataset_menu)"
-    );
-  } finally {
-    navMsg.value.isThinking = false;
-    navMsg.value.thinkingText = "";
-    if (datasetMenuThoughtTimer) {
-      clearInterval(datasetMenuThoughtTimer);
-      datasetMenuThoughtTimer = null;
-    }
-    datasetMenuLoading.value = false;
-    isProcessing.value = false;
-    await nextTick();
-    scrollToBottom(true);
-  }
-};
-
 const handleSystemCommand = async (cmd: string): Promise<boolean> => {
   switch (cmd) {
     case "/dataset_menu":
@@ -4686,6 +4355,92 @@ const handleQuickQuestion = async (content: string) => {
   if (await handleSystemCommand(content)) return;
   userInput.value = content;
   sendMessage();
+};
+
+const portalLoadingTips = [
+  "正在为数据集唤醒大模型并进行资源初始化... 🧠",
+  "AI 正在深度解析物理表的业务语义与指标口径... 📊",
+  "首次加载需探索物理库表，耗时稍长（约15-30秒），请耐心稍候喔 ✨",
+  "正在基于大模型智构最适合该数据集的场景分析提问... 🚀",
+  "云枢大模型正在努力推理计算中，马上就好... 🔄",
+];
+const currentPortalLoadingTip = ref(portalLoadingTips[0]);
+let portalLoadingTipTimer: ReturnType<typeof setInterval> | null = null;
+
+const startPortalLoadingTips = () => {
+  if (portalLoadingTipTimer) clearInterval(portalLoadingTipTimer);
+  let index = 0;
+  currentPortalLoadingTip.value = portalLoadingTips[0];
+  portalLoadingTipTimer = setInterval(() => {
+    index = (index + 1) % portalLoadingTips.length;
+    currentPortalLoadingTip.value = portalLoadingTips[index];
+  }, 4000);
+};
+
+const stopPortalLoadingTips = () => {
+  if (portalLoadingTipTimer) {
+    clearInterval(portalLoadingTipTimer);
+    portalLoadingTipTimer = null;
+  }
+};
+
+const {
+  showPortalDrawer,
+  portalNavigationPayload,
+  portalLoading,
+  portalBackgroundRefreshing,
+  portalKeepOpenOnQuestion,
+  portalPinned,
+  openPortalDrawer,
+  refreshPortalNavigation,
+  handlePortalQuickQuestion,
+  recordDatasetMenuQuestionClick,
+  clearDatasetMenuQuestionClick,
+  prefetchPortalNavigationIfEligible,
+  fetchDatasetMenuNavigationPayload,
+  disposePortalTimers,
+} = useDatasetPortal({
+  getAuthHeaders: () => embedAuthHeaders() || {},
+  showToast,
+  lockToDataQueryAgentForDatasetMenu,
+  onQuickQuestion: handleQuickQuestion,
+  findDataQueryAgent,
+  keepOpenStorageKey: "embed_portal_keep_open",
+  pinStorageKey: "embed_portal_pinned",
+  onPortalLoadingChange: (loading) => {
+    if (loading) startPortalLoadingTips();
+    else stopPortalLoadingTips();
+  },
+});
+
+watch(showPortalDrawer, (val) => {
+  if (!val) stopPortalLoadingTips();
+});
+
+const refreshDatasetMenuNavigation = async (msg: Message) => {
+  if (datasetMenuLoading.value || isProcessing.value) {
+    return;
+  }
+  datasetMenuLoading.value = true;
+  isProcessing.value = true;
+  try {
+    const payload = await fetchDatasetMenuNavigationPayload(true);
+    msg.datasetNavigation = payload;
+    msg.content = payload?.markdown || "当前暂无可展示的数据集导航，请联系管理员开通数据权限。";
+    isProcessing.value = false;
+    showToast("数据门户刷新成功", "success");
+    await nextTick();
+    scrollToBottom(true);
+  } catch (error) {
+    console.warn("Failed to refresh dataset menu navigation", error);
+    showToast("刷新数据门户失败，请稍后重试", "error");
+    if (msg.datasetNavigation) {
+      msg.datasetNavigation = { ...msg.datasetNavigation, _failed_at: new Date().toISOString() };
+    }
+  } finally {
+    datasetMenuLoading.value = false;
+    isProcessing.value = false;
+  }
 };
 
 const handleVisualAnalysis = async () => {
@@ -5303,7 +5058,6 @@ onMounted(() => {
   window.addEventListener("fullscreenchange", updateFullScreenStatus);
   // Close agent selector on global click
   window.addEventListener("click", onWindowClick);
-  document.addEventListener("keydown", handlePortalDrawerKeydown);
   // Initialize or Retrieve Conversation ID
   const savedId = localStorage.getItem("yovole_embed_conv_id");
   if (savedId) {
@@ -5350,7 +5104,7 @@ onMounted(() => {
   }
 
   // Attach cleanup handlers to component instance scope
-  (onUnmountHandlers as any).value = { onMessage, onOnline, onOffline, onWindowClick, onPortalDrawerKeydown: handlePortalDrawerKeydown };
+  (onUnmountHandlers as any).value = { onMessage, onOnline, onOffline, onWindowClick };
 });
 onUnmounted(() => {
   window.removeEventListener("resize", updateWidth);
@@ -5360,7 +5114,8 @@ onUnmounted(() => {
   if (handlers?.onOnline) window.removeEventListener("online", handlers.onOnline);
   if (handlers?.onOffline) window.removeEventListener("offline", handlers.onOffline);
   if (handlers?.onWindowClick) window.removeEventListener("click", handlers.onWindowClick);
-  if (handlers?.onPortalDrawerKeydown) document.removeEventListener("keydown", handlers.onPortalDrawerKeydown);
+  disposePortalTimers();
+  stopPortalLoadingTips();
   if (thoughtTimer) clearInterval(thoughtTimer);
 });
 // --- Typewriter Effect ---

@@ -3,9 +3,11 @@
     v-show="modelValue"
     :class="[
       'z-50',
-      pinned
-        ? 'fixed inset-y-0 right-0 max-w-full flex pointer-events-none'
-        : 'fixed inset-0 overflow-hidden',
+      pinned && isMobile
+        ? 'fixed inset-x-0 bottom-0 max-w-full flex pointer-events-none'
+        : pinned
+          ? 'fixed inset-y-0 right-0 max-w-full flex pointer-events-none'
+          : 'fixed inset-0 overflow-hidden',
     ]"
   >
     <transition
@@ -27,21 +29,32 @@
     <div
       :class="[
         pinned
-          ? 'h-full flex pointer-events-auto'
-          : 'absolute inset-y-0 right-0 pl-0 sm:pl-10 max-w-full flex',
+          ? isMobile
+            ? 'w-full flex pointer-events-auto'
+            : 'h-full flex pointer-events-auto'
+          : isMobile
+            ? 'absolute inset-x-0 bottom-0 flex justify-center'
+            : 'absolute inset-y-0 right-0 pl-0 sm:pl-10 max-w-full flex',
       ]"
     >
       <transition
         enter-active-class="transform transition ease-in-out duration-300"
-        enter-from-class="translate-x-full"
-        enter-to-class="translate-x-0"
+        :enter-from-class="sheetEnterFrom"
+        enter-to-class="translate-x-0 translate-y-0"
         leave-active-class="transform transition ease-in-out duration-300"
-        leave-from-class="translate-x-0"
-        leave-to-class="translate-x-full"
+        leave-from-class="translate-x-0 translate-y-0"
+        :leave-to-class="sheetLeaveTo"
       >
         <div
           v-show="modelValue"
-          class="w-screen max-w-[min(100vw,28rem)] bg-white dark:bg-gray-900 border-l border-gray-200 dark:border-gray-800 shadow-2xl flex flex-col h-full relative z-10 pb-[env(safe-area-inset-bottom,0px)]"
+          :class="[
+            'bg-white dark:bg-gray-900 shadow-2xl flex flex-col relative z-10 pb-[env(safe-area-inset-bottom,0px)]',
+            isMobile
+              ? 'w-full max-w-none rounded-t-2xl border-t border-gray-200 dark:border-gray-800'
+              : 'w-screen max-w-[min(100vw,28rem)] h-full border-l border-gray-200 dark:border-gray-800',
+            isMobile && pinned ? 'max-h-[min(58vh,100%)]' : '',
+            isMobile && !pinned ? 'max-h-[min(85vh,100%)]' : '',
+          ]"
         >
           <div class="px-4 py-3 sm:py-4 border-b border-gray-150 dark:border-gray-800 bg-gray-50/50 dark:bg-gray-800/20 flex items-center justify-between gap-2 pt-[max(0.75rem,env(safe-area-inset-top,0px))]">
             <span class="text-sm font-bold text-gray-900 dark:text-gray-100 flex items-center gap-1.5 select-none min-w-0">
@@ -51,7 +64,7 @@
               <span class="truncate">数据门户导航</span>
               <span
                 v-if="pinned"
-                class="hidden sm:inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wide text-blue-600 bg-blue-50 border border-blue-100 dark:text-blue-300 dark:bg-blue-500/10 dark:border-blue-500/20"
+                class="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wide text-blue-600 bg-blue-50 border border-blue-100 dark:text-blue-300 dark:bg-blue-500/10 dark:border-blue-500/20"
               >
                 已钉住
               </span>
@@ -70,9 +83,9 @@
               </label>
               <button
                 type="button"
-                class="hidden sm:inline-flex text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 p-1 rounded-md hover:bg-gray-150 dark:hover:bg-gray-800 transition-colors"
+                class="inline-flex text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 p-1 rounded-md hover:bg-gray-150 dark:hover:bg-gray-800 transition-colors"
                 :class="{ 'text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-500/10': pinned }"
-                :title="pinned ? '取消钉住（恢复遮罩模式）' : '钉住侧栏（去掉遮罩，可继续浏览聊天）'"
+                :title="pinButtonTitle"
                 @click="pinned = !pinned"
               >
                 <svg v-if="pinned" class="h-5 w-5" fill="currentColor" viewBox="0 0 24 24">
@@ -94,7 +107,7 @@
               </button>
             </div>
           </div>
-          <div class="flex-1 overflow-y-auto p-3 sm:p-4 bg-white dark:bg-gray-900/60">
+          <div class="flex-1 overflow-y-auto p-3 sm:p-4 bg-white dark:bg-gray-900/60 min-h-0">
             <DatasetCapabilityMenu
               :payload="payload || { groups: [] }"
               :initial-loading="initialLoading"
@@ -112,6 +125,7 @@
 </template>
 
 <script setup lang="ts">
+import { ref, computed, onMounted, onUnmounted } from "vue";
 import DatasetCapabilityMenu from "@/components/chatbi/DatasetCapabilityMenu.vue";
 
 const modelValue = defineModel<boolean>({ default: false });
@@ -130,6 +144,35 @@ const emit = defineEmits<{
   (event: "clear-question-click", payload: { query: string }): void;
   (event: "refresh"): void;
 }>();
+
+const isMobile = ref(false);
+let mobileMq: MediaQueryList | null = null;
+
+const syncMobile = () => {
+  isMobile.value = !!mobileMq?.matches;
+};
+
+onMounted(() => {
+  mobileMq = window.matchMedia("(max-width: 639px)");
+  syncMobile();
+  mobileMq.addEventListener("change", syncMobile);
+});
+
+onUnmounted(() => {
+  mobileMq?.removeEventListener("change", syncMobile);
+});
+
+const sheetEnterFrom = computed(() => (isMobile.value ? "translate-y-full" : "translate-x-full"));
+const sheetLeaveTo = computed(() => (isMobile.value ? "translate-y-full" : "translate-x-full"));
+
+const pinButtonTitle = computed(() => {
+  if (pinned.value) {
+    return isMobile.value ? "取消钉住（恢复全屏抽屉）" : "取消钉住（恢复遮罩模式）";
+  }
+  return isMobile.value
+    ? "钉住底部抽屉（去掉遮罩，可继续浏览聊天）"
+    : "钉住侧栏（去掉遮罩，可继续浏览聊天）";
+});
 
 const closeDrawer = () => {
   modelValue.value = false;

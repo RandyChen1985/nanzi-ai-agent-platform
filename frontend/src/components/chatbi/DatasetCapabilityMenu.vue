@@ -603,9 +603,25 @@
         </button>
       </div>
 
-      <!-- Empty State -->
+      <!-- Empty State: no permission -->
       <div
-        v-if="filteredGroups.length === 0"
+        v-if="isNoPermissionEmpty"
+        class="bg-amber-50/30 dark:bg-amber-950/10 border border-dashed border-amber-200 dark:border-amber-900/40 rounded-xl p-8 flex flex-col items-center justify-center text-center space-y-2 select-none"
+      >
+        <div class="text-amber-400 dark:text-amber-600">
+          <svg class="w-10 h-10" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+          </svg>
+        </div>
+        <h4 class="text-xs font-bold text-amber-800 dark:text-amber-200">暂无可用数据集</h4>
+        <p class="text-[10px] text-amber-700/80 dark:text-amber-300/80 max-w-[260px] leading-relaxed">
+          当前账号尚未开通 ChatBI 数据查询权限。请联系系统管理员为您配置数据集访问权限后再试。
+        </p>
+      </div>
+
+      <!-- Empty State: search / filter -->
+      <div
+        v-else-if="filteredGroups.length === 0 && !initialLoading"
         class="bg-gray-50/20 dark:bg-gray-900/10 border border-dashed border-gray-200 dark:border-gray-800 rounded-xl p-8 flex flex-col items-center justify-center text-center space-y-2 select-none"
       >
         <div class="text-gray-300 dark:text-gray-600">
@@ -686,6 +702,8 @@ interface DatasetNavigationPayload {
   groups?: DatasetCapabilityGroup[];
   markdown?: string;
   is_fallback?: boolean;
+  from_cache?: boolean;
+  has_datasets?: boolean;
 }
 
 const props = withDefaults(defineProps<{
@@ -874,6 +892,41 @@ const formattedGeneratedAt = computed(() => {
   return date.toLocaleString();
 });
 
+const cacheAgeLabel = computed(() => {
+  if (!props.payload.generated_at) return "";
+  const date = new Date(props.payload.generated_at);
+  if (Number.isNaN(date.getTime())) return "";
+  const diffMs = Date.now() - date.getTime();
+  if (diffMs < 0) return "刚刚生成";
+  const diffMin = Math.floor(diffMs / 60000);
+  if (diffMin < 1) return "刚刚生成";
+  if (diffMin < 60) return `${diffMin} 分钟前生成`;
+  const diffH = Math.floor(diffMin / 60);
+  if (diffH < 24) return `${diffH} 小时前生成`;
+  const diffD = Math.floor(diffH / 24);
+  if (diffD < 7) return `${diffD} 天前生成`;
+  return formattedGeneratedAt.value;
+});
+
+const cacheHashShort = computed(() => {
+  const hash = props.payload.dataset_menu_hash;
+  return hash ? hash.slice(0, 8) : "";
+});
+
+const cacheSourceLabel = computed(() => {
+  if (props.payload.from_cache === true) return "缓存命中";
+  if (props.payload.from_cache === false) return "本次新生成";
+  return "";
+});
+
+const isNoPermissionEmpty = computed(() => {
+  if (props.initialLoading || props.backgroundRefreshing) return false;
+  if (props.payload.has_datasets === false) return true;
+  const groupCount = (props.payload.groups || []).length;
+  const datasetCount = props.payload.dataset_count ?? groupCount;
+  return datasetCount === 0 && groupCount === 0 && !props.payload.is_fallback;
+});
+
 const showReadyBanner = computed(
   () => upgradedFromFallback.value && portalStatus.value === "ready",
 );
@@ -915,14 +968,22 @@ const statusBannerText = computed(() => {
       return "正在后台刷新完整门户内容…";
     case "fallback":
       return "当前为基础场景目录，完整 AI 场景卡片正在后台生成，可先点击问题开始查数。";
-    default:
-      return `门户已就绪${props.payload?.generated_at ? `（${formattedGeneratedAt.value}）` : ""}`;
+    default: {
+      const parts = ["门户已就绪"];
+      if (cacheAgeLabel.value) parts.push(cacheAgeLabel.value);
+      if (cacheSourceLabel.value) parts.push(cacheSourceLabel.value);
+      if (cacheHashShort.value) parts.push(`版本 #${cacheHashShort.value}`);
+      return parts.join(" · ");
+    }
   }
 });
 
 const refreshButtonTitle = computed(() => {
-  const hash = props.payload?.dataset_menu_hash?.slice(0, 8);
-  return hash ? `刷新数据门户（缓存版本 ${hash}）` : "刷新数据门户";
+  const parts = ["刷新数据门户"];
+  if (cacheHashShort.value) parts.push(`版本 #${cacheHashShort.value}`);
+  if (cacheAgeLabel.value) parts.push(cacheAgeLabel.value);
+  if (cacheSourceLabel.value) parts.push(cacheSourceLabel.value);
+  return parts.join(" · ");
 });
 
 const frequentQuestions = computed(() => {

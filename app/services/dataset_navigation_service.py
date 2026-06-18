@@ -484,8 +484,12 @@ class DatasetNavigationService:
         cache_key = (
             f"agent:dataset_navigation:{user_key}:{menu_hash}:{_NAV_PROMPT_VERSION}:{cache_gen}"
         )
+        has_datasets = menu_has_authorized_datasets(dataset_menu)
 
+        from_cache = False
         markdown = None if force_refresh else await DatasetNavigationService._load_cached_navigation(cache_key)
+        if markdown:
+            from_cache = True
         if not markdown:
             markdown = await DatasetNavigationService._generate_navigation_markdown(dataset_menu)
             
@@ -493,7 +497,6 @@ class DatasetNavigationService:
             fallback_raw = DataQueryPrompts.build_dataset_navigation_fallback(dataset_menu)
             fallback_md = finalize_visible_reply(fallback_raw, collapse_duplicates=False)
             is_fallback = (markdown == fallback_md)
-            has_datasets = menu_has_authorized_datasets(dataset_menu)
             
             # 如果是异常兜底（有授权数据集但生成了兜底文本），只缓存 15 秒，避免长期卡在兜底状态；如果是正常情况则缓存 10 分钟
             ttl = 15 if (is_fallback and has_datasets) else _NAV_CACHE_TTL_SECONDS
@@ -557,6 +560,8 @@ class DatasetNavigationService:
             "groups": groups,
             "markdown": markdown,
             "is_fallback": is_fallback,
+            "has_datasets": has_datasets,
+            "from_cache": from_cache,
         }
 
     @staticmethod

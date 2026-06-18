@@ -1,4 +1,4 @@
-import { ref, computed, watch } from "vue";
+import { ref, computed, watch, onMounted, onUnmounted } from "vue";
 import axios from "@/utils/axios";
 
 export interface DatasetPortalPayload {
@@ -8,6 +8,8 @@ export interface DatasetPortalPayload {
   groups?: unknown[];
   markdown?: string;
   is_fallback?: boolean;
+  from_cache?: boolean;
+  has_datasets?: boolean;
   _failed_at?: string;
 }
 
@@ -21,10 +23,21 @@ export interface UseDatasetPortalOptions {
   findDataQueryAgent?: () => unknown;
   keepOpenStorageKey?: string;
   pinStorageKey?: string;
+  /** 门户加载态变化（用于 EmbedChat 加载提示轮播等） */
+  onPortalLoadingChange?: (loading: boolean) => void;
 }
 
-const isMobileViewport = () =>
+export const isMobileViewport = () =>
   typeof window !== "undefined" && window.matchMedia("(max-width: 639px)").matches;
+
+const readStoredBoolean = (storageKey: string, defaultWhenUnset: boolean): boolean => {
+  const stored = localStorage.getItem(storageKey);
+  if (stored === "1") return true;
+  if (stored === "0") return false;
+  return defaultWhenUnset;
+};
+
+export const PORTAL_OPEN_HOTKEY = "Ctrl+Shift+D";
 
 export function useDatasetPortal(options: UseDatasetPortalOptions) {
   const showPortalDrawer = ref(false);
@@ -36,7 +49,9 @@ export function useDatasetPortal(options: UseDatasetPortalOptions) {
   let silentRefreshTimer: ReturnType<typeof setTimeout> | null = null;
 
   const storageKey = options.keepOpenStorageKey || "dataset_portal_keep_open";
-  const portalKeepOpenOnQuestion = ref(localStorage.getItem(storageKey) === "1");
+  const portalKeepOpenOnQuestion = ref(
+    readStoredBoolean(storageKey, !isMobileViewport()),
+  );
   watch(portalKeepOpenOnQuestion, (val) => {
     localStorage.setItem(storageKey, val ? "1" : "0");
   });
@@ -53,6 +68,11 @@ export function useDatasetPortal(options: UseDatasetPortalOptions) {
   const portalBackgroundRefreshing = computed(
     () => portalSilentRefreshing.value || (portalLoading.value && !!portalNavigationPayload.value),
   );
+
+  const setPortalLoading = (loading: boolean) => {
+    portalLoading.value = loading;
+    options.onPortalLoadingChange?.(loading);
+  };
 
   const fetchDatasetMenuNavigationPayload = async (refresh = false) => {
     const res = await axios.get("/api/v1/chat/dataset-menu", {
@@ -128,7 +148,7 @@ export function useDatasetPortal(options: UseDatasetPortalOptions) {
   const fetchPortalNavigationData = async (refresh = false, silent = false) => {
     if (!silent) {
       if (portalLoading.value) return;
-      portalLoading.value = true;
+      setPortalLoading(true);
     } else if (refresh) {
       portalSilentRefreshing.value = true;
     }
@@ -170,7 +190,7 @@ export function useDatasetPortal(options: UseDatasetPortalOptions) {
       }
     } finally {
       if (!silent) {
-        portalLoading.value = false;
+        setPortalLoading(false);
       } else if (refresh) {
         portalSilentRefreshing.value = false;
       }
@@ -217,6 +237,16 @@ export function useDatasetPortal(options: UseDatasetPortalOptions) {
   };
 
   const handlePortalDrawerKeydown = (event: KeyboardEvent) => {
+    const key = event.key.toLowerCase();
+    if ((event.ctrlKey || event.metaKey) && event.shiftKey && key === "d") {
+      event.preventDefault();
+      if (showPortalDrawer.value) {
+        showPortalDrawer.value = false;
+      } else {
+        void openPortalDrawer();
+      }
+      return;
+    }
     if (event.key === "Escape" && showPortalDrawer.value) {
       showPortalDrawer.value = false;
     }
@@ -236,6 +266,15 @@ export function useDatasetPortal(options: UseDatasetPortalOptions) {
     }
   };
 
+  onMounted(() => {
+    document.addEventListener("keydown", handlePortalDrawerKeydown);
+  });
+
+  onUnmounted(() => {
+    document.removeEventListener("keydown", handlePortalDrawerKeydown);
+    disposePortalTimers();
+  });
+
   return {
     showPortalDrawer,
     portalNavigationPayload,
@@ -250,6 +289,7 @@ export function useDatasetPortal(options: UseDatasetPortalOptions) {
     recordDatasetMenuQuestionClick,
     clearDatasetMenuQuestionClick,
     prefetchPortalNavigationIfEligible,
+    fetchDatasetMenuNavigationPayload,
     disposePortalTimers,
   };
 }
