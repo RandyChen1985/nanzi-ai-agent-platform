@@ -24,6 +24,31 @@ async def test_yaml_generation():
     assert "- name: id" in content
     assert "type: Int64" in content
 
+
+def test_metrics_yaml_generation():
+    """验证指标块 YAML 包含 dataset / meta_name / data_source。"""
+    from app.models.metadata import MetaMetric
+
+    dataset = MetaDataset(name="sales_detail", display_name="销售明细", data_source="default_clickhouse")
+    dataset.metrics = [
+        MetaMetric(
+            name="daily_orders",
+            display_name="日订单量",
+            description="当日订单总数",
+            unit="单",
+            calculation_logic="SELECT count(*) FROM fact_orders WHERE dt = today()",
+        )
+    ]
+
+    content = MetadataRagService.generate_metrics_content(dataset)
+
+    assert "dataset: sales_detail" in content
+    assert "meta_name: 销售明细" in content
+    assert "data_source: default_clickhouse" in content
+    assert "metrics_scope: 销售明细" in content
+    assert "name: daily_orders" in content
+
+
 @pytest.mark.asyncio
 async def test_sync_dataset_flow(db_session: AsyncSession):
     """模拟同步全流程"""

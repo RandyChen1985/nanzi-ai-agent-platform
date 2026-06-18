@@ -59,8 +59,9 @@
         </div>
         
         <div class="flex items-center space-x-2">
-            <!-- Fullscreen Button -->
+            <!-- Fullscreen Button (desktop only) -->
             <button
+                v-if="!isMobile"
                 @click="toggleFullScreen"
                 class="p-2 text-gray-400 hover:text-primary hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-all"
                 :title="isFullScreen ? '退出全屏' : '全屏模式'"

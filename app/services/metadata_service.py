@@ -942,7 +942,7 @@ class MetadataService:
                 )
             )
 
-        metrics_yaml = MetadataRagService.render_metrics_schema_yaml(dataset)
+        metrics_yaml = MetadataRagService.render_metrics_schema_yaml(dataset, data_source=ds_source)
         if metrics_yaml:
             chunks.append(metrics_yaml)
         return chunks
