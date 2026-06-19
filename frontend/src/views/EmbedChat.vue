@@ -4783,11 +4783,14 @@ const handleShowCitation = async (msg: Message, citeId: string, anchor?: HTMLEle
   }
 };
 
-const handleQuickQuestion = async (content: string) => {
-  if (isProcessing.value) return;
-  if (await handleSystemCommand(content)) return;
+const handleQuickQuestion = async (content: string, action: "send" | "fill" = "send") => {
+  if (!content) return;
+  if (action === "send" && isProcessing.value) return;
+  if (action === "send" && await handleSystemCommand(content)) return;
   userInput.value = content;
-  sendMessage();
+  if (action === "send") {
+    sendMessage();
+  }
 };
 
 const portalLoadingTips = [

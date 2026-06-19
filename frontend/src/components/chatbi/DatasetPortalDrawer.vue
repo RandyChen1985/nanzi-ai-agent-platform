@@ -151,7 +151,7 @@
                 :payload="payload || { groups: [] }"
                 :initial-loading="initialLoading"
                 :background-refreshing="backgroundRefreshing"
-                @quick-question="(query) => emit('quick-question', query)"
+                @quick-question="(query, action) => emit('quick-question', query, action)"
                 @record-question-click="(p) => emit('record-question-click', p)"
                 @clear-question-click="(p) => emit('clear-question-click', p)"
                 @refresh="emit('refresh')"
@@ -180,7 +180,7 @@ defineProps<{
 }>();
 
 const emit = defineEmits<{
-  (event: "quick-question", query: string): void;
+  (event: "quick-question", query: string, action?: "send" | "fill"): void;
   (event: "record-question-click", payload: { query: string; label?: string; group_id?: string }): void;
   (event: "clear-question-click", payload: { query: string }): void;
   (event: "refresh"): void;

@@ -20,6 +20,8 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 MAX_PINNED_GROUPS = 50  # 最多允许置顶的卡片数，防止滥用
+MAX_CARD_ORDER = 200   # 最多记录排序的卡片数
+MAX_QUESTION_CLICKS = 500  # 最多记录的问题点击 key 数
 
 
 def _redis_key(user_id: int) -> str:
@@ -28,6 +30,9 @@ def _redis_key(user_id: int) -> str:
 
 class PortalPrefs(BaseModel):
     pinned_group_ids: List[str] = Field(default_factory=list, description="已置顶的数据门户卡片 ID 列表，保持插入顺序")
+    card_order: List[str] = Field(default_factory=list, description="拖拽自定义排序的卡片 ID 全量列表")
+    expanded_group_ids: List[str] = Field(default_factory=list, description="已展开相关数据面板的卡片 ID 列表")
+    question_clicks: Dict[str, int] = Field(default_factory=dict, description="本地问题点击次数备份（query → count），用于跨 session 保留常问数据")
 
 
 @router.get(
@@ -83,18 +88,48 @@ async def update_portal_prefs(
     user_id = int(user_info["user_id"])
     key = _redis_key(user_id)
 
-    # 去重并限制最大数量
-    seen = set()
-    deduped: List[str] = []
+    # --- 清理 pinned_group_ids ---
+    seen: set = set()
+    deduped_pins: List[str] = []
     for gid in body.pinned_group_ids:
         gid = gid.strip()
         if gid and gid not in seen:
             seen.add(gid)
-            deduped.append(gid)
-            if len(deduped) >= MAX_PINNED_GROUPS:
+            deduped_pins.append(gid)
+            if len(deduped_pins) >= MAX_PINNED_GROUPS:
                 break
 
-    prefs = PortalPrefs(pinned_group_ids=deduped)
+    # --- 清理 card_order ---
+    seen2: set = set()
+    deduped_order: List[str] = []
+    for gid in body.card_order:
+        gid = gid.strip()
+        if gid and gid not in seen2:
+            seen2.add(gid)
+            deduped_order.append(gid)
+            if len(deduped_order) >= MAX_CARD_ORDER:
+                break
+
+    # --- 清理 expanded_group_ids ---
+    deduped_expanded = list(dict.fromkeys(
+        gid.strip() for gid in body.expanded_group_ids if gid.strip()
+    ))
+
+    # --- 清理 question_clicks：只保留正整数，限制 key 数量 ---
+    clean_clicks: Dict[str, int] = {}
+    for q, cnt in body.question_clicks.items():
+        q = q.strip()
+        if q and isinstance(cnt, int) and cnt > 0:
+            clean_clicks[q] = cnt
+            if len(clean_clicks) >= MAX_QUESTION_CLICKS:
+                break
+
+    prefs = PortalPrefs(
+        pinned_group_ids=deduped_pins,
+        card_order=deduped_order,
+        expanded_group_ids=deduped_expanded,
+        question_clicks=clean_clicks,
+    )
 
     try:
         # 不设置 TTL，长期保留用户偏好

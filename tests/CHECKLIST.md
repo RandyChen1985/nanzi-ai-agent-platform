@@ -148,3 +148,9 @@
 | Pydantic V2 全局废弃警告修复 (Pydantic V2 Global Deprecation Fix) | `app/services/ai/agent_manager.py`, `app/services/slash_command_service.py`, `app/api/portal/endpoints/tools.py`, `app/api/portal/endpoints/models.py`, `app/api/portal/endpoints/memory.py`, `app/api/portal/endpoints/system.py`, `app/api/v1/endpoints/tasks.py`, `app/api/v1/endpoints/chat.py` | **消除全局废弃警告**：将项目中 11 处核心服务和接口中使用的废弃 `.dict()` 方法升级为 Pydantic V2 推荐的 `.model_dump()`；优化了 Pydantic 版本的 hasattr 检测逻辑；运行全部 API 单元测试成功通过。 | ✅ 通过 | 2026-06-18 |
 | RAGFlow 平台配置摘要测试修复 (RAGFlow Config Summary Test Fix) | `tests/api/portal/test_ragflow_knowledge_platform.py` | **修复单元测试故障**：更新 `test_get_ragflow_config_summary_does_not_expose_api_key` 中 Mock 方法 `fake_get` 的签名以兼容 `default` 关键字传参，同步补全断言中的 `metadata_provider` 返回值校验。 | ✅ 通过 | 2026-06-18 |
 | 黄金 SQL 报表暂存与免模型直连执行 (Golden SQL Reports & Native Execution) | `saved_reports.py`, `EmbedChat.vue`, `AgentDebug.vue`, `DatasetCapabilityMenu.vue` | **黄金 SQL 报表一键暂存与免模型极速安全直连执行**：在聊天与调试页面提供“暂存”按钮并调起模态框输入标题以暂存 SQL，在后端基于 Redis Hash（按用户隔离）提供 CRUD 暂存，并支持全自动提取物理表名以反查补全数据集与数据源属性；在数据门户中提供“我的黄金报表”折叠展示卡片并支持一键物理删除；点击暂存项将自动触发免模型直连安全执行（复用底层 execute_sql_query_core 并强制校验表与行级权限门禁）；前端将直连数据进行健壮转换，在聊天框中将其以 Markdown 格式的表格美观渲染呈现。 | ✅ 已完成 | 2026-06-19 |
+| 快捷问题一键编辑后提问 (Quick Question Edit Before Send) | `DatasetCapabilityMenu.vue`, `DatasetPortalDrawer.vue`, `useDatasetPortal.ts`, `AgentDebug.vue`, `EmbedChat.vue` | **推荐问题增加“填入”按钮**：在“🔥 我常问”、“你可以这样问”、“推荐业务提问”和“继续追问”列表的所有快捷提问按钮右侧增加分体 ✎ 铅笔小按钮，平时隐藏 (`opacity-0`) 悬浮淡入 (`opacity-100`)；点击 ✎ 图标时仅将文本填入输入框而不会自动发送消息，允许用户微调后手动发送。 | ✅ 已完成 | 2026-06-19 |
+| 数据门户搜索区域默认折叠隐藏 (Dataset Menu Search Bar Collapse UX) | `DatasetCapabilityMenu.vue` | **搜索与筛选区域默认折叠**：在数据门户头部右侧增加 🔍 搜索切换按钮，用于显示/隐藏搜索输入框与标签栏；搜索栏默认不显示（`showSearchBar=false`），并在此区域包裹平滑展开/折叠过渡动画；折叠收起时，自动清空已输入的搜索词及标签高亮过滤状态，防范隐藏后导致的数据卡片无故过滤。 | ✅ 已完成 | 2026-06-19 |
+
+
+
+

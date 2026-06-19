@@ -21,7 +21,7 @@ export interface UseDatasetPortalOptions {
   getAuthHeaders: () => Record<string, string>;
   showToast: ToastFn;
   lockToDataQueryAgentForDatasetMenu: () => Promise<void>;
-  onQuickQuestion: (query: string) => void | Promise<void>;
+  onQuickQuestion: (query: string, action?: "send" | "fill") => void | Promise<void>;
   findDataQueryAgent?: () => unknown;
   keepOpenStorageKey?: string;
   pinStorageKey?: string;
@@ -272,11 +272,11 @@ export function useDatasetPortal(options: UseDatasetPortalOptions) {
     await fetchPortalNavigationData(true);
   };
 
-  const handlePortalQuickQuestion = async (query: string) => {
-    if (shouldClosePortalAfterQuestion()) {
+  const handlePortalQuickQuestion = async (query: string, action?: "send" | "fill") => {
+    if (action === "send" && shouldClosePortalAfterQuestion()) {
       showPortalDrawer.value = false;
     }
-    await options.onQuickQuestion(query);
+    await options.onQuickQuestion(query, action);
   };
 
   const handlePortalDrawerKeydown = (event: KeyboardEvent) => {

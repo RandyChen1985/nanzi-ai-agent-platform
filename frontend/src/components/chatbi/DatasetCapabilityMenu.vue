@@ -38,80 +38,106 @@
           </div>
         </div>
       </div>
-      <button
-        type="button"
-        class="w-8 h-8 flex-shrink-0 flex items-center justify-center rounded-lg border border-transparent bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-400 transition-all"
-        :class="refreshDisabled
-          ? 'opacity-50 cursor-not-allowed'
-          : 'hover:bg-gray-200/70 dark:hover:bg-gray-750 hover:text-gray-700 dark:hover:text-gray-200 active:scale-90 cursor-pointer'"
-        :disabled="refreshDisabled"
-        :title="refreshDisabled && props.initialLoading ? '数据门户首次加载中，请稍候' : refreshButtonTitle"
-        @click="handleRefreshClick"
-      >
-        <svg 
-          class="w-4 h-4 transition-transform duration-700"
-          :class="{ 'animate-spin': showRefreshBusy }"
-          fill="none" stroke="currentColor" viewBox="0 0 24 24"
+      <div class="flex items-center gap-1.5 flex-shrink-0">
+        <!-- 🔍 搜索折叠切换按钮 -->
+        <button
+          type="button"
+          class="w-8 h-8 flex items-center justify-center rounded-lg border border-transparent transition-all cursor-pointer active:scale-90"
+          :class="showSearchBar
+            ? 'bg-blue-55 text-blue-600 dark:bg-blue-950/40 dark:text-blue-400 font-bold'
+            : 'bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-400 hover:bg-gray-200/70 dark:hover:bg-gray-750 hover:text-gray-700 dark:hover:text-gray-200'"
+          title="展开/折叠搜索与标签过滤"
+          @click="showSearchBar = !showSearchBar"
         >
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
-        </svg>
-      </button>
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+          </svg>
+        </button>
+
+        <!-- 刷新按钮 -->
+        <button
+          type="button"
+          class="w-8 h-8 flex items-center justify-center rounded-lg border border-transparent bg-gray-100 text-gray-550 dark:bg-gray-800 dark:text-gray-400 transition-all"
+          :class="refreshDisabled
+            ? 'opacity-50 cursor-not-allowed'
+            : 'hover:bg-gray-200/70 dark:hover:bg-gray-750 hover:text-gray-700 dark:hover:text-gray-200 active:scale-90 cursor-pointer'"
+          :disabled="refreshDisabled"
+          :title="refreshDisabled && props.initialLoading ? '数据门户首次加载中，请稍候' : refreshButtonTitle"
+          @click="handleRefreshClick"
+        >
+          <svg 
+            class="w-4 h-4 transition-transform duration-700"
+            :class="{ 'animate-spin': showRefreshBusy }"
+            fill="none" stroke="currentColor" viewBox="0 0 24 24"
+          >
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+          </svg>
+        </button>
+      </div>
     </div>
 
     <!-- Search and Filter Bar -->
-    <div v-if="!isNoPermissionEmpty" class="space-y-2.5">
-      <div class="relative">
-        <span class="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none text-gray-400 dark:text-gray-500">
-          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-          </svg>
-        </span>
-        <input
-          v-model="searchQuery"
-          type="text"
-          placeholder="搜索场景、表名或指标..."
-          class="w-full pl-9 pr-8 py-1.5 text-xs rounded-xl border border-gray-150 dark:border-gray-800 bg-white dark:bg-gray-900/30 text-gray-850 dark:text-gray-200 placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-all shadow-xs"
-        />
-        <button
-          v-if="searchQuery"
-          type="button"
-          class="absolute inset-y-0 right-0 flex items-center pr-2.5 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 transition-colors"
-          @click="searchQuery = ''"
-        >
-          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M6 18L18 6M6 6l12 12" />
-          </svg>
-        </button>
-      </div>
+    <transition
+      enter-active-class="transition-all duration-300 ease-out"
+      enter-from-class="transform opacity-0 -translate-y-2 max-h-0 overflow-hidden"
+      enter-to-class="transform opacity-100 translate-y-0 max-h-[120px] overflow-hidden"
+      leave-active-class="transition-all duration-200 ease-in"
+      leave-from-class="transform opacity-100 translate-y-0 max-h-[120px] overflow-hidden"
+      leave-to-class="transform opacity-0 -translate-y-2 max-h-0 overflow-hidden"
+    >
+      <div v-show="showSearchBar && !isNoPermissionEmpty" class="space-y-2.5">
+        <div class="relative">
+          <span class="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none text-gray-400 dark:text-gray-500">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+            </svg>
+          </span>
+          <input
+            v-model="searchQuery"
+            type="text"
+            placeholder="搜索场景、表名或指标..."
+            class="w-full pl-9 pr-8 py-1.5 text-xs rounded-xl border border-gray-150 dark:border-gray-800 bg-white dark:bg-gray-900/30 text-gray-850 dark:text-gray-200 placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-all shadow-xs"
+          />
+          <button
+            v-if="searchQuery"
+            type="button"
+            class="absolute inset-y-0 right-0 flex items-center pr-2.5 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 transition-colors"
+            @click="searchQuery = ''"
+          >
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
 
-      <div v-if="allTags.length" class="relative">
-        <div class="pointer-events-none absolute inset-y-0 left-0 w-4 bg-gradient-to-r from-white dark:from-gray-900 to-transparent z-10 sm:hidden"></div>
-        <div class="pointer-events-none absolute inset-y-0 right-0 w-6 bg-gradient-to-l from-white dark:from-gray-900 to-transparent z-10 sm:hidden"></div>
-        <div class="flex items-center gap-1.5 overflow-x-auto no-scrollbar pb-1 -mx-0.5 scroll-smooth">
-        <button
-          type="button"
-          class="px-2.5 py-1 text-[10px] font-bold rounded-lg border transition-all whitespace-nowrap cursor-pointer active:scale-95"
-          :class="selectedTag === 'All'
-            ? 'bg-blue-600 border-transparent text-white shadow-xs'
-            : 'bg-gray-50 dark:bg-gray-800/40 border-gray-150 dark:border-gray-800 text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800'"
-          @click="selectedTag = 'All'"
-        >
-          全部
-        </button>
-        <button
-          v-for="tag in allTags"
-          :key="tag"
-          type="button"
-          class="px-2.5 py-1 text-[10px] font-bold rounded-lg border transition-all whitespace-nowrap cursor-pointer active:scale-95"
-          :class="tagFilterClass(tag)"
-          @click="selectedTag = tag"
-        >
-          {{ tag }}
-        </button>
+        <div v-if="allTags.length" class="relative">
+          <div class="pointer-events-none absolute inset-y-0 left-0 w-4 bg-gradient-to-r from-white dark:from-gray-900 to-transparent z-10 sm:hidden"></div>
+          <div class="pointer-events-none absolute inset-y-0 right-0 w-6 bg-gradient-to-l from-white dark:from-gray-900 to-transparent z-10 sm:hidden"></div>
+          <div class="flex items-center gap-1.5 overflow-x-auto no-scrollbar pb-1 -mx-0.5 scroll-smooth">
+            <button
+              type="button"
+              class="px-2.5 py-1 text-[10px] font-bold rounded-lg border transition-all whitespace-nowrap cursor-pointer active:scale-95"
+              :class="selectedTag === 'All'
+                ? 'bg-blue-600 border-transparent text-white shadow-xs'
+                : 'bg-gray-50 dark:bg-gray-800/40 border-gray-150 dark:border-gray-800 text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800'"
+              @click="selectedTag = 'All'"
+            >
+              全部
+            </button>
+            <button
+              v-for="tag in allTags"
+              :key="tag"
+              type="button"
+              class="px-2.5 py-1 text-[10px] font-bold rounded-lg border transition-all whitespace-nowrap cursor-pointer active:scale-95"
+              :class="tagFilterClass(tag)"
+              @click="selectedTag = tag"
+            >
+              {{ tag }}
+            </button>
+          </div>
         </div>
       </div>
-    </div>
-
+    </transition>
     <!-- 📌 我的黄金报表 (Redis 暂存版) -->
     <div
       v-if="!initialLoading"
@@ -237,19 +263,30 @@
         <div
           v-for="item in frequentQuestions"
           :key="item.question.query"
-          class="inline-flex items-stretch rounded-lg border border-amber-200/70 dark:border-amber-800/50 bg-white/80 dark:bg-gray-900/40 overflow-hidden"
+          class="group/freq inline-flex items-stretch rounded-lg border border-amber-200/70 dark:border-amber-800/50 bg-white/80 dark:bg-gray-900/40 overflow-hidden"
         >
           <button
             type="button"
-            class="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-left text-[11px] font-semibold text-amber-900 dark:text-amber-100 hover:bg-amber-50 dark:hover:bg-amber-950/40 transition-all active:scale-95"
-            @click="handleFrequentQuestionClick(item)"
+            class="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-left text-[11px] font-semibold text-amber-900 dark:text-amber-100 hover:bg-amber-50 dark:hover:bg-amber-950/40 transition-all active:scale-95 cursor-pointer"
+            @click="handleFrequentQuestionClick(item, 'send')"
           >
             <span class="truncate max-w-[200px] sm:max-w-[220px]">{{ item.question.label }}</span>
             <span class="text-[9px] font-bold text-amber-600 dark:text-amber-400">{{ item.question.click_count }}次</span>
           </button>
           <button
             type="button"
-            class="flex items-center justify-center px-1.5 text-amber-500/80 dark:text-amber-400/80 border-l border-amber-200/70 dark:border-amber-800/50 hover:bg-amber-100/80 dark:hover:bg-amber-950/60 hover:text-amber-700 dark:hover:text-amber-200 transition-colors"
+            class="opacity-0 group-hover/freq:opacity-100 flex items-center justify-center px-1.5 text-amber-500/80 dark:text-amber-400/80 border-l border-amber-200/70 dark:border-amber-800/50 hover:bg-amber-100/80 dark:hover:bg-amber-950/60 hover:text-amber-700 dark:hover:text-amber-200 transition-all duration-200 cursor-pointer"
+            title="填入输入框微调"
+            aria-label="填入输入框微调"
+            @click.stop="handleFrequentQuestionClick(item, 'fill')"
+          >
+            <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L6.83 19.82a4.5 4.5 0 01-1.897 1.13l-2.685.8.8-2.685a4.5 4.5 0 011.13-1.897L16.863 4.487zm0 0L19.5 7.125" />
+            </svg>
+          </button>
+          <button
+            type="button"
+            class="flex items-center justify-center px-1.5 text-amber-500/80 dark:text-amber-400/80 border-l border-amber-200/70 dark:border-amber-800/50 hover:bg-amber-100/80 dark:hover:bg-amber-950/60 hover:text-amber-700 dark:hover:text-amber-200 transition-colors cursor-pointer"
             title="从常问中移除"
             aria-label="从常问中移除"
             @click.stop="handleClearFrequentQuestion(item)"
@@ -307,8 +344,29 @@
           v-for="{ group, visuals } in visibleDisplayGroups"
           :key="group.id || group.title"
           class="group/card relative overflow-hidden rounded-xl border p-3.5 sm:p-4 shadow-sm hover:shadow-lg hover:-translate-y-0.5 transition-all duration-300"
-          :class="[visuals.card, visuals.cardBorder, visuals.cardHover]"
+          :class="[
+            visuals.card, visuals.cardBorder, visuals.cardHover,
+            canDragCards ? 'cursor-grab active:cursor-grabbing' : '',
+            dragOverId === (group.id || group.title) ? 'ring-2 ring-blue-400/60 dark:ring-blue-500/60 scale-[1.01]' : '',
+            dragSourceId === (group.id || group.title) ? 'opacity-50' : '',
+          ]"
+          :draggable="canDragCards"
+          @dragstart="canDragCards && handleDragStart($event, group.id || group.title)"
+          @dragover="handleDragOver($event, group.id || group.title)"
+          @dragleave="handleDragLeave($event)"
+          @drop="handleDrop($event, group.id || group.title)"
+          @dragend="handleDragEnd()"
         >
+          <!-- 拖拽 Handle 提示（无筛选时悬停显示） -->
+          <div
+            v-if="canDragCards"
+            class="absolute top-2 left-1/2 -translate-x-1/2 opacity-0 group-hover/card:opacity-40 transition-opacity duration-200 pointer-events-none select-none"
+          >
+            <svg class="w-4 h-3 text-gray-500 dark:text-gray-400" viewBox="0 0 16 10" fill="currentColor">
+              <circle cx="4" cy="2" r="1.2"/><circle cx="8" cy="2" r="1.2"/><circle cx="12" cy="2" r="1.2"/>
+              <circle cx="4" cy="8" r="1.2"/><circle cx="8" cy="8" r="1.2"/><circle cx="12" cy="8" r="1.2"/>
+            </svg>
+          </div>
           <div
             class="pointer-events-none absolute -right-10 -top-10 h-28 w-28 rounded-full opacity-[0.18] blur-2xl transition-opacity duration-300 group-hover/card:opacity-[0.28]"
             :class="visuals.decor"
@@ -319,6 +377,7 @@
           />
 
           <!-- Card Header -->
+
           <div class="relative space-y-2.5">
             <div class="flex items-start gap-2.5 min-w-0">
               <div
@@ -451,28 +510,51 @@
               ></div>
             </div>
             <div v-else class="flex flex-wrap gap-2">
-              <button
+              <div
                 v-for="question in sortedQuestions(group.questions)"
                 :key="question.query"
-                type="button"
-                class="group/btn relative inline-flex items-center gap-1.5 rounded-lg border px-3 py-2 text-left text-xs font-semibold transition-all hover:-translate-y-0.5 active:translate-y-0 shadow-sm"
+                class="group/qbtn inline-flex items-stretch rounded-lg border transition-all duration-200 hover:-translate-y-0.5 active:translate-y-0 shadow-sm overflow-hidden"
                 :class="visuals.questionBtn"
-                @click="handleQuestionClick(question, group)"
               >
-                <svg
-                  class="w-3.5 h-3.5 flex-shrink-0 opacity-80 group-hover/btn:opacity-100"
-                  fill="none" stroke="currentColor" viewBox="0 0 24 24"
+                <button
+                  type="button"
+                  class="inline-flex items-center gap-1.5 px-3 py-2 text-left text-xs font-semibold cursor-pointer select-none bg-transparent hover:bg-black/5 dark:hover:bg-white/5 transition-colors"
+                  @click="handleQuestionClick(question, group, 'send')"
                 >
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/>
-                </svg>
-                <span>{{ question.label }}</span>
-                <span
-                  v-if="question.click_count"
-                  class="ml-1 inline-flex items-center px-1 py-0.5 rounded bg-amber-500/10 text-[9px] font-bold text-amber-600 border border-amber-500/20 dark:bg-amber-500/20 dark:text-amber-300 dark:border-amber-500/30 shadow-sm"
+                  <svg
+                    class="w-3.5 h-3.5 flex-shrink-0 opacity-80"
+                    fill="none" stroke="currentColor" viewBox="0 0 24 24"
+                  >
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/>
+                  </svg>
+                  <span>{{ question.label }}</span>
+                  <span
+                    v-if="question.click_count"
+                    class="ml-1 inline-flex items-center px-1 py-0.5 rounded bg-amber-500/10 text-[9px] font-bold text-amber-600 border border-amber-500/20 dark:bg-amber-500/20 dark:text-amber-300 dark:border-amber-500/30 shadow-sm"
+                  >
+                    🔥 常用 {{ question.click_count }}
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  class="opacity-0 group-hover/qbtn:opacity-100 flex items-center justify-center px-2 border-l transition-all duration-200 cursor-pointer bg-transparent hover:bg-black/5 dark:hover:bg-white/5"
+                  :class="[
+                    visuals.key === 'blue' ? 'border-blue-200/80 dark:border-blue-800/50' :
+                    visuals.key === 'violet' ? 'border-violet-200/80 dark:border-violet-800/50' :
+                    visuals.key === 'emerald' ? 'border-emerald-200/80 dark:border-emerald-800/50' :
+                    visuals.key === 'amber' ? 'border-amber-200/80 dark:border-amber-800/50' :
+                    visuals.key === 'rose' ? 'border-rose-200/80 dark:border-rose-800/50' :
+                    'border-cyan-200/80 dark:border-cyan-800/50'
+                  ]"
+                  title="填入输入框微调"
+                  aria-label="填入输入框微调"
+                  @click.stop="handleQuestionClick(question, group, 'fill')"
                 >
-                  🔥 常用 {{ question.click_count }}
-                </span>
-              </button>
+                  <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L6.83 19.82a4.5 4.5 0 01-1.897 1.13l-2.685.8.8-2.685a4.5 4.5 0 011.13-1.897L16.863 4.487zm0 0L19.5 7.125" />
+                  </svg>
+                </button>
+              </div>
             </div>
           </div>
 
@@ -635,15 +717,30 @@
                               </div>
                               <template v-else>
                                 <div class="text-[9px] font-bold text-gray-500 dark:text-gray-400">推荐业务提问</div>
-                                <button
+                                <div
                                   v-for="question in tableRecommendState[buildTableDictionaryKey(group, related, table)]?.questions || []"
                                   :key="question.query"
-                                  type="button"
-                                  class="w-full text-left rounded-lg border border-amber-100/80 dark:border-amber-900/40 bg-amber-50/50 dark:bg-amber-950/20 px-2 py-1.5 text-[9px] font-semibold text-amber-900 dark:text-amber-100 hover:bg-amber-100/70 dark:hover:bg-amber-950/40 transition-all active:scale-[0.99]"
-                                  @click.stop="handleRecommendedQuestionClick(question)"
+                                  class="group/rec w-full inline-flex items-stretch rounded-lg border border-amber-100/80 dark:border-amber-900/40 bg-amber-50/50 dark:bg-amber-950/20 text-[9px] font-semibold text-amber-900 dark:text-amber-100 hover:bg-amber-100/70 dark:hover:bg-amber-950/40 transition-all overflow-hidden"
                                 >
-                                  🙋 {{ question.label }}
-                                </button>
+                                  <button
+                                    type="button"
+                                    class="flex-1 text-left px-2 py-1.5 bg-transparent hover:bg-black/5 dark:hover:bg-white/5 transition-colors cursor-pointer"
+                                    @click.stop="handleRecommendedQuestionClick(question, 'send')"
+                                  >
+                                    🙋 {{ question.label }}
+                                  </button>
+                                  <button
+                                    type="button"
+                                    class="opacity-0 group-hover/rec:opacity-100 flex items-center justify-center px-2 border-l border-amber-100/80 dark:border-amber-900/40 transition-all duration-200 cursor-pointer bg-transparent hover:bg-black/5 dark:hover:bg-white/5"
+                                    title="填入输入框微调"
+                                    aria-label="填入输入框微调"
+                                    @click.stop="handleRecommendedQuestionClick(question, 'fill')"
+                                  >
+                                    <svg class="w-3 h-3 text-amber-500/80 dark:text-amber-400/80" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
+                                      <path stroke-linecap="round" stroke-linejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L6.83 19.82a4.5 4.5 0 01-1.897 1.13l-2.685.8.8-2.685a4.5 4.5 0 011.13-1.897L16.863 4.487zm0 0L19.5 7.125" />
+                                    </svg>
+                                  </button>
+                                </div>
                               </template>
                             </div>
                           </div>
@@ -695,15 +792,30 @@
               />
             </div>
             <div v-else class="flex flex-wrap gap-2">
-              <button
+              <div
                 v-for="followup in group.followups"
                 :key="followup.query"
-                type="button"
-                class="inline-flex items-center gap-1 px-2.5 py-1 text-xs text-gray-500 dark:text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 transition-colors bg-gray-50/50 dark:bg-gray-800/20 hover:bg-blue-50/30 dark:hover:bg-blue-900/20 border border-gray-200/50 dark:border-gray-700 hover:border-blue-100 dark:hover:border-blue-900/40 rounded-lg shadow-xs active:scale-95 font-medium"
-                @click="handleFollowupClick(followup, group)"
+                class="group/follow inline-flex items-stretch rounded-lg border border-gray-200/50 dark:border-gray-700 bg-gray-50/50 dark:bg-gray-800/20 text-xs text-gray-500 dark:text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 hover:border-blue-100 dark:hover:border-blue-900/40 transition-all shadow-xs overflow-hidden"
               >
-                <span>{{ followup.label }}</span>
-              </button>
+                <button
+                  type="button"
+                  class="px-2.5 py-1 text-left bg-transparent hover:bg-blue-50/30 dark:hover:bg-blue-900/20 transition-colors cursor-pointer font-medium"
+                  @click="handleFollowupClick(followup, group, 'send')"
+                >
+                  <span>{{ followup.label }}</span>
+                </button>
+                <button
+                  type="button"
+                  class="opacity-0 group-hover/follow:opacity-100 flex items-center justify-center px-1.5 border-l border-gray-200/50 dark:border-gray-700 hover:bg-blue-50/30 dark:hover:bg-blue-900/20 transition-all duration-200 cursor-pointer"
+                  title="填入输入框微调"
+                  aria-label="填入输入框微调"
+                  @click.stop="handleFollowupClick(followup, group, 'fill')"
+                >
+                  <svg class="w-3 h-3 text-gray-400 group-hover/follow:text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L6.83 19.82a4.5 4.5 0 01-1.897 1.13l-2.685.8.8-2.685a4.5 4.5 0 011.13-1.897L16.863 4.487zm0 0L19.5 7.125" />
+                  </svg>
+                </button>
+              </div>
             </div>
           </div>
         </article>
@@ -867,7 +979,7 @@ const formatTagLabel = (tag: string, maxLen = 18): string => {
 };
 
 const emit = defineEmits<{
-  (event: "quick-question", query: string): void;
+  (event: "quick-question", query: string, action?: "send" | "fill"): void;
   (event: "record-question-click", payload: { query: string; label?: string; group_id?: string }): void;
   (event: "clear-question-click", payload: { query: string }): void;
   (event: "refresh"): void;
@@ -909,9 +1021,12 @@ const tableRecommendState = ref<Record<string, {
   error?: string;
 }>>({});
 
-// ===== 门户置顶偏好 =====
+// ===== 门户个人偏好（置顶 + 拖拽排序 + 展开状态 + 常问备份）=====
 const pinnedGroupIds = ref<string[]>([]);
+const cardOrder = ref<string[]>([]);          // 拖拽自定义排序
+const localQuestionClicks = ref<Record<string, number>>({}); // 常问本地点击备份
 const isSavingPrefs = ref(false);
+let prefsDebounceSaveTimer: ReturnType<typeof setTimeout> | null = null;
 
 const isPinned = (group: DatasetCapabilityGroup): boolean => {
   const id = group.id || group.title;
@@ -921,26 +1036,48 @@ const isPinned = (group: DatasetCapabilityGroup): boolean => {
 const loadPortalPrefs = async () => {
   try {
     const res = await axios.get("/api/portal/portal-prefs");
-    if (res.data?.data?.pinned_group_ids) {
-      pinnedGroupIds.value = res.data.data.pinned_group_ids;
+    const data = res.data?.data;
+    if (!data) return;
+    if (Array.isArray(data.pinned_group_ids)) pinnedGroupIds.value = data.pinned_group_ids;
+    if (Array.isArray(data.card_order))        cardOrder.value = data.card_order;
+    if (Array.isArray(data.expanded_group_ids)) {
+      const expanded: Record<string, boolean> = {};
+      for (const id of data.expanded_group_ids) expanded[id] = true;
+      expandedGroups.value = expanded;
+    }
+    if (data.question_clicks && typeof data.question_clicks === 'object') {
+      localQuestionClicks.value = data.question_clicks;
     }
   } catch (error) {
     console.error("Failed to load portal prefs:", error);
   }
 };
 
-const savePortalPrefs = async () => {
-  if (isSavingPrefs.value) return;
-  isSavingPrefs.value = true;
-  try {
-    await axios.put("/api/portal/portal-prefs", {
-      pinned_group_ids: pinnedGroupIds.value,
-    });
-  } catch (error) {
-    console.error("Failed to save portal prefs:", error);
-    showToast("置顶设置保存失败", "error");
-  } finally {
-    isSavingPrefs.value = false;
+const savePortalPrefs = async (immediate = false) => {
+  const doSave = async () => {
+    if (isSavingPrefs.value) return;
+    isSavingPrefs.value = true;
+    try {
+      await axios.put("/api/portal/portal-prefs", {
+        pinned_group_ids: pinnedGroupIds.value,
+        card_order: cardOrder.value,
+        expanded_group_ids: Object.entries(expandedGroups.value)
+          .filter(([, v]) => v).map(([k]) => k),
+        question_clicks: localQuestionClicks.value,
+      });
+    } catch (error) {
+      console.error("Failed to save portal prefs:", error);
+    } finally {
+      isSavingPrefs.value = false;
+    }
+  };
+
+  if (immediate) {
+    if (prefsDebounceSaveTimer) { clearTimeout(prefsDebounceSaveTimer); prefsDebounceSaveTimer = null; }
+    await doSave();
+  } else {
+    if (prefsDebounceSaveTimer) clearTimeout(prefsDebounceSaveTimer);
+    prefsDebounceSaveTimer = setTimeout(doSave, 1200);
   }
 };
 
@@ -951,14 +1088,69 @@ const togglePinGroup = async (event: MouseEvent, group: DatasetCapabilityGroup) 
   const idx = pinnedGroupIds.value.indexOf(id);
   if (idx === -1) {
     pinnedGroupIds.value = [id, ...pinnedGroupIds.value];
+    // 置顶时同时把该卡片移到 cardOrder 最前
+    const orderWithout = cardOrder.value.filter((v) => v !== id);
+    cardOrder.value = [id, ...orderWithout];
     showToast(`已置顶「${group.title}」`, "success");
   } else {
     pinnedGroupIds.value = pinnedGroupIds.value.filter((v) => v !== id);
     showToast(`已取消置顶「${group.title}」`, "success");
   }
-  await savePortalPrefs();
+  await savePortalPrefs(true);
 };
-// ===========================;
+
+// ===== 拖拽排序 =====
+const dragSourceId = ref<string | null>(null);
+const dragOverId = ref<string | null>(null);
+const canDragCards = computed(() => !isFilteringPortal.value && !showRefreshBusy.value);
+
+const handleDragStart = (event: DragEvent, groupId: string) => {
+  dragSourceId.value = groupId;
+  if (event.dataTransfer) {
+    event.dataTransfer.effectAllowed = 'move';
+    event.dataTransfer.setData('text/plain', groupId);
+  }
+};
+
+const handleDragOver = (event: DragEvent, groupId: string) => {
+  if (!canDragCards.value) return;
+  event.preventDefault();
+  if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
+  if (groupId !== dragSourceId.value) dragOverId.value = groupId;
+};
+
+const handleDragLeave = (event: DragEvent) => {
+  // 只在真正离开卡片区域时清除（避免子元素触发）
+  const related = event.relatedTarget as HTMLElement | null;
+  const card = (event.currentTarget as HTMLElement);
+  if (!related || !card.contains(related)) dragOverId.value = null;
+};
+
+const handleDrop = (event: DragEvent, targetId: string) => {
+  event.preventDefault();
+  dragOverId.value = null;
+  const sourceId = dragSourceId.value;
+  if (!sourceId || sourceId === targetId) return;
+
+  // 以当前渲染顺序为基准构建新排序
+  const currentOrder = displayGroups.value.map(({ group }) => group.id || group.title);
+  const sourceIdx = currentOrder.indexOf(sourceId);
+  const targetIdx = currentOrder.indexOf(targetId);
+  if (sourceIdx === -1 || targetIdx === -1) return;
+
+  const newOrder = [...currentOrder];
+  newOrder.splice(sourceIdx, 1);
+  newOrder.splice(targetIdx, 0, sourceId);
+  cardOrder.value = newOrder;
+  dragSourceId.value = null;
+  savePortalPrefs(true);
+};
+
+const handleDragEnd = () => {
+  dragSourceId.value = null;
+  dragOverId.value = null;
+};
+// ===========================
 
 const buildTableDictionaryKey = (
   group: DatasetCapabilityGroup,
@@ -1109,6 +1301,14 @@ onUnmounted(() => {
 
 const searchQuery = ref("");
 const selectedTag = ref("All");
+const showSearchBar = ref(false);
+
+watch(showSearchBar, (val) => {
+  if (!val) {
+    searchQuery.value = "";
+    selectedTag.value = "All";
+  }
+});
 const PORTAL_DEFAULT_VISIBLE_CARDS = 5;
 const portalCardsExpanded = ref(false);
 const upgradedFromFallback = ref(false);
@@ -1256,11 +1456,14 @@ const frequentQuestions = computed(() => {
   for (const group of props.payload.groups || []) {
     for (const question of group.questions || []) {
       const query = String(question.query || "").trim();
-      const clicks = question.click_count || 0;
+      // 合并服务端数 + 本地备份数，取最大值
+      const localCount = localQuestionClicks.value[query] || 0;
+      const serverCount = question.click_count || 0;
+      const clicks = Math.max(localCount, serverCount);
       if (!query || clicks <= 0) continue;
       const existing = merged.get(query);
-      if (!existing || clicks > (existing.question.click_count || 0)) {
-        merged.set(query, { question, group });
+      if (!existing || clicks > Math.max(existing.question.click_count || 0, localQuestionClicks.value[query] || 0)) {
+        merged.set(query, { question: { ...question, click_count: clicks }, group });
       }
     }
   }
@@ -1289,13 +1492,21 @@ const applyEmptySearchSuggestion = (tag: string) => {
   searchQuery.value = "";
 };
 
-const handleFrequentQuestionClick = (item: { question: DatasetCapabilityQuestion; group: DatasetCapabilityGroup }) => {
-  handleQuestionClick(item.question, item.group);
+const handleFrequentQuestionClick = (
+  item: { question: DatasetCapabilityQuestion; group: DatasetCapabilityGroup },
+  action: "send" | "fill" = "send"
+) => {
+  handleQuestionClick(item.question, item.group, action);
 };
 
 const handleClearFrequentQuestion = (item: { question: DatasetCapabilityQuestion; group: DatasetCapabilityGroup }) => {
   const query = String(item.question.query || "").trim();
   if (!query) return;
+  // 同时清除本地备份数
+  if (localQuestionClicks.value[query]) {
+    delete localQuestionClicks.value[query];
+    savePortalPrefs();
+  }
   emit("clear-question-click", { query });
 };
 
@@ -1515,17 +1726,31 @@ const filteredGroups = computed(() => {
 
 const displayGroups = computed(() => {
   const pinned = pinnedGroupIds.value;
+  const order = cardOrder.value;
+
   const sorted = [...filteredGroups.value].sort((a, b) => {
     const aId = a.id || a.title;
     const bId = b.id || b.title;
+
+    if (order.length > 0) {
+      // 有明确拖拽排序时，以 cardOrder 为主
+      const aIdx = order.indexOf(aId);
+      const bIdx = order.indexOf(bId);
+      if (aIdx !== -1 && bIdx !== -1) return aIdx - bIdx;
+      if (aIdx !== -1) return -1; // 在排序列表中的排前
+      if (bIdx !== -1) return 1;
+      // 不在排序列表中的，按热度退化排到后面
+      return groupPopularityScore(b) - groupPopularityScore(a);
+    }
+
+    // 无自定义排序时：置顶优先，然后按热度
     const aPinned = pinned.includes(aId) ? 1 : 0;
     const bPinned = pinned.includes(bId) ? 1 : 0;
-    if (bPinned !== aPinned) return bPinned - aPinned; // 置顶优先
-    // 置顶组内按置顶先后顺序
+    if (bPinned !== aPinned) return bPinned - aPinned;
     if (aPinned && bPinned) return pinned.indexOf(aId) - pinned.indexOf(bId);
-    // 非置顶组按热度
     return groupPopularityScore(b) - groupPopularityScore(a);
   });
+
   return sorted.map((group, idx) => ({
     group,
     visuals: getGroupVisuals(group, idx),
@@ -1724,30 +1949,46 @@ watch(
 
 const toggleGroup = (groupId: string) => {
   expandedGroups.value[groupId] = !expandedGroups.value[groupId];
+  // 展开状态变化后延迟保存到 Redis（1.2s debounce）
+  savePortalPrefs();
 };
 
-const emitQuickQuestion = (query?: string) => {
+const emitQuickQuestion = (query?: string, action: "send" | "fill" = "send") => {
   const text = String(query || "").trim();
   if (text) {
-    emit("quick-question", text);
+    emit("quick-question", text, action);
   }
 };
 
-const handleQuestionClick = (question: DatasetCapabilityQuestion, group: DatasetCapabilityGroup) => {
+const handleQuestionClick = (
+  question: DatasetCapabilityQuestion,
+  group: DatasetCapabilityGroup,
+  action: "send" | "fill" = "send"
+) => {
   const query = String(question.query || "").trim();
   if (!query) return;
-  emit("record-question-click", {
-    query,
-    label: question.label,
-    group_id: group.id,
-  });
-  emitQuickQuestion(query);
+  
+  if (action === "send") {
+    // 本地点击数备份（尾部取服务端最大值）
+    localQuestionClicks.value[query] = (localQuestionClicks.value[query] || 0) + 1;
+    savePortalPrefs(); // debounce 延迟保存
+    emit("record-question-click", {
+      query,
+      label: question.label,
+      group_id: group.id,
+    });
+  }
+  emitQuickQuestion(query, action);
 };
 
-const handleFollowupClick = (followup: DatasetCapabilityQuestion, group: DatasetCapabilityGroup) => {
+const handleFollowupClick = (
+  followup: DatasetCapabilityQuestion,
+  group: DatasetCapabilityGroup,
+  action: "send" | "fill" = "send"
+) => {
   const query = String(followup.query || "").trim();
   if (!query) return;
-  emitQuickQuestion(query);
+  emitQuickQuestion(query, action);
 };
 
 const handleMetricClick = (metric: string, group: DatasetCapabilityGroup) => {
@@ -1819,10 +2060,13 @@ const handleRecommendQuestions = async (
   }
 };
 
-const handleRecommendedQuestionClick = (question: { label: string; query: string }) => {
+const handleRecommendedQuestionClick = (
+  question: { label: string; query: string },
+  action: "send" | "fill" = "send"
+) => {
   const query = String(question.query || "").trim();
   if (!query) return;
-  emitQuickQuestion(query);
+  emitQuickQuestion(query, action);
   pinnedTableDictionary.value = null;
 };
 </script>

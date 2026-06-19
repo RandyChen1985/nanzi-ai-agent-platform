@@ -1940,11 +1940,14 @@ const handleSystemCommand = async (cmd: string): Promise<boolean> => {
   return false;
 };
 
-const handleQuickQuestion = async (question: string) => {
-  if (!question || isProcessing.value) return;
-  if (await handleSystemCommand(question)) return;
+const handleQuickQuestion = async (question: string, action: "send" | "fill" = "send") => {
+  if (!question) return;
+  if (action === "send" && isProcessing.value) return;
+  if (action === "send" && await handleSystemCommand(question)) return;
   userInput.value = question;
-  sendMessage();
+  if (action === "send") {
+    sendMessage();
+  }
 };
 
 const {
