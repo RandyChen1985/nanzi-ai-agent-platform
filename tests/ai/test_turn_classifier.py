@@ -76,6 +76,21 @@ def test_data_query_not_misrouted_as_web_search(query):
     assert result is None or result.turn_type != TurnType.GENERAL
 
 
+@pytest.mark.parametrize(
+    "query",
+    [
+        "查一下今天上海天气",
+        "查询 Python list 的用法",
+        "帮我分析一下这段话",
+    ],
+)
+def test_general_boundary_queries_short_circuit_to_general(query):
+    result = classify_turn_heuristic(query, can_do_data=True, has_last_data_result=False)
+    assert result is not None
+    assert result.turn_type == TurnType.GENERAL
+    assert result.intent == IntentType.GENERAL
+
+
 def test_internal_sop_still_classified_as_knowledge():
     result = classify_turn_heuristic(
         "高温告警的标准处理流程是什么",
@@ -84,6 +99,20 @@ def test_internal_sop_still_classified_as_knowledge():
     )
     assert result is not None
     assert result.turn_type == TurnType.KNOWLEDGE
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "查询高温告警的标准处理流程",
+        "查一下机房巡检怎么操作",
+    ],
+)
+def test_knowledge_boundary_allows_generic_query_verbs(query):
+    result = classify_turn_heuristic(query, can_do_data=True, has_last_data_result=False)
+    assert result is not None
+    assert result.turn_type == TurnType.KNOWLEDGE
+    assert result.intent == IntentType.KNOWLEDGE_BASE
 
 
 def test_classify_turn_from_intent_web_search_overrides_knowledge_without_binding():
@@ -177,6 +206,23 @@ def test_classify_turn_from_intent_data_query():
     )
     result = classify_turn_from_intent(intent, can_do_data=True)
     assert result.turn_type == TurnType.DATA_QUERY_REQUEST
+
+
+def test_low_confidence_data_query_prefers_general_when_boundary_is_ambiguous():
+    intent = IntentResponse(
+        intent=IntentType.DATA_QUERY,
+        confidence=0.55,
+        reasoning="可能是查询请求，但不确定是否为内部业务数据",
+        entities=[],
+    )
+    result = classify_turn_from_intent(
+        intent,
+        can_do_data=True,
+        user_query="帮我查一下这个怎么弄",
+    )
+    assert result.turn_type == TurnType.GENERAL
+    assert result.intent == IntentType.GENERAL
+    assert "低置信度" in result.reasoning
 
 
 def test_classify_turn_from_intent_knowledge():

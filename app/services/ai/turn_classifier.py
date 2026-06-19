@@ -13,15 +13,20 @@ from app.services.ai.intent_service import (
     intent_service,
     looks_like_compound_query_with_viz,
     looks_like_context_action,
+    looks_like_general_query,
     looks_like_greeting,
     looks_like_knowledge_query,
     looks_like_meta_action,
     looks_like_pure_result_followup,
+    looks_like_strong_business_data_request,
     looks_like_skill_execution,
     looks_like_web_search_query,
 )
 
 logger = logging.getLogger(__name__)
+
+
+AMBIGUOUS_INTENT_CONFIDENCE_THRESHOLD = 0.65
 
 
 class TurnType(str, Enum):
@@ -131,6 +136,14 @@ def classify_turn_heuristic(
             intent=IntentType.GENERAL,
         )
 
+    if looks_like_general_query(q):
+        return TurnClassification(
+            turn_type=TurnType.GENERAL,
+            reasoning="检测到通用问答/公共信息/编程或文本处理请求（启发式短路，跳过意图识别）",
+            skip_intent_llm=True,
+            intent=IntentType.GENERAL,
+        )
+
     if can_do_data and looks_like_skill_execution(q):
         return TurnClassification(
             turn_type=TurnType.SKILL_EXECUTION,
@@ -199,6 +212,19 @@ def classify_turn_from_intent(
 ) -> TurnClassification:
     """将意图 LLM 结果映射为统一轮次分类。"""
     if can_do_data and intent_info.intent == IntentType.DATA_QUERY:
+        if (
+            intent_info.confidence < AMBIGUOUS_INTENT_CONFIDENCE_THRESHOLD
+            and not looks_like_strong_business_data_request(user_query)
+        ):
+            return TurnClassification(
+                turn_type=TurnType.GENERAL,
+                reasoning=(
+                    f"{intent_info.reasoning}（低置信度且缺少明确内部业务数据信号，优先按通用对话处理）"
+                ),
+                skip_intent_llm=False,
+                intent=IntentType.GENERAL,
+            )
+
         is_followup_semantics = False
         try:
             from app.services.ai.intent_service import _FOLLOWUP_KEYWORDS, _NEW_QUERY_KEYWORDS
