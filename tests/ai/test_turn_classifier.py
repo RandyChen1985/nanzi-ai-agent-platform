@@ -456,6 +456,27 @@ async def test_data_query_turn_classifier_reuses_result_for_date_formatting_foll
 
 
 @pytest.mark.asyncio
+async def test_data_query_turn_classifier_metadata_query_uses_schema_without_sql():
+    with patch(
+        "app.services.ai.config.AgentConfigProvider.get_configured_llm",
+        AsyncMock(side_effect=AssertionError("metadata query should short-circuit before classifier LLM")),
+    ):
+        classification, intent_info, elapsed_ms = await resolve_data_query_turn_classification(
+            "说明智能体有哪些可查询字段和分析口径",
+            [{"role": "user", "content": "说明智能体有哪些可查询字段和分析口径"}],
+            has_last_data_result=False,
+        )
+
+    assert classification.turn_type == DataQueryTurnType.METADATA_QUERY
+    assert classification.requires_fresh_data is True
+    assert classification.requires_sql_query is False
+    assert classification.requires_few_shot is False
+    assert classification.skip_intent_llm is True
+    assert intent_info.intent == IntentType.DATA_QUERY
+    assert elapsed_ms == 0.0
+
+
+@pytest.mark.asyncio
 async def test_data_query_turn_classifier_rejects_reuse_without_reusable_result():
     llm = object()
     chat_client = _mock_chat_client('{"turn_type":"reuse_previous_result","reasoning":"用户是在要求可视化上一轮结果"}')

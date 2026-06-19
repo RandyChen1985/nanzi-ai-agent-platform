@@ -60,6 +60,11 @@ const handleSetMultiAgent = (enabled: boolean) => {
     saveAndClose();
 };
 
+const handleSetSqlPlan = (enabled: boolean) => {
+    props.config.enableSqlPlan = enabled;
+    saveAndClose();
+};
+
 const handleModelChange = () => {
     saveAndClose();
 };
@@ -213,6 +218,36 @@ const handleLogout = () => {
             </button>
           </div>
           <p class="mt-1 text-[10px] text-gray-400">开启后支持跨领域任务并行执行</p>
+        </div>
+
+        <!-- SQL Plan Toggle -->
+        <div class="mb-4">
+          <label class="block text-xs font-semibold text-gray-500 uppercase mb-2">SQL Plan 中间层</label>
+          <div class="flex bg-gray-100 dark:bg-gray-700 rounded-lg p-1">
+            <button
+              @click="handleSetSqlPlan(true)"
+              class="flex-1 py-1 text-[10px] rounded-md font-medium transition-all"
+              :class="
+                config.enableSqlPlan
+                  ? 'bg-white text-primary shadow-sm'
+                  : 'text-gray-500 dark:text-gray-400'
+              "
+            >
+              开启
+            </button>
+            <button
+              @click="handleSetSqlPlan(false)"
+              class="flex-1 py-1 text-[10px] rounded-md font-medium transition-all"
+              :class="
+                !config.enableSqlPlan
+                  ? 'bg-white text-gray-900 shadow-sm'
+                  : 'text-gray-500 dark:text-gray-400'
+              "
+            >
+              关闭
+            </button>
+          </div>
+          <p class="mt-1 text-[10px] text-gray-400">高风险查数先校验计划</p>
         </div>
 
         <!-- Model Selector -->

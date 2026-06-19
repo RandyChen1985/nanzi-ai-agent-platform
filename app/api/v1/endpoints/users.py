@@ -12,14 +12,14 @@ from pydantic import BaseModel, Field
 from app.schemas.response import StandardResponse
 
 class UserProfile(BaseModel):
-    id: int = Field(..., description="用户ID", example=123)
-    username: str = Field(..., description="用户名", example="admin")
-    display_name: str = Field(..., description="显示名称", example="Administrator")
-    role: str = Field(..., description="角色 (admin/user)", example="admin")
-    status: int = Field(..., description="状态 (1=启用, 0=禁用)", example=1)
-    api_key: Optional[str] = Field(None, description="API Key (仅自己在查自己时可见)", example="sk-r8s7...")
-    roles: List[str] = Field(default_factory=list, description="所属角色列表", example=["admin", "editor"])
-    permissions: List[str] = Field(default_factory=list, description="权限列表", example=["api:read", "agent:write"])
+    id: int = Field(..., description="用户ID", json_schema_extra={"example": 123})
+    username: str = Field(..., description="用户名", json_schema_extra={"example": "admin"})
+    display_name: str = Field(..., description="显示名称", json_schema_extra={"example": "Administrator"})
+    role: str = Field(..., description="角色 (admin/user)", json_schema_extra={"example": "admin"})
+    status: int = Field(..., description="状态 (1=启用, 0=禁用)", json_schema_extra={"example": 1})
+    api_key: Optional[str] = Field(None, description="API Key (仅自己在查自己时可见)", json_schema_extra={"example": "sk-r8s7..."})
+    roles: List[str] = Field(default_factory=list, description="所属角色列表", json_schema_extra={"example": ["admin", "editor"]})
+    permissions: List[str] = Field(default_factory=list, description="权限列表", json_schema_extra={"example": ["api:read", "agent:write"]})
 
 @router.get("/profile", 
     response_model=StandardResponse[UserProfile],

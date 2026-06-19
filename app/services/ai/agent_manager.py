@@ -401,10 +401,10 @@ class AgentManagerService:
         
         normalized = []
         for item in tools:
-            if hasattr(item, "dict"): # Pydantic v1
-                normalized.append(item.dict(exclude_none=True))
-            elif hasattr(item, "model_dump"): # Pydantic v2
+            if hasattr(item, "model_dump"): # Pydantic v2
                 normalized.append(item.model_dump(exclude_none=True))
+            elif hasattr(item, "dict"): # Pydantic v1
+                normalized.append(item.dict(exclude_none=True))
             else:
                 normalized.append(item)
         return normalized

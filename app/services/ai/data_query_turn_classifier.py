@@ -32,6 +32,7 @@ logger = logging.getLogger(__name__)
 
 class DataQueryTurnType(str, Enum):
     NEW_DATA_QUERY = "new_data_query"
+    METADATA_QUERY = "metadata_query"
     REUSE_PREVIOUS_RESULT = "reuse_previous_result"
     CONTEXT_ACTION = "context_action"
     SKILL_EXECUTION = "skill_execution"
@@ -40,6 +41,7 @@ class DataQueryTurnType(str, Enum):
 
 DATA_QUERY_TURN_TYPE_LABELS: dict[DataQueryTurnType, str] = {
     DataQueryTurnType.NEW_DATA_QUERY: "新数据查询",
+    DataQueryTurnType.METADATA_QUERY: "元数据探索",
     DataQueryTurnType.REUSE_PREVIOUS_RESULT: "复用上一轮结果",
     DataQueryTurnType.CONTEXT_ACTION: "上下文动作",
     DataQueryTurnType.SKILL_EXECUTION: "技能执行",
@@ -57,6 +59,7 @@ class DataQueryTurnClassification:
     reasoning: str
     requires_fresh_data: bool = True
     requires_few_shot: bool = True
+    requires_sql_query: bool = True
     skip_intent_llm: bool = False
     intent: Optional[IntentType] = None
 
@@ -73,6 +76,17 @@ def _classification_for_turn_type(
             reasoning=reasoning,
             requires_fresh_data=False,
             requires_few_shot=False,
+            requires_sql_query=False,
+            skip_intent_llm=skip_intent_llm,
+            intent=IntentType.DATA_QUERY,
+        )
+    if turn_type == DataQueryTurnType.METADATA_QUERY:
+        return DataQueryTurnClassification(
+            turn_type=turn_type,
+            reasoning=reasoning,
+            requires_fresh_data=True,
+            requires_few_shot=False,
+            requires_sql_query=False,
             skip_intent_llm=skip_intent_llm,
             intent=IntentType.DATA_QUERY,
         )
@@ -82,6 +96,7 @@ def _classification_for_turn_type(
             reasoning=reasoning,
             requires_fresh_data=False,
             requires_few_shot=False,
+            requires_sql_query=False,
             skip_intent_llm=skip_intent_llm,
             intent=IntentType.GENERAL,
         )
@@ -100,6 +115,7 @@ def _classification_for_turn_type(
             reasoning=reasoning,
             requires_fresh_data=False,
             requires_few_shot=False,
+            requires_sql_query=False,
             skip_intent_llm=skip_intent_llm,
             intent=IntentType.GENERAL,
         )
@@ -277,8 +293,13 @@ def _can_reuse_previous_result(
     messages: Optional[List[Dict[str, str]]],
     *,
     has_last_data_result: bool,
+    allow_contextual_llm_reuse: bool = False,
 ) -> bool:
     if not looks_like_pure_result_followup(user_query):
+        return False
+    q = (user_query or "").strip().lower()
+    contextual_only_signals = ("你好", "您好", "hi", "hello", "这列", "那列", "该列")
+    if not allow_contextual_llm_reuse and any(signal in q for signal in contextual_only_signals):
         return False
     if not _recent_history_supports_reuse(messages):
         return False
@@ -329,19 +350,21 @@ async def _classify_with_llm(
 
 请结合最近对话、当前用户问题，以及是否存在上一轮结构化查询结果，判断当前请求属于以下哪一类：
 
-1. new_data_query：需要重新查询业务数据，或**对当前有权访问的数据集结构、表结构、可查询字段、分析口径、元数据信息的探索提问**（例如“说明智能体有哪些字段”、“支持查询哪些指标”、“列名有啥”）。
-2. reuse_previous_result：不需要重新查库，只是基于上一轮结构化查询结果做展示、格式化、分析、总结、可视化、改列格式、排序说明等。
-3. context_action：对已有上下文或上一轮结果执行保存、导出、发送、记住、沉淀为技能等动作。
-4. skill_execution：显式要求使用/执行某个技能。
-5. clarification_or_non_data：当前不是明确查数或元数据探索请求，或指代过于模糊，需要先请用户补充业务数据对象、时间范围、指标/维度等信息。
+1. new_data_query：需要重新查询业务数据。
+2. metadata_query：对当前有权访问的数据集结构、表结构、可查询字段、分析口径、元数据信息的探索提问（例如“说明智能体有哪些字段”、“支持查询哪些指标”、“列名有啥”）。
+3. reuse_previous_result：不需要重新查库，只是基于上一轮结构化查询结果做展示、格式化、分析、总结、可视化、改列格式、排序说明等。
+4. context_action：对已有上下文或上一轮结果执行保存、导出、发送、记住、沉淀为技能等动作。
+5. skill_execution：显式要求使用/执行某个技能。
+6. clarification_or_non_data：当前不是明确查数或元数据探索请求，或指代过于模糊，需要先请用户补充业务数据对象、时间范围、指标/维度等信息。
 
 约束：
 - 如果选择 reuse_previous_result，必须确认“存在上一轮结构化查询结果”为 true。
-- 如果用户提出新的查询对象、时间范围、筛选条件，或提问元数据字段/分析口径，选择 new_data_query。
+- 如果用户提出新的查询对象、时间范围或筛选条件，选择 new_data_query。
+- 如果用户只是提问元数据字段/分析口径，选择 metadata_query。
 - 只返回 JSON，不要解释，不要 Markdown。
 
 JSON 格式：
-{{"turn_type":"new_data_query|reuse_previous_result|context_action|skill_execution|clarification_or_non_data","reasoning":"一句中文原因"}}
+{{"turn_type":"new_data_query|metadata_query|reuse_previous_result|context_action|skill_execution|clarification_or_non_data","reasoning":"一句中文原因"}}
 
 【存在上一轮结构化查询结果】
 {str(has_last_data_result).lower()}
@@ -402,8 +425,8 @@ async def resolve_data_query_turn_classification(
     q = (user_query or "").strip()
     if looks_like_metadata_query(q):
         classification = _classification_for_turn_type(
-            DataQueryTurnType.NEW_DATA_QUERY,
-            "检测到元数据或分析口径探索意图，直接放行让 AI 回答",
+            DataQueryTurnType.METADATA_QUERY,
+            "检测到元数据或分析口径探索意图，仅需检索数据集定义后回答，不强制执行 SQL",
             skip_intent_llm=True,
         )
         intent_info = IntentResponse(
@@ -439,7 +462,7 @@ async def resolve_data_query_turn_classification(
         reasoning = (
             "检测到对上一轮数据结果的追问，且存在可复用结构化查询结果，直接复用"
             if has_last_data_result
-            else "检测到对上一轮数据结果的追问，且最近对话已展示可查数结果，直接复用"
+            else "检测到对上一轮数据结果的追问，且最近对话中已有查数展示，直接复用"
         )
         classification = _classification_for_turn_type(
             DataQueryTurnType.REUSE_PREVIOUS_RESULT,
@@ -484,6 +507,7 @@ async def resolve_data_query_turn_classification(
             q,
             messages,
             has_last_data_result=has_last_data_result,
+            allow_contextual_llm_reuse=True,
         ):
             if _looks_like_explicit_new_data_query(q):
                 classification = _classification_for_turn_type(
@@ -515,6 +539,7 @@ async def resolve_data_query_turn_classification(
             reasoning="请求类别 LLM 未返回有效结果；规则兜底检测到对已有上下文/结果的动作（保存/导出/记住等）",
             requires_fresh_data=False,
             requires_few_shot=False,
+            requires_sql_query=False,
             skip_intent_llm=True,
             intent=IntentType.GENERAL,
         )
@@ -542,6 +567,7 @@ async def resolve_data_query_turn_classification(
             reasoning=reasoning,
             requires_fresh_data=False,
             requires_few_shot=False,
+            requires_sql_query=False,
             skip_intent_llm=True,
             intent=IntentType.DATA_QUERY,
         )

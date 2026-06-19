@@ -45,22 +45,52 @@
             <div class="flex flex-col min-w-0">
                 <div class="flex items-center space-x-2">
                     <span class="text-sm font-black text-gray-800 dark:text-gray-100 truncate">
-                        {{ isProcessing ? (lastAgentMessage?.agentDisplayName || lastAgentMessage?.agentName || '智能体') : '云枢智能助手' }}
+                        <template v-if="isProcessing">
+                            {{ lastAgentMessage?.agentDisplayName || lastAgentMessage?.agentName || '智能体' }}
+                        </template>
+                        <template v-else-if="isMobile && config.routingMode === 'expert' && currentExpertAgent">
+                            {{ currentExpertAgent.display_name || currentExpertAgent.name }}
+                        </template>
+                        <template v-else>
+                            云枢智能助手
+                        </template>
                     </span>
                     <span v-if="isProcessing" class="flex h-1.5 w-1.5 relative">
                         <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary opacity-75"></span>
                         <span class="relative inline-flex rounded-full h-1.5 w-1.5 bg-primary"></span>
                     </span>
+                    <span
+                        v-else-if="isMobile && config.routingMode === 'expert' && currentExpertAgent"
+                        class="inline-flex items-center px-1.5 py-0.5 rounded-full bg-primary/10 text-primary text-[9px] font-black uppercase tracking-wider shrink-0"
+                    >
+                        专家
+                    </span>
                 </div>
-                <div class="text-[10px] text-gray-400 font-bold uppercase tracking-widest truncate">
-                    {{ isProcessing ? '正在处理您的请求...' : '准备就绪' }}
+                <div class="text-[10px] font-bold uppercase tracking-widest truncate flex items-center gap-1.5 min-w-0">
+                    <template v-if="isProcessing">
+                        <span class="text-gray-400">正在处理您的请求...</span>
+                    </template>
+                    <template v-else-if="isMobile && config.routingMode === 'expert' && currentExpertAgent">
+                        <span class="text-primary/80 normal-case tracking-normal font-semibold">专家模式</span>
+                        <button
+                            type="button"
+                            @click.stop="switchToAuto"
+                            class="text-gray-400 hover:text-red-500 normal-case tracking-normal font-bold transition-colors shrink-0"
+                        >
+                            退出
+                        </button>
+                    </template>
+                    <template v-else>
+                        <span class="text-gray-400">准备就绪</span>
+                    </template>
                 </div>
             </div>
         </div>
         
         <div class="flex items-center space-x-2">
-            <!-- Fullscreen Button -->
+            <!-- Fullscreen Button (desktop only) -->
             <button
+                v-if="!isMobile"
                 @click="toggleFullScreen"
                 class="p-2 text-gray-400 hover:text-primary hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-all"
                 :title="isFullScreen ? '退出全屏' : '全屏模式'"
@@ -73,10 +103,10 @@
                 </svg>
 	            </button>
             <button
-                v-if="!config.showShortcuts"
-                @click="toggleShortcuts"
+                v-if="isMobile || !config.showShortcuts"
+                @click="handleHeaderShortcutsClick"
                 class="p-2 text-gray-400 hover:text-primary hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-all"
-                title="显示快捷指令"
+                :title="isMobile ? '快捷指令' : '显示快捷指令'"
             >
                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 2L4 14h7l-1 8 10-13h-7l1-7z" />
@@ -118,6 +148,7 @@
           :show-auto-routing-hint="showAutoRoutingHint"
           :show-multi-agent-hint="showMultiAgentHint"
           :multi-agent-hint-message="multiAgentHintMessage"
+          :is-mobile="isMobile"
           @switch-to-auto="switchToAuto"
       />
 
@@ -665,6 +696,12 @@
                                <!-- Main Text -->
                                <span class="truncate">{{ log.title }}</span>
                                <span
+                                 v-if="log.status === 'success' && (log.category === 'sql' || (log.title && log.title.toLowerCase().includes('sql')))"
+                                 class="text-emerald-500 dark:text-emerald-400 font-bold ml-1 flex-shrink-0 select-none"
+                               >
+                                 ☑
+                               </span>
+                               <span
                                  v-if="isActiveThoughtStep(log, msg.isThinking)"
                                  class="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wide text-primary bg-primary/10 border border-primary/20"
                                >
@@ -701,7 +738,13 @@
                                 <div class="p-2 bg-gray-900 rounded border border-gray-800 font-mono text-[10px] text-emerald-400 leading-relaxed overflow-x-auto relative group/sql">
                                   <div class="flex justify-between items-center mb-1 text-[9px] text-gray-500 font-sans uppercase tracking-tight">
                                     <span>SQL Query</span>
-                                    <button @click.stop="copyMessage(splitSqlToolLogDetails(log.details)!.sqlPart)" class="text-gray-600 hover:text-emerald-400 transition-colors uppercase">Copy</button>
+                                    <div class="flex items-center gap-1">
+                                      <button @click.stop="copyMessage(splitSqlToolLogDetails(log.details)!.sqlPart)" class="text-gray-600 hover:text-emerald-400 transition-colors uppercase">Copy</button>
+                                      <template v-if="splitSqlToolLogDetails(log.details)!.bodyKind === 'result' && log.status === 'success'">
+                                        <span class="text-gray-700">|</span>
+                                        <button @click.stop="openSaveReportModal(splitSqlToolLogDetails(log.details)!.sqlPart, msg)" class="text-gray-600 hover:text-primary transition-colors uppercase" title="暂存到我的数据门户">暂存</button>
+                                      </template>
+                                    </div>
                                   </div>
                                   <pre class="whitespace-pre-wrap break-all">{{ splitSqlToolLogDetails(log.details)!.sqlPart }}</pre>
                                 </div>
@@ -723,7 +766,9 @@
                                 <div class="p-2 bg-gray-900 rounded border border-gray-800 font-mono text-[10px] text-emerald-400 leading-relaxed overflow-x-auto relative group/sql">
                                     <div class="flex justify-between items-center mb-1 text-[9px] text-gray-500 font-sans uppercase tracking-tight">
                                       <span>SQL Query</span>
-                                      <button @click.stop="copyMessage(log.details)" class="text-gray-600 hover:text-emerald-400 transition-colors uppercase">Copy</button>
+                                      <div class="flex items-center gap-1">
+                                        <button @click.stop="copyMessage(log.details)" class="text-gray-600 hover:text-emerald-400 transition-colors uppercase">Copy</button>
+                                      </div>
                                     </div>
                                     <pre class="whitespace-pre-wrap break-all">{{ log.details }}</pre>
                                 </div>
@@ -871,6 +916,7 @@
                                                                   @record-question-click="(payload) => recordDatasetMenuQuestionClick(msg.datasetNavigation, payload)"
                                                                   @clear-question-click="(payload) => clearDatasetMenuQuestionClick(msg.datasetNavigation, payload)"
                                                                   @refresh="refreshDatasetMenuNavigation(msg)"
+                                                                  @execute-saved-report="handleExecuteSavedReport"
                                                                 />
                                 <!-- Typewriter Cursor -->
                                 <span 
@@ -1145,7 +1191,7 @@
         ref="chatInputRef"
         v-model="userInput"
         :is-processing="isProcessing"
-        :show-shortcuts="config.showShortcuts"
+        :show-shortcuts="!isMobile && config.showShortcuts"
         :slash-commands="slashCommands"
         :allowed-agents="allowedAgents"
         :current-user="currentUser"
@@ -1693,6 +1739,76 @@
       @save-settings="saveRoutingSettings"
       @reset-session="resetSession"
     />
+    <!-- Modal: Save Report -->
+    <div
+      v-if="showSaveReportModal"
+      class="fixed inset-0 z-[200] flex items-center justify-center bg-black/40 backdrop-blur-sm p-4"
+      @click.self="showSaveReportModal = false"
+    >
+      <div 
+        class="bg-white dark:bg-gray-800 w-full max-w-lg rounded-2xl shadow-2xl overflow-hidden flex flex-col border border-gray-100 dark:border-gray-700 animate-fade-in-up"
+      >
+        <!-- Header -->
+        <div class="px-6 py-4 border-b border-gray-100 dark:border-gray-700 flex justify-between items-center bg-gray-50/50 dark:bg-gray-800/50">
+          <div class="flex items-center space-x-2">
+            <div class="p-1.5 bg-primary/10 rounded-lg text-primary">
+              <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 5a2 2 0 012-2h10a2 2 0 012 2v2a2 2 0 01-2 2H7a2 2 0 01-2-2V5zM12 9v12m-3-3l3 3 3-3" />
+              </svg>
+            </div>
+            <h3 class="text-base font-black text-gray-800 dark:text-gray-100 uppercase tracking-widest">暂存黄金 SQL 报表</h3>
+          </div>
+          <button @click="showSaveReportModal = false" class="p-2 hover:bg-gray-200 dark:hover:bg-gray-700 rounded-full transition-colors text-gray-400">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M6 18L18 6M6 6l12 12" /></svg>
+          </button>
+        </div>
+
+        <!-- Body -->
+        <div class="flex-1 overflow-y-auto p-6 space-y-4 custom-scrollbar max-h-[60vh]">
+          <div>
+            <label class="block text-xs font-black text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">报表名称 <span class="text-red-500">*</span></label>
+            <input 
+              v-model="saveReportForm.title" 
+              type="text" 
+              placeholder="请输入自定义报表名称"
+              class="w-full px-3 py-2 border border-gray-200 dark:border-gray-700 rounded-xl bg-gray-50 dark:bg-gray-950 text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all text-gray-800 dark:text-gray-200"
+            />
+          </div>
+
+          <div v-if="saveReportForm.original_query">
+            <label class="block text-xs font-black text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">原始提问</label>
+            <div class="px-3 py-2 border border-gray-100 dark:border-gray-800 rounded-xl bg-gray-50 dark:bg-gray-900/50 text-xs text-gray-600 dark:text-gray-400 break-all select-all font-mono leading-relaxed max-h-20 overflow-y-auto">
+              {{ saveReportForm.original_query }}
+            </div>
+          </div>
+
+          <div>
+            <label class="block text-xs font-black text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">SQL 语句预览</label>
+            <pre class="px-3 py-2 border border-gray-100 dark:border-gray-800 rounded-xl bg-gray-50 dark:bg-gray-900/50 text-xs text-gray-600 dark:text-gray-400 break-all select-all font-mono leading-relaxed overflow-x-auto max-h-40 overflow-y-auto">{{ saveReportForm.sql_content }}</pre>
+            <span class="text-[10px] text-gray-400 mt-1 block">提示：系统将自动反查关联的数据集与数据源以保证直连执行时能够顺利通过权限安全校验。</span>
+          </div>
+        </div>
+
+        <!-- Footer -->
+        <div class="px-6 py-4 border-t border-gray-100 dark:border-gray-700 flex justify-end space-x-3 bg-gray-50/50 dark:bg-gray-800/50">
+          <button 
+            @click="showSaveReportModal = false" 
+            class="px-4 py-2 text-xs font-bold text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 border border-gray-200 dark:border-gray-700 rounded-xl hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+          >
+            取消
+          </button>
+          <button 
+            @click="submitSaveReport" 
+            :disabled="isSavingReport"
+            class="px-4 py-2 text-xs font-bold text-white bg-primary rounded-xl hover:bg-primary-hover active:bg-primary-active disabled:opacity-50 transition-colors flex items-center space-x-1.5"
+          >
+            <svg v-if="isSavingReport" class="w-3.5 h-3.5 animate-spin text-white" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+            <span>确定暂存</span>
+          </button>
+        </div>
+      </div>
+    </div>
+
     <!-- Modal: Help Guide -->
     <div
       v-if="showHelpModal"
@@ -2232,6 +2348,7 @@
       @record-question-click="(payload) => recordDatasetMenuQuestionClick(portalNavigationPayload, payload)"
       @clear-question-click="(payload) => clearDatasetMenuQuestionClick(portalNavigationPayload, payload)"
       @refresh="refreshPortalNavigation"
+      @execute-saved-report="handleExecuteSavedReport"
     />
     </div>
 </template>
@@ -2844,6 +2961,7 @@ const config = reactive({
   expertAgentId: "",
   enableMultiAgent: true,
   showShortcuts: true,
+  enableSqlPlan: false,
 });
 const showAutoRoutingHint = ref(false);
 const showMultiAgentHint = ref(false);
@@ -2854,6 +2972,7 @@ const saveRoutingSettings = () => {
     localStorage.setItem("yovole_expert_agent_id", config.expertAgentId || "");
     localStorage.setItem("yovole_enable_multi_agent", config.enableMultiAgent ? "1" : "0");
     localStorage.setItem("yovole_show_shortcuts", config.showShortcuts ? "1" : "0");
+    localStorage.setItem("yovole_enable_sql_plan", config.enableSqlPlan ? "1" : "0");
     localStorage.setItem("yovole_override_model", config.overrideModel || "");
     localStorage.setItem("yovole_approval_mode", config.approvalMode || "ask");
     localStorage.setItem("yovole_embed_theme", config.theme || "light");
@@ -3475,6 +3594,259 @@ watch(historyKeyword, () => {
 // Settings
 const showSettings = ref(false);
 const showHelpModal = ref(false);
+
+// 黄金报表暂存状态
+const showSaveReportModal = ref(false);
+const isSavingReport = ref(false);
+const saveReportForm = ref({
+  title: '',
+  sql_content: '',
+  dataset_id: null as number | null,
+  data_source: 'default_clickhouse',
+  original_query: '',
+});
+
+const openSaveReportModal = (sql: string, agentMessage: any) => {
+  let originalQuery = '';
+  if (agentMessage && messages.value) {
+    const idx = messages.value.findIndex((m: any) => m.id === agentMessage.id);
+    if (idx > 0) {
+      for (let i = idx - 1; i >= 0; i--) {
+        if (messages.value[i].role === 'user') {
+          const content = messages.value[i].content || '';
+          if (content.includes('---')) {
+            originalQuery = content.split('---')[0].trim();
+          } else {
+            originalQuery = content.trim();
+          }
+          break;
+        }
+      }
+    }
+  }
+
+  let cleanSql = sql || '';
+  if (cleanSql.includes('[Executed SQL]:')) {
+    cleanSql = cleanSql.replace(/\[Executed\s+SQL\]:\s*/i, '').trim();
+  }
+
+  if (!originalQuery && cleanSql) {
+    const fromMatch = cleanSql.match(/from\s+([a-zA-Z0-9_]+)/i);
+    if (fromMatch && fromMatch[1]) {
+      originalQuery = `${fromMatch[1]}数据查询`;
+    }
+  }
+
+  saveReportForm.value = {
+    title: originalQuery ? `${originalQuery.slice(0, 15)}报表` : '暂存报表',
+    sql_content: cleanSql,
+    dataset_id: null,
+    data_source: 'default_clickhouse',
+    original_query: originalQuery,
+  };
+  showSaveReportModal.value = true;
+};
+
+const submitSaveReport = async () => {
+  if (!saveReportForm.value.title.trim()) {
+    showToast("请输入报表标题", "error");
+    return;
+  }
+  isSavingReport.value = true;
+  try {
+    const payload = {
+      title: saveReportForm.value.title.trim(),
+      sql_content: saveReportForm.value.sql_content,
+      dataset_id: saveReportForm.value.dataset_id,
+      data_source: saveReportForm.value.data_source,
+      original_query: saveReportForm.value.original_query,
+    };
+    await axios.post("/api/portal/saved-reports", payload);
+    showToast("报表暂存成功！您可以在我的数据门户中查看。", "success");
+    showSaveReportModal.value = false;
+  } catch (error: any) {
+    console.error("Failed to save report:", error);
+    const detail = error.response?.data?.detail || "暂存失败，请重试";
+    showToast(typeof detail === 'object' ? JSON.stringify(detail) : detail, "error");
+  } finally {
+    isSavingReport.value = false;
+  }
+};
+
+const renderSavedReportDataToMarkdown = (data: any): string => {
+  if (!data) return "执行结果为空";
+  
+  let columns: string[] = [];
+  let rows: any[] = [];
+  
+  if (data.columns && Array.isArray(data.columns)) {
+    columns = data.columns.map((c: any) => typeof c === 'object' ? (c.name || '') : String(c));
+  }
+  
+  if (data.rows && Array.isArray(data.rows)) {
+    rows = data.rows;
+  } else if (data.items && Array.isArray(data.items)) {
+    rows = data.items;
+  } else if (Array.isArray(data)) {
+    rows = data;
+  } else if (typeof data === 'object') {
+    if (Array.isArray(data.data)) {
+      rows = data.data;
+    } else {
+      rows = [data];
+    }
+  }
+
+  if (!rows || rows.length === 0) {
+    return "查询执行成功，但没有返回任何明细数据。";
+  }
+
+  if (columns.length === 0) {
+    const firstRow = rows[0];
+    if (firstRow && typeof firstRow === 'object' && !Array.isArray(firstRow)) {
+      columns = Object.keys(firstRow);
+    } else if (Array.isArray(firstRow)) {
+      columns = firstRow.map((_, i) => `列 ${i + 1}`);
+    } else {
+      columns = ["结果值"];
+    }
+  }
+
+  const maxDisplayRows = 150;
+  const displayRows = rows.slice(0, maxDisplayRows);
+  const truncated = rows.length > maxDisplayRows;
+
+  let md = `\n\n| ${columns.join(" | ")} |\n`;
+  md += `| ${columns.map(() => "---").join(" | ")} |\n`;
+
+  for (const r of displayRows) {
+    let rowCells: any[] = [];
+    if (Array.isArray(r)) {
+      rowCells = r.map(val => typeof val === 'object' ? JSON.stringify(val) : String(val));
+    } else if (r && typeof r === 'object') {
+      rowCells = columns.map(col => {
+        const val = r[col];
+        if (val === null || val === undefined) return "";
+        return typeof val === 'object' ? JSON.stringify(val) : String(val);
+      });
+    } else {
+      rowCells = [String(r)];
+    }
+    
+    const cleanCells = rowCells.map(cell => {
+      return cell.replace(/\|/g, "\\|").replace(/\n/g, " ");
+    });
+    
+    md += `| ${cleanCells.join(" | ")} |\n`;
+  }
+
+  if (truncated) {
+    md += `\n> *⚠️ 结果集数据量较大，已在聊天框中自动为您省略后半部分（共展示前 ${maxDisplayRows} 行 / 总计 ${rows.length} 行）。*`;
+  }
+
+  return md;
+};
+
+const handleExecuteSavedReport = async (report: { id: string; title: string; sql_content: string }) => {
+  if (isProcessing.value) return;
+
+  if (showPortalDrawer.value && !portalKeepOpenOnQuestion.value) {
+    showPortalDrawer.value = false;
+  }
+
+  isProcessing.value = true;
+  
+  messages.value.push({
+    id: Date.now(),
+    role: "user",
+    content: `📌 执行黄金 SQL 报表: ${report.title}`,
+    timestamp: new Date().toISOString(),
+  });
+
+  const agentMsg = ref<Message>({
+    id: Date.now() + 1,
+    role: "agent",
+    agentName: "chat-bi",
+    agentDisplayName: "数据智能助手",
+    content: "",
+    isThinking: true,
+    thinkingText: "正在进行免模型极速直连安全执行，请稍候...",
+    logs: [],
+    thoughtStartTime: Date.now(),
+    thoughtDuration: "0.0",
+    isThoughtExpanded: false,
+    isCitationsExpanded: false,
+    timestamp: new Date().toISOString(),
+  });
+  messages.value.push(agentMsg.value);
+  autoScrollEnabled.value = true;
+  await nextTick();
+  scrollToBottom(true);
+
+  try {
+    const res = await axios.post(`/api/portal/saved-reports/${report.id}/execute`, null, {
+      params: { conversation_id: conversationId.value }
+    });
+    
+    agentMsg.value.isThinking = false;
+    agentMsg.value.thinkingText = "";
+    
+    let resultMarkdown = "";
+    let detailsText = "";
+    
+    if (res.data && res.data.data !== undefined) {
+      const execResult = res.data.data;
+      resultMarkdown = renderSavedReportDataToMarkdown(execResult);
+      detailsText = `${report.sql_content}\n--- 结果 ---\n${typeof execResult === 'object' ? JSON.stringify(execResult, null, 2) : String(execResult)}`;
+    } else {
+      resultMarkdown = "执行结果为空。";
+      detailsText = `${report.sql_content}\n--- 结果 ---\n无`;
+    }
+    
+    // 直连成功后输出表格，并在结尾拼接“深度可视化分析一下”快捷按钮，方便用户手动点击触发大模型分析流程
+    agentMsg.value.content = `### 📊 黄金报表「${report.title}」执行结果：\n\n${resultMarkdown}\n\n---\n- [🙋 深度可视化分析一下](quick:深度可视化分析一下)`;
+    
+    agentMsg.value.logs = [
+      {
+        id: `log_${Date.now()}`,
+        name: "execute_sql_query",
+        title: "工具完成: execute_sql_query",
+        category: "sql",
+        status: "success",
+        details: detailsText,
+      }
+    ];
+  } catch (error: any) {
+    console.error("Failed to execute saved report:", error);
+    agentMsg.value.isThinking = false;
+    agentMsg.value.thinkingText = "";
+    
+    const detail = error.response?.data?.detail;
+    let errorMsg = "";
+    if (detail) {
+      errorMsg = typeof detail === 'object' ? JSON.stringify(detail, null, 2) : String(detail);
+    } else {
+      errorMsg = error.message || "执行失败，请检查网络或配置";
+    }
+    
+    agentMsg.value.content = `### ❌ 报表执行失败\n\n在直连执行 SQL 报表时遇到错误：\n\n\`\`\`\n${errorMsg}\n\`\`\``;
+    agentMsg.value.logs = [
+      {
+        id: `log_${Date.now()}`,
+        name: "execute_sql_query",
+        title: "工具完成: execute_sql_query",
+        category: "sql",
+        status: "error",
+        details: `${report.sql_content}\n--- 错误 ---\n${errorMsg}`,
+      }
+    ];
+  } finally {
+    isProcessing.value = false;
+    await nextTick();
+    scrollToBottom(true);
+  }
+};
+
 watch(showSettings, (val) => {
     if (val) {
         fetchAllowedAgents();
@@ -3647,6 +4019,15 @@ const toggleShortcuts = () => {
   if (config.showShortcuts) {
     fetchSlashCommands();
   }
+};
+
+const handleHeaderShortcutsClick = () => {
+  if (isMobile.value) {
+    fetchSlashCommands();
+    chatInputRef.value?.openCommandDrawer?.();
+    return;
+  }
+  toggleShortcuts();
 };
 const isFullScreen = ref(false);
 const toggleFullScreen = () => {
@@ -3831,7 +4212,9 @@ const handleConfirmClearSession = () => {
   resetSession();
   showConfirmModal.value = false;
   nextTick(() => {
-    chatInputRef.value?.focus();
+    if (!isMobile.value) {
+      chatInputRef.value?.focus();
+    }
   });
 };
 const fetchSlashCommands = async () => {
@@ -4669,7 +5052,9 @@ const submitPendingExternalExecution = async (msg: Message) => {
       });
     }
     scrollToBottom();
-    nextTick(() => chatInputRef.value?.focus());
+    nextTick(() => {
+      if (!isMobile.value) chatInputRef.value?.focus();
+    });
   }
 };
 
@@ -4733,7 +5118,9 @@ const confirmPendingPermission = async (msg: Message, confirmed: boolean) => {
       });
     }
     scrollToBottom();
-    nextTick(() => chatInputRef.value?.focus());
+    nextTick(() => {
+      if (!isMobile.value) chatInputRef.value?.focus();
+    });
   }
 };
 
@@ -4831,6 +5218,7 @@ const sendMessage = async () => {
       debug_options: {
         injected_context: injectedContext.value,
         model: config.overrideModel || undefined,
+        enable_sql_plan: config.enableSqlPlan,
       },
       permission_options: {
         approval_mode: config.approvalMode || "ask",
@@ -5004,7 +5392,9 @@ const sendMessage = async () => {
     finalizeAllPendingStreamLogs(agentMsg.value);
     scrollToBottom();
     nextTick(() => {
-      chatInputRef.value?.focus();
+      if (!isMobile.value) {
+        chatInputRef.value?.focus();
+      }
     });
   }
 };
@@ -5131,6 +5521,8 @@ onMounted(() => {
   if (savedMulti !== null) config.enableMultiAgent = savedMulti === "1";
   const savedShortcuts = localStorage.getItem("yovole_show_shortcuts");
   if (savedShortcuts !== null) config.showShortcuts = savedShortcuts === "1";
+  const savedSqlPlan = localStorage.getItem("yovole_enable_sql_plan");
+  if (savedSqlPlan !== null) config.enableSqlPlan = savedSqlPlan === "1";
   const savedOverrideModel = localStorage.getItem("yovole_override_model");
   if (savedOverrideModel) config.overrideModel = savedOverrideModel;
   const savedApprovalMode = localStorage.getItem("yovole_approval_mode");

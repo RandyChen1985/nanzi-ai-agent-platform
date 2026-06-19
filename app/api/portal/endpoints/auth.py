@@ -9,7 +9,7 @@ from app.services.auth_service import AuthService
 router = APIRouter()
 
 class LoginRequest(BaseModel):
-    api_key: Optional[str] = Field(None, description="API 密钥", example="S63B_...")
+    api_key: Optional[str] = Field(None, description="API 密钥", json_schema_extra={"example": "S63B_..."})
     username: Optional[str] = Field(None, description="用户名")
     password: Optional[str] = Field(None, description="密码")
 

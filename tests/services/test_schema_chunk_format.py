@@ -20,6 +20,19 @@ def test_infer_schema_chunk_meta_table():
 
 
 def test_infer_schema_chunk_meta_metrics():
+    content = (
+        "dataset: sales_detail\n"
+        "meta_name: 销售明细\n"
+        "metrics_scope: 销售明细\n"
+        "metrics: []\n"
+    )
+    chunk_type, table, dataset = infer_schema_chunk_meta(content, "_metrics.txt")
+    assert chunk_type == "metrics"
+    assert table is None
+    assert dataset == "sales_detail"
+
+
+def test_infer_schema_chunk_meta_metrics_legacy_without_dataset_field():
     content = "metrics_scope: 销售明细\nmetrics: []\n"
     chunk_type, table, dataset = infer_schema_chunk_meta(content, "_metrics.txt")
     assert chunk_type == "metrics"

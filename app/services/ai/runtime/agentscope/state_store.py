@@ -111,10 +111,10 @@ class AgentStateStore:
             "state": state.model_dump(mode="json") if hasattr(state, "model_dump") else state,
         }
         try:
-            await redis.setex(
+            await redis.set(
                 key,
-                ttl_seconds,
                 json.dumps(payload, ensure_ascii=False),
+                ex=ttl_seconds,
             )
         except Exception as exc:
             logger.warning("[AgentStateStore] Failed to save key=%s: %s", key, exc)

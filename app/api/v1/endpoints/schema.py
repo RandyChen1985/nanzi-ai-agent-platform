@@ -14,7 +14,7 @@ router = APIRouter()
 from app.schemas.response import StandardResponse
 
 class SchemaRequest(BaseModel):
-    query: Optional[str] = Field(None, description="检索关键词", example="销售数据")
+    query: Optional[str] = Field(None, description="检索关键词", json_schema_extra={"example": "销售数据"})
     metadata_provider: Optional[str] = Field(None, description="临时指定元数据提供方 (local/ragflow)")
     ragflow_metadata_top_k: Optional[int] = Field(None, description="临时指定 Top K 数量")
     ragflow_similarity_threshold: Optional[float] = Field(None, description="临时指定相似度阈值")

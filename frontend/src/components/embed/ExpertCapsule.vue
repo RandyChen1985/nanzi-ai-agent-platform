@@ -10,6 +10,7 @@ defineProps<{
   showAutoRoutingHint: boolean;
   showMultiAgentHint?: boolean;
   multiAgentHintMessage?: string;
+  isMobile?: boolean;
 }>();
 
 const emit = defineEmits(['switch-to-auto']);
@@ -41,8 +42,8 @@ const emit = defineEmits(['switch-to-auto']);
             </div>
         </div>
 
-        <!-- Expert Mode Header Bar -->
-        <div v-else-if="config.routingMode === 'expert' && currentExpertAgent" 
+        <!-- Expert Mode Header Bar (desktop only; mobile uses main header) -->
+        <div v-else-if="!isMobile && config.routingMode === 'expert' && currentExpertAgent"
              class="w-full bg-blue-50/90 dark:bg-blue-900/20 backdrop-blur-md border-b border-blue-100 dark:border-blue-800 px-4 py-2 flex items-center justify-center relative shadow-sm"
         >
             <!-- 1. Avatar (Absolute Left) -->

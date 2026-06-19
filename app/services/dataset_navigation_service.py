@@ -19,7 +19,7 @@ from app.services.ai.runtime.agentscope.stream_reconcile import finalize_visible
 
 logger = logging.getLogger(__name__)
 
-_NAV_CACHE_TTL_SECONDS = 600
+_NAV_CACHE_TTL_SECONDS = 604800  # 7 days
 _NAV_PROMPT_VERSION = "v5"
 _NAV_CACHE_GEN_KEY = "agent:dataset_navigation:cache_generation"
 _CLICK_STATS_TTL_SECONDS = 90 * 24 * 60 * 60
@@ -578,6 +578,22 @@ class DatasetNavigationService:
         )
         groups = DatasetNavigationService._apply_question_click_stats(groups, click_stats)
 
+        # 记录原始索引并计算场景卡片（Group）的问题点击总数进行稳定重排
+        for idx, g in enumerate(groups):
+            g["_original_index"] = idx
+            g["total_click_count"] = sum(int(q.get("click_count") or 0) for q in g.get("questions") or [])
+
+        groups.sort(
+            key=lambda g: (
+                g.get("total_click_count") or 0,
+                -g.get("_original_index", 0)
+            ),
+            reverse=True
+        )
+
+        for g in groups:
+            g.pop("_original_index", None)
+
         return {
             "dataset_count": dataset_count,
             "dataset_menu_hash": menu_hash,
@@ -754,4 +770,99 @@ class DatasetNavigationService:
             dataset_name=str(dataset_name or "").strip(),
         )
         return await DatasetNavigationService._generate_questions_via_llm(prompt)
+
+    @staticmethod
+    async def warm_up_navigation_caches_background() -> None:
+        """后台异步静默预热数据门户缓存，最大程度消除变更后用户的首屏 LLM 延迟。"""
+        import asyncio
+        from datetime import datetime, timedelta
+        from sqlalchemy import select
+        from app.core.orm import AsyncSessionLocal
+        from app.models.audit import AgentExecutionHistory
+        from app.models.user import User
+
+        logger.info("[Portal Warm-up] Background navigation cache warm-up task started.")
+        try:
+            active_user_ids = set()
+            three_days_ago = datetime.now() - timedelta(days=3)
+
+            async with AsyncSessionLocal() as session:
+                # 1. 搜集最近 3 天有对话记录的用户 ID 字符串列表
+                active_str_ids = set()
+                stmt = (
+                    select(AgentExecutionHistory.user_id)
+                    .where(AgentExecutionHistory.created_at >= three_days_ago)
+                    .where(AgentExecutionHistory.user_id.isnot(None))
+                    .distinct()
+                )
+                res = await session.execute(stmt)
+                for row in res.all():
+                    val = str(row[0]).strip()
+                    if val:
+                        active_str_ids.add(val)
+
+                # 2. 转换为 int 并验证用户状态为启用
+                u_ids = []
+                for s_id in active_str_ids:
+                    try:
+                        u_ids.append(int(s_id))
+                    except ValueError:
+                        pass
+
+                if u_ids:
+                    stmt = (
+                        select(User.id)
+                        .where(User.id.in_(u_ids))
+                        .where(User.status == 1)
+                        .where(User.role != "admin")
+                    )
+                    res = await session.execute(stmt)
+                    for row in res.all():
+                        if row[0] is not None:
+                            active_user_ids.add(row[0])
+
+            logger.info(
+                "[Portal Warm-up] Detected %d active users for cache warm-up.",
+                len(active_user_ids),
+            )
+
+            # 3. 并发控制与依次生成
+            sem = asyncio.Semaphore(3)  # 限制最多3个并发大模型请求
+
+            async def _warm_up_single(*, user_id: Optional[int], is_admin: bool) -> None:
+                async with sem:
+                    try:
+                        async with AsyncSessionLocal() as session:
+                            await DatasetNavigationService.build_navigation_for_user(
+                                session,
+                                user_id=user_id,
+                                is_admin=is_admin,
+                                force_refresh=True,  # 强制刷新并生成新缓存
+                            )
+                        logger.info(
+                            "[Portal Warm-up] Cache successfully warmed up for %s.",
+                            "admin" if is_admin else f"user {user_id}",
+                        )
+                    except Exception as ex:
+                        logger.warning(
+                            "[Portal Warm-up] Failed to warm up cache for %s: %s",
+                            "admin" if is_admin else f"user {user_id}",
+                            ex,
+                        )
+
+            # 构造全部预热任务
+            tasks = []
+            # 预热管理员缓存 (管理员共享一个 'admin' 键)
+            tasks.append(_warm_up_single(user_id=None, is_admin=True))
+
+            # 预热所有活跃的普通用户缓存
+            for u_id in active_user_ids:
+                tasks.append(_warm_up_single(user_id=u_id, is_admin=False))
+
+            if tasks:
+                await asyncio.gather(*tasks, return_exceptions=True)
+            
+            logger.info("[Portal Warm-up] Background navigation cache warm-up completed.")
+        except Exception as e:
+            logger.error("[Portal Warm-up] Background warm-up task encountered error: %s", e)
 

@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 from typing import Optional, Dict, Any, List, Union
 from datetime import datetime
 
@@ -29,8 +29,7 @@ class AIAgentVersionResponse(AIAgentVersionBase):
     agent_id: str
     created_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 class AIAgentBase(BaseModel):
     name: str
@@ -56,8 +55,7 @@ class AIAgentResponse(AIAgentBase):
     execution_count: int = 0
     # versions: List[AIAgentVersionResponse] = [] # Optional
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 # --- Chat Execution Schemas ---
 
@@ -122,8 +120,7 @@ class AgentExecutionHistoryResponse(BaseModel):
     agent_name: Optional[str] = None
     agent_display_name: Optional[str] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 class AgentExecutionHistoryListResponse(BaseModel):
     total: int

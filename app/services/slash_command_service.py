@@ -1,6 +1,6 @@
 from typing import List, Optional
 from datetime import datetime
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from sqlalchemy import select, delete, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.orm import Base
@@ -42,8 +42,7 @@ class SlashCommandResponse(SlashCommandBase):
     created_by: str
     created_at: Optional[datetime] = None
     
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 # Service
 class SlashCommandService:
@@ -82,7 +81,7 @@ class SlashCommandService:
 
     @staticmethod
     async def create_command(session: AsyncSession, data: SlashCommandCreate, user_name: str) -> SlashCommand:
-        cmd = SlashCommand(**data.dict(), created_by=user_name)
+        cmd = SlashCommand(**data.model_dump(), created_by=user_name)
         session.add(cmd)
         await session.commit()
         await session.refresh(cmd)
@@ -101,7 +100,7 @@ class SlashCommandService:
         if not (is_admin or is_owner):
             return None # Or raise PermissionError, but returning None works for 404/403 ambiguity in simple service
         
-        for key, value in data.dict().items():
+        for key, value in data.model_dump().items():
             setattr(cmd, key, value)
             
         await session.commit()

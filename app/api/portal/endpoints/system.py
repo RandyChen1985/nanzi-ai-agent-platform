@@ -571,7 +571,7 @@ async def update_system_configs(
     Bulk update system configurations.
     """
     try:
-        updates = [item.dict() for item in request.updates]
+        updates = [item.model_dump() for item in request.updates]
         # Pass the username to the service for audit logging
         await ConfigService.bulk_update(updates, changed_by=user.get("user_name", "admin"))
         return {"status": "success", "message": "Configurations updated successfully."}

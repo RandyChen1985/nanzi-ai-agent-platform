@@ -76,8 +76,7 @@ class ConfigService:
                 if row:
                     db_val = row[0]
                     # Cache it if found (even if empty string)
-                    if redis:
-                        await redis.setex(f"{CACHE_PREFIX}{key}", CACHE_TTL, db_val)
+                    await redis.set(f"{CACHE_PREFIX}{key}", db_val, ex=CACHE_TTL)
         except Exception as e:
             logger.error(f"Failed to fetch config '{key}' from DB: {e}")
         
@@ -162,9 +161,8 @@ class ConfigService:
             if is_local:
                 await session.close()
         
-        redis = await get_redis()
         if redis:
-            await redis.setex(f"{CACHE_PREFIX}{key}", CACHE_TTL, value)
+            await redis.set(f"{CACHE_PREFIX}{key}", value, ex=CACHE_TTL)
             logger.info(f"Config '{key}' updated in DB and Redis. Audit log created.")
         
         # Invalidate Memory Cache
@@ -261,9 +259,8 @@ class ConfigService:
              # Fallback to set_config outside of the session block
              return await ConfigService.set_config(key, value, changed_by=changed_by, change_reason=change_reason)
         
-        redis = await get_redis()
         if redis:
-            await redis.setex(f"{CACHE_PREFIX}{key}", CACHE_TTL, value)
+            await redis.set(f"{CACHE_PREFIX}{key}", value, ex=CACHE_TTL)
             logger.info(f"Config '{key}' value updated. Audit log created.")
         
         # Invalidate Memory Cache

@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 from typing import Optional
 from datetime import datetime
 
@@ -29,13 +29,12 @@ class AIModelResponse(AIModelBase):
     # We do NOT return the full api_key for security
     has_api_key: bool = False
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
     @staticmethod
     def from_orm_custom(obj):
         """Custom converter to handle masked API key logic"""
-        data = AIModelResponse.from_orm(obj)
+        data = AIModelResponse.model_validate(obj)
         data.has_api_key = bool(obj.api_key)
         # Ensure API key is never leaked in the default response if Pydantic included it
         # (Though it is not in AIModelBase, better safe)

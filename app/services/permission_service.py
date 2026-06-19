@@ -95,10 +95,10 @@ class PermissionService:
 
         # 3. Set Cache (TTL 1 hour)
         if redis:
-            await redis.setex(
+            await redis.set(
                 cache_key,
-                3600,
-                response.model_dump_json()
+                response.model_dump_json(),
+                ex=3600
             )
 
         return response

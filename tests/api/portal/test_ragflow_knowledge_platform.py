@@ -105,11 +105,12 @@ async def test_require_element_permission_rejects_non_admin_without_permission(m
 
 @pytest.mark.asyncio
 async def test_get_ragflow_config_summary_does_not_expose_api_key(monkeypatch):
-    async def fake_get(key):
+    async def fake_get(key, *args, **kwargs):
         return {
-            "ragflow_api_url": "http://ragflow.example/",
-            "ragflow_api_key": "secret-api-key",
-        }.get(key)
+            "knowledge_ragflow_api_url": "http://ragflow.example/",
+            "knowledge_ragflow_api_key": "secret-api-key",
+            "metadata_provider": "ragflow",
+        }.get(key, kwargs.get("default"))
 
     monkeypatch.setattr(ragflow.ConfigService, "get", fake_get)
 
@@ -120,6 +121,7 @@ async def test_get_ragflow_config_summary_does_not_expose_api_key(monkeypatch):
         "api_url": "http://ragflow.example/",
         "api_key_configured": True,
         "configured": True,
+        "metadata_provider": "ragflow",
     }
     assert "secret-api-key" not in str(result)
 

@@ -85,7 +85,7 @@ class MemoryConfigService:
             return default
         val = row[0]
         if redis and val is not None:
-            await redis.setex(cache_key, CACHE_TTL, val)
+            await redis.set(cache_key, val, ex=CACHE_TTL)
         return val if val is not None else default
 
     @staticmethod

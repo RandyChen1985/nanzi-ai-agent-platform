@@ -156,7 +156,6 @@ class ExampleIndexService:
             "embedding": _vector_to_bytes(embedding)
         }
         await redis.hset(key, mapping=mapping)
-        logger.info("[ExampleIndex] Upserted local Redis example vector for key %s", key)
         await ExampleIndexService.ensure_index()
 
     @staticmethod

@@ -159,7 +159,7 @@ class MemoryService:
 
         key = self._get_data_result_key(user_id, conversation_id)
         try:
-            await redis.setex(key, self.ttl, json.dumps(payload, ensure_ascii=False))
+            await redis.set(key, json.dumps(payload, ensure_ascii=False), ex=self.ttl)
             logger.info(f"[MemoryService] Stored last data result for key: {key}")
         except Exception as e:
             logger.error(f"[MemoryService] Failed to set last data result for key {key}: {e}")

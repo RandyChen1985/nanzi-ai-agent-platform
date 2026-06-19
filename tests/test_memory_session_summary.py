@@ -26,7 +26,7 @@ async def test_should_run_debounce_blocks_until_turns_or_time():
     redis.get = AsyncMock(
         return_value=json.dumps({"last_run": time.time(), "pending_turns": 0})
     )
-    redis.setex = AsyncMock()
+    redis.set = AsyncMock()
 
     async def get_int(key, default=0):
         mapping = {
@@ -46,8 +46,8 @@ async def test_should_run_debounce_blocks_until_turns_or_time():
     ):
         ok = await SessionSummaryService.should_run("u1", "conv1", "a" * 50)
         assert ok is False
-        assert redis.setex.called
-        state = json.loads(redis.setex.call_args[0][2])
+        assert redis.set.called
+        state = json.loads(redis.set.call_args[0][1])
         assert state["pending_turns"] == 1
 
 
@@ -57,7 +57,7 @@ async def test_should_run_after_enough_turns():
     redis.get = AsyncMock(
         return_value=json.dumps({"last_run": time.time(), "pending_turns": 2})
     )
-    redis.setex = AsyncMock()
+    redis.set = AsyncMock()
 
     async def get_int(key, default=0):
         mapping = {

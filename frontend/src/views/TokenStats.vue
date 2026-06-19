@@ -263,7 +263,7 @@ const API_BASE = "";
 const apiKey = ref(localStorage.getItem("api_key") || "");
 const userInfo = ref<any>(null);
 const loading = ref(false);
-const period = ref("today");
+const period = ref("week");
 
 // 数据源
 const trendData = ref<any[]>([]);

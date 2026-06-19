@@ -1,5 +1,5 @@
 import os
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 from functools import lru_cache
 from typing import List, Optional
 
@@ -65,9 +65,7 @@ class Settings(BaseSettings):
         os.makedirs(host_path, exist_ok=True)
         return host_path
 
-    class Config:
-        env_file = ".env"
-        extra = "ignore"  # Allow extra fields in .env
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
 @lru_cache()
 def get_settings():

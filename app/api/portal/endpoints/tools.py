@@ -61,7 +61,7 @@ async def create_tool(
         raise HTTPException(status_code=400, detail="Tool name already exists")
     
     # Dump Dicts to JSON strings for DB
-    data = tool_in.dict()
+    data = tool_in.model_dump()
     if data.get("headers") is not None:
         data["headers"] = json.dumps(data["headers"], ensure_ascii=False)
     if data.get("parameter_schema") is not None:
@@ -90,7 +90,7 @@ async def update_tool(
     if not tool:
         raise HTTPException(status_code=404, detail="Tool not found")
     
-    update_data = tool_in.dict(exclude_unset=True)
+    update_data = tool_in.model_dump(exclude_unset=True)
     
     # Dump Dicts to JSON strings for DB
     if "headers" in update_data:

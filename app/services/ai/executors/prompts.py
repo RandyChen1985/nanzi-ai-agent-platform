@@ -1091,12 +1091,17 @@ class DataQueryPrompts:
         cleaned = re.sub(r"[？?！!。；;]+$", "", str(current_question or "")).strip()
         return cleaned[:40] + ("..." if len(cleaned) > 40 else "") if cleaned else ""
 
-    # 旧版曾要求模型在 SQL 前输出结构化计划，现已关闭该流程；保留常量供历史兼容/测试引用。
     SQL_PLAN_ENFORCEMENT = (
-        "【SQL 生成要求】\n"
-        "调用 execute_sql_query 前无需输出额外计划文本；请直接通过工具调用执行 SQL。"
-        "SQL 仍需遵循：先对齐粒度（CTE 聚合）→ 再 JOIN → 再计算比率/占比。"
-        "禁止在明细粒度多对多 JOIN 后再聚合。\n"
+        "【SQL Plan 中间层】\n"
+        "当平台要求 SQL Plan 时，调用 execute_sql_query 前必须先输出一个结构化计划，格式严格如下：\n"
+        "<sql_plan>{\"goal\":\"用户要查询的业务目标\",\"tables\":[\"物理表名\"],"
+        "\"fields\":[\"物理字段名\"],\"metrics\":[\"指标/计算口径\"],"
+        "\"filters\":[\"筛选条件\"],\"time_range\":\"时间范围或无\","
+        "\"grain\":\"聚合粒度或明细粒度\",\"joins\":[\"JOIN 条件或无\"],"
+        "\"risk_notes\":[\"可能出错点\"]}</sql_plan>\n"
+        "计划中的 tables/fields 必须来自 get_dataset_schema 或 Schema Binding 摘要。"
+        "输出计划后再通过工具调用 execute_sql_query；禁止只写计划不查数。"
+        "SQL 仍需遵循 Grain-first：先聚合到正确粒度，再 JOIN，再计算比率/占比。"
     )
 
     # 追问复用约束，每个执行器实例注入一次
@@ -1196,13 +1201,15 @@ class DataQueryPrompts:
 
     # 高风险查询：执行 SQL 前必须先输出计划（阻断一次）
     HIGH_RISK_REQUIRE_PLAN = (
-        "你当前问题属于高风险数据查询（包含比率/趋势/排名/分组等）。"
-        "请直接调用 execute_sql_query，并确保 SQL 按正确粒度聚合、过滤和计算。"
+        "【SQL Plan 缺失】当前问题属于高风险数据查询（包含比率、趋势、排名、分组、JOIN 或复杂聚合等）。"
+        "请先输出 <sql_plan>{...}</sql_plan>，明确目标指标、使用表、字段、筛选条件、时间范围、"
+        "聚合粒度和 JOIN 条件；随后再调用 execute_sql_query。"
     )
 
     # 低风险查询：建议补计划但不阻断
     PLAN_NUDGE_NON_BLOCKING = (
-        "提示：你将执行 SQL。请直接调用 execute_sql_query，并确保 SQL 字段、时间范围和聚合粒度正确。"
+        "提示：你将执行 SQL。若问题涉及多字段或口径不确定，可先输出 <sql_plan>{...}</sql_plan> 自检；"
+        "简单单表查询可直接调用 execute_sql_query。"
     )
 
     # 已拿 Schema，下一步必须执行 SQL（不得直接总结）
@@ -1239,7 +1246,22 @@ class DataQueryPrompts:
         "2) 重点核对：SELECT 列、JOIN ON 条件、WHERE 筛选字段、GROUP BY 键是否与 Schema 一致。\n"
         "3) 若报错涉及 unknown column/table/invalid identifier 等，优先重查 Schema，"
         "再修改 SQL 中的列名、表别名或关联键；禁止原样重复失败 SQL。\n"
-        "4) 若 Schema 中仅有中文术语，请使用术语对应的物理字段名，不要直接写未定义的英文列名。"
+        "4) 若 Schema 中仅有中文术语，请使用术语对应的物理字段名，不要直接写未定义的英文列名。\n"
+        "5) 若报错涉及 ClickHouse 时间解析错误 (如 Cannot parse datetime... While executing MergeTreeThread)，"
+        "通常是由于 String 类型的日期字段包含空值或非法格式脏数据导致转换失败。此时【必须】使用 "
+        "toDateTimeOrNull(column_name) 替换 toDateTime(column_name) 来进行容错，避免执行崩溃。"
+    )
+
+    DATE_FORMAT_SQL_ERROR_REPAIR_GUIDE = (
+        "【日期/时间格式修正指引】\n"
+        "1) 报错如 ORA-01861 / ORA-01830 / literal does not match format string 时，"
+        "优先检查日期字段真实类型与 SQL 中 TO_DATE、TO_CHAR、日期字面量格式是否一致。\n"
+        "2) 若字段本身是 DATE/TIMESTAMP，禁止再用 TO_DATE(date_column, 'YYYY-MM-DD') 包裹；"
+        "应直接比较日期字段，或用 TO_CHAR(date_column, 'YYYY-MM-DD') 仅用于展示/分组。\n"
+        "3) 若字段是字符串日期，TO_DATE 的格式掩码必须与字段真实字符串格式一致；"
+        "不要把 'YYYY-MM-DD' 用在实际包含时间、斜杠或中文格式的字段上。\n"
+        "4) 修复时只改日期字段、日期字面量、TO_DATE/TO_CHAR 或时间边界表达式，"
+        "不要顺手更换无关表字段。"
     )
 
     # 元数据服务（RAGFlow）不可用时的硬终止回复

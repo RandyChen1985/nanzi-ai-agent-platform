@@ -13,7 +13,7 @@ from app.models.mcp import McpServer, McpToolCache
 from app.models.agent import AIAgentVersion
 from app.services.ai.tools.mcp_client import McpClientService, McpSseSession
 from app.services.ai.tools.mcp_factory import McpToolFactory
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -30,8 +30,7 @@ class McpServerResponse(McpServerBase):
     tool_count: int = 0
     published_tool_count: int = 0
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 class McpToolResponse(BaseModel):
     id: str
@@ -41,14 +40,12 @@ class McpToolResponse(BaseModel):
     parameter_schema: str
     is_published: bool
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 class McpToolResponseWithUsage(McpToolResponse):
     usage_count: int = 0
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 @router.post("/verify")
 async def verify_mcp_server(

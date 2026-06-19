@@ -220,7 +220,7 @@ async def update_memory_configs(
     user: Dict = Depends(require_permission("element", "element:memory:config_save")),
     _health: Dict = Depends(require_memory_vector_ready),
 ):
-    updates = [i.dict() for i in body.updates]
+    updates = [i.model_dump() for i in body.updates]
     for u in updates:
         if u.get("is_secret") and u.get("value") == "******":
             existing = await MemoryConfigService.get(u["key"])

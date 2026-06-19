@@ -80,6 +80,16 @@ const activeCommandIndex = ref(0);
 const mentionListRef = ref<any>(null);
 const isDrawerExpanded = ref(false);
 
+const openCommandDrawer = () => {
+  isDrawerExpanded.value = true;
+};
+
+const closeCommandDrawer = () => {
+  isDrawerExpanded.value = false;
+};
+
+const showShortcutBar = computed(() => props.showShortcuts && props.windowWidth >= 640);
+
 const handleCompositionStart = () => {
   isComposing.value = true;
 };
@@ -475,7 +485,9 @@ const focus = () => {
 
 defineExpose({
   uploadedFiles,
-  focus
+  focus,
+  openCommandDrawer,
+  closeCommandDrawer,
 });
 </script>
 
@@ -483,9 +495,13 @@ defineExpose({
     <div class="flex-shrink-0 bg-white dark:bg-gray-900 border-t border-gray-100 dark:border-gray-800 flex flex-col relative z-20">
       <slot name="banner"></slot>
 
-      <div class="p-3 pb-2">
-        <!-- Shortcut Bar -->
-        <div v-if="showShortcuts" class="flex items-center space-x-2 mb-2 px-1 relative h-8" :class="{ 'opacity-50 pointer-events-none select-none': isProcessing }">
+      <div
+        :class="isMobileViewport
+          ? 'px-3 pt-1 pb-[calc(env(safe-area-inset-bottom,0px)+0.625rem)]'
+          : 'p-3 pb-2'"
+      >
+        <!-- Shortcut Bar (desktop only) -->
+        <div v-if="showShortcutBar" class="flex items-center space-x-2 mb-2 px-1 relative h-8" :class="{ 'opacity-50 pointer-events-none select-none': isProcessing }">
             <!-- 1. Left Toggle Button (Visible on all devices now) -->
             <div @click="emit('toggle-shortcuts')" class="flex items-center space-x-1 cursor-pointer select-none group flex-shrink-0 bg-white dark:bg-gray-900 pr-2 z-10">
                 <span class="text-[10px] font-black text-gray-400 group-hover:text-primary transition-colors tracking-tighter">⚡️ 快捷指令</span>
@@ -498,34 +514,28 @@ defineExpose({
                     <div class="w-full">
                         <div v-if="!isDrawerExpanded" class="flex items-center space-x-2">
                             <div class="flex flex-1 items-center space-x-2 overflow-x-auto no-scrollbar scroll-smooth pr-12">
-                                <template v-if="windowWidth < 640">
-                                    <button v-if="filteredSystemCommands.some(c => c.id === DATASET_PORTAL_SYSTEM_COMMAND_ID)" @click="handleShortcutClick(filteredSystemCommands.find(c => c.id === DATASET_PORTAL_SYSTEM_COMMAND_ID))" class="px-3 py-1 text-[10px] font-bold bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-300 border border-blue-100/50 dark:border-blue-800 rounded-full whitespace-nowrap">📚 数据门户</button>
-                                    <button v-if="filteredSystemCommands.some(c => c.id === 'sys_clear')" @click="handleShortcutClick(filteredSystemCommands.find(c => c.id === 'sys_clear'))" class="px-3 py-1 text-[10px] font-bold bg-gray-100 dark:bg-gray-800 text-gray-600 rounded-full whitespace-nowrap">💬 新会话</button>
+                                <template v-for="cmd in filteredSystemCommands" :key="'row-sys-'+cmd.id">
+                                    <button @click="handleShortcutClick(cmd)" class="px-2.5 py-1 text-[10px] font-bold bg-gray-100/80 dark:bg-gray-800 text-gray-500 rounded-full whitespace-nowrap hover:bg-gray-200 transition-colors">{{ cmd.label }}</button>
                                 </template>
-                                <template v-else>
-                                    <template v-for="cmd in filteredSystemCommands" :key="'row-sys-'+cmd.id">
-                                        <button @click="handleShortcutClick(cmd)" class="px-2.5 py-1 text-[10px] font-bold bg-gray-100/80 dark:bg-gray-800 text-gray-500 rounded-full whitespace-nowrap hover:bg-gray-200 transition-colors">{{ cmd.label }}</button>
-                                    </template>
-                                    <div class="w-px h-3 bg-gray-200 dark:bg-gray-700 flex-shrink-0"></div>
-                                    <template v-for="cmd in filteredUserCommands" :key="'row-user-'+cmd.id">
-                                        <button @click="handleShortcutClick(cmd)" class="px-2.5 py-1 text-[10px] font-bold bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-300 border border-blue-100/50 dark:border-blue-800 rounded-full whitespace-nowrap hover:bg-blue-100 transition-colors">{{ cmd.label }}</button>
-                                    </template>
+                                <div class="w-px h-3 bg-gray-200 dark:bg-gray-700 flex-shrink-0"></div>
+                                <template v-for="cmd in filteredUserCommands" :key="'row-user-'+cmd.id">
+                                    <button @click="handleShortcutClick(cmd)" class="px-2.5 py-1 text-[10px] font-bold bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-300 border border-blue-100/50 dark:border-blue-800 rounded-full whitespace-nowrap hover:bg-blue-100 transition-colors">{{ cmd.label }}</button>
                                 </template>
                             </div>
-                            <button @click="isDrawerExpanded = true" class="absolute right-0 top-0 bottom-0 bg-gradient-to-l from-white via-white dark:from-gray-900 dark:via-gray-900 pl-6 pr-1 flex items-center text-[10px] font-black text-primary hover:opacity-80 transition-all z-10">
+                            <button @click="openCommandDrawer" class="absolute right-0 top-0 bottom-0 bg-gradient-to-l from-white via-white dark:from-gray-900 dark:via-gray-900 pl-6 pr-1 flex items-center text-[10px] font-black text-primary hover:opacity-80 transition-all z-10">
                                 更多 <svg class="w-3 h-3 ml-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M19 9l-7 7-7-7" /></svg>
                             </button>
                         </div>
 
-                        <!-- Bottom Drawer -->
-                        <div v-else class="z-50" :class="windowWidth < 640 ? 'fixed inset-0 bg-black/40 backdrop-blur-sm flex flex-col justify-end p-0' : 'absolute bottom-full left-0 right-0 mb-3 animate-fade-in-up px-1'" @click.self="isDrawerExpanded = false">
-                            <div class="bg-white/95 dark:bg-gray-800/95 backdrop-blur-xl border border-gray-200 dark:border-gray-700 p-4 shadow-2xl overflow-y-auto custom-scrollbar ring-1 ring-black/5" :class="windowWidth < 640 ? 'rounded-t-3xl max-h-[85vh] pb-12 animate-slide-up' : 'rounded-2xl max-h-[24rem]'" @click.stop>
+                        <!-- Desktop command drawer -->
+                        <div v-else class="z-50 absolute bottom-full left-0 right-0 mb-3 animate-fade-in-up px-1" @click.self="closeCommandDrawer">
+                            <div class="bg-white/95 dark:bg-gray-800/95 backdrop-blur-xl border border-gray-200 dark:border-gray-700 p-4 shadow-2xl overflow-y-auto custom-scrollbar ring-1 ring-black/5 rounded-2xl max-h-[24rem]" @click.stop>
                                 <div class="flex items-center justify-between mb-6">
                                     <div class="flex items-center space-x-2">
                                         <span class="w-1.5 h-4 bg-primary rounded-full"></span>
                                         <span class="text-[11px] font-black text-gray-800 dark:text-gray-100 uppercase tracking-widest">指令库 · Commands</span>
                                     </div>
-                                    <button @click="isDrawerExpanded = false" class="w-8 h-8 flex items-center justify-center rounded-full bg-gray-100 dark:bg-gray-700 text-gray-500 hover:bg-gray-200 transition-all">
+                                    <button @click="closeCommandDrawer" class="w-8 h-8 flex items-center justify-center rounded-full bg-gray-100 dark:bg-gray-700 text-gray-500 hover:bg-gray-200 transition-all">
                                         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M19 9l-7 7-7-7" /></svg>
                                     </button>
                                 </div>
@@ -534,18 +544,18 @@ defineExpose({
                                         <div class="text-[10px] font-black text-blue-500 mb-3 px-1 flex items-center uppercase tracking-tighter">Mine · 我的常用</div>
                                         <div class="grid grid-cols-2 sm:grid-cols-3 gap-3">
                                             <div v-for="cmd in filteredUserCommands" :key="'grid-user-'+cmd.id" class="relative group/grid-item">
-                                                <button draggable="true" @dragstart="handleDragStart($event, cmd, 'user')" @dragover.prevent @drop="handleDrop($event, cmd, 'user')" @click="handleShortcutClick(cmd); isDrawerExpanded = false;" class="w-full text-left p-3.5 rounded-2xl bg-gray-50 dark:bg-gray-900/50 border border-gray-100 dark:border-gray-800 hover:border-primary/30 hover:bg-white dark:hover:bg-gray-900 hover:shadow-md transition-all">
+                                                <button draggable="true" @dragstart="handleDragStart($event, cmd, 'user')" @dragover.prevent @drop="handleDrop($event, cmd, 'user')" @click="handleShortcutClick(cmd); closeCommandDrawer();" class="w-full text-left p-3.5 rounded-2xl bg-gray-50 dark:bg-gray-900/50 border border-gray-100 dark:border-gray-800 hover:border-primary/30 hover:bg-white dark:hover:bg-gray-900 hover:shadow-md transition-all">
                                                     <div class="text-xs font-bold text-gray-800 dark:text-gray-200 mb-1 truncate">{{ cmd.label }}</div>
                                                     <div class="text-[9px] text-gray-400 truncate opacity-60 font-mono">{{ cmd.command }}</div>
                                                 </button>
-                                                <button v-if="currentUser && cmd.created_by === currentUser.user_name" @click.stop="$emit('delete-command', cmd, $event)" class="absolute -top-1.5 -right-1.5 w-6 h-6 bg-red-500 text-white rounded-full flex items-center justify-center shadow-lg z-10 hover:scale-110 active:scale-95" :class="windowWidth < 640 ? 'opacity-100' : 'opacity-0 group-hover/grid-item:opacity-100'"><svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M6 18L18 6M6 6l12 12" /></svg></button>
+                                                <button v-if="currentUser && cmd.created_by === currentUser.user_name" @click.stop="$emit('delete-command', cmd, $event)" class="absolute -top-1.5 -right-1.5 w-6 h-6 bg-red-500 text-white rounded-full flex items-center justify-center shadow-lg z-10 opacity-0 group-hover/grid-item:opacity-100 hover:scale-110 active:scale-95"><svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M6 18L18 6M6 6l12 12" /></svg></button>
                                             </div>
                                         </div>
                                     </div>
                                     <div>
                                         <div class="text-[10px] font-black text-gray-400 mb-3 px-1 flex items-center uppercase tracking-tighter">System · 系统功能</div>
                                         <div class="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                                            <button v-for="cmd in filteredSystemCommands" :key="'grid-sys-'+cmd.id" @click="handleShortcutClick(cmd); isDrawerExpanded = false;" class="w-full text-left p-3.5 rounded-2xl bg-gray-50/50 dark:bg-gray-900/30 border border-transparent hover:bg-gray-100 dark:hover:bg-gray-800 transition-all">
+                                            <button v-for="cmd in filteredSystemCommands" :key="'grid-sys-'+cmd.id" @click="handleShortcutClick(cmd); closeCommandDrawer();" class="w-full text-left p-3.5 rounded-2xl bg-gray-50/50 dark:bg-gray-900/30 border border-transparent hover:bg-gray-100 dark:hover:bg-gray-800 transition-all">
                                                 <div class="text-xs font-bold text-gray-600 dark:text-gray-400 mb-1 truncate">{{ cmd.label }}</div>
                                                 <div class="text-[9px] text-gray-400/60 truncate font-mono">{{ cmd.command }}</div>
                                             </button>
@@ -931,6 +941,50 @@ defineExpose({
       </div>
 
       <MentionList ref="mentionListRef" :visible="showMentionList" :keyword="mentionKeyword" :agents="allowedAgents" :position="mentionPosition" @select="handleMentionSelect" @close="showMentionList = false" />
+
+      <!-- Mobile command drawer (opened from header shortcut button) -->
+      <Teleport to="body">
+        <div
+          v-if="isDrawerExpanded && windowWidth < 640"
+          class="fixed inset-0 z-[9995] bg-black/40 backdrop-blur-sm flex flex-col justify-end p-0"
+          @click.self="closeCommandDrawer"
+        >
+          <div class="bg-white/95 dark:bg-gray-800/95 backdrop-blur-xl border border-gray-200 dark:border-gray-700 p-4 shadow-2xl overflow-y-auto custom-scrollbar ring-1 ring-black/5 rounded-t-3xl max-h-[85vh] pb-12 animate-slide-up" @click.stop>
+            <div class="flex items-center justify-between mb-6">
+              <div class="flex items-center space-x-2">
+                <span class="w-1.5 h-4 bg-primary rounded-full"></span>
+                <span class="text-[11px] font-black text-gray-800 dark:text-gray-100 uppercase tracking-widest">指令库 · Commands</span>
+              </div>
+              <button @click="closeCommandDrawer" class="w-8 h-8 flex items-center justify-center rounded-full bg-gray-100 dark:bg-gray-700 text-gray-500 hover:bg-gray-200 transition-all">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M19 9l-7 7-7-7" /></svg>
+              </button>
+            </div>
+            <div class="space-y-6">
+              <div v-if="filteredUserCommands.length > 0">
+                <div class="text-[10px] font-black text-blue-500 mb-3 px-1 flex items-center uppercase tracking-tighter">Mine · 我的常用</div>
+                <div class="grid grid-cols-2 gap-3">
+                  <div v-for="cmd in filteredUserCommands" :key="'mobile-user-'+cmd.id" class="relative">
+                    <button @click="handleShortcutClick(cmd); closeCommandDrawer();" class="w-full text-left p-3.5 rounded-2xl bg-gray-50 dark:bg-gray-900/50 border border-gray-100 dark:border-gray-800 hover:border-primary/30 hover:bg-white dark:hover:bg-gray-900 hover:shadow-md transition-all">
+                      <div class="text-xs font-bold text-gray-800 dark:text-gray-200 mb-1 truncate">{{ cmd.label }}</div>
+                      <div class="text-[9px] text-gray-400 truncate opacity-60 font-mono">{{ cmd.command }}</div>
+                    </button>
+                    <button v-if="currentUser && cmd.created_by === currentUser.user_name" @click.stop="$emit('delete-command', cmd, $event)" class="absolute -top-1.5 -right-1.5 w-6 h-6 bg-red-500 text-white rounded-full flex items-center justify-center shadow-lg z-10"><svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M6 18L18 6M6 6l12 12" /></svg></button>
+                  </div>
+                </div>
+              </div>
+              <div>
+                <div class="text-[10px] font-black text-gray-400 mb-3 px-1 flex items-center uppercase tracking-tighter">System · 系统功能</div>
+                <div class="grid grid-cols-2 gap-3">
+                  <button v-for="cmd in filteredSystemCommands" :key="'mobile-sys-'+cmd.id" @click="handleShortcutClick(cmd); closeCommandDrawer();" class="w-full text-left p-3.5 rounded-2xl bg-gray-50/50 dark:bg-gray-900/30 border border-transparent hover:bg-gray-100 dark:hover:bg-gray-800 transition-all">
+                    <div class="text-xs font-bold text-gray-600 dark:text-gray-400 mb-1 truncate">{{ cmd.label }}</div>
+                    <div class="text-[9px] text-gray-400/60 truncate font-mono">{{ cmd.command }}</div>
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </Teleport>
     </div>
 </template>
 

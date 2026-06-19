@@ -136,7 +136,7 @@ async def test_sql_routing_cache_key_includes_execution_mode():
         async def get(self, key):
             return cache_store.get(key)
 
-        async def setex(self, key, ttl, value):
+        async def set(self, key, value, ex=None):
             cache_store[key] = value
 
     local_adapter = AsyncMock()

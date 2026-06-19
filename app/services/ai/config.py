@@ -263,10 +263,10 @@ class AgentConfigProvider:
         # 2. Cache Miss: Fetch from DB
         content = await AgentConfigProvider._generate_dataset_menu_content(user_id, is_admin)
 
-        # 3. Save to Cache (TTL: 10 mins)
+        # 3. Save to Cache (TTL: 7 days)
         try:
             if redis:
-                await redis.set(cache_key, content, ex=600)
+                await redis.set(cache_key, content, ex=604800)
         except Exception as e:
             logger.warning(f"Redis set error: {e}")
         
@@ -289,5 +289,8 @@ class AgentConfigProvider:
                 await redis.delete("agent:dataset_menu")
             await DatasetNavigationService.bump_navigation_cache_generation()
             logger.info("Dataset menu and navigation caches invalidated.")
+            # 异步启动后台预热任务，温和预热最近活跃用户的门户缓存
+            import asyncio
+            asyncio.create_task(DatasetNavigationService.warm_up_navigation_caches_background())
         except Exception as e:
             logger.error(f"Failed to refresh dataset menu cache: {e}")

@@ -493,7 +493,7 @@ async def create_chat_completion(
     # We now let agent_service handle the routing if agent_id is missing.
     
     # Convert Pydantic models to dicts for the service
-    history = [msg.dict() for msg in completion_request.messages]
+    history = [msg.model_dump() for msg in completion_request.messages]
     
     if completion_request.stream:
         lane_user_id = user_info.get("user_id") or user_info.get("id")

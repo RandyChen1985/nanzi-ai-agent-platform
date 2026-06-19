@@ -75,7 +75,7 @@ async def update_task(
     if str(task.user_id) != str(user_info.get("user_id")) and user_info.get("role") != "admin":
         raise HTTPException(status_code=403, detail="Permission denied")
         
-    updated = await TaskCenterService.update_task(db, task_id, task_in.dict(exclude_unset=True))
+    updated = await TaskCenterService.update_task(db, task_id, task_in.model_dump(exclude_unset=True))
     return StandardResponse(data=TaskResponse.from_orm(updated))
 
 @router.delete("/{task_id}", response_model=StandardResponse[Dict[str, bool]])

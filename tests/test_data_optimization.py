@@ -43,7 +43,7 @@ async def test_call_external_sql_api_optimization():
         # Verify Cache was checked
         mock_redis.get.assert_called_once()
         # Verify Cache was set
-        mock_redis.setex.assert_called_once()
+        mock_redis.set.assert_called_once()
         # Verify Global Client was used
         mock_get_client.assert_called_once()
         mock_client.post.assert_called_once()
@@ -52,7 +52,7 @@ async def test_call_external_sql_api_optimization():
 
         # Scenario B: Cache HIT
         mock_redis.get.reset_mock()
-        mock_redis.setex.reset_mock()
+        mock_redis.set.reset_mock()
         mock_client.post.reset_mock()
         
         mock_redis.get.return_value = '{"cached": "true"}'
@@ -64,7 +64,7 @@ async def test_call_external_sql_api_optimization():
         # Verify Cache was checked
         mock_redis.get.assert_called_once()
         # Verify Cache was NOT set (already there)
-        mock_redis.setex.assert_not_called()
+        mock_redis.set.assert_not_called()
         # Verify Client was NOT used
         mock_client.post.assert_not_called()
         

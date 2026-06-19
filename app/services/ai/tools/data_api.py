@@ -179,7 +179,7 @@ async def call_external_sql_api(sql: str, data_source: Optional[str] = None) -> 
 
             # 设置缓存
             if redis_client:
-                await redis_client.setex(cache_key, 60, result_json)
+                await redis_client.set(cache_key, result_json, ex=60)
 
             return result_json
         except asyncio.TimeoutError:
@@ -224,7 +224,7 @@ async def call_external_sql_api(sql: str, data_source: Optional[str] = None) -> 
         result_json = json.dumps(resp_data.get("data"), ensure_ascii=False)
 
         if redis_client:
-            await redis_client.setex(cache_key, 60, result_json)
+            await redis_client.set(cache_key, result_json, ex=60)
 
         return result_json
 

@@ -67,10 +67,10 @@ class PendingAgentScopeStore:
         if redis:
             key = self._key(snapshot.user_id, snapshot.request_id)
             try:
-                await redis.setex(
+                await redis.set(
                     key,
-                    PENDING_CONFIRMATION_TTL_SECONDS,
                     json.dumps(asdict(snapshot), ensure_ascii=False),
+                    ex=PENDING_CONFIRMATION_TTL_SECONDS,
                 )
             except Exception as exc:
                 logger.warning("[PendingAgentScopeStore] Redis save failed: %s", exc)

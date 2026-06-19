@@ -402,30 +402,34 @@
         <!-- Tabs for Edit -->
         <div
           v-if="showEditDialog && formData.role === 'user'"
-          class="flex border-b border-gray-200 mb-4 overflow-x-auto whitespace-nowrap scrollbar-hide"
+          class="border-b border-gray-200 mb-4"
         >
-          <button
-            @click="activeTab = 'info'"
-            :class="
-              activeTab === 'info'
-                ? 'border-blue-500 text-blue-600'
-                : 'border-transparent text-gray-500 hover:text-gray-700'
-            "
-            class="px-4 py-2 border-b-2 font-medium text-sm transition-colors flex-1 sm:flex-none text-center"
+          <nav
+            class="-mb-px flex overflow-x-auto whitespace-nowrap scrollbar-hide"
           >
-            基本信息
-          </button>
-          <button
-            @click="activeTab = 'permissions'"
-            :class="
-              activeTab === 'permissions'
-                ? 'border-blue-500 text-blue-600'
-                : 'border-transparent text-gray-500 hover:text-gray-700'
-            "
-            class="px-4 py-2 border-b-2 font-medium text-sm transition-colors flex-1 sm:flex-none text-center"
-          >
-            权限配置
-          </button>
+            <button
+              @click="activeTab = 'info'"
+              :class="
+                activeTab === 'info'
+                  ? 'border-blue-500 text-blue-600'
+                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+              "
+              class="px-4 py-2.5 border-b-2 font-medium text-sm transition-colors flex-1 sm:flex-none text-center"
+            >
+              基本信息
+            </button>
+            <button
+              @click="activeTab = 'permissions'"
+              :class="
+                activeTab === 'permissions'
+                  ? 'border-blue-500 text-blue-600'
+                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+              "
+              class="px-4 py-2.5 border-b-2 font-medium text-sm transition-colors flex-1 sm:flex-none text-center"
+            >
+              权限配置
+            </button>
+          </nav>
         </div>
 
         <div class="flex-1 overflow-y-auto custom-scrollbar pr-1 pt-3">

@@ -78,6 +78,7 @@ SCHEMA_GATE_PREFIX = "[SCHEMA_GATE]"
 SQL_REPEAT_GATE_PREFIX = "[SQL_REPEAT_GATE]"
 SQL_STATIC_GATE_PREFIX = "[SQL_STATIC_GATE]"
 FAILED_SQL_REPEAT_GATE_PREFIX = "[FAILED_SQL_REPEAT_GATE]"
+SQL_PLAN_GATE_PREFIX = "[SQL_PLAN_GATE]"
 TOOL_LOOP_FUSE_THRESHOLD = 3
 FAILED_SQL_REPEAT_THRESHOLD = 2
 DELAY_SECONDS_EXTREME_THRESHOLD = 7 * 24 * 60 * 60
@@ -90,6 +91,7 @@ DATA_REPAIR_BUDGETS = {
     "sql_plan_missing": 1,
     "sql_static_risk": 1,
     "sql_error": 5,
+    "failed_sql_repeat": 1,
     "schema_refresh_after_sql_error": 2,
     "empty_sql_result": 1,
     "ratio_anomaly": 1,
@@ -181,7 +183,9 @@ class _DataRunState:
     sql_static_risk: bool = False
     sql_static_risk_reason: str = ""
     sql_repeat_gate_block: bool = False
+    failed_sql_repeat_gate_block: bool = False
     requires_sql_plan: bool = False
+    requires_sql_query: bool = True
     sql_plan_seen: bool = False
     sql_plan_missing: bool = False
     requires_fresh_data: bool = True
@@ -210,6 +214,7 @@ class _DataRunState:
     last_applied_schema_retry_keywords: str = ""
     pending_schema_retry: bool = False   # 修复轮受控重试标记（不随 _reset_state_for_repair 清除）
     followup_data_saved: bool = False    # 本轮是否已将结构化 SQL 结果写入 last_data_result
+    schema_table_columns: dict[str, list[str]] = field(default_factory=dict)
     failed_sql_signatures: dict[str, int] = field(default_factory=dict)
     last_failed_sql_normalized: str = ""
     last_sql_error_summary: str = ""
@@ -234,6 +239,14 @@ class _DataRunState:
             return False
         if not self.requires_fresh_data:
             return True
+        if not self.requires_sql_query:
+            return (
+                self.schema_completed
+                and not self.schema_service_unavailable
+                and not self.no_authorized_schema
+                and not self.rag_not_synced
+                and self.schema_miss_count < 2
+            )
         if self.sql_fatal_error:
             return True
         if self.schema_ambiguous and not self.sql_before_schema and not self.sql_error:
@@ -276,6 +289,7 @@ class DataAgentRunner(BaseExecutor):
         self._standalone_query = ""
         self._schema_search_keywords = ""
         self._schema_similarity_threshold: float | None = None
+        self._requires_sql_query = True
 
     async def _ensure_schema_similarity_threshold(self) -> float:
         """与 fetch_dataset_schema_core 共用 ragflow_similarity_threshold。"""
@@ -295,6 +309,12 @@ class DataAgentRunner(BaseExecutor):
     def _schema_strong_confidence_threshold(similarity_threshold: float) -> float:
         """Schema 置信度达到配置的 ragflow_similarity_threshold 即可进入 SQL。"""
         return float(similarity_threshold)
+
+    def _is_sql_plan_enabled(self) -> bool:
+        raw = self.debug_options.get("enable_sql_plan")
+        if isinstance(raw, bool):
+            return raw
+        return str(raw or "").strip().lower() in {"1", "true", "yes", "on"}
 
     @staticmethod
     def _extract_schema_confidence_values(tool_output: Any) -> list[float]:
@@ -319,6 +339,7 @@ class DataAgentRunner(BaseExecutor):
             "standalone_query": self._standalone_query,
             "schema_search_keywords": self._schema_search_keywords,
             "requires_fresh_data": self._requires_fresh_data,
+            "requires_sql_query": bool(getattr(self, "_requires_sql_query", True)),
         }
 
     @classmethod
@@ -344,6 +365,7 @@ class DataAgentRunner(BaseExecutor):
         runner._standalone_query = str(runner_context.get("standalone_query") or "")
         runner._schema_search_keywords = str(runner_context.get("schema_search_keywords") or "")
         runner._requires_fresh_data = bool(runner_context.get("requires_fresh_data", True))
+        runner._requires_sql_query = bool(runner_context.get("requires_sql_query", True))
         return runner
 
     @staticmethod
@@ -487,6 +509,14 @@ class DataAgentRunner(BaseExecutor):
         return str(output or "").startswith(FAILED_SQL_REPEAT_GATE_PREFIX)
 
     @staticmethod
+    def _is_sql_plan_gate_block(output: Any) -> bool:
+        return str(output or "").startswith(SQL_PLAN_GATE_PREFIX)
+
+    @staticmethod
+    def _is_sql_schema_preflight_error(output: Any) -> bool:
+        return str(output or "").startswith("[TOOL_ERROR] SQL 预检失败")
+
+    @staticmethod
     def _normalize_sql_text(sql: str) -> str:
         return " ".join(str(sql or "").strip().lower().split())
 
@@ -513,6 +543,317 @@ class DataAgentRunner(BaseExecutor):
             r"table .+ does not exist",
         )
         return any(re.search(pattern, err) for pattern in patterns)
+
+    @staticmethod
+    def _extract_failed_repeat_original_error(output: Any) -> str:
+        text = str(output or "").strip()
+        for marker in ("上次错误摘要：", "上次错误摘要:"):
+            if marker in text:
+                return text.rsplit(marker, 1)[1].strip()[:800]
+        return ""
+
+    @staticmethod
+    def _extract_invalid_sql_identifiers(message: str) -> list[str]:
+        text = str(message or "")
+        if not text.strip():
+            return []
+        candidates: list[str] = []
+        patterns = (
+            r"ORA-\d+:\s*(?:\"[^\"]+\"\.)?\"([^\"]+)\"\s*:\s*invalid identifier",
+            r"unknown column\s+['\"]([^'\"]+)['\"]",
+            r"no such column:\s*([A-Za-z_][A-Za-z0-9_.$]*)",
+            r"column\s+['\"]?([A-Za-z_][A-Za-z0-9_.$]*)['\"]?\s+does not exist",
+            r"invalid identifier\s+['\"]?([A-Za-z_][A-Za-z0-9_.$]*)['\"]?",
+            r"unresolved column\s+['\"]?([A-Za-z_][A-Za-z0-9_.$]*)['\"]?",
+        )
+        for pattern in patterns:
+            candidates.extend(re.findall(pattern, text, flags=re.IGNORECASE))
+
+        identifiers: list[str] = []
+        seen: set[str] = set()
+        for candidate in candidates:
+            if isinstance(candidate, tuple):
+                candidate = next((part for part in candidate if part), "")
+            value = str(candidate or "").strip().strip('"').strip("'")
+            if not value:
+                continue
+            key = value.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            identifiers.append(value)
+            if len(identifiers) >= 8:
+                break
+        return identifiers
+
+    def _invalid_identifier_repair_hint(self, message: str) -> str:
+        identifiers = self._extract_invalid_sql_identifiers(message)
+        if not identifiers:
+            return ""
+        return (
+            "\n\n【无效标识符定位】本次数据库明确报出的无效字段/标识符："
+            f"{', '.join(identifiers)}。请在 get_dataset_schema 返回的物理列名中逐项核对；"
+            "若 schema 未列出这些字段，必须删除或替换为真实物理列，"
+            "并同步修正 SELECT、JOIN、WHERE、GROUP BY、ORDER BY 中所有引用，"
+            "不得继续使用这些字段名。"
+        )
+
+    def _sql_repair_taxonomy_hint(self, message: str) -> str:
+        text = str(message or "")
+        lower = text.lower()
+        if self._is_date_format_sql_error(text):
+            category = "date_format"
+            focus = "核对日期字段类型、日期字面量格式、TO_DATE/TO_CHAR 或时间边界表达式"
+        elif self._is_schema_reference_sql_error(text):
+            category = "invalid_identifier"
+            focus = "核对字段名、表名或别名引用"
+        elif "not a group by" in lower or "group by expression" in lower or "ora-00979" in lower:
+            category = "group_by_mismatch"
+            focus = "核对 SELECT 中非聚合字段是否全部进入 GROUP BY，或改为聚合表达式"
+        elif "join" in lower and ("cartesian" in lower or "missing" in lower or "condition" in lower):
+            category = "join_condition_missing"
+            focus = "补齐 JOIN ON 条件，并确认左右表关联键来自 Schema"
+        elif "permission" in lower or "unauthorized" in lower or "access denied" in lower:
+            category = "permission_denied"
+            focus = "不要改写 SQL 绕过权限，应如实说明权限不足或请求授权"
+        elif "syntax" in lower or "unexpected token" in lower or "invalid expression" in lower:
+            category = "syntax_error"
+            focus = "修正数据库方言语法、分页写法、函数名和括号结构"
+        else:
+            category = "sql_execution_error"
+            focus = "根据数据库错误信息最小化修改 SQL，禁止无依据更换业务口径"
+        return f"\n\n【SQL Repair Taxonomy】错误分类：{category}\n修复重点：{focus}。"
+
+    @staticmethod
+    def _normalize_sql_identifier(identifier: str) -> str:
+        value = str(identifier or "").strip()
+        value = value.strip('"').strip("`").strip("[").strip("]")
+        return value.lower()
+
+    @staticmethod
+    def _split_schema_columns(raw: str) -> list[str]:
+        values: list[str] = []
+        for part in re.split(r"[,，]", str(raw or "")):
+            name = part.strip().strip("-").strip()
+            if not name:
+                continue
+            name = name.split("#", 1)[0].strip()
+            if not name:
+                continue
+            values.append(name)
+        return values
+
+    def _extract_schema_table_columns(self, output: Any) -> dict[str, list[str]]:
+        text = str(output or "")
+        if not text.strip():
+            return {}
+
+        table_columns: dict[str, list[str]] = {}
+        current_table = ""
+        columns_mode = False
+        columns_indent = 0
+
+        def set_table(name: str) -> None:
+            nonlocal current_table, columns_mode
+            table = str(name or "").strip().strip('"').strip("'")
+            if not table:
+                return
+            current_table = table
+            table_columns.setdefault(self._normalize_sql_identifier(table), [])
+            columns_mode = False
+
+        def add_column(name: str) -> None:
+            if not current_table:
+                return
+            column = str(name or "").strip().strip('"').strip("'")
+            if not column:
+                return
+            key = self._normalize_sql_identifier(current_table)
+            normalized = self._normalize_sql_identifier(column)
+            existing = {self._normalize_sql_identifier(item) for item in table_columns.setdefault(key, [])}
+            if normalized and normalized not in existing:
+                table_columns[key].append(column)
+
+        for raw_line in text.splitlines():
+            line = raw_line.rstrip()
+            stripped = line.strip()
+            if not stripped:
+                continue
+            header_match = re.match(r"---\s*\[Schema:\d+\].*?\btable=([^\s]+)", stripped, flags=re.IGNORECASE)
+            if header_match:
+                set_table(header_match.group(1))
+                continue
+
+            indent = len(line) - len(line.lstrip())
+            if columns_mode and indent <= columns_indent and not stripped.startswith("-"):
+                columns_mode = False
+
+            table_match = re.match(r"table_name:\s*([A-Za-z_][\w.$]*)\s*$", stripped, flags=re.IGNORECASE)
+            if table_match:
+                set_table(table_match.group(1))
+                continue
+
+            inline_columns = re.match(r"columns:\s*(.+)$", stripped, flags=re.IGNORECASE)
+            if inline_columns:
+                columns_mode = True
+                columns_indent = indent
+                for column in self._split_schema_columns(inline_columns.group(1)):
+                    add_column(column)
+                continue
+
+            if re.match(r"columns:\s*$", stripped, flags=re.IGNORECASE):
+                columns_mode = True
+                columns_indent = indent
+                continue
+
+            physical_match = re.match(r"-\s*physical_name:\s*([A-Za-z_][\w.$]*)\s*$", stripped, flags=re.IGNORECASE)
+            name_match = re.match(r"-\s*name:\s*([A-Za-z_][\w.$]*)\s*$", stripped, flags=re.IGNORECASE)
+            simple_column_match = re.match(r"-\s*([A-Za-z_][\w.$]*)\s*$", stripped)
+            if columns_mode:
+                match = physical_match or name_match or simple_column_match
+                if match:
+                    add_column(match.group(1))
+                continue
+
+            if physical_match:
+                set_table(physical_match.group(1))
+
+        return {
+            table: columns
+            for table, columns in table_columns.items()
+            if columns
+        }
+
+    def _build_schema_binding_summary(self, output: Any) -> str:
+        table_columns = self._extract_schema_table_columns(output)
+        if not table_columns:
+            return ""
+        lines = [
+            "【Schema Binding 摘要】",
+            "以下为本轮 SQL 允许优先绑定的物理表与字段，请先完成“业务含义 -> 物理字段”的映射再生成 SQL。",
+        ]
+        for table, columns in list(table_columns.items())[:8]:
+            visible_columns = ", ".join(columns[:60])
+            if len(columns) > 60:
+                visible_columns += f", ... 共 {len(columns)} 列"
+            lines.append(f"- {table.upper()}: {visible_columns}")
+        lines.append("约束：禁止使用未列出的字段；若用户口径无法绑定到上述字段，请先重查 Schema 或澄清，不要臆造英文列名。")
+        return "\n".join(lines)
+
+    @staticmethod
+    def _is_date_format_sql_error(message: str) -> bool:
+        text = str(message or "").lower()
+        if not text.strip():
+            return False
+        patterns = (
+            "ora-01861",
+            "ora-01830",
+            "literal does not match format string",
+            "date format",
+            "datetime format",
+            "cannot parse datetime",
+            "cannot parse date",
+        )
+        return any(pattern in text for pattern in patterns)
+
+    @staticmethod
+    def _collect_unqualified_sql_columns(sql: str) -> set[str]:
+        try:
+            import sqlglot
+            from sqlglot import exp
+        except Exception:
+            return set()
+
+        try:
+            expression = sqlglot.parse_one(str(sql or ""))
+        except Exception:
+            return set()
+
+        select_aliases = {
+            str(alias.alias or "").lower()
+            for alias in expression.find_all(exp.Alias)
+            if str(alias.alias or "").strip()
+        }
+        columns: set[str] = set()
+        for column in expression.find_all(exp.Column):
+            table = str(getattr(column, "table", "") or "").strip()
+            name = str(getattr(column, "name", "") or "").strip()
+            if table or not name:
+                continue
+            if name.lower() in select_aliases:
+                continue
+            columns.add(name)
+        return columns
+
+    def _build_sql_schema_preflight_error(
+        self,
+        sql: str,
+        schema_table_columns: dict[str, list[str]],
+    ) -> str:
+        if not sql or not schema_table_columns:
+            return ""
+
+        alias_to_table: dict[str, str] = {}
+        table_displays: dict[str, str] = {}
+        table_pattern = re.compile(
+            r"\b(?:from|join)\s+([A-Za-z_][\w.$]*)(?:\s+(?:as\s+)?([A-Za-z_][\w$]*))?",
+            flags=re.IGNORECASE,
+        )
+        reserved_aliases = {
+            "where", "join", "left", "right", "inner", "outer", "full", "cross", "on",
+            "group", "order", "having", "limit", "fetch", "union", "where",
+        }
+        for match in table_pattern.finditer(sql):
+            table = match.group(1).split(".")[-1]
+            alias = match.group(2) or table
+            alias_norm = self._normalize_sql_identifier(alias)
+            table_norm = self._normalize_sql_identifier(table)
+            if alias_norm in reserved_aliases:
+                alias_norm = table_norm
+            if table_norm not in schema_table_columns:
+                continue
+            alias_to_table[alias_norm] = table_norm
+            alias_to_table[table_norm] = table_norm
+            table_displays[table_norm] = table
+
+        if not alias_to_table:
+            return ""
+
+        for qualifier, column in re.findall(r"\b([A-Za-z_][\w$]*)\.([A-Za-z_][\w$]*)\b", sql):
+            qualifier_norm = self._normalize_sql_identifier(qualifier)
+            table_norm = alias_to_table.get(qualifier_norm)
+            if not table_norm:
+                continue
+            allowed_columns = schema_table_columns.get(table_norm) or []
+            allowed_norms = {self._normalize_sql_identifier(item) for item in allowed_columns}
+            column_norm = self._normalize_sql_identifier(column)
+            if column_norm not in allowed_norms:
+                table_display = table_displays.get(table_norm) or table_norm
+                available = ", ".join(allowed_columns[:40])
+                return (
+                    "[TOOL_ERROR] SQL 预检失败：字段/表引用错误。"
+                    f'ORA-00904: "{qualifier.upper()}"."{column.upper()}": invalid identifier。'
+                    f"字段 {qualifier}.{column} 不在 get_dataset_schema 返回的表 {table_display} 字段列表中。"
+                    f"可用字段：{available}。请替换或删除该字段后再调用 execute_sql_query。"
+                )
+        known_tables = sorted({table for table in alias_to_table.values()})
+        if len(known_tables) == 1:
+            table_norm = known_tables[0]
+            allowed_columns = schema_table_columns.get(table_norm) or []
+            allowed_norms = {self._normalize_sql_identifier(item) for item in allowed_columns}
+            for column in sorted(self._collect_unqualified_sql_columns(sql)):
+                column_norm = self._normalize_sql_identifier(column)
+                if column_norm in allowed_norms:
+                    continue
+                table_display = table_displays.get(table_norm) or table_norm
+                available = ", ".join(allowed_columns[:40])
+                return (
+                    "[TOOL_ERROR] SQL 预检失败：字段/表引用错误。"
+                    f'ORA-00904: "{column.upper()}": invalid identifier。'
+                    f"字段 {column} 不在 get_dataset_schema 返回的表 {table_display} 字段列表中。"
+                    f"可用字段：{available}。请替换或删除该字段后再调用 execute_sql_query。"
+                )
+        return ""
 
     @staticmethod
     def _normalize_tool_arg_value(value: Any) -> Any:
@@ -735,8 +1076,10 @@ class DataAgentRunner(BaseExecutor):
                 state.sql_completed
                 and not state.sql_error
                 and not state.empty_sql_result
+                and not state.sql_plan_missing
                 and not state.sql_static_risk
                 and not state.sql_repeat_gate_block
+                and not state.failed_sql_repeat_gate_block
                 and not state.ratio_anomaly
                 and not state.duration_anomaly
                 and not state.diagnostic_sql_pending_final
@@ -804,6 +1147,13 @@ class DataAgentRunner(BaseExecutor):
                 current_sql = str(kwargs.get("sql") or kwargs.get("query") or "").strip()
                 current_sql_normalized = self._normalize_sql_text(current_sql)
 
+                if state.requires_sql_plan and not state.sql_plan_seen:
+                    state.sql_plan_missing = True
+                    return (
+                        f"{SQL_PLAN_GATE_PREFIX} 高风险 SQL 执行前缺少结构化 SQL Plan，已阻止执行。\n"
+                        f"{DataQueryPrompts.HIGH_RISK_REQUIRE_PLAN}"
+                    )
+
                 if current_sql_normalized:
                     prior_failures = state.failed_sql_signatures.get(current_sql_normalized, 0)
                     if prior_failures >= 1:
@@ -814,6 +1164,13 @@ class DataAgentRunner(BaseExecutor):
                             "禁止原样重复提交。请根据错误信息修正字段名、表名、JOIN 条件、"
                             f"筛选条件或聚合逻辑后再调用 execute_sql_query。{summary_line}"
                         )
+
+                preflight_error = self._build_sql_schema_preflight_error(
+                    current_sql,
+                    state.schema_table_columns,
+                )
+                if preflight_error:
+                    return preflight_error
 
                 static_risk = ""
                 if not (state.requires_sql_plan and not state.sql_plan_seen):
@@ -844,6 +1201,7 @@ class DataAgentRunner(BaseExecutor):
                         and not self._is_schema_gate_block(result)
                         and not self._is_sql_repeat_gate_block(result)
                         and not self._is_sql_static_gate_block(result)
+                        and not self._is_sql_plan_gate_block(result)
                     ):
                         parsed_output = self._try_parse_json_output(result)
                         empty_reason = self._detect_empty_result(parsed_output)
@@ -945,6 +1303,7 @@ class DataAgentRunner(BaseExecutor):
         self.intent_info = turn_intent_info
         self.intent_elapsed_ms = turn_elapsed_ms
         self._requires_fresh_data = turn_cls.requires_fresh_data
+        self._requires_sql_query = bool(getattr(turn_cls, "requires_sql_query", True))
         yield {
             "type": "log",
             "id": f"chatbi_turn_{uuid.uuid4().hex[:8]}",
@@ -1095,6 +1454,9 @@ class DataAgentRunner(BaseExecutor):
                         prefetched_schema_output,
                     )
                 )
+                schema_binding_summary = self._build_schema_binding_summary(prefetched_schema_output)
+                if schema_binding_summary:
+                    system_content += f"\n\n{schema_binding_summary}"
 
         llm_handle = await AgentConfigProvider.get_configured_llm(
             streaming=True,
@@ -1193,7 +1555,13 @@ class DataAgentRunner(BaseExecutor):
 
         state = _DataRunState()
         state.requires_fresh_data = turn_cls.requires_fresh_data
-        state.requires_sql_plan = False
+        state.requires_sql_query = bool(getattr(turn_cls, "requires_sql_query", True))
+        state.requires_sql_plan = (
+            self._is_sql_plan_enabled()
+            and state.requires_fresh_data
+            and state.requires_sql_query
+            and self._should_require_sql_plan(user_question)
+        )
         if prefetched_schema_output is not None:
             state.last_schema_keywords = (
                 self._schema_search_keywords
@@ -2361,6 +2729,7 @@ class DataAgentRunner(BaseExecutor):
         return (
             f"{DataQueryPrompts.GLOBAL_GUARDRAILS}\n\n"
             f"{DataQueryPrompts.SQL_PAGINATION_SYNTAX_GUIDE}\n\n"
+            f"{DataQueryPrompts.SQL_PLAN_ENFORCEMENT + chr(10) + chr(10) if self._is_sql_plan_enabled() else ''}"
             f"{time_anchor}\n\n"
             f"{DataQueryPrompts.FOLLOWUP_REUSE_CONSTRAINT}\n\n"
             f"{system_prompt}"
@@ -2474,8 +2843,10 @@ class DataAgentRunner(BaseExecutor):
             state.halt_current_react = (
                 state.sql_error
                 or state.empty_sql_result
+                or state.sql_plan_missing
                 or state.sql_static_risk
                 or state.sql_repeat_gate_block
+                or state.failed_sql_repeat_gate_block
                 or state.ratio_anomaly
                 or state.duration_anomaly
                 or state.diagnostic_sql_pending_final
@@ -2701,6 +3072,7 @@ class DataAgentRunner(BaseExecutor):
             or state.sql_error
             or state.empty_sql_result
             or state.sql_static_risk
+            or state.failed_sql_repeat_gate_block
             or state.ratio_anomaly
             or state.duration_anomaly
             or state.diagnostic_sql_pending_final
@@ -2713,6 +3085,7 @@ class DataAgentRunner(BaseExecutor):
             _, content = self._schema_fatal_response(state)
         elif (
             state.requires_fresh_data
+            and state.requires_sql_query
             and not state.sql_completed
             and (
                 state.schema_miss_count >= 2
@@ -2727,6 +3100,10 @@ class DataAgentRunner(BaseExecutor):
         elif state.sql_before_schema:
             content = "为保证数据准确性，请先检索数据集定义后再执行数据查询。"
         elif state.sql_error:
+            error_text = (state.last_sql_error_summary or state.sql_error_message or "").strip()
+            presentation = map_sql_tool_error_for_user(error_text)
+            content = presentation.content
+        elif state.failed_sql_repeat_gate_block:
             error_text = (state.last_sql_error_summary or state.sql_error_message or "").strip()
             presentation = map_sql_tool_error_for_user(error_text)
             content = presentation.content
@@ -2819,6 +3196,10 @@ class DataAgentRunner(BaseExecutor):
             return "schema_refinement"
         if state.sql_static_risk:
             return "sql_static_risk"
+        if state.sql_plan_missing:
+            return "sql_plan_missing"
+        if state.failed_sql_repeat_gate_block:
+            return "failed_sql_repeat"
         if state.sql_error:
             return "sql_error"
         if state.empty_sql_result:
@@ -2833,6 +3214,7 @@ class DataAgentRunner(BaseExecutor):
             return "diagnostic_sql_pending_final"
         if (
             state.requires_fresh_data
+            and state.requires_sql_query
             and state.schema_completed
             and state.sql_plan_seen
             and not state.sql_completed
@@ -2846,7 +3228,7 @@ class DataAgentRunner(BaseExecutor):
         ):
             if not state.schema_completed:
                 return "missing_schema"
-            if not state.sql_completed:
+            if state.requires_sql_query and not state.sql_completed:
                 return "missing_sql"
         return ""
 
@@ -2904,6 +3286,7 @@ class DataAgentRunner(BaseExecutor):
             return (
                 "【Schema 重查要求】上一轮 SQL 因字段/表/标识符引用错误失败，"
                 f"错误信息：{summary[:800]}\n"
+                f"{self._invalid_identifier_repair_hint(summary)}\n"
                 f"{DataQueryPrompts.SCHEMA_REFERENCE_SQL_ERROR_REPAIR_GUIDE}\n"
                 "必须先重新调用 get_dataset_schema，核对物理列名、表名与 JOIN 键。"
                 "在未完成 Schema 重查前禁止 execute_sql_query，也禁止原样重复失败 SQL。"
@@ -2915,6 +3298,30 @@ class DataAgentRunner(BaseExecutor):
                 "请修正 SQL 后重新调用 execute_sql_query，例如补充时间范围、限制返回行数、避免 SELECT *、"
                 "或补齐 JOIN 条件。修正并执行成功前禁止直接回答用户。"
             )
+        if state.sql_plan_missing:
+            return (
+                "【SQL Plan 补充要求】上一轮 execute_sql_query 因缺少结构化 SQL Plan 被平台拦截。\n"
+                f"{DataQueryPrompts.HIGH_RISK_REQUIRE_PLAN}\n"
+                f"{DataQueryPrompts.SQL_PLAN_ENFORCEMENT}\n"
+                "请先输出完整 <sql_plan>{...}</sql_plan>，然后基于同一计划修正并调用 execute_sql_query。"
+                "禁止跳过计划直接查数。"
+            )
+        if state.failed_sql_repeat_gate_block:
+            error_text = (state.last_sql_error_summary or state.sql_error_message or "").strip()
+            repair = (
+                "【重复失败 SQL 修正要求】上一轮尝试原样重复执行已经失败的 SQL，已被平台拦截。"
+                f"原始数据库错误：{error_text[:800]}\n"
+                "请只围绕原始数据库错误修正 SQL 后再次调用 execute_sql_query；"
+                "必须修改导致失败的字段名、表名、JOIN 条件、筛选条件、时间转换或聚合逻辑，"
+                "禁止继续提交与上次完全相同的 SQL。SQL 成功前禁止直接回答用户。"
+            )
+            repair += self._sql_repair_taxonomy_hint(error_text)
+            repair += self._invalid_identifier_repair_hint(error_text)
+            if self._is_schema_reference_sql_error(error_text):
+                repair += f"\n\n{DataQueryPrompts.SCHEMA_REFERENCE_SQL_ERROR_REPAIR_GUIDE}"
+            if self._is_date_format_sql_error(error_text):
+                repair += f"\n\n{DataQueryPrompts.DATE_FORMAT_SQL_ERROR_REPAIR_GUIDE}"
+            return repair
         if state.sql_error:
             error_text = (state.last_sql_error_summary or state.sql_error_message or "").strip()
             repair = (
@@ -2924,14 +3331,18 @@ class DataAgentRunner(BaseExecutor):
                 "禁止原样重复提交与上次完全相同的失败 SQL。"
                 "在 SQL 成功前禁止直接回答用户。"
             )
+            repair += self._sql_repair_taxonomy_hint(error_text)
             if state.last_failed_sql_normalized:
                 repair += (
                     "\n\n【禁止重复 SQL】上次失败 SQL 归一化后与当前尝试一致时，平台将直接拦截。"
                     "必须修改至少一处：列名、表名、JOIN、WHERE、时间范围或聚合逻辑。"
                 )
             err_lower = error_text.lower()
+            repair += self._invalid_identifier_repair_hint(error_text)
             if self._is_schema_reference_sql_error(error_text):
                 repair += f"\n\n{DataQueryPrompts.SCHEMA_REFERENCE_SQL_ERROR_REPAIR_GUIDE}"
+            if self._is_date_format_sql_error(error_text):
+                repair += f"\n\n{DataQueryPrompts.DATE_FORMAT_SQL_ERROR_REPAIR_GUIDE}"
             if "invalid expression" in err_lower or "unexpected token" in err_lower:
                 repair += f"\n\n{DataQueryPrompts.SQL_PAGINATION_SYNTAX_GUIDE}"
             return repair
@@ -2962,6 +3373,7 @@ class DataAgentRunner(BaseExecutor):
             )
         if (
             state.requires_fresh_data
+            and state.requires_sql_query
             and state.schema_completed
             and state.sql_plan_seen
             and not state.sql_completed
@@ -2984,7 +3396,7 @@ class DataAgentRunner(BaseExecutor):
                     f"{DataQueryPrompts.MUST_FETCH_SCHEMA}\n"
                     "请先调用 get_dataset_schema 获取数据集定义，再调用 execute_sql_query 查数。"
                 )
-            if not state.sql_completed:
+            if state.requires_sql_query and not state.sql_completed:
                 return (
                     "【查数顺序要求】你已获取数据集 Schema，但尚未执行 execute_sql_query。\n"
                     f"{DataQueryPrompts.FORCE_SQL_AFTER_SCHEMA}\n"
@@ -3011,6 +3423,7 @@ class DataAgentRunner(BaseExecutor):
         state.sql_before_schema = False
         state.sql_static_risk = False
         state.sql_static_risk_reason = ""
+        state.failed_sql_repeat_gate_block = False
         if repair_kind in {"empty_sql_result", "ratio_anomaly"}:
             state.expecting_final_sql_after_diagnostic = True
         state.diagnostic_sql_pending_final = False
@@ -3035,6 +3448,7 @@ class DataAgentRunner(BaseExecutor):
 
         if (
             state.requires_fresh_data
+            and state.requires_sql_query
             and state.schema_completed
             and not self._is_schema_fatal(state)
             and not state.sql_completed
@@ -3044,6 +3458,8 @@ class DataAgentRunner(BaseExecutor):
 
     def _resolve_initial_tool_choice(self, state: _DataRunState) -> Any | None:
         """Schema 已就绪时，首轮 Agent 第一次模型调用强制 execute_sql_query。"""
+        if state.requires_sql_plan and not state.sql_plan_seen:
+            return None
         return self._resolve_force_execute_sql_tool_choice(state)
 
     def _resolve_repair_tool_choice(self, state: _DataRunState) -> Any | None:
@@ -3059,8 +3475,12 @@ class DataAgentRunner(BaseExecutor):
             return None
         if state.schema_refresh_required and not state.schema_refreshed_after_sql_error:
             return ToolChoice(mode="get_dataset_schema")
+        if state.sql_plan_missing:
+            return None
         if state.sql_static_risk:
             return ToolChoice(mode="execute_sql_query")
+        if state.failed_sql_repeat_gate_block:
+            return ToolChoice(mode="required")
         if state.ratio_anomaly:
             return ToolChoice(mode="required")  # 强制调用工具补充对账 SQL
         if state.duration_anomaly:
@@ -3069,6 +3489,7 @@ class DataAgentRunner(BaseExecutor):
             return ToolChoice(mode="required")
         if (
             state.requires_fresh_data
+            and state.requires_sql_query
             and state.schema_completed
             and state.sql_plan_seen
             and not state.sql_completed
@@ -3077,6 +3498,7 @@ class DataAgentRunner(BaseExecutor):
             return self._resolve_force_execute_sql_tool_choice(state)
         if (
             state.requires_fresh_data
+            and state.requires_sql_query
             and state.blocked_content.strip()
             and not state.ready_to_answer
         ):
@@ -3098,6 +3520,10 @@ class DataAgentRunner(BaseExecutor):
             return "必须先重查数据集定义"
         if state.sql_static_risk:
             return "修正高风险 SQL"
+        if state.sql_plan_missing:
+            return "补充 SQL 计划"
+        if state.failed_sql_repeat_gate_block:
+            return "修正重复失败 SQL"
         if state.ratio_anomaly:
             return "比率/占比异常复核"
         if state.duration_anomaly:
@@ -3113,10 +3539,11 @@ class DataAgentRunner(BaseExecutor):
         ):
             if not state.schema_completed:
                 return "必须先完成查数流程"
-            if not state.sql_completed:
+            if state.requires_sql_query and not state.sql_completed:
                 return "必须先执行 SQL 查数"
         if (
             state.requires_fresh_data
+            and state.requires_sql_query
             and state.schema_completed
             and state.sql_plan_seen
             and not state.sql_completed
@@ -3217,6 +3644,8 @@ class DataAgentRunner(BaseExecutor):
                             f"[Executed SQL]:\n{raw_sql.strip()}\n\n"
                             f"{_SQL_TOOL_RESULT_DELIMITER}\n{result_details}"
                         )
+            elif self._is_failed_sql_repeat_gate_block(output):
+                details = truncate_for_context(str(output or ""), max_len=1000)
             elif state.sql_error:
                 details = self._build_sql_error_tool_details(output, tool_args)
             else:
@@ -3257,6 +3686,8 @@ class DataAgentRunner(BaseExecutor):
             details = f"{details}\n\n[系统检测] 已有成功非空查数结果，已拦截重复 SQL 执行。"
         if tool_name == "execute_sql_query" and self._is_sql_static_gate_block(output):
             details = f"{details}\n\n[系统检测] SQL 存在高风险执行特征，已拦截执行。"
+        if tool_name == "execute_sql_query" and self._is_sql_plan_gate_block(output):
+            details = f"{details}\n\n[系统检测] 高风险 SQL 缺少结构化 SQL Plan，已拦截执行。"
         if tool_name == "execute_sql_query" and state.empty_sql_reason:
             details = f"{details}\n\n[系统检测] {state.empty_sql_reason}"
         if tool_name == "execute_sql_query" and state.duration_anomaly_reason:
@@ -3328,9 +3759,11 @@ class DataAgentRunner(BaseExecutor):
         ):
             state.schema_completed = False
             state.sql_before_schema = False
+            state.schema_table_columns = {}
             return
         state.schema_completed = True
         state.sql_before_schema = False
+        state.schema_table_columns = self._extract_schema_table_columns(output)
         if state.schema_refresh_required:
             state.schema_refreshed_after_sql_error = True
 
@@ -3351,16 +3784,33 @@ class DataAgentRunner(BaseExecutor):
                 cached_text = parts[1]
             state.last_successful_sql_output = cached_text
             parsed = self._try_parse_json_output(cached_text)
-            return parsed, bool(self._is_structured_sql_result(parsed))
+            return parsed, False
         if self._is_sql_static_gate_block(output):
             state.sql_static_risk = True
             state.sql_error = False
             state.sql_error_message = ""
             return output, False
+        if self._is_sql_plan_gate_block(output):
+            state.sql_plan_missing = True
+            state.sql_error = False
+            state.sql_error_message = ""
+            state.sql_completed = True
+            return output, False
         if self._is_failed_sql_repeat_gate_block(output):
+            original_error = (
+                self._extract_failed_repeat_original_error(output)
+                or state.last_sql_error_summary
+                or state.sql_error_message
+                or ""
+            )
+            if self._is_failed_sql_repeat_gate_block(original_error):
+                original_error = self._extract_failed_repeat_original_error(original_error)
+            original_error = str(original_error or "").strip()
+            state.failed_sql_repeat_gate_block = True
             state.sql_error = True
-            state.sql_error_message = str(output or "")[:1000]
-            state.last_sql_error_summary = state.sql_error_message
+            if original_error:
+                state.sql_error_message = original_error[:1000]
+                state.last_sql_error_summary = original_error[:800]
             state.sql_completed = True
             return output, False
         if self._is_schema_gate_block(output):
@@ -3397,7 +3847,10 @@ class DataAgentRunner(BaseExecutor):
                 )
                 state.last_failed_sql_normalized = normalized_sql
             state.last_sql_error_summary = str(state.sql_error_message or "")[:800]
-            if self._is_schema_reference_sql_error(state.sql_error_message):
+            if (
+                self._is_schema_reference_sql_error(state.sql_error_message)
+                and not self._is_sql_schema_preflight_error(output)
+            ):
                 state.schema_refresh_required = True
                 state.schema_refreshed_after_sql_error = False
             return parsed_output, False
@@ -3438,6 +3891,7 @@ class DataAgentRunner(BaseExecutor):
         state.sql_static_risk = False
         state.sql_static_risk_reason = ""
         state.sql_repeat_gate_block = False
+        state.failed_sql_repeat_gate_block = False
         normalized_sql = self._normalize_sql_text(sql_text)
         if normalized_sql:
             state.failed_sql_signatures.pop(normalized_sql, None)
@@ -3451,7 +3905,7 @@ class DataAgentRunner(BaseExecutor):
         if duration_anomaly:
             state.duration_anomaly = True
             state.duration_anomaly_reason = duration_reason
-            return parsed_output, True
+            return parsed_output, False
         state.duration_anomaly = False
         state.duration_anomaly_reason = ""
         ratio_anomaly, anomaly_reason = self._detect_ratio_anomaly(parsed_output)
@@ -3502,25 +3956,32 @@ class DataAgentRunner(BaseExecutor):
         sql_text = str(sql or "").strip()
         if not sql_text:
             return "SQL 为空"
-        sql_upper = " ".join(sql_text.upper().split())
+
+        # 1. 剥离多行注释 /* ... */ 和单行注释 -- ...，防止注释导致只读判定误杀
+        sql_clean = re.sub(r"/\*[\s\S]*?\*/", "", sql_text)
+        sql_clean = re.sub(r"--.*", "", sql_clean)
+        sql_clean = sql_clean.strip()
+
+        sql_upper = " ".join(sql_clean.upper().split())
         if not sql_upper.startswith(("SELECT ", "WITH ")):
             return "只允许执行只读 SELECT 查询"
         if re.search(r"\bSELECT\s+\*", sql_upper):
             return "SELECT * 会扩大返回范围，请只查询必要字段"
-        if re.search(r"\bORDER\s+BY\b[\s\S]{0,400}\bAND\b[\s\S]{0,120}\b(ROWNUM|LIMIT)\b", sql_upper):
+
+        # 2. 限制 ORDER BY 误杀：排除在 ORDER BY 子句中包含 CASE 的合理情况
+        if re.search(r"\bORDER\s+BY\b(?:(?!\bCASE\b)[\s\S]){0,400}\bAND\b[\s\S]{0,120}\b(ROWNUM|LIMIT)\b", sql_upper):
             return (
                 "ORDER BY 后不能接 AND ROWNUM/LIMIT；"
                 "Oracle TopN 请用子查询包一层排序后外层 ROWNUM，或 FETCH FIRST N ROWS ONLY；"
                 "MySQL/ClickHouse 请用 ORDER BY ... LIMIT N"
             )
-        if " JOIN " in f" {sql_upper} " and not re.search(r"\bJOIN\b[\s\S]{1,240}\bON\b", sql_upper):
-            return "JOIN 缺少明确 ON 条件，存在笛卡尔积风险"
-        has_limit = bool(re.search(r"\bLIMIT\s+\d+\b", sql_upper) or re.search(r"\bROWNUM\s*<=\s*\d+\b", sql_upper))
-        has_aggregation = any(marker in sql_upper for marker in (" GROUP BY ", " COUNT(", " SUM(", " AVG(", " MAX(", " MIN("))
-        if " JOIN " in f" {sql_upper} " and not has_limit and not has_aggregation:
-            return "JOIN 明细查询缺少 LIMIT 或聚合约束，可能放大返回行数"
-        if not has_limit and not has_aggregation:
-            return "缺少 LIMIT 或聚合约束，可能返回过多明细行"
+
+        # 3. 兼容 CROSS JOIN、USING 以及复杂子查询字数溢出
+        if " JOIN " in f" {sql_upper} ":
+            if " CROSS JOIN " not in f" {sql_upper} " and " NATURAL JOIN " not in f" {sql_upper} ":
+                if not re.search(r"\bJOIN\b[\s\S]{1,400}\b(ON|USING)\b", sql_upper):
+                    return "JOIN 缺少明确 ON 或 USING 条件，存在笛卡尔积风险"
+
         return ""
 
     @staticmethod
@@ -3615,6 +4076,7 @@ class DataAgentRunner(BaseExecutor):
             "[Permission Denied]",
             "[Security Error]",
             f"{SCHEMA_GATE_PREFIX}",
+            f"{SQL_PLAN_GATE_PREFIX}",
             "Error: Dataset",
         )
         if any(text.startswith(prefix) for prefix in error_prefixes):

@@ -35,7 +35,7 @@ async def create_model(
     # ... (rest of the function)
     new_model = AIModel(
         id=str(uuid.uuid4()),
-        **model_in.dict()
+        **model_in.model_dump()
     )
     db.add(new_model)
     await db.commit()
@@ -55,7 +55,7 @@ async def update_model(
     if not model:
         raise HTTPException(status_code=404, detail="Model not found")
     
-    update_data = model_in.dict(exclude_unset=True)
+    update_data = model_in.model_dump(exclude_unset=True)
     for field, value in update_data.items():
         setattr(model, field, value)
         

@@ -112,6 +112,99 @@
       </div>
     </div>
 
+    <!-- 📌 我的黄金报表 (Redis 暂存版) -->
+    <div
+      v-if="!initialLoading"
+      class="rounded-xl border border-blue-150/70 dark:border-blue-900/40 bg-blue-50/10 dark:bg-blue-950/5 p-3.5 space-y-2.5 animate-fade-in-up"
+    >
+      <div
+        class="flex items-center justify-between w-full text-[11px] font-bold text-blue-700 dark:text-blue-400 uppercase tracking-wider transition-colors select-none cursor-pointer"
+        @click="showSavedReportsCollapse = !showSavedReportsCollapse; if (!showSavedReportsCollapse) fetchSavedReports();"
+      >
+        <span class="flex items-center gap-1.5">
+          <span>📌</span> 我的黄金报表
+          <span 
+            v-if="savedReports.length > 0"
+            class="rounded-full px-1.5 py-0.5 text-[9px] font-bold bg-blue-100 dark:bg-blue-900/60 text-blue-700 dark:text-blue-355"
+          >
+            {{ savedReports.length }} 个
+          </span>
+        </span>
+        <div class="flex items-center space-x-2">
+          <button
+            type="button"
+            class="p-1 rounded hover:bg-blue-100/80 dark:hover:bg-blue-900/40 text-blue-700 dark:text-blue-400 transition-colors cursor-pointer flex items-center justify-center"
+            title="刷新黄金报表"
+            @click.stop="fetchSavedReports"
+          >
+            <svg
+              class="w-3.5 h-3.5"
+              :class="{ 'animate-spin': loadingReports }"
+              fill="none" stroke="currentColor" viewBox="0 0 24 24"
+            >
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 1121.21 8H17" />
+            </svg>
+          </button>
+          <svg
+            class="w-3.5 h-3.5 transform transition-transform duration-300 pointer-events-none"
+            :class="{ 'rotate-180': !showSavedReportsCollapse }"
+            fill="none" stroke="currentColor" viewBox="0 0 24 24"
+          >
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.2" d="M19 9l-7 7-7-7" />
+          </svg>
+        </div>
+      </div>
+
+      <div 
+        v-if="!showSavedReportsCollapse"
+        class="space-y-2"
+      >
+        <div v-if="loadingReports" class="flex items-center justify-center py-4 text-xs text-gray-400 select-none">
+          <svg class="w-4 h-4 animate-spin text-blue-500 mr-2" fill="none" viewBox="0 0 24 24">
+            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+          </svg>
+          正在加载暂存报表...
+        </div>
+        <div v-else-if="savedReports.length === 0" class="text-center py-6 border border-dashed border-gray-200 dark:border-gray-800 rounded-xl text-gray-400 dark:text-gray-500 text-[11px] select-none">
+          暂无已存报表。您可以在 ChatBI 结果中点击 SQL 上方的“暂存”按钮进行快捷收藏。
+        </div>
+        <div v-else class="grid gap-2 max-h-60 overflow-y-auto pr-0.5 custom-scrollbar">
+          <div
+            v-for="report in savedReports"
+            :key="report.id"
+            class="group/item flex items-stretch rounded-lg border border-blue-100/60 dark:border-blue-900/30 bg-white dark:bg-gray-900/40 hover:border-blue-300 dark:hover:border-blue-700/60 overflow-hidden shadow-xs"
+          >
+            <button
+              type="button"
+              class="flex-1 flex flex-col p-2.5 text-left transition-all active:scale-[0.99] hover:bg-blue-50/30 dark:hover:bg-blue-950/20 min-w-0"
+              @click="handleExecuteSavedReportClick(report)"
+            >
+              <span class="text-xs font-bold text-gray-800 dark:text-gray-200 truncate w-full" :title="report.title">
+                {{ report.title }}
+              </span>
+              <span v-if="report.original_query" class="text-[10px] text-gray-400 dark:text-gray-500 truncate mt-1 w-full" :title="report.original_query">
+                问: {{ report.original_query }}
+              </span>
+              <span class="text-[9px] text-gray-400 dark:text-gray-550 mt-1 select-none font-mono">
+                {{ formatDate(report.created_at) }}
+              </span>
+            </button>
+            <button
+              type="button"
+              class="flex items-center justify-center w-8 text-gray-400 hover:text-red-500 border-l border-blue-50/60 dark:border-blue-900/20 hover:bg-red-50 dark:hover:bg-red-950/40 transition-colors cursor-pointer"
+              title="删除暂存"
+              @click.stop="handleDeleteReport(report)"
+            >
+              <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+              </svg>
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- 我常问 -->
     <div
       v-if="showFrequentSection"
@@ -737,6 +830,7 @@ const emit = defineEmits<{
   (event: "record-question-click", payload: { query: string; label?: string; group_id?: string }): void;
   (event: "clear-question-click", payload: { query: string }): void;
   (event: "refresh"): void;
+  (event: "execute-saved-report", payload: { id: string; title: string; sql_content: string }): void;
 }>();
 
 const menuContainer = ref<HTMLElement | null>(null);
@@ -850,8 +944,62 @@ const handleTableDictionaryClick = (
   }
 };
 
+// 黄金报表业务逻辑
+const savedReports = ref<any[]>([]);
+const loadingReports = ref(false);
+const showSavedReportsCollapse = ref(true); // 默认收起
+
+const fetchSavedReports = async () => {
+  loadingReports.value = true;
+  try {
+    const res = await axios.get("/api/portal/saved-reports");
+    if (res.data && res.data.data) {
+      savedReports.value = res.data.data;
+    }
+  } catch (error) {
+    console.error("Failed to fetch saved reports:", error);
+  } finally {
+    loadingReports.value = false;
+  }
+};
+
+const handleDeleteReport = async (report: any) => {
+  try {
+    await axios.delete(`/api/portal/saved-reports/${report.id}`);
+    showToast("删除暂存报表成功", "success");
+    await fetchSavedReports();
+  } catch (error: any) {
+    console.error("Failed to delete saved report:", error);
+    const detail = error.response?.data?.detail || "删除失败";
+    showToast(typeof detail === 'object' ? JSON.stringify(detail) : detail, "error");
+  }
+};
+
+const handleExecuteSavedReportClick = (report: any) => {
+  emit("execute-saved-report", {
+    id: report.id,
+    title: report.title,
+    sql_content: report.sql_content,
+  });
+};
+
+const formatDate = (isoString: string) => {
+  if (!isoString) return "";
+  try {
+    const date = new Date(isoString);
+    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")} ${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
+  } catch (e) {
+    return isoString;
+  }
+};
+
+watch(() => props.payload, () => {
+  fetchSavedReports();
+}, { deep: true });
+
 onMounted(() => {
   document.addEventListener("click", handleGlobalClick);
+  fetchSavedReports();
 });
 
 onUnmounted(() => {

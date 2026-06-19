@@ -68,12 +68,12 @@ class SessionSummaryService:
         last_run = float(state.get("last_run") or 0)
 
         if state["pending_turns"] < debounce_turns and (now - last_run) < debounce_seconds:
-            await redis.setex(key, debounce_seconds * 2, json.dumps(state))
+            await redis.set(key, json.dumps(state), ex=debounce_seconds * 2)
             return False
 
         state["last_run"] = now
         state["pending_turns"] = 0
-        await redis.setex(key, debounce_seconds * 2, json.dumps(state))
+        await redis.set(key, json.dumps(state), ex=debounce_seconds * 2)
         return True
 
     @staticmethod

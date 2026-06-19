@@ -136,9 +136,16 @@ class MetadataRagService:
         return data
 
     @staticmethod
-    def build_metrics_schema_dict(dataset: MetaDataset) -> Dict[str, Any]:
+    def build_metrics_schema_dict(
+        dataset: MetaDataset,
+        *,
+        data_source: Optional[str] = None,
+    ) -> Dict[str, Any]:
         """构建指标块 Schema 字典。"""
         return {
+            "dataset": dataset.name,
+            "meta_name": dataset.display_name or dataset.name,
+            "data_source": data_source if data_source is not None else dataset.data_source,
             "metrics_scope": dataset.display_name or dataset.name,
             "metrics": [
                 {
@@ -169,17 +176,23 @@ class MetadataRagService:
         return yaml.dump(data, allow_unicode=True, sort_keys=False)
 
     @staticmethod
-    def render_metrics_schema_yaml(dataset: MetaDataset) -> str:
+    def render_metrics_schema_yaml(
+        dataset: MetaDataset,
+        *,
+        data_source: Optional[str] = None,
+    ) -> str:
         if not dataset.metrics:
             return ""
         note = (
             "# 说明：本文件仅为指标计算口径参考，不包含任何表结构。\n"
-            "# metrics_scope 是数据集名称，并非物理表名；下方 sql 仅为指标的计算表达式片段。\n"
-            "# 实际查询请以对应表文件中的 table_name（物理表名）作为 FROM 表，\n"
-            "# 严禁将本文件、metrics_scope 或指标名当作可查询的表。\n"
+            "# dataset 为数据集标识符（execute_sql_query 的 dataset_name）；"
+            "meta_name / metrics_scope 为业务展示名，并非物理表名。\n"
+            "# 下方 sql 仅为指标的计算表达式片段；"
+            "实际查询请以对应表文件中的 table_name（物理表名）作为 FROM 表，\n"
+            "# 严禁将 metrics_scope、meta_name 或指标名当作可查询的表。\n"
         )
         return note + yaml.dump(
-            MetadataRagService.build_metrics_schema_dict(dataset),
+            MetadataRagService.build_metrics_schema_dict(dataset, data_source=data_source),
             allow_unicode=True,
             sort_keys=False,
         )
@@ -193,9 +206,13 @@ class MetadataRagService:
         return MetadataRagService.render_table_schema_yaml(dataset, table, relationships)
 
     @staticmethod
-    def generate_metrics_content(dataset: MetaDataset) -> str:
+    def generate_metrics_content(
+        dataset: MetaDataset,
+        *,
+        data_source: Optional[str] = None,
+    ) -> str:
         """Generate YAML for Dataset Metrics"""
-        return MetadataRagService.render_metrics_schema_yaml(dataset)
+        return MetadataRagService.render_metrics_schema_yaml(dataset, data_source=data_source)
 
     @staticmethod
     async def sync_dataset(db: AsyncSession, dataset_id: int):
