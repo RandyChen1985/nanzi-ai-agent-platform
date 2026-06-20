@@ -76,6 +76,7 @@ def test_dataset_capability_menu_component_contract():
     assert "GROUP_REFRESH_COOLDOWN_MS" in source
     assert "startGroupRefreshCooldown" in source
     assert "换一批太频繁，请稍后再试" in source
+    assert "暂无更多不同问题，稍后再试" in source
     assert "QUESTIONS_SECTION_TIP" in source
     assert "FOLLOWUPS_SECTION_TIP" in source
     assert "该场景的入门示例问题" in source

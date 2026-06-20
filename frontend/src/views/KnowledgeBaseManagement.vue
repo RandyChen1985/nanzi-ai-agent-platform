@@ -220,7 +220,8 @@ const fetchDatasets = async () => {
     
     // 如果没有选中的节点，默认选中第一个
     if (!selectedId.value && datasets.value.length > 0) {
-      selectDatasetNode(datasets.value[0])
+      const firstDataset = datasets.value[0]
+      if (firstDataset) selectDatasetNode(firstDataset)
     } else if (selectedType.value === 'dataset' && selectedId.value) {
       // 保持之前的选中，更新数据引用
       const found = datasets.value.find(d => (d.ragflow_dataset_id || d.id) === selectedId.value)
@@ -283,7 +284,7 @@ const selectDocumentNode = (doc: KnowledgeDocument, dataset: KnowledgeBase) => {
   selectedDocument.value = doc
   const dsId = dataset.ragflow_dataset_id || dataset.id || ''
   const status = getDocStatus(doc)
-  if (dsId && (status === 'parsing' || status === 'running' || parsingDocIds.value[doc.id])) {
+    if (dsId && (status === 'parsing' || parsingDocIds.value[doc.id])) {
     if (!parsingDocIds.value[doc.id]) {
       parsingDocIds.value = { ...parsingDocIds.value, [doc.id]: true }
     }
@@ -500,7 +501,7 @@ const isDocParsing = (doc?: KnowledgeDocument | null) => {
   if (!doc) return false
   if (parsingDocIds.value[doc.id]) return true
   const status = getDocStatus(doc)
-  return status === 'parsing' || status === 'running'
+  return status === 'parsing'
 }
 
 const isParseButtonDisabled = (doc?: KnowledgeDocument | null) => {
@@ -536,10 +537,10 @@ const startParseStatusPolling = (dsId: string, docId: string) => {
       await fetchDocumentsForDataset(dsId)
       const doc = syncSelectedDocumentFromMap(dsId, docId)
       const status = getDocStatus(doc)
-      if (status === 'parsing' || status === 'running') {
+      if (status === 'parsing') {
         seenParsing = true
       }
-      const terminal = status !== 'parsing' && status !== 'running'
+      const terminal = status !== 'parsing'
       if (terminal && (seenParsing || pollCount >= 2)) {
         unmarkDocParsing(docId)
         return
@@ -933,8 +934,8 @@ onMounted(async () => {
                       <span
                         class="w-1.5 h-1.5 rounded-full shrink-0 transition-all"
                         :class="{
-                          'bg-emerald-500 shadow-[0_0_4px_#10b981]': getDocStatus(doc) === 'completed' || getDocStatus(doc) === 'parsed',
-                          'bg-amber-500 animate-pulse shadow-[0_0_4px_#f59e0b]': getDocStatus(doc) === 'running' || getDocStatus(doc) === 'parsing',
+                          'bg-emerald-500 shadow-[0_0_4px_#10b981]': getDocStatus(doc) === 'parsed',
+                          'bg-amber-500 animate-pulse shadow-[0_0_4px_#f59e0b]': getDocStatus(doc) === 'parsing',
                           'bg-red-500 shadow-[0_0_4px_#ef4444]': getDocStatus(doc) === 'failed',
                           'bg-gray-300': !getDocStatus(doc) || getDocStatus(doc) === 'unparsed'
                         }"
@@ -1100,8 +1101,8 @@ onMounted(async () => {
                 <div
                   class="flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium border shrink-0"
                   :class="{
-                    'bg-emerald-50 text-emerald-700 border-emerald-200': getDocStatus(selectedDocument) === 'completed' || getDocStatus(selectedDocument) === 'parsed',
-                    'bg-amber-50 text-amber-700 border-amber-200': getDocStatus(selectedDocument) === 'running' || getDocStatus(selectedDocument) === 'parsing',
+                    'bg-emerald-50 text-emerald-700 border-emerald-200': getDocStatus(selectedDocument) === 'parsed',
+                    'bg-amber-50 text-amber-700 border-amber-200': getDocStatus(selectedDocument) === 'parsing',
                     'bg-red-50 text-red-700 border-red-200': getDocStatus(selectedDocument) === 'failed',
                     'bg-gray-50 text-gray-600 border-gray-200': !getDocStatus(selectedDocument) || getDocStatus(selectedDocument) === 'unparsed'
                   }"
@@ -1109,8 +1110,8 @@ onMounted(async () => {
                   <span
                     class="w-1.5 h-1.5 rounded-full"
                     :class="{
-                      'bg-emerald-500': getDocStatus(selectedDocument) === 'completed' || getDocStatus(selectedDocument) === 'parsed',
-                      'bg-amber-500 animate-ping': getDocStatus(selectedDocument) === 'running' || getDocStatus(selectedDocument) === 'parsing',
+                      'bg-emerald-500': getDocStatus(selectedDocument) === 'parsed',
+                      'bg-amber-500 animate-ping': getDocStatus(selectedDocument) === 'parsing',
                       'bg-red-500': getDocStatus(selectedDocument) === 'failed',
                       'bg-gray-400': !getDocStatus(selectedDocument) || getDocStatus(selectedDocument) === 'unparsed'
                     }"
@@ -1162,14 +1163,14 @@ onMounted(async () => {
                 <span class="text-lg font-bold text-gray-800 mt-2 block">{{ selectedDocument.chunk_count ?? 0 }} 个分块</span>
               </div>
               <button
-                v-if="(getDocStatus(selectedDocument) === 'completed' || getDocStatus(selectedDocument) === 'parsed') && canViewChunks(selectedDataset)"
+                v-if="getDocStatus(selectedDocument) === 'parsed' && canViewChunks(selectedDataset)"
                 class="text-xs text-primary hover:underline mt-2 flex items-center gap-1 font-semibold self-start"
                 @click="openChunksModal(selectedDocument)"
               >
                 <span>🔍 查看分块详情</span>
               </button>
               <span
-                v-else-if="(getDocStatus(selectedDocument) === 'completed' || getDocStatus(selectedDocument) === 'parsed') && !canViewChunks(selectedDataset)"
+                v-else-if="getDocStatus(selectedDocument) === 'parsed' && !canViewChunks(selectedDataset)"
                 class="text-xs text-gray-400 mt-2 block"
               >
                 无权限查看分块明细（仅创建人或管理员可查看）
@@ -1399,4 +1400,3 @@ onMounted(async () => {
   opacity: 0;
 }
 </style>
-

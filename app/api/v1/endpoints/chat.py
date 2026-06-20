@@ -166,6 +166,10 @@ class DatasetGroupQuestion(BaseModel):
 
 class DatasetGroupRefreshResponse(BaseModel):
     questions: List[DatasetGroupQuestion] = Field(..., description="重新生成的推荐问题列表")
+    refresh_disabled_reason: Optional[str] = Field(
+        default=None,
+        description="未返回新问题时的可读原因，例如短期内已无更多不同问题",
+    )
 
 
 
@@ -325,7 +329,13 @@ async def refresh_group_questions(
             group_id=request.group_id or "",
             exclude_questions=request.exclude_questions,
         )
-    return StandardResponse(data=DatasetGroupRefreshResponse(questions=questions))
+    reason = None if questions else "暂无更多不同问题，稍后再试"
+    return StandardResponse(
+        data=DatasetGroupRefreshResponse(
+            questions=questions,
+            refresh_disabled_reason=reason,
+        )
+    )
 
 
 @router.post(

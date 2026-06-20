@@ -283,8 +283,8 @@ const orderedCategories = computed(() => {
 
 const metadataProvider = computed(() => {
   if (!configGroups.value) return 'local'
-  for (const cat in configGroups.value) {
-    const item = configGroups.value[cat].find(x => x.key === 'metadata_provider')
+  for (const list of Object.values(configGroups.value)) {
+    const item = list.find(x => x.key === 'metadata_provider')
     if (item) return item.value
   }
   return 'local'
@@ -554,8 +554,7 @@ const testGlobalEmbed = async () => {
   let url = ''
   let key = ''
   let model = ''
-  for (const cat in configGroups.value) {
-    const list = configGroups.value[cat]
+  for (const list of Object.values(configGroups.value)) {
     const uItem = list.find(x => x.key === 'embed_api_url')
     if (uItem) url = uItem.value
     const kItem = list.find(x => x.key === 'embed_api_key')
@@ -589,7 +588,7 @@ const handleDatasetSelect = (val: string | string[]) => {
     }
 }
 
-const getVisibleItems = (items: ConfigItem[], category: string) => {
+const getVisibleItems = (items: ConfigItem[] | undefined, category: string) => {
   if (!items) return []
   let list = [...items]
   if (category === 'agent') {
@@ -941,8 +940,8 @@ onMounted(() => {
                    <input
                      type="number"
                      v-model.number="retentionDays"
-                     @keypress="e => { if (!/[0-9]/.test(e.key)) e.preventDefault(); }"
-                     @input="e => { if (retentionDays && typeof retentionDays === 'number') retentionDays = Math.floor(retentionDays) }"
+	                     @keypress="!/[0-9]/.test(($event as KeyboardEvent).key) && ($event as KeyboardEvent).preventDefault()"
+	                     @input="retentionDays && typeof retentionDays === 'number' ? retentionDays = Math.floor(retentionDays) : undefined"
                      min="1"
                      max="3650"
                      :disabled="!canSave"
@@ -1466,7 +1465,7 @@ onMounted(() => {
                              <textarea v-model="item.value" :disabled="!canSave" rows="10" class="shadow-sm focus:ring-primary focus:border-primary block w-full sm:text-sm border-gray-300 rounded-md font-mono text-xs bg-gray-100 p-3 disabled:opacity-70 disabled:cursor-not-allowed"></textarea>
                           </div>
                           <div v-else-if="['audit_log_retention_days', 'agent_max_iterations', 'agent_max_context_turns', 'data_api_timeout_seconds', 'schema_api_timeout_seconds', 'ragflow_metadata_top_k', 'knowledge_ragflow_metadata_top_k', 'embed_dimensions', 'chatbi_sample_top_k'].includes(item.key)">
-                             <input type="text" v-model="item.value" @keypress="e => { if (!/[0-9]/.test(e.key)) e.preventDefault(); }" @input="e => { item.value = item.value.replace(/\D/g, '') }" :disabled="!canSave" class="shadow-sm focus:ring-primary focus:border-primary block w-full sm:text-sm border-gray-300 rounded-md bg-gray-100 disabled:opacity-70 disabled:cursor-not-allowed p-2" />
+	                             <input type="text" v-model="item.value" @keypress="!/[0-9]/.test(($event as KeyboardEvent).key) && ($event as KeyboardEvent).preventDefault()" @input="item.value = item.value.replace(/\D/g, '')" :disabled="!canSave" class="shadow-sm focus:ring-primary focus:border-primary block w-full sm:text-sm border-gray-300 rounded-md bg-gray-100 disabled:opacity-70 disabled:cursor-not-allowed p-2" />
                           </div>
                           <div v-else>
                              <input type="text" v-model="item.value" :disabled="!canSave" class="shadow-sm focus:ring-primary focus:border-primary block w-full sm:text-sm border-gray-300 rounded-md bg-gray-100 disabled:opacity-70 disabled:cursor-not-allowed" />

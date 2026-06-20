@@ -3,7 +3,8 @@ const IMAGE_EXTS = new Set(["png", "jpg", "jpeg", "webp", "gif"]);
 export function normalizeAttachmentExt(ext?: string, url?: string): string {
   let normalized = (ext || "").toLowerCase().replace(/^\./, "");
   if (!normalized && url) {
-    const segment = url.split("?")[0].split("/").pop() || "";
+    const path = url.split("?")[0] || "";
+    const segment = path.split("/").pop() || "";
     const dot = segment.lastIndexOf(".");
     normalized = dot >= 0 ? segment.slice(dot + 1).toLowerCase() : "";
   }

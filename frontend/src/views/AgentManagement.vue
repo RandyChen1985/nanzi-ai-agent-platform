@@ -407,8 +407,11 @@ const allAvailableTools = computed(() => {
   return combined;
 });
 
+type ToolGroupKey = 'chatbi' | 'knowledge' | 'system' | 'office' | 'memory' | 'other';
+type ToolGroup = { label: string; icon: string; tools: any[] };
+
 const groupedTools = computed(() => {
-  const groups: Record<string, { label: string; icon: string; tools: any[] }> = {
+  const groups: Record<ToolGroupKey, ToolGroup> = {
     chatbi: { label: 'ChatBI 数据分析', icon: '📊', tools: [] },
     knowledge: { label: '知识库检索 (RAG)', icon: '📖', tools: [] },
     system: { label: '系统自治工具', icon: '💻', tools: [] },
@@ -467,10 +470,11 @@ const groupedTools = computed(() => {
     }
   });
 
-  const result: Record<string, { label: string; icon: string; tools: any[] }> = {};
-  for (const key in groups) {
-    if (groups[key].tools.length > 0) {
-      result[key] = groups[key];
+  const result: ToolGroup[] = [];
+  for (const key of Object.keys(groups) as ToolGroupKey[]) {
+    const group = groups[key];
+    if (group.tools.length > 0) {
+      result.push(group);
     }
   }
   return result;
@@ -2190,7 +2194,7 @@ const formatDate = (dateStr: string) => {
             </div>
 
             <div v-if="toolTab === 'static'" class="space-y-4 mt-2 max-h-[450px] overflow-y-auto pr-2 scrollbar-thin scrollbar-thumb-gray-200 hover:scrollbar-thumb-gray-300">
-              <div v-for="(group, key) in groupedTools" :key="key" class="space-y-2">
+              <div v-for="group in groupedTools" :key="group.label" class="space-y-2">
                 <!-- Group Header -->
                 <div class="flex items-center space-x-2 py-1 sticky top-0 bg-white z-10">
                   <span class="text-[10px] font-extrabold text-primary uppercase tracking-widest bg-blue-50/80 px-2.5 py-0.5 rounded-full border border-blue-100 flex items-center">

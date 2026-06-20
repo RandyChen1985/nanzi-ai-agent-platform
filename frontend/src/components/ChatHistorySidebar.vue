@@ -232,9 +232,9 @@ const handleScroll = (e: Event) => {
               <!-- Watermark Number -->
               <div 
                   class="absolute bottom-2 right-2 w-7 h-7 rounded-full border-[2px] flex items-center justify-center text-[12px] font-black select-none pointer-events-none z-0 -rotate-12 transition-all duration-500 group-hover:scale-110 group-hover:-rotate-6 opacity-30 dark:opacity-40"
-                  :style="{ color: `hsl(${(index * 137.5) % 360}, 70%, 50%)`, borderColor: `hsl(${(index * 137.5) % 360}, 70%, 50%, 0.3)` }"
+                  :style="{ color: `hsl(${((Number(index) || 0) * 137.5) % 360}, 70%, 50%)`, borderColor: `hsl(${((Number(index) || 0) * 137.5) % 360}, 70%, 50%, 0.3)` }"
               >
-                  {{ index + 1 }}
+                  {{ (Number(index) || 0) + 1 }}
               </div>
               
               <div class="relative z-10">

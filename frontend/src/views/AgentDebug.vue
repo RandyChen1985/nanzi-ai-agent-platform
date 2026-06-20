@@ -15,7 +15,6 @@ import {
   isDatasetPortalSlashCommand,
 } from "@/constants/datasetPortalCommand";
 import CitationPopover from "@/components/CitationPopover.vue";
-import MentionList from "@/components/agent/MentionList.vue"; // New Import
 import axios from "@/utils/axios";
 import { finalizeConversation } from "@/utils/conversationFinalize";
 import { cancelConversationRun } from "@/utils/cancelConversationRun";
@@ -25,7 +24,6 @@ import {
   dispatchAgentscopeStreamEvent,
   formatExternalExecutionStatus,
   formatPermissionStatus,
-  handlePermissionRequired as applyPermissionRequiredEvent,
   markStalePendingStreamLogs,
   resumeExternalExecutionStream,
   type PendingExternalExecution,
@@ -46,92 +44,6 @@ import { isKnowledgeToolLog } from "@/utils/knowledgeToolLog";
 
 const route = useRoute();
 const { showToast } = useToast();
-
-// ... existing code ...
-
-// Mention State
-const showMentionList = ref(false);
-const mentionKeyword = ref("");
-const mentionPosition = reactive({ top: 0, left: 0 });
-const mentionListRef = ref<any>(null);
-
-const handleInput = (e: Event) => {
-  const target = e.target as HTMLTextAreaElement;
-  const val = target.value;
-  const cursor = target.selectionStart;
-
-  // Check for @
-  const lastAt = val.lastIndexOf('@', cursor - 1);
-  if (lastAt !== -1) {
-    const query = val.slice(lastAt + 1, cursor);
-    if (!query.includes(' ')) {
-        // Fetch allowed agents if not already fetched
-        // Optimization: We can fetch this once or lazy load.
-        // For Debug view, we might want to use the same list as the dropdown (all visible),
-        // OR strict allowed list. Let's use /allowed for consistency with EmbedChat.
-        if (agents.value.length === 0) { // Fallback if main list empty
-             fetchAgents();
-        }
-
-        // Use 'agents' list for now, but ideally should be a separate 'allowedAgents' list
-        // filtering locally is fine for Debug view as it shows all by default.
-        mentionKeyword.value = query;
-        showMentionList.value = true;
-
-        const rect = target.getBoundingClientRect();
-        mentionPosition.top = rect.top - 220;
-        mentionPosition.left = rect.left + 20;
-        return;
-    }
-  }
-  showMentionList.value = false;
-};
-
-const handleMentionSelect = (agent: any) => {
-  const target = inputTextarea.value;
-  if (!target) return;
-
-  const val = userInput.value;
-  const cursor = target.selectionStart;
-  const lastAt = val.lastIndexOf('@', cursor - 1);
-
-  if (lastAt !== -1) {
-      const before = val.slice(0, lastAt);
-      const after = val.slice(cursor);
-      // Insert Agent Display Name
-      const insertText = `@${agent.display_name} `;
-      userInput.value = before + insertText + after;
-
-      // Move cursor
-      nextTick(() => {
-          target.selectionStart = target.selectionEnd = before.length + insertText.length;
-          target.focus();
-      });
-
-      // Auto-switch Agent Context
-      debugMode.value = 'specific';
-      agentParams.agent_id = agent.id;
-  }
-  showMentionList.value = false;
-};
-
-// ... existing handleKeydown ...
-const handleKeydown = (e: KeyboardEvent) => {
-  // Prevent Enter key from sending message while IME composition is active
-  if (e.isComposing) return;
-
-  // Delegate to MentionList if visible
-  if (showMentionList.value && mentionListRef.value) {
-      if (mentionListRef.value.handleKeydown(e)) {
-          return;
-      }
-  }
-
-  if (e.key === "Enter" && !e.shiftKey) {
-    e.preventDefault();
-    sendMessage();
-  }
-};
 
 // --- New Features State ---
 const showSessionPreview = ref(false);
@@ -178,12 +90,12 @@ const groupedHistoryList = computed(() => {
   const aggregated = aggregatedHistoryList.value;
   if (!aggregated.length) return [];
 
-  const groupsMap: Record<string, { title: string; items: any[]; order: number }> = {
-    today: { title: "今天", items: [], order: 1 },
-    yesterday: { title: "昨天", items: [], order: 2 },
-    threeDays: { title: "3天前", items: [], order: 3 },
-    sevenDays: { title: "7天前", items: [], order: 4 },
-    older: { title: "更早", items: [], order: 5 },
+  const groupsMap = {
+    today: { title: "今天", items: [] as any[], order: 1 },
+    yesterday: { title: "昨天", items: [] as any[], order: 2 },
+    threeDays: { title: "3天前", items: [] as any[], order: 3 },
+    sevenDays: { title: "7天前", items: [] as any[], order: 4 },
+    older: { title: "更早", items: [] as any[], order: 5 },
   };
 
   const now = new Date();
@@ -192,27 +104,27 @@ const groupedHistoryList = computed(() => {
 
   aggregated.forEach(item => {
     if (!item.created_at) {
-      groupsMap.older.items.push(item);
+      groupsMap["older"].items.push(item);
       return;
     }
     const itemTime = new Date(item.created_at).getTime();
     const diffMs = startOfToday - itemTime;
 
     if (itemTime >= startOfToday) {
-      groupsMap.today.items.push(item);
+      groupsMap["today"].items.push(item);
     } else if (diffMs < oneDayMs) {
-      groupsMap.yesterday.items.push(item);
+      groupsMap["yesterday"].items.push(item);
     } else if (diffMs < 3 * oneDayMs) {
-      groupsMap.threeDays.items.push(item);
+      groupsMap["threeDays"].items.push(item);
     } else if (diffMs < 7 * oneDayMs) {
-      groupsMap.sevenDays.items.push(item);
+      groupsMap["sevenDays"].items.push(item);
     } else {
-      groupsMap.older.items.push(item);
+      groupsMap["older"].items.push(item);
     }
   });
 
-  return Object.keys(groupsMap)
-    .map(key => ({ id: key, ...groupsMap[key] }))
+  return Object.entries(groupsMap)
+    .map(([key, group]) => ({ id: key, ...group }))
     .filter(g => g.items.length > 0)
     .sort((a, b) => a.order - b.order);
 });
@@ -668,10 +580,11 @@ const openSaveReportModal = (sql: string, agentMessage: any) => {
     const idx = messages.value.findIndex((m: any) => m.id === agentMessage.id);
     if (idx > 0) {
       for (let i = idx - 1; i >= 0; i--) {
-        if (messages.value[i].role === 'user') {
-          const content = messages.value[i].content || '';
+        const previousMessage = messages.value[i];
+        if (previousMessage?.role === 'user') {
+          const content = previousMessage.content || '';
           if (content.includes('---')) {
-            originalQuery = content.split('---')[0].trim();
+            originalQuery = (content.split('---')[0] || '').trim();
           } else {
             originalQuery = content.trim();
           }
@@ -1857,7 +1770,6 @@ const handleReorderCommands = async (reorderData: any[]) => {
   }
 };
 
-const debugPageContainer = ref<HTMLElement | null>(null);
 const isFullScreen = ref(false);
 
 const toggleFullScreen = () => {
@@ -1866,7 +1778,6 @@ const toggleFullScreen = () => {
 
 const userInput = ref("");
 const isProcessing = ref(false);
-const inputTextarea = ref<HTMLTextAreaElement | null>(null);
 const messagesContainer = ref<HTMLDivElement | null>(null);
 
 let abortController: AbortController | null = null;
@@ -2675,14 +2586,6 @@ const addRealLog = (msg: Message, data: any) => {
   }
 };
 
-const handlePermissionRequired = (msg: Message, data: any) => {
-  applyPermissionRequiredEvent(msg, data, addRealLog);
-  if (thoughtTimer) {
-    clearInterval(thoughtTimer);
-    thoughtTimer = null;
-  }
-};
-
 const submitPendingExternalExecution = async (msg: Message) => {
   const pending = msg.pendingExternalExecution;
   if (!pending || pending.status !== "pending") return;
@@ -2931,7 +2834,6 @@ onUnmounted(() => {
 
 <template>
   <div
-    ref="debugPageContainer"
     class="h-full flex bg-gray-100 overflow-hidden"
     :class="{ 'fixed inset-0 z-[99] w-screen h-screen': isFullScreen }"
   >

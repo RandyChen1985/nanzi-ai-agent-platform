@@ -349,7 +349,7 @@
       </div>
       <!-- Message List -->
       <div
-        v-for="(msg, index) in displayMessages"
+        v-for="msg in displayMessages"
         :key="msg.id"
         class="flex flex-col space-y-4 animate-fade-in-up"
       >
@@ -2425,7 +2425,6 @@ import { modelApi, type AIModel } from "@/api/model";
 import {
   filterLogsForTurn,
   getTurnPanelTitle,
-  defaultThoughtExpanded,
   countHiddenLogs,
   isActiveThoughtStep,
   isDimmedThoughtStep,
@@ -2442,7 +2441,6 @@ import {
   resolveStreamLogDurationMs,
   finalizeAllPendingStreamLogs,
   markStalePendingStreamLogs,
-  handlePermissionRequired as applyPermissionRequiredEvent,
   resumeExternalExecutionStream,
   type PendingExternalExecution,
   type PendingToolPermission,
@@ -2450,6 +2448,7 @@ import {
 // --- Types ---
 interface LogEntry {
   id: number | string;
+  name?: string;
   title: string;
   details: string;
   status: "pending" | "success" | "error";
@@ -2502,6 +2501,12 @@ interface DatasetNavigationPayload {
   }>;
   markdown?: string;
   is_fallback?: boolean;
+  has_datasets?: boolean;
+  from_cache?: boolean;
+  llm_generation_failed?: boolean;
+  llm_error_message?: string | null;
+  refresh_disabled_reason?: string | null;
+  _failed_at?: string;
 }
 interface Message {
   id: number;
@@ -2971,9 +2976,6 @@ const buildOutboundMessages = () => {
   });
 };
 
-const previewImage = (url: string) => {
-  window.open(url, '_blank');
-};
 const embedTraceId = ref("");
 const showEmbedTrace = ref(false);
 const openEmbedTrace = (traceId: string) => {
@@ -3271,12 +3273,12 @@ const groupedHistoryList = computed(() => {
   const aggregated = aggregatedHistoryList.value;
   if (!aggregated.length) return [];
 
-  const groupsMap: Record<string, { title: string; items: any[]; order: number }> = {
-    today: { title: "今天", items: [], order: 1 },
-    yesterday: { title: "昨天", items: [], order: 2 },
-    threeDays: { title: "3天前", items: [], order: 3 },
-    sevenDays: { title: "7天前", items: [], order: 4 },
-    older: { title: "更早", items: [], order: 5 },
+  const groupsMap = {
+    today: { title: "今天", items: [] as any[], order: 1 },
+    yesterday: { title: "昨天", items: [] as any[], order: 2 },
+    threeDays: { title: "3天前", items: [] as any[], order: 3 },
+    sevenDays: { title: "7天前", items: [] as any[], order: 4 },
+    older: { title: "更早", items: [] as any[], order: 5 },
   };
 
   const now = new Date();
@@ -3304,8 +3306,8 @@ const groupedHistoryList = computed(() => {
     }
   });
 
-  return Object.keys(groupsMap)
-    .map(key => ({ id: key, ...groupsMap[key] }))
+  return Object.entries(groupsMap)
+    .map(([key, group]) => ({ id: key, ...group }))
     .filter(g => g.items.length > 0)
     .sort((a, b) => a.order - b.order);
 });
@@ -3480,6 +3482,7 @@ const saveAndResend = async () => {
   const msgIndex = messages.value.findIndex(m => m.id === editingMsgId.value);
   if (msgIndex === -1) return;
   const originalMsg = messages.value[msgIndex];
+  if (!originalMsg) return;
   const newContent = editContent.value.trim();
   if (!newContent) return;
   // Truncate history: keep up to this message
@@ -3647,7 +3650,6 @@ const canPreviewFile = (file: any) => {
 
 const handlePreviewFile = (file: any) => {
   const ext = (file.ext || '').toLowerCase();
-  const isImg = ext === 'jpg' || ext === 'jpeg' || ext === 'png' || ext === 'webp' || ext === 'gif';
   handleOpenCanvas({
     type: ext === 'pdf' ? 'pdf' : (ext === 'csv' ? 'csv' : 'image'),
     title: file.filename,
@@ -3848,10 +3850,11 @@ const openSaveReportModal = (sql: string, agentMessage: any) => {
     const idx = messages.value.findIndex((m: any) => m.id === agentMessage.id);
     if (idx > 0) {
       for (let i = idx - 1; i >= 0; i--) {
-        if (messages.value[i].role === 'user') {
-          const content = messages.value[i].content || '';
+        const previousMessage = messages.value[i];
+        if (previousMessage?.role === 'user') {
+          const content = previousMessage.content || '';
           if (content.includes('---')) {
-            originalQuery = content.split('---')[0].trim();
+            originalQuery = (content.split('---')[0] || '').trim();
           } else {
             originalQuery = content.trim();
           }
@@ -4049,6 +4052,7 @@ const handleExecuteSavedReport = async (report: { id: string; title: string; sql
         title: "工具完成: execute_sql_query",
         category: "sql",
         status: "success",
+        isExpanded: false,
         details: detailsText,
       }
     ];
@@ -4073,6 +4077,7 @@ const handleExecuteSavedReport = async (report: { id: string; title: string; sql
         title: "工具完成: execute_sql_query",
         category: "sql",
         status: "error",
+        isExpanded: false,
         details: `${report.sql_content}\n--- 错误 ---\n${errorMsg}`,
       }
     ];
@@ -5242,14 +5247,6 @@ const applyPermissionStreamEvent = (msg: Message, data: any) => {
       if (msg.isThinking) msg.isThinking = false;
       resetStallTimer();
     }
-  }
-};
-
-const handlePermissionRequired = (msg: Message, data: any) => {
-  applyPermissionRequiredEvent(msg, data, addEmbedLogFromStream);
-  if (thoughtTimer) {
-    clearInterval(thoughtTimer);
-    thoughtTimer = null;
   }
 };
 

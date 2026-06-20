@@ -634,15 +634,6 @@ const copyToClipboard = (text: string) => {
   })
 }
 
-const activeHelpKey = ref<string | null>(null)
-const toggleHelp = (key: string) => {
-  if (activeHelpKey.value === key) {
-    activeHelpKey.value = null
-  } else {
-    activeHelpKey.value = key
-  }
-}
-
 onMounted(async () => {
   if (!canViewAllUsers.value && currentUserId.value) {
     filterUserId.value = Number(currentUserId.value)

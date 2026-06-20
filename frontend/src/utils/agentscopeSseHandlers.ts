@@ -249,6 +249,7 @@ export function isLiveThoughtStepTimer(
   const logs = allLogs || [];
   for (let i = logs.length - 1; i >= 0; i -= 1) {
     const item = logs[i];
+    if (!item) continue;
     if (item.status !== "pending") continue;
     if (item.category && NON_LIVE_TIMER_CATEGORIES.has(item.category)) continue;
     return item === log;

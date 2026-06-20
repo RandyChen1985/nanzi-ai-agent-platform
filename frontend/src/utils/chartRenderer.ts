@@ -28,9 +28,10 @@ function normalizeReadableTextColor(color: unknown, fallback = axisLabelReadable
 
   const hexMatch = value.match(/^#([0-9a-f]{3,8})$/i);
   if (hexMatch) {
-    let hex = hexMatch[1];
+    let hex = hexMatch[1] || "";
     if (hex.length === 3) hex = hex.split("").map((c) => c + c).join("");
     if (hex.length === 8) hex = hex.slice(0, 6);
+    if (hex.length < 6) return fallback;
     const r = parseInt(hex.slice(0, 2), 16);
     const g = parseInt(hex.slice(2, 4), 16);
     const b = parseInt(hex.slice(4, 6), 16);
@@ -40,7 +41,7 @@ function normalizeReadableTextColor(color: unknown, fallback = axisLabelReadable
 
   const rgbMatch = value.match(/^rgba?\(([^)]+)\)$/);
   if (rgbMatch) {
-    const parts = rgbMatch[1].split(",").map((part) => Number(part.trim()));
+    const parts = (rgbMatch[1] || "").split(",").map((part) => Number(part.trim()));
     const [r = 0, g = 0, b = 0, a = 1] = parts;
     if (a <= 0.35) return fallback;
     const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;

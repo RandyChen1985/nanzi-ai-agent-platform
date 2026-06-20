@@ -1,17 +1,42 @@
 import { ref, computed, watch, onMounted, onUnmounted } from "vue";
 import axios from "@/utils/axios";
 
+export interface DatasetPortalQuestion {
+  label: string;
+  query: string;
+  type?: string;
+  click_count?: number;
+  last_clicked_at?: string;
+}
+
+export interface DatasetPortalGroup {
+  id?: string;
+  title: string;
+  summary: string;
+  tags?: string[];
+  questions?: DatasetPortalQuestion[];
+  related_data?: Array<{
+    dataset?: string;
+    display_name?: string;
+    tables?: string[];
+    table_descriptions?: Array<{ name: string; description?: string }>;
+    table_physical_names?: Record<string, string>;
+  }>;
+  followups?: DatasetPortalQuestion[];
+}
+
 export interface DatasetPortalPayload {
   dataset_count?: number;
   dataset_menu_hash?: string;
   generated_at?: string;
-  groups?: unknown[];
+  groups?: DatasetPortalGroup[];
   markdown?: string;
   is_fallback?: boolean;
   from_cache?: boolean;
   has_datasets?: boolean;
   llm_generation_failed?: boolean;
   llm_error_message?: string | null;
+  refresh_disabled_reason?: string | null;
   _failed_at?: string;
 }
 
