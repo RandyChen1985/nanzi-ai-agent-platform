@@ -431,7 +431,7 @@
                             <span v-if="file.type === 'skill' || file.type === 'knowledge_base' || file.type === 'memory'" class="text-xs font-bold text-white truncate">{{ file.filename }}</span>
                             <template v-else>
                               <span v-if="canPreviewFile(file)" @click="handlePreviewFile(file)" class="text-xs font-bold text-white hover:underline cursor-pointer truncate">{{ file.filename }}</span>
-                              <a v-else :href="file.url" target="_blank" class="text-xs font-bold text-white hover:underline truncate">{{ file.filename }}</a>
+                              <a v-else :href="resolveFileUrl(file.url)" target="_blank" class="text-xs font-bold text-white hover:underline truncate">{{ file.filename }}</a>
                             </template>
                             <span class="text-[9px] text-white/70 font-mono">
                                 {{ 
@@ -3482,15 +3482,34 @@ const handlePreviewImageUrl = (url: string, filename: string) => {
   });
 };
 
+const resolveFileUrl = (url: string): string => {
+  if (!url) return '';
+  if (url.startsWith('http://') || url.startsWith('https://') || url.startsWith('data:')) {
+    return url;
+  }
+  if (url.includes('uploads/')) {
+    const parts = url.split('uploads/');
+    return '/static/uploads/' + parts[parts.length - 1];
+  }
+  if (url.startsWith('/') && 
+      !url.startsWith('/static/') && 
+      !url.startsWith('/api/') && 
+      !url.startsWith('/assets/')) {
+    return `/api/v1/chat/fs/preview?path=${encodeURIComponent(url)}`;
+  }
+  return url;
+};
+
 const canPreviewFile = (file: any) => {
   const ext = (file.ext || '').toLowerCase();
-  return ext === 'pdf' || ext === 'csv';
+  return ext === 'pdf' || ext === 'csv' || ext === 'jpg' || ext === 'jpeg' || ext === 'png' || ext === 'webp' || ext === 'gif';
 };
 
 const handlePreviewFile = (file: any) => {
   const ext = (file.ext || '').toLowerCase();
+  const isImg = ext === 'jpg' || ext === 'jpeg' || ext === 'png' || ext === 'webp' || ext === 'gif';
   handleOpenCanvas({
-    type: ext === 'pdf' ? 'pdf' : 'csv',
+    type: ext === 'pdf' ? 'pdf' : (ext === 'csv' ? 'csv' : 'image'),
     title: file.filename,
     content: file.url
   });
