@@ -20,6 +20,7 @@ import axios from "@/utils/axios";
 import { finalizeConversation } from "@/utils/conversationFinalize";
 import { cancelConversationRun } from "@/utils/cancelConversationRun";
 import { createSseLineParser } from "@/utils/chartRenderer";
+import { normalizeAgentSwitchCommand } from "@/utils/agentSwitchCommands";
 import {
   dispatchAgentscopeStreamEvent,
   formatExternalExecutionStatus,
@@ -1899,20 +1900,21 @@ watch(
 );
 
 const handleSystemCommand = async (cmd: string): Promise<boolean> => {
-  if (isDatasetPortalSlashCommand(cmd)) {
+  const normalizedCmd = normalizeAgentSwitchCommand(cmd, agents.value);
+  if (isDatasetPortalSlashCommand(normalizedCmd)) {
     userInput.value = "";
     await openPortalDrawer();
     return true;
   }
-  if (cmd === "/switch_to_auto" || cmd === "/switch_agent_auto") {
+  if (normalizedCmd === "/switch_to_auto" || normalizedCmd === "/switch_agent_auto") {
     userInput.value = "";
     debugMode.value = "auto";
     showToast("已切换为自动路由模式", "success");
     return true;
   }
-  if (cmd.startsWith("/switch_agent_expert?agent_id=")) {
+  if (normalizedCmd.startsWith("/switch_agent_expert?agent_id=")) {
     userInput.value = "";
-    const agentId = cmd.split("?agent_id=")[1];
+    const agentId = normalizedCmd.split("?agent_id=")[1];
     if (agentId) {
       const agent = agents.value.find((a: any) => a.id === agentId);
       if (agent) {
@@ -1922,7 +1924,7 @@ const handleSystemCommand = async (cmd: string): Promise<boolean> => {
     }
     return true;
   }
-  switch (cmd) {
+  switch (normalizedCmd) {
     case "/history":
       userInput.value = "";
       showHistorySidebar.value = !showHistorySidebar.value;

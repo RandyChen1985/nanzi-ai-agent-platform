@@ -3,6 +3,7 @@ import json
 from types import SimpleNamespace
 from unittest.mock import MagicMock, AsyncMock, patch
 from app.services.ai.router_service import RouterService, RouteResult
+from app.services.ai.intent_service import should_inherit_data_agent_session
 
 # --- Mocks ---
 
@@ -48,6 +49,13 @@ def _mock_chat_client(content: str):
     mock_client = AsyncMock()
     mock_client.generate_text.return_value = content
     return mock_client
+
+
+def test_should_inherit_data_agent_session_generalized():
+    assert should_inherit_data_agent_session("把上面的结果画成柱状图") is True
+    assert should_inherit_data_agent_session("查一下所有机房的列表") is True
+    assert should_inherit_data_agent_session("看看我开源项目，小星星情况") is False
+    assert should_inherit_data_agent_session("今天北京天气怎么样") is False
 
 # --- Tests ---
 
@@ -449,6 +457,62 @@ async def test_route_query_greeting_shortcut_skips_llm(mock_agents_metadata):
     assert result.user_action_type == "chat"
     mock_get_llm.assert_not_called()
     mock_chat.generate_text.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_route_query_open_source_stars_shortcut_to_general(mock_agents_metadata):
+    """上一轮 ChatBI 后，若本轮无内部业务查数/数据追问信号，应断开粘性并转通用助手。"""
+    service = RouterService()
+    mock_chat = _mock_chat_client("{}")
+
+    with patch.object(service, "_fetch_agents_from_db", new_callable=AsyncMock) as mock_fetch, \
+         patch("app.services.ai.router_service.get_llm_async", new_callable=AsyncMock) as mock_get_llm, \
+         patch("app.services.ai.router_service.chat_client_from_handle") as mock_chat_factory:
+
+        mock_fetch.return_value = mock_agents_metadata
+        mock_get_llm.return_value = object()
+        mock_chat_factory.return_value = mock_chat
+
+        result = await service.route_query(
+            "看看我开源项目，小星星情况",
+            last_agent_name="ChatBI",
+        )
+
+    assert result is not None
+    assert result.agent_id == "agent-general"
+    assert "内部业务库查数" in result.reasoning or "数据追问" in result.reasoning
+    assert result.relation_to_previous == "topic_switch"
+    mock_get_llm.assert_not_called()
+    mock_chat.generate_text.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_route_query_data_followup_after_chatbi_still_uses_llm(mock_agents_metadata):
+    """上一轮 ChatBI 后，纯数据结果追问仍应走路由 LLM（保留粘性，不误切通用助手）。"""
+    service = RouterService()
+    llm_resp_content = json.dumps({
+        "thought": "Follow-up visualization on previous query result.",
+        "agent_name": "ChatBI",
+        "confidence": 0.92,
+    })
+    mock_chat = _mock_chat_client(llm_resp_content)
+
+    with patch.object(service, "_fetch_agents_from_db", new_callable=AsyncMock) as mock_fetch, \
+         patch("app.services.ai.router_service.get_llm_async", new_callable=AsyncMock) as mock_get_llm, \
+         patch("app.services.ai.router_service.chat_client_from_handle") as mock_chat_factory:
+
+        mock_fetch.return_value = mock_agents_metadata
+        mock_get_llm.return_value = object()
+        mock_chat_factory.return_value = mock_chat
+
+        result = await service.route_query(
+            "把上面的结果画成柱状图",
+            last_agent_name="ChatBI",
+        )
+
+    assert result.agent_id == "agent-chatbi"
+    mock_get_llm.assert_called_once()
+    mock_chat.generate_text.assert_called_once()
 
 
 @pytest.mark.asyncio

@@ -295,6 +295,8 @@ class AgentService:
                 return
 
             route_hints = None
+            if agent_id or agent_name:
+                route_hints = {"direct_agent_selection": True}
             # Emit Routing Logic (New Debug Feature)
             if route_details:
                 logger.info(f"[Router] Routing decision found: {route_details}")
@@ -461,6 +463,71 @@ class AgentService:
                         }
                 except Exception as resolve_err:
                     logger.warning("[Skills] Failed to auto-resolve skills from query: %s", resolve_err)
+
+            # 挂载与口头解析均未命中时：主助手 (main) 按用户问题扫描技能库（关键词流程匹配）。
+            if user_query and not skills_injection:
+                try:
+                    from app.services.ai.skill_resolver import (
+                        is_main_general_agent,
+                        scan_relevant_skills,
+                        should_scan_skills_for_query,
+                    )
+                    from app.services.config_service import ConfigService
+
+                    if is_main_general_agent(agent_config):
+                        scan_enabled_raw = await ConfigService.get("skill_auto_scan_enabled", "true")
+                        scan_enabled = str(scan_enabled_raw or "true").strip().lower() in {
+                            "1", "true", "yes", "on",
+                        }
+                        if scan_enabled and should_scan_skills_for_query(user_query):
+                            min_score_raw = await ConfigService.get("skill_auto_scan_min_score", "0.45")
+                            try:
+                                min_score = float(min_score_raw) if min_score_raw is not None else 0.45
+                            except (TypeError, ValueError):
+                                min_score = 0.45
+                            max_results_raw = await ConfigService.get("skill_auto_scan_max_results", "1")
+                            try:
+                                max_scan_results = int(max_results_raw) if max_results_raw is not None else 1
+                            except (TypeError, ValueError):
+                                max_scan_results = 1
+                            max_scan_results = max(1, min(max_scan_results, 3))
+
+                            for skill_meta in scan_relevant_skills(
+                                user_query,
+                                exclude_ids=mounted_skill_ids,
+                                max_results=max_scan_results,
+                                min_score=min_score,
+                            ):
+                                skill_id = skill_meta.get("id")
+                                if not skill_id or skill_id in mounted_skill_ids:
+                                    continue
+                                skill_name = skill_meta.get("name") or skill_id
+                                description = skill_meta.get("description") or ""
+                                match_score = skill_meta.get("match_score")
+                                skills_injection.append(
+                                    AgentServicePrompts.skill_summary_injection_block(
+                                        skill_name, skill_id, description
+                                    )
+                                )
+                                mounted_skill_ids.add(skill_id)
+                                logger.info(
+                                    "[Skills] Scanned skill %s from query (score=%s, summary only).",
+                                    skill_id,
+                                    match_score,
+                                )
+                                score_hint = f"（相关度 {match_score}）" if match_score is not None else ""
+                                yield {
+                                    "type": "log",
+                                    "id": f"skill_scan_{skill_id}",
+                                    "title": f"已扫描匹配技能: {skill_name}",
+                                    "details": (
+                                        f"已根据本轮问题扫描技能库并匹配「{skill_name}」(ID: {skill_id}){score_hint}。"
+                                        f"已注入摘要；模型须调用 read_skill_instruction 读取 SKILL.md 全文后再执行。"
+                                    ),
+                                    "status": "success",
+                                }
+                except Exception as scan_err:
+                    logger.warning("[Skills] Failed to scan skills from query: %s", scan_err)
 
             if skills_injection:
                 # 限制最大技能预载摘要数，防止 token 爆炸（Lost in the Middle 优化）

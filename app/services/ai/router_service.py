@@ -51,6 +51,7 @@ class RouterService:
 ### Step 2 会话连续性优先 (Session Continuity) — 重要
 - 若本轮是对上一轮的追问/补充/指代（如"可视化一下""再查下""那它呢""展开讲讲"），且【没有】出现明确属于其它智能体的新领域意图，则【优先沿用上一轮处理的智能体】。
 - 仅当用户明确转向另一个领域时，才切换到别的智能体。
+- 【禁止机械沿用】：若上一轮由 data_query 智能体处理，但本轮【不再】表现为内部业务库查数或数据结果追问（例如仅有「看看/情况/查一下」等弱探询、或已切换到与平台业务库无关的新话题），必须重新分诊，不得仅因会话连续性继续路由到 data_query 智能体。
 
 ### Step 3 语义匹配 (Semantic Matching)
 - 逐一对照清单中每个智能体的 name / 中文名 / Description / Capabilities，选出职责与用户真实意图最吻合的那一个。
@@ -59,6 +60,12 @@ class RouterService:
   - 用户询问当前系统/本机/这台机器/服务器运行状态、负载、CPU、内存、磁盘、进程、端口、网络连通性、服务状态、日志、或要求执行命令时，这是平台运行环境诊断/工具执行意图，应选择 {fallback_agent_name}。
   - 用户是查询、统计系统数据库中存储的结构化业务数据（如：PUE、温度、能耗、负载率等历史/业务指标，以及机房列表、设备清单、工单记录、告警/故障历史、操作日志等离散记录或数据列表）时，才按清单匹配数据查询类智能体。
   - 不要因为出现"负载/利用率/CPU/内存"等词就直接判为数据查询；必须先判断用户是在看"当前这台机器"还是查"业务/监控数据指标"。
+- 区分"泛化查询词"与"内部业务查数"：
+  - 天气、公共常识、外部事实、代码/API/编程问题、文本分析/改写/翻译、系统使用帮助等属于通用助手，即使带有「查询/查一下」也应选择 {fallback_agent_name}。
+  - 凡未明确指向平台已接入业务库的结构化数据（记录/列表/指标/报表/SQL 明细），而更像第三方平台指标、公网资讯、个人项目/外部系统状态时，应选择 {fallback_agent_name}，不要路由到 data_query 智能体。
+  - 内部 SOP/流程/规范/手册/怎么操作/处理步骤属于知识库或文档类智能体，即使带有「查询/查一下」也不要路由到数据查询类智能体。
+  - 只有用户明确要内部业务数据的真实记录、列表、数量、指标、趋势、报表、SQL 明细时，才选择具备 data_query 能力的智能体。
+  - 当通用、知识库、数据查询三者难以区分时，优先选择 {fallback_agent_name}，由通用助手澄清用户到底要查数据、查知识库，还是普通问答。
 
 ### Step 4 复合意图判定 (Multi-Intent) — 保守
 - 仅当用户问题明确跨越两个不同智能体的职责、且可并行处理时，才填写 secondary_agents；否则 secondary_agents 必须为空（如无必要，勿增实体）。
@@ -176,7 +183,11 @@ class RouterService:
             logger.warning("No routeable agents available for user %s.", user_id)
             return None
 
-        from app.services.ai.intent_service import looks_like_greeting
+        from app.services.ai.intent_service import (
+            looks_like_greeting,
+            looks_like_web_search_query,
+            should_inherit_data_agent_session,
+        )
 
         if looks_like_greeting(user_input):
             fallback_agent = self._find_fallback_agent(agents_metadata)
@@ -194,12 +205,57 @@ class RouterService:
                     user_action_type="chat",
                 )
 
+        if looks_like_web_search_query(user_input):
+            fallback_agent = self._find_fallback_agent(agents_metadata)
+            if fallback_agent:
+                logger.info(
+                    "Web search shortcut: routing to %s without LLM",
+                    fallback_agent["name"],
+                )
+                return RouteResult(
+                    agent_id=fallback_agent["id"],
+                    confidence=0.92,
+                    reasoning="联网/外部公网检索请求，启发式短路至通用助手",
+                    turn_labels=["topic_switch", "general_chat"],
+                    relation_to_previous="topic_switch",
+                    user_action_type="chat",
+                )
+
+        if (
+            last_agent_name
+            and self._is_data_query_agent(agents_metadata, last_agent_name)
+            and not should_inherit_data_agent_session(user_input)
+        ):
+            fallback_agent = self._find_fallback_agent(agents_metadata)
+            if fallback_agent:
+                logger.info(
+                    "Data-agent session break: routing to %s without LLM (last=%s)",
+                    fallback_agent["name"],
+                    last_agent_name,
+                )
+                return RouteResult(
+                    agent_id=fallback_agent["id"],
+                    confidence=0.9,
+                    reasoning=(
+                        "上一轮虽由数据智能体处理，但本轮不再具备内部业务库查数或数据追问信号，"
+                        "按话题切换重新分诊至通用助手"
+                    ),
+                    turn_labels=["topic_switch", "general_chat"],
+                    relation_to_previous="topic_switch",
+                    user_action_type="chat",
+                )
+
         # 2. Unified LLM Routing
         # 路由提示词内置在代码中（DEFAULT_SYSTEM_PROMPT），不再从数据库配置读取，
         # 避免运营在配置页误改导致路由失准。
         system_prompt = self.DEFAULT_SYSTEM_PROMPT
         agents_str = self._build_agents_context(agents_metadata)
-        history_str = self._build_history_context(history, last_agent_name)
+        history_str = self._build_history_context(
+            history,
+            last_agent_name,
+            user_input=user_input,
+            agents_metadata=agents_metadata,
+        )
         
         fallback_agent_name = self._resolve_fallback_agent_name(agents_metadata)
         formatted_prompt = (
@@ -240,20 +296,44 @@ class RouterService:
         logger.error(f"Routing failed after retries: {last_error}. Falling back to General Chat.")
         return self._fallback_to_general(agents_metadata, f"Routing exception ({str(last_error)})")
 
-    def _build_history_context(self, history: Optional[List[dict]], last_agent_name: Optional[str]) -> str:
+    def _build_history_context(
+        self,
+        history: Optional[List[dict]],
+        last_agent_name: Optional[str],
+        *,
+        user_input: str = "",
+        agents_metadata: Optional[List[dict]] = None,
+    ) -> str:
         """Build a denoised, truncated history context plus session-affinity hint.
 
         - 注入"上一轮处理者"，让追问/指代类输入可沿用上一轮智能体。
+        - 若上一轮是 data_query 但本轮不再满足粘性条件，显式提示勿机械沿用。
         - 历史逐条截断并剥离表格/图表/代码块，避免大段业务输出淹没路由信号。
         """
         parts: List[str] = []
 
         if last_agent_name:
-            parts.append(
-                "### 上一轮路由 (Previous Turn)\n"
-                f"上一轮由智能体 `{last_agent_name}` 处理。\n"
-                f"若本轮为追问/指代/省略主语且无明确的新领域意图，应优先沿用 `{last_agent_name}`。"
+            from app.services.ai.intent_service import should_inherit_data_agent_session
+
+            break_data_affinity = (
+                agents_metadata is not None
+                and self._is_data_query_agent(agents_metadata, last_agent_name)
+                and user_input
+                and not should_inherit_data_agent_session(user_input)
             )
+            if break_data_affinity:
+                parts.append(
+                    "### 上一轮路由 (Previous Turn)\n"
+                    f"上一轮由智能体 `{last_agent_name}` 处理。\n"
+                    "但本轮输入**未表现出**内部业务库查数或数据结果追问信号；"
+                    f"**禁止**仅因上一轮是数据智能体就机械沿用，应重新分诊最匹配的智能体。"
+                )
+            else:
+                parts.append(
+                    "### 上一轮路由 (Previous Turn)\n"
+                    f"上一轮由智能体 `{last_agent_name}` 处理。\n"
+                    f"若本轮为追问/指代/省略主语且无明确的新领域意图，应优先沿用 `{last_agent_name}`。"
+                )
 
         condensed = self._condense_history(history)
         if condensed:
@@ -334,6 +414,23 @@ class RouterService:
             if str(a.get("display_name", "")).lower() == name_l:
                 return a
         return None
+
+    _DATA_QUERY_CAPABILITY_KEYS = frozenset({
+        "data_query",
+        "sql_generation",
+        "text-to-sql",
+        "reporting",
+    })
+
+    def _is_data_query_agent(self, agents_metadata: List[dict], agent_name: Optional[str]) -> bool:
+        agent = self._match_agent(agent_name, agents_metadata)
+        if not agent:
+            return False
+        caps = agent.get("capabilities") or []
+        if isinstance(caps, str):
+            caps = [caps]
+        cap_set = {str(cap).strip().lower() for cap in caps}
+        return bool(cap_set & self._DATA_QUERY_CAPABILITY_KEYS)
 
     def _build_route_result(
         self,

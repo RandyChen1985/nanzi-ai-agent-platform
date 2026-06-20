@@ -1,6 +1,10 @@
 """SQL AST 表名提取（元数据权限前置逻辑）单测。"""
 
+import pytest
+
 from app.services.sql_query_execution_service import extract_physical_table_refs_from_select_sql
+
+pytestmark = pytest.mark.no_infrastructure
 
 
 def test_extract_tables_simple_join():
@@ -56,3 +60,28 @@ def test_extract_skips_oracle_dual_builtin():
     assert err2 is None
     assert "dual" not in refs2
     assert "clue_monthly" in refs2
+
+
+def test_extract_skips_system_schema_tables():
+    err, refs = extract_physical_table_refs_from_select_sql(
+        "SELECT name FROM system.tables",
+        dialect="clickhouse",
+    )
+    assert err is None
+    assert refs == {}
+
+    err2, refs2 = extract_physical_table_refs_from_select_sql(
+        "SELECT table_name FROM information_schema.tables",
+        dialect="mysql",
+    )
+    assert err2 is None
+    assert refs2 == {}
+
+
+def test_extract_keeps_non_system_schema_qualified_table():
+    err, refs = extract_physical_table_refs_from_select_sql(
+        "SELECT * FROM other_schema.allowed_table",
+        dialect="mysql",
+    )
+    assert err is None
+    assert refs["allowed_table"] == "allowed_table"

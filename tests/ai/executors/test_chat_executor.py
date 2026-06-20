@@ -1,6 +1,7 @@
 import pytest
 import asyncio
 from unittest.mock import MagicMock, AsyncMock, patch
+from types import SimpleNamespace
 from pydantic import BaseModel
 from app.services.ai.runtime.agentscope.compat import AIMessage
 from app.services.ai.executors.assistant_executor import AssistantExecutor
@@ -1344,7 +1345,7 @@ async def test_general_runner_greeting_with_table_not_intercepted(chat_config):
         async for chunk in runner.execute([{"role": "user", "content": "你好"}]):
             events.append(chunk)
 
-    assert not any(e.get("title") == "拦截虚构业务数据" for e in events)
+    assert not any(e.get("title") == "引导切换数据智能体" for e in events)
     assert any(greeting_reply in str(e.get("content", "")) for e in events if e.get("content"))
 
 
@@ -1367,17 +1368,137 @@ async def test_general_runner_without_tools_intercepts_hallucination(chat_config
                 content = hallucinated_text
             yield Chunk()
             
-    runner = AssistantAgentRunner(config=chat_config, trace_id="test-hallucination-intercept", trace_buffer=[])
+    runner = AssistantAgentRunner(
+        config=chat_config,
+        trace_id="test-hallucination-intercept",
+        trace_buffer=[],
+        user_info={"role": "admin", "user_id": "1"},
+    )
+    runner.config.agent_id = "sys-agent-chat"
+    runner.config.agent_name = "main"
     runner.config.tools = [] # 确保无工具，走 Simple Mode
     
+    data_agent = SimpleNamespace(
+        id="agent-data-custom",
+        display_name="业务数据专家",
+        name="biz-data-agent",
+        capabilities=["data_query"],
+    )
+
+    with patch("app.services.ai.config.AgentConfigProvider.get_synthesis_llm", AsyncMock(return_value=FakeLLM())), \
+         patch("app.services.ai.tools.registry.ToolRegistry.get_system_implicit_tools", return_value=[]), \
+         patch(
+             "app.services.ai.runners.assistant_agent_runner.AgentManagerService.list_allowed_agents",
+             AsyncMock(return_value=[data_agent]),
+         ):
+        events = []
+        async for chunk in runner.execute([{"role": "user", "content": "查一下资产列表和设备清单"}]):
+            events.append(chunk)
+            
+    assert any(e.get("title") == "引导切换数据智能体" for e in events)
+    assert any("请切换到 **业务数据专家** 后继续查询" in str(e.get("content", "")) for e in events)
+    assert any("quick:/switch_agent_expert?agent_id=agent-data-custom" in str(e.get("content", "")) for e in events)
+
+
+@pytest.mark.asyncio
+async def test_general_runner_without_data_tool_intercepts_fake_chatbi_handoff(chat_config):
+    """通用助手不能在无 data_query 能力时假装衔接 ChatBI 或检索数据集。"""
+    from app.services.ai.intent_service import IntentType
+    from app.services.ai.runners.assistant_agent_runner import AssistantAgentRunner
+    from app.services.ai.turn_classifier import TurnClassification, TurnType
+
+    fake_handoff_text = (
+        "检测到您的需求涉及业务数据查询，我将自动为您衔接 ChatBI 数据分析专家的能力，"
+        "尝试查询最近一周的总订单量。\n\n正在为您检索相关数据集..."
+    )
+
+    class FakeLLM:
+        async def astream(self, messages, *args, **kwargs):
+            class Chunk:
+                content = fake_handoff_text
+            yield Chunk()
+
+    runner = AssistantAgentRunner(
+        config=chat_config,
+        trace_id="test-fake-chatbi-handoff",
+        trace_buffer=[],
+        user_info={"role": "admin", "user_id": "1"},
+    )
+    runner.config.agent_id = "sys-agent-chat"
+    runner.config.agent_name = "main"
+    runner.config.tools = []
+    runner.turn_classification = TurnClassification(
+        turn_type=TurnType.GENERAL,
+        reasoning="识别为查数请求，但当前 Agent 无 data_query 能力",
+        intent=IntentType.DATA_QUERY,
+    )
+
+    data_agent = SimpleNamespace(
+        id="agent-data-custom",
+        display_name="业务数据专家",
+        name="biz-data-agent",
+        capabilities=["data_query"],
+    )
+
+    with patch("app.services.ai.config.AgentConfigProvider.get_synthesis_llm", AsyncMock(return_value=FakeLLM())), \
+         patch("app.services.ai.tools.registry.ToolRegistry.get_system_implicit_tools", return_value=[]), \
+         patch(
+             "app.services.ai.runners.assistant_agent_runner.AgentManagerService.list_allowed_agents",
+             AsyncMock(return_value=[data_agent]),
+         ):
+        events = []
+        async for chunk in runner.execute([{"role": "user", "content": "查一下最近一周总订单量"}]):
+            events.append(chunk)
+
+    assert any(e.get("title") == "引导切换数据智能体" for e in events)
+    assert any("请切换到 **业务数据专家** 后继续查询" in str(e.get("content", "")) for e in events)
+    assert any("quick:/switch_agent_expert?agent_id=agent-data-custom" in str(e.get("content", "")) for e in events)
+    assert not any(fake_handoff_text in str(e.get("content", "")) for e in events if e.get("content"))
+
+
+@pytest.mark.asyncio
+async def test_general_runner_plain_chatbi_suggestions_without_hallucination_not_intercepted(chat_config):
+    """仅口头建议切换 ChatBI、无编造数据特征时，反查数护栏不再误拦。"""
+    from app.services.ai.intent_service import IntentType
+    from app.services.ai.runners.assistant_agent_runner import AssistantAgentRunner
+    from app.services.ai.turn_classifier import TurnClassification, TurnType
+
+    plain_suggestion_text = (
+        "作为通用全能助手，我无法直接访问您的内部业务数据库。"
+        "但我已为您识别意图，该任务最适合由 ChatBI 数据分析专家来处理。\n\n"
+        "- [🙋 查询所有活跃用户](quick:查询所有活跃用户)\n"
+        "- [🙋 查询今日新增用户](quick:查询今日新增用户)"
+    )
+
+    class FakeLLM:
+        async def astream(self, messages, *args, **kwargs):
+            class Chunk:
+                content = plain_suggestion_text
+            yield Chunk()
+
+    runner = AssistantAgentRunner(
+        config=chat_config,
+        trace_id="test-plain-chatbi-suggestions",
+        trace_buffer=[],
+        user_info={"role": "admin", "user_id": "1"},
+    )
+    runner.config.agent_id = "sys-agent-chat"
+    runner.config.agent_name = "main"
+    runner.config.tools = []
+    runner.turn_classification = TurnClassification(
+        turn_type=TurnType.GENERAL,
+        reasoning="识别为查数请求，但当前 Agent 无 data_query 能力",
+        intent=IntentType.DATA_QUERY,
+    )
+
     with patch("app.services.ai.config.AgentConfigProvider.get_synthesis_llm", AsyncMock(return_value=FakeLLM())), \
          patch("app.services.ai.tools.registry.ToolRegistry.get_system_implicit_tools", return_value=[]):
         events = []
-        async for chunk in runner.execute([{"role": "user", "content": "查一下我机器的 IP 地址"}]):
+        async for chunk in runner.execute([{"role": "user", "content": "帮我查一下用户列表数据呢"}]):
             events.append(chunk)
-            
-    assert any(e.get("title") == "拦截虚构业务数据" for e in events)
-    assert any("请使用 **数据智能助手 (ChatBI)** 进行查询" in str(e.get("content", "")) for e in events)
+
+    assert not any(e.get("title") == "引导切换数据智能体" for e in events)
+    assert any(plain_suggestion_text in str(e.get("content", "")) for e in events if e.get("content"))
 
 
 @pytest.mark.asyncio

@@ -25,11 +25,22 @@ logger = logging.getLogger(__name__)
 _DIALECT_BUILTIN_TABLE_EXEMPTIONS: dict[str, frozenset[str]] = {
     "oracle": frozenset({"dual"}),
 }
+_DIALECT_BUILTIN_SCHEMA_EXEMPTIONS: dict[str, frozenset[str]] = {
+    "clickhouse": frozenset({"system", "information_schema"}),
+    "mysql": frozenset({"information_schema", "mysql", "performance_schema", "sys"}),
+    "oracle": frozenset({"sys", "system"}),
+}
 
 
-def _is_exempt_builtin_table(table_lower: str, dialect: str) -> bool:
-    exemptions = _DIALECT_BUILTIN_TABLE_EXEMPTIONS.get(str(dialect or "").lower(), frozenset())
-    return table_lower in exemptions
+def _is_exempt_builtin_table(table_lower: str, dialect: str, schema_lower: Optional[str] = None) -> bool:
+    dialect_lower = str(dialect or "").lower()
+    table_exemptions = _DIALECT_BUILTIN_TABLE_EXEMPTIONS.get(dialect_lower, frozenset())
+    if table_lower in table_exemptions:
+        return True
+    if not schema_lower:
+        return False
+    schema_exemptions = _DIALECT_BUILTIN_SCHEMA_EXEMPTIONS.get(dialect_lower, frozenset())
+    return schema_lower in schema_exemptions
 
 
 def _effective_dry_run(dry_run: Optional[bool]) -> bool:
@@ -75,6 +86,19 @@ def _physical_fragment_from_table(table: exp.Table) -> str:
     if name is None:
         return ""
     return str(name).strip('"').strip("`").strip("'")
+
+
+def _schema_fragment_from_table(table: exp.Table) -> str:
+    schema = getattr(table, "db", None)
+    if schema:
+        return str(schema).strip('"').strip("`").strip("'")
+    parts = getattr(table, "parts", None) or []
+    if len(parts) >= 2:
+        ident = parts[-2]
+        name = getattr(ident, "name", None)
+        if name:
+            return str(name).strip('"').strip("`").strip("'")
+    return ""
 
 
 def _collect_cte_alias_lowers(expression: exp.Expression) -> set[str]:
@@ -139,9 +163,10 @@ def extract_physical_table_refs_from_select_sql(sql: str, dialect: str) -> Tuple
         if not frag:
             continue
         lk = frag.lower()
+        schema_lower = _schema_fragment_from_table(table).lower()
         if lk in skip_aliases:
             continue
-        if _is_exempt_builtin_table(lk, dialect):
+        if _is_exempt_builtin_table(lk, dialect, schema_lower=schema_lower):
             continue
         if lk not in refs:
             refs[lk] = frag

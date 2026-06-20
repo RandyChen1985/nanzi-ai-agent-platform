@@ -7,6 +7,16 @@ from app.services.ai.router_service import RouterService, RouteResult
 pytestmark = pytest.mark.no_infrastructure
 
 
+def test_router_prompt_documents_general_and_knowledge_boundaries():
+    prompt = RouterService.DEFAULT_SYSTEM_PROMPT
+    assert "天气" in prompt
+    assert "代码/API/编程" in prompt
+    assert "内部 SOP/流程/规范/手册" in prompt
+    assert "即使带有「查询/查一下」" in prompt
+    assert "难以区分" in prompt
+    assert "优先选择" in prompt
+
+
 @pytest.mark.asyncio
 async def test_router_context_awareness():
     """

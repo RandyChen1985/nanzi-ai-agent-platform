@@ -1,6 +1,7 @@
 import time
 import uuid
 import json
+import inspect
 import logging
 import asyncio
 from typing import List, Dict, Any, AsyncGenerator, Optional
@@ -12,10 +13,17 @@ from app.services.ai.runtime.agentscope.compat import (
     SystemMessage,
 )
 from app.schemas.agent import ChatConfig, AgentExecutionStep
+from app.core.orm import AsyncSessionLocal
 from app.services.ai.tools.registry import ToolRegistry
 from app.services.ai.config import AgentConfigProvider
+from app.services.ai.agent_manager import AgentManagerService
 from app.services.ai.executors.base import BaseExecutor
-from app.services.ai.intent_service import IntentType, looks_like_business_data_request
+from app.services.ai.intent_service import (
+    IntentType,
+    looks_like_strong_business_data_request,
+    looks_like_web_search_query,
+)
+from app.services.ai.skill_resolver import is_main_general_agent
 from app.services.ai.turn_classifier import TurnType
 from app.services.ai.executors.common import (
     convert_history_to_messages,
@@ -58,6 +66,30 @@ from app.services.ai.runtime.agentscope.tools import build_toolkit
 from app.services.ai.runtime.tool_loop_detector import ToolLoopDetector
 
 logger = logging.getLogger(__name__)
+
+
+DATA_QUERY_SWITCH_CAPABILITY = "data_query"
+
+
+class _ForcedFirstToolChoiceModel:
+    """仅在首个模型调用上注入 tool_choice，强制本轮优先走工具；其后恢复模型原生行为。"""
+
+    def __init__(self, inner: Any, tool_choice: Any):
+        self._inner = inner
+        self._tool_choice = tool_choice
+        self._consumed = False
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._inner, name)
+
+    async def __call__(self, *args: Any, **kwargs: Any) -> Any:
+        if not self._consumed and self._tool_choice is not None:
+            kwargs["tool_choice"] = self._tool_choice
+            self._consumed = True
+        result = self._inner(*args, **kwargs)
+        if inspect.isawaitable(result):
+            return await result
+        return result
 
 
 class AssistantAgentRunner(BaseExecutor):
@@ -127,8 +159,19 @@ class AssistantAgentRunner(BaseExecutor):
                 return str(msg.get("content") or "")
         return ""
 
+    def _is_direct_agent_selection(self) -> bool:
+        """专家模式 / @提及 / 显式 agent_id 直达，不走自动路由。"""
+        return bool(self.route_hints.get("direct_agent_selection"))
+
     def _should_run_data_hallucination_guard(self, user_query: str) -> bool:
-        """仅在用户确有查数类诉求时启用反幻觉拦截，避免问候语带表格引导被误杀。"""
+        """仅主助手 + 自动路由 + 明确查数诉求时启用，防止无 DB 连接时编造业务数据。"""
+        if not is_main_general_agent(self.config):
+            return False
+        if self._is_direct_agent_selection():
+            return False
+        if looks_like_web_search_query(user_query):
+            return False
+
         if self.turn_classification is not None:
             if self.turn_classification.turn_type == TurnType.DATA_QUERY_REQUEST:
                 return True
@@ -141,21 +184,105 @@ class AssistantAgentRunner(BaseExecutor):
                 return False
         if self.intent_info is not None and self.intent_info.intent == IntentType.DATA_QUERY:
             return True
-        return looks_like_business_data_request(user_query)
+        return looks_like_strong_business_data_request(user_query)
+
+    @staticmethod
+    def _chunk_indicates_tool_attempt(chunk: Dict[str, Any]) -> bool:
+        """本轮是否已发起/待确认工具调用（含 permission 待确认，不含 memory_search）。"""
+        if chunk.get("type") == "log" and chunk.get("category") == "tool":
+            tool_name = str(chunk.get("title", "") or "")
+            return "memory_search" not in tool_name
+        chunk_type = str(chunk.get("type") or "")
+        if chunk_type in {"permission_required", "external_execution_required"}:
+            return True
+        tool_call = chunk.get("tool_call")
+        if isinstance(tool_call, dict) and tool_call.get("name"):
+            return str(tool_call.get("name")) != "memory_search"
+        return False
 
     def _is_hallucinated_data_reply(self, text: str) -> bool:
         text_clean = text.strip()
         if not text_clean:
             return False
-        # 1. 包含表格结构，但在通用对话中未调用查数工具，判定为编造的数据库列表
-        if "|" in text_clean and "---" in text_clean:
-            return True
-        # 2. 包含典型的数据库列表特征或大量虚构字段/IP等
-        ip_pattern = r"\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b"
         import re
-        if re.search(ip_pattern, text_clean):
+        # 1. 假装已自动转派 ChatBI 或正在检索内部数据集
+        fake_data_process_patterns = (
+            r"自动.{0,12}(衔接|接入|调用|转交).{0,12}(ChatBI|数据智能助手|数据分析专家)",
+            r"我将.{0,12}(衔接|接入|调用|转交).{0,12}(ChatBI|数据智能助手|数据分析专家)",
+            r"(正在|开始|为您).{0,12}(检索|查询|查找).{0,12}(数据集|业务数据|指标)",
+            r"数据查询未成功",
+        )
+        if any(re.search(pattern, text_clean, re.IGNORECASE) for pattern in fake_data_process_patterns):
+            return True
+        # 2. 表格 + 内网 IP：典型编造资产/主机清单（联网搜索摘要表格通常无内网 IP）
+        has_markdown_table = "|" in text_clean and "---" in text_clean
+        ip_pattern = r"\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b"
+        if has_markdown_table and re.search(ip_pattern, text_clean):
+            return True
+        # 3. 表格 + 内部业务对象字段：区分于联网资料整理类表格
+        internal_table_signals = (
+            "主机名", "资产", "工单", "告警", "设备清单", "机房", "机柜",
+            "数据集", "字段名", "表结构", "sql",
+        )
+        if has_markdown_table and any(sig in text_clean for sig in internal_table_signals):
             return True
         return False
+
+    @staticmethod
+    def _agent_field(agent: Any, field: str, default: Any = None) -> Any:
+        if isinstance(agent, dict):
+            return agent.get(field, default)
+        return getattr(agent, field, default)
+
+    @classmethod
+    def _agent_has_capability(cls, agent: Any, capability: str) -> bool:
+        capabilities = cls._agent_field(agent, "capabilities", []) or []
+        return capability in capabilities
+
+    async def _resolve_switch_agent_for_capability(self, capability: str) -> Optional[Dict[str, str]]:
+        """Find a user-allowed agent that can satisfy the missing capability."""
+        if not self.user_info:
+            return None
+        try:
+            async with AsyncSessionLocal() as session:
+                agents = await AgentManagerService.list_allowed_agents(session, user=self.user_info)
+        except Exception as exc:
+            logger.warning(
+                "[AssistantAgentRunner] Failed to resolve switch target for capability=%s: %s",
+                capability,
+                exc,
+            )
+            return None
+
+        for agent in agents or []:
+            if not self._agent_has_capability(agent, capability):
+                continue
+            agent_id = self._agent_field(agent, "id")
+            if not agent_id:
+                continue
+            display_name = (
+                self._agent_field(agent, "display_name")
+                or self._agent_field(agent, "name")
+                or str(agent_id)
+            )
+            return {"id": str(agent_id), "display_name": str(display_name)}
+        return None
+
+    async def _build_data_guard_refusal_content(self) -> str:
+        switch_agent = await self._resolve_switch_agent_for_capability(DATA_QUERY_SWITCH_CAPABILITY)
+        base = (
+            "⚠️ 抱歉，检测到您正在查询系统内部数据或资产列表。通用助手未连接数据库，"
+            "为保证数据真实性已拦截该回答。"
+        )
+        if not switch_agent:
+            return f"{base}请切换到具备数据查询能力的智能体后继续查询。"
+
+        display_name = switch_agent["display_name"]
+        agent_id = switch_agent["id"]
+        return (
+            f"{base}请切换到 **{display_name}** 后继续查询。\n\n"
+            f"- [⚡ 切换到 {display_name}](quick:/switch_agent_expert?agent_id={agent_id})"
+        )
 
     async def execute(
         self,
@@ -166,13 +293,11 @@ class AssistantAgentRunner(BaseExecutor):
 
         chunks_buffer = []
         full_text = ""
-        has_called_data_tool = False
+        has_attempted_tool = False
 
         async for chunk in self._execute_core(history):
-            if chunk.get("type") == "log" and chunk.get("category") == "tool":
-                tool_name = chunk.get("title", "")
-                if "memory_search" not in tool_name:
-                    has_called_data_tool = True
+            if self._chunk_indicates_tool_attempt(chunk):
+                has_attempted_tool = True
 
             if "content" in chunk:
                 full_text += chunk["content"]
@@ -180,24 +305,27 @@ class AssistantAgentRunner(BaseExecutor):
             else:
                 yield chunk
 
-        should_intercept = False
-        if run_data_guard and not has_called_data_tool:
-            should_intercept = self._is_hallucinated_data_reply(full_text)
+        should_intercept = (
+            run_data_guard
+            and not has_attempted_tool
+            and self._is_hallucinated_data_reply(full_text)
+        )
 
         if should_intercept:
             logger.warning(
                 f"[AssistantAgentRunner] Hallucination detected! "
-                f"run_data_guard={run_data_guard}, has_tool={has_called_data_tool}. "
+                f"run_data_guard={run_data_guard}, has_attempted_tool={has_attempted_tool}. "
+                f"looks_hallucinated={self._is_hallucinated_data_reply(full_text)}. "
                 f"Generated: {full_text[:200]}..."
             )
             yield {
                 "type": "log",
                 "id": f"data_general_guard_{uuid.uuid4().hex[:8]}",
-                "title": "拦截虚构业务数据",
-                "details": "检测到您正在查询系统内部数据，通用助手未连接数据库，已拦截可能存在的编造回复。",
+                "title": "引导切换数据智能体",
+                "details": "检测到您正在查询系统内部数据，当前助手未连接数据库，已生成可执行的智能体切换建议。",
                 "status": "warning",
             }
-            refusal_content = "⚠️ 抱歉，检测到您正在查询系统内部数据或资产列表。通用助手未连接数据库，为保证数据真实性已拦截该回答。请使用 **数据智能助手 (ChatBI)** 进行查询。"
+            refusal_content = await self._build_data_guard_refusal_content()
             yield {"content": refusal_content}
         else:
             for chunk in chunks_buffer:
@@ -358,6 +486,52 @@ class AssistantAgentRunner(BaseExecutor):
                 f"{native_system_content}"
             )
 
+        # 工具预检（Tool Preflight）：由本轮已绑定工具的 name+description 与问题相关度驱动，
+        # 识别该不该用工具、用哪个，并按配置力度促发模型调用（记忆类有专门便签，故跳过）。
+        # 模式 agent_tool_preflight_mode：off=关闭；soft=仅注入强约束便签；hard=便签+首步强制调用。
+        preflight_tool_choice = None
+        try:
+            if not recall_query_pending:
+                preflight_mode = str(
+                    await ConfigService.get("agent_tool_preflight_mode", "soft") or "soft"
+                ).strip().lower()
+                if preflight_mode not in {"off", "false", "0", "none"}:
+                    from app.services.ai.tool_nudge_policy import resolve_tool_nudge
+
+                    tool_nudge = resolve_tool_nudge(
+                        self._extract_last_user_query(history),
+                        tools,
+                    )
+                    if tool_nudge is not None:
+                        native_system_content = f"{tool_nudge.message}\n\n{native_system_content}"
+                        force_applied = False
+                        if preflight_mode == "hard":
+                            preflight_tool_choice = self._build_preflight_tool_choice(
+                                tool_nudge.recommended_force_mode()
+                            )
+                            force_applied = preflight_tool_choice is not None
+                        logger.info(
+                            "[ToolPreflight] mode=%s tool=%s score=%s forced=%s",
+                            preflight_mode,
+                            tool_nudge.tool_name,
+                            tool_nudge.score,
+                            force_applied,
+                        )
+                        yield {
+                            "type": "log",
+                            "id": f"tool_preflight_{uuid.uuid4().hex[:8]}",
+                            "title": "工具预检：建议调用工具" if not force_applied else "工具预检：本轮优先调用工具",
+                            "details": (
+                                f"本轮问题与已绑定工具「{tool_nudge.tool_name}」相关"
+                                f"（相关度 {tool_nudge.score}），"
+                                + ("已要求模型先调用工具再作答。" if force_applied else "已提示模型优先调用该工具。")
+                            ),
+                            "status": "success",
+                            "category": "tool_preflight",
+                        }
+        except Exception as preflight_err:
+            logger.warning("[ToolPreflight] Failed to resolve tool preflight: %s", preflight_err)
+
         if (
             tools
             and all(isinstance(t, RuntimeToolSpec) for t in tools)
@@ -371,6 +545,7 @@ class AssistantAgentRunner(BaseExecutor):
                     system_content=native_system_content,
                     runtime_messages=runtime_messages,
                     max_steps=MAX_STEPS,
+                    initial_tool_choice=preflight_tool_choice,
                 ):
                     yield chunk
                 return
@@ -386,6 +561,19 @@ class AssistantAgentRunner(BaseExecutor):
             "status": "error",
             "content": "Assistant 工具链必须使用 AgentScope RuntimeToolSpec；旧 ReAct fallback 已移除。",
         }
+
+    @staticmethod
+    def _build_preflight_tool_choice(force_mode: str) -> Any:
+        """根据预检建议构造 AgentScope ToolChoice；模型不支持时返回 None 以回退软促发。"""
+        if not force_mode:
+            return None
+        try:
+            from agentscope.tool import ToolChoice
+
+            return ToolChoice(mode=force_mode)
+        except Exception as exc:
+            logger.warning("[ToolPreflight] Build ToolChoice failed (fallback to soft): %s", exc)
+            return None
 
     @staticmethod
     async def _create_tool_loop_detector() -> ToolLoopDetector:
@@ -431,6 +619,7 @@ class AssistantAgentRunner(BaseExecutor):
         system_content: str,
         runtime_messages: List[BaseMessage],
         max_steps: int,
+        initial_tool_choice: Any = None,
     ) -> AsyncGenerator[Dict[str, Any], None]:
         agent_name = self._runtime_agent_name()
         tools_fingerprint = build_tools_fingerprint(self.config, tools)
@@ -483,6 +672,10 @@ class AssistantAgentRunner(BaseExecutor):
                     primary_model_name=str(model_name or ""),
                     loop_detector=loop_detector,
                 )
+                # hard 预检：仅在「首步模型调用」注入 tool_choice，强制本轮先走工具，
+                # 之后的 ReAct 步骤恢复模型自主决策，避免死循环或答非所问。
+                if initial_tool_choice is not None and getattr(agent, "model", None) is not None:
+                    agent.model = _ForcedFirstToolChoiceModel(agent.model, initial_tool_choice)
                 if restored_state and restored_state.context:
                     latest_user_messages = self._latest_user_runtime_messages(runtime_messages)
                     inputs = to_agentscope_messages(compat_to_runtime_messages(latest_user_messages))

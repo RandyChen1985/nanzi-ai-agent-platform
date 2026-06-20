@@ -3,7 +3,9 @@ import { computed } from 'vue';
 import { renderMarkdown } from '@/utils/markdown';
 import { parseQuickButtons, postProcessQuickButtonHtml } from '@/utils/quickButtons';
 import { mergeChartDefaults, parseChartOptions } from '@/utils/chartRenderer';
+import { dedupeSqlPlanPayload, parseSqlPlan, type SqlPlanData } from '@/utils/sqlPlan';
 import MermaidRenderer from './MermaidRenderer.vue';
+import SqlPlanCard from './SqlPlanCard.vue';
 
 // Dynamically import ECharts
 import VChart from 'vue-echarts';
@@ -54,10 +56,11 @@ const emit = defineEmits<{
 }>();
 
 interface ContentSegment {
-  type: 'text' | 'chart' | 'mermaid' | 'thought' | 'analysis';
+  type: 'text' | 'chart' | 'mermaid' | 'thought' | 'analysis' | 'sql_plan';
   content: string;
   chartData?: any;
   title?: string;
+  sqlPlan?: SqlPlanData;
 }
 
   /** 将 [ID:n] 转为可点击徽章（Markdown 渲染前保护，避免被解析器吞掉） */
@@ -153,26 +156,42 @@ const segments = computed<ContentSegment[]>(() => {
   // 2. 预处理 Quick 按钮 (核心改进)
   cleanContent = parseQuickButtons(cleanContent);
 
-  const regex = /(?:<thought>([\s\S]*?)<\/thought>)|(?:<chart>([\s\S]*?)<\/chart>)|(?:```\s*(?:chart|echarts|json)\s*([\s\S]*?)```)|(?:```\s*mermaid\s*([\s\S]*?)```)|(?::::analysis\s*([^\n]*)\n([\s\S]*?)\n:::)/gi;
+  const regex = /(?:<sql_plan>([\s\S]*?)<\/sql_plan>)|(?:<thought>([\s\S]*?)<\/thought>)|(?:<chart>([\s\S]*?)<\/chart>)|(?:```\s*(?:chart|echarts|json)\s*([\s\S]*?)```)|(?:```\s*mermaid\s*([\s\S]*?)```)|(?::::analysis\s*([^\n]*)\n([\s\S]*?)\n:::)/gi;
   const result: ContentSegment[] = [];
   let lastIndex = 0;
   let match;
+  const seenSqlPlans = new Set<string>();
 
   while ((match = regex.exec(cleanContent)) !== null) {
     if (match.index > lastIndex) {
       result.push({ type: 'text', content: renderMarkdownSegment(cleanContent.slice(lastIndex, match.index)) });
     }
-    if (match[1]) result.push({ type: 'thought', content: renderMarkdown(match[1].trim()) });
-    else if (match[4]) result.push({ type: 'mermaid', content: match[4].trim() });
-    else if (match[5] || match[6]) {
+    if (match[1]) {
+      const rawSqlPlan = match[1].trim();
+      const dedupeKey = dedupeSqlPlanPayload(rawSqlPlan);
+      if (!seenSqlPlans.has(dedupeKey)) {
+        seenSqlPlans.add(dedupeKey);
+        const parsed = parseSqlPlan(rawSqlPlan);
+        if (parsed.ok) {
+          result.push({ type: 'sql_plan', content: rawSqlPlan, sqlPlan: parsed.data });
+        } else {
+          result.push({
+            type: 'text',
+            content: renderMarkdown(`> ⚠️ **SQL Plan 解析失败**\n\n\`\`\`json\n${rawSqlPlan}\n\`\`\``),
+          });
+        }
+      }
+    } else if (match[2]) result.push({ type: 'thought', content: renderMarkdown(match[2].trim()) });
+    else if (match[5]) result.push({ type: 'mermaid', content: match[5].trim() });
+    else if (match[6] || match[7]) {
       result.push({ 
         type: 'analysis', 
         title: 'AI分析推理过程 ...',
-        content: renderMarkdown(match[6]?.trim() || '') 
+        content: renderMarkdown(match[7]?.trim() || '') 
       });
     }
-    else if (match[2] || match[3]) {
-      const rawJson = (match[2] || match[3]) as string;
+    else if (match[3] || match[4]) {
+      const rawJson = (match[3] || match[4]) as string;
       const jsonStr = rawJson.trim().replace(/^(json|javascript|js|xml|chart)\s+/i, '');
       const parsed = parseChartOptions(jsonStr);
       if (parsed.ok) {
@@ -206,6 +225,10 @@ const segments = computed<ContentSegment[]>(() => {
       <div v-if="segment.type === 'text'" class="markdown-body" v-html="segment.content"></div>
       <div v-else-if="segment.type === 'mermaid'" class="w-full my-4"><MermaidRenderer :content="segment.content" /></div>
       <div v-else-if="segment.type === 'chart'" class="w-full h-64 bg-white rounded-lg border border-gray-100 p-2 shadow-sm"><v-chart class="chart" :option="segment.chartData" autoresize /></div>
+
+      <div v-else-if="segment.type === 'sql_plan' && segment.sqlPlan" class="w-full">
+        <SqlPlanCard :plan="segment.sqlPlan" />
+      </div>
       
       <div v-else-if="segment.type === 'analysis'" class="analysis-block mb-6">
         <details class="analysis-details group" open>

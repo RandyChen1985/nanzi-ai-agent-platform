@@ -2383,6 +2383,7 @@ import FileBrowserModal from "@/components/embed/FileBrowserModal.vue";
 import AttachmentImageThumb from "@/components/embed/AttachmentImageThumb.vue";
 import { isImageAttachment } from "@/utils/attachmentImages";
 import { sanitizeStreamContent } from "@/utils/streamContentSanitize";
+import { normalizeAgentSwitchCommand } from "@/utils/agentSwitchCommands";
 import { createSseLineParser } from "@/utils/chartRenderer";
 import { modelApi, type AIModel } from "@/api/model";
 import {
@@ -4507,27 +4508,28 @@ const fetchConversationHistory = async (isLoadMore = false) => {
 };
 // --- Logic ---
 const handleSystemCommand = async (cmd: string): Promise<boolean> => {
-  if (isDatasetPortalSlashCommand(cmd)) {
+  const normalizedCmd = normalizeAgentSwitchCommand(cmd, allowedAgents.value);
+  if (isDatasetPortalSlashCommand(normalizedCmd)) {
     userInput.value = "";
     await openPortalDrawer();
     return true;
   }
-  if (cmd === "/switch_to_auto" || cmd === "/switch_agent_auto") {
+  if (normalizedCmd === "/switch_to_auto" || normalizedCmd === "/switch_agent_auto") {
     userInput.value = "";
     switchToAuto();
     showToast("已切换为自动路由模式", "success");
     return true;
   }
-  if (cmd.startsWith("/switch_agent_expert?agent_id=")) {
+  if (normalizedCmd.startsWith("/switch_agent_expert?agent_id=")) {
     userInput.value = "";
-    const agentId = cmd.split("?agent_id=")[1];
+    const agentId = normalizedCmd.split("?agent_id=")[1];
     if (agentId) {
       switchToExpert(agentId);
       showToast("已切换到指定智能体", "success");
     }
     return true;
   }
-  switch (cmd) {
+  switch (normalizedCmd) {
     case "/history":
       userInput.value = "";
       showHistorySidebar.value = !showHistorySidebar.value;

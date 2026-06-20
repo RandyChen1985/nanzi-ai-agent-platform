@@ -757,33 +757,47 @@ class DataAgentRunner(BaseExecutor):
         return any(pattern in text for pattern in patterns)
 
     @staticmethod
-    def _collect_unqualified_sql_columns(sql: str) -> set[str]:
-        try:
-            import sqlglot
-            from sqlglot import exp
-        except Exception:
-            return set()
-
-        try:
-            expression = sqlglot.parse_one(str(sql or ""))
-        except Exception:
-            return set()
-
-        select_aliases = {
-            str(alias.alias or "").lower()
-            for alias in expression.find_all(exp.Alias)
-            if str(alias.alias or "").strip()
-        }
-        columns: set[str] = set()
-        for column in expression.find_all(exp.Column):
-            table = str(getattr(column, "table", "") or "").strip()
-            name = str(getattr(column, "name", "") or "").strip()
-            if table or not name:
+    def _mask_sql_literals_and_comments(sql: str) -> str:
+        text = str(sql or "")
+        chars = list(text)
+        i = 0
+        while i < len(chars):
+            ch = chars[i]
+            nxt = chars[i + 1] if i + 1 < len(chars) else ""
+            if ch == "-" and nxt == "-":
+                chars[i] = chars[i + 1] = " "
+                i += 2
+                while i < len(chars) and chars[i] not in "\r\n":
+                    chars[i] = " "
+                    i += 1
                 continue
-            if name.lower() in select_aliases:
+            if ch == "/" and nxt == "*":
+                chars[i] = chars[i + 1] = " "
+                i += 2
+                while i < len(chars):
+                    if chars[i] == "*" and i + 1 < len(chars) and chars[i + 1] == "/":
+                        chars[i] = chars[i + 1] = " "
+                        i += 2
+                        break
+                    chars[i] = " "
+                    i += 1
                 continue
-            columns.add(name)
-        return columns
+            if ch == "'":
+                chars[i] = " "
+                i += 1
+                while i < len(chars):
+                    chars[i] = " "
+                    if text[i] == "'" and i + 1 < len(chars) and text[i + 1] == "'":
+                        chars[i + 1] = " "
+                        i += 2
+                        continue
+                    if text[i] == "'":
+                        i += 1
+                        break
+                    i += 1
+                continue
+            i += 1
+        return "".join(chars)
 
     def _build_sql_schema_preflight_error(
         self,
@@ -793,6 +807,7 @@ class DataAgentRunner(BaseExecutor):
         if not sql or not schema_table_columns:
             return ""
 
+        sql_for_preflight = self._mask_sql_literals_and_comments(sql)
         alias_to_table: dict[str, str] = {}
         table_displays: dict[str, str] = {}
         table_pattern = re.compile(
@@ -803,7 +818,7 @@ class DataAgentRunner(BaseExecutor):
             "where", "join", "left", "right", "inner", "outer", "full", "cross", "on",
             "group", "order", "having", "limit", "fetch", "union", "where",
         }
-        for match in table_pattern.finditer(sql):
+        for match in table_pattern.finditer(sql_for_preflight):
             table = match.group(1).split(".")[-1]
             alias = match.group(2) or table
             alias_norm = self._normalize_sql_identifier(alias)
@@ -819,7 +834,7 @@ class DataAgentRunner(BaseExecutor):
         if not alias_to_table:
             return ""
 
-        for qualifier, column in re.findall(r"\b([A-Za-z_][\w$]*)\.([A-Za-z_][\w$]*)\b", sql):
+        for qualifier, column in re.findall(r"\b([A-Za-z_][\w$]*)\.([A-Za-z_][\w$]*)\b", sql_for_preflight):
             qualifier_norm = self._normalize_sql_identifier(qualifier)
             table_norm = alias_to_table.get(qualifier_norm)
             if not table_norm:
@@ -834,23 +849,6 @@ class DataAgentRunner(BaseExecutor):
                     "[TOOL_ERROR] SQL 预检失败：字段/表引用错误。"
                     f'ORA-00904: "{qualifier.upper()}"."{column.upper()}": invalid identifier。'
                     f"字段 {qualifier}.{column} 不在 get_dataset_schema 返回的表 {table_display} 字段列表中。"
-                    f"可用字段：{available}。请替换或删除该字段后再调用 execute_sql_query。"
-                )
-        known_tables = sorted({table for table in alias_to_table.values()})
-        if len(known_tables) == 1:
-            table_norm = known_tables[0]
-            allowed_columns = schema_table_columns.get(table_norm) or []
-            allowed_norms = {self._normalize_sql_identifier(item) for item in allowed_columns}
-            for column in sorted(self._collect_unqualified_sql_columns(sql)):
-                column_norm = self._normalize_sql_identifier(column)
-                if column_norm in allowed_norms:
-                    continue
-                table_display = table_displays.get(table_norm) or table_norm
-                available = ", ".join(allowed_columns[:40])
-                return (
-                    "[TOOL_ERROR] SQL 预检失败：字段/表引用错误。"
-                    f'ORA-00904: "{column.upper()}": invalid identifier。'
-                    f"字段 {column} 不在 get_dataset_schema 返回的表 {table_display} 字段列表中。"
                     f"可用字段：{available}。请替换或删除该字段后再调用 execute_sql_query。"
                 )
         return ""
@@ -3957,10 +3955,7 @@ class DataAgentRunner(BaseExecutor):
         if not sql_text:
             return "SQL 为空"
 
-        # 1. 剥离多行注释 /* ... */ 和单行注释 -- ...，防止注释导致只读判定误杀
-        sql_clean = re.sub(r"/\*[\s\S]*?\*/", "", sql_text)
-        sql_clean = re.sub(r"--.*", "", sql_clean)
-        sql_clean = sql_clean.strip()
+        sql_clean = DataAgentRunner._mask_sql_literals_and_comments(sql_text).strip()
 
         sql_upper = " ".join(sql_clean.upper().split())
         if not sql_upper.startswith(("SELECT ", "WITH ")):

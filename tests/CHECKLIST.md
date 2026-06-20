@@ -150,6 +150,10 @@
 | 黄金 SQL 报表暂存与免模型直连执行 (Golden SQL Reports & Native Execution) | `saved_reports.py`, `EmbedChat.vue`, `AgentDebug.vue`, `DatasetCapabilityMenu.vue` | **黄金 SQL 报表一键暂存与免模型极速安全直连执行**：在聊天与调试页面提供“暂存”按钮并调起模态框输入标题以暂存 SQL，在后端基于 Redis Hash（按用户隔离）提供 CRUD 暂存，并支持全自动提取物理表名以反查补全数据集与数据源属性；在数据门户中提供“我的黄金报表”折叠展示卡片并支持一键物理删除；点击暂存项将自动触发免模型直连安全执行（复用底层 execute_sql_query_core 并强制校验表与行级权限门禁）；前端将直连数据进行健壮转换，在聊天框中将其以 Markdown 格式的表格美观渲染呈现。 | ✅ 已完成 | 2026-06-19 |
 | 快捷问题一键编辑后提问 (Quick Question Edit Before Send) | `DatasetCapabilityMenu.vue`, `DatasetPortalDrawer.vue`, `useDatasetPortal.ts`, `AgentDebug.vue`, `EmbedChat.vue` | **推荐问题增加“填入”按钮**：在“🔥 我常问”、“你可以这样问”、“推荐业务提问”和“继续追问”列表的所有快捷提问按钮右侧增加分体 ✎ 铅笔小按钮，平时隐藏 (`opacity-0`) 悬浮淡入 (`opacity-100`)；点击 ✎ 图标时仅将文本填入输入框而不会自动发送消息，允许用户微调后手动发送。 | ✅ 已完成 | 2026-06-19 |
 | 数据门户搜索区域默认折叠隐藏 (Dataset Menu Search Bar Collapse UX) | `DatasetCapabilityMenu.vue` | **搜索与筛选区域默认折叠**：在数据门户头部右侧增加 🔍 搜索切换按钮，用于显示/隐藏搜索输入框与标签栏；搜索栏默认不显示（`showSearchBar=false`），并在此区域包裹平滑展开/折叠过渡动画；折叠收起时，自动清空已输入的搜索词及标签高亮过滤状态，防范隐藏后导致的数据卡片无故过滤。 | ✅ 已完成 | 2026-06-19 |
+| SQL 门禁预检机制与方言兼容性优化 (SQL Gate Preflight & Dialect Optimization) | `app/services/ai/runners/data_agent_runner.py`, `tests/ai/runners/test_data_agent_runner.py` | **SQL 预检规则优化**：优化单表查询字段检测以避免方言误判；支持 Oracle 伪列（如 ROWNUM、ROWID）与无参内置函数；调用 _mask_sql_literals_and_comments 屏蔽字符串字面量与注释以防误杀保留字。 | ✅ 通过 | 2026-06-19 |
+| SQL 物理表提取豁免方言系统 Schema 优化 (SQL Physical Table Extract Schema Exemption) | `app/services/sql_query_execution_service.py`, `tests/services/test_sql_metadata_tables.py` | **物理表解析优化**：在提取物理表引用时，支持检测并豁免各数据库方言的内置系统 Schema（如 ClickHouse 的 system，MySQL 的 information_schema/performance_schema/sys/mysql，Oracle 的 sys/system），防止其作为业务物理表参与数据集归属与元数据校验。 | ✅ 通过 | 2026-06-19 |
+
+
 
 
 

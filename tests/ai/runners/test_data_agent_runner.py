@@ -2929,7 +2929,7 @@ async def test_sql_preflight_allows_known_alias_columns(data_config):
 
 
 @pytest.mark.asyncio
-async def test_sql_preflight_blocks_unknown_unqualified_column_for_single_table(data_config):
+async def test_sql_preflight_allows_unqualified_columns_for_single_table_to_avoid_dialect_false_positives(data_config):
     from app.services.ai.runners.data_agent_runner import DataAgentRunner, _DataRunState
     from app.services.ai.runtime.agentscope.tools import RuntimeToolSpec
 
@@ -2938,7 +2938,7 @@ async def test_sql_preflight_blocks_unknown_unqualified_column_for_single_table(
     async def fake_sql(**kwargs):
         nonlocal invoked
         invoked = True
-        return "should not run"
+        return '{"columns": [{"name": "SUPDEPID"}, {"name": "SSFB"}], "items": [[1, "x"]]}'
 
     runner = DataAgentRunner(config=data_config, trace_id="trace-sql-preflight-single-table", trace_buffer=[])
     state = _DataRunState(requires_fresh_data=True, schema_completed=True)
@@ -2960,10 +2960,139 @@ async def test_sql_preflight_blocks_unknown_unqualified_column_for_single_table(
         "sql": "SELECT SUPDEPID, SSFB FROM HRMRESOURCE WHERE BELONGTO = 1",
     })
 
-    assert invoked is False
-    assert str(result).startswith("[TOOL_ERROR] SQL 预检失败")
-    assert '"SSFB": invalid identifier' in str(result)
-    assert "HRMRESOURCE" in str(result)
+    assert invoked is True
+    assert str(result).startswith('{"columns"')
+
+
+@pytest.mark.asyncio
+async def test_sql_preflight_allows_oracle_rownum_and_select_alias_for_single_table(data_config):
+    from app.services.ai.runners.data_agent_runner import DataAgentRunner, _DataRunState
+    from app.services.ai.runtime.agentscope.tools import RuntimeToolSpec
+
+    invoked = False
+
+    async def fake_sql(**kwargs):
+        nonlocal invoked
+        invoked = True
+        return '{"columns": [{"name": "aaa"}], "items": [[1]]}'
+
+    runner = DataAgentRunner(config=data_config, trace_id="trace-sql-preflight-rownum", trace_buffer=[])
+    state = _DataRunState(requires_fresh_data=True, schema_completed=True)
+    runner._apply_schema_tool_result(
+        state,
+        "table_name: HRMRESOURCE\ncolumns: SUPDEPID, BELONGTO, MANAGERID",
+    )
+    spec = RuntimeToolSpec(
+        name="execute_sql_query",
+        description="sql",
+        parameters_schema={"type": "object", "properties": {}},
+        source_type="static",
+        callable=fake_sql,
+        permission_scope="read",
+    )
+
+    wrapped = runner._wrap_tools_with_schema_gate([spec], state)[0]
+    result = await wrapped.invoke({
+        "sql": "SELECT SUPDEPID AS aaa FROM HRMRESOURCE WHERE ROWNUM <= 10 ORDER BY aaa",
+    })
+
+    assert invoked is True
+    assert str(result).startswith('{"columns"')
+
+
+@pytest.mark.asyncio
+async def test_sql_preflight_allows_oracle_pseudocolumns_and_no_arg_builtins(data_config):
+    from app.services.ai.runners.data_agent_runner import DataAgentRunner, _DataRunState
+    from app.services.ai.runtime.agentscope.tools import RuntimeToolSpec
+
+    invoked = False
+
+    async def fake_sql(**kwargs):
+        nonlocal invoked
+        invoked = True
+        return '{"columns": [{"name": "RID"}], "items": [["AAA"]]}'
+
+    runner = DataAgentRunner(config=data_config, trace_id="trace-sql-preflight-oracle-builtins", trace_buffer=[])
+    state = _DataRunState(requires_fresh_data=True, schema_completed=True)
+    runner._apply_schema_tool_result(
+        state,
+        "table_name: HRMRESOURCE\ncolumns: SUPDEPID, BELONGTO, MANAGERID",
+    )
+    spec = RuntimeToolSpec(
+        name="execute_sql_query",
+        description="sql",
+        parameters_schema={"type": "object", "properties": {}},
+        source_type="static",
+        callable=fake_sql,
+        permission_scope="read",
+    )
+
+    wrapped = runner._wrap_tools_with_schema_gate([spec], state)[0]
+    result = await wrapped.invoke({
+        "sql": "SELECT ROWID AS rid, SYSDATE AS queried_at FROM HRMRESOURCE WHERE ROWNUM <= 10",
+    })
+
+    assert invoked is True
+    assert str(result).startswith('{"columns"')
+
+
+@pytest.mark.asyncio
+async def test_sql_preflight_ignores_alias_like_text_inside_literals_and_comments(data_config):
+    from app.services.ai.runners.data_agent_runner import DataAgentRunner, _DataRunState
+    from app.services.ai.runtime.agentscope.tools import RuntimeToolSpec
+
+    invoked_count = 0
+
+    async def fake_sql(**kwargs):
+        nonlocal invoked_count
+        invoked_count += 1
+        return '{"columns": [{"name": "SUPDEPID"}], "items": [[1]]}'
+
+    runner = DataAgentRunner(config=data_config, trace_id="trace-sql-preflight-literals", trace_buffer=[])
+    state = _DataRunState(requires_fresh_data=True, schema_completed=True)
+    runner._apply_schema_tool_result(
+        state,
+        "table_name: HRMRESOURCE\ncolumns: SUPDEPID, BELONGTO, MANAGERID, ACCOUNTNAME",
+    )
+    spec = RuntimeToolSpec(
+        name="execute_sql_query",
+        description="sql",
+        parameters_schema={"type": "object", "properties": {}},
+        source_type="static",
+        callable=fake_sql,
+        permission_scope="read",
+    )
+
+    wrapped = runner._wrap_tools_with_schema_gate([spec], state)[0]
+    sqls = [
+        "SELECT r.SUPDEPID FROM HRMRESOURCE r WHERE r.ACCOUNTNAME = 'r.SSFB'",
+        "SELECT r.SUPDEPID FROM HRMRESOURCE r -- r.SSFB\nWHERE r.BELONGTO = 1",
+        "SELECT r.SUPDEPID FROM HRMRESOURCE r /* r.SSFB */ WHERE r.BELONGTO = 1",
+    ]
+
+    for sql in sqls:
+        result = await wrapped.invoke({"sql": sql})
+        assert str(result).startswith('{"columns"')
+
+    assert invoked_count == len(sqls)
+
+
+def test_sql_static_risk_ignores_risky_patterns_inside_literals(data_config):
+    from app.services.ai.runners.data_agent_runner import DataAgentRunner
+
+    assert DataAgentRunner._detect_sql_static_risk(
+        "SELECT name FROM demo WHERE note = 'select * from x'"
+    ) == ""
+    assert DataAgentRunner._detect_sql_static_risk(
+        "SELECT name FROM demo WHERE note = 'ORDER BY x AND ROWNUM <= 1'"
+    ) == ""
+    assert (
+        DataAgentRunner._detect_sql_static_risk("SELECT * FROM demo")
+        == "SELECT * 会扩大返回范围，请只查询必要字段"
+    )
+    assert "ORDER BY 后不能接 AND ROWNUM" in DataAgentRunner._detect_sql_static_risk(
+        "SELECT id FROM demo ORDER BY created_at DESC AND ROWNUM <= 10"
+    )
 
 
 def test_schema_reference_sql_error_requires_schema_refresh(data_config):
