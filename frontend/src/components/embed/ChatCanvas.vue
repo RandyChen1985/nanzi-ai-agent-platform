@@ -303,24 +303,40 @@ const isHtmlContent = computed(() => {
   return false;
 });
 
+const resolveUrlPath = (val: string): string => {
+  if (!val) return '';
+  if (val.startsWith('http://') || val.startsWith('https://') || val.startsWith('data:')) {
+    return val;
+  }
+  if (val.includes('uploads/')) {
+    const parts = val.split('uploads/');
+    return '/static/uploads/' + parts[parts.length - 1];
+  }
+  if (val.startsWith('/') && 
+      !val.startsWith('/static/') && 
+      !val.startsWith('/api/') && 
+      !val.startsWith('/assets/')) {
+    return `/api/v1/chat/fs/preview?path=${encodeURIComponent(val)}`;
+  }
+  return val;
+};
+
 const resolvedContent = computed(() => {
   if (!props.data?.content) return '';
   const val = props.data.content;
-  if (props.data.type === 'image' || props.data.type === 'pdf' || props.data.type === 'csv') {
-    if (val.startsWith('http://') || val.startsWith('https://') || val.startsWith('data:')) {
-      return val;
-    }
-    if (val.includes('uploads/')) {
-      const parts = val.split('uploads/');
-      return '/static/uploads/' + parts[parts.length - 1];
-    }
-    if (val.startsWith('/') && 
-        !val.startsWith('/static/') && 
-        !val.startsWith('/api/') && 
-        !val.startsWith('/assets/')) {
-      return `/api/v1/chat/fs/preview?path=${encodeURIComponent(val)}`;
-    }
+  
+  if (props.data.type === 'html') {
+    // 深度重写 HTML 中的所有物理资源绝对路径引用
+    return val.replace(/(src|href)=["']([^"']*)["']/gi, (match, attr, pathVal) => {
+      const newVal = resolveUrlPath(pathVal);
+      return `${attr}="${newVal}"`;
+    });
   }
+  
+  if (props.data.type === 'image' || props.data.type === 'pdf' || props.data.type === 'csv') {
+    return resolveUrlPath(val);
+  }
+  
   return val;
 });
 
@@ -465,7 +481,7 @@ watch(() => props.data, () => {
           <!-- HTML Preview iframe -->
           <div v-if="activeTab === 'preview'" class="w-full h-full bg-white dark:bg-gray-950 rounded-xl overflow-hidden shadow-inner border border-gray-100 dark:border-gray-800 min-h-[500px]">
             <iframe
-              :srcdoc="data?.content"
+              :srcdoc="resolvedContent"
               sandbox="allow-scripts"
               class="w-full h-full border-none"
             ></iframe>
