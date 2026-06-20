@@ -132,6 +132,12 @@ class DatasetMenuClickRequest(BaseModel):
 class DatasetGroupRefreshRequest(BaseModel):
     group_title: str = Field(..., description="业务场景卡片标题")
     tables: List[str] = Field(..., description="关联的数据表术语列表")
+    dataset_menu_hash: Optional[str] = Field(default=None, description="当前数据目录 hash，用于短期去重隔离")
+    group_id: Optional[str] = Field(default=None, description="业务场景卡片 ID，用于短期去重隔离")
+    exclude_questions: List[Dict[str, Any]] = Field(
+        default_factory=list,
+        description="当前页面已展示的问题列表，后端刷新时应避免重复或相似",
+    )
     purpose: str = Field(
         default="questions",
         description="刷新目标：questions=推荐问题，followups=继续追问",
@@ -291,17 +297,33 @@ async def refresh_group_questions(
     from app.services.dataset_navigation_service import DatasetNavigationService
 
     purpose = str(request.purpose or "questions").strip().lower()
+    raw_user_id = user_info.get("user_id") or user_info.get("id")
+    try:
+        user_id = int(raw_user_id) if raw_user_id is not None else None
+    except (TypeError, ValueError):
+        user_id = None
+    is_admin = user_info.get("role") == "admin"
     if purpose == "followups":
         questions = await DatasetNavigationService.refresh_group_followups(
             db,
             group_title=request.group_title,
             tables=request.tables,
+            user_id=user_id,
+            is_admin=is_admin,
+            dataset_menu_hash=request.dataset_menu_hash or "",
+            group_id=request.group_id or "",
+            exclude_questions=request.exclude_questions,
         )
     else:
         questions = await DatasetNavigationService.refresh_group_questions(
             db,
             group_title=request.group_title,
             tables=request.tables,
+            user_id=user_id,
+            is_admin=is_admin,
+            dataset_menu_hash=request.dataset_menu_hash or "",
+            group_id=request.group_id or "",
+            exclude_questions=request.exclude_questions,
         )
     return StandardResponse(data=DatasetGroupRefreshResponse(questions=questions))
 

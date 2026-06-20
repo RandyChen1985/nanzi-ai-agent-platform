@@ -577,6 +577,27 @@ def test_build_group_followups_refresh_prompt_contains_scene_and_tables():
     assert "2 条" in prompt or "2 行" in prompt
 
 
+@pytest.mark.no_infrastructure
+def test_build_group_questions_refresh_prompt_contains_excluded_questions():
+    prompt = DataQueryPrompts.build_group_questions_refresh_prompt(
+        group_title="智能体元数据",
+        tables=["智能体访问日志"],
+        table_to_columns={
+            "智能体访问日志": [
+                {"name": "request_count", "term": "访问量", "type": "int", "description": "总访问量"}
+            ]
+        },
+        table_physical_names={"智能体访问日志": "ai_agent_execution_history"},
+        exclude_questions=[
+            "分析最近一周的智能体访问量",
+            "统计最近7天每日访问量趋势",
+        ],
+    )
+    assert "最近已经出现过" in prompt
+    assert "分析最近一周的智能体访问量" in prompt
+    assert "统计最近7天每日访问量趋势" in prompt
+
+
 @pytest.mark.asyncio
 @pytest.mark.no_infrastructure
 async def test_refresh_group_followups_success():
@@ -658,6 +679,101 @@ async def test_refresh_group_questions_success():
 
 @pytest.mark.asyncio
 @pytest.mark.no_infrastructure
+async def test_refresh_group_questions_filters_to_authorized_tables_and_excludes_recent_questions():
+    llm_output = (
+        "- [🙋 访问量统计](quick:分析最近一周的智能体访问量)\n"
+        "- [🙋 耗时分析](quick:说明响应最长的前10个请求)\n"
+        "- [🙋 失败原因分布](quick:统计最近24小时的失败原因分布)"
+    )
+    mock_client = MagicMock()
+    mock_client.generate_text = AsyncMock(return_value=llm_output)
+    mock_db = AsyncMock()
+
+    with patch.object(
+        DatasetNavigationService,
+        "_get_dataset_menu",
+        AsyncMock(return_value=SAMPLE_MENU),
+    ), patch.object(
+        DatasetNavigationService,
+        "_load_table_metadata",
+        AsyncMock(return_value=(
+            {"智能体访问日志": "ai_agent_execution_history"},
+            {"智能体访问日志": [
+                {"name": "request_count", "term": "访问量", "type": "int", "description": "总访问量"}
+            ]},
+        )),
+    ) as load_metadata, patch(
+        "app.services.dataset_navigation_service.AgentConfigProvider.get_configured_llm",
+        AsyncMock(return_value=object()),
+    ), patch(
+        "app.services.dataset_navigation_service.chat_client_from_handle",
+        return_value=mock_client,
+    ), patch(
+        "app.services.dataset_navigation_service.get_redis",
+        AsyncMock(return_value=None),
+    ):
+        questions = await DatasetNavigationService.refresh_group_questions(
+            mock_db,
+            group_title="智能体元数据",
+            tables=["智能体访问日志", "未授权表"],
+            user_id=7,
+            is_admin=False,
+            dataset_menu_hash="abc123",
+            group_id="ai-agent-meta",
+            exclude_questions=[
+                {"label": "当前问题", "query": "分析最近一周的智能体访问量"},
+            ],
+        )
+
+    load_metadata.assert_awaited_once_with(mock_db, ["智能体访问日志"])
+    assert [q["query"] for q in questions] == [
+        "说明响应最长的前10个请求",
+        "统计最近24小时的失败原因分布",
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.no_infrastructure
+async def test_recent_refresh_questions_are_stored_with_short_ttl():
+    class FakeRedis:
+        def __init__(self):
+            self.values = {}
+            self.ttls = {}
+
+        async def get(self, key):
+            return self.values.get(key)
+
+        async def set(self, key, value, ex=None):
+            self.values[key] = value
+            self.ttls[key] = ex
+
+    redis = FakeRedis()
+    with patch(
+        "app.services.dataset_navigation_service.get_redis",
+        AsyncMock(return_value=redis),
+    ):
+        await DatasetNavigationService._remember_recent_refresh_questions(
+            user_key="7",
+            dataset_menu_hash="abc123",
+            purpose="questions",
+            group_identity="ai-agent-meta",
+            questions=[
+                {"label": "访问量统计", "query": "分析最近一周的智能体访问量"},
+            ],
+        )
+        recent = await DatasetNavigationService._load_recent_refresh_questions(
+            user_key="7",
+            dataset_menu_hash="abc123",
+            purpose="questions",
+            group_identity="ai-agent-meta",
+        )
+
+    assert recent == ["分析最近一周的智能体访问量"]
+    assert list(redis.ttls.values()) == [300]
+
+
+@pytest.mark.asyncio
+@pytest.mark.no_infrastructure
 async def test_recommend_table_questions_uses_frontend_columns_without_db_lookup():
     llm_output = (
         "- [🙋 用户增长趋势](quick:统计最近30天每日新增用户数)\n"
@@ -733,4 +849,3 @@ async def test_build_navigation_for_user_skips_llm_when_no_authorized_datasets()
     load_cache.assert_not_awaited()
     generate_markdown.assert_not_awaited()
     save_cache.assert_not_awaited()
-

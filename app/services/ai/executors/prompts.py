@@ -464,7 +464,8 @@ XML 示例：
         group_title: str,
         tables: list[str],
         table_to_columns: dict[str, list[dict[str, Any]]],
-        table_physical_names: dict[str, str]
+        table_physical_names: dict[str, str],
+        exclude_questions: list[str] | None = None,
     ) -> str:
         ctx = ""
         for t in tables:
@@ -480,10 +481,12 @@ XML 示例：
                 ctx += "  * (暂无字段定义)\n"
             ctx += "\n"
 
+        exclude_block = DataQueryPrompts._format_recent_question_exclusions(exclude_questions)
         return (
             f"你是一个专业的 ChatBI 数据分析专家。\n"
             f"请针对以下业务分析场景，推荐 3 个最适合的高频业务分析提问：\n\n"
             f"{DataQueryPrompts._portal_time_recommendation_rules()}\n\n"
+            f"{exclude_block}"
             f"【业务场景】：'{group_title}'\n"
             f"【关联数据表结构】：\n{ctx}\n"
             f"【输出格式要求】：\n"
@@ -500,6 +503,7 @@ XML 示例：
         tables: list[str],
         table_to_columns: dict[str, list[dict[str, Any]]],
         table_physical_names: dict[str, str],
+        exclude_questions: list[str] | None = None,
     ) -> str:
         ctx = ""
         for t in tables:
@@ -515,10 +519,12 @@ XML 示例：
                 ctx += "  * (暂无字段定义)\n"
             ctx += "\n"
 
+        exclude_block = DataQueryPrompts._format_recent_question_exclusions(exclude_questions)
         return (
             f"你是一个专业的 ChatBI 数据分析专家。\n"
             f"请针对业务场景「{group_title}」，生成 2 条**继续探索**型追问，帮助用户在该场景下延伸分析。\n\n"
             f"{DataQueryPrompts._portal_time_recommendation_rules()}\n\n"
+            f"{exclude_block}"
             f"【关联数据表结构】：\n{ctx}\n"
             f"【输出要求】：\n"
             f"- 2 条追问应偏「还能问什么 / 字段口径 / 关联维度」，不要与常见统计明细重复。\n"
@@ -526,6 +532,20 @@ XML 示例：
             f"- 问题中优先使用中文表术语，不要在 quick 中输出物理表名。\n"
             f"- 只输出 2 行，不要前言或 Markdown 标题。"
         )
+
+    @staticmethod
+    def _format_recent_question_exclusions(exclude_questions: list[str] | None) -> str:
+        cleaned: list[str] = []
+        for question in exclude_questions or []:
+            text = str(question or "").strip()
+            if text and text not in cleaned:
+                cleaned.append(text)
+        if not cleaned:
+            return ""
+        lines = ["【最近已经出现过的问题，禁止重复或生成语义高度相似的问题】："]
+        for question in cleaned[:12]:
+            lines.append(f"- {question}")
+        return "\n".join(lines) + "\n\n"
 
     @staticmethod
     def _slugify_scene_id(text: str) -> str:

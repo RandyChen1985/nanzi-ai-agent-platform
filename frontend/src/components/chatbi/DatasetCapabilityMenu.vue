@@ -1829,6 +1829,15 @@ const collectGroupTables = (group: DatasetCapabilityGroup): string[] => {
   return tables;
 };
 
+const buildQuestionExclusions = (questions?: DatasetCapabilityQuestion[]) => {
+  return (questions || [])
+    .map((question) => ({
+      label: String(question.label || "").trim(),
+      query: String(question.query || "").trim(),
+    }))
+    .filter((question) => question.query);
+};
+
 const handleRefreshClick = () => {
   if (refreshDisabled.value) return;
   isRefreshing.value = true;
@@ -1864,6 +1873,9 @@ const handleRefreshGroupQuestions = async (group: DatasetCapabilityGroup) => {
     const res = await axios.post("/api/v1/chat/dataset-menu/refresh-group-questions", {
       group_title: group.title,
       tables,
+      dataset_menu_hash: props.payload.dataset_menu_hash,
+      group_id: group.id || group.title,
+      exclude_questions: buildQuestionExclusions(group.questions),
       purpose: "questions",
     });
     if (res.data?.code === 200 && res.data?.data?.questions?.length) {
@@ -1895,6 +1907,9 @@ const handleRefreshGroupFollowups = async (group: DatasetCapabilityGroup) => {
     const res = await axios.post("/api/v1/chat/dataset-menu/refresh-group-questions", {
       group_title: group.title,
       tables,
+      dataset_menu_hash: props.payload.dataset_menu_hash,
+      group_id: group.id || group.title,
+      exclude_questions: buildQuestionExclusions(group.followups),
       purpose: "followups",
     });
     if (res.data?.code === 200 && res.data?.data?.questions?.length) {

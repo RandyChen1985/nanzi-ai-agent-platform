@@ -6,6 +6,7 @@ import hashlib
 import logging
 import re
 from datetime import datetime, timezone
+from difflib import SequenceMatcher
 from typing import Any, Dict, Optional
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -23,6 +24,8 @@ _NAV_CACHE_TTL_SECONDS = 604800  # 7 days
 _NAV_PROMPT_VERSION = "v5"
 _NAV_CACHE_GEN_KEY = "agent:dataset_navigation:cache_generation"
 _CLICK_STATS_TTL_SECONDS = 90 * 24 * 60 * 60
+_RECENT_REFRESH_QUESTIONS_TTL_SECONDS = 5 * 60
+_RECENT_REFRESH_QUESTIONS_LIMIT = 80
 
 
 def _user_cache_key(*, user_id: Optional[int], is_admin: bool) -> str:
@@ -54,6 +57,31 @@ def _decode_redis_value(value: Any) -> Any:
     if isinstance(value, bytes):
         return value.decode("utf-8")
     return value
+
+
+def _normalize_question_text(text: str) -> str:
+    return re.sub(r"[\W_]+", "", str(text or "").lower(), flags=re.UNICODE)
+
+
+def _question_texts_similar(left: str, right: str) -> bool:
+    left_norm = _normalize_question_text(left)
+    right_norm = _normalize_question_text(right)
+    if not left_norm or not right_norm:
+        return False
+    if left_norm == right_norm:
+        return True
+    shorter, longer = sorted((left_norm, right_norm), key=len)
+    if len(shorter) >= 8 and shorter in longer:
+        return True
+    if SequenceMatcher(None, left_norm, right_norm).ratio() >= 0.86:
+        return True
+    if len(left_norm) < 2 or len(right_norm) < 2:
+        return False
+    left_pairs = {left_norm[i : i + 2] for i in range(len(left_norm) - 1)}
+    right_pairs = {right_norm[i : i + 2] for i in range(len(right_norm) - 1)}
+    if not left_pairs or not right_pairs:
+        return False
+    return len(left_pairs & right_pairs) / len(left_pairs | right_pairs) >= 0.72
 
 
 class DatasetNavigationService:
@@ -150,6 +178,153 @@ class DatasetNavigationService:
     @staticmethod
     def _click_meta_key(*, user_key: str, dataset_menu_hash: str) -> str:
         return f"agent:dataset_navigation_click_meta:{user_key}:{dataset_menu_hash}"
+
+    @staticmethod
+    def _recent_refresh_questions_key(
+        *,
+        user_key: str,
+        dataset_menu_hash: str,
+        purpose: str,
+        group_identity: str,
+    ) -> str:
+        clean_hash = str(dataset_menu_hash or "").strip() or "unknown"
+        clean_purpose = re.sub(r"[^0-9A-Za-z_-]+", "_", str(purpose or "questions").strip()) or "questions"
+        group_hash = _question_hash(group_identity or "unknown")
+        return f"agent:dataset_navigation_recent_questions:{user_key}:{clean_hash}:{clean_purpose}:{group_hash}"
+
+    @staticmethod
+    def _extract_question_queries(questions: Optional[list[Any]]) -> list[str]:
+        extracted: list[str] = []
+        for item in questions or []:
+            if isinstance(item, dict):
+                text = str(item.get("query") or item.get("label") or "").strip()
+            else:
+                text = str(item or "").strip()
+            if text and text not in extracted:
+                extracted.append(text)
+        return extracted
+
+    @staticmethod
+    async def _load_recent_refresh_questions(
+        *,
+        user_key: str,
+        dataset_menu_hash: str,
+        purpose: str,
+        group_identity: str,
+    ) -> list[str]:
+        if not dataset_menu_hash:
+            return []
+        try:
+            redis = await get_redis()
+            if not redis:
+                return []
+            key = DatasetNavigationService._recent_refresh_questions_key(
+                user_key=user_key,
+                dataset_menu_hash=dataset_menu_hash,
+                purpose=purpose,
+                group_identity=group_identity,
+            )
+            raw = await redis.get(key)
+            raw = _decode_redis_value(raw)
+            if not raw:
+                return []
+            values = json.loads(str(raw))
+            if not isinstance(values, list):
+                return []
+            return [str(v).strip() for v in values if str(v or "").strip()]
+        except Exception as e:
+            logger.warning("Dataset navigation recent questions read failed: %s", e)
+            return []
+
+    @staticmethod
+    async def _remember_recent_refresh_questions(
+        *,
+        user_key: str,
+        dataset_menu_hash: str,
+        purpose: str,
+        group_identity: str,
+        questions: list[dict[str, Any]],
+    ) -> None:
+        new_queries = DatasetNavigationService._extract_question_queries(questions)
+        if not dataset_menu_hash or not new_queries:
+            return
+        try:
+            redis = await get_redis()
+            if not redis:
+                return
+            key = DatasetNavigationService._recent_refresh_questions_key(
+                user_key=user_key,
+                dataset_menu_hash=dataset_menu_hash,
+                purpose=purpose,
+                group_identity=group_identity,
+            )
+            raw = _decode_redis_value(await redis.get(key))
+            try:
+                existing_payload = json.loads(str(raw)) if raw else []
+            except Exception:
+                existing_payload = []
+            existing = []
+            if isinstance(existing_payload, list):
+                existing = [str(v).strip() for v in existing_payload if str(v or "").strip()]
+            merged: list[str] = []
+            for query in [*new_queries, *existing]:
+                if query and query not in merged:
+                    merged.append(query)
+            await redis.set(
+                key,
+                json.dumps(merged[:_RECENT_REFRESH_QUESTIONS_LIMIT], ensure_ascii=False),
+                ex=_RECENT_REFRESH_QUESTIONS_TTL_SECONDS,
+            )
+        except Exception as e:
+            logger.warning("Dataset navigation recent questions write failed: %s", e)
+
+    @staticmethod
+    async def _filter_authorized_tables(
+        *,
+        tables: list[str],
+        user_id: Optional[int],
+        is_admin: bool,
+    ) -> list[str]:
+        requested: list[str] = []
+        for table in tables or []:
+            term = str(table or "").strip()
+            if term and term not in requested:
+                requested.append(term)
+        if not requested:
+            return []
+        if user_id is None and not is_admin:
+            return requested
+        dataset_menu = await DatasetNavigationService._get_dataset_menu(user_id=user_id, is_admin=is_admin)
+        allowed: set[str] = set()
+        for block in DataQueryPrompts._parse_dataset_blocks(dataset_menu):
+            for table in block.get("tables") or []:
+                term = str(table.get("term") or "").strip()
+                if term:
+                    allowed.add(term)
+        if not allowed:
+            return []
+        return [table for table in requested if table in allowed]
+
+    @staticmethod
+    def _filter_new_questions(
+        questions: list[dict[str, Any]],
+        excluded_queries: list[str],
+        *,
+        limit: int,
+    ) -> list[dict[str, Any]]:
+        accepted: list[dict[str, Any]] = []
+        comparison_pool = list(excluded_queries)
+        for question in questions or []:
+            query = str(question.get("query") or "").strip()
+            if not query:
+                continue
+            if any(_question_texts_similar(query, existing) for existing in comparison_pool):
+                continue
+            accepted.append(question)
+            comparison_pool.append(query)
+            if len(accepted) >= limit:
+                break
+        return accepted
 
     @staticmethod
     async def _load_question_click_stats(
@@ -613,17 +788,80 @@ class DatasetNavigationService:
         *,
         group_title: str,
         tables: list[str],
+        user_id: Optional[int] = None,
+        is_admin: bool = False,
+        dataset_menu_hash: str = "",
+        group_id: str = "",
+        exclude_questions: Optional[list[Any]] = None,
     ) -> list[dict[str, Any]]:
         """针对特定的卡片场景 (group_title) 和关联表列表 (tables)，在线实时调用大模型生成 3 个新问题"""
-        table_physical_names, table_to_columns = await DatasetNavigationService._load_table_metadata(db, tables)
+        purpose = "questions"
+        user_key = _user_cache_key(user_id=user_id, is_admin=is_admin)
+        group_identity = str(group_id or group_title or "").strip()
+        authorized_tables = await DatasetNavigationService._filter_authorized_tables(
+            tables=tables,
+            user_id=user_id,
+            is_admin=is_admin,
+        )
+        if not authorized_tables:
+            return []
+
+        recent_questions = await DatasetNavigationService._load_recent_refresh_questions(
+            user_key=user_key,
+            dataset_menu_hash=dataset_menu_hash,
+            purpose=purpose,
+            group_identity=group_identity,
+        )
+        excluded_queries = [
+            *DatasetNavigationService._extract_question_queries(exclude_questions),
+            *recent_questions,
+        ]
+        table_physical_names, table_to_columns = await DatasetNavigationService._load_table_metadata(
+            db,
+            authorized_tables,
+        )
 
         prompt = DataQueryPrompts.build_group_questions_refresh_prompt(
             group_title=group_title,
-            tables=tables,
+            tables=authorized_tables,
             table_to_columns=table_to_columns,
             table_physical_names=table_physical_names,
+            exclude_questions=excluded_queries,
         )
-        return await DatasetNavigationService._generate_questions_via_llm(prompt)
+        generated = await DatasetNavigationService._generate_questions_via_llm(prompt)
+        questions = DatasetNavigationService._filter_new_questions(generated, excluded_queries, limit=3)
+        if len(questions) < 3:
+            retry_exclusions = [
+                *excluded_queries,
+                *DatasetNavigationService._extract_question_queries(generated),
+            ]
+            retry_prompt = DataQueryPrompts.build_group_questions_refresh_prompt(
+                group_title=group_title,
+                tables=authorized_tables,
+                table_to_columns=table_to_columns,
+                table_physical_names=table_physical_names,
+                exclude_questions=retry_exclusions,
+            )
+            retry_generated = await DatasetNavigationService._generate_questions_via_llm(retry_prompt)
+            questions = [
+                *questions,
+                *DatasetNavigationService._filter_new_questions(
+                    retry_generated,
+                    [
+                        *excluded_queries,
+                        *DatasetNavigationService._extract_question_queries(questions),
+                    ],
+                    limit=3 - len(questions),
+                ),
+            ]
+        await DatasetNavigationService._remember_recent_refresh_questions(
+            user_key=user_key,
+            dataset_menu_hash=dataset_menu_hash,
+            purpose=purpose,
+            group_identity=group_identity,
+            questions=questions,
+        )
+        return questions
 
     @staticmethod
     async def refresh_group_followups(
@@ -631,17 +869,78 @@ class DatasetNavigationService:
         *,
         group_title: str,
         tables: list[str],
+        user_id: Optional[int] = None,
+        is_admin: bool = False,
+        dataset_menu_hash: str = "",
+        group_id: str = "",
+        exclude_questions: Optional[list[Any]] = None,
     ) -> list[dict[str, Any]]:
         """针对场景卡片生成 2 条「继续追问」探索性问题。"""
-        table_physical_names, table_to_columns = await DatasetNavigationService._load_table_metadata(db, tables)
+        purpose = "followups"
+        user_key = _user_cache_key(user_id=user_id, is_admin=is_admin)
+        group_identity = str(group_id or group_title or "").strip()
+        authorized_tables = await DatasetNavigationService._filter_authorized_tables(
+            tables=tables,
+            user_id=user_id,
+            is_admin=is_admin,
+        )
+        if not authorized_tables:
+            return []
+        recent_questions = await DatasetNavigationService._load_recent_refresh_questions(
+            user_key=user_key,
+            dataset_menu_hash=dataset_menu_hash,
+            purpose=purpose,
+            group_identity=group_identity,
+        )
+        excluded_queries = [
+            *DatasetNavigationService._extract_question_queries(exclude_questions),
+            *recent_questions,
+        ]
+        table_physical_names, table_to_columns = await DatasetNavigationService._load_table_metadata(
+            db,
+            authorized_tables,
+        )
         prompt = DataQueryPrompts.build_group_followups_refresh_prompt(
             group_title=group_title,
-            tables=tables,
+            tables=authorized_tables,
             table_to_columns=table_to_columns,
             table_physical_names=table_physical_names,
+            exclude_questions=excluded_queries,
         )
-        questions = await DatasetNavigationService._generate_questions_via_llm(prompt)
-        return questions[:2]
+        generated = await DatasetNavigationService._generate_questions_via_llm(prompt)
+        questions = DatasetNavigationService._filter_new_questions(generated, excluded_queries, limit=2)
+        if len(questions) < 2:
+            retry_exclusions = [
+                *excluded_queries,
+                *DatasetNavigationService._extract_question_queries(generated),
+            ]
+            retry_prompt = DataQueryPrompts.build_group_followups_refresh_prompt(
+                group_title=group_title,
+                tables=authorized_tables,
+                table_to_columns=table_to_columns,
+                table_physical_names=table_physical_names,
+                exclude_questions=retry_exclusions,
+            )
+            retry_generated = await DatasetNavigationService._generate_questions_via_llm(retry_prompt)
+            questions = [
+                *questions,
+                *DatasetNavigationService._filter_new_questions(
+                    retry_generated,
+                    [
+                        *excluded_queries,
+                        *DatasetNavigationService._extract_question_queries(questions),
+                    ],
+                    limit=2 - len(questions),
+                ),
+            ]
+        await DatasetNavigationService._remember_recent_refresh_questions(
+            user_key=user_key,
+            dataset_menu_hash=dataset_menu_hash,
+            purpose=purpose,
+            group_identity=group_identity,
+            questions=questions,
+        )
+        return questions
 
     @staticmethod
     def _parse_quick_questions_from_llm(content: str) -> list[dict[str, Any]]:
@@ -865,4 +1164,3 @@ class DatasetNavigationService:
             logger.info("[Portal Warm-up] Background navigation cache warm-up completed.")
         except Exception as e:
             logger.error("[Portal Warm-up] Background warm-up task encountered error: %s", e)
-

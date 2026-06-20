@@ -20,7 +20,12 @@ async def test_refresh_group_questions_api_success(db_session):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             payload = {
                 "group_title": "智能体运行分析",
-                "tables": ["智能体访问日志"]
+                "tables": ["智能体访问日志"],
+                "dataset_menu_hash": "abc123",
+                "group_id": "ai-agent-meta",
+                "exclude_questions": [
+                    {"label": "旧问题", "query": "分析最近一周的智能体访问量"}
+                ],
             }
             resp = await client.post(
                 "/api/v1/chat/dataset-menu/refresh-group-questions",
@@ -37,6 +42,12 @@ async def test_refresh_group_questions_api_success(db_session):
             assert data["data"]["questions"][0]["query"] == "指令1"
             
             mock_refresh.assert_awaited_once()
+            kwargs = mock_refresh.await_args.kwargs
+            assert kwargs["user_id"] is not None
+            assert kwargs["is_admin"] is False
+            assert kwargs["dataset_menu_hash"] == "abc123"
+            assert kwargs["group_id"] == "ai-agent-meta"
+            assert kwargs["exclude_questions"][0]["query"] == "分析最近一周的智能体访问量"
 
 
 @pytest.mark.asyncio
