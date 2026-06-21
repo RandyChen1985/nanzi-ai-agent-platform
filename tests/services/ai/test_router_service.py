@@ -56,6 +56,13 @@ def test_should_inherit_data_agent_session_generalized():
     assert should_inherit_data_agent_session("查一下所有机房的列表") is True
     assert should_inherit_data_agent_session("看看我开源项目，小星星情况") is False
     assert should_inherit_data_agent_session("今天北京天气怎么样") is False
+    assert should_inherit_data_agent_session("姓名呢") is True
+    assert should_inherit_data_agent_session("那手机号呢") is True
+    assert should_inherit_data_agent_session("还有创建时间呢") is True
+    assert should_inherit_data_agent_session("PUE呢？") is True
+    assert should_inherit_data_agent_session("那它呢") is False
+    assert should_inherit_data_agent_session("为什么呢") is False
+    assert should_inherit_data_agent_session("看看") is False
 
 # --- Tests ---
 

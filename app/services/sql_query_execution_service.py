@@ -331,7 +331,12 @@ async def execute_sql_query_core(
                         )
                     return (
                         f"[Validation Failed] 表 '{display}' 不属于当前指定的数据集 '{dataset_name}'，"
-                        f"严禁跨数据集或凭空猜表。请通过 get_dataset_schema 重新确认该数据集下相关表的 table_name（物理表名）后再查询。"
+                        f"普通 execute_sql_query 严禁跨数据集或凭空猜表。"
+                        f"如果用户明确要求跨数据集/跨库/联合查询，请走跨数据集联邦查询流程："
+                        f"先分别在各自 dataset 内执行子查询，再在内存联邦阶段关联。"
+                        f"如果只是补全姓名/部门/客户名称等维度，请只查询当前数据集的外键字段，"
+                        f"后端会尝试按 relation/维表做维度补全。"
+                        f"请通过 get_dataset_schema 重新确认当前数据集下相关表的 table_name（物理表名）后再查询。"
                     )
 
         # 2. 物理表全局可访问权限校验
@@ -417,6 +422,21 @@ async def execute_sql_query_core(
             if "Expected table name" in error_str or "SQL transformation failed" in error_str:
                 return f"[Validation Failed] SQL语法错误: {error_str}"
             return f"[Security Error] Failed to apply data permissions: {error_str}"
+
+    # SQL 性能与安全沙箱网关预检
+    try:
+        from app.services.ai.sql_sandbox_gate import SQLSandboxGate
+        sandbox_res = await SQLSandboxGate.verify_and_optimize(
+            session,
+            sql=sql,
+            data_source=data_source,
+            dialect=dialect,
+        )
+        if not sandbox_res.allowed:
+            return sandbox_res.message
+        sql = sandbox_res.optimized_sql
+    except Exception as sandbox_err:
+        logger.warning(f"[SQL Sandbox] Pre-check failed or skipped: {sandbox_err}")
 
     error = validate_sql(sql, dialect=dialect)
     if error:

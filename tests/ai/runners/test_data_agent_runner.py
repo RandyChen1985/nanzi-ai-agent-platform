@@ -3118,6 +3118,32 @@ def test_sql_static_risk_ignores_risky_patterns_inside_literals(data_config):
         "SELECT id FROM demo ORDER BY created_at DESC AND ROWNUM <= 10"
     )
 
+    # 新增关于子查询与 CTE 的 SELECT * 校验用例
+    # 1. 允许：外层 SELECT *，但内层子查询指定了具体字段
+    assert DataAgentRunner._detect_sql_static_risk(
+        "SELECT * FROM (SELECT col1, col2 FROM demo) AS x"
+    ) == ""
+
+    # 2. 允许：外层 SELECT *，但内层 CTE 指定了具体字段
+    assert DataAgentRunner._detect_sql_static_risk(
+        "WITH cte AS (SELECT col1, col2 FROM demo) SELECT * FROM cte"
+    ) == ""
+
+    # 3. 拦截：外层不是 SELECT *，但内层子查询是物理表 SELECT *
+    assert DataAgentRunner._detect_sql_static_risk(
+        "SELECT col1 FROM (SELECT * FROM demo) AS x"
+    ) == "SELECT * 会扩大返回范围，请只查询必要字段"
+
+    # 4. 拦截：JOIN 子查询中包含物理表 SELECT *
+    assert DataAgentRunner._detect_sql_static_risk(
+        "SELECT a.col1, b.col2 FROM t1 AS a JOIN (SELECT * FROM demo) AS b ON a.id = b.id"
+    ) == "SELECT * 会扩大返回范围，请只查询必要字段"
+
+    # 5. 拦截：嵌套子查询里依然是物理表 SELECT *
+    assert DataAgentRunner._detect_sql_static_risk(
+        "SELECT * FROM (SELECT * FROM demo) AS x"
+    ) == "SELECT * 会扩大返回范围，请只查询必要字段"
+
 
 def test_schema_reference_sql_error_requires_schema_refresh(data_config):
     from app.services.ai.runners.data_agent_runner import DataAgentRunner, _DataRunState
@@ -3263,6 +3289,34 @@ def test_sql_error_repair_message_for_schema_reference_includes_column_guidance(
     repair = runner._build_repair_message(state)
     assert "禁止原样重复" in repair
     assert "字段/表引用修正指引" in repair
+
+
+def test_sql_error_repair_message_for_cross_dataset_scope_guides_federated_path(data_config):
+    from app.services.ai.runners.data_agent_runner import DataAgentRunner, _DataRunState
+
+    runner = DataAgentRunner(config=data_config, trace_id="trace-cross-dataset-scope", trace_buffer=[])
+    error_message = (
+        "[Validation Failed] 表 'HRMRESOURCE' 不属于当前指定的数据集 'meta_yes_crm_ds'，"
+        "普通 execute_sql_query 严禁跨数据集或凭空猜表。"
+    )
+    state = _DataRunState(
+        requires_fresh_data=True,
+        schema_completed=True,
+        sql_error=True,
+        sql_error_message=error_message,
+        last_sql_error_summary=error_message,
+        last_failed_sql_normalized=(
+            "select * from view_ai_visit_log v "
+            "left join hr_ds.hrmresource r on v.follow_up_person = r.id"
+        ),
+    )
+
+    repair = runner._build_repair_message(state)
+
+    assert "普通 execute_sql_query 只能查询当前 dataset" in repair
+    assert "不要把其他数据集表写进同一条 SQL" in repair
+    assert "跨数据集联邦查询流程" in repair
+    assert "姓名/部门" in repair
 
 
 def test_sql_error_repair_message_for_date_format_error_includes_date_guidance(data_config):

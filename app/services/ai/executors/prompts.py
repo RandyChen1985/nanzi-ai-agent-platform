@@ -1081,9 +1081,12 @@ XML 示例：
 
         if any(keyword in reasoning_text for keyword in ("最近对话", "上下文")):
             if last_topic:
+                query_action = last_topic
+                if not query_action.startswith(("查询", "查一下", "查下", "获取", "显示", "展示", "看看", "搜")):
+                    query_action = f"查询{query_action}"
                 add(
                     f"重新查询「{cls._truncate_for_display(last_topic, 16)}」",
-                    f"查询{last_topic}",
+                    query_action,
                 )
             if q:
                 add(f"明确对象后重问：{topic_label}", f"请明确要分析的对象和时间范围：{q}")
@@ -1180,11 +1183,14 @@ XML 示例：
             ),
         ]
         if last_topic:
+            query_action = last_topic
+            if not query_action.startswith(("查询", "查一下", "查下", "获取", "显示", "展示", "看看", "搜")):
+                query_action = f"查询{query_action}"
             buttons.insert(
                 0,
                 cls.quick_button(
                     f"重新查询「{last_topic}」",
-                    f"查询{last_topic}",
+                    query_action,
                 ),
             )
         lead = (
@@ -1536,6 +1542,7 @@ XML 示例：
             f"{result_json}\n\n"
             "请只基于上一轮结构化查询结果完成分析或可视化，不要声称已重新查询数据库。\n"
             "这是基于已有结果的追问：不要重复上一轮已展示过的图表、表格或核心结论，只输出本轮追问的新增分析或可视化。\n"
+            "【排版特别约束】：因为是追问，请直接输出图表（```chart```）和新增分析，【禁止】再次套用系统提示词中“🎯 核心结论”、“📊 数据概览”、“🔍 分析解读”等三段式完整报告模板，避免重复输出上轮数据表格。\n"
             "整段回答只输出一次，禁止将相同内容重复输出两遍。\n"
             "如果适合可视化，请输出 markdown 结论并附带 ```chart JSON``` 图表配置。\n\n"
             f"{SharedPrompts.MARKDOWN_OUTPUT_FORMAT}\n\n"
@@ -1551,6 +1558,7 @@ XML 示例：
             f"{history_excerpt}\n\n"
             "请只基于上述已有查数展示完成分析或可视化，不要声称已重新查询数据库。\n"
             "这是基于已有结果的追问：不要重复上一轮已展示过的图表、表格或核心结论，只输出本轮追问的新增分析或可视化。\n"
+            "【排版特别约束】：因为是追问，请直接输出图表（```chart```）和新增分析，【禁止】再次套用系统提示词中“🎯 核心结论”、“📊 数据概览”、“🔍 分析解读”等三段式完整报告模板，避免重复输出上轮数据表格。\n"
             "整段回答只输出一次，禁止将相同内容重复输出两遍。\n"
             "如果适合可视化，请输出 markdown 结论并附带 ```chart JSON``` 图表配置。\n\n"
             f"{SharedPrompts.MARKDOWN_OUTPUT_FORMAT}\n\n"

@@ -10,7 +10,8 @@
 [![Python](https://img.shields.io/badge/Python-3.11%2B-blue.svg?logo=python&logoColor=white)](https://www.python.org/) [![AgentScope](https://img.shields.io/badge/AgentScope-2.x-7C3AED.svg)](https://github.com/agentscope-ai/agentscope) [![FastAPI](https://img.shields.io/badge/FastAPI-0.109%2B-009688.svg?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/) [![Vue](https://img.shields.io/badge/Vue-3.x-4FC08D.svg?logo=vue.js&logoColor=white)](https://vuejs.org/) [![TailwindCSS](https://img.shields.io/badge/Tailwind-3.x-38B2AC.svg?logo=tailwind-css&logoColor=white)](https://tailwindcss.com/) [![ClickHouse](https://img.shields.io/badge/ClickHouse-Ready-FFCC00.svg?logo=clickhouse&logoColor=black)](https://clickhouse.com/) [![Redis](https://img.shields.io/badge/Redis-Active-DC382D.svg?logo=redis&logoColor=white)](https://redis.io/) [![MCP](https://img.shields.io/badge/MCP-Supported-orange.svg?logo=anthropic)](https://modelcontextprotocol.org/) [![License](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
 
 
-![Banner](docs/images/banner.png)
+![Promo](docs/images/yunshu-platform-promo-16x9.png)
+![Overview](docs/images/yunshu-platform-overview-16x9.png)
 
 **云枢智能体平台** 是专为企业级复杂场景打造的 AI 智能中枢。
 
@@ -28,6 +29,8 @@
 ---
 
 ## 🏛️ 系统架构 (Architecture)
+
+![Architecture](docs/images/yunshu-platform-architecture-16x9.png)
 
 ```text
 ┌──────────────────────────────────────────────────────────┐

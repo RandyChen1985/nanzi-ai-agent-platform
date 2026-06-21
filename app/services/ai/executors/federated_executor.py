@@ -215,18 +215,67 @@ class FederatedQueryExecutor:
                             
                         except Exception as e:
                             logger.error(f"[FederatedQueryExecutor] Subquery execution failed on dataset {dataset_name}: {e}", exc_info=True)
-                            yield {
-                                "type": "log",
-                                "id": sub_log_id,
-                                "title": f"执行子查询 ({dataset_name}) 失败",
-                                "details": f"错误信息: {str(e)}\nSQL:\n{sub_sql}",
-                                "status": "error",
-                            }
-                            yield {
-                                "content": f"\n❌ 跨源联邦子查询失败（数据集: '{dataset_name}'）：{str(e)}",
-                                "status": "error"
-                            }
-                            return
+                            if idx == 0:
+                                yield {
+                                    "type": "log",
+                                    "id": sub_log_id,
+                                    "title": f"执行主表子查询 ({dataset_name}) 失败",
+                                    "details": f"错误信息: {str(e)}\nSQL:\n{sub_sql}",
+                                    "status": "error",
+                                }
+                                yield {
+                                    "content": f"\n❌ 跨源联邦主表子查询失败（数据集: '{dataset_name}'）：{str(e)}",
+                                    "status": "error"
+                                }
+                                return
+                            else:
+                                yield {
+                                    "type": "log",
+                                    "id": sub_log_id,
+                                    "title": f"执行子查询 ({dataset_name}) 失败，已自动降级",
+                                    "details": f"警告: 关联数据集 '{dataset_name}' 的查询失败，相关字段已自动降级留空处理。错误信息: {str(e)}\nSQL:\n{sub_sql}",
+                                    "status": "warning",
+                                }
+                                yield {
+                                    "content": f"\n⚠️ 警告: 关联数据集 '{dataset_name}' 的查询失败，相关字段已自动降级留空处理。",
+                                    "status": "warning"
+                                }
+                                
+                                # 使用 sqlglot 解析失败子查询的 SQL 字段
+                                col_names = []
+                                try:
+                                    import sqlglot
+                                    from sqlglot import exp
+                                    dialect = dataset_dialect_map.get(dataset_name) if dataset_dialect_map else None
+                                    parsed = sqlglot.parse(sub_sql, read=dialect)
+                                    if parsed:
+                                        expression = parsed[0]
+                                        if isinstance(expression, exp.Select):
+                                            cols = []
+                                            for expr in expression.expressions:
+                                                alias = getattr(expr, "alias", None)
+                                                name = getattr(expr, "name", None)
+                                                if isinstance(expr, exp.Alias):
+                                                    cols.append(expr.alias)
+                                                elif isinstance(expr, exp.Column):
+                                                    cols.append(expr.name)
+                                                elif alias:
+                                                    cols.append(alias)
+                                                elif name:
+                                                    cols.append(name)
+                                                else:
+                                                    cols.append(expr.sql(dialect))
+                                            col_names = [c.strip('`"\'') for c in cols if c]
+                                except Exception as parse_err:
+                                    logger.warning(
+                                        "[FederatedQueryExecutor] Failed to parse columns from failed subquery SQL: %s",
+                                        parse_err,
+                                        exc_info=True
+                                    )
+                                
+                                df = pd.DataFrame(columns=col_names)
+                                duckdb_conn.register(temp_table, df)
+                                continue
 
                 # 3. 内存 Join 联合计算
                 join_log_id = f"fed_join_{uuid.uuid4().hex[:8]}"

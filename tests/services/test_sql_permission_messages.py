@@ -122,7 +122,7 @@ async def test_dataset_table_consistency_validation_failed(monkeypatch):
     )
     assert "[DRY_RUN]" in result_ok
 
-    # 2. 异常场景：查询的表不属于当前数据集，错误信息应回带可查询的物理表清单
+    # 2. 异常场景：查询的表不属于当前数据集，错误信息应引导回正确查询路径
     result_fail = await sql_service.execute_sql_query_core(
         mock_session,
         sql="SELECT * FROM other_table",
@@ -135,6 +135,9 @@ async def test_dataset_table_consistency_validation_failed(monkeypatch):
     )
     assert "[Validation Failed]" in result_fail
     assert "表 'other_table' 不属于当前指定的数据集 'test_dataset'" in result_fail
+    assert "普通 execute_sql_query" in result_fail
+    assert "跨数据集联邦查询流程" in result_fail
+    assert "后端会尝试按 relation/维表做维度补全" in result_fail
     # 不应回显整张数据集表清单（与 get_dataset_schema 语义检索设计保持一致）
     assert "业务表二" not in result_fail
     assert "get_dataset_schema" in result_fail

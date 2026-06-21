@@ -3008,7 +3008,7 @@ const config = reactive({
   enableMultiAgent: true,
   showShortcuts: true,
   enableSqlPlan: false,
-  expandThoughts: false, // 思考过程默认展示开关
+  expandThoughts: true, // 思考过程默认展示开关
 });
 const showAutoRoutingHint = ref(false);
 const showMultiAgentHint = ref(false);
@@ -3506,6 +3506,11 @@ const activeBlobUrl = ref('');
 // Long-Term Memory States
 const activeLtmPreference = ref<any>(null);
 const ignoreLtmThisTurn = ref(false);
+const ltmAlertedInSession = ref(false);
+
+watch(conversationId, () => {
+  ltmAlertedInSession.value = false;
+});
 
 const handleIgnoreLtm = () => {
   ignoreLtmThisTurn.value = true;
@@ -5646,7 +5651,10 @@ const sendMessage = async () => {
               agentMsg.value.hasDataOutput = true;
             }
             if (data.ltm_applied && data.ltm_data) {
-              activeLtmPreference.value = data.ltm_data;
+              if (!ltmAlertedInSession.value) {
+                activeLtmPreference.value = data.ltm_data;
+                ltmAlertedInSession.value = true;
+              }
             }
           } else if (data.type === "retraction") {
             agentMsg.value.content = data.content;
