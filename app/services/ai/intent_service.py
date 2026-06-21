@@ -180,6 +180,42 @@ def looks_like_strong_business_data_request(user_question: str) -> bool:
     return any(sig in q for sig in _DATA_QUERY_STRONG_SIGNALS)
 
 
+def looks_like_short_field_or_continuation_followup(user_question: str) -> bool:
+    """极其简短的字段/属性追问（如：姓名呢、那手机号呢、还有创建时间呢、PUE呢）。"""
+    q = (user_question or "").strip()
+    if not q or len(q) > 15:
+        return False
+
+    has_prefix = any(q.startswith(p) for p in ("那", "还有", "加上", "补充", "增加"))
+    has_suffix = q.endswith(("呢", "吗", "?", "？"))
+
+    if not (has_prefix or has_suffix):
+        return False
+
+    # 去除前缀和后缀，提取核心内容
+    core = q
+    for p in ("那", "还有", "加上", "补充", "增加"):
+        if core.startswith(p):
+            core = core[len(p):]
+            break
+    for s in ("呢", "吗", "?", "？"):
+        if core.endswith(s):
+            core = core[:-len(s)]
+    core = core.strip("?？ \t")
+
+    if not core or len(core) > 10:
+        return False
+
+    # 排除纯人称代词和无意义单字
+    if core in {"你", "我", "他", "它", "谁", "这", "那"}:
+        return False
+    # 排除一些明显的通用疑问词
+    if core in {"什么", "怎么", "哪里", "哪个", "如何", "为什么", "怎么做"}:
+        return False
+
+    return True
+
+
 def should_inherit_data_agent_session(user_question: str) -> bool:
     """上一轮为 data_query 智能体时，本轮是否仍应沿用其会话粘性。
 
@@ -192,6 +228,8 @@ def should_inherit_data_agent_session(user_question: str) -> bool:
     if looks_like_meta_action(q) or looks_like_context_action(q) or looks_like_skill_execution(q):
         return False
     if looks_like_data_followup(q) or looks_like_pure_result_followup(q):
+        return True
+    if looks_like_short_field_or_continuation_followup(q):
         return True
     return looks_like_strong_business_data_request(q)
 
