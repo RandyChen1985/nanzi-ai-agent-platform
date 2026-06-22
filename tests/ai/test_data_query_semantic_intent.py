@@ -84,6 +84,81 @@ def test_build_semantic_intent_prompt_warns_intent_frame_is_not_schema():
     assert "SQL 的 FROM/JOIN/字段必须以 get_dataset_schema 返回为准" in prompt
 
 
+def test_parse_semantic_intent_payload_keeps_all_scope_list_query_narrow():
+    from app.services.ai.data_query_semantic_intent import parse_semantic_intent_payload
+
+    payload = """
+    {"keywords":"机房，列表，设施管理，数据中心，物理位置",
+     "goal":"获取所有机房的基础信息列表",
+     "metrics":[],
+     "dimensions":["机房名称","机房位置","机房状态","机房ID"],
+     "filters":[
+       {"phrase":"所有机房","semantic_type":"entity",
+        "expected_column_types":["机房名称","机房ID","facility_name","dc_name"],
+        "avoid_column_types":["机房状态","机房等级","具体机房名称"],
+        "relation":"parent_region_or_scope"}
+     ],
+     "time_range":"无",
+     "grain":"明细粒度"}
+    """
+
+    intent = parse_semantic_intent_payload(payload, fallback_question="查一下所有机房的列表")
+
+    assert intent.keywords == "机房 列表"
+    assert intent.filters == []
+    assert intent.dimensions == ["机房"]
+    assert "设施管理" not in intent.keywords
+    assert "数据中心" not in intent.keywords
+    assert "物理位置" not in intent.keywords
+
+
+def test_parse_semantic_intent_payload_cleans_space_separated_expanded_keywords():
+    from app.services.ai.data_query_semantic_intent import parse_semantic_intent_payload
+
+    payload = """
+    {"keywords":"机房 列表 设施管理 数据中心 物理位置",
+     "goal":"查一下所有机房的列表",
+     "metrics":[],
+     "dimensions":["机房名称","物理位置"],
+     "filters":[{"phrase":"所有机房","relation":"parent_region_or_scope"}]}
+    """
+
+    intent = parse_semantic_intent_payload(payload, fallback_question="查一下所有机房的列表")
+
+    assert intent.keywords == "机房 列表"
+    assert intent.filters == []
+
+
+def test_parse_semantic_intent_payload_handles_full_scope_particle():
+    from app.services.ai.data_query_semantic_intent import parse_semantic_intent_payload
+
+    payload = """
+    {"keywords":"全部的机房 列表 数据中心",
+     "goal":"查一下全部的机房列表",
+     "dimensions":["机房名称"],
+     "filters":[{"phrase":"全部的机房","relation":"parent_region_or_scope"}]}
+    """
+
+    intent = parse_semantic_intent_payload(payload, fallback_question="查一下全部的机房列表")
+
+    assert intent.keywords == "机房 列表"
+    assert intent.filters == []
+
+
+def test_build_semantic_intent_prompt_warns_not_to_expand_list_query_scope():
+    from app.services.ai.data_query_semantic_intent import build_semantic_intent_prompt
+
+    prompt = build_semantic_intent_prompt(
+        "查一下所有机房的列表",
+        "查一下所有机房的列表",
+        "",
+    )
+
+    assert "不要扩大用户问题范围" in prompt
+    assert "所有/全部" in prompt
+    assert "不要把全量范围词输出为 filters" in prompt
+
+
 def test_format_empty_result_semantic_repair_context_mentions_parent_child_relationship():
     from app.services.ai.data_query_semantic_intent import (
         DataQuerySemanticIntent,

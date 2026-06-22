@@ -73,6 +73,104 @@ def _as_str_list(value: Any, *, max_items: int = 8, max_len: int = 40) -> list[s
     return items
 
 
+_FULL_SCOPE_PREFIX_RE = re.compile(r"^(?:所有的|全部的|所有|全部|全量)(.+)$")
+_LIST_QUERY_HINT_RE = re.compile(r"(?:列表|清单|明细|列出|展示|显示)")
+
+
+def _strip_full_scope_prefix(text: str) -> str:
+    cleaned = _as_clean_str(text)
+    match = _FULL_SCOPE_PREFIX_RE.match(cleaned)
+    if not match:
+        return cleaned
+    return _as_clean_str(match.group(1).lstrip("的"))
+
+
+def _is_full_scope_phrase(text: str) -> bool:
+    cleaned = _as_clean_str(text)
+    return cleaned in {"所有", "全部", "全量"} or bool(_FULL_SCOPE_PREFIX_RE.match(cleaned))
+
+
+def _is_full_scope_list_query(question: str) -> bool:
+    text = _as_clean_str(question, max_len=240)
+    return bool(re.search(r"(?:所有|全部|全量)", text)) and bool(_LIST_QUERY_HINT_RE.search(text))
+
+
+def _split_keywords(text: str) -> list[str]:
+    if not text:
+        return []
+    return _as_str_list(re.split(r"[\s,，、\n]+", str(text)), max_items=20, max_len=40)
+
+
+def _infer_full_scope_subject(question: str, filters: list[SemanticIntentFilter]) -> str:
+    for item in filters:
+        if _is_full_scope_phrase(item.phrase):
+            subject = _strip_full_scope_prefix(item.phrase)
+            if subject:
+                return subject
+    match = re.search(r"(?:所有|全部|全量)(?:的)?([^，,。？?\s]+?)(?:的)?(?:列表|清单|明细)", question)
+    if match:
+        return _as_clean_str(match.group(1))
+    return ""
+
+
+def _keyword_is_user_anchored(keyword: str, question: str, subject: str) -> bool:
+    if not keyword:
+        return False
+    if keyword in question:
+        return True
+    if subject and keyword == subject:
+        return True
+    return False
+
+
+def _sanitize_intent_scope(intent: DataQuerySemanticIntent, *, fallback_question: str = "") -> DataQuerySemanticIntent:
+    question = _as_clean_str(fallback_question or intent.goal, max_len=240)
+    original_filters = list(intent.filters)
+    intent.filters = [item for item in intent.filters if not _is_full_scope_phrase(item.phrase)]
+
+    if not _is_full_scope_list_query(question):
+        return intent
+
+    subject = _infer_full_scope_subject(question, original_filters)
+    user_anchored_keywords: list[str] = []
+    seen_keywords: set[str] = set()
+    for keyword in _split_keywords(intent.keywords):
+        normalized = _strip_full_scope_prefix(keyword)
+        if not _keyword_is_user_anchored(normalized, question, subject):
+            continue
+        if normalized in seen_keywords:
+            continue
+        seen_keywords.add(normalized)
+        user_anchored_keywords.append(normalized)
+    if subject and subject not in seen_keywords:
+        user_anchored_keywords.insert(0, subject)
+        seen_keywords.add(subject)
+    if "列表" in question and "列表" not in seen_keywords:
+        user_anchored_keywords.append("列表")
+    if user_anchored_keywords:
+        intent.keywords = " ".join(user_anchored_keywords[:8])
+
+    if subject:
+        explicit_dimensions: list[str] = []
+        seen_dimensions: set[str] = set()
+        for dimension in intent.dimensions:
+            text = _as_clean_str(dimension)
+            if not text:
+                continue
+            if text in question or (subject and text != subject and text.replace(subject, "") in question):
+                if text not in seen_dimensions:
+                    seen_dimensions.add(text)
+                    explicit_dimensions.append(text)
+                continue
+            if subject not in seen_dimensions:
+                seen_dimensions.add(subject)
+                explicit_dimensions.append(subject)
+        if explicit_dimensions:
+            intent.dimensions = explicit_dimensions[:8]
+
+    return intent
+
+
 def _extract_json_object(content: str) -> dict[str, Any]:
     text = str(content or "").strip()
     if not text:
@@ -117,7 +215,7 @@ def parse_semantic_intent_payload(content: str, *, fallback_question: str = "") 
                 )
             )
     keywords = _as_clean_str(data.get("keywords"), max_len=300)
-    return DataQuerySemanticIntent(
+    intent = DataQuerySemanticIntent(
         goal=_as_clean_str(data.get("goal") or fallback_question, max_len=200),
         keywords=keywords,
         metrics=_as_str_list(data.get("metrics")),
@@ -127,6 +225,7 @@ def parse_semantic_intent_payload(content: str, *, fallback_question: str = "") 
         grain=_as_clean_str(data.get("grain"), max_len=80),
         reasoning=_as_clean_str(data.get("reasoning"), max_len=200),
     )
+    return _sanitize_intent_scope(intent, fallback_question=fallback_question)
 
 
 def derive_keywords_from_semantic_intent(intent: DataQuerySemanticIntent | None, *, max_terms: int = 12) -> str:
@@ -231,7 +330,10 @@ def build_semantic_intent_prompt(
         "3. expected_column_types 只能写字段语义或候选字段名线索，例如 区域/gxqy/region/area；"
         "这些线索不是已确认物理字段名。\n"
         "4. avoid_column_types 用于指出容易误绑字段，例如 地域条件不要优先绑到机房名称/shipName。\n"
-        "5. 若无法判断字段语义，relation 使用 unknown，但不要编造具体数据值。\n\n"
+        "5. 不要扩大用户问题范围：用户只问列表/清单时，不要擅自加入状态、位置、等级、设施管理、数据中心等未明确要求的属性或场景。\n"
+        "6. “所有/全部/全量 + 对象 + 列表/清单/明细”表示全量查询范围，不是筛选条件；"
+        "不要把全量范围词输出为 filters，keywords 也应优先保留用户原话中的对象词和列表/清单词。\n"
+        "7. 若无法判断字段语义，relation 使用 unknown，但不要编造具体数据值。\n\n"
         f"【用户原始问题】\n{user_question}\n\n"
         f"【独立查数问题】\n{standalone_query}\n\n"
         f"【命中的历史案例线索】\n{example_context}"
