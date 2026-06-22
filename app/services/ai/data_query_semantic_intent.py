@@ -226,9 +226,12 @@ def build_semantic_intent_prompt(
         '"time_range":"时间范围或无","grain":"聚合粒度或明细粒度","reasoning":"一句话说明"}\n\n'
         "约束：\n"
         "1. keywords 必须适合检索数据集/表/字段/指标定义，不要输出完整问题原句。\n"
-        "2. expected_column_types 写业务语义和常见物理名均可，例如 区域/gxqy/region/area。\n"
-        "3. avoid_column_types 用于指出容易误绑字段，例如 地域条件不要优先绑到机房名称/shipName。\n"
-        "4. 若无法判断字段语义，relation 使用 unknown，但不要编造具体数据值。\n\n"
+        "2. DataQueryIntentFrame 不是数据库 Schema，不得编造物理表名、物理字段名或 JOIN 键；"
+        "SQL 的 FROM/JOIN/字段必须以 get_dataset_schema 返回为准。\n"
+        "3. expected_column_types 只能写字段语义或候选字段名线索，例如 区域/gxqy/region/area；"
+        "这些线索不是已确认物理字段名。\n"
+        "4. avoid_column_types 用于指出容易误绑字段，例如 地域条件不要优先绑到机房名称/shipName。\n"
+        "5. 若无法判断字段语义，relation 使用 unknown，但不要编造具体数据值。\n\n"
         f"【用户原始问题】\n{user_question}\n\n"
         f"【独立查数问题】\n{standalone_query}\n\n"
         f"【命中的历史案例线索】\n{example_context}"
@@ -261,6 +264,10 @@ def format_semantic_intent_context(intent: DataQuerySemanticIntent | None) -> st
         if item.avoid_column_types:
             detail += f"；避免误绑: {'、'.join(item.avoid_column_types)}"
         lines.append(detail)
+    lines.append(
+        "注意：本意图帧不是已确认物理表名或字段名来源；"
+        "expected_column_types / avoid_column_types 只是字段语义线索，SQL 的 FROM/JOIN/字段必须以 get_dataset_schema 返回为准。"
+    )
     lines.append(
         "生成 SQL 前请逐项核对：每个用户筛选词是否绑定到了语义匹配的字段；"
         "若字段语义不匹配，应先重查 Schema 或更换字段，而不是直接把口语词写进任意名称字段。"

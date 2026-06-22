@@ -66,6 +66,22 @@ def test_format_semantic_intent_context_guides_field_binding():
     assert "gxqy" in block
     assert "避免误绑" in block
     assert "shipName" in block
+    assert "不是已确认物理表名或字段名" in block
+    assert "必须以 get_dataset_schema 返回为准" in block
+
+
+def test_build_semantic_intent_prompt_warns_intent_frame_is_not_schema():
+    from app.services.ai.data_query_semantic_intent import build_semantic_intent_prompt
+
+    prompt = build_semantic_intent_prompt(
+        "查询上海区域所有机房的剩余机柜数",
+        "查询上海区域所有机房的剩余机柜数",
+        "",
+    )
+
+    assert "DataQueryIntentFrame 不是数据库 Schema" in prompt
+    assert "不得编造物理表名" in prompt
+    assert "SQL 的 FROM/JOIN/字段必须以 get_dataset_schema 返回为准" in prompt
 
 
 def test_format_empty_result_semantic_repair_context_mentions_parent_child_relationship():
