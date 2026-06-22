@@ -242,6 +242,7 @@ class FederatedQueryExecutor:
                 
                 async with AsyncSessionLocal() as session:
                     perm_service = PermissionService(session)
+                    subquery_citation_sources: list[dict[str, Any]] = []
 
                     for idx, sq in enumerate(sub_queries):
                         dataset_name = sq["dataset_name"]
@@ -344,6 +345,16 @@ class FederatedQueryExecutor:
 
                                 df = pd.DataFrame(items, columns=col_names)
                                 duckdb_conn.register(temp_table, df)
+                                subquery_citation_sources.append(
+                                    {
+                                        "dataset_name": dataset_name,
+                                        "data_source": dataset.data_source if dataset is not None else "",
+                                        "sql": sub_sql,
+                                        "row_count": len(items),
+                                        "columns": col_names,
+                                        "items": items[:3],
+                                    }
+                                )
                                 yield {
                                     "type": "log",
                                     "id": sub_log_id,
@@ -545,6 +556,16 @@ class FederatedQueryExecutor:
                                 )
                                 df = pd.DataFrame(columns=col_names)
                                 duckdb_conn.register(temp_table, df)
+                                subquery_citation_sources.append(
+                                    {
+                                        "dataset_name": dataset_name,
+                                        "data_source": dataset.data_source if dataset is not None else "",
+                                        "sql": sub_sql,
+                                        "row_count": 0,
+                                        "columns": col_names,
+                                        "items": [],
+                                    }
+                                )
                                 break
 
                 join_log_id = f"fed_join_{uuid.uuid4().hex[:8]}"
@@ -680,6 +701,18 @@ class FederatedQueryExecutor:
                     )
                 except Exception as e:
                     logger.warning("[FederatedQueryExecutor] Failed to save last data result: %s", e)
+
+                from app.services.ai.chatbi_citation_utils import build_federated_chatbi_citation_event
+
+                federated_citation = build_federated_chatbi_citation_event(
+                    tool_call_id=f"fed_cite_{uuid.uuid4().hex[:8]}",
+                    subquery_sources=subquery_citation_sources,
+                    join_sql=join_sql,
+                    final_data=final_data,
+                    dataset_names=self.datasets,
+                )
+                if federated_citation:
+                    yield federated_citation
 
                 # 调用 LLM 做最终的分析和可视化（附带数据完整性提示，避免把降级/截断结果当完整结论）
                 data_caveats = self._build_data_caveats(degraded_datasets, truncated_notes)

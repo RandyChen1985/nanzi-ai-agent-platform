@@ -270,7 +270,10 @@ class _DataRunState:
     current_text_block_emitted: bool = False
     halt_current_react: bool = False
     last_successful_sql_output: Any = None
+    last_successful_sql_args: dict[str, Any] = field(default_factory=dict)
     successful_sqls: dict[str, Any] = field(default_factory=dict)
+    sql_citation_counter: int = 0
+    emitted_sql_citation_signatures: list[str] = field(default_factory=list)
     ratio_anomaly: bool = False          # SQL 结果含超阈值比率（>1.5 或负值），触发对账修复
     ratio_anomaly_reason: str = ""       # 异常说明，用于修复提示词
     duration_anomaly: bool = False       # 时延/时长/时间差字段结果明显反常，触发 SQL 复核
@@ -3358,6 +3361,20 @@ class DataAgentRunner(BaseExecutor):
                             "status": "success",
                             "execution_time_ms": 0,
                         }
+                    citation_args = dict(tool_args)
+                    if auto_retry and getattr(auto_retry, "corrected_sql", None):
+                        citation_args["sql"] = auto_retry.corrected_sql
+                    state.last_successful_sql_args = citation_args
+                    from app.services.ai.chatbi_citation_utils import maybe_build_chatbi_sql_citation_event
+
+                    citation_event = maybe_build_chatbi_sql_citation_event(
+                        state,
+                        tool_call_id=tool_id,
+                        tool_args=citation_args,
+                        parsed_output=parsed_output,
+                    )
+                    if citation_event:
+                        yield citation_event
             self._record_tool_call_signature(state, tool_name, tool_args)
             state.halt_current_react = (
                 state.sql_error
@@ -4000,7 +4017,10 @@ class DataAgentRunner(BaseExecutor):
         state.duration_anomaly_reason = ""
         # 彻底清空上一轮的 SQL 缓存，并重置 Schema 未命中状态，防范修复过程中的 Gate 误拦截
         state.last_successful_sql_output = None
+        state.last_successful_sql_args = {}
         state.successful_sqls = {}
+        state.sql_citation_counter = 0
+        state.emitted_sql_citation_signatures = []
         state.schema_miss = False
         state.schema_needs_refinement = False
         # schema_miss_count 不重置，跨轮累计用于连续未命中达到阈值后终止

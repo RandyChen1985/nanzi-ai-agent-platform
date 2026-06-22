@@ -12,6 +12,8 @@ from app.core.context import get_current_agent_context
 _DATASET_ID_RE = re.compile(r"^[a-fA-F0-9]{32}$")
 _DATASET_HINT_RE = re.compile(r"dataset_id[：:]\s*([a-fA-F0-9]{32})", re.I)
 _CITATION_MARKER_RE = re.compile(r"\[ID:(\d+)\]")
+# 兼容旧式 [1] 引用；负向前瞻避免把 [ID:1] 误判为 [1]
+_LEGACY_CITATION_MARKER_RE = re.compile(r"\[(?!ID:)\d+\]")
 
 
 def normalize_dataset_ids(raw: Union[str, List[Any], None]) -> List[str]:
@@ -197,6 +199,30 @@ def filter_invalid_citation_markers(text: str, valid_ids: Set[str]) -> str:
         return match.group(0) if ref_id in valid_ids else ""
 
     return _CITATION_MARKER_RE.sub(_replace, text)
+
+
+def has_knowledge_citation_markers(text: str) -> bool:
+    """回答中是否包含知识库引用标记（规范 [ID:n] 或旧式 [n]）。"""
+    raw = str(text or "")
+    if not raw.strip():
+        return False
+    if _CITATION_MARKER_RE.search(raw):
+        return True
+    return _LEGACY_CITATION_MARKER_RE.search(raw) is not None
+
+
+def text_has_valid_citation_markers(text: str, valid_ids: Set[str]) -> bool:
+    """回答中是否包含至少一个存在于检索结果中的引用序号。"""
+    if not text or not valid_ids:
+        return False
+    for match in _CITATION_MARKER_RE.finditer(text):
+        if match.group(1) in valid_ids:
+            return True
+    for match in _LEGACY_CITATION_MARKER_RE.finditer(text):
+        legacy_match = re.search(r"\d+", match.group(0))
+        if legacy_match and legacy_match.group(0) in valid_ids:
+            return True
+    return False
 
 
 def _coerce_float(value: Any, default: float) -> float:

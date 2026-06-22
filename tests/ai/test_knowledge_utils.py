@@ -68,6 +68,19 @@ def test_knowledge_prefetch_had_citations_and_filter_markers():
     assert "[ID:9]" not in filtered
 
 
+def test_has_knowledge_citation_markers_supports_id_and_legacy_formats():
+    from app.services.ai.knowledge_utils import (
+        has_knowledge_citation_markers,
+        text_has_valid_citation_markers,
+    )
+
+    assert has_knowledge_citation_markers("制度要求保存配置。[ID:1]") is True
+    assert has_knowledge_citation_markers("制度要求保存配置。[1]") is True
+    assert has_knowledge_citation_markers("制度要求保存配置。") is False
+    assert text_has_valid_citation_markers("说明见文档 [ID:1] 与 [ID:9]", {"1"}) is True
+    assert text_has_valid_citation_markers("说明见文档 [ID:9]", {"1"}) is False
+
+
 def test_resolve_rag_retrieval_params_from_engine_config():
     set_agent_context(
         AgentContext(

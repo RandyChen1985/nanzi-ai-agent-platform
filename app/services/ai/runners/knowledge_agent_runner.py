@@ -23,8 +23,10 @@ from app.services.ai.knowledge_utils import (
     collect_citation_ids_from_payload,
     filter_invalid_citation_markers,
     format_dataset_ids_for_tool,
+    has_knowledge_citation_markers,
     knowledge_prefetch_had_citations,
     resolve_knowledge_dataset_ids,
+    text_has_valid_citation_markers,
 )
 from app.services.ai.tools.registry import ToolRegistry
 
@@ -60,10 +62,11 @@ class KnowledgeAgentRunner(AssistantAgentRunner):
         text_clean = text.strip()
         if not text_clean:
             return False
-        # 1. 检查是否存在有效的引用标记（如 [1] 等）
-        import re
-        citation_markers = re.findall(r"\[\d+\]", text_clean)
-        if citation_markers:
+        # 1. 检查是否存在引用标记（规范 [ID:n] 或旧式 [n]）
+        if self._valid_citation_ids:
+            if text_has_valid_citation_markers(text_clean, self._valid_citation_ids):
+                return False
+        elif has_knowledge_citation_markers(text_clean):
             return False
         # 2. 如果没有任何引用，且是偏事实性描述或表格/列表，且没有拒绝词，判定为幻觉
         refusal_keywords = ["未找到", "没有找到", "暂无", "无法", "抱歉", "没有", "换个关键词", "换关键词", "不具备", "不能", "未提及", "未在"]
