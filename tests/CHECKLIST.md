@@ -173,4 +173,6 @@
 | 空结果诊断方言敏感修复 (Empty Result Dialect Diagnostics) | `app/services/ai/empty_result_filter_diagnostic.py` | 验证当物理数据源为 Oracle 数据库时，智能进行双引号引用以及限制行数的 Oracle 方言语法生成（`FETCH FIRST n ROWS ONLY`），并自动透传方言类型参数。 | ✅ 已完成 | 2026-06-22 |
 | AgentService 主函数拆分与重构 (AgentService Refactoring) | `app/services/ai/agent_service.py` | 验证将 `_run_chat_turn_stream` 重构为 `_resolve_and_verify_agent`、`_inject_skills`、`_load_memory_context`、`_dispatch_executor` 四个子模块以提高可读性和维护性。 | ✅ 已完成 | 2026-06-22 |
 | 联邦查询空结果快捷建议 (Federated Empty Result Quick Tips) | `app/services/ai/executors/federated_executor.py` | 验证当跨源联邦聚合数据行数为空时，自动在 Markdown 结果末尾追加快捷引导建议（“查看子查询行数”、“放宽时间范围”等）以提高用户排查体验。 | ✅ 已完成 | 2026-06-22 |
+| 联邦查询前置静态升级去噪优化 (Federated Query Preflight De-noise) | `app/services/ai/runners/data_agent_runner.py`, `tests/ai/runners/test_data_agent_runner.py` | 优化联邦查询前置静态拦截条件，收紧启发式规则为确凿的跨源特征词匹配，防范因 RAG 检索背景噪声导致的单数据集内多表 JOIN 误判升级。 | ✅ 通过 | 2026-06-22 |
+
 

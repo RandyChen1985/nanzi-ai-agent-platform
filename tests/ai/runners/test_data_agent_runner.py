@@ -36,6 +36,11 @@ columns: id, owner
         schema_output,
         user_question="跨数据集关联能耗数据和资产数据，查维保人员",
     ) is True
+    # 避免单数据集内的两表关联被误判升级为联邦查询
+    assert _should_upgrade_to_federated_query(
+        schema_output,
+        user_question="在这个数据集里把这两张表关联查询一下",
+    ) is False
 
 
 @pytest.fixture

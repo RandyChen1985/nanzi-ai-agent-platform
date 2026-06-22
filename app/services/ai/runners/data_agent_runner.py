@@ -179,14 +179,7 @@ def _looks_like_explicit_federated_query(user_question: str) -> bool:
         "不同库",
         "联合查询",
     )
-    if any(term in q for term in explicit_terms):
-        return True
-    # 弱启发式收敛：仅当「关联动作」与明确的多源名词（数据集/数据源）同现才升级。
-    # 此前把裸「表」「库」「连接/合并」纳入会大量误升级（如单数据集内的多表 JOIN、
-    # “数据库连接”“合并报表”等），且 schema enrich 常带 2+ dataset 放大了误判。
-    has_join_action = any(term in q for term in ("关联", "join", "联结"))
-    has_multi_source_hint = any(term in q for term in ("数据集", "数据源"))
-    return has_join_action and has_multi_source_hint
+    return any(term in q for term in explicit_terms)
 
 
 def _should_upgrade_to_federated_query(schema_output: str, user_question: str) -> bool:
