@@ -2278,6 +2278,7 @@ def test_schema_binding_summary_lists_physical_tables_and_columns(data_config):
     assert "HRMRESOURCE" in summary
     assert "SUPDEPID" in summary
     assert "禁止使用未列出的字段" in summary
+    assert "字段后括号内为类型/样例值" in summary
 
 
 def test_two_schema_misses_or_weak_hits_trigger_fatal(data_config):
@@ -3308,7 +3309,7 @@ async def test_sql_preflight_blocks_unknown_alias_column_before_execution(data_c
 
 
 @pytest.mark.asyncio
-async def test_sql_preflight_blocks_table_not_returned_by_schema_before_execution(data_config):
+async def test_sql_preflight_blocks_table_not_returned_by_schema_before_execution(data_config, monkeypatch):
     from app.services.ai.runners.data_agent_runner import DataAgentRunner, _DataRunState
     from app.services.ai.runtime.agentscope.tools import RuntimeToolSpec
 
@@ -3318,6 +3319,14 @@ async def test_sql_preflight_blocks_table_not_returned_by_schema_before_executio
         nonlocal invoked
         invoked = True
         return "should not run"
+
+    async def fake_permission_check(*args, **kwargs):
+        return "[Validation Failed] 物理表 'facility_management' 未在元数据中注册或不存在。"
+
+    monkeypatch.setattr(
+        "app.services.sql_query_execution_service.check_physical_table_refs_permission",
+        fake_permission_check,
+    )
 
     runner = DataAgentRunner(config=data_config, trace_id="trace-sql-preflight-table", trace_buffer=[])
     state = _DataRunState(requires_fresh_data=True, schema_completed=True)
@@ -3340,10 +3349,56 @@ async def test_sql_preflight_blocks_table_not_returned_by_schema_before_executio
     })
 
     assert invoked is False
-    assert str(result).startswith("[TOOL_ERROR] SQL 预检失败")
     assert "facility_management" in str(result)
-    assert "不在 get_dataset_schema 返回的表列表中" in str(result)
-    assert "memory_service_configs" in str(result)
+    assert "未在元数据中注册" in str(result)
+
+
+@pytest.mark.asyncio
+async def test_sql_preflight_allows_table_in_user_permission_set(data_config, monkeypatch):
+    from app.services.ai.runners.data_agent_runner import DataAgentRunner, _DataRunState
+    from app.services.ai.runtime.agentscope.tools import RuntimeToolSpec
+
+    invoked = False
+
+    async def fake_sql(**kwargs):
+        nonlocal invoked
+        invoked = True
+        return '{"columns": [{"name": "id"}], "items": [[1]]}'
+
+    async def fake_permission_check(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(
+        "app.services.sql_query_execution_service.check_physical_table_refs_permission",
+        fake_permission_check,
+    )
+
+    runner = DataAgentRunner(config=data_config, trace_id="trace-sql-preflight-perm-allow", trace_buffer=[])
+    state = _DataRunState(requires_fresh_data=True, schema_completed=True)
+    runner._apply_schema_tool_result(
+        state,
+        "table_name: view_ai_visit_log\ncolumns: id, follow_up_person",
+    )
+    spec = RuntimeToolSpec(
+        name="execute_sql_query",
+        description="sql",
+        parameters_schema={"type": "object", "properties": {}},
+        source_type="static",
+        callable=fake_sql,
+        permission_scope="read",
+    )
+
+    wrapped = runner._wrap_tools_with_schema_gate([spec], state)[0]
+    result = await wrapped.invoke({
+        "sql": (
+            "SELECT vl.id, hr.username FROM view_ai_visit_log vl "
+            "LEFT JOIN hrmresource hr ON vl.follow_up_person = hr.id"
+        ),
+        "data_source": "mysql_oa",
+    })
+
+    assert invoked is True
+    assert str(result).startswith('{"columns"')
 
 
 @pytest.mark.asyncio

@@ -29,6 +29,10 @@
         │     ├─ [G3] Schema Gate（工具层拦截器）
         │     │     未取 Schema 就调用 execute_sql_query → 返回 SCHEMA_GATE_PREFIX 错误
         │     │
+        │     ├─ [G3b] SQL Schema 预检（工具层，SqlQueryBinding）
+        │     │     build_sql_query_binding → resolve_sql_schema_preflight_with_binding
+        │     │     字段/表名校验；未知表权限 fallback 后回填 binding
+        │     │
         │     ├─ [G4] SQL 重复 Gate（工具层拦截器）
         │     │     已成功执行过相同 SQL → 禁止重复，注入缓存结果
         │     │
@@ -45,7 +49,14 @@
               ├─ [G9] SQL 错误修复：修正 SQL 重试
               ├─ [G10] 空结果修复：诊断 SQL → 修正 SQL
               └─ [G11] SQL Plan 缺失修复：要求先补 Plan 再执行
+
+  [G12] 跨数据集联邦升级（SQL 执行后，react_stream）
+        execute_sql_query_core 报「不属于当前指定的数据集」且涉及多 dataset
+        → build_federated_upgrade_binding → FederatedQueryExecutor
+        → plan prompt 注入表→dataset 硬约束 + 解析后自动修正 subquery dataset_name
 ```
+
+**SqlQueryBinding**（`app/services/ai/chatbi_sql_query_binding.py`）贯穿 G3b 与 `execute_sql_query_core`：Gate 预检通过后设 `preflight_validated=True`，Core 跳过重复字段校验；HTTP/门户直连路径无 binding 时回退 MetaTable 查库逻辑。
 
 ---
 
@@ -94,6 +105,19 @@
 | 触发条件 | 模型调用 `execute_sql_query` 但 `schema_completed=False` |
 | 返回内容 | `SCHEMA_GATE_PREFIX` 错误字符串，SQL 不实际执行 |
 | 作用 | 在工具函数层面强制顺序：Schema → SQL |
+
+---
+
+### [G3b] SQL Schema 预检（SqlQueryBinding）
+
+| 属性 | 内容 |
+|------|------|
+| 实现位置 | `tool_gate_wrapper` → `resolve_sql_schema_preflight_with_binding`（`chatbi_sql_query_binding.py`） |
+| 触发时机 | `execute_sql_query` 调用前（G3 通过后） |
+| 数据来源 | `state.table_bindings`（来自 `get_dataset_schema` YAML 的 `dataset:` + 列 meta）+ 当前 SQL 表引用 |
+| 校验内容 | 表/列名与 Schema 一致；Schema 外物理表走权限 fallback，通过后回填 binding（含 `dataset_name`） |
+| 通过后 | `binding.preflight_validated=True`；经 ContextVar 传入 `execute_sql_query_core`，Core 跳过重复字段预检 |
+| 作用 | Gate 与 Core 共用一份 meta，避免重复 parse/查库；为联邦升级提供表→dataset 映射 |
 
 ---
 
@@ -186,6 +210,19 @@
 
 ---
 
+### [G12] 跨数据集联邦升级
+
+| 属性 | 内容 |
+|------|------|
+| 实现位置 | `react_stream`（触发）→ `turn_handlers.run_federated_sql_upgrade` → `FederatedQueryExecutor` |
+| 触发条件 | SQL 报错含「不属于当前指定的数据集」，且 SQL 中表反查涉及 **多个** dataset |
+| 绑定构造 | `build_federated_upgrade_binding`：Schema binding + SQL 表 + MetaTable DB 补全 |
+| 计划生成 | `build_federated_plan_prompt` 注入【物理表与数据集绑定】硬约束块 |
+| 计划修正 | `apply_subquery_dataset_bindings`：按 binding 自动修正 LLM 填错的 `dataset_name` |
+| 子查询执行 | `execute_sql_query_core(sql_query_binding=...)` 复用同一份 binding 做校验 |
+
+---
+
 ## 三、门禁完整性评估
 
 ### ✅ 已覆盖的场景
@@ -202,6 +239,8 @@
 | 复用追问但无历史结果 | G1 前置检查 |
 | 高风险查询缺 SQL Plan | G6 + G11 |
 | 重复 SQL 执行 | G4 缓存复用 |
+| SQL 字段/表名与 Schema 不一致 | G3b 预检（Agent 路径）+ Core 二次校验（HTTP 无 binding 时） |
+| 跨数据集 JOIN 误走单源 execute | G12 自动升级联邦 + binding 约束 plan |
 | 并发会话冲突 | `agentscope_session_lock` |
 | 致命权限/表不存在 | `sql_fatal_error` 立即终止 |
 

@@ -81,6 +81,7 @@ AgentService.chat_completion_stream()
 在 AgentScope ReAct 之上，`DataRunState`（`chatbi/run_state.py`）显式守卫；实现分布在 `app/services/ai/runners/chatbi/`，Runner 仅编排：
 
 - 新查数：平台先生成 `DataQueryIntentFrame`（`schema_prefetch`），派生/校验 `get_dataset_schema` 检索词，最后 `execute_sql_query`
+- **SqlQueryBinding**：Schema 解析为 `table_bindings` → execute 前 `build_sql_query_binding` → Gate 预检（`resolve_sql_schema_preflight_with_binding`）→ ContextVar → `execute_sql_query_core` 复用同一份 binding 做表归属/权限/字段/data_perm 校验
 - `DataQueryIntentFrame` 注入 ReAct 上下文用于字段绑定自检，并在“用户需求分析”trace 卡片展示
 - 查数完成前拦截最终回答（`react_stream`，`blocked_content`）
 - SQL 错误 / 空结果 / 缺 SQL 计划 → `repair_policy` + `native_turn` 再跑 `reply_stream`；空结果修复结合意图帧
@@ -99,4 +100,4 @@ AgentService.chat_completion_stream()
 | [../tools-schemal/README.md](../tools-schemal/README.md) | 工具开发与注册 |
 | `openspec/changes/archive/2026-06-09-refactor-to-agentscope/` | 迁移提案与设计 |
 
-*文档版本：2026-06-23（ChatBI 域模块拆分后更新）*
+*文档版本：2026-06-23（SqlQueryBinding 统一绑定后更新）*

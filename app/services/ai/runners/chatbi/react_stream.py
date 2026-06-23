@@ -106,33 +106,29 @@ async def stream_agentscope_events(
                     "execution_time_ms": 0,
                 }
             if state.sql_error and "不属于当前指定的数据集" in (state.sql_error_message or ""):
-                from app.services.sql_query_execution_service import (
-                    extract_physical_table_refs_from_select_sql,
-                    dialect_from_data_source
-                )
+                from app.services.ai.chatbi_sql_query_binding import build_federated_upgrade_binding
+                from app.services.sql_query_execution_service import dialect_from_data_source
                 from app.core.orm import AsyncSessionLocal
-                from app.models.metadata import MetaTable, MetaDataset
-                from sqlalchemy import select
-                    
+
                 sql = tool_args.get("sql", "")
                 dialect = dialect_from_data_source(tool_args.get("data_source", ""))
-                _, refs = extract_physical_table_refs_from_select_sql(sql, dialect)
-                    
-                datasets = set()
-                if refs:
-                    table_names = [name.lower() for name in refs.values()]
-                    async with AsyncSessionLocal() as session:
-                        stmt = (
-                            select(MetaDataset.name)
-                            .join(MetaTable, MetaTable.dataset_id == MetaDataset.id)
-                            .where(MetaTable.physical_name.in_(table_names), MetaTable.status == 1)
-                        )
-                        res = await session.execute(stmt)
-                        datasets = {r for r in res.scalars().all() if r}
-                    
-                    if len(datasets) > 1:
-                        UpgradeToFederatedQuery = _upgrade_to_federated_query_exc()
-                        raise UpgradeToFederatedQuery(sql=sql, datasets=datasets)
+                binding = None
+                datasets: set[str] = set()
+                async with AsyncSessionLocal() as session:
+                    binding = await build_federated_upgrade_binding(
+                        session,
+                        sql=sql,
+                        dialect=dialect,
+                        schema_output=state.schema_output,
+                        schema_bindings=state.table_bindings,
+                        primary_dataset_name=str(tool_args.get("dataset_name") or ""),
+                    )
+                    datasets = binding.involved_datasets()
+
+                if len(datasets) > 1:
+                    UpgradeToFederatedQuery = _upgrade_to_federated_query_exc()
+                    state.sql_query_binding = binding
+                    raise UpgradeToFederatedQuery(sql=sql, datasets=datasets, binding=binding)
             enrichment_result = None
             if should_save_followup:
                 output, parsed_output, enrichment_result = await runner._maybe_enrich_sql_tool_result(

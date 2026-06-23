@@ -6,6 +6,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
+from app.services.ai.chatbi_sql_query_binding import TableBinding
 from app.services.ai.runtime.tool_loop_detector import ToolLoopDetector
 
 
@@ -82,7 +83,10 @@ class DataRunState:
     last_applied_schema_retry_keywords: str = ""
     pending_schema_retry: bool = False
     followup_data_saved: bool = False
+    schema_output: str = ""
+    table_bindings: dict[str, TableBinding] = field(default_factory=dict)
     schema_table_columns: dict[str, list[str]] = field(default_factory=dict)
+    sql_query_binding: Any | None = None
     failed_sql_signatures: dict[str, int] = field(default_factory=dict)
     last_failed_sql_normalized: str = ""
     last_sql_error_summary: str = ""

@@ -113,6 +113,8 @@ class MetadataRagService:
             }
             if col.enums:
                 col_data["enums"] = col.enums
+            if col.examples:
+                col_data["examples"] = col.examples
             if hasattr(col, "is_primary") and col.is_primary == 1:
                 col_data["pk"] = True
             data["columns"].append(col_data)

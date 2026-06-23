@@ -17,8 +17,11 @@ from app.services.ai.runners.chatbi.schema_retry import (
     prepare_controlled_schema_retry_keywords,
 )
 from app.services.ai.runners.chatbi.sql_gates import (
+    build_schema_binding_summary,
     build_sql_schema_preflight_error,
+    collect_preflight_unknown_tables,
     detect_sql_static_risk,
+    extract_schema_table_column_meta,
     extract_schema_table_columns,
     is_schema_gate_block,
     normalize_sql_text,
@@ -104,11 +107,85 @@ def test_sql_schema_preflight_error_unknown_column():
     assert "missing" in err
 
 
+def test_collect_preflight_unknown_tables():
+    schema = {"view_ai_visit_log": ["id", "follow_up_date"]}
+    sql = (
+        "SELECT vl.id FROM view_ai_visit_log vl "
+        "LEFT JOIN hrmresource hr ON vl.follow_up_person = hr.id"
+    )
+    unknown = collect_preflight_unknown_tables(sql, schema)
+    assert "hrmresource" in unknown
+    assert unknown["hrmresource"] == "hrmresource"
+
+
+def test_collect_preflight_unknown_tables_with_dialect_uses_subquery_tables():
+    schema = {"outer_t": ["id"]}
+    sql = (
+        "SELECT o.id FROM outer_t o "
+        "JOIN (SELECT id FROM inner_t) i ON o.id = i.id"
+    )
+    unknown = collect_preflight_unknown_tables(sql, schema, dialect="oracle")
+    assert "inner_t" in unknown
+    assert unknown["inner_t"] == "inner_t"
+
+
+def test_sql_schema_preflight_allows_permission_fallback_table():
+    schema = {"view_ai_visit_log": ["id", "follow_up_date", "follow_up_person"]}
+    sql = (
+        "SELECT vl.id, hr.username FROM view_ai_visit_log vl "
+        "LEFT JOIN hrmresource hr ON vl.follow_up_person = hr.id"
+    )
+    err = build_sql_schema_preflight_error(sql, schema, extra_allowed_tables={"hrmresource"})
+    assert err == ""
+
+
+def test_sql_schema_preflight_still_blocks_unauthorized_table():
+    schema = {"view_ai_visit_log": ["id"]}
+    sql = "SELECT id FROM facility_management"
+    err = build_sql_schema_preflight_error(sql, schema)
+    assert "SQL 预检失败" in err
+    assert "facility_management" in err
+    assert "权限集内" in err
+
+
 def test_extract_schema_table_columns_from_inline_format():
     output = "table_name: demo\ncolumns: id, status, total"
     cols = extract_schema_table_columns(output)
     assert "demo" in cols
     assert "id" in cols["demo"]
+
+
+def test_extract_schema_table_column_meta_includes_type_and_examples():
+    output = (
+        "table_name: view_ai_visit_log\n"
+        "columns:\n"
+        "  - name: FOLLOW_UP_DATE\n"
+        "    type: VARCHAR2\n"
+        "    examples:\n"
+        "      - '2026-06-22 10:30:00'\n"
+        "  - name: ID\n"
+        "    type: NUMBER\n"
+    )
+    meta = extract_schema_table_column_meta(output)
+    assert meta["view_ai_visit_log"][0].name == "FOLLOW_UP_DATE"
+    assert meta["view_ai_visit_log"][0].col_type == "VARCHAR2"
+    assert meta["view_ai_visit_log"][0].examples == ["2026-06-22 10:30:00"]
+
+
+def test_schema_binding_summary_includes_type_examples_and_date_hint():
+    output = (
+        "table_name: view_ai_visit_log\n"
+        "columns:\n"
+        "  - name: FOLLOW_UP_DATE\n"
+        "    type: VARCHAR2\n"
+        "    examples:\n"
+        "      - '2026-06-22 10:30:00'\n"
+    )
+    summary = build_schema_binding_summary(output)
+    assert "FOLLOW_UP_DATE (VARCHAR2" in summary
+    assert "2026-06-22 10:30:00" in summary
+    assert "字符串日期列" in summary
+    assert "禁止 DATE/TO_DATE/TO_CHAR" in summary
 
 
 def test_sql_result_parser_empty_and_error():

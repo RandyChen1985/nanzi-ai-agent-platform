@@ -119,6 +119,88 @@ def test_federated_memory_join_sql_blocks_external_access():
     assert "只允许" in error or "外部访问" in error
 
 
+def test_federated_memory_join_rejects_columns_not_in_subquery_select():
+    temp_schemas = {
+        "t_visit_log": [
+            "FOLLOW_UP_PERSON",
+            "CUSTOMER_NAME",
+            "FOLLOW_UP_DATE",
+            "FOLLOW_UP_CONTENT",
+            "PLAN_CONTENT",
+        ],
+        "t_sales_info": ["ID", "ACCOUNTNAME", "LASTNAME", "FIRSTNAME"],
+    }
+    join_sql = """
+    SELECT
+      s.ACCOUNTNAME AS sales_username,
+      v.CUSTOMER_NAME
+    FROM t_visit_log v
+    INNER JOIN t_sales_info s ON v.FOLLOW_UP_PERSON = s.ID
+    ORDER BY v.FOLLOW_UP_DATE DESC, v.ID DESC
+    """
+    error = FederatedQueryExecutor._validate_memory_join_columns(join_sql, temp_schemas)
+    assert error
+    assert "未 SELECT 的字段" in error
+    assert "v.id" in error.lower()
+
+
+def test_federated_memory_join_allows_columns_from_subquery_select():
+    temp_schemas = {
+        "t_visit_log": ["ID", "FOLLOW_UP_PERSON", "FOLLOW_UP_DATE"],
+        "t_sales_info": ["ID", "LASTNAME"],
+    }
+    join_sql = """
+    SELECT v.ID, s.LASTNAME
+    FROM t_visit_log v
+    INNER JOIN t_sales_info s ON v.FOLLOW_UP_PERSON = s.ID
+    ORDER BY v.FOLLOW_UP_DATE DESC, v.ID DESC
+    """
+    assert FederatedQueryExecutor._validate_memory_join_columns(join_sql, temp_schemas) is None
+
+
+def test_auto_fix_memory_join_order_by_strips_missing_column():
+    temp_schemas = {
+        "t_visit_log": [
+            "FOLLOW_UP_PERSON",
+            "CUSTOMER_NAME",
+            "FOLLOW_UP_DATE",
+        ],
+        "t_sales_info": ["ID", "LASTNAME"],
+    }
+    join_sql = """
+    SELECT v.CUSTOMER_NAME, s.LASTNAME
+    FROM t_visit_log v
+    INNER JOIN t_sales_info s ON v.FOLLOW_UP_PERSON = s.ID
+    ORDER BY v.FOLLOW_UP_DATE DESC, v.ID DESC
+    """
+    fixed = FederatedQueryExecutor._auto_fix_memory_join_order_by(join_sql, temp_schemas)
+    assert fixed
+    assert "v.ID" not in fixed.upper().replace(" ", "")
+    assert FederatedQueryExecutor._validate_memory_join_columns(fixed, temp_schemas) is None
+
+
+def test_build_temp_table_schemas_from_plan_infers_select_columns():
+    sub_queries = [
+        {
+            "dataset_name": "meta_yes_crm_ds",
+            "temp_table": "t_visit_log",
+            "sql": (
+                "SELECT FOLLOW_UP_PERSON, CUSTOMER_NAME, FOLLOW_UP_DATE "
+                "FROM VIEW_AI_VISIT_LOG"
+            ),
+        }
+    ]
+    schemas = FederatedQueryExecutor._build_temp_table_schemas_from_plan(
+        sub_queries,
+        {"meta_yes_crm_ds": "oracle"},
+    )
+    assert schemas["t_visit_log"] == [
+        "FOLLOW_UP_PERSON",
+        "CUSTOMER_NAME",
+        "FOLLOW_UP_DATE",
+    ]
+
+
 def test_federated_executor_limits_rows_and_maps_duckdb_types():
     rows = [[i] for i in range(1002)]
     limited = FederatedQueryExecutor._limit_rows(rows)

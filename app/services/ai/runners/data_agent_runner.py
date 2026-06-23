@@ -65,9 +65,10 @@ from app.services.ai.runners.chatbi import followup_data as chatbi_followup_data
 
 class UpgradeToFederatedQuery(Exception):
 
-    def __init__(self, sql: str, datasets: set[str]):
+    def __init__(self, sql: str, datasets: set[str], binding=None):
         self.sql = sql
         self.datasets = datasets
+        self.binding = binding
 
 class DataAgentRunner(BaseExecutor):
     """AgentScope-native runner foundation for ChatBI/DataExecutor migration."""
@@ -295,8 +296,40 @@ class DataAgentRunner(BaseExecutor):
     def _mask_sql_literals_and_comments(sql: str) -> str:
         return chatbi_sql_gates.mask_sql_literals_and_comments(sql)
 
-    def _build_sql_schema_preflight_error(self, sql: str, schema_table_columns: dict[str, list[str]]) -> str:
-        return chatbi_sql_gates.build_sql_schema_preflight_error(sql, schema_table_columns)
+    def _build_sql_schema_preflight_error(
+        self,
+        sql: str,
+        schema_table_columns: dict[str, list[str]],
+        *,
+        extra_allowed_tables: set[str] | None = None,
+    ) -> str:
+        return chatbi_sql_gates.build_sql_schema_preflight_error(
+            sql,
+            schema_table_columns,
+            extra_allowed_tables=extra_allowed_tables,
+        )
+
+    async def _resolve_sql_schema_preflight_error(
+        self,
+        sql: str,
+        data_source: str | None,
+        *,
+        binding: Any | None = None,
+        schema_table_columns: dict[str, list[str]] | None = None,
+    ) -> str:
+        from app.core.orm import AsyncSessionLocal
+        from app.services.ai.chatbi_sql_query_binding import resolve_sql_schema_preflight_with_binding
+
+        async with AsyncSessionLocal() as session:
+            return await resolve_sql_schema_preflight_with_binding(
+                session,
+                sql=sql,
+                binding=binding,
+                schema_table_columns=schema_table_columns,
+                data_source=str(data_source or ""),
+                user_id=self._current_user_id(),
+                is_admin=self._current_user_is_admin(),
+            )
 
     @staticmethod
     def _normalize_tool_arg_value(value: Any) -> Any:

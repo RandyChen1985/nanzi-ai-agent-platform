@@ -102,10 +102,12 @@ class FederatedQueryExecutor:
         agent_runner: Any,
         schema_output: str,
         datasets: list[str],
+        sql_query_binding: Any | None = None,
     ):
         self.agent_runner = agent_runner
         self.schema_output = schema_output
         self.datasets = datasets
+        self.sql_query_binding = sql_query_binding
         self.user_info = agent_runner.user_info
         self.trace_buffer = agent_runner.trace_buffer
 
@@ -166,6 +168,7 @@ class FederatedQueryExecutor:
                     self.schema_output,
                     original_user_question,
                     dataset_dialect_map=dataset_dialect_map,
+                    sql_query_binding=self.sql_query_binding,
                 )
                 if _repair_context:
                     plan_prompt = self._build_federated_plan_repair_prompt(
@@ -195,11 +198,25 @@ class FederatedQueryExecutor:
                 
                 # 解析 XML 执行计划
                 sub_queries, join_sql = self._parse_federated_plan(plan_output)
+                from app.services.ai.chatbi_sql_query_binding import apply_subquery_dataset_bindings
+
+                sub_queries = apply_subquery_dataset_bindings(
+                    sub_queries,
+                    self.sql_query_binding,
+                )
                 
                 if not sub_queries:
                     raise ValueError(f"联邦计划生成失败：未能成功提取到有效的子查询节点。 LLM 输出内容:\n{plan_output}")
                 if not join_sql:
                     raise ValueError(f"联邦计划生成失败：未能提取到有效的 <memory_join> 逻辑。 LLM 输出内容:\n{plan_output}")
+
+                inferred_temp_schemas = self._build_temp_table_schemas_from_plan(
+                    sub_queries,
+                    dataset_dialect_map,
+                )
+                join_col_error = self._validate_memory_join_columns(join_sql, inferred_temp_schemas)
+                if join_col_error:
+                    raise ValueError(join_col_error)
                 
                 yield {
                     "type": "log",
@@ -274,6 +291,7 @@ class FederatedQueryExecutor:
                 async with AsyncSessionLocal() as session:
                     perm_service = PermissionService(session)
                     subquery_citation_sources: list[dict[str, Any]] = []
+                    temp_table_schemas: dict[str, list[str]] = {}
 
                     for idx, sq in enumerate(sub_queries):
                         dataset_name = sq["dataset_name"]
@@ -349,6 +367,7 @@ class FederatedQueryExecutor:
                                             agent_context=current_agent_context,
                                             is_admin=is_admin,
                                             bypass_table_auth=False,
+                                            sql_query_binding=self.sql_query_binding,
                                         )
                                         sub_span.set_output(res_str)
 
@@ -376,6 +395,7 @@ class FederatedQueryExecutor:
 
                                 df = pd.DataFrame(items, columns=col_names)
                                 duckdb_conn.register(temp_table, df)
+                                temp_table_schemas[temp_table] = list(col_names)
                                 subquery_citation_sources.append(
                                     {
                                         "dataset_name": dataset_name,
@@ -602,6 +622,7 @@ class FederatedQueryExecutor:
                                 )
                                 df = pd.DataFrame(columns=col_names)
                                 duckdb_conn.register(temp_table, df)
+                                temp_table_schemas[temp_table] = list(col_names)
                                 subquery_citation_sources.append(
                                     {
                                         "dataset_name": dataset_name,
@@ -636,6 +657,12 @@ class FederatedQueryExecutor:
                         join_error = self._validate_memory_join_sql(join_sql)
                         if join_error:
                             raise ValueError(join_error)
+                        join_col_error = self._validate_memory_join_columns(
+                            join_sql,
+                            temp_table_schemas,
+                        )
+                        if join_col_error:
+                            raise ValueError(join_col_error)
                         duck_res = duckdb_conn.execute(join_sql)
                         raw_join_rows = duck_res.fetchall()
                         join_rows = self._limit_rows(raw_join_rows)
@@ -693,6 +720,26 @@ class FederatedQueryExecutor:
                         ):
                             norm_sql = normalize_sql_text(join_sql)
                             repeat_blocked = norm_sql in join_failed_signatures
+                            if repeat_blocked:
+                                auto_fixed = self._auto_fix_memory_join_order_by(
+                                    join_sql,
+                                    temp_table_schemas,
+                                )
+                                if auto_fixed and normalize_sql_text(auto_fixed) != norm_sql:
+                                    join_sql = auto_fixed
+                                    join_repair_count += 1
+                                    yield {
+                                        "type": "log",
+                                        "id": f"fed_repair_{uuid.uuid4().hex[:8]}",
+                                        "title": "自动修正联邦聚合 SQL",
+                                        "details": (
+                                            "检测到 memory_join 重复引用子查询未 SELECT 的列，"
+                                            "已自动从 ORDER BY 移除无效排序键。\n"
+                                            f"修正后 SQL:\n{join_sql}"
+                                        ),
+                                        "status": "warning",
+                                    }
+                                    continue
                             yield {
                                 "type": "log",
                                 "id": f"fed_repair_{uuid.uuid4().hex[:8]}",
@@ -718,6 +765,7 @@ class FederatedQueryExecutor:
                                     repeat_blocked=repeat_blocked,
                                     sub_queries=sub_queries,
                                     join_sql=join_sql,
+                                    temp_table_schemas=temp_table_schemas,
                                     _total_llm_calls=_total_llm_calls,
                                 )
                                 new_norm = normalize_sql_text(join_sql)
@@ -858,11 +906,17 @@ class FederatedQueryExecutor:
         return html.unescape(content).strip()
 
     @staticmethod
-    def _summarize_subqueries_for_prompt(sub_queries: list[dict[str, str]]) -> str:
+    def _summarize_subqueries_for_prompt(
+        sub_queries: list[dict[str, str]],
+        temp_table_schemas: dict[str, list[str]] | None = None,
+    ) -> str:
         lines: list[str] = []
         for sq in sub_queries:
+            temp_table = str(sq.get("temp_table") or "")
+            cols = (temp_table_schemas or {}).get(temp_table)
+            col_part = f", columns=[{', '.join(cols)}]" if cols else ""
             lines.append(
-                f"- dataset={sq.get('dataset_name')}, temp_table={sq.get('temp_table')}, "
+                f"- dataset={sq.get('dataset_name')}, temp_table={temp_table}{col_part}, "
                 f"sql={str(sq.get('sql') or '')[:500]}"
             )
         return "\n".join(lines)
@@ -884,6 +938,7 @@ class FederatedQueryExecutor:
         join_sql: str,
         schema_snippet: str = "",
         explain_context: str = "",
+        temp_table_schemas: dict[str, list[str]] | None = None,
         _total_llm_calls: Optional[list[int]] = None,
     ) -> str:
         if _total_llm_calls is not None:
@@ -909,7 +964,10 @@ class FederatedQueryExecutor:
             error_text=error_text,
             repair_attempt=repair_attempt,
             repair_guidance=repair_guidance,
-            sub_queries_summary=self._summarize_subqueries_for_prompt(sub_queries),
+            sub_queries_summary=self._summarize_subqueries_for_prompt(
+                sub_queries,
+                temp_table_schemas,
+            ),
             join_sql=join_sql,
             schema_snippet=schema_snippet,
             explain_context=explain_context,
@@ -1034,6 +1092,7 @@ class FederatedQueryExecutor:
                 agent_context=agent_context,
                 is_admin=is_admin,
                 bypass_table_auth=False,
+                sql_query_binding=self.sql_query_binding,
             )
         except Exception as exc:
             logger.warning(
@@ -1170,6 +1229,166 @@ class FederatedQueryExecutor:
             uniq_notes = list(dict.fromkeys(truncated_notes))
             parts.append("以下数据存在行数截断，统计/汇总口径可能不完整：" + "；".join(uniq_notes))
         return "\n".join(parts)
+
+    @staticmethod
+    def _normalize_temp_table_key(name: str) -> str:
+        return str(name or "").strip().strip('"').strip("'").lower()
+
+    @classmethod
+    def _build_temp_table_schemas_from_plan(
+        cls,
+        sub_queries: list[dict[str, str]],
+        dataset_dialect_map: dict[str, str] | None,
+    ) -> dict[str, list[str]]:
+        schemas: dict[str, list[str]] = {}
+        for sq in sub_queries:
+            temp_table = str(sq.get("temp_table") or "").strip()
+            if not temp_table:
+                continue
+            cols = cls._infer_degraded_subquery_columns(
+                str(sq.get("sql") or ""),
+                str(sq.get("dataset_name") or ""),
+                dataset_dialect_map,
+            )
+            if cols:
+                schemas[temp_table] = cols
+        return schemas
+
+    @classmethod
+    def _find_memory_join_column_violations(
+        cls,
+        sql: str,
+        temp_table_schemas: dict[str, list[str]],
+    ) -> list[tuple[str, str, str, list[str]]]:
+        """返回 (alias, column, temp_table, available_cols) 违规列表。"""
+        if not str(sql or "").strip() or not temp_table_schemas:
+            return []
+
+        schema_by_key = {
+            cls._normalize_temp_table_key(name): (name, cols)
+            for name, cols in temp_table_schemas.items()
+        }
+
+        try:
+            import sqlglot
+            from sqlglot import exp
+
+            parsed = sqlglot.parse(sql, read="duckdb")
+            if not parsed:
+                return []
+            root = parsed[0]
+
+            alias_to_schema: dict[str, tuple[str, list[str]]] = {}
+            for table in root.find_all(exp.Table):
+                raw_name = str(table.name or "").strip().strip('"').strip("'")
+                if not raw_name:
+                    continue
+                key = cls._normalize_temp_table_key(raw_name)
+                match = schema_by_key.get(key)
+                if match is None:
+                    continue
+                original_name, cols = match
+                alias = str(table.alias or raw_name).strip().strip('"').strip("'")
+                alias_to_schema[cls._normalize_temp_table_key(alias)] = (original_name, cols)
+                alias_to_schema[key] = (original_name, cols)
+
+            violations: list[tuple[str, str, str, list[str]]] = []
+            seen: set[tuple[str, str]] = set()
+            for column in root.find_all(exp.Column):
+                col_name = str(column.name or "").strip().strip('"').strip("'")
+                if not col_name or col_name == "*":
+                    continue
+                table_ref = column.table
+                if not table_ref:
+                    continue
+                qual_key = cls._normalize_temp_table_key(str(table_ref))
+                match = alias_to_schema.get(qual_key)
+                if match is None:
+                    continue
+                temp_name, cols = match
+                allowed = {c.lower() for c in cols}
+                if col_name.lower() not in allowed:
+                    key = (qual_key, col_name.lower())
+                    if key not in seen:
+                        seen.add(key)
+                        violations.append((qual_key, col_name, temp_name, cols))
+            return violations
+        except Exception as exc:
+            logger.debug(
+                "[FederatedQueryExecutor] memory_join column scan skipped: %s",
+                exc,
+            )
+            return []
+
+    @classmethod
+    def _validate_memory_join_columns(
+        cls,
+        sql: str,
+        temp_table_schemas: dict[str, list[str]],
+    ) -> Optional[str]:
+        """校验 memory_join 是否引用了各 sub_query 未 SELECT 的字段。"""
+        violations = cls._find_memory_join_column_violations(sql, temp_table_schemas)
+        if not violations:
+            return None
+        parts = [
+            f"{alias}.{col}（临时表 {temp_name} 可用字段: {', '.join(cols)}）"
+            for alias, col, temp_name, cols in violations[:5]
+        ]
+        return (
+            "内存联邦 SQL 引用了子查询未 SELECT 的字段："
+            + "；".join(parts)
+            + "。memory_join 只能使用各 sub_query SELECT 列表中的字段；"
+            "若 ORDER BY / JOIN / WHERE 需要某字段，须先在对应 sub_query 中 SELECT 出来，"
+            "或在 memory_join 中删除对该列的引用（例如去掉 ORDER BY 中的 v.ID）。"
+        )
+
+    @classmethod
+    def _auto_fix_memory_join_order_by(
+        cls,
+        sql: str,
+        temp_table_schemas: dict[str, list[str]],
+    ) -> Optional[str]:
+        """从 ORDER BY 中移除引用临时表不存在列的排序键（LLM repair 反复失败时的兜底）。"""
+        violations = cls._find_memory_join_column_violations(sql, temp_table_schemas)
+        if not violations:
+            return None
+        invalid_keys = {(alias, col.lower()) for alias, col, _, _ in violations}
+
+        try:
+            import sqlglot
+            from sqlglot import exp
+
+            parsed = sqlglot.parse(sql, read="duckdb")
+            if not parsed:
+                return None
+            root = parsed[0]
+            order = root.find(exp.Order)
+            if order is None:
+                return None
+
+            kept: list[Any] = []
+            for expr in order.expressions:
+                target = expr.this if isinstance(expr, exp.Ordered) else expr
+                if isinstance(target, exp.Column):
+                    qual = cls._normalize_temp_table_key(str(target.table or ""))
+                    name = str(target.name or "").lower()
+                    if (qual, name) in invalid_keys:
+                        continue
+                kept.append(expr)
+
+            if len(kept) == len(list(order.expressions)):
+                return None
+            if kept:
+                order.set("expressions", kept)
+            else:
+                order.pop()
+            return root.sql(dialect="duckdb")
+        except Exception as exc:
+            logger.debug(
+                "[FederatedQueryExecutor] memory_join ORDER BY auto-fix skipped: %s",
+                exc,
+            )
+            return None
 
     @staticmethod
     def _validate_memory_join_sql(sql: str) -> Optional[str]:

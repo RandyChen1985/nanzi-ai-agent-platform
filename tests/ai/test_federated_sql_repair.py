@@ -36,6 +36,17 @@ def test_build_sql_repair_guidance_includes_taxonomy_for_federated():
     assert "DATE_FORMAT_SQL_ERROR_REPAIR_GUIDE" in guidance or "YYYY-MM-DD" in guidance
 
 
+def test_build_sql_repair_guidance_includes_memory_join_column_hint_for_binder_error():
+    guidance = build_sql_repair_guidance(
+        'Binder Error: Values list "v" does not have a column named "ID"',
+        "SELECT v.CUSTOMER_NAME FROM t_visit_log v ORDER BY v.ID DESC",
+        for_federated_node=True,
+    )
+    assert "memory_join 字段约束" in guidance
+    assert "v.ID" in guidance or "去掉" in guidance
+    assert is_retryable_sql_error('Binder Error: does not have a column named "ID"') is True
+
+
 def test_normalize_sql_text_collapses_whitespace():
     assert normalize_sql_text("SELECT  1") == normalize_sql_text("select 1")
 

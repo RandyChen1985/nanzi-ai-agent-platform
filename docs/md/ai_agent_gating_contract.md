@@ -83,12 +83,20 @@
 2. `DataQueryIntentFrame` 必须作为字段绑定自检和空结果修复的依据；若 LLM 直接给出的 keywords 无效，但意图帧有效，应优先从意图帧派生 keywords，而不是机械回退到原始长句。
 3. 需要新 SQL 生成时必须进行 few-shot 案例检索；未命中或检索失败也必须有可观测日志。
 4. 必须先调用 `get_dataset_schema`，再允许调用 `execute_sql_query`。
-5. schema prefetch 失败时：
+5. Agent 路径在 `execute_sql_query` 前必须通过 **SqlQueryBinding 预检**（`resolve_sql_schema_preflight_with_binding`）：字段/表名与 Schema 一致；Schema 外物理表仅在有元数据权限时放行，并回填 binding 的 `dataset_name`。
+6. `execute_sql_query_core` 优先读取 ContextVar / 参数中的 `SqlQueryBinding` 做表归属、权限、字段与 data_perm 列 meta；Gate 已预检通过时设 `preflight_validated=True`，Core 不重复字段校验。HTTP/门户直连无 binding 时回退 MetaTable 查库。
+7. schema prefetch 失败时：
    - 元数据服务不可用：终止
    - 无授权数据集：终止
    - 元数据未同步知识库：终止
    - 连续 schema miss 达到阈值：终止
-6. schema 返回多个高置信候选且分数接近时，必须先澄清数据集或指标口径，禁止直接 SQL。
+8. schema 返回多个高置信候选且分数接近时，必须先澄清数据集或指标口径，禁止直接 SQL。
+
+### 跨数据集联邦
+
+1. 单源 `execute_sql_query` 检测到 SQL 引用不属于当前 `dataset_name` 的表，且涉及多个 dataset 时，必须自动升级为联邦查询（G12）。
+2. 升级时必须构造 `SqlQueryBinding`（Schema + SQL 表 + MetaTable 反查），注入联邦 plan prompt 的【物理表与数据集绑定】块，并在解析 XML 后按 binding 修正 subquery 的 `dataset_name`。
+3. 禁止仅依赖 LLM 从 Schema 文本猜测 subquery 的 `dataset_name` 而无平台侧表→dataset 约束。
 
 ### SQL 安全与修复
 
@@ -114,6 +122,7 @@
 
 - `tests/ai/test_turn_classifier.py`
 - `tests/ai/runners/test_data_agent_runner.py`
+- `tests/ai/test_sql_query_binding.py`
 - `tests/ai/tools/test_data_api.py`
 - `tests/ai/test_dispatcher_data_executor_boundary.py`
 - `tests/ai/runtime/test_event_stream_observability.py`

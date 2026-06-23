@@ -98,7 +98,10 @@ async def test_dataset_table_consistency_validation_failed(monkeypatch):
 
     async def fake_enforce(*args, **kwargs):
         return None
-    monkeypatch.setattr(sql_service, "enforce_physical_table_permissions_for_select", fake_enforce)
+    monkeypatch.setattr(
+        "app.services.ai.chatbi_sql_query_binding.enforce_physical_table_permissions",
+        fake_enforce,
+    )
 
     from unittest.mock import MagicMock
     mock_session = AsyncMock()

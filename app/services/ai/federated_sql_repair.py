@@ -119,6 +119,9 @@ def is_schema_reference_sql_error(message: str) -> bool:
         r"unresolved column",
         r"table .+ doesn't exist",
         r"table .+ does not exist",
+        r"does not have a column",
+        r"binder error",
+        r"未 select 的字段",
     )
     return any(re.search(pattern, err) for pattern in patterns)
 
@@ -428,6 +431,7 @@ def build_sql_repair_guidance(
     """构建联邦子查询 / memory_join 局部 repair 的修正指引。"""
     error_text = str(error_text or "").strip()
     failed_sql = str(failed_sql or "").strip()
+    err_lower = error_text.lower()
     action = (
         "请只修正下方失败 SQL，并按输出格式返回修正后的 SQL。"
         if for_federated_node
@@ -457,11 +461,24 @@ def build_sql_repair_guidance(
             "必须以【本数据集 Schema 片段】中的 columns.type 与物理列名为准修正 SQL，"
             "禁止继续臆造 TO_CHAR/TO_DATE 或英文列名。"
         )
+        if (
+            "未 select 的字段" in error_text
+            or "does not have a column" in err_lower
+            or "binder error" in err_lower
+        ):
+            repair += (
+                "\n\n【memory_join 字段约束 — 必读】"
+                "memory_join 中的临时表（如 v）**只有 sub_query SELECT 出来的列**，"
+                "与物理表 Schema 无关；物理表有 ID 列不代表临时表 v 有 ID。"
+                "\n修正优先级："
+                "\n1. 【推荐】删除 memory_join 中对不存在列的引用（例如去掉 `ORDER BY v.ID DESC`，只保留 `ORDER BY v.FOLLOW_UP_DATE DESC`）。"
+                "\n2. 若必须按 ID 排序，需改 sub_query 在 SELECT 中补 ID——但本轮 repair 只能输出 memory_join，"
+                "因此请采用方案 1，删除无效列引用。"
+            )
     if is_date_format_sql_error(error_text):
         repair += f"\n\n{DataQueryPrompts.DATE_FORMAT_SQL_ERROR_REPAIR_GUIDE}"
     if is_invalid_number_sql_error(error_text):
         repair += f"\n\n{DataQueryPrompts.INVALID_NUMBER_SQL_ERROR_REPAIR_GUIDE}"
-    err_lower = error_text.lower()
     if TIME_RANGE_GATE_PREFIX in error_text or "相对时间" in err_lower or "时间锚点" in error_text:
         repair += (
             f"\n\n{build_data_query_time_anchor_block()}\n\n"

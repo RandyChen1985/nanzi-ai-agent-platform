@@ -86,7 +86,10 @@ class DataQueryPrompts:
         schema_context: str,
         user_question: str,
         dataset_dialect_map: dict | None = None,
+        sql_query_binding: Any | None = None,
     ) -> str:
+        from app.services.ai.chatbi_sql_query_binding import format_table_dataset_binding_block
+
         # 构建数据集方言说明块，告知 LLM 每个数据集对应的物理数据库类型
         dialect_hint = ""
         if dataset_dialect_map:
@@ -114,11 +117,15 @@ class DataQueryPrompts:
                     + "\n".join(dialect_lines)
                 )
 
+        table_binding_hint = format_table_dataset_binding_block(sql_query_binding)
+        if table_binding_hint:
+            table_binding_hint = f"\n\n{table_binding_hint}"
+
         return f"""你是一个智能跨数据集联邦查询计划生成器。
 用户希望查询多个不同的数据集，你需要根据下面提供的多个数据集的合并 Schema，生成一个联邦查询执行计划。
 
 【跨数据集 Schema 定义】
-{schema_context}{dialect_hint}
+{schema_context}{dialect_hint}{table_binding_hint}
 
 【约束规则】
 1. 分析用户问题，识别出所有需要涉及的数据集。
@@ -140,6 +147,8 @@ class DataQueryPrompts:
    - `<memory_join>` 的 SQL 对临时表操作，使用 DuckDB 语法（支持 field::DATE、STRFTIME 等）；最终聚合/汇总必须在 `<memory_join>` 中完成。
    - 为了防止 SQL 语句中的特殊字符（如比较运算符 <、>、& 等）破坏 XML 格式，请将所有 SQL 语句使用 <![CDATA[ ... ]]> 包裹。
 9. 相对时间（上月/本月/今年/最近N天等）必须严格使用下方【当前时间锚点】换算出的 YYYY-MM-DD 起止日期写入各 `<sub_query>` 的 WHERE 条件，禁止臆测年份或月份。
+10. `<memory_join>` **只能引用各 sub_query 的 SELECT 输出列**（含 `AS` 别名），禁止引用子查询未 SELECT 的字段。
+    特别注意 `ORDER BY`：若需按某字段排序（如 `v.ID`），**必须先在对应 sub_query 的 SELECT 列表中包含该字段**，否则 DuckDB 内存关联会报「column not found」。
 
 {build_data_query_time_anchor_block()}
 
@@ -286,8 +295,11 @@ XML 示例：
             extra = (
                 f"\n【当前各子查询临时表概览】\n{sub_queries_summary}\n"
                 f"当前 memory_join SQL：\n{join_sql[:4000]}\n"
-                "若错误来自字段/别名不一致，可只在 memory_join 中修正引用；"
-                "若根因在子查询投影，请在 repair 说明中指出需同步调整的别名，但本轮只输出修正后的 memory_join SQL。"
+                "memory_join 只能引用各 sub_query 已 SELECT 的列（含 AS 别名）；"
+                "临时表列以【当前各子查询临时表概览】中的 columns= 为准，勿假设物理表字段在内存表中都存在。"
+                "ORDER BY 引用了未 SELECT 的列时，必须删除该排序键（例如去掉 `v.ID`），不要原样重复失败 SQL。\n"
+                "本轮只输出修正后的 memory_join SQL，不能改 sub_query；"
+                "因此缺列时只能删除 memory_join 中的无效引用，不能指望补 SELECT。\n"
             )
         elif node_kind == "sub_query":
             extra = (

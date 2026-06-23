@@ -123,13 +123,16 @@ async def run_federated_prefetch_upgrade(
         "execution_time_ms": 0,
     }
     runner._last_run_state = DataRunState(requires_fresh_data=True)
+    from app.services.ai.chatbi_sql_query_binding import build_sql_query_binding
     from app.services.ai.executors.federated_executor import FederatedQueryExecutor
     from app.services.ai.runtime.agentscope.stream_reconcile import finalize_visible_reply
 
+    sql_query_binding = build_sql_query_binding(schema_output=prefetched_schema_output)
     executor = FederatedQueryExecutor(
         agent_runner=runner,
         schema_output=prefetched_schema_output,
         datasets=datasets,
+        sql_query_binding=sql_query_binding,
     )
     federated_content = ""
     async for chunk in executor.execute(
@@ -194,13 +197,35 @@ async def run_federated_sql_upgrade(
             len(schema_output),
         )
     runner._last_run_state = DataRunState(requires_fresh_data=True)
+    from app.services.ai.chatbi_sql_query_binding import build_sql_query_binding
     from app.services.ai.executors.federated_executor import FederatedQueryExecutor
     from app.services.ai.runtime.agentscope.stream_reconcile import finalize_visible_reply
+
+    sql_query_binding = getattr(exc, "binding", None)
+    if sql_query_binding is None:
+        sql_query_binding = build_sql_query_binding(
+            schema_output=schema_output,
+            sql=getattr(exc, "sql", "") or "",
+        )
+    elif schema_output:
+        sql_query_binding.schema_output = schema_output
+        for key, table_binding in build_sql_query_binding(schema_output=schema_output).tables.items():
+            current = sql_query_binding.tables.get(key)
+            if current is None:
+                sql_query_binding.tables[key] = table_binding
+            else:
+                if not current.dataset_name:
+                    current.dataset_name = table_binding.dataset_name
+                if not current.data_source:
+                    current.data_source = table_binding.data_source
+                if not current.columns:
+                    current.columns = list(table_binding.columns)
 
     executor = FederatedQueryExecutor(
         agent_runner=runner,
         schema_output=schema_output,
         datasets=sorted(list(exc.datasets)),
+        sql_query_binding=sql_query_binding,
     )
     federated_content = ""
     async for chunk in executor.execute(

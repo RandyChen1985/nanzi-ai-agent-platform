@@ -189,6 +189,50 @@ async def _fetch_allowed_physical_lowers_for_user(session: AsyncSession, user_id
     return allowed
 
 
+async def check_physical_table_refs_permission(
+    session: AsyncSession,
+    *,
+    refs: Dict[str, str],
+    user_id: Optional[int],
+    is_admin: bool,
+    dialect: str = "clickhouse",
+    user_identity_label: Optional[str] = None,
+) -> Optional[str]:
+    """
+    校验给定物理表引用是否已在元数据注册且当前用户有权访问。
+    refs: {physical_lower -> SQL 展示名}
+    """
+    if is_admin or not refs:
+        return None
+
+    if user_id is None:
+        return "[Permission Denied] 无法校验表权限：缺少用户身份"
+
+    filtered_refs: Dict[str, str] = {}
+    for lk, display in refs.items():
+        if _is_exempt_builtin_table(lk, dialect):
+            continue
+        filtered_refs[lk] = display
+    if not filtered_refs:
+        return None
+
+    allowed_lower = await _fetch_allowed_physical_lowers_for_user(session, user_id)
+    registered_lower = await _fetch_all_registered_physical_lowers(session)
+
+    for lk, display in filtered_refs.items():
+        if lk in allowed_lower:
+            continue
+        subject = f"{user_identity_label} " if user_identity_label else ""
+        if lk in registered_lower:
+            return f"[Permission Denied] {subject}无权访问表 '{display}'"
+        return (
+            f"[Validation Failed] {subject}物理表 '{display}' 未在元数据中注册或不存在。"
+            "请使用 get_dataset_schema 工具确认当前数据集的可查询表，严禁凭空猜测表名！"
+        )
+
+    return None
+
+
 async def enforce_physical_table_permissions_for_select(
     session: AsyncSession,
     *,
@@ -235,7 +279,7 @@ async def execute_sql_query_core(
     sql: str,
     data_source: str,
     dataset_name: Optional[str] = None,
-    user_id: Optional[int],
+    user_id: Optional[int] = None,
     user_dimensions: Optional[Dict[str, Any]] = None,
     trace_logs: Optional[List[str]] = None,
     api_key: Optional[str] = None,
@@ -244,6 +288,7 @@ async def execute_sql_query_core(
     is_admin: bool = False,
     auth_check_only: bool = False,
     bypass_table_auth: bool = False,
+    sql_query_binding: Any | None = None,
 ) -> str:
     """
     在给定 DB 会话下完成权限重写与执行；调用方负责会话生命周期。
@@ -255,7 +300,19 @@ async def execute_sql_query_core(
         auth_check_only: 为 True 时走与执行相同的权限与语法校验（含行级重写），**不调用**外部 SQL API；
                  成功时返回 JSON 字符串 `{"allowed": true}`。与 `dry_run` 互斥使用（HTTP 校验接口传
                  `auth_check_only=True` 且 `dry_run=False`）。
+        sql_query_binding: 可选的 ChatBI 表/数据集/字段绑定；未传时尝试读取 ContextVar，
+                 Agent 路径在 execute 前由 tool gate 注入。
     """
+    from app.services.ai.chatbi_sql_query_binding import (
+        build_data_perm_table_metadata,
+        enforce_dataset_table_scope,
+        enforce_physical_table_permissions,
+        get_current_sql_query_binding,
+        prepare_binding_for_execution,
+        validate_sql_columns_with_binding,
+    )
+
+    binding = sql_query_binding or get_current_sql_query_binding()
     user_id_eff = user_id
     key = api_key or (agent_context.api_key if agent_context else None)
 
@@ -293,63 +350,50 @@ async def execute_sql_query_core(
             return f"Error: Dataset '{dataset_name}' not found. Please verify the dataset name."
 
     dialect = dialect_from_data_source(data_source)
+    if binding is not None:
+        binding = await prepare_binding_for_execution(
+            session,
+            binding,
+            sql=sql,
+            dialect=dialect,
+            dataset_name=dataset_name,
+        )
 
     if not bypass_table_auth:
-        # 1. 强一致性校验：SQL 中的表必须属于当前指定的数据集
-        if ds:
-            err_ref, refs = extract_physical_table_refs_from_select_sql(sql, dialect)
-            if err_ref:
-                return f"[Validation Failed] {err_ref}"
-            if refs:
-                t_stmt = select(MetaTable.physical_name, MetaTable.term).where(
-                    MetaTable.dataset_id == ds.id,
-                    MetaTable.status == 1
-                )
-                t_res = await session.execute(t_stmt)
-                rows = list(t_res.all())
-                dataset_tables = {str(p).lower() for p, _ in rows if p}
-                term_to_physical = {
-                    str(t).lower(): str(p) for p, t in rows if p and t and str(t).strip()
-                }
-                dataset_alias_lowers = {
-                    str(x).lower()
-                    for x in (getattr(ds, "display_name", None), getattr(ds, "name", None))
-                    if x
-                }
-                for lk, display in refs.items():
-                    if lk in dataset_tables:
-                        continue
-                    if lk in term_to_physical:
-                        return (
-                            f"[Validation Failed] '{display}' 是业务术语，并非物理表名，不能直接用于 SQL。"
-                            f"请改用 get_dataset_schema 返回的物理表名 '{term_to_physical[lk]}'。"
-                        )
-                    if lk in dataset_alias_lowers:
-                        return (
-                            f"[Validation Failed] '{display}' 是数据集名称，并非物理表名，不能直接用于 SQL 的 FROM/JOIN。"
-                            f"请使用 get_dataset_schema 返回的 table_name（物理表名）进行查询。"
-                        )
-                    return (
-                        f"[Validation Failed] 表 '{display}' 不属于当前指定的数据集 '{dataset_name}'，"
-                        f"普通 execute_sql_query 严禁跨数据集或凭空猜表。"
-                        f"如果用户明确要求跨数据集/跨库/联合查询，请走跨数据集联邦查询流程："
-                        f"先分别在各自 dataset 内执行子查询，再在内存联邦阶段关联。"
-                        f"如果只是补全姓名/部门/客户名称等维度，请只查询当前数据集的外键字段，"
-                        f"后端会尝试按 relation/维表做维度补全。"
-                        f"请通过 get_dataset_schema 重新确认当前数据集下相关表的 table_name（物理表名）后再查询。"
-                    )
+        err_ref, refs = extract_physical_table_refs_from_select_sql(sql, dialect)
+        if err_ref:
+            return f"[Validation Failed] {err_ref}"
 
-        # 2. 物理表全局可访问权限校验
-        perm_err = await enforce_physical_table_permissions_for_select(
+        column_err = validate_sql_columns_with_binding(sql, binding)
+        if column_err:
+            return column_err
+
+        if ds and refs:
+            scope_err = await enforce_dataset_table_scope(
+                session,
+                refs=refs,
+                dataset_name=str(dataset_name or ""),
+                ds=ds,
+                binding=binding,
+            )
+            if scope_err:
+                return scope_err
+
+        perm_err = await enforce_physical_table_permissions(
             session,
-            sql=sql,
+            refs=refs,
             dialect=dialect,
             user_id_eff=user_id_eff,
             is_admin_eff=is_admin_eff,
             user_identity_label=user_identity_label,
+            binding=binding,
         )
         if perm_err:
             return perm_err
+    elif binding is not None:
+        column_err = validate_sql_columns_with_binding(sql, binding)
+        if column_err:
+            return column_err
 
     if ds and ds.enable_data_perm:
         _append_trace(
@@ -364,8 +408,8 @@ async def execute_sql_query_core(
         try:
             rewriter_dialect = dialect
 
-            table_metadata: Dict[str, Any] = {}
-            if ds.enable_data_perm:
+            table_metadata: Dict[str, Any] = build_data_perm_table_metadata(binding, str(dataset_name or "")) or {}
+            if ds.enable_data_perm and not table_metadata:
                 try:
                     tables_stmt = select(MetaTable).where(MetaTable.dataset_id == ds.id)
                     tables_result = await session.execute(tables_stmt)
@@ -385,6 +429,12 @@ async def execute_sql_query_core(
                 except Exception as e:
                     logger.warning("[DataPerm] Failed to load table metadata: %s", e)
                     table_metadata = {}
+            elif table_metadata:
+                logger.info(
+                    "[DataPerm] Reused SqlQueryBinding metadata for %s tables, %s columns",
+                    len(table_metadata),
+                    sum(len(cols) for cols in table_metadata.values()),
+                )
 
             rewriter = SQLRewriter(dialect=rewriter_dialect, table_metadata=table_metadata)
 

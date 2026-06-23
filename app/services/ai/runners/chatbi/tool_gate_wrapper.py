@@ -86,8 +86,26 @@ def wrap_tools_with_schema_gate(runner: Any, tools: list[RuntimeToolSpec], state
                         "禁止原样重复提交。请根据错误信息修正字段名、表名、JOIN 条件、"
                         f"筛选条件或聚合逻辑后再调用 execute_sql_query。{summary_line}"
                     )
-            preflight_error = runner._build_sql_schema_preflight_error(
-                current_sql, state.schema_table_columns
+            from app.services.ai.chatbi_sql_query_binding import (
+                build_sql_query_binding,
+                reset_current_sql_query_binding,
+                set_current_sql_query_binding,
+            )
+            from app.services.sql_query_execution_service import dialect_from_data_source
+
+            dialect = dialect_from_data_source(str(kwargs.get("data_source") or ""))
+            state.sql_query_binding = build_sql_query_binding(
+                schema_output=state.schema_output,
+                sql=current_sql,
+                primary_dataset_name=str(kwargs.get("dataset_name") or ""),
+                table_bindings=state.table_bindings,
+                dialect=dialect,
+            )
+            preflight_error = await runner._resolve_sql_schema_preflight_error(
+                current_sql,
+                str(kwargs.get("data_source") or ""),
+                binding=state.sql_query_binding,
+                schema_table_columns=state.schema_table_columns,
             )
             if preflight_error:
                 return preflight_error
@@ -114,30 +132,34 @@ def wrap_tools_with_schema_gate(runner: Any, tools: list[RuntimeToolSpec], state
                     "请直接基于此数据进行回答，无需再次调用查数工具：\n\n"
                     f"{cached_output}"
                 )
-            result = _original(**kwargs)
-            if inspect.isawaitable(result):
-                result = await result
+            binding_token = set_current_sql_query_binding(state.sql_query_binding)
             try:
-                if (
-                    result
-                    and not runner._is_schema_gate_block(result)
-                    and not runner._is_sql_repeat_gate_block(result)
-                    and not runner._is_sql_static_gate_block(result)
-                    and not runner._is_time_range_gate_block(result)
-                    and not runner._is_sql_plan_gate_block(result)
-                    and not runner._is_sql_sandbox_gate_block(result)
-                ):
-                    parsed_output = runner._try_parse_json_output(result)
-                    empty_reason = runner._detect_empty_result(parsed_output)
-                    sql_error, _ = runner._detect_sql_error(result)
-                    duration_anomaly, _ = runner._detect_duration_anomaly(parsed_output)
-                    if not sql_error and not empty_reason and not duration_anomaly:
-                        if current_sql_normalized:
-                            state.successful_sqls[current_sql_normalized] = result
-                        state.last_successful_sql_output = result
-            except Exception:
-                pass
-            return result
+                result = _original(**kwargs)
+                if inspect.isawaitable(result):
+                    result = await result
+                try:
+                    if (
+                        result
+                        and not runner._is_schema_gate_block(result)
+                        and not runner._is_sql_repeat_gate_block(result)
+                        and not runner._is_sql_static_gate_block(result)
+                        and not runner._is_time_range_gate_block(result)
+                        and not runner._is_sql_plan_gate_block(result)
+                        and not runner._is_sql_sandbox_gate_block(result)
+                    ):
+                        parsed_output = runner._try_parse_json_output(result)
+                        empty_reason = runner._detect_empty_result(parsed_output)
+                        sql_error, _ = runner._detect_sql_error(result)
+                        duration_anomaly, _ = runner._detect_duration_anomaly(parsed_output)
+                        if not sql_error and not empty_reason and not duration_anomaly:
+                            if current_sql_normalized:
+                                state.successful_sqls[current_sql_normalized] = result
+                            state.last_successful_sql_output = result
+                except Exception:
+                    pass
+                return result
+            finally:
+                reset_current_sql_query_binding(binding_token)
 
         wrapped.append(replace(spec, callable=invoke_sql_gated))
     return wrapped

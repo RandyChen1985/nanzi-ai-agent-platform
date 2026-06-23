@@ -199,11 +199,20 @@ def apply_schema_tool_result(runner: Any, state: DataRunState, output: Any) -> N
     ):
         state.schema_completed = False
         state.sql_before_schema = False
+        state.schema_output = ""
+        state.table_bindings = {}
         state.schema_table_columns = {}
         return
     state.schema_completed = True
     state.sql_before_schema = False
-    state.schema_table_columns = runner._extract_schema_table_columns(output)
+    from app.services.ai.chatbi_sql_query_binding import (
+        bindings_to_table_columns,
+        extract_schema_table_bindings,
+    )
+
+    state.schema_output = str(output or "")
+    state.table_bindings = extract_schema_table_bindings(state.schema_output)
+    state.schema_table_columns = bindings_to_table_columns(state.table_bindings)
     if state.schema_refresh_required:
         state.schema_refreshed_after_sql_error = True
 
