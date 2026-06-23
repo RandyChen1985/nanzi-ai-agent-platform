@@ -144,20 +144,6 @@ def test_federated_memory_join_rejects_columns_not_in_subquery_select():
     assert "v.id" in error.lower()
 
 
-def test_federated_memory_join_allows_columns_from_subquery_select():
-    temp_schemas = {
-        "t_visit_log": ["ID", "FOLLOW_UP_PERSON", "FOLLOW_UP_DATE"],
-        "t_sales_info": ["ID", "LASTNAME"],
-    }
-    join_sql = """
-    SELECT v.ID, s.LASTNAME
-    FROM t_visit_log v
-    INNER JOIN t_sales_info s ON v.FOLLOW_UP_PERSON = s.ID
-    ORDER BY v.FOLLOW_UP_DATE DESC, v.ID DESC
-    """
-    assert FederatedQueryExecutor._validate_memory_join_columns(join_sql, temp_schemas) is None
-
-
 def test_auto_fix_memory_join_order_by_strips_missing_column():
     temp_schemas = {
         "t_visit_log": [
@@ -177,6 +163,28 @@ def test_auto_fix_memory_join_order_by_strips_missing_column():
     assert fixed
     assert "v.ID" not in fixed.upper().replace(" ", "")
     assert FederatedQueryExecutor._validate_memory_join_columns(fixed, temp_schemas) is None
+
+
+def test_federated_memory_join_allows_columns_from_subquery_select():
+    temp_schemas = {
+        "t_visit_log": ["ID", "FOLLOW_UP_PERSON", "FOLLOW_UP_DATE"],
+        "t_sales_info": ["ID", "LASTNAME"],
+    }
+    join_sql = """
+    SELECT v.ID, s.LASTNAME
+    FROM t_visit_log v
+    INNER JOIN t_sales_info s ON v.FOLLOW_UP_PERSON = s.ID
+    ORDER BY v.FOLLOW_UP_DATE DESC, v.ID DESC
+    """
+    assert FederatedQueryExecutor._validate_memory_join_columns(join_sql, temp_schemas) is None
+
+
+def test_maybe_auto_fix_memory_join_sql_returns_updated_sql():
+    temp_schemas = {"t_visit_log": ["FOLLOW_UP_DATE"]}
+    join_sql = "SELECT 1 FROM t_visit_log v ORDER BY v.FOLLOW_UP_DATE DESC, v.ID DESC"
+    fixed, changed = FederatedQueryExecutor._maybe_auto_fix_memory_join_sql(join_sql, temp_schemas)
+    assert changed is True
+    assert "v.ID" not in fixed.upper().replace(" ", "")
 
 
 def test_build_temp_table_schemas_from_plan_infers_select_columns():

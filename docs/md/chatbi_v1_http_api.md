@@ -182,6 +182,8 @@ OpenClaw 通路的 system prompt 中会生成 `<AUTH_CONTEXT>` JSON（见 `app/s
 
 本文描述 `app/api/v1/endpoints/chatbi.py` 暴露的接口（数据集 Schema、只读 SQL 执行、SQL 权限校验）：**路径、认证、入参、成功响应结构及示例**。示例 JSON 使用 FastAPI `TestClient` 对真实路由做请求得到的 **序列化结果**（底层 `execute_sql_query_core` / `fetch_dataset_schema_core` 在抓示例时用 patch 固定返回值；**字段结构与线上响应一致**，具体业务数值以实际环境与外部 SQL API 为准）。
 
+> **与 Agent 查数路径的差异**：HTTP/门户直连 `execute_sql_query_core` 时**不会**注入 Agent 侧的 `SqlQueryBinding` ContextVar；表归属、权限与字段校验仍走 Core 内 MetaTable / Schema 回退逻辑。Agent ReAct 路径会先经 `get_dataset_schema` 构建 binding 再预检与执行（见 `app/services/ai/runners/chatbi/README.md`）。
+
 ---
 
 ## 认证说明

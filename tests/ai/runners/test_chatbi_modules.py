@@ -129,6 +129,14 @@ def test_collect_preflight_unknown_tables_with_dialect_uses_subquery_tables():
     assert unknown["inner_t"] == "inner_t"
 
 
+def test_build_sql_schema_preflight_error_with_dialect_detects_unknown_column():
+    schema = {"outer_t": ["id", "name"]}
+    sql = "SELECT o.missing FROM outer_t o"
+    err = build_sql_schema_preflight_error(sql, schema, dialect="oracle")
+    assert "SQL 预检失败" in err
+    assert "missing" in err
+
+
 def test_sql_schema_preflight_allows_permission_fallback_table():
     schema = {"view_ai_visit_log": ["id", "follow_up_date", "follow_up_person"]}
     sql = (

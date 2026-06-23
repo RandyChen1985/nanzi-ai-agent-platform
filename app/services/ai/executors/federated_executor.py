@@ -216,7 +216,17 @@ class FederatedQueryExecutor:
                 )
                 join_col_error = self._validate_memory_join_columns(join_sql, inferred_temp_schemas)
                 if join_col_error:
-                    raise ValueError(join_col_error)
+                    join_sql, auto_fixed = self._maybe_auto_fix_memory_join_sql(
+                        join_sql,
+                        inferred_temp_schemas,
+                    )
+                    if auto_fixed:
+                        join_col_error = self._validate_memory_join_columns(
+                            join_sql,
+                            inferred_temp_schemas,
+                        )
+                    if join_col_error:
+                        raise ValueError(join_col_error)
                 
                 yield {
                     "type": "log",
@@ -662,7 +672,17 @@ class FederatedQueryExecutor:
                             temp_table_schemas,
                         )
                         if join_col_error:
-                            raise ValueError(join_col_error)
+                            join_sql, auto_fixed = self._maybe_auto_fix_memory_join_sql(
+                                join_sql,
+                                temp_table_schemas,
+                            )
+                            if auto_fixed:
+                                join_col_error = self._validate_memory_join_columns(
+                                    join_sql,
+                                    temp_table_schemas,
+                                )
+                            if join_col_error:
+                                raise ValueError(join_col_error)
                         duck_res = duckdb_conn.execute(join_sql)
                         raw_join_rows = duck_res.fetchall()
                         join_rows = self._limit_rows(raw_join_rows)
@@ -721,12 +741,11 @@ class FederatedQueryExecutor:
                             norm_sql = normalize_sql_text(join_sql)
                             repeat_blocked = norm_sql in join_failed_signatures
                             if repeat_blocked:
-                                auto_fixed = self._auto_fix_memory_join_order_by(
+                                join_sql, auto_fixed = self._maybe_auto_fix_memory_join_sql(
                                     join_sql,
                                     temp_table_schemas,
                                 )
-                                if auto_fixed and normalize_sql_text(auto_fixed) != norm_sql:
-                                    join_sql = auto_fixed
+                                if auto_fixed and normalize_sql_text(join_sql) != norm_sql:
                                     join_repair_count += 1
                                     yield {
                                         "type": "log",
@@ -1389,6 +1408,20 @@ class FederatedQueryExecutor:
                 exc,
             )
             return None
+
+    @classmethod
+    def _maybe_auto_fix_memory_join_sql(
+        cls,
+        join_sql: str,
+        temp_table_schemas: dict[str, list[str]],
+    ) -> tuple[str, bool]:
+        """尝试自动修正 memory_join（当前仅移除 ORDER BY 中无效列）。"""
+        fixed = cls._auto_fix_memory_join_order_by(join_sql, temp_table_schemas)
+        if not fixed:
+            return join_sql, False
+        if normalize_sql_text(fixed) == normalize_sql_text(join_sql):
+            return join_sql, False
+        return fixed, True
 
     @staticmethod
     def _validate_memory_join_sql(sql: str) -> Optional[str]:

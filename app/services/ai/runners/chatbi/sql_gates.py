@@ -544,20 +544,74 @@ def collect_preflight_unknown_tables(
     return unknown
 
 
-def build_sql_schema_preflight_error(
+def _preflight_cte_names_sqlglot(root: Any) -> set[str]:
+    try:
+        from sqlglot import exp
+
+        names: set[str] = set()
+        for cte in root.find_all(exp.CTE):
+            alias = getattr(cte, "alias", None) or getattr(cte, "alias_or_name", None)
+            if alias:
+                names.add(normalize_sql_identifier(str(alias)))
+        return names
+    except Exception:
+        return set()
+
+
+def _build_preflight_alias_map(
     sql: str,
     schema_table_columns: dict[str, list[str]],
     *,
+    dialect: str | None = None,
     extra_allowed_tables: set[str] | None = None,
-) -> str:
-    if not sql or not schema_table_columns:
-        return ""
+) -> tuple[dict[str, str], dict[str, str], str]:
+    """构建 alias→table 映射；若发现未知表则返回 error 文案。"""
+    permission_allowed = extra_allowed_tables or set()
+    if dialect:
+        try:
+            import sqlglot
+            from sqlglot import exp
+
+            parsed = sqlglot.parse(sql, read=dialect)
+            if parsed and len(parsed) == 1:
+                root = parsed[0]
+                cte_names = _preflight_cte_names_sqlglot(root)
+                alias_to_table: dict[str, str] = {}
+                table_displays: dict[str, str] = {}
+                for table in root.find_all(exp.Table):
+                    raw_name = str(table.name or "").strip().strip('"').strip("'")
+                    if not raw_name:
+                        continue
+                    table_name = raw_name.split(".")[-1]
+                    table_norm = normalize_sql_identifier(table_name)
+                    if table_norm in cte_names:
+                        continue
+                    if table_norm not in schema_table_columns:
+                        if table_norm not in permission_allowed:
+                            available_tables = ", ".join(sorted(schema_table_columns.keys())[:40])
+                            return {}, {}, (
+                                "[TOOL_ERROR] SQL 预检失败：字段/表引用错误。"
+                                f"表 {table_name} 不在 get_dataset_schema 返回的表列表中，"
+                                f"且不在当前用户可访问的物理表权限集内。"
+                                f"当前 Schema 可用表：{available_tables}。"
+                                "请先重新调用 get_dataset_schema 核对物理 table_name，"
+                                "禁止根据 DataQueryIntentFrame、业务术语或中文含义凭空猜测表名。"
+                            )
+                    alias = str(table.alias or table_name).strip().strip('"').strip("'")
+                    alias_norm = normalize_sql_identifier(alias)
+                    if alias_norm in _PREFLIGHT_RESERVED_ALIASES:
+                        alias_norm = table_norm
+                    alias_to_table[alias_norm] = table_norm
+                    alias_to_table[table_norm] = table_norm
+                    table_displays[table_norm] = table_name
+                return alias_to_table, table_displays, ""
+        except Exception:
+            pass
 
     sql_for_preflight = mask_sql_literals_and_comments(sql)
     alias_to_table: dict[str, str] = {}
     table_displays: dict[str, str] = {}
     cte_names = _preflight_cte_names(sql_for_preflight)
-    permission_allowed = extra_allowed_tables or set()
     for match in _PREFLIGHT_TABLE_PATTERN.finditer(sql_for_preflight):
         table = match.group(1).split(".")[-1]
         alias = match.group(2) or table
@@ -570,7 +624,7 @@ def build_sql_schema_preflight_error(
         if table_norm not in schema_table_columns:
             if table_norm not in permission_allowed:
                 available_tables = ", ".join(sorted(schema_table_columns.keys())[:40])
-                return (
+                return {}, {}, (
                     "[TOOL_ERROR] SQL 预检失败：字段/表引用错误。"
                     f"表 {table} 不在 get_dataset_schema 返回的表列表中，"
                     f"且不在当前用户可访问的物理表权限集内。"
@@ -581,10 +635,54 @@ def build_sql_schema_preflight_error(
         alias_to_table[alias_norm] = table_norm
         alias_to_table[table_norm] = table_norm
         table_displays[table_norm] = table
+    return alias_to_table, table_displays, ""
 
-    if not alias_to_table:
-        return ""
 
+def _preflight_column_reference_error(
+    sql: str,
+    schema_table_columns: dict[str, list[str]],
+    alias_to_table: dict[str, str],
+    table_displays: dict[str, str],
+    *,
+    dialect: str | None = None,
+) -> str:
+    if dialect:
+        try:
+            import sqlglot
+            from sqlglot import exp
+
+            parsed = sqlglot.parse(sql, read=dialect)
+            if parsed and len(parsed) == 1:
+                for column in parsed[0].find_all(exp.Column):
+                    col_name = str(column.name or "").strip().strip('"').strip("'")
+                    if not col_name or col_name == "*":
+                        continue
+                    table_ref = column.table
+                    if not table_ref:
+                        continue
+                    qualifier_norm = normalize_sql_identifier(str(table_ref))
+                    table_norm = alias_to_table.get(qualifier_norm)
+                    if not table_norm:
+                        continue
+                    allowed_columns = schema_table_columns.get(table_norm) or []
+                    if not allowed_columns:
+                        continue
+                    allowed_norms = {normalize_sql_identifier(item) for item in allowed_columns}
+                    column_norm = normalize_sql_identifier(col_name)
+                    if column_norm not in allowed_norms:
+                        table_display = table_displays.get(table_norm) or table_norm
+                        available = ", ".join(allowed_columns[:40])
+                        return (
+                            "[TOOL_ERROR] SQL 预检失败：字段/表引用错误。"
+                            f'ORA-00904: "{qualifier_norm.upper()}"."{col_name.upper()}": invalid identifier。'
+                            f"字段 {qualifier_norm}.{col_name} 不在 get_dataset_schema 返回的表 {table_display} 字段列表中。"
+                            f"可用字段：{available}。请替换或删除该字段后再调用 execute_sql_query。"
+                        )
+                return ""
+        except Exception:
+            pass
+
+    sql_for_preflight = mask_sql_literals_and_comments(sql)
     for qualifier, column in re.findall(r"\b([A-Za-z_][\w$]*)\.([A-Za-z_][\w$]*)\b", sql_for_preflight):
         qualifier_norm = normalize_sql_identifier(qualifier)
         table_norm = alias_to_table.get(qualifier_norm)
@@ -605,6 +703,36 @@ def build_sql_schema_preflight_error(
                 f"可用字段：{available}。请替换或删除该字段后再调用 execute_sql_query。"
             )
     return ""
+
+
+def build_sql_schema_preflight_error(
+    sql: str,
+    schema_table_columns: dict[str, list[str]],
+    *,
+    extra_allowed_tables: set[str] | None = None,
+    dialect: str | None = None,
+) -> str:
+    if not sql or not schema_table_columns:
+        return ""
+
+    alias_to_table, table_displays, table_error = _build_preflight_alias_map(
+        sql,
+        schema_table_columns,
+        dialect=dialect,
+        extra_allowed_tables=extra_allowed_tables,
+    )
+    if table_error:
+        return table_error
+    if not alias_to_table:
+        return ""
+
+    return _preflight_column_reference_error(
+        sql,
+        schema_table_columns,
+        alias_to_table,
+        table_displays,
+        dialect=dialect,
+    )
 
 
 def detect_sql_static_risk(sql: str) -> str:

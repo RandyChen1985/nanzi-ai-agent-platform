@@ -533,6 +533,7 @@ async def resolve_sql_schema_preflight_with_binding(
         sql,
         table_columns,
         extra_allowed_tables=extra_allowed,
+        dialect=dialect,
     )
     if binding and not err:
         binding.sql = sql
