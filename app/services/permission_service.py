@@ -615,7 +615,12 @@ class PermissionService:
         elif resource_type == "dataset":
             return resource_id in perms.permissions.datasets
         elif resource_type == "api":
-            return resource_id in perms.permissions.apis
+            from app.core.v1_api_access import expand_api_permission_candidates
+
+            granted = set(perms.permissions.apis or [])
+            if not granted:
+                return False
+            return bool(granted & expand_api_permission_candidates(resource_id))
         elif resource_type == "metadata":
             return resource_id in perms.permissions.metadata
         elif resource_type == "element":

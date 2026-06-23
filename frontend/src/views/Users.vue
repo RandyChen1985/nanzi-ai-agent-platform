@@ -1598,7 +1598,7 @@ const fetchBusinessRoles = async () => {
 };
 
 const fetchResources = async () => {
-  if (allResources.value.agents.length > 0) return;
+  if (loadingResources.value) return;
   loadingResources.value = true;
   try {
     // 1. Fetch Local Core Resources (High Priority)

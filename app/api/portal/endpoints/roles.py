@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, Query, HTTPException, status
+from fastapi import APIRouter, Depends, Query, HTTPException, status, Request
 from pydantic import BaseModel
 from typing import Optional, List
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -256,32 +256,45 @@ async def bulk_assign_role_users(
 @router.get("/{role_id}/permissions")
 async def get_role_resources(
     role_id: int,
+    request: Request,
     admin: dict = Depends(require_permission("element", "element:role:edit")),
     db: AsyncSession = Depends(get_db_session)
 ):
     """
     Get resources assigned to this role.
     """
+    from app.core.v1_api_access import normalize_api_permission_ids
+
     role = await db.get(Role, role_id)
     if not role:
         raise HTTPException(status_code=404, detail="Role not found")
         
     service = PermissionService(db)
-    return await service.get_role_permissions(role_id)
+    response = await service.get_role_permissions(role_id)
+    response.permissions.apis = normalize_api_permission_ids(
+        request.app,
+        response.permissions.apis or [],
+    )
+    return response
 
 @router.put("/{role_id}/permissions")
 async def update_role_resources(
     role_id: int,
     permissions: PermissionUpdate,
+    request: Request,
     admin: dict = Depends(require_permission("element", "element:role:edit")),
     db: AsyncSession = Depends(get_db_session)
 ):
     """
     Assign resources to this role.
     """
+    from app.core.v1_api_access import normalize_api_permission_ids
+
     role = await db.get(Role, role_id)
     if not role:
         raise HTTPException(status_code=404, detail="Role not found")
+
+    permissions.apis = normalize_api_permission_ids(request.app, permissions.apis or [])
         
     service = PermissionService(db)
     await service.update_role_permissions(role_id, permissions)

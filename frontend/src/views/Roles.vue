@@ -929,7 +929,7 @@ const openPermissionDialog = async (role: any) => {
 }
 
 const fetchResources = async () => {
-    if (allResources.value.agents.length > 0) return 
+    if (loadingResources.value) return
     loadingResources.value = true
     try {
         const apiKey = localStorage.getItem('api_key')

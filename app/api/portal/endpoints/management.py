@@ -152,32 +152,45 @@ class UpdateStatusRequest(BaseModel):
 @router.get("/users/{user_id}/permissions", response_model=UserPermissionsResponse)
 async def get_user_permissions(
     user_id: int,
+    request: Request,
     admin: dict = Depends(require_permission("element", "element:user:edit")),
     db: AsyncSession = Depends(get_db_session)
 ):
     """
     Get user permissions. Admin only.
     """
+    from app.core.v1_api_access import normalize_api_permission_ids
+
     user = await db.get(User, user_id)
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
         
     service = PermissionService(db)
-    return await service.get_user_permissions(user_id)
+    response = await service.get_user_permissions(user_id)
+    response.permissions.apis = normalize_api_permission_ids(
+        request.app,
+        response.permissions.apis or [],
+    )
+    return response
 
 @router.put("/users/{user_id}/permissions")
 async def update_user_permissions(
     user_id: int,
     permissions: PermissionUpdate,
+    request: Request,
     admin: dict = Depends(require_permission("element", "element:user:edit")),
     db: AsyncSession = Depends(get_db_session)
 ):
     """
     Update user permissions. Admin only.
     """
+    from app.core.v1_api_access import normalize_api_permission_ids
+
     user = await db.get(User, user_id)
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
+
+    permissions.apis = normalize_api_permission_ids(request.app, permissions.apis or [])
 
     service = PermissionService(db)
     await service.update_user_permissions(user_id, permissions)

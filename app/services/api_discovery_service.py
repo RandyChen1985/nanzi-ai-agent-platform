@@ -2,6 +2,8 @@ from typing import List, Dict, Any
 from fastapi import FastAPI
 from fastapi.routing import APIRoute
 
+from app.core.v1_api_access import build_api_resource_id
+
 class ApiDiscoveryService:
     @staticmethod
     def get_v1_api_resources(app: FastAPI) -> List[Dict[str, Any]]:
@@ -32,7 +34,7 @@ class ApiDiscoveryService:
                     if method in ["HEAD", "OPTIONS"]:
                         continue
                         
-                    resource_id = f"{method}:{route.path}"
+                    resource_id = build_api_resource_id(method, route.path)
                     # Use summary as primary name, fallback to function name
                     name = route.summary or route.name.replace("_", " ").title()
                     description = route.description or ""

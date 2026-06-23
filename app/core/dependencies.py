@@ -101,41 +101,32 @@ async def verify_v1_api_access(
     Enforce permission check for V1 External APIs.
     Checks if the user has explicit 'api' permission for the current endpoint.
     """
-    # 1. Identify Resource
-    route = request.scope.get("route")
-    if not route:
+    from app.core.v1_api_access import is_v1_api_whitelisted, resolve_v1_api_resource_id
+
+    if not request.scope.get("route"):
         return user_info
-        
-    path_template = route.path
-    method = request.method
-    resource_id = f"{method}:{path_template}"
-    
+
+    resource_id, path_template = resolve_v1_api_resource_id(request)
+
     # Whitelist Core Endpoints (Allow all authenticated users)
-    # 1. All Chat related endpoints
-    if "/chat" in path_template and not path_template.startswith("/api/v1/chatbi"):
+    if is_v1_api_whitelisted(path_template) or is_v1_api_whitelisted(request.url.path):
         return user_info
-    
-    # 2. All Task related endpoints (User-owned resources)
-    if "/tasks" in path_template:
-        return user_info
-    
+
     try:
         user_id = int(user_info["user_id"])
     except (ValueError, TypeError):
-        # Should be handled by require_api_key but safe check
         raise HTTPException(status_code=401, detail="Invalid User ID")
-    
-    # 2. Check Permission
+
     from app.services.permission_service import PermissionService
     service = PermissionService(db)
-    
+
     has_perm = await service.check_permission(user_id, "api", resource_id)
     if not has_perm:
-         raise HTTPException(
+        raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"Permission denied for API: {resource_id} (Path: {path_template})"
+            detail=f"Permission denied for API: {resource_id} (Path: {path_template})",
         )
-        
+
     return user_info
 
 
