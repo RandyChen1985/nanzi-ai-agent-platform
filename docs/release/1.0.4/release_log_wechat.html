@@ -1,0 +1,245 @@
+<!--
+  微信公众号排版 HTML — 云枢 AI 智能体平台 v1.0.4
+  使用说明：
+  1. 复制下方 <section> 内全部内容，粘贴到微信公众平台编辑器「HTML」模式（或 135/秀米 等工具）
+  2. 封面图 image.png 需在编辑器中重新上传并替换下方占位图 src（或与发布包同目录引用）
+  3. 外链在发布前预览确认；部分链接需绑定公众号域名白名单
+  4. 不支持 <style>、<script>、class/id 选择器，全部采用内联 style；避免 flex/grid，使用 section + p 块级卡片布局
+-->
+
+<section style="box-sizing:border-box;font-size:16px;color:#3f3f3f;line-height:1.8;letter-spacing:0.5px;text-align:justify;font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue','PingFang SC','Hiragino Sans GB','Microsoft YaHei',Arial,sans-serif;">
+
+  <!-- 标题区 -->
+  <section style="margin:0 0 24px 0;padding:20px 16px;background:linear-gradient(135deg,#070b14 0%,#0f172a 48%,#0c4a6e 100%);border-radius:10px;text-align:center;box-shadow:0 4px 20px rgba(6,182,212,0.12);">
+    <p style="margin:0 0 8px 0;font-size:22px;font-weight:bold;color:#f8fafc;line-height:1.5;letter-spacing:1px;">🚀 云枢 AI 智能体平台 · v1.0.4 重磅发布</p>
+    <p style="margin:0;font-size:16px;font-weight:normal;color:#67e8f9;line-height:1.6;letter-spacing:0.5px;">联邦查数 · 数据门户 2.0 · ChatBI 运行时全面进化</p>
+  </section>
+
+  <!-- 仓库链接 -->
+  <section style="margin:0 0 20px 0;padding:12px 16px;background:#f0f7ff;border-left:4px solid #2563eb;border-radius:0 6px 6px 0;">
+    <p style="margin:0;font-size:15px;color:#1e40af;line-height:1.7;">
+      <strong style="color:#1e3a8a;">GitHub Repository：</strong>
+      <a href="https://github.com/RandyChen1985/yunshu-ai-agent-platform" style="color:#2563eb;text-decoration:none;word-break:break-all;">RandyChen1985/yunshu-ai-agent-platform</a>
+    </p>
+  </section>
+
+  <!-- 导语 -->
+  <section style="margin:0 0 24px 0;">
+    <p style="margin:0 0 12px 0;font-size:15px;color:#374151;line-height:1.9;">
+      v1.0.4 版本是一次<strong style="color:#1d4ed8;">跨数据集联邦查数、数据门户 2.0 与 ChatBI 运行时全面进化</strong>的大版本更新。平台全新上线联邦查询引擎与链路追踪 Trace Span 画布；数据门户升级为「一数据集一场景」并支持黄金 SQL 报表暂存；ChatBI 引入 SQL 安全沙箱、空结果自动诊断重试与模块化架构重构；EmbedChat 新增 Mermaid / HTML / PDF / 图片 Canvas 在线预览。
+    </p>
+    <p style="margin:0;font-size:14px;color:#6b7280;line-height:1.8;">
+      本次变更范围自 <code style="font-size:13px;background:#f3f4f6;padding:2px 6px;border-radius:3px;color:#374151;">528d43c</code>（含）至
+      <code style="font-size:13px;background:#f3f4f6;padding:2px 6px;border-radius:3px;color:#374151;">3534d54</code>，共
+      <strong>104 个提交</strong>，涉及 255 个文件、约 33,000 行新增代码。
+    </p>
+  </section>
+
+  <!-- 封面图 -->
+  <section style="margin:0 0 28px 0;text-align:center;">
+    <img src="image.png" alt="云枢 AI 智能体平台 v1.0.4 发布概览" style="display:block;width:100%;max-width:100%;height:auto;margin:0 auto;border-radius:8px;box-shadow:0 2px 12px rgba(0,0,0,0.08);" />
+  </section>
+
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+
+  <!-- ========== Key Features ========== -->
+  <section style="margin:0 0 20px 0;">
+    <p style="margin:0 0 16px 0;font-size:20px;font-weight:bold;color:#111827;border-left:5px solid #2563eb;padding-left:12px;line-height:1.4;">🚀 Key Features</p>
+  </section>
+
+  <!-- Feature Card 01 -->
+  <section style="margin:0 0 16px 0;padding:16px 14px;background-color:#eef6ff;border:1px solid #cfe3ff;border-radius:10px;">
+    <p style="margin:0 0 12px 0;font-size:16px;font-weight:bold;color:#1e40af;line-height:1.5;">01 🔗 跨数据集联邦查询引擎</p>
+    <p style="margin:0 0 8px 0;font-size:14px;color:#374151;line-height:1.85;text-align:justify;"><span style="color:#3b82f6;font-weight:bold;">●</span> <strong>联邦执行与 synthesis</strong>：跨数据集 SQL 计划分解、逐节点 repair 与中文表头汇总输出。</p>
+    <p style="margin:0 0 8px 0;font-size:14px;color:#374151;line-height:1.85;text-align:justify;"><span style="color:#3b82f6;font-weight:bold;">●</span> <strong>自适应升级</strong>：单源跨表引用自动引导升级联邦；子查询误判升级为整计划 repair。</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;text-align:justify;"><span style="color:#3b82f6;font-weight:bold;">●</span> <strong>Trace Span 画布</strong>：链路追踪支持嵌套步骤父子层级展示与计时审计。</p>
+  </section>
+
+  <!-- Feature Card 02 -->
+  <section style="margin:0 0 16px 0;padding:16px 14px;background-color:#f0f9ff;border:1px solid #bae6fd;border-radius:10px;">
+    <p style="margin:0 0 12px 0;font-size:16px;font-weight:bold;color:#0369a1;line-height:1.5;">02 🏠 数据门户 2.0</p>
+    <p style="margin:0 0 8px 0;font-size:14px;color:#374151;line-height:1.85;text-align:justify;"><span style="color:#0ea5e9;font-weight:bold;">●</span> <strong>一数据集一场景</strong>：按业务场景合并卡片；「我常问」管理、多数据集折叠与卡片置顶。</p>
+    <p style="margin:0 0 8px 0;font-size:14px;color:#374151;line-height:1.85;text-align:justify;"><span style="color:#0ea5e9;font-weight:bold;">●</span> <strong>/dataset_portal</strong>：门户主指令升级，支持钉住、缓存失效、换一批 4 秒冷却与表级推荐提问。</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;text-align:justify;"><span style="color:#0ea5e9;font-weight:bold;">●</span> <strong>移动端全面优化</strong>：抽屉、顶栏滚动、快捷指令收进顶部栏。</p>
+  </section>
+
+  <!-- Feature Card 03 -->
+  <section style="margin:0 0 16px 0;padding:16px 14px;background-color:#ecfdf5;border:1px solid #a7f3d0;border-radius:10px;">
+    <p style="margin:0 0 12px 0;font-size:16px;font-weight:bold;color:#047857;line-height:1.5;">03 🛡️ ChatBI SQL 安全沙箱与智能修复</p>
+    <p style="margin:0 0 8px 0;font-size:14px;color:#374151;line-height:1.85;text-align:justify;"><span style="color:#10b981;font-weight:bold;">●</span> <strong>安全沙箱网关</strong>：笛卡尔积拦截、明细 500 行上限、Explain 行数熔断。</p>
+    <p style="margin:0 0 8px 0;font-size:14px;color:#374151;line-height:1.85;text-align:justify;"><span style="color:#10b981;font-weight:bold;">●</span> <strong>空结果自动诊断</strong>：筛选条件诊断与修正重试，业务 SQL 自动重试 3 次。</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;text-align:justify;"><span style="color:#10b981;font-weight:bold;">●</span> <strong>结构化意图帧</strong>：增强 Schema 检索；前端 sql_plan 结构化查询计划卡片。</p>
+  </section>
+
+  <!-- Feature Card 04 -->
+  <section style="margin:0 0 16px 0;padding:16px 14px;background-color:#fffbeb;border:1px solid #fde68a;border-radius:10px;">
+    <p style="margin:0 0 12px 0;font-size:16px;font-weight:bold;color:#b45309;line-height:1.5;">04 📊 黄金 SQL 报表暂存</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;text-align:justify;"><span style="color:#f59e0b;font-weight:bold;">●</span> 支持黄金 SQL 报表暂存、免模型极速直连运行；直连后「手动分析」快捷按钮与数据结果缓存复用。</p>
+  </section>
+
+  <!-- Feature Card 05 -->
+  <section style="margin:0 0 16px 0;padding:16px 14px;background-color:#faf5ff;border:1px solid #e9d5ff;border-radius:10px;">
+    <p style="margin:0 0 12px 0;font-size:16px;font-weight:bold;color:#7e22ce;line-height:1.5;">05 🖼️ EmbedChat Canvas 多媒体画布</p>
+    <p style="margin:0 0 8px 0;font-size:14px;color:#374151;line-height:1.85;text-align:justify;"><span style="color:#a855f7;font-weight:bold;">●</span> Mermaid 架构图平移缩放；HTML 预览 / 代码双态 Tab。</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;text-align:justify;"><span style="color:#a855f7;font-weight:bold;">●</span> PDF / CSV / 图片超链接与附件区 Canvas 预览；物理路径自愈代理防裂图。</p>
+  </section>
+
+  <!-- Feature Card 06 -->
+  <section style="margin:0 0 16px 0;padding:16px 14px;background-color:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;">
+    <p style="margin:0 0 12px 0;font-size:16px;font-weight:bold;color:#15803d;line-height:1.5;">06 👤 用户画像、LTM 与澄清交互</p>
+    <p style="margin:0 0 8px 0;font-size:14px;color:#374151;line-height:1.85;text-align:justify;"><span style="color:#22c55e;font-weight:bold;">●</span> 全轮次注入只读用户画像与 LTM；真实姓名称谓与偏好提醒气泡。</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;text-align:justify;"><span style="color:#22c55e;font-weight:bold;">●</span> 澄清模块按场景路由，代码组装原因与 quick 按钮；修复澄清正文未输出 Bug。</p>
+  </section>
+
+  <!-- Feature Card 07 -->
+  <section style="margin:0 0 16px 0;padding:16px 14px;background-color:#f1f5f9;border:1px solid #cbd5e1;border-radius:10px;">
+    <p style="margin:0 0 12px 0;font-size:16px;font-weight:bold;color:#334155;line-height:1.5;">07 ⚙️ ChatBI 架构重构</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;text-align:justify;"><span style="color:#64748b;font-weight:bold;">●</span> DataAgentRunner 拆分为 26 个 chatbi/ 域模块；AgentService 重构；Pydantic V2 迁移；取消启动时 Redis 向量全量同步。</p>
+  </section>
+
+  <!-- Feature Card 08 -->
+  <section style="margin:0 0 28px 0;padding:16px 14px;background-color:#fef2f2;border:1px solid #fecaca;border-radius:10px;">
+    <p style="margin:0 0 12px 0;font-size:16px;font-weight:bold;color:#991b1b;line-height:1.5;">08 🎯 智能路由与体验优化</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;text-align:justify;"><span style="color:#ef4444;font-weight:bold;">●</span> 会话粘性支持极短追问（如「姓名呢」）；主助手工具预检；手动终止释放会话锁；元数据 DDL 导入优化。</p>
+  </section>
+
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+
+  <!-- ========== Breaking Changes ========== -->
+  <section style="margin:0 0 8px 0;">
+    <p style="margin:0 0 16px 0;font-size:20px;font-weight:bold;color:#111827;border-left:5px solid #dc2626;padding-left:12px;line-height:1.4;">⚠️ Breaking Changes &amp; Migration Notes</p>
+  </section>
+  <section style="margin:0 0 12px 0;padding:12px 16px;background:#fef2f2;border-left:4px solid #dc2626;border-radius:0 6px 6px 0;">
+    <p style="margin:0;font-size:15px;color:#991b1b;line-height:1.7;">从 v1.0.3 升级至 v1.0.4 时，请特别注意以下变更：</p>
+  </section>
+  <section style="margin:0 0 28px 0;overflow-x:auto;">
+    <table style="width:100%;border-collapse:collapse;font-size:14px;line-height:1.6;">
+      <thead>
+        <tr>
+          <th style="padding:10px 8px;background:#fef2f2;color:#991b1b;font-weight:bold;border:1px solid #fecaca;text-align:left;width:30%;">项目</th>
+          <th style="padding:10px 8px;background:#fef2f2;color:#991b1b;font-weight:bold;border:1px solid #fecaca;text-align:left;">说明</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td style="padding:10px 8px;border:1px solid #e5e7eb;color:#374151;font-weight:bold;">门户指令</td>
+          <td style="padding:10px 8px;border:1px solid #e5e7eb;color:#374151;">主指令为 <code style="font-size:13px;background:#f3f4f6;padding:1px 5px;border-radius:3px;">/dataset_portal</code>，旧 <code style="font-size:13px;background:#f3f4f6;padding:1px 5px;border-radius:3px;">/dataset_menu</code> 仍兼容。</td>
+        </tr>
+        <tr>
+          <td style="padding:10px 8px;border:1px solid #e5e7eb;color:#374151;font-weight:bold;background:#f9fafb;">数据库变更</td>
+          <td style="padding:10px 8px;border:1px solid #e5e7eb;color:#374151;background:#f9fafb;">须执行 V79 / V80 / V81 三个增量脚本。</td>
+        </tr>
+        <tr>
+          <td style="padding:10px 8px;border:1px solid #e5e7eb;color:#374151;font-weight:bold;">SQL 沙箱</td>
+          <td style="padding:10px 8px;border:1px solid #e5e7eb;color:#374151;">笛卡尔积、超大明细等将被拦截；已移除自动注入 LIMIT。</td>
+        </tr>
+        <tr>
+          <td style="padding:10px 8px;border:1px solid #e5e7eb;color:#374151;font-weight:bold;background:#f9fafb;">查数超时</td>
+          <td style="padding:10px 8px;border:1px solid #e5e7eb;color:#374151;background:#f9fafb;">SQL 执行超时由 30s 调整为 60s。</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+
+  <!-- ========== Database Upgrades ========== -->
+  <section style="margin:0 0 8px 0;">
+    <p style="margin:0 0 16px 0;font-size:20px;font-weight:bold;color:#111827;border-left:5px solid #10b981;padding-left:12px;line-height:1.4;">🗄️ Database Incremental Upgrades</p>
+    <p style="margin:0 0 12px 0;font-size:15px;color:#374151;">从 v1.0.3 升级至 v1.0.4 期间，平台数据库共引入了 <strong>3 个</strong>增量 SQL 升级脚本：</p>
+  </section>
+  <section style="margin:0 0 28px 0;overflow-x:auto;">
+    <table style="width:100%;border-collapse:collapse;font-size:14px;line-height:1.6;">
+      <thead>
+        <tr>
+          <th style="padding:10px 8px;background:#f0fdf4;color:#047857;font-weight:bold;border:1px solid #a7f3d0;text-align:left;width:35%;">脚本文件</th>
+          <th style="padding:10px 8px;background:#f0fdf4;color:#047857;font-weight:bold;border:1px solid #a7f3d0;text-align:left;">核心变更内容</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td style="padding:10px 8px;border:1px solid #e5e7eb;color:#374151;font-weight:bold;">V79-expand_meta_changelog_resource_id.sql</td>
+          <td style="padding:10px 8px;border:1px solid #e5e7eb;color:#374151;">扩展 meta_changelog.resource_id 至 270 字符。</td>
+        </tr>
+        <tr>
+          <td style="padding:10px 8px;border:1px solid #e5e7eb;color:#374151;font-weight:bold;background:#f9fafb;">V80-update_data_api_timeout_seconds.sql</td>
+          <td style="padding:10px 8px;border:1px solid #e5e7eb;color:#374151;background:#f9fafb;">查数超时 30s → 60s。</td>
+        </tr>
+        <tr>
+          <td style="padding:10px 8px;border:1px solid #e5e7eb;color:#374151;font-weight:bold;">V81-add_span_columns_to_traces.sql</td>
+          <td style="padding:10px 8px;border:1px solid #e5e7eb;color:#374151;">Trace 表新增 span_id / parent_span_id / meta_info。</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+
+  <!-- ========== Upgrade Guide ========== -->
+  <section style="margin:0 0 8px 0;">
+    <p style="margin:0 0 16px 0;font-size:20px;font-weight:bold;color:#111827;border-left:5px solid #7c3aed;padding-left:12px;line-height:1.4;">📦 Upgrade Guide</p>
+    <p style="margin:0 0 12px 0;font-size:16px;font-weight:bold;color:#374151;">从 v1.0.3 升级</p>
+  </section>
+  <section style="margin:0 0 16px 0;padding:14px 16px;background:#1e1e2e;border-radius:8px;">
+    <p style="margin:0 0 6px 0;font-size:13px;color:#a5b4fc;line-height:1.8;font-family:Menlo,Monaco,Consolas,monospace;word-break:break-all;"># 1. 拉取最新代码</p>
+    <p style="margin:0 0 10px 0;font-size:13px;color:#e2e8f0;line-height:1.8;font-family:Menlo,Monaco,Consolas,monospace;word-break:break-all;">git fetch origin &amp;&amp; git checkout main &amp;&amp; git pull origin main</p>
+    <p style="margin:0 0 6px 0;font-size:13px;color:#a5b4fc;line-height:1.8;font-family:Menlo,Monaco,Consolas,monospace;word-break:break-all;"># 2. 更新依赖</p>
+    <p style="margin:0 0 4px 0;font-size:13px;color:#e2e8f0;line-height:1.8;font-family:Menlo,Monaco,Consolas,monospace;word-break:break-all;">source .venv/bin/activate</p>
+    <p style="margin:0 0 10px 0;font-size:13px;color:#e2e8f0;line-height:1.8;font-family:Menlo,Monaco,Consolas,monospace;word-break:break-all;">pip install -r requirements.txt</p>
+    <p style="margin:0 0 6px 0;font-size:13px;color:#a5b4fc;line-height:1.8;font-family:Menlo,Monaco,Consolas,monospace;word-break:break-all;"># 3. 执行数据库迁移（V79 / V80 / V81）</p>
+    <p style="margin:0 0 10px 0;font-size:13px;color:#e2e8f0;line-height:1.8;font-family:Menlo,Monaco,Consolas,monospace;word-break:break-all;">./db-prod/apply-sql-native.sh</p>
+    <p style="margin:0 0 6px 0;font-size:13px;color:#a5b4fc;line-height:1.8;font-family:Menlo,Monaco,Consolas,monospace;word-break:break-all;"># 4. 重新编译前端并启动</p>
+    <p style="margin:0 0 4px 0;font-size:13px;color:#e2e8f0;line-height:1.8;font-family:Menlo,Monaco,Consolas,monospace;word-break:break-all;">cd frontend &amp;&amp; npm install &amp;&amp; npm run build &amp;&amp; cd ..</p>
+    <p style="margin:0;font-size:13px;color:#e2e8f0;line-height:1.8;font-family:Menlo,Monaco,Consolas,monospace;word-break:break-all;">./dev.sh</p>
+  </section>
+  <p style="margin:0 0 28px 0;font-size:14px;color:#6b7280;line-height:1.8;">
+    完整部署说明请参考
+    <a href="https://github.com/RandyChen1985/yunshu-ai-agent-platform/blob/main/HOW_TO_INSTALL.md" style="color:#2563eb;text-decoration:none;">HOW_TO_INSTALL.md</a>。
+  </p>
+
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+
+  <!-- ========== Test Checklist ========== -->
+  <section style="margin:0 0 8px 0;">
+    <p style="margin:0 0 16px 0;font-size:20px;font-weight:bold;color:#111827;border-left:5px solid #0891b2;padding-left:12px;line-height:1.4;">✅ Test Checklist</p>
+    <p style="margin:0 0 12px 0;font-size:15px;color:#374151;">升级后建议验证以下核心场景：</p>
+  </section>
+  <section style="margin:0 0 28px 0;padding:14px 16px;background-color:#f0f9ff;border:1px solid #bae6fd;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:14px;color:#374151;line-height:1.8;">☐ <strong>联邦查询</strong>：跨数据集提问、Trace Span 画布、synthesis 中文表头</p>
+    <p style="margin:0 0 8px 0;font-size:14px;color:#374151;line-height:1.8;">☐ <strong>数据门户</strong>：/dataset_portal、钉住、换一批冷却、表级推荐提问</p>
+    <p style="margin:0 0 8px 0;font-size:14px;color:#374151;line-height:1.8;">☐ <strong>黄金报表</strong>：暂存、免模型极速运行、手动分析</p>
+    <p style="margin:0 0 8px 0;font-size:14px;color:#374151;line-height:1.8;">☐ <strong>澄清交互</strong>：「你好」「可视化分析一下」正文完整输出与 quick 按钮</p>
+    <p style="margin:0 0 8px 0;font-size:14px;color:#374151;line-height:1.8;">☐ <strong>Canvas 预览</strong>：Mermaid / HTML / PDF / 图片</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.8;">☐ <strong>回归测试</strong>：全量 pytest 自动化用例通过</p>
+  </section>
+
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+
+  <!-- ========== Downloads ========== -->
+  <section style="margin:0 0 8px 0;">
+    <p style="margin:0 0 12px 0;font-size:20px;font-weight:bold;color:#111827;border-left:5px solid #d97706;padding-left:12px;line-height:1.4;">💾 Downloads / Assets</p>
+    <p style="margin:0 0 16px 0;font-size:15px;color:#374151;line-height:1.8;">本项目 v1.0.4 发布版本关联的源码、Docker 镜像资产归档包及配置文件如下：</p>
+  </section>
+  <section style="margin:0 0 16px 0;padding:14px 16px;background-color:#fffbeb;border:1px solid #fde68a;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:14px;color:#374151;line-height:1.8;">📦 <strong>Source Code (zip)</strong>：yunshu-ai-agent-platform-1.0.4.zip</p>
+    <p style="margin:0 0 8px 0;font-size:14px;color:#374151;line-height:1.8;">📦 <strong>Source Code (tar.gz)</strong>：yunshu-ai-agent-platform-1.0.4.tar.gz</p>
+    <p style="margin:0 0 8px 0;font-size:14px;color:#374151;line-height:1.8;">🐳 <strong>Docker Image for Linux amd64 (x86_64)</strong>：yunshu-ai-agent_1.0.4_linux-amd64_*.tar</p>
+    <p style="margin:0 0 8px 0;font-size:14px;color:#374151;line-height:1.8;">🐳 <strong>Docker Image for Linux arm64 (aarch64)</strong>：yunshu-ai-agent_1.0.4_linux-arm64_*.tar</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.8;">⚙️ <strong>Docker Compose YAML file</strong>：docker-compose.yml</p>
+  </section>
+  <section style="margin:0 0 20px 0;padding:12px 16px;background:#fffbeb;border-radius:8px;text-align:center;">
+    <p style="margin:0;font-size:15px;color:#92400e;line-height:1.7;">
+      🔗 <strong>下载地址：</strong>
+      <a href="https://github.com/RandyChen1985/yunshu-ai-agent-platform/releases/tag/1.0.4" style="color:#d97706;text-decoration:none;font-weight:bold;">GitHub Releases v1.0.4</a>
+    </p>
+  </section>
+
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+
+  <!-- ========== Contributors ========== -->
+  <section style="margin:0 0 0 0;padding:20px 16px;background:linear-gradient(135deg,#f8fafc 0%,#e2e8f0 100%);border-radius:10px;text-align:center;">
+    <p style="margin:0;font-size:16px;font-weight:bold;color:#374151;line-height:1.7;">🤝 Contributors</p>
+    <p style="margin:10px 0 0 0;font-size:15px;color:#6b7280;line-height:1.8;">感谢所有参与 v1.0.4 版本发布的开发者！</p>
+  </section>
+
+</section>
