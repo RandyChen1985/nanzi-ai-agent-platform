@@ -99,6 +99,43 @@ def test_detect_sql_static_risk_join_and_order_by():
     )
 
 
+def test_sql_schema_preflight_allows_order_by_select_alias_multi_table():
+    schema = {
+        "view_ai_visit_log": ["ID", "FOLLOW_UP_PERSON", "FOLLOW_UP_DATE"],
+        "hrmresource": ["ID", "ACCOUNTNAME"],
+    }
+    sql = (
+        "SELECT hr.ACCOUNTNAME AS sales_name, COUNT(v.ID) AS visit_count "
+        "FROM VIEW_AI_VISIT_LOG v "
+        "LEFT JOIN HRMRESOURCE hr ON v.FOLLOW_UP_PERSON = hr.ID "
+        "WHERE v.FOLLOW_UP_DATE >= '2026-05-01' AND v.FOLLOW_UP_DATE <= '2026-05-31' "
+        "GROUP BY hr.ACCOUNTNAME "
+        "ORDER BY visit_count DESC"
+    )
+    err = build_sql_schema_preflight_error(sql, schema, dialect="oracle")
+    assert err == ""
+
+
+def test_sql_schema_preflight_allows_order_by_select_alias_single_table():
+    schema = {"hrmresource": ["SUPDEPID", "BELONGTO", "MANAGERID"]}
+    sql = "SELECT SUPDEPID AS aaa FROM HRMRESOURCE WHERE ROWNUM <= 10 ORDER BY aaa"
+    err = build_sql_schema_preflight_error(sql, schema, dialect="oracle")
+    assert err == ""
+
+
+def test_sql_schema_preflight_still_blocks_unknown_column_with_order_by_alias():
+    schema = {
+        "view_ai_visit_log": ["ID", "FOLLOW_UP_PERSON", "FOLLOW_UP_DATE"],
+        "hrmresource": ["ID", "ACCOUNTNAME"],
+    }
+    sql = (
+        "SELECT hr.ACCOUNTNAME AS sales_name, COUNT(v.ID) AS visit_count "
+        "FROM VIEW_AI_VISIT_LOG v "
+        "LEFT JOIN HRMRESOURCE hr ON v.FOLLOW_UP_PERSON = hr.ID "
+        "ORDER BY unknown_col DESC"
+    )
+
+
 def test_sql_schema_preflight_error_unknown_column():
     schema = {"demo": ["id", "status"]}
     sql = "SELECT d.missing FROM demo d"

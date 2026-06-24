@@ -504,7 +504,16 @@ def mask_sql_literals_and_comments(sql: str) -> str:
 
 _PREFLIGHT_RESERVED_ALIASES = {
     "where", "join", "left", "right", "inner", "outer", "full", "cross", "on",
-    "group", "order", "having", "limit", "fetch", "union", "where",
+    "group", "order", "having", "limit", "fetch", "union", "where", "as",
+    "asc", "desc", "by", "distinct", "case", "when", "then", "else", "end",
+    "count", "sum", "avg", "min", "max", "coalesce", "nvl", "to_char", "to_date",
+    "to_timestamp", "cast", "trim", "substr", "substring", "extract", "between",
+    "in", "is", "not", "null", "like", "over", "partition", "nulls", "first",
+    "last", "with", "select", "from",
+}
+_PREFLIGHT_BUILTIN_IDENTIFIERS = {
+    "rownum", "rowid", "level", "sysdate", "systimestamp", "current_date",
+    "current_timestamp", "user", "uid", "dual", "connect_by_root",
 }
 _PREFLIGHT_TABLE_PATTERN = re.compile(
     r"\b(?:from|join)\s+([A-Za-z_][\w.$]*)(?:\s+(?:as\s+)?([A-Za-z_][\w$]*))?",
@@ -534,6 +543,65 @@ def _extract_preflight_table_refs_regex(sql: str) -> dict[str, str]:
             continue
         refs[table_norm] = table
     return refs
+
+
+def _extract_select_output_aliases_sqlglot(root: Any) -> set[str]:
+    try:
+        from sqlglot import exp
+
+        aliases: set[str] = set()
+        for node in root.find_all(exp.Alias):
+            alias = str(getattr(node, "alias", "") or "").strip().strip('"').strip("'")
+            if alias:
+                aliases.add(normalize_sql_identifier(alias))
+        return aliases
+    except Exception:
+        return set()
+
+
+def _extract_select_output_aliases_regex(sql: str) -> set[str]:
+    sql_for_preflight = mask_sql_literals_and_comments(sql)
+    select_match = re.search(
+        r"\bSELECT\b(.*?)\bFROM\b",
+        sql_for_preflight,
+        re.IGNORECASE | re.DOTALL,
+    )
+    if not select_match:
+        return set()
+    select_part = select_match.group(1)
+    aliases: set[str] = set()
+    for match in re.finditer(r"\bAS\s+([A-Za-z_][\w$]*)\b", select_part, flags=re.IGNORECASE):
+        aliases.add(normalize_sql_identifier(match.group(1)))
+    return aliases
+
+
+def _extract_select_output_aliases(
+    sql: str,
+    *,
+    parsed_root: Any | None = None,
+) -> set[str]:
+    aliases: set[str] = set()
+    if parsed_root is not None:
+        aliases.update(_extract_select_output_aliases_sqlglot(parsed_root))
+    aliases.update(_extract_select_output_aliases_regex(sql))
+    return aliases
+
+
+def _should_skip_unqualified_preflight_column(
+    col_name: str,
+    *,
+    select_output_aliases: set[str],
+) -> bool:
+    column_norm = normalize_sql_identifier(col_name)
+    if not column_norm:
+        return True
+    if column_norm in _PREFLIGHT_RESERVED_ALIASES:
+        return True
+    if column_norm in _PREFLIGHT_BUILTIN_IDENTIFIERS:
+        return True
+    if column_norm in select_output_aliases:
+        return True
+    return False
 
 
 def extract_preflight_physical_table_refs(
@@ -707,6 +775,22 @@ def _preflight_column_reference_error(
     dialect: str | None = None,
 ) -> str:
     referenced_tables = sorted(set(alias_to_table.values()))
+    select_output_aliases: set[str] = set()
+
+    if dialect:
+        try:
+            import sqlglot
+
+            parsed = sqlglot.parse(sql, read=dialect)
+            if parsed and len(parsed) == 1:
+                select_output_aliases = _extract_select_output_aliases(
+                    sql,
+                    parsed_root=parsed[0],
+                )
+        except Exception:
+            select_output_aliases = _extract_select_output_aliases(sql)
+    else:
+        select_output_aliases = _extract_select_output_aliases(sql)
 
     def _check_column(table_norm: str, col_name: str, *, unqualified: bool) -> str:
         allowed_columns = schema_table_columns.get(table_norm) or []
@@ -747,6 +831,11 @@ def _preflight_column_reference_error(
                         err = _check_column(table_norm, col_name, unqualified=False)
                         if err:
                             return err
+                        continue
+                    if _should_skip_unqualified_preflight_column(
+                        col_name,
+                        select_output_aliases=select_output_aliases,
+                    ):
                         continue
                     if not referenced_tables:
                         continue
@@ -797,6 +886,10 @@ def _preflight_column_reference_error(
                 for token in re.findall(r"\b([A-Za-z_][\w$]*)\b", select_part):
                     token_norm = normalize_sql_identifier(token)
                     if token_norm in _PREFLIGHT_RESERVED_ALIASES:
+                        continue
+                    if token_norm in _PREFLIGHT_BUILTIN_IDENTIFIERS:
+                        continue
+                    if token_norm in select_output_aliases:
                         continue
                     if token_norm in {normalize_sql_identifier(alias) for alias in alias_to_table}:
                         continue
