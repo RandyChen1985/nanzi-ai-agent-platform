@@ -158,6 +158,8 @@ class DataQueryPrompts:
 9. 相对时间（上月/本月/今年/最近N天等）必须严格使用下方【当前时间锚点】换算出的 YYYY-MM-DD 起止日期写入各 `<sub_query>` 的 WHERE 条件，禁止臆测年份或月份。
 10. `<memory_join>` **只能引用各 sub_query 的 SELECT 输出列**（含 `AS` 别名），禁止引用子查询未 SELECT 的字段。
     特别注意 `ORDER BY`：若需按某字段排序（如 `v.ID`），**必须先在对应 sub_query 的 SELECT 列表中包含该字段**，否则 DuckDB 内存关联会报「column not found」。
+11. `<memory_join>` 关联非主表（第一个 sub_query 之外）的临时表时，**默认使用 LEFT JOIN**，以便关联数据集子查询失败降级留空时主表结果仍可输出。
+    仅当业务明确要求「只保留两侧均有匹配的行」时，才对该维表使用 INNER JOIN；不要用 INNER JOIN 关联可能为空的补充数据集。
 
 {build_data_query_time_anchor_block()}
 
@@ -186,12 +188,12 @@ class DataQueryPrompts:
     SELECT ID, LOGINID, LASTNAME, FIRSTNAME FROM HRMRESOURCE
     ]]>
   </sub_query>
-  <!-- 关联过滤统一在内存 JOIN 阶段完成，INNER JOIN 会自动过滤掉无跟进记录的人员 -->
+  <!-- 关联过滤统一在内存 JOIN 阶段完成；维表用 LEFT JOIN，主表失败降级时仍可输出 -->
   <memory_join>
     <![CDATA[
     SELECT v.ID, v.FOLLOW_UP_DATE, s.LASTNAME, s.FIRSTNAME
     FROM t_visit_log v
-    INNER JOIN t_sales s ON v.FOLLOW_UP_PERSON = s.ID
+    LEFT JOIN t_sales s ON v.FOLLOW_UP_PERSON = s.ID
     ORDER BY v.FOLLOW_UP_DATE DESC
     ]]>
   </memory_join>

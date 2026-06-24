@@ -200,6 +200,142 @@ def invalid_identifier_repair_hint(message: str) -> str:
     )
 
 
+def _select_expr_output_name(expr: Any) -> str:
+    """推断 SELECT 项对外暴露的列名（用于无效字段降级替换）。"""
+    try:
+        from sqlglot import exp
+    except ImportError:
+        return ""
+
+    if isinstance(expr, exp.Alias):
+        return str(expr.alias or "").strip().strip('"').strip("'")
+    if isinstance(expr, exp.Column):
+        return str(expr.name or "").strip().strip('"').strip("'")
+    alias = getattr(expr, "alias", None)
+    if alias:
+        return str(alias).strip().strip('"').strip("'")
+    name = getattr(expr, "name", None)
+    if name:
+        return str(name).strip().strip('"').strip("'")
+    return ""
+
+
+def _expression_references_invalid_column(expr: Any, invalid_lower: set[str]) -> bool:
+    try:
+        from sqlglot import exp
+    except ImportError:
+        return False
+
+    output_name = _select_expr_output_name(expr).lower()
+    if output_name and output_name in invalid_lower:
+        return True
+    for column in expr.find_all(exp.Column):
+        col_name = str(column.name or "").strip().strip('"').strip("'").lower()
+        if col_name and col_name in invalid_lower:
+            return True
+    return False
+
+
+def _filter_where_expression(expr: Any, invalid_lower: set[str]) -> Any | None:
+    """递归移除 WHERE 中引用无效字段的条件分支。"""
+    from sqlglot import exp
+
+    if expr is None:
+        return None
+    if isinstance(expr, exp.Paren):
+        inner = _filter_where_expression(expr.this, invalid_lower)
+        if inner is None:
+            return None
+        return exp.Paren(this=inner)
+    if isinstance(expr, exp.And):
+        left = _filter_where_expression(expr.left, invalid_lower)
+        right = _filter_where_expression(expr.right, invalid_lower)
+        if left is None and right is None:
+            return None
+        if left is None:
+            return right
+        if right is None:
+            return left
+        return exp.and_(left, right)
+    if isinstance(expr, exp.Or):
+        left = _filter_where_expression(expr.left, invalid_lower)
+        right = _filter_where_expression(expr.right, invalid_lower)
+        if left is None or right is None:
+            return None
+        return exp.or_(left, right)
+    if _expression_references_invalid_column(expr, invalid_lower):
+        return None
+    return expr
+
+
+def _strip_invalid_columns_from_where(root: Any, invalid_lower: set[str]) -> bool:
+    from sqlglot import exp
+
+    where = root.args.get("where")
+    if where is None:
+        return False
+    filtered = _filter_where_expression(where.this, invalid_lower)
+    if filtered is None:
+        root.set("where", None)
+        return True
+    if filtered is where.this:
+        return False
+    root.set("where", exp.Where(this=filtered))
+    return True
+
+
+def try_deterministic_invalid_identifier_repair(
+    sql: str,
+    error_text: str,
+    *,
+    sql_dialect: str | None = None,
+) -> str | None:
+    """将无效字段在 SELECT 中替换为 NULL 占位，并从 WHERE 移除相关条件。"""
+    identifiers = extract_invalid_sql_identifiers(error_text)
+    if not identifiers or not str(sql or "").strip():
+        return None
+
+    invalid_lower = {ident.lower() for ident in identifiers}
+    try:
+        import sqlglot
+        from sqlglot import exp
+    except ImportError:
+        return None
+
+    try:
+        parsed = sqlglot.parse(sql, read=sql_dialect)
+        if not parsed:
+            return None
+        root = parsed[0]
+        if not isinstance(root, exp.Select):
+            return None
+
+        select_changed = False
+        new_exprs: list[Any] = []
+        for expr in root.expressions:
+            if _expression_references_invalid_column(expr, invalid_lower):
+                alias = _select_expr_output_name(expr) or identifiers[0]
+                new_exprs.append(
+                    exp.alias_(
+                        exp.cast(exp.Null(), to=exp.DataType.Type.VARCHAR),
+                        alias,
+                    )
+                )
+                select_changed = True
+            else:
+                new_exprs.append(expr)
+        if select_changed:
+            root.set("expressions", new_exprs)
+
+        where_changed = _strip_invalid_columns_from_where(root, invalid_lower)
+        if not select_changed and not where_changed:
+            return None
+
+        return root.sql(dialect=sql_dialect).strip()
+    except Exception:
+        return None
+
+
 def extract_cross_dataset_violation(message: str) -> tuple[str, str]:
     """从 Validation Failed 文案解析违规表名与当前 dataset。"""
     text = str(message or "")

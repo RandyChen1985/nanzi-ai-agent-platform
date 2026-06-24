@@ -87,6 +87,23 @@ def test_parse_federated_plan_robustness():
     assert "time > '2026-06-01'" in subs[0]["sql"]
     assert join_sql == "SELECT * FROM t_energy"
 
+    # 3. 属性顺序反转（temp_table 在前）
+    xml_content_3 = """
+    <multi_dataset_plan>
+      <sub_query temp_table="t_hr" dataset_name="hr_ds">
+        SELECT id, name FROM hrmresource
+      </sub_query>
+      <memory_join>
+        SELECT id, name FROM t_hr
+      </memory_join>
+    </multi_dataset_plan>
+    """
+    subs, join_sql = executor._parse_federated_plan(xml_content_3)
+    assert len(subs) == 1
+    assert subs[0]["dataset_name"] == "hr_ds"
+    assert subs[0]["temp_table"] == "t_hr"
+    assert "SELECT id, name" in subs[0]["sql"]
+
 
 def test_make_markdown_table():
     cols = [{"name": "id"}, {"name": "name"}]

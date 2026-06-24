@@ -9,6 +9,7 @@ from app.services.ai.federated_sql_repair import (
     is_retryable_sql_error,
     merge_repair_schema_snippets,
     normalize_sql_text,
+    try_deterministic_invalid_identifier_repair,
 )
 
 
@@ -101,3 +102,42 @@ def test_cross_dataset_scope_hint_requires_plan_split():
     assert "memory_join" in hint
     assert "VIEW_AI_VISIT_LOG" in hint
     assert "整计划重构" in hint
+
+
+def test_try_deterministic_invalid_identifier_repair_replaces_missing_column():
+    failed_sql = """
+    SELECT
+        co.OPP_CODE,
+        co.CLUE_CODE,
+        co.opp_customer_name,
+        co.CUSTOMER_NAME
+    FROM VIEW_AI_CULEOPP co
+    WHERE co.OPP_CODE IS NOT NULL
+    """
+    err = '[TOOL_ERROR] ORA-00904: "CO"."CUSTOMER_NAME": invalid identifier'
+    fixed = try_deterministic_invalid_identifier_repair(
+        failed_sql,
+        err,
+        sql_dialect="oracle",
+    )
+    assert fixed is not None
+    assert "co.CUSTOMER_NAME" not in fixed.upper().replace(" ", "")
+    assert "CUSTOMER_NAME" in fixed.upper()
+    assert normalize_sql_text(failed_sql) != normalize_sql_text(fixed)
+
+
+def test_try_deterministic_invalid_identifier_repair_strips_where_predicate():
+    failed_sql = """
+    SELECT co.OPP_CODE, co.CUSTOMER_NAME
+    FROM VIEW_AI_CULEOPP co
+    WHERE co.OPP_CODE IS NOT NULL AND co.CUSTOMER_NAME = 'ACME'
+    """
+    err = '[TOOL_ERROR] ORA-00904: "CO"."CUSTOMER_NAME": invalid identifier'
+    fixed = try_deterministic_invalid_identifier_repair(
+        failed_sql,
+        err,
+        sql_dialect="oracle",
+    )
+    assert fixed is not None
+    assert "CUSTOMER_NAME = 'ACME'" not in fixed.upper().replace(" ", "")
+    assert "OPP_CODE" in fixed.upper()
