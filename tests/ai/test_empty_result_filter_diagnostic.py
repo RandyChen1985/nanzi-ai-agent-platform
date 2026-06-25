@@ -215,6 +215,42 @@ def test_rewrite_sql_with_filter_corrections_column_and_value():
     assert rewritten == "SELECT jfmc FROM zf_view_resroom WHERE region_name = '上海市' ORDER BY jfmc"
 
 
+def test_build_automatic_filter_retry_plans_prioritizes_value_swap_for_empty_literal():
+    from app.services.ai.empty_result_filter_diagnostic import (
+        FilterDiagnosticResult,
+        build_automatic_filter_retry_plans,
+        rewrite_sql_with_filter_corrections,
+    )
+
+    sql = "SELECT department_name FROM demo WHERE months_diff = '' AND unpaid_amount > 0"
+    plans = build_automatic_filter_retry_plans(
+        [
+            FilterDiagnosticResult(
+                column="months_diff",
+                table="demo",
+                operator="=",
+                used_values=("",),
+                diagnostic_sql="x",
+                candidates=["-83", "-71", "-59"],
+                suspect_wrong_column=True,
+                alternative_columns=["customer_name", "department_name", "room_name"],
+            )
+        ],
+        sql=sql,
+        dialect="oracle",
+    )
+    assert plans
+    assert len(plans) <= 5
+    first_sql = rewrite_sql_with_filter_corrections(sql, plans[0][0], dialect="oracle")
+    assert "months_diff = '-83'" in first_sql or "months_diff = \"-83\"" in first_sql
+    retain_swaps = [
+        desc
+        for _corrections, desc in plans
+        if "替换为" in desc and "保留条件值" in desc
+    ]
+    assert len(retain_swaps) <= 2
+
+
 def test_build_automatic_filter_retry_plans_limits_to_three():
     from app.services.ai.empty_result_filter_diagnostic import (
         FilterDiagnosticResult,

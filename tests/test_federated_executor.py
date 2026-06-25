@@ -587,6 +587,107 @@ WHERE FOLLOW_UP_DATE >= DATE '2026-05-01'
 
 
 @pytest.mark.asyncio
+async def test_federated_executor_applies_where_probe_auto_repair_before_llm():
+    from app.services.ai.where_condition_sample_diagnostic import AutoWhereFormatRetryResult
+
+    runner = MagicMock()
+    runner.user_info = {"id": 1, "role": "user"}
+    runner.trace_buffer = MagicMock()
+    runner._save_last_data_result_for_followups = AsyncMock()
+
+    plan = """
+    <multi_dataset_plan>
+      <sub_query dataset_name="svc_ds" temp_table="t_svc">
+        <![CDATA[
+        SELECT contract_code FROM VIEW_AI_SERVICE
+        WHERE contract_end_date >= DATE '2026-01-01'
+        ]]>
+      </sub_query>
+      <memory_join>
+        <![CDATA[SELECT contract_code FROM t_svc]]>
+      </memory_join>
+    </multi_dataset_plan>
+    """
+    mock_llm_client = MagicMock()
+    mock_llm_client.generate_text = AsyncMock(return_value=plan)
+    mock_llm_stream_client = MagicMock()
+
+    async def mock_stream_messages(*args, **kwargs):
+        yield SimpleNamespace(content="查询完成。")
+
+    mock_llm_stream_client.stream_messages = mock_stream_messages
+
+    async def mock_get_llm(streaming=False, *args, **kwargs):
+        return "stream" if streaming else "plan"
+
+    def fake_chat_client_from_handle(handle):
+        return mock_llm_stream_client if handle == "stream" else mock_llm_client
+
+    mock_ds = MagicMock()
+    mock_ds.id = 101
+    mock_ds.name = "svc_ds"
+    mock_ds.data_source = "oracle_svc"
+
+    async def mock_get_dataset_by_name(session, name):
+        return mock_ds
+
+    async def mock_check_permission(user_id, res_type, res_id):
+        return True
+
+    class FakeTraceSpanContext:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            span = MagicMock()
+            span.set_output = MagicMock()
+            return span
+
+        async def __aexit__(self, exc_type, exc_val, exc_tb):
+            pass
+
+    sql_error = (
+        "[TOOL_ERROR] 本地执行 SQL 失败，错误信息: ORA-01861: literal does not match format string"
+    )
+    fixed_sql = (
+        "SELECT contract_code FROM VIEW_AI_SERVICE "
+        "WHERE contract_end_date >= '2026-01-01'"
+    )
+    fixed_result = json.dumps({
+        "columns": [{"name": "contract_code", "type": "string"}],
+        "items": [["C001"]],
+    })
+    where_retry = AutoWhereFormatRetryResult(
+        attempted=True,
+        corrected_sql=fixed_sql,
+        raw_output=fixed_result,
+        has_rows=True,
+        probe_summary="【平台自动 WHERE 样例探查】contract_end_date='2026-01-15'",
+        summary="【平台自动 WHERE 修正重试】已根据源表样例修正。",
+    )
+
+    with patch("app.services.ai.executors.federated_executor.AgentConfigProvider.get_configured_llm", side_effect=mock_get_llm), \
+         patch("app.services.ai.executors.federated_executor.chat_client_from_handle", side_effect=fake_chat_client_from_handle), \
+         patch("app.services.ai.executors.federated_executor.AsyncSessionLocal") as mock_session_cls, \
+         patch("app.services.permission_service.PermissionService.check_permission", side_effect=mock_check_permission), \
+         patch("app.services.metadata_service.MetadataService.get_dataset_by_name", side_effect=mock_get_dataset_by_name), \
+         patch("app.services.ai.runtime.agentscope.trace_context.TraceSpanContext", FakeTraceSpanContext), \
+         patch("app.services.ai.executors.federated_executor.execute_sql_query_core", AsyncMock(return_value=sql_error)), \
+         patch("app.services.ai.executors.federated_executor.try_automatic_where_condition_repair", AsyncMock(return_value=where_retry)):
+        mock_session_cls.return_value.__aenter__.return_value = MagicMock()
+
+        chunks = []
+        async for chunk in FederatedQueryExecutor(runner, "", ["svc_ds"]).execute([], "", "查询合同"):
+            chunks.append(chunk)
+
+    assert mock_llm_client.generate_text.await_count == 1
+    assert any(chunk.get("title") == "平台自动探查 WHERE 字段样例" for chunk in chunks)
+    assert any(chunk.get("title") == "平台自动修正 WHERE 并重试" for chunk in chunks)
+    assert not any(chunk.get("title") == "修复联邦子查询 SQL" for chunk in chunks)
+    assert any(chunk.get("title") == "内存联邦聚合计算" and chunk.get("status") == "success" for chunk in chunks)
+
+
+@pytest.mark.asyncio
 async def test_federated_executor_passes_agent_context_to_sql_core():
     runner = MagicMock()
     runner.user_info = {"id": 7, "role": "user"}

@@ -241,6 +241,33 @@ def test_rewrite_where_numeric_literals_as_strings():
     assert "is_partner_project = '0'" in corrected
 
 
+def test_build_where_probe_schema_context_for_dataset_filters_by_dataset():
+    from app.services.ai.where_condition_sample_diagnostic import (
+        build_where_probe_schema_context_for_dataset,
+    )
+
+    schema_output = """
+dataset: ds_a
+data_source: oracle
+table_name: VIEW_A
+columns:
+  - contract_end_date (varchar, 例: '2026-01-15')
+dataset: ds_b
+data_source: oracle
+table_name: VIEW_B
+columns:
+  - other_col (varchar)
+"""
+    cols, hints = build_where_probe_schema_context_for_dataset("ds_a", schema_output=schema_output)
+    assert cols is not None
+    flat_cols = {name for names in cols.values() for name in names}
+    assert "contract_end_date" in flat_cols
+    assert "other_col" not in flat_cols
+    assert hints is not None
+    flat_hint_names = {item.name for items in hints.values() for item in items}
+    assert "contract_end_date" in flat_hint_names
+
+
 def test_parse_sample_rows_from_dict_items():
     parsed = {
         "columns": ["CREATE_DATE", "OPP_STATUS"],

@@ -8,10 +8,8 @@ from typing import Any
 from app.services.ai.runners.chatbi.run_state import DataRunState
 from app.services.ai.where_condition_sample_diagnostic import (
     AutoWhereFormatRetryResult,
-    format_where_condition_repair_block,
     is_where_condition_sql_error,
-    run_automatic_where_format_retry,
-    run_where_condition_diagnostics,
+    try_automatic_where_condition_repair,
     schema_column_hints_from_bindings,
 )
 
@@ -65,42 +63,26 @@ async def maybe_run_where_condition_diagnostics(
     schema_context = _where_probe_schema_context(state, error_message=error_message)
 
     try:
-        diagnostics = await run_where_condition_diagnostics(
+        retry = await try_automatic_where_condition_repair(
             sql=sql_text,
-            data_source=data_source,
-            dataset_name=dataset_name,
-            user_id=runner._current_user_id(),
-            is_admin=runner._current_user_is_admin(),
-            execute_sql=_execute_sql,
-            **schema_context,
-        )
-    except Exception as exc:
-        logger.warning("[DataAgentRunner] WHERE condition diagnostics skipped: %s", exc)
-        return None
-
-    if not diagnostics:
-        return None
-
-    state.where_condition_diagnostics = [item.to_dict() for item in diagnostics]
-    state.where_condition_diagnostic_summary = format_where_condition_repair_block(diagnostics)
-
-    try:
-        retry = await run_automatic_where_format_retry(
-            sql=sql_text,
-            diagnostics=diagnostics,
             data_source=data_source,
             dataset_name=dataset_name,
             user_id=runner._current_user_id(),
             is_admin=runner._current_user_is_admin(),
             execute_sql=_execute_sql,
             error_message=error_message,
+            **schema_context,
         )
     except Exception as exc:
-        logger.warning("[DataAgentRunner] WHERE auto retry skipped: %s", exc)
-        return AutoWhereFormatRetryResult(probe_summary=state.where_condition_diagnostic_summary)
+        logger.warning("[DataAgentRunner] WHERE condition diagnostics skipped: %s", exc)
+        return None
+
+    if not (retry.probe_summary or retry.attempted or retry.corrected_sql):
+        return None
 
     if retry.probe_summary:
         state.where_condition_diagnostic_summary = retry.probe_summary
+        state.where_condition_diagnostics = []
     if retry.summary:
         summary = state.where_condition_diagnostic_summary
         state.where_condition_diagnostic_summary = (

@@ -17,8 +17,9 @@ from app.services.ai.sql_dialect_limit import apply_dialect_row_limit
 logger = logging.getLogger(__name__)
 
 MAX_AUTO_FILTER_DIAGNOSTICS = 3
-MAX_ALTERNATIVE_COLUMN_PROBES = 2
-MAX_AUTO_FILTER_BUSINESS_RETRIES = 3
+MAX_ALTERNATIVE_COLUMN_PROBES = 3
+MAX_AUTO_FILTER_BUSINESS_RETRIES = 5
+MAX_AUTO_FILTER_COLUMN_SWAP_RETAIN_VALUE_RETRIES = 2
 DISTINCT_CANDIDATE_LIMIT = 20
 
 _DIMENSION_COLUMN_HINTS = (
@@ -240,7 +241,7 @@ def should_escalate_empty_after_value_correction(diagnostics: list[dict[str, Any
 def build_automatic_filter_corrections(
     diagnostics: list[FilterDiagnosticResult],
 ) -> list[FilterCorrection]:
-    """根据诊断结果构造平台自动改写 WHERE 的修正计划（优先字段替换，其次取值替换）。"""
+    """根据诊断结果构造平台自动改写 WHERE 的修正计划（优先高置信换字段+换值，其次换取值）。"""
     corrections: list[FilterCorrection] = []
     for item in diagnostics:
         if item.error:
@@ -271,6 +272,58 @@ def build_automatic_filter_corrections(
     return corrections
 
 
+def _looks_like_numeric_token(value: str) -> bool:
+    text = str(value or "").strip()
+    if not text:
+        return False
+    return bool(re.fullmatch(r"-?\d+(?:\.\d+)?", text))
+
+
+def _candidate_values_for_value_retry(
+    item: FilterDiagnosticResult,
+    *,
+    limit: int = 3,
+) -> list[str]:
+    """字面量与库内候选不匹配时，优先用 suggested / 模糊匹配 / 样例候选做 value_swap。"""
+    values: list[str] = []
+    literal = str(item.used_values[0] if item.used_values else "").strip()
+
+    for suggested in item.suggested_values:
+        text = str(suggested or "").strip()
+        if text and text not in values:
+            values.append(text)
+        if len(values) >= limit:
+            return values[:limit]
+
+    if literal and not literal_matches_candidates(literal, item.candidates):
+        for close in suggest_close_values(literal, item.candidates):
+            if close not in values:
+                values.append(close)
+            if len(values) >= limit:
+                return values[:limit]
+
+    if (not literal or not literal_matches_candidates(literal, item.candidates)) and item.candidates:
+        for candidate in item.candidates:
+            text = str(candidate or "").strip()
+            if not text or text == literal or text in values:
+                continue
+            values.append(text)
+            if len(values) >= limit:
+                break
+    return values[:limit]
+
+
+def _should_allow_column_swap_retain_value(item: FilterDiagnosticResult) -> bool:
+    """空字面量/数值列已有候选时，不盲目换字段并保留原条件值。"""
+    literal = str(item.used_values[0] if item.used_values else "").strip()
+    if not literal and item.candidates:
+        return False
+    if literal and item.candidates and all(_looks_like_numeric_token(c) for c in item.candidates[:3]):
+        if not _looks_like_numeric_token(literal):
+            return False
+    return item.suspect_wrong_column or bool(item.alternative_columns)
+
+
 def build_automatic_filter_retry_plans(
     diagnostics: list[FilterDiagnosticResult],
     *,
@@ -278,11 +331,20 @@ def build_automatic_filter_retry_plans(
     dialect: str = "clickhouse",
     max_plans: int = MAX_AUTO_FILTER_BUSINESS_RETRIES,
 ) -> list[tuple[list[FilterCorrection], str]]:
-    """按优先级生成最多 N 套互不重复的自动修正方案（每套对应 1 次业务 SQL 重试）。"""
+    """按优先级生成修正方案：高置信换字段+换值 → 换取值 → 保留原值的换字段（单独限次）。"""
     plans: list[tuple[list[FilterCorrection], str]] = []
     seen_sql: set[str] = {_normalize_sql(sql)}
+    column_swap_retain_count = 0
 
-    def add_plan(corrections: list[FilterCorrection], description: str) -> None:
+    def add_plan(
+        corrections: list[FilterCorrection],
+        description: str,
+        *,
+        retain_value_column_swap: bool = False,
+    ) -> None:
+        nonlocal column_swap_retain_count
+        if retain_value_column_swap and column_swap_retain_count >= MAX_AUTO_FILTER_COLUMN_SWAP_RETAIN_VALUE_RETRIES:
+            return
         if len(plans) >= max_plans:
             return
         rewritten = rewrite_sql_with_filter_corrections(sql, corrections, dialect=dialect)
@@ -293,10 +355,13 @@ def build_automatic_filter_retry_plans(
             return
         seen_sql.add(key)
         plans.append((corrections, description))
+        if retain_value_column_swap:
+            column_swap_retain_count += 1
 
     for item in diagnostics:
         if item.error:
             continue
+
         if item.matched_alternative_column:
             new_values = tuple(item.matched_alternative_values or item.suggested_values or item.used_values)
             old = item.used_values[0] if item.used_values else "?"
@@ -314,7 +379,8 @@ def build_automatic_filter_retry_plans(
                 ],
                 f"第{{n}}次：字段 `{item.column}` → `{item.matched_alternative_column}`，条件值 `{old}` → `{new}`",
             )
-        for suggested in item.suggested_values:
+
+        for suggested in _candidate_values_for_value_retry(item):
             old = item.used_values[0] if item.used_values else "?"
             add_plan(
                 [
@@ -328,6 +394,10 @@ def build_automatic_filter_retry_plans(
                 ],
                 f"第{{n}}次：字段 `{item.column}` 条件值 `{old}` → `{suggested}`",
             )
+
+        if not _should_allow_column_swap_retain_value(item):
+            continue
+
         for alt_column in item.alternative_columns:
             if _normalize_identifier(alt_column) == _normalize_identifier(item.matched_alternative_column):
                 continue
@@ -346,6 +416,7 @@ def build_automatic_filter_retry_plans(
                     )
                 ],
                 f"第{{n}}次：尝试将字段 `{item.column}` 替换为 `{alt_column}`（保留条件值 `{old}`）",
+                retain_value_column_swap=True,
             )
     return plans
 
@@ -393,7 +464,7 @@ async def run_automatic_filter_retry(
     execute_sql,
     max_retries: int = MAX_AUTO_FILTER_BUSINESS_RETRIES,
 ) -> AutoFilterRetryResult:
-    """平台自动改写 WHERE（换字段/换值）并重试最多 3 次业务 SQL。"""
+    """平台自动改写 WHERE（换字段/换值）并重试最多 5 次业务 SQL（保留原值的换字段单独限 2 次）。"""
     from app.services.sql_query_execution_service import dialect_from_data_source
 
     dialect = dialect_from_data_source(data_source)

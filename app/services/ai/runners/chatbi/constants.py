@@ -21,7 +21,7 @@ DATA_REPAIR_BUDGETS = {
     "sql_error": 8,
     "failed_sql_repeat": 1,
     "schema_refresh_after_sql_error": 2,
-    "empty_sql_result": 1,
+    "empty_sql_result": 2,
     "ratio_anomaly": 1,
     "duration_anomaly": 1,
     "tool_loop_fuse": 0,

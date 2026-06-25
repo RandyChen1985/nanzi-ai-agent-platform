@@ -736,6 +736,7 @@ def build_sql_repair_guidance(
     *,
     repeat_blocked: bool = False,
     for_federated_node: bool = False,
+    where_probe_summary: str = "",
 ) -> str:
     """构建联邦子查询 / memory_join 局部 repair 的修正指引。"""
     error_text = str(error_text or "").strip()
@@ -764,6 +765,20 @@ def build_sql_repair_guidance(
     repair += cross_dataset_scope_repair_hint(error_text)
     if is_schema_reference_sql_error(error_text):
         repair += f"\n\n{DataQueryPrompts.SCHEMA_REFERENCE_SQL_ERROR_REPAIR_GUIDE}"
+    from app.services.ai.where_condition_sample_diagnostic import (
+        build_where_condition_probe_repair_hint,
+        is_where_condition_sql_error,
+    )
+
+    if is_where_condition_sql_error(error_text):
+        repair += f"\n\n{DataQueryPrompts.WHERE_CONDITION_PROBE_REPAIR_GUIDE}"
+        if where_probe_summary:
+            repair += f"\n\n{where_probe_summary}"
+        elif failed_sql.strip():
+            repair += build_where_condition_probe_repair_hint(
+                failed_sql,
+                error_message=error_text,
+            )
     if for_federated_node:
         repair += (
             "\n\n【Schema 核对要求】repair 阶段已按需调用 get_dataset_schema 检索失败 SQL 涉及的表；"

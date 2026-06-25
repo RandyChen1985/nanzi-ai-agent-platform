@@ -1003,6 +1003,83 @@ async def run_automatic_where_format_retry(
     )
 
 
+def build_where_probe_schema_context_for_dataset(
+    dataset_name: str,
+    *,
+    schema_output: str = "",
+    sql_query_binding: Any | None = None,
+) -> tuple[dict[str, list[str]] | None, dict[str, list[SchemaColumnHint]] | None]:
+    """按数据集从 Schema binding / schema_output 提取 WHERE 探查所需的列元信息。"""
+    from app.services.ai.chatbi_sql_query_binding import (
+        bindings_to_table_columns,
+        extract_schema_table_bindings,
+    )
+
+    dataset_key = str(dataset_name or "").strip().lower()
+    selected: dict[str, Any] = {}
+
+    if sql_query_binding is not None:
+        for table_key, binding in (getattr(sql_query_binding, "tables", None) or {}).items():
+            binding_dataset = str(getattr(binding, "dataset_name", "") or "").strip().lower()
+            if not dataset_key or not binding_dataset or binding_dataset == dataset_key:
+                selected[str(table_key)] = binding
+
+    if not selected and str(schema_output or "").strip():
+        for table_key, binding in extract_schema_table_bindings(schema_output).items():
+            binding_dataset = str(binding.dataset_name or "").strip().lower()
+            if not dataset_key or not binding_dataset or binding_dataset == dataset_key:
+                selected[str(table_key)] = binding
+
+    if not selected:
+        return None, None
+
+    schema_table_columns = bindings_to_table_columns(selected) or None
+    schema_column_hints = schema_column_hints_from_bindings(selected) or None
+    return schema_table_columns, schema_column_hints
+
+
+async def try_automatic_where_condition_repair(
+    *,
+    sql: str,
+    data_source: str,
+    dataset_name: str,
+    user_id: Optional[int],
+    is_admin: bool,
+    execute_sql,
+    error_message: str = "",
+    schema_table_columns: dict[str, list[str]] | None = None,
+    schema_column_hints: dict[str, list[SchemaColumnHint]] | None = None,
+) -> AutoWhereFormatRetryResult:
+    """WHERE 类型/格式错误时：探查源表样例 + 自动修正并重试 1 次（单源/联邦子查询共用）。"""
+    if not is_where_condition_sql_error(error_message):
+        return AutoWhereFormatRetryResult()
+
+    diagnostics = await run_where_condition_diagnostics(
+        sql=sql,
+        data_source=data_source,
+        dataset_name=dataset_name,
+        user_id=user_id,
+        is_admin=is_admin,
+        execute_sql=execute_sql,
+        error_message=error_message,
+        schema_table_columns=schema_table_columns,
+        schema_column_hints=schema_column_hints,
+    )
+    if not diagnostics:
+        return AutoWhereFormatRetryResult()
+
+    return await run_automatic_where_format_retry(
+        sql=sql,
+        diagnostics=diagnostics,
+        data_source=data_source,
+        dataset_name=dataset_name,
+        user_id=user_id,
+        is_admin=is_admin,
+        execute_sql=execute_sql,
+        error_message=error_message,
+    )
+
+
 def _resolve_physical_table_name(sql: str, table_ref: str, *, dialect: str) -> str:
     """将 SQL 中的表别名解析为物理表名（探查 SQL 不能用别名）。"""
     ref = str(table_ref or "").strip()

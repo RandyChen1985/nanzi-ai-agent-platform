@@ -30,6 +30,17 @@ def test_is_retryable_sql_error_accepts_validation_failed():
     assert is_retryable_sql_error("[Validation Failed] unknown column 'foo'") is True
 
 
+def test_build_sql_repair_guidance_includes_where_probe_summary_for_federated():
+    guidance = build_sql_repair_guidance(
+        "ORA-01861: literal does not match format string",
+        "SELECT * FROM t WHERE d >= DATE '2026-01-01'",
+        for_federated_node=True,
+        where_probe_summary="【平台自动 WHERE 样例探查】d='2026-01-15'",
+    )
+    assert "WHERE 条件样例探查" in guidance
+    assert "2026-01-15" in guidance
+
+
 def test_build_sql_repair_guidance_includes_taxonomy_for_federated():
     guidance = build_sql_repair_guidance(
         "ORA-01861: literal does not match format string",

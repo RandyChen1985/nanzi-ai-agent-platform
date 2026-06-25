@@ -41,6 +41,12 @@ from app.services.ai.federated_sql_repair import (
     parse_fixed_sql_from_llm_response,
     try_deterministic_invalid_identifier_repair,
 )
+from app.services.ai.where_condition_sample_diagnostic import (
+    AutoWhereFormatRetryResult,
+    build_where_probe_schema_context_for_dataset,
+    is_where_condition_sql_error,
+    try_automatic_where_condition_repair,
+)
 from app.services.sql_query_execution_service import dialect_from_data_source
 from app.services.ai.time_anchor import (
     build_time_range_gate_message,
@@ -322,6 +328,8 @@ class FederatedQueryExecutor:
                         is_primary = idx == 0
                         node_repair_count = 0
                         failed_sql_signatures: set[str] = set()
+                        where_probe_summary = ""
+                        subquery_res_override: str | None = None
 
                         while True:
                             dataset = None
@@ -365,7 +373,12 @@ class FederatedQueryExecutor:
                                 cache_key = f"{dataset.name}::{self._normalize_sub_sql(sub_sql)}"
                                 cached_res = _subquery_cache.get(cache_key)
                                 cache_hit = cached_res is not None
-                                if cache_hit:
+
+                                if subquery_res_override is not None:
+                                    res_str = subquery_res_override
+                                    subquery_res_override = None
+                                    cache_hit = False
+                                elif cache_hit:
                                     res_str = cached_res
                                 else:
                                     async with TraceSpanContext(
@@ -503,6 +516,68 @@ class FederatedQueryExecutor:
                                 can_local_repair = is_retryable_sql_error(error_text)
                                 execute_failed_norm = normalize_sql_text(sub_sql)
                                 repaired_for_retry = False
+                                if (
+                                    can_local_repair
+                                    and is_where_condition_sql_error(error_text)
+                                    and dataset is not None
+                                ):
+                                    where_retry = await self._try_where_condition_auto_repair(
+                                        session,
+                                        sub_sql=sub_sql,
+                                        dataset=dataset,
+                                        error_text=error_text,
+                                        user_id=user_id,
+                                        is_admin=is_admin,
+                                        user_dimensions=user_dimensions,
+                                        agent_context=current_agent_context,
+                                    )
+                                    if where_retry.probe_summary:
+                                        where_probe_summary = where_retry.probe_summary
+                                        yield {
+                                            "type": "log",
+                                            "id": f"fed_repair_{uuid.uuid4().hex[:8]}",
+                                            "title": "平台自动探查 WHERE 字段样例",
+                                            "details": where_retry.probe_summary,
+                                            "status": "success" if where_retry.has_rows else "warning",
+                                        }
+                                    if where_retry.corrected_sql:
+                                        sub_sql = where_retry.corrected_sql
+                                        sq["sql"] = sub_sql
+                                    if where_retry.raw_output and not where_retry.error:
+                                        ok, _ = detect_sql_error(where_retry.raw_output)
+                                        if not ok:
+                                            subquery_res_override = where_retry.raw_output
+                                            yield {
+                                                "type": "log",
+                                                "id": f"fed_repair_{uuid.uuid4().hex[:8]}",
+                                                "title": "平台自动修正 WHERE 并重试",
+                                                "details": (
+                                                    f"{where_retry.summary}\n\n```sql\n{sub_sql}\n```"
+                                                    if where_retry.summary
+                                                    else f"```sql\n{sub_sql}\n```"
+                                                ),
+                                                "status": "success" if where_retry.has_rows else "warning",
+                                            }
+                                            continue
+                                    if where_retry.attempted and where_retry.corrected_sql:
+                                        yield {
+                                            "type": "log",
+                                            "id": f"fed_repair_{uuid.uuid4().hex[:8]}",
+                                            "title": "平台自动修正 WHERE 并重试",
+                                            "details": (
+                                                f"{where_retry.summary}\n\n```sql\n{sub_sql}\n```"
+                                                if where_retry.summary
+                                                else f"```sql\n{sub_sql}\n```"
+                                            ),
+                                            "status": (
+                                                "success"
+                                                if where_retry.has_rows and not where_retry.error
+                                                else "warning"
+                                            ),
+                                        }
+                                        if normalize_sql_text(sub_sql) != execute_failed_norm:
+                                            repaired_for_retry = True
+                                            continue
                                 if can_local_repair:
                                     while node_repair_count < MAX_FEDERATED_SQL_REPAIR_PER_NODE:
                                         norm_sql = normalize_sql_text(sub_sql)
@@ -604,6 +679,7 @@ class FederatedQueryExecutor:
                                                 join_sql=join_sql,
                                                 schema_snippet=schema_snippet,
                                                 explain_context=explain_context,
+                                                where_probe_summary=where_probe_summary,
                                                 _total_llm_calls=_total_llm_calls,
                                             )
                                         except FederatedLLMLimitExceededError as limit_err:
@@ -1091,6 +1167,7 @@ class FederatedQueryExecutor:
         join_sql: str,
         schema_snippet: str = "",
         explain_context: str = "",
+        where_probe_summary: str = "",
         temp_table_schemas: dict[str, list[str]] | None = None,
         degraded_temp_tables: set[str] | None = None,
         _total_llm_calls: Optional[list[int]] = None,
@@ -1106,6 +1183,7 @@ class FederatedQueryExecutor:
             failed_sql,
             repeat_blocked=repeat_blocked,
             for_federated_node=True,
+            where_probe_summary=where_probe_summary,
         )
         prompt = DataQueryPrompts.build_federated_node_repair_prompt(
             node_kind=node_kind,
@@ -1226,6 +1304,57 @@ class FederatedQueryExecutor:
         if len(formatted) > 3000:
             formatted = formatted[:3000] + "\n... [EXPLAIN 输出已截断]"
         return formatted
+
+    async def _try_where_condition_auto_repair(
+        self,
+        session: Any,
+        *,
+        sub_sql: str,
+        dataset: Any,
+        error_text: str,
+        user_id: Optional[int],
+        is_admin: bool,
+        user_dimensions: Any,
+        agent_context: Any,
+    ) -> AutoWhereFormatRetryResult:
+        schema_table_columns, schema_column_hints = build_where_probe_schema_context_for_dataset(
+            str(getattr(dataset, "name", "") or ""),
+            schema_output=self.schema_output,
+            sql_query_binding=self.sql_query_binding,
+        )
+
+        async def _execute_sql(**kwargs: Any) -> str:
+            return await execute_sql_query_core(
+                session,
+                user_id=int(user_id) if user_id else None,
+                user_dimensions=user_dimensions or None,
+                agent_context=agent_context,
+                is_admin=is_admin,
+                bypass_table_auth=False,
+                sql_query_binding=self.sql_query_binding,
+                **kwargs,
+            )
+
+        try:
+            return await try_automatic_where_condition_repair(
+                sql=sub_sql,
+                data_source=str(getattr(dataset, "data_source", "") or ""),
+                dataset_name=str(getattr(dataset, "name", "") or ""),
+                user_id=int(user_id) if user_id else None,
+                is_admin=is_admin,
+                execute_sql=_execute_sql,
+                error_message=error_text,
+                schema_table_columns=schema_table_columns,
+                schema_column_hints=schema_column_hints,
+            )
+        except Exception as exc:
+            logger.warning(
+                "[FederatedQueryExecutor] WHERE condition auto repair skipped on %s: %s",
+                getattr(dataset, "name", ""),
+                exc,
+                exc_info=True,
+            )
+            return AutoWhereFormatRetryResult(error=str(exc)[:300])
 
     async def _fetch_subquery_explain_for_repair(
         self,
