@@ -9,6 +9,8 @@ TOOL_LOOP_FUSE_THRESHOLD = 3
 FAILED_SQL_REPEAT_THRESHOLD = 2
 DELAY_SECONDS_EXTREME_THRESHOLD = 7 * 24 * 60 * 60
 MAX_DATA_REPAIR_ROUNDS = 2
+# 平台在工具回调内自动执行的 SQL 重试上限（empty_filter / WHERE 探查），不计入 LLM repair 轮次。
+MAX_PLATFORM_AUTO_SQL_RETRIES = 5
 DATA_REPAIR_BUDGETS = {
     "sql_before_schema": 1,
     "schema_miss": 1,
@@ -24,7 +26,7 @@ DATA_REPAIR_BUDGETS = {
     "empty_sql_result": 2,
     "ratio_anomaly": 1,
     "duration_anomaly": 1,
-    "tool_loop_fuse": 0,
+    "tool_loop_fuse": 1,
     "diagnostic_sql_pending_final": 1,
     "missing_schema": 1,
     "missing_sql": 2,

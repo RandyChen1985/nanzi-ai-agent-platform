@@ -280,6 +280,14 @@ def test_detect_ratio_anomaly():
     assert anomaly is True
     assert "success_rate" in reason
 
+    columns_items = {
+        "columns": ["success_rate"],
+        "items": [[2.5]],
+    }
+    anomaly, reason = detect_ratio_anomaly(columns_items)
+    assert anomaly is True
+    assert "success_rate" in reason
+
 
 def test_invalid_identifier_repair_hint():
     hint = invalid_identifier_repair_hint('ORA-00904: "T"."BAD_COL": invalid identifier')

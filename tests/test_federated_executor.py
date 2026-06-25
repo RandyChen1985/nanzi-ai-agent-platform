@@ -1440,5 +1440,84 @@ async def test_federated_executor_repairs_subquery_time_range_mismatch_before_ex
     assert "上月拜访记录查询完成" in "".join(chunk.get("content") or "" for chunk in chunks)
 
 
+@pytest.mark.asyncio
+async def test_federated_executor_blocks_join_result_ratio_anomaly():
+    from app.services.ai.runners.data_agent_runner import DataAgentRunner
+
+    runner = MagicMock()
+    runner.user_info = {"id": 1, "role": "user"}
+    runner.trace_buffer = []
+    runner._current_user_id.return_value = 1
+    runner._current_user_is_admin.return_value = False
+    runner._save_last_data_result_for_followups = AsyncMock()
+    runner._detect_duration_anomaly = MagicMock(return_value=(False, ""))
+    runner._detect_ratio_anomaly = DataAgentRunner._detect_ratio_anomaly
+
+    bad_join_sql = "SELECT 2.5 AS success_rate FROM t_crm"
+    mock_plan = f"""
+    <multi_dataset_plan>
+      <sub_query dataset_name="crm_ds" temp_table="t_crm">SELECT 1 AS id FROM visits</sub_query>
+      <memory_join><![CDATA[{bad_join_sql}]]></memory_join>
+    </multi_dataset_plan>
+    """
+    repair_response = f"<fixed_sql><![CDATA[{bad_join_sql}]]></fixed_sql>"
+
+    mock_llm_client = MagicMock()
+    mock_llm_client.generate_text = AsyncMock(
+        side_effect=[mock_plan] + [repair_response] * 6
+    )
+
+    async def mock_get_llm(streaming=False, *args, **kwargs):
+        return "plan"
+
+    def fake_chat_client_from_handle(handle):
+        return mock_llm_client
+
+    mock_ds = SimpleNamespace(id=101, name="crm_ds", data_source="oracle_crm")
+
+    async def mock_get_dataset_by_name(session, name):
+        return mock_ds
+
+    async def mock_check_permission(user_id, res_type, res_id):
+        return True
+
+    class FakeTraceSpanContext:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            span = MagicMock()
+            span.set_output = MagicMock()
+            return span
+
+        async def __aexit__(self, exc_type, exc_val, exc_tb):
+            pass
+
+    execute_mock = AsyncMock(
+        return_value=json.dumps({
+            "columns": [{"name": "id"}],
+            "items": [[1]],
+        })
+    )
+
+    with patch("app.services.ai.executors.federated_executor.AgentConfigProvider.get_configured_llm", side_effect=mock_get_llm), \
+         patch("app.services.ai.executors.federated_executor.chat_client_from_handle", side_effect=fake_chat_client_from_handle), \
+         patch("app.services.ai.executors.federated_executor.AsyncSessionLocal") as mock_session_cls, \
+         patch("app.services.permission_service.PermissionService.check_permission", side_effect=mock_check_permission), \
+         patch("app.services.metadata_service.MetadataService.get_dataset_by_name", side_effect=mock_get_dataset_by_name), \
+         patch("app.services.ai.runtime.agentscope.trace_context.TraceSpanContext", FakeTraceSpanContext), \
+         patch("app.services.ai.executors.federated_executor.execute_sql_query_core", execute_mock):
+        mock_session_cls.return_value.__aenter__.return_value = MagicMock()
+
+        chunks = []
+        async for chunk in FederatedQueryExecutor(runner, "", ["crm_ds"]).execute([], "", "占比异常测试"):
+            chunks.append(chunk)
+
+    combined = "\n".join(str(chunk.get("content") or "") for chunk in chunks)
+    assert any(chunk.get("title") == "联邦关联结果异常已拦截" for chunk in chunks)
+    assert "为保证数据准确性" in combined
+    assert "success_rate" in combined or "占比" in combined or "比率" in combined
+
+
 if __name__ == "__main__":
     pytest.main([__file__])

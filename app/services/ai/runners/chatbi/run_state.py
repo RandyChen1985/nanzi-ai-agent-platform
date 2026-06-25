@@ -96,6 +96,8 @@ class DataRunState:
     where_condition_auto_retry_sql: str = ""
     schema_refresh_required: bool = False
     schema_refreshed_after_sql_error: bool = False
+    preflight_fail_signatures: dict[str, int] = field(default_factory=dict)
+    platform_auto_sql_attempts: int = 0
 
     @property
     def has_successful_nonempty_sql(self) -> bool:

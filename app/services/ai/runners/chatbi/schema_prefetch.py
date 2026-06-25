@@ -432,10 +432,14 @@ async def yield_fresh_data_schema_setup(
     if not prefetched_schema_output:
         return
 
-    prefetch_state = DataRunState()
-    runner._apply_schema_tool_result(prefetch_state, prefetched_schema_output)
-    if runner._is_schema_fatal(prefetch_state):
-        async for chunk in runner._yield_schema_fatal_abort(prefetch_state, prefetched_schema_output):
+    from app.services.ai.runners.chatbi.schema_prefetch_fatal import (
+        build_prefetch_fatal_probe_state,
+        is_prefetch_schema_fatal,
+    )
+
+    if is_prefetch_schema_fatal(runner, prefetched_schema_output):
+        fatal_state = build_prefetch_fatal_probe_state(runner, prefetched_schema_output)
+        async for chunk in runner._yield_schema_fatal_abort(fatal_state, prefetched_schema_output):
             yield chunk
         outcome.stop_execution = True
         return
@@ -447,14 +451,40 @@ async def yield_fresh_data_schema_setup(
     if schema_binding_summary:
         outcome.system_content += f"\n\n{schema_binding_summary}"
 
+    if turn_cls.turn_type == DataQueryTurnType.METADATA_QUERY:
+        async for chunk in chatbi_turn_handlers.dispatch_metadata_schema_turn(
+            runner,
+            runtime_messages=runtime_messages,
+            system_content=outcome.system_content,
+            user_question=user_question,
+            prefetched_schema_output=prefetched_schema_output,
+        ):
+            yield chunk
+        outcome.stop_execution = True
+        return
+
     datasets = sorted(extract_schema_dataset_names(prefetched_schema_output))
     classified_as_federated = (
         turn_cls.turn_type == DataQueryTurnType.FEDERATED_DATA_QUERY and len(datasets) > 1
     )
-    if classified_as_federated or should_upgrade_to_federated_query(
+    should_federate = should_upgrade_to_federated_query(
         prefetched_schema_output,
         runner._standalone_query,
-    ):
+    )
+    if len(datasets) > 1 and not classified_as_federated and not should_federate:
+        yield {
+            "type": "log",
+            "id": f"multi_ds_hint_{uuid.uuid4().hex[:8]}",
+            "title": "检测到多个数据集",
+            "details": (
+                f"本次 Schema 检索命中 {len(datasets)} 个数据集：{', '.join(datasets)}。\n"
+                "若您需要跨数据集关联分析，可在问题中明确「关联/对比/联合/跨库」等表述，"
+                "或点击快捷提问：\n"
+                "- [🔗 升级为跨数据集联邦查询](quick:请对刚才命中的多个数据集做跨源关联查询)"
+            ),
+            "status": "warning",
+        }
+    if classified_as_federated or should_federate:
         async for chunk in chatbi_turn_handlers.run_federated_prefetch_upgrade(
             runner,
             turn_cls=turn_cls,

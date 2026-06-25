@@ -276,16 +276,7 @@ def detect_ratio_anomaly(parsed: Any) -> tuple[bool, str]:
         r"\u7387|\u5360\u6bd4|\u6bd4\u4f8b|\u8d1f\u8f7d\u7387|\u5229\u7528\u7387|\u6210\u529f\u7387|\u8f6c\u5316\u7387|\u5b8c\u6210\u7387)",
         re.IGNORECASE,
     )
-    rows: list[dict] = []
-    if isinstance(parsed, list):
-        rows = [r for r in parsed if isinstance(r, dict)]
-    elif isinstance(parsed, dict):
-        for key in ("items", "rows", "data", "records"):
-            val = parsed.get(key)
-            if isinstance(val, list):
-                rows = [r for r in val if isinstance(r, dict)]
-                break
-
+    rows = iter_named_result_rows(parsed)
     if not rows:
         return False, ""
 

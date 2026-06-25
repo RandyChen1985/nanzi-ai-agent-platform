@@ -2154,6 +2154,66 @@ def test_resolve_repair_tool_choice_forces_sql_for_empty_result(data_config):
     assert choice.mode == "execute_sql_query"
 
 
+def test_resolve_repair_tool_choice_for_tool_loop_fuse(data_config):
+    from agentscope.tool import ToolChoice
+
+    from app.services.ai.runners.data_agent_runner import DataAgentRunner, _DataRunState
+
+    runner = DataAgentRunner(config=data_config, trace_id="trace-fuse-force", trace_buffer=[])
+    state = _DataRunState(
+        requires_fresh_data=True,
+        schema_completed=True,
+        tool_loop_fuse_triggered=True,
+        tool_loop_fuse_reason="重复调用 get_dataset_schema",
+    )
+    choice = runner._resolve_repair_tool_choice(state)
+    assert isinstance(choice, ToolChoice)
+    assert choice.mode == "execute_sql_query"
+
+
+def test_build_repair_message_for_tool_loop_fuse(data_config):
+    from app.services.ai.runners.data_agent_runner import DataAgentRunner, _DataRunState
+
+    runner = DataAgentRunner(config=data_config, trace_id="trace-fuse-repair", trace_buffer=[])
+    state = _DataRunState(
+        requires_fresh_data=True,
+        schema_completed=True,
+        tool_loop_fuse_triggered=True,
+        tool_loop_fuse_reason="ping-pong",
+    )
+    message = runner._build_repair_message(state)
+    assert "工具循环熔断" in message
+    assert "ping-pong" in message
+
+
+def test_build_repair_title_for_empty_sql_result(data_config):
+    from app.services.ai.runners.data_agent_runner import DataAgentRunner, _DataRunState
+
+    runner = DataAgentRunner(config=data_config, trace_id="trace-empty-title", trace_buffer=[])
+    state = _DataRunState(
+        requires_fresh_data=True,
+        schema_completed=True,
+        sql_completed=True,
+        empty_sql_result=True,
+    )
+    assert runner._build_repair_title(state) == "空结果筛选复核"
+
+
+def test_preflight_fail_twice_triggers_schema_refresh(data_config):
+    from app.services.ai.runners.data_agent_runner import DataAgentRunner, _DataRunState
+
+    runner = DataAgentRunner(config=data_config, trace_id="trace-preflight-refresh", trace_buffer=[])
+    state = _DataRunState(requires_fresh_data=True, schema_completed=True)
+    sql = "SELECT bad_col FROM demo"
+    preflight = "[TOOL_ERROR] SQL 预检失败：未知列 bad_col"
+
+    runner._apply_sql_tool_result(state, tool_args={"sql": sql}, output=preflight)
+    assert state.schema_refresh_required is False
+
+    runner._apply_sql_tool_result(state, tool_args={"sql": sql}, output=preflight)
+    assert state.schema_refresh_required is True
+
+
 def test_resolve_repair_tool_choice_forces_sql_for_diagnostic_pending(data_config):
     from agentscope.tool import ToolChoice
 

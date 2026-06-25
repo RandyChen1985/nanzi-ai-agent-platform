@@ -26,6 +26,14 @@ async def maybe_run_empty_filter_diagnostics(
 ):
     if not state.empty_sql_result:
         return None
+    from app.services.ai.runners.chatbi.platform_auto_retry import platform_auto_retry_budget_exhausted
+
+    if platform_auto_retry_budget_exhausted(state):
+        logger.info(
+            "[DataAgentRunner] Empty filter diagnostics skipped: platform auto-retry budget exhausted (%s)",
+            state.platform_auto_sql_attempts,
+        )
+        return None
     sql_text = state.empty_sql_text or str(tool_args.get("sql") or tool_args.get("query") or "")
     from app.services.ai.empty_result_filter_diagnostic import (
         format_repair_diagnostic_block,

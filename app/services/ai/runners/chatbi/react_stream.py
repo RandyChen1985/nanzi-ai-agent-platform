@@ -15,6 +15,12 @@ from app.services.ai.executors.prompts import DataQueryPrompts
 from app.services.ai.runtime.agentscope.event_stream import is_interrupt_sse_chunk, map_standard_agentscope_event
 from app.services.ai.runtime.agentscope.stream_reconcile import truncate_for_context
 from app.services.ai.runners.chatbi.run_state import DataRunState
+from app.services.ai.runners.chatbi.platform_auto_retry import (
+    format_platform_auto_retry_details,
+    format_platform_auto_retry_title,
+    platform_auto_retry_budget_exhausted,
+    record_platform_auto_sql_attempt,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -67,9 +73,11 @@ async def stream_agentscope_events(
                 tool_args=tool_args,
                 output=output,
             )
-            auto_retry = await runner._maybe_run_empty_filter_diagnostics(state, tool_args=tool_args)
+            auto_retry = None
+            if state.empty_sql_result and not platform_auto_retry_budget_exhausted(state):
+                auto_retry = await runner._maybe_run_empty_filter_diagnostics(state, tool_args=tool_args)
             where_retry = None
-            if state.sql_error:
+            if state.sql_error and not platform_auto_retry_budget_exhausted(state):
                 where_retry = await runner._maybe_run_where_condition_diagnostics(
                     state, tool_args=tool_args
                 )
@@ -83,6 +91,7 @@ async def stream_agentscope_events(
                         "execution_time_ms": 0,
                     }
             if where_retry and where_retry.has_rows:
+                attempt = record_platform_auto_sql_attempt(state)
                 should_save_followup = runner._apply_auto_retry_sql_result(
                     state,
                     sql_text=where_retry.corrected_sql,
@@ -97,29 +106,37 @@ async def stream_agentscope_events(
                 yield {
                     "type": "log",
                     "id": f"{tool_id}:where_condition_auto_retry",
-                    "title": "平台自动修正 WHERE 并重试",
-                    "details": (
-                        f"{where_retry.summary}\n\n```sql\n{where_retry.corrected_sql}\n```"
-                        if where_retry.corrected_sql
-                        else where_retry.summary
+                    "title": format_platform_auto_retry_title("平台自动修正 WHERE 并重试", attempt),
+                    "details": format_platform_auto_retry_details(
+                        (
+                            f"{where_retry.summary}\n\n```sql\n{where_retry.corrected_sql}\n```"
+                            if where_retry.corrected_sql
+                            else where_retry.summary
+                        ),
+                        attempt,
                     ),
                     "status": "success",
                     "execution_time_ms": 0,
                 }
             elif where_retry and where_retry.attempted:
+                attempt = record_platform_auto_sql_attempt(state)
                 yield {
                     "type": "log",
                     "id": f"{tool_id}:where_condition_auto_retry",
-                    "title": "平台自动修正 WHERE 并重试",
-                    "details": (
-                        f"{where_retry.summary}\n\n```sql\n{where_retry.corrected_sql}\n```"
-                        if where_retry.corrected_sql
-                        else where_retry.summary
+                    "title": format_platform_auto_retry_title("平台自动修正 WHERE 并重试", attempt),
+                    "details": format_platform_auto_retry_details(
+                        (
+                            f"{where_retry.summary}\n\n```sql\n{where_retry.corrected_sql}\n```"
+                            if where_retry.corrected_sql
+                            else where_retry.summary
+                        ),
+                        attempt,
                     ),
                     "status": "warning",
                     "execution_time_ms": 0,
                 }
             if auto_retry and auto_retry.has_rows:
+                attempt = record_platform_auto_sql_attempt(state)
                 should_save_followup = runner._apply_auto_retry_sql_result(
                     state,
                     sql_text=auto_retry.corrected_sql,
@@ -132,26 +149,33 @@ async def stream_agentscope_events(
                 yield {
                     "type": "log",
                     "id": f"{tool_id}:empty_filter_auto_retry",
-                    "title": "平台自动修正筛选并重试",
-                    "details": (
-                        f"{auto_retry.summary}\n\n```sql\n{auto_retry.corrected_sql}\n```"
-                        if auto_retry.corrected_sql
-                        else auto_retry.summary
+                    "title": format_platform_auto_retry_title("平台自动修正筛选并重试", attempt),
+                    "details": format_platform_auto_retry_details(
+                        (
+                            f"{auto_retry.summary}\n\n```sql\n{auto_retry.corrected_sql}\n```"
+                            if auto_retry.corrected_sql
+                            else auto_retry.summary
+                        ),
+                        attempt,
                     ),
                     "status": "success",
                     "execution_time_ms": 0,
                 }
             elif auto_retry and auto_retry.attempted:
+                attempt = record_platform_auto_sql_attempt(state)
                 if auto_retry.corrected_sql:
                     state.empty_sql_text = auto_retry.corrected_sql
                 yield {
                     "type": "log",
                     "id": f"{tool_id}:empty_filter_auto_retry",
-                    "title": "平台自动修正筛选并重试",
-                    "details": (
-                        f"{auto_retry.summary}\n\n```sql\n{auto_retry.corrected_sql}\n```"
-                        if auto_retry.corrected_sql
-                        else auto_retry.summary
+                    "title": format_platform_auto_retry_title("平台自动修正筛选并重试", attempt),
+                    "details": format_platform_auto_retry_details(
+                        (
+                            f"{auto_retry.summary}\n\n```sql\n{auto_retry.corrected_sql}\n```"
+                            if auto_retry.corrected_sql
+                            else auto_retry.summary
+                        ),
+                        attempt,
                     ),
                     "status": "warning",
                     "execution_time_ms": 0,

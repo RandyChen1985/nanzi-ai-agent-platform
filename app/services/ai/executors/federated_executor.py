@@ -52,6 +52,18 @@ from app.services.ai.time_anchor import (
     build_time_range_gate_message,
     detect_time_range_mismatch,
 )
+from app.services.ai.executors.federated_subquery_gates import (
+    FAILED_FEDERATED_SQL_REPEAT_PREFIX,
+    federated_failed_sql_repeat_message,
+    validate_federated_subquery_before_execute,
+)
+from app.services.ai.chatbi_sql_user_messages import format_empty_filter_result_content
+from app.services.ai.runners.chatbi.platform_auto_retry import (
+    format_platform_auto_retry_details,
+    format_platform_auto_retry_title,
+    platform_auto_retry_budget_exhausted_counter,
+    record_platform_auto_sql_attempt_counter,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -70,8 +82,9 @@ MAX_FEDERATED_PLAN_REPAIR_ROUNDS = 5
 MAX_FEDERATED_SQL_REPAIR_PER_NODE = 4
 # 全局 LLM 调用次数上限（计划生成 1 次 + 各轮 repair）：
 # 超过后直接报错，防止极端情况下无限 repair 造成超长等待和 Token 暴涨。
-# 公式参考：1(计划) + MAX_PLAN_REPAIR(3) + 每节点*2(子查询)*4 + join*4 = 20
+# 公式参考：1(计划) + MAX_PLAN_REPAIR(5) + 每节点局部 repair(4) + join repair ≈ 20
 MAX_FEDERATED_TOTAL_LLM_CALLS = 20
+FEDERATED_JOIN_RESULT_ANOMALY = "[FEDERATED_JOIN_RESULT_ANOMALY]"
 
 
 def make_markdown_table(
@@ -132,6 +145,7 @@ class FederatedQueryExecutor:
         _original_user_question: Optional[str] = None,
         _subquery_cache: Optional[Dict[str, str]] = None,
         _total_llm_calls: Optional[list] = None,
+        _platform_auto_sql_attempts: Optional[list] = None,
     ) -> AsyncGenerator[Dict[str, Any], None]:
         from app.services.ai.runtime.agentscope.trace_context import TraceSpanContext
 
@@ -143,6 +157,8 @@ class FederatedQueryExecutor:
         # 全局 LLM 调用次数计数器（跨 repair 递归共享，用可变 list 模拟引用语义）
         if _total_llm_calls is None:
             _total_llm_calls = [0]
+        if _platform_auto_sql_attempts is None:
+            _platform_auto_sql_attempts = [0]
         # 记录本次执行中发生的「降级留空 / 行截断」情况，最终注入 synthesis，避免把不完整结果当完整结论解读。
         degraded_datasets: list[str] = []
         truncated_notes: list[str] = []
@@ -277,6 +293,7 @@ class FederatedQueryExecutor:
                         _original_user_question=original_user_question,
                         _subquery_cache=_subquery_cache,
                         _total_llm_calls=_total_llm_calls,
+                        _platform_auto_sql_attempts=_platform_auto_sql_attempts,
                     ):
                         yield chunk
                     return
@@ -364,11 +381,21 @@ class FederatedQueryExecutor:
                                             f"无权访问数据集: '{dataset_name}' (ID: {dataset.id})"
                                         )
 
-                                time_range_risk = detect_time_range_mismatch(
-                                    original_user_question, sub_sql
+                                norm_before_execute = normalize_sql_text(sub_sql)
+                                if norm_before_execute and norm_before_execute in failed_sql_signatures:
+                                    raise ValueError(federated_failed_sql_repeat_message())
+
+                                gate_block = await validate_federated_subquery_before_execute(
+                                    self.agent_runner,
+                                    session=session,
+                                    sub_sql=sub_sql,
+                                    dataset=dataset,
+                                    schema_output=self.schema_output,
+                                    sql_query_binding=self.sql_query_binding,
+                                    user_question=original_user_question,
                                 )
-                                if time_range_risk:
-                                    raise ValueError(build_time_range_gate_message(time_range_risk))
+                                if gate_block:
+                                    raise ValueError(gate_block)
 
                                 cache_key = f"{dataset.name}::{self._normalize_sub_sql(sub_sql)}"
                                 cached_res = _subquery_cache.get(cache_key)
@@ -413,29 +440,41 @@ class FederatedQueryExecutor:
                                 res_data = json.loads(res_str)
                                 col_names = [col["name"] for col in res_data.get("columns", [])]
                                 raw_items = res_data.get("items") or res_data.get("rows") or []
-                                if not raw_items and not cache_hit:
-                                    empty_retry = await self._try_empty_filter_auto_repair(
-                                        session,
-                                        sub_sql=sub_sql,
-                                        dataset=dataset,
-                                        user_id=user_id,
-                                        is_admin=is_admin,
-                                        user_dimensions=user_dimensions,
-                                        agent_context=current_agent_context,
-                                    )
+                                if not raw_items:
+                                    empty_retry = None
+                                    if not platform_auto_retry_budget_exhausted_counter(
+                                        _platform_auto_sql_attempts
+                                    ):
+                                        empty_retry = await self._try_empty_filter_auto_repair(
+                                            session,
+                                            sub_sql=sub_sql,
+                                            dataset=dataset,
+                                            user_id=user_id,
+                                            is_admin=is_admin,
+                                            user_dimensions=user_dimensions,
+                                            agent_context=current_agent_context,
+                                        )
                                     if empty_retry and empty_retry.attempted:
+                                        attempt = record_platform_auto_sql_attempt_counter(
+                                            _platform_auto_sql_attempts
+                                        )
+                                        detail_body = (
+                                            f"{empty_retry.summary}\n\n```sql\n{empty_retry.corrected_sql}\n```"
+                                            if empty_retry.corrected_sql and empty_retry.summary
+                                            else (
+                                                f"```sql\n{empty_retry.corrected_sql}\n```"
+                                                if empty_retry.corrected_sql
+                                                else (empty_retry.summary or "空结果筛选探查已完成。")
+                                            )
+                                        )
                                         yield {
                                             "type": "log",
                                             "id": f"fed_repair_{uuid.uuid4().hex[:8]}",
-                                            "title": "平台自动修正筛选并重试",
-                                            "details": (
-                                                f"{empty_retry.summary}\n\n```sql\n{empty_retry.corrected_sql}\n```"
-                                                if empty_retry.corrected_sql and empty_retry.summary
-                                                else (
-                                                    f"```sql\n{empty_retry.corrected_sql}\n```"
-                                                    if empty_retry.corrected_sql
-                                                    else (empty_retry.summary or "空结果筛选探查已完成。")
-                                                )
+                                            "title": format_platform_auto_retry_title(
+                                                "平台自动修正筛选并重试", attempt
+                                            ),
+                                            "details": format_platform_auto_retry_details(
+                                                detail_body, attempt
                                             ),
                                             "status": (
                                                 "success"
@@ -457,7 +496,8 @@ class FederatedQueryExecutor:
                                         raw_items = res_data.get("items") or res_data.get("rows") or []
                                         cache_key = f"{dataset.name}::{self._normalize_sub_sql(sub_sql)}"
 
-                                _subquery_cache[cache_key] = res_str
+                                if raw_items:
+                                    _subquery_cache[cache_key] = res_str
                                 items = self._limit_rows(raw_items, max_rows=MAX_FEDERATED_SUBQUERY_ROWS)
                                 if len(raw_items) > len(items):
                                     limit_note = (
@@ -522,6 +562,34 @@ class FederatedQueryExecutor:
                                     }
                                     return
 
+                                if FAILED_FEDERATED_SQL_REPEAT_PREFIX in error_text:
+                                    yield {
+                                        "type": "log",
+                                        "id": sub_log_id,
+                                        "title": f"执行子查询 ({dataset_name}) 失败",
+                                        "details": f"{error_text}\nSQL:\n{sub_sql}",
+                                        "status": "error",
+                                    }
+                                    if is_primary:
+                                        yield {
+                                            "content": (
+                                                f"\n❌ 跨源联邦子查询失败（数据集: '{dataset_name}'）：{error_text}"
+                                            ),
+                                            "status": "error",
+                                        }
+                                        return
+                                    degraded_datasets.append(dataset_name)
+                                    degraded_temp_tables.add(temp_table)
+                                    col_names = self._infer_degraded_subquery_columns(
+                                        sub_sql, dataset_name, dataset_dialect_map
+                                    )
+                                    if not col_names:
+                                        col_names = ["_degraded"]
+                                    df = pd.DataFrame(columns=col_names)
+                                    duckdb_conn.register(temp_table, df)
+                                    temp_table_schemas[temp_table] = list(col_names)
+                                    break
+
                                 if (
                                     is_cross_dataset_scope_sql_error(error_text)
                                     and _repair_attempt < MAX_FEDERATED_PLAN_REPAIR_ROUNDS
@@ -553,6 +621,7 @@ class FederatedQueryExecutor:
                                         _original_user_question=original_user_question,
                                         _subquery_cache=_subquery_cache,
                                         _total_llm_calls=_total_llm_calls,
+                                        _platform_auto_sql_attempts=_platform_auto_sql_attempts,
                                     ):
                                         yield chunk
                                     return
@@ -881,6 +950,9 @@ class FederatedQueryExecutor:
                                 )
                             if join_col_error:
                                 raise ValueError(join_col_error)
+                        join_time_risk = detect_time_range_mismatch(original_user_question, join_sql)
+                        if join_time_risk:
+                            raise ValueError(build_time_range_gate_message(join_time_risk))
                         duck_res = duckdb_conn.execute(join_sql)
                         raw_join_rows = duck_res.fetchall()
                         join_rows = self._limit_rows(raw_join_rows)
@@ -898,6 +970,25 @@ class FederatedQueryExecutor:
                             "columns": columns,
                             "items": [list(r) for r in join_rows],
                         }
+                        if join_rows:
+                            parsed_join = {
+                                "columns": columns,
+                                "items": final_data["items"],
+                            }
+                            duration_anomaly, duration_reason = (
+                                self.agent_runner._detect_duration_anomaly(parsed_join)
+                            )
+                            if duration_anomaly:
+                                raise ValueError(
+                                    f"{FEDERATED_JOIN_RESULT_ANOMALY} 时长/时延结果异常：{duration_reason}"
+                                )
+                            ratio_anomaly, ratio_reason = (
+                                self.agent_runner._detect_ratio_anomaly(parsed_join)
+                            )
+                            if ratio_anomaly:
+                                raise ValueError(
+                                    f"{FEDERATED_JOIN_RESULT_ANOMALY} 比率/占比结果异常：{ratio_reason}"
+                                )
                         yield {
                             "type": "log",
                             "id": join_log_id,
@@ -907,10 +998,50 @@ class FederatedQueryExecutor:
                             ),
                             "status": "success",
                         }
-                        # 联邦结果为空：若无降级数据集则直接提示；若有降级则继续 synthesis 结合 caveats 解读
+                        # 联邦结果为空：尝试对主表子查询做 empty_filter 修正后重跑 join
                         if not join_rows and not degraded_datasets:
-                            yield {
-                                "content": (
+                            retry_result = await self._maybe_retry_federated_join_after_empty_filter(
+                                session,
+                                duckdb_conn=duckdb_conn,
+                                join_sql=join_sql,
+                                sub_queries=sub_queries,
+                                temp_table_schemas=temp_table_schemas,
+                                user_id=user_id,
+                                is_admin=is_admin,
+                                user_dimensions=user_dimensions,
+                                agent_context=current_agent_context,
+                                _platform_auto_sql_attempts=_platform_auto_sql_attempts,
+                            )
+                            if retry_result and retry_result.get("join_rows"):
+                                attempt = retry_result.get("attempt")
+                                detail_text = (
+                                    "联邦关联结果为空后，已对主表子查询执行 empty_filter 修正并重新关联成功。"
+                                )
+                                yield {
+                                    "type": "log",
+                                    "id": f"fed_repair_{uuid.uuid4().hex[:8]}",
+                                    "title": (
+                                        format_platform_auto_retry_title(
+                                            "平台自动修正筛选并重试", attempt
+                                        )
+                                        if attempt
+                                        else "平台自动修正筛选并重试"
+                                    ),
+                                    "details": (
+                                        format_platform_auto_retry_details(detail_text, attempt)
+                                        if attempt
+                                        else detail_text
+                                    ),
+                                    "status": "success",
+                                }
+                                join_rows = retry_result["join_rows"]
+                                columns = retry_result.get("columns", columns)
+                                final_data = retry_result.get("final_data", final_data)
+                                continue
+                            diagnostics = (retry_result or {}).get("diagnostics") or []
+                            empty_message = format_empty_filter_result_content(diagnostics)
+                            if not empty_message.strip():
+                                empty_message = (
                                     "已成功在多个数据源中帮您进行了查找和关联比对，但按您目前的筛选条件，没有找到符合要求的数据。\n\n"
                                     "**可能原因：**\n"
                                     "1. 涉及的多个数据集之间没有找到对应的匹配信息（例如在该时段内，这批人员没有产生对应的订单或维保记录）。\n"
@@ -920,7 +1051,9 @@ class FederatedQueryExecutor:
                                     "**快捷建议：**\n"
                                     "- [🔍 查看各子查询行数](quick:帮我检查刚才联邦查询中各个子查询单独执行时的返回行数)\n"
                                     "- [📅 放宽时间范围重试](quick:放宽时间范围，重新查询刚才的联邦数据)"
-                                ),
+                                )
+                            yield {
+                                "content": empty_message,
                                 "status": "success",
                             }
                             return
@@ -932,7 +1065,8 @@ class FederatedQueryExecutor:
                             e,
                             exc_info=True,
                         )
-                        if is_retryable_sql_error(error_text):
+                        is_join_result_anomaly = FEDERATED_JOIN_RESULT_ANOMALY in error_text
+                        if is_retryable_sql_error(error_text) or is_join_result_anomaly:
                             execute_failed_norm = normalize_sql_text(join_sql)
                             repaired_for_retry = False
                             while join_repair_count < MAX_FEDERATED_SQL_REPAIR_PER_NODE:
@@ -1064,6 +1198,27 @@ class FederatedQueryExecutor:
 
                             if repaired_for_retry:
                                 continue
+                        if is_join_result_anomaly:
+                            yield {
+                                "type": "log",
+                                "id": join_log_id,
+                                "title": "联邦关联结果异常已拦截",
+                                "details": f"原因：{error_text}\nSQL:\n{join_sql}",
+                                "status": "error",
+                            }
+                            yield {
+                                "content": (
+                                    "为保证数据准确性，联邦关联结果中存在明显异常的时长、时延或占比/比率指标，"
+                                    "平台已拦截该次回答。\n\n"
+                                    f"原因：{error_text.replace(FEDERATED_JOIN_RESULT_ANOMALY, '').strip()}\n\n"
+                                    "💡 **建议您可以尝试**：\n"
+                                    "1. 检查 SQL 中时间字段相减方向、时区口径与单位换算。\n"
+                                    "2. 检查占比/比率字段的分子分母口径是否一致。\n"
+                                    "3. 适当简化关联条件或缩小时间范围后重新提问。"
+                                ),
+                                "status": "error",
+                            }
+                            return
                         yield {
                             "type": "log",
                             "id": join_log_id,
@@ -1439,6 +1594,146 @@ class FederatedQueryExecutor:
                 exc,
             )
             return None
+
+    async def _maybe_retry_federated_join_after_empty_filter(
+        self,
+        session: Any,
+        *,
+        duckdb_conn: Any,
+        join_sql: str,
+        sub_queries: list[dict[str, str]],
+        temp_table_schemas: dict[str, list[str]],
+        user_id: Optional[int],
+        is_admin: bool,
+        user_dimensions: Any,
+        agent_context: Any,
+        _platform_auto_sql_attempts: Optional[list] = None,
+    ) -> dict[str, Any] | None:
+        if not sub_queries:
+            return None
+        if (
+            _platform_auto_sql_attempts is not None
+            and platform_auto_retry_budget_exhausted_counter(_platform_auto_sql_attempts)
+        ):
+            return None
+        primary = sub_queries[0]
+        dataset_name = str(primary.get("dataset_name") or "")
+        temp_table = str(primary.get("temp_table") or "")
+        sub_sql = str(primary.get("sql") or "")
+        if not dataset_name or not sub_sql:
+            return None
+
+        dataset = await MetadataService.get_dataset_by_name(session, dataset_name)
+        if dataset is None:
+            return None
+
+        empty_retry = await self._try_empty_filter_auto_repair(
+            session,
+            sub_sql=sub_sql,
+            dataset=dataset,
+            user_id=user_id,
+            is_admin=is_admin,
+            user_dimensions=user_dimensions,
+            agent_context=agent_context,
+        )
+        diagnostics: list[dict[str, Any]] = []
+        attempt: Optional[int] = None
+        if empty_retry and empty_retry.attempted:
+            if _platform_auto_sql_attempts is not None:
+                attempt = record_platform_auto_sql_attempt_counter(_platform_auto_sql_attempts)
+            from app.services.ai.empty_result_filter_diagnostic import (
+                run_empty_filter_diagnostics,
+                sql_has_string_literal_filters,
+            )
+
+            if sql_has_string_literal_filters(sub_sql):
+                try:
+                    async def _execute_sql(**kwargs: Any) -> str:
+                        return await execute_sql_query_core(
+                            session,
+                            user_id=int(user_id) if user_id else None,
+                            user_dimensions=user_dimensions or None,
+                            agent_context=agent_context,
+                            is_admin=is_admin,
+                            bypass_table_auth=False,
+                            sql_query_binding=self.sql_query_binding,
+                            **kwargs,
+                        )
+
+                    diag_items = await run_empty_filter_diagnostics(
+                        sql=sub_sql,
+                        data_source=str(dataset.data_source or ""),
+                        dataset_name=dataset_name,
+                        user_id=int(user_id) if user_id else None,
+                        is_admin=is_admin,
+                        execute_sql=_execute_sql,
+                        schema_table_columns=(
+                            self.sql_query_binding.schema_table_columns()
+                            if self.sql_query_binding
+                            else None
+                        ),
+                    )
+                    diagnostics = [item.to_dict() for item in diag_items]
+                except Exception:
+                    diagnostics = []
+
+        if not (empty_retry and empty_retry.has_rows and empty_retry.raw_output):
+            payload: dict[str, Any] = {}
+            if diagnostics:
+                payload["diagnostics"] = diagnostics
+            if attempt is not None:
+                payload["attempt"] = attempt
+            return payload or None
+
+        corrected_sql = empty_retry.corrected_sql or sub_sql
+        primary["sql"] = corrected_sql
+        try:
+            res_data = empty_retry.parsed_output or json.loads(empty_retry.raw_output)
+            col_names = [col["name"] for col in res_data.get("columns", [])]
+            raw_items = res_data.get("items") or res_data.get("rows") or []
+        except (json.JSONDecodeError, TypeError, ValueError, KeyError) as exc:
+            logger.warning(
+                "[FederatedQueryExecutor] Failed to parse empty_retry output on %s: %s",
+                dataset_name,
+                exc,
+            )
+            payload: dict[str, Any] = {}
+            if diagnostics:
+                payload["diagnostics"] = diagnostics
+            if attempt is not None:
+                payload["attempt"] = attempt
+            return payload or None
+        items = self._limit_rows(raw_items, max_rows=MAX_FEDERATED_SUBQUERY_ROWS)
+        df = pd.DataFrame(items, columns=col_names)
+        duckdb_conn.register(temp_table, df)
+        temp_table_schemas[temp_table] = list(col_names)
+
+        try:
+            duck_res = duckdb_conn.execute(join_sql)
+            raw_join_rows = duck_res.fetchall()
+            join_rows = self._limit_rows(raw_join_rows)
+            columns = self._columns_from_duckdb_description(duck_res.description)
+            if not join_rows:
+                payload = {"diagnostics": diagnostics} if diagnostics else {}
+                if attempt is not None:
+                    payload["attempt"] = attempt
+                return payload or None
+            return {
+                "join_rows": join_rows,
+                "columns": columns,
+                "final_data": {
+                    "columns": columns,
+                    "items": [list(r) for r in join_rows],
+                },
+                "diagnostics": diagnostics,
+                "attempt": attempt,
+            }
+        except Exception as exc:
+            logger.warning(
+                "[FederatedQueryExecutor] Join retry after empty_filter failed: %s",
+                exc,
+            )
+            return {"diagnostics": diagnostics} if diagnostics else None
 
     async def _try_where_condition_auto_repair(
         self,

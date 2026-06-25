@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import logging
 import time
 import uuid
@@ -10,14 +9,67 @@ from datetime import datetime
 from typing import Any, AsyncGenerator, Dict, List
 
 from app.schemas.agent import AgentExecutionStep
-from app.services.ai.config import AgentConfigProvider
-from app.services.ai.executors.common import extract_tokens_from_message, normalize_messages_for_llm
 from app.services.ai.executors.prompts import DataQueryPrompts
 from app.services.ai.runtime.agentscope.compat import HumanMessage, SystemMessage
-from app.services.ai.runtime.agentscope.stream_reconcile import finalize_visible_reply
 from app.services.ai.runners.chatbi.run_state import DataRunState
+from app.services.ai.runners.chatbi.synthesis_stream import (
+    SynthesisStreamState,
+    result_dict_to_json,
+    stream_synthesis_llm_chunks,
+    synthesis_token_usage,
+)
 
 logger = logging.getLogger(__name__)
+
+
+def _recent_human_messages(runtime_messages: List[Any]) -> List[Any]:
+    return [
+        message
+        for message in runtime_messages[-6:-1]
+        if isinstance(message, HumanMessage) and getattr(message, "content", None)
+    ]
+
+
+def _prompt_without_dataset_menu(system_prompt: str) -> str:
+    return (system_prompt or "").replace(
+        "{dataset_menu}",
+        DataQueryPrompts.REUSE_DATASET_MENU_PLACEHOLDER,
+    )
+
+
+def _append_synthesis_trace(
+    runner: Any,
+    *,
+    start_synthesis: float,
+    stream_state: SynthesisStreamState,
+    tool_output: Dict[str, Any],
+) -> None:
+    tokens = synthesis_token_usage(stream_state)
+    runner._increment_step()
+    runner.trace_buffer.append(
+        AgentExecutionStep(
+            step_number=runner.step_counter,
+            event_type="synthesis",
+            agent_name=runner.config.agent_name,
+            model=str(
+                getattr(
+                    stream_state.final_llm,
+                    "model_name",
+                    runner.config.synthesis_model_name or runner.config.model_name,
+                )
+            ),
+            temperature=float(
+                runner.config.synthesis_temperature or runner.config.temperature or 0
+            ),
+            tool_output=tool_output,
+            raw_log=stream_state.full_content,
+            prompt_tokens=tokens["prompt_tokens"],
+            completion_tokens=tokens["completion_tokens"],
+            total_tokens=tokens["total_tokens"],
+            execution_time_ms=(time.time() - start_synthesis) * 1000,
+            timestamp=datetime.fromtimestamp(start_synthesis),
+        )
+    )
 
 
 async def synthesize_from_last_data_result(
@@ -26,7 +78,7 @@ async def synthesize_from_last_data_result(
     system_prompt: str,
     user_question: str,
     last_result: Dict[str, Any],
-    ) -> AsyncGenerator[Dict[str, Any], None]:
+) -> AsyncGenerator[Dict[str, Any], None]:
     start_synthesis = time.time()
     yield {
         "type": "log",
@@ -37,106 +89,35 @@ async def synthesize_from_last_data_result(
     }
     yield {"type": "thinking", "status": "continuing"}
 
-    prompt_without_menu = (system_prompt or "").replace(
-        "{dataset_menu}",
-        DataQueryPrompts.REUSE_DATASET_MENU_PLACEHOLDER,
-    )
-    safe_result = dict(last_result)
-    for r_key in ("rows", "items", "data", "records"):
-        val = safe_result.get(r_key)
-        if isinstance(val, list) and len(val) > 50:
-            safe_result[r_key] = val[:50]
-            safe_result["_display_note"] = "部分明细数据由于上下文长度限制已在此处被省略..."
-            break
-    result_json = json.dumps(safe_result, ensure_ascii=False, indent=2)
-
-    from app.services.ai.runtime.agentscope.compat import HumanMessage
-
-    synthesis_messages = [SystemMessage(content=prompt_without_menu)]
-    # 只保留用户追问，不把上一轮 assistant 全文（含图表/表格）塞进 prompt，避免模型照抄两遍。
-    synthesis_messages.extend(
-        message
-        for message in runtime_messages[-6:-1]
-        if isinstance(message, HumanMessage) and getattr(message, "content", None)
-    )
+    result_json = result_dict_to_json(last_result)
+    synthesis_messages = [SystemMessage(content=_prompt_without_dataset_menu(system_prompt))]
+    synthesis_messages.extend(_recent_human_messages(runtime_messages))
     synthesis_messages.append(
-        HumanMessage(content=DataQueryPrompts.followup_synthesis_user_message(user_question, result_json))
-    )
-
-    final_llm = await AgentConfigProvider.get_synthesis_llm(streaming=True, config=runner.config)
-    full_synthesis_content = ""
-    content_emitted = False
-    generation_start = None
-    gen_log_id = f"gen_{uuid.uuid4().hex[:8]}"
-    last_synthesis_chunk = None
-    try:
-        async for chunk in final_llm.astream(normalize_messages_for_llm(synthesis_messages)):
-            last_synthesis_chunk = chunk
-            content = str(getattr(chunk, "content", "") or "")
-            if not content:
-                continue
-            if not content_emitted:
-                generation_start = time.time()
-                content_emitted = True
-                yield {
-                    "type": "log",
-                    "id": gen_log_id,
-                    "title": "✨ 开始生成回复",
-                    "status": "pending",
-                    "started_at": int(generation_start * 1000),
-                }
-            full_synthesis_content += content
-            yield {"content": content}
-        if generation_start:
-            yield {
-                "type": "log",
-                "id": gen_log_id,
-                "title": "✨ 生成回复完成",
-                "status": "success",
-                "execution_time_ms": (time.time() - generation_start) * 1000,
-            }
-    except Exception as syn_err:
-        logger.error("[DataAgentRunner] Follow-up synthesis failed: %s", syn_err)
-        fallback = DataQueryPrompts.FOLLOWUP_SYNTHESIS_FALLBACK
-        full_synthesis_content = fallback
-        yield {
-            "type": "log",
-            "id": f"syn_err_{uuid.uuid4().hex[:6]}",
-            "title": "⚠️ 总结生成失败",
-            "details": str(syn_err),
-            "status": "error",
-        }
-        yield {"content": fallback}
-
-    deduped_synthesis = finalize_visible_reply(full_synthesis_content)
-    if deduped_synthesis != full_synthesis_content:
-        logger.warning(
-            "[DataAgentRunner] Collapsed duplicated follow-up synthesis output (len %s -> %s)",
-            len(full_synthesis_content),
-            len(deduped_synthesis),
-        )
-        full_synthesis_content = deduped_synthesis
-        if content_emitted:
-            yield {"type": "retraction", "content": full_synthesis_content}
-
-    synthesis_tokens = extract_tokens_from_message(last_synthesis_chunk)
-    runner._increment_step()
-    runner.trace_buffer.append(
-        AgentExecutionStep(
-            step_number=runner.step_counter,
-            event_type="synthesis",
-            agent_name=runner.config.agent_name,
-            model=str(getattr(final_llm, "model_name", runner.config.synthesis_model_name or runner.config.model_name)),
-            temperature=float(runner.config.synthesis_temperature or runner.config.temperature or 0),
-            tool_output={"content": full_synthesis_content, "reused_last_data_result": True},
-            raw_log=full_synthesis_content,
-            prompt_tokens=synthesis_tokens["prompt_tokens"],
-            completion_tokens=synthesis_tokens["completion_tokens"],
-            total_tokens=synthesis_tokens["total_tokens"],
-            execution_time_ms=(time.time() - start_synthesis) * 1000,
-            timestamp=datetime.fromtimestamp(start_synthesis),
+        HumanMessage(
+            content=DataQueryPrompts.followup_synthesis_user_message(user_question, result_json)
         )
     )
+
+    stream_state = SynthesisStreamState()
+    async for chunk in stream_synthesis_llm_chunks(
+        runner,
+        synthesis_messages,
+        stream_state,
+        start_title="✨ 开始生成回复",
+        complete_title="✨ 生成回复完成",
+        error_title="⚠️ 总结生成失败",
+        fallback=DataQueryPrompts.FOLLOWUP_SYNTHESIS_FALLBACK,
+        dedupe_warning_context="[DataAgentRunner] Collapsed duplicated follow-up synthesis output",
+    ):
+        yield chunk
+
+    _append_synthesis_trace(
+        runner,
+        start_synthesis=start_synthesis,
+        stream_state=stream_state,
+        tool_output={"content": stream_state.full_content, "reused_last_data_result": True},
+    )
+
 
 async def synthesize_format_correction(
     runner: Any,
@@ -144,7 +125,7 @@ async def synthesize_format_correction(
     system_prompt: str,
     user_question: str,
     last_result: Dict[str, Any],
-    ) -> AsyncGenerator[Dict[str, Any], None]:
+) -> AsyncGenerator[Dict[str, Any], None]:
     start_synthesis = time.time()
     yield {
         "type": "log",
@@ -155,100 +136,34 @@ async def synthesize_format_correction(
     }
     yield {"type": "thinking", "status": "continuing"}
 
-    prompt_without_menu = (system_prompt or "").replace(
-        "{dataset_menu}",
-        DataQueryPrompts.REUSE_DATASET_MENU_PLACEHOLDER,
-    )
-    safe_result = dict(last_result)
-    for r_key in ("rows", "items", "data", "records"):
-        val = safe_result.get(r_key)
-        if isinstance(val, list) and len(val) > 50:
-            safe_result[r_key] = val[:50]
-            safe_result["_display_note"] = "部分明细数据由于上下文长度限制已在此处被省略..."
-            break
-    result_json = json.dumps(safe_result, ensure_ascii=False, indent=2)
-
-    from app.services.ai.runtime.agentscope.compat import HumanMessage
-
-    synthesis_messages = [SystemMessage(content=prompt_without_menu)]
-    synthesis_messages.extend(
-        message
-        for message in runtime_messages[-6:-1]
-        if isinstance(message, HumanMessage) and getattr(message, "content", None)
-    )
+    result_json = result_dict_to_json(last_result)
+    synthesis_messages = [SystemMessage(content=_prompt_without_dataset_menu(system_prompt))]
+    synthesis_messages.extend(_recent_human_messages(runtime_messages))
     synthesis_messages.append(
-        HumanMessage(content=DataQueryPrompts.format_correction_user_message(user_question, result_json))
-    )
-
-    final_llm = await AgentConfigProvider.get_synthesis_llm(streaming=True, config=runner.config)
-    full_synthesis_content = ""
-    content_emitted = False
-    generation_start = None
-    gen_log_id = f"gen_{uuid.uuid4().hex[:8]}"
-    last_synthesis_chunk = None
-    try:
-        async for chunk in final_llm.astream(normalize_messages_for_llm(synthesis_messages)):
-            last_synthesis_chunk = chunk
-            content = str(getattr(chunk, "content", "") or "")
-            if not content:
-                continue
-            if not content_emitted:
-                generation_start = time.time()
-                content_emitted = True
-                yield {
-                    "type": "log",
-                    "id": gen_log_id,
-                    "title": "✨ 开始生成微调样式",
-                    "status": "pending",
-                    "started_at": int(generation_start * 1000),
-                }
-            full_synthesis_content += content
-            yield {"content": content}
-        if generation_start:
-            yield {
-                "type": "log",
-                "id": gen_log_id,
-                "title": "✨ 微调样式生成完成",
-                "status": "success",
-                "execution_time_ms": (time.time() - generation_start) * 1000,
-            }
-    except Exception as syn_err:
-        logger.error("[DataAgentRunner] Chart format correction synthesis failed: %s", syn_err)
-        fallback = DataQueryPrompts.FOLLOWUP_SYNTHESIS_FALLBACK
-        full_synthesis_content = fallback
-        yield {
-            "type": "log",
-            "id": f"syn_err_{uuid.uuid4().hex[:6]}",
-            "title": "⚠️ 样式生成失败",
-            "details": str(syn_err),
-            "status": "error",
-        }
-        yield {"content": fallback}
-
-    deduped_synthesis = finalize_visible_reply(full_synthesis_content)
-    if deduped_synthesis != full_synthesis_content:
-        full_synthesis_content = deduped_synthesis
-        if content_emitted:
-            yield {"type": "retraction", "content": full_synthesis_content}
-
-    synthesis_tokens = extract_tokens_from_message(last_synthesis_chunk)
-    runner._increment_step()
-    runner.trace_buffer.append(
-        AgentExecutionStep(
-            step_number=runner.step_counter,
-            event_type="synthesis",
-            agent_name=runner.config.agent_name,
-            model=str(getattr(final_llm, "model_name", runner.config.synthesis_model_name or runner.config.model_name)),
-            temperature=float(runner.config.synthesis_temperature or runner.config.temperature or 0),
-            tool_output={"content": full_synthesis_content, "reused_last_data_result": True},
-            raw_log=full_synthesis_content,
-            prompt_tokens=synthesis_tokens["prompt_tokens"],
-            completion_tokens=synthesis_tokens["completion_tokens"],
-            total_tokens=synthesis_tokens["total_tokens"],
-            execution_time_ms=(time.time() - start_synthesis) * 1000,
-            timestamp=datetime.fromtimestamp(start_synthesis),
+        HumanMessage(
+            content=DataQueryPrompts.format_correction_user_message(user_question, result_json)
         )
     )
+
+    stream_state = SynthesisStreamState()
+    async for chunk in stream_synthesis_llm_chunks(
+        runner,
+        synthesis_messages,
+        stream_state,
+        start_title="✨ 开始生成微调样式",
+        complete_title="✨ 微调样式生成完成",
+        error_title="⚠️ 样式生成失败",
+        fallback=DataQueryPrompts.FOLLOWUP_SYNTHESIS_FALLBACK,
+    ):
+        yield chunk
+
+    _append_synthesis_trace(
+        runner,
+        start_synthesis=start_synthesis,
+        stream_state=stream_state,
+        tool_output={"content": stream_state.full_content, "reused_last_data_result": True},
+    )
+
 
 async def synthesize_from_history_data_result(
     runner: Any,
@@ -256,7 +171,7 @@ async def synthesize_from_history_data_result(
     system_prompt: str,
     user_question: str,
     history: List[Dict[str, str]],
-    ) -> AsyncGenerator[Dict[str, Any], None]:
+) -> AsyncGenerator[Dict[str, Any], None]:
     start_synthesis = time.time()
     yield {
         "type": "log",
@@ -271,19 +186,8 @@ async def synthesize_from_history_data_result(
     yield {"type": "thinking", "status": "continuing"}
 
     history_excerpt = runner._latest_data_assistant_excerpt(history)
-    prompt_without_menu = (system_prompt or "").replace(
-        "{dataset_menu}",
-        DataQueryPrompts.REUSE_DATASET_MENU_PLACEHOLDER,
-    )
-
-    from app.services.ai.runtime.agentscope.compat import HumanMessage
-
-    synthesis_messages = [SystemMessage(content=prompt_without_menu)]
-    synthesis_messages.extend(
-        message
-        for message in runtime_messages[-6:-1]
-        if isinstance(message, HumanMessage) and getattr(message, "content", None)
-    )
+    synthesis_messages = [SystemMessage(content=_prompt_without_dataset_menu(system_prompt))]
+    synthesis_messages.extend(_recent_human_messages(runtime_messages))
     synthesis_messages.append(
         HumanMessage(
             content=DataQueryPrompts.followup_synthesis_from_history_user_message(
@@ -293,75 +197,25 @@ async def synthesize_from_history_data_result(
         )
     )
 
-    final_llm = await AgentConfigProvider.get_synthesis_llm(streaming=True, config=runner.config)
-    full_synthesis_content = ""
-    content_emitted = False
-    generation_start = None
-    gen_log_id = f"gen_{uuid.uuid4().hex[:8]}"
-    last_synthesis_chunk = None
-    try:
-        async for chunk in final_llm.astream(normalize_messages_for_llm(synthesis_messages)):
-            last_synthesis_chunk = chunk
-            content = str(getattr(chunk, "content", "") or "")
-            if not content:
-                continue
-            if not content_emitted:
-                generation_start = time.time()
-                content_emitted = True
-                yield {
-                    "type": "log",
-                    "id": gen_log_id,
-                    "title": "✨ 开始生成回复",
-                    "status": "pending",
-                    "started_at": int(generation_start * 1000),
-                }
-            full_synthesis_content += content
-            yield {"content": content}
-        if generation_start:
-            yield {
-                "type": "log",
-                "id": gen_log_id,
-                "title": "✨ 生成回复完成",
-                "status": "success",
-                "execution_time_ms": (time.time() - generation_start) * 1000,
-            }
-    except Exception as syn_err:
-        logger.error("[DataAgentRunner] History follow-up synthesis failed: %s", syn_err)
-        fallback = DataQueryPrompts.FOLLOWUP_SYNTHESIS_FALLBACK
-        full_synthesis_content = fallback
-        yield {
-            "type": "log",
-            "id": f"syn_err_{uuid.uuid4().hex[:6]}",
-            "title": "⚠️ 总结生成失败",
-            "details": str(syn_err),
-            "status": "error",
-        }
-        yield {"content": fallback}
+    stream_state = SynthesisStreamState()
+    async for chunk in stream_synthesis_llm_chunks(
+        runner,
+        synthesis_messages,
+        stream_state,
+        start_title="✨ 开始生成回复",
+        complete_title="✨ 生成回复完成",
+        error_title="⚠️ 总结生成失败",
+        fallback=DataQueryPrompts.FOLLOWUP_SYNTHESIS_FALLBACK,
+    ):
+        yield chunk
 
-    deduped_synthesis = finalize_visible_reply(full_synthesis_content)
-    if deduped_synthesis != full_synthesis_content:
-        full_synthesis_content = deduped_synthesis
-        if content_emitted:
-            yield {"type": "retraction", "content": full_synthesis_content}
-
-    synthesis_tokens = extract_tokens_from_message(last_synthesis_chunk)
-    runner._increment_step()
-    runner.trace_buffer.append(
-        AgentExecutionStep(
-            step_number=runner.step_counter,
-            event_type="synthesis",
-            agent_name=runner.config.agent_name,
-            model=str(getattr(final_llm, "model_name", runner.config.synthesis_model_name or runner.config.model_name)),
-            temperature=float(runner.config.synthesis_temperature or runner.config.temperature or 0),
-            tool_output={"content": full_synthesis_content, "reused_history_data_result": True},
-            raw_log=full_synthesis_content,
-            prompt_tokens=synthesis_tokens["prompt_tokens"],
-            completion_tokens=synthesis_tokens["completion_tokens"],
-            total_tokens=synthesis_tokens["total_tokens"],
-            execution_time_ms=(time.time() - start_synthesis) * 1000,
-            timestamp=datetime.fromtimestamp(start_synthesis),
-        )
+    _append_synthesis_trace(
+        runner,
+        start_synthesis=start_synthesis,
+        stream_state=stream_state,
+        tool_output={"content": stream_state.full_content, "reused_history_data_result": True},
     )
+
 
 async def synthesize_from_cached_sql_result(
     runner: Any,
@@ -370,7 +224,7 @@ async def synthesize_from_cached_sql_result(
     system_prompt: str,
     user_question: str,
     state: DataRunState,
-    ) -> AsyncGenerator[Dict[str, Any], None]:
+) -> AsyncGenerator[Dict[str, Any], None]:
     start_synthesis = time.time()
     yield {
         "type": "log",
@@ -382,10 +236,7 @@ async def synthesize_from_cached_sql_result(
 
     raw_result = state.last_successful_sql_output
     parsed_result = runner._try_parse_json_output(raw_result)
-    result_json = json.dumps(parsed_result, ensure_ascii=False, indent=2, default=str)
-    if len(result_json) > 20000:
-        result_json = result_json[:20000] + "\n... [SQL 结果过长已截断]"
-
+    result_json = result_dict_to_json(parsed_result, max_chars=20000)
     execution_review = (
         "【执行过程回顾】\n"
         "- 已成功执行 SQL 并获得非空结果。\n"
@@ -393,92 +244,28 @@ async def synthesize_from_cached_sql_result(
         "【查询结果】\n"
         f"{result_json}"
     )
-    prompt_without_menu = (system_prompt or "").replace(
-        "{dataset_menu}",
-        DataQueryPrompts.REUSE_DATASET_MENU_PLACEHOLDER,
-    )
-    synthesis_messages = [SystemMessage(content=prompt_without_menu)]
-    synthesis_messages.extend(
-        message
-        for message in runtime_messages[-6:-1]
-        if isinstance(message, HumanMessage) and getattr(message, "content", None)
-    )
+    synthesis_messages = [SystemMessage(content=_prompt_without_dataset_menu(system_prompt))]
+    synthesis_messages.extend(_recent_human_messages(runtime_messages))
     synthesis_messages.append(
         HumanMessage(content=DataQueryPrompts.synthesis_user_message(user_question, execution_review))
     )
 
-    final_llm = await AgentConfigProvider.get_synthesis_llm(streaming=True, config=runner.config)
-    full_synthesis_content = ""
-    content_emitted = False
-    generation_start = None
-    gen_log_id = f"gen_{uuid.uuid4().hex[:8]}"
-    last_synthesis_chunk = None
-    try:
-        async for chunk in final_llm.astream(normalize_messages_for_llm(synthesis_messages)):
-            last_synthesis_chunk = chunk
-            content = str(getattr(chunk, "content", "") or "")
-            if not content:
-                continue
-            if not content_emitted:
-                generation_start = time.time()
-                content_emitted = True
-                yield {
-                    "type": "log",
-                    "id": gen_log_id,
-                    "title": "✨ 开始生成回复",
-                    "status": "pending",
-                    "started_at": int(generation_start * 1000),
-                }
-            full_synthesis_content += content
-            yield {"content": content}
-        if generation_start:
-            yield {
-                "type": "log",
-                "id": gen_log_id,
-                "title": "✨ 生成回复完成",
-                "status": "success",
-                "execution_time_ms": (time.time() - generation_start) * 1000,
-            }
-    except Exception as syn_err:
-        logger.error("[DataAgentRunner] Cached SQL synthesis failed: %s", syn_err)
-        fallback = DataQueryPrompts.SYNTHESIS_FAILED_FALLBACK
-        full_synthesis_content = fallback
-        yield {
-            "type": "log",
-            "id": f"syn_err_{uuid.uuid4().hex[:6]}",
-            "title": "⚠️ 总结生成失败",
-            "details": str(syn_err),
-            "status": "error",
-        }
-        yield {"content": fallback}
+    stream_state = SynthesisStreamState()
+    async for chunk in stream_synthesis_llm_chunks(
+        runner,
+        synthesis_messages,
+        stream_state,
+        start_title="✨ 开始生成回复",
+        complete_title="✨ 生成回复完成",
+        error_title="⚠️ 总结生成失败",
+        fallback=DataQueryPrompts.SYNTHESIS_FAILED_FALLBACK,
+        dedupe_warning_context="[DataAgentRunner] Collapsed duplicated cached SQL synthesis output",
+    ):
+        yield chunk
 
-    deduped_synthesis = finalize_visible_reply(full_synthesis_content)
-    if deduped_synthesis != full_synthesis_content:
-        logger.warning(
-            "[DataAgentRunner] Collapsed duplicated cached SQL synthesis output (len %s -> %s)",
-            len(full_synthesis_content),
-            len(deduped_synthesis),
-        )
-        full_synthesis_content = deduped_synthesis
-        if content_emitted:
-            yield {"type": "retraction", "content": full_synthesis_content}
-
-    synthesis_tokens = extract_tokens_from_message(last_synthesis_chunk)
-    runner._increment_step()
-    runner.trace_buffer.append(
-        AgentExecutionStep(
-            step_number=runner.step_counter,
-            event_type="synthesis",
-            agent_name=runner.config.agent_name,
-            model=str(getattr(final_llm, "model_name", runner.config.synthesis_model_name or runner.config.model_name)),
-            temperature=float(runner.config.synthesis_temperature or runner.config.temperature or 0),
-            tool_output={"content": full_synthesis_content, "reused_repeated_sql_result": True},
-            raw_log=full_synthesis_content,
-            prompt_tokens=synthesis_tokens["prompt_tokens"],
-            completion_tokens=synthesis_tokens["completion_tokens"],
-            total_tokens=synthesis_tokens["total_tokens"],
-            execution_time_ms=(time.time() - start_synthesis) * 1000,
-            timestamp=datetime.fromtimestamp(start_synthesis),
-        )
+    _append_synthesis_trace(
+        runner,
+        start_synthesis=start_synthesis,
+        stream_state=stream_state,
+        tool_output={"content": stream_state.full_content, "reused_repeated_sql_result": True},
     )
-

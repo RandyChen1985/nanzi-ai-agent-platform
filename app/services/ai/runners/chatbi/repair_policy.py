@@ -270,7 +270,14 @@ def build_repair_message(
             "修正 SQL 后重新调用 execute_sql_query。修正并执行成功前禁止直接回答用户。"
         )
     if state.tool_loop_fuse_triggered:
-        return ""
+        reason = (state.tool_loop_fuse_reason or "").strip()
+        return (
+            "【工具循环熔断复核】检测到重复或无效的工具调用模式，已自动中止当前 ReAct 流。\n"
+            f"原因：{reason[:600]}\n"
+            "请停止重复提交相同工具参数；必须更换 get_dataset_schema 的 keywords，"
+            "或修正 execute_sql_query 的 SQL（字段、WHERE、JOIN、时间范围至少改一处）后重试。"
+            "禁止在未完成有效查数前直接回答用户。"
+        )
     if state.diagnostic_sql_pending_final:
         return (
             "【最终 SQL 执行要求】上一轮 execute_sql_query 是诊断 SQL，只能用于定位候选值、"
@@ -341,7 +348,9 @@ def reset_state_for_repair(state: DataRunState) -> None:
     state.sql_sandbox_blocked = False
     state.sql_sandbox_blocked_reason = ""
     state.failed_sql_repeat_gate_block = False
-    if repair_kind in {"empty_sql_result", "ratio_anomaly"}:
+    state.preflight_fail_signatures = {}
+    state.platform_auto_sql_attempts = 0
+    if repair_kind in {"empty_sql_result", "ratio_anomaly", "duration_anomaly"}:
         state.expecting_final_sql_after_diagnostic = True
     state.diagnostic_sql_pending_final = False
     state.ratio_anomaly = False
@@ -383,6 +392,10 @@ def build_repair_title(state: DataRunState) -> str:
         return "补充 SQL 计划"
     if state.failed_sql_repeat_gate_block:
         return "修正重复失败 SQL"
+    if state.sql_error:
+        return "修正 SQL 执行错误"
+    if state.empty_sql_result:
+        return "空结果筛选复核"
     if state.ratio_anomaly:
         return "比率/占比异常复核"
     if state.duration_anomaly:
@@ -459,6 +472,10 @@ def resolve_repair_tool_choice(state: DataRunState) -> Any | None:
         return ToolChoice(mode="required")
     if state.duration_anomaly:
         return ToolChoice(mode="execute_sql_query")
+    if state.tool_loop_fuse_triggered:
+        if state.schema_completed:
+            return ToolChoice(mode="execute_sql_query")
+        return ToolChoice(mode="get_dataset_schema")
     if state.empty_sql_result or state.diagnostic_sql_pending_final:
         return ToolChoice(mode="execute_sql_query")
     if state.sql_error:

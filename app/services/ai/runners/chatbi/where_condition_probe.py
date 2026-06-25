@@ -37,6 +37,14 @@ async def maybe_run_where_condition_diagnostics(
     """
     if not state.sql_error:
         return None
+    from app.services.ai.runners.chatbi.platform_auto_retry import platform_auto_retry_budget_exhausted
+
+    if platform_auto_retry_budget_exhausted(state):
+        logger.info(
+            "[DataAgentRunner] WHERE condition diagnostics skipped: platform auto-retry budget exhausted (%s)",
+            state.platform_auto_sql_attempts,
+        )
+        return None
     error_message = str(state.last_sql_error_summary or state.sql_error_message or "")
     if not is_where_condition_sql_error(error_message):
         return None
