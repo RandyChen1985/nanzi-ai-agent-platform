@@ -103,7 +103,7 @@ class ToolNudge:
     message: str
 
     def recommended_force_mode(self) -> str:
-        """hard 模式下推荐的 ToolChoice.mode：高相关度锁定具体工具，否则 required。"""
+        """hard 模式下推荐 of ToolChoice.mode：高相关度锁定具体工具，否则 required。"""
         if self.score >= STRONG_FORCE_SCORE:
             return self.tool_name
         return "required"
@@ -143,6 +143,37 @@ def resolve_tool_nudge(
     query = (user_query or "").strip()
     if not query or not should_consider_tool_nudge(query):
         return None
+
+    # 特殊规则：对于强查数或强知识库检索意图，若绑定了 sub_agent_call，优先做静默子代理委派
+    sub_agent_tool = next((t for t in (tools or []) if getattr(t, "name", "") == "sub_agent_call"), None)
+    if sub_agent_tool:
+        from app.services.ai.intent_service import (
+            looks_like_business_data_request,
+            looks_like_knowledge_query,
+        )
+        # 优先判断更具体的知识库检索意图
+        if looks_like_knowledge_query(query):
+            desc = (
+                "用户问题涉及内部制度、SOP或操作规程查询。主助手没有直接读取知识库能力，"
+                "你必须优先调用 sub_agent_call(agent_name='knowledge-base', query='用户的问题') 委派给知识库助手 'knowledge-base' 检索文档，拿到结果再回答；"
+                "严禁凭记忆直接编造任何文档或规范；若工具返回为空或失败，如实说明，不要编造。"
+            )
+            return ToolNudge(
+                tool_name="sub_agent_call",
+                score=0.95,
+                message=f"【本轮工具优先】本轮用户请求涉及制度、SOP或规范文档检索。{desc}"
+            )
+        elif looks_like_business_data_request(query):
+            desc = (
+                "用户问题涉及内部数据、指标或资产查询。主助手没有直接连接数据库能力，"
+                "你必须优先调用 sub_agent_call(agent_name='chat-bi', query='用户的问题') 委派给数据智能助手 'chat-bi' 获取真实数据，拿到结果再回答；"
+                "严禁凭记忆直接编造任何表格、数据或字段；若工具返回为空或失败，如实说明，不要编造。"
+            )
+            return ToolNudge(
+                tool_name="sub_agent_call",
+                score=0.95,
+                message=f"【本轮工具优先】本轮用户请求涉及内部数据、指标或资产查询。{desc}"
+            )
 
     signals = _query_signals(query)
     if len(signals) < 2:

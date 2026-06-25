@@ -1870,19 +1870,23 @@ class KnowledgeChatPrompts:
     TURN_SYSTEM_HINT = (
         "【知识库问答模式】用户正在询问文档/SOP/操作指引。"
         "请基于知识库检索结果作答；若检索无结果，应明确说明未找到相关内容，禁止编造流程或制度。\n"
+        "禁止调用 web_search_baidu、fetch_static_web_url 等外网检索工具；"
+        "仅允许使用 search_knowledge_base 检索内部知识库。\n"
         f"{CITATION_FORMAT_RULE}"
     )
 
     SEARCH_CORRECTION_MSG = (
         "【必须执行】本轮为知识库/SOP 类问答。"
         "若尚未检索或需补充检索，请调用 search_knowledge_base；"
+        "禁止调用 web_search_baidu 等外网工具；"
         "在未获得工具返回前，禁止凭记忆编造流程或制度内容。"
     )
 
     PREFETCH_DONE_CORRECTION_MSG = (
         "【平台已预检索】系统已在推理前自动完成 search_knowledge_base，"
-        "请直接基于【知识库检索结果】组织回答，默认不要再调用 search_knowledge_base。"
-        "仅当用户问题与预检索词明显不同、或预检索结果明确不足时，才可补充调用一次。"
+        "请直接基于【知识库检索结果】组织回答，默认不要再调用 search_knowledge_base，"
+        "且禁止调用 web_search_baidu 等外网检索工具。"
+        "仅当用户问题与预检索词明显不同、或预检索结果明确不足时，才可补充调用一次 search_knowledge_base。"
     )
 
     KNOWLEDGE_SERVICE_UNAVAILABLE_CONTENT = (

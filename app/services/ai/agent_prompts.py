@@ -98,6 +98,7 @@ class AgentServicePrompts:
 
     _PLATFORM_TOOL_ONE_LINERS: Dict[str, str] = {
         "memory_search": "跨会话摘要/历史对话检索",
+        "sub_agent_call": "委派其他专有子智能体执行特定任务（如查数、查手册等）",
         "fetch_user_long_term_memory": "读取用户长期偏好与 facts",
         "update_user_preference": "写入用户长期偏好",
         "search_knowledge_base": "知识库文档检索",
@@ -236,6 +237,14 @@ class AgentServicePrompts:
             # 知识库工具（如果在 data_query/knowledge 模式下可能动态引入）
             if getattr(agent_config, "capabilities", None) and "knowledge_base" in agent_config.capabilities:
                 tool_names.add("search_knowledge_base")
+            # 主助手运行时隐式挂载 sub_agent_call，与 AssistantAgentRunner 门控对齐
+            try:
+                from app.services.ai.skill_resolver import is_main_general_agent
+
+                if is_main_general_agent(agent_config):
+                    tool_names.add("sub_agent_call")
+            except Exception:
+                pass
 
         agentscope_tool_aliases = {
             "exec_command": "Bash",
@@ -324,6 +333,9 @@ class AgentServicePrompts:
 
         # 3. 记忆与知识对照表（动态构建表格）
         table_rows = []
+        if "sub_agent_call" in tool_names:
+            table_rows.append("| 需要业务数据查询、知识库检索或执行其他专有功能，且你自身没有绑定对应工具时 | **必须调用 sub_agent_call** 委派给相应的子智能体获取结果（严禁编造，可用子代理清单参见下文） |")
+
         if "memory_search" in tool_names:
             table_rows.append("| 「今天/上次/最近聊了啥」「回顾历史对话」 | 调用 **memory_search**（scope=summary，query 填关键词；要原文明细再 scope=history + conversation_id） |")
             

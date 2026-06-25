@@ -308,7 +308,66 @@ class AssistantAgentRunner(BaseExecutor):
         full_text = ""
         has_attempted_tool = False
 
-        async for chunk in self._execute_core(history):
+        from app.core.context import set_agent_context
+        import asyncio
+        ctx = self._ensure_agent_context()
+        event_queue = asyncio.Queue()
+        ctx.event_queue = event_queue
+
+        async def merge_streams(core_stream):
+            out_queue = asyncio.Queue()
+
+            async def read_core():
+                if ctx:
+                    set_agent_context(ctx)
+                try:
+                    async for chunk in core_stream:
+                        await out_queue.put(("core", chunk))
+                except Exception as e:
+                    await out_queue.put(("error", e))
+                finally:
+                    await out_queue.put(("core_done", None))
+
+            async def read_queue():
+                try:
+                    while True:
+                        item = await event_queue.get()
+                        if item == "DONE":
+                            break
+                        await out_queue.put(("queue", item))
+                        event_queue.task_done()
+                except asyncio.CancelledError:
+                    pass
+
+            t1 = asyncio.create_task(read_core())
+            t2 = asyncio.create_task(read_queue())
+
+            core_done = False
+            try:
+                while not core_done or not out_queue.empty():
+                    try:
+                        tag, val = await asyncio.wait_for(out_queue.get(), timeout=0.05)
+                        if tag == "core":
+                            yield val
+                        elif tag == "queue":
+                            yield val
+                        elif tag == "core_done":
+                            core_done = True
+                        elif tag == "error":
+                            raise val
+                        out_queue.task_done()
+                    except asyncio.TimeoutError:
+                        if core_done and out_queue.empty():
+                            break
+            finally:
+                t1.cancel()
+                t2.cancel()
+                try:
+                    await event_queue.put("DONE")
+                except Exception:
+                    pass
+
+        async for chunk in merge_streams(self._execute_core(history)):
             if self._chunk_indicates_tool_attempt(chunk):
                 has_attempted_tool = True
 
@@ -360,17 +419,7 @@ class AssistantAgentRunner(BaseExecutor):
             return
 
         # 1. Prepare LLM
-        configured_tools = self.config.tools or []
-        tools = []
-        if configured_tools:
-            tools = await ToolRegistry.get_runtime_tools(configured_tools)
-
-        system_tools = ToolRegistry.get_system_implicit_tools()
-        if system_tools:
-            tools.extend(
-                runtime_tool_spec_from_legacy_tool(tool, source_type="system")
-                for tool in system_tools
-            )
+        tools = await self._resolve_runtime_tools_from_config()
 
         # 2. Build Messages
         system_content = self.config.system_prompt or ""
@@ -1129,7 +1178,12 @@ class AssistantAgentRunner(BaseExecutor):
         if configured_tools:
             tools = await ToolRegistry.get_runtime_tools(configured_tools)
 
-        system_tools = ToolRegistry.get_system_implicit_tools()
+        system_tools = list(ToolRegistry.get_system_implicit_tools())
+        if is_main_general_agent(self.config):
+            sub_agent_tool = await ToolRegistry.get_tool("sub_agent_call")
+            if sub_agent_tool:
+                system_tools.append(sub_agent_tool)
+
         if system_tools:
             tools.extend(
                 runtime_tool_spec_from_legacy_tool(tool, source_type="system")
@@ -1143,6 +1197,7 @@ class AssistantAgentRunner(BaseExecutor):
         pending: Any,
         resume_event: Any,
     ) -> AsyncGenerator[Dict[str, Any], None]:
+        self._ensure_agent_context()
         agent_name = self._runtime_agent_name()
         loop_detector = await self._create_tool_loop_detector()
         try:

@@ -806,6 +806,35 @@ class AgentService:
                 id_msg = await self._build_user_context_msg(user_info)
                 user_profile = id_msg.get("content")
 
+            # --- Sub-agents inventory for sub_agent_call tool (specs 5.2) ---
+            sub_agents_context = None
+            from app.services.ai.skill_resolver import is_main_general_agent
+            if is_main_general_agent(agent_config):
+                try:
+                    from app.core.orm import AsyncSessionLocal
+                    from app.services.ai.agent_manager import AgentManagerService
+                    async with AsyncSessionLocal() as session:
+                        active_agents = await AgentManagerService.list_agents(session)
+                        sub_agent_lines = []
+                        for a in active_agents:
+                            if a.is_enabled and a.is_system and str(a.id) != str(agent_config.agent_id):
+                                display = a.display_name or a.name
+                                desc = a.description or "无描述"
+                                caps = ", ".join(a.capabilities or [])
+                                sub_agent_lines.append(
+                                    f"- **标识 (agent_name)**: `{a.name}` (展示名: {display})\n"
+                                    f"  **职责描述**: {desc}\n"
+                                    f"  **核心能力**: [{caps}]"
+                                )
+                        if sub_agent_lines:
+                            sub_agents_context = (
+                                "## 可委派子智能体清单 (可用通讯录)\n"
+                                "当且仅当你使用 `sub_agent_call` 工具时，可以通过传入 `agent_name`（标识）来调用以下已启用的智能体：\n\n"
+                                + "\n\n".join(sub_agent_lines)
+                            )
+                except Exception as sa_err:
+                    logger.warning(f"Failed to build sub-agents context for prompts: {sa_err}")
+
             from app.core.config import settings
             cache_boundary_enabled, cache_reorder_enabled = await resolve_prompt_assembler_flags()
             assembled_prompt = assemble_system_prompt(
@@ -822,6 +851,7 @@ class AgentService:
                     user_profile=user_profile,
                     cache_boundary_enabled=cache_boundary_enabled,
                     cache_reorder_enabled=cache_reorder_enabled,
+                    sub_agents_context=sub_agents_context,
                 )
             )
             agent_config.system_prompt = assembled_prompt.full_text

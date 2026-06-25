@@ -69,3 +69,26 @@ def test_plain_chat_does_not_nudge():
     ]
     nudge = resolve_tool_nudge("帮我把这段话润色一下", tools)
     assert nudge is None
+
+
+def test_sub_agent_call_nudge_for_data_query():
+    tools = [
+        _tool("sub_agent_call", "委派其他专有子智能体执行特定任务（如查数、查手册等）"),
+        _tool("exec_command", "在服务器上执行 shell 命令")
+    ]
+    nudge = resolve_tool_nudge("帮我查一下设备资产列表", tools)
+    assert nudge is not None
+    assert nudge.tool_name == "sub_agent_call"
+    assert nudge.score == 0.95
+    assert "chat-bi" in nudge.message
+
+
+def test_sub_agent_call_nudge_for_knowledge_query():
+    tools = [
+        _tool("sub_agent_call", "委派其他专有子智能体执行特定任务（如查数、查手册等）"),
+    ]
+    nudge = resolve_tool_nudge("我想查一下设备运维规范和操作指引", tools)
+    assert nudge is not None
+    assert nudge.tool_name == "sub_agent_call"
+    assert nudge.score == 0.95
+    assert "knowledge-base" in nudge.message

@@ -27,6 +27,7 @@ from app.services.ai.tools.memory_ltm_tools import (
     update_user_preference, fetch_user_long_term_memory, delete_user_preference
 )
 from app.services.ai.tools.memory_search_tool import memory_search
+from app.services.ai.tools.agent_delegate_tool import sub_agent_call
 from app.models.tool import SysApiTool
 from app.models.mcp import McpToolCache
 from app.core.orm import AsyncSessionLocal
@@ -114,6 +115,7 @@ class ToolRegistry:
         "fetch_user_long_term_memory": fetch_user_long_term_memory,
         "delete_user_preference": delete_user_preference,
         "memory_search": memory_search,
+        "sub_agent_call": sub_agent_call,
     }
 
     # Cache for DB Tools

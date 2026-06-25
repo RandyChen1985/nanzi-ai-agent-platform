@@ -40,6 +40,12 @@ class AgentContext(BaseModel):
     trace_logs: List[str] = Field(default_factory=list)
     trace_buffer: List[Any] = Field(default_factory=list, description="物理执行步骤审计 buffer 引用")
 
+    # Delegation control
+    delegation_depth: int = 0
+
+    # Queue for streaming sub-agent log/progress chunks back to client
+    event_queue: Optional[Any] = None
+
 agent_context: ContextVar[Optional[AgentContext]] = ContextVar("agent_context", default=None)
 
 def get_current_agent_context() -> Optional[AgentContext]:

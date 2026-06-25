@@ -31,6 +31,7 @@ class PromptAssemblyInput:
     user_profile: Optional[str] = None
     cache_boundary_enabled: bool = False
     cache_reorder_enabled: bool = False
+    sub_agents_context: Optional[str] = None
 
 
 def _prepend_block(current: str, block: Optional[str]) -> str:
@@ -100,6 +101,8 @@ def _platform_global_only(params: PromptAssemblyInput) -> str:
 def assemble_system_prompt(params: PromptAssemblyInput) -> AssembledSystemPrompt:
     stack_without_platform = _build_stack_without_platform(params)
     platform_global = _platform_global_only(params)
+    if params.sub_agents_context:
+        platform_global = _join_blocks([platform_global, params.sub_agents_context])
     agent_db = (params.agent_system_prompt or "").strip()
 
     dynamic_blocks = [
