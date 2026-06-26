@@ -10,11 +10,11 @@ class BaseExecutor(ABC):
     Base class for all Agent Executors.
     Defines the contract for streaming execution.
     """
-    
+
     def __init__(
-        self, 
-        config: ChatConfig, 
-        trace_id: str, 
+        self,
+        config: ChatConfig,
+        trace_id: str,
         trace_buffer: List[AgentExecutionStep],
         debug_options: Dict[str, Any] = None,
         user_info: Optional[Dict[str, Any]] = None,
@@ -32,7 +32,7 @@ class BaseExecutor(ABC):
 
     @abstractmethod
     async def execute(
-        self, 
+        self,
         history: List[Dict[str, str]]
     ) -> AsyncGenerator[Dict[str, Any], None]:
         """
@@ -47,7 +47,7 @@ class BaseExecutor(ABC):
             from app.services.ai.knowledge_utils import merge_dataset_id_sources
             engine_config = self.config.engine_config or {}
             agent_dataset_ids = merge_dataset_id_sources(engine_config.get("dataset_ids"))
-            
+
             user_dims = {}
             u_id_val = None
             is_admin_val = False

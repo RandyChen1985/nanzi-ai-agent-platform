@@ -134,6 +134,7 @@ def resolve_tool_nudge(
     *,
     min_score: float = 0.34,
     exclude_tools: Optional[Set[str]] = None,
+    available_sub_agent_names: Optional[Set[str]] = None,
 ) -> Optional[ToolNudge]:
     """解析本轮是否需要工具促发；返回相关度最高的一条便签或 None。
 
@@ -151,8 +152,16 @@ def resolve_tool_nudge(
             looks_like_business_data_request,
             looks_like_knowledge_query,
         )
+        def _sub_agent_available(name: str) -> bool:
+            if available_sub_agent_names is None:
+                return True
+            aliases = {name, name.replace("_", "-"), name.replace("-", "_")}
+            return bool(aliases & available_sub_agent_names)
+
         # 优先判断更具体的知识库检索意图
         if looks_like_knowledge_query(query):
+            if not _sub_agent_available("knowledge-base"):
+                return None
             desc = (
                 "用户问题涉及内部制度、SOP或操作规程查询。主助手没有直接读取知识库能力，"
                 "你必须优先调用 sub_agent_call(agent_name='knowledge-base', query='用户的问题') 委派给知识库助手 'knowledge-base' 检索文档，拿到结果再回答；"
@@ -164,6 +173,8 @@ def resolve_tool_nudge(
                 message=f"【本轮工具优先】本轮用户请求涉及制度、SOP或规范文档检索。{desc}"
             )
         elif looks_like_business_data_request(query):
+            if not _sub_agent_available("chat-bi"):
+                return None
             desc = (
                 "用户问题涉及内部数据、指标或资产查询。主助手没有直接连接数据库能力，"
                 "你必须优先调用 sub_agent_call(agent_name='chat-bi', query='用户的问题') 委派给数据智能助手 'chat-bi' 获取真实数据，拿到结果再回答；"

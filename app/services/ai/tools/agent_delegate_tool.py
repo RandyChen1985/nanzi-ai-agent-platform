@@ -3,7 +3,7 @@ import asyncio
 import re
 import uuid
 import inspect
-from typing import Optional, Dict, Any, List, Tuple
+from typing import Optional, Dict, Any, List, Tuple, Iterable
 from app.services.ai.tools.tool_compat import tool
 from app.core.context import get_current_agent_context, AgentContext, set_agent_context
 from app.core.orm import AsyncSessionLocal
@@ -14,6 +14,7 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_DELEGATION_TIMEOUT_SECONDS = 120.0
 DEFAULT_DELEGATION_RESULT_MAX_CHARS = 8000
+MAX_DELEGATION_CALLS_PER_AGENT = 2
 
 INTERRUPT_SSE_TYPES = frozenset({"permission_required", "external_execution_required"})
 
@@ -56,10 +57,116 @@ def _extract_delegation_text(chunk: Dict[str, Any]) -> str:
 def resolve_delegation_permission_options(
     main_options: Dict[str, Any] | None,
 ) -> Dict[str, Any]:
-    """子代理在委派链路内无法向用户弹出工具确认，强制 auto-allow。"""
+    """继承主流程审批策略；默认 ask，避免静默委派绕过写入/外部工具确认。"""
     options = dict(main_options or {})
-    options["approval_mode"] = "allow"
+    options.setdefault("approval_mode", "ask")
     return options
+
+
+def _normalize_agent_name(value: str | None) -> str:
+    return (value or "").lower().replace("-", "_").strip()
+
+
+def _normalize_delegation_query(value: str | None) -> str:
+    return " ".join((value or "").strip().split())
+
+
+def _delegation_signature(agent_name: str | None, query: str | None) -> str:
+    return f"{_normalize_agent_name(agent_name)}:{_normalize_delegation_query(query)}"
+
+
+def _record_delegation_attempt(
+    ctx: AgentContext,
+    *,
+    agent_name: str,
+    display_name: str,
+    query: str,
+) -> str | None:
+    signature = _delegation_signature(agent_name, query)
+    call_counts = ctx.delegation_call_counts
+    if call_counts.get(signature, 0) >= 1:
+        return (
+            f"错误：本轮已经对 `{agent_name}`（{display_name}）使用相同问题执行过一次 sub_agent_call。"
+            "请勿重复委派；请基于上一次工具结果回答，或向用户说明子智能体结果不足。"
+        )
+
+    agent_key = _normalize_agent_name(agent_name)
+    agent_counts = ctx.delegation_agent_call_counts
+    if agent_counts.get(agent_key, 0) >= MAX_DELEGATION_CALLS_PER_AGENT:
+        return (
+            f"错误：本轮已多次委派 `{agent_name}`（{display_name}），系统已阻止继续重复调用。"
+            "请基于已有子智能体结果回答，或向用户说明需要切换到对应子智能体对话继续处理。"
+        )
+
+    call_counts[signature] = call_counts.get(signature, 0) + 1
+    agent_counts[agent_key] = agent_counts.get(agent_key, 0) + 1
+    return None
+
+
+def _matches_requested_agent(agent: Any, requested_name: str) -> bool:
+    target_clean = _normalize_agent_name(requested_name)
+    agent_name = getattr(agent, "name", None)
+    if agent_name and _normalize_agent_name(agent_name) == target_clean:
+        return True
+    display_name = getattr(agent, "display_name", None)
+    if display_name and display_name.strip() == requested_name.strip():
+        return True
+    if display_name and display_name.lower().strip() == requested_name.lower().strip():
+        return True
+    return False
+
+
+async def can_delegate_to_agent(
+    session: Any,
+    *,
+    user_id: int | str | None,
+    is_admin: bool,
+    target_agent_id: str,
+) -> bool:
+    if not user_id or is_admin:
+        return True
+    perm_service = PermissionService(session)
+    return await perm_service.check_permission(int(user_id), "agent", str(target_agent_id))
+
+
+async def filter_delegable_system_agents(
+    session: Any,
+    agents: Iterable[Any],
+    *,
+    user_id: int | str | None,
+    is_admin: bool,
+    current_agent_id: str | None,
+) -> List[Any]:
+    delegable: List[Any] = []
+    for agent in agents or []:
+        if not getattr(agent, "is_enabled", False) or not getattr(agent, "is_system", False):
+            continue
+        agent_id = str(getattr(agent, "id", "") or "")
+        if current_agent_id and agent_id == str(current_agent_id):
+            continue
+        if await can_delegate_to_agent(
+            session,
+            user_id=user_id,
+            is_admin=is_admin,
+            target_agent_id=agent_id,
+        ):
+            delegable.append(agent)
+    return delegable
+
+
+def delegable_agent_name_aliases(agents: Iterable[Any]) -> set[str]:
+    aliases: set[str] = set()
+    for agent in agents or []:
+        name = getattr(agent, "name", None)
+        if name:
+            name_str = str(name)
+            aliases.add(name_str)
+            aliases.add(name_str.replace("_", "-"))
+            aliases.add(name_str.replace("-", "_"))
+        display_name = getattr(agent, "display_name", None)
+        if display_name:
+            aliases.add(str(display_name))
+    return aliases
 
 
 def finalize_delegation_output(
@@ -160,53 +267,55 @@ async def sub_agent_call(agent_name: str, query: str) -> str:
         # 强制只查询启用的系统内置智能体 (is_system = True)
         stmt = select(AIAgent).where(AIAgent.is_enabled == True, AIAgent.is_system == True)
         all_active_system = (await session.execute(stmt)).scalars().all()
-        
-        matched_agent = None
-        clean_name = lambda s: s.lower().replace('-', '_').strip() if s else ""
-        target_clean = clean_name(agent_name)
-        
         for a in all_active_system:
-            # 规则1：英文标识忽略大小写和中划线/下划线比对
-            if a.name and clean_name(a.name) == target_clean:
+            if str(getattr(a, "id", "") or "") == str(main_ctx.agent_id) and _matches_requested_agent(a, agent_name):
+                return "错误：主智能体无法委派调用自身。"
+
+        delegable_agents = await filter_delegable_system_agents(
+            session,
+            all_active_system,
+            user_id=main_ctx.user_id,
+            is_admin=main_ctx.is_admin,
+            current_agent_id=main_ctx.agent_id,
+        )
+
+        matched_agent = None
+
+        for a in delegable_agents:
+            if _matches_requested_agent(a, agent_name):
                 matched_agent = a
                 break
-            # 规则2：中文/英文展示名比对
-            if a.display_name and a.display_name.strip() == agent_name.strip():
-                matched_agent = a
-                break
-            if a.display_name and a.display_name.lower().strip() == agent_name.lower().strip():
-                matched_agent = a
-                break
-        
+
         if matched_agent:
             # 使用匹配到的正确的英文标识名重新加载配置
             target_config = await AgentManagerService.get_active_agent_config(session, agent_name=matched_agent.name)
-            
+
             # [CR Fix] 阻止自委派 (matched_agent.id == main_ctx.agent_id)
             if target_config and str(target_config.agent_id) == str(main_ctx.agent_id):
                 return "错误：主智能体无法委派调用自身。"
-        
+
         if not target_config:
-            # 无论如何都找不到，列出当前系统已启用的内置系统智能体列表，供模型自我纠错
+            # 无论如何都找不到，只列出当前用户可委派的候选，供模型自我纠错
             candidates = [
-                f"`{a.name}` ({a.display_name or a.name})" 
-                for a in all_active_system 
-                if str(a.id) != str(main_ctx.agent_id)
+                f"`{a.name}` ({a.display_name or a.name})"
+                for a in delegable_agents
             ]
             candidates_str = ", ".join(candidates)
             return (
                 f"错误：未找到名为 '{agent_name}' 的启用系统智能体。请重新反思问题，并只能从以下当前已启用的系统内置候选智能体列表中选择正确的英文标识 (agent_name) 进行 `sub_agent_call` 调用：{candidates_str}"
             )
 
-        # 3. 权限校验
-        if main_ctx.user_id and not main_ctx.is_admin:
-            perm_service = PermissionService(session)
-            has_perm = await perm_service.check_permission(int(main_ctx.user_id), "agent", str(target_config.agent_id))
-            if not has_perm:
-                return f"错误：当前用户无权访问子智能体 '{target_config.agent_display_name or agent_name}'。"
-
     # 4. 构造子代理独立上下文 (Sandbox Isolation)
     sub_history = [{"role": "user", "content": query}]
+    sub_display_name = target_config.agent_display_name or target_config.agent_name or agent_name
+    repeat_error = _record_delegation_attempt(
+        main_ctx,
+        agent_name=target_config.agent_name or agent_name,
+        display_name=sub_display_name,
+        query=query,
+    )
+    if repeat_error:
+        return repeat_error
 
     # [CR Fix] 继承主上下文已生效的知识库 ID，并与子智能体引擎自身配置的 IDs 合并
     effective_dataset_ids = list(set(main_ctx.dataset_ids or []))
@@ -273,7 +382,6 @@ async def sub_agent_call(agent_name: str, query: str) -> str:
     set_agent_context(sub_ctx)
 
     full_output = ""
-    sub_display_name = target_config.agent_display_name or target_config.agent_name or agent_name
     sub_stream = None
     interrupt_type: str | None = None
 
@@ -348,4 +456,3 @@ async def _dispatch_sub_agent_executor(
         user_info=user_info,
         conversation_id=conversation_id,
     )
-

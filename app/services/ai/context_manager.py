@@ -43,13 +43,13 @@ class AgentContextManager:
         """
         Resolve the appropriate AgentConfig based on inputs or routing.
         Returns attributes needed for execution.
-        
+
         Returns:
             Tuple[Optional[ChatConfig], Optional[Any]]: The config and optional routing details.
         """
         agent_config = None
         route_details = None
-        
+
         async with AsyncSessionLocal() as session:
             if version_id:
                 agent_config = await AgentManagerService.get_version_config(session, version_id)
@@ -84,7 +84,7 @@ class AgentContextManager:
                         break
 
                 route_result = await router_service.route_query(
-                    last_user_msg, 
+                    last_user_msg,
                     history=history,
                     enable_multi_agent=enable_multi_agent,
                     user_id=route_user_id,
@@ -92,7 +92,7 @@ class AgentContextManager:
                     last_agent_name=last_agent_name,
                 )
                 route_details = route_result
-                
+
                 if route_result and route_result.agent_id:
                     agent_config = await AgentManagerService.get_active_agent_config(session, agent_id=route_result.agent_id)
 
@@ -198,7 +198,7 @@ class AgentContextManager:
 
     @staticmethod
     async def setup_context(
-        config: ChatConfig, 
+        config: ChatConfig,
         debug_options: Dict[str, Any] = {},
         user_info: Optional[Dict[str, Any]] = None,
         api_key: Optional[str] = None,
@@ -212,13 +212,13 @@ class AgentContextManager:
         """
         # 1. Set Debug Context
         set_debug_context(debug_options)
-        
+
         # 2. Set Agent Context
         u_id_val = None
         is_admin_val = False
         api_key_val = api_key
         user_dims = {}
-        
+
         if user_info:
             raw_uid = user_info.get("user_id", user_info.get("id"))
             if raw_uid:
@@ -226,7 +226,7 @@ class AgentContextManager:
             is_admin_val = user_info.get("role") == "admin"
             if not api_key_val:
                 api_key_val = user_info.get("api_key")
-            
+
             # Extract Dimensions for SQL Rewriter
             user_dims = {
                 "id": u_id_val,
@@ -236,7 +236,7 @@ class AgentContextManager:
                 "dept_code": user_info.get("dept_code"),
                 "org_path": user_info.get("org_path"),
             }
-            
+
             # Flatten extra_data into user_dims
             extra_data = user_info.get("extra_data")
             if extra_data:
@@ -248,7 +248,7 @@ class AgentContextManager:
                         extra_dict = json.loads(extra_data)
                     elif isinstance(extra_data, dict):
                         extra_dict = extra_data
-                    
+
                     if isinstance(extra_dict, dict):
                         for k, v in extra_dict.items():
                             # Avoid overwriting core dimensions
@@ -256,7 +256,7 @@ class AgentContextManager:
                                 user_dims[k] = v
                 except Exception as e:
                     logger.warning(f"Failed to parse or flatten extra_data: {e}")
-            
+
             # Keep original extra_data for backward compatibility
             user_dims["extra_data"] = extra_data
 

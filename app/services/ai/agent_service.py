@@ -77,8 +77,8 @@ class AgentService:
         return {"role": "system", "content": content}
 
     async def chat_completion_stream(
-        self, 
-        messages: List[Dict[str, str]], 
+        self,
+        messages: List[Dict[str, str]],
         agent_id: Optional[str] = None,
         agent_name: Optional[str] = None,
         version_id: Optional[str] = None,
@@ -96,7 +96,7 @@ class AgentService:
         trace_id = str(uuid.uuid4())
         trace_buffer: List[AgentExecutionStep] = []
         agent_config = None
-        
+
         # 1. Initial Identity Chunk
         yield {"trace_id": trace_id, "status": "init"}
 
@@ -268,9 +268,9 @@ class AgentService:
         """
         route_start = asyncio.get_running_loop().time()
         agent_config, route_details = await AgentContextManager.resolve_agent_config(
-            messages, 
-            agent_id=agent_id, 
-            agent_name=agent_name, 
+            messages,
+            agent_id=agent_id,
+            agent_name=agent_name,
             version_id=version_id,
             enable_multi_agent=enable_multi_agent,
             user_info=user_info,
@@ -290,7 +290,7 @@ class AgentService:
             r_turn_labels = getattr(route_details, "turn_labels", []) or []
             r_relation = getattr(route_details, "relation_to_previous", "unknown")
             r_action_type = getattr(route_details, "user_action_type", "unknown")
-            
+
             trace_buffer.append(AgentExecutionStep(
                 step_number=0,
                 event_type="router",
@@ -484,7 +484,7 @@ class AgentService:
         ignore_ltm = False
         if debug_options and debug_options.get("ignore_ltm"):
             ignore_ltm = True
-        
+
         from app.services.ai.turn_classifier import (
             should_inject_ltm,
             should_inject_memory_recall_hint,
@@ -527,11 +527,11 @@ class AgentService:
                         from app.services.ai.tools.memory_search_tool import parse_date_from_query
                         from app.services.ai.daily_summary_service import DailySummaryService
                         from app.services.ai.memory_index_service import MemoryIndexService
-                        
+
                         uid = str(u_id)
                         target_day = parse_date_from_query(user_query)
                         preloaded_memories = []
-                        
+
                         if target_day:
                             d_summary = await DailySummaryService.get_daily_summary(uid, target_day)
                             if d_summary:
@@ -561,7 +561,7 @@ class AgentService:
                                     preloaded_memories.append(
                                         AgentServicePrompts.recent_sessions_section(sess_lines)
                                     )
-                        
+
                         if preloaded_memories:
                             preloaded_memories_text = AgentServicePrompts.preloaded_memories(preloaded_memories)
                             logger.info(f"[ActiveMemory] Successfully preloaded memory context for user {u_id}")
@@ -689,7 +689,7 @@ class AgentService:
             )
 
             await AgentContextManager.setup_context(
-                config=agent_config, 
+                config=agent_config,
                 debug_options=debug_options,
                 user_info=user_info,
                 api_key=api_key,
@@ -813,19 +813,32 @@ class AgentService:
                 try:
                     from app.core.orm import AsyncSessionLocal
                     from app.services.ai.agent_manager import AgentManagerService
+                    from app.services.ai.tools.agent_delegate_tool import filter_delegable_system_agents
+
                     async with AsyncSessionLocal() as session:
                         active_agents = await AgentManagerService.list_agents(session)
+                        raw_user_id = None
+                        is_admin = False
+                        if user_info:
+                            raw_user_id = user_info.get("user_id") or user_info.get("id")
+                            is_admin = user_info.get("role") == "admin"
+                        delegable_agents = await filter_delegable_system_agents(
+                            session,
+                            active_agents,
+                            user_id=raw_user_id,
+                            is_admin=is_admin,
+                            current_agent_id=agent_config.agent_id,
+                        )
                         sub_agent_lines = []
-                        for a in active_agents:
-                            if a.is_enabled and a.is_system and str(a.id) != str(agent_config.agent_id):
-                                display = a.display_name or a.name
-                                desc = a.description or "无描述"
-                                caps = ", ".join(a.capabilities or [])
-                                sub_agent_lines.append(
-                                    f"- **标识 (agent_name)**: `{a.name}` (展示名: {display})\n"
-                                    f"  **职责描述**: {desc}\n"
-                                    f"  **核心能力**: [{caps}]"
-                                )
+                        for a in delegable_agents:
+                            display = a.display_name or a.name
+                            desc = a.description or "无描述"
+                            caps = ", ".join(a.capabilities or [])
+                            sub_agent_lines.append(
+                                f"- **标识 (agent_name)**: `{a.name}` (展示名: {display})\n"
+                                f"  **职责描述**: {desc}\n"
+                                f"  **核心能力**: [{caps}]"
+                            )
                         if sub_agent_lines:
                             sub_agents_context = (
                                 "## 可委派子智能体清单 (可用通讯录)\n"
@@ -876,7 +889,7 @@ class AgentService:
                         "status": "success",
                         "isDebug": True
                     }
-                
+
                 if debug_options.get("injected_context"):
                     context_data = debug_options["injected_context"]
                     logger.info(f"[Debug] Injecting Context: {context_data}")
@@ -917,7 +930,7 @@ class AgentService:
             agent_config.model_name = actual_model
 
             meta_event: Dict[str, Any] = {
-                "type": "meta", 
+                "type": "meta",
                 "agent_name": agent_config.agent_name,
                 "agent_display_name": agent_config.agent_display_name or agent_config.agent_name,
                 "model": actual_model,
@@ -941,7 +954,7 @@ class AgentService:
 
             # 4. Dispatch Executor
             secondary_agents = getattr(route_details, "secondary_agents", []) if route_details else []
-            
+
             if enable_multi_agent and secondary_agents:
                 async for chunk in self._execute_multi_agent(
                     agent_config,
@@ -974,7 +987,7 @@ class AgentService:
                     session_turn=session_turn,
                     route_hints=route_hints,
                 )
-                
+
                 yield {
                     "type": "log",
                     "title": "分析用户请求并进行意图识别",
@@ -1031,11 +1044,11 @@ class AgentService:
                 u_id = user_info.get("user_id") if user_info else None
                 handled_by = getattr(agent_config, "agent_name", None) if agent_config else None
                 asyncio.create_task(memory_service.add_message(
-                    u_id, 
-                    conversation_id, 
-                    "assistant", 
-                    full_response_content, 
-                    trace_id=trace_id, 
+                    u_id,
+                    conversation_id,
+                    "assistant",
+                    full_response_content,
+                    trace_id=trace_id,
                     agent_name=handled_by,
                     prompt_tokens=p_tokens,
                     completion_tokens=c_tokens,
@@ -1053,11 +1066,11 @@ class AgentService:
                 "content": format_execution_error(str(e), model_name=model_name),
                 "status": "error",
             }
-        
+
         finally:
             end_time = asyncio.get_running_loop().time()
             duration = (end_time - start_time) * 1000
-            
+
             if execution_status not in AWAITING_RESUME_STATUSES:
                 asyncio.create_task(AuditManager.log_transaction(
                      trace_id, agent_config, user_query, full_response_content,
@@ -1083,8 +1096,8 @@ class AgentService:
 
 
     async def chat_completion(
-        self, 
-        messages: List[Dict[str, str]], 
+        self,
+        messages: List[Dict[str, str]],
         agent_id: Optional[str] = None,
         agent_name: Optional[str] = None,
         version_id: Optional[str] = None,
@@ -1102,12 +1115,12 @@ class AgentService:
         full_content = ""
         trace_id = ""
         agent_name_resp = ""
-        
+
         async for chunk in self.chat_completion_stream(
-            messages, 
-            agent_id=agent_id, 
-            agent_name=agent_name, 
-            version_id=version_id, 
+            messages,
+            agent_id=agent_id,
+            agent_name=agent_name,
+            version_id=version_id,
             conversation_id=conversation_id,
             user_info=user_info,
             api_key=api_key,
@@ -1121,7 +1134,7 @@ class AgentService:
                 full_content += chunk["content"]
             if "agent_name" in chunk:
                 agent_name_resp = chunk["agent_name"]
-                
+
         return {
             "content": full_content,
             "intent": "general_chat", # Simplified, real intent is in stream but not easily exposed here without refactor
@@ -1521,7 +1534,7 @@ class AgentService:
 
         # 3. Parallel Execution with Queue-based log streaming
         queue = asyncio.Queue()
-        
+
         async def run_executor(executor, config):
             full_text = ""
             try:
@@ -1541,9 +1554,9 @@ class AgentService:
             except Exception as e:
                 logger.error(f"Error in multi-agent sub-task ({config.agent_name}): {e}", exc_info=True)
                 await queue.put({
-                    "type": "log", 
-                    "title": f"[{config.agent_name}] 执行异常", 
-                    "details": str(e), 
+                    "type": "log",
+                    "title": f"[{config.agent_name}] 执行异常",
+                    "details": str(e),
                     "status": "error"
                 })
                 full_text = f"【{config.agent_name} 执行失败】: {str(e)}"
@@ -1552,7 +1565,7 @@ class AgentService:
         # Start all tasks
         tasks = [asyncio.create_task(run_executor(exec, conf)) for exec, conf in zip(executors, all_configs)]
         results_task = asyncio.gather(*tasks)
-        
+
         # Stream logs while tasks are running
         while not results_task.done() or not queue.empty():
             try:
@@ -1566,7 +1579,7 @@ class AgentService:
                 await asyncio.sleep(0.01)
 
         agent_outputs = await results_task
-        
+
         # 4. Final Synthesis
         yield {
             "type": "log",
@@ -1574,7 +1587,7 @@ class AgentService:
             "details": "正在汇总各专家意见并组织最终回答...",
             "status": "success"
         }
-        
+
         async for chunk in self._synthesize_multi_agent_results(
             primary_config, user_query, agent_outputs, trace_buffer
         ):
@@ -1593,14 +1606,14 @@ class AgentService:
         outputs_str = ""
         for out in agent_outputs:
             outputs_str += f"### 专家智能体: {out['name']}\n{out['content']}\n\n"
-        
+
         system_prompt = AgentServicePrompts.MULTI_AGENT_SYNTHESIS_SYSTEM
 
         human_content = AgentServicePrompts.multi_agent_synthesis_human(user_query, outputs_str)
-        
+
         # Use synthesis model from primary agent config
         llm = await AgentConfigProvider.get_synthesis_llm(streaming=True, config=config)
-        
+
         lc_messages = [
             SystemMessage(content=system_prompt),
             HumanMessage(content=human_content)

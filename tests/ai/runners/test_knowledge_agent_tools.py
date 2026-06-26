@@ -32,10 +32,10 @@ async def test_resolve_knowledge_tools_excludes_external_web_search():
     mock_kb = MagicMock()
     mock_kb.name = "search_knowledge_base"
 
-    def _as_spec(tool):
+    def _as_spec(tool, **kwargs):
         from app.services.ai.runtime.agentscope.tools import runtime_tool_spec_from_legacy_tool
 
-        return runtime_tool_spec_from_legacy_tool(tool, source_type="system")
+        return runtime_tool_spec_from_legacy_tool(tool, source_type=kwargs.get("source_type", "system"))
 
     with patch(
         "app.services.ai.runners.knowledge_agent_runner.ToolRegistry.get_system_implicit_tools",

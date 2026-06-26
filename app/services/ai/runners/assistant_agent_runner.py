@@ -4,7 +4,7 @@ import json
 import inspect
 import logging
 import asyncio
-from typing import List, Dict, Any, AsyncGenerator, Optional
+from typing import List, Dict, Any, AsyncGenerator, Optional, Set
 from datetime import datetime
 
 from app.services.ai.runtime.agentscope.compat import (
@@ -268,6 +268,34 @@ class AssistantAgentRunner(BaseExecutor):
             return {"id": str(agent_id), "display_name": str(display_name)}
         return None
 
+    async def _resolve_available_sub_agent_names(self) -> Optional[Set[str]]:
+        if not is_main_general_agent(self.config):
+            return None
+        try:
+            from app.services.ai.tools.agent_delegate_tool import (
+                delegable_agent_name_aliases,
+                filter_delegable_system_agents,
+            )
+
+            raw_user_id = None
+            is_admin = False
+            if self.user_info:
+                raw_user_id = self.user_info.get("user_id") or self.user_info.get("id")
+                is_admin = self.user_info.get("role") == "admin"
+            async with AsyncSessionLocal() as session:
+                agents = await AgentManagerService.list_agents(session)
+                delegable_agents = await filter_delegable_system_agents(
+                    session,
+                    agents,
+                    user_id=raw_user_id,
+                    is_admin=is_admin,
+                    current_agent_id=self.config.agent_id,
+                )
+            return delegable_agent_name_aliases(delegable_agents)
+        except Exception as exc:
+            logger.warning("[AssistantAgentRunner] Failed to resolve sub-agent availability: %s", exc)
+            return None
+
     async def _build_data_guard_refusal_content(self) -> str:
         switch_agent = await self._resolve_switch_agent_for_capability(DATA_QUERY_SWITCH_CAPABILITY)
         base = (
@@ -438,10 +466,10 @@ class AssistantAgentRunner(BaseExecutor):
 
             start_synthesis = time.time()
             yield {"type": "log", "id": f"syn_s_{uuid.uuid4().hex[:8]}", "title": "📝 准备回答", "details": "正在生成回答...", "status": "success"}
-            
+
             # Use Synthesizer for simple mode
             llm = await AgentConfigProvider.get_synthesis_llm(streaming=True, config=self.config)
-            
+
             full_content = ""
             content_emitted = False
             accumulated_msg = None
@@ -479,9 +507,9 @@ class AssistantAgentRunner(BaseExecutor):
                     return
             if not stream_succeeded:
                 return
-            
+
             tokens = extract_tokens_from_message(accumulated_msg)
-            
+
             # Record final answer as a trace step
             self._increment_step()
             self.trace_buffer.append(AgentExecutionStep(
@@ -563,6 +591,7 @@ class AssistantAgentRunner(BaseExecutor):
                     tool_nudge = resolve_tool_nudge(
                         self._extract_last_user_query(history),
                         tools,
+                        available_sub_agent_names=await self._resolve_available_sub_agent_names(),
                     )
                     if tool_nudge is not None:
                         native_system_content = f"{tool_nudge.message}\n\n{native_system_content}"
@@ -1304,7 +1333,7 @@ class AssistantAgentRunner(BaseExecutor):
         runtime_cfg = getattr(target_tool, "_runtime_config", None)
         t_model = getattr(runtime_cfg, "model_name", self.config.model_name)
         t_temp = getattr(runtime_cfg, "temperature", self.config.temperature)
-        
+
         # Ensure types for AgentExecutionStep validation (especially when using Mocks in tests)
         if not isinstance(t_model, str): t_model = str(self.config.model_name)
         if not isinstance(t_temp, (int, float)): t_temp = float(self.config.temperature or 0)
@@ -1316,7 +1345,7 @@ class AssistantAgentRunner(BaseExecutor):
             execution_time_ms=duration_tool, status="success" if not is_error else "error",
             timestamp=datetime.fromtimestamp(time.time() - duration_tool / 1000)
         )
-        
+
         if tool_name == "search_knowledge_base" and not is_error:
             from app.services.ai.knowledge_utils import format_knowledge_tool_log_display
 
@@ -1332,7 +1361,7 @@ class AssistantAgentRunner(BaseExecutor):
             "model": t_model,
             "temperature": t_temp,
         }
-        
+
         # --- [NEW: Citation Extraction & Multi-Track Unpacking] ---
         citation_event = None
         final_tool_message_content = str(tool_output)
@@ -1354,7 +1383,7 @@ class AssistantAgentRunner(BaseExecutor):
                     # 'content' goes to LLM, 'citations' goes to Frontend
                     if "content" in parsed_res:
                         final_tool_message_content = parsed_res["content"]
-                    
+
                     chunks = parsed_res.get("citations")
                     if isinstance(chunks, list) and len(chunks) > 0:
                         citation_event = {
@@ -1375,7 +1404,7 @@ class AssistantAgentRunner(BaseExecutor):
         return {
             "index": tool_index,
             "final_tool_message_content": final_tool_message_content,
-            "trace": trace_step, 
+            "trace": trace_step,
             "log": log_event,
             "citation": citation_event
         }

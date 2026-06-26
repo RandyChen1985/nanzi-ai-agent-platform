@@ -30,4 +30,3 @@ TBD - created by archiving change sub-agent-delegation. Update Purpose after arc
 #### Scenario: 过滤图形化卡片标签
 - **WHEN** 查数子代理执行完毕并返回包含 `<sql_plan>...</sql_plan>` 的结果文本时
 - **THEN** 委托工具在将文本交付给主助手前，将 `<sql_plan>` 标签段过滤掉或转换为纯文本格式，防止上下文污染。
-

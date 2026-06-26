@@ -42,6 +42,8 @@ class AgentContext(BaseModel):
 
     # Delegation control
     delegation_depth: int = 0
+    delegation_call_counts: Dict[str, int] = Field(default_factory=dict)
+    delegation_agent_call_counts: Dict[str, int] = Field(default_factory=dict)
 
     # Runtime tool approval (inherited by sub_agent_call delegation)
     permission_options: Dict[str, Any] = Field(default_factory=dict)

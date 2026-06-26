@@ -4,6 +4,8 @@ from app.schemas.agent import ChatConfig
 from app.services.ai.context_manager import AgentContextManager
 from app.core.context import get_current_agent_context
 
+pytestmark = pytest.mark.no_infrastructure
+
 # 32-character hex strings matching RAGFlow dataset ID regex
 ID_USER_CHECKED_1 = "11111111111111111111111111111111"
 ID_USER_CHECKED_2 = "22222222222222222222222222222222"
@@ -26,13 +28,13 @@ async def test_setup_context_frontend_specified():
         capabilities=[],
         engine_config={"dataset_ids": [ID_AGENT_BOUND_1]}
     )
-    
+
     await AgentContextManager.setup_context(
         config=config,
         knowledge_dataset_ids=[ID_USER_CHECKED_1, ID_USER_CHECKED_2],
         user_info={"user_id": 1, "role": "user"}
     )
-    
+
     ctx = get_current_agent_context()
     assert ctx is not None
     # 仅包含前端指定的，且覆盖了智能体绑定的
@@ -54,25 +56,25 @@ async def test_setup_context_fallback_user_permissions():
         capabilities=[],
         engine_config={"dataset_ids": [ID_AGENT_BOUND_1]}
     )
-    
+
     # Mock PermissionService.get_knowledge_base_access
     mock_access = {"is_admin": False, "accessible_ids": {ID_USER_PERM_1, ID_USER_PERM_2}}
-    
+
     with patch("app.services.permission_service.PermissionService.get_knowledge_base_access", new_callable=AsyncMock) as mock_get:
         mock_get.return_value = mock_access
-        
+
         # Mock AsyncSessionLocal 的上下文管理器
         mock_session = AsyncMock()
         mock_session_context = MagicMock()
         mock_session_context.__aenter__.return_value = mock_session
-        
+
         with patch("app.services.ai.context_manager.AsyncSessionLocal", return_value=mock_session_context):
             await AgentContextManager.setup_context(
                 config=config,
                 knowledge_dataset_ids=None,
                 user_info={"user_id": 100, "user_name": "test_user", "role": "user"}
             )
-            
+
     ctx = get_current_agent_context()
     assert ctx is not None
     # 应该是智能体配置 + 用户权限的并集
@@ -93,22 +95,22 @@ async def test_setup_context_admin_user():
         capabilities=[],
         engine_config={"dataset_ids": [ID_AGENT_BOUND_1]}
     )
-    
+
     mock_access = {"is_admin": True}
-    
+
     # Mock 数据库查询结果
     mock_rows = [ID_DB_ALL_1, ID_DB_ALL_2]
     mock_scalars = MagicMock()
     mock_scalars.all.return_value = mock_rows
     mock_result = MagicMock()
     mock_result.scalars.return_value = mock_scalars
-    
+
     mock_session = AsyncMock()
     mock_session.execute.return_value = mock_result
-    
+
     mock_session_context = MagicMock()
     mock_session_context.__aenter__.return_value = mock_session
-    
+
     with patch("app.services.permission_service.PermissionService.get_knowledge_base_access", new_callable=AsyncMock) as mock_get:
         mock_get.return_value = mock_access
         with patch("app.services.ai.context_manager.AsyncSessionLocal", return_value=mock_session_context):
@@ -117,7 +119,7 @@ async def test_setup_context_admin_user():
                 knowledge_dataset_ids=None,
                 user_info={"user_id": 1, "user_name": "admin_user", "role": "admin"}
             )
-            
+
     ctx = get_current_agent_context()
     assert ctx is not None
     # 应该是智能体配置 + 数据库所有非deleted的知识库
