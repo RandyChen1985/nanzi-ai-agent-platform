@@ -137,3 +137,55 @@ async def test_duplicate_agent_name(db_session):
         
         # Cleanup
         await client.delete(f"/api/portal/agents/{id1}", headers={"X-API-Key": admin_key})
+
+@pytest.mark.asyncio
+async def test_agent_reorder(db_session):
+    """Verify batch reorder updates sort_order (desc: higher value appears first)."""
+    admin_key = await AuthService.generate_api_key(f"test_admin_r_{unique_id()}", role="admin", db=db_session)
+    user_key = await AuthService.generate_api_key(f"test_user_r_{unique_id()}", role="user", db=db_session)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        created_ids = []
+        for idx, name_suffix in enumerate(["a", "b", "c"]):
+            resp = await client.post(
+                "/api/portal/agents/",
+                json={
+                    "name": f"reorder-agent-{name_suffix}-{unique_id()}",
+                    "display_name": f"Agent {name_suffix.upper()}",
+                    "sort_order": (3 - idx) * 10,
+                },
+                headers={"X-API-Key": admin_key},
+            )
+            assert resp.status_code == 200
+            created_ids.append(resp.json()["id"])
+
+        # Reverse order: last agent should become first
+        reorder_payload = {
+            "items": [
+                {"id": created_ids[2], "sort_order": 30},
+                {"id": created_ids[0], "sort_order": 20},
+                {"id": created_ids[1], "sort_order": 10},
+            ]
+        }
+        resp = await client.post(
+            "/api/portal/agents/reorder",
+            json=reorder_payload,
+            headers={"X-API-Key": admin_key},
+        )
+        assert resp.status_code == 200
+
+        resp = await client.get("/api/portal/agents/", headers={"X-API-Key": admin_key})
+        assert resp.status_code == 200
+        ordered = [a["id"] for a in resp.json() if a["id"] in created_ids]
+        assert ordered[0] == created_ids[2]
+
+        # Non-admin cannot reorder
+        resp = await client.post(
+            "/api/portal/agents/reorder",
+            json=reorder_payload,
+            headers={"X-API-Key": user_key},
+        )
+        assert resp.status_code == 403
+
+        for agent_id in created_ids:
+            await client.delete(f"/api/portal/agents/{agent_id}", headers={"X-API-Key": admin_key})

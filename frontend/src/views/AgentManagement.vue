@@ -210,6 +210,7 @@ const openSafetyModal = (type: 'input' | 'output') => {
 const searchKeyword = ref("");
 const statusFilter = ref<"all" | "enabled" | "disabled">("all"); // New
 const typeFilter = ref<"all" | "system" | "custom">("all"); // New
+const userInfo = ref<any>({});
 
 const filteredAgents = computed(() => {
   let result = [...agents.value];
@@ -254,7 +255,99 @@ const filteredAgents = computed(() => {
   });
 });
 
-const userInfo = ref<any>({});
+const hasActiveAgentFilters = computed(
+  () =>
+    !!searchKeyword.value ||
+    statusFilter.value !== "all" ||
+    typeFilter.value !== "all",
+);
+
+const canDragAgents = computed(
+  () => !hasActiveAgentFilters.value && userInfo.value?.role === "admin" && !loading.value,
+);
+
+const dragSourceId = ref<string | null>(null);
+const dragOverId = ref<string | null>(null);
+const savingAgentOrder = ref(false);
+
+const buildAgentSortUpdates = (orderedIds: string[]) =>
+  orderedIds.map((id, index) => ({
+    id,
+    sort_order: (orderedIds.length - index) * 10,
+  }));
+
+const applyAgentSortUpdates = (updates: { id: string; sort_order: number }[]) => {
+  const sortMap = new Map(updates.map((item) => [item.id, item.sort_order]));
+  agents.value = agents.value.map((agent) =>
+    sortMap.has(agent.id)
+      ? { ...agent, sort_order: sortMap.get(agent.id)! }
+      : agent,
+  );
+};
+
+const persistAgentOrder = async (updates: { id: string; sort_order: number }[]) => {
+  if (!updates.length) return;
+  savingAgentOrder.value = true;
+  const previous = agents.value.map((agent) => ({
+    id: agent.id,
+    sort_order: agent.sort_order ?? 0,
+  }));
+  applyAgentSortUpdates(updates);
+  try {
+    await agentApi.reorderAgents(updates);
+    showToast("排序已更新", "success");
+  } catch (error: any) {
+    applyAgentSortUpdates(previous);
+    showToast(error.response?.data?.detail || "更新排序失败", "error");
+  } finally {
+    savingAgentOrder.value = false;
+  }
+};
+
+const handleAgentDragStart = (event: DragEvent, agentId: string) => {
+  if (!canDragAgents.value) return;
+  dragSourceId.value = agentId;
+  if (event.dataTransfer) {
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("text/plain", agentId);
+  }
+};
+
+const handleAgentDragOver = (event: DragEvent, agentId: string) => {
+  if (!canDragAgents.value) return;
+  event.preventDefault();
+  if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
+  if (agentId !== dragSourceId.value) dragOverId.value = agentId;
+};
+
+const handleAgentDragLeave = (event: DragEvent) => {
+  const related = event.relatedTarget as HTMLElement | null;
+  const row = event.currentTarget as HTMLElement;
+  if (!related || !row.contains(related)) dragOverId.value = null;
+};
+
+const handleAgentDrop = (event: DragEvent, targetId: string) => {
+  event.preventDefault();
+  dragOverId.value = null;
+  const sourceId = dragSourceId.value;
+  dragSourceId.value = null;
+  if (!canDragAgents.value || !sourceId || sourceId === targetId) return;
+
+  const currentOrder = filteredAgents.value.map((agent) => agent.id);
+  const sourceIdx = currentOrder.indexOf(sourceId);
+  const targetIdx = currentOrder.indexOf(targetId);
+  if (sourceIdx === -1 || targetIdx === -1) return;
+
+  const newOrder = [...currentOrder];
+  newOrder.splice(sourceIdx, 1);
+  newOrder.splice(targetIdx, 0, sourceId);
+  persistAgentOrder(buildAgentSortUpdates(newOrder));
+};
+
+const handleAgentDragEnd = () => {
+  dragSourceId.value = null;
+  dragOverId.value = null;
+};
 
 // 视图模式切换 (Grid / List)
 const viewMode = ref<'grid' | 'list'>((localStorage.getItem('agent_view_mode') as 'grid' | 'list') || 'grid');
@@ -1226,6 +1319,12 @@ const formatDate = (dateStr: string) => {
             </svg>
           </button>
         </div>
+        <p
+          v-if="canDragAgents"
+          class="text-[11px] text-gray-400 hidden sm:block"
+        >
+          拖动卡片或列表行可调整排序
+        </p>
       </div>
     </div>
 
@@ -1273,12 +1372,31 @@ const formatDate = (dateStr: string) => {
         <div
           v-for="agent in filteredAgents"
           :key="agent.id"
-          class="bg-white rounded-xl shadow-sm border hover:shadow-md transition-all duration-200 flex flex-col overflow-hidden group"
+          class="bg-white rounded-xl shadow-sm border hover:shadow-md transition-all duration-200 flex flex-col overflow-hidden group relative"
           :class="[
             !agent.is_enabled ? 'bg-gray-50/50 grayscale-[0.8] opacity-80' : '',
-            getAgentColorTheme(agent).border
+            getAgentColorTheme(agent).border,
+            canDragAgents ? 'cursor-grab active:cursor-grabbing' : '',
+            dragOverId === agent.id ? 'ring-2 ring-primary/40 scale-[1.01]' : '',
+            dragSourceId === agent.id ? 'opacity-50' : '',
+            savingAgentOrder ? 'pointer-events-none' : '',
           ]"
+          :draggable="canDragAgents"
+          @dragstart="handleAgentDragStart($event, agent.id)"
+          @dragover="handleAgentDragOver($event, agent.id)"
+          @dragleave="handleAgentDragLeave($event)"
+          @drop="handleAgentDrop($event, agent.id)"
+          @dragend="handleAgentDragEnd()"
         >
+        <div
+          v-if="canDragAgents"
+          class="absolute top-2 left-1/2 -translate-x-1/2 z-10 opacity-0 group-hover:opacity-40 transition-opacity pointer-events-none select-none"
+        >
+          <svg class="w-4 h-3 text-gray-500" viewBox="0 0 16 10" fill="currentColor">
+            <circle cx="4" cy="2" r="1.2"/><circle cx="8" cy="2" r="1.2"/><circle cx="12" cy="2" r="1.2"/>
+            <circle cx="4" cy="8" r="1.2"/><circle cx="8" cy="8" r="1.2"/><circle cx="12" cy="8" r="1.2"/>
+          </svg>
+        </div>
         <!-- Card Header Accent -->
         <div class="h-1.5 w-full" :class="getAgentColorTheme(agent).accent"></div>
         <!-- Card Header & Status -->
@@ -1530,6 +1648,7 @@ const formatDate = (dateStr: string) => {
           <table class="w-full text-left border-collapse">
             <thead>
               <tr class="bg-gray-50/50 border-b border-gray-200">
+                <th v-if="canDragAgents" class="px-3 py-3 text-[11px] font-bold text-gray-400 uppercase tracking-wider w-8"></th>
                 <th class="px-6 py-3 text-[11px] font-bold text-gray-400 uppercase tracking-wider w-12 text-center">Icon</th>
                 <th class="px-6 py-3 text-[11px] font-bold text-gray-400 uppercase tracking-wider">智能体名称</th>
                 <th class="px-6 py-3 text-[11px] font-bold text-gray-400 uppercase tracking-wider hidden md:table-cell">引擎 / 类型</th>
@@ -1542,8 +1661,26 @@ const formatDate = (dateStr: string) => {
                 v-for="agent in filteredAgents"
                 :key="agent.id"
                 class="hover:bg-blue-50/30 transition-colors group"
-                :class="!agent.is_enabled ? 'opacity-70 grayscale-[0.6] bg-gray-50/30' : ''"
+                :class="[
+                  !agent.is_enabled ? 'opacity-70 grayscale-[0.6] bg-gray-50/30' : '',
+                  canDragAgents ? 'cursor-grab active:cursor-grabbing' : '',
+                  dragOverId === agent.id ? 'bg-blue-50/60 ring-1 ring-inset ring-primary/30' : '',
+                  dragSourceId === agent.id ? 'opacity-50' : '',
+                  savingAgentOrder ? 'pointer-events-none' : '',
+                ]"
+                :draggable="canDragAgents"
+                @dragstart="handleAgentDragStart($event, agent.id)"
+                @dragover="handleAgentDragOver($event, agent.id)"
+                @dragleave="handleAgentDragLeave($event)"
+                @drop="handleAgentDrop($event, agent.id)"
+                @dragend="handleAgentDragEnd()"
               >
+                <td v-if="canDragAgents" class="px-3 py-4 text-gray-300 group-hover:text-gray-400">
+                  <svg class="w-4 h-4 mx-auto" viewBox="0 0 16 10" fill="currentColor">
+                    <circle cx="4" cy="2" r="1.2"/><circle cx="8" cy="2" r="1.2"/><circle cx="12" cy="2" r="1.2"/>
+                    <circle cx="4" cy="8" r="1.2"/><circle cx="8" cy="8" r="1.2"/><circle cx="12" cy="8" r="1.2"/>
+                  </svg>
+                </td>
                 <td class="px-6 py-4">
                   <div
                     class="w-8 h-8 rounded-lg flex items-center justify-center text-lg shadow-inner border mx-auto"

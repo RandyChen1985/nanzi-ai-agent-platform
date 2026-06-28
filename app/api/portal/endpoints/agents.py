@@ -6,8 +6,9 @@ from app.core.dependencies import require_admin, get_current_user, require_permi
 from typing import Dict, Any
 from app.services.ai.agent_manager import AgentManagerService
 from app.schemas.agent import (
-    AIAgentResponse, AIAgentBase, 
-    AIAgentVersionResponse, AIAgentVersionBase, 
+    AIAgentResponse, AIAgentBase,
+    AIAgentReorderRequest,
+    AIAgentVersionResponse, AIAgentVersionBase,
     AgentExecutionHistoryResponse
 )
 
@@ -27,6 +28,18 @@ async def list_allowed_agents(
 async def list_agents(session: AsyncSession = Depends(get_db_session), user: Dict[str, Any] = Depends(require_permission("menu", "menu:agent_management"))):
     """获取所有智能体列表 (基于权限过滤)"""
     return await AgentManagerService.list_agents(session, user=user)
+
+@router.post("/reorder")
+async def reorder_agents(
+    data: AIAgentReorderRequest,
+    session: AsyncSession = Depends(get_db_session),
+    user: Dict[str, Any] = Depends(require_admin),
+):
+    """批量更新智能体排序权重（值越大越靠前）"""
+    success = await AgentManagerService.reorder_agents(session, data.items, user=user)
+    if not success:
+        raise HTTPException(status_code=403, detail="Forbidden: Only admins can reorder agents")
+    return {"status": "success"}
 
 @router.post("/", response_model=AIAgentResponse, dependencies=[Depends(require_permission("element", "element:agent:create"))])
 async def create_agent(data: AIAgentBase, session: AsyncSession = Depends(get_db_session), user: Dict[str, Any] = Depends(get_current_user)):

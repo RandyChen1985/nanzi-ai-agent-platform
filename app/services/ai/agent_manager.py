@@ -300,6 +300,37 @@ class AgentManagerService:
         return agent
 
     @staticmethod
+    async def reorder_agents(session: AsyncSession, items: List[Any], user: Any = None) -> bool:
+        """Batch update sort_order for agents (admin only)."""
+        if isinstance(user, dict):
+            is_admin = user.get('role', '') == 'admin'
+        else:
+            is_admin = user and getattr(user, 'role', '') == 'admin'
+
+        if not is_admin:
+            return False
+
+        ids = [item.id for item in items]
+        if not ids:
+            return True
+
+        stmt = select(AIAgent).where(AIAgent.id.in_(ids))
+        result = await session.execute(stmt)
+        agents = {agent.id: agent for agent in result.scalars().all()}
+
+        for item in items:
+            agent = agents.get(item.id)
+            if agent:
+                agent.sort_order = item.sort_order
+
+        await session.commit()
+
+        from app.services.ai.router_service import router_service
+        router_service.invalidate_cache()
+
+        return True
+
+    @staticmethod
     async def update_agent(session: AsyncSession, agent_id: str, data: AIAgentBase, user: Any = None) -> Optional[AIAgent]:
         """Update existing agent metadata"""
         agent = await session.get(AIAgent, agent_id)

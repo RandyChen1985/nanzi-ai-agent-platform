@@ -1180,7 +1180,7 @@
                   v-if="msg.hasDataOutput && checkRole(msg, 'agent') && !msg.isThinking"
                   type="button"
                   @click="handleVisualAnalysis()"
-                  class="flex shrink-0 items-center space-x-1 text-[10px] font-medium text-primary border border-primary/25 bg-primary/5 hover:bg-primary/10 transition-colors rounded"
+                  class="flex shrink-0 items-center space-x-1 text-[10px] text-gray-400 hover:text-primary transition-colors rounded hover:bg-gray-100 dark:hover:bg-gray-800"
                   :class="windowWidth < 640 ? 'p-2.5' : 'px-1.5 py-0.5'"
                   title="基于本轮查询结果进行可视化深度分析"
                 >
@@ -1193,7 +1193,7 @@
                   v-if="canSaveGoldenReportFromMessage(msg) && checkRole(msg, 'agent') && !msg.isThinking"
                   type="button"
                   @click="handleSaveReportFromMessage(msg)"
-                  class="flex shrink-0 items-center space-x-1 text-[10px] font-medium text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-700/50 bg-amber-50 dark:bg-amber-900/20 hover:bg-amber-100 dark:hover:bg-amber-900/35 transition-colors rounded"
+                  class="flex shrink-0 items-center space-x-1 text-[10px] text-gray-400 hover:text-primary transition-colors rounded hover:bg-gray-100 dark:hover:bg-gray-800"
                   :class="windowWidth < 640 ? 'p-2.5' : 'px-1.5 py-0.5'"
                   title="将本轮成功查数的 SQL 沉淀为黄金报表"
                 >

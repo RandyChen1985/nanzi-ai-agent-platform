@@ -43,6 +43,13 @@ class AIAgentBase(BaseModel):
     engine_type: str = "LOCAL"
     engine_config: Optional[Dict[str, Any]] = None
 
+class AIAgentReorderItem(BaseModel):
+    id: str
+    sort_order: int
+
+class AIAgentReorderRequest(BaseModel):
+    items: List[AIAgentReorderItem]
+
 class AIAgentResponse(AIAgentBase):
     id: str
     is_system: bool

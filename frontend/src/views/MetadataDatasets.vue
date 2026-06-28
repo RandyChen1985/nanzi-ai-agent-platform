@@ -6,6 +6,7 @@ import type { Dataset } from '../api/metadata'
 import { portalApi, type User, type Role } from '../api/portal'
 import axios from '@/utils/axios'
 import SmartImportWizard from '../components/metadata/SmartImportWizard.vue'
+import RowFilterOptionSelect from '../components/metadata/RowFilterOptionSelect.vue'
 import { useUser } from '../composables/useUser'
 import { useToast } from '../composables/useToast'
 
@@ -204,6 +205,23 @@ const syncFromVisual = (silent = false) => {
 // 获取表的字段
 const getTableFields = (tableName: string) => {
   return tableFields.value[tableName] || []
+}
+
+const tableSelectOptions = computed(() =>
+  datasetTables.value.map((table: any) => ({
+    value: table.physical_name,
+    label: table.physical_name,
+    remark: table.term || table.description || '',
+  })),
+)
+
+const getColumnSelectOptions = (tableName: string) => {
+  const table = datasetTables.value.find((item: any) => item.physical_name === tableName)
+  return (table?.columns || []).map((column: any) => ({
+    value: column.physical_name,
+    label: column.physical_name,
+    remark: column.term || column.description || '',
+  }))
 }
 
 // 规则校验功能
@@ -2084,21 +2102,28 @@ relationships:
                           <div class="flex items-end gap-3 p-3 bg-amber-50/80 rounded-xl border border-amber-200">
                             <div class="flex-1 space-y-1">
                               <label class="block text-[10px] text-amber-600 font-bold ml-1">目标表</label>
-                              <select v-model="rule._builder_table" class="bg-white border border-amber-300 rounded-lg px-2 py-1.5 text-xs focus:ring-1 focus:ring-amber-500 outline-none w-32 shadow-sm">
-                                <option value="" disabled selected>选择表...</option>
-                                <option v-for="table in availableTables" :key="table" :value="table">{{ table }}</option>
-                              </select>
+                              <RowFilterOptionSelect
+                                v-model="rule._builder_table"
+                                :options="tableSelectOptions"
+                                placeholder="选择表..."
+                                button-class="border-amber-300 focus:ring-amber-500"
+                                menu-class="hover:bg-amber-50"
+                              />
                             </div>
                             <div class="flex-1 space-y-1">
                               <label class="block text-[10px] text-amber-600 font-bold ml-1">字段</label>
-                              <select v-model="rule._builder_field" class="bg-white border border-amber-300 rounded-lg px-2 py-1.5 text-xs focus:ring-1 focus:ring-amber-500 outline-none w-32 shadow-sm">
-                                <option value="" disabled selected>选择字段...</option>
-                                <option v-for="field in getTableFields(rule._builder_table)" :key="field" :value="field">{{ field }}</option>
-                              </select>
+                              <RowFilterOptionSelect
+                                v-model="rule._builder_field"
+                                :options="getColumnSelectOptions(rule._builder_table)"
+                                placeholder="选择字段..."
+                                :disabled="!rule._builder_table"
+                                button-class="border-amber-300 focus:ring-amber-500"
+                                menu-class="hover:bg-amber-50"
+                              />
                             </div>
                             <div class="flex-1 space-y-1">
                               <label class="block text-[10px] text-amber-600 font-bold ml-1">操作符</label>
-                              <select v-model="rule._builder_op" class="bg-white border border-amber-300 rounded-lg px-2 py-1.5 text-xs focus:ring-1 focus:ring-amber-500 outline-none w-24 shadow-sm">
+                              <select v-model="rule._builder_op" class="h-[2.625rem] bg-white border border-amber-300 rounded-lg px-2 text-xs focus:ring-1 focus:ring-amber-500 outline-none w-28 shadow-sm">
                                 <option value="" disabled selected>操作符...</option>
                                 <option v-for="op in OPERATORS" :key="op.value" :value="op.value">{{ op.label }}</option>
                               </select>
@@ -2106,8 +2131,8 @@ relationships:
                             <div class="flex-1 space-y-1">
                               <label class="block text-[10px] text-amber-600 font-bold ml-1">过滤值/变量</label>
                               <div class="relative flex items-center gap-1">
-                                <input v-model="rule._builder_val" class="flex-1 w-full bg-white border border-amber-300 rounded-lg px-2 py-1.5 text-xs focus:ring-1 focus:ring-amber-500 outline-none min-w-[120px] shadow-sm" placeholder="e.g. {user.id}">
-                                <button @click.stop="toggleMenu(`visual-user-${userId}-${idx}-vars`)" class="flex-shrink-0 w-8 h-8 rounded-lg text-amber-600 hover:bg-amber-50 transition-colors border border-amber-100 bg-white flex items-center justify-center font-bold" title="插入内部变量">
+                                <input v-model="rule._builder_val" class="flex-1 w-full h-[2.625rem] bg-white border border-amber-300 rounded-lg px-2 text-xs focus:ring-1 focus:ring-amber-500 outline-none min-w-[120px] shadow-sm" placeholder="e.g. {user.id}">
+                                <button @click.stop="toggleMenu(`visual-user-${userId}-${idx}-vars`)" class="flex-shrink-0 h-[2.625rem] w-9 rounded-lg text-amber-600 hover:bg-amber-50 transition-colors border border-amber-100 bg-white flex items-center justify-center font-bold" title="插入内部变量">
                                   { }
                                 </button>
                                 <div v-if="activeMenuPath === `visual-user-${userId}-${idx}-vars`" class="absolute right-0 top-full mt-1 w-36 bg-white rounded-lg shadow-xl border border-gray-100 z-[9999] max-h-48 overflow-y-auto custom-scrollbar">
@@ -2117,7 +2142,7 @@ relationships:
                                 </div>
                               </div>
                             </div>
-                            <button @click="appendBuilderCondition(rule)" class="bg-amber-700 hover:bg-amber-800 text-white w-10 h-8 rounded-lg flex items-center justify-center transition-all shadow-md disabled:opacity-30 disabled:scale-100 active:scale-95" :disabled="!rule._builder_table || !rule._builder_field || !rule._builder_op || !rule._builder_val" title="追加条件">
+                            <button @click="appendBuilderCondition(rule)" class="bg-amber-700 hover:bg-amber-800 text-white w-10 h-[2.625rem] rounded-lg flex items-center justify-center transition-all shadow-md disabled:opacity-30 disabled:scale-100 active:scale-95" :disabled="!rule._builder_table || !rule._builder_field || !rule._builder_op || !rule._builder_val" title="追加条件">
                               <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M12 6v6m0 0v6m0-6h6m-6 0h6"/></svg>
                             </button>
                             <button @click="rules.splice(idx, 1)" class="text-red-500 hover:text-red-700">
@@ -2203,23 +2228,30 @@ relationships:
                             <div class="flex items-end gap-3 p-3 bg-emerald-50/80 rounded-xl border border-emerald-200">
                               <div class="space-y-1">
                                 <label class="block text-[10px] text-emerald-600 font-bold ml-1">目标表</label>
-                                <select v-model="rule._builder_table" class="bg-white border border-emerald-300 rounded-lg px-2 py-1.5 text-xs focus:ring-1 focus:ring-emerald-500 outline-none w-32 shadow-sm">
-                                  <option value="" disabled selected>选择数据表...</option>
-                                  <option v-for="t in datasetTables" :key="t.physical_name" :value="t.physical_name">{{ t.physical_name }}</option>
-                                </select>
+                                <RowFilterOptionSelect
+                                  v-model="rule._builder_table"
+                                  :options="tableSelectOptions"
+                                  placeholder="选择数据表..."
+                                  button-class="border-emerald-300 focus:ring-emerald-500"
+                                  menu-class="hover:bg-emerald-50"
+                                />
                               </div>
                               
                               <div class="space-y-1">
                                 <label class="block text-[10px] text-emerald-600 font-bold ml-1">选择字段</label>
-                                <select v-model="rule._builder_field" class="bg-white border border-emerald-300 rounded-lg px-2 py-1.5 text-xs focus:ring-1 focus:ring-emerald-500 outline-none w-32 shadow-sm" :disabled="!rule._builder_table">
-                                  <option value="" disabled selected>选择字段...</option>
-                                  <option v-for="col in (datasetTables.find((t: any) => t.physical_name === rule._builder_table)?.columns || [])" :key="col.physical_name" :value="col.physical_name">{{ col.physical_name }}</option>
-                                </select>
+                                <RowFilterOptionSelect
+                                  v-model="rule._builder_field"
+                                  :options="getColumnSelectOptions(rule._builder_table)"
+                                  placeholder="选择字段..."
+                                  :disabled="!rule._builder_table"
+                                  button-class="border-emerald-300 focus:ring-emerald-500"
+                                  menu-class="hover:bg-emerald-50"
+                                />
                               </div>
 
                               <div class="space-y-1">
                                 <label class="block text-[10px] text-emerald-600 font-bold ml-1">操作符</label>
-                                <select v-model="rule._builder_op" class="bg-white border border-emerald-300 rounded-lg px-2 py-1.5 text-xs focus:ring-1 focus:ring-emerald-500 outline-none w-24 shadow-sm">
+                                <select v-model="rule._builder_op" class="h-[2.625rem] bg-white border border-emerald-300 rounded-lg px-2 text-xs focus:ring-1 focus:ring-emerald-500 outline-none w-28 shadow-sm">
                                   <option value="" disabled selected>操作符...</option>
                                   <option v-for="op in OPERATORS" :key="op.value" :value="op.value">{{ op.label }}</option>
                                 </select>
@@ -2228,9 +2260,9 @@ relationships:
                               <div class="flex-1 space-y-1">
                                 <label class="block text-[10px] text-emerald-600 font-bold ml-1">过滤值/变量</label>
                                 <div class="relative flex items-center gap-1">
-                                  <input v-model="rule._builder_val" class="flex-1 w-full bg-white border border-emerald-300 rounded-lg px-2 py-1.5 text-xs focus:ring-1 focus:ring-emerald-500 outline-none min-w-[120px] shadow-sm" placeholder="e.g. {user.id}">
+                                  <input v-model="rule._builder_val" class="flex-1 w-full h-[2.625rem] bg-white border border-emerald-300 rounded-lg px-2 text-xs focus:ring-1 focus:ring-emerald-500 outline-none min-w-[120px] shadow-sm" placeholder="e.g. {user.id}">
                                   <!-- System variable dropdown trigger -->
-                                  <button @click.stop="toggleMenu(`role-${roleName}-${idx}-vars`)" class="flex-shrink-0 w-8 h-8 rounded-lg text-emerald-600 hover:bg-emerald-50 transition-colors border border-emerald-100 bg-white flex items-center justify-center font-bold" title="插入内部变量">
+                                  <button @click.stop="toggleMenu(`role-${roleName}-${idx}-vars`)" class="flex-shrink-0 h-[2.625rem] w-9 rounded-lg text-emerald-600 hover:bg-emerald-50 transition-colors border border-emerald-100 bg-white flex items-center justify-center font-bold" title="插入内部变量">
                                     { }
                                   </button>
                                   <div v-if="activeMenuPath === `role-${roleName}-${idx}-vars`" class="absolute right-0 top-full mt-1 w-36 bg-white rounded-lg shadow-xl border border-gray-100 z-[9999] max-h-48 overflow-y-auto custom-scrollbar">
@@ -2241,7 +2273,7 @@ relationships:
                                 </div>
                               </div>
                               
-                              <button @click="appendBuilderCondition(rule)" class="bg-emerald-700 hover:bg-emerald-800 text-white w-10 h-8 rounded-lg flex items-center justify-center transition-all shadow-md disabled:opacity-30 disabled:scale-100 active:scale-95" :disabled="!rule._builder_table || !rule._builder_field || !rule._builder_op || !rule._builder_val" title="追加条件">
+                              <button @click="appendBuilderCondition(rule)" class="bg-emerald-700 hover:bg-emerald-800 text-white w-10 h-[2.625rem] rounded-lg flex items-center justify-center transition-all shadow-md disabled:opacity-30 disabled:scale-100 active:scale-95" :disabled="!rule._builder_table || !rule._builder_field || !rule._builder_op || !rule._builder_val" title="追加条件">
                                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M12 6v6m0 0v6m0-6h6m-6 0H6"/></svg>
                               </button>
                             </div>
@@ -2295,23 +2327,30 @@ relationships:
                               <div class="flex items-end gap-3 p-3 bg-amber-50/80 rounded-xl border border-amber-200">
                                 <div class="space-y-1">
                                   <label class="block text-[10px] text-amber-600 font-bold ml-1">目标表</label>
-                                  <select v-model="rule._builder_table" class="bg-white border border-amber-300 rounded-lg px-2 py-1.5 text-xs focus:ring-1 focus:ring-amber-500 outline-none w-32 shadow-sm">
-                                    <option value="" disabled selected>选择数据表...</option>
-                                    <option v-for="t in datasetTables" :key="t.physical_name" :value="t.physical_name">{{ t.physical_name }}</option>
-                                  </select>
+                                  <RowFilterOptionSelect
+                                    v-model="rule._builder_table"
+                                    :options="tableSelectOptions"
+                                    placeholder="选择数据表..."
+                                    button-class="border-amber-300 focus:ring-amber-500"
+                                    menu-class="hover:bg-amber-50"
+                                  />
                                 </div>
                                 
                                 <div class="space-y-1">
                                   <label class="block text-[10px] text-amber-600 font-bold ml-1">选择字段</label>
-                                  <select v-model="rule._builder_field" class="bg-white border border-amber-300 rounded-lg px-2 py-1.5 text-xs focus:ring-1 focus:ring-amber-500 outline-none w-32 shadow-sm" :disabled="!rule._builder_table">
-                                    <option value="" disabled selected>选择字段...</option>
-                                    <option v-for="col in (datasetTables.find((t: any) => t.physical_name === rule._builder_table)?.columns || [])" :key="col.physical_name" :value="col.physical_name">{{ col.physical_name }}</option>
-                                  </select>
+                                  <RowFilterOptionSelect
+                                    v-model="rule._builder_field"
+                                    :options="getColumnSelectOptions(rule._builder_table)"
+                                    placeholder="选择字段..."
+                                    :disabled="!rule._builder_table"
+                                    button-class="border-amber-300 focus:ring-amber-500"
+                                    menu-class="hover:bg-amber-50"
+                                  />
                                 </div>
 
                                 <div class="space-y-1">
                                   <label class="block text-[10px] text-amber-600 font-bold ml-1">操作符</label>
-                                  <select v-model="rule._builder_op" class="bg-white border border-amber-300 rounded-lg px-2 py-1.5 text-xs focus:ring-1 focus:ring-amber-500 outline-none w-24 shadow-sm">
+                                  <select v-model="rule._builder_op" class="h-[2.625rem] bg-white border border-amber-300 rounded-lg px-2 text-xs focus:ring-1 focus:ring-amber-500 outline-none w-28 shadow-sm">
                                     <option value="" disabled selected>操作符...</option>
                                     <option v-for="op in OPERATORS" :key="op.value" :value="op.value">{{ op.label }}</option>
                                   </select>
@@ -2320,9 +2359,9 @@ relationships:
                                 <div class="flex-1 space-y-1">
                                   <label class="block text-[10px] text-amber-600 font-bold ml-1">过滤值/变量</label>
                                   <div class="relative flex items-center gap-1">
-                                    <input v-model="rule._builder_val" class="flex-1 w-full bg-white border border-amber-300 rounded-lg px-2 py-1.5 text-xs focus:ring-1 focus:ring-amber-500 outline-none min-w-[120px] shadow-sm" placeholder="e.g. {user.id}">
+                                    <input v-model="rule._builder_val" class="flex-1 w-full h-[2.625rem] bg-white border border-amber-300 rounded-lg px-2 text-xs focus:ring-1 focus:ring-amber-500 outline-none min-w-[120px] shadow-sm" placeholder="e.g. {user.id}">
                                     <!-- System variable dropdown trigger -->
-                                    <button @click.stop="toggleMenu(`user-${uid}-${idx}-vars`)" class="flex-shrink-0 w-8 h-8 rounded-lg text-amber-600 hover:bg-amber-50 transition-colors border border-amber-100 bg-white flex items-center justify-center font-bold" title="插入内部变量">
+                                    <button @click.stop="toggleMenu(`user-${uid}-${idx}-vars`)" class="flex-shrink-0 h-[2.625rem] w-9 rounded-lg text-amber-600 hover:bg-amber-50 transition-colors border border-amber-100 bg-white flex items-center justify-center font-bold" title="插入内部变量">
                                       { }
                                     </button>
                                     <div v-if="activeMenuPath === `user-${uid}-${idx}-vars`" class="absolute right-0 top-full mt-1 w-36 bg-white rounded-lg shadow-xl border border-gray-100 z-[9999] max-h-48 overflow-y-auto custom-scrollbar">
@@ -2333,7 +2372,7 @@ relationships:
                                   </div>
                                 </div>
                                 
-                                <button @click="appendBuilderCondition(rule)" class="bg-amber-700 hover:bg-amber-800 text-white w-10 h-8 rounded-lg flex items-center justify-center transition-all shadow-md disabled:opacity-30 disabled:scale-100 active:scale-95" :disabled="!rule._builder_table || !rule._builder_field || !rule._builder_op || !rule._builder_val" title="追加条件">
+                                <button @click="appendBuilderCondition(rule)" class="bg-amber-700 hover:bg-amber-800 text-white w-10 h-[2.625rem] rounded-lg flex items-center justify-center transition-all shadow-md disabled:opacity-30 disabled:scale-100 active:scale-95" :disabled="!rule._builder_table || !rule._builder_field || !rule._builder_op || !rule._builder_val" title="追加条件">
                                   <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M12 6v6m0 0v6m0-6h6m-6 0H6"/></svg>
                                 </button>
                               </div>
@@ -2377,23 +2416,30 @@ relationships:
                          <div class="flex items-end gap-3 p-3 bg-slate-50/80 rounded-xl border border-slate-200">
                            <div class="space-y-1">
                              <label class="block text-[10px] text-slate-400 font-bold ml-1">目标表</label>
-                             <select v-model="rule._builder_table" class="bg-white border border-slate-300 rounded-lg px-2 py-1.5 text-xs focus:ring-1 focus:ring-slate-500 outline-none w-32 shadow-sm">
-                                <option value="" disabled selected>选择数据表...</option>
-                                <option v-for="t in datasetTables" :key="t.physical_name" :value="t.physical_name">{{ t.physical_name }}</option>
-                             </select>
+                             <RowFilterOptionSelect
+                               v-model="rule._builder_table"
+                               :options="tableSelectOptions"
+                               placeholder="选择数据表..."
+                               button-class="border-slate-300 focus:ring-slate-500"
+                               menu-class="hover:bg-slate-50"
+                             />
                            </div>
                            
                            <div class="space-y-1">
                              <label class="block text-[10px] text-slate-400 font-bold ml-1">选择字段</label>
-                             <select v-model="rule._builder_field" class="bg-white border border-slate-300 rounded-lg px-2 py-1.5 text-xs focus:ring-1 focus:ring-slate-500 outline-none w-32 shadow-sm" :disabled="!rule._builder_table">
-                                <option value="" disabled selected>选择字段...</option>
-                                <option v-for="col in (datasetTables.find((t: any) => t.physical_name === rule._builder_table)?.columns || [])" :key="col.physical_name" :value="col.physical_name">{{ col.physical_name }}</option>
-                             </select>
+                             <RowFilterOptionSelect
+                               v-model="rule._builder_field"
+                               :options="getColumnSelectOptions(rule._builder_table)"
+                               placeholder="选择字段..."
+                               :disabled="!rule._builder_table"
+                               button-class="border-slate-300 focus:ring-slate-500"
+                               menu-class="hover:bg-slate-50"
+                             />
                            </div>
 
                            <div class="space-y-1">
                              <label class="block text-[10px] text-slate-400 font-bold ml-1">操作符</label>
-                             <select v-model="rule._builder_op" class="bg-white border border-slate-300 rounded-lg px-2 py-1.5 text-xs focus:ring-1 focus:ring-slate-500 outline-none w-24 shadow-sm">
+                             <select v-model="rule._builder_op" class="h-[2.625rem] bg-white border border-slate-300 rounded-lg px-2 text-xs focus:ring-1 focus:ring-slate-500 outline-none w-28 shadow-sm">
                                 <option value="" disabled selected>操作符...</option>
                                 <option v-for="op in OPERATORS" :key="op.value" :value="op.value">{{ op.label }}</option>
                              </select>
@@ -2402,9 +2448,9 @@ relationships:
                            <div class="flex-1 space-y-1">
                              <label class="block text-[10px] text-slate-400 font-bold ml-1">过滤值/变量</label>
                              <div class="relative flex items-center gap-1">
-                               <input v-model="rule._builder_val" class="flex-1 w-full bg-white border border-slate-300 rounded-lg px-2 py-1.5 text-xs focus:ring-1 focus:ring-slate-500 outline-none min-w-[120px] shadow-sm" placeholder="e.g. {user.id}">
+                               <input v-model="rule._builder_val" class="flex-1 w-full h-[2.625rem] bg-white border border-slate-300 rounded-lg px-2 text-xs focus:ring-1 focus:ring-slate-500 outline-none min-w-[120px] shadow-sm" placeholder="e.g. {user.id}">
                                <!-- System variable dropdown trigger -->
-                               <button @click.stop="toggleMenu(`default-${idx}-vars`)" class="flex-shrink-0 w-8 h-8 rounded-lg text-emerald-600 hover:bg-emerald-50 transition-colors border border-emerald-100 bg-white flex items-center justify-center font-bold" title="插入内部变量">
+                               <button @click.stop="toggleMenu(`default-${idx}-vars`)" class="flex-shrink-0 h-[2.625rem] w-9 rounded-lg text-emerald-600 hover:bg-emerald-50 transition-colors border border-emerald-100 bg-white flex items-center justify-center font-bold" title="插入内部变量">
                                  { }
                                </button>
                                <div v-if="activeMenuPath === `default-${idx}-vars`" class="absolute right-0 top-full mt-1 w-36 bg-white rounded-lg shadow-xl border border-gray-100 z-[9999] max-h-48 overflow-y-auto custom-scrollbar">
@@ -2415,7 +2461,7 @@ relationships:
                              </div>
                            </div>
                            
-                           <button @click="appendBuilderCondition(rule)" class="bg-slate-700 hover:bg-slate-800 text-white w-10 h-8 rounded-lg flex items-center justify-center transition-all shadow-md disabled:opacity-30 disabled:scale-100 active:scale-95" :disabled="!rule._builder_table || !rule._builder_field || !rule._builder_op || !rule._builder_val" title="追加条件">
+                           <button @click="appendBuilderCondition(rule)" class="bg-slate-700 hover:bg-slate-800 text-white w-10 h-[2.625rem] rounded-lg flex items-center justify-center transition-all shadow-md disabled:opacity-30 disabled:scale-100 active:scale-95" :disabled="!rule._builder_table || !rule._builder_field || !rule._builder_op || !rule._builder_val" title="追加条件">
                              <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M12 6v6m0 0v6m0-6h6m-6 0H6"/></svg>
                            </button>
                          </div>

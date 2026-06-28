@@ -58,6 +58,10 @@ export const agentApi = {
   
   // Update agent
   updateAgent: (id: string, data: Partial<AIAgent>) => axios.put<AIAgent>(`/api/portal/agents/${id}`, data),
+
+  // Batch reorder agents (sort_order)
+  reorderAgents: (items: { id: string; sort_order: number }[]) =>
+    axios.post<{ status: string }>('/api/portal/agents/reorder', { items }),
   
   // Delete agent
   deleteAgent: (id: string) => axios.delete<void>(`/api/portal/agents/${id}`),
