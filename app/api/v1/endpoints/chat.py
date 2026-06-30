@@ -138,10 +138,13 @@ class DatasetNavigationResponse(BaseModel):
 
 
 class DatasetMenuClickRequest(BaseModel):
-    dataset_menu_hash: str = Field(..., description="当前数据目录 hash")
     query: str = Field(..., description="用户点击的完整 quick 问题")
     label: Optional[str] = Field(default=None, description="按钮短标签")
     group_id: Optional[str] = Field(default=None, description="业务场景卡片 ID")
+    dataset_menu_hash: Optional[str] = Field(
+        default=None,
+        description="已废弃，仅保留兼容；点击统计按 user_id 存储",
+    )
 
 
 class DatasetGroupRefreshRequest(BaseModel):
@@ -270,7 +273,6 @@ async def record_dataset_menu_question_click(
     await DatasetNavigationService.record_question_click(
         user_id=user_id,
         is_admin=is_admin,
-        dataset_menu_hash=request.dataset_menu_hash,
         query=request.query,
         label=request.label,
         group_id=request.group_id,
@@ -296,7 +298,6 @@ async def clear_dataset_menu_question_click(
     cleared = await DatasetNavigationService.clear_question_click(
         user_id=user_id,
         is_admin=is_admin,
-        dataset_menu_hash=request.dataset_menu_hash,
         query=request.query,
     )
     return StandardResponse(data={"success": cleared})
@@ -329,7 +330,6 @@ async def refresh_group_questions(
             tables=request.tables,
             user_id=user_id,
             is_admin=is_admin,
-            dataset_menu_hash=request.dataset_menu_hash or "",
             group_id=request.group_id or "",
             exclude_questions=request.exclude_questions,
         )
@@ -340,7 +340,6 @@ async def refresh_group_questions(
             tables=request.tables,
             user_id=user_id,
             is_admin=is_admin,
-            dataset_menu_hash=request.dataset_menu_hash or "",
             group_id=request.group_id or "",
             exclude_questions=request.exclude_questions,
         )

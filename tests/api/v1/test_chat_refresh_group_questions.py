@@ -57,7 +57,6 @@ async def test_refresh_group_questions_api_success():
                 kwargs = mock_refresh.await_args.kwargs
                 assert kwargs["user_id"] == 7
                 assert kwargs["is_admin"] is False
-                assert kwargs["dataset_menu_hash"] == "abc123"
                 assert kwargs["group_id"] == "ai-agent-meta"
                 assert kwargs["exclude_questions"][0]["query"] == "分析最近一周的智能体访问量"
         finally:

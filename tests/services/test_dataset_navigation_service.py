@@ -371,13 +371,14 @@ async def test_record_question_click_stores_redis_rank_and_metadata():
         await DatasetNavigationService.record_question_click(
             user_id=7,
             is_admin=False,
-            dataset_menu_hash="abc123",
             query="查询智能体访问日志最近10条明细记录",
             label="查询明细",
             group_id="ai_agent_meta",
         )
 
     redis.zincrby.assert_awaited_once()
+    rank_call = redis.zincrby.await_args
+    assert rank_call.args[0] == "agent:dataset_navigation_click_rank:7"
     redis.hset.assert_awaited_once()
     assert redis.expire.await_count == 2
 
@@ -392,11 +393,11 @@ async def test_clear_question_click_removes_redis_rank_and_metadata():
         cleared = await DatasetNavigationService.clear_question_click(
             user_id=7,
             is_admin=False,
-            dataset_menu_hash="abc123",
             query="查询智能体访问日志最近10条明细记录",
         )
 
     assert cleared is True
+    assert redis.zrem.await_args.args[0] == "agent:dataset_navigation_click_rank:7"
     redis.zrem.assert_awaited_once()
     redis.hdel.assert_awaited_once()
 
@@ -550,12 +551,26 @@ async def test_build_navigation_for_user_sets_llm_generation_failed():
 
 @pytest.mark.asyncio
 @pytest.mark.no_infrastructure
-async def test_bump_navigation_cache_generation_increments_redis_counter():
-    redis = AsyncMock()
-    redis.incr = AsyncMock(return_value=2)
-    with patch("app.services.dataset_navigation_service.get_redis", AsyncMock(return_value=redis)):
-        await DatasetNavigationService.bump_navigation_cache_generation()
-    redis.incr.assert_awaited_once()
+async def test_invalidate_all_navigation_caches_deletes_portal_keys():
+    deleted = []
+
+    class FakeRedis:
+        async def scan_iter(self, match, count=200):
+            if match == "agent:dataset_navigation:*":
+                yield "agent:dataset_navigation:7"
+                yield "agent:dataset_navigation:7:legacy:hash:v5:0"
+            elif match == "agent:dataset_navigation_click_rank:*":
+                yield "agent:dataset_navigation_click_rank:7"
+
+        async def delete(self, *keys):
+            deleted.extend(keys)
+
+    with patch("app.services.dataset_navigation_service.get_redis", AsyncMock(return_value=FakeRedis())):
+        await DatasetNavigationService.invalidate_all_navigation_caches()
+
+    assert "agent:dataset_navigation:7" in deleted
+    assert "agent:dataset_navigation:7:legacy:hash:v5:0" in deleted
+    assert "agent:dataset_navigation_click_rank:7" in deleted
 
 
 @pytest.mark.no_infrastructure
@@ -718,7 +733,6 @@ async def test_refresh_group_questions_filters_to_authorized_tables_and_excludes
             tables=["智能体访问日志", "未授权表"],
             user_id=7,
             is_admin=False,
-            dataset_menu_hash="abc123",
             group_id="ai-agent-meta",
             exclude_questions=[
                 {"label": "当前问题", "query": "分析最近一周的智能体访问量"},
@@ -754,7 +768,6 @@ async def test_recent_refresh_questions_are_stored_with_short_ttl():
     ):
         await DatasetNavigationService._remember_recent_refresh_questions(
             user_key="7",
-            dataset_menu_hash="abc123",
             purpose="questions",
             group_identity="ai-agent-meta",
             questions=[
@@ -763,13 +776,17 @@ async def test_recent_refresh_questions_are_stored_with_short_ttl():
         )
         recent = await DatasetNavigationService._load_recent_refresh_questions(
             user_key="7",
-            dataset_menu_hash="abc123",
             purpose="questions",
             group_identity="ai-agent-meta",
         )
 
     assert recent == ["分析最近一周的智能体访问量"]
-    assert list(redis.ttls.values()) == [300]
+    expected_key = DatasetNavigationService._recent_refresh_questions_key(
+        user_key="7",
+        purpose="questions",
+        group_identity="ai-agent-meta",
+    )
+    assert redis.ttls[expected_key] == 300
 
 
 @pytest.mark.asyncio

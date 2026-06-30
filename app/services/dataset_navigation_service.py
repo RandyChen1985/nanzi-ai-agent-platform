@@ -20,12 +20,11 @@ from app.services.ai.runtime.agentscope.stream_reconcile import finalize_visible
 
 logger = logging.getLogger(__name__)
 
-_NAV_CACHE_TTL_SECONDS = 604800  # 7 days
-_NAV_PROMPT_VERSION = "v5"
-_NAV_CACHE_GEN_KEY = "agent:dataset_navigation:cache_generation"
+_NAV_CACHE_TTL_SECONDS = 90 * 24 * 60 * 60  # 90 days
 _CLICK_STATS_TTL_SECONDS = 90 * 24 * 60 * 60
 _RECENT_REFRESH_QUESTIONS_TTL_SECONDS = 5 * 60
 _RECENT_REFRESH_QUESTIONS_LIMIT = 80
+_LEGACY_NAV_CACHE_GEN_KEY = "agent:dataset_navigation:cache_generation"
 
 
 def _user_cache_key(*, user_id: Optional[int], is_admin: bool) -> str:
@@ -95,26 +94,75 @@ class DatasetNavigationService:
         return await AgentConfigProvider.get_dataset_menu(user_id=user_id, is_admin=is_admin, force_refresh=force_refresh)
 
     @staticmethod
-    async def _get_navigation_cache_generation() -> str:
+    def _navigation_cache_key(user_key: str) -> str:
+        return f"agent:dataset_navigation:{user_key}"
+
+    @staticmethod
+    def _click_rank_key(user_key: str) -> str:
+        return f"agent:dataset_navigation_click_rank:{user_key}"
+
+    @staticmethod
+    def _click_meta_key(user_key: str) -> str:
+        return f"agent:dataset_navigation_click_meta:{user_key}"
+
+    @staticmethod
+    def _recent_refresh_questions_key(
+        *,
+        user_key: str,
+        purpose: str,
+        group_identity: str,
+    ) -> str:
+        clean_purpose = re.sub(r"[^0-9A-Za-z_-]+", "_", str(purpose or "questions").strip()) or "questions"
+        group_hash = _question_hash(group_identity or "unknown")
+        return f"agent:dataset_navigation_recent_questions:{user_key}:{clean_purpose}:{group_hash}"
+
+    @staticmethod
+    async def invalidate_navigation_cache_for_user(
+        *,
+        user_id: Optional[int] = None,
+        is_admin: bool = False,
+    ) -> None:
+        """权限或目录变更后，清理指定用户的数据门户 Redis 缓存。"""
+        user_key = _user_cache_key(user_id=user_id, is_admin=is_admin)
         try:
-            redis = await get_redis()
-            if redis:
-                cached = await redis.get(_NAV_CACHE_GEN_KEY)
-                if cached is not None:
-                    return str(cached)
+            redis_client = await get_redis()
+            if not redis_client:
+                return
+            await redis_client.delete(
+                DatasetNavigationService._navigation_cache_key(user_key),
+                DatasetNavigationService._click_rank_key(user_key),
+                DatasetNavigationService._click_meta_key(user_key),
+            )
+            pattern = f"agent:dataset_navigation_recent_questions:{user_key}:*"
+            async for key in redis_client.scan_iter(match=pattern, count=200):
+                await redis_client.delete(key)
         except Exception as e:
-            logger.warning("Dataset navigation cache generation read failed: %s", e)
-        return "0"
+            logger.warning("Dataset navigation cache invalidate failed for %s: %s", user_key, e)
+
+    @staticmethod
+    async def invalidate_all_navigation_caches() -> None:
+        """元数据变更后清理全部用户的数据门户 Redis 缓存（含历史 menu_hash 旧 Key）。"""
+        patterns = (
+            "agent:dataset_navigation:*",
+            "agent:dataset_navigation_click_rank:*",
+            "agent:dataset_navigation_click_meta:*",
+            "agent:dataset_navigation_recent_questions:*",
+        )
+        try:
+            redis_client = await get_redis()
+            if not redis_client:
+                return
+            for pattern in patterns:
+                async for key in redis_client.scan_iter(match=pattern, count=200):
+                    await redis_client.delete(key)
+            await redis_client.delete(_LEGACY_NAV_CACHE_GEN_KEY)
+        except Exception as e:
+            logger.warning("Dataset navigation global cache invalidate failed: %s", e)
 
     @staticmethod
     async def bump_navigation_cache_generation() -> None:
-        """元数据变更后递增，使门户 Markdown 缓存失效。"""
-        try:
-            redis = await get_redis()
-            if redis:
-                await redis.incr(_NAV_CACHE_GEN_KEY)
-        except Exception as e:
-            logger.warning("Dataset navigation cache generation bump failed: %s", e)
+        """兼容旧调用：改为直接删除门户相关 Redis 缓存。"""
+        await DatasetNavigationService.invalidate_all_navigation_caches()
 
     @staticmethod
     async def _load_cached_navigation(cache_key: str) -> Optional[str]:
@@ -173,27 +221,6 @@ class DatasetNavigationService:
             return fallback_md, err[:240]
 
     @staticmethod
-    def _click_rank_key(*, user_key: str, dataset_menu_hash: str) -> str:
-        return f"agent:dataset_navigation_click_rank:{user_key}:{dataset_menu_hash}"
-
-    @staticmethod
-    def _click_meta_key(*, user_key: str, dataset_menu_hash: str) -> str:
-        return f"agent:dataset_navigation_click_meta:{user_key}:{dataset_menu_hash}"
-
-    @staticmethod
-    def _recent_refresh_questions_key(
-        *,
-        user_key: str,
-        dataset_menu_hash: str,
-        purpose: str,
-        group_identity: str,
-    ) -> str:
-        clean_hash = str(dataset_menu_hash or "").strip() or "unknown"
-        clean_purpose = re.sub(r"[^0-9A-Za-z_-]+", "_", str(purpose or "questions").strip()) or "questions"
-        group_hash = _question_hash(group_identity or "unknown")
-        return f"agent:dataset_navigation_recent_questions:{user_key}:{clean_hash}:{clean_purpose}:{group_hash}"
-
-    @staticmethod
     def _extract_question_queries(questions: Optional[list[Any]]) -> list[str]:
         extracted: list[str] = []
         for item in questions or []:
@@ -209,19 +236,15 @@ class DatasetNavigationService:
     async def _load_recent_refresh_questions(
         *,
         user_key: str,
-        dataset_menu_hash: str,
         purpose: str,
         group_identity: str,
     ) -> list[str]:
-        if not dataset_menu_hash:
-            return []
         try:
             redis = await get_redis()
             if not redis:
                 return []
             key = DatasetNavigationService._recent_refresh_questions_key(
                 user_key=user_key,
-                dataset_menu_hash=dataset_menu_hash,
                 purpose=purpose,
                 group_identity=group_identity,
             )
@@ -241,13 +264,12 @@ class DatasetNavigationService:
     async def _remember_recent_refresh_questions(
         *,
         user_key: str,
-        dataset_menu_hash: str,
         purpose: str,
         group_identity: str,
         questions: list[dict[str, Any]],
     ) -> None:
         new_queries = DatasetNavigationService._extract_question_queries(questions)
-        if not dataset_menu_hash or not new_queries:
+        if not new_queries:
             return
         try:
             redis = await get_redis()
@@ -255,7 +277,6 @@ class DatasetNavigationService:
                 return
             key = DatasetNavigationService._recent_refresh_questions_key(
                 user_key=user_key,
-                dataset_menu_hash=dataset_menu_hash,
                 purpose=purpose,
                 group_identity=group_identity,
             )
@@ -331,20 +352,13 @@ class DatasetNavigationService:
     async def _load_question_click_stats(
         *,
         user_key: str,
-        dataset_menu_hash: str,
     ) -> Dict[str, Dict[str, Any]]:
         try:
             redis = await get_redis()
             if not redis:
                 return {}
-            rank_key = DatasetNavigationService._click_rank_key(
-                user_key=user_key,
-                dataset_menu_hash=dataset_menu_hash,
-            )
-            meta_key = DatasetNavigationService._click_meta_key(
-                user_key=user_key,
-                dataset_menu_hash=dataset_menu_hash,
-            )
+            rank_key = DatasetNavigationService._click_rank_key(user_key)
+            meta_key = DatasetNavigationService._click_meta_key(user_key)
             ranked = await redis.zrevrange(rank_key, 0, -1, withscores=True)
             raw_meta = await redis.hgetall(meta_key)
             meta_map: Dict[str, Any] = {}
@@ -423,14 +437,14 @@ class DatasetNavigationService:
         *,
         user_id: Optional[int],
         is_admin: bool,
-        dataset_menu_hash: str,
         query: str,
         label: Optional[str] = None,
         group_id: Optional[str] = None,
+        dataset_menu_hash: Optional[str] = None,
     ) -> None:
-        clean_hash = str(dataset_menu_hash or "").strip()
+        del dataset_menu_hash
         clean_query = str(query or "").strip()
-        if not clean_hash or not clean_query:
+        if not clean_query:
             return
         try:
             redis = await get_redis()
@@ -438,14 +452,8 @@ class DatasetNavigationService:
                 return
             user_key = _user_cache_key(user_id=user_id, is_admin=is_admin)
             question_id = _question_hash(clean_query)
-            rank_key = DatasetNavigationService._click_rank_key(
-                user_key=user_key,
-                dataset_menu_hash=clean_hash,
-            )
-            meta_key = DatasetNavigationService._click_meta_key(
-                user_key=user_key,
-                dataset_menu_hash=clean_hash,
-            )
+            rank_key = DatasetNavigationService._click_rank_key(user_key)
+            meta_key = DatasetNavigationService._click_meta_key(user_key)
             now = datetime.now(timezone.utc).isoformat()
             metadata = {
                 "query": clean_query,
@@ -465,12 +473,12 @@ class DatasetNavigationService:
         *,
         user_id: Optional[int],
         is_admin: bool,
-        dataset_menu_hash: str,
         query: str,
+        dataset_menu_hash: Optional[str] = None,
     ) -> bool:
-        clean_hash = str(dataset_menu_hash or "").strip()
+        del dataset_menu_hash
         clean_query = str(query or "").strip()
-        if not clean_hash or not clean_query:
+        if not clean_query:
             return False
         try:
             redis = await get_redis()
@@ -478,14 +486,8 @@ class DatasetNavigationService:
                 return False
             user_key = _user_cache_key(user_id=user_id, is_admin=is_admin)
             question_id = _question_hash(clean_query)
-            rank_key = DatasetNavigationService._click_rank_key(
-                user_key=user_key,
-                dataset_menu_hash=clean_hash,
-            )
-            meta_key = DatasetNavigationService._click_meta_key(
-                user_key=user_key,
-                dataset_menu_hash=clean_hash,
-            )
+            rank_key = DatasetNavigationService._click_rank_key(user_key)
+            meta_key = DatasetNavigationService._click_meta_key(user_key)
             removed_rank = int(await redis.zrem(rank_key, question_id) or 0)
             removed_meta = int(await redis.hdel(meta_key, question_id) or 0)
             return removed_rank > 0 or removed_meta > 0
@@ -658,11 +660,8 @@ class DatasetNavigationService:
 
         menu_hash = hashlib.md5(dataset_menu.encode("utf-8")).hexdigest()[:12]
         user_key = _user_cache_key(user_id=user_id, is_admin=is_admin)
-        cache_gen = await DatasetNavigationService._get_navigation_cache_generation()
+        cache_key = DatasetNavigationService._navigation_cache_key(user_key)
         groups = DataQueryPrompts.build_dataset_navigation_groups(dataset_menu)
-        cache_key = (
-            f"agent:dataset_navigation:{user_key}:{menu_hash}:{_NAV_PROMPT_VERSION}:{cache_gen}"
-        )
         has_datasets = menu_has_authorized_datasets(dataset_menu)
 
         if not has_datasets:
@@ -700,7 +699,7 @@ class DatasetNavigationService:
             fallback_md = finalize_visible_reply(fallback_raw, collapse_duplicates=False)
             is_fallback = (markdown == fallback_md)
             
-            # 如果是异常兜底（有授权数据集但生成了兜底文本），只缓存 15 秒，避免长期卡在兜底状态；如果是正常情况则缓存 10 分钟
+            # 如果是异常兜底（有授权数据集但生成了兜底文本），只缓存 15 秒，避免长期卡在兜底状态；正常 LLM 结果缓存 90 天
             ttl = 15 if (is_fallback and has_datasets) else _NAV_CACHE_TTL_SECONDS
             await DatasetNavigationService._save_cached_navigation(cache_key, markdown, ttl=ttl)
 
@@ -751,7 +750,6 @@ class DatasetNavigationService:
         # 应用用户点击的偏好排序
         click_stats = await DatasetNavigationService._load_question_click_stats(
             user_key=user_key,
-            dataset_menu_hash=menu_hash,
         )
         groups = DatasetNavigationService._apply_question_click_stats(groups, click_stats)
 
@@ -792,7 +790,6 @@ class DatasetNavigationService:
         tables: list[str],
         user_id: Optional[int] = None,
         is_admin: bool = False,
-        dataset_menu_hash: str = "",
         group_id: str = "",
         exclude_questions: Optional[list[Any]] = None,
     ) -> list[dict[str, Any]]:
@@ -810,7 +807,6 @@ class DatasetNavigationService:
 
         recent_questions = await DatasetNavigationService._load_recent_refresh_questions(
             user_key=user_key,
-            dataset_menu_hash=dataset_menu_hash,
             purpose=purpose,
             group_identity=group_identity,
         )
@@ -858,7 +854,6 @@ class DatasetNavigationService:
             ]
         await DatasetNavigationService._remember_recent_refresh_questions(
             user_key=user_key,
-            dataset_menu_hash=dataset_menu_hash,
             purpose=purpose,
             group_identity=group_identity,
             questions=questions,
@@ -873,7 +868,6 @@ class DatasetNavigationService:
         tables: list[str],
         user_id: Optional[int] = None,
         is_admin: bool = False,
-        dataset_menu_hash: str = "",
         group_id: str = "",
         exclude_questions: Optional[list[Any]] = None,
     ) -> list[dict[str, Any]]:
@@ -890,7 +884,6 @@ class DatasetNavigationService:
             return []
         recent_questions = await DatasetNavigationService._load_recent_refresh_questions(
             user_key=user_key,
-            dataset_menu_hash=dataset_menu_hash,
             purpose=purpose,
             group_identity=group_identity,
         )
@@ -937,7 +930,6 @@ class DatasetNavigationService:
             ]
         await DatasetNavigationService._remember_recent_refresh_questions(
             user_key=user_key,
-            dataset_menu_hash=dataset_menu_hash,
             purpose=purpose,
             group_identity=group_identity,
             questions=questions,

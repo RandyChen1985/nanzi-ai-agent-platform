@@ -45,7 +45,7 @@ export const REDIS_KEY_CATEGORIES: RedisKeyCategory[] = [
   {
     id: 'dataset_navigation',
     label: '数据门户',
-    description: '数据门户导航与点击偏好',
+    description: '数据门户导航 Markdown 缓存、点击统计与换一批去重（按 user_id 单 Key）',
     match: (key) => key.startsWith('agent:dataset_navigation'),
   },
   {
