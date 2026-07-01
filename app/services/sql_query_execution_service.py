@@ -126,6 +126,8 @@ def dialect_from_data_source(data_source: Optional[str]) -> str:
         dialect = "mysql"
     elif "oracle" in ds_lower:
         dialect = "oracle"
+    elif any(token in ds_lower for token in ("sqlserver", "mssql", "tsql")):
+        dialect = "sqlserver"
     return dialect
 
 

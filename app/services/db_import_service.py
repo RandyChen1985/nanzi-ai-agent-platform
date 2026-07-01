@@ -326,3 +326,145 @@ class DBImportService:
         except Exception as e:
             logger.error(f"Failed to get Oracle DDL: {e}")
             raise Exception(f"获取 Oracle DDL 失败: {str(e)}")
+
+    @staticmethod
+    def _sqlserver_type_aliases() -> tuple:
+        return ("sqlserver", "mssql", "tsql")
+
+    @staticmethod
+    async def test_sqlserver_connection(config: Dict[str, Any]) -> bool:
+        """测试 SQL Server 连接"""
+        try:
+            import aioodbc
+            from app.services.data_adapter.sqlserver import build_sqlserver_odbc_dsn
+
+            dsn = build_sqlserver_odbc_dsn(config)
+            conn = await aioodbc.connect(dsn=dsn, timeout=10)
+            try:
+                async with conn.cursor() as cur:
+                    await cur.execute("SELECT 1")
+                    await cur.fetchone()
+            finally:
+                await conn.close()
+            return True
+        except Exception as e:
+            logger.error(f"SQL Server connection test failed: {e}")
+            raise Exception(f"SQL Server 连接失败: {str(e)}")
+
+    @staticmethod
+    async def get_sqlserver_tables(config: Dict[str, Any]) -> List[Dict[str, str]]:
+        """获取 SQL Server 表列表及其备注 (包含视图类型)"""
+        try:
+            import aioodbc
+            from app.services.data_adapter.sqlserver import build_sqlserver_odbc_dsn
+
+            dsn = build_sqlserver_odbc_dsn(config)
+            conn = await aioodbc.connect(dsn=dsn, timeout=10)
+            try:
+                query = """
+                    SELECT
+                        t.TABLE_NAME,
+                        ISNULL(CAST(ep.value AS NVARCHAR(MAX)), '') AS TABLE_COMMENT,
+                        CASE WHEN t.TABLE_TYPE = 'VIEW' THEN 'view' ELSE 'table' END AS obj_type
+                    FROM INFORMATION_SCHEMA.TABLES t
+                    LEFT JOIN sys.tables st ON st.name = t.TABLE_NAME
+                    LEFT JOIN sys.extended_properties ep
+                        ON ep.major_id = st.object_id AND ep.minor_id = 0 AND ep.name = 'MS_Description'
+                    WHERE t.TABLE_TYPE IN ('BASE TABLE', 'VIEW')
+                      AND t.TABLE_CATALOG = DB_NAME()
+                    ORDER BY t.TABLE_NAME
+                """
+                async with conn.cursor() as cur:
+                    await cur.execute(query)
+                    res = await cur.fetchall()
+                    return [
+                        {"name": row[0], "comment": row[1] or "", "type": row[2]}
+                        for row in res
+                    ]
+            finally:
+                await conn.close()
+        except Exception as e:
+            logger.error(f"Failed to get SQL Server tables: {e}")
+            raise Exception(f"获取 SQL Server 表列表失败: {str(e)}")
+
+    @staticmethod
+    def _format_sqlserver_column_type(row: tuple) -> str:
+        data_type, char_len, num_precision, num_scale = row[1], row[2], row[3], row[4]
+        data_type = (data_type or "").lower()
+        if data_type in ("varchar", "nvarchar", "char", "nchar") and char_len:
+            if int(char_len) == -1:
+                return f"{data_type}(max)"
+            return f"{data_type}({int(char_len)})"
+        if data_type in ("decimal", "numeric") and num_precision is not None:
+            scale = int(num_scale or 0)
+            return f"{data_type}({int(num_precision)},{scale})"
+        return data_type
+
+    @staticmethod
+    async def get_sqlserver_ddl(config: Dict[str, Any], table_names: List[str]) -> str:
+        """获取 SQL Server DDL (支持 TABLE 和 VIEW)"""
+        try:
+            import aioodbc
+            from app.services.data_adapter.sqlserver import build_sqlserver_odbc_dsn
+
+            dsn = build_sqlserver_odbc_dsn(config)
+            conn = await aioodbc.connect(dsn=dsn, timeout=10)
+            ddls: List[str] = []
+            try:
+                async with conn.cursor() as cur:
+                    for table in table_names:
+                        await cur.execute(
+                            """
+                            SELECT TABLE_TYPE
+                            FROM INFORMATION_SCHEMA.TABLES
+                            WHERE TABLE_NAME = ? AND TABLE_CATALOG = DB_NAME()
+                            """,
+                            (table,),
+                        )
+                        type_row = await cur.fetchone()
+                        if not type_row:
+                            continue
+
+                        if type_row[0] == "VIEW":
+                            await cur.execute(
+                                """
+                                SELECT m.definition
+                                FROM sys.sql_modules m
+                                INNER JOIN sys.objects o ON m.object_id = o.object_id
+                                WHERE o.name = ? AND o.type = 'V'
+                                """,
+                                (table,),
+                            )
+                            view_row = await cur.fetchone()
+                            if view_row and view_row[0]:
+                                ddls.append(str(view_row[0]).strip())
+                            continue
+
+                        await cur.execute(
+                            """
+                            SELECT
+                                COLUMN_NAME, DATA_TYPE, CHARACTER_MAXIMUM_LENGTH,
+                                NUMERIC_PRECISION, NUMERIC_SCALE, IS_NULLABLE, COLUMN_DEFAULT
+                            FROM INFORMATION_SCHEMA.COLUMNS
+                            WHERE TABLE_NAME = ? AND TABLE_CATALOG = DB_NAME()
+                            ORDER BY ORDINAL_POSITION
+                            """,
+                            (table,),
+                        )
+                        columns = await cur.fetchall()
+                        if not columns:
+                            continue
+
+                        col_defs = []
+                        for col in columns:
+                            col_type = DBImportService._format_sqlserver_column_type(col)
+                            nullable = "" if col[5] == "NO" else " NULL"
+                            default = f" DEFAULT {col[6]}" if col[6] else ""
+                            col_defs.append(f"    [{col[0]}] {col_type}{nullable}{default}")
+                        ddls.append(f"CREATE TABLE [{table}] (\n" + ",\n".join(col_defs) + "\n);")
+            finally:
+                await conn.close()
+            return "\n\n".join(ddls)
+        except Exception as e:
+            logger.error(f"Failed to get SQL Server DDL: {e}")
+            raise Exception(f"获取 SQL Server DDL 失败: {str(e)}")

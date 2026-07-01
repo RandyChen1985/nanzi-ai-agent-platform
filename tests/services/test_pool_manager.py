@@ -131,3 +131,18 @@ async def test_pool_manager_oracle_mode_dsn():
         mock_oracledb.create_pool_async.assert_called_once()
         dsn_called_sn = mock_oracledb.create_pool_async.call_args[1]["dsn"]
         assert dsn_called_sn == "oracle.host:1521/ORCLPDB"
+
+@pytest.mark.asyncio
+async def test_pool_manager_sqlserver_type_routing():
+    DataSourcePoolManager._pools.clear()
+
+    config = make_mock_config(source_id=5, db_type="sqlserver", host="mssql.host", port=1433, db_name="erp")
+    mock_pool = MagicMock()
+    mock_pool.close = AsyncMock()
+
+    with patch("app.services.db_connection_service.DbConnectionService.get_config", new_callable=AsyncMock, return_value=config), \
+         patch.object(DataSourcePoolManager, "_create_sqlserver_pool", new_callable=AsyncMock, return_value=mock_pool) as mock_create_sqlserver:
+
+        pool = await DataSourcePoolManager.get_pool(source_id=5)
+        assert pool is mock_pool
+        mock_create_sqlserver.assert_awaited_once_with(config)

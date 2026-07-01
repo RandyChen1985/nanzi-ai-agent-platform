@@ -378,6 +378,8 @@ async def test_db_connection(config: DBConnectionConfig):
             await DBImportService.test_clickhouse_connection(config.model_dump())
         elif config.type == "oracle":
             await DBImportService.test_oracle_connection(config.model_dump())
+        elif config.type in DBImportService._sqlserver_type_aliases():
+            await DBImportService.test_sqlserver_connection(config.model_dump())
         else:
             raise HTTPException(status_code=400, detail=f"Unsupported DB type: {config.type}")
         return {"code": 200, "message": "Connection successful"}
@@ -394,6 +396,8 @@ async def list_db_tables(config: DBConnectionConfig):
             tables = await DBImportService.get_clickhouse_tables(config.model_dump())
         elif config.type == "oracle":
             tables = await DBImportService.get_oracle_tables(config.model_dump())
+        elif config.type in DBImportService._sqlserver_type_aliases():
+            tables = await DBImportService.get_sqlserver_tables(config.model_dump())
         else:
             raise HTTPException(status_code=400, detail=f"Unsupported DB type: {config.type}")
         return {"code": 200, "data": tables}
@@ -411,6 +415,8 @@ async def get_db_ddl(request: DDLRequest):
             ddl = await DBImportService.get_clickhouse_ddl(config.model_dump(), request.tables)
         elif config.type == "oracle":
             ddl = await DBImportService.get_oracle_ddl(config.model_dump(), request.tables)
+        elif config.type in DBImportService._sqlserver_type_aliases():
+            ddl = await DBImportService.get_sqlserver_ddl(config.model_dump(), request.tables)
         else:
             raise HTTPException(status_code=400, detail=f"Unsupported DB type: {config.type}")
         return {"code": 200, "data": ddl}

@@ -68,7 +68,8 @@ const fetchSavedConfigs = async () => {
 const dbTypes = [
   { id: 'mysql', name: 'MySQL', icon: '🐬', defaultPort: 3306, disabled: false },
   { id: 'clickhouse', name: 'ClickHouse', icon: '🧊', defaultPort: 9000, disabled: false },
-  { id: 'oracle', name: 'Oracle', icon: '🔴', defaultPort: 1521, disabled: false }
+  { id: 'oracle', name: 'Oracle', icon: '🔴', defaultPort: 1521, disabled: false },
+  { id: 'sqlserver', name: 'SQL Server', icon: '🟦', defaultPort: 1433, disabled: false },
 ]
 
 const dbTypeIcon = (type: string) => dbTypes.find((item) => item.id === type)?.icon || '🗄️'
@@ -222,6 +223,7 @@ const dbTypeColor = (type: string) => {
   if (type === 'mysql') return 'bg-blue-100 text-blue-700'
   if (type === 'clickhouse') return 'bg-cyan-100 text-cyan-700'
   if (type === 'oracle') return 'bg-red-100 text-red-700'
+  if (type === 'sqlserver' || type === 'mssql') return 'bg-indigo-100 text-indigo-700'
   return 'bg-gray-100 text-gray-600'
 }
 </script>

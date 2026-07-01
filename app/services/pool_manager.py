@@ -131,6 +131,8 @@ class DataSourcePoolManager:
                 pool = await cls._create_mysql_pool(db_config)
             elif db_type == "oracle":
                 pool = await cls._create_oracle_pool(db_config)
+            elif db_type in ("sqlserver", "mssql", "tsql"):
+                pool = await cls._create_sqlserver_pool(db_config)
             else:
                 raise NotImplementedError(f"不支持的连接池数据库类型: '{db_config.db_type}'")
 
@@ -167,6 +169,29 @@ class DataSourcePoolManager:
             minsize=1,
             maxsize=50,
             encoding_errors="replace"
+        )
+        return pool
+
+    @classmethod
+    async def _create_sqlserver_pool(cls, db_config: Any) -> Any:
+        """创建 SQL Server 连接池"""
+        import aioodbc
+        from app.services.data_adapter.sqlserver import build_sqlserver_odbc_dsn
+
+        dsn = build_sqlserver_odbc_dsn(
+            {
+                "host": db_config.host,
+                "port": db_config.port,
+                "database": db_config.database_name,
+                "user": db_config.db_user,
+                "password": db_config.password,
+            }
+        )
+        pool = await aioodbc.create_pool(
+            dsn=dsn,
+            minsize=1,
+            maxsize=50,
+            autocommit=True,
         )
         return pool
 

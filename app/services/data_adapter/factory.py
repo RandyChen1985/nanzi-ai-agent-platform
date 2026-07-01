@@ -2,6 +2,7 @@ from .base import DataSourceAdapter
 from .clickhouse import ClickHouseAdapter
 from .mysql import MySQLAdapter
 from .oracle import OracleAdapter
+from .sqlserver import SQLServerAdapter, normalize_sqlserver_type
 import logging
 
 logger = logging.getLogger(__name__)
@@ -33,6 +34,8 @@ async def get_adapter(data_source_name: str) -> DataSourceAdapter:
         return MySQLAdapter(db_config.id)
     elif db_type_lower == "oracle":
         return OracleAdapter(db_config.id)
+    elif normalize_sqlserver_type(db_config.db_type):
+        return SQLServerAdapter(db_config.id)
     else:
         logger.error(f"[Adapter Factory] 不支持的数据库类型: {db_config.db_type}")
         raise NotImplementedError(f"适配器暂未实现对 '{db_config.db_type}' 类型的支持。")

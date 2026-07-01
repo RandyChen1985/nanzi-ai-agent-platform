@@ -4,6 +4,7 @@ from app.services.data_adapter.base import SQLSafetyError
 from app.services.data_adapter.mysql import MySQLAdapter
 from app.services.data_adapter.clickhouse import ClickHouseAdapter
 from app.services.data_adapter.oracle import OracleAdapter
+from app.services.data_adapter.sqlserver import SQLServerAdapter
 
 # 测试 SQL 安全策略校验（基于基类的 _validate_sql_safety 逻辑）
 @pytest.mark.no_infrastructure
@@ -185,3 +186,57 @@ async def test_oracle_adapter():
         res = await adapter.execute_sql("SELECT ID, NAME FROM T_USER")
         assert res["items"] == [[1, "Oracle"]]
         assert res["columns"] == [{"name": "ID", "type": "None"}, {"name": "NAME", "type": "None"}]
+
+
+@pytest.mark.asyncio
+async def test_sqlserver_adapter():
+    adapter = SQLServerAdapter(source_id=4)
+
+    mock_rows = [("dbo_users", "BASE TABLE"), ("dbo_user_view", "VIEW")]
+    mock_cursor = AsyncMock()
+    mock_cursor.fetchall.return_value = mock_rows
+
+    mock_conn = MagicMock()
+    mock_cursor_cm = MagicMock()
+    mock_cursor_cm.__aenter__ = AsyncMock(return_value=mock_cursor)
+    mock_conn.cursor.return_value = mock_cursor_cm
+
+    mock_pool = MagicMock()
+    mock_conn_cm = MagicMock()
+    mock_conn_cm.__aenter__ = AsyncMock(return_value=mock_conn)
+    mock_pool.acquire.return_value = mock_conn_cm
+
+    with patch("app.services.pool_manager.DataSourcePoolManager.get_pool", return_value=mock_pool):
+        tables = await adapter.get_tables()
+        assert len(tables) == 2
+        assert tables[0] == {"name": "dbo_users", "type": "TABLE"}
+        assert tables[1] == {"name": "dbo_user_view", "type": "VIEW"}
+        assert "INFORMATION_SCHEMA.TABLES" in mock_cursor.execute.call_args[0][0]
+
+        mock_cursor.description = [("id", str), ("name", str)]
+        cols = await adapter.get_columns(table_name="dbo_users")
+        assert len(cols) == 2
+        assert cols[0] == {"name": "id", "type": "String", "comment": ""}
+        mock_cursor.execute.assert_called_with("SELECT TOP 0 * FROM [dbo_users]")
+
+        cols_custom = await adapter.get_columns(
+            custom_sql="SELECT * FROM dbo_users WHERE id = {{ user_id }}",
+            params={"user_id": 123},
+        )
+        assert len(cols_custom) == 2
+        mock_cursor.execute.assert_called_with(
+            "SELECT TOP 0 * FROM (SELECT * FROM dbo_users WHERE id = 123) AS t"
+        )
+
+        mock_cursor.fetchall.return_value = [(1, "MSSQL")]
+        res = await adapter.execute_sql("SELECT id, name FROM dbo_users")
+        assert res["items"] == [[1, "MSSQL"]]
+        assert res["columns"] == [{"name": "id", "type": "<class 'str'>"}, {"name": "name", "type": "<class 'str'>"}]
+
+        mock_cursor.fetchall.return_value = [(1, "MSSQL")]
+        res_preview = await adapter.preview("SELECT id, name FROM dbo_users", limit=50)
+        assert len(res_preview["rows"]) == 1
+        assert mock_cursor.execute.call_args[0][0].upper().startswith("SELECT TOP 50")
+
+        with pytest.raises(ValueError, match="安全策略违规"):
+            await adapter.preview("UPDATE dbo_users SET name = '{{ name }}'", params={"name": "MSSQL"})

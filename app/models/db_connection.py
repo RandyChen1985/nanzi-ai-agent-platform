@@ -12,7 +12,7 @@ class MetaDbConnectionConfig(Base):
 
     id            = Column(Integer, primary_key=True, index=True)
     name          = Column(String(100), nullable=False, comment='连接别名，如"生产-业务库"')
-    db_type       = Column(String(20), nullable=False, comment='数据库类型: mysql|clickhouse|oracle')
+    db_type       = Column(String(20), nullable=False, comment='数据库类型: mysql|clickhouse|oracle|sqlserver')
     host          = Column(String(255), nullable=False, comment='主机地址')
     port          = Column(Integer, nullable=False, comment='端口号')
     db_user       = Column(String(100), nullable=False, comment='数据库用户名')

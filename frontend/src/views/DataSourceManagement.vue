@@ -10,6 +10,7 @@ const dbTypes = [
   { id: 'mysql', name: 'MySQL', icon: '🐬', defaultPort: 3306 },
   { id: 'clickhouse', name: 'ClickHouse', icon: '🧊', defaultPort: 9000 },
   { id: 'oracle', name: 'Oracle', icon: '🔴', defaultPort: 1521 },
+  { id: 'sqlserver', name: 'SQL Server', icon: '🟦', defaultPort: 1433 },
 ]
 
 const configs = ref<DbConnectionConfig[]>([])
@@ -66,6 +67,7 @@ const dbTypeColor = (type: string) => {
   if (type === 'mysql') return 'bg-blue-100 text-blue-700 border-blue-200'
   if (type === 'clickhouse') return 'bg-cyan-100 text-cyan-700 border-cyan-200'
   if (type === 'oracle') return 'bg-red-100 text-red-700 border-red-200'
+  if (type === 'sqlserver' || type === 'mssql') return 'bg-indigo-100 text-indigo-700 border-indigo-200'
   return 'bg-gray-100 text-gray-600 border-gray-200'
 }
 
@@ -269,7 +271,7 @@ const confirmDeleteConfig = async () => {
 
 const openSqlDebug = (item: DbConnectionConfig) => {
   debugTarget.value = item
-  debugSql.value = item.db_type === 'oracle' ? 'SELECT 1 FROM DUAL' : 'SELECT 1'
+  debugSql.value = item.db_type === 'oracle' ? 'SELECT 1 FROM DUAL' : item.db_type === 'sqlserver' || item.db_type === 'mssql' ? 'SELECT 1' : 'SELECT 1'
   debugLimit.value = 100
   debugError.value = ''
   debugResult.value = null
@@ -336,7 +338,7 @@ onMounted(() => {
         </div>
 
         <div class="p-5 space-y-4">
-          <div class="grid grid-cols-3 gap-3">
+          <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
             <button
               v-for="db in dbTypes"
               :key="db.id"
@@ -351,9 +353,9 @@ onMounted(() => {
 
           <div>
             <label class="block text-xs font-bold text-gray-400 uppercase tracking-wider mb-1.5">数据源名称</label>
-            <input v-model="form.name" class="w-full border border-gray-200 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-primary/50" placeholder="如：default_clickhouse、clickhouse_ods、mysql_crm、oracle_erp">
+            <input v-model="form.name" class="w-full border border-gray-200 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-primary/50" placeholder="如：default_clickhouse、clickhouse_ods、mysql_crm、oracle_erp、sqlserver_erp">
             <p class="mt-1.5 text-xs leading-5 text-amber-700 bg-amber-50 border border-amber-100 rounded-lg px-3 py-2">
-              建议使用外部 SQL 执行兼容标识命名，例如 default_clickhouse、clickhouse_xxx、mysql_xxx、oracle_xxx，ChatBI 本地执行会按数据源名称匹配历史配置。
+              建议使用外部 SQL 执行兼容标识命名，例如 default_clickhouse、clickhouse_xxx、mysql_xxx、oracle_xxx、sqlserver_xxx，ChatBI 本地执行会按数据源名称匹配历史配置。
             </p>
           </div>
 

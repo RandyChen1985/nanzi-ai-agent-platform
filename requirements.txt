@@ -24,6 +24,8 @@ agentscope[service,storage,workspace]
 openai>=1.0.0
 atlassian-python-api>=3.41.11
 oracledb>=2.0.0
+aioodbc>=0.5.0
+pyodbc>=5.0.0
 APScheduler>=3.10.1
 mcp>=1.0.0
 pandas>=2.0.0
