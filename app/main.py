@@ -345,6 +345,10 @@ uploads_dir = os.path.join(base_dir, "data", "uploads")
 os.makedirs(uploads_dir, exist_ok=True)
 app.mount("/static/uploads", StaticFiles(directory=uploads_dir), name="uploads")
 
+branding_dir = os.path.join(base_dir, "data", "branding")
+os.makedirs(branding_dir, exist_ok=True)
+app.mount("/branding", StaticFiles(directory=branding_dir), name="branding")
+
 
 @app.get("/{full_path:path}")
 async def serve_spa(full_path: str):

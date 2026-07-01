@@ -313,3 +313,14 @@ async def get_public_config(
             "yovole_sso_enabled": sso_enabled
         }
     }
+
+
+@router.get("/branding", summary="获取公开品牌配置")
+async def get_public_branding():
+    """登录页与前端展示用，无需鉴权。"""
+    from app.services.branding_settings_service import BrandingSettingsService
+
+    return {
+        "status": "success",
+        "data": await BrandingSettingsService.get_public_branding(),
+    }

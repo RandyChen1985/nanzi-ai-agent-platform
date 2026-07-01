@@ -1,7 +1,11 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, computed } from 'vue'
 import axios from '../utils/axios'
 import Toast from '../components/Toast.vue'
+import { useBranding } from '../composables/useBranding'
+import { renderMarkdown } from '../utils/markdown'
+
+const { branding, loadBranding } = useBranding()
 
 const userInfo = ref<any>({})
 const userApiKey = ref('')
@@ -99,6 +103,9 @@ import Modal from '../components/Modal.vue'
 import ConfirmModal from '../components/ConfirmModal.vue'
 
 const activeTab = ref<'info' | 'permissions' | 'memory'>('info')
+const permissionsSubTab = ref<'list' | 'about'>('list')
+const showAboutTab = computed(() => !!branding.value.contact_markdown?.trim())
+const contactHtml = computed(() => renderMarkdown(branding.value.contact_markdown || ''))
 const loadingPermissions = ref(false)
 const permissions = ref<{
     roles?: string[],
@@ -506,6 +513,7 @@ watch(activeTab, (val) => {
 
 onMounted(() => {
     fetchUserInfo()
+    loadBranding()
 })
 </script>
 
@@ -681,6 +689,30 @@ onMounted(() => {
             </div>
             
             <div v-else class="space-y-4 sm:space-y-6">
+                <div v-if="showAboutTab" class="border-b border-gray-200">
+                    <nav class="-mb-px flex space-x-6">
+                        <button
+                            @click="permissionsSubTab = 'list'"
+                            class="whitespace-nowrap py-3 px-1 border-b-2 font-medium text-xs sm:text-sm transition-colors"
+                            :class="permissionsSubTab === 'list' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'"
+                        >
+                            权限清单
+                        </button>
+                        <button
+                            @click="permissionsSubTab = 'about'"
+                            class="whitespace-nowrap py-3 px-1 border-b-2 font-medium text-xs sm:text-sm transition-colors"
+                            :class="permissionsSubTab === 'about' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'"
+                        >
+                            关于
+                        </button>
+                    </nav>
+                </div>
+
+                <div v-if="permissionsSubTab === 'about' && showAboutTab" class="bg-gray-50 border border-gray-100 rounded-xl p-4 sm:p-6">
+                    <div class="markdown-body prose prose-sm max-w-none text-gray-700 break-words" v-html="contactHtml"></div>
+                </div>
+
+                <template v-else>
                 <!-- Helper Text -->
                 <div class="bg-gray-50 p-3 sm:p-4 rounded-lg text-xs sm:text-sm text-gray-600 flex items-start gap-3 border border-gray-100">
                     <svg class="w-5 h-5 text-gray-400 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -799,6 +831,7 @@ onMounted(() => {
                         </div>
                     </div>
                 </div>
+                </template>
             </div>
         </div>
 

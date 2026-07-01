@@ -1,9 +1,11 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, watch } from 'vue'
+import { ref, onMounted, onUnmounted, watch, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import axios from 'axios'
+import { useBranding } from '../composables/useBranding'
 
 const router = useRouter()
+const { branding, loadBranding } = useBranding()
 const activeTab = ref<'sso' | 'password' | 'apikey'>('password')
 const ssoEnabled = ref(false)
 const apiKey = ref('')
@@ -11,6 +13,22 @@ const username = ref('')
 const password = ref('')
 const error = ref('')
 const loading = ref(false)
+
+const productName = computed(() => branding.value.product_name)
+const loginSubtitle = computed(() => branding.value.login_subtitle)
+const iconUrl = computed(() => branding.value.icon_url)
+const showCopyright = computed(() => branding.value.enabled && !!(branding.value.copyright_text || '').trim())
+const copyrightText = computed(() => (branding.value.copyright_text || '').trim())
+const showSsoFromBranding = computed(() => !branding.value.hide_login_sso)
+
+const displaySlides = computed(() => {
+    const list = slides.map((slide) => ({ ...slide }))
+    if (list[0]) {
+        list[0].title = productName.value
+        list[0].subtitle = loginSubtitle.value
+    }
+    return list
+})
 
 // Carousel Logic
 const currentSlide = ref(0)
@@ -104,10 +122,20 @@ const fetchPublicConfig = async () => {
     }
 }
 
-onMounted(() => { 
+onMounted(async () => { 
     window.addEventListener('mousemove', handleMouseMove)
     startSlide()
+    await loadBranding()
+    if (branding.value.hide_login_sso && activeTab.value === 'sso') {
+        activeTab.value = 'password'
+    }
     fetchPublicConfig()
+})
+
+watch(() => branding.value.hide_login_sso, (hide) => {
+    if (hide && activeTab.value === 'sso') {
+        activeTab.value = 'password'
+    }
 })
 onUnmounted(() => { 
     window.removeEventListener('mousemove', handleMouseMove)
@@ -189,7 +217,7 @@ const handleLogin = async () => {
         <!-- Carousel Container -->
         <div class="relative w-full h-full flex items-center justify-center">
             <div 
-                v-for="(slide, index) in slides" 
+                v-for="(slide, index) in displaySlides" 
                 :key="index"
                 class="absolute inset-0 flex flex-col items-center justify-center text-center px-20 transition-all duration-1000 ease-in-out"
                 :class="[
@@ -250,10 +278,10 @@ const handleLogin = async () => {
         <!-- Mobile Header (Visible only on small screens) -->
         <div class="lg:hidden pt-8 px-10 pb-0 animate-fade-in">
             <div class="flex items-center gap-3 mb-2">
-                <img src="/logo.png" class="w-8 h-8 rounded-lg drop-shadow-md" alt="Logo" />
-                <h1 class="text-xl font-bold text-slate-900 tracking-tight">云枢 · 智能体平台</h1>
+                <img :src="iconUrl" class="w-8 h-8 rounded-lg drop-shadow-md object-cover" alt="Logo" />
+                <h1 class="text-xl font-bold text-slate-900 tracking-tight">{{ productName }}</h1>
             </div>
-            <p class="text-xs text-slate-500 tracking-wide uppercase">Yunshu Intelligent Agent Platform</p>
+            <p class="text-xs text-slate-500 tracking-wide uppercase">{{ loginSubtitle }}</p>
         </div>
 
         <div class="flex-1 flex flex-col justify-center px-10">
@@ -265,7 +293,7 @@ const handleLogin = async () => {
             <!-- Tabs -->
             <div class="flex space-x-8 border-b border-slate-100 mb-8">
                 <button 
-                    v-for="tab in [{id:'sso', name:'SSO 登录'}, {id:'apikey', name:'API Key'}, {id:'password', name:'本地账号'}].filter(t => t.id !== 'sso' || ssoEnabled)" 
+                    v-for="tab in [{id:'sso', name:'SSO 登录'}, {id:'password', name:'本地账号'}, {id:'apikey', name:'API Key'}].filter(t => t.id !== 'sso' || (ssoEnabled && showSsoFromBranding))" 
                     :key="tab.id"
                     @click="activeTab = tab.id as any"
                     class="pb-3 text-sm font-semibold transition-all relative"
@@ -340,7 +368,13 @@ const handleLogin = async () => {
             </div>
         </div>
         
-        <div class="p-6 text-center text-[10px] text-slate-400 font-mono opacity-40">
+        <div v-if="showCopyright" class="p-6 text-center">
+            <p class="login-copyright text-[10px] text-slate-400/80 font-extralight tracking-[0.22em] leading-[1.8] whitespace-pre-line">
+                {{ copyrightText }}
+            </p>
+            <div class="mt-3 mx-auto h-px w-14 bg-gradient-to-r from-transparent via-slate-300/40 to-transparent" aria-hidden="true" />
+        </div>
+        <div v-else class="p-6 text-center text-[10px] text-slate-400 font-mono opacity-40">
             © 2026 Yunshu Network // CLOUD_PIVOT_AGENT
         </div>
     </div>

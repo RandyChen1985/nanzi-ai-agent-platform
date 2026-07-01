@@ -1,11 +1,14 @@
 <script setup lang="ts">
 import { useRouter, useRoute } from "vue-router";
-import { computed, ref, onMounted } from "vue";
+import { computed, ref, onMounted, onUnmounted, watch } from "vue";
 import axios from "../utils/axios";
 import Toast from "../components/Toast.vue";
+import { useBranding } from "../composables/useBranding";
 
 const router = useRouter();
 const route = useRoute();
+const { branding, loadBranding, applyDocumentTitle, resolveRepoUrl } = useBranding();
+const repoUrl = computed(() => resolveRepoUrl());
 const isCollapsed = ref(false);
 const showMobileSidebar = ref(false);
 const windowWidth = ref(window.innerWidth);
@@ -84,6 +87,7 @@ const fetchUserInfo = async () => {
 };
 
 onMounted(() => {
+  loadBranding();
   fetchUserInfo();
   fetchOnlineUsers();
 });
@@ -182,8 +186,6 @@ onMounted(() => {
   document.addEventListener("keydown", handleEscape);
 });
 
-// Cleanup on unmount
-import { onUnmounted, watch } from "vue";
 onUnmounted(() => {
   document.removeEventListener("keydown", handleEscape);
 });
@@ -199,6 +201,14 @@ const breadcrumbs = computed(() => {
   const matched = route.matched;
   return matched.map((m) => m.meta?.title || m.name).filter(Boolean);
 });
+
+watch(
+  () => [route.path, breadcrumbs.value[breadcrumbs.value.length - 1], branding.value.product_name],
+  () => {
+    applyDocumentTitle(breadcrumbs.value[breadcrumbs.value.length - 1] || undefined);
+  },
+  { immediate: true },
+);
 
 const toggleSidebar = () => {
   if (isMobile.value) {
@@ -367,24 +377,33 @@ const filteredMenuGroups = computed(() => {
         :class="isCollapsed ? 'justify-center px-0' : 'px-4'"
       >
         <img
-          src="/logo.png"
-          class="w-8 h-8 flex-shrink-0 rounded-lg"
+          :src="branding.icon_url"
+          class="w-8 h-8 flex-shrink-0 rounded-lg object-cover"
           alt="Logo"
         />
         <transition name="fade">
           <div v-if="!isCollapsed" class="ml-2.5 flex flex-col justify-center -translate-y-0.5">
-            <span class="text-[15px] font-bold tracking-wide leading-tight">云枢 · 智能体平台</span>
-            <a 
-              href="https://github.com/RandyChen1985/yunshu-ai-agent-platform" 
-              target="_blank" 
-              class="group flex items-center text-[10px] text-gray-500 font-medium tracking-wider leading-none mt-0.5 hover:text-white transition-colors"
-              title="View on GitHub"
+            <span class="text-[15px] font-bold tracking-wide leading-tight">{{ branding.product_name }}</span>
+            <component
+              :is="repoUrl ? 'a' : 'span'"
+              :href="repoUrl || undefined"
+              :target="repoUrl ? '_blank' : undefined"
+              :rel="repoUrl ? 'noopener noreferrer' : undefined"
+              class="group flex items-center text-[10px] text-gray-500 font-medium tracking-wider leading-none mt-0.5 transition-colors"
+              :class="repoUrl ? 'hover:text-white' : ''"
+              :title="repoUrl ? 'View on GitHub' : undefined"
             >
-              <svg class="w-3 h-3 mr-1 opacity-80 group-hover:opacity-100 transition-opacity" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+              <svg
+                v-if="repoUrl"
+                class="w-3 h-3 mr-1 opacity-80 group-hover:opacity-100 transition-opacity"
+                fill="currentColor"
+                viewBox="0 0 24 24"
+                aria-hidden="true"
+              >
                 <path fill-rule="evenodd" d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.531 1.032 1.531 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z" clip-rule="evenodd" />
               </svg>
               <span>v{{ appVersion }}</span>
-            </a>
+            </component>
           </div>
         </transition>
       </div>
@@ -592,7 +611,7 @@ const filteredMenuGroups = computed(() => {
                 </svg>
              </router-link>
              <h1 class="text-sm font-bold text-gray-900 truncate">
-                {{ breadcrumbs[breadcrumbs.length - 1] || '云枢智能体' }}
+                {{ breadcrumbs[breadcrumbs.length - 1] || branding.product_name }}
              </h1>
           </div>
         </div>

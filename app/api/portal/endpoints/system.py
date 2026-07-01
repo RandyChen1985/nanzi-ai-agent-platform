@@ -1,16 +1,29 @@
-from fastapi import APIRouter, Depends, HTTPException, Body
+from fastapi import APIRouter, Depends, HTTPException, Body, File, UploadFile
 from typing import List, Dict, Any, Optional
 from pydantic import BaseModel
 from app.core.dependencies import require_admin, require_permission
 from app.core.config import settings
 from app.core import redis
 from app.services.config_service import ConfigService
+from app.schemas.branding import BrandingSettingsUpdate
+from app.services.branding_settings_service import BrandingSettingsService
 from app.schemas.system_config import ConfigHistoryItem
 import logging
 import asyncio
 import traceback
+import os
+import time
 
 router = APIRouter()
+
+BRANDING_UPLOAD_DIR = "data/branding"
+ALLOWED_ICON_TYPES = {
+    "image/png": ".png",
+    "image/jpeg": ".jpg",
+    "image/webp": ".webp",
+    "image/svg+xml": ".svg",
+}
+MAX_ICON_BYTES = 512 * 1024
 
 @router.get("/configs/{key}/history", response_model=List[ConfigHistoryItem])
 async def get_config_history(
@@ -634,6 +647,59 @@ async def update_system_configs(
     except Exception as e:
         logging.error(f"Failed to update configs: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/branding")
+async def get_branding_settings(
+    user: Dict = Depends(require_permission("menu", "menu:system:config"))
+):
+    """获取品牌个性化配置（管理端）。"""
+    return await BrandingSettingsService.get_raw_settings()
+
+
+@router.put("/branding")
+async def update_branding_settings(
+    body: BrandingSettingsUpdate,
+    user: Dict = Depends(require_permission("element", "element:system:config_save")),
+):
+    """保存品牌个性化配置。"""
+    await BrandingSettingsService.update_settings(
+        enabled=body.enabled,
+        product_name=body.product_name,
+        login_subtitle=body.login_subtitle,
+        icon_url=body.icon_url,
+        hide_login_sso=body.hide_login_sso,
+        hide_version_link=body.hide_version_link,
+        contact_markdown=body.contact_markdown,
+        copyright_text=body.copyright_text,
+        changed_by=user.get("user_name", "admin"),
+    )
+    return await BrandingSettingsService.get_raw_settings()
+
+
+@router.post("/branding/icon")
+async def upload_branding_icon(
+    file: UploadFile = File(...),
+    user: Dict = Depends(require_permission("element", "element:system:config_save")),
+):
+    """上传品牌 Logo / Favicon（PNG/JPEG/WebP/SVG，最大 512KB）。"""
+    content_type = (file.content_type or "").lower()
+    ext = ALLOWED_ICON_TYPES.get(content_type)
+    if not ext:
+        raise HTTPException(status_code=400, detail="仅支持 PNG、JPEG、WebP、SVG 图片")
+
+    data = await file.read()
+    if len(data) > MAX_ICON_BYTES:
+        raise HTTPException(status_code=400, detail="图片大小不能超过 512KB")
+
+    os.makedirs(BRANDING_UPLOAD_DIR, exist_ok=True)
+    filename = f"icon{ext}"
+    save_path = os.path.join(BRANDING_UPLOAD_DIR, filename)
+    with open(save_path, "wb") as f:
+        f.write(data)
+
+    icon_url = f"/branding/{filename}?t={int(time.time())}"
+    return {"icon_url": icon_url}
 
 
 # --- Log & Partition Management Endpoints (Admin Only) ---
