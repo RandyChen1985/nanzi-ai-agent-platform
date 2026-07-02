@@ -193,9 +193,9 @@ async def _system_third_party_user_sync_job():
         async with AsyncSessionLocal() as session:
             result = await UserSyncService.run_sync(session)
             logger.info(
-                "✅ Third-party user sync finished. created=%s skipped=%s failed=%s",
+                "✅ Third-party user sync finished. created=%s updated=%s failed=%s",
                 result["created"],
-                result["skipped"],
+                result["updated"],
                 result["failed"],
             )
     except Exception as e:

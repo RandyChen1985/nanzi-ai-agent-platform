@@ -392,7 +392,8 @@ XML 示例：
         "8. SQL 的 FROM/JOIN 只能使用 get_dataset_schema 返回的 table_name（物理表名）；"
         "schema 中的 table_desc、列 term、metrics_scope、数据集中文名等均为业务说明，严禁直接当作表名；"
         "指标块（metrics）仅提供计算口径参考，不含表结构，禁止把指标块或 metrics_scope 当作可查询的表。\n"
-        "9. 分页语法：禁止 ORDER BY ... AND ROWNUM/LIMIT；Oracle TopN 用子查询包排序后外层 ROWNUM 或 FETCH FIRST；MySQL/ClickHouse 用 LIMIT。"
+        "9. 分页语法：禁止 ORDER BY ... AND ROWNUM/LIMIT；Oracle TopN 用子查询包排序后外层 ROWNUM 或 FETCH FIRST；"
+        "MySQL/ClickHouse 用 LIMIT；SQL Server 用 TOP N 或 ORDER BY ... OFFSET ... FETCH NEXT。"
     )
 
     # 分页/TopN 常见语法反例（Oracle ROWNUM 与 ORDER BY 混用是高频错误）
@@ -402,8 +403,11 @@ XML 示例：
         "（语法错误：ORDER BY 后不能接 AND；ROWNUM 不是排序子句的一部分）\n"
         "❌ WHERE ROWNUM <= 20 ... ORDER BY create_date DESC"
         "（Oracle 会先截断再排序，TopN 结果错误）\n"
+        "❌ SQL Server 中使用 LIMIT，或在子查询/派生表/CTE 中裸写 ORDER BY"
+        "（SQL Server 要求子查询内 ORDER BY 必须配合 TOP、OFFSET 或 FOR XML）\n"
         "✅ Oracle：内层 ORDER BY 排序，外层 WHERE ROWNUM <= N；或 FETCH FIRST N ROWS ONLY\n"
-        "✅ MySQL/ClickHouse：ORDER BY ... LIMIT N"
+        "✅ MySQL/ClickHouse：ORDER BY ... LIMIT N\n"
+        "✅ SQL Server：SELECT TOP N ... ORDER BY ...；分页用 ORDER BY ... OFFSET M ROWS FETCH NEXT N ROWS ONLY"
     )
 
     # 追问复用合成失败兜底

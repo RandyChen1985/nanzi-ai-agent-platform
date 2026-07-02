@@ -12,6 +12,8 @@ from app.services.sql_query_execution_service import (
     to_sqlglot_dialect,
 )
 
+pytestmark = pytest.mark.no_infrastructure
+
 
 def test_normalize_sqlserver_type_aliases():
     assert normalize_sqlserver_type("sqlserver")

@@ -144,7 +144,9 @@ async def call_external_sql_api(
             return f"[TOOL_ERROR] 安全策略违规：{str(e)}\n\n[Executed SQL]:\n{sql}"
 
         # 强制行数限制（最大不超过 1000 行），根据数据库类型转换方言
+        from app.services.ai.sql_dialect_limit import apply_dialect_row_limit
         from app.services.data_adapter.oracle import OracleAdapter
+        from app.services.data_adapter.sqlserver import SQLServerAdapter
 
         if isinstance(adapter, OracleAdapter):
             clean_sql = sql.strip().rstrip(";")
@@ -167,6 +169,14 @@ async def call_external_sql_api(
                     sql_limited = clean_sql
             else:
                 sql_limited = f"SELECT * FROM ({clean_sql}) WHERE ROWNUM <= {MAX_LOCAL_SQL_ROWS}"
+        elif isinstance(adapter, SQLServerAdapter):
+            clean_sql = sql.strip().rstrip(";")
+            sql_limited = apply_dialect_row_limit(
+                clean_sql,
+                dialect="tsql",
+                limit=MAX_LOCAL_SQL_ROWS,
+                max_limit=MAX_LOCAL_SQL_ROWS,
+            )
         else:
             # MySQL / ClickHouse 使用 LIMIT
             clean_sql = sql.strip().rstrip(";")

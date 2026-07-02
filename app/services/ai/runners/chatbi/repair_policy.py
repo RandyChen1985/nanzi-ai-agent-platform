@@ -241,7 +241,24 @@ def build_repair_message(
                 repair += _where_probe_repair_hint(state, error_text=error_text)
             if is_invalid_number_sql_error(error_text):
                 repair += f"\n\n{DataQueryPrompts.INVALID_NUMBER_SQL_ERROR_REPAIR_GUIDE}"
-        if "invalid expression" in err_lower or "unexpected token" in err_lower:
+        is_sqlserver_order_by_error = (
+            "sql server" in err_lower
+            and "order by" in err_lower
+            and (
+                "top" in err_lower
+                or "offset" in err_lower
+                or "for xml" in err_lower
+                or "derived" in err_lower
+                or "subquery" in err_lower
+                or "子查询" in error_text
+                or "派生表" in error_text
+            )
+        )
+        if (
+            "invalid expression" in err_lower
+            or "unexpected token" in err_lower
+            or is_sqlserver_order_by_error
+        ):
             repair += f"\n\n{DataQueryPrompts.SQL_PAGINATION_SYNTAX_GUIDE}"
         return repair
     if state.empty_sql_result:

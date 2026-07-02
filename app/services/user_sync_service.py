@@ -1,13 +1,17 @@
 import json
 import logging
 import re
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.user import User
-from app.schemas.user_sync import ThirdPartyUserSyncConfig, ThirdPartyUserSyncFieldMap
+from app.schemas.user_sync import (
+    ThirdPartyUserSyncConfig,
+    ThirdPartyUserSyncExtraDataMapping,
+    ThirdPartyUserSyncFieldMap,
+)
 from app.services.auth_service import AuthService
 from app.services.config_service import ConfigService
 from app.services.data_adapter.factory import get_adapter
@@ -25,13 +29,24 @@ class UserSyncService:
         return ThirdPartyUserSyncConfig()
 
     @staticmethod
+    def _normalize_config_data(data: Dict[str, Any]) -> Dict[str, Any]:
+        payload = dict(data or {})
+        field_map = dict(payload.get("field_map") or {})
+        field_map.pop("id", None)
+        payload["field_map"] = field_map
+        extra_mappings = payload.get("extra_data_mappings")
+        if extra_mappings is None:
+            payload["extra_data_mappings"] = []
+        return payload
+
+    @staticmethod
     async def get_config() -> ThirdPartyUserSyncConfig:
         raw = await ConfigService.get(CONFIG_KEY)
         if not raw:
             return UserSyncService._default_config()
         try:
             data = json.loads(raw)
-            return ThirdPartyUserSyncConfig(**data)
+            return ThirdPartyUserSyncConfig(**UserSyncService._normalize_config_data(data))
         except Exception as exc:
             logger.warning("Invalid third_party_user_sync_config: %s", exc)
             return UserSyncService._default_config()
@@ -79,19 +94,57 @@ class UserSyncService:
         return f"`{safe.replace('`', '``')}`"
 
     @staticmethod
+    def _extra_data_alias(json_key: str) -> str:
+        safe = re.sub(r"[^A-Za-z0-9_]", "_", str(json_key or "").strip())
+        return f"__extra__{safe or 'field'}"
+
+    @staticmethod
+    def _serialize_extra_value(value: Any) -> Any:
+        if isinstance(value, (dict, list)):
+            return value
+        if hasattr(value, "isoformat"):
+            try:
+                return value.isoformat()
+            except Exception:
+                pass
+        return value
+
+    @staticmethod
+    def _build_extra_data_json(
+        row: Dict[str, Any],
+        mappings: List[ThirdPartyUserSyncExtraDataMapping],
+    ) -> Optional[str]:
+        payload: Dict[str, Any] = {}
+        for item in mappings:
+            json_key = str(item.json_key or "").strip()
+            source_column = str(item.source_column or "").strip()
+            if not json_key or not source_column:
+                continue
+            alias = UserSyncService._extra_data_alias(json_key)
+            if alias not in row:
+                continue
+            raw = row.get(alias)
+            if raw is None:
+                continue
+            payload[json_key] = UserSyncService._serialize_extra_value(raw)
+        if not payload:
+            return None
+        return json.dumps(payload, ensure_ascii=False)
+
+    @staticmethod
     def _build_select_sql(
         table_name: str,
         field_map: ThirdPartyUserSyncFieldMap,
         db_type: str,
+        extra_data_mappings: Optional[List[ThirdPartyUserSyncExtraDataMapping]] = None,
     ) -> str:
         if not table_name:
             raise ValueError("未配置目标表")
-        if not field_map.id or not field_map.user_name:
-            raise ValueError("用户 ID 和用户名字段映射为必填项")
+        if not field_map.user_name:
+            raise ValueError("用户名字段映射为必填项")
 
         selects: List[str] = []
         mapping = {
-            "id": field_map.id,
             "user_name": field_map.user_name,
             "real_name": field_map.real_name,
             "remark": field_map.remark,
@@ -102,8 +155,27 @@ class UserSyncService:
                     f"{UserSyncService._quote_ident(source_col, db_type)} AS {alias}"
                 )
 
+        for item in extra_data_mappings or []:
+            json_key = str(item.json_key or "").strip()
+            source_column = str(item.source_column or "").strip()
+            if not json_key or not source_column:
+                continue
+            alias = UserSyncService._extra_data_alias(json_key)
+            selects.append(
+                f"{UserSyncService._quote_ident(source_column, db_type)} AS {alias}"
+            )
+
         table_sql = UserSyncService._quote_ident(table_name, db_type)
         return f"SELECT {', '.join(selects)} FROM {table_sql}"
+
+    @staticmethod
+    def _format_sync_remark(remark: Optional[str]) -> str:
+        text = (remark or "").strip()
+        if text and not text.startswith(SYNC_REMARK_PREFIX):
+            return f"{SYNC_REMARK_PREFIX}: {text}"
+        if text:
+            return text
+        return SYNC_REMARK_PREFIX
 
     @staticmethod
     async def _get_adapter_for_config(
@@ -147,23 +219,21 @@ class UserSyncService:
         return items
 
     @staticmethod
-    def _normalize_external_user(row: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        raw_id = row.get("id")
+    def _normalize_external_user(
+        row: Dict[str, Any],
+        extra_data_mappings: Optional[List[ThirdPartyUserSyncExtraDataMapping]] = None,
+    ) -> Optional[Dict[str, Any]]:
         user_name = row.get("user_name")
-        if raw_id is None or user_name is None:
-            return None
-        try:
-            user_id = int(raw_id)
-        except (TypeError, ValueError):
+        if user_name is None:
             return None
         username = str(user_name).strip()
         if not username:
             return None
         return {
-            "id": user_id,
             "user_name": username,
             "real_name": (str(row.get("real_name")).strip() if row.get("real_name") is not None else None),
             "remark": (str(row.get("remark")).strip() if row.get("remark") is not None else None),
+            "extra_data": UserSyncService._build_extra_data_json(row, extra_data_mappings or []),
         }
 
     @staticmethod
@@ -179,12 +249,18 @@ class UserSyncService:
             db, config.connection_config_id
         )
         sql = UserSyncService._build_select_sql(
-            config.table_name, config.field_map, db_config.db_type
+            config.table_name,
+            config.field_map,
+            db_config.db_type,
+            config.extra_data_mappings,
         )
         result = await adapter.preview(sql, limit=limit)
         users: List[Dict[str, Any]] = []
         for row in UserSyncService._rows_to_dicts(result):
-            normalized = UserSyncService._normalize_external_user(row)
+            normalized = UserSyncService._normalize_external_user(
+                row,
+                config.extra_data_mappings,
+            )
             if normalized:
                 users.append(normalized)
         return users
@@ -195,84 +271,91 @@ class UserSyncService:
         config: Optional[ThirdPartyUserSyncConfig] = None,
     ) -> List[Dict[str, Any]]:
         cfg = config or await UserSyncService.get_config()
-        if not cfg.enabled and config is None:
-            pass
         external_users = await UserSyncService.fetch_external_users(db, cfg)
 
-        ids = [u["id"] for u in external_users]
-        existing_ids: set[int] = set()
-        if ids:
-            stmt = select(User.id).where(User.id.in_(ids))
-            existing_ids = set((await db.execute(stmt)).scalars().all())
+        usernames = [u["user_name"] for u in external_users]
+        existing_names: set[str] = set()
+        if usernames:
+            stmt = select(User.user_name).where(User.user_name.in_(usernames))
+            existing_names = set((await db.execute(stmt)).scalars().all())
 
         items = []
         for user in external_users:
+            exists = user["user_name"] in existing_names
             items.append(
                 {
                     **user,
-                    "is_synced": user["id"] in existing_ids,
+                    "is_existing": exists,
+                    "is_synced": exists,
                 }
             )
         return items
 
     @staticmethod
+    async def _apply_external_user_to_local(
+        db: AsyncSession,
+        ext_user: Dict[str, Any],
+        existing: Optional[User],
+    ) -> str:
+        remark = UserSyncService._format_sync_remark(ext_user.get("remark"))
+        if existing:
+            if ext_user.get("real_name"):
+                existing.real_name = ext_user["real_name"]
+            existing.remark = remark
+            if ext_user.get("extra_data") is not None:
+                existing.extra_data = ext_user["extra_data"]
+            await db.commit()
+            return "updated"
+
+        await AuthService.generate_api_key(
+            user_name=ext_user["user_name"],
+            real_name=ext_user.get("real_name"),
+            role="user",
+            remark=remark,
+            extra_data=ext_user.get("extra_data"),
+            db=db,
+        )
+        return "created"
+
+    @staticmethod
     async def run_sync(
         db: AsyncSession,
-        user_ids: Optional[List[int]] = None,
+        user_names: Optional[List[str]] = None,
         config: Optional[ThirdPartyUserSyncConfig] = None,
     ) -> Dict[str, int]:
         cfg = config or await UserSyncService.get_config()
         if not cfg.connection_config_id or not cfg.table_name:
             raise ValueError("同步配置不完整，请先保存数据源与字段映射")
-        if not cfg.field_map.id or not cfg.field_map.user_name:
-            raise ValueError("用户 ID 和用户名字段映射为必填项")
+        if not cfg.field_map.user_name:
+            raise ValueError("用户名字段映射为必填项")
 
         external_users = await UserSyncService.fetch_external_users(db, cfg)
-        if user_ids:
-            selected = set(user_ids)
-            external_users = [u for u in external_users if u["id"] in selected]
+        if user_names:
+            selected = {name.strip() for name in user_names if str(name).strip()}
+            external_users = [u for u in external_users if u["user_name"] in selected]
 
-        skipped = 0
         created = 0
+        updated = 0
         failed = 0
 
         for ext_user in external_users:
-            user_id = ext_user["id"]
-            existing = await db.get(User, user_id)
-            if existing:
-                skipped += 1
-                continue
-
-            username_check = await db.execute(
-                select(User.id).where(User.user_name == ext_user["user_name"])
-            )
-            if username_check.scalar_one_or_none() is not None:
-                logger.warning(
-                    "Skip third-party user id=%s: username %s already exists",
-                    user_id,
-                    ext_user["user_name"],
-                )
-                skipped += 1
-                continue
-
-            remark = ext_user.get("remark") or ""
-            if remark and not remark.startswith(SYNC_REMARK_PREFIX):
-                remark = f"{SYNC_REMARK_PREFIX}: {remark}"
-            elif not remark:
-                remark = SYNC_REMARK_PREFIX
-
+            username = ext_user["user_name"]
             try:
-                await AuthService.generate_api_key(
-                    user_name=ext_user["user_name"],
-                    real_name=ext_user.get("real_name"),
-                    role="user",
-                    remark=remark,
-                    user_id=user_id,
-                    db=db,
+                existing = (
+                    await db.execute(select(User).where(User.user_name == username))
+                ).scalar_one_or_none()
+                action = await UserSyncService._apply_external_user_to_local(
+                    db,
+                    ext_user,
+                    existing,
                 )
-                created += 1
+                if action == "created":
+                    created += 1
+                else:
+                    updated += 1
             except Exception as exc:
-                logger.error("Failed to sync third-party user %s: %s", user_id, exc)
+                await db.rollback()
+                logger.error("Failed to sync third-party user %s: %s", username, exc)
                 failed += 1
 
-        return {"created": created, "skipped": skipped, "failed": failed}
+        return {"created": created, "updated": updated, "failed": failed}

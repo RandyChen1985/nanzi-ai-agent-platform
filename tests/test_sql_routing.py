@@ -2,14 +2,17 @@ import pytest
 import json
 from unittest.mock import MagicMock, AsyncMock, patch
 from app.services.ai.tools.data_api import call_external_sql_api
+from app.services.data_adapter.sqlserver import SQLServerAdapter
+
+pytestmark = pytest.mark.no_infrastructure
 
 @pytest.mark.asyncio
 async def test_sql_routing_forced_env_local():
     """验证当环境变量 SQL_EXECUTION_MODE=local 时，强制分流到本地模式，不发起 HTTP 请求"""
     sql = "SELECT id FROM users"
     
-    mock_adapter = AsyncMock()
-    mock_adapter.execute_sql.return_value = {"columns": [{"name": "id", "type": "int"}], "items": [[1]]}
+    mock_adapter = MagicMock()
+    mock_adapter.execute_sql = AsyncMock(return_value={"columns": [{"name": "id", "type": "int"}], "items": [[1]]})
     
     with patch.dict("os.environ", {"SQL_EXECUTION_MODE": "local"}), \
          patch("app.services.data_adapter.factory.get_adapter", return_value=mock_adapter) as mock_get_adapter, \
@@ -28,6 +31,36 @@ async def test_sql_routing_forced_env_local():
         
         # 验证在此模式下根本没有获取 HTTP 客户端或发起请求
         mock_get_http_client.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.no_infrastructure
+async def test_sql_routing_local_sqlserver_uses_top_limit_without_subquery_wrapper():
+    """SQL Server 本地执行不能套 MySQL LIMIT 子查询，否则 ORDER BY 会触发 1033。"""
+    sql = (
+        "SELECT bm AS department, SUM(amount) AS total_amount "
+        "FROM t_cw_clg "
+        "WHERE status = N'已报销' "
+        "GROUP BY bm "
+        "ORDER BY total_amount DESC"
+    )
+    adapter = SQLServerAdapter(source_id=9)
+    adapter.execute_sql = AsyncMock(return_value={"columns": [], "items": []})
+
+    with patch.dict("os.environ", {"SQL_EXECUTION_MODE": "local"}), \
+         patch("app.services.config_service.ConfigService.get", new_callable=AsyncMock) as mock_config, \
+         patch("app.services.data_adapter.factory.get_adapter", return_value=adapter), \
+         patch("app.core.redis.get_redis", return_value=None):
+        mock_config.side_effect = lambda key, **kw: "60.0" if key == "data_api_timeout_seconds" else kw.get("default")
+        res = await call_external_sql_api(sql, data_source="sqlserver_erp")
+
+    assert json.loads(res)["items"] == []
+    executed_sql = adapter.execute_sql.await_args.args[0]
+    assert "TOP 1000" in executed_sql.upper()
+    assert "N'已报销'" in executed_sql
+    assert "ORDER BY TOTAL_AMOUNT DESC" in executed_sql.upper()
+    assert " LIMIT " not in f" {executed_sql.upper()} "
+    assert "FROM (" not in executed_sql.upper()
 
 
 @pytest.mark.asyncio
@@ -64,8 +97,8 @@ async def test_sql_routing_fallback_to_db_local():
     """验证当环境变量为空或 auto 时，会读取数据库配置；若数据库为 local，则执行本地模式"""
     sql = "SELECT id FROM users"
     
-    mock_adapter = AsyncMock()
-    mock_adapter.execute_sql.return_value = {"columns": [{"name": "id", "type": "int"}], "items": [[3]]}
+    mock_adapter = MagicMock()
+    mock_adapter.execute_sql = AsyncMock(return_value={"columns": [{"name": "id", "type": "int"}], "items": [[3]]})
     
     # 模拟环境变量为 auto，数据库配置为 local
     with patch.dict("os.environ", {"SQL_EXECUTION_MODE": "auto"}), \
@@ -139,8 +172,8 @@ async def test_sql_routing_cache_key_includes_execution_mode():
         async def set(self, key, value, ex=None):
             cache_store[key] = value
 
-    local_adapter = AsyncMock()
-    local_adapter.execute_sql.return_value = {"columns": [], "items": [["local"]]}
+    local_adapter = MagicMock()
+    local_adapter.execute_sql = AsyncMock(return_value={"columns": [], "items": [["local"]]})
 
     remote_client = AsyncMock()
     remote_response = MagicMock()

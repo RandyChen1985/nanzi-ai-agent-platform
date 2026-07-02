@@ -6,6 +6,8 @@ from typing import Any, Dict, List, Optional
 
 from jinja2 import BaseLoader, Environment, Undefined
 
+from app.services.ai.sql_dialect_limit import apply_dialect_row_limit
+
 from .base import DataSourceAdapter, SQLSafetyError, standardize_items
 from .models import LogicalQuery, ResultSet
 
@@ -104,7 +106,13 @@ class SQLServerAdapter(DataSourceAdapter):
             except Exception as e:
                 logger.warning(f"Jinja2 模板渲染异常，回退使用原始 SQL: {e}")
                 sql = raw_sql
-            final_sql = f"SELECT TOP 0 * FROM ({sql}) AS t"
+            final_sql = apply_dialect_row_limit(
+                sql,
+                dialect="tsql",
+                limit=0,
+                max_limit=1000,
+                min_limit=0,
+            )
         elif table_name:
             final_sql = f"SELECT TOP 0 * FROM [{table_name}]"
         else:

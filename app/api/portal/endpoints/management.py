@@ -144,6 +144,7 @@ from app.schemas.user_sync import (
     ThirdPartyUserSyncConfig,
     ThirdPartyUserSyncConfigUpdate,
     ThirdPartyUserSyncRunRequest,
+    ThirdPartyUserSyncPreviewRequest,
 )
 from app.services.user_sync_service import UserSyncService
 
@@ -220,8 +221,23 @@ async def list_third_party_sync_columns(
         raise HTTPException(status_code=400, detail=str(e))
 
 
-@router.get("/third-party-sync/preview")
+@router.post("/third-party-sync/preview")
 async def preview_third_party_sync_users(
+    request: ThirdPartyUserSyncPreviewRequest,
+    admin: dict = Depends(require_permission("element", "element:user:edit")),
+    db: AsyncSession = Depends(get_db_session),
+):
+    try:
+        cfg = request.config or await UserSyncService.get_config()
+        items = await UserSyncService.preview_users(db, config=cfg)
+        return {"items": items}
+    except Exception as e:
+        logger.error(f"Preview third-party sync users failed: {e}")
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.get("/third-party-sync/preview")
+async def preview_third_party_sync_users_saved(
     admin: dict = Depends(require_permission("element", "element:user:edit")),
     db: AsyncSession = Depends(get_db_session),
 ):
@@ -240,9 +256,13 @@ async def run_third_party_sync(
     db: AsyncSession = Depends(get_db_session),
 ):
     try:
-        result = await UserSyncService.run_sync(db, user_ids=request.user_ids)
+        cfg = request.config or await UserSyncService.get_config()
+        result = await UserSyncService.run_sync(db, user_names=request.user_names, config=cfg)
         return {
-            "message": f"同步完成：新增 {result['created']} 人，跳过 {result['skipped']} 人，失败 {result['failed']} 人",
+            "message": (
+                f"同步完成：新增 {result['created']} 人，更新 {result['updated']} 人，"
+                f"失败 {result['failed']} 人"
+            ),
             **result,
         }
     except Exception as e:

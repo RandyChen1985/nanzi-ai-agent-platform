@@ -433,6 +433,8 @@ async def test_data_agent_runner_system_content_includes_data_guardrails(data_co
 
     assert DataQueryPrompts.GLOBAL_GUARDRAILS in system_content
     assert DataQueryPrompts.SQL_PAGINATION_SYNTAX_GUIDE in system_content
+    assert "SQL Server" in system_content
+    assert "TOP N" in system_content
     assert "[当前时间锚点]" in system_content
     assert "【相对时间 SQL 规则】" in system_content
     assert DataQueryPrompts.SQL_PLAN_ENFORCEMENT not in system_content

@@ -189,6 +189,7 @@ async def test_oracle_adapter():
 
 
 @pytest.mark.asyncio
+@pytest.mark.no_infrastructure
 async def test_sqlserver_adapter():
     adapter = SQLServerAdapter(source_id=4)
 
@@ -225,8 +226,17 @@ async def test_sqlserver_adapter():
         )
         assert len(cols_custom) == 2
         mock_cursor.execute.assert_called_with(
-            "SELECT TOP 0 * FROM (SELECT * FROM dbo_users WHERE id = 123) AS t"
+            "SELECT TOP 0 * FROM dbo_users WHERE id = 123"
         )
+
+        cols_ordered_custom = await adapter.get_columns(
+            custom_sql="SELECT id, name FROM dbo_users ORDER BY name",
+        )
+        assert len(cols_ordered_custom) == 2
+        ordered_probe_sql = mock_cursor.execute.call_args[0][0]
+        assert "TOP 0" in ordered_probe_sql.upper()
+        assert "ORDER BY NAME" in ordered_probe_sql.upper()
+        assert "FROM (" not in ordered_probe_sql.upper()
 
         mock_cursor.fetchall.return_value = [(1, "MSSQL")]
         res = await adapter.execute_sql("SELECT id, name FROM dbo_users")

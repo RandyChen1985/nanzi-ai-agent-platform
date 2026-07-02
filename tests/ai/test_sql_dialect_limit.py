@@ -44,6 +44,45 @@ def test_sqlserver_uses_top():
     assert "SELECT TOP 3" in sql.upper()
 
 
+def test_sqlserver_top_handles_order_by_without_wrapping_subquery():
+    sql = apply_dialect_row_limit(
+        "SELECT bm, SUM(amount) AS total_amount FROM t_cw_clg GROUP BY bm ORDER BY total_amount DESC",
+        dialect="tsql",
+        limit=1000,
+        max_limit=1000,
+    )
+
+    assert "SELECT TOP 1000" in sql.upper()
+    assert "ORDER BY TOTAL_AMOUNT DESC" in sql.upper()
+    assert "LIMIT" not in sql.upper()
+    assert "FROM (" not in sql.upper()
+
+
+def test_sqlserver_existing_top_is_clamped():
+    sql = apply_dialect_row_limit(
+        "SELECT TOP 5000 id FROM hrmresource ORDER BY id",
+        dialect="mssql",
+        limit=1000,
+        max_limit=1000,
+    )
+
+    assert "TOP 1000" in sql.upper()
+    assert "TOP 5000" not in sql.upper()
+
+
+def test_sqlserver_cte_uses_outer_top():
+    sql = apply_dialect_row_limit(
+        "WITH x AS (SELECT bm, amount FROM t_cw_clg) SELECT bm, SUM(amount) AS total_amount FROM x GROUP BY bm ORDER BY total_amount DESC",
+        dialect="sqlserver",
+        limit=1000,
+        max_limit=1000,
+    )
+
+    assert "WITH X AS" in sql.upper()
+    assert "SELECT TOP 1000 BM" in sql.upper()
+    assert "LIMIT" not in sql.upper()
+
+
 def test_dialect_limit_hint():
     assert "ROWNUM" in dialect_limit_hint("oracle_ds")
     assert "TOP" in dialect_limit_hint("mssql_prod")
