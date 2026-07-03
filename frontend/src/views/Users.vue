@@ -921,7 +921,7 @@
             @click="closeDialogs"
             class="order-2 sm:order-1 px-4 py-2.5 border border-gray-300 rounded-lg hover:bg-gray-50 text-sm font-medium"
           >
-            取消
+            {{ activeTab === 'quota' ? '关闭' : '取消' }}
           </button>
           <button
             v-if="!createdApiKey && activeTab !== 'quota'"
@@ -1320,6 +1320,15 @@
         </button>
       </div>
       <QuotaPolicyPanel scope-type="system" />
+      <div class="mt-6 flex justify-end pt-4 border-t border-gray-100">
+        <button
+          type="button"
+          @click="showSystemQuotaModal = false"
+          class="px-4 py-2.5 border border-gray-300 rounded-lg hover:bg-gray-50 text-sm font-medium"
+        >
+          关闭
+        </button>
+      </div>
     </div>
   </div>
 

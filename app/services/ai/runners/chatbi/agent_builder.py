@@ -45,6 +45,8 @@ async def build_native_agent(
     toolkit = dar.build_toolkit(tools, approval_mode=runner.permission_options.get("approval_mode"))
     workspace = await dar.get_local_workspace(
         user_id=runner._current_user_id(),
+        user_name=runner._runtime_user_name(),
+        user_info=runner.user_info,
         conversation_id=runner.conversation_id,
     )
     context_config = await dar.load_context_config()

@@ -181,10 +181,6 @@ const onJSONEditorChange = () => {
   }
 }
 
-// 可用表和字段（用于可视化编辑器）
-const availableTables = ref<string[]>([])
-const tableFields = ref<Record<string, string[]>>({})
-
 // 将 JSON 转换为可视化结构
 const syncJsonToVisual = (json: any) => {
   visualRules.value = {
@@ -229,11 +225,6 @@ const syncFromVisual = (silent = false) => {
   jsonEditorContent.value = JSON.stringify(jsonData, null, 2)
   onJSONEditorChange()
   if (!silent) showToast('已从可视化编辑器同步配置', 'success')
-}
-
-// 获取表的字段
-const getTableFields = (tableName: string) => {
-  return tableFields.value[tableName] || []
 }
 
 const tableSelectOptions = computed(() =>

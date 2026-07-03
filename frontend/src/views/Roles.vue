@@ -400,7 +400,7 @@
             </div>
 
             <div class="flex-shrink-0 p-4 sm:p-0 mt-2 sm:mt-6 flex flex-col sm:flex-row justify-end gap-2 sm:pt-4 border-t border-gray-100 sm:border-t-0">
-                <button @click="closePermissionDialog" class="order-2 sm:order-1 px-4 py-2.5 border border-gray-300 rounded-lg hover:bg-gray-50 text-sm font-medium">取消</button>
+                <button @click="closePermissionDialog" class="order-2 sm:order-1 px-4 py-2.5 border border-gray-300 rounded-lg hover:bg-gray-50 text-sm font-medium">{{ activeMainTab === 'quota' ? '关闭' : '取消' }}</button>
                 <button 
                     v-if="activeMainTab !== 'quota'"
                     @click="savePermissions" 

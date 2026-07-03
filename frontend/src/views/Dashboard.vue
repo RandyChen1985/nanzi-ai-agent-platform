@@ -199,7 +199,13 @@ watch(() => route.path, () => {
 
 const breadcrumbs = computed(() => {
   const matched = route.matched;
-  return matched.map((m) => m.meta?.title || m.name).filter(Boolean);
+  return matched
+    .map((m) => {
+      const title = m.meta?.title;
+      if (typeof title === "string") return title;
+      return typeof m.name === "string" ? m.name : undefined;
+    })
+    .filter((item): item is string => Boolean(item));
 });
 
 watch(

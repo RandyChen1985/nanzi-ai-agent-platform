@@ -34,8 +34,8 @@
     </div>
 
     <div
-      class="flex-1 flex flex-col h-full relative z-10 min-w-0 transition-[margin] duration-300"
-      :class="{ 'sm:mr-[min(28rem,100vw)]': showPortalDrawer && portalPinned && !isMobile }"
+      class="flex-1 flex flex-col h-full relative z-10 min-w-0 transition-[margin] duration-300 overflow-hidden"
+      :style="pinnedDrawerMarginStyle"
     >
       <!-- Dynamic Header Status (New) -->
       <div
@@ -1275,7 +1275,7 @@
         @reorder-commands="handleReorderCommands"
         @select-skill="openSkillSelector"
         @select-knowledge-base="showKnowledgeBaseSelector = true"
-        @select-local-fs="showFileBrowserModal = true"
+        @select-local-fs="showWorkspaceDrawer = true"
         @select-memory="openMemorySelector"
         @system-command="handleSystemCommand"
         @ignore-ltm="handleIgnoreLtm"
@@ -1283,6 +1283,16 @@
       >
       </ChatInput>
     </div>
+
+    <ChatCanvas
+      :visible="canvasVisible"
+      :data="canvasData"
+      :overlay="canvasFromWorkspace"
+      :dock-side="canvasFromWorkspace ? 'left' : 'right'"
+      :conversation-id="conversationId"
+      @close="closeCanvas"
+      @analyze-diff="handleAnalyzeDiff"
+    />
     </div> <!-- Closing div for .flex-1.flex.flex-col -->
 
     <RagFlowResourceSelector
@@ -1292,11 +1302,13 @@
       @select="handleSelectKnowledgeBase"
     />
 
-    <FileBrowserModal
-      v-if="showFileBrowserModal"
-      :show="showFileBrowserModal"
-      @close="showFileBrowserModal = false"
+    <WorkspaceBrowserDrawer
+      v-model="showWorkspaceDrawer"
+      v-model:keep-open-on-select="workspaceKeepOpenOnSelect"
+      v-model:pinned="workspacePinned"
+      :pinned-dock-class="workspacePinnedDockClass"
       @select="handleSelectLocalFs"
+      @preview="handleWorkspaceFilePreview"
     />
 
     <!-- 技能工作流选择弹窗 (Skill Selector Modal) -->
@@ -1809,7 +1821,7 @@
     <div
       v-if="showSaveReportModal"
       class="fixed inset-y-0 left-0 z-[250] flex items-center justify-center bg-black/40 backdrop-blur-sm p-4"
-      :class="saveReportModalOverlayClass"
+      :style="saveReportModalOverlayStyle"
       @click.self="showSaveReportModal = false"
     >
       <div
@@ -1906,7 +1918,7 @@
     <div
       v-if="showReportRunModal"
       class="fixed inset-y-0 left-0 z-[250] flex items-center justify-center bg-black/40 backdrop-blur-sm p-4"
-      :class="saveReportModalOverlayClass"
+      :style="saveReportModalOverlayStyle"
       @click.self="showReportRunModal = false"
     >
       <div class="bg-white dark:bg-gray-800 w-full max-w-md rounded-2xl shadow-2xl overflow-hidden border border-gray-100 dark:border-gray-700">
@@ -2528,7 +2540,7 @@
         </div>
       </div>
     </div>
-    <!-- 数据门户右侧抽屉 Drawer -->
+
     <DatasetPortalDrawer
       v-model="showPortalDrawer"
       v-model:keep-open-on-question="portalKeepOpenOnQuestion"
@@ -2543,14 +2555,6 @@
 	      @execute-saved-report="handleExecuteSavedReport"
 	      @edit-saved-report="openEditReportModal"
 	    />
-
-    <!-- ChatCanvas Panel -->
-    <ChatCanvas
-      :visible="canvasVisible"
-      :data="canvasData"
-      @close="canvasVisible = false"
-      @analyze-diff="handleAnalyzeDiff"
-    />
 
     <!-- TraceLogViewer -->
     <TraceLogViewer
@@ -2575,6 +2579,11 @@ import {
   DATASET_PORTAL_SYSTEM_COMMAND_ID,
   isDatasetPortalSlashCommand,
 } from "@/constants/datasetPortalCommand";
+import {
+  WORKSPACE_SLASH_COMMAND,
+  WORKSPACE_SYSTEM_COMMAND_ID,
+  isWorkspaceSlashCommand,
+} from "@/constants/workspaceCommand";
 
 const toast = useToast();
 const {
@@ -2597,9 +2606,10 @@ import ChatCanvas from "@/components/embed/ChatCanvas.vue";
 import ChatInput from "@/components/embed/ChatInput.vue";
 import WelcomeDashboard from "@/components/embed/WelcomeDashboard.vue";
 import RagFlowResourceSelector from "@/components/RagFlowResourceSelector.vue";
-import FileBrowserModal from "@/components/embed/FileBrowserModal.vue";
+import WorkspaceBrowserDrawer from "@/components/embed/WorkspaceBrowserDrawer.vue";
 import AttachmentImageThumb from "@/components/embed/AttachmentImageThumb.vue";
 import { isImageAttachment } from "@/utils/attachmentImages";
+import { openWorkspaceFileInCanvas, resolvePublicUploadsPreviewUrl, shouldAttachWorkspaceSourcePath } from "@/utils/workspaceFilePreview";
 import TraceLogViewer from "@/components/TraceLogViewer.vue";
 import { sanitizeStreamContent } from "@/utils/streamContentSanitize";
 import { normalizeAgentSwitchCommand } from "@/utils/agentSwitchCommands";
@@ -2923,7 +2933,34 @@ const hideEmbedLikeDislike = computed(() => {
 const chatInputRef = ref<any>(null);
 const userInput = ref("");
 const showKnowledgeBaseSelector = ref(false);
-const showFileBrowserModal = ref(false);
+const showWorkspaceDrawer = ref(false);
+
+const readStoredBoolean = (key: string, defaultWhenUnset: boolean) => {
+  const stored = localStorage.getItem(key);
+  if (stored === "1") return true;
+  if (stored === "0") return false;
+  return defaultWhenUnset;
+};
+
+const workspaceKeepOpenOnSelect = ref(
+  readStoredBoolean(
+    "embed_workspace_keep_open",
+    typeof window !== "undefined" &&
+      !window.matchMedia("(max-width: 639px)").matches,
+  ),
+);
+watch(workspaceKeepOpenOnSelect, (val) => {
+  localStorage.setItem("embed_workspace_keep_open", val ? "1" : "0");
+});
+
+const workspacePinned = ref(
+  typeof window !== "undefined" &&
+    !window.matchMedia("(max-width: 639px)").matches &&
+    readStoredBoolean("embed_workspace_pinned", false),
+);
+watch(workspacePinned, (val) => {
+  localStorage.setItem("embed_workspace_pinned", val ? "1" : "0");
+});
 
 const showStatsModal = ref(false);
 const loadingStats = ref(false);
@@ -3054,6 +3091,21 @@ const handleSelectLocalFs = (payload: { type: 'local_file' | 'local_dir'; path: 
       ext: payload.ext
     });
   }
+};
+
+const handleWorkspaceFilePreview = async (payload: { path: string; name: string }) => {
+  canvasFromWorkspace.value = true;
+  await openWorkspaceFileInCanvas({
+    path: payload.path,
+    name: payload.name,
+    conversationId: conversationId.value,
+    showToast,
+    activeBlobUrlRef: activeBlobUrl,
+    onOpen: (data) => {
+      canvasData.value = data as typeof canvasData.value;
+      canvasVisible.value = true;
+    },
+  });
 };
 
 const isImageFile = isImageAttachment;
@@ -3452,6 +3504,7 @@ const resetStallTimer = () => {
 // Slash Commands
 const SYSTEM_SLASH_COMMANDS = [
   { id: DATASET_PORTAL_SYSTEM_COMMAND_ID, command: DATASET_PORTAL_SLASH_COMMAND, label: "📚 数据门户", sort_order: -35 },
+  { id: WORKSPACE_SYSTEM_COMMAND_ID, command: WORKSPACE_SLASH_COMMAND, label: "💻 工作空间", sort_order: -34 },
   { id: "sys_clear", command: "/new", label: "💬 新会话", sort_order: -30 },
   { id: "sys_history", command: "/history", label: "🕒 历史", sort_order: -20 },
   { id: "sys_quota", command: "/quota", label: "📊 我的额度", sort_order: -18 },
@@ -3721,8 +3774,35 @@ const saveAndResend = async () => {
 
 // Canvas Panel States
 const canvasVisible = ref(false);
-const canvasData = ref<{ type: 'html' | 'code' | 'mermaid' | 'pdf' | 'csv' | 'image' | 'compare'; title: string; content: string; compareContent?: string; compareTitle?: string } | null>(null);
+const canvasFromWorkspace = ref(false);
+const canvasData = ref<{ type: 'html' | 'code' | 'mermaid' | 'pdf' | 'csv' | 'image' | 'compare'; title: string; content: string; sourcePath?: string; compareContent?: string; compareTitle?: string } | null>(null);
 const activeBlobUrl = ref('');
+
+const revokeActiveBlobUrl = () => {
+  if (!activeBlobUrl.value) return;
+  try {
+    URL.revokeObjectURL(activeBlobUrl.value);
+  } catch (e) {
+    console.warn("Revoke blob URL error:", e);
+  }
+  activeBlobUrl.value = '';
+};
+
+const closeCanvas = () => {
+  canvasVisible.value = false;
+  revokeActiveBlobUrl();
+};
+
+watch(canvasVisible, (visible) => {
+  if (!visible) {
+    canvasFromWorkspace.value = false;
+    revokeActiveBlobUrl();
+  }
+});
+
+onUnmounted(() => {
+  revokeActiveBlobUrl();
+});
 
 // Long-Term Memory States
 const activeLtmPreference = ref<any>(null);
@@ -3741,14 +3821,7 @@ const handleIgnoreLtm = () => {
 
 const handleOpenCanvas = async (payload: { type: 'html' | 'code' | 'mermaid' | 'pdf' | 'csv' | 'image' | 'compare'; title: string; content: string }) => {
   // 回收之前创建的本地 Blob 内存链接，防止内存泄漏
-  if (activeBlobUrl.value) {
-    try {
-      URL.revokeObjectURL(activeBlobUrl.value);
-    } catch (e) {
-      console.warn("Revoke blob URL error:", e);
-    }
-    activeBlobUrl.value = '';
-  }
+  revokeActiveBlobUrl();
 
   if (payload.type === 'compare') {
     try {
@@ -3826,10 +3899,12 @@ const handleOpenCanvas = async (payload: { type: 'html' | 'code' | 'mermaid' | '
         canvasVisible.value = true;
       } else {
         const resText = await axios.get(resolvedUrl).then(res => res.data);
+        const filename = payload.title || filePath.split('/').pop() || '文件预览';
         canvasData.value = {
           type: payload.type,
-          title: payload.title || filePath.split('/').pop() || '文件预览',
-          content: resText
+          title: filename,
+          content: resText,
+          sourcePath: shouldAttachWorkspaceSourcePath(filePath, filename) ? filePath : undefined,
         };
         canvasVisible.value = true;
       }
@@ -3873,10 +3948,8 @@ const resolveFileUrl = (url: string): string => {
   if (url.startsWith('http://') || url.startsWith('https://') || url.startsWith('data:') || url.startsWith('quick:') || url.startsWith('canvas:')) {
     return url;
   }
-  if (url.includes('uploads/')) {
-    const parts = url.split('uploads/');
-    return '/static/uploads/' + parts[parts.length - 1];
-  }
+  const publicUploadUrl = resolvePublicUploadsPreviewUrl(url);
+  if (publicUploadUrl) return publicUploadUrl;
   // 兼容绝对路径与相对物理路径，只要它不属于静态路由与API接口路由，均通过后端预览API拉取
   if (!url.startsWith('/static/') &&
       !url.startsWith('/api/') &&
@@ -5326,6 +5399,11 @@ const handleSystemCommand = async (cmd: string): Promise<boolean> => {
     await openPortalDrawer();
     return true;
   }
+  if (isWorkspaceSlashCommand(normalizedCmd)) {
+    userInput.value = "";
+    showWorkspaceDrawer.value = true;
+    return true;
+  }
   if (normalizedCmd === "/switch_to_auto" || normalizedCmd === "/switch_agent_auto") {
     userInput.value = "";
     switchToAuto();
@@ -5668,8 +5746,28 @@ const {
   },
 });
 
-const saveReportModalOverlayClass = computed(() =>
-  showPortalDrawer.value && portalPinned.value ? 'right-[28rem]' : 'right-0'
+const pinnedDrawerRightRem = computed(() => {
+  if (isMobile.value) return 0;
+  let rem = 0;
+  if (showPortalDrawer.value && portalPinned.value) rem += 28;
+  if (showWorkspaceDrawer.value && workspacePinned.value) rem += 28;
+  return rem;
+});
+
+const saveReportModalOverlayStyle = computed(() => {
+  const rem = pinnedDrawerRightRem.value;
+  return { right: rem > 0 ? `${rem}rem` : "0" };
+});
+
+const pinnedDrawerMarginStyle = computed(() => {
+  const rem = pinnedDrawerRightRem.value;
+  return { marginRight: rem > 0 ? `min(${rem}rem, 100vw)` : "" };
+});
+
+const workspacePinnedDockClass = computed(() =>
+  showPortalDrawer.value && portalPinned.value && !isMobile.value
+    ? "right-[28rem]"
+    : "right-0",
 );
 
 watch(showPortalDrawer, (val) => {

@@ -1,5 +1,4 @@
 import os
-import time
 from typing import List, Optional, Dict, Any
 from fastapi import APIRouter, HTTPException, Depends, Query
 from fastapi.responses import FileResponse
@@ -7,6 +6,17 @@ from pydantic import BaseModel, Field
 from app.schemas.response import StandardResponse
 from app.core.dependencies import require_api_key
 from app.utils.fs_paths import get_data_base_dir, normalize_under_base
+from app.utils.fs_access import (
+    assert_path_allowed,
+    assert_path_writable,
+    get_allowed_fs_roots,
+    get_user_private_workspace_root,
+    is_fs_admin,
+    is_fs_virtual_root,
+    is_path_allowed,
+    normalize_fs_path,
+    resolve_parent_path,
+)
 
 router = APIRouter()
 
@@ -25,12 +35,14 @@ class FileItem(BaseModel):
     is_dir: bool = Field(..., description="是否是目录")
     size: int = Field(..., description="文件大小（字节），目录为0")
     mtime: float = Field(..., description="修改时间戳")
+    is_user_workspace: bool = Field(False, description="是否为当前用户的 AI 工作目录根")
 
 class FileListResponse(BaseModel):
     current_path: str = Field(..., description="当前浏览的绝对路径")
     parent_path: Optional[str] = Field(None, description="上级目录绝对路径，若在根目录则为 None")
     is_root: bool = Field(..., description="是否已在安全根目录")
     items: List[FileItem] = Field(..., description="子文件和子目录列表")
+    scope: str = Field(..., description="当前可见范围：admin_all / user_scoped")
 
 
 class FileSearchResponse(BaseModel):
@@ -40,7 +52,20 @@ class FileSearchResponse(BaseModel):
     truncated: bool = Field(False, description="结果是否因上限被截断")
 
 
-def _append_fs_entry(results: List[FileItem], entry_path: str, is_dir: bool) -> None:
+def _is_user_workspace_path(path: str, user_info: Dict[str, Any] | None) -> bool:
+    private_root = get_user_private_workspace_root(user_info)
+    if not private_root:
+        return False
+    return os.path.normpath(path) == os.path.normpath(private_root)
+
+
+def _append_fs_entry(
+    results: List[FileItem],
+    entry_path: str,
+    is_dir: bool,
+    *,
+    user_info: Dict[str, Any] | None = None,
+) -> None:
     try:
         stat = os.stat(entry_path)
         results.append(
@@ -50,102 +75,125 @@ def _append_fs_entry(results: List[FileItem], entry_path: str, is_dir: bool) -> 
                 is_dir=is_dir,
                 size=0 if is_dir else stat.st_size,
                 mtime=stat.st_mtime,
+                is_user_workspace=_is_user_workspace_path(entry_path, user_info),
             )
         )
     except OSError:
         pass
 
-def get_base_dir() -> str:
-    return get_data_base_dir()
 
-@router.get("/list",
-    response_model=StandardResponse[FileListResponse],
-    summary="浏览服务器文件系统",
-    description="以 /app/data 为安全根目录（本地开发兼容为当前工作目录下的 data 目录），层层向下浏览文件和目录，提供安全路径防越权越界限制。"
-)
-async def list_files(
-    path: Optional[str] = Query(None, description="要浏览的绝对路径，如果不传默认返回安全根目录"),
-    user_info: Dict[str, Any] = Depends(require_api_key)
-):
-    base_dir = get_base_dir()
-    
-    # 确定目标浏览路径
-    if not path:
-        target_path = base_dir
-    else:
-        target_path = os.path.abspath(path)
-        
-    # 安全验证：检查 target_path 是否以 base_dir 开头，防范路径穿越 (Directory Traversal)
-    # 使用 base_dir 和 target_path 的规范形式进行前缀比对
-    normalized_base = os.path.normpath(base_dir)
-    normalized_target = os.path.normpath(target_path)
-    
-    # 确保 target_path 不逃离 base_dir 范围
-    if not normalized_target.startswith(normalized_base):
-        raise HTTPException(
-            status_code=403,
-            detail="安全越权拦截：禁止访问安全根目录以外的文件系统空间。"
-        )
-        
-    if not os.path.exists(normalized_target):
-        raise HTTPException(
-            status_code=404,
-            detail="请求的路径不存在。"
-        )
-        
-    if not os.path.isdir(normalized_target):
-        raise HTTPException(
-            status_code=400,
-            detail="请求的路径不是一个目录。"
-        )
-        
+def _list_directory_entries(target_path: str, user_info: Dict[str, Any]) -> List[FileItem]:
     items: List[FileItem] = []
     try:
-        with os.scandir(normalized_target) as entries:
+        with os.scandir(target_path) as entries:
             for entry in entries:
-                # 隐藏以 . 开头的文件/夹
-                if entry.name.startswith('.'):
+                if entry.name.startswith("."):
                     continue
                 try:
                     stat = entry.stat()
                     is_dir = entry.is_dir()
-                    items.append(FileItem(
-                        name=entry.name,
-                        path=entry.path,
-                        is_dir=is_dir,
-                        size=0 if is_dir else stat.st_size,
-                        mtime=stat.st_mtime
-                    ))
+                    items.append(
+                        FileItem(
+                            name=entry.name,
+                            path=entry.path,
+                            is_dir=is_dir,
+                            size=0 if is_dir else stat.st_size,
+                            mtime=stat.st_mtime,
+                        )
+                    )
                 except Exception:
-                    # 某些系统文件没有读取权限时跳过
                     continue
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"读取目录失败: {str(e)}"
-        )
-        
-    # 按“目录在前，文件在后；名称升序”的规则排序，保障极佳的用户浏览体验
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"读取目录失败: {str(exc)}") from exc
+
     items.sort(key=lambda x: (not x.is_dir, x.name.lower()))
-    
-    # 计算 parent_path
-    if normalized_target == normalized_base:
-        parent_path = None
-        is_root = True
-    else:
-        parent_path = os.path.dirname(normalized_target)
-        is_root = False
-        
+    return items
+
+
+def _list_virtual_root_entries(user_info: Dict[str, Any]) -> List[FileItem]:
+    items: List[FileItem] = []
+    for root in get_allowed_fs_roots(user_info):
+        if not os.path.isdir(root):
+            continue
+        try:
+            stat = os.stat(root)
+            items.append(
+                FileItem(
+                    name=os.path.basename(root),
+                    path=root,
+                    is_dir=True,
+                    size=0,
+                    mtime=stat.st_mtime,
+                    is_user_workspace=_is_user_workspace_path(root, user_info),
+                )
+            )
+        except OSError:
+            continue
+
+    def _sort_key(item: FileItem) -> tuple[int, str]:
+        return (0 if item.is_user_workspace else 1, item.name.lower())
+
+    items.sort(key=_sort_key)
+    return items
+
+
+def _contains_parent_path_segment(path: str | None) -> bool:
+    if not path:
+        return False
+    return ".." in str(path).replace("\\", "/").split("/")
+
+
+def get_base_dir() -> str:
+    return get_data_base_dir()
+
+
+@router.get("/list",
+    response_model=StandardResponse[FileListResponse],
+    summary="浏览服务器文件系统",
+    description="普通用户仅可浏览公共目录与本人 agent_workspaces；管理员可浏览完整 data 沙箱。",
+)
+async def list_files(
+    path: Optional[str] = Query(None, description="要浏览的绝对路径，如果不传默认返回授权根目录"),
+    user_info: Dict[str, Any] = Depends(require_api_key)
+):
+    base_dir = get_base_dir()
+
+    if _contains_parent_path_segment(path):
+        raise HTTPException(
+            status_code=403,
+            detail="安全越权拦截：禁止访问安全根目录以外的文件系统空间。",
+        )
+
+    if is_fs_virtual_root(path, base_dir) and not is_fs_admin(user_info):
+        return StandardResponse(data=FileListResponse(
+            current_path=base_dir,
+            parent_path=None,
+            is_root=True,
+            scope="user_scoped",
+            items=_list_virtual_root_entries(user_info),
+        ))
+
+    target_path = assert_path_allowed(path or base_dir, user_info)
+    if not os.path.exists(target_path):
+        raise HTTPException(status_code=404, detail="请求的路径不存在。")
+    if not os.path.isdir(target_path):
+        raise HTTPException(status_code=400, detail="请求的路径不是一个目录。")
+
+    parent_path = resolve_parent_path(target_path, user_info)
+    is_root = parent_path is None
+    scope = "admin_all" if is_fs_admin(user_info) else "user_scoped"
+
     return StandardResponse(data=FileListResponse(
-        current_path=normalized_target,
+        current_path=target_path,
         parent_path=parent_path,
         is_root=is_root,
-        items=items
+        scope=scope,
+        items=_list_directory_entries(target_path, user_info),
     ))
 
 
 TEXT_PREVIEW_EXTENSIONS = {
-    ".txt", ".md", ".csv", ".json", ".sql", ".py", ".js", ".ts", 
+    ".txt", ".md", ".csv", ".json", ".sql", ".py", ".js", ".ts",
     ".sh", ".xml", ".html", ".css", ".yaml", ".yml", ".ini", ".conf",
     ".log", ".env"
 }
@@ -160,6 +208,84 @@ OFFICE_PREVIEW_EXTENSIONS = {
     ".ppt": "application/vnd.ms-powerpoint",
 }
 
+MAX_WRITE_BYTES = 5 * 1024 * 1024
+
+
+class FileWriteRequest(BaseModel):
+    path: str = Field(..., description="文件绝对路径，须在本人工作目录内")
+    content: str = Field(..., description="文件文本内容")
+    conversation_id: Optional[str] = Field(None, description="所属会话 ID（用于解析相对路径）")
+
+
+class FileWriteResponse(BaseModel):
+    path: str = Field(..., description="已写入文件的绝对路径")
+    size: int = Field(..., description="写入后文件大小（字节）")
+    mtime: float = Field(..., description="写入后修改时间戳")
+
+
+def _resolve_fs_file_path(
+    path: str,
+    conversation_id: Optional[str],
+    user_info: Dict[str, Any],
+    *,
+    workspace_root: str,
+    must_exist: bool = True,
+) -> str:
+    from app.services.ai.runtime.agentscope.workspace import (
+        resolve_session_workdir,
+        resolve_user_workspace_root,
+    )
+
+    safe_path: str | None = None
+
+    if conversation_id and not path.startswith("/") and not path.startswith("/app/data"):
+        root = workspace_root
+        session_workdir = resolve_session_workdir(
+            root=root,
+            user_id=user_info.get("user_id") or user_info.get("id"),
+            user_name=user_info.get("user_name") or user_info.get("username"),
+            user_info=user_info,
+            conversation_id=conversation_id,
+        )
+        if os.path.isdir(session_workdir):
+            candidate = normalize_under_base(path, session_workdir)
+            if candidate and (not must_exist or os.path.isfile(candidate)) and is_path_allowed(candidate, user_info):
+                safe_path = candidate
+
+        if not safe_path:
+            user_workspaces_root = resolve_user_workspace_root(
+                root=root,
+                user_id=user_info.get("user_id") or user_info.get("id"),
+                user_name=user_info.get("user_name") or user_info.get("username"),
+                user_info=user_info,
+            )
+            if user_workspaces_root and os.path.isdir(user_workspaces_root):
+                for cid_dir in os.listdir(user_workspaces_root):
+                    candidate_dir = os.path.join(user_workspaces_root, cid_dir)
+                    if not os.path.isdir(candidate_dir):
+                        continue
+                    candidate = normalize_under_base(path, candidate_dir)
+                    if candidate and (not must_exist or os.path.isfile(candidate)) and is_path_allowed(candidate, user_info):
+                        safe_path = candidate
+                        break
+
+    if not safe_path:
+        candidate = normalize_fs_path(path)
+        if candidate and (not must_exist or os.path.isfile(candidate)) and is_path_allowed(candidate, user_info):
+            safe_path = candidate
+
+    if not safe_path:
+        candidate = normalize_fs_path(path)
+        if candidate and not is_path_allowed(candidate, user_info):
+            raise HTTPException(
+                status_code=403,
+                detail="安全越权拦截：无权访问其他用户的私有目录或非授权路径。",
+            )
+        raise HTTPException(status_code=404, detail="文件不存在。")
+
+    return safe_path
+
+
 @router.get(
     "/preview",
     summary="预览服务器文件内容",
@@ -170,48 +296,12 @@ async def preview_file(
     conversation_id: Optional[str] = Query(None, description="所属会话 ID"),
     user_info: Dict[str, Any] = Depends(require_api_key),
 ):
-    base_dir = None
-    if conversation_id and not path.startswith("/") and not path.startswith("/app/data"):
-        from app.utils.fs_paths import get_data_base_dir
-        user_id = str(user_info.get("user_id", "anonymous"))
-        import re
-        cleaned_uid = re.sub(r"[^A-Za-z0-9_-]+", "_", user_id).strip("_")
-        cleaned_cid = re.sub(r"[^A-Za-z0-9_-]+", "_", conversation_id).strip("_")
-        
-        session_workdir = os.path.normpath(os.path.join(get_data_base_dir(), "agent_workspaces", cleaned_uid, cleaned_cid))
-        if os.path.isdir(session_workdir):
-            base_dir = session_workdir
+    from app.services.ai.runtime.agentscope.workspace import resolve_workspace_root
 
-    safe_path = None
-    if base_dir:
-        safe_path = normalize_under_base(path, base_dir)
-        if not safe_path or not os.path.isfile(safe_path):
-            safe_path = None
-
-    # 自愈搜索：若在当前会话空间内未找到相对文件，迭代遍历该用户所有的历史会话空间进行全局寻址
-    if not safe_path and not path.startswith("/") and not path.startswith("/app/data"):
-        from app.utils.fs_paths import get_data_base_dir
-        user_id = str(user_info.get("user_id", "anonymous"))
-        import re
-        cleaned_uid = re.sub(r"[^A-Za-z0-9_-]+", "_", user_id).strip("_")
-        
-        user_workspaces_root = os.path.normpath(os.path.join(get_data_base_dir(), "agent_workspaces", cleaned_uid))
-        if os.path.isdir(user_workspaces_root):
-            for cid_dir in os.listdir(user_workspaces_root):
-                candidate_dir = os.path.join(user_workspaces_root, cid_dir)
-                if os.path.isdir(candidate_dir):
-                    test_path = normalize_under_base(path, candidate_dir)
-                    if test_path and os.path.isfile(test_path):
-                        safe_path = test_path
-                        break
-
-    if not safe_path:
-        safe_path = normalize_under_base(path)
-
-    if not safe_path:
-        raise HTTPException(status_code=403, detail="安全越权拦截：禁止访问安全根目录以外的文件。")
-    if not os.path.isfile(safe_path):
-        raise HTTPException(status_code=404, detail="文件不存在。")
+    workspace_root = await resolve_workspace_root()
+    safe_path = _resolve_fs_file_path(
+        path, conversation_id, user_info, workspace_root=workspace_root, must_exist=True,
+    )
 
     ext = os.path.splitext(safe_path)[1].lower()
     if ext in IMAGE_PREVIEW_EXTENSIONS:
@@ -219,78 +309,127 @@ async def preview_file(
             safe_path,
             media_type=IMAGE_MEDIA_TYPES.get(ext, "application/octet-stream"),
         )
-    elif ext in TEXT_PREVIEW_EXTENSIONS:
+    if ext in TEXT_PREVIEW_EXTENSIONS:
         return FileResponse(
             safe_path,
             media_type="text/plain; charset=utf-8",
         )
-    elif ext == ".pdf":
-        return FileResponse(
-            safe_path,
-            media_type="application/pdf",
-        )
-    elif ext in OFFICE_PREVIEW_EXTENSIONS:
+    if ext == ".pdf":
+        return FileResponse(safe_path, media_type="application/pdf")
+    if ext in OFFICE_PREVIEW_EXTENSIONS:
         return FileResponse(
             safe_path,
             media_type=OFFICE_PREVIEW_EXTENSIONS[ext],
             filename=os.path.basename(safe_path),
         )
-    else:
-        raise HTTPException(status_code=400, detail="不支持预览该类型的文件。")
+    raise HTTPException(status_code=400, detail="不支持预览该类型的文件。")
+
+
+@router.put(
+    "/write",
+    response_model=StandardResponse[FileWriteResponse],
+    summary="写入工作空间文本文件",
+    description="仅允许写入本人 agent_workspaces 目录内的文本类文件。",
+)
+async def write_file(
+    body: FileWriteRequest,
+    user_info: Dict[str, Any] = Depends(require_api_key),
+):
+    from app.services.ai.runtime.agentscope.workspace import resolve_workspace_root
+
+    workspace_root = await resolve_workspace_root()
+    safe_path = _resolve_fs_file_path(
+        body.path,
+        body.conversation_id,
+        user_info,
+        workspace_root=workspace_root,
+        must_exist=True,
+    )
+    writable_path = assert_path_writable(safe_path, user_info)
+
+    ext = os.path.splitext(writable_path)[1].lower()
+    if ext not in TEXT_PREVIEW_EXTENSIONS:
+        raise HTTPException(status_code=400, detail="不支持写入该类型的文件。")
+
+    encoded = body.content.encode("utf-8")
+    if len(encoded) > MAX_WRITE_BYTES:
+        raise HTTPException(status_code=400, detail="文件内容过大，超过写入上限。")
+
+    try:
+        with open(writable_path, "w", encoding="utf-8", newline="") as handle:
+            handle.write(body.content)
+        stat = os.stat(writable_path)
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail=f"写入文件失败: {exc}") from exc
+
+    return StandardResponse(
+        data=FileWriteResponse(
+            path=writable_path,
+            size=stat.st_size,
+            mtime=stat.st_mtime,
+        )
+    )
 
 
 @router.get(
     "/search",
     response_model=StandardResponse[FileSearchResponse],
     summary="搜索服务器文件",
-    description="在指定目录及其子目录中按文件名模糊搜索（安全根目录内）。",
+    description="在授权目录及其子目录中按文件名模糊搜索。",
 )
 async def search_files(
     q: str = Query(..., min_length=1, max_length=100, description="搜索关键词"),
-    path: Optional[str] = Query(None, description="搜索起始目录，默认安全根目录"),
+    path: Optional[str] = Query(None, description="搜索起始目录，默认在全部授权目录内搜索"),
     max_results: int = Query(80, ge=1, le=200, description="最大返回条数"),
     user_info: Dict[str, Any] = Depends(require_api_key),
 ):
-    base_dir = get_base_dir()
-    if path:
-        search_root = normalize_under_base(os.path.abspath(path), base_dir)
-    else:
-        search_root = base_dir
-
-    if not search_root or not os.path.isdir(search_root):
-        raise HTTPException(status_code=404, detail="搜索起始目录不存在。")
-
     keyword = q.strip().lower()
     if not keyword:
         raise HTTPException(status_code=400, detail="搜索关键词不能为空。")
 
+    if path:
+        search_roots = [assert_path_allowed(os.path.abspath(path), user_info)]
+        search_root_label = search_roots[0]
+    elif is_fs_admin(user_info):
+        search_roots = [get_base_dir()]
+        search_root_label = search_roots[0]
+    else:
+        search_roots = [root for root in get_allowed_fs_roots(user_info) if os.path.isdir(root)]
+        search_root_label = get_base_dir()
+
+    if not search_roots:
+        raise HTTPException(status_code=404, detail="没有可搜索的授权目录。")
+
     results: List[FileItem] = []
     truncated = False
 
-    for root, dirs, files in os.walk(search_root):
-        norm_root = os.path.normpath(root)
-        if not norm_root.startswith(base_dir):
-            continue
-
-        dirs[:] = sorted(d for d in dirs if not d.startswith("."))
-
-        for name in sorted(dirs):
-            if keyword in name.lower():
-                _append_fs_entry(results, os.path.join(root, name), True)
-                if len(results) >= max_results:
-                    truncated = True
-                    break
-        if truncated:
-            break
-
-        for name in sorted(files):
-            if name.startswith("."):
+    for search_root in search_roots:
+        for root, dirs, files in os.walk(search_root):
+            norm_root = os.path.normpath(root)
+            if not is_path_allowed(norm_root, user_info):
                 continue
-            if keyword in name.lower():
-                _append_fs_entry(results, os.path.join(root, name), False)
-                if len(results) >= max_results:
-                    truncated = True
-                    break
+
+            dirs[:] = sorted(d for d in dirs if not d.startswith("."))
+
+            for name in sorted(dirs):
+                if keyword in name.lower():
+                    _append_fs_entry(results, os.path.join(root, name), True, user_info=user_info)
+                    if len(results) >= max_results:
+                        truncated = True
+                        break
+            if truncated:
+                break
+
+            for name in sorted(files):
+                if name.startswith("."):
+                    continue
+                if keyword in name.lower():
+                    _append_fs_entry(results, os.path.join(root, name), False, user_info=user_info)
+                    if len(results) >= max_results:
+                        truncated = True
+                        break
+            if truncated:
+                break
         if truncated:
             break
 
@@ -300,7 +439,7 @@ async def search_files(
         data=FileSearchResponse(
             items=results,
             query=q.strip(),
-            search_root=search_root,
+            search_root=search_root_label,
             truncated=truncated,
         )
     )

@@ -14,6 +14,11 @@ import {
   DATASET_PORTAL_SYSTEM_COMMAND_ID,
   isDatasetPortalSlashCommand,
 } from "@/constants/datasetPortalCommand";
+import {
+  WORKSPACE_SLASH_COMMAND,
+  WORKSPACE_SYSTEM_COMMAND_ID,
+  isWorkspaceSlashCommand,
+} from "@/constants/workspaceCommand";
 import CitationPopover from "@/components/CitationPopover.vue";
 import axios from "@/utils/axios";
 import { finalizeConversation } from "@/utils/conversationFinalize";
@@ -37,9 +42,11 @@ import { isActiveThoughtStep, isDimmedThoughtStep } from "@/utils/turnLogDisplay
 
 import ChatInput from "@/components/embed/ChatInput.vue";
 import RagFlowResourceSelector from "@/components/RagFlowResourceSelector.vue";
-import FileBrowserModal from "@/components/embed/FileBrowserModal.vue";
+import WorkspaceBrowserDrawer from "@/components/embed/WorkspaceBrowserDrawer.vue";
+import ChatCanvas from "@/components/embed/ChatCanvas.vue";
 import AttachmentImageThumb from "@/components/embed/AttachmentImageThumb.vue";
 import { isImageAttachment } from "@/utils/attachmentImages";
+import { openWorkspaceFileInCanvas } from "@/utils/workspaceFilePreview";
 import { sanitizeStreamContent } from "@/utils/streamContentSanitize";
 import {
   splitSqlToolLogDetails,
@@ -320,6 +327,7 @@ const agents = ref<any[]>([]);
 const debugMode = ref<"auto" | "specific">("auto");
 const SYSTEM_SLASH_COMMANDS = [
   { id: DATASET_PORTAL_SYSTEM_COMMAND_ID, command: DATASET_PORTAL_SLASH_COMMAND, label: "📚 数据门户", sort_order: -35 },
+  { id: WORKSPACE_SYSTEM_COMMAND_ID, command: WORKSPACE_SLASH_COMMAND, label: "💻 工作空间", sort_order: -34 },
   { id: "sys_clear", command: "/new", label: "💬 新会话", sort_order: -30 },
   { id: "sys_history", command: "/history", label: "🕒 历史", sort_order: -20 },
   { id: "sys_quota", command: "/quota", label: "📊 我的额度", sort_order: -18 },
@@ -1680,7 +1688,35 @@ const formatModelCallTime = (isoStr: string): string => {
 
 const chatInputRef = ref<any>(null);
 const showKnowledgeBaseSelector = ref(false);
-const showFileBrowserModal = ref(false);
+const showWorkspaceDrawer = ref(false);
+
+const readStoredBoolean = (key: string, defaultWhenUnset: boolean) => {
+  const stored = localStorage.getItem(key);
+  if (stored === "1") return true;
+  if (stored === "0") return false;
+  return defaultWhenUnset;
+};
+
+const workspaceKeepOpenOnSelect = ref(
+  readStoredBoolean(
+    "debug_workspace_keep_open",
+    typeof window !== "undefined" &&
+      !window.matchMedia("(max-width: 639px)").matches,
+  ),
+);
+watch(workspaceKeepOpenOnSelect, (val) => {
+  localStorage.setItem("debug_workspace_keep_open", val ? "1" : "0");
+});
+
+const workspacePinned = ref(
+  typeof window !== "undefined" &&
+    !window.matchMedia("(max-width: 639px)").matches &&
+    readStoredBoolean("debug_workspace_pinned", false),
+);
+watch(workspacePinned, (val) => {
+  localStorage.setItem("debug_workspace_pinned", val ? "1" : "0");
+});
+
 const showSkillSelector = ref(false);
 const skillSelectorSearchQuery = ref("");
 const allSkillsList = ref<any[]>([]);
@@ -1840,6 +1876,59 @@ const handleSelectLocalFs = (payload: { type: 'local_file' | 'local_dir'; path: 
       ext: payload.ext
     });
   }
+};
+
+const canvasVisible = ref(false);
+const canvasFromWorkspace = ref(false);
+const canvasData = ref<{
+  type: 'html' | 'code' | 'mermaid' | 'pdf' | 'csv' | 'image' | 'compare';
+  title: string;
+  content: string;
+  sourcePath?: string;
+  compareContent?: string;
+  compareTitle?: string;
+} | null>(null);
+const activeBlobUrl = ref('');
+
+const revokeActiveBlobUrl = () => {
+  if (!activeBlobUrl.value) return;
+  try {
+    URL.revokeObjectURL(activeBlobUrl.value);
+  } catch (e) {
+    console.warn("Revoke blob URL error:", e);
+  }
+  activeBlobUrl.value = '';
+};
+
+const closeCanvas = () => {
+  canvasVisible.value = false;
+  revokeActiveBlobUrl();
+};
+
+watch(canvasVisible, (visible) => {
+  if (!visible) {
+    canvasFromWorkspace.value = false;
+    revokeActiveBlobUrl();
+  }
+});
+
+onUnmounted(() => {
+  revokeActiveBlobUrl();
+});
+
+const handleWorkspaceFilePreview = async (payload: { path: string; name: string }) => {
+  canvasFromWorkspace.value = true;
+  await openWorkspaceFileInCanvas({
+    path: payload.path,
+    name: payload.name,
+    conversationId: conversationId.value,
+    showToast,
+    activeBlobUrlRef: activeBlobUrl,
+    onOpen: (data) => {
+      canvasData.value = data as typeof canvasData.value;
+      canvasVisible.value = true;
+    },
+  });
 };
 
 const isImageFile = isImageAttachment;
@@ -2187,6 +2276,11 @@ const handleSystemCommand = async (cmd: string): Promise<boolean> => {
     await openPortalDrawer();
     return true;
   }
+  if (isWorkspaceSlashCommand(normalizedCmd)) {
+    userInput.value = "";
+    showWorkspaceDrawer.value = true;
+    return true;
+  }
   if (normalizedCmd === "/switch_to_auto" || normalizedCmd === "/switch_agent_auto") {
     userInput.value = "";
     debugMode.value = "auto";
@@ -2262,8 +2356,28 @@ const {
   pinStorageKey: "debug_portal_pinned",
 });
 
-const saveReportModalOverlayClass = computed(() =>
-  showPortalDrawer.value && portalPinned.value ? 'right-[28rem]' : 'right-0'
+const pinnedDrawerRightRem = computed(() => {
+  if (isMobile.value) return 0;
+  let rem = 0;
+  if (showPortalDrawer.value && portalPinned.value) rem += 28;
+  if (showWorkspaceDrawer.value && workspacePinned.value) rem += 28;
+  return rem;
+});
+
+const saveReportModalOverlayStyle = computed(() => {
+  const rem = pinnedDrawerRightRem.value;
+  return { right: rem > 0 ? `${rem}rem` : "0" };
+});
+
+const pinnedDrawerMarginStyle = computed(() => {
+  const rem = pinnedDrawerRightRem.value;
+  return { marginRight: rem > 0 ? `min(${rem}rem, 100vw)` : "" };
+});
+
+const workspacePinnedDockClass = computed(() =>
+  showPortalDrawer.value && portalPinned.value && !isMobile.value
+    ? "right-[28rem]"
+    : "right-0",
 );
 
 const INLINE_DATASET_MENU_EMPTY =
@@ -2295,6 +2409,10 @@ const refreshDatasetMenuNavigation = async (msg: Message) => {
 };
 
 const handleEscKey = (e: KeyboardEvent) => {
+  if (e.key === "Escape" && showWorkspaceDrawer.value) {
+    showWorkspaceDrawer.value = false;
+    return;
+  }
   if (e.key === "Escape" && showPortalDrawer.value) {
     showPortalDrawer.value = false;
     return;
@@ -3339,8 +3457,8 @@ onUnmounted(() => {
 
     <!-- Center: Main Chat Area -->
     <div
-      class="flex-1 flex flex-col bg-white shadow-sm overflow-hidden mr-px transition-[margin] duration-300"
-      :class="{ 'sm:mr-[min(28rem,100vw)]': showPortalDrawer && portalPinned && !isMobile }"
+      class="flex-1 flex flex-col bg-white shadow-sm overflow-hidden mr-px transition-[margin] duration-300 relative"
+      :style="pinnedDrawerMarginStyle"
     >
       <!-- Header -->
       <div
@@ -4443,13 +4561,22 @@ onUnmounted(() => {
             @reorder-commands="handleReorderCommands"
             @select-skill="openSkillSelector"
             @select-knowledge-base="showKnowledgeBaseSelector = true"
-            @select-local-fs="showFileBrowserModal = true"
+            @select-local-fs="showWorkspaceDrawer = true"
             @select-memory="openMemorySelector"
             @system-command="handleSystemCommand"
           >
           </ChatInput>
         </div>
       </div>
+
+      <ChatCanvas
+        :visible="canvasVisible"
+        :data="canvasData"
+        :overlay="canvasFromWorkspace"
+        :dock-side="canvasFromWorkspace ? 'left' : 'right'"
+        :conversation-id="conversationId"
+        @close="closeCanvas"
+      />
     </div>
 
     <!-- Right: Configuration Panel -->
@@ -5139,11 +5266,13 @@ onUnmounted(() => {
     @select="handleSelectKnowledgeBase"
   />
 
-  <FileBrowserModal
-    v-if="showFileBrowserModal"
-    :show="showFileBrowserModal"
-    @close="showFileBrowserModal = false"
+  <WorkspaceBrowserDrawer
+    v-model="showWorkspaceDrawer"
+    v-model:keep-open-on-select="workspaceKeepOpenOnSelect"
+    v-model:pinned="workspacePinned"
+    :pinned-dock-class="workspacePinnedDockClass"
     @select="handleSelectLocalFs"
+    @preview="handleWorkspaceFilePreview"
   />
 
   <!-- 技能工作流选择弹窗 (Skill Selector Modal) -->
@@ -5609,7 +5738,7 @@ onUnmounted(() => {
   <div
     v-if="showReportRunModal"
     class="fixed inset-y-0 left-0 z-[250] flex items-center justify-center bg-black/40 backdrop-blur-sm p-4"
-    :class="saveReportModalOverlayClass"
+    :style="saveReportModalOverlayStyle"
     @click.self="showReportRunModal = false"
   >
     <div class="bg-white dark:bg-gray-800 w-full max-w-md rounded-2xl shadow-2xl overflow-hidden border border-gray-100 dark:border-gray-700">
@@ -5709,7 +5838,7 @@ onUnmounted(() => {
   <div
     v-if="showSaveReportModal"
     class="fixed inset-y-0 left-0 z-[250] flex items-center justify-center bg-black/40 backdrop-blur-sm p-4"
-    :class="saveReportModalOverlayClass"
+    :style="saveReportModalOverlayStyle"
     @click.self="showSaveReportModal = false"
   >
     <div

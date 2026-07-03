@@ -1,29 +1,53 @@
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue';
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue';
 import hljs from 'highlight.js';
 import 'highlight.js/styles/github.css';
 import MermaidRenderer from '@/components/MermaidRenderer.vue';
 import { renderMarkdown } from '@/utils/markdown';
 import PivotTable from '@/components/embed/PivotTable.vue';
+import { useToast } from '@/composables/useToast';
+import { canWriteWorkspaceFile, resolvePublicUploadsPreviewUrl, saveWorkspaceFileContent } from '@/utils/workspaceFilePreview';
 
-const props = defineProps<{
-  visible: boolean;
-  data: {
-    type: 'html' | 'code' | 'mermaid' | 'pdf' | 'csv' | 'image' | 'compare';
-    title: string;
-    content: string;
-    compareContent?: string;
-    compareTitle?: string;
-  } | null;
-}>();
+const props = withDefaults(
+  defineProps<{
+    visible: boolean;
+    data: {
+      type: 'html' | 'code' | 'mermaid' | 'pdf' | 'csv' | 'image' | 'compare';
+      title: string;
+      content: string;
+      sourcePath?: string;
+      compareContent?: string;
+      compareTitle?: string;
+    } | null;
+    /** 工作空间预览时靠左停靠，避免与右侧抽屉重叠 */
+    dockSide?: 'left' | 'right';
+    /** 叠放在父级聊天区域内，不挤压主布局 */
+    overlay?: boolean;
+    conversationId?: string | null;
+  }>(),
+  { dockSide: 'right', overlay: false },
+);
 
 const emit = defineEmits<{
   (e: 'close'): void;
   (e: 'analyze-diff', question: string): void;
+  (e: 'content-saved', payload: { path: string; content: string }): void;
 }>();
 
+const { showToast } = useToast();
 const isFullscreen = ref(false);
 const copied = ref(false);
+const editorContent = ref('');
+const savedContent = ref('');
+const saving = ref(false);
+const isMobile = ref(
+  typeof window !== 'undefined' && window.matchMedia('(max-width: 639px)').matches,
+);
+let mobileMq: MediaQueryList | null = null;
+
+const syncMobile = () => {
+  isMobile.value = !!mobileMq?.matches;
+};
 
 const toggleFullscreen = () => {
   isFullscreen.value = !isFullscreen.value;
@@ -50,8 +74,9 @@ const getFileExtension = (title: string): string => {
 
 // 复制代码内容
 const copyContent = () => {
-  if (!props.data?.content) return;
-  navigator.clipboard.writeText(props.data.content).then(() => {
+  const text = codeTextContent.value;
+  if (!text) return;
+  navigator.clipboard.writeText(text).then(() => {
     copied.value = true;
     setTimeout(() => {
       copied.value = false;
@@ -89,9 +114,27 @@ const downloadFile = () => {
 };
 
 // 使用 hljs 进行代码渲染（带行号）
+const canSaveWorkspaceFile = computed(() => {
+  if (!props.data?.sourcePath) return false;
+  return canWriteWorkspaceFile(props.data.title);
+});
+
+const isCodeEditing = computed(() => {
+  if (!canSaveWorkspaceFile.value) return false;
+  if (props.data?.type === 'code' && !isHtmlContent.value && !isMarkdownContent.value) return true;
+  return activeTab.value === 'code';
+});
+
+const codeTextContent = computed(() => {
+  if (isCodeEditing.value) return editorContent.value;
+  return props.data?.content || '';
+});
+
+const isDirty = computed(() => canSaveWorkspaceFile.value && editorContent.value !== savedContent.value);
+
 const highlightedCode = computed(() => {
   if (!props.data || (props.data.type !== 'code' && props.data.type !== 'html')) return '';
-  const content = props.data.content;
+  const content = codeTextContent.value;
 
   let lang = 'txt';
   if (props.data.type === 'html') {
@@ -127,8 +170,9 @@ const highlightedCode = computed(() => {
 
 // 计算行号数组
 const lineCount = computed(() => {
-  if (!props.data?.content) return [];
-  const lines = props.data.content.split('\n');
+  const content = codeTextContent.value;
+  if (!content) return [];
+  const lines = content.split('\n');
   // 保持与内容的行号一致，数组值为 1, 2, 3...
   return Array.from({ length: lines.length }, (_, i) => i + 1);
 });
@@ -355,24 +399,58 @@ const isMarkdownContent = computed(() => {
 });
 
 const renderedMarkdownContent = computed(() => {
-  if (!props.data?.content) return '';
-  return renderMarkdown(props.data.content);
+  const content = canSaveWorkspaceFile.value
+    ? editorContent.value
+    : (props.data?.content || '');
+  if (!content) return '';
+  return renderMarkdown(content);
 });
+
+const resolveConversationId = () =>
+  props.conversationId
+  || localStorage.getItem('yovole_embed_conv_id')
+  || localStorage.getItem('agent_debug_conv_id')
+  || '';
+
+const syncEditorFromData = () => {
+  const raw = props.data?.content;
+  const text = typeof raw === 'string' && !raw.startsWith('blob:') ? raw : '';
+  editorContent.value = text;
+  savedContent.value = text;
+};
+
+const saveWorkspaceFile = async () => {
+  if (!props.data?.sourcePath || !canSaveWorkspaceFile.value || saving.value) return;
+  saving.value = true;
+  try {
+    await saveWorkspaceFileContent({
+      path: props.data.sourcePath,
+      content: editorContent.value,
+      conversationId: resolveConversationId(),
+    });
+    savedContent.value = editorContent.value;
+    emit('content-saved', { path: props.data.sourcePath, content: editorContent.value });
+    showToast('文件已保存', 'success');
+  } catch (err: any) {
+    const errMsg = err.response?.data?.detail || err.response?.data?.message || err.message || '保存失败';
+    showToast(errMsg, 'error');
+  } finally {
+    saving.value = false;
+  }
+};
 
 const resolveUrlPath = (val: string): string => {
   if (!val) return '';
   if (val.startsWith('http://') || val.startsWith('https://') || val.startsWith('data:') || val.startsWith('quick:') || val.startsWith('canvas:')) {
     return val;
   }
-  if (val.includes('uploads/')) {
-    const parts = val.split('uploads/');
-    return '/static/uploads/' + parts[parts.length - 1];
-  }
+  const publicUploadUrl = resolvePublicUploadsPreviewUrl(val);
+  if (publicUploadUrl) return publicUploadUrl;
   // 兼容绝对路径与相对物理路径，只要它不属于静态路由与API接口路由，均通过后端预览API拉取
   if (!val.startsWith('/static/') &&
       !val.startsWith('/api/') &&
       !val.startsWith('/assets/')) {
-    const convId = localStorage.getItem("yovole_embed_conv_id") || "";
+    const convId = resolveConversationId();
     const convParam = convId ? `&conversation_id=${encodeURIComponent(convId)}` : "";
     return `/api/v1/chat/fs/preview?path=${encodeURIComponent(val)}${convParam}`;
   }
@@ -380,8 +458,11 @@ const resolveUrlPath = (val: string): string => {
 };
 
 const resolvedContent = computed(() => {
-  if (!props.data?.content) return '';
-  const val = props.data.content;
+  const data = props.data;
+  if (!data?.content && !canSaveWorkspaceFile.value) return '';
+  const val = canSaveWorkspaceFile.value && isHtmlContent.value
+    ? editorContent.value
+    : (data?.content || '');
 
   if (isHtmlContent.value) {
     // 只要识别为可预览的 HTML 语法，就深度重写其内部的所有物理资源绝对路径引用
@@ -391,7 +472,7 @@ const resolvedContent = computed(() => {
     });
   }
 
-  if (props.data.type === 'image' || props.data.type === 'pdf' || props.data.type === 'csv') {
+  if (data && (data.type === 'image' || data.type === 'pdf' || data.type === 'csv')) {
     return resolveUrlPath(val);
   }
 
@@ -403,6 +484,7 @@ const resolvedContent = computed(() => {
 // ==========================================
 watch(() => props.data, () => {
   resetTransform();
+  syncEditorFromData();
   if (props.data?.type === 'csv') {
     csvSearchQuery.value = '';
     csvViewMode.value = 'table';
@@ -486,15 +568,62 @@ const analyzeDiff = () => {
   emit('analyze-diff', question);
   handleClose();
 };
+
+onMounted(() => {
+  mobileMq = window.matchMedia('(max-width: 639px)');
+  syncMobile();
+  mobileMq.addEventListener('change', syncMobile);
+});
+
+onUnmounted(() => {
+  mobileMq?.removeEventListener('change', syncMobile);
+});
+
+const slideTransitionName = computed(() =>
+  props.overlay || props.dockSide === 'left' ? 'slide-left' : 'slide',
+);
+
+const useBodyTeleport = computed(() =>
+  !props.overlay || isFullscreen.value || isMobile.value,
+);
+
+const panelFrameClass = computed(() => {
+  if (isFullscreen.value || (props.overlay && isMobile.value)) {
+    return 'fixed inset-0 z-[260] w-full max-w-none pointer-events-auto border-0';
+  }
+  if (props.overlay) {
+    return 'absolute inset-0 z-50 w-full max-w-none pointer-events-auto border-0';
+  }
+  if (props.dockSide === 'left') {
+    return 'fixed left-0 right-auto top-0 bottom-0 z-[118] w-full sm:w-[min(28rem,92%)] sm:max-w-[28rem] border-r border-l-0';
+  }
+  return 'fixed right-0 left-0 sm:left-auto top-0 bottom-0 z-[118] w-full sm:w-[80%] sm:max-w-[520px] border-l border-r-0';
+});
+
+const overlayBackdropClass = computed(() =>
+  isFullscreen.value || isMobile.value
+    ? 'fixed inset-0 z-[259]'
+    : 'absolute inset-0 z-40',
+);
 </script>
 
 <template>
-  <teleport to="body">
-    <Transition name="slide">
+  <teleport to="body" :disabled="!useBodyTeleport">
+    <Transition :name="slideTransitionName">
+      <div
+        v-if="visible && overlay"
+        class="pointer-events-none"
+        :class="overlayBackdropClass"
+        aria-hidden="true"
+      >
+        <div class="absolute inset-0 bg-gray-900/5 dark:bg-black/15" />
+      </div>
+    </Transition>
+    <Transition :name="slideTransitionName">
       <div
         v-if="visible"
-        class="fixed right-0 top-0 bottom-0 z-[120] bg-white/95 dark:bg-gray-800/95 backdrop-blur-md border-l border-gray-200 dark:border-gray-700 shadow-2xl flex flex-col transition-all duration-300"
-        :class="isFullscreen ? 'left-0 w-full' : 'w-full sm:w-[80%] sm:max-w-[520px] left-0 sm:left-auto'"
+        class="bg-white/95 dark:bg-gray-800/95 backdrop-blur-md shadow-2xl flex flex-col transition-all duration-300 border-gray-200 dark:border-gray-700"
+        :class="panelFrameClass"
       >
       <!-- Header -->
       <div class="p-4 border-b border-gray-100 dark:border-gray-700 flex justify-between items-center flex-shrink-0">
@@ -589,7 +718,7 @@ const analyzeDiff = () => {
       </div>
 
       <!-- HTML / Markdown Preview/Code Tabs Selector -->
-      <div v-if="isHtmlContent || isMarkdownContent" class="px-4 py-2 border-b border-gray-100/50 dark:border-gray-700/50 bg-slate-50/50 dark:bg-gray-900/10 flex-shrink-0 flex justify-center">
+      <div v-if="isHtmlContent || isMarkdownContent" class="px-4 py-2 border-b border-gray-100/50 dark:border-gray-700/50 bg-slate-50/50 dark:bg-gray-900/10 flex-shrink-0 flex items-center justify-center gap-2">
         <div class="bg-gray-150/80 dark:bg-gray-900 p-0.5 rounded-lg flex space-x-1 w-full max-w-[240px] border border-gray-200/20 shadow-inner">
           <button
             @click="activeTab = 'preview'"
@@ -612,6 +741,18 @@ const analyzeDiff = () => {
             <span>源代码</span>
           </button>
         </div>
+        <button
+          v-if="canSaveWorkspaceFile && activeTab === 'code'"
+          type="button"
+          class="px-3 py-1.5 text-[11px] font-bold rounded-lg transition-all whitespace-nowrap"
+          :class="isDirty
+            ? 'text-white bg-primary hover:bg-primary/90 shadow-sm'
+            : 'text-gray-400 bg-gray-100 dark:bg-gray-800 cursor-default'"
+          :disabled="saving || !isDirty"
+          @click="saveWorkspaceFile"
+        >
+          {{ saving ? '保存中...' : (isDirty ? '保存' : '已保存') }}
+        </button>
       </div>
 
       <!-- Content Area -->
@@ -627,15 +768,23 @@ const analyzeDiff = () => {
             ></iframe>
           </div>
           <!-- HTML Source Code -->
-          <div v-else class="w-full font-mono text-xs overflow-x-auto bg-white dark:bg-gray-900 rounded-xl p-4 border border-gray-100 dark:border-gray-850 shadow-inner flex leading-relaxed select-text">
-            <!-- Line Numbers Column -->
-            <div class="text-gray-300 dark:text-gray-600 text-right pr-4 select-none border-r border-gray-100 dark:border-gray-800 flex-shrink-0">
-              <div v-for="num in lineCount" :key="num" class="h-5">
-                {{ num }}
+          <div v-else class="w-full font-mono text-xs overflow-x-auto bg-white dark:bg-gray-900 rounded-xl border border-gray-100 dark:border-gray-850 shadow-inner flex leading-relaxed select-text min-h-[320px]">
+            <template v-if="isCodeEditing">
+              <div class="text-gray-300 dark:text-gray-600 text-right pr-3 py-4 select-none border-r border-gray-100 dark:border-gray-800 flex-shrink-0">
+                <div v-for="num in lineCount" :key="num" class="h-5 leading-5">{{ num }}</div>
               </div>
-            </div>
-            <!-- Highlighted Code Column -->
-            <pre class="pl-4 flex-1 overflow-x-auto custom-scrollbar select-text"><code class="hljs block whitespace-pre" v-html="highlightedCode"></code></pre>
+              <textarea
+                v-model="editorContent"
+                class="flex-1 min-h-[300px] p-4 pl-3 bg-transparent outline-none resize-y text-gray-800 dark:text-gray-100 leading-5 custom-scrollbar"
+                spellcheck="false"
+              />
+            </template>
+            <template v-else>
+              <div class="text-gray-300 dark:text-gray-600 text-right pr-4 py-4 select-none border-r border-gray-100 dark:border-gray-800 flex-shrink-0">
+                <div v-for="num in lineCount" :key="num" class="h-5">{{ num }}</div>
+              </div>
+              <pre class="pl-4 flex-1 overflow-x-auto custom-scrollbar select-text py-4"><code class="hljs block whitespace-pre" v-html="highlightedCode"></code></pre>
+            </template>
           </div>
         </template>
 
@@ -645,29 +794,58 @@ const analyzeDiff = () => {
           <div v-if="activeTab === 'preview'" class="w-full h-full bg-white dark:bg-gray-900 rounded-xl p-6 border border-gray-100 dark:border-gray-850 shadow-inner select-text markdown-body" v-html="renderedMarkdownContent">
           </div>
           <!-- Markdown Source Code -->
-          <div v-else class="w-full font-mono text-xs overflow-x-auto bg-white dark:bg-gray-900 rounded-xl p-4 border border-gray-100 dark:border-gray-850 shadow-inner flex leading-relaxed select-text">
-            <!-- Line Numbers Column -->
-            <div class="text-gray-300 dark:text-gray-600 text-right pr-4 select-none border-r border-gray-100 dark:border-gray-800 flex-shrink-0">
-              <div v-for="num in lineCount" :key="num" class="h-5">
-                {{ num }}
+          <div v-else class="w-full font-mono text-xs overflow-x-auto bg-white dark:bg-gray-900 rounded-xl border border-gray-100 dark:border-gray-850 shadow-inner flex leading-relaxed select-text min-h-[320px]">
+            <template v-if="isCodeEditing">
+              <div class="text-gray-300 dark:text-gray-600 text-right pr-3 py-4 select-none border-r border-gray-100 dark:border-gray-800 flex-shrink-0">
+                <div v-for="num in lineCount" :key="num" class="h-5 leading-5">{{ num }}</div>
               </div>
-            </div>
-            <!-- Highlighted Code Column -->
-            <pre class="pl-4 flex-1 overflow-x-auto custom-scrollbar select-text"><code class="hljs block whitespace-pre" v-html="highlightedCode"></code></pre>
+              <textarea
+                v-model="editorContent"
+                class="flex-1 min-h-[300px] p-4 pl-3 bg-transparent outline-none resize-y text-gray-800 dark:text-gray-100 leading-5 custom-scrollbar"
+                spellcheck="false"
+              />
+            </template>
+            <template v-else>
+              <div class="text-gray-300 dark:text-gray-600 text-right pr-4 py-4 select-none border-r border-gray-100 dark:border-gray-800 flex-shrink-0">
+                <div v-for="num in lineCount" :key="num" class="h-5">{{ num }}</div>
+              </div>
+              <pre class="pl-4 flex-1 overflow-x-auto custom-scrollbar select-text py-4"><code class="hljs block whitespace-pre" v-html="highlightedCode"></code></pre>
+            </template>
           </div>
         </template>
 
         <!-- General Code Block (Not HTML) -->
         <template v-else-if="data?.type === 'code'">
-          <div class="w-full font-mono text-xs overflow-x-auto bg-white dark:bg-gray-900 rounded-xl p-4 border border-gray-100 dark:border-gray-850 shadow-inner flex leading-relaxed select-text">
-            <!-- Line Numbers Column -->
-            <div class="text-gray-300 dark:text-gray-600 text-right pr-4 select-none border-r border-gray-100 dark:border-gray-800 flex-shrink-0">
-              <div v-for="num in lineCount" :key="num" class="h-5">
-                {{ num }}
+          <div v-if="canSaveWorkspaceFile" class="mb-2 flex justify-end">
+            <button
+              type="button"
+              class="px-3 py-1.5 text-[11px] font-bold rounded-lg transition-all"
+              :class="isDirty
+                ? 'text-white bg-primary hover:bg-primary/90 shadow-sm'
+                : 'text-gray-400 bg-gray-100 dark:bg-gray-800 cursor-default'"
+              :disabled="saving || !isDirty"
+              @click="saveWorkspaceFile"
+            >
+              {{ saving ? '保存中...' : (isDirty ? '保存' : '已保存') }}
+            </button>
+          </div>
+          <div class="w-full font-mono text-xs overflow-x-auto bg-white dark:bg-gray-900 rounded-xl border border-gray-100 dark:border-gray-850 shadow-inner flex leading-relaxed select-text min-h-[320px]">
+            <template v-if="isCodeEditing">
+              <div class="text-gray-300 dark:text-gray-600 text-right pr-3 py-4 select-none border-r border-gray-100 dark:border-gray-800 flex-shrink-0">
+                <div v-for="num in lineCount" :key="num" class="h-5 leading-5">{{ num }}</div>
               </div>
-            </div>
-            <!-- Highlighted Code Column -->
-            <pre class="pl-4 flex-1 overflow-x-auto custom-scrollbar select-text"><code class="hljs block whitespace-pre" v-html="highlightedCode"></code></pre>
+              <textarea
+                v-model="editorContent"
+                class="flex-1 min-h-[300px] p-4 pl-3 bg-transparent outline-none resize-y text-gray-800 dark:text-gray-100 leading-5 custom-scrollbar"
+                spellcheck="false"
+              />
+            </template>
+            <template v-else>
+              <div class="text-gray-300 dark:text-gray-600 text-right pr-4 py-4 select-none border-r border-gray-100 dark:border-gray-800 flex-shrink-0">
+                <div v-for="num in lineCount" :key="num" class="h-5">{{ num }}</div>
+              </div>
+              <pre class="pl-4 flex-1 overflow-x-auto custom-scrollbar select-text py-4"><code class="hljs block whitespace-pre" v-html="highlightedCode"></code></pre>
+            </template>
           </div>
         </template>
 
@@ -958,6 +1136,16 @@ const analyzeDiff = () => {
 .slide-enter-from,
 .slide-leave-to {
   transform: translateX(100%);
+  opacity: 0;
+}
+
+.slide-left-enter-active,
+.slide-left-leave-active {
+  transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.3s ease;
+}
+.slide-left-enter-from,
+.slide-left-leave-to {
+  transform: translateX(-100%);
   opacity: 0;
 }
 

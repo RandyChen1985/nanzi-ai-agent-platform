@@ -65,6 +65,7 @@
               <label class="block text-sm font-medium text-gray-700 mb-2">用户表</label>
               <div class="relative">
                 <button
+                  ref="tableTriggerRef"
                   type="button"
                   class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-left focus:ring-2 focus:ring-indigo-500 outline-none disabled:bg-gray-50 disabled:cursor-not-allowed flex items-center justify-between gap-2"
                   :disabled="!config.enabled || !config.connection_config_id || loadingTables"
@@ -87,45 +88,49 @@
                   </svg>
                 </button>
 
-                <div
-                  v-if="tablePickerOpen"
-                  class="absolute left-0 right-0 top-full z-[10001] mt-1 rounded-lg border border-gray-200 bg-white shadow-xl overflow-hidden"
-                >
-                  <div class="flex items-center gap-2 border-b border-gray-100 px-3 py-2 bg-gray-50">
-                    <svg class="w-4 h-4 text-gray-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-                    </svg>
-                    <input
-                      ref="tableSearchInputRef"
-                      v-model="tableSearchQuery"
-                      type="text"
-                      class="flex-1 min-w-0 bg-transparent border-none focus:ring-0 text-sm py-0.5 outline-none"
-                      placeholder="搜索表名或中文备注..."
-                      @click.stop
-                    />
-                  </div>
-                  <div class="max-h-56 overflow-y-auto">
-                    <button
-                      v-for="t in filteredTables"
-                      :key="t.name"
-                      type="button"
-                      class="w-full px-3 py-2.5 text-left transition-colors hover:bg-indigo-50"
-                      :class="config.table_name === t.name ? 'bg-indigo-50 text-indigo-700' : 'text-gray-800'"
-                      @click.stop="selectTable(t.name)"
-                    >
-                      <div class="text-sm font-medium truncate">{{ t.name }}</div>
-                      <div class="text-xs truncate mt-0.5" :class="config.table_name === t.name ? 'text-indigo-500/80' : 'text-gray-400'">
-                        {{ tableSubtitle(t) }}
+                <Teleport to="body">
+                  <div
+                    v-if="tablePickerOpen"
+                    ref="tableDropdownRef"
+                    class="fixed z-[10050] rounded-lg border border-gray-200 bg-white shadow-xl overflow-hidden flex flex-col"
+                    :style="tableDropdownStyle"
+                  >
+                    <div class="flex items-center gap-2 border-b border-gray-100 px-3 py-2 bg-gray-50 shrink-0">
+                      <svg class="w-4 h-4 text-gray-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                      </svg>
+                      <input
+                        ref="tableSearchInputRef"
+                        v-model="tableSearchQuery"
+                        type="text"
+                        class="flex-1 min-w-0 bg-transparent border-none focus:ring-0 text-sm py-0.5 outline-none"
+                        placeholder="搜索表名或中文备注..."
+                        @click.stop
+                      />
+                    </div>
+                    <div class="overflow-y-auto flex-1 min-h-0">
+                      <button
+                        v-for="t in filteredTables"
+                        :key="t.name"
+                        type="button"
+                        class="w-full px-3 py-2.5 text-left transition-colors hover:bg-indigo-50"
+                        :class="config.table_name === t.name ? 'bg-indigo-50 text-indigo-700' : 'text-gray-800'"
+                        @click.stop="selectTable(t.name)"
+                      >
+                        <div class="text-sm font-medium truncate">{{ t.name }}</div>
+                        <div class="text-xs truncate mt-0.5" :class="config.table_name === t.name ? 'text-indigo-500/80' : 'text-gray-400'">
+                          {{ tableSubtitle(t) }}
+                        </div>
+                      </button>
+                      <div
+                        v-if="!loadingTables && filteredTables.length === 0"
+                        class="px-3 py-6 text-center text-sm text-gray-400"
+                      >
+                        {{ tableSearchQuery.trim() ? '无匹配表' : '暂无可用表' }}
                       </div>
-                    </button>
-                    <div
-                      v-if="!loadingTables && filteredTables.length === 0"
-                      class="px-3 py-6 text-center text-sm text-gray-400"
-                    >
-                      {{ tableSearchQuery.trim() ? '无匹配表' : '暂无可用表' }}
                     </div>
                   </div>
-                </div>
+                </Teleport>
               </div>
               <p v-if="tables.length > 0" class="text-xs text-gray-400 mt-1">
                 共 {{ tables.length }} 张表，可搜索快速定位
@@ -583,10 +588,17 @@ const tables = ref<any[]>([])
 const columns = ref<any[]>([])
 const previewUsers = ref<any[]>([])
 const tablePickerRef = ref<HTMLElement | null>(null)
+const tableTriggerRef = ref<HTMLButtonElement | null>(null)
+const tableDropdownRef = ref<HTMLElement | null>(null)
 const tableSearchInputRef = ref<HTMLInputElement | null>(null)
 const tablePickerOpen = ref(false)
 const tableSearchQuery = ref('')
+const tableDropdownStyle = ref<Record<string, string>>({})
 const showHelpModal = ref(false)
+
+const TABLE_SEARCH_BAR_HEIGHT = 44
+const TABLE_MIN_LIST_HEIGHT = 120
+const TABLE_PREFERRED_LIST_HEIGHT = 224
 
 const defaultConfig = (): SyncConfig => ({
   enabled: false,
@@ -696,11 +708,39 @@ const closeTablePicker = () => {
   tableSearchQuery.value = ''
 }
 
+const updateTableDropdownPosition = () => {
+  const trigger = tableTriggerRef.value
+  if (!trigger) return
+
+  const rect = trigger.getBoundingClientRect()
+  const viewportHeight = window.innerHeight
+  const spaceBelow = viewportHeight - rect.bottom - 8
+  const spaceAbove = rect.top - 8
+  const openDown = spaceBelow >= TABLE_MIN_LIST_HEIGHT || spaceBelow >= spaceAbove
+
+  const listHeight = Math.min(
+    TABLE_PREFERRED_LIST_HEIGHT,
+    Math.max(
+      TABLE_MIN_LIST_HEIGHT,
+      openDown ? spaceBelow - TABLE_SEARCH_BAR_HEIGHT : spaceAbove - TABLE_SEARCH_BAR_HEIGHT,
+    ),
+  )
+  const totalHeight = listHeight + TABLE_SEARCH_BAR_HEIGHT
+
+  tableDropdownStyle.value = {
+    top: openDown ? `${rect.bottom + 4}px` : `${rect.top - totalHeight - 4}px`,
+    left: `${rect.left}px`,
+    width: `${rect.width}px`,
+    height: `${totalHeight}px`,
+  }
+}
+
 const toggleTablePicker = async () => {
   if (!config.value.enabled || !config.value.connection_config_id || loadingTables.value) return
   tablePickerOpen.value = !tablePickerOpen.value
   if (tablePickerOpen.value) {
     await nextTick()
+    updateTableDropdownPosition()
     tableSearchInputRef.value?.focus()
   } else {
     tableSearchQuery.value = ''
@@ -718,10 +758,19 @@ const selectTable = (tableName: string) => {
 }
 
 const onTablePickerOutside = (event: MouseEvent) => {
-  if (!tablePickerRef.value?.contains(event.target as Node)) {
-    closeTablePicker()
-  }
+  const target = event.target as Node
+  if (tablePickerRef.value?.contains(target)) return
+  if (tableDropdownRef.value?.contains(target)) return
+  closeTablePicker()
 }
+
+const onTablePickerReposition = () => {
+  if (tablePickerOpen.value) updateTableDropdownPosition()
+}
+
+watch(tablePickerOpen, (isOpen) => {
+  if (isOpen) nextTick(() => updateTableDropdownPosition())
+})
 
 const loadConfig = async () => {
   try {
@@ -907,11 +956,15 @@ watch(
 
 onMounted(() => {
   document.addEventListener('click', onTablePickerOutside)
+  window.addEventListener('resize', onTablePickerReposition)
+  window.addEventListener('scroll', onTablePickerReposition, true)
   if (props.visible) loadConfig()
 })
 
 onBeforeUnmount(() => {
   document.removeEventListener('click', onTablePickerOutside)
+  window.removeEventListener('resize', onTablePickerReposition)
+  window.removeEventListener('scroll', onTablePickerReposition, true)
 })
 </script>
 
