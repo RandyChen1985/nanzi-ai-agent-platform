@@ -2,6 +2,7 @@ import pytest
 import os
 from httpx import AsyncClient, ASGITransport
 from app.main import app
+from app.utils.fs_paths import get_data_base_dir
 
 @pytest.mark.asyncio
 async def test_list_root_directory(db_session, valid_api_key):
@@ -20,7 +21,42 @@ async def test_list_root_directory(db_session, valid_api_key):
         assert "current_path" in data["data"]
         assert "is_root" in data["data"]
         assert data["data"]["is_root"] is True
+        assert data["data"]["scope"] == "user_scoped"
         assert isinstance(data["data"]["items"], list)
+        item_paths = {item["path"] for item in data["data"]["items"]}
+        base = get_data_base_dir()
+        assert os.path.join(base, "uploads") in item_paths or any("uploads" in p for p in item_paths)
+
+@pytest.mark.asyncio
+async def test_regular_user_cannot_list_other_workspace(db_session, valid_api_key):
+    base = get_data_base_dir()
+    other_dir = os.path.join(base, "agent_workspaces", "other_user__999", "conv-a")
+    os.makedirs(other_dir, exist_ok=True)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.get(
+            "/api/v1/chat/fs/list",
+            params={"path": other_dir},
+            headers={"X-API-Key": valid_api_key},
+        )
+        assert resp.status_code == 403
+        assert "越权" in resp.json()["message"]
+
+@pytest.mark.asyncio
+async def test_regular_user_cannot_preview_other_workspace_file(db_session, valid_api_key):
+    base = get_data_base_dir()
+    other_file = os.path.join(base, "agent_workspaces", "other_user__999", "secret.txt")
+    os.makedirs(os.path.dirname(other_file), exist_ok=True)
+    with open(other_file, "w", encoding="utf-8") as handle:
+        handle.write("secret")
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.get(
+            "/api/v1/chat/fs/preview",
+            params={"path": other_file},
+            headers={"X-API-Key": valid_api_key},
+        )
+        assert resp.status_code == 403
 
 @pytest.mark.asyncio
 async def test_list_traversal_interception(db_session, valid_api_key):

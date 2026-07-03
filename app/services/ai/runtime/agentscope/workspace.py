@@ -27,10 +27,55 @@ WORKSPACE_REPLACED_PLATFORM_TOOL_NAMES = frozenset(
 _workspace_cache: dict[str, Any] = {}
 
 
+WORKSPACE_USER_KEY_SEP = "__"
+
+
 def _clean_key_part(value: str | None, fallback_prefix: str) -> str:
     raw = value or f"{fallback_prefix}_{uuid.uuid4().hex[:12]}"
     cleaned = re.sub(r"[^A-Za-z0-9_-]+", "_", raw).strip("_")
     return cleaned or f"{fallback_prefix}_{uuid.uuid4().hex[:12]}"
+
+
+def extract_workspace_identity(
+    *,
+    user_id: str | int | None = None,
+    user_name: str | None = None,
+    user_info: dict[str, Any] | None = None,
+) -> tuple[str | int | None, str | None]:
+    """Resolve workspace identity from explicit args or user_info."""
+    resolved_user_id = user_id
+    resolved_user_name = user_name
+    if user_info:
+        if resolved_user_id is None:
+            resolved_user_id = user_info.get("user_id") or user_info.get("id")
+        if not resolved_user_name:
+            raw_name = user_info.get("user_name") or user_info.get("username")
+            resolved_user_name = str(raw_name).strip() if raw_name else None
+    if resolved_user_name:
+        resolved_user_name = str(resolved_user_name).strip() or None
+    return resolved_user_id, resolved_user_name
+
+
+def resolve_workspace_user_key(
+    *,
+    user_id: str | int | None,
+    user_name: str | None = None,
+) -> str:
+    """Build a readable, stable workspace directory key: user_name__user_id."""
+    if user_id is None:
+        return _clean_key_part(None, "anonymous")
+
+    uid_str = str(user_id).strip()
+    if not uid_str:
+        return _clean_key_part(None, "anonymous")
+
+    raw_name = (user_name or "").strip()
+    if raw_name:
+        name_part = _clean_key_part(raw_name, "user")
+        id_part = _clean_key_part(uid_str, "user")
+        return f"{name_part}{WORKSPACE_USER_KEY_SEP}{id_part}"
+
+    return _clean_key_part(uid_str, "anonymous")
 
 
 def build_workspace_key(trace_id: str | None, conversation_id: str | None = None) -> str:
@@ -86,16 +131,51 @@ def resolve_session_workdir(
     root: str,
     user_id: str | int | None,
     conversation_id: str,
+    user_name: str | None = None,
+    user_info: dict[str, Any] | None = None,
 ) -> str:
-    uid = _clean_key_part(str(user_id) if user_id is not None else None, "anonymous")
+    resolved_user_id, resolved_user_name = extract_workspace_identity(
+        user_id=user_id,
+        user_name=user_name,
+        user_info=user_info,
+    )
+    uid = resolve_workspace_user_key(
+        user_id=resolved_user_id,
+        user_name=resolved_user_name,
+    )
     cid = _clean_key_part(conversation_id, "conversation")
     return os.path.join(os.path.abspath(root), uid, cid)
+
+
+def resolve_user_workspace_root(
+    *,
+    root: str,
+    user_id: str | int | None,
+    user_name: str | None = None,
+    user_info: dict[str, Any] | None = None,
+) -> str | None:
+    """Return the per-user workspace root when it exists on disk."""
+    resolved_user_id, resolved_user_name = extract_workspace_identity(
+        user_id=user_id,
+        user_name=user_name,
+        user_info=user_info,
+    )
+    user_key = resolve_workspace_user_key(
+        user_id=resolved_user_id,
+        user_name=resolved_user_name,
+    )
+    user_root = os.path.normpath(os.path.join(os.path.abspath(root), user_key))
+    if os.path.isdir(user_root):
+        return user_root
+    return None
 
 
 async def get_local_workspace(
     *,
     user_id: str | int | None,
     conversation_id: str | None,
+    user_name: str | None = None,
+    user_info: dict[str, Any] | None = None,
 ) -> Any | None:
     """Return an initialized LocalWorkspace for the conversation."""
     if not conversation_id:
@@ -105,6 +185,8 @@ async def get_local_workspace(
     workdir = resolve_session_workdir(
         root=root,
         user_id=user_id,
+        user_name=user_name,
+        user_info=user_info,
         conversation_id=conversation_id,
     )
     cached = _workspace_cache.get(workdir)
@@ -135,17 +217,23 @@ async def get_local_workspace_offloader(
     *,
     user_id: str | int | None,
     conversation_id: str | None,
+    user_name: str | None = None,
+    user_info: dict[str, Any] | None = None,
 ) -> Any | None:
     """Backward-compatible alias for get_local_workspace."""
     return await get_local_workspace(
         user_id=user_id,
         conversation_id=conversation_id,
+        user_name=user_name,
+        user_info=user_info,
     )
 
 
 async def delete_workspace_for_session(
     user_id: str | int | None,
     conversation_id: str | None,
+    user_name: str | None = None,
+    user_info: dict[str, Any] | None = None,
 ) -> None:
     if not conversation_id:
         return
@@ -153,6 +241,8 @@ async def delete_workspace_for_session(
     workdir = resolve_session_workdir(
         root=root,
         user_id=user_id,
+        user_name=user_name,
+        user_info=user_info,
         conversation_id=conversation_id,
     )
     _workspace_cache.pop(workdir, None)
@@ -199,6 +289,8 @@ async def append_session_workspace_sandbox_to_system_prompt(
     user_id: str | int | None,
     conversation_id: str | None,
     tools: list[Any],
+    user_name: str | None = None,
+    user_info: dict[str, Any] | None = None,
 ) -> str:
     """Append session workspace + path sandbox guidance when file/shell tools are bound."""
     file_tools = collect_workspace_file_tool_names(tools)
@@ -214,6 +306,8 @@ async def append_session_workspace_sandbox_to_system_prompt(
     workdir = resolve_session_workdir(
         root=root,
         user_id=user_id,
+        user_name=user_name,
+        user_info=user_info,
         conversation_id=conversation_id,
     )
     block = AgentServicePrompts.session_workspace_sandbox_block(

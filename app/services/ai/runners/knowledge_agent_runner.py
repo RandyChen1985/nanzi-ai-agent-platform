@@ -347,6 +347,8 @@ class KnowledgeAgentRunner(AssistantAgentRunner):
         system_content = await append_session_workspace_sandbox_to_system_prompt(
             system_content,
             user_id=self._runtime_user_id(),
+            user_name=self._runtime_user_name(),
+            user_info=self.user_info,
             conversation_id=self.conversation_id,
             tools=tools,
         )

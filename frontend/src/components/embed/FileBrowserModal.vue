@@ -22,6 +22,7 @@ const activeTab = ref<'file' | 'directory'>('file')
 const currentPath = ref<string>('')
 const parentPath = ref<string | null>(null)
 const isRoot = ref<boolean>(true)
+const scope = ref<'admin_all' | 'user_scoped'>('user_scoped')
 const items = ref<any[]>([])
 const loading = ref<boolean>(false)
 const baseDir = ref<string>('')
@@ -155,6 +156,7 @@ const fetchDirectory = async (pathUrl: string = '') => {
       currentPath.value = data.current_path
       parentPath.value = data.parent_path
       isRoot.value = data.is_root
+      scope.value = data.scope === 'admin_all' ? 'admin_all' : 'user_scoped'
       items.value = data.items
       
       // 记录根目录的绝对路径，用于面包屑做截断
@@ -215,19 +217,21 @@ const legendItems = FILE_TYPE_LEGEND.map((category) => ({
   ...getCategoryStyle(category),
 }))
 
-// 极客感面包屑计算属性
 const breadcrumbs = computed(() => {
+  if (isRoot.value && scope.value === 'user_scoped') {
+    return [{ name: '📁 root', path: '', isBase: true }]
+  }
+
   const base = baseDir.value
   const current = currentPath.value
   if (!current) return []
-  
+
   const parts = current.split('/').filter(Boolean)
   const crumbs: Array<{ name: string; path: string; isBase: boolean }> = []
   let runningPath = ''
-  
+
   for (const part of parts) {
     runningPath += '/' + part
-    // 只有在 baseDir 自身或其子目录之下才在面板里友好展示，绝不展示父级目录
     if (runningPath.startsWith(base)) {
       const isBase = runningPath === base
       crumbs.push({
@@ -237,14 +241,18 @@ const breadcrumbs = computed(() => {
       })
     }
   }
-  
-  // 确保如果 baseDir 为空或没有匹配上，至少有个当前目录
+
   if (crumbs.length === 0) {
     crumbs.push({ name: '📁 root', path: base || current, isBase: true })
   }
-  
+
   return crumbs
 })
+
+const goParent = () => {
+  if (isRoot.value || loading.value) return
+  fetchDirectory(parentPath.value || '')
+}
 
 // 点击面包屑
 const clickBreadcrumb = (path: string) => {
@@ -328,7 +336,7 @@ const handleConfirm = () => {
 </script>
 
 <template>
-  <Modal :show="show" title="服务器文件浏览器" size="max-w-2xl" @close="emit('close')">
+  <Modal :show="show" title="浏览工作空间" size="max-w-2xl" @close="emit('close')">
     <div class="flex flex-col h-[500px]">
       <!-- 1. 双 Tab 页切换 -->
       <div class="flex border-b border-gray-100 dark:border-gray-800 mb-3 bg-gray-50/50 dark:bg-gray-900/30 p-1 rounded-xl">
@@ -354,7 +362,7 @@ const handleConfirm = () => {
       <div class="flex items-center space-x-2 px-2 py-1.5 bg-gray-50 dark:bg-gray-800/50 rounded-lg border border-gray-100 dark:border-gray-800 mb-2 overflow-x-auto no-scrollbar">
         <!-- 后退按钮 -->
         <button 
-          @click="parentPath && fetchDirectory(parentPath)" 
+          @click="goParent" 
           :disabled="isRoot || loading" 
           class="p-1 rounded hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-500 disabled:opacity-30 disabled:hover:bg-transparent transition-colors"
           title="返回上一级"

@@ -937,16 +937,16 @@ defineExpose({
                                 <span class="font-medium text-left">打开数据门户</span>
                             </button>
 
+                            <!-- Browse Workspace -->
+                            <button @click="showPlusMenu = false; emit('select-local-fs');" class="w-full flex items-center space-x-3 px-3 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-primary/10 dark:hover:bg-primary/20 hover:text-primary transition-all duration-150">
+                                <span class="text-lg">💻</span>
+                                <span class="font-medium text-left">浏览工作空间</span>
+                            </button>
+
                             <!-- Upload File (Active) -->
                             <button @click="triggerFileInput" class="w-full flex items-center space-x-3 px-3 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-primary/10 dark:hover:bg-primary/20 hover:text-primary transition-all duration-150">
                                 <span class="text-lg">📁</span>
                                 <span class="font-medium text-left">上传本地文件</span>
-                            </button>
-
-                            <!-- Browse Server Files (Active) -->
-                            <button @click="showPlusMenu = false; emit('select-local-fs');" class="w-full flex items-center space-x-3 px-3 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-primary/10 dark:hover:bg-primary/20 hover:text-primary transition-all duration-150">
-                                <span class="text-lg">💻</span>
-                                <span class="font-medium text-left">浏览服务器文件</span>
                             </button>
 
                             <!-- Knowledge Base -->

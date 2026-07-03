@@ -128,6 +128,9 @@ import { computed, ref, watch } from 'vue'
 import axios from 'axios'
 import TokenAmount from '@/components/common/TokenAmount.vue'
 import { formatTokenInputHint } from '@/utils/tokenFormat'
+import { useToast } from '@/composables/useToast'
+
+const { showToast } = useToast()
 
 type ScopeType = 'user' | 'role' | 'system'
 
@@ -221,9 +224,10 @@ const savePolicy = async () => {
     }
     const res = await axios.put(apiBase.value, payload)
     applyPolicy(res.data)
+    showToast('额度保存成功', 'success')
     emit('saved')
   } catch (error: any) {
-    alert(error?.response?.data?.detail || '保存失败')
+    showToast(error?.response?.data?.detail || '保存失败', 'error')
   } finally {
     saving.value = false
   }
@@ -238,9 +242,10 @@ const clearPolicy = async () => {
     form.value.enabled = false
     unlimited.value = true
     await loadPolicy()
+    showToast('额度配置已清除', 'success')
     emit('saved')
   } catch (error: any) {
-    alert(error?.response?.data?.detail || '清除失败')
+    showToast(error?.response?.data?.detail || '清除失败', 'error')
   } finally {
     saving.value = false
   }

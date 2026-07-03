@@ -115,6 +115,15 @@ class AssistantAgentRunner(BaseExecutor):
             return None
         return str(self.user_info.get("user_id") or self.user_info.get("id") or "") or None
 
+    def _runtime_user_name(self) -> str | None:
+        if not self.user_info:
+            return None
+        raw_name = self.user_info.get("user_name") or self.user_info.get("username")
+        if not raw_name:
+            return None
+        name = str(raw_name).strip()
+        return name or None
+
     def _runtime_agent_name(self) -> str:
         return self.config.agent_name or "AssistantAgent"
 
@@ -535,6 +544,8 @@ class AssistantAgentRunner(BaseExecutor):
         system_content = await append_session_workspace_sandbox_to_system_prompt(
             system_content,
             user_id=self._runtime_user_id(),
+            user_name=self._runtime_user_name(),
+            user_info=self.user_info,
             conversation_id=self.conversation_id,
             tools=tools,
         )
@@ -841,6 +852,8 @@ class AssistantAgentRunner(BaseExecutor):
         )
         workspace = await get_local_workspace(
             user_id=self._runtime_user_id(),
+            user_name=self._runtime_user_name(),
+            user_info=self.user_info,
             conversation_id=self.conversation_id,
         )
         # 仅挂载 agent 后端配置的工具；workspace 只作 offloader，不自动注入 Grep/Read/Bash 等内置工具。

@@ -603,7 +603,13 @@ async def delete_my_summary(
 ):
     """物理清除当前用户本人特定会话的记忆摘要与 Redis 历史"""
     uid = str(_current_uid(current_user))
-    await memory_service.delete_session_memory(uid, conversation_id, include_summary=True)
+    await memory_service.delete_session_memory(
+        uid,
+        conversation_id,
+        include_summary=True,
+        user_name=current_user.get("user_name") or current_user.get("username"),
+        user_info=current_user,
+    )
     return {"status": "success", "message": "已清除该会话的记忆与聊天历史"}
 
 

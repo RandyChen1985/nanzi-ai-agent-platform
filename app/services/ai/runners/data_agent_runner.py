@@ -123,6 +123,15 @@ class DataAgentRunner(BaseExecutor):
         user_id = self._current_user_id()
         return str(user_id) if user_id is not None else None
 
+    def _runtime_user_name(self) -> str | None:
+        if not self.user_info:
+            return None
+        raw_name = self.user_info.get("user_name") or self.user_info.get("username")
+        if not raw_name:
+            return None
+        name = str(raw_name).strip()
+        return name or None
+
     def _runner_context(self, *, system_content: str, max_steps: int) -> Dict[str, Any]:
         return {'runner_type': 'data', 'config': self.config.model_dump(), 'debug_options': self.debug_options, 'permission_options': self.permission_options, 'system_content': system_content, 'max_steps': max_steps, 'standalone_query': self._standalone_query, 'schema_search_keywords': self._schema_search_keywords, 'semantic_intent': semantic_intent_to_dict(self._semantic_intent), 'requires_fresh_data': self._requires_fresh_data, 'requires_sql_query': bool(getattr(self, '_requires_sql_query', True))}
 

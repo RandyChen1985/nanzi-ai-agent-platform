@@ -21,10 +21,23 @@ async def resolve_workspace_root() -> str:
     return await resolver()
 
 
-def resolve_session_workdir(*, root: str, user_id: int | str | None, conversation_id: str) -> str:
+def resolve_session_workdir(
+    *,
+    root: str,
+    user_id: int | str | None,
+    conversation_id: str,
+    user_name: str | None = None,
+    user_info: dict | None = None,
+) -> str:
     from app.services.ai.runtime.agentscope.workspace import resolve_session_workdir as resolver
 
-    return resolver(root=root, user_id=user_id, conversation_id=conversation_id)
+    return resolver(
+        root=root,
+        user_id=user_id,
+        conversation_id=conversation_id,
+        user_name=user_name,
+        user_info=user_info,
+    )
 
 
 def _path_under(path: Path, parent: Path) -> bool:
@@ -62,6 +75,7 @@ async def resolve_document_input_path(
     user_id: int | str | None,
     conversation_id: str | None,
     allowed_extensions: Iterable[str],
+    user_name: str | None = None,
 ) -> Path:
     """Resolve one existing document, limited to this request's attachments or workspace."""
     candidate = _normalize_platform_path(path)
@@ -87,6 +101,7 @@ async def resolve_document_input_path(
             root=str(workspace_root),
             user_id=user_id,
             conversation_id=conversation_id,
+            user_name=user_name,
         )
     ).resolve()
     if not _path_under(candidate, session_workdir):
@@ -109,6 +124,7 @@ async def resolve_document_output_path(
     user_id: int | str | None,
     conversation_id: str | None,
     allowed_extensions: Iterable[str],
+    user_name: str | None = None,
 ) -> Path:
     if not conversation_id:
         raise DocumentPathError("当前会话缺少工作目录，无法生成文件")
@@ -119,6 +135,7 @@ async def resolve_document_output_path(
             root=str(workspace_root),
             user_id=user_id,
             conversation_id=conversation_id,
+            user_name=user_name,
         )
     ).resolve()
     session_workdir.mkdir(parents=True, exist_ok=True)

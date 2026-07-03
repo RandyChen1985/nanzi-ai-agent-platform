@@ -20,14 +20,36 @@ def _context():
     return context
 
 
+def _context_user_name(context) -> str | None:
+    dims = context.user_dimensions or {}
+    raw_name = dims.get("user_name") or dims.get("username")
+    if not raw_name:
+        return None
+    name = str(raw_name).strip()
+    return name or None
+
+
 async def _input_path(path: str):
     context = _context()
-    return await resolve_document_input_path(path, allowed_attachment_paths=context.authorized_attachment_paths, user_id=context.user_id, conversation_id=context.conversation_id, allowed_extensions=_EXTENSIONS)
+    return await resolve_document_input_path(
+        path,
+        allowed_attachment_paths=context.authorized_attachment_paths,
+        user_id=context.user_id,
+        conversation_id=context.conversation_id,
+        allowed_extensions=_EXTENSIONS,
+        user_name=_context_user_name(context),
+    )
 
 
 async def _output_path(filename: str):
     context = _context()
-    return await resolve_document_output_path(filename, user_id=context.user_id, conversation_id=context.conversation_id, allowed_extensions=_EXTENSIONS)
+    return await resolve_document_output_path(
+        filename,
+        user_id=context.user_id,
+        conversation_id=context.conversation_id,
+        allowed_extensions=_EXTENSIONS,
+        user_name=_context_user_name(context),
+    )
 
 
 def _result(output_path, summary: str, changes: dict[str, Any]) -> dict[str, Any]:
