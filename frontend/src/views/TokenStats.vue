@@ -47,19 +47,25 @@
         <div class="min-w-0 flex-1 space-y-2">
           <span class="text-sm font-medium text-gray-500">Token 消耗</span>
           <h3 class="text-2xl sm:text-3xl font-black text-gray-900 tabular-nums leading-none">
-            {{ formatCompactNumber(summaryData.total_tokens) }}
+            {{ formatTokenCompact(summaryData.total_tokens) }}
           </h3>
+          <p
+            v-if="shouldShowTokenFullHint(summaryData.total_tokens)"
+            class="text-[10px] text-gray-400 tabular-nums"
+          >
+            {{ formatTokenFull(summaryData.total_tokens) }}
+          </p>
           <div class="text-xs text-gray-500 space-y-1 leading-relaxed">
             <p class="text-sky-700">
               <span class="text-gray-400">输入</span>
-              {{ formatCompactNumber(summaryData.prompt_tokens) }}
+              <span :title="formatTokenFull(summaryData.prompt_tokens)">{{ formatTokenCompact(summaryData.prompt_tokens) }}</span>
             </p>
             <p class="text-rose-700">
               <span class="text-gray-400">输出</span>
-              {{ formatCompactNumber(summaryData.completion_tokens) }}
+              <span :title="formatTokenFull(summaryData.completion_tokens)">{{ formatTokenCompact(summaryData.completion_tokens) }}</span>
             </p>
             <p v-if="summaryData.legacy_tokens > 0" class="text-amber-700/90 pt-0.5">
-              历史未拆分 {{ formatCompactNumber(summaryData.legacy_tokens) }}
+              历史未拆分 <span :title="formatTokenFull(summaryData.legacy_tokens)">{{ formatTokenCompact(summaryData.legacy_tokens) }}</span>
             </p>
           </div>
         </div>
@@ -86,7 +92,7 @@
       <div class="bg-white rounded-2xl p-5 border border-gray-100 shadow-sm flex items-center justify-between gap-3">
         <div class="min-w-0 flex-1 space-y-1">
           <span class="text-sm font-medium text-gray-500">平均单次</span>
-          <h3 class="text-2xl sm:text-3xl font-black text-gray-900 tabular-nums leading-none">{{ formatCompactNumber(summaryData.avg_tokens) }}</h3>
+          <h3 class="text-2xl sm:text-3xl font-black text-gray-900 tabular-nums leading-none">{{ formatTokenCompact(summaryData.avg_tokens) }}</h3>
           <p class="text-xs text-gray-400">Token / 会话</p>
         </div>
         <div class="flex-shrink-0 p-3.5 rounded-2xl bg-yellow-50/80 text-yellow-600">
@@ -169,10 +175,10 @@
               <tr v-for="agent in agentData" :key="agent.agent_id" class="hover:bg-gray-50/50 transition-colors">
                 <td class="py-3 px-4 font-medium text-gray-900 max-w-[12rem] truncate" :title="agent.name">{{ agent.name }}</td>
                 <td class="py-3 px-4 text-right tabular-nums">{{ formatNumber(agent.calls) }}</td>
-                <td class="py-3 px-4 text-right tabular-nums text-sky-700">{{ formatCompactNumber(agent.prompt_tokens || 0) }}</td>
-                <td class="py-3 px-4 text-right tabular-nums text-rose-700">{{ formatCompactNumber(agent.completion_tokens || 0) }}</td>
-                <td class="py-3 px-4 text-right tabular-nums font-semibold">{{ formatCompactNumber(effectiveAgentTokens(agent)) }}</td>
-                <td class="py-3 px-4 text-right tabular-nums text-gray-500">{{ formatCompactNumber(Math.round(effectiveAgentTokens(agent) / Math.max(agent.calls, 1))) }}</td>
+                <td class="py-3 px-4 text-right tabular-nums text-sky-700" :title="formatTokenFull(agent.prompt_tokens || 0)">{{ formatTokenCompact(agent.prompt_tokens || 0) }}</td>
+                <td class="py-3 px-4 text-right tabular-nums text-rose-700" :title="formatTokenFull(agent.completion_tokens || 0)">{{ formatTokenCompact(agent.completion_tokens || 0) }}</td>
+                <td class="py-3 px-4 text-right tabular-nums font-semibold" :title="formatTokenFull(effectiveAgentTokens(agent))">{{ formatTokenCompact(effectiveAgentTokens(agent)) }}</td>
+                <td class="py-3 px-4 text-right tabular-nums text-gray-500" :title="formatTokenFull(Math.round(effectiveAgentTokens(agent) / Math.max(agent.calls, 1)))">{{ formatTokenCompact(Math.round(effectiveAgentTokens(agent) / Math.max(agent.calls, 1))) }}</td>
               </tr>
             </tbody>
           </table>
@@ -213,9 +219,9 @@
               <td class="py-3.5 px-4 font-medium text-gray-900">{{ userItem.username }}</td>
               <td class="py-3.5 px-4 text-gray-600">{{ userItem.real_name || '-' }}</td>
               <td class="py-3.5 px-4 text-right tabular-nums">{{ formatNumber(userItem.calls) }}</td>
-              <td class="py-3.5 px-4 text-right tabular-nums text-sky-700">{{ formatCompactNumber(userItem.prompt_tokens || 0) }}</td>
-              <td class="py-3.5 px-4 text-right tabular-nums text-rose-700">{{ formatCompactNumber(userItem.completion_tokens || 0) }}</td>
-              <td class="py-3.5 px-4 text-right tabular-nums font-semibold text-gray-900">{{ formatCompactNumber(effectiveAgentTokens(userItem)) }}</td>
+              <td class="py-3.5 px-4 text-right tabular-nums text-sky-700" :title="formatTokenFull(userItem.prompt_tokens || 0)">{{ formatTokenCompact(userItem.prompt_tokens || 0) }}</td>
+              <td class="py-3.5 px-4 text-right tabular-nums text-rose-700" :title="formatTokenFull(userItem.completion_tokens || 0)">{{ formatTokenCompact(userItem.completion_tokens || 0) }}</td>
+              <td class="py-3.5 px-4 text-right tabular-nums font-semibold text-gray-900" :title="formatTokenFull(effectiveAgentTokens(userItem))">{{ formatTokenCompact(effectiveAgentTokens(userItem)) }}</td>
               <td class="py-3.5 px-4">
                 <div class="flex items-center gap-3 w-48">
                   <div class="flex-1 h-2 bg-gray-100 rounded-full overflow-hidden">
@@ -238,6 +244,11 @@
 <script setup lang="ts">
 import { ref, onMounted, computed } from "vue";
 import axios from "../utils/axios";
+import {
+  formatTokenCompact,
+  formatTokenFull,
+  shouldShowTokenFullHint,
+} from "@/utils/tokenFormat";
 import VChart from "vue-echarts";
 import { use } from "echarts/core";
 import { CanvasRenderer } from "echarts/renderers";
@@ -317,17 +328,6 @@ const summaryData = computed(() => {
 
 const formatNumber = (num: number) => {
   if (num === undefined || num === null) return "0";
-  return num.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
-};
-
-const formatCompactNumber = (num: number) => {
-  if (num === undefined || num === null) return "0";
-  if (num >= 1.0e9) {
-    return (num / 1.0e9).toFixed(2).replace(/\.00$/, "") + " B";
-  }
-  if (num >= 1.0e6) {
-    return (num / 1.0e6).toFixed(2).replace(/\.00$/, "") + " M";
-  }
   return num.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
 };
 

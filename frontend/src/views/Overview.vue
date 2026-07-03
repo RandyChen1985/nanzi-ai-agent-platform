@@ -124,7 +124,7 @@
         <!-- Token Usage -->
         <StatsCard
           title="Token 消耗"
-          :value="formatCompactNumber(stats?.total_tokens || 0)"
+          :value="formatTokenCompact(stats?.total_tokens || 0)"
           type="warning"
         >
           <template #icon>
@@ -134,8 +134,8 @@
           </template>
           <template #subtext>
             <div class="flex flex-col gap-0.5 leading-tight mt-0.5">
-              <span>输入 {{ formatCompactNumber(stats?.prompt_tokens || 0) }}</span>
-              <span>输出 {{ formatCompactNumber(stats?.completion_tokens || 0) }}</span>
+              <span>输入 {{ formatTokenCompact(stats?.prompt_tokens || 0) }}</span>
+              <span>输出 {{ formatTokenCompact(stats?.completion_tokens || 0) }}</span>
             </div>
           </template>
         </StatsCard>
@@ -246,7 +246,7 @@
         <!-- Token Usage -->
         <StatsCard
           title="我的 Token"
-          :value="formatCompactNumber(stats?.total_tokens || 0)"
+          :value="formatTokenCompact(stats?.total_tokens || 0)"
           type="purple"
         >
           <template #icon>
@@ -256,8 +256,8 @@
           </template>
           <template #subtext>
             <div class="flex flex-col gap-0.5 leading-tight mt-0.5">
-              <span>输入 {{ formatCompactNumber(stats?.prompt_tokens || 0) }}</span>
-              <span>输出 {{ formatCompactNumber(stats?.completion_tokens || 0) }}</span>
+              <span>输入 {{ formatTokenCompact(stats?.prompt_tokens || 0) }}</span>
+              <span>输出 {{ formatTokenCompact(stats?.completion_tokens || 0) }}</span>
             </div>
           </template>
         </StatsCard>
@@ -387,6 +387,7 @@ import RecentUsersCard from "../components/dashboard/RecentUsersCard.vue";
 import RecentCallsCard from "../components/dashboard/RecentCallsCard.vue";
 import RequestTrendChart from "../components/dashboard/RequestTrendChart.vue";
 import RecentFailuresCard from "../components/dashboard/RecentFailuresCard.vue";
+import { formatTokenCompact } from "@/utils/tokenFormat";
 
 const router = useRouter();
 const API_BASE = ""; // Using relative path with axios instance proxy
@@ -544,17 +545,6 @@ const loadUserInfo = () => {
   if (stored) {
     userInfo.value = JSON.parse(stored);
   }
-};
-
-const formatCompactNumber = (num: number) => {
-  if (num === undefined || num === null) return "0";
-  if (num >= 1.0e9) {
-    return (num / 1.0e9).toFixed(2).replace(/\.00$/, "") + " B";
-  }
-  if (num >= 1.0e6) {
-    return (num / 1.0e6).toFixed(2).replace(/\.00$/, "") + " M";
-  }
-  return num.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
 };
 
 onMounted(async () => {

@@ -1,5 +1,6 @@
 import { computed, ref } from 'vue'
 import axios from '@/utils/axios'
+import { formatTokenCompact } from '@/utils/tokenFormat'
 
 export interface TokenQuotaStatus {
   period_start: string
@@ -11,8 +12,6 @@ export interface TokenQuotaStatus {
   source_label?: string | null
   is_admin_bypass: boolean
 }
-
-const formatNumber = (num: number) => num.toLocaleString('zh-CN')
 
 export function useTokenQuota() {
   const quotaStatus = ref<TokenQuotaStatus | null>(null)
@@ -43,10 +42,10 @@ export function useTokenQuota() {
     if (!quotaStatus.value || quotaStatus.value.is_admin_bypass) return ''
     if (quotaStatus.value.limit_tokens == null) return ''
     if (isBlocked.value) {
-      return `本月 Token 额度已用尽（已用 ${formatNumber(quotaStatus.value.used_tokens)} / 上限 ${formatNumber(quotaStatus.value.limit_tokens)}），请联系管理员。`
+      return `本月 Token 额度已用尽（已用 ${formatTokenCompact(quotaStatus.value.used_tokens)} / 上限 ${formatTokenCompact(quotaStatus.value.limit_tokens)}），请联系管理员。`
     }
     if (isWarning.value) {
-      return `本月 Token 额度即将用尽（已用 ${formatNumber(quotaStatus.value.used_tokens)} / 上限 ${formatNumber(quotaStatus.value.limit_tokens)}，剩余 ${formatNumber(quotaStatus.value.remaining_tokens || 0)}）。`
+      return `本月 Token 额度即将用尽（已用 ${formatTokenCompact(quotaStatus.value.used_tokens)} / 上限 ${formatTokenCompact(quotaStatus.value.limit_tokens)}，剩余 ${formatTokenCompact(quotaStatus.value.remaining_tokens || 0)}）。`
     }
     return ''
   })

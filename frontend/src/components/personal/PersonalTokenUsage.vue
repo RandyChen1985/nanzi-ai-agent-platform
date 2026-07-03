@@ -69,15 +69,26 @@
       <div v-if="!quotaStatus.is_admin_bypass" class="mt-4 grid grid-cols-3 gap-3">
         <div class="rounded-lg bg-white/80 border border-white/60 p-3">
           <p class="text-[11px] text-gray-500">已用</p>
-          <p class="text-lg font-bold tabular-nums text-gray-900 mt-0.5">{{ formatNumber(quotaStatus.used_tokens) }}</p>
+          <TokenAmount
+            :value="quotaStatus.used_tokens"
+            main-class="text-lg font-bold tabular-nums text-gray-900"
+          />
         </div>
         <div class="rounded-lg bg-white/80 border border-white/60 p-3">
           <p class="text-[11px] text-gray-500">上限</p>
-          <p class="text-lg font-bold tabular-nums text-gray-900 mt-0.5">{{ quotaLimitLabel }}</p>
+          <TokenAmount
+            :value="quotaStatus.limit_tokens"
+            :is-unlimited="quotaStatus.limit_tokens == null"
+            main-class="text-lg font-bold tabular-nums text-gray-900"
+          />
         </div>
         <div class="rounded-lg bg-white/80 border border-white/60 p-3">
           <p class="text-[11px] text-gray-500">剩余</p>
-          <p class="text-lg font-bold tabular-nums mt-0.5" :class="quotaRemainingClass">{{ quotaRemainingLabel }}</p>
+          <TokenAmount
+            :value="quotaStatus.remaining_tokens || 0"
+            :is-unlimited="quotaStatus.limit_tokens == null"
+            :main-class="`text-lg font-bold tabular-nums ${quotaRemainingClass}`"
+          />
         </div>
       </div>
 
@@ -102,8 +113,14 @@
       <div class="grid grid-cols-2 lg:grid-cols-4 gap-3">
       <div class="rounded-xl border border-gray-100 bg-gray-50/80 p-4">
         <p class="text-xs text-gray-500">Token 总量</p>
-        <p class="text-xl font-bold text-gray-900 tabular-nums mt-1">{{ formatNumber(summary.total_tokens) }}</p>
-        <p class="text-[10px] text-gray-400 mt-1">输入 {{ formatNumber(summary.prompt_tokens) }} · 输出 {{ formatNumber(summary.completion_tokens) }}</p>
+        <TokenAmount
+          :value="summary.total_tokens"
+          main-class="text-xl font-bold text-gray-900 tabular-nums"
+        />
+        <p class="text-[10px] text-gray-400 mt-1">
+          输入 <span :title="formatTokenFull(summary.prompt_tokens)">{{ formatTokenCompact(summary.prompt_tokens) }}</span>
+          · 输出 <span :title="formatTokenFull(summary.completion_tokens)">{{ formatTokenCompact(summary.completion_tokens) }}</span>
+        </p>
       </div>
       <div class="rounded-xl border border-gray-100 bg-gray-50/80 p-4">
         <p class="text-xs text-gray-500">对话交互</p>
@@ -112,12 +129,18 @@
       </div>
       <div class="rounded-xl border border-gray-100 bg-gray-50/80 p-4">
         <p class="text-xs text-gray-500">日均 Token</p>
-        <p class="text-xl font-bold text-gray-900 tabular-nums mt-1">{{ formatNumber(summary.avg_daily_tokens) }}</p>
+        <TokenAmount
+          :value="summary.avg_daily_tokens"
+          main-class="text-xl font-bold text-gray-900 tabular-nums"
+        />
         <p class="text-[10px] text-gray-400 mt-1">按 {{ trendData.length }} 天平均</p>
       </div>
       <div class="rounded-xl border border-gray-100 bg-gray-50/80 p-4">
         <p class="text-xs text-gray-500">单次平均</p>
-        <p class="text-xl font-bold text-gray-900 tabular-nums mt-1">{{ formatNumber(summary.avg_tokens) }}</p>
+        <TokenAmount
+          :value="summary.avg_tokens"
+          main-class="text-xl font-bold text-gray-900 tabular-nums"
+        />
         <p class="text-[10px] text-gray-400 mt-1">Token / 次交互</p>
       </div>
       </div>
@@ -163,9 +186,9 @@
             >
               <td class="px-4 py-2.5 text-gray-900 font-medium">{{ row.date }}</td>
               <td class="px-4 py-2.5 text-right tabular-nums text-gray-600">{{ formatNumber(row.calls) }}</td>
-              <td class="px-4 py-2.5 text-right tabular-nums text-sky-700">{{ formatNumber(row.prompt_tokens) }}</td>
-              <td class="px-4 py-2.5 text-right tabular-nums text-rose-700">{{ formatNumber(row.completion_tokens) }}</td>
-              <td class="px-4 py-2.5 text-right tabular-nums font-semibold text-gray-900">{{ formatNumber(row.total_tokens) }}</td>
+              <td class="px-4 py-2.5 text-right tabular-nums text-sky-700" :title="formatTokenFull(row.prompt_tokens)">{{ formatTokenCompact(row.prompt_tokens) }}</td>
+              <td class="px-4 py-2.5 text-right tabular-nums text-rose-700" :title="formatTokenFull(row.completion_tokens)">{{ formatTokenCompact(row.completion_tokens) }}</td>
+              <td class="px-4 py-2.5 text-right tabular-nums font-semibold text-gray-900" :title="formatTokenFull(row.total_tokens)">{{ formatTokenCompact(row.total_tokens) }}</td>
             </tr>
           </tbody>
         </table>
@@ -207,7 +230,7 @@
               <td class="px-4 py-2.5 text-gray-700 whitespace-nowrap">{{ formatDateTime(item.created_at) }}</td>
               <td class="px-4 py-2.5 text-gray-800">{{ item.agent_name }}</td>
               <td class="px-4 py-2.5 text-gray-500 font-mono text-xs">{{ item.model_id || '—' }}</td>
-              <td class="px-4 py-2.5 text-right tabular-nums font-medium text-gray-900">{{ formatNumber(item.total_tokens) }}</td>
+              <td class="px-4 py-2.5 text-right tabular-nums font-medium text-gray-900" :title="formatTokenFull(item.total_tokens)">{{ formatTokenCompact(item.total_tokens) }}</td>
               <td class="px-4 py-2.5 text-center">
                 <span
                   class="text-[10px] px-2 py-0.5 rounded-full font-medium"
@@ -246,6 +269,12 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import axios from '../../utils/axios'
+import TokenAmount from '@/components/common/TokenAmount.vue'
+import {
+  formatTokenAxis,
+  formatTokenCompact,
+  formatTokenFull,
+} from '@/utils/tokenFormat'
 import VChart from 'vue-echarts'
 import { use } from 'echarts/core'
 import { CanvasRenderer } from 'echarts/renderers'
@@ -316,16 +345,6 @@ interface QuotaStatus {
 }
 
 const quotaStatus = ref<QuotaStatus | null>(null)
-
-const quotaLimitLabel = computed(() => {
-  if (!quotaStatus.value || quotaStatus.value.limit_tokens == null) return '不限'
-  return formatNumber(quotaStatus.value.limit_tokens)
-})
-
-const quotaRemainingLabel = computed(() => {
-  if (!quotaStatus.value || quotaStatus.value.limit_tokens == null) return '不限'
-  return formatNumber(quotaStatus.value.remaining_tokens || 0)
-})
 
 const quotaUsagePercent = computed(() => {
   if (!quotaStatus.value?.limit_tokens) return 0
@@ -432,8 +451,9 @@ const trendChartOption = computed(() => {
         const items = Array.isArray(params) ? params : [params]
         const date = items[0]?.axisValue || ''
         const lines = items.map((item: any) => {
-          const val = formatNumber(Number(item.value) || 0)
-          return `${item.marker}${item.seriesName}: ${val}`
+          const val = formatTokenCompact(Number(item.value) || 0)
+          const full = formatTokenFull(Number(item.value) || 0)
+          return `${item.marker}${item.seriesName}: ${val}${val !== full ? ` (${full})` : ''}`
         })
         return [date, ...lines].join('<br/>')
       },
@@ -452,7 +472,7 @@ const trendChartOption = computed(() => {
         axisLine: { show: false },
         axisTick: { show: false },
         axisLabel: {
-          formatter: (value: number) => formatAxisValue(value),
+          formatter: (value: number) => formatTokenAxis(value),
         },
         splitLine: { lineStyle: { type: 'dashed', color: '#f3f4f6' } },
       },
@@ -461,7 +481,7 @@ const trendChartOption = computed(() => {
         axisLine: { show: false },
         axisTick: { show: false },
         axisLabel: {
-          formatter: (value: number) => formatAxisValue(value),
+          formatter: (value: number) => formatTokenAxis(value),
         },
         splitLine: { show: false },
       },
@@ -500,14 +520,6 @@ const trendChartOption = computed(() => {
 const formatNumber = (num: number) => {
   if (!num) return '0'
   return num.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',')
-}
-
-const formatAxisValue = (value: number) => {
-  const num = Number(value) || 0
-  if (num >= 1_000_000) return `${(num / 1_000_000).toFixed(num >= 10_000_000 ? 0 : 1)}M`
-  if (num >= 10_000) return `${(num / 10_000).toFixed(num >= 100_000 ? 0 : 1)}万`
-  if (num >= 1_000) return `${(num / 1_000).toFixed(0)}k`
-  return String(num)
 }
 
 const formatDateTime = (value: string) => {

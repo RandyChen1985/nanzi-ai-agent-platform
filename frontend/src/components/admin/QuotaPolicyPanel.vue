@@ -8,15 +8,26 @@
       <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
         <div>
           <p class="text-blue-600/80">已用</p>
-          <p class="text-lg font-bold text-blue-950 tabular-nums">{{ formatNumber(effective.used_tokens) }}</p>
+          <TokenAmount
+            :value="effective.used_tokens"
+            main-class="text-lg font-bold text-blue-950 tabular-nums"
+          />
         </div>
         <div>
           <p class="text-blue-600/80">上限</p>
-          <p class="text-lg font-bold text-blue-950 tabular-nums">{{ limitLabel(effective.limit_tokens) }}</p>
+          <TokenAmount
+            :value="effective.limit_tokens"
+            :is-unlimited="effective.limit_tokens == null"
+            main-class="text-lg font-bold text-blue-950 tabular-nums"
+          />
         </div>
         <div>
           <p class="text-blue-600/80">剩余</p>
-          <p class="text-lg font-bold text-blue-950 tabular-nums">{{ remainingLabel(effective) }}</p>
+          <TokenAmount
+            :value="effective.remaining_tokens || 0"
+            :is-unlimited="effective.limit_tokens == null"
+            main-class="text-lg font-bold text-blue-950 tabular-nums"
+          />
         </div>
         <div>
           <p class="text-blue-600/80">来源</p>
@@ -77,6 +88,12 @@
             />
           </label>
         </div>
+        <p
+          v-if="form.enabled && !unlimited && limitInputHint"
+          class="text-[11px] text-gray-500 mt-1.5 tabular-nums"
+        >
+          {{ limitInputHint }}
+        </p>
       </div>
 
       <div v-if="inherit && !form.enabled" class="text-xs text-amber-700 bg-amber-50 border border-amber-100 rounded-lg px-3 py-2">
@@ -109,6 +126,8 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import axios from 'axios'
+import TokenAmount from '@/components/common/TokenAmount.vue'
+import { formatTokenInputHint } from '@/utils/tokenFormat'
 
 type ScopeType = 'user' | 'role' | 'system'
 
@@ -156,14 +175,10 @@ const apiBase = computed(() => {
   return `/api/portal/quota/users/${props.scopeId}`
 })
 
-const formatNumber = (num: number) => {
-  if (!num) return '0'
-  return num.toLocaleString('zh-CN')
-}
-
-const limitLabel = (limit: number | null) => (limit == null ? '不限' : formatNumber(limit))
-const remainingLabel = (status: QuotaStatus) =>
-  status.limit_tokens == null ? '不限' : formatNumber(status.remaining_tokens || 0)
+const limitInputHint = computed(() => {
+  if (!form.value.enabled || unlimited.value) return ''
+  return formatTokenInputHint(form.value.limit_tokens)
+})
 
 const sourceText = (source: string) => {
   const map: Record<string, string> = {
