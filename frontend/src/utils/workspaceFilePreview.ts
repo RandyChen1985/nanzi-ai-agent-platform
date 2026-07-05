@@ -21,6 +21,18 @@ export type CanvasPanelData = {
   compareTitle?: string
 }
 
+export function normalizeWorkspacePath(path: string): string {
+  return String(path || '').replace(/\\/g, '/').replace(/\/+$/, '')
+}
+
+export function isSameWorkspacePreviewPath(
+  a: string | null | undefined,
+  b: string | null | undefined,
+): boolean {
+  if (!a || !b) return false
+  return normalizeWorkspacePath(a) === normalizeWorkspacePath(b)
+}
+
 export function getWorkspaceFileExtension(name: string): string {
   const parts = name.split('.')
   if (parts.length < 2) return ''

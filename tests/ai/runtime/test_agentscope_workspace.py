@@ -4,10 +4,12 @@ import pytest
 
 from app.services.ai.runtime.agentscope.workspace import (
     WORKSPACE_USER_KEY_SEP,
+    USER_DOCS_DIR_NAME,
     clear_workspace_cache,
     delete_workspace_for_session,
     get_local_workspace_offloader,
     resolve_session_workdir,
+    resolve_user_docs_dir,
     resolve_user_workspace_root,
     resolve_workspace_user_key,
 )
@@ -43,6 +45,21 @@ async def test_resolve_session_workdir_isolates_user_and_conversation(tmp_path, 
     assert path.startswith(str(tmp_path))
     assert f"alice{WORKSPACE_USER_KEY_SEP}1" in path
     assert "conv_abc" in path
+
+
+def test_resolve_user_docs_dir_is_per_user_not_per_conversation(tmp_path):
+    docs_a = resolve_user_docs_dir(
+        root=str(tmp_path),
+        user_id=1,
+        user_name="alice",
+    )
+    docs_b = resolve_user_docs_dir(
+        root=str(tmp_path),
+        user_id=1,
+        user_name="alice",
+    )
+    assert docs_a == docs_b
+    assert docs_a.endswith(os.path.join(f"alice{WORKSPACE_USER_KEY_SEP}1", USER_DOCS_DIR_NAME))
 
 
 @pytest.mark.asyncio

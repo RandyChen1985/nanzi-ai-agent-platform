@@ -18,8 +18,10 @@ from app.utils.fs_access import (
     assert_path_allowed,
     assert_path_writable,
     get_allowed_fs_roots,
+    get_user_docs_dir,
     get_user_private_workspace_root,
     get_user_uploads_dir,
+    is_session_dir_name,
     is_fs_admin,
     is_fs_virtual_root,
     is_path_allowed,
@@ -276,6 +278,16 @@ async def list_files(
     uploads_path = get_user_uploads_dir(user_info)
     if uploads_path and os.path.normpath(target_path) == os.path.normpath(uploads_path):
         os.makedirs(uploads_path, mode=0o700, exist_ok=True)
+    docs_path = get_user_docs_dir(user_info)
+    if docs_path and os.path.normpath(target_path) == os.path.normpath(docs_path):
+        os.makedirs(docs_path, mode=0o700, exist_ok=True)
+    if not os.path.exists(target_path) and private_root:
+        norm_target = os.path.normpath(target_path)
+        norm_root = os.path.normpath(private_root)
+        if norm_target.startswith(norm_root + os.sep):
+            rel = os.path.relpath(norm_target, norm_root)
+            if "/" not in rel and is_session_dir_name(rel):
+                os.makedirs(norm_target, mode=0o700, exist_ok=True)
     if not os.path.exists(target_path):
         raise HTTPException(status_code=404, detail="请求的路径不存在。")
     if not os.path.isdir(target_path):
@@ -353,6 +365,7 @@ def _resolve_fs_file_path(
 ) -> str:
     from app.services.ai.runtime.agentscope.workspace import (
         resolve_session_workdir,
+        resolve_user_docs_dir,
         resolve_user_workspace_root,
     )
 
@@ -360,17 +373,29 @@ def _resolve_fs_file_path(
 
     if conversation_id and not path.startswith("/") and not path.startswith("/app/data"):
         root = workspace_root
-        session_workdir = resolve_session_workdir(
+        docs_workdir = resolve_user_docs_dir(
             root=root,
             user_id=user_info.get("user_id") or user_info.get("id"),
             user_name=user_info.get("user_name") or user_info.get("username"),
             user_info=user_info,
-            conversation_id=conversation_id,
         )
-        if os.path.isdir(session_workdir):
-            candidate = normalize_under_base(path, session_workdir)
+        if os.path.isdir(docs_workdir) or not must_exist:
+            candidate = normalize_under_base(path, docs_workdir)
             if candidate and (not must_exist or os.path.isfile(candidate)) and is_path_allowed(candidate, user_info):
                 safe_path = candidate
+
+        if not safe_path:
+            session_workdir = resolve_session_workdir(
+                root=root,
+                user_id=user_info.get("user_id") or user_info.get("id"),
+                user_name=user_info.get("user_name") or user_info.get("username"),
+                user_info=user_info,
+                conversation_id=conversation_id,
+            )
+            if os.path.isdir(session_workdir):
+                candidate = normalize_under_base(path, session_workdir)
+                if candidate and (not must_exist or os.path.isfile(candidate)) and is_path_allowed(candidate, user_info):
+                    safe_path = candidate
 
         if not safe_path:
             user_workspaces_root = resolve_user_workspace_root(

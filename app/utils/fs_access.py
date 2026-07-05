@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import re
 from typing import Any
 
 from fastapi import HTTPException
@@ -9,6 +10,11 @@ from fastapi import HTTPException
 from app.utils.fs_paths import get_data_base_dir, normalize_under_base
 
 PUBLIC_DATA_SUBDIRS: tuple[str, ...] = ("branding", "skills")
+USER_WORKSPACE_RESERVED_DIR_NAMES = frozenset({"docs", "uploads", "sandbox", ".trash", "skills"})
+SESSION_DIR_NAME_RE = re.compile(
+    r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+    re.IGNORECASE,
+)
 
 
 def get_platform_skills_root() -> str | None:
@@ -74,6 +80,22 @@ def get_user_uploads_dir(user_info: dict[str, Any] | None) -> str | None:
     if not private_root:
         return None
     return os.path.normpath(os.path.join(private_root, "uploads"))
+
+
+def get_user_docs_dir(user_info: dict[str, Any] | None) -> str | None:
+    """用户文档目录：agent_workspaces/{user_key}/docs（AI 默认落盘，跨会话共享）。"""
+    private_root = get_user_private_workspace_root(user_info)
+    if not private_root:
+        return None
+    return os.path.normpath(os.path.join(private_root, "docs"))
+
+
+def is_session_dir_name(name: str) -> bool:
+    """判断用户工作区下的直接子目录名是否为会话目录。"""
+    cleaned = str(name or "").strip()
+    if not cleaned or cleaned in USER_WORKSPACE_RESERVED_DIR_NAMES:
+        return False
+    return bool(SESSION_DIR_NAME_RE.match(cleaned)) or cleaned.startswith("conv_")
 
 
 def get_user_sandbox_dir(user_info: dict[str, Any] | None) -> str | None:

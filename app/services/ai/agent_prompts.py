@@ -540,17 +540,23 @@ class AgentServicePrompts:
         )
 
     @staticmethod
-    def session_workspace_sandbox_block(*, workdir: str, file_tool_names: List[str]) -> str:
+    def session_workspace_sandbox_block(
+        *,
+        session_workdir: str,
+        docs_dir: str,
+        file_tool_names: List[str],
+    ) -> str:
         """本会话 AgentScope workspace 与路径沙箱说明（仅在有文件/Shell 工具时注入）。"""
         tools_text = "、".join(file_tool_names) if file_tool_names else "Read/Write/Grep/Glob/Bash"
         return (
             "[Session Workspace & Path Sandbox]\n"
-            f"- **会话工作目录**：`{workdir}`（位于 `/app/data/agent_workspaces/...`，仅供本会话读写落盘文件）\n"
+            f"- **会话工作目录**：`{session_workdir}`（本会话自动创建；Read/Write/Edit/Grep/Glob/Bash 的相对路径默认相对此目录，会话过程临时文件、工具落盘优先放这里）\n"
+            f"- **默认文档目录**：`{docs_dir}`（跨会话集中存放；用户要求「保存到文档/报告/文件」且**未指定路径**时，写入此目录，如 `{docs_dir}/report.md` 或相对路径 `../docs/report.md`）\n"
             f"- **本轮文件/Shell 工具**：{tools_text}\n"
-            "- Read/Write/Edit/Grep/Glob 的路径默认相对**会话工作目录**；本会话内新生成/落盘文件优先用相对路径（如 `./notes.md`）。\n"
             "- **平台共享目录仍在 `/app/data` 沙箱内、可访问**：用户上传附件在本人工作目录 `.../uploads/`；SQLite 临时演算库在 `.../sandbox/sess_<id>.db`；技能文件在 `/app/data/skills/...`。"
-            " 用户消息 `---` 之后或附件块中给出的**绝对路径**可直接用于 Read/Grep，无需先复制到会话工作目录。\n"
-            "- 文件与命令工具仅能在平台允许的路径范围内生效（含上述会话目录与 `/app/data` 下授权子目录）；越界会被工具层拒绝。\n"
+            " 用户消息 `---` 之后或附件块中给出的**绝对路径**可直接用于 Read/Grep。\n"
+            "- 用户明确要求保存到其他路径时，按其指示写入；未说明且属于交付给用户的文档时，一律使用默认文档目录。\n"
+            "- 文件与命令工具仅能在平台允许的路径范围内生效（含上述目录与 `/app/data` 下授权子目录）；越界会被工具层拒绝。\n"
             "- 禁止访问其他用户或其他会话的 agent_workspaces 目录；不得臆造路径。\n"
             "- 有 Grep/Glob 时优先于 Bash 做文本/文件搜索；Bash 用于 Grep/Glob 无法完成的管道或系统诊断。\n"
             "- 写文件、执行命令等高风险操作可能触发平台确认；挂起时不得声称已完成。"

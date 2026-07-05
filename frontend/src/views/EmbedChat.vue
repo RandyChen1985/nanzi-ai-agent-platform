@@ -2374,7 +2374,7 @@ import MemoryBrowserDrawer from "@/components/embed/MemoryBrowserDrawer.vue";
 import SkillBrowserDrawer from "@/components/embed/SkillBrowserDrawer.vue";
 import AttachmentImageThumb from "@/components/embed/AttachmentImageThumb.vue";
 import { isImageAttachment, getServerAttachmentPath } from "@/utils/attachmentImages";
-import { openWorkspaceFileInCanvas, isDirectRenderableUrl, resolvePublicUploadsPreviewUrl, shouldAttachWorkspaceSourcePath } from "@/utils/workspaceFilePreview";
+import { openWorkspaceFileInCanvas, isDirectRenderableUrl, isSameWorkspacePreviewPath, resolvePublicUploadsPreviewUrl, shouldAttachWorkspaceSourcePath } from "@/utils/workspaceFilePreview";
 import TraceLogViewer from "@/components/TraceLogViewer.vue";
 import { sanitizeStreamContent } from "@/utils/streamContentSanitize";
 import { normalizeAgentSwitchCommand } from "@/utils/agentSwitchCommands";
@@ -2909,6 +2909,15 @@ const handleSelectLocalFs = (payload: { type: 'local_file' | 'local_dir'; path: 
 };
 
 const handleWorkspaceFilePreview = async (payload: { path: string; name: string }) => {
+  if (
+    canvasVisible.value &&
+    canvasFromWorkspace.value &&
+    isSameWorkspacePreviewPath(workspaceCanvasPreviewPath.value, payload.path)
+  ) {
+    closeCanvas();
+    workspaceCanvasPreviewPath.value = null;
+    return;
+  }
   canvasFromWorkspace.value = true;
   await openWorkspaceFileInCanvas({
     path: payload.path,
@@ -2917,6 +2926,7 @@ const handleWorkspaceFilePreview = async (payload: { path: string; name: string 
     showToast,
     activeBlobUrlRef: activeBlobUrl,
     onOpen: (data) => {
+      workspaceCanvasPreviewPath.value = payload.path;
       canvasData.value = data as typeof canvasData.value;
       canvasVisible.value = true;
     },
@@ -3586,6 +3596,7 @@ const saveAndResend = async () => {
 // Canvas Panel States
 const canvasVisible = ref(false);
 const canvasFromWorkspace = ref(false);
+const workspaceCanvasPreviewPath = ref<string | null>(null);
 const canvasData = ref<{ type: 'html' | 'code' | 'mermaid' | 'pdf' | 'csv' | 'image' | 'compare'; title: string; content: string; sourcePath?: string; compareContent?: string; compareTitle?: string } | null>(null);
 const activeBlobUrl = ref('');
 
@@ -3607,6 +3618,7 @@ const closeCanvas = () => {
 watch(canvasVisible, (visible) => {
   if (!visible) {
     canvasFromWorkspace.value = false;
+    workspaceCanvasPreviewPath.value = null;
     revokeActiveBlobUrl();
   }
 });

@@ -28,6 +28,7 @@ _workspace_cache: dict[str, Any] = {}
 
 
 WORKSPACE_USER_KEY_SEP = "__"
+USER_DOCS_DIR_NAME = "docs"
 
 
 def _clean_key_part(value: str | None, fallback_prefix: str) -> str:
@@ -147,6 +148,26 @@ def resolve_session_workdir(
     return os.path.join(os.path.abspath(root), uid, cid)
 
 
+def resolve_user_docs_dir(
+    *,
+    root: str,
+    user_id: str | int | None,
+    user_name: str | None = None,
+    user_info: dict[str, Any] | None = None,
+) -> str:
+    """用户级文档目录：agent_workspaces/{user_key}/docs（跨会话集中存放 AI 落盘文件）。"""
+    resolved_user_id, resolved_user_name = extract_workspace_identity(
+        user_id=user_id,
+        user_name=user_name,
+        user_info=user_info,
+    )
+    uid = resolve_workspace_user_key(
+        user_id=resolved_user_id,
+        user_name=resolved_user_name,
+    )
+    return os.path.join(os.path.abspath(root), uid, USER_DOCS_DIR_NAME)
+
+
 def resolve_user_workspace_root(
     *,
     root: str,
@@ -189,6 +210,7 @@ async def get_local_workspace(
         user_info=user_info,
         conversation_id=conversation_id,
     )
+    os.makedirs(workdir, exist_ok=True)
     cached = _workspace_cache.get(workdir)
     if cached is not None:
         return cached
@@ -303,15 +325,22 @@ async def append_session_workspace_sandbox_to_system_prompt(
     from app.services.ai.agent_prompts import AgentServicePrompts
 
     root = await resolve_workspace_root()
-    workdir = resolve_session_workdir(
+    session_workdir = resolve_session_workdir(
         root=root,
         user_id=user_id,
         user_name=user_name,
         user_info=user_info,
         conversation_id=conversation_id,
     )
+    docs_dir = resolve_user_docs_dir(
+        root=root,
+        user_id=user_id,
+        user_name=user_name,
+        user_info=user_info,
+    )
     block = AgentServicePrompts.session_workspace_sandbox_block(
-        workdir=workdir,
+        session_workdir=session_workdir,
+        docs_dir=docs_dir,
         file_tool_names=sorted(file_tools),
     )
     base = (system_content or "").strip()

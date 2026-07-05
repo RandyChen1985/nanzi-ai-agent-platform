@@ -48,7 +48,7 @@ import SkillBrowserDrawer from "@/components/embed/SkillBrowserDrawer.vue";
 import ChatCanvas from "@/components/embed/ChatCanvas.vue";
 import AttachmentImageThumb from "@/components/embed/AttachmentImageThumb.vue";
 import { isImageAttachment, getServerAttachmentPath } from "@/utils/attachmentImages";
-import { openWorkspaceFileInCanvas } from "@/utils/workspaceFilePreview";
+import { openWorkspaceFileInCanvas, isSameWorkspacePreviewPath } from "@/utils/workspaceFilePreview";
 import { sanitizeStreamContent } from "@/utils/streamContentSanitize";
 import {
   splitSqlToolLogDetails,
@@ -1976,6 +1976,7 @@ const handleSelectLocalFs = (payload: { type: 'local_file' | 'local_dir'; path: 
 
 const canvasVisible = ref(false);
 const canvasFromWorkspace = ref(false);
+const workspaceCanvasPreviewPath = ref<string | null>(null);
 const canvasData = ref<{
   type: 'html' | 'code' | 'mermaid' | 'pdf' | 'csv' | 'image' | 'compare';
   title: string;
@@ -2004,6 +2005,7 @@ const closeCanvas = () => {
 watch(canvasVisible, (visible) => {
   if (!visible) {
     canvasFromWorkspace.value = false;
+    workspaceCanvasPreviewPath.value = null;
     revokeActiveBlobUrl();
   }
 });
@@ -2013,6 +2015,15 @@ onUnmounted(() => {
 });
 
 const handleWorkspaceFilePreview = async (payload: { path: string; name: string }) => {
+  if (
+    canvasVisible.value &&
+    canvasFromWorkspace.value &&
+    isSameWorkspacePreviewPath(workspaceCanvasPreviewPath.value, payload.path)
+  ) {
+    closeCanvas();
+    workspaceCanvasPreviewPath.value = null;
+    return;
+  }
   canvasFromWorkspace.value = true;
   await openWorkspaceFileInCanvas({
     path: payload.path,
@@ -2021,6 +2032,7 @@ const handleWorkspaceFilePreview = async (payload: { path: string; name: string 
     showToast,
     activeBlobUrlRef: activeBlobUrl,
     onOpen: (data) => {
+      workspaceCanvasPreviewPath.value = payload.path;
       canvasData.value = data as typeof canvasData.value;
       canvasVisible.value = true;
     },

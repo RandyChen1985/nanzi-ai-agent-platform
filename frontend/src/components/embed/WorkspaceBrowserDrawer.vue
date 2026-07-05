@@ -604,6 +604,25 @@ const isTrashListItem = (item: { path: string; name: string; is_dir: boolean }) 
   isTrashPath(item.path) && !isTrashRootItem(item)
 )
 
+const USER_WORKSPACE_RESERVED_DIRS = new Set(['docs', 'uploads', 'sandbox', '.trash', 'skills'])
+const SESSION_DIR_NAME_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+const isDirectChildOfUserWorkspace = (itemPath: string) => {
+  const root = userWorkspaceRoot.value
+  if (!root || !itemPath) return false
+  const norm = normalizeFsPathForCompare(itemPath)
+  const rootNorm = normalizeFsPathForCompare(root)
+  if (!norm.startsWith(`${rootNorm}/`)) return false
+  const relative = norm.slice(rootNorm.length + 1)
+  return relative.length > 0 && !relative.includes('/')
+}
+
+const isSessionDirItem = (item: { name: string; path: string; is_dir: boolean }) => {
+  if (!item.is_dir || USER_WORKSPACE_RESERVED_DIRS.has(item.name)) return false
+  if (!isDirectChildOfUserWorkspace(item.path)) return false
+  return SESSION_DIR_NAME_RE.test(item.name) || item.name.startsWith('conv_')
+}
+
 const isPathInUserWorkspace = (path: string) => {
   const root = userWorkspaceRoot.value
   if (!root || !path) return false
@@ -742,12 +761,35 @@ watch(
       baseDir.value = ''
       loadRecentFiles()
       fetchDirectory()
+      nextTick(syncQuickNavScrollHints)
     } else {
       closeRecentFilesMenu()
     }
   },
   { immediate: true },
 )
+
+const quickNavScrollRef = ref<HTMLElement | null>(null)
+const quickNavScrollRight = ref(false)
+const quickNavScrollLeft = ref(false)
+
+const syncQuickNavScrollHints = () => {
+  const el = quickNavScrollRef.value
+  if (!el) {
+    quickNavScrollRight.value = false
+    quickNavScrollLeft.value = false
+    return
+  }
+  const maxScroll = el.scrollWidth - el.clientWidth
+  quickNavScrollLeft.value = el.scrollLeft > 4
+  quickNavScrollRight.value = maxScroll > 4 && el.scrollLeft < maxScroll - 4
+}
+
+const scrollQuickNav = (direction: 'left' | 'right') => {
+  const el = quickNavScrollRef.value
+  if (!el) return
+  el.scrollBy({ left: direction === 'right' ? 140 : -140, behavior: 'smooth' })
+}
 
 const onGlobalKeydown = (event: KeyboardEvent) => {
   if (event.key === 'Escape') {
@@ -783,6 +825,7 @@ onMounted(() => {
   document.addEventListener('keydown', onGlobalKeydown)
   window.addEventListener('resize', syncRecentFilesMenuPosition)
   window.addEventListener('scroll', syncRecentFilesMenuPosition, true)
+  nextTick(syncQuickNavScrollHints)
 })
 
 onUnmounted(() => {
@@ -841,6 +884,18 @@ const getRowVisual = (item: { name: string; is_dir: boolean; path: string }) => 
       iconRing: 'ring-amber-200/60 dark:ring-amber-500/20',
       badgeBg: 'bg-amber-50 dark:bg-amber-500/10',
       badgeText: 'text-amber-700 dark:text-amber-300',
+      category: 'folder' as FileTypeCategory,
+      ext: '',
+    }
+  }
+  if (isSessionDirItem(item)) {
+    return {
+      icon: '💬',
+      label: '会话目录',
+      iconBg: 'bg-sky-50 dark:bg-sky-500/10',
+      iconRing: 'ring-sky-200/60 dark:ring-sky-500/20',
+      badgeBg: 'bg-sky-50 dark:bg-sky-500/10',
+      badgeText: 'text-sky-700 dark:text-sky-300',
       category: 'folder' as FileTypeCategory,
       ext: '',
     }
@@ -960,6 +1015,13 @@ const clearMultiSelect = () => {
   multiSelectMode.value = false
 }
 
+const toggleMultiSelectMode = () => {
+  multiSelectMode.value = !multiSelectMode.value
+  if (!multiSelectMode.value) {
+    selectedPaths.value = new Set()
+  }
+}
+
 const handleRowClick = (item: any) => {
   if (isMobile.value && item.is_dir) {
     fetchDirectory(item.path)
@@ -1027,6 +1089,16 @@ const mountCurrentDirectoryToSession = () => {
 
 const shouldShowRowActions = (item: { path: string }) => selectedItem.value?.path === item.path
 
+const trashNavLink = computed(() => {
+  if (!userWorkspaceRoot.value) return null
+  return {
+    key: 'trash',
+    label: '回收站',
+    path: `${userWorkspaceRoot.value}/.trash`,
+    icon: '🗑️',
+  }
+})
+
 const quickNavLinks = computed(() => {
   const links: Array<{
     key: string
@@ -1038,20 +1110,31 @@ const quickNavLinks = computed(() => {
   }> = []
   if (userWorkspaceRoot.value) {
     links.push({ key: 'home', label: '我的目录', path: userWorkspaceRoot.value, icon: '🏠' })
+    links.push({ key: 'docs', label: '我的文档', path: `${userWorkspaceRoot.value}/docs`, icon: '📄' })
+    if (props.conversationId) {
+      links.push({
+        key: 'session',
+        label: '本会话目录',
+        path: `${userWorkspaceRoot.value}/${props.conversationId}`,
+        icon: '💬',
+        disabled: !props.sessionStarted,
+        disabledTitle: '发送首条消息后会话目录才会创建',
+      })
+    }
     links.push({ key: 'uploads', label: 'uploads', path: `${userWorkspaceRoot.value}/uploads`, icon: '📤' })
-    links.push({ key: 'trash', label: '回收站', path: `${userWorkspaceRoot.value}/.trash`, icon: '🗑️' })
-  }
-  if (props.conversationId && userWorkspaceRoot.value) {
-    links.push({
-      key: 'session',
-      label: '本会话目录',
-      path: `${userWorkspaceRoot.value}/${props.conversationId}`,
-      icon: '💬',
-      disabled: !props.sessionStarted,
-      disabledTitle: '发送首条消息后会话目录才会创建',
-    })
   }
   return links
+})
+
+watch(quickNavLinks, () => {
+  nextTick(syncQuickNavScrollHints)
+})
+
+watch(quickNavScrollRef, (el, _, onCleanup) => {
+  if (!el || typeof ResizeObserver === 'undefined') return
+  const observer = new ResizeObserver(() => syncQuickNavScrollHints())
+  observer.observe(el)
+  onCleanup(() => observer.disconnect())
 })
 
 const handleQuickNavClick = (link: { path: string; disabled?: boolean; disabledTitle?: string }) => {
@@ -1391,62 +1474,93 @@ const closeDrawer = () => {
 
             <div class="workspace-drawer-scroll flex-1 overflow-y-auto overscroll-y-contain p-3 sm:p-4 bg-white dark:bg-gray-900/60 min-h-0 touch-pan-y flex flex-col">
               <div class="flex flex-col flex-1 min-h-0">
-                <div class="flex items-center gap-1.5 mb-3 shrink-0 overflow-x-auto no-scrollbar flex-nowrap min-w-0 touch-pan-x">
-                  <button
-                    v-for="link in quickNavLinks"
-                    :key="link.key"
-                    type="button"
-                    class="inline-flex shrink-0 whitespace-nowrap items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-bold border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 transition-all"
-                    :class="link.disabled
-                      ? 'opacity-40 cursor-not-allowed text-gray-400 dark:text-gray-500'
-                      : 'hover:border-primary/30 hover:text-primary'"
-                    :aria-disabled="link.disabled ? 'true' : undefined"
-                    :title="link.disabled ? link.disabledTitle : link.label"
-                    @click="handleQuickNavClick(link)"
+                <div class="relative mb-3 shrink-0 min-w-0">
+                  <div
+                    ref="quickNavScrollRef"
+                    class="flex items-center gap-1.5 overflow-x-auto no-scrollbar flex-nowrap min-w-0 touch-pan-x scroll-smooth pr-1"
+                    @scroll="syncQuickNavScrollHints"
                   >
-                    <span>{{ link.icon }}</span>
-                    <span>{{ link.label }}</span>
-                  </button>
-                  <div class="shrink-0">
-                    <button
-                      ref="recentFilesTriggerRef"
-                      type="button"
-                      class="inline-flex shrink-0 whitespace-nowrap items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-bold border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 transition-all"
-                      :class="recentFilesOpen ? 'border-primary/30 text-primary bg-primary/5' : 'text-gray-500 hover:border-primary/30 hover:text-primary'"
-                      @click.stop="toggleRecentFilesMenu"
-                    >
-                      <span>🕒</span>
-                      <span>最近文件</span>
-                      <svg
-                        class="w-3 h-3 transition-transform"
-                        :class="recentFilesOpen ? 'rotate-180' : ''"
-                        fill="none"
-                        stroke="currentColor"
-                        viewBox="0 0 24 24"
-                        aria-hidden="true"
+                      <button
+                        v-for="link in quickNavLinks"
+                        :key="link.key"
+                        type="button"
+                        class="inline-flex shrink-0 whitespace-nowrap items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-bold border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 transition-all"
+                        :class="link.disabled
+                          ? 'opacity-40 cursor-not-allowed text-gray-400 dark:text-gray-500'
+                          : 'hover:border-primary/30 hover:text-primary'"
+                        :aria-disabled="link.disabled ? 'true' : undefined"
+                        :title="link.disabled ? link.disabledTitle : link.label"
+                        @click="handleQuickNavClick(link)"
                       >
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M19 9l-7 7-7-7" />
-                      </svg>
+                        <span>{{ link.icon }}</span>
+                        <span>{{ link.label }}</span>
+                      </button>
+                      <div class="shrink-0">
+                        <button
+                          ref="recentFilesTriggerRef"
+                          type="button"
+                          class="inline-flex shrink-0 whitespace-nowrap items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-bold border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 transition-all"
+                          :class="recentFilesOpen ? 'border-primary/30 text-primary bg-primary/5' : 'text-gray-500 hover:border-primary/30 hover:text-primary'"
+                          @click.stop="toggleRecentFilesMenu"
+                        >
+                          <span>🕒</span>
+                          <span>最近文件</span>
+                          <svg
+                            class="w-3 h-3 transition-transform"
+                            :class="recentFilesOpen ? 'rotate-180' : ''"
+                            fill="none"
+                            stroke="currentColor"
+                            viewBox="0 0 24 24"
+                            aria-hidden="true"
+                          >
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M19 9l-7 7-7-7" />
+                          </svg>
+                        </button>
+                      </div>
+                      <button
+                        v-if="trashNavLink"
+                        type="button"
+                        class="inline-flex shrink-0 whitespace-nowrap items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-bold border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 transition-all hover:border-primary/30 hover:text-primary"
+                        @click="handleQuickNavClick(trashNavLink)"
+                      >
+                        <span>{{ trashNavLink.icon }}</span>
+                        <span>{{ trashNavLink.label }}</span>
                     </button>
                   </div>
-                  <div class="flex shrink-0 items-center gap-1.5">
-                    <button
-                      v-if="selectedPaths.size > 0"
-                      type="button"
-                      class="inline-flex shrink-0 whitespace-nowrap items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-bold border border-primary/30 text-primary bg-primary/10 transition-all"
-                      @click="mountSelectedBatch"
-                    >
-                      批量添加 ({{ selectedPaths.size }})
-                    </button>
-                    <button
-                      type="button"
-                      class="inline-flex shrink-0 whitespace-nowrap items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-bold border border-gray-200 dark:border-gray-700 text-gray-500 transition-all"
-                      :class="multiSelectMode ? 'text-primary border-primary/30 bg-primary/5' : ''"
-                      @click="multiSelectMode = !multiSelectMode; if (!multiSelectMode) clearMultiSelect()"
-                    >
-                      {{ multiSelectMode ? '取消多选' : '多选' }}
-                    </button>
-                  </div>
+                  <div
+                    v-if="quickNavScrollLeft"
+                    class="pointer-events-none absolute inset-y-0 left-0 w-6 bg-gradient-to-r from-white via-white/95 to-transparent dark:from-gray-900 dark:via-gray-900/95"
+                    aria-hidden="true"
+                  />
+                  <div
+                    v-if="quickNavScrollRight"
+                    class="pointer-events-none absolute inset-y-0 right-0 w-10 bg-gradient-to-l from-white via-white/95 to-transparent dark:from-gray-900 dark:via-gray-900/95"
+                    aria-hidden="true"
+                  />
+                  <button
+                    v-if="quickNavScrollRight"
+                    type="button"
+                    class="absolute right-0 top-1/2 z-10 flex h-5 w-5 -translate-y-1/2 items-center justify-center rounded-full border border-gray-200 bg-white/95 text-gray-400 shadow-sm transition-colors hover:border-primary/30 hover:text-primary dark:border-gray-700 dark:bg-gray-900/95 dark:text-gray-500"
+                    title="向右滑动查看更多"
+                    aria-label="向右滑动查看更多"
+                    @click="scrollQuickNav('right')"
+                  >
+                    <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M9 5l7 7-7 7" />
+                    </svg>
+                  </button>
+                  <button
+                    v-if="quickNavScrollLeft"
+                    type="button"
+                    class="absolute left-0 top-1/2 z-10 flex h-5 w-5 -translate-y-1/2 items-center justify-center rounded-full border border-gray-200 bg-white/95 text-gray-400 shadow-sm transition-colors hover:border-primary/30 hover:text-primary dark:border-gray-700 dark:bg-gray-900/95 dark:text-gray-500"
+                    title="向左滑动查看更多"
+                    aria-label="向左滑动查看更多"
+                    @click="scrollQuickNav('left')"
+                  >
+                    <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M15 19l-7-7 7-7" />
+                    </svg>
+                  </button>
                 </div>
 
                 <div
@@ -1582,10 +1696,14 @@ const closeDrawer = () => {
 
                 <div class="flex-1 min-h-[240px] border border-gray-100 dark:border-gray-800 rounded-xl overflow-hidden flex flex-col relative bg-gray-50/10">
                   <div class="grid grid-cols-12 gap-2 px-4 py-2 border-b border-gray-100 dark:border-gray-800 bg-gray-50/50 dark:bg-gray-900/20 text-[10px] font-black text-gray-400 tracking-wider shrink-0">
+                    <div v-if="multiSelectMode" class="col-span-1" aria-hidden="true" />
                     <button
                       type="button"
-                      class="col-span-7 sm:col-span-6 inline-flex items-center gap-1 text-left hover:text-primary transition-colors focus:outline-none"
-                      :class="sortKey === 'name' ? 'text-primary' : ''"
+                      class="inline-flex items-center gap-1 text-left hover:text-primary transition-colors focus:outline-none"
+                      :class="[
+                        multiSelectMode ? 'col-span-6 sm:col-span-5' : 'col-span-7 sm:col-span-6',
+                        sortKey === 'name' ? 'text-primary' : '',
+                      ]"
                       @click="toggleSort('name')"
                     >
                       <span>名称</span>
@@ -1632,7 +1750,7 @@ const closeDrawer = () => {
                     </div>
                   </div>
 
-                  <div class="flex-1 overflow-y-auto custom-scrollbar p-1 min-h-0" @contextmenu="handleListContextMenu">
+                  <div class="flex-1 overflow-y-auto custom-scrollbar p-1 pb-16 min-h-0" @contextmenu="handleListContextMenu">
                     <div v-if="displayItems.length === 0 && !searchLoading" class="h-full flex flex-col items-center justify-center text-gray-400 py-12 px-4">
                       <span class="text-4xl mb-2">{{ isRecursiveListingActive || isSearchActive ? '🔍' : '📂' }}</span>
                       <span class="text-xs font-bold">{{ displayEmptyHint }}</span>
@@ -1664,7 +1782,10 @@ const closeDrawer = () => {
                           <input type="checkbox" class="rounded border-gray-300 text-primary" :checked="selectedPaths.has(item.path)" @click.stop="toggleMultiSelect(item)">
                         </div>
                         <template v-for="visual in [getRowVisual(item)]" :key="item.path + '-visual'">
-                          <div class="col-span-7 sm:col-span-6 flex items-start gap-2.5 min-w-0">
+                          <div
+                            class="flex items-start gap-2.5 min-w-0"
+                            :class="multiSelectMode ? 'col-span-6 sm:col-span-5' : 'col-span-7 sm:col-span-6'"
+                          >
                             <div
                               class="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 ring-1 text-sm mt-0.5"
                               :class="[visual.iconBg, visual.iconRing]"
@@ -1685,6 +1806,12 @@ const closeDrawer = () => {
                                 title="当前登录用户的 AI 会话工作目录"
                               >
                                 用户工作目录
+                              </span>
+                              <span
+                                v-if="isSessionDirItem(item)"
+                                class="inline-flex sm:hidden mt-1 px-1.5 py-0.5 rounded-md text-[9px] font-bold bg-sky-50 dark:bg-sky-500/10 text-sky-700 dark:text-sky-300 ring-1 ring-sky-200/60 dark:ring-sky-500/20"
+                              >
+                                会话目录
                               </span>
                               <div
                                 v-if="isRecursiveListingActive && getItemLocationHint(item.path)"
@@ -1801,6 +1928,50 @@ const closeDrawer = () => {
                         </button>
                       </div>
                     </div>
+                  </div>
+
+                  <div class="absolute bottom-3 right-3 z-20 flex flex-col items-end gap-2 pointer-events-none">
+                    <button
+                      v-if="multiSelectMode && selectedPaths.size > 0"
+                      type="button"
+                      class="pointer-events-auto inline-flex items-center gap-1.5 rounded-full border border-primary/20 bg-primary px-3.5 py-2 text-[11px] font-bold text-white shadow-lg shadow-primary/20 transition-all hover:brightness-105 active:scale-[0.98]"
+                      @click="mountSelectedBatch"
+                    >
+                      批量添加 ({{ selectedPaths.size }})
+                    </button>
+                    <button
+                      type="button"
+                      class="pointer-events-auto flex h-11 w-11 items-center justify-center rounded-full border shadow-lg transition-all active:scale-95"
+                      :class="multiSelectMode
+                        ? 'border-primary bg-primary text-white shadow-primary/25'
+                        : 'border-gray-200 bg-white text-gray-600 hover:border-primary/30 hover:text-primary dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300 dark:shadow-black/30'"
+                      :title="multiSelectMode ? '取消多选' : '多选'"
+                      :aria-label="multiSelectMode ? '取消多选' : '多选'"
+                      @click="toggleMultiSelectMode"
+                    >
+                      <svg
+                        v-if="multiSelectMode"
+                        class="h-5 w-5"
+                        fill="none"
+                        stroke="currentColor"
+                        viewBox="0 0 24 24"
+                        aria-hidden="true"
+                      >
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.2" d="M6 18L18 6M6 6l12 12" />
+                      </svg>
+                      <svg
+                        v-else
+                        class="h-5 w-5"
+                        fill="none"
+                        stroke="currentColor"
+                        viewBox="0 0 24 24"
+                        aria-hidden="true"
+                      >
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 11H5a2 2 0 00-2 2v6a2 2 0 002 2h6a2 2 0 002-2v-4" />
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 7h4a2 2 0 012 2v6" />
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 7V5a2 2 0 012-2h2a2 2 0 012 2v2" />
+                      </svg>
+                    </button>
                   </div>
                 </div>
               </div>
