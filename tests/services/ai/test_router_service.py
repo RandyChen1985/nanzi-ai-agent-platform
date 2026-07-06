@@ -484,6 +484,43 @@ async def test_route_query_constrains_candidates_for_high_confidence_data_intent
 
 
 @pytest.mark.asyncio
+async def test_route_query_public_company_lookup_not_forced_to_data_agent(mock_agents_metadata):
+    """公网公司资料查询即使被语义模型误判为 DATA_QUERY，也不能收缩或落到 ChatBI。"""
+    service = RouterService()
+    evidence = IntentResponse(
+        intent=IntentType.DATA_QUERY,
+        confidence=0.93,
+        reasoning="误判为查询业务数据",
+        entities=["有孚网络"],
+    )
+    mock_chat = _mock_chat_client(json.dumps({
+        "thought": "错误地选择数据查询智能体",
+        "agent_name": "ChatBI",
+        "confidence": 0.88,
+    }))
+
+    with patch.object(service, "_fetch_agents_from_db", new_callable=AsyncMock) as mock_fetch, \
+         patch("app.services.ai.router_service.intent_service.identify_intent", new_callable=AsyncMock) as mock_identify, \
+         patch("app.services.ai.router_service.get_llm_async", new_callable=AsyncMock) as mock_get_llm, \
+         patch("app.services.ai.router_service.chat_client_from_handle") as mock_chat_factory:
+        mock_fetch.return_value = mock_agents_metadata
+        mock_identify.return_value = evidence
+        mock_get_llm.return_value = object()
+        mock_chat_factory.return_value = mock_chat
+
+        result = await service.route_query("查一下有孚网络公司信息")
+
+    assert result.agent_id == "agent-general"
+    assert result.intent_info == evidence
+    assert "without internal structured-data source" in result.reasoning
+
+    routed_messages = mock_chat.generate_text.call_args.args[0]
+    system_prompt = routed_messages[0].content[0].text
+    assert "ID: ChatBI" in system_prompt
+    assert "ID: general-chat" in system_prompt
+
+
+@pytest.mark.asyncio
 async def test_route_query_data_evidence_survives_invalid_constrained_route(mock_agents_metadata):
     """受约束候选的路由模型失败时，应回落 Main 并保留语义供其委派。"""
     service = RouterService()

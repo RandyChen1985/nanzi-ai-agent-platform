@@ -15,8 +15,13 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from enum import Enum
 from typing import Any, List, Mapping, Optional, Set
+
+from app.services.ai.intent_service import (
+    IntentSource as ToolIntentSource,
+    IntentSourceFrame as ToolIntentFrame,
+    resolve_intent_source,
+)
 
 # 不主动促发的工具（写入/管理/记忆维护类）：避免推动模型产生副作用或与专门机制重复。
 _NUDGE_EXCLUDED_TOOLS = frozenset({
@@ -97,20 +102,6 @@ def should_consider_tool_nudge(user_query: str) -> bool:
 STRONG_FORCE_SCORE = 0.5
 
 
-class ToolIntentSource(str, Enum):
-    INTERNAL_STRUCTURED_DATA = "internal_structured_data"
-    PUBLIC_WEB = "public_web"
-    INTERNAL_DOCS = "internal_docs"
-    UNKNOWN = "unknown"
-
-
-@dataclass(frozen=True)
-class ToolIntentFrame:
-    source: ToolIntentSource
-    confidence: float
-    reasoning: str
-
-
 @dataclass(frozen=True)
 class ToolNudge:
     tool_name: str
@@ -175,84 +166,6 @@ def _contains_any(text: str, terms: tuple[str, ...]) -> bool:
     return any(term and term in text for term in terms)
 
 
-def _intent_name(value: Any) -> str:
-    raw = getattr(value, "value", value)
-    return str(raw or "").strip().upper()
-
-
-def _coerce_confidence(value: Any) -> float:
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return 0.0
-
-
-def resolve_tool_intent_source(
-    query: str,
-    *,
-    semantic_intent: Any = None,
-    semantic_confidence: Any = None,
-    turn_intent: Any = None,
-) -> ToolIntentFrame:
-    """Resolve the request source before any specific tool/sub-agent is nudged."""
-    from app.services.ai.intent_service import (
-        looks_like_knowledge_query,
-        looks_like_strong_business_data_request,
-        looks_like_web_search_query,
-    )
-
-    if looks_like_web_search_query(query):
-        return ToolIntentFrame(
-            source=ToolIntentSource.PUBLIC_WEB,
-            confidence=0.95,
-            reasoning="explicit public web/search signal",
-        )
-
-    if looks_like_knowledge_query(query):
-        return ToolIntentFrame(
-            source=ToolIntentSource.INTERNAL_DOCS,
-            confidence=0.85,
-            reasoning="internal documentation or SOP signal",
-        )
-
-    semantic_name = _intent_name(semantic_intent)
-    semantic_score = _coerce_confidence(semantic_confidence)
-    if semantic_name == "DATA_QUERY" and semantic_score >= 0.65:
-        return ToolIntentFrame(
-            source=ToolIntentSource.INTERNAL_STRUCTURED_DATA,
-            confidence=semantic_score,
-            reasoning="router semantic intent is DATA_QUERY",
-        )
-
-    turn_name = _intent_name(turn_intent)
-    if turn_name == "DATA_QUERY":
-        return ToolIntentFrame(
-            source=ToolIntentSource.INTERNAL_STRUCTURED_DATA,
-            confidence=0.9,
-            reasoning="turn classification intent is DATA_QUERY",
-        )
-
-    if semantic_name in {"GENERAL", "KNOWLEDGE_BASE", "UNKNOWN"}:
-        return ToolIntentFrame(
-            source=ToolIntentSource.UNKNOWN,
-            confidence=semantic_score,
-            reasoning=f"router semantic intent is {semantic_name}",
-        )
-
-    if looks_like_strong_business_data_request(query):
-        return ToolIntentFrame(
-            source=ToolIntentSource.INTERNAL_STRUCTURED_DATA,
-            confidence=0.72,
-            reasoning="strong internal structured data signal",
-        )
-
-    return ToolIntentFrame(
-        source=ToolIntentSource.UNKNOWN,
-        confidence=0.0,
-        reasoning="no reliable source signal",
-    )
-
-
 def _resolve_notification_nudge(query: str, tools: List[Any]) -> Optional[ToolNudge]:
     normalized_query = query.lower()
     if not _contains_any(normalized_query, _NOTIFICATION_ACTION_TERMS):
@@ -300,7 +213,7 @@ def resolve_tool_nudge(
     query = (user_query or "").strip()
     if not query or not should_consider_tool_nudge(query):
         return None
-    intent_frame = resolve_tool_intent_source(
+    intent_frame = resolve_intent_source(
         query,
         semantic_intent=semantic_intent,
         semantic_confidence=semantic_confidence,

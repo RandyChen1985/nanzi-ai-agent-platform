@@ -1,5 +1,6 @@
 import json
 import re
+from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Optional, List, Dict
 from pydantic import BaseModel, Field
@@ -162,6 +163,7 @@ _DATA_QUERY_STRONG_SIGNALS = [
     "统计", "多少", "列表", "记录", "趋势", "top", "明细", "汇总", "对比",
     "数量", "报表", "指标", "数据集", "数据库", "sql", "工单", "告警记录",
     "故障记录", "操作日志", "设备清单", "资产列表",
+    "count", "list", "record", "records", "table", "metric", "metrics", "report",
 ]
 
 
@@ -179,6 +181,27 @@ def looks_like_strong_business_data_request(user_question: str) -> bool:
     if not q:
         return False
     return any(sig in q for sig in _DATA_QUERY_STRONG_SIGNALS)
+
+
+def looks_like_public_profile_lookup(user_question: str) -> bool:
+    """用户在查公开主体资料，而不是内部业务库记录。
+
+    这类问题常见形态是“查一下 X 公司信息 / 了解某品牌资料”。它们可能没有
+    “联网/新闻/官网”等显式公网词，但语义来源仍更接近公开搜索，不应仅因
+    “查一下”或意图模型误判而进入 data_query。
+    """
+    q = (user_question or "").strip().lower()
+    if not q:
+        return False
+    if looks_like_strong_business_data_request(q):
+        return False
+    lookup_verbs = (*_DATA_QUERY_GENERIC_VERBS, "了解", "搜一下", "搜索", "search")
+    profile_subjects = ("公司", "企业", "机构", "品牌", "人物", "company", "brand")
+    profile_fields = ("信息", "资料", "简介", "介绍", "背景", "官网", "新闻", "动态", "profile", "info")
+    has_lookup = any(term in q for term in lookup_verbs)
+    if not has_lookup:
+        return False
+    return any(subject in q for subject in profile_subjects) and any(field in q for field in profile_fields)
 
 
 def looks_like_short_field_or_continuation_followup(user_question: str) -> bool:
@@ -469,6 +492,117 @@ class IntentResponse(BaseModel):
     confidence: float = Field(description="Confidence score from 0.0 to 1.0")
     reasoning: str = Field(description="Brief explanation of why this intent was chosen")
     entities: List[str] = Field(default_factory=list, description="Extracted key entities (e.g., room name, metric)")
+
+
+class IntentSource(str, Enum):
+    INTERNAL_STRUCTURED_DATA = "internal_structured_data"
+    PUBLIC_WEB = "public_web"
+    INTERNAL_DOCS = "internal_docs"
+    UNKNOWN = "unknown"
+
+
+@dataclass(frozen=True)
+class IntentSourceFrame:
+    source: IntentSource
+    confidence: float
+    reasoning: str
+
+
+def _intent_name(value: Any) -> str:
+    raw = getattr(value, "value", value)
+    return str(raw or "").strip().upper()
+
+
+def _coerce_confidence(value: Any) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def resolve_intent_source(
+    query: str,
+    *,
+    semantic_intent: Any = None,
+    semantic_confidence: Any = None,
+    turn_intent: Any = None,
+) -> IntentSourceFrame:
+    """Resolve the request source before routing to a specialized agent/tool.
+
+    A semantic DATA_QUERY label is useful evidence, but public profile lookups
+    must be carved out first: generic requests such as "查一下 X 公司信息" may
+    look like "querying data" while their source is actually public search.
+    Strong record/metric/list signals and data-result follow-ups are accepted
+    immediately; otherwise high-confidence DATA_QUERY evidence is still allowed.
+    """
+    query = (query or "").strip()
+    if looks_like_web_search_query(query):
+        return IntentSourceFrame(
+            source=IntentSource.PUBLIC_WEB,
+            confidence=0.95,
+            reasoning="explicit public web/search signal",
+        )
+
+    if looks_like_knowledge_query(query):
+        return IntentSourceFrame(
+            source=IntentSource.INTERNAL_DOCS,
+            confidence=0.85,
+            reasoning="internal documentation or SOP signal",
+        )
+
+    if looks_like_public_profile_lookup(query):
+        return IntentSourceFrame(
+            source=IntentSource.UNKNOWN,
+            confidence=0.8,
+            reasoning="public profile lookup without structured-data signal",
+        )
+
+    has_structured_signal = looks_like_strong_business_data_request(query)
+    has_data_followup_signal = (
+        looks_like_data_followup(query)
+        or looks_like_pure_result_followup(query)
+        or looks_like_short_field_or_continuation_followup(query)
+    )
+    if has_structured_signal or has_data_followup_signal:
+        return IntentSourceFrame(
+            source=IntentSource.INTERNAL_STRUCTURED_DATA,
+            confidence=0.9 if has_data_followup_signal else 0.72,
+            reasoning=(
+                "data-result follow-up signal"
+                if has_data_followup_signal
+                else "strong internal structured data signal"
+            ),
+        )
+
+    semantic_name = _intent_name(semantic_intent)
+    semantic_score = _coerce_confidence(semantic_confidence)
+    if semantic_name == IntentType.DATA_QUERY.value and semantic_score >= 0.65:
+        return IntentSourceFrame(
+            source=IntentSource.INTERNAL_STRUCTURED_DATA,
+            confidence=semantic_score,
+            reasoning="router semantic intent is DATA_QUERY",
+        )
+
+    turn_name = _intent_name(turn_intent)
+    if turn_name == IntentType.DATA_QUERY.value:
+        return IntentSourceFrame(
+            source=IntentSource.INTERNAL_STRUCTURED_DATA,
+            confidence=0.9,
+            reasoning="turn classification intent is DATA_QUERY",
+        )
+
+    if semantic_name in {IntentType.GENERAL.value, IntentType.KNOWLEDGE_BASE.value, IntentType.UNKNOWN.value}:
+        return IntentSourceFrame(
+            source=IntentSource.UNKNOWN,
+            confidence=semantic_score,
+            reasoning=f"router semantic intent is {semantic_name}",
+        )
+
+    return IntentSourceFrame(
+        source=IntentSource.UNKNOWN,
+        confidence=0.0,
+        reasoning="no reliable source signal",
+    )
 
 class IntentService:
     """

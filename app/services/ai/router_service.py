@@ -2,7 +2,14 @@ from typing import List, Optional
 import json
 import logging
 from app.core.llm.client import get_llm_async
-from app.services.ai.intent_service import IntentResponse, IntentType, intent_service
+from app.services.ai.intent_service import (
+    IntentResponse,
+    IntentSource,
+    IntentSourceFrame,
+    IntentType,
+    intent_service,
+    resolve_intent_source,
+)
 from app.services.ai.runtime.agentscope.chat import chat_client_from_handle
 from app.services.ai.runtime.agentscope.messages import RuntimeContentBlock, RuntimeMessage
 from app.services.ai.turn_classifier import AMBIGUOUS_INTENT_CONFIDENCE_THRESHOLD
@@ -249,7 +256,25 @@ class RouterService:
                 )
 
         intent_info = await self._resolve_intent_evidence(user_input, history)
-        routing_agents = self._constrain_candidates_by_intent(agents_metadata, intent_info)
+        source_frame = resolve_intent_source(
+            user_input,
+            semantic_intent=getattr(intent_info, "intent", None),
+            semantic_confidence=getattr(intent_info, "confidence", None),
+        )
+        data_route_allowed = (
+            source_frame.source == IntentSource.INTERNAL_STRUCTURED_DATA
+            or (
+                last_agent_name
+                and self._is_data_query_agent(agents_metadata, last_agent_name)
+                and should_inherit_data_agent_session(user_input)
+            )
+        )
+        routing_agents = self._constrain_candidates_by_intent(
+            agents_metadata,
+            intent_info,
+            source_frame=source_frame,
+            data_route_allowed=bool(data_route_allowed),
+        )
 
         # 2. Unified LLM Routing
         # 路由提示词内置在代码中（DEFAULT_SYSTEM_PROMPT），不再从数据库配置读取，
@@ -298,7 +323,10 @@ class RouterService:
                     result_json,
                     routing_agents,
                     enable_multi_agent,
+                    fallback_agents_metadata=agents_metadata,
                     intent_info=intent_info,
+                    source_frame=source_frame,
+                    data_route_allowed=bool(data_route_allowed),
                 )
                 if route_result is not None:
                     return route_result
@@ -330,17 +358,37 @@ class RouterService:
             logger.warning("Semantic evidence failed before routing: %s", exc)
             return None
 
+    def _should_constrain_to_data_agents(
+        self,
+        intent_info: Optional[IntentResponse],
+        source_frame: Optional[IntentSourceFrame],
+        data_route_allowed: bool,
+    ) -> bool:
+        """是否满足将候选收缩到数据查询智能体的全部条件。
+
+        须同时满足：
+        1. 语义意图为 DATA_QUERY 且置信度超过模糊阈值（排除低置信误判）；
+        2. 意图来源确认为内部结构化数据（排除公网查询 / 公司信息等误判）；
+        3. 路由层允许进入数据查询路径（排除会话粘性以外的追问被强制推进）。
+        """
+        if not intent_info or intent_info.intent != IntentType.DATA_QUERY:
+            return False
+        if intent_info.confidence < AMBIGUOUS_INTENT_CONFIDENCE_THRESHOLD:
+            return False
+        if source_frame is None or source_frame.source != IntentSource.INTERNAL_STRUCTURED_DATA:
+            return False
+        return data_route_allowed
+
     def _constrain_candidates_by_intent(
         self,
         agents: List[dict],
         intent_info: Optional[IntentResponse],
+        *,
+        source_frame: Optional[IntentSourceFrame] = None,
+        data_route_allowed: bool = False,
     ) -> List[dict]:
-        """Use high-confidence semantic evidence as a capability constraint, not a domain keyword rule."""
-        if (
-            not intent_info
-            or intent_info.intent != IntentType.DATA_QUERY
-            or intent_info.confidence < AMBIGUOUS_INTENT_CONFIDENCE_THRESHOLD
-        ):
+        """Constrain to data agents only when the request source is truly data."""
+        if not self._should_constrain_to_data_agents(intent_info, source_frame, data_route_allowed):
             return agents
 
         data_agents = [
@@ -492,7 +540,10 @@ class RouterService:
         agents_metadata: List[dict],
         enable_multi_agent: bool,
         *,
+        fallback_agents_metadata: Optional[List[dict]] = None,
         intent_info: Optional[IntentResponse] = None,
+        source_frame: Optional[IntentSourceFrame] = None,
+        data_route_allowed: bool = True,
     ) -> Optional[RouteResult]:
         confidence = result_json.get("confidence", 0.5)
         target_name = result_json.get("agent_name")
@@ -523,9 +574,30 @@ class RouterService:
         if not target_agent:
             logger.warning(f"Router suggested unknown agent: {target_name}. Falling back to General Chat.")
             return self._fallback_to_general(
-                agents_metadata,
+                fallback_agents_metadata or agents_metadata,
                 f"Router returned unknown agent: {target_name}",
                 intent_info=intent_info,
+            )
+
+        if self._is_data_query_agent(agents_metadata, target_agent.get("name")) and not data_route_allowed:
+            source_reason = getattr(source_frame, "reasoning", "unknown source")
+            fallback_agents = fallback_agents_metadata or agents_metadata
+            if self._find_fallback_agent(fallback_agents):
+                logger.info(
+                    "Router selected data agent %s without internal structured-data source (%s); falling back to Main.",
+                    target_agent.get("name"),
+                    source_reason,
+                )
+                return self._fallback_to_general(
+                    fallback_agents,
+                    f"Router selected data agent without internal structured-data source: {source_reason}",
+                    intent_info=intent_info,
+                )
+            logger.info(
+                "Router selected data agent %s without internal structured-data source (%s), "
+                "but no fallback Main agent is available; keeping router result.",
+                target_agent.get("name"),
+                source_reason,
             )
 
         resolved_secondaries: List[str] = []

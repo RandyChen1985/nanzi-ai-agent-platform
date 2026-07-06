@@ -122,6 +122,26 @@ def test_general_semantic_company_info_prefers_web_tool_over_data_sub_agent():
     assert nudge.should_force_first_call is False
 
 
+def test_misclassified_company_info_does_not_force_data_sub_agent():
+    tools = [
+        _tool("sub_agent_call", "委派其他专有子智能体执行特定任务（如查数、查手册等）"),
+        _tool("web_search_baidu", "联网搜索公司信息、官网、新闻和最新资讯"),
+    ]
+
+    nudge = resolve_tool_nudge(
+        "查一下有孚网络公司信息",
+        tools,
+        available_sub_agent_names={"biz-data-agent"},
+        sub_agent_targets_by_capability={"data_query": "biz-data-agent"},
+        semantic_intent=IntentType.DATA_QUERY,
+        semantic_confidence=0.93,
+    )
+
+    assert nudge is not None
+    assert nudge.tool_name == "web_search_baidu"
+    assert nudge.should_force_first_call is False
+
+
 def test_public_news_query_prefers_web_tool_over_data_sub_agent():
     tools = [
         _tool("sub_agent_call", "委派其他专有子智能体执行特定任务（如查数、查手册等）"),
