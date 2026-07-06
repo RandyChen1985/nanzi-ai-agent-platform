@@ -285,8 +285,16 @@ const isKnowledgeFeatureEnabled = computed(() => {
   return (item?.value ?? 'true') === 'true'
 })
 
-const isConfigItemDisabled = (_category: string, _item: ConfigItem) => {
+const isConfigItemDisabled = (_category: string, item: ConfigItem) => {
+  if (item.key === 'third_party_user_sync_config') return true
   return !canSave
+}
+const parseJson = (val: string) => {
+  try {
+    return JSON.parse(val)
+  } catch (e) {
+    return null
+  }
 }
 const originalConfigs = ref<{ [key: string]: string }>({})
 const configLoading = ref(false)
@@ -522,6 +530,9 @@ const fetchConfigs = async () => {
     for (const cat in res.data) {
         res.data[cat].forEach((item: ConfigItem) => {
             originalConfigs.value[item.key] = item.value
+            if (item.key === 'third_party_user_sync_config' && !item.description) {
+              item.description = '第三方用户同步配置（数据源、表、字段映射、定时周期）'
+            }
         })
     }
   } catch (e: any) {
@@ -732,7 +743,8 @@ const getCategoryTip = (key: string) => {
 * 如果知识库多为技术文档、规格手册或包含大量专业代号，调低该值（如 0.2 ~ 0.3）。
 * 如果问题比较多样化、偏口语表述，调高该值（如 0.6 ~ 0.7）以强化语义召回。`,
     'knowledge_ragflow_metadata_top_k': '知识库问答检索时，最大召回匹配的候选文档片段数。值越大参考条数越多，但会消耗更多的模型 Token。',
-    'knowledge_base_enabled': '总开关：关闭后隐藏下方 RAGFlow 配置项，并禁用知识库管理、检索测试及智能体的 search_knowledge_base 工具。'
+    'knowledge_base_enabled': '总开关：关闭后隐藏下方 RAGFlow 配置项，并禁用知识库管理、检索测试及智能体的 search_knowledge_base 工具。',
+    'third_party_user_sync_config': '配置从外部数据源定时同步用户信息到本平台的参数。包含启用状态、连接源、表名、字段对应关系和同步周期。此配置已在【用户管理】页面统一维护，在此处仅提供只读展示。'
   }
   return tips[key] || ''
 }
@@ -1734,6 +1746,81 @@ onMounted(() => {
                                 <EyeSlashIcon v-else class="h-5 w-5" />
                              </div>
                           </div>
+                          <div v-else-if="item.key === 'third_party_user_sync_config'">
+                              <div class="border border-gray-200/80 rounded-xl p-4 bg-gray-50/50 space-y-4 shadow-inner">
+                                 <!-- 状态与定时自动同步 -->
+                                 <div class="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-gray-200/60">
+                                    <div class="flex items-center gap-2">
+                                       <span class="text-xs font-semibold text-gray-500">同步状态:</span>
+                                       <span v-if="parseJson(item.value)?.enabled" class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium bg-emerald-100 text-emerald-800 border border-emerald-200">
+                                          <span class="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                                          已启用
+                                       </span>
+                                       <span v-else class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-800 border border-gray-200">
+                                          <span class="w-1.5 h-1.5 rounded-full bg-gray-400"></span>
+                                          已禁用
+                                       </span>
+                                    </div>
+                                    <div class="flex items-center gap-2">
+                                       <span class="text-xs font-semibold text-gray-500">定时周期:</span>
+                                       <span class="text-xs font-medium text-gray-600 bg-gray-100/80 px-2.5 py-0.5 rounded border border-gray-200">
+                                          {{ 
+                                             parseJson(item.value)?.schedule === 'off' ? '未开启定时自动同步' :
+                                             parseJson(item.value)?.schedule === 'hourly' ? '每小时自动同步' :
+                                             parseJson(item.value)?.schedule === 'daily' ? '每日凌晨 2:00 同步' :
+                                             parseJson(item.value)?.schedule === 'weekly' ? '每周一凌晨 2:00 同步' : '未开启'
+                                          }}
+                                       </span>
+                                    </div>
+                                 </div>
+                                 
+                                 <!-- 数据源与对应表 -->
+                                 <div class="grid grid-cols-1 sm:grid-cols-2 gap-3.5 text-xs">
+                                    <div class="flex items-center justify-between bg-white px-3 py-2 rounded-lg border border-gray-150">
+                                       <span class="font-medium text-gray-500">外部数据源 ID:</span>
+                                       <span class="font-mono text-gray-800 font-bold bg-slate-50 px-2 py-0.5 rounded border border-slate-200">{{ parseJson(item.value)?.connection_config_id || '未配置' }}</span>
+                                    </div>
+                                    <div class="flex items-center justify-between bg-white px-3 py-2 rounded-lg border border-gray-150">
+                                       <span class="font-medium text-gray-500">外部用户表名:</span>
+                                       <span class="font-mono text-indigo-700 font-semibold bg-indigo-50/30 px-2 py-0.5 rounded border border-indigo-100/60">{{ parseJson(item.value)?.table_name || '未配置' }}</span>
+                                    </div>
+                                 </div>
+
+                                 <!-- 核心字段映射 -->
+                                 <div class="space-y-2">
+                                    <span class="text-xs font-semibold text-gray-700 block">核心字段映射:</span>
+                                    <div class="bg-white rounded-lg border border-gray-150 divide-y divide-gray-100 overflow-hidden shadow-sm">
+                                       <div class="grid grid-cols-[110px_1fr] px-3.5 py-2.5 text-xs items-center">
+                                          <span class="text-gray-500 font-medium">用户名 (user_name):</span>
+                                          <span class="font-mono text-gray-800 bg-gray-100 px-2 py-0.5 rounded w-max border border-gray-200/60">{{ parseJson(item.value)?.field_map?.user_name || '未配置' }}</span>
+                                       </div>
+                                       <div class="grid grid-cols-[110px_1fr] px-3.5 py-2.5 text-xs items-center">
+                                          <span class="text-gray-500 font-medium">真实姓名 (real_name):</span>
+                                          <span class="font-mono text-gray-800 bg-gray-100 px-2 py-0.5 rounded w-max border border-gray-200/60">{{ parseJson(item.value)?.field_map?.real_name || '未配置' }}</span>
+                                       </div>
+                                       <div class="grid grid-cols-[110px_1fr] px-3.5 py-2.5 text-xs items-center">
+                                          <span class="text-gray-500 font-medium">备注说明 (remark):</span>
+                                          <span class="font-mono text-gray-800 bg-gray-100 px-2 py-0.5 rounded w-max border border-gray-200/60">{{ parseJson(item.value)?.field_map?.remark || '未配置' }}</span>
+                                       </div>
+                                    </div>
+                                 </div>
+
+                                 <!-- 额外字段扩展 -->
+                                 <div v-if="parseJson(item.value)?.extra_data_mappings?.length" class="space-y-2 pt-1">
+                                    <span class="text-xs font-semibold text-gray-700 block">扩展字段同步:</span>
+                                    <div class="flex flex-wrap gap-2">
+                                       <span v-for="map in parseJson(item.value).extra_data_mappings" :key="map.json_key" class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-slate-100/80 text-slate-700 border border-slate-200/60 text-[11px] font-mono shadow-sm">
+                                          {{ map.json_key }} 
+                                          <span class="text-slate-400">←</span>
+                                          {{ map.source_column }}
+                                       </span>
+                                    </div>
+                                 </div>
+                              </div>
+                              <p class="mt-2 text-xs text-blue-600 bg-blue-50/50 p-2.5 rounded-lg border border-blue-100 leading-normal select-none">
+                                  💡 <strong>提示：</strong>该配置项为只读模式。如需配置或测试同步规则，请前往 <strong>【用户管理】</strong> 页面进行设置。
+                              </p>
+                          </div>
                           <div v-else-if="['ragflow_dataset_ids', 'knowledge_ragflow_dataset_ids'].includes(item.key)">
                                <div class="flex space-x-2">
                                    <input type="text" v-model="item.value" :disabled="isConfigItemDisabled(String(category), item)" class="shadow-sm focus:ring-primary focus:border-primary block w-full sm:text-sm border-gray-300 rounded-md bg-gray-100 disabled:opacity-70 disabled:cursor-not-allowed" />
@@ -1847,6 +1934,9 @@ onMounted(() => {
                           </div>
                           <div v-else-if="isLongText(item)">
                              <textarea v-model="item.value" :disabled="isConfigItemDisabled(String(category), item)" rows="10" class="shadow-sm focus:ring-primary focus:border-primary block w-full sm:text-sm border-gray-300 rounded-md font-mono text-xs bg-gray-100 p-3 disabled:opacity-70 disabled:cursor-not-allowed"></textarea>
+                             <p v-if="item.key === 'third_party_user_sync_config'" class="mt-2 text-xs text-blue-600 bg-blue-50/50 p-2.5 rounded-lg border border-blue-100 leading-normal select-none">
+                                 💡 <strong>提示：</strong>该配置项为只读模式。如需配置或测试同步规则，请前往 <strong>【用户管理】</strong> 页面进行设置。
+                             </p>
                           </div>
                           <div v-else-if="['audit_log_retention_days', 'agent_max_iterations', 'agent_max_context_turns', 'data_api_timeout_seconds', 'schema_api_timeout_seconds', 'ragflow_metadata_top_k', 'knowledge_ragflow_metadata_top_k', 'embed_dimensions', 'chatbi_sample_top_k'].includes(item.key)">
 	                             <input type="text" v-model="item.value" @keypress="!/[0-9]/.test(($event as KeyboardEvent).key) && ($event as KeyboardEvent).preventDefault()" @input="item.value = item.value.replace(/\D/g, '')" :disabled="isConfigItemDisabled(String(category), item)" class="shadow-sm focus:ring-primary focus:border-primary block w-full sm:text-sm border-gray-300 rounded-md bg-gray-100 disabled:opacity-70 disabled:cursor-not-allowed p-2" />

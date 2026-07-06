@@ -637,10 +637,10 @@ const extraDataPreviewExample = computed(() => {
 })
 
 const sanitizeExtraDataMappings = () =>
-  config.value.extra_data_mappings
+  (config.value?.extra_data_mappings || [])
     .map((item) => ({
-      json_key: String(item.json_key || '').trim(),
-      source_column: String(item.source_column || '').trim(),
+      json_key: String(item?.json_key || '').trim(),
+      source_column: String(item?.source_column || '').trim(),
     }))
     .filter((item) => item.json_key && item.source_column)
 
@@ -857,8 +857,9 @@ const onTableChange = () => {
 }
 
 const saveConfig = async () => {
-  if (config.value.enabled) {
-    if (!config.value.field_map.user_name) {
+  console.log("saveConfig triggered. config enabled:", config.value?.enabled)
+  if (config.value?.enabled) {
+    if (!config.value?.field_map?.user_name) {
       showToast('用户名字段映射为必填项', 'error')
       return
     }
@@ -871,7 +872,9 @@ const saveConfig = async () => {
   saving.value = true
   try {
     const payload = buildConfigPayload()
+    console.log("Saving third-party sync config payload:", payload)
     const res = await axios.put('/api/portal/management/third-party-sync/config', payload)
+    console.log("Save config success response:", res.data)
     config.value = {
       ...config.value,
       ...(res.data?.data || {}),
@@ -880,7 +883,9 @@ const saveConfig = async () => {
     showToast('配置已保存', 'success')
     if (canPreview.value) await loadPreview()
   } catch (e: any) {
-    showToast(e.response?.data?.detail || '保存配置失败', 'error')
+    console.error("Save config error:", e)
+    const errMessage = e.response?.data?.detail || e.message || '保存配置失败'
+    showToast(errMessage, 'error')
   } finally {
     saving.value = false
   }
