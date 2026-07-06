@@ -213,6 +213,58 @@ def test_server_load_query_prefers_shell_tool_over_data_sub_agent():
     assert nudge.should_force_first_call is False
 
 
+def test_runtime_diagnostic_data_intent_does_not_force_data_sub_agent():
+    tools = [
+        _tool("sub_agent_call", "委派其他专有子智能体执行特定任务（如查数、查手册等）"),
+    ]
+
+    nudge = resolve_tool_nudge(
+        "查看当前系统的CPU和内存使用情况",
+        tools,
+        available_sub_agent_names={"biz-data-agent"},
+        sub_agent_targets_by_capability={"data_query": "biz-data-agent"},
+        turn_intent=IntentType.DATA_QUERY,
+    )
+
+    assert nudge is None
+
+
+def test_generic_data_intent_without_business_signal_does_not_force_data_sub_agent():
+    tools = [
+        _tool("sub_agent_call", "委派其他专有子智能体执行特定任务（如查数、查手册等）"),
+    ]
+
+    nudge = resolve_tool_nudge(
+        "查一下 abc 的状态",
+        tools,
+        available_sub_agent_names={"biz-data-agent"},
+        sub_agent_targets_by_capability={"data_query": "biz-data-agent"},
+        semantic_intent=IntentType.DATA_QUERY,
+        semantic_confidence=0.91,
+    )
+
+    assert nudge is None
+
+
+def test_runtime_diagnostic_data_intent_prefers_shell_tool():
+    tools = [
+        _tool("sub_agent_call", "委派其他专有子智能体执行特定任务（如查数、查手册等）"),
+        _tool("exec_command", "在服务器上执行 shell 命令，查看系统负载、CPU、内存、磁盘和进程状态"),
+    ]
+
+    nudge = resolve_tool_nudge(
+        "查看当前系统的CPU和内存使用情况",
+        tools,
+        available_sub_agent_names={"biz-data-agent"},
+        sub_agent_targets_by_capability={"data_query": "biz-data-agent"},
+        turn_intent=IntentType.DATA_QUERY,
+    )
+
+    assert nudge is not None
+    assert nudge.tool_name == "exec_command"
+    assert nudge.should_force_first_call is False
+
+
 def test_sub_agent_call_nudge_skips_when_target_agent_unavailable():
     tools = [
         _tool("sub_agent_call", "委派其他专有子智能体执行特定任务（如查数、查手册等）"),

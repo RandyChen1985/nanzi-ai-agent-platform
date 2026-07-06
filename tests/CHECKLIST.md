@@ -200,4 +200,5 @@
 | 个人消息通知配置与连通性测试 (Notification Settings & Connectivity) | `tests/api/portal/test_notifications.py` | **个人通知配置与测试**：验证获取默认与自定义配置、打星号脱敏、反解真实密码、保存配置、钉钉/企微/邮件真实连通性测试、重构钉钉工具读取当前用户通知配置。 | ✅ 通过 | 2026-07-06 |
 | 智能体工具促发优化 (Tool Nudge Optimization) | `tests/ai/test_tool_nudge_policy.py` | **联网优先与意图过滤**：验证语义意图、单轮分类意图对工具促发路由的影响，包括联网检索优先（降低推荐阈值）和强数据查询意图的正确促发、模糊匹配排除。 | ✅ 通过 | 2026-07-06 |
 | 跨设备活动会话同步 (Active Session Synchronization) | `tests/api/v1/test_active_conversation.py` | 验证在 Redis 中根据用户和智能体 ID 存取活动会话 ID，支持 GET 与 POST /active，确保不设置 TTL 过期时间且满足跨设备一致性。 | 🛠 待验证 | 2026-07-06 |
+| 当前运行环境诊断意图与工具推荐优化 (Runtime Diagnostic Intent & Tool Nudge) | `app/services/ai/intent_service.py`, `tests/ai/test_tool_nudge_policy.py` | **当前运行环境诊断意图与工具促发规则优化**：验证系统 CPU/内存/磁盘/进程以及 shell 命令行等运行环境诊断提问会被识别为 `IntentSource.RUNTIME_DIAGNOSTIC`；验证在此意图下，系统不会强推 ChatBI 数据子代理，且优先提示 exec_command 工具促发；验证无强业务信号的 DATA_QUERY 意图不会误伤强推数据子代理。 | ✅ 通过 | 2026-07-06 |
 

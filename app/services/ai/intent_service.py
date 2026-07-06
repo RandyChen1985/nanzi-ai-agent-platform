@@ -166,6 +166,19 @@ _DATA_QUERY_STRONG_SIGNALS = [
     "count", "list", "record", "records", "table", "metric", "metrics", "report",
 ]
 
+_RUNTIME_LOCAL_CONTEXT_SIGNALS = [
+    "当前系统", "当前服务器", "当前机器", "当前这台", "当前平台", "当前环境",
+    "本机", "本地", "我机器", "我的机器", "这台机器", "这台服务器", "这台主机",
+    "运行环境", "系统运行",
+]
+_RUNTIME_METRIC_SIGNALS = [
+    "cpu", "内存", "memory", "磁盘", "disk", "负载", "load", "进程", "端口",
+    "网络连通", "服务状态", "运行状态", "资源使用", "使用情况",
+]
+_RUNTIME_COMMAND_SIGNALS = [
+    "执行命令", "shell", "bash", "uptime", "top ", "ps ", "df -h", "free -h",
+]
+
 
 
 def looks_like_strong_business_data_request(user_question: str) -> bool:
@@ -174,6 +187,21 @@ def looks_like_strong_business_data_request(user_question: str) -> bool:
     if not q:
         return False
     return any(sig in q for sig in _DATA_QUERY_STRONG_SIGNALS)
+
+
+def looks_like_runtime_diagnostic_query(user_question: str) -> bool:
+    """当前运行环境诊断：需要工具拿真实状态，但不属于 ChatBI 业务库查数。"""
+    q = (user_question or "").strip().lower()
+    if not q:
+        return False
+    if looks_like_meta_action(q) or looks_like_context_action(q) or looks_like_skill_execution(q):
+        return False
+    if any(sig in q for sig in _RUNTIME_COMMAND_SIGNALS):
+        return True
+    has_runtime_metric = any(sig in q for sig in _RUNTIME_METRIC_SIGNALS)
+    if not has_runtime_metric:
+        return False
+    return any(sig in q for sig in _RUNTIME_LOCAL_CONTEXT_SIGNALS)
 
 
 def looks_like_public_profile_lookup(user_question: str) -> bool:
@@ -491,6 +519,7 @@ class IntentSource(str, Enum):
     INTERNAL_STRUCTURED_DATA = "internal_structured_data"
     PUBLIC_WEB = "public_web"
     INTERNAL_DOCS = "internal_docs"
+    RUNTIME_DIAGNOSTIC = "runtime_diagnostic"
     UNKNOWN = "unknown"
 
 
@@ -525,8 +554,9 @@ def resolve_intent_source(
     语义模型输出的 DATA_QUERY 标签只是证据，不能直接等同于"来自内部业务库"：
     - "查一下 X 公司信息"等公开主体查询可能被误判为 DATA_QUERY，但来源实为公网搜索，
       需要通过 looks_like_public_profile_lookup 提前拦截；
+    - 当前系统 / 本机 / 服务器 CPU 内存等运行环境诊断需要执行类工具，不属于 ChatBI；
     - 强业务数据词（列表/记录/统计/明细等）或数据追问信号则直接采信为内部结构化数据；
-    - 其余情况在语义置信度 >= 0.65 时才接受 DATA_QUERY 判定，不足时回落为 UNKNOWN。
+    - 其余 DATA_QUERY 只作为弱证据保留，不直接触发 ChatBI / sub_agent_call。
     """
     query = (query or "").strip()
     if looks_like_web_search_query(query):
@@ -541,6 +571,13 @@ def resolve_intent_source(
             source=IntentSource.INTERNAL_DOCS,
             confidence=0.85,
             reasoning="internal documentation or SOP signal",
+        )
+
+    if looks_like_runtime_diagnostic_query(query):
+        return IntentSourceFrame(
+            source=IntentSource.RUNTIME_DIAGNOSTIC,
+            confidence=0.9,
+            reasoning="current runtime/system diagnostic signal",
         )
 
     if looks_like_public_profile_lookup(query):
@@ -569,26 +606,25 @@ def resolve_intent_source(
 
     semantic_name = _intent_name(semantic_intent)
     semantic_score = _coerce_confidence(semantic_confidence)
-    if semantic_name == IntentType.DATA_QUERY.value and semantic_score >= 0.65:
-        return IntentSourceFrame(
-            source=IntentSource.INTERNAL_STRUCTURED_DATA,
-            confidence=semantic_score,
-            reasoning="router semantic intent is DATA_QUERY",
-        )
-
     turn_name = _intent_name(turn_intent)
-    if turn_name == IntentType.DATA_QUERY.value:
-        return IntentSourceFrame(
-            source=IntentSource.INTERNAL_STRUCTURED_DATA,
-            confidence=0.9,
-            reasoning="turn classification intent is DATA_QUERY",
-        )
 
     if semantic_name in {IntentType.GENERAL.value, IntentType.KNOWLEDGE_BASE.value, IntentType.UNKNOWN.value}:
         return IntentSourceFrame(
             source=IntentSource.UNKNOWN,
             confidence=semantic_score,
             reasoning=f"router semantic intent is {semantic_name}",
+        )
+    if semantic_name == IntentType.DATA_QUERY.value:
+        return IntentSourceFrame(
+            source=IntentSource.UNKNOWN,
+            confidence=semantic_score,
+            reasoning="router semantic intent is DATA_QUERY without internal structured-data signal",
+        )
+    if turn_name == IntentType.DATA_QUERY.value:
+        return IntentSourceFrame(
+            source=IntentSource.UNKNOWN,
+            confidence=0.6,
+            reasoning="turn classification intent is DATA_QUERY without internal structured-data signal",
         )
 
     return IntentSourceFrame(
