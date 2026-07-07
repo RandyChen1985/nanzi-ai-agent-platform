@@ -99,14 +99,14 @@ async def get_metadata_dataset_permissions(
     granted_roles = []
 
     if user_ids:
-        user_stmt = select(User.user_name, User.real_name).where(User.id.in_(user_ids), User.status == 1)
+        user_stmt = select(User.id, User.user_name, User.real_name).where(User.id.in_(user_ids), User.status == 1)
         user_res = await conn.execute(user_stmt)
-        granted_users = [{"user_name": u.user_name, "real_name": u.real_name} for u in user_res.all()]
+        granted_users = [{"id": u.id, "user_name": u.user_name, "real_name": u.real_name} for u in user_res.all()]
 
     if role_ids:
-        role_stmt = select(Role.code, Role.name).where(Role.id.in_(role_ids))
+        role_stmt = select(Role.id, Role.code, Role.name).where(Role.id.in_(role_ids))
         role_res = await conn.execute(role_stmt)
-        granted_roles = [{"code": r.code, "name": r.name} for r in role_res.all()]
+        granted_roles = [{"id": r.id, "code": r.code, "name": r.name} for r in role_res.all()]
 
     return {
         "code": 0,
