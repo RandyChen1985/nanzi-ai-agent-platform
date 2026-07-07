@@ -206,9 +206,9 @@ async def add_metadata_dataset_permissions(
     # 清理受影响用户的缓存，使其变更即刻生效
     if affected_user_ids:
         await perm_service.invalidate_cached_permissions_for_users(affected_user_ids)
-        from app.services.ai.config import invalidate_dataset_menu_cache
+        from app.services.ai.config import AgentConfigProvider
         for uid in affected_user_ids:
-            await invalidate_dataset_menu_cache(user_id=uid)
+            await AgentConfigProvider.invalidate_dataset_menu_cache(user_id=uid)
 
     return {"code": 0, "message": "权限配置已成功添加"}
 
@@ -252,9 +252,9 @@ async def delete_metadata_dataset_permission(
     # 清理权限缓存
     if affected_user_ids:
         await perm_service.invalidate_cached_permissions_for_users(affected_user_ids)
-        from app.services.ai.config import invalidate_dataset_menu_cache
+        from app.services.ai.config import AgentConfigProvider
         for uid in affected_user_ids:
-            await invalidate_dataset_menu_cache(user_id=uid)
+            await AgentConfigProvider.invalidate_dataset_menu_cache(user_id=uid)
 
     return {"code": 0, "message": "权限配置已成功移除"}
 
