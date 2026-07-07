@@ -988,16 +988,11 @@ onMounted(async () => {
       <div>
         <h1 class="text-2xl font-bold text-gray-900 tracking-tight">知识库管理</h1>
         <p class="text-sm text-gray-500 mt-1">管理 RAGFlow 知识库、平台扩展元数据及一体化文档解析。</p>
-        <p class="text-xs text-gray-400 mt-2 flex items-center gap-1">
-          <span>当前 知识库引擎(RAGFlow)：</span>
-          <a :href="ragflowApiUrl" target="_blank" rel="noopener noreferrer" :title="ragflowApiUrl" class="font-mono text-primary bg-gray-100 px-1.5 py-0.5 rounded hover:underline truncate max-w-[200px] sm:max-w-[300px] inline-block align-bottom">{{ ragflowApiUrl }}</a>
-          <span v-if="ragflowConfig && !ragflowConfig.api_key_configured" class="ml-2 text-amber-600 font-medium">⚠️ API Key 未配置</span>
-        </p>
       </div>
       <div class="flex items-center gap-3">
         <!-- 引擎连接指示器 -->
         <div
-          class="flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs border transition-colors"
+          class="flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs border transition-colors group relative cursor-pointer"
           :class="{
             'border-blue-200 bg-blue-50/50 text-blue-700': isKnowledgeEnabled && engineStatus === 'checking',
             'border-emerald-200 bg-emerald-50/50 text-emerald-700': isKnowledgeEnabled && engineStatus === 'connected',
@@ -1013,6 +1008,17 @@ onMounted(async () => {
             }"
           ></span>
           <span class="font-medium">引擎 {{ engineStatusText }}</span>
+
+          <!-- 悬浮 Tooltip 提示引擎详细配置 -->
+          <span class="absolute top-full right-0 mt-2 hidden group-hover:block bg-slate-900 text-white text-xs p-2.5 rounded-lg shadow-xl z-50 text-left font-sans font-normal pointer-events-none">
+            <div class="font-medium mb-1 border-b border-white/10 pb-1">知识库引擎信息</div>
+            <div class="opacity-80">地址: {{ ragflowApiUrl }}</div>
+            <div class="opacity-80 mt-1">
+              API Key: 
+              <span v-if="ragflowConfig?.api_key_configured" class="text-emerald-400">已配置</span>
+              <span v-else class="text-amber-400">未配置</span>
+            </div>
+          </span>
         </div>
         <button
           v-if="canSync"
