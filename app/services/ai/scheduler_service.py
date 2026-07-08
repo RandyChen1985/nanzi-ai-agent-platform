@@ -477,6 +477,28 @@ async def _system_memory_consolidation_job():
         logger.error(f"❌ Failed to run system memory consolidation job: {e}", exc_info=True)
 
 
+async def _system_knowledge_metrics_sync_job():
+    """
+    系统级定时任务：每天凌晨 3:30 运行知识库及文档被引用和检索指标同步落库。
+    """
+    logger.info("⏰ Starting system knowledge metrics sync job...")
+    
+    lock_key = f"lock:system_knowledge_metrics_sync:{datetime.now().strftime('%Y%m%d%H%M')}"
+    try:
+        if not await redis.redis_client.set(lock_key, "locked", ex=300, nx=True):
+            logger.warning("⏩ System knowledge metrics sync skipped: lock already acquired by another node.")
+            return
+    except Exception as lock_err:
+        logger.warning(f"Failed to acquire redis lock: {lock_err}")
+        
+    try:
+        from app.services.knowledge_metrics_service import KnowledgeMetricsService
+        await KnowledgeMetricsService.sync_redis_metrics_to_db()
+        logger.info("✅ System knowledge metrics sync job finished successfully.")
+    except Exception as e:
+        logger.error(f"❌ Failed to run system knowledge metrics sync job: {e}", exc_info=True)
+
+
 async def _system_third_party_user_sync_job():
     """系统级定时任务：从第三方数据源同步用户。"""
     logger.info("⏰ Starting third-party user sync job...")
@@ -543,6 +565,14 @@ class TaskSchedulerService:
             _system_memory_consolidation_job,
             CronTrigger(hour=3, minute=0, timezone=tz),
             id="system_memory_consolidation",
+            replace_existing=True
+        )
+
+        # 注册知识库运营数据归并同步任务，每日凌晨 3:30 运行
+        self._scheduler.add_job(
+            _system_knowledge_metrics_sync_job,
+            CronTrigger(hour=3, minute=30, timezone=tz),
+            id="system_knowledge_metrics_sync",
             replace_existing=True
         )
 

@@ -681,3 +681,49 @@ async def get_dataset_permissions(
             "roles": granted_roles
         }
     }
+
+
+@router.get("/metrics/summary")
+async def get_ragflow_metrics_summary(
+    start_date: str,
+    end_date: str,
+    user: dict = Depends(get_current_user)
+):
+    """
+    获取指定日期范围内知识库与文档的统计指标汇总
+    """
+    from app.services.knowledge_metrics_service import KnowledgeMetricsService
+    data = await KnowledgeMetricsService.get_metrics_summary(start_date, end_date)
+    return {"code": 0, "data": data}
+
+
+@router.get("/documents/{document_id}/file")
+async def get_ragflow_document_file(
+    document_id: str,
+    user: dict = Depends(get_current_user)
+):
+    """
+    获取文档文件二进制流以供前端 iframe 原地预览
+    """
+    from fastapi.responses import Response
+    client = RagFlowClient(config_prefix="knowledge_ragflow")
+    try:
+        content, filename, content_type = await client.download_document(document_id)
+        
+        # 强力纠正 Content-Type 防止未知流触发下载
+        import mimetypes
+        guess_type, _ = mimetypes.guess_type(filename)
+        if guess_type:
+            content_type = guess_type
+        if filename.lower().endswith(".pdf"):
+            content_type = "application/pdf"
+            
+        import urllib.parse
+        encoded_filename = urllib.parse.quote(filename)
+        headers = {
+            "Content-Disposition": f'inline; filename="{encoded_filename}"; filename*=UTF-8\'\'{encoded_filename}'
+        }
+        return Response(content=content, media_type=content_type, headers=headers)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch document file: {str(e)}")
+

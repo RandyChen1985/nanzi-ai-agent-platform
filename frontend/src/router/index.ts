@@ -154,6 +154,12 @@ const router = createRouter({
           meta: { perm: 'menu:knowledge_retrieval_test', title: '检索测试' }
         },
         {
+          path: 'knowledge-metrics',
+          name: 'KnowledgeMetrics',
+          component: () => import('../views/KnowledgeMetrics.vue'),
+          meta: { perm: 'menu:knowledge_management', title: '运营分析' }
+        },
+        {
           path: 'prompts',
           name: 'PromptStudio',
           component: PromptStudio,

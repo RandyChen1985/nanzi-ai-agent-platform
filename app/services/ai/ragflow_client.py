@@ -504,11 +504,24 @@ class RagFlowClient:
                                     if doc_name == "Unknown Document":
                                          logger.debug(f"[RAGFlow] Missing doc_name in retrieval chunk: {json.dumps(chunk, ensure_ascii=False)}")
  
+                                    positions = chunk.get("positions")
+                                    page_no = chunk.get("page_no") or chunk.get("page_num")
+                                    if not page_no and isinstance(positions, list) and len(positions) > 0:
+                                        first_pos = positions[0]
+                                        if isinstance(first_pos, list) and len(first_pos) > 0:
+                                            page_no = first_pos[0]
+                                        elif isinstance(first_pos, dict):
+                                            page_no = first_pos.get("page_no") or first_pos.get("page_num")
+
                                     normalized_chunks.append({
                                         "doc_name": doc_name,
                                         "content": chunk.get("content_with_weight") or chunk.get("content") or str(chunk),
                                         "similarity": chunk.get("similarity", 0.0),
-                                        "chunk_id": chunk.get("chunk_id") or chunk.get("id")
+                                        "chunk_id": chunk.get("chunk_id") or chunk.get("id"),
+                                        "doc_id": chunk.get("doc_id") or chunk.get("document_id"),
+                                        "dataset_id": chunk.get("dataset_id"),
+                                        "positions": positions,
+                                        "page_no": page_no
                                     })
                             return normalized_chunks
                         else:
@@ -530,3 +543,28 @@ class RagFlowClient:
         # All attempts failed
         logger.error(f"[RAGFlow] All {max_attempts} retrieval attempts failed. Last exception: {last_exception}")
         raise last_exception
+
+    async def download_document(self, document_id: str) -> tuple[bytes, str, str]:
+        """
+        Download document binary content from RAGFlow.
+        Returns: (content, filename, content_type)
+        """
+        await self._ensure_config()
+        url = f"{self.base_url}/api/v1/document/get/{document_id}"
+        
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(url, headers=self._get_headers())
+            if resp.status_code == 200:
+                content_disposition = resp.headers.get("content-disposition", "")
+                filename = "document"
+                if "filename=" in content_disposition:
+                    # 解密文件名
+                    import urllib.parse
+                    raw_fn = content_disposition.split("filename=")[-1].strip('"')
+                    filename = urllib.parse.unquote(raw_fn)
+                
+                content_type = resp.headers.get("content-type", "application/octet-stream")
+                return resp.content, filename, content_type
+            else:
+                raise Exception(f"RAGFlow document download failed ({resp.status_code}): {resp.text}")
+

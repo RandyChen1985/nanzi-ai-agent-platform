@@ -7,6 +7,12 @@ export interface CitationItem {
   doc_name?: string;
   content?: string;
   similarity?: number;
+  doc_id?: string;
+  dataset_id?: string;
+  positions?: any;
+  page_no?: number | string;
+  source_type?: string;
+  link?: string;
 }
 
 const props = defineProps<{
@@ -19,6 +25,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   (e: "close"): void;
   (e: "copy", content: string): void;
+  (e: "view-original", citation: CitationItem): void;
 }>();
 
 const copyState = ref<"idle" | "success" | "error">("idle");
@@ -248,26 +255,41 @@ onUnmounted(() => {
           class="text-[10px] text-red-500 font-medium"
         >复制失败，请重试</span>
         <span v-else class="text-[10px] text-transparent select-none">.</span>
-        <button
-          @click="handleCopy"
-          class="px-2.5 py-1 text-[11px] font-bold rounded-md transition-colors flex items-center gap-1"
-          :class="copyState === 'success'
-            ? 'text-emerald-600 bg-emerald-50 dark:bg-emerald-900/20'
-            : copyState === 'error'
-              ? 'text-red-500 bg-red-50 dark:bg-red-900/20'
-              : 'text-gray-500 hover:text-primary hover:bg-gray-50 dark:hover:bg-gray-700/50'"
-        >
-          <svg
-            v-if="copyState === 'success'"
-            class="w-3 h-3"
-            fill="none"
-            stroke="currentColor"
-            viewBox="0 0 24 24"
+
+        <div class="flex items-center gap-2">
+          <button
+            v-if="citation.doc_id || citation.link"
+            @click="emit('view-original', citation)"
+            class="px-2.5 py-1 text-[11px] font-bold rounded-md transition-colors text-primary hover:bg-blue-50 dark:hover:bg-blue-900/20 flex items-center gap-1"
           >
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7" />
-          </svg>
-          {{ copyState === 'success' ? '已复制' : copyState === 'error' ? '重试' : '复制' }}
-        </button>
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.4" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+            </svg>
+            {{ citation.source_type === 'web' ? '访问网页' : '查看原档' }}
+          </button>
+          
+          <button
+            @click="handleCopy"
+            class="px-2.5 py-1 text-[11px] font-bold rounded-md transition-colors flex items-center gap-1"
+            :class="copyState === 'success'
+              ? 'text-emerald-600 bg-emerald-50 dark:bg-emerald-900/20'
+              : copyState === 'error'
+                ? 'text-red-500 bg-red-50 dark:bg-red-900/20'
+                : 'text-gray-500 hover:text-primary hover:bg-gray-50 dark:hover:bg-gray-700/50'"
+          >
+            <svg
+              v-if="copyState === 'success'"
+              class="w-3.5 h-3.5"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7" />
+            </svg>
+            {{ copyState === 'success' ? '已复制' : copyState === 'error' ? '重试' : '复制' }}
+          </button>
+        </div>
       </div>
     </div>
   </Teleport>

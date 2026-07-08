@@ -302,7 +302,8 @@ const menuGroups: MenuGroup[] = [
     title: '知识库开发平台',
     items: [
       { name: '知识库管理', to: '/dashboard/knowledge-bases', icon: 'knowledge_base', perm: 'menu:knowledge_management', desktopOnly: true, activeNames: ['KnowledgeBaseManagement'] },
-      { name: '检索测试', to: '/dashboard/knowledge-retrieval-test', icon: 'playground', perm: 'menu:knowledge_retrieval_test', desktopOnly: true, activeNames: ['KnowledgeRetrievalTest'] }
+      { name: '检索测试', to: '/dashboard/knowledge-retrieval-test', icon: 'playground', perm: 'menu:knowledge_retrieval_test', desktopOnly: true, activeNames: ['KnowledgeRetrievalTest'] },
+      { name: '运营分析', to: '/dashboard/knowledge-metrics', icon: 'token_stats', perm: 'menu:knowledge_management', desktopOnly: true, activeNames: ['KnowledgeMetrics'] }
     ]
   },
   {

@@ -16,7 +16,7 @@ from app.services.ai.executors.prompts import KnowledgeChatPrompts
 from app.services.ai.runners.assistant_agent_runner import AssistantAgentRunner
 from app.services.ai.runtime.agentscope.stream_reconcile import truncate_for_context
 from app.services.metadata_rag_service import MetadataRagService
-from app.services.ai.runtime.agentscope.compat import HumanMessage, SystemMessage
+from app.services.ai.runtime.agentscope.compat import HumanMessage, SystemMessage, AIMessage
 from app.services.ai.runtime.agentscope.tools import RuntimeToolSpec, runtime_tool_spec_from_legacy_tool
 from app.services.ai.knowledge_utils import (
     NO_KNOWLEDGE_DATASET_MESSAGE,
@@ -165,6 +165,113 @@ class KnowledgeAgentRunner(AssistantAgentRunner):
                 output = MetadataRagService.knowledge_unavailable_hint(err_msg)
             else:
                 output = f"[TOOL_ERROR] 自动检索知识库失败: {exc}"
+
+        # 混合检索自适应召回退避逻辑 (特性 6)
+        is_empty = False
+        max_score = 0.0
+        citations = []
+        try:
+            import json
+            parsed = json.loads(output)
+            if isinstance(parsed, dict):
+                is_empty = (parsed.get("status") == "empty")
+                citations = parsed.get("citations", [])
+                if citations:
+                    scores = [float(c.get("similarity", 0.0)) for c in citations if "similarity" in c]
+                    if scores:
+                        max_score = max(scores)
+        except Exception:
+            pass
+
+        similarity_threshold = 0.45
+        try:
+            from app.services.config_service import ConfigService
+            sys_threshold = await ConfigService.get("knowledge_ragflow_similarity_threshold")
+            if sys_threshold is not None:
+                similarity_threshold = float(sys_threshold)
+        except Exception:
+            pass
+
+        service_unavailable = self._is_knowledge_service_unavailable(output)
+        if not service_unavailable and (is_empty or max_score < similarity_threshold):
+            logger.info(f"[KnowledgeAgentRunner] Knowledge recall weak (max_score={max_score} < threshold={similarity_threshold}). Activating web search backoff...")
+            web_tool_id = f"web_prefetch_{uuid.uuid4().hex[:8]}"
+            web_started = time.time()
+            yield {
+                "type": "log",
+                "id": web_tool_id,
+                "title": "触发联网辅助检索",
+                "details": f"知识库检索无高置信度结果（相似度: {max_score:.3f}，阈值: {similarity_threshold}），自适应触发百度联网检索辅助推理。",
+                "status": "pending",
+                "category": "tool",
+                "started_at": int(web_started * 1000),
+            }
+            try:
+                from app.services.ai.tools.advanced_auxiliary_tools import web_search_baidu_raw
+                web_results = await web_search_baidu_raw(query=query, max_results=3)
+                web_duration = (time.time() - web_started) * 1000
+                yield {
+                    "type": "log",
+                    "id": web_tool_id,
+                    "title": "联网辅助检索完成",
+                    "details": f"成功融合 {len(web_results)} 个网页的最新参考事实作为推理支撑 (耗时 {web_duration:.0f}ms)",
+                    "status": "success",
+                    "category": "tool",
+                    "execution_time_ms": web_duration,
+                }
+                
+                kb_context = ""
+                if isinstance(parsed, dict):
+                    kb_context = parsed.get("content", "")
+                else:
+                    kb_context = output
+
+                web_context_pieces = []
+                new_citations = []
+                
+                # 给原有的知识库 citations 加上 source_type
+                for c in citations:
+                    c["source_type"] = "knowledge"
+                    new_citations.append(c)
+                    
+                for idx, item in enumerate(web_results, 1):
+                    title = item.get("title", "")
+                    link = item.get("real_url") or item.get("link", "")
+                    abstract = item.get("abstract", "")
+                    content = item.get("extracted_content") or abstract
+                    
+                    web_context_pieces.append(f"文献 {idx} [标题: {title} | 来源: {link}]:\n{content}")
+                    
+                    web_chunk_id = f"web_{idx}_{uuid.uuid4().hex[:6]}"
+                    new_citations.append({
+                        "chunk_id": web_chunk_id,
+                        "doc_name": f"网页: {title}",
+                        "content": content,
+                        "similarity": 1.0,
+                        "source_type": "web",
+                        "link": link
+                    })
+                    
+                web_context = "\n\n【互联网参考事实文献】\n" + "\n\n".join(web_context_pieces) if web_context_pieces else ""
+                combined_context = f"{kb_context}\n{web_context}"
+                
+                import json
+                output = json.dumps({
+                    "content": combined_context,
+                    "citations": new_citations
+                })
+                self._valid_citation_ids = [c["chunk_id"] for c in new_citations]
+                
+            except Exception as web_exc:
+                logger.error(f"[KnowledgeAgentRunner] Web search backoff failed: {web_exc}", exc_info=True)
+                yield {
+                    "type": "log",
+                    "id": web_tool_id,
+                    "title": "联网辅助检索失败",
+                    "details": f"发生异常: {web_exc}",
+                    "status": "error",
+                    "category": "tool",
+                }
 
         duration_ms = (time.time() - started_at) * 1000
         self._increment_step()
@@ -396,48 +503,140 @@ class KnowledgeAgentRunner(AssistantAgentRunner):
             }
             return
 
-        chunks_buffer = []
-        full_text = ""
-        async for chunk in self._execute_with_agentscope_native_agent(
-            native_model=native_model,
-            tools=react_tools,
-            system_content=native_system_content,
-            runtime_messages=runtime_messages,
-            max_steps=max_steps,
-        ):
-            if "content" in chunk:
-                content = str(chunk.get("content") or "")
-                if self._valid_citation_ids:
-                    content = filter_invalid_citation_markers(content, self._valid_citation_ids)
-                full_text += content
-                chunk = dict(chunk)
-                chunk["content"] = content
-            chunks_buffer.append(chunk)
+        # 幻觉检测自反思循环 (Reflection Loop) (特性 3)
+        from app.services.ai.hallucination_evaluator import HallucinationEvaluator
 
-        is_hallucinated = False
-        if self._rag_empty:
-            is_hallucinated = self._is_hallucinated_knowledge_reply(full_text)
-        else:
-            is_hallucinated = self._is_hallucinated_with_rag_reply(full_text)
+        max_retries = 2
+        retry_count = 0
+        passed_guard = False
+        
+        current_system_content = native_system_content
+        current_messages = list(runtime_messages)
 
-        if is_hallucinated:
+        while retry_count <= max_retries:
+            chunks_buffer = []
+            full_text = ""
+            
+            async for chunk in self._execute_with_agentscope_native_agent(
+                native_model=native_model,
+                tools=react_tools,
+                system_content=current_system_content,
+                runtime_messages=current_messages,
+                max_steps=max_steps,
+            ):
+                if "content" in chunk:
+                    content = str(chunk.get("content") or "")
+                    if self._valid_citation_ids:
+                        content = filter_invalid_citation_markers(content, self._valid_citation_ids)
+                    full_text += content
+                    chunk = dict(chunk)
+                    chunk["content"] = content
+                chunks_buffer.append(chunk)
+
+            # 评估是否含有幻觉
+            evaluation = await HallucinationEvaluator.evaluate(
+                query=user_question,
+                context=prefetched_knowledge_output or "",
+                response=full_text
+            )
+
+            is_hallucinated = evaluation.get("is_hallucinated", False)
+            if not is_hallucinated:
+                # 兜底原有的规则：如果 RAG 为空但模型编造了答案，或召回非空但缺少引用
+                if self._rag_empty:
+                    is_hallucinated = self._is_hallucinated_knowledge_reply(full_text)
+                else:
+                    is_hallucinated = self._is_hallucinated_with_rag_reply(full_text)
+
+            if not is_hallucinated:
+                passed_guard = True
+                break
+
+            retry_count += 1
+            reason = evaluation.get("reason") or "回答中存在无依据的幻觉陈述或缺少必要引用"
             logger.warning(
-                f"[KnowledgeAgentRunner] Hallucination detected! RAG empty={self._rag_empty}, "
-                f"but model generated: {full_text[:200]}..."
+                f"[KnowledgeAgentRunner] Hallucination detected! Attempt {retry_count} failed. "
+                f"Reason: {reason}. Model output: {full_text[:150]}..."
+            )
+
+            if retry_count <= max_retries:
+                # 发送拦截 log 事件告知前端
+                yield {
+                    "type": "log",
+                    "id": f"kb_reflection_{uuid.uuid4().hex[:8]}",
+                    "title": f"检测到无依据表述 (反思修正中 {retry_count}/{max_retries})",
+                    "details": f"回答中发现与事实文献不符的描述（原因: {reason}），安全网关已拦截并命令其重写纠正。",
+                    "status": "warning",
+                }
+                
+                # 重新追加 messages 进行反思自纠偏
+                current_messages.append(AIMessage(content=full_text))
+                reflection_prompt = (
+                    f"【网关安全警报】\n"
+                    f"你刚才生成的回答被事实一致性网关拦截退回。原因：{reason}。\n"
+                    f"请务必吸取教训，重新审查问题和提供的事实文献，绝对不允许包含文献中没有明确说明的外部假设、新参数或隐藏规则。\n"
+                    f"请重新进行一次高度客观且无任何幻觉的严谨回答："
+                )
+                current_messages.append(HumanMessage(content=reflection_prompt))
+            else:
+                break
+
+        if passed_guard:
+            # 异步记录 Redis 引用行为数据埋点 (特性 4)
+            if prefetched_knowledge_output:
+                try:
+                    import json
+                    import re
+                    from app.core.redis import get_redis
+                    redis = await get_redis()
+                    if redis:
+                        stripped = prefetched_knowledge_output.strip()
+                        if not stripped.startswith("{"):
+                            raise ValueError("Output is not a valid JSON string, skip metrics")
+                        parsed = json.loads(stripped)
+                        citations = parsed.get("citations", [])
+                        citation_ids = set(re.findall(r"\[ID:\s*(\d+)\]", full_text))
+                        
+                        current_date = time.strftime("%Y-%m-%d")
+                        key_prefix = f"kb:citation:stats:{current_date}"
+                        
+                        for idx, c in enumerate(citations, 1):
+                            ref_id = str(idx)
+                            source_type = c.get("source_type", "knowledge")
+                            is_cited = ref_id in citation_ids
+                            
+                            # 1. 统计知识库维度
+                            if source_type == "knowledge":
+                                ds_id = c.get("dataset_id") or "default"
+                                await redis.hincrby(f"{key_prefix}:dataset:search", ds_id, 1)
+                                if is_cited:
+                                    await redis.hincrby(f"{key_prefix}:dataset:citation", ds_id, 1)
+                                    
+                                # 2. 统计文档维度
+                                doc_id = c.get("doc_id")
+                                doc_name = c.get("doc_name") or "Unknown Document"
+                                if doc_id:
+                                    # 缓存 doc_id 到 doc_name 映射供同步归并落库使用
+                                    await redis.hset("kb:citation:doc_names", doc_id, doc_name)
+                                    await redis.hincrby(f"{key_prefix}:document:search", doc_id, 1)
+                                    if is_cited:
+                                        await redis.hincrby(f"{key_prefix}:document:citation", doc_id, 1)
+                except Exception as metric_err:
+                    logger.error(f"[KnowledgeAgentRunner] Redis metrics recording failed: {metric_err}", exc_info=True)
+
+            for chunk in chunks_buffer:
+                yield chunk
+        else:
+            logger.error(
+                f"[KnowledgeAgentRunner] Hallucination check failed after {max_retries} retries. "
+                f"Bypassing with fatal fallback prompt."
             )
             yield {
                 "type": "log",
                 "id": f"kb_guard_{uuid.uuid4().hex[:8]}",
-                "title": "阻止无依据回答",
-                "details": (
-                    "知识库中未检索到相关文档，大模型尝试直接脑补回答，已拦截该输出。"
-                    if self._rag_empty else
-                    "检索到知识库文档，但模型生成了无任何来源引用的事实回答，已拦截该输出以防幻觉。"
-                ),
-                "status": "warning",
+                "title": "安全网关最终拦截",
+                "details": "经网关多次反思纠偏，该回答仍无法通过事实一致性核验，已被安全屏蔽以保证准确性。",
+                "status": "error",
             }
             refusal_content = "⚠️ 抱歉，在系统知识库中未检索到相关内容，无法回答该问题。建议您更换关键词重新检索。"
             yield {"content": refusal_content}
-        else:
-            for chunk in chunks_buffer:
-                yield chunk
