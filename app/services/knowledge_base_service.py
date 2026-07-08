@@ -77,7 +77,13 @@ class KnowledgeBaseMetadataService:
     ) -> Optional[KnowledgeBaseMetadata]:
         record = await self.get_by_dataset_id(dataset_id)
         if not record:
-            return None
+            record = KnowledgeBaseMetadata(
+                ragflow_dataset_id=dataset_id,
+                name=name if name is not None else "未命名知识库",
+                created_by=user_name,
+                status="active",
+            )
+            self.db.add(record)
 
         if name is not None:
             record.name = name

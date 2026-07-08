@@ -392,9 +392,9 @@
                     
                     <h4
                       class="flex-1 min-w-0 text-sm font-bold leading-snug break-words pt-0.5 text-gray-800 dark:text-gray-100"
-                      :title="ds.name"
+                      :title="ds.platform_name || ds.name"
                     >
-                      {{ ds.name }}
+                      {{ ds.platform_name || ds.name }}
                     </h4>
                     
                     <!-- Actions (Pin & Toggle switch) -->
@@ -447,10 +447,10 @@
 
                   <!-- Description Summary Box (blockquote) -->
                   <blockquote
-                    v-if="ds.description"
+                    v-if="ds.platform_description || ds.description"
                     class="relative w-full m-0 px-3.5 py-2.5 text-[11px] leading-relaxed rounded-r-lg border-l-[3px] bg-green-50/40 dark:bg-green-950/10 border-green-500 text-gray-600 dark:text-gray-400 font-medium"
                   >
-                    {{ ds.description }}
+                    {{ ds.platform_description || ds.description }}
                   </blockquote>
 
                   <!-- Collapsible Relevant Documents Section -->

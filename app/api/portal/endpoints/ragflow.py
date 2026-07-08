@@ -1000,3 +1000,98 @@ async def get_document_portal_recommendations(
         import logging
         logging.exception(f"Failed to fetch document recommendations: {str(e)}")
         return {"code": 0, "data": {"questions": default_questions}}
+
+
+@router.post("/datasets/{dataset_id}/ai-analyze")
+async def analyze_dataset_metadata(
+    dataset_id: str,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db_session)
+):
+    """
+    基于知识库里的文档文件名，调用大模型生成描述说明、标签和备注信息。
+    """
+    await require_dataset_write_access(user, db, [dataset_id])
+
+    client = RagFlowClient(config_prefix="knowledge_ragflow")
+    try:
+        docs = await client.list_documents(dataset_id, page=1, page_size=100)
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to fetch documents from RAGFlow: {str(e)}"
+        )
+
+    doc_names = [doc.get("name") for doc in docs if doc.get("name")]
+    if not doc_names:
+        raise HTTPException(
+            status_code=400,
+            detail="该知识库暂无文档，无法进行 AI 分析。"
+        )
+
+    from app.core.llm.client import get_llm_async
+    from app.services.ai.runtime.agentscope.chat import chat_client_from_handle
+    from app.services.ai.runtime.agentscope.messages import RuntimeContentBlock, RuntimeMessage
+    import json
+    import re
+
+    llm = await get_llm_async(streaming=False, temperature=0.7)
+    if not llm:
+        raise HTTPException(
+            status_code=500,
+            detail="无法初始化大模型，请检查 LLM 相关系统设置。"
+        )
+
+    chat_client = chat_client_from_handle(llm)
+    doc_names_str = ", ".join(doc_names[:50])
+
+    prompt = (
+        f"你是一个专业的知识库分析助手。当前知识库包含了以下文档列表：\n"
+        f"[{doc_names_str}]\n\n"
+        f"请根据这些文件的名字所反映的业务内容、行业特征及知识领域，为该知识库推断并生成以下元数据信息：\n"
+        f"1. 描述说明（description）：一句简明扼要地介绍该知识库包含哪些内容以及其主要用途的话，中文，不超过 100 字。\n"
+        f"2. 标签（tags）：3 到 5 个能够体现知识库核心主题的关键词或标签，可以是中文或英文，多个标签之间请用英文逗号 (,) 分隔。例如：\"ERP,系统说明,使用指南\"。\n"
+        f"3. 备注信息（notes）：对该知识库使用场景、目标读者或注意事项的简要补充说明，中文，不超过 100 字。\n\n"
+        f"请严格输出为以下格式的 JSON 对象，不要包含任何 Markdown 代码块标记（如 ```json）或多余的解释：\n"
+        f"{{\n"
+        f"  \"description\": \"...\",\n"
+        f"  \"tags\": \"...\",\n"
+        f"  \"notes\": \"...\"\n"
+        f"}}"
+    )
+
+    messages = [
+        RuntimeMessage(
+            role="system",
+            content=[RuntimeContentBlock(type="text", text="你是一个严谨的 JSON 格式输出器，只输出合法的 JSON，没有任何其他解释文本。")]
+        ),
+        RuntimeMessage(
+            role="user",
+            content=[RuntimeContentBlock(type="text", text=prompt)]
+        )
+    ]
+
+    try:
+        raw_text = await chat_client.generate_text(messages)
+        raw_text = str(raw_text or "").strip()
+        match = re.search(r"\{[\s\S]*\}", raw_text)
+        if match:
+            parsed_data = json.loads(match.group())
+            return {
+                "code": 0,
+                "data": {
+                    "description": parsed_data.get("description", "").strip(),
+                    "tags": parsed_data.get("tags", "").strip(),
+                    "notes": parsed_data.get("notes", "").strip()
+                }
+            }
+        else:
+            raise ValueError(f"No JSON block found in LLM response: {raw_text}")
+    except Exception as llm_err:
+        import logging
+        logging.exception("Failed to run AI metadata analysis via LLM")
+        raise HTTPException(
+            status_code=500,
+            detail=f"AI 分析失败: {str(llm_err)}"
+        )
+

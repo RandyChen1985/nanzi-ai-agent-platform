@@ -206,7 +206,7 @@
 | 知识库置顶与文件折叠展开 (Knowledge Pin & Document Collapse UX) | `portal_prefs.py`, `KnowledgePortalDrawer.vue`, `useKnowledgePortal.ts` | **置顶与折叠文档**：验证卡片右上角图钉一键置顶并利用 Redis 个人偏好接口（`/portal-prefs`）多端/跨会话同步；验证备注描述栏改为左侧带绿色实边框的浅色美学气泡；验证“相关文档”可折叠，展开时通过 `/datasets/{dataset_id}/documents` 异步加载真实原文件列表；验证 ChatInput 输入框 v-if/v-for 渲染修复及原档层级 z-index 遮挡修复。 | ✅ 已完成 | 2026-07-08 |
 | 知识库卡片提问全对齐与 LLM API 修复 (Knowledge Card Question Align & LLM Bugfix) | `ragflow.py`, `KnowledgePortalDrawer.vue`, `useKnowledgePortal.ts` | **卡片提问对齐与大模型生成修复**：验证卡片排版、装饰背景、宽度截断与数据门户 1:1 对齐；验证提问区分为“左侧直接发送”与“右侧小铅笔 ✏️ 编辑后发送（仅 fill 入输入框）”；验证点击提问气泡或铅笔时若该知识库处于未启用状态，会自动触发 `toggle-active` 将其一键启用；验证并修复 `/portal` 接口中 `AgentScopeLLMHandle` 缺乏 `generate_text` 方法报错导致静默退避默认问题的 Bug。 | ✅ 已完成 | 2026-07-08 |
 | 单文件专属提问推荐与缓存策略 (Single Document Recommended Questions) | `ragflow.py`, `KnowledgePortalDrawer.vue`, `useKnowledgePortal.ts` | **单文档手风琴专属提问生成与懒加载**：验证在“相关文档”列表点击单文件展开/收起；验证懒加载发起大模型专属提问推断；验证 Redis 缓存（7天）读取命中；验证双功能按钮（直接发送/编辑提问）及联动自动激活绑定知识库。 | ✅ 已验证 | 2026-07-08 |
-
+| 知识库 AI 元数据分析 (AI Metadata Analysis) | `app/api/portal/endpoints/ragflow.py`, `KnowledgeBaseManagement.vue` | **AI 元数据分析生成与回填**：验证获取知识库写权限与文档列表；验证调用 LLM 基于前 100 个文件名分析生成中英文标签、描述与备注信息，并在前端编辑弹窗一键智能分析后自动回填。 | ✅ 已完成 | 2026-07-08 |
 
 
 

@@ -80,6 +80,7 @@ const searchQuery = ref('')
 
 const showCreateModal = ref(false)
 const showEditModal = ref(false)
+const aiAnalyzing = ref(false)
 const deletingDataset = ref<KnowledgeBase | null>(null)
 const deletingDocument = ref<KnowledgeDocument | null>(null)
 
@@ -210,6 +211,28 @@ const openEdit = (dataset: KnowledgeBase) => {
     extraConfigText: JSON.stringify(dataset.local_metadata?.extra_config || {}, null, 2)
   }
   showEditModal.value = true
+}
+
+const analyzeMetadataByAI = async () => {
+  if (!selectedDataset.value) return
+  const datasetId = selectedDataset.value.ragflow_dataset_id || selectedDataset.value.id
+  if (!datasetId) return
+
+  aiAnalyzing.value = true
+  try {
+    const response = await axios.post(`/api/portal/ragflow/datasets/${datasetId}/ai-analyze`)
+    const resData = apiData(response)
+    if (resData) {
+      if (resData.description) form.value.description = resData.description
+      if (resData.tags) form.value.tagsText = resData.tags
+      if (resData.notes) form.value.notes = resData.notes
+      showToast('AI 智能分析完成，已自动填充元数据', 'success')
+    }
+  } catch (err) {
+    showToast(extractError(err) || 'AI 分析失败，请重试', 'error')
+  } finally {
+    aiAnalyzing.value = false
+  }
 }
 
 // 获取知识库列表
@@ -1262,7 +1285,12 @@ onMounted(async () => {
                 <h2 class="text-xl font-bold text-gray-900">{{ selectedDataset.platform_name || selectedDataset.name }}</h2>
                 <span v-if="selectedDataset.is_missing_in_ragflow" class="px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 text-xs font-semibold">RAGFlow 侧已失联</span>
               </div>
-              <p class="text-sm text-gray-500 mt-1.5">{{ selectedDataset.platform_description || selectedDataset.description || '暂无对该知识库的描述' }}</p>
+              <div v-if="selectedDataset.platform_description || selectedDataset.description" class="mt-3 pl-3.5 border-l-3 border-primary bg-gray-50/80 py-2.5 pr-4 rounded-r-xl max-w-3xl">
+                <p class="text-sm text-gray-600 leading-relaxed italic">
+                  "{{ selectedDataset.platform_description || selectedDataset.description }}"
+                </p>
+              </div>
+              <p v-else class="text-xs text-gray-400 italic mt-2.5 select-none">暂无对该知识库的描述说明</p>
             </div>
             <div class="flex items-center gap-2 shrink-0">
               <button
@@ -1291,7 +1319,7 @@ onMounted(async () => {
                 <svg class="w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
                 </svg>
-                编辑元数据
+                编辑
               </button>
             </div>
           </div>
@@ -1328,24 +1356,34 @@ onMounted(async () => {
           </div>
 
           <!-- Tags & Notes -->
-          <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <div class="space-y-2">
-              <h3 class="text-xs font-semibold text-gray-400 uppercase tracking-wider">分类标签</h3>
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-6 pt-2">
+            <div class="space-y-2.5">
+              <div class="flex items-center gap-1.5 text-gray-400">
+                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 7h.01M6 20h12a2 2 0 002-2V8a2 2 0 00-2-2H6a2 2 0 00-2 2v10a2 2 0 002 2z" />
+                </svg>
+                <h3 class="text-xs font-semibold uppercase tracking-wider">分类标签</h3>
+              </div>
               <div v-if="selectedDataset.tags?.length" class="flex flex-wrap gap-1.5">
                 <span
                   v-for="tag in selectedDataset.tags"
                   :key="tag"
-                  class="px-2.5 py-1 text-xs rounded-full bg-blue-50 text-blue-700 border border-blue-100 font-medium"
+                  class="px-2.5 py-1 text-xs rounded-lg bg-blue-50/60 text-blue-700 border border-blue-100/60 font-medium transition-all hover:bg-blue-100/50 select-none cursor-default"
                 >
                   {{ tag }}
                 </span>
               </div>
-              <span v-else class="text-sm text-gray-400 italic">暂无标签</span>
+              <span v-else class="text-sm text-gray-400 italic select-none block pt-1">暂无分类标签</span>
             </div>
 
-            <div class="space-y-2">
-              <h3 class="text-xs font-semibold text-gray-400 uppercase tracking-wider">平台备注</h3>
-              <p class="text-sm text-gray-600 bg-gray-50/50 p-3 rounded-xl border border-gray-150 leading-relaxed">
+            <div class="space-y-2.5">
+              <div class="flex items-center gap-1.5 text-gray-400">
+                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                </svg>
+                <h3 class="text-xs font-semibold uppercase tracking-wider">平台备注说明</h3>
+              </div>
+              <p class="text-sm text-gray-600 bg-amber-50/20 p-3.5 rounded-xl border border-amber-100/50 leading-relaxed">
                 {{ selectedDataset.notes || '暂无备注说明。' }}
               </p>
             </div>
@@ -1826,8 +1864,23 @@ onMounted(async () => {
           <input v-model="form.name" class="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary" placeholder="展示名称" />
         </div>
         <div>
-          <label class="block text-xs font-semibold text-gray-400 mb-1.5">描述说明</label>
-          <textarea v-model="form.description" class="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary" rows="2" placeholder="描述"></textarea>
+          <div class="flex justify-between items-center mb-1.5">
+            <label class="block text-xs font-semibold text-gray-400">描述说明</label>
+            <button
+              v-if="selectedDataset && (selectedDataset.doc_count ?? selectedDataset.document_count ?? 0) > 0"
+              class="flex items-center gap-1 text-xs text-primary hover:text-primary-hover font-semibold transition-colors disabled:opacity-50"
+              :disabled="aiAnalyzing"
+              @click="analyzeMetadataByAI"
+            >
+              <svg v-if="aiAnalyzing" class="animate-spin h-3.5 w-3.5 text-primary" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+              </svg>
+              <span v-else>✨</span>
+              <span>{{ aiAnalyzing ? 'AI 分析中...' : 'AI 智能分析元数据' }}</span>
+            </button>
+          </div>
+          <textarea v-model="form.description" class="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary" rows="2" placeholder="由 AI 自动分析生成或手动输入"></textarea>
         </div>
         <div class="grid grid-cols-2 gap-3">
           <div>
