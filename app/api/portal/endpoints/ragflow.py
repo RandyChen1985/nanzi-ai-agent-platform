@@ -735,20 +735,21 @@ async def get_ragflow_document_file(
 @router.get("/datasets/{dataset_id}/portal")
 async def get_dataset_portal_recommendations(
     dataset_id: str,
+    exclude: Optional[str] = None,
     user: dict = Depends(get_current_user)
 ):
     """
-    获取指定知识库数据集的侧边栏推荐提问与扩展概要
+    获取指定知识库数据集的侧边栏推荐提问与扩展概要，支持换一批
     """
     client = RagFlowClient(config_prefix="knowledge_ragflow")
     try:
-        # 1. 尝试获取数据集基本信息与文档列表
-        docs = await client.list_documents(dataset_id, page_size=20)
+        # 1. 尝试获取数据集基本信息与文档列表（获取较多文件以支持换一批抽样）
+        docs = await client.list_documents(dataset_id, page_size=100)
         doc_names = [d.get("name", "") for d in docs if d.get("name")]
         
         # 2. 默认快捷兜底问题
         default_questions = [
-            {"label": "总结该知识库核心内容", "query": "请帮我梳理并总结一下当前选中的知识库里的核心要点和背景信息。"},
+            {"label": "总结该知识库核心内容", "query": "请帮我梳理并总结一下当前选中的知识库里的核心要点 and 背景信息。"},
             {"label": "列出包含的所有文件", "query": "这个知识库里一共有哪些文档？分别介绍下它们的主题是什么。"},
             {"label": "检索使用说明", "query": "我想知道当前选中的这些文档里有哪些值得注意的关键条款或常见问题？"}
         ]
@@ -757,32 +758,46 @@ async def get_dataset_portal_recommendations(
         if doc_names:
             try:
                 from app.core.llm.client import get_llm_async
+                from app.services.ai.runtime.agentscope.chat import chat_client_from_handle
                 from app.services.ai.runtime.agentscope.messages import RuntimeContentBlock, RuntimeMessage
                 import json
                 import re
+                import random
+                
+                # 随机抽取前 10 个文件名进行推断，使得“换一批”有不同的提示内容
+                sampled_names = list(doc_names)
+                random.shuffle(sampled_names)
+                sampled_names = sampled_names[:10]
                 
                 llm = await get_llm_async(streaming=False, temperature=0.7)
                 if llm:
-                    doc_names_str = ", ".join(doc_names[:10]) # 限制前10个
+                    chat_client = chat_client_from_handle(llm)
+                    doc_names_str = ", ".join(sampled_names)
+                    exclude_instructions = ""
+                    if exclude:
+                        exclude_list = [q.strip() for q in exclude.split(",") if q.strip()]
+                        if exclude_list:
+                            exclude_instructions = f"\n请不要生成与以下已存在问题相近或重复的问题：{json.dumps(exclude_list, ensure_ascii=False)}。"
+                            
                     prompt = (
                         f"你是一个专业的知识库导航助手。当前知识库包含以下文档列表：[{doc_names_str}]。\n"
                         f"请根据这些文件的名字所反映的业务内容，生成 3 个用户最有可能向 AI 提问的高频、专业且具体的问题。\n"
                         f"要求：\n"
                         f"1. 每个问题必须是一句完整、具体的提问，不要宽泛（如“介绍下XX项目的设计架构”而不是“关于架构的设计”）；\n"
                         f"2. 输出格式必须是一个合法的 JSON 数组，如：[\"问题一内容\", \"问题二内容\", \"问题三内容\"]\n"
-                        f"3. 只输出 JSON 数组本身，严禁任何 Markdown 标记包围或多余解释。"
+                        f"3. 只输出 JSON 数组本身，严禁任何 Markdown 标记包围或多余解释。{exclude_instructions}"
                     )
                     messages = [
                         RuntimeMessage(
                             role="system",
-                            content=[RuntimeContentBlock(type="text", text="你是一个严谨的 JSON 问答生成器。")]
+                            content=[RuntimeContentBlock(type="text", text="你是一个严谨 of JSON 问答生成器。")]
                         ),
                         RuntimeMessage(
                             role="user",
                             content=[RuntimeContentBlock(type="text", text=prompt)]
                         )
                     ]
-                    raw_text = await llm.generate_text(messages)
+                    raw_text = await chat_client.generate_text(messages)
                     raw_text = str(raw_text or "").strip()
                     match = re.search(r"\[[\s\S]*\]", raw_text)
                     if match:
@@ -801,9 +816,10 @@ async def get_dataset_portal_recommendations(
                             return {"code": 0, "data": {"questions": dynamic_questions}}
             except Exception as llm_err:
                 # LLM 生成失败时，安静退避到默认问题，不影响 API 的正常可用
+                import logging
+                logging.exception("Failed to generate dynamic questions via LLM in knowledge portal")
                 pass
                 
         return {"code": 0, "data": {"questions": default_questions}}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to generate dataset portal info: {str(e)}")
-

@@ -1243,7 +1243,7 @@
 
     <!-- Canvas RAG 原地物理高亮预览抽屉 -->
     <div
-      class="fixed top-0 right-0 h-full w-[45%] bg-white dark:bg-gray-900 border-l border-gray-200 dark:border-gray-800 shadow-2xl z-[115] flex flex-col transition-transform duration-300 ease-in-out transform"
+      class="fixed top-0 right-0 h-full w-[45%] bg-white dark:bg-gray-900 border-l border-gray-200 dark:border-gray-800 shadow-2xl z-[210] flex flex-col transition-transform duration-300 ease-in-out transform"
       :class="ragPreviewVisible ? 'translate-x-0' : 'translate-x-full'"
     >
       <!-- Header -->
@@ -1386,11 +1386,15 @@
       :datasets="knowledgeDatasets"
       :active-dataset-ids="activeDatasetIds"
       :recommendations="datasetRecommendations"
+      :pinned-dataset-ids="pinnedDatasetIds"
+      :dataset-documents="datasetDocuments"
       :loading="loadingKnowledgeDatasets"
       @toggle-active="(id) => toggleDatasetActive(id, chatInputRef)"
       @load-recommendations="fetchRecommendations"
       @quick-question="handleQuickQuestion"
       @refresh="fetchDatasets"
+      @toggle-pin="toggleDatasetPinned"
+      @load-documents="fetchDatasetDocuments"
     />
 
     <WorkspaceBrowserDrawer
@@ -5702,6 +5706,10 @@ const {
   loadingDatasets: loadingKnowledgeDatasets,
   activeDatasetIds,
   datasetRecommendations,
+  pinnedDatasetIds,
+  datasetDocuments,
+  toggleDatasetPinned,
+  fetchDatasetDocuments,
   fetchDatasets,
   fetchRecommendations,
   syncActiveDatasetsFromInput,

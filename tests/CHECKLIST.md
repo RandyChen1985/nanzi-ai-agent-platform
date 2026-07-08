@@ -203,4 +203,8 @@
 | 当前运行环境诊断意图与工具推荐优化 (Runtime Diagnostic Intent & Tool Nudge) | `app/services/ai/intent_service.py`, `tests/ai/test_tool_nudge_policy.py` | **当前运行环境诊断意图与工具促发规则优化**：验证系统 CPU/内存/磁盘/进程以及 shell 命令行等运行环境诊断提问会被识别为 `IntentSource.RUNTIME_DIAGNOSTIC`；验证在此意图下，系统不会强推 ChatBI 数据子代理，且优先提示 exec_command 工具促发；验证无强业务信号的 DATA_QUERY 意图不会误伤强推数据子代理。 | ✅ 通过 | 2026-07-06 |
 | 知识库混合检索与防幻觉网关 (Hybrid RAG & Hallucination Guardrails) | `app/services/ai/hallucination_evaluator.py`, `app/services/ai/runners/knowledge_agent_runner.py`, `tests/ai/runners/test_knowledge_hallucination_guard.py` | **混合检索与防幻觉反思自愈**：验证空召回或相似度得分低自适应退避调用百度检索并融合两路数据给大模型及前端 Citation；验证 NLI 事实一致性网关检测与最多 2 次 Re-prompt 自纠偏反思修正循环（Reflection Loop）以及最终安全熔断降级。 | ✅ 已完成 | 2026-07-08 |
 | 知识库中心侧边抽屉重构 (Knowledge Portal Drawer) | `KnowledgePortalDrawer.vue`, `useKnowledgePortal.ts`, `AgentDebug.vue`, `EmbedChat.vue` | **侧边抽屉式管理与会话绑定**：验证点击按钮滑出右侧知识库中心；验证卡片勾选一键绑定至当前会话附件列表；验证卡片展开时异步通过 LLM 动态策划推荐提问并一键点击填充发送；验证与数据门户的强互斥关闭交互。 | ✅ 已完成 | 2026-07-08 |
+| 知识库置顶与文件折叠展开 (Knowledge Pin & Document Collapse UX) | `portal_prefs.py`, `KnowledgePortalDrawer.vue`, `useKnowledgePortal.ts` | **置顶与折叠文档**：验证卡片右上角图钉一键置顶并利用 Redis 个人偏好接口（`/portal-prefs`）多端/跨会话同步；验证备注描述栏改为左侧带绿色实边框的浅色美学气泡；验证“相关文档”可折叠，展开时通过 `/datasets/{dataset_id}/documents` 异步加载真实原文件列表；验证 ChatInput 输入框 v-if/v-for 渲染修复及原档层级 z-index 遮挡修复。 | ✅ 已完成 | 2026-07-08 |
+| 知识库卡片提问全对齐与 LLM API 修复 (Knowledge Card Question Align & LLM Bugfix) | `ragflow.py`, `KnowledgePortalDrawer.vue`, `useKnowledgePortal.ts` | **卡片提问对齐与大模型生成修复**：验证卡片排版、装饰背景、宽度截断与数据门户 1:1 对齐；验证提问区分为“左侧直接发送”与“右侧小铅笔 ✏️ 编辑后发送（仅 fill 入输入框）”；验证点击提问气泡或铅笔时若该知识库处于未启用状态，会自动触发 `toggle-active` 将其一键启用；验证并修复 `/portal` 接口中 `AgentScopeLLMHandle` 缺乏 `generate_text` 方法报错导致静默退避默认问题的 Bug。 | ✅ 已完成 | 2026-07-08 |
+
+
 

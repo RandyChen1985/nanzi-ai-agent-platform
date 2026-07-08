@@ -33,6 +33,7 @@ class PortalPrefs(BaseModel):
     card_order: List[str] = Field(default_factory=list, description="拖拽自定义排序的卡片 ID 全量列表")
     expanded_group_ids: List[str] = Field(default_factory=list, description="已展开相关数据面板的卡片 ID 列表")
     question_clicks: Dict[str, int] = Field(default_factory=dict, description="本地问题点击次数备份（query → count），用于跨 session 保留常问数据")
+    pinned_kb_dataset_ids: List[str] = Field(default_factory=list, description="已置顶的知识库数据集 ID 列表")
 
 
 @router.get(
@@ -115,6 +116,11 @@ async def update_portal_prefs(
         gid.strip() for gid in body.expanded_group_ids if gid.strip()
     ))
 
+    # --- 清理 pinned_kb_dataset_ids ---
+    deduped_kb_pins = list(dict.fromkeys(
+        kid.strip() for kid in body.pinned_kb_dataset_ids if kid.strip()
+    ))
+
     # --- 清理 question_clicks：只保留正整数，限制 key 数量 ---
     clean_clicks: Dict[str, int] = {}
     for q, cnt in body.question_clicks.items():
@@ -129,6 +135,7 @@ async def update_portal_prefs(
         card_order=deduped_order,
         expanded_group_ids=deduped_expanded,
         question_clicks=clean_clicks,
+        pinned_kb_dataset_ids=deduped_kb_pins,
     )
 
     try:

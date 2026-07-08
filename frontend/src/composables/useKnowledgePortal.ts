@@ -84,10 +84,25 @@ export function useKnowledgePortal(options: UseKnowledgePortalOptions) {
     localStorage.setItem("knowledge_ragflow_metadata_top_k", val.toString());
   });
 
+  const rawPrefs = ref<any>(null);
+
   const fetchDatasets = async () => {
     if (loadingDatasets.value) return;
     loadingDatasets.value = true;
     try {
+      // 异步读取 Redis 中的数据门户/知识库通用个人偏好设置
+      try {
+        const prefRes = await axios.get("/api/portal/portal-prefs");
+        if (prefRes.data && prefRes.data.code === 0 && prefRes.data.data) {
+          rawPrefs.value = prefRes.data.data;
+          if (Array.isArray(prefRes.data.data.pinned_kb_dataset_ids)) {
+            pinnedDatasetIds.value = prefRes.data.data.pinned_kb_dataset_ids;
+          }
+        }
+      } catch (prefErr) {
+        console.error("Failed to load portal prefs in knowledge portal", prefErr);
+      }
+
       const response = await axios.get("/api/portal/ragflow/datasets", {
         params: { page: 1, page_size: 100, include_missing: false }
       });
@@ -96,6 +111,13 @@ export function useKnowledgePortal(options: UseKnowledgePortalOptions) {
         const nowStr = new Date().toLocaleString("zh-CN", { hour12: false });
         knowledgeGeneratedAt.value = nowStr;
         localStorage.setItem("knowledge_portal_generated_at", nowStr);
+        
+        // 自动为加载出的知识库初始化首批推荐提问
+        nextTick(() => {
+          datasets.value.forEach((ds: any) => {
+            fetchRecommendations(ds.id, false);
+          });
+        });
       } else {
         datasets.value = response.data.data || [];
       }
@@ -107,24 +129,35 @@ export function useKnowledgePortal(options: UseKnowledgePortalOptions) {
     }
   };
 
-  const fetchRecommendations = async (datasetId: string) => {
+  const fetchRecommendations = async (datasetId: string, refresh: boolean = false) => {
     if (!datasetId) return;
-    if (datasetRecommendations.value[datasetId]) return;
+    if (!refresh && datasetRecommendations.value[datasetId]?.questions?.length > 0) return;
 
-    datasetRecommendations.value[datasetId] = { questions: [], loading: true };
+    if (!datasetRecommendations.value[datasetId]) {
+      datasetRecommendations.value[datasetId] = { questions: [], loading: true };
+    } else {
+      datasetRecommendations.value[datasetId].loading = true;
+    }
+
     try {
-      const response = await axios.get(`/api/portal/ragflow/datasets/${datasetId}/portal`);
+      const params: Record<string, any> = {};
+      if (refresh && datasetRecommendations.value[datasetId]?.questions?.length > 0) {
+        const queries = datasetRecommendations.value[datasetId].questions.map((q: any) => q.query);
+        params.exclude = queries.join(",");
+      }
+
+      const response = await axios.get(`/api/portal/ragflow/datasets/${datasetId}/portal`, { params });
       if (response.data && response.data.code === 0) {
         datasetRecommendations.value[datasetId] = {
           questions: response.data.data.questions || [],
           loading: false
         };
       } else {
-        datasetRecommendations.value[datasetId] = { questions: [], loading: false };
+        datasetRecommendations.value[datasetId].loading = false;
       }
     } catch (error) {
       console.error("Failed to fetch recommendations for " + datasetId, error);
-      datasetRecommendations.value[datasetId] = { questions: [], loading: false };
+      datasetRecommendations.value[datasetId].loading = false;
     }
   };
 
@@ -180,6 +213,63 @@ export function useKnowledgePortal(options: UseKnowledgePortalOptions) {
     }
   };
 
+  // 置顶状态管理
+  const pinnedDatasetIds = ref<string[]>([]);
+
+  const toggleDatasetPinned = async (datasetId: string) => {
+    if (pinnedDatasetIds.value.includes(datasetId)) {
+      pinnedDatasetIds.value = pinnedDatasetIds.value.filter(id => id !== datasetId);
+    } else {
+      pinnedDatasetIds.value.push(datasetId);
+    }
+
+    try {
+      const currentPrefs = rawPrefs.value || {
+        pinned_group_ids: [],
+        card_order: [],
+        expanded_group_ids: [],
+        question_clicks: {},
+      };
+      await axios.put("/api/portal/portal-prefs", {
+        ...currentPrefs,
+        pinned_kb_dataset_ids: pinnedDatasetIds.value
+      });
+      if (!rawPrefs.value) {
+        rawPrefs.value = currentPrefs;
+      }
+      rawPrefs.value.pinned_kb_dataset_ids = pinnedDatasetIds.value;
+    } catch (error) {
+      console.error("Failed to save portal prefs in knowledge portal", error);
+      options.showToast("保存置顶状态失败，请稍后重试", "error");
+    }
+  };
+
+  // 关联文档数据管理
+  const datasetDocuments = ref<Record<string, { docs: any[]; loading: boolean }>>({});
+
+  const fetchDatasetDocuments = async (datasetId: string) => {
+    if (!datasetId) return;
+    if (datasetDocuments.value[datasetId]?.docs?.length > 0) return;
+
+    datasetDocuments.value[datasetId] = { docs: [], loading: true };
+    try {
+      const response = await axios.get(`/api/portal/ragflow/datasets/${datasetId}/documents`, {
+        params: { page: 1, page_size: 100 }
+      });
+      if (response.data && response.data.code === 0) {
+        datasetDocuments.value[datasetId] = {
+          docs: response.data.data || [],
+          loading: false
+        };
+      } else {
+        datasetDocuments.value[datasetId] = { docs: [], loading: false };
+      }
+    } catch (error) {
+      console.error("Failed to load dataset documents", error);
+      datasetDocuments.value[datasetId] = { docs: [], loading: false };
+    }
+  };
+
   const openKnowledgePortal = async () => {
     if (options.onOpenAnotherPortal) {
       options.onOpenAnotherPortal();
@@ -205,6 +295,10 @@ export function useKnowledgePortal(options: UseKnowledgePortalOptions) {
     loadingDatasets,
     activeDatasetIds,
     datasetRecommendations,
+    pinnedDatasetIds,
+    datasetDocuments,
+    toggleDatasetPinned,
+    fetchDatasetDocuments,
     fetchDatasets,
     fetchRecommendations,
     syncActiveDatasetsFromInput,
