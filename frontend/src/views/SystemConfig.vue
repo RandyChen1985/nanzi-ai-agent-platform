@@ -606,6 +606,8 @@ const isLongText = (item: ConfigItem) => {
 
 const showRagSelector = ref(false)
 const workingConfigItem = ref<ConfigItem | null>(null)
+const datasetSelectorUrl = ref('')
+const datasetSelectorKey = ref('')
 const showModelExplanation = ref(false)
 const showMetadataExplanation = ref(false)
 const activeExplanationItem = ref<ConfigItem | null>(null)
@@ -751,6 +753,28 @@ const getCategoryTip = (key: string) => {
 
 const openDatasetSelector = (item: ConfigItem) => {
     workingConfigItem.value = item
+
+    // 根据 item.key 查找对应的 api_url 和 api_key
+    let urlKey = 'knowledge_ragflow_api_url'
+    let tokenKey = 'knowledge_ragflow_api_key'
+    if (item.key === 'ragflow_dataset_ids') {
+        urlKey = 'ragflow_api_url'
+        tokenKey = 'ragflow_api_key'
+    }
+
+    let currentUrl = ''
+    let currentKey = ''
+    for (const list of Object.values(configGroups.value)) {
+        const uItem = list.find(x => x.key === urlKey)
+        if (uItem) currentUrl = uItem.value || ''
+        const kItem = list.find(x => x.key === tokenKey)
+        if (kItem) currentKey = kItem.value || ''
+    }
+
+    datasetSelectorUrl.value = currentUrl
+    // 如果是掩码，传递空字符串，让后端自动读取数据库中的真实密钥
+    datasetSelectorKey.value = currentKey.includes('****') ? '' : currentKey
+
     showRagSelector.value = true
 }
 
@@ -1962,6 +1986,9 @@ onMounted(() => {
         v-model="showRagSelector"
         type="dataset"
         :initial-selected="workingConfigItem?.value ? workingConfigItem.value.split(',').filter(Boolean) : []"
+        :override-url="datasetSelectorUrl"
+        :override-key="datasetSelectorKey"
+        :include-missing="false"
         @select="handleDatasetSelect"
     />
 

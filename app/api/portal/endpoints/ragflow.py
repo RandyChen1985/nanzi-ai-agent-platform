@@ -205,11 +205,28 @@ async def get_ragflow_config_summary():
 
 
 @router.get("/agents", dependencies=[Depends(require_admin)])
-async def list_ragflow_agents(page: int = 1, page_size: int = 100):
+async def list_ragflow_agents(
+    page: int = 1, 
+    page_size: int = 100,
+    override_url: Optional[str] = None,
+    override_key: Optional[str] = None
+):
     """
     Proxy to list RAGFlow agents (assistants).
     """
-    base_url, api_key = await get_ragflow_client()
+    # 过滤打码的 key 或是空值
+    real_url = override_url if override_url else None
+    real_key = override_key if override_key and "****" not in override_key else None
+    
+    if real_url and real_key:
+        base_url = real_url
+        api_key = real_key
+    else:
+        db_url, db_key = await get_ragflow_client()
+        base_url = real_url or db_url
+        api_key = real_key or db_key
+    
+    base_url = base_url.rstrip("/")
     url = f"{base_url}/api/v1/agents"
     
     headers = {"Authorization": f"Bearer {api_key}"}
@@ -229,13 +246,23 @@ async def list_ragflow_agents(page: int = 1, page_size: int = 100):
 async def list_ragflow_datasets(
     page: int = 1, 
     page_size: int = 100,
+    override_url: Optional[str] = None,
+    override_key: Optional[str] = None,
+    include_missing: bool = True,
     user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db_session)
 ):
     """
     Proxy to list RAGFlow datasets (knowledge bases) with permission filtering.
     """
-    client = RagFlowClient(config_prefix="knowledge_ragflow")
+    real_url = override_url if override_url else None
+    real_key = override_key if override_key and "****" not in override_key else None
+
+    client = RagFlowClient(
+        config_prefix="knowledge_ragflow",
+        override_url=real_url,
+        override_key=real_key
+    )
     metadata_service = KnowledgeBaseMetadataService(db)
 
     # 1. Check Permissions
@@ -254,7 +281,12 @@ async def list_ragflow_datasets(
             allowed = access["accessible_ids"] or set()
             items = [item for item in items if item.get("id") in allowed]
 
-        merged = await metadata_service.merge_with_ragflow(items, include_missing=is_admin)
+        # 结合参数决定是否包含失联知识库（如果临时覆写了 RAGFlow 地址则不包含）
+        real_include_missing = include_missing and is_admin
+        if override_url:
+            real_include_missing = False
+
+        merged = await metadata_service.merge_with_ragflow(items, include_missing=real_include_missing)
         _apply_knowledge_permission_flags(merged, access)
         return {"code": 0, "data": merged, "total": len(merged)}
     except httpx.RequestError as e:

@@ -12,6 +12,9 @@ const props = defineProps<{
   modelValue: boolean; // v-model for visibility
   type: "agent" | "dataset"; // Select Agent (Single) or Dataset (Multiple)
   initialSelected?: string | string[]; // For pre-selecting
+  overrideUrl?: string;
+  overrideKey?: string;
+  includeMissing?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -28,7 +31,7 @@ const ragflowConfig = ref<RagFlowConfigSummary | null>(null);
 
 const selectedIds = ref<string[]>([]); // Always array for internal logic
 
-const ragflowApiUrl = computed(() => ragflowConfig.value?.api_url || "未配置");
+const ragflowApiUrl = computed(() => props.overrideUrl || ragflowConfig.value?.api_url || "未配置");
 const engineStatusText = computed(() => {
   if (engineStatus.value === "checking") return "知识库引擎检测中 ...";
   if (engineStatus.value === "connected") return "知识库引擎已连接";
@@ -62,7 +65,7 @@ const loadData = async () => {
     }
 
     if (props.type === "agent") {
-      const res = await ragflowApi.listAgents();
+      const res = await ragflowApi.listAgents(1, 100, props.overrideUrl, props.overrideKey);
       const rawData = res.data as any;
 
       if (rawData && Array.isArray(rawData.data)) {
@@ -87,7 +90,7 @@ const loadData = async () => {
         }
       }
     } else {
-      const res = await ragflowApi.listDatasets();
+      const res = await ragflowApi.listDatasets(1, 100, props.overrideUrl, props.overrideKey, props.includeMissing);
       const rawData = res.data as any;
 
       // Robust parsing for RAGFlow response

@@ -13,9 +13,16 @@ class RagFlowClient:
     Handles authentication, conversation management, and streaming responses.
     """
 
-    def __init__(self, config_prefix: str = "ragflow"):
-        self.base_url: Optional[str] = None
-        self.api_key: Optional[str] = None
+    def __init__(
+        self, 
+        config_prefix: str = "ragflow",
+        override_url: Optional[str] = None,
+        override_key: Optional[str] = None
+    ):
+        self.base_url: Optional[str] = override_url
+        if self.base_url and self.base_url.endswith("/"):
+            self.base_url = self.base_url[:-1]
+        self.api_key: Optional[str] = override_key
         self.config_prefix: str = config_prefix
 
     async def _ensure_config(self):

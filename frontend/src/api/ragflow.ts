@@ -36,15 +36,21 @@ export interface RagFlowConfigSummary {
 }
 
 export const ragflowApi = {
-    listAgents: (page = 1, pageSize = 100) => 
+    listAgents: (page = 1, pageSize = 100, overrideUrl?: string, overrideKey?: string) => 
         axios.get<{code: number, data: RagFlowAgent[]}>('/api/portal/ragflow/agents', { 
-            params: { page, page_size: pageSize },
+            params: { page, page_size: pageSize, override_url: overrideUrl, override_key: overrideKey },
             timeout: 5000 // 5s timeout for external service
         }),
         
-    listDatasets: (page = 1, pageSize = 100) =>
+    listDatasets: (page = 1, pageSize = 100, overrideUrl?: string, overrideKey?: string, includeMissing?: boolean) =>
         axios.get<{code: number, data: RagFlowDataset[]}>('/api/portal/ragflow/datasets', { 
-            params: { page, page_size: pageSize },
+            params: { 
+                page, 
+                page_size: pageSize, 
+                override_url: overrideUrl, 
+                override_key: overrideKey,
+                include_missing: includeMissing
+            },
             timeout: 5000 
         }),
 
