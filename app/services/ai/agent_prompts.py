@@ -234,9 +234,6 @@ class AgentServicePrompts:
                     tool_names.update(t.name for t in system_tools)
             except Exception:
                 pass
-            # 知识库工具（如果在 data_query/knowledge 模式下可能动态引入）
-            if getattr(agent_config, "capabilities", None) and "knowledge_base" in agent_config.capabilities:
-                tool_names.add("search_knowledge_base")
             # 主助手运行时隐式挂载 sub_agent_call，与 AssistantAgentRunner 门控对齐
             try:
                 from app.services.ai.skill_resolver import is_main_general_agent
