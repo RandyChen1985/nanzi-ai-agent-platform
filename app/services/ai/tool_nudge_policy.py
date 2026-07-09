@@ -20,6 +20,7 @@ from typing import Any, List, Mapping, Optional, Set
 from app.services.ai.intent_service import (
     IntentSource as ToolIntentSource,
     IntentSourceFrame as ToolIntentFrame,
+    looks_like_platform_self_service_query,
     resolve_intent_source,
 )
 
@@ -162,8 +163,86 @@ _NOTIFICATION_CHANNELS = (
 )
 
 
+_EXPLICIT_SUB_AGENT_ACTION_TERMS = (
+    "调用", "委派", "委派给", "交给", "让", "使用", "用",
+    "call", "delegate", "ask",
+)
+
+_SELF_AGENT_NAMES = frozenset({
+    "main",
+    "assistant",
+    "主助手",
+    "主智能体",
+    "通用助手",
+    "通用智能体",
+})
+
+
 def _contains_any(text: str, terms: tuple[str, ...]) -> bool:
     return any(term and term in text for term in terms)
+
+
+def _sub_agent_aliases(name: str) -> Set[str]:
+    normalized = str(name or "").strip().lower()
+    if not normalized:
+        return set()
+    return {
+        normalized,
+        normalized.replace("_", "-"),
+        normalized.replace("-", "_"),
+    }
+
+
+def _contains_sub_agent_alias(query: str, alias: str) -> bool:
+    if not alias:
+        return False
+    if re.search(r"[a-z0-9_-]", alias):
+        pattern = rf"(?<![a-z0-9_-]){re.escape(alias)}(?![a-z0-9_-])"
+        return re.search(pattern, query) is not None
+    return alias in query
+
+
+def _resolve_explicit_sub_agent_target(
+    query: str,
+    available_sub_agent_names: Optional[Set[str]],
+) -> Optional[str]:
+    """用户点名某个可用子代理时，返回其规范名称。"""
+    if not available_sub_agent_names:
+        return None
+
+    normalized_query = (query or "").strip().lower()
+    if not _contains_any(normalized_query, _EXPLICIT_SUB_AGENT_ACTION_TERMS):
+        return None
+
+    query_variants = {
+        normalized_query,
+        normalized_query.replace("_", "-"),
+        normalized_query.replace("-", "_"),
+    }
+    for candidate in sorted(available_sub_agent_names, key=lambda item: len(str(item)), reverse=True):
+        canonical = str(candidate or "").strip()
+        if not canonical:
+            continue
+        if canonical.lower() in _SELF_AGENT_NAMES:
+            continue
+        aliases = _sub_agent_aliases(canonical)
+        if any(
+            _contains_sub_agent_alias(query_variant, alias)
+            for query_variant in query_variants
+            for alias in aliases
+        ):
+            return canonical
+    return None
+
+
+def _build_explicit_sub_agent_message(target_agent_name: str) -> str:
+    return (
+        f"【本轮工具优先】用户明确要求调用子代理 '{target_agent_name}'。"
+        f"你必须优先调用 sub_agent_call(agent_name='{target_agent_name}', query='用户的问题') "
+        f"委派给该子代理处理，拿到结果后再回答；"
+        f"不要改派给其他子代理，也不要在未调用工具前自行完成该任务；"
+        f"若工具返回为空或失败，如实说明。"
+    )
 
 
 def _resolve_notification_nudge(query: str, tools: List[Any]) -> Optional[ToolNudge]:
@@ -219,10 +298,21 @@ def resolve_tool_nudge(
         semantic_confidence=semantic_confidence,
         turn_intent=turn_intent,
     )
+    is_platform_self_service = looks_like_platform_self_service_query(query)
 
     # 特殊规则：对于强查数或强知识库检索意图，若绑定了 sub_agent_call，优先做静默子代理委派
     sub_agent_tool = next((t for t in (tools or []) if getattr(t, "name", "") == "sub_agent_call"), None)
     if sub_agent_tool:
+        explicit_sub_agent = _resolve_explicit_sub_agent_target(query, available_sub_agent_names)
+        if explicit_sub_agent:
+            return ToolNudge(
+                tool_name="sub_agent_call",
+                score=1.0,
+                message=_build_explicit_sub_agent_message(explicit_sub_agent),
+                force_first_call=True,
+            )
+
+    if sub_agent_tool and not is_platform_self_service:
         def _sub_agent_available(name: str) -> bool:
             if available_sub_agent_names is None:
                 return True
@@ -280,6 +370,8 @@ def resolve_tool_nudge(
     excluded = set(_NUDGE_EXCLUDED_TOOLS)
     if exclude_tools:
         excluded |= {str(name) for name in exclude_tools}
+    if is_platform_self_service:
+        excluded.add("sub_agent_call")
 
     best_tool: Any = None
     best_score = 0.0

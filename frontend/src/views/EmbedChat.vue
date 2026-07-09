@@ -1351,6 +1351,7 @@
       :dataset-documents="datasetDocuments"
       :document-recommendations="documentRecommendations"
       :loading="loadingKnowledgeDatasets"
+      :load-error="knowledgeLoadError"
       @toggle-active="(id) => toggleDatasetActive(id, chatInputRef)"
       @load-recommendations="fetchRecommendations"
       @quick-question="handleQuickQuestion"
@@ -5683,6 +5684,7 @@ const {
   knowledgeGeneratedAt,
   datasets: knowledgeDatasets,
   loadingDatasets: loadingKnowledgeDatasets,
+  datasetLoadError: knowledgeLoadError,
   activeDatasetIds,
   datasetRecommendations,
   pinnedDatasetIds,

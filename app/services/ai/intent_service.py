@@ -154,6 +154,14 @@ _KNOWLEDGE_SIGNALS = [
     "知识库", "文档里", "说明书", "用户手册", "政策", "条例", "合规",
     "wiki", "playbook", "runbook",
 ]
+_PLATFORM_SELF_SERVICE_SUBJECTS = (
+    "技能", "skill", "agent", "智能体", "工具", "tool", "模型", "model",
+    "插件", "plugin", "mcp", "提示词", "prompt", "上下文", "配置",
+)
+_PLATFORM_SELF_SERVICE_ACTIONS = (
+    "安装", "挂载", "加载", "启用", "配置", "设置", "创建", "管理", "使用",
+    "触发", "执行", "怎么", "如何", "哪里", "在哪", "用法", "说明",
+)
 _DATA_QUERY_SIGNALS = [
     "查询", "查一下", "查下", "统计", "多少", "列表", "记录", "趋势",
     "最近", "今天", "本月", "上月", "top", "明细", "汇总", "对比",
@@ -202,6 +210,17 @@ def looks_like_runtime_diagnostic_query(user_question: str) -> bool:
     if not has_runtime_metric:
         return False
     return any(sig in q for sig in _RUNTIME_LOCAL_CONTEXT_SIGNALS)
+
+
+def looks_like_platform_self_service_query(user_question: str) -> bool:
+    """Whether the user is asking about the platform/agent system itself."""
+    q = (user_question or "").strip().lower()
+    if not q:
+        return False
+    has_subject = any(sig in q for sig in _PLATFORM_SELF_SERVICE_SUBJECTS)
+    if not has_subject:
+        return False
+    return any(sig in q for sig in _PLATFORM_SELF_SERVICE_ACTIONS)
 
 
 def looks_like_public_profile_lookup(user_question: str) -> bool:
@@ -386,6 +405,8 @@ def looks_like_knowledge_query(user_question: str) -> bool:
     ]
     if any(sig in q for sig in formatting_correction_signals):
         return False
+    if looks_like_platform_self_service_query(q):
+        return False
     if looks_like_meta_action(q) or looks_like_context_action(q) or looks_like_skill_execution(q):
         return False
     # 联网/外部搜索优先于内部知识库判定，避免“搜索最新新闻”被当成知识库问答
@@ -559,6 +580,13 @@ def resolve_intent_source(
     - 其余 DATA_QUERY 只作为弱证据保留，不直接触发 ChatBI / sub_agent_call。
     """
     query = (query or "").strip()
+    if looks_like_platform_self_service_query(query):
+        return IntentSourceFrame(
+            source=IntentSource.UNKNOWN,
+            confidence=0.9,
+            reasoning="platform self-service or skills/tools configuration query",
+        )
+
     if looks_like_web_search_query(query):
         return IntentSourceFrame(
             source=IntentSource.PUBLIC_WEB,

@@ -45,6 +45,7 @@ export function useKnowledgePortal(options: UseKnowledgePortalOptions) {
 
   const datasets = ref<KnowledgeDataset[]>([]);
   const loadingDatasets = ref(false);
+  const datasetLoadError = ref(false);
   const activeDatasetIds = ref<string[]>([]);
   const datasetRecommendations = ref<Record<string, RecommendationPayload>>({});
 
@@ -101,6 +102,7 @@ export function useKnowledgePortal(options: UseKnowledgePortalOptions) {
   const fetchDatasets = async () => {
     if (loadingDatasets.value) return;
     loadingDatasets.value = true;
+    datasetLoadError.value = false;
     try {
       // 异步读取 Redis 中的数据门户/知识库通用个人偏好设置
       try {
@@ -127,9 +129,15 @@ export function useKnowledgePortal(options: UseKnowledgePortalOptions) {
       } else {
         datasets.value = response.data.data || [];
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error("Failed to load knowledge bases", error);
-      options.showToast("加载知识库列表失败，请稍后重试", "error");
+      datasetLoadError.value = true;
+      const isConnectionErr = error.response?.status === 502 || error.response?.status === 503 || error.message?.includes("Network Error");
+      if (isConnectionErr) {
+        options.showToast("知识库服务暂时不可用，请稍后重试", "error");
+      } else {
+        options.showToast("加载知识库列表失败，请稍后重试", "error");
+      }
     } finally {
       loadingDatasets.value = false;
     }
@@ -328,6 +336,7 @@ export function useKnowledgePortal(options: UseKnowledgePortalOptions) {
     knowledgeGeneratedAt,
     datasets,
     loadingDatasets,
+    datasetLoadError,
     activeDatasetIds,
     datasetRecommendations,
     pinnedDatasetIds,

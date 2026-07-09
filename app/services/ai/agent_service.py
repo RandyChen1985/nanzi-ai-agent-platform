@@ -47,6 +47,8 @@ def _trace_has_tool_call(trace_buffer: Optional[List[AgentExecutionStep]]) -> bo
 
 
 class AgentService:
+    USING_SUPERPOWERS_SKILL_ID = "using-superpowers"
+
     """
     Unified Orchestrator for AI Agent interactions.
     Now refactored to delegate execution to specialized Executors.
@@ -139,6 +141,58 @@ class AgentService:
             except (TypeError, ValueError):
                 return False
         return False
+
+    @staticmethod
+    def _is_new_session_first_user_turn(messages: Optional[List[Dict[str, Any]]]) -> bool:
+        """Whether the current context only contains the first user turn."""
+        if not messages:
+            return False
+        conversation_roles = [
+            str(m.get("role") or "").strip().lower()
+            for m in messages
+            if str(m.get("role") or "").strip().lower() in {"user", "assistant", "agent"}
+        ]
+        return conversation_roles == ["user"]
+
+    @classmethod
+    def _should_force_preload_scanned_skill(
+        cls,
+        *,
+        skill_id: str,
+        messages: Optional[List[Dict[str, Any]]],
+    ) -> bool:
+        return (
+            skill_id == cls.USING_SUPERPOWERS_SKILL_ID
+            and cls._is_new_session_first_user_turn(messages)
+        )
+
+    @classmethod
+    def _ensure_first_turn_superpowers_candidate(
+        cls,
+        *,
+        scanned_skills: List[Dict[str, Any]],
+        available_skills: List[Dict[str, Any]],
+        messages: Optional[List[Dict[str, Any]]],
+        exclude_ids: Optional[set[str]] = None,
+    ) -> List[Dict[str, Any]]:
+        """Ensure using-superpowers is considered on the first Main-agent turn."""
+        if not cls._is_new_session_first_user_turn(messages):
+            return scanned_skills
+        excluded = exclude_ids or set()
+        if cls.USING_SUPERPOWERS_SKILL_ID in excluded:
+            return scanned_skills
+        if any(skill.get("id") == cls.USING_SUPERPOWERS_SKILL_ID for skill in scanned_skills):
+            return scanned_skills
+
+        for skill in available_skills:
+            if skill.get("id") != cls.USING_SUPERPOWERS_SKILL_ID:
+                continue
+            item = dict(skill)
+            item["match_score"] = 1.0
+            item["match_source"] = "scan"
+            item["force_first_turn"] = True
+            return [item] + scanned_skills
+        return scanned_skills
 
     @staticmethod
     def _build_skill_injection(
@@ -261,6 +315,10 @@ class AgentService:
                 conversation_id=conversation_id,
                 trace_id=trace_id,
             ):
+                from app.services.ai.executors.common import sanitize_client_messages_for_identity
+
+                messages = sanitize_client_messages_for_identity(messages)
+
                 # --- Memory Integration ---
                 # If conversation_id is provided, we use server-side history
                 if conversation_id:
@@ -298,10 +356,6 @@ class AgentService:
                             max_context = 20
                         window = server_history[-max_context:] if server_history else []
                         messages = await self._maybe_compact_overflow(server_history, window)
-
-                from app.services.ai.executors.common import sanitize_client_messages_for_identity
-
-                messages = sanitize_client_messages_for_identity(messages)
 
                 from app.utils.skill_metadata import enrich_messages_with_skill_meta
 
@@ -619,6 +673,7 @@ class AgentService:
             try:
                 from app.services.ai.skill_resolver import (
                     is_main_general_agent,
+                    list_skill_metas,
                     load_skill_md_content,
                     scan_relevant_skills,
                     should_scan_skills_for_query,
@@ -630,7 +685,7 @@ class AgentService:
                     scan_enabled = str(scan_enabled_raw or "true").strip().lower() in {
                         "1", "true", "yes", "on",
                     }
-                    if scan_enabled and should_scan_skills_for_query(user_query):
+                    if scan_enabled:
                         min_score_raw = await ConfigService.get("skill_auto_scan_min_score", "0.45")
                         try:
                             min_score = float(min_score_raw) if min_score_raw is not None else 0.45
@@ -643,12 +698,24 @@ class AgentService:
                             max_scan_results = 1
                         max_scan_results = max(1, min(max_scan_results, 3))
 
-                        for skill_meta in scan_relevant_skills(
-                            user_query,
+                        scanned_skills = []
+                        if should_scan_skills_for_query(user_query):
+                            scanned_skills = scan_relevant_skills(
+                                user_query,
+                                exclude_ids=mounted_skill_ids,
+                                max_results=max_scan_results,
+                                min_score=min_score,
+                            )
+                        available_skills = list_skill_metas()
+                        scanned_skills = self._ensure_first_turn_superpowers_candidate(
+                            scanned_skills=scanned_skills,
+                            available_skills=available_skills,
+                            messages=messages,
                             exclude_ids=mounted_skill_ids,
-                            max_results=max_scan_results,
-                            min_score=min_score,
-                        ):
+                        )
+                        scanned_skills = scanned_skills[:max_scan_results]
+
+                        for skill_meta in scanned_skills:
                             skill_id = skill_meta.get("id")
                             if not skill_id or skill_id in mounted_skill_ids:
                                 continue
@@ -656,7 +723,11 @@ class AgentService:
                             description = skill_meta.get("description") or ""
                             match_score = skill_meta.get("match_score")
                             full_instruction = None
-                            if self._should_preload_skill_full_instruction(
+                            force_full_instruction = self._should_force_preload_scanned_skill(
+                                skill_id=skill_id,
+                                messages=messages,
+                            )
+                            if force_full_instruction or self._should_preload_skill_full_instruction(
                                 match_source=str(skill_meta.get("match_source") or "scan"),
                                 match_score=match_score,
                                 policy=full_load_policy,
@@ -686,9 +757,10 @@ class AgentService:
                             if skills_log_callback:
                                 score_hint = f"（相关度 {match_score}）" if match_score is not None else ""
                                 if full_instruction:
+                                    force_hint = "新会话首轮门禁已强制启用；" if force_full_instruction else ""
                                     details_msg = (
                                         f"已根据本轮问题扫描技能库并匹配「{skill_name}」(ID: {skill_id}){score_hint}。"
-                                        "已预载完整 SKILL.md 指令，本轮可直接按该流程执行。"
+                                        f"{force_hint}已预载完整 SKILL.md 指令，本轮可直接按该流程执行。"
                                     )
                                 else:
                                     details_msg = (

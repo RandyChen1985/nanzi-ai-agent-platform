@@ -84,6 +84,80 @@ def test_sub_agent_call_nudge_for_data_query():
     assert "chat-bi" in nudge.message
 
 
+@pytest.mark.parametrize(
+    "query",
+    [
+        "如何安装技能呢",
+        "技能怎么挂载",
+        "agent 怎么配置",
+        "工具怎么启用",
+        "插件如何安装",
+        "模型在哪里配置呢",
+    ],
+)
+def test_platform_self_service_query_does_not_delegate_to_sub_agent(query):
+    tools = [
+        _tool("sub_agent_call", "委派其他专有子智能体执行特定任务（如查数、查手册等）"),
+    ]
+
+    nudge = resolve_tool_nudge(
+        query,
+        tools,
+        available_sub_agent_names={"chat-bi", "knowledge-base"},
+    )
+
+    assert nudge is None
+
+
+def test_explicit_sub_agent_name_forces_delegation():
+    tools = [
+        _tool("sub_agent_call", "委派其他专有子智能体执行特定任务（如查数、查手册等）"),
+    ]
+
+    nudge = resolve_tool_nudge(
+        "调用 chat-bi 子代理查一下设备资产列表",
+        tools,
+        available_sub_agent_names={"chat-bi", "knowledge-base"},
+    )
+
+    assert nudge is not None
+    assert nudge.tool_name == "sub_agent_call"
+    assert nudge.score == 1.0
+    assert "agent_name='chat-bi'" in nudge.message
+    assert nudge.should_force_first_call is True
+
+
+def test_explicit_sub_agent_alias_matches_available_name():
+    tools = [
+        _tool("sub_agent_call", "委派其他专有子智能体执行特定任务（如查数、查手册等）"),
+    ]
+
+    nudge = resolve_tool_nudge(
+        "让 knowledge_base 智能体处理一下这段输入",
+        tools,
+        available_sub_agent_names={"knowledge-base"},
+    )
+
+    assert nudge is not None
+    assert nudge.tool_name == "sub_agent_call"
+    assert "agent_name='knowledge-base'" in nudge.message
+    assert nudge.should_force_first_call is True
+
+
+def test_explicit_sub_agent_name_skips_when_unavailable():
+    tools = [
+        _tool("sub_agent_call", "委派其他专有子智能体执行特定任务（如查数、查手册等）"),
+    ]
+
+    nudge = resolve_tool_nudge(
+        "调用 unknown 子代理处理一下",
+        tools,
+        available_sub_agent_names={"chat-bi", "knowledge-base"},
+    )
+
+    assert nudge is None
+
+
 def test_sub_agent_call_nudge_for_data_query_uses_capability_target():
     tools = [
         _tool("sub_agent_call", "委派其他专有子智能体执行特定任务（如查数、查手册等）"),

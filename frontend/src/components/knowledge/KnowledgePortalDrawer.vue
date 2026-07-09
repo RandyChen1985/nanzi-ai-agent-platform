@@ -430,6 +430,24 @@
                 </div>
               </div>
 
+              <!-- Error State -->
+              <div v-else-if="loadError" class="flex flex-col items-center justify-center py-20 text-gray-400 dark:text-gray-500 text-center px-6">
+                <svg class="w-12 h-12 text-red-500 dark:text-red-600 mb-4" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
+                </svg>
+                <h4 class="text-xs font-bold text-gray-700 dark:text-gray-300">知识库服务不可用</h4>
+                <p class="text-[11px] text-gray-400 dark:text-gray-500 mt-2 max-w-[18rem] leading-relaxed">
+                  连接知识库引擎失败，服务可能正在维护或已离线。请稍后重试或联系管理员排查。
+                </p>
+                <button
+                  type="button"
+                  @click="emit('refresh')"
+                  class="mt-4 px-3 py-1.5 text-[10px] font-medium bg-green-500 hover:bg-green-600 text-white rounded transition-colors active:scale-95 cursor-pointer"
+                >
+                  重新加载
+                </button>
+              </div>
+
               <!-- Empty State -->
               <div v-else-if="datasets.length === 0" class="flex flex-col items-center justify-center py-20 text-gray-400 dark:text-gray-500 text-center px-6">
                 <svg class="w-12 h-12 text-gray-300 dark:text-gray-700 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -988,6 +1006,7 @@ const props = defineProps<{
   datasetDocuments: Record<string, { docs: any[]; loading?: boolean }>;
   documentRecommendations: Record<string, { questions: any[]; loading?: boolean }>;
   loading?: boolean;
+  loadError?: boolean;
   generatedAt?: string;
 }>();
 
