@@ -901,16 +901,16 @@
                       </div>
                     </div>
 
-                    <div v-else class="flex justify-center py-1">
+                    <div v-else class="w-full py-1">
                       <button
                         type="button"
-                        class="inline-flex items-center gap-1.5 rounded-lg border border-dashed border-gray-200 dark:border-gray-700 px-3 py-1.5 text-[11px] font-bold text-gray-500 dark:text-gray-400 hover:border-green-500/40 hover:text-green-600 dark:hover:text-green-400 hover:bg-green-50/30 dark:hover:bg-green-950/10 transition-all active:scale-95"
+                        class="w-full flex items-center justify-center gap-2 rounded-xl border border-dashed border-gray-200 dark:border-gray-800 bg-gray-50/20 dark:bg-gray-900/10 hover:bg-green-50/10 dark:hover:bg-green-950/10 hover:border-green-500/35 hover:text-green-600 dark:hover:text-green-400 px-4 py-3.5 text-xs font-bold text-gray-500 dark:text-gray-400 transition-all active:scale-[0.99] cursor-pointer"
                         @click.stop="emit('load-recommendations', ds.id, false)"
                       >
-                        <svg class="w-3.5 h-3.5 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
+                        <svg class="w-4 h-4 text-green-500/95" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24">
+                          <path stroke-linecap="round" stroke-linejoin="round" d="M9.813 15.904L9 21l-1.81-5.096L2.096 14.1 7.19 13.287 8 8.1l1.81 5.187 5.096.91-5.093.907zM19.5 4.5l-.81 2.274L16.417 7.58l2.273.81.81 2.274.81-2.274 2.274-.81-2.274-.806L19.5 4.5z" />
                         </svg>
-                        <span>生成推荐</span>
+                        <span>智能生成提问推荐</span>
                       </button>
                     </div>
                   </div>

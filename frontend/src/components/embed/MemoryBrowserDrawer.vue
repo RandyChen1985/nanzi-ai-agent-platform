@@ -454,19 +454,13 @@ onUnmounted(() => {
                         </span>
                       </span>
                       <div class="flex items-center gap-2 flex-shrink-0">
-                        <span
-                          v-if="attachedIdSet.has(memory.conversation_id)"
-                          class="text-[9px] font-bold text-gray-400"
-                        >
-                          已挂载
-                        </span>
                         <button
                           type="button"
                           class="text-[10px] text-primary hover:text-primary-dark hover:underline flex items-center space-x-0.5"
                           @click.stop="openMemoryDetail(memory)"
                         >
                           <span>详情</span>
-                          <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/></svg>
+                          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/></svg>
                         </button>
                         <button
                           type="button"
@@ -479,13 +473,32 @@ onUnmounted(() => {
                       </div>
                     </div>
                     <p class="text-xs text-gray-700 dark:text-gray-200 leading-relaxed line-clamp-3">{{ memory.summary }}</p>
+                    <div class="mt-2.5 flex items-center justify-end">
+                      <div class="flex-shrink-0">
+                        <span
+                          v-if="attachedIdSet.has(memory.conversation_id)"
+                          class="text-[9px] font-bold text-gray-400 dark:text-gray-500 flex items-center gap-0.5 select-none"
+                        >
+                          已加载
+                        </span>
+                        <button
+                          v-else
+                          type="button"
+                          class="px-2 py-0.5 text-[9px] font-medium bg-green-500 hover:bg-green-600 text-white rounded transition-all active:scale-95 flex items-center space-x-0.5 shadow-sm"
+                          @click.stop="mountMemory(memory)"
+                        >
+                          <span>加载记忆</span>
+                          <svg class="w-2.5 h-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"/></svg>
+                        </button>
+                      </div>
+                    </div>
                   </div>
                 </div>
               </div>
             </div>
 
             <div class="shrink-0 p-3 sm:p-4 border-t border-gray-150 dark:border-gray-800 bg-gray-50/50 dark:bg-gray-800/20 text-center">
-              <span class="text-[10px] text-gray-400 font-bold">双击记忆可挂载至输入框</span>
+              <span class="text-[10px] text-gray-400 font-bold">双击卡片或点击「加载记忆」按钮可引入至输入框</span>
             </div>
           </div>
         </transition>
