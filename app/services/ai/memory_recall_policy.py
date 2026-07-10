@@ -34,6 +34,7 @@ _RECALL_QUERY_PATTERNS = [
     re.compile(r"历史.{0,6}(对话|聊天|会话)", re.I),
     re.compile(r"过往.{0,6}(对话|聊天|会话)", re.I),
     re.compile(r"记得.{0,10}(聊|说|讨论)", re.I),
+    re.compile(r"(?:上次|之前).{0,12}(?:说过|提过|偏好|要求|约定)", re.I),
 ]
 
 

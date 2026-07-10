@@ -6,6 +6,7 @@ import pytest
 
 from app.schemas.agent import ChatConfig
 from app.services.ai.grounding.models import EvidenceType
+from app.services.ai.grounding.ledger import EvidenceLedger
 from app.services.ai.grounding.policy import FactRequirement
 from app.services.ai.runners.assistant_agent_runner import AssistantAgentRunner
 from app.services.ai.runtime.agentscope.tools import RuntimeToolSpec
@@ -245,6 +246,51 @@ def test_current_turn_attachment_requires_file_evidence():
 
     assert requirement.required is True
     assert requirement.accepted_types == frozenset({EvidenceType.USER_FILE})
+
+
+def test_attachment_continuation_requires_file_evidence_without_repeating_file_word():
+    runner = _runner(request_source="unknown")
+    ctx = runner._ensure_agent_context()
+    ctx.authorized_attachment_paths = ["/tmp/report.pdf"]
+    ctx.current_turn_attachment_paths = []
+
+    requirement = runner._resolve_turn_grounding_requirement("继续看第二页", ctx)
+
+    assert requirement.required is True
+    assert requirement.accepted_types == frozenset({EvidenceType.USER_FILE})
+
+
+@pytest.mark.parametrize(
+    ("query", "evidence_type"),
+    [
+        ("联网搜索一下今天的天气", EvidenceType.PUBLIC_WEB),
+        ("看看当前服务器磁盘状态", EvidenceType.RUNTIME_STATE),
+        ("从知识库查一下操作要求", EvidenceType.INTERNAL_KNOWLEDGE),
+        ("我上次说过的偏好是什么", EvidenceType.CONVERSATION_MEMORY),
+    ],
+)
+def test_unknown_requirement_refines_from_query_signal_and_matching_evidence(
+    query,
+    evidence_type,
+):
+    runner = _runner(request_source="unknown")
+    ledger = EvidenceLedger(user_id="1", conversation_id="conv-1")
+    ledger.record_success(
+        call_id="call-1",
+        producer="typed-tool",
+        evidence_types={evidence_type},
+        result={"success": True, "data": "verified"},
+    )
+    requirement = FactRequirement(False, frozenset(), scrutinize_unknown_output=True)
+
+    refined = runner._refine_unknown_requirement_from_evidence(
+        requirement,
+        user_query=query,
+        ledger=ledger,
+    )
+
+    assert refined.required is True
+    assert refined.accepted_types == frozenset({evidence_type})
 
 
 def test_only_clearly_non_factual_turns_skip_grounding_buffer():

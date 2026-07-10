@@ -95,21 +95,21 @@ TOOL_EVIDENCE_TYPES = {
 
 # 工具取证策略：
 # "non_empty"（默认）：仅在工具返回非空结果时记录凭证。
-# "any"：即使返回空结果也记录凭证，适用于"查无结果"本身即为合法事实依据的场景
+# "allow_empty_success"：成功调用即使返回空结果也记录；错误和失败始终不记录
 #        （记忆检索、知识库搜索、文件读取 —— 未找到也应允许模型如实回答）。
 TOOL_EVIDENCE_POLICY: dict[str, str] = {
     # 数据查询：查询成功但返回空行 = "暂无数据"，属于合法事实依据
-    "execute_sql_query": "any",
-    "get_dataset_schema": "any",
+    "execute_sql_query": "allow_empty_success",
+    "get_dataset_schema": "allow_empty_success",
     # 记忆/知识/文件检索：查无结果 = "未找到"，属于合法事实依据
-    "memory_search": "any",
-    "fetch_user_long_term_memory": "any",
-    "search_knowledge_base": "any",
-    "jira_search": "any",
-    "read_file": "any",
-    "search_text": "any",
-    "excel_document_read": "any",
-    "word_document_read": "any",
+    "memory_search": "allow_empty_success",
+    "fetch_user_long_term_memory": "allow_empty_success",
+    "search_knowledge_base": "allow_empty_success",
+    "jira_search": "allow_empty_success",
+    "read_file": "allow_empty_success",
+    "search_text": "allow_empty_success",
+    "excel_document_read": "allow_empty_success",
+    "word_document_read": "allow_empty_success",
 }
 
 
@@ -143,6 +143,26 @@ def resolve_tool_evidence_types(*names: str) -> frozenset[EvidenceType]:
                 _collect_for_key(alias)
 
     return frozenset(collected)
+
+
+def resolve_tool_evidence_policy(*names: str) -> str:
+    """Resolve evidence policy through configured, native, and reverse aliases."""
+    candidates: list[str] = []
+    for name in names:
+        if not name:
+            continue
+        native_name = AGENTSCOPE_BUILTIN_TOOL_ALIASES.get(name, name)
+        candidates.extend((name, native_name))
+        candidates.extend(
+            alias
+            for alias, target in AGENTSCOPE_BUILTIN_TOOL_ALIASES.items()
+            if target == native_name
+        )
+    for candidate in candidates:
+        policy = TOOL_EVIDENCE_POLICY.get(candidate)
+        if policy:
+            return policy
+    return "non_empty"
 
 
 class ToolRegistry:
@@ -329,11 +349,11 @@ class ToolRegistry:
         existing_policy = getattr(spec, "evidence_policy", "non_empty") or "non_empty"
 
         # 从静态表中查询 policy（name 优先，其次 spec.name）
-        policy = TOOL_EVIDENCE_POLICY.get(name) or TOOL_EVIDENCE_POLICY.get(spec_name)
+        policy = resolve_tool_evidence_policy(name, spec_name)
 
         if existing:
             # evidence_types 已由工具自身声明；若 policy 需升级则单独注入
-            if policy and policy != existing_policy:
+            if policy != existing_policy:
                 return replace(spec, evidence_policy=policy)
             return spec
 
@@ -343,7 +363,7 @@ class ToolRegistry:
         return replace(
             spec,
             evidence_types=evidence_types,
-            evidence_policy=policy or "non_empty",
+            evidence_policy=policy,
         )
 
     @classmethod

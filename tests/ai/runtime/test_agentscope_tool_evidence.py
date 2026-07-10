@@ -59,6 +59,8 @@ async def test_registry_assigns_abstract_evidence_capabilities():
     assert user_file.evidence_types == frozenset({EvidenceType.USER_FILE})
     assert runtime.evidence_types == frozenset({EvidenceType.RUNTIME_STATE})
     assert memory.evidence_types == frozenset({EvidenceType.CONVERSATION_MEMORY})
+    assert knowledge.evidence_policy == "allow_empty_success"
+    assert user_file.evidence_policy == "allow_empty_success"
 
 
 async def test_registry_resolves_builtin_aliases_to_evidence_capabilities():
@@ -71,6 +73,8 @@ async def test_registry_resolves_builtin_aliases_to_evidence_capabilities():
     assert bash_native.evidence_types == frozenset({EvidenceType.RUNTIME_STATE})
     assert grep_alias.evidence_types == frozenset({EvidenceType.USER_FILE})
     assert read_alias.evidence_types == frozenset({EvidenceType.USER_FILE})
+    assert grep_alias.evidence_policy == "allow_empty_success"
+    assert read_alias.evidence_policy == "allow_empty_success"
 
 
 def test_legacy_tool_ignores_invalid_evidence_type_and_keeps_valid_values(caplog):
@@ -156,3 +160,30 @@ async def test_runtime_tool_does_not_record_empty_result_as_evidence():
         set_agent_context(None)
 
     assert ledger.receipts == ()
+
+
+@pytest.mark.asyncio
+async def test_runtime_tool_allow_empty_success_records_empty_query_result():
+    ledger = EvidenceLedger(user_id="1", conversation_id="conv-1")
+    ctx = AgentContext(
+        agent_id="data-agent",
+        agent_name="chat-bi",
+        grounding_evidence_ledger=ledger,
+    )
+    set_agent_context(ctx)
+    spec = RuntimeToolSpec(
+        name="execute_sql_query",
+        description="query data",
+        parameters_schema={"type": "object"},
+        source_type="static",
+        callable=lambda: {"success": True, "items": []},
+        evidence_types=frozenset({EvidenceType.INTERNAL_DATA}),
+        evidence_policy="allow_empty_success",
+    )
+
+    try:
+        await spec.invoke({})
+    finally:
+        set_agent_context(None)
+
+    assert ledger.has_valid_evidence({EvidenceType.INTERNAL_DATA})

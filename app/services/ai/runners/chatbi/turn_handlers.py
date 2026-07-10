@@ -24,6 +24,42 @@ EARLY_EXIT_TURN_TYPES = frozenset(
 )
 
 
+def _record_previous_result_evidence(
+    runner: Any,
+    *,
+    turn_type: DataQueryTurnType,
+    last_data_result: Dict[str, Any],
+) -> None:
+    """将可信的跨轮结构化缓存登记为当前轮派生数据凭证。"""
+    from app.core.context import get_current_agent_context
+    from app.services.ai.grounding.ledger import EvidenceLedger
+    from app.services.ai.grounding.models import EvidenceType
+
+    context = get_current_agent_context()
+    ledger = getattr(context, "grounding_evidence_ledger", None) if context else None
+    if not isinstance(ledger, EvidenceLedger):
+        return
+
+    runner_user_id = runner._runtime_user_id()
+    runner_conversation_id = runner.conversation_id
+    if (
+        ledger.user_id != runner_user_id
+        or ledger.conversation_id != runner_conversation_id
+    ):
+        logger.warning(
+            "Skip derived ChatBI evidence because ledger ownership does not match "
+            "the cached-result request context"
+        )
+        return
+
+    ledger.record_success(
+        call_id=f"{turn_type.value}:{uuid.uuid4().hex}",
+        producer="chatbi_previous_result",
+        evidence_types={EvidenceType.INTERNAL_DATA},
+        result=last_data_result,
+    )
+
+
 async def dispatch_early_turn(
     runner: Any,
     *,
@@ -38,6 +74,11 @@ async def dispatch_early_turn(
         if not last_data_result_for_turn:
             last_data_result_for_turn = await runner._load_last_data_result_with_retry()
         if last_data_result_for_turn:
+            _record_previous_result_evidence(
+                runner,
+                turn_type=turn_cls.turn_type,
+                last_data_result=last_data_result_for_turn,
+            )
             async for chunk in runner._synthesize_format_correction(
                 runtime_messages,
                 runner.config.system_prompt or "",
@@ -57,6 +98,11 @@ async def dispatch_early_turn(
         if not last_data_result_for_turn:
             last_data_result_for_turn = await runner._load_last_data_result_with_retry()
         if last_data_result_for_turn:
+            _record_previous_result_evidence(
+                runner,
+                turn_type=turn_cls.turn_type,
+                last_data_result=last_data_result_for_turn,
+            )
             async for chunk in runner._synthesize_from_last_data_result(
                 runtime_messages,
                 runner.config.system_prompt or "",

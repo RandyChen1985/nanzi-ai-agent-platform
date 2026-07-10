@@ -744,10 +744,13 @@ async def test_data_agent_runner_system_content_replaces_dataset_menu(data_confi
 
 @pytest.mark.asyncio
 async def test_data_agent_runner_reuses_previous_result_without_native_agent(data_config, monkeypatch):
+    from app.core.context import AgentContext, agent_context
     from app.services.ai.data_query_turn_classifier import (
         DataQueryTurnClassification,
         DataQueryTurnType,
     )
+    from app.services.ai.grounding.ledger import EvidenceLedger
+    from app.services.ai.grounding.models import EvidenceType
     from app.services.ai.intent_service import IntentType
     from app.services.ai.runners.data_agent_runner import DataAgentRunner
 
@@ -805,19 +808,116 @@ async def test_data_agent_runner_reuses_previous_result_without_native_agent(dat
     )
     monkeypatch.setattr(runner, "_build_native_agent", forbidden_build_agent)
 
-    events = []
-    async for chunk in runner.execute(
-        [
-            {"role": "assistant", "content": "上一轮返回了用户状态。"},
-            {"role": "user", "content": "分析一下"},
-        ]
-    ):
-        events.append(chunk)
+    ledger = EvidenceLedger(user_id="42", conversation_id="conv-1")
+    context_token = agent_context.set(
+        AgentContext(
+            agent_id="data-agent",
+            agent_name="ChatBI",
+            user_id=42,
+            conversation_id="conv-1",
+            grounding_evidence_ledger=ledger,
+        )
+    )
+
+    try:
+        events = []
+        async for chunk in runner.execute(
+            [
+                {"role": "assistant", "content": "上一轮返回了用户状态。"},
+                {"role": "user", "content": "分析一下"},
+            ]
+        ):
+            events.append(chunk)
+    finally:
+        agent_context.reset(context_token)
 
     assert any(chunk.get("title") == "ChatBI 请求类别分析结果" for chunk in events)
     assert any(chunk.get("title") == "复用上一轮查询结果" for chunk in events)
     assert any(chunk.get("content") == "已基于上一轮结果完成分析。" for chunk in events)
     assert runner.turn_classification is reuse_turn
+    assert ledger.has_valid_evidence({EvidenceType.INTERNAL_DATA})
+    assert ledger.receipts[0].producer == "chatbi_previous_result"
+
+
+@pytest.mark.asyncio
+async def test_data_agent_runner_does_not_issue_derived_evidence_for_history_only_reuse(
+    data_config, monkeypatch
+):
+    from app.core.context import AgentContext, agent_context
+    from app.services.ai.data_query_turn_classifier import (
+        DataQueryTurnClassification,
+        DataQueryTurnType,
+    )
+    from app.services.ai.grounding.ledger import EvidenceLedger
+    from app.services.ai.grounding.models import EvidenceType
+    from app.services.ai.intent_service import IntentType
+    from app.services.ai.runners.data_agent_runner import DataAgentRunner
+    from app.services.ai.runtime.agentscope.compat import AIMessage
+
+    reuse_turn = DataQueryTurnClassification(
+        turn_type=DataQueryTurnType.REUSE_PREVIOUS_RESULT,
+        reasoning="测试：只存在历史展示文本",
+        requires_fresh_data=False,
+        requires_few_shot=False,
+        skip_intent_llm=True,
+        intent=IntentType.DATA_QUERY,
+    )
+
+    async def fake_resolve(*args, **kwargs):
+        return reuse_turn, None, 0.0
+
+    class FakeSynthesisLLM:
+        model_name = "synthesis-model"
+
+        async def astream(self, messages):
+            yield AIMessage(content="根据历史内容生成的分析。")
+
+    monkeypatch.setattr(
+        "app.services.ai.runners.data_agent_runner.resolve_data_query_turn_classification",
+        fake_resolve,
+    )
+    monkeypatch.setattr(
+        "app.services.ai.memory_service.memory_service.get_last_data_result",
+        AsyncMock(return_value=None),
+    )
+    monkeypatch.setattr(
+        "app.services.ai.runners.data_agent_runner.AgentConfigProvider.get_synthesis_llm",
+        AsyncMock(return_value=FakeSynthesisLLM()),
+    )
+
+    ledger = EvidenceLedger(user_id="42", conversation_id="conv-1")
+    context_token = agent_context.set(
+        AgentContext(
+            agent_id="data-agent",
+            agent_name="ChatBI",
+            user_id=42,
+            conversation_id="conv-1",
+            grounding_evidence_ledger=ledger,
+        )
+    )
+    runner = DataAgentRunner(
+        config=data_config,
+        trace_id="trace-history-only-reuse",
+        trace_buffer=[],
+        user_info={"user_id": 42},
+        conversation_id="conv-1",
+    )
+
+    try:
+        async for _chunk in runner.execute(
+            [
+                {
+                    "role": "assistant",
+                    "content": "上一轮数据结果：| 状态 | 数量 |\n|---|---|\n| 启用 | 8 |",
+                },
+                {"role": "user", "content": "可视化分析一下"},
+            ]
+        ):
+            pass
+    finally:
+        agent_context.reset(context_token)
+
+    assert not ledger.has_valid_evidence({EvidenceType.INTERNAL_DATA})
 
 
 @pytest.mark.asyncio

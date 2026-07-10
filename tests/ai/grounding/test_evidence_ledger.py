@@ -68,3 +68,72 @@ def test_receipt_requires_a_declared_evidence_type():
 
     assert receipt is None
     assert ledger.receipts == ()
+
+
+def test_allow_empty_success_records_successful_empty_result():
+    ledger = EvidenceLedger(user_id="1", conversation_id="c1")
+
+    receipt = ledger.record_success(
+        call_id="call-empty-query",
+        producer="execute_sql_query",
+        evidence_types={EvidenceType.INTERNAL_DATA},
+        result={"success": True, "items": []},
+        policy="allow_empty_success",
+    )
+
+    assert receipt is not None
+    assert ledger.has_valid_evidence({EvidenceType.INTERNAL_DATA})
+
+
+@pytest.mark.parametrize(
+    "result",
+    [
+        "错误：SQL 执行失败",
+        "permission denied",
+        {"success": False, "items": []},
+        {"status": "error", "items": []},
+        {"code": 500, "items": []},
+        {"message": "SQL 执行失败", "items": []},
+        {"message": "数据库连接失败", "items": []},
+    ],
+)
+def test_allow_empty_success_never_records_error_result(result):
+    ledger = EvidenceLedger(user_id="1", conversation_id="c1")
+
+    receipt = ledger.record_success(
+        call_id="call-error",
+        producer="query-tool",
+        evidence_types={EvidenceType.INTERNAL_DATA},
+        result=result,
+        policy="allow_empty_success",
+    )
+
+    assert receipt is None
+    assert ledger.receipts == ()
+
+
+def test_successful_knowledge_content_with_failure_topic_is_not_treated_as_tool_error():
+    ledger = EvidenceLedger(user_id="1", conversation_id="c1")
+
+    receipt = ledger.record_success(
+        call_id="call-kb",
+        producer="search_knowledge_base",
+        evidence_types={EvidenceType.INTERNAL_KNOWLEDGE},
+        result={
+            "success": True,
+            "data": {"content": "数据库连接失败排查手册"},
+        },
+        policy="allow_empty_success",
+    )
+
+    assert receipt is not None
+
+    raw_receipt = ledger.record_success(
+        call_id="call-kb-raw",
+        producer="search_knowledge_base",
+        evidence_types={EvidenceType.INTERNAL_KNOWLEDGE},
+        result="数据库连接失败排查手册",
+        policy="allow_empty_success",
+    )
+
+    assert raw_receipt is not None

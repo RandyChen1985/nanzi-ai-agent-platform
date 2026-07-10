@@ -29,6 +29,10 @@ from app.services.ai.grounding.policy import (
 )
 from app.services.ai.intent_service import (
     IntentType,
+    looks_like_dynamic_public_fact_query,
+    looks_like_knowledge_query,
+    looks_like_public_profile_lookup,
+    looks_like_runtime_diagnostic_query,
     looks_like_strong_business_data_request,
     looks_like_web_search_query,
 )
@@ -524,8 +528,18 @@ class AssistantAgentRunner(BaseExecutor):
         references_file = bool(
             re.search(r"(?:附件|文件|文档|表格|工作簿|日志)(?:里|中|内|的|内容|数据)?", user_query or "", re.I)
         )
+        references_attachment_continuation = bool(
+            re.search(
+                r"(?:第?\s*[一二三四五六七八九十百两\d]+\s*页|上一页|下一页|"
+                r"第?\s*[一二三四五六七八九十百两\d]+\s*(?:个)?(?:sheet|工作表)|"
+                r"sheet\s*\d+)",
+                user_query or "",
+                re.I,
+            )
+        )
         has_relevant_attachment = bool(current_turn_paths) or bool(
-            getattr(ctx, "authorized_attachment_paths", None) and references_file
+            getattr(ctx, "authorized_attachment_paths", None)
+            and (references_file or references_attachment_continuation)
         )
         if has_relevant_attachment:
             return FactRequirement(
@@ -541,15 +555,34 @@ class AssistantAgentRunner(BaseExecutor):
         user_query: str,
         ledger: EvidenceLedger,
     ) -> FactRequirement:
-        if (
-            requirement.scrutinize_unknown_output
-            and looks_like_strong_business_data_request(user_query)
-            and ledger.has_valid_evidence({EvidenceType.INTERNAL_DATA})
-        ):
-            return FactRequirement(
-                required=True,
-                accepted_types=frozenset({EvidenceType.INTERNAL_DATA}),
-            )
+        if not requirement.scrutinize_unknown_output:
+            return requirement
+
+        from app.services.ai.memory_recall_policy import (
+            looks_like_cross_session_recall_query,
+        )
+
+        signal_contracts = (
+            (looks_like_strong_business_data_request(user_query), EvidenceType.INTERNAL_DATA),
+            (
+                looks_like_web_search_query(user_query)
+                or looks_like_dynamic_public_fact_query(user_query)
+                or looks_like_public_profile_lookup(user_query),
+                EvidenceType.PUBLIC_WEB,
+            ),
+            (looks_like_runtime_diagnostic_query(user_query), EvidenceType.RUNTIME_STATE),
+            (looks_like_knowledge_query(user_query), EvidenceType.INTERNAL_KNOWLEDGE),
+            (
+                looks_like_cross_session_recall_query(user_query),
+                EvidenceType.CONVERSATION_MEMORY,
+            ),
+        )
+        for has_signal, evidence_type in signal_contracts:
+            if has_signal and ledger.has_valid_evidence({evidence_type}):
+                return FactRequirement(
+                    required=True,
+                    accepted_types=frozenset({evidence_type}),
+                )
         return requirement
 
     async def execute(

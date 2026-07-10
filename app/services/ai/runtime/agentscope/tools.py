@@ -21,7 +21,7 @@ ToolSourceType = Literal["static", "generic_api", "mcp", "class", "system"]
 RuntimePermissionScope = Literal["read", "write", "ask", "dangerous"]
 RuntimeApprovalMode = Literal["ask", "allow", "deny"]
 RuntimeToolAuditStatus = Literal["start", "success", "error"]
-RuntimeEvidencePolicy = Literal["non_empty", "structured_success"]
+RuntimeEvidencePolicy = Literal["non_empty", "structured_success", "allow_empty_success"]
 
 
 READ_ONLY_TOOL_NAMES = {

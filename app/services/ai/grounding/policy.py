@@ -197,17 +197,31 @@ def evaluate_grounding(
         )
 
     if requirement.scrutinize_unknown_output:
-        # 对 UNKNOWN 来源的请求，只拦截一种明确的幻觉信号：
-        # 模型在回答中声称"已经查询/已经调用/已经执行"，但账本里没有任何工具凭证。
-        # 其他情况（含数字、含表格、含动态事实等）一律放行——
-        # 避免因过度审查导致正常回答被误拦截。
-        has_execution_claim = bool(_EXECUTION_CLAIM_RE.search(text))
-        if has_execution_claim and not ledger.has_valid_evidence(frozenset()):
+        if _contains_structural_external_fact(text):
+            requirement_groups = _infer_evidence_requirement_groups(text)
+            if requirement_groups and all(
+                ledger.has_valid_evidence(alternatives)
+                for alternatives in requirement_groups
+            ):
+                return GroundingDecision(
+                    GroundingAction.PASS,
+                    "unknown request backed by matching tool evidence",
+                )
+            missing_groups = tuple(
+                alternatives
+                for alternatives in requirement_groups
+                if not ledger.has_valid_evidence(alternatives)
+            )
+            missing_types = frozenset(
+                evidence_type
+                for alternatives in missing_groups
+                for evidence_type in alternatives
+            )
             return GroundingDecision(
                 GroundingAction.BLOCK_UNGROUNDED_FACTS,
-                "model claimed tool execution but no evidence receipt was recorded",
-                frozenset(),
+                "unknown request emitted a dynamic or structured fact without matched evidence",
+                missing_types,
             )
-        return GroundingDecision(GroundingAction.PASS, "unknown output scrutiny passed")
+        return GroundingDecision(GroundingAction.PASS, "unknown output has no external fact signal")
 
     return GroundingDecision(GroundingAction.PASS, "no external evidence requirement")
