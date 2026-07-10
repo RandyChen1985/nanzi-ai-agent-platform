@@ -50,7 +50,9 @@ async def test_permission_api_lifecycle(db_session):
             "agents": ["agent-x"],
             "datasets": ["ds-y"],
             "apis": [],
-            "metadata": []
+            "metadata": [],
+            "forbidden_tools": ["exec_command"],
+            "forbidden_commands": ["rm", "shutdown"]
         }
         resp = await client.put(
             f"/api/portal/management/users/{target_user.id}/permissions",
@@ -67,6 +69,8 @@ async def test_permission_api_lifecycle(db_session):
         data = resp.json()
         assert "agent-x" in data["permissions"]["agents"]
         assert "ds-y" in data["permissions"]["datasets"]
+        assert "exec_command" in data["permissions"]["forbidden_tools"]
+        assert "rm" in data["permissions"]["forbidden_commands"]
 
     # Cleanup
     await db_session.delete(target_user)

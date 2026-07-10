@@ -3,8 +3,8 @@
     <!-- Header -->
     <div class="flex justify-between items-center">
       <h1 class="text-2xl font-bold text-gray-900">角色管理</h1>
-      <button 
-        @click="openCreateDialog" 
+      <button
+        @click="openCreateDialog"
         class="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition flex items-center gap-2"
       >
         <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -17,15 +17,15 @@
     <!-- Filters -->
     <div class="bg-white shadow rounded-lg p-4">
       <div class="flex flex-col sm:flex-row gap-4">
-        <input 
-          v-model="searchQuery" 
+        <input
+          v-model="searchQuery"
           @input="debouncedSearch"
-          type="text" 
-          placeholder="搜索角色名称或代码..." 
+          type="text"
+          placeholder="搜索角色名称或代码..."
           class="border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 flex-1 text-sm"
         />
-        <button 
-          @click="resetFilters" 
+        <button
+          @click="resetFilters"
           class="border border-gray-300 rounded-lg px-4 py-2 hover:bg-gray-50 transition text-sm font-medium"
         >
           重置
@@ -79,9 +79,9 @@
                     <button @click="openUserAssignmentDialog(role)" class="text-green-600 hover:text-green-900 transition-colors p-1" title="分配用户">
                       <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" /></svg>
                     </button>
-                    <button 
-                      @click="confirmDelete(role)" 
-                      class="text-red-600 hover:text-red-900 transition-colors p-1" 
+                    <button
+                      @click="confirmDelete(role)"
+                      class="text-red-600 hover:text-red-900 transition-colors p-1"
                       title="删除角色"
                     >
                       <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
@@ -106,7 +106,7 @@
               {{ role.user_count }} 用户
             </div>
           </div>
-          
+
           <p class="text-[11px] text-gray-600 line-clamp-2 leading-relaxed bg-gray-50 p-2 rounded border border-gray-100">
             {{ role.description || '暂无描述' }}
           </p>
@@ -155,7 +155,7 @@
 
     <!-- Create/Edit Dialog -->
     <div v-if="showCreateDialog || showEditDialog" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[9990]" @click.self="closeDialogs">
-      <div 
+      <div
         class="bg-white p-6 w-full max-w-md flex flex-col"
         :class="isMobile ? 'h-full rounded-none' : 'rounded-lg shadow-2xl'"
       >
@@ -165,13 +165,13 @@
                 <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" /></svg>
             </button>
         </div>
-        
+
         <div class="space-y-4 flex-1 overflow-y-auto pr-1">
             <div>
                 <label class="block text-xs font-bold text-gray-400 uppercase mb-1">角色代码</label>
-                <input 
-                  v-model="formData.code" 
-                  type="text" 
+                <input
+                  v-model="formData.code"
+                  type="text"
                   :disabled="showEditDialog"
                   class="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100 text-sm"
                   placeholder="例如: finance_manager"
@@ -181,9 +181,9 @@
 
             <div>
                 <label class="block text-xs font-bold text-gray-400 uppercase mb-1">角色名称</label>
-                <input 
-                  v-model="formData.name" 
-                  type="text" 
+                <input
+                  v-model="formData.name"
+                  type="text"
                   class="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
                   placeholder="例如: 财务经理"
                 />
@@ -191,8 +191,8 @@
 
             <div>
                 <label class="block text-xs font-bold text-gray-400 uppercase mb-1">描述</label>
-                <textarea 
-                  v-model="formData.description" 
+                <textarea
+                  v-model="formData.description"
                   rows="3"
                   class="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
                   placeholder="角色职责描述..."
@@ -208,9 +208,9 @@
           <button @click="closeDialogs" class="order-2 sm:order-1 px-4 py-2.5 border border-gray-300 rounded-lg hover:bg-gray-50 text-sm font-medium">
             取消
           </button>
-          <button 
-            @click="saveRole" 
-            :disabled="submitting" 
+          <button
+            @click="saveRole"
+            :disabled="submitting"
             class="order-1 sm:order-2 px-4 py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 text-sm font-bold shadow-md shadow-blue-100"
           >
             {{ submitting ? '保存中...' : (showEditDialog ? '保存更新' : '立即创建') }}
@@ -221,7 +221,7 @@
 
     <!-- Permission Dialog -->
     <div v-if="showPermissionDialog" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[9990]" @click.self="closePermissionDialog">
-        <div 
+        <div
             class="bg-white flex flex-col shadow-2xl transition-all duration-300 overflow-hidden"
             :class="isMobile ? 'w-full h-full rounded-none min-h-0' : 'rounded-2xl p-6 w-full max-w-4xl max-h-[90vh] min-h-0'"
         >
@@ -229,7 +229,7 @@
             <div class="flex-shrink-0 px-4 py-4 sm:px-0 sm:pt-0 border-b border-gray-100 sm:border-0 flex justify-between items-center">
                 <div>
                     <h2 class="text-xl font-bold flex items-center gap-2">
-                        分配权限 
+                        分配权限
                         <span v-if="!isMobile" class="text-xs font-normal text-gray-400 bg-gray-50 px-2 py-0.5 rounded border">{{ currentRole?.code }}</span>
                     </h2>
                     <p class="text-xs text-gray-500 mt-0.5">当前角色: <span class="font-bold text-gray-700">{{ currentRole?.name }}</span></p>
@@ -238,24 +238,24 @@
                     <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" /></svg>
                 </button>
             </div>
-            
+
             <!-- Main Tabs (Assets vs UI) -->
             <div class="flex-shrink-0 flex items-center space-x-1 p-1 bg-gray-100 rounded-xl my-4 sm:my-6 w-full max-w-md mx-auto">
-                <button 
+                <button
                     @click="activeMainTab = 'assets'"
                     :class="activeMainTab === 'assets' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'"
                     class="flex-1 py-2 rounded-lg text-xs font-bold transition-all"
                 >
                     📦 资产授权
                 </button>
-                <button 
+                <button
                     @click="activeMainTab = 'ui'"
                     :class="activeMainTab === 'ui' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'"
                     class="flex-1 py-2 rounded-lg text-xs font-bold transition-all"
                 >
                     🎨 菜单功能
                 </button>
-                <button 
+                <button
                     @click="activeMainTab = 'quota'"
                     :class="activeMainTab === 'quota' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'"
                     class="flex-1 py-2 rounded-lg text-xs font-bold transition-all"
@@ -271,8 +271,8 @@
                     <!-- Resource Type Tabs：固定高度，避免被下方列表 flex 挤没 -->
                     <div class="flex-shrink-0 overflow-x-auto scrollbar-hide">
                         <div class="inline-flex min-w-full sm:min-w-0 items-center gap-1 p-1 bg-gray-100 rounded-xl">
-                            <button 
-                                v-for="type in resourceTypes" 
+                            <button
+                                v-for="type in resourceTypes"
                                 :key="type"
                                 @click="activeResTab = type"
                                 :class="[
@@ -287,7 +287,8 @@
                                     v-html="resourceConfig[type].icon"
                                 />
                                 <span>{{ resourceConfig[type].label }}</span>
-                                <span 
+                                <span
+                                    v-if="type !== 'forbidden_configs'"
                                     class="text-[10px] leading-none min-w-[1.25rem] text-center px-1.5 py-0.5 rounded-full bg-gray-100 text-gray-600"
                                     :class="activeResTab === type ? 'bg-gray-50' : ''"
                                 >
@@ -308,11 +309,89 @@
                         </div>
 
                         <div v-if="loadingResources" class="text-center py-10 text-gray-500 text-xs">加载资源中...</div>
+                        <div v-if="activeResTab === 'forbidden_configs'" class="space-y-4 text-left">
+                            <div class="bg-red-50 border border-red-100 rounded-lg p-2.5 flex items-start gap-2 mb-2 select-none">
+                                <svg class="w-4 h-4 text-red-500 mt-0.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
+                                </svg>
+                                <div class="text-[10px] sm:text-xs text-red-700 leading-tight">
+                                    <p class="font-bold mb-0.5">安全策略与黑名单说明</p>
+                                    <p class="opacity-80">配置禁用工具后该角色下的用户完全无法调用该工具。配置禁用命令后，当智能体尝试替该角色下的用户运行含有敏感词的系统命令时，将被运行时强行拦截。</p>
+                                </div>
+                            </div>
+
+                            <!-- 1. 禁用工具 Checkbox 组 -->
+                            <div class="border border-gray-150 rounded-xl p-3 bg-white shadow-sm">
+                                <h4 class="text-xs font-bold text-gray-700 mb-2.5 flex items-center gap-1.5 select-none">
+                                    <span class="w-1.5 h-1.5 bg-red-500 rounded-full"></span>
+                                    选择要禁用的工具（全局拉黑）
+                                </h4>
+                                <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                    <label v-for="tool in availableToolsToForbid" :key="tool.id" class="flex items-start p-2.5 rounded-lg border transition-all shadow-sm bg-white hover:border-red-200 cursor-pointer">
+                                        <input
+                                            type="checkbox"
+                                            :value="tool.id"
+                                            v-model="permissionData.forbidden_tools"
+                                            class="h-4 w-4 rounded mt-0.5 flex-shrink-0 border-gray-300 focus:ring-2 text-red-600 focus:ring-red-500"
+                                        />
+                                        <div class="ml-2.5 min-w-0 flex-1">
+                                            <p class="font-bold text-gray-900 truncate text-xs leading-tight">{{ tool.name }}</p>
+                                            <span class="text-gray-400 text-[9px] block truncate font-mono mt-0.5">{{ tool.description }}</span>
+                                        </div>
+                                    </label>
+                                </div>
+                            </div>
+
+                            <!-- 1.2 其他自定义与扩展工具禁用 -->
+                            <div v-show="otherAvailableTools.length > 0" class="border border-gray-150 rounded-xl p-3 bg-white shadow-sm">
+                                <h4 class="text-xs font-bold text-gray-700 mb-2 flex items-center justify-between select-none">
+                                    <span class="flex items-center gap-1.5">
+                                        <span class="w-1.5 h-1.5 bg-indigo-500 rounded-full"></span>
+                                        自定义 API 与 MCP 扩展工具禁用
+                                    </span>
+                                    <input
+                                        v-model="toolSearchQuery"
+                                        type="text"
+                                        placeholder="搜索工具名..."
+                                        class="text-[10px] border border-gray-200 rounded px-2 py-0.5 w-[140px] focus:outline-none focus:border-indigo-500"
+                                    />
+                                </h4>
+                                <div class="max-h-[140px] overflow-y-auto border border-gray-100 rounded-lg p-2 bg-gray-50 custom-scrollbar grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                                    <label v-for="tool in filteredOtherTools" :key="tool.id" class="flex items-center p-1.5 rounded border bg-white hover:bg-gray-50 transition-colors cursor-pointer text-xs">
+                                        <input
+                                            type="checkbox"
+                                            :value="tool.id"
+                                            v-model="permissionData.forbidden_tools"
+                                            class="h-3.5 w-3.5 rounded text-indigo-600 focus:ring-indigo-500"
+                                        />
+                                        <div class="ml-1.5 min-w-0 flex-1">
+                                            <p class="font-bold text-gray-900 truncate text-[11px] leading-tight">{{ tool.name }}</p>
+                                            <p class="text-[9px] text-gray-400 truncate mt-0.5">{{ tool.description }}</p>
+                                        </div>
+                                    </label>
+                                </div>
+                            </div>
+
+                            <!-- 2. 禁用 Bash 命令关键字 -->
+                            <div class="border border-gray-150 rounded-xl p-3 bg-white shadow-sm flex flex-col">
+                                <h4 class="text-xs font-bold text-gray-700 mb-2 flex items-center gap-1.5 select-none">
+                                    <span class="w-1.5 h-1.5 bg-amber-500 rounded-full"></span>
+                                    自定义禁用命令关键字
+                                </h4>
+                                <p class="text-[10px] text-gray-400 mb-2">针对 exec_command 终端工具，输入禁止该角色下的用户运行的命令名或命令序列（例如：rm, shutdown, mv, wget），用英文逗号隔开。</p>
+                                <textarea
+                                    v-model="forbiddenCommandsText"
+                                    placeholder="例如: rm, shutdown, mv, wget, curl"
+                                    class="w-full text-xs sm:text-sm border border-gray-200 rounded-lg p-2.5 min-h-[85px] focus:ring-amber-500 focus:border-amber-500 custom-scrollbar focus:outline-none"
+                                ></textarea>
+                            </div>
+                        </div>
+
                         <div v-else-if="currentResources.length === 0" class="text-center py-10 text-gray-500 text-xs italic">（暂无资源）</div>
                         <div v-else class="grid grid-cols-1 xs:grid-cols-2 lg:grid-cols-3 gap-2">
-                            <label 
-                                v-for="res in currentResources" 
-                                :key="res.id" 
+                            <label
+                                v-for="res in currentResources"
+                                :key="res.id"
                                 class="flex items-start p-2.5 rounded-lg border transition-all shadow-sm group bg-white"
                                 :class="[
                                     isMissingKnowledgeBase(res)
@@ -322,9 +401,9 @@
                                 ]"
                                 :title="isMissingKnowledgeBase(res) ? '该知识库已在 RAGFlow 失联，不可分配权限' : undefined"
                             >
-                                <input 
-                                    type="checkbox" 
-                                    :value="res.id" 
+                                <input
+                                    type="checkbox"
+                                    :value="res.id"
                                     v-model="(permissionData as any)[activeResTab]"
                                     :disabled="isMissingKnowledgeBase(res)"
                                     class="h-4 w-4 rounded mt-0.5 flex-shrink-0 border-gray-300 focus:ring-2 disabled:cursor-not-allowed disabled:opacity-50"
@@ -343,10 +422,10 @@
                             </label>
                         </div>
                     </div>
-                    <div class="flex-shrink-0 flex justify-between items-center py-1 text-[10px] text-gray-500 px-1">
+                    <div v-if="activeResTab !== 'forbidden_configs'" class="flex-shrink-0 flex justify-between items-center py-1 text-[10px] text-gray-500 px-1">
                         <span>已勾选: <b class="text-blue-600">{{ (permissionData as any)[activeResTab].length }}</b></span>
-                        <button 
-                            @click="toggleSelectAll" 
+                        <button
+                            @click="toggleSelectAll"
                             class="font-black hover:underline text-blue-600"
                         >
                             {{ isAllSelected ? '全部取消' : '全选本页' }}
@@ -363,8 +442,8 @@
                                 <!-- Menu Parent -->
                                 <div class="px-3 py-2.5 bg-gray-50 flex items-center justify-between border-b border-gray-100">
                                     <div class="flex items-center gap-2">
-                                        <input 
-                                            type="checkbox" 
+                                        <input
+                                            type="checkbox"
                                             :checked="isItemSelected(menu.id)"
                                             @change="toggleTreeItem(menu.id)"
                                             class="h-4 w-4 text-blue-600 rounded border-gray-300 focus:ring-blue-500 cursor-pointer"
@@ -372,17 +451,17 @@
                                         <span class="font-black text-gray-800 text-xs sm:text-sm">{{ menu.label }}</span>
                                     </div>
                                 </div>
-                                
+
                                 <!-- Children Elements -->
                                 <div v-if="menu.children && menu.children.length > 0" class="p-3 grid grid-cols-1 xs:grid-cols-2 gap-2">
-                                    <div 
-                                        v-for="child in menu.children" 
+                                    <div
+                                        v-for="child in menu.children"
                                         :key="child.id"
                                         @click="toggleTreeItem(child.id)"
                                         class="flex items-center gap-2.5 p-2 rounded-lg border border-transparent hover:bg-blue-50 transition-all cursor-pointer group"
                                         :class="isItemSelected(child.id) ? 'bg-blue-50/50 border-blue-100 shadow-inner' : ''"
                                     >
-                                        <div 
+                                        <div
                                             class="w-3.5 h-3.5 rounded border flex-shrink-0 flex items-center justify-center transition-all"
                                             :class="isItemSelected(child.id) ? 'bg-blue-600 border-blue-600' : 'bg-white border-gray-300'"
                                         >
@@ -414,10 +493,10 @@
 
             <div class="flex-shrink-0 p-4 sm:p-0 mt-2 sm:mt-6 flex flex-col sm:flex-row justify-end gap-2 sm:pt-4 border-t border-gray-100 sm:border-t-0">
                 <button @click="closePermissionDialog" class="order-2 sm:order-1 px-4 py-2.5 border border-gray-300 rounded-lg hover:bg-gray-50 text-sm font-medium">{{ activeMainTab === 'quota' ? '关闭' : '取消' }}</button>
-                <button 
+                <button
                     v-if="activeMainTab !== 'quota'"
-                    @click="savePermissions" 
-                    :disabled="submittingPerms" 
+                    @click="savePermissions"
+                    :disabled="submittingPerms"
                     class="order-1 sm:order-2 px-4 py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 text-sm font-bold shadow-lg shadow-blue-200"
                 >
                     {{ submittingPerms ? '...' : '确认并保存配置' }}
@@ -428,7 +507,7 @@
 
     <!-- User Assignment Dialog (Refactored to Dual Column) -->
     <div v-if="showUserAssignmentDialog" class="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-[9990] backdrop-blur-sm" @click.self="closeUserAssignmentDialog">
-        <div 
+        <div
             class="bg-white flex flex-col shadow-2xl transition-all duration-500 overflow-hidden"
             :class="isMobile ? 'w-full h-full rounded-none' : 'rounded-3xl p-6 w-full max-w-4xl max-h-[90vh]'"
         >
@@ -457,12 +536,12 @@
                         </div>
                         <button @click="addAllVisible" class="text-[10px] font-bold text-blue-600 hover:underline">全选本页</button>
                     </div>
-                    
+
                     <div class="relative mb-3">
-                        <input 
-                            v-model="userSearchQuery" 
-                            type="text" 
-                            placeholder="搜索候选用户..." 
+                        <input
+                            v-model="userSearchQuery"
+                            type="text"
+                            placeholder="搜索候选用户..."
                             class="w-full bg-white border border-gray-200 rounded-xl px-4 py-2.5 pl-10 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all text-sm"
                         />
                         <svg class="w-4 h-4 text-gray-400 absolute left-3.5 top-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -473,8 +552,8 @@
                     <div class="flex-1 overflow-y-auto custom-scrollbar pr-1 space-y-1.5">
                         <div v-if="loadingUsers" class="text-center py-20 text-gray-400 text-xs animate-pulse">正在获取候选库...</div>
                         <div v-else-if="filteredAvailableUsers.length === 0" class="text-center py-20 text-gray-400 text-xs italic">暂无可分配用户</div>
-                        <div 
-                            v-for="user in filteredAvailableUsers" 
+                        <div
+                            v-for="user in filteredAvailableUsers"
                             :key="'avail-'+user.id"
                             @click="toggleUser(user.id)"
                             class="flex items-center p-3 rounded-xl bg-white border border-gray-100 hover:border-blue-300 hover:shadow-md hover:shadow-blue-500/5 transition-all cursor-pointer group active:scale-[0.98]"
@@ -514,8 +593,8 @@
                             </div>
                             <span class="text-xs text-blue-400/80 font-medium">从左侧点击添加用户</span>
                         </div>
-                        <div 
-                            v-for="user in selectedUsersDetails" 
+                        <div
+                            v-for="user in selectedUsersDetails"
                             :key="'sel-'+user.id"
                             @click="toggleUser(user.id)"
                             class="flex items-center p-3 rounded-xl bg-white border border-blue-200 hover:border-red-300 hover:shadow-lg hover:shadow-red-500/5 transition-all cursor-pointer group active:scale-[0.98] ring-1 ring-blue-500/5"
@@ -543,9 +622,9 @@
                 </div>
                 <div class="flex gap-3 w-full sm:w-auto">
                     <button @click="closeUserAssignmentDialog" class="flex-1 sm:flex-none px-6 py-2.5 border border-gray-200 rounded-xl hover:bg-gray-50 text-sm font-bold text-gray-500 transition-all">取消更改</button>
-                    <button 
-                        @click="saveUserAssignments" 
-                        :disabled="submittingUserAssignment" 
+                    <button
+                        @click="saveUserAssignments"
+                        :disabled="submittingUserAssignment"
                         class="flex-1 sm:flex-none px-10 py-2.5 bg-blue-600 text-white rounded-xl hover:bg-blue-700 disabled:opacity-50 text-sm font-black shadow-xl shadow-blue-200 transition-all active:scale-[0.98]"
                     >
                         {{ submittingUserAssignment ? '正在同步...' : '确认分配' }}
@@ -633,8 +712,8 @@ const userSearchQuery = ref('')
 
 // Permissions
 const activeMainTab = ref<'assets' | 'ui' | 'quota'>('assets')
-const activeResTab = ref<'agents' | 'datasets' | 'metadata' | 'apis'>('agents')
-const resourceTypes = ['agents', 'datasets', 'metadata', 'apis'] as const
+const activeResTab = ref<'agents' | 'datasets' | 'metadata' | 'apis' | 'forbidden_configs'>('agents')
+const resourceTypes = ['agents', 'datasets', 'metadata', 'apis', 'forbidden_configs'] as const
 
 const resourceConfig: Record<typeof resourceTypes[number], { label: string, color: string, tabActive: string, tabTextActive: string, cardSelected: string, icon: string }> = {
     agents: {
@@ -668,6 +747,14 @@ const resourceConfig: Record<typeof resourceTypes[number], { label: string, colo
         tabTextActive: 'text-purple-600',
         cardSelected: 'ring-1 ring-purple-400 border-purple-200 bg-purple-50',
         icon: `<svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" /></svg>`
+    },
+    forbidden_configs: {
+        label: '禁用工具与命令',
+        color: 'red',
+        tabActive: 'text-red-600 border-red-600 bg-red-50',
+        tabTextActive: 'text-red-600',
+        cardSelected: 'ring-1 ring-red-400 border-red-200 bg-red-50',
+        icon: `<svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" /></svg>`
     }
 }
 const loadingResources = ref(false)
@@ -688,15 +775,68 @@ const permissionData = ref<{
     metadata: string[],
     apis: string[],
     menus: string[],
-    elements: string[]
+    elements: string[],
+    forbidden_tools: string[],
+    forbidden_commands: string[]
 }>({
     agents: [],
     datasets: [],
     metadata: [],
     apis: [],
     menus: [],
-    elements: []
+    elements: [],
+    forbidden_tools: [],
+    forbidden_commands: []
 })
+
+const forbiddenCommandsText = ref("")
+
+const availableToolsToForbid = [
+  { id: "exec_command", name: "执行终端命令 (exec_command)", description: "在沙箱中执行 Bash/shell 命令行" },
+  { id: "write_file", name: "写入/修改文件 (write_file)", description: "对沙箱目录物理写入或修改代码文件" },
+  { id: "read_file", name: "读取文件内容 (read_file)", description: "读取沙箱工作目录中的文本或源代码" },
+  { id: "manage_process", name: "进程管理 (manage_process)", description: "查看或终止沙箱中的系统进程" }
+]
+
+const otherAvailableTools = ref<any[]>([])
+const toolSearchQuery = ref("")
+
+const filteredOtherTools = computed(() => {
+    const query = toolSearchQuery.value.trim().toLowerCase()
+    if (!query) return otherAvailableTools.value
+    return otherAvailableTools.value.filter(t =>
+        t.name.toLowerCase().includes(query) ||
+        t.description.toLowerCase().includes(query)
+    )
+})
+
+const fetchAllSystemTools = async () => {
+    try {
+        const [resPortal, resMcp] = await Promise.all([
+            axios.get("/api/portal/tools"),
+            axios.get("/api/portal/tools/mcp").catch(() => ({ data: [] }))
+        ])
+
+        const dynamicMapped = (resPortal.data || []).map((t: any) => ({
+            id: t.name,
+            name: t.name,
+            description: t.description || "自定义 API 工具",
+            category: "api"
+        }))
+
+        const mcpMapped = (Array.isArray(resMcp.data) ? resMcp.data : (resMcp.data.data || [])).map((t: any) => ({
+            id: t.name,
+            name: t.name,
+            description: t.description || "MCP 注册工具",
+            category: "mcp"
+        }))
+
+        const forbiddenIds = new Set(["exec_command", "write_file", "read_file", "manage_process"])
+        otherAvailableTools.value = [...dynamicMapped, ...mcpMapped].filter(t => !forbiddenIds.has(t.name))
+    } catch (e) {
+        console.error("Failed to fetch all tools for permission mapping", e)
+    }
+}
 
 const isMissingKnowledgeBase = (res: any) => {
     if (activeResTab.value !== 'datasets') return false
@@ -715,6 +855,7 @@ const resCheckboxClass = () => {
         datasets: 'text-green-600 focus:ring-green-500',
         metadata: 'text-orange-600 focus:ring-orange-500',
         apis: 'text-purple-600 focus:ring-purple-500',
+        forbidden_configs: 'text-red-600 focus:ring-red-500',
     }
     return map[activeResTab.value]
 }
@@ -723,7 +864,7 @@ const resCheckboxClass = () => {
 const toggleTreeItem = (itemId: string) => {
     const isMenu = itemId.startsWith('menu:');
     const targetArray = isMenu ? permissionData.value.menus : permissionData.value.elements;
-    
+
     const idx = targetArray.indexOf(itemId);
     if (idx > -1) {
         targetArray.splice(idx, 1);
@@ -742,13 +883,13 @@ const isItemSelected = (itemId: string) => {
 const filteredAvailableUsers = computed(() => {
     // 1. First, exclude users already assigned to this role
     const available = users.value.filter(u => !assignedUserIds.value.includes(u.id))
-    
+
     // 2. Then apply search filter
     if (!userSearchQuery.value) return available
     const q = userSearchQuery.value.toLowerCase()
-    return available.filter(u => 
-        (u.user_name || '').toLowerCase().includes(q) || 
-        (u.real_name || '').toLowerCase().includes(q) || 
+    return available.filter(u =>
+        (u.user_name || '').toLowerCase().includes(q) ||
+        (u.real_name || '').toLowerCase().includes(q) ||
         (u.email || '').toLowerCase().includes(q)
     )
 })
@@ -783,7 +924,7 @@ const openUserAssignmentDialog = async (role: any) => {
     showUserAssignmentDialog.value = true
     userSearchQuery.value = ''
     assignedUserIds.value = []
-    
+
     await Promise.all([
         fetchAllUsers(),
         fetchRoleUsers(role.id)
@@ -796,9 +937,9 @@ const fetchAllUsers = async () => {
     try {
         const apiKey = localStorage.getItem('api_key')
         // Get all users (setting a large size to get most users for selection)
-        const response = await axios.get('/api/portal/management/users', { 
+        const response = await axios.get('/api/portal/management/users', {
             headers: { 'X-API-Key': apiKey },
-            params: { page: 1, size: 1000 } 
+            params: { page: 1, size: 1000 }
         })
         users.value = response.data.items || []
     } catch (e) {
@@ -812,8 +953,8 @@ const fetchAllUsers = async () => {
 const fetchRoleUsers = async (roleId: number) => {
     try {
         const apiKey = localStorage.getItem('api_key')
-        const response = await axios.get(`/api/portal/roles/${roleId}/users`, { 
-            headers: { 'X-API-Key': apiKey } 
+        const response = await axios.get(`/api/portal/roles/${roleId}/users`, {
+            headers: { 'X-API-Key': apiKey }
         })
         assignedUserIds.value = response.data.user_ids || []
     } catch (e) {
@@ -827,8 +968,8 @@ const saveUserAssignments = async () => {
     try {
         const apiKey = localStorage.getItem('api_key')
         await axios.post(
-            `/api/portal/roles/${currentRole.value.id}/users`, 
-            { user_ids: assignedUserIds.value }, 
+            `/api/portal/roles/${currentRole.value.id}/users`,
+            { user_ids: assignedUserIds.value },
             { headers: { 'X-API-Key': apiKey } }
         )
         showToast('用户分配保存成功', 'success')
@@ -848,6 +989,7 @@ const closeUserAssignmentDialog = () => {
 
 // Computed
 const currentResources = computed(() => {
+    if (activeResTab.value === 'forbidden_configs') return []
     return allResources.value[activeResTab.value] || []
 })
 
@@ -858,7 +1000,8 @@ const selectableResources = computed(() =>
 const isAllSelected = computed(() => {
     const current = selectableResources.value
     if (current.length === 0) return false
-    const selected = (permissionData.value as any)[activeResTab.value]
+    if (activeResTab.value === 'forbidden_configs') return false
+    const selected = permissionData.value[activeResTab.value]
     return current.every((r: any) => selected.includes(r.id))
 })
 
@@ -870,7 +1013,7 @@ const fetchRoles = async () => {
         const apiKey = localStorage.getItem('api_key')
         const params: any = { page: page.value, size: size.value }
         if (searchQuery.value) params.search = searchQuery.value
-        
+
         const response = await axios.get('/api/portal/roles', {
             headers: { 'X-API-Key': apiKey },
             params
@@ -923,7 +1066,7 @@ const saveRole = async () => {
     }
     submitting.value = true
     error.value = ''
-    
+
     try {
         const apiKey = localStorage.getItem('api_key')
         if (showEditDialog.value && editingRoleId.value) {
@@ -998,7 +1141,7 @@ const fetchResources = async () => {
              (id: string) => !missingIds.has(id)
            )
          }
-         
+
          if (available) {
              allResources.value.agents = available.agents || []
              allResources.value.metadata = (available.metadata || []).map((m: any) => ({ ...m, id: String(m.id) }))
@@ -1027,11 +1170,24 @@ const fetchRolePermissions = async (roleId: number) => {
             metadata: perms.metadata || [],
             apis: perms.apis || [],
             menus: perms.menus || [],
-            elements: perms.elements || []
+            elements: perms.elements || [],
+            forbidden_tools: perms.forbidden_tools || [],
+            forbidden_commands: perms.forbidden_commands || []
         }
+        forbiddenCommandsText.value = (perms.forbidden_commands || []).join(", ")
     } catch (e) {
         console.error('Fetch Permissions Failed', e)
-        permissionData.value = { agents: [], datasets: [], metadata: [], apis: [], menus: [], elements: [] }
+        permissionData.value = {
+            agents: [],
+            datasets: [],
+            metadata: [],
+            apis: [],
+            menus: [],
+            elements: [],
+            forbidden_tools: [],
+            forbidden_commands: []
+        }
+        forbiddenCommandsText.value = ""
     }
 }
 
@@ -1045,13 +1201,18 @@ const savePermissions = async () => {
                 .filter((d: any) => d?.is_missing_in_ragflow || d?.status === 'missing')
                 .map((d: any) => d.id)
         )
+        permissionData.value.forbidden_commands = forbiddenCommandsText.value
+          .split(",")
+          .map(cmd => cmd.trim())
+          .filter(cmd => cmd.length > 0)
+
         const payload = {
             ...permissionData.value,
             datasets: (permissionData.value.datasets || []).filter((id: string) => !missingIds.has(id)),
         }
         await axios.put(
-            `/api/portal/roles/${currentRole.value.id}/permissions`, 
-            payload, 
+            `/api/portal/roles/${currentRole.value.id}/permissions`,
+            payload,
             { headers: { 'X-API-Key': apiKey } }
         )
         showToast('权限保存成功', 'success')
@@ -1065,10 +1226,11 @@ const savePermissions = async () => {
 
 const toggleSelectAll = () => {
     const type = activeResTab.value
+    if (type === 'forbidden_configs') return
     if (isAllSelected.value) {
-        (permissionData.value as any)[type] = []
+        permissionData.value[type] = []
     } else {
-        (permissionData.value as any)[type] = selectableResources.value.map((r: any) => r.id)
+        permissionData.value[type] = selectableResources.value.map((r: any) => r.id)
     }
 }
 
@@ -1091,6 +1253,7 @@ const formatDate = (dateStr: string) => {
 
 onMounted(() => {
     fetchRoles()
+    fetchAllSystemTools()
 })
 
 </script>

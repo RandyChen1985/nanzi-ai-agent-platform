@@ -892,6 +892,7 @@ class AssistantAgentRunner(BaseExecutor):
             tools,
             approval_mode=self.permission_options.get("approval_mode"),
             loop_detector=loop_detector,
+            user_id=self._runtime_user_id(),
         )
         middlewares = []
         if self.conversation_id:
@@ -1376,7 +1377,7 @@ class AssistantAgentRunner(BaseExecutor):
         target_tool: Any,
         tool_index: int,
     ) -> Dict[str, Any]:
-        is_error = "Error" in str(tool_output)
+        is_error = "Error" in str(tool_output) or "安全策略拦截" in str(tool_output) or "Permission Denied" in str(tool_output) or "PermissionDenied" in str(tool_output)
 
         runtime_cfg = getattr(target_tool, "_runtime_config", None)
         t_model = getattr(runtime_cfg, "model_name", self.config.model_name)

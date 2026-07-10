@@ -198,10 +198,10 @@ def test_path_traversal_protection(mock_skills_dir):
 
 def test_skills_stats_service_recording(mock_skills_dir):
     from app.services.ai.skills_stats_service import skills_stats_service
-    
+
     # 模拟写入 Redis 并读取
     run(skills_stats_service.record_activations(["test-skill-1", "test-skill-2"]))
-    
+
     stats = run(skills_stats_service.get_stats(days=7))
     assert "total" in stats
     assert "trend" in stats
@@ -209,7 +209,47 @@ def test_skills_stats_service_recording(mock_skills_dir):
 
 def test_get_skills_stats_endpoint(mock_skills_dir):
     user = {"user_name": "admin", "role": "admin"}
-    
+
     response = run(skills.get_skills_stats(user_info=user))
     assert "total" in response
     assert "trend" in response
+
+
+def test_enforce_command_blacklist(mock_skills_dir):
+    from unittest.mock import patch, AsyncMock
+    from app.services.ai.runtime.agentscope.tools import _enforce_command_blacklist
+    from app.core.context import AgentContext
+    from agentscope.permission import PermissionBehavior
+
+    # 模拟 Context
+    mock_ctx = AgentContext(
+        agent_id="test-agent",
+        agent_name="test-name",
+        user_id=123,
+        is_admin=False
+    )
+
+    mock_perms = SimpleNamespace(
+        roles=["user"],
+        permissions=SimpleNamespace(
+            forbidden_commands=["rm", "shutdown"]
+        )
+    )
+
+    with patch("app.core.context.get_current_agent_context", return_value=mock_ctx):
+        with patch("app.services.permission_service.PermissionService.get_user_permissions", new_callable=AsyncMock) as mock_get_perms:
+            mock_get_perms.return_value = mock_perms
+
+            # 测试包含 rm 的命令被拦截
+            res = run(_enforce_command_blacklist("exec_command", {"command": "rm -rf /"}))
+            assert res is not None
+            assert res.behavior == PermissionBehavior.DENY
+            assert "安全策略拦截" in res.message
+
+            # 测试不包含敏感词的命令放行
+            res2 = run(_enforce_command_blacklist("exec_command", {"command": "git status"}))
+            assert res2 is None
+
+            # 测试非 exec_command 工具直接放行
+            res3 = run(_enforce_command_blacklist("read_file", {"path": "/app/data"}))
+            assert res3 is None

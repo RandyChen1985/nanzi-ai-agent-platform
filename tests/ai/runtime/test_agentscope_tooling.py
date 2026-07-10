@@ -356,6 +356,87 @@ def test_build_toolkit_wraps_native_agentscope_tools_with_approval_mode(monkeypa
 
 
 @pytest.mark.asyncio
+async def test_native_wrapper_applies_user_forbidden_tool_and_command_checks(monkeypatch):
+    from agentscope.permission import PermissionBehavior, PermissionDecision
+    from agentscope.tool import Bash
+
+    from app.services.ai.runtime.agentscope.tools import AgentScopeNativeApprovalTool
+
+    calls = []
+
+    async def deny_forbidden_tool(tool_name, user_id):
+        calls.append(("tool", tool_name, user_id))
+        return PermissionDecision(
+            behavior=PermissionBehavior.DENY,
+            message="blocked",
+            bypass_immune=True,
+        )
+
+    async def allow_command(tool_name, tool_input, user_id):
+        calls.append(("command", tool_name, user_id, tool_input))
+        return None
+
+    monkeypatch.setattr(
+        "app.services.ai.runtime.agentscope.tools._enforce_tool_forbidden",
+        deny_forbidden_tool,
+    )
+    monkeypatch.setattr(
+        "app.services.ai.runtime.agentscope.tools._enforce_command_blacklist",
+        allow_command,
+    )
+
+    tool = AgentScopeNativeApprovalTool(Bash(), approval_mode="allow", user_id=42)
+    decision = await tool.check_permissions({"command": "git status"}, None)
+
+    assert decision.behavior == PermissionBehavior.DENY
+    assert calls == [("tool", "Bash", 42)]
+
+
+@pytest.mark.parametrize(
+    ("command", "rule", "expected"),
+    [
+        ("rm -rf /tmp/example", "rm", True),
+        ("sudo /bin/rm file.txt", "rm", True),
+        ("terraform plan", "rm", False),
+        ("echo normal", "rm", False),
+        ("shutdown -h now", "shutdown", True),
+    ],
+)
+def test_forbidden_command_matching_uses_shell_tokens(command, rule, expected):
+    from app.services.ai.runtime.agentscope.tools import _matches_forbidden_command
+
+    assert _matches_forbidden_command(command, rule) is expected
+
+
+@pytest.mark.asyncio
+async def test_forbidden_tool_check_denies_when_user_policy_cannot_be_loaded(monkeypatch):
+    from agentscope.permission import PermissionBehavior
+
+    from app.services.ai.runtime.agentscope.tools import _enforce_tool_forbidden
+
+    class BrokenSessionContext:
+        async def __aenter__(self):
+            raise RuntimeError("database unavailable")
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            return False
+
+    monkeypatch.setattr(
+        "app.core.context.get_current_agent_context",
+        lambda: None,
+    )
+    monkeypatch.setattr(
+        "app.core.orm.AsyncSessionLocal",
+        lambda: BrokenSessionContext(),
+    )
+
+    decision = await _enforce_tool_forbidden("exec_command", 42)
+
+    assert decision.behavior == PermissionBehavior.DENY
+    assert decision.decision_reason == "user_permission_policy_unavailable"
+
+
+@pytest.mark.asyncio
 async def test_build_toolkit_integrates_with_real_agentscope_toolkit():
     pytest.importorskip("agentscope.tool")
 

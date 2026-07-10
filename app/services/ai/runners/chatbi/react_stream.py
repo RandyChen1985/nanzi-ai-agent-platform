@@ -292,12 +292,19 @@ async def stream_agentscope_events(
             notice = final_parsed.get("permission_notice") if isinstance(final_parsed, dict) else None
             if isinstance(notice, dict) and notice.get("row_filter_applied") is True:
                 yield {"type": "meta", "permission_notice": notice}
+        is_error = (
+            "Error" in str(output)
+            or "安全策略拦截" in str(output)
+            or "Permission Denied" in str(output)
+            or "PermissionDenied" in str(output)
+            or getattr(state, "sql_error", False)
+        )
         log_payload: Dict[str, Any] = {
             "type": "log",
             "id": tool_id,
             "title": f"工具完成: {tool_name}",
             "details": runner._format_tool_details(tool_name, output, state, tool_args),
-            "status": "success",
+            "status": "success" if not is_error else "error",
             "execution_time_ms": duration_ms,
         }
         if (

@@ -55,7 +55,7 @@ class PermissionService:
         user_stmt = select(User).where(User.id == user_id)
         user_result = await self.db.execute(user_stmt)
         user = user_result.scalar_one_or_none()
-        
+
         if user and user.role:
             user_roles_list.append(user.role) # Add 'admin' or 'user'
 
@@ -250,7 +250,7 @@ class PermissionService:
 
     async def _fetch_permission_details(self, perm_set: PermissionSet) -> PermissionSetDetail:
         details = PermissionSetDetail()
-        
+
         # 中文映射字典 (支持多种可能的键名格式)
         menu_name_mapping = {
             'dashboard': '仪表盘',
@@ -276,7 +276,7 @@ class PermissionService:
             'knowledge_retrieval_test': '检索测试',
             'memory_management': '记忆工作台'
         }
-        
+
         element_module_mapping = {
             'metadata': '元数据管理',
             'agent': '智能体中心',
@@ -289,7 +289,7 @@ class PermissionService:
             'knowledge': '知识库开发平台',
             'memory': '记忆工作台'
         }
-        
+
         element_action_mapping = {
             'import': '导入',
             'edit': '编辑',
@@ -310,16 +310,16 @@ class PermissionService:
             'parse_document': '解析文档',
             'test_retrieval': '检索测试'
         }
-        
+
         # 1. Agents
         if perm_set.agents:
             stmt = select(AIAgent).where(AIAgent.id.in_(perm_set.agents))
             agents = (await self.db.execute(stmt)).scalars().all()
             details.agents = [
                 ResourceDetail(
-                    id=a.id, 
-                    name=a.name, 
-                    display_name=a.display_name, 
+                    id=a.id,
+                    name=a.name,
+                    display_name=a.display_name,
                     description=a.description
                 ) for a in agents
             ]
@@ -331,15 +331,15 @@ class PermissionService:
             for mid in perm_set.metadata:
                 if mid.isdigit():
                     meta_ids.append(int(mid))
-            
+
             if meta_ids:
                 stmt = select(MetaDataset).where(MetaDataset.id.in_(meta_ids))
                 metas = (await self.db.execute(stmt)).scalars().all()
                 details.metadata = [
                     ResourceDetail(
-                        id=str(m.id), 
-                        name=m.name, 
-                        display_name=m.display_name, 
+                        id=str(m.id),
+                        name=m.name,
+                        display_name=m.display_name,
                         description=m.description or ""
                     ) for m in metas
                 ]
@@ -350,13 +350,13 @@ class PermissionService:
             apis = (await self.db.execute(stmt)).scalars().all()
             details.apis = [
                 ResourceDetail(
-                    id=a.id, 
-                    name=a.name, 
+                    id=a.id,
+                    name=a.name,
                     display_name=a.name, # API tools might not have separate display_name
                     description=a.description
                 ) for a in apis
             ]
-            
+
         # 4. 知识库（RAGFlow dataset id → knowledge_base_metadata 名称）
         if perm_set.datasets:
             ds_ids = [(d or "").strip() for d in perm_set.datasets if (d or "").strip()]
@@ -402,8 +402,8 @@ class PermissionService:
                 display_name = menu_name_mapping.get(menu_key, menu_key.capitalize())
                 details.menus.append(
                     ResourceDetail(
-                        id=m_id, 
-                        name=m_id, 
+                        id=m_id,
+                        name=m_id,
                         display_name=display_name
                     )
                 )
@@ -417,25 +417,39 @@ class PermissionService:
                 if len(parts) >= 3:
                     module = parts[1]  # 模块
                     action = parts[2]  # 操作
-                    
+
                     # 获取模块和操作的中文映射
                     module_name = element_module_mapping.get(module, module)
                     action_name = element_action_mapping.get(action, action)
-                    
+
                     # 组合成完整的中文描述
                     display_name = f"{module_name}-{action_name}"
                 else:
                     # 如果格式不符合预期，使用原有逻辑
                     display_name = e_id.split(':')[-1]
-                
+
                 details.elements.append(
                     ResourceDetail(
-                        id=e_id, 
-                        name=e_id, 
+                        id=e_id,
+                        name=e_id,
                         display_name=display_name
                     )
                 )
-            
+
+        # 7. Forbidden Tools
+        if perm_set.forbidden_tools:
+            details.forbidden_tools = [
+                ResourceDetail(id=t_id, name=t_id, display_name=t_id)
+                for t_id in perm_set.forbidden_tools
+            ]
+
+        # 8. Forbidden Commands
+        if perm_set.forbidden_commands:
+            details.forbidden_commands = [
+                ResourceDetail(id=cmd, name=cmd, display_name=cmd)
+                for cmd in perm_set.forbidden_commands
+            ]
+
         return details
 
     def _aggregate_permissions(self, perm_set: PermissionSet, perms: list[ResourcePermission]):
@@ -458,11 +472,17 @@ class PermissionService:
             elif p.resource_type == "element":
                 if p.resource_id not in perm_set.elements:
                     perm_set.elements.append(p.resource_id)
+            elif p.resource_type == "forbidden_tool":
+                if p.resource_id not in perm_set.forbidden_tools:
+                    perm_set.forbidden_tools.append(p.resource_id)
+            elif p.resource_type == "forbidden_command":
+                if p.resource_id not in perm_set.forbidden_commands:
+                    perm_set.forbidden_commands.append(p.resource_id)
 
     async def update_user_permissions(self, user_id: int, updates: PermissionUpdate):
         """Update DIRECT user permissions"""
         try:
-            types_to_update = ["agent", "dataset", "api", "metadata", "menu", "element"]
+            types_to_update = ["agent", "dataset", "api", "metadata", "menu", "element", "forbidden_tool", "forbidden_command"]
             await self.db.execute(
                 delete(ResourcePermission).where(
                     ResourcePermission.user_id == user_id,
@@ -483,13 +503,17 @@ class PermissionService:
                 new_perms.append(ResourcePermission(user_id=user_id, resource_type="menu", resource_id=menu_id))
             for element_id in updates.elements:
                 new_perms.append(ResourcePermission(user_id=user_id, resource_type="element", resource_id=element_id))
+            for t_id in updates.forbidden_tools:
+                new_perms.append(ResourcePermission(user_id=user_id, resource_type="forbidden_tool", resource_id=t_id))
+            for cmd in updates.forbidden_commands:
+                new_perms.append(ResourcePermission(user_id=user_id, resource_type="forbidden_command", resource_id=cmd))
 
             if new_perms:
                 self.db.add_all(new_perms)
-            
+
             await self.db.commit()
             await self._invalidate_user_cache(user_id)
-                
+
         except Exception as e:
             await self.db.rollback()
             logger.error(f"Failed to update permissions for user {user_id}: {e}")
@@ -507,7 +531,7 @@ class PermissionService:
             relations = [UserRoleRelation(user_id=user_id, role_id=rid) for rid in role_ids]
             if relations:
                 self.db.add_all(relations)
-            
+
             await self.db.commit()
             await self._invalidate_user_cache(user_id)
         except Exception as e:
@@ -522,10 +546,10 @@ class PermissionService:
             ResourcePermission.enabled == True
         )
         perms = (await self.db.execute(stmt)).scalars().all()
-        
+
         perm_set = PermissionSet()
         self._aggregate_permissions(perm_set, perms)
-        
+
         # Get role code/name
         role = await self.db.get(Role, role_id)
         role_name = [role.code] if role else []
@@ -538,7 +562,7 @@ class PermissionService:
     async def update_role_permissions(self, role_id: int, updates: PermissionUpdate):
         """Update Role Permissions"""
         try:
-            types_to_update = ["agent", "dataset", "api", "metadata", "menu", "element"]
+            types_to_update = ["agent", "dataset", "api", "metadata", "menu", "element", "forbidden_tool", "forbidden_command"]
             await self.db.execute(
                 delete(ResourcePermission).where(
                     ResourcePermission.role_id == role_id,
@@ -559,21 +583,25 @@ class PermissionService:
                 new_perms.append(ResourcePermission(role_id=role_id, resource_type="menu", resource_id=menu_id))
             for element_id in updates.elements:
                 new_perms.append(ResourcePermission(role_id=role_id, resource_type="element", resource_id=element_id))
+            for t_id in updates.forbidden_tools:
+                new_perms.append(ResourcePermission(role_id=role_id, resource_type="forbidden_tool", resource_id=t_id))
+            for cmd in updates.forbidden_commands:
+                new_perms.append(ResourcePermission(role_id=role_id, resource_type="forbidden_command", resource_id=cmd))
 
             if new_perms:
                 self.db.add_all(new_perms)
-            
+
             await self.db.commit()
-            
+
             # Heavy operation: Invalidate cache for ALL users who have this role
             # For now, we might just accept 1 hour delay or try to find them.
             # Efficient way: Select user_ids from UserRoleRelation where role_id = role_id
             user_ids_stmt = select(UserRoleRelation.user_id).where(UserRoleRelation.role_id == role_id)
             user_ids = (await self.db.execute(user_ids_stmt)).scalars().all()
-            
+
             for uid in user_ids:
                 await self._invalidate_user_cache(uid)
-                
+
         except Exception as e:
             await self.db.rollback()
             logger.error(f"Failed to update permissions for role {role_id}: {e}")
@@ -600,32 +628,32 @@ class PermissionService:
         Admins bypass this check.
         """
         perms = await self.get_user_permissions(user_id)
-        
+
         # Admin bypass
         if "admin" in perms.roles:
             return True
-            
+
         # Check specific permission
         if resource_type == "agent":
             # 1. Explicit Permission Check (for System Agents)
             if resource_id in perms.permissions.agents:
                 return True
-            
+
             # 2. Ownership Check (for User Created Agents)
             agent = await self.db.get(AIAgent, resource_id)
             user = await self.db.get(User, user_id)
-            
+
             if agent and user:
                 # If System Agent: Must have explicit permission (already failed above)
                 if agent.is_system:
                     return False
-                
+
                 # If User Agent: Must be Owner AND Enabled
                 if agent.created_by == user.user_name and agent.is_enabled:
                     return True
-            
+
             return False
-            
+
         elif resource_type == "dataset":
             return resource_id in perms.permissions.datasets
         elif resource_type == "api":
@@ -641,7 +669,7 @@ class PermissionService:
             return resource_id in perms.permissions.elements
         elif resource_type == "menu":
             return resource_id in perms.permissions.menus
-            
+
         return False
 
     async def check_permission_by_api_key(self, api_key: str, resource_type: str, resource_id: str) -> bool:
@@ -650,11 +678,11 @@ class PermissionService:
         Admins bypass this check.
         """
         from app.services.auth_service import AuthService
-        
+
         user = await AuthService.verify_api_key(api_key, self.db)
         if not user:
             return False
-            
+
         return await self.check_permission(
             user_id=int(user["user_id"]),
             resource_type=resource_type,

@@ -28,6 +28,7 @@ async def resolve_runtime_tools_from_config(runner: Any) -> list[RuntimeToolSpec
                 continue
             tools.append(spec)
             seen.add(spec.name)
+
     return tools
 
 
@@ -42,7 +43,7 @@ async def build_native_agent(
     restored_state: Any = None,
 ) -> Any:
     dar = _runner_module()
-    toolkit = dar.build_toolkit(tools, approval_mode=runner.permission_options.get("approval_mode"))
+    toolkit = dar.build_toolkit(tools, approval_mode=runner.permission_options.get("approval_mode"), user_id=runner._current_user_id())
     workspace = await dar.get_local_workspace(
         user_id=runner._current_user_id(),
         user_name=runner._runtime_user_name(),

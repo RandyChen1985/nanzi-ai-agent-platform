@@ -2,12 +2,18 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import logging
+import os
+import shlex
 import time
 from dataclasses import dataclass
 from typing import Any, Callable, Literal
 
 from app.services.ai.runtime.agentscope.errors import RuntimeToolError, RuntimeTimeoutError, ToolLoopFuseError
 from app.services.ai.runtime.tool_loop_detector import ToolLoopDetector
+
+
+logger = logging.getLogger(__name__)
 
 
 ToolSourceType = Literal["static", "generic_api", "mcp", "class", "system"]
@@ -153,6 +159,7 @@ class AgentScopeRuntimeTool:
         spec: RuntimeToolSpec,
         approval_mode: RuntimeApprovalMode | str | None = None,
         loop_detector: ToolLoopDetector | None = None,
+        user_id: int | str | None = None,
     ) -> None:
         self.spec = spec
         self.name = spec.name
@@ -161,6 +168,7 @@ class AgentScopeRuntimeTool:
         self.is_read_only = spec.is_read_only
         self.approval_mode = _normalize_runtime_approval_mode(approval_mode)
         self.loop_detector = loop_detector
+        self.user_id = user_id
 
     def _check_tool_loop(self, tool_input: dict[str, Any]) -> None:
         if not self.loop_detector:
@@ -174,6 +182,15 @@ class AgentScopeRuntimeTool:
             from agentscope.permission import PermissionBehavior, PermissionDecision
         except Exception:
             return None
+
+        forbidden_decision = await _enforce_tool_forbidden(self.name, getattr(self, "user_id", None))
+        if forbidden_decision:
+            return forbidden_decision
+
+        blacklist_decision = await _enforce_command_blacklist(self.name, tool_input, getattr(self, "user_id", None))
+        if blacklist_decision:
+            return blacklist_decision
+
         if self.spec.permission_scope == "read":
             return PermissionDecision(
                 behavior=PermissionBehavior.ALLOW,
@@ -235,6 +252,7 @@ class AgentScopeNativeApprovalTool:
         approval_mode: RuntimeApprovalMode | str | None = None,
         permission_scope: RuntimePermissionScope | None = None,
         loop_detector: ToolLoopDetector | None = None,
+        user_id: int | str | None = None,
     ) -> None:
         self.native_tool = native_tool
         self.name = getattr(native_tool, "name", "")
@@ -244,6 +262,7 @@ class AgentScopeNativeApprovalTool:
         self.approval_mode = _normalize_runtime_approval_mode(approval_mode)
         self.permission_scope = permission_scope or _infer_native_permission_scope(native_tool)
         self.loop_detector = loop_detector
+        self.user_id = user_id
 
     def _check_tool_loop(self, tool_input: dict[str, Any]) -> None:
         if not self.loop_detector:
@@ -260,6 +279,19 @@ class AgentScopeNativeApprovalTool:
             from agentscope.permission import PermissionBehavior, PermissionDecision
         except Exception:
             return None
+
+        forbidden_decision = await _enforce_tool_forbidden(self.name, self.user_id)
+        if forbidden_decision:
+            return forbidden_decision
+
+        blacklist_decision = await _enforce_command_blacklist(
+            self.name,
+            tool_input,
+            self.user_id,
+        )
+        if blacklist_decision:
+            return blacklist_decision
+
         if self.permission_scope == "read":
             return PermissionDecision(
                 behavior=PermissionBehavior.ALLOW,
@@ -361,6 +393,7 @@ def runtime_tool_from_spec(
     *,
     approval_mode: RuntimeApprovalMode | str | None = None,
     loop_detector: ToolLoopDetector | None = None,
+    user_id: int | str | None = None,
 ) -> Any:
     if spec.native_tool is not None:
         return AgentScopeNativeApprovalTool(
@@ -368,11 +401,13 @@ def runtime_tool_from_spec(
             approval_mode=approval_mode,
             permission_scope=spec.permission_scope,
             loop_detector=loop_detector,
+            user_id=user_id,
         )
     return AgentScopeRuntimeTool(
         spec,
         approval_mode=approval_mode,
         loop_detector=loop_detector,
+        user_id=user_id,
     )
 
 
@@ -380,8 +415,9 @@ def runtime_tool_from_native(
     native_tool: Any,
     *,
     approval_mode: RuntimeApprovalMode | str | None = None,
+    user_id: int | str | None = None,
 ) -> Any:
-    return AgentScopeNativeApprovalTool(native_tool, approval_mode=approval_mode)
+    return AgentScopeNativeApprovalTool(native_tool, approval_mode=approval_mode, user_id=user_id)
 
 
 def build_toolkit(
@@ -389,10 +425,11 @@ def build_toolkit(
     *,
     approval_mode: RuntimeApprovalMode | str | None = None,
     loop_detector: ToolLoopDetector | None = None,
+    user_id: int | str | None = None,
 ):
     toolkit_cls = _load_agentscope_toolkit()
     tools = [
-        runtime_tool_from_spec(spec, approval_mode=approval_mode, loop_detector=loop_detector)
+        runtime_tool_from_spec(spec, approval_mode=approval_mode, loop_detector=loop_detector, user_id=user_id)
         for spec in tool_specs
     ]
     return toolkit_cls(tools=tools)
@@ -491,3 +528,125 @@ def infer_runtime_permission_scope(
     if source_type in {"generic_api", "mcp"}:
         return "ask"
     return "ask"
+
+
+async def _enforce_tool_forbidden(tool_name: str, explicit_user_id: int | str | None = None) -> Any:
+    from app.core.context import get_current_agent_context
+    agent_ctx = get_current_agent_context()
+    user_id = explicit_user_id or (agent_ctx.user_id if agent_ctx else None)
+
+    if explicit_user_id is None and agent_ctx and agent_ctx.is_admin:
+        return None
+
+    if user_id:
+        try:
+            from app.core.orm import AsyncSessionLocal
+            from app.services.permission_service import PermissionService
+            from app.services.ai.tools.registry import AGENTSCOPE_BUILTIN_TOOL_ALIASES
+            from agentscope.permission import PermissionBehavior, PermissionDecision
+
+            async with AsyncSessionLocal() as session:
+                perm_service = PermissionService(session)
+                perms = await perm_service.get_user_permissions(int(user_id))
+                if "admin" in perms.roles:
+                    return None
+
+                forbidden = set(perms.permissions.forbidden_tools or [])
+                if forbidden:
+                    extended_forbidden = set()
+                    for f in forbidden:
+                        extended_forbidden.add(f)
+                        if f in AGENTSCOPE_BUILTIN_TOOL_ALIASES:
+                            extended_forbidden.add(AGENTSCOPE_BUILTIN_TOOL_ALIASES[f])
+                        for k, v in AGENTSCOPE_BUILTIN_TOOL_ALIASES.items():
+                            if v == f:
+                                extended_forbidden.add(k)
+
+                    if tool_name in extended_forbidden:
+                        return PermissionDecision(
+                            behavior=PermissionBehavior.DENY,
+                            message=f"安全策略拦截：您的账号已被禁止使用 '{tool_name}' 工具。",
+                            decision_reason="hit_user_forbidden_tool",
+                            bypass_immune=True,
+                        )
+        except Exception as err:
+            logger.exception("Failed to enforce forbidden tools for user %s", user_id)
+            return _permission_policy_unavailable_decision()
+    return None
+
+
+async def _enforce_command_blacklist(tool_name: str, tool_input: dict[str, Any], explicit_user_id: int | str | None = None) -> Any:
+    if tool_name.lower() not in {"exec_command", "bash"}:
+        return None
+
+    from app.core.context import get_current_agent_context
+    agent_ctx = get_current_agent_context()
+    user_id = explicit_user_id or (agent_ctx.user_id if agent_ctx else None)
+
+    if explicit_user_id is None and agent_ctx and agent_ctx.is_admin:
+        return None
+
+    if user_id:
+        try:
+            from app.core.orm import AsyncSessionLocal
+            from app.services.permission_service import PermissionService
+            from agentscope.permission import PermissionBehavior, PermissionDecision
+
+            async with AsyncSessionLocal() as session:
+                perm_service = PermissionService(session)
+                perms = await perm_service.get_user_permissions(int(user_id))
+                if "admin" in perms.roles:
+                    return None
+
+                forbidden_cmds = [cmd.lower().strip() for cmd in (perms.permissions.forbidden_commands or []) if cmd.strip()]
+                if forbidden_cmds:
+                    command_str = str(tool_input.get("command", ""))
+                    for w in forbidden_cmds:
+                        if _matches_forbidden_command(command_str, w):
+                            return PermissionDecision(
+                                behavior=PermissionBehavior.DENY,
+                                message=f"安全策略拦截：您的账号已被禁止在该智能体中执行包含 '{w}' 的命令。",
+                                decision_reason="hit_user_command_blacklist",
+                                bypass_immune=True,
+                            )
+        except Exception as err:
+            logger.exception("Failed to enforce forbidden commands for user %s", user_id)
+            return _permission_policy_unavailable_decision()
+    return None
+
+
+def _permission_policy_unavailable_decision() -> Any:
+    from agentscope.permission import PermissionBehavior, PermissionDecision
+
+    return PermissionDecision(
+        behavior=PermissionBehavior.DENY,
+        message="安全策略暂时无法验证，工具调用已拒绝，请稍后重试。",
+        decision_reason="user_permission_policy_unavailable",
+        bypass_immune=True,
+    )
+
+
+def _shell_command_tokens(command: str) -> list[str]:
+    try:
+        lexer = shlex.shlex(command, posix=True, punctuation_chars=";&|()")
+        lexer.whitespace_split = True
+        raw_tokens = list(lexer)
+    except ValueError:
+        raw_tokens = command.split()
+    return [
+        os.path.basename(token).lower()
+        for token in raw_tokens
+        if token and not all(char in ";&|()" for char in token)
+    ]
+
+
+def _matches_forbidden_command(command: str, rule: str) -> bool:
+    command_tokens = _shell_command_tokens(command)
+    rule_tokens = _shell_command_tokens(rule)
+    if not rule_tokens or len(rule_tokens) > len(command_tokens):
+        return False
+    window_size = len(rule_tokens)
+    return any(
+        command_tokens[index : index + window_size] == rule_tokens
+        for index in range(len(command_tokens) - window_size + 1)
+    )
