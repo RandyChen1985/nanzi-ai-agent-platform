@@ -733,13 +733,15 @@ onMounted(async () => {
 
               <!-- 右侧按钮操作组 -->
               <div class="flex flex-wrap items-center justify-start sm:justify-end gap-2 flex-shrink-0">
-                <!-- 关键主按钮：查看表资产画像 (仅在摸排完成后高对比度凸显) -->
+                <!-- 关键主按钮：查看表资产画像 (与整体淡彩风格保持一致) -->
                 <button
                   v-if="profilingTasks[item.id]?.status === 2"
                   @click="openTableProfiles(item)"
-                  class="px-3.5 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-black shadow-md shadow-indigo-600/10 hover:shadow-indigo-600/20 transition-all flex items-center gap-1 cursor-pointer"
+                  class="px-3 py-1.5 rounded-lg bg-indigo-50 border border-indigo-100 text-indigo-600 hover:bg-indigo-100 hover:text-indigo-700 text-xs font-bold transition-all shadow-sm flex items-center gap-1.5 cursor-pointer"
                 >
-                  <span>🔍</span>
+                  <svg class="w-3.5 h-3.5 text-indigo-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+                  </svg>
                   <span>查看表资产画像</span>
                 </button>
 
