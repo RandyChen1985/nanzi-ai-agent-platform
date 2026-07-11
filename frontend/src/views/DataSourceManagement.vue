@@ -674,76 +674,95 @@ onMounted(async () => {
             class="p-4 hover:bg-gray-50 transition-colors"
             :class="editingId === item.id ? 'bg-primary/5' : ''"
           >
-            <div class="flex items-start justify-between gap-4">
-              <div class="min-w-0">
-                <div class="flex items-center gap-2 mb-1">
+            <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <!-- 左侧基本信息与状态说明 -->
+              <div class="min-w-0 flex-1">
+                <div class="flex items-center gap-2 mb-1 flex-wrap">
                   <h3 class="font-black text-gray-900 truncate">{{ item.name }}</h3>
-                  <span class="px-2 py-0.5 rounded border text-[10px] font-black uppercase" :class="dbTypeColor(item.db_type)">{{ item.db_type }}</span>
+                  <span class="px-2 py-0.5 rounded border text-[10px] font-black uppercase shrink-0" :class="dbTypeColor(item.db_type)">{{ item.db_type }}</span>
+                  <!-- 摸排完成的精致徽章 -->
+                  <span 
+                    v-if="profilingTasks[item.id] && profilingTasks[item.id].status === 2" 
+                    class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-100 text-[10px] font-black shrink-0 shadow-sm shadow-emerald-50"
+                  >
+                    <span>🤖</span>
+                    <span>已生成 {{ profilingTasks[item.id].total_tables }} 张表画像</span>
+                  </span>
+                  <!-- 摸排失败提示 -->
+                  <span 
+                    v-if="profilingTasks[item.id] && profilingTasks[item.id].status === 3" 
+                    class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-red-50 text-red-600 border border-red-100 text-[10px] font-bold shrink-0"
+                    :title="profilingTasks[item.id].error_message"
+                  >
+                    <span>⚠️</span>
+                    <span>分析中断</span>
+                  </span>
                 </div>
                 <p class="text-xs font-mono text-gray-500 truncate">{{ item.host }}:{{ item.port }} / {{ item.database_name }}</p>
                 <p class="text-xs text-gray-400 mt-1">用户：{{ item.db_user }}</p>
-                <div v-if="item.description" class="mt-2 inline-flex max-w-full items-start gap-1.5 rounded-lg bg-amber-50 px-2.5 py-1.5 text-xs text-amber-800 border border-amber-100">
-                  <svg class="w-3.5 h-3.5 mt-0.5 shrink-0 text-amber-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 8h10M7 12h6m-6 4h4M5 4h14a1 1 0 011 1v14l-4-3H5a1 1 0 01-1-1V5a1 1 0 011-1z"/>
-                  </svg>
-                  <span class="font-bold shrink-0">用途</span>
-                  <span class="line-clamp-2">{{ item.description }}</span>
-                </div>
+                
+                <div class="flex items-center gap-2 flex-wrap mt-2">
+                  <!-- 用途备注 -->
+                  <div v-if="item.description" class="inline-flex max-w-full items-start gap-1.5 rounded-lg bg-amber-50 px-2.5 py-1.5 text-xs text-amber-800 border border-amber-100">
+                    <svg class="w-3.5 h-3.5 mt-0.5 shrink-0 text-amber-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 8h10M7 12h6m-6 4h4M5 4h14a1 1 0 011 1v14l-4-3H5a1 1 0 01-1-1V5a1 1 0 011-1z"/>
+                    </svg>
+                    <span class="font-bold shrink-0">用途</span>
+                    <span class="line-clamp-1">{{ item.description }}</span>
+                  </div>
 
-                <!-- 智能摸排任务进度展示 -->
-                <div v-if="profilingTasks[item.id]" class="mt-3 p-3 bg-gray-50 border border-gray-100 rounded-xl space-y-1.5">
-                  <div class="flex items-center justify-between text-xs">
-                    <span class="font-bold text-gray-700 flex items-center gap-1">
-                      <span>🤖 智能分析摸排</span>
-                      <span v-if="profilingTasks[item.id].status === 0" class="text-gray-400 font-normal">(排队中)</span>
-                      <span v-else-if="profilingTasks[item.id].status === 1" class="text-primary font-bold animate-pulse">(分析中)</span>
-                      <span v-else-if="profilingTasks[item.id].status === 2" class="text-emerald-600 font-bold">(已完成)</span>
-                      <span v-else-if="profilingTasks[item.id].status === 3" class="text-red-500 font-bold" :title="profilingTasks[item.id].error_message">(分析中断)</span>
+                  <!-- 正在摸排任务进度提示 (轻量化展示在用途旁) -->
+                  <div v-if="profilingTasks[item.id] && profilingTasks[item.id].status === 1" class="inline-flex items-center gap-2 bg-blue-50/50 border border-blue-100 rounded-lg px-2.5 py-1.5 text-xs">
+                    <span class="font-bold text-primary animate-pulse shrink-0 flex items-center gap-1">
+                      <span>🤖 摸排中</span>
+                      <span class="font-mono text-gray-500">({{ profilingTasks[item.id].processed_tables }}/{{ profilingTasks[item.id].total_tables }})</span>
                     </span>
-                    <span class="font-mono text-gray-500 flex items-center gap-2" v-if="profilingTasks[item.id].status === 1 || profilingTasks[item.id].status === 2">
-                      <span>{{ profilingTasks[item.id].processed_tables }} / {{ profilingTasks[item.id].total_tables }}</span>
-                      <button
-                        v-if="profilingTasks[item.id].status === 2"
-                        @click="openTableProfiles(item)"
-                        class="px-2.5 py-1 rounded-lg bg-indigo-50 border border-indigo-100 text-indigo-600 hover:bg-indigo-100 text-[10px] font-bold transition-all shrink-0"
-                      >
-                        查看表资产画像
-                      </button>
+                    <!-- 进度条 -->
+                    <div class="w-20 bg-gray-200 rounded-full h-1 overflow-hidden shrink-0">
+                      <div 
+                        class="bg-primary h-full transition-all duration-300"
+                        :style="{ width: `${(profilingTasks[item.id].processed_tables / profilingTasks[item.id].total_tables) * 100}%` }"
+                      ></div>
+                    </div>
+                    <span v-if="profilingTasks[item.id].current_table" class="text-[10px] text-gray-400 truncate max-w-[150px]">
+                      分析中: {{ profilingTasks[item.id].current_table }}
                     </span>
-                  </div>
-                  <!-- 进度条 -->
-                  <div v-if="profilingTasks[item.id].status === 1 || profilingTasks[item.id].status === 2" class="w-full bg-gray-200 rounded-full h-1.5 overflow-hidden">
-                    <div 
-                      class="bg-primary h-full transition-all duration-300"
-                      :style="{ width: `${(profilingTasks[item.id].processed_tables / profilingTasks[item.id].total_tables) * 100}%` }"
-                    ></div>
-                  </div>
-                  <div v-if="profilingTasks[item.id].status === 1 && profilingTasks[item.id].current_table" class="text-[10px] text-gray-400 truncate">
-                    当前正在分析: <code class="bg-gray-100 px-1 py-0.5 rounded text-gray-600 font-mono">{{ profilingTasks[item.id].current_table }}</code>
-                  </div>
-                  <div v-if="profilingTasks[item.id].status === 3 && profilingTasks[item.id].error_message" class="text-[10px] text-red-500 leading-tight line-clamp-2">
-                    错误: {{ profilingTasks[item.id].error_message }}
                   </div>
                 </div>
               </div>
-              <div class="flex flex-wrap items-center justify-end gap-2 flex-shrink-0">
+
+              <!-- 右侧按钮操作组 -->
+              <div class="flex flex-wrap items-center justify-start sm:justify-end gap-2 flex-shrink-0">
+                <!-- 关键主按钮：查看表资产画像 (仅在摸排完成后高对比度凸显) -->
+                <button
+                  v-if="profilingTasks[item.id]?.status === 2"
+                  @click="openTableProfiles(item)"
+                  class="px-3.5 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-black shadow-md shadow-indigo-600/10 hover:shadow-indigo-600/20 transition-all flex items-center gap-1 cursor-pointer"
+                >
+                  <span>🔍</span>
+                  <span>查看表资产画像</span>
+                </button>
 
                 <button
                   @click="requestProfiling(item)"
                   :disabled="profilingTasks[item.id]?.status === 1"
-                  class="px-3 py-1.5 rounded-lg text-xs font-bold disabled:opacity-50"
-                  :class="profilingTasks[item.id]?.status === 1 ? 'bg-gray-100 text-gray-400 border border-gray-200' : 'bg-primary/5 border border-primary/10 text-primary hover:bg-primary/10'"
+                  class="px-3 py-1.5 rounded-lg text-xs font-bold disabled:opacity-50 transition-all border shadow-sm"
+                  :class="profilingTasks[item.id]?.status === 1 
+                    ? 'bg-gray-100 text-gray-400 border-gray-200' 
+                    : profilingTasks[item.id]?.status === 2
+                      ? 'bg-white border-gray-200 text-gray-500 hover:bg-gray-50'
+                      : 'bg-primary/5 border-primary/10 text-primary hover:bg-primary/10'"
                 >
-                  {{ profilingTasks[item.id]?.status === 1 ? '摸排中...' : '智能摸排' }}
+                  {{ profilingTasks[item.id]?.status === 1 ? '摸排中...' : profilingTasks[item.id]?.status === 2 ? '重新摸排' : '智能摸排' }}
                 </button>
-                <button @click="editConfig(item)" class="px-3 py-1.5 rounded-lg bg-white border border-gray-200 text-gray-600 hover:bg-gray-100 text-xs font-bold">编辑</button>
-                <button @click="copyConfig(item)" class="px-3 py-1.5 rounded-lg bg-violet-50 border border-violet-100 text-violet-600 hover:bg-violet-100 text-xs font-bold">复制</button>
-                <button @click="testSavedConnection(item)" class="px-3 py-1.5 rounded-lg bg-blue-50 border border-blue-100 text-blue-600 hover:bg-blue-100 text-xs font-bold">测试</button>
-                <button @click="openSqlDebug(item)" class="px-3 py-1.5 rounded-lg bg-emerald-50 border border-emerald-100 text-emerald-600 hover:bg-emerald-100 text-xs font-bold">调试</button>
+                <button @click="editConfig(item)" class="px-3 py-1.5 rounded-lg bg-white border border-gray-200 text-gray-600 hover:bg-gray-50 text-xs font-bold shadow-sm transition-all">编辑</button>
+                <button @click="copyConfig(item)" class="px-3 py-1.5 rounded-lg bg-violet-50 border border-violet-100 text-violet-600 hover:bg-violet-100 text-xs font-bold shadow-sm transition-all">复制</button>
+                <button @click="testSavedConnection(item)" class="px-3 py-1.5 rounded-lg bg-blue-50 border border-blue-100 text-blue-600 hover:bg-blue-100 text-xs font-bold shadow-sm transition-all">测试</button>
+                <button @click="openSqlDebug(item)" class="px-3 py-1.5 rounded-lg bg-emerald-50 border border-emerald-100 text-emerald-600 hover:bg-emerald-100 text-xs font-bold shadow-sm transition-all">调试</button>
                 <button
                   @click="requestDeleteConfig(item)"
                   :disabled="deletingId === item.id"
-                  class="px-3 py-1.5 rounded-lg bg-red-50 border border-red-100 text-red-500 hover:bg-red-100 text-xs font-bold disabled:opacity-50"
+                  class="px-3 py-1.5 rounded-lg bg-red-50 border border-red-100 text-red-500 hover:bg-red-100 text-xs font-bold disabled:opacity-50 shadow-sm transition-all"
                 >
                   {{ deletingId === item.id ? '删除中' : '删除' }}
                 </button>
