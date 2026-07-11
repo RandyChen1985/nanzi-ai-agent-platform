@@ -35,6 +35,22 @@ const selectedConfigName = computed(() => {
   return savedConfigs.value.find((c) => c.id === selectedConfigId.value)?.name || ''
 })
 
+const step1CanContinue = computed(() => {
+  return !!selectedConfigId.value && !!config.value.host && !!config.value.database
+})
+
+const step1ActionLabel = computed(() => {
+  if (!step1CanContinue.value) return '请选择数据源'
+  if (testing.value) return '正在验证连接...'
+  if (loading.value) return '正在加载表列表...'
+  if (testPassed.value) return '下一步 (浏览表)'
+  return '测试并继续'
+})
+
+const step1ActionDisabled = computed(() => {
+  return !step1CanContinue.value || testing.value || loading.value
+})
+
 const lockedConfig = computed(() => {
   const lockedName = props.lockedDataSourceName?.trim()
   if (!lockedName) return null
@@ -149,6 +165,15 @@ const handleTestConnection = async () => {
   } finally {
     testing.value = false
   }
+}
+
+const handleStep1Continue = async () => {
+  if (!step1CanContinue.value) return
+  if (!testPassed.value) {
+    await handleTestConnection()
+    if (!testPassed.value) return
+  }
+  await handleNext()
 }
 
 // ─── 加载表列表（Step 2） ──────────────────────────────────────────────────────
@@ -532,7 +557,7 @@ const dbTypeColor = (type: string) => {
       </div>
 
       <!-- Content -->
-      <div class="flex-1 overflow-y-auto p-6">
+      <div class="flex-1 overflow-y-auto" :class="step === 2 ? 'p-4' : 'p-6'">
 
         <!-- Step 1: Data Source -->
         <div v-if="step === 1 && !isDataSourceLocked" class="space-y-4">
@@ -559,7 +584,7 @@ const dbTypeColor = (type: string) => {
             <div class="flex items-start justify-between gap-4">
               <div>
                 <h3 class="text-sm font-bold text-gray-800">选择数据源</h3>
-                <p class="text-xs text-gray-500 mt-1">元数据导入会使用选中的数据源读取表列表和 DDL。</p>
+                <p class="text-xs text-gray-500 mt-1">选中后将验证连接，通过后即可浏览表列表。</p>
               </div>
               <button
                 @click="goDataSourceManagement"
@@ -581,9 +606,24 @@ const dbTypeColor = (type: string) => {
                   {{ dbTypeIcon(c.db_type) }}
                 </div>
                 <div class="flex-1 min-w-0">
-                  <div class="flex items-center gap-2">
+                  <div class="flex items-center gap-2 flex-wrap">
                     <span class="text-sm font-bold text-gray-800 truncate">{{ c.name }}</span>
                     <span class="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase" :class="dbTypeColor(c.db_type)">{{ c.db_type }}</span>
+                    <span
+                      v-if="selectedConfigId === c.id && testing"
+                      class="px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-blue-50 text-blue-600 border border-blue-100"
+                    >验证中...</span>
+                    <span
+                      v-else-if="selectedConfigId === c.id && testPassed"
+                      class="px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-green-50 text-green-600 border border-green-100 flex items-center gap-0.5"
+                    >
+                      <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/></svg>
+                      已连接
+                    </span>
+                    <span
+                      v-else-if="selectedConfigId === c.id && connError"
+                      class="px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-red-50 text-red-600 border border-red-100"
+                    >连接失败</span>
                   </div>
                   <p class="text-[11px] text-gray-400 truncate font-mono mt-1">{{ c.host }}:{{ c.port }} / {{ c.database_name }}</p>
                   <p class="text-[11px] text-gray-400 truncate mt-1">用户：{{ c.db_user || '-' }}</p>
@@ -634,31 +674,29 @@ const dbTypeColor = (type: string) => {
         </div>
 
         <!-- Step 2: Select Tables -->
-        <div v-else class="h-full flex flex-col gap-4">
+        <div v-else class="h-full flex flex-col gap-2.5">
           <div
             v-if="isDataSourceLocked"
-            class="flex items-start gap-3 p-3.5 rounded-xl bg-blue-50 border border-blue-100 shrink-0"
+            class="flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-blue-50 border border-blue-100 shrink-0 text-[11px] min-w-0"
+            title="追加导入仅允许从该数据源选表，不可切换其他数据源"
           >
-            <div class="w-9 h-9 rounded-lg bg-white border border-blue-100 flex items-center justify-center text-lg shrink-0">
-              {{ dbTypeIcon(lockedConfig?.db_type || config.type) }}
-            </div>
-            <div class="min-w-0 flex-1">
-              <div class="text-[10px] font-bold text-blue-800 uppercase tracking-wider">当前数据集数据源（已锁定）</div>
-              <div class="flex items-center gap-2 mt-1 flex-wrap">
-                <span class="text-sm font-bold text-blue-900 font-mono">{{ lockedDataSourceName }}</span>
-                <span
-                  v-if="lockedConfig?.db_type"
-                  class="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase"
-                  :class="dbTypeColor(lockedConfig.db_type)"
-                >
-                  {{ lockedConfig.db_type }}
-                </span>
-              </div>
-              <p v-if="lockedConfig" class="text-[11px] text-blue-600/80 font-mono mt-1 truncate">
-                {{ lockedConfig.host }}:{{ lockedConfig.port }} / {{ lockedConfig.database_name }}
-              </p>
-              <p class="text-[11px] text-blue-600/70 mt-1">追加导入仅允许从该数据源选表，不可切换其他数据源。</p>
-            </div>
+            <span class="text-sm shrink-0 leading-none">{{ dbTypeIcon(lockedConfig?.db_type || config.type) }}</span>
+            <span class="font-bold text-blue-800 shrink-0">数据源已锁定</span>
+            <span class="text-blue-200 shrink-0">|</span>
+            <span class="font-mono font-bold text-blue-900 shrink-0">{{ lockedDataSourceName }}</span>
+            <span
+              v-if="lockedConfig?.db_type"
+              class="px-1 py-0.5 rounded text-[9px] font-bold uppercase shrink-0"
+              :class="dbTypeColor(lockedConfig.db_type)"
+            >
+              {{ lockedConfig.db_type }}
+            </span>
+            <span
+              v-if="lockedConfig"
+              class="text-blue-600/70 font-mono truncate min-w-0"
+            >
+              {{ lockedConfig.host }}:{{ lockedConfig.port }}/{{ lockedConfig.database_name }}
+            </span>
           </div>
 
           <!-- 双 Tab 切换 -->
@@ -1038,48 +1076,67 @@ const dbTypeColor = (type: string) => {
       </div>
 
       <!-- Footer -->
-      <div class="p-6 border-t border-gray-100 flex justify-between items-center bg-gray-50/30 shrink-0">
-        <!-- 左侧：第一步显示"测试连接"，第二步返回数据源选择 -->
-        <div v-if="step === 1" class="flex items-center gap-2">
+      <div class="px-5 py-2.5 border-t border-gray-100 flex justify-between items-center gap-3 bg-gray-50/30 shrink-0">
+        <button @click="handleClose" class="px-4 py-1.5 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-100 shrink-0">取消</button>
+
+        <!-- Step 1: 验证 → 继续 连贯操作 -->
+        <div v-if="step === 1 && !isDataSourceLocked" class="flex items-center gap-2 min-w-0 flex-1 justify-end">
+          <div v-if="selectedConfigId" class="hidden sm:flex items-center gap-1.5 text-xs text-gray-500 min-w-0 mr-1">
+            <template v-if="testing">
+              <svg class="animate-spin h-3.5 w-3.5 text-blue-500 shrink-0" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+              <span class="truncate">验证 <strong class="text-gray-700">{{ selectedConfigName }}</strong> 连接中</span>
+            </template>
+            <template v-else-if="testPassed">
+              <svg class="w-3.5 h-3.5 text-green-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/></svg>
+              <span class="text-green-600 font-medium shrink-0">连接正常</span>
+              <button
+                type="button"
+                @click="handleTestConnection"
+                :disabled="testing"
+                class="text-primary hover:underline shrink-0 disabled:opacity-50"
+              >重新测试</button>
+            </template>
+            <template v-else-if="connError">
+              <span class="text-red-500 shrink-0">连接失败，请重试</span>
+            </template>
+            <template v-else>
+              <span class="truncate">已选 <strong class="text-gray-700">{{ selectedConfigName }}</strong>，点击继续验证</span>
+            </template>
+          </div>
+
           <button
-            @click="handleTestConnection"
-            :disabled="testing || !selectedConfigId || !config.host || !config.database"
-            class="px-5 py-2 bg-blue-50 hover:bg-blue-100 text-blue-600 rounded-xl text-sm font-bold transition-all flex items-center gap-2 disabled:opacity-50 border border-blue-100"
+            @click="handleStep1Continue"
+            :disabled="step1ActionDisabled"
+            class="px-5 py-1.5 rounded-lg text-sm font-bold shadow-sm transition-all flex items-center gap-1.5 shrink-0 disabled:opacity-50"
+            :class="testPassed && !testing && !loading
+              ? 'bg-primary hover:bg-primary-dark text-white'
+              : 'bg-blue-600 hover:bg-blue-700 text-white'"
           >
-            <svg v-if="testing" class="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
-            <svg v-else-if="testPassed" class="w-4 h-4 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/></svg>
-            <span>{{ testing ? '正在连接...' : testPassed ? '连接成功' : '测试连接' }}</span>
+            <svg v-if="testing || loading" class="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+            <svg v-else-if="testPassed" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7l5 5m0 0l-5 5m5-5H6"/></svg>
+            <span>{{ step1ActionLabel }}</span>
           </button>
         </div>
-        <div v-else-if="isDataSourceLocked" class="flex items-center gap-2 text-sm text-gray-500">
-          <span class="font-bold text-gray-700">数据集数据源</span>
-          <span class="px-2 py-1 rounded-lg bg-primary/10 text-primary font-mono text-xs border border-primary/20">{{ lockedDataSourceName }}</span>
+
+        <!-- Step 2 左侧信息 -->
+        <div v-else-if="step === 2 && isDataSourceLocked" class="flex items-center gap-1.5 text-xs text-gray-500 min-w-0 flex-1">
+          <span class="font-bold text-gray-700 shrink-0">数据集数据源</span>
+          <span class="px-1.5 py-0.5 rounded bg-primary/10 text-primary font-mono text-[11px] border border-primary/20 truncate">{{ lockedDataSourceName }}</span>
         </div>
-        <div v-else>
-          <button @click="step = 1" class="text-sm font-bold text-gray-400 hover:text-gray-600 transition-all flex items-center gap-1">
-            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
+        <div v-else-if="step === 2" class="flex-1">
+          <button @click="step = 1" class="text-xs font-bold text-gray-400 hover:text-gray-600 transition-all flex items-center gap-1">
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
             更换数据源
           </button>
         </div>
+        <div v-else class="flex-1"></div>
 
-        <div class="flex gap-3">
-          <button @click="handleClose" class="px-6 py-2 border border-gray-300 rounded-xl text-sm font-medium text-gray-700 hover:bg-gray-100">取消</button>
-
+        <!-- Step 2 确认按钮 -->
+        <div v-if="step === 2" class="flex gap-2 shrink-0">
           <button
-            v-if="step === 1"
-            @click="handleNext"
-            :disabled="loading || !selectedConfigId || !config.host || !config.database || !testPassed"
-            class="px-8 py-2 bg-primary hover:bg-primary-dark text-white rounded-xl text-sm font-bold shadow-lg shadow-primary/20 transition-all flex items-center gap-2 disabled:opacity-50"
-          >
-            <svg v-if="loading" class="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
-            <span>下一步 (浏览表)</span>
-          </button>
-
-          <button
-            v-else
             @click="handleConfirm"
             :disabled="loading || selectedTables.length === 0"
-            class="px-8 py-2 bg-green-600 hover:bg-green-700 text-white rounded-xl text-sm font-bold shadow-lg shadow-green-500/20 transition-all flex items-center gap-2 disabled:opacity-50"
+            class="px-5 py-1.5 bg-green-600 hover:bg-green-700 text-white rounded-lg text-sm font-bold shadow-sm transition-all flex items-center gap-1.5 disabled:opacity-50"
           >
             <svg v-if="loading" class="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
             <span>{{ activeTab === 'profile' ? '使用摸排画像导入' : '确认导入' }} ({{ selectedTables.length }})</span>

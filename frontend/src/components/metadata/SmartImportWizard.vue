@@ -145,7 +145,7 @@ const getDescriptionRows = (desc?: string) => {
 }
 
 const EDITABLE_INPUT =
-  'w-full px-3 py-2 bg-amber-50/60 border-2 border-dashed border-amber-300 rounded-lg text-sm text-gray-800 shadow-sm hover:border-amber-400 hover:bg-amber-50 focus:outline-none focus:ring-2 focus:ring-amber-200 focus:border-amber-500 focus:bg-white transition-colors'
+  'w-full px-2.5 py-1.5 bg-amber-50/60 border-2 border-dashed border-amber-300 rounded-lg text-sm text-gray-800 shadow-sm hover:border-amber-400 hover:bg-amber-50 focus:outline-none focus:ring-2 focus:ring-amber-200 focus:border-amber-500 focus:bg-white transition-colors'
 
 const EDITABLE_INPUT_SM =
   'w-full px-2.5 py-1.5 bg-amber-50/60 border border-dashed border-amber-300 rounded-md text-xs text-gray-800 hover:border-amber-400 hover:bg-amber-50 focus:outline-none focus:ring-2 focus:ring-amber-200 focus:border-amber-500 focus:bg-white transition-colors'
@@ -389,18 +389,22 @@ const normalizeType = (rawType: string): string => {
 </script>
 
 <template>
-  <div v-if="show" class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
-    <div class="bg-white rounded-xl shadow-2xl w-full max-w-6xl h-[90vh] flex flex-col overflow-hidden border border-gray-100 animate-fade-in-up">
+  <div v-if="show" class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+    <div class="bg-white rounded-xl shadow-2xl w-full max-w-5xl h-[92vh] flex flex-col overflow-hidden border border-gray-100 animate-fade-in-up">
       
       <!-- Header -->
-      <div class="p-6 border-b border-gray-100 flex justify-between items-center bg-gradient-to-r from-blue-50 to-indigo-50">
-        <div class="flex items-center gap-4">
-           <div class="w-12 h-12 rounded-xl bg-white shadow-sm flex items-center justify-center text-blue-600 border border-blue-100">
-              <svg class="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19.428 15.428a2 2 0 00-1.022-.547l-2.384-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z"/></svg>
+      <div
+        class="border-b border-gray-100 flex justify-between items-center bg-gradient-to-r from-blue-50 to-indigo-50 shrink-0 px-5 py-3"
+      >
+        <div class="flex items-center gap-3">
+           <div
+             class="rounded-xl bg-white shadow-sm flex items-center justify-center text-blue-600 border border-blue-100 shrink-0 w-9 h-9"
+           >
+              <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19.428 15.428a2 2 0 00-1.022-.547l-2.384-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z"/></svg>
            </div>
            <div>
-             <h2 class="text-xl font-bold text-gray-900">智能元数据导入向导</h2>
-             <div class="flex items-center gap-3 mt-1">
+             <h2 class="font-bold text-gray-900 text-lg">智能元数据导入向导</h2>
+             <div class="flex items-center gap-2 mt-0.5">
                 <!-- Step 1 -->
                 <div class="flex items-center gap-2" :class="step >= 1 ? 'text-blue-600' : 'text-gray-400'">
                   <div class="w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold border-2 transition-colors"
@@ -431,69 +435,17 @@ const normalizeType = (rawType: string): string => {
         </button>
       </div>
 
-      <!-- Step 2: 数据集信息顶栏 -->
-      <div v-if="step === 2" class="px-6 py-4 border-b border-gray-100 bg-white shrink-0">
-        <div v-if="!datasetId" class="space-y-3">
-          <div class="flex items-start gap-2 text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2.5">
-            <svg class="w-4 h-4 shrink-0 mt-0.5 text-amber-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
-            <span>以下为 AI 识别结果，<strong class="font-bold">虚线框</strong>内内容可直接修改，保存前请核对数据集信息与表结构。</span>
-          </div>
-          <div class="flex flex-col lg:flex-row lg:items-end gap-4">
-          <div class="flex-1 min-w-0">
-            <label class="flex items-center gap-2 text-xs font-bold text-gray-500 uppercase tracking-wider mb-1.5">
-              <span>数据集 ID (Unique)</span>
-              <span class="inline-flex items-center gap-0.5 text-[10px] font-semibold text-amber-600 normal-case tracking-normal">
-                <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"/></svg>
-                可编辑
-              </span>
-            </label>
-            <input
-              v-model="datasetName"
-              :class="[EDITABLE_INPUT, 'font-mono']"
-              placeholder="e.g. user_orders_ds"
-            >
-          </div>
-          <div class="flex-[1.4] min-w-0">
-            <label class="flex items-center gap-2 text-xs font-bold text-gray-500 uppercase tracking-wider mb-1.5">
-              <span>显示名称</span>
-              <span class="inline-flex items-center gap-0.5 text-[10px] font-semibold text-amber-600 normal-case tracking-normal">
-                <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"/></svg>
-                可编辑
-              </span>
-            </label>
-            <input
-              v-model="datasetDisplayName"
-              :class="EDITABLE_INPUT"
-              placeholder="e.g. 用户订单数据集"
-            >
-          </div>
-          </div>
-        </div>
-        <div v-else class="flex items-center gap-3 p-3 bg-blue-50 border border-blue-100 rounded-xl">
-          <div class="w-8 h-8 rounded-lg bg-white flex items-center justify-center text-blue-600 shadow-sm shrink-0">
-            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
-          </div>
-          <div class="min-w-0 flex-1">
-            <div class="text-[10px] font-bold text-blue-800 uppercase tracking-wider">追加到现有数据集</div>
-            <div class="text-sm font-bold text-blue-700 truncate" :title="datasetDisplayName">{{ datasetDisplayName || '当前数据集' }}</div>
-            <div class="text-[10px] text-blue-500 font-mono flex items-center gap-2 mt-0.5 flex-wrap">
-              <span class="bg-blue-100 px-1.5 py-0.5 rounded">#{{ datasetPhysicalName }}</span>
-              <span>ID: {{ datasetId }}</span>
-            </div>
-          </div>
-        </div>
-      </div>
-
       <!-- Content Step 1: Input -->
-      <div v-if="step === 1" class="flex-1 p-8 flex flex-col gap-6 overflow-hidden">
-        <div class="flex-1 relative">
+      <div v-if="step === 1" class="flex-1 flex flex-col min-h-0 overflow-hidden">
+        <div class="flex-1 p-5 min-h-0 overflow-hidden">
+        <div class="relative h-full">
            <textarea 
              v-model="ddlText" 
              :disabled="analyzing"
-             class="w-full h-full bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 p-6 font-mono text-sm text-gray-800 resize-none shadow-inner disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed transition-colors"
+             class="w-full h-full bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 p-5 font-mono text-sm text-gray-800 resize-none shadow-inner disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed transition-colors"
              placeholder="请在此粘贴 SQL DDL (CREATE TABLE...) 或者业务需求文档...&#10;&#10;示例:&#10;CREATE TABLE orders (id int, user_id int); -- 订单表&#10;CREATE TABLE users (id int, name varchar); -- 用户表&#10;-- 用户表和订单表是一对多关系"
            ></textarea>
-            <div class="absolute top-4 right-4 z-10">
+            <div class="absolute top-3 right-3 z-10">
                <button 
                  @click="showDbImportModal = true"
                  :disabled="analyzing"
@@ -503,17 +455,19 @@ const normalizeType = (rawType: string): string => {
                  从数据库加载 (MySQL/CK)
                </button>
             </div>
-            <div class="absolute bottom-4 right-4 text-xs text-gray-400 flex items-center gap-4">
+            <div class="absolute bottom-3 right-3 text-xs text-gray-400 flex items-center gap-4">
               <span class="font-mono">{{ ddlText.length }} 字符</span>
               <span>支持 SQL, Markdown, 自然语言</span>
             </div>
         </div>
-        <div class="flex justify-between items-center">
-           <!-- Log Button -->
+        </div>
+
+        <!-- Footer Step 1 -->
+        <div class="px-5 py-2.5 border-t border-gray-100 bg-white flex justify-between items-center shrink-0">
            <button 
              v-if="currentTraceId"
              @click="showLogs = true"
-             class="text-xs text-gray-400 hover:text-blue-600 transition-colors flex items-center gap-1.5 px-3 py-2 rounded hover:bg-gray-100"
+             class="text-xs text-gray-400 hover:text-blue-600 transition-colors flex items-center gap-1.5 px-2 py-1 rounded hover:bg-gray-100"
              title="查看执行过程日志"
            >
              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01"></path></svg>
@@ -521,20 +475,18 @@ const normalizeType = (rawType: string): string => {
            </button>
            <div v-else></div>
 
-           <button              @click="handleAnalyze"
+           <button
+              @click="handleAnalyze"
               :disabled="analyzing || !ddlText"
-              class="px-8 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold shadow-lg shadow-blue-500/30 transition-all flex items-center gap-3 disabled:opacity-50 disabled:cursor-not-allowed relative overflow-hidden"
+              class="px-5 py-1.5 text-sm bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-bold shadow-sm transition-all flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed relative overflow-hidden min-w-[140px] justify-center"
             >
-              <!-- Progress Background -->
               <div 
                 v-if="analyzing" 
                 class="absolute left-0 top-0 bottom-0 bg-blue-800/50 transition-all duration-300 ease-linear"
                 :style="{ width: `${progress}%` }"
               ></div>
-              
-              <!-- Content -->
-              <div class="relative flex items-center gap-2 z-10 w-full justify-center min-w-[160px]">
-                 <svg v-if="analyzing" class="animate-spin h-5 w-5" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+              <div class="relative flex items-center gap-2 z-10">
+                 <svg v-if="analyzing" class="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
                  <span v-if="analyzing" class="text-sm font-light tracking-wide">{{ progressStatus }} ({{ analysisSeconds }}s)</span>
                  <span v-else>开始智能识别</span>
               </div>
@@ -545,69 +497,109 @@ const normalizeType = (rawType: string): string => {
       <!-- Content Step 2: Preview -->
       <div v-else class="flex-1 flex min-h-0 overflow-hidden">
          <!-- Sidebar Navigation -->
-         <div class="w-64 shrink-0 bg-gray-50 border-r border-gray-100 flex flex-col min-h-0 overflow-hidden">
-            <div class="flex-1 min-h-0 overflow-y-auto py-6">
+         <div class="w-60 shrink-0 bg-gray-50 border-r border-gray-100 flex flex-col min-h-0 overflow-hidden">
+            <div class="flex-1 min-h-0 overflow-y-auto py-4">
+            <!-- 数据集信息 -->
+            <div class="px-4 mb-4 space-y-3">
+              <div v-if="!datasetId" class="space-y-3">
+                <div class="flex items-center gap-1.5 text-[10px] text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-2 py-1.5">
+                  <svg class="w-3 h-3 shrink-0 text-amber-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
+                  <span><strong class="font-bold">虚线框</strong>可编辑</span>
+                </div>
+                <div>
+                  <label class="flex items-center gap-1 text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1">
+                    <span>数据集 ID</span>
+                    <span class="text-amber-600 normal-case tracking-normal font-semibold">可编辑</span>
+                  </label>
+                  <input
+                    v-model="datasetName"
+                    :class="[EDITABLE_INPUT, 'font-mono text-xs']"
+                    placeholder="e.g. user_orders_ds"
+                  >
+                </div>
+                <div>
+                  <label class="flex items-center gap-1 text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1">
+                    <span>显示名称</span>
+                    <span class="text-amber-600 normal-case tracking-normal font-semibold">可编辑</span>
+                  </label>
+                  <input
+                    v-model="datasetDisplayName"
+                    :class="[EDITABLE_INPUT, 'text-xs']"
+                    placeholder="e.g. 用户订单数据集"
+                  >
+                </div>
+              </div>
+              <div v-else class="p-2.5 bg-blue-50 border border-blue-100 rounded-lg space-y-1">
+                <div class="text-[10px] font-bold text-blue-800 uppercase tracking-wider">追加到现有数据集</div>
+                <div class="text-xs font-bold text-blue-700 break-words" :title="datasetDisplayName">{{ datasetDisplayName || '当前数据集' }}</div>
+                <div class="text-[10px] text-blue-500 font-mono flex flex-col gap-0.5">
+                  <span class="bg-blue-100 px-1.5 py-0.5 rounded w-fit">#{{ datasetPhysicalName }}</span>
+                  <span>ID: {{ datasetId }}</span>
+                </div>
+              </div>
+            </div>
+
             <div
               v-if="(!datasetId && importDataSourceName) || (datasetId && datasetDataSource)"
-              class="px-6 mb-6"
+              class="px-4 mb-4"
             >
-              <label class="block text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">数据源 ID</label>
-              <div class="p-2.5 rounded-lg bg-emerald-50 border border-emerald-100 text-[11px] text-emerald-700">
+              <label class="block text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1">数据源 ID</label>
+              <div class="px-2 py-1.5 rounded-lg bg-emerald-50 border border-emerald-100 text-[11px] text-emerald-700">
                 <span class="font-mono font-bold break-all">{{ datasetId ? datasetDataSource : importDataSourceName }}</span>
               </div>
             </div>
 
-            <div class="px-6 mb-4 font-bold text-xs text-gray-400 uppercase tracking-wider">识别结果概览</div>
+            <div class="px-4 mb-2 font-bold text-[10px] text-gray-400 uppercase tracking-wider">识别结果概览</div>
             
-            <div class="space-y-1 px-4 pb-4">
-               <div class="flex justify-between items-center p-2 rounded-lg bg-white border border-gray-200 shadow-sm">
-                  <span class="text-sm font-bold text-gray-700">Tables</span>
+            <div class="space-y-1 px-3 pb-2">
+               <div class="flex justify-between items-center px-2 py-1.5 rounded-lg bg-white border border-gray-200 shadow-sm">
+                  <span class="text-xs font-bold text-gray-700">Tables</span>
                   <span class="text-xs bg-gray-100 px-2 py-0.5 rounded-full text-gray-600">{{ previewData.tables.length }}</span>
                </div>
-               <div class="flex justify-between items-center p-2 rounded-lg bg-white border border-gray-200 shadow-sm">
-                  <span class="text-sm font-bold text-gray-700">Metrics</span>
+               <div class="flex justify-between items-center px-2 py-1.5 rounded-lg bg-white border border-gray-200 shadow-sm">
+                  <span class="text-xs font-bold text-gray-700">Metrics</span>
                   <span class="text-xs bg-gray-100 px-2 py-0.5 rounded-full text-gray-600">{{ previewData.metrics.length }}</span>
                </div>
-               <div class="flex justify-between items-center p-2 rounded-lg bg-white border border-gray-200 shadow-sm">
-                  <span class="text-sm font-bold text-gray-700">Relationships</span>
+               <div class="flex justify-between items-center px-2 py-1.5 rounded-lg bg-white border border-gray-200 shadow-sm">
+                  <span class="text-xs font-bold text-gray-700">Relationships</span>
                   <span class="text-xs bg-gray-100 px-2 py-0.5 rounded-full text-gray-600">{{ previewData.relationships.length }}</span>
                </div>
             </div>
 
             </div>
 
-            <div class="shrink-0 px-6 py-4 border-t border-gray-100 bg-gray-50">
-               <button @click="step = 1" class="w-full py-2 border border-gray-300 rounded-lg text-sm text-gray-600 hover:bg-gray-100">
+            <div class="shrink-0 px-4 py-2.5 border-t border-gray-100 bg-gray-50">
+               <button @click="step = 1" class="w-full py-1.5 border border-gray-300 rounded-lg text-xs text-gray-600 hover:bg-gray-100">
                   ← 返回修改输入
                </button>
             </div>
          </div>
 
          <!-- Main Preview Area -->
-         <div class="flex-1 min-h-0 overflow-y-auto bg-gray-50/50 p-8 space-y-8">
+         <div class="flex-1 min-h-0 overflow-y-auto bg-gray-50/50 p-4 md:p-5 space-y-5">
             
             <!-- Tables Section -->
             <section v-if="previewData.tables.length > 0">
-               <h3 class="text-lg font-bold text-gray-900 mb-1 flex items-center gap-2">
-                 <span class="w-2 h-6 bg-blue-500 rounded-full"></span>
+               <h3 class="text-base font-bold text-gray-900 flex items-center gap-2">
+                 <span class="w-1.5 h-5 bg-blue-500 rounded-full"></span>
                  识别到的表结构
+                 <span class="text-[11px] font-normal text-gray-400">物理表名只读，虚线框可编辑</span>
                </h3>
-               <p class="text-xs text-gray-500 mb-4 ml-4">物理表名只读；业务名称、描述与字段画像在虚线框内可编辑。</p>
-               <div class="grid gap-4">
+               <div class="grid gap-3 mt-2">
                   <div
                     v-for="(table, idx) in previewData.tables"
                     :key="idx"
                     class="bg-white rounded-xl border border-gray-200 shadow-sm group overflow-hidden"
                   >
-                     <div class="p-5">
-                        <div class="flex justify-between items-start gap-3 mb-3">
+                     <div class="p-4">
+                        <div class="flex justify-between items-start gap-2 mb-2">
                            <div class="min-w-0 flex-1">
-                              <div class="flex items-center gap-2 flex-wrap mb-3">
-                                 <span class="px-2 py-1 bg-slate-100 text-slate-600 font-mono text-xs font-bold rounded border border-slate-200">{{ table.physical_name }}</span>
-                                 <span class="text-[10px] text-gray-400">物理表名（只读）</span>
+                              <div class="flex items-center gap-2 flex-wrap mb-2">
+                                 <span class="px-2 py-0.5 bg-slate-100 text-slate-600 font-mono text-xs font-bold rounded border border-slate-200">{{ table.physical_name }}</span>
+                                 <span class="text-[10px] text-gray-400">只读</span>
                               </div>
-                              <div class="rounded-xl border-2 border-dashed border-amber-300/80 bg-amber-50/20 p-4 space-y-3">
-                                 <div class="flex items-center gap-1.5 text-[10px] font-bold text-amber-700 uppercase tracking-wider">
+                              <div class="rounded-lg border-2 border-dashed border-amber-300/80 bg-amber-50/20 p-3 space-y-2">
+                                 <div class="flex items-center gap-1 text-[10px] font-bold text-amber-700 uppercase tracking-wider">
                                     <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"/></svg>
                                     可编辑区域
                                  </div>
@@ -673,7 +665,7 @@ const normalizeType = (rawType: string): string => {
                         </div>
                      </div>
 
-                     <div v-if="expandedPreviewTables[idx]" class="border-t border-amber-200/60 p-5 bg-amber-50/10 space-y-3">
+                     <div v-if="expandedPreviewTables[idx]" class="border-t border-amber-200/60 p-3 bg-amber-50/10 space-y-2">
                         <div class="text-xs font-bold text-gray-500 uppercase tracking-wider flex items-center gap-2">
                            <span>字段画像定义 (Columns Profile)</span>
                            <span class="text-gray-300 font-normal">· {{ table.columns.length }} 个字段</span>
@@ -736,12 +728,12 @@ const normalizeType = (rawType: string): string => {
 
             <!-- Metrics Section -->
             <section v-if="previewData.metrics.length > 0">
-               <h3 class="text-lg font-bold text-gray-900 mb-4 flex items-center gap-2">
-                 <span class="w-2 h-6 bg-amber-500 rounded-full"></span>
+               <h3 class="text-base font-bold text-gray-900 mb-2 flex items-center gap-2">
+                 <span class="w-1.5 h-5 bg-amber-500 rounded-full"></span>
                  业务指标 (Metrics)
                </h3>
-               <div class="grid grid-cols-2 gap-4">
-                  <div v-for="(metric, idx) in previewData.metrics" :key="idx" class="bg-white rounded-xl border border-gray-200 p-5 shadow-sm group border-l-4 border-l-amber-400">
+               <div class="grid grid-cols-2 gap-3">
+                  <div v-for="(metric, idx) in previewData.metrics" :key="idx" class="bg-white rounded-xl border border-gray-200 p-4 shadow-sm group border-l-4 border-l-amber-400">
                      <div class="flex justify-between items-start">
                         <div>
                            <div class="flex items-center gap-2 mb-1">
@@ -763,30 +755,30 @@ const normalizeType = (rawType: string): string => {
 
             <!-- Relationships Section -->
             <section v-if="previewData.relationships.length > 0">
-               <h3 class="text-lg font-bold text-gray-900 mb-4 flex items-center gap-2">
-                 <span class="w-2 h-6 bg-purple-500 rounded-full"></span>
+               <h3 class="text-base font-bold text-gray-900 mb-2 flex items-center gap-2">
+                 <span class="w-1.5 h-5 bg-purple-500 rounded-full"></span>
                  实体关系 (Relationships)
                </h3>
                <div class="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
                   <table class="min-w-full text-sm">
                      <thead class="bg-gray-50 text-gray-500 font-medium">
                         <tr>
-                           <th class="px-4 py-3 text-left">Source</th>
-                           <th class="px-4 py-3 text-center">Type</th>
-                           <th class="px-4 py-3 text-left">Target</th>
-                           <th class="px-4 py-3 text-left">Condition</th>
-                           <th class="px-4 py-3"></th>
+                           <th class="px-3 py-2 text-left">Source</th>
+                           <th class="px-3 py-2 text-center">Type</th>
+                           <th class="px-3 py-2 text-left">Target</th>
+                           <th class="px-3 py-2 text-left">Condition</th>
+                           <th class="px-3 py-2"></th>
                         </tr>
                      </thead>
                      <tbody class="divide-y divide-gray-100">
                         <tr v-for="(rel, idx) in previewData.relationships" :key="idx" class="group hover:bg-gray-50">
-                           <td class="px-4 py-3 font-mono text-blue-600 font-bold">{{ rel.source_table }}</td>
-                           <td class="px-4 py-3 text-center">
+                           <td class="px-3 py-2 font-mono text-blue-600 font-bold">{{ rel.source_table }}</td>
+                           <td class="px-3 py-2 text-center">
                               <span class="px-2 py-0.5 bg-purple-50 text-purple-600 rounded text-xs border border-purple-100">{{ rel.type }}</span>
                            </td>
-                           <td class="px-4 py-3 font-mono text-blue-600 font-bold">{{ rel.target_table }}</td>
-                           <td class="px-4 py-3 font-mono text-xs text-gray-500">{{ rel.condition }}</td>
-                           <td class="px-4 py-3 text-right">
+                           <td class="px-3 py-2 font-mono text-blue-600 font-bold">{{ rel.target_table }}</td>
+                           <td class="px-3 py-2 font-mono text-xs text-gray-500">{{ rel.condition }}</td>
+                           <td class="px-3 py-2 text-right">
                               <button @click="removeRel(idx)" class="text-gray-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity">
                                  <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
                               </button>
@@ -806,14 +798,14 @@ const normalizeType = (rawType: string): string => {
       </div>
 
       <!-- Footer Step 2 -->
-      <div v-if="step === 2" class="p-6 border-t border-gray-100 bg-white flex justify-end gap-3">
-         <button @click="handleClose" class="px-6 py-2 border border-gray-300 rounded-xl text-gray-700 font-medium hover:bg-gray-50">取消</button>
+      <div v-if="step === 2" class="px-5 py-2.5 border-t border-gray-100 bg-white flex justify-end gap-2 shrink-0">
+         <button @click="handleClose" class="px-4 py-1.5 text-sm border border-gray-300 rounded-lg text-gray-700 font-medium hover:bg-gray-50">取消</button>
          <button 
             @click="handleSave"
             :disabled="saving || previewData.tables.length === 0"
-            class="px-8 py-2 bg-green-600 hover:bg-green-700 text-white rounded-xl font-bold shadow-lg shadow-green-500/20 transition-all flex items-center gap-2 disabled:opacity-50"
+            class="px-5 py-1.5 text-sm bg-green-600 hover:bg-green-700 text-white rounded-lg font-bold shadow-sm transition-all flex items-center gap-1.5 disabled:opacity-50"
          >
-            <svg v-if="saving" class="animate-spin h-5 w-5" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+            <svg v-if="saving" class="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
             {{ saving ? '正在入库...' : '确认并保存' }}
          </button>
       </div>
