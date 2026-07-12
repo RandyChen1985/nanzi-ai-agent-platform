@@ -525,15 +525,75 @@ watch(viewMode, (newMode) => {
 
 // Search and Filter
 const searchQuery = ref('')
-const filteredDatasets = computed(() => {
-  if (!searchQuery.value) return datasets.value
-  const q = searchQuery.value.toLowerCase()
-  return datasets.value.filter(ds => 
-    ds.name.toLowerCase().includes(q) || 
-    (ds.display_name && ds.display_name.toLowerCase().includes(q)) ||
-    (ds.description && ds.description.toLowerCase().includes(q))
-  )
+type StatusFilter = 'all' | 'active' | 'inactive'
+type DatasetSortField = 'display_name' | 'status' | 'table_count' | 'rag_sync_status' | 'updated_at'
+type SortDirection = 'asc' | 'desc'
+
+const statusFilter = ref<StatusFilter>('all')
+const sortField = ref<DatasetSortField>('updated_at')
+const sortDirection = ref<SortDirection>('desc')
+
+const toggleSort = (field: DatasetSortField) => {
+  if (sortField.value === field) {
+    sortDirection.value = sortDirection.value === 'asc' ? 'desc' : 'asc'
+  } else {
+    sortField.value = field
+    sortDirection.value = field === 'display_name' ? 'asc' : 'desc'
+  }
+}
+
+const compareDatasets = (a: Dataset, b: Dataset): number => {
+  const dir = sortDirection.value === 'asc' ? 1 : -1
+
+  switch (sortField.value) {
+    case 'display_name': {
+      const aName = (a.display_name || a.name || '').toLowerCase()
+      const bName = (b.display_name || b.name || '').toLowerCase()
+      return aName.localeCompare(bName, 'zh-CN') * dir
+    }
+    case 'status':
+      return ((a.status ?? 0) - (b.status ?? 0)) * dir
+    case 'table_count': {
+      const tableDiff = (a.table_count || 0) - (b.table_count || 0)
+      if (tableDiff !== 0) return tableDiff * dir
+      return ((a.metric_count || 0) - (b.metric_count || 0)) * dir
+    }
+    case 'rag_sync_status':
+      return ((a.rag_sync_status ?? -99) - (b.rag_sync_status ?? -99)) * dir
+    case 'updated_at': {
+      const aTime = a.updated_at ? new Date(a.updated_at).getTime() : 0
+      const bTime = b.updated_at ? new Date(b.updated_at).getTime() : 0
+      return (aTime - bTime) * dir
+    }
+    default:
+      return 0
+  }
+}
+
+const displayDatasets = computed(() => {
+  let list = datasets.value
+
+  if (statusFilter.value === 'active') {
+    list = list.filter((ds) => ds.status === 1)
+  } else if (statusFilter.value === 'inactive') {
+    list = list.filter((ds) => ds.status !== 1)
+  }
+
+  if (searchQuery.value) {
+    const q = searchQuery.value.toLowerCase()
+    list = list.filter((ds) =>
+      ds.name.toLowerCase().includes(q) ||
+      (ds.display_name && ds.display_name.toLowerCase().includes(q)) ||
+      (ds.description && ds.description.toLowerCase().includes(q))
+    )
+  }
+
+  return [...list].sort(compareDatasets)
 })
+
+const hasActiveFilters = computed(() =>
+  !!searchQuery.value || statusFilter.value !== 'all'
+)
 
 // Test Retrieval State
 const testQuery = ref('')
@@ -1012,17 +1072,36 @@ onMounted(async () => {
 
     <!-- Toolbar -->
     <div class="flex flex-col sm:flex-row justify-between items-center gap-4 bg-white p-4 rounded-xl border border-gray-100 shadow-sm">
-       <!-- Search -->
-       <div class="relative w-full sm:w-96">
-          <span class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-gray-400">
-             <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
-          </span>
-          <input 
-            v-model="searchQuery" 
-            type="text" 
-            class="block w-full pl-10 pr-3 py-2 border border-gray-200 rounded-lg leading-5 bg-gray-50 placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary focus:bg-white sm:text-sm transition-all" 
-            placeholder="搜索数据集名称、ID或描述..."
-          >
+       <div class="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 w-full sm:w-auto flex-1">
+         <!-- Search -->
+         <div class="relative w-full sm:w-80">
+            <span class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-gray-400">
+               <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+            </span>
+            <input 
+              v-model="searchQuery" 
+              type="text" 
+              class="block w-full pl-10 pr-3 py-2 border border-gray-200 rounded-lg leading-5 bg-gray-50 placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary focus:bg-white sm:text-sm transition-all" 
+              placeholder="搜索数据集名称、ID或描述..."
+            >
+         </div>
+
+         <!-- Status Filter -->
+         <select
+           v-model="statusFilter"
+           class="w-full sm:w-36 py-2 px-3 border border-gray-200 rounded-lg bg-gray-50 text-sm text-gray-700 focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary focus:bg-white transition-all"
+         >
+           <option value="all">全部状态</option>
+           <option value="active">已启用</option>
+           <option value="inactive">已禁用</option>
+         </select>
+
+         <div
+           v-if="hasActiveFilters"
+           class="text-xs text-gray-400 whitespace-nowrap px-1"
+         >
+           显示 {{ displayDatasets.length }} / {{ datasets.length }}
+         </div>
        </div>
        
        <!-- View Toggle -->
@@ -1052,10 +1131,26 @@ onMounted(async () => {
       <div v-for="i in 3" :key="i" class="h-32 bg-gray-100 rounded-xl animate-pulse"></div>
     </div>
 
+    <!-- Filtered Empty State -->
+    <div
+      v-else-if="datasets.length > 0 && displayDatasets.length === 0"
+      class="text-center py-20 bg-white rounded-xl border border-dashed border-gray-200"
+    >
+      <div class="text-4xl mb-3">🔍</div>
+      <h3 class="text-lg font-medium text-gray-900">没有匹配的数据集</h3>
+      <p class="text-gray-500 mt-1 mb-5 text-sm">请调整搜索关键词或状态筛选条件后重试。</p>
+      <button
+        @click="searchQuery = ''; statusFilter = 'all'"
+        class="px-4 py-2 text-sm font-medium text-primary hover:bg-primary/5 rounded-lg border border-primary/20 transition-colors"
+      >
+        清除筛选
+      </button>
+    </div>
+
     <!-- Grid View -->
     <div v-else-if="viewMode === 'grid'" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
       <div 
-        v-for="ds in filteredDatasets" 
+        v-for="ds in displayDatasets" 
         :key="ds.id"
         class="bg-white rounded-xl shadow-sm border border-gray-100 hover:shadow-xl transition-all duration-300 cursor-pointer group overflow-hidden flex flex-col hover:-translate-y-1 relative"
         @click="goToTables(ds.id)"
@@ -1227,16 +1322,46 @@ onMounted(async () => {
     <!-- List View -->
     <div v-else class="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
        <div class="grid grid-cols-12 gap-4 px-6 py-3 bg-gray-50 border-b border-gray-100 text-xs font-bold text-gray-500 uppercase tracking-wider">
-          <div class="col-span-3">数据集 (Dataset)</div>
-          <div class="col-span-2">状态 (Status)</div>
-          <div class="col-span-2">统计 (Stats)</div>
-          <div class="col-span-2">RAG 状态</div>
-          <div class="col-span-1">更新时间</div>
+          <button type="button" class="col-span-3 inline-flex items-center gap-1 text-left hover:text-gray-700 transition-colors" @click="toggleSort('display_name')">
+            <span>数据集 (Dataset)</span>
+            <svg v-if="sortField === 'display_name'" class="w-3.5 h-3.5 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path v-if="sortDirection === 'asc'" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 15l7-7 7 7" />
+              <path v-else stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+            </svg>
+          </button>
+          <button type="button" class="col-span-2 inline-flex items-center gap-1 text-left hover:text-gray-700 transition-colors" @click="toggleSort('status')">
+            <span>状态 (Status)</span>
+            <svg v-if="sortField === 'status'" class="w-3.5 h-3.5 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path v-if="sortDirection === 'asc'" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 15l7-7 7 7" />
+              <path v-else stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+            </svg>
+          </button>
+          <button type="button" class="col-span-2 inline-flex items-center gap-1 text-left hover:text-gray-700 transition-colors" @click="toggleSort('table_count')">
+            <span>统计 (Stats)</span>
+            <svg v-if="sortField === 'table_count'" class="w-3.5 h-3.5 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path v-if="sortDirection === 'asc'" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 15l7-7 7 7" />
+              <path v-else stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+            </svg>
+          </button>
+          <button type="button" class="col-span-2 inline-flex items-center gap-1 text-left hover:text-gray-700 transition-colors" @click="toggleSort('rag_sync_status')">
+            <span>RAG 状态</span>
+            <svg v-if="sortField === 'rag_sync_status'" class="w-3.5 h-3.5 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path v-if="sortDirection === 'asc'" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 15l7-7 7 7" />
+              <path v-else stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+            </svg>
+          </button>
+          <button type="button" class="col-span-1 inline-flex items-center gap-1 text-left hover:text-gray-700 transition-colors" @click="toggleSort('updated_at')">
+            <span>更新时间</span>
+            <svg v-if="sortField === 'updated_at'" class="w-3.5 h-3.5 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path v-if="sortDirection === 'asc'" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 15l7-7 7 7" />
+              <path v-else stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+            </svg>
+          </button>
           <div class="col-span-2 text-right">操作</div>
        </div>
        <div class="divide-y divide-gray-100">
           <div 
-             v-for="ds in filteredDatasets" 
+             v-for="ds in displayDatasets" 
              :key="ds.id" 
              class="grid grid-cols-12 gap-4 px-6 py-4 items-center hover:bg-gray-50 transition-colors cursor-pointer group"
              @click="goToTables(ds.id)"

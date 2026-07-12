@@ -649,6 +649,13 @@ const toggleProfileTag = async (tag: string) => {
   await loadProfilePage()
 }
 
+const clearProfileTag = async () => {
+  if (!selectedProfileTag.value) return
+  selectedProfileTag.value = null
+  profilesPage.value = 1
+  await loadProfilePage()
+}
+
 const availableTags = computed(() => profileStats.value?.tags || [])
 
 const activeProfileTask = computed(() => {
@@ -1330,7 +1337,7 @@ onUnmounted(() => {
             <div v-if="availableTags.length > 0" class="flex flex-wrap items-center gap-1.5 pt-1">
               <span class="text-xs font-bold text-gray-400 mr-1.5 select-none">快速过滤:</span>
               <button
-                @click="selectedProfileTag = null"
+                @click="clearProfileTag"
                 :class="['px-2.5 py-1 rounded-full text-xs font-medium border transition-all cursor-pointer flex items-center gap-1', !selectedProfileTag ? 'bg-primary text-white border-primary shadow-sm shadow-primary/20' : 'bg-gray-100 border-gray-200/50 hover:bg-gray-200/50 text-gray-600']"
               >
                 <span>全部</span>

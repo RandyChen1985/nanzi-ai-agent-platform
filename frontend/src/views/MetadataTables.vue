@@ -67,6 +67,11 @@ const handleCreateTable = async () => {
 
 // Search and Filter
 const searchQuery = ref('')
+const expandedTables = ref<Record<string, boolean>>({})
+
+const toggleTableExpand = (tableName: string) => {
+  expandedTables.value[tableName] = !expandedTables.value[tableName]
+}
 const filteredTables = computed(() => {
   if (!searchQuery.value) return tables.value
   const q = searchQuery.value.toLowerCase()
@@ -607,44 +612,94 @@ defineExpose({ fetchMetrics })
             <button v-else @click="showImportModal = true" class="mt-4 text-primary text-sm font-medium hover:underline">立即导入</button>
          </div>
          
-         <div v-for="table in filteredTables" :key="table.physical_name" class="bg-white rounded-xl border border-gray-100 p-5 hover:shadow-md transition-shadow group">
-            <div class="flex justify-between items-start mb-4">
-              <div class="flex-1">
-                <div class="flex items-center gap-2">
-                  <h3 class="font-bold text-gray-900 group-hover:text-primary transition-colors">{{ table.physical_name }}</h3>
-                  <span class="text-[10px] font-bold text-gray-400 px-1.5 py-0.5 bg-gray-50 rounded border border-gray-100 uppercase tracking-wider">{{ table.term || '未命名' }}</span>
+         <div v-for="table in filteredTables" :key="table.physical_name" class="bg-white rounded-xl border border-gray-100 overflow-hidden hover:shadow-md transition-shadow group">
+            <div class="p-5">
+              <div class="flex justify-between items-start mb-3 gap-3">
+                <div class="flex-1 min-w-0 cursor-pointer" @click="toggleTableExpand(table.physical_name)">
+                  <div class="flex items-center gap-2 flex-wrap">
+                    <h3 class="font-bold text-gray-900 group-hover:text-primary transition-colors font-mono">{{ table.physical_name }}</h3>
+                    <span class="text-[10px] font-bold text-gray-500 px-1.5 py-0.5 bg-gray-50 rounded border border-gray-100">{{ table.term || '未命名' }}</span>
+                  </div>
+                  <p class="text-xs text-gray-500 mt-2 leading-relaxed line-clamp-2">{{ table.description || '暂无描述' }}</p>
                 </div>
-                <p class="text-xs text-gray-500 mt-1 line-clamp-1">{{ table.description || '暂无描述' }}</p>
+                <div class="flex items-center gap-1 shrink-0">
+                  <button
+                    type="button"
+                    class="text-gray-400 hover:text-gray-600 p-1.5 rounded-md hover:bg-gray-50 transition-all"
+                    :class="expandedTables[table.physical_name] ? 'rotate-90' : ''"
+                    @click="toggleTableExpand(table.physical_name)"
+                    title="展开字段画像"
+                  >
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M9 5l7 7-7 7"/></svg>
+                  </button>
+                  <div class="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity" v-if="hasPermission('element:metadata:edit_table')">
+                    <button 
+                      @click.stop="openEditModal(table)"
+                      class="text-gray-400 hover:text-primary transition-colors p-1.5 hover:bg-gray-100 rounded-md"
+                      title="编辑表结构"
+                    >
+                       <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
+                    </button>
+                    <button 
+                      v-if="hasPermission('element:metadata:delete_table')"
+                      @click.stop="handleDeleteTable(table.physical_name)"
+                      class="text-gray-400 hover:text-red-500 transition-colors p-1.5 hover:bg-gray-100 rounded-md"
+                      title="删除表"
+                    >
+                       <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+                    </button>
+                  </div>
+                </div>
               </div>
-              <div class="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity" v-if="hasPermission('element:metadata:edit_table')">
-                <button 
-                  @click.stop="openEditModal(table)"
-                  class="text-gray-400 hover:text-primary transition-colors p-1.5 hover:bg-gray-100 rounded-md"
-                  title="编辑表结构"
+              
+              <div v-if="!expandedTables[table.physical_name]" class="flex flex-wrap gap-1.5">
+                <div v-for="col in table.columns.slice(0, 10)" :key="col.physical_name" class="flex items-center gap-1 px-2 py-0.5 bg-slate-50 border border-slate-100 rounded-md text-[10px] font-mono group/col">
+                  <span class="text-amber-500" v-if="col.is_primary" title="Primary Key">🔑</span>
+                  <span class="text-slate-600 font-bold">{{ col.physical_name }}</span>
+                  <span class="text-slate-300">/</span>
+                  <span class="text-blue-500">{{ col.term || '?' }}</span>
+                </div>
+                <div v-if="table.columns.length > 10" class="px-2 py-0.5 bg-gray-50 border border-gray-100 rounded-md text-[10px] text-gray-400 font-medium">
+                  +{{ table.columns.length - 10 }} 更多字段
+                </div>
+                <button
+                  v-if="table.columns.length > 0"
+                  type="button"
+                  @click="toggleTableExpand(table.physical_name)"
+                  class="px-2 py-0.5 text-[10px] text-blue-500 hover:bg-blue-50 rounded-md border border-transparent hover:border-blue-100 transition-colors"
                 >
-                   <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
-                </button>
-                <button 
-                  v-if="hasPermission('element:metadata:delete_table')"
-                  @click.stop="handleDeleteTable(table.physical_name)"
-                  class="text-gray-400 hover:text-red-500 transition-colors p-1.5 hover:bg-gray-100 rounded-md"
-                  title="删除表"
-                >
-                   <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+                  展开字段画像
                 </button>
               </div>
             </div>
-            
-            <!-- Columns Minimal View -->
-            <div class="flex flex-wrap gap-1.5">
-              <div v-for="col in table.columns.slice(0, 10)" :key="col.physical_name" class="flex items-center gap-1 px-2 py-0.5 bg-slate-50 border border-slate-100 rounded-md text-[10px] font-mono group/col">
-                <span class="text-amber-500" v-if="col.is_primary" title="Primary Key">🔑</span>
-                <span class="text-slate-600 font-bold">{{ col.physical_name }}</span>
-                <span class="text-slate-300">/</span>
-                <span class="text-blue-500">{{ col.term || '?' }}</span>
+
+            <div v-if="expandedTables[table.physical_name]" class="border-t border-gray-100 p-5 bg-gray-50/30">
+              <div class="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3">
+                字段画像定义 (Columns Profile)
+                <span class="text-gray-300 font-normal ml-1">· {{ table.columns.length }} 个字段</span>
               </div>
-              <div v-if="table.columns.length > 10" class="px-2 py-0.5 bg-gray-50 border border-gray-100 rounded-md text-[10px] text-gray-400 font-medium">
-                +{{ table.columns.length - 10 }} more columns
+              <div class="border border-gray-100 rounded-xl overflow-hidden bg-white">
+                <table class="w-full text-left border-collapse text-xs">
+                  <thead>
+                    <tr class="bg-gray-50 border-b border-gray-100 text-gray-400 font-bold uppercase">
+                      <th class="px-4 py-2 border-r border-gray-100 w-[22%]">物理字段</th>
+                      <th class="px-4 py-2 border-r border-gray-100 w-[12%]">类型</th>
+                      <th class="px-4 py-2 border-r border-gray-100 w-[20%]">业务术语/中文名</th>
+                      <th class="px-4 py-2">业务含义说明</th>
+                    </tr>
+                  </thead>
+                  <tbody class="divide-y divide-gray-100 text-gray-700">
+                    <tr v-for="col in table.columns" :key="col.physical_name" class="hover:bg-gray-50">
+                      <td class="px-4 py-2 border-r border-gray-100 font-mono font-bold">
+                        <span v-if="col.is_primary" class="text-amber-500 mr-1" title="Primary Key">🔑</span>
+                        {{ col.physical_name }}
+                      </td>
+                      <td class="px-4 py-2 border-r border-gray-100 text-gray-500">{{ col.type || '-' }}</td>
+                      <td class="px-4 py-2 border-r border-gray-100 text-primary font-medium">{{ col.term || '-' }}</td>
+                      <td class="px-4 py-2 text-gray-500 leading-normal">{{ col.description || '-' }}</td>
+                    </tr>
+                  </tbody>
+                </table>
               </div>
             </div>
          </div>
@@ -1117,6 +1172,7 @@ defineExpose({ fetchMetrics })
       :dataset-id="datasetId"
       :dataset-display-name="dataset?.display_name"
       :dataset-physical-name="dataset?.name"
+      :dataset-data-source="dataset?.data_source"
       :imported-table-names="tables.map((t) => t.physical_name)"
       @close="showImportModal = false"
       @saved="fetchDatasetInfo"
