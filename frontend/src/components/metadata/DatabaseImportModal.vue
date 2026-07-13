@@ -183,7 +183,7 @@ const tableProfiles = ref<any[]>([])
 const profileStats = ref<any>(null)
 const loadingProfiles = ref(false)
 const profilesPage = ref(1)
-const profilesPageSize = ref(200)
+const profilesPageSize = ref(40)
 const profilesTotal = ref(0)
 const profilesPages = ref(0)
 const profilesSort = ref<'name_asc' | 'confidence_desc' | 'confidence_asc'>('name_asc')
@@ -192,37 +192,108 @@ const importFilter = ref<'all' | 'unimported'>('unimported')
 const selectedTables = ref<string[]>([])
 let profileSearchDebounce: ReturnType<typeof setTimeout> | null = null
 
-const expandedProfileTables = ref<Record<string, boolean>>({})
 const profileDetailsCache = ref<Record<string, any>>({})
-const loadingProfileDetails = ref<Record<string, boolean>>({})
 
-const toggleProfileExpand = async (tableName: string) => {
-  const next = !expandedProfileTables.value[tableName]
-  expandedProfileTables.value[tableName] = next
-  if (!next || profileDetailsCache.value[tableName] || !selectedConfigId.value) return
+const profilePreviewTable = ref<string | null>(null)
+const profilePreviewDetail = ref<any>(null)
+const profilePreviewLoading = ref(false)
+const profileExpandedDataTable = ref<string | null>(null)
+const profileDataPreviewLoading = ref(false)
+const profileDataPreviewError = ref('')
+const profileDataPreviewData = ref<{ columns: { name: string }[]; rows: any[][] } | null>(null)
 
-  loadingProfileDetails.value[tableName] = true
+const profilePreviewItem = computed(() =>
+  filteredTableProfiles.value.find((i) => i.table_name === profilePreviewTable.value)
+)
+
+const colName = (col: string | { name: string }) => (typeof col === 'string' ? col : col.name)
+
+const confidenceClass = (score?: number) => {
+  if (score == null) return 'bg-gray-100 text-gray-500'
+  if (score >= 80) return 'bg-emerald-100 text-emerald-700'
+  if (score >= 60) return 'bg-amber-100 text-amber-700'
+  return 'bg-red-100 text-red-700'
+}
+
+const quoteTableName = (tableName: string) => {
+  const dbType = lockedConfig.value?.db_type || config.value.type || 'mysql'
+  if (dbType === 'clickhouse') return tableName
+  if (dbType === 'oracle' || dbType === 'sqlserver' || dbType === 'mssql') {
+    return `"${tableName.replace(/"/g, '""')}"`
+  }
+  return `\`${tableName.replace(/`/g, '``')}\``
+}
+
+const loadProfilePreviewDetail = async (tableName: string) => {
+  if (!selectedConfigId.value) return
+  if (profileDetailsCache.value[tableName]) {
+    profilePreviewDetail.value = profileDetailsCache.value[tableName]
+    return
+  }
+  profilePreviewLoading.value = true
+  profilePreviewDetail.value = null
   try {
     const res = await metadataApi.getDbTableProfileDetail(selectedConfigId.value, tableName)
     profileDetailsCache.value[tableName] = res.data
+    profilePreviewDetail.value = res.data
   } catch {
-    showToast('加载字段详情失败', 'error')
-    expandedProfileTables.value[tableName] = false
+    profilePreviewDetail.value = null
   } finally {
-    loadingProfileDetails.value[tableName] = false
+    profilePreviewLoading.value = false
   }
 }
 
-const getProfileColumns = (profile: any) => {
-  const detail = profileDetailsCache.value[profile.table_name]
-  if (detail?.columns_profile) return detail.columns_profile
-  return []
+const onProfileRowClick = (profile: any) => {
+  if (profile.status !== 2) return
+  profilePreviewTable.value = profile.table_name
+  loadProfilePreviewDetail(profile.table_name)
 }
 
-const getProfileColumnChips = (profile: any) => {
-  const cols = getProfileColumns(profile)
-  if (cols.length) return cols
-  return []
+const toggleProfileDataPreview = async (tableName: string) => {
+  if (profileExpandedDataTable.value === tableName) {
+    profileExpandedDataTable.value = null
+    profileDataPreviewData.value = null
+    profileDataPreviewError.value = ''
+    return
+  }
+  if (!selectedConfigId.value) return
+  profileExpandedDataTable.value = tableName
+  profileDataPreviewLoading.value = true
+  profileDataPreviewError.value = ''
+  profileDataPreviewData.value = null
+  try {
+    const res = await metadataApi.debugDbConnectionSql(
+      selectedConfigId.value,
+      `SELECT * FROM ${quoteTableName(tableName)}`,
+      10
+    )
+    if (res.data?.code === 200) {
+      profileDataPreviewData.value = res.data.data
+    } else {
+      profileDataPreviewError.value = res.data?.message || '预览失败'
+    }
+  } catch (e: any) {
+    profileDataPreviewError.value = e.response?.data?.detail || e.message || '预览失败'
+  } finally {
+    profileDataPreviewLoading.value = false
+  }
+}
+
+const syncProfilePreviewSelection = () => {
+  const list = filteredTableProfiles.value
+  if (profileExpandedDataTable.value && !list.some((i) => i.table_name === profileExpandedDataTable.value)) {
+    profileExpandedDataTable.value = null
+    profileDataPreviewData.value = null
+    profileDataPreviewError.value = ''
+  }
+  if (profilePreviewTable.value && !list.some((i) => i.table_name === profilePreviewTable.value)) {
+    profilePreviewTable.value = list[0]?.table_name || null
+    profilePreviewDetail.value = null
+    if (profilePreviewTable.value) loadProfilePreviewDetail(profilePreviewTable.value)
+  } else if (!profilePreviewTable.value && list.length) {
+    profilePreviewTable.value = list[0].table_name
+    loadProfilePreviewDetail(list[0].table_name)
+  }
 }
 
 const profileSortParams = computed(() => {
@@ -256,6 +327,7 @@ const loadTableProfiles = async () => {
     profilesTotal.value = data.total || 0
     profilesPages.value = data.pages || 0
     profilesPage.value = data.page || profilesPage.value
+    syncProfilePreviewSelection()
   } catch {
     tableProfiles.value = []
     profileStats.value = null
@@ -278,17 +350,12 @@ const setProfilesSort = async (sort: 'name_asc' | 'confidence_desc' | 'confidenc
 }
 
 const selectedProfileTag = ref<string | null>(null)
-const isTagsExpanded = ref(false)
 
 const toggleProfileTag = async (tag: string) => {
   if (selectedProfileTag.value === tag) {
     selectedProfileTag.value = null
   } else {
     selectedProfileTag.value = tag
-    const idx = availableTags.value.findIndex((t) => t.name === tag)
-    if (idx >= 8) {
-      isTagsExpanded.value = true
-    }
   }
   profilesPage.value = 1
   await loadTableProfiles()
@@ -416,8 +483,15 @@ watch(activeTab, async (tab) => {
     profilesPage.value = 1
     profilesSort.value = 'name_asc'
     selectedProfileTag.value = null
+    profilePreviewTable.value = null
+    profilePreviewDetail.value = null
+    profileExpandedDataTable.value = null
     await loadTableProfiles()
   }
+})
+
+watch(importFilter, () => {
+  if (activeTab.value === 'profile') syncProfilePreviewSelection()
 })
 
 const handleNext = async () => {
@@ -431,7 +505,9 @@ const handleNext = async () => {
 
     // 预加载已摸排的表结构草稿
     selectedProfileTag.value = null
-    isTagsExpanded.value = false
+    profilePreviewTable.value = null
+    profilePreviewDetail.value = null
+    profileExpandedDataTable.value = null
     profilesPage.value = 1
     await loadTableProfiles()
     activeTab.value = (profileStats.value?.success_count || 0) > 0 ? 'profile' : 'system'
@@ -515,9 +591,12 @@ const handleClose = () => {
   testPassed.value = false
   connError.value = ''
   initializingLocked.value = false
-  expandedProfileTables.value = {}
   profileDetailsCache.value = {}
-  loadingProfileDetails.value = {}
+  profilePreviewTable.value = null
+  profilePreviewDetail.value = null
+  profileExpandedDataTable.value = null
+  profileDataPreviewData.value = null
+  profileDataPreviewError.value = ''
   emit('close')
 }
 
@@ -538,7 +617,7 @@ const dbTypeColor = (type: string) => {
 
 <template>
   <div v-if="show" class="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-    <div class="bg-white rounded-2xl shadow-2xl w-full max-w-5xl overflow-hidden border border-gray-100 flex flex-col max-h-[92vh] animate-fade-in-up">
+    <div class="bg-white rounded-2xl shadow-2xl w-full max-w-6xl overflow-hidden border border-gray-100 flex flex-col max-h-[92vh] animate-fade-in-up">
 
       <!-- Header -->
       <div class="p-6 border-b border-gray-100 flex justify-between items-center bg-gray-50/50 shrink-0">
@@ -674,7 +753,7 @@ const dbTypeColor = (type: string) => {
         </div>
 
         <!-- Step 2: Select Tables -->
-        <div v-else class="h-full flex flex-col gap-2.5">
+        <div v-else class="h-full flex flex-col gap-2.5 min-h-0">
           <div
             v-if="isDataSourceLocked"
             class="flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-blue-50 border border-blue-100 shrink-0 text-[11px] min-w-0"
@@ -752,23 +831,15 @@ const dbTypeColor = (type: string) => {
           <div class="flex items-center gap-2 bg-gray-50 p-2 rounded-xl border border-gray-200 shrink-0">
             <svg class="w-5 h-5 text-gray-400 ml-2 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
             <input v-model="searchQuery" type="text" class="flex-1 min-w-0 bg-transparent border-none focus:ring-0 text-sm py-1" placeholder="搜索表名或备注...">
-            <select
-              v-model="importFilter"
-              class="text-xs font-semibold text-gray-600 bg-white border border-gray-200 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-primary/20 shrink-0"
-            >
-              <option value="unimported">{{ activeTab === 'profile' ? '仅可选' : '未导入' }}</option>
-              <option value="all">{{ activeTab === 'profile' ? '全部可选' : '全部' }}</option>
-            </select>
-            <select
-              v-if="activeTab === 'profile'"
-              :value="profilesSort"
-              @change="setProfilesSort(($event.target as HTMLSelectElement).value as 'name_asc' | 'confidence_desc' | 'confidence_asc')"
-              class="text-xs font-semibold text-gray-600 bg-white border border-gray-200 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-primary/20 shrink-0"
-            >
-              <option value="name_asc">表名 A-Z</option>
-              <option value="confidence_desc">可信度 高→低</option>
-              <option value="confidence_asc">可信度 低→高</option>
-            </select>
+            <template v-if="activeTab === 'system'">
+              <select
+                v-model="importFilter"
+                class="text-xs font-semibold text-gray-600 bg-white border border-gray-200 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-primary/20 shrink-0"
+              >
+                <option value="unimported">未导入</option>
+                <option value="all">全部</option>
+              </select>
+            </template>
             <button
               @click="toggleAll"
               :disabled="activeTab === 'system' ? selectableFilteredTables.length === 0 : selectableFilteredProfiles.length === 0"
@@ -782,40 +853,11 @@ const dbTypeColor = (type: string) => {
             </button>
           </div>
 
-          <!-- 快速标签过滤 (仅在智能摸排浏览 Tab 渲染) -->
-          <div v-if="activeTab === 'profile' && availableTags.length > 0" class="flex flex-wrap items-center gap-1.5 px-1 shrink-0">
-            <span class="text-xs font-bold text-gray-400 mr-1.5 select-none">快速过滤:</span>
-            <button
-              @click="clearProfileTag"
-              :class="['px-2.5 py-1 rounded-full text-xs font-medium border transition-all cursor-pointer flex items-center gap-1', !selectedProfileTag ? 'bg-primary text-white border-primary shadow-sm shadow-primary/20' : 'bg-gray-100 border-gray-200/50 hover:bg-gray-200/50 text-gray-600']"
-            >
-              <span>全部</span>
-                <span :class="['text-[9px] px-1 py-0.2 rounded-full font-bold', !selectedProfileTag ? 'bg-white/20 text-white' : 'bg-gray-200 text-gray-500']">{{ profileSuccessTotal }}</span>
-            </button>
-            <button
-              v-for="tag in (isTagsExpanded ? availableTags : availableTags.slice(0, 8))"
-              :key="tag.name"
-              @click="toggleProfileTag(tag.name)"
-              :class="['px-2.5 py-1 rounded-full text-xs font-medium border transition-all cursor-pointer flex items-center gap-1.5', selectedProfileTag === tag.name ? 'bg-primary text-white border-primary shadow-sm shadow-primary/20' : 'bg-gray-100 border-gray-200/50 hover:bg-gray-200/50 text-gray-600']"
-            >
-              <span>{{ tag.name }}</span>
-              <span :class="['text-[9px] px-1 py-0.2 rounded-full font-bold', selectedProfileTag === tag.name ? 'bg-white/20 text-white' : 'bg-gray-200 text-gray-500']">{{ tag.count }}</span>
-            </button>
-            <button
-              v-if="availableTags.length > 8"
-              @click="isTagsExpanded = !isTagsExpanded"
-              class="px-2.5 py-1 rounded-full text-xs font-bold bg-indigo-50 border border-indigo-100 text-indigo-600 hover:bg-indigo-100 transition-all cursor-pointer flex items-center gap-0.5"
-            >
-              <span>{{ isTagsExpanded ? '收起 ▴' : `更多 (${availableTags.length - 8}) ▾` }}</span>
-            </button>
-          </div>
-
+          <!-- 系统表直连列表 -->
           <div
-            class="flex-1 overflow-y-auto border border-gray-100 rounded-xl"
-            :class="activeTab === 'profile' ? 'p-3 bg-gray-50/40' : 'divide-y divide-gray-50'"
+            v-if="activeTab === 'system'"
+            class="flex-1 overflow-y-auto border border-gray-100 rounded-xl divide-y divide-gray-50 min-h-0"
           >
-             <!-- Tab 1: 系统表直连 -->
-             <template v-if="activeTab === 'system'">
                <div
                  v-for="table in filteredTables"
                  :key="table.name"
@@ -857,206 +899,209 @@ const dbTypeColor = (type: string) => {
                <div v-if="filteredTables.length === 0" class="p-12 text-center text-gray-400 text-sm italic">
                   {{ importFilter === 'unimported' ? '暂无可导入的新表' : '未找到匹配的表' }}
                </div>
-             </template>
+          </div>
 
-             <!-- Tab 2: 智能摸排浏览 -->
-             <template v-else>
-               <div v-if="loadingProfiles" class="py-12 text-center text-sm text-gray-400">
-                 加载智能摸排数据中...
-               </div>
-               <div v-else-if="profilesTotal === 0" class="py-12 px-6 text-center text-gray-400 text-sm leading-relaxed">
-                 <p class="font-bold text-gray-500 mb-1">暂无智能摸排分析数据</p>
-                 <p class="text-xs">请先前往数据源管理对该配置执行“智能摸排”，</p>
-                 <p class="text-xs">分析完成后即可在此 Tab 快速浏览有中文业务释义的表资产。</p>
-               </div>
-               <div v-else class="space-y-3">
-                 <div
-                   v-for="profile in filteredTableProfiles"
-                   :key="profile.table_name"
-                   class="border border-gray-200/80 rounded-xl overflow-hidden shadow-sm transition-all"
-                   :class="[
-                     isTableImported(profile.table_name) ? 'opacity-70 bg-gray-50/60' : 'bg-white hover:border-gray-300',
-                     selectedTables.includes(profile.table_name) && !isTableImported(profile.table_name) ? 'ring-2 ring-primary/20 border-primary/30' : ''
-                   ]"
-                 >
-                   <div class="p-4 bg-gray-50/30 flex items-start gap-3">
-                     <div
-                       class="w-5 h-5 rounded border-2 flex items-center justify-center transition-all shrink-0 mt-1"
-                       :class="isTableImported(profile.table_name)
-                         ? 'border-gray-200 bg-gray-100 cursor-not-allowed'
-                         : selectedTables.includes(profile.table_name)
-                           ? 'bg-primary border-primary cursor-pointer'
-                           : 'border-gray-200 bg-white cursor-pointer hover:border-primary/40'"
-                       @click.stop="toggleTable(profile.table_name)"
-                     >
-                       <svg v-if="!isTableImported(profile.table_name) && selectedTables.includes(profile.table_name)" class="w-3 h-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/></svg>
-                       <svg v-else-if="isTableImported(profile.table_name)" class="w-3 h-3 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/></svg>
-                     </div>
+          <!-- 智能摸排浏览：三栏探索器布局 -->
+          <div
+            v-else
+            class="flex flex-1 min-h-0 border border-gray-100 rounded-xl overflow-hidden bg-white"
+          >
+            <div v-if="loadingProfiles" class="flex-1 flex items-center justify-center text-sm text-gray-400">
+              加载智能摸排数据中...
+            </div>
+            <div v-else-if="profilesTotal === 0" class="flex-1 flex items-center justify-center px-6 text-center text-gray-400 text-sm leading-relaxed">
+              <div>
+                <p class="font-bold text-gray-500 mb-1">暂无智能摸排分析数据</p>
+                <p class="text-xs">请先前往数据源管理对该配置执行「智能摸排」</p>
+              </div>
+            </div>
+            <template v-else>
+              <!-- 左栏筛选 -->
+              <div class="w-40 shrink-0 border-r bg-gray-50/80 flex flex-col overflow-y-auto custom-scrollbar">
+                <div class="p-2 space-y-1">
+                  <div class="px-1 text-[10px] font-bold text-gray-400 uppercase mb-1">导入范围</div>
+                  <button
+                    type="button"
+                    class="w-full text-left px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-colors"
+                    :class="importFilter === 'unimported' ? 'bg-primary text-white' : 'text-gray-600 hover:bg-white'"
+                    @click="importFilter = 'unimported'"
+                  >仅可选</button>
+                  <button
+                    type="button"
+                    class="w-full text-left px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-colors"
+                    :class="importFilter === 'all' ? 'bg-primary text-white' : 'text-gray-600 hover:bg-white'"
+                    @click="importFilter = 'all'"
+                  >全部可选</button>
+                </div>
+                <div class="border-t p-2">
+                  <div class="px-1 text-[10px] font-bold text-gray-400 uppercase mb-1">排序</div>
+                  <select
+                    :value="profilesSort"
+                    class="w-full text-xs font-semibold text-gray-600 bg-white border border-gray-200 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-primary/20"
+                    @change="setProfilesSort(($event.target as HTMLSelectElement).value as 'name_asc' | 'confidence_desc' | 'confidence_asc')"
+                  >
+                    <option value="name_asc">表名 A-Z</option>
+                    <option value="confidence_desc">可信度 高→低</option>
+                    <option value="confidence_asc">可信度 低→高</option>
+                  </select>
+                </div>
+                <div v-if="availableTags.length" class="border-t p-2 flex-1 min-h-0">
+                  <div class="px-1 text-[10px] font-bold text-gray-400 uppercase mb-1">标签</div>
+                  <button
+                    type="button"
+                    class="w-full text-left px-2 py-1 rounded-md text-[11px] mb-0.5 transition-colors"
+                    :class="!selectedProfileTag ? 'bg-primary/10 text-primary font-bold' : 'text-gray-600 hover:bg-white'"
+                    @click="clearProfileTag"
+                  >全部 ({{ profileSuccessTotal }})</button>
+                  <button
+                    v-for="tag in availableTags.slice(0, 20)"
+                    :key="tag.name"
+                    type="button"
+                    class="w-full text-left px-2 py-1 rounded-md text-[11px] truncate transition-colors"
+                    :class="selectedProfileTag === tag.name ? 'bg-primary/10 text-primary font-bold' : 'text-gray-600 hover:bg-white'"
+                    @click="toggleProfileTag(tag.name)"
+                  >{{ tag.name }} ({{ tag.count }})</button>
+                </div>
+              </div>
 
-                     <div
-                       class="min-w-0 flex-1 space-y-1.5"
-                       :class="profile.status === 2 ? 'cursor-pointer' : 'cursor-default'"
-                       @click="profile.status === 2 && toggleProfileExpand(profile.table_name)"
-                     >
-                       <div class="flex items-center gap-2 flex-wrap">
-                         <span class="font-mono text-sm font-bold text-gray-900">{{ profile.table_name }}</span>
-                         <span
-                           v-if="isTableImported(profile.table_name)"
-                           class="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider bg-gray-100 text-gray-500 border border-gray-200"
-                         >
-                           已导入
-                         </span>
-                         <span
-                           v-else-if="profile.table_type"
-                           class="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider"
-                           :class="profile.table_type === 'view' ? 'bg-amber-100 text-amber-700 border border-amber-200' : 'bg-blue-100 text-blue-700 border border-blue-200'"
-                         >
-                           {{ profile.table_type === 'view' ? '视图' : '表' }}
-                         </span>
-                         <span v-if="profile.is_ignored === 1" class="px-1.5 py-0.5 rounded text-[9px] bg-orange-50 text-orange-700 font-bold border border-orange-200/60">
-                           摸排建议忽略
-                         </span>
-                       </div>
+              <!-- 中栏列表 -->
+              <div class="flex-1 flex flex-col min-w-0">
+                <div class="px-3 py-2 border-b flex items-center justify-between text-[11px] text-gray-500 shrink-0">
+                  <span>共 {{ profilesTotal }} 张 · 当前 {{ filteredTableProfiles.length }} 张</span>
+                  <div v-if="profilesPages > 1" class="flex items-center gap-1.5">
+                    <button type="button" class="px-2 py-0.5 rounded border border-gray-200 hover:bg-gray-50 disabled:opacity-40" :disabled="profilesPage <= 1 || loadingProfiles" @click="goImportProfilePage(profilesPage - 1)">上一页</button>
+                    <span>{{ profilesPage }}/{{ profilesPages }}</span>
+                    <button type="button" class="px-2 py-0.5 rounded border border-gray-200 hover:bg-gray-50 disabled:opacity-40" :disabled="profilesPage >= profilesPages || loadingProfiles" @click="goImportProfilePage(profilesPage + 1)">下一页</button>
+                  </div>
+                </div>
+                <div class="flex-1 overflow-y-auto custom-scrollbar">
+                  <div v-if="filteredTableProfiles.length === 0" class="py-16 text-center text-gray-400 text-xs px-4">
+                    {{ importFilter === 'unimported' ? '当前页暂无可导入的新表' : '未找到匹配的表' }}
+                  </div>
+                  <div
+                    v-for="profile in filteredTableProfiles"
+                    :key="profile.table_name"
+                    class="border-b"
+                    :class="[
+                      profilePreviewTable === profile.table_name ? 'bg-primary/5' : '',
+                      isTableImported(profile.table_name) ? 'opacity-70' : '',
+                    ]"
+                  >
+                    <div
+                      class="px-3 py-2.5 flex items-start gap-2.5 group transition-colors"
+                      :class="profile.status === 2 ? 'cursor-pointer' : 'cursor-default'"
+                      @click="onProfileRowClick(profile)"
+                    >
+                      <div
+                        class="w-5 h-5 rounded border-2 flex items-center justify-center transition-all shrink-0 mt-0.5"
+                        :class="isTableImported(profile.table_name)
+                          ? 'border-gray-200 bg-gray-100 cursor-not-allowed'
+                          : selectedTables.includes(profile.table_name)
+                            ? 'bg-primary border-primary cursor-pointer'
+                            : 'border-gray-200 bg-white cursor-pointer hover:border-primary/40'"
+                        @click.stop="toggleTable(profile.table_name)"
+                      >
+                        <svg v-if="!isTableImported(profile.table_name) && selectedTables.includes(profile.table_name)" class="w-3 h-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/></svg>
+                        <svg v-else-if="isTableImported(profile.table_name)" class="w-3 h-3 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/></svg>
+                      </div>
+                      <div class="min-w-0 flex-1">
+                        <div class="flex items-start justify-between gap-2">
+                          <div class="min-w-0 flex-1 flex items-center gap-1.5 flex-wrap">
+                            <span class="text-sm font-mono font-bold text-gray-800 break-all">{{ profile.table_name }}</span>
+                            <span v-if="isTableImported(profile.table_name)" class="text-[9px] px-1 py-0.5 rounded font-bold bg-gray-100 text-gray-500">已导入</span>
+                            <span v-else class="text-[9px] px-1 py-0.5 rounded font-black shrink-0" :class="profile.table_type === 'view' ? 'bg-amber-100 text-amber-700' : 'bg-blue-100 text-blue-700'">{{ profile.table_type === 'view' ? 'VIEW' : 'TABLE' }}</span>
+                            <span v-if="profile.confidence_score != null" class="text-[9px] px-1 py-0.5 rounded font-bold shrink-0" :class="confidenceClass(profile.confidence_score)">{{ profile.confidence_score }}分</span>
+                            <span v-if="profile.is_ignored === 1" class="text-[9px] text-orange-600 font-bold">建议忽略</span>
+                          </div>
+                          <button
+                            v-if="profile.status === 2"
+                            type="button"
+                            class="shrink-0 flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-semibold border transition-colors"
+                            :class="profileExpandedDataTable === profile.table_name
+                              ? 'bg-primary text-white border-primary'
+                              : 'bg-white text-gray-500 border-gray-200 opacity-0 group-hover:opacity-100 hover:border-primary/40 hover:text-primary'"
+                            @click.stop="toggleProfileDataPreview(profile.table_name)"
+                          >
+                            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/></svg>
+                            预览数据
+                          </button>
+                        </div>
+                        <div v-if="profile.ai_term" class="text-xs text-primary font-semibold mt-0.5 break-words">{{ profile.ai_term }}</div>
+                        <div v-if="profile.ai_description" class="text-[11px] text-gray-500 mt-0.5 line-clamp-2 leading-relaxed">{{ profile.ai_description }}</div>
+                      </div>
+                    </div>
+                    <div v-if="profileExpandedDataTable === profile.table_name" class="px-3 pb-2.5 ml-8 mr-2" @click.stop>
+                      <div v-if="profileDataPreviewLoading" class="py-3 text-center text-gray-400 text-xs">
+                        <span class="inline-block w-4 h-4 border-2 border-primary/20 border-t-primary rounded-full animate-spin mr-2 align-middle" />
+                        正在加载前 10 条数据...
+                      </div>
+                      <div v-else-if="profileDataPreviewError" class="py-2 px-3 bg-red-50 border border-red-100 rounded-lg text-red-600 text-[11px]">{{ profileDataPreviewError }}</div>
+                      <div v-else-if="profileDataPreviewData" class="bg-white border border-gray-200 rounded-lg overflow-hidden shadow-sm">
+                        <div class="px-3 py-1.5 border-b bg-gray-50 flex items-center justify-between">
+                          <span class="text-[10px] font-bold text-gray-400">数据预览 (最多 10 行)</span>
+                          <span class="text-[10px] text-gray-400">{{ profileDataPreviewData.rows?.length || 0 }} 行</span>
+                        </div>
+                        <div class="overflow-x-auto custom-scrollbar max-h-40">
+                          <table class="min-w-full divide-y divide-gray-100">
+                            <thead class="bg-gray-50 sticky top-0">
+                              <tr>
+                                <th v-for="col in profileDataPreviewData.columns" :key="colName(col)" class="px-2 py-1.5 text-left text-[9px] font-bold text-gray-400 uppercase whitespace-nowrap">{{ colName(col) }}</th>
+                              </tr>
+                            </thead>
+                            <tbody class="divide-y divide-gray-50">
+                              <tr v-for="(row, rIdx) in profileDataPreviewData.rows" :key="rIdx">
+                                <td v-for="(cell, cIdx) in row" :key="cIdx" class="px-2 py-1 text-[10px] text-gray-600 whitespace-nowrap max-w-[140px] truncate" :title="cell === null || cell === undefined ? 'NULL' : String(cell)">{{ cell === null || cell === undefined ? 'NULL' : cell }}</td>
+                              </tr>
+                            </tbody>
+                          </table>
+                        </div>
+                        <div v-if="!profileDataPreviewData.rows?.length" class="py-4 text-center text-gray-400 text-[11px] italic">表中暂无数据</div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
 
-                       <div v-if="profile.ai_term" class="text-xs text-primary font-bold">
-                         💡 业务备注：{{ profile.ai_term }}
-                       </div>
-
-                       <div v-if="profile.confidence_score != null" class="flex items-center gap-2 text-[11px] flex-wrap">
-                         <div class="flex items-center gap-1 font-bold shrink-0">
-                           <span class="text-gray-400">业务可信度:</span>
-                           <span
-                             class="px-1 py-0.5 rounded text-[9px] font-black"
-                             :class="profile.confidence_score >= 80
-                               ? 'bg-emerald-50 text-emerald-700 border border-emerald-200/50'
-                               : profile.confidence_score >= 60
-                                 ? 'bg-amber-50 text-amber-700 border border-amber-200/50'
-                                 : 'bg-red-50 text-red-700 border border-red-200/50'"
-                           >
-                             {{ profile.confidence_score }} 分
-                           </span>
-                           <span
-                             v-if="profile.is_temporary === 1"
-                             class="px-1.5 py-0.5 rounded text-[9px] bg-amber-100 text-amber-800 font-bold border border-amber-200/40"
-                           >
-                             低价值临时表
-                           </span>
-                         </div>
-                         <span
-                           v-if="profile.confidence_reason"
-                           class="text-gray-400 line-clamp-1"
-                           :title="profile.confidence_reason"
-                         >
-                           原因: {{ profile.confidence_reason }}
-                         </span>
-                       </div>
-
-                       <p v-if="profile.ai_description" class="text-xs text-gray-500 leading-relaxed">
-                         用途：{{ profile.ai_description }}
-                       </p>
-
-                       <div v-if="profile.ai_tags && profile.ai_tags.length > 0" class="flex flex-wrap gap-1">
-                         <span
-                           v-for="tag in profile.ai_tags"
-                           :key="tag"
-                           @click.stop="toggleProfileTag(tag)"
-                           :class="['px-1.5 py-0.5 rounded text-[9px] font-medium transition-colors cursor-pointer', selectedProfileTag === tag ? 'bg-primary text-white' : 'bg-gray-100 text-gray-500 hover:bg-gray-200']"
-                         >
-                           {{ tag }}
-                         </span>
-                       </div>
-
-                       <div v-if="getProfileColumnChips(profile).length > 0" class="flex flex-wrap gap-1.5 pt-1">
-                         <div
-                           v-for="col in getProfileColumnChips(profile).slice(0, 8)"
-                           :key="col.name"
-                           class="flex items-center gap-1 px-2 py-0.5 bg-slate-50 border border-slate-100 rounded-md text-[10px] font-mono"
-                         >
-                           <span class="text-slate-600 font-bold">{{ col.name }}</span>
-                           <span class="text-slate-300">/</span>
-                           <span class="text-blue-500">{{ col.term || '?' }}</span>
-                         </div>
-                         <div
-                           v-if="(profile.columns_count || getProfileColumnChips(profile).length) > 8"
-                           class="px-2 py-0.5 bg-gray-50 border border-gray-100 rounded-md text-[10px] text-gray-400 font-medium"
-                         >
-                           +{{ Math.max((profile.columns_count || getProfileColumnChips(profile).length) - 8, 0) }} 更多字段
-                         </div>
-                       </div>
-                       <p v-else-if="profile.columns_count" class="text-[10px] text-gray-400 pt-1">
-                         共 {{ profile.columns_count }} 个字段 · 点击右侧展开查看字段画像
-                       </p>
-                     </div>
-
-                     <button
-                       v-if="profile.status === 2"
-                       type="button"
-                       class="text-gray-400 ml-1 shrink-0 transition-transform duration-200 p-1 hover:text-gray-600"
-                       :class="expandedProfileTables[profile.table_name] ? 'rotate-90' : ''"
-                       @click.stop="toggleProfileExpand(profile.table_name)"
-                     >
-                       <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M9 5l7 7-7 7"/>
-                       </svg>
-                     </button>
-                   </div>
-
-                   <div v-if="expandedProfileTables[profile.table_name]" class="border-t border-gray-100 p-4 bg-white space-y-2">
-                     <div class="text-xs font-bold text-gray-400 uppercase tracking-wider">
-                       字段画像定义 (Columns Profile)
-                       <span v-if="profile.columns_count" class="text-gray-300 font-normal ml-1">· {{ profile.columns_count }} 个字段</span>
-                     </div>
-
-                     <div v-if="loadingProfileDetails[profile.table_name]" class="text-xs text-gray-400 italic py-4 text-center">
-                       正在加载字段详情...
-                     </div>
-                     <div v-else-if="getProfileColumns(profile).length === 0" class="text-xs text-gray-400 italic">
-                       暂无字段分析信息
-                     </div>
-                     <div v-else class="border border-gray-100 rounded-xl overflow-hidden">
-                       <table class="w-full text-left border-collapse text-xs">
-                         <thead>
-                           <tr class="bg-gray-50 border-b border-gray-100 text-gray-400 font-bold uppercase">
-                             <th class="px-4 py-2 border-r border-gray-100 w-1/4">物理字段</th>
-                             <th class="px-4 py-2 border-r border-gray-100 w-1/4">业务术语/中文名</th>
-                             <th class="px-4 py-2">业务含义说明</th>
-                           </tr>
-                         </thead>
-                         <tbody class="divide-y divide-gray-100 text-gray-700">
-                           <tr v-for="col in getProfileColumns(profile)" :key="col.name" class="hover:bg-gray-50 bg-white">
-                             <td class="px-4 py-2 border-r border-gray-100 font-mono font-bold">{{ col.name }}</td>
-                             <td class="px-4 py-2 border-r border-gray-100 text-primary font-medium">{{ col.term || '-' }}</td>
-                             <td class="px-4 py-2 text-gray-500 leading-normal">{{ col.desc || '-' }}</td>
-                           </tr>
-                         </tbody>
-                       </table>
-                     </div>
-                   </div>
-                 </div>
-               </div>
-               <div v-if="profilesTotal > 0 && filteredTableProfiles.length === 0" class="p-12 text-center text-gray-400 text-sm italic">
-                 {{ importFilter === 'unimported' ? '当前页暂无可导入的新表，请翻页或调整筛选' : '未找到匹配的表' }}
-               </div>
-               <div v-if="profilesPages > 1" class="p-3 border-t border-gray-100 flex items-center justify-between bg-gray-50/50 rounded-xl mt-3">
-                 <span class="text-xs text-gray-400">第 {{ profilesPage }} / {{ profilesPages }} 页</span>
-                 <div class="flex items-center gap-2">
-                   <button
-                     @click="goImportProfilePage(profilesPage - 1)"
-                     :disabled="profilesPage <= 1 || loadingProfiles"
-                     class="px-2.5 py-1 rounded-lg border border-gray-200 text-xs font-bold text-gray-600 disabled:opacity-40"
-                   >
-                     上一页
-                   </button>
-                   <button
-                     @click="goImportProfilePage(profilesPage + 1)"
-                     :disabled="profilesPage >= profilesPages || loadingProfiles"
-                     class="px-2.5 py-1 rounded-lg border border-gray-200 text-xs font-bold text-gray-600 disabled:opacity-40"
-                   >
-                     下一页
-                   </button>
-                 </div>
-               </div>
-             </template>
+              <!-- 右栏预览 -->
+              <div class="w-64 shrink-0 border-l bg-gray-50/50 flex flex-col overflow-hidden">
+                <div class="px-3 py-2 border-b text-[11px] font-bold text-gray-500 shrink-0">表预览</div>
+                <div v-if="!profilePreviewTable" class="flex-1 flex items-center justify-center text-gray-400 text-xs px-3 text-center">点击表查看字段画像</div>
+                <div v-else class="flex-1 overflow-y-auto custom-scrollbar p-3 space-y-2">
+                  <div class="font-mono text-sm font-bold text-gray-800 break-all">{{ profilePreviewTable }}</div>
+                  <template v-if="profilePreviewItem">
+                    <div v-if="profilePreviewItem.ai_term" class="text-xs text-primary font-semibold">{{ profilePreviewItem.ai_term }}</div>
+                    <div v-if="profilePreviewItem.ai_description" class="text-[11px] text-gray-600 leading-relaxed">{{ profilePreviewItem.ai_description }}</div>
+                    <div v-if="profilePreviewItem.confidence_score != null" class="text-[10px] flex items-center gap-1">
+                      <span class="text-gray-400">可信度</span>
+                      <span class="px-1 py-0.5 rounded font-bold" :class="confidenceClass(profilePreviewItem.confidence_score)">{{ profilePreviewItem.confidence_score }} 分</span>
+                    </div>
+                    <div v-if="profilePreviewItem.ai_tags?.length" class="flex flex-wrap gap-1">
+                      <span v-for="tg in profilePreviewItem.ai_tags" :key="tg" class="text-[9px] px-1.5 py-0.5 bg-white border rounded-full text-gray-600">{{ tg }}</span>
+                    </div>
+                  </template>
+                  <div v-if="profilePreviewLoading" class="text-[11px] text-gray-400 italic py-4 text-center">加载字段画像...</div>
+                  <div v-else-if="profilePreviewDetail?.columns_profile?.length" class="border border-gray-100 rounded-lg overflow-hidden bg-white">
+                    <div class="px-2 py-1.5 bg-gray-50 border-b text-[10px] font-bold text-gray-400">字段 ({{ profilePreviewDetail.columns_profile.length }})</div>
+                    <div class="max-h-[38vh] overflow-y-auto custom-scrollbar">
+                      <table class="w-full text-[10px]">
+                        <thead class="sticky top-0 bg-gray-50 text-gray-400">
+                          <tr>
+                            <th class="px-2 py-1 font-bold border-b">字段</th>
+                            <th class="px-2 py-1 font-bold border-b">术语</th>
+                          </tr>
+                        </thead>
+                        <tbody class="divide-y divide-gray-50">
+                          <tr v-for="col in profilePreviewDetail.columns_profile" :key="col.name || col.column_name">
+                            <td class="px-2 py-1 font-mono text-gray-700 align-top">{{ col.name || col.column_name }}</td>
+                            <td class="px-2 py-1 text-primary align-top">{{ col.term || '-' }}</td>
+                          </tr>
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </template>
           </div>
 
           <div class="text-xs text-gray-400 font-medium px-2 space-y-0.5 shrink-0">
@@ -1149,6 +1194,8 @@ const dbTypeColor = (type: string) => {
 </template>
 
 <style scoped>
+.custom-scrollbar::-webkit-scrollbar { width: 5px; height: 5px; }
+.custom-scrollbar::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 6px; }
 .animate-fade-in-up {
   animation: fadeInUp 0.4s cubic-bezier(0.16, 1, 0.3, 1);
 }
