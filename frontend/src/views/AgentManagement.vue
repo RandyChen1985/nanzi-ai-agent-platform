@@ -487,6 +487,24 @@ const groupedMcpTools = computed(() => {
   return groups;
 });
 
+const collapsedMcpGroups = ref<Set<string>>(new Set());
+
+const isMcpGroupCollapsed = (serverName: string) => collapsedMcpGroups.value.has(serverName);
+
+const toggleMcpGroupCollapse = (serverName: string) => {
+  const next = new Set(collapsedMcpGroups.value);
+  if (next.has(serverName)) {
+    next.delete(serverName);
+  } else {
+    next.add(serverName);
+  }
+  collapsedMcpGroups.value = next;
+};
+
+const getMcpGroupSelectedCount = (tools: any[]) => {
+  return tools.filter(tool => isToolSelected(tool.name)).length;
+};
+
 const fetchTools = async () => {
   try {
     const res = await toolApi.list();
@@ -2556,20 +2574,42 @@ const formatDate = (dateStr: string) => {
                 暂无已发布的 MCP 工具，请前往系统设置配置。
               </div>
               
-              <div v-else v-for="(tools, serverName) in groupedMcpTools" :key="serverName" class="space-y-3">
-                <!-- 精致分组贴片 Header 带全选控制 -->
-                <div class="flex items-center justify-between py-1.5 px-3 rounded-lg bg-indigo-50/60 border border-indigo-100/50 sticky top-0 bg-white z-10 shadow-sm mb-2 select-none">
-                  <span class="text-[10px] font-black text-indigo-600 uppercase tracking-widest flex items-center gap-1.5">
-                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <div v-else v-for="(tools, serverName) in groupedMcpTools" :key="serverName" class="rounded-lg border border-indigo-100/60 overflow-hidden">
+                <!-- 分组 Header：折叠 + 全选 -->
+                <div class="flex items-center justify-between py-1.5 px-3 bg-indigo-50/80 border-b border-indigo-100/50 sticky top-0 z-10 select-none">
+                  <button
+                    type="button"
+                    @click="toggleMcpGroupCollapse(serverName)"
+                    class="flex items-center gap-1.5 min-w-0 flex-1 text-left group/header"
+                  >
+                    <svg
+                      class="w-3.5 h-3.5 text-indigo-400 flex-shrink-0 transition-transform duration-200"
+                      :class="{ 'rotate-90': !isMcpGroupCollapsed(serverName) }"
+                      fill="none" stroke="currentColor" viewBox="0 0 24 24"
+                    >
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
+                    </svg>
+                    <svg class="w-3.5 h-3.5 text-indigo-500 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
                     </svg>
-                    {{ serverName }} ({{ tools.length }})
-                  </span>
+                    <span class="text-[10px] font-black text-indigo-600 uppercase tracking-widest truncate">
+                      {{ serverName }}
+                    </span>
+                    <span class="text-[10px] font-bold text-indigo-400 flex-shrink-0">
+                      ({{ tools.length }})
+                    </span>
+                    <span
+                      v-if="getMcpGroupSelectedCount(tools) > 0"
+                      class="text-[9px] font-bold text-indigo-700 bg-indigo-100 px-1.5 py-0.5 rounded-full flex-shrink-0"
+                    >
+                      已选 {{ getMcpGroupSelectedCount(tools) }}
+                    </span>
+                  </button>
                   
                   <button 
                     v-if="canEditVersion"
-                    @click="toggleSelectAllMcp(serverName, tools)"
-                    class="text-[10px] font-bold text-indigo-600 hover:text-indigo-800 active:scale-95 transition-all flex items-center gap-1"
+                    @click.stop="toggleSelectAllMcp(serverName, tools)"
+                    class="text-[10px] font-bold text-indigo-600 hover:text-indigo-800 active:scale-95 transition-all flex items-center gap-1 flex-shrink-0 ml-2"
                   >
                     <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path v-if="isAllMcpSelected(serverName, tools)" stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" />
@@ -2579,8 +2619,8 @@ const formatDate = (dateStr: string) => {
                   </button>
                 </div>
 
-                <!-- 优化为双列网格 (Two-column Grid) -->
-                <div class="grid grid-cols-2 gap-3">
+                <!-- 双列工具网格 -->
+                <div v-show="!isMcpGroupCollapsed(serverName)" class="grid grid-cols-2 gap-3 p-3">
                   <div
                     v-for="tool in tools"
                     :key="tool.id"

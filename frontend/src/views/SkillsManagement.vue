@@ -1789,13 +1789,13 @@ textarea:focus {
   box-shadow: none;
 }
 
-/* Skill Editor */
+/* Skill Editor (light theme) */
 .skill-editor {
   border-radius: 12px;
   border: 1px solid #e2e8f0;
-  background: #1a1b26;
+  background: #ffffff;
   overflow: hidden;
-  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.06), 0 8px 24px rgba(15, 23, 42, 0.08);
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04), 0 4px 16px rgba(15, 23, 42, 0.04);
 }
 
 .skill-editor-toolbar {
@@ -1804,8 +1804,8 @@ textarea:focus {
   justify-content: space-between;
   gap: 12px;
   padding: 10px 14px;
-  background: #16161e;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  background: #f8fafc;
+  border-bottom: 1px solid #e2e8f0;
   flex-shrink: 0;
 }
 
@@ -1825,33 +1825,33 @@ textarea:focus {
   height: 28px;
   border-radius: 7px;
   flex-shrink: 0;
-  background: rgba(59, 130, 246, 0.15);
-  color: #60a5fa;
+  background: #eff6ff;
+  color: #2563eb;
 }
 
 .skill-editor-file-icon.ext-md {
-  background: rgba(59, 130, 246, 0.15);
-  color: #60a5fa;
+  background: #eff6ff;
+  color: #2563eb;
 }
 .skill-editor-file-icon.ext-sh,
 .skill-editor-file-icon.ext-bash {
-  background: rgba(34, 197, 94, 0.15);
-  color: #4ade80;
+  background: #f0fdf4;
+  color: #16a34a;
 }
 .skill-editor-file-icon.ext-py {
-  background: rgba(250, 204, 21, 0.15);
-  color: #facc15;
+  background: #fefce8;
+  color: #ca8a04;
 }
 .skill-editor-file-icon.ext-json {
-  background: rgba(251, 146, 60, 0.15);
-  color: #fb923c;
+  background: #fff7ed;
+  color: #ea580c;
 }
 
 .skill-editor-filename {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   font-size: 12px;
   font-weight: 500;
-  color: #c0caf5;
+  color: #334155;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1861,9 +1861,9 @@ textarea:focus {
   flex-shrink: 0;
   font-size: 10px;
   font-weight: 600;
-  color: #fbbf24;
-  background: rgba(251, 191, 36, 0.12);
-  border: 1px solid rgba(251, 191, 36, 0.25);
+  color: #b45309;
+  background: #fffbeb;
+  border: 1px solid #fde68a;
   padding: 1px 7px;
   border-radius: 999px;
 }
@@ -1880,8 +1880,8 @@ textarea:focus {
   align-items: center;
   padding: 2px;
   border-radius: 8px;
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: #f1f5f9;
+  border: 1px solid #e2e8f0;
 }
 
 .skill-editor-mode-toggle button {
@@ -1892,18 +1892,18 @@ textarea:focus {
   border-radius: 6px;
   font-size: 11px;
   font-weight: 500;
-  color: #6b7280;
+  color: #64748b;
   transition: all 0.15s ease;
 }
 
 .skill-editor-mode-toggle button:hover {
-  color: #a9b1d6;
+  color: #334155;
 }
 
 .skill-editor-mode-toggle button.active {
-  background: rgba(255, 255, 255, 0.1);
-  color: #e0e6f5;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+  background: #ffffff;
+  color: #1e293b;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08);
 }
 
 .skill-editor-save-btn {
@@ -1914,9 +1914,9 @@ textarea:focus {
   border-radius: 8px;
   font-size: 12px;
   font-weight: 600;
-  color: #64748b;
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  color: #94a3b8;
+  background: #f1f5f9;
+  border: 1px solid #e2e8f0;
   transition: all 0.15s ease;
   cursor: not-allowed;
 }
@@ -1926,7 +1926,7 @@ textarea:focus {
   background: #2563eb;
   border-color: #3b82f6;
   cursor: pointer;
-  box-shadow: 0 1px 2px rgba(37, 99, 235, 0.3);
+  box-shadow: 0 1px 2px rgba(37, 99, 235, 0.25);
 }
 
 .skill-editor-save-btn.is-dirty:hover {
@@ -1961,6 +1961,7 @@ textarea:focus {
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  background: #ffffff;
 }
 
 .skill-editor-code-pane {
@@ -1978,9 +1979,9 @@ textarea:focus {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   font-size: 12px;
   line-height: 1.625rem;
-  color: #3b4261;
-  background: #16161e;
-  border-right: 1px solid rgba(255, 255, 255, 0.04);
+  color: #94a3b8;
+  background: #f8fafc;
+  border-right: 1px solid #e2e8f0;
   overflow: hidden;
   user-select: none;
 }
@@ -1992,19 +1993,19 @@ textarea:focus {
 .skill-editor-textarea {
   flex: 1;
   padding: 12px 16px;
-  background: transparent;
-  color: #a9bade;
+  background: #ffffff;
+  color: #1e293b;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   font-size: 13px;
   line-height: 1.625rem;
   border: none;
   resize: none;
   overflow-y: auto;
-  caret-color: #7aa2f7;
+  caret-color: #2563eb;
 }
 
 .skill-editor-textarea::placeholder {
-  color: #3b4261;
+  color: #cbd5e1;
 }
 
 .skill-editor-textarea::-webkit-scrollbar {
@@ -2013,12 +2014,12 @@ textarea:focus {
 }
 
 .skill-editor-textarea::-webkit-scrollbar-thumb {
-  background: #2a2b3d;
+  background: #cbd5e1;
   border-radius: 4px;
 }
 
 .skill-editor-textarea::-webkit-scrollbar-thumb:hover {
-  background: #3b3d52;
+  background: #94a3b8;
 }
 
 .skill-editor-preview {
@@ -2027,7 +2028,6 @@ textarea:focus {
   padding: 24px 32px;
   color: #1e293b;
   background: #ffffff;
-  border-top: 1px solid #e2e8f0;
 }
 
 .skill-editor-preview::-webkit-scrollbar {
@@ -2049,11 +2049,11 @@ textarea:focus {
   align-items: center;
   justify-content: space-between;
   padding: 5px 14px;
-  background: #16161e;
-  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  background: #f8fafc;
+  border-top: 1px solid #e2e8f0;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   font-size: 10px;
-  color: #565f89;
+  color: #94a3b8;
   flex-shrink: 0;
   user-select: none;
 }
@@ -2066,11 +2066,11 @@ textarea:focus {
 }
 
 .skill-editor-status-sep {
-  opacity: 0.5;
+  opacity: 0.6;
 }
 
 .skill-editor-status-dirty {
-  color: #e0af68;
+  color: #d97706;
 }
 
 /* 生态市场外链按钮特殊强制渐变背景以防止被第三方库覆盖 */
