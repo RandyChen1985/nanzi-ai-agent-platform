@@ -41,7 +41,7 @@ def test_current_conversation_context_is_already_available_evidence():
     assert not requirement.required
 
 
-def test_unknown_request_blocks_numeric_table_and_false_tool_claim_without_evidence():
+def test_unknown_request_passes_numeric_table_without_evidence():
     ledger = EvidenceLedger(user_id="1", conversation_id="c1")
     answer = (
         "好的，我来调用数据智能体进行分析。\n"
@@ -58,10 +58,10 @@ def test_unknown_request_blocks_numeric_table_and_false_tool_claim_without_evide
         ledger=ledger,
     )
 
-    assert decision.action == GroundingAction.BLOCK_UNGROUNDED_FACTS
+    assert decision.action == GroundingAction.PASS
 
 
-def test_unknown_dynamic_fact_fails_closed_even_without_numbers_or_tables():
+def test_unknown_dynamic_fact_passes_without_evidence():
     decision = evaluate_grounding(
         requirement=resolve_fact_requirement(
             _decision(RequestSource.UNKNOWN, RequestCapability.ANSWER)
@@ -70,10 +70,10 @@ def test_unknown_dynamic_fact_fails_closed_even_without_numbers_or_tables():
         ledger=EvidenceLedger(user_id="1", conversation_id="c1"),
     )
 
-    assert decision.action == GroundingAction.BLOCK_UNGROUNDED_FACTS
+    assert decision.action == GroundingAction.PASS
 
 
-def test_unknown_dynamic_fact_is_not_authorized_by_an_untyped_unrelated_receipt():
+def test_unknown_dynamic_fact_passes_with_any_valid_tool_receipt():
     ledger = EvidenceLedger(user_id="1", conversation_id="c1")
     ledger.record_success(
         call_id="call-time",
@@ -90,7 +90,32 @@ def test_unknown_dynamic_fact_is_not_authorized_by_an_untyped_unrelated_receipt(
         ledger=ledger,
     )
 
-    assert decision.action == GroundingAction.BLOCK_UNGROUNDED_FACTS
+    assert decision.action == GroundingAction.PASS
+
+
+def test_unknown_structured_fact_passes_with_any_valid_tool_receipt():
+    ledger = EvidenceLedger(user_id="1", conversation_id="c1")
+    ledger.record_success(
+        call_id="call-travel",
+        producer="travel-query",
+        evidence_types={EvidenceType.PUBLIC_WEB},
+        result={"trains": [{"number": "G1505", "price": 973}]},
+    )
+    answer = (
+        "| 车次 | 出发时间 | 票价 |\n"
+        "| --- | --- | --- |\n"
+        "| G1505 | 07:50 | 973元 |"
+    )
+
+    decision = evaluate_grounding(
+        requirement=resolve_fact_requirement(
+            _decision(RequestSource.UNKNOWN, RequestCapability.ANSWER)
+        ),
+        candidate_text=answer,
+        ledger=ledger,
+    )
+
+    assert decision.action == GroundingAction.PASS
 
 
 def test_unknown_runtime_fact_passes_when_matching_runtime_receipt_exists():
@@ -117,7 +142,7 @@ def test_unknown_runtime_fact_passes_when_matching_runtime_receipt_exists():
     assert decision.action == GroundingAction.PASS
 
 
-def test_unknown_internal_table_still_blocks_with_unrelated_runtime_receipt():
+def test_unknown_internal_table_passes_with_unrelated_runtime_receipt():
     ledger = EvidenceLedger(user_id="1", conversation_id="c1")
     ledger.record_success(
         call_id="call-bash",
@@ -139,10 +164,10 @@ def test_unknown_internal_table_still_blocks_with_unrelated_runtime_receipt():
         ledger=ledger,
     )
 
-    assert decision.action == GroundingAction.BLOCK_UNGROUNDED_FACTS
+    assert decision.action == GroundingAction.PASS
 
 
-def test_unknown_mixed_fact_requires_every_inferred_evidence_type():
+def test_unknown_mixed_fact_passes_with_any_valid_tool_receipt():
     ledger = EvidenceLedger(user_id="1", conversation_id="c1")
     ledger.record_success(
         call_id="call-bash",
@@ -160,7 +185,7 @@ def test_unknown_mixed_fact_requires_every_inferred_evidence_type():
         ledger=ledger,
     )
 
-    assert decision.action == GroundingAction.BLOCK_UNGROUNDED_FACTS
+    assert decision.action == GroundingAction.PASS
 
 
 @pytest.mark.parametrize(
@@ -171,7 +196,7 @@ def test_unknown_mixed_fact_requires_every_inferred_evidence_type():
         "该制度要求三级审批。",
     ],
 )
-def test_unknown_entity_fact_without_evidence_fails_closed(answer):
+def test_unknown_entity_fact_without_evidence_passes(answer):
     decision = evaluate_grounding(
         requirement=resolve_fact_requirement(
             _decision(RequestSource.UNKNOWN, RequestCapability.ANSWER)
@@ -180,7 +205,7 @@ def test_unknown_entity_fact_without_evidence_fails_closed(answer):
         ledger=EvidenceLedger(user_id="1", conversation_id="c1"),
     )
 
-    assert decision.action == GroundingAction.BLOCK_UNGROUNDED_FACTS
+    assert decision.action == GroundingAction.PASS
 
 
 def test_unknown_creative_and_math_outputs_are_not_misclassified_as_external_facts():

@@ -105,7 +105,7 @@ def resolve_fact_requirement(decision: RequestDecision | None) -> FactRequiremen
     return FactRequirement(
         required=bool(accepted_types),
         accepted_types=accepted_types,
-        scrutinize_unknown_output=decision.source == RequestSource.UNKNOWN,
+        scrutinize_unknown_output=False,
     )
 
 

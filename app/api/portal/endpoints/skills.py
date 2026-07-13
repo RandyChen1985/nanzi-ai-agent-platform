@@ -2,7 +2,10 @@ import os
 import shutil
 import logging
 import re
-from typing import List, Dict, Any, Optional
+import zipfile
+import tarfile
+from io import BytesIO
+from typing import List, Dict, Any, Optional, Literal
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
 from pydantic import BaseModel
 
@@ -29,6 +32,15 @@ class FileEditRequest(BaseModel):
     path: str
     content: str
 
+class SkillAssetCreateRequest(BaseModel):
+    path: str
+    type: Literal["file", "folder"]
+
+EDITABLE_TEXT_EXTENSIONS = {
+    ".md", ".py", ".js", ".ts", ".json", ".txt", ".yaml", ".yml",
+    ".ini", ".conf", ".sql", ".sh",
+}
+
 def validate_secure_skill_path(skill_id: str, relative_path: str = "") -> str:
     """
     严格校验 skill_id 和 relative_path，防御路径穿越漏洞。
@@ -50,6 +62,29 @@ def validate_secure_skill_path(skill_id: str, relative_path: str = "") -> str:
     if os.path.commonpath([skill_base_dir, target_path]) != skill_base_dir:
          raise HTTPException(status_code=403, detail="安全拦截：文件子路径越界")
          
+    return target_path
+
+def validate_new_asset_path(skill_id: str, relative_path: str, asset_type: str) -> str:
+    """校验新建资产路径，并返回技能根目录内的绝对路径。"""
+    if not relative_path or not relative_path.strip():
+        raise HTTPException(status_code=400, detail="资产名称不能为空")
+    if os.path.isabs(relative_path) or relative_path.startswith("/"):
+        raise HTTPException(status_code=400, detail="资产路径必须是相对路径")
+
+    target_path = validate_secure_skill_path(skill_id, relative_path)
+    if "\\" in relative_path:
+        raise HTTPException(status_code=400, detail="资产路径不允许包含反斜杠")
+    normalized_path = relative_path.replace("\\", "/")
+    path_parts = [part for part in normalized_path.split("/") if part]
+    if any(part in {".", ".."} for part in path_parts):
+        raise HTTPException(status_code=400, detail="资产路径不允许包含相对目录段")
+    if any(part.startswith(".") and part not in {".", ".."} for part in path_parts):
+        raise HTTPException(status_code=400, detail="不允许创建隐藏文件或文件夹")
+
+    if asset_type == "file":
+        _, ext = os.path.splitext(target_path.lower())
+        if ext not in EDITABLE_TEXT_EXTENSIONS:
+            raise HTTPException(status_code=400, detail="只允许新建可在线编辑的文本类文件")
     return target_path
 
 def parse_skill_metadata(skill_id: str, skill_md_path: str) -> dict:
@@ -259,9 +294,8 @@ async def get_skill_file_content(
             raise HTTPException(status_code=404, detail="文件不存在")
             
         # 安全阻断：禁止读取非文本类型
-        text_extensions = [".md", ".py", ".js", ".ts", ".json", ".txt", ".yaml", ".yml", ".ini", ".conf", ".sql", ".sh"]
         _, ext = os.path.splitext(file_path.lower())
-        if ext not in text_extensions:
+        if ext not in EDITABLE_TEXT_EXTENSIONS:
             raise HTTPException(status_code=400, detail="只允许在线读取文本类配置文件及脚本")
             
         with open(file_path, "r", encoding="utf-8") as f:
@@ -287,9 +321,8 @@ async def edit_skill_file(
         file_path = validate_secure_skill_path(skill_id, req.path)
         
         # 安全阻断：禁止操作非文本类型
-        text_extensions = [".md", ".py", ".js", ".json", ".txt", ".yaml", ".yml", ".ini", ".conf", ".sql", ".sh"]
         _, ext = os.path.splitext(file_path.lower())
-        if ext not in text_extensions:
+        if ext not in EDITABLE_TEXT_EXTENSIONS:
             raise HTTPException(status_code=400, detail="只允许在线编辑保存文本类配置文件及脚本")
             
         # 限制文件大小在 2MB 以内
@@ -307,6 +340,34 @@ async def edit_skill_file(
         raise
     except Exception as e:
         logger.error(f"[Skills] Failed to edit file {req.path} in {skill_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/{skill_id}/files", response_model=Dict[str, Any])
+async def create_skill_asset(
+    skill_id: str,
+    req: SkillAssetCreateRequest,
+    user: Dict = Depends(require_permission("menu", "menu:skills_management"))
+):
+    """在技能目录内显式创建空文本文件或文件夹。"""
+    try:
+        target_path = validate_new_asset_path(skill_id, req.path, req.type)
+        parent_path = os.path.dirname(target_path)
+        if not os.path.isdir(parent_path):
+            raise HTTPException(status_code=400, detail="目标父文件夹不存在")
+        if os.path.exists(target_path):
+            raise HTTPException(status_code=409, detail="同名文件或文件夹已存在")
+
+        if req.type == "folder":
+            os.mkdir(target_path)
+        else:
+            with open(target_path, "x", encoding="utf-8"):
+                pass
+
+        return {"status": "success", "message": "创建成功"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[Skills] Failed to create asset {req.path} in {skill_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/{skill_id}/upload", response_model=Dict[str, Any])
@@ -390,4 +451,177 @@ async def delete_entire_skill(
         raise
     except Exception as e:
         logger.error(f"[Skills] Failed to delete skill directory {skill_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+def safe_extract_archive(content: bytes, filename: str, target_dir: str):
+    """
+    安全解包 ZIP 或 TAR 压缩文件到指定的目标目录下。
+    对解压出来的所有路径进行防路径穿越 (Zip Slip) 安全校验。
+    """
+    target_dir_abs = os.path.abspath(target_dir)
+    os.makedirs(target_dir_abs, exist_ok=True)
+    
+    file_like = BytesIO(content)
+    lower_filename = filename.lower()
+    
+    if lower_filename.endswith(".zip"):
+        try:
+            with zipfile.ZipFile(file_like) as zf:
+                for member in zf.infolist():
+                    # 规范化路径分割符并分割
+                    parts = [p for p in member.filename.replace("\\", "/").split("/") if p]
+                    if any(part == ".." for part in parts):
+                        raise HTTPException(status_code=400, detail="压缩包内包含非法越权路径")
+                    if any(part.startswith(".") for part in parts):
+                        continue
+                    if "__MACOSX" in parts:
+                        continue
+                    
+                    # 防范路径穿越：拼接并验证
+                    target_path = os.path.abspath(os.path.join(target_dir_abs, *parts))
+                    if os.path.commonpath([target_dir_abs, target_path]) != target_dir_abs:
+                        raise HTTPException(status_code=400, detail="压缩包内包含非法越权路径")
+                    
+                    if member.is_dir():
+                        os.makedirs(target_path, exist_ok=True)
+                    else:
+                        os.makedirs(os.path.dirname(target_path), exist_ok=True)
+                        with zf.open(member) as source, open(target_path, "wb") as target:
+                            shutil.copyfileobj(source, target)
+        except zipfile.BadZipFile:
+            raise HTTPException(status_code=400, detail="无效或损坏的 ZIP 文件")
+            
+    elif lower_filename.endswith((".tar", ".tar.gz", ".tgz", ".tar.bz2", ".tbz")):
+        try:
+            with tarfile.open(fileobj=file_like, mode="r:*") as tf:
+                for member in tf.getmembers():
+                    parts = [p for p in member.name.replace("\\", "/").split("/") if p]
+                    if any(part == ".." for part in parts):
+                        raise HTTPException(status_code=400, detail="压缩包内包含非法越权路径")
+                    if any(part.startswith(".") for part in parts):
+                        continue
+                    if "__MACOSX" in parts:
+                        continue
+                    
+                    target_path = os.path.abspath(os.path.join(target_dir_abs, *parts))
+                    if os.path.commonpath([target_dir_abs, target_path]) != target_dir_abs:
+                        raise HTTPException(status_code=400, detail="压缩包内包含非法越权路径")
+                    
+                    if member.isdir():
+                        os.makedirs(target_path, exist_ok=True)
+                    elif member.isreg():  # 仅解压普通文件
+                        os.makedirs(os.path.dirname(target_path), exist_ok=True)
+                        fileobj = tf.extractfile(member)
+                        if fileobj:
+                            with open(target_path, "wb") as target:
+                                shutil.copyfileobj(fileobj, target)
+        except tarfile.TarError:
+            raise HTTPException(status_code=400, detail="无效或损坏的 TAR 归档文件")
+    else:
+        raise HTTPException(status_code=400, detail="不支持的压缩格式。仅支持 .zip, .tar, .tar.gz, .tgz, .tar.bz2")
+
+
+@router.post("/{skill_id}/upload-archive", response_model=Dict[str, Any])
+async def upload_skill_archive(
+    skill_id: str,
+    folder: Optional[str] = Form(None),
+    file: UploadFile = File(...),
+    user: Dict = Depends(require_permission("menu", "menu:skills_management"))
+):
+    """
+    上传 zip/tar 压缩包并解压到指定技能的子目录下，单文件上限 20MB
+    """
+    try:
+        sub_dir = folder if folder else ""
+        target_dir = validate_secure_skill_path(skill_id, sub_dir)
+        
+        content = await file.read()
+        if len(content) > 20 * 1024 * 1024:
+            raise HTTPException(status_code=400, detail="上传的压缩文件大小不能超出 20MB 限制")
+            
+        file_name = file.filename if file.filename else "archive.zip"
+        safe_extract_archive(content, file_name, target_dir)
+        
+        return {"status": "success", "message": f"技能压缩包 {file_name} 上传解压成功"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[Skills] Failed to upload and extract archive for skill {skill_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/import", response_model=Dict[str, Any])
+async def import_skill_package(
+    file: UploadFile = File(...),
+    overwrite: bool = Form(False),
+    user: Dict = Depends(require_permission("menu", "menu:skills_management"))
+):
+    """
+    上传压缩包导入为新技能，解压至技能目录。解包后必须包含 SKILL.md。
+    """
+    try:
+        filename = file.filename if file.filename else "imported_skill.zip"
+        base_name, _ = os.path.splitext(filename)
+        if base_name.lower().endswith(".tar"):
+            base_name, _ = os.path.splitext(base_name)
+            
+        skill_id = re.sub(r"[^a-zA-Z0-9_\-]", "", base_name).strip()
+        if not skill_id:
+            raise HTTPException(status_code=400, detail="无法从文件名中提取合法的技能ID")
+            
+        skill_dir = validate_secure_skill_path(skill_id)
+        
+        if os.path.exists(skill_dir) and not overwrite:
+            raise HTTPException(status_code=400, detail=f"技能 {skill_id} 已存在，请开启 overwrite 以覆盖导入")
+            
+        content = await file.read()
+        if len(content) > 20 * 1024 * 1024:
+            raise HTTPException(status_code=400, detail="导入文件大小超出 20MB 限制")
+            
+        if os.path.exists(skill_dir):
+            shutil.rmtree(skill_dir)
+            
+        os.makedirs(skill_dir, exist_ok=True)
+        
+        try:
+            safe_extract_archive(content, filename, skill_dir)
+            
+            # 平铺外层文件夹：若解包后只有一个子目录，且该子目录内含 SKILL.md
+            top_items = os.listdir(skill_dir)
+            visible_items = [i for i in top_items if not i.startswith(".")]
+            if len(visible_items) == 1:
+                single_sub = os.path.join(skill_dir, visible_items[0])
+                if os.path.isdir(single_sub):
+                    has_inner_skill_md = False
+                    for item in os.listdir(single_sub):
+                        if item.upper() == "SKILL.MD" and os.path.isfile(os.path.join(single_sub, item)):
+                            has_inner_skill_md = True
+                            break
+                    if has_inner_skill_md:
+                        for item in os.listdir(single_sub):
+                            shutil.move(os.path.join(single_sub, item), os.path.join(skill_dir, item))
+                        os.rmdir(single_sub)
+            
+            # 最终检验是否存在 SKILL.md
+            has_skill_md = False
+            for item in os.listdir(skill_dir):
+                if item.upper() == "SKILL.MD" and os.path.isfile(os.path.join(skill_dir, item)):
+                    has_skill_md = True
+                    break
+                    
+            if not has_skill_md:
+                shutil.rmtree(skill_dir)
+                raise HTTPException(status_code=400, detail="导入失败：压缩包根目录下必须包含核心规范文件 SKILL.md")
+                
+        except Exception as e:
+            if os.path.exists(skill_dir):
+                shutil.rmtree(skill_dir)
+            raise e
+            
+        return {"status": "success", "message": f"技能 {skill_id} 导入成功"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[Skills] Failed to import skill package: {e}")
         raise HTTPException(status_code=500, detail=str(e))

@@ -12,11 +12,14 @@ interface FileNode {
 const props = defineProps<{
   treeData: FileNode[]
   selectedPath?: string
+  selectedDirectoryPath?: string
 }>()
 
 const emit = defineEmits<{
   (e: 'select-file', path: string): void
+  (e: 'select-directory', path: string): void
   (e: 'delete-file', path: string): void
+  (e: 'context-menu', data: { event: MouseEvent, node: FileNode }): void
 }>()
 
 // 存储折叠状态的 Map
@@ -24,6 +27,11 @@ const collapsedDirs = ref<Record<string, boolean>>({})
 
 const toggleDir = (path: string) => {
   collapsedDirs.value[path] = !collapsedDirs.value[path]
+}
+
+const selectAndToggleDir = (path: string) => {
+  emit('select-directory', path)
+  toggleDir(path)
 }
 
 const isCollapsed = (path: string) => {
@@ -57,8 +65,10 @@ const getFileIcon = (name: string, isDir: boolean) => {
       <!-- 文件夹节点 -->
       <div v-if="node.is_dir">
         <div 
-          @click="toggleDir(node.path)"
-          class="flex items-center justify-between py-1.5 px-2 rounded-lg hover:bg-gray-100 cursor-pointer group transition-all"
+          @click="selectAndToggleDir(node.path)"
+          @contextmenu.prevent="emit('context-menu', { event: $event, node })"
+          class="flex items-center justify-between py-1.5 px-2 rounded-lg cursor-pointer group transition-all"
+          :class="selectedDirectoryPath === node.path ? 'bg-amber-50 ring-1 ring-amber-200' : 'hover:bg-gray-100'"
         >
           <div class="flex items-center space-x-2 text-gray-700 min-w-0">
             <!-- 展开折叠图标 -->
@@ -97,8 +107,11 @@ const getFileIcon = (name: string, isDir: boolean) => {
             <SkillFileTree 
               :tree-data="node.children || []" 
               :selected-path="selectedPath"
+              :selected-directory-path="selectedDirectoryPath"
               @select-file="(path) => emit('select-file', path)"
+              @select-directory="(path) => emit('select-directory', path)"
               @delete-file="(path) => emit('delete-file', path)"
+              @context-menu="(data) => emit('context-menu', data)"
             />
           </div>
         </transition>
@@ -108,6 +121,7 @@ const getFileIcon = (name: string, isDir: boolean) => {
       <div v-else>
         <div 
           @click="emit('select-file', node.path)"
+          @contextmenu.prevent="emit('context-menu', { event: $event, node })"
           class="flex items-center justify-between py-1.5 px-2 rounded-lg cursor-pointer group transition-all"
           :class="[
             selectedPath === node.path 

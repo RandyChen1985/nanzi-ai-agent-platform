@@ -13,12 +13,12 @@ import Modal from "../components/Modal.vue";
 import ConfirmModal from "../components/ConfirmModal.vue";
 import Toast from "../components/Toast.vue";
 import AgentVersionsDrawer from "../components/agent/AgentVersionsDrawer.vue"; // New Component
+import AgentVersionEditorDrawer from "../components/agent/AgentVersionEditorDrawer.vue";
 import RagFlowResourceSelector from "../components/RagFlowResourceSelector.vue";
 import ToolRuntimeConfigModal from "../components/agent/ToolRuntimeConfigModal.vue";
 import DingTalkConfigModal from "../components/agent/DingTalkConfigModal.vue";
 import EmailConfigModal from "../components/agent/EmailConfigModal.vue";
 import WeChatWorkConfigModal from "../components/agent/WeChatWorkConfigModal.vue";
-import MarkdownEditor from "../components/MarkdownEditor.vue";
 import axios from "@/utils/axios";
 
 const agents = ref<AIAgent[]>([]);
@@ -487,6 +487,141 @@ const groupedMcpTools = computed(() => {
   return groups;
 });
 
+const collapsedMcpGroups = ref<Set<string>>(new Set());
+
+const isMcpGroupCollapsed = (serverName: string) => collapsedMcpGroups.value.has(serverName);
+
+const toggleMcpGroupCollapse = (serverName: string) => {
+  const next = new Set(collapsedMcpGroups.value);
+  if (next.has(serverName)) {
+    next.delete(serverName);
+  } else {
+    next.add(serverName);
+  }
+  collapsedMcpGroups.value = next;
+};
+
+const getMcpGroupSelectedCount = (tools: any[]) => {
+  return tools.filter(tool => isToolSelected(tool.name)).length;
+};
+
+type VersionConfigStep = 'model' | 'tools' | 'prompt' | 'review';
+const versionConfigStep = ref<VersionConfigStep>('model');
+const toolSearchQuery = ref('');
+
+const versionConfigSteps: { id: VersionConfigStep; label: string }[] = [
+  { id: 'model', label: '模型策略' },
+  { id: 'tools', label: '工具能力' },
+  { id: 'prompt', label: '系统提示词' },
+  { id: 'review', label: '确认保存' },
+];
+
+const selectedToolsCount = computed(() => versionForm.value.tools?.length ?? 0);
+const promptCharCount = computed(() => versionForm.value.system_prompt?.length ?? 0);
+
+const versionConfigProgress = computed(() => {
+  let count = 0;
+  if (versionForm.value.model_name) count++;
+  if (selectedToolsCount.value > 0) count++;
+  if (versionForm.value.system_prompt?.trim()) count++;
+  return count;
+});
+
+const filteredGroupedTools = computed(() => {
+  const q = toolSearchQuery.value.trim().toLowerCase();
+  return Object.values(groupedTools.value)
+    .map((group) => ({
+      ...group,
+      tools: group.tools.filter((tool) =>
+        !q ||
+        tool.name.toLowerCase().includes(q) ||
+        (tool.description || '').toLowerCase().includes(q)
+      ),
+    }))
+    .filter((group) => group.tools.length > 0);
+});
+
+const filteredGroupedMcpTools = computed(() => {
+  const q = toolSearchQuery.value.trim().toLowerCase();
+  const groups = groupedMcpTools.value;
+  if (!q) return groups;
+  const result: Record<string, any[]> = {};
+  for (const [serverName, tools] of Object.entries(groups)) {
+    const filtered = tools.filter((tool) =>
+      tool.name.toLowerCase().includes(q) ||
+      (tool.description || '').toLowerCase().includes(q) ||
+      serverName.toLowerCase().includes(q)
+    );
+    if (filtered.length > 0) result[serverName] = filtered;
+  }
+  return result;
+});
+
+const collapsedStaticGroups = ref<Set<string>>(new Set());
+const isStaticGroupCollapsed = (label: string) => collapsedStaticGroups.value.has(label);
+const toggleStaticGroupCollapse = (label: string) => {
+  const next = new Set(collapsedStaticGroups.value);
+  if (next.has(label)) next.delete(label);
+  else next.add(label);
+  collapsedStaticGroups.value = next;
+};
+
+const getStaticGroupSelectedCount = (tools: any[]) => {
+  return tools.filter((tool) => isToolSelected(tool.name)).length;
+};
+
+const goVersionStep = (step: VersionConfigStep) => {
+  versionConfigStep.value = step;
+};
+
+const nextVersionStep = () => {
+  const idx = versionConfigSteps.findIndex((s) => s.id === versionConfigStep.value);
+  if (idx < versionConfigSteps.length - 1) {
+    versionConfigStep.value = versionConfigSteps[idx + 1].id;
+  }
+};
+
+const prevVersionStep = () => {
+  const idx = versionConfigSteps.findIndex((s) => s.id === versionConfigStep.value);
+  if (idx > 0) {
+    versionConfigStep.value = versionConfigSteps[idx - 1].id;
+  }
+};
+
+const setOrchestratorTemperature = (value: number) => {
+  versionForm.value.temperature = value;
+};
+
+const setSynthesisTemperature = (value: number) => {
+  versionForm.value.synthesis_temperature = value;
+};
+
+const getModelDisplayName = (modelId?: string) => {
+  if (!modelId) return '未选择';
+  return models.value.find((m) => m.model_id === modelId)?.name || modelId;
+};
+
+const versionStatusLabel = computed(() => {
+  if (!versionForm.value.id) return '新建';
+  if (versionForm.value.status === 'DRAFT') return '草稿';
+  if (versionForm.value.status === 'PUBLISHED') return '已发布';
+  return versionForm.value.status || '未知';
+});
+
+const versionStatusClass = computed(() => {
+  if (!versionForm.value.id) return 'bg-blue-50 text-blue-700 border-blue-100';
+  if (versionForm.value.status === 'DRAFT') return 'bg-amber-50 text-amber-700 border-amber-100';
+  if (versionForm.value.status === 'PUBLISHED') return 'bg-emerald-50 text-emerald-700 border-emerald-100';
+  return 'bg-gray-50 text-gray-600 border-gray-200';
+});
+
+const resetVersionEditorUi = () => {
+  versionConfigStep.value = 'model';
+  toolSearchQuery.value = '';
+  collapsedMcpGroups.value = new Set();
+  collapsedStaticGroups.value = new Set();
+};
+
 const fetchTools = async () => {
   try {
     const res = await toolApi.list();
@@ -840,6 +975,7 @@ const openVersionModal = (
       comment: "",
     };
   }
+  resetVersionEditorUi();
   showVersionModal.value = true;
 };
 
@@ -1041,6 +1177,38 @@ const isToolSelected = (toolName: string) => {
   return !!versionForm.value.tools?.find(t =>
     (typeof t === 'string' ? t === toolName : (t as any).name === toolName)
   );
+};
+
+const isAllMcpSelected = (serverName: string, tools: any[]) => {
+  if (!tools || tools.length === 0) return false;
+  return tools.every(tool => isToolSelected(tool.name));
+};
+
+const toggleSelectAllMcp = (serverName: string, tools: any[]) => {
+  if (!canEditVersion.value) return;
+  const currentTools = [...(versionForm.value.tools || [])];
+  const allSelected = isAllMcpSelected(serverName, tools);
+
+  if (allSelected) {
+    tools.forEach(tool => {
+      const idx = currentTools.findIndex(t =>
+        (typeof t === 'string' ? t === tool.name : (t as any).name === tool.name)
+      );
+      if (idx > -1) {
+        currentTools.splice(idx, 1);
+      }
+    });
+  } else {
+    tools.forEach(tool => {
+      const isSelected = currentTools.some(t =>
+        (typeof t === 'string' ? t === tool.name : (t as any).name === tool.name)
+      );
+      if (!isSelected) {
+        currentTools.push(tool.name);
+      }
+    });
+  }
+  versionForm.value.tools = currentTools;
 };
 
 const getToolCustomConfig = (toolName: string) => {
@@ -2248,407 +2416,53 @@ const formatDate = (dateStr: string) => {
       </div>
     </Modal>
 
-    <!-- Version Editor Modal (Side Drawer style better for long prompts, but for now modal) -->
-    <Modal
-      v-if="showVersionModal"
-      :title="`版本详情 (V${versionForm.version_number || 'New'})`"
+    <AgentVersionEditorDrawer
+      :show="showVersionModal"
+      :version-form="versionForm"
+      :selected-agent="selectedAgent"
+      :models="models"
+      :can-edit-version="canEditVersion"
+      :tool-tab="toolTab"
+      :tool-search-query="toolSearchQuery"
+      :version-config-step="versionConfigStep"
+      :version-config-steps="versionConfigSteps"
+      :version-config-progress="versionConfigProgress"
+      :selected-tools-count="selectedToolsCount"
+      :prompt-char-count="promptCharCount"
+      :version-status-label="versionStatusLabel"
+      :version-status-class="versionStatusClass"
+      :filtered-grouped-tools="filteredGroupedTools"
+      :filtered-grouped-mcp-tools="filteredGroupedMcpTools"
+      :all-available-tools-count="allAvailableTools.length"
+      :mcp-tools-count="mcpTools.length"
+      :is-tool-selected="isToolSelected"
+      :get-tool-custom-config="getToolCustomConfig"
+      :is-all-mcp-selected="isAllMcpSelected"
+      :is-mcp-group-collapsed="isMcpGroupCollapsed"
+      :get-mcp-group-selected-count="getMcpGroupSelectedCount"
+      :is-static-group-collapsed="isStaticGroupCollapsed"
+      :get-static-group-selected-count="getStaticGroupSelectedCount"
+      :get-model-display-name="getModelDisplayName"
       @close="showVersionModal = false"
-      size="max-w-7xl"
-    >
-      <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-        <div class="space-y-4">
-          <h4 class="font-bold text-gray-900 border-b pb-2 flex items-center">
-            <svg class="w-4 h-4 mr-2 text-primary" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 17L9 21h6l-.75-4M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
-            </svg>
-            模型策略配置
-          </h4>
-
-          <!-- Orchestrator Section -->
-          <div class="bg-blue-50/30 p-3 rounded-lg border border-blue-100">
-            <label class="block text-sm font-bold text-blue-900 mb-1"
-              >编排模型 (Orchestrator)</label
-            >
-            <div class="text-[10px] text-blue-700/70 mb-2 leading-relaxed italic">
-              负责任务拆解、逻辑推理及工具调用。建议选择逻辑能力最强的模型（如 GPT-4o）。
-            </div>
-            <select
-              v-model="versionForm.model_name"
-              class="w-full px-3 py-2 border border-gray-300 rounded-lg outline-none focus:ring-2 focus:ring-primary bg-white text-sm"
-            >
-              <option value="" disabled>选择编排模型...</option>
-              <optgroup label="已注册模型">
-                <option
-                  v-for="m in models.filter((x) => x.type === 'llm' && x.is_active)"
-                  :key="m.id"
-                  :value="m.model_id"
-                >
-                  {{ m.name }}
-                </option>
-              </optgroup>
-            </select>
-            <div class="mt-3">
-              <label class="block text-[11px] font-medium text-gray-600 mb-1"
-                >编排采样温度: {{ versionForm.temperature }}</label
-              >
-              <input
-                type="range"
-                min="0"
-                max="1"
-                step="0.1"
-                v-model.number="versionForm.temperature"
-                class="w-full h-1.5 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-blue-600"
-              />
-              <div class="flex justify-between text-[9px] text-gray-400 mt-1 px-0.5">
-                <span>精确 (Logical)</span>
-                <span>平衡</span>
-                <span>灵活 (Flexible)</span>
-              </div>
-            </div>
-          </div>
-
-          <!-- Synthesizer Section -->
-          <div class="bg-emerald-50/30 p-3 rounded-lg border border-emerald-100">
-            <div class="flex justify-between items-center mb-1">
-              <label class="block text-sm font-bold text-emerald-900"
-                >合成模型 (Synthesizer)</label
-              >
-              <span class="text-[10px] bg-emerald-100 text-emerald-700 px-1.5 py-0.5 rounded">可选</span>
-            </div>
-            <div class="text-[10px] text-emerald-700/70 mb-2 leading-relaxed italic">
-              负责整合工具结果并组织语言回复。若未设置，将默认使用编排模型。
-            </div>
-            <select
-              v-model="versionForm.synthesis_model_name"
-              class="w-full px-3 py-2 border border-gray-300 rounded-lg outline-none focus:ring-2 focus:ring-emerald-500 bg-white text-sm"
-            >
-              <option value="">跟随编排模型 (Default)</option>
-              <optgroup label="建议选择性价比高、表达自然的模型">
-                <option
-                  v-for="m in models.filter((x) => x.type === 'llm' && x.is_active)"
-                  :key="m.id"
-                  :value="m.model_id"
-                >
-                  {{ m.name }}
-                </option>
-              </optgroup>
-            </select>
-
-            <div v-if="versionForm.synthesis_model_name" class="mt-3 animate-fade-in">
-              <div class="flex justify-between items-center mb-1">
-                <label class="block text-[11px] font-medium text-gray-600"
-                  >合成采样温度: {{ versionForm.synthesis_temperature }}</label
-                >
-              </div>
-              <input
-                type="range"
-                min="0"
-                max="2"
-                step="0.1"
-                v-model.number="versionForm.synthesis_temperature"
-                class="w-full h-1.5 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-emerald-600"
-              />
-              <div class="flex justify-between text-[9px] text-gray-400 mt-1 px-0.5">
-                <span>严谨 (Stable)</span>
-                <span>平衡</span>
-                <span>发散 (Creative)</span>
-              </div>
-            </div>
-          </div>
-
-          <div>
-            <div class="flex justify-between items-center mb-2">
-              <label class="block text-sm font-medium text-gray-700">🛠️ 工具能力集 (Tools Capability)</label>
-              <div class="flex bg-gray-100 p-0.5 rounded-md text-[10px]">
-                <button
-                  @click="toolTab = 'static'"
-                  class="px-2 py-1 rounded transition-all"
-                  :class="toolTab === 'static' ? 'bg-white shadow-sm text-primary' : 'text-gray-400'"
-                >系统工具 ({{ allAvailableTools.length }})</button>
-                <button
-                  @click="toolTab = 'mcp'"
-                  class="px-2 py-1 rounded transition-all"
-                  :class="toolTab === 'mcp' ? 'bg-white shadow-sm text-primary' : 'text-gray-400'"
-                >MCP工具 ({{ mcpTools.length }})</button>
-              </div>
-            </div>
-
-            <div v-if="toolTab === 'static'" class="space-y-4 mt-2 max-h-[450px] overflow-y-auto pr-2 scrollbar-thin scrollbar-thumb-gray-200 hover:scrollbar-thumb-gray-300">
-              <div v-for="group in groupedTools" :key="group.label" class="space-y-2">
-                <!-- Group Header -->
-                <div class="flex items-center space-x-2 py-1 sticky top-0 bg-white z-10">
-                  <span class="text-[10px] font-extrabold text-primary uppercase tracking-widest bg-blue-50/80 px-2.5 py-0.5 rounded-full border border-blue-100 flex items-center">
-                    <span class="mr-1">{{ group.icon }}</span> {{ group.label }} ({{ group.tools.length }})
-                  </span>
-                  <div class="h-px bg-gray-100 flex-1"></div>
-                </div>
-
-                <!-- Two-column Grid -->
-                <div class="grid grid-cols-2 gap-3">
-                  <div
-                    v-for="tool in group.tools"
-                    :key="tool.name"
-                    @click="toggleTool(tool.name)"
-                    class="flex items-start p-2.5 rounded-lg border transition-all select-none duration-150"
-                    :class="[
-                      isToolSelected(tool.name)
-                        ? 'border-primary bg-blue-50/70 shadow-sm'
-                        : 'border-gray-200 hover:border-primary/40 hover:bg-gray-50/50',
-                      !canEditVersion ? 'cursor-default opacity-90' : 'cursor-pointer'
-                    ]"
-                  >
-                    <!-- Checkbox -->
-                    <div
-                      class="w-3.5 h-3.5 rounded border mt-0.5 mr-2.5 flex items-center justify-center flex-shrink-0"
-                      :class="[
-                        isToolSelected(tool.name)
-                          ? 'bg-primary border-primary'
-                          : 'bg-white border-gray-300',
-                        !canEditVersion ? 'opacity-50' : ''
-                      ]"
-                    >
-                      <svg
-                        v-if="isToolSelected(tool.name)"
-                        class="w-2.5 h-2.5 text-white"
-                        fill="none"
-                        stroke="currentColor"
-                        viewBox="0 0 24 24"
-                      >
-                        <path
-                          stroke-linecap="round"
-                          stroke-linejoin="round"
-                          stroke-width="4"
-                          d="M5 13l4 4L19 7"
-                        />
-                      </svg>
-                    </div>
-
-                    <!-- Meta & Actions -->
-                    <div class="flex-1 min-w-0">
-                      <div class="text-[11px] font-bold font-mono flex items-center flex-wrap gap-1 leading-tight text-gray-800">
-                        {{ tool.name }}
-                        <span
-                          v-if="tool.isSystem"
-                          class="text-[9px] bg-gray-100 text-gray-500 px-1 rounded border border-gray-200 font-sans font-normal"
-                          >系统</span
-                        >
-                        <span
-                          v-if="getToolCustomConfig(tool.name)"
-                          class="w-1.5 h-1.5 rounded-full bg-primary animate-pulse"
-                          title="已应用自定义配置"
-                        ></span>
-                      </div>
-
-                      <div class="text-[10px] text-gray-400 mt-1 leading-snug line-clamp-2" :title="tool.description">
-                        {{ tool.description }}
-                      </div>
-
-                      <!-- Runtime Context Preview -->
-                      <div
-                        v-if="getToolCustomConfig(tool.name)"
-                        class="text-[9px] text-primary/70 mt-1 font-mono itallic whitespace-nowrap overflow-hidden text-ellipsis"
-                      >
-                        R: {{ getToolCustomConfig(tool.name)?.model_name || 'Default' }} / T: {{ getToolCustomConfig(tool.name)?.temperature }}
-                      </div>
-
-                      <div class="flex items-center space-x-1 mt-1.5" v-if="isToolSelected(tool.name)">
-                        <!-- Tool Runtime Config Button -->
-                        <button
-                          @click.stop="openToolRuntimeConfig(tool.name)"
-                          class="p-1 rounded text-gray-400 hover:text-primary hover:bg-white border border-transparent hover:border-gray-100 transition-colors"
-                          :title="canEditVersion ? '配置模型温度' : '查看配置'"
-                        >
-                           <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                          </svg>
-                        </button>
-
-                        <!-- DingTalk Config Button -->
-                        <button
-                          v-if="tool.name === 'send_dingtalk_message'"
-                          @click.stop="openDingTalkConfig('send_dingtalk_message')"
-                          class="p-1 rounded text-gray-400 hover:text-primary hover:bg-white border border-transparent hover:border-gray-100 transition-colors"
-                          title="配置钉钉机器人"
-                        >
-                          <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5.882V19.24a1.76 1.72 0 01-3.417.592l-2.147-6.15M18 13a3 3 0 100-6M5.436 13.683A4.001 4.001 0 017 6h1.832c4.1 0 7.625-1.234 9.168-3v14c-1.543-1.766-5.067-3-9.168-3H7a3.988 3.988 0 01-1.564-.317z" />
-                          </svg>
-                        </button>
-
-                        <!-- Email Config Button -->
-                        <button
-                          v-if="tool.name === 'send_email'"
-                          @click.stop="openEmailConfig('send_email')"
-                          class="p-1 rounded text-gray-400 hover:text-primary hover:bg-white border border-transparent hover:border-gray-100 transition-colors"
-                          title="配置 SMTP 邮件"
-                        >
-                          <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
-                          </svg>
-                        </button>
-
-                        <!-- WeChat Work Config Button -->
-                        <button
-                          v-if="tool.name === 'send_wechat_work_message'"
-                          @click.stop="openWeChatWorkConfig('send_wechat_work_message')"
-                          class="p-1 rounded text-gray-400 hover:text-emerald-500 hover:bg-white border border-transparent hover:border-gray-100 transition-colors"
-                          title="配置企业微信"
-                        >
-                          <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
-                          </svg>
-                        </button>
-
-                        <!-- Knowledge Base Config Button for search_knowledge_base -->
-                        <button
-                          v-if="tool.name === 'search_knowledge_base' && selectedAgent?.engine_type === 'LOCAL'"
-                          @click.stop="openRagSelector('dataset', 'agent_kb_immediate')"
-                          class="p-1 rounded text-gray-400 hover:text-primary hover:bg-white border border-transparent hover:border-gray-100 transition-colors"
-                          title="关联知识库"
-                        >
-                          <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
-                          </svg>
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <!-- MCP Tools -->
-            <div v-else class="grid grid-cols-1 gap-4 mt-2 max-h-[400px] overflow-y-auto pr-2 scrollbar-thin scrollbar-thumb-gray-200 hover:scrollbar-thumb-gray-300">
-              <div v-if="mcpTools.length === 0" class="p-8 text-center text-gray-400 text-xs italic">
-                暂无已发布的 MCP 工具，请前往系统设置配置。
-              </div>
-              <div v-else v-for="(tools, serverName) in groupedMcpTools" :key="serverName" class="space-y-2">
-                <div class="flex items-center space-x-2 py-1 sticky top-0 bg-white z-10">
-                  <div class="h-px bg-gray-200 flex-1"></div>
-                  <span class="text-[10px] font-black text-indigo-500 uppercase tracking-widest bg-indigo-50 px-2 py-0.5 rounded-full border border-indigo-100">
-                    {{ serverName }} ({{ tools.length }})
-                  </span>
-                  <div class="h-px bg-gray-200 flex-1"></div>
-                </div>
-
-                <div class="grid grid-cols-1 gap-2">
-                  <div
-                    v-for="tool in tools"
-                    :key="tool.id"
-                    @click="toggleTool(tool.name)"
-                    class="flex items-center p-2 rounded-lg border transition-all cursor-pointer"
-                    :class="isToolSelected(tool.name) ? 'border-indigo-500 bg-indigo-50 shadow-sm' : 'border-gray-100 hover:border-indigo-300 bg-gray-50/30'"
-                  >
-                    <div
-                      class="w-4 h-4 rounded-sm border mr-3 flex items-center justify-center"
-                      :class="isToolSelected(tool.name) ? 'bg-indigo-600 border-indigo-600' : 'bg-white border-gray-300'"
-                    >
-                      <svg v-if="isToolSelected(tool.name)" class="w-3 h-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7" />
-                      </svg>
-                    </div>
-                    <div class="flex-1 min-w-0">
-                      <div class="text-xs font-bold font-mono text-indigo-900">
-                        {{ tool.name }}
-                      </div>
-                      <div class="text-[10px] text-gray-500 truncate italic">
-                        {{ tool.description }}
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <div class="space-y-4">
-          <div class="flex items-center justify-between border-b pb-2 mb-2">
-            <h4 class="font-bold text-gray-900">📝 核心提示词 (System Prompt)</h4>
-          </div>
-          <div class="h-full relative flex flex-col group/prompt">
-            <!-- Floating Copy Button -->
-            <button
-              @click="copySystemPrompt"
-              class="absolute top-2 right-2 z-10 p-2 bg-white/80 backdrop-blur-sm border border-gray-200 rounded-md shadow-sm text-gray-500 hover:text-primary hover:border-primary transition-all opacity-0 group-hover/prompt:opacity-100"
-              title="复制全部内容"
-            >
-              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"></path>
-              </svg>
-            </button>
-
-            <MarkdownEditor
-              v-model="versionForm.system_prompt"
-              placeholder="你是一个..."
-              height="800px"
-            />
-
-            <p class="text-[11px] text-gray-400 mt-2 flex items-center">
-              <svg class="w-3 h-3 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-              提示：系统提示词决定了智能体的人格、输出风格以及对工具调用的理解能力。
-            </p>
-
-            <!-- Relocated Change Note: Now properly inside the right column space -->
-            <div class="mt-4 pt-4 border-t border-gray-100">
-              <label class="block text-sm font-bold text-gray-700 mb-2 flex items-center">
-                <svg class="w-4 h-4 mr-1.5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-                </svg>
-                版本变动说明 (Change Note)
-              </label>
-              <textarea
-                v-model="versionForm.comment"
-                placeholder="在此说明此版本做了哪些优化或改动..."
-                rows="4"
-                class="w-full text-sm border border-gray-300 rounded-lg focus:border-primary focus:ring-1 focus:ring-primary resize-none p-3 bg-gray-50 shadow-inner transition-all"
-              ></textarea>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <div
-        class="mt-8 flex justify-end space-x-3 pt-4 border-t border-gray-100"
-      >
-        <div
-          v-if="selectedAgent?.is_editable === false"
-          class="flex-1 flex items-center text-xs text-yellow-600 bg-yellow-50 px-3 py-1 rounded"
-        >
-          <svg
-            class="w-4 h-4 mr-2"
-            fill="none"
-            stroke="currentColor"
-            viewBox="0 0 24 24"
-          >
-            <path
-              stroke-linecap="round"
-              stroke-linejoin="round"
-              stroke-width="2"
-              d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
-            />
-          </svg>
-          您没有权限修改此智能体版本配置（只读模式）
-        </div>
-        <button
-          @click="showVersionModal = false"
-          class="px-4 py-2 text-gray-500 hover:text-gray-700 font-medium"
-        >
-          取消
-        </button>
-        <button
-          v-if="
-            (!versionForm.id || versionForm.status === 'DRAFT') &&
-            selectedAgent?.is_editable !== false
-          "
-          @click="saveVersion"
-          class="px-8 py-2 bg-primary text-white rounded-lg hover:bg-primary-dark transition-colors font-medium shadow-md"
-        >
-          {{ versionForm.id ? "更新草稿" : "保存为草稿" }}
-        </button>
-      </div>
-    </Modal>
+      @save="saveVersion"
+      @update:tool-tab="toolTab = $event"
+      @update:tool-search-query="toolSearchQuery = $event"
+      @update:version-config-step="versionConfigStep = $event"
+      @toggle-tool="toggleTool"
+      @toggle-select-all-mcp="toggleSelectAllMcp"
+      @toggle-mcp-group-collapse="toggleMcpGroupCollapse"
+      @toggle-static-group-collapse="toggleStaticGroupCollapse"
+      @set-orchestrator-temperature="setOrchestratorTemperature"
+      @set-synthesis-temperature="setSynthesisTemperature"
+      @open-tool-runtime-config="openToolRuntimeConfig"
+      @open-ding-talk-config="openDingTalkConfig"
+      @open-email-config="openEmailConfig"
+      @open-we-chat-work-config="openWeChatWorkConfig"
+      @open-rag-selector="openRagSelector"
+      @copy-system-prompt="copySystemPrompt"
+      @next-step="nextVersionStep"
+      @prev-step="prevVersionStep"
+    />
 
     <!-- History Modal -->
     <Modal

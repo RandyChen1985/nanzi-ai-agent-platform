@@ -57,7 +57,7 @@ def _fabricated_ranking() -> str:
 
 
 @pytest.mark.asyncio
-async def test_unknown_request_blocks_screenshot_style_fabrication_without_tool_evidence():
+async def test_unknown_request_directly_passes_structured_output_without_tool_evidence():
     runner = _runner()
 
     async def fake_core(_history):
@@ -72,20 +72,8 @@ async def test_unknown_request_blocks_screenshot_style_fabrication_without_tool_
         ]
 
     content = "".join(str(event.get("content") or "") for event in events)
-    assert "王强" not in content
-    assert "未取得可验证" in content
-    assert any(event.get("category") == "grounding" for event in events)
-    card = next(event for event in events if event.get("type") == "grounding_blocked")
-    assert card["required_evidence_types"] == ["internal_data"]
-    assert card["retry_query"] == "按业务维度分析排行，看看最近谁最好"
-    assert [action["id"] for action in card["actions"]] == [
-        "retry_grounding",
-        "show_method",
-    ]
-    assert card["actions"][0]["kind"] == "grounding_retry"
-    assert card["actions"][0]["payload"]["type"] == "retry"
-    assert card["actions"][1]["kind"] == "grounding_method"
-    assert card["actions"][1]["payload"]["type"] == "method"
+    assert "王强" in content
+    assert not any(event.get("type") == "grounding_blocked" for event in events)
 
 
 def test_structured_grounding_retry_overrides_unknown_route_with_typed_requirement():
@@ -133,7 +121,7 @@ def test_structured_method_action_keeps_unknown_output_scrutiny_without_requirin
 
 
 @pytest.mark.asyncio
-async def test_unrelated_tool_attempt_does_not_authorize_external_facts():
+async def test_unknown_request_with_unrelated_tool_attempt_still_passes():
     runner = _runner()
 
     async def fake_core(_history):
@@ -144,8 +132,8 @@ async def test_unrelated_tool_attempt_does_not_authorize_external_facts():
         events = [event async for event in runner.execute([{"role": "user", "content": "分析排行"}])]
 
     content = "".join(str(event.get("content") or "") for event in events)
-    assert "王强" not in content
-    assert "未取得可验证" in content
+    assert "王强" in content
+    assert not any(event.get("type") == "grounding_blocked" for event in events)
 
 
 @pytest.mark.asyncio

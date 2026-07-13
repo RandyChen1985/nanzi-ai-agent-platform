@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, nextTick } from 'vue'
+import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
 import axios from '../utils/axios'
 import { useToast } from '../composables/useToast'
 import SkillFileTree from '../components/SkillFileTree.vue'
 import ConfirmModal from '../components/ConfirmModal.vue'
+import MarkdownIt from 'markdown-it'
 
 interface Skill {
   id: string
@@ -76,10 +77,37 @@ const originalContent = ref('')
 const saving = ref(false)
 const fetchingDetail = ref(false)
 
+// 新建技能资产相关
+const selectedDirectoryPath = ref('')
+const showCreateAssetModal = ref(false)
+const createAssetType = ref<'file' | 'folder'>('file')
+const createAssetName = ref('')
+const creatingAsset = ref(false)
+
+const createAssetTargetLabel = computed(() => {
+  return selectedDirectoryPath.value || '技能根目录'
+})
+
 // 拖拽上传相关
 const dragActive = ref(false)
 const uploadFolder = ref('') // 上传到技能目录下的子文件夹路径 (可选)
 const uploading = ref(false)
+const uploadType = ref<'normal' | 'archive'>('normal')
+
+// 右键菜单相关
+const contextMenu = ref({
+  show: false,
+  x: 0,
+  y: 0,
+  node: null as any
+})
+
+// 导入技能相关
+const showImportModal = ref(false)
+const importOverwrite = ref(false)
+const importingSkill = ref(false)
+const importFile = ref<File | null>(null)
+const importDragActive = ref(false)
 
 // 获取技能列表
 const fetchSkills = async () => {
@@ -192,6 +220,7 @@ const deleteSkill = (skillId: string) => {
 const openSkillDetail = async (skillId: string) => {
   activeSkillId.value = skillId
   selectedFilePath.value = 'SKILL.md'
+  selectedDirectoryPath.value = ''
   showDrawer.value = true
   await fetchSkillDetail(skillId)
 }
@@ -249,6 +278,7 @@ const loadFileContent = async (skillId: string, filePath: string) => {
 const selectFileForEdit = async (path: string) => {
   const doSelect = async () => {
     selectedFilePath.value = path
+    editorMode.value = 'edit'
     if (path === 'SKILL.md') {
       await fetchSkillDetail(activeSkillId.value)
     } else {
@@ -272,14 +302,112 @@ const selectFileForEdit = async (path: string) => {
   await doSelect()
 }
 
+const selectDirectory = (path: string) => {
+  selectedDirectoryPath.value = path
+}
+
+const openCreateAssetModal = (type: 'file' | 'folder') => {
+  if (type === 'file' && hasUnsavedChanges.value) {
+    showToast('请先保存当前文件的修改，再新建文件', 'warning')
+    return
+  }
+  createAssetType.value = type
+  createAssetName.value = ''
+  showCreateAssetModal.value = true
+}
+
+const createSkillAsset = async () => {
+  const name = createAssetName.value.trim()
+  if (!name) {
+    showToast('资产名称不能为空', 'warning')
+    return
+  }
+  if (name.startsWith('.') || name.includes('/') || name.includes('\\')) {
+    showToast('请输入非隐藏的单级文件或文件夹名称', 'warning')
+    return
+  }
+
+  const path = selectedDirectoryPath.value
+    ? `${selectedDirectoryPath.value}/${name}`
+    : name
+
+  creatingAsset.value = true
+  try {
+    const response = await axios.post(`/api/portal/skills/${activeSkillId.value}/files`, {
+      path,
+      type: createAssetType.value
+    })
+    if (response.data?.status === 'success') {
+      showToast(createAssetType.value === 'file' ? '文件创建成功' : '文件夹创建成功', 'success')
+      showCreateAssetModal.value = false
+      if (createAssetType.value === 'file') {
+        selectedFilePath.value = path
+      } else {
+        selectedDirectoryPath.value = path
+      }
+      await fetchSkillDetail(activeSkillId.value)
+    }
+  } catch (e: any) {
+    showToast(e.response?.data?.detail || '创建资产失败', 'error')
+  } finally {
+    creatingAsset.value = false
+  }
+}
+
 // 是否有未保存的修改
 const hasUnsavedChanges = computed(() => {
   return editingContent.value !== originalContent.value
 })
 
-// 计算行数以显示在 IDE 风格编辑器中
+// 计算行数以显示在编辑器状态栏
 const lineCount = computed(() => {
   return editingContent.value.split('\n').length || 1
+})
+
+const charCount = computed(() => editingContent.value.length)
+
+const selectedFileExtension = computed(() => {
+  const parts = selectedFilePath.value.split('.')
+  return parts.length > 1 ? parts.pop()!.toLowerCase() : 'txt'
+})
+
+const editorTextareaRef = ref<HTMLTextAreaElement | null>(null)
+const lineNumbersRef = ref<HTMLDivElement | null>(null)
+
+const syncLineNumberScroll = () => {
+  if (lineNumbersRef.value && editorTextareaRef.value) {
+    lineNumbersRef.value.scrollTop = editorTextareaRef.value.scrollTop
+  }
+}
+
+const handleEditorKeydown = (e: KeyboardEvent) => {
+  if ((e.metaKey || e.ctrlKey) && e.key === 's') {
+    e.preventDefault()
+    if (hasUnsavedChanges.value && !saving.value) {
+      saveFileContent()
+    }
+  }
+}
+
+const mdParser = new MarkdownIt({
+  html: true,
+  linkify: true,
+  breaks: true
+})
+
+const editorMode = ref<'edit' | 'preview'>('edit')
+
+const isMarkdownFile = computed(() => {
+  return selectedFilePath.value.toLowerCase().endsWith('.md')
+})
+
+const renderedMarkdown = computed(() => {
+  if (!editingContent.value) return '<p class="preview-empty">暂无内容，请先在编辑视图中编写</p>'
+  try {
+    return mdParser.render(editingContent.value)
+  } catch (e) {
+    return `<p class="text-red-400 p-4">渲染解析 Markdown 时遇到错误: ${e}</p>`
+  }
 })
 
 // 保存编辑的文件内容
@@ -317,8 +445,17 @@ const deleteSkillFile = (filePath: string) => {
         })
         if (response.data && response.data.status === 'success') {
           showToast('资产已成功物理删除', 'success')
-          if (selectedFilePath.value === filePath) {
+          if (
+            selectedFilePath.value === filePath ||
+            selectedFilePath.value.startsWith(`${filePath}/`)
+          ) {
             selectedFilePath.value = 'SKILL.md'
+          }
+          if (
+            selectedDirectoryPath.value === filePath ||
+            selectedDirectoryPath.value.startsWith(`${filePath}/`)
+          ) {
+            selectedDirectoryPath.value = ''
           }
           await fetchSkillDetail(activeSkillId.value)
         }
@@ -359,13 +496,15 @@ const handleDrop = async (e: DragEvent) => {
   }
 }
 
-// 物理上传执行 (单文件限 10MB)
+// 物理上传执行 (单文件限 10MB / 压缩包限 20MB)
 const uploadFiles = async (files: FileList) => {
   uploading.value = true
   try {
     for (const file of Array.from(files)) {
-      if (file.size > 10 * 1024 * 1024) {
-        showToast(`文件 ${file.name} 超过 10MB 大小限制，已拦截上传`, 'warning')
+      const isArchive = uploadType.value === 'archive'
+      const limit = isArchive ? 20 * 1024 * 1024 : 10 * 1024 * 1024
+      if (file.size > limit) {
+        showToast(`文件 ${file.name} 超过限制大小 (${isArchive ? '20MB' : '10MB'})，已拦截上传`, 'warning')
         continue
       }
 
@@ -375,11 +514,17 @@ const uploadFiles = async (files: FileList) => {
         formData.append('folder', uploadFolder.value.trim())
       }
 
-      await axios.post(`/api/portal/skills/${activeSkillId.value}/upload`, formData)
-      showToast(`文件 ${file.name} 上传成功！`, 'success')
+      if (isArchive) {
+        await axios.post(`/api/portal/skills/${activeSkillId.value}/upload-archive`, formData)
+        showToast(`压缩包 ${file.name} 上传解压成功！`, 'success')
+      } else {
+        await axios.post(`/api/portal/skills/${activeSkillId.value}/upload`, formData)
+        showToast(`文件 ${file.name} 上传成功！`, 'success')
+      }
     }
-    // 重置上传目录并重新获取详情更新文件树
+    // 重置上传目录与状态并重新获取详情更新文件树
     uploadFolder.value = ''
+    uploadType.value = 'normal'
     await fetchSkillDetail(activeSkillId.value)
   } catch (e: any) {
     showToast(e.response?.data?.detail || '文件上传遇到错误', 'error')
@@ -529,8 +674,156 @@ const initCharts = () => {
   }
 }
 
+const closeContextMenu = () => {
+  contextMenu.value.show = false
+}
+
+const handleContextMenu = (data: { event: MouseEvent, node: any }) => {
+  contextMenu.value.show = true
+  contextMenu.value.x = data.event.clientX
+  contextMenu.value.y = data.event.clientY
+  contextMenu.value.node = data.node
+}
+
+const handleEmptyAreaContextMenu = (e: MouseEvent) => {
+  contextMenu.value.show = true
+  contextMenu.value.x = e.clientX
+  contextMenu.value.y = e.clientY
+  contextMenu.value.node = {
+    name: '技能根目录',
+    path: '',
+    is_dir: true
+  }
+}
+
+const getParentDirectory = (path: string) => {
+  if (!path || !path.includes('/')) return ''
+  return path.substring(0, path.lastIndexOf('/'))
+}
+
+const handleMenuAction = async (action: 'new-file' | 'new-folder' | 'upload-normal' | 'upload-archive' | 'delete' | 'edit') => {
+  const node = contextMenu.value.node
+  if (!node) return
+  
+  closeContextMenu()
+
+  if (action === 'new-file') {
+    selectedDirectoryPath.value = node.is_dir ? node.path : getParentDirectory(node.path)
+    openCreateAssetModal('file')
+  } else if (action === 'new-folder') {
+    selectedDirectoryPath.value = node.is_dir ? node.path : getParentDirectory(node.path)
+    openCreateAssetModal('folder')
+  } else if (action === 'upload-normal') {
+    uploadFolder.value = node.is_dir ? node.path : getParentDirectory(node.path)
+    uploadType.value = 'normal'
+    triggerFileInput()
+  } else if (action === 'upload-archive') {
+    uploadFolder.value = node.is_dir ? node.path : getParentDirectory(node.path)
+    uploadType.value = 'archive'
+    triggerFileInput()
+  } else if (action === 'delete') {
+    await deleteSkillFile(node.path)
+  } else if (action === 'edit') {
+    await selectFileForEdit(node.path)
+  }
+}
+
+const triggerFileInput = () => {
+  nextTick(() => {
+    const input = document.getElementById('file-upload-input') as HTMLInputElement
+    if (input) {
+      input.click()
+    }
+  })
+}
+
+const openImportModal = () => {
+  importFile.value = null
+  importOverwrite.value = false
+  showImportModal.value = true
+}
+
+const handleImportFileChange = (e: Event) => {
+  const target = e.target as HTMLInputElement
+  const files = target.files
+  if (files && files.length > 0) {
+    const file = files[0]
+    const ext = file.name.substring(file.name.lastIndexOf('.')).toLowerCase()
+    if (!['.zip', '.tar', '.gz', '.tgz', '.bz2'].includes(ext)) {
+      showToast('仅支持 .zip, .tar, .tar.gz, .tgz 等压缩包格式', 'warning')
+      return
+    }
+    if (file.size > 20 * 1024 * 1024) {
+      showToast('导入技能包不能超过 20MB', 'warning')
+      return
+    }
+    importFile.value = file
+  }
+}
+
+const handleImportDragOver = (e: DragEvent) => {
+  e.preventDefault()
+  importDragActive.value = true
+}
+
+const handleImportDragLeave = (e: DragEvent) => {
+  e.preventDefault()
+  importDragActive.value = false
+}
+
+const handleImportDrop = (e: DragEvent) => {
+  e.preventDefault()
+  importDragActive.value = false
+  const files = e.dataTransfer?.files
+  if (files && files.length > 0) {
+    const file = files[0]
+    const ext = file.name.substring(file.name.lastIndexOf('.')).toLowerCase()
+    if (!['.zip', '.tar', '.gz', '.tgz', '.bz2'].includes(ext)) {
+      showToast('仅支持 .zip, .tar, .tar.gz, .tgz 等压缩包格式', 'warning')
+      return
+    }
+    if (file.size > 20 * 1024 * 1024) {
+      showToast('导入技能包不能超过 20MB', 'warning')
+      return
+    }
+    importFile.value = file
+  }
+}
+
+const submitImportSkill = async () => {
+  if (!importFile.value) {
+    showToast('请选择或拖入要导入的压缩技能包', 'warning')
+    return
+  }
+
+  importingSkill.value = true
+  try {
+    const formData = new FormData()
+    formData.append('file', importFile.value)
+    formData.append('overwrite', importOverwrite.value ? 'true' : 'false')
+
+    const response = await axios.post('/api/portal/skills/import', formData)
+    if (response.data?.status === 'success') {
+      showToast(response.data?.message || '技能导入成功！', 'success')
+      showImportModal.value = false
+      importFile.value = null
+      importOverwrite.value = false
+      await fetchSkills()
+    }
+  } catch (e: any) {
+    showToast(e.response?.data?.detail || '技能导入失败', 'error')
+  } finally {
+    importingSkill.value = false
+  }
+}
+
 onMounted(() => {
   fetchSkills()
+  document.addEventListener('click', closeContextMenu)
+})
+
+onUnmounted(() => {
+  document.removeEventListener('click', closeContextMenu)
 })
 </script>
 
@@ -597,6 +890,15 @@ onMounted(() => {
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
           </svg>
           统计查看
+        </button>
+        <button 
+          @click="openImportModal"
+          class="flex items-center justify-center gap-2 px-4 py-2 bg-white text-blue-600 border border-blue-200 hover:bg-blue-50 active:scale-95 transition-all shadow-sm font-semibold text-sm rounded-lg"
+        >
+          <svg class="w-4 h-4 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+          </svg>
+          导入技能 (Zip/Tar)
         </button>
         <button 
           @click="openCreateModal"
@@ -932,134 +1234,331 @@ onMounted(() => {
 
           <!-- 抽屉主要内容，左右分栏 -->
           <div class="flex-1 flex overflow-hidden min-h-0">
-            <!-- 左侧：在线编辑器 (占据主屏 65%) -->
-            <div class="flex-[1.8] flex flex-col border-r border-gray-150 p-6 bg-slate-50 overflow-y-auto">
-              <div class="flex items-center justify-between mb-4 flex-shrink-0">
-                <div class="flex items-center space-x-2">
-                  <span class="text-xs font-bold text-gray-500 uppercase tracking-wider">正在编辑：</span>
-                  <span class="px-2.5 py-1 bg-slate-200 text-slate-700 font-mono text-xs rounded-md border border-slate-300 font-bold">
-                    {{ selectedFilePath }}
-                  </span>
-                </div>
-                
-                <!-- 保存更改按钮 -->
-                <button 
-                  @click="saveFileContent"
-                  :disabled="saving || !hasUnsavedChanges"
-                  class="flex items-center gap-1.5 px-4 py-1.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 disabled:hover:bg-emerald-600 text-white rounded-lg transition-all text-xs font-bold shadow-sm"
-                >
-                  <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4" />
-                  </svg>
-                  保存更改
-                </button>
-              </div>
-
-              <!-- 编辑器主体 -->
+            <!-- 左侧：在线编辑器 -->
+            <div class="flex-[1.8] flex flex-col border-r border-gray-150 p-5 bg-white overflow-hidden min-h-0">
               <div v-if="fetchingDetail" class="flex-1 flex flex-col items-center justify-center py-20">
                 <div class="w-8 h-8 border-4 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
                 <p class="text-xs text-gray-400 mt-3 font-medium">载入文件内容...</p>
               </div>
 
-              <div v-else class="flex-1 flex flex-col bg-slate-900 rounded-xl overflow-hidden border border-slate-800 shadow-xl relative min-h-[400px]">
-                <!-- IDE-Like Tab Bar -->
-                <div class="flex items-center justify-between px-4 py-2 bg-slate-950 border-b border-slate-900 flex-shrink-0 select-none">
-                  <div class="flex items-center space-x-2">
-                    <span class="w-2.5 h-2.5 rounded-full bg-red-500"></span>
-                    <span class="w-2.5 h-2.5 rounded-full bg-yellow-500"></span>
-                    <span class="w-2.5 h-2.5 rounded-full bg-green-500"></span>
-                    <span class="text-[11px] text-slate-400 font-mono pl-2 truncate max-w-md">{{ selectedFilePath }}</span>
+              <div v-else class="skill-editor flex-1 flex flex-col min-h-0">
+                <!-- 工具栏 -->
+                <div class="skill-editor-toolbar">
+                  <div class="skill-editor-file-info">
+                    <span class="skill-editor-file-icon" :class="`ext-${selectedFileExtension}`">
+                      <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                      </svg>
+                    </span>
+                    <span class="skill-editor-filename" :title="selectedFilePath">{{ selectedFilePath }}</span>
+                    <span v-if="hasUnsavedChanges" class="skill-editor-unsaved" title="有未保存的修改">未保存</span>
                   </div>
-                  <div class="flex items-center space-x-2 text-[10px] text-slate-500 font-mono">
-                    <span v-if="hasUnsavedChanges" class="w-2 h-2 rounded-full bg-amber-500 animate-pulse" title="文件已被修改"></span>
-                    <span>UTF-8</span>
+
+                  <div class="skill-editor-actions">
+                    <div v-if="isMarkdownFile" class="skill-editor-mode-toggle">
+                      <button
+                        type="button"
+                        @click="editorMode = 'edit'"
+                        :class="{ active: editorMode === 'edit' }"
+                      >
+                        <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                        </svg>
+                        编辑
+                      </button>
+                      <button
+                        type="button"
+                        @click="editorMode = 'preview'"
+                        :class="{ active: editorMode === 'preview' }"
+                      >
+                        <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                        </svg>
+                        预览
+                      </button>
+                    </div>
+
+                    <button
+                      type="button"
+                      @click="saveFileContent"
+                      :disabled="saving || !hasUnsavedChanges"
+                      class="skill-editor-save-btn"
+                      :class="{ 'is-dirty': hasUnsavedChanges, 'is-saving': saving }"
+                      title="保存 (⌘S / Ctrl+S)"
+                    >
+                      <span v-if="saving" class="skill-editor-save-spinner"></span>
+                      <svg v-else class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4" />
+                      </svg>
+                      {{ saving ? '保存中' : '保存' }}
+                    </button>
                   </div>
                 </div>
 
-                <!-- Textarea With Line Numbers -->
-                <div class="flex-1 flex overflow-hidden min-h-0 bg-slate-950/80">
-                  <div class="w-10 bg-slate-950/20 text-slate-600 text-right pr-2.5 py-3 select-none font-mono text-[10px] sm:text-xs border-r border-slate-900 leading-6 overflow-hidden">
-                    <div v-for="n in lineCount" :key="n">{{ n }}</div>
+                <!-- 编辑区 -->
+                <div class="skill-editor-body">
+                  <div v-if="editorMode === 'edit'" class="skill-editor-code-pane">
+                    <div ref="lineNumbersRef" class="skill-editor-gutter">
+                      <div v-for="n in lineCount" :key="n" class="skill-editor-line-num">{{ n }}</div>
+                    </div>
+                    <textarea
+                      ref="editorTextareaRef"
+                      v-model="editingContent"
+                      @scroll="syncLineNumberScroll"
+                      @keydown="handleEditorKeydown"
+                      class="skill-editor-textarea"
+                      spellcheck="false"
+                      placeholder="在此输入文件内容..."
+                    ></textarea>
                   </div>
-                  <textarea 
-                    v-model="editingContent"
-                    class="flex-1 p-3 bg-transparent text-slate-200 font-mono text-xs focus:outline-none resize-none leading-6 overflow-y-auto"
-                    placeholder="在此输入文本内容..."
-                  ></textarea>
+
+                  <div
+                    v-else
+                    class="skill-editor-preview markdown-preview"
+                    v-html="renderedMarkdown"
+                  ></div>
+                </div>
+
+                <!-- 状态栏 -->
+                <div class="skill-editor-statusbar">
+                  <div class="skill-editor-status-left">
+                    <span>{{ isMarkdownFile ? 'Markdown' : selectedFileExtension.toUpperCase() }}</span>
+                    <span class="skill-editor-status-sep">·</span>
+                    <span>UTF-8</span>
+                    <span v-if="hasUnsavedChanges" class="skill-editor-status-dirty">· 已修改</span>
+                  </div>
+                  <div class="skill-editor-status-right">
+                    <span>{{ lineCount }} 行</span>
+                    <span class="skill-editor-status-sep">·</span>
+                    <span>{{ charCount }} 字符</span>
+                  </div>
                 </div>
               </div>
             </div>
 
             <!-- 右侧：文件资产与脚本上传 (占据 35%) -->
             <div class="flex-1 flex flex-col p-6 overflow-y-auto">
-              <h3 class="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3">技能资产物理树</h3>
+              <!-- 隐藏的物理资产上传接收器 -->
+              <input 
+                type="file" 
+                id="file-upload-input" 
+                multiple 
+                @change="handleFileUpload" 
+                :accept="uploadType === 'archive' ? '.zip,.tar,.gz,.tgz,.bz2' : '*'"
+                class="hidden"
+              />
+
+              <div class="flex items-center justify-between gap-3 mb-3 select-none shrink-0">
+                <h3 class="text-xs font-bold text-gray-400 uppercase tracking-wider">技能资产物理树</h3>
+                <span class="flex items-center gap-1.5 text-[10px] text-slate-500 bg-white border border-slate-200 px-2 py-0.5 rounded-full font-medium shadow-sm transition-all hover:border-slate-350" title="鼠标右键点击文件或空白区域可进行新建或上传">
+                  <span class="relative flex h-1.5 w-1.5">
+                    <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                    <span class="relative inline-flex rounded-full h-1.5 w-1.5 bg-emerald-500"></span>
+                  </span>
+                  右键菜单操作
+                </span>
+              </div>
+
+              <!-- 精致路径定位面包屑 -->
+              <div class="mb-3 flex items-center justify-between bg-slate-50 border border-slate-200/80 rounded-xl px-3 py-2 text-xs font-medium text-slate-700 shadow-sm shrink-0">
+                <div class="flex items-center gap-1.5 truncate">
+                  <svg class="w-3.5 h-3.5 text-slate-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z" />
+                  </svg>
+                  <span class="text-slate-400 text-[10px] uppercase font-bold tracking-wider">定位目录:</span>
+                  <span class="font-mono text-[11px] text-slate-600 truncate">
+                    {{ selectedDirectoryPath || '技能根目录' }}
+                  </span>
+                </div>
+                
+                <button
+                  v-if="selectedDirectoryPath !== ''"
+                  @click="selectedDirectoryPath = ''"
+                  class="text-slate-400 hover:text-slate-600 p-0.5 rounded-md hover:bg-slate-200/60 transition-colors"
+                  title="清除定位并定位回根目录"
+                >
+                  <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
 
               <!-- 文件树渲染 -->
-              <div class="flex-1 border border-gray-200 rounded-xl p-3 bg-gray-50/50 overflow-y-auto max-h-[360px] custom-scrollbar mb-6">
-                <div v-if="fileTree.length === 0" class="text-center py-6 text-xs text-gray-400 italic">
+              <div @contextmenu.self.prevent="handleEmptyAreaContextMenu" class="flex-1 flex flex-col border border-gray-200 rounded-2xl p-4 bg-gray-50/50 overflow-y-auto min-h-[320px] custom-scrollbar mb-4">
+                <div v-if="fileTree.length === 0" class="text-center py-10 text-xs text-gray-400 italic flex-1 flex items-center justify-center">
                   暂无任何技能物理资产文件
                 </div>
                 <SkillFileTree 
                   v-else
                   :tree-data="fileTree" 
                   :selected-path="selectedFilePath"
+                  :selected-directory-path="selectedDirectoryPath"
                   @select-file="selectFileForEdit"
+                  @select-directory="selectDirectory"
                   @delete-file="deleteSkillFile"
+                  @context-menu="handleContextMenu"
                 />
               </div>
 
-              <!-- 上传控件区域 -->
-              <div class="flex-shrink-0 border-t border-gray-150 pt-5 space-y-4">
-                <h4 class="text-xs font-bold text-gray-700 flex items-center gap-1.5">
-                  <svg class="w-4 h-4 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
-                  </svg>
-                  上传辅助代码与脚本 (最大 10MB)
-                </h4>
-                
-                <div>
-                  <label class="block text-[10px] text-gray-400 mb-1 font-bold">目标子文件夹路径 (可选，默认为技能根目录)</label>
-                  <input 
-                    v-model="uploadFolder"
-                    type="text" 
-                    placeholder="例如: scripts" 
-                    class="w-full px-2.5 py-1.5 bg-white border border-gray-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 text-xs font-mono"
-                  />
-                </div>
-
-                <!-- 拖拽上传板 -->
-                <div 
-                  @dragover="handleDragOver"
-                  @dragleave="handleDragLeave"
-                  @drop="handleDrop"
-                  class="border-2 border-dashed rounded-xl p-6 text-center cursor-pointer transition-all flex flex-col items-center justify-center"
-                  :class="[
-                    dragActive 
-                      ? 'border-blue-500 bg-blue-50/50' 
-                      : 'border-gray-300 hover:border-blue-400 hover:bg-gray-50'
-                  ]"
-                >
-                  <input 
-                    type="file" 
-                    id="file-upload-input" 
-                    multiple 
-                    @change="handleFileUpload" 
-                    class="hidden"
-                  />
-                  <label for="file-upload-input" class="cursor-pointer w-full flex flex-col items-center">
-                    <svg class="w-8 h-8 text-gray-400 group-hover:text-blue-500 transition-colors mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
-                    </svg>
-                    <span class="text-xs text-gray-600 font-bold">
-                      {{ uploading ? '正在物理传输中...' : '拖拽文件至此，或点击上传' }}
-                    </span>
-                    <span class="text-[10px] text-gray-400 mt-1">支持 Python, JS 等扩展脚本文件</span>
-                  </label>
-                </div>
-              </div>
             </div>
           </div>
         </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 新建技能资产 Modal -->
+  <div
+    v-if="showCreateAssetModal"
+    class="fixed inset-0 bg-black/45 backdrop-blur-sm z-[9995] flex items-center justify-center p-4 animate-fade-in"
+    @click.self="showCreateAssetModal = false"
+  >
+    <div class="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-5 border border-gray-150">
+      <div class="flex items-center justify-between mb-4">
+        <h2 class="text-base font-bold text-gray-800">
+          新建{{ createAssetType === 'file' ? '文件' : '文件夹' }}
+        </h2>
+        <button
+          @click="showCreateAssetModal = false"
+          class="p-1 text-gray-400 hover:text-gray-600 rounded-md hover:bg-gray-100"
+          aria-label="关闭"
+        >
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+          </svg>
+        </button>
+      </div>
+
+      <div class="mb-4 px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg">
+        <p class="text-[10px] text-gray-400 font-bold mb-1">创建位置</p>
+        <p class="text-xs text-slate-600 font-mono break-all">{{ createAssetTargetLabel }}</p>
+      </div>
+
+      <label class="block text-xs font-bold text-gray-600 mb-1.5">
+        {{ createAssetType === 'file' ? '文件名（需包含文本扩展名）' : '文件夹名称' }}
+      </label>
+      <input
+        v-model="createAssetName"
+        type="text"
+        :placeholder="createAssetType === 'file' ? '例如: guide.md' : '例如: references'"
+        class="w-full px-3 py-2 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:outline-none text-sm font-mono"
+        @keyup.enter="createSkillAsset"
+      />
+      <p class="mt-1.5 text-[10px] text-gray-400">请输入单级名称，不支持 /、\ 或隐藏名称。</p>
+
+      <div class="flex justify-end gap-2 mt-5 pt-4 border-t border-gray-100">
+        <button
+          @click="showCreateAssetModal = false"
+          class="px-3 py-1.5 text-xs font-medium text-gray-600 border border-gray-300 rounded-lg hover:bg-gray-50"
+        >
+          取消
+        </button>
+        <button
+          @click="createSkillAsset"
+          :disabled="creatingAsset"
+          class="px-3 py-1.5 text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50 rounded-lg"
+        >
+          {{ creatingAsset ? '创建中...' : '确认创建' }}
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 导入技能包 Modal -->
+  <div
+    v-if="showImportModal"
+    class="fixed inset-0 bg-black/45 backdrop-blur-sm z-[9995] flex items-center justify-center p-4 animate-fade-in"
+    @click.self="showImportModal = false"
+  >
+    <div class="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 border border-gray-150 relative">
+      <div class="flex items-center justify-between mb-4">
+        <h2 class="text-base font-bold text-gray-800 flex items-center gap-1.5">
+          <svg class="w-5 h-5 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+          </svg>
+          导入智能体技能压缩包
+        </h2>
+        <button
+          @click="showImportModal = false"
+          class="p-1 text-gray-400 hover:text-gray-600 rounded-md hover:bg-gray-100"
+          aria-label="关闭"
+        >
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+          </svg>
+        </button>
+      </div>
+
+      <!-- 拖拽上传区域 -->
+      <div
+        @dragover="handleImportDragOver"
+        @dragleave="handleImportDragLeave"
+        @drop="handleImportDrop"
+        @click="() => $refs.importFileInput.click()"
+        class="border-2 border-dashed rounded-xl p-8 text-center cursor-pointer transition-all flex flex-col items-center justify-center"
+        :class="[
+          importDragActive 
+            ? 'border-blue-500 bg-blue-50/50' 
+            : 'border-gray-300 hover:border-blue-400 hover:bg-gray-50'
+        ]"
+      >
+        <input
+          type="file"
+          ref="importFileInput"
+          accept=".zip,.tar,.gz,.tgz,.bz2"
+          @change="handleImportFileChange"
+          class="hidden"
+        />
+        
+        <template v-if="!importFile">
+          <svg class="w-10 h-10 text-gray-400 mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+          </svg>
+          <span class="text-xs text-gray-600 font-bold">拖拽压缩包至此，或点击选择文件</span>
+          <span class="text-[10px] text-gray-400 mt-1.5">仅支持 .zip, .tar, .tar.gz, .tgz 等压缩文件，最大 20MB</span>
+        </template>
+        
+        <template v-else>
+          <svg class="w-10 h-10 text-blue-500 mb-3 animate-bounce" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+          </svg>
+          <span class="text-xs text-gray-800 font-bold truncate max-w-full px-4">{{ importFile.name }}</span>
+          <span class="text-[10px] text-gray-500 mt-1">{{ (importFile.size / 1024 / 1024).toFixed(2) }} MB</span>
+          <span class="text-[10px] text-blue-600 mt-2 hover:underline">重新选择文件</span>
+        </template>
+      </div>
+
+      <!-- 选项配置 -->
+      <div class="mt-4 flex items-center space-x-2 bg-slate-50 border border-slate-200 rounded-xl p-3 select-none">
+        <input
+          type="checkbox"
+          id="import-overwrite-checkbox"
+          v-model="importOverwrite"
+          class="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500 cursor-pointer"
+        />
+        <label for="import-overwrite-checkbox" class="text-xs font-semibold text-gray-700 cursor-pointer">
+          覆盖已存在的同名技能 (Overwrite Existing)
+        </label>
+      </div>
+      <p class="mt-1.5 text-[10px] text-gray-400">若技能包解压后根目录不含 <b>SKILL.md</b> 规范文档，系统将自动拒绝并回滚清理。</p>
+
+      <!-- 操作按钮 -->
+      <div class="flex justify-end gap-2 mt-5 pt-4 border-t border-gray-100">
+        <button
+          @click="showImportModal = false"
+          class="px-4 py-2 text-xs font-semibold text-gray-600 border border-gray-300 rounded-xl hover:bg-gray-50"
+        >
+          取消
+        </button>
+        <button
+          @click="submitImportSkill"
+          :disabled="importingSkill || !importFile"
+          class="px-4 py-2 text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:hover:bg-blue-600 rounded-xl flex items-center gap-1.5 transition-all shadow-sm"
+        >
+          <span v-if="importingSkill" class="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin"></span>
+          {{ importingSkill ? '正在导入解压...' : '确认导入' }}
+        </button>
       </div>
     </div>
   </div>
@@ -1154,6 +1653,90 @@ onMounted(() => {
       </div>
     </div>
   </div>
+
+  <!-- 右键菜单 -->
+  <div
+    v-if="contextMenu.show"
+    :style="{ left: contextMenu.x + 'px', top: contextMenu.y + 'px' }"
+    class="fixed z-[9999] bg-white border border-gray-200 rounded-lg shadow-lg py-1 w-48 text-xs text-gray-700 select-none animate-fade-in"
+  >
+    <!-- 文件夹专属操作 -->
+    <template v-if="contextMenu.node?.is_dir">
+      <button
+        @click="handleMenuAction('new-file')"
+        class="w-full text-left px-3.5 py-2 hover:bg-gray-50 flex items-center gap-2 transition-colors text-blue-600 font-medium"
+      >
+        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 13h6m-3-3v6m5 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+        </svg>
+        新建文件
+      </button>
+      <button
+        @click="handleMenuAction('new-folder')"
+        class="w-full text-left px-3.5 py-2 hover:bg-gray-50 flex items-center gap-2 transition-colors text-amber-700 font-medium"
+      >
+        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 13h6m-3-3v6m-9 1V7a2 2 0 012-2h6l2 2h6a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z" />
+        </svg>
+        新建文件夹
+      </button>
+      <div class="border-t border-gray-100 my-1"></div>
+      <button
+        @click="handleMenuAction('upload-normal')"
+        class="w-full text-left px-3.5 py-2 hover:bg-gray-50 flex items-center gap-2 transition-colors"
+      >
+        <svg class="w-3.5 h-3.5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+        </svg>
+        上传普通文件
+      </button>
+      <button
+        @click="handleMenuAction('upload-archive')"
+        class="w-full text-left px-3.5 py-2 hover:bg-gray-50 flex items-center gap-2 transition-colors"
+      >
+        <svg class="w-3.5 h-3.5 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4" />
+        </svg>
+        上传压缩包 (Zip/Tar)
+      </button>
+      <div v-if="contextMenu.node?.path !== ''" class="border-t border-gray-100 my-1"></div>
+      <button
+        v-if="contextMenu.node?.path !== ''"
+        @click="handleMenuAction('delete')"
+        class="w-full text-left px-3.5 py-2 hover:bg-gray-50 flex items-center gap-2 text-red-500 hover:bg-red-50 transition-colors"
+      >
+        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+        </svg>
+        删除此文件夹
+      </button>
+    </template>
+
+    <!-- 普通文件专属操作 -->
+    <template v-else>
+      <button
+        @click="handleMenuAction('edit')"
+        class="w-full text-left px-3.5 py-2 hover:bg-gray-50 flex items-center gap-2 transition-colors font-medium text-slate-800"
+      >
+        <svg class="w-3.5 h-3.5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+        </svg>
+        编辑此文件
+      </button>
+      <template v-if="contextMenu.node?.name.toLowerCase() !== 'skill.md'">
+        <div class="border-t border-gray-100 my-1"></div>
+        <button
+          @click="handleMenuAction('delete')"
+          class="w-full text-left px-3.5 py-2 hover:bg-gray-50 flex items-center gap-2 text-red-500 hover:bg-red-50 transition-colors"
+        >
+          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+          </svg>
+          删除此文件
+        </button>
+      </template>
+    </template>
+  </div>
 </template>
 
 <style scoped>
@@ -1206,6 +1789,290 @@ textarea:focus {
   box-shadow: none;
 }
 
+/* Skill Editor (light theme) */
+.skill-editor {
+  border-radius: 12px;
+  border: 1px solid #e2e8f0;
+  background: #ffffff;
+  overflow: hidden;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04), 0 4px 16px rgba(15, 23, 42, 0.04);
+}
+
+.skill-editor-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px;
+  background: #f8fafc;
+  border-bottom: 1px solid #e2e8f0;
+  flex-shrink: 0;
+}
+
+.skill-editor-file-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex: 1;
+}
+
+.skill-editor-file-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 7px;
+  flex-shrink: 0;
+  background: #eff6ff;
+  color: #2563eb;
+}
+
+.skill-editor-file-icon.ext-md {
+  background: #eff6ff;
+  color: #2563eb;
+}
+.skill-editor-file-icon.ext-sh,
+.skill-editor-file-icon.ext-bash {
+  background: #f0fdf4;
+  color: #16a34a;
+}
+.skill-editor-file-icon.ext-py {
+  background: #fefce8;
+  color: #ca8a04;
+}
+.skill-editor-file-icon.ext-json {
+  background: #fff7ed;
+  color: #ea580c;
+}
+
+.skill-editor-filename {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12px;
+  font-weight: 500;
+  color: #334155;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.skill-editor-unsaved {
+  flex-shrink: 0;
+  font-size: 10px;
+  font-weight: 600;
+  color: #b45309;
+  background: #fffbeb;
+  border: 1px solid #fde68a;
+  padding: 1px 7px;
+  border-radius: 999px;
+}
+
+.skill-editor-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.skill-editor-mode-toggle {
+  display: flex;
+  align-items: center;
+  padding: 2px;
+  border-radius: 8px;
+  background: #f1f5f9;
+  border: 1px solid #e2e8f0;
+}
+
+.skill-editor-mode-toggle button {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 10px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 500;
+  color: #64748b;
+  transition: all 0.15s ease;
+}
+
+.skill-editor-mode-toggle button:hover {
+  color: #334155;
+}
+
+.skill-editor-mode-toggle button.active {
+  background: #ffffff;
+  color: #1e293b;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08);
+}
+
+.skill-editor-save-btn {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 14px;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #94a3b8;
+  background: #f1f5f9;
+  border: 1px solid #e2e8f0;
+  transition: all 0.15s ease;
+  cursor: not-allowed;
+}
+
+.skill-editor-save-btn.is-dirty {
+  color: #fff;
+  background: #2563eb;
+  border-color: #3b82f6;
+  cursor: pointer;
+  box-shadow: 0 1px 2px rgba(37, 99, 235, 0.25);
+}
+
+.skill-editor-save-btn.is-dirty:hover {
+  background: #1d4ed8;
+}
+
+.skill-editor-save-btn.is-dirty:active {
+  transform: scale(0.97);
+}
+
+.skill-editor-save-btn.is-saving {
+  cursor: wait;
+  opacity: 0.8;
+}
+
+.skill-editor-save-spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: spin 0.6s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.skill-editor-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: #ffffff;
+}
+
+.skill-editor-code-pane {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.skill-editor-gutter {
+  width: 44px;
+  flex-shrink: 0;
+  padding: 12px 8px 12px 0;
+  text-align: right;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.625rem;
+  color: #94a3b8;
+  background: #f8fafc;
+  border-right: 1px solid #e2e8f0;
+  overflow: hidden;
+  user-select: none;
+}
+
+.skill-editor-line-num {
+  height: 1.625rem;
+}
+
+.skill-editor-textarea {
+  flex: 1;
+  padding: 12px 16px;
+  background: #ffffff;
+  color: #1e293b;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 13px;
+  line-height: 1.625rem;
+  border: none;
+  resize: none;
+  overflow-y: auto;
+  caret-color: #2563eb;
+}
+
+.skill-editor-textarea::placeholder {
+  color: #cbd5e1;
+}
+
+.skill-editor-textarea::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.skill-editor-textarea::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 4px;
+}
+
+.skill-editor-textarea::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
+
+.skill-editor-preview {
+  flex: 1;
+  overflow-y: auto;
+  padding: 24px 32px;
+  color: #1e293b;
+  background: #ffffff;
+}
+
+.skill-editor-preview::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.skill-editor-preview::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 4px;
+}
+
+.skill-editor-preview::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
+
+.skill-editor-statusbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 5px 14px;
+  background: #f8fafc;
+  border-top: 1px solid #e2e8f0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 10px;
+  color: #94a3b8;
+  flex-shrink: 0;
+  user-select: none;
+}
+
+.skill-editor-status-left,
+.skill-editor-status-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.skill-editor-status-sep {
+  opacity: 0.6;
+}
+
+.skill-editor-status-dirty {
+  color: #d97706;
+}
+
 /* 生态市场外链按钮特殊强制渐变背景以防止被第三方库覆盖 */
 .market-link {
   background: linear-gradient(135deg, #2563eb, #4f46e5) !important;
@@ -1214,5 +2081,118 @@ textarea:focus {
 .market-link:hover {
   background: linear-gradient(135deg, #1d4ed8, #4338ca) !important;
   color: #ffffff !important;
+}
+
+/* Markdown Preview Styling (light theme) */
+.markdown-preview :deep(h1) {
+  font-size: 1.625rem;
+  font-weight: 700;
+  border-bottom: 1px solid #e2e8f0;
+  padding-bottom: 0.5rem;
+  margin-top: 0;
+  margin-bottom: 1rem;
+  color: #0f172a;
+  letter-spacing: -0.01em;
+}
+.markdown-preview :deep(h2) {
+  font-size: 1.25rem;
+  font-weight: 600;
+  margin-top: 1.5rem;
+  margin-bottom: 0.75rem;
+  color: #1e293b;
+}
+.markdown-preview :deep(h3) {
+  font-size: 1.05rem;
+  font-weight: 600;
+  margin-top: 1.25rem;
+  margin-bottom: 0.5rem;
+  color: #334155;
+}
+.markdown-preview :deep(p) {
+  margin-bottom: 0.85rem;
+  line-height: 1.75;
+  color: #475569;
+}
+.markdown-preview :deep(ul), .markdown-preview :deep(ol) {
+  margin-left: 1.5rem;
+  margin-bottom: 1rem;
+  list-style-type: disc;
+}
+.markdown-preview :deep(ol) {
+  list-style-type: decimal;
+}
+.markdown-preview :deep(li) {
+  margin-bottom: 0.35rem;
+  line-height: 1.65;
+  color: #475569;
+}
+.markdown-preview :deep(code) {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.875em;
+  background-color: #f1f5f9;
+  padding: 0.15rem 0.4rem;
+  border-radius: 0.25rem;
+  color: #be185d;
+  border: 1px solid #e2e8f0;
+}
+.markdown-preview :deep(pre) {
+  background-color: #f8fafc;
+  padding: 1rem 1.25rem;
+  border-radius: 0.5rem;
+  overflow-x: auto;
+  margin-bottom: 1rem;
+  border: 1px solid #e2e8f0;
+}
+.markdown-preview :deep(pre code) {
+  background-color: transparent;
+  padding: 0;
+  border: none;
+  color: #334155;
+  font-size: 0.8125rem;
+  line-height: 1.6;
+}
+.markdown-preview :deep(blockquote) {
+  border-left: 3px solid #3b82f6;
+  padding: 0.25rem 0 0.25rem 1rem;
+  margin-left: 0;
+  margin-right: 0;
+  margin-bottom: 1rem;
+  color: #64748b;
+  background: #f8fafc;
+  border-radius: 0 0.375rem 0.375rem 0;
+}
+.markdown-preview :deep(a) {
+  color: #2563eb;
+  text-decoration: none;
+}
+.markdown-preview :deep(a:hover) {
+  text-decoration: underline;
+}
+.markdown-preview :deep(hr) {
+  border: none;
+  border-top: 1px solid #e2e8f0;
+  margin: 1.5rem 0;
+}
+.markdown-preview :deep(table) {
+  width: 100%;
+  border-collapse: collapse;
+  margin-bottom: 1rem;
+  font-size: 0.875rem;
+}
+.markdown-preview :deep(th),
+.markdown-preview :deep(td) {
+  border: 1px solid #e2e8f0;
+  padding: 0.5rem 0.75rem;
+  text-align: left;
+}
+.markdown-preview :deep(th) {
+  background: #f8fafc;
+  font-weight: 600;
+  color: #334155;
+}
+.markdown-preview :deep(.preview-empty) {
+  color: #94a3b8;
+  font-style: italic;
+  padding: 1rem 0;
 }
 </style>

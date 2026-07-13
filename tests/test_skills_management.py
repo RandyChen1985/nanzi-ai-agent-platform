@@ -196,6 +196,73 @@ def test_path_traversal_protection(mock_skills_dir):
     assert "安全拦截" in bad_read_error.value.detail
 
 
+def test_create_skill_assets(mock_skills_dir):
+    user = {"user_name": "admin", "role": "admin"}
+    skill_dir = mock_skills_dir / "test-skill"
+    skill_dir.mkdir()
+    (skill_dir / "SKILL.md").write_text("# Test", encoding="utf-8")
+
+    file_req = skills.SkillAssetCreateRequest(path="notes.md", type="file")
+    response = run(skills.create_skill_asset("test-skill", file_req, user=user))
+    assert response["status"] == "success"
+    assert (skill_dir / "notes.md").read_text(encoding="utf-8") == ""
+
+    folder_req = skills.SkillAssetCreateRequest(path="references", type="folder")
+    response = run(skills.create_skill_asset("test-skill", folder_req, user=user))
+    assert response["status"] == "success"
+    assert (skill_dir / "references").is_dir()
+
+    nested_file_req = skills.SkillAssetCreateRequest(
+        path="references/guide.md",
+        type="file",
+    )
+    response = run(
+        skills.create_skill_asset("test-skill", nested_file_req, user=user)
+    )
+    assert response["status"] == "success"
+    assert (skill_dir / "references" / "guide.md").is_file()
+
+
+def test_create_skill_asset_rejects_conflicts_and_invalid_paths(mock_skills_dir):
+    user = {"user_name": "admin", "role": "admin"}
+    skill_dir = mock_skills_dir / "test-skill"
+    skill_dir.mkdir()
+    (skill_dir / "SKILL.md").write_text("# Test", encoding="utf-8")
+
+    duplicate = skills.SkillAssetCreateRequest(path="SKILL.md", type="file")
+    with pytest.raises(HTTPException) as duplicate_error:
+        run(skills.create_skill_asset("test-skill", duplicate, user=user))
+    assert duplicate_error.value.status_code == 409
+
+    missing_parent = skills.SkillAssetCreateRequest(
+        path="missing/guide.md",
+        type="file",
+    )
+    with pytest.raises(HTTPException) as parent_error:
+        run(skills.create_skill_asset("test-skill", missing_parent, user=user))
+    assert parent_error.value.status_code == 400
+    assert "父文件夹不存在" in parent_error.value.detail
+
+    invalid_requests = [
+        skills.SkillAssetCreateRequest(path="", type="folder"),
+        skills.SkillAssetCreateRequest(path="/absolute.md", type="file"),
+        skills.SkillAssetCreateRequest(path=".hidden", type="folder"),
+        skills.SkillAssetCreateRequest(path="references/.hidden.md", type="file"),
+        skills.SkillAssetCreateRequest(path="binary.exe", type="file"),
+        skills.SkillAssetCreateRequest(path="references\\guide.md", type="file"),
+        skills.SkillAssetCreateRequest(path="references/../guide.md", type="file"),
+    ]
+    for request in invalid_requests:
+        with pytest.raises(HTTPException) as invalid_error:
+            run(skills.create_skill_asset("test-skill", request, user=user))
+        assert invalid_error.value.status_code == 400
+
+    traversal = skills.SkillAssetCreateRequest(path="../escape.md", type="file")
+    with pytest.raises(HTTPException) as traversal_error:
+        run(skills.create_skill_asset("test-skill", traversal, user=user))
+    assert traversal_error.value.status_code == 403
+
+
 def test_skills_stats_service_recording(mock_skills_dir):
     from app.services.ai.skills_stats_service import skills_stats_service
 

@@ -49,7 +49,7 @@ onUnmounted(() => {
 
 <template>
   <div
-    class="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm"
+    class="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm"
     role="dialog"
     aria-modal="true"
     @click.self="!loading && $emit('cancel')"
