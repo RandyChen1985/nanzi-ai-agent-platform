@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, computed, watch } from "vue";
+import { ref, onMounted, computed, watch, nextTick } from "vue";
 import axios from "../utils/axios";
 import { agentApi } from "../api/agent";
 import { modelApi, type AIModel } from "../api/model";
@@ -22,6 +22,8 @@ import {
   CalculatorIcon,
   QueueListIcon,
   RocketLaunchIcon,
+  ArrowsPointingOutIcon,
+  ArrowsPointingInIcon,
 } from "@heroicons/vue/24/outline";
 import { renderMarkdown } from "../utils/markdown";
 import * as Diff from "diff";
@@ -75,12 +77,12 @@ const testResult = ref<{
 const streamedOutput = ref(""); // For typewriter effect
 const selectedVersion = ref<number | null>(null);
 const versionNote = ref("");
-const viewMode = ref<"edit" | "preview">("edit");
+const viewMode = ref<"edit" | "preview">("preview");
 const historyList = ref<any[]>([]);
 const loadingHistory = ref(false);
 const showHistory = ref(false);
 const showOptimizeConfirm = ref(false);
-const showPublishConfirm = ref(false); // New confirm state
+const showPublishConfirm = ref(false);
 const showOptimizeModal = ref(false);
 const optimizing = ref(false);
 const optimizeSuggestions = ref<any[]>([]);
@@ -88,9 +90,27 @@ const activeOptimizeTab = ref(0);
 const models = ref<AIModel[]>([]);
 const selectedModel = ref<string>("");
 const showSnippets = ref(false);
-const showSidebar = ref(true); // Sidebar toggle state
-const activeCategoryTab = ref<'ALL' | 'System' | 'Agent'>('ALL'); // Category filter
-const isFullscreen = ref(false); // Fullscreen mode
+const showSidebar = ref(true);
+const activeCategoryTab = ref<'ALL' | 'System' | 'Agent'>('ALL');
+const isFullscreen = ref(false);
+const showUnsavedConfirm = ref(false);
+const pendingPromptSwitch = ref<{ prompt: PromptMetadata; version?: number } | null>(null);
+
+const editorTextareaRef = ref<HTMLTextAreaElement | null>(null);
+const lineNumbersRef = ref<HTMLDivElement | null>(null);
+
+const lineCount = computed(() => {
+  const content = currentDetail.value?.content || "";
+  return content.split("\n").length || 1;
+});
+
+const charCount = computed(() => currentDetail.value?.content?.length || 0);
+
+const syncLineNumberScroll = () => {
+  if (lineNumbersRef.value && editorTextareaRef.value) {
+    lineNumbersRef.value.scrollTop = editorTextareaRef.value.scrollTop;
+  }
+};
 
 const snippets = [
   {
@@ -116,7 +136,6 @@ const snippets = [
 // 添加缺失的响应式变量
 const searchQuery = ref("");
 const collapsedGroups = ref<Record<string, boolean>>({});
-const hoveredPromptId = ref<string | null>(null);
 
 const canEdit = computed(() => {
   return userInfo.value?.role === "admin";
@@ -278,98 +297,6 @@ const performPublish = async () => {
   }
 };
 
-const getPromptColorTheme = (p: PromptMetadata) => {
-  const themes = [
-    {
-      bg: "bg-blue-50",
-      border: "border-blue-100",
-      text: "text-blue-600",
-      accent: "bg-blue-600",
-      light: "bg-blue-50/50",
-      ring: "ring-blue-500",
-    },
-    {
-      bg: "bg-indigo-50",
-      border: "border-indigo-100",
-      text: "text-indigo-600",
-      accent: "bg-indigo-600",
-      light: "bg-indigo-50/50",
-      ring: "ring-indigo-500",
-    },
-    {
-      bg: "bg-purple-50",
-      border: "border-purple-100",
-      text: "text-purple-600",
-      accent: "bg-purple-600",
-      light: "bg-purple-50/50",
-      ring: "ring-purple-500",
-    },
-    {
-      bg: "bg-pink-50",
-      border: "border-pink-100",
-      text: "text-pink-600",
-      accent: "bg-pink-600",
-      light: "bg-pink-50/50",
-      ring: "ring-pink-500",
-    },
-    {
-      bg: "bg-rose-50",
-      border: "border-rose-100",
-      text: "text-rose-600",
-      accent: "bg-rose-600",
-      light: "bg-rose-50/50",
-      ring: "ring-rose-500",
-    },
-    {
-      bg: "bg-orange-50",
-      border: "border-orange-100",
-      text: "text-orange-600",
-      accent: "bg-orange-600",
-      light: "bg-orange-50/50",
-      ring: "ring-orange-500",
-    },
-    {
-      bg: "bg-amber-50",
-      border: "border-amber-100",
-      text: "text-amber-600",
-      accent: "bg-amber-600",
-      light: "bg-amber-50/50",
-      ring: "ring-amber-500",
-    },
-    {
-      bg: "bg-emerald-50",
-      border: "border-emerald-100",
-      text: "text-emerald-600",
-      accent: "bg-emerald-600",
-      light: "bg-emerald-50/50",
-      ring: "ring-emerald-500",
-    },
-    {
-      bg: "bg-teal-50",
-      border: "border-teal-100",
-      text: "text-teal-600",
-      accent: "bg-teal-600",
-      light: "bg-teal-50/50",
-      ring: "ring-teal-500",
-    },
-    {
-      bg: "bg-cyan-50",
-      border: "border-cyan-100",
-      text: "text-cyan-600",
-      accent: "bg-cyan-600",
-      light: "bg-cyan-50/50",
-      ring: "ring-cyan-500",
-    },
-  ];
-  let hash = 0;
-  const str = p.id || p.name || "default";
-  for (let i = 0; i < str.length; i++) {
-    hash = str.charCodeAt(i) + ((hash << 5) - hash);
-  }
-  const index = Math.abs(hash) % themes.length;
-  return themes[index] || themes[0]!;
-};
-
 const fetchUserInfo = () => {
   const cached = localStorage.getItem("user_info");
   if (cached) {
@@ -438,8 +365,8 @@ const loadPromptDetail = async (prompt: PromptMetadata, version?: number) => {
   loadingDetail.value = true;
   testResult.value = null;
   versionNote.value = "";
-  viewMode.value = "edit";
   showHistory.value = false;
+  showSnippets.value = false;
 
   try {
     const res = await axios.get("/api/portal/prompts/detail", {
@@ -453,16 +380,21 @@ const loadPromptDetail = async (prompt: PromptMetadata, version?: number) => {
     versionNote.value = res.data.version_note || "";
     originalContent.value = res.data.content;
     selectedVersion.value = res.data.version_number;
+    if (canEdit.value && (!res.data.content || res.data.content.trim() === "")) {
+      viewMode.value = "edit";
+    } else {
+      viewMode.value = "preview";
+    }
 
-    // Init test variables
     const newVars: Record<string, string> = {};
     res.data.variables.forEach((v: string) => {
       newVars[v] = testVariables.value[v] || "";
     });
     testVariables.value = newVars;
-    
-    // Load saved test case
+
     loadTestCase();
+    await nextTick();
+    syncLineNumberScroll();
   } catch (e: any) {
     console.error("Failed to load prompt detail:", e);
     const errorMessage = e.response?.data?.detail || "获取详情失败";
@@ -470,6 +402,54 @@ const loadPromptDetail = async (prompt: PromptMetadata, version?: number) => {
   } finally {
     loadingDetail.value = false;
   }
+};
+
+const selectPrompt = async (prompt: PromptMetadata, version?: number) => {
+  if (
+    isDirty.value &&
+    selectedPrompt.value &&
+    (selectedPrompt.value.id !== prompt.id ||
+      (version !== undefined && version !== selectedVersion.value))
+  ) {
+    pendingPromptSwitch.value = { prompt, version };
+    showUnsavedConfirm.value = true;
+    return;
+  }
+  await loadPromptDetail(prompt, version);
+};
+
+const confirmDiscardAndSwitch = async () => {
+  showUnsavedConfirm.value = false;
+  const pending = pendingPromptSwitch.value;
+  pendingPromptSwitch.value = null;
+  if (pending) {
+    await loadPromptDetail(pending.prompt, pending.version);
+  }
+};
+
+const cancelPromptSwitch = () => {
+  showUnsavedConfirm.value = false;
+  pendingPromptSwitch.value = null;
+};
+
+const onVersionChange = () => {
+  if (!selectedPrompt.value || selectedVersion.value == null) return;
+  const targetVersion = selectedVersion.value;
+  // v-model 已切版本；若有脏数据取消时需回滚
+  const previousVersion = Number(
+    (currentDetail.value as any)?.version_number ?? selectedVersion.value
+  );
+  if (isDirty.value) {
+    pendingPromptSwitch.value = {
+      prompt: selectedPrompt.value,
+      version: targetVersion,
+    };
+    // 先回滚显示，确认后再切
+    selectedVersion.value = previousVersion;
+    showUnsavedConfirm.value = true;
+    return;
+  }
+  selectPrompt(selectedPrompt.value, targetVersion);
 };
 
 const fetchHistory = async () => {
@@ -697,330 +677,228 @@ watch(
 </script>
 
 <template>
-  <div class="h-full flex flex-col">
-    <!-- Header -->
-    <div class="mb-6 flex justify-between items-center">
-      <div>
-        <h1 class="text-2xl font-bold text-gray-900">
-          提示词工坊 (Prompt Studio)
-        </h1>
-        <p class="text-gray-500 text-sm mt-1">
-          统一管理、编辑和测试系统及智能体的提示词。
-        </p>
+  <div class="h-full flex flex-col min-h-0">
+    <!-- Compact Header -->
+    <div class="mb-4 flex justify-between items-center shrink-0">
+      <div class="flex items-center gap-3">
+        <h1 class="text-xl font-bold text-gray-900">提示词工坊</h1>
+        <span class="text-xs text-gray-400 hidden sm:inline">统一管理、编辑并测试系统与智能体提示词</span>
       </div>
       <button
         @click="fetchPrompts"
-        class="p-2 text-gray-500 hover:text-primary rounded-full hover:bg-white transition-all"
+        class="p-2 text-gray-500 hover:text-primary rounded-lg hover:bg-white border border-transparent hover:border-gray-200 transition-all"
+        title="刷新列表"
       >
-        <ArrowPathIcon class="w-5 h-5" :class="{ 'animate-spin': loading }" />
+        <ArrowPathIcon class="w-4 h-4" :class="{ 'animate-spin': loading }" />
       </button>
     </div>
 
-    <!-- Initial Loading State -->
     <div
       v-if="initialLoading"
       class="flex-1 flex flex-col items-center justify-center bg-white rounded-xl shadow-sm border border-gray-200"
     >
-      <ArrowPathIcon class="w-12 h-12 text-primary animate-spin mb-4" />
-      <h2 class="text-xl font-medium text-gray-700">加载中...</h2>
-      <p class="mt-2 text-sm text-gray-500">正在初始化提示词工坊</p>
+      <ArrowPathIcon class="w-10 h-10 text-primary animate-spin mb-3" />
+      <p class="text-sm text-gray-600">正在初始化提示词工坊...</p>
     </div>
 
-    <!-- Initial Error State -->
     <div
       v-else-if="initError"
       class="flex-1 flex flex-col items-center justify-center bg-white rounded-xl shadow-sm border border-gray-200"
     >
-      <div class="text-red-500 mb-4">
-        <svg
-          class="w-12 h-12"
-          fill="none"
-          stroke="currentColor"
-          viewBox="0 0 24 24"
-        >
-          <path
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-width="2"
-            d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
-          />
-        </svg>
-      </div>
-      <h2 class="text-xl font-medium text-gray-700">加载失败</h2>
-      <p class="mt-2 text-sm text-gray-500">{{ initError }}</p>
+      <p class="text-sm font-medium text-gray-700">加载失败</p>
+      <p class="mt-1 text-xs text-gray-500">{{ initError }}</p>
       <button
         @click="reloadPage"
-        class="mt-4 px-4 py-2 bg-primary text-white rounded-lg hover:bg-primary-dark transition-all"
+        class="mt-4 px-4 py-2 bg-primary text-white rounded-lg hover:bg-primary-dark text-sm"
       >
         刷新页面
       </button>
     </div>
 
-    <!-- Main Content -->
-    <div v-else class="flex-1 flex gap-6 min-h-0 overflow-hidden relative">
-      <!-- Sidebar Toggle Button (Absolute) -->
-      <button 
-        @click="showSidebar = !showSidebar"
-        class="absolute left-0 top-1/2 -translate-y-1/2 z-20 bg-white border border-gray-200 shadow-md p-1 rounded-r-md hover:bg-gray-50 text-gray-400 hover:text-primary transition-all duration-300"
-        :class="{ 'left-80': showSidebar }"
-        style="transition: left 0.3s ease;"
-        title="Toggle Sidebar"
-      >
-        <ChevronRightIcon class="w-3 h-3 transition-transform" :class="{ 'rotate-180': showSidebar }" />
-      </button>
-
-      <!-- Sidebar List -->
+    <div v-else class="flex-1 flex gap-4 min-h-0 overflow-hidden">
+      <!-- Sidebar -->
       <div
-        class="flex flex-col bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden transition-all duration-300"
-        :class="showSidebar ? 'w-80 opacity-100' : 'w-0 opacity-0 border-none'"
+        class="flex flex-col bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden transition-all duration-300 shrink-0"
+        :class="showSidebar ? 'w-72' : 'w-0 border-0 opacity-0'"
       >
-        <div
-          class="px-4 py-3 border-b border-gray-100 bg-gray-50 flex flex-col space-y-3"
-        >
-          <!-- Category Tabs -->
-          <div class="flex p-1 bg-gray-200/60 rounded-lg">
-             <button 
-               v-for="tab in ['ALL', 'System', 'Agent']" 
-               :key="tab"
-               @click="activeCategoryTab = tab as any"
-               class="flex-1 py-1 text-[10px] font-bold rounded-md transition-all text-center"
-               :class="activeCategoryTab === tab ? 'bg-white text-gray-800 shadow-sm' : 'text-gray-500 hover:text-gray-700'"
-             >
-               {{ tab === 'ALL' ? '全部' : (tab === 'System' ? '系统 (Sys)' : '智能体 (Bot)') }}
-             </button>
+        <div class="px-3 py-3 border-b border-gray-100 bg-gray-50 space-y-2.5 shrink-0">
+          <div class="flex p-0.5 bg-gray-200/60 rounded-lg">
+            <button
+              v-for="tab in [
+                { id: 'ALL', label: '全部' },
+                { id: 'System', label: '系统' },
+                { id: 'Agent', label: '智能体' },
+              ]"
+              :key="tab.id"
+              @click="activeCategoryTab = tab.id as any"
+              class="flex-1 py-1.5 text-[11px] font-semibold rounded-md transition-all text-center"
+              :class="activeCategoryTab === tab.id ? 'bg-white text-gray-800 shadow-sm' : 'text-gray-500 hover:text-gray-700'"
+            >
+              {{ tab.label }}
+            </button>
           </div>
-
-          <!-- Search Bar -->
-          <div class="relative group">
-            <MagnifyingGlassIcon
-              class="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 group-focus-within:text-primary transition-colors"
-            />
+          <div class="relative">
+            <MagnifyingGlassIcon class="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
             <input
               v-model="searchQuery"
               type="text"
-              placeholder="搜索..."
-              class="w-full pl-9 pr-4 py-2 bg-white border-gray-200 rounded-lg text-xs focus:ring-1 focus:ring-primary focus:border-primary transition-all placeholder:text-gray-300"
+              placeholder="搜索提示词..."
+              class="w-full pl-8 pr-3 py-1.5 bg-white border border-gray-200 rounded-lg text-xs focus:ring-1 focus:ring-primary focus:border-primary outline-none"
             />
           </div>
         </div>
-        <div class="flex-1 overflow-y-auto p-2 space-y-4 custom-scrollbar">
+
+        <div class="flex-1 overflow-y-auto p-2 space-y-3 custom-scrollbar">
           <div v-for="(items, category) in groupedPrompts" :key="category">
-            <h3
+            <button
+              type="button"
               @click="toggleGroup(category)"
-              class="px-3 py-1.5 mb-2 text-xs font-bold uppercase tracking-wider rounded-md flex items-center justify-between border border-transparent cursor-pointer group hover:bg-white hover:shadow-sm transition-all"
-              :class="{
-                'bg-blue-50 text-blue-700 border-blue-100':
-                  category === 'System',
-                'bg-emerald-50 text-emerald-700 border-emerald-100':
-                  category === 'Agent',
-                'bg-gray-50 text-gray-500':
-                  category !== 'System' && category !== 'Agent',
-              }"
+              class="w-full px-2.5 py-1.5 mb-1 text-[10px] font-bold uppercase tracking-wider rounded-md flex items-center justify-between text-gray-500 hover:bg-gray-50"
             >
-              <div class="flex items-center">
-                <span class="mr-1.5 opacity-70">
-                  {{
-                    category === "System"
-                      ? "🔧"
-                      : category === "Agent"
-                      ? "🤖"
-                      : "#"
-                  }}
-                </span>
-                {{ category }}
-                <span
-                  class="ml-2 px-1.5 py-0.5 rounded-full bg-white/50 text-[9px] font-mono"
-                  >{{ items.length }}</span
-                >
-              </div>
+              <span class="flex items-center gap-1.5">
+                <span>{{ category === 'System' ? '系统' : category === 'Agent' ? '智能体' : category }}</span>
+                <span class="px-1.5 py-0.5 rounded-full bg-gray-100 text-gray-400 font-mono">{{ items.length }}</span>
+              </span>
               <ChevronDownIcon
-                class="w-3 h-3 transition-transform duration-300"
+                class="w-3 h-3 transition-transform"
                 :class="{ 'rotate-[-90deg]': collapsedGroups[category] }"
               />
-            </h3>
-            <div v-show="!collapsedGroups[category]" class="space-y-1">
+            </button>
+            <div v-show="!collapsedGroups[category]" class="space-y-2 mt-1.5">
               <button
                 v-for="p in items"
                 :key="p.id"
-                @click="loadPromptDetail(p)"
-                @mouseenter="hoveredPromptId = p.id"
-                @mouseleave="hoveredPromptId = null"
-                class="w-full text-left px-3 py-2.5 rounded-xl text-sm transition-all flex items-start group border relative overflow-hidden"
-                :class="[
+                type="button"
+                @click="selectPrompt(p)"
+                class="w-full text-left px-3 py-2.5 rounded-lg text-sm transition-all border shadow-sm"
+                :class="
                   selectedPrompt?.id === p.id
-                    ? `${getPromptColorTheme(p).bg} ${
-                        getPromptColorTheme(p).border
-                      } shadow-sm ring-1 ${getPromptColorTheme(p).ring} z-10`
-                    : 'bg-white border-transparent hover:border-gray-300 hover:shadow-sm',
-                ]"
+                    ? 'bg-primary/5 border-primary/30 text-primary ring-1 ring-primary/10'
+                    : 'bg-white border-gray-100 hover:border-gray-300 hover:shadow hover:bg-gray-50/50 text-gray-800'
+                "
               >
-                <!-- Unsaved (Dirty) Indicator -->
-                <div
-                  v-if="isDirty && selectedPrompt?.id === p.id"
-                  class="absolute top-1.5 right-1.5 w-1.5 h-1.5 rounded-full bg-orange-500 shadow-sm animate-pulse"
-                  title="有未保存的修改"
-                ></div>
-
-                <!-- Color Accent Bar -->
-                <div
-                  class="absolute left-0 top-0 bottom-0 w-1 opacity-0 group-hover:opacity-100 transition-opacity"
-                  :class="getPromptColorTheme(p).accent"
-                ></div>
-                <div
-                  v-if="selectedPrompt?.id === p.id"
-                  class="absolute left-0 top-0 bottom-0 w-1"
-                  :class="getPromptColorTheme(p).accent"
-                ></div>
-
-                <!-- Icon and Main Info -->
-                <div class="flex-1 min-w-0">
-                  <div class="flex items-center justify-between mb-0.5">
-                    <div
-                      class="flex items-center text-xs font-bold truncate pr-3"
-                      :class="
-                        selectedPrompt?.id === p.id
-                          ? 'text-primary'
-                          : 'text-gray-900'
-                      "
-                    >
-                      {{ p.display_name || p.name }}
-                    </div>
-                    <ChevronRightIcon
-                      v-if="selectedPrompt?.id === p.id"
-                      class="w-3 h-3 text-primary flex-shrink-0"
+                <div class="flex items-center justify-between gap-2">
+                  <div class="flex items-center gap-1.5 min-w-0">
+                    <!-- 根据类型展示图标 -->
+                    <CpuChipIcon
+                      v-if="p.source === 'system_config'"
+                      class="w-3.5 h-3.5 shrink-0"
+                      :class="selectedPrompt?.id === p.id ? 'text-primary/70' : 'text-gray-400'"
                     />
+                    <SparklesIcon
+                      v-else
+                      class="w-3.5 h-3.5 shrink-0"
+                      :class="selectedPrompt?.id === p.id ? 'text-primary/80' : 'text-amber-500'"
+                    />
+                    <span class="text-xs font-semibold truncate">{{ p.display_name || p.name }}</span>
                   </div>
-
-                  <div class="flex items-center justify-between">
-                    <div
-                      class="text-[9px] text-gray-400 font-mono truncate flex items-center"
-                    >
-                      {{ p.name }}
-                    </div>
-                  </div>
-
-                  <div
-                    class="mt-1.5 flex items-center justify-between gap-2 overflow-hidden"
-                  >
-                    <div class="flex items-center space-x-1 flex-1 min-w-0">
-                      <div
-                        v-if="p.created_by"
-                        class="flex items-center text-[9px] text-gray-400 bg-gray-50 px-1 py-0.5 rounded flex-shrink-0"
-                      >
-                        {{ p.created_by }}
-                      </div>
-                      <!-- Version Badge in Sidebar -->
-                      <div
-                        v-if="p.versions?.length"
-                        class="text-[9px] font-bold text-gray-500 bg-gray-100 px-1 py-0.5 rounded flex-shrink-0"
-                      >
-                        v{{ p.versions.length }}
-                      </div>
-                      <!-- Relative Modified Time -->
-                      <div
-                        v-if="p.versions?.[0]?.updated_at"
-                        class="text-[9px] text-gray-300 truncate"
-                      >
-                        {{ formatRelativeDate(p.versions[0].updated_at) }}
-                      </div>
-                    </div>
-                    <span
-                      v-if="p.is_system || p.category !== 'Agent'"
-                      class="text-[8px] font-bold px-1 py-0.5 rounded flex-shrink-0 border border-current opacity-30 tracking-tighter"
-                      :class="
-                        p.category === 'Agent'
-                          ? 'text-green-700'
-                          : 'text-blue-700'
-                      "
-                    >
-                      {{ p.category === "Agent" ? "SYS" : "CFG" }}
-                    </span>
-                  </div>
+                  <span
+                    v-if="isDirty && selectedPrompt?.id === p.id"
+                    class="w-1.5 h-1.5 rounded-full bg-amber-500 shrink-0"
+                    title="未保存"
+                  ></span>
                 </div>
-
-                <!-- Hover Preview Tooltip -->
-                <transition name="fade">
-                  <div
-                    v-if="
-                      hoveredPromptId === p.id &&
-                      !collapsedGroups[category] &&
-                      selectedPrompt?.id !== p.id
-                    "
-                    class="absolute left-full ml-2 top-0 w-64 bg-gray-900 text-gray-200 text-xs p-3 rounded-lg shadow-2xl z-[100] border border-white/10 pointer-events-none"
-                  >
-                    <div
-                      class="text-[10px] text-gray-500 font-bold uppercase mb-1 border-b border-white/5 pb-1"
+                <div
+                  v-if="p.description"
+                  class="mt-1.5 px-2 py-1 text-[11px] rounded-r border-l-2 truncate"
+                  :class="
+                    selectedPrompt?.id === p.id
+                      ? 'bg-primary/10 border-primary/30 text-primary/80'
+                      : 'bg-gray-50 border-gray-200 text-gray-500'
+                  "
+                  :title="p.description"
+                >
+                  {{ p.description }}
+                </div>
+                <div class="mt-1.5 flex items-center gap-1.5 text-[10px] text-gray-400">
+                  <template v-if="p.versions?.length">
+                    <span
+                      class="font-mono px-1 rounded text-[10px]"
+                      :class="selectedPrompt?.id === p.id ? 'bg-primary/15 text-primary-dark font-medium' : 'bg-gray-100 text-gray-600'"
                     >
-                      内容预览 (Preview)
-                    </div>
-                    <div
-                      class="font-mono leading-relaxed opacity-80"
-                      style="
-                        display: -webkit-box;
-                        -webkit-line-clamp: 4;
-                        -webkit-box-orient: vertical;
-                        overflow: hidden;
-                      "
+                      v{{ p.versions.length }}
+                    </span>
+                    <span
+                      v-if="p.versions[0]?.updated_at"
+                      class="truncate"
+                      :class="selectedPrompt?.id === p.id ? 'text-primary/60' : 'text-gray-400'"
                     >
-                      {{ p.description || "暂无描述" }}
-                    </div>
-                    <div class="mt-2 flex justify-end">
-                      <span class="text-[9px] text-primary/80 font-bold"
-                        >点击查看详情 ›</span
-                      >
-                    </div>
-                    <!-- Tooltip Arrow -->
-                    <div
-                      class="absolute left-0 top-4 -ml-1 border-8 border-transparent border-r-gray-900"
-                    ></div>
-                  </div>
-                </transition>
+                      {{ formatRelativeDate(p.versions[0].updated_at) }}
+                    </span>
+                  </template>
+                  <template v-else>
+                    <span
+                      class="font-mono px-1 rounded text-[10px] border"
+                      :class="selectedPrompt?.id === p.id ? 'bg-primary/10 border-primary/20 text-primary/60' : 'bg-gray-50 border-gray-100 text-gray-400'"
+                    >
+                      无版本
+                    </span>
+                    <span
+                      :class="selectedPrompt?.id === p.id ? 'text-primary/60' : 'text-gray-400'"
+                    >
+                      未编辑
+                    </span>
+                  </template>
+                </div>
               </button>
             </div>
+          </div>
+          <div v-if="Object.keys(groupedPrompts).length === 0" class="py-10 text-center text-xs text-gray-400">
+            没有匹配的提示词
           </div>
         </div>
       </div>
 
-      <!-- Main Editor/Playground Area -->
-      <div 
-        class="flex-1 flex flex-col min-w-0"
-        :class="{ 'fixed inset-0 z-[100] bg-white p-6': isFullscreen }"
+      <!-- Main -->
+      <div
+        class="flex-1 flex flex-col min-w-0 min-h-0"
+        :class="{ 'fixed inset-0 z-[100] bg-slate-50 p-4': isFullscreen }"
       >
         <div
           v-if="currentDetail"
-          class="flex-1 flex flex-col bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden"
+          class="flex-1 flex flex-col bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden min-h-0"
         >
-          <!-- Toolbar -->
-          <div
-            class="px-6 py-4 border-b border-gray-100 flex items-center justify-between bg-gray-50"
-          >
-            <div class="flex items-center space-x-4">
-              <div class="flex items-center">
-                <span class="text-sm font-bold text-gray-900 mr-3">{{
-                  selectedPrompt?.display_name || selectedPrompt?.name
-                }}</span>
-                <span
-                  v-if="selectedPrompt?.source === 'system_config'"
-                  class="px-2 py-0.5 rounded bg-blue-100 text-blue-700 text-[10px] font-bold uppercase"
-                  >System</span
-                >
-                <span
-                  v-else
-                  class="px-2 py-0.5 rounded bg-purple-100 text-purple-700 text-[10px] font-bold uppercase"
-                  >Agent</span
-                >
+          <!-- Top bar: identity + primary actions -->
+          <div class="px-4 py-3 border-b border-gray-100 flex items-center justify-between gap-3 bg-gray-50 shrink-0">
+            <div class="flex items-center gap-2 min-w-0">
+              <button
+                type="button"
+                @click="showSidebar = !showSidebar"
+                class="p-1.5 text-gray-400 hover:text-primary hover:bg-white rounded-lg border border-transparent hover:border-gray-200"
+                :title="showSidebar ? '隐藏列表' : '显示列表'"
+              >
+                <ChevronRightIcon class="w-4 h-4" :class="{ 'rotate-180': showSidebar }" />
+              </button>
+              <div class="min-w-0">
+                <div class="flex items-center gap-2 flex-wrap">
+                  <span class="text-sm font-bold text-gray-900 truncate">
+                    {{ selectedPrompt?.display_name || selectedPrompt?.name }}
+                  </span>
+                  <span
+                    class="px-1.5 py-0.5 rounded text-[10px] font-bold"
+                    :class="selectedPrompt?.source === 'system_config' ? 'bg-blue-50 text-blue-700' : 'bg-emerald-50 text-emerald-700'"
+                  >
+                    {{ selectedPrompt?.source === 'system_config' ? '系统' : '智能体' }}
+                  </span>
+                  <span v-if="isDirty" class="px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-50 text-amber-700 border border-amber-100">未保存</span>
+                  <span v-if="!canEdit" class="px-1.5 py-0.5 rounded text-[10px] font-bold bg-gray-100 text-gray-500">只读</span>
+                </div>
+                <p v-if="selectedPrompt?.description" class="text-[11px] text-gray-400 truncate mt-0.5">
+                  {{ selectedPrompt.description }}
+                </p>
               </div>
+            </div>
 
-              <!-- Version Selector -->
+            <div class="flex items-center gap-2 shrink-0">
               <div
                 v-if="selectedPrompt?.versions?.length"
-                class="flex items-center bg-white border border-gray-200 rounded-md px-2 py-1"
+                class="hidden sm:flex items-center bg-white border border-gray-200 rounded-lg px-2 py-1"
               >
-                <span class="text-xs text-gray-500 mr-2">版本:</span>
+                <span class="text-[11px] text-gray-400 mr-1">版本</span>
                 <select
                   v-model="selectedVersion"
-                  @change="loadPromptDetail(selectedPrompt!, selectedVersion!)"
-                  class="text-xs font-medium bg-transparent border-none focus:ring-0 p-0 cursor-pointer max-w-[120px]"
+                  @change="onVersionChange"
+                  class="text-xs font-medium bg-transparent border-none focus:ring-0 p-0 cursor-pointer max-w-[130px]"
                 >
                   <option
                     v-for="v in selectedPrompt.versions"
@@ -1028,196 +906,109 @@ watch(
                     :value="v.version_number"
                   >
                     v{{ v.version_number }}
-                    {{
-                      v.status === "PUBLISHED"
-                        ? "(当前)"
-                        : v.status === "ARCHIVED"
-                        ? "(历史)"
-                        : ""
-                    }}
+                    {{ v.status === 'PUBLISHED' ? '·已发布' : v.status === 'ARCHIVED' ? '·历史' : '' }}
                   </option>
                 </select>
               </div>
-            </div>
 
-            <div class="flex items-center space-x-3">
-              <!-- Fullscreen Toggle -->
-              <button 
+              <button
+                type="button"
                 @click="toggleFullscreen"
-                class="p-2 text-gray-400 hover:text-primary rounded-lg hover:bg-white transition-all border border-transparent hover:border-gray-200 shadow-none hover:shadow-sm"
-                :title="isFullscreen ? '退出全屏' : '全屏模式'"
+                class="p-2 text-gray-400 hover:text-primary rounded-lg hover:bg-white border border-transparent hover:border-gray-200 flex items-center justify-center shrink-0"
+                :title="isFullscreen ? '退出全屏' : '全屏'"
               >
-                <svg v-if="!isFullscreen" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4"/></svg>
-                <svg v-else class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 9L4 4m0 0h5M4 4v5m11 0V4m0 0h-5m5 0l-5 5m5 6l-5-5m5 5v-5m0 5h-5m-6 0l5-5m-5 5H4m5 0v-5"/></svg>
+                <ArrowsPointingOutIcon v-if="!isFullscreen" class="w-4 h-4" />
+                <ArrowsPointingInIcon v-else class="w-4 h-4" />
               </button>
 
-              <!-- History Toggle for System Prompts -->
               <button
                 v-if="selectedPrompt?.source === 'system_config'"
+                type="button"
                 @click="showHistory ? (showHistory = false) : fetchHistory()"
-                class="flex items-center px-3 py-1.5 text-xs font-bold rounded-lg transition-all border shadow-sm group"
-                :class="
-                  showHistory
-                    ? 'bg-gray-200 text-gray-700 border-gray-300'
-                    : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50 hover:border-gray-300'
-                "
+                class="px-3 py-1.5 text-xs font-semibold rounded-lg border transition-all"
+                :class="showHistory ? 'bg-gray-200 text-gray-700 border-gray-300' : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'"
               >
-                <ArrowPathIcon
-                  class="w-3.5 h-3.5 mr-1.5 text-gray-400 group-hover:rotate-180 transition-transform duration-500"
-                  :class="{ 'animate-spin': loadingHistory }"
-                />
                 历史
               </button>
 
               <button
                 v-if="canEdit && selectedPrompt?.source !== 'agent'"
+                type="button"
                 @click="requestSave"
-                :disabled="saving"
-                class="flex items-center px-4 py-1.5 bg-primary text-white text-xs font-bold rounded-lg hover:bg-primary-dark transition-all disabled:opacity-50 shadow-sm"
+                :disabled="saving || !isDirty"
+                class="flex items-center px-3.5 py-1.5 bg-primary text-white text-xs font-bold rounded-lg hover:bg-primary-dark disabled:opacity-50 shadow-sm"
               >
-                <CloudArrowUpIcon v-if="!saving" class="w-3.5 h-3.5 mr-1.5" />
-                <ArrowPathIcon v-else class="w-3.5 h-3.5 mr-1.5 animate-spin" />
-                更新
+                <CloudArrowUpIcon v-if="!saving" class="w-3.5 h-3.5 mr-1" />
+                <ArrowPathIcon v-else class="w-3.5 h-3.5 mr-1 animate-spin" />
+                保存
               </button>
-              <span
-                v-else
-                class="px-2 py-1 bg-gray-100 text-gray-500 text-[10px] font-bold rounded border border-gray-200"
+              <button
+                v-if="canEdit && selectedPrompt?.source === 'agent'"
+                type="button"
+                @click="requestPublish"
+                class="flex items-center px-3.5 py-1.5 bg-primary text-white text-xs font-bold rounded-lg hover:bg-primary-dark shadow-sm"
               >
-                只读 (Read Only)
-              </span>
+                <RocketLaunchIcon class="w-3.5 h-3.5 mr-1" />
+                发布版本
+              </button>
             </div>
           </div>
 
-          <div class="flex-1 flex overflow-hidden relative">
-            <!-- History Overlay -->
+          <!-- Body: editor + optional playground -->
+          <div class="flex-1 flex min-h-0 relative overflow-hidden">
+            <!-- History drawer -->
             <transition name="slide">
               <div
                 v-if="showHistory"
-                class="absolute inset-0 z-30 bg-white flex flex-col border-r border-gray-100"
+                class="absolute inset-y-0 right-0 w-full max-w-xl z-30 bg-white border-l border-gray-200 shadow-2xl flex flex-col"
               >
-                <div
-                  class="px-6 py-4 border-b border-gray-100 flex justify-between items-center bg-gray-50"
-                >
-                  <span class="text-sm font-bold text-gray-900"
-                    >审计日志 (Audit Log)</span
-                  >
-                  <button
-                    @click="showHistory = false"
-                    class="text-gray-400 hover:text-gray-600"
-                  >
-                    <svg
-                      class="w-5 h-5"
-                      fill="none"
-                      stroke="currentColor"
-                      viewBox="0 0 24 24"
-                    >
-                      <path d="M6 18L18 6M6 6l12 12" />
-                    </svg>
+                <div class="px-4 py-3 border-b border-gray-100 flex justify-between items-center bg-gray-50 shrink-0">
+                  <span class="text-sm font-bold text-gray-900">变更历史</span>
+                  <button type="button" @click="showHistory = false" class="p-1.5 text-gray-400 hover:text-gray-600 rounded-lg hover:bg-gray-100">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" /></svg>
                   </button>
                 </div>
-                <div
-                  class="flex-1 overflow-y-auto p-6 space-y-4 custom-scrollbar"
-                >
-                  <div
-                    v-if="historyList.length === 0"
-                    class="text-center py-12 text-gray-400"
-                  >
-                    暂无审计记录
-                  </div>
+                <div class="flex-1 overflow-y-auto p-4 space-y-3 custom-scrollbar">
+                  <div v-if="loadingHistory" class="text-center py-10 text-xs text-gray-400">加载中...</div>
+                  <div v-else-if="historyList.length === 0" class="text-center py-10 text-xs text-gray-400">暂无审计记录</div>
                   <div
                     v-for="log in historyList"
                     :key="log.id"
-                    class="border border-gray-100 rounded-lg p-4 hover:bg-gray-50 transition-colors"
+                    class="border border-gray-100 rounded-xl p-3 hover:bg-gray-50"
                   >
-                    <div class="flex justify-between items-start mb-2">
-                      <div class="flex items-center gap-2">
+                    <div class="flex justify-between items-start mb-2 gap-2">
+                      <div class="flex items-center gap-2 flex-wrap">
                         <span
                           class="px-2 py-0.5 rounded text-[10px] font-bold"
-                          :class="
-                            log.change_type === 'CREATE'
-                              ? 'bg-green-100 text-green-700'
-                              : 'bg-blue-100 text-blue-700'
-                          "
-                        >
-                          {{ log.change_type }}
-                        </span>
-                        <!-- Version Badge for System Prompts -->
-                        <span 
-                          v-if="selectedPrompt?.versions?.length"
-                          class="px-2 py-0.5 rounded text-[10px] font-bold bg-purple-100 text-purple-700 border border-purple-200"
-                          :title="'版本 ' + (selectedPrompt.versions.length - historyList.indexOf(log))"
-                        >
-                          v{{ selectedPrompt.versions.length - historyList.indexOf(log) }}
-                        </span>
-                        <span class="text-xs font-bold text-gray-900">{{
-                          log.changed_by
-                        }}</span>
+                          :class="log.change_type === 'CREATE' ? 'bg-green-100 text-green-700' : 'bg-blue-100 text-blue-700'"
+                        >{{ log.change_type }}</span>
+                        <span class="text-xs font-bold text-gray-800">{{ log.changed_by }}</span>
                       </div>
-                      <span class="text-[10px] text-gray-400 font-mono">{{
-                        log.created_at
-                      }}</span>
+                      <span class="text-[10px] text-gray-400 font-mono shrink-0">{{ log.created_at }}</span>
                     </div>
-                    <div
-                      v-if="log.description"
-                      class="mb-2 p-2 bg-blue-50 border border-blue-100 rounded text-xs text-blue-800 flex items-start"
-                    >
-                      <span class="font-bold mr-1 flex-shrink-0">📝 备注:</span>
-                      <span class="whitespace-pre-wrap">{{ log.description }}</span>
+                    <div v-if="log.description" class="mb-2 text-xs text-blue-800 bg-blue-50 border border-blue-100 rounded-lg p-2">
+                      {{ log.description }}
                     </div>
-                    <div class="grid grid-cols-2 gap-4">
-                      <div v-if="log.old_value" class="relative group/pane">
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      <div v-if="log.old_value">
                         <div class="flex justify-between items-center mb-1">
-                          <span class="text-[9px] text-gray-400 uppercase"
-                            >变更前 (Diff)</span
-                          >
-                          <button
-                            @click="copyToClipboard(log.old_value)"
-                            class="p-1 text-gray-400 hover:text-primary transition-colors hover:bg-white rounded"
-                            title="复制原始内容"
-                          >
-                            <ClipboardDocumentIcon class="w-3.5 h-3.5" />
-                          </button>
-                          <button
-                            @click="restoreContent(log.old_value)"
-                            class="p-1 text-gray-400 hover:text-green-600 transition-colors hover:bg-white rounded ml-1"
-                            title="从该快照回撤"
-                          >
-                            <ArrowUturnLeftIcon class="w-3.5 h-3.5" />
-                          </button>
+                          <span class="text-[10px] text-gray-400">变更前</span>
+                          <div class="flex gap-1">
+                            <button type="button" @click="copyToClipboard(log.old_value)" class="p-1 text-gray-400 hover:text-primary"><ClipboardDocumentIcon class="w-3.5 h-3.5" /></button>
+                            <button type="button" @click="restoreContent(log.old_value)" class="p-1 text-gray-400 hover:text-green-600"><ArrowUturnLeftIcon class="w-3.5 h-3.5" /></button>
+                          </div>
                         </div>
-                        <pre
-                          class="mt-1 p-2 bg-gray-50 rounded text-[10px] text-gray-400 whitespace-pre-wrap max-h-60 overflow-y-auto custom-scrollbar"
-                          v-html="
-                            computeDiffHtml(log.old_value, log.new_value, 'old')
-                          "
-                        ></pre>
+                        <pre class="p-2 bg-gray-50 rounded text-[10px] text-gray-400 whitespace-pre-wrap max-h-40 overflow-y-auto" v-html="computeDiffHtml(log.old_value, log.new_value, 'old')"></pre>
                       </div>
-                      <div class="relative group/pane">
+                      <div>
                         <div class="flex justify-between items-center mb-1">
-                          <span class="text-[9px] text-gray-400 uppercase"
-                            >变更后 (Diff)</span
-                          >
-                          <button
-                            @click="copyToClipboard(log.new_value)"
-                            class="p-1 text-gray-400 hover:text-primary transition-colors hover:bg-white rounded"
-                            title="复制原始内容"
-                          >
-                            <ClipboardDocumentIcon class="w-3.5 h-3.5" />
-                          </button>
-                          <button
-                            @click="restoreContent(log.new_value)"
-                            class="p-1 text-gray-400 hover:text-green-600 transition-colors hover:bg-white rounded ml-1"
-                            title="从该快照回撤"
-                          >
-                            <ArrowUturnLeftIcon class="w-3.5 h-3.5" />
-                          </button>
+                          <span class="text-[10px] text-gray-400">变更后</span>
+                          <div class="flex gap-1">
+                            <button type="button" @click="copyToClipboard(log.new_value)" class="p-1 text-gray-400 hover:text-primary"><ClipboardDocumentIcon class="w-3.5 h-3.5" /></button>
+                            <button type="button" @click="restoreContent(log.new_value)" class="p-1 text-gray-400 hover:text-green-600"><ArrowUturnLeftIcon class="w-3.5 h-3.5" /></button>
+                          </div>
                         </div>
-                        <pre
-                          class="mt-1 p-2 bg-gray-100 rounded text-[10px] text-gray-700 whitespace-pre-wrap max-h-60 overflow-y-auto custom-scrollbar"
-                          v-html="
-                            computeDiffHtml(log.old_value, log.new_value, 'new')
-                          "
-                        ></pre>
+                        <pre class="p-2 bg-gray-50 rounded text-[10px] text-gray-700 whitespace-pre-wrap max-h-40 overflow-y-auto" v-html="computeDiffHtml(log.old_value, log.new_value, 'new')"></pre>
                       </div>
                     </div>
                   </div>
@@ -1225,591 +1016,243 @@ watch(
               </div>
             </transition>
 
-            <!-- Left Side: Editor / Preview -->
+            <!-- Editor pane -->
             <div
-              class="flex-[3] flex flex-col border-r border-gray-100 min-w-0"
+              class="flex flex-col min-w-0 min-h-0 border-r border-gray-100"
+              :class="showPlayground ? 'flex-[1.2]' : 'flex-1'"
             >
-              <div
-                class="px-4 py-2 bg-gray-50 border-b border-gray-100 flex justify-between items-center"
-              >
-                <div
-                  class="flex items-center space-x-1 bg-gray-200/50 p-0.5 rounded-lg"
-                >
-                  <div class="relative inline-block text-left mr-1">
+              <div class="px-3 py-2 bg-gray-50 border-b border-gray-100 flex justify-between items-center gap-2 shrink-0">
+                <div class="flex items-center gap-1">
+                  <div class="relative">
                     <button
+                      v-if="canEdit"
+                      type="button"
                       @click="showSnippets = !showSnippets"
-                      class="flex items-center px-3 py-1.5 text-[10px] font-bold rounded-md transition-all text-gray-500 hover:text-gray-700 bg-transparent hover:bg-white/50"
-                      title="插入常用模版"
+                      class="p-1.5 text-gray-500 hover:text-gray-800 hover:bg-white rounded-md"
+                      title="插入常用片段"
                     >
                       <QueueListIcon class="w-3.5 h-3.5" />
                     </button>
                     <div
                       v-if="showSnippets"
-                      class="absolute top-full left-0 mt-1 w-48 bg-white rounded-lg shadow-xl border border-gray-100 z-50 overflow-hidden"
+                      class="absolute top-full left-0 mt-1 w-52 bg-white rounded-lg shadow-xl border border-gray-100 z-50 overflow-hidden"
                     >
-                      <div
+                      <button
                         v-for="(snip, idx) in snippets"
                         :key="idx"
+                        type="button"
                         @click="insertSnippet(snip.content)"
-                        class="px-4 py-2 text-xs text-gray-700 hover:bg-indigo-50 hover:text-primary cursor-pointer border-b border-gray-50 last:border-0"
+                        class="w-full text-left px-3 py-2 text-xs text-gray-700 hover:bg-primary/5 hover:text-primary border-b border-gray-50 last:border-0"
                       >
                         {{ snip.label }}
-                      </div>
+                      </button>
                     </div>
                   </div>
-                  <button
-                    @click="viewMode = 'edit'"
-                    class="flex items-center px-3 py-1.5 text-[10px] font-bold rounded-md transition-all"
-                    :class="
-                      viewMode === 'edit'
-                        ? 'bg-white text-primary shadow-sm'
-                        : 'text-gray-500 hover:text-gray-700'
-                    "
-                  >
-                    <PencilSquareIcon class="w-3.5 h-3.5 mr-1.5" />
-                    编辑内容 (Edit)
-                  </button>
-                  <button
-                    @click="viewMode = 'preview'"
-                    class="flex items-center px-3 py-1.5 text-[10px] font-bold rounded-md transition-all"
-                    :class="
-                      viewMode === 'preview'
-                        ? 'bg-white text-primary shadow-sm'
-                        : 'text-gray-500 hover:text-gray-700'
-                    "
-                  >
-                    <EyeIcon class="w-3.5 h-3.5 mr-1.5" />
-                    预览效果 (Preview)
-                  </button>
-                </div>
-                <div class="flex items-center space-x-3">
-                  <div class="text-[10px] text-gray-400 italic hidden sm:block">
-                    支持 {variable} 占位符
+                  <div class="flex p-0.5 rounded-lg bg-gray-200/50">
+                    <button
+                      type="button"
+                      @click="viewMode = 'edit'"
+                      class="flex items-center px-2.5 py-1 text-[11px] font-semibold rounded-md"
+                      :class="viewMode === 'edit' ? 'bg-white text-primary shadow-sm' : 'text-gray-500'"
+                    >
+                      <PencilSquareIcon class="w-3.5 h-3.5 mr-1" />编辑
+                    </button>
+                    <button
+                      type="button"
+                      @click="viewMode = 'preview'"
+                      class="flex items-center px-2.5 py-1 text-[11px] font-semibold rounded-md"
+                      :class="viewMode === 'preview' ? 'bg-white text-primary shadow-sm' : 'text-gray-500'"
+                    >
+                      <EyeIcon class="w-3.5 h-3.5 mr-1" />预览
+                    </button>
                   </div>
                   <button
-                    @click="showPlayground = !showPlayground"
-                    class="flex items-center px-3 py-1 text-[10px] font-bold rounded transition-all shadow-sm border"
-                    :class="
-                      showPlayground
-                        ? 'bg-green-50 text-green-700 border-green-200 shadow-inner'
-                        : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'
-                    "
-                  >
-                    <BeakerIcon class="w-3 h-3 mr-1" />
-                    {{ showPlayground ? "关闭测试" : "打开测试 (Playground)" }}
-                  </button>
-                </div>
-              </div>
-
-              <!-- Content Area (Professional Editor UI) -->
-              <div class="flex-1 flex flex-col min-h-0 relative bg-white group/editor overflow-hidden">
-                <!-- Editor Wrapper -->
-                <div 
-                  v-if="viewMode === 'edit'"
-                  class="flex-1 flex relative overflow-hidden border-t border-gray-100"
-                >
-                  <!-- Line Numbers Simulation -->
-                  <div class="w-10 bg-gray-50/50 border-r border-gray-100 flex flex-col py-6 items-center select-none pt-6 z-10">
-                    <div v-for="i in 30" :key="i" class="text-[10px] text-gray-300 font-mono leading-relaxed mb-0.5">{{ i }}</div>
-                  </div>
-
-                  <!-- Real Textarea -->
-                  <textarea
-                    v-model="currentDetail.content"
-                    :readonly="!canEdit"
-                    class="flex-1 pl-6 pr-6 py-6 font-mono text-sm leading-relaxed text-gray-800 focus:outline-none resize-none bg-white selection:bg-indigo-100 z-10 relative overflow-y-auto custom-scrollbar"
-                    :class="{ 'cursor-not-allowed opacity-80': !canEdit }"
-                    placeholder="在此输入提示词内容..."
-                  ></textarea>
-                </div>
-
-                <div
-                  v-else
-                  class="flex-1 p-8 overflow-y-auto bg-white custom-scrollbar"
-                >
-                  <div class="max-w-4xl mx-auto">
-                    <div
-                      class="markdown-body prose prose-sm sm:prose max-w-none"
-                      v-html="renderMarkdown(currentDetail.content)"
-                    ></div>
-                  </div>
-                </div>
-
-                <!-- Floating AI Optimize Button (Improved Position) -->
-                <div
-                  v-if="canEdit && viewMode === 'edit'"
-                  class="absolute bottom-6 right-6 flex flex-col items-end pointer-events-none group"
-                >
-                  <button
+                    v-if="canEdit && viewMode === 'edit'"
                     v-has-perm="'element:prompts:optimize'"
+                    type="button"
                     @click="showOptimizeConfirm = true"
                     :disabled="optimizing"
-                    class="pointer-events-auto flex items-center px-4 py-2 bg-white text-indigo-600 text-xs font-bold rounded-full shadow-xl border border-indigo-100 hover:bg-indigo-600 hover:text-white hover:border-indigo-600 hover:-translate-y-1 transition-all active:scale-95 disabled:opacity-50 group/opt"
+                    class="ml-1 flex items-center px-2.5 py-1 text-[11px] font-semibold rounded-md text-indigo-600 hover:bg-indigo-50 disabled:opacity-50"
                   >
-                    <div
-                      class="w-6 h-6 bg-indigo-100 rounded-full flex items-center justify-center mr-2 -ml-1 group-hover/opt:bg-white/20 transition-colors"
-                    >
-                      <SparklesIcon
-                        class="w-3.5 h-3.5 group-hover/opt:text-white transition-colors"
-                        :class="{ 'animate-spin': optimizing }"
-                      />
-                    </div>
-                    <span>AI 智能润色 (Optimize)</span>
+                    <SparklesIcon class="w-3.5 h-3.5 mr-1" :class="{ 'animate-spin': optimizing }" />
+                    AI 润色
                   </button>
+                </div>
+                <button
+                  type="button"
+                  @click="showPlayground = !showPlayground"
+                  class="flex items-center px-2.5 py-1 text-[11px] font-semibold rounded-md border"
+                  :class="showPlayground ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-white text-gray-600 border-gray-200'"
+                >
+                  <BeakerIcon class="w-3.5 h-3.5 mr-1" />
+                  {{ showPlayground ? '关闭测试' : '打开测试' }}
+                </button>
+              </div>
+
+              <div class="flex-1 flex flex-col min-h-0 bg-white overflow-hidden">
+                <div v-if="viewMode === 'edit'" class="flex-1 flex overflow-hidden min-h-0">
+                  <div
+                    ref="lineNumbersRef"
+                    class="w-10 bg-gray-50 text-gray-400 text-right pr-2 py-4 select-none font-mono text-[11px] leading-6 border-r border-gray-100 overflow-hidden shrink-0"
+                  >
+                    <div v-for="n in lineCount" :key="n" class="h-6">{{ n }}</div>
+                  </div>
+                  <textarea
+                    ref="editorTextareaRef"
+                    v-model="currentDetail.content"
+                    :readonly="!canEdit"
+                    @scroll="syncLineNumberScroll"
+                    class="flex-1 px-4 py-4 font-mono text-[13px] leading-6 text-gray-800 focus:outline-none resize-none bg-white overflow-y-auto custom-scrollbar"
+                    :class="{ 'cursor-not-allowed opacity-80': !canEdit }"
+                    placeholder="在此输入提示词内容，支持 {variable} 占位符..."
+                    spellcheck="false"
+                  ></textarea>
+                </div>
+                <div v-else class="flex-1 p-6 overflow-y-auto custom-scrollbar bg-white">
+                  <div
+                    class="markdown-body prose prose-sm max-w-none"
+                    v-html="renderMarkdown(currentDetail.content)"
+                  ></div>
                 </div>
               </div>
 
-
-
-              <div v-if="canEdit" class="p-4 border-t border-gray-100 bg-gray-50/30 backdrop-blur-sm">
-                <div class="flex items-center justify-between mb-2">
-                  <label class="block text-[10px] font-black text-gray-400 uppercase tracking-widest">
-                    Version Note / 变更备注
-                  </label>
-                  <div
-                    class="text-[10px] font-mono text-gray-400 bg-white px-2 py-0.5 rounded border border-gray-100 flex items-center shadow-sm"
-                  >
-                    <CalculatorIcon class="w-3 h-3 mr-1 text-primary/60" />
-                    Estimated Token: <span class="font-bold text-gray-700 ml-1">{{ tokenCount }}</span>
+              <!-- Status + note -->
+              <div class="border-t border-gray-100 bg-gray-50 shrink-0">
+                <div class="px-4 py-1.5 flex items-center justify-between text-[10px] font-mono text-gray-400">
+                  <div class="flex items-center gap-2">
+                    <span>{{ lineCount }} 行</span>
+                    <span>·</span>
+                    <span>{{ charCount }} 字符</span>
+                    <span>·</span>
+                    <span class="inline-flex items-center"><CalculatorIcon class="w-3 h-3 mr-0.5" />≈ {{ tokenCount }} token</span>
+                    <span v-if="isDirty" class="text-amber-600">· 已修改</span>
                   </div>
+                  <span>支持 {variable} 占位符</span>
                 </div>
-                <div class="relative group/note">
+                <div v-if="canEdit" class="px-4 pb-3">
+                  <label class="block text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1">变更备注</label>
                   <textarea
                     v-model="versionNote"
                     rows="2"
-                    placeholder="简要描述此次变更内容（例如：修复了xx逻辑，增加了xx约束）..."
-                    class="w-full text-xs border border-gray-200 rounded-xl focus:border-primary/50 focus:ring-4 focus:ring-primary/5 resize-none p-3 bg-white shadow-sm transition-all"
+                    placeholder="简要描述此次变更..."
+                    class="w-full text-xs border border-gray-200 rounded-lg focus:border-primary focus:ring-1 focus:ring-primary/20 resize-none p-2.5 bg-white outline-none"
                   ></textarea>
-                </div>
-                <div
-                  class="flex justify-end mt-3"
-                  v-if="selectedPrompt?.source === 'agent'"
-                >
-                  <button
-                    @click="requestPublish"
-                    class="flex items-center px-5 py-2 bg-indigo-600 text-white text-xs font-black rounded-xl hover:bg-indigo-700 hover:shadow-lg hover:shadow-indigo-200 transition-all active:scale-95 shadow-md"
-                  >
-                    <RocketLaunchIcon class="w-3.5 h-3.5 mr-2" />
-                    SAVE & PUBLISH
-                  </button>
                 </div>
               </div>
             </div>
 
-            <!-- Right Side: Playground Sliding Panel (Modern Refactor) -->
-            <transition name="playground-slide">
-              <div
-                v-if="showPlayground"
-                class="absolute top-0 right-0 bottom-0 w-[500px] z-20 bg-white/95 backdrop-blur-md border-l border-gray-100 shadow-2xl flex flex-col overflow-hidden"
-              >
-                <!-- Premium Header -->
-                <div
-                  class="px-5 py-3 bg-gradient-to-r from-gray-50 to-white border-b border-gray-100 flex flex-col justify-between relative overflow-hidden space-y-3"
-                >
-                  <div
-                    class="absolute top-0 left-0 w-1 h-full bg-primary/40"
-                  ></div>
-                  <div class="flex items-center justify-between w-full">
-                    <div class="flex items-center">
-                      <div class="p-2 bg-primary/10 rounded-lg mr-3">
-                        <BeakerIcon class="w-5 h-5 text-primary" />
-                      </div>
-                      <div>
-                        <h3
-                          class="text-sm font-bold text-gray-800 tracking-tight"
-                        >
-                          测试沙盒
-                        </h3>
-                        <p
-                          class="text-[10px] text-gray-400 font-medium uppercase tracking-widest leading-none"
-                        >
-                          Playground
-                        </p>
-                      </div>
-                    </div>
-                    <div class="flex items-center space-x-2">
-                      <button
-                        @click="saveTestCase"
-                        class="p-1.5 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"
-                        title="保存当前测试用例 (Local)"
-                      >
-                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4"/></svg>
-                      </button>
-                      <button
-                        @click="runTest"
-                        :disabled="testing"
-                        class="relative group flex items-center px-4 py-1.5 bg-primary text-white text-xs font-bold rounded-lg hover:bg-primary-dark transition-all disabled:opacity-50 overflow-hidden shadow-md active:scale-95"
-                      >
-                        <PlayIcon v-if="!testing" class="w-3.5 h-3.5 mr-1.5" />
-                        <ArrowPathIcon
-                          v-else
-                          class="w-3.5 h-3.5 mr-1.5 animate-spin"
-                        />
-                        <span>运行测试</span>
-                      </button>
-                      <button
-                        @click="showPlayground = false"
-                        class="p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
-                      >
-                        <svg
-                          class="w-5 h-5"
-                          fill="none"
-                          stroke="currentColor"
-                          viewBox="0 0 24 24"
-                        >
-                          <path
-                            stroke-linecap="round"
-                            stroke-linejoin="round"
-                            stroke-width="2"
-                            d="M6 18L18 6M6 6l12 12"
-                          />
-                        </svg>
-                      </button>
-                    </div>
-                  </div>
+            <!-- Playground split pane -->
+            <div
+              v-if="showPlayground"
+              class="w-full max-w-[420px] flex flex-col min-h-0 bg-slate-50/50 shrink-0"
+            >
+              <div class="px-4 py-3 border-b border-gray-100 bg-white flex items-center justify-between shrink-0">
+                <div class="flex items-center gap-2">
+                  <BeakerIcon class="w-4 h-4 text-primary" />
+                  <span class="text-sm font-bold text-gray-800">测试沙盒</span>
+                </div>
+                <div class="flex items-center gap-1.5">
+                  <button type="button" @click="saveTestCase" class="p-1.5 text-gray-400 hover:text-primary rounded-lg hover:bg-gray-50" title="保存测试用例">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4"/></svg>
+                  </button>
+                  <button
+                    type="button"
+                    @click="runTest"
+                    :disabled="testing"
+                    class="flex items-center px-3 py-1.5 bg-primary text-white text-xs font-bold rounded-lg hover:bg-primary-dark disabled:opacity-50"
+                  >
+                    <PlayIcon v-if="!testing" class="w-3.5 h-3.5 mr-1" />
+                    <ArrowPathIcon v-else class="w-3.5 h-3.5 mr-1 animate-spin" />
+                    运行
+                  </button>
+                  <button type="button" @click="showPlayground = false" class="p-1.5 text-gray-400 hover:text-gray-600 rounded-lg hover:bg-gray-100">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" /></svg>
+                  </button>
+                </div>
+              </div>
 
-                  <div class="flex items-center w-full">
-                    <!-- Model Selector Full Width -->
-                    <div
-                      class="flex-1 flex items-center bg-white border border-gray-200 rounded-lg px-3 py-1.5 shadow-sm"
-                    >
-                      <CpuChipIcon
-                        class="w-4 h-4 text-gray-400 mr-2 flex-shrink-0"
-                      />
-                      <span class="text-xs text-gray-400 mr-2 flex-shrink-0"
-                        >模型:</span
-                      >
-                      <select
-                        v-model="selectedModel"
-                        class="flex-1 text-xs font-bold text-gray-700 bg-transparent border-none focus:ring-0 p-0 truncate cursor-pointer"
-                      >
-                        <option value="" disabled>选择推理模型...</option>
-                        <option
-                          v-for="m in models"
-                          :key="m.id"
-                          :value="m.model_id"
-                        >
-                          {{ m.name }}
-                        </option>
-                      </select>
+              <div class="px-4 py-2 border-b border-gray-100 bg-white shrink-0">
+                <div class="flex items-center bg-gray-50 border border-gray-200 rounded-lg px-2.5 py-1.5">
+                  <CpuChipIcon class="w-3.5 h-3.5 text-gray-400 mr-1.5" />
+                  <select v-model="selectedModel" class="flex-1 text-xs font-medium text-gray-700 bg-transparent border-none focus:ring-0 p-0 cursor-pointer">
+                    <option value="" disabled>选择模型...</option>
+                    <option v-for="m in models" :key="m.id" :value="m.model_id">{{ m.name }}</option>
+                  </select>
+                </div>
+              </div>
+
+              <div class="flex-1 overflow-y-auto p-4 space-y-5 custom-scrollbar">
+                <div>
+                  <label class="text-[11px] font-bold text-gray-500 mb-1.5 block">用户模拟输入</label>
+                  <textarea
+                    v-model="userInput"
+                    rows="3"
+                    class="w-full text-sm border border-gray-200 rounded-xl bg-white focus:border-primary focus:ring-1 focus:ring-primary/20 p-3 outline-none"
+                    placeholder="模拟用户发给智能体的请求..."
+                  ></textarea>
+                </div>
+
+                <div>
+                  <div class="flex items-center justify-between mb-1.5">
+                    <label class="text-[11px] font-bold text-gray-500">变量</label>
+                    <span v-if="Object.keys(testVariables).length" class="text-[10px] text-gray-400">{{ Object.keys(testVariables).length }} 个</span>
+                  </div>
+                  <div v-if="Object.keys(testVariables).length === 0" class="text-xs text-gray-400 border border-dashed border-gray-200 rounded-xl py-6 text-center">
+                    未检测到 {变量} 占位符
+                  </div>
+                  <div v-else class="space-y-2">
+                    <div v-for="(_, key) in testVariables" :key="key" class="bg-white border border-gray-200 rounded-xl p-3">
+                      <div class="text-[11px] font-bold text-gray-600 mb-1 font-mono">{{ key }}</div>
+                      <textarea
+                        v-model="testVariables[key]"
+                        rows="2"
+                        class="w-full text-xs border-0 bg-gray-50 rounded-lg p-2 font-mono outline-none focus:ring-1 focus:ring-primary/20"
+                        :placeholder="'输入 ' + key"
+                      ></textarea>
                     </div>
                   </div>
                 </div>
 
-                <!-- Context Hint Banner -->
-                <div
-                  class="px-6 py-2 bg-blue-50/80 border-b border-blue-100/50 flex items-center"
-                >
-                  <div
-                    class="flex items-center text-[10px] text-blue-700 font-medium tracking-wide"
-                  >
-                    <span class="mr-1.5 opacity-70">ℹ️</span>
-                    当前测试:
-                    <span
-                      class="font-bold underline decoration-blue-200 underline-offset-2 mx-1"
-                      >{{
-                        selectedPrompt?.display_name || selectedPrompt?.name
-                      }}</span
-                    >
-                    {{
-                      selectedPrompt?.source === "agent" ? "智能体" : "系统配置"
-                    }}
-                    的
-                    <span class="font-bold mx-1">v{{ selectedVersion }}</span>
-                    版本提示词
+                <div>
+                  <div class="flex items-center justify-between mb-1.5">
+                    <label class="text-[11px] font-bold text-gray-500">推理输出</label>
+                    <span v-if="testResult" class="text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full">
+                      {{ Math.round(testResult.latency_ms) }}ms
+                    </span>
                   </div>
-                </div>
-
-                <div class="flex-1 flex flex-col min-h-0 bg-gray-50/20">
-                  <!-- Section Tabs/Indicators (Future) -->
-
-                  <div
-                    class="flex-1 overflow-y-auto custom-scrollbar p-6 space-y-8"
-                  >
-                    <!-- 1. Universal User Input (Chat Style) -->
-                    <div class="space-y-3">
-                      <div class="flex items-center justify-between">
-                        <label
-                          class="text-[11px] font-bold text-gray-500 uppercase flex items-center tracking-wider"
-                        >
-                          <span
-                            class="w-2 h-2 rounded-full bg-blue-500 mr-2 shadow-sm shadow-blue-500/50"
-                          ></span>
-                          用户模拟输入
-                        </label>
-                      </div>
-                      <div class="relative group">
-                        <div
-                          class="absolute -inset-0.5 bg-gradient-to-r from-blue-500 to-primary rounded-2xl blur opacity-0 group-focus-within:opacity-10 transition-opacity duration-300"
-                        ></div>
-                        <textarea
-                          v-model="userInput"
-                          rows="4"
-                          class="relative w-full text-sm border-gray-100 rounded-2xl bg-white focus:border-primary/30 focus:ring-4 focus:ring-primary/5 transition-all p-4 shadow-sm placeholder-gray-300 text-gray-700 leading-relaxed"
-                          placeholder="输入一段话，模拟用户发给智能体的请求..."
-                        ></textarea>
-                      </div>
-                      <div class="flex items-start space-x-2 px-1">
-                        <div class="p-1 bg-blue-50 rounded text-blue-500">
-                          <svg
-                            class="w-3 h-3"
-                            fill="currentColor"
-                            viewBox="0 0 20 20"
-                          >
-                            <path
-                              fill-rule="evenodd"
-                              d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z"
-                              clip-rule="evenodd"
-                            />
-                          </svg>
-                        </div>
-                        <p class="text-[10px] text-gray-400 leading-tight">
-                          如果没有变量占位符，此处内容将作为 Human Message
-                          参与对话。
-                        </p>
+                  <div v-if="!testResult && !testing" class="bg-white border border-gray-200 rounded-xl py-10 text-center text-xs text-gray-400">
+                    配置后点击「运行」开始测试
+                  </div>
+                  <div v-else-if="testing" class="bg-white border border-gray-200 rounded-xl py-10 text-center text-xs text-gray-400">
+                    推理中...
+                  </div>
+                  <div v-else-if="testResult" class="space-y-3">
+                    <div class="bg-white border border-gray-200 rounded-xl p-3">
+                      <pre class="text-xs text-gray-800 whitespace-pre-wrap font-sans leading-relaxed">{{ streamedOutput }}</pre>
+                      <div class="mt-2 flex justify-end">
+                        <button type="button" @click="copyToClipboard(testResult.raw_output || streamedOutput)" class="text-[10px] text-gray-400 hover:text-primary flex items-center">
+                          <ClipboardDocumentIcon class="w-3.5 h-3.5 mr-1" />复制
+                        </button>
                       </div>
                     </div>
-
-                    <!-- 2. Variables (Card style) -->
-                    <div class="space-y-4 pt-2">
-                      <div class="flex items-center justify-between">
-                        <label
-                          class="text-[11px] font-bold text-gray-500 uppercase flex items-center tracking-wider"
-                        >
-                          <span
-                            class="w-2 h-2 rounded-full bg-amber-500 mr-2 shadow-sm shadow-amber-500/50"
-                          ></span>
-                          提取的变量 (Variables)
-                        </label>
-                        <span
-                          v-if="Object.keys(testVariables).length"
-                          class="text-[10px] font-semibold text-gray-400 bg-gray-100 px-2 py-0.5 rounded-full"
-                        >
-                          {{ Object.keys(testVariables).length }} 个
-                        </span>
-                      </div>
-
-                      <div
-                        v-if="Object.keys(testVariables).length === 0"
-                        class="bg-white/40 border border-gray-100 border-dashed rounded-2xl py-8 flex flex-col items-center justify-center space-y-2"
-                      >
-                        <div class="p-3 bg-gray-100/50 rounded-full">
-                          <DocumentTextIcon class="w-6 h-6 text-gray-300" />
-                        </div>
-                        <p class="text-xs text-gray-400 italic">
-                          未在提示词中检测到 {变量} 占位符
-                        </p>
-                      </div>
-
-                      <div v-else class="grid grid-cols-1 gap-4">
-                        <div
-                          v-for="(_, key) in testVariables"
-                          :key="key"
-                          class="bg-white border border-gray-100 rounded-2xl p-4 shadow-sm hover:shadow-md transition-shadow group/var"
-                        >
-                          <div
-                            class="flex items-center justify-between mb-2 px-0.5"
-                          >
-                            <span
-                              class="text-[11px] font-bold text-gray-600 group-hover/var:text-primary transition-colors flex items-center"
-                            >
-                              <span
-                                class="px-1.5 py-0.5 bg-gray-50 text-gray-400 rounded mr-2"
-                                >$</span
-                              >
-                              {{ key }}
-                            </span>
-                          </div>
-                          <textarea
-                            v-model="testVariables[key]"
-                            rows="2"
-                            class="w-full text-xs border-transparent rounded-lg bg-gray-50/50 focus:bg-white focus:border-primary/20 focus:ring-0 transition-all p-3 font-mono leading-relaxed"
-                            :placeholder="'输入 ' + key + ' ...'"
-                          ></textarea>
-                        </div>
-                      </div>
-                    </div>
-
-                    <!-- 3. Test Output Section -->
-                    <div class="space-y-4 pt-2 border-t border-gray-100/50">
-                      <div class="flex items-center justify-between">
-                        <label
-                          class="text-[11px] font-bold text-gray-500 uppercase flex items-center tracking-wider"
-                        >
-                          <span
-                            class="w-2 h-2 rounded-full bg-green-500 mr-2 shadow-sm shadow-green-500/50"
-                          ></span>
-                          推理输出 (Execution Output)
-                        </label>
-                        <div
-                          v-if="testResult"
-                          class="flex items-center space-x-2"
-                        >
-                          <span
-                            class="flex items-center px-2 py-0.5 bg-green-50 text-green-600 rounded-full text-[9px] font-bold border border-green-100"
-                          >
-                            {{ Math.round(testResult.latency_ms) }}ms
-                          </span>
-                          <button
-                            @click="testResult = null"
-                            class="text-gray-300 hover:text-gray-500 transition-colors"
-                          >
-                            <svg
-                              class="w-3.5 h-3.5"
-                              fill="none"
-                              stroke="currentColor"
-                              viewBox="0 0 24 24"
-                            >
-                              <path
-                                d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
-                              />
-                            </svg>
-                          </button>
-                        </div>
-                      </div>
-
-                      <div
-                        v-if="!testResult && !testing"
-                        class="bg-white border border-gray-100 rounded-2xl p-10 flex flex-col items-center justify-center space-y-4 text-center"
-                      >
-                        <div class="relative">
-                          <div
-                            class="absolute inset-0 bg-primary/20 blur-xl rounded-full scale-150 animate-pulse"
-                          ></div>
-                          <div class="relative p-4 bg-primary/10 rounded-full">
-                            <PlayIcon class="w-8 h-8 text-primary/60" />
-                          </div>
-                        </div>
-                        <div>
-                          <p class="text-xs font-bold text-gray-500">
-                            就绪 (Ready to Test)
-                          </p>
-                          <p
-                            class="text-[10px] text-gray-400 mt-1 max-w-[200px] mx-auto"
-                          >
-                            配置好输入和变量后，点击右上角的运行按钮开始推理。
-                          </p>
-                        </div>
-                      </div>
-
-                      <div
-                        v-if="testing"
-                        class="bg-white border border-gray-100 rounded-2xl p-10 flex flex-col items-center justify-center space-y-6"
-                      >
-                        <div class="flex space-x-2">
-                          <div
-                            class="w-2.5 h-2.5 bg-primary/30 rounded-full animate-bounce"
-                            style="animation-delay: 0s"
-                          ></div>
-                          <div
-                            class="w-2.5 h-2.5 bg-primary/60 rounded-full animate-bounce"
-                            style="animation-delay: 0.2s"
-                          ></div>
-                          <div
-                            class="w-2.5 h-2.5 bg-primary/30 rounded-full animate-bounce"
-                            style="animation-delay: 0.4s"
-                          ></div>
-                        </div>
-                        <p
-                          class="text-xs font-bold text-gray-400 animate-pulse tracking-widest uppercase"
-                        >
-                          LLM Inferencing...
-                        </p>
-                      </div>
-
-                      <div v-if="testResult" class="space-y-6">
-                        <!-- Chat Bubble Result -->
-                        <div class="relative">
-                          <div
-                            class="absolute -left-2 top-0 bottom-0 w-0.5 bg-primary/10 rounded-full"
-                          ></div>
-                          <div
-                            class="bg-gradient-to-br from-primary/5 to-transparent rounded-2xl rounded-tl-none p-5 border border-primary/10 shadow-sm"
-                          >
-                            <div class="flex items-center mb-3">
-                              <div
-                                class="w-5 h-5 bg-primary rounded-md flex items-center justify-center mr-2 shadow-sm"
-                              >
-                                <span class="text-[10px] text-white font-bold"
-                                  >AI</span
-                                >
-                              </div>
-                              <span
-                                class="text-[10px] font-bold text-gray-800 uppercase tracking-tight"
-                                >智能体响应</span
-                              >
-                            </div>
-                            <pre
-                              class="text-xs text-gray-800 whitespace-pre-wrap font-sans leading-relaxed selection:bg-primary/20"
-                              >{{ streamedOutput }}<span v-if="testing || (streamedOutput.length < (testResult?.raw_output?.length || 0))" class="animate-pulse inline-block w-1.5 h-3 bg-primary align-middle ml-0.5"></span></pre>
-
-                            <div
-                              class="mt-4 pt-4 border-t border-primary/5 flex justify-end"
-                            >
-                              <button
-                                @click="copyToClipboard(testResult.raw_output || streamedOutput)"
-                                class="flex items-center text-[10px] font-bold text-gray-400 hover:text-primary transition-colors"
-                              >
-                                <ClipboardDocumentIcon
-                                  class="w-3.5 h-3.5 mr-1"
-                                />
-                                复制响应正文
-                              </button>
-                            </div>
-                          </div>
-                        </div>
-
-                        <!-- Rendered Prompt Detail -->
-                        <details
-                          class="group bg-gray-50/50 rounded-2xl border border-gray-100 overflow-hidden transition-all"
-                        >
-                          <summary
-                            class="flex items-center justify-between p-4 cursor-pointer hover:bg-gray-100/50 transition-colors list-none outline-none"
-                          >
-                            <span
-                              class="text-[10px] font-bold text-gray-400 uppercase tracking-wider flex items-center"
-                            >
-                              <DocumentTextIcon
-                                class="w-3.5 h-3.5 mr-2 opacity-50"
-                              />
-                              查看渲染后的完整 Prompt
-                            </span>
-                            <div
-                              class="group-open:rotate-180 transition-transform duration-300"
-                            >
-                              <ChevronRightIcon class="w-3 h-3 text-gray-300" />
-                            </div>
-                          </summary>
-                          <div class="px-4 pb-4">
-                            <div
-                              class="bg-gray-900 rounded-xl p-4 shadow-inner"
-                            >
-                              <pre
-                                class="text-[10px] text-gray-300 font-mono leading-relaxed whitespace-pre-wrap custom-scrollbar max-h-[300px] overflow-y-auto"
-                                >{{ testResult.interpolated_prompt }}</pre
-                              >
-                            </div>
-                          </div>
-                        </details>
-                      </div>
-                    </div>
+                    <details class="bg-white border border-gray-200 rounded-xl overflow-hidden">
+                      <summary class="px-3 py-2 text-[10px] font-bold text-gray-400 cursor-pointer hover:bg-gray-50">查看完整 Prompt</summary>
+                      <pre class="px-3 pb-3 text-[10px] text-gray-600 font-mono whitespace-pre-wrap max-h-48 overflow-y-auto">{{ testResult.interpolated_prompt }}</pre>
+                    </details>
                   </div>
                 </div>
               </div>
-            </transition>
+            </div>
           </div>
         </div>
 
-        <!-- Empty State -->
         <div
           v-else
           class="flex-1 flex flex-col items-center justify-center bg-white rounded-xl shadow-sm border border-gray-200 text-gray-400"
         >
-          <DocumentTextIcon class="w-16 h-16 mb-4 opacity-20" />
-          <h2 class="text-xl font-medium">请从左侧选择一个提示词进行编辑</h2>
-          <p class="mt-2 text-sm">
-            您可以选择系统级核心配置或特定智能体的角色设定。
-          </p>
+          <DocumentTextIcon class="w-12 h-12 mb-3 opacity-25" />
+          <h2 class="text-base font-medium text-gray-600">从左侧选择一个提示词</h2>
+          <p class="mt-1 text-xs text-gray-400">可管理编辑系统配置或智能体角色设定</p>
         </div>
       </div>
     </div>
@@ -1835,23 +1278,33 @@ watch(
     <!-- Confirm Modal -->
     <ConfirmModal
       v-if="showConfirm"
-      title="确认更新配置"
+      title="确认保存"
       :message="
         selectedPrompt?.source === 'agent'
           ? '确定要为该智能体发布新版本吗？'
-          : '确定要更新此系统级 Prompt 配置吗？此操作将立即生效。'
+          : '确定要更新此系统级提示词配置吗？此操作将立即生效。'
       "
       type="primary"
-      confirm-text="确认更新"
+      confirm-text="确认保存"
       @confirm="performSave"
       @cancel="showConfirm = false"
+    />
+    <ConfirmModal
+      v-if="showUnsavedConfirm"
+      title="未保存的修改"
+      message="当前提示词有未保存的修改，切换后将丢失这些修改。确定要继续吗？"
+      type="warning"
+      confirm-text="放弃修改"
+      cancel-text="继续编辑"
+      @confirm="confirmDiscardAndSwitch"
+      @cancel="cancelPromptSwitch"
     />
     <!-- AI Optimize Confirm Modal -->
     <ConfirmModal
       v-if="showOptimizeConfirm"
-      title="✨ AI 提示词优化 (Prompt Optimization)"
-      message="AI 将针对当前内容生成 5 个不同侧重点的优化建议方案。生成过程大约需要几秒钟。是否开始？"
-      confirmText="开始优化"
+      title="AI 提示词润色"
+      message="AI 将针对当前内容生成多个侧重点不同的优化方案，大约需要几秒钟。是否开始？"
+      confirmText="开始润色"
       cancelText="取消"
       @confirm="runOptimize"
       @cancel="showOptimizeConfirm = false"
@@ -1860,8 +1313,8 @@ watch(
     <!-- Publish Confirm Modal -->
     <ConfirmModal
       v-if="showPublishConfirm"
-      title="发布验证"
-      message="确定要保存当前并发布为新的线上版本吗？此操作将立即覆盖线上 Prompt。"
+      title="确认发布"
+      message="确定要保存并发布为线上版本吗？此操作将立即覆盖线上提示词。"
       confirmText="确认发布"
       cancelText="取消"
       type="primary"
@@ -1916,10 +1369,10 @@ watch(
             </div>
             <div>
               <h3 class="text-sm font-bold text-gray-900">
-                AI 优化建议 (Suggestions)
+                AI 优化建议
               </h3>
               <p class="text-[10px] text-gray-400 font-medium">
-                共生成了 5 个不同侧重点的提示词方案
+                共生成了多个侧重点不同的提示词方案
               </p>
             </div>
           </div>
@@ -2021,7 +1474,7 @@ watch(
                     class="px-6 py-2.5 bg-indigo-600 text-white text-xs font-bold rounded-xl hover:bg-indigo-700 shadow-lg shadow-indigo-600/20 active:scale-95 transition-all flex items-center"
                   >
                     <CheckBadgeIcon class="w-4 h-4 mr-2" />
-                    应用此优化版本 (Apply)
+                    应用此方案
                   </button>
                 </div>
               </div>
@@ -2068,14 +1521,11 @@ watch(
 
 .slide-enter-active,
 .slide-leave-active {
-  transition: transform 0.3s ease, opacity 0.3s ease;
+  transition: transform 0.25s ease, opacity 0.25s ease;
 }
-.slide-enter-from {
-  transform: translateX(-20px);
-  opacity: 0;
-}
+.slide-enter-from,
 .slide-leave-to {
-  transform: translateX(-20px);
+  transform: translateX(24px);
   opacity: 0;
 }
 
