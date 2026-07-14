@@ -350,6 +350,8 @@ def test_early_exit_turn_types():
     assert DataQueryTurnType.FORMAT_CORRECTION in EARLY_EXIT_TURN_TYPES
     assert DataQueryTurnType.REUSE_PREVIOUS_RESULT in EARLY_EXIT_TURN_TYPES
     assert DataQueryTurnType.CLARIFICATION_OR_NON_DATA in EARLY_EXIT_TURN_TYPES
+    assert DataQueryTurnType.NON_DATA_REQUEST in EARLY_EXIT_TURN_TYPES
+    assert DataQueryTurnType.CLARIFICATION_REQUIRED in EARLY_EXIT_TURN_TYPES
     assert DataQueryTurnType.NEW_DATA_QUERY not in EARLY_EXIT_TURN_TYPES
 
 

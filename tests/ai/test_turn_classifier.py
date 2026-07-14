@@ -608,9 +608,10 @@ async def test_data_query_turn_classifier_rejects_reuse_without_reusable_result(
         )
 
     mock_get_llm.assert_awaited_once()
-    assert classification.turn_type == DataQueryTurnType.CLARIFICATION_OR_NON_DATA
+    assert classification.turn_type == DataQueryTurnType.CLARIFICATION_REQUIRED
     assert classification.requires_fresh_data is False
     assert classification.requires_few_shot is False
+    assert classification.missing_fields == ("result_context",)
     assert "可信" in classification.reasoning or "没有可复用" in classification.reasoning
 
 
@@ -626,12 +627,61 @@ async def test_data_query_turn_classifier_short_circuits_general_chat_without_sq
             has_last_data_result=False,
         )
 
-    assert classification.turn_type == DataQueryTurnType.CLARIFICATION_OR_NON_DATA
+    assert classification.turn_type == DataQueryTurnType.NON_DATA_REQUEST
     assert classification.requires_fresh_data is False
     assert classification.requires_few_shot is False
     assert classification.skip_intent_llm is True
     assert intent_info.intent == IntentType.GENERAL
     assert elapsed_ms == 0.0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "query",
+    ["现在是什么模型", "你用的哪个模型", "帮我写一封邮件", "翻译一下这段话"],
+)
+async def test_data_query_turn_classifier_routes_non_data_requests_without_clarification(query):
+    with patch(
+        "app.services.ai.config.AgentConfigProvider.get_configured_llm",
+        AsyncMock(side_effect=AssertionError("non-data request should not call classifier LLM")),
+    ):
+        classification, intent_info, elapsed_ms = await resolve_data_query_turn_classification(
+            query,
+            [{"role": "user", "content": query}],
+            has_last_data_result=False,
+        )
+
+    assert classification.turn_type == DataQueryTurnType.NON_DATA_REQUEST
+    assert classification.missing_fields == ()
+    assert classification.requires_sql_query is False
+    assert classification.skip_intent_llm is True
+    assert intent_info.intent == IntentType.GENERAL
+    assert elapsed_ms == 0.0
+
+
+@pytest.mark.asyncio
+async def test_data_query_turn_classifier_preserves_structured_clarification_gaps_from_llm():
+    llm = object()
+    chat_client = _mock_chat_client(
+        '{"turn_type":"clarification_required","reasoning":"查数对象明确但缺少时间范围",'
+        '"missing_fields":["time_range"]}'
+    )
+
+    with patch(
+        "app.services.ai.config.AgentConfigProvider.get_configured_llm",
+        AsyncMock(return_value=llm),
+    ), patch(
+        "app.services.ai.data_query_turn_classifier.chat_client_from_handle",
+        return_value=chat_client,
+    ):
+        classification, _, _ = await resolve_data_query_turn_classification(
+            "统计各机房 PUE",
+            [{"role": "user", "content": "统计各机房 PUE"}],
+            has_last_data_result=False,
+        )
+
+    assert classification.turn_type == DataQueryTurnType.CLARIFICATION_REQUIRED
+    assert classification.missing_fields == ("time_range",)
 
 
 @pytest.mark.asyncio
@@ -664,7 +714,7 @@ async def test_data_query_turn_classifier_requires_recent_context_for_reuse():
             has_last_data_result=True,
         )
 
-    assert classification.turn_type == DataQueryTurnType.CLARIFICATION_OR_NON_DATA
+    assert classification.turn_type == DataQueryTurnType.CLARIFICATION_REQUIRED
     assert classification.requires_fresh_data is False
     assert "最近对话" in classification.reasoning
 
@@ -746,7 +796,7 @@ async def test_data_query_turn_classifier_keeps_vague_status_followup_as_clarifi
             has_last_data_result=True,
         )
 
-    assert classification.turn_type == DataQueryTurnType.CLARIFICATION_OR_NON_DATA
+    assert classification.turn_type == DataQueryTurnType.CLARIFICATION_REQUIRED
     assert "最近对话" in classification.reasoning
 
 

@@ -2721,7 +2721,7 @@ const formatDate = (dateStr: string) => {
       v-model:model="showToolRuntimeModal"
       :tool-name="currentConfiguringTool"
       :config="currentToolConfig"
-      :available-models="models.filter(m => m.is_active && m.type === 'llm')"
+      :available-models="models.filter(m => m.is_active && (m.type === 'llm' || m.type === 'multimodal'))"
       :readonly="!canEditVersion"
       @save="handleToolConfigSave"
     />

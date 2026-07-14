@@ -57,7 +57,7 @@ const emit = defineEmits<{
   prevStep: [];
 }>();
 
-const llmModels = () => props.models.filter((m) => m.type === 'llm' && m.is_active);
+const llmModels = () => props.models.filter((m) => (m.type === 'llm' || m.type === 'multimodal') && m.is_active);
 
 const stepIndex = () => props.versionConfigSteps.findIndex((s) => s.id === props.versionConfigStep);
 const isFirstStep = () => stepIndex() <= 0;
@@ -152,7 +152,7 @@ const goStep = (step: VersionConfigStep) => emit('update:versionConfigStep', ste
                   class="w-full px-3 py-2 border border-gray-200 rounded-lg outline-none focus:ring-2 focus:ring-primary/30 bg-white text-sm"
                 >
                   <option value="" disabled>选择编排模型...</option>
-                  <option v-for="m in llmModels()" :key="m.id" :value="m.model_id">{{ m.name }}</option>
+                  <option v-for="m in llmModels()" :key="m.id" :value="m.model_id">{{ m.type === 'multimodal' ? '🖼️ ' : '' }}{{ m.name }}</option>
                 </select>
                 <div class="mt-3">
                   <div class="flex justify-between items-center mb-1">
@@ -188,7 +188,7 @@ const goStep = (step: VersionConfigStep) => emit('update:versionConfigStep', ste
                   class="w-full px-3 py-2 border border-gray-200 rounded-lg outline-none focus:ring-2 focus:ring-emerald-500/30 bg-white text-sm"
                 >
                   <option value="">跟随编排模型</option>
-                  <option v-for="m in llmModels()" :key="m.id" :value="m.model_id">{{ m.name }}</option>
+                  <option v-for="m in llmModels()" :key="m.id" :value="m.model_id">{{ m.type === 'multimodal' ? '🖼️ ' : '' }}{{ m.name }}</option>
                 </select>
                 <div v-if="versionForm.synthesis_model_name" class="mt-3">
                   <div class="flex justify-between items-center mb-1">

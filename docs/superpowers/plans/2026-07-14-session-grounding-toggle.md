@@ -70,3 +70,59 @@
 - [x] Add `enableGrounding: false` to the shared debug config contract and replace the right-panel model override with a checkbox.
 - [x] Keep the ChatInput model selector bound to `debugConfig.model` and pass `grounding_enabled` in `debug_options`.
 - [x] Run the frontend contract test, `git diff --check`, and leave service compilation to the user.
+
+### Task 6: Add shared grounding help examples
+
+**Files:**
+- Create: `frontend/src/components/GroundingHelpPopover.vue`
+- Modify: `frontend/src/components/embed/ChatSettings.vue`
+- Modify: `frontend/src/components/DebugConfigPanel.vue`
+- Modify: `frontend/scripts/groundingToggle.test.ts`
+- Modify: `docs/platform-grounding-gate.md`
+- Modify: `tests/CHECKLIST.md`
+
+- [x] Add failing source-contract assertions for the shared component, both entry points, the three result examples, and close interactions.
+- [x] Run `node --experimental-strip-types scripts/groundingToggle.test.ts` and confirm it fails because `GroundingHelpPopover.vue` does not exist.
+- [x] Implement the compact `?` popover with hover/click opening plus outside-click and `Esc` closing.
+- [x] Mount the shared component beside both grounding labels without nesting its button inside a checkbox label.
+- [x] Document the help example and run the frontend contract test plus `git diff --check`; do not run build or service scripts.
+
+### Task 7: Show grounding toggle Toast feedback
+
+**Files:**
+- Modify: `frontend/scripts/groundingToggle.test.ts`
+- Modify: `frontend/src/components/embed/ChatSettings.vue`
+- Modify: `frontend/src/components/DebugConfigPanel.vue`
+- Modify: `docs/platform-grounding-gate.md`
+- Modify: `tests/CHECKLIST.md`
+
+- [x] **Step 1: Add failing Toast contract assertions**
+
+Assert that both components import `useToast`, contain “反幻觉校验已开启” with `success` and “反幻觉校验已关闭” with `info`; also assert that ChatSettings compares the requested state with the current state and AgentDebug binds `@change="handleGroundingChange"`.
+
+- [x] **Step 2: Run the contract test and verify RED**
+
+Run: `cd frontend && node --experimental-strip-types scripts/groundingToggle.test.ts`
+
+Expected: FAIL because `ChatSettings.vue` does not import `useToast`.
+
+- [x] **Step 3: Implement minimal Toast feedback**
+
+Use the existing global composable in both components:
+
+```ts
+const { showToast } = useToast();
+
+showToast(
+  enabled ? "反幻觉校验已开启" : "反幻觉校验已关闭",
+  enabled ? "success" : "info",
+);
+```
+
+ChatSettings returns without showing a Toast when `config.enableGrounding === enabled`, while preserving its existing save-and-close behavior. AgentDebug invokes a `handleGroundingChange()` handler from the checkbox `change` event and reads the already-updated `config.enableGrounding` value.
+
+- [x] **Step 4: Verify GREEN and static validity**
+
+Run the frontend contract test, parse `ChatSettings.vue` and `DebugConfigPanel.vue` with `@vue/compiler-sfc`, and run `git diff --check`.
+
+Expected: all checks pass. Do not run frontend build, `./dev.sh`, or service restart commands.

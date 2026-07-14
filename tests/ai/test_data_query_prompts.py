@@ -59,6 +59,65 @@ def test_build_clarification_response_uses_rule_lead_and_quick():
     assert "PUE" in content
 
 
+def test_build_non_data_response_only_guides_agent_switch():
+    content = DataQueryPrompts.build_non_data_response("现在是什么模型")
+
+    assert "切换智能体" in content
+    assert "/switch_to_auto" in content
+    assert "补充时间" not in content
+    assert "指标口径" not in content
+    assert "统计对象" not in content
+
+
+def test_structured_clarification_only_builds_requested_gap_buttons():
+    content = DataQueryPrompts.build_clarification_response(
+        "统计各机房 PUE",
+        "查数对象明确但缺少时间范围",
+        "",
+        missing_fields=("time_range",),
+    )
+
+    assert "补充时间" in content
+    assert "指标口径" not in content
+    assert "统计对象" not in content
+    assert "### ℹ️ 为什么需要补充信息" in content
+    assert "### 💬 您可以这样继续" in content
+    assert "(quick:" in content
+    assert "PUE" in content
+
+
+def test_semantic_clarification_recommendations_replace_mechanical_gap_buttons():
+    content = DataQueryPrompts.build_clarification_response(
+        "统计各机房 PUE",
+        "查数对象明确但缺少时间范围",
+        "",
+        missing_fields=("time_range",),
+        suggested_queries=(
+            "查询本月各机房平均 PUE",
+            "查询最近 30 天各机房 PUE 趋势",
+            "对比本月与上月各机房 PUE",
+        ),
+    )
+
+    assert "查询本月各机房平均 PUE" in content
+    assert "最近 30 天各机房 PUE 趋势" in content
+    assert "（时间范围：本月）" not in content
+
+
+def test_validate_semantic_recommendations_rejects_unrelated_topics():
+    candidates = DataQueryPrompts.validate_clarification_recommendations(
+        "统计各机房 PUE",
+        ("time_range",),
+        [
+            "查询本月各机房平均 PUE",
+            "查询本月销售收入",
+            "现在是什么模型",
+        ],
+    )
+
+    assert candidates == ("查询本月各机房平均 PUE",)
+
+
 def test_sanitize_clarification_lead_strips_reason_and_quick():
     raw = (
         "### ℹ️ 为什么需要补充信息\n- **触发原因：** x\n"

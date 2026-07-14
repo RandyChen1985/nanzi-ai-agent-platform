@@ -341,6 +341,19 @@ watch(
 // Agents State for Dropdown
 const agents = ref<any[]>([]);
 const debugMode = ref<"auto" | "specific">("auto");
+
+const showAgentDropdown = ref(false);
+const agentDropdownRef = ref<HTMLElement | null>(null);
+
+const selectedAgent = computed(() => {
+  return agents.value.find((a: any) => a.id === agentParams.agent_id);
+});
+
+const handleDocumentClick = (e: MouseEvent) => {
+  if (agentDropdownRef.value && !agentDropdownRef.value.contains(e.target as Node)) {
+    showAgentDropdown.value = false;
+  }
+};
 const SYSTEM_SLASH_COMMANDS = [
   { id: "sys_clear", command: "/new", label: "💬 新会话", sort_order: -40 },
   { id: "sys_history", command: "/history", label: "🕒 历史", sort_order: -39 },
@@ -432,7 +445,7 @@ const fetchModels = async () => {
   try {
     const res = await modelApi.list();
     availableModels.value = res.data.filter(
-      (m) => m.type === "llm" && m.is_active
+      (m) => (m.type === "llm" || m.type === "multimodal") && m.is_active
     );
   } catch (e) {
     console.error("Failed to fetch models", e);
@@ -2525,6 +2538,10 @@ const pinnedDrawerMarginStyle = computed(() => {
   return { marginRight: rem > 0 ? `min(${rem}rem, 100vw)` : "" };
 });
 
+const hasPinnedDrawer = computed(() => {
+  return pinnedDrawerRightRem.value > 0;
+});
+
 const workspacePinnedDockClass = computed(() => {
   const rem = pinnedDrawerDockOffsetRem("workspace");
   return rem > 0 ? `right-[${rem}rem]` : "right-0";
@@ -2585,10 +2602,12 @@ const handleEscKey = (e: KeyboardEvent) => {
 
 onMounted(() => {
   window.addEventListener("keydown", handleEscKey);
+  document.addEventListener("click", handleDocumentClick);
 });
 
 onUnmounted(() => {
   window.removeEventListener("keydown", handleEscKey);
+  document.removeEventListener("click", handleDocumentClick);
   disposePortalTimers();
 });
 
@@ -3861,7 +3880,7 @@ onUnmounted(() => {
 
       <!-- Mode Selector Bar -->
       <div
-        class="px-6 py-2 bg-gray-50 border-b border-gray-200 flex items-center space-x-4"
+        class="px-6 py-2 bg-gray-50 border-b border-gray-200 flex items-center space-x-4 flex-shrink-0"
       >
         <!-- Mode Toggle -->
         <div class="flex bg-gray-200 p-1 rounded-lg">
@@ -3895,16 +3914,101 @@ onUnmounted(() => {
           </button>
         </div>
 
-        <!-- Agent Dropdown (Visible only in Specific Mode) -->
-        <div v-if="debugMode === 'specific'" class="relative w-48 z-10">
-          <select
-            v-model="agentParams.agent_id"
-            class="block w-full pl-3 pr-10 py-1.5 text-xs border-gray-300 focus:outline-none focus:ring-primary focus:border-primary sm:text-sm rounded-md shadow-sm"
+        <!-- Custom Dropdown (Visible only in Specific Mode) -->
+        <div v-if="debugMode === 'specific'" ref="agentDropdownRef" class="relative z-30">
+          <!-- Dropdown Trigger Button -->
+          <button
+            @click="showAgentDropdown = !showAgentDropdown"
+            class="flex items-center justify-between w-64 px-3 py-1.5 text-xs bg-white border border-gray-300 rounded-lg shadow-sm hover:border-gray-400 focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary transition-all text-left"
           >
-            <option v-for="agent in agents" :key="agent.id" :value="agent.id">
-              {{ agent.is_system ? '🔒' : '👤' }} {{ agent.display_name }} ({{ agent.name }})
-            </option>
-          </select>
+            <div class="flex items-center space-x-2 min-w-0 flex-1">
+              <!-- Selected Agent Avatar -->
+              <div class="flex-shrink-0 w-5 h-5 rounded bg-gray-50 flex items-center justify-center border border-gray-100 overflow-hidden text-xs">
+                <img
+                  v-if="selectedAgent?.avatar_url && (selectedAgent.avatar_url.startsWith('http') || selectedAgent.avatar_url.startsWith('/') || selectedAgent.avatar_url.startsWith('data:'))"
+                  :src="selectedAgent.avatar_url"
+                  class="w-full h-full object-cover"
+                />
+                <span v-else-if="selectedAgent?.avatar_url" class="text-xs">{{ selectedAgent.avatar_url }}</span>
+                <span v-else class="text-xs">{{ selectedAgent?.is_system ? '🔒' : '👤' }}</span>
+              </div>
+              <span class="font-medium text-gray-700 truncate">
+                {{ selectedAgent?.display_name || '选择智能体' }}
+              </span>
+            </div>
+            <!-- Arrow -->
+            <svg
+              class="w-4 h-4 text-gray-400 ml-1 transform transition-transform duration-200"
+              :class="{ 'rotate-180': showAgentDropdown }"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+            </svg>
+          </button>
+
+          <!-- Dropdown Card Menu -->
+          <transition name="slide-up">
+            <div
+              v-show="showAgentDropdown"
+              class="absolute mt-1 left-0 z-30 w-[360px] max-h-80 overflow-y-auto bg-white border border-gray-200 rounded-xl shadow-xl py-1 px-1 custom-scrollbar origin-top-left"
+            >
+              <div
+                v-for="agent in agents"
+                :key="agent.id"
+                @click="
+                  agentParams.agent_id = agent.id;
+                  showAgentDropdown = false;
+                "
+                class="my-1 p-2 rounded-lg border transition-all cursor-pointer flex items-start space-x-2.5"
+                :class="
+                  agentParams.agent_id === agent.id
+                    ? 'border-primary/40 bg-primary/5 ring-1 ring-primary/5'
+                    : 'border-transparent hover:bg-gray-50'
+                "
+              >
+                <!-- Avatar -->
+                <div
+                  class="flex-shrink-0 w-7 h-7 rounded bg-gray-50 flex items-center justify-center text-sm border border-gray-100 overflow-hidden"
+                  :class="agentParams.agent_id === agent.id ? 'bg-primary/10 border-primary/20' : ''"
+                >
+                  <img
+                    v-if="agent.avatar_url && (agent.avatar_url.startsWith('http') || agent.avatar_url.startsWith('/') || agent.avatar_url.startsWith('data:'))"
+                    :src="agent.avatar_url"
+                    class="w-full h-full object-cover"
+                  />
+                  <span v-else-if="agent.avatar_url" class="text-sm">{{ agent.avatar_url }}</span>
+                  <span v-else class="text-sm">{{ agent.is_system ? '🔒' : '👤' }}</span>
+                </div>
+                <!-- Info -->
+                <div class="flex-1 min-w-0">
+                  <div class="flex items-center justify-between">
+                    <span
+                      class="text-xs font-bold text-gray-800 truncate"
+                      :class="agentParams.agent_id === agent.id ? 'text-primary' : ''"
+                    >
+                      {{ agent.display_name }}
+                    </span>
+                    <span
+                      v-if="agent.is_system"
+                      class="text-[8px] text-gray-400 font-mono scale-90 origin-right border border-gray-200 px-1 rounded bg-gray-50"
+                      >SYSTEM</span
+                    >
+                  </div>
+                  <div class="text-[9px] text-gray-400 font-mono truncate mt-0.5">
+                    {{ agent.name }}
+                  </div>
+                  <div
+                    class="text-[10px] text-gray-500 line-clamp-2 mt-1 leading-relaxed break-words"
+                    :title="agent.description"
+                  >
+                    {{ agent.description || '暂无备注说明信息' }}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </transition>
         </div>
 
         <div class="text-xs text-gray-400 border-l pl-3 ml-2">
@@ -4779,38 +4883,36 @@ onUnmounted(() => {
 
       <!-- Input Area -->
       <div class="flex-shrink-0 px-4 py-2 bg-white border-t border-gray-200 relative z-20 debug-chat-input-wrapper">
-        <div class="max-w-4xl mx-auto">
-          <ChatInput
-            ref="chatInputRef"
-            v-model="userInput"
-            :is-processing="isProcessing"
-            :show-shortcuts="debugConfig.showShortcuts"
-            :slash-commands="slashCommands"
-            :allowed-agents="agents"
-            :current-user="currentUser"
-            :window-width="windowWidth"
-            :approval-mode="debugConfig.approvalMode"
-            :selected-model="debugConfig.model"
-            :available-models="availableModels"
-            @update:approval-mode="debugConfig.approvalMode = $event"
-            @update:selected-model="debugConfig.model = $event"
-            @send="sendMessage"
-            @stop="stopGeneration"
-            @toggle-shortcuts="debugConfig.showShortcuts = !debugConfig.showShortcuts"
-            @open-command-manager="openCommandManager"
-            @upload-image="handleImageUpload"
-            @edit-command="editCommand"
-            @delete-command="confirmDeleteCommand"
-            @switch-mode="handleSwitchMode"
-            @reorder-commands="handleReorderCommands"
-            @select-skill="openSkillSelector"
-            @select-knowledge-base="openKnowledgePortal"
-            @select-local-fs="showWorkspaceDrawer = true"
-            @select-memory="openMemorySelector"
-            @system-command="handleSystemCommand"
-          >
-          </ChatInput>
-        </div>
+        <ChatInput
+          ref="chatInputRef"
+          v-model="userInput"
+          :is-processing="isProcessing"
+          :show-shortcuts="debugConfig.showShortcuts"
+          :slash-commands="slashCommands"
+          :allowed-agents="agents"
+          :current-user="currentUser"
+          :window-width="windowWidth"
+          :approval-mode="debugConfig.approvalMode"
+          :selected-model="debugConfig.model"
+          :available-models="availableModels"
+          @update:approval-mode="debugConfig.approvalMode = $event"
+          @update:selected-model="debugConfig.model = $event"
+          @send="sendMessage"
+          @stop="stopGeneration"
+          @toggle-shortcuts="debugConfig.showShortcuts = !debugConfig.showShortcuts"
+          @open-command-manager="openCommandManager"
+          @upload-image="handleImageUpload"
+          @edit-command="editCommand"
+          @delete-command="confirmDeleteCommand"
+          @switch-mode="handleSwitchMode"
+          @reorder-commands="handleReorderCommands"
+          @select-skill="openSkillSelector"
+          @select-knowledge-base="openKnowledgePortal"
+          @select-local-fs="showWorkspaceDrawer = true"
+          @select-memory="openMemorySelector"
+          @system-command="handleSystemCommand"
+        >
+        </ChatInput>
       </div>
 
       <ChatCanvas
@@ -4825,13 +4927,14 @@ onUnmounted(() => {
 
     <!-- Right: Configuration Panel -->
     <DebugConfigPanel
-      v-model:visible="showConfigPanel"
+      :visible="showConfigPanel && !hasPinnedDrawer"
       v-model:is-floating="isConfigPanelFloating"
       :config="debugConfig"
       :agent-params="agentParams"
       :loading-config="loadingConfig"
       :agent-context="agentContext"
       :rag-retrieval-meta="ragRetrievalMeta"
+      @update:visible="(val) => { showConfigPanel = val; }"
       @load-config="loadCurrentPrompt"
       @clear-context="clearContext"
     />

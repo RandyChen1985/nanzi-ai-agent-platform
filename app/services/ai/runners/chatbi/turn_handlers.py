@@ -20,6 +20,8 @@ EARLY_EXIT_TURN_TYPES = frozenset(
         DataQueryTurnType.FORMAT_CORRECTION,
         DataQueryTurnType.REUSE_PREVIOUS_RESULT,
         DataQueryTurnType.CLARIFICATION_OR_NON_DATA,
+        DataQueryTurnType.NON_DATA_REQUEST,
+        DataQueryTurnType.CLARIFICATION_REQUIRED,
     }
 )
 
@@ -126,11 +128,24 @@ async def dispatch_early_turn(
                 yield chunk
         return
 
-    if turn_cls.turn_type == DataQueryTurnType.CLARIFICATION_OR_NON_DATA:
+    if turn_cls.turn_type == DataQueryTurnType.NON_DATA_REQUEST:
+        from app.services.ai.runners.chatbi import clarification as chatbi_clarification
+
+        async for chunk in chatbi_clarification.yield_non_data_guidance(
+            user_question=user_question,
+        ):
+            yield chunk
+        return
+
+    if turn_cls.turn_type in {
+        DataQueryTurnType.CLARIFICATION_OR_NON_DATA,
+        DataQueryTurnType.CLARIFICATION_REQUIRED,
+    }:
         async for chunk in runner._yield_contextual_clarification(
             user_question=user_question,
             history=history,
             reasoning=turn_cls.reasoning,
+            missing_fields=getattr(turn_cls, "missing_fields", None),
         ):
             yield chunk
 

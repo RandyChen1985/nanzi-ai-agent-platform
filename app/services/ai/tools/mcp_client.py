@@ -82,10 +82,19 @@ class McpSseSession:
     async def close(self):
         """Closes the connection"""
         async with self._lock:
-            if self._exit_stack:
-                await self._exit_stack.aclose()
+            exit_stack = self._exit_stack
+            self._exit_stack = None
             self.session = None
             self.mcp_session_id = None
+            if exit_stack:
+                try:
+                    await exit_stack.aclose()
+                except Exception as exc:
+                    logger.warning(
+                        "[MCP] Transport cleanup failed for %s; cached state was cleared: %s",
+                        self.server_id,
+                        exc,
+                    )
             logger.info(f"[MCP] Session closed for {self.server_id}")
 
     def update_activity(self):
@@ -118,7 +127,24 @@ class McpClientService:
         session_mgr = await cls.get_session(server_id)
         
         if not session_mgr.is_direct_http:
-            response = await session_mgr.session.list_tools()
+            try:
+                response = await session_mgr.session.list_tools()
+            except Exception as exc:
+                logger.warning(
+                    "[MCP] Tool listing failed for %s; reconnecting once: %s",
+                    server_id,
+                    exc,
+                )
+                await session_mgr.close()
+                await session_mgr.connect()
+                if session_mgr.is_direct_http:
+                    if not session_mgr.mcp_session_id:
+                        await cls._initialize_direct_http(session_mgr)
+                    res = await cls._direct_http_rpc(session_mgr, "tools/list", {})
+                    if isinstance(res, dict) and "tools" in res:
+                        return res["tools"]
+                    return res if isinstance(res, list) else []
+                response = await session_mgr.session.list_tools()
             return response.tools
         else:
             # Direct HTTP Flow: 1. Init -> 2. Initialized -> 3. List
@@ -134,6 +160,37 @@ class McpClientService:
             if isinstance(res, dict) and "tools" in res: return res["tools"]
             elif isinstance(res, list): return res
             return []
+
+    @classmethod
+    async def _initialize_direct_http(cls, session_mgr: McpSseSession) -> None:
+        await cls._direct_http_rpc(session_mgr, "initialize", {
+            "protocolVersion": "2024-11-05",
+            "capabilities": {"tools": {}},
+            "clientInfo": {"name": "yunshu-ai-agent", "version": "1.0.0"},
+        })
+        await cls._direct_http_rpc(
+            session_mgr,
+            "notifications/initialized",
+            {},
+            is_notification=True,
+        )
+
+    @classmethod
+    async def _recover_direct_http_session(
+        cls,
+        session_mgr: McpSseSession,
+        stale_session_id: Optional[str],
+    ) -> None:
+        """Reinitialize once, while coalescing concurrent stale-session recovery."""
+        async with session_mgr._lock:
+            if (
+                stale_session_id
+                and session_mgr.mcp_session_id
+                and session_mgr.mcp_session_id != stale_session_id
+            ):
+                return
+            session_mgr.mcp_session_id = None
+            await cls._initialize_direct_http(session_mgr)
 
     @classmethod
     async def call_remote_tool(cls, server_id: str, tool_name: str, arguments: Dict[str, Any]) -> Any:
@@ -239,6 +296,28 @@ class McpClientService:
                 continue
         return None
 
+    @staticmethod
+    def _is_session_expired_payload(payload: Any) -> bool:
+        if not isinstance(payload, dict):
+            return False
+        error = payload.get("error")
+        candidates = [
+            payload.get("Code"),
+            payload.get("code"),
+            payload.get("Message"),
+            payload.get("message"),
+        ]
+        if isinstance(error, dict):
+            candidates.extend([error.get("code"), error.get("message")])
+        normalized = " ".join(str(value).lower() for value in candidates if value is not None)
+        return any(marker in normalized for marker in (
+            "sessionexpired",
+            "session expired",
+            "session not found",
+            "unknown session",
+            "invalid session",
+        ))
+
     @classmethod
     async def _direct_http_rpc(cls, session_mgr: McpSseSession, method: str, params: Optional[Dict], is_notification: bool = False, retry_count: int = 0) -> Any:
         headers = {
@@ -246,8 +325,9 @@ class McpClientService:
             "Accept": "application/json, text/event-stream",
             **session_mgr.auth_headers
         }
-        if session_mgr.mcp_session_id:
-            headers["mcp-session-id"] = session_mgr.mcp_session_id
+        request_session_id = session_mgr.mcp_session_id
+        if request_session_id:
+            headers["mcp-session-id"] = request_session_id
         
         rpc_id = session_mgr.next_rpc_id() if not is_notification else None
         payload = { "jsonrpc": "2.0", "method": method, "params": params or {} }
@@ -301,26 +381,57 @@ class McpClientService:
                 if "result" in data: return data["result"]
                 if is_notification: return None
                 if "error" in data:
+                    if (
+                        request_session_id
+                        and retry_count < 1
+                        and not is_notification
+                        and method != "initialize"
+                        and cls._is_session_expired_payload(data)
+                    ):
+                        logger.warning(
+                            "[MCP-Direct] Session invalid for %s; reinitializing before retrying %s",
+                            session_mgr.server_id,
+                            method,
+                        )
+                        await cls._recover_direct_http_session(session_mgr, request_session_id)
+                        return await cls._direct_http_rpc(
+                            session_mgr,
+                            method,
+                            params,
+                            is_notification,
+                            retry_count=retry_count + 1,
+                        )
                     logger.error(f"[MCP-Direct] RPC Error Response: {data['error']}")
                     raise Exception(f"RPC Error {data['error'].get('code')}: {data['error'].get('message')}")
                 return data
-            
-            # Handle Session Expired (401)
-            if resp.status_code == 401:
-                try:
-                    err_data = resp.json()
-                    # Check for SessionExpired (Case insensitive check for safety)
-                    err_code = err_data.get("Code", "")
-                    if err_code == "SessionExpired":
-                        if retry_count < 1:
-                            logger.warning(f"[MCP-Direct] Session Expired for {session_mgr.server_id}. Clearing session and retrying...")
-                            session_mgr.mcp_session_id = None
-                            # Recursive retry
-                            return await cls._direct_http_rpc(session_mgr, method, params, is_notification, retry_count=retry_count + 1)
-                        else:
-                            logger.error(f"[MCP-Direct] Session Expired and retry limit reached.")
-                except Exception as e:
-                    logger.warning(f"[MCP-Direct] Failed to parse error response for retry check: {e}")
+
+            error_payload = None
+            try:
+                error_payload = resp.json()
+            except json.JSONDecodeError:
+                error_payload = cls._parse_sse_payload(resp.text)
+            if (
+                request_session_id
+                and retry_count < 1
+                and not is_notification
+                and method != "initialize"
+                and resp.status_code in {400, 401, 404, 410}
+                and cls._is_session_expired_payload(error_payload)
+            ):
+                logger.warning(
+                    "[MCP-Direct] HTTP %s invalidated session for %s; reinitializing before retrying %s",
+                    resp.status_code,
+                    session_mgr.server_id,
+                    method,
+                )
+                await cls._recover_direct_http_session(session_mgr, request_session_id)
+                return await cls._direct_http_rpc(
+                    session_mgr,
+                    method,
+                    params,
+                    is_notification,
+                    retry_count=retry_count + 1,
+                )
 
             logger.error(f"[MCP-Direct] Error Response Body: {resp.text[:500]}")
             raise Exception(f"HTTP {resp.status_code}: {resp.text}")

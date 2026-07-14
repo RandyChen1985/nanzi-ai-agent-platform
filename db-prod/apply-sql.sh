@@ -1,6 +1,16 @@
 #!/bin/bash
 # Wrapper to run apply_sql.py with explicit connection parameters.
 
+# 确保脚本在非 bash 环境下（如使用 sh 执行时）能够自动重新唤起并用 bash 执行
+if [ -z "$BASH_VERSION" ]; then
+    if command -v bash >/dev/null 2>&1; then
+        exec bash "$0" "$@"
+    else
+        echo "❌ 本脚本需要 bash 支持，但系统未找到 bash。"
+        exit 1
+    fi
+fi
+
 cd "$(dirname "$0")/.."
 
 

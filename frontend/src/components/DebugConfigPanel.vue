@@ -1,4 +1,9 @@
 <script setup lang="ts">
+import GroundingHelpPopover from "@/components/GroundingHelpPopover.vue";
+import { useToast } from "@/composables/useToast";
+
+const { showToast } = useToast();
+
 interface DebugConfig {
   model: string;
   temperature: number;
@@ -44,6 +49,14 @@ const addContextItem = () => {
 
 const removeContextItem = (index: number) => {
   props.config.injectedContext.splice(index, 1);
+};
+
+const handleGroundingChange = () => {
+  const enabled = props.config.enableGrounding;
+  showToast(
+    enabled ? "反幻觉校验已开启" : "反幻觉校验已关闭",
+    enabled ? "success" : "info",
+  );
 };
 </script>
 
@@ -173,14 +186,18 @@ const removeContextItem = (index: number) => {
 
         <!-- Grounding Toggle -->
         <div class="space-y-3">
-          <label class="flex items-center space-x-2 cursor-pointer">
-            <input
-              type="checkbox"
-              v-model="config.enableGrounding"
-              class="rounded text-primary focus:ring-primary border-gray-300"
-            />
-            <span class="text-sm font-medium text-gray-700">反幻觉校验</span>
-          </label>
+          <div class="flex items-center gap-1.5">
+            <label class="flex items-center space-x-2 cursor-pointer">
+              <input
+                type="checkbox"
+                v-model="config.enableGrounding"
+                @change="handleGroundingChange"
+                class="rounded text-primary focus:ring-primary border-gray-300"
+              />
+              <span class="text-sm font-medium text-gray-700">反幻觉校验</span>
+            </label>
+            <GroundingHelpPopover />
+          </div>
           <p class="text-xs text-gray-500 ml-6">
             开启后校验回答的事实来源并提示风险。
           </p>

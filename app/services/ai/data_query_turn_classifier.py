@@ -37,6 +37,8 @@ class DataQueryTurnType(str, Enum):
     CONTEXT_ACTION = "context_action"
     SKILL_EXECUTION = "skill_execution"
     CLARIFICATION_OR_NON_DATA = "clarification_or_non_data"
+    NON_DATA_REQUEST = "non_data_request"
+    CLARIFICATION_REQUIRED = "clarification_required"
     FORMAT_CORRECTION = "format_correction"
     FEDERATED_DATA_QUERY = "federated_data_query"
 
@@ -48,6 +50,8 @@ DATA_QUERY_TURN_TYPE_LABELS: dict[DataQueryTurnType, str] = {
     DataQueryTurnType.CONTEXT_ACTION: "上下文动作",
     DataQueryTurnType.SKILL_EXECUTION: "技能执行",
     DataQueryTurnType.CLARIFICATION_OR_NON_DATA: "需澄清或非查数请求",
+    DataQueryTurnType.NON_DATA_REQUEST: "非查数请求",
+    DataQueryTurnType.CLARIFICATION_REQUIRED: "查数需求待澄清",
     DataQueryTurnType.FORMAT_CORRECTION: "样式与图表微调",
     DataQueryTurnType.FEDERATED_DATA_QUERY: "跨数据集联邦查询",
 }
@@ -67,6 +71,7 @@ class DataQueryTurnClassification:
     requires_sql_query: bool = True
     skip_intent_llm: bool = False
     intent: Optional[IntentType] = None
+    missing_fields: tuple[str, ...] = ()
 
 
 def _classification_for_turn_type(
@@ -134,7 +139,11 @@ def _classification_for_turn_type(
             skip_intent_llm=skip_intent_llm,
             intent=IntentType.DATA_QUERY,
         )
-    if turn_type == DataQueryTurnType.CLARIFICATION_OR_NON_DATA:
+    if turn_type in {
+        DataQueryTurnType.CLARIFICATION_OR_NON_DATA,
+        DataQueryTurnType.NON_DATA_REQUEST,
+        DataQueryTurnType.CLARIFICATION_REQUIRED,
+    }:
         return DataQueryTurnClassification(
             turn_type=turn_type,
             reasoning=reasoning,
@@ -206,9 +215,25 @@ def _looks_like_business_status_data_query(user_query: str) -> bool:
     return len(object_text) >= 2 or any(marker in q for marker in scope_markers)
 
 
-def _classification_for_clarification(reasoning: str, *, skip_intent_llm: bool) -> DataQueryTurnClassification:
+def _classification_for_clarification(
+    reasoning: str,
+    *,
+    skip_intent_llm: bool,
+    missing_fields: tuple[str, ...] = ("result_context",),
+) -> DataQueryTurnClassification:
+    result = _classification_for_turn_type(
+        DataQueryTurnType.CLARIFICATION_REQUIRED,
+        reasoning,
+        skip_intent_llm=skip_intent_llm,
+    )
+    result.intent = IntentType.DATA_QUERY
+    result.missing_fields = missing_fields
+    return result
+
+
+def _classification_for_non_data(reasoning: str, *, skip_intent_llm: bool) -> DataQueryTurnClassification:
     return _classification_for_turn_type(
-        DataQueryTurnType.CLARIFICATION_OR_NON_DATA,
+        DataQueryTurnType.NON_DATA_REQUEST,
         reasoning,
         skip_intent_llm=skip_intent_llm,
     )
@@ -284,7 +309,11 @@ def _looks_like_general_chat_or_unsupported(
     ):
         return False
 
-    general_signals = ["你好", "您好", "你是谁", "你能做什么", "谢谢", "感谢", "辛苦了"]
+    general_signals = [
+        "你好", "您好", "你是谁", "你能做什么", "谢谢", "感谢", "辛苦了",
+        "什么模型", "哪个模型", "模型版本", "写一封", "写邮件", "写文章",
+        "翻译一下", "帮我翻译", "润色一下", "改写一下",
+    ]
     if any(signal in q for signal in general_signals) or re.search(r"\b(hi|hello)\b", q):
         return True
 
@@ -380,19 +409,21 @@ async def _classify_with_llm(
 3. reuse_previous_result：不需要重新查库，只是基于上一轮结构化查询结果做展示、格式化、分析、总结、可视化、改列格式、排序说明等。
 4. context_action：对已有上下文或上一轮结果执行保存、导出、发送、记住、沉淀为技能等动作。
 5. skill_execution：显式要求使用/执行某个技能。
-6. clarification_or_non_data：当前不是明确查数或元数据探索请求，或指代过于模糊，需要先请用户补充业务数据对象、时间范围、指标/维度等信息。
-7. format_correction：不需要重新查库，只是对图表的展现形式或样式进行微调（如将折线图改为柱状图、给特定数据标红、添加图表参考线等样式调整）。
-8. federated_data_query：用户显式要求跨数据集/跨库/跨源/联邦/联合查询，或明确要求关联多个数据集、数据源、库或表。
+6. non_data_request：身份、模型、能力、闲聊、写作、翻译、通用知识等非查数请求。
+7. clarification_required：已确认用户想查业务数据，但缺少安全执行所需的数据对象、时间范围、指标、维度或结果上下文。
+8. format_correction：不需要重新查库，只是对图表的展现形式或样式进行微调（如将折线图改为柱状图、给特定数据标红、添加图表参考线等样式调整）。
+9. federated_data_query：用户显式要求跨数据集/跨库/跨源/联邦/联合查询，或明确要求关联多个数据集、数据源、库或表。
 
 约束：
 - 如果选择 reuse_previous_result 或 format_correction，必须确认“存在上一轮结构化查询结果”为 true。
 - 如果用户提出新的查询对象、时间范围或筛选条件，选择 new_data_query。
 - 如果用户明确要求跨数据集、跨库、联邦查询，或要求关联多个数据集/数据源/库/表，选择 federated_data_query。
 - 如果用户只是提问元数据字段/分析口径，选择 metadata_query。
+- clarification_required 必须返回至少一个 missing_fields，可选值：data_object、metric、time_range、dimension、result_context、dataset_or_schema。
 - 只返回 JSON，不要解释，不要 Markdown。
 
 JSON 格式：
-{{"turn_type":"new_data_query|metadata_query|reuse_previous_result|context_action|skill_execution|clarification_or_non_data|format_correction|federated_data_query","reasoning":"一句中文原因"}}
+{{"turn_type":"new_data_query|metadata_query|reuse_previous_result|context_action|skill_execution|non_data_request|clarification_required|format_correction|federated_data_query","reasoning":"一句中文原因","missing_fields":[]}}
 
 【存在上一轮结构化查询结果】
 {str(has_last_data_result).lower()}
@@ -415,7 +446,25 @@ JSON 格式：
         raw_turn_type = str(data.get("turn_type") or "").strip()
         reasoning = str(data.get("reasoning") or "ChatBI 请求类别由大模型兜底识别").strip()
         turn_type = DataQueryTurnType(raw_turn_type)
-        return _classification_for_turn_type(turn_type, reasoning, skip_intent_llm=False)
+        result = _classification_for_turn_type(turn_type, reasoning, skip_intent_llm=False)
+        allowed_missing_fields = {
+            "data_object", "metric", "time_range", "dimension",
+            "result_context", "dataset_or_schema",
+        }
+        raw_missing_fields = data.get("missing_fields")
+        if isinstance(raw_missing_fields, list):
+            result.missing_fields = tuple(
+                field for field in raw_missing_fields
+                if isinstance(field, str) and field in allowed_missing_fields
+            )
+        if turn_type == DataQueryTurnType.CLARIFICATION_REQUIRED:
+            if not result.missing_fields:
+                return _classification_for_non_data(
+                    "未确认到可结构化描述的查数缺口，按非查数请求引导切换智能体",
+                    skip_intent_llm=False,
+                )
+            result.intent = IntentType.DATA_QUERY
+        return result
     except Exception as e:
         logger.warning("[DataQueryTurnClassifier] LLM fallback classification failed: %s", e)
         return None
@@ -530,8 +579,8 @@ async def resolve_data_query_turn_classification(
         has_last_data_result=has_last_data_result,
         messages=messages,
     ):
-        classification = _classification_for_clarification(
-            "当前请求不是明确的 ChatBI 查数请求，需要用户补充想查询的业务数据、指标、维度或时间范围",
+        classification = _classification_for_non_data(
+            "当前请求不属于 ChatBI 查数需求，应引导用户切换到自动路由或其他智能体",
             skip_intent_llm=True,
         )
         intent_info = IntentResponse(
