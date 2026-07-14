@@ -344,6 +344,15 @@ const modelLabel = computed(() => {
   return model?.name || props.selectedModel;
 });
 
+const isSelectedModelMultimodal = computed(() => {
+  if (!props.selectedModel || !props.availableModels) return false;
+  const m = props.availableModels.find((item) => item.model_id === props.selectedModel);
+  return m?.type === 'multimodal';
+});
+
+const showModelDropdown = ref(false);
+const modelDropdownRef = ref<HTMLElement | null>(null);
+
 const activeApprovalMode = computed(
   () => props.approvalMode || "ask",
 );
@@ -498,12 +507,16 @@ const handleGlobalClick = (event: MouseEvent) => {
       showApprovalMenu.value = false;
     }
   }
+  if (showModelDropdown.value && modelDropdownRef.value && !modelDropdownRef.value.contains(event.target as Node)) {
+    showModelDropdown.value = false;
+  }
 };
 
 const handleGlobalKeydown = (event: KeyboardEvent) => {
   if (event.key === 'Escape') {
     showPlusMenu.value = false;
     showApprovalMenu.value = false;
+    showModelDropdown.value = false;
   }
 };
 
@@ -1138,25 +1151,68 @@ defineExpose({
                 </div>
 
                 <div class="flex-1"></div>
-
-                <label class="relative flex h-8 max-w-[9rem] flex-shrink-0 items-center gap-1 rounded-full px-2.5 text-xs font-semibold leading-none text-gray-600 transition-colors hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-700/70 sm:max-w-[14rem] sm:gap-1.5 sm:px-3" :title="selectedModel ? `覆盖模型: ${selectedModel}` : '使用智能体默认模型'">
-                    <span class="pointer-events-none max-w-[7rem] truncate sm:max-w-[12rem]">{{ modelLabel }}</span>
-                    <select
-                      :value="selectedModel || ''"
+                <!-- Custom Model Dropdown Selector -->
+                <div ref="modelDropdownRef" class="relative">
+                    <button
                       :disabled="isProcessing"
-                      class="model-select absolute inset-0 cursor-pointer opacity-0 disabled:cursor-not-allowed"
-                      aria-label="模型选择"
-                      @change="emit('update:selectedModel', ($event.target as HTMLSelectElement).value)"
+                      @click="showModelDropdown = !showModelDropdown"
+                      class="relative flex h-8 items-center gap-1 rounded-full px-2.5 text-xs font-semibold leading-none text-gray-600 transition-colors hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-700/70 sm:gap-1.5 sm:px-3 border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 disabled:opacity-50 disabled:cursor-not-allowed select-none max-w-[9rem] sm:max-w-[14rem]"
+                      :title="selectedModel ? `覆盖模型: ${selectedModel}` : '使用智能体默认模型'"
                     >
-                        <option value="">使用默认模型</option>
-                        <option v-for="model in (availableModels || [])" :key="model.id || model.model_id" :value="model.model_id">
-                            {{ model.name || model.model_id }}
-                        </option>
-                    </select>
-                    <svg class="pointer-events-none h-3.5 w-3.5 flex-shrink-0 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 9l6 6 6-6" />
-                    </svg>
-                </label>
+                        <span v-if="isSelectedModelMultimodal" class="pointer-events-none select-none text-[11px] text-purple-500">🖼️</span>
+                        <span class="pointer-events-none max-w-[7rem] truncate sm:max-w-[12rem] flex-1 text-left">{{ modelLabel }}</span>
+                        <svg class="pointer-events-none h-3.5 w-3.5 flex-shrink-0 text-gray-400 transform transition-transform duration-200" :class="{ 'rotate-180': showModelDropdown }" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M19 9l-7 7-7-7" />
+                        </svg>
+                    </button>
+
+                    <!-- Custom Dropdown Menu (Pop up upwards) -->
+                    <transition name="slide-up">
+                        <div
+                          v-show="showModelDropdown"
+                          class="absolute bottom-full mb-2 right-0 z-30 w-52 max-h-60 overflow-y-auto bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl shadow-xl py-1.5 px-1 custom-scrollbar origin-bottom-right"
+                        >
+                            <!-- Default Option -->
+                            <button
+                              @click="
+                                emit('update:selectedModel', '');
+                                showModelDropdown = false;
+                              "
+                              class="w-full text-left px-2.5 py-1.5 rounded-lg text-xs transition-all flex items-center justify-between"
+                              :class="
+                                !selectedModel
+                                  ? 'bg-primary/5 text-primary font-bold'
+                                  : 'text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700/50'
+                              "
+                            >
+                                <span class="truncate">使用默认模型</span>
+                                <span v-if="!selectedModel" class="text-[10px]">✓</span>
+                            </button>
+
+                            <!-- Available Models Options -->
+                            <button
+                              v-for="model in (availableModels || [])"
+                              :key="model.id || model.model_id"
+                              @click="
+                                emit('update:selectedModel', model.model_id);
+                                showModelDropdown = false;
+                              "
+                              class="w-full text-left px-2.5 py-1.5 rounded-lg text-xs transition-all flex items-center justify-between mt-0.5"
+                              :class="
+                                selectedModel === model.model_id
+                                  ? 'bg-primary/5 text-primary font-bold'
+                                  : 'text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700/50'
+                              "
+                            >
+                                <div class="flex items-center space-x-1.5 min-w-0 flex-1">
+                                    <span v-if="model.type === 'multimodal'" class="text-[10px] text-purple-500 flex-shrink-0" title="多模态">🖼️</span>
+                                    <span class="truncate">{{ model.name || model.model_id }}</span>
+                                </div>
+                                <span v-if="selectedModel === model.model_id" class="text-[10px] ml-1 flex-shrink-0">✓</span>
+                            </button>
+                        </div>
+                    </transition>
+                </div>
 
                 <button @click="isProcessing ? emit('stop') : emit('send')" :disabled="!isProcessing && !canSend" class="flex-shrink-0 w-8 h-8 flex items-center justify-center rounded-full text-white hover:opacity-90 disabled:opacity-50 transition-all shadow-sm z-10 relative" :style="{ backgroundColor: 'var(--primary-color, #1677ff)' }" :title="isProcessing ? '停止生成' : '发送'">
                     <svg v-if="isProcessing" class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20"><rect x="5" y="5" width="10" height="10" /></svg>

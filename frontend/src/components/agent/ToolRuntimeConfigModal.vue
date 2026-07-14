@@ -69,7 +69,7 @@ const handleSave = () => {
                 :key="m.id"
                 :value="m.model_id"
               >
-                {{ m.name }} ({{ m.model_id }})
+                {{ m.type === 'multimodal' ? '🖼️ ' : '' }}{{ m.name }} ({{ m.model_id }})
               </option>
             </select>
             <p class="text-[10px] text-gray-400 mt-1">

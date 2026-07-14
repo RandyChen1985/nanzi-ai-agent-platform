@@ -232,7 +232,7 @@ const tokenCount = computed(() => {
 const fetchModels = async () => {
   try {
     const res = await modelApi.list();
-    models.value = res.data.filter((m) => m.type === "llm" && m.is_active);
+    models.value = res.data.filter((m) => (m.type === "llm" || m.type === "multimodal") && m.is_active);
     if (models.value.length > 0) {
       selectedModel.value = models.value[0]?.model_id || "";
     }

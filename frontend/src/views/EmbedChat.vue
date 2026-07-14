@@ -4983,7 +4983,7 @@ const fetchModels = async () => {
     const res = await modelApi.list();
     if (res.data) {
       availableModels.value = res.data.filter(
-        (m) => m.type === "llm" && m.is_active
+        (m) => (m.type === "llm" || m.type === "multimodal") && m.is_active
       );
     }
   } catch (e) {
