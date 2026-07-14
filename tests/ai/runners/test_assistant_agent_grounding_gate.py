@@ -1,6 +1,6 @@
 import asyncio
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -157,6 +157,47 @@ async def test_matching_server_receipt_allows_grounded_facts():
 
 
 @pytest.mark.asyncio
+async def test_missing_evidence_preserves_answer_and_appends_risk_warning():
+    runner = _runner(request_source="internal_structured_data")
+    answer = "当前销售额排名第一的是王强，金额为 663.98 万元。"
+
+    async def fake_core(_history):
+        yield {"content": answer}
+
+    with patch.object(runner, "_execute_core", fake_core):
+        events = [event async for event in runner.execute([{"role": "user", "content": "分析排行"}])]
+
+    content = "".join(str(event.get("content") or "") for event in events)
+    assert answer in content
+    assert content.count("风险提示") == 1
+    assert not any(event.get("type") == "grounding_blocked" for event in events)
+
+
+@pytest.mark.asyncio
+async def test_internal_knowledge_compatibility_preserves_answer_with_source_notice():
+    runner = _runner(request_source="internal_structured_data")
+    answer = "询价审批需要采购和主管共同确认。"
+
+    async def fake_core(_history):
+        runner._evidence_ledger.record_success(
+            call_id="kb-1",
+            producer="search_knowledge_base",
+            evidence_types={EvidenceType.INTERNAL_KNOWLEDGE},
+            result={"content": answer},
+        )
+        yield {"content": answer}
+
+    with patch.object(runner, "_execute_core", fake_core):
+        events = [event async for event in runner.execute([{"role": "user", "content": "说明询价审批规则"}])]
+
+    content = "".join(str(event.get("content") or "") for event in events)
+    assert answer in content
+    assert content.count("信息来源提示") == 1
+    assert "知识库或已授权文件" in content
+    assert not any(event.get("type") == "grounding_blocked" for event in events)
+
+
+@pytest.mark.asyncio
 async def test_sub_agent_runtime_tool_receipt_allows_main_grounded_answer():
     from app.core.context import AgentContext, get_current_agent_context, set_agent_context
 
@@ -234,6 +275,20 @@ def test_current_turn_attachment_requires_file_evidence():
 
     assert requirement.required is True
     assert requirement.accepted_types == frozenset({EvidenceType.USER_FILE})
+
+
+def test_current_turn_attachment_adds_file_as_alternative_to_knowledge_evidence():
+    runner = _runner(request_source="internal_docs")
+    ctx = runner._ensure_agent_context()
+    ctx.authorized_attachment_paths = ["/tmp/current-policy.docx"]
+    ctx.current_turn_attachment_paths = ["/tmp/current-policy.docx"]
+
+    requirement = runner._resolve_turn_grounding_requirement("总结这份询价制度", ctx)
+
+    assert requirement.required is True
+    assert requirement.accepted_types == frozenset(
+        {EvidenceType.INTERNAL_KNOWLEDGE, EvidenceType.USER_FILE}
+    )
 
 
 def test_attachment_continuation_requires_file_evidence_without_repeating_file_word():
@@ -314,3 +369,44 @@ async def test_clearly_non_factual_turn_emits_content_before_generation_complete
         remaining = [event async for event in stream]
 
     assert remaining == [{"content": "第二段"}]
+
+
+@pytest.mark.asyncio
+async def test_resumed_stream_preserves_answer_and_appends_risk_warning():
+    runner = _runner(request_source="internal_structured_data")
+    answer = "当前销售额为 663.98 万元。"
+    agent = SimpleNamespace(reply_stream=lambda _event: object(), state={})
+    native_model = SimpleNamespace(model="test")
+    state = {"user_query": "查询当前销售额"}
+
+    async def fake_stream(**_kwargs):
+        yield {"content": answer}
+
+    with patch.object(
+        runner,
+        "_create_tool_loop_detector",
+        AsyncMock(return_value=None),
+    ), patch.object(
+        runner,
+        "_resolve_pending_runtime",
+        AsyncMock(return_value=(agent, [], native_model, state)),
+    ), patch.object(
+        runner,
+        "_stream_agentscope_native_events",
+        fake_stream,
+    ), patch(
+        "app.services.ai.runners.assistant_agent_runner.agent_state_store.save",
+        AsyncMock(return_value=None),
+    ):
+        events = [
+            event
+            async for event in runner._resume_agentscope_native_stream(
+                pending=SimpleNamespace(),
+                resume_event=object(),
+            )
+        ]
+
+    content = "".join(str(event.get("content") or "") for event in events)
+    assert answer in content
+    assert content.count("风险提示") == 1
+    assert not any(event.get("type") == "grounding_blocked" for event in events)

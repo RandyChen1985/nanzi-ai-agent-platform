@@ -41,7 +41,7 @@ def test_current_conversation_context_is_already_available_evidence():
     assert not requirement.required
 
 
-def test_unknown_request_passes_numeric_table_without_evidence():
+def test_unknown_numeric_table_without_evidence_returns_warning():
     ledger = EvidenceLedger(user_id="1", conversation_id="c1")
     answer = (
         "好的，我来调用数据智能体进行分析。\n"
@@ -58,10 +58,11 @@ def test_unknown_request_passes_numeric_table_without_evidence():
         ledger=ledger,
     )
 
-    assert decision.action == GroundingAction.PASS
+    assert decision.action == GroundingAction.PASS_WITH_WARNING
+    assert decision.risk_level.value == "high"
 
 
-def test_unknown_dynamic_fact_passes_without_evidence():
+def test_unknown_dynamic_fact_without_evidence_returns_warning():
     decision = evaluate_grounding(
         requirement=resolve_fact_requirement(
             _decision(RequestSource.UNKNOWN, RequestCapability.ANSWER)
@@ -70,10 +71,10 @@ def test_unknown_dynamic_fact_passes_without_evidence():
         ledger=EvidenceLedger(user_id="1", conversation_id="c1"),
     )
 
-    assert decision.action == GroundingAction.PASS
+    assert decision.action == GroundingAction.PASS_WITH_WARNING
 
 
-def test_unknown_dynamic_fact_passes_with_any_valid_tool_receipt():
+def test_unknown_dynamic_fact_with_unrelated_receipt_returns_warning():
     ledger = EvidenceLedger(user_id="1", conversation_id="c1")
     ledger.record_success(
         call_id="call-time",
@@ -90,10 +91,10 @@ def test_unknown_dynamic_fact_passes_with_any_valid_tool_receipt():
         ledger=ledger,
     )
 
-    assert decision.action == GroundingAction.PASS
+    assert decision.action == GroundingAction.PASS_WITH_WARNING
 
 
-def test_unknown_structured_fact_passes_with_any_valid_tool_receipt():
+def test_unknown_structured_fact_with_ambiguous_receipt_returns_warning():
     ledger = EvidenceLedger(user_id="1", conversation_id="c1")
     ledger.record_success(
         call_id="call-travel",
@@ -115,7 +116,7 @@ def test_unknown_structured_fact_passes_with_any_valid_tool_receipt():
         ledger=ledger,
     )
 
-    assert decision.action == GroundingAction.PASS
+    assert decision.action == GroundingAction.PASS_WITH_WARNING
 
 
 def test_unknown_runtime_fact_passes_when_matching_runtime_receipt_exists():
@@ -142,7 +143,7 @@ def test_unknown_runtime_fact_passes_when_matching_runtime_receipt_exists():
     assert decision.action == GroundingAction.PASS
 
 
-def test_unknown_internal_table_passes_with_unrelated_runtime_receipt():
+def test_unknown_internal_table_warns_with_unrelated_runtime_receipt():
     ledger = EvidenceLedger(user_id="1", conversation_id="c1")
     ledger.record_success(
         call_id="call-bash",
@@ -164,10 +165,10 @@ def test_unknown_internal_table_passes_with_unrelated_runtime_receipt():
         ledger=ledger,
     )
 
-    assert decision.action == GroundingAction.PASS
+    assert decision.action == GroundingAction.PASS_WITH_WARNING
 
 
-def test_unknown_mixed_fact_passes_with_any_valid_tool_receipt():
+def test_unknown_mixed_fact_warns_when_one_source_type_is_missing():
     ledger = EvidenceLedger(user_id="1", conversation_id="c1")
     ledger.record_success(
         call_id="call-bash",
@@ -185,7 +186,7 @@ def test_unknown_mixed_fact_passes_with_any_valid_tool_receipt():
         ledger=ledger,
     )
 
-    assert decision.action == GroundingAction.PASS
+    assert decision.action == GroundingAction.PASS_WITH_WARNING
 
 
 @pytest.mark.parametrize(
@@ -196,7 +197,7 @@ def test_unknown_mixed_fact_passes_with_any_valid_tool_receipt():
         "该制度要求三级审批。",
     ],
 )
-def test_unknown_entity_fact_without_evidence_passes(answer):
+def test_unknown_entity_fact_without_evidence_returns_warning(answer):
     decision = evaluate_grounding(
         requirement=resolve_fact_requirement(
             _decision(RequestSource.UNKNOWN, RequestCapability.ANSWER)
@@ -205,7 +206,7 @@ def test_unknown_entity_fact_without_evidence_passes(answer):
         ledger=EvidenceLedger(user_id="1", conversation_id="c1"),
     )
 
-    assert decision.action == GroundingAction.PASS
+    assert decision.action == GroundingAction.PASS_WITH_WARNING
 
 
 def test_unknown_creative_and_math_outputs_are_not_misclassified_as_external_facts():
@@ -311,7 +312,63 @@ def test_matching_receipt_allows_evidence_required_answer():
     assert decision.action == GroundingAction.PASS
 
 
-def test_model_cannot_self_authorize_method_only_answer_when_evidence_is_unavailable():
+def test_internal_knowledge_receipt_soft_passes_internal_data_requirement():
+    ledger = EvidenceLedger(user_id="1", conversation_id="c1")
+    ledger.record_success(
+        call_id="kb-1",
+        producer="search_knowledge_base",
+        evidence_types={EvidenceType.INTERNAL_KNOWLEDGE},
+        result={"content": "询价审批需要采购和主管共同确认。"},
+    )
+    requirement = resolve_fact_requirement(
+        _decision(RequestSource.INTERNAL_STRUCTURED_DATA, RequestCapability.DATA_QUERY)
+    )
+
+    decision = evaluate_grounding(
+        requirement=requirement,
+        candidate_text="询价审批需要采购和主管共同确认。",
+        ledger=ledger,
+    )
+
+    assert decision.action == GroundingAction.PASS_WITH_WARNING
+    assert decision.risk_level.value == "low"
+    assert decision.available_evidence_types == frozenset(
+        {EvidenceType.INTERNAL_KNOWLEDGE}
+    )
+
+
+def test_missing_internal_data_returns_high_risk_warning_instead_of_block():
+    requirement = resolve_fact_requirement(
+        _decision(RequestSource.INTERNAL_STRUCTURED_DATA, RequestCapability.DATA_QUERY)
+    )
+
+    decision = evaluate_grounding(
+        requirement=requirement,
+        candidate_text="当前销售额排名第一的是王强，金额为 663.98 万元。",
+        ledger=EvidenceLedger(user_id="1", conversation_id="c1"),
+    )
+
+    assert decision.action == GroundingAction.PASS_WITH_WARNING
+    assert decision.risk_level.value == "high"
+    assert decision.required_evidence_types == frozenset({EvidenceType.INTERNAL_DATA})
+
+
+def test_required_source_without_factual_claim_passes_without_warning():
+    requirement = resolve_fact_requirement(
+        _decision(RequestSource.RUNTIME_DIAGNOSTIC, RequestCapability.RUNTIME_TOOL)
+    )
+
+    decision = evaluate_grounding(
+        requirement=requirement,
+        candidate_text="我暂时无法读取运行状态，可以告诉你排查步骤。",
+        ledger=EvidenceLedger(user_id="1", conversation_id="c1"),
+    )
+
+    assert decision.action == GroundingAction.PASS
+    assert decision.risk_level.value == "none"
+
+
+def test_explicitly_unverified_method_answer_passes_without_warning():
     requirement = resolve_fact_requirement(
         _decision(RequestSource.RUNTIME_DIAGNOSTIC, RequestCapability.RUNTIME_TOOL)
     )
@@ -322,7 +379,7 @@ def test_model_cannot_self_authorize_method_only_answer_when_evidence_is_unavail
         ledger=EvidenceLedger(user_id="1", conversation_id="c1"),
     )
 
-    assert decision.action == GroundingAction.BLOCK_UNGROUNDED_FACTS
+    assert decision.action == GroundingAction.PASS
 
 
 def test_agent_capabilities_map_to_evidence_types_without_agent_names():
@@ -334,7 +391,7 @@ def test_agent_capabilities_map_to_evidence_types_without_agent_names():
     )
 
 
-def test_block_decision_exposes_missing_evidence_types_for_ui_actions():
+def test_warning_decision_exposes_missing_evidence_types_for_inline_notice():
     ledger = EvidenceLedger(user_id="u1", conversation_id="c1")
     requirement = FactRequirement(
         required=True,
@@ -347,5 +404,6 @@ def test_block_decision_exposes_missing_evidence_types_for_ui_actions():
         ledger=ledger,
     )
 
-    assert decision.action == GroundingAction.BLOCK_UNGROUNDED_FACTS
+    assert decision.action == GroundingAction.PASS_WITH_WARNING
+    assert decision.risk_level.value == "high"
     assert decision.required_evidence_types == frozenset({EvidenceType.RUNTIME_STATE})

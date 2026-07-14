@@ -137,3 +137,23 @@ def test_successful_knowledge_content_with_failure_topic_is_not_treated_as_tool_
     )
 
     assert raw_receipt is not None
+
+
+def test_ledger_exposes_all_recorded_evidence_types():
+    ledger = EvidenceLedger(user_id="1", conversation_id="c1")
+    ledger.record_success(
+        call_id="knowledge-1",
+        producer="search_knowledge_base",
+        evidence_types={EvidenceType.INTERNAL_KNOWLEDGE},
+        result={"items": [{"content": "审批制度"}]},
+    )
+    ledger.record_success(
+        call_id="file-1",
+        producer="read_file",
+        evidence_types={EvidenceType.USER_FILE},
+        result="报告正文",
+    )
+
+    assert ledger.available_evidence_types == frozenset(
+        {EvidenceType.INTERNAL_KNOWLEDGE, EvidenceType.USER_FILE}
+    )

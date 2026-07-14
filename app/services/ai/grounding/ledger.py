@@ -118,6 +118,14 @@ class EvidenceLedger:
     def receipts(self) -> tuple[EvidenceReceipt, ...]:
         return tuple(self._receipts)
 
+    @property
+    def available_evidence_types(self) -> frozenset[EvidenceType]:
+        return frozenset(
+            evidence_type
+            for receipt in self._receipts
+            for evidence_type in receipt.evidence_types
+        )
+
     def record_success(
         self,
         *,

@@ -102,8 +102,10 @@ async def test_expert_mode_still_uses_platform_grounding_gate(chat_config):
             events.append(chunk)
 
     assert not any(e.get("title") == "引导切换数据智能体" for e in events)
-    assert not any(hallucinated in str(e.get("content", "")) for e in events)
-    assert any(e.get("category") == "grounding" for e in events)
+    content = "".join(str(e.get("content") or "") for e in events)
+    assert hallucinated in content
+    assert content.count("风险提示") == 1
+    assert not any(e.get("type") == "grounding_blocked" for e in events)
 
 
 @pytest.mark.asyncio
@@ -129,8 +131,8 @@ async def test_web_search_table_without_internal_signals_not_intercepted(chat_co
 
 
 @pytest.mark.asyncio
-async def test_auto_main_intercepts_internal_asset_table(chat_config):
-    """自动路由主助手 + 强查数诉求 + 编造资产表，应引导切换数据智能体。"""
+async def test_auto_main_preserves_internal_asset_table_with_risk_warning(chat_config):
+    """自动路由主助手的疑似编造资产表应保留正文并追加高风险提示。"""
     hallucinated = (
         "为您查询到以下机器配置信息：\n"
         "| 主机名 | IP 地址 | 配置 |\n"
@@ -156,4 +158,8 @@ async def test_auto_main_intercepts_internal_asset_table(chat_config):
         async for chunk in runner.execute([{"role": "user", "content": "查一下资产列表和设备清单"}]):
             events.append(chunk)
 
-    assert any(e.get("title") == "引导切换数据智能体" for e in events)
+    content = "".join(str(e.get("content") or "") for e in events)
+    assert hallucinated in content
+    assert content.count("风险提示") == 1
+    assert not any(e.get("title") == "引导切换数据智能体" for e in events)
+    assert not any(e.get("type") == "grounding_blocked" for e in events)

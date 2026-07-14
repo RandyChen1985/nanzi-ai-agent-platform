@@ -11,8 +11,16 @@ from app.services.ai.request_decision import RequestDecision, RequestSource
 
 class GroundingAction(str, Enum):
     PASS = "pass"
+    PASS_WITH_WARNING = "pass_with_warning"
     PASS_WITHOUT_FACTS = "pass_without_facts"
     BLOCK_UNGROUNDED_FACTS = "block_ungrounded_facts"
+
+
+class GroundingRiskLevel(str, Enum):
+    NONE = "none"
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
 
 
 @dataclass(frozen=True)
@@ -27,6 +35,8 @@ class GroundingDecision:
     action: GroundingAction
     reason: str
     required_evidence_types: frozenset[EvidenceType] = frozenset()
+    available_evidence_types: frozenset[EvidenceType] = frozenset()
+    risk_level: GroundingRiskLevel = GroundingRiskLevel.NONE
 
 
 _SOURCE_EVIDENCE_TYPES = {
@@ -97,6 +107,29 @@ _MEMORY_FACT_RE = re.compile(
     re.IGNORECASE,
 )
 
+_REFUSAL_MARKERS = (
+    "无法",
+    "不能确认",
+    "暂时不能",
+    "暂时无法",
+    "没有读取",
+    "未读取",
+    "没有查询",
+    "未查询",
+    "没有检索",
+    "未检索",
+    "未找到",
+    "暂无结果",
+)
+
+_INTERNAL_TRUSTED_TYPES = frozenset(
+    {
+        EvidenceType.INTERNAL_DATA,
+        EvidenceType.INTERNAL_KNOWLEDGE,
+        EvidenceType.USER_FILE,
+    }
+)
+
 
 def resolve_fact_requirement(decision: RequestDecision | None) -> FactRequirement:
     if decision is None:
@@ -105,7 +138,7 @@ def resolve_fact_requirement(decision: RequestDecision | None) -> FactRequiremen
     return FactRequirement(
         required=bool(accepted_types),
         accepted_types=accepted_types,
-        scrutinize_unknown_output=False,
+        scrutinize_unknown_output=decision.source == RequestSource.UNKNOWN,
     )
 
 
@@ -122,6 +155,10 @@ def evidence_types_for_capabilities(capabilities: object) -> frozenset[EvidenceT
 
 def _is_explicitly_hypothetical(text: str) -> bool:
     return any(marker in text for marker in _HYPOTHETICAL_MARKERS)
+
+
+def _is_explicitly_unverified(text: str) -> bool:
+    return any(marker in text for marker in _REFUSAL_MARKERS)
 
 
 def _contains_structural_external_fact(text: str) -> bool:
@@ -186,14 +223,48 @@ def evaluate_grounding(
     ledger: EvidenceLedger,
 ) -> GroundingDecision:
     text = str(candidate_text or "").strip()
+    available_types = ledger.available_evidence_types
     if requirement.accepted_types and ledger.has_valid_evidence(requirement.accepted_types):
-        return GroundingDecision(GroundingAction.PASS, "matching evidence receipt exists")
+        return GroundingDecision(
+            GroundingAction.PASS,
+            "matching evidence receipt exists",
+            requirement.accepted_types,
+            available_types,
+        )
 
     if requirement.required:
+        if (
+            _is_explicitly_unverified(text)
+            and not _FACT_VALUE_RE.search(text)
+            and not _MARKDOWN_TABLE_SEPARATOR_RE.search(text)
+        ):
+            return GroundingDecision(
+                GroundingAction.PASS,
+                "response explicitly avoids unverified factual claims",
+                requirement.accepted_types,
+                available_types,
+            )
+        internal_requirement = bool(requirement.accepted_types & _INTERNAL_TRUSTED_TYPES)
+        internal_evidence = bool(available_types & _INTERNAL_TRUSTED_TYPES)
+        if internal_requirement and internal_evidence:
+            high_risk = (
+                EvidenceType.INTERNAL_DATA in requirement.accepted_types
+                and _looks_like_internal_business_fact(text)
+                and _contains_structural_external_fact(text)
+            )
+            return GroundingDecision(
+                GroundingAction.PASS_WITH_WARNING,
+                "compatible internal evidence exists but the source type is not an exact match",
+                requirement.accepted_types,
+                available_types,
+                GroundingRiskLevel.HIGH if high_risk else GroundingRiskLevel.LOW,
+            )
         return GroundingDecision(
-            GroundingAction.BLOCK_UNGROUNDED_FACTS,
+            GroundingAction.PASS_WITH_WARNING,
             "required evidence receipt is missing",
             requirement.accepted_types,
+            available_types,
+            GroundingRiskLevel.HIGH,
         )
 
     if requirement.scrutinize_unknown_output:
@@ -206,6 +277,7 @@ def evaluate_grounding(
                 return GroundingDecision(
                     GroundingAction.PASS,
                     "unknown request backed by matching tool evidence",
+                    available_evidence_types=available_types,
                 )
             missing_groups = tuple(
                 alternatives
@@ -218,10 +290,20 @@ def evaluate_grounding(
                 for evidence_type in alternatives
             )
             return GroundingDecision(
-                GroundingAction.BLOCK_UNGROUNDED_FACTS,
+                GroundingAction.PASS_WITH_WARNING,
                 "unknown request emitted a dynamic or structured fact without matched evidence",
                 missing_types,
+                available_types,
+                GroundingRiskLevel.HIGH,
             )
-        return GroundingDecision(GroundingAction.PASS, "unknown output has no external fact signal")
+        return GroundingDecision(
+            GroundingAction.PASS,
+            "unknown output has no external fact signal",
+            available_evidence_types=available_types,
+        )
 
-    return GroundingDecision(GroundingAction.PASS, "no external evidence requirement")
+    return GroundingDecision(
+        GroundingAction.PASS,
+        "no external evidence requirement",
+        available_evidence_types=available_types,
+    )

@@ -24,6 +24,7 @@ from app.services.ai.grounding.models import EvidenceType
 from app.services.ai.grounding.policy import (
     FactRequirement,
     GroundingAction,
+    GroundingRiskLevel,
     evaluate_grounding,
     resolve_fact_requirement,
 )
@@ -85,9 +86,6 @@ from app.services.ai.runtime.agentscope.tools import build_toolkit
 from app.services.ai.runtime.tool_loop_detector import ToolLoopDetector
 
 logger = logging.getLogger(__name__)
-
-
-DATA_QUERY_SWITCH_CAPABILITY = "data_query"
 
 
 class _ForcedFirstToolChoiceModel:
@@ -280,35 +278,6 @@ class AssistantAgentRunner(BaseExecutor):
                     targets[capability_key] = agent_name
         return targets
 
-    async def _resolve_switch_agent_for_capability(self, capability: str) -> Optional[Dict[str, str]]:
-        """Find a user-allowed agent that can satisfy the missing capability."""
-        if not self.user_info:
-            return None
-        try:
-            async with AsyncSessionLocal() as session:
-                agents = await AgentManagerService.list_allowed_agents(session, user=self.user_info)
-        except Exception as exc:
-            logger.warning(
-                "[AssistantAgentRunner] Failed to resolve switch target for capability=%s: %s",
-                capability,
-                exc,
-            )
-            return None
-
-        for agent in agents or []:
-            if not self._agent_has_capability(agent, capability):
-                continue
-            agent_id = self._agent_field(agent, "id")
-            if not agent_id:
-                continue
-            display_name = (
-                self._agent_field(agent, "display_name")
-                or self._agent_field(agent, "name")
-                or str(agent_id)
-            )
-            return {"id": str(agent_id), "display_name": str(display_name)}
-        return None
-
     async def _resolve_available_sub_agent_delegation_info(self) -> tuple[Optional[Set[str]], Dict[str, str]]:
         if not is_main_general_agent(self.config):
             return None, {}
@@ -343,22 +312,6 @@ class AssistantAgentRunner(BaseExecutor):
     async def _resolve_available_sub_agent_names(self) -> Optional[Set[str]]:
         names, _ = await self._resolve_available_sub_agent_delegation_info()
         return names
-
-    async def _build_data_guard_refusal_content(self) -> str:
-        switch_agent = await self._resolve_switch_agent_for_capability(DATA_QUERY_SWITCH_CAPABILITY)
-        base = (
-            "⚠️ 抱歉，检测到您正在查询系统内部数据或资产列表。通用助手未连接数据库，"
-            "为保证数据真实性已拦截该回答。"
-        )
-        if not switch_agent:
-            return f"{base}请切换到具备数据查询能力的智能体后继续查询。"
-
-        display_name = switch_agent["display_name"]
-        agent_id = switch_agent["id"]
-        return (
-            f"{base}请切换到 **{display_name}** 后继续查询。\n\n"
-            f"- [⚡ 切换到 {display_name}](quick:/switch_agent_expert?agent_id={agent_id})"
-        )
 
     def _resolve_grounding_request_decision(self, user_query: str) -> RequestDecision:
         source_value = str(self.route_hints.get("request_source") or "").strip()
@@ -396,12 +349,37 @@ class AssistantAgentRunner(BaseExecutor):
         )
 
     @staticmethod
-    def _grounding_block_content() -> str:
-        return (
-            "本次未取得可验证的外部事实来源，因此不能提供具体数据、状态或结论。\n\n"
-            "我可以继续调用具备相应能力的工具或智能体进行核实；如果暂时无法取证，"
-            "也可以先提供分析方法和查询方案。"
-        )
+    def _grounding_warning_chunk(
+        *,
+        risk_level: GroundingRiskLevel,
+        reason: str,
+        required_types: frozenset[EvidenceType] = frozenset(),
+        available_types: frozenset[EvidenceType] = frozenset(),
+    ) -> Dict[str, Any]:
+        if risk_level == GroundingRiskLevel.LOW:
+            notice = (
+                "> **信息来源提示**：本回答基于知识库或已授权文件资料，"
+                "不代表实时数据库状态。"
+            )
+        elif risk_level == GroundingRiskLevel.MEDIUM:
+            notice = (
+                "> **信息来源提示**：本回答参考了已取得的资料，但部分结论未获得"
+                "完全匹配的数据来源，请结合原始资料核对。"
+            )
+        else:
+            notice = (
+                "> **风险提示**：本次未取得能够完整验证这些具体数据或当前状态的来源，"
+                "以下内容可能存在偏差，请勿直接用于生产操作或正式决策。"
+            )
+        return {
+            "content": f"\n\n{notice}",
+            "grounding_risk": {
+                "level": risk_level.value,
+                "reason": reason,
+                "required_evidence_types": sorted(item.value for item in required_types),
+                "available_evidence_types": sorted(item.value for item in available_types),
+            },
+        }
 
     @staticmethod
     def _parse_grounding_retry_evidence_types(action: Any) -> frozenset[EvidenceType]:
@@ -433,64 +411,6 @@ class AssistantAgentRunner(BaseExecutor):
             ),
             None,
         )
-
-    def _grounding_block_event(
-        self,
-        *,
-        user_query: str,
-        decision: Any,
-        requirement: FactRequirement,
-    ) -> Dict[str, Any]:
-        # 优先取 decision 中明确的 required_evidence_types；
-        # 若为空集（BLOCK 时理论上不应为空），再 fallback 到 requirement.accepted_types。
-        # 注意：空 frozenset 是 falsy，不能用 or 做 fallback，需显式判断。
-        required_types = (
-            decision.required_evidence_types
-            if decision.required_evidence_types
-            else requirement.accepted_types
-        )
-        if not required_types:
-            logger.warning(
-                "[_grounding_block_event] required_evidence_types is empty for a BLOCK decision. "
-                "Frontend retry button will not know which tool to call. "
-                "Decision reason: %s",
-                decision.reason,
-            )
-        required_values = sorted(evidence_type.value for evidence_type in required_types)
-        return {
-            "type": "grounding_blocked",
-            "title": "暂时无法验证事实",
-            "message": "本次未取得可验证的数据来源，已停止输出未经核实的结论。",
-            "details": decision.reason,
-            "required_evidence_types": required_values,
-            "retry_query": user_query,
-            "actions": [
-                {
-                    "id": "retry_grounding",
-                    "label": "重新核实",
-                    "style": "primary",
-                    "kind": "grounding_retry",
-                    "payload": {
-                        "type": "retry",
-                        "required_evidence_types": required_values,
-                    },
-                },
-                {
-                    "id": "show_method",
-                    "label": "查看分析方法",
-                    "style": "secondary",
-                    "kind": "grounding_method",
-                    "payload": {
-                        "type": "method",
-                        "message": (
-                            "请针对刚才的问题只提供可执行的查询或分析方法，"
-                            "不要给出未经工具核实的具体事实、数据或结论。"
-                        ),
-                    },
-                },
-            ],
-            "fallback_content": self._grounding_block_content(),
-        }
 
     @staticmethod
     def _should_buffer_grounding_output(
@@ -544,7 +464,11 @@ class AssistantAgentRunner(BaseExecutor):
         if has_relevant_attachment:
             return FactRequirement(
                 required=True,
-                accepted_types=frozenset({EvidenceType.USER_FILE}),
+                accepted_types=(
+                    requirement.accepted_types
+                    | frozenset({EvidenceType.USER_FILE})
+                ),
+                scrutinize_unknown_output=requirement.scrutinize_unknown_output,
             )
         return requirement
 
@@ -715,39 +639,55 @@ class AssistantAgentRunner(BaseExecutor):
 
         if should_intercept:
             logger.warning(
-                f"[AssistantAgentRunner] Hallucination detected! "
+                f"[AssistantAgentRunner] Potential hallucination retained with risk warning. "
                 f"run_data_guard={run_data_guard}, has_attempted_tool={has_attempted_tool}. "
                 f"looks_hallucinated={self._is_hallucinated_data_reply(full_text)}. "
                 f"Generated: {full_text[:200]}..."
             )
+            for chunk in chunks_buffer:
+                yield chunk
             yield {
                 "type": "log",
                 "id": f"data_general_guard_{uuid.uuid4().hex[:8]}",
-                "title": "引导切换数据智能体",
-                "details": "检测到您正在查询系统内部数据，当前助手未连接数据库，已生成可执行的智能体切换建议。",
+                "title": "事实来源风险提示已追加",
+                "details": "检测到回答包含尚未完全核实的内部数据表述，已保留正文并追加风险提示。",
                 "status": "warning",
+                "category": "grounding",
             }
-            refusal_content = await self._build_data_guard_refusal_content()
-            yield {"content": refusal_content}
-        elif grounding_decision.action == GroundingAction.BLOCK_UNGROUNDED_FACTS:
+            yield self._grounding_warning_chunk(
+                risk_level=GroundingRiskLevel.HIGH,
+                reason="legacy data hallucination signal matched without a trusted tool attempt",
+                required_types=frozenset({EvidenceType.INTERNAL_DATA}),
+                available_types=self._evidence_ledger.available_evidence_types,
+            )
+        elif grounding_decision.action in {
+            GroundingAction.PASS_WITH_WARNING,
+            GroundingAction.BLOCK_UNGROUNDED_FACTS,
+        }:
             logger.warning(
-                "[AssistantAgentRunner] Ungrounded factual response blocked: %s",
+                "[AssistantAgentRunner] Ungrounded factual response retained with warning: %s",
                 grounding_decision.reason,
             )
+            for chunk in chunks_buffer:
+                yield chunk
             yield {
                 "type": "log",
                 "id": f"grounding_{uuid.uuid4().hex[:8]}",
-                "title": "事实取证门禁已拦截无依据回答",
+                "title": "事实来源风险提示已追加",
                 "details": grounding_decision.reason,
                 "status": "warning",
                 "category": "grounding",
             }
-            yield self._grounding_block_event(
-                user_query=user_query,
-                decision=grounding_decision,
-                requirement=evaluated_requirement,
+            yield self._grounding_warning_chunk(
+                risk_level=(
+                    grounding_decision.risk_level
+                    if grounding_decision.risk_level != GroundingRiskLevel.NONE
+                    else GroundingRiskLevel.HIGH
+                ),
+                reason=grounding_decision.reason,
+                required_types=grounding_decision.required_evidence_types,
+                available_types=grounding_decision.available_evidence_types,
             )
-            yield {"content": self._grounding_block_content()}
         else:
             for chunk in chunks_buffer:
                 yield chunk
@@ -1703,21 +1643,30 @@ class AssistantAgentRunner(BaseExecutor):
                         candidate_text=candidate_text,
                         ledger=ledger,
                     )
-                    if decision.action == GroundingAction.BLOCK_UNGROUNDED_FACTS:
+                    if decision.action in {
+                        GroundingAction.PASS_WITH_WARNING,
+                        GroundingAction.BLOCK_UNGROUNDED_FACTS,
+                    }:
+                        for buffered_chunk in buffered_content:
+                            yield buffered_chunk
                         yield {
                             "type": "log",
                             "id": f"grounding_resume_{uuid.uuid4().hex[:8]}",
-                            "title": "事实取证门禁已拦截无依据回答",
+                            "title": "事实来源风险提示已追加",
                             "details": decision.reason,
                             "status": "warning",
                             "category": "grounding",
                         }
-                        yield self._grounding_block_event(
-                            user_query=user_query,
-                            decision=decision,
-                            requirement=evaluated_requirement,
+                        yield self._grounding_warning_chunk(
+                            risk_level=(
+                                decision.risk_level
+                                if decision.risk_level != GroundingRiskLevel.NONE
+                                else GroundingRiskLevel.HIGH
+                            ),
+                            reason=decision.reason,
+                            required_types=decision.required_evidence_types,
+                            available_types=decision.available_evidence_types,
                         )
-                        yield {"content": self._grounding_block_content()}
                     else:
                         for buffered_chunk in buffered_content:
                             yield buffered_chunk
