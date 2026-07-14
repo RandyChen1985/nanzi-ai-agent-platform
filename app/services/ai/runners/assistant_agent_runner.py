@@ -1576,7 +1576,28 @@ class AssistantAgentRunner(BaseExecutor):
         from app.core.context import set_agent_context
 
         ctx = self._ensure_agent_context()
-        if ctx:
+        ledger = getattr(self, "_evidence_ledger", None)
+        snapshot_receipts = getattr(
+            getattr(pending, "snapshot", None),
+            "evidence_receipts",
+            [],
+        )
+        if ledger is None and snapshot_receipts:
+            ledger = EvidenceLedger.from_snapshot(
+                snapshot_receipts,
+                user_id=self._runtime_user_id(),
+                conversation_id=self.conversation_id,
+            )
+        if ledger is None and ctx is not None:
+            ledger = getattr(ctx, "grounding_evidence_ledger", None)
+        if ledger is None:
+            ledger = EvidenceLedger(
+                user_id=self._runtime_user_id(),
+                conversation_id=self.conversation_id,
+            )
+        self._evidence_ledger = ledger
+        if ctx is not None:
+            ctx.grounding_evidence_ledger = ledger
             set_agent_context(ctx)
         agent_name = self._runtime_agent_name()
         loop_detector = await self._create_tool_loop_detector()

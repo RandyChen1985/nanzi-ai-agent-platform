@@ -92,6 +92,7 @@ class PendingAgentScopeConfirmationRegistry:
     ) -> PendingAgentScopeConfirmation:
         await self.prune()
         request_id = pending_agentscope_store.new_request_id()
+        evidence_ledger = getattr(runner, "_evidence_ledger", None)
         snapshot = PendingAgentScopeSnapshot(
             request_id=request_id,
             kind=kind,
@@ -104,6 +105,11 @@ class PendingAgentScopeConfirmationRegistry:
             agent_state=agent.state.model_dump(mode="json"),
             stream_state=state or {},
             runner_context=runner_context or {},
+            evidence_receipts=(
+                evidence_ledger.to_snapshot()
+                if evidence_ledger is not None
+                else []
+            ),
         )
         await pending_agentscope_store.register(snapshot)
         request = PendingAgentScopeConfirmation(

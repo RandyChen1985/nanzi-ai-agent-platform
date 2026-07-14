@@ -9,6 +9,7 @@ from app.schemas.agent import ChatConfig
 from app.services.ai.runtime.agentscope.compat import AIMessage
 from app.services.ai.data_query_turn_classifier import DataQueryTurnClassification, DataQueryTurnType
 from app.services.ai.intent_service import IntentType
+from app.services.ai.grounding.models import EvidenceType
 
 
 pytestmark = pytest.mark.no_infrastructure
@@ -163,6 +164,7 @@ async def test_data_agent_runner_resolves_chatbi_runtime_tools(data_config):
     assert "get_current_time" in tool_names
     time_tool = next(tool for tool in tools if tool.name == "get_current_time")
     assert time_tool.permission_scope == "read"
+    assert time_tool.evidence_types == frozenset({EvidenceType.RUNTIME_STATE})
 
 
 @pytest.mark.asyncio

@@ -121,10 +121,10 @@ _MCP_READ_ACTION_RE = re.compile(
     re.IGNORECASE,
 )
 _MCP_MUTATION_ACTION_RE = re.compile(
-    r"^\s*(?:create|add|update|edit|patch|delete|remove|write|set|send|book|"
+    r"(?:^|[_./-])(?:create|add|update|edit|patch|delete|remove|write|set|send|book|"
     r"purchase|order|cancel|start|stop|restart|run|execute|invoke|upload|move|"
     r"copy|rename)(?:\b|[_./-])|"
-    r"^\s*(?:创建|新增|添加|更新|修改|编辑|删除|移除|写入|设置|发送|预订|"
+    r"(?:创建|新增|添加|更新|修改|编辑|删除|移除|写入|设置|发送|预订|"
     r"购买|下单|取消|启动|停止|重启|执行|调用|上传|移动|复制|重命名)",
     re.IGNORECASE,
 )
@@ -381,10 +381,15 @@ class ToolRegistry:
 
         # 从静态表中查询 policy（name 优先，其次 spec.name）
         policy = resolve_tool_evidence_policy(name, spec_name)
+        has_configured_policy = any(
+            candidate in TOOL_EVIDENCE_POLICY
+            for candidate in (name, spec_name)
+            if candidate
+        )
 
         if existing:
             # evidence_types 已由工具自身声明；若 policy 需升级则单独注入
-            if policy != existing_policy:
+            if has_configured_policy and policy != existing_policy:
                 return replace(spec, evidence_policy=policy)
             return spec
 
@@ -392,12 +397,14 @@ class ToolRegistry:
         if (
             not evidence_types
             and getattr(spec, "source_type", None) == "mcp"
+            and not bool(getattr(spec, "evidence_inference_disabled", False))
             and _is_read_only_mcp_tool(
                 name=spec_name or name,
                 description=str(getattr(spec, "description", "") or ""),
             )
         ):
             evidence_types = frozenset({EvidenceType.EXTERNAL_TOOL})
+            policy = "allow_empty_success"
         if not evidence_types:
             return spec
         return replace(

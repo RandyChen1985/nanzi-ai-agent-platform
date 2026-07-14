@@ -136,16 +136,19 @@ class McpClientService:
             return []
 
     @classmethod
-    async def call_remote_tool(cls, server_id: str, tool_name: str, arguments: Dict[str, Any]) -> str:
+    async def call_remote_tool(cls, server_id: str, tool_name: str, arguments: Dict[str, Any]) -> Any:
         session_mgr = await cls.get_session(server_id)
         
         if not session_mgr.is_direct_http:
             try:
                 response = await session_mgr.session.call_tool(tool_name, arguments)
-                return "".join([getattr(item, 'text', '') for item in response.content])
+                text = "".join([getattr(item, 'text', '') for item in response.content])
+                if bool(getattr(response, "isError", False) or getattr(response, "is_error", False)):
+                    raise RuntimeError(text or f"MCP tool '{tool_name}' returned an error")
+                return text if text else {"success": True, "content": ""}
             except Exception as e:
                 await session_mgr.close()
-                return f"[MCP Error] {e}"
+                raise RuntimeError(f"MCP tool '{tool_name}' failed: {e}") from e
         else:
             if not session_mgr.mcp_session_id:
                 await cls._direct_http_rpc(session_mgr, "initialize", {
@@ -160,8 +163,47 @@ class McpClientService:
                 "arguments": arguments
             })
             if isinstance(res, dict) and "content" in res:
-                return "".join([c.get("text", "") for c in res["content"] if c.get("type") == "text"])
+                text = "".join([c.get("text", "") for c in res["content"] if c.get("type") == "text"])
+                if bool(res.get("isError") or res.get("is_error")):
+                    raise RuntimeError(text or f"MCP tool '{tool_name}' returned an error")
+                return text if text else {"success": True, "content": ""}
+            if res is None:
+                return {"success": True, "content": ""}
             return str(res)
+
+    @staticmethod
+    def _parse_sse_payload(text: str) -> Optional[Dict]:
+        """从 Streamable HTTP 的 SSE 响应体中解析出 JSON-RPC payload。
+
+        响应体形如：
+            event: message
+            data: {"jsonrpc":"2.0","id":3,"result":{...}}
+
+        多行 data: 按 SSE 规范拼接；返回最后一条解析成功的 JSON-RPC 对象。
+        """
+        if not text:
+            return None
+        data_buffer: list = []
+        events: list = []
+        for line in text.splitlines():
+            if line.startswith("data:"):
+                data_buffer.append(line[len("data:"):].lstrip())
+            elif line == "" and data_buffer:
+                events.append("".join(data_buffer))
+                data_buffer = []
+        if data_buffer:
+            events.append("".join(data_buffer))
+        for payload in reversed(events):
+            payload = payload.strip()
+            if not payload:
+                continue
+            try:
+                obj = json.loads(payload)
+                if isinstance(obj, dict) and ("result" in obj or "error" in obj or "method" in obj):
+                    return obj
+            except json.JSONDecodeError:
+                continue
+        return None
 
     @classmethod
     async def _direct_http_rpc(cls, session_mgr: McpSseSession, method: str, params: Optional[Dict], is_notification: bool = False, retry_count: int = 0) -> Any:
@@ -196,7 +238,10 @@ class McpClientService:
                 s_id = resp.headers.get("mcp-session-id")
                 if not s_id:
                     try:
-                        res_data = resp.json().get("result", {})
+                        try:
+                            res_data = resp.json().get("result", {})
+                        except json.JSONDecodeError:
+                            res_data = (cls._parse_sse_payload(resp.text) or {}).get("result", {})
                         s_id = res_data.get("_experimental", {}).get("session_id") or res_data.get("session_id")
                     except:
                         pass
@@ -209,17 +254,22 @@ class McpClientService:
                 if resp.status_code == 204 or not resp.text:
                     return None
                 
+                raw_text = resp.text
                 try:
                     data = resp.json()
-                    if "result" in data: return data["result"]
-                    if is_notification: return None
-                    if "error" in data:
-                        logger.error(f"[MCP-Direct] RPC Error Response: {data['error']}")
-                        raise Exception(f"RPC Error {data['error'].get('code')}: {data['error'].get('message')}")
-                    return data
                 except json.JSONDecodeError:
-                    logger.warning(f"[MCP-Direct] Non-JSON success response: {resp.text[:200]}")
-                    return None # Success but not JSON (e.g. 202 Accepted)
+                    data = cls._parse_sse_payload(raw_text)
+                    if data is None:
+                        logger.warning(f"[MCP-Direct] Non-JSON success response: {raw_text[:200]}")
+                        return None  # Success but not JSON (e.g. 202 Accepted)
+                    logger.info(f"[MCP-Direct] Parsed SSE-encoded response for {method}")
+
+                if "result" in data: return data["result"]
+                if is_notification: return None
+                if "error" in data:
+                    logger.error(f"[MCP-Direct] RPC Error Response: {data['error']}")
+                    raise Exception(f"RPC Error {data['error'].get('code')}: {data['error'].get('message')}")
+                return data
             
             # Handle Session Expired (401)
             if resp.status_code == 401:
@@ -255,14 +305,24 @@ class McpClientService:
                 t_name = t.name if hasattr(t, 'name') else t.get('name')
                 t_desc = t.description if hasattr(t, 'description') else t.get('description')
                 t_schema = t.inputSchema if hasattr(t, 'inputSchema') else t.get('inputSchema', t.get('parameter_schema'))
+                if hasattr(t_schema, "model_dump"):
+                    t_schema = t_schema.model_dump(mode="json")
+                schema_payload = dict(t_schema or {})
+                annotations = getattr(t, "annotations", None)
+                if annotations is None and isinstance(t, dict):
+                    annotations = t.get("annotations")
+                if hasattr(annotations, "model_dump"):
+                    annotations = annotations.model_dump(mode="json")
+                if isinstance(annotations, dict) and annotations:
+                    schema_payload["x-yunshu-mcp-annotations"] = annotations
                 full_name = f"{server.server_name}:{t_name}"
                 stmt = select(McpToolCache).where(McpToolCache.server_id == server_id, McpToolCache.tool_name == full_name)
                 existing = (await db.execute(stmt)).scalar_one_or_none()
                 if existing:
                     existing.tool_description = t_desc
-                    existing.parameter_schema = json.dumps(t_schema)
+                    existing.parameter_schema = json.dumps(schema_payload)
                 else:
-                    db.add(McpToolCache(id=str(uuid.uuid4()), server_id=server_id, tool_name=full_name, tool_description=t_desc, parameter_schema=json.dumps(t_schema), is_published=False))
+                    db.add(McpToolCache(id=str(uuid.uuid4()), server_id=server_id, tool_name=full_name, tool_description=t_desc, parameter_schema=json.dumps(schema_payload), is_published=False))
             await db.commit()
 
     @classmethod

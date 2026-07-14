@@ -2,6 +2,7 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from app.schemas.agent import ChatConfig
+from app.services.ai.grounding.models import EvidenceType
 from app.services.ai.runners.knowledge_agent_runner import (
     KNOWLEDGE_EXCLUDED_IMPLICIT_TOOLS,
     KnowledgeAgentRunner,
@@ -54,3 +55,5 @@ async def test_resolve_knowledge_tools_excludes_external_web_search():
     assert "search_knowledge_base" in names
     assert "memory_search" in names
     assert not names & KNOWLEDGE_EXCLUDED_IMPLICIT_TOOLS
+    memory_tool = next(tool for tool in tools if tool.name == "memory_search")
+    assert memory_tool.evidence_types == frozenset({EvidenceType.CONVERSATION_MEMORY})

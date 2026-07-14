@@ -3,6 +3,8 @@ from unittest.mock import MagicMock, AsyncMock, patch
 from app.services.ai.tools.mcp_client import McpClientService, McpSseSession
 from httpx import Response
 
+pytestmark = pytest.mark.no_infrastructure
+
 # Mock server info
 SERVER_ID = "test-server"
 SSE_URL = "http://mock-mcp-server/mcp"

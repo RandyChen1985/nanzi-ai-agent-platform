@@ -28,6 +28,7 @@ class PendingAgentScopeSnapshot:
     agent_state: dict[str, Any]
     stream_state: dict[str, Any]
     runner_context: dict[str, Any]
+    evidence_receipts: list[dict[str, Any]] = field(default_factory=list)
     created_at: float = field(default_factory=time.time)
 
     def is_expired(self, now: float | None = None) -> bool:
@@ -159,6 +160,7 @@ class PendingAgentScopeStore:
                 agent_state=dict(data.get("agent_state") or {}),
                 stream_state=dict(data.get("stream_state") or {}),
                 runner_context=dict(data.get("runner_context") or {}),
+                evidence_receipts=list(data.get("evidence_receipts") or []),
                 created_at=float(data.get("created_at", time.time())),
             )
         except Exception as exc:

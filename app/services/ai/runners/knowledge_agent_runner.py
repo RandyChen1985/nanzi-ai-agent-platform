@@ -126,7 +126,8 @@ class KnowledgeAgentRunner(AssistantAgentRunner):
                 name = str(getattr(tool, "name", "") or "")
                 if not name or name in KNOWLEDGE_EXCLUDED_IMPLICIT_TOOLS or name in seen:
                     continue
-                tools.append(runtime_tool_spec_from_legacy_tool(tool, source_type="system"))
+                spec = runtime_tool_spec_from_legacy_tool(tool, source_type="system")
+                tools.append(ToolRegistry._attach_evidence_metadata(spec.name, spec))
                 seen.add(name)
 
         if not tools_include_named(tools, "search_knowledge_base"):

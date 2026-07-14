@@ -167,25 +167,31 @@ def test_external_tool_receipt_does_not_bypass_explicit_internal_data_requiremen
 
 
 @pytest.mark.parametrize(
-    ("source", "capability", "answer"),
+    ("source", "capability", "answer", "result"),
     [
-        (RequestSource.PUBLIC_WEB, RequestCapability.WEB_SEARCH, "明天上海有 G1 次列车。"),
+        (
+            RequestSource.PUBLIC_WEB,
+            RequestCapability.WEB_SEARCH,
+            "明天上海有 G1 次列车。",
+            {"train": "G1"},
+        ),
         (
             RequestSource.RUNTIME_DIAGNOSTIC,
             RequestCapability.RUNTIME_TOOL,
             "当前日期为 2026-07-15。",
+            {"date": "2026-07-15"},
         ),
     ],
 )
 def test_external_tool_receipt_satisfies_external_or_runtime_requirement(
-    source, capability, answer
+    source, capability, answer, result
 ):
     ledger = EvidenceLedger(user_id="1", conversation_id="c1")
     ledger.record_success(
         call_id="call-external-mcp",
         producer="external:get-current-state",
         evidence_types={EvidenceType.EXTERNAL_TOOL},
-        result={"value": "verified"},
+        result=result,
     )
 
     decision = evaluate_grounding(
@@ -216,6 +222,26 @@ def test_external_tool_receipt_does_not_back_unknown_internal_business_table():
             _decision(RequestSource.UNKNOWN, RequestCapability.ANSWER)
         ),
         candidate_text=answer,
+        ledger=ledger,
+    )
+
+    assert decision.action == GroundingAction.PASS_WITH_WARNING
+
+
+def test_unrelated_external_tool_receipt_does_not_back_unknown_weather_fact():
+    ledger = EvidenceLedger(user_id="1", conversation_id="c1")
+    ledger.record_success(
+        call_id="call-date",
+        producer="calendar:get-current-date",
+        evidence_types={EvidenceType.EXTERNAL_TOOL},
+        result={"date": "2026-07-15"},
+    )
+
+    decision = evaluate_grounding(
+        requirement=resolve_fact_requirement(
+            _decision(RequestSource.UNKNOWN, RequestCapability.ANSWER)
+        ),
+        candidate_text="当前上海天气为晴，最高温度为 28 度。",
         ledger=ledger,
     )
 

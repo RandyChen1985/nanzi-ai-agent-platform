@@ -120,6 +120,7 @@ _REFUSAL_MARKERS = (
     "未检索",
     "未找到",
     "暂无结果",
+    "暂无",
 )
 
 _INTERNAL_TRUSTED_TYPES = frozenset(
@@ -243,6 +244,11 @@ def evaluate_grounding(
             EvidenceType.EXTERNAL_TOOL in available_types
             and requirement.accepted_types
             and requirement.accepted_types <= _EXTERNAL_TOOL_COMPATIBLE_TYPES
+            and ledger.has_candidate_overlap(
+                text,
+                {EvidenceType.EXTERNAL_TOOL},
+                allow_empty=_is_explicitly_unverified(text),
+            )
         ):
             return GroundingDecision(
                 GroundingAction.PASS,
@@ -289,6 +295,11 @@ def evaluate_grounding(
             if (
                 EvidenceType.EXTERNAL_TOOL in available_types
                 and not _looks_like_internal_business_fact(text)
+                and ledger.has_candidate_overlap(
+                    text,
+                    {EvidenceType.EXTERNAL_TOOL},
+                    allow_empty=_is_explicitly_unverified(text),
+                )
             ):
                 return GroundingDecision(
                     GroundingAction.PASS,

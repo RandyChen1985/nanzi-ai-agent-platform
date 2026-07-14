@@ -5,6 +5,7 @@ from typing import Dict, Any, Type
 from pydantic import create_model, Field
 from app.services.ai.tools.tool_compat import StructuredTool
 from app.models.tool import SysApiTool
+from app.services.ai.grounding.models import EvidenceType
 
 logger = logging.getLogger(__name__)
 
@@ -89,21 +90,39 @@ class GenericApiToolFactory:
         args_schema = create_model(f"{tool_config.name}Args", **fields)
         
         # 2. Define the execution function
-        async def _execute(**kwargs) -> str:
+        async def _execute(**kwargs) -> Any:
             return await GenericApiToolFactory._execute_request(tool_config, kwargs)
         
         _execute.__doc__ = tool_config.description or f"Execute {tool_config.name}"
         
-        return StructuredTool.from_function(
+        tool = StructuredTool.from_function(
             func=None,
             coroutine=_execute,
             name=tool_config.name,
             description=tool_config.description or "",
             args_schema=args_schema
         )
+        declared_types = set()
+        for value in schema_def.get("x-yunshu-evidence-types") or []:
+            try:
+                declared_types.add(EvidenceType(value))
+            except (TypeError, ValueError):
+                logger.warning("Ignoring invalid evidence type %r for %s", value, tool_config.name)
+        if declared_types:
+            tool.evidence_types = frozenset(declared_types)
+        elif str(tool_config.method or "").strip().upper() == "GET":
+            tool.evidence_types = frozenset({EvidenceType.EXTERNAL_TOOL})
+        if getattr(tool, "evidence_types", None):
+            declared_policy = schema_def.get("x-yunshu-evidence-policy")
+            tool.evidence_policy = (
+                declared_policy
+                if declared_policy in {"non_empty", "structured_success", "allow_empty_success"}
+                else "allow_empty_success"
+            )
+        return tool
 
     @staticmethod
-    async def _execute_request(config: SysApiTool, params: Dict[str, Any]) -> str:
+    async def _execute_request(config: SysApiTool, params: Dict[str, Any]) -> Any:
         """
         Executes the HTTP request.
         """
@@ -148,6 +167,13 @@ class GenericApiToolFactory:
                     response = await client.request(method, url, json=remaining_params, headers=headers)
                 else:
                     return f"[Error] Unsupported method: {method}"
+
+                if not 200 <= response.status_code < 300:
+                    raise RuntimeError(
+                        f"HTTP {response.status_code}: {response.text[:500]}"
+                    )
+                if response.status_code == 204 or not response.content:
+                    return {"success": True, "content": ""}
                 
                 # Try to format JSON result
                 try:

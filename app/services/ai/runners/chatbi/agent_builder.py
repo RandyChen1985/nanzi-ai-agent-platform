@@ -26,7 +26,7 @@ async def resolve_runtime_tools_from_config(runner: Any) -> list[RuntimeToolSpec
             spec = runtime_tool_spec_from_legacy_tool(tool, source_type="system")
             if spec.name in seen:
                 continue
-            tools.append(spec)
+            tools.append(ToolRegistry._attach_evidence_metadata(spec.name, spec))
             seen.add(spec.name)
 
     return tools

@@ -1,4 +1,5 @@
 import time
+from types import SimpleNamespace
 
 import pytest
 
@@ -11,6 +12,11 @@ from app.services.ai.runtime.agentscope.state_store import (
     SCHEMA_VERSION,
     AgentStateStore,
     RuntimeStateEnvelope,
+)
+from app.services.ai.grounding.ledger import EvidenceLedger
+from app.services.ai.grounding.models import EvidenceType
+from app.services.ai.runtime.agentscope.confirmations import (
+    PendingAgentScopeConfirmationRegistry,
 )
 
 pytestmark = pytest.mark.no_infrastructure
@@ -40,16 +46,50 @@ async def test_pending_store_memory_roundtrip():
         agent_state={"session_id": "s1", "context": []},
         stream_state={"user_query": "hello"},
         runner_context={"max_steps": 5},
+        evidence_receipts=[{"call_id": "call-evidence-1"}],
     )
     await store.register(snapshot)
     loaded = await store.peek("perm_test_1", user_id="u1")
     assert loaded is not None
     assert loaded.request_id == "perm_test_1"
+    assert loaded.evidence_receipts == [{"call_id": "call-evidence-1"}]
 
     popped = await store.pop("perm_test_1", user_id="u1")
     assert popped is not None
     assert popped.kind == "permission"
     assert await store.peek("perm_test_1", user_id="u1") is None
+
+
+@pytest.mark.asyncio
+async def test_confirmation_snapshot_captures_runner_evidence_ledger():
+    ledger = EvidenceLedger(user_id="u1", conversation_id="c1")
+    ledger.record_success(
+        call_id="call-evidence-1",
+        producer="railway:get-tickets",
+        evidence_types={EvidenceType.EXTERNAL_TOOL},
+        result={"train": "G1"},
+    )
+    runner = SimpleNamespace(_evidence_ledger=ledger)
+    agent = SimpleNamespace(
+        state=SimpleNamespace(model_dump=lambda mode: {"context": []})
+    )
+    registry = PendingAgentScopeConfirmationRegistry()
+
+    pending = await registry.register(
+        kind="permission",
+        agent=agent,
+        runner=runner,
+        tools=[],
+        native_model=SimpleNamespace(),
+        tool_call={"id": "call-2", "name": "next-tool", "input": {}},
+        reply_id="reply-1",
+        trace_id="trace-1",
+        user_id="u1",
+        conversation_id="c1",
+        agent_name="GeneralAgent",
+    )
+
+    assert pending.snapshot.evidence_receipts == ledger.to_snapshot()
 
 
 @pytest.mark.asyncio

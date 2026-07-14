@@ -145,11 +145,12 @@
    - **裸 Markdown 表格 alone 不触发**；系统负载等可通过 Bash/工具执行的请求，若已出现 `permission_required` / `external_execution_required` 或 tool log，视为已尝试工具，不拦截。
 6. 命中后保留原回答并在消息内容中追加高风险提示；不再替换正文、不发送 `grounding_blocked`、不展示智能体切换阻断卡片。
 7. `internal_data`、`internal_knowledge`、`user_file` 属于内部可信来源族。类型不完全一致时允许兼容输出，并明确提示内容来源不代表实时数据库状态。附件要求必须与已有来源要求合并，不能覆盖知识库或数据来源要求。
-8. 动态只读 MCP（查询、检索、获取、读取、查看类）成功返回非空结果后签发 `external_tool`。公开信息、运行状态及 `UNKNOWN` 请求据此生成非内部业务类的结构化或动态事实时正常通过；该回执不能替代明确要求的 `internal_data`、`internal_knowledge` 等来源，疑似内部业务数据表也不会被它放行。创建、更新、删除、写入、发送、预订和执行类 MCP 不自动签发读取型事实凭证。
-9. **工具预检**（`tool_nudge_policy.resolve_tool_nudge`）：由已绑定工具的 `name + description` 与问题相关度驱动；配置 `agent_tool_preflight_mode`：`off` / `soft`（默认，注入便签）/ `hard`（便签 + 首步 `ToolChoice`）。问候、元操作、记忆类工具（`memory_search` 等）不促发。
-10. **Skill 自动扫描**（仅主助手）：未挂载/解析技能时，按 `skill_auto_scan_*` 配置扫描技能库并注入摘要（全文仍须 `read_skill_instruction`）。
-11. 绑定工具时必须走 AgentScope runtime tool 权限门控。
-12. 没有工具时走 simple synthesis，不适用工具权限/外部执行挂起。
+8. 动态只读 MCP（查询、检索、获取、读取、查看类或 `annotations.readOnlyHint=true`）成功后签发 `external_tool`，成功空结果允许证明“暂无数据”。公开信息、运行状态及 `UNKNOWN` 请求只有在答案与结果不可逆内容指纹重合时才正常通过；该回执不能替代明确要求的 `internal_data`、`internal_knowledge` 等来源，疑似内部业务数据表也不会被它放行。MCP `isError`、SDK 异常、Generic API HTTP 4xx/5xx 不签发回执；创建、更新、删除、写入、发送、预订和执行类 MCP 不自动签发读取型事实凭证。
+9. AgentScope 原生工具与普通运行时工具共享证据签发入口；Main、KnowledgeAgent、ChatBI 的隐式工具统一补齐元数据。permission/external execution 挂起快照必须保存当前证据回执，并在恢复时校验用户与会话范围后恢复。
+10. **工具预检**（`tool_nudge_policy.resolve_tool_nudge`）：由已绑定工具的 `name + description` 与问题相关度驱动；配置 `agent_tool_preflight_mode`：`off` / `soft`（默认，注入便签）/ `hard`（便签 + 首步 `ToolChoice`）。问候、元操作、记忆类工具（`memory_search` 等）不促发。
+11. **Skill 自动扫描**（仅主助手）：未挂载/解析技能时，按 `skill_auto_scan_*` 配置扫描技能库并注入摘要（全文仍须 `read_skill_instruction`）。
+12. 绑定工具时必须走 AgentScope runtime tool 权限门控。
+13. 没有工具时走 simple synthesis，不适用工具权限/外部执行挂起。
 
 测试映射：
 

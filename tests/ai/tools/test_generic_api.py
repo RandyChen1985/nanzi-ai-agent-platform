@@ -4,6 +4,9 @@ import httpx
 from unittest.mock import MagicMock, AsyncMock, patch
 from app.services.ai.tools.generic_api import GenericApiToolFactory
 from app.models.tool import SysApiTool
+from app.services.ai.grounding.models import EvidenceType
+
+pytestmark = pytest.mark.no_infrastructure
 
 @pytest.fixture
 def mock_tool_config():
@@ -36,6 +39,8 @@ def test_create_tool_schema_parsing(mock_tool_config):
     assert fields["include_details"].annotation == bool
     # 验证默认值
     assert fields["include_details"].default is False
+    assert tool.evidence_types == frozenset({"external_tool"})
+    assert tool.evidence_policy == "allow_empty_success"
 
 @pytest.mark.asyncio
 async def test_execute_request_get_with_path_substitution(mock_tool_config):
@@ -93,6 +98,36 @@ async def test_execute_request_error_handling(mock_tool_config):
         assert "[Execution Error]" in result
         assert "Connection failed" in result
 
+
+@pytest.mark.asyncio
+async def test_execute_request_http_error_is_not_returned_as_success(mock_tool_config):
+    with patch("httpx.AsyncClient.get", new_callable=AsyncMock) as mock_get:
+        mock_get.return_value = httpx.Response(
+            503,
+            json={"message": "service unavailable"},
+            request=httpx.Request("GET", "http://api.example.com/users/999"),
+        )
+
+        result = await GenericApiToolFactory._execute_request(
+            mock_tool_config,
+            {"user_id": 999},
+        )
+
+    assert result.startswith("[Execution Error]")
+
+
+@pytest.mark.asyncio
+async def test_execute_request_empty_success_returns_explicit_envelope(mock_tool_config):
+    with patch("httpx.AsyncClient.get", new_callable=AsyncMock) as mock_get:
+        mock_get.return_value = httpx.Response(204, content=b"")
+
+        result = await GenericApiToolFactory._execute_request(
+            mock_tool_config,
+            {"user_id": 999},
+        )
+
+    assert result == {"success": True, "content": ""}
+
 def test_schema_parsing_simple_dict():
     """测试简化的 Schema 结构解析"""
     config = SysApiTool(
@@ -107,3 +142,22 @@ def test_schema_parsing_simple_dict():
     assert "q" in fields
     assert "page" in fields
     assert fields["page"].annotation == int
+
+
+def test_generic_api_schema_can_declare_precise_evidence_type():
+    config = SysApiTool(
+        name="internal_metrics",
+        method="GET",
+        url_template="http://api.example.com/metrics",
+        parameter_schema={
+            "type": "object",
+            "properties": {},
+            "x-yunshu-evidence-types": ["internal_data"],
+            "x-yunshu-evidence-policy": "allow_empty_success",
+        },
+    )
+
+    tool = GenericApiToolFactory.create_tool(config)
+
+    assert tool.evidence_types == frozenset({EvidenceType.INTERNAL_DATA})
+    assert tool.evidence_policy == "allow_empty_success"

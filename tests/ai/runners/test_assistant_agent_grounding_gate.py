@@ -1,4 +1,5 @@
 import asyncio
+from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -9,10 +10,16 @@ from app.services.ai.grounding.models import EvidenceType
 from app.services.ai.grounding.ledger import EvidenceLedger
 from app.services.ai.grounding.policy import FactRequirement
 from app.services.ai.runners.assistant_agent_runner import AssistantAgentRunner
+from app.services.ai.runners import assistant_agent_runner as assistant_runner_module
 from app.services.ai.runtime.agentscope.tools import RuntimeToolSpec
 
 
 pytestmark = pytest.mark.no_infrastructure
+
+
+@asynccontextmanager
+async def _unlocked_session(**_kwargs):
+    yield
 
 
 def _runner(*, request_source="unknown") -> AssistantAgentRunner:
@@ -429,6 +436,10 @@ async def test_resumed_stream_preserves_answer_and_appends_risk_warning():
     ), patch(
         "app.services.ai.runners.assistant_agent_runner.agent_state_store.save",
         AsyncMock(return_value=None),
+    ), patch.object(
+        assistant_runner_module.agentscope_session_lock,
+        "hold",
+        _unlocked_session,
     ):
         events = [
             event
@@ -442,3 +453,61 @@ async def test_resumed_stream_preserves_answer_and_appends_risk_warning():
     assert answer in content
     assert content.count("风险提示") == 1
     assert not any(event.get("type") == "grounding_blocked" for event in events)
+
+
+@pytest.mark.asyncio
+async def test_cross_process_resume_restores_mcp_evidence_without_warning():
+    runner = _runner()
+    answer = (
+        "| 车次 | 出发时间 | 二等座 |\n"
+        "| --- | --- | --- |\n"
+        "| G1 | 06:30 | 661元 |"
+    )
+    source_ledger = EvidenceLedger(user_id="1", conversation_id="conv-1")
+    source_ledger.record_success(
+        call_id="mcp-tickets-1",
+        producer="railway:get-tickets",
+        evidence_types={EvidenceType.EXTERNAL_TOOL},
+        result={"trains": [{"number": "G1", "price": 661}]},
+    )
+    pending = SimpleNamespace(
+        snapshot=SimpleNamespace(evidence_receipts=source_ledger.to_snapshot())
+    )
+    agent = SimpleNamespace(reply_stream=lambda _event: object(), state={})
+    native_model = SimpleNamespace(model="test")
+    state = {"user_query": "查询明天北京到上海的火车票"}
+
+    async def fake_stream(**_kwargs):
+        yield {"content": answer}
+
+    with patch.object(
+        runner,
+        "_create_tool_loop_detector",
+        AsyncMock(return_value=None),
+    ), patch.object(
+        runner,
+        "_resolve_pending_runtime",
+        AsyncMock(return_value=(agent, [], native_model, state)),
+    ), patch.object(
+        runner,
+        "_stream_agentscope_native_events",
+        fake_stream,
+    ), patch(
+        "app.services.ai.runners.assistant_agent_runner.agent_state_store.save",
+        AsyncMock(return_value=None),
+    ), patch.object(
+        assistant_runner_module.agentscope_session_lock,
+        "hold",
+        _unlocked_session,
+    ):
+        events = [
+            event
+            async for event in runner._resume_agentscope_native_stream(
+                pending=pending,
+                resume_event=object(),
+            )
+        ]
+
+    content = "".join(str(event.get("content") or "") for event in events)
+    assert content == answer
+    assert "风险提示" not in content

@@ -46,6 +46,41 @@ READ_ONLY_TOOL_NAMES = {
     "system_http_request",
     "sub_agent_call",
 }
+NATIVE_TOOL_EVIDENCE_TYPES = {
+    "Bash": frozenset({EvidenceType.RUNTIME_STATE}),
+    "Read": frozenset({EvidenceType.USER_FILE}),
+    "Grep": frozenset({EvidenceType.USER_FILE}),
+    "Glob": frozenset({EvidenceType.USER_FILE}),
+}
+NATIVE_TOOL_EVIDENCE_POLICIES = {
+    "Read": "allow_empty_success",
+    "Grep": "allow_empty_success",
+    "Glob": "allow_empty_success",
+}
+
+
+def _record_evidence_result(
+    *,
+    tool_name: str,
+    evidence_types: frozenset[EvidenceType],
+    evidence_policy: str,
+    result: Any,
+) -> None:
+    if not evidence_types:
+        return
+    from app.core.context import get_current_agent_context
+
+    context = get_current_agent_context()
+    ledger = getattr(context, "grounding_evidence_ledger", None)
+    if ledger is not None:
+        ledger.record_success(
+            call_id=f"{tool_name}:{time.time_ns()}",
+            producer=tool_name,
+            evidence_types=evidence_types,
+            result=result,
+            policy=evidence_policy,
+        )
+
 
 @dataclass(frozen=True)
 class RuntimeToolAuditEvent:
@@ -69,6 +104,7 @@ class RuntimeToolSpec:
     permission_scope: RuntimePermissionScope = "ask"
     evidence_types: frozenset[EvidenceType] = frozenset()
     evidence_policy: RuntimeEvidencePolicy = "non_empty"
+    evidence_inference_disabled: bool = False
     timeout_seconds: float | None = None
     audit_callback: Callable[[RuntimeToolAuditEvent], Any] | None = None
     native_tool: Any | None = None
@@ -107,19 +143,12 @@ class RuntimeToolSpec:
                     result_preview=_preview_result(result),
                 )
             )
-            if self.evidence_types:
-                from app.core.context import get_current_agent_context
-
-                context = get_current_agent_context()
-                ledger = getattr(context, "grounding_evidence_ledger", None)
-                if ledger is not None:
-                    ledger.record_success(
-                        call_id=f"{self.name}:{time.time_ns()}",
-                        producer=self.name,
-                        evidence_types=self.evidence_types,
-                        result=result,
-                        policy=self.evidence_policy,
-                    )
+            _record_evidence_result(
+                tool_name=self.name,
+                evidence_types=self.evidence_types,
+                evidence_policy=self.evidence_policy,
+                result=result,
+            )
             return result
         except TimeoutError as exc:
             wrapped = RuntimeTimeoutError(
@@ -270,6 +299,8 @@ class AgentScopeNativeApprovalTool:
         permission_scope: RuntimePermissionScope | None = None,
         loop_detector: ToolLoopDetector | None = None,
         user_id: int | str | None = None,
+        evidence_types: frozenset[EvidenceType] = frozenset(),
+        evidence_policy: str = "non_empty",
     ) -> None:
         self.native_tool = native_tool
         self.name = getattr(native_tool, "name", "")
@@ -280,6 +311,8 @@ class AgentScopeNativeApprovalTool:
         self.permission_scope = permission_scope or _infer_native_permission_scope(native_tool)
         self.loop_detector = loop_detector
         self.user_id = user_id
+        self.evidence_types = evidence_types
+        self.evidence_policy = evidence_policy
 
     def _check_tool_loop(self, tool_input: dict[str, Any]) -> None:
         if not self.loop_detector:
@@ -371,7 +404,13 @@ class AgentScopeNativeApprovalTool:
         self._check_tool_loop(kwargs)
         result = self.native_tool(**kwargs)
         if inspect.isawaitable(result):
-            return await result
+            result = await result
+        _record_evidence_result(
+            tool_name=self.name,
+            evidence_types=self.evidence_types,
+            evidence_policy=self.evidence_policy,
+            result=result,
+        )
         return result
 
 
@@ -419,6 +458,8 @@ def runtime_tool_from_spec(
             permission_scope=spec.permission_scope,
             loop_detector=loop_detector,
             user_id=user_id,
+            evidence_types=spec.evidence_types,
+            evidence_policy=spec.evidence_policy,
         )
     return AgentScopeRuntimeTool(
         spec,
@@ -434,7 +475,18 @@ def runtime_tool_from_native(
     approval_mode: RuntimeApprovalMode | str | None = None,
     user_id: int | str | None = None,
 ) -> Any:
-    return AgentScopeNativeApprovalTool(native_tool, approval_mode=approval_mode, user_id=user_id)
+    native_name = str(getattr(native_tool, "name", "") or "")
+    evidence_types = NATIVE_TOOL_EVIDENCE_TYPES.get(
+        native_name,
+        frozenset(),
+    )
+    return AgentScopeNativeApprovalTool(
+        native_tool,
+        approval_mode=approval_mode,
+        user_id=user_id,
+        evidence_types=evidence_types,
+        evidence_policy=NATIVE_TOOL_EVIDENCE_POLICIES.get(native_name, "non_empty"),
+    )
 
 
 def build_toolkit(
@@ -512,6 +564,9 @@ def runtime_tool_spec_from_legacy_tool(
         permission_scope=resolved_scope,
         evidence_types=evidence_types,
         evidence_policy=evidence_policy,
+        evidence_inference_disabled=(
+            getattr(tool, "evidence_inference_disabled", False) is True
+        ),
     )
 
 
@@ -546,6 +601,9 @@ def runtime_tool_spec_from_native_agentscope_tool(
         permission_scope=resolved_scope,
         evidence_types=evidence_types,
         evidence_policy=getattr(tool, "evidence_policy", "non_empty"),
+        evidence_inference_disabled=(
+            getattr(tool, "evidence_inference_disabled", False) is True
+        ),
         native_tool=tool,
     )
 
