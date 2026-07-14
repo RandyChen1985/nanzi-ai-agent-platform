@@ -530,11 +530,11 @@ class DataAgentRunner(BaseExecutor):
     async def _resolve_standalone_query_for_new_data_query(self, user_question: str, runtime_messages: List[Any]) -> str:
         return await chatbi_schema_prefetch.resolve_standalone_query_for_new_data_query(self, user_question, runtime_messages)
 
-    async def _generate_clarification_content(self, *, user_question: str, history: List[Dict[str, str]], reasoning: str) -> str:
-        return await chatbi_clarification.generate_clarification_content(self, user_question=user_question, history=history, reasoning=reasoning)
+    async def _generate_clarification_content(self, *, user_question: str, history: List[Dict[str, str]], reasoning: str, missing_fields: tuple[str, ...] | None = None) -> str:
+        return await chatbi_clarification.generate_clarification_content(self, user_question=user_question, history=history, reasoning=reasoning, missing_fields=missing_fields)
 
-    async def _yield_contextual_clarification(self, *, user_question: str, history: List[Dict[str, str]], reasoning: str) -> AsyncGenerator[Dict[str, Any], None]:
-        async for _chunk in chatbi_clarification.yield_contextual_clarification(self, user_question=user_question, history=history, reasoning=reasoning):
+    async def _yield_contextual_clarification(self, *, user_question: str, history: List[Dict[str, str]], reasoning: str, missing_fields: tuple[str, ...] | None = None) -> AsyncGenerator[Dict[str, Any], None]:
+        async for _chunk in chatbi_clarification.yield_contextual_clarification(self, user_question=user_question, history=history, reasoning=reasoning, missing_fields=missing_fields):
             yield _chunk
 
     async def _yield_missing_reusable_result_clarification(self, history: List[Dict[str, str]], *, user_question: str='') -> AsyncGenerator[Dict[str, Any], None]:

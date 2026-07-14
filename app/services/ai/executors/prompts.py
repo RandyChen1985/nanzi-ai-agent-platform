@@ -653,24 +653,123 @@ XML 示例：
         history_excerpt: str = "",
         *,
         lead: str | None = None,
+        missing_fields: tuple[str, ...] | None = None,
+        suggested_queries: tuple[str, ...] | None = None,
     ) -> str:
         """Assemble clarification: reason block (code) + lead + rule-based quick buttons."""
-        lead_text = (
-            cls.sanitize_clarification_lead(lead)
-            if lead
-            else cls._build_contextual_clarification_lead(
+        structured_gaps = cls._structured_clarification_gaps(missing_fields)
+        if lead:
+            lead_text = cls.sanitize_clarification_lead(lead)
+        elif missing_fields is not None:
+            gap_text = "、".join(structured_gaps) or "完整查数条件"
+            lead_text = f"这是查数需求，但还需要补充{gap_text}后才能继续。"
+        else:
+            lead_text = cls._build_contextual_clarification_lead(
                 user_question, reasoning, history_excerpt
             )
-        )
-        variants = cls._build_contextual_clarification_quick_variants(
+        validated_suggestions = cls.validate_clarification_recommendations(
             user_question,
-            reasoning,
-            history_excerpt,
+            missing_fields or (),
+            suggested_queries or (),
         )
+        if validated_suggestions:
+            variants = [
+                (cls._truncate_for_display(query, 28), query)
+                for query in validated_suggestions
+            ]
+        else:
+            variants = cls._build_contextual_clarification_quick_variants(
+                user_question,
+                reasoning,
+                history_excerpt,
+                missing_fields=missing_fields,
+            )
         buttons = [cls.quick_button(label, target) for label, target in variants[:3]]
         suggestions = "\n".join(buttons)
-        reason_block = cls._format_clarification_reason_block(user_question, reasoning)
+        reason_block = cls._format_clarification_reason_block(
+            user_question,
+            reasoning,
+            missing_fields=missing_fields,
+        )
         return f"{reason_block}\n{lead_text}\n\n### 💬 您可以这样继续\n{suggestions}"
+
+    @classmethod
+    def build_non_data_response(cls, user_question: str) -> str:
+        """Guide an unrelated request away from ChatBI without inventing data gaps."""
+        topic = cls._truncate_for_display(user_question, 40)
+        intro = (
+            f"您当前的问题“{topic}”不属于业务数据查询。"
+            if topic
+            else "您当前的问题不属于业务数据查询。"
+        )
+        return (
+            "### ℹ️ 当前问题更适合其他智能体\n"
+            f"{intro}数据智能助手主要负责业务数据查询、统计分析和结果可视化。\n\n"
+            "### 💬 您可以这样继续\n"
+            f"{cls.quick_button('切换智能体', '/switch_to_auto')}\n"
+            f"{cls.quick_button('查看我能查哪些数据', DATASET_PORTAL_SLASH_COMMAND)}"
+        )
+
+    @classmethod
+    def clarification_recommendation_prompt(
+        cls,
+        user_question: str,
+        history_excerpt: str,
+        missing_fields: tuple[str, ...],
+    ) -> str:
+        gaps = "、".join(cls._structured_clarification_gaps(missing_fields))
+        return f"""你是 ChatBI 查数问题补全模块。
+
+【用户原问题】{user_question}
+【最近对话】
+{history_excerpt or '无'}
+【必须补齐的缺口】{gaps or '完整查数条件'}
+
+请生成 2-3 个可直接执行的完整查数问题，并严格遵守：
+- 保留原问题的业务对象与主题，不得改成其他业务域。
+- 每个候选都必须实际补齐上述缺口；时间建议可根据问题给出本月、最近30天、同比或环比等有意义的不同选择。
+- 不得编造对话中未出现的具体数据集、字段、指标或数值。
+- 只返回 JSON：{{"queries":["候选1","候选2"]}}。
+"""
+
+    @classmethod
+    def validate_clarification_recommendations(
+        cls,
+        user_question: str,
+        missing_fields: tuple[str, ...],
+        candidates: Any,
+    ) -> tuple[str, ...]:
+        if not isinstance(candidates, (list, tuple)):
+            return ()
+        original = re.sub(r"\s+", "", str(user_question or ""))
+        anchor_text = original
+        for word in (
+            "查询", "查一下", "查下", "统计", "看看", "看一下", "分析", "对比",
+            "帮我", "请", "一下", "数据", "情况",
+        ):
+            anchor_text = anchor_text.replace(word, "")
+        anchors = re.findall(r"[A-Za-z][A-Za-z0-9_-]*|[\u4e00-\u9fff]{2,}", anchor_text)
+        time_signals = (
+            "今天", "昨天", "本周", "上周", "本月", "上月", "今年", "去年",
+            "最近", "近", "天", "周", "月", "季度", "年度", "同比", "环比",
+        )
+        valid: list[str] = []
+        for raw in candidates:
+            query = re.sub(r"\s+", " ", str(raw or "")).strip()
+            if not query or len(query) > 160 or query == user_question:
+                continue
+            if cls._is_non_data_general_intent(query, ""):
+                continue
+            lowered = query.lower()
+            if anchors and not any(anchor.lower() in lowered for anchor in anchors):
+                continue
+            if "time_range" in missing_fields and not any(signal in query for signal in time_signals):
+                continue
+            if query not in valid:
+                valid.append(query)
+            if len(valid) == 3:
+                break
+        return tuple(valid)
 
     @staticmethod
     def dataset_navigation_generation_prompt(dataset_menu: str) -> str:
@@ -1068,8 +1167,40 @@ XML 示例：
         }
 
     @classmethod
-    def _format_clarification_reason_block(cls, user_question: str, reasoning: str) -> str:
-        expl = cls._explain_clarification_trigger(user_question, reasoning)
+    def _structured_clarification_gaps(
+        cls,
+        missing_fields: tuple[str, ...] | None,
+    ) -> list[str]:
+        names = {
+            "data_object": "统计对象",
+            "metric": "指标口径",
+            "time_range": "时间范围",
+            "dimension": "分析维度",
+            "result_context": "要基于哪一份查询结果继续分析",
+            "dataset_or_schema": "数据集或字段口径",
+        }
+        if missing_fields is None:
+            return []
+        return [names[field] for field in missing_fields if field in names]
+
+    @classmethod
+    def _format_clarification_reason_block(
+        cls,
+        user_question: str,
+        reasoning: str,
+        *,
+        missing_fields: tuple[str, ...] | None = None,
+    ) -> str:
+        if missing_fields is None:
+            expl = cls._explain_clarification_trigger(user_question, reasoning)
+        else:
+            gaps = cls._structured_clarification_gaps(missing_fields)
+            gap_text = "、".join(gaps) or "完整查数条件"
+            expl = {
+                "title": "查数需求还缺少必要条件",
+                "detail": f"已确认这是查数需求，当前还缺少：{gap_text}。",
+                "fix": f"请补充{gap_text}后继续查询。",
+            }
         block = (
             "### ℹ️ 为什么需要补充信息\n"
             f"- **触发原因：** {expl['title']}\n"
@@ -1239,6 +1370,8 @@ XML 示例：
         user_question: str,
         reasoning: str,
         history_excerpt: str,
+        *,
+        missing_fields: tuple[str, ...] | None = None,
     ) -> list[tuple[str, str]]:
         q = str(user_question or "").strip()
         reasoning_text = str(reasoning or "")
@@ -1305,7 +1438,11 @@ XML 示例：
             add("打开数据门户选表提问", DATASET_PORTAL_SLASH_COMMAND)
             return variants[:3]
 
-        gaps = cls._infer_clarification_gaps(q, reasoning_text)
+        gaps = (
+            cls._structured_clarification_gaps(missing_fields)
+            if missing_fields is not None
+            else cls._infer_clarification_gaps(q, reasoning_text)
+        )
         if "时间范围" in gaps:
             add(f"补充时间：{topic_label}", f"{q}（时间范围：本月）")
         if "具体对象或指代范围" in gaps:
@@ -1319,6 +1456,10 @@ XML 示例：
             add(f"补充指标口径：{topic_label}", f"请补充具体指标和统计口径后回答：{q}")
         if "统计对象" in gaps:
             add(f"补充统计对象：{topic_label}", f"请明确统计对象后回答：{q}")
+        if "分析维度" in gaps:
+            add(f"补充分析维度：{topic_label}", f"请明确分组或分析维度后回答：{q}")
+        if "数据集或字段口径" in gaps:
+            add(f"明确数据集或字段：{topic_label}", f"请明确要使用的数据集、指标或字段后回答：{q}")
         add(f"按原问题重试：{topic_label}", q)
         return variants[:3]
 
