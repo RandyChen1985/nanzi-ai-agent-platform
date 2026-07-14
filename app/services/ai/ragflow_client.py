@@ -486,9 +486,18 @@ class RagFlowClient:
         max_attempts = 2
         last_exception = None
         
+        # 从系统配置动态加载超时时间，若无配置默认使用 20.0 秒
+        timeout_val = 20.0
+        try:
+            cfg_timeout = await ConfigService.get(f"{self.config_prefix}_retrieve_timeout")
+            if cfg_timeout:
+                timeout_val = float(cfg_timeout)
+        except Exception:
+            pass
+
         for attempt in range(1, max_attempts + 1):
             try:
-                async with httpx.AsyncClient(timeout=3.0) as client:
+                async with httpx.AsyncClient(timeout=timeout_val) as client:
                     response = await client.post(url, headers=self._get_headers(), json=payload)
                     
                     if response.status_code == 200:
