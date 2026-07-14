@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
+import { ref, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import axios from '../utils/axios'
 import { useToast } from '../composables/useToast'
 import SkillFileTree from '../components/SkillFileTree.vue'
@@ -61,6 +61,105 @@ const hasStatsData = computed(() => {
   return Object.keys(statsData.value.total || {}).length > 0
 })
 
+// 抽屉内：当前技能近 30 天调用趋势
+const skillDrawerChartRef = ref<HTMLElement | null>(null)
+const loadingSkillDrawerStats = ref(false)
+let skillDrawerChartInstance: echarts.ECharts | null = null
+
+const activeSkillTrend = computed(() => {
+  const trend = statsData.value?.trend || {}
+  const skillId = activeSkillId.value
+  const dates = Object.keys(trend).sort()
+  return {
+    dates,
+    values: dates.map((d) => Number(trend[d]?.[skillId] || 0)),
+  }
+})
+
+const activeSkill30DayTotal = computed(() => {
+  return activeSkillTrend.value.values.reduce((sum, n) => sum + n, 0)
+})
+
+const activeSkillAllTimeTotal = computed(() => {
+  const skillId = activeSkillId.value
+  return Number(statsData.value?.total?.[skillId] || 0)
+})
+
+const disposeSkillDrawerChart = () => {
+  if (skillDrawerChartInstance) {
+    skillDrawerChartInstance.dispose()
+    skillDrawerChartInstance = null
+  }
+}
+
+const renderSkillDrawerChart = () => {
+  if (!skillDrawerChartRef.value) return
+  const { dates, values } = activeSkillTrend.value
+  if (!skillDrawerChartInstance) {
+    skillDrawerChartInstance = echarts.init(skillDrawerChartRef.value)
+  }
+  skillDrawerChartInstance.setOption({
+    grid: { left: 8, right: 8, top: 12, bottom: 20, containLabel: true },
+    tooltip: {
+      trigger: 'axis',
+      formatter: (params: any) => {
+        const p = Array.isArray(params) ? params[0] : params
+        return `${p?.axisValueLabel || ''}<br/>调用 ${p?.value ?? 0} 次`
+      },
+    },
+    xAxis: {
+      type: 'category',
+      data: dates.map((d) => d.slice(5)),
+      boundaryGap: false,
+      axisLabel: {
+        color: '#94a3b8',
+        fontSize: 9,
+        interval: Math.max(0, Math.floor(dates.length / 6) - 1),
+      },
+      axisLine: { lineStyle: { color: '#e2e8f0' } },
+      axisTick: { show: false },
+    },
+    yAxis: {
+      type: 'value',
+      minInterval: 1,
+      splitLine: { lineStyle: { color: '#f1f5f9' } },
+      axisLabel: { color: '#94a3b8', fontSize: 9 },
+    },
+    series: [
+      {
+        type: 'line',
+        smooth: true,
+        symbol: 'circle',
+        symbolSize: 4,
+        showSymbol: false,
+        data: values,
+        lineStyle: { width: 2, color: '#3b82f6' },
+        itemStyle: { color: '#3b82f6' },
+        areaStyle: {
+          color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+            { offset: 0, color: 'rgba(59, 130, 246, 0.28)' },
+            { offset: 1, color: 'rgba(59, 130, 246, 0.02)' },
+          ]),
+        },
+      },
+    ],
+  })
+}
+
+const loadSkillDrawerStats = async () => {
+  loadingSkillDrawerStats.value = true
+  try {
+    const res = await axios.get('/api/portal/skills/stats')
+    statsData.value = res.data
+  } catch (e) {
+    console.warn('Failed to load skill drawer stats', e)
+  } finally {
+    loadingSkillDrawerStats.value = false
+    await nextTick()
+    renderSkillDrawerChart()
+  }
+}
+
 // 帮助弹窗相关
 const showHelpModal = ref(false)
 const commandCopied = ref(false)
@@ -76,6 +175,12 @@ const editingContent = ref('')
 const originalContent = ref('')
 const saving = ref(false)
 const fetchingDetail = ref(false)
+
+watch(showDrawer, (open) => {
+  if (!open) {
+    disposeSkillDrawerChart()
+  }
+})
 
 // 新建技能资产相关
 const selectedDirectoryPath = ref('')
@@ -221,8 +326,10 @@ const openSkillDetail = async (skillId: string) => {
   activeSkillId.value = skillId
   selectedFilePath.value = 'SKILL.md'
   selectedDirectoryPath.value = ''
+  editorMode.value = 'preview'
   showDrawer.value = true
-  await fetchSkillDetail(skillId)
+  disposeSkillDrawerChart()
+  await Promise.all([fetchSkillDetail(skillId), loadSkillDrawerStats()])
 }
 
 // 获取详情 (包含加载选中的文件内容)
@@ -278,7 +385,7 @@ const loadFileContent = async (skillId: string, filePath: string) => {
 const selectFileForEdit = async (path: string) => {
   const doSelect = async () => {
     selectedFilePath.value = path
-    editorMode.value = 'edit'
+    editorMode.value = path.toLowerCase().endsWith('.md') ? 'preview' : 'edit'
     if (path === 'SKILL.md') {
       await fetchSkillDetail(activeSkillId.value)
     } else {
@@ -395,7 +502,7 @@ const mdParser = new MarkdownIt({
   breaks: true
 })
 
-const editorMode = ref<'edit' | 'preview'>('edit')
+const editorMode = ref<'edit' | 'preview'>('preview')
 
 const isMarkdownFile = computed(() => {
   return selectedFilePath.value.toLowerCase().endsWith('.md')
@@ -824,6 +931,15 @@ onMounted(() => {
 
 onUnmounted(() => {
   document.removeEventListener('click', closeContextMenu)
+  disposeSkillDrawerChart()
+  if (distChartInstance) {
+    distChartInstance.dispose()
+    distChartInstance = null
+  }
+  if (trendChartInstance) {
+    trendChartInstance.dispose()
+    trendChartInstance = null
+  }
 })
 </script>
 
@@ -1385,7 +1501,7 @@ onUnmounted(() => {
               </div>
 
               <!-- 文件树渲染 -->
-              <div @contextmenu.self.prevent="handleEmptyAreaContextMenu" class="flex-1 flex flex-col border border-gray-200 rounded-2xl p-4 bg-gray-50/50 overflow-y-auto min-h-[320px] custom-scrollbar mb-4">
+              <div @contextmenu.self.prevent="handleEmptyAreaContextMenu" class="flex-1 flex flex-col border border-gray-200 rounded-2xl p-4 bg-gray-50/50 overflow-y-auto min-h-[180px] custom-scrollbar mb-3">
                 <div v-if="fileTree.length === 0" class="text-center py-10 text-xs text-gray-400 italic flex-1 flex items-center justify-center">
                   暂无任何技能物理资产文件
                 </div>
@@ -1399,6 +1515,33 @@ onUnmounted(() => {
                   @delete-file="deleteSkillFile"
                   @context-menu="handleContextMenu"
                 />
+              </div>
+
+              <!-- 当前技能近 30 天调用趋势 -->
+              <div class="shrink-0 rounded-2xl border border-gray-200 bg-white p-3 shadow-sm">
+                <div class="flex items-center justify-between mb-2">
+                  <div class="flex items-center gap-1.5 min-w-0">
+                    <h4 class="text-xs font-bold text-gray-500 uppercase tracking-wider">近 30 天调用</h4>
+                    <span class="text-[10px] text-gray-400 truncate">{{ activeSkillId }}</span>
+                  </div>
+                  <div class="flex items-center gap-2 text-[10px] font-mono text-slate-500">
+                    <span class="px-1.5 py-0.5 rounded bg-blue-50 text-blue-600 font-bold">30天 {{ activeSkill30DayTotal }}</span>
+                    <span class="px-1.5 py-0.5 rounded bg-slate-50 text-slate-500">累计 {{ activeSkillAllTimeTotal }}</span>
+                  </div>
+                </div>
+                <div v-if="loadingSkillDrawerStats" class="h-[140px] flex items-center justify-center text-[11px] text-gray-400">
+                  加载调用统计...
+                </div>
+                <div
+                  v-else-if="activeSkill30DayTotal === 0 && activeSkillAllTimeTotal === 0"
+                  class="h-[140px] flex flex-col items-center justify-center text-[11px] text-gray-400 gap-1"
+                >
+                  <svg class="w-5 h-5 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3 3v18h18M7 14l4-4 3 3 5-6" />
+                  </svg>
+                  暂无调用记录
+                </div>
+                <div v-else ref="skillDrawerChartRef" class="w-full h-[140px]"></div>
               </div>
 
             </div>
