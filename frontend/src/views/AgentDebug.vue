@@ -2525,6 +2525,10 @@ const pinnedDrawerMarginStyle = computed(() => {
   return { marginRight: rem > 0 ? `min(${rem}rem, 100vw)` : "" };
 });
 
+const hasPinnedDrawer = computed(() => {
+  return pinnedDrawerRightRem.value > 0;
+});
+
 const workspacePinnedDockClass = computed(() => {
   const rem = pinnedDrawerDockOffsetRem("workspace");
   return rem > 0 ? `right-[${rem}rem]` : "right-0";
@@ -3861,58 +3865,105 @@ onUnmounted(() => {
 
       <!-- Mode Selector Bar -->
       <div
-        class="px-6 py-2 bg-gray-50 border-b border-gray-200 flex items-center space-x-4"
+        class="px-6 py-2.5 bg-gray-50 border-b border-gray-200 flex flex-col space-y-3 flex-shrink-0"
       >
-        <!-- Mode Toggle -->
-        <div class="flex bg-gray-200 p-1 rounded-lg">
-          <button
-            @click="
-              debugMode = 'auto';
-              agentParams.agent_id = null;
-            "
-            class="px-3 py-1.5 text-xs font-medium rounded-md transition-all"
-            :class="
-              debugMode === 'auto'
-                ? 'bg-white text-primary shadow-sm'
-                : 'text-gray-600 hover:text-gray-900'
-            "
-          >
-            🤖 自动路由 (Auto)
-          </button>
-          <button
-            @click="
-              debugMode = 'specific';
-              if (agents.length) agentParams.agent_id = agents[0].id;
-            "
-            class="px-3 py-1.5 text-xs font-medium rounded-md transition-all"
-            :class="
-              debugMode === 'specific'
-                ? 'bg-white text-primary shadow-sm'
-                : 'text-gray-600 hover:text-gray-900'
-            "
-          >
-            🎯 指定智能体 (Specific)
-          </button>
+        <div class="flex items-center space-x-4">
+          <!-- Mode Toggle -->
+          <div class="flex bg-gray-200 p-1 rounded-lg">
+            <button
+              @click="
+                debugMode = 'auto';
+                agentParams.agent_id = null;
+              "
+              class="px-3 py-1.5 text-xs font-medium rounded-md transition-all"
+              :class="
+                debugMode === 'auto'
+                  ? 'bg-white text-primary shadow-sm'
+                  : 'text-gray-600 hover:text-gray-900'
+              "
+            >
+              🤖 自动路由 (Auto)
+            </button>
+            <button
+              @click="
+                debugMode = 'specific';
+                if (agents.length) agentParams.agent_id = agents[0].id;
+              "
+              class="px-3 py-1.5 text-xs font-medium rounded-md transition-all"
+              :class="
+                debugMode === 'specific'
+                  ? 'bg-white text-primary shadow-sm'
+                  : 'text-gray-600 hover:text-gray-900'
+              "
+            >
+              🎯 指定智能体 (Specific)
+            </button>
+          </div>
+
+          <div class="text-xs text-gray-400 border-l pl-3 ml-2">
+            {{
+              debugMode === "auto"
+                ? "系统将根据您的问题自动选择最合适的 Agent"
+                : "强制请求发送给当前选中的 Agent"
+            }}
+          </div>
         </div>
 
-        <!-- Agent Dropdown (Visible only in Specific Mode) -->
-        <div v-if="debugMode === 'specific'" class="relative w-48 z-10">
-          <select
-            v-model="agentParams.agent_id"
-            class="block w-full pl-3 pr-10 py-1.5 text-xs border-gray-300 focus:outline-none focus:ring-primary focus:border-primary sm:text-sm rounded-md shadow-sm"
+        <!-- Agent Cards Grid (Visible only in Specific Mode) -->
+        <div
+          v-if="debugMode === 'specific' && agents.length > 0"
+          class="flex flex-wrap gap-3 pt-1"
+        >
+          <div
+            v-for="agent in agents"
+            :key="agent.id"
+            @click="agentParams.agent_id = agent.id"
+            class="flex-1 min-w-[200px] max-w-[280px] p-3 rounded-xl border-2 transition-all cursor-pointer select-none flex items-start space-x-3 bg-white"
+            :class="
+              agentParams.agent_id === agent.id
+                ? 'border-primary bg-primary/5 shadow-sm ring-1 ring-primary/10'
+                : 'border-gray-200 hover:border-gray-300 hover:bg-gray-50/50'
+            "
           >
-            <option v-for="agent in agents" :key="agent.id" :value="agent.id">
-              {{ agent.is_system ? '🔒' : '👤' }} {{ agent.display_name }} ({{ agent.name }})
-            </option>
-          </select>
-        </div>
-
-        <div class="text-xs text-gray-400 border-l pl-3 ml-2">
-          {{
-            debugMode === "auto"
-              ? "系统将根据您的问题自动选择最合适的 Agent"
-              : "强制请求发送给当前选中的 Agent"
-          }}
+            <!-- Avatar/Icon -->
+            <div
+              class="flex-shrink-0 w-8 h-8 rounded-lg flex items-center justify-center text-lg bg-gray-50 border border-gray-100 overflow-hidden"
+              :class="agentParams.agent_id === agent.id ? 'bg-primary/10 border-primary/20' : ''"
+            >
+              <img
+                v-if="agent.avatar_url && (agent.avatar_url.startsWith('http') || agent.avatar_url.startsWith('/') || agent.avatar_url.startsWith('data:'))"
+                :src="agent.avatar_url"
+                class="w-full h-full object-cover"
+              />
+              <span v-else-if="agent.avatar_url" class="text-base">{{ agent.avatar_url }}</span>
+              <span v-else class="text-base">{{ agent.is_system ? '🔒' : '👤' }}</span>
+            </div>
+            <!-- Info -->
+            <div class="flex-1 min-w-0">
+              <div class="flex items-center justify-between">
+                <span
+                  class="text-xs font-bold text-gray-800 truncate"
+                  :class="agentParams.agent_id === agent.id ? 'text-primary' : ''"
+                >
+                  {{ agent.display_name }}
+                </span>
+                <span
+                  v-if="agent.is_system"
+                  class="text-[8px] text-gray-400 font-mono scale-90 origin-right border border-gray-200 px-1 rounded bg-gray-50"
+                  >SYSTEM</span
+                >
+              </div>
+              <div class="text-[9px] text-gray-400 font-mono truncate mt-0.5">
+                {{ agent.name }}
+              </div>
+              <div
+                class="text-[10px] text-gray-500 line-clamp-2 mt-1.5 leading-relaxed"
+                :title="agent.description"
+              >
+                {{ agent.description || '暂无备注说明信息' }}
+              </div>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -4779,38 +4830,36 @@ onUnmounted(() => {
 
       <!-- Input Area -->
       <div class="flex-shrink-0 px-4 py-2 bg-white border-t border-gray-200 relative z-20 debug-chat-input-wrapper">
-        <div class="max-w-4xl mx-auto">
-          <ChatInput
-            ref="chatInputRef"
-            v-model="userInput"
-            :is-processing="isProcessing"
-            :show-shortcuts="debugConfig.showShortcuts"
-            :slash-commands="slashCommands"
-            :allowed-agents="agents"
-            :current-user="currentUser"
-            :window-width="windowWidth"
-            :approval-mode="debugConfig.approvalMode"
-            :selected-model="debugConfig.model"
-            :available-models="availableModels"
-            @update:approval-mode="debugConfig.approvalMode = $event"
-            @update:selected-model="debugConfig.model = $event"
-            @send="sendMessage"
-            @stop="stopGeneration"
-            @toggle-shortcuts="debugConfig.showShortcuts = !debugConfig.showShortcuts"
-            @open-command-manager="openCommandManager"
-            @upload-image="handleImageUpload"
-            @edit-command="editCommand"
-            @delete-command="confirmDeleteCommand"
-            @switch-mode="handleSwitchMode"
-            @reorder-commands="handleReorderCommands"
-            @select-skill="openSkillSelector"
-            @select-knowledge-base="openKnowledgePortal"
-            @select-local-fs="showWorkspaceDrawer = true"
-            @select-memory="openMemorySelector"
-            @system-command="handleSystemCommand"
-          >
-          </ChatInput>
-        </div>
+        <ChatInput
+          ref="chatInputRef"
+          v-model="userInput"
+          :is-processing="isProcessing"
+          :show-shortcuts="debugConfig.showShortcuts"
+          :slash-commands="slashCommands"
+          :allowed-agents="agents"
+          :current-user="currentUser"
+          :window-width="windowWidth"
+          :approval-mode="debugConfig.approvalMode"
+          :selected-model="debugConfig.model"
+          :available-models="availableModels"
+          @update:approval-mode="debugConfig.approvalMode = $event"
+          @update:selected-model="debugConfig.model = $event"
+          @send="sendMessage"
+          @stop="stopGeneration"
+          @toggle-shortcuts="debugConfig.showShortcuts = !debugConfig.showShortcuts"
+          @open-command-manager="openCommandManager"
+          @upload-image="handleImageUpload"
+          @edit-command="editCommand"
+          @delete-command="confirmDeleteCommand"
+          @switch-mode="handleSwitchMode"
+          @reorder-commands="handleReorderCommands"
+          @select-skill="openSkillSelector"
+          @select-knowledge-base="openKnowledgePortal"
+          @select-local-fs="showWorkspaceDrawer = true"
+          @select-memory="openMemorySelector"
+          @system-command="handleSystemCommand"
+        >
+        </ChatInput>
       </div>
 
       <ChatCanvas
@@ -4825,13 +4874,14 @@ onUnmounted(() => {
 
     <!-- Right: Configuration Panel -->
     <DebugConfigPanel
-      v-model:visible="showConfigPanel"
+      :visible="showConfigPanel && !hasPinnedDrawer"
       v-model:is-floating="isConfigPanelFloating"
       :config="debugConfig"
       :agent-params="agentParams"
       :loading-config="loadingConfig"
       :agent-context="agentContext"
       :rag-retrieval-meta="ragRetrievalMeta"
+      @update:visible="(val) => { showConfigPanel = val; }"
       @load-config="loadCurrentPrompt"
       @clear-context="clearContext"
     />

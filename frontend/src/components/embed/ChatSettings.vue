@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { ref } from 'vue';
 import { useRouter } from 'vue-router';
+import GroundingHelpPopover from '@/components/GroundingHelpPopover.vue';
+import { useToast } from '@/composables/useToast';
 
 const props = defineProps<{
   visible: boolean;
@@ -19,6 +21,7 @@ const emit = defineEmits<{
 }>();
 
 const router = useRouter();
+const { showToast } = useToast();
 const activeColor = ref("#1677ff");
 const presetColors = [
   "#1677ff",
@@ -70,7 +73,16 @@ const handleSetExpandThoughts = (enabled: boolean) => {
 };
 
 const handleSetGrounding = (enabled: boolean) => {
+    if (props.config.enableGrounding === enabled) {
+      saveAndClose();
+      return;
+    }
+
     props.config.enableGrounding = enabled;
+    showToast(
+      enabled ? "反幻觉校验已开启" : "反幻觉校验已关闭",
+      enabled ? "success" : "info",
+    );
     saveAndClose();
 };
 
@@ -288,7 +300,10 @@ const handleLogout = () => {
 
           <!-- Grounding Toggle -->
           <div>
-            <label class="block text-xs font-semibold text-gray-500 uppercase mb-2">反幻觉校验</label>
+            <div class="mb-2 flex items-center gap-1.5">
+              <label class="block text-xs font-semibold text-gray-500 uppercase">反幻觉校验</label>
+              <GroundingHelpPopover />
+            </div>
             <div class="flex bg-gray-100 dark:bg-gray-700 rounded-lg p-1">
               <button
                 @click="handleSetGrounding(true)"
