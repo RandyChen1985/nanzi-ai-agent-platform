@@ -1312,6 +1312,18 @@ class FederatedQueryExecutor:
                     if text:
                         chunk_count += 1
                         yield {"content": text}
+
+                from app.services.ai.runners.chatbi.insight_meta import (
+                    build_federated_chatbi_insight_meta,
+                )
+
+                insight_event = build_federated_chatbi_insight_meta(
+                    final_data=final_data,
+                    dataset_names=self.datasets,
+                    final_sql=join_sql,
+                )
+                if insight_event is not None:
+                    yield insight_event
                 
                 logger.info(
                     "[FederatedQueryExecutor] Synthesis complete. Total text chunks yielded: %d. LLM call count: %d",

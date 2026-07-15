@@ -9,6 +9,10 @@ import MessageRenderer from "@/components/MessageRenderer.vue";
 import GroundingBlockedCard from "@/components/GroundingBlockedCard.vue";
 import DatasetCapabilityMenu from "@/components/chatbi/DatasetCapabilityMenu.vue";
 import DatasetPortalDrawer from "@/components/chatbi/DatasetPortalDrawer.vue";
+import ChatBIDataEvidence from "@/components/chatbi/ChatBIDataEvidence.vue";
+import ChatBIContinueAnalysis from "@/components/chatbi/ChatBIContinueAnalysis.vue";
+import type { ChatBIInsightMeta } from "@/types/chatbiInsight";
+import { applyChatBIInsightEvent } from "@/utils/chatbiInsight";
 import KnowledgePortalDrawer from "@/components/knowledge/KnowledgePortalDrawer.vue";
 import { useDatasetPortal } from "@/composables/useDatasetPortal";
 import { useKnowledgePortal } from "@/composables/useKnowledgePortal";
@@ -1411,6 +1415,7 @@ interface Message {
   toolResultData?: Record<string, Array<{ block_id?: string; media_type?: string; data?: unknown; url?: string | null }>>;
   datasetNavigation?: DatasetNavigationPayload;
   permissionNotice?: PermissionNotice;
+  chatbiInsight?: ChatBIInsightMeta;
   groundingBlocked?: GroundingBlockedPayload;
   prompt_tokens?: number;
   completion_tokens?: number;
@@ -3308,6 +3313,9 @@ const sendMessage = async () => {
               }
             }
             // Handle Meta Info (Agent Name)
+            else if (applyChatBIInsightEvent(agentMsg.value, data)) {
+              // Additive ChatBI evidence event.
+            }
             else if (data.type === "meta") {
               if (data.agent_name) {
                 agentMsg.value.agentName = data.agent_name;
@@ -3551,6 +3559,8 @@ const applyPermissionStreamEvent = (msg: Message, data: any) => {
     if (data.data) {
       agentContext.value = { ...agentContext.value, ...data.data };
     }
+  } else if (applyChatBIInsightEvent(msg, data)) {
+    return;
   } else if (data.type === "thinking" && data.status === "continuing") {
     msg.isThinking = true;
   } else if (data.type === "meta") {
@@ -4873,7 +4883,7 @@ onUnmounted(() => {
                   </svg>
                 </button>
                 <div
-                  v-if="msg.permissionNotice?.row_filter_applied"
+                  v-if="msg.permissionNotice?.row_filter_applied && !msg.chatbiInsight"
                   class="mb-2 inline-flex max-w-full items-start gap-1.5 rounded-lg border border-emerald-100 bg-emerald-50/70 px-2.5 py-1.5 text-[11px] font-medium leading-relaxed text-emerald-700 dark:border-emerald-900/50 dark:bg-emerald-950/30 dark:text-emerald-300"
                 >
                   <svg class="mt-0.5 h-3.5 w-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -4888,8 +4898,16 @@ onUnmounted(() => {
                   @show-citation="(payload) => handleShowCitation(msg, payload.id, payload.anchor)"
                   @open-canvas="handleOpenCanvas"
                 />
+                <ChatBIDataEvidence v-if="msg.chatbiInsight" :meta="msg.chatbiInsight" />
+                <div v-if="msg.chatbiInsight?.actions?.length && !msg.isThinking" class="mt-2 flex justify-end">
+                  <ChatBIContinueAnalysis
+                    :actions="msg.chatbiInsight.actions"
+                    :is-mobile="isMobile"
+                    @select="handleQuickQuestion"
+                  />
+                </div>
                 <DatasetCapabilityMenu
-                  v-else
+                  v-if="msg.datasetNavigation?.groups?.length"
                   :payload="msg.datasetNavigation"
                   @quick-question="handleQuickQuestion"
                   @record-question-click="(payload) => recordPortalQuestionClick(msg.datasetNavigation, payload)"

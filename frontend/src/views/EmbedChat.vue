@@ -949,7 +949,7 @@
                   <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"></path></svg>
                 </button>
                                                                 <div
-                                                                  v-if="msg.permissionNotice?.row_filter_applied"
+                                                                  v-if="msg.permissionNotice?.row_filter_applied && !msg.chatbiInsight"
                                                                   class="mb-2 inline-flex max-w-full items-start gap-1.5 rounded-lg border border-emerald-100 bg-emerald-50/70 px-2.5 py-1.5 text-[11px] font-medium leading-relaxed text-emerald-700 dark:border-emerald-900/50 dark:bg-emerald-950/30 dark:text-emerald-300"
                                                                 >
                                                                   <svg class="mt-0.5 h-3.5 w-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1064,6 +1064,7 @@
                                                                                             </div>
                                                             </div>
             <!-- Agent Message Actions (Overlay/Bottom) -->
+            <ChatBIDataEvidence v-if="msg.chatbiInsight" :meta="msg.chatbiInsight" />
             <div class="flex flex-nowrap items-center space-x-2 mt-1.5">
               <button
                 @click="copyMessage(msg.content)"
@@ -1212,19 +1213,12 @@
                   </svg>
                 </button>
                 </template>
-                <button
-                  v-if="msg.hasDataOutput && checkRole(msg, 'agent') && !msg.isThinking"
-                  type="button"
-                  @click="handleVisualAnalysis()"
-                  class="flex shrink-0 items-center space-x-1 text-[10px] text-gray-400 hover:text-primary transition-colors rounded hover:bg-gray-100 dark:hover:bg-gray-800"
-                  :class="windowWidth < 640 ? 'p-2.5' : 'px-1.5 py-0.5'"
-                  title="基于本轮查询结果进行可视化深度分析"
-                >
-                  <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
-                  </svg>
-                  <span class="hidden sm:inline">可视化分析</span>
-                </button>
+                <ChatBIContinueAnalysis
+                  v-if="msg.chatbiInsight?.actions?.length && checkRole(msg, 'agent') && !msg.isThinking"
+                  :actions="msg.chatbiInsight.actions"
+                  :is-mobile="isMobile"
+                  @select="handleQuickQuestion"
+                />
                 <button
                   v-if="canSaveGoldenReportFromMessage(msg) && checkRole(msg, 'agent') && !msg.isThinking"
                   type="button"
@@ -2433,6 +2427,10 @@ import MessageRenderer from "@/components/MessageRenderer.vue";
 import GroundingBlockedCard from "@/components/GroundingBlockedCard.vue";
 import DatasetCapabilityMenu from "@/components/chatbi/DatasetCapabilityMenu.vue";
 import DatasetPortalDrawer from "@/components/chatbi/DatasetPortalDrawer.vue";
+import ChatBIDataEvidence from "@/components/chatbi/ChatBIDataEvidence.vue";
+import ChatBIContinueAnalysis from "@/components/chatbi/ChatBIContinueAnalysis.vue";
+import type { ChatBIInsightMeta } from "@/types/chatbiInsight";
+import { applyChatBIInsightEvent } from "@/utils/chatbiInsight";
 import KnowledgePortalDrawer from "@/components/knowledge/KnowledgePortalDrawer.vue";
 import { useKnowledgePortal } from "@/composables/useKnowledgePortal";
 import CitationPopover from "@/components/CitationPopover.vue";
@@ -2603,6 +2601,7 @@ interface Message {
   agentDisplayName?: string;
   turnType?: TurnType | string;
   hasDataOutput?: boolean;
+  chatbiInsight?: ChatBIInsightMeta;
   prompt_tokens?: number;
   completion_tokens?: number;
   total_tokens?: number;
@@ -5872,10 +5871,6 @@ const refreshDatasetMenuNavigation = async (msg: Message) => {
   }
 };
 
-const handleVisualAnalysis = async () => {
-  await handleQuickQuestion("可视化分析一下");
-};
-
 const handleSaveReportFromMessage = (msg: Message) => {
   const sql = resolveSavableSqlFromMessage(msg);
   if (sql) openSaveReportModal(sql, msg);
@@ -5940,6 +5935,8 @@ const addEmbedLogFromStream = (msg: Message, data: any) => {
 const applyPermissionStreamEvent = (msg: Message, data: any) => {
   if (data.trace_id) msg.trace_id = data.trace_id;
   if (data.data?.trace_id) msg.trace_id = data.data.trace_id;
+
+  if (applyChatBIInsightEvent(msg, data)) return;
 
   if (dispatchAgentscopeStreamEvent(msg, data, addEmbedLogFromStream)) {
     if (data.type === "error") {
@@ -6385,6 +6382,8 @@ const sendMessage = async () => {
                 execution_time_ms: data.execution_time_ms ?? null,
               });
             }
+          } else if (applyChatBIInsightEvent(agentMsg.value, data)) {
+            // Additive ChatBI evidence event; answer content stays unchanged.
           } else if (dispatchAgentscopeStreamEvent(agentMsg.value, data, addEmbedLogFromStream)) {
             if (data.type === "permission_required" && thoughtTimer) {
               clearInterval(thoughtTimer);
