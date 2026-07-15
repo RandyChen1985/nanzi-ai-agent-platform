@@ -49,6 +49,58 @@ def test_mobile_digest_supports_columns_and_array_rows_and_empty_results():
     assert "暂无符合条件的数据" in empty["key_findings"]
 
 
+def test_digest_scope_uses_chinese_readable_range_not_raw_param_keys():
+    from app.services.saved_report_digest_service import build_deterministic_digest, render_mobile_markdown
+
+    digest = build_deterministic_digest(
+        _report(),
+        _run({"rows": [{"日期": "2026-07-06", "用量": 2}]}),
+        {
+            "date_range": "month_start_to_today",
+            "start_datetime": "2026-07-01 00:00:00",
+            "end_datetime": "2026-07-15 23:59:59",
+        },
+    )
+    _, content = render_mobile_markdown(digest, "https://example.test/report/1", "inbox")
+
+    assert "date_range" not in digest["scope"]
+    assert "start_datetime" not in digest["scope"]
+    assert "end_datetime" not in digest["scope"]
+    assert "month_start_to_today" not in digest["scope"]
+    assert "本月至今" in digest["scope"]
+    assert "2026-07-01" in digest["scope"]
+    assert "2026-07-15" in digest["scope"]
+    assert "统计范围：本月至今" in content or "统计范围：" in content and "本月至今" in content
+
+
+def test_digest_humanizes_object_column_keys_instead_of_dict_repr():
+    from app.services.saved_report_digest_service import build_deterministic_digest, render_mobile_markdown
+
+    digest = build_deterministic_digest(
+        _report(),
+        _run(
+            {
+                "columns": [
+                    {"name": "stat_date", "type": "3", "label": "统计日期"},
+                    {"name": "new_users", "type": "8"},
+                ],
+                "rows": [
+                    ["2026-07-06", 2],
+                    ["2026-07-10", 16],
+                ],
+            }
+        ),
+        {},
+    )
+    _, content = render_mobile_markdown(digest, "https://example.test/report/1", "inbox")
+
+    assert digest["records"][0] == {"统计日期": "2026-07-06", "new_users": "2"}
+    assert "{'name'" not in content
+    assert '"type"' not in content
+    assert "统计日期：2026-07-06" in content or "**1. 2026-07-06**" in content
+    assert "new_users：2" in content
+
+
 def test_deterministic_digest_surfaces_actual_kpi_values_without_ai():
     from app.services.saved_report_digest_service import build_deterministic_digest
 

@@ -57,11 +57,12 @@ def test_data_portal_full_page_route_and_mobile_navigation_contract():
     assert "name: '我的数据门户'" not in dashboard
 
 
-def test_data_portal_workspace_is_flush_with_dashboard_content_area():
+def test_data_portal_workspace_stays_full_width_inside_personal_center_gutter():
     dashboard = _read("frontend/src/views/Dashboard.vue")
     page = _read("frontend/src/views/DataPortalHome.vue")
 
-    assert "['AIChat', 'PersonalCenter'].includes(route.name as string) ? 'p-0'" in dashboard
+    assert 'route.name === "PersonalCenter"' in dashboard
+    assert "px-3 sm:px-4" in dashboard
     assert "props.embedded ? 'bg-white dark:bg-gray-900'" in page
     assert "props.embedded ? 'min-h-[620px]'" in page
     assert "max-w-[1500px]" not in page
@@ -160,13 +161,16 @@ def test_data_portal_lives_in_personal_center_data_tab():
     assert 'path: "/dashboard/personal", query: { tab: "data" }' in debug
 
 
-def test_personal_center_is_flush_and_tab_query_does_not_remount_page():
+def test_personal_center_has_light_horizontal_gutter_without_remounting_tabs():
     personal = _read("frontend/src/views/PersonalCenter.vue")
     dashboard = _read("frontend/src/views/Dashboard.vue")
 
     assert 'class="min-h-full bg-white"' in personal
     assert "rounded-lg shadow-sm border border-gray-200" not in personal
     assert "activeTab === 'data' ? '' : 'px-4 pb-4 sm:px-6 sm:pb-6'" in personal
-    assert "['AIChat', 'PersonalCenter'].includes(route.name as string) ? 'p-0'" in dashboard
+    assert "dashboardContentSpacing" in dashboard
+    assert 'route.name === "AIChat"' in dashboard
+    assert 'route.name === "PersonalCenter"' in dashboard
+    assert "px-3 sm:px-4" in dashboard
     assert ':key="$route.path"' in dashboard
     assert ':key="$route.fullPath"' not in dashboard

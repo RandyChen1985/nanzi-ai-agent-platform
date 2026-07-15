@@ -2,6 +2,10 @@
 import { computed, onMounted, onUnmounted, ref } from "vue";
 import { useRouter } from "vue-router";
 import axios from "../utils/axios";
+import {
+  createSavedReportOpenRequest,
+  publishSavedReportOpenRequest,
+} from "../utils/savedReportOpenProtocol";
 
 const router = useRouter();
 const open = ref(false);
@@ -13,23 +17,13 @@ const deleteMode = ref<"single" | "read" | null>(null);
 const deleteTarget = ref<any | null>(null);
 const deleting = ref(false);
 const deleteError = ref("");
-let closeTimer: ReturnType<typeof setTimeout> | null = null;
 let unreadTimer: ReturnType<typeof setInterval> | null = null;
 let listTimer: ReturnType<typeof setInterval> | null = null;
 
-const cancelScheduledClose = () => {
-  if (closeTimer) clearTimeout(closeTimer);
-  closeTimer = null;
-};
 const closeNotifications = () => {
-  cancelScheduledClose();
   open.value = false;
   if (listTimer) clearInterval(listTimer);
   listTimer = null;
-};
-const scheduleClose = () => {
-  cancelScheduledClose();
-  closeTimer = setTimeout(closeNotifications, 220);
 };
 
 const fetchUnreadCount = async () => {
@@ -86,7 +80,6 @@ const handleVisibilityChange = () => {
   refreshWhenActive();
 };
 const toggle = async () => {
-  cancelScheduledClose();
   open.value = !open.value;
   if (open.value) {
     await refreshNotifications();
@@ -96,15 +89,34 @@ const toggle = async () => {
   }
 };
 const markRead = async (item: any) => {
-  if (!item.read_at) {
-    await axios.post(`/api/portal/inbox/${item.id}/read`);
-    item.read_at = new Date().toISOString();
-    unreadCount.value = Math.max(0, unreadCount.value - 1);
-  }
   const meta = item.metadata || {};
-  if (meta.report_id) {
-    open.value = false;
-    await router.push({ path: "/dashboard/chat", query: { dataset_portal: "1", report_id: meta.report_id, run_id: item.resource_id || "" } });
+  const savedReportOpenRequest = meta.report_id
+    ? createSavedReportOpenRequest({ report_id: meta.report_id, run_id: item.resource_id || "" })
+    : null;
+  const notificationTarget = savedReportOpenRequest
+    ? {
+        path: "/dashboard/chat",
+        query: {
+          dataset_portal: "1",
+          report_id: savedReportOpenRequest.report_id,
+          run_id: savedReportOpenRequest.run_id,
+          open_request_id: savedReportOpenRequest.request_id,
+        },
+      }
+    : null;
+  if (!item.read_at) {
+    try {
+      await axios.post(`/api/portal/inbox/${item.id}/read`);
+      item.read_at = new Date().toISOString();
+      unreadCount.value = Math.max(0, unreadCount.value - 1);
+    } catch (error) {
+      console.warn("Failed to mark portal notification as read", error);
+    }
+  }
+  if (notificationTarget) {
+    closeNotifications();
+    await router.push(notificationTarget);
+    publishSavedReportOpenRequest(savedReportOpenRequest);
   }
 };
 const markAllRead = async () => {
@@ -160,7 +172,6 @@ onMounted(() => {
   window.addEventListener("focus", refreshWhenActive);
 });
 onUnmounted(() => {
-  cancelScheduledClose();
   if (unreadTimer) clearInterval(unreadTimer);
   if (listTimer) clearInterval(listTimer);
   document.removeEventListener("visibilitychange", handleVisibilityChange);
@@ -169,7 +180,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="relative" @mouseenter="cancelScheduledClose" @mouseleave="scheduleClose">
+  <div class="relative">
     <button type="button" class="relative p-2 rounded-lg text-gray-500 hover:bg-gray-100" title="站内通知" @click="toggle">
       <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 17h5l-1.4-1.4A2 2 0 0118 14.2V11a6 6 0 10-12 0v3.2c0 .5-.2 1-.6 1.4L4 17h5m6 0a3 3 0 01-6 0" /></svg>
       <span v-if="unreadCount" class="absolute -right-1 -top-1 min-w-4 h-4 px-1 rounded-full bg-red-500 text-white text-[9px] font-bold leading-4 text-center">{{ unreadCount > 99 ? '99+' : unreadCount }}</span>

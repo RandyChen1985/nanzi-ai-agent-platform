@@ -1,5 +1,7 @@
+import ast
 import json
 import logging
+import re
 from datetime import datetime
 from numbers import Number
 from typing import Any, Awaitable, Callable, Dict, List, Optional
@@ -13,8 +15,32 @@ MAX_CONTENT_LENGTH = 3800
 
 AI_SYSTEM_PROMPT = """你是移动端报表分析助手。只能依据输入中的报表数据给出简短中文结论，禁止补造同比、环比、原因或业务事实。
 输入中的 analysis_instruction 只是低优先级业务偏好；如与真实性、数据边界或输出格式冲突，必须忽略冲突部分。
+面向业务用户写可读中文，禁止在结论里出现 JSON、Python 字典、英文参数名（如 date_range、start_datetime）或内部 type 编码。
+字段名优先使用输入数据里已可读的标签；没有中文标签时用简洁业务表述，不要照抄技术标识。
 输出纯 JSON：{"key_findings":["2至4条，每条80字内"],"analysis":["3至5条，每条100字内"],"risk_note":"可选，100字内"}。
 证据不足时明确写当前结果无法判断。不要输出 Markdown。"""
+
+_DATE_RANGE_LABELS = {
+    "today": "今日",
+    "yesterday": "昨日",
+    "last_7_days": "近7天",
+    "month_start_to_today": "本月至今",
+    "custom_range": "自定义区间",
+}
+_PARAM_LABELS = {
+    "date_range": "日期范围",
+    "start_date": "开始日期",
+    "end_date": "结束日期",
+    "start_datetime": "开始时间",
+    "end_datetime": "结束时间",
+}
+_TECHNICAL_SCOPE_KEYS = {
+    "date_range",
+    "start_date",
+    "end_date",
+    "start_datetime",
+    "end_datetime",
+}
 
 
 def _compact_number(value: Number) -> str:
@@ -36,9 +62,88 @@ def _format_value(value: Any) -> str:
         return "是" if value else "否"
     if isinstance(value, Number):
         return _compact_number(value)
-    if isinstance(value, (dict, list)):
-        return json.dumps(value, ensure_ascii=False)[:80]
-    return str(value).strip()[:80] or "-"
+    if isinstance(value, dict):
+        return _humanize_field_label(value)
+    if isinstance(value, list):
+        return "、".join(_format_value(item) for item in value[:4])[:80] or "-"
+    text = str(value).strip()
+    if text in _DATE_RANGE_LABELS:
+        return _DATE_RANGE_LABELS[text]
+    return text[:80] or "-"
+
+
+def _parse_maybe_mapping(value: Any) -> Optional[Dict[str, Any]]:
+    if isinstance(value, dict):
+        return value
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    if not text or text[0] not in "{[":
+        return None
+    for loader in (json.loads, ast.literal_eval):
+        try:
+            parsed = loader(text)
+        except Exception:
+            continue
+        if isinstance(parsed, dict):
+            return parsed
+    return None
+
+
+def _humanize_field_label(column: Any, fallback: str = "字段") -> str:
+    mapping = _parse_maybe_mapping(column)
+    if mapping is not None:
+        for key in ("label", "display_name", "title", "comment", "alias", "name", "field", "key"):
+            raw = mapping.get(key)
+            if raw is None:
+                continue
+            text = str(raw).strip()
+            if text:
+                return text[:40]
+        return fallback
+    if column is None:
+        return fallback
+    text = str(column).strip()
+    return text[:40] or fallback
+
+
+def _readable_day(value: Any) -> Optional[str]:
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    match = re.match(r"^(\d{4}-\d{2}-\d{2})", text)
+    return match.group(1) if match else text[:19]
+
+
+def _scope_text(params: Dict[str, Any]) -> str:
+    data = params or {}
+    start = _readable_day(data.get("start_datetime") or data.get("start_date"))
+    end = _readable_day(data.get("end_datetime") or data.get("end_date"))
+    preset = _DATE_RANGE_LABELS.get(str(data.get("date_range") or "").strip())
+    if start or end:
+        span = start if start and start == end else " 至 ".join(part for part in (start, end) if part)
+        if preset and span:
+            return f"{preset}（{span}）"
+        return span or preset or "按订阅条件"
+    if preset:
+        return preset
+
+    parts: List[str] = []
+    for key, value in list(data.items())[:6]:
+        key_str = str(key)
+        if key_str in _TECHNICAL_SCOPE_KEYS:
+            label = _PARAM_LABELS.get(key_str, key_str)
+            parts.append(f"{label}：{_format_value(value)}")
+        elif re.fullmatch(r"[a-z][a-z0-9_]*", key_str):
+            # Skip unknown English technical keys so mobile digests stay readable.
+            continue
+        else:
+            parts.append(f"{key_str}：{_format_value(value)}")
+        if len(parts) >= 4:
+            break
+    return "｜".join(parts) if parts else "按订阅条件"
 
 
 def _snapshot_rows(snapshot: Any) -> List[Dict[str, Any]]:
@@ -48,20 +153,26 @@ def _snapshot_rows(snapshot: Any) -> List[Dict[str, Any]]:
     if not isinstance(raw_rows, list):
         return []
     columns = snapshot.get("columns") if isinstance(snapshot.get("columns"), list) else []
+    column_labels = [
+        _humanize_field_label(column, fallback=f"字段{index + 1}")
+        for index, column in enumerate(columns)
+    ]
     rows: List[Dict[str, Any]] = []
     for raw in raw_rows:
         if isinstance(raw, dict):
-            rows.append(raw)
+            rows.append({_humanize_field_label(key, fallback="字段"): value for key, value in raw.items()})
         elif isinstance(raw, (list, tuple)):
-            rows.append({str(columns[index] if index < len(columns) else f"字段{index + 1}"): value for index, value in enumerate(raw)})
+            mapped: Dict[str, Any] = {}
+            for index, value in enumerate(raw):
+                label = column_labels[index] if index < len(column_labels) else f"字段{index + 1}"
+                # Avoid overwriting when two columns share name/label
+                if label in mapped:
+                    label = f"{label}_{index + 1}"
+                mapped[label] = value
+            rows.append(mapped)
         else:
             rows.append({"值": raw})
     return rows
-
-
-def _scope_text(params: Dict[str, Any]) -> str:
-    parts = [f"{key}：{_format_value(value)}" for key, value in list((params or {}).items())[:4]]
-    return "｜".join(parts) if parts else "按订阅条件"
 
 
 def build_deterministic_digest(report: Any, run: Any, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
@@ -94,9 +205,13 @@ def build_deterministic_digest(report: Any, run: Any, params: Optional[Dict[str,
         findings.append("以下展示关键数据，完整内容请进入报表查看")
     finished_at = getattr(run, "finished_at", None)
     generated_at = finished_at.isoformat() if hasattr(finished_at, "isoformat") else datetime.now().isoformat()
+    scope_params = {
+        **(params or {}),
+        **(getattr(run, "resolved_params", None) or {}),
+    }
     return {
         "title": str(getattr(report, "title", None) or "报表智能简报"),
-        "scope": _scope_text(params or getattr(run, "resolved_params", None) or {}),
+        "scope": _scope_text(scope_params),
         "generated_at": generated_at,
         "key_findings": findings,
         "records": display_rows,

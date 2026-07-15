@@ -162,6 +162,7 @@
                 :payload="payload || { groups: [] }"
                 :initial-loading="initialLoading"
                 :background-refreshing="backgroundRefreshing"
+                :focus-saved-report-request="focusSavedReportRequest"
                 @quick-question="(query, action) => emit('quick-question', query, action)"
                 @record-question-click="(p) => emit('record-question-click', p)"
                 @clear-question-click="(p) => emit('clear-question-click', p)"
@@ -189,6 +190,11 @@ defineProps<{
   payload: Record<string, unknown> | null;
   initialLoading?: boolean;
   backgroundRefreshing?: boolean;
+  focusSavedReportRequest?: {
+    report_id: string;
+    run_id: string;
+    request_id: string;
+  } | null;
 }>();
 
 const emit = defineEmits<{

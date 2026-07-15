@@ -410,7 +410,10 @@
                         <span class="rounded-md bg-violet-50 px-2 py-1 text-violet-600 dark:bg-violet-950/30 dark:text-violet-300">{{ delivery.ai_status === 'success' ? 'AI 分析' : delivery.ai_status === 'fallback' ? '数据摘要' : '未启用 AI' }}</span>
                       </div>
                       <p class="text-xs font-bold text-gray-700 dark:text-gray-200">{{ delivery.title }}</p>
-                      <pre class="mt-2 max-h-72 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-gray-50 p-2 text-[10px] leading-relaxed text-gray-600 dark:bg-gray-900 dark:text-gray-300">{{ delivery.content }}</pre>
+                      <div
+                        class="saved-report-delivery-markdown markdown-body mt-2 max-h-72 overflow-auto break-words rounded-lg bg-gray-50 px-3 py-2.5 text-xs leading-relaxed text-gray-600 dark:bg-gray-900 dark:text-gray-300"
+                        v-html="renderSafeMarkdownPreview(delivery.content || '')"
+                      />
                       <p v-if="delivery.error_message" class="mt-2 text-[10px] text-red-500">{{ delivery.error_message }}</p>
                     </article>
                   </div>
@@ -1253,6 +1256,9 @@
 import { ref, watch, computed, onMounted, onUnmounted } from "vue";
 import axios from "@/utils/axios";
 import { useToast } from "@/composables/useToast";
+import { renderSafeMarkdownPreview } from "@/utils/safeMarkdown";
+import { focusSavedReportTarget } from "@/utils/savedReportFocus";
+import type { SavedReportOpenRequest } from "@/utils/savedReportOpenProtocol";
 import SavedReportItemCard from "@/components/chatbi/SavedReportItemCard.vue";
 import SavedReportBrowseModal from "@/components/chatbi/SavedReportBrowseModal.vue";
 
@@ -1329,6 +1335,7 @@ const props = withDefaults(defineProps<{
   payload: DatasetNavigationPayload;
   initialLoading?: boolean;
   backgroundRefreshing?: boolean;
+  focusSavedReportRequest?: SavedReportOpenRequest | null;
 }>(), {
   initialLoading: false,
   backgroundRefreshing: false,
@@ -2026,20 +2033,6 @@ const fetchSavedReports = async () => {
     });
     if (res.data && res.data.data) {
       savedReports.value = res.data.data;
-      const focusRaw = localStorage.getItem("portal_focus_saved_report");
-      if (focusRaw) {
-        localStorage.removeItem("portal_focus_saved_report");
-        try {
-          const focus = JSON.parse(focusRaw);
-          const report = savedReports.value.find(item => item.id === focus.report_id);
-          if (report) {
-            await openSavedReportDetail(report);
-            await selectSavedReportDetailTab("runs");
-            const run = savedReportRuns.value.find(item => String(item.id) === String(focus.run_id));
-            if (run) await toggleSavedReportRunDetail(run);
-          }
-        } catch (error) { console.warn("Failed to focus saved report notification target", error); }
-      }
     }
   } catch (error) {
     console.error("Failed to fetch saved reports:", error);
@@ -2048,6 +2041,29 @@ const fetchSavedReports = async () => {
     refreshingReports.value = false;
   }
 };
+
+let lastHandledSavedReportFocusRequestId = "";
+watch(
+  () => props.focusSavedReportRequest?.request_id,
+  async (requestId) => {
+    const request = props.focusSavedReportRequest;
+    if (!request || !requestId || requestId === lastHandledSavedReportFocusRequestId) return;
+    lastHandledSavedReportFocusRequestId = requestId;
+    showSavedReportsCollapse.value = false;
+    try {
+      await focusSavedReportTarget(request, {
+        getReports: () => savedReports.value,
+        loadReports: fetchSavedReports,
+        openReport: openSavedReportDetail,
+        openRunsTab: () => selectSavedReportDetailTab("runs"),
+        getRuns: () => savedReportRuns.value,
+        openRun: toggleSavedReportRunDetail,
+      });
+    } catch (error) {
+      console.warn("Failed to focus saved report notification target", error);
+    }
+  },
+);
 
 const setSavedReportScope = async (scope: "all" | "my" | "shared") => {
   if (savedReportScope.value === scope) return;
@@ -3078,6 +3094,109 @@ const handleRecommendedQuestionClick = (
 </script>
 
 <style scoped>
+.saved-report-delivery-markdown :deep(h1),
+.saved-report-delivery-markdown :deep(h2),
+.saved-report-delivery-markdown :deep(h3),
+.saved-report-delivery-markdown :deep(h4) {
+  margin: 0.75rem 0 0.35rem;
+  color: rgb(55 65 81);
+  font-weight: 800;
+  line-height: 1.45;
+}
+
+.saved-report-delivery-markdown :deep(h1:first-child),
+.saved-report-delivery-markdown :deep(h2:first-child),
+.saved-report-delivery-markdown :deep(h3:first-child),
+.saved-report-delivery-markdown :deep(h4:first-child) {
+  margin-top: 0;
+}
+
+.saved-report-delivery-markdown :deep(h1) { font-size: 1rem; }
+.saved-report-delivery-markdown :deep(h2) { font-size: 0.95rem; }
+.saved-report-delivery-markdown :deep(h3),
+.saved-report-delivery-markdown :deep(h4) { font-size: 0.875rem; }
+
+.saved-report-delivery-markdown :deep(p) {
+  margin: 0.4rem 0;
+}
+
+.saved-report-delivery-markdown :deep(ul),
+.saved-report-delivery-markdown :deep(ol) {
+  margin: 0.4rem 0;
+  padding-left: 1.25rem;
+}
+
+.saved-report-delivery-markdown :deep(ul) { list-style: disc; }
+.saved-report-delivery-markdown :deep(ol) { list-style: decimal; }
+.saved-report-delivery-markdown :deep(li) { margin: 0.2rem 0; }
+
+.saved-report-delivery-markdown :deep(blockquote) {
+  margin: 0.5rem 0;
+  border-left: 3px solid rgb(147 197 253);
+  padding: 0.25rem 0.75rem;
+  color: rgb(107 114 128);
+}
+
+.saved-report-delivery-markdown :deep(code) {
+  border-radius: 0.25rem;
+  background: rgb(229 231 235 / 0.75);
+  padding: 0.1rem 0.3rem;
+  font-size: 0.72rem;
+}
+
+.saved-report-delivery-markdown :deep(pre) {
+  margin: 0.5rem 0;
+  overflow-x: auto;
+  border-radius: 0.5rem;
+  background: rgb(17 24 39);
+  padding: 0.65rem;
+  color: rgb(209 250 229);
+}
+
+.saved-report-delivery-markdown :deep(pre code) {
+  background: transparent;
+  padding: 0;
+  color: inherit;
+}
+
+.saved-report-delivery-markdown :deep(a) {
+  color: rgb(37 99 235);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.saved-report-delivery-markdown :deep(table) {
+  display: block;
+  width: 100%;
+  margin: 0.5rem 0;
+  overflow-x: auto;
+  border-collapse: collapse;
+}
+
+.saved-report-delivery-markdown :deep(th),
+.saved-report-delivery-markdown :deep(td) {
+  border: 1px solid rgb(229 231 235);
+  padding: 0.35rem 0.5rem;
+  text-align: left;
+  white-space: nowrap;
+}
+
+:global(.dark) .saved-report-delivery-markdown :deep(h1),
+:global(.dark) .saved-report-delivery-markdown :deep(h2),
+:global(.dark) .saved-report-delivery-markdown :deep(h3),
+:global(.dark) .saved-report-delivery-markdown :deep(h4) {
+  color: rgb(229 231 235);
+}
+
+:global(.dark) .saved-report-delivery-markdown :deep(code) {
+  background: rgb(55 65 81 / 0.8);
+}
+
+:global(.dark) .saved-report-delivery-markdown :deep(th),
+:global(.dark) .saved-report-delivery-markdown :deep(td) {
+  border-color: rgb(55 65 81);
+}
+
 .portal-card-icon :deep(svg) {
   width: 18px;
   height: 18px;

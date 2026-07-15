@@ -16,6 +16,11 @@ const showMobileSidebar = ref(false);
 const windowWidth = ref(window.innerWidth);
 const isMobile = computed(() => windowWidth.value < 1024);
 const appVersion = import.meta.env.VITE_APP_VERSION || "Dev Build";
+const dashboardContentSpacing = computed(() => {
+  if (route.name === "AIChat") return "p-0";
+  if (route.name === "PersonalCenter") return "px-3 sm:px-4";
+  return "p-0 sm:p-4 md:p-8";
+});
 
 const showLogoutDialog = ref(false);
 const showUserInfoDialog = ref(false);
@@ -667,7 +672,7 @@ const filteredMenuGroups = computed(() => {
       <!-- Main Scrollable Content -->
       <main 
         class="flex-1 overflow-y-auto bg-gray-100 custom-scrollbar"
-        :class="['AIChat', 'PersonalCenter'].includes(route.name as string) ? 'p-0' : 'p-0 sm:p-4 md:p-8'"
+        :class="dashboardContentSpacing"
       >
         <router-view v-slot="{ Component }">
           <transition name="page">
