@@ -11,6 +11,9 @@ import {
   PlayCircleIcon,
   PauseCircleIcon
 } from '@heroicons/vue/24/outline'
+import { useRouter } from 'vue-router'
+
+const router = useRouter()
 
 // Auth & Permission
 const cachedUser = localStorage.getItem('user_info')
@@ -21,11 +24,20 @@ const canManage = computed(() => {
   const userElements = userInfo.value.permissions?.elements || []
   return userElements.includes('element:task:manage')
 })
+const canManageTask = (task: AgentTask) => task.task_type === 'saved_report'
+  ? String(task.user_id) === String(userInfo.value?.user_id)
+  : canManage.value
 
 // View & Filter States
 const viewMode = ref<'grid' | 'list'>((localStorage.getItem('task_center_view_mode') as 'grid' | 'list') || 'grid')
 const searchQuery = ref('')
 const statusFilter = ref<'all' | 'running' | 'stopped'>('all')
+const taskTypeFilter = ref<'all' | 'agent' | 'saved_report'>('all')
+const taskTypeTabs = [
+  { value: 'all' as const, label: '全部任务' },
+  { value: 'agent' as const, label: '智能体任务' },
+  { value: 'saved_report' as const, label: '报表订阅' },
+]
 
 watch(viewMode, (newMode) => {
   localStorage.setItem('task_center_view_mode', newMode)
@@ -157,8 +169,19 @@ const cronDescription = computed(() => {
 })
 
 // Filtered Tasks
+const taskTypeCounts = computed(() => ({
+  all: tasks.value.length,
+  agent: tasks.value.filter(task => task.task_type !== 'saved_report').length,
+  saved_report: tasks.value.filter(task => task.task_type === 'saved_report').length,
+}))
+
 const filteredTasks = computed(() => {
   let result = [...tasks.value]
+  if (taskTypeFilter.value === 'agent') {
+    result = result.filter(task => task.task_type !== 'saved_report')
+  } else if (taskTypeFilter.value === 'saved_report') {
+    result = result.filter(task => task.task_type === 'saved_report')
+  }
   if (searchQuery.value) {
     const q = searchQuery.value.toLowerCase()
     result = result.filter(t => t.name.toLowerCase().includes(q) || t.prompt.toLowerCase().includes(q))
@@ -180,8 +203,8 @@ const confirmState = ref({ show: false, title: '', message: '', type: 'danger' a
 const fetchTasks = async (isSilent = false) => {
   if (!isSilent) loading.value = true
   try {
-    const res = await taskApi.list()
-    tasks.value = res.data.data
+    const [agentRes, reportRes] = await Promise.all([taskApi.list(), taskApi.listReportSubscriptions()])
+    tasks.value = [...(agentRes.data.data || []), ...(reportRes.data.data || [])]
   } catch (e) {
     if (!isSilent) showToast('获取任务列表失败', 'error')
     console.error('Failed to fetch tasks', e)
@@ -207,6 +230,10 @@ const openCreateModal = () => {
 }
 
 const openEditModal = (task: AgentTask) => {
+  if (task.task_type === 'saved_report') {
+    openSavedReportTask(task)
+    return
+  }
   editingTask.value = { ...task }
   parseCronToUI(task.cron_expr || '')
   showEditModal.value = true
@@ -239,7 +266,8 @@ const toggleStatus = (task: AgentTask) => {
     onConfirm: async () => {
       try {
         const newStatus = isRunning ? 0 : 1
-        await taskApi.update(task.id, { status: newStatus })
+        if (task.task_type === 'saved_report') await taskApi.updateReportSubscriptionStatus(task.subscription_id!, newStatus === 1)
+        else await taskApi.update(task.id, { status: newStatus })
         showToast(newStatus === 1 ? '任务已启动' : '任务已停止')
         fetchTasks(true)
         confirmState.value.show = false
@@ -258,7 +286,8 @@ const deleteTask = (task: AgentTask) => {
     type: 'danger',
     onConfirm: async () => {
       try {
-        await taskApi.delete(task.id)
+        if (task.task_type === 'saved_report') await taskApi.deleteReportSubscription(task.subscription_id!)
+        else await taskApi.delete(task.id)
         showToast('删除成功')
         fetchTasks(true)
         confirmState.value.show = false
@@ -273,7 +302,8 @@ const runTaskNow = async (task: AgentTask) => {
   if (runningTaskIds.value.has(task.id)) return
   runningTaskIds.value.add(task.id)
   try {
-    await taskApi.run(task.id)
+    if (task.task_type === 'saved_report') await taskApi.runReportSubscription(task.subscription_id!)
+    else await taskApi.run(task.id)
     showToast(`任务 已发送触发指令`, 'success')
     // Poll for status update for 5 seconds
     let attempts = 0
@@ -291,7 +321,15 @@ const runTaskNow = async (task: AgentTask) => {
 
 
 const openLogs = async (task: AgentTask) => {
+  if (task.task_type === 'saved_report') {
+    openSavedReportTask(task)
+    return
+  }
   selectedTask.value = task; logsPage.value = 1; logs.value = []; showLogsDrawer.value = true; fetchLogs()
+}
+
+const openSavedReportTask = async (task: AgentTask) => {
+  await router.push({ path: '/dashboard/chat', query: { dataset_portal: '1', report_id: task.report_id, run_id: task.last_run_id || '' } })
 }
 
 const fetchLogs = async (append = false) => {
@@ -380,6 +418,26 @@ const formatDate = (d: string | undefined) => {
   return new Date(d).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
 }
 
+const formatNextRunCompact = (d: string | undefined) => {
+  if (!d) return '暂无计划'
+  return new Date(d).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false })
+}
+
+const formatTaskSchedule = (cron: string) => {
+  const parts = String(cron || '').trim().split(/\s+/)
+  if (parts.length !== 5) return cron || '未配置'
+  const [minute, hour, day, month, weekday] = parts
+  const time = `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`
+  const fixedTime = /^\d+$/.test(String(hour)) && /^\d+$/.test(String(minute))
+  if (fixedTime && day === '*' && month === '*' && weekday === '*') return `每天 ${time}`
+  if (fixedTime && day === '*' && month === '*' && weekday !== '*') {
+    const weekLabels = ['日', '一', '二', '三', '四', '五', '六']
+    return `每周${weekLabels[Number(weekday)] ?? weekday} ${time}`
+  }
+  if (fixedTime && day !== '*' && month === '*' && weekday === '*') return `每月${day}日 ${time}`
+  try { return cronstrue.toString(cron, { locale: 'zh_CN' }) } catch { return cron }
+}
+
 const taskHealthMeta = (task: AgentTask) => {
   const status = task.health_status || 'unknown'
   if (status === 'healthy') {
@@ -436,6 +494,22 @@ onMounted(() => { fetchTasks(true); fetchAgents() })
           <span class="sm:hidden">新建</span>
         </button>
       </div>
+    </div>
+
+    <div class="flex items-center gap-1 overflow-x-auto rounded-xl border border-gray-100 bg-white p-1.5 shadow-sm">
+      <button
+        v-for="tab in taskTypeTabs"
+        :key="tab.value"
+        type="button"
+        class="inline-flex shrink-0 items-center gap-1.5 rounded-lg px-3 py-2 text-xs font-bold transition-colors"
+        :class="taskTypeFilter === tab.value ? 'bg-primary text-white shadow-sm' : 'text-gray-500 hover:bg-gray-50 hover:text-gray-700'"
+        @click="taskTypeFilter = tab.value"
+      >
+        <span>{{ tab.label }}</span>
+        <span class="min-w-5 rounded-full px-1.5 py-0.5 text-[9px] text-center" :class="taskTypeFilter === tab.value ? 'bg-white/20 text-white' : 'bg-gray-100 text-gray-500'">
+          {{ taskTypeCounts[tab.value] }}
+        </span>
+      </button>
     </div>
 
     <!-- Filters & Toolbar -->
@@ -508,15 +582,16 @@ onMounted(() => { fetchTasks(true); fetchAgents() })
                 <!-- Source Badge -->
                 <div 
                   class="absolute -top-1 -right-1 w-5 h-5 rounded-full flex items-center justify-center border-2 border-white shadow-sm text-[10px]"
-                  :class="task.source === 'agent' ? 'bg-indigo-500 text-white' : 'bg-amber-500 text-white'"
-                  :title="task.source === 'agent' ? '智能体创建' : '手动创建'"
+                  :class="task.task_type === 'saved_report' ? 'bg-emerald-500 text-white' : task.source === 'agent' ? 'bg-indigo-500 text-white' : 'bg-amber-500 text-white'"
+                  :title="task.task_type === 'saved_report' ? '报表订阅' : task.source === 'agent' ? '智能体创建' : '手动创建'"
                 >
-                  {{ task.source === 'agent' ? '🤖' : '👤' }}
+                  {{ task.task_type === 'saved_report' ? '📊' : task.source === 'agent' ? '🤖' : '👤' }}
                 </div>
               </div>
               <div class="min-w-0">
                 <div class="flex items-center space-x-2">
                   <h3 class="font-bold text-gray-900 truncate">{{ task.name }}</h3>
+                  <span v-if="task.task_type === 'saved_report'" class="px-2 py-0.5 bg-emerald-50 text-emerald-700 text-[9px] font-black rounded-full border border-emerald-100">报表订阅</span>
                   <span v-if="String(task.user_id) === String(userInfo?.user_id)" class="px-2 py-0.5 bg-amber-100 text-amber-700 text-[9px] font-black rounded-full border border-amber-200 flex-shrink-0">
                     我创建的
                   </span>
@@ -531,14 +606,14 @@ onMounted(() => { fetchTasks(true); fetchAgents() })
                     class="w-2 h-2 rounded-full mr-2"
                     :class="task.status === 1 ? 'bg-green-500 animate-pulse' : 'bg-gray-300'"
                   ></span>
-                  <span class="text-[10px] text-gray-400 font-mono">{{ task.cron_expr }}</span>
+                  <span class="text-[10px] font-bold text-blue-600" :title="`Cron: ${task.cron_expr}`">{{ formatTaskSchedule(task.cron_expr) }}</span>
                 </div>
               </div>
             </div>
             
             <!-- Switch UI Replacement -->
             <button 
-              v-if="canManage"
+              v-if="canManageTask(task)"
               @click="toggleStatus(task)"
               class="relative inline-flex h-5 w-9 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200"
               :class="task.status === 1 ? 'bg-green-500' : 'bg-gray-200'"
@@ -552,7 +627,7 @@ onMounted(() => { fetchTasks(true); fetchAgents() })
 
           <div class="space-y-3">
             <div class="p-3 bg-gray-50 rounded-lg border border-gray-100 min-h-[60px]">
-              <p class="text-[10px] text-gray-400 font-bold uppercase tracking-widest mb-1">指令</p>
+              <p class="text-[10px] text-gray-400 font-bold uppercase tracking-widest mb-1">{{ task.task_type === 'saved_report' ? '报表说明' : '指令' }}</p>
               <p class="text-xs text-gray-600 line-clamp-2 italic leading-relaxed">"{{ task.prompt }}"</p>
             </div>
             <div class="grid grid-cols-4 gap-2 text-[10px]">
@@ -581,7 +656,7 @@ onMounted(() => { fetchTasks(true); fetchAgents() })
               </div>
               <div>
                 <p class="text-gray-400 mb-0.5">预计下次</p>
-                <p class="text-primary font-bold">{{ formatDate(task.next_run_at) }}</p>
+                <p class="whitespace-nowrap text-primary font-bold">{{ formatNextRunCompact(task.next_run_at) }}</p>
               </div>
             </div>
 
@@ -605,19 +680,19 @@ onMounted(() => { fetchTasks(true); fetchAgents() })
             <button @click="openLogs(task)" class="p-1.5 text-gray-400 hover:text-primary hover:bg-white rounded-md transition-all shadow-sm border border-transparent hover:border-gray-100" title="执行历史">
               <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
             </button>
-            <button v-if="canManage" @click="openEditModal(task)" class="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-white rounded-md transition-all shadow-sm border border-transparent hover:border-gray-100" title="编辑">
+            <button v-if="canManageTask(task)" @click="openEditModal(task)" class="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-white rounded-md transition-all shadow-sm border border-transparent hover:border-gray-100" :title="task.task_type === 'saved_report' ? '打开报表' : '编辑'">
               <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>
             </button>
-            <button v-if="canManage" @click="toggleStatus(task)" class="p-1.5 text-gray-400 hover:bg-white rounded-md transition-all shadow-sm border border-transparent hover:border-gray-100" :class="task.status === 1 ? 'hover:text-orange-600' : 'hover:text-green-600'" :title="task.status === 1 ? '停止' : '激活'">
+            <button v-if="canManageTask(task)" @click="toggleStatus(task)" class="p-1.5 text-gray-400 hover:bg-white rounded-md transition-all shadow-sm border border-transparent hover:border-gray-100" :class="task.status === 1 ? 'hover:text-orange-600' : 'hover:text-green-600'" :title="task.status === 1 ? '停止' : '激活'">
               <PauseCircleIcon v-if="task.status === 1" class="w-4 h-4" />
               <PlayCircleIcon v-else class="w-4 h-4" />
             </button>
-            <button v-if="canManage" @click="deleteTask(task)" class="p-1.5 text-gray-400 hover:text-red-600 hover:bg-white rounded-md transition-all shadow-sm border border-transparent hover:border-gray-100" title="删除">
+            <button v-if="canManageTask(task)" @click="deleteTask(task)" class="p-1.5 text-gray-400 hover:text-red-600 hover:bg-white rounded-md transition-all shadow-sm border border-transparent hover:border-gray-100" title="删除">
               <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
             </button>
           </div>
           <button 
-            v-if="canManage"
+            v-if="canManageTask(task)"
             @click="runTaskNow(task)"
             :disabled="runningTaskIds.has(task.id)"
             class="text-[10px] font-bold flex items-center px-2 py-1 rounded bg-white border border-gray-200 shadow-sm hover:border-primary hover:text-primary transition-all disabled:opacity-50"
@@ -630,33 +705,34 @@ onMounted(() => { fetchTasks(true); fetchAgents() })
     </div>
 
     <!-- List View -->
-    <div v-else class="bg-white rounded-xl border border-gray-200 overflow-hidden shadow-sm">
-      <table class="w-full text-left border-collapse">
+    <div v-else class="bg-white rounded-xl border border-gray-200 overflow-x-auto shadow-sm">
+      <table class="w-full min-w-[1080px] table-fixed text-left border-collapse">
         <thead>
           <tr class="bg-gray-50/50 border-b border-gray-200">
-            <th class="px-6 py-3 text-[11px] font-bold text-gray-400 uppercase tracking-wider">任务名称</th>
-            <th class="px-6 py-3 text-[11px] font-bold text-gray-400 uppercase tracking-wider">智能体</th>
-            <th class="px-6 py-3 text-[11px] font-bold text-gray-400 uppercase tracking-wider text-center">执行次数</th>
-            <th class="px-6 py-3 text-[11px] font-bold text-gray-400 uppercase tracking-wider hidden md:table-cell">运行周期</th>
-            <th class="px-6 py-3 text-[11px] font-bold text-gray-400 uppercase tracking-wider">预计下次运行</th>
-            <th class="px-6 py-3 text-[11px] font-bold text-gray-400 uppercase tracking-wider text-center w-24">状态</th>
-            <th class="px-6 py-3 text-[11px] font-bold text-gray-400 uppercase tracking-wider text-right w-48">操作</th>
+            <th class="w-[30%] px-5 py-3 text-[11px] font-bold text-gray-400 uppercase tracking-wider">任务名称</th>
+            <th class="w-[12%] px-4 py-3 text-[11px] font-bold text-gray-400 uppercase tracking-wider">执行对象</th>
+            <th class="w-[8%] px-4 py-3 text-[11px] font-bold text-gray-400 uppercase tracking-wider text-center">执行次数</th>
+            <th class="w-[12%] px-4 py-3 text-[11px] font-bold text-gray-400 uppercase tracking-wider hidden md:table-cell">运行周期</th>
+            <th class="w-[12%] px-4 py-3 text-[11px] font-bold text-gray-400 uppercase tracking-wider">预计下次运行</th>
+            <th class="w-[8%] px-4 py-3 text-[11px] font-bold text-gray-400 uppercase tracking-wider text-center">状态</th>
+            <th class="w-[18%] px-5 py-3 text-[11px] font-bold text-gray-400 uppercase tracking-wider text-right">操作</th>
           </tr>
         </thead>
         <tbody class="divide-y divide-gray-100">
           <tr v-for="task in filteredTasks" :key="task.id" class="hover:bg-blue-50/30 transition-colors group">
-            <td class="px-6 py-4">
-              <div class="flex items-center space-x-3">
+            <td class="px-5 py-4">
+              <div class="flex items-start space-x-3">
                 <span 
                   class="w-6 h-6 rounded-lg flex items-center justify-center text-xs shadow-inner"
-                  :class="task.source === 'agent' ? 'bg-indigo-50 text-indigo-600' : 'bg-amber-50 text-amber-600'"
-                  :title="task.source === 'agent' ? '智能体创建' : '手动创建'"
+                  :class="task.task_type === 'saved_report' ? 'bg-emerald-50 text-emerald-600' : task.source === 'agent' ? 'bg-indigo-50 text-indigo-600' : 'bg-amber-50 text-amber-600'"
+                  :title="task.task_type === 'saved_report' ? '报表订阅' : task.source === 'agent' ? '智能体创建' : '手动创建'"
                 >
-                  {{ task.source === 'agent' ? '🤖' : '👤' }}
+                  {{ task.task_type === 'saved_report' ? '📊' : task.source === 'agent' ? '🤖' : '👤' }}
                 </span>
-                <div class="flex flex-col">
-                  <div class="flex items-center space-x-2">
-                    <span class="text-sm font-bold text-gray-900 group-hover:text-primary">{{ task.name }}</span>
+                <div class="min-w-0 flex-1">
+                  <p class="text-sm font-bold leading-5 text-gray-900 group-hover:text-primary line-clamp-2" :title="task.name">{{ task.name }}</p>
+                  <div class="mt-1.5 flex flex-wrap items-center gap-1.5">
+                    <span v-if="task.task_type === 'saved_report'" class="whitespace-nowrap px-2 py-0.5 bg-emerald-50 text-emerald-700 text-[8px] font-black rounded-full border border-emerald-100">报表订阅</span>
                     <span v-if="String(task.user_id) === String(userInfo?.user_id)" class="px-2 py-0.5 bg-amber-100 text-amber-700 text-[8px] font-black rounded-full border border-amber-200">
                       我创建的
                     </span>
@@ -665,26 +741,26 @@ onMounted(() => { fetchTasks(true); fetchAgents() })
                       {{ taskHealthMeta(task).label }}
                     </span>
                   </div>
-                  <span class="text-[10px] text-gray-400 line-clamp-1 mt-0.5">
+                  <span class="block text-[10px] text-gray-400 line-clamp-1 mt-1">
                     {{ task.creator_name }} · 触发 {{ metricValue(task.trigger_count) }} / 成功 {{ metricValue(task.success_count || task.run_count) }} / 失败 {{ metricValue(task.failure_count) }}
                   </span>
                 </div>
               </div>
             </td>
-            <td class="px-6 py-4">
-              <span class="text-xs text-gray-600">{{ task.agent_name }}</span>
+            <td class="px-4 py-4">
+              <span class="inline-flex items-center gap-1.5 whitespace-nowrap text-xs font-medium text-gray-600"><span>{{ task.task_type === 'saved_report' ? '📊' : '🤖' }}</span>{{ task.agent_name }}</span>
             </td>
-            <td class="px-6 py-4 text-center">
+            <td class="px-4 py-4 text-center">
               <div class="flex flex-col items-center">
                 <span class="text-xs font-black text-gray-900">{{ metricValue(task.success_count || task.run_count) }}</span>
                 <span v-if="metricValue(task.failure_count)" class="text-[9px] text-red-500 mt-0.5">失败 {{ metricValue(task.failure_count) }}</span>
               </div>
             </td>
-            <td class="px-6 py-4 hidden md:table-cell">
-              <span class="text-xs font-mono bg-gray-100 px-1.5 py-0.5 rounded text-gray-600">{{ task.cron_expr }}</span>
+            <td class="px-4 py-4 hidden md:table-cell">
+              <span class="inline-flex whitespace-nowrap rounded-lg bg-blue-50 px-2 py-1 text-[11px] font-bold text-blue-700" :title="`Cron: ${task.cron_expr}`">{{ formatTaskSchedule(task.cron_expr) }}</span>
             </td>
-            <td class="px-6 py-4">
-              <span class="text-xs text-gray-600">{{ formatDate(task.next_run_at) }}</span>
+            <td class="px-4 py-4">
+              <span class="whitespace-nowrap text-xs font-medium text-gray-600">{{ formatNextRunCompact(task.next_run_at) }}</span>
             </td>
             <td class="px-6 py-4">
               <div class="flex justify-center">
@@ -697,23 +773,31 @@ onMounted(() => { fetchTasks(true); fetchAgents() })
                 </span>
               </div>
             </td>
-            <td class="px-6 py-4 text-right">
-              <div class="flex items-center justify-end space-x-1 opacity-60 group-hover:opacity-100 transition-opacity">
-                <button v-if="canManage" @click="runTaskNow(task)" :disabled="runningTaskIds.has(task.id)" class="p-1.5 text-primary hover:bg-white rounded shadow-sm border border-transparent hover:border-gray-100" title="立即执行">
+            <td class="px-5 py-4 text-right">
+              <!-- 报表订阅专属操作 -->
+              <div v-if="task.task_type === 'saved_report'" class="flex items-center justify-end gap-1.5">
+                <button class="whitespace-nowrap rounded-lg border border-blue-100 bg-blue-50 px-2 py-1.5 text-[10px] font-bold text-blue-600 hover:bg-blue-100" @click="openSavedReportTask(task)">打开报表</button>
+                <button class="whitespace-nowrap rounded-lg border border-gray-200 bg-white px-2 py-1.5 text-[10px] font-bold text-gray-600 hover:border-blue-200 hover:text-blue-600" @click="openLogs(task)">运行历史</button>
+                <button v-if="canManageTask(task)" class="whitespace-nowrap rounded-lg border border-emerald-100 bg-emerald-50 px-2 py-1.5 text-[10px] font-bold text-emerald-700 hover:bg-emerald-100 disabled:opacity-50" :disabled="runningTaskIds.has(task.id)" @click="runTaskNow(task)">{{ runningTaskIds.has(task.id) ? '执行中' : '立即执行' }}</button>
+                <button v-if="canManageTask(task)" class="whitespace-nowrap rounded-lg border border-gray-200 bg-white px-2 py-1.5 text-[10px] font-bold text-gray-500 hover:text-orange-600" @click="toggleStatus(task)">{{ task.status === 1 ? '暂停' : '恢复' }}</button>
+                <button v-if="canManageTask(task)" class="rounded-lg p-1.5 text-gray-300 hover:bg-red-50 hover:text-red-500" title="删除订阅" @click="deleteTask(task)"><svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg></button>
+              </div>
+              <div v-else class="flex items-center justify-end space-x-1 opacity-60 group-hover:opacity-100 transition-opacity">
+                <button v-if="canManageTask(task)" @click="runTaskNow(task)" :disabled="runningTaskIds.has(task.id)" class="p-1.5 text-primary hover:bg-white rounded shadow-sm border border-transparent hover:border-gray-100" title="立即执行">
                   <svg v-if="!runningTaskIds.has(task.id)" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 5l7 7-7 7M5 5l7 7-7 7" /></svg>
                   <span v-else class="animate-spin text-[10px]">⌛</span>
                 </button>
                 <button @click="openLogs(task)" class="p-1.5 text-gray-400 hover:text-primary hover:bg-white rounded shadow-sm border border-transparent hover:border-gray-100" title="历史">
                   <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
                 </button>
-                <button v-if="canManage" @click="openEditModal(task)" class="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-white rounded shadow-sm border border-transparent hover:border-gray-100" title="编辑">
+                <button v-if="canManageTask(task)" @click="openEditModal(task)" class="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-white rounded shadow-sm border border-transparent hover:border-gray-100" :title="task.task_type === 'saved_report' ? '打开报表' : '编辑'">
                   <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>
                 </button>
-                <button v-if="canManage" @click="toggleStatus(task)" class="p-1.5 text-gray-400 hover:bg-white rounded shadow-sm border border-transparent hover:border-gray-100" :class="task.status === 1 ? 'hover:text-orange-600' : 'hover:text-green-600'" :title="task.status === 1 ? '停止' : '激活'">
+                <button v-if="canManageTask(task)" @click="toggleStatus(task)" class="p-1.5 text-gray-400 hover:bg-white rounded shadow-sm border border-transparent hover:border-gray-100" :class="task.status === 1 ? 'hover:text-orange-600' : 'hover:text-green-600'" :title="task.status === 1 ? '停止' : '激活'">
                   <PauseCircleIcon v-if="task.status === 1" class="w-4 h-4" />
                   <PlayCircleIcon v-else class="w-4 h-4" />
                 </button>
-                <button v-if="canManage" @click="deleteTask(task)" class="p-1.5 text-gray-400 hover:text-red-600 hover:bg-white rounded shadow-sm border border-transparent hover:border-gray-100" title="删除">
+                <button v-if="canManageTask(task)" @click="deleteTask(task)" class="p-1.5 text-gray-400 hover:text-red-600 hover:bg-white rounded shadow-sm border border-transparent hover:border-gray-100" title="删除">
                   <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
                 </button>
               </div>

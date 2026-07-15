@@ -82,3 +82,55 @@ class PortalSavedReportUserPref(Base):
         Index("ux_portal_saved_report_user_pref", "report_id", "user_id", unique=True),
         Index("idx_portal_saved_report_user_pref_user", "user_id", "pinned_at", "last_run_at"),
     )
+
+
+class PortalSavedReportRun(Base):
+    __tablename__ = "portal_saved_report_runs"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    report_id = Column(String(64), ForeignKey("portal_saved_reports.id"), nullable=False, index=True)
+    user_id = Column(BigInteger, ForeignKey("ai_agent_users.id"), nullable=False, index=True)
+    trigger_type = Column(String(32), nullable=False, default="manual")
+    task_id = Column(BigInteger, nullable=True, index=True)
+    status = Column(String(16), nullable=False, default="running")
+    resolved_params = Column(JSON, nullable=True)
+    executed_sql = Column(Text, nullable=True)
+    data_source = Column(String(100), nullable=True)
+    dataset_name = Column(String(255), nullable=True)
+    row_count = Column(Integer, nullable=True)
+    snapshot_row_count = Column(Integer, nullable=False, default=0)
+    result_snapshot = Column(JSON, nullable=True)
+    permission_notice = Column(JSON, nullable=True)
+    duration_ms = Column(Integer, nullable=True)
+    error_message = Column(Text, nullable=True)
+    started_at = Column(DateTime, default=datetime.now, nullable=False)
+    finished_at = Column(DateTime, nullable=True)
+
+    __table_args__ = (
+        Index("idx_portal_saved_report_runs_report_started", "report_id", "started_at"),
+        Index("idx_portal_saved_report_runs_user_started", "user_id", "started_at"),
+        Index("idx_portal_saved_report_runs_status_started", "status", "started_at"),
+    )
+
+
+class PortalSavedReportSubscription(Base):
+    __tablename__ = "portal_saved_report_subscriptions"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    report_id = Column(String(64), ForeignKey("portal_saved_reports.id"), nullable=False, unique=True, index=True)
+    user_id = Column(BigInteger, ForeignKey("ai_agent_users.id"), nullable=False, index=True)
+    schedule_type = Column(String(16), nullable=False)
+    cron_expr = Column(String(64), nullable=False)
+    timezone = Column(String(64), nullable=False, default="Asia/Shanghai")
+    params = Column(JSON, nullable=True)
+    notify_on_success = Column(Boolean, nullable=False, default=False)
+    notify_on_failure = Column(Boolean, nullable=False, default=True)
+    external_channels = Column(JSON, nullable=True)
+    status = Column(String(16), nullable=False, default="active")
+    consecutive_failures = Column(Integer, nullable=False, default=0)
+    last_run_id = Column(BigInteger, nullable=True)
+    last_run_at = Column(DateTime, nullable=True)
+    next_run_at = Column(DateTime, nullable=True)
+    last_error = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.now, nullable=False)
+    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now, nullable=False)

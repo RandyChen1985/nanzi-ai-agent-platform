@@ -38,6 +38,9 @@
 
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted } from 'vue';
+import { useRoute } from 'vue-router';
+
+const route = useRoute();
 
 const chatFrame = ref<HTMLIFrameElement | null>(null);
 const iframeUrl = ref('');
@@ -79,7 +82,8 @@ const sendInitConfig = () => {
                     role: userInfo.role
                 },
                 // 可以设置一些 Portal 特有的欢迎语
-                welcome_message_override: `您好，${displayName}！我是您的智能助手，已为您准备就绪。`
+                welcome_message_override: `您好，${displayName}！我是您的智能助手，已为您准备就绪。`,
+                open_saved_report: route.query.report_id ? { report_id: String(route.query.report_id), run_id: String(route.query.run_id || '') } : null
             }, '*');
             
             // 发送成功后，稍微延迟关闭 loading，以确保子页面有时间渲染

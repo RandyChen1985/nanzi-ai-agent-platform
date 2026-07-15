@@ -5,6 +5,7 @@ import axios from "../utils/axios";
 import Toast from "../components/Toast.vue";
 import { useBranding } from "../composables/useBranding";
 import { copyToClipboard } from "../utils/clipboard";
+import PortalNotificationBell from "../components/PortalNotificationBell.vue";
 
 const router = useRouter();
 const route = useRoute();
@@ -640,6 +641,7 @@ const filteredMenuGroups = computed(() => {
             </span>
           </div>
           <div class="h-6 w-px bg-gray-200 mx-1 sm:mx-2 flex-shrink-0" aria-hidden="true"></div>
+          <PortalNotificationBell />
           <button
             @click="logout"
             class="flex items-center px-2 sm:px-3 py-1.5 text-xs sm:text-sm font-medium text-red-600 bg-red-50 hover:bg-red-100 rounded-lg transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 group flex-shrink-0 whitespace-nowrap"

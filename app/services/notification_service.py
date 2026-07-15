@@ -258,11 +258,7 @@ class NotificationService:
         if not data.get("is_enabled"):
             return False, "用户未启用钉钉通知"
             
-        success, err = await cls._test_dingtalk(data)
-        if not success:
-            # Retry with actual message parameters instead of test parameters
-            return await cls._send_dingtalk_msg_real(data, title, content)
-        return True, ""
+        return await cls._send_dingtalk_msg_real(data, title, content)
 
     @classmethod
     async def _send_dingtalk_msg_real(cls, config: Dict[str, Any], title: str, content: str) -> Tuple[bool, str]:
@@ -294,3 +290,52 @@ class NotificationService:
                     return False, f"{resp_data.get('errmsg')} (Code: {resp_data.get('errcode')})"
         except Exception as e:
             return False, str(e)
+
+    @classmethod
+    async def send_wechat_work(cls, db: AsyncSession, user_id: int, title: str, content: str) -> Tuple[bool, str]:
+        record = await cls.get_config_by_type_raw(db, user_id, "wechat_work")
+        if not record or not record.config_json:
+            return False, "用户未配置企业微信通知"
+        config = json.loads(record.config_json)
+        if not config.get("is_enabled") or not config.get("webhook_url"):
+            return False, "用户未启用企业微信通知"
+        try:
+            payload = {"msgtype": "markdown", "markdown": {"content": f"### {title}\n\n{content}"}}
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                response = await client.post(config["webhook_url"], json=payload)
+                data = response.json()
+            return (True, "") if data.get("errcode") == 0 else (False, str(data.get("errmsg") or data))
+        except Exception as exc:
+            return False, str(exc)
+
+    @classmethod
+    async def send_email(cls, db: AsyncSession, user_id: int, title: str, content: str) -> Tuple[bool, str]:
+        record = await cls.get_config_by_type_raw(db, user_id, "email")
+        if not record or not record.config_json:
+            return False, "用户未配置邮件通知"
+        config = json.loads(record.config_json)
+        if not config.get("is_enabled"):
+            return False, "用户未启用邮件通知"
+
+        def send_sync():
+            host, port = config.get("smtp_host"), int(config.get("smtp_port") or 465)
+            username, password = config.get("smtp_user"), config.get("smtp_password")
+            if not host or not username or not password:
+                raise ValueError("SMTP 配置不完整")
+            message = MIMEMultipart()
+            message["From"] = formataddr((config.get("sender_name") or "AI Agent", username))
+            message["To"] = username
+            message["Subject"] = title
+            message.attach(MIMEText(content, "plain", "utf-8"))
+            server = smtplib.SMTP_SSL(host, port, timeout=10.0) if port == 465 else smtplib.SMTP(host, port, timeout=10.0)
+            if port != 465:
+                server.starttls()
+            server.login(username, password)
+            server.sendmail(username, [username], message.as_string())
+            server.quit()
+
+        try:
+            await asyncio.to_thread(send_sync)
+            return True, ""
+        except Exception as exc:
+            return False, str(exc)

@@ -4830,6 +4830,10 @@ const handlePostMessage = (event: MessageEvent) => {
         if (data.page_info) {
           injectedContext.value = { ...injectedContext.value, ...data.page_info };
         }
+        if (data.open_saved_report?.report_id) {
+          localStorage.setItem("portal_focus_saved_report", JSON.stringify(data.open_saved_report));
+          setTimeout(() => openPortalDrawer(), 0);
+        }
         postMessageToHost({ type: "INIT_SUCCESS" });
         initChat(); // Only init if token exists
       } else {

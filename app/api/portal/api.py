@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends
 from app.core.dependencies import require_admin, require_api_key
-from app.api.portal.endpoints import auth, audit, management, keys, dashboard, system, chat, metadata, agents, prompts, slash_commands, health, models, tools, ragflow, roles, mcp, changelog, chat_feedback, chatbi_examples, skills, memory, saved_reports, portal_prefs, quota, notifications
+from app.api.portal.endpoints import auth, audit, management, keys, dashboard, system, chat, metadata, agents, prompts, slash_commands, health, models, tools, ragflow, roles, mcp, changelog, chat_feedback, chatbi_examples, skills, memory, saved_reports, portal_prefs, quota, notifications, inbox
 
 portal_router = APIRouter()
 
@@ -79,3 +79,6 @@ portal_router.include_router(quota.router, prefix="/quota", tags=["Token额度"]
 
 # 22. 个人中心消息通知 (Notifications)
 portal_router.include_router(notifications.router, prefix="/notifications", tags=["消息通知"], dependencies=[Depends(require_api_key)])
+
+# 23. 站内消息中心
+portal_router.include_router(inbox.router, prefix="/inbox", tags=["站内消息"], dependencies=[Depends(require_api_key)])

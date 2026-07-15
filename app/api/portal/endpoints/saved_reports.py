@@ -2,6 +2,7 @@ import json
 import logging
 import inspect
 import re
+import time
 import uuid
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
@@ -17,7 +18,13 @@ from app.core.dependencies import require_api_key
 from app.core.orm import get_db_session
 from app.models.metadata import MetaDataset, MetaTable
 from app.models.permission import Role, UserRoleRelation
-from app.models.saved_report import PortalSavedReport, PortalSavedReportShare, PortalSavedReportUserPref
+from app.models.saved_report import (
+    PortalSavedReport,
+    PortalSavedReportRun,
+    PortalSavedReportSubscription,
+    PortalSavedReportShare,
+    PortalSavedReportUserPref,
+)
 from app.models.user import User
 from app.schemas.response import StandardResponse
 from app.services.ai.chatbi_sql_user_messages import map_sql_tool_error_for_user
@@ -25,6 +32,7 @@ from app.services.sql_query_execution_service import (
     attach_permission_notice_to_payload,
     execute_sql_query_core,
 )
+from app.services.saved_report_subscription_service import schedule_to_cron
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +56,18 @@ class SaveReportRequest(BaseModel):
 class ExecuteReportRequest(BaseModel):
     params: Dict[str, Any] = Field(default_factory=dict, description="本次运行参数")
     analysis_mode: Optional[str] = Field(None, description="覆盖报表默认分析模式")
+
+
+class SavedReportSubscriptionRequest(BaseModel):
+    schedule_type: str
+    time_value: Optional[str] = None
+    weekday: Optional[int] = None
+    monthday: Optional[int] = None
+    cron_expr: Optional[str] = None
+    params: Dict[str, Any] = Field(default_factory=dict)
+    notify_on_success: bool = False
+    notify_on_failure: bool = True
+    external_channels: List[str] = Field(default_factory=list)
 
 
 class SavedReportPreview(BaseModel):
@@ -128,6 +148,30 @@ class SavedReportItem(BaseModel):
     user_last_run_at: Optional[str] = None
 
 
+class SavedReportRunSummary(BaseModel):
+    id: int
+    report_id: str
+    user_id: int
+    trigger_type: str = "manual"
+    task_id: Optional[int] = None
+    status: str
+    resolved_params: Dict[str, Any] = Field(default_factory=dict)
+    row_count: Optional[int] = None
+    snapshot_row_count: int = 0
+    permission_notice: Optional[Dict[str, Any]] = None
+    duration_ms: Optional[int] = None
+    error_message: Optional[str] = None
+    started_at: Optional[str] = None
+    finished_at: Optional[str] = None
+
+
+class SavedReportRunDetail(SavedReportRunSummary):
+    executed_sql: Optional[str] = None
+    data_source: Optional[str] = None
+    dataset_name: Optional[str] = None
+    result_snapshot: Optional[Dict[str, Any]] = None
+
+
 class ReportParameterError(ValueError):
     pass
 
@@ -165,6 +209,100 @@ def _clean_tags(tags: Optional[List[str]]) -> List[str]:
 
 def _dt_to_iso(value: Any) -> Optional[str]:
     return value.isoformat() if value else None
+
+
+def _build_saved_report_result_snapshot(
+    parsed: Any,
+    *,
+    limit: int = 200,
+) -> Tuple[Dict[str, Any], int, int]:
+    columns: List[Any] = []
+    rows: List[Any] = []
+    explicit_total: Optional[int] = None
+
+    if isinstance(parsed, list):
+        rows = parsed
+    elif isinstance(parsed, dict):
+        raw_columns = parsed.get("columns")
+        if isinstance(raw_columns, list):
+            columns = raw_columns
+        for key in ("rows", "items", "data", "records", "result"):
+            candidate = parsed.get(key)
+            if isinstance(candidate, list):
+                rows = candidate
+                break
+        for key in ("total", "total_count", "row_count"):
+            candidate = parsed.get(key)
+            if isinstance(candidate, int) and not isinstance(candidate, bool) and candidate >= 0:
+                explicit_total = candidate
+                break
+    elif parsed is not None:
+        rows = [{"value": str(parsed)[:10000]}]
+
+    if not columns and rows and isinstance(rows[0], dict):
+        columns = list(rows[0].keys())
+    snapshot_rows = rows[: max(0, limit)]
+    row_count = max(len(rows), explicit_total or 0)
+    return {"columns": columns, "rows": snapshot_rows}, row_count, len(snapshot_rows)
+
+
+def _saved_report_permission_snapshot(permission_notice: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    allowed = ("row_filter_applied", "dataset_name", "rule_count", "message")
+    snapshot = {key: permission_notice[key] for key in allowed if key in permission_notice}
+    return snapshot or None
+
+
+def _saved_report_run_to_summary(row: PortalSavedReportRun) -> SavedReportRunSummary:
+    return SavedReportRunSummary(
+        id=int(row.id),
+        report_id=row.report_id,
+        user_id=int(row.user_id),
+        trigger_type=row.trigger_type or "manual",
+        task_id=row.task_id,
+        status=row.status,
+        resolved_params=row.resolved_params or {},
+        row_count=row.row_count,
+        snapshot_row_count=row.snapshot_row_count or 0,
+        permission_notice=row.permission_notice,
+        duration_ms=row.duration_ms,
+        error_message=row.error_message,
+        started_at=_dt_to_iso(row.started_at),
+        finished_at=_dt_to_iso(row.finished_at),
+    )
+
+
+def _saved_report_run_to_detail(row: PortalSavedReportRun) -> SavedReportRunDetail:
+    summary = _saved_report_run_to_summary(row)
+    return SavedReportRunDetail(
+        **summary.model_dump(),
+        executed_sql=row.executed_sql,
+        data_source=row.data_source,
+        dataset_name=row.dataset_name,
+        result_snapshot=row.result_snapshot,
+    )
+
+
+def _finish_saved_report_run_error(run: PortalSavedReportRun, error: Any, started: float) -> None:
+    run.status = "error"
+    run.error_message = str(error)[:10000]
+    run.duration_ms = max(0, int((time.perf_counter() - started) * 1000))
+    run.finished_at = datetime.now()
+
+
+def _finish_saved_report_run_success(
+    run: PortalSavedReportRun,
+    parsed: Any,
+    permission_notice: Dict[str, Any],
+    started: float,
+) -> None:
+    snapshot, row_count, snapshot_row_count = _build_saved_report_result_snapshot(parsed)
+    run.status = "success"
+    run.row_count = row_count
+    run.snapshot_row_count = snapshot_row_count
+    run.result_snapshot = snapshot
+    run.permission_notice = _saved_report_permission_snapshot(permission_notice)
+    run.duration_ms = max(0, int((time.perf_counter() - started) * 1000))
+    run.finished_at = datetime.now()
 
 
 def _chatbi_user_dimensions(user_info: Dict[str, Any], user_id: int) -> Dict[str, Any]:
@@ -1351,6 +1489,171 @@ async def copy_saved_report(
     await db.flush()
     return StandardResponse(data=copied_item)
 
+
+@router.get(
+    "/{report_id}/runs",
+    response_model=StandardResponse[List[SavedReportRunSummary]],
+    summary="查看黄金报表运行历史",
+)
+async def list_saved_report_runs(
+    report_id: str,
+    limit: int = Query(20, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+    user_info: Dict[str, Any] = Depends(require_api_key),
+    db: AsyncSession = Depends(get_db_session),
+):
+    user_id = int(user_info["user_id"])
+    role_ids = await _get_user_role_ids(db, user_id)
+    report = await _get_report_for_user(db, report_id=report_id, user_id=user_id, role_ids=role_ids)
+    stmt = select(PortalSavedReportRun).where(PortalSavedReportRun.report_id == report_id)
+    if int(report.owner_user_id) != user_id:
+        stmt = stmt.where(PortalSavedReportRun.user_id == user_id)
+    result = await db.execute(stmt.order_by(desc(PortalSavedReportRun.started_at)).offset(offset).limit(limit))
+    return StandardResponse(data=[_saved_report_run_to_summary(row) for row in result.scalars().all()])
+
+
+@router.get(
+    "/{report_id}/runs/{run_id}",
+    response_model=StandardResponse[SavedReportRunDetail],
+    summary="查看黄金报表单次运行详情",
+)
+async def get_saved_report_run(
+    report_id: str,
+    run_id: int,
+    user_info: Dict[str, Any] = Depends(require_api_key),
+    db: AsyncSession = Depends(get_db_session),
+):
+    user_id = int(user_info["user_id"])
+    role_ids = await _get_user_role_ids(db, user_id)
+    report = await _get_report_for_user(db, report_id=report_id, user_id=user_id, role_ids=role_ids)
+    stmt = select(PortalSavedReportRun).where(
+        PortalSavedReportRun.report_id == report_id,
+        PortalSavedReportRun.id == run_id,
+    )
+    if int(report.owner_user_id) != user_id:
+        stmt = stmt.where(PortalSavedReportRun.user_id == user_id)
+    result = await db.execute(stmt)
+    run = result.scalar_one_or_none()
+    if run is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="运行记录不存在")
+    return StandardResponse(data=_saved_report_run_to_detail(run))
+
+
+def _saved_report_subscription_data(row: PortalSavedReportSubscription) -> Dict[str, Any]:
+    return {
+        "id": int(row.id), "report_id": row.report_id, "schedule_type": row.schedule_type,
+        "cron_expr": row.cron_expr, "timezone": row.timezone, "params": row.params or {},
+        "notify_on_success": bool(row.notify_on_success), "notify_on_failure": bool(row.notify_on_failure),
+        "external_channels": row.external_channels or [], "status": row.status,
+        "consecutive_failures": row.consecutive_failures or 0, "last_run_id": row.last_run_id,
+        "last_run_at": _dt_to_iso(row.last_run_at), "next_run_at": _dt_to_iso(row.next_run_at),
+        "last_error": row.last_error,
+    }
+
+
+async def _owned_report(db: AsyncSession, report_id: str, user_id: int):
+    role_ids = await _get_user_role_ids(db, user_id)
+    return await _get_report_for_user(db, report_id=report_id, user_id=user_id, role_ids=role_ids, require_owner=True)
+
+
+async def _subscription_for_report(db: AsyncSession, report_id: str):
+    result = await db.execute(select(PortalSavedReportSubscription).where(PortalSavedReportSubscription.report_id == report_id))
+    return result.scalar_one_or_none()
+
+
+@router.get("/{report_id}/subscription", summary="获取黄金报表订阅")
+async def get_saved_report_subscription(report_id: str, user_info=Depends(require_api_key), db: AsyncSession = Depends(get_db_session)):
+    user_id = int(user_info["user_id"])
+    await _owned_report(db, report_id, user_id)
+    row = await _subscription_for_report(db, report_id)
+    return StandardResponse(data=_saved_report_subscription_data(row) if row else None)
+
+
+@router.put("/{report_id}/subscription", summary="保存黄金报表订阅")
+async def put_saved_report_subscription(report_id: str, body: SavedReportSubscriptionRequest,
+                                        user_info=Depends(require_api_key), db: AsyncSession = Depends(get_db_session)):
+    user_id = int(user_info["user_id"])
+    await _owned_report(db, report_id, user_id)
+    try:
+        cron_expr = schedule_to_cron(body.schedule_type, time_value=body.time_value, weekday=body.weekday,
+                                     monthday=body.monthday, cron_expr=body.cron_expr)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    channels = list(dict.fromkeys(body.external_channels))
+    if any(channel not in {"dingtalk", "wechat_work", "email"} for channel in channels):
+        raise HTTPException(status_code=400, detail="通知渠道无效")
+    row = await _subscription_for_report(db, report_id)
+    if row is None:
+        row = PortalSavedReportSubscription(report_id=report_id, user_id=user_id)
+        db.add(row)
+    row.schedule_type = body.schedule_type
+    row.cron_expr = cron_expr
+    row.params = body.params
+    row.notify_on_success = body.notify_on_success
+    row.notify_on_failure = body.notify_on_failure
+    row.external_channels = channels
+    row.status = "active"
+    row.last_error = None
+    await db.flush()
+    from app.services.ai.scheduler_service import scheduler_service
+    await scheduler_service.upsert_saved_report_subscription(row)
+    row.next_run_at = scheduler_service.get_saved_report_subscription_next_run_time(row.id)
+    await db.flush()
+    return StandardResponse(data=_saved_report_subscription_data(row))
+
+
+@router.post("/{report_id}/subscription/pause", summary="暂停黄金报表订阅")
+async def pause_saved_report_subscription(report_id: str, user_info=Depends(require_api_key), db: AsyncSession = Depends(get_db_session)):
+    await _owned_report(db, report_id, int(user_info["user_id"]))
+    row = await _subscription_for_report(db, report_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="订阅不存在")
+    row.status = "paused"
+    row.next_run_at = None
+    from app.services.ai.scheduler_service import scheduler_service
+    await scheduler_service.remove_saved_report_subscription(row.id)
+    await db.flush()
+    return StandardResponse(data=_saved_report_subscription_data(row))
+
+
+@router.post("/{report_id}/subscription/resume", summary="恢复黄金报表订阅")
+async def resume_saved_report_subscription(report_id: str, user_info=Depends(require_api_key), db: AsyncSession = Depends(get_db_session)):
+    await _owned_report(db, report_id, int(user_info["user_id"]))
+    row = await _subscription_for_report(db, report_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="订阅不存在")
+    row.status = "active"
+    from app.services.ai.scheduler_service import scheduler_service
+    await scheduler_service.upsert_saved_report_subscription(row)
+    row.next_run_at = scheduler_service.get_saved_report_subscription_next_run_time(row.id)
+    await db.flush()
+    return StandardResponse(data=_saved_report_subscription_data(row))
+
+
+@router.post("/{report_id}/subscription/run", summary="立即运行黄金报表订阅")
+async def run_saved_report_subscription(report_id: str, user_info=Depends(require_api_key), db: AsyncSession = Depends(get_db_session)):
+    await _owned_report(db, report_id, int(user_info["user_id"]))
+    row = await _subscription_for_report(db, report_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="订阅不存在")
+    from app.services.ai.scheduler_service import _saved_report_subscription_wrapper
+    await _saved_report_subscription_wrapper(row.id, is_manual=True)
+    return StandardResponse(data={"message": "订阅已执行，请在运行历史查看结果"})
+
+
+@router.delete("/{report_id}/subscription", summary="删除黄金报表订阅")
+async def delete_saved_report_subscription(report_id: str, user_info=Depends(require_api_key), db: AsyncSession = Depends(get_db_session)):
+    await _owned_report(db, report_id, int(user_info["user_id"]))
+    row = await _subscription_for_report(db, report_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="订阅不存在")
+    from app.services.ai.scheduler_service import scheduler_service
+    await scheduler_service.remove_saved_report_subscription(row.id)
+    await db.delete(row)
+    await db.flush()
+    return StandardResponse(data={"deleted": True})
+
+
 @router.post(
     "/{report_id}/execute",
     response_model=StandardResponse[Any],
@@ -1362,6 +1665,19 @@ async def execute_saved_report(
     conversation_id: Optional[str] = None, # 接收 conversation_id 以便写入缓存复用
     user_info: Dict[str, Any] = Depends(require_api_key),
     db: AsyncSession = Depends(get_db_session),
+):
+    return await _execute_saved_report_impl(report_id, body, conversation_id, user_info, db)
+
+
+async def _execute_saved_report_impl(
+    report_id: str,
+    body: Optional[ExecuteReportRequest],
+    conversation_id: Optional[str],
+    user_info: Dict[str, Any],
+    db: AsyncSession,
+    *,
+    trigger_type: str = "manual",
+    task_id: Optional[int] = None,
 ):
     user_id = int(user_info["user_id"])
     role_ids = await _get_user_role_ids(db, user_id)
@@ -1397,6 +1713,21 @@ async def execute_saved_report(
         # 参数化报表会在执行前重新经过底层 SQL 校验、沙箱与表权限校验。
         dataset_name = await _dataset_name_from_id(db, report.dataset_id)
         permission_notice: Dict[str, Any] = {}
+        run_started = time.perf_counter()
+        run_row = PortalSavedReportRun(
+            report_id=report.id,
+            user_id=user_id,
+            trigger_type=trigger_type,
+            task_id=task_id,
+            status="running",
+            resolved_params=resolved_params,
+            executed_sql=sql_to_execute,
+            data_source=report.data_source,
+            dataset_name=dataset_name,
+            started_at=datetime.now(),
+        )
+        db.add(run_row)
+        await db.flush()
         result_str = await execute_sql_query_core(
             db,
             sql=sql_to_execute,
@@ -1417,6 +1748,12 @@ async def execute_saved_report(
         report_row.last_run_at = datetime.now()
         report_row.last_error = str(e)
         report_row.status = "error"
+        if "run_row" in locals():
+            run_error = _saved_report_sql_error_detail(str(e)) if any(
+                prefix in str(e) for prefix in _SQL_GATE_ERROR_PREFIXES
+            ) else str(e)
+            _finish_saved_report_run_error(run_row, run_error, run_started)
+            await db.commit()
         if "[Permission Denied]" in str(e) or "[Security Error]" in str(e):
             await _raise_saved_report_sql_error(db, report_row, str(e))
         raise HTTPException(
@@ -1430,6 +1767,8 @@ async def execute_saved_report(
     try:
         parsed = json.loads(raw_res)
         if isinstance(parsed, dict) and ("[Validation Failed]" in raw_res or "[Permission Denied]" in raw_res or "[Security Error]" in raw_res):
+            _finish_saved_report_run_error(run_row, _saved_report_sql_error_detail(raw_res), run_started)
+            await db.commit()
             await _raise_saved_report_sql_error(db, report_row, raw_res)
             
         # 若传入了会话ID，写入缓存供大模型下一轮做可视化复用
@@ -1457,6 +1796,7 @@ async def execute_saved_report(
         report_row.last_success_at = now
         report_row.last_error = None
         report_row.status = "active"
+        _finish_saved_report_run_success(run_row, parsed, permission_notice, run_started)
         try:
             await _record_saved_report_run(db, report_id=report.id, user_id=user_id)
         except Exception as pref_err:
@@ -1468,6 +1808,8 @@ async def execute_saved_report(
 
     # 如果是文本类输出（非标准 JSON 格式，如报错信息）
     if raw_res.startswith("[Validation Failed]") or raw_res.startswith("[Permission Denied]") or raw_res.startswith("[Security Error]"):
+        _finish_saved_report_run_error(run_row, _saved_report_sql_error_detail(raw_res), run_started)
+        await db.commit()
         await _raise_saved_report_sql_error(db, report_row, raw_res)
         
     now = datetime.now()
@@ -1475,6 +1817,8 @@ async def execute_saved_report(
     report_row.last_success_at = now
     report_row.last_error = None
     report_row.status = "active"
+    text_payload = {"rows": [{"value": raw_res}]}
+    _finish_saved_report_run_success(run_row, text_payload, permission_notice, run_started)
     try:
         await _record_saved_report_run(db, report_id=report.id, user_id=user_id)
     except Exception as pref_err:

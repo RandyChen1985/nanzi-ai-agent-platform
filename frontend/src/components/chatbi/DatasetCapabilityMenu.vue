@@ -323,7 +323,12 @@
             </svg>
           </button>
         </div>
-        <div class="p-5 space-y-4">
+        <div class="px-5 pt-4 flex items-center gap-1 border-b border-gray-100 dark:border-gray-800">
+          <button type="button" class="px-3 py-2 text-xs font-bold border-b-2 transition-colors" :class="savedReportDetailTab === 'info' ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-400 hover:text-gray-600'" @click="savedReportDetailTab = 'info'">报表信息</button>
+          <button type="button" class="px-3 py-2 text-xs font-bold border-b-2 transition-colors" :class="savedReportDetailTab === 'runs' ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-400 hover:text-gray-600'" @click="selectSavedReportDetailTab('runs')">运行历史</button>
+          <button v-if="selectedSavedReportDetail.is_owner" type="button" class="px-3 py-2 text-xs font-bold border-b-2 transition-colors" :class="savedReportDetailTab === 'subscription' ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-400 hover:text-gray-600'" @click="selectSavedReportDetailTab('subscription')">订阅设置</button>
+        </div>
+        <div v-if="savedReportDetailTab === 'info'" class="p-5 space-y-4">
           <section class="space-y-2">
             <div class="flex items-center gap-2">
               <span class="px-2 py-1 rounded-lg text-[10px] font-bold" :class="getSavedReportRunPermissionClass(selectedSavedReportDetail)">
@@ -352,6 +357,74 @@
             <button v-if="selectedSavedReportDetail.is_owner" type="button" class="px-3 py-2 rounded-lg text-xs font-bold border border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-300" @click="handleEditReport(selectedSavedReportDetail)">编辑</button>
             <button v-if="selectedSavedReportDetail.is_owner" type="button" class="px-3 py-2 rounded-lg text-xs font-bold border border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-300" @click="openShareReportModal(selectedSavedReportDetail)">共享</button>
           </div>
+        </div>
+        <div v-else-if="savedReportDetailTab === 'runs'" class="p-5 space-y-3">
+          <div v-if="savedReportRunsLoading" class="py-12 text-center text-xs text-gray-400">正在加载运行历史...</div>
+          <div v-else-if="!savedReportRuns.length" class="py-12 text-center">
+            <p class="text-sm font-bold text-gray-500 dark:text-gray-300">暂无运行记录</p>
+            <p class="mt-1 text-xs text-gray-400">运行一次报表后，这里会显示耗时、行数和结果快照。</p>
+          </div>
+          <div v-else class="space-y-2">
+            <article v-for="run in savedReportRuns" :key="run.id" class="rounded-xl border border-gray-100 dark:border-gray-800 overflow-hidden">
+              <button type="button" class="w-full p-3 text-left hover:bg-gray-50 dark:hover:bg-gray-900 transition-colors" @click="toggleSavedReportRunDetail(run)">
+                <div class="flex items-center justify-between gap-3">
+                  <div class="min-w-0">
+                    <div class="flex items-center gap-2">
+                      <span class="w-2 h-2 rounded-full" :class="run.status === 'success' ? 'bg-emerald-500' : run.status === 'error' ? 'bg-red-500' : 'bg-amber-500'"></span>
+                      <span class="text-xs font-bold text-gray-700 dark:text-gray-200">{{ run.status === 'success' ? '运行成功' : run.status === 'error' ? '运行失败' : '运行中' }}</span>
+                    </div>
+                    <p class="mt-1 text-[11px] text-gray-400">{{ formatDate(run.started_at) || '-' }}</p>
+                  </div>
+                  <div class="text-right shrink-0">
+                    <p class="text-[11px] font-bold text-gray-600 dark:text-gray-300">{{ run.row_count ?? '-' }} 行</p>
+                    <p class="mt-1 text-[10px] text-gray-400">{{ formatSavedReportRunDuration(run.duration_ms) }}</p>
+                  </div>
+                </div>
+                <p v-if="run.error_message" class="mt-2 text-[11px] text-red-500 line-clamp-2">{{ run.error_message }}</p>
+              </button>
+              <div v-if="selectedSavedReportRunId === run.id" class="border-t border-gray-100 dark:border-gray-800 bg-gray-50/70 dark:bg-gray-900/50 p-3 space-y-3">
+                <p v-if="savedReportRunDetailLoading" class="py-4 text-center text-xs text-gray-400">正在加载运行详情...</p>
+                <template v-else-if="selectedSavedReportRunDetail">
+                  <div v-if="Object.keys(selectedSavedReportRunDetail.resolved_params || {}).length">
+                    <p class="text-[11px] font-bold text-gray-500 mb-1">运行参数</p>
+                    <pre class="max-h-32 overflow-auto rounded-lg bg-white dark:bg-gray-950 p-2 text-[10px] text-gray-600 dark:text-gray-300 whitespace-pre-wrap">{{ JSON.stringify(selectedSavedReportRunDetail.resolved_params, null, 2) }}</pre>
+                  </div>
+                  <div v-if="selectedSavedReportRunDetail.permission_notice?.row_filter_applied" class="rounded-lg bg-amber-50 dark:bg-amber-950/20 px-3 py-2 text-[11px] text-amber-700 dark:text-amber-300">本次结果已应用行级数据权限</div>
+                  <div v-if="selectedSavedReportRunDetail.executed_sql">
+                    <p class="text-[11px] font-bold text-gray-500 mb-1">执行 SQL</p>
+                    <pre class="max-h-40 overflow-auto rounded-lg bg-gray-950 text-green-100 p-2 text-[10px] whitespace-pre-wrap">{{ selectedSavedReportRunDetail.executed_sql }}</pre>
+                  </div>
+                  <div v-if="selectedSavedReportRunDetail.result_snapshot">
+                    <p class="text-[11px] font-bold text-gray-500 mb-1">结果快照（前 {{ selectedSavedReportRunDetail.snapshot_row_count || 0 }} 行）</p>
+                    <pre class="max-h-64 overflow-auto rounded-lg bg-white dark:bg-gray-950 p-2 text-[10px] text-gray-600 dark:text-gray-300 whitespace-pre-wrap">{{ JSON.stringify(selectedSavedReportRunDetail.result_snapshot, null, 2) }}</pre>
+                  </div>
+                  <div v-if="selectedSavedReportRunDetail.error_message" class="rounded-lg bg-red-50 dark:bg-red-950/20 px-3 py-2 text-[11px] text-red-600 dark:text-red-300 whitespace-pre-wrap">{{ selectedSavedReportRunDetail.error_message }}</div>
+                </template>
+              </div>
+            </article>
+          </div>
+        </div>
+        <div v-else class="p-5 space-y-4">
+          <div v-if="savedReportSubscriptionLoading" class="py-12 text-center text-xs text-gray-400">正在加载订阅设置...</div>
+          <template v-else>
+            <div v-if="savedReportSubscription" class="rounded-xl bg-blue-50 dark:bg-blue-950/20 px-3 py-2 text-xs text-blue-700 dark:text-blue-300">
+              {{ savedReportSubscription.status === 'active' ? '订阅运行中' : savedReportSubscription.status === 'paused' ? '订阅已暂停' : '订阅异常' }}
+              <span class="ml-2 text-[11px] opacity-75">下次运行：{{ formatDate(savedReportSubscription.next_run_at) || '服务重启后同步' }}</span>
+            </div>
+            <label class="block"><span class="text-xs font-bold text-gray-600">执行频率</span><select v-model="savedReportSubscriptionForm.schedule_type" class="mt-1 w-full rounded-lg border-gray-200 text-sm"><option value="daily">每天</option><option value="weekly">每周</option><option value="monthly">每月</option><option value="cron">高级 Cron</option></select></label>
+            <label v-if="savedReportSubscriptionForm.schedule_type !== 'cron'" class="block"><span class="text-xs font-bold text-gray-600">执行时间</span><input v-model="savedReportSubscriptionForm.time_value" type="time" class="mt-1 w-full rounded-lg border-gray-200 text-sm" /></label>
+            <label v-if="savedReportSubscriptionForm.schedule_type === 'weekly'" class="block"><span class="text-xs font-bold text-gray-600">星期</span><select v-model.number="savedReportSubscriptionForm.weekday" class="mt-1 w-full rounded-lg border-gray-200 text-sm"><option v-for="day in 7" :key="day" :value="day - 1">星期{{ ['日','一','二','三','四','五','六'][day - 1] }}</option></select></label>
+            <label v-if="savedReportSubscriptionForm.schedule_type === 'monthly'" class="block"><span class="text-xs font-bold text-gray-600">每月日期</span><input v-model.number="savedReportSubscriptionForm.monthday" type="number" min="1" max="31" class="mt-1 w-full rounded-lg border-gray-200 text-sm" /></label>
+            <label v-if="savedReportSubscriptionForm.schedule_type === 'cron'" class="block"><span class="text-xs font-bold text-gray-600">Cron 表达式</span><input v-model="savedReportSubscriptionForm.cron_expr" class="mt-1 w-full rounded-lg border-gray-200 text-sm font-mono" placeholder="0 9 * * *" /></label>
+            <div class="space-y-2 rounded-xl border border-gray-100 dark:border-gray-800 p-3"><p class="text-[10px] text-gray-400">定时运行失败始终写入站内通知。</p><label class="flex items-center justify-between text-xs text-gray-600"><span>失败时同时发送外部通知</span><input v-model="savedReportSubscriptionForm.notify_on_failure" type="checkbox" /></label><label class="flex items-center justify-between text-xs text-gray-600"><span>成功时发送站内及外部通知</span><input v-model="savedReportSubscriptionForm.notify_on_success" type="checkbox" /></label></div>
+            <div class="space-y-2"><p class="text-xs font-bold text-gray-600">外部通知渠道</p><div class="flex flex-wrap gap-3"><label v-for="channel in [{ value: 'dingtalk', label: '钉钉' }, { value: 'wechat_work', label: '企业微信' }, { value: 'email', label: '邮件' }]" :key="channel.value" class="flex items-center gap-1.5 text-xs text-gray-600"><input v-model="savedReportSubscriptionForm.external_channels" type="checkbox" :value="channel.value" />{{ channel.label }}</label></div><p class="text-[10px] text-gray-400">外部渠道需先在个人中心 → 消息通知中启用。</p></div>
+            <div class="flex flex-wrap gap-2">
+              <button class="px-3 py-2 rounded-lg bg-blue-600 text-white text-xs font-bold" :disabled="savedReportSubscriptionSaving" @click="saveSavedReportSubscription">{{ savedReportSubscriptionSaving ? '保存中...' : '保存订阅' }}</button>
+              <button v-if="savedReportSubscription" class="px-3 py-2 rounded-lg border text-xs font-bold" @click="toggleSavedReportSubscriptionStatus">{{ savedReportSubscription.status === 'active' ? '暂停' : '恢复' }}</button>
+              <button v-if="savedReportSubscription" class="px-3 py-2 rounded-lg border text-xs font-bold" @click="runSavedReportSubscriptionNow">立即执行</button>
+              <button v-if="savedReportSubscription" class="px-3 py-2 rounded-lg border border-red-200 text-red-600 text-xs font-bold" @click="deleteSavedReportSubscription">删除订阅</button>
+            </div>
+          </template>
         </div>
       </aside>
     </div>
@@ -1511,6 +1584,16 @@ const showSavedReportDetailDrawer = ref(false);
 const showSavedReportBrowser = ref(false);
 const savedReportBrowseModalRef = ref<{ refresh: () => Promise<void> } | null>(null);
 const selectedSavedReportDetail = ref<any | null>(null);
+const savedReportDetailTab = ref<"info" | "runs" | "subscription">("info");
+const savedReportRuns = ref<any[]>([]);
+const savedReportRunsLoading = ref(false);
+const selectedSavedReportRunId = ref<number | null>(null);
+const selectedSavedReportRunDetail = ref<any | null>(null);
+const savedReportRunDetailLoading = ref(false);
+const savedReportSubscription = ref<any | null>(null);
+const savedReportSubscriptionLoading = ref(false);
+const savedReportSubscriptionSaving = ref(false);
+const savedReportSubscriptionForm = ref({ schedule_type: "daily", time_value: "09:00", weekday: 1, monthday: 1, cron_expr: "0 9 * * *", params: {} as Record<string, any>, notify_on_success: false, notify_on_failure: true, external_channels: [] as string[] });
 const showShareReportModal = ref(false);
 const sharingReport = ref<any | null>(null);
 const shareUserSearch = ref("");
@@ -1706,6 +1789,10 @@ const sortSavedReportsForUser = (reports: any[]) => {
 
 const openSavedReportDetail = async (report: any) => {
   selectedSavedReportDetail.value = report;
+  savedReportDetailTab.value = "info";
+  savedReportRuns.value = [];
+  selectedSavedReportRunId.value = null;
+  selectedSavedReportRunDetail.value = null;
   showSavedReportDetailDrawer.value = true;
   try {
     const res = await axios.get(`/api/portal/saved-reports/${report.id}`);
@@ -1719,9 +1806,95 @@ const openSavedReportDetail = async (report: any) => {
   }
 };
 
+const fetchSavedReportRuns = async (reportId: string) => {
+  savedReportRunsLoading.value = true;
+  try {
+    const res = await axios.get(`/api/portal/saved-reports/${reportId}/runs`);
+    savedReportRuns.value = Array.isArray(res.data?.data) ? res.data.data : [];
+  } catch (error) {
+    console.error("Failed to fetch saved report runs:", error);
+    showToast("加载运行历史失败", "error");
+  } finally {
+    savedReportRunsLoading.value = false;
+  }
+};
+
+const fetchSavedReportSubscription = async () => {
+  savedReportSubscriptionLoading.value = true;
+  try {
+    const res = await axios.get(`/api/portal/saved-reports/${selectedSavedReportDetail.value.id}/subscription`);
+    savedReportSubscription.value = res.data?.data || null;
+    if (savedReportSubscription.value) Object.assign(savedReportSubscriptionForm.value, savedReportSubscription.value);
+  } finally { savedReportSubscriptionLoading.value = false; }
+};
+
+const selectSavedReportDetailTab = async (tab: "info" | "runs" | "subscription") => {
+  savedReportDetailTab.value = tab;
+  if (tab === "runs" && selectedSavedReportDetail.value?.id && !savedReportRuns.value.length) {
+    await fetchSavedReportRuns(selectedSavedReportDetail.value.id);
+  }
+  if (tab === "subscription" && selectedSavedReportDetail.value?.is_owner) await fetchSavedReportSubscription();
+};
+
+const saveSavedReportSubscription = async () => {
+  savedReportSubscriptionSaving.value = true;
+  try {
+    const res = await axios.put(`/api/portal/saved-reports/${selectedSavedReportDetail.value.id}/subscription`, savedReportSubscriptionForm.value);
+    savedReportSubscription.value = res.data?.data;
+    showToast("订阅设置已保存", "success");
+  } catch (error: any) { showToast(error.response?.data?.detail || "订阅保存失败", "error"); }
+  finally { savedReportSubscriptionSaving.value = false; }
+};
+const toggleSavedReportSubscriptionStatus = async () => {
+  const action = savedReportSubscription.value.status === "active" ? "pause" : "resume";
+  const res = await axios.post(`/api/portal/saved-reports/${selectedSavedReportDetail.value.id}/subscription/${action}`);
+  savedReportSubscription.value = res.data?.data;
+};
+const runSavedReportSubscriptionNow = async () => {
+  await axios.post(`/api/portal/saved-reports/${selectedSavedReportDetail.value.id}/subscription/run`);
+  showToast("订阅已执行，可在运行历史查看结果", "success");
+  savedReportRuns.value = [];
+};
+const deleteSavedReportSubscription = async () => {
+  await axios.delete(`/api/portal/saved-reports/${selectedSavedReportDetail.value.id}/subscription`);
+  savedReportSubscription.value = null;
+  showToast("订阅已删除", "success");
+};
+
+const toggleSavedReportRunDetail = async (run: any) => {
+  if (selectedSavedReportRunId.value === run.id) {
+    selectedSavedReportRunId.value = null;
+    selectedSavedReportRunDetail.value = null;
+    return;
+  }
+  selectedSavedReportRunId.value = run.id;
+  selectedSavedReportRunDetail.value = null;
+  savedReportRunDetailLoading.value = true;
+  try {
+    const reportId = selectedSavedReportDetail.value?.id;
+    const runId = run.id;
+    const res = await axios.get(`/api/portal/saved-reports/${reportId}/runs/${runId}`);
+    selectedSavedReportRunDetail.value = res.data?.data || null;
+  } catch (error) {
+    console.error("Failed to fetch saved report run detail:", error);
+    showToast("加载运行详情失败", "error");
+  } finally {
+    savedReportRunDetailLoading.value = false;
+  }
+};
+
+const formatSavedReportRunDuration = (durationMs: number | null | undefined) => {
+  if (durationMs === null || durationMs === undefined) return "耗时 -";
+  if (durationMs < 1000) return `耗时 ${durationMs}ms`;
+  return `耗时 ${(durationMs / 1000).toFixed(1)}s`;
+};
+
 const closeSavedReportDetail = () => {
   showSavedReportDetailDrawer.value = false;
   selectedSavedReportDetail.value = null;
+  savedReportRuns.value = [];
+  selectedSavedReportRunId.value = null;
+  selectedSavedReportRunDetail.value = null;
 };
 
 const updateSavedReportPreference = async (report: any, payload: Record<string, any>, resort = false) => {
@@ -1760,6 +1933,20 @@ const fetchSavedReports = async () => {
     });
     if (res.data && res.data.data) {
       savedReports.value = res.data.data;
+      const focusRaw = localStorage.getItem("portal_focus_saved_report");
+      if (focusRaw) {
+        localStorage.removeItem("portal_focus_saved_report");
+        try {
+          const focus = JSON.parse(focusRaw);
+          const report = savedReports.value.find(item => item.id === focus.report_id);
+          if (report) {
+            await openSavedReportDetail(report);
+            await selectSavedReportDetailTab("runs");
+            const run = savedReportRuns.value.find(item => String(item.id) === String(focus.run_id));
+            if (run) await toggleSavedReportRunDetail(run);
+          }
+        } catch (error) { console.warn("Failed to focus saved report notification target", error); }
+      }
     }
   } catch (error) {
     console.error("Failed to fetch saved reports:", error);
