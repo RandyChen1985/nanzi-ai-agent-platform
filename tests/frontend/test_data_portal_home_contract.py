@@ -152,7 +152,7 @@ def test_data_portal_lives_in_personal_center_data_tab():
 
     assert "DataPortalHome" in personal
     assert "activeTab === 'data'" in personal
-    assert "我的数据" in personal
+    assert "我的数据门户" in personal
     assert "route.query.tab" in personal
     assert "name: '我的数据门户'" not in dashboard
     assert "redirect: (to" not in router

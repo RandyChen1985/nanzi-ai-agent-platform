@@ -592,7 +592,7 @@ onMounted(() => {
                         'whitespace-nowrap py-3 sm:py-4 px-1 border-b-2 font-medium text-xs sm:text-sm transition-colors'
                     ]"
                 >
-                    我的数据
+                    我的数据门户
                 </button>
                 <button 
                     @click="activeTab = 'notifications'"
