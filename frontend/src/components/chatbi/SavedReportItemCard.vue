@@ -53,6 +53,17 @@
     </button>
     <div class="flex items-center justify-end px-2.5 py-1 bg-gray-50/50 dark:bg-gray-900/10 border-t border-blue-50/30 dark:border-blue-950/20 text-gray-400 gap-1.5">
       <button
+        v-if="report.is_owner && report.subscription_status"
+        type="button"
+        class="mr-auto inline-flex items-center gap-1 rounded-md px-1.5 py-1 text-[9px] font-bold transition-colors"
+        :class="subscriptionClass"
+        :title="subscriptionTitle"
+        @click.stop="emit('subscription', report)"
+      >
+        <span class="h-1.5 w-1.5 rounded-full bg-current" />
+        {{ subscriptionLabel }}
+      </button>
+      <button
         v-if="report.is_owner"
         type="button"
         class="flex items-center justify-center p-1 rounded hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950/40 transition-all duration-200 cursor-pointer"
@@ -151,6 +162,7 @@ const emit = defineEmits<{
   (event: "share", report: any): void;
   (event: "copy", report: any): void;
   (event: "delete", report: any): void;
+  (event: "subscription", report: any): void;
 }>();
 
 const isDisabled = computed(() => props.report.run_permission_status === "denied");
@@ -199,4 +211,34 @@ const copyTitle = computed(() => {
 });
 
 const formattedDate = computed(() => props.formatDate(props.report.created_at));
+
+const subscriptionLabel = computed(() => {
+  if (props.report.subscription_status === "active") return "已订阅";
+  if (props.report.subscription_status === "paused") return "已暂停";
+  return "订阅异常";
+});
+
+const subscriptionClass = computed(() => {
+  if (props.report.subscription_status === "active") return "bg-emerald-50 text-emerald-600 hover:bg-emerald-100 dark:bg-emerald-950/30 dark:text-emerald-300";
+  if (props.report.subscription_status === "paused") return "bg-gray-100 text-gray-500 hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-300";
+  return "bg-red-50 text-red-600 hover:bg-red-100 dark:bg-red-950/30 dark:text-red-300";
+});
+
+const subscriptionScheduleLabel = computed(() => {
+  const parts = String(props.report.subscription_cron_expr || "").trim().split(/\s+/);
+  if (parts.length !== 5) return props.report.subscription_cron_expr || "";
+  const [minute, hour, monthday, month, weekday] = parts;
+  if (!/^\d+$/.test(minute) || !/^\d+$/.test(hour)) return props.report.subscription_cron_expr;
+  const time = `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
+  if (month === "*" && weekday === "*" && monthday === "*") return `每天 ${time}`;
+  if (month === "*" && weekday === "*" && /^\d+$/.test(monthday)) return `每月${monthday}日 ${time}`;
+  if (month === "*" && monthday === "*" && /^[0-6]$/.test(weekday)) return `每周${["日", "一", "二", "三", "四", "五", "六"][Number(weekday)]} ${time}`;
+  return props.report.subscription_cron_expr;
+});
+
+const subscriptionTitle = computed(() => {
+  const schedule = subscriptionScheduleLabel.value ? `运行周期：${subscriptionScheduleLabel.value}` : "";
+  const nextRun = props.report.subscription_next_run_at ? `下次运行：${props.formatDate(props.report.subscription_next_run_at)}` : "";
+  return [subscriptionLabel.value, schedule, nextRun, "点击管理订阅"].filter(Boolean).join("\n");
+});
 </script>

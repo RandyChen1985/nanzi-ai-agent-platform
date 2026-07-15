@@ -9,6 +9,13 @@ export interface DatasetPortalQuestion {
   last_clicked_at?: string;
 }
 
+export interface DatasetPortalColumn {
+  name: string;
+  term: string;
+  type?: string;
+  description?: string;
+}
+
 export interface DatasetPortalGroup {
   id?: string;
   title: string;
@@ -21,6 +28,7 @@ export interface DatasetPortalGroup {
     tables?: string[];
     table_descriptions?: Array<{ name: string; description?: string }>;
     table_physical_names?: Record<string, string>;
+    table_columns?: Record<string, DatasetPortalColumn[]>;
   }>;
   followups?: DatasetPortalQuestion[];
 }

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // ... imports ...
 import { ref, nextTick, watch, onUnmounted, reactive, onMounted, computed } from "vue";
-import { useRoute } from "vue-router";
+import { useRoute, useRouter } from "vue-router";
 import TraceLogViewer from "@/components/TraceLogViewer.vue";
 import DebugConfigPanel from "@/components/DebugConfigPanel.vue";
 import ChatHistorySidebar from "@/components/ChatHistorySidebar.vue";
@@ -9,6 +9,10 @@ import MessageRenderer from "@/components/MessageRenderer.vue";
 import GroundingBlockedCard from "@/components/GroundingBlockedCard.vue";
 import DatasetCapabilityMenu from "@/components/chatbi/DatasetCapabilityMenu.vue";
 import DatasetPortalDrawer from "@/components/chatbi/DatasetPortalDrawer.vue";
+import ChatBIDataEvidence from "@/components/chatbi/ChatBIDataEvidence.vue";
+import ChatBIContinueAnalysis from "@/components/chatbi/ChatBIContinueAnalysis.vue";
+import type { ChatBIInsightMeta } from "@/types/chatbiInsight";
+import { applyChatBIInsightEvent } from "@/utils/chatbiInsight";
 import KnowledgePortalDrawer from "@/components/knowledge/KnowledgePortalDrawer.vue";
 import { useDatasetPortal } from "@/composables/useDatasetPortal";
 import { useKnowledgePortal } from "@/composables/useKnowledgePortal";
@@ -34,10 +38,12 @@ import { createConversationId } from "@/utils/conversationId";
 import { createSseLineParser } from "@/utils/chartRenderer";
 import { normalizeAgentSwitchCommand } from "@/utils/agentSwitchCommands";
 import {
+  applyStreamTraceId,
   dispatchAgentscopeStreamEvent,
   formatExternalExecutionStatus,
   formatPermissionStatus,
   markStalePendingStreamLogs,
+  mergeStreamCitations,
   resumeExternalExecutionStream,
   type PendingExternalExecution,
   type PendingToolPermission,
@@ -60,9 +66,10 @@ import WorkspaceBrowserDrawer from "@/components/embed/WorkspaceBrowserDrawer.vu
 import MemoryBrowserDrawer from "@/components/embed/MemoryBrowserDrawer.vue";
 import SkillBrowserDrawer from "@/components/embed/SkillBrowserDrawer.vue";
 import ChatCanvas from "@/components/embed/ChatCanvas.vue";
+import ChatThinkingHeader from "@/components/chat/ChatThinkingHeader.vue";
 import AttachmentImageThumb from "@/components/embed/AttachmentImageThumb.vue";
-import { isImageAttachment, getServerAttachmentPath } from "@/utils/attachmentImages";
-import { openWorkspaceFileInCanvas, isSameWorkspacePreviewPath } from "@/utils/workspaceFilePreview";
+import { isImageAttachment } from "@/utils/attachmentImages";
+import { isDirectRenderableUrl, resolvePublicUploadsPreviewUrl } from "@/utils/workspaceFilePreview";
 import { sanitizeStreamContent } from "@/utils/streamContentSanitize";
 import {
   splitSqlToolLogDetails,
@@ -79,10 +86,28 @@ import {
   deriveSavedReportTitle,
   parseRequirementAnalysisFromMessage,
 } from "@/utils/savedReportDefaults";
+import {
+  buildSavedReportRunParams,
+  detectSavedReportDateTemplate,
+  extractSavedReportExecuteErrorMessage,
+  parseSavedReportTags,
+  renderSavedReportDataToMarkdown,
+  todayDateString,
+  todayMonthString,
+} from "@/composables/chat/useSavedReportWorkflow";
+import { useWorkspaceCanvas } from "@/composables/chat/useWorkspaceCanvas";
+import {
+  USER_MESSAGE_CONTEXT_DIVIDER,
+  splitUserMessageContent,
+  useChatAttachments,
+} from "@/composables/chat/useChatAttachments";
+import { groupChatHistoryByDate } from "@/composables/chat/useChatHistoryGroups";
 import KnowledgeToolLogDetails from "@/components/KnowledgeToolLogDetails.vue";
 import { isKnowledgeToolLog } from "@/utils/knowledgeToolLog";
 
 const route = useRoute();
+const router = useRouter();
+const openFullDataPortal = () => router.push({ path: "/dashboard/personal", query: { tab: "data" } });
 const { showToast } = useToast();
 const { quotaStatus, refreshQuota } = useTokenQuota();
 
@@ -127,48 +152,7 @@ const aggregatedHistoryList = computed(() => {
   }).filter(Boolean);
 });
 
-const groupedHistoryList = computed(() => {
-  const aggregated = aggregatedHistoryList.value;
-  if (!aggregated.length) return [];
-
-  const groupsMap = {
-    today: { title: "今天", items: [] as any[], order: 1 },
-    yesterday: { title: "昨天", items: [] as any[], order: 2 },
-    threeDays: { title: "3天前", items: [] as any[], order: 3 },
-    sevenDays: { title: "7天前", items: [] as any[], order: 4 },
-    older: { title: "更早", items: [] as any[], order: 5 },
-  };
-
-  const now = new Date();
-  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
-  const oneDayMs = 24 * 60 * 60 * 1000;
-
-  aggregated.forEach(item => {
-    if (!item.created_at) {
-      groupsMap["older"].items.push(item);
-      return;
-    }
-    const itemTime = new Date(item.created_at).getTime();
-    const diffMs = startOfToday - itemTime;
-
-    if (itemTime >= startOfToday) {
-      groupsMap["today"].items.push(item);
-    } else if (diffMs < oneDayMs) {
-      groupsMap["yesterday"].items.push(item);
-    } else if (diffMs < 3 * oneDayMs) {
-      groupsMap["threeDays"].items.push(item);
-    } else if (diffMs < 7 * oneDayMs) {
-      groupsMap["sevenDays"].items.push(item);
-    } else {
-      groupsMap["older"].items.push(item);
-    }
-  });
-
-  return Object.entries(groupsMap)
-    .map(([key, group]) => ({ id: key, ...group }))
-    .filter(g => g.items.length > 0)
-    .sort((a, b) => a.order - b.order);
-});
+const groupedHistoryList = computed(() => groupChatHistoryByDate(aggregatedHistoryList.value));
 
 const formatDate = (dateStr: string) => {
   if (!dateStr) return "-";
@@ -711,77 +695,6 @@ const saveReportForm = ref({
   tags_input: '',
 });
 
-const detectSavedReportDateTemplate = (sql: string) => {
-  const matches = [...String(sql || '').matchAll(/'(\d{4}-\d{2}-\d{2})(?:\s+\d{2}:\d{2}:\d{2})?'/g)];
-  if (matches.length >= 2) {
-    const first = matches[0];
-    const second = matches[1];
-    if (!first || !second || first.index === undefined || second.index === undefined) return null;
-    const firstRaw = first[0];
-    const secondRaw = second[0];
-    const startParam = /\d{2}:\d{2}:\d{2}/.test(firstRaw) ? 'start_datetime' : 'start_date';
-    const endParam = /\d{2}:\d{2}:\d{2}/.test(secondRaw) ? 'end_datetime' : 'end_date';
-    const template = `${sql.slice(0, first.index)}{{${startParam}}}${sql.slice(first.index + firstRaw.length, second.index)}{{${endParam}}}${sql.slice(second.index + secondRaw.length)}`;
-    return {
-      sql_template: template,
-      params_schema: [
-        {
-          name: 'date_range',
-          type: 'date_range',
-          label: '日期范围',
-          default: 'month_start_to_today',
-          options: ['today', 'yesterday', 'last_7_days', 'month_start_to_today', 'custom_range'],
-        },
-      ],
-      default_params: { date_range: 'month_start_to_today' },
-    };
-  }
-  const monthMatches = [...String(sql || '').matchAll(/'(\d{4}-\d{2})'/g)];
-  if (monthMatches.length < 2) return null;
-  const first = monthMatches[0];
-  const second = monthMatches[1];
-  if (!first || !second || first.index === undefined || second.index === undefined) return null;
-  const firstRaw = first[0];
-  const secondRaw = second[0];
-  const template = `${sql.slice(0, first.index)}{{start_month}}${sql.slice(first.index + firstRaw.length, second.index)}{{end_month}}${sql.slice(second.index + secondRaw.length)}`;
-  return {
-    sql_template: template,
-    params_schema: [
-      {
-        name: 'month_range',
-        type: 'month_range',
-        label: '月份范围',
-        default: 'last_6_completed_months',
-        options: ['last_6_completed_months', 'year_start_to_current_month', 'custom_month_range'],
-      },
-    ],
-    default_params: { month_range: 'last_6_completed_months' },
-  };
-};
-
-const todayDateString = () => {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-};
-
-const todayMonthString = () => {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-};
-
-const parseSavedReportTags = (input: string) => {
-  const seen = new Set<string>();
-  const tags: string[] = [];
-  for (const raw of String(input || '').split(/[,\s，]+/)) {
-    const tag = raw.trim();
-    if (!tag || seen.has(tag)) continue;
-    seen.add(tag);
-    tags.push(tag.slice(0, 32));
-    if (tags.length >= 12) break;
-  }
-  return tags;
-};
-
 const openSaveReportModal = (sql: string, agentMessage: any) => {
   isEditingReport.value = false;
   editingReportId.value = null;
@@ -902,102 +815,6 @@ const submitSaveReport = async () => {
   }
 };
 
-const renderSavedReportDataToMarkdown = (data: any): string => {
-  if (!data) return "执行结果为空";
-
-  let columns: string[] = [];
-  let rows: any[] = [];
-
-  if (data.columns && Array.isArray(data.columns)) {
-    columns = data.columns.map((c: any) => typeof c === 'object' ? (c.name || '') : String(c));
-  }
-
-  if (data.rows && Array.isArray(data.rows)) {
-    rows = data.rows;
-  } else if (data.items && Array.isArray(data.items)) {
-    rows = data.items;
-  } else if (Array.isArray(data)) {
-    rows = data;
-  } else if (typeof data === 'object') {
-    if (Array.isArray(data.data)) {
-      rows = data.data;
-    } else {
-      rows = [data];
-    }
-  }
-
-  if (!rows || rows.length === 0) {
-    return "查询执行成功，但没有返回任何明细数据。";
-  }
-
-  if (columns.length === 0) {
-    const firstRow = rows[0];
-    if (firstRow && typeof firstRow === 'object' && !Array.isArray(firstRow)) {
-      columns = Object.keys(firstRow);
-    } else if (Array.isArray(firstRow)) {
-      columns = firstRow.map((_, i) => `列 ${i + 1}`);
-    } else {
-      columns = ["结果值"];
-    }
-  }
-
-  const maxDisplayRows = 150;
-  const displayRows = rows.slice(0, maxDisplayRows);
-  const truncated = rows.length > maxDisplayRows;
-
-  let md = `\n\n| ${columns.join(" | ")} |\n`;
-  md += `| ${columns.map(() => "---").join(" | ")} |\n`;
-
-  for (const r of displayRows) {
-    let rowCells: any[] = [];
-    if (Array.isArray(r)) {
-      rowCells = r.map(val => typeof val === 'object' ? JSON.stringify(val) : String(val));
-    } else if (r && typeof r === 'object') {
-      rowCells = columns.map(col => {
-        const val = r[col];
-        if (val === null || val === undefined) return "";
-        return typeof val === 'object' ? JSON.stringify(val) : String(val);
-      });
-    } else {
-      rowCells = [String(r)];
-    }
-
-    const cleanCells = rowCells.map(cell => {
-      return cell.replace(/\|/g, "\\|").replace(/\n/g, " ");
-    });
-
-    md += `| ${cleanCells.join(" | ")} |\n`;
-  }
-
-  if (truncated) {
-    md += `\n> *⚠️ 结果集数据量较大，已在聊天框中自动为您省略后半部分（共展示前 ${maxDisplayRows} 行 / 总计 ${rows.length} 行）。*`;
-  }
-
-  return md;
-};
-
-const extractSavedReportExecuteErrorMessage = (error: any) => {
-  const statusCode = error?.response?.status;
-  const responseData = error?.response?.data || {};
-  const rawDetail = responseData?.detail ?? responseData?.message ?? responseData?.error;
-  const rawMessage = typeof rawDetail === 'object' ? JSON.stringify(rawDetail) : String(rawDetail || '');
-  const combined = `${rawMessage} ${error?.message || ''}`;
-  const lower = combined.toLowerCase();
-  if (
-    statusCode === 401 ||
-    statusCode === 403 ||
-    lower.includes('permission denied') ||
-    lower.includes('access denied') ||
-    lower.includes('forbidden') ||
-    combined.includes('无权访问') ||
-    combined.includes('权限')
-  ) {
-    return '暂无该报表所需数据权限，无法执行本次查询。请联系报表创建人或管理员为你开通相关数据表权限后重试。';
-  }
-  const cleaned = rawMessage.replace(/Request failed with status code\s+\d+/i, '').trim();
-  return cleaned || '报表执行失败，暂时无法获取结果。请稍后重试，或联系管理员检查报表配置与数据权限。';
-};
-
 const savedReportNeedsRunOptions = (report: SavedReportPayload) => {
   return report.mode === 'param_sql' && Array.isArray(report.params_schema) && report.params_schema.length > 0;
 };
@@ -1024,27 +841,6 @@ const prepareSavedReportRunForm = (report: SavedReportPayload) => {
   });
 };
 
-const buildSavedReportRunParams = () => {
-  if (savedReportUsesMonthRange(pendingSavedReport.value)) {
-    const params: Record<string, any> = {
-      month_range: reportRunForm.value.monthRange,
-    };
-    if (reportRunForm.value.monthRange === 'custom_month_range') {
-      params.start_month = reportRunForm.value.startMonth;
-      params.end_month = reportRunForm.value.endMonth;
-    }
-    return params;
-  }
-  const params: Record<string, any> = {
-    date_range: reportRunForm.value.dateRange,
-  };
-  if (reportRunForm.value.dateRange === 'custom_range') {
-    params.start_date = reportRunForm.value.startDate;
-    params.end_date = reportRunForm.value.endDate;
-  }
-  return params;
-};
-
 let savedReportPreviewSeq = 0;
 let savedReportPreviewAbort: AbortController | null = null;
 
@@ -1059,7 +855,7 @@ const previewSavedReportRun = async () => {
   reportRunPreview.value = null;
   try {
     const res = await axios.post(`/api/portal/saved-reports/${report.id}/preview`, {
-      params: buildSavedReportRunParams(),
+      params: buildSavedReportRunParams(pendingSavedReport.value, reportRunForm.value),
       analysis_mode: 'auto',
     }, { signal: controller.signal });
     if (seq !== savedReportPreviewSeq) return;
@@ -1178,7 +974,7 @@ const executeSavedReportWithOptions = async (reportArg?: SavedReportPayload | nu
   try {
     const shouldAutoAnalyze = true;
     const res = await axios.post(`/api/portal/saved-reports/${report.id}/execute`, {
-      params: buildSavedReportRunParams(),
+      params: buildSavedReportRunParams(pendingSavedReport.value, reportRunForm.value),
       analysis_mode: 'auto',
     }, {
       params: { conversation_id: conversationId.value }
@@ -1411,6 +1207,7 @@ interface Message {
   toolResultData?: Record<string, Array<{ block_id?: string; media_type?: string; data?: unknown; url?: string | null }>>;
   datasetNavigation?: DatasetNavigationPayload;
   permissionNotice?: PermissionNotice;
+  chatbiInsight?: ChatBIInsightMeta;
   groundingBlocked?: GroundingBlockedPayload;
   prompt_tokens?: number;
   completion_tokens?: number;
@@ -1989,22 +1786,6 @@ const resolveKnowledgeExpertAgent = () => {
   });
 };
 
-/** 用户问题与附件/知识库系统说明的分隔（展示为横线，模型侧为 Markdown 分隔） */
-const USER_MESSAGE_CONTEXT_DIVIDER = "\n\n---\n\n";
-
-const splitUserMessageContent = (text: string) => {
-  const raw = text || "";
-  const idx = raw.indexOf(USER_MESSAGE_CONTEXT_DIVIDER);
-  if (idx === -1) {
-    return { hasContext: false, userPart: raw, contextPart: "" };
-  }
-  return {
-    hasContext: true,
-    userPart: raw.slice(0, idx).trim(),
-    contextPart: raw.slice(idx + USER_MESSAGE_CONTEXT_DIVIDER.length).trim(),
-  };
-};
-
 const buildKnowledgeBaseAttachmentHint = (datasetIdLine: string) => {
   const expert = resolveKnowledgeExpertAgent();
   const expertHint = expert
@@ -2014,6 +1795,9 @@ const buildKnowledgeBaseAttachmentHint = (datasetIdLine: string) => {
   return `${expertHint}\n\n【必须执行】${datasetIdLine}`;
 };
 
+const { appendAttachmentContext } = useChatAttachments({
+  buildKnowledgeBaseAttachmentHint,
+});
 
 const handleSelectLocalFs = (payload: { type: 'local_file' | 'local_dir'; path: string; name: string; size: number; ext: string }) => {
   if (!chatInputRef.value) return;
@@ -2030,70 +1814,36 @@ const handleSelectLocalFs = (payload: { type: 'local_file' | 'local_dir'; path: 
   }
 };
 
-const canvasVisible = ref(false);
-const canvasFromWorkspace = ref(false);
-const workspaceCanvasPreviewPath = ref<string | null>(null);
-const canvasData = ref<{
-  type: 'html' | 'code' | 'mermaid' | 'pdf' | 'csv' | 'image' | 'compare';
-  title: string;
-  content: string;
-  sourcePath?: string;
-  compareContent?: string;
-  compareTitle?: string;
-} | null>(null);
-const activeBlobUrl = ref('');
-
-const revokeActiveBlobUrl = () => {
-  if (!activeBlobUrl.value) return;
-  try {
-    URL.revokeObjectURL(activeBlobUrl.value);
-  } catch (e) {
-    console.warn("Revoke blob URL error:", e);
+const resolveFileUrl = (url: string): string => {
+  if (!url) return '';
+  if (isDirectRenderableUrl(url)) {
+    return url;
   }
-  activeBlobUrl.value = '';
+  const publicUploadUrl = resolvePublicUploadsPreviewUrl(url);
+  if (publicUploadUrl) return publicUploadUrl;
+  if (!url.startsWith('/static/') &&
+      !url.startsWith('/api/') &&
+      !url.startsWith('/assets/')) {
+    const convParam = conversationId.value ? `&conversation_id=${encodeURIComponent(conversationId.value)}` : "";
+    return `/api/v1/chat/fs/preview?path=${encodeURIComponent(url)}${convParam}`;
+  }
+  return url;
 };
 
-const closeCanvas = () => {
-  canvasVisible.value = false;
-  revokeActiveBlobUrl();
-};
-
-watch(canvasVisible, (visible) => {
-  if (!visible) {
-    canvasFromWorkspace.value = false;
-    workspaceCanvasPreviewPath.value = null;
-    revokeActiveBlobUrl();
-  }
+const {
+  canvasVisible,
+  canvasFromWorkspace,
+  canvasData,
+  handleWorkspaceFilePreview,
+  handleOpenCanvas,
+  closeCanvas,
+  revokeActiveBlobUrl,
+} = useWorkspaceCanvas({
+  getConversationId: () => conversationId.value,
+  resolveFileUrl,
+  showToast,
+  normalizeDirectPayloadTitle: true,
 });
-
-onUnmounted(() => {
-  revokeActiveBlobUrl();
-});
-
-const handleWorkspaceFilePreview = async (payload: { path: string; name: string }) => {
-  if (
-    canvasVisible.value &&
-    canvasFromWorkspace.value &&
-    isSameWorkspacePreviewPath(workspaceCanvasPreviewPath.value, payload.path)
-  ) {
-    closeCanvas();
-    workspaceCanvasPreviewPath.value = null;
-    return;
-  }
-  canvasFromWorkspace.value = true;
-  await openWorkspaceFileInCanvas({
-    path: payload.path,
-    name: payload.name,
-    conversationId: conversationId.value,
-    showToast,
-    activeBlobUrlRef: activeBlobUrl,
-    onOpen: (data) => {
-      workspaceCanvasPreviewPath.value = payload.path;
-      canvasData.value = data as typeof canvasData.value;
-      canvasVisible.value = true;
-    },
-  });
-};
 
 const isImageFile = isImageAttachment;
 
@@ -2103,67 +1853,6 @@ const formatBytes = (bytes: number) => {
   const sizes = ['B', 'KB', 'MB', 'GB'];
   const i = Math.floor(Math.log(bytes) / Math.log(k));
   return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
-};
-
-const buildImageAttachmentHint = (file: ChatFile, path: string) => {
-  if (file.type === "local_file") {
-    return `用户本轮已从服务器挂载图片：${file.filename}，该图片已作为视觉多模态输入随消息一并发送（源路径：${path}）。`;
-  }
-  return `用户本轮已上传图片：${file.filename}，该图片已作为视觉多模态输入随消息一并发送（托管路径：${path}）。`;
-};
-
-const buildSkillAttachmentHint = (file: ChatFile, path: string) => {
-  const skillName = file.filename.replace(" (技能)", "");
-  const meta = file.skillMeta;
-  const metaParts: string[] = [];
-  if (meta?.name) metaParts.push(`name: ${meta.name}`);
-  if (meta?.description) metaParts.push(`description: ${meta.description}`);
-  const metaText = metaParts.length > 0 ? metaParts.join(", ") : "";
-  let hint = `用户本轮已调用生态技能工作流：${skillName}，对应的物理描述文件绝对路径是：${path}。`;
-  if (metaText) {
-    hint += `\nskills meta 为：${metaText}`;
-  }
-  return hint;
-};
-
-const appendAttachmentContext = (content: string, files: ChatFile[]) => {
-  if (files.length === 0) return content;
-
-  const contextLines = files.map((file) => {
-    if (file.type === "knowledge_base") {
-      const datasetLine = `用户本轮已选择知识库，dataset_id：${file.url}。你必须在本轮回复前调用 search_knowledge_base 工具检索后再作答，不得跳过。dataset_ids 请传纯 ID 或单引号列表，例如 ['${file.url}']；禁止使用双引号 JSON 如 ["${file.url}"]。`;
-      return buildKnowledgeBaseAttachmentHint(datasetLine);
-    }
-    if (file.type === "memory") {
-      const meta = file.memoryMeta || [];
-      const memoryContextLines = meta.map((m: any, i: number) => {
-        const dateStr = m.last_active ? new Date(m.last_active * 1000).toLocaleDateString('zh-CN') : '';
-        const dateInfo = dateStr ? `【${dateStr}】` : '';
-        return `${i + 1}. ${dateInfo}${m.summary}`;
-      });
-      return `💡 以下引用的是历史记忆，供参考：\n\n${memoryContextLines.join('\n\n')}`;
-    }
-    const path = getServerAttachmentPath(file);
-    if (file.type === "skill") {
-      return buildSkillAttachmentHint(file, path);
-    }
-    if (isImageAttachment(file)) {
-      return buildImageAttachmentHint(file, path);
-    }
-    if (file.type === "local_file") {
-      return `用户本轮已挂载服务器本地文件：${file.filename}，其真实的绝对路径是：${path}。你可以直接通过系统级执行工具访问或读取此绝对路径的资料以解答用户的问题。`;
-    }
-    if (file.type === "local_dir") {
-      return `用户本轮已挂载服务器本地目录：${file.filename}，其真实的绝对路径是：${path}。你可以直接通过系统级执行工具访问、遍历或检索此绝对路径目录下的资料以解答用户的问题。`;
-    }
-    return `用户本轮已上传文件附件：${file.filename}，其安全托管后的服务器绝对路径是：${path}。`;
-  });
-
-  const contextBlock = contextLines.filter(Boolean).join("\n\n");
-  const userPart = (content || "").trim();
-  if (!contextBlock) return userPart;
-  if (!userPart) return `${USER_MESSAGE_CONTEXT_DIVIDER}${contextBlock}`;
-  return `${userPart}${USER_MESSAGE_CONTEXT_DIVIDER}${contextBlock}`;
 };
 
 const resolveReqContent = (msg: Message) => {
@@ -3078,13 +2767,7 @@ const sendMessage = async () => {
           try {
             const data = JSON.parse(dataStr);
 
-            // Handle Trace ID
-            if (data.trace_id) {
-              agentMsg.value.trace_id = data.trace_id;
-            }
-            if (data.data && data.data.trace_id) {
-              agentMsg.value.trace_id = data.data.trace_id;
-            }
+            applyStreamTraceId(agentMsg.value, data);
 
             // Handle Structured Logs
             if (data.type === "log") {
@@ -3117,17 +2800,8 @@ const sendMessage = async () => {
               }
             }
             // Handle Citations (New)
-            else if (data.type === "citation") {
-              if (data.data && Array.isArray(data.data)) {
-                if (!agentMsg.value.citations) agentMsg.value.citations = [];
-
-                data.data.forEach((newRef: any) => {
-                    const exists = agentMsg.value.citations?.some(c => c.chunk_id === newRef.chunk_id || (c.content === newRef.content && c.doc_name === newRef.doc_name));
-                    if (!exists) {
-                        agentMsg.value.citations?.push(newRef);
-                    }
-                });
-              }
+            else if (mergeStreamCitations(agentMsg.value, data)) {
+              // Citations are merged and de-duplicated by the shared stream normalizer.
             }
             // Handle Context Update Events (New)
             else if (data.type === "context") {
@@ -3183,6 +2857,9 @@ const sendMessage = async () => {
               }
             }
             // Handle Meta Info (Agent Name)
+            else if (applyChatBIInsightEvent(agentMsg.value, data)) {
+              // Additive ChatBI evidence event.
+            }
             else if (data.type === "meta") {
               if (data.agent_name) {
                 agentMsg.value.agentName = data.agent_name;
@@ -3357,8 +3034,7 @@ const submitPendingExternalExecution = async (msg: Message) => {
 };
 
 const applyPermissionStreamEvent = (msg: Message, data: any) => {
-  if (data.trace_id) msg.trace_id = data.trace_id;
-  if (data.data?.trace_id) msg.trace_id = data.data.trace_id;
+  applyStreamTraceId(msg, data);
 
   if (dispatchAgentscopeStreamEvent(msg, data, addRealLog)) {
     if (data.type === "error") {
@@ -3411,12 +3087,8 @@ const applyPermissionStreamEvent = (msg: Message, data: any) => {
       status: "success",
       isDebug: true,
     });
-  } else if (data.type === "citation" && Array.isArray(data.data)) {
-    if (!msg.citations) msg.citations = [];
-    data.data.forEach((newRef: any) => {
-      const exists = msg.citations?.some(c => c.chunk_id === newRef.chunk_id || (c.content === newRef.content && c.doc_name === newRef.doc_name));
-      if (!exists) msg.citations?.push(newRef);
-    });
+  } else if (mergeStreamCitations(msg, data)) {
+    // Citations are merged and de-duplicated by the shared stream normalizer.
   } else if (data.type === "context") {
     addRealLog(msg, {
       title: "✨ Context Updated",
@@ -3426,6 +3098,8 @@ const applyPermissionStreamEvent = (msg: Message, data: any) => {
     if (data.data) {
       agentContext.value = { ...agentContext.value, ...data.data };
     }
+  } else if (applyChatBIInsightEvent(msg, data)) {
+    return;
   } else if (data.type === "thinking" && data.status === "continuing") {
     msg.isThinking = true;
   } else if (data.type === "meta") {
@@ -3625,7 +3299,7 @@ onUnmounted(() => {
                             </div>
                             <div>
                                 <div class="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1 opacity-70">智能体</div>
-                                <div class="text-gray-600 dark:text-gray-300 text-xs sm:text-sm"><MessageRenderer :content="turn.summary" /></div>
+                                <div class="text-gray-600 dark:text-gray-300 text-xs sm:text-sm"><MessageRenderer :content="turn.summary" @open-canvas="handleOpenCanvas" /></div>
                             </div>
                         </div>
 
@@ -4080,7 +3754,7 @@ onUnmounted(() => {
               >
                 <template v-for="parts in [splitUserMessageContent(msg.content)]" :key="'user-parts'">
                   <template v-if="parts.hasContext">
-                    <MessageRenderer v-if="parts.userPart" :content="parts.userPart" />
+                    <MessageRenderer v-if="parts.userPart" :content="parts.userPart" @open-canvas="handleOpenCanvas" />
                     <div v-if="parts.userPart" class="my-2.5 border-t border-white/30" role="separator" />
                     <details class="group/sys mt-2 text-[10px] text-white/70 select-none">
                       <summary class="cursor-pointer hover:text-white flex items-center gap-1 font-semibold focus:outline-none list-none [&::-webkit-details-marker]:hidden">
@@ -4094,7 +3768,7 @@ onUnmounted(() => {
                       </div>
                     </details>
                   </template>
-                  <MessageRenderer v-else :content="msg.content" />
+                  <MessageRenderer v-else :content="msg.content" @open-canvas="handleOpenCanvas" />
                 </template>
 
                 <!-- Attached Files In Bubble -->
@@ -4321,46 +3995,15 @@ onUnmounted(() => {
               <!-- Logs (Collapsible Thought Accordion) -->
               <div v-if="!msg.isGreeting && msg.logs && msg.logs.length > 0" class="mb-3">
                 <!-- Header -->
-                <button
-                  @click="msg.isThoughtExpanded = !msg.isThoughtExpanded"
-                  class="flex items-center space-x-2 w-full text-left px-3 py-2 rounded-lg hover:bg-gray-100 transition-colors group/header select-none border border-transparent hover:border-gray-200"
-                >
-                  <!-- Icon -->
-                  <div class="flex-shrink-0 flex items-center justify-center w-5 h-5 rounded bg-gray-100 text-gray-500">
-                    <svg v-if="msg.isThinking" class="w-3.5 h-3.5 animate-spin text-primary" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
-                    <svg v-else class="w-3.5 h-3.5 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" /></svg>
-                  </div>
-
-                  <!-- Title & Meta -->
-                  <div class="flex-1 flex items-center justify-between min-w-0">
-                    <div class="flex items-center space-x-2 overflow-hidden">
-                      <span class="text-xs font-semibold text-gray-700 truncate">
-                        {{ msg.isThinking ? (msg.thinkingText || '思考中...') : '深度思考过程' }}
-                      </span>
-                      <span
-                        v-if="msg.logs.length > 0"
-                        class="text-[10px] px-1.5 py-0.5 rounded-full bg-gray-100 text-gray-500 font-mono"
-                      >
-                        {{ msg.logs.length }} 步骤
-                      </span>
-                      <span v-if="getSkillFlowBadgesForMessage(msg, messages).length > 0" class="text-[10px] px-1.5 py-0.5 rounded-full bg-purple-50 text-purple-600 dark:bg-purple-950/40 dark:text-purple-400 font-semibold border border-purple-100 dark:border-purple-900/30 flex items-center gap-0.5">
-                        ⚡ {{ summarizeSkillFlowBadges(getSkillFlowBadgesForMessage(msg, messages)) }}
-                      </span>
-                    </div>
-                    <span class="text-[10px] text-gray-400 font-mono ml-2 flex-shrink-0">
-                      {{ msg.thoughtDuration ? `${msg.thoughtDuration}s` : '' }}
-                    </span>
-                  </div>
-
-                  <!-- Chevron -->
-                  <svg
-                    class="w-4 h-4 text-gray-400 transform transition-transform duration-200"
-                    :class="{ 'rotate-180': msg.isThoughtExpanded }"
-                    fill="none" stroke="currentColor" viewBox="0 0 24 24"
-                  >
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
-                  </svg>
-                </button>
+                <ChatThinkingHeader
+                  v-model:expanded="msg.isThoughtExpanded"
+                  :is-thinking="msg.isThinking"
+                  :title="msg.isThinking ? (msg.thinkingText || '思考中...') : '深度思考过程'"
+                  :step-count="msg.logs.length"
+                  :skill-summary="getSkillFlowBadgesForMessage(msg, messages).length > 0 ? summarizeSkillFlowBadges(getSkillFlowBadgesForMessage(msg, messages)) : ''"
+                  :duration="msg.thoughtDuration"
+                  bordered
+                />
 
                 <!-- Body -->
                 <transition
@@ -4748,7 +4391,7 @@ onUnmounted(() => {
                   </svg>
                 </button>
                 <div
-                  v-if="msg.permissionNotice?.row_filter_applied"
+                  v-if="msg.permissionNotice?.row_filter_applied && !msg.chatbiInsight"
                   class="mb-2 inline-flex max-w-full items-start gap-1.5 rounded-lg border border-emerald-100 bg-emerald-50/70 px-2.5 py-1.5 text-[11px] font-medium leading-relaxed text-emerald-700 dark:border-emerald-900/50 dark:bg-emerald-950/30 dark:text-emerald-300"
                 >
                   <svg class="mt-0.5 h-3.5 w-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -4761,9 +4404,18 @@ onUnmounted(() => {
                   :content="msg.content"
                   @quick-question="handleQuickQuestion"
                   @show-citation="(payload) => handleShowCitation(msg, payload.id, payload.anchor)"
+                  @open-canvas="handleOpenCanvas"
                 />
+                <ChatBIDataEvidence v-if="msg.chatbiInsight" :meta="msg.chatbiInsight" />
+                <div v-if="msg.chatbiInsight?.actions?.length && !msg.isThinking" class="mt-2 flex justify-end">
+                  <ChatBIContinueAnalysis
+                    :actions="msg.chatbiInsight.actions"
+                    :is-mobile="isMobile"
+                    @select="handleQuickQuestion"
+                  />
+                </div>
                 <DatasetCapabilityMenu
-                  v-else
+                  v-if="msg.datasetNavigation?.groups?.length"
                   :payload="msg.datasetNavigation"
                   @quick-question="handleQuickQuestion"
                   @record-question-click="(payload) => recordPortalQuestionClick(msg.datasetNavigation, payload)"
@@ -5866,6 +5518,7 @@ onUnmounted(() => {
     @refresh="refreshPortalNavigation"
     @execute-saved-report="handleExecuteSavedReport"
     @edit-saved-report="openEditReportModal"
+    @open-full-page="openFullDataPortal"
   />
 
   <!-- Modal: Run Saved Report -->

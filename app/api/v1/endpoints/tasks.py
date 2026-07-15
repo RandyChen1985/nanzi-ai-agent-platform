@@ -1,12 +1,15 @@
 from typing import List, Dict, Any
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import func, select
 
 from app.core.orm import get_db_session
 from app.core.dependencies import require_api_key
 from app.schemas.task import TaskCreate, TaskUpdate, TaskResponse, TaskLogResponse
 from app.services.task_center_service import TaskCenterService
 from app.schemas.response import StandardResponse, ListResponse
+from app.models.saved_report import PortalSavedReport, PortalSavedReportRun, PortalSavedReportSubscription
+from app.models.user import User
 
 router = APIRouter()
 
@@ -37,6 +40,109 @@ async def list_tasks(
     is_admin = user_info.get("role") == "admin"
     tasks = await TaskCenterService.list_tasks(db, user_id, is_admin)
     return StandardResponse(data=[TaskResponse.from_orm(t) for t in tasks])
+
+
+@router.get("/report-subscriptions")
+async def list_report_subscriptions(
+    user_info: Dict[str, Any] = Depends(require_api_key),
+    db: AsyncSession = Depends(get_db_session),
+):
+    user_id = int(user_info["user_id"])
+    stmt = (
+        select(PortalSavedReportSubscription, PortalSavedReport, User)
+        .join(PortalSavedReport, PortalSavedReport.id == PortalSavedReportSubscription.report_id)
+        .join(User, User.id == PortalSavedReportSubscription.user_id)
+    )
+    if user_info.get("role") != "admin":
+        stmt = stmt.where(PortalSavedReportSubscription.user_id == user_id)
+    rows = (await db.execute(stmt.order_by(PortalSavedReportSubscription.created_at.desc()))).all()
+    from app.services.ai.scheduler_service import scheduler_service
+    items = []
+    for subscription, report, owner in rows:
+        counts = (await db.execute(select(
+            func.count(PortalSavedReportRun.id),
+            func.sum(PortalSavedReportRun.status == "success"),
+            func.sum(PortalSavedReportRun.status == "error"),
+        ).where(PortalSavedReportRun.task_id == subscription.id))).one()
+        trigger_count, success_count, failure_count = (int(value or 0) for value in counts)
+        items.append({
+            "id": -int(subscription.id),
+            "subscription_id": int(subscription.id),
+            "task_type": "saved_report",
+            "name": report.title,
+            "user_id": int(subscription.user_id),
+            "creator_name": owner.real_name or owner.user_name,
+            "agent_id": "saved_report",
+            "agent_name": "黄金报表",
+            "conversation_id": "",
+            "source": "saved_report",
+            "cron_expr": subscription.cron_expr,
+            "prompt": report.description or f"定时运行黄金报表：{report.title}",
+            "status": 1 if subscription.status == "active" else 0,
+            "run_count": success_count,
+            "trigger_count": trigger_count,
+            "success_count": success_count,
+            "failure_count": failure_count,
+            "skipped_count": 0,
+            "consecutive_failures": int(subscription.consecutive_failures or 0),
+            "health_status": "error" if subscription.status == "error" else ("warning" if subscription.consecutive_failures else ("healthy" if success_count else "unknown")),
+            "last_status": "error" if subscription.last_error else ("success" if subscription.last_run_id else None),
+            "last_error": subscription.last_error,
+            "last_attempt_at": subscription.last_run_at.isoformat() if subscription.last_run_at else None,
+            "last_run_at": subscription.last_run_at,
+            "last_run_id": str(subscription.last_run_id) if subscription.last_run_id else None,
+            "next_run_at": scheduler_service.get_saved_report_subscription_next_run_time(subscription.id) or subscription.next_run_at,
+            "created_at": subscription.created_at,
+            "updated_at": subscription.updated_at,
+            "report_id": report.id,
+        })
+    return StandardResponse(data=items)
+
+
+async def _owned_report_subscription(db: AsyncSession, subscription_id: int, user_info: Dict[str, Any]):
+    row = (await db.execute(select(PortalSavedReportSubscription).where(
+        PortalSavedReportSubscription.id == subscription_id
+    ))).scalar_one_or_none()
+    if row is None:
+        raise HTTPException(status_code=404, detail="报表订阅不存在")
+    if int(row.user_id) != int(user_info["user_id"]):
+        raise HTTPException(status_code=403, detail="只有订阅所有者可以执行此操作")
+    return row
+
+
+@router.patch("/report-subscriptions/{subscription_id}/status")
+async def update_report_subscription_status(subscription_id: int, payload: Dict[str, Any],
+                                            user_info=Depends(require_api_key), db: AsyncSession = Depends(get_db_session)):
+    row = await _owned_report_subscription(db, subscription_id, user_info)
+    row.status = "active" if bool(payload.get("active")) else "paused"
+    from app.services.ai.scheduler_service import scheduler_service
+    if row.status == "active":
+        await scheduler_service.upsert_saved_report_subscription(row)
+        row.next_run_at = scheduler_service.get_saved_report_subscription_next_run_time(row.id)
+    else:
+        await scheduler_service.remove_saved_report_subscription(row.id)
+        row.next_run_at = None
+    await db.flush()
+    return StandardResponse(data={"success": True, "status": row.status})
+
+
+@router.post("/report-subscriptions/{subscription_id}/run")
+async def run_report_subscription(subscription_id: int, user_info=Depends(require_api_key), db: AsyncSession = Depends(get_db_session)):
+    await _owned_report_subscription(db, subscription_id, user_info)
+    import asyncio
+    from app.services.ai.scheduler_service import _saved_report_subscription_wrapper
+    asyncio.create_task(_saved_report_subscription_wrapper(subscription_id, is_manual=True))
+    return StandardResponse(data={"message": "报表订阅已触发"})
+
+
+@router.delete("/report-subscriptions/{subscription_id}")
+async def delete_report_subscription(subscription_id: int, user_info=Depends(require_api_key), db: AsyncSession = Depends(get_db_session)):
+    row = await _owned_report_subscription(db, subscription_id, user_info)
+    from app.services.ai.scheduler_service import scheduler_service
+    await scheduler_service.remove_saved_report_subscription(row.id)
+    await db.delete(row)
+    await db.flush()
+    return StandardResponse(data={"success": True})
 
 @router.get("/{task_id}", response_model=StandardResponse[TaskResponse])
 async def get_task(

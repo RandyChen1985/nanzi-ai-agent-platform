@@ -389,7 +389,7 @@ class ConversationHistoryResponse(BaseModel):
 @router.get("/conversation/{conversation_id}",
     response_model=StandardResponse[ConversationHistoryResponse],
     summary="获取会话历史",
-    description="从服务端内存 (Redis) 获取指定会话的历史记录。"
+    description="从服务端内存 (Redis) 获取指定会话的历史记录，若缓存失效则自动从数据库持久化记录中回退恢复。"
 )
 async def get_conversation_history(
     conversation_id: str,
@@ -400,16 +400,67 @@ async def get_conversation_history(
     db: AsyncSession = Depends(get_db_session)
 ):
     """
-    Retrieve conversation history from server-side memory (Redis).
+    Retrieve conversation history from server-side memory (Redis),
+    with automatic database audit log recovery fallback.
     """
-    # 1. Permission Check (Optional: Check if user owns this conversation?)
-    # For now, we rely on the UUID being hard to guess. 
-    # But we now enforce user isolation via Redis keys.
     user_id = user_info.get("user_id") if user_info else None
     
     from app.services.ai.memory_service import memory_service
     
     history = await memory_service.get_history(user_id, conversation_id, limit=limit, offset=offset)
+    
+    # Fallback to DB audit logs if Redis cache is empty/expired
+    if not history:
+        from app.models.audit import AgentExecutionHistory
+        from sqlalchemy import select
+        
+        stmt = select(AgentExecutionHistory).where(AgentExecutionHistory.conversation_id == conversation_id)
+        
+        # Apply user isolation unless admin
+        is_admin = user_info.get("role") == "admin" if user_info else False
+        if not is_admin and user_info and user_info.get("user_name"):
+            stmt = stmt.where(AgentExecutionHistory.username == user_info.get("user_name"))
+            
+        stmt = stmt.order_by(AgentExecutionHistory.created_at.asc())
+        
+        db_res = await db.execute(stmt)
+        records = db_res.scalars().all()
+        
+        # Dynamically fetch active agents map for rich display names
+        try:
+            from app.services.ai.agent_manager import AgentManagerService
+            all_agents = await AgentManagerService.list_agents(db, user=user_info)
+            agent_map = {str(a.id): (a.name, a.display_name) for a in all_agents}
+        except Exception:
+            agent_map = {}
+            
+        fallback_history = []
+        for r in records:
+            agent_name = None
+            agent_display_name = None
+            if r.agent_id in agent_map:
+                agent_name = agent_map[r.agent_id][0]
+                agent_display_name = agent_map[r.agent_id][1]
+                
+            # Each record has a query (user message) and a summary (assistant reply)
+            if r.query:
+                fallback_history.append({
+                    "role": "user",
+                    "content": r.query,
+                    "timestamp": r.created_at.isoformat() if r.created_at else None
+                })
+            if r.summary:
+                fallback_history.append({
+                    "role": "assistant",
+                    "content": r.summary,
+                    "timestamp": r.created_at.isoformat() if r.created_at else None,
+                    "agent_name": agent_name,
+                    "agent_display_name": agent_display_name,
+                    "trace_id": r.trace_id,
+                    "feedback": r.feedback
+                })
+        history = fallback_history
+        
     return StandardResponse(data=ConversationHistoryResponse(
         conversation_id=conversation_id,
         messages=history

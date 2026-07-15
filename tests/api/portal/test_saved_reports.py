@@ -11,6 +11,20 @@ from app.api.portal.endpoints import saved_reports
 pytestmark = pytest.mark.no_infrastructure
 
 
+def test_saved_report_list_items_receive_owner_subscription_summary():
+    report = saved_reports._report_row_to_item(_report_row(), current_user_id=7)
+    subscription = SimpleNamespace(
+        report_id="rpt_5", status="active", cron_expr="0 9 * * *",
+        next_run_at=datetime(2026, 7, 16, 9, 0, 0),
+    )
+
+    saved_reports._apply_saved_report_subscription_summaries([report], [subscription])
+
+    assert report.subscription_status == "active"
+    assert report.subscription_cron_expr == "0 9 * * *"
+    assert report.subscription_next_run_at == "2026-07-16T09:00:00"
+
+
 def _report_row(**overrides):
     data = {
         "id": "rpt_5",
@@ -115,6 +129,7 @@ async def test_get_saved_reports_enriches_owner_share_summary(monkeypatch):
             _ExecuteResult([owner_report]),
             _ExecuteResult([SimpleNamespace(id=9, user_name="bob", real_name="Bob")]),
             _ExecuteResult([SimpleNamespace(id=2, code="ops", name="运维角色")]),
+            _ExecuteResult([]),
             _ExecuteResult([]),
         ]
     )
@@ -229,6 +244,7 @@ async def test_get_saved_report_detail_includes_user_preferences(monkeypatch):
     monkeypatch.setattr(saved_reports, "_get_report_user_prefs", AsyncMock(return_value={"rpt_5": pref}))
     monkeypatch.setattr(saved_reports, "_enrich_saved_report_share_targets", AsyncMock())
     monkeypatch.setattr(saved_reports, "_annotate_saved_report_run_permissions", AsyncMock())
+    monkeypatch.setattr(saved_reports, "_enrich_saved_report_subscriptions", AsyncMock())
     monkeypatch.setattr(saved_reports, "_touch_saved_report_view", AsyncMock())
 
     response = await saved_reports.get_saved_report_detail(
@@ -570,11 +586,39 @@ def test_saved_report_param_sql_rejects_unknown_placeholder():
         )
 
 
+def test_build_saved_report_result_snapshot_truncates_rows_and_keeps_total():
+    parsed = {
+        "columns": ["id", "amount"],
+        "items": [[index, index * 10] for index in range(205)],
+        "total": 999,
+    }
+
+    snapshot, row_count, snapshot_row_count = saved_reports._build_saved_report_result_snapshot(parsed)
+
+    assert snapshot["columns"] == ["id", "amount"]
+    assert len(snapshot["rows"]) == 200
+    assert snapshot["rows"][0] == [0, 0]
+    assert snapshot["rows"][-1] == [199, 1990]
+    assert row_count == 999
+    assert snapshot_row_count == 200
+
+
+def test_build_saved_report_result_snapshot_supports_plain_row_list():
+    parsed = [{"name": "A"}, {"name": "B"}]
+
+    snapshot, row_count, snapshot_row_count = saved_reports._build_saved_report_result_snapshot(parsed)
+
+    assert snapshot == {"columns": ["name"], "rows": parsed}
+    assert row_count == 2
+    assert snapshot_row_count == 2
+
+
 @pytest.mark.asyncio
 async def test_execute_saved_report_uses_rendered_sql_and_enables_table_auth(monkeypatch):
     captured = {}
     report_row = _report_row()
     db = AsyncMock()
+    db.add = Mock()
     db.flush = AsyncMock()
 
     async def fake_execute_sql_query_core(*args, **kwargs):
@@ -598,13 +642,21 @@ async def test_execute_saved_report_uses_rendered_sql_and_enables_table_auth(mon
     assert captured["sql"] == _today_range_sql()
     assert captured["bypass_table_auth"] is False
     assert report_row.last_success_at is not None
-    db.flush.assert_awaited_once()
+    run_row = db.add.call_args.args[0]
+    assert run_row.report_id == "rpt_5"
+    assert run_row.user_id == 7
+    assert run_row.status == "success"
+    assert run_row.row_count == 1
+    assert run_row.snapshot_row_count == 1
+    assert run_row.result_snapshot == {"columns": ["orders"], "rows": [{"orders": 3}]}
+    assert db.flush.await_count == 2
 
 
 @pytest.mark.asyncio
 async def test_execute_saved_report_records_user_run_preference(monkeypatch):
     report_row = _report_row()
     db = AsyncMock()
+    db.add = Mock()
     db.flush = AsyncMock()
     record_run = AsyncMock()
 
@@ -632,6 +684,7 @@ async def test_execute_saved_report_reinfers_placeholder_data_source(monkeypatch
     captured = {}
     report_row = _report_row(data_source="default_clickhouse", dataset_id=None)
     db = AsyncMock()
+    db.add = Mock()
     db.flush = AsyncMock()
 
     async def fake_execute_sql_query_core(*args, **kwargs):
@@ -662,6 +715,7 @@ async def test_execute_saved_report_reinfers_placeholder_data_source(monkeypatch
 async def test_execute_shared_saved_report_permission_denied_uses_friendly_message(monkeypatch):
     report_row = _report_row(owner_user_id=1, owner_name="admin")
     db = AsyncMock()
+    db.add = Mock()
     db.flush = AsyncMock()
 
     async def fake_execute_sql_query_core(*args, **kwargs):
@@ -685,7 +739,12 @@ async def test_execute_shared_saved_report_permission_denied_uses_friendly_messa
     assert "Request failed" not in str(exc_info.value.detail)
     assert "[Permission Denied]" not in str(exc_info.value.detail)
     assert report_row.status == "error"
-    db.flush.assert_awaited_once()
+    run_row = db.add.call_args.args[0]
+    assert run_row.status == "error"
+    assert "没有访问数据表" in run_row.error_message
+    assert "Permission Denied" not in run_row.error_message
+    db.commit.assert_awaited_once()
+    assert db.flush.await_count == 2
 
 
 @pytest.mark.asyncio

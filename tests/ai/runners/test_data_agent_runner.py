@@ -5873,6 +5873,39 @@ async def test_emit_final_guard_prefers_schema_miss_message(data_config):
 
 
 @pytest.mark.asyncio
+async def test_emit_final_guard_diagnostic_pending_uses_review_copy_not_no_query_title(
+    data_config,
+):
+    from app.services.ai.runners.data_agent_runner import DataAgentRunner, _DataRunState
+
+    runner = DataAgentRunner(
+        config=data_config,
+        trace_id="trace-final-guard-diagnostic",
+        trace_buffer=[],
+    )
+    state = _DataRunState(
+        diagnostic_sql_pending_final=True,
+        blocked_content="这是基于样本就想下结论的回答",
+    )
+
+    events = []
+    async for chunk in runner._emit_final_guard(state):
+        events.append(chunk)
+
+    log_events = [event for event in events if isinstance(event, dict) and event.get("type") == "log"]
+    assert log_events
+    assert log_events[0]["title"] == "等待最终查数复核"
+    assert "样本" in str(log_events[0].get("details") or "")
+    assert "未查数" not in str(log_events[0].get("title") or "")
+    assert any(
+        "诊断查询已返回样本数据" in str(event.get("content", ""))
+        for event in events
+        if event.get("content")
+    )
+    assert not any(event.get("title") == "阻止未查数回答" for event in log_events)
+
+
+@pytest.mark.asyncio
 async def test_data_agent_runner_overrides_schema_retry_with_controlled_keywords(
     data_config,
 ):

@@ -95,6 +95,40 @@ export type AddStreamLogFn<T extends AgentStreamMessage = AgentStreamMessage> = 
   data: Record<string, unknown>,
 ) => void;
 
+export function applyStreamTraceId<T extends AgentStreamMessage>(
+  msg: T,
+  data: Record<string, any>,
+): boolean {
+  // Preserve the original page behavior: a nested sub-agent trace overrides
+  // the outer orchestration trace when both are present.
+  const traceId = data.data?.trace_id || data.trace_id;
+  if (!traceId) return false;
+  msg.trace_id = traceId as T["trace_id"];
+  return true;
+}
+
+export function mergeStreamCitations<T extends AgentStreamMessage>(
+  msg: T,
+  data: Record<string, any>,
+): boolean {
+  // Preserve the original page semantics: a citation event is always consumed
+  // here (even when its payload is malformed), so it never falls through to the
+  // downstream answer/content branch.
+  if (data.type !== "citation") return false;
+  if (!Array.isArray(data.data)) return true;
+
+  const citations = [...(msg.citations || [])] as Array<Record<string, any>>;
+  data.data.forEach((candidate: Record<string, any>) => {
+    const exists = citations.some((current) =>
+      current.chunk_id === candidate.chunk_id ||
+      (current.content === candidate.content && current.doc_name === candidate.doc_name)
+    );
+    if (!exists) citations.push(candidate);
+  });
+  msg.citations = citations;
+  return true;
+}
+
 export const formatPermissionStatus = (status: PendingToolPermission["status"]) => {
   const labels: Record<PendingToolPermission["status"], string> = {
     pending: "待确认",

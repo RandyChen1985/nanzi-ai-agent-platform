@@ -33,6 +33,15 @@ export function getAttachmentPreviewUrl(file: {
   return `/api/v1/chat/fs/preview?path=${encodeURIComponent(file.url)}`;
 }
 
+/** `/api/...` 预览需带鉴权头，不能直接塞进 <img src> */
+export function attachmentPreviewNeedsAuthFetch(previewUrl: string | null | undefined): boolean {
+  if (!previewUrl) return false;
+  if (previewUrl.startsWith("/static/")) return false;
+  if (/^https?:\/\//.test(previewUrl)) return false;
+  if (previewUrl.startsWith("blob:") || previewUrl.startsWith("data:")) return false;
+  return previewUrl.startsWith("/api/");
+}
+
 /** 附件在服务器上的绝对路径（供 AI 上下文与工具使用） */
 export function getServerAttachmentPath(file: {
   type?: string;

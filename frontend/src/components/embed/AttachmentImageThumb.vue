@@ -2,6 +2,7 @@
 import { ref, watch, onUnmounted } from "vue";
 import axios from "@/utils/axios";
 import {
+  attachmentPreviewNeedsAuthFetch,
   getAttachmentPreviewUrl,
   isImageAttachment,
 } from "@/utils/attachmentImages";
@@ -44,12 +45,8 @@ const loadPreview = async () => {
   const previewUrl = getAttachmentPreviewUrl(props.file);
   if (!previewUrl) return;
 
-  // 本地上传 / 外链可直接用 img src
-  if (
-    props.file.type !== "local_file" ||
-    previewUrl.startsWith("/static/") ||
-    /^https?:\/\//.test(previewUrl)
-  ) {
+  // 公网/静态资源可直接用 img；鉴权预览 API 必须走 axios + blob
+  if (!attachmentPreviewNeedsAuthFetch(previewUrl)) {
     displayUrl.value = previewUrl;
     return;
   }
@@ -93,6 +90,7 @@ const handleClick = () => {
       class="w-full h-full object-cover"
       :class="clickable ? 'cursor-pointer' : ''"
       @click="handleClick"
+      @error="failed = true; displayUrl = null"
     />
     <span v-else-if="failed" class="text-[10px]" title="预览加载失败">🖼️</span>
   </div>

@@ -1349,9 +1349,9 @@ onUnmounted(() => {
           </div>
 
           <!-- 抽屉主要内容，左右分栏 -->
-          <div class="flex-1 flex overflow-hidden min-h-0">
+          <div class="flex-1 flex flex-col lg:flex-row overflow-y-auto lg:overflow-hidden min-h-0 bg-slate-50 dark:bg-gray-900">
             <!-- 左侧：在线编辑器 -->
-            <div class="flex-[1.8] flex flex-col border-r border-gray-150 p-5 bg-white overflow-hidden min-h-0">
+            <div class="flex-[1.8] h-[60vh] lg:h-auto flex flex-col border-b lg:border-b-0 lg:border-r border-gray-150 p-3 sm:p-5 bg-white dark:bg-gray-800 overflow-hidden min-h-0">
               <div v-if="fetchingDetail" class="flex-1 flex flex-col items-center justify-center py-20">
                 <div class="w-8 h-8 border-4 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
                 <p class="text-xs text-gray-400 mt-3 font-medium">载入文件内容...</p>
@@ -1413,9 +1413,9 @@ onUnmounted(() => {
                 </div>
 
                 <!-- 编辑区 -->
-                <div class="skill-editor-body">
-                  <div v-if="editorMode === 'edit'" class="skill-editor-code-pane">
-                    <div ref="lineNumbersRef" class="skill-editor-gutter">
+                <div class="skill-editor-body flex-1 overflow-hidden min-h-0 flex flex-col">
+                  <div v-if="editorMode === 'edit'" class="skill-editor-code-pane flex-1 flex overflow-hidden min-h-0">
+                    <div ref="lineNumbersRef" class="skill-editor-gutter overflow-hidden select-none">
                       <div v-for="n in lineCount" :key="n" class="skill-editor-line-num">{{ n }}</div>
                     </div>
                     <textarea
@@ -1423,7 +1423,7 @@ onUnmounted(() => {
                       v-model="editingContent"
                       @scroll="syncLineNumberScroll"
                       @keydown="handleEditorKeydown"
-                      class="skill-editor-textarea"
+                      class="skill-editor-textarea flex-1 min-w-0"
                       spellcheck="false"
                       placeholder="在此输入文件内容..."
                     ></textarea>
@@ -1431,13 +1431,13 @@ onUnmounted(() => {
 
                   <div
                     v-else
-                    class="skill-editor-preview markdown-preview"
+                    class="skill-editor-preview markdown-preview flex-1 overflow-y-auto"
                     v-html="renderedMarkdown"
                   ></div>
                 </div>
 
                 <!-- 状态栏 -->
-                <div class="skill-editor-statusbar">
+                <div class="skill-editor-statusbar shrink-0">
                   <div class="skill-editor-status-left">
                     <span>{{ isMarkdownFile ? 'Markdown' : selectedFileExtension.toUpperCase() }}</span>
                     <span class="skill-editor-status-sep">·</span>
@@ -1454,7 +1454,7 @@ onUnmounted(() => {
             </div>
 
             <!-- 右侧：文件资产与脚本上传 (占据 35%) -->
-            <div class="flex-1 flex flex-col p-6 overflow-y-auto">
+            <div class="flex-1 h-[40vh] lg:h-auto flex flex-col p-4 sm:p-6 overflow-y-auto bg-white dark:bg-gray-800">
               <!-- 隐藏的物理资产上传接收器 -->
               <input 
                 type="file" 
@@ -2337,5 +2337,59 @@ textarea:focus {
   color: #94a3b8;
   font-style: italic;
   padding: 1rem 0;
+}
+
+/* 移动端/小屏幕下技能编辑器的优化样式 */
+@media (max-width: 1024px) {
+  /* 隐藏抽屉最左侧的大内边距，使内容宽度最大化 */
+  .absolute.inset-y-0.right-0.pl-10.max-w-full.flex {
+    padding-left: 0 !important;
+  }
+  
+  /* 给编辑器主体加上底边框与最小高度 */
+  .skill-editor {
+    border-radius: 8px;
+  }
+}
+
+@media (max-width: 640px) {
+  .skill-editor-toolbar {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+    padding: 8px 10px;
+  }
+  
+  .skill-editor-actions {
+    justify-content: space-between;
+    width: 100%;
+  }
+  
+  .skill-editor-file-info {
+    width: 100%;
+  }
+
+  .skill-editor-filename {
+    max-width: 150px;
+  }
+  
+  .skill-editor-body {
+    padding: 8px !important;
+  }
+  
+  .skill-editor-textarea {
+    font-size: 11px !important;
+    padding: 10px !important;
+  }
+  
+  .skill-editor-gutter {
+    font-size: 11px !important;
+    padding: 10px 4px 10px 8px !important;
+  }
+  
+  .skill-editor-statusbar {
+    padding: 6px 10px !important;
+    font-size: 9px !important;
+  }
 }
 </style>

@@ -15,6 +15,7 @@ from app.services.ai.runtime.agentscope.compat import HumanMessage, AIMessage
 from app.services.ai.runners.chatbi.constants import DATA_REPAIR_BUDGETS, MAX_DATA_REPAIR_ROUNDS
 from app.services.ai.runners.chatbi.forced_tool_choice import ForcedFirstToolChoiceModel
 from app.services.ai.runners.chatbi.run_state import DataRunState
+from app.services.ai.runners.chatbi.insight_meta import take_chatbi_insight_meta_event
 from app.services.ai.runtime.agentscope.tools import RuntimeToolSpec
 
 logger = logging.getLogger(__name__)
@@ -80,6 +81,9 @@ async def _finalize_content_and_persist(
         }
         state.full_content += str(warning.get("content") or "")
         yield warning
+    insight_event = take_chatbi_insight_meta_event(state)
+    if insight_event is not None:
+        yield insight_event
     await _persist_agent_state(
         runner,
         agent_name=agent_name,
@@ -241,6 +245,9 @@ async def run_native_agent_turn(
             state=state,
         ):
             yield chunk
+        insight_event = take_chatbi_insight_meta_event(state)
+        if insight_event is not None:
+            yield insight_event
         await _persist_agent_state(
             runner,
             agent_name=agent_name,
@@ -325,6 +332,9 @@ async def run_native_agent_turn(
                 state=state,
             ):
                 yield chunk
+            insight_event = take_chatbi_insight_meta_event(state)
+            if insight_event is not None:
+                yield insight_event
             await _persist_agent_state(
                 runner,
                 agent_name=agent_name,

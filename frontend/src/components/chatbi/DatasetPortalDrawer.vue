@@ -83,6 +83,17 @@
                 </span>
               </span>
               <div class="flex items-center gap-2 flex-shrink-0">
+                <button
+                  type="button"
+                  class="text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 p-1.5 rounded-md hover:bg-gray-150 dark:hover:bg-gray-800 transition-colors"
+                  title="打开完整数据门户"
+                  aria-label="打开完整数据门户"
+                  @click="emit('open-full-page')"
+                >
+                  <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 3H5a2 2 0 00-2 2v3m18 0V5a2 2 0 00-2-2h-3M3 16v3a2 2 0 002 2h3m8 0h3a2 2 0 002-2v-3M8 8h8v8H8z" />
+                  </svg>
+                </button>
                 <label
                   class="hidden sm:flex items-center gap-1.5 text-[10px] text-gray-500 dark:text-gray-400 cursor-pointer select-none whitespace-nowrap"
                   title="开启后点击问题不会关闭抽屉，可连续提问（仅桌面端生效）"
@@ -151,6 +162,7 @@
                 :payload="payload || { groups: [] }"
                 :initial-loading="initialLoading"
                 :background-refreshing="backgroundRefreshing"
+                :focus-saved-report-request="focusSavedReportRequest"
                 @quick-question="(query, action) => emit('quick-question', query, action)"
                 @record-question-click="(p) => emit('record-question-click', p)"
                 @clear-question-click="(p) => emit('clear-question-click', p)"
@@ -178,9 +190,15 @@ defineProps<{
   payload: Record<string, unknown> | null;
   initialLoading?: boolean;
   backgroundRefreshing?: boolean;
+  focusSavedReportRequest?: {
+    report_id: string;
+    run_id: string;
+    request_id: string;
+  } | null;
 }>();
 
 const emit = defineEmits<{
+  (event: "open-full-page"): void;
   (event: "quick-question", query: string, action?: "send" | "fill"): void;
   (event: "record-question-click", payload: { query: string; label?: string; group_id?: string }): void;
   (event: "clear-question-click", payload: { query: string }): void;

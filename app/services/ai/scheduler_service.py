@@ -16,6 +16,12 @@ from app.core.orm import AsyncSessionLocal, engine
 from app.core import redis
 from app.models.task import AgentScheduledTask
 from app.models.user import User
+from app.models.saved_report import (
+    PortalSavedReport,
+    PortalSavedReportDigestDelivery,
+    PortalSavedReportRun,
+    PortalSavedReportSubscription,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -528,6 +534,144 @@ async def _system_third_party_user_sync_job():
         logger.error(f"❌ Failed to run third-party user sync job: {e}", exc_info=True)
 
 
+async def _saved_report_subscription_wrapper(subscription_id: int, is_manual: bool = False):
+    from app.api.portal.endpoints.saved_reports import ExecuteReportRequest, _execute_saved_report_impl
+    from app.services.portal_notification_service import PortalNotificationService
+    from app.services.notification_service import NotificationService
+    from app.services.saved_report_digest_service import (
+        build_deterministic_digest,
+        enrich_digest_with_ai,
+        render_mobile_markdown,
+    )
+    trigger_label = "手动触发" if is_manual else "定时触发"
+
+    async def send_external(db, subscription, user_id, title, content, *, failure: bool):
+        if failure and not (subscription.consecutive_failures == 1 or subscription.consecutive_failures % 3 == 0):
+            return
+        senders = {
+            "dingtalk": NotificationService.send_dingtalk,
+            "wechat_work": NotificationService.send_wechat_work,
+            "email": NotificationService.send_email,
+        }
+        for channel in subscription.external_channels or []:
+            sender = senders.get(channel)
+            if sender:
+                ok, error = await sender(db, user_id, title, content)
+                if not ok:
+                    logger.warning("Saved report external notification failed: channel=%s error=%s", channel, error)
+
+    async with AsyncSessionLocal() as db:
+        subscription = (await db.execute(select(PortalSavedReportSubscription).where(
+            PortalSavedReportSubscription.id == subscription_id
+        ))).scalar_one_or_none()
+        if subscription is None or (subscription.status != "active" and not is_manual):
+            return
+        report = (await db.execute(select(PortalSavedReport).where(
+            PortalSavedReport.id == subscription.report_id
+        ))).scalar_one_or_none()
+        user = (await db.execute(select(User).where(User.id == subscription.user_id))).scalar_one_or_none()
+        if report is None or user is None or user.status != 1 or int(report.owner_user_id) != int(subscription.user_id):
+            subscription.status = "error"
+            subscription.last_error = "报表所有权或订阅用户状态已失效"
+            await db.commit()
+            return
+
+        user_info = {
+            "user_id": str(user.id), "user_name": user.user_name, "real_name": user.real_name,
+            "role": user.role, "dept_code": user.dept_code, "org_path": user.org_path,
+            "extra_data": user.extra_data,
+        }
+        try:
+            await _execute_saved_report_impl(
+                report.id, ExecuteReportRequest(params=subscription.params or {}), None, user_info, db,
+                trigger_type="scheduled", task_id=subscription.id,
+            )
+            run = (await db.execute(select(PortalSavedReportRun).where(
+                PortalSavedReportRun.report_id == report.id,
+                PortalSavedReportRun.task_id == subscription.id,
+            ).order_by(PortalSavedReportRun.id.desc()).limit(1))).scalar_one_or_none()
+            subscription.last_run_id = run.id if run else None
+            subscription.last_run_at = datetime.now()
+            subscription.consecutive_failures = 0
+            subscription.last_error = None
+            if subscription.notify_on_success:
+                try:
+                    async with db.begin_nested():
+                        digest = build_deterministic_digest(report, run, subscription.params or {})
+                        digest = await enrich_digest_with_ai(
+                            digest,
+                            enabled=bool(getattr(subscription, "ai_analysis_enabled", True)),
+                            analysis_instruction=getattr(subscription, "analysis_instruction", None),
+                        )
+                        public_base = str(settings.APP_PUBLIC_URL or "").rstrip("/")
+                        report_url = (
+                            f"{public_base}/dashboard/chat?dataset_portal=1&report_id={report.id}&run_id={run.id}"
+                            if public_base and run else ""
+                        )
+                        title, content = render_mobile_markdown(digest, report_url, "inbox")
+                        await PortalNotificationService.create(
+                            db, user_id=user.id, title=title, content=content, level="success",
+                            resource_type="saved_report_run", resource_id=str(run.id) if run else None,
+                            metadata={
+                                "report_id": report.id,
+                                "report_title": report.title,
+                                "subscription_id": subscription.id,
+                                "digest_mode": digest.get("generation_mode"),
+                            },
+                        )
+                        if run:
+                            db.add(PortalSavedReportDigestDelivery(
+                                run_id=run.id, subscription_id=subscription.id, channel="inbox",
+                                digest_payload=digest, title=title, content=content, status="success",
+                                ai_status=digest.get("ai_status") or "disabled", sent_at=datetime.now(),
+                            ))
+                        senders = {
+                            "dingtalk": NotificationService.send_dingtalk,
+                            "wechat_work": NotificationService.send_wechat_work,
+                            "email": NotificationService.send_email,
+                        }
+                        for channel in subscription.external_channels or []:
+                            sender = senders.get(channel)
+                            if sender is None:
+                                continue
+                            channel_title, channel_content = render_mobile_markdown(digest, report_url, channel)
+                            ok, error = await sender(db, user.id, channel_title, channel_content)
+                            if run:
+                                db.add(PortalSavedReportDigestDelivery(
+                                    run_id=run.id, subscription_id=subscription.id, channel=channel,
+                                    digest_payload=digest, title=channel_title, content=channel_content,
+                                    status="success" if ok else "failed",
+                                    error_message=None if ok else error,
+                                    ai_status=digest.get("ai_status") or "disabled",
+                                    sent_at=datetime.now(),
+                                ))
+                            if not ok:
+                                logger.warning("Saved report digest delivery failed: channel=%s error=%s", channel, error)
+                except Exception as digest_error:
+                    logger.exception("Saved report digest generation or audit failed: %s", type(digest_error).__name__)
+            await db.commit()
+        except Exception as exc:
+            subscription.last_run_at = datetime.now()
+            subscription.consecutive_failures = int(subscription.consecutive_failures or 0) + 1
+            subscription.last_error = str(getattr(exc, "detail", exc))[:10000]
+            run = (await db.execute(select(PortalSavedReportRun).where(
+                PortalSavedReportRun.report_id == report.id,
+                PortalSavedReportRun.task_id == subscription.id,
+            ).order_by(PortalSavedReportRun.id.desc()).limit(1))).scalar_one_or_none()
+            subscription.last_run_id = run.id if run else None
+            title = f"报表运行失败：{report.title}"
+            failure_content = f"触发方式：{trigger_label}\n{subscription.last_error}"
+            await PortalNotificationService.create(
+                db, user_id=user.id, title=title,
+                content=failure_content, level="error", resource_type="saved_report_run",
+                resource_id=str(run.id) if run else None,
+                metadata={"report_id": report.id, "report_title": report.title, "subscription_id": subscription.id},
+            )
+            if subscription.notify_on_failure:
+                await send_external(db, subscription, user.id, title, failure_content, failure=True)
+            await db.commit()
+
+
 class TaskSchedulerService:
     _instance = None
     _scheduler: Optional[AsyncIOScheduler] = None
@@ -581,6 +725,7 @@ class TaskSchedulerService:
         now = datetime.now(tz)
         logger.info(f"🚀 Agent Task Scheduler started (Fixed Serialization). Current Scheduler Time: {now}")
         await self.reload_tasks()
+        await self.reload_saved_report_subscriptions()
 
     async def stop(self):
         if self._scheduler:
@@ -597,6 +742,42 @@ class TaskSchedulerService:
             for task in tasks:
                 await self._add_job_to_memory(task)
         logger.info(f"Loaded {len(tasks)} active tasks into scheduler.")
+
+    async def reload_saved_report_subscriptions(self):
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(select(PortalSavedReportSubscription).where(
+                PortalSavedReportSubscription.status == "active"
+            ))
+            subscriptions = result.scalars().all()
+            for subscription in subscriptions:
+                await self.upsert_saved_report_subscription(subscription)
+        logger.info("Loaded %s active saved report subscriptions into scheduler.", len(subscriptions))
+
+    async def upsert_saved_report_subscription(self, subscription: PortalSavedReportSubscription):
+        if not self._scheduler:
+            return
+        job_id = f"saved_report_subscription_{subscription.id}"
+        if self._scheduler.get_job(job_id):
+            self._scheduler.remove_job(job_id)
+        if subscription.status == "active":
+            self._scheduler.add_job(
+                _saved_report_subscription_wrapper,
+                CronTrigger.from_crontab(subscription.cron_expr, timezone=subscription.timezone or "Asia/Shanghai"),
+                id=job_id, args=[subscription.id], replace_existing=True, misfire_grace_time=3600,
+            )
+
+    async def remove_saved_report_subscription(self, subscription_id: int):
+        if not self._scheduler:
+            return
+        job_id = f"saved_report_subscription_{subscription_id}"
+        if self._scheduler.get_job(job_id):
+            self._scheduler.remove_job(job_id)
+
+    def get_saved_report_subscription_next_run_time(self, subscription_id: int) -> Optional[datetime]:
+        if not self._scheduler:
+            return None
+        job = self._scheduler.get_job(f"saved_report_subscription_{subscription_id}")
+        return job.next_run_time if job else None
 
     async def _add_job_to_memory(self, task: AgentScheduledTask):
         if not self._scheduler:

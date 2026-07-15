@@ -9,7 +9,10 @@ export interface AgentTask {
   user_id: number
   creator_name?: string
   agent_name?: string
-  source: 'web' | 'agent'
+  source: 'web' | 'agent' | 'saved_report'
+  task_type?: 'agent' | 'saved_report'
+  subscription_id?: number
+  report_id?: string
   cron_expr: string
   prompt: string
   status: number // 0-Stopped, 1-Running, 2-Error
@@ -52,5 +55,9 @@ export const taskApi = {
   delete: (id: number) => axios.delete<StandardResponse<any>>(`/api/v1/tasks/${id}`),
   run: (id: number) => axios.post<StandardResponse<any>>(`/api/v1/tasks/${id}/run`),
   logs: (id: number, params: { page?: number, page_size?: number }) => 
-    axios.get<StandardResponse<ListResponse<TaskLog>>>(`/api/v1/tasks/${id}/logs`, { params })
+    axios.get<StandardResponse<ListResponse<TaskLog>>>(`/api/v1/tasks/${id}/logs`, { params }),
+  listReportSubscriptions: () => axios.get<StandardResponse<AgentTask[]>>('/api/v1/tasks/report-subscriptions'),
+  updateReportSubscriptionStatus: (id: number, active: boolean) => axios.patch(`/api/v1/tasks/report-subscriptions/${id}/status`, { active }),
+  runReportSubscription: (id: number) => axios.post(`/api/v1/tasks/report-subscriptions/${id}/run`),
+  deleteReportSubscription: (id: number) => axios.delete(`/api/v1/tasks/report-subscriptions/${id}`)
 }

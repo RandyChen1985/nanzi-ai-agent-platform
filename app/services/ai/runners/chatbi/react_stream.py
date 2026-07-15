@@ -451,6 +451,8 @@ async def emit_final_guard(
     )
     if state.full_content or state.ready_to_answer or not has_guard_condition:
         return
+    guard_title = "阻止未查数回答"
+    guard_details = "模型在满足 ChatBI 查数顺序前尝试直接回答，已拦截该输出。"
     if runner._is_schema_fatal(state):
         _, content = runner._schema_fatal_response(state)
     elif (
@@ -478,8 +480,14 @@ async def emit_final_guard(
         presentation = map_sql_tool_error_for_user(error_text)
         content = presentation.content
     elif state.diagnostic_sql_pending_final:
+        guard_title = "等待最终查数复核"
+        guard_details = (
+            "上一轮已返回诊断/探查样本数据，但最终业务 SQL 尚未完成；"
+            "为避免用样本直接下结论，已拦截该回答。"
+        )
         content = (
-            "诊断查询已返回样本数据，但尚未完成最终业务 SQL 复核，暂时无法生成结论。\n\n"
+            "诊断查询已返回样本数据，但尚未完成最终业务 SQL 复核，暂时无法生成结论。"
+            "这不代表没有查到数，而是还需要一次正式业务查询后才能回答。\n\n"
             "💡 **建议您可以尝试**：\n"
             "1. 稍微调整筛选条件或时间范围后重新提问。\n"
             "2. 若问题较复杂，可拆成更具体的单指标/单表问题。"
@@ -520,8 +528,8 @@ async def emit_final_guard(
     yield {
         "type": "log",
         "id": f"data_guard_{uuid.uuid4().hex[:8]}",
-        "title": "阻止未查数回答",
-        "details": "模型在满足 ChatBI 查数顺序前尝试直接回答，已拦截该输出。",
+        "title": guard_title,
+        "details": guard_details,
         "status": "warning",
     }
     yield {

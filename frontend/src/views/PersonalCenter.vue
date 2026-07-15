@@ -104,8 +104,14 @@ import Modal from '../components/Modal.vue'
 import ConfirmModal from '../components/ConfirmModal.vue'
 import PersonalTokenUsage from '../components/personal/PersonalTokenUsage.vue'
 import NotificationConfigs from '../components/personal/NotificationConfigs.vue'
+import DataPortalHome from './DataPortalHome.vue'
+import { useRoute, useRouter } from 'vue-router'
 
-const activeTab = ref<'info' | 'permissions' | 'memory' | 'tokens' | 'notifications'>('info')
+type PersonalTab = 'info' | 'permissions' | 'memory' | 'tokens' | 'notifications' | 'data'
+const route = useRoute()
+const router = useRouter()
+const personalTabs: PersonalTab[] = ['info', 'permissions', 'memory', 'tokens', 'notifications', 'data']
+const activeTab = ref<PersonalTab>(personalTabs.includes(route.query.tab as PersonalTab) ? route.query.tab as PersonalTab : 'info')
 const permissionsSubTab = ref<'list' | 'about'>('list')
 const showAboutTab = computed(() => !!branding.value.contact_markdown?.trim())
 const contactHtml = computed(() => renderMarkdown(branding.value.contact_markdown || ''))
@@ -499,6 +505,7 @@ watch(activeSubTab, (val) => {
 })
 
 watch(activeTab, (val) => {
+    router.replace({ query: { ...route.query, tab: val === 'info' ? undefined : val } })
     if (val === 'permissions' && !permissions.value.details) {
         fetchPermissions()
     } else if (val === 'memory') {
@@ -514,6 +521,10 @@ watch(activeTab, (val) => {
     }
 })
 
+watch(() => route.query.tab, (value) => {
+    activeTab.value = personalTabs.includes(value as PersonalTab) ? value as PersonalTab : 'info'
+})
+
 onMounted(() => {
     fetchUserInfo()
     loadBranding()
@@ -521,14 +532,14 @@ onMounted(() => {
 </script>
 
 <template>
-<div class="space-y-4 sm:space-y-6">
-    <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-4 sm:p-6">
-        <h2 class="text-lg sm:text-xl font-bold text-gray-900 mb-4 sm:mb-6">个人中心</h2>
+<div class="min-h-full bg-white">
+    <div>
+        <h2 class="px-4 pt-5 text-lg font-bold text-gray-900 sm:px-6 sm:pt-6 sm:text-xl">个人中心</h2>
         
         <!-- Tabs -->
-        <div class="border-b border-gray-200 mb-4 sm:mb-6">
+        <div class="mt-4 border-b border-gray-200 px-4 sm:mt-6 sm:px-6">
             <nav class="-mb-px flex space-x-4 sm:space-x-8 overflow-x-auto">
-                <button 
+                <button
                     @click="activeTab = 'info'"
                     :class="[
                         activeTab === 'info'
@@ -572,6 +583,17 @@ onMounted(() => {
                 >
                     我的 Token 消耗
                 </button>
+                <button
+                    @click="activeTab = 'data'"
+                    :class="[
+                        activeTab === 'data'
+                            ? 'border-blue-500 text-blue-600'
+                            : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300',
+                        'whitespace-nowrap py-3 sm:py-4 px-1 border-b-2 font-medium text-xs sm:text-sm transition-colors'
+                    ]"
+                >
+                    我的数据门户
+                </button>
                 <button 
                     @click="activeTab = 'notifications'"
                     :class="[
@@ -586,6 +608,7 @@ onMounted(() => {
             </nav>
         </div>
 
+        <div :class="activeTab === 'data' ? '' : 'px-4 pb-4 sm:px-6 sm:pb-6'">
         <!-- Info Tab -->
         <div v-if="activeTab === 'info'">
             <div class="grid grid-cols-1 md:grid-cols-2 gap-6 sm:gap-8">
@@ -1154,6 +1177,13 @@ onMounted(() => {
         <!-- Notifications Tab -->
         <div v-else-if="activeTab === 'notifications'">
             <NotificationConfigs @show-toast="showToast" />
+        </div>
+
+        <!-- My Data Tab -->
+        <div v-else-if="activeTab === 'data'">
+            <DataPortalHome embedded />
+        </div>
+
         </div>
 
     </div>

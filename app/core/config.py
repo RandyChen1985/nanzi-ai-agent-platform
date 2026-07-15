@@ -8,6 +8,7 @@ class Settings(BaseSettings):
     API_SERVICE_PORT: int = 8001
     LOG_LEVEL: str = "INFO"  # Aligned with .env
     ALLOWED_ORIGINS: List[str] = ["*"]
+    APP_PUBLIC_URL: Optional[str] = None
 
     # MySQL
     MYSQL_HOST: str

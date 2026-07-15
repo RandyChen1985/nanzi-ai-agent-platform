@@ -26,7 +26,7 @@ DATA_REPAIR_BUDGETS = {
     "empty_sql_result": 2,
     "duration_anomaly": 1,
     "tool_loop_fuse": 1,
-    "diagnostic_sql_pending_final": 1,
+    "diagnostic_sql_pending_final": 2,
     "missing_schema": 1,
     "missing_sql": 2,
 }

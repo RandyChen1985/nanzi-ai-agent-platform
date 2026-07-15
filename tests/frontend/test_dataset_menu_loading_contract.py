@@ -25,7 +25,7 @@ def _assert_embed_portal_contract(source: str) -> None:
     assert "refreshDatasetMenuNavigation" in source
     assert "recordDatasetMenuQuestionClick" in source
     assert "dataset_menu_hash" in source
-    assert "📚 数据门户" in source
+    assert "📊 数据门户" in source
     assert "embed_portal_keep_open" in source
     assert "onPortalLoadingChange" in source
     assert "applyPortalViewportLayout" in _source("frontend/src/composables/useDatasetPortal.ts")
@@ -138,29 +138,30 @@ def test_dataset_capability_menu_component_contract():
 
 def test_saved_report_parameterized_execution_contract():
     source = _source("frontend/src/views/EmbedChat.vue")
+    workflow = _source("frontend/src/composables/chat/useSavedReportWorkflow.ts")
     assert "showReportRunModal" in source
     assert "reportRunForm" in source
     assert "executeSavedReportWithOptions" in source
     assert "analysis_mode: 'auto'" in source
     assert "const shouldAutoAnalyze = true" in source
-    assert "params: buildSavedReportRunParams()" in source
+    assert "params: buildSavedReportRunParams(pendingSavedReport.value, reportRunForm.value)" in source
     assert "handleQuickQuestion(\"请基于刚才黄金报表结果做业务解读，指出关键结论、异常点和后续建议。\")" in source
     assert "mode: saveReportForm.value.mode" in source
     assert "sql_template: saveReportForm.value.sql_template" in source
     assert "tags: parseSavedReportTags(saveReportForm.value.tags_input)" in source
     assert "description: saveReportForm.value.description" in source
-    assert "\\d{2}:\\d{2}:\\d{2}" in source
-    assert "start_datetime" in source
-    assert "end_datetime" in source
+    assert "\\d{2}:\\d{2}:\\d{2}" in workflow
+    assert "start_datetime" in workflow
+    assert "end_datetime" in workflow
     assert "month_range" in source
     assert "start_month" in source
     assert "end_month" in source
     assert "last_6_completed_months" in source
     assert "type=\"month\"" in source
     assert "extractSavedReportExecuteErrorMessage" in source
-    assert "responseData?.message" in source
-    assert "暂无该报表所需数据权限" in source
-    assert "Request failed with status code" in source
+    assert "responseData?.message" in workflow
+    assert "暂无该报表所需数据权限" in workflow
+    assert "Request failed with status code" in workflow
     assert "previewSavedReportRun" in source
     assert "/preview" in source
     assert "reportRunPreview" in source
@@ -211,7 +212,7 @@ def test_saved_report_modal_avoids_pinned_dataset_portal_drawer():
 
     for source in (embed_source, debug_source):
         assert "saveReportModalOverlayClass" in source
-        assert "showPortalDrawer.value && portalPinned.value ? 'right-[28rem]' : 'right-0'" in source
+        assert "return isPinned ? 'right-[28rem]' : 'right-0'" in source
         assert ":class=\"saveReportModalOverlayClass\"" in source
 
     run_modal_start = embed_source.index("<!-- Modal: Run Saved Report -->")

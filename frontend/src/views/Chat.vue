@@ -38,11 +38,21 @@
 
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted } from 'vue';
+import { useRoute, useRouter } from 'vue-router';
+import {
+    SAVED_REPORT_OPEN_EVENT,
+    createSavedReportOpenMessage,
+    type SavedReportOpenRequest,
+} from '../utils/savedReportOpenProtocol';
+
+const route = useRoute();
+const router = useRouter();
 
 const chatFrame = ref<HTMLIFrameElement | null>(null);
 const iframeUrl = ref('');
 const loading = ref(true);
 const isInitTimedOut = ref(false);
+const widgetReady = ref(false);
 let timeoutTimer: any = null;
 
 const initChat = () => {
@@ -79,7 +89,16 @@ const sendInitConfig = () => {
                     role: userInfo.role
                 },
                 // 可以设置一些 Portal 特有的欢迎语
-                welcome_message_override: `您好，${displayName}！我是您的智能助手，已为您准备就绪。`
+                welcome_message_override: `您好，${displayName}！我是您的智能助手，已为您准备就绪。`,
+                open_saved_report: route.query.report_id ? {
+                    report_id: String(route.query.report_id),
+                    run_id: String(route.query.run_id || ''),
+                    request_id: String(route.query.open_request_id || ''),
+                } : null,
+                portal_question: route.query.portal_question ? {
+                    query: String(route.query.portal_question),
+                    action: route.query.portal_action === 'fill' ? 'fill' : 'send'
+                } : null
             }, '*');
             
             // 发送成功后，稍微延迟关闭 loading，以确保子页面有时间渲染
@@ -100,22 +119,38 @@ const retryInit = () => {
     // iframeUrl.value = iframeUrl.value; // Force reload might be too aggressive if frame is just slow
 };
 
+const sendSavedReportOpenRequest = (target: SavedReportOpenRequest) => {
+    if (!widgetReady.value || !target?.report_id || !chatFrame.value?.contentWindow) return;
+    chatFrame.value.contentWindow.postMessage(createSavedReportOpenMessage(target), '*');
+};
+
+const handleSavedReportOpenEvent = (event: Event) => {
+    sendSavedReportOpenRequest((event as CustomEvent<SavedReportOpenRequest>).detail);
+};
+
 const handleMessage = (event: MessageEvent) => {
     const data = event.data;
+    if (data.source === 'yunshu-agent-embed' && data.type === 'OPEN_DATA_PORTAL_FULL') {
+        router.push({ path: '/dashboard/personal', query: { tab: 'data' } });
+        return;
+    }
     
     // 当挂件准备好后，注入当前用户信息
     if (data.source === 'yunshu-agent-embed' && data.type === 'YUNSHU_WIDGET_READY') {
+        widgetReady.value = true;
         sendInitConfig();
     }
 };
 
 onMounted(() => {
     window.addEventListener('message', handleMessage);
+    window.addEventListener(SAVED_REPORT_OPEN_EVENT, handleSavedReportOpenEvent);
     initChat();
 });
 
 onUnmounted(() => {
     window.removeEventListener('message', handleMessage);
+    window.removeEventListener(SAVED_REPORT_OPEN_EVENT, handleSavedReportOpenEvent);
     clearTimeout(timeoutTimer);
 });
 </script>

@@ -79,11 +79,12 @@
               :class="browserSmartFilter === filter.value
                 ? 'bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-300 border-blue-200 dark:border-blue-900/40'
                 : 'bg-gray-50 dark:bg-gray-900 text-gray-500 border-transparent hover:bg-gray-100 dark:hover:bg-gray-800'"
-              @click="browserSmartFilter = filter.value"
+              @click="setBrowserSmartFilter(filter.value)"
             >
               <span class="flex items-center gap-1">
                 <span v-if="filter.value === 'pinned'">📌</span>
                 <span v-else-if="filter.value === 'favorite'">⭐️</span>
+                <span v-else-if="filter.value === 'subscribed'">🔔</span>
                 <span v-else-if="filter.value === 'recent'">🕒</span>
                 <span v-else-if="filter.value === 'frequent'">🔥</span>
                 <span>{{ filter.label }}</span>
@@ -154,6 +155,7 @@
               @share="emit('share', $event)"
               @copy="emit('copy', $event)"
               @delete="emit('delete', $event)"
+              @subscription="emit('subscription', $event)"
             />
           </div>
         </div>
@@ -168,7 +170,7 @@ import axios from "@/utils/axios";
 import SavedReportItemCard from "@/components/chatbi/SavedReportItemCard.vue";
 
 type ReportScope = "all" | "my" | "shared";
-type SmartFilter = "all" | "pinned" | "favorite" | "recent" | "frequent";
+type SmartFilter = "all" | "pinned" | "favorite" | "subscribed" | "recent" | "frequent";
 
 defineProps<{
   formatDate: (iso?: string | null) => string;
@@ -185,6 +187,7 @@ const smartFilters = [
   { value: "all" as const, label: "全部报表" },
   { value: "pinned" as const, label: "置顶" },
   { value: "favorite" as const, label: "收藏" },
+  { value: "subscribed" as const, label: "已订阅" },
   { value: "recent" as const, label: "最近运行" },
   { value: "frequent" as const, label: "常用" },
 ];
@@ -217,6 +220,8 @@ const filteredReports = computed(() => {
     list = list.filter((report) => !!report.pinned_at);
   } else if (browserSmartFilter.value === "favorite") {
     list = list.filter((report) => !!report.is_favorite);
+  } else if (browserSmartFilter.value === "subscribed") {
+    list = list.filter((report) => !!report.subscription_status);
   } else if (browserSmartFilter.value === "recent") {
     list = list
       .filter((report) => !!(report.user_last_run_at || report.last_success_at))
@@ -271,8 +276,18 @@ const fetchReports = async () => {
 const setBrowserScope = async (scope: ReportScope) => {
   if (browserScope.value === scope) return;
   browserScope.value = scope;
+  if (scope === "shared" && browserSmartFilter.value === "subscribed") browserSmartFilter.value = "all";
   browserSelectedTag.value = "";
   await fetchReports();
+};
+
+const setBrowserSmartFilter = async (filter: SmartFilter) => {
+  browserSmartFilter.value = filter;
+  browserSelectedTag.value = "";
+  if (filter === "subscribed" && browserScope.value !== "my") {
+    browserScope.value = "my";
+    await fetchReports();
+  }
 };
 
 const refresh = () => fetchReports();
@@ -300,5 +315,6 @@ const emit = defineEmits<{
   (event: "share", report: any): void;
   (event: "copy", report: any): void;
   (event: "delete", report: any): void;
+  (event: "subscription", report: any): void;
 }>();
 </script>

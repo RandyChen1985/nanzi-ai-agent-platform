@@ -1,0 +1,31 @@
+CREATE TABLE IF NOT EXISTS portal_saved_report_runs (
+    id BIGINT NOT NULL AUTO_INCREMENT COMMENT '运行记录主键ID',
+    report_id VARCHAR(64) NOT NULL COMMENT '关联的黄金报表ID',
+    user_id BIGINT NOT NULL COMMENT '本次运行的触发用户ID',
+    trigger_type VARCHAR(32) NOT NULL DEFAULT 'manual' COMMENT '触发类型: manual-手动运行, scheduled-定时任务',
+    task_id BIGINT NULL COMMENT '关联的定时任务ID，手动运行时为空',
+    status VARCHAR(16) NOT NULL DEFAULT 'running' COMMENT '运行状态: running-运行中, success-成功, error-失败',
+    resolved_params JSON NULL COMMENT '本次运行解析后的报表参数JSON',
+    executed_sql LONGTEXT NULL COMMENT '本次实际执行的SQL语句',
+    data_source VARCHAR(100) NULL COMMENT '本次运行使用的数据源标识',
+    dataset_name VARCHAR(255) NULL COMMENT '本次运行关联的数据集名称',
+    row_count INT NULL COMMENT '查询结果总行数，失败时为空',
+    snapshot_row_count INT NOT NULL DEFAULT 0 COMMENT '结果快照实际保存行数，最多200行',
+    result_snapshot JSON NULL COMMENT '查询结果快照JSON，仅保存前200行',
+    permission_notice JSON NULL COMMENT '本次运行的数据权限处理摘要JSON',
+    duration_ms INT NULL COMMENT '本次运行耗时，单位毫秒',
+    error_message LONGTEXT NULL COMMENT '运行失败时面向用户的错误原因',
+    started_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '运行开始时间',
+    finished_at DATETIME NULL COMMENT '运行完成或失败时间',
+    PRIMARY KEY (id),
+    KEY idx_portal_saved_report_runs_report_id (report_id),
+    KEY idx_portal_saved_report_runs_user_id (user_id),
+    KEY idx_portal_saved_report_runs_task_id (task_id),
+    KEY idx_portal_saved_report_runs_report_started (report_id, started_at),
+    KEY idx_portal_saved_report_runs_user_started (user_id, started_at),
+    KEY idx_portal_saved_report_runs_status_started (status, started_at),
+    CONSTRAINT fk_portal_saved_report_runs_report
+        FOREIGN KEY (report_id) REFERENCES portal_saved_reports(id) ON DELETE CASCADE,
+    CONSTRAINT fk_portal_saved_report_runs_user
+        FOREIGN KEY (user_id) REFERENCES ai_agent_users(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='黄金报表运行历史与结果快照表';

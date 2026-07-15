@@ -302,6 +302,17 @@ def test_repair_policy_kind_and_budget():
     assert repair_budget_exhausted(state) is True
 
 
+def test_diagnostic_sql_pending_final_repair_budget_is_two():
+    state = DataRunState(diagnostic_sql_pending_final=True, blocked_content="sample")
+    assert current_repair_kind(state) == "diagnostic_sql_pending_final"
+    assert DATA_REPAIR_BUDGETS["diagnostic_sql_pending_final"] == 2
+    assert repair_budget_exhausted(state) is False
+    state.repair_attempts["diagnostic_sql_pending_final"] = 1
+    assert repair_budget_exhausted(state) is False
+    state.repair_attempts["diagnostic_sql_pending_final"] = 2
+    assert repair_budget_exhausted(state) is True
+
+
 def test_build_repair_message_for_schema_miss():
     state = DataRunState(schema_miss=True, controlled_schema_retry_keywords="机房 列表")
     msg = build_repair_message(state)
