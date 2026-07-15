@@ -62,7 +62,7 @@ import SkillBrowserDrawer from "@/components/embed/SkillBrowserDrawer.vue";
 import ChatCanvas from "@/components/embed/ChatCanvas.vue";
 import AttachmentImageThumb from "@/components/embed/AttachmentImageThumb.vue";
 import { isImageAttachment, getServerAttachmentPath } from "@/utils/attachmentImages";
-import { openWorkspaceFileInCanvas, isSameWorkspacePreviewPath } from "@/utils/workspaceFilePreview";
+import { openWorkspaceFileInCanvas, isSameWorkspacePreviewPath, isDirectRenderableUrl, resolvePublicUploadsPreviewUrl, shouldAttachWorkspaceSourcePath } from "@/utils/workspaceFilePreview";
 import { sanitizeStreamContent } from "@/utils/streamContentSanitize";
 import {
   splitSqlToolLogDetails,
@@ -2095,6 +2095,131 @@ const handleWorkspaceFilePreview = async (payload: { path: string; name: string 
   });
 };
 
+const resolveFileUrl = (url: string): string => {
+  if (!url) return '';
+  if (isDirectRenderableUrl(url)) {
+    return url;
+  }
+  const publicUploadUrl = resolvePublicUploadsPreviewUrl(url);
+  if (publicUploadUrl) return publicUploadUrl;
+  if (!url.startsWith('/static/') &&
+      !url.startsWith('/api/') &&
+      !url.startsWith('/assets/')) {
+    const convParam = conversationId.value ? `&conversation_id=${encodeURIComponent(conversationId.value)}` : "";
+    return `/api/v1/chat/fs/preview?path=${encodeURIComponent(url)}${convParam}`;
+  }
+  return url;
+};
+
+const handleOpenCanvas = async (payload: { type: 'html' | 'code' | 'mermaid' | 'pdf' | 'csv' | 'image' | 'compare'; title: string; content: string }) => {
+  revokeActiveBlobUrl();
+
+  if (payload.type === 'compare') {
+    try {
+      const urlObj = new URL(payload.content.replace('canvas://', 'http://localhost/'));
+      const leftPath = urlObj.searchParams.get('left') || '';
+      const rightPath = urlObj.searchParams.get('right') || '';
+
+      const leftResolved = resolveFileUrl(leftPath);
+      const rightResolved = resolveFileUrl(rightPath);
+
+      const [leftRes, rightRes] = await Promise.all([
+        axios.get(leftResolved).then(res => res.data),
+        axios.get(rightResolved).then(res => res.data)
+      ]);
+
+      canvasData.value = {
+        type: 'compare',
+        title: payload.title || '数据对比',
+        content: leftRes,
+        compareContent: rightRes,
+        compareTitle: rightPath.split('/').pop() || '对比文件'
+      };
+      canvasVisible.value = true;
+    } catch (err: any) {
+      console.error('加载对比文件失败:', err);
+      let errMsg = '加载对比文件失败';
+      if (err.response?.data?.detail) {
+        errMsg = err.response.data.detail;
+      } else if (err.response?.status === 404) {
+        errMsg = '对比的文件不存在，可能已被删除或尚未生成。';
+      } else if (err.response?.status === 403) {
+        errMsg = '权限拦截：无权访问该对比文件。';
+      } else {
+        errMsg = err.message || String(err);
+      }
+      showToast(errMsg, 'error');
+    }
+  } else if (payload.content.startsWith('canvas://file')) {
+    try {
+      const urlObj = new URL(payload.content.replace('canvas://', 'http://localhost/'));
+      const filePath = urlObj.searchParams.get('path') || '';
+      const resolvedUrl = resolveFileUrl(filePath);
+      const officeExtensions = ['.docx', '.doc', '.xlsx', '.xls', '.xlsm', '.pptx', '.ppt'];
+      const normalizedPath = ((filePath.toLowerCase().split('?')[0] ?? '').split('#')[0] ?? '');
+      const isOfficeFile = officeExtensions.some((ext) => normalizedPath.endsWith(ext));
+
+      if (isOfficeFile) {
+        const response = await axios.get(resolvedUrl, { responseType: 'blob' });
+        const filename = filePath.split('/').pop() || 'download';
+        const blobUrl = URL.createObjectURL(response.data);
+        const link = document.createElement('a');
+        link.href = blobUrl;
+        link.download = filename;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(blobUrl);
+        showToast(`已开始下载 ${filename}`, 'success');
+        return;
+      }
+
+      if (payload.type === 'pdf' || payload.type === 'image' || payload.type === 'csv') {
+        const response = await axios.get(resolvedUrl, { responseType: 'blob' });
+        const blobUrl = URL.createObjectURL(response.data);
+        activeBlobUrl.value = blobUrl;
+
+        canvasData.value = {
+          type: payload.type,
+          title: payload.title || filePath.split('/').pop() || '文件预览',
+          content: blobUrl
+        };
+        canvasVisible.value = true;
+      } else {
+        const resText = await axios.get(resolvedUrl).then(res => res.data);
+        const filename = payload.title || filePath.split('/').pop() || '文件预览';
+        canvasData.value = {
+          type: payload.type,
+          title: filename,
+          content: resText,
+          sourcePath: shouldAttachWorkspaceSourcePath(filePath, filename) ? filePath : undefined,
+        };
+        canvasVisible.value = true;
+      }
+    } catch (err: any) {
+      console.error('加载本地文件失败:', err);
+      let errMsg = '加载本地文件失败';
+      if (err.response?.data?.detail) {
+        errMsg = err.response.data.detail;
+      } else if (err.response?.status === 404) {
+        errMsg = '预览的文件不存在，请确认路径是否正确。';
+      } else if (err.response?.status === 403) {
+        errMsg = '安全拦截：无权访问该服务器文件。';
+      } else {
+        errMsg = err.message || String(err);
+      }
+      showToast(errMsg, 'error');
+    }
+  } else {
+    canvasData.value = {
+      type: payload.type,
+      title: payload.title || '文件预览',
+      content: payload.content
+    };
+    canvasVisible.value = true;
+  }
+};
+
 const isImageFile = isImageAttachment;
 
 const formatBytes = (bytes: number) => {
@@ -3625,7 +3750,7 @@ onUnmounted(() => {
                             </div>
                             <div>
                                 <div class="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1 opacity-70">智能体</div>
-                                <div class="text-gray-600 dark:text-gray-300 text-xs sm:text-sm"><MessageRenderer :content="turn.summary" /></div>
+                                <div class="text-gray-600 dark:text-gray-300 text-xs sm:text-sm"><MessageRenderer :content="turn.summary" @open-canvas="handleOpenCanvas" /></div>
                             </div>
                         </div>
 
@@ -4080,7 +4205,7 @@ onUnmounted(() => {
               >
                 <template v-for="parts in [splitUserMessageContent(msg.content)]" :key="'user-parts'">
                   <template v-if="parts.hasContext">
-                    <MessageRenderer v-if="parts.userPart" :content="parts.userPart" />
+                    <MessageRenderer v-if="parts.userPart" :content="parts.userPart" @open-canvas="handleOpenCanvas" />
                     <div v-if="parts.userPart" class="my-2.5 border-t border-white/30" role="separator" />
                     <details class="group/sys mt-2 text-[10px] text-white/70 select-none">
                       <summary class="cursor-pointer hover:text-white flex items-center gap-1 font-semibold focus:outline-none list-none [&::-webkit-details-marker]:hidden">
@@ -4094,7 +4219,7 @@ onUnmounted(() => {
                       </div>
                     </details>
                   </template>
-                  <MessageRenderer v-else :content="msg.content" />
+                  <MessageRenderer v-else :content="msg.content" @open-canvas="handleOpenCanvas" />
                 </template>
 
                 <!-- Attached Files In Bubble -->
@@ -4761,6 +4886,7 @@ onUnmounted(() => {
                   :content="msg.content"
                   @quick-question="handleQuickQuestion"
                   @show-citation="(payload) => handleShowCitation(msg, payload.id, payload.anchor)"
+                  @open-canvas="handleOpenCanvas"
                 />
                 <DatasetCapabilityMenu
                   v-else
