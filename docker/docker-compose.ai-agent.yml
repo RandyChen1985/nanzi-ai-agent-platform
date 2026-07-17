@@ -2,13 +2,13 @@ version: '3.8'
 
 services:
   ai-agent:
-    image: yunshu-ai-agent:latest
-    container_name: yunshu-ai-agent
+    image: nanzi-ai-agent:latest
+    container_name: nanzi-ai-agent
     ports:
       - "8001:8001"
     volumes:
       # 请将下面的 /path/to/your/oracle/instantclient 替换为您宿主机上实际的 Oracle 客户端路径
-      - /app/yunshu-aiagent/lib/instantclient_19_30:/opt/oracle/instantclient
+      - /app/nanzi-aiagent/lib/instantclient_19_30:/opt/oracle/instantclient
       - ./data:/app/data
       - ~/.agents/skills:/app/data/skills
 
@@ -23,7 +23,7 @@ services:
       # MySQL
       - MYSQL_HOST=${MYSQL_HOST:-host.docker.internal}
       - MYSQL_PORT=${MYSQL_PORT:-3306}
-      - MYSQL_DB=${MYSQL_DB:-yunshu_ai_agent_platform}
+      - MYSQL_DB=${MYSQL_DB:-nanzi_ai_agent_platform}
       - MYSQL_USER=${MYSQL_USER:-root}
       - MYSQL_PASSWORD=${MYSQL_PASSWORD:-root123}
 

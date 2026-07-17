@@ -217,7 +217,7 @@ AgentScope 的 `AgentState` 本身不提供持久化，平台实现了 Redis 持
         state,
         ttl=7天
       )
-    → Redis Key: yunshu:{uid}:{conv_id}:agent_state:{agent_name}
+    → Redis Key: nanzi:{uid}:{conv_id}:agent_state:{agent_name}
 
 下一轮对话开始时：
   AgentStateStore.load(user_id, conversation_id, agent_name)
@@ -237,7 +237,7 @@ AgentScope 的 `AgentState` 本身不提供持久化，平台实现了 Redis 持
 防止同一会话的多个并发请求同时修改 AgentState：
 
 ```
-Redis Lock Key: yunshu:{uid}:{conv_id}:agent_lock:{agent_name}
+Redis Lock Key: nanzi:{uid}:{conv_id}:agent_lock:{agent_name}
 TTL: 120 秒（请求级别，请求结束释放）
 等待超时: 15 秒（轮询间隔 100ms）
 ```
@@ -254,7 +254,7 @@ TTL: 120 秒（请求级别，请求结束释放）
   → stream_pending_tool_interrupt() 在 event_stream.py 中处理
   → confirmations.register(kind="permission", ...)
       → PendingAgentScopeSnapshot 序列化（含 agent_state + tool_call + stream_state）
-      → Redis Key: yunshu:{uid}:pending:{request_id}  TTL=600s
+      → Redis Key: nanzi:{uid}:pending:{request_id}  TTL=600s
       → 内存注册表 _items[request_id] = PendingAgentScopeConfirmation
   → 向前端 SSE 发送 permission_required 事件（含 permission_request_id）
 
@@ -323,7 +323,7 @@ workspace = LocalWorkspace(
 
 #### 3.8.2 Redis 指标追加与存储
 - **异步写入**：使用 `asyncio.ensure_future` 触发 Redis 异步追加写入（List 结构），保障不会阻塞大模型的核心流式生成。
-- **Key 格式**：`yunshu:{user_id}:{conversation_id}:model_call_stats`
+- **Key 格式**：`nanzi:{user_id}:{conversation_id}:model_call_stats`
 - **生命周期**：TTL 设为 7 天（604,800 秒），与 AgentState 保持同步。
 
 #### 3.8.3 前后端统计交互

@@ -440,7 +440,7 @@ def normalize_messages_for_llm(messages: List[BaseMessage]) -> List[BaseMessage]
     for idx, part in enumerate(system_parts, 1):
         # 探测是哪种类型的系统消息，以加上结构化 Markdown 标题与 XML 区隔（兼容多系统消息，提升注意力聚焦与 API 兼容）
         title = "系统指令"
-        if "[云枢智能体平台 · 全局守则]" in part:
+        if "[南孜智能体平台 · 全局守则]" in part:
             title = "平台守则与安全约束"
         elif "# Active User Profile" in part:
             title = "当前用户画像"

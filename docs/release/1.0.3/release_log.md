@@ -1,6 +1,6 @@
-# 🎉 Yunshu AI Agent Platform v1.0.3 Release Notes
+# 🎉 NanZi AI Agent Platform v1.0.3 Release Notes
 
-**GitHub Repository**: [RandyChen1985/yunshu-ai-agent-platform](https://github.com/RandyChen1985/yunshu-ai-agent-platform)
+**GitHub Repository**: [RandyChen1985/nanzi-ai-agent-platform](https://github.com/RandyChen1985/nanzi-ai-agent-platform)
 
 > **文档同步说明**：v1.0.3 发布时使用门户指令 **`/dataset_menu`**；当前主指令为 **`/dataset_portal`**（旧指令仍兼容）。下文保留当时发布表述。
 
@@ -75,11 +75,11 @@ v1.0.3 版本是一次**数据门户体验与查数可靠性升级**。在本次
 
 ## 🗄️ Database Incremental Upgrades (数据库增量升级说明)
 
-从 v1.0.2 升级至 v1.0.3 期间，平台数据库共引入了 **1 个**增量 SQL 升级脚本（存放于 [db-prod/](file:///Users/chenxiaolong/workspace/yovole-yunshu-ai-agent-platform/db-prod/) 目录下）：
+从 v1.0.2 升级至 v1.0.3 期间，平台数据库共引入了 **1 个**增量 SQL 升级脚本（存放于 [db-prod/](file:///Users/chenxiaolong/workspace/yovole-nanzi-ai-agent-platform/db-prod/) 目录下）：
 
 | 脚本文件 | 核心变更内容 |
 | :--- | :--- |
-| **[V78-chatbi_quick_suggestions_placement.sql](file:///Users/chenxiaolong/workspace/yovole-yunshu-ai-agent-platform/db-prod/V78-chatbi_quick_suggestions_placement.sql)** | 更新 ChatBI V8 系统提示词，约束 quick 追问建议区块必须位于全文最末尾（图表与数据来源说明之后），并补充自检清单项。 |
+| **[V78-chatbi_quick_suggestions_placement.sql](file:///Users/chenxiaolong/workspace/yovole-nanzi-ai-agent-platform/db-prod/V78-chatbi_quick_suggestions_placement.sql)** | 更新 ChatBI V8 系统提示词，约束 quick 追问建议区块必须位于全文最末尾（图表与数据来源说明之后），并补充自检清单项。 |
 
 > [!WARNING]
 > 请在升级后通过执行 `./db-prod/apply-sql-native.sh` 脚本，将增量 SQL 自动、安全地导入到目标 MySQL 数据库中。
@@ -125,7 +125,7 @@ cd frontend && npm install && npm run build && cd ..
 - [ ] **管理界面**：验证 Agent 帮助弹窗、元数据本地模式 Top K 配置、系统参数 Modal 滚动正常。
 - [ ] **回归测试**：运行自动化测试套件 `pytest tests/`，确保整体功能无回归。
 
-完整测试清单见 [tests/CHECKLIST.md](file:///Users/chenxiaolong/workspace/yovole-yunshu-ai-agent-platform/tests/CHECKLIST.md)。
+完整测试清单见 [tests/CHECKLIST.md](file:///Users/chenxiaolong/workspace/yovole-nanzi-ai-agent-platform/tests/CHECKLIST.md)。
 
 ---
 
@@ -133,13 +133,13 @@ cd frontend && npm install && npm run build && cd ..
 
 本项目 v1.0.3 发布版本关联的源码、Docker 镜像资产归档包及配置文件如下：
 
-* 📦 **Source Code (zip)**: `yunshu-ai-agent-platform-1.0.3.zip`
-* 📦 **Source Code (tar.gz)**: `yunshu-ai-agent-platform-1.0.3.tar.gz`
-* 🐳 **Docker Image for Linux amd64 (x86_64)**: `yunshu-ai-agent_1.0.3_linux-amd64_*.tar`
-* 🐳 **Docker Image for Linux arm64 (aarch64)**: `yunshu-ai-agent_1.0.3_linux-arm64_*.tar`
+* 📦 **Source Code (zip)**: `nanzi-ai-agent-platform-1.0.3.zip`
+* 📦 **Source Code (tar.gz)**: `nanzi-ai-agent-platform-1.0.3.tar.gz`
+* 🐳 **Docker Image for Linux amd64 (x86_64)**: `nanzi-ai-agent_1.0.3_linux-amd64_*.tar`
+* 🐳 **Docker Image for Linux arm64 (aarch64)**: `nanzi-ai-agent_1.0.3_linux-arm64_*.tar`
 * ⚙️ **Docker Compose YAML file**: `docker-compose.yml`
 
-🔗 **下载地址**: [GitHub Releases v1.0.3](https://github.com/RandyChen1985/yunshu-ai-agent-platform/releases/tag/1.0.3)
+🔗 **下载地址**: [GitHub Releases v1.0.3](https://github.com/RandyChen1985/nanzi-ai-agent-platform/releases/tag/1.0.3)
 
 ---
 

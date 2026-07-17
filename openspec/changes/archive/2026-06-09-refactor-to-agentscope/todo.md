@@ -72,7 +72,7 @@ MySQL trace_buffer（审计）         （不替代审计）
 
 **问题**：`confirmations.py` 把 live `Agent` 放进程内存，多实例/重启后 confirm 失败。
 
-**Redis key**：`yunshu:agent:{user_id}:pending:{request_id}`，TTL 600s
+**Redis key**：`nanzi:agent:{user_id}:pending:{request_id}`，TTL 600s
 
 **持久化内容**（不存 `Agent` 对象）：
 - `agent_state`（`agent.state.model_dump(mode="json")`）

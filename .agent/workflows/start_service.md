@@ -1,5 +1,5 @@
 ---
-description: Start the Yunshu API Data Platform application service correctly using venv
+description: Start the NanZi API Data Platform application service correctly using venv
 ---
 
 1. Kill any existing uvicorn processes

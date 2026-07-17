@@ -9,7 +9,7 @@ export default {
     extend: {
       colors: {
         primary: {
-          DEFAULT: '#1677ff', // Yunshu Blue
+          DEFAULT: '#1677ff', // NanZi Blue
           hover: '#4096ff',
           active: '#0958d9',
           dark: '#0958d9', // 添加dark变体，与active相同

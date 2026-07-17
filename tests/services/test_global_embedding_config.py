@@ -160,8 +160,8 @@ async def test_rebuild_vector_indexes_api():
         res = await rebuild_vector_indexes(user={"username": "admin"})
         assert res["status"] == "success"
         assert "已成功重构本地向量索引。" in res["message"]
-        mock_redis.execute_command.assert_any_call("FT.DROPINDEX", "yunshu:idx:metadata:dataset", "DD")
-        mock_redis.execute_command.assert_any_call("FT.DROPINDEX", "yunshu:idx:example:dataset", "DD")
+        mock_redis.execute_command.assert_any_call("FT.DROPINDEX", "nanzi:idx:metadata:dataset", "DD")
+        mock_redis.execute_command.assert_any_call("FT.DROPINDEX", "nanzi:idx:example:dataset", "DD")
 
 @pytest.mark.asyncio
 async def test_search_examples_top_k_resolution():

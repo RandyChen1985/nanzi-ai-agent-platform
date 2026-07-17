@@ -19,12 +19,12 @@ async def test_example_index_ensure_index():
         assert res is True
         mock_redis.execute_command.assert_any_call(
             "FT.CREATE",
-            "yunshu:idx:example:local",
+            "nanzi:idx:example:local",
             "ON",
             "HASH",
             "PREFIX",
             "1",
-            "yunshu:example:",
+            "nanzi:example:",
             "SCHEMA",
             "id",
             "TAG",
@@ -81,7 +81,7 @@ async def test_example_index_upsert_vector():
         
         mock_redis.hset.assert_called_once()
         call_args = mock_redis.hset.call_args[0]
-        assert call_args[0] == "yunshu:example:12"
+        assert call_args[0] == "nanzi:example:12"
         mapping = mock_redis.hset.call_args[1]["mapping"]
         assert mapping["id"] == "12"
         assert mapping["dataset_id"] == "42"
@@ -97,14 +97,14 @@ async def test_example_index_delete_vector():
     
     with patch("app.services.ai.example_index_service.get_redis", return_value=mock_redis):
         await ExampleIndexService.delete_vector(12)
-        mock_redis.delete.assert_called_once_with("yunshu:example:12")
+        mock_redis.delete.assert_called_once_with("nanzi:example:12")
 
 @pytest.mark.asyncio
 async def test_example_index_search_knn_admin():
     mock_redis = AsyncMock()
     raw_response = [
         1,
-        "yunshu:example:12",
+        "nanzi:example:12",
         [
             b"id", b"12",
             b"dataset_id", b"42",

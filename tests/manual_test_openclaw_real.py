@@ -14,7 +14,7 @@ async def test_real_openclaw_call():
     # 使用您提供的真实配置
     base_url = "https://yunshu-openclaw.yovole.net/"
     api_key = "7c203522923b5f9fa2fabdf274c4fc2a129b1037f58574a9"
-    model_id = "openclaw:yunshu_bot"
+    model_id = "openclaw:nanzi_bot"
 
     print(f"📡 目标地址: {base_url}")
     print(f"🤖 机器人 ID: {model_id}")

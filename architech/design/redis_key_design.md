@@ -1,6 +1,6 @@
 # Redis 键设计与使用文档
 
-本文档总结了当前系统 (`yovole-yunshu-ai-agent-platform`) 中 Redis 的键设计、数据结构、过期策略及业务用途。
+本文档总结了当前系统 (`yovole-nanzi-ai-agent-platform`) 中 Redis 的键设计、数据结构、过期策略及业务用途。
 
 ## 1. 核心系统 (System Core)
 

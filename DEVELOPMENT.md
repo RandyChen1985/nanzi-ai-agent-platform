@@ -1,4 +1,4 @@
-# 云枢智能体平台 - 开发指南
+# 南孜智能体平台 - 开发指南
 
 > 本文档面向开发人员，提供环境搭建、开发规范、测试、部署等完整指引。
 
@@ -31,13 +31,13 @@
 > [!IMPORTANT]
 > **运行前置说明**：
 >
-> 1. **服务依赖**：需提前准备好 MySQL 服务（并手动创建数据库，如 `yunshu_ai_agent_platform`）与 Redis 服务（因包含向量检索等高级功能，必须使用支持 RediSearch 的 `redis/redis-stack:latest` 版本服务）。
-> 2. **镜像构建**：一键启动脚本底层依赖本地的 `yunshu-ai-agent` 镜像，运行前需先执行构建。
+> 1. **服务依赖**：需提前准备好 MySQL 服务（并手动创建数据库，如 `nanzi_ai_agent_platform`）与 Redis 服务（因包含向量检索等高级功能，必须使用支持 RediSearch 的 `redis/redis-stack:latest` 版本服务）。
+> 2. **镜像构建**：一键启动脚本底层依赖本地的 `nanzi-ai-agent` 镜像，运行前需先执行构建。
 
 ```bash
 # 1. 克隆仓库并进入目录
 git clone <repository-url>
-cd yunshu-ai-agent-platform
+cd nanzi-ai-agent-platform
 
 # 2. 本地构建 Docker 镜像（以本机 CPU 架构调试为例）
 cd docker
@@ -48,7 +48,7 @@ cp ../env.example .env
 vim .env
 
 # 4. 运行一键启动脚本
-./start-yunshu-ai-agent.sh
+./start-nanzi-ai-agent.sh
 ```
 
 访问：http://localhost:8001
@@ -71,7 +71,7 @@ pip install -r requirements.txt
 cp env.example .env
 # 编辑 .env 文件，配置数据库连接等信息
 
-# 4. 初始化数据库（请先确保已手动创建数据库，如 `yunshu_ai_agent_platform`）
+# 4. 初始化数据库（请先确保已手动创建数据库，如 `nanzi_ai_agent_platform`）
 # 执行交互式部署脚本，详见 db-prod/README.md 指南
 ./db-prod/apply-sql.sh
 ```
@@ -105,7 +105,7 @@ npm install
 ```text
 $ ./dev.sh
 ==================================================
-       云枢智能体平台 · 本地开发启动工具       
+       南孜智能体平台 · 本地开发启动工具       
 ==================================================
 
 🛑 [1/3] 正在检查并停止旧服务 (Port 8001)...
@@ -120,7 +120,7 @@ transforming (6423) node_modules/zrender/lib/Element.js
 🔥 [3/3] 正在启动后端服务 (Starting Backend in Foreground)...
 提示：您将在此看到实时运行日志，按 Ctrl+C 可停止服务。
 ------------------------------------------------
-INFO:     Will watch for changes in these directories: ['/Users/chenxiaolong/资料/有孚网络/1云枢中台/yovole-yunshu-ai-agent-platform']
+INFO:     Will watch for changes in these directories: ['/Users/chenxiaolong/资料/有孚网络/1南孜中台/yovole-nanzi-ai-agent-platform']
 INFO:     Uvicorn running on http://0.0.0.0:8001 (Press CTRL+C to quit)
 INFO:     Started reloader process [45012] using StatReload
 INFO:     Started server process [45014]
@@ -179,7 +179,7 @@ npm run dev
 ## 项目结构
 
 ```
-yovole-yunshu-ai-agent-platform/
+yovole-nanzi-ai-agent-platform/
 ├── app/                          # 后端核心代码
 │   ├── api/                      # API 路由层
 │   │   ├── portal/               # 管理后台接口
@@ -295,19 +295,19 @@ git commit -m "feat: 添加 MCP 工具实时测试功能
 
 凡涉及数据库 Schema 或数据的变更，必须严格遵守以下规范：
 
-1. **执行边界**：开发人员与 AI 助手**仅负责**在 [db-prod/](file:///Users/chenxiaolong/%E8%B5%84%E6%96%99/%E6%9C%89%E5%AD%9A%E7%BD%91%E7%BB%9C/1%E4%BA%91%E6%9E%A2%E4%B8%AD%E5%8F%B0/yovole-yunshu-ai-agent-platform/db-prod/) 目录下创建 SQL 脚本。**严禁**自动执行 SQL 语句或通过 Python 脚本直接修改本地/线上数据库。
+1. **执行边界**：开发人员与 AI 助手**仅负责**在 [db-prod/](file:///Users/chenxiaolong/%E8%B5%84%E6%96%99/%E6%9C%89%E5%AD%9A%E7%BD%91%E7%BB%9C/1%E4%BA%91%E6%9E%A2%E4%B8%AD%E5%8F%B0/yovole-nanzi-ai-agent-platform/db-prod/) 目录下创建 SQL 脚本。**严禁**自动执行 SQL 语句或通过 Python 脚本直接修改本地/线上数据库。
 2. **命名规范**：使用 `V` 开头 + 自增序号 + 描述。例如 `V60-create_scheduler_job_store.sql`。在创建前必须检查目录下的当前最大序号并自增 +1。
 
 ### 系统提示词变更规范
 
-凡涉及系统提示词 (Prompts) 的新增或更新，必须在 [architech/prompts/](file:///Users/chenxiaolong/%E8%B5%84%E6%96%99/%E6%9C%89%E5%AD%9A%E7%BD%91%E7%BB%9C/1%E4%BA%91%E6%9E%A2%E4%B8%AD%E5%8F%B0/yovole-yunshu-ai-agent-platform/architech/prompts/) 目录下进行并纳入 Git 版本控制。
+凡涉及系统提示词 (Prompts) 的新增或更新，必须在 [architech/prompts/](file:///Users/chenxiaolong/%E8%B5%84%E6%96%99/%E6%9C%89%E5%AD%9A%E7%BD%91%E7%BB%9C/1%E4%BA%91%E6%9E%A2%E4%B8%AD%E5%8F%B0/yovole-nanzi-ai-agent-platform/architech/prompts/) 目录下进行并纳入 Git 版本控制。
 
 > [!NOTE]
 > 开发人员或 AI 助手仅负责创建/更新对应的 Prompt 文件，不负责自动同步到系统内部运行环境中。
 
 ### 自动化测试清单更新规范
 
-为确保代码逻辑和接口的稳定性，在实现新功能或接口时，必须自动更新 [tests/CHECKLIST.md](file:///Users/chenxiaolong/%E8%B5%84%E6%96%99/%E6%9C%89%E5%AD%9A%E7%BD%91%E7%BB%9C/1%E4%BA%91%E6%9E%A2%E4%B8%AD%E5%8F%B0/yovole-yunshu-ai-agent-platform/tests/CHECKLIST.md) 中的自动化测试清单，记录测试用例。
+为确保代码逻辑和接口的稳定性，在实现新功能或接口时，必须自动更新 [tests/CHECKLIST.md](file:///Users/chenxiaolong/%E8%B5%84%E6%96%99/%E6%9C%89%E5%AD%9A%E7%BD%91%E7%BB%9C/1%E4%BA%91%E6%9E%A2%E4%B8%AD%E5%8F%B0/yovole-nanzi-ai-agent-platform/tests/CHECKLIST.md) 中的自动化测试清单，记录测试用例。
 
 ### 代码已合本地同步与重启流程
 
@@ -559,7 +559,7 @@ async def get_user(
 
 ## 测试指南
 
-本项目使用 `pytest` + `httpx` (AsyncClient) 构建自动化集成测试框架。更详细的测试方法与环境配置说明，请查阅 [tests/README.md](file:///Users/chenxiaolong/资料/有孚网络/1云枢中台/yovole-yunshu-ai-agent-platform/tests/README.md)。
+本项目使用 `pytest` + `httpx` (AsyncClient) 构建自动化集成测试框架。更详细的测试方法与环境配置说明，请查阅 [tests/README.md](file:///Users/chenxiaolong/资料/有孚网络/1南孜中台/yovole-nanzi-ai-agent-platform/tests/README.md)。
 
 ### 后端测试
 
@@ -575,7 +575,7 @@ async def get_user(
 ./tests/run_tests.sh
 ```
 
-该脚本会自动配置 `PYTHONPATH` 环境变量并检索依赖，自动执行所有集成测试。脚本源码细节详见 [tests/run_tests.sh](file:///Users/chenxiaolong/资料/有孚网络/1云枢中台/yovole-yunshu-ai-agent-platform/tests/run_tests.sh)。
+该脚本会自动配置 `PYTHONPATH` 环境变量并检索依赖，自动执行所有集成测试。脚本源码细节详见 [tests/run_tests.sh](file:///Users/chenxiaolong/资料/有孚网络/1南孜中台/yovole-nanzi-ai-agent-platform/tests/run_tests.sh)。
 
 **方式二：手动执行 pytest**
 在项目根目录下执行：
@@ -710,7 +710,7 @@ A: 检查 `app.core.config.py` 配置和 `.env` 文件：
 ```bash
 MYSQL_HOST=localhost
 MYSQL_PORT=3306
-MYSQL_DB=yunshu_ai
+MYSQL_DB=nanzi_ai
 MYSQL_USER=root
 MYSQL_PASSWORD=your_password
 ```
@@ -769,7 +769,7 @@ npm run type-check
 
 ```bash
 # 1. 登录 MySQL 并重建数据库
-mysql -u root -p -e "DROP DATABASE IF EXISTS yunshu_ai_agent_platform; CREATE DATABASE yunshu_ai_agent_platform CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci;"
+mysql -u root -p -e "DROP DATABASE IF EXISTS nanzi_ai_agent_platform; CREATE DATABASE nanzi_ai_agent_platform CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci;"
 
 # 2. 重新运行脚本进行全量初始化
 ./db-prod/apply-sql.sh
@@ -788,11 +788,11 @@ mysql -u root -p -e "DROP DATABASE IF EXISTS yunshu_ai_agent_platform; CREATE DA
 
 ```bash
 # 构建后端镜像
-docker build -t yunshu-ai-backend:latest .
+docker build -t nanzi-ai-backend:latest .
 
 # 构建前端镜像
 cd frontend
-docker build -t yunshu-ai-frontend:latest .
+docker build -t nanzi-ai-frontend:latest .
 ```
 
 #### 启动服务
@@ -909,7 +909,7 @@ LOGGING = {
 
 ## 许可证
 
-本项目采用商业许可模式，详情联系 [云枢智能体](https://www.yovole.com)。
+本项目采用商业许可模式，详情联系 [南孜智能体](https://www.yovole.com)。
 
 ---
 

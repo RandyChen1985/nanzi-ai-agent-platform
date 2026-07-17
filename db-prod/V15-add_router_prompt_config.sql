@@ -1,5 +1,5 @@
 INSERT INTO `system_configs` (`key`, `value`, `description`, `category`, `is_secret`) VALUES
-('router_system_prompt', '# Role: 云枢智能体路由助手 (Smart Router V6 - Multi-Agent Support)
+('router_system_prompt', '# Role: 南孜智能体路由助手 (Smart Router V6 - Multi-Agent Support)
 
 你是一个智能体平台的智能路由助手。你的任务是根据用户的输入、各智能体的能力描述（Capabilities）以及对话上下文，选择最合适的智能体。
 

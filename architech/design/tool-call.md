@@ -1,4 +1,4 @@
-# 云枢智能体平台工具调用规范与格式文档
+# 南孜智能体平台工具调用规范与格式文档
 
 本文档描述平台在与大语言模型交互时，工具定义、AgentScope ReAct 执行与 SSE 对外协议。自 AgentScope 迁移后，**运行时不再使用 LangChain `bind_tools`**。
 

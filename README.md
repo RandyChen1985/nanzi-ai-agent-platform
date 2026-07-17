@@ -1,4 +1,4 @@
-# 云枢 · 智能体平台 (Yunshu AI Agent Platform)
+# 南孜 · 智能体平台 (NanZi AI Agent Platform)
 
 **简体中文** | [English](README_EN.md)
 
@@ -10,10 +10,10 @@
 [![Python](https://img.shields.io/badge/Python-3.11%2B-blue.svg?logo=python&logoColor=white)](https://www.python.org/) [![AgentScope](https://img.shields.io/badge/AgentScope-2.x-7C3AED.svg)](https://github.com/agentscope-ai/agentscope) [![FastAPI](https://img.shields.io/badge/FastAPI-0.109%2B-009688.svg?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/) [![Vue](https://img.shields.io/badge/Vue-3.x-4FC08D.svg?logo=vue.js&logoColor=white)](https://vuejs.org/) [![TailwindCSS](https://img.shields.io/badge/Tailwind-3.x-38B2AC.svg?logo=tailwind-css&logoColor=white)](https://tailwindcss.com/) [![ClickHouse](https://img.shields.io/badge/ClickHouse-Ready-FFCC00.svg?logo=clickhouse&logoColor=black)](https://clickhouse.com/) [![Redis](https://img.shields.io/badge/Redis-Active-DC382D.svg?logo=redis&logoColor=white)](https://redis.io/) [![MCP](https://img.shields.io/badge/MCP-Supported-orange.svg?logo=anthropic)](https://modelcontextprotocol.org/) [![License](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
 
 
-![Promo](docs/images/yunshu-platform-promo-16x9.png)
-![Overview](docs/images/yunshu-platform-overview-16x9.png)
+![Promo](docs/images/nanzi-platform-promo-16x9.png)
+![Overview](docs/images/nanzi-platform-overview-16x9.png)
 
-**云枢智能体平台** 是专为企业级复杂场景打造的 AI 智能中枢。
+**南孜智能体平台** 是专为企业级复杂场景打造的 AI 智能中枢。
 
 平台核心聚焦于以下能力矩阵：
 *   💬 **深度交互式对话 (Dialogue & Co-Agent)**：极速流式响应，支持自动路由与 **专家模式 / @提及直选**、多专家协同。内置 **工具预检** 促发模型主动调用已绑定工具；主助手支持 **Skill 自动扫描** 与权限挂起恢复；支持快捷指令、多模态附件与 Vision 识图。
@@ -30,11 +30,11 @@
 
 ## 🏛️ 系统架构 (Architecture)
 
-![Architecture](docs/images/yunshu-platform-architecture-16x9.png)
+![Architecture](docs/images/nanzi-platform-architecture-16x9.png)
 
 ```text
 ┌──────────────────────────────────────────────────────────┐
-│                      云枢智能体平台                      │
+│                      南孜智能体平台                      │
 └───────────────┬────────────────────────────┬─────────────┘
                 │                            │
    [ 嵌入式聊天 SDK ]                [ 管理控制后台 ]
@@ -208,7 +208,7 @@ cp ../env.example .env   # 配置数据库、Redis、ENCRYPTION_KEY 等
 ./build_linux_x86.sh
 ```
 
-产物输出至 **`docker/release/`**，例如 `yunshu-ai-agent_linux-amd64_20250527.tar`。离线部署可在目标机执行 `docker load -i docker/release/xxx.tar`。
+产物输出至 **`docker/release/`**，例如 `nanzi-ai-agent_linux-amd64_20250527.tar`。离线部署可在目标机执行 `docker load -i docker/release/xxx.tar`。
 
 > Mac（Apple Silicon）部署到 x86 服务器时，务必使用 `build_linux_x86.sh`，不要用 `build_native.sh`。首次跨平台构建拉取基础镜像时可能较长时间无新日志，属正常现象。
 
@@ -224,7 +224,7 @@ cd docker
 
 **3. 启动服务**
 ```bash
-./start-yunshu-ai-agent.sh
+./start-nanzi-ai-agent.sh
 ```
 
 ### 🛠️ 开发与部署工具

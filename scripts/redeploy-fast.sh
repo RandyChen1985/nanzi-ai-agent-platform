@@ -9,7 +9,7 @@ RED='\033[0;31m'
 NC='\033[0m' # No Color
 
 echo -e "${BLUE}==================================================${NC}"
-echo -e "${BLUE}   云枢智能体平台 · 极速重部署 (Skip TypeCheck)   ${NC}"
+echo -e "${BLUE}   南孜智能体平台 · 极速重部署 (Skip TypeCheck)   ${NC}"
 echo -e "${BLUE}==================================================${NC}"
 
 # 1. 编译前端 (Fast Mode)

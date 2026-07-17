@@ -74,7 +74,7 @@ async def system_http_request(method: str, url: str, headers: dict = None, body:
             headers = {}
         # Set a default User-Agent if not present
         if "User-Agent" not in headers and "user-agent" not in headers:
-            headers["User-Agent"] = "Yunshu-AI-Agent/1.0"
+            headers["User-Agent"] = "NanZi-AI-Agent/1.0"
 
         timeout = 30.0
         

@@ -19,7 +19,7 @@
 
 ## 4. 长期记忆 (LTM) 引擎与无感注入管道
 
-- [x] 4.1 实现 Redis `Hash` 读写服务，支持 `yunshu:agent:ltm:{user_id}` 长期事实与个性偏好存储
+- [x] 4.1 实现 Redis `Hash` 读写服务，支持 `nanzi:agent:ltm:{user_id}` 长期事实与个性偏好存储
 - [x] 4.2 编写 `update_user_preference` 与 `fetch_user_long_term_memory` 工具，允许智能体显式管理长期记忆
 - [x] 4.3 在智能体 LLM 交互的 Message 组装入口构建无感加载管道，并发读取 Redis LTM 并格式化注入 System Prompt 的 `[Memory Profile]` 部分
 

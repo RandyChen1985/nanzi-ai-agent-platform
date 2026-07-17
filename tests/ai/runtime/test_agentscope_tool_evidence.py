@@ -164,7 +164,7 @@ def test_mcp_read_only_annotation_assigns_evidence_without_name_heuristic():
         tool_description="Railway availability",
         parameter_schema=(
             '{"type":"object","properties":{},'
-            '"x-yunshu-mcp-annotations":{"readOnlyHint":true}}'
+            '"x-nanzi-mcp-annotations":{"readOnlyHint":true}}'
         ),
         is_published=True,
     )
@@ -185,8 +185,8 @@ def test_mcp_schema_can_declare_precise_internal_evidence_type():
         tool_description="Company policy lookup",
         parameter_schema=(
             '{"type":"object","properties":{},'
-            '"x-yunshu-evidence-types":["internal_knowledge"],'
-            '"x-yunshu-evidence-policy":"allow_empty_success"}'
+            '"x-nanzi-evidence-types":["internal_knowledge"],'
+            '"x-nanzi-evidence-policy":"allow_empty_success"}'
         ),
         is_published=True,
     )
@@ -207,7 +207,7 @@ def test_mcp_read_only_false_annotation_disables_name_based_evidence_inference()
         tool_description="Get availability and reserve a ticket",
         parameter_schema=(
             '{"type":"object","properties":{},'
-            '"x-yunshu-mcp-annotations":{"readOnlyHint":false}}'
+            '"x-nanzi-mcp-annotations":{"readOnlyHint":false}}'
         ),
         is_published=True,
     )

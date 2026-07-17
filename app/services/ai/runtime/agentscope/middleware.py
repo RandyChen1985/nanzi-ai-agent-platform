@@ -7,7 +7,7 @@
 - 调用耗时（ms）
 
 统计数据以追加方式写入 Redis List，Key 格式：
-    yunshu:{uid}:{conv_id}:model_call_stats
+    nanzi:{uid}:{conv_id}:model_call_stats
 TTL：7 天（与 AgentState 保持一致）
 """
 
@@ -211,7 +211,7 @@ async def _stream_with_stats(
 class ModelCallStatsMiddleware(MiddlewareBase):
     """统计每次 LLM 调用的 Token 消耗与工具调用情况，写入 Redis。
 
-    Redis Key: yunshu:{uid}:{conv_id}:model_call_stats
+    Redis Key: nanzi:{uid}:{conv_id}:model_call_stats
     存储结构: Redis List，每个元素为一条 JSON 调用记录。
     """
 

@@ -105,7 +105,7 @@ Bind the main content container with `:class="dashboardContentSpacing"` and leav
 
 - [ ] **Step 2: Send a dedicated saved-report request to an already-ready iframe**
 
-Add `widgetReady`, set it when `YUNSHU_WIDGET_READY` arrives, listen for the host event, and send only the lightweight message:
+Add `widgetReady`, set it when `NANZI_WIDGET_READY` arrives, listen for the host event, and send only the lightweight message:
 
 ```ts
 const widgetReady = ref(false);

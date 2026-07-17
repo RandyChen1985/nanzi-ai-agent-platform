@@ -1,8 +1,8 @@
-dataset: Yunshu_Resources
-description: 云枢资产与动环监控基础资源元数据 (Generated from CLICKHOUSE_TABLES.md)
-domain: 云枢资源 # Added domain field as script uses it for display_name
+dataset: NanZi_Resources
+description: 南孜资产与动环监控基础资源元数据 (Generated from CLICKHOUSE_TABLES.md)
+domain: 南孜资源 # Added domain field as script uses it for display_name
 entities:
-  - name: yovole_dm_clickhouse_prod.ck_fact_yunshu_devicepoint_hbase
+  - name: yovole_dm_clickhouse_prod.ck_fact_nanzi_devicepoint_hbase
     term: 设备点位表
     description: 存储设备具体的监控点位信息，如电压、电流、开关状态的具体测点。
     synonyms:
@@ -38,7 +38,7 @@ entities:
         term: 相关设备
         description: 该点位所属的设备名称
         type: String
-  - name: yovole_dm_clickhouse_prod.ck_fact_yunshu_resjj_hbase
+  - name: yovole_dm_clickhouse_prod.ck_fact_nanzi_resjj_hbase
     term: 机柜表
     description: 数据中心内的物理机柜，管理空间租赁和电力分配。
     synonyms:
@@ -80,7 +80,7 @@ entities:
         term: 业务中心
         description: 所属业务单元
         type: String
-  - name: yovole_dm_clickhouse_prod.ck_fact_yunshu_resroom_hbase
+  - name: yovole_dm_clickhouse_prod.ck_fact_nanzi_resroom_hbase
     term: 机房表
     description: 机房物理空间信息。
     synonyms:
@@ -194,25 +194,25 @@ entities:
         description: 告警发生的物理位置路径
         type: String
 relationships:
-  - source: yovole_dm_clickhouse_prod.ck_fact_yunshu_devicepoint_hbase
-    target: yovole_dm_clickhouse_prod.ck_fact_yunshu_resroom_hbase
+  - source: yovole_dm_clickhouse_prod.ck_fact_nanzi_devicepoint_hbase
+    target: yovole_dm_clickhouse_prod.ck_fact_nanzi_resroom_hbase
     type: LEFT
-    condition: yovole_dm_clickhouse_prod.ck_fact_yunshu_devicepoint_hbase.jf = yovole_dm_clickhouse_prod.ck_fact_yunshu_resroom_hbase.rowkey
+    condition: yovole_dm_clickhouse_prod.ck_fact_nanzi_devicepoint_hbase.jf = yovole_dm_clickhouse_prod.ck_fact_nanzi_resroom_hbase.rowkey
     description: 点位位于某机房
-  - source: yovole_dm_clickhouse_prod.ck_fact_yunshu_devicepoint_hbase
-    target: yovole_dm_clickhouse_prod.ck_fact_yunshu_resjj_hbase
+  - source: yovole_dm_clickhouse_prod.ck_fact_nanzi_devicepoint_hbase
+    target: yovole_dm_clickhouse_prod.ck_fact_nanzi_resjj_hbase
     type: LEFT
-    condition: yovole_dm_clickhouse_prod.ck_fact_yunshu_devicepoint_hbase.jjbm = yovole_dm_clickhouse_prod.ck_fact_yunshu_resjj_hbase.rowkey
+    condition: yovole_dm_clickhouse_prod.ck_fact_nanzi_devicepoint_hbase.jjbm = yovole_dm_clickhouse_prod.ck_fact_nanzi_resjj_hbase.rowkey
     description: 点位位于某机柜（如PDU点位）
-  - source: yovole_dm_clickhouse_prod.ck_fact_yunshu_resjj_hbase
-    target: yovole_dm_clickhouse_prod.ck_fact_yunshu_resroom_hbase
+  - source: yovole_dm_clickhouse_prod.ck_fact_nanzi_resjj_hbase
+    target: yovole_dm_clickhouse_prod.ck_fact_nanzi_resroom_hbase
     type: LEFT
-    condition: yovole_dm_clickhouse_prod.ck_fact_yunshu_resjj_hbase.jfmc = yovole_dm_clickhouse_prod.ck_fact_yunshu_resroom_hbase.rowkey
+    condition: yovole_dm_clickhouse_prod.ck_fact_nanzi_resjj_hbase.jfmc = yovole_dm_clickhouse_prod.ck_fact_nanzi_resroom_hbase.rowkey
     description: 机柜归属于机房
   - source: yovole_dm_clickhouse_prod.ck_fact_donghuan_event_detail_hbase
-    target: yovole_dm_clickhouse_prod.ck_fact_yunshu_devicepoint_hbase
+    target: yovole_dm_clickhouse_prod.ck_fact_nanzi_devicepoint_hbase
     type: LEFT
     condition:
       yovole_dm_clickhouse_prod.ck_fact_donghuan_event_detail_hbase.resource_id
-      = yovole_dm_clickhouse_prod.ck_fact_yunshu_devicepoint_hbase.dwid
+      = yovole_dm_clickhouse_prod.ck_fact_nanzi_devicepoint_hbase.dwid
     description: 告警事件关联到具体设备点位

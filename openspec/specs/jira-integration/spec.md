@@ -20,7 +20,7 @@
 ### 3.2 `jira_create_issue`
 - **Description**: Create a new Jira issue (Task, Bug, or Story).
 - **Parameters**:
-    - `project_key` (string, required): The project key (e.g., OPS, YUNSHU). NOT the project name.
+    - `project_key` (string, required): The project key (e.g., OPS, NANZI). NOT the project name.
     - `summary` (string, required): Brief title of the issue.
     - `description` (string, required): Detailed description.
     - `issue_type` (string, default="Task"): Task, Bug, Story.
@@ -43,7 +43,7 @@
    - `status`: Typically 'Open', 'In Progress', 'Done', 'Reopened'.
 2. **Project Keys**: Always use the KEY, not the name.
    - Example: Use `project = OPS` not `project = "Operations"`.
-   - Common Keys: OPS (运维), YUNSHU (云枢平台), DATA (大数据).
+   - Common Keys: OPS (运维), NANZI (南孜平台), DATA (大数据).
 3. **JQL Syntax**:
    - String values must be quoted: `summary ~ "error"`
    - Dates: `created >= -7d` (last 7 days).

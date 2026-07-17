@@ -1,7 +1,7 @@
 # 嵌入式 Web 组件设计 (Embedded Web Widget Design)
 
 ## 1. 背景与目标
-为了降低第三方系统集成云枢智能体平台的成本，避免重复开发前端聊天界面，我们需要提供一种“低代码”的嵌入式解决方案。
+为了降低第三方系统集成南孜智能体平台的成本，避免重复开发前端聊天界面，我们需要提供一种“低代码”的嵌入式解决方案。
 
 **目标**:
 - 提供一个**极简、纯净**的聊天页面，专门用于被 `<iframe>` 引用。
@@ -74,10 +74,10 @@
 ```
 
 ### 方案 B: JS SDK (Widget 模式 - 后续规划)
-提供 `yunshu-widget.js`，自动注入 DOM 和样式。
+提供 `nanzi-widget.js`，自动注入 DOM 和样式。
 ```html
 <script>
-  window.YunshuAI = {
+  window.NanZiAI = {
     config: {
       agent_id: "sys-agent-chatbi",
       token: "..."

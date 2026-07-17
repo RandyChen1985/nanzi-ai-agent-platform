@@ -130,13 +130,13 @@ const handleSavedReportOpenEvent = (event: Event) => {
 
 const handleMessage = (event: MessageEvent) => {
     const data = event.data;
-    if (data.source === 'yunshu-agent-embed' && data.type === 'OPEN_DATA_PORTAL_FULL') {
+    if (data.source === 'nanzi-agent-embed' && data.type === 'OPEN_DATA_PORTAL_FULL') {
         router.push({ path: '/dashboard/personal', query: { tab: 'data' } });
         return;
     }
     
     // 当挂件准备好后，注入当前用户信息
-    if (data.source === 'yunshu-agent-embed' && data.type === 'YUNSHU_WIDGET_READY') {
+    if (data.source === 'nanzi-agent-embed' && data.type === 'NANZI_WIDGET_READY') {
         widgetReady.value = true;
         sendInitConfig();
     }

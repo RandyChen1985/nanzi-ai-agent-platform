@@ -22,7 +22,7 @@ def test_safe_path_validation():
 
 def test_read_write_file():
     test_file = "data/uploads/test_junit.txt"
-    test_content = "Hello Yunshu Agent Executive Tools!\nLine 2\nLine 3"
+    test_content = "Hello NanZi Agent Executive Tools!\nLine 2\nLine 3"
     
     # 写入测试
     res_write = write_file.invoke({"path": test_file, "content": test_content})
@@ -44,8 +44,8 @@ def test_read_write_file():
 @pytest.mark.asyncio
 async def test_exec_command():
     # 测试常规命令
-    res = await exec_command.ainvoke({"command": "echo 'Yunshu'"})
-    assert "Yunshu" in res
+    res = await exec_command.ainvoke({"command": "echo 'NanZi'"})
+    assert "NanZi" in res
     assert "ExitCode=0" in res
 
     # 测试超时拦截
@@ -185,7 +185,7 @@ async def test_fetch_static_web_url_flow():
       <body>
         <header><h1>Header Navigation</h1></header>
         <div class="content">
-          <p>Hello Yunshu Light Weight Web Content!</p>
+          <p>Hello NanZi Light Weight Web Content!</p>
           <script>console.log("noisy script");</script>
         </div>
         <footer>Footer Info</footer>
@@ -202,7 +202,7 @@ async def test_fetch_static_web_url_flow():
         res = await fetch_static_web_url.ainvoke({"url": "https://example.com/news"})
         
     assert "静态网页拉取成功" in res
-    assert "Hello Yunshu Light Weight Web Content!" in res
+    assert "Hello NanZi Light Weight Web Content!" in res
     assert "Header Navigation" not in res
     assert "Footer Info" not in res
     assert "noisy script" not in res

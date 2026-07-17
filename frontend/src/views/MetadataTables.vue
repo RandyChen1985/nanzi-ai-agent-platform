@@ -736,7 +736,7 @@ defineExpose({ fetchMetrics })
             </svg>
             数据集成员授权管理
           </h2>
-          <p class="text-xs text-gray-400 mt-1 select-none">控制并配置当前数据集在云枢元数据平台中的访问分配关系。</p>
+          <p class="text-xs text-gray-400 mt-1 select-none">控制并配置当前数据集在南孜元数据平台中的访问分配关系。</p>
         </div>
 
         <div v-if="hasEditPermission" class="flex items-center gap-3">

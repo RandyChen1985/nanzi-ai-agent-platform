@@ -1,8 +1,8 @@
-# Yunshu AI Agent Platform v1.0.5 Cover Info
+# NanZi AI Agent Platform v1.0.5 Cover Info
 
 ## 封面主标题
 
-Yunshu AI Agent Platform v1.0.5
+NanZi AI Agent Platform v1.0.5
 
 ## 封面副标题
 
@@ -33,7 +33,7 @@ Yunshu AI Agent Platform v1.0.5
 ```text
 Use case: ads-marketing
 Asset type: 16:9 release-note cover image, final project asset
-Primary request: Create a polished landscape cover image for "Yunshu AI Agent Platform v1.0.5" release notes.
+Primary request: Create a polished landscape cover image for "NanZi AI Agent Platform v1.0.5" release notes.
 Canvas: 16:9 landscape, 2048x1152 composition.
 Scene/backdrop: A sophisticated enterprise AI data platform command center, with a central luminous data hub connecting multiple database nodes, report panels, and automation flows. Subtle visual references to federated BI querying, saved golden reports, SQL Server connectivity, third-party user sync, Office document generation, Redis diagnostics, and platform operations.
 Subject: Abstract but concrete product visual: layered dashboards, query traces, schema lines, report cards with gold accents, connector rails, and AI agent nodes. No real company logos.

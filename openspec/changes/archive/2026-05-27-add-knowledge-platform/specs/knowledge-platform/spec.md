@@ -126,7 +126,7 @@
 #### Scenario: 前端通过平台 API 管理知识库
 
 - **WHEN** 前端执行知识库列表、创建、删除、文档管理或检索测试操作
-- **THEN** 请求发送到云枢平台后端 Portal API
+- **THEN** 请求发送到南孜平台后端 Portal API
 - **AND** 后端读取系统配置中的 RAGFlow 地址与 API Key 后调用 RAGFlow
 
 #### Scenario: RAGFlow 返回错误

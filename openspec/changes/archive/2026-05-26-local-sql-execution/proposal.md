@@ -1,6 +1,6 @@
 ## Why
 
-当前云枢智能体平台的 ChatBI 模块和 SQL 执行工具，高度依赖远程外部 SQL 执行服务（`yovole-yunshu-api-data-platform`）来进行物理 SQL 执行与数据源在线 Debug。这不仅带来了额外的微服务跨网延迟和鉴权开销，还增加了系统部署与容器运维的复杂度。
+当前南孜智能体平台的 ChatBI 模块和 SQL 执行工具，高度依赖远程外部 SQL 执行服务（`yovole-yunshu-api-data-platform`）来进行物理 SQL 执行与数据源在线 Debug。这不仅带来了额外的微服务跨网延迟和鉴权开销，还增加了系统部署与容器运维的复杂度。
 
 为了实现系统去外部解耦、降低运维成本并提升 ChatBI 执行效能，我们需要在智能体平台内部直接集成这一套 SQL 执行器逻辑（包括 ClickHouse/MySQL/Oracle 适配器及连接池），并在保留远程接口模式的同时，通过配置开关支持一键平滑切换。
 

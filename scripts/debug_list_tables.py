@@ -10,7 +10,7 @@ async def list_tables():
     port = int(os.getenv("MYSQL_PORT", 3306))
     user = os.getenv("MYSQL_USER", "root")
     password = os.getenv("MYSQL_PASSWORD", "")
-    db = os.getenv("MYSQL_DB", "yunshu_ai_agent_platform")
+    db = os.getenv("MYSQL_DB", "nanzi_ai_agent_platform")
 
     try:
         pool = await aiomysql.create_pool(

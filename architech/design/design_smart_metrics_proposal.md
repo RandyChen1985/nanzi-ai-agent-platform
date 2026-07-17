@@ -57,7 +57,7 @@
 ### 输入 (Prompt Context)
 ```yaml
 tables:
-  - name: ck_fact_yunshu_resroom_hbase
+  - name: ck_fact_nanzi_resroom_hbase
     columns:
       - name: jfmc (机房名称)
       - name: gxqy (管辖区域)
@@ -70,7 +70,7 @@ tables:
   {
     "name": "room_distribution_by_region",
     "display_name": "机房辖区分布",
-    "calculation": "SELECT gxqy, count(1) as total FROM ck_fact_yunshu_resroom_hbase GROUP BY gxqy",
+    "calculation": "SELECT gxqy, count(1) as total FROM ck_fact_nanzi_resroom_hbase GROUP BY gxqy",
     "description": "统计不同管辖区域内的机房数量",
     "unit": "个",
     "type": "dimension"
@@ -78,7 +78,7 @@ tables:
   {
     "name": "total_racks",
     "display_name": "机柜总规模",
-    "calculation": "SELECT sum(jgzs) FROM ck_fact_yunshu_resroom_hbase",
+    "calculation": "SELECT sum(jgzs) FROM ck_fact_nanzi_resroom_hbase",
     "description": "所有机房的机柜设计总数",
     "unit": "个",
     "type": "measure"

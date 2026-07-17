@@ -17,7 +17,7 @@
   - 处理 `UPDATE_CONTEXT` 以更新本地状态。
   - 处理 `RESET_SESSION` 以重置会话。
   - 处理 `SEND_COMMAND` 以触发指令。
-  - 挂载时发送 `YUNSHU_WIDGET_READY`。
+  - 挂载时发送 `NANZI_WIDGET_READY`。
 
 - [x] **实现上下文注入 (Context Injection Support)**
   - 更新 API 调用逻辑，将 `injected_context` 包含在请求中。

@@ -152,7 +152,7 @@ class McpClientService:
                 await cls._direct_http_rpc(session_mgr, "initialize", {
                     "protocolVersion": "2024-11-05",
                     "capabilities": {"tools": {}},
-                    "clientInfo": {"name": "yunshu-ai-agent", "version": "1.0.0"}
+                    "clientInfo": {"name": "nanzi-ai-agent", "version": "1.0.0"}
                 })
                 await cls._direct_http_rpc(session_mgr, "notifications/initialized", {}, is_notification=True)
             
@@ -166,7 +166,7 @@ class McpClientService:
         await cls._direct_http_rpc(session_mgr, "initialize", {
             "protocolVersion": "2024-11-05",
             "capabilities": {"tools": {}},
-            "clientInfo": {"name": "yunshu-ai-agent", "version": "1.0.0"},
+            "clientInfo": {"name": "nanzi-ai-agent", "version": "1.0.0"},
         })
         await cls._direct_http_rpc(
             session_mgr,
@@ -223,7 +223,7 @@ class McpClientService:
                 await cls._direct_http_rpc(session_mgr, "initialize", {
                     "protocolVersion": "2024-11-05",
                     "capabilities": {"tools": {}},
-                    "clientInfo": {"name": "yunshu", "version": "1.0.0"}
+                    "clientInfo": {"name": "nanzi", "version": "1.0.0"}
                 })
                 await cls._direct_http_rpc(session_mgr, "notifications/initialized", {}, is_notification=True)
 
@@ -459,7 +459,7 @@ class McpClientService:
                 if hasattr(annotations, "model_dump"):
                     annotations = annotations.model_dump(mode="json")
                 if isinstance(annotations, dict) and annotations:
-                    schema_payload["x-yunshu-mcp-annotations"] = annotations
+                    schema_payload["x-nanzi-mcp-annotations"] = annotations
                 full_name = f"{server.server_name}:{t_name}"
                 stmt = select(McpToolCache).where(McpToolCache.server_id == server_id, McpToolCache.tool_name == full_name)
                 existing = (await db.execute(stmt)).scalar_one_or_none()

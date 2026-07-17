@@ -19,7 +19,7 @@ def convert_openapi_to_postman(openapi_schema):
             "name": openapi_schema.get("info", {}).get("title", "API Collection"),
             "description": openapi_schema.get("info", {}).get("description", ""),
             "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
-            "_exporter_id": "yunshu-api-exporter"
+            "_exporter_id": "nanzi-api-exporter"
         },
         "item": [],
         "auth": {
@@ -161,7 +161,7 @@ def main():
         sys.exit(1)
     
     # Save to file
-    output_file = "yunshu_api.postman_collection.json"
+    output_file = "nanzi_api.postman_collection.json"
     print(f"\n3. 保存到文件: {output_file}...")
     try:
         with open(output_file, "w", encoding="utf-8") as f:

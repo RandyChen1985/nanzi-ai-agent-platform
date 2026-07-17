@@ -18,10 +18,10 @@ def load_apply_sql_module():
 
 def test_parse_args_requires_explicit_database_and_ignores_env(monkeypatch):
     module = load_apply_sql_module()
-    monkeypatch.setenv("MYSQL_DB", "yunshu_ai_agent_platform")
+    monkeypatch.setenv("MYSQL_DB", "nanzi_ai_agent_platform")
 
     with pytest.raises(SystemExit):
-        module.parse_args(["db-prod/V0-init_yunshu_ai_agent_metadata.sql"])
+        module.parse_args(["db-prod/V0-init_nanzi_ai_agent_metadata.sql"])
 
 
 def test_split_sql_skips_database_switching_statements():
@@ -30,8 +30,8 @@ def test_split_sql_skips_database_switching_statements():
     statements = module.split_sql_statements(
         """
         SET NAMES utf8mb4;
-        CREATE DATABASE IF NOT EXISTS yunshu_ai_agent_platform;
-        USE yunshu_ai_agent_platform;
+        CREATE DATABASE IF NOT EXISTS nanzi_ai_agent_platform;
+        USE nanzi_ai_agent_platform;
         CREATE TABLE ai_agent_users (id BIGINT PRIMARY KEY);
         """
     )
@@ -49,15 +49,15 @@ def test_confirmation_rejects_non_yes(monkeypatch, capsys):
         port=3306,
         user="root",
         password="secret",
-        database="yunshu_ai_agent_platform_init_test",
+        database="nanzi_ai_agent_platform_init_test",
     )
     monkeypatch.setattr("builtins.input", lambda _prompt: "no")
 
     with pytest.raises(SystemExit):
-        module.confirm_execution(config, "db-prod/V0-init_yunshu_ai_agent_metadata.sql")
+        module.confirm_execution(config, "db-prod/V0-init_nanzi_ai_agent_metadata.sql")
 
     out = capsys.readouterr().out
-    assert "yunshu_ai_agent_platform_init_test" in out
+    assert "nanzi_ai_agent_platform_init_test" in out
     assert "secret" not in out
 
 

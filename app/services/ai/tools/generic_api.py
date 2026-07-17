@@ -103,7 +103,7 @@ class GenericApiToolFactory:
             args_schema=args_schema
         )
         declared_types = set()
-        for value in schema_def.get("x-yunshu-evidence-types") or []:
+        for value in schema_def.get("x-nanzi-evidence-types") or []:
             try:
                 declared_types.add(EvidenceType(value))
             except (TypeError, ValueError):
@@ -113,7 +113,7 @@ class GenericApiToolFactory:
         elif str(tool_config.method or "").strip().upper() == "GET":
             tool.evidence_types = frozenset({EvidenceType.EXTERNAL_TOOL})
         if getattr(tool, "evidence_types", None):
-            declared_policy = schema_def.get("x-yunshu-evidence-policy")
+            declared_policy = schema_def.get("x-nanzi-evidence-policy")
             tool.evidence_policy = (
                 declared_policy
                 if declared_policy in {"non_empty", "structured_success", "allow_empty_success"}

@@ -1,12 +1,12 @@
 version: "1.0"
-domain: "Yunshu_Resources"
-description: "云枢资产与动环监控基础资源元数据 (Generated from CLICKHOUSE_TABLES.md)"
+domain: "NanZi_Resources"
+description: "南孜资产与动环监控基础资源元数据 (Generated from CLICKHOUSE_TABLES.md)"
 
 entities:
   # ---------------------------------------------------------
-  # 1. 设备点位事实表 (1.1 CK_FACT_YUNSHU_DEVICEPOINT_HBASE)
+  # 1. 设备点位事实表 (1.1 CK_FACT_NANZI_DEVICEPOINT_HBASE)
   # ---------------------------------------------------------
-  - name: "yovole_dm_clickhouse_prod.ck_fact_yunshu_devicepoint_hbase"
+  - name: "yovole_dm_clickhouse_prod.ck_fact_nanzi_devicepoint_hbase"
     term: "设备点位表"
     description: "存储设备具体的监控点位信息，如电压、电流、开关状态的具体测点。"
     synonyms: ["Device Point", "测点", "监控点"]
@@ -23,12 +23,12 @@ entities:
       - name: "jf"
         term: "所属机房ID"
         description: "关联机房表"
-        foreign_key: "yovole_dm_clickhouse_prod.ck_fact_yunshu_resroom_hbase.rowkey"
+        foreign_key: "yovole_dm_clickhouse_prod.ck_fact_nanzi_resroom_hbase.rowkey"
 
       - name: "jjbm"
         term: "所属机柜ID"
         description: "关联机架表"
-        foreign_key: "yovole_dm_clickhouse_prod.ck_fact_yunshu_resjj_hbase.rowkey"
+        foreign_key: "yovole_dm_clickhouse_prod.ck_fact_nanzi_resjj_hbase.rowkey"
 
       - name: "dwlx"
         term: "点位类型"
@@ -43,9 +43,9 @@ entities:
         description: "该点位所属的设备名称"
 
   # ---------------------------------------------------------
-  # 2. 机架事实表 (1.2 CK_FACT_YUNSHU_RESJJ_HBASE)
+  # 2. 机架事实表 (1.2 CK_FACT_NANZI_RESJJ_HBASE)
   # ---------------------------------------------------------
-  - name: "yovole_dm_clickhouse_prod.ck_fact_yunshu_resjj_hbase"
+  - name: "yovole_dm_clickhouse_prod.ck_fact_nanzi_resjj_hbase"
     term: "机柜表"
     description: "数据中心内的物理机柜，管理空间租赁和电力分配。"
     synonyms: ["机架", "Rack", "Cabinet", "机位"]
@@ -62,7 +62,7 @@ entities:
       - name: "jfmc"
         term: "所属机房ID"
         description: "关联机房表"
-        foreign_key: "yovole_dm_clickhouse_prod.ck_fact_yunshu_resroom_hbase.rowkey"
+        foreign_key: "yovole_dm_clickhouse_prod.ck_fact_nanzi_resroom_hbase.rowkey"
 
       - name: "jjzt"
         term: "机柜状态"
@@ -87,9 +87,9 @@ entities:
         description: "所属业务单元"
 
   # ---------------------------------------------------------
-  # 3. 机房事实表 (1.3 CK_FACT_YUNSHU_RESROOM_HBASE)
+  # 3. 机房事实表 (1.3 CK_FACT_NANZI_RESROOM_HBASE)
   # ---------------------------------------------------------
-  - name: "yovole_dm_clickhouse_prod.ck_fact_yunshu_resroom_hbase"
+  - name: "yovole_dm_clickhouse_prod.ck_fact_nanzi_resroom_hbase"
     term: "机房表"
     description: "机房物理空间信息。"
     synonyms: ["IDC机房", "Room", "DataCenter"]
@@ -209,22 +209,22 @@ entities:
         description: "告警发生的物理位置路径"
 
 relationships:
-  - source: "yovole_dm_clickhouse_prod.ck_fact_yunshu_devicepoint_hbase.jf"
-    target: "yovole_dm_clickhouse_prod.ck_fact_yunshu_resroom_hbase.rowkey"
+  - source: "yovole_dm_clickhouse_prod.ck_fact_nanzi_devicepoint_hbase.jf"
+    target: "yovole_dm_clickhouse_prod.ck_fact_nanzi_resroom_hbase.rowkey"
     type: "many_to_one"
     description: "点位位于某机房"
 
-  - source: "yovole_dm_clickhouse_prod.ck_fact_yunshu_devicepoint_hbase.jjbm"
-    target: "yovole_dm_clickhouse_prod.ck_fact_yunshu_resjj_hbase.rowkey"
+  - source: "yovole_dm_clickhouse_prod.ck_fact_nanzi_devicepoint_hbase.jjbm"
+    target: "yovole_dm_clickhouse_prod.ck_fact_nanzi_resjj_hbase.rowkey"
     type: "many_to_one"
     description: "点位位于某机柜（如PDU点位）"
 
-  - source: "yovole_dm_clickhouse_prod.ck_fact_yunshu_resjj_hbase.jfmc"
-    target: "yovole_dm_clickhouse_prod.ck_fact_yunshu_resroom_hbase.rowkey"
+  - source: "yovole_dm_clickhouse_prod.ck_fact_nanzi_resjj_hbase.jfmc"
+    target: "yovole_dm_clickhouse_prod.ck_fact_nanzi_resroom_hbase.rowkey"
     type: "many_to_one"
     description: "机柜归属于机房"
 
   - source: "yovole_dm_clickhouse_prod.ck_fact_donghuan_event_detail_hbase.resource_id"
-    target: "yovole_dm_clickhouse_prod.ck_fact_yunshu_devicepoint_hbase.dwid"
+    target: "yovole_dm_clickhouse_prod.ck_fact_nanzi_devicepoint_hbase.dwid"
     type: "one_to_many"
     description: "告警事件关联到具体设备点位"

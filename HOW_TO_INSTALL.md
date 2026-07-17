@@ -1,12 +1,12 @@
-# 云枢智能体平台部署安装指南 (HOW TO INSTALL)
+# 南孜智能体平台部署安装指南 (HOW TO INSTALL)
 
-本指南旨在指导开发和运维人员在本地开发环境或生产环境下完成 **云枢智能体平台 (Yunshu AI Agent Platform)** 的安装部署、数据库表结构初始化以及常见问题的快速排查。
+本指南旨在指导开发和运维人员在本地开发环境或生产环境下完成 **南孜智能体平台 (NanZi AI Agent Platform)** 的安装部署、数据库表结构初始化以及常见问题的快速排查。
 
 ---
 
 ## 1. 概要 (Overview)
 
-云枢智能体平台是企业级的多智能体编排与数据智能洞察（ChatBI）系统。为了适应不同用户的环境，平台主要提供两套部署安装方案：
+南孜智能体平台是企业级的多智能体编排与数据智能洞察（ChatBI）系统。为了适应不同用户的环境，平台主要提供两套部署安装方案：
 *   **Docker 容器化部署（生产首选，支持离线）**：通过位置参数指定版本号构建 Docker 归档包，可在隔离容器环境下运行并一键部署。
 *   **本地源码开发调试部署（开发首选）**：使用 Python 虚拟环境与 Node.js 宿主机环境，支持前后端热重载实时开发联调。
 
@@ -38,7 +38,7 @@
 1.  **手动创建数据库**：
     登录您的 MySQL 服务，手动创建一个干净的数据库，确保使用 `utf8mb4` 字符集以完美支持中文字符与 Emoji：
     ```sql
-    CREATE DATABASE IF NOT EXISTS `yunshu_ai_agent_platform` CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci;
+    CREATE DATABASE IF NOT EXISTS `nanzi_ai_agent_platform` CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci;
     ```
 
 2.  **执行结构自动初始化（提供以下两种途径）**：
@@ -78,7 +78,7 @@
         ./db-prod/apply-sql-native.sh db-prod/INIT-USER-ADMIN.sql
         ```
 
-详细的库表结构说明，请参考：[db-prod/README.md](file:///Users/chenxiaolong/资料/有孚网络/1云枢中台/yovole-yunshu-ai-agent-platform/db-prod/README.md)。
+详细的库表结构说明，请参考：[db-prod/README.md](file:///Users/chenxiaolong/资料/有孚网络/1南孜中台/yovole-nanzi-ai-agent-platform/db-prod/README.md)。
 
 ---
 
@@ -88,7 +88,7 @@
 1.  **获取离线镜像包（提供以下两种途径）**：
 
     *   **途径一：直接下载官方预编译镜像包（推荐，最便捷）**
-        直接前往 [GitHub Releases](https://github.com/RandyChen1985/yunshu-ai-agent-platform/releases) 页面，下载对应版本以及适合您服务器 CPU 架构（如 `linux-amd64` / `linux-arm64`）的离线 Docker 镜像归档 tar 包。
+        直接前往 [GitHub Releases](https://github.com/RandyChen1985/nanzi-ai-agent-platform/releases) 页面，下载对应版本以及适合您服务器 CPU 架构（如 `linux-amd64` / `linux-arm64`）的离线 Docker 镜像归档 tar 包。
         
     *   **途径二：本地自行编译并导出镜像包（适合二次开发与定制）**
         执行入口构建脚本时，**必须显式在第一位传入版本号参数**（如 `1.0.0`）：
@@ -104,12 +104,12 @@
         # 仅在本机试跑调试（原生架构）
         ./build_native.sh 1.0.0
         ```
-        构建完成后，带版本号与平台架构后缀的镜像 tar 归档包将固定生成在 `docker/release/` 目录下（例如 `yunshu-ai-agent_1.0.0_linux-amd64_YYYYMMDD.tar`）。
+        构建完成后，带版本号与平台架构后缀的镜像 tar 归档包将固定生成在 `docker/release/` 目录下（例如 `nanzi-ai-agent_1.0.0_linux-amd64_YYYYMMDD.tar`）。
 
 2.  **载入离线镜像包**：
     将下载或自行编译生成的镜像 tar 包拷贝到目标运行服务器上，执行以下命令载入镜像：
     ```bash
-    docker load -i yunshu-ai-agent_1.0.0_linux-amd64_YYYYMMDD.tar
+    docker load -i nanzi-ai-agent_1.0.0_linux-amd64_YYYYMMDD.tar
     ```
 3.  **准备容器环境变量配置文件及 Docker Compose 编排调整**：
 
@@ -122,25 +122,25 @@
         ```
         *注：因容器是网络隔离的沙箱，`MYSQL_HOST` 与 `REDIS_HOST` 严禁配置为 `localhost` 或 `127.0.0.1`，必须设置为宿主机的局域网 IP（在 Mac 系统上可通过 `ipconfig getifaddr en0` 查询，或使用 `host.docker.internal`）。*
 
-    *   **检查与修改 Docker Compose 编排文件（[docker-compose.ai-agent.yml](file:///Users/chenxiaolong/资料/有孚网络/1云枢中台/yovole-yunshu-ai-agent-platform/docker/docker-compose.ai-agent.yml)）**：
+    *   **检查与修改 Docker Compose 编排文件（[docker-compose.ai-agent.yml](file:///Users/chenxiaolong/资料/有孚网络/1南孜中台/yovole-nanzi-ai-agent-platform/docker/docker-compose.ai-agent.yml)）**：
         在启动前，您可以根据实际运行环境修改该配置文件：
-        1.  **镜像版本校准**：YAML 中默认使用 `image: yunshu-ai-agent:latest`。如果您下载或编译出来的镜像是带具体版本号的（如 `yunshu-ai-agent:1.0.0`），您需要将 YAML 中 `image:` 指向对应标签；或直接在终端为该镜像重新打上 `latest` 标签，即可免除文件修改：
+        1.  **镜像版本校准**：YAML 中默认使用 `image: nanzi-ai-agent:latest`。如果您下载或编译出来的镜像是带具体版本号的（如 `nanzi-ai-agent:1.0.0`），您需要将 YAML 中 `image:` 指向对应标签；或直接在终端为该镜像重新打上 `latest` 标签，即可免除文件修改：
             ```bash
-            docker tag yunshu-ai-agent:1.0.0 yunshu-ai-agent:latest
+            docker tag nanzi-ai-agent:1.0.0 nanzi-ai-agent:latest
             ```
-        2.  **Oracle 客户端挂载卷调整（仅当需要直连 Oracle 数据库时）**：请根据宿主机上 Oracle Instant Client 实际物理存放路径，将 `volumes` 下的 `/app/yunshu-aiagent/lib/instantclient_19_30` 替换为宿主机对应的真实目录。
+        2.  **Oracle 客户端挂载卷调整（仅当需要直连 Oracle 数据库时）**：请根据宿主机上 Oracle Instant Client 实际物理存放路径，将 `volumes` 下的 `/app/nanzi-aiagent/lib/instantclient_19_30` 替换为宿主机对应的真实目录。
             *   *低版本 Oracle 数据库兼容提示*：若需要连接低版本 Oracle（如 Oracle 11g 或更低版本），Python 的默认 Thin 模式无法兼容，**必须启用 Thick 模式**（即在 `.env` 中设置 `USE_ORACLE_THICK_MODE=1`），并在此处正确挂载兼容该低版本 Oracle 的物理客户端目录。如果您的智能体不需要操作 Oracle 数据库，此挂载卷配置可直接保留默认或予以注释。
 4.  **一键启动与停止服务**：
     平台封装了高内聚的容器启动管理脚本，能自动完成冲突校验与状态检测：
     ```bash
     # 启动 API 容器
-    ./start-yunshu-ai-agent.sh
+    ./start-nanzi-ai-agent.sh
     
     # 停止并移除容器
-    ./stop-yunshu-ai-agent.sh
+    ./stop-nanzi-ai-agent.sh
     ```
 
-详细的 Docker 编排配置，请参考：[docker/README.md](file:///Users/chenxiaolong/资料/有孚网络/1云枢中台/yovole-yunshu-ai-agent-platform/docker/README.md)。
+详细的 Docker 编排配置，请参考：[docker/README.md](file:///Users/chenxiaolong/资料/有孚网络/1南孜中台/yovole-nanzi-ai-agent-platform/docker/README.md)。
 
 ---
 
@@ -176,7 +176,7 @@
 *   **Swagger 接口文档**：`http://localhost:8001/docs`
 
 ### 🔑 首次登录指引
-1.  云枢系统后台默认采用 **仅 API Key 认证** 的安全规则。
+1.  南孜系统后台默认采用 **仅 API Key 认证** 的安全规则。
 2.  若您在初始化阶段执行过 `db-prod/INIT-USER-ADMIN.sql` 脚本，平台会预置以下默认管理员凭证：
     *   **默认用户名**：`admin`
     *   **默认管理员 API Key**：`5BYfsKWhU_Cfx83cuo8E0kd4AtEhlUHDVlKwwR2kN-c`
@@ -195,7 +195,7 @@
 
 ### 5.2 RAGFlow 配置 (RAGFlow Integration)
 *   **API 地址 (API URL)**：在【RAGFlow 配置】处，输入您已部署好的 RAGFlow 服务接口地址（注意在 Docker 部署下请写宿主机或局域网 IP，避免使用 localhost）。
-*   **接口密钥 (API Key)**：填入在 RAGFlow 控制台中为知识库应用生成的 API Token，使得云枢平台能正常唤醒、同步非结构化知识库并为 ChatBI 数据分析提供文档参考。
+*   **接口密钥 (API Key)**：填入在 RAGFlow 控制台中为知识库应用生成的 API Token，使得南孜平台能正常唤醒、同步非结构化知识库并为 ChatBI 数据分析提供文档参考。
 
 ### 5.3 数据源管理 (Data Sources)
 *   若需使用 ChatBI 智能数据问答与图表可视化，请在【数据源管理】中添加您的业务数据库连接（支持 MySQL、ClickHouse、Oracle 等）。

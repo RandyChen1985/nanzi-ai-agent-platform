@@ -17,16 +17,16 @@ SET NAMES utf8mb4 COLLATE utf8mb4_unicode_ci;
 
 -- 统一的“本轮请求分类”块（K1/K2/K3）。\n 在 MySQL 字符串字面量中解析为真实换行。
 -- 使用 _utf8mb4 字符集前缀，避免与列 utf8mb4 混用时触发 #3854。
-SET @yunshu_turn_classify_block = _utf8mb4'> 🧭 **本轮请求分类（先判类，再裁剪流程）**：在执行任何动作前，先判断用户本轮属于以下哪一类：\n> - **K1 新数据查询**：要查询/统计新的业务数据（新指标、新条件、新时间范围、切换数据集等）。→ 严格执行下文标准工作流：`get_dataset_schema` → 构建 SQL → `execute_sql_query` → 汇总，不得跳步。\n> - **K2 对上一轮结果的纯加工**：可视化 / 画图 / 换图形 / 分析 / 总结 / 解读"刚才、上面的结果"，且无新增查询对象或条件。→ 直接复用上一轮结构化结果，**禁止**重新检索 Schema 或执行 SQL。\n> - **K3 对已有上下文的动作**：基于已有对话 / 上一轮结果做"保存或导出结果、发送、记住偏好、把流程沉淀为技能"等管理类动作，本身**不需要查询新数据**。→ **禁止**机械重跑 `get_dataset_schema` / `execute_sql_query`；应直接调用对应工具（如 `create_skills`、写文件、记忆等）完成，或基于上下文直接作答。\n> 仅 **K1** 适用下文"禁止跳过元数据查询 / 禁止直接回答"等强制护栏；**K2、K3 属例外，不受其约束**。';
+SET @nanzi_turn_classify_block = _utf8mb4'> 🧭 **本轮请求分类（先判类，再裁剪流程）**：在执行任何动作前，先判断用户本轮属于以下哪一类：\n> - **K1 新数据查询**：要查询/统计新的业务数据（新指标、新条件、新时间范围、切换数据集等）。→ 严格执行下文标准工作流：`get_dataset_schema` → 构建 SQL → `execute_sql_query` → 汇总，不得跳步。\n> - **K2 对上一轮结果的纯加工**：可视化 / 画图 / 换图形 / 分析 / 总结 / 解读"刚才、上面的结果"，且无新增查询对象或条件。→ 直接复用上一轮结构化结果，**禁止**重新检索 Schema 或执行 SQL。\n> - **K3 对已有上下文的动作**：基于已有对话 / 上一轮结果做"保存或导出结果、发送、记住偏好、把流程沉淀为技能"等管理类动作，本身**不需要查询新数据**。→ **禁止**机械重跑 `get_dataset_schema` / `execute_sql_query`；应直接调用对应工具（如 `create_skills`、写文件、记忆等）完成，或基于上下文直接作答。\n> 仅 **K1** 适用下文"禁止跳过元数据查询 / 禁止直接回答"等强制护栏；**K2、K3 属例外，不受其约束**。';
 
 -- 历史遗留的旧版“元操作例外”单行说明（若此前手动跑过旧版 V69 则存在），整体替换为新版分类块。
-SET @yunshu_old_meta_note = _utf8mb4'> ⚙️ **元操作例外 (Meta-Action Exception)**：当用户请求的是基于**已有对话/上一轮结果**的"管理类操作"（例如：创建技能、保存为技能或模板、把流程固定下来、记住某项偏好），且本身**不需要查询新的业务数据**时，禁止机械地重新执行 `get_dataset_schema` / `execute_sql_query`。应直接基于已有上下文完成，或调用对应的管理工具（如 `create_skills`）。这类请求不属于数据查询，**不受**下文"禁止直接回答 / 禁止跳过元数据查询"等约束。';
+SET @nanzi_old_meta_note = _utf8mb4'> ⚙️ **元操作例外 (Meta-Action Exception)**：当用户请求的是基于**已有对话/上一轮结果**的"管理类操作"（例如：创建技能、保存为技能或模板、把流程固定下来、记住某项偏好），且本身**不需要查询新的业务数据**时，禁止机械地重新执行 `get_dataset_schema` / `execute_sql_query`。应直接基于已有上下文完成，或调用对应的管理工具（如 `create_skills`）。这类请求不属于数据查询，**不受**下文"禁止直接回答 / 禁止跳过元数据查询"等约束。';
 
 SET @dataset_menu = _utf8mb4'{dataset_menu}';
 
 -- 1) 已存在旧版“元操作例外”说明：替换为新版 K1/K2/K3 分类块。
 UPDATE `ai_agent_versions`
-SET `system_prompt` = REPLACE(`system_prompt`, @yunshu_old_meta_note, @yunshu_turn_classify_block)
+SET `system_prompt` = REPLACE(`system_prompt`, @nanzi_old_meta_note, @nanzi_turn_classify_block)
 WHERE `agent_id` = 'sys-agent-chatbi'
   AND `system_prompt` LIKE '%元操作例外%'
   AND `system_prompt` NOT LIKE '%本轮请求分类%';
@@ -36,7 +36,7 @@ UPDATE `ai_agent_versions`
 SET `system_prompt` = REPLACE(
     `system_prompt`,
     @dataset_menu,
-    CONCAT(@dataset_menu, _utf8mb4'\n\n', @yunshu_turn_classify_block)
+    CONCAT(@dataset_menu, _utf8mb4'\n\n', @nanzi_turn_classify_block)
 )
 WHERE `agent_id` = 'sys-agent-chatbi'
   AND `system_prompt` LIKE '%{dataset_menu}%'

@@ -241,10 +241,10 @@ class LongTermMemoryService:
     """
     Manages Long-Term Memory (LTM) in Redis.
     Uses Redis HASH to store user preferences, core facts, and profiles.
-    Key pattern: yunshu:agent:ltm:{user_id}
+    Key pattern: nanzi:agent:ltm:{user_id}
     """
     
-    KEY_PREFIX = "yunshu:agent:ltm"
+    KEY_PREFIX = "nanzi:agent:ltm"
 
     def _get_key(self, user_id: str) -> str:
         uid = str(user_id) if user_id else "anonymous"

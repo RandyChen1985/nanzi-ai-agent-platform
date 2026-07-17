@@ -3,7 +3,7 @@
 
 CREATE TABLE IF NOT EXISTS meta_datasets (
     id INT AUTO_INCREMENT PRIMARY KEY,
-    name VARCHAR(100) NOT NULL COMMENT '数据集名称，如 Yunshu_Resources',
+    name VARCHAR(100) NOT NULL COMMENT '数据集名称，如 NanZi_Resources',
     display_name VARCHAR(100) COMMENT '显示名称',
     description TEXT COMMENT '详细描述：用于帮助 Agent 理解该数据集包含什么业务内容',
     tags JSON COMMENT '标签列表：辅助检索和分类，如 ["资产", "基础信息"]',

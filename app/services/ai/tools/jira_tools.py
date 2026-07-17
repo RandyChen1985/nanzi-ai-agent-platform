@@ -44,7 +44,7 @@ class JiraSearchInput(BaseModel):
     jql: str = Field(description="The JQL query string. E.g., 'project = OPS AND status = Open'")
 
 class JiraCreateIssueInput(BaseModel):
-    project_key: str = Field(description="Project Key (e.g., 'OPS', 'YUNSHU').")
+    project_key: str = Field(description="Project Key (e.g., 'OPS', 'NANZI').")
     summary: str = Field(description="Brief title of the issue.")
     description: str = Field(description="Detailed description of the task or bug.")
     issue_type: str = Field(default="Task", description="Issue Type: 'Task', 'Bug', 'Story'. Default is 'Task'.")

@@ -1,6 +1,6 @@
 # 实现计划 (Implementation Plan) - 艾宾浩斯长期记忆遗忘曲线与异步记忆降噪
 
-本计划定义了“云枢智能体平台”长期记忆（LTM）召回动态重排与后台降噪的详细开发步骤。
+本计划定义了“南孜智能体平台”长期记忆（LTM）召回动态重排与后台降噪的详细开发步骤。
 
 ---
 
@@ -17,12 +17,12 @@
 ## 2. 准备怎么搞 (How)
 
 ### 涉及修改的文件：
-1. **[config.py](file:///Users/chenxiaolong/workspace/yovole-yunshu-ai-agent-platform/app/core/config.py)** (配置项定义)
-2. **[memory_index_service.py](file:///Users/chenxiaolong/workspace/yovole-yunshu-ai-agent-platform/app/services/ai/memory_index_service.py)** (记忆召回、聚类与降噪管道)
-3. **[scheduler_service.py](file:///Users/chenxiaolong/workspace/yovole-yunshu-ai-agent-platform/app/services/ai/scheduler_service.py)** (凌晨 3:00 定时任务注册与 Redis 锁保障)
-4. **[MemoryManagement.vue](file:///Users/chenxiaolong/workspace/yovole-yunshu-ai-agent-platform/frontend/src/views/MemoryManagement.vue)** (前端服务配置渲染挂载)
-5. **[tests/test_memory_ebbinghaus_consolidation.py](file:///Users/chenxiaolong/workspace/yovole-yunshu-ai-agent-platform/tests/test_memory_ebbinghaus_consolidation.py)** (新增的单元测试)
-6. **[tests/CHECKLIST.md](file:///Users/chenxiaolong/workspace/yovole-yunshu-ai-agent-platform/tests/CHECKLIST.md)** (自动化测试验收清单)
+1. **[config.py](file:///Users/chenxiaolong/workspace/yovole-nanzi-ai-agent-platform/app/core/config.py)** (配置项定义)
+2. **[memory_index_service.py](file:///Users/chenxiaolong/workspace/yovole-nanzi-ai-agent-platform/app/services/ai/memory_index_service.py)** (记忆召回、聚类与降噪管道)
+3. **[scheduler_service.py](file:///Users/chenxiaolong/workspace/yovole-nanzi-ai-agent-platform/app/services/ai/scheduler_service.py)** (凌晨 3:00 定时任务注册与 Redis 锁保障)
+4. **[MemoryManagement.vue](file:///Users/chenxiaolong/workspace/yovole-nanzi-ai-agent-platform/frontend/src/views/MemoryManagement.vue)** (前端服务配置渲染挂载)
+5. **[tests/test_memory_ebbinghaus_consolidation.py](file:///Users/chenxiaolong/workspace/yovole-nanzi-ai-agent-platform/tests/test_memory_ebbinghaus_consolidation.py)** (新增的单元测试)
+6. **[tests/CHECKLIST.md](file:///Users/chenxiaolong/workspace/yovole-nanzi-ai-agent-platform/tests/CHECKLIST.md)** (自动化测试验收清单)
 
 ### 具体修改步骤：
 

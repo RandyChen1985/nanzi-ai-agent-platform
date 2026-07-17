@@ -8,7 +8,7 @@ sequenceDiagram
     participant Widget as IFrame 组件 (AI 平台)
     
     Host->>Widget: 加载 IFrame (src=/embed/chat)
-    Widget-->>Host: postMessage { type: 'YUNSHU_WIDGET_READY' }
+    Widget-->>Host: postMessage { type: 'NANZI_WIDGET_READY' }
     
     Note over Host, Widget: 握手阶段 (Handshake Phase)
     
@@ -28,7 +28,7 @@ sequenceDiagram
 
 ## 2. 通信协议 (Communication Protocol)
 
-所有消息必须包含 `type` 字段，且建议包含 `source: 'yunshu-agent-embed'` 以便区分。
+所有消息必须包含 `type` 字段，且建议包含 `source: 'nanzi-agent-embed'` 以便区分。
 **重要**：所有消息推荐携带 `instance_id`（如果在 URL 或 初始化时提供了），以支持多实例场景。
 
 ### 2.1 宿主发送给组件 (Host to Widget - Downstream)
@@ -45,7 +45,7 @@ sequenceDiagram
 
 | 类型 (Type) | 载荷 (Payload) | 说明 (Description) |
 |---|---|---|
-| `YUNSHU_WIDGET_READY` | - | IFrame JS 加载完毕，等待初始化。 |
+| `NANZI_WIDGET_READY` | - | IFrame JS 加载完毕，等待初始化。 |
 | `INIT_SUCCESS` | - | 鉴权成功，连接建立。 |
 | `INIT_FAILED` | `{ error: string }` | 鉴权失败。 |
 | `REQUEST_RESIZE` | `{ width: string, height: string, expanded: boolean }` | 请求宿主调整 IFrame 容器大小。 |

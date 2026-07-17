@@ -152,8 +152,8 @@ def test_generic_api_schema_can_declare_precise_evidence_type():
         parameter_schema={
             "type": "object",
             "properties": {},
-            "x-yunshu-evidence-types": ["internal_data"],
-            "x-yunshu-evidence-policy": "allow_empty_success",
+            "x-nanzi-evidence-types": ["internal_data"],
+            "x-nanzi-evidence-policy": "allow_empty_success",
         },
     )
 

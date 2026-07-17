@@ -15,7 +15,7 @@
 ### 2.2 配置项 (Environment Variables)
 - `SSO_API_URL`: SSO 接口地址。
 - `SSO_ACCESS_TOKEN`: 固定访问令牌 `YOVOLE-LAPLACE-API-ACCESS-TOKEN`。
-- `SSO_REQUEST_SYSTEM`: 请求系统标识（默认为 `YUNSHU_AI_AGENT_PLATFORM`）。
+- `SSO_REQUEST_SYSTEM`: 请求系统标识（默认为 `NANZI_AI_AGENT_PLATFORM`）。
 - `SSO_REQUEST_BUSINESS`: 业务标识（默认为 `USER-LOGIN`）。
 
 ### 2.3 接口定义

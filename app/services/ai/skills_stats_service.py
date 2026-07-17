@@ -6,8 +6,8 @@ from app.core.redis import get_redis
 logger = logging.getLogger(__name__)
 
 class SkillsStatsService:
-    TOTAL_KEY = "yunshu:skills:stats:total"
-    DAILY_KEY_PREFIX = "yunshu:skills:stats:daily:"
+    TOTAL_KEY = "nanzi:skills:stats:total"
+    DAILY_KEY_PREFIX = "nanzi:skills:stats:daily:"
     DAILY_TTL = 60 * 86400  # 60 days
 
     async def record_activations(self, skill_ids: Union[Set[str], List[str]]) -> None:

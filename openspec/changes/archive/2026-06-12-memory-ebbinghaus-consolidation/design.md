@@ -1,6 +1,6 @@
 ## Context
 
-当前云枢平台通过 [memory_index_service.py](file:///Users/chenxiaolong/workspace/yovole-yunshu-ai-agent-platform/app/services/ai/memory_index_service.py) 进行用户的长期偏好及会话摘要召回。由于仅仅基于余弦相似度评分，未结合时间敏感度和引用频次，导致了老旧冗余信息的大量堆积。为了让 LTM 召回符合人类遗忘及关联模式，并精简大模型会话上下文 Token，我们需要实现艾宾浩斯动态打分与后台异步合并清理。
+当前南孜平台通过 [memory_index_service.py](file:///Users/chenxiaolong/workspace/yovole-nanzi-ai-agent-platform/app/services/ai/memory_index_service.py) 进行用户的长期偏好及会话摘要召回。由于仅仅基于余弦相似度评分，未结合时间敏感度和引用频次，导致了老旧冗余信息的大量堆积。为了让 LTM 召回符合人类遗忘及关联模式，并精简大模型会话上下文 Token，我们需要实现艾宾浩斯动态打分与后台异步合并清理。
 
 ## Goals / Non-Goals
 
@@ -16,7 +16,7 @@
 ## Decisions
 
 ### 1. 艾宾浩斯重排执行点
-- **选择**：在 [memory_index_service.py](file:///Users/chenxiaolong/workspace/yovole-yunshu-ai-agent-platform/app/services/ai/memory_index_service.py) 中 `_search_summaries_knn` 方法内进行 Python 内存重排。
+- **选择**：在 [memory_index_service.py](file:///Users/chenxiaolong/workspace/yovole-nanzi-ai-agent-platform/app/services/ai/memory_index_service.py) 中 `_search_summaries_knn` 方法内进行 Python 内存重排。
 - **对比**：
   - *方案 A（在 Redis 中通过 Lua 脚本排序）*：计算速度极快，但无法动态读取复杂的系统半衰期配置，且调试和修改极其困难。
   - *方案 B（Python 后置重排，当前选择）*：仅对 FT.SEARCH KNN 粗筛出来的 10 条结果进行 Python 算术计算。对于 $N \le 10$ 的列表排序耗时 $< 0.1\text{ms}$，逻辑清晰易读。

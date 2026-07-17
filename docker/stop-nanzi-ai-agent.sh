@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# 云枢智能体平台 - Docker 停止脚本
+# 南孜智能体平台 - Docker 停止脚本
 
 set -e
 
@@ -8,14 +8,14 @@ SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 cd "$SCRIPT_DIR"
 
 COMPOSE_FILE="docker-compose.ai-agent.yml"
-CONTAINER_NAME="yunshu-ai-agent"
+CONTAINER_NAME="nanzi-ai-agent"
 
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 RED='\033[0;31m'
 NC='\033[0m'
 
-echo -e "${YELLOW}=== 云枢智能体平台 Docker 停止 ===${NC}"
+echo -e "${YELLOW}=== 南孜智能体平台 Docker 停止 ===${NC}"
 
 if docker compose version >/dev/null 2>&1; then
     docker compose -f "$COMPOSE_FILE" down 2>/dev/null || true

@@ -1,6 +1,6 @@
 # 聊天流程说明（Chat Flow）
 
-本文描述云枢智能体平台从用户发消息到看到回复的端到端流程。以 **Embed 对话页**（`EmbedChat.vue`）为主；**Agent 调试页**（`AgentDebug.vue`）逻辑类似，额外支持 `debug_options` 覆盖模型等调试项。
+本文描述南孜智能体平台从用户发消息到看到回复的端到端流程。以 **Embed 对话页**（`EmbedChat.vue`）为主；**Agent 调试页**（`AgentDebug.vue`）逻辑类似，额外支持 `debug_options` 覆盖模型等调试项。
 
 **提示词分层**（`system_prompt` 栈、全局守则、轮次裁剪）见同目录 [PROMPT_LAYERS.md](./PROMPT_LAYERS.md)。目录索引：[README.md](./README.md)。
 
@@ -179,7 +179,7 @@ conversation:{user_id}:{conversation_id}:last_data_result
 **长期记忆 LTM（与会话无关，按用户维度）**
 
 ```text
-yunshu:agent:ltm:{user_id}
+nanzi:agent:ltm:{user_id}
 ```
 
 - 类型：Redis **HASH**，存偏好/facts，由 `LongTermMemoryService` 管理
@@ -272,7 +272,7 @@ sequenceDiagram
 
 - 会话摘要必须含 **`conversation_id`**（与 LIST key 相同），供 `memory_search(scope=history)` 拼 key 拉明细
 - 每日摘要的 `conversation_id` 约定为 `daily:{yyyy-mm-dd}`，用于「今天/昨天/最近」这类跨会话回顾；它是聚合层，不替代会话摘要
-- **全局索引**：`yunshu:idx:memory:session_summary`（代码写死，`PREFIX memory:summary:`），覆盖 session + daily 两类摘要，KNN 语义检索 + `@user_id` TAG 过滤
+- **全局索引**：`nanzi:idx:memory:session_summary`（代码写死，`PREFIX memory:summary:`），覆盖 session + daily 两类摘要，KNN 语义检索 + `@user_id` TAG 过滤
 - **完整规格**：[`docs/superpowers/specs/2026-05-27-memory-search-redis-stack-design.md`](docs/superpowers/specs/2026-05-27-memory-search-redis-stack-design.md)
 
 会话摘要字段示例：
@@ -364,7 +364,7 @@ session summary 写入成功后，会由 `DailySummaryService.refresh_for_date(u
 
 | scope | 数据源 | 返回内容 |
 |-------|--------|----------|
-| `summary` | RediSearch `yunshu:idx:memory:session_summary` + `@user_id` | 有 query 时走 RediSearch KNN；返回 session / daily 摘要的 `conversation_id`、`summary_type`、`title`、`summary`、`last_active`、`score` 等；无 query 时按时间取最近 session 摘要 |
+| `summary` | RediSearch `nanzi:idx:memory:session_summary` + `@user_id` | 有 query 时走 RediSearch KNN；返回 session / daily 摘要的 `conversation_id`、`summary_type`、`title`、`summary`、`last_active`、`score` 等；无 query 时按时间取最近 session 摘要 |
 | `history` | `conversation:{uid}:{cid}:history` | 该会话最近 `limit` 条 user/assistant（脱敏后）；`cid` 必填或默认当前 `AgentContext.conversation_id` |
 | `both` | 先 summary 再 history | 先列相关会话，再对最相关 1 条拉明细（控制总长度） |
 
@@ -393,7 +393,7 @@ session summary 写入成功后，会由 `DailySummaryService.refresh_for_date(u
 
 | Tab | 能力 |
 |-----|------|
-| 服务配置 | `memory_service_configs` 分组表单（总开关 / 摘要开关、Embedding、防抖、TTL 等）；测试 Embedding；检查/创建索引 `yunshu:idx:memory:session_summary`（索引名代码写死，不可配置） |
+| 服务配置 | `memory_service_configs` 分组表单（总开关 / 摘要开关、Embedding、防抖、TTL 等）；测试 Embedding；检查/创建索引 `nanzi:idx:memory:session_summary`（索引名代码写死，不可配置） |
 | 记忆数据 | 默认展示 **每日摘要**，可切换到 **会话摘要**；支持用户、用户名、关键词和日期筛选；daily 详情展示主题/决策/待办/关联会话，会话详情展示结构化摘要与 Redis history；删除按钮只删除 summary，不删除 Redis history（历史由会话/聊天侧流程管理） |
 | 记忆检索测试 | `POST /api/portal/memory/search-test`，与 `memory_search` 同源；支持用户 ID / 用户名 |
 

@@ -1,6 +1,6 @@
 # Docker 部署指南
 
-本目录包含了云枢智能体平台 (Yunshu AI Agent Platform) 的容器化部署配置文件。
+本目录包含了南孜智能体平台 (NanZi AI Agent Platform) 的容器化部署配置文件。
 
 ## 文件说明
 
@@ -15,8 +15,8 @@
 | `install-buildx.sh` | 修复 Homebrew docker + Colima 下 buildx 不可用的问题。 |
 | `_build_common.sh` | 内部公共逻辑，请勿直接调用。 |
 | `README_EN.md` | 英文部署说明。 |
-| `start-yunshu-ai-agent.sh` | 一键启动脚本。自动检查配置并启动 API 容器。 |
-| `stop-yunshu-ai-agent.sh` | 一键停止脚本。停止并移除 API 容器。 |
+| `start-nanzi-ai-agent.sh` | 一键启动脚本。自动检查配置并启动 API 容器。 |
+| `stop-nanzi-ai-agent.sh` | 一键停止脚本。停止并移除 API 容器。 |
 | `.env` | 环境变量配置文件（需从 `../env.example` 复制并修改）。 |
 
 ## 快速开始
@@ -43,7 +43,7 @@ API_SERVICE_LOG_LEVEL=INFO              # 日志级别
 # 数据库连接 (使用宿主机 IP 而非 localhost)
 MYSQL_HOST=192.168.x.x                  # 宿主机 IP 地址
 MYSQL_PORT=3306
-MYSQL_DB=yunshu_ai_agent_platform
+MYSQL_DB=nanzi_ai_agent_platform
 MYSQL_USER=root
 MYSQL_PASSWORD=your_password
 
@@ -84,8 +84,8 @@ cd docker
 
 产物固定输出到 **`docker/release/`** 目录，文件名带版本号与架构后缀，例如：
 
-- `docker/release/yunshu-ai-agent_1.2.0_linux-amd64_20260529.tar`
-- `docker/release/yunshu-ai-agent_1.2.0_linux-arm64_20260529.tar`
+- `docker/release/nanzi-ai-agent_1.2.0_linux-amd64_20260529.tar`
+- `docker/release/nanzi-ai-agent_1.2.0_linux-arm64_20260529.tar`
 
 > **Mac 打 x86 包**：请用 `build_linux_x86.sh`（内部 `docker buildx --platform linux/amd64`），不要用 `build_native.sh`，否则 M 芯片会打出 arm64 镜像，无法在 x86 服务器运行。
 
@@ -110,7 +110,7 @@ cd docker
 
 ```bash
 # 在 docker 目录下执行
-./start-yunshu-ai-agent.sh
+./start-nanzi-ai-agent.sh
 ```
 
 启动脚本会自动：
@@ -148,13 +148,13 @@ docker-compose up -d
 
 ```bash
 # 查看容器状态
-docker ps | grep yunshu-ai-agent
+docker ps | grep nanzi-ai-agent
 
 # 查看启动日志
-docker logs yunshu-ai-agent
+docker logs nanzi-ai-agent
 
 # 实时查看日志
-docker logs -f yunshu-ai-agent
+docker logs -f nanzi-ai-agent
 ```
 
 正常启动后，日志应显示：
@@ -179,7 +179,7 @@ INFO:     Uvicorn running on http://0.0.0.0:8001 (Press CTRL+C to quit)
 **认证方式：仅使用 API Key**
 
 1. 首次使用需要创建管理员 API Key：
-   平台推荐通过运行 `db-prod/INIT-USER-ADMIN.sql` 来初始化默认管理员账号。您可以参考 [db-prod/README.md](file:///Users/chenxiaolong/资料/有孚网络/1云枢中台/yovole-yunshu-ai-agent-platform/db-prod/README.md) 的说明，在项目根目录下通过运行以下部署脚本来完成导入：
+   平台推荐通过运行 `db-prod/INIT-USER-ADMIN.sql` 来初始化默认管理员账号。您可以参考 [db-prod/README.md](file:///Users/chenxiaolong/资料/有孚网络/1南孜中台/yovole-nanzi-ai-agent-platform/db-prod/README.md) 的说明，在项目根目录下通过运行以下部署脚本来完成导入：
    ```bash
    ./db-prod/apply-sql.sh db-prod/INIT-USER-ADMIN.sql
    ```
@@ -210,45 +210,45 @@ curl -X GET "http://localhost:8001/api/v1/query/real-metrics" \
 
 ```bash
 # 启动服务
-./start-yunshu-ai-agent.sh
+./start-nanzi-ai-agent.sh
 
 # 停止服务
-./stop-yunshu-ai-agent.sh
+./stop-nanzi-ai-agent.sh
 
 # 重启服务
-docker restart yunshu-ai-agent
+docker restart nanzi-ai-agent
 
 # 删除容器
-docker rm -f yunshu-ai-agent
+docker rm -f nanzi-ai-agent
 
 # 查看容器状态
-docker ps -a | grep yunshu
+docker ps -a | grep nanzi
 ```
 
 ### 日志查看
 
 ```bash
 # 查看最近 100 行日志
-docker logs yunshu-ai-agent --tail 100
+docker logs nanzi-ai-agent --tail 100
 
 # 实时查看日志
-docker logs -f yunshu-ai-agent
+docker logs -f nanzi-ai-agent
 
 # 查看错误日志
-docker logs yunshu-ai-agent 2>&1 | grep -i error
+docker logs nanzi-ai-agent 2>&1 | grep -i error
 ```
 
 ### 进入容器调试
 
 ```bash
 # 进入容器 Shell
-docker exec -it yunshu-ai-agent bash
+docker exec -it nanzi-ai-agent bash
 
 # 查看环境变量
-docker exec yunshu-ai-agent env | grep MYSQL
+docker exec nanzi-ai-agent env | grep MYSQL
 
 # 测试数据库连接
-docker exec yunshu-ai-agent python -c "from app.core.database import engine; print(engine)"
+docker exec nanzi-ai-agent python -c "from app.core.database import engine; print(engine)"
 ```
 
 ## 故障排查
@@ -261,7 +261,7 @@ docker exec yunshu-ai-agent python -c "from app.core.database import engine; pri
 1. 检查 `.env` 配置是否正确
 2. 确认数据库 Host 使用的是宿主机 IP 而非 localhost
 3. 检查数据库服务是否启动
-4. 查看详细日志：`docker logs yunshu-ai-agent`
+4. 查看详细日志：`docker logs nanzi-ai-agent`
 
 ### 问题 2: 无法访问管理后台
 
@@ -269,7 +269,7 @@ docker exec yunshu-ai-agent python -c "from app.core.database import engine; pri
 
 **解决方法**:
 1. 检查 8001 端口是否被占用：`lsof -ti:8001`
-2. 检查容器状态：`docker ps | grep yunshu-ai-agent`
+2. 检查容器状态：`docker ps | grep nanzi-ai-agent`
 3. 查看容器日志确认启动状态
 
 ### 问题 3: API Key 认证失败

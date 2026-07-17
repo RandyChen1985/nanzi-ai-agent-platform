@@ -7,7 +7,7 @@ PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 cd "$PROJECT_ROOT"
 
 echo "========================================"
-echo "   Yovole Yunshu API Test Runner"
+echo "   Yovole NanZi API Test Runner"
 echo "========================================"
 echo "📂 Project root: $PROJECT_ROOT"
 

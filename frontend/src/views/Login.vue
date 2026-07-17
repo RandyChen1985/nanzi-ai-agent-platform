@@ -34,8 +34,8 @@ const displaySlides = computed(() => {
 const currentSlide = ref(0)
 const slides = [
     {
-        title: '云枢 · 智能体平台',
-        subtitle: 'Yunshu Intelligent Agent Platform',
+        title: '南孜 · 智能体平台',
+        subtitle: 'NanZi Intelligent Agent Platform',
         desc: '企业级多智能体编排 · 7x24 进化的数字大脑',
         features: ['智能编排', '安全管控', '实时分析'],
         gradient: 'from-blue-600/30 via-blue-950/60 to-[#020617]',
@@ -375,7 +375,7 @@ const handleLogin = async () => {
             <div class="mt-3 mx-auto h-px w-14 bg-gradient-to-r from-transparent via-slate-300/40 to-transparent" aria-hidden="true" />
         </div>
         <div v-else class="p-6 text-center text-[10px] text-slate-400 font-mono opacity-40">
-            © 2026 Yunshu Network // CLOUD_PIVOT_AGENT
+            © 2026 NanZi Network // CLOUD_PIVOT_AGENT
         </div>
     </div>
   </div>

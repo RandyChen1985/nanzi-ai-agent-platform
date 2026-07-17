@@ -54,7 +54,7 @@ export const REDIS_KEY_CATEGORIES: RedisKeyCategory[] = [
     description: '会话摘要、长期记忆与防抖状态',
     match: (key) =>
       key.startsWith('memory:') ||
-      key.startsWith('yunshu:agent:ltm:') ||
+      key.startsWith('nanzi:agent:ltm:') ||
       key.startsWith('memory_config:'),
   },
   {
@@ -62,10 +62,10 @@ export const REDIS_KEY_CATEGORIES: RedisKeyCategory[] = [
     label: '向量索引',
     description: '元数据/案例/记忆向量文档',
     match: (key) =>
-      key.startsWith('yunshu:idx:') ||
+      key.startsWith('nanzi:idx:') ||
       key.startsWith('idx:') ||
       key.startsWith('metadata:dataset:') ||
-      key.startsWith('yunshu:example:'),
+      key.startsWith('nanzi:example:'),
   },
   {
     id: 'sql_cache',
@@ -78,7 +78,7 @@ export const REDIS_KEY_CATEGORIES: RedisKeyCategory[] = [
     label: '会话锁',
     description: '并发会话与运行锁',
     match: (key) =>
-      key.startsWith('yunshu:conv_run:') ||
+      key.startsWith('nanzi:conv_run:') ||
       key.startsWith('lock:') ||
       key.includes(':session_lock:'),
   },

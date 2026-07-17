@@ -101,8 +101,8 @@ async def import_metadata():
                 # Source/Target format: "table.column"
                 # But our YAML has "db.table.column" sometimes? 
                 # Let's parse carefully. The YAML examples:
-                # source: "yovole_dm_clickhouse_prod.ck_fact_yunshu_devicepoint_hbase.jf"
-                # target: "yovole_dm_clickhouse_prod.ck_fact_yunshu_resroom_hbase.rowkey"
+                # source: "yovole_dm_clickhouse_prod.ck_fact_nanzi_devicepoint_hbase.jf"
+                # target: "yovole_dm_clickhouse_prod.ck_fact_nanzi_resroom_hbase.rowkey"
                 
                 src_full = rel["source"]
                 tgt_full = rel["target"]

@@ -86,7 +86,7 @@ flowchart TD
 - 工具没有声明证据类型：不签发凭证；
 - 动态 MCP 没有显式类型但名称或描述以查询、检索、获取、读取、查看等只读动作开头：签发 `external_tool`；
 - MCP 标准 `annotations.readOnlyHint=true` 会在同步时持久化并优先作为只读依据；
-- MCP 或 Generic API 可在参数 Schema 中用 `x-yunshu-evidence-types` 和 `x-yunshu-evidence-policy` 声明精确来源；
+- MCP 或 Generic API 可在参数 Schema 中用 `x-nanzi-evidence-types` 和 `x-nanzi-evidence-policy` 声明精确来源；
 - 创建、更新、删除、写入、发送、预订、执行等动作型 MCP 不自动签发读取型事实凭证；
 - 工具执行失败、超时、拒绝或返回错误结构：不签发凭证；
 - MCP `isError`、SDK 异常、Generic API HTTP 4xx/5xx、`[MCP Error]` 和 `[Execution Error]` 均按失败处理；

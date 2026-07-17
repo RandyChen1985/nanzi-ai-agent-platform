@@ -1,6 +1,6 @@
 # Docker Deployment Guide
 
-Container deployment files for **Yunshu AI Agent Platform**.
+Container deployment files for **NanZi AI Agent Platform**.
 
 ## Files
 
@@ -14,8 +14,8 @@ Container deployment files for **Yunshu AI Agent Platform**.
 | `build_native.sh` | Build for host CPU arch, requires version parameter (local testing only) |
 | `install-buildx.sh` | Fix missing/broken `docker buildx` on Homebrew docker + Colima |
 | `_build_common.sh` | Internal shared build logic (do not run directly) |
-| `start-yunshu-ai-agent.sh` | Check config and start the API container |
-| `stop-yunshu-ai-agent.sh` | Stop and remove the API container |
+| `start-nanzi-ai-agent.sh` | Check config and start the API container |
+| `stop-nanzi-ai-agent.sh` | Stop and remove the API container |
 | `.env` | Environment variables (copy from `../env.example`) |
 
 ## Quick start
@@ -46,8 +46,8 @@ cd docker
 
 Artifacts are written to **`docker/release/`**, e.g.:
 
-- `docker/release/yunshu-ai-agent_1.2.0_linux-amd64_20260529.tar`
-- `docker/release/yunshu-ai-agent_1.2.0_linux-arm64_20260529.tar`
+- `docker/release/nanzi-ai-agent_1.2.0_linux-amd64_20260529.tar`
+- `docker/release/nanzi-ai-agent_1.2.0_linux-arm64_20260529.tar`
 
 > On **Apple Silicon Macs** targeting **x86 servers**, use `build_linux_x86.sh`, not `build_native.sh`. The first cross-platform build may run for a long time with little console output while pulling amd64 base images.
 
@@ -63,14 +63,14 @@ Artifacts are written to **`docker/release/`**, e.g.:
 Offline deploy on the target host:
 
 ```bash
-docker load -i docker/release/yunshu-ai-agent_1.2.0_linux-amd64_YYYYMMDD.tar
+docker load -i docker/release/nanzi-ai-agent_1.2.0_linux-amd64_YYYYMMDD.tar
 ```
 
 ### 3. Start services
 
 ```bash
-./start-yunshu-ai-agent.sh
-./stop-yunshu-ai-agent.sh
+./start-nanzi-ai-agent.sh
+./stop-nanzi-ai-agent.sh
 ```
 
 Or manually:
@@ -82,8 +82,8 @@ docker-compose -f docker-compose.ai-agent.yml up -d
 ### 4. Verify
 
 ```bash
-docker ps | grep yunshu-ai-agent
-docker logs -f yunshu-ai-agent
+docker ps | grep nanzi-ai-agent
+docker logs -f nanzi-ai-agent
 ```
 
 - Admin UI: http://localhost:8001/

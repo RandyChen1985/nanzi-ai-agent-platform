@@ -1,7 +1,7 @@
 # 提案：ChatBI 查数模块与流式交互升级 (ChatBI & Streaming Integration)
 
 ## 摘要
-本提案旨在为“云枢・智能体平台”引入两个核心增强功能：
+本提案旨在为“南孜・智能体平台”引入两个核心增强功能：
 1. **ChatBI 核心能力**：通过 LangChain Tools 整合现有的 Data API，实现“自然语言 -> 指标查询 -> 结论生成”的闭环。
 2. **流式交互体验**：将 API V1 升级为流式输出（Streaming），参照 OpenAI 标准提供逐字生成的丝滑体验。
 

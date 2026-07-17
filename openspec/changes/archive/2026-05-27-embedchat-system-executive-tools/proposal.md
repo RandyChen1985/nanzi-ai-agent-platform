@@ -17,7 +17,7 @@
    - 新增 `web_renderer_and_snapshot`（基于 Playwright 的网页渲染与视觉截图工具，配合 Vision LLM 进行识图分析）。
    - 新增 `code_syntax_linter`（代码静态语法与 lint 检查，在写入前确保代码合规性）。
 3. **长期记忆 (Long-Term Memory, LTM) 机制**:
-   - 新增基于 Redis 哈希（Hash）数据结构的长期记忆设计，Key 规范为 `yunshu:agent:ltm:{user_id}`，包含用户个性偏好、核心事实等字段。
+   - 新增基于 Redis 哈希（Hash）数据结构的长期记忆设计，Key 规范为 `nanzi:agent:ltm:{user_id}`，包含用户个性偏好、核心事实等字段。
    - 新增两个记忆工具：`update_user_preference`（智能更新用户偏好）及 `fetch_user_long_term_memory`（主动拉取长期记忆）。
    - 实现 **无感记忆加载管道**：在向大模型发送请求时，自动并发从 Redis 异步读取长期记忆，无感拼接至 System Prompt 头部，保证智能体在后续对话中具备稳定且准确的个性化认知。
 4. **前端工具能力集 UI 重构 (Tools Capability UI Refactoring)**:

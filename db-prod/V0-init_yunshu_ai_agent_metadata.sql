@@ -1,4 +1,4 @@
--- Yunshu AI Agent Platform - Core Schema
+-- NanZi AI Agent Platform - Core Schema
 -- Date: 2025-12-31
 
 SET NAMES utf8mb4;

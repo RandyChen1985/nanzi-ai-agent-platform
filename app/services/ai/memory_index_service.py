@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 SUMMARY_KEY_PREFIX = "memory:summary:"
 # RediSearch 索引名（固定，不可通过 memory_service_configs 修改）
-MEMORY_REDIS_INDEX_NAME = "yunshu:idx:memory:session_summary"
+MEMORY_REDIS_INDEX_NAME = "nanzi:idx:memory:session_summary"
 
 
 def _doc_key(user_id: str, conversation_id: str) -> str:

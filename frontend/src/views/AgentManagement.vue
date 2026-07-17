@@ -1634,7 +1634,7 @@ const formatDate = (dateStr: string) => {
               v-else
               class="px-2 py-0.5 rounded text-[10px] font-bold bg-blue-50 text-blue-600 border border-blue-100 flex items-center"
             >
-              🧠 Yunshu Engine
+              🧠 NanZi Engine
             </span>
 
             <span
@@ -1894,7 +1894,7 @@ const formatDate = (dateStr: string) => {
                       {{ agent.is_system ? 'System' : 'Custom' }}
                     </span>
                     <span class="text-[10px] text-gray-500 bg-gray-100 px-1.5 py-0.5 rounded">
-                      {{ agent.engine_type === 'LOCAL' ? 'Yunshu Engine' : agent.engine_type === 'RAGFLOW' ? 'RAGFlow' : agent.engine_type === 'OPENCLAW' ? 'OpenClaw' : agent.engine_type }}
+                      {{ agent.engine_type === 'LOCAL' ? 'NanZi Engine' : agent.engine_type === 'RAGFLOW' ? 'RAGFlow' : agent.engine_type === 'OPENCLAW' ? 'OpenClaw' : agent.engine_type }}
                     </span>
                   </div>
                 </td>
@@ -2031,7 +2031,7 @@ const formatDate = (dateStr: string) => {
               :class="agentForm.engine_type === 'LOCAL' ? 'bg-blue-50 border-blue-500 shadow-sm' : 'bg-white border-gray-100 hover:border-blue-200'"
             >
               <div class="w-10 h-10 rounded-lg bg-blue-100 flex items-center justify-center text-xl mb-2 group-hover:scale-110 transition-transform">🧠</div>
-              <div class="text-[11px] font-bold" :class="agentForm.engine_type === 'LOCAL' ? 'text-blue-700' : 'text-gray-600'">Yunshu Engine</div>
+              <div class="text-[11px] font-bold" :class="agentForm.engine_type === 'LOCAL' ? 'text-blue-700' : 'text-gray-600'">NanZi Engine</div>
               <div class="text-[9px] text-gray-400 mt-0.5">自主智能体</div>
               <div v-if="agentForm.engine_type === 'LOCAL'" class="absolute -top-1.5 -right-1.5 w-4 h-4 bg-blue-500 text-white rounded-full flex items-center justify-center shadow-sm">
                 <svg class="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7" /></svg>

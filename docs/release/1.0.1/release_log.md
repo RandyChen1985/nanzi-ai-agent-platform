@@ -1,8 +1,8 @@
-# 🎉 Yunshu AI Agent Platform v1.0.1 Release Notes
+# 🎉 NanZi AI Agent Platform v1.0.1 Release Notes
 
-**GitHub Repository**: [RandyChen1985/yunshu-ai-agent-platform](https://github.com/RandyChen1985/yunshu-ai-agent-platform)
+**GitHub Repository**: [RandyChen1985/nanzi-ai-agent-platform](https://github.com/RandyChen1985/nanzi-ai-agent-platform)
 
-v1.0.1 是一次**架构级升级版本**，将 AI 执行层从 LangChain 全面迁移至 [AgentScope](https://github.com/modelscope/agentscope) 原生运行时，并重构 General / ChatBI / Knowledge 三条执行链路。本次变更合并自 [PR #1](https://github.com/RandyChen1985/yunshu-ai-agent-platform/pull/1)（`6a1a1d4` → `40b0c57`），共 **32 个提交**，**162 个文件**，+18104 / -6582 行。
+v1.0.1 是一次**架构级升级版本**，将 AI 执行层从 LangChain 全面迁移至 [AgentScope](https://github.com/modelscope/agentscope) 原生运行时，并重构 General / ChatBI / Knowledge 三条执行链路。本次变更合并自 [PR #1](https://github.com/RandyChen1985/nanzi-ai-agent-platform/pull/1)（`6a1a1d4` → `40b0c57`），共 **32 个提交**，**162 个文件**，+18104 / -6582 行。
 
 ---
 
@@ -145,7 +145,7 @@ cd frontend && npm install && cd ..
 ./dev.sh
 ```
 
-完整部署说明请参考 [HOW_TO_INSTALL.md](https://github.com/RandyChen1985/yunshu-ai-agent-platform/blob/main/HOW_TO_INSTALL.md)。
+完整部署说明请参考 [HOW_TO_INSTALL.md](https://github.com/RandyChen1985/nanzi-ai-agent-platform/blob/main/HOW_TO_INSTALL.md)。
 
 ---
 
@@ -165,7 +165,7 @@ cd frontend && npm install && cd ..
 - [ ] **Embed UI**：`/new` 弹框 Enter/Esc；工具日志 SQL/结果分区；审批模式切换
 - [ ] **回归测试**：`pytest tests/ai/` 全量通过
 
-完整测试清单见 [tests/CHECKLIST.md](https://github.com/RandyChen1985/yunshu-ai-agent-platform/blob/main/tests/CHECKLIST.md)。
+完整测试清单见 [tests/CHECKLIST.md](https://github.com/RandyChen1985/nanzi-ai-agent-platform/blob/main/tests/CHECKLIST.md)。
 
 ---
 
@@ -173,22 +173,22 @@ cd frontend && npm install && cd ..
 
 本项目 v1.0.1 发布版本关联的源码、Docker 镜像资产归档包及配置文件如下：
 
-* 📦 **Source Code (zip)**: `yunshu-ai-agent-platform-1.0.1.zip`
-* 📦 **Source Code (tar.gz)**: `yunshu-ai-agent-platform-1.0.1.tar.gz`
-* 🐳 **Docker Image for Linux amd64 (x86_64)**: `yunshu-ai-agent_1.0.1_linux-amd64_*.tar`
-* 🐳 **Docker Image for Linux arm64 (aarch64)**: `yunshu-ai-agent_1.0.1_linux-arm64_*.tar`
+* 📦 **Source Code (zip)**: `nanzi-ai-agent-platform-1.0.1.zip`
+* 📦 **Source Code (tar.gz)**: `nanzi-ai-agent-platform-1.0.1.tar.gz`
+* 🐳 **Docker Image for Linux amd64 (x86_64)**: `nanzi-ai-agent_1.0.1_linux-amd64_*.tar`
+* 🐳 **Docker Image for Linux arm64 (aarch64)**: `nanzi-ai-agent_1.0.1_linux-arm64_*.tar`
 * ⚙️ **Docker Compose YAML file**: `docker-compose.yml`
 
-🔗 **下载地址**: [GitHub Releases v1.0.1](https://github.com/RandyChen1985/yunshu-ai-agent-platform/releases/tag/1.0.1)
+🔗 **下载地址**: [GitHub Releases v1.0.1](https://github.com/RandyChen1985/nanzi-ai-agent-platform/releases/tag/1.0.1)
 
 ### 🐳 离线/内网环境加载 Docker 镜像
 
 ```bash
 # 1. 加载本地镜像归档
-docker load -i yunshu-ai-agent_1.0.1_linux-amd64_*.tar
+docker load -i nanzi-ai-agent_1.0.1_linux-amd64_*.tar
 
 # 2. 检查是否加载成功
-docker images | grep yunshu-ai-agent
+docker images | grep nanzi-ai-agent
 
 # 3. 利用 docker-compose 快速拉起服务
 docker-compose up -d

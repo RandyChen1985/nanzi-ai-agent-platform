@@ -18,7 +18,7 @@ INSERT IGNORE INTO `memory_service_configs` (`key`, `value`, `description`, `is_
 ('memory_embedding_base_url', '', 'Embedding API Base URL（OpenAI 兼容）；空则回退 llm_base_url', 0),
 ('memory_embedding_api_key', '', 'Embedding API Key；空则回退 llm_api_key', 1),
 ('memory_embedding_model', 'text-embedding-3-small', 'Embedding 模型名称', 0),
-('memory_embedding_dimensions', '1536', '向量维度（变更后需重建 RediSearch 索引；索引名固定 yunshu:idx:memory:session_summary）', 0),
+('memory_embedding_dimensions', '1536', '向量维度（变更后需重建 RediSearch 索引；索引名固定 nanzi:idx:memory:session_summary）', 0),
 ('memory_summary_max_sessions', '50', '每用户最多保留的会话摘要条数', 0),
 ('memory_summary_ttl_days', '30', '会话摘要 Redis 文档 TTL（天）', 0),
 ('memory_history_ttl_days', '7', '会话 history LIST TTL（天）', 0),

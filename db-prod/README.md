@@ -1,6 +1,6 @@
 # 数据库初始化与升级指南
 
-本目录包含云枢 AI Agent 平台生产环境的数据库初始化脚本 (Migrations) 以及部署脚本。
+本目录包含南孜 AI Agent 平台生产环境的数据库初始化脚本 (Migrations) 以及部署脚本。
 在运行初始化或迁移时，如果目标数据库不存在，导入脚本（无论是 Python 版还是纯 Shell 版）均会自动以 `utf8mb4` 字符集创建该数据库，无须您提前建库。
 
 ## 📁 文件结构
@@ -22,7 +22,7 @@
 如果目标数据库不存在，部署脚本在运行时会自动以 `utf8mb4` 字符集创建它。但如果您需要自定义库名或有特殊的初始化字符集要求，可登录您的 MySQL 服务提前手动创建一个干净的数据库：
 
 ```sql
-CREATE DATABASE IF NOT EXISTS `yunshu_ai_agent_platform` CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci;
+CREATE DATABASE IF NOT EXISTS `nanzi_ai_agent_platform` CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci;
 ```
 
 ### 第二步：运行结构初始化脚本

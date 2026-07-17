@@ -140,7 +140,7 @@ async def test_direct_http_tool_call_reinitializes_after_server_loses_session(
         result = await McpClientService.call_remote_tool(
             SERVER_ID,
             "lookup",
-            {"query": "yunshu"},
+            {"query": "nanzi"},
         )
 
     assert result == "ok"

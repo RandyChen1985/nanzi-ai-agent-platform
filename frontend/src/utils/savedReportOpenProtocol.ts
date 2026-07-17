@@ -15,7 +15,7 @@ interface SavedReportOpenTargetInput {
 
 type SavedReportOpenDispatch = (event: CustomEvent<SavedReportOpenRequest>) => unknown;
 
-export const SAVED_REPORT_OPEN_EVENT = "yunshu:open-saved-report";
+export const SAVED_REPORT_OPEN_EVENT = "nanzi:open-saved-report";
 let requestSequence = 0;
 
 export const createSavedReportOpenRequest = (

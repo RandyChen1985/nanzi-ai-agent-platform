@@ -63,12 +63,12 @@ class McpToolFactory:
             args_schema=args_schema
         )
         declared_types = set()
-        for value in schema_def.get("x-yunshu-evidence-types") or []:
+        for value in schema_def.get("x-nanzi-evidence-types") or []:
             try:
                 declared_types.add(EvidenceType(value))
             except (TypeError, ValueError):
                 logger.warning("Ignoring invalid evidence type %r for %s", value, tool_record.tool_name)
-        annotations = schema_def.get("x-yunshu-mcp-annotations") or {}
+        annotations = schema_def.get("x-nanzi-mcp-annotations") or {}
         if annotations.get("readOnlyHint") is False or annotations.get("read_only_hint") is False:
             tool.evidence_inference_disabled = True
         if declared_types:
@@ -76,7 +76,7 @@ class McpToolFactory:
         elif annotations.get("readOnlyHint") is True or annotations.get("read_only_hint") is True:
             tool.evidence_types = frozenset({EvidenceType.EXTERNAL_TOOL})
         if getattr(tool, "evidence_types", None):
-            declared_policy = schema_def.get("x-yunshu-evidence-policy")
+            declared_policy = schema_def.get("x-nanzi-evidence-policy")
             tool.evidence_policy = (
                 declared_policy
                 if declared_policy in {"non_empty", "structured_success", "allow_empty_success"}

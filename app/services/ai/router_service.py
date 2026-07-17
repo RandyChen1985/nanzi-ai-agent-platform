@@ -50,7 +50,7 @@ class RouterService:
     # 兜底通用助手 slug，按优先级匹配 DB 中 ai_agents.name（首个命中即用）
     FALLBACK_AGENT_NAMES = ("assistant", "main", "general-chat")
 
-    DEFAULT_SYSTEM_PROMPT = """# Role: 云枢智能体平台 · 智能路由助手 (Smart Router V7 · 清单驱动)
+    DEFAULT_SYSTEM_PROMPT = """# Role: 南孜智能体平台 · 智能路由助手 (Smart Router V7 · 清单驱动)
 
 你是智能体平台的"分诊台"。任务：依据【可用智能体清单】+【对话历史与上一轮路由】+【用户最新输入】，选出最合适的智能体。
 你只输出路由决策 JSON，绝不回答业务问题本身。

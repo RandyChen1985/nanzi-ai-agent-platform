@@ -105,9 +105,9 @@ async def test_combo_baidu_search_and_extract():
             <div id="content_left">
                 <div class="result c-container">
                     <h3 class="t">
-                        <a href="https://www.baidu.com/link?url=fakeurl1">云枢 Agent 智能开发平台</a>
+                        <a href="https://www.baidu.com/link?url=fakeurl1">南孜 Agent 智能开发平台</a>
                     </h3>
-                    <div class="c-span-last">云枢是一款面向企业级的多智能体编排与开发平台，包含全链路审计和记忆管理中心。</div>
+                    <div class="c-span-last">南孜是一款面向企业级的多智能体编排与开发平台，包含全链路审计和记忆管理中心。</div>
                 </div>
                 <div class="result c-container">
                     <h3 class="t">
@@ -127,8 +127,8 @@ async def test_combo_baidu_search_and_extract():
         <body>
             <header>导航条</header>
             <main>
-                <h1>云枢多智能体平台</h1>
-                <p>云枢拥有极速向量搜索机制和长期事实记忆注入引擎，目前支持多平台MCP连接。</p>
+                <h1>南孜多智能体平台</h1>
+                <p>南孜拥有极速向量搜索机制和长期事实记忆注入引擎，目前支持多平台MCP连接。</p>
             </main>
             <footer>底部版权</footer>
         </body>
@@ -166,7 +166,7 @@ async def test_combo_baidu_search_and_extract():
     mock_client.__aenter__.return_value = mock_client
     # 模拟重定向跟踪行为，第 1 个链接返回真实网页 1
     mock_client.get = AsyncMock(side_effect=[
-        MockResponse("https://yovole.com/yunshu-intro", mock_page_html_1),
+        MockResponse("https://yovole.com/nanzi-intro", mock_page_html_1),
         MockResponse("https://baidu.com/wiki-op", "智能运营百科，主要用于效率提升。")
     ])
 
@@ -180,18 +180,18 @@ async def test_combo_baidu_search_and_extract():
         "app.services.ai.tools.system_tools.validate_url",
         return_value=True
     ):
-        result = await web_search_baidu.ainvoke({"query": "云枢平台", "max_results": 2})
+        result = await web_search_baidu.ainvoke({"query": "南孜平台", "max_results": 2})
         
         # 验证百度搜索结果列表包含提取的数据
         assert "### 🔍 百度搜索结果" in result
-        assert "云枢 Agent 智能开发平台" in result
-        assert "https://yovole.com/yunshu-intro" in result
+        assert "南孜 Agent 智能开发平台" in result
+        assert "https://yovole.com/nanzi-intro" in result
         
         # 验证自动联动网页正文抓取整合
         assert "### 📄 自动提取的网页全文提炼 (Top-2 网页深度正文)" in result
-        assert "#### 📄 网页 1: 云枢 Agent 智能开发平台" in result
-        assert "真实源链接**: https://yovole.com/yunshu-intro" in result
+        assert "#### 📄 网页 1: 南孜 Agent 智能开发平台" in result
+        assert "真实源链接**: https://yovole.com/nanzi-intro" in result
         # 验证 HTML 噪点标签（如 header, footer, style）已被剥离，仅剩下 main/p 的正文内容
-        assert "云枢拥有极速向量搜索机制和长期事实记忆注入引擎" in result
+        assert "南孜拥有极速向量搜索机制和长期事实记忆注入引擎" in result
         assert "导航条" not in result
         assert "底部版权" not in result

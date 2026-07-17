@@ -1,7 +1,7 @@
 # agentscope-core-integration Specification
 
 ## Purpose
-定义云枢平台以 AgentScope 作为唯一 AI 运行时的集成边界：执行器、消息/工具抽象、SSE 协议兼容、AgentState 续跑、权限与外部执行挂起恢复，以及 General/ChatBI 原生 Agent 路径的验收要求。
+定义南孜平台以 AgentScope 作为唯一 AI 运行时的集成边界：执行器、消息/工具抽象、SSE 协议兼容、AgentState 续跑、权限与外部执行挂起恢复，以及 General/ChatBI 原生 Agent 路径的验收要求。
 ## Requirements
 ### Requirement: AgentScope 作为唯一 AI 运行时
 

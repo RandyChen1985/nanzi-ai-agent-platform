@@ -5,13 +5,13 @@
 > 2. **Always respond in Chinese**, unless explicitly asked to translate.
 
 ## Purpose
-**云枢・智能体平台 (Yunshu AI Agent Platform)**
-这是一个独立的 AI 服务系统，旨在为云枢生态（数据中心智能运营）提供通用的 AI 能力。
+**南孜・智能体平台 (NanZi AI Agent Platform)**
+这是一个独立的 AI 服务系统，旨在为南孜生态（数据中心智能运营）提供通用的 AI 能力。
 核心功能包括：
 - **ChatBI**: 自然语言查数、生成图表。
 - **RAG**: 知识库问答。
 - **Multi-Agent**: 多智能体意图识别与自动化工作流。
-该平台不直接连接底层大宽表（ClickHouse/HBase），而是通过 **云枢・数据服务平台 (api_service)** 获取统一封装的数据，确保权限与逻辑的一致性。
+该平台不直接连接底层大宽表（ClickHouse/HBase），而是通过 **南孜・数据服务平台 (api_service)** 获取统一封装的数据，确保权限与逻辑的一致性。
 
 ## Tech Stack
 ### Backend
@@ -73,7 +73,7 @@
 - **Branching**: 基于 `main` 分支开发（参考 GitFlow 或 GitHub Flow）。
 
 ## Domain Context
-- **Yunshu (云枢)**: 云枢智能体的数据中心智能运营品牌。
+- **NanZi (南孜)**: 南孜智能体的数据中心智能运营品牌。
 - **Data Foundation**: 底层数据采集与加工平台。
 - **api_service (Data API Platform)**: 统一数据出口，屏蔽底层存储差异，提供统一鉴权。
 - **ChatBI**: 用户通过自然语言提问（如“华东机房温度趋势”），系统解析意图并调用 `api_service` 获取数据，最终返回图表+结论。
@@ -91,4 +91,4 @@
 
 ## External Dependencies
 - **LLM Gateway**: 公司内部私有化部署的模型网关（兼容 OpenAI 协议）。
-- **Yunshu Data API Platform (`api_service`)**: 核心数据来源。
+- **NanZi Data API Platform (`api_service`)**: 核心数据来源。

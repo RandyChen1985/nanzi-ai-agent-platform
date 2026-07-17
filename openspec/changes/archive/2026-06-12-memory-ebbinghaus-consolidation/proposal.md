@@ -23,9 +23,9 @@
 ## Impact
 
 - **后端服务**：
-  - [memory_index_service.py](file:///Users/chenxiaolong/workspace/yovole-yunshu-ai-agent-platform/app/services/ai/memory_index_service.py)：增加后置重排算法，并在向量搜索召回时进行最终加权。
-  - [scheduler_service.py](file:///Users/chenxiaolong/workspace/yovole-yunshu-ai-agent-platform/app/services/ai/scheduler_service.py)：注册并管理凌晨运行的记忆降噪后台定时任务。
+  - [memory_index_service.py](file:///Users/chenxiaolong/workspace/yovole-nanzi-ai-agent-platform/app/services/ai/memory_index_service.py)：增加后置重排算法，并在向量搜索召回时进行最终加权。
+  - [scheduler_service.py](file:///Users/chenxiaolong/workspace/yovole-nanzi-ai-agent-platform/app/services/ai/scheduler_service.py)：注册并管理凌晨运行的记忆降噪后台定时任务。
 - **数据结构与存储**：
   - 影响 Redis HASH `MEMORY_REDIS_INDEX_NAME` 中 `last_active` 和 `reference_count` 字段的读取、统计与物理更新。
 - **系统设置 (前端)**：
-  - [SystemConfig.vue](file:///Users/chenxiaolong/workspace/yovole-yunshu-ai-agent-platform/frontend/src/views/SystemConfig.vue)：添加记忆基础半衰期及降噪聚类相似度阈值的表单参数配置。
+  - [SystemConfig.vue](file:///Users/chenxiaolong/workspace/yovole-nanzi-ai-agent-platform/frontend/src/views/SystemConfig.vue)：添加记忆基础半衰期及降噪聚类相似度阈值的表单参数配置。

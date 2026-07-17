@@ -1,10 +1,10 @@
-# 🎉 Yunshu AI Agent Platform v1.0.0 Release Notes
+# 🎉 NanZi AI Agent Platform v1.0.0 Release Notes
 
-Welcome to the **first official release** of Yunshu AI Agent Platform (云枢智能体平台)! 🚀
+Welcome to the **first official release** of NanZi AI Agent Platform (南孜智能体平台)! 🚀
 
-**GitHub Repository**: [RandyChen1985/yunshu-ai-agent-platform](https://github.com/RandyChen1985/yunshu-ai-agent-platform)
+**GitHub Repository**: [RandyChen1985/nanzi-ai-agent-platform](https://github.com/RandyChen1985/nanzi-ai-agent-platform)
 
-云枢 AI Agent 平台（`yovole-yunshu-ai-agent-platform`）是一个面向企业级的高性能、高安全、强审计的 **多智能体编排与数据智能运营中枢**。v1.0.0 正式版提供了多智能体并行调度、物理数据库直连分流、全链路多维记忆引擎、容器自治沙箱执行及企业级 Token 级审计看板等核心基础能力。
+南孜 AI Agent 平台（`yovole-nanzi-ai-agent-platform`）是一个面向企业级的高性能、高安全、强审计的 **多智能体编排与数据智能运营中枢**。v1.0.0 正式版提供了多智能体并行调度、物理数据库直连分流、全链路多维记忆引擎、容器自治沙箱执行及企业级 Token 级审计看板等核心基础能力。
 
 ---
 
@@ -55,7 +55,7 @@ Welcome to the **first official release** of Yunshu AI Agent Platform (云枢智
 
 ## 📦 Quick Start
 
-请参考项目根目录下的 [HOW_TO_INSTALL.md](https://github.com/RandyChen1985/yunshu-ai-agent-platform/blob/main/HOW_TO_INSTALL.md) 进行部署。
+请参考项目根目录下的 [HOW_TO_INSTALL.md](https://github.com/RandyChen1985/nanzi-ai-agent-platform/blob/main/HOW_TO_INSTALL.md) 进行部署。
 
 ### 本地快速开发模式启动：
 
@@ -81,13 +81,13 @@ cd frontend && npm install && cd ..
 
 本项目发布版本关联的源码、Docker 镜像资产归档包及配置文件如下：
 
-* 📦 **Source Code (zip)**: `yunshu-ai-agent-platform-1.0.0.zip`
-* 📦 **Source Code (tar.gz)**: `yunshu-ai-agent-platform-1.0.0.tar.gz`
-* 🐳 **Docker Image for Linux amd64 (x86_64)**: `yunshu-ai-agent_1.0.0_linux-amd64_20260529.tar` (适用于大部分云服务器及物理服务器)
-* 🐳 **Docker Image for Linux arm64 (aarch64)**: `yunshu-ai-agent_1.0.0_linux-arm64_20260529.tar` (适用于 Apple Silicon Mac/鲲鹏/飞腾等 ARM 架构)
+* 📦 **Source Code (zip)**: `nanzi-ai-agent-platform-1.0.0.zip`
+* 📦 **Source Code (tar.gz)**: `nanzi-ai-agent-platform-1.0.0.tar.gz`
+* 🐳 **Docker Image for Linux amd64 (x86_64)**: `nanzi-ai-agent_1.0.0_linux-amd64_20260529.tar` (适用于大部分云服务器及物理服务器)
+* 🐳 **Docker Image for Linux arm64 (aarch64)**: `nanzi-ai-agent_1.0.0_linux-arm64_20260529.tar` (适用于 Apple Silicon Mac/鲲鹏/飞腾等 ARM 架构)
 * ⚙️ **Docker Compose YAML file**: `docker-compose.yml` (Docker 一键部署配置文件)
 
-🔗 **下载地址**: [GitHub Releases v1.0.0](https://github.com/RandyChen1985/yunshu-ai-agent-platform/releases/tag/1.0.0)
+🔗 **下载地址**: [GitHub Releases v1.0.0](https://github.com/RandyChen1985/nanzi-ai-agent-platform/releases/tag/1.0.0)
 
 ### 🐳 如何在离线/内网环境加载 Docker 镜像归档：
 
@@ -95,10 +95,10 @@ cd frontend && npm install && cd ..
 
 ```bash
 # 1. 加载本地镜像归档
-docker load -i yunshu-ai-agent_1.0.0_linux-amd64_20260529.tar
+docker load -i nanzi-ai-agent_1.0.0_linux-amd64_20260529.tar
 
 # 2. 检查是否加载成功
-docker images | grep yunshu-ai-agent
+docker images | grep nanzi-ai-agent
 
 # 3. 利用 docker-compose 快速拉起服务
 docker-compose up -d
@@ -110,4 +110,4 @@ docker-compose up -d
 
 Special thanks to all developers who contributed to this release!
 
-For complete changes and test files check out [CHECKLIST.md](https://github.com/RandyChen1985/yunshu-ai-agent-platform/blob/main/tests/CHECKLIST.md).
+For complete changes and test files check out [CHECKLIST.md](https://github.com/RandyChen1985/nanzi-ai-agent-platform/blob/main/tests/CHECKLIST.md).

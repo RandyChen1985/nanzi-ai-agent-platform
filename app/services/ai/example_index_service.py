@@ -8,8 +8,8 @@ from app.services.ai.embedding_client import EmbeddingClient
 
 logger = logging.getLogger(__name__)
 
-EXAMPLE_INDEX_NAME = "yunshu:idx:example:local"
-EXAMPLE_KEY_PREFIX = "yunshu:example:"
+EXAMPLE_INDEX_NAME = "nanzi:idx:example:local"
+EXAMPLE_KEY_PREFIX = "nanzi:example:"
 
 def _vector_to_bytes(vec: List[float]) -> bytes:
     return struct.pack(f"{len(vec)}f", *vec)

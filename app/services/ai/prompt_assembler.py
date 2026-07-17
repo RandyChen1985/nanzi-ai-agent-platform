@@ -5,7 +5,7 @@ from typing import Any, List, Optional
 
 from app.services.ai.agent_prompts import AgentServicePrompts
 
-YUNSHU_PROMPT_CACHE_BOUNDARY = "\n<!-- YUNSHU_CACHE_BOUNDARY -->\n"
+NANZI_PROMPT_CACHE_BOUNDARY = "\n<!-- NANZI_CACHE_BOUNDARY -->\n"
 
 
 @dataclass(frozen=True)
@@ -124,7 +124,7 @@ def assemble_system_prompt(params: PromptAssemblyInput) -> AssembledSystemPrompt
     if params.cache_reorder_enabled:
         stable_prefix = _join_blocks([part for part in [platform_global, params.user_profile, agent_db] if part])
         if params.cache_boundary_enabled and dynamic_suffix:
-            full_text = f"{stable_prefix}{YUNSHU_PROMPT_CACHE_BOUNDARY}{dynamic_suffix}"
+            full_text = f"{stable_prefix}{NANZI_PROMPT_CACHE_BOUNDARY}{dynamic_suffix}"
         elif params.cache_boundary_enabled:
             full_text = stable_prefix
         else:
@@ -139,7 +139,7 @@ def assemble_system_prompt(params: PromptAssemblyInput) -> AssembledSystemPrompt
 
     if (params.engine_type or "LOCAL") == "LOCAL":
         if params.cache_boundary_enabled and platform_global and stack_without_platform:
-            full_text = f"{platform_global}{YUNSHU_PROMPT_CACHE_BOUNDARY}{stack_without_platform}"
+            full_text = f"{platform_global}{NANZI_PROMPT_CACHE_BOUNDARY}{stack_without_platform}"
         else:
             full_text = AgentServicePrompts.prepend_platform_global_system_prompt(
                 stack_without_platform or None,

@@ -7,7 +7,7 @@ from app.services.ai.embedding_client import EmbeddingClient
 
 logger = logging.getLogger(__name__)
 
-METADATA_INDEX_NAME = "yunshu:idx:metadata:dataset"
+METADATA_INDEX_NAME = "nanzi:idx:metadata:dataset"
 METADATA_KEY_PREFIX = "metadata:dataset:"
 
 def _vector_to_bytes(vec: List[float]) -> bytes:

@@ -23,4 +23,4 @@
 
 - **数据库**：`ai_agent_access_logs` 和 `ai_agent_execution_traces` 的主键定义和表结构发生变更，需要执行一次 DDL 升级。
 - **后端 API 与服务**：在 `ConfigService` 中增加对 `audit_log_retention_days` 的配置项支持；增加日志管理相关的 API（获取分区信息、手动清理触发等）；在定时任务调度模块中加入每日分区自动维护任务。
-- **前端配置页**：修改 [SystemConfig.vue](file:///Users/chenxiaolong/workspace/yovole-yunshu-ai-agent-platform/frontend/src/views/SystemConfig.vue) 组件以支持“日志管理” Tab 的展示、权限控制、状态请求及交互逻辑。
+- **前端配置页**：修改 [SystemConfig.vue](file:///Users/chenxiaolong/workspace/yovole-nanzi-ai-agent-platform/frontend/src/views/SystemConfig.vue) 组件以支持“日志管理” Tab 的展示、权限控制、状态请求及交互逻辑。

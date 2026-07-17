@@ -1305,7 +1305,7 @@ const loadGreeting = async () => {
       {
         id: Date.now(),
         role: "agent",
-        content: "您好！我是云枢智能体，期待为您服务。",
+        content: "您好！我是南孜智能体，期待为您服务。",
         isGreeting: true,
       },
     ];
@@ -2618,7 +2618,7 @@ const sendMessage = async () => {
     isThoughtExpanded: true, // Default expanded to show progress
     thoughtStartTime: Date.now(),
     thoughtDuration: "0.0",
-    thinkingText: "云枢正在处理您的请求...",
+    thinkingText: "南孜正在处理您的请求...",
   });
   messages.value.push(agentMsg.value);
 

@@ -9,11 +9,11 @@ from app.services.metadata_service import MetadataService
 
 async def seed_data():
     async with AsyncSessionLocal() as db:
-        # 1. Create Dataset: Yunshu Resources
-        print("Creating 'yunshu_resources' dataset...")
+        # 1. Create Dataset: NanZi Resources
+        print("Creating 'nanzi_resources' dataset...")
         ds_data = {
-            "name": "yunshu_resources",
-            "display_name": "云枢资源池",
+            "name": "nanzi_resources",
+            "display_name": "南孜资源池",
             "description": "包含机房(Room)、机柜(Cabinet)、物理机(Server)、虚拟机(VM)等核心资源信息的元数据。",
             "tags": ["core", "resources", "idc"],
             "data_source": "clickhouse"

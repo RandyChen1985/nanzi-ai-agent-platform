@@ -21,7 +21,7 @@
 ### 2.3 请求体 (Payload)
 ```json
 {
-  "requestSystem": "YUNSHU_API_DATA_PLATFORM",
+  "requestSystem": "NANZI_API_DATA_PLATFORM",
   "requestBusiness": "USER-LOGIN",
   "operationType": "LOGIN",
   "userName": "your_username",
@@ -40,7 +40,7 @@
 # SSO Configuration
 SSO_API_URL=https://yovole.net/api/v1/user/check/login
 SSO_ACCESS_TOKEN=laplace
-SSO_REQUEST_SYSTEM=YUNSHU_API_DATA_PLATFORM
+SSO_REQUEST_SYSTEM=NANZI_API_DATA_PLATFORM
 SSO_REQUEST_BUSINESS=USER-LOGIN
 SSO_TIMEOUT=30
 ```

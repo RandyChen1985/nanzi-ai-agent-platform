@@ -20,7 +20,7 @@ async def test_metadata_index_ensure_index():
         assert res is True
         mock_redis.execute_command.assert_any_call(
             "FT.CREATE",
-            "yunshu:idx:metadata:dataset",
+            "nanzi:idx:metadata:dataset",
             "ON",
             "HASH",
             "PREFIX",
@@ -139,7 +139,7 @@ async def test_metadata_index_search_knn_normal_user():
 def test_extract_num_docs_from_redis74_flat_info():
     info = [
         "index_name",
-        "yunshu:idx:metadata:dataset",
+        "nanzi:idx:metadata:dataset",
         "num_docs",
         6,
         "attributes",

@@ -28,7 +28,7 @@ class ConversationRunLane:
     def _lock_key(self, user_id: str | int | None, conversation_id: str) -> str:
         uid = str(user_id) if user_id is not None else "anonymous"
         safe_cid = conversation_id.replace(":", "_")
-        return f"yunshu:conv_run:{uid}:{safe_cid}"
+        return f"nanzi:conv_run:{uid}:{safe_cid}"
 
     async def _is_enabled(self) -> bool:
         from app.services.config_service import ConfigService

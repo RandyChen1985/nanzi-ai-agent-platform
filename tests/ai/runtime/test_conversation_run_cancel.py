@@ -40,7 +40,7 @@ class FakeRedis:
 async def test_release_conversation_run_locks_clears_lane_and_session_locks(monkeypatch):
     fake = FakeRedis()
     conversation_id = f"conv-cancel-{uuid.uuid4().hex}"
-    lane_key = f"yunshu:conv_run:u1:{conversation_id.replace(':', '_')}"
+    lane_key = f"nanzi:conv_run:u1:{conversation_id.replace(':', '_')}"
     session_key = f"conversation:u1:{conversation_id}:agent_lock:DataAgent"
     fake.store[lane_key] = "trace-1"
     fake.store[session_key] = "token-1"

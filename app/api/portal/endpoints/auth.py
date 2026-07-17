@@ -228,7 +228,7 @@ async def get_current_user_info(
     from app.services.config_service import ConfigService
     watermark_enabled = await ConfigService.get("embedchat_watermark_enabled") == "true"
     watermark_style = await ConfigService.get("embedchat_watermark_style") or "user_time"
-    watermark_text = await ConfigService.get("embedchat_watermark_text") or "云枢系统"
+    watermark_text = await ConfigService.get("embedchat_watermark_text") or "南孜系统"
 
     return {
         "status": "success",
@@ -279,7 +279,7 @@ async def validate_user_apikey(
     from app.services.config_service import ConfigService
     watermark_enabled = await ConfigService.get("embedchat_watermark_enabled") == "true"
     watermark_style = await ConfigService.get("embedchat_watermark_style") or "user_time"
-    watermark_text = await ConfigService.get("embedchat_watermark_text") or "云枢系统"
+    watermark_text = await ConfigService.get("embedchat_watermark_text") or "南孜系统"
 
     return {
         "status": "success",

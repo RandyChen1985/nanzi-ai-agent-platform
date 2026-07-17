@@ -89,7 +89,7 @@
 
 #### Scenario: 自动捕捉并持久化用户偏好
 - **WHEN** 用户说“我更偏好使用 dark mode 暗黑主题”，智能体调用该工具更新键值对 `theme: dark`
-- **THEN** 系统成功在 Redis `yunshu:agent:ltm:{user_id}` 哈希中存入该偏好，并返回成功回执
+- **THEN** 系统成功在 Redis `nanzi:agent:ltm:{user_id}` 哈希中存入该偏好，并返回成功回执
 
 ---
 
@@ -103,7 +103,7 @@
 ---
 
 ### Requirement: 无感记忆加载与 System Prompt 注入管道
-系统必须（MUST）在智能体与 LLM 交互的对话生命周期入口，自动并发、异步地从 Redis 读取 `yunshu:agent:ltm:{user_id}` 长期记忆内容。系统必须将这些内容格式化为 `Memory Profile`，并无感地注入到发送给大模型的 System Prompt 的头部，无需智能体在每轮对话中手动调用检索工具。
+系统必须（MUST）在智能体与 LLM 交互的对话生命周期入口，自动并发、异步地从 Redis 读取 `nanzi:agent:ltm:{user_id}` 长期记忆内容。系统必须将这些内容格式化为 `Memory Profile`，并无感地注入到发送给大模型的 System Prompt 的头部，无需智能体在每轮对话中手动调用检索工具。
 
 #### Scenario: 用户新对话自动注入长期事实偏好
 - **WHEN** 用户新发起一轮对话，系统开始组装 System Prompt

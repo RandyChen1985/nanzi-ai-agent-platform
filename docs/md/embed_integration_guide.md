@@ -1,6 +1,6 @@
-# 云枢智能体平台嵌入式组件集成指南
+# 南孜智能体平台嵌入式组件集成指南
 
-本文档旨在指导第三方业务系统如何快速、安全地集成云枢 AI Agent 聊天组件（EmbedChat）。
+本文档旨在指导第三方业务系统如何快速、安全地集成南孜 AI Agent 聊天组件（EmbedChat）。
 
 ## 交互流程概览 (Integration Flow)
 
@@ -8,8 +8,8 @@
 sequenceDiagram
     participant S as 第三方后端 (Host Server)
     participant H as 第三方前端 (Host Page)
-    participant W as 云枢组件 (Embed Widget)
-    participant A as 云枢平台 API (Agent API)
+    participant W as 南孜组件 (Embed Widget)
+    participant A as 南孜平台 API (Agent API)
 
     Note over S, A: 1. 获取认证凭证 (Auth)
     S->>A: GET /api/v1/users/profile?username={user}
@@ -18,7 +18,7 @@ sequenceDiagram
 
     Note over H, W: 2. 组件加载与初始化 (Handshake)
     H->>W: 加载 IFrame (src 不带敏感 Token)
-    W-->>H: 发送 YUNSHU_WIDGET_READY
+    W-->>H: 发送 NANZI_WIDGET_READY
     H->>W: 发送 INIT_CONFIG (携带 Token, user_info)
     W->>A: 验证 Token
     A-->>W: 验证成功
@@ -35,7 +35,7 @@ sequenceDiagram
 在集成组件前，您需要获取一个有效的认证 Token（即系统中的 **API Key**）。根据集成场景不同，有以下几种获取方式：
 
 ### 方式一：管理后台手动获取 (个人集成)
-1. 登录云枢智能体平台管理后台。
+1. 登录南孜智能体平台管理后台。
 2. 进入 **“个人中心”**。
 3. 在 “API Key” 栏位点击查看并复制。
 
@@ -109,13 +109,13 @@ sequenceDiagram
 ### 3.1 安全协议规范
 
 所有的双向通信消息均遵循以下格式：
-*   **组件发出**：消息对象中固定包含 `{ source: "yunshu-agent-embed" }`。
+*   **组件发出**：消息对象中固定包含 `{ source: "nanzi-agent-embed" }`。
 *   **宿主发出**：若初始化时指定了 `instance_id`，后续所有指令必须携带该 ID。
 
 ### 3.2 初始化流程
 
 1. 宿主加载 IFrame（src 不带敏感 token）。
-2. 组件加载完成，向父窗口发送 `YUNSHU_WIDGET_READY`。
+2. 组件加载完成，向父窗口发送 `NANZI_WIDGET_READY`。
 3. 宿主收到就绪信号，发送 `INIT_CONFIG`（携带 Token、用户信息、业务上下文等）。
 4. 组件鉴权成功并完成初始化，返回 `INIT_SUCCESS`。
 
@@ -138,7 +138,7 @@ sequenceDiagram
 
 | 事件类型 (Type) | 关键参数 | 说明 |
 |---|---|---|
-| `YUNSHU_WIDGET_READY` | - | 组件代码加载完成，等待初始化配置。 |
+| `NANZI_WIDGET_READY` | - | 组件代码加载完成，等待初始化配置。 |
 | `INIT_SUCCESS` | - | 组件已成功完成 Token 校验和资源加载。 |
 | `CONNECTION_STATUS` | `status` | 网络连接状态通知（`connected` / `disconnected` / `reconnecting`）。 |
 | `REQUEST_RESIZE` | `width`, `height`, `expanded` | 组件请求调整容器大小（通常由内部的展开/收起按钮触发）。 |
@@ -157,10 +157,10 @@ window.addEventListener('message', (event) => {
   const data = event.data;
   
   // 必须通过 source 标识进行过滤
-  if (data.source !== 'yunshu-agent-embed') return;
+  if (data.source !== 'nanzi-agent-embed') return;
 
   switch (data.type) {
-    case 'YUNSHU_WIDGET_READY':
+    case 'NANZI_WIDGET_READY':
       // 发送初始化配置
       widgetFrame.contentWindow.postMessage({
         type: 'INIT_CONFIG',
@@ -182,7 +182,7 @@ window.addEventListener('message', (event) => {
       break;
       
     case 'INIT_SUCCESS':
-      console.log('云枢智能体已就绪');
+      console.log('南孜智能体已就绪');
       break;
       
     case 'REQUEST_RESIZE':

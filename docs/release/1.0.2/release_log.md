@@ -1,6 +1,6 @@
-# 🎉 Yunshu AI Agent Platform v1.0.2 Release Notes
+# 🎉 NanZi AI Agent Platform v1.0.2 Release Notes
 
-**GitHub Repository**: [RandyChen1985/yunshu-ai-agent-platform](https://github.com/RandyChen1985/yunshu-ai-agent-platform)
+**GitHub Repository**: [RandyChen1985/nanzi-ai-agent-platform](https://github.com/RandyChen1985/nanzi-ai-agent-platform)
 
 v1.0.2 版本是一次**性能与稳定性里程碑升级**。在本次更新中，平台不仅引入了艾宾浩斯长时记忆遗忘与凌晨固化归并机制，实现了基于本地 Redis (RediSearch) HNSW 向量库的本地化语义检索，而且彻底解耦了常规知识库与元数据 RAG 检索参数，同时对 ChatBI 执行流程进行了彻底的 Bug 修复（引入 ReAct 熔断机制防止空结果死循环，并简化 SQL 计划输出以提升性能）。
 
@@ -61,15 +61,15 @@ v1.0.2 版本是一次**性能与稳定性里程碑升级**。在本次更新中
 
 ## 🗄️ Database Incremental Upgrades (数据库增量升级说明)
 
-从 v1.0.1 升级至 v1.0.2 期间，平台数据库共引入了 5 个增量 SQL 升级脚本（存放于 [db-prod/](file:///Users/chenxiaolong/workspace/yovole-yunshu-ai-agent-platform/db-prod/) 目录下）：
+从 v1.0.1 升级至 v1.0.2 期间，平台数据库共引入了 5 个增量 SQL 升级脚本（存放于 [db-prod/](file:///Users/chenxiaolong/workspace/yovole-nanzi-ai-agent-platform/db-prod/) 目录下）：
 
 | 脚本文件 | 核心变更内容 |
 | :--- | :--- |
-| **[V73-update_chatbi_prompt_v8.sql](file:///Users/chenxiaolong/workspace/yovole-yunshu-ai-agent-platform/db-prod/V73-update_chatbi_prompt_v8.sql)** | 更新 ChatBI 助手系统提示词为 V8 版本，精简了查数与门控交互，完美适配 DataAgentRunner。 |
-| **[V74-add_ebbinghaus_memory_configs.sql](file:///Users/chenxiaolong/workspace/yovole-yunshu-ai-agent-platform/db-prod/V74-add_ebbinghaus_memory_configs.sql)** | 引入艾宾浩斯长时记忆算法的基础半衰期（`memory_base_half_life`）与凌晨降噪相似度聚类阈值（`memory_consolidation_threshold`）等系统配置参数。 |
-| **[V75-add_global_embed_configs.sql](file:///Users/chenxiaolong/workspace/yovole-yunshu-ai-agent-platform/db-prod/V75-add_global_embed_configs.sql)** | 插入全局 Embedding 服务参数配置（API 地址、API Key、模型名与维度），用于本地向量化索引计算。 |
-| **[V76-add_chatbi_sample_top_k.sql](file:///Users/chenxiaolong/workspace/yovole-yunshu-ai-agent-platform/db-prod/V76-add_chatbi_sample_top_k.sql)** | 新增配置项 `chatbi_sample_top_k`（默认值 5），以控制查数过程中的优质案例最大召回条数。 |
-| **[V77-add_knowledge_ragflow_configs.sql](file:///Users/chenxiaolong/workspace/yovole-yunshu-ai-agent-platform/db-prod/V77-add_knowledge_ragflow_configs.sql)** | 独立解耦常规知识库问答专属 RAGFlow 检索配置，并自动迁移老数据，同时物理清理删除已废弃的 `ragflow_dataset_ids` 字段。 |
+| **[V73-update_chatbi_prompt_v8.sql](file:///Users/chenxiaolong/workspace/yovole-nanzi-ai-agent-platform/db-prod/V73-update_chatbi_prompt_v8.sql)** | 更新 ChatBI 助手系统提示词为 V8 版本，精简了查数与门控交互，完美适配 DataAgentRunner。 |
+| **[V74-add_ebbinghaus_memory_configs.sql](file:///Users/chenxiaolong/workspace/yovole-nanzi-ai-agent-platform/db-prod/V74-add_ebbinghaus_memory_configs.sql)** | 引入艾宾浩斯长时记忆算法的基础半衰期（`memory_base_half_life`）与凌晨降噪相似度聚类阈值（`memory_consolidation_threshold`）等系统配置参数。 |
+| **[V75-add_global_embed_configs.sql](file:///Users/chenxiaolong/workspace/yovole-nanzi-ai-agent-platform/db-prod/V75-add_global_embed_configs.sql)** | 插入全局 Embedding 服务参数配置（API 地址、API Key、模型名与维度），用于本地向量化索引计算。 |
+| **[V76-add_chatbi_sample_top_k.sql](file:///Users/chenxiaolong/workspace/yovole-nanzi-ai-agent-platform/db-prod/V76-add_chatbi_sample_top_k.sql)** | 新增配置项 `chatbi_sample_top_k`（默认值 5），以控制查数过程中的优质案例最大召回条数。 |
+| **[V77-add_knowledge_ragflow_configs.sql](file:///Users/chenxiaolong/workspace/yovole-nanzi-ai-agent-platform/db-prod/V77-add_knowledge_ragflow_configs.sql)** | 独立解耦常规知识库问答专属 RAGFlow 检索配置，并自动迁移老数据，同时物理清理删除已废弃的 `ragflow_dataset_ids` 字段。 |
 
 > [!WARNING]
 > 本次数据库升级涉及旧配置字段的物理删除及新独立字段的同步复制，请在升级后务必在项目根目录下通过执行 `./db-prod/apply-sql-native.sh` 脚本，将上面的所有增量 SQL 自动、安全地导入到目标 MySQL 数据库中。
@@ -117,7 +117,7 @@ cd frontend && npm install && npm run build && cd ..
 - [ ] **UI 灵动交互与 Slider 验证**：在配置页验证 LLM 温度配置、权重配置是否已变更为 Range Slider 滑动条，验证呼吸灯、输入框微蓝渐变动效。
 - [ ] **回归测试**：运行自动化测试套件 `pytest tests/`，确保整体功能无回归。
 
-完整测试清单见 [tests/CHECKLIST.md](file:///Users/chenxiaolong/workspace/yovole-yunshu-ai-agent-platform/tests/CHECKLIST.md)。
+完整测试清单见 [tests/CHECKLIST.md](file:///Users/chenxiaolong/workspace/yovole-nanzi-ai-agent-platform/tests/CHECKLIST.md)。
 
 ---
 
@@ -125,13 +125,13 @@ cd frontend && npm install && npm run build && cd ..
 
 本项目 v1.0.2 发布版本关联的源码、Docker 镜像资产归档包及配置文件如下：
 
-* 📦 **Source Code (zip)**: `yunshu-ai-agent-platform-1.0.2.zip`
-* 📦 **Source Code (tar.gz)**: `yunshu-ai-agent-platform-1.0.2.tar.gz`
-* 🐳 **Docker Image for Linux amd64 (x86_64)**: `yunshu-ai-agent_1.0.2_linux-amd64_*.tar`
-* 🐳 **Docker Image for Linux arm64 (aarch64)**: `yunshu-ai-agent_1.0.2_linux-arm64_*.tar`
+* 📦 **Source Code (zip)**: `nanzi-ai-agent-platform-1.0.2.zip`
+* 📦 **Source Code (tar.gz)**: `nanzi-ai-agent-platform-1.0.2.tar.gz`
+* 🐳 **Docker Image for Linux amd64 (x86_64)**: `nanzi-ai-agent_1.0.2_linux-amd64_*.tar`
+* 🐳 **Docker Image for Linux arm64 (aarch64)**: `nanzi-ai-agent_1.0.2_linux-arm64_*.tar`
 * ⚙️ **Docker Compose YAML file**: `docker-compose.yml`
 
-🔗 **下载地址**: [GitHub Releases v1.0.2](https://github.com/RandyChen1985/yunshu-ai-agent-platform/releases/tag/1.0.2)
+🔗 **下载地址**: [GitHub Releases v1.0.2](https://github.com/RandyChen1985/nanzi-ai-agent-platform/releases/tag/1.0.2)
 
 ---
 

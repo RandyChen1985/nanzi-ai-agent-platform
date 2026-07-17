@@ -51,11 +51,11 @@ process.stdout.write(JSON.stringify({
     }
     assert result["dispatched"] == [
         {
-            "type": "yunshu:open-saved-report",
+            "type": "nanzi:open-saved-report",
             "detail": {"report_id": "7", "run_id": "11", "request_id": "req-1"},
         },
         {
-            "type": "yunshu:open-saved-report",
+            "type": "nanzi:open-saved-report",
             "detail": {"report_id": "7", "run_id": "11", "request_id": "req-2"},
         },
     ]

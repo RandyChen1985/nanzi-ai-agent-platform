@@ -43,6 +43,6 @@ def test_widget_debugger_copy_guide_shows_toast_feedback():
 def test_widget_debugger_floating_guide_can_collapse_after_opening():
     source = _source("frontend/src/views/WidgetDebugger.vue")
 
-    assert "yunshu-widget-collapse" in source
+    assert "nanzi-widget-collapse" in source
     assert "shell.classList.add('collapsed')" in source
     assert "收起助手" in source

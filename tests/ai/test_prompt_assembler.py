@@ -3,7 +3,7 @@ from types import SimpleNamespace
 import pytest
 
 from app.services.ai.prompt_assembler import (
-    YUNSHU_PROMPT_CACHE_BOUNDARY,
+    NANZI_PROMPT_CACHE_BOUNDARY,
     PromptAssemblyInput,
     assemble_system_prompt,
 )
@@ -53,10 +53,10 @@ def test_cache_reorder_places_agent_db_before_dynamic_blocks():
     )
     text = assembled.full_text
 
-    assert YUNSHU_PROMPT_CACHE_BOUNDARY in text
+    assert NANZI_PROMPT_CACHE_BOUNDARY in text
     assert assembled.cache_reorder_enabled is True
 
-    boundary_idx = text.index(YUNSHU_PROMPT_CACHE_BOUNDARY)
+    boundary_idx = text.index(NANZI_PROMPT_CACHE_BOUNDARY)
     agent_idx = text.index("Agent DB prompt")
     preloaded_idx = text.index("Preloaded block")
 
