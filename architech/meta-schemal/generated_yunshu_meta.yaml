@@ -1,6 +1,6 @@
 version: "1.0"
 domain: "Yunshu_Resources"
-description: "云枢资产与动环监控基础资源元数据 (Generated from CLICKHOUSE_TABLES.md)"
+description: "南孜资产与动环监控基础资源元数据 (Generated from CLICKHOUSE_TABLES.md)"
 
 entities:
   # ---------------------------------------------------------

@@ -398,11 +398,11 @@ async def web_search_baidu_raw(query: str, max_results: int = 3) -> List[Dict[st
 @tool
 async def web_search_baidu(query: str, max_results: int = 6) -> str:
     """
-    通过模拟浏览器访问百度，在互联网上实时检索关于特定问题、技术报错、实时新闻或云枢智能体相关资讯等最新信息。
+    通过模拟浏览器访问百度，在互联网上实时检索关于特定问题、技术报错、实时新闻或南孜智能体相关资讯等最新信息。
     不需要任何商业 API Key，完全自主可控。输入查询词，返回包含标题、核心摘要及百度来源链接的精美 Markdown 结果列表。
     
     Args:
-        query: 检索关键词 (例如 '云枢智能体 智能运营')。
+        query: 检索关键词 (例如 '南孜智能体 智能运营')。
         max_results: 返回的最多结果条数，默认 6 条。
     """
     try:

@@ -1,7 +1,7 @@
 # 支持 ChatBI 动态数据源路由 (Dynamic Data Source Routing)
 
 ## 1. 背景与问题 (Background & Problem)
-目前，云枢智能体平台（Yunshu AI Agent Platform）的 ChatBI 功能存在以下限制：
+目前，南孜智能体平台（Yunshu AI Agent Platform）的 ChatBI 功能存在以下限制：
 1.  **全局单一数据源**：底层的 `execute_sql_query` 工具默认使用系统配置的全局数据源（`default_clickhouse`），无法针对不同数据集（Dataset）选择不同的数据库连接（如 MySQL 业务库 vs ClickHouse 分析库）。
 2.  **上下文缺失**：LLM 在阅读元数据（YAML）时，不知道该表位于哪个物理数据库实例中。
 3.  **语法校验僵化**：SQL 语法校验硬编码为 ClickHouse 格式，导致生成的 MySQL SQL 语句在校验阶段被误拦截。

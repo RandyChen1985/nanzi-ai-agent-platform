@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# 云枢智能体平台 - Docker 启动脚本
+# 南孜智能体平台 - Docker 启动脚本
 # 用途：启动 API 服务容器（依赖外部 MySQL/ClickHouse/Redis）
 
 set -e
@@ -16,7 +16,7 @@ YELLOW='\033[1;33m'
 RED='\033[0;31m'
 NC='\033[0m'
 
-echo -e "${GREEN}=== 云枢智能体平台 Docker 启动 ===${NC}"
+echo -e "${GREEN}=== 南孜智能体平台 Docker 启动 ===${NC}"
 
 if [ ! -f ".env" ]; then
     echo -e "${RED}错误: .env 文件不存在${NC}"

@@ -457,7 +457,7 @@
             <div class="w-8 h-8 rounded-lg bg-indigo-600 text-white flex items-center justify-center font-black text-sm">?</div>
             <div>
               <h3 class="text-lg font-bold text-gray-900">第三方用户同步说明</h3>
-              <p class="text-xs text-gray-400 mt-0.5">从外部业务库拉取账号，写入云枢用户表</p>
+              <p class="text-xs text-gray-400 mt-0.5">从外部业务库拉取账号，写入南孜用户表</p>
             </div>
           </div>
 
@@ -615,7 +615,7 @@ const selectedDatasource = computed(() =>
   datasources.value.find((ds) => ds.id === config.value.connection_config_id) || null,
 )
 
-const localPlatformLabel = computed(() => 'ai_agent_users · 云枢用户表')
+const localPlatformLabel = computed(() => 'ai_agent_users · 南孜用户表')
 
 const sourcePlatformLabel = computed(() => {
   const ds = selectedDatasource.value

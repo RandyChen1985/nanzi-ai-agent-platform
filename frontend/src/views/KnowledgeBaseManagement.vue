@@ -784,7 +784,7 @@ const deleteDatasetMessage = computed(() => {
   const hasPerms = datasetPermissions.value.users?.length > 0 || datasetPermissions.value.roles?.length > 0
   
   if (deletingDataset.value.is_missing_in_ragflow) {
-    let baseMsg = '检测到该知识库已在 RAGFlow 端不存在或已被物理删除，确定清理云枢平台本地残留的相关配置和元数据信息吗？'
+    let baseMsg = '检测到该知识库已在 RAGFlow 端不存在或已被物理删除，确定清理南孜平台本地残留的相关配置和元数据信息吗？'
     if (hasPerms) {
       baseMsg += '（⚠️ 该知识库当前已授权的角色/用户访问权限关系也将被同步清除）'
     }

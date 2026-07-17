@@ -1,7 +1,7 @@
 # Proposal: 实现通用 HTTP 工具配置与管理 (Generic API Tools)
 
 ## 1. 背景与目标 (Background & Goals)
-目前云枢智能体平台（Yunshu AI Agent Platform）的工具集（Tools）主要依赖开发者手动编写 Python 代码（如 `get_dataset_schema`, `execute_sql_query`）。随着中台对接的业务系统增多（如运维操作、外部知识库搜索等），这种“硬编码”方式存在以下问题：
+目前南孜智能体平台（Yunshu AI Agent Platform）的工具集（Tools）主要依赖开发者手动编写 Python 代码（如 `get_dataset_schema`, `execute_sql_query`）。随着中台对接的业务系统增多（如运维操作、外部知识库搜索等），这种“硬编码”方式存在以下问题：
 1.  **扩展成本高**：每新增一个 API 都需要发布新版本代码。
 2.  **维护困难**：Token、URL 等配置分散，难以统一管理。
 3.  **缺乏灵活性**：运营人员无法自助配置简单的查询工具。

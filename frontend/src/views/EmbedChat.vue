@@ -24,7 +24,7 @@
     <div v-if="currentUser?.watermark ? currentUser.watermark.enabled : true" class="fixed inset-0 pointer-events-none overflow-hidden z-0 opacity-[0.04] select-none grid grid-cols-2 sm:grid-cols-3 gap-x-10 gap-y-24 p-10 justify-items-center items-center h-full w-full" aria-hidden="true">
         <div v-for="n in 60" :key="n" class="text-[10px] sm:text-xs font-black -rotate-[30deg] whitespace-nowrap uppercase tracking-tighter">
             <template v-if="currentUser?.watermark?.style === 'custom'">
-                {{ currentUser?.watermark?.text || '云枢系统' }}
+                {{ currentUser?.watermark?.text || '南孜系统' }}
             </template>
             <template v-else>
                 {{ currentUser?.real_name || currentUser?.user_name || 'Unauthorized' }}
@@ -52,7 +52,7 @@
                             {{ currentExpertAgent.display_name || currentExpertAgent.name }}
                         </template>
                         <template v-else>
-                            {{ branding.default_agent_name || '云枢智能助手' }}
+                            {{ branding.default_agent_name || '南孜智能助手' }}
                         </template>
                     </span>
                     <span v-if="isProcessing" class="flex h-1.5 w-1.5 relative">
@@ -1842,7 +1842,7 @@
                系统简介
             </h4>
             <p class="text-sm text-gray-600 dark:text-gray-400 leading-relaxed font-medium">
-              🚀 欢迎使用<b>云枢·智能体平台</b>。本系统是一个集成多模型能力的 🤖 AI 助手，旨在通过自然语言交互，帮助您高效完成<b>通用咨询问答</b>、📊 数据查询分析、📚 私有文档检索及 ⚙️ 复杂业务流程处理。
+              🚀 欢迎使用<b>南孜·智能体平台</b>。本系统是一个集成多模型能力的 🤖 AI 助手，旨在通过自然语言交互，帮助您高效完成<b>通用咨询问答</b>、📊 数据查询分析、📚 私有文档检索及 ⚙️ 复杂业务流程处理。
             </p>
           </section>
 
@@ -4677,7 +4677,7 @@ const initChat = async () => {
     if (!config.welcomeMessage) {
       const displayName = accountInfo.value?.real_name || accountInfo.value?.user_name || "";
       const greeting = displayName ? `您好，${displayName}！` : "您好！";
-      config.welcomeMessage = `${greeting}我是云枢智能体，很高兴为您服务。`;
+      config.welcomeMessage = `${greeting}我是南孜智能体，很高兴为您服务。`;
     }
     // 4. Background tasks (non-blocking)
     Promise.all([fetchModels(), fetchAccountInfo(), fetchSlashCommands()]).catch(err => {
@@ -5246,7 +5246,7 @@ const portalLoadingTips = [
   "AI 正在深度解析物理表的业务语义与指标口径... 📊",
   "首次加载需探索物理库表，耗时稍长（约15-30秒），请耐心稍候喔 ✨",
   "正在基于大模型智构最适合该数据集的场景分析提问... 🚀",
-  "云枢大模型正在努力推理计算中，马上就好... 🔄",
+  "南孜大模型正在努力推理计算中，马上就好... 🔄",
 ];
 const currentPortalLoadingTip = ref(portalLoadingTips[0]);
 let portalLoadingTipTimer: ReturnType<typeof setInterval> | null = null;

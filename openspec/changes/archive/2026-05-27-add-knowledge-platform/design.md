@@ -1,8 +1,8 @@
 ## Context
 
-云枢智能体平台已经接入 RAGFlow，用于元数据同步、知识库列表选择、`search_knowledge_base` 工具检索以及 RAGFlow 托管智能体调用。当前知识库的生命周期管理仍依赖 RAGFlow 控制台，平台内只提供“选择已有知识库”的能力，无法完成创建、上传文档、解析、删除和检索效果验证。
+南孜智能体平台已经接入 RAGFlow，用于元数据同步、知识库列表选择、`search_knowledge_base` 工具检索以及 RAGFlow 托管智能体调用。当前知识库的生命周期管理仍依赖 RAGFlow 控制台，平台内只提供“选择已有知识库”的能力，无法完成创建、上传文档、解析、删除和检索效果验证。
 
-本变更新增「知识库开发平台」作为独立菜单分组，面向平台管理员、知识库维护人员和智能体配置人员，提供围绕 RAGFlow Dataset/Document/Retrieval API 的管理与测试能力。RAGFlow 继续承载向量知识库和文档解析检索能力，云枢平台新增本地知识库元数据表，用于维护 RAGFlow 元数据之外的业务属性、归属信息、展示信息、扩展配置和审计关联。
+本变更新增「知识库开发平台」作为独立菜单分组，面向平台管理员、知识库维护人员和智能体配置人员，提供围绕 RAGFlow Dataset/Document/Retrieval API 的管理与测试能力。RAGFlow 继续承载向量知识库和文档解析检索能力，南孜平台新增本地知识库元数据表，用于维护 RAGFlow 元数据之外的业务属性、归属信息、展示信息、扩展配置和审计关联。
 
 ## Goals / Non-Goals
 
@@ -27,7 +27,7 @@
 
 ### 决策 1：RAGFlow 作为检索事实源，平台维护本地扩展元数据
 
-采用后端 Portal API 代理 RAGFlow datasets、documents、chunks、retrieval 接口。前端只调用云枢平台接口，不直接访问 RAGFlow。平台新增本地知识库元数据表，记录 `ragflow_dataset_id`、名称/描述快照、业务归属、可见性、标签、备注、创建人、更新人、扩展 JSON、状态等信息。
+采用后端 Portal API 代理 RAGFlow datasets、documents、chunks、retrieval 接口。前端只调用南孜平台接口，不直接访问 RAGFlow。平台新增本地知识库元数据表，记录 `ragflow_dataset_id`、名称/描述快照、业务归属、可见性、标签、备注、创建人、更新人、扩展 JSON、状态等信息。
 
 原因：
 - 现有系统已经通过 `ragflow_api_url` 与 `ragflow_api_key` 集中配置 RAGFlow。

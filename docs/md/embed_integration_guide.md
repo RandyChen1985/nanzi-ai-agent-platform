@@ -1,6 +1,6 @@
-# 云枢智能体平台嵌入式组件集成指南
+# 南孜智能体平台嵌入式组件集成指南
 
-本文档旨在指导第三方业务系统如何快速、安全地集成云枢 AI Agent 聊天组件（EmbedChat）。
+本文档旨在指导第三方业务系统如何快速、安全地集成南孜 AI Agent 聊天组件（EmbedChat）。
 
 ## 交互流程概览 (Integration Flow)
 
@@ -8,8 +8,8 @@
 sequenceDiagram
     participant S as 第三方后端 (Host Server)
     participant H as 第三方前端 (Host Page)
-    participant W as 云枢组件 (Embed Widget)
-    participant A as 云枢平台 API (Agent API)
+    participant W as 南孜组件 (Embed Widget)
+    participant A as 南孜平台 API (Agent API)
 
     Note over S, A: 1. 获取认证凭证 (Auth)
     S->>A: GET /api/v1/users/profile?username={user}
@@ -35,7 +35,7 @@ sequenceDiagram
 在集成组件前，您需要获取一个有效的认证 Token（即系统中的 **API Key**）。根据集成场景不同，有以下几种获取方式：
 
 ### 方式一：管理后台手动获取 (个人集成)
-1. 登录云枢智能体平台管理后台。
+1. 登录南孜智能体平台管理后台。
 2. 进入 **“个人中心”**。
 3. 在 “API Key” 栏位点击查看并复制。
 
@@ -182,7 +182,7 @@ window.addEventListener('message', (event) => {
       break;
       
     case 'INIT_SUCCESS':
-      console.log('云枢智能体已就绪');
+      console.log('南孜智能体已就绪');
       break;
       
     case 'REQUEST_RESIZE':

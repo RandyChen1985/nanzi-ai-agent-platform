@@ -1,10 +1,10 @@
 # 🎉 Yunshu AI Agent Platform v1.0.0 Release Notes
 
-Welcome to the **first official release** of Yunshu AI Agent Platform (云枢智能体平台)! 🚀
+Welcome to the **first official release** of Yunshu AI Agent Platform (南孜智能体平台)! 🚀
 
 **GitHub Repository**: [RandyChen1985/yunshu-ai-agent-platform](https://github.com/RandyChen1985/yunshu-ai-agent-platform)
 
-云枢 AI Agent 平台（`yovole-yunshu-ai-agent-platform`）是一个面向企业级的高性能、高安全、强审计的 **多智能体编排与数据智能运营中枢**。v1.0.0 正式版提供了多智能体并行调度、物理数据库直连分流、全链路多维记忆引擎、容器自治沙箱执行及企业级 Token 级审计看板等核心基础能力。
+南孜 AI Agent 平台（`yovole-yunshu-ai-agent-platform`）是一个面向企业级的高性能、高安全、强审计的 **多智能体编排与数据智能运营中枢**。v1.0.0 正式版提供了多智能体并行调度、物理数据库直连分流、全链路多维记忆引擎、容器自治沙箱执行及企业级 Token 级审计看板等核心基础能力。
 
 ---
 

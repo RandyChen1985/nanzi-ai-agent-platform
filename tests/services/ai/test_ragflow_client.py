@@ -42,7 +42,7 @@ async def test_retrieve_success(ragflow_client, mock_config):
         mock_post.return_value = httpx.Response(200, json=mock_response_data)
         
         results = await ragflow_client.retrieve(
-            query="什么是云枢？",
+            query="什么是南孜？",
             dataset_ids=["ds_001"],
             top_k=1
         )
@@ -54,7 +54,7 @@ async def test_retrieve_success(ragflow_client, mock_config):
         
         # 验证调用参数
         args, kwargs = mock_post.call_args
-        assert kwargs["json"]["question"] == "什么是云枢？"
+        assert kwargs["json"]["question"] == "什么是南孜？"
         assert kwargs["json"]["dataset_ids"] == ["ds_001"]
 
 @pytest.mark.asyncio

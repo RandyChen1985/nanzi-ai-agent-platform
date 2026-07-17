@@ -1,4 +1,4 @@
-# 云枢智能体平台 - 开发指南
+# 南孜智能体平台 - 开发指南
 
 > 本文档面向开发人员，提供环境搭建、开发规范、测试、部署等完整指引。
 
@@ -105,7 +105,7 @@ npm install
 ```text
 $ ./dev.sh
 ==================================================
-       云枢智能体平台 · 本地开发启动工具       
+       南孜智能体平台 · 本地开发启动工具       
 ==================================================
 
 🛑 [1/3] 正在检查并停止旧服务 (Port 8001)...
@@ -120,7 +120,7 @@ transforming (6423) node_modules/zrender/lib/Element.js
 🔥 [3/3] 正在启动后端服务 (Starting Backend in Foreground)...
 提示：您将在此看到实时运行日志，按 Ctrl+C 可停止服务。
 ------------------------------------------------
-INFO:     Will watch for changes in these directories: ['/Users/chenxiaolong/资料/有孚网络/1云枢中台/yovole-yunshu-ai-agent-platform']
+INFO:     Will watch for changes in these directories: ['/Users/chenxiaolong/资料/有孚网络/1南孜中台/yovole-yunshu-ai-agent-platform']
 INFO:     Uvicorn running on http://0.0.0.0:8001 (Press CTRL+C to quit)
 INFO:     Started reloader process [45012] using StatReload
 INFO:     Started server process [45014]
@@ -559,7 +559,7 @@ async def get_user(
 
 ## 测试指南
 
-本项目使用 `pytest` + `httpx` (AsyncClient) 构建自动化集成测试框架。更详细的测试方法与环境配置说明，请查阅 [tests/README.md](file:///Users/chenxiaolong/资料/有孚网络/1云枢中台/yovole-yunshu-ai-agent-platform/tests/README.md)。
+本项目使用 `pytest` + `httpx` (AsyncClient) 构建自动化集成测试框架。更详细的测试方法与环境配置说明，请查阅 [tests/README.md](file:///Users/chenxiaolong/资料/有孚网络/1南孜中台/yovole-yunshu-ai-agent-platform/tests/README.md)。
 
 ### 后端测试
 
@@ -575,7 +575,7 @@ async def get_user(
 ./tests/run_tests.sh
 ```
 
-该脚本会自动配置 `PYTHONPATH` 环境变量并检索依赖，自动执行所有集成测试。脚本源码细节详见 [tests/run_tests.sh](file:///Users/chenxiaolong/资料/有孚网络/1云枢中台/yovole-yunshu-ai-agent-platform/tests/run_tests.sh)。
+该脚本会自动配置 `PYTHONPATH` 环境变量并检索依赖，自动执行所有集成测试。脚本源码细节详见 [tests/run_tests.sh](file:///Users/chenxiaolong/资料/有孚网络/1南孜中台/yovole-yunshu-ai-agent-platform/tests/run_tests.sh)。
 
 **方式二：手动执行 pytest**
 在项目根目录下执行：
@@ -909,7 +909,7 @@ LOGGING = {
 
 ## 许可证
 
-本项目采用商业许可模式，详情联系 [云枢智能体](https://www.yovole.com)。
+本项目采用商业许可模式，详情联系 [南孜智能体](https://www.yovole.com)。
 
 ---
 

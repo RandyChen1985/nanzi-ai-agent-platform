@@ -2,10 +2,10 @@ from typing import Any, Dict, Optional
 
 from app.services.config_service import ConfigService
 
-DEFAULT_PRODUCT_NAME = "云枢 · 智能体平台"
+DEFAULT_PRODUCT_NAME = "南孜 · 智能体平台"
 DEFAULT_LOGIN_SUBTITLE = "Yunshu Intelligent Agent Platform"
 DEFAULT_ICON_URL = "/favicon.png"
-DEFAULT_AGENT_NAME = "云枢智能助手"
+DEFAULT_AGENT_NAME = "南孜智能助手"
 
 
 class BrandingSettingsService:

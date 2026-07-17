@@ -11,7 +11,7 @@ TBD - created by archiving change create-metadata-management. Update Purpose aft
 - **THEN** 该定义被保存到 `meta_tables` 表中，字段 `term` 为 "机房表"，`physical_name` 为 "res_room"。
 
 #### Scenario: 配置数据源
-- **WHEN** 管理员创建数据集 "云枢资源"
+- **WHEN** 管理员创建数据集 "南孜资源"
 - **THEN** 系统默认将其 `data_source` 设为 "clickhouse"，但也允许指定为 "mysql" 或其他支持的源。这确保了后端执行查询时能路由到正确的数据库连接。
 
 ### Requirement: 元数据管理接口 (Metadata CRUD API)

@@ -306,14 +306,14 @@ const showSecrets = ref<{ [key: string]: boolean }>({})
 
 const brandingConfig = ref({
   enabled: false,
-  product_name: '云枢 · 智能体平台',
+  product_name: '南孜 · 智能体平台',
   login_subtitle: 'Yunshu Intelligent Agent Platform',
   icon_url: '/favicon.png',
   hide_login_sso: false,
   hide_version_link: false,
   contact_markdown: '',
   copyright_text: '',
-  default_agent_name: '云枢智能助手',
+  default_agent_name: '南孜智能助手',
 })
 const brandingIconInput = ref<HTMLInputElement | null>(null)
 
@@ -323,14 +323,14 @@ const fetchBrandingConfig = async () => {
     const data = res.data || {}
     brandingConfig.value = {
       enabled: !!data.enabled,
-      product_name: data.product_name || '云枢 · 智能体平台',
+      product_name: data.product_name || '南孜 · 智能体平台',
       login_subtitle: data.login_subtitle || 'Yunshu Intelligent Agent Platform',
       icon_url: data.icon_url || '/favicon.png',
       hide_login_sso: !!data.hide_login_sso,
       hide_version_link: !!data.hide_version_link,
       contact_markdown: data.contact_markdown || '',
       copyright_text: data.copyright_text || '',
-      default_agent_name: data.default_agent_name || '云枢智能助手',
+      default_agent_name: data.default_agent_name || '南孜智能助手',
     }
   } catch {
     showToast('品牌配置加载失败', 'error')
@@ -1565,7 +1565,7 @@ onMounted(() => {
                 v-model="brandingConfig.product_name"
                 type="text"
                 class="block w-full rounded-lg border-gray-300 shadow-sm focus:border-primary focus:ring-primary text-sm"
-                placeholder="云枢 · 智能体平台"
+                placeholder="南孜 · 智能体平台"
               />
               <p class="text-xs text-gray-400 mt-1">影响浏览器标题、左侧菜单栏名称、登录页</p>
             </div>
@@ -1586,7 +1586,7 @@ onMounted(() => {
                 v-model="brandingConfig.default_agent_name"
                 type="text"
                 class="block w-full rounded-lg border-gray-300 shadow-sm focus:border-primary focus:ring-primary text-sm"
-                placeholder="云枢智能助手"
+                placeholder="南孜智能助手"
               />
               <p class="text-xs text-gray-400 mt-1">影响未开启品牌个性化时或未指定时的智能助手默认名称（例如：Nexus AI）</p>
             </div>

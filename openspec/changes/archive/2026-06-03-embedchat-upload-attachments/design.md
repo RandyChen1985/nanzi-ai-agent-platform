@@ -1,6 +1,6 @@
 ## Context
 
-当前云枢智能体平台是一个基于 **FastAPI (Python)** 后端和 **Vue 3 (Vite + TS + Tailwind)** 前端构建的多智能体中台。EmbedChat 是供外部系统嵌入的核心对话窗。
+当前南孜智能体平台是一个基于 **FastAPI (Python)** 后端和 **Vue 3 (Vite + TS + Tailwind)** 前端构建的多智能体中台。EmbedChat 是供外部系统嵌入的核心对话窗。
 本设计旨在为 EmbedChat 对话输入端快速、安全地引入多模态本地文件上传、托管展示以及会话历史回显，同时提供知识库和技能工作流的高阶占位设计。
 
 ## Goals / Non-Goals
@@ -27,7 +27,7 @@
 ### 2. 前端组件手写 Tailwind 化设计
 - **技术决定**：前端 `ChatInput.vue` 的 `+` 菜单以及预览栏全部采用纯 Tailwind CSS 手写与 SVG 组合实现，不引入任何重型 UI 库。
 - **备选方案**：引入 `Ant Design Vue` 或 `Element Plus`。
-- **选择理由**：云枢前端打包体积需保持绝对轻量。手写 Tailwind 能够做到 100% 精确契合已有页面的圆角、暗色模式及玻璃质感（如 `backdrop-blur-md px-3 bg-white/90`），且保证了完美的平台视觉一致性。
+- **选择理由**：南孜前端打包体积需保持绝对轻量。手写 Tailwind 能够做到 100% 精确契合已有页面的圆角、暗色模式及玻璃质感（如 `backdrop-blur-md px-3 bg-white/90`），且保证了完美的平台视觉一致性。
 
 ### 3. 多维附件元数据与持久化设计
 - **技术决定**：

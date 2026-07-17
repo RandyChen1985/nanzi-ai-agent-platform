@@ -43,7 +43,7 @@
    - `status`: Typically 'Open', 'In Progress', 'Done', 'Reopened'.
 2. **Project Keys**: Always use the KEY, not the name.
    - Example: Use `project = OPS` not `project = "Operations"`.
-   - Common Keys: OPS (运维), YUNSHU (云枢平台), DATA (大数据).
+   - Common Keys: OPS (运维), YUNSHU (南孜平台), DATA (大数据).
 3. **JQL Syntax**:
    - String values must be quoted: `summary ~ "error"`
    - Dates: `created >= -7d` (last 7 days).

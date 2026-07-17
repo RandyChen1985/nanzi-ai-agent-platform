@@ -1,6 +1,6 @@
-# 云枢智能体平台集成指南 (Architecture & Integration Guide)
+# 南孜智能体平台集成指南 (Architecture & Integration Guide)
 
-本文档旨在说明云枢智能体平台（Yunshu AI Agent Platform）的核心架构、接入方式以及智能体编排的工作原理。
+本文档旨在说明南孜智能体平台（Yunshu AI Agent Platform）的核心架构、接入方式以及智能体编排的工作原理。
 
 ## 1. 核心运行逻辑 (Core Architecture)
 

@@ -1,12 +1,12 @@
-# 云枢智能体平台部署安装指南 (HOW TO INSTALL)
+# 南孜智能体平台部署安装指南 (HOW TO INSTALL)
 
-本指南旨在指导开发和运维人员在本地开发环境或生产环境下完成 **云枢智能体平台 (Yunshu AI Agent Platform)** 的安装部署、数据库表结构初始化以及常见问题的快速排查。
+本指南旨在指导开发和运维人员在本地开发环境或生产环境下完成 **南孜智能体平台 (Yunshu AI Agent Platform)** 的安装部署、数据库表结构初始化以及常见问题的快速排查。
 
 ---
 
 ## 1. 概要 (Overview)
 
-云枢智能体平台是企业级的多智能体编排与数据智能洞察（ChatBI）系统。为了适应不同用户的环境，平台主要提供两套部署安装方案：
+南孜智能体平台是企业级的多智能体编排与数据智能洞察（ChatBI）系统。为了适应不同用户的环境，平台主要提供两套部署安装方案：
 *   **Docker 容器化部署（生产首选，支持离线）**：通过位置参数指定版本号构建 Docker 归档包，可在隔离容器环境下运行并一键部署。
 *   **本地源码开发调试部署（开发首选）**：使用 Python 虚拟环境与 Node.js 宿主机环境，支持前后端热重载实时开发联调。
 
@@ -78,7 +78,7 @@
         ./db-prod/apply-sql-native.sh db-prod/INIT-USER-ADMIN.sql
         ```
 
-详细的库表结构说明，请参考：[db-prod/README.md](file:///Users/chenxiaolong/资料/有孚网络/1云枢中台/yovole-yunshu-ai-agent-platform/db-prod/README.md)。
+详细的库表结构说明，请参考：[db-prod/README.md](file:///Users/chenxiaolong/资料/有孚网络/1南孜中台/yovole-yunshu-ai-agent-platform/db-prod/README.md)。
 
 ---
 
@@ -122,7 +122,7 @@
         ```
         *注：因容器是网络隔离的沙箱，`MYSQL_HOST` 与 `REDIS_HOST` 严禁配置为 `localhost` 或 `127.0.0.1`，必须设置为宿主机的局域网 IP（在 Mac 系统上可通过 `ipconfig getifaddr en0` 查询，或使用 `host.docker.internal`）。*
 
-    *   **检查与修改 Docker Compose 编排文件（[docker-compose.ai-agent.yml](file:///Users/chenxiaolong/资料/有孚网络/1云枢中台/yovole-yunshu-ai-agent-platform/docker/docker-compose.ai-agent.yml)）**：
+    *   **检查与修改 Docker Compose 编排文件（[docker-compose.ai-agent.yml](file:///Users/chenxiaolong/资料/有孚网络/1南孜中台/yovole-yunshu-ai-agent-platform/docker/docker-compose.ai-agent.yml)）**：
         在启动前，您可以根据实际运行环境修改该配置文件：
         1.  **镜像版本校准**：YAML 中默认使用 `image: yunshu-ai-agent:latest`。如果您下载或编译出来的镜像是带具体版本号的（如 `yunshu-ai-agent:1.0.0`），您需要将 YAML 中 `image:` 指向对应标签；或直接在终端为该镜像重新打上 `latest` 标签，即可免除文件修改：
             ```bash
@@ -140,7 +140,7 @@
     ./stop-yunshu-ai-agent.sh
     ```
 
-详细的 Docker 编排配置，请参考：[docker/README.md](file:///Users/chenxiaolong/资料/有孚网络/1云枢中台/yovole-yunshu-ai-agent-platform/docker/README.md)。
+详细的 Docker 编排配置，请参考：[docker/README.md](file:///Users/chenxiaolong/资料/有孚网络/1南孜中台/yovole-yunshu-ai-agent-platform/docker/README.md)。
 
 ---
 
@@ -176,7 +176,7 @@
 *   **Swagger 接口文档**：`http://localhost:8001/docs`
 
 ### 🔑 首次登录指引
-1.  云枢系统后台默认采用 **仅 API Key 认证** 的安全规则。
+1.  南孜系统后台默认采用 **仅 API Key 认证** 的安全规则。
 2.  若您在初始化阶段执行过 `db-prod/INIT-USER-ADMIN.sql` 脚本，平台会预置以下默认管理员凭证：
     *   **默认用户名**：`admin`
     *   **默认管理员 API Key**：`5BYfsKWhU_Cfx83cuo8E0kd4AtEhlUHDVlKwwR2kN-c`
@@ -195,7 +195,7 @@
 
 ### 5.2 RAGFlow 配置 (RAGFlow Integration)
 *   **API 地址 (API URL)**：在【RAGFlow 配置】处，输入您已部署好的 RAGFlow 服务接口地址（注意在 Docker 部署下请写宿主机或局域网 IP，避免使用 localhost）。
-*   **接口密钥 (API Key)**：填入在 RAGFlow 控制台中为知识库应用生成的 API Token，使得云枢平台能正常唤醒、同步非结构化知识库并为 ChatBI 数据分析提供文档参考。
+*   **接口密钥 (API Key)**：填入在 RAGFlow 控制台中为知识库应用生成的 API Token，使得南孜平台能正常唤醒、同步非结构化知识库并为 ChatBI 数据分析提供文档参考。
 
 ### 5.3 数据源管理 (Data Sources)
 *   若需使用 ChatBI 智能数据问答与图表可视化，请在【数据源管理】中添加您的业务数据库连接（支持 MySQL、ClickHouse、Oracle 等）。

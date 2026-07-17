@@ -1,6 +1,6 @@
 dataset: Yunshu_Resources
-description: 云枢资产与动环监控基础资源元数据 (Generated from CLICKHOUSE_TABLES.md)
-domain: 云枢资源 # Added domain field as script uses it for display_name
+description: 南孜资产与动环监控基础资源元数据 (Generated from CLICKHOUSE_TABLES.md)
+domain: 南孜资源 # Added domain field as script uses it for display_name
 entities:
   - name: yovole_dm_clickhouse_prod.ck_fact_yunshu_devicepoint_hbase
     term: 设备点位表

@@ -167,7 +167,7 @@ def test_prepend_platform_global_system_prompt_with_tool_config_items():
     )
 
     # 验证全局守则和业务提示词均被正确合并拼装
-    assert "[云枢智能体平台 · 全局守则]" in result
+    assert "[南孜智能体平台 · 全局守则]" in result
     assert "My custom prompt" in result
     assert "## 执行倾向" in result
     assert "## 工具调用风格" in result

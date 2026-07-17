@@ -34,7 +34,7 @@ const displaySlides = computed(() => {
 const currentSlide = ref(0)
 const slides = [
     {
-        title: '云枢 · 智能体平台',
+        title: '南孜 · 智能体平台',
         subtitle: 'Yunshu Intelligent Agent Platform',
         desc: '企业级多智能体编排 · 7x24 进化的数字大脑',
         features: ['智能编排', '安全管控', '实时分析'],

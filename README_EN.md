@@ -1,4 +1,4 @@
-# Yunshu AI Agent Platform (云枢 · 智能体平台)
+# NanZi AI Agent Platform (南孜 · 智能体平台)
 
 [简体中文](README.md) | **English**
 
@@ -10,7 +10,7 @@
 ![Promo](docs/images/yunshu-platform-promo-16x9.png)
 ![Overview](docs/images/yunshu-platform-overview-16x9.png)
 
-**Yunshu AI Agent Platform** is an AI intelligence center purpose-built for complex enterprise scenarios.
+**NanZi AI Agent Platform** is an AI intelligence center purpose-built for complex enterprise scenarios.
 
 The platform revolves around the following core capability matrix:
 *   💬 **Deep Interactive Dialogue**: High-performance streaming chat with auto-routing, **expert mode / @mention direct selection**, and multi-agent synthesis. **Tool preflight** nudges the model to call bound tools; the main assistant supports **skill auto-scan** and permission suspend/resume; slash commands, multimodal attachments, and Vision Q&A.
@@ -31,7 +31,7 @@ The platform revolves around the following core capability matrix:
 
 ```text
 ┌──────────────────────────────────────────────────────────┐
-│                 Yunshu AI Agent Platform                 │
+│                 NanZi AI Agent Platform                 │
 └───────────────┬────────────────────────────┬─────────────┘
                 │                            │
       [ Embed Chat SDK ]              [ Admin Console ]

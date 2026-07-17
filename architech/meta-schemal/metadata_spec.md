@@ -102,7 +102,7 @@ metrics:            # 预定义计算公式 (Computed Metrics)
     *   `resource_meta.yaml` (资源类：机房、机柜)
     *   `metric_meta.yaml` (指标类：能耗、PUE)
 2.  **RAG 增强**：
-    *   **Retrieval**: 当用户提问 "查看云枢机房的PUE" 时，先检索 Meta Schema 中的 Synonyms 和 Description。
+    *   **Retrieval**: 当用户提问 "查看南孜机房的PUE" 时，先检索 Meta Schema 中的 Synonyms 和 Description。
     *   **Prompting**: 将检索到的 Top-K 表结构 + Enums + Examples 注入到 Prompt 中，而非 Dump 整个数据库结构。
 
 ## 6. LLM 是如何读取这些文件的？ (Retrieval Strategy)

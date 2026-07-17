@@ -3,7 +3,7 @@ import json
 import time
 
 """
-# 云枢·智能体平台 API 调用示例 (Python)
+# 南孜·智能体平台 API 调用示例 (Python)
 该脚本演示了如何使用 requests 库调用通用查询接口。
 """
 
@@ -40,7 +40,7 @@ def execute_logical_query(resource, filters=None, sort_by=None, page=1, size=10)
         return None
 
 def get_yunshu_rooms():
-    """获取云枢机房列表示例"""
+    """获取南孜机房列表示例"""
     url = f"{BASE_URL}/resources/rooms"
     headers = {"X-API-Key": API_KEY}
     

@@ -1,6 +1,6 @@
 # Docker 部署指南
 
-本目录包含了云枢智能体平台 (Yunshu AI Agent Platform) 的容器化部署配置文件。
+本目录包含了南孜智能体平台 (Yunshu AI Agent Platform) 的容器化部署配置文件。
 
 ## 文件说明
 
@@ -179,7 +179,7 @@ INFO:     Uvicorn running on http://0.0.0.0:8001 (Press CTRL+C to quit)
 **认证方式：仅使用 API Key**
 
 1. 首次使用需要创建管理员 API Key：
-   平台推荐通过运行 `db-prod/INIT-USER-ADMIN.sql` 来初始化默认管理员账号。您可以参考 [db-prod/README.md](file:///Users/chenxiaolong/资料/有孚网络/1云枢中台/yovole-yunshu-ai-agent-platform/db-prod/README.md) 的说明，在项目根目录下通过运行以下部署脚本来完成导入：
+   平台推荐通过运行 `db-prod/INIT-USER-ADMIN.sql` 来初始化默认管理员账号。您可以参考 [db-prod/README.md](file:///Users/chenxiaolong/资料/有孚网络/1南孜中台/yovole-yunshu-ai-agent-platform/db-prod/README.md) 的说明，在项目根目录下通过运行以下部署脚本来完成导入：
    ```bash
    ./db-prod/apply-sql.sh db-prod/INIT-USER-ADMIN.sql
    ```

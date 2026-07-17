@@ -1,6 +1,6 @@
 # Yunshu ChatBI 精细化数据权限架构指南 (RLS)
 
-本文档详尽描述了云枢智能体平台中 ChatBI 的权限控制架构。该架构基于 **SQL 动态 AST 改写** 技术，实现了工业级的行级数据隔离 (Row-Level Security)。
+本文档详尽描述了南孜智能体平台中 ChatBI 的权限控制架构。该架构基于 **SQL 动态 AST 改写** 技术，实现了工业级的行级数据隔离 (Row-Level Security)。
 
 ## 一、 核心设计理念
 

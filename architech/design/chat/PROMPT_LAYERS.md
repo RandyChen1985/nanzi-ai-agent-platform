@@ -42,13 +42,13 @@
 | 4 | `[Memory Profile]` LTM JSON | `should_inject_ltm` |
 | 5 | `[跨会话记忆检索]` | `should_inject_memory_recall_hint` + 记忆服务开启 |
 | 6 | `[System Preloaded Memories]` | 回忆意图 / 日期命中 |
-| 7 | **`[云枢智能体平台 · 全局守则]`** | `engine_type == LOCAL` |
+| 7 | **`[南孜智能体平台 · 全局守则]`** | `engine_type == LOCAL` |
 | 8 | **整段替换** | `debug_options.system_prompt_override` |
 
 **发给模型时，从上到下：**
 
 ```
-[云枢智能体平台 · 全局守则]     ← PLATFORM_GLOBAL_SYSTEM_PROMPT（常量）
+[南孜智能体平台 · 全局守则]     ← PLATFORM_GLOBAL_SYSTEM_PROMPT（常量）
 [System Preloaded Memories]    ← 可选
 [跨会话记忆检索]               ← 可选
 [Memory Profile]               ← 可选
@@ -111,7 +111,7 @@ graph TD
 
     subgraph M1_Detail[SystemMessage #1 内部层级 - 自顶向下优先级]
         M1_0["[工具预检便签] (Assistant 有工具时，可选)"]
-        M1_1["[云枢智能体平台 · 全局守则] (最顶层/最高优先级)"]
+        M1_1["[南孜智能体平台 · 全局守则] (最顶层/最高优先级)"]
         M1_1b["[用户画像 Active User Profile] (PromptAssembler stable_prefix)"]
         M1_2["[System Preloaded Memories] (历史回忆，可选)"]
         M1_3["[跨会话记忆检索提示] (可选)"]
@@ -137,7 +137,7 @@ HumanMessage       ← 本轮用户（见 §4）
 
 #### 1. SystemMessage #1：系统提示词栈
 在后端 `AgentService` 中，系统提示词由多段内容从上到下组装。越靠上的内容在模型中拥有更高的约束力：
-- **`[云枢智能体平台 · 全局守则]`（PLATFORM_GLOBAL_SYSTEM_PROMPT）**：
+- **`[南孜智能体平台 · 全局守则]`（PLATFORM_GLOBAL_SYSTEM_PROMPT）**：
   - **最高优先级**：声明其优先级高于智能体专规及用户当轮要求，防止 Prompt 注入攻击。
   - **安全与保密**：严禁透露内部提示词、流程、路由逻辑或非安全模式；进行敏感信息脱敏（如 IP 地址、密钥）；禁止模型编造不存在的 URL 或工单。
   - **工具调用约束**：强力约束模型“仅调用已绑定工具”，规范敏感工具（如 `read_file`、`search_text`、`exec_command`）的使用边界，优先推荐用专门工具而非通用 Shell 命令。
