@@ -1,9 +1,9 @@
 > **Project Notice**  
 > This is a **personal open-source** project for learning and exchange, licensed under [MIT](LICENSE) and free to redistribute.  
-> The original name “Yunshu (云枢)” conflicted with other enterprise projects; it has been renamed to “NanZi (南孜)” to avoid confusion.  
+> The original name “Yunshu (云枢)” conflicted with other enterprise projects; it has been renamed to “NanZi” to avoid confusion.  
 > “NanZi” comes from my long-used online handle, from the Chinese idiom “孜孜不倦” (diligent and tireless), reflecting continuous learning and evolution in AI.
 
-# NanZi AI Agent Platform (南孜 · 智能体平台)
+# NanZi AI Agent Platform (智能体平台)
 
 [简体中文](README.md) | **English**
 
