@@ -79,7 +79,10 @@ async def list_agent_versions(agent_id: str, session: AsyncSession = Depends(get
 @router.post("/{agent_id}/versions", response_model=AIAgentVersionResponse)
 async def create_agent_version(agent_id: str, data: AIAgentVersionBase, session: AsyncSession = Depends(get_db_session), user: Dict[str, Any] = Depends(get_current_user)):
     """为智能体创建新版本 (默认 DRAFT)"""
-    version = await AgentManagerService.create_agent_version(session, agent_id, data, user=user)
+    try:
+        version = await AgentManagerService.create_agent_version(session, agent_id, data, user=user)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     if not version:
         raise HTTPException(status_code=403, detail="Forbidden: You can only add versions to your own agents")
     return version
@@ -87,7 +90,10 @@ async def create_agent_version(agent_id: str, data: AIAgentVersionBase, session:
 @router.put("/{agent_id}/versions/{version_id}", response_model=AIAgentVersionResponse)
 async def update_agent_version(agent_id: str, version_id: str, data: AIAgentVersionBase, session: AsyncSession = Depends(get_db_session), user: Dict[str, Any] = Depends(get_current_user)):
     """更新现有的草稿版本 (仅限 DRAFT 状态)"""
-    version = await AgentManagerService.update_agent_version(session, agent_id, version_id, data, user=user)
+    try:
+        version = await AgentManagerService.update_agent_version(session, agent_id, version_id, data, user=user)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     if not version:
         raise HTTPException(status_code=403, detail="Forbidden: Version not found, not a DRAFT, or missing permissions")
     return version

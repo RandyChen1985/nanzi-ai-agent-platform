@@ -37,6 +37,8 @@ class AIAgentVersion(Base):
     synthesis_temperature = Column(Float, nullable=True)
     system_prompt = Column(Text, nullable=False)
     tools = Column(JSON) # List of tool names ["tool1", "tool2"]
+    skills_custom = Column(Boolean, default=False, nullable=False)  # 是否自定义公共 Skills
+    skills = Column(JSON)  # 自定义公共技能 ID 列表 ["skill-id", ...]
     status = Column(String(20), default="DRAFT") # DRAFT, PUBLISHED, ARCHIVED
     comment = Column(String(255))
     created_at = Column(DateTime, default=datetime.now)

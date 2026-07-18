@@ -1176,6 +1176,8 @@ class AssistantAgentRunner(BaseExecutor):
             user_name=self._runtime_user_name(),
             user_info=self.user_info,
             conversation_id=self.conversation_id,
+            skills_custom=bool(getattr(self.config, "skills_custom", False)),
+            allowed_global_skills=list(getattr(self.config, "skills", None) or []),
         )
         # 仅挂载 agent 后端配置的工具；workspace 只作 offloader，不自动注入 Grep/Read/Bash 等内置工具。
         toolkit = build_toolkit(

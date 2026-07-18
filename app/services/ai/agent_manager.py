@@ -91,6 +91,8 @@ class AgentManagerService:
                 synthesis_temperature=version.synthesis_temperature,
                 system_prompt=version.system_prompt,
                 tools=tools_list or [],
+                skills_custom=bool(getattr(version, "skills_custom", False)),
+                skills=AgentManagerService._normalize_skills_list(getattr(version, "skills", None)),
                 capabilities=agent.capabilities or [],
                 engine_type=agent.engine_type,
                 engine_config=agent.engine_config
@@ -134,6 +136,8 @@ class AgentManagerService:
                     synthesis_temperature=version.synthesis_temperature,
                     system_prompt=version.system_prompt,
                     tools=tools_list or [],
+                    skills_custom=bool(getattr(version, "skills_custom", False)),
+                    skills=AgentManagerService._normalize_skills_list(getattr(version, "skills", None)),
                     capabilities=version.agent.capabilities or [],
                     engine_type=version.agent.engine_type,
                     engine_config=version.agent.engine_config
@@ -441,6 +445,30 @@ class AgentManagerService:
         return normalized
 
     @staticmethod
+    def _normalize_skills_list(skills: Any) -> List[str]:
+        """Normalize skills JSON (list/str) into a clean list of skill ids."""
+        if not skills:
+            return []
+        if isinstance(skills, str):
+            try:
+                skills = json.loads(skills)
+            except Exception:
+                return []
+        if not isinstance(skills, list):
+            return []
+        result: List[str] = []
+        for item in skills:
+            skill_id = str(item or "").strip()
+            if skill_id and skill_id not in result:
+                result.append(skill_id)
+        return result
+
+    @staticmethod
+    def _validate_skills_config(skills_custom: bool, skills: List[str]) -> None:
+        if skills_custom and not skills:
+            raise ValueError("自定义 Skills 开启时至少选择一个公共技能")
+
+    @staticmethod
     async def create_agent_version(session: AsyncSession, agent_id: str, data: AIAgentVersionBase, user: Any = None) -> Optional[AIAgentVersion]:
         """Create a new version for an agent (checks ownership)"""
         agent = await session.get(AIAgent, agent_id)
@@ -458,12 +486,16 @@ class AgentManagerService:
         if not is_admin and agent.created_by and agent.created_by != username:
             return None # Forbidden
 
+        skills_custom = bool(getattr(data, "skills_custom", False))
+        skills_list = AgentManagerService._normalize_skills_list(getattr(data, "skills", None)) if skills_custom else []
+        AgentManagerService._validate_skills_config(skills_custom, skills_list)
+
         # Determine next version number
         query = select(AIAgentVersion.version_number).where(AIAgentVersion.agent_id == agent_id).order_by(AIAgentVersion.version_number.desc()).limit(1)
         prev_result = await session.execute(query)
         prev_v = prev_result.scalar_one_or_none()
         next_v = (prev_v or 0) + 1
-        
+
         version = AIAgentVersion(
             id=str(uuid.uuid4()),
             agent_id=agent_id,
@@ -474,6 +506,8 @@ class AgentManagerService:
             synthesis_temperature=data.synthesis_temperature,
             system_prompt=data.system_prompt,
             tools=AgentManagerService._normalize_tools_for_db(data.tools),
+            skills_custom=skills_custom,
+            skills=skills_list,
             status="DRAFT",
             comment=data.comment
         )
@@ -510,6 +544,14 @@ class AgentManagerService:
         if not is_admin and agent.created_by and agent.created_by != username:
             return None # Forbidden
 
+        skills_custom = bool(getattr(data, "skills_custom", False))
+        skills_list = (
+            AgentManagerService._normalize_skills_list(getattr(data, "skills", None))
+            if skills_custom
+            else []
+        )
+        AgentManagerService._validate_skills_config(skills_custom, skills_list)
+
         # Update fields
         version.model_name = data.model_name or version.model_name
         version.temperature = data.temperature if data.temperature is not None else version.temperature
@@ -517,6 +559,8 @@ class AgentManagerService:
         version.synthesis_temperature = data.synthesis_temperature
         version.system_prompt = data.system_prompt
         version.tools = AgentManagerService._normalize_tools_for_db(data.tools)
+        version.skills_custom = skills_custom
+        version.skills = skills_list
         version.comment = data.comment or version.comment
         
         await session.commit()

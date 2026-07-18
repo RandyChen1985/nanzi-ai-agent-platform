@@ -367,6 +367,8 @@ const versionForm = ref<Partial<AIAgentVersion>>({
   synthesis_temperature: 0.7, // NEW
   system_prompt: "",
   tools: [],
+  skills_custom: false,
+  skills: [],
   comment: "",
 });
 
@@ -475,7 +477,8 @@ const availableTools = [
 
 const dynamicTools = ref<SysApiTool[]>([]);
 const mcpTools = ref<any[]>([]);
-const toolTab = ref<'static' | 'mcp'>('static');
+const availableSkills = ref<any[]>([]);
+const toolTab = ref<'static' | 'mcp' | 'skills'>('static');
 
 const groupedMcpTools = computed(() => {
   const groups: Record<string, any[]> = {};
@@ -517,6 +520,10 @@ const versionConfigSteps: { id: VersionConfigStep; label: string }[] = [
 ];
 
 const selectedToolsCount = computed(() => versionForm.value.tools?.length ?? 0);
+const selectedSkillsCount = computed(() => versionForm.value.skills?.length ?? 0);
+const enabledGlobalSkills = computed(() =>
+  availableSkills.value.filter((s) => String(s.enabled ?? 'true') !== 'false')
+);
 const promptCharCount = computed(() => versionForm.value.system_prompt?.length ?? 0);
 
 const versionConfigProgress = computed(() => {
@@ -555,6 +562,16 @@ const filteredGroupedMcpTools = computed(() => {
     if (filtered.length > 0) result[serverName] = filtered;
   }
   return result;
+});
+
+const filteredEnabledSkills = computed(() => {
+  const q = toolSearchQuery.value.trim().toLowerCase();
+  return enabledGlobalSkills.value.filter((skill) =>
+    !q ||
+    String(skill.id || '').toLowerCase().includes(q) ||
+    String(skill.name || '').toLowerCase().includes(q) ||
+    String(skill.description || '').toLowerCase().includes(q)
+  );
 });
 
 const collapsedStaticGroups = ref<Set<string>>(new Set());
@@ -633,6 +650,14 @@ const fetchTools = async () => {
       mcpTools.value = Array.isArray(mcpRes.data) ? mcpRes.data : (mcpRes.data.data || []);
     } catch (e) {
       console.warn("MCP tools not loaded");
+    }
+
+    try {
+      const skillsRes = await axios.get('/api/portal/skills');
+      availableSkills.value = Array.isArray(skillsRes.data) ? skillsRes.data : (skillsRes.data.data || []);
+    } catch (e) {
+      console.warn("Skills not loaded");
+      availableSkills.value = [];
     }
   } catch (e) {
     console.error("Failed to fetch dynamic tools", e);
@@ -958,10 +983,16 @@ const openVersionModal = (
         status: "DRAFT", // Reset status
         comment: `Cloned from V${version.version_number}`,
         created_at: undefined,
+        skills_custom: !!version.skills_custom,
+        skills: version.skills_custom ? [...(version.skills || [])] : [],
       };
     } else {
       // Edit mode
-      versionForm.value = { ...version };
+      versionForm.value = {
+        ...version,
+        skills_custom: !!version.skills_custom,
+        skills: version.skills_custom ? [...(version.skills || [])] : [],
+      };
     }
   } else {
     // Default system prompt from selected agent or empty
@@ -972,6 +1003,8 @@ const openVersionModal = (
       synthesis_temperature: 0.7,
       system_prompt: "",
       tools: [],
+      skills_custom: false,
+      skills: [],
       comment: "",
     };
   }
@@ -1057,16 +1090,29 @@ const saveVersion = async () => {
     return;
   }
 
+  if (versionForm.value.skills_custom && !(versionForm.value.skills?.length)) {
+    showToast("自定义 Skills 开启时至少选择一个公共技能", "warning");
+    versionConfigStep.value = 'tools';
+    toolTab.value = 'skills';
+    return;
+  }
+
+  const payload = {
+    ...versionForm.value,
+    skills_custom: !!versionForm.value.skills_custom,
+    skills: versionForm.value.skills_custom ? (versionForm.value.skills || []) : [],
+  };
+
   try {
     if (versionForm.value.id) {
       await agentApi.updateVersion(
         selectedAgent.value.id,
         versionForm.value.id,
-        versionForm.value
+        payload
       );
       showToast("版本更新成功", "success");
     } else {
-      await agentApi.createVersion(selectedAgent.value.id, versionForm.value);
+      await agentApi.createVersion(selectedAgent.value.id, payload);
       showToast("版本创建成功", "success");
     }
     showVersionModal.value = false;
@@ -1171,6 +1217,32 @@ const toggleTool = (toolName: string) => {
     tools.push(toolName);
   }
   versionForm.value.tools = tools;
+};
+
+const setSkillsCustom = (enabled: boolean) => {
+  if (!canEditVersion.value) return;
+  versionForm.value.skills_custom = enabled;
+  if (!enabled) {
+    versionForm.value.skills = [];
+  } else if (!versionForm.value.skills) {
+    versionForm.value.skills = [];
+  }
+};
+
+const toggleSkill = (skillId: string) => {
+  if (!canEditVersion.value || !versionForm.value.skills_custom) return;
+  const skills = [...(versionForm.value.skills || [])];
+  const index = skills.indexOf(skillId);
+  if (index > -1) {
+    skills.splice(index, 1);
+  } else {
+    skills.push(skillId);
+  }
+  versionForm.value.skills = skills;
+};
+
+const isSkillSelected = (skillId: string) => {
+  return !!(versionForm.value.skills || []).includes(skillId);
 };
 
 const isToolSelected = (toolName: string) => {
@@ -2348,14 +2420,18 @@ const formatDate = (dateStr: string) => {
       :version-config-steps="versionConfigSteps"
       :version-config-progress="versionConfigProgress"
       :selected-tools-count="selectedToolsCount"
+      :selected-skills-count="selectedSkillsCount"
       :prompt-char-count="promptCharCount"
       :version-status-label="versionStatusLabel"
       :version-status-class="versionStatusClass"
       :filtered-grouped-tools="filteredGroupedTools"
       :filtered-grouped-mcp-tools="filteredGroupedMcpTools"
+      :filtered-enabled-skills="filteredEnabledSkills"
+      :enabled-global-skills-count="enabledGlobalSkills.length"
       :all-available-tools-count="allAvailableTools.length"
       :mcp-tools-count="mcpTools.length"
       :is-tool-selected="isToolSelected"
+      :is-skill-selected="isSkillSelected"
       :get-tool-custom-config="getToolCustomConfig"
       :is-all-mcp-selected="isAllMcpSelected"
       :is-mcp-group-collapsed="isMcpGroupCollapsed"
@@ -2369,6 +2445,8 @@ const formatDate = (dateStr: string) => {
       @update:tool-search-query="toolSearchQuery = $event"
       @update:version-config-step="versionConfigStep = $event"
       @toggle-tool="toggleTool"
+      @toggle-skill="toggleSkill"
+      @set-skills-custom="setSkillsCustom"
       @toggle-select-all-mcp="toggleSelectAllMcp"
       @toggle-mcp-group-collapse="toggleMcpGroupCollapse"
       @toggle-static-group-collapse="toggleStaticGroupCollapse"

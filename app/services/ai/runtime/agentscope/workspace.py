@@ -97,8 +97,15 @@ def default_workspace_root() -> str:
 
 def discover_platform_skill_paths(
     user_info: dict[str, Any] | None = None,
+    *,
+    skills_custom: bool = False,
+    allowed_global_skills: list[str] | None = None,
 ) -> list[str]:
-    """Collect skill directories: global platform skills + user personal skills."""
+    """Collect skill directories: global platform skills + user personal skills.
+
+    When skills_custom is True, only allowlisted global skill ids are included;
+    personal skills are always appended (if enabled).
+    """
     try:
         from app.core.config import settings
 
@@ -108,11 +115,17 @@ def discover_platform_skill_paths(
     if not skills_root or not os.path.isdir(skills_root):
         return []
 
+    allowlist: set[str] | None = None
+    if skills_custom:
+        allowlist = {str(s).strip() for s in (allowed_global_skills or []) if str(s).strip()}
+
     paths: list[str] = []
     from app.utils.skill_metadata import parse_skill_frontmatter
     for entry in sorted(os.listdir(skills_root)):
         skill_dir = os.path.join(skills_root, entry)
         if os.path.isdir(skill_dir) and os.path.isfile(os.path.join(skill_dir, "SKILL.md")):
+            if allowlist is not None and entry not in allowlist:
+                continue
             # 过滤禁用的技能
             meta = parse_skill_frontmatter(entry, os.path.join(skill_dir, "SKILL.md"))
             if meta.get("enabled", "true") == "false":
@@ -269,6 +282,8 @@ async def get_local_workspace(
     conversation_id: str | None,
     user_name: str | None = None,
     user_info: dict[str, Any] | None = None,
+    skills_custom: bool = False,
+    allowed_global_skills: list[str] | None = None,
 ) -> Any | None:
     """Return an initialized LocalWorkspace for the conversation."""
     if not conversation_id:
@@ -283,7 +298,13 @@ async def get_local_workspace(
         conversation_id=conversation_id,
     )
     os.makedirs(workdir, exist_ok=True)
-    cached = _workspace_cache.get(workdir)
+    skills_fp = (
+        f"custom:{','.join(sorted(str(s) for s in (allowed_global_skills or []) if str(s).strip()))}"
+        if skills_custom
+        else "all"
+    )
+    cache_key = f"{workdir}::{skills_fp}"
+    cached = _workspace_cache.get(cache_key)
     if cached is not None:
         return cached
 
@@ -295,7 +316,11 @@ async def get_local_workspace(
 
     workspace = LocalWorkspace(
         workdir=workdir,
-        skill_paths=discover_platform_skill_paths(user_info=user_info),
+        skill_paths=discover_platform_skill_paths(
+            user_info=user_info,
+            skills_custom=skills_custom,
+            allowed_global_skills=allowed_global_skills,
+        ),
     )
     try:
         await workspace.initialize()
@@ -303,7 +328,7 @@ async def get_local_workspace(
         logger.warning("[workspace] Failed to initialize LocalWorkspace workdir=%s: %s", workdir, exc)
         return None
 
-    _workspace_cache[workdir] = workspace
+    _workspace_cache[cache_key] = workspace
     return workspace
 
 
@@ -313,6 +338,8 @@ async def get_local_workspace_offloader(
     conversation_id: str | None,
     user_name: str | None = None,
     user_info: dict[str, Any] | None = None,
+    skills_custom: bool = False,
+    allowed_global_skills: list[str] | None = None,
 ) -> Any | None:
     """Backward-compatible alias for get_local_workspace."""
     return await get_local_workspace(
@@ -320,6 +347,8 @@ async def get_local_workspace_offloader(
         conversation_id=conversation_id,
         user_name=user_name,
         user_info=user_info,
+        skills_custom=skills_custom,
+        allowed_global_skills=allowed_global_skills,
     )
 
 
@@ -340,6 +369,10 @@ async def delete_workspace_for_session(
         conversation_id=conversation_id,
     )
     _workspace_cache.pop(workdir, None)
+    prefix = f"{workdir}::"
+    for key in list(_workspace_cache.keys()):
+        if key == workdir or (isinstance(key, str) and key.startswith(prefix)):
+            _workspace_cache.pop(key, None)
     if not os.path.isdir(workdir):
         return
     try:

@@ -653,9 +653,15 @@ class AgentService:
                 from app.services.ai.skill_resolver import (
                     load_skill_md_content,
                     resolve_skills_from_query,
+                    skill_filter_kwargs_from_config,
                 )
 
-                for skill_meta in resolve_skills_from_query(user_query, user_info=user_info):
+                skill_filter = skill_filter_kwargs_from_config(agent_config)
+                for skill_meta in resolve_skills_from_query(
+                    user_query,
+                    user_info=user_info,
+                    **skill_filter,
+                ):
                     skill_id = skill_meta.get("id")
                     if not skill_id or skill_id in mounted_skill_ids:
                         continue
@@ -707,10 +713,12 @@ class AgentService:
                     load_skill_md_content,
                     scan_relevant_skills,
                     should_scan_skills_for_query,
+                    skill_filter_kwargs_from_config,
                 )
                 from app.services.config_service import ConfigService
 
                 if is_main_general_agent(agent_config):
+                    skill_filter = skill_filter_kwargs_from_config(agent_config)
                     scan_enabled_raw = await ConfigService.get("skill_auto_scan_enabled", "true")
                     scan_enabled = str(scan_enabled_raw or "true").strip().lower() in {
                         "1", "true", "yes", "on",
@@ -736,8 +744,12 @@ class AgentService:
                                 exclude_ids=mounted_skill_ids,
                                 max_results=max_scan_results,
                                 min_score=min_score,
+                                **skill_filter,
                             )
-                        available_skills = list_skill_metas()
+                        available_skills = list_skill_metas(
+                            user_info=user_info,
+                            **skill_filter,
+                        )
                         scanned_skills = self._ensure_first_turn_superpowers_candidate(
                             scanned_skills=scanned_skills,
                             available_skills=available_skills,

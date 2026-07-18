@@ -145,31 +145,38 @@ def _is_forbidden_shell_command(command: str) -> str | None:
 @tool
 def list_available_skills() -> str:
     """
-    列出当前平台技能库中可用的技能摘要，供智能体按 name/description 判断是否需要读取具体技能。
-    只返回技能 ID、名称和描述，不读取完整 SKILL.md。
+    列出当前会话可用的技能摘要（已启用），供智能体按 name/description 判断是否需要读取具体技能。
+    规则与运行时一致：未自定义时=全部已启用公共技能+当前用户个人技能；
+    自定义开启时=智能体勾选的公共技能+当前用户个人技能。
+    只返回技能 ID、名称、描述与 scope，不读取完整 SKILL.md。
     """
     try:
-        from app.core.config import settings
+        from app.core.context import get_current_agent_context
+        from app.utils.context import current_user_info
+        from app.services.ai.skill_resolver import list_skill_metas
 
-        skills_dir = settings.SKILLS_DIR
-        if not os.path.exists(skills_dir):
-            return "[]"
+        user_info = current_user_info.get()
+        ctx = get_current_agent_context()
+        skills_custom = bool(getattr(ctx, "skills_custom", False)) if ctx else False
+        allowed = list(getattr(ctx, "skills", None) or []) if ctx else []
 
+        metas = list_skill_metas(
+            user_info=user_info,
+            skills_custom=skills_custom,
+            allowed_global_skills=allowed if skills_custom else None,
+        )
         skills = []
-        for item in sorted(os.listdir(skills_dir)):
-            if item.startswith("."):
+        for meta in metas:
+            if meta.get("enabled", "true") == "false":
                 continue
-            item_path = os.path.join(skills_dir, item)
-            if not os.path.isdir(item_path):
-                continue
-            try:
-                _validate_skill_id(item)
-            except ValueError:
-                logger.warning("[Skills] Ignored invalid skill directory name: %s", item)
-                continue
-            skill_md_path = os.path.join(item_path, "SKILL.md")
-            skills.append(_parse_skill_frontmatter(item, skill_md_path))
-
+            skills.append(
+                {
+                    "id": meta.get("id"),
+                    "name": meta.get("name") or meta.get("id"),
+                    "description": meta.get("description") or "",
+                    "scope": meta.get("scope") or "global",
+                }
+            )
         return json.dumps(skills, ensure_ascii=False, indent=2)
     except Exception as e:
         return f"错误：列出技能失败，原因: {str(e)}"
@@ -179,24 +186,75 @@ def list_available_skills() -> str:
 def read_skill_instruction(skill_id: str) -> str:
     """
     读取指定技能的 SKILL.md 指令内容。调用前应先使用 list_available_skills 确认技能存在且适用。
+    仅允许读取当前会话可见技能（含自定义白名单过滤后的公共技能与个人技能）。
 
     Args:
         skill_id: 技能唯一 ID，仅允许英文、数字、中划线及下划线。
     """
     try:
-        from app.core.config import settings
+        from app.core.context import get_current_agent_context
+        from app.utils.context import current_user_info
+        from app.services.ai.skill_resolver import list_skill_metas
 
         safe_skill_id = _validate_skill_id(skill_id)
-        skills_dir = os.path.abspath(settings.SKILLS_DIR)
-        skill_md_path = os.path.abspath(os.path.join(skills_dir, safe_skill_id, "SKILL.md"))
-        if os.path.commonpath([skills_dir, skill_md_path]) != skills_dir:
-            return "错误：技能路径越界。"
-        if not os.path.exists(skill_md_path):
-            return f"错误：技能 {safe_skill_id} 不存在或缺少 SKILL.md。"
+        user_info = current_user_info.get()
+        ctx = get_current_agent_context()
+        skills_custom = bool(getattr(ctx, "skills_custom", False)) if ctx else False
+        allowed = list(getattr(ctx, "skills", None) or []) if ctx else []
 
-        with open(skill_md_path, "r", encoding="utf-8", errors="ignore") as f:
+        metas = list_skill_metas(
+            user_info=user_info,
+            skills_custom=skills_custom,
+            allowed_global_skills=allowed if skills_custom else None,
+        )
+        matched = next(
+            (
+                m
+                for m in metas
+                if m.get("id") == safe_skill_id and m.get("enabled", "true") != "false"
+            ),
+            None,
+        )
+        if not matched:
+            return (
+                f"错误：技能 {safe_skill_id} 不存在、已禁用，"
+                "或不在当前智能体可用 Skills 范围内。"
+            )
+
+        skill_md_path = matched.get("skill_md_path")
+        if not skill_md_path or not os.path.exists(skill_md_path):
+            return f"错误：技能 {safe_skill_id} 缺少 SKILL.md。"
+
+        # 路径安全：限制在全局 SKILLS_DIR 或个人 skills 根目录下
+        abs_md = os.path.abspath(skill_md_path)
+        allowed_roots: list[str] = []
+        try:
+            from app.core.config import settings
+
+            if getattr(settings, "SKILLS_DIR", None):
+                allowed_roots.append(os.path.abspath(settings.SKILLS_DIR))
+        except Exception:
+            pass
+        if user_info:
+            try:
+                from app.services.ai.skill_resolver import get_user_personal_skills_dir
+
+                personal_dir = get_user_personal_skills_dir(user_info)
+                if personal_dir:
+                    allowed_roots.append(os.path.abspath(personal_dir))
+            except Exception:
+                pass
+        if not any(
+            os.path.commonpath([abs_md, root]) == root
+            for root in allowed_roots
+            if root
+        ):
+            return "错误：技能路径越界。"
+
+        with open(abs_md, "r", encoding="utf-8", errors="ignore") as f:
             content = f.read(262144)
-        return f"[技能读取成功: {safe_skill_id}/SKILL.md]\n{content}"
+        scope = matched.get("scope") or "global"
+        return f"[技能读取成功: {safe_skill_id}/SKILL.md · scope={scope}]\n{content}"
     except ValueError as e:
         return f"错误：非法技能 ID，{str(e)}"
     except Exception as e:

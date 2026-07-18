@@ -352,6 +352,8 @@ async def sub_agent_call(agent_name: str, query: str) -> str:
         # 共享主 runner 的事实取证账本，使子智能体工具调用产生的取证凭证回流到主链路。
         # 依赖顺序：主 runner._execute_raw 在调用本工具前必须已完成 ctx.grounding_evidence_ledger 初始化。
         grounding_evidence_ledger=main_ctx.grounding_evidence_ledger,
+        skills_custom=bool(getattr(target_config, "skills_custom", False)),
+        skills=list(getattr(target_config, "skills", None) or []),
     )
     if main_ctx.grounding_evidence_ledger is None:
         import logging as _logging

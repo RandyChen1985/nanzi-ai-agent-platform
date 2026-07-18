@@ -5,6 +5,7 @@ import MarkdownEditor from '../MarkdownEditor.vue';
 
 type VersionConfigStep = 'model' | 'tools' | 'prompt' | 'review';
 type ToolGroup = { label: string; icon: string; tools: any[] };
+type SkillItem = { id: string; name?: string; description?: string; enabled?: string | boolean; path?: string };
 
 const props = defineProps<{
   show: boolean;
@@ -12,20 +13,24 @@ const props = defineProps<{
   selectedAgent: AIAgent | null;
   models: AIModel[];
   canEditVersion: boolean;
-  toolTab: 'static' | 'mcp';
+  toolTab: 'static' | 'mcp' | 'skills';
   toolSearchQuery: string;
   versionConfigStep: VersionConfigStep;
   versionConfigSteps: { id: VersionConfigStep; label: string }[];
   versionConfigProgress: number;
   selectedToolsCount: number;
+  selectedSkillsCount: number;
   promptCharCount: number;
   versionStatusLabel: string;
   versionStatusClass: string;
   filteredGroupedTools: ToolGroup[];
   filteredGroupedMcpTools: Record<string, any[]>;
+  filteredEnabledSkills: SkillItem[];
+  enabledGlobalSkillsCount: number;
   allAvailableToolsCount: number;
   mcpToolsCount: number;
   isToolSelected: (name: string) => boolean;
+  isSkillSelected: (skillId: string) => boolean;
   getToolCustomConfig: (name: string) => any;
   isAllMcpSelected: (serverName: string, tools: any[]) => boolean;
   isMcpGroupCollapsed: (serverName: string) => boolean;
@@ -38,10 +43,12 @@ const props = defineProps<{
 const emit = defineEmits<{
   close: [];
   save: [];
-  'update:toolTab': [value: 'static' | 'mcp'];
+  'update:toolTab': [value: 'static' | 'mcp' | 'skills'];
   'update:toolSearchQuery': [value: string];
   'update:versionConfigStep': [value: VersionConfigStep];
   toggleTool: [name: string];
+  toggleSkill: [skillId: string];
+  setSkillsCustom: [enabled: boolean];
   toggleSelectAllMcp: [serverName: string, tools: any[]];
   toggleMcpGroupCollapse: [serverName: string];
   toggleStaticGroupCollapse: [label: string];
@@ -251,6 +258,12 @@ const goStep = (step: VersionConfigStep) => emit('update:versionConfigStep', ste
                   class="px-3 py-1.5 rounded-md transition-all font-medium"
                   :class="toolTab === 'mcp' ? 'bg-white shadow-sm text-primary' : 'text-gray-400'"
                 >MCP 工具 ({{ mcpToolsCount }})</button>
+                <button
+                  type="button"
+                  @click="emit('update:toolTab', 'skills')"
+                  class="px-3 py-1.5 rounded-md transition-all font-medium"
+                  :class="toolTab === 'skills' ? 'bg-white shadow-sm text-primary' : 'text-gray-400'"
+                >Skills ({{ enabledGlobalSkillsCount }})</button>
               </div>
             </div>
 
@@ -320,7 +333,7 @@ const goStep = (step: VersionConfigStep) => emit('update:versionConfigStep', ste
             </div>
 
             <!-- MCP Tools -->
-            <div v-else class="flex-1 overflow-y-auto space-y-3 pr-1 version-editor-scroll">
+            <div v-else-if="toolTab === 'mcp'" class="flex-1 overflow-y-auto space-y-3 pr-1 version-editor-scroll">
               <div v-if="mcpToolsCount === 0" class="p-12 text-center text-gray-400 text-sm">
                 暂无已发布的 MCP 工具，请前往系统设置配置。
               </div>
@@ -362,6 +375,76 @@ const goStep = (step: VersionConfigStep) => emit('update:versionConfigStep', ste
                 </div>
               </div>
             </div>
+
+            <!-- Skills -->
+            <div v-else class="flex-1 overflow-y-auto space-y-3 pr-1 version-editor-scroll">
+              <div class="rounded-lg border border-emerald-100 bg-emerald-50/40 px-4 py-3 flex items-start justify-between gap-3">
+                <div class="min-w-0">
+                  <div class="text-sm font-bold text-gray-800">自定义 Skills</div>
+                  <p class="text-[11px] text-gray-500 mt-1 leading-relaxed">
+                    关闭时加载全部已启用公共技能 + 当前用户个人技能。开启后仅从公共技能中勾选；运行时仍会附带当前用户个人技能。
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  role="switch"
+                  :aria-checked="!!versionForm.skills_custom"
+                  :disabled="!canEditVersion"
+                  @click="emit('setSkillsCustom', !versionForm.skills_custom)"
+                  class="relative inline-flex h-6 w-11 flex-shrink-0 rounded-full transition-colors"
+                  :class="[
+                    versionForm.skills_custom ? 'bg-primary' : 'bg-gray-300',
+                    canEditVersion ? 'cursor-pointer' : 'opacity-60 cursor-not-allowed'
+                  ]"
+                >
+                  <span
+                    class="inline-block h-5 w-5 transform rounded-full bg-white shadow transition mt-0.5"
+                    :class="versionForm.skills_custom ? 'translate-x-5 ml-0.5' : 'translate-x-0.5'"
+                  />
+                </button>
+              </div>
+
+              <div v-if="!versionForm.skills_custom" class="p-10 text-center text-gray-400 text-sm border border-dashed border-gray-200 rounded-xl">
+                当前使用默认策略：全部已启用公共 Skills + 个人 Skills
+              </div>
+              <template v-else>
+                <div class="flex items-center justify-between gap-2">
+                  <span class="text-xs font-medium text-primary bg-primary/10 px-2.5 py-1 rounded-full">
+                    已选 {{ selectedSkillsCount }} 个公共技能
+                  </span>
+                  <span class="text-[10px] text-amber-600" v-if="selectedSkillsCount === 0">至少选择 1 个公共技能</span>
+                </div>
+                <div v-if="enabledGlobalSkillsCount === 0" class="p-12 text-center text-gray-400 text-sm">
+                  暂无已启用的公共技能，请前往技能工作台启用。
+                </div>
+                <div v-else class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  <div
+                    v-for="skill in filteredEnabledSkills"
+                    :key="skill.id"
+                    @click="emit('toggleSkill', skill.id)"
+                    class="tool-card"
+                    :class="[
+                      isSkillSelected(skill.id) ? 'tool-card--selected' : '',
+                      !canEditVersion ? 'opacity-90 cursor-default' : 'cursor-pointer'
+                    ]"
+                  >
+                    <div class="tool-checkbox" :class="isSkillSelected(skill.id) ? 'tool-checkbox--on' : ''">
+                      <svg v-if="isSkillSelected(skill.id)" class="w-2.5 h-2.5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="4" d="M5 13l4 4L19 7" />
+                      </svg>
+                    </div>
+                    <div class="flex-1 min-w-0">
+                      <div class="text-[11px] font-bold font-mono text-gray-800 flex items-center gap-1 flex-wrap">
+                        {{ skill.name || skill.id }}
+                        <span class="text-[9px] bg-emerald-50 text-emerald-600 px-1 rounded font-sans font-normal">公共</span>
+                      </div>
+                      <div class="text-[10px] text-gray-400 mt-0.5 font-mono">{{ skill.id }}</div>
+                      <div class="text-[10px] text-gray-400 mt-0.5 line-clamp-2">{{ skill.description || '暂无描述' }}</div>
+                    </div>
+                  </div>
+                </div>
+              </template>
+            </div>
           </div>
 
           <!-- Step 3: Prompt -->
@@ -390,7 +473,7 @@ const goStep = (step: VersionConfigStep) => emit('update:versionConfigStep', ste
           <!-- Step 4: Review -->
           <div v-else class="space-y-4 max-w-2xl">
             <h3 class="text-sm font-bold text-gray-900">配置总览</h3>
-            <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
               <div class="summary-card">
                 <div class="text-[10px] text-gray-400 uppercase font-bold mb-1">编排模型</div>
                 <div class="text-sm font-semibold text-gray-800 truncate">{{ getModelDisplayName(versionForm.model_name) }}</div>
@@ -399,6 +482,12 @@ const goStep = (step: VersionConfigStep) => emit('update:versionConfigStep', ste
               <div class="summary-card">
                 <div class="text-[10px] text-gray-400 uppercase font-bold mb-1">工具能力</div>
                 <div class="text-sm font-semibold text-gray-800">{{ selectedToolsCount }} 个已启用</div>
+              </div>
+              <div class="summary-card">
+                <div class="text-[10px] text-gray-400 uppercase font-bold mb-1">Skills</div>
+                <div class="text-sm font-semibold text-gray-800">
+                  {{ versionForm.skills_custom ? `自定义 ${selectedSkillsCount} 个` : '全部公共 + 个人' }}
+                </div>
               </div>
               <div class="summary-card">
                 <div class="text-[10px] text-gray-400 uppercase font-bold mb-1">系统提示词</div>

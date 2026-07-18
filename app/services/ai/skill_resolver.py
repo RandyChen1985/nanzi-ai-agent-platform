@@ -89,11 +89,19 @@ def _scan_skill_dir(skills_dir: str, scope: str) -> List[Dict[str, str]]:
     return metas
 
 
-def list_skill_metas(user_info: Optional[Dict[str, Any]] = None) -> List[Dict[str, str]]:
+def list_skill_metas(
+    user_info: Optional[Dict[str, Any]] = None,
+    *,
+    skills_custom: bool = False,
+    allowed_global_skills: Optional[List[str]] = None,
+) -> List[Dict[str, str]]:
     """扫描技能目录，返回 id/name/description/scope 摘要列表。
 
     合并顺序：全局平台技能（scope=global）+ 当前用户个人技能（scope=personal）。
     若 ID 冲突，个人技能优先覆盖全局同 ID 技能。
+
+    skills_custom=True 时，全局技能仅保留 allowed_global_skills 白名单中的项；
+    个人技能始终合并。
     """
     try:
         from app.core.config import settings
@@ -103,6 +111,9 @@ def list_skill_metas(user_info: Optional[Dict[str, Any]] = None) -> List[Dict[st
         return []
 
     global_metas = _scan_skill_dir(skills_dir, SCOPE_GLOBAL)
+    if skills_custom:
+        allowlist = {str(s).strip() for s in (allowed_global_skills or []) if str(s).strip()}
+        global_metas = [m for m in global_metas if m.get("id") in allowlist]
 
     personal_metas: List[Dict[str, str]] = []
     personal_dir = get_user_personal_skills_dir(user_info)
@@ -115,6 +126,24 @@ def list_skill_metas(user_info: Optional[Dict[str, Any]] = None) -> List[Dict[st
         merged[m["id"]] = m
 
     return list(merged.values())
+
+
+def skill_filter_kwargs_from_config(agent_config: Any = None) -> Dict[str, Any]:
+    """从 ChatConfig / dict 提取 skills 过滤参数。"""
+    if agent_config is None:
+        return {"skills_custom": False, "allowed_global_skills": None}
+    if isinstance(agent_config, dict):
+        skills_custom = bool(agent_config.get("skills_custom") or False)
+        skills = agent_config.get("skills") or []
+    else:
+        skills_custom = bool(getattr(agent_config, "skills_custom", False) or False)
+        skills = getattr(agent_config, "skills", None) or []
+    if not isinstance(skills, list):
+        skills = []
+    return {
+        "skills_custom": skills_custom,
+        "allowed_global_skills": [str(s).strip() for s in skills if str(s).strip()],
+    }
 
 
 def load_skill_md_content(skill_id: str, max_bytes: int = 262144) -> Optional[str]:
@@ -271,6 +300,8 @@ def scan_relevant_skills(
     exclude_ids: Optional[Set[str]] = None,
     max_results: int = 1,
     min_score: float = 0.45,
+    skills_custom: bool = False,
+    allowed_global_skills: Optional[List[str]] = None,
 ) -> List[Dict[str, Any]]:
     """扫描技能库，按关键词相关度返回候选技能（流程化自动匹配，非语义向量）。
 
@@ -281,7 +312,11 @@ def scan_relevant_skills(
     if not query or not should_scan_skills_for_query(query):
         return []
 
-    metas = list_skill_metas(user_info=user_info)
+    metas = list_skill_metas(
+        user_info=user_info,
+        skills_custom=skills_custom,
+        allowed_global_skills=allowed_global_skills,
+    )
     if not metas:
         return []
 
@@ -318,6 +353,8 @@ def resolve_skills_from_query(
     *,
     user_info: Optional[Dict[str, Any]] = None,
     max_results: int = 2,
+    skills_custom: bool = False,
+    allowed_global_skills: Optional[List[str]] = None,
 ) -> List[Dict[str, Any]]:
     """从用户问题中解析技能引用并按 name/id 匹配可用技能。
 
@@ -331,7 +368,11 @@ def resolve_skills_from_query(
     if not hints and not any(token in query.lower() for token in ("技能", "skill")):
         return []
 
-    metas = list_skill_metas(user_info=user_info)
+    metas = list_skill_metas(
+        user_info=user_info,
+        skills_custom=skills_custom,
+        allowed_global_skills=allowed_global_skills,
+    )
     if not metas:
         return []
 

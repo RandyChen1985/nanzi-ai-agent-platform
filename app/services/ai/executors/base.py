@@ -109,6 +109,8 @@ class BaseExecutor(ABC):
         identity = self._user_identity_from_info()
         if ctx is not None:
             self._apply_user_identity_to_context(ctx, identity)
+            ctx.skills_custom = bool(getattr(self.config, "skills_custom", False))
+            ctx.skills = list(getattr(self.config, "skills", None) or [])
             return ctx
 
         from app.services.ai.knowledge_utils import merge_dataset_id_sources
@@ -134,6 +136,8 @@ class BaseExecutor(ABC):
             trace_buffer=self.trace_buffer or [],
             delegation_depth=0,
             permission_options=dict(self.permission_options or {}),
+            skills_custom=bool(getattr(self.config, "skills_custom", False)),
+            skills=list(getattr(self.config, "skills", None) or []),
         )
         set_agent_context(ctx)
         return ctx

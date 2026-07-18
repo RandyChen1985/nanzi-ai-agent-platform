@@ -49,6 +49,8 @@ async def build_native_agent(
         user_name=runner._runtime_user_name(),
         user_info=runner.user_info,
         conversation_id=runner.conversation_id,
+        skills_custom=bool(getattr(runner.config, "skills_custom", False)),
+        allowed_global_skills=list(getattr(runner.config, "skills", None) or []),
     )
     context_config = await dar.load_context_config()
     model_config = await dar.build_model_config(

@@ -277,5 +277,7 @@ class AgentContextManager:
             user_dimensions=user_dims,
             authorized_attachment_paths=list(authorized_attachment_paths or []),
             current_turn_attachment_paths=list(current_turn_attachment_paths or []),
-            trace_buffer=trace_buffer or []
+            trace_buffer=trace_buffer or [],
+            skills_custom=bool(getattr(config, "skills_custom", False)),
+            skills=list(getattr(config, "skills", None) or []),
         ))

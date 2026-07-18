@@ -54,6 +54,10 @@ class AgentContext(BaseModel):
     # Runtime tool approval (inherited by sub_agent_call delegation)
     permission_options: Dict[str, Any] = Field(default_factory=dict)
 
+    # Agent-level custom Skills allowlist (from published ChatConfig)
+    skills_custom: bool = False
+    skills: List[str] = Field(default_factory=list)
+
     # Queue for streaming sub-agent log/progress chunks back to client
     event_queue: Optional[Any] = None
 

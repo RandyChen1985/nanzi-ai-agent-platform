@@ -5380,6 +5380,7 @@ onUnmounted(() => {
     v-model:pinned="skillPinned"
     :pinned-dock-class="skillPinnedDockClass"
     :attached-skill-ids="attachedSkillIds"
+    :agent-id="agentParams.agent_id"
     @select="handleSelectSkill"
   />
 

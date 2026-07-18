@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, Field, ConfigDict, model_validator, field_validator
 from typing import Optional, Dict, Any, List, Union
 from datetime import datetime
 
@@ -21,8 +21,31 @@ class AIAgentVersionBase(BaseModel):
     synthesis_temperature: Optional[float] = None # NEW: Separate synthesizer temp
     system_prompt: str
     tools: List[Union[str, ToolConfigItem]] = Field(default_factory=list)
+    skills_custom: bool = False
+    skills: List[str] = Field(default_factory=list)
     status: str = "DRAFT"
     comment: Optional[str] = None
+
+    @field_validator("skills", mode="before")
+    @classmethod
+    def coerce_skills_list(cls, value):
+        # DB 历史行 skills 可能为 NULL；from_attributes 时需归一成 []
+        if value is None:
+            return []
+        return value
+
+    @field_validator("skills_custom", mode="before")
+    @classmethod
+    def coerce_skills_custom(cls, value):
+        if value is None:
+            return False
+        return bool(value)
+
+    @model_validator(mode="after")
+    def normalize_skills_when_not_custom(self):
+        if not self.skills_custom:
+            self.skills = []
+        return self
 
 class AIAgentVersionResponse(AIAgentVersionBase):
     id: str
@@ -78,6 +101,8 @@ class ChatConfig(BaseModel):
     synthesis_temperature: Optional[float] = None
     system_prompt: str
     tools: List[Union[str, ToolConfigItem]]
+    skills_custom: bool = False
+    skills: List[str] = Field(default_factory=list)
     capabilities: List[str] = Field(default_factory=list)
     engine_type: str = "LOCAL"
     engine_config: Optional[Dict[str, Any]] = None

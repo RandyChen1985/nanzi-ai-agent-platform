@@ -44,6 +44,8 @@ export interface AIAgentVersion {
   synthesis_temperature?: number
   system_prompt: string
   tools: string[]
+  skills_custom?: boolean
+  skills?: string[]
   status: 'DRAFT' | 'PUBLISHED' | 'ARCHIVED'
   comment?: string
   created_at: string

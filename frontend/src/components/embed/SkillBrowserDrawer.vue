@@ -13,8 +13,13 @@ const props = withDefaults(
     pinnedDockClass?: string
     /** 已挂载到输入框的技能 ID */
     attachedSkillIds?: string[]
+    /**
+     * 当前会话有效智能体 ID。有值时按该智能体已发布版本的 skills_custom / skills
+     * 过滤「平台技能」列表；个人技能始终全量展示。
+     */
+    agentId?: string | null
   }>(),
-  { pinnedDockClass: 'right-0', attachedSkillIds: () => [] },
+  { pinnedDockClass: 'right-0', attachedSkillIds: () => [], agentId: null },
 )
 
 const emit = defineEmits<{
@@ -40,6 +45,9 @@ const showSkillPreviewModal = ref(false)
 const previewLoading = ref(false)
 const previewSkill = ref<SkillItem | null>(null)
 const previewMarkdown = ref('')
+/** 当前智能体是否开启了自定义公共 Skills */
+const skillsCustom = ref(false)
+const allowedGlobalSkillIds = ref<string[] | null>(null)
 
 const isMobile = ref(false)
 let mobileMq: MediaQueryList | null = null
@@ -64,19 +72,45 @@ const filteredSkillsList = computed(() => {
 
 const renderedPreviewHtml = computed(() => renderMarkdownPreview(previewMarkdown.value || ''))
 
+const resolveAgentSkillFilter = async (agentId: string | null | undefined) => {
+  skillsCustom.value = false
+  allowedGlobalSkillIds.value = null
+  const id = String(agentId || '').trim()
+  if (!id) return
+  try {
+    const res = await axios.get(`/api/portal/agents/${encodeURIComponent(id)}/active-config`)
+    const cfg = res.data || {}
+    if (cfg.skills_custom) {
+      skillsCustom.value = true
+      allowedGlobalSkillIds.value = Array.isArray(cfg.skills)
+        ? cfg.skills.map((s: any) => String(s || '').trim()).filter(Boolean)
+        : []
+    }
+  } catch (err) {
+    // 无已发布版本或拉取失败时不拦截：回退为展示全部已启用公共技能
+    console.warn('加载智能体 Skills 配置失败，回退为全量公共技能', err)
+  }
+}
+
 const loadSkillsList = async () => {
   skillsList.value = []
   personalSkillsList.value = []
   isLoadingSkillsList.value = true
   try {
+    await resolveAgentSkillFilter(props.agentId)
     const [globalRes, personalRes] = await Promise.allSettled([
       axios.get('/api/portal/skills'),
-      axios.get('/api/portal/skills/personal')
+      axios.get('/api/portal/skills/personal'),
     ])
     if (globalRes.status === 'fulfilled' && globalRes.value.data?.status === 'success') {
-      skillsList.value = (globalRes.value.data.data || [])
-        .map((s: any) => ({ ...s, scope: 'global' }))
+      let list = (globalRes.value.data.data || [])
+        .map((s: any) => ({ ...s, scope: 'global' as const }))
         .filter((s: any) => s.enabled !== 'false')
+      if (skillsCustom.value && allowedGlobalSkillIds.value) {
+        const allow = new Set(allowedGlobalSkillIds.value)
+        list = list.filter((s: SkillItem) => allow.has(s.id))
+      }
+      skillsList.value = list
     }
     if (personalRes.status === 'fulfilled' && personalRes.value.data?.status === 'success') {
       personalSkillsList.value = (personalRes.value.data.data || [])
@@ -184,6 +218,13 @@ watch(modelValue, (open) => {
     previewMarkdown.value = ''
   }
 })
+
+watch(
+  () => props.agentId,
+  () => {
+    if (modelValue.value) void loadSkillsList()
+  },
+)
 
 const onGlobalKeydown = (event: KeyboardEvent) => {
   if (event.key !== 'Escape' || !modelValue.value) return
@@ -384,6 +425,13 @@ onUnmounted(() => {
                 </button>
               </div>
 
+              <div
+                v-if="skillsCustom && activeScope === 'global'"
+                class="mb-3 shrink-0 rounded-lg border border-amber-200/80 bg-amber-50/80 dark:border-amber-500/30 dark:bg-amber-500/10 px-3 py-2 text-[11px] text-amber-800 dark:text-amber-200 leading-relaxed"
+              >
+                当前智能体已开启自定义 Skills，仅展示其配置的 {{ skillsList.length }} 个公共技能；「我的技能」不受限制。
+              </div>
+
               <div class="relative mb-3 shrink-0">
                 <span class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
                   <svg class="h-4 w-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -407,7 +455,13 @@ onUnmounted(() => {
                 <div v-else-if="filteredSkillsList.length === 0" class="text-center py-12">
                   <span class="text-2xl opacity-40">⚙️</span>
                   <p class="text-xs text-gray-400 mt-2 font-bold">未发现可用的智能体技能</p>
-                  <p class="text-[10px] text-gray-400/70 mt-1">您可以前往系统控制台「技能管理」页面创建</p>
+                  <p class="text-[10px] text-gray-400/70 mt-1">
+                    {{
+                      skillsCustom && activeScope === 'global'
+                        ? '当前智能体自定义 Skills 未匹配到可用公共技能，可切换到「我的技能」'
+                        : '您可以前往系统控制台「技能管理」页面创建'
+                    }}
+                  </p>
                 </div>
 
                 <div
