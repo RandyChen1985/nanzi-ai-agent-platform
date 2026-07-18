@@ -1,28 +1,26 @@
 <template>
-  <div class="bg-white rounded-lg shadow p-6">
-    <div class="flex items-center">
-      <div 
-        class="flex-shrink-0 rounded-md p-3"
+  <div class="bg-white rounded-2xl shadow-sm border border-gray-100 p-4 sm:p-5">
+    <div class="flex items-center gap-3.5">
+      <div
+        class="flex-shrink-0 rounded-xl p-2.5"
         :class="bgClass"
       >
         <slot name="icon"></slot>
       </div>
-      <div class="ml-5 w-0 flex-1">
-        <dl>
-          <dt class="text-sm font-medium text-gray-500 truncate">
-            {{ title }}
-          </dt>
-          <dd 
-            class="text-lg font-semibold"
-            :class="valueClass"
-          >
-            {{ value }}
-            <small v-if="unit" class="text-[10px] ml-0.5">{{ unit }}</small>
-          </dd>
-          <dd v-if="$slots.subtext || subtext" class="text-xs text-gray-400">
-            <slot name="subtext">{{ subtext }}</slot>
-          </dd>
-        </dl>
+      <div class="min-w-0 flex-1">
+        <p class="text-xs font-medium text-gray-500 truncate">
+          {{ title }}
+        </p>
+        <p
+          class="mt-0.5 text-xl sm:text-2xl font-bold tracking-tight tabular-nums"
+          :class="valueClass"
+        >
+          {{ value }}
+          <small v-if="unit" class="text-xs font-semibold text-gray-400 ml-0.5">{{ unit }}</small>
+        </p>
+        <div v-if="$slots.subtext || subtext" class="mt-0.5 text-xs text-gray-400">
+          <slot name="subtext">{{ subtext }}</slot>
+        </div>
       </div>
     </div>
   </div>
@@ -37,20 +35,20 @@ const props = defineProps<{
   type?: 'primary' | 'success' | 'warning' | 'danger' | 'info' | 'purple';
   unit?: string;
   subtext?: string;
-  valueColor?: string; // Optional override for value color class
-  bgColor?: string; // Optional override for icon bg color class
+  valueColor?: string;
+  bgColor?: string;
 }>();
 
 const bgClass = computed(() => {
   if (props.bgColor) return props.bgColor;
-  
+
   switch (props.type) {
-    case 'success': return 'bg-green-100 text-green-600';
-    case 'warning': return 'bg-yellow-100 text-yellow-600';
-    case 'danger': return 'bg-red-100 text-red-600';
-    case 'info': return 'bg-blue-100 text-blue-600';
-    case 'purple': return 'bg-purple-100 text-purple-600';
-    default: return 'bg-blue-100 text-blue-600';
+    case 'success': return 'bg-emerald-50 text-emerald-600';
+    case 'warning': return 'bg-amber-50 text-amber-600';
+    case 'danger': return 'bg-red-50 text-red-600';
+    case 'info': return 'bg-blue-50 text-blue-600';
+    case 'purple': return 'bg-violet-50 text-violet-600';
+    default: return 'bg-blue-50 text-blue-600';
   }
 });
 

@@ -1,7 +1,7 @@
 <template>
   <section
     v-if="items.length"
-    class="rounded-2xl border border-amber-300 bg-amber-50 p-4 shadow-sm dark:border-amber-900/60 dark:bg-amber-950/20"
+    class="rounded-2xl border border-gray-100 bg-white p-4 shadow-sm sm:p-5"
   >
     <WorkbenchSectionHeader
       eyebrow="待处理"
@@ -15,12 +15,12 @@
         v-for="item in sortedItems"
         :key="item.id"
         type="button"
-        class="flex w-full items-center justify-between rounded-xl border border-gray-200 bg-white px-3 py-3 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-amber-300 dark:border-gray-700 dark:bg-gray-900"
+        class="flex w-full items-center justify-between rounded-xl border border-gray-100 bg-gray-50/50 px-3 py-3 text-left transition hover:border-amber-200 hover:bg-amber-50/40"
         :class="item.severity === 'critical' ? 'border-l-4 border-l-red-500' : ''"
         @click="$emit('open-item', item)"
       >
         <span class="min-w-0">
-          <span class="block text-sm font-medium text-gray-900 dark:text-white">{{ item.title }}</span>
+          <span class="block text-sm font-medium text-gray-900">{{ item.title }}</span>
           <span class="mt-0.5 block text-xs text-gray-500">{{ item.subtitle }}</span>
           <WorkbenchItemMeta
             :occurred-at="item.occurred_at"

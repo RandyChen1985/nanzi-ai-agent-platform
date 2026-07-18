@@ -7,82 +7,70 @@
       aria-hidden="true"
     >
       <div
-        class="h-full w-1/3 rounded-full bg-blue-500 transition-transform"
+        class="h-full w-1/3 rounded-full bg-blue-500"
         :class="refreshing ? 'animate-pulse' : ''"
       />
     </div>
 
-    <header class="space-y-3">
-      <div class="flex items-start justify-between gap-4">
-        <div>
-          <h1 class="text-xl font-bold text-gray-900 sm:text-2xl dark:text-white">我的工作台</h1>
-          <p class="mt-1 text-sm text-gray-500">先处理今天值得关注的事情，再继续最近的工作。</p>
-        </div>
-        <button
-          type="button"
-          class="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-gray-300 bg-white text-gray-600 shadow-sm hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300"
-          :disabled="loading"
-          :aria-busy="refreshing || loading"
-          :title="refreshing || loading ? '刷新中' : '刷新'"
-          @click="refresh"
-        >
-          <span class="inline-flex h-4 w-4 items-center justify-center">
-            <svg
-              class="h-4 w-4 origin-center will-change-transform"
-              :class="{ 'animate-spin': refreshing || loading }"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-            >
-              <path
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                stroke-width="2"
-                d="M4 4v5h.6m14.8 2A8 8 0 004.6 9m0 0H9m11 11v-5h-.6m0 0A8 8 0 014.6 13m14.8 2H15"
-              />
-            </svg>
-          </span>
-        </button>
+    <header class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+      <div class="min-w-0">
+        <h1 class="text-2xl font-bold tracking-normal text-gray-900">我的工作台</h1>
+        <p class="mt-0.5 truncate text-sm text-gray-500">
+          先处理今天值得关注的事情，再继续最近的工作。
+        </p>
       </div>
-
-      <div
-        v-if="payload"
-        class="flex flex-wrap items-center gap-2 rounded-2xl border border-gray-200 bg-white px-3 py-2.5 shadow-sm dark:border-gray-700 dark:bg-gray-900"
+      <button
+        type="button"
+        class="inline-flex h-9 w-9 shrink-0 items-center justify-center self-start rounded-lg border border-gray-300 bg-white text-gray-600 shadow-sm hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60 sm:self-auto"
+        :disabled="loading"
+        :aria-busy="refreshing || loading"
+        :title="refreshing || loading ? '刷新中' : '刷新'"
+        @click="refresh"
       >
-        <span
-          class="inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-medium"
-          :class="summaryToneClass"
+        <svg
+          class="h-4 w-4"
+          :class="{ 'animate-spin': refreshing || loading }"
+          fill="none"
+          stroke="currentColor"
+          viewBox="0 0 24 24"
         >
-          {{ summaryPrimary }}
-        </span>
-        <span
-          v-if="summarySecondary"
-          class="inline-flex items-center rounded-full border border-gray-200 bg-gray-50 px-2.5 py-1 text-xs text-gray-600 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300"
-        >
-          {{ summarySecondary }}
-        </span>
-        <button
-          v-if="payload.next_scheduled_item"
-          type="button"
-          class="inline-flex items-center gap-1.5 rounded-full border border-blue-200 bg-blue-50 px-2.5 py-1 text-xs text-blue-700 hover:border-blue-300"
-          @click="openItem(payload.next_scheduled_item)"
-        >
-          <span class="font-medium">下次任务</span>
-          <span class="max-w-[10rem] truncate">{{ payload.next_scheduled_item.title }}</span>
-          <span class="text-blue-500">{{ nextScheduledLabel }}</span>
-        </button>
-      </div>
+          <path
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            stroke-width="2"
+            d="M4 4v5h.6m14.8 2A8 8 0 004.6 9m0 0H9m11 11v-5h-.6m0 0A8 8 0 014.6 13m14.8 2H15"
+          />
+        </svg>
+      </button>
     </header>
 
     <div
+      v-if="payload && !quietMode"
+      class="flex flex-wrap items-center gap-2"
+    >
+      <span
+        class="inline-flex items-center rounded-lg border px-2.5 py-1 text-xs font-medium"
+        :class="summaryToneClass"
+      >
+        {{ summaryPrimary }}
+      </span>
+      <span
+        v-if="summarySecondary"
+        class="inline-flex items-center rounded-lg border border-gray-200 bg-white px-2.5 py-1 text-xs text-gray-600 shadow-sm"
+      >
+        {{ summarySecondary }}
+      </span>
+    </div>
+
+    <div
       v-if="bannerMessage"
-      class="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-700 dark:border-amber-900/50 dark:bg-amber-950/20 dark:text-amber-300"
+      class="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-700"
     >
       {{ bannerMessage }}
     </div>
 
     <div v-if="loading && !payload" class="space-y-3">
-      <div v-for="index in 3" :key="index" class="h-28 animate-pulse rounded-2xl bg-gray-200 dark:bg-gray-800" />
+      <div v-for="index in 3" :key="index" class="h-28 animate-pulse rounded-2xl bg-gray-100" />
     </div>
 
     <template v-else-if="payload">
@@ -117,6 +105,12 @@
       </template>
 
       <template v-else-if="quietMode">
+        <div class="rounded-2xl border border-emerald-100 bg-emerald-50/60 px-4 py-3.5">
+          <p class="text-sm font-medium text-emerald-800">今日运行正常</p>
+          <p class="mt-0.5 text-xs text-emerald-700/80">
+            暂无失败任务和待确认事项。{{ summarySecondary }}，可以从下方继续。
+          </p>
+        </div>
         <div class="grid gap-4 xl:grid-cols-2">
           <WorkbenchResume
             :items="payload.resume_items"
@@ -129,6 +123,11 @@
             @view-all="openReports"
           />
         </div>
+        <WorkbenchNextScheduled
+          v-if="payload.next_scheduled_item"
+          :item="payload.next_scheduled_item"
+          @open-item="openItem"
+        />
         <WorkbenchAgents
           :agents="payload.favorite_agents"
           @open-agent="openAgent"
@@ -137,12 +136,12 @@
       </template>
 
       <template v-else-if="newUserMode">
-        <section class="rounded-2xl border border-gray-300 bg-white p-5 shadow-sm dark:border-gray-700 dark:bg-gray-900 sm:p-6">
-          <p class="text-xs font-semibold uppercase tracking-wider text-blue-600">开始使用</p>
-          <h2 class="mt-2 text-xl font-bold text-gray-900 dark:text-white">
+        <section class="rounded-2xl border border-gray-100 bg-white p-5 shadow-sm sm:p-6">
+          <p class="text-xs font-medium text-blue-600">开始使用</p>
+          <h2 class="mt-1.5 text-lg font-bold text-gray-900">
             {{ failedSources.length ? "工作台部分数据暂时不可用" : "欢迎使用 NanZi" }}
           </h2>
-          <p class="mt-2 max-w-2xl text-sm text-gray-600 dark:text-gray-300">
+          <p class="mt-1.5 max-w-2xl text-sm text-gray-500">
             {{
               failedSources.length
                 ? "你仍可从当前可用的业务助手继续工作。"
@@ -159,7 +158,7 @@
             </button>
             <button
               type="button"
-              class="rounded-lg border border-gray-300 bg-white px-3.5 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200"
+              class="rounded-lg border border-gray-300 bg-white px-3.5 py-2 text-sm font-medium text-gray-700 shadow-sm hover:bg-gray-50"
               @click="openChat"
             >
               打开智能助手
@@ -192,7 +191,6 @@ import WorkbenchAgents from "@/components/workbench/WorkbenchAgents.vue"
 import WorkbenchScenarios from "@/components/workbench/WorkbenchScenarios.vue"
 import WorkbenchNextScheduled from "@/components/workbench/WorkbenchNextScheduled.vue"
 import { useWorkbenchHome } from "@/composables/useWorkbenchHome"
-import { formatWorkbenchRelativeTime } from "@/utils/workbenchDisplay"
 import type { WorkbenchAgent, WorkbenchItem, WorkbenchScenario } from "@/types/workbench"
 
 const router = useRouter()
@@ -245,12 +243,6 @@ const summaryToneClass = computed(() => {
   if (activeMode.value) return "border-amber-200 bg-amber-50 text-amber-800"
   if (quietMode.value) return "border-emerald-200 bg-emerald-50 text-emerald-800"
   return "border-blue-200 bg-blue-50 text-blue-800"
-})
-
-const nextScheduledLabel = computed(() => {
-  const item = payload.value?.next_scheduled_item
-  if (!item) return ""
-  return formatWorkbenchRelativeTime(item.next_run_at || item.occurred_at)
 })
 
 function openItem(item: WorkbenchItem) {

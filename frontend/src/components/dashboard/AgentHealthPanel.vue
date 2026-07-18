@@ -1,38 +1,20 @@
 <template>
-  <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+  <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-5">
     <div
-      class="lg:col-span-2 bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden"
+      class="lg:col-span-2 bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden"
     >
       <div
-        class="px-6 py-4 border-b border-gray-50 flex items-center justify-between bg-blue-50/30"
+        class="px-5 py-3.5 border-b border-gray-100 flex items-center justify-between"
       >
-        <h3 class="text-sm font-bold text-blue-900 flex items-center">
-          <svg
-            class="w-4 h-4 mr-2"
-            fill="none"
-            stroke="currentColor"
-            viewBox="0 0 24 24"
-          >
-            <path
-              stroke-linecap="round"
-              stroke-linejoin="round"
-              stroke-width="2"
-              d="M13 10V3L4 14h7v7l9-11h-7z"
-            />
-          </svg>
-          智能体运行健康度 (Agent Health)
+        <h3 class="text-sm font-bold text-gray-900 flex items-center">
+          <span class="w-1.5 h-1.5 rounded-full bg-primary mr-2"></span>
+          智能体运行健康度
         </h3>
-        <span
-          class="text-[10px] text-blue-400 font-mono uppercase tracking-widest"
-          >Real-time Analytics</span
-        >
       </div>
-      <div class="p-6 grid grid-cols-1 md:grid-cols-2 gap-8">
+      <div class="p-5 grid grid-cols-1 md:grid-cols-2 gap-6">
         <!-- Pie Chart -->
-        <div class="space-y-4">
-          <p
-            class="text-xs font-semibold text-gray-400 uppercase tracking-wider text-center"
-          >
+        <div class="space-y-3">
+          <p class="text-xs font-medium text-gray-400 text-center">
             工具调用分布
           </p>
           <div class="h-48 relative">
@@ -50,11 +32,9 @@
           </div>
         </div>
         <!-- Line Chart -->
-        <div class="space-y-4">
-          <p
-            class="text-xs font-semibold text-gray-400 uppercase tracking-wider text-center"
-          >
-            执行耗时趋势 (24h)
+        <div class="space-y-3">
+          <p class="text-xs font-medium text-gray-400 text-center">
+            执行耗时趋势（24h）
           </p>
           <div class="h-48 relative">
             <v-chart
@@ -75,41 +55,37 @@
 
     <!-- Key Metrics Side Panel -->
     <div
-      class="bg-white rounded-xl shadow-sm border border-gray-100 p-6 space-y-6"
+      class="bg-white rounded-2xl shadow-sm border border-gray-100 p-5 space-y-4"
     >
       <div class="flex items-center justify-between">
-        <span
-          class="text-xs font-bold text-gray-400 uppercase tracking-widest"
-          >核心指标</span
-        >
-        <span
-          class="px-2 py-0.5 bg-green-100 text-green-700 text-[10px] rounded-full font-bold"
-          >LIVE</span
-        >
+        <h3 class="text-sm font-bold text-gray-900 flex items-center">
+          <span class="w-1.5 h-1.5 rounded-full bg-primary mr-2"></span>
+          核心指标
+        </h3>
       </div>
-      <div class="space-y-4">
+      <div class="space-y-3">
         <div
-          class="flex items-center justify-between p-3 bg-gray-50 rounded-lg"
+          class="flex items-center justify-between p-3 bg-gray-50/80 rounded-xl"
         >
           <span class="text-xs text-gray-500">工具成功率</span>
-          <span class="text-lg font-bold text-gray-900"
+          <span class="text-lg font-bold text-gray-900 tabular-nums"
             >{{ agentStats?.health_stats?.success_rate || 0 }}%</span
           >
         </div>
         <div
-          class="flex items-center justify-between p-3 bg-gray-50 rounded-lg"
+          class="flex items-center justify-between p-3 bg-gray-50/80 rounded-xl"
         >
           <span class="text-xs text-gray-500">平均执行耗时</span>
-          <span class="text-lg font-bold text-amber-600"
+          <span class="text-lg font-bold text-amber-600 tabular-nums"
             >{{ agentStats?.health_stats?.avg_latency || 0
-            }}<small class="text-[10px] ml-0.5">ms</small></span
+            }}<small class="text-[10px] ml-0.5 font-semibold text-amber-500">ms</small></span
           >
         </div>
         <div
-          class="flex items-center justify-between p-3 bg-gray-50 rounded-lg"
+          class="flex items-center justify-between p-3 bg-gray-50/80 rounded-xl"
         >
           <span class="text-xs text-gray-500">总工具调用</span>
-          <span class="text-lg font-bold text-gray-900">{{
+          <span class="text-lg font-bold text-gray-900 tabular-nums">{{
             agentStats?.health_stats?.total_tool_calls || 0
           }}</span>
         </div>

@@ -1,10 +1,15 @@
 <template>
-  <div class="bg-white rounded-lg shadow p-6">
-    <div class="flex items-center justify-between mb-4">
-      <h2 class="text-lg font-medium text-gray-900">近 24 小时请求趋势</h2>
+  <div class="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+    <div class="px-5 py-3.5 border-b border-gray-100">
+      <h2 class="text-sm font-bold text-gray-900 flex items-center">
+        <span class="w-1.5 h-1.5 rounded-full bg-primary mr-2"></span>
+        近 24 小时请求趋势
+      </h2>
     </div>
-    <div class="h-80 w-full">
-      <v-chart class="h-full w-full" :option="chartOption" autoresize />
+    <div class="p-5">
+      <div class="h-72 sm:h-80 w-full">
+        <v-chart class="h-full w-full" :option="chartOption" autoresize />
+      </div>
     </div>
   </div>
 </template>
