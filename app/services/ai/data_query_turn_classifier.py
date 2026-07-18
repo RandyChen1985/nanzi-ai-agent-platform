@@ -174,8 +174,52 @@ def _looks_like_explicit_new_data_query(user_query: str) -> bool:
         "拉取", "明细", "记录", "趋势", "报表", "汇总", "对比", "多少",
         "用户表", "用户列表", "query", "how many", "count", "select ",
         "from ", "where ", "group by", "table", "users",
+        "查看", "关联", "调用情况", "访问日志",
     ]
     return any(keyword in q for keyword in keywords) or _looks_like_business_status_data_query(q)
+
+
+# 软性缺口：可由执行阶段合理默认补齐，不应单独触发整轮澄清拦截
+_SOFT_CLARIFICATION_FIELDS = frozenset({"time_range", "metric", "dimension"})
+# 硬性缺口：缺少时继续查数容易空跑或答非所问
+_HARD_CLARIFICATION_FIELDS = frozenset({
+    "data_object", "result_context", "dataset_or_schema",
+})
+
+
+def _looks_like_actionable_data_query(user_query: str) -> bool:
+    """对象/动作已足够明确，可用默认时间与口径继续查数。"""
+    q = (user_query or "").strip().lower()
+    if not q:
+        return False
+    if _looks_like_explicit_new_data_query(q) or _looks_like_business_status_data_query(q):
+        return True
+    object_signals = (
+        "表", "数据集", "字段", "日志", "明细", "记录", "智能体", "代理",
+        "用户", "订单", "机房", "门店", "客户", "项目", "渠道", "工单",
+    )
+    action_signals = (
+        "查看", "查", "统计", "列出", "关联", "join", "分析", "汇总",
+        "对比", "筛选", "获取", "拉取",
+    )
+    has_object = any(signal in q for signal in object_signals)
+    has_action = any(signal in q for signal in action_signals)
+    return has_object and has_action and len(q) >= 8
+
+
+def _should_proceed_despite_clarification(
+    user_query: str,
+    missing_fields: tuple[str, ...],
+) -> bool:
+    """软性缺口（时间/指标/维度）在对象已明确时不拦截，交由执行默认补齐。"""
+    fields = set(missing_fields or ())
+    if not fields:
+        return True
+    if fields & _HARD_CLARIFICATION_FIELDS:
+        return False
+    if not fields <= _SOFT_CLARIFICATION_FIELDS:
+        return False
+    return _looks_like_actionable_data_query(user_query)
 
 
 def _looks_like_business_status_data_query(user_query: str) -> bool:
@@ -410,16 +454,21 @@ async def _classify_with_llm(
 4. context_action：对已有上下文或上一轮结果执行保存、导出、发送、记住、沉淀为技能等动作。
 5. skill_execution：显式要求使用/执行某个技能。
 6. non_data_request：身份、模型、能力、闲聊、写作、翻译、通用知识等非查数请求。
-7. clarification_required：已确认用户想查业务数据，但缺少安全执行所需的数据对象、时间范围、指标、维度或结果上下文。
+7. clarification_required：已确认想查业务数据，但缺少**真正阻塞执行**的信息。仅限：完全说不清查什么对象；要基于上一轮结果继续但没有可复用结果；多个数据集/字段口径冲突无法安全选择。
 8. format_correction：不需要重新查库，只是对图表的展现形式或样式进行微调（如将折线图改为柱状图、给特定数据标红、添加图表参考线等样式调整）。
 9. federated_data_query：用户显式要求跨数据集/跨库/跨源/联邦/联合查询，或明确要求关联多个数据集、数据源、库或表。
 
 约束：
+- 默认优先继续查数：能合理默认时间（如近期→最近30天）、统计方式或维度时，必须选 new_data_query，不要 clarification_required。
+- 不要因为未写精确日期、未出现“指标口径/分析维度”等 BI 术语，或“近期/最近”较模糊就澄清。
+- 用户已给出表/对象/字段/关联关系，或问题已足够可执行时，必须选 new_data_query。
+  例：「查看智能体主表中的名称和引擎类型，并关联访问日志统计近期调用」→ new_data_query。
 - 如果选择 reuse_previous_result 或 format_correction，必须确认“存在上一轮结构化查询结果”为 true。
 - 如果用户提出新的查询对象、时间范围或筛选条件，选择 new_data_query。
 - 如果用户明确要求跨数据集、跨库、联邦查询，或要求关联多个数据集/数据源/库/表，选择 federated_data_query。
 - 如果用户只是提问元数据字段/分析口径，选择 metadata_query。
 - clarification_required 必须返回至少一个 missing_fields，可选值：data_object、metric、time_range、dimension、result_context、dataset_or_schema。
+  仅在硬性阻塞时使用；软性缺口（仅缺时间/指标/维度且对象已明确）不要选 clarification_required。
 - 只返回 JSON，不要解释，不要 Markdown。
 
 JSON 格式：
@@ -669,6 +718,23 @@ async def resolve_data_query_turn_classification(
                     "最近对话没有明确的上一轮数据结果上下文，需要先确认是否基于之前的查询结果继续分析",
                     skip_intent_llm=False,
                 )
+
+    # 软性澄清降级：对象已明确时，仅缺时间/指标/维度不整轮拦截，交由执行阶段默认补齐。
+    if (
+        classification
+        and classification.turn_type == DataQueryTurnType.CLARIFICATION_REQUIRED
+        and _should_proceed_despite_clarification(q, classification.missing_fields)
+    ):
+        logger.info(
+            "[DataQueryTurnClassifier] 软性澄清降级为 new_data_query（missing_fields=%s, reasoning=%s）",
+            classification.missing_fields,
+            classification.reasoning,
+        )
+        classification = _classification_for_turn_type(
+            DataQueryTurnType.NEW_DATA_QUERY,
+            "查数对象已足够明确，软性缺口交由执行阶段用合理默认补齐，不拦截澄清",
+            skip_intent_llm=False,
+        )
 
     # LLM 分类为联邦查询时做规则兜底校验：
     # 联邦升级成本高（额外一次 LLM 计划生成），必须有明确的跨数据集/跨库意图才允许；

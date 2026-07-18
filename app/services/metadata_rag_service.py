@@ -175,7 +175,13 @@ class MetadataRagService:
             relationships,
             data_source=data_source,
         )
-        return yaml.dump(data, allow_unicode=True, sort_keys=False)
+        note = (
+            "# 说明：dataset 仅为逻辑数据集 ID（execute_sql_query 的 dataset_name），"
+            "不是物理数据库名；禁止写成 FROM dataset.table_name。\n"
+            "# FROM/JOIN 只使用 table_name；连接目标看 data_source；"
+            "meta_name / table_desc 为业务展示名，不可当表名。\n"
+        )
+        return note + yaml.dump(data, allow_unicode=True, sort_keys=False)
 
     @staticmethod
     def render_metrics_schema_yaml(

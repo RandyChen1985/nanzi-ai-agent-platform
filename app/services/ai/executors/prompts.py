@@ -390,7 +390,10 @@ XML 示例：
         "但 SQL 中的表名、字段名、指标定义必须以 get_dataset_schema 返回的 columns.name / table_name 为准；"
         "term 仅为业务说明，禁止写入 SQL。\n"
         "8. SQL 的 FROM/JOIN 只能使用 get_dataset_schema 返回的 table_name（物理表名）；"
-        "schema 中的 table_desc、列 term、metrics_scope、数据集中文名等均为业务说明，严禁直接当作表名；"
+        "schema 中的 dataset 仅为逻辑数据集 ID（execute_sql_query 的 dataset_name），"
+        "不是物理数据库名，严禁写成 FROM dataset.table_name（如 ai_agent_meta.xxx）；"
+        "连接目标以 data_source 为准，并通过工具参数 data_source / dataset_name 传递。"
+        "table_desc、列 term、metrics_scope、数据集中文名（meta_name）等均为业务说明，严禁直接当作表名；"
         "指标块（metrics）仅提供计算口径参考，不含表结构，禁止把指标块或 metrics_scope 当作可查询的表。\n"
         "9. 分页语法：禁止 ORDER BY ... AND ROWNUM/LIMIT；Oracle TopN 用子查询包排序后外层 ROWNUM 或 FETCH FIRST；"
         "MySQL/ClickHouse 用 LIMIT；SQL Server 用 TOP N 或 ORDER BY ... OFFSET ... FETCH NEXT。"
@@ -1170,7 +1173,7 @@ XML 示例：
                     f"请在原问题「{topic}」中补充上述缺失信息，"
                     "或点选下方已根据您的问题生成的改写建议。"
                     if topic
-                    else "请补充统计对象、指标口径和时间范围，或点选下方建议。"
+                    else "请补充要查的数据、要统计的内容和时间范围，或点选下方建议。"
                 ),
             }
 
@@ -1180,7 +1183,7 @@ XML 示例：
             "fix": (
                 f"请在原问题「{topic}」中补充上述信息；下方按钮已根据您的问题生成可一键发送的改写版本。"
                 if topic
-                else "请补充统计对象、指标口径和时间范围，或点选下方建议。"
+                else "请补充要查的数据、要统计的内容和时间范围，或点选下方建议。"
             ),
         }
 
@@ -1190,10 +1193,10 @@ XML 示例：
         missing_fields: tuple[str, ...] | None,
     ) -> list[str]:
         names = {
-            "data_object": "统计对象",
-            "metric": "指标口径",
+            "data_object": "要查什么数据",
+            "metric": "要统计什么",
             "time_range": "时间范围",
-            "dimension": "分析维度",
+            "dimension": "要按什么分组或看哪些字段",
             "result_context": "要基于哪一份查询结果继续分析",
             "dataset_or_schema": "数据集或字段口径",
         }
@@ -1482,10 +1485,11 @@ XML 示例：
         if any(signal in q for signal in metric_signals) and not any(
             signal in q for signal in object_signals
         ):
-            gaps.append("统计对象或指标口径")
+            gaps.append("要查什么数据")
 
         if not gaps:
-            gaps = ["统计对象", "指标口径", "时间范围"]
+            # 启发式兜底只保留最少硬缺口，避免再默认发明「三件套」误导用户
+            gaps = ["要查什么数据"]
         deduped: list[str] = []
         for gap in gaps:
             if gap not in deduped:
@@ -1646,10 +1650,10 @@ XML 示例：
                 f"基于「{cls._truncate_for_display(last_topic, 16)}」",
                 f"基于刚才关于{last_topic}的查询结果，{q}",
             )
-        if "统计对象或指标口径" in gaps or "指标口径" in gaps or "统计对象" in gaps:
+        if "要查什么数据" in gaps or "要统计什么" in gaps or "统计对象或指标口径" in gaps or "指标口径" in gaps or "统计对象" in gaps:
             for query in cls._build_gap_fill_example_queries(q, ("metric", "data_object")):
                 add(cls._truncate_for_display(query, 32), query)
-        if "分析维度" in gaps:
+        if "要按什么分组或看哪些字段" in gaps or "分析维度" in gaps:
             for query in cls._build_gap_fill_example_queries(q, ("dimension",)):
                 add(cls._truncate_for_display(query, 32), query)
         if "数据集或字段口径" in gaps:
@@ -1905,12 +1909,14 @@ XML 示例：
     SCHEMA_COLUMN_NAMING_GUIDE = (
         "【字段命名硬约束 — 写 SQL 前必读】\n"
         "1) SQL 中的表名 MUST 使用 Schema 里 table_name；列名 MUST 使用 columns 下 name 的原文字符串（大小写一致）。\n"
-        "2) columns.term / desc 仅用于理解业务含义，禁止写入 SQL（不要把「客户名称」翻译成 CUSTOMER_NAME）。\n"
-        "3) 禁止臆造 Schema 未列出的英文列名（如 CUSTOMER_NAME、NAME、CREATE_TIME）；"
+        "2) Schema 的 dataset 是逻辑数据集 ID，不是数据库名；禁止 FROM dataset.table_name"
+        "（如 FROM ai_agent_meta.xxx）；连接目标看 data_source，经工具参数传递。\n"
+        "3) columns.term / desc 仅用于理解业务含义，禁止写入 SQL（不要把「客户名称」翻译成 CUSTOMER_NAME）。\n"
+        "4) 禁止臆造 Schema 未列出的英文列名（如 CUSTOMER_NAME、NAME、CREATE_TIME）；"
         "若用户业务词无法映射到某个 name，先重查 Schema 或澄清，不得猜测。\n"
-        "4) 写 SQL 前先完成映射：用户说的每个业务词 → 具体哪张表的哪个 columns.name；"
+        "5) 写 SQL 前先完成映射：用户说的每个业务词 → 具体哪张表的哪个 columns.name；"
         "跨表字段必须带表别名（如 c.CUSTOMER_NAME），禁止在错误的表上 SELECT 该列。\n"
-        "5) WHERE/JOIN 必须对照 columns.type：字符串日期列用 'YYYY-MM-DD' 区间，DATE 列才用 DATE '...'；"
+        "6) WHERE/JOIN 必须对照 columns.type：字符串日期列用 'YYYY-MM-DD' 区间，DATE 列才用 DATE '...'；"
         "禁止把名称列（VARCHAR）与 ID 列（Int64）直接 JOIN。"
     )
 

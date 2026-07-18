@@ -660,7 +660,60 @@ async def test_data_query_turn_classifier_routes_non_data_requests_without_clari
 
 
 @pytest.mark.asyncio
-async def test_data_query_turn_classifier_preserves_structured_clarification_gaps_from_llm():
+async def test_data_query_turn_classifier_downgrades_soft_clarification_gaps():
+    """对象已明确时，仅缺时间/指标/维度不应整轮澄清拦截。"""
+    llm = object()
+    chat_client = _mock_chat_client(
+        '{"turn_type":"clarification_required","reasoning":"缺少时间范围与指标口径",'
+        '"missing_fields":["time_range","metric","dimension"]}'
+    )
+    query = "查看智能体主表中的智能体名称和引擎类型，并关联 AI代理访问日志表统计近期的调用情况"
+
+    with patch(
+        "app.services.ai.config.AgentConfigProvider.get_configured_llm",
+        AsyncMock(return_value=llm),
+    ), patch(
+        "app.services.ai.data_query_turn_classifier.chat_client_from_handle",
+        return_value=chat_client,
+    ):
+        classification, _, _ = await resolve_data_query_turn_classification(
+            query,
+            [{"role": "user", "content": query}],
+            has_last_data_result=False,
+        )
+
+    assert classification.turn_type == DataQueryTurnType.NEW_DATA_QUERY
+    assert classification.requires_fresh_data is True
+    assert "软性缺口" in classification.reasoning
+
+
+@pytest.mark.asyncio
+async def test_data_query_turn_classifier_preserves_hard_clarification_gaps_from_llm():
+    llm = object()
+    chat_client = _mock_chat_client(
+        '{"turn_type":"clarification_required","reasoning":"完全说不清查什么对象",'
+        '"missing_fields":["data_object"]}'
+    )
+
+    with patch(
+        "app.services.ai.config.AgentConfigProvider.get_configured_llm",
+        AsyncMock(return_value=llm),
+    ), patch(
+        "app.services.ai.data_query_turn_classifier.chat_client_from_handle",
+        return_value=chat_client,
+    ):
+        classification, _, _ = await resolve_data_query_turn_classification(
+            "查一下情况",
+            [{"role": "user", "content": "查一下情况"}],
+            has_last_data_result=False,
+        )
+
+    assert classification.turn_type == DataQueryTurnType.CLARIFICATION_REQUIRED
+    assert classification.missing_fields == ("data_object",)
+
+
+@pytest.mark.asyncio
+async def test_data_query_turn_classifier_downgrades_time_only_clarification_for_actionable_query():
     llm = object()
     chat_client = _mock_chat_client(
         '{"turn_type":"clarification_required","reasoning":"查数对象明确但缺少时间范围",'
@@ -680,8 +733,8 @@ async def test_data_query_turn_classifier_preserves_structured_clarification_gap
             has_last_data_result=False,
         )
 
-    assert classification.turn_type == DataQueryTurnType.CLARIFICATION_REQUIRED
-    assert classification.missing_fields == ("time_range",)
+    assert classification.turn_type == DataQueryTurnType.NEW_DATA_QUERY
+    assert "软性缺口" in classification.reasoning
 
 
 @pytest.mark.asyncio
