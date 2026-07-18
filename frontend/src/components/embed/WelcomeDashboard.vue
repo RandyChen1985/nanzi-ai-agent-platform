@@ -85,7 +85,7 @@ const recommendedPrompts = computed(() => {
         {{ greeting }}！
       </h1>
       <p class="text-gray-500 dark:text-gray-400 text-sm max-w-md mx-auto leading-relaxed">
-        {{ welcomeMessage || ('我是您的' + (branding.default_agent_name || '南孜智能助手') + '，准备好帮您处理任何任务了。') }}
+        {{ welcomeMessage || ('我是您的' + (branding.default_agent_name || 'NanZi · AI') + '，准备好帮您处理任何任务了。') }}
       </p>
     </div>
 

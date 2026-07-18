@@ -76,3 +76,6 @@ nohup.out
 
 # Antigravity CLI
 .antigravitycli/
+
+# Superpowers local brainstorm / session artifacts
+.superpowers/

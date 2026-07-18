@@ -17,6 +17,22 @@ from app.services.ai.runtime.agentscope.stream_reconcile import finalize_visible
 logger = logging.getLogger(__name__)
 
 
+def _resolve_agent_display_name(runner: Any) -> str:
+    config = getattr(runner, "config", None)
+    display = getattr(config, "agent_display_name", None) if config else None
+    name = getattr(config, "agent_name", None) if config else None
+    return DataQueryPrompts.resolve_agent_display_name(display or name)
+
+
+def _agent_brief(runner: Any) -> str | None:
+    config = getattr(runner, "config", None)
+    system_prompt = str(getattr(config, "system_prompt", None) or "").strip()
+    if not system_prompt:
+        return None
+    first_line = system_prompt.splitlines()[0].strip()
+    return first_line[:160] if first_line else None
+
+
 def _build_user_profile_block(runner: Any) -> str | None:
     if not runner.user_info:
         return None
@@ -50,6 +66,7 @@ async def generate_clarification_content(
 ) -> str:
     history_excerpt = DataQueryPrompts.format_clarification_history(history)
     user_profile = _build_user_profile_block(runner)
+    agent_display_name = _resolve_agent_display_name(runner)
     scenario = DataQueryPrompts.resolve_clarification_scenario(user_question, reasoning)
     skip_llm = (
         missing_fields is not None
@@ -106,6 +123,7 @@ async def generate_clarification_content(
                         reasoning,
                         history_excerpt,
                         user_profile=user_profile,
+                        agent_display_name=agent_display_name,
                     ),
                     user_prompt=user_question,
                 )
@@ -133,6 +151,7 @@ async def generate_clarification_content(
         lead=llm_lead,
         missing_fields=missing_fields,
         suggested_queries=suggested_queries,
+        agent_display_name=agent_display_name,
     )
     logger.info(
         "[DataAgentRunner] Clarification assembled scenario=%s skip_llm=%s quick_source=%s",
@@ -168,22 +187,82 @@ async def yield_contextual_clarification(
     yield {"content": content, "status": "success"}
 
 
+async def generate_non_data_response(
+    runner: Any,
+    *,
+    user_question: str,
+) -> str:
+    agent_display_name = _resolve_agent_display_name(runner)
+    is_greeting = DataQueryPrompts._looks_like_greeting_or_capability_question(
+        user_question, ""
+    )
+    llm_lead: str | None = None
+
+    if is_greeting:
+        try:
+            llm = await AgentConfigProvider.get_configured_llm(
+                streaming=False,
+                config=runner.config,
+            )
+            chat_client = chat_client_from_handle(llm)
+            raw_lead = await chat_client.generate_text(
+                system_user_prompt_messages(
+                    DataQueryPrompts.non_data_greeting_lead_generation_prompt(
+                        agent_display_name=agent_display_name,
+                        user_question=user_question,
+                        agent_brief=_agent_brief(runner),
+                    ),
+                    user_prompt=user_question,
+                )
+            )
+            if DataQueryPrompts.is_valid_non_data_greeting_lead(
+                raw_lead,
+                agent_display_name=agent_display_name,
+            ):
+                llm_lead = DataQueryPrompts.sanitize_clarification_lead(raw_lead)
+            else:
+                logger.info(
+                    "[DataAgentRunner] Non-data greeting LLM lead rejected; using rule lead. agent=%s",
+                    agent_display_name,
+                )
+        except Exception as e:
+            logger.warning(
+                "[DataAgentRunner] Non-data greeting lead generation failed: %s",
+                e,
+            )
+
+    content = DataQueryPrompts.build_non_data_response(
+        user_question,
+        agent_display_name=agent_display_name,
+        lead=llm_lead,
+    )
+    return finalize_visible_reply(content, collapse_duplicates=False)
+
+
 async def yield_non_data_guidance(
+    runner: Any,
     *,
     user_question: str,
 ) -> AsyncGenerator[Dict[str, Any], None]:
+    is_greeting = DataQueryPrompts._looks_like_greeting_or_capability_question(
+        user_question, ""
+    )
+    if is_greeting:
+        title = "友好回应并介绍能力"
+        details = "识别为寒暄或能力咨询，先友好承接，再引导查数或切换智能体"
+    else:
+        title = "引导至更合适的智能体"
+        details = "当前请求更偏通用问答，已提供切换入口与查数引导"
     yield {
         "type": "log",
         "id": f"non_data_{uuid.uuid4().hex[:8]}",
-        "title": "当前问题更适合其他智能体",
-        "details": "当前请求不属于业务数据查询，已提供智能体切换入口",
-        "status": "warning",
+        "title": title,
+        "details": details,
+        "status": "info" if is_greeting else "warning",
         "category": "intent",
     }
-    yield {
-        "content": DataQueryPrompts.build_non_data_response(user_question),
-        "status": "success",
-    }
+    content = await generate_non_data_response(runner, user_question=user_question)
+    yield {"content": content, "status": "success"}
 
 
 async def yield_missing_reusable_result_clarification(

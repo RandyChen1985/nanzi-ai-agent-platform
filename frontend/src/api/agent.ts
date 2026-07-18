@@ -19,6 +19,17 @@ export interface AIAgent {
   created_at: string
   updated_at: string
   execution_count?: number
+  /** 已发布版本：静态/API 工具数；无发布版或非 LOCAL 为 null */
+  tool_count?: number | null
+  /** 已发布版本：MCP 工具数 */
+  mcp_count?: number | null
+  /** 已发布版本：自定义 Skills 数；skills_custom=false 时为 null（表示全部） */
+  skill_count?: number | null
+  skills_custom?: boolean | null
+  /** 显式绑定的元数据集数；未绑定（走全局）为 null */
+  metadata_dataset_count?: number | null
+  /** 显式绑定的知识库数；未绑定（走全局）为 null */
+  knowledge_base_count?: number | null
 }
 
 export interface AIAgentBase {

@@ -70,3 +70,61 @@ async def test_tool_copy_isolation():
     # 再次获取原始工具，应该没有配置
     original_tool = await ToolRegistry.get_tool("execute_sql_query")
     assert not hasattr(original_tool, "_runtime_config")
+
+
+@pytest.mark.asyncio
+async def test_runtime_tool_config_preserves_schema_dataset_scope(monkeypatch):
+    """AgentScope runtime 工具也要保留 get_dataset_schema 的数据集配置。"""
+    calls = []
+
+    async def fake_schema_tool(**kwargs):
+        calls.append(kwargs)
+        return "schema ok"
+
+    fake_schema_tool.name = "get_dataset_schema"
+    fake_schema_tool.description = "fake schema"
+    monkeypatch.setitem(ToolRegistry._registry, "get_dataset_schema", fake_schema_tool)
+
+    specs = await ToolRegistry.get_runtime_tools([
+        {
+            "name": "get_dataset_schema",
+            "metadata_dataset_ids": ["1", "3"],
+        }
+    ])
+
+    assert len(specs) == 1
+    assert specs[0].name == "get_dataset_schema"
+
+    result = await specs[0].callable(keywords="销售")
+
+    assert result == "schema ok"
+    assert calls == [{"keywords": "销售", "metadata_dataset_ids": ["1", "3"]}]
+
+
+@pytest.mark.asyncio
+async def test_runtime_tool_config_forces_schema_dataset_scope(monkeypatch):
+    """模型显式传空列表或其他 ID 时，不能覆盖平台绑定的数据集范围。"""
+    calls = []
+
+    async def fake_schema_tool(**kwargs):
+        calls.append(kwargs)
+        return "schema ok"
+
+    fake_schema_tool.name = "get_dataset_schema"
+    fake_schema_tool.description = "fake schema"
+    monkeypatch.setitem(ToolRegistry._registry, "get_dataset_schema", fake_schema_tool)
+
+    specs = await ToolRegistry.get_runtime_tools([
+        {
+            "name": "get_dataset_schema",
+            "metadata_dataset_ids": ["1", "3"],
+        }
+    ])
+
+    await specs[0].callable(keywords="销售", metadata_dataset_ids=[])
+    await specs[0].callable(keywords="销售", metadata_dataset_ids=["999"])
+
+    assert calls == [
+        {"keywords": "销售", "metadata_dataset_ids": ["1", "3"]},
+        {"keywords": "销售", "metadata_dataset_ids": ["1", "3"]},
+    ]

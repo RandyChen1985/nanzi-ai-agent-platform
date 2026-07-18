@@ -426,6 +426,23 @@ XML 示例：
         "或直接点击 [⚡ 切换智能体](quick:/switch_to_auto) 切换为自动路由模式。"
     )
 
+    DEFAULT_AGENT_DISPLAY_NAME = "数据智能助手"
+
+    @classmethod
+    def resolve_agent_display_name(cls, agent_display_name: str | None = None) -> str:
+        name = str(agent_display_name or "").strip()
+        return name or cls.DEFAULT_AGENT_DISPLAY_NAME
+
+    @classmethod
+    def capability_onboarding_lead(cls, agent_display_name: str | None = None) -> str:
+        name = cls.resolve_agent_display_name(agent_display_name)
+        return (
+            f"我是{name}，主要帮你做业务数据查询、指标统计，以及基于查询结果的可视化解读。\n\n"
+            "你可以直接用自然语言提问，例如「本月各区域销售额」「近 30 天核心业务指标趋势」。"
+            "说清对象、指标和时间范围，我会更快给出准确结果："
+        )
+
+    # 兼容旧引用：默认名称兜底文案
     CLARIFICATION_CAPABILITY_ONBOARDING = (
         "我是数据智能助手，主要负责业务数据查询、统计分析，或基于查询结果做可视化。"
         "若您想查数，请告诉我数据对象、指标和时间范围："
@@ -539,11 +556,13 @@ XML 示例：
         history_excerpt: str,
         *,
         user_profile: Optional[str] = None,
+        agent_display_name: str | None = None,
     ) -> str:
         """Ask LLM for 1–2 sentence lead only; reason block and quick buttons come from code."""
         prefix = f"{user_profile}\n\n" if user_profile else ""
         gaps_block = cls.format_clarification_gaps_for_prompt(user_question, reasoning)
         reasoning_text = reasoning or "需要用户补充查数信息"
+        agent_name = cls.resolve_agent_display_name(agent_display_name)
 
         scenario_intro = {
             cls.CLARIFICATION_SCENARIO_VAGUE_QUERY: (
@@ -552,6 +571,9 @@ XML 示例：
             cls.CLARIFICATION_SCENARIO_INTENT_CALIBRATION: (
                 "【场景】用户在做意图校准（如强调「还是查数/是数据查询」）。"
                 "请引导其重述完整查数问题，并回溯【最近对话】中上一次真实业务诉求。"
+            ),
+            cls.CLARIFICATION_SCENARIO_NON_DATA: (
+                "【场景】寒暄或非查数闲聊。请用智能体真实名称自我介绍，并轻量引导查数。"
             ),
         }.get(
             scenario,
@@ -563,11 +585,18 @@ XML 示例：
             calibration_extra = (
                 "\n- 禁止围绕当前这句校准语本身做建议；应合并历史中的真实查数对象、指标与时间范围。"
             )
+        name_extra = ""
+        if scenario == cls.CLARIFICATION_SCENARIO_NON_DATA:
+            name_extra = (
+                f"\n- 自我介绍时必须使用真实名称「{agent_name}」，"
+                "不要改用其他助手名（除非它就是该名称）。"
+            )
 
-        return prefix + f"""你是 ChatBI 数据查询助手的澄清引导模块。
+        return prefix + f"""你是「{agent_name}」的澄清引导模块。
 
 {scenario_intro}
 
+【智能体名称】{agent_name}
 【已识别缺口】{gaps_block}
 【系统判断原因】{reasoning_text}
 【最近对话】
@@ -581,9 +610,65 @@ XML 示例：
 - 结合【当前用户问题】与【已识别缺口】说明还缺什么、如何补充。
 - 若上文有 `<USER_PROFILE>` 且含用户称呼，可礼貌使用真实姓名。
 - 禁止输出与用户当前问题无关的其他业务域示例；不要编造对话中未出现的具体数值。
-- 禁止把身份/闲聊改写成「查询当前用户信息」等伪查数问题。{calibration_extra}
+- 禁止把身份/闲聊改写成「查询当前用户信息」等伪查数问题。{calibration_extra}{name_extra}
 - 只输出 Markdown 正文，不要 JSON，不要用代码块包裹全文。
 """
+
+    @classmethod
+    def non_data_greeting_lead_generation_prompt(
+        cls,
+        *,
+        agent_display_name: str,
+        user_question: str,
+        agent_brief: str | None = None,
+    ) -> str:
+        """Ask LLM for a richer greeting / capability lead; quick buttons come from code."""
+        name = cls.resolve_agent_display_name(agent_display_name)
+        brief = str(agent_brief or "").strip() or "业务数据查询、统计分析与结果可视化"
+        return f"""你是查数智能体的寒暄与能力介绍模块。当前智能体对外名称是「{name}」。
+
+【智能体简介】{brief}
+【用户说】
+{user_question}
+
+任务：输出一段更充实的中文欢迎/能力介绍（约 80–180 字，可分 2–3 个短段落），结构建议：
+1. 先友好承接用户这句话（打招呼 / 道谢 / 问你是谁 / 问能做什么）。
+2. 用真实名称「{name}」自我介绍，并结合【智能体简介】说明擅长什么（查询、统计、对比、趋势、可视化解读等，选贴合的写，不要堆砌空话）。
+3. 给出 1–2 个通用、不绑定具体表名的提问示例（如「本月各区域销售额」「近 30 天某指标趋势」），并提示把对象、指标、时间说清楚会更好。
+4. 最后自然邀请用户继续提问。
+
+硬性要求：
+- 必须出现智能体真实名称「{name}」；不要改用「数据智能助手」等其他名字（除非它就是该名称）。
+- 语气友好、专业，像真人助手，不要写成口号或广告腔。
+- 不要输出 `###` 标题、编号大标题、列表式 quick 按钮，或 `(quick:...)`（系统会自动添加快捷操作）。
+- 不要编造具体数据、真实表名、数据集名、SQL 或未给出的业务数字。
+- 只输出 Markdown 正文，不要 JSON，不要用代码块包裹全文。
+"""
+
+    @classmethod
+    def is_valid_non_data_greeting_lead(
+        cls,
+        lead: str,
+        *,
+        agent_display_name: str | None = None,
+    ) -> bool:
+        cleaned = cls.sanitize_clarification_lead(lead)
+        if not cleaned or len(cleaned) > 900:
+            return False
+        # 过短通常是敷衍一句，宁可回退到更充实的规则文案
+        if len(cleaned) < 40:
+            return False
+        if cls.has_quick_suggestions(cleaned):
+            return False
+        if "###" in cleaned:
+            return False
+        name = cls.resolve_agent_display_name(agent_display_name)
+        if name and name not in cleaned:
+            return False
+        lowered = cleaned.lower()
+        if any(token in lowered for token in ("select ", " from ", "sql")):
+            return False
+        return True
 
     @staticmethod
     def clarification_generation_prompt(
@@ -658,6 +743,7 @@ XML 示例：
         lead: str | None = None,
         missing_fields: tuple[str, ...] | None = None,
         suggested_queries: tuple[str, ...] | None = None,
+        agent_display_name: str | None = None,
     ) -> str:
         """Assemble clarification: reason + lead + rewrite examples + quick buttons."""
         structured_gaps = cls._structured_clarification_gaps(missing_fields)
@@ -671,7 +757,10 @@ XML 示例：
             )
         else:
             lead_text = cls._build_contextual_clarification_lead(
-                user_question, reasoning, history_excerpt
+                user_question,
+                reasoning,
+                history_excerpt,
+                agent_display_name=agent_display_name,
             )
 
         example_queries = cls._merge_clarification_example_queries(
@@ -711,18 +800,61 @@ XML 示例：
         return "\n\n".join(part for part in parts if part)
 
     @classmethod
-    def build_non_data_response(cls, user_question: str) -> str:
+    def build_non_data_response(
+        cls,
+        user_question: str,
+        *,
+        agent_display_name: str | None = None,
+        lead: str | None = None,
+    ) -> str:
         """Guide an unrelated request away from ChatBI without inventing data gaps."""
-        topic = cls._truncate_for_display(user_question, 40)
-        intro = (
-            f"您当前的问题“{topic}”不属于业务数据查询。"
-            if topic
-            else "您当前的问题不属于业务数据查询。"
-        )
+        q = str(user_question or "").strip()
+        name = cls.resolve_agent_display_name(agent_display_name)
+        is_greeting = cls._looks_like_greeting_or_capability_question(q, "")
+
+        if is_greeting:
+            lead_text = cls.sanitize_clarification_lead(lead) if lead else ""
+            if not lead_text:
+                # 寒暄 / 能力咨询：规则兜底；优先使用 LLM 导语（含真实智能体名）
+                if any(signal in q for signal in ("谢谢", "感谢", "辛苦了")):
+                    lead_text = (
+                        f"不客气，随时找我就好。\n\n"
+                        f"我是{name}，可以帮你查业务数据、做指标统计与对比，"
+                        "也可以基于查询结果做趋势解读或可视化说明。"
+                        "例如「本月各区域销售额」「近 30 天某指标变化」。"
+                        "直接说想看什么数据即可。"
+                    )
+                elif any(signal in q for signal in ("你是谁", "你能做什么")):
+                    lead_text = (
+                        f"我是{name}，专注业务数据查询与分析。"
+                        "常见能力包括：按对象/时间拉明细、做汇总与对比、看趋势，"
+                        "以及结合结果做可视化解读。\n\n"
+                        "你可以这样问我：「本月各区域销售额」「近 30 天核心业务指标趋势」。"
+                        "把对象、指标和时间说清楚，结果会更准。"
+                    )
+                else:
+                    lead_text = (
+                        f"你好！我是{name}。"
+                        "我擅长业务数据查询、指标统计与对比分析，也能帮你看趋势或做结果可视化解读。\n\n"
+                        "你可以直接用自然语言提问，例如「本月各区域销售额」"
+                        "「近 30 天某业务指标趋势」。说清对象、指标和时间范围会更好；"
+                        "不确定能查什么，也可以先点下方入口浏览可用数据。"
+                    )
+            return (
+                f"{lead_text}\n\n"
+                "### 💬 你可以这样继续\n"
+                f"{cls.quick_button('查看我能查哪些数据', DATASET_PORTAL_SLASH_COMMAND)}\n"
+                f"{cls.quick_button('切换智能体', '/switch_to_auto')}"
+            )
+
+        topic = cls._truncate_for_display(q, 40)
+        topic_bit = f"「{topic}」" if topic else "这个问题"
         return (
-            "### ℹ️ 当前问题更适合其他智能体\n"
-            f"{intro}数据智能助手主要负责业务数据查询、统计分析和结果可视化。\n\n"
-            "### 💬 您可以这样继续\n"
+            f"关于{topic_bit}，我这边帮不上太多——"
+            f"我是{name}，更擅长业务数据查询、统计分析和结果可视化。\n\n"
+            "若是闲聊、写作、翻译或通用问答，建议切换到其他智能体；"
+            "若想查数，可以直接问业务问题，或先看看我能查哪些数据。\n\n"
+            "### 💬 你可以这样继续\n"
             f"{cls.quick_button('切换智能体', '/switch_to_auto')}\n"
             f"{cls.quick_button('查看我能查哪些数据', DATASET_PORTAL_SLASH_COMMAND)}"
         )
@@ -1502,6 +1634,8 @@ XML 示例：
         user_question: str,
         reasoning: str,
         history_excerpt: str = "",
+        *,
+        agent_display_name: str | None = None,
     ) -> str:
         q = str(user_question or "").strip()
         topic = cls._truncate_for_display(q, 56)
@@ -1541,7 +1675,7 @@ XML 示例：
             )
 
         if cls._is_non_data_general_intent(q, reasoning_text):
-            return cls.CLARIFICATION_CAPABILITY_ONBOARDING
+            return cls.capability_onboarding_lead(agent_display_name)
 
         gap_text = "、".join(cls._infer_clarification_gaps(q, reasoning_text))
         if topic:

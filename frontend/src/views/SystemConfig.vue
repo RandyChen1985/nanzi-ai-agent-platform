@@ -313,7 +313,7 @@ const brandingConfig = ref({
   hide_version_link: false,
   contact_markdown: '',
   copyright_text: '',
-  default_agent_name: '南孜智能助手',
+  default_agent_name: 'NanZi · AI',
 })
 const brandingIconInput = ref<HTMLInputElement | null>(null)
 
@@ -330,7 +330,7 @@ const fetchBrandingConfig = async () => {
       hide_version_link: !!data.hide_version_link,
       contact_markdown: data.contact_markdown || '',
       copyright_text: data.copyright_text || '',
-      default_agent_name: data.default_agent_name || '南孜智能助手',
+      default_agent_name: data.default_agent_name || 'NanZi · AI',
     }
   } catch {
     showToast('品牌配置加载失败', 'error')
@@ -1586,7 +1586,7 @@ onMounted(() => {
                 v-model="brandingConfig.default_agent_name"
                 type="text"
                 class="block w-full rounded-lg border-gray-300 shadow-sm focus:border-primary focus:ring-primary text-sm"
-                placeholder="南孜智能助手"
+                placeholder="NanZi · AI"
               />
               <p class="text-xs text-gray-400 mt-1">影响未开启品牌个性化时或未指定时的智能助手默认名称（例如：Nexus AI）</p>
             </div>

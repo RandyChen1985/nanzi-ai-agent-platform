@@ -11,9 +11,10 @@ import {
   PlayCircleIcon,
   PauseCircleIcon
 } from '@heroicons/vue/24/outline'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 
 const router = useRouter()
+const route = useRoute()
 
 // Auth & Permission
 const cachedUser = localStorage.getItem('user_info')
@@ -457,7 +458,13 @@ const taskHealthMeta = (task: AgentTask) => {
 
 const metricValue = (value: number | undefined) => Number(value || 0)
 
-onMounted(() => { fetchTasks(true); fetchAgents() })
+onMounted(async () => {
+  await Promise.all([fetchTasks(true), fetchAgents()])
+  if (route.query.task_id) {
+    const target = tasks.value.find(task => String(task.id) === String(route.query.task_id))
+    if (target) openLogs(target)
+  }
+})
 </script>
 
 <template>

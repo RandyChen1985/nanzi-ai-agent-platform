@@ -52,7 +52,7 @@
                             {{ currentExpertAgent.display_name || currentExpertAgent.name }}
                         </template>
                         <template v-else>
-                            {{ branding.default_agent_name || '南孜智能助手' }}
+                            {{ branding.default_agent_name || 'NanZi · AI' }}
                         </template>
                     </span>
                     <span v-if="isProcessing" class="flex h-1.5 w-1.5 relative">
@@ -3120,6 +3120,7 @@ watch(() => config.enableMultiAgent, (newVal, oldVal) => {
     }
 });
 const conversationId = ref("");
+let requestedConversationId = "";
 
 const embedAuthHeaders = (): Record<string, string> | undefined => {
   if (!config.token) return undefined;
@@ -4379,7 +4380,23 @@ const handlePostMessage = (event: MessageEvent) => {
         // Configure axios defaults immediately
         axios.defaults.headers.common["Authorization"] = `Bearer ${incomingToken}`;
         axios.defaults.headers.common["X-API-Key"] = incomingToken;
-        if (data.agent_id) config.agentId = data.agent_id;
+        if (data.agent_id) {
+          const agentId = String(data.agent_id);
+          config.agentId = agentId;
+          // 工作台 / 门户指定助手时，切到专家模式并选中该助手
+          switchToExpert(agentId);
+          if (!data.conversation_id) {
+            // 未指定会话：新开对话，避免仍停在上一会话内容
+            messages.value = [];
+            generateNewConversation();
+            requestedConversationId = conversationId.value;
+          }
+        }
+        if (data.conversation_id) {
+          requestedConversationId = String(data.conversation_id);
+          conversationId.value = requestedConversationId;
+          localStorage.setItem("yovole_embed_conv_id", requestedConversationId);
+        }
         if (data.instance_id) config.instanceId = data.instance_id;
         if (data.theme) applyTheme(data.theme, data.styleVars);
         if (data.welcome_message_override)
@@ -4694,19 +4711,26 @@ const initChat = async () => {
             }
         }
     }).catch(e => console.warn("Failed to preload agents", e));
-    // 6. Fetch active conversation from server
+    // 6. Workbench/host explicit resume wins; otherwise fetch the active conversation.
     let loadedCid = false;
-    try {
-      const activeRes = await axios.get("/api/v1/chat/active", {
-        headers: embedAuthHeaders()
-      });
-      if (activeRes.data?.status === "success" && activeRes.data?.data?.conversation_id) {
-        conversationId.value = activeRes.data.data.conversation_id;
-        localStorage.setItem("yovole_embed_conv_id", conversationId.value);
-        loadedCid = true;
+    if (requestedConversationId) {
+      conversationId.value = requestedConversationId;
+      localStorage.setItem("yovole_embed_conv_id", requestedConversationId);
+      updateActiveConversationOnServer(requestedConversationId);
+      loadedCid = true;
+    } else {
+      try {
+        const activeRes = await axios.get("/api/v1/chat/active", {
+          headers: embedAuthHeaders()
+        });
+        if (activeRes.data?.status === "success" && activeRes.data?.data?.conversation_id) {
+          conversationId.value = activeRes.data.data.conversation_id;
+          localStorage.setItem("yovole_embed_conv_id", conversationId.value);
+          loadedCid = true;
+        }
+      } catch (e: any) {
+        console.warn("[Init] Failed to fetch active conversation from server:", e);
       }
-    } catch (e: any) {
-      console.warn("[Init] Failed to fetch active conversation from server:", e);
     }
 
     if (!loadedCid) {
@@ -6193,7 +6217,11 @@ onMounted(() => {
     config.token = token;
     console.log("[LifeCycle] Token found in URL (persist to storage only after validation).");
   }
-  if (query.get("agent_id")) config.agentId = query.get("agent_id")!;
+  if (query.get("agent_id")) {
+    const agentId = query.get("agent_id")!;
+    config.agentId = agentId;
+    switchToExpert(agentId);
+  }
   if (query.get("theme")) applyTheme(query.get("theme")!);
   postMessageToHost({ type: "NANZI_WIDGET_READY" });
   if (config.token) {

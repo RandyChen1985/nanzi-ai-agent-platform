@@ -24,6 +24,7 @@ async def fetch_dataset_schema_core(
     user_id: Optional[int] = None,
     is_admin: bool = False,
     api_key: Optional[str] = None,
+    authorized_dataset_ids: Optional[list[int]] = None,
 ) -> str:
     """
     按当前用户权限获取数据集 Schema 文本（local/ragflow 均优先返回检索片段）。
@@ -41,6 +42,7 @@ async def fetch_dataset_schema_core(
             user_id=user_id,
             is_admin=is_admin,
             api_key=api_key,
+            authorized_dataset_ids=authorized_dataset_ids,
         )
     except Exception as e:
         logger.error("[fetch_dataset_schema_core] Schema retrieval failed: %s", e, exc_info=True)
@@ -67,6 +69,7 @@ async def _fetch_dataset_schema_impl(
     user_id: Optional[int] = None,
     is_admin: bool = False,
     api_key: Optional[str] = None,
+    authorized_dataset_ids: Optional[list[int]] = None,
 ) -> str:
     user_id_eff = user_id
     is_admin_eff = bool(is_admin)
@@ -88,6 +91,15 @@ async def _fetch_dataset_schema_impl(
 
     if not authorized_datasets:
         return "No authorized datasets found. You do not have permission to view any data."
+
+    configured_dataset_ids = _normalize_authorized_dataset_ids(authorized_dataset_ids)
+    if configured_dataset_ids is not None:
+        authorized_datasets = [
+            ds for ds in authorized_datasets
+            if getattr(ds, "id", None) in configured_dataset_ids
+        ]
+        if not authorized_datasets:
+            return "No configured metadata datasets are authorized for current user."
 
     provider = await ConfigService.get("metadata_provider", default="local")
     logger.info("[fetch_dataset_schema_core] provider=%s", str(provider).upper())
@@ -166,6 +178,7 @@ async def _fetch_dataset_schema_impl(
                 schema_text,
                 user_id=user_id_eff,
                 is_admin=is_admin_eff,
+                authorized_dataset_ids=authorized_dataset_ids,
             )
             return schema_text
         return f"No relevant schema info found for '{query}'.\nDebug Logs: {'; '.join(trace_logs)}"
@@ -182,9 +195,11 @@ async def _fetch_dataset_schema_impl(
             from app.services.ai.embedding_client import EmbeddingClient
             from app.services.ai.metadata_index_service import MetadataIndexService
 
-            authorized_ids = None if is_admin_eff else [
-                ds.id for ds in authorized_datasets if getattr(ds, "id", None) is not None
-            ]
+            authorized_ids = (
+                [ds.id for ds in authorized_datasets if getattr(ds, "id", None) is not None]
+                if configured_dataset_ids is not None or not is_admin_eff
+                else None
+            )
             query_embedding = await EmbeddingClient.embed_text(query, use_global=True)
             redis_results = await MetadataIndexService.search_knn(
                 query_embedding=query_embedding,
@@ -236,6 +251,16 @@ async def _fetch_dataset_schema_impl(
         )
         if not found_datasets:
             return f"No relevant schema info found for '{query}'.\nDebug Logs: local MySQL keyword search returned 0 datasets"
+        if configured_dataset_ids is not None:
+            found_datasets = [
+                ds for ds in found_datasets
+                if getattr(ds, "id", None) in configured_dataset_ids
+            ]
+            if not found_datasets:
+                return (
+                    f"No relevant schema info found for '{query}'.\n"
+                    "Debug Logs: local MySQL keyword search returned 0 datasets in configured scope"
+                )
 
         results: list[str] = []
         next_index = 1
@@ -251,9 +276,22 @@ async def _fetch_dataset_schema_impl(
         schema_text,
         user_id=user_id_eff,
         is_admin=is_admin_eff,
+        authorized_dataset_ids=authorized_dataset_ids,
     )
 
     return schema_text
+
+
+def _normalize_authorized_dataset_ids(raw: Optional[list[int]]) -> Optional[set[int]]:
+    if raw is None:
+        return None
+    normalized: set[int] = set()
+    for item in raw:
+        try:
+            normalized.add(int(item))
+        except (TypeError, ValueError):
+            continue
+    return normalized
 
 
 def _extract_schema_table_refs(schema_text: str) -> list[tuple[str | None, str]]:
@@ -304,6 +342,7 @@ async def _enrich_with_cross_dataset_schema(
     *,
     user_id: Optional[int] = None,
     is_admin: bool = False,
+    authorized_dataset_ids: Optional[list[int]] = None,
 ) -> str:
     """从 schema 文本中解析 table_name，查询其跨数据集关联表，追加对应 schema chunk。
 
@@ -341,6 +380,14 @@ async def _enrich_with_cross_dataset_schema(
     cross_tables = await MetadataService.get_cross_dataset_related_tables(session, source_table_ids)
     if not cross_tables:
         return schema_text
+    configured_dataset_ids = _normalize_authorized_dataset_ids(authorized_dataset_ids)
+    if configured_dataset_ids is not None:
+        cross_tables = [
+            table for table in cross_tables
+            if getattr(table, "dataset_id", None) in configured_dataset_ids
+        ]
+        if not cross_tables:
+            return schema_text
     cross_tables = await _filter_tables_by_metadata_permission(
         session,
         cross_tables,

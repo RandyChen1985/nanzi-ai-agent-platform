@@ -37,7 +37,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted } from 'vue';
+import { ref, onMounted, onUnmounted, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import {
     SAVED_REPORT_OPEN_EVENT,
@@ -88,6 +88,8 @@ const sendInitConfig = () => {
                     real_name: userInfo.real_name,
                     role: userInfo.role
                 },
+                conversation_id: route.query.conversation_id ? String(route.query.conversation_id) : null,
+                agent_id: route.query.agent_id ? String(route.query.agent_id) : null,
                 // 可以设置一些 Portal 特有的欢迎语
                 welcome_message_override: `您好，${displayName}！我是您的智能助手，已为您准备就绪。`,
                 open_saved_report: route.query.report_id ? {
@@ -147,6 +149,21 @@ onMounted(() => {
     window.addEventListener(SAVED_REPORT_OPEN_EVENT, handleSavedReportOpenEvent);
     initChat();
 });
+
+// 工作台等入口再次带 agent_id / conversation_id 进入时，向已就绪的挂件重推配置
+watch(
+    () => [
+        route.query.agent_id,
+        route.query.conversation_id,
+        route.query.report_id,
+        route.query.run_id,
+    ],
+    () => {
+        if (widgetReady.value) {
+            sendInitConfig();
+        }
+    },
+);
 
 onUnmounted(() => {
     window.removeEventListener('message', handleMessage);

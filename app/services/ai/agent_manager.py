@@ -12,6 +12,122 @@ logger = logging.getLogger(__name__)
 
 class AgentManagerService:
     @staticmethod
+    def _tool_entry_name(tool: Any) -> str:
+        if isinstance(tool, dict):
+            return str(tool.get("name") or "").strip()
+        return str(tool or "").strip()
+
+    @staticmethod
+    def _is_mcp_tool_name(name: str) -> bool:
+        # MCP 工具在平台内统一命名为 server_name:tool_name
+        return ":" in name
+
+    @classmethod
+    def _count_bound_metadata_datasets(cls, tools: List[Any]) -> Optional[int]:
+        """从 get_dataset_schema 工具配置读取显式绑定的元数据集数；未绑定则 None（走全局）。"""
+        for tool in tools:
+            if not isinstance(tool, dict):
+                continue
+            if cls._tool_entry_name(tool) != "get_dataset_schema":
+                continue
+            raw_ids = tool.get("metadata_dataset_ids") or []
+            if not isinstance(raw_ids, list):
+                return None
+            cleaned = [str(item).strip() for item in raw_ids if str(item).strip()]
+            return len(cleaned) if cleaned else None
+        return None
+
+    @staticmethod
+    def _count_bound_knowledge_bases(engine_config: Optional[Dict[str, Any]]) -> Optional[int]:
+        """从 engine_config.dataset_ids 统计显式绑定知识库数；未绑定则 None（走全局策略）。"""
+        from app.services.ai.knowledge_utils import normalize_dataset_ids
+
+        ids = normalize_dataset_ids((engine_config or {}).get("dataset_ids"))
+        return len(ids) if ids else None
+
+    @classmethod
+    def summarize_version_capabilities(
+        cls,
+        version: Optional[AIAgentVersion],
+        engine_config: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """统计 tool / mcp / skills，以及显式绑定的数据集 / 知识库数量。"""
+        knowledge_base_count = cls._count_bound_knowledge_bases(engine_config)
+        if version is None:
+            return {
+                "tool_count": None,
+                "mcp_count": None,
+                "skill_count": None,
+                "skills_custom": None,
+                "metadata_dataset_count": None,
+                "knowledge_base_count": knowledge_base_count,
+            }
+
+        tools_raw = version.tools or []
+        if isinstance(tools_raw, str):
+            try:
+                tools_raw = json.loads(tools_raw)
+            except Exception:
+                tools_raw = []
+        if not isinstance(tools_raw, list):
+            tools_raw = []
+
+        tool_count = 0
+        mcp_count = 0
+        for tool in tools_raw:
+            name = cls._tool_entry_name(tool)
+            if not name:
+                continue
+            if cls._is_mcp_tool_name(name):
+                mcp_count += 1
+            else:
+                tool_count += 1
+
+        skills_custom = bool(getattr(version, "skills_custom", False))
+        skills_raw = getattr(version, "skills", None) or []
+        if isinstance(skills_raw, str):
+            try:
+                skills_raw = json.loads(skills_raw)
+            except Exception:
+                skills_raw = []
+        if not isinstance(skills_raw, list):
+            skills_raw = []
+        # skills_custom=False 表示使用全部公共 Skills，skill_count 置 None 由前端显示「全部」
+        skill_count = len([s for s in skills_raw if str(s).strip()]) if skills_custom else None
+
+        return {
+            "tool_count": tool_count,
+            "mcp_count": mcp_count,
+            "skill_count": skill_count,
+            "skills_custom": skills_custom,
+            "metadata_dataset_count": cls._count_bound_metadata_datasets(tools_raw),
+            "knowledge_base_count": knowledge_base_count,
+        }
+
+    @staticmethod
+    async def _latest_published_versions_by_agent(
+        session: AsyncSession,
+        agent_ids: List[str],
+    ) -> Dict[str, AIAgentVersion]:
+        if not agent_ids:
+            return {}
+        rows = (
+            await session.execute(
+                select(AIAgentVersion)
+                .where(
+                    AIAgentVersion.agent_id.in_(agent_ids),
+                    AIAgentVersion.status == "PUBLISHED",
+                )
+                .order_by(AIAgentVersion.agent_id, AIAgentVersion.version_number.desc())
+            )
+        ).scalars().all()
+        latest: Dict[str, AIAgentVersion] = {}
+        for version in rows:
+            if version.agent_id not in latest:
+                latest[version.agent_id] = version
+        return latest
+
+    @staticmethod
     async def get_active_agent_config(
         session: AsyncSession, 
         agent_id: Optional[str] = None, 
@@ -206,6 +322,29 @@ class AgentManagerService:
             agent.execution_count = counts.get(agent.id, 0)
                  
             visible_agents.append(agent)
+
+        # 批量附带已发布版本的 tool / mcp / skills 摘要（仅 LOCAL 引擎有版本工具配置）
+        local_ids = [a.id for a in visible_agents if (a.engine_type or "LOCAL") == "LOCAL"]
+        published_by_agent = await AgentManagerService._latest_published_versions_by_agent(
+            session, local_ids
+        )
+        for agent in visible_agents:
+            engine_config = agent.engine_config if isinstance(agent.engine_config, dict) else None
+            if (agent.engine_type or "LOCAL") != "LOCAL":
+                caps = AgentManagerService.summarize_version_capabilities(
+                    None, engine_config=engine_config
+                )
+            else:
+                caps = AgentManagerService.summarize_version_capabilities(
+                    published_by_agent.get(agent.id),
+                    engine_config=engine_config,
+                )
+            agent.tool_count = caps["tool_count"]
+            agent.mcp_count = caps["mcp_count"]
+            agent.skill_count = caps["skill_count"]
+            agent.skills_custom = caps["skills_custom"]
+            agent.metadata_dataset_count = caps["metadata_dataset_count"]
+            agent.knowledge_base_count = caps["knowledge_base_count"]
             
         return visible_agents
 

@@ -389,3 +389,85 @@ def test_skip_few_shot_log_shape():
     log = skip_few_shot_log()
     assert log["title"] == "跳过经验库检索"
     assert log["type"] == "log"
+
+
+@pytest.mark.asyncio
+async def test_generate_non_data_response_uses_llm_lead_and_agent_name(monkeypatch):
+    from types import SimpleNamespace
+
+    from app.services.ai.runners.chatbi import clarification as chatbi_clarification
+
+    class _FakeChat:
+        async def generate_text(self, _messages):
+            return (
+                "你好！我是测试经营分析助手。"
+                "我可以帮你做经营数据查询、指标对比和趋势解读，"
+                "也可以基于结果做可视化说明。\n\n"
+                "你可以试试「本月各区域销售额」或「近 30 天关键经营指标变化」。"
+                "把对象、指标和时间说清楚会更好。"
+            )
+
+    async def fake_llm(**_kwargs):
+        return object()
+
+    monkeypatch.setattr(
+        "app.services.ai.runners.chatbi.clarification.AgentConfigProvider.get_configured_llm",
+        fake_llm,
+    )
+    monkeypatch.setattr(
+        "app.services.ai.runners.chatbi.clarification.chat_client_from_handle",
+        lambda _handle: _FakeChat(),
+    )
+
+    runner = SimpleNamespace(
+        config=SimpleNamespace(
+            agent_display_name="测试经营分析助手",
+            agent_name="biz-analyst",
+            system_prompt="专注经营分析与指标解读。",
+        )
+    )
+    content = await chatbi_clarification.generate_non_data_response(
+        runner,
+        user_question="你好",
+    )
+    assert "测试经营分析助手" in content
+    assert "数据智能助手" not in content
+    assert "查看我能查哪些数据" in content
+
+
+@pytest.mark.asyncio
+async def test_generate_non_data_response_falls_back_when_llm_omits_name(monkeypatch):
+    from types import SimpleNamespace
+
+    from app.services.ai.runners.chatbi import clarification as chatbi_clarification
+
+    class _FakeChat:
+        async def generate_text(self, _messages):
+            return "你好呀，有什么可以帮你的？"
+
+    async def fake_llm(**_kwargs):
+        return object()
+
+    monkeypatch.setattr(
+        "app.services.ai.runners.chatbi.clarification.AgentConfigProvider.get_configured_llm",
+        fake_llm,
+    )
+    monkeypatch.setattr(
+        "app.services.ai.runners.chatbi.clarification.chat_client_from_handle",
+        lambda _handle: _FakeChat(),
+    )
+
+    runner = SimpleNamespace(
+        config=SimpleNamespace(
+            agent_display_name="测试经营分析助手",
+            agent_name="biz-analyst",
+            system_prompt="",
+        )
+    )
+    content = await chatbi_clarification.generate_non_data_response(
+        runner,
+        user_question="你好",
+    )
+    assert "测试经营分析助手" in content
+    assert content.startswith("你好！我是测试经营分析助手")
+    assert "自然语言" in content or "例如" in content

@@ -5,7 +5,16 @@ from app.services.config_service import ConfigService
 DEFAULT_PRODUCT_NAME = "NanZi·智能体平台"
 DEFAULT_LOGIN_SUBTITLE = "NanZi Intelligent Agent Platform"
 DEFAULT_ICON_URL = "/favicon.png"
-DEFAULT_AGENT_NAME = "南孜智能助手"
+DEFAULT_AGENT_NAME = "NanZi · AI"
+# 历史默认名：读取时映射到新兜底，不写库
+_LEGACY_DEFAULT_AGENT_NAMES = frozenset({"南孜智能助手", "南孜 · 智能助手"})
+
+
+def _normalize_default_agent_name(value: Optional[str]) -> str:
+    name = (value or "").strip()
+    if not name or name in _LEGACY_DEFAULT_AGENT_NAMES:
+        return DEFAULT_AGENT_NAME
+    return name
 
 
 class BrandingSettingsService:
@@ -40,8 +49,9 @@ class BrandingSettingsService:
             "hide_version_link": await cls._get_bool(cls.CONFIG_HIDE_VERSION_LINK, False),
             "contact_markdown": (await ConfigService.get(cls.CONFIG_CONTACT_MARKDOWN, "")) or "",
             "copyright_text": (await ConfigService.get(cls.CONFIG_COPYRIGHT_TEXT, "")) or "",
-            "default_agent_name": (await ConfigService.get(cls.CONFIG_DEFAULT_AGENT_NAME, DEFAULT_AGENT_NAME) or "").strip()
-            or DEFAULT_AGENT_NAME,
+            "default_agent_name": _normalize_default_agent_name(
+                await ConfigService.get(cls.CONFIG_DEFAULT_AGENT_NAME, DEFAULT_AGENT_NAME)
+            ),
         }
 
     @classmethod
@@ -69,7 +79,7 @@ class BrandingSettingsService:
             "hide_version_link": raw["hide_version_link"],
             "contact_markdown": raw["contact_markdown"],
             "copyright_text": raw["copyright_text"],
-            "default_agent_name": raw["default_agent_name"],
+            "default_agent_name": _normalize_default_agent_name(raw["default_agent_name"]),
         }
 
     @classmethod

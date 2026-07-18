@@ -603,6 +603,7 @@ onMounted(() => {
   // Check for Agent Debug Context (agent_id, version_id)
   const qAgentId = route.query.agent_id as string;
   const qVersionId = route.query.version_id as string;
+  const qSampleQuestion = route.query.sample_question as string;
 
   fetchAgents();
   fetchSlashCommands(); // Fetch dynamic commands
@@ -630,6 +631,7 @@ onMounted(() => {
   }
 
   if (qVersionId) agentParams.version_id = qVersionId;
+  if (qSampleQuestion) userInput.value = qSampleQuestion;
 
   if (qVersionId) {
     // Add a system update message to inform user they are in preview mode

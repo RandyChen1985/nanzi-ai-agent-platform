@@ -32,6 +32,7 @@ const props = defineProps<{
   isToolSelected: (name: string) => boolean;
   isSkillSelected: (skillId: string) => boolean;
   getToolCustomConfig: (name: string) => any;
+  hasToolMetadataDatasetBinding: (name: string) => boolean;
   isAllMcpSelected: (serverName: string, tools: any[]) => boolean;
   isMcpGroupCollapsed: (serverName: string) => boolean;
   getMcpGroupSelectedCount: (tools: any[]) => number;
@@ -55,6 +56,7 @@ const emit = defineEmits<{
   setOrchestratorTemperature: [value: number];
   setSynthesisTemperature: [value: number];
   openToolRuntimeConfig: [name: string];
+  openMetadataDatasetBinding: [name: string];
   openDingTalkConfig: [name: string];
   openEmailConfig: [name: string];
   openWeChatWorkConfig: [name: string];
@@ -312,6 +314,16 @@ const goStep = (step: VersionConfigStep) => emit('update:versionConfigStep', ste
                       <div v-if="isToolSelected(tool.name)" class="flex gap-1 mt-1.5" @click.stop>
                         <button type="button" @click="emit('openToolRuntimeConfig', tool.name)" class="tool-action-btn" title="配置">
                           <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" /><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
+                        </button>
+                        <button
+                          v-if="tool.name === 'get_dataset_schema'"
+                          type="button"
+                          @click="emit('openMetadataDatasetBinding', tool.name)"
+                          class="tool-action-btn"
+                          :class="hasToolMetadataDatasetBinding(tool.name) ? 'tool-action-btn--active' : ''"
+                          title="绑定数据集"
+                        >
+                          <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7c0 1.657 3.582 3 8 3s8-1.343 8-3-3.582-3-8-3-8 1.343-8 3zm0 0v5c0 1.657 3.582 3 8 3s8-1.343 8-3V7M4 12v5c0 1.657 3.582 3 8 3s8-1.343 8-3v-5" /></svg>
                         </button>
                         <button v-if="tool.name === 'send_dingtalk_message'" type="button" @click="emit('openDingTalkConfig', tool.name)" class="tool-action-btn" title="钉钉">
                           <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5.882V19.24a1.76 1.72 0 01-3.417.592l-2.147-6.15M18 13a3 3 0 100-6M5.436 13.683A4.001 4.001 0 017 6h1.832c4.1 0 7.625-1.234 9.168-3v14c-1.543-1.766-5.067-3-9.168-3H7a3.988 3.988 0 01-1.564-.317z" /></svg>
@@ -610,6 +622,11 @@ const goStep = (step: VersionConfigStep) => emit('update:versionConfigStep', ste
   transition: all 0.15s;
 }
 .tool-action-btn:hover {
+  color: var(--color-primary, #2563eb);
+  background: white;
+}
+
+.tool-action-btn--active {
   color: var(--color-primary, #2563eb);
   background: white;
 }

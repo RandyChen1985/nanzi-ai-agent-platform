@@ -461,12 +461,19 @@ class ToolRegistry:
         runtime_tools = []
         seen_tool_names = set()
         for item in tool_configs:
+            config_item = None
             if isinstance(item, str):
                 name = item
             elif isinstance(item, dict):
                 name = item.get("name", "")
+                try:
+                    from app.schemas.agent import ToolConfigItem
+                    config_item = ToolConfigItem(**item)
+                except Exception as e:
+                    logger.warning(f"Failed to parse runtime tool config dict: {e}")
             elif hasattr(item, "name"):
                 name = getattr(item, "name")
+                config_item = item
             else:
                 name = ""
 
@@ -474,10 +481,34 @@ class ToolRegistry:
                 continue
 
             spec = await cls.get_runtime_tool(name)
+            if spec and config_item:
+                spec = cls._configure_runtime_tool_spec(spec, config_item)
             if spec and spec.name not in seen_tool_names:
                 runtime_tools.append(spec)
                 seen_tool_names.add(spec.name)
         return runtime_tools
+
+    @classmethod
+    def _configure_runtime_tool_spec(cls, spec: Any, config: Any):
+        from dataclasses import replace
+
+        description = getattr(config, "description_override", None) or spec.description
+        if spec.name != "get_dataset_schema":
+            return replace(spec, description=description)
+
+        metadata_dataset_ids = list(getattr(config, "metadata_dataset_ids", None) or [])
+        original_callable = spec.callable
+
+        async def invoke_schema_with_config(**kwargs: Any) -> Any:
+            if metadata_dataset_ids:
+                kwargs["metadata_dataset_ids"] = metadata_dataset_ids
+            result = original_callable(**kwargs)
+            import inspect
+            if inspect.isawaitable(result):
+                return await result
+            return result
+
+        return replace(spec, description=description, callable=invoke_schema_with_config)
 
     @classmethod
     def _create_agentscope_builtin_tool(cls, configured_name: str) -> Optional[Any]:
@@ -524,7 +555,10 @@ class ToolRegistry:
             async def invoke_schema(**kwargs):
                 return await cls._invoke_registry_entry(
                     tool,
-                    {"keywords": kwargs.get("keywords")},
+                    {
+                        "keywords": kwargs.get("keywords"),
+                        "metadata_dataset_ids": kwargs.get("metadata_dataset_ids"),
+                    },
                 )
 
             return RuntimeToolSpec(

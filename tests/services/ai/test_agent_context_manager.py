@@ -118,7 +118,7 @@ async def test_setup_context_keeps_authorized_attachment_paths():
 
 @pytest.mark.asyncio
 async def test_setup_context_fallback_user_permissions():
-    # 测试前端未传，普通用户，合并智能体配置与用户权限绑定的知识库
+    # 测试前端未传，普通用户：智能体已有绑定时，只使用智能体绑定知识库，用户权限只做后续过滤
     config = ChatConfig(
         agent_id="test-agent",
         agent_name="Test Agent",
@@ -150,14 +150,45 @@ async def test_setup_context_fallback_user_permissions():
 
     ctx = get_current_agent_context()
     assert ctx is not None
-    # 应该是智能体配置 + 用户权限的并集
-    assert set(ctx.dataset_ids) == {ID_AGENT_BOUND_1, ID_USER_PERM_1, ID_USER_PERM_2}
+    # 不再扩展到用户全部可访问知识库，避免场景 Agent 被放大检索范围
+    assert set(ctx.dataset_ids) == {ID_AGENT_BOUND_1}
     assert ctx.knowledge_dataset_ids == []
-    assert set(config.engine_config.get("dataset_ids")) == {ID_AGENT_BOUND_1, ID_USER_PERM_1, ID_USER_PERM_2}
+    assert set(config.engine_config.get("dataset_ids")) == {ID_AGENT_BOUND_1}
+
+
+@pytest.mark.asyncio
+async def test_setup_context_uses_user_permissions_when_agent_has_no_bound_dataset():
+    config = ChatConfig(
+        agent_id="test-agent",
+        agent_name="Test Agent",
+        model_name="DeepSeek",
+        temperature=0.7,
+        system_prompt="prompt",
+        tools=[],
+        capabilities=[],
+        engine_config={}
+    )
+
+    mock_access = {"is_admin": False, "accessible_ids": {ID_USER_PERM_1, ID_USER_PERM_2}}
+    with patch("app.services.permission_service.PermissionService.get_knowledge_base_access", new_callable=AsyncMock) as mock_get:
+        mock_get.return_value = mock_access
+        mock_session = AsyncMock()
+        mock_session_context = MagicMock()
+        mock_session_context.__aenter__.return_value = mock_session
+        with patch("app.services.ai.context_manager.AsyncSessionLocal", return_value=mock_session_context):
+            await AgentContextManager.setup_context(
+                config=config,
+                knowledge_dataset_ids=None,
+                user_info={"user_id": 100, "user_name": "test_user", "role": "user"}
+            )
+
+    ctx = get_current_agent_context()
+    assert ctx is not None
+    assert set(ctx.dataset_ids) == {ID_USER_PERM_1, ID_USER_PERM_2}
 
 @pytest.mark.asyncio
 async def test_setup_context_admin_user():
-    # 测试前端未传，管理员用户，兜底获取数据库全部未删除知识库
+    # 测试前端未传，管理员用户：智能体已有绑定时不再扩展到数据库全部知识库
     config = ChatConfig(
         agent_id="test-agent",
         agent_name="Test Agent",
@@ -195,7 +226,6 @@ async def test_setup_context_admin_user():
 
     ctx = get_current_agent_context()
     assert ctx is not None
-    # 应该是智能体配置 + 数据库所有非deleted的知识库
-    assert set(ctx.dataset_ids) == {ID_AGENT_BOUND_1, ID_DB_ALL_1, ID_DB_ALL_2}
+    assert set(ctx.dataset_ids) == {ID_AGENT_BOUND_1}
     assert ctx.knowledge_dataset_ids == []
-    assert set(config.engine_config.get("dataset_ids")) == {ID_AGENT_BOUND_1, ID_DB_ALL_1, ID_DB_ALL_2}
+    assert set(config.engine_config.get("dataset_ids")) == {ID_AGENT_BOUND_1}

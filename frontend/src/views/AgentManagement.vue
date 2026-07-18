@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, computed } from "vue";
+import { useRouter } from "vue-router";
 import { agentApi } from "../api/agent";
 import type {
   AIAgent,
@@ -16,16 +17,19 @@ import AgentVersionEditorDrawer from "../components/agent/AgentVersionEditorDraw
 import AgentHistoryModal from "../components/agent/AgentHistoryModal.vue";
 import RagFlowResourceSelector from "../components/RagFlowResourceSelector.vue";
 import ToolRuntimeConfigModal from "../components/agent/ToolRuntimeConfigModal.vue";
+import MetadataDatasetBindingModal from "../components/agent/MetadataDatasetBindingModal.vue";
 import DingTalkConfigModal from "../components/agent/DingTalkConfigModal.vue";
 import EmailConfigModal from "../components/agent/EmailConfigModal.vue";
 import WeChatWorkConfigModal from "../components/agent/WeChatWorkConfigModal.vue";
 import axios from "@/utils/axios";
 
+const router = useRouter();
 const agents = ref<AIAgent[]>([]);
 const loading = ref(false);
 const selectedAgent = ref<AIAgent | null>(null);
 
 const showToolRuntimeModal = ref(false);
+const showMetadataDatasetBindingModal = ref(false);
 const showDingTalkModal = ref(false);
 const showEmailModal = ref(false);
 const showWeChatWorkModal = ref(false);
@@ -46,6 +50,7 @@ const fetchModels = async () => {
 const showAgentModal = ref(false);
 const showVersionModal = ref(false);
 const showHistoryModal = ref(false);
+const showCreateAgentMenu = ref(false);
 
 const showVersionsDrawer = ref(false); // New Drawer State
 
@@ -1141,6 +1146,20 @@ const openToolRuntimeConfig = (toolName: string) => {
   showToolRuntimeModal.value = true;
 };
 
+const openMetadataDatasetBinding = (toolName: string) => {
+  currentConfiguringTool.value = toolName;
+  const existing = versionForm.value.tools?.find(t =>
+    (typeof t === 'string' ? t === toolName : (t as any).name === toolName)
+  );
+
+  if (existing && typeof existing === 'object') {
+    currentToolConfig.value = { ...(existing as any) };
+  } else {
+    currentToolConfig.value = { name: toolName };
+  }
+  showMetadataDatasetBindingModal.value = true;
+};
+
 const openDingTalkConfig = (toolName: string) => {
   currentConfiguringTool.value = toolName;
   const existing = versionForm.value.tools?.find(t =>
@@ -1282,11 +1301,27 @@ const getToolCustomConfig = (toolName: string) => {
   );
   if (found && typeof found === 'object') {
     const cfg = found as any;
-    if (cfg.model_name || (cfg.temperature !== undefined && cfg.temperature !== 0) || cfg.description_override) {
+    if (
+      cfg.model_name ||
+      (cfg.temperature !== undefined && cfg.temperature !== 0) ||
+      cfg.description_override
+    ) {
       return cfg;
     }
   }
   return null;
+};
+
+const hasToolMetadataDatasetBinding = (toolName: string) => {
+  const found = versionForm.value.tools?.find(t =>
+    (typeof t !== 'string' && (t as any).name === toolName)
+  );
+  return Boolean(
+    found &&
+    typeof found === 'object' &&
+    Array.isArray((found as any).metadata_dataset_ids) &&
+    (found as any).metadata_dataset_ids.length > 0
+  );
 };
 
 const canEditVersion = computed(() => {
@@ -1388,6 +1423,7 @@ const toggleCardMenu = (agentId: string, e?: Event) => {
 }
 const closeCardMenus = () => {
   openCardMenuId.value = null
+  showCreateAgentMenu.value = false
 }
 
 onMounted(() => {
@@ -1423,6 +1459,24 @@ const formatDate = (dateStr: string) => {
     hour: "2-digit",
     minute: "2-digit",
   });
+};
+
+/** LOCAL 引擎且有已发布版本才展示工具能力摘要 */
+const hasCapabilitySummary = (agent: AIAgent) =>
+  (agent.engine_type || "LOCAL") === "LOCAL" && agent.tool_count != null;
+
+/** 显式绑定了数据集或知识库（非全局策略） */
+const hasResourceBindings = (agent: AIAgent) =>
+  (agent.metadata_dataset_count != null && agent.metadata_dataset_count > 0) ||
+  (agent.knowledge_base_count != null && agent.knowledge_base_count > 0);
+
+const showCapabilityChips = (agent: AIAgent) =>
+  hasCapabilitySummary(agent) || hasResourceBindings(agent);
+
+const formatSkillCountLabel = (agent: AIAgent) => {
+  if (!hasCapabilitySummary(agent)) return "—";
+  if (!agent.skills_custom) return "全部";
+  return String(agent.skill_count ?? 0);
 };
 </script>
 
@@ -1499,16 +1553,51 @@ const formatDate = (dateStr: string) => {
           </button>
         </div>
 
-        <button
-          v-has-perm="'element:agent:create'"
-          @click="openAgentModal()"
-          class="flex items-center justify-center gap-2 px-4 py-2 bg-primary text-white rounded-lg shadow-sm hover:bg-primary-dark transition-colors font-medium text-sm shrink-0"
-        >
-          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
-          </svg>
-          新建智能体
-        </button>
+        <div v-has-perm="'element:agent:create'" class="relative shrink-0" @click.stop>
+          <div class="flex items-stretch rounded-lg overflow-hidden shadow-sm">
+            <button
+              @click="openAgentModal()"
+              class="flex items-center justify-center gap-2 px-4 py-2 bg-primary text-white font-medium text-sm transition-all hover:bg-primary-dark active:scale-[0.98]"
+            >
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
+              </svg>
+              新建智能体
+            </button>
+            <button
+              @click="showCreateAgentMenu = !showCreateAgentMenu"
+              class="px-2 bg-primary text-white border-l border-primary-dark/30 transition-colors hover:bg-primary-dark"
+              title="更多创建方式"
+            >
+              <svg class="w-4 h-4 transition-transform" :class="{ 'rotate-180': showCreateAgentMenu }" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+              </svg>
+            </button>
+          </div>
+          <div
+            v-if="showCreateAgentMenu"
+            class="absolute right-0 mt-1.5 w-52 bg-white border border-gray-200 rounded-xl shadow-lg py-1 z-20"
+          >
+            <button
+              @click="showCreateAgentMenu = false; openAgentModal()"
+              class="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2"
+            >
+              <svg class="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
+              </svg>
+              空白新建
+            </button>
+            <button
+              @click="showCreateAgentMenu = false; router.push('/dashboard/scenario-templates')"
+              class="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2"
+            >
+              <svg class="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7h16M4 12h10M4 17h7" />
+              </svg>
+              从场景模板交付
+            </button>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -1676,6 +1765,58 @@ const formatDate = (dateStr: string) => {
             {{ agent.description || '暂无描述' }}
           </p>
 
+          <!-- 已发布版本：Tool / MCP / Skills；显式绑定才显示数据集 / 知识库 -->
+          <div
+            v-if="showCapabilityChips(agent)"
+            class="mt-3 flex items-center flex-wrap gap-1.5"
+          >
+            <template v-if="hasCapabilitySummary(agent)">
+              <span
+                class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[11px] font-medium bg-slate-50 text-slate-600 border border-slate-100"
+                :title="`已配置 ${agent.tool_count ?? 0} 个内置/API 工具`"
+              >
+                <span class="text-slate-400 font-normal">Tool</span>
+                <span class="tabular-nums text-slate-800">{{ agent.tool_count ?? 0 }}</span>
+              </span>
+              <span
+                class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[11px] font-medium bg-violet-50 text-violet-700 border border-violet-100"
+                :title="`已配置 ${agent.mcp_count ?? 0} 个 MCP 工具`"
+              >
+                <span class="text-violet-400 font-normal">MCP</span>
+                <span class="tabular-nums">{{ agent.mcp_count ?? 0 }}</span>
+              </span>
+              <span
+                class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[11px] font-medium bg-amber-50 text-amber-700 border border-amber-100"
+                :title="agent.skills_custom ? `已自定义 ${agent.skill_count ?? 0} 个 Skills` : '使用全部公共 Skills'"
+              >
+                <span class="text-amber-400 font-normal">Skills</span>
+                <span class="tabular-nums">{{ formatSkillCountLabel(agent) }}</span>
+              </span>
+            </template>
+            <span
+              v-if="agent.metadata_dataset_count != null && agent.metadata_dataset_count > 0"
+              class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[11px] font-medium bg-cyan-50 text-cyan-700 border border-cyan-100"
+              :title="`已绑定 ${agent.metadata_dataset_count} 个元数据集`"
+            >
+              <span class="text-cyan-400 font-normal">数据集</span>
+              <span class="tabular-nums">{{ agent.metadata_dataset_count }}</span>
+            </span>
+            <span
+              v-if="agent.knowledge_base_count != null && agent.knowledge_base_count > 0"
+              class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[11px] font-medium bg-emerald-50 text-emerald-700 border border-emerald-100"
+              :title="`已绑定 ${agent.knowledge_base_count} 个知识库`"
+            >
+              <span class="text-emerald-400 font-normal">知识库</span>
+              <span class="tabular-nums">{{ agent.knowledge_base_count }}</span>
+            </span>
+          </div>
+          <div
+            v-else-if="(agent.engine_type || 'LOCAL') === 'LOCAL'"
+            class="mt-3 text-[11px] text-gray-400"
+          >
+            尚未发布版本
+          </div>
+
           <div
             v-if="!isMobile"
             class="mt-3 flex items-center flex-wrap gap-x-3 gap-y-1 text-xs text-gray-400"
@@ -1739,7 +1880,7 @@ const formatDate = (dateStr: string) => {
           </div>
 
           <button
-            v-if="!isMobile && agent.engine_type !== 'RAGFLOW' && agent.engine_type !== 'OPENCLAW'"
+            v-if="agent.engine_type !== 'RAGFLOW' && agent.engine_type !== 'OPENCLAW'"
             @click.stop="openDrawer(agent)"
             class="px-3 py-1.5 bg-primary text-white text-xs font-medium rounded-lg shadow-sm hover:bg-primary-dark transition-colors flex items-center"
           >
@@ -1780,6 +1921,7 @@ const formatDate = (dateStr: string) => {
                 <th class="px-6 py-3 text-[11px] font-bold text-gray-400 uppercase tracking-wider w-12 text-center">Icon</th>
                 <th class="px-6 py-3 text-[11px] font-bold text-gray-400 uppercase tracking-wider">智能体名称</th>
                 <th class="px-6 py-3 text-[11px] font-bold text-gray-400 uppercase tracking-wider hidden md:table-cell">引擎 / 类型</th>
+                <th class="px-6 py-3 text-[11px] font-bold text-gray-400 uppercase tracking-wider hidden lg:table-cell">能力</th>
                 <th class="px-6 py-3 text-[11px] font-bold text-gray-400 uppercase tracking-wider text-center w-32">状态</th>
                 <th class="px-6 py-3 text-[11px] font-bold text-gray-400 uppercase tracking-wider text-right w-48">操作</th>
               </tr>
@@ -1836,6 +1978,37 @@ const formatDate = (dateStr: string) => {
                       {{ agent.engine_type === 'LOCAL' ? 'NanZi Engine' : agent.engine_type === 'RAGFLOW' ? 'RAGFlow' : agent.engine_type === 'OPENCLAW' ? 'OpenClaw' : agent.engine_type }}
                     </span>
                   </div>
+                </td>
+                <td class="px-6 py-4 hidden lg:table-cell">
+                  <div v-if="showCapabilityChips(agent)" class="flex items-center flex-wrap gap-1">
+                    <template v-if="hasCapabilitySummary(agent)">
+                      <span class="px-1.5 py-0.5 rounded text-[10px] font-medium bg-slate-50 text-slate-600 border border-slate-100 tabular-nums" title="Tool">
+                        T {{ agent.tool_count ?? 0 }}
+                      </span>
+                      <span class="px-1.5 py-0.5 rounded text-[10px] font-medium bg-violet-50 text-violet-700 border border-violet-100 tabular-nums" title="MCP">
+                        M {{ agent.mcp_count ?? 0 }}
+                      </span>
+                      <span class="px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-50 text-amber-700 border border-amber-100 tabular-nums" title="Skills">
+                        S {{ formatSkillCountLabel(agent) }}
+                      </span>
+                    </template>
+                    <span
+                      v-if="agent.metadata_dataset_count != null && agent.metadata_dataset_count > 0"
+                      class="px-1.5 py-0.5 rounded text-[10px] font-medium bg-cyan-50 text-cyan-700 border border-cyan-100 tabular-nums"
+                      title="元数据集"
+                    >
+                      数 {{ agent.metadata_dataset_count }}
+                    </span>
+                    <span
+                      v-if="agent.knowledge_base_count != null && agent.knowledge_base_count > 0"
+                      class="px-1.5 py-0.5 rounded text-[10px] font-medium bg-emerald-50 text-emerald-700 border border-emerald-100 tabular-nums"
+                      title="知识库"
+                    >
+                      库 {{ agent.knowledge_base_count }}
+                    </span>
+                  </div>
+                  <span v-else-if="(agent.engine_type || 'LOCAL') === 'LOCAL'" class="text-[10px] text-gray-400">未发布</span>
+                  <span v-else class="text-[10px] text-gray-300">—</span>
                 </td>
                 <td class="px-6 py-4">
                   <div class="flex justify-center">
@@ -2382,6 +2555,7 @@ const formatDate = (dateStr: string) => {
       :is-tool-selected="isToolSelected"
       :is-skill-selected="isSkillSelected"
       :get-tool-custom-config="getToolCustomConfig"
+      :has-tool-metadata-dataset-binding="hasToolMetadataDatasetBinding"
       :is-all-mcp-selected="isAllMcpSelected"
       :is-mcp-group-collapsed="isMcpGroupCollapsed"
       :get-mcp-group-selected-count="getMcpGroupSelectedCount"
@@ -2402,6 +2576,7 @@ const formatDate = (dateStr: string) => {
       @set-orchestrator-temperature="setOrchestratorTemperature"
       @set-synthesis-temperature="setSynthesisTemperature"
       @open-tool-runtime-config="openToolRuntimeConfig"
+      @open-metadata-dataset-binding="openMetadataDatasetBinding"
       @open-ding-talk-config="openDingTalkConfig"
       @open-email-config="openEmailConfig"
       @open-we-chat-work-config="openWeChatWorkConfig"
@@ -2450,6 +2625,13 @@ const formatDate = (dateStr: string) => {
       :tool-name="currentConfiguringTool"
       :config="currentToolConfig"
       :available-models="models.filter(m => m.is_active && (m.type === 'llm' || m.type === 'multimodal'))"
+      :readonly="!canEditVersion"
+      @save="handleToolConfigSave"
+    />
+
+    <MetadataDatasetBindingModal
+      v-model:model="showMetadataDatasetBindingModal"
+      :config="currentToolConfig"
       :readonly="!canEditVersion"
       @save="handleToolConfigSave"
     />

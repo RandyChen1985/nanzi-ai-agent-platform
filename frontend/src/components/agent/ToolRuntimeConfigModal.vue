@@ -8,6 +8,7 @@ interface ToolConfig {
   model_name?: string;
   temperature?: number;
   description_override?: string;
+  [key: string]: any;
 }
 
 const props = defineProps<{
@@ -26,6 +27,7 @@ const localConfig = ref<ToolConfig>({ ...props.config });
 watch(() => props.model, (val) => {
   if (val) {
     localConfig.value = { 
+      ...props.config,
       name: props.toolName,
       model_name: props.config.model_name || "",
       temperature: props.config.temperature ?? 0,
@@ -44,6 +46,7 @@ const handleSave = () => {
   <Modal
     v-if="model"
     :title="`工具高级配置 - ${toolName}`"
+    :z-index="10050"
     @close="emit('update:model', false)"
     size="max-w-md"
   >

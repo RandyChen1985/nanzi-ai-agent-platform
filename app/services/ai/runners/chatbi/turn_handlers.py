@@ -132,6 +132,7 @@ async def dispatch_early_turn(
         from app.services.ai.runners.chatbi import clarification as chatbi_clarification
 
         async for chunk in chatbi_clarification.yield_non_data_guidance(
+            runner,
             user_question=user_question,
         ):
             yield chunk

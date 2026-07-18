@@ -74,8 +74,8 @@ async def test_get_active_agent_config_ragflow(mock_session):
 async def test_list_agents_admin(mock_session, mock_user_admin):
     """测试管理员查看 Agent 列表"""
     agents = [
-        AIAgent(id="a1", name="sys", is_system=True),
-        AIAgent(id="a2", name="usr", is_system=False, created_by="other")
+        AIAgent(id="a1", name="sys", is_system=True, engine_type="LOCAL"),
+        AIAgent(id="a2", name="usr", is_system=False, created_by="other", engine_type="LOCAL")
     ]
     
     # Mock Agents result
@@ -84,10 +84,30 @@ async def test_list_agents_admin(mock_session, mock_user_admin):
     
     mock_count_result = MagicMock()
     mock_count_result.fetchall.return_value = [("a1", 10)]
+
+    published = AIAgentVersion(
+        id="v1",
+        agent_id="a1",
+        version_number=1,
+        status="PUBLISHED",
+        system_prompt="p",
+        tools=[
+            {"name": "get_dataset_schema", "metadata_dataset_ids": ["101", "102"]},
+            "ops:alert_query",
+        ],
+        skills_custom=True,
+        skills=["skill-a", "skill-b"],
+    )
+    agents[0].engine_config = {
+        "dataset_ids": ["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"]
+    }
+    mock_versions_result = MagicMock()
+    mock_versions_result.scalars.return_value.all.return_value = [published]
     
     mock_session.execute.side_effect = [
         mock_list_result, # list agents
-        mock_count_result # counts
+        mock_count_result, # counts
+        mock_versions_result, # published versions
     ]
     
     res = await AgentManagerService.list_agents(mock_session, mock_user_admin)
@@ -96,6 +116,70 @@ async def test_list_agents_admin(mock_session, mock_user_admin):
     assert res[0].is_editable is True # Admin edits system
     assert res[1].is_editable is True # Admin edits user
     assert res[0].execution_count == 10
+    assert res[0].tool_count == 1
+    assert res[0].mcp_count == 1
+    assert res[0].skill_count == 2
+    assert res[0].skills_custom is True
+    assert res[0].metadata_dataset_count == 2
+    assert res[0].knowledge_base_count == 2
+    assert res[1].tool_count is None  # 无发布版
+    assert res[1].metadata_dataset_count is None
+    assert res[1].knowledge_base_count is None
+
+
+def test_summarize_version_capabilities_mcp_and_skills_all():
+    version = AIAgentVersion(
+        id="v1",
+        agent_id="a1",
+        version_number=1,
+        status="PUBLISHED",
+        system_prompt="p",
+        tools=["search_knowledge_base", {"name": "mcp-server:foo"}, ""],
+        skills_custom=False,
+        skills=["ignored-when-not-custom"],
+    )
+    caps = AgentManagerService.summarize_version_capabilities(version)
+    assert caps["tool_count"] == 1
+    assert caps["mcp_count"] == 1
+    assert caps["skill_count"] is None
+    assert caps["skills_custom"] is False
+    assert caps["metadata_dataset_count"] is None
+    assert caps["knowledge_base_count"] is None
+
+
+def test_summarize_bound_datasets_and_knowledge_bases():
+    version = AIAgentVersion(
+        id="v1",
+        agent_id="a1",
+        version_number=1,
+        status="PUBLISHED",
+        system_prompt="p",
+        tools=[{"name": "get_dataset_schema", "metadata_dataset_ids": ["1", "2", ""]}],
+        skills_custom=False,
+        skills=[],
+    )
+    caps = AgentManagerService.summarize_version_capabilities(
+        version,
+        engine_config={"dataset_ids": "cccccccccccccccccccccccccccccccc,dddddddddddddddddddddddddddddddd"},
+    )
+    assert caps["metadata_dataset_count"] == 2
+    assert caps["knowledge_base_count"] == 2
+
+    unbound = AgentManagerService.summarize_version_capabilities(
+        AIAgentVersion(
+            id="v2",
+            agent_id="a1",
+            version_number=1,
+            status="PUBLISHED",
+            system_prompt="p",
+            tools=["get_dataset_schema"],
+            skills_custom=False,
+            skills=[],
+        ),
+        engine_config={"dataset_ids": []},
+    )
+    assert unbound["metadata_dataset_count"] is None
+    assert unbound["knowledge_base_count"] is None
 
 @pytest.mark.asyncio
 async def test_create_agent_success(mock_session, mock_user_normal):

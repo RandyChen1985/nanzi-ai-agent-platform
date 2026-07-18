@@ -279,6 +279,7 @@ const menuGroups: MenuGroup[] = [
   {
     title: '智能助手',
     items: [
+      { name: '我的工作台', to: '/dashboard/workbench', icon: 'dashboard', perm: 'menu:ai_chat', activeNames: ['PersonalWorkbench'] },
       { name: '智能助手', to: '/dashboard/chat', icon: 'chat', perm: 'menu:ai_chat' }
     ]
   },

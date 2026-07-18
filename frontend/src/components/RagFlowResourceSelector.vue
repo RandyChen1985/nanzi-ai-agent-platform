@@ -185,7 +185,7 @@ const formatDate = (ts?: number | string) => {
   <Modal
     :show="modelValue"
     :title="type === 'agent' ? '选择 RAGFlow 智能体' : '选择知识库 (Datasets)'"
-    :z-index="120"
+    :z-index="10050"
     @close="close"
     size="max-w-3xl"
   >

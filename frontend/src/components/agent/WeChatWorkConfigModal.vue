@@ -14,6 +14,7 @@ const emit = defineEmits(["update:model", "save"]);
   <Modal
     v-if="model"
     title="企业微信通知工具配置"
+    :z-index="10050"
     @close="emit('update:model', false)"
     size="max-w-md"
   >

@@ -339,6 +339,52 @@ async def test_cross_dataset_schema_enrichment_filters_unauthorized_targets(monk
 
 
 @pytest.mark.asyncio
+async def test_cross_dataset_schema_enrichment_respects_configured_dataset_scope(monkeypatch):
+    from app.services.chatbi_dataset_schema_service import _enrich_with_cross_dataset_schema
+
+    source_table = SimpleNamespace(id=1, physical_name="energy_usage")
+    target_dataset = SimpleNamespace(id=2, name="asset_ds", display_name="资产数据", data_source="mysql")
+    target_table = SimpleNamespace(
+        id=2,
+        physical_name="asset_owner",
+        dataset_id=2,
+        dataset=target_dataset,
+        columns=[],
+    )
+
+    class FakeScalarResult:
+        def all(self):
+            return [source_table]
+
+    class FakeExecuteResult:
+        def scalars(self):
+            return FakeScalarResult()
+
+    class FakeSession:
+        async def execute(self, stmt):
+            return FakeExecuteResult()
+
+    async def fake_get_cross_dataset_related_tables(session, source_table_ids, **kwargs):
+        return [target_table]
+
+    monkeypatch.setattr(
+        "app.services.chatbi_dataset_schema_service.MetadataService.get_cross_dataset_related_tables",
+        fake_get_cross_dataset_related_tables,
+    )
+
+    schema_text = "dataset: energy_ds\ntable_name: energy_usage\ncolumns:\n  - name: device_id"
+    enriched = await _enrich_with_cross_dataset_schema(
+        FakeSession(),
+        schema_text,
+        user_id=7,
+        is_admin=True,
+        authorized_dataset_ids=[1],
+    )
+
+    assert "asset_owner" not in enriched
+
+
+@pytest.mark.asyncio
 async def test_federated_executor_execution():
     # 模拟 Runner 及其环境
     runner = MagicMock()

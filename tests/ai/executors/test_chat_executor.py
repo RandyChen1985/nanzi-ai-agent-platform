@@ -1447,7 +1447,7 @@ async def test_general_runner_greeting_with_table_not_intercepted(chat_config):
     from app.services.ai.turn_classifier import TurnClassification, TurnType
 
     greeting_reply = (
-        "您好！我是南孜智能助手。\n"
+        "您好！我是 NanZi · AI。\n"
         "| 我能帮您 | 示例 |\n"
         "| --- | --- |\n"
         "| 闲聊问答 | 今天天气怎么样 |\n"

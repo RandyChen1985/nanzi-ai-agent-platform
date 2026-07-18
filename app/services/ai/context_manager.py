@@ -231,29 +231,29 @@ class AgentContextManager:
             effective_dataset_ids = request_dataset_ids
         else:
             agent_dataset_ids = merge_dataset_id_sources(engine_config.get("dataset_ids"))
-            user_permitted_ids = []
-            if u_id_val is not None:
-                from app.services.permission_service import PermissionService
-                from app.models.knowledge import KnowledgeBaseMetadata
-                from sqlalchemy.future import select
-                async with AsyncSessionLocal() as session:
-                    permission_service = PermissionService(session)
-                    access = await permission_service.get_knowledge_base_access(
-                        user_id=u_id_val,
-                        user_name=user_dims.get("user_name"),
-                    )
-                    if access.get("is_admin"):
-                        stmt = select(KnowledgeBaseMetadata.ragflow_dataset_id).where(
-                            KnowledgeBaseMetadata.status != "deleted"
+            if agent_dataset_ids:
+                effective_dataset_ids = agent_dataset_ids
+            else:
+                user_permitted_ids = []
+                if u_id_val is not None:
+                    from app.services.permission_service import PermissionService
+                    from app.models.knowledge import KnowledgeBaseMetadata
+                    from sqlalchemy.future import select
+                    async with AsyncSessionLocal() as session:
+                        permission_service = PermissionService(session)
+                        access = await permission_service.get_knowledge_base_access(
+                            user_id=u_id_val,
+                            user_name=user_dims.get("user_name"),
                         )
-                        rows = (await session.execute(stmt)).scalars().all()
-                        user_permitted_ids = [row for row in rows if row]
-                    else:
-                        user_permitted_ids = list(access.get("accessible_ids") or [])
-            effective_dataset_ids = merge_dataset_id_sources(
-                agent_dataset_ids,
-                user_permitted_ids,
-            )
+                        if access.get("is_admin"):
+                            stmt = select(KnowledgeBaseMetadata.ragflow_dataset_id).where(
+                                KnowledgeBaseMetadata.status != "deleted"
+                            )
+                            rows = (await session.execute(stmt)).scalars().all()
+                            user_permitted_ids = [row for row in rows if row]
+                        else:
+                            user_permitted_ids = list(access.get("accessible_ids") or [])
+                effective_dataset_ids = merge_dataset_id_sources(user_permitted_ids)
 
         # Sync effective_dataset_ids back to config's engine_config to support context re-generation
         if config.engine_config is None:

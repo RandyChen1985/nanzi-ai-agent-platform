@@ -167,10 +167,9 @@ const handleLogin = async () => {
           localStorage.setItem('user_info', JSON.stringify(userData))
           localStorage.setItem('api_key', userData.api_key)
           
-          // Redirect based on role and device
-          const isMobile = window.innerWidth < 768
-          if (isMobile || userData.role !== 'admin') {
-            router.push('/dashboard/chat')
+          // 普通业务用户进入个人工作台；管理员保留平台概览入口。
+          if (userData.role !== 'admin') {
+            router.push('/dashboard/workbench')
           } else {
             router.push('/dashboard')
           }

@@ -206,6 +206,25 @@ async def test_get_dataset_schema_tool_local_falls_back_to_mysql_like_when_vecto
         assert mock_search.await_args_list[1].kwargs["query"] == "order"
         mock_build_chunks.assert_awaited_once_with(ANY, 2)
 
+
+@pytest.mark.asyncio
+@pytest.mark.no_infrastructure
+async def test_get_dataset_schema_tool_passes_configured_metadata_dataset_ids():
+    """工具高级配置中的元数据集 ID 应传给 Schema 检索核心逻辑。"""
+    with patch("app.core.orm.AsyncSessionLocal", new_callable=MagicMock), \
+         patch("app.services.chatbi_dataset_schema_service.fetch_dataset_schema_core", new_callable=AsyncMock) as mock_fetch:
+        mock_fetch.return_value = "schema scoped"
+
+        result = await get_dataset_schema.ainvoke({
+            "keywords": "销售",
+            "metadata_dataset_ids": ["1", "3"],
+        })
+
+        assert result == "schema scoped"
+        mock_fetch.assert_awaited_once()
+        assert mock_fetch.await_args.kwargs["keywords"] == "销售"
+        assert mock_fetch.await_args.kwargs["authorized_dataset_ids"] == [1, 3]
+
 @pytest.mark.asyncio
 async def test_execute_sql_query_tool_dry_run():
     """测试执行 SQL 工具的干跑模式 (使用 .invoke)"""

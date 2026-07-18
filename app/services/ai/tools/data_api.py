@@ -326,8 +326,26 @@ async def call_ragflow_api(query: str, dataset_ids: list[str]) -> str:
         logger.error(f"[RAGFlow] Exception: {e}")
         return f"[RAG Connection Error] {str(e)}"
 
+def _normalize_metadata_dataset_ids(raw: Any) -> Optional[list[int]]:
+    if raw is None:
+        return None
+    values = raw if isinstance(raw, list) else str(raw).replace("'", "").replace('"', "").split(",")
+    normalized: list[int] = []
+    for item in values:
+        text = str(item).strip()
+        if not text:
+            continue
+        try:
+            dataset_id = int(text)
+        except (TypeError, ValueError):
+            continue
+        if dataset_id not in normalized:
+            normalized.append(dataset_id)
+    return normalized or None
+
+
 @tool
-async def get_dataset_schema(keywords: Optional[str] = None) -> str:
+async def get_dataset_schema(keywords: Optional[str] = None, metadata_dataset_ids: Optional[Any] = None) -> str:
     """
     Retrieves the table schema, columns, and metric definitions for available datasets.
     Call this to understand which data is available and how to query it.
@@ -336,6 +354,8 @@ async def get_dataset_schema(keywords: Optional[str] = None) -> str:
         keywords: Optional. A search term or topic (e.g., "sales", "user behavior") to find relevant data.
                  In Local Mode, this is used for local vector metadata search.
                  In RAGFlow Mode, this is used as the semantic search query.
+        metadata_dataset_ids: Optional. Platform-injected dataset IDs from tool runtime config.
+                 Use this only when the agent has configured get_dataset_schema to a fixed metadata dataset scope.
     """
     try:
         from app.core.orm import AsyncSessionLocal
@@ -346,6 +366,7 @@ async def get_dataset_schema(keywords: Optional[str] = None) -> str:
         user_id = ctx.user_id if ctx else None
         is_admin = ctx.is_admin if ctx else False
         api_key = ctx.api_key if ctx else None
+        authorized_dataset_ids = _normalize_metadata_dataset_ids(metadata_dataset_ids)
 
         trace_buffer = ctx.trace_buffer if ctx else None
         if trace_buffer is not None:
@@ -364,6 +385,7 @@ async def get_dataset_schema(keywords: Optional[str] = None) -> str:
                         user_id=user_id,
                         is_admin=is_admin,
                         api_key=api_key,
+                        authorized_dataset_ids=authorized_dataset_ids,
                     )
                     span.set_output(res)
                     return res
@@ -375,6 +397,7 @@ async def get_dataset_schema(keywords: Optional[str] = None) -> str:
                     user_id=user_id,
                     is_admin=is_admin,
                     api_key=api_key,
+                    authorized_dataset_ids=authorized_dataset_ids,
                 )
 
     except Exception as e:

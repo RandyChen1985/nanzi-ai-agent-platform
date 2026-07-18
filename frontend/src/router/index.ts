@@ -107,6 +107,12 @@ const router = createRouter({
           meta: { perm: 'menu:widget_debug' }
         },
         {
+          path: 'workbench',
+          name: 'PersonalWorkbench',
+          component: () => import('../views/PersonalWorkbench.vue'),
+          meta: { perm: 'menu:ai_chat', title: '我的工作台' }
+        },
+        {
           path: 'personal',
           name: 'PersonalCenter',
           component: PersonalCenter
@@ -134,6 +140,24 @@ const router = createRouter({
           name: 'AgentManagement',
           component: AgentManagement,
           meta: { perm: 'menu:agent_management' }
+        },
+        {
+          path: 'scenario-templates',
+          name: 'ScenarioTemplates',
+          component: () => import('../views/ScenarioTemplates.vue'),
+          meta: { perm: 'menu:ai_chat', title: '场景模板' }
+        },
+        {
+          path: 'scenario-templates/:templateId',
+          name: 'ScenarioTemplateDetail',
+          component: () => import('../views/ScenarioTemplateDetail.vue'),
+          meta: { perm: 'menu:ai_chat', title: '模板详情' }
+        },
+        {
+          path: 'scenario-templates/:templateId/install',
+          name: 'ScenarioTemplateInstall',
+          component: () => import('../views/ScenarioTemplateInstall.vue'),
+          meta: { perm: 'menu:agent_management', title: '交付向导' }
         },
         {
           path: 'chatbi-examples',
