@@ -417,33 +417,36 @@ onMounted(async () => {
         <p class="text-sm text-gray-500 mt-1">管理 ChatBI 问答经验样本及 RAG 语义对齐案例</p>
       </div>
 
-      <div class="flex flex-col sm:flex-row sm:items-center gap-2.5 sm:gap-3">
-        <div class="relative w-full sm:w-56 lg:w-72">
-          <span class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-            <MagnifyingGlassIcon class="h-4 w-4 text-gray-400" />
-          </span>
-          <input
-            v-model="searchQuery"
-            type="text"
-            placeholder="搜索提问内容..."
-            class="w-full pl-9 pr-3 py-2 bg-white border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none text-sm transition-all shadow-sm"
-          />
+      <div class="flex w-full flex-col gap-2.5 sm:w-auto sm:flex-row sm:items-center sm:gap-3">
+        <div class="flex w-full items-center gap-2 sm:w-auto">
+          <div class="relative min-w-0 flex-1 sm:w-56 sm:flex-none lg:w-72">
+            <span class="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3">
+              <MagnifyingGlassIcon class="h-4 w-4 text-gray-400" />
+            </span>
+            <input
+              v-model="searchQuery"
+              type="text"
+              placeholder="搜索提问内容..."
+              class="w-full rounded-lg border border-gray-300 bg-white py-2 pl-9 pr-3 text-sm shadow-sm outline-none transition-all focus:border-primary focus:ring-2 focus:ring-primary/20"
+            />
+          </div>
+          <button
+            type="button"
+            class="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-gray-300 bg-white text-gray-500 shadow-sm transition-colors hover:bg-gray-50 hover:text-primary"
+            title="刷新列表"
+            @click="fetchExamples"
+          >
+            <ArrowPathIcon class="h-4 w-4" :class="{ 'animate-spin': loading }" />
+          </button>
         </div>
 
         <button
-          @click="fetchExamples"
-          class="p-2 text-gray-500 hover:text-primary bg-white border border-gray-300 rounded-lg shadow-sm hover:bg-gray-50 transition-colors shrink-0 self-start sm:self-auto"
-          title="刷新列表"
-        >
-          <ArrowPathIcon class="w-4 h-4" :class="{ 'animate-spin': loading }" />
-        </button>
-
-        <button
           v-if="hasPermission('element:chatbi_example:sync') && !isLocalMode"
-          @click="isEngineReady && (showSyncAllConfirm = true)"
+          type="button"
+          class="inline-flex w-full items-center justify-center gap-1.5 rounded-lg border border-indigo-200 bg-indigo-50 px-3.5 py-2 text-sm font-medium text-indigo-700 shadow-sm transition-all hover:bg-indigo-100 disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto"
           :disabled="loading || !isEngineReady"
-          class="inline-flex items-center justify-center gap-1.5 px-3.5 py-2 border border-indigo-200 rounded-lg shadow-sm text-sm font-medium text-indigo-700 bg-indigo-50 hover:bg-indigo-100 transition-all disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
           :title="!isEngineReady ? 'RAGFlow 服务未就绪' : '一键同步至 RAGFlow'"
+          @click="isEngineReady && (showSyncAllConfirm = true)"
         >
           <CloudArrowUpIcon class="h-4 w-4 text-indigo-600" />
           <span class="hidden sm:inline">一键同步</span>

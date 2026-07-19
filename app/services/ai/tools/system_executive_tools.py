@@ -645,6 +645,21 @@ def create_skills(
             f.write(skill_md_content)
             
         scope_desc = "平台全局" if resolved_scope == "global" else "个人专属"
-        return f"成功：{scope_desc}技能 {skill_id} 创建成功。SKILL.md 规范文件已物理写入路径 {skill_md_path}。"
+        marker = (
+            "NANZI_SKILL_CREATED:"
+            + json.dumps(
+                {
+                    "skill_id": skill_id,
+                    "scope": resolved_scope,
+                    "name": name or skill_id,
+                },
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
+        )
+        return (
+            f"成功：{scope_desc}技能 {skill_id} 创建成功。"
+            f"SKILL.md 规范文件已物理写入路径 {skill_md_path}。\n{marker}"
+        )
     except Exception as e:
         return f"错误：创建技能失败，原因: {str(e)}"

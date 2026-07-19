@@ -12,36 +12,36 @@
       />
     </div>
 
-    <header class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-      <div class="min-w-0">
-        <h1 class="text-2xl font-bold tracking-normal text-gray-900">我的工作台</h1>
-        <p class="mt-0.5 truncate text-sm text-gray-500">
-          先处理今天值得关注的事情，再继续最近的工作。
-        </p>
-      </div>
-      <button
-        type="button"
-        class="inline-flex h-9 w-9 shrink-0 items-center justify-center self-start rounded-lg border border-gray-300 bg-white text-gray-600 shadow-sm hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60 sm:self-auto"
-        :disabled="loading"
-        :aria-busy="refreshing || loading"
-        :title="refreshing || loading ? '刷新中' : '刷新'"
-        @click="refresh"
-      >
-        <svg
-          class="h-4 w-4"
-          :class="{ 'animate-spin': refreshing || loading }"
-          fill="none"
-          stroke="currentColor"
-          viewBox="0 0 24 24"
+    <header>
+      <div class="flex items-center justify-between gap-3">
+        <h1 class="min-w-0 text-2xl font-bold tracking-normal text-gray-900">我的工作台</h1>
+        <button
+          type="button"
+          class="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-gray-300 bg-white text-gray-600 shadow-sm hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60"
+          :disabled="loading"
+          :aria-busy="refreshing || loading"
+          :title="refreshing || loading ? '刷新中' : '刷新'"
+          @click="refresh"
         >
-          <path
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-width="2"
-            d="M4 4v5h.6m14.8 2A8 8 0 004.6 9m0 0H9m11 11v-5h-.6m0 0A8 8 0 014.6 13m14.8 2H15"
-          />
-        </svg>
-      </button>
+          <svg
+            class="h-4 w-4"
+            :class="{ 'animate-spin': refreshing || loading }"
+            fill="none"
+            stroke="currentColor"
+            viewBox="0 0 24 24"
+          >
+            <path
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              stroke-width="2"
+              d="M4 4v5h.6m14.8 2A8 8 0 004.6 9m0 0H9m11 11v-5h-.6m0 0A8 8 0 014.6 13m14.8 2H15"
+            />
+          </svg>
+        </button>
+      </div>
+      <p class="mt-0.5 truncate text-sm text-gray-500">
+        先处理今天值得关注的事情，再继续最近的工作。
+      </p>
     </header>
 
     <div

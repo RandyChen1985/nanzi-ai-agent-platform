@@ -11,9 +11,18 @@ const { branding, loadBranding } = useBranding()
 const userInfo = ref<any>({})
 const userApiKey = ref('')
 const loadingApiKey = ref(false)
+const apiKeyRevealed = ref(false)
 const newPassword = ref('')
 const confirmPassword = ref('')
 const loadingPassword = ref(false)
+
+const apiKeyDisplay = computed(() => {
+  if (!userApiKey.value) return '点击“查看”加载'
+  if (!apiKeyRevealed.value) {
+    return '•'.repeat(Math.min(28, Math.max(16, userApiKey.value.length)))
+  }
+  return userApiKey.value
+})
 
 const toast = ref({
   show: false,
@@ -53,11 +62,24 @@ const fetchApiKey = async () => {
   try {
     const response = await axios.get(`/api/portal/management/api-key/${userInfo.value.user_id}`)
     userApiKey.value = response.data.api_key
+    apiKeyRevealed.value = true
   } catch (error: any) {
     showToast(error.response?.data?.detail || '获取 API Key 失败', 'error')
   } finally {
     loadingApiKey.value = false
   }
+}
+
+const hideApiKey = () => {
+  apiKeyRevealed.value = false
+}
+
+const revealOrFetchApiKey = async () => {
+  if (userApiKey.value) {
+    apiKeyRevealed.value = true
+    return
+  }
+  await fetchApiKey()
 }
 
 const copyApiKey = async () => {
@@ -105,13 +127,15 @@ import ConfirmModal from '../components/ConfirmModal.vue'
 import PersonalTokenUsage from '../components/personal/PersonalTokenUsage.vue'
 import NotificationConfigs from '../components/personal/NotificationConfigs.vue'
 import DataPortalHome from './DataPortalHome.vue'
+import SkillsManagement from './SkillsManagement.vue'
 import { useRoute, useRouter } from 'vue-router'
 
-type PersonalTab = 'info' | 'permissions' | 'memory' | 'tokens' | 'notifications' | 'data'
+type PersonalTab = 'info' | 'permissions' | 'memory' | 'tokens' | 'notifications' | 'data' | 'skills'
 const route = useRoute()
 const router = useRouter()
-const personalTabs: PersonalTab[] = ['info', 'permissions', 'memory', 'tokens', 'notifications', 'data']
+const personalTabs: PersonalTab[] = ['info', 'permissions', 'memory', 'tokens', 'notifications', 'data', 'skills']
 const activeTab = ref<PersonalTab>(personalTabs.includes(route.query.tab as PersonalTab) ? route.query.tab as PersonalTab : 'info')
+const skillsInitialId = computed(() => String(route.query.skill_id || '').trim())
 const permissionsSubTab = ref<'list' | 'about'>('list')
 const showAboutTab = computed(() => !!branding.value.contact_markdown?.trim())
 const contactHtml = computed(() => renderMarkdown(branding.value.contact_markdown || ''))
@@ -150,8 +174,10 @@ const fetchPermissions = async () => {
 }
 
 // 我的记忆相关数据状态与方法
-const activeSubTab = ref<'sessions' | 'ltm'>('sessions')
-const sessionView = ref<'daily' | 'session'>('daily')
+/** 单层视图：每日摘要 | 会话摘要 | 长期记忆 */
+const memoryView = ref<'daily' | 'session' | 'ltm'>('daily')
+const showMemoryDateFilter = ref(false)
+const memoryMenuKey = ref<string | null>(null)
 
 // 每日摘要数据与状态
 const myDailySummaries = ref<any[]>([])
@@ -219,6 +245,15 @@ const formatList = (value?: string | string[]) => {
         if (Array.isArray(parsed)) return parsed.map(String).filter(Boolean)
     } catch (_) {}
     return String(value).trim() ? [String(value)] : []
+}
+
+const toggleMemoryMenu = (key: string, event?: Event) => {
+    event?.stopPropagation()
+    memoryMenuKey.value = memoryMenuKey.value === key ? null : key
+}
+
+const closeMemoryMenu = () => {
+    memoryMenuKey.value = null
 }
 
 // 获取每日摘要列表
@@ -312,14 +347,11 @@ const executeDeleteDaily = async () => {
     }
 }
 
-// 切换视图
-const switchSessionView = (view: 'daily' | 'session') => {
-    sessionView.value = view
-    if (view === 'daily') {
-        fetchMyDailySummaries()
-    } else {
-        fetchMySessions()
-    }
+// 切换记忆视图
+const switchMemoryView = (view: 'daily' | 'session' | 'ltm') => {
+    if (memoryView.value === view) return
+    memoryView.value = view
+    memoryMenuKey.value = null
 }
 
 // 获取会话记忆列表
@@ -401,9 +433,9 @@ const executeClearAllSessionMemory = async () => {
             showToast('全部会话记忆已清除', 'success')
             showDailyDetailModal.value = false
             showSessionDetailModal.value = false
-            if (sessionView.value === 'daily') {
+            if (memoryView.value === 'daily') {
                 await fetchMyDailySummaries()
-            } else {
+            } else if (memoryView.value === 'session') {
                 await fetchMySessions()
             }
         }
@@ -492,35 +524,47 @@ const executeDeleteLtm = async () => {
     }
 }
 
-watch(activeSubTab, (val) => {
-    if (val === 'sessions') {
-        if (sessionView.value === 'daily') {
-            fetchMyDailySummaries()
-        } else {
-            fetchMySessions()
-        }
+watch(memoryView, (val) => {
+    if (val === 'daily') {
+        fetchMyDailySummaries()
+    } else if (val === 'session') {
+        fetchMySessions()
     } else if (val === 'ltm') {
         fetchMyLtm()
     }
 })
 
 watch(activeTab, (val) => {
-    router.replace({ query: { ...route.query, tab: val === 'info' ? undefined : val } })
+    const nextQuery: Record<string, any> = { ...route.query }
+    if (val === 'info') {
+        delete nextQuery.tab
+    } else {
+        nextQuery.tab = val
+    }
+    // 离开「我的技能」时清掉深链 skill_id，避免再切回来又自动弹出编辑抽屉
+    if (val !== 'skills') {
+        delete nextQuery.skill_id
+    }
+    router.replace({ query: nextQuery })
     if (val === 'permissions' && !permissions.value.details) {
         fetchPermissions()
     } else if (val === 'memory') {
-        if (activeSubTab.value === 'sessions') {
-            if (sessionView.value === 'daily') {
-                fetchMyDailySummaries()
-            } else {
-                fetchMySessions()
-            }
+        if (memoryView.value === 'daily') {
+            fetchMyDailySummaries()
+        } else if (memoryView.value === 'session') {
+            fetchMySessions()
         } else {
             fetchMyLtm()
         }
     }
 })
 
+const clearSkillsDeepLink = () => {
+    if (!route.query.skill_id) return
+    const nextQuery: Record<string, any> = { ...route.query }
+    delete nextQuery.skill_id
+    router.replace({ query: nextQuery })
+}
 watch(() => route.query.tab, (value) => {
     activeTab.value = personalTabs.includes(value as PersonalTab) ? value as PersonalTab : 'info'
 })
@@ -594,6 +638,17 @@ onMounted(() => {
                 >
                     我的数据门户
                 </button>
+                <button
+                    @click="activeTab = 'skills'"
+                    :class="[
+                        activeTab === 'skills'
+                            ? 'border-blue-500 text-blue-600'
+                            : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300',
+                        'whitespace-nowrap py-3 sm:py-4 px-1 border-b-2 font-medium text-xs sm:text-sm transition-colors'
+                    ]"
+                >
+                    我的技能
+                </button>
                 <button 
                     @click="activeTab = 'notifications'"
                     :class="[
@@ -608,7 +663,7 @@ onMounted(() => {
             </nav>
         </div>
 
-        <div :class="activeTab === 'data' ? '' : 'px-4 pb-4 sm:px-6 sm:pb-6'">
+        <div :class="(activeTab === 'data' || activeTab === 'skills') ? '' : 'px-4 pb-4 sm:px-6 sm:pb-6'">
         <!-- Info Tab -->
         <div v-if="activeTab === 'info'">
             <div class="grid grid-cols-1 md:grid-cols-2 gap-6 sm:gap-8">
@@ -653,25 +708,36 @@ onMounted(() => {
                         <div class="flex items-center space-x-2">
                             <input
                                 type="text"
-                                :value="userApiKey || '点击“查看”加载'"
+                                :value="apiKeyDisplay"
                                 readonly
                                 class="flex-1 px-3 py-2 border border-gray-300 rounded-md bg-gray-50 text-xs sm:text-sm font-mono truncate"
+                                :class="apiKeyRevealed ? 'tracking-normal' : 'tracking-widest'"
                             />
                             <button
-                                v-if="!userApiKey"
-                                @click="fetchApiKey"
+                                v-if="!apiKeyRevealed"
+                                type="button"
+                                @click="revealOrFetchApiKey"
                                 :disabled="loadingApiKey"
                                 class="px-3 sm:px-4 py-2 bg-primary text-white text-xs sm:text-sm font-bold rounded-md hover:bg-primary-dark transition-all disabled:opacity-50 flex-shrink-0"
                             >
                                 {{ loadingApiKey ? '...' : '查看' }}
                             </button>
-                            <button
-                                v-else
-                                @click="copyApiKey"
-                                class="px-3 sm:px-4 py-2 bg-green-600 text-white text-xs sm:text-sm font-bold rounded-md hover:bg-green-700 transition-all flex-shrink-0"
-                            >
-                                复制
-                            </button>
+                            <template v-else>
+                                <button
+                                    type="button"
+                                    @click="copyApiKey"
+                                    class="px-3 sm:px-4 py-2 bg-green-600 text-white text-xs sm:text-sm font-bold rounded-md hover:bg-green-700 transition-all flex-shrink-0"
+                                >
+                                    复制
+                                </button>
+                                <button
+                                    type="button"
+                                    @click="hideApiKey"
+                                    class="px-3 sm:px-4 py-2 border border-gray-300 bg-white text-gray-600 text-xs sm:text-sm font-medium rounded-md hover:bg-gray-50 transition-all flex-shrink-0"
+                                >
+                                    隐藏
+                                </button>
+                            </template>
                         </div>
                     </div>
                 </div>
@@ -884,282 +950,267 @@ onMounted(() => {
         </div>
 
         <!-- Memory Tab -->
-        <div v-else-if="activeTab === 'memory'" class="space-y-6">
-            <!-- Sub tabs -->
-            <div class="flex space-x-2 border-b border-gray-100 pb-2">
-                <button 
-                    @click="activeSubTab = 'sessions'"
-                    :class="[
-                        activeSubTab === 'sessions'
-                            ? 'bg-blue-50 text-blue-600 font-bold'
-                            : 'text-gray-500 hover:bg-gray-50',
-                        'px-3 py-1.5 rounded-lg text-xs sm:text-sm transition-all'
-                    ]"
-                >
-                    会话记忆
-                </button>
-                <button 
-                    @click="activeSubTab = 'ltm'"
-                    :class="[
-                        activeSubTab === 'ltm'
-                            ? 'bg-blue-50 text-blue-600 font-bold'
-                            : 'text-gray-500 hover:bg-gray-50',
-                        'px-3 py-1.5 rounded-lg text-xs sm:text-sm transition-all'
-                    ]"
-                >
-                    长期记忆 (LTM)
-                </button>
-            </div>
-
-            <!-- Sessions Sub Tab -->
-            <div v-if="activeSubTab === 'sessions'" class="space-y-4">
-                <!-- 每日/会话摘要切换胶囊 -->
-                <div class="inline-flex w-fit rounded-lg border border-gray-200 bg-white p-1 shadow-sm">
+        <div v-else-if="activeTab === 'memory'" class="space-y-5" @click="closeMemoryMenu">
+            <!-- 单层分段导航 + 危险操作靠右弱化 -->
+            <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div class="inline-flex w-fit max-w-full overflow-x-auto rounded-lg border border-gray-200 bg-white p-1 shadow-sm">
                     <button
                         type="button"
-                        class="px-3 py-1 text-xs sm:text-sm font-medium rounded-md transition-colors"
-                        :class="sessionView === 'daily' ? 'bg-blue-600 text-white' : 'text-gray-600 hover:bg-gray-50'"
-                        @click="switchSessionView('daily')"
+                        class="whitespace-nowrap rounded-md px-3 py-1.5 text-xs font-medium transition-colors sm:text-sm"
+                        :class="memoryView === 'daily' ? 'bg-blue-600 text-white shadow-sm' : 'text-gray-600 hover:bg-gray-50'"
+                        @click="switchMemoryView('daily')"
                     >
                         每日摘要
                     </button>
                     <button
                         type="button"
-                        class="px-3 py-1 text-xs sm:text-sm font-medium rounded-md transition-colors"
-                        :class="sessionView === 'session' ? 'bg-blue-600 text-white' : 'text-gray-600 hover:bg-gray-50'"
-                        @click="switchSessionView('session')"
+                        class="whitespace-nowrap rounded-md px-3 py-1.5 text-xs font-medium transition-colors sm:text-sm"
+                        :class="memoryView === 'session' ? 'bg-blue-600 text-white shadow-sm' : 'text-gray-600 hover:bg-gray-50'"
+                        @click="switchMemoryView('session')"
                     >
                         会话摘要
                     </button>
+                    <button
+                        type="button"
+                        class="whitespace-nowrap rounded-md px-3 py-1.5 text-xs font-medium transition-colors sm:text-sm"
+                        :class="memoryView === 'ltm' ? 'bg-blue-600 text-white shadow-sm' : 'text-gray-600 hover:bg-gray-50'"
+                        @click="switchMemoryView('ltm')"
+                    >
+                        长期记忆
+                    </button>
                 </div>
 
-                <!-- 每日摘要视图 -->
-                <div v-if="sessionView === 'daily'" class="space-y-4">
-                    <div class="flex flex-wrap gap-3 items-end">
-                        <div class="flex-1 min-w-[12rem]">
-                            <label class="text-xs text-gray-500 block mb-1">关键词</label>
+                <div class="flex items-center gap-2 self-end sm:self-auto">
+                    <button
+                        v-if="memoryView === 'ltm'"
+                        type="button"
+                        class="inline-flex items-center gap-1 rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition-all hover:bg-blue-700 active:scale-95"
+                        @click="openLtmModal()"
+                    >
+                        <svg class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" /></svg>
+                        新增偏好
+                    </button>
+                    <button
+                        v-if="memoryView === 'daily' || memoryView === 'session'"
+                        type="button"
+                        class="rounded-lg px-2.5 py-1.5 text-xs text-gray-400 transition-colors hover:bg-red-50 hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-50"
+                        :disabled="clearingAllSessionMemory"
+                        title="清除全部会话摘要、每日摘要与聊天明细"
+                        @click.stop="confirmClearAllSessionMemory"
+                    >
+                        {{ clearingAllSessionMemory ? '清除中…' : '清除全部记忆' }}
+                    </button>
+                </div>
+            </div>
+
+            <!-- 每日摘要 -->
+            <div v-if="memoryView === 'daily'" class="space-y-4">
+                <div class="flex flex-col gap-3">
+                    <div class="flex flex-col gap-2 sm:flex-row sm:items-center">
+                        <div class="relative min-w-0 flex-1">
                             <input
                                 v-model="dailyKeyword"
-                                class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white shadow-sm focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none"
+                                class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2.5 text-sm shadow-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
                                 placeholder="搜索每日摘要主题..."
                                 @keyup.enter="fetchMyDailySummaries"
                             />
                         </div>
+                        <div class="flex shrink-0 items-center gap-2">
+                            <button
+                                type="button"
+                                class="rounded-lg border border-gray-300 bg-white px-3 py-2 text-xs font-medium text-gray-600 shadow-sm transition-colors hover:bg-gray-50"
+                                :class="showMemoryDateFilter ? 'border-blue-300 text-blue-600' : ''"
+                                @click="showMemoryDateFilter = !showMemoryDateFilter"
+                            >
+                                日期筛选
+                            </button>
+                            <button
+                                type="button"
+                                class="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition-all hover:bg-blue-700 active:scale-95"
+                                @click="fetchMyDailySummaries"
+                            >
+                                查询
+                            </button>
+                        </div>
+                    </div>
+                    <div v-if="showMemoryDateFilter" class="flex flex-wrap items-end gap-3 rounded-lg border border-gray-100 bg-gray-50/80 p-3">
                         <div>
-                            <label class="text-xs text-gray-500 block mb-1">开始日期</label>
-                            <input
-                                v-model="dailyDateFrom"
-                                type="date"
-                                class="border border-gray-300 rounded-lg px-2 py-2 text-sm bg-white shadow-sm outline-none"
-                            />
+                            <label class="mb-1 block text-xs text-gray-500">开始日期</label>
+                            <input v-model="dailyDateFrom" type="date" class="rounded-lg border border-gray-300 bg-white px-2 py-2 text-sm shadow-sm outline-none" />
                         </div>
                         <div>
-                            <label class="text-xs text-gray-500 block mb-1">结束日期</label>
-                            <input
-                                v-model="dailyDateTo"
-                                type="date"
-                                class="border border-gray-300 rounded-lg px-2 py-2 text-sm bg-white shadow-sm outline-none"
-                            />
-                        </div>
-                        <button
-                            type="button"
-                            class="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 active:scale-95 transition-all shadow-sm flex-shrink-0"
-                            @click="fetchMyDailySummaries"
-                        >
-                            查询
-                        </button>
-                        <button
-                            type="button"
-                            class="px-4 py-2 border border-red-200 text-red-600 rounded-lg text-sm font-medium hover:bg-red-50 active:scale-95 transition-all shadow-sm flex-shrink-0 disabled:opacity-50 disabled:cursor-not-allowed"
-                            :disabled="clearingAllSessionMemory"
-                            @click="confirmClearAllSessionMemory"
-                        >
-                            {{ clearingAllSessionMemory ? '清除中…' : '一键清除所有记忆' }}
-                        </button>
-                    </div>
-
-                    <div v-if="dailyLoading" class="flex justify-center py-10">
-                        <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
-                    </div>
-
-                    <div v-else-if="myDailySummaries.length === 0" class="text-center text-gray-400 py-10 text-xs sm:text-sm">
-                        暂无每日摘要记录（需先产生会话摘要并由系统每日汇总或手动重建生成）
-                    </div>
-
-                    <div v-else class="space-y-3">
-                        <div 
-                            v-for="row in myDailySummaries" 
-                            :key="row.date"
-                            class="border border-gray-200 rounded-lg p-4 bg-white hover:border-blue-200 hover:shadow-sm transition-all flex flex-col sm:flex-row sm:items-start justify-between gap-4"
-                        >
-                            <div class="min-w-0 flex-1 space-y-1">
-                                <div class="flex items-center gap-2 flex-wrap">
-                                    <span class="font-mono font-bold text-gray-800 text-xs sm:text-sm bg-gray-50 px-2 py-1 rounded border border-gray-200">{{ row.date }}</span>
-                                    <span class="font-bold text-gray-900 text-sm truncate max-w-[200px] sm:max-w-[300px]">{{ row.title || '今日记忆' }}</span>
-                                    <span class="text-[10px] px-2 py-0.5 rounded-full font-bold bg-blue-50 text-blue-600">
-                                        {{ row.session_count || 0 }} 个会话
-                                    </span>
-                                </div>
-                                <p class="text-xs text-gray-600 leading-relaxed font-sans">{{ row.summary || '暂无摘要' }}</p>
-                                <div class="text-[10px] text-gray-400 flex items-center gap-1">
-                                    <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-                                    最后更新：{{ formatTime(row.last_active) }}
-                                </div>
-                            </div>
-                            <div class="flex items-center gap-3 self-end sm:self-start flex-shrink-0">
-                                <button 
-                                    @click="openDailyDetail(row)"
-                                    class="text-xs font-medium text-blue-600 hover:text-blue-800 hover:underline transition-all"
-                                >
-                                    详情
-                                </button>
-                                <button 
-                                    @click="confirmRebuildDaily(row)"
-                                    class="text-xs font-medium text-amber-600 hover:text-amber-800 hover:underline transition-all"
-                                >
-                                    重建
-                                </button>
-                                <button 
-                                    @click="confirmDeleteDaily(row)"
-                                    class="text-xs font-medium text-red-600 hover:text-red-800 hover:underline transition-all"
-                                >
-                                    删除
-                                </button>
-                            </div>
+                            <label class="mb-1 block text-xs text-gray-500">结束日期</label>
+                            <input v-model="dailyDateTo" type="date" class="rounded-lg border border-gray-300 bg-white px-2 py-2 text-sm shadow-sm outline-none" />
                         </div>
                     </div>
                 </div>
 
-                <!-- 会话摘要视图 -->
-                <div v-else class="space-y-4">
-                    <div class="flex items-center gap-3">
-                        <div class="flex-1">
-                            <input
-                                v-model="sessionsKeyword"
-                                class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white shadow-sm focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none"
-                                placeholder="搜索会话标题或摘要..."
-                                @keyup.enter="fetchMySessions"
-                            />
-                        </div>
-                        <button
-                            type="button"
-                            class="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 active:scale-95 transition-all shadow-sm flex-shrink-0"
-                            @click="fetchMySessions"
-                        >
-                            查询
-                        </button>
-                        <button
-                            type="button"
-                            class="px-4 py-2 border border-red-200 text-red-600 rounded-lg text-sm font-medium hover:bg-red-50 active:scale-95 transition-all shadow-sm flex-shrink-0 disabled:opacity-50 disabled:cursor-not-allowed"
-                            :disabled="clearingAllSessionMemory"
-                            @click="confirmClearAllSessionMemory"
-                        >
-                            {{ clearingAllSessionMemory ? '清除中…' : '一键清除所有记忆' }}
-                        </button>
-                    </div>
+                <div v-if="dailyLoading" class="flex justify-center py-10">
+                    <div class="h-8 w-8 animate-spin rounded-full border-b-2 border-blue-600"></div>
+                </div>
 
-                    <div v-if="sessionsLoading" class="flex justify-center py-10">
-                        <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
-                    </div>
+                <div v-else-if="myDailySummaries.length === 0" class="rounded-xl border border-dashed border-gray-200 bg-gray-50/50 px-6 py-12 text-center">
+                    <p class="text-sm font-medium text-gray-600">还没有每日摘要</p>
+                    <p class="mt-1 text-xs text-gray-400">和助手聊过天后，系统会按日汇总；也可在有会话后手动重建某一天。</p>
+                </div>
 
-                    <div v-else-if="mySessions.length === 0" class="text-center text-gray-400 py-10 text-xs sm:text-sm">
-                        暂无会话记忆记录（需要对话结束后由智能体自动总结生成）
-                    </div>
-
-                    <div v-else class="space-y-3">
-                        <div 
-                            v-for="session in mySessions" 
-                            :key="session.conversation_id"
-                            class="border border-gray-200 rounded-lg p-4 bg-white hover:border-blue-200 hover:shadow-sm transition-all flex flex-col sm:flex-row sm:items-start justify-between gap-4"
-                        >
-                            <div class="min-w-0 flex-1 space-y-1">
-                                <div class="flex items-center gap-2 flex-wrap">
-                                    <span class="font-bold text-gray-900 text-sm truncate max-w-[200px] sm:max-w-[300px]" :title="session.title">{{ session.title || '无标题会话' }}</span>
-                                    <span class="text-[10px] px-2 py-0.5 rounded-full font-mono bg-gray-100 text-gray-600" :title="session.conversation_id">
-                                        ID: {{ session.conversation_id.substring(0, 8) }}...
-                                    </span>
-                                    <span 
-                                        class="text-[10px] px-2 py-0.5 rounded-full font-bold"
-                                        :class="session.has_history ? 'bg-blue-50 text-blue-600' : 'bg-gray-50 text-gray-400'"
-                                    >
-                                        {{ session.has_history ? '有 Redis 明细' : '无明细' }}
-                                    </span>
+                <div v-else class="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
+                    <div
+                        v-for="row in myDailySummaries"
+                        :key="row.date"
+                        class="group cursor-pointer border-b border-gray-100 px-4 py-3.5 transition-colors last:border-b-0 hover:bg-blue-50/30"
+                        @click="openDailyDetail(row)"
+                    >
+                        <div class="flex items-start justify-between gap-3">
+                            <div class="min-w-0 flex-1 space-y-1.5">
+                                <div class="flex flex-wrap items-center gap-2">
+                                    <span class="rounded border border-gray-200 bg-gray-50 px-2 py-0.5 font-mono text-xs font-semibold text-gray-700">{{ row.date }}</span>
+                                    <span class="truncate text-sm font-semibold text-gray-900">{{ row.title || '今日记忆' }}</span>
+                                    <span class="rounded-full bg-blue-50 px-2 py-0.5 text-[10px] font-semibold text-blue-600">{{ row.session_count || 0 }} 个会话</span>
                                 </div>
-                                <p class="text-xs text-gray-600 leading-relaxed whitespace-pre-wrap font-sans">{{ session.summary || '暂无摘要' }}</p>
-                                <div class="text-[10px] text-gray-400 flex items-center gap-1">
-                                    <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-                                    活跃时间：{{ formatTime(session.last_active) }}
-                                </div>
+                                <p class="line-clamp-2 text-xs leading-relaxed text-gray-500">{{ row.summary || '暂无摘要' }}</p>
+                                <p class="text-[10px] text-gray-400">更新于 {{ formatTime(row.last_active) }}</p>
                             </div>
-                            <div class="flex items-center gap-3 self-end sm:self-start flex-shrink-0">
-                                <button 
-                                    @click="openSessionDetail(session)"
-                                    class="text-xs font-medium text-blue-600 hover:text-blue-800 hover:underline transition-all"
+                            <div class="relative flex shrink-0 items-center gap-1" @click.stop>
+                                <button
+                                    type="button"
+                                    class="rounded-lg px-2.5 py-1 text-xs font-medium text-blue-600 hover:bg-blue-50"
+                                    @click="openDailyDetail(row)"
                                 >
                                     详情
                                 </button>
-                                <button 
-                                    @click="confirmDeleteSession(session)"
-                                    class="text-xs font-medium text-red-600 hover:text-red-800 hover:underline transition-all"
+                                <button
+                                    type="button"
+                                    class="rounded-lg p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-700"
+                                    aria-label="更多操作"
+                                    @click="toggleMemoryMenu(`daily:${row.date}`, $event)"
                                 >
-                                    清除记忆
+                                    <svg class="h-4 w-4" fill="currentColor" viewBox="0 0 20 20"><path d="M6 10a2 2 0 11-4 0 2 2 0 014 0zm6 0a2 2 0 11-4 0 2 2 0 014 0zm6 0a2 2 0 11-4 0 2 2 0 014 0z" /></svg>
                                 </button>
+                                <div
+                                    v-if="memoryMenuKey === `daily:${row.date}`"
+                                    class="absolute right-0 top-8 z-20 w-28 overflow-hidden rounded-lg border border-gray-200 bg-white py-1 shadow-lg"
+                                >
+                                    <button type="button" class="block w-full px-3 py-1.5 text-left text-xs text-amber-700 hover:bg-amber-50" @click="confirmRebuildDaily(row); closeMemoryMenu()">重建</button>
+                                    <button type="button" class="block w-full px-3 py-1.5 text-left text-xs text-red-600 hover:bg-red-50" @click="confirmDeleteDaily(row); closeMemoryMenu()">删除</button>
+                                </div>
                             </div>
                         </div>
                     </div>
                 </div>
             </div>
 
-            <!-- LTM Sub Tab -->
-            <div v-else-if="activeSubTab === 'ltm'" class="space-y-4">
-                <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between border-b pb-3 border-gray-100 gap-2">
-                    <p class="text-xs text-gray-500 leading-relaxed max-w-xl">
-                        长期记忆 (LTM) 是智能体识别并在您多轮会话之间沉淀下来的长期事实和个性化偏好偏向（如习惯语言、角色等）。
-                    </p>
-                    <button 
-                        @click="openLtmModal()"
-                        class="px-3 py-1.5 bg-blue-600 text-white rounded-lg text-xs font-bold hover:bg-blue-700 active:scale-95 transition-all flex items-center gap-1 shadow-sm flex-shrink-0"
+            <!-- 会话摘要 -->
+            <div v-else-if="memoryView === 'session'" class="space-y-4">
+                <div class="flex flex-col gap-2 sm:flex-row sm:items-center">
+                    <input
+                        v-model="sessionsKeyword"
+                        class="min-w-0 flex-1 rounded-lg border border-gray-300 bg-white px-3 py-2.5 text-sm shadow-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
+                        placeholder="搜索会话标题或摘要..."
+                        @keyup.enter="fetchMySessions"
+                    />
+                    <button
+                        type="button"
+                        class="shrink-0 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition-all hover:bg-blue-700 active:scale-95"
+                        @click="fetchMySessions"
                     >
-                        <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" /></svg>
-                        新增偏好
+                        查询
                     </button>
                 </div>
 
+                <div v-if="sessionsLoading" class="flex justify-center py-10">
+                    <div class="h-8 w-8 animate-spin rounded-full border-b-2 border-blue-600"></div>
+                </div>
+
+                <div v-else-if="mySessions.length === 0" class="rounded-xl border border-dashed border-gray-200 bg-gray-50/50 px-6 py-12 text-center">
+                    <p class="text-sm font-medium text-gray-600">还没有会话摘要</p>
+                    <p class="mt-1 text-xs text-gray-400">和助手完成一轮对话后，系统会自动生成可回顾的会话摘要。</p>
+                </div>
+
+                <div v-else class="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
+                    <div
+                        v-for="session in mySessions"
+                        :key="session.conversation_id"
+                        class="group cursor-pointer border-b border-gray-100 px-4 py-3.5 transition-colors last:border-b-0 hover:bg-blue-50/30"
+                        @click="openSessionDetail(session)"
+                    >
+                        <div class="flex items-start justify-between gap-3">
+                            <div class="min-w-0 flex-1 space-y-1.5">
+                                <div class="flex flex-wrap items-center gap-2">
+                                    <span class="truncate text-sm font-semibold text-gray-900" :title="session.title">{{ session.title || '无标题会话' }}</span>
+                                    <span class="rounded-full bg-gray-100 px-2 py-0.5 font-mono text-[10px] text-gray-500" :title="session.conversation_id">
+                                        {{ session.conversation_id.substring(0, 8) }}…
+                                    </span>
+                                    <span
+                                        class="rounded-full px-2 py-0.5 text-[10px] font-semibold"
+                                        :class="session.has_history ? 'bg-blue-50 text-blue-600' : 'bg-gray-50 text-gray-400'"
+                                    >
+                                        {{ session.has_history ? '含明细' : '无明细' }}
+                                    </span>
+                                </div>
+                                <p class="line-clamp-2 text-xs leading-relaxed text-gray-500">{{ session.summary || '暂无摘要' }}</p>
+                                <p class="text-[10px] text-gray-400">活跃于 {{ formatTime(session.last_active) }}</p>
+                            </div>
+                            <div class="relative flex shrink-0 items-center gap-1" @click.stop>
+                                <button
+                                    type="button"
+                                    class="rounded-lg px-2.5 py-1 text-xs font-medium text-blue-600 hover:bg-blue-50"
+                                    @click="openSessionDetail(session)"
+                                >
+                                    详情
+                                </button>
+                                <button
+                                    type="button"
+                                    class="rounded-lg p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-700"
+                                    aria-label="更多操作"
+                                    @click="toggleMemoryMenu(`session:${session.conversation_id}`, $event)"
+                                >
+                                    <svg class="h-4 w-4" fill="currentColor" viewBox="0 0 20 20"><path d="M6 10a2 2 0 11-4 0 2 2 0 014 0zm6 0a2 2 0 11-4 0 2 2 0 014 0zm6 0a2 2 0 11-4 0 2 2 0 014 0z" /></svg>
+                                </button>
+                                <div
+                                    v-if="memoryMenuKey === `session:${session.conversation_id}`"
+                                    class="absolute right-0 top-8 z-20 w-28 overflow-hidden rounded-lg border border-gray-200 bg-white py-1 shadow-lg"
+                                >
+                                    <button type="button" class="block w-full px-3 py-1.5 text-left text-xs text-red-600 hover:bg-red-50" @click="confirmDeleteSession(session); closeMemoryMenu()">清除记忆</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 长期记忆 -->
+            <div v-else-if="memoryView === 'ltm'" class="space-y-4">
+                <p class="text-xs leading-relaxed text-gray-500">
+                    长期记忆是助手跨会话记住的个人偏好与事实（如常用语言、角色习惯等）。
+                </p>
+
                 <div v-if="ltmLoading" class="flex justify-center py-10">
-                    <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+                    <div class="h-8 w-8 animate-spin rounded-full border-b-2 border-blue-600"></div>
                 </div>
 
-                <div v-else-if="Object.keys(myLtm).length === 0" class="text-center text-gray-400 py-10 text-xs sm:text-sm">
-                    暂无长期偏好事实记录（对话中智能体自动记录）
+                <div v-else-if="Object.keys(myLtm).length === 0" class="rounded-xl border border-dashed border-gray-200 bg-gray-50/50 px-6 py-12 text-center">
+                    <p class="text-sm font-medium text-gray-600">还没有长期偏好</p>
+                    <p class="mt-1 text-xs text-gray-400">对话中助手可自动沉淀，也可手动「新增偏好」。</p>
                 </div>
 
-                <div v-else class="border border-gray-200 rounded-lg overflow-hidden bg-white shadow-sm">
+                <div v-else class="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
                     <div class="overflow-x-auto">
-                        <table class="w-full text-xs sm:text-sm">
-                            <thead class="bg-gray-50 text-gray-600 font-bold border-b border-gray-200">
+                        <table class="w-full text-left text-xs sm:text-sm">
+                            <thead class="border-b border-gray-200 bg-gray-50 text-gray-500">
                                 <tr>
-                                    <th class="text-left px-4 py-3">偏好键 (Key)</th>
-                                    <th class="text-left px-4 py-3">记忆偏好内容 (Value)</th>
-                                    <th class="text-right px-4 py-3 w-32">操作</th>
+                                    <th class="px-4 py-3 font-semibold">偏好键</th>
+                                    <th class="px-4 py-3 font-semibold">内容</th>
+                                    <th class="w-28 px-4 py-3 text-right font-semibold">操作</th>
                                 </tr>
                             </thead>
                             <tbody class="divide-y divide-gray-100">
-                                <tr v-for="(val, key) in myLtm" :key="key" class="hover:bg-gray-50/50">
-                                    <td class="px-4 py-3 font-mono text-gray-800 font-bold">{{ key }}</td>
-                                    <td class="px-4 py-3 text-gray-600 break-all leading-relaxed whitespace-pre-wrap">{{ val }}</td>
-                                    <td class="px-4 py-3 text-right whitespace-nowrap space-x-3">
-                                        <button 
-                                            @click="openLtmModal(String(key), String(val))"
-                                            class="text-xs font-medium text-blue-600 hover:text-blue-800 transition-all hover:underline"
-                                        >
-                                            编辑
-                                        </button>
-                                        <button 
-                                            @click="confirmDeleteLtm(String(key))"
-                                            class="text-xs font-medium text-red-600 hover:text-red-800 transition-all hover:underline"
-                                        >
-                                            删除
-                                        </button>
+                                <tr v-for="(val, key) in myLtm" :key="key" class="hover:bg-gray-50/60">
+                                    <td class="px-4 py-3 font-mono text-xs font-semibold text-gray-800">{{ key }}</td>
+                                    <td class="px-4 py-3 whitespace-pre-wrap break-all leading-relaxed text-gray-600">{{ val }}</td>
+                                    <td class="space-x-2 whitespace-nowrap px-4 py-3 text-right">
+                                        <button type="button" class="text-xs font-medium text-blue-600 hover:underline" @click="openLtmModal(String(key), String(val))">编辑</button>
+                                        <button type="button" class="text-xs font-medium text-red-600 hover:underline" @click="confirmDeleteLtm(String(key))">删除</button>
                                     </td>
                                 </tr>
                             </tbody>
@@ -1182,6 +1233,14 @@ onMounted(() => {
         <!-- My Data Tab -->
         <div v-else-if="activeTab === 'data'">
             <DataPortalHome embedded />
+        </div>
+
+        <div v-else-if="activeTab === 'skills'" class="px-4 pb-4 sm:px-6 sm:pb-6">
+            <SkillsManagement
+                personal-only
+                :initial-skill-id="skillsInitialId"
+                @drawer-closed="clearSkillsDeepLink"
+            />
         </div>
 
         </div>

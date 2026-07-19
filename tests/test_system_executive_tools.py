@@ -218,35 +218,43 @@ async def test_fetch_static_web_url_ssrf():
 def test_create_skills_tool(tmp_path):
     from app.services.ai.tools.system_executive_tools import create_skills
     from unittest.mock import patch, PropertyMock
+    from app.utils.context import current_user_info
 
     # 将 settings.SKILLS_DIR mock 成 pytest 的 tmp_path 隔离真实环境
     with patch("app.core.config.Settings.SKILLS_DIR", new_callable=PropertyMock) as mock_skills_dir:
         mock_skills_dir.return_value = str(tmp_path)
-        
-        skill_id = "test-ai-write"
-        name = "AI自动写作技能"
-        description = "自动生成文章"
-        content = "---\nname: AI自动写作技能\ndescription: 自动生成文章\n---\n\n# 守则\n1. Imperatives"
-        
-        # 1. 成功创建技能
-        res = create_skills.invoke({
-            "skill_id": skill_id,
-            "name": name,
-            "description": description,
-            "skill_md_content": content
-        })
-        assert "创建成功" in res
-        
-        # 验证物理文件写入
-        skill_file = tmp_path / skill_id / "SKILL.md"
-        assert skill_file.exists()
-        assert skill_file.read_text(encoding="utf-8") == content
+        token = current_user_info.set({"user_id": 1, "user_name": "tester", "role": "admin"})
+        try:
+            skill_id = "test-ai-write"
+            name = "AI自动写作技能"
+            description = "自动生成文章"
+            content = "---\nname: AI自动写作技能\ndescription: 自动生成文章\n---\n\n# 守则\n1. Imperatives"
 
-        # 2. 测试非法ID拦截
-        res_bad_id = create_skills.invoke({
-            "skill_id": "../bad-path",
-            "name": name,
-            "description": description,
-            "skill_md_content": content
-        })
-        assert "非法技能 ID 格式" in res_bad_id
+            # 1. 成功创建技能（平台目录，便于隔离断言）
+            res = create_skills.invoke({
+                "skill_id": skill_id,
+                "name": name,
+                "description": description,
+                "skill_md_content": content,
+                "scope": "global",
+            })
+            assert "创建成功" in res
+            assert "NANZI_SKILL_CREATED" in res
+            assert "test-ai-write" in res
+
+            # 验证物理文件写入
+            skill_file = tmp_path / skill_id / "SKILL.md"
+            assert skill_file.exists()
+            assert skill_file.read_text(encoding="utf-8") == content
+
+            # 2. 测试非法ID拦截
+            res_bad_id = create_skills.invoke({
+                "skill_id": "../bad-path",
+                "name": name,
+                "description": description,
+                "skill_md_content": content,
+                "scope": "global",
+            })
+            assert "非法技能 ID 格式" in res_bad_id
+        finally:
+            current_user_info.reset(token)

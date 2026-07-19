@@ -12,49 +12,49 @@
     />
 
     <!-- Header / Toolbar -->
-    <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-      <div class="min-w-0">
-        <h1 class="text-2xl font-bold tracking-normal text-gray-900">
+    <header>
+      <div class="flex items-center justify-between gap-3">
+        <h1 class="min-w-0 text-2xl font-bold tracking-normal text-gray-900">
           {{ userInfo?.role === "admin" ? "系统概览" : "我的工作台" }}
         </h1>
-        <p class="text-gray-500 text-sm mt-0.5 truncate">
-          {{ userInfo?.role === "admin" ? "平台运行状态与智能体健康度" : "我的调用概况与智能体表现" }}
-        </p>
-      </div>
-      <div class="flex items-center gap-2.5 shrink-0">
-        <select
-          v-model="period"
-          @change="onPeriodChange"
-          class="text-sm border border-gray-300 rounded-lg py-2 px-2.5 bg-white shadow-sm focus:ring-2 focus:ring-blue-500 focus:outline-none"
-        >
-          <option value="today">时间：今日</option>
-          <option value="week">时间：本周</option>
-          <option value="month">时间：本月</option>
-        </select>
-        <button
-          @click="refreshData"
-          :disabled="loading"
-          class="inline-flex items-center justify-center gap-1.5 px-3 py-2 border border-gray-300 rounded-lg shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 active:scale-[0.98] transition-all disabled:opacity-50"
-          :title="loading ? '正在刷新...' : '刷新数据'"
-        >
-          <svg
-            class="h-4 w-4 text-gray-500"
-            :class="{ 'animate-spin': loading }"
-            fill="none"
-            stroke="currentColor"
-            viewBox="0 0 24 24"
+        <div class="flex shrink-0 items-center gap-2">
+          <select
+            v-model="period"
+            class="rounded-lg border border-gray-300 bg-white py-1.5 pl-2.5 pr-8 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            @change="onPeriodChange"
           >
-            <path
-              stroke-linecap="round"
-              stroke-linejoin="round"
-              stroke-width="2"
-              d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
-            />
-          </svg>
-          <span class="hidden sm:inline">刷新</span>
-        </button>
+            <option value="today">今日</option>
+            <option value="week">本周</option>
+            <option value="month">本月</option>
+          </select>
+          <button
+            type="button"
+            class="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-gray-300 bg-white text-gray-600 shadow-sm transition-all hover:bg-gray-50 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50"
+            :disabled="loading"
+            :title="loading ? '正在刷新...' : '刷新数据'"
+            @click="refreshData"
+          >
+            <svg
+              class="h-4 w-4"
+              :class="{ 'animate-spin': loading }"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                stroke-width="2"
+                d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
+              />
+            </svg>
+          </button>
+        </div>
       </div>
-    </div>
+      <p class="mt-0.5 truncate text-sm text-gray-500">
+        {{ userInfo?.role === "admin" ? "平台运行状态与智能体健康度" : "我的调用概况与智能体表现" }}
+      </p>
+    </header>
 
     <!-- Loading State -->
     <div

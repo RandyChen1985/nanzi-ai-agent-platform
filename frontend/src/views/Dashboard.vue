@@ -301,7 +301,7 @@ const menuGroups: MenuGroup[] = [
     title: 'ChatBI 开发平台',
     items: [
       { name: '数据源管理', to: '/dashboard/data-sources', icon: 'data_source', perm: 'menu:data_sources', desktopOnly: true, activeNames: ['DataSourceManagement'] },
-      { name: '元数据管理', to: '/dashboard/metadata', icon: 'metadata', perm: 'menu:metadata', desktopOnly: true, activeNames: ['Metadata', 'MetadataTables'] },
+      { name: '元数据管理', to: '/dashboard/metadata', icon: 'metadata', perm: 'menu:metadata', activeNames: ['Metadata', 'MetadataTables'] },
       { name: '案例集管理', to: '/dashboard/chatbi-examples', icon: 'chat_bubble_left_right', perm: 'menu:chatbi_examples', activeNames: ['ChatBIExampleManagement'] }
     ]
   },

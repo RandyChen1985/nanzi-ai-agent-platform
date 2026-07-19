@@ -469,24 +469,25 @@ onMounted(async () => {
 
 <template>
   <div class="space-y-5">
-    <!-- Header：与技能工作台一致，筛选进顶栏 -->
-    <div class="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
+    <!-- Header：标题一行；窄屏搜索通栏，状态+刷新并排，新建通栏 -->
+    <div class="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
       <div class="flex items-center space-x-3">
-        <h1 class="text-xl sm:text-2xl font-bold text-gray-900">任务调度台</h1>
+        <h1 class="text-xl font-bold text-gray-900 sm:text-2xl">任务调度台</h1>
         <button
-          @click="showSpecsModal = true"
-          class="flex items-center justify-center w-7 h-7 rounded-full bg-white text-blue-600 border border-gray-200 hover:border-blue-300 hover:bg-blue-50 transition-colors shadow-sm"
+          type="button"
+          class="flex h-7 w-7 items-center justify-center rounded-full border border-gray-200 bg-white text-blue-600 shadow-sm transition-colors hover:border-blue-300 hover:bg-blue-50"
           title="设计规范"
+          @click="showSpecsModal = true"
         >
-          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
           </svg>
         </button>
       </div>
 
-      <div class="flex flex-col sm:flex-row sm:items-center gap-3">
+      <div class="flex w-full flex-col gap-2.5 sm:w-auto sm:flex-row sm:flex-wrap sm:items-center sm:gap-3 lg:justify-end">
         <div class="relative w-full sm:w-56 lg:w-64">
-          <span class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+          <span class="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3">
             <svg class="h-4 w-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
             </svg>
@@ -495,59 +496,65 @@ onMounted(async () => {
             v-model="searchQuery"
             type="text"
             placeholder="搜索任务名称或指令..."
-            class="w-full pl-9 pr-3 py-2 bg-white border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none text-sm transition-all shadow-sm"
+            class="w-full rounded-lg border border-gray-300 bg-white py-2 pl-9 pr-3 text-sm shadow-sm outline-none transition-all focus:border-primary focus:ring-2 focus:ring-primary/20"
           />
         </div>
 
-        <select
-          v-model="statusFilter"
-          class="text-sm border border-gray-300 rounded-lg py-2 px-2.5 bg-white shadow-sm focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none shrink-0"
-          title="按状态筛选"
-        >
-          <option value="all">状态：全部</option>
-          <option value="running">状态：运行中</option>
-          <option value="stopped">状态：已停止</option>
-        </select>
+        <div class="flex items-center gap-2">
+          <select
+            v-model="statusFilter"
+            class="min-w-0 flex-1 rounded-lg border border-gray-300 bg-white px-2.5 py-2 text-sm shadow-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20 sm:w-auto sm:flex-none"
+            title="按状态筛选"
+          >
+            <option value="all">状态：全部</option>
+            <option value="running">状态：运行中</option>
+            <option value="stopped">状态：已停止</option>
+          </select>
 
-        <div class="hidden md:flex items-center bg-gray-200/60 p-0.5 rounded-lg border border-gray-300 gap-0.5 select-none shrink-0">
+          <div class="hidden shrink-0 select-none items-center gap-0.5 rounded-lg border border-gray-300 bg-gray-200/60 p-0.5 md:flex">
+            <button
+              type="button"
+              class="rounded-md p-1.5 transition-all"
+              :class="currentViewMode === 'grid' ? 'border border-gray-200 bg-white text-primary shadow-sm' : 'text-gray-500 hover:text-gray-800'"
+              title="网格视图"
+              @click="viewMode = 'grid'"
+            >
+              <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" />
+              </svg>
+            </button>
+            <button
+              type="button"
+              class="rounded-md p-1.5 transition-all"
+              :class="currentViewMode === 'list' ? 'border border-gray-200 bg-white text-primary shadow-sm' : 'text-gray-500 hover:text-gray-800'"
+              title="列表视图"
+              @click="viewMode = 'list'"
+            >
+              <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16" />
+              </svg>
+            </button>
+          </div>
+
           <button
-            @click="viewMode = 'grid'"
-            class="p-1.5 rounded-md transition-all"
-            :class="currentViewMode === 'grid' ? 'bg-white shadow-sm text-primary border border-gray-200' : 'text-gray-500 hover:text-gray-800'"
-            title="网格视图"
+            type="button"
+            class="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-gray-300 bg-white text-gray-500 shadow-sm transition-colors hover:bg-gray-50 hover:text-primary"
+            title="刷新列表"
+            @click="fetchTasks(false)"
           >
-            <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" />
-            </svg>
-          </button>
-          <button
-            @click="viewMode = 'list'"
-            class="p-1.5 rounded-md transition-all"
-            :class="currentViewMode === 'list' ? 'bg-white shadow-sm text-primary border border-gray-200' : 'text-gray-500 hover:text-gray-800'"
-            title="列表视图"
-          >
-            <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16" />
+            <svg class="h-4 w-4" :class="loading ? 'animate-spin' : ''" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
             </svg>
           </button>
         </div>
 
         <button
-          @click="fetchTasks(false)"
-          class="p-2 text-gray-500 hover:text-primary bg-white border border-gray-300 rounded-lg shadow-sm hover:bg-gray-50 transition-colors shrink-0"
-          title="刷新列表"
-        >
-          <svg class="w-4 h-4" :class="loading ? 'animate-spin' : ''" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-          </svg>
-        </button>
-
-        <button
           v-if="canManage"
+          type="button"
+          class="flex w-full items-center justify-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white shadow-sm transition-all hover:bg-primary-dark sm:w-auto"
           @click="openCreateModal"
-          class="flex items-center justify-center gap-2 px-4 py-2 bg-primary text-white rounded-lg shadow-sm hover:bg-primary-dark transition-all font-medium text-sm shrink-0"
         >
-          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
           </svg>
           <span class="hidden sm:inline">新建任务</span>

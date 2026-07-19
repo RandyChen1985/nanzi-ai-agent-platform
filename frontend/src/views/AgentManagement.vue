@@ -1482,22 +1482,23 @@ const formatSkillCountLabel = (agent: AIAgent) => {
 
 <template>
   <div class="space-y-4 sm:space-y-5">
-    <!-- Header：与技能工作台一致，标题左 / 筛选操作右 -->
-    <div class="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
+    <!-- Header：标题一行；筛选/操作在窄屏压缩为搜索 + 双列筛选 + 新建 -->
+    <div class="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
       <div class="flex items-center space-x-3">
-        <h1 class="text-xl sm:text-2xl font-bold text-gray-900">智能体中心</h1>
-        <button 
-          @click="showHelp = true"
-          class="flex items-center justify-center w-7 h-7 rounded-full bg-white text-blue-600 border border-gray-200 hover:border-blue-300 hover:bg-blue-50 transition-colors shadow-sm"
+        <h1 class="text-xl font-bold text-gray-900 sm:text-2xl">智能体中心</h1>
+        <button
+          type="button"
+          class="flex h-7 w-7 items-center justify-center rounded-full border border-gray-200 bg-white text-blue-600 shadow-sm transition-colors hover:border-blue-300 hover:bg-blue-50"
           title="智能体调度与托管说明"
+          @click="showHelp = true"
         >
-          <span class="font-bold text-sm">?</span>
+          <span class="text-sm font-bold">?</span>
         </button>
       </div>
 
-      <div class="flex flex-col sm:flex-row sm:items-center gap-3">
+      <div class="flex w-full flex-col gap-2.5 sm:w-auto sm:flex-row sm:flex-wrap sm:items-center sm:gap-3 lg:justify-end">
         <div class="relative w-full sm:w-56 lg:w-64">
-          <span class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+          <span class="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3">
             <svg class="h-4 w-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
             </svg>
@@ -1506,92 +1507,100 @@ const formatSkillCountLabel = (agent: AIAgent) => {
             v-model="searchKeyword"
             type="text"
             placeholder="搜索智能体名称..."
-            class="w-full pl-9 pr-3 py-2 bg-white border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none text-sm transition-all shadow-sm"
+            class="w-full rounded-lg border border-gray-300 bg-white py-2 pl-9 pr-3 text-sm shadow-sm outline-none transition-all focus:border-primary focus:ring-2 focus:ring-primary/20"
           />
         </div>
 
-        <select
-          v-model="statusFilter"
-          class="text-sm border border-gray-300 rounded-lg py-2 px-2.5 bg-white shadow-sm focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none shrink-0"
-          title="按状态筛选"
-        >
-          <option value="all">状态：全部</option>
-          <option value="enabled">状态：已启用</option>
-          <option value="disabled">状态：已禁用</option>
-        </select>
-
-        <select
-          v-model="typeFilter"
-          class="text-sm border border-gray-300 rounded-lg py-2 px-2.5 bg-white shadow-sm focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none shrink-0"
-          title="按类型筛选"
-        >
-          <option value="all">类型：全部</option>
-          <option value="system">类型：系统内置</option>
-          <option value="custom">类型：自定义</option>
-        </select>
-
-        <div v-if="!isMobile" class="flex items-center bg-gray-200/60 p-0.5 rounded-lg border border-gray-300 gap-0.5 select-none shrink-0">
-          <button
-            @click="toggleViewMode('grid')"
-            class="p-1.5 rounded-md transition-all"
-            :class="viewMode === 'grid' ? 'bg-white shadow-sm text-primary border border-gray-200' : 'text-gray-500 hover:text-gray-800'"
-            title="网格视图"
+        <div class="grid grid-cols-2 gap-2 sm:contents">
+          <select
+            v-model="statusFilter"
+            class="w-full rounded-lg border border-gray-300 bg-white px-2.5 py-2 text-sm shadow-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20 sm:w-auto sm:shrink-0"
+            title="按状态筛选"
           >
-            <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <option value="all">状态：全部</option>
+            <option value="enabled">状态：已启用</option>
+            <option value="disabled">状态：已禁用</option>
+          </select>
+
+          <select
+            v-model="typeFilter"
+            class="w-full rounded-lg border border-gray-300 bg-white px-2.5 py-2 text-sm shadow-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20 sm:w-auto sm:shrink-0"
+            title="按类型筛选"
+          >
+            <option value="all">类型：全部</option>
+            <option value="system">类型：系统内置</option>
+            <option value="custom">类型：自定义</option>
+          </select>
+        </div>
+
+        <div v-if="!isMobile" class="flex shrink-0 select-none items-center gap-0.5 rounded-lg border border-gray-300 bg-gray-200/60 p-0.5">
+          <button
+            type="button"
+            class="rounded-md p-1.5 transition-all"
+            :class="viewMode === 'grid' ? 'border border-gray-200 bg-white text-primary shadow-sm' : 'text-gray-500 hover:text-gray-800'"
+            title="网格视图"
+            @click="toggleViewMode('grid')"
+          >
+            <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" />
             </svg>
           </button>
           <button
-            @click="toggleViewMode('list')"
-            class="p-1.5 rounded-md transition-all"
-            :class="viewMode === 'list' ? 'bg-white shadow-sm text-primary border border-gray-200' : 'text-gray-500 hover:text-gray-800'"
+            type="button"
+            class="rounded-md p-1.5 transition-all"
+            :class="viewMode === 'list' ? 'border border-gray-200 bg-white text-primary shadow-sm' : 'text-gray-500 hover:text-gray-800'"
             title="列表视图"
+            @click="toggleViewMode('list')"
           >
-            <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16" />
             </svg>
           </button>
         </div>
 
-        <div v-has-perm="'element:agent:create'" class="relative shrink-0" @click.stop>
-          <div class="flex items-stretch rounded-lg overflow-hidden shadow-sm">
+        <div v-has-perm="'element:agent:create'" class="relative w-full shrink-0 sm:w-auto" @click.stop>
+          <div class="flex w-full items-stretch overflow-hidden rounded-lg shadow-sm sm:w-auto">
             <button
+              type="button"
+              class="flex flex-1 items-center justify-center gap-2 bg-primary px-4 py-2 text-sm font-medium text-white transition-all hover:bg-primary-dark active:scale-[0.98] sm:flex-none"
               @click="openAgentModal()"
-              class="flex items-center justify-center gap-2 px-4 py-2 bg-primary text-white font-medium text-sm transition-all hover:bg-primary-dark active:scale-[0.98]"
             >
-              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
               </svg>
               新建智能体
             </button>
             <button
-              @click="showCreateAgentMenu = !showCreateAgentMenu"
-              class="px-2 bg-primary text-white border-l border-primary-dark/30 transition-colors hover:bg-primary-dark"
+              type="button"
+              class="border-l border-primary-dark/30 bg-primary px-2 text-white transition-colors hover:bg-primary-dark"
               title="更多创建方式"
+              @click="showCreateAgentMenu = !showCreateAgentMenu"
             >
-              <svg class="w-4 h-4 transition-transform" :class="{ 'rotate-180': showCreateAgentMenu }" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <svg class="h-4 w-4 transition-transform" :class="{ 'rotate-180': showCreateAgentMenu }" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
               </svg>
             </button>
           </div>
           <div
             v-if="showCreateAgentMenu"
-            class="absolute right-0 mt-1.5 w-52 bg-white border border-gray-200 rounded-xl shadow-lg py-1 z-20"
+            class="absolute right-0 z-20 mt-1.5 w-52 rounded-xl border border-gray-200 bg-white py-1 shadow-lg"
           >
             <button
+              type="button"
+              class="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50"
               @click="showCreateAgentMenu = false; openAgentModal()"
-              class="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2"
             >
-              <svg class="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <svg class="h-4 w-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
               </svg>
               空白新建
             </button>
             <button
+              type="button"
+              class="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50"
               @click="showCreateAgentMenu = false; router.push('/dashboard/scenario-templates')"
-              class="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2"
             >
-              <svg class="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <svg class="h-4 w-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7h16M4 12h10M4 17h7" />
               </svg>
               从场景模板交付

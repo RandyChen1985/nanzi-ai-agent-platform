@@ -1265,6 +1265,13 @@
       >
         {{ quotaBannerMessage }}
       </div>
+      <div v-if="skillCreatedInfo" class="px-3 pt-2">
+        <SkillCreatedBanner
+          :info="skillCreatedInfo"
+          @mount="mountCreatedSkill"
+          @dismiss="skillCreatedInfo = null"
+        />
+      </div>
       <ChatInput
         ref="chatInputRef"
         v-model="userInput"
@@ -2449,6 +2456,8 @@ import WelcomeDashboard from "@/components/embed/WelcomeDashboard.vue";
 import WorkspaceBrowserDrawer from "@/components/embed/WorkspaceBrowserDrawer.vue";
 import MemoryBrowserDrawer from "@/components/embed/MemoryBrowserDrawer.vue";
 import SkillBrowserDrawer from "@/components/embed/SkillBrowserDrawer.vue";
+import SkillCreatedBanner from "@/components/chat/SkillCreatedBanner.vue";
+import { parseSkillCreatedMarker, type SkillCreatedInfo } from "@/utils/skillCreated";
 import AttachmentImageThumb from "@/components/embed/AttachmentImageThumb.vue";
 import { isImageAttachment } from "@/utils/attachmentImages";
 import { isDirectRenderableUrl, resolvePublicUploadsPreviewUrl } from "@/utils/workspaceFilePreview";
@@ -4204,18 +4213,52 @@ const openSkillSelector = () => {
   showSkillDrawer.value = true;
 };
 
+const skillCreatedInfo = ref<SkillCreatedInfo | null>(null);
+
+watch(
+  () =>
+    messages.value
+      .map((m) =>
+        [
+          m.content || "",
+          ...((m.logs || []).map((log: any) => String(log.details || ""))),
+        ].join("\n"),
+      )
+      .join("\n---\n"),
+  (blob) => {
+    const info = parseSkillCreatedMarker(blob);
+    if (info && info.scope === "personal") {
+      skillCreatedInfo.value = info;
+    }
+  },
+);
+
+const mountCreatedSkill = () => {
+  if (!skillCreatedInfo.value) return;
+  handleSelectSkill({
+    id: skillCreatedInfo.value.skill_id,
+    name: skillCreatedInfo.value.name,
+    description: "",
+    scope: skillCreatedInfo.value.scope,
+  });
+  skillCreatedInfo.value = null;
+};
+
 const handleSelectSkill = (skill: any) => {
   if (!chatInputRef.value) return;
+  const scope = skill.scope === "personal" ? "personal" : "global";
   chatInputRef.value.uploadedFiles.push({
     type: "skill",
     url: skill.id,
     filename: `${skill.name} (技能)`,
     size: 0,
     ext: "skill",
+    scope,
     skillMeta: {
       id: skill.id,
       name: skill.name,
       description: skill.description || "",
+      scope,
     },
   });
 };

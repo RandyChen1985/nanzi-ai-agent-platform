@@ -975,26 +975,26 @@ onMounted(async () => {
 
 <template>
   <div class="space-y-5" @click="showCreateMenu = false">
-    <!-- Header：对齐技能工作台单行工具栏 -->
-    <div class="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
+    <!-- Header：窄屏压缩工具栏；列表视图移动端可横滑查看 -->
+    <div class="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
       <div class="min-w-0">
-          <div class="flex items-center gap-2">
-            <h1 class="text-2xl font-bold tracking-normal text-gray-900">元数据管理</h1>
-            <button
-              type="button"
-              @click="showSpecModal = true"
-              class="flex items-center justify-center w-7 h-7 rounded-full bg-white text-blue-600 border border-gray-200 hover:border-blue-300 hover:bg-blue-50 transition-colors shadow-sm shrink-0"
-              title="元数据规范"
-            >
-              <span class="font-bold text-sm">?</span>
-            </button>
-          </div>
-          <p class="text-gray-500 text-sm mt-0.5 truncate">管理业务数据集及其表结构语义</p>
+        <div class="flex items-center gap-2">
+          <h1 class="text-2xl font-bold tracking-normal text-gray-900">元数据管理</h1>
+          <button
+            type="button"
+            class="flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-gray-200 bg-white text-blue-600 shadow-sm transition-colors hover:border-blue-300 hover:bg-blue-50"
+            title="元数据规范"
+            @click="showSpecModal = true"
+          >
+            <span class="text-sm font-bold">?</span>
+          </button>
         </div>
+        <p class="mt-0.5 truncate text-sm text-gray-500">管理业务数据集及其表结构语义</p>
+      </div>
 
-      <div class="flex flex-col sm:flex-row sm:items-center gap-3">
+      <div class="flex w-full flex-col gap-2.5 sm:w-auto sm:flex-row sm:flex-wrap sm:items-center sm:gap-3 lg:justify-end">
         <div class="relative w-full sm:w-72">
-          <span class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+          <span class="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3">
             <svg class="h-4 w-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
             </svg>
@@ -1003,124 +1003,126 @@ onMounted(async () => {
             v-model="searchQuery"
             type="text"
             placeholder="搜索数据集名称、ID或描述..."
-            class="w-full pl-9 pr-4 py-2 bg-white border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none text-sm transition-all shadow-sm"
+            class="w-full rounded-lg border border-gray-300 bg-white py-2 pl-9 pr-4 text-sm shadow-sm transition-all focus:outline-none focus:ring-2 focus:ring-blue-500"
           />
         </div>
 
-        <select
-          v-model="statusFilter"
-          class="w-full sm:w-auto text-sm border border-gray-300 rounded-lg py-2 px-2.5 bg-white shadow-sm focus:ring-2 focus:ring-blue-500 focus:outline-none shrink-0"
-        >
-          <option value="all">状态：全部</option>
-          <option value="active">已启用</option>
-          <option value="inactive">已禁用</option>
-        </select>
+        <div class="flex items-center gap-2">
+          <select
+            v-model="statusFilter"
+            class="min-w-0 flex-1 rounded-lg border border-gray-300 bg-white px-2.5 py-2 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 sm:w-auto sm:flex-none"
+          >
+            <option value="all">状态：全部</option>
+            <option value="active">已启用</option>
+            <option value="inactive">已禁用</option>
+          </select>
 
-        <!-- 引擎状态：放在右侧工具栏，避免挤占标题区 -->
-        <div
-          class="flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-xs border transition-colors shrink-0 group relative cursor-pointer bg-white shadow-sm"
-          :class="{
-            'border-blue-200 text-blue-700': !isLocalMode && engineStatus === 'checking',
-            'border-emerald-200 text-emerald-700': isLocalMode || engineStatus === 'connected',
-            'border-amber-200 text-amber-700': !isLocalMode && engineStatus === 'disconnected'
-          }"
-        >
-          <span
-            class="inline-block w-2 h-2 rounded-full"
+          <div
+            tabindex="0"
+            class="relative flex shrink-0 cursor-pointer items-center gap-2 rounded-lg border bg-white px-2.5 py-1.5 text-xs shadow-sm transition-colors group"
             :class="{
-              'bg-blue-500 animate-pulse': !isLocalMode && engineStatus === 'checking',
-              'bg-emerald-500': isLocalMode || engineStatus === 'connected',
-              'bg-amber-500': !isLocalMode && engineStatus === 'disconnected'
+              'border-blue-200 text-blue-700': !isLocalMode && engineStatus === 'checking',
+              'border-emerald-200 text-emerald-700': isLocalMode || engineStatus === 'connected',
+              'border-amber-200 text-amber-700': !isLocalMode && engineStatus === 'disconnected'
             }"
-          ></span>
-          <span class="font-medium whitespace-nowrap">引擎 {{ engineStatusText }}</span>
-          <span class="absolute top-full right-0 mt-2 hidden group-hover:block bg-slate-900 text-white text-xs p-2.5 rounded-lg shadow-xl z-50 text-left font-sans font-normal pointer-events-none w-56">
-            <div class="font-medium mb-1 border-b border-white/10 pb-1">知识库引擎信息</div>
-            <template v-if="isLocalMode">
-              <div class="opacity-80">运行模式: 本地 Redis 向量检索</div>
-              <div class="opacity-80 mt-0.5 text-emerald-400 font-medium">无需连接外部 RAGFlow</div>
-            </template>
-            <template v-else>
-              <div class="opacity-80 break-all">地址: {{ ragflowApiUrl }}</div>
-              <div class="opacity-80 mt-1">
-                API Key:
-                <span v-if="ragflowConfig?.api_key_configured" class="text-emerald-400">已配置</span>
-                <span v-else class="text-amber-400">未配置</span>
-              </div>
-            </template>
-          </span>
+          >
+            <span
+              class="inline-block h-2 w-2 rounded-full"
+              :class="{
+                'animate-pulse bg-blue-500': !isLocalMode && engineStatus === 'checking',
+                'bg-emerald-500': isLocalMode || engineStatus === 'connected',
+                'bg-amber-500': !isLocalMode && engineStatus === 'disconnected'
+              }"
+            />
+            <span class="whitespace-nowrap font-medium">引擎 {{ engineStatusText }}</span>
+            <span class="pointer-events-none absolute right-0 top-full z-50 mt-2 hidden w-56 rounded-lg bg-slate-900 p-2.5 text-left font-sans text-xs font-normal text-white shadow-xl group-hover:block group-focus-within:block">
+              <div class="mb-1 border-b border-white/10 pb-1 font-medium">知识库引擎信息</div>
+              <template v-if="isLocalMode">
+                <div class="opacity-80">运行模式: 本地 Redis 向量检索</div>
+                <div class="mt-0.5 font-medium text-emerald-400 opacity-80">无需连接外部 RAGFlow</div>
+              </template>
+              <template v-else>
+                <div class="break-all opacity-80">地址: {{ ragflowApiUrl }}</div>
+                <div class="mt-1 opacity-80">
+                  API Key:
+                  <span v-if="ragflowConfig?.api_key_configured" class="text-emerald-400">已配置</span>
+                  <span v-else class="text-amber-400">未配置</span>
+                </div>
+              </template>
+            </span>
+          </div>
+
+          <div
+            v-if="hasActiveFilters"
+            class="hidden shrink-0 whitespace-nowrap px-1 text-xs text-gray-400 sm:block"
+          >
+            {{ displayDatasets.length }} / {{ datasets.length }}
+          </div>
         </div>
 
-        <div
-          v-if="hasActiveFilters"
-          class="text-xs text-gray-400 whitespace-nowrap px-1 shrink-0 hidden sm:block"
-        >
-          {{ displayDatasets.length }} / {{ datasets.length }}
-        </div>
+        <div class="flex items-center gap-2">
+          <div class="flex shrink-0 select-none items-center gap-0.5 rounded-lg border border-gray-300 bg-gray-200/60 p-0.5">
+            <button
+              type="button"
+              class="flex items-center justify-center rounded-md p-1.5 transition-all duration-200"
+              :class="viewMode === 'grid' ? 'border border-gray-200 bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-800'"
+              title="卡片视图"
+              @click="viewMode = 'grid'"
+            >
+              <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" />
+              </svg>
+            </button>
+            <button
+              type="button"
+              class="flex items-center justify-center rounded-md p-1.5 transition-all duration-200"
+              :class="viewMode === 'list' ? 'border border-gray-200 bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-800'"
+              title="列表视图"
+              @click="viewMode = 'list'"
+            >
+              <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16" />
+              </svg>
+            </button>
+          </div>
 
-        <!-- 视图切换 -->
-        <div class="flex items-center bg-gray-200/60 p-0.5 rounded-lg border border-gray-300 gap-0.5 select-none shrink-0">
           <button
             type="button"
-            @click="viewMode = 'grid'"
-            class="p-1.5 rounded-md transition-all duration-200 flex items-center justify-center"
-            :class="viewMode === 'grid' ? 'bg-white text-blue-600 shadow-sm border border-gray-200' : 'text-gray-500 hover:text-gray-800'"
-            title="卡片视图"
+            class="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-gray-300 bg-white text-gray-700 shadow-sm transition-all hover:bg-gray-50 active:scale-95"
+            title="检索测试"
+            @click="showTestModal = true"
           >
-            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" />
-            </svg>
-          </button>
-          <button
-            type="button"
-            @click="viewMode = 'list'"
-            class="p-1.5 rounded-md transition-all duration-200 flex items-center justify-center"
-            :class="viewMode === 'list' ? 'bg-white text-blue-600 shadow-sm border border-gray-200' : 'text-gray-500 hover:text-gray-800'"
-            title="列表视图"
-          >
-            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16" />
+            <svg class="h-4 w-4 text-amber-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
             </svg>
           </button>
         </div>
 
-        <button
-          type="button"
-          @click="showTestModal = true"
-          class="flex items-center justify-center p-2 bg-white text-gray-700 border border-gray-300 rounded-lg hover:bg-gray-50 active:scale-95 transition-all shadow-sm shrink-0"
-          title="检索测试"
-        >
-          <svg class="w-4 h-4 text-amber-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-          </svg>
-        </button>
-
-        <!-- 新建 / 智能导入（拆分主按钮） -->
         <div
           v-if="hasPermission('element:metadata:edit') || hasPermission('element:metadata:import')"
-          class="relative shrink-0"
+          class="relative w-full shrink-0 sm:w-auto"
           @click.stop
         >
-          <div class="flex items-stretch rounded-lg overflow-hidden shadow-sm">
+          <div class="flex w-full items-stretch overflow-hidden rounded-lg shadow-sm sm:w-auto">
             <button
               v-if="hasPermission('element:metadata:edit')"
               type="button"
+              class="flex flex-1 items-center justify-center gap-2 bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-all hover:bg-blue-700 active:scale-[0.98] sm:flex-none"
               @click="showCreateModal = true; showCreateMenu = false"
-              class="flex items-center justify-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-medium text-sm transition-all active:scale-[0.98]"
             >
-              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
               </svg>
               新建数据集
             </button>
             <button
               v-else
-              type="button"
               v-has-perm="'element:metadata:import'"
+              type="button"
+              class="flex flex-1 items-center justify-center gap-2 bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-all hover:bg-blue-700 active:scale-[0.98] sm:flex-none"
               @click="showImportModal = true; showCreateMenu = false"
-              class="flex items-center justify-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-medium text-sm transition-all active:scale-[0.98]"
             >
-              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
               </svg>
               智能导入
@@ -1128,26 +1130,26 @@ onMounted(async () => {
             <button
               v-if="hasPermission('element:metadata:edit') && hasPermission('element:metadata:import')"
               type="button"
-              @click="showCreateMenu = !showCreateMenu"
-              class="px-2 border-l border-blue-500 bg-blue-600 hover:bg-blue-700 text-white transition-colors"
+              class="border-l border-blue-500 bg-blue-600 px-2 text-white transition-colors hover:bg-blue-700"
               title="更多创建方式"
+              @click="showCreateMenu = !showCreateMenu"
             >
-              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
               </svg>
             </button>
           </div>
           <div
             v-if="showCreateMenu"
-            class="absolute right-0 mt-1.5 w-48 bg-white border border-gray-200 rounded-xl shadow-lg py-1 z-20"
+            class="absolute right-0 z-20 mt-1.5 w-48 rounded-xl border border-gray-200 bg-white py-1 shadow-lg"
           >
             <button
               v-if="hasPermission('element:metadata:edit')"
               type="button"
+              class="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50"
               @click="showCreateMenu = false; showCreateModal = true"
-              class="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2"
             >
-              <svg class="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <svg class="h-4 w-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
               </svg>
               空白新建
@@ -1155,10 +1157,10 @@ onMounted(async () => {
             <button
               v-has-perm="'element:metadata:import'"
               type="button"
+              class="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50"
               @click="showCreateMenu = false; showImportModal = true"
-              class="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2"
             >
-              <svg class="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <svg class="h-4 w-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
               </svg>
               智能导入 (DDL)
@@ -1363,9 +1365,10 @@ onMounted(async () => {
       </div>
     </div>
 
-    <!-- List View -->
-    <div v-else class="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
-       <div class="grid grid-cols-12 gap-4 px-6 py-3 bg-gray-50 border-b border-gray-100 text-xs font-bold text-gray-500 uppercase tracking-wider">
+    <!-- List View：窄屏允许横滑，避免 overflow-hidden 裁切列内容 -->
+    <div v-else class="overflow-x-auto rounded-xl border border-gray-100 bg-white shadow-sm" style="-webkit-overflow-scrolling: touch;">
+       <div class="min-w-[720px]">
+       <div class="grid grid-cols-12 gap-4 border-b border-gray-100 bg-gray-50 px-6 py-3 text-xs font-bold uppercase tracking-wider text-gray-500">
           <button type="button" class="col-span-3 inline-flex items-center gap-1 text-left hover:text-gray-700 transition-colors" @click="toggleSort('display_name')">
             <span>数据集 (Dataset)</span>
             <svg v-if="sortField === 'display_name'" class="w-3.5 h-3.5 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1528,6 +1531,7 @@ onMounted(async () => {
                 </span>
              </div>
           </div>
+       </div>
        </div>
     </div>
 

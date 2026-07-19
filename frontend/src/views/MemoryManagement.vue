@@ -685,42 +685,42 @@ onMounted(async () => {
 
     <div
       v-else-if="!vectorReady && vectorHealth"
-      class="bg-amber-50 border border-amber-200 rounded-lg p-4 sm:p-5 shadow-sm space-y-4"
+      class="space-y-4 rounded-lg border border-amber-200 bg-amber-50 p-4 shadow-sm sm:p-5"
     >
-      <div class="flex flex-col gap-3">
+      <div class="flex items-start justify-between gap-3">
         <div class="min-w-0">
           <h2 class="text-base font-semibold text-amber-900">记忆服务不可用</h2>
-          <p class="text-sm text-amber-800 mt-1 break-words">{{ vectorHealth.message }}</p>
-          <p class="text-xs text-amber-700 mt-2 font-mono break-all">
+          <p class="mt-1 break-words text-sm text-amber-800">{{ vectorHealth.message }}</p>
+          <p class="mt-2 break-all font-mono text-xs text-amber-700">
             当前连接：{{ vectorHealth.redis_host }}:{{ vectorHealth.redis_port }} / db
             {{ vectorHealth.redis_db }}
           </p>
         </div>
         <button
           type="button"
-          class="w-full sm:w-auto self-start px-4 py-2.5 bg-amber-600 text-white rounded-lg text-sm font-medium hover:bg-amber-700 shadow-sm"
+          class="shrink-0 rounded-lg bg-amber-600 px-3 py-2 text-sm font-medium text-white shadow-sm hover:bg-amber-700"
           @click="runVectorTest(true)"
         >
           重新检测
         </button>
       </div>
-      <ul class="text-sm text-amber-900 list-disc pl-5 space-y-1">
+      <ul class="list-disc space-y-1 pl-5 text-sm text-amber-900">
         <li v-for="(hint, i) in vectorHealth.hints" :key="i">{{ hint }}</li>
       </ul>
-      <div v-if="vectorHealth.checks?.length" class="border border-amber-200 rounded-lg overflow-hidden bg-white">
+      <div v-if="vectorHealth.checks?.length" class="overflow-hidden rounded-lg border border-amber-200 bg-white">
         <div class="overflow-x-auto">
-          <table class="w-full text-xs min-w-[320px]">
+          <table class="w-full min-w-[320px] text-xs">
             <thead class="bg-amber-100/80">
               <tr>
-                <th class="text-left p-2 font-medium">检查项</th>
-                <th class="text-left p-2 font-medium">结果</th>
-                <th class="text-left p-2 font-medium">说明</th>
+                <th class="p-2 text-left font-medium">检查项</th>
+                <th class="p-2 text-left font-medium">结果</th>
+                <th class="p-2 text-left font-medium">说明</th>
               </tr>
             </thead>
             <tbody>
               <tr v-for="c in vectorHealth.checks" :key="c.name" class="border-t border-amber-100">
-                <td class="p-2 font-mono whitespace-nowrap">{{ c.name }}</td>
-                <td class="p-2 whitespace-nowrap">
+                <td class="whitespace-nowrap p-2 font-mono">{{ c.name }}</td>
+                <td class="whitespace-nowrap p-2">
                   <span :class="c.passed ? 'text-green-600' : 'text-red-600'">
                     {{ c.passed ? '通过' : '失败' }}
                   </span>
@@ -738,12 +738,12 @@ onMounted(async () => {
 
     <div
       v-else-if="vectorReady"
-      class="bg-green-50 border border-green-200 rounded-lg px-3 sm:px-4 py-2 flex flex-col xs:flex-row sm:flex-row sm:items-center sm:justify-between gap-2 text-sm"
+      class="flex items-center justify-between gap-3 rounded-lg border border-green-200 bg-green-50 px-3 py-2 text-sm sm:px-4"
     >
-      <span class="text-green-800 text-xs sm:text-sm leading-relaxed">{{ vectorHealth?.message || 'Redis 向量环境正常' }}</span>
+      <span class="min-w-0 text-xs leading-relaxed text-green-800 sm:text-sm">{{ vectorHealth?.message || 'Redis 向量环境正常' }}</span>
       <button
         type="button"
-        class="self-start sm:self-auto shrink-0 px-2.5 py-1 text-green-700 hover:text-green-900 text-xs font-medium border border-green-200 rounded-md hover:bg-green-100/60 transition-colors"
+        class="shrink-0 rounded-md border border-green-200 px-2.5 py-1 text-xs font-medium text-green-700 transition-colors hover:bg-green-100/60 hover:text-green-900"
         @click="runVectorTest(true)"
       >
         重新检测
@@ -757,21 +757,22 @@ onMounted(async () => {
     >
     <!-- 服务配置 -->
     <div v-show="activeTab === 'config' && memoryFeaturesEnabled" class="space-y-5">
-      <div class="flex flex-col sm:flex-row sm:flex-wrap gap-2">
+      <div class="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
         <button
           v-if="canSave"
           type="button"
-          class="w-full sm:w-auto px-4 py-2.5 sm:py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-50 shadow-sm order-1"
+          class="w-full rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-medium text-white shadow-sm hover:bg-blue-700 disabled:opacity-50 sm:w-auto sm:py-2"
           :disabled="savingConfig"
           @click="saveConfigs"
         >
           {{ savingConfig ? '保存中…' : '保存配置' }}
         </button>
-        <div class="grid grid-cols-2 sm:flex sm:flex-wrap gap-2 order-2">
+        <div class="grid grid-cols-3 gap-2 sm:flex sm:flex-wrap">
           <button
             v-if="canSave && summaryEnabled"
             type="button"
-            class="px-3 py-2 bg-white border border-gray-300 rounded-lg text-sm hover:bg-gray-50 shadow-sm disabled:opacity-40"
+            class="rounded-lg border border-gray-300 bg-white px-2 py-2 text-center text-xs shadow-sm hover:bg-gray-50 disabled:opacity-40 sm:px-3 sm:text-sm"
+            title="测试 Embedding"
             @click="testEmbedding"
           >
             测试 Embedding
@@ -779,15 +780,17 @@ onMounted(async () => {
           <button
             v-if="canIndex && summaryEnabled"
             type="button"
-            class="px-3 py-2 bg-white border border-gray-300 rounded-lg text-sm hover:bg-gray-50 shadow-sm"
+            class="rounded-lg border border-gray-300 bg-white px-2 py-2 text-center text-xs shadow-sm hover:bg-gray-50 sm:px-3 sm:text-sm"
+            title="刷新索引状态"
             @click="loadIndexStatus"
           >
-            刷新索引状态
+            刷新索引
           </button>
           <button
             v-if="canIndex && summaryEnabled"
             type="button"
-            class="col-span-2 sm:col-span-1 px-3 py-2 bg-white border border-gray-300 rounded-lg text-sm hover:bg-gray-50 shadow-sm text-gray-700"
+            class="rounded-lg border border-gray-300 bg-white px-2 py-2 text-center text-xs text-gray-700 shadow-sm hover:bg-gray-50 sm:px-3 sm:text-sm"
+            title="检查/创建索引"
             @click="requestRebuildIndex"
           >
             检查/创建索引

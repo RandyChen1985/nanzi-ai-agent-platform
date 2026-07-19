@@ -10,117 +10,121 @@
       <p class="text-gray-300 mt-2 text-sm">正在为您生成 API Key 并同步权限，请勿刷新页面</p>
     </div>
 
-    <!-- Header：筛选进顶栏，低频操作用「更多」收纳 -->
-    <div class="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
+    <!-- Header：标题一行；窄屏压缩筛选与操作，避免刷新/更多各占一行 -->
+    <div class="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
       <div class="min-w-0">
-        <h1 class="text-xl sm:text-2xl font-bold text-gray-900">用户管理</h1>
-        <p class="text-sm text-gray-500 mt-1">管理账号、身份角色与 API 访问凭证</p>
+        <h1 class="text-xl font-bold text-gray-900 sm:text-2xl">用户管理</h1>
+        <p class="mt-1 text-sm text-gray-500">管理账号、身份角色与 API 访问凭证</p>
       </div>
 
-      <div class="flex flex-col sm:flex-row sm:flex-wrap sm:items-center gap-2.5 sm:gap-3">
+      <div class="flex w-full flex-col gap-2.5 sm:w-auto sm:flex-row sm:flex-wrap sm:items-center sm:gap-3 lg:justify-end">
         <div class="relative w-full sm:w-52 lg:w-60">
-          <span class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+          <span class="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3">
             <svg class="h-4 w-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
             </svg>
           </span>
           <input
             v-model="searchQuery"
-            @input="debouncedSearch"
             type="text"
             placeholder="搜索用户名或姓名..."
-            class="w-full pl-9 pr-3 py-2 bg-white border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none text-sm shadow-sm"
+            class="w-full rounded-lg border border-gray-300 bg-white py-2 pl-9 pr-3 text-sm shadow-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
+            @input="debouncedSearch"
           />
         </div>
 
-        <select
-          v-model="roleFilter"
-          @change="page = 1; fetchUsers()"
-          class="w-full sm:w-auto text-sm border border-gray-300 rounded-lg py-2 px-2.5 bg-white shadow-sm focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none shrink-0"
-        >
-          <option value="">身份：全部</option>
-          <option value="admin">管理员</option>
-          <option value="user">普通用户</option>
-        </select>
-
-        <select
-          v-model="statusFilter"
-          @change="page = 1; fetchUsers()"
-          class="w-full sm:w-auto text-sm border border-gray-300 rounded-lg py-2 px-2.5 bg-white shadow-sm focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none shrink-0"
-        >
-          <option value="">状态：全部</option>
-          <option value="1">启用</option>
-          <option value="0">禁用</option>
-        </select>
-
-        <button
-          v-if="hasActiveFilters"
-          type="button"
-          @click="resetFilters"
-          class="px-3 py-2 text-sm text-gray-500 hover:text-gray-800 bg-white border border-gray-300 rounded-lg shadow-sm hover:bg-gray-50 transition-colors shrink-0"
-        >
-          清除
-        </button>
-
-        <button
-          type="button"
-          @click="fetchUsers"
-          class="p-2 text-gray-500 hover:text-primary bg-white border border-gray-300 rounded-lg shadow-sm hover:bg-gray-50 transition-colors shrink-0 self-start sm:self-auto"
-          title="刷新列表"
-        >
-          <ArrowPathIcon class="w-4 h-4" :class="{ 'animate-spin': loading }" />
-        </button>
-
-        <div class="relative shrink-0" @click.stop>
-          <button
-            type="button"
-            @click="showMoreMenu = !showMoreMenu; openRowMenuId = null"
-            class="inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg shadow-sm hover:bg-gray-50 transition-colors"
+        <div class="grid grid-cols-2 gap-2 sm:contents">
+          <select
+            v-model="roleFilter"
+            class="w-full rounded-lg border border-gray-300 bg-white px-2.5 py-2 text-sm shadow-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20 sm:w-auto sm:shrink-0"
+            @change="page = 1; fetchUsers()"
           >
-            更多
-            <ChevronDownIcon class="w-4 h-4 text-gray-400" :class="{ 'rotate-180': showMoreMenu }" />
-          </button>
-          <div
-            v-if="showMoreMenu"
-            class="absolute right-0 mt-1.5 w-52 bg-white border border-gray-200 rounded-xl shadow-lg py-1 z-30"
+            <option value="">身份：全部</option>
+            <option value="admin">管理员</option>
+            <option value="user">普通用户</option>
+          </select>
+
+          <select
+            v-model="statusFilter"
+            class="w-full rounded-lg border border-gray-300 bg-white px-2.5 py-2 text-sm shadow-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20 sm:w-auto sm:shrink-0"
+            @change="page = 1; fetchUsers()"
           >
-            <button
-              v-if="showSsoSync"
-              type="button"
-              class="w-full text-left px-3 py-2.5 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2"
-              @click="showMoreMenu = false; openSsoModal()"
-            >
-              <UserGroupIcon class="w-4 h-4 text-indigo-500" />
-              同步 SSO 用户
-            </button>
-            <button
-              type="button"
-              class="w-full text-left px-3 py-2.5 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2"
-              @click="showMoreMenu = false; showThirdPartyDrawer = true"
-            >
-              <ArrowPathIcon class="w-4 h-4 text-violet-500" />
-              同步第三方用户
-            </button>
-            <button
-              type="button"
-              class="w-full text-left px-3 py-2.5 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2"
-              @click="showMoreMenu = false; showSystemQuotaModal = true"
-            >
-              <ChartBarIcon class="w-4 h-4 text-amber-500" />
-              系统默认额度
-            </button>
-          </div>
+            <option value="">状态：全部</option>
+            <option value="1">启用</option>
+            <option value="0">禁用</option>
+          </select>
         </div>
 
-        <button
-          type="button"
-          @click="openCreateDialog"
-          class="flex items-center justify-center gap-2 px-4 py-2 bg-primary text-white rounded-lg shadow-sm hover:bg-primary-dark transition-all font-medium text-sm shrink-0"
-        >
-          <PlusIcon class="w-4 h-4" />
-          <span class="hidden sm:inline">创建用户</span>
-          <span class="sm:hidden">创建</span>
-        </button>
+        <div class="flex items-center gap-2">
+          <button
+            v-if="hasActiveFilters"
+            type="button"
+            class="shrink-0 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-500 shadow-sm transition-colors hover:bg-gray-50 hover:text-gray-800"
+            @click="resetFilters"
+          >
+            清除
+          </button>
+
+          <button
+            type="button"
+            class="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-gray-300 bg-white text-gray-500 shadow-sm transition-colors hover:bg-gray-50 hover:text-primary"
+            title="刷新列表"
+            @click="fetchUsers"
+          >
+            <ArrowPathIcon class="h-4 w-4" :class="{ 'animate-spin': loading }" />
+          </button>
+
+          <div class="relative shrink-0" @click.stop>
+            <button
+              type="button"
+              class="inline-flex items-center gap-1.5 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-700 shadow-sm transition-colors hover:bg-gray-50"
+              @click="showMoreMenu = !showMoreMenu; openRowMenuId = null"
+            >
+              更多
+              <ChevronDownIcon class="h-4 w-4 text-gray-400" :class="{ 'rotate-180': showMoreMenu }" />
+            </button>
+            <div
+              v-if="showMoreMenu"
+              class="absolute right-0 z-30 mt-1.5 w-52 rounded-xl border border-gray-200 bg-white py-1 shadow-lg"
+            >
+              <button
+                v-if="showSsoSync"
+                type="button"
+                class="flex w-full items-center gap-2 px-3 py-2.5 text-left text-sm text-gray-700 hover:bg-gray-50"
+                @click="showMoreMenu = false; openSsoModal()"
+              >
+                <UserGroupIcon class="h-4 w-4 text-indigo-500" />
+                同步 SSO 用户
+              </button>
+              <button
+                type="button"
+                class="flex w-full items-center gap-2 px-3 py-2.5 text-left text-sm text-gray-700 hover:bg-gray-50"
+                @click="showMoreMenu = false; showThirdPartyDrawer = true"
+              >
+                <ArrowPathIcon class="h-4 w-4 text-violet-500" />
+                同步第三方用户
+              </button>
+              <button
+                type="button"
+                class="flex w-full items-center gap-2 px-3 py-2.5 text-left text-sm text-gray-700 hover:bg-gray-50"
+                @click="showMoreMenu = false; showSystemQuotaModal = true"
+              >
+                <ChartBarIcon class="h-4 w-4 text-amber-500" />
+                系统默认额度
+              </button>
+            </div>
+          </div>
+
+          <button
+            type="button"
+            class="ml-auto flex flex-1 items-center justify-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white shadow-sm transition-all hover:bg-primary-dark sm:ml-0 sm:flex-none"
+            @click="openCreateDialog"
+          >
+            <PlusIcon class="h-4 w-4" />
+            <span class="hidden sm:inline">创建用户</span>
+            <span class="sm:hidden">创建</span>
+          </button>
+        </div>
       </div>
     </div>
 
