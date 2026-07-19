@@ -25,6 +25,20 @@ interface FileNode {
   children?: FileNode[]
 }
 
+const props = withDefaults(defineProps<{
+  /** 仅展示「我的技能」，用于个人中心（无需平台技能管理权限） */
+  personalOnly?: boolean
+  /** 打开时定位到指定个人技能详情 */
+  initialSkillId?: string
+}>(), {
+  personalOnly: false,
+  initialSkillId: '',
+})
+
+const emit = defineEmits<{
+  (e: 'drawer-closed'): void
+}>()
+
 const { showToast } = useToast()
 
 const confirmState = ref({
@@ -37,7 +51,7 @@ const confirmState = ref({
 
 const skills = ref<Skill[]>([])
 const personalSkills = ref<Skill[]>([])
-const activeScope = ref<'global' | 'personal'>('global')
+const activeScope = ref<'global' | 'personal'>(props.personalOnly ? 'personal' : 'global')
 const loading = ref(false)
 const searchQuery = ref('')
 const viewMode = ref<'card' | 'list'>('card')
@@ -192,6 +206,9 @@ const fetchingDetail = ref(false)
 watch(showDrawer, (open) => {
   if (!open) {
     disposeSkillDrawerChart()
+    if (props.personalOnly) {
+      emit('drawer-closed')
+    }
   }
 })
 
@@ -1081,11 +1098,34 @@ const submitImportSkill = async () => {
 }
 
 onMounted(() => {
-  fetchSkills()
-  fetchPersonalSkills()
+  if (!props.personalOnly) {
+    fetchSkills()
+  }
+  fetchPersonalSkills().then(() => {
+    const targetId = String(props.initialSkillId || '').trim()
+    if (targetId && personalSkills.value.some((s) => s.id === targetId)) {
+      activeScope.value = 'personal'
+      openSkillDetail(targetId)
+    }
+  })
   document.addEventListener('click', closeContextMenu)
   document.addEventListener('keydown', handleDrawerKeydown)
 })
+
+watch(
+  () => props.initialSkillId,
+  async (skillId) => {
+    const targetId = String(skillId || '').trim()
+    if (!targetId) return
+    if (!personalSkills.value.some((s) => s.id === targetId)) {
+      await fetchPersonalSkills()
+    }
+    if (personalSkills.value.some((s) => s.id === targetId)) {
+      activeScope.value = 'personal'
+      openSkillDetail(targetId)
+    }
+  },
+)
 
 onUnmounted(() => {
   document.removeEventListener('click', closeContextMenu)
@@ -1103,14 +1143,19 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="space-y-5">
-    <!-- Header：标题一行；窄屏下搜索通栏，排序/视图/统计并排，新建通栏 -->
-    <div class="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-      <div class="flex items-center space-x-3">
-        <h1 class="text-2xl font-bold tracking-normal text-gray-900">技能工作台</h1>
+  <div :class="personalOnly ? 'space-y-6' : 'space-y-5'">
+    <!-- Header：标题单独一行；搜索 + 排序/视图 + 新建同一工具行 -->
+    <div class="flex flex-col gap-4">
+      <div class="flex min-w-0 items-center gap-2.5">
+        <h1
+          class="font-bold tracking-normal text-gray-900"
+          :class="personalOnly ? 'text-xl' : 'text-2xl'"
+        >
+          {{ personalOnly ? '我的技能' : '技能工作台' }}
+        </h1>
         <button
           type="button"
-          class="flex h-7 w-7 items-center justify-center rounded-full border border-gray-200 bg-white text-blue-600 shadow-sm transition-colors hover:border-blue-300 hover:bg-blue-50"
+          class="flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-gray-200 bg-white text-blue-600 shadow-sm transition-colors hover:border-blue-300 hover:bg-blue-50"
           title="技能开发使用指南"
           @click="showHelpModal = true"
         >
@@ -1118,8 +1163,8 @@ onUnmounted(() => {
         </button>
       </div>
 
-      <div class="flex w-full flex-col gap-2.5 sm:w-auto sm:flex-row sm:flex-wrap sm:items-center sm:gap-3 lg:justify-end">
-        <div class="relative w-full sm:w-72">
+      <div class="flex flex-col gap-3 sm:flex-row sm:items-center">
+        <div class="relative min-w-0 flex-1">
           <span class="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3">
             <svg class="h-4 w-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
@@ -1129,12 +1174,12 @@ onUnmounted(() => {
             v-model="searchQuery"
             type="text"
             placeholder="搜索技能名称或描述..."
-            class="w-full rounded-lg border border-gray-300 bg-white py-2 pl-9 pr-4 text-sm shadow-sm transition-all focus:outline-none focus:ring-2 focus:ring-blue-500"
+            class="w-full rounded-lg border border-gray-300 bg-white py-2.5 pl-9 pr-4 text-sm shadow-sm transition-all focus:outline-none focus:ring-2 focus:ring-blue-500"
           />
         </div>
 
-        <div class="flex items-center gap-2">
-          <div class="flex shrink-0 select-none items-center gap-0.5 rounded-lg border border-gray-300 bg-gray-200/60 p-0.5">
+        <div class="flex shrink-0 flex-wrap items-center gap-2">
+          <div class="flex select-none items-center gap-0.5 rounded-lg border border-gray-300 bg-gray-200/60 p-0.5">
             <button
               type="button"
               class="rounded-md px-2.5 py-1.5 text-xs font-medium transition-all"
@@ -1165,7 +1210,7 @@ onUnmounted(() => {
             </button>
           </div>
 
-          <div class="flex shrink-0 select-none items-center gap-0.5 rounded-lg border border-gray-300 bg-gray-200/60 p-0.5">
+          <div class="flex select-none items-center gap-0.5 rounded-lg border border-gray-300 bg-gray-200/60 p-0.5">
             <button
               type="button"
               class="flex items-center justify-center rounded-md p-1.5 transition-all duration-200"
@@ -1191,6 +1236,7 @@ onUnmounted(() => {
           </div>
 
           <button
+            v-if="!personalOnly"
             type="button"
             class="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-gray-300 bg-white text-gray-700 shadow-sm transition-all hover:bg-gray-50 active:scale-95"
             title="统计查看"
@@ -1200,64 +1246,64 @@ onUnmounted(() => {
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
             </svg>
           </button>
-        </div>
 
-        <div class="relative w-full shrink-0 sm:w-auto" @click.stop>
-          <div class="flex w-full items-stretch overflow-hidden rounded-lg shadow-sm sm:w-auto">
-            <button
-              type="button"
-              class="flex flex-1 items-center justify-center gap-2 px-4 py-2 text-sm font-medium text-white transition-all active:scale-[0.98] sm:flex-none"
-              :class="activeScope === 'personal' ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-blue-600 hover:bg-blue-700'"
-              @click="openCreateModal"
+          <div class="relative shrink-0" @click.stop>
+            <div class="flex items-stretch overflow-hidden rounded-lg shadow-sm">
+              <button
+                type="button"
+                class="flex items-center justify-center gap-2 px-4 py-2 text-sm font-medium text-white transition-all active:scale-[0.98]"
+                :class="activeScope === 'personal' ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-blue-600 hover:bg-blue-700'"
+                @click="openCreateModal"
+              >
+                <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
+                </svg>
+                新建技能
+              </button>
+              <button
+                type="button"
+                class="border-l px-2 text-white transition-colors"
+                :class="activeScope === 'personal' ? 'border-emerald-500 bg-emerald-600 hover:bg-emerald-700' : 'border-blue-500 bg-blue-600 hover:bg-blue-700'"
+                title="更多创建方式"
+                @click="showCreateMenu = !showCreateMenu"
+              >
+                <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+                </svg>
+              </button>
+            </div>
+            <div
+              v-if="showCreateMenu"
+              class="absolute right-0 z-20 mt-1.5 w-48 rounded-xl border border-gray-200 bg-white py-1 shadow-lg"
             >
-              <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
-              </svg>
-              新建技能
-            </button>
-            <button
-              type="button"
-              class="border-l px-2 text-white transition-colors"
-              :class="activeScope === 'personal' ? 'border-emerald-500 bg-emerald-600 hover:bg-emerald-700' : 'border-blue-500 bg-blue-600 hover:bg-blue-700'"
-              title="更多创建方式"
-              @click="showCreateMenu = !showCreateMenu"
-            >
-              <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
-              </svg>
-            </button>
-          </div>
-          <div
-            v-if="showCreateMenu"
-            class="absolute right-0 z-20 mt-1.5 w-48 rounded-xl border border-gray-200 bg-white py-1 shadow-lg"
-          >
-            <button
-              type="button"
-              class="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50"
-              @click="showCreateMenu = false; openCreateModal()"
-            >
-              <svg class="h-4 w-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
-              </svg>
-              空白新建
-            </button>
-            <button
-              type="button"
-              class="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50"
-              @click="showCreateMenu = false; openImportModal()"
-            >
-              <svg class="h-4 w-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
-              </svg>
-              导入 Zip/Tar
-            </button>
+              <button
+                type="button"
+                class="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50"
+                @click="showCreateMenu = false; openCreateModal()"
+              >
+                <svg class="h-4 w-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
+                </svg>
+                空白新建
+              </button>
+              <button
+                type="button"
+                class="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50"
+                @click="showCreateMenu = false; openImportModal()"
+              >
+                <svg class="h-4 w-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+                </svg>
+                导入 Zip/Tar
+              </button>
+            </div>
           </div>
         </div>
       </div>
     </div>
 
     <!-- Scope Tab 切换 -->
-    <div class="flex items-center border-b border-gray-200">
+    <div v-if="!personalOnly" class="flex items-center border-b border-gray-200">
       <button
         id="tab-global-skills"
         @click="activeScope = 'global'"
@@ -1336,70 +1382,77 @@ onUnmounted(() => {
     </div>
 
     <!-- 卡片视图 -->
-    <div v-else-if="viewMode === 'card'" class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
+    <div
+      v-else-if="viewMode === 'card'"
+      class="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3"
+      :class="personalOnly ? 'gap-6' : ''"
+    >
       <!-- 磨砂玻璃质感卡片 -->
       <div 
         v-for="skill in sortedSkills" 
         :key="skill.id"
         @click="openSkillDetail(skill.id)"
-        class="group relative flex flex-col bg-white border border-gray-200 hover:border-blue-400 hover:shadow-lg hover:-translate-y-0.5 rounded-lg p-5 cursor-pointer transition-all duration-200"
-        :class="{ 'opacity-65 saturate-50 bg-gray-50/50': skill.enabled === 'false' }"
+        class="group relative flex flex-col cursor-pointer rounded-xl border border-gray-200 bg-white transition-all duration-200 hover:-translate-y-0.5 hover:border-blue-400 hover:shadow-lg"
+        :class="[
+          personalOnly ? 'p-6' : 'rounded-lg p-5',
+          skill.enabled === 'false' ? 'opacity-65 saturate-50 bg-gray-50/50' : '',
+        ]"
       >
         <!-- 卡片顶部 -->
-        <div class="flex items-start justify-between">
-          <div class="flex items-center space-x-3 min-w-0">
+        <div class="flex items-start justify-between gap-3">
+          <div class="flex min-w-0 items-center space-x-3">
             <div
-              class="flex items-center justify-center w-10 h-10 rounded-xl transition-transform group-hover:scale-110"
+              class="flex h-10 w-10 items-center justify-center rounded-xl transition-transform group-hover:scale-110"
               :class="skill.scope === 'personal' ? 'bg-gradient-to-br from-emerald-500/10 to-teal-500/10 text-emerald-600' : 'bg-gradient-to-br from-blue-500/10 to-indigo-500/10 text-blue-600'"
             >
-              <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5S19.832 5.477 21 6.253v13C19.832 18.477 18.246 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
               </svg>
             </div>
             <div class="min-w-0">
               <div class="flex items-center gap-1.5">
-                <h3 class="font-bold text-gray-800 truncate group-hover:text-blue-600 transition-colors">
+                <h3 class="truncate font-bold text-gray-800 transition-colors group-hover:text-blue-600">
                   {{ skill.name }}
                 </h3>
-                <!-- Scope 徽章 -->
+                <!-- Scope 徽章：个人中心全是个人技能，不再重复标「个人」 -->
                 <span
-                  v-if="skill.scope === 'personal'"
-                  class="shrink-0 px-1.5 py-0.5 text-[9px] font-semibold rounded-full bg-emerald-100 text-emerald-700"
+                  v-if="skill.scope === 'personal' && !personalOnly"
+                  class="shrink-0 rounded-full bg-emerald-100 px-1.5 py-0.5 text-[9px] font-semibold text-emerald-700"
                 >个人</span>
                 <span
-                  v-else
-                  class="shrink-0 px-1.5 py-0.5 text-[9px] font-semibold rounded-full bg-blue-100 text-blue-700"
+                  v-else-if="skill.scope !== 'personal'"
+                  class="shrink-0 rounded-full bg-blue-100 px-1.5 py-0.5 text-[9px] font-semibold text-blue-700"
                 >平台</span>
                 <span
                   v-if="skill.enabled === 'false'"
-                  class="shrink-0 px-1.5 py-0.5 text-[9px] font-semibold rounded-full bg-gray-100 text-gray-500"
+                  class="shrink-0 rounded-full bg-gray-100 px-1.5 py-0.5 text-[9px] font-semibold text-gray-500"
                 >已禁用</span>
               </div>
-              <p class="text-[10px] text-gray-400 font-mono tracking-wider uppercase mt-0.5">
+              <p class="mt-0.5 font-mono text-[10px] uppercase tracking-wider text-gray-400">
                 ID: {{ skill.id }}
               </p>
             </div>
           </div>
           
-          <div class="flex items-center space-x-2 shrink-0" @click.stop>
+          <div class="flex shrink-0 items-center space-x-2" @click.stop>
             <!-- Switch 开关 -->
-            <label class="relative inline-flex items-center cursor-pointer" title="启用/禁用此技能（禁用后对话不再自动匹配）">
+            <label class="relative inline-flex cursor-pointer items-center" title="启用/禁用此技能（禁用后对话不再自动匹配）">
               <input 
                 type="checkbox" 
                 :checked="skill.enabled !== 'false'"
                 @change="toggleSkillStatus(skill)"
-                class="sr-only peer"
+                class="peer sr-only"
               >
-              <div class="w-7 h-4 bg-gray-250 dark:bg-gray-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:bg-blue-600"></div>
+              <div class="peer h-4 w-7 rounded-full bg-gray-250 after:absolute after:left-[2px] after:top-[2px] after:h-3 after:w-3 after:rounded-full after:border after:border-gray-300 after:bg-white after:transition-all after:content-[''] peer-checked:bg-blue-600 peer-checked:after:translate-x-full peer-checked:after:border-white peer-focus:outline-none dark:bg-gray-700"></div>
             </label>
 
             <!-- 删除：仅 hover 显示，降低误触 -->
             <button 
               @click.stop="deleteSkill(skill.id)"
-              class="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all opacity-0 group-hover:opacity-100 focus:opacity-100"
+              class="rounded-lg p-1.5 text-gray-400 opacity-0 transition-all hover:bg-red-50 hover:text-red-600 group-hover:opacity-100 focus:opacity-100"
               title="注销并彻底删除技能目录"
             >
-              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
               </svg>
             </button>
@@ -1407,19 +1460,22 @@ onUnmounted(() => {
         </div>
 
         <!-- 技能描述 -->
-        <p class="text-sm text-gray-500 mt-4 flex-1 line-clamp-3">
+        <p class="mt-4 flex-1 text-sm leading-relaxed text-gray-500 line-clamp-3">
           {{ skill.description || '暂无描述' }}
         </p>
 
         <!-- 卡片底部路径信息 -->
-        <div class="flex items-center justify-between gap-2 text-[11px] text-gray-400 font-mono mt-5 border-t border-gray-100 pt-3">
-          <div class="flex items-center gap-1.5 min-w-0">
-            <svg class="w-3.5 h-3.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <div
+          class="mt-5 flex items-center justify-between gap-2 border-t border-gray-100 pt-3 font-mono text-[11px] text-gray-400"
+        >
+          <div v-if="!personalOnly" class="flex min-w-0 items-center gap-1.5">
+            <svg class="h-3.5 w-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
             </svg>
-            <span class="truncate" :title="skill.path">{{ skill.path }}</span>
+            <span class="truncate">{{ skill.path }}</span>
           </div>
-          <span class="shrink-0 text-[10px] text-gray-400">{{ formatModifiedAt(skill.modified_at) }}</span>
+          <span v-else class="text-[11px] text-gray-400">更新</span>
+          <span class="shrink-0 tabular-nums">{{ formatModifiedAt(skill.modified_at) }}</span>
         </div>
       </div>
     </div>
@@ -1456,11 +1512,11 @@ onUnmounted(() => {
                     <div class="font-bold text-gray-900 group-hover:text-blue-600 transition-colors flex items-center gap-2 flex-wrap">
                       <span>{{ skill.name }}</span>
                       <span
-                        v-if="skill.scope === 'personal'"
+                        v-if="skill.scope === 'personal' && !personalOnly"
                         class="shrink-0 px-1.5 py-0.5 text-[9px] font-semibold rounded-full bg-emerald-100 text-emerald-700"
                       >个人</span>
                       <span
-                        v-else
+                        v-else-if="skill.scope !== 'personal'"
                         class="shrink-0 px-1.5 py-0.5 text-[9px] font-semibold rounded-full bg-blue-100 text-blue-700"
                       >平台</span>
                       <span

@@ -252,6 +252,9 @@ class AgentService:
         full_instruction = load_skill_md_content(
             skill_id,
             max_bytes=int(full_load_policy["max_bytes"]),
+            user_info=user_info,
+            scope=skill_meta.get("scope"),
+            skill_md_path=skill_meta.get("skill_md_path"),
         )
         if full_instruction:
             full_loaded_count += 1
@@ -690,25 +693,44 @@ class AgentService:
         if active_skills:
             import os
             from app.core.config import settings
-            from app.services.ai.skill_resolver import load_skill_md_content
+            from app.services.ai.skill_resolver import (
+                get_user_personal_skills_dir,
+                load_skill_md_content,
+            )
             from app.utils.skill_metadata import parse_skill_frontmatter
 
             for skill_obj in active_skills:
                 skill_id = skill_obj.get("url")
                 if not skill_id:
                     continue
-                skill_md_path = os.path.join(settings.SKILLS_DIR, skill_id, "SKILL.md")
                 meta_override = skill_obj.get("skillMeta") or skill_obj.get("skill_meta")
+                skill_scope = None
+                explicit_skill_md_path = None
                 if meta_override and isinstance(meta_override, dict):
                     skill_name = str(meta_override.get("name") or skill_id)
                     description = str(meta_override.get("description") or "")
-                elif os.path.exists(skill_md_path):
-                    meta = parse_skill_frontmatter(skill_id, skill_md_path)
-                    skill_name = meta.get("name") or skill_obj.get("filename", skill_id).replace(" (技能)", "")
-                    description = meta.get("description") or ""
+                    skill_scope = str(meta_override.get("scope") or "").strip().lower() or None
+                    explicit_skill_md_path = meta_override.get("skill_md_path") or meta_override.get("skillMdPath")
                 else:
                     skill_name = skill_obj.get("filename", skill_id).replace(" (技能)", "")
                     description = ""
+
+                skill_scope = skill_scope or str(skill_obj.get("scope") or "").strip().lower() or None
+                candidate_paths: list[str] = []
+                if explicit_skill_md_path:
+                    candidate_paths.append(str(explicit_skill_md_path))
+                if skill_scope == "personal":
+                    personal_dir = get_user_personal_skills_dir(user_info)
+                    if personal_dir:
+                        candidate_paths.append(os.path.join(personal_dir, skill_id, "SKILL.md"))
+                candidate_paths.append(os.path.join(settings.SKILLS_DIR, skill_id, "SKILL.md"))
+
+                skill_md_path = next((p for p in candidate_paths if os.path.exists(p)), candidate_paths[-1])
+                if not (meta_override and isinstance(meta_override, dict)) and os.path.exists(skill_md_path):
+                    meta = parse_skill_frontmatter(skill_id, skill_md_path)
+                    skill_name = meta.get("name") or skill_obj.get("filename", skill_id).replace(" (技能)", "")
+                    description = meta.get("description") or ""
+                elif not (meta_override and isinstance(meta_override, dict)):
                     logger.warning("[Skills] Skill markdown not found at %s", skill_md_path)
 
                 full_instruction = None
@@ -720,6 +742,9 @@ class AgentService:
                     full_instruction = load_skill_md_content(
                         skill_id,
                         max_bytes=int(full_load_policy["max_bytes"]),
+                        user_info=user_info,
+                        scope=skill_scope,
+                        skill_md_path=skill_md_path if os.path.exists(skill_md_path) else None,
                     )
                     if full_instruction:
                         full_loaded_count += 1
@@ -767,6 +792,9 @@ class AgentService:
                         full_instruction = load_skill_md_content(
                             skill_id,
                             max_bytes=int(full_load_policy["max_bytes"]),
+                            user_info=user_info,
+                            scope=skill_meta.get("scope"),
+                            skill_md_path=skill_meta.get("skill_md_path"),
                         )
                         if full_instruction:
                             full_loaded_count += 1
@@ -869,6 +897,9 @@ class AgentService:
                                 full_instruction = load_skill_md_content(
                                     skill_id,
                                     max_bytes=int(full_load_policy["max_bytes"]),
+                                    user_info=user_info,
+                                    scope=skill_meta.get("scope"),
+                                    skill_md_path=skill_meta.get("skill_md_path"),
                                 )
                                 if full_instruction:
                                     full_loaded_count += 1

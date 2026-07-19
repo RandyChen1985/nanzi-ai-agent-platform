@@ -455,12 +455,24 @@ onUnmounted(() => {
                 <div v-else-if="filteredSkillsList.length === 0" class="text-center py-12">
                   <span class="text-2xl opacity-40">⚙️</span>
                   <p class="text-xs text-gray-400 mt-2 font-bold">未发现可用的智能体技能</p>
-                  <p class="text-[10px] text-gray-400/70 mt-1">
-                    {{
-                      skillsCustom && activeScope === 'global'
-                        ? '当前智能体自定义 Skills 未匹配到可用公共技能，可切换到「我的技能」'
-                        : '您可以前往系统控制台「技能管理」页面创建'
-                    }}
+                  <p class="text-[10px] text-gray-400/70 mt-1 px-4 leading-relaxed">
+                    <template v-if="skillsCustom && activeScope === 'global'">
+                      当前智能体自定义 Skills 未匹配到可用公共技能，可切换到「我的技能」
+                    </template>
+                    <template v-else-if="activeScope === 'personal'">
+                      可在对话中说「帮我生成一个…技能」，或前往
+                      <a
+                        class="text-emerald-600 hover:underline font-semibold"
+                        href="/dashboard/personal?tab=skills"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        @click.stop
+                      >个人中心 · 我的技能</a>
+                      新建 / 导入
+                    </template>
+                    <template v-else>
+                      可切换到「我的技能」，或前往个人中心创建个人技能
+                    </template>
                   </p>
                 </div>
 

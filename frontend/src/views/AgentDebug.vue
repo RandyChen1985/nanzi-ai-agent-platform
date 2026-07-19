@@ -69,6 +69,8 @@ import {
 } from "@/utils/skillFlowBadges";
 
 import ChatInput from "@/components/embed/ChatInput.vue";
+import SkillCreatedBanner from "@/components/chat/SkillCreatedBanner.vue";
+import { parseSkillCreatedMarker, type SkillCreatedInfo } from "@/utils/skillCreated";
 import WorkspaceBrowserDrawer from "@/components/embed/WorkspaceBrowserDrawer.vue";
 import MemoryBrowserDrawer from "@/components/embed/MemoryBrowserDrawer.vue";
 import SkillBrowserDrawer from "@/components/embed/SkillBrowserDrawer.vue";
@@ -1900,18 +1902,52 @@ const openSkillSelector = () => {
   showSkillDrawer.value = true;
 };
 
+const skillCreatedInfo = ref<SkillCreatedInfo | null>(null);
+
+watch(
+  () =>
+    messages.value
+      .map((m) =>
+        [
+          m.content || "",
+          ...((m.logs || []).map((log: any) => String(log.details || ""))),
+        ].join("\n"),
+      )
+      .join("\n---\n"),
+  (blob) => {
+    const info = parseSkillCreatedMarker(blob);
+    if (info && info.scope === "personal") {
+      skillCreatedInfo.value = info;
+    }
+  },
+);
+
+const mountCreatedSkill = () => {
+  if (!skillCreatedInfo.value) return;
+  handleSelectSkill({
+    id: skillCreatedInfo.value.skill_id,
+    name: skillCreatedInfo.value.name,
+    description: "",
+    scope: skillCreatedInfo.value.scope,
+  });
+  skillCreatedInfo.value = null;
+};
+
 const handleSelectSkill = (skill: any) => {
   if (!chatInputRef.value) return;
+  const scope = skill.scope === "personal" ? "personal" : "global";
   chatInputRef.value.uploadedFiles.push({
     type: "skill",
     url: skill.id,
     filename: `${skill.name} (技能)`,
     size: 0,
     ext: "skill",
+    scope,
     skillMeta: {
       id: skill.id,
       name: skill.name,
       description: skill.description || "",
+      scope,
     },
   });
 };
@@ -4645,6 +4681,13 @@ onUnmounted(() => {
 
       <!-- Input Area -->
       <div class="flex-shrink-0 px-4 py-2 bg-white border-t border-gray-200 relative z-20 debug-chat-input-wrapper">
+        <div v-if="skillCreatedInfo" class="mb-2">
+          <SkillCreatedBanner
+            :info="skillCreatedInfo"
+            @mount="mountCreatedSkill"
+            @dismiss="skillCreatedInfo = null"
+          />
+        </div>
         <ChatInput
           ref="chatInputRef"
           v-model="userInput"

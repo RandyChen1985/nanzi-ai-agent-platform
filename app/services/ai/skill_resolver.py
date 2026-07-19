@@ -146,21 +146,90 @@ def skill_filter_kwargs_from_config(agent_config: Any = None) -> Dict[str, Any]:
     }
 
 
-def load_skill_md_content(skill_id: str, max_bytes: int = 262144) -> Optional[str]:
-    """读取技能 SKILL.md 全文；失败返回 None。"""
+def _is_path_under_root(path: str, root: str) -> bool:
+    try:
+        abs_path = os.path.abspath(path)
+        abs_root = os.path.abspath(root)
+        return os.path.commonpath([abs_root, abs_path]) == abs_root
+    except Exception:
+        return False
+
+
+def _allowed_skill_md_roots(user_info: Optional[Dict[str, Any]] = None) -> List[str]:
+    from app.core.config import settings
+
+    roots: List[str] = [os.path.abspath(settings.SKILLS_DIR)]
+    personal_dir = get_user_personal_skills_dir(user_info)
+    if personal_dir:
+        roots.append(os.path.abspath(personal_dir))
+    return roots
+
+
+def _read_skill_md_if_allowed(
+    skill_md_path: str,
+    *,
+    allowed_roots: List[str],
+    max_bytes: int,
+) -> Optional[str]:
+    abs_path = os.path.abspath(skill_md_path)
+    if not any(_is_path_under_root(abs_path, root) for root in allowed_roots):
+        return None
+    if not os.path.exists(abs_path):
+        return None
+    with open(abs_path, "r", encoding="utf-8", errors="ignore") as f:
+        return f.read(max_bytes)
+
+
+def load_skill_md_content(
+    skill_id: str,
+    max_bytes: int = 262144,
+    *,
+    user_info: Optional[Dict[str, Any]] = None,
+    scope: Optional[str] = None,
+    skill_md_path: Optional[str] = None,
+) -> Optional[str]:
+    """读取技能 SKILL.md 全文；支持平台与个人目录。失败返回 None。"""
     if not _validate_skill_id(skill_id):
         return None
     try:
         from app.core.config import settings
 
-        skills_dir = os.path.abspath(settings.SKILLS_DIR)
-        skill_md_path = os.path.abspath(os.path.join(skills_dir, skill_id, "SKILL.md"))
-        if os.path.commonpath([skills_dir, skill_md_path]) != skills_dir:
-            return None
-        if not os.path.exists(skill_md_path):
-            return None
-        with open(skill_md_path, "r", encoding="utf-8", errors="ignore") as f:
-            return f.read(max_bytes)
+        allowed_roots = _allowed_skill_md_roots(user_info)
+        candidates: List[str] = []
+        if skill_md_path:
+            candidates.append(str(skill_md_path))
+
+        resolved_scope = (scope or "").strip().lower() or None
+        if user_info is not None:
+            for meta in list_skill_metas(user_info=user_info):
+                if meta.get("id") != skill_id:
+                    continue
+                if resolved_scope and (meta.get("scope") or SCOPE_GLOBAL) != resolved_scope:
+                    continue
+                meta_path = meta.get("skill_md_path")
+                if meta_path:
+                    candidates.append(str(meta_path))
+                break
+
+        if resolved_scope != SCOPE_PERSONAL:
+            candidates.append(
+                os.path.join(os.path.abspath(settings.SKILLS_DIR), skill_id, "SKILL.md")
+            )
+
+        seen: Set[str] = set()
+        for candidate in candidates:
+            abs_candidate = os.path.abspath(candidate)
+            if abs_candidate in seen:
+                continue
+            seen.add(abs_candidate)
+            content = _read_skill_md_if_allowed(
+                abs_candidate,
+                allowed_roots=allowed_roots,
+                max_bytes=max_bytes,
+            )
+            if content is not None:
+                return content
+        return None
     except Exception as e:
         logger.warning("[Skills] Failed to read SKILL.md for %s: %s", skill_id, e)
         return None

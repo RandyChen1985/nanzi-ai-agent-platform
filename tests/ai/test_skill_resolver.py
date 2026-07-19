@@ -84,7 +84,7 @@ def test_scan_relevant_skills_returns_top_match(monkeypatch):
     ]
     monkeypatch.setattr(
         "app.services.ai.skill_resolver.list_skill_metas",
-        lambda: metas,
+        lambda **kwargs: metas,
     )
     results = scan_relevant_skills("查一下用户列表", max_results=1, min_score=0.45)
     assert len(results) == 1
