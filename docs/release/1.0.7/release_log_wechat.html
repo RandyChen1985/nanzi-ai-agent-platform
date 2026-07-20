@@ -1,0 +1,274 @@
+<!--
+  微信公众号排版 HTML — 南孜 AI 智能体平台 v1.0.7
+  使用说明：
+  1. 复制下方 <section> 内全部内容，粘贴到微信公众平台编辑器「HTML」模式（或 135/秀米 等工具）
+  2. 封面图可在编辑器中自行上传替换
+  3. 外链在发布前预览确认；部分链接需绑定公众号域名白名单
+  4. 不支持 <style>、<script>、class/id 选择器，全部采用内联 style
+-->
+
+<section style="box-sizing:border-box;font-size:16px;color:#3f3f3f;line-height:1.8;letter-spacing:0.5px;text-align:justify;font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue','PingFang SC','Hiragino Sans GB','Microsoft YaHei',Arial,sans-serif;">
+
+  <!-- 标题区 -->
+  <section style="margin:0 0 24px 0;padding:24px 16px;background:linear-gradient(135deg,#064e3b 0%,#022c22 48%,#111827 100%);border-radius:10px;text-align:center;box-shadow:0 4px 20px rgba(16,185,129,0.15);">
+    <p style="margin:0 0 8px 0;font-size:22px;font-weight:bold;color:#f8fafc;line-height:1.5;letter-spacing:1px;">🚀 NanZi AI 开源智能体平台 · v1.0.7 重磅发布</p>
+    <p style="margin:0;font-size:15px;font-weight:normal;color:#a7f3d0;line-height:1.6;letter-spacing:0.5px;">品牌统一 · ChatBI可信分析 · 黄金报表订阅 · 个人技能闭环</p>
+  </section>
+
+  <!-- 项目声明 -->
+  <section style="margin:0 0 20px 0;padding:14px 16px;background:#fafafa;border:1px solid #e5e7eb;border-radius:10px;">
+    <p style="margin:0 0 10px 0;font-size:15px;font-weight:bold;color:#111827;line-height:1.5;">项目声明</p>
+    <p style="margin:0 0 10px 0;font-size:14px;color:#374151;line-height:1.85;text-align:justify;">
+      本项目为<strong>个人开源</strong>，供自由学习交流，遵循 MIT 开源协议，可自由分发。
+    </p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;text-align:justify;">
+      「NanZi」来自我一直使用的网名（南孜），取「孜孜不倦」之意，寓意 AI 持续学习与进化。
+    </p>
+  </section>
+
+  <!-- 仓库链接 -->
+  <section style="margin:0 0 20px 0;padding:12px 16px;background:#f0fdf4;border-left:4px solid #10b981;border-radius:0 6px 6px 0;">
+    <p style="margin:0;font-size:15px;color:#065f46;line-height:1.7;">
+      <strong style="color:#064e3b;">GitHub Repository：</strong>
+      <a href="https://github.com/RandyChen1985/nanzi-ai-agent-platform" style="color:#10b981;text-decoration:none;word-break:break-all;">RandyChen1985/nanzi-ai-agent-platform</a>
+    </p>
+  </section>
+
+  <!-- 导语 -->
+  <section style="margin:0 0 24px 0;">
+    <p style="margin:0 0 12px 0;font-size:15px;color:#374151;line-height:1.9;">
+      v1.0.7 是一次以<strong style="color:#059669;">“NanZi品牌统一、ChatBI 可信分析、黄金报表订阅、Grounding 门禁、个人技能与场景工作台”</strong>为核心的里程碑大版本迭代。平台完成「 Yunshu」→「南孜 / NanZi」全站更名；ChatBI 补齐非数据分流、连续分析与可信依据；黄金报表支持订阅、智能简报与告警推送；引入 Evidence Grounding 与 MCP 会话恢复；并打通个人技能创建-编辑-挂载闭环与场景模板交付。
+    </p>
+    <p style="margin:0;font-size:14px;color:#6b7280;line-height:1.8;">
+      本次变更范围自 <code style="font-size:13px;background:#f3f4f6;padding:2px 6px;border-radius:3px;color:#374151;">cda13f99</code>（含）至
+      <code style="font-size:13px;background:#f3f4f6;padding:2px 6px;border-radius:3px;color:#374151;">3aee21bb</code>，共
+      <strong>101 个提交</strong>，涉及 535 个文件、约 47,974 行新增代码。
+    </p>
+  </section>
+
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+
+  <!-- ========== Key Features ========== -->
+  <section style="margin:0 0 20px 0;">
+    <p style="margin:0 0 16px 0;font-size:20px;font-weight:bold;color:#111827;border-left:5px solid #10b981;padding-left:12px;line-height:1.4;">🚀 Key Features</p>
+  </section>
+
+  <!-- Feature Card 01 -->
+  <section style="margin:0 0 16px 0;padding:18px 16px;background-color:#f0fdf4;border:1px solid #a7f3d0;border-radius:10px;">
+    <p style="margin:0 0 14px 0;font-size:16px;font-weight:bold;color:#065f46;line-height:1.5;">01 🏷️ 品牌统一：南孜 / NanZi</p>
+    <p style="margin:0 0 10px 0;font-size:14px;color:#374151;line-height:1.85;text-align:justify;">
+      <span style="color:#10b981;font-weight:bold;margin-right:6px;">●</span><strong>全站文案更名</strong>： Yunshu → NanZi，登录页、侧栏、嵌入助手与文档同步。
+    </p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;text-align:justify;">
+      <span style="color:#10b981;font-weight:bold;margin-right:6px;">●</span><strong>仓库对齐</strong>：GitHub 仓库更名为 <code style="font-size:13px;background:#f3f4f6;padding:1px 5px;border-radius:3px;">nanzi-ai-agent-platform</code>，README 与项目声明更新。
+    </p>
+  </section>
+
+  <!-- Feature Card 02 -->
+  <section style="margin:0 0 16px 0;padding:18px 16px;background-color:#ecfeff;border:1px solid #a5f3fc;border-radius:10px;">
+    <p style="margin:0 0 14px 0;font-size:16px;font-weight:bold;color:#0891b2;line-height:1.5;">02 📊 ChatBI 分诊、连续分析与可信交付</p>
+    <p style="margin:0 0 10px 0;font-size:14px;color:#374151;line-height:1.85;text-align:justify;">
+      <span style="color:#06b6d4;font-weight:bold;margin-right:6px;">●</span><strong>非数据分流</strong>：非数据意图结构化澄清，放宽软性拦截，禁止把 dataset 当库名。
+    </p>
+    <p style="margin:0 0 10px 0;font-size:14px;color:#374151;line-height:1.85;text-align:justify;">
+      <span style="color:#06b6d4;font-weight:bold;margin-right:6px;">●</span><strong>连续分析升级</strong>：分诊与连续分析交付增强，DATA_QUERY 无条件委派。
+    </p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;text-align:justify;">
+      <span style="color:#06b6d4;font-weight:bold;margin-right:6px;">●</span><strong>可信依据与简报</strong>：追问分析 + 证据化业务简报落库（chatbi_briefs）。
+    </p>
+  </section>
+
+  <!-- Feature Card 03 -->
+  <section style="margin:0 0 16px 0;padding:18px 16px;background-color:#fffbeb;border:1px solid #fde68a;border-radius:10px;">
+    <p style="margin:0 0 14px 0;font-size:16px;font-weight:bold;color:#b45309;line-height:1.5;">03 📈 黄金报表订阅、简报与告警</p>
+    <p style="margin:0 0 10px 0;font-size:14px;color:#374151;line-height:1.85;text-align:justify;">
+      <span style="color:#f59e0b;font-weight:bold;margin-right:6px;">●</span><strong>订阅与运行历史</strong>：定时调度、运行快照、通知中心与站内信箱。
+    </p>
+    <p style="margin:0 0 10px 0;font-size:14px;color:#374151;line-height:1.85;text-align:justify;">
+      <span style="color:#f59e0b;font-weight:bold;margin-right:6px;">●</span><strong>智能简报推送</strong>：AI 分析简报经钉钉 / 企微 / 邮件 / 站内信投递并审计。
+    </p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;text-align:justify;">
+      <span style="color:#f59e0b;font-weight:bold;margin-right:6px;">●</span><strong>告警条件</strong>：版本化告警规则与触发证据，完善订阅通知体验。
+    </p>
+  </section>
+
+  <!-- Feature Card 04 -->
+  <section style="margin:0 0 16px 0;padding:18px 16px;background-color:#f8fafc;border:1px solid #cbd5e1;border-radius:10px;">
+    <p style="margin:0 0 14px 0;font-size:16px;font-weight:bold;color:#334155;line-height:1.5;">04 🛡️ Grounding 门禁与 MCP 稳定性</p>
+    <p style="margin:0 0 10px 0;font-size:14px;color:#374151;line-height:1.85;text-align:justify;">
+      <span style="color:#64748b;font-weight:bold;margin-right:6px;">●</span><strong>Evidence Grounding</strong>：统一 GroundingService；Intent-First、Session 门控、Final SQL 角色。
+    </p>
+    <p style="margin:0 0 10px 0;font-size:14px;color:#374151;line-height:1.85;text-align:justify;">
+      <span style="color:#64748b;font-weight:bold;margin-right:6px;">●</span><strong>软风险提示</strong>：未接地事实 <code style="font-size:13px;background:#f3f4f6;padding:1px 5px;border-radius:3px;">PASS_WITH_WARNING</code>；MCP external_tool 凭证校验。
+    </p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;text-align:justify;">
+      <span style="color:#64748b;font-weight:bold;margin-right:6px;">●</span><strong>会话恢复</strong>：Direct HTTP SSE 解析修复；失效会话自动恢复与重连。
+    </p>
+  </section>
+
+  <!-- Feature Card 05 -->
+  <section style="margin:0 0 16px 0;padding:18px 16px;background-color:#eef2ff;border:1px solid #c7d2fe;border-radius:10px;">
+    <p style="margin:0 0 14px 0;font-size:16px;font-weight:bold;color:#4338ca;line-height:1.5;">05 🧩 个人技能闭环与 Skills 工作台</p>
+    <p style="margin:0 0 10px 0;font-size:14px;color:#374151;line-height:1.85;text-align:justify;">
+      <span style="color:#6366f1;font-weight:bold;margin-right:6px;">●</span><strong>个人技能隔离</strong>：独立管理、启用/禁用、排序与作用域修复。
+    </p>
+    <p style="margin:0 0 10px 0;font-size:14px;color:#374151;line-height:1.85;text-align:justify;">
+      <span style="color:#6366f1;font-weight:bold;margin-right:6px;">●</span><strong>创建-编辑-挂载</strong>：个人中心「我的技能」、创建引导横幅、个人 SKILL.md 预加载。
+    </p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;text-align:justify;">
+      <span style="color:#6366f1;font-weight:bold;margin-right:6px;">●</span><strong>导入与白名单</strong>：压缩包导入、编辑器升级；智能体版本可自定义公共 Skills 白名单。
+    </p>
+  </section>
+
+  <!-- Feature Card 06 -->
+  <section style="margin:0 0 16px 0;padding:18px 16px;background-color:#eef6ff;border:1px solid #bfdbfe;border-radius:10px;">
+    <p style="margin:0 0 14px 0;font-size:16px;font-weight:bold;color:#1e40af;line-height:1.5;">06 🧰 场景模板、工作台与摸排画像</p>
+    <p style="margin:0 0 10px 0;font-size:14px;color:#374151;line-height:1.85;text-align:justify;">
+      <span style="color:#2563eb;font-weight:bold;margin-right:6px;">●</span><strong>场景交付闭环</strong>：场景包市场、资源绑定与交付实例落库；个人业务工作台上线。
+    </p>
+    <p style="margin:0 0 10px 0;font-size:14px;color:#374151;line-height:1.85;text-align:justify;">
+      <span style="color:#2563eb;font-weight:bold;margin-right:6px;">●</span><strong>库表摸排画像</strong>：中断/分页/增量全量摸排，置信度过滤，直导元数据导入。
+    </p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;text-align:justify;">
+      <span style="color:#2563eb;font-weight:bold;margin-right:6px;">●</span><strong>管理端体验</strong>：版本配置全屏向导、聊天 Markdown 历史、移动端工具栏与多页视觉对齐。
+    </p>
+  </section>
+
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+
+  <!-- ========== Breaking Changes ========== -->
+  <section style="margin:0 0 8px 0;">
+    <p style="margin:0 0 16px 0;font-size:20px;font-weight:bold;color:#111827;border-left:5px solid #dc2626;padding-left:12px;line-height:1.4;">⚠️ Breaking Changes</p>
+  </section>
+  <section style="margin:0 0 28px 0;overflow-x:auto;">
+    <table style="width:100%;border-collapse:collapse;font-size:14px;line-height:1.6;">
+      <thead>
+        <tr>
+          <th style="padding:10px 8px;background:#fef2f2;color:#991b1b;font-weight:bold;border:1px solid #fecaca;text-align:left;width:30%;">项目</th>
+          <th style="padding:10px 8px;background:#fef2f2;color:#991b1b;font-weight:bold;border:1px solid #fecaca;text-align:left;">说明</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td style="padding:10px 8px;border:1px solid #e5e7eb;color:#374151;font-weight:bold;">数据库</td>
+          <td style="padding:10px 8px;border:1px solid #e5e7eb;color:#374151;">须执行 V94 ~ V102 九个增量脚本；场景实例为 V102。</td>
+        </tr>
+        <tr>
+          <td style="padding:10px 8px;border:1px solid #e5e7eb;color:#374151;font-weight:bold;background:#f9fafb;">品牌与仓库</td>
+          <td style="padding:10px 8px;border:1px solid #e5e7eb;color:#374151;background:#f9fafb;">Yunshu → 南孜/NanZi；仓库 nanzi-ai-agent-platform。</td>
+        </tr>
+        <tr>
+          <td style="padding:10px 8px;border:1px solid #e5e7eb;color:#374151;font-weight:bold;">Grounding</td>
+          <td style="padding:10px 8px;border:1px solid #e5e7eb;color:#374151;">事实门禁与软风险提示行为变化，需回归关键对话。</td>
+        </tr>
+        <tr>
+          <td style="padding:10px 8px;border:1px solid #e5e7eb;color:#374151;font-weight:bold;background:#f9fafb;">个人技能</td>
+          <td style="padding:10px 8px;border:1px solid #e5e7eb;color:#374151;background:#f9fafb;">个人/公共隔离；禁用技能不再自动加载。</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+
+  <!-- ========== Database Upgrades ========== -->
+  <section style="margin:0 0 8px 0;">
+    <p style="margin:0 0 16px 0;font-size:20px;font-weight:bold;color:#111827;border-left:5px solid #10b981;padding-left:12px;line-height:1.4;">🗄️ Database Upgrades</p>
+    <p style="margin:0 0 12px 0;font-size:15px;color:#374151;">从 v1.0.6 升级至 v1.0.7，须执行 <strong>9 个</strong>增量 SQL 脚本：</p>
+  </section>
+  <section style="margin:0 0 28px 0;overflow-x:auto;">
+    <table style="width:100%;border-collapse:collapse;font-size:14px;line-height:1.6;">
+      <thead>
+        <tr>
+          <th style="padding:10px 8px;background:#f0fdf4;color:#047857;font-weight:bold;border:1px solid #a7f3d0;text-align:left;width:28%;">脚本</th>
+          <th style="padding:10px 8px;background:#f0fdf4;color:#047857;font-weight:bold;border:1px solid #a7f3d0;text-align:left;">内容</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td style="padding:10px 8px;border:1px solid #e5e7eb;color:#374151;font-weight:bold;">V94</td>
+          <td style="padding:10px 8px;border:1px solid #e5e7eb;color:#374151;">库表摸排任务与画像草稿表。</td>
+        </tr>
+        <tr>
+          <td style="padding:10px 8px;border:1px solid #e5e7eb;color:#374151;font-weight:bold;background:#f9fafb;">V95</td>
+          <td style="padding:10px 8px;border:1px solid #e5e7eb;color:#374151;background:#f9fafb;">画像置信度 / 临时表 / 忽略标记。</td>
+        </tr>
+        <tr>
+          <td style="padding:10px 8px;border:1px solid #e5e7eb;color:#374151;font-weight:bold;">V96</td>
+          <td style="padding:10px 8px;border:1px solid #e5e7eb;color:#374151;">黄金报表运行历史表。</td>
+        </tr>
+        <tr>
+          <td style="padding:10px 8px;border:1px solid #e5e7eb;color:#374151;font-weight:bold;background:#f9fafb;">V97</td>
+          <td style="padding:10px 8px;border:1px solid #e5e7eb;color:#374151;background:#f9fafb;">黄金报表订阅与通知信箱。</td>
+        </tr>
+        <tr>
+          <td style="padding:10px 8px;border:1px solid #e5e7eb;color:#374151;font-weight:bold;">V98</td>
+          <td style="padding:10px 8px;border:1px solid #e5e7eb;color:#374151;">智能简报推送审计表。</td>
+        </tr>
+        <tr>
+          <td style="padding:10px 8px;border:1px solid #e5e7eb;color:#374151;font-weight:bold;background:#f9fafb;">V99</td>
+          <td style="padding:10px 8px;border:1px solid #e5e7eb;color:#374151;background:#f9fafb;">智能体版本自定义 Skills 白名单。</td>
+        </tr>
+        <tr>
+          <td style="padding:10px 8px;border:1px solid #e5e7eb;color:#374151;font-weight:bold;">V100</td>
+          <td style="padding:10px 8px;border:1px solid #e5e7eb;color:#374151;">订阅告警条件与触发证据。</td>
+        </tr>
+        <tr>
+          <td style="padding:10px 8px;border:1px solid #e5e7eb;color:#374151;font-weight:bold;background:#f9fafb;">V101</td>
+          <td style="padding:10px 8px;border:1px solid #e5e7eb;color:#374151;background:#f9fafb;">ChatBI 证据化业务简报表。</td>
+        </tr>
+        <tr>
+          <td style="padding:10px 8px;border:1px solid #e5e7eb;color:#374151;font-weight:bold;">V102</td>
+          <td style="padding:10px 8px;border:1px solid #e5e7eb;color:#374151;">场景模板交付实例表。</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+
+  <!-- ========== Upgrade Guide ========== -->
+  <section style="margin:0 0 8px 0;">
+    <p style="margin:0 0 16px 0;font-size:20px;font-weight:bold;color:#111827;border-left:5px solid #7c3aed;padding-left:12px;line-height:1.4;">📦 Upgrade Guide</p>
+  </section>
+  <section style="margin:0 0 16px 0;padding:14px 16px;background:#1e1e2e;border-radius:8px;">
+    <p style="margin:0 0 6px 0;font-size:13px;color:#a5b4fc;line-height:1.8;font-family:Menlo,Monaco,Consolas,monospace;"># 拉取代码 → 更新依赖 → 执行 V94~V102 → 编译前端 → ./dev.sh</p>
+    <p style="margin:0;font-size:13px;color:#e2e8f0;line-height:1.8;font-family:Menlo,Monaco,Consolas,monospace;">./db-prod/apply-sql-native.sh</p>
+  </section>
+
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+
+  <!-- ========== Test Checklist ========== -->
+  <section style="margin:0 0 8px 0;">
+    <p style="margin:0 0 16px 0;font-size:20px;font-weight:bold;color:#111827;border-left:5px solid #0891b2;padding-left:12px;line-height:1.4;">✅ Test Checklist</p>
+  </section>
+  <section style="margin:0 0 28px 0;padding:14px 16px;background-color:#f0f9ff;border:1px solid #bae6fd;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:14px;color:#374151;line-height:1.8;">☐ <strong>品牌</strong>：界面与文档展示南孜 / NanZi，无残留 Yunshu</p>
+    <p style="margin:0 0 8px 0;font-size:14px;color:#374151;line-height:1.8;">☐ <strong>ChatBI</strong>：非数据分流、连续分析、可信依据、业务简报</p>
+    <p style="margin:0 0 8px 0;font-size:14px;color:#374151;line-height:1.8;">☐ <strong>黄金报表</strong>：订阅、运行历史、多渠道简报、告警触发</p>
+    <p style="margin:0 0 8px 0;font-size:14px;color:#374151;line-height:1.8;">☐ <strong>Grounding / MCP</strong>：软风险提示、SSE 重连、空结果不误拦</p>
+    <p style="margin:0 0 8px 0;font-size:14px;color:#374151;line-height:1.8;">☐ <strong>个人技能</strong>：创建/编辑/挂载/预加载/启用禁用</p>
+    <p style="margin:0 0 8px 0;font-size:14px;color:#374151;line-height:1.8;">☐ <strong>工作台与摸排</strong>：场景交付、conversation_id、库表画像导入</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.8;">☐ <strong>回归测试</strong>：pytest 核心测试用例全量通过</p>
+  </section>
+
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+
+  <!-- ========== Downloads ========== -->
+  <section style="margin:0 0 8px 0;">
+    <p style="margin:0 0 12px 0;font-size:20px;font-weight:bold;color:#111827;border-left:5px solid #d97706;padding-left:12px;line-height:1.4;">💾 Downloads</p>
+  </section>
+  <section style="margin:0 0 28px 0;padding:14px 16px;background-color:#fffbeb;border:1px solid #fde68a;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:14px;color:#374151;line-height:1.8;">📦 Source Code：nanzi-ai-agent-platform-1.0.7.zip / .tar.gz</p>
+    <p style="margin:0 0 8px 0;font-size:14px;color:#374151;line-height:1.8;">🐳 Docker：nanzi-ai-agent_1.0.7_linux-amd64_*.tar / arm64_*.tar</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.8;">
+      🔗 <a href="https://github.com/RandyChen1985/nanzi-ai-agent-platform/releases/tag/1.0.7" style="color:#10b981;text-decoration:none;">GitHub Releases v1.0.7</a>
+    </p>
+  </section>
+
+  <!-- 页脚 -->
+  <section style="margin:32px 0 0 0;padding:16px;text-align:center;background:#f9fafb;border-radius:8px;">
+    <p style="margin:0;font-size:14px;color:#6b7280;line-height:1.7;">感谢所有参与 v1.0.7 版本发布的开发者 🎉</p>
+  </section>
+
+</section>
