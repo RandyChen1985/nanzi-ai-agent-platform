@@ -2421,8 +2421,8 @@ const formatSkillCountLabel = (agent: AIAgent) => {
 
       <!-- List View -->
       <template v-else>
-        <div class="bg-white rounded-xl border border-gray-200 overflow-hidden shadow-sm">
-          <table class="w-full text-left border-collapse">
+        <div class="overflow-x-auto rounded-xl border border-gray-200 bg-white shadow-sm">
+          <table class="w-full min-w-[1100px] text-left border-collapse">
             <thead>
               <tr class="bg-gray-50/50 border-b border-gray-200">
                 <th v-if="canDragAgents" class="px-3 py-3 text-[11px] font-bold text-gray-400 uppercase tracking-wider w-8"></th>
@@ -2431,7 +2431,7 @@ const formatSkillCountLabel = (agent: AIAgent) => {
                 <th class="px-6 py-3 text-[11px] font-bold text-gray-400 uppercase tracking-wider hidden md:table-cell">引擎 / 类型</th>
                 <th class="px-6 py-3 text-[11px] font-bold text-gray-400 uppercase tracking-wider hidden lg:table-cell">能力</th>
                 <th class="px-6 py-3 text-[11px] font-bold text-gray-400 uppercase tracking-wider text-center w-32">状态</th>
-                <th class="px-6 py-3 text-[11px] font-bold text-gray-400 uppercase tracking-wider text-right w-48">操作</th>
+                <th class="w-64 min-w-[17rem] px-6 py-3 text-right text-[11px] font-bold uppercase tracking-wider text-gray-400">操作</th>
               </tr>
             </thead>
             <tbody class="divide-y divide-gray-100">
@@ -2536,13 +2536,13 @@ const formatSkillCountLabel = (agent: AIAgent) => {
                     </span>
                   </div>
                 </td>
-                <td class="px-6 py-4 text-right">
-                  <div class="flex items-center justify-end space-x-1">
+                <td class="min-w-[17rem] px-6 py-4 text-right">
+                  <div class="flex items-center justify-end gap-0.5">
                     <!-- Actions for List View -->
                     <button
                       v-if="agent.onboarding_step && agent.onboarding_step !== 'COMPLETE'"
                       @click.stop="continueAgentOnboarding(agent)"
-                      class="rounded-md border border-amber-200 bg-amber-50 px-2 py-1.5 text-xs font-medium text-amber-700 hover:bg-amber-100"
+                      class="inline-flex shrink-0 items-center whitespace-nowrap rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-xs font-medium text-amber-700 hover:bg-amber-100"
                       title="继续完成初始版本与资源配置"
                     >
                       继续配置

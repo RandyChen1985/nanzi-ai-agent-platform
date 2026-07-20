@@ -99,6 +99,14 @@ def test_agent_center_filters_and_labels_cards_by_primary_type():
     assert "getAgentTypeBadgeClass(agent)" in management
 
 
+def test_agent_list_keeps_continue_configuration_action_horizontal():
+    management = Path("frontend/src/views/AgentManagement.vue").read_text()
+
+    assert "min-w-[1100px]" in management
+    assert "min-w-[17rem]" in management
+    assert "shrink-0 items-center whitespace-nowrap" in management
+
+
 def test_agent_edit_dialog_is_compact_and_locks_engine_type_only():
     management = Path("frontend/src/views/AgentManagement.vue").read_text()
     modal = Path("frontend/src/components/Modal.vue").read_text()
