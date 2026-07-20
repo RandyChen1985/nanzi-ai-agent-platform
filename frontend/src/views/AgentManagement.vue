@@ -6,6 +6,7 @@ import type {
   AIAgent,
   AIAgentBase,
   AIAgentVersion,
+  AgentType,
 } from "../api/agent";
 import { modelApi, type AIModel } from "../api/model";
 import { toolApi, type SysApiTool } from "../api/tool";
@@ -87,10 +88,26 @@ const handleRagSelect = async (val: string | string[]) => {
     engineConfigUI.value.dataset_ids = Array.isArray(val)
       ? val.join(",")
       : (val as string);
+    if (isCreatingAgent.value) {
+      agentForm.value.engine_config = {
+        ...(agentForm.value.engine_config || {}),
+        dataset_ids: Array.isArray(val) ? val : [val],
+      };
+    }
   } else if (ragSelectorTarget.value === "agent_kb_immediate") {
     // Immediate update for Agent's KB config
-    if (!selectedAgent.value) return;
     const newIds = Array.isArray(val) ? val : [val];
+
+    if (isCreatingAgent.value && !selectedAgent.value) {
+      engineConfigUI.value.dataset_ids = newIds.join(",");
+      agentForm.value.engine_config = {
+        ...(agentForm.value.engine_config || {}),
+        dataset_ids: newIds,
+      };
+      showToast("知识库已加入初始配置", "success");
+      return;
+    }
+    if (!selectedAgent.value) return;
 
     const newConfig = {
       ...(selectedAgent.value.engine_config || {}),
@@ -143,12 +160,50 @@ const showToast = (
 };
 
 const isEditingAgent = ref(false);
+const showAdvancedCapabilities = ref(false);
+const AGENT_TYPE_OPTIONS = [
+  {
+    value: "GENERAL",
+    icon: "✨",
+    label: "通用助手",
+    description: "问答、写作与专业任务",
+    capability: "general_chat",
+  },
+  {
+    value: "CHATBI",
+    icon: "📊",
+    label: "数据分析（ChatBI）",
+    description: "查数、指标与报表分析",
+    capability: "data_query",
+  },
+  {
+    value: "KNOWLEDGE_BASE",
+    icon: "📚",
+    label: "知识库助手",
+    description: "企业文档检索与问答",
+    capability: "knowledge_base",
+  },
+] as const;
+const lockedCapabilityForType = (agentType: AgentType) =>
+  AGENT_TYPE_OPTIONS.find((option) => option.value === agentType)?.capability ||
+  "general_chat";
+const primaryCapabilities = new Set(
+  AGENT_TYPE_OPTIONS.map((option) => option.capability),
+);
+const selectAgentType = (agentType: AgentType) => {
+  const extensions = (agentForm.value.capabilities || []).filter(
+    (capability) => !primaryCapabilities.has(capability as any),
+  );
+  agentForm.value.agent_type = agentType;
+  agentForm.value.capabilities = [lockedCapabilityForType(agentType), ...extensions];
+};
 const agentForm = ref<AIAgentBase>({
   name: "",
   display_name: "",
   description: "",
   avatar_url: "",
   capabilities: [],
+  agent_type: "GENERAL",
 
   is_system: false,
   sort_order: 0,
@@ -369,6 +424,12 @@ const versionForm = ref<Partial<AIAgentVersion>>({
   skills: [],
   comment: "",
 });
+type OnboardingStep = "BASIC" | "VERSION" | "RESOURCE";
+const isOnboardingFlow = ref(false);
+const onboardingStep = ref<OnboardingStep>("BASIC");
+const onboardingKey = ref(crypto.randomUUID());
+const onboardingAgent = ref<AIAgent | null>(null);
+const onboardingVersion = ref<AIAgentVersion | null>(null);
 
 const availableTools = [
   {
@@ -506,16 +567,25 @@ const getMcpGroupSelectedCount = (tools: any[]) => {
   return tools.filter(tool => isToolSelected(tool.name)).length;
 };
 
-type VersionConfigStep = 'model' | 'tools' | 'prompt' | 'review';
+type VersionConfigStep = 'agent' | 'model' | 'tools' | 'prompt' | 'review';
 const versionConfigStep = ref<VersionConfigStep>('model');
 const toolSearchQuery = ref('');
+const isCreatingAgent = ref(false);
+const isPersistingNewAgent = ref(false);
+const isLocalCreationEngine = computed(() => (agentForm.value.engine_type || 'LOCAL') === 'LOCAL');
 
-const versionConfigSteps: { id: VersionConfigStep; label: string }[] = [
-  { id: 'model', label: '模型策略' },
-  { id: 'tools', label: '工具能力' },
-  { id: 'prompt', label: '系统提示词' },
-  { id: 'review', label: '确认保存' },
-];
+const versionConfigSteps = computed<{ id: VersionConfigStep; label: string }[]>(() => {
+  if (isCreatingAgent.value && !isLocalCreationEngine.value) {
+    return [{ id: 'agent', label: '智能体信息' }];
+  }
+  return [
+    ...(isCreatingAgent.value ? [{ id: 'agent' as const, label: '智能体信息' }] : []),
+    { id: 'model', label: '模型策略' },
+    { id: 'tools', label: '工具能力' },
+    { id: 'prompt', label: '系统提示词' },
+    { id: 'review', label: '确认保存' },
+  ];
+});
 
 const selectedToolsCount = computed(() => versionForm.value.tools?.length ?? 0);
 const selectedSkillsCount = computed(() => versionForm.value.skills?.length ?? 0);
@@ -526,6 +596,7 @@ const promptCharCount = computed(() => versionForm.value.system_prompt?.length ?
 
 const versionConfigProgress = computed(() => {
   let count = 0;
+  if (isCreatingAgent.value && agentForm.value.name && agentForm.value.display_name) count++;
   if (versionForm.value.model_name) count++;
   if (selectedToolsCount.value > 0) count++;
   if (versionForm.value.system_prompt?.trim()) count++;
@@ -585,22 +656,28 @@ const getStaticGroupSelectedCount = (tools: any[]) => {
   return tools.filter((tool) => isToolSelected(tool.name)).length;
 };
 
-const goVersionStep = (step: VersionConfigStep) => {
-  versionConfigStep.value = step;
-};
-
 const nextVersionStep = () => {
-  const idx = versionConfigSteps.findIndex((s) => s.id === versionConfigStep.value);
-  if (idx < versionConfigSteps.length - 1) {
-    versionConfigStep.value = versionConfigSteps[idx + 1].id;
+  if (versionConfigStep.value === 'agent' && (!agentForm.value.name || !agentForm.value.display_name)) {
+    showToast('请完善智能体标识和显示名称', 'warning');
+    return;
   }
+  if (versionConfigStep.value === 'agent' && agentForm.value.engine_type === 'RAGFLOW' && !agentForm.value.engine_config?.app_id) {
+    showToast('RAGFlow 模式必须填写 App ID', 'warning');
+    return;
+  }
+  if (versionConfigStep.value === 'agent' && agentForm.value.engine_type === 'OPENCLAW' && (!agentForm.value.engine_config?.base_url || !agentForm.value.engine_config?.model)) {
+    showToast('OpenClaw 模式必须填写地址和机器人 ID', 'warning');
+    return;
+  }
+  const idx = versionConfigSteps.value.findIndex((s) => s.id === versionConfigStep.value);
+  const next = versionConfigSteps.value[idx + 1];
+  if (next) versionConfigStep.value = next.id;
 };
 
 const prevVersionStep = () => {
-  const idx = versionConfigSteps.findIndex((s) => s.id === versionConfigStep.value);
-  if (idx > 0) {
-    versionConfigStep.value = versionConfigSteps[idx - 1].id;
-  }
+  const idx = versionConfigSteps.value.findIndex((s) => s.id === versionConfigStep.value);
+  const previous = versionConfigSteps.value[idx - 1];
+  if (previous) versionConfigStep.value = previous.id;
 };
 
 const setOrchestratorTemperature = (value: number) => {
@@ -800,8 +877,52 @@ const handleDeleteAgent = (agent: AIAgent) => {
   };
 };
 
+const startAgentCreation = () => {
+  isCreatingAgent.value = true;
+  isOnboardingFlow.value = true;
+  onboardingKey.value = crypto.randomUUID();
+  onboardingAgent.value = null;
+  onboardingVersion.value = null;
+  isEditingAgent.value = false;
+  selectedAgent.value = null;
+  agentForm.value = {
+    name: "",
+    display_name: "",
+    description: "",
+    avatar_url: "",
+    capabilities: ["general_chat"],
+    agent_type: "GENERAL",
+    is_system: false,
+    sort_order: 0,
+    is_enabled: true,
+    engine_type: "LOCAL",
+    engine_config: {
+      dataset_ids: [],
+      safety_check_enabled: true,
+      safety_check_input_strategy: "append",
+      safety_check_output_strategy: "append",
+    },
+  };
+  versionForm.value = {
+    model_name: "",
+    temperature: 0,
+    synthesis_model_name: "",
+    synthesis_temperature: 0.7,
+    system_prompt: "",
+    tools: [],
+    skills_custom: false,
+    skills: [],
+    comment: "Initial version",
+  };
+  fetchTools();
+  toolSearchQuery.value = "";
+  versionConfigStep.value = "agent";
+  showVersionModal.value = true;
+};
+
 const openAgentModal = (agent?: AIAgent) => {
   if (agent) {
+    isOnboardingFlow.value = false;
     if (agent.is_system && userInfo.value?.role !== "admin") {
       showToast("系统内置智能体仅管理员可编辑", "warning");
       return;
@@ -811,6 +932,7 @@ const openAgentModal = (agent?: AIAgent) => {
     agentForm.value = {
       ...agent,
       capabilities: agent.capabilities || [],
+      agent_type: agent.agent_type || "GENERAL",
       sort_order: agent.sort_order || 0,
       engine_type: agent.engine_type || "LOCAL",
       engine_config: agent.engine_config || null,
@@ -852,6 +974,11 @@ const openAgentModal = (agent?: AIAgent) => {
        };
     }
   } else {
+    isOnboardingFlow.value = true;
+    onboardingStep.value = "BASIC";
+    onboardingKey.value = crypto.randomUUID();
+    onboardingAgent.value = null;
+    onboardingVersion.value = null;
     isEditingAgent.value = false;
     selectedAgent.value = null;
     agentForm.value = {
@@ -860,6 +987,7 @@ const openAgentModal = (agent?: AIAgent) => {
       description: "",
       avatar_url: "",
       capabilities: [],
+      agent_type: "GENERAL",
       is_system: false,
       sort_order: 0,
       is_enabled: true,
@@ -884,7 +1012,7 @@ const openAgentModal = (agent?: AIAgent) => {
   showAgentModal.value = true;
 };
 
-const saveAgent = async () => {
+const saveAgent = async (exitAfterSave = false) => {
   if (selectedAgent.value && selectedAgent.value.is_editable === false) {
     showToast("无权限修改此智能体", "error");
     return;
@@ -893,6 +1021,10 @@ const saveAgent = async () => {
   if (!agentForm.value.name || !agentForm.value.display_name) {
     showToast("请完善智能体标识和名称", "warning");
     return;
+  }
+  if (agentForm.value.engine_type === 'RAGFLOW' || agentForm.value.engine_type === 'OPENCLAW') {
+    agentForm.value.agent_type = 'GENERAL';
+    agentForm.value.capabilities = ['general_chat'];
   }
 
   // Sync UI to Engine Config
@@ -946,6 +1078,23 @@ const saveAgent = async () => {
     if (isEditingAgent.value && selectedAgent.value) {
       await agentApi.updateAgent(selectedAgent.value.id, agentForm.value);
       showToast("更新成功", "success");
+    } else if (isOnboardingFlow.value) {
+      const response = await agentApi.createAgentOnboarding({
+        ...agentForm.value,
+        onboarding_key: onboardingKey.value,
+      });
+      onboardingAgent.value = response.data.agent;
+      onboardingVersion.value = response.data.version;
+      selectedAgent.value = response.data.agent;
+      versionForm.value = { ...response.data.version };
+      onboardingStep.value = "VERSION";
+      showToast(
+        response.data.template_fallback
+          ? "智能体和 V1 草稿已创建，当前使用安全基础模板"
+          : "智能体和 V1 草稿已创建",
+        response.data.template_fallback ? "info" : "success",
+      );
+      if (!exitAfterSave) return;
     } else {
       await agentApi.createAgent(agentForm.value);
       showToast("创建成功", "success");
@@ -955,6 +1104,115 @@ const saveAgent = async () => {
   } catch (error: any) {
     console.error("Failed to save agent", error);
     showToast(error.response?.data?.detail || "保存失败，请重试", "error");
+  }
+};
+
+const saveOnboardingVersion = async (exitAfterSave = false) => {
+  if (!onboardingAgent.value || !onboardingVersion.value) return;
+  if (!versionForm.value.model_name || !versionForm.value.system_prompt?.trim()) {
+    showToast("请完善模型和系统提示词", "warning");
+    return;
+  }
+  try {
+    const response = await agentApi.updateVersion(
+      onboardingAgent.value.id,
+      onboardingVersion.value.id,
+      versionForm.value,
+    );
+    onboardingVersion.value = response.data;
+    versionForm.value = { ...response.data };
+    onboardingAgent.value.onboarding_step = "RESOURCE";
+    onboardingStep.value = "RESOURCE";
+    showToast("初始版本已保存", "success");
+    if (exitAfterSave) {
+      showAgentModal.value = false;
+      fetchAgents();
+    }
+  } catch (error: any) {
+    showToast(error.response?.data?.detail || "初始版本保存失败", "error");
+  }
+};
+
+const saveOnboardingResources = async (exitAfterSave = false) => {
+  if (!onboardingAgent.value) return false;
+  const datasetIds = engineConfigUI.value.dataset_ids
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
+  try {
+    const response = await agentApi.updateAgent(onboardingAgent.value.id, {
+      ...onboardingAgent.value,
+      engine_config: {
+        ...(onboardingAgent.value.engine_config || {}),
+        dataset_ids: datasetIds,
+      },
+    });
+    onboardingAgent.value = response.data;
+    if (exitAfterSave) {
+      showToast("资源配置已保存，可稍后继续", "success");
+      showAgentModal.value = false;
+      fetchAgents();
+    }
+    return true;
+  } catch (error: any) {
+    showToast(error.response?.data?.detail || "资源配置保存失败", "error");
+    return false;
+  }
+};
+
+const saveOnboardingDraft = async () => {
+  if (onboardingStep.value === "BASIC") {
+    await saveAgent(true);
+  } else if (onboardingStep.value === "VERSION") {
+    await saveOnboardingVersion(true);
+  } else {
+    await saveOnboardingResources(true);
+  }
+};
+
+const publishOnboarding = async () => {
+  if (!onboardingAgent.value || !onboardingVersion.value) return;
+  if (!(await saveOnboardingResources(false))) return;
+  try {
+    await agentApi.publishVersion(onboardingAgent.value.id, onboardingVersion.value.id);
+    showToast("智能体已完成配置并发布", "success");
+    showAgentModal.value = false;
+    fetchAgents();
+  } catch (error: any) {
+    const detail = error.response?.data?.detail;
+    const missing = Array.isArray(detail?.missing) ? detail.missing.join("、") : "";
+    showToast(missing ? `尚未就绪：${missing}` : "发布失败", "error");
+  }
+};
+
+const continueAgentOnboarding = async (agent: AIAgent) => {
+  try {
+    const versionsResponse = await agentApi.listVersions(agent.id);
+    const draft = versionsResponse.data
+      .filter((version) => version.status === "DRAFT")
+      .sort((left, right) => left.version_number - right.version_number)[0];
+    if (!draft) {
+      showToast("未找到可继续配置的草稿版本", "warning");
+      return;
+    }
+    isEditingAgent.value = false;
+    isCreatingAgent.value = false;
+    isOnboardingFlow.value = true;
+    onboardingAgent.value = agent;
+    onboardingVersion.value = draft;
+    selectedAgent.value = agent;
+    agentForm.value = { ...agent };
+    versionForm.value = { ...draft };
+    engineConfigUI.value.dataset_ids = Array.isArray(agent.engine_config?.dataset_ids)
+      ? agent.engine_config.dataset_ids.join(",")
+      : "";
+    onboardingStep.value = agent.onboarding_step === "VERSION" ? "VERSION" : "RESOURCE";
+    fetchTools();
+    toolSearchQuery.value = "";
+    versionConfigStep.value = "model";
+    showVersionModal.value = true;
+  } catch (error) {
+    showToast("加载未完成配置失败", "error");
   }
 };
 
@@ -969,6 +1227,7 @@ const openVersionModal = (
   version?: AIAgentVersion,
   isClone: boolean = false
 ) => {
+  isCreatingAgent.value = false;
   fetchTools();
   // This might be called from Drawer emit
   if (version) {
@@ -1037,7 +1296,23 @@ const handleDrawerPublishVersion = (version: AIAgentVersion) => {
           }
         }
       } catch (e) {
-        showToast("发布失败", "error");
+        const error = e as any;
+        const detail = error?.response?.data?.detail;
+        const missing = Array.isArray(detail?.missing) ? detail.missing : [];
+        const labels: Record<string, string> = {
+          published_version: "发布版本",
+          primary_capability: "主类型能力",
+          dataset_binding: "数据集绑定",
+          data_query_tool: "查数工具",
+          knowledge_base_binding: "知识库绑定",
+          knowledge_base_tool: "知识库检索工具",
+        };
+        showToast(
+          detail?.code === "AGENT_NOT_READY"
+            ? `尚未就绪：${missing.map((item: string) => labels[item] || item).join("、")}`
+            : "发布失败",
+          "error",
+        );
         console.error(e);
       }
     },
@@ -1080,7 +1355,117 @@ const openPreview = (agent: AIAgent) => {
   window.open(url, "_blank");
 };
 
+const createExternalEngineAgent = async () => {
+  agentForm.value.agent_type = 'GENERAL';
+  agentForm.value.capabilities = ['general_chat'];
+  const created = await agentApi.createAgent(agentForm.value);
+  selectedAgent.value = created.data;
+  isCreatingAgent.value = false;
+  showVersionModal.value = false;
+  showToast(`${created.data.engine_type === 'RAGFLOW' ? 'RAGFlow' : 'OpenClaw'} 智能体创建成功`, 'success');
+  fetchAgents();
+  return true;
+};
+
+const persistNewAgentDraft = async (closeAfterSave: boolean) => {
+  if (isPersistingNewAgent.value) return false;
+  if (!agentForm.value.name || !agentForm.value.display_name) {
+    if (closeAfterSave) showVersionModal.value = false;
+    else {
+      versionConfigStep.value = 'agent';
+      showToast("请完善智能体标识和显示名称", "warning");
+    }
+    return false;
+  }
+  if (agentForm.value.engine_type === 'RAGFLOW' && !agentForm.value.engine_config?.app_id) {
+    if (closeAfterSave) {
+      showVersionModal.value = false;
+      return false;
+    }
+    versionConfigStep.value = 'agent';
+    showToast('RAGFlow 模式必须填写 App ID', 'warning');
+    return false;
+  }
+  if (agentForm.value.engine_type === 'OPENCLAW' && (!agentForm.value.engine_config?.base_url || !agentForm.value.engine_config?.model)) {
+    if (closeAfterSave) {
+      showVersionModal.value = false;
+      return false;
+    }
+    versionConfigStep.value = 'agent';
+    showToast('OpenClaw 模式必须填写地址和机器人 ID', 'warning');
+    return false;
+  }
+
+  const desiredVersion = { ...versionForm.value };
+  const rawDatasetIds = agentForm.value.engine_config?.dataset_ids ?? engineConfigUI.value.dataset_ids;
+  const datasetIds = (Array.isArray(rawDatasetIds) ? rawDatasetIds : String(rawDatasetIds || '').split(','))
+    .map((value) => String(value).trim()).filter(Boolean);
+  agentForm.value.engine_config = {
+    ...(agentForm.value.engine_config || {}),
+    dataset_ids: datasetIds,
+  };
+  isPersistingNewAgent.value = true;
+  try {
+    if (!isLocalCreationEngine.value) {
+      // 外部引擎不创建本地版本，由远程引擎直接提供运行能力。
+      return await createExternalEngineAgent();
+    }
+    const created = await agentApi.createAgentOnboarding({
+      ...agentForm.value,
+      onboarding_key: onboardingKey.value,
+    });
+    onboardingAgent.value = created.data.agent;
+    onboardingVersion.value = created.data.version;
+    selectedAgent.value = created.data.agent;
+
+    const toolName = (item: any) => typeof item === 'string' ? item : item?.name;
+    const mergedToolMap = new Map<string, any>();
+    for (const item of [...(created.data.version.tools || []), ...(desiredVersion.tools || [])]) {
+      const name = toolName(item);
+      if (name) mergedToolMap.set(name, item);
+    }
+    const updated = await agentApi.updateVersion(
+      created.data.agent.id,
+      created.data.version.id,
+      {
+        ...created.data.version,
+        ...desiredVersion,
+        model_name: desiredVersion.model_name || created.data.version.model_name,
+        tools: [...mergedToolMap.values()],
+        system_prompt: desiredVersion.system_prompt?.trim() || created.data.version.system_prompt,
+        skills_custom: !!desiredVersion.skills_custom,
+        skills: desiredVersion.skills_custom ? (desiredVersion.skills || []) : [],
+      },
+    );
+    const savedVersion = updated.data;
+    onboardingVersion.value = savedVersion;
+    versionForm.value = { ...savedVersion };
+    isCreatingAgent.value = false;
+    showToast(closeAfterSave ? "智能体草稿已保存，可稍后继续配置" : "智能体和 V1 草稿已创建", "success");
+    if (closeAfterSave) showVersionModal.value = false;
+    fetchAgents();
+    return true;
+  } catch (error: any) {
+    showToast(error.response?.data?.detail || "智能体创建失败", "error");
+    return false;
+  } finally {
+    isPersistingNewAgent.value = false;
+  }
+};
+
+const handleVersionEditorClose = async () => {
+  if (isCreatingAgent.value) {
+    await persistNewAgentDraft(true);
+    return;
+  }
+  showVersionModal.value = false;
+};
+
 const saveVersion = async () => {
+  if (isCreatingAgent.value) {
+    await persistNewAgentDraft(true);
+    return;
+  }
   if (!selectedAgent.value) return;
 
   if (!versionForm.value.system_prompt) {
@@ -1128,6 +1513,63 @@ const saveVersion = async () => {
   } catch (error: any) {
     console.error("Failed to save version", error);
     showToast(error.response?.data?.detail || "版本保存失败", "error");
+  }
+};
+
+const publishVersionFromEditor = async () => {
+  if (!versionForm.value.system_prompt?.trim()) {
+    showToast("系统提示词不能为空", "warning");
+    versionConfigStep.value = "prompt";
+    return;
+  }
+  if (versionForm.value.skills_custom && !(versionForm.value.skills?.length)) {
+    showToast("自定义 Skills 开启时至少选择一个公共技能", "warning");
+    versionConfigStep.value = "tools";
+    toolTab.value = "skills";
+    return;
+  }
+
+  try {
+    if (isCreatingAgent.value) {
+      const saved = await persistNewAgentDraft(false);
+      if (!saved) return;
+    } else {
+      if (!selectedAgent.value || !versionForm.value.id) return;
+      const updated = await agentApi.updateVersion(
+        selectedAgent.value.id,
+        versionForm.value.id,
+        {
+          ...versionForm.value,
+          skills_custom: !!versionForm.value.skills_custom,
+          skills: versionForm.value.skills_custom ? (versionForm.value.skills || []) : [],
+        },
+      );
+      versionForm.value = { ...updated.data };
+      onboardingVersion.value = updated.data;
+    }
+
+    const agentId = onboardingAgent.value?.id || selectedAgent.value?.id;
+    const versionId = onboardingVersion.value?.id || versionForm.value.id;
+    if (!agentId || !versionId) return;
+
+    await agentApi.publishVersion(agentId, versionId);
+    showToast("智能体已完成配置并发布", "success");
+    isOnboardingFlow.value = false;
+    showVersionModal.value = false;
+    await fetchAgents();
+    if (versionsDrawerRef.value) versionsDrawerRef.value.refresh();
+  } catch (error: any) {
+    const detail = error.response?.data?.detail;
+    const labels: Record<string, string> = {
+      published_version: "可发布版本",
+      data_query_tool: "查数工具",
+      knowledge_base_tool: "知识库检索工具",
+      knowledge_base: "知识库",
+    };
+    const missing = Array.isArray(detail?.missing)
+      ? detail.missing.map((item: string) => labels[item] || item).join("、")
+      : "";
+    showToast(missing ? `尚未就绪：缺少${missing}` : (detail?.message || detail || "发布失败"), "error");
   }
 };
 
@@ -1224,12 +1666,25 @@ const toggleTool = (toolName: string) => {
   );
 
   if (index > -1) {
+    const requiredForNewAgent = isCreatingAgent.value && (
+      (agentForm.value.agent_type === 'CHATBI' && ['get_dataset_schema', 'execute_sql_query'].includes(toolName)) ||
+      (agentForm.value.agent_type === 'KNOWLEDGE_BASE' && toolName === 'search_knowledge_base')
+    );
+    if (requiredForNewAgent) {
+      showToast('该工具是当前智能体类型的必需能力，创建时不能取消', 'warning');
+      return;
+    }
     tools.splice(index, 1);
   } else {
     tools.push(toolName);
   }
   versionForm.value.tools = tools;
 };
+
+const isVersionToolSelected = (toolName: string) =>
+  (versionForm.value.tools || []).some((item) =>
+    (typeof item === "string" ? item : (item as any).name) === toolName
+  );
 
 const setSkillsCustom = (enabled: boolean) => {
   if (!canEditVersion.value) return;
@@ -1263,7 +1718,7 @@ const isToolSelected = (toolName: string) => {
   );
 };
 
-const isAllMcpSelected = (serverName: string, tools: any[]) => {
+const isAllMcpSelected = (_serverName: string, tools: any[]) => {
   if (!tools || tools.length === 0) return false;
   return tools.every(tool => isToolSelected(tool.name));
 };
@@ -1334,6 +1789,10 @@ const newCapability = ref("");
 const addCapability = () => {
   const cap = newCapability.value.trim();
   if (!cap) return;
+  if (primaryCapabilities.has(cap as any)) {
+    showToast("系统能力由智能体类型自动管理", "warning");
+    return;
+  }
   if (!agentForm.value.capabilities) agentForm.value.capabilities = [];
   if (!agentForm.value.capabilities.includes(cap)) {
     agentForm.value.capabilities.push(cap);
@@ -1563,7 +2022,7 @@ const formatSkillCountLabel = (agent: AIAgent) => {
             <button
               type="button"
               class="flex flex-1 items-center justify-center gap-2 bg-primary px-4 py-2 text-sm font-medium text-white transition-all hover:bg-primary-dark active:scale-[0.98] sm:flex-none"
-              @click="openAgentModal()"
+              @click="startAgentCreation()"
             >
               <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
@@ -1588,7 +2047,7 @@ const formatSkillCountLabel = (agent: AIAgent) => {
             <button
               type="button"
               class="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50"
-              @click="showCreateAgentMenu = false; openAgentModal()"
+              @click="showCreateAgentMenu = false; startAgentCreation()"
             >
               <svg class="h-4 w-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
@@ -1648,7 +2107,7 @@ const formatSkillCountLabel = (agent: AIAgent) => {
     >
       <p class="text-gray-500">没有找到匹配的智能体</p>
       <button
-        @click="openAgentModal()"
+        @click="startAgentCreation()"
         class="mt-4 text-primary hover:underline"
       >
         新建一个?
@@ -1724,6 +2183,12 @@ const formatSkillCountLabel = (agent: AIAgent) => {
                   v-if="agent.is_system"
                   class="shrink-0 px-1.5 py-0.5 rounded font-medium bg-indigo-50 text-indigo-600 border border-indigo-100"
                 >系统</span>
+                <span class="shrink-0 px-1.5 py-0.5 rounded font-medium border"
+                  :class="agent.readiness_ready
+                    ? 'bg-emerald-50 text-emerald-700 border-emerald-100'
+                    : 'bg-amber-50 text-amber-700 border-amber-100'"
+                  :title="agent.readiness_ready ? '已满足运行和委派条件' : `缺少：${(agent.readiness_missing || []).join(', ')}`"
+                >{{ agent.readiness_ready ? '已就绪' : '尚未就绪' }}</span>
                 <span
                   v-if="!agent.is_enabled"
                   class="shrink-0 px-1.5 py-0.5 rounded font-medium bg-gray-100 text-gray-500 border border-gray-200"
@@ -1889,7 +2354,14 @@ const formatSkillCountLabel = (agent: AIAgent) => {
           </div>
 
           <button
-            v-if="agent.engine_type !== 'RAGFLOW' && agent.engine_type !== 'OPENCLAW'"
+            v-if="agent.onboarding_step && agent.onboarding_step !== 'COMPLETE'"
+            @click.stop="continueAgentOnboarding(agent)"
+            class="px-3 py-1.5 bg-amber-500 text-white text-xs font-medium rounded-lg shadow-sm hover:bg-amber-600 transition-colors"
+          >
+            继续配置
+          </button>
+          <button
+            v-else-if="agent.engine_type !== 'RAGFLOW' && agent.engine_type !== 'OPENCLAW'"
             @click.stop="openDrawer(agent)"
             class="px-3 py-1.5 bg-primary text-white text-xs font-medium rounded-lg shadow-sm hover:bg-primary-dark transition-colors flex items-center"
           >
@@ -2037,6 +2509,14 @@ const formatSkillCountLabel = (agent: AIAgent) => {
                 <td class="px-6 py-4 text-right">
                   <div class="flex items-center justify-end space-x-1">
                     <!-- Actions for List View -->
+                    <button
+                      v-if="agent.onboarding_step && agent.onboarding_step !== 'COMPLETE'"
+                      @click.stop="continueAgentOnboarding(agent)"
+                      class="rounded-md border border-amber-200 bg-amber-50 px-2 py-1.5 text-xs font-medium text-amber-700 hover:bg-amber-100"
+                      title="继续完成初始版本与资源配置"
+                    >
+                      继续配置
+                    </button>
                     <button @click.stop="openPreview(agent)" class="p-1.5 text-gray-400 hover:text-indigo-600 hover:bg-white rounded-md transition-all shadow-sm border border-transparent hover:border-gray-100" title="预览">
                       <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
@@ -2097,11 +2577,27 @@ const formatSkillCountLabel = (agent: AIAgent) => {
 
     <!-- Agent Modal -->
     <Modal
-      v-if="showAgentModal"
+      v-if="showAgentModal && isEditingAgent"
       :title="isEditingAgent ? '编辑智能体' : '新建智能体'"
       @close="showAgentModal = false"
     >
       <div class="space-y-4">
+        <div v-if="isOnboardingFlow" class="grid grid-cols-3 gap-2 rounded-xl bg-gray-50 p-2">
+          <div
+            v-for="(step, index) in [
+              { key: 'BASIC', label: '基本信息' },
+              { key: 'VERSION', label: '初始版本' },
+              { key: 'RESOURCE', label: '资源与发布' },
+            ]"
+            :key="step.key"
+            class="rounded-lg px-3 py-2 text-center text-xs font-semibold transition-colors"
+            :class="onboardingStep === step.key ? 'bg-white text-primary shadow-sm' : 'text-gray-400'"
+          >
+            <span class="mr-1">{{ index + 1 }}</span>{{ step.label }}
+          </div>
+        </div>
+
+        <div v-if="!isOnboardingFlow || onboardingStep === 'BASIC'" class="space-y-4">
         <div>
           <label class="block text-sm font-medium text-gray-700 mb-1"
             >物理标识符 (ID/Name)</label
@@ -2481,66 +2977,191 @@ const formatSkillCountLabel = (agent: AIAgent) => {
             ></div>
           </label>
         </div>
-        <div>
-          <label class="block text-sm font-medium text-gray-700 mb-1"
-            >能力标签 (Orchestration Tags)</label
-          >
-          <div class="flex items-center space-x-2 mb-2">
-            <input
-              v-model="newCapability"
-              @keyup.enter="addCapability"
-              placeholder="输入能力并回车 (e.g. data_query)"
-              class="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent outline-none text-sm"
-            />
+        <div v-if="agentForm.engine_type === 'LOCAL'">
+          <label class="block text-sm font-medium text-gray-700 mb-2">
+            智能体类型 <span class="text-red-500">*</span>
+          </label>
+          <div v-if="!isEditingAgent" class="grid grid-cols-1 sm:grid-cols-3 gap-2">
             <button
-              @click="addCapability"
-              class="px-3 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 font-medium text-xs"
+              v-for="option in AGENT_TYPE_OPTIONS"
+              :key="option.value"
+              type="button"
+              @click="selectAgentType(option.value)"
+              class="text-left rounded-xl border p-3 transition-all"
+              :class="agentForm.agent_type === option.value
+                ? 'border-primary bg-blue-50 ring-1 ring-primary/20'
+                : 'border-gray-200 bg-white hover:border-blue-300'"
             >
-              添加
+              <div class="flex items-center gap-2 font-semibold text-gray-800">
+                <span>{{ option.icon }}</span>
+                <span>{{ option.label }}</span>
+              </div>
+              <p class="mt-1 text-xs leading-5 text-gray-500">{{ option.description }}</p>
+              <p
+                v-if="agentForm.agent_type === option.value"
+                class="mt-2 text-xs font-medium text-primary"
+              >
+                ✓ 已选择
+              </p>
             </button>
           </div>
-          <div
-            class="flex flex-wrap gap-2 min-h-[30px] p-2 bg-gray-50 rounded-lg border border-dashed border-gray-200"
+          <div v-else class="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2">
+            <div class="text-sm font-semibold text-gray-800">当前类型：{{ AGENT_TYPE_OPTIONS.find(option => option.value === agentForm.agent_type)?.label }}</div>
+            <p class="mt-1 text-xs text-gray-500">智能体类型决定运行流程和门禁规则，创建保存后不可修改。</p>
+          </div>
+
+          <div class="mt-3 rounded-lg border border-blue-100 bg-blue-50 px-3 py-2 text-xs text-gray-600">
+            <template v-if="agentForm.agent_type === 'CHATBI'">
+              将自动启用数据查询能力；发布前需要绑定数据集和查数工具。
+            </template>
+            <template v-else-if="agentForm.agent_type === 'KNOWLEDGE_BASE'">
+              将自动启用知识库能力；发布前需要绑定知识库和检索工具。
+            </template>
+            <template v-else>
+              适合大多数问答、写作和专业任务，可在高级设置中补充扩展能力。
+            </template>
+          </div>
+        </div>
+
+        <div v-if="agentForm.engine_type === 'LOCAL'" class="rounded-lg border border-gray-200">
+          <button
+            type="button"
+            class="flex w-full items-center justify-between px-3 py-2.5 text-left text-sm font-medium text-gray-700"
+            @click="showAdvancedCapabilities = !showAdvancedCapabilities"
           >
-            <span
-              v-for="(cap, index) in agentForm.capabilities"
-              :key="index"
-              class="inline-flex items-center px-2 py-1 rounded bg-blue-100 text-blue-800 text-xs font-medium"
-            >
-              {{ cap }}
+            <span>高级能力设置</span>
+            <span class="text-xs text-gray-400">{{ showAdvancedCapabilities ? '收起' : '展开' }}</span>
+          </button>
+          <div v-if="showAdvancedCapabilities" class="border-t border-gray-100 p-3">
+            <div class="mb-3">
+              <p class="mb-2 text-xs font-medium text-gray-500">系统管理能力</p>
+              <span class="inline-flex items-center rounded-full bg-blue-100 px-2.5 py-1 text-xs font-medium text-blue-800">
+                🔒 {{ lockedCapabilityForType(agentForm.agent_type) }}
+              </span>
+            </div>
+            <div class="flex items-center space-x-2 mb-2">
+              <input
+                v-model="newCapability"
+                @keyup.enter="addCapability"
+                placeholder="添加扩展能力，例如 reporting"
+                class="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent outline-none text-sm"
+              />
               <button
-                @click="removeCapability(index)"
-                class="ml-1 text-blue-600 hover:text-blue-900 focus:outline-none"
+                type="button"
+                @click="addCapability"
+                class="px-3 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 font-medium text-xs"
+              >添加</button>
+            </div>
+            <div class="flex flex-wrap gap-2 min-h-[30px] p-2 bg-gray-50 rounded-lg border border-dashed border-gray-200">
+              <span
+                v-for="cap in (agentForm.capabilities || []).filter(cap => !primaryCapabilities.has(cap as any))"
+                :key="cap"
+                class="inline-flex items-center px-2 py-1 rounded bg-gray-200 text-gray-700 text-xs font-medium"
               >
-                ×
-              </button>
-            </span>
-            <span
-              v-if="!agentForm.capabilities?.length"
-              class="text-xs text-gray-400 p-1"
-              >暂无标签</span
-            >
+                {{ cap }}
+                <button
+                  type="button"
+                  @click="removeCapability((agentForm.capabilities || []).indexOf(cap))"
+                  class="ml-1 text-gray-500 hover:text-gray-900 focus:outline-none"
+                >×</button>
+              </span>
+              <span
+                v-if="!(agentForm.capabilities || []).some(cap => !primaryCapabilities.has(cap as any))"
+                class="text-xs text-gray-400 p-1"
+              >暂无扩展能力</span>
+            </div>
           </div>
         </div>
         <div class="mt-6 flex justify-end space-x-3">
           <button
-            @click="showAgentModal = false"
+            @click="isOnboardingFlow ? saveOnboardingDraft() : (showAgentModal = false)"
             class="px-4 py-2 text-gray-500 hover:text-gray-700 font-medium"
           >
-            取消
+            {{ isOnboardingFlow ? '跳过，稍后配置' : '取消' }}
           </button>
           <button
-            @click="saveAgent"
+            @click="saveAgent(false)"
             class="px-6 py-2 bg-primary text-white rounded-lg hover:bg-primary-dark transition-colors font-medium"
           >
-            确认保存
+            {{ isEditingAgent ? '确认保存' : '保存并继续配置' }}
           </button>
+        </div>
+        </div>
+
+        <div v-if="isOnboardingFlow && onboardingStep === 'VERSION'" class="space-y-5">
+          <div class="rounded-xl border border-blue-100 bg-blue-50/70 p-4">
+            <div class="text-sm font-semibold text-blue-900">V1 初始版本草稿已创建</div>
+            <p class="mt-1 text-xs leading-5 text-blue-700">系统已按智能体类型带入基础模板，你可以直接调整模型、提示词和工具。</p>
+          </div>
+          <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <div>
+              <label class="mb-1 block text-sm font-medium text-gray-700">模型 <span class="text-red-500">*</span></label>
+              <input v-model="versionForm.model_name" list="onboarding-models" class="w-full rounded-lg border border-gray-300 px-3 py-2 outline-none focus:ring-2 focus:ring-primary" />
+              <datalist id="onboarding-models">
+                <option v-for="model in models" :key="model.id || model.name" :value="model.name" />
+              </datalist>
+            </div>
+            <div>
+              <label class="mb-1 block text-sm font-medium text-gray-700">温度 {{ versionForm.temperature ?? 0 }}</label>
+              <input v-model.number="versionForm.temperature" type="range" min="0" max="2" step="0.1" class="mt-3 w-full accent-primary" />
+            </div>
+          </div>
+          <div>
+            <label class="mb-1 block text-sm font-medium text-gray-700">系统提示词 <span class="text-red-500">*</span></label>
+            <textarea v-model="versionForm.system_prompt" rows="8" class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary"></textarea>
+          </div>
+          <div>
+            <label class="mb-2 block text-sm font-medium text-gray-700">工具</label>
+            <div class="grid max-h-48 grid-cols-1 gap-2 overflow-y-auto rounded-lg border border-gray-200 p-3 sm:grid-cols-2">
+              <label v-for="tool in availableTools" :key="tool.name" class="flex cursor-pointer items-start gap-2 rounded-lg p-2 hover:bg-gray-50">
+                <input
+                  type="checkbox"
+                  class="mt-0.5 rounded text-primary"
+                  :checked="isVersionToolSelected(tool.name)"
+                  @change="toggleTool(tool.name)"
+                />
+                <span><span class="block text-xs font-semibold text-gray-700">{{ tool.name }}</span><span class="block text-[10px] leading-4 text-gray-400">{{ tool.description }}</span></span>
+              </label>
+            </div>
+          </div>
+          <div class="flex items-center justify-between pt-2">
+            <button @click="saveOnboardingDraft" class="px-4 py-2 text-sm font-medium text-gray-500 hover:text-gray-700">保存草稿，稍后配置</button>
+            <button @click="saveOnboardingVersion(false)" class="rounded-lg bg-primary px-6 py-2 text-sm font-medium text-white hover:bg-primary-dark">保存并下一步</button>
+          </div>
+        </div>
+
+        <div v-if="isOnboardingFlow && onboardingStep === 'RESOURCE'" class="space-y-5">
+          <div class="rounded-xl border border-gray-200 p-4">
+            <div class="text-sm font-semibold text-gray-900">{{ agentForm.agent_type === 'GENERAL' ? '通用智能体无需必选业务资源' : agentForm.agent_type === 'CHATBI' ? '绑定 ChatBI 数据集' : '绑定知识库' }}</div>
+            <p class="mt-1 text-xs leading-5 text-gray-500">
+              {{ agentForm.agent_type === 'GENERAL' ? '可以直接发布；需要时再从版本管理补充工具、技能或资源。' : '发布前需要至少绑定一个可用资源，并确保初始版本包含对应查询工具。' }}
+            </p>
+          </div>
+          <div v-if="agentForm.agent_type !== 'GENERAL'">
+            <label class="mb-1 block text-sm font-medium text-gray-700">{{ agentForm.agent_type === 'CHATBI' ? '数据集 IDs' : '知识库 Dataset IDs' }}</label>
+            <div class="flex gap-2">
+              <input v-model="engineConfigUI.dataset_ids" placeholder="多个 ID 使用逗号分隔" class="flex-1 rounded-lg border border-gray-300 px-3 py-2 outline-none focus:ring-2 focus:ring-primary" />
+              <button type="button" @click="openRagSelector('dataset', 'dataset_ids')" class="rounded-lg border border-gray-200 bg-gray-50 px-4 py-2 text-sm text-gray-600 hover:bg-gray-100">选择资源</button>
+            </div>
+          </div>
+          <div class="rounded-lg bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-800">发布时会自动执行就绪检查；未满足条件时会明确提示缺少的资源或工具，不会产生不可用的已发布智能体。</div>
+          <div class="flex items-center justify-between pt-2">
+            <button @click="onboardingStep = 'VERSION'" class="px-3 py-2 text-sm font-medium text-gray-500 hover:text-gray-700">上一步</button>
+            <div class="flex gap-2">
+              <button @click="saveOnboardingDraft" class="px-4 py-2 text-sm font-medium text-gray-500 hover:text-gray-700">保存草稿，稍后配置</button>
+              <button @click="publishOnboarding" class="rounded-lg bg-primary px-6 py-2 text-sm font-medium text-white hover:bg-primary-dark">检查并发布</button>
+            </div>
+          </div>
         </div>
       </div>
     </Modal>
 
     <AgentVersionEditorDrawer
       :show="showVersionModal"
+      :is-creating-agent="isCreatingAgent"
+      :is-onboarding-flow="isOnboardingFlow"
+      :agent-form="agentForm"
+      :can-configure-system-agent="userInfo?.role === 'admin'"
       :version-form="versionForm"
       :selected-agent="selectedAgent"
       :models="models"
@@ -2571,8 +3192,9 @@ const formatSkillCountLabel = (agent: AIAgent) => {
       :is-static-group-collapsed="isStaticGroupCollapsed"
       :get-static-group-selected-count="getStaticGroupSelectedCount"
       :get-model-display-name="getModelDisplayName"
-      @close="showVersionModal = false"
+      @close="handleVersionEditorClose"
       @save="saveVersion"
+      @publish="publishVersionFromEditor"
       @update:tool-tab="toolTab = $event"
       @update:tool-search-query="toolSearchQuery = $event"
       @update:version-config-step="versionConfigStep = $event"

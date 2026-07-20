@@ -5,6 +5,8 @@ from app.services.ai.agent_manager import AgentManagerService
 from app.models.agent import AIAgent, AIAgentVersion
 from app.schemas.agent import AIAgentBase, AIAgentVersionBase
 
+pytestmark = pytest.mark.no_infrastructure
+
 # --- Mocks ---
 
 @pytest.fixture
@@ -218,11 +220,47 @@ async def test_update_agent_permission(mock_session, mock_user_normal):
     res = await AgentManagerService.update_agent(mock_session, "o1", AIAgentBase(name="x", display_name="X"), mock_user_normal)
     assert res is None # Forbidden
 
+
+@pytest.mark.asyncio
+async def test_update_agent_keeps_original_primary_type(mock_session, mock_user_admin):
+    agent = AIAgent(
+        id="a1",
+        name="fixed-type",
+        display_name="Fixed Type",
+        created_by="admin",
+        agent_type="CHATBI",
+        capabilities=["data_query", "reporting"],
+        engine_type="LOCAL",
+    )
+    mock_session.get.return_value = agent
+
+    await AgentManagerService.update_agent(
+        mock_session,
+        "a1",
+        AIAgentBase(
+            name="fixed-type",
+            display_name="Fixed Type Updated",
+            agent_type="GENERAL",
+            capabilities=["general_chat", "writing"],
+        ),
+        mock_user_admin,
+    )
+
+    assert agent.agent_type == "CHATBI"
+    assert agent.capabilities == ["data_query", "writing"]
+
 @pytest.mark.asyncio
 async def test_publish_version_logic(mock_session, mock_user_admin):
     """测试版本发布逻辑"""
-    agent = AIAgent(id="a1", created_by="admin")
-    mock_session.get.return_value = agent
+    agent = AIAgent(
+        id="a1",
+        created_by="admin",
+        agent_type="GENERAL",
+        capabilities=["general_chat"],
+        engine_config={},
+    )
+    version = AIAgentVersion(id="v_new", agent_id="a1", tools=[])
+    mock_session.get.side_effect = [agent, version]
     
     await AgentManagerService.publish_version(mock_session, "a1", "v_new", mock_user_admin)
     
@@ -231,3 +269,34 @@ async def test_publish_version_logic(mock_session, mock_user_admin):
     # 2. Publish new
     assert mock_session.execute.call_count == 2
     mock_session.commit.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_publish_version_rejects_chatbi_without_query_tool_before_archiving(mock_session, mock_user_admin):
+    from app.services.ai.agent_manager import AgentNotReadyError
+
+    agent = AIAgent(
+        id="chatbi-1",
+        created_by="admin",
+        agent_type="CHATBI",
+        capabilities=["data_query"],
+        engine_config={"dataset_ids": []},
+    )
+    version = AIAgentVersion(
+        id="draft-1",
+        agent_id="chatbi-1",
+        tools=[],
+    )
+    mock_session.get.side_effect = [agent, version]
+
+    with pytest.raises(AgentNotReadyError) as exc_info:
+        await AgentManagerService.publish_version(
+            mock_session,
+            "chatbi-1",
+            "draft-1",
+            mock_user_admin,
+        )
+
+    assert exc_info.value.missing == ("data_query_tool",)
+    mock_session.execute.assert_not_called()
+    mock_session.commit.assert_not_called()

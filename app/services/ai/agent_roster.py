@@ -46,7 +46,7 @@ async def resolve_delegable_system_agents_for_user(
     current_agent_id: Optional[str],
 ) -> List[Any]:
     from app.services.ai.agent_manager import AgentManagerService
-    from app.services.ai.tools.agent_delegate_tool import filter_delegable_system_agents
+    from app.services.ai.tools.agent_delegate_tool import resolve_runnable_delegable_system_agents
 
     active_agents = await AgentManagerService.list_agents(session)
     raw_user_id = None
@@ -54,7 +54,7 @@ async def resolve_delegable_system_agents_for_user(
     if user_info:
         raw_user_id = user_info.get("user_id") or user_info.get("id")
         is_admin = user_info.get("role") == "admin"
-    return await filter_delegable_system_agents(
+    return await resolve_runnable_delegable_system_agents(
         session,
         active_agents,
         user_id=raw_user_id,

@@ -80,6 +80,8 @@ def test_sub_agent_call_nudge_for_data_query():
     nudge = resolve_tool_nudge(
         "帮我查一下设备资产列表",
         tools,
+        available_sub_agent_names={"chat-bi"},
+        sub_agent_targets_by_capability={"data_query": "chat-bi"},
         semantic_intent=IntentType.DATA_QUERY,
         semantic_confidence=0.94,
     )
@@ -487,6 +489,8 @@ def test_sub_agent_call_nudge_for_knowledge_query():
     nudge = resolve_tool_nudge(
         "我想查一下设备运维规范和操作指引",
         tools,
+        available_sub_agent_names={"knowledge-base"},
+        sub_agent_targets_by_capability={"knowledge_base": "knowledge-base"},
         semantic_intent=IntentType.KNOWLEDGE_BASE,
         semantic_confidence=0.92,
     )

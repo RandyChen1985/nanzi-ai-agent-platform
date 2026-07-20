@@ -154,6 +154,52 @@ async def filter_delegable_system_agents(
     return delegable
 
 
+async def resolve_runnable_delegable_system_agents(
+    session: Any,
+    agents: Iterable[Any],
+    *,
+    user_id: int | str | None,
+    is_admin: bool,
+    current_agent_id: str | None,
+) -> List[Any]:
+    """Return permitted system agents that have a loadable, ready runtime."""
+    from app.services.ai.agent_readiness import evaluate_agent_readiness
+    from app.services.ai.agent_types import resolve_agent_type
+
+    permitted = await filter_delegable_system_agents(
+        session,
+        agents,
+        user_id=user_id,
+        is_admin=is_admin,
+        current_agent_id=current_agent_id,
+    )
+    runnable: List[Any] = []
+    for agent in permitted:
+        config = await AgentManagerService.get_active_agent_config(
+            session,
+            agent_id=str(getattr(agent, "id", "") or ""),
+        )
+        if not config:
+            continue
+        readiness = evaluate_agent_readiness(
+            agent_type=resolve_agent_type(agent),
+            capabilities=config.capabilities,
+            engine_config=config.engine_config,
+            tools=config.tools,
+            has_published_version=True,
+        )
+        if readiness.ready:
+            runnable.append(agent)
+
+    return sorted(
+        runnable,
+        key=lambda agent: (
+            -int(getattr(agent, "sort_order", 0) or 0),
+            str(getattr(agent, "id", "") or ""),
+        ),
+    )
+
+
 def delegable_agent_name_aliases(agents: Iterable[Any]) -> set[str]:
     aliases: set[str] = set()
     for agent in agents or []:
@@ -271,9 +317,16 @@ async def sub_agent_call(agent_name: str, query: str) -> str:
             if str(getattr(a, "id", "") or "") == str(main_ctx.agent_id) and _matches_requested_agent(a, agent_name):
                 return "错误：主智能体无法委派调用自身。"
 
-        delegable_agents = await filter_delegable_system_agents(
+        permitted_agents = await filter_delegable_system_agents(
             session,
             all_active_system,
+            user_id=main_ctx.user_id,
+            is_admin=main_ctx.is_admin,
+            current_agent_id=main_ctx.agent_id,
+        )
+        delegable_agents = await resolve_runnable_delegable_system_agents(
+            session,
+            permitted_agents,
             user_id=main_ctx.user_id,
             is_admin=main_ctx.is_admin,
             current_agent_id=main_ctx.agent_id,
@@ -295,6 +348,16 @@ async def sub_agent_call(agent_name: str, query: str) -> str:
                 return "错误：主智能体无法委派调用自身。"
 
         if not target_config:
+            unavailable_match = next(
+                (a for a in permitted_agents if _matches_requested_agent(a, agent_name)),
+                None,
+            )
+            if unavailable_match is not None:
+                return (
+                    f"错误：智能体 `{unavailable_match.name}`（{unavailable_match.display_name or unavailable_match.name}）"
+                    "当前尚未就绪，缺少可加载的发布版本或主类型所需的资源/工具。"
+                    "请完成配置并发布后重试。"
+                )
             # 无论如何都找不到，只列出当前用户可委派的候选，供模型自我纠错
             candidates = [
                 f"`{a.name}` ({a.display_name or a.name})"

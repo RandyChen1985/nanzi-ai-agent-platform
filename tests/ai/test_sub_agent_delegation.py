@@ -1,6 +1,7 @@
 import pytest
 import asyncio
 from contextlib import contextmanager
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch, MagicMock
 from app.services.ai.tools.agent_delegate_tool import (
     sub_agent_call,
@@ -9,12 +10,14 @@ from app.services.ai.tools.agent_delegate_tool import (
     finalize_delegation_output,
     resolve_delegation_permission_options,
     filter_delegable_system_agents,
+    resolve_runnable_delegable_system_agents,
     delegable_agent_name_aliases,
     EMPTY_DELEGATION_RESULT_MESSAGE,
     DELEGATION_INTERRUPT_MESSAGES,
 )
 from app.core.context import AgentContext, set_agent_context
 from app.schemas.agent import ChatConfig
+from app.services.ai.runners.assistant_agent_runner import AssistantAgentRunner
 
 pytestmark = pytest.mark.no_infrastructure
 
@@ -61,6 +64,10 @@ def _make_system_agent(*, agent_id, name, display_name="测试助手"):
     mock_agent.display_name = display_name
     mock_agent.is_enabled = True
     mock_agent.is_system = True
+    mock_agent.agent_type = "CHATBI" if name == "chat-bi" else "GENERAL"
+    mock_agent.capabilities = ["data_query"] if name == "chat-bi" else ["general_chat"]
+    mock_agent.engine_config = {"dataset_ids": [ID_SUB_KB]} if name == "chat-bi" else {}
+    mock_agent.sort_order = 0
     return mock_agent
 
 
@@ -101,6 +108,27 @@ def test_resolve_delegation_permission_options_preserves_main_approval_boundary(
     }
 
 
+def test_capability_target_prefers_sort_order_then_stable_id():
+    targets = AssistantAgentRunner._build_sub_agent_targets_by_capability(
+        [
+            {
+                "id": "b",
+                "name": "later",
+                "sort_order": 1,
+                "capabilities": ["data_query"],
+            },
+            {
+                "id": "a",
+                "name": "preferred",
+                "sort_order": 5,
+                "capabilities": ["data_query"],
+            },
+        ]
+    )
+
+    assert targets["data_query"] == "preferred"
+
+
 @pytest.mark.asyncio
 async def test_filter_delegable_system_agents_hides_self_and_unauthorized_agents():
     main_agent = _make_system_agent(agent_id="main-agent-id", name="assistant", display_name="主助手")
@@ -128,6 +156,46 @@ async def test_filter_delegable_system_agents_hides_self_and_unauthorized_agents
 
     assert delegable == [allowed_agent]
     assert delegable_agent_name_aliases(delegable) >= {"chat-bi", "chat_bi", "数据助手"}
+
+
+@pytest.mark.asyncio
+async def test_runnable_delegable_agents_exclude_unloadable_candidate():
+    ready_agent = _make_system_agent(
+        agent_id="ready-agent-id",
+        name="chat-bi",
+        display_name="数据助手",
+    )
+    ready_agent.agent_type = "CHATBI"
+    ready_agent.capabilities = ["data_query"]
+    ready_agent.engine_config = {"dataset_ids": ["dataset-1"]}
+    unavailable_agent = _make_system_agent(
+        agent_id="unavailable-agent-id",
+        name="knowledge-base",
+        display_name="知识库助手",
+    )
+    mock_session = AsyncMock()
+    ready_config = SimpleNamespace(
+        tools=["execute_sql_query"],
+        engine_config={"dataset_ids": ["dataset-1"]},
+        capabilities=["data_query"],
+    )
+
+    async def mock_get_config(_session, *, agent_id=None, agent_name=None):
+        return ready_config if agent_id == "ready-agent-id" else None
+
+    with patch(
+        "app.services.ai.agent_manager.AgentManagerService.get_active_agent_config",
+        AsyncMock(side_effect=mock_get_config),
+    ):
+        runnable = await resolve_runnable_delegable_system_agents(
+            mock_session,
+            [ready_agent, unavailable_agent],
+            user_id=None,
+            is_admin=True,
+            current_agent_id="main-id",
+        )
+
+    assert runnable == [ready_agent]
 
 
 @pytest.mark.asyncio
@@ -169,8 +237,9 @@ async def test_sub_agent_call_normal_execution_and_log_forwarding():
         agent_name="chat-bi",
         agent_display_name="数据查询助手",
         system_prompt="sub",
-        tools=[],
-        capabilities=[],
+        tools=["execute_sql_query"],
+        capabilities=["data_query"],
+        engine_config={"dataset_ids": [ID_SUB_KB]},
         model_name="test",
         temperature=0.0,
     )
@@ -218,8 +287,9 @@ async def test_sub_agent_call_self_delegation():
         agent_name="chat-bi",
         agent_display_name="数据查询助手",
         system_prompt="sub",
-        tools=[],
-        capabilities=[],
+        tools=["execute_sql_query"],
+        capabilities=["data_query"],
+        engine_config={"dataset_ids": [ID_SUB_KB]},
         model_name="test",
         temperature=0.0,
     )
@@ -268,8 +338,8 @@ async def test_sub_agent_call_context_inheritance_and_user_info():
         agent_name="chat-bi",
         agent_display_name="数据查询助手",
         system_prompt="sub",
-        tools=[],
-        capabilities=[],
+        tools=["execute_sql_query"],
+        capabilities=["data_query"],
         model_name="test",
         temperature=0.0,
         engine_config={"dataset_ids": [ID_SUB_KB]},
@@ -339,8 +409,9 @@ async def test_sub_agent_call_empty_output_returns_guidance():
         agent_name="chat-bi",
         agent_display_name="数据查询助手",
         system_prompt="sub",
-        tools=[],
-        capabilities=[],
+        tools=["execute_sql_query"],
+        capabilities=["data_query"],
+        engine_config={"dataset_ids": [ID_SUB_KB]},
         model_name="test",
         temperature=0.0,
     )
@@ -378,8 +449,9 @@ async def test_sub_agent_call_blocks_duplicate_same_agent_and_query():
         agent_name="chat-bi",
         agent_display_name="数据查询助手",
         system_prompt="sub",
-        tools=[],
-        capabilities=[],
+        tools=["execute_sql_query"],
+        capabilities=["data_query"],
+        engine_config={"dataset_ids": [ID_SUB_KB]},
         model_name="test",
         temperature=0.0,
     )
@@ -422,8 +494,9 @@ async def test_sub_agent_call_caps_same_agent_attempts_per_turn():
         agent_name="chat-bi",
         agent_display_name="数据查询助手",
         system_prompt="sub",
-        tools=[],
-        capabilities=[],
+        tools=["execute_sql_query"],
+        capabilities=["data_query"],
+        engine_config={"dataset_ids": [ID_SUB_KB]},
         model_name="test",
         temperature=0.0,
     )
@@ -468,8 +541,9 @@ async def test_sub_agent_call_permission_interrupt_returns_error():
         agent_name="chat-bi",
         agent_display_name="数据查询助手",
         system_prompt="sub",
-        tools=[],
-        capabilities=[],
+        tools=["execute_sql_query"],
+        capabilities=["data_query"],
+        engine_config={"dataset_ids": [ID_SUB_KB]},
         model_name="test",
         temperature=0.0,
     )
@@ -503,8 +577,9 @@ async def test_sub_agent_call_timeout_generator_closed():
         agent_name="chat-bi",
         agent_display_name="数据查询助手",
         system_prompt="sub",
-        tools=[],
-        capabilities=[],
+        tools=["execute_sql_query"],
+        capabilities=["data_query"],
+        engine_config={"dataset_ids": [ID_SUB_KB]},
         model_name="test",
         temperature=0.0,
     )

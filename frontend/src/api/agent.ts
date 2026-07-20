@@ -1,6 +1,8 @@
 import axios from '../utils/axios'
 import type { StandardResponse } from './common'
 
+export type AgentType = 'GENERAL' | 'CHATBI' | 'KNOWLEDGE_BASE'
+
 export interface AIAgent {
   id: string
   name: string
@@ -8,6 +10,7 @@ export interface AIAgent {
   description: string
   avatar_url?: string
   capabilities?: string[]
+  agent_type: AgentType
   is_system: boolean
   is_enabled: boolean
   created_by?: string
@@ -30,6 +33,9 @@ export interface AIAgent {
   metadata_dataset_count?: number | null
   /** 显式绑定的知识库数；未绑定（走全局）为 null */
   knowledge_base_count?: number | null
+  readiness_ready?: boolean
+  readiness_missing?: string[]
+  onboarding_step?: 'VERSION' | 'RESOURCE' | 'COMPLETE'
 }
 
 export interface AIAgentBase {
@@ -38,6 +44,7 @@ export interface AIAgentBase {
   description: string
   avatar_url?: string
   capabilities?: string[]
+  agent_type: AgentType
   is_system?: boolean
   is_enabled?: boolean
   engine_type?: 'LOCAL' | 'RAGFLOW' | 'OPENCLAW'
@@ -68,6 +75,14 @@ export const agentApi = {
   
   // Create agent
   createAgent: (data: Partial<AIAgent>) => axios.post<AIAgent>('/api/portal/agents/', data),
+
+  createAgentOnboarding: (data: Partial<AIAgent> & { onboarding_key: string }) =>
+    axios.post<{
+      agent: AIAgent
+      version: AIAgentVersion
+      onboarding_step: 'VERSION' | 'RESOURCE' | 'COMPLETE'
+      template_fallback: boolean
+    }>('/api/portal/agents/onboarding', data),
   
   // Update agent
   updateAgent: (id: string, data: Partial<AIAgent>) => axios.put<AIAgent>(`/api/portal/agents/${id}`, data),

@@ -12,6 +12,9 @@ class AIAgent(Base):
     description = Column(Text)
     avatar_url = Column(String(255))
     capabilities = Column(JSON) # Tags for routing e.g. ["data", "coding"]
+    agent_type = Column(String(32), nullable=False, default="GENERAL")
+    onboarding_key = Column(String(64), nullable=True)
+    onboarding_step = Column(String(20), nullable=False, default="COMPLETE")
     is_system = Column(Boolean, default=False)
     sort_order = Column(Integer, default=0)
     is_enabled = Column(Boolean, default=True)

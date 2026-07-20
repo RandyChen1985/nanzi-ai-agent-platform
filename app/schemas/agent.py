@@ -1,6 +1,7 @@
 from pydantic import BaseModel, Field, ConfigDict, model_validator, field_validator
 from typing import Optional, Dict, Any, List, Union
 from datetime import datetime
+from app.services.ai.agent_types import AgentType
 
 # --- Agent Management Schemas ---
 
@@ -61,6 +62,7 @@ class AIAgentBase(BaseModel):
     description: Optional[str] = None
     avatar_url: Optional[str] = None
     capabilities: Optional[List[str]] = []
+    agent_type: AgentType = AgentType.GENERAL
     is_system: Optional[bool] = False
     sort_order: Optional[int] = 0
     is_enabled: Optional[bool] = True
@@ -92,9 +94,23 @@ class AIAgentResponse(AIAgentBase):
     # 仅在智能体显式绑定（非全局策略）时返回计数，否则为 null
     metadata_dataset_count: Optional[int] = None
     knowledge_base_count: Optional[int] = None
+    readiness_ready: bool = False
+    readiness_missing: List[str] = Field(default_factory=list)
+    onboarding_step: str = "COMPLETE"
     # versions: List[AIAgentVersionResponse] = [] # Optional
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class AgentOnboardingCreateRequest(AIAgentBase):
+    onboarding_key: str = Field(min_length=8, max_length=64)
+
+
+class AgentOnboardingResponse(BaseModel):
+    agent: AIAgentResponse
+    version: AIAgentVersionResponse
+    onboarding_step: str
+    template_fallback: bool = False
 
 # --- Chat Execution Schemas ---
 

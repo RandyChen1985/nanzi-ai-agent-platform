@@ -4,13 +4,202 @@ from typing import Optional, List, Dict, Any
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, delete, update, or_
 from sqlalchemy.orm import selectinload
+from sqlalchemy.exc import IntegrityError
 from app.models.agent import AIAgent, AIAgentVersion
 from app.schemas.agent import ChatConfig, AIAgentBase, AIAgentVersionBase
 import json
+from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
 
+
+class AgentNotReadyError(ValueError):
+    def __init__(self, missing: tuple[str, ...]):
+        self.missing = missing
+        super().__init__(f"Agent is not ready: {', '.join(missing)}")
+
+
+@dataclass(frozen=True)
+class AgentOnboardingResult:
+    agent: AIAgent
+    version: AIAgentVersion
+    template_fallback: bool
+
 class AgentManagerService:
+    _ONBOARDING_TEMPLATE_AGENT_NAMES = {
+        "GENERAL": "main",
+        "CHATBI": "chat-bi",
+        "KNOWLEDGE_BASE": "knowledge-base",
+    }
+    _ONBOARDING_FALLBACKS = {
+        "GENERAL": {
+            "system_prompt": "你是一个通用智能助手。请准确理解用户问题，在不确定时明确说明，并安全使用已配置工具。",
+            "tools": [],
+        },
+        "CHATBI": {
+            "system_prompt": "你是数据分析助手。必须基于真实数据集结构和查询结果回答，不得编造数据。",
+            "tools": ["get_dataset_schema", "execute_sql_query"],
+        },
+        "KNOWLEDGE_BASE": {
+            "system_prompt": "你是知识库助手。必须先检索已绑定知识库，再基于检索结果回答，不得编造内部资料。",
+            "tools": ["search_knowledge_base"],
+        },
+    }
+
+    @staticmethod
+    async def _resolve_onboarding_template(
+        session: AsyncSession,
+        agent_type: Any,
+    ) -> Dict[str, Any]:
+        type_value = getattr(agent_type, "value", agent_type)
+        template_name = AgentManagerService._ONBOARDING_TEMPLATE_AGENT_NAMES[str(type_value)]
+        config = await AgentManagerService.get_active_agent_config(
+            session,
+            agent_name=template_name,
+        )
+        if config:
+            return {
+                "model_name": config.model_name,
+                "temperature": config.temperature or 0.0,
+                "system_prompt": config.system_prompt,
+                "tools": AgentManagerService._normalize_tools_for_db(config.tools),
+                "skills_custom": bool(config.skills_custom),
+                "skills": list(config.skills or []),
+                "template_fallback": False,
+            }
+
+        from app.services.config_service import ConfigService
+
+        fallback = AgentManagerService._ONBOARDING_FALLBACKS[str(type_value)]
+        return {
+            "model_name": await ConfigService.get("llm_model_name") or "DeepSeek-V3.2",
+            "temperature": 0.0,
+            "system_prompt": fallback["system_prompt"],
+            "tools": list(fallback["tools"]),
+            "skills_custom": False,
+            "skills": [],
+            "template_fallback": True,
+        }
+
+    @staticmethod
+    async def create_agent_onboarding(
+        session: AsyncSession,
+        data: AIAgentBase,
+        *,
+        onboarding_key: str,
+        user: Any = None,
+    ) -> AgentOnboardingResult:
+        from app.services.ai.agent_types import normalize_agent_capabilities
+
+        if isinstance(user, dict):
+            created_by = user.get("user_name")
+            is_admin = user.get("role", "") == "admin"
+        else:
+            created_by = getattr(user, "user_name", None) if user else None
+            is_admin = bool(user and getattr(user, "role", "") == "admin")
+
+        existing_result = await session.execute(
+            select(AIAgent).where(
+                AIAgent.created_by == created_by,
+                AIAgent.onboarding_key == onboarding_key,
+            )
+        )
+        existing_agent = existing_result.scalar_one_or_none()
+        if existing_agent:
+            version_result = await session.execute(
+                select(AIAgentVersion)
+                .where(AIAgentVersion.agent_id == existing_agent.id)
+                .order_by(AIAgentVersion.version_number.asc())
+                .limit(1)
+            )
+            existing_version = version_result.scalar_one_or_none()
+            if existing_version:
+                return AgentOnboardingResult(
+                    agent=existing_agent,
+                    version=existing_version,
+                    template_fallback=False,
+                )
+
+        duplicate_name = await session.execute(select(AIAgent.id).where(AIAgent.name == data.name))
+        if duplicate_name.scalar_one_or_none():
+            from fastapi import HTTPException
+
+            raise HTTPException(status_code=400, detail=f"Agent with ID/Name '{data.name}' already exists.")
+
+        template = await AgentManagerService._resolve_onboarding_template(session, data.agent_type)
+        agent = AIAgent(
+            id=str(uuid.uuid4()),
+            name=data.name,
+            display_name=data.display_name,
+            description=data.description,
+            avatar_url=data.avatar_url,
+            capabilities=normalize_agent_capabilities(data.agent_type, data.capabilities),
+            agent_type=data.agent_type.value,
+            onboarding_key=onboarding_key,
+            onboarding_step="VERSION",
+            is_system=data.is_system if is_admin and data.is_system is not None else False,
+            sort_order=data.sort_order or 0,
+            is_enabled=data.is_enabled if data.is_enabled is not None else True,
+            created_by=created_by,
+            engine_type=data.engine_type,
+            engine_config=data.engine_config,
+        )
+        version = AIAgentVersion(
+            id=str(uuid.uuid4()),
+            agent_id=agent.id,
+            version_number=1,
+            model_name=template["model_name"],
+            temperature=template["temperature"],
+            system_prompt=template["system_prompt"],
+            tools=template["tools"],
+            skills_custom=template["skills_custom"],
+            skills=template["skills"],
+            status="DRAFT",
+            comment="Initial onboarding template snapshot",
+        )
+        session.add(agent)
+        session.add(version)
+        try:
+            await session.flush()
+            await session.commit()
+        except IntegrityError:
+            # A retry with the same onboarding key may win between the initial
+            # lookup and commit. Return that committed pair instead of leaking
+            # a duplicate-key database error to the user.
+            await session.rollback()
+            winner_result = await session.execute(
+                select(AIAgent).where(
+                    AIAgent.created_by == created_by,
+                    AIAgent.onboarding_key == onboarding_key,
+                )
+            )
+            winner = winner_result.scalar_one_or_none()
+            if winner:
+                winner_version_result = await session.execute(
+                    select(AIAgentVersion)
+                    .where(AIAgentVersion.agent_id == winner.id)
+                    .order_by(AIAgentVersion.version_number.asc())
+                    .limit(1)
+                )
+                winner_version = winner_version_result.scalar_one_or_none()
+                if winner_version:
+                    return AgentOnboardingResult(
+                        agent=winner,
+                        version=winner_version,
+                        template_fallback=False,
+                    )
+            raise
+        await session.refresh(agent)
+        await session.refresh(version)
+
+        from app.services.ai.router_service import router_service
+
+        router_service.invalidate_cache()
+        return AgentOnboardingResult(
+            agent=agent,
+            version=version,
+            template_fallback=bool(template["template_fallback"]),
+        )
     @staticmethod
     def _tool_entry_name(tool: Any) -> str:
         if isinstance(tool, dict):
@@ -330,13 +519,14 @@ class AgentManagerService:
         )
         for agent in visible_agents:
             engine_config = agent.engine_config if isinstance(agent.engine_config, dict) else None
+            published_version = published_by_agent.get(agent.id)
             if (agent.engine_type or "LOCAL") != "LOCAL":
                 caps = AgentManagerService.summarize_version_capabilities(
                     None, engine_config=engine_config
                 )
             else:
                 caps = AgentManagerService.summarize_version_capabilities(
-                    published_by_agent.get(agent.id),
+                    published_version,
                     engine_config=engine_config,
                 )
             agent.tool_count = caps["tool_count"]
@@ -345,6 +535,21 @@ class AgentManagerService:
             agent.skills_custom = caps["skills_custom"]
             agent.metadata_dataset_count = caps["metadata_dataset_count"]
             agent.knowledge_base_count = caps["knowledge_base_count"]
+            from app.services.ai.agent_readiness import evaluate_agent_readiness
+            from app.services.ai.agent_types import resolve_agent_type
+
+            readiness = evaluate_agent_readiness(
+                agent_type=resolve_agent_type(agent),
+                capabilities=agent.capabilities,
+                engine_config=engine_config,
+                tools=(published_version.tools if published_version else []),
+                has_published_version=(
+                    published_version is not None
+                    or (agent.engine_type or "LOCAL") != "LOCAL"
+                ),
+            )
+            agent.readiness_ready = readiness.ready
+            agent.readiness_missing = list(readiness.missing)
             
         return visible_agents
 
@@ -418,13 +623,16 @@ class AgentManagerService:
             from fastapi import HTTPException
             raise HTTPException(status_code=400, detail=f"Agent with ID/Name '{data.name}' already exists.")
 
+        from app.services.ai.agent_types import normalize_agent_capabilities
+
         agent = AIAgent(
             id=str(uuid.uuid4()),
             name=data.name,
             display_name=data.display_name,
             description=data.description,
             avatar_url=data.avatar_url,
-            capabilities=data.capabilities,
+            capabilities=normalize_agent_capabilities(data.agent_type, data.capabilities),
+            agent_type=data.agent_type.value,
             is_system=data.is_system if is_admin and data.is_system is not None else False,
             sort_order=data.sort_order if data.sort_order is not None else 0,
             is_enabled=data.is_enabled if data.is_enabled is not None else True,
@@ -499,7 +707,13 @@ class AgentManagerService:
         agent.display_name = data.display_name
         agent.description = data.description
         agent.avatar_url = data.avatar_url
-        agent.capabilities = data.capabilities
+        from app.services.ai.agent_types import normalize_agent_capabilities
+
+        # Primary type defines runtime gates and delegation semantics. It is
+        # immutable after creation; only extension capabilities may be edited.
+        original_agent_type = agent.agent_type or "GENERAL"
+        agent.agent_type = original_agent_type
+        agent.capabilities = normalize_agent_capabilities(original_agent_type, data.capabilities)
         agent.sort_order = data.sort_order if data.sort_order is not None else agent.sort_order
         
         if is_admin and data.is_system is not None:
@@ -701,6 +915,8 @@ class AgentManagerService:
         version.skills_custom = skills_custom
         version.skills = skills_list
         version.comment = data.comment or version.comment
+        if agent.onboarding_step == "VERSION":
+            agent.onboarding_step = "RESOURCE"
         
         await session.commit()
         await session.refresh(version)
@@ -729,6 +945,23 @@ class AgentManagerService:
         if not is_admin and agent.created_by and agent.created_by != username:
             return False # Forbidden
 
+        version = await session.get(AIAgentVersion, version_id)
+        if not version or str(version.agent_id) != str(agent_id):
+            return False
+
+        from app.services.ai.agent_readiness import evaluate_agent_readiness
+
+        readiness = evaluate_agent_readiness(
+            agent_type=agent.agent_type or "GENERAL",
+            capabilities=agent.capabilities,
+            engine_config=agent.engine_config,
+            tools=version.tools,
+            # The target version becomes the published version in this transaction.
+            has_published_version=True,
+        )
+        if not readiness.ready:
+            raise AgentNotReadyError(readiness.missing)
+
         # 1. Archive current PUBLISHED versions for this agent
         await session.execute(
             update(AIAgentVersion)
@@ -742,6 +975,7 @@ class AgentManagerService:
             .where(AIAgentVersion.id == version_id)
             .values(status='PUBLISHED')
         )
+        agent.onboarding_step = "COMPLETE"
         
         await session.commit()
         

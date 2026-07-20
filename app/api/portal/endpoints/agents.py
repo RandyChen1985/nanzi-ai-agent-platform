@@ -9,7 +9,9 @@ from app.schemas.agent import (
     AIAgentResponse, AIAgentBase,
     AIAgentReorderRequest,
     AIAgentVersionResponse, AIAgentVersionBase,
-    AgentExecutionHistoryResponse
+    AgentExecutionHistoryResponse,
+    AgentOnboardingCreateRequest,
+    AgentOnboardingResponse,
 )
 
 router = APIRouter()
@@ -45,6 +47,30 @@ async def reorder_agents(
 async def create_agent(data: AIAgentBase, session: AsyncSession = Depends(get_db_session), user: Dict[str, Any] = Depends(get_current_user)):
     """创建新智能体"""
     return await AgentManagerService.create_agent(session, data, user=user)
+
+
+@router.post(
+    "/onboarding",
+    response_model=AgentOnboardingResponse,
+    dependencies=[Depends(require_permission("element", "element:agent:create"))],
+)
+async def create_agent_onboarding(
+    data: AgentOnboardingCreateRequest,
+    session: AsyncSession = Depends(get_db_session),
+    user: Dict[str, Any] = Depends(get_current_user),
+):
+    result = await AgentManagerService.create_agent_onboarding(
+        session,
+        data,
+        onboarding_key=data.onboarding_key,
+        user=user,
+    )
+    return AgentOnboardingResponse(
+        agent=result.agent,
+        version=result.version,
+        onboarding_step=result.agent.onboarding_step,
+        template_fallback=result.template_fallback,
+    )
 
 @router.put("/{agent_id}", response_model=AIAgentResponse, dependencies=[Depends(require_permission("element", "element:agent:edit"))])
 async def update_agent(
@@ -101,7 +127,15 @@ async def update_agent_version(agent_id: str, version_id: str, data: AIAgentVers
 @router.post("/{agent_id}/versions/{version_id}/publish")
 async def publish_agent_version(agent_id: str, version_id: str, session: AsyncSession = Depends(get_db_session), user: Dict[str, Any] = Depends(get_current_user)):
     """发布特定版本（将该版本设为 PUBLISHED，原发布版本设为 ARCHIVED）"""
-    success = await AgentManagerService.publish_version(session, agent_id, version_id, user=user)
+    from app.services.ai.agent_manager import AgentNotReadyError
+
+    try:
+        success = await AgentManagerService.publish_version(session, agent_id, version_id, user=user)
+    except AgentNotReadyError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "AGENT_NOT_READY", "missing": list(exc.missing)},
+        ) from exc
     if not success:
         raise HTTPException(status_code=403, detail="Forbidden: Failed to publish version (check ownership)")
     return {"status": "success"}

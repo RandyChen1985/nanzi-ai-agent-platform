@@ -1,10 +1,13 @@
 from types import SimpleNamespace
+import pytest
 
 from app.services.ai.agent_roster import (
     AGENT_ROSTER_PLACEHOLDER,
     format_agent_roster_markdown,
     inject_agent_roster,
 )
+
+pytestmark = pytest.mark.no_infrastructure
 
 
 def _agent(name, display_name, description):
