@@ -509,11 +509,12 @@ onMounted(async () => {
           </button>
           <button
             class="inline-flex items-center gap-2 rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
-            :disabled="currentStepIndex === steps.length - 1 || !canGoNext"
-            @click="goNext"
+            :disabled="currentStep.id !== 'done' && !canGoNext"
+            @click="currentStep.id === 'done' ? openAgentCenter() : goNext()"
           >
-            下一步
-            <ChevronRightIcon class="h-4 w-4" />
+            {{ currentStep.id === 'done' ? '完成' : '下一步' }}
+            <CheckCircleIcon v-if="currentStep.id === 'done'" class="h-4 w-4" />
+            <ChevronRightIcon v-else class="h-4 w-4" />
           </button>
         </div>
       </main>

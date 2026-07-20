@@ -38,7 +38,7 @@ def test_scenario_templates_use_separate_market_detail_and_install_routes():
     assert "更多创建方式" in agent_management
     assert "空白新建" in agent_management
     assert "从场景模板交付" in agent_management
-    assert "showCreateAgentMenu = false; openAgentModal()" in agent_management
+    assert "showCreateAgentMenu = false; startAgentCreation()" in agent_management
     assert "showCreateAgentMenu = false; router.push('/dashboard/scenario-templates')" in agent_management
     assert "router.push('/dashboard/scenario-templates')" in agent_management
 
