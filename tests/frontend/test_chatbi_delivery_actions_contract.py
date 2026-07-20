@@ -19,11 +19,12 @@ def test_brief_and_monitor_are_real_local_actions_on_both_surfaces():
     for view in ("frontend/src/views/EmbedChat.vue", "frontend/src/views/AgentDebug.vue"):
         source = _source(view)
         assert 'axios.post("/api/portal/chatbi-briefs"' in source
+        assert "assistant_report:" in source
         assert 'axios.post("/api/portal/chatbi-monitors"' not in source
         assert "window.confirm" not in source
         assert 'import ChatBIMonitorDialog from "@/components/chatbi/ChatBIMonitorDialog.vue"' in source
         assert "<ChatBIMonitorDialog" in source
-        assert '@action="handleChatBIResultAction"' in source
+        assert "handleChatBIResultAction(action, msg)" in source
         assert ':result-id="msg.chatbiInsight.result_id"' in source
         assert 'result_id: action.result_id' in source
 

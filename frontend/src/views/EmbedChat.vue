@@ -1193,7 +1193,7 @@
                   :is-mobile="isMobile"
                   :result-id="msg.chatbiInsight.result_id"
                   @select="handleQuickQuestion"
-                  @action="handleChatBIResultAction"
+                  @action="(action) => handleChatBIResultAction(action, msg)"
                 />
                 <button
                   v-if="canSaveGoldenReportFromMessage(msg) && checkRole(msg, 'agent') && !msg.isThinking"
@@ -5309,18 +5309,29 @@ const handleChatBIMonitorCreated = (payload: { created: boolean }) => {
   showToast(payload.created === false ? "该结果的订阅已存在" : "查询订阅已创建，可在黄金报表中管理", "success");
 };
 
-const handleChatBIResultAction = async (action: ChatBIInsightMeta["actions"][number]) => {
+const handleChatBIResultAction = async (
+  action: ChatBIInsightMeta["actions"][number],
+  sourceMessage?: Message,
+) => {
   if (action.id === "monitor") {
     chatbiMonitorResultId.value = action.result_id;
     chatbiMonitorDialogOpen.value = true;
     return;
   }
   if (action.id !== "brief") return handleQuickQuestion(action.query);
+  const assistantReport = sourceMessage?.content?.trim();
+  if (!assistantReport) {
+    showToast("未找到当前分析正文，请在本轮回复旁重试", "warning");
+    return;
+  }
   try {
+    showToast("正在生成业务简报…", "info");
     const res = await axios.post("/api/portal/chatbi-briefs", {
       conversation_id: conversationId.value,
-      result_id: action.result_id,
+      result_id: action.result_id || sourceMessage?.chatbiInsight?.result_id,
       export_word: true,
+      assistant_report: assistantReport,
+      polish_with_llm: true,
     });
     const artifact = res.data?.data?.artifact;
     if (artifact?.download_url) {

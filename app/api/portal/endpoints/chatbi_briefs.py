@@ -2,7 +2,7 @@ import uuid
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.dependencies import require_api_key
@@ -11,7 +11,11 @@ from app.models.chatbi_analysis import ChatBIBrief
 from app.schemas.response import StandardResponse
 from app.services.ai.chatbi_result_stack import ChatBIResultRef, resolve_result_reference
 from app.services.ai.memory_service import memory_service
-from app.services.chatbi_brief_service import build_business_brief, publish_business_brief_docx
+from app.services.chatbi_brief_service import (
+    BriefInputError,
+    build_business_brief_async,
+    publish_business_brief_docx,
+)
 
 router = APIRouter()
 
@@ -20,9 +24,14 @@ class CreateChatBIBriefRequest(BaseModel):
     conversation_id: str
     result_id: Optional[str] = None
     export_word: bool = True
+    assistant_report: Optional[str] = Field(
+        default=None,
+        description="当前轮 AI 分析正文（Markdown），与结构化结果一并导出",
+    )
+    polish_with_llm: bool = Field(default=True, description="是否尝试用模型整理版式（不新增数字）")
 
 
-@router.post("", summary="从当前 ChatBI 结果一键生成业务简报")
+@router.post("", summary="从当前 ChatBI 结果与 AI 分析生成业务简报")
 async def create_chatbi_brief(
     body: CreateChatBIBriefRequest,
     user_info=Depends(require_api_key),
@@ -42,7 +51,15 @@ async def create_chatbi_brief(
         detail = "结果引用不明确" if reference.candidates else "当前会话没有可生成简报的结构化结果"
         raise HTTPException(status_code=409, detail=detail)
     result_payload = reference.result.to_dict()
-    brief = build_business_brief(result_payload)
+    assistant = (body.assistant_report or "").strip() or None
+    try:
+        brief = await build_business_brief_async(
+            result_payload,
+            assistant_report=assistant,
+            polish=body.polish_with_llm,
+        )
+    except BriefInputError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     artifact_payload = None
     if body.export_word:
         artifact_payload = publish_business_brief_docx(brief).to_tool_payload()
