@@ -407,7 +407,7 @@ const segments = computed<ContentSegment[]>(() => {
       <div v-else-if="segment.type === 'mermaid'" class="w-full my-4 relative group/mermaid">
         <button
           @click="emit('open-canvas', { type: 'mermaid', title: '架构流程图预览', content: segment.content })"
-          class="absolute top-2 right-2 p-1.5 bg-white/90 dark:bg-gray-800/90 text-gray-500 hover:text-primary rounded-lg shadow border border-gray-200 dark:border-gray-700 opacity-0 group-hover/mermaid:opacity-100 transition-all z-10 text-xs flex items-center space-x-1"
+          class="absolute top-2 right-2 p-1.5 bg-white/90 dark:bg-gray-800/90 text-gray-500 hover:text-[var(--primary-color)] rounded-lg shadow border border-gray-200 dark:border-gray-700 opacity-0 group-hover/mermaid:opacity-100 transition-all z-10 text-xs flex items-center space-x-1"
           title="在画布中放大缩小平移"
         >
           <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0zM10 7v6m3-3H7"/></svg>
@@ -580,39 +580,50 @@ const segments = computed<ContentSegment[]>(() => {
 .chart { height: 100%; width: 100%; }
 .markdown-body :deep(a[href^="http"]) { color: #2563eb !important; text-decoration: underline !important; cursor: pointer !important; }
 
-/* Quick Action Buttons (Universal Styling) */
+/* 快捷追问保留按钮识别，但以低强调描边融入回答内容。 */
 .markdown-body :deep(.quick-action-btn),
 .markdown-body :deep(a[href^="quick:"]) {
   display: inline-flex !important;
   align-items: center !important;
-  margin: 6px 8px 6px 0 !important;
-  padding: 6px 16px !important;
-  background-color: var(--primary-color, #1677ff) !important;
-  border: 1px solid rgba(255, 255, 255, 0.15) !important;
-  border-radius: 12px !important;
-  color: white !important;
+  margin: 4px 8px 4px 0 !important;
+  max-width: 100% !important;
+  min-height: 32px !important;
+  padding: 5px 10px !important;
+  background-color: #f8fbff !important;
+  background-color: color-mix(in srgb, var(--primary-color, #0052D9) 4%, white) !important;
+  border: 1px solid #dbe7f8 !important;
+  border-color: color-mix(in srgb, var(--primary-color, #0052D9) 18%, white) !important;
+  border-radius: 4px !important;
+  color: var(--primary-color, #0052D9) !important;
   font-size: 13px !important;
-  font-weight: 800 !important;
+  font-weight: 500 !important;
   text-decoration: none !important;
-  box-shadow: 0 4px 14px -2px var(--primary-color-alpha, rgba(22, 119, 255, 0.3)) !important;
-  transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1) !important;
+  transition: background-color 0.2s cubic-bezier(0.38, 0, 0.24, 1), border-color 0.2s cubic-bezier(0.38, 0, 0.24, 1) !important;
   cursor: pointer !important;
-  position: relative !important;
-  line-height: 1.2 !important;
+  line-height: 1.4 !important;
+  white-space: normal !important;
 }
 
+/* 去掉强制 ⚡️ 前缀（label 里的 emoji 自行负责） */
 .markdown-body :deep(.quick-action-btn::before),
 .markdown-body :deep(a[href^="quick:"]::before) {
-  content: "⚡️" !important;
-  margin-right: 6px !important;
-  font-size: 11px !important;
+  content: none !important;
+  margin-right: 0 !important;
 }
 
 .markdown-body :deep(.quick-action-btn:hover),
 .markdown-body :deep(a[href^="quick:"]:hover) {
-  filter: brightness(1.05) !important;
-  transform: translateY(-2px) scale(1.03) !important;
-  box-shadow: 0 8px 20px -4px var(--primary-color-alpha, rgba(22, 119, 255, 0.45)) !important;
+  color: #003CAB !important;
+  background-color: #f1f6ff !important;
+  background-color: color-mix(in srgb, var(--primary-color, #0052D9) 8%, white) !important;
+  border-color: color-mix(in srgb, var(--primary-color, #0052D9) 38%, white) !important;
+}
+
+.markdown-body :deep(.quick-action-btn:focus-visible),
+.markdown-body :deep(a[href^="quick:"]:focus-visible) {
+  outline: 2px solid #80aaff !important;
+  outline-color: color-mix(in srgb, var(--primary-color, #0052D9) 35%, white) !important;
+  outline-offset: 2px !important;
 }
 
 .markdown-body :deep(.citation-badge) { display: inline-flex; align-items: center; justify-content: center; font-size: 10px; font-weight: 700; color: #3b82f6; background-color: #eff6ff; border: 1px solid #dbeafe; border-radius: 4px; padding: 0 4px; margin: 0 2px; cursor: pointer; vertical-align: super; transition: all 0.2s ease; }

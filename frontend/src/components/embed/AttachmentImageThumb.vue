@@ -81,7 +81,7 @@ const handleClick = () => {
   >
     <div
       v-if="loading"
-      class="w-3.5 h-3.5 border-2 border-primary border-t-transparent rounded-full animate-spin"
+      class="w-3.5 h-3.5 border-2 border-[var(--primary-color)] border-t-transparent rounded-full animate-spin"
     />
     <img
       v-else-if="displayUrl"

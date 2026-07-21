@@ -1,6 +1,7 @@
 <template>
   <div
-    class="flex h-full bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 font-sans overflow-hidden relative"
+    class="flex h-full bg-white dark:bg-[#181818] text-gray-900 dark:text-gray-100 font-sans overflow-hidden relative"
+    style="--primary-color: #0052D9; --primary-color-rgb: 0, 82, 217;"
   >
     <!-- Sidebar (Desktop/Mobile) -->
     <ChatHistorySidebar
@@ -20,17 +21,19 @@
       class="border-r border-gray-200 dark:border-gray-800"
     />
 
-    <!-- Persistent Global Watermark (Fixed position, now in background) -->
-    <div v-if="currentUser?.watermark ? currentUser.watermark.enabled : true" class="fixed inset-0 pointer-events-none overflow-hidden z-0 opacity-[0.04] select-none grid grid-cols-2 sm:grid-cols-3 gap-x-10 gap-y-24 p-10 justify-items-center items-center h-full w-full" aria-hidden="true">
-        <div v-for="n in 60" :key="n" class="text-[10px] sm:text-xs font-black -rotate-[30deg] whitespace-nowrap uppercase tracking-tighter">
-            <template v-if="currentUser?.watermark?.style === 'custom'">
-                {{ currentUser?.watermark?.text || '南孜系统' }}
-            </template>
-            <template v-else>
-                {{ currentUser?.real_name || currentUser?.user_name || 'Unauthorized' }}
-            </template>
-            {{ new Date().toLocaleDateString() }} {{ new Date().getHours() }}:{{ String(new Date().getMinutes()).padStart(2, '0') }}
-        </div>
+    <!-- Persistent Watermark: 单点右下角，避免常驻噪点（对齐 TDesign 克制） -->
+    <div
+      v-if="currentUser?.watermark ? currentUser.watermark.enabled : true"
+      class="fixed bottom-3 right-4 z-0 pointer-events-none select-none text-[11px] text-gray-400 dark:text-gray-500 opacity-50 tracking-normal"
+      aria-hidden="true"
+    >
+      <template v-if="currentUser?.watermark?.style === 'custom'">
+        {{ currentUser?.watermark?.text || '南孜系统' }}
+      </template>
+      <template v-else>
+        {{ currentUser?.real_name || currentUser?.user_name || 'Unauthorized' }}
+      </template>
+      · {{ new Date().toLocaleDateString() }} {{ new Date().getHours() }}:{{ String(new Date().getMinutes()).padStart(2, '0') }}
     </div>
 
     <div
@@ -39,12 +42,12 @@
     >
       <!-- Dynamic Header Status (New) -->
       <div
-        class="h-12 border-b border-gray-100 dark:border-gray-800 bg-white/80 dark:bg-gray-900/80 backdrop-blur-md px-4 flex items-center justify-between z-30 flex-shrink-0"
+        class="h-12 border-b border-gray-100 dark:border-[#2a2a2a] bg-white/80 dark:bg-[#181818]/80 backdrop-blur-md px-4 flex items-center justify-between z-30 flex-shrink-0"
       >
         <div class="flex items-center space-x-3 overflow-hidden">
             <div class="flex flex-col min-w-0">
                 <div class="flex items-center space-x-2">
-                    <span class="text-sm font-black text-gray-800 dark:text-gray-100 truncate">
+                    <span class="text-sm font-medium text-gray-800 dark:text-gray-100 truncate">
                         <template v-if="isProcessing">
                             {{ lastAgentMessage?.agentDisplayName || lastAgentMessage?.agentName || '智能体' }}
                         </template>
@@ -56,22 +59,22 @@
                         </template>
                     </span>
                     <span v-if="isProcessing" class="flex h-1.5 w-1.5 relative">
-                        <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary opacity-75"></span>
-                        <span class="relative inline-flex rounded-full h-1.5 w-1.5 bg-primary"></span>
+                        <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-[var(--primary-color)] opacity-75"></span>
+                        <span class="relative inline-flex rounded-full h-1.5 w-1.5 bg-[var(--primary-color)]"></span>
                     </span>
                     <span
                         v-else-if="isMobile && config.routingMode === 'expert' && currentExpertAgent"
-                        class="inline-flex items-center px-1.5 py-0.5 rounded-full bg-primary/10 text-primary text-[9px] font-black uppercase tracking-wider shrink-0"
+                        class="inline-flex items-center px-1.5 py-0.5 rounded-full bg-[rgb(var(--primary-color-rgb)/0.1)] text-[var(--primary-color)] text-[11px] font-medium tracking-normal shrink-0"
                     >
                         专家
                     </span>
                 </div>
-                <div class="text-[10px] font-bold uppercase tracking-widest truncate flex items-center gap-1.5 min-w-0">
+                <div class="text-[11px] font-normal text-gray-500 truncate flex items-center gap-1.5 min-w-0">
                     <template v-if="isProcessing">
                         <span class="text-gray-400">正在处理您的请求...</span>
                     </template>
                     <template v-else-if="isMobile && config.routingMode === 'expert' && currentExpertAgent">
-                        <span class="text-primary/80 normal-case tracking-normal font-semibold">专家模式</span>
+                        <span class="text-[rgb(var(--primary-color-rgb)/0.8)] normal-case tracking-normal font-semibold">专家模式</span>
                         <button
                             type="button"
                             @click.stop="switchToAuto"
@@ -92,7 +95,7 @@
             <button
                 v-if="!isMobile"
                 @click="toggleFullScreen"
-                class="p-2 text-gray-400 hover:text-primary hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-all"
+                class="p-2 text-gray-400 hover:text-[var(--primary-color)] hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-all"
                 :title="isFullScreen ? '退出全屏' : '全屏模式'"
             >
                 <svg v-if="!isFullScreen" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -105,7 +108,7 @@
             <button
                 v-if="isMobile || !config.showShortcuts"
                 @click="handleHeaderShortcutsClick"
-                class="p-2 text-gray-400 hover:text-primary hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-all"
+                class="p-2 text-gray-400 hover:text-[var(--primary-color)] hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-all"
                 :title="isMobile ? '快捷指令' : '显示快捷指令'"
             >
                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -114,7 +117,7 @@
             </button>
             <button
                 @click="showHelpModal = true"
-                class="p-2 text-gray-400 hover:text-primary hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-all"
+                class="p-2 text-gray-400 hover:text-[var(--primary-color)] hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-all"
                 title="查看帮助"
             >
                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -124,17 +127,17 @@
             <!-- Agent Quick Selector Button -->
             <button
                 @click.stop="toggleAgentSelector"
-                class="p-2 text-gray-400 hover:text-primary hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-all relative group"
-                :class="{ 'text-primary bg-primary/5': showAgentSelector || config.routingMode === 'expert' }"
+                class="p-2 text-gray-400 hover:text-[var(--primary-color)] hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-all relative group"
+                :class="{ 'text-[var(--primary-color)] bg-[rgb(var(--primary-color-rgb)/0.05)]': showAgentSelector || config.routingMode === 'expert' }"
                 title="切换智能体"
             >
                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
                 </svg>
-                <span v-if="config.routingMode === 'expert'" class="absolute -top-0.5 -right-0.5 w-2 h-2 bg-primary rounded-full border-2 border-white dark:border-gray-900 animate-pulse"></span>
+                <span v-if="config.routingMode === 'expert'" class="absolute -top-0.5 -right-0.5 w-2 h-2 bg-[var(--primary-color)] rounded-full border-2 border-white dark:border-gray-900 animate-pulse"></span>
             </button>
             <button
-                @click="showSettings = true"                class="p-2 text-gray-400 hover:text-primary hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-all"
+                @click="showSettings = true"                class="p-2 text-gray-400 hover:text-[var(--primary-color)] hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-all"
                 title="对话设置"
             >
                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" /><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
@@ -163,12 +166,12 @@
         <div v-if="showAgentSelector" class="fixed top-[52px] right-4 w-72 max-h-[70vh] bg-white/95 dark:bg-gray-800/95 backdrop-blur-xl border border-gray-200 dark:border-gray-700 rounded-2xl shadow-2xl z-50 flex flex-col overflow-hidden" @click.stop>
           <div class="p-3 border-b border-gray-100 dark:border-gray-700 flex items-center justify-between bg-gray-50/50 dark:bg-gray-900/50">
             <div class="flex items-center space-x-2">
-              <span class="w-1.5 h-4 bg-primary rounded-full"></span>
-              <span class="text-xs font-black text-gray-800 dark:text-gray-100 uppercase tracking-widest">选择智能体专家</span>
+              <span class="w-1.5 h-4 bg-[var(--primary-color)] rounded-full"></span>
+              <span class="text-sm font-medium text-gray-800 dark:text-gray-100 tracking-normal">选择智能体专家</span>
               <button
                 @click.stop="fetchAllowedAgents(true)"
-                class="ml-2 text-gray-400 hover:text-primary transition-all p-1 rounded-md hover:bg-white/50 dark:hover:bg-black/20"
-                :class="{ 'animate-spin text-primary': isLoadingAgents }"
+                class="ml-2 text-gray-400 hover:text-[var(--primary-color)] transition-all p-1 rounded-md hover:bg-white/50 dark:hover:bg-black/20"
+                :class="{ 'animate-spin text-[var(--primary-color)]': isLoadingAgents }"
                 title="刷新列表"
               >
                 <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -184,25 +187,25 @@
           <div class="flex-1 overflow-y-auto p-2 space-y-1 custom-scrollbar">
             <!-- Loading State -->
             <div v-if="isLoadingAgents && allowedAgents.length === 0" class="flex flex-col items-center justify-center py-10 opacity-50">
-              <svg class="w-8 h-8 animate-spin text-primary mb-2" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
-              <span class="text-[10px] font-black uppercase tracking-widest">同步中</span>
+              <svg class="w-8 h-8 animate-spin text-[var(--primary-color)] mb-2" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+              <span class="text-xs font-normal text-gray-500 tracking-normal">同步中</span>
             </div>
             <!-- Auto Mode Option -->
             <div
               @click.stop="switchToAuto(); showAgentSelector = false;"
               class="flex items-center space-x-3 p-3 rounded-xl cursor-pointer transition-all border border-transparent"
-              :class="config.routingMode === 'auto' ? 'bg-primary/10 border-primary/20 ring-1 ring-primary/10' : 'hover:bg-gray-50 dark:hover:bg-gray-700/50'"
+              :class="config.routingMode === 'auto' ? 'bg-[rgb(var(--primary-color-rgb)/0.1)] border-[rgb(var(--primary-color-rgb)/0.2)] ring-1 ring-[rgb(var(--primary-color-rgb)/0.1)]' : 'hover:bg-gray-50 dark:hover:bg-gray-700/50'"
             >
-              <div class="w-10 h-10 rounded-full bg-gradient-to-br from-primary/20 to-primary/10 flex items-center justify-center text-primary shadow-sm border border-primary/10">
+              <div class="w-10 h-10 rounded-full bg-gradient-to-br from-[rgb(var(--primary-color-rgb)/0.2)] to-[rgb(var(--primary-color-rgb)/0.1)] flex items-center justify-center text-[var(--primary-color)] shadow-sm border border-[rgb(var(--primary-color-rgb)/0.1)]">
                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
               </div>
               <div class="flex-1">
                 <div class="flex items-center space-x-2">
-                  <span class="text-sm font-black" :class="config.routingMode === 'auto' ? 'text-primary' : 'text-gray-800 dark:text-gray-200'">全能助手 (自动)</span>
+                  <span class="text-sm font-black" :class="config.routingMode === 'auto' ? 'text-[var(--primary-color)]' : 'text-gray-800 dark:text-gray-200'">全能助手 (自动)</span>
                 </div>
                 <div class="text-[10px] text-gray-400 font-medium mt-0.5">智能调度最合适的专家处理</div>
               </div>
-              <div v-if="config.routingMode === 'auto'" class="text-primary">
+              <div v-if="config.routingMode === 'auto'" class="text-[var(--primary-color)]">
                 <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd" /></svg>
               </div>
             </div>
@@ -215,7 +218,7 @@
               :key="agent.id"
               @click.stop="switchToExpert(agent.id); showAgentSelector = false;"
               class="flex items-center space-x-3 p-3 rounded-xl cursor-pointer transition-all border border-transparent group"
-              :class="config.routingMode === 'expert' && config.expertAgentId === agent.id ? 'bg-primary/10 border-primary/20 ring-1 ring-primary/10' : 'hover:bg-gray-50 dark:hover:bg-gray-700/50'"
+              :class="config.routingMode === 'expert' && config.expertAgentId === agent.id ? 'bg-[rgb(var(--primary-color-rgb)/0.1)] border-[rgb(var(--primary-color-rgb)/0.2)] ring-1 ring-[rgb(var(--primary-color-rgb)/0.1)]' : 'hover:bg-gray-50 dark:hover:bg-gray-700/50'"
             >
               <div class="w-10 h-10 rounded-full bg-gray-100 dark:bg-gray-700 flex items-center justify-center overflow-hidden border border-white dark:border-gray-900 shadow-sm transition-transform group-hover:scale-105">
                 <img v-if="agent.avatar_url" :src="agent.avatar_url" class="w-full h-full object-cover" />
@@ -223,19 +226,19 @@
               </div>
               <div class="flex-1 min-w-0">
                 <div class="flex items-center space-x-1.5">
-                  <span class="text-sm font-bold truncate" :class="config.routingMode === 'expert' && config.expertAgentId === agent.id ? 'text-primary' : 'text-gray-800 dark:text-gray-200'">{{ agent.display_name }}</span>
+                  <span class="text-sm font-bold truncate" :class="config.routingMode === 'expert' && config.expertAgentId === agent.id ? 'text-[var(--primary-color)]' : 'text-gray-800 dark:text-gray-200'">{{ agent.display_name }}</span>
                   <span v-if="agent.is_system" class="px-1 py-0.5 rounded text-[8px] bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300 font-black tracking-tighter shrink-0 uppercase">SYS</span>
                 </div>
                 <div class="text-[10px] text-gray-400 truncate mt-0.5">{{ agent.description || '专属能力专家' }}</div>
               </div>
-              <div v-if="config.routingMode === 'expert' && config.expertAgentId === agent.id" class="text-primary">
+              <div v-if="config.routingMode === 'expert' && config.expertAgentId === agent.id" class="text-[var(--primary-color)]">
                 <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd" /></svg>
               </div>
             </div>
           </div>
 
           <div class="p-3 bg-gray-50/80 dark:bg-gray-900/80 border-t border-gray-100 dark:border-gray-700 text-center">
-             <span class="text-[9px] text-gray-400 font-bold uppercase tracking-widest">已授权智能体列表</span>
+             <span class="text-[11px] text-gray-500 font-normal tracking-normal">已授权智能体列表</span>
           </div>
         </div>
       </transition>
@@ -309,7 +312,7 @@
           </div>
         </div>
         <div class="flex flex-col items-center justify-center pt-8 animate-pulse">
-            <span class="text-[10px] font-bold text-gray-300 uppercase tracking-widest mb-2">正在安全同步环境上下文</span>
+            <span class="text-[11px] font-normal text-gray-400 tracking-normal mb-2">正在安全同步环境上下文</span>
             <div class="flex space-x-1">
                 <div class="w-1 h-1 bg-gray-200 rounded-full animate-bounce"></div>
                 <div class="w-1 h-1 bg-gray-200 rounded-full animate-bounce [animation-delay:0.2s]"></div>
@@ -334,13 +337,13 @@
              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 10l7-7m0 0l7 7m-7-7v18" />
            </svg>
         </div>
-        <span class="text-[11px] font-bold text-gray-400 uppercase tracking-widest">这是您对话的起点</span>
+        <span class="text-[11px] font-normal text-gray-400 tracking-normal">这是您对话的起点</span>
         <div class="w-12 h-[1px] bg-gradient-to-r from-transparent via-gray-200 dark:via-gray-700 to-transparent mt-2"></div>
       </div>
       <!-- History Loading Indicator -->
       <div v-if="isLoadingHistory" class="w-full flex justify-center py-4 animate-fade-in-up">
         <div class="flex items-center gap-2 bg-gray-50/90 dark:bg-gray-800/90 px-4 py-1.5 rounded-full border border-gray-100 dark:border-gray-700 shadow-sm backdrop-blur-sm">
-            <svg class="w-4 h-4 text-primary animate-spin" fill="none" viewBox="0 0 24 24">
+            <svg class="w-4 h-4 text-[var(--primary-color)] animate-spin" fill="none" viewBox="0 0 24 24">
                 <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
                 <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
             </svg>
@@ -368,7 +371,7 @@
           <div v-if="editingMsgId === msg.id" class="flex flex-col items-end space-y-2 max-w-[90%] self-end">
              <textarea
                 v-model="editContent"
-                class="w-full p-3 border border-primary/30 rounded-lg shadow-sm focus:ring-2 focus:ring-primary focus:border-primary text-sm min-h-[80px] bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100"
+                class="w-full p-3 border border-[rgb(var(--primary-color-rgb)/0.3)] rounded-lg shadow-sm focus:ring-2 focus:ring-[var(--primary-color)] focus:border-[var(--primary-color)] text-sm min-h-[80px] bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100"
               ></textarea>
               <div class="flex space-x-2">
                 <button
@@ -377,30 +380,33 @@
                 >取消</button>
                 <button
                   @click="saveAndResend"
-                  class="px-3 py-1 text-xs text-white bg-primary hover:opacity-90 rounded"
-                  :style="{ backgroundColor: 'var(--primary-color, #1677ff)' }"
+                  class="px-3 py-1 text-xs text-white bg-[var(--primary-color)] hover:opacity-90 rounded"
+                  :style="{ backgroundColor: 'var(--primary-color, #0052D9)' }"
                 >发送</button>
               </div>
           </div>
           <!-- Normal Mode -->
           <div v-else>
             <div class="flex justify-end items-start space-x-2">
+              <!--
+                TDesign: 用户气泡 = secondarycontainer 灰底 + 深字 + 复合 tail 圆角 + 无阴影
+                brand 色从气泡退场，仅靠灰阶 + 右对齐 + 头像区分发言者
+              -->
               <div
-                class="max-w-[85%] text-white px-4 py-2.5 rounded-2xl rounded-tr-sm shadow-sm text-sm leading-relaxed transition-colors duration-300 relative"
-                :style="{ backgroundColor: 'var(--primary-color, #1677ff)' }"
+                class="max-w-[85%] text-gray-900 dark:text-gray-100 px-4 py-2.5 bg-tdSecondaryContainer dark:bg-tdSecondaryContainer-dark rounded-td-xl rounded-tr-[6px] text-sm leading-relaxed transition-colors duration-300 relative"
               >
                 <template v-for="parts in [splitUserMessageContent(msg.content)]" :key="'user-parts'">
                   <template v-if="parts.hasContext">
                     <div v-if="parts.userPart" class="whitespace-pre-wrap">{{ parts.userPart }}</div>
-                    <div v-if="parts.userPart" class="my-2.5 border-t border-white/30" role="separator" />
-                    <details class="group/sys mt-2 text-[10px] text-white/70 select-none">
-                      <summary class="cursor-pointer hover:text-white flex items-center gap-1 font-semibold focus:outline-none list-none [&::-webkit-details-marker]:hidden">
+                    <div v-if="parts.userPart" class="my-2.5 border-t border-gray-300/60 dark:border-gray-600/60" role="separator" />
+                    <details class="group/sys mt-2 text-[11px] text-gray-500 dark:text-gray-400 select-none">
+                      <summary class="cursor-pointer hover:text-gray-700 dark:hover:text-gray-200 flex items-center gap-1 font-medium focus:outline-none list-none [&::-webkit-details-marker]:hidden">
                         <svg class="w-3 h-3 transform transition-transform duration-200 group-open/sys:rotate-90" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M9 5l7 7-7 7" />
                         </svg>
                         <span>⚙️ 附加系统元数据说明 (点击展开)</span>
                       </summary>
-                      <div class="mt-1.5 p-2 rounded bg-black/15 text-white/85 font-mono text-[10px] leading-relaxed whitespace-pre-wrap break-all select-text selection:bg-white/20">
+                      <div class="mt-1.5 p-2 rounded bg-black/5 dark:bg-white/5 text-gray-700 dark:text-gray-300 font-mono text-[11px] leading-relaxed whitespace-pre-wrap break-all select-text">
                         {{ parts.contextPart }}
                       </div>
                     </details>
@@ -409,39 +415,39 @@
                 </template>
 
                 <!-- Attached Files In Bubble -->
-                <div v-if="msg.files && msg.files.length > 0" class="mt-2 space-y-2 border-t border-white/20 pt-2">
-                    <div v-for="(file, fIdx) in msg.files" :key="fIdx" class="flex items-center bg-white/10 rounded-lg p-1.5 max-w-xs select-none">
+                <div v-if="msg.files && msg.files.length > 0" class="mt-2 space-y-2 border-t border-gray-300/60 dark:border-gray-600/60 pt-2">
+                    <div v-for="(file, fIdx) in msg.files" :key="fIdx" class="flex items-center bg-black/5 dark:bg-white/5 rounded-lg p-1.5 max-w-xs select-none">
                         <!-- Image Thumb -->
                         <AttachmentImageThumb
                           v-if="isImageFile(file)"
                           :file="file"
                           clickable
-                          class="mr-2 border-white/10"
+                          class="mr-2 border-gray-300/40 dark:border-gray-600/40"
                           @click="(url) => handlePreviewImageUrl(url, file.filename)"
                         />
                         <!-- Skill Icon -->
-                        <div v-else-if="file.type === 'skill'" class="w-8 h-8 rounded bg-white/20 flex items-center justify-center text-white text-sm flex-shrink-0 mr-2 font-mono">
+                        <div v-else-if="file.type === 'skill'" class="w-8 h-8 rounded bg-black/10 dark:bg-white/10 flex items-center justify-center text-gray-700 dark:text-gray-200 text-sm flex-shrink-0 mr-2 font-mono">
                             ⚙️
                         </div>
                         <!-- Knowledge Base Icon -->
-                        <div v-else-if="file.type === 'knowledge_base'" class="w-8 h-8 rounded bg-white/20 flex items-center justify-center text-white text-sm flex-shrink-0 mr-2">
+                        <div v-else-if="file.type === 'knowledge_base'" class="w-8 h-8 rounded bg-black/10 dark:bg-white/10 flex items-center justify-center text-gray-700 dark:text-gray-200 text-sm flex-shrink-0 mr-2">
                             📚
                         </div>
                         <!-- Memory Icon -->
-                        <div v-else-if="file.type === 'memory'" class="w-8 h-8 rounded bg-white/20 flex items-center justify-center text-white text-sm flex-shrink-0 mr-2">
+                        <div v-else-if="file.type === 'memory'" class="w-8 h-8 rounded bg-black/10 dark:bg-white/10 flex items-center justify-center text-gray-700 dark:text-gray-200 text-sm flex-shrink-0 mr-2">
                             🧠
                         </div>
                         <!-- File Icon -->
-                        <div v-else class="w-8 h-8 rounded bg-white/20 flex items-center justify-center text-white text-sm flex-shrink-0 mr-2">
+                        <div v-else class="w-8 h-8 rounded bg-black/10 dark:bg-white/10 flex items-center justify-center text-gray-700 dark:text-gray-200 text-sm flex-shrink-0 mr-2">
                             📄
                         </div>
                         <div class="flex-1 min-w-0 flex flex-col">
-                            <span v-if="file.type === 'skill' || file.type === 'knowledge_base' || file.type === 'memory'" class="text-xs font-bold text-white truncate">{{ file.filename }}</span>
+                            <span v-if="file.type === 'skill' || file.type === 'knowledge_base' || file.type === 'memory'" class="text-xs font-medium text-gray-800 dark:text-gray-100 truncate">{{ file.filename }}</span>
                             <template v-else>
-                              <span v-if="canPreviewFile(file)" @click="handlePreviewFile(file)" class="text-xs font-bold text-white hover:underline cursor-pointer truncate">{{ file.filename }}</span>
-                              <a v-else :href="resolveFileUrl(file.url)" target="_blank" class="text-xs font-bold text-white hover:underline truncate">{{ file.filename }}</a>
+                              <span v-if="canPreviewFile(file)" @click="handlePreviewFile(file)" class="text-xs font-medium text-gray-800 dark:text-gray-100 hover:underline cursor-pointer truncate">{{ file.filename }}</span>
+                              <a v-else :href="resolveFileUrl(file.url)" target="_blank" class="text-xs font-medium text-gray-800 dark:text-gray-100 hover:underline truncate">{{ file.filename }}</a>
                             </template>
-                            <span class="text-[9px] text-white/70 font-mono">
+                            <span class="text-[11px] text-gray-500 dark:text-gray-400 font-mono">
                                 {{
                                     file.type === 'skill' ? '生态技能' :
                                     file.type === 'knowledge_base' ? '知识库' :
@@ -453,13 +459,13 @@
                     </div>
                 </div>
               </div>
-              <!-- User Avatar -->
+              <!-- User Avatar: TDesign 风格，无渐变，brand 实心圆 -->
               <div
-                class="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 text-white shadow-sm overflow-hidden border border-white dark:border-gray-800"
+                class="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 text-white overflow-hidden border border-gray-200 dark:border-gray-700"
                 :style="{
                   background: config.userAvatar
                     ? `url(${config.userAvatar}) center/cover no-repeat`
-                    : 'linear-gradient(135deg, #60a5fa, #3b82f6)',
+                    : 'var(--primary-color, #0052D9)',
                 }"
               >
                 <svg
@@ -486,7 +492,7 @@
               <div class="flex flex-nowrap items-center space-x-2">
               <button
                 @click="startEdit(msg)"
-                class="flex shrink-0 items-center space-x-1 text-[10px] text-gray-400 hover:text-primary transition-colors rounded hover:bg-gray-100 dark:hover:bg-gray-800"
+                class="flex shrink-0 items-center space-x-1 text-[10px] text-gray-400 hover:text-[var(--primary-color)] transition-colors rounded hover:bg-gray-100 dark:hover:bg-gray-800"
                 :class="windowWidth < 640 ? 'p-2.5' : 'px-1.5 py-0.5'"
                 title="编辑"
                 :disabled="isProcessing"
@@ -498,7 +504,7 @@
               </button>
               <button
                 @click="copyMessage(msg.content)"
-                class="flex shrink-0 items-center space-x-1 text-[10px] text-gray-400 hover:text-primary transition-colors rounded hover:bg-gray-100 dark:hover:bg-gray-800"
+                class="flex shrink-0 items-center space-x-1 text-[10px] text-gray-400 hover:text-[var(--primary-color)] transition-colors rounded hover:bg-gray-100 dark:hover:bg-gray-800"
                 :class="windowWidth < 640 ? 'p-2.5' : 'px-1.5 py-0.5'"
                 title="复制"
               >
@@ -551,16 +557,13 @@
               class="absolute inset-0 rounded-full animate-pulse-slow transition-opacity"
               :class="(!msg.agentName || msg.isThinking) ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'"
               :style="{
-                backgroundColor: 'var(--primary-color, #1677ff)',
+                backgroundColor: 'var(--primary-color, #0052D9)',
                 filter: 'blur(4px)',
               }"
             ></div>
             <div
-              class="relative w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 text-white shadow-sm overflow-hidden cursor-pointer hover:scale-110 hover:shadow-md active:scale-95 transition-all duration-200"
-              :style="{
-                background:
-                  'linear-gradient(135deg, var(--primary-color, #1677ff), #9333ea)',
-              }"
+              class="relative w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 text-white overflow-hidden cursor-pointer hover:opacity-90 active:scale-95 transition-all duration-200"
+              :style="{ background: 'var(--primary-color, #0052D9)' }"
               @click.stop="showSettings = true; fetchAllowedAgents()"
               title="点击配置主题"
             >
@@ -587,7 +590,7 @@
               ></div>
             </div>
           </div>
-          <div class="max-w-[90%]">
+          <div class="agent-message-content max-w-[90%]">
             <!-- Agent Name (Smart Status Capsule) -->
             <div class="mb-1 ml-1 flex items-center">
               <div
@@ -599,15 +602,21 @@
                 <!-- Status Indicator Dot (Removed to reduce visual noise) -->
                 <!-- Text -->
                 <span>{{ msg.agentDisplayName || msg.agentName }}</span>
-                <span class="opacity-70 font-normal">{{ String(msg.agentName || '').startsWith('sys_') ? '· 系统指令' : '· 正在服务' }}</span>
+                <span class="opacity-70 font-normal">
+                  {{ String(msg.agentName || '').startsWith('sys_') ? '· 系统指令' : (msg.isThinking || (isProcessing && msg === lastAgentMessage) ? '· 正在服务' : '· 已完成') }}
+                </span>
               </div>
             </div>
+            <!--
+              TDesign: AI 气泡 = container 白底 + 无阴影 + 复合 tail 圆角 + 去色条
+              分层靠灰阶（用户灰 vs AI 白），不靠 border-l 色条或 shadow
+            -->
             <div
-              class="px-4 py-3 rounded-2xl rounded-tl-sm shadow-md border border-gray-100 dark:border-gray-700 border-l-4 border-l-primary/60 dark:border-l-primary/40 text-sm leading-relaxed min-h-[46px] transition-all duration-300 relative group/bubble"
+              class="px-4 py-3 rounded-td-xl rounded-tl-[6px] text-sm leading-relaxed min-h-[46px] transition-colors duration-300 relative group/bubble"
               :class="[
                 msg.isThinking
-                    ? 'bg-slate-50/80 dark:bg-slate-800/80 shimmer-thought-card'
-                    : 'bg-white dark:bg-gray-800'
+                    ? 'bg-tdSecondaryContainer dark:bg-tdSecondaryContainer-dark shimmer-thought-card'
+                    : 'bg-transparent dark:bg-transparent'
               ]"
             >
               <!-- Thinking Process (Collapsible Accordion) -->
@@ -665,7 +674,7 @@
                         <div class="absolute -left-[23px] top-2 w-[18px] h-[18px] rounded-full flex items-center justify-center text-[9px] font-bold group-hover/log:scale-110 transition-all z-10 select-none ring-4 ring-white dark:ring-gray-800"
                              :class="{
                                'bg-red-50 text-red-500 border border-red-200 dark:bg-red-900/30 dark:border-red-800/50': log.status === 'error',
-                               'bg-primary/10 text-primary border border-primary/25 dark:bg-primary/20 dark:border-primary/30': isActiveThoughtStep(log, msg.isThinking),
+                               'bg-[rgb(var(--primary-color-rgb)/0.1)] text-[var(--primary-color)] border border-[rgb(var(--primary-color-rgb)/0.25)] dark:bg-[rgb(var(--primary-color-rgb)/0.2)] dark:border-[rgb(var(--primary-color-rgb)/0.3)]': isActiveThoughtStep(log, msg.isThinking),
                                'bg-gray-100 text-gray-500 border border-gray-200 dark:bg-gray-800 dark:text-gray-400 dark:border-gray-700': log.status !== 'error' && !isActiveThoughtStep(log, msg.isThinking),
                                'animate-pulse': log.status === 'pending'
                              }"
@@ -695,7 +704,7 @@
                                  <template v-else-if="log.category === 'router'">🧠</template>
                                  <template v-else-if="log.category === 'tool' || log.category === 'sql'">🛠️</template>
                                  <template v-else-if="log.category === 'permission'">🔒</template>
-                                 <SparklesIcon v-else class="h-3.5 w-3.5 text-primary" />
+                                 <SparklesIcon v-else class="h-3.5 w-3.5 text-[var(--primary-color)]" />
                                </span>
                                <!-- Main Text -->
                                <span class="truncate">{{ log.title }}</span>
@@ -706,7 +715,7 @@
                                >🔒</span>
                                <span
                                  v-if="isActiveThoughtStep(log, msg.isThinking)"
-                                 class="inline-flex items-center px-1 sm:px-1.5 py-px sm:py-0.5 rounded text-[8px] sm:text-[9px] font-bold uppercase tracking-wide text-primary bg-primary/10 border border-primary/20 scale-90 sm:scale-100 origin-center"
+                                 class="inline-flex items-center px-1 sm:px-1.5 py-px sm:py-0.5 rounded text-[11px] font-normal tracking-normal text-[var(--primary-color)] bg-[rgb(var(--primary-color-rgb)/0.1)] border border-[rgb(var(--primary-color-rgb)/0.2)] scale-90 sm:scale-100 origin-center"
                                >
                                  进行中
                                </span>
@@ -729,7 +738,7 @@
                                <button
                                  v-if="log.details && log.isExpanded"
                                  @click.stop="copyMessage(log.details)"
-                                 class="p-1 text-gray-400 hover:text-primary transition-colors"
+                                 class="p-1 text-gray-400 hover:text-[var(--primary-color)] transition-colors"
                                  title="复制详情"
                                >
                                  <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012-2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3" /></svg>
@@ -746,13 +755,13 @@
                             <template v-else-if="splitSqlToolLogDetails(log.details)">
                               <div class="space-y-1.5 mb-1">
                                 <div class="p-2 bg-gray-900 rounded border border-gray-800 font-mono text-[10px] text-emerald-400 leading-relaxed overflow-x-auto relative group/sql">
-                                  <div class="flex justify-between items-center mb-1 text-[9px] text-gray-500 font-sans uppercase tracking-tight">
+                                  <div class="flex justify-between items-center mb-1 text-[11px] text-gray-500 font-sans tracking-normal">
                                     <span>SQL Query</span>
                                     <div class="flex items-center gap-1">
                                       <button @click.stop="copyMessage(splitSqlToolLogDetails(log.details)!.sqlPart)" class="text-gray-600 hover:text-emerald-400 transition-colors uppercase">Copy</button>
                                       <template v-if="resolveSavableSqlFromLog(log)">
                                         <span class="text-gray-700">|</span>
-                                        <button @click.stop="openSaveReportModal(resolveSavableSqlFromLog(log)!, msg)" class="text-gray-600 hover:text-primary transition-colors" title="添加为黄金报表">添加黄金报表</button>
+                                        <button @click.stop="openSaveReportModal(resolveSavableSqlFromLog(log)!, msg)" class="text-gray-600 hover:text-[var(--primary-color)] transition-colors" title="添加为黄金报表">添加黄金报表</button>
                                       </template>
                                     </div>
                                   </div>
@@ -762,7 +771,7 @@
                                      :class="splitSqlToolLogDetails(log.details)!.bodyKind === 'error'
                                        ? 'bg-red-50 dark:bg-red-950/30 border-red-200 dark:border-red-900/40 text-red-700 dark:text-red-300'
                                        : 'bg-gray-50 dark:bg-gray-900/60 border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-300'">
-                                  <div class="mb-1 text-[9px] font-sans uppercase tracking-tight"
+                                  <div class="mb-1 text-[11px] font-sans tracking-normal"
                                        :class="splitSqlToolLogDetails(log.details)!.bodyKind === 'error' ? 'text-red-500' : 'text-gray-500'">
                                     {{ sqlToolLogBodyLabel(splitSqlToolLogDetails(log.details)!.bodyKind) }}
                                   </div>
@@ -774,7 +783,7 @@
                             <!-- SQL Detection & Pretty Print (legacy / error-only logs) -->
                             <div v-else-if="log.details && isSqlLikeToolLogDetails(log.details)" class="space-y-1.5 mb-1">
                                 <div class="p-2 bg-gray-900 rounded border border-gray-800 font-mono text-[10px] text-emerald-400 leading-relaxed overflow-x-auto relative group/sql">
-                                    <div class="flex justify-between items-center mb-1 text-[9px] text-gray-500 font-sans uppercase tracking-tight">
+                                    <div class="flex justify-between items-center mb-1 text-[11px] text-gray-500 font-sans tracking-normal">
                                       <span>SQL Query</span>
                                       <div class="flex items-center gap-1">
                                         <button @click.stop="copyMessage(log.details)" class="text-gray-600 hover:text-emerald-400 transition-colors uppercase">Copy</button>
@@ -915,7 +924,7 @@
                 <button
                   v-if="!msg.datasetNavigation?.groups?.length"
                   @click="copyMessage(msg.content)"
-                  class="absolute -top-1 -right-1 p-1.5 text-gray-400 bg-white/90 dark:bg-gray-700/90 hover:bg-gray-100 dark:hover:bg-gray-600 hover:text-primary rounded-md opacity-0 group-hover/content:opacity-100 transition-all z-10 shadow-sm border border-gray-100 dark:border-gray-600"
+                  class="absolute -top-1 -right-1 p-1.5 text-gray-400 bg-white/90 dark:bg-gray-700/90 hover:bg-gray-100 dark:hover:bg-gray-600 hover:text-[var(--primary-color)] rounded-md opacity-0 group-hover/content:opacity-100 transition-all z-10 shadow-sm border border-gray-100 dark:border-gray-600"
                   title="复制内容"
                 >
                   <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"></path></svg>
@@ -949,8 +958,8 @@
                                 <!-- Typewriter Cursor -->
                                 <span
                                   v-if="isProcessing && msg.id === lastAgentMessage?.id && !msg.isThinking"
-                                  class="inline-block w-1.5 h-4 ml-1 bg-primary/60 animate-pulse-fast align-middle rounded-sm"
-                                  :style="{ backgroundColor: 'var(--primary-color, #1677ff)' }"
+                                  class="inline-block w-1.5 h-4 ml-1 bg-[rgb(var(--primary-color-rgb)/0.6)] animate-pulse-fast align-middle rounded-sm"
+                                  :style="{ backgroundColor: 'var(--primary-color, #0052D9)' }"
                                                                 ></span>
                                                               </div>
 
@@ -980,10 +989,10 @@
                                                                                                                               @click="msg.isCitationsExpanded = !msg.isCitationsExpanded"
                                                                                                                               class="flex items-center space-x-1.5 mb-2 w-full text-left group/cite-head"
                                                                                                                             >
-                                                                                                                               <svg class="w-3.5 h-3.5 text-gray-400 group-hover/cite-head:text-primary transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                                                                                               <svg class="w-3.5 h-3.5 text-gray-400 group-hover/cite-head:text-[var(--primary-color)] transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                                                                                                                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5S19.832 5.477 21 6.253v13C19.832 18.477 18.246 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
                                                                                                                                </svg>
-                                                                                                                               <span class="text-[10px] font-bold text-gray-400 uppercase tracking-wider flex-1 group-hover/cite-head:text-gray-600 dark:group-hover/cite-head:text-gray-300 transition-colors">引用来源 ({{ msg.citations.length }})</span>
+                                                                                                                               <span class="text-[11px] font-normal text-gray-500 flex-1 group-hover/cite-head:text-gray-700 dark:group-hover/cite-head:text-gray-300 transition-colors tracking-normal">引用来源 ({{ msg.citations.length }})</span>
                                                                                                                                <svg
                                                                                                                                   class="w-3.5 h-3.5 text-gray-400 transform transition-transform duration-200"
                                                                                                                                   :class="{ 'rotate-180': msg.isCitationsExpanded }"
@@ -1007,7 +1016,7 @@
                                                                                                                                                                           class="citation-chip group/cite relative flex items-center space-x-2 px-2.5 py-1.5 rounded-lg transition-all cursor-pointer overflow-hidden"
                                                                                                                                                                           :class="cite.similarity && cite.similarity < 0.5
                                                                                                                                                                             ? 'bg-amber-50/80 dark:bg-amber-900/20 border border-amber-200/80 dark:border-amber-700/50 hover:border-amber-400/60'
-                                                                                                                                                                            : 'bg-gray-50 dark:bg-gray-800/80 border border-gray-100 dark:border-gray-700 hover:border-primary/40 dark:hover:border-primary/40'"
+                                                                                                                                                                            : 'bg-gray-50 dark:bg-gray-800/80 border border-gray-100 dark:border-gray-700 hover:border-[rgb(var(--primary-color-rgb)/0.4)] dark:hover:border-[rgb(var(--primary-color-rgb)/0.4)]'"
                                                                                                                                                                           @click.stop="openCitationPopover(cite, $event)"
                                                                                                                                                                        >
                                                                                                                                                                           <!-- File Icon -->
@@ -1039,10 +1048,10 @@
             <!-- Agent Message Actions (Overlay/Bottom) -->
             <ChatBIDataEvidence v-if="msg.chatbiInsight" :meta="msg.chatbiInsight" />
             <ChatBIMetadataGuide v-if="msg.chatbiMetadataGuide" :guide="msg.chatbiMetadataGuide" @select="handleQuickQuestion" />
-            <div class="flex flex-nowrap items-center space-x-2 mt-1.5">
+            <div class="flex flex-wrap items-center gap-x-1 gap-y-0.5 mt-2 pt-1.5 border-t border-gray-100 dark:border-gray-800/70">
               <button
                 @click="copyMessage(msg.content)"
-                class="flex shrink-0 items-center space-x-1 text-[10px] text-gray-400 hover:text-primary transition-colors rounded hover:bg-gray-100 dark:hover:bg-gray-800"
+                class="flex shrink-0 items-center space-x-1 text-[11px] text-gray-500 dark:text-gray-400 hover:text-[var(--primary-color)] transition-colors rounded hover:bg-gray-100 dark:hover:bg-gray-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[rgb(var(--primary-color-rgb)/0.3)]"
                 :class="windowWidth < 640 ? 'p-2.5' : 'px-1.5 py-0.5'"
                 title="复制"
               >
@@ -1065,7 +1074,7 @@
               <button
                 v-if="msg.trace_id"
                 @click="exportData(msg.trace_id, 'xlsx')"
-                class="hidden sm:flex items-center space-x-1 text-[10px] text-gray-400 hover:text-primary transition-colors rounded hover:bg-gray-100 dark:hover:bg-gray-800"
+                class="hidden sm:flex items-center space-x-1 text-[11px] text-gray-500 dark:text-gray-400 hover:text-[var(--primary-color)] transition-colors rounded hover:bg-gray-100 dark:hover:bg-gray-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[rgb(var(--primary-color-rgb)/0.3)]"
                 :class="windowWidth < 640 ? 'p-2.5' : 'px-1.5 py-0.5'"
                 title="导出数据 (Excel)"
               >
@@ -1075,11 +1084,11 @@
                 <span>导出</span>
               </button>
               <!-- Time -->
-              <span v-if="msg.timestamp" class="text-[10px] text-gray-400 dark:text-gray-500 select-none mr-1">{{ formatBubbleTime(msg.timestamp) }}</span>
+              <span v-if="msg.timestamp" class="text-[11px] text-gray-400 dark:text-gray-500 select-none mr-1">{{ formatBubbleTime(msg.timestamp) }}</span>
               <button
                 v-if="msg === lastAgentMessage && !isProcessing"
                 @click="regenerate"
-                class="flex shrink-0 items-center space-x-1 text-[10px] text-gray-400 hover:text-primary transition-colors rounded hover:bg-gray-100 dark:hover:bg-gray-800"
+                class="flex shrink-0 items-center space-x-1 text-[11px] text-gray-500 dark:text-gray-400 hover:text-[var(--primary-color)] transition-colors rounded hover:bg-gray-100 dark:hover:bg-gray-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[rgb(var(--primary-color-rgb)/0.3)]"
                 :class="windowWidth < 640 ? 'p-2.5' : 'px-1.5 py-0.5'"
                 title="重新生成"
               >
@@ -1101,7 +1110,7 @@
               <button
                 v-if="msg.trace_id"
                 @click="openEmbedTrace(msg.trace_id)"
-                class="hidden md:flex shrink-0 items-center space-x-1 text-[10px] text-gray-400 hover:text-primary transition-colors rounded hover:bg-gray-100 dark:hover:bg-gray-800"
+                class="hidden md:flex shrink-0 items-center space-x-1 text-[11px] text-gray-500 dark:text-gray-400 hover:text-[var(--primary-color)] transition-colors rounded hover:bg-gray-100 dark:hover:bg-gray-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[rgb(var(--primary-color-rgb)/0.3)]"
                 :class="windowWidth < 640 ? 'p-2.5' : 'px-1.5 py-0.5'"
                 title="链路"
               >
@@ -1114,7 +1123,7 @@
               <button
                 v-if="msg.prompt_tokens !== undefined || msg.completion_tokens !== undefined"
                 @click="openModelCallStats(msg)"
-                class="flex sm:hidden shrink-0 items-center justify-center text-gray-400 hover:text-primary transition-colors rounded hover:bg-gray-100 dark:hover:bg-gray-800 p-2.5"
+                class="flex sm:hidden shrink-0 items-center justify-center text-gray-400 hover:text-[var(--primary-color)] transition-colors rounded hover:bg-gray-100 dark:hover:bg-gray-800 p-2.5"
                 title="查看 Token 消耗详情"
               >
                 <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1124,7 +1133,7 @@
               <button
                 v-if="msg.prompt_tokens !== undefined || msg.completion_tokens !== undefined"
                 @click="openModelCallStats(msg)"
-                class="hidden sm:flex shrink-0 items-center space-x-1.5 text-[10px] text-gray-400 dark:text-gray-500 bg-gray-50 dark:bg-gray-800/40 hover:bg-gray-100 dark:hover:bg-gray-800 hover:text-primary dark:hover:text-primary-active border border-gray-100/50 dark:border-gray-800/20 rounded px-1.5 py-0.5 select-none font-mono transition-all duration-200 cursor-pointer active:scale-95 ml-1"
+                class="hidden sm:flex shrink-0 items-center space-x-1.5 text-[10px] text-gray-400 dark:text-gray-500 bg-gray-50 dark:bg-gray-800/40 hover:bg-gray-100 dark:hover:bg-gray-800 hover:text-[var(--primary-color)] dark:hover:text-[var(--primary-color)]-active border border-gray-100/50 dark:border-gray-800/20 rounded px-1.5 py-0.5 select-none font-mono transition-all duration-200 cursor-pointer active:scale-95 ml-1"
                 title="点击查看详细的大模型调用统计指标（如单步耗时、工具调用明细、Token消耗详情等）"
               >
                 <span class="flex items-center space-x-0.5">
@@ -1199,7 +1208,7 @@
                   v-if="canSaveGoldenReportFromMessage(msg) && checkRole(msg, 'agent') && !msg.isThinking"
                   type="button"
                   @click="handleSaveReportFromMessage(msg)"
-                  class="flex shrink-0 items-center space-x-1 text-[10px] text-gray-400 hover:text-primary transition-colors rounded hover:bg-gray-100 dark:hover:bg-gray-800"
+                  class="flex shrink-0 items-center space-x-1 text-[10px] text-gray-400 hover:text-[var(--primary-color)] transition-colors rounded hover:bg-gray-100 dark:hover:bg-gray-800"
                   :class="windowWidth < 640 ? 'p-2.5' : 'px-1.5 py-0.5'"
                   title="将本轮成功查数的 SQL 沉淀为黄金报表"
                 >
@@ -1227,8 +1236,8 @@
         class="absolute bottom-52 left-1/2 -translate-x-1/2 z-30"
       >        <button
           @click="scrollToBottom(true)"
-          class="flex items-center space-x-2 px-4 py-2.5 bg-primary text-white shadow-2xl shadow-primary/40 rounded-full text-xs font-black hover:-translate-y-0.5 active:scale-95 transition-all group"
-          :style="{ backgroundColor: 'var(--primary-color, #1677ff)' }"
+          class="flex items-center space-x-2 px-4 py-2.5 bg-[var(--primary-color)] text-white shadow-2xl shadow-[rgb(var(--primary-color-rgb)/0.4)] rounded-full text-xs font-black hover:-translate-y-0.5 active:scale-95 transition-all group"
+          :style="{ backgroundColor: 'var(--primary-color, #0052D9)' }"
         >
           <svg class="w-4 h-4 animate-bounce" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M19 13l-7 7-7-7" /></svg>
           <span class="tracking-widest uppercase">查看最新消息</span>
@@ -2096,7 +2105,7 @@
           <button
             @click="showHelpModal = false"
             class="px-6 py-2 bg-primary text-white text-xs font-black uppercase tracking-widest rounded-xl hover:opacity-90 transition-all shadow-lg shadow-primary/20"
-            :style="{ backgroundColor: 'var(--primary-color, #1677ff)' }"
+            :style="{ backgroundColor: 'var(--primary-color, #0052D9)' }"
           >
             我明白了
           </button>
@@ -2653,25 +2662,20 @@ interface Message {
 const checkRole = (msg: Message, role: string): boolean => {
   return msg.role === role;
 };
-// Helper: Format Timestamp for Separators
+// 会话分隔仅按日期展示，避免与单条消息时间重复。
 const formatTimeLabel = (isoStr: string): string => {
   try {
     const date = new Date(isoStr);
     const now = new Date();
-    const diff = now.getTime() - date.getTime();
-    const oneDay = 24 * 60 * 60 * 1000;
-    const hours = String(date.getHours()).padStart(2, '0');
-    const minutes = String(date.getMinutes()).padStart(2, '0');
-    if (diff < oneDay && date.getDate() === now.getDate()) {
-      return `${hours}:${minutes}`;
+    if (date.toDateString() === now.toDateString()) {
+      return '今天';
     }
-    const yesterday = new Date(now.getTime() - oneDay);
-    if (date.getDate() === yesterday.getDate() && date.getMonth() === yesterday.getMonth()) {
-       return `昨天 ${hours}:${minutes}`;
+    const yesterday = new Date(now);
+    yesterday.setDate(now.getDate() - 1);
+    if (date.toDateString() === yesterday.toDateString()) {
+       return '昨天';
     }
-    const month = String(date.getMonth() + 1).padStart(2, '0');
-    const day = String(date.getDate()).padStart(2, '0');
-    return `${month}-${day} ${hours}:${minutes}`;
+    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
   } catch (e) { return ""; }
 };
 
@@ -2775,26 +2779,26 @@ const displayMessages = computed(() => {
   const raw = messages.value;
   if (!raw || raw.length === 0) return [];
   const result: Message[] = [];
-  let lastTime = 0;
+  let lastDateKey = '';
   const tryAddDateLabel = (currMsg: Message) => {
     if (currMsg.timestamp) {
-      const currTime = new Date(currMsg.timestamp).getTime();
-      // 5 minutes threshold
-      if (currTime - lastTime > 300000) {
+      const currDate = new Date(currMsg.timestamp);
+      const currDateKey = currDate.toDateString();
+      // 只在跨日期时插入分隔，具体时刻由消息操作栏展示。
+      if (currDateKey !== 'Invalid Date' && currDateKey !== lastDateKey) {
          result.push({
-           id: -currTime,
+           id: -currDate.getTime(),
            role: 'system',
            content: formatTimeLabel(currMsg.timestamp),
            isTimeLabel: true
          });
-         lastTime = currTime;
+         lastDateKey = currDateKey;
       }
     }
   };
   if (raw[0]) {
     tryAddDateLabel(raw[0]);
     result.push(raw[0]);
-    if (raw[0].timestamp) lastTime = new Date(raw[0].timestamp).getTime();
   }
   for (let i = 1; i < raw.length; i++) {
     const prev = raw[i - 1];
@@ -2805,7 +2809,6 @@ const displayMessages = computed(() => {
     if (curr) {
        tryAddDateLabel(curr);
        result.push(curr);
-       if (curr.timestamp) lastTime = new Date(curr.timestamp).getTime();
     }
   }
   return result;
@@ -6540,11 +6543,62 @@ onUnmounted(() => {
 :deep(.markdown-body p:last-child) {
   margin-bottom: 0;
 }
-:deep(.markdown-body h1, .markdown-body h2, .markdown-body h3) {
+/* TDesign 加粗：字重 600 + 深色强调，避免浏览器默认 700 的跳变感 */
+:deep(.markdown-body strong),
+:deep(.markdown-body b) {
+  font-weight: 600;
+  color: #1f2937;
+}
+.dark :deep(.markdown-body strong),
+.dark :deep(.markdown-body b) {
+  color: #f3f4f6;
+}
+/* 标题：TDesign 层级分明，h1/h2/h3 字号区分 */
+:deep(.markdown-body h1) {
+  font-size: 1.5em;
   font-weight: 600;
   margin-top: 1.5em;
   margin-bottom: 0.5em;
-  color: var(--primary-color, #1677ff);
+  color: #1f2937;
+  letter-spacing: 0.01em;
+}
+:deep(.markdown-body h2) {
+  font-size: 1.25em;
+  font-weight: 600;
+  margin-top: 1.4em;
+  margin-bottom: 0.5em;
+  color: #1f2937;
+  letter-spacing: 0.01em;
+}
+:deep(.markdown-body h3) {
+  font-size: 1.1em;
+  font-weight: 600;
+  margin-top: 1.3em;
+  margin-bottom: 0.4em;
+  color: #1f2937;
+}
+:deep(.markdown-body h4) {
+  font-size: 1em;
+  font-weight: 600;
+  margin-top: 1.2em;
+  margin-bottom: 0.4em;
+  color: #1f2937;
+}
+:deep(.markdown-body h5),
+:deep(.markdown-body h6) {
+  font-size: 0.95em;
+  font-weight: 600;
+  margin-top: 1em;
+  margin-bottom: 0.3em;
+  color: #1f2937;
+}
+.dark :deep(.markdown-body h1),
+.dark :deep(.markdown-body h2),
+.dark :deep(.markdown-body h3),
+.dark :deep(.markdown-body h4),
+.dark :deep(.markdown-body h5),
+.dark :deep(.markdown-body h6) {
+  color: #f3f4f6;
 }
 :deep(.markdown-body code) {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
@@ -6601,13 +6655,66 @@ onUnmounted(() => {
   margin: 1em 0;
 }
 :deep(.markdown-body table) {
-  display: block;
-  width: 100%;
-  overflow-x: auto;
+  display: table;
+  width: fit-content;
+  min-width: min(100%, 38rem);
+  max-width: 100%;
   border-collapse: collapse;
-  margin-bottom: 1em;
+  margin: 1em 0;
   font-size: 13px;
   -webkit-overflow-scrolling: touch;
+  /* 使用低对比度细线保留结构，移除左右外框以降低卡片感。 */
+  border-top: 0.5px solid rgba(15, 23, 42, 0.09);
+  border-bottom: 0.5px solid rgba(15, 23, 42, 0.09);
+  table-layout: auto;
+}
+/* 表头与正文共用白底，以极淡灰线区分首行数据。 */
+:deep(.markdown-body thead) {
+  background-color: transparent;
+  border-bottom: 0.5px solid rgba(15, 23, 42, 0.09);
+}
+:deep(.markdown-body th) {
+  padding: 10px 12px;
+  font-weight: 600;
+  color: #1f2937;
+  text-align: left;
+  border: none;
+}
+:deep(.markdown-body td) {
+  padding: 10px 12px;
+  border: none;
+  border-bottom: 0.5px solid rgba(15, 23, 42, 0.09);
+  color: #4b5563;
+  word-break: normal;
+}
+:deep(.markdown-body tbody tr:last-child td) {
+  border-bottom: none;
+}
+/* 去掉偶数行斑马纹（TDesign Table 默认无斑马纹，靠行分隔线分层） */
+:deep(.markdown-body tbody tr:nth-child(even)) {
+  background-color: transparent;
+}
+:deep(.markdown-body tbody tr:hover) {
+  background-color: #F9F9F9;
+}
+/* 暗色模式表格分支 */
+.dark :deep(.markdown-body table) {
+  border-top-color: rgba(255, 255, 255, 0.12);
+  border-bottom-color: rgba(255, 255, 255, 0.12);
+}
+.dark :deep(.markdown-body thead) {
+  background-color: transparent;
+  border-bottom-color: rgba(255, 255, 255, 0.12);
+}
+.dark :deep(.markdown-body th) {
+  color: #E5E5E5;
+}
+.dark :deep(.markdown-body td) {
+  border-bottom-color: rgba(255, 255, 255, 0.12);
+  color: #B9B9B9;
+}
+.dark :deep(.markdown-body tbody tr:hover) {
+  background-color: rgba(255, 255, 255, 0.03);
 }
 :deep(.markdown-body pre) {
   max-width: 100%;
@@ -6625,6 +6732,21 @@ onUnmounted(() => {
   background: rgba(0,0,0,0.1);
   border-radius: 2px;
 }
+
+/* 数据回答在桌面端维持舒适行宽，宽表仍可在正文范围内展开。 */
+.agent-message-content {
+  width: min(100%, 60rem);
+}
+
+@media (max-width: 640px) {
+  .agent-message-content {
+    width: 100%;
+  }
+
+  :deep(.markdown-body table) {
+    min-width: 100%;
+  }
+}
 .drawer-enter-active,
 .drawer-leave-active {
   transition: opacity 0.3s ease;
@@ -6633,13 +6755,7 @@ onUnmounted(() => {
 .drawer-leave-to {
   opacity: 0;
 }
-:deep(.markdown-body th, .markdown-body td) {
-  border: 1px solid #e5e7eb;
-  padding: 8px 12px;
-}
-:deep(.markdown-body tr:nth-child(even)) {
-  background-color: #f9fafb;
-}
+/* th / td 边框已在上面 table TDesign 规则里改为行内分隔线，这里不再覆盖 */
 /* Highlight.js Color Overrides - Light Theme */
 :deep(.hljs-keyword),
 :deep(.hljs-selector-tag) {
@@ -6719,7 +6835,7 @@ onUnmounted(() => {
   border-color: #10b981;
 }
 
-/* 思维链扫光动效 */
+/* 思维链扫光动效：TDesign 风格，大幅降强度降频率 */
 .shimmer-thought-card {
   position: relative !important;
   overflow: hidden !important;
@@ -6734,12 +6850,12 @@ onUnmounted(() => {
   transform: translateX(-100%);
   background-image: linear-gradient(
     90deg,
-    rgba(255, 255, 255, 0) 0%,
-    rgba(255, 255, 255, 0.45) 20%,
-    rgba(255, 255, 255, 0.75) 60%,
-    rgba(255, 255, 255, 0) 100%
+    rgba(0, 0, 0, 0) 0%,
+    rgba(0, 0, 0, 0.03) 20%,
+    rgba(0, 0, 0, 0.06) 60%,
+    rgba(0, 0, 0, 0) 100%
   );
-  animation: shimmer-slide 2s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+  animation: shimmer-slide 3s cubic-bezier(0.4, 0, 0.2, 1) infinite;
   pointer-events: none;
   z-index: 5;
 }

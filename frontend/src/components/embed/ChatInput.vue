@@ -703,8 +703,8 @@ defineExpose({
         <div v-if="showShortcutBar" class="flex items-center space-x-2 mb-2 px-1 relative h-8" :class="{ 'opacity-50 pointer-events-none select-none': isProcessing }">
             <!-- 1. Left Toggle Button (Visible on all devices now) -->
             <div @click="emit('toggle-shortcuts')" class="flex items-center space-x-1 cursor-pointer select-none group flex-shrink-0 bg-white dark:bg-gray-900 pr-2 z-10">
-                <span class="text-[10px] font-black text-gray-400 group-hover:text-primary transition-colors tracking-tighter">⚡️ 快捷指令</span>
-                <svg class="w-3 h-3 text-gray-300 group-hover:text-primary transition-transform duration-200 rotate-180" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M19 9l-7 7-7-7" /></svg>
+                <span class="text-[11px] font-normal text-gray-500 group-hover:text-[var(--primary-color)] transition-colors tracking-normal">⚡️ 快捷指令</span>
+                <svg class="w-3 h-3 text-gray-300 group-hover:text-[var(--primary-color)] transition-transform duration-200 rotate-180" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M19 9l-7 7-7-7" /></svg>
             </div>
 
             <!-- 2. Middle Content -->
@@ -754,7 +754,7 @@ defineExpose({
                                 data-shortcut-more
                                 type="button"
                                 @click="openCommandDrawer"
-                                class="flex-shrink-0 inline-flex items-center text-[10px] font-black text-primary hover:opacity-80 transition-all whitespace-nowrap"
+                                class="flex-shrink-0 inline-flex items-center text-[11px] font-medium text-[var(--primary-color)] hover:opacity-80 transition-all whitespace-nowrap"
                             >
                                 更多 <svg class="w-3 h-3 ml-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M19 9l-7 7-7-7" /></svg>
                             </button>
@@ -762,11 +762,11 @@ defineExpose({
 
                         <!-- Desktop command drawer -->
                         <div v-else class="z-50 absolute bottom-full left-0 right-0 mb-3 animate-fade-in-up px-1" @click.self="closeCommandDrawer">
-                            <div class="bg-white/95 dark:bg-gray-800/95 backdrop-blur-xl border border-gray-200 dark:border-gray-700 p-4 shadow-2xl overflow-y-auto custom-scrollbar ring-1 ring-black/5 rounded-2xl max-h-[24rem]" @click.stop>
+                            <div class="bg-white/95 dark:bg-gray-800/95 backdrop-blur-xl border border-gray-200 dark:border-gray-700 p-4 shadow-xl overflow-y-auto custom-scrollbar rounded-td-xl max-h-[24rem]" @click.stop>
                                 <div class="flex items-center justify-between mb-6">
                                     <div class="flex items-center space-x-2">
-                                        <span class="w-1.5 h-4 bg-primary rounded-full"></span>
-                                        <span class="text-[11px] font-black text-gray-800 dark:text-gray-100 uppercase tracking-widest">指令库 · Commands</span>
+                                        <span class="w-1.5 h-4 bg-[var(--primary-color)] rounded-full"></span>
+                                        <span class="text-xs font-medium text-gray-800 dark:text-gray-100 tracking-normal">指令库 · Commands</span>
                                     </div>
                                     <button @click="closeCommandDrawer" class="w-8 h-8 flex items-center justify-center rounded-full bg-gray-100 dark:bg-gray-700 text-gray-500 hover:bg-gray-200 transition-all">
                                         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M19 9l-7 7-7-7" /></svg>
@@ -774,11 +774,11 @@ defineExpose({
                                 </div>
                                 <div class="space-y-6">
                                     <div v-if="filteredUserCommands.length > 0">
-                                        <div class="text-[10px] font-black text-blue-500 mb-3 px-1 flex items-center uppercase tracking-tighter">Mine · 我的常用</div>
+                                        <div class="text-xs font-medium text-gray-700 dark:text-gray-200 mb-3 px-1 flex items-center tracking-normal">Mine · 我的常用</div>
                                         <div class="grid grid-cols-2 sm:grid-cols-3 gap-3">
                                             <div v-for="cmd in filteredUserCommands" :key="'grid-user-'+cmd.id" class="relative group/grid-item">
-                                                <button draggable="true" @dragstart="handleDragStart($event, cmd, 'user')" @dragover.prevent @drop="handleDrop($event, cmd, 'user')" @click="handleShortcutClick(cmd); closeCommandDrawer();" class="w-full text-left p-3.5 rounded-2xl bg-gray-50 dark:bg-gray-900/50 border border-gray-100 dark:border-gray-800 hover:border-primary/30 hover:bg-white dark:hover:bg-gray-900 hover:shadow-md transition-all">
-                                                    <div class="text-xs font-bold text-gray-800 dark:text-gray-200 mb-1 truncate">{{ cmd.label }}</div>
+                                                <button draggable="true" @dragstart="handleDragStart($event, cmd, 'user')" @dragover.prevent @drop="handleDrop($event, cmd, 'user')" @click="handleShortcutClick(cmd); closeCommandDrawer();" class="w-full text-left p-3.5 rounded-td-md bg-tdSecondaryContainer dark:bg-tdSecondaryContainer-dark border border-transparent hover:border-[rgb(var(--primary-color-rgb)/0.4)] transition-colors">
+                                                    <div class="text-xs font-medium text-gray-800 dark:text-gray-200 mb-1 truncate">{{ cmd.label }}</div>
                                                     <div class="text-[9px] text-gray-400 truncate opacity-60 font-mono">{{ cmd.command }}</div>
                                                 </button>
                                                 <button v-if="canDeleteCommand(cmd)" @click.stop="$emit('delete-command', cmd, $event)" class="absolute -top-1.5 -right-1.5 w-6 h-6 bg-red-500 text-white rounded-full flex items-center justify-center shadow-lg z-10 opacity-0 group-hover/grid-item:opacity-100 hover:scale-110 active:scale-95"><svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M6 18L18 6M6 6l12 12" /></svg></button>
@@ -786,11 +786,11 @@ defineExpose({
                                         </div>
                                     </div>
                                     <div>
-                                        <div class="text-[10px] font-black text-gray-400 mb-3 px-1 flex items-center uppercase tracking-tighter">System · 系统功能</div>
+                                        <div class="text-xs font-medium text-gray-500 dark:text-gray-400 mb-3 px-1 flex items-center tracking-normal">System · 系统功能</div>
                                         <div class="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                                            <button :disabled="cmd.disabled" v-for="cmd in filteredSystemCommands" :key="'grid-sys-'+cmd.id" @click="handleShortcutClick(cmd); closeCommandDrawer();" class="w-full text-left p-3.5 rounded-2xl bg-gray-50/50 dark:bg-gray-900/30 border border-transparent hover:bg-gray-100 dark:hover:bg-gray-800 transition-all disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-gray-50/50">
-                                                <div class="text-xs font-bold text-gray-600 dark:text-gray-400 mb-1 truncate">{{ cmd.label }}</div>
-                                                <div class="text-[9px] text-gray-400/60 truncate font-mono">{{ cmd.command }}</div>
+                                            <button :disabled="cmd.disabled" v-for="cmd in filteredSystemCommands" :key="'grid-sys-'+cmd.id" @click="handleShortcutClick(cmd); closeCommandDrawer();" class="w-full text-left p-3.5 rounded-td-md bg-tdSecondaryContainer dark:bg-tdSecondaryContainer-dark border border-transparent hover:border-[rgb(var(--primary-color-rgb)/0.3)] transition-colors disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-tdSecondaryContainer">
+                                                <div class="text-xs font-medium text-gray-700 dark:text-gray-300 mb-1 truncate">{{ cmd.label }}</div>
+                                                <div class="text-[11px] text-gray-400/70 truncate font-mono">{{ cmd.command }}</div>
                                             </button>
                                         </div>
                                     </div>
@@ -802,7 +802,7 @@ defineExpose({
             </div>
 
             <!-- Add Button -->
-            <button @click="emit('open-command-manager')" class="flex-shrink-0 p-1.5 text-gray-400 hover:text-primary transition-all rounded-full hover:bg-gray-100 dark:hover:bg-gray-800 group" title="新建快捷指令">
+            <button @click="emit('open-command-manager')" class="flex-shrink-0 p-1.5 text-gray-400 hover:text-[var(--primary-color)] transition-all rounded-full hover:bg-gray-100 dark:hover:bg-gray-800 group" title="新建快捷指令">
                 <svg class="w-4 h-4 transform group-hover:rotate-90 transition-transform duration-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M12 4v16m8-8H4" /></svg>
             </button>
         </div>
@@ -840,7 +840,7 @@ defineExpose({
                       📁
                   </div>
                   <!-- File Icon -->
-                  <div v-else class="w-8 h-8 rounded bg-primary/10 dark:bg-primary/20 flex items-center justify-center text-primary text-sm flex-shrink-0 mr-2">
+                  <div v-else class="w-8 h-8 rounded bg-[rgb(var(--primary-color-rgb)/0.1)] dark:bg-[rgb(var(--primary-color-rgb)/0.2)] flex items-center justify-center text-[var(--primary-color)] text-sm flex-shrink-0 mr-2">
                       📄
                   </div>
                   <!-- Metadata -->
@@ -866,7 +866,7 @@ defineExpose({
             
             <!-- Uploading indicator -->
             <div v-if="isUploading" class="flex items-center space-x-2 bg-gray-100/50 dark:bg-gray-800/50 border border-dashed border-gray-300 dark:border-gray-700 rounded-lg px-3 py-1.5 max-w-[200px]">
-                <div class="w-3.5 h-3.5 border-2 border-primary border-t-transparent rounded-full animate-spin"></div>
+                <div class="w-3.5 h-3.5 border-2 border-[var(--primary-color)] border-t-transparent rounded-full animate-spin"></div>
                 <span class="text-[10px] text-gray-400 font-medium">正在上传...</span>
             </div>
         </div>
@@ -875,17 +875,17 @@ defineExpose({
         <div
           @dragover.prevent
           @drop="handleDropFile"
-          class="relative flex flex-col rounded-2xl border bg-white px-3 py-2.5 transition-all duration-300 focus-within:border-primary focus-within:ring-2 focus-within:ring-primary/25 dark:bg-gray-800 dark:focus-within:ring-primary/30"
+          class="relative flex flex-col rounded-td-xl border border-gray-300 dark:border-gray-600 bg-tdSpecialComponent dark:bg-tdSpecialComponent-dark px-3 py-2.5 transition-all duration-200 focus-within:border-[var(--primary-color)] focus-within:ring-2 focus-within:ring-[rgb(var(--primary-color-rgb)/0.2)] hover:border-[var(--primary-color)]"
           :class="isProcessing
-            ? 'border-primary/60 bg-blue-50/30 dark:bg-blue-950/20 dark:border-primary/50 input-glow-processing'
-            : 'border-gray-200 dark:border-gray-700'"
+            ? 'border-[var(--primary-color)] ring-2 ring-[rgb(var(--primary-color-rgb)/0.2)] input-glow-processing'
+            : ''"
         >
             <!-- 三点跳动 Loading 指示器 -->
             <div v-if="isProcessing" class="absolute top-3 left-3 flex items-center space-x-1.5 pointer-events-none z-20">
                 <span class="ai-dot" style="animation-delay: 0ms"></span>
                 <span class="ai-dot" style="animation-delay: 150ms"></span>
                 <span class="ai-dot" style="animation-delay: 300ms"></span>
-                <span class="ml-1.5 text-[11px] font-medium text-primary/70 select-none">AI 正在生成回复…</span>
+                <span class="ml-1.5 text-[11px] font-medium text-[rgb(var(--primary-color-rgb)/0.7)] select-none">AI 正在生成回复…</span>
             </div>
 
             <div
@@ -894,8 +894,8 @@ defineExpose({
             >
               <div class="flex items-center justify-between border-b border-gray-100 bg-gray-50 px-3 py-2 dark:border-gray-600 dark:bg-gray-700">
                 <div class="flex items-center space-x-2">
-                  <span class="text-[10px] font-black uppercase tracking-widest text-gray-400">快捷指令库</span>
-                  <span class="rounded-md bg-primary/10 px-1.5 py-0.5 text-[9px] font-bold text-primary">{{ filteredCommands.length }} 匹配</span>
+                  <span class="text-[11px] font-normal tracking-normal text-gray-500">快捷指令库</span>
+                  <span class="rounded-md bg-[rgb(var(--primary-color-rgb)/0.1)] px-1.5 py-0.5 text-[9px] font-bold text-[var(--primary-color)]">{{ filteredCommands.length }} 匹配</span>
                 </div>
               </div>
               <div class="overflow-y-auto p-1 custom-scrollbar">
@@ -906,16 +906,16 @@ defineExpose({
                   class="flex cursor-pointer items-center space-x-3 rounded-lg px-3 py-2 transition-all"
                   :class="[
                     cmd.disabled ? 'opacity-40 cursor-not-allowed' : '',
-                    index === activeCommandIndex ? 'bg-primary/10 ring-1 ring-primary/20 dark:bg-primary/20' : 'hover:bg-gray-50 dark:hover:bg-gray-700'
+                    index === activeCommandIndex ? 'bg-[rgb(var(--primary-color-rgb)/0.1)] ring-1 ring-[rgb(var(--primary-color-rgb)/0.2)] dark:bg-[rgb(var(--primary-color-rgb)/0.2)]' : 'hover:bg-gray-50 dark:hover:bg-gray-700'
                   ]"
                 >
                   <div class="min-w-0 flex-1">
                     <div class="flex items-center space-x-2">
-                      <span class="truncate text-sm font-bold text-gray-900 dark:text-gray-100" :class="[index === activeCommandIndex && !cmd.disabled ? 'text-primary' : '', cmd.disabled ? 'text-gray-400 dark:text-gray-500' : '']">
+                      <span class="truncate text-sm font-bold text-gray-900 dark:text-gray-100" :class="[index === activeCommandIndex && !cmd.disabled ? 'text-[var(--primary-color)]' : '', cmd.disabled ? 'text-gray-400 dark:text-gray-500' : '']">
                         {{ cmd.label }}
                       </span>
                       <span v-if="cmd.disabled" class="rounded border border-yellow-200 bg-yellow-50 px-1 py-0.5 text-[8px] font-bold text-yellow-600 dark:border-yellow-900/30 dark:bg-yellow-950/20">功能未启用</span>
-                      <span v-if="String(cmd.id).startsWith('sys_')" class="rounded border border-gray-200 bg-gray-100 px-1 py-0.5 text-[8px] font-black uppercase tracking-tighter text-gray-500 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-400">SYS</span>
+                      <span v-if="String(cmd.id).startsWith('sys_')" class="rounded border border-gray-200 bg-gray-100 px-1 py-0.5 text-[11px] font-normal tracking-normal text-gray-500 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-400">SYS</span>
                     </div>
                     <div class="truncate font-mono text-[10px] text-gray-400 opacity-70">
                       {{ cmd.command }}
@@ -930,7 +930,7 @@ defineExpose({
             <div class="relative z-20 mt-1 flex min-h-9 flex-wrap items-center gap-1.5 sm:gap-2">
                 <!-- Plus Button & Menu (Premium Glassmorphism Style) -->
                 <div ref="plusMenuContainerRef" class="relative flex-shrink-0 z-30">
-                    <button @click="togglePlusMenu" :disabled="isProcessing" class="w-8 h-8 flex items-center justify-center rounded-full text-gray-400 hover:text-primary hover:bg-gray-100 dark:hover:bg-gray-700 transition-all duration-200 focus:outline-none disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-gray-400" :class="{ 'text-primary bg-gray-100 dark:bg-gray-700 rotate-45': showPlusMenu && !isProcessing }" title="添加附件或上下文">
+                    <button @click="togglePlusMenu" :disabled="isProcessing" class="w-8 h-8 flex items-center justify-center rounded-full text-gray-400 hover:text-[var(--primary-color)] hover:bg-gray-100 dark:hover:bg-gray-700 transition-all duration-200 focus:outline-none disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-gray-400" :class="{ 'text-[var(--primary-color)] bg-gray-100 dark:bg-gray-700 rotate-45': showPlusMenu && !isProcessing }" title="添加附件或上下文">
                         <svg class="w-5 h-5 transition-transform duration-200" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M12 4v16m8-8H4" />
                         </svg>
@@ -952,14 +952,14 @@ defineExpose({
                             <button
                               v-if="filteredSystemCommands.some(c => c.id === DATASET_PORTAL_SYSTEM_COMMAND_ID)"
                               @click="openDataPortalFromPlusMenu"
-                              class="w-full flex items-center space-x-3 px-3 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-primary/10 dark:hover:bg-primary/20 hover:text-primary transition-all duration-150"
+                              class="w-full flex items-center space-x-3 px-3 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-[rgb(var(--primary-color-rgb)/0.1)] dark:hover:bg-[rgb(var(--primary-color-rgb)/0.2)] hover:text-[var(--primary-color)] transition-all duration-150"
                             >
                                 <span class="text-lg">📊</span>
                                 <span class="font-medium text-left">打开数据门户</span>
                             </button>
 
                             <!-- Knowledge Base -->
-                            <button :disabled="isKnowledgePortalDisabled" @click="isKnowledgePortalDisabled ? null : (showPlusMenu = false, emit('select-knowledge-base'));" class="w-full flex items-center justify-between px-3 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-primary/10 dark:hover:bg-primary/20 hover:text-primary transition-all duration-150 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent">
+                            <button :disabled="isKnowledgePortalDisabled" @click="isKnowledgePortalDisabled ? null : (showPlusMenu = false, emit('select-knowledge-base'));" class="w-full flex items-center justify-between px-3 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-[rgb(var(--primary-color-rgb)/0.1)] dark:hover:bg-[rgb(var(--primary-color-rgb)/0.2)] hover:text-[var(--primary-color)] transition-all duration-150 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent">
                                 <div class="flex items-center space-x-3">
                                     <span class="text-lg">📚</span>
                                     <span class="font-medium text-left">打开知识库中心</span>
@@ -967,25 +967,25 @@ defineExpose({
                             </button>
 
                             <!-- Browse Workspace -->
-                            <button @click="showPlusMenu = false; emit('select-local-fs');" class="w-full flex items-center space-x-3 px-3 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-primary/10 dark:hover:bg-primary/20 hover:text-primary transition-all duration-150">
+                            <button @click="showPlusMenu = false; emit('select-local-fs');" class="w-full flex items-center space-x-3 px-3 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-[rgb(var(--primary-color-rgb)/0.1)] dark:hover:bg-[rgb(var(--primary-color-rgb)/0.2)] hover:text-[var(--primary-color)] transition-all duration-150">
                                 <span class="text-lg">💻</span>
                                 <span class="font-medium text-left">浏览工作空间</span>
                             </button>
 
                             <!-- Upload File (Active) -->
-                            <button @click="triggerFileInput" class="w-full flex items-center space-x-3 px-3 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-primary/10 dark:hover:bg-primary/20 hover:text-primary transition-all duration-150">
+                            <button @click="triggerFileInput" class="w-full flex items-center space-x-3 px-3 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-[rgb(var(--primary-color-rgb)/0.1)] dark:hover:bg-[rgb(var(--primary-color-rgb)/0.2)] hover:text-[var(--primary-color)] transition-all duration-150">
                                 <span class="text-lg">📁</span>
                                 <span class="font-medium text-left">上传本地文件</span>
                             </button>
 
                             <!-- Skills (Active) -->
-                            <button @click="showPlusMenu = false; emit('select-skill');" class="w-full flex items-center space-x-3 px-3 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-primary/10 dark:hover:bg-primary/20 hover:text-primary transition-all duration-150">
+                            <button @click="showPlusMenu = false; emit('select-skill');" class="w-full flex items-center space-x-3 px-3 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-[rgb(var(--primary-color-rgb)/0.1)] dark:hover:bg-[rgb(var(--primary-color-rgb)/0.2)] hover:text-[var(--primary-color)] transition-all duration-150">
                                 <span class="text-lg">⚙️</span>
                                 <span class="font-medium text-left">调用技能工作流</span>
                             </button>
 
                             <!-- Memory Records -->
-                            <button @click="showPlusMenu = false; emit('select-memory');" class="w-full flex items-center space-x-3 px-3 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-primary/10 dark:hover:bg-primary/20 hover:text-primary transition-all duration-150">
+                            <button @click="showPlusMenu = false; emit('select-memory');" class="w-full flex items-center space-x-3 px-3 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-[rgb(var(--primary-color-rgb)/0.1)] dark:hover:bg-[rgb(var(--primary-color-rgb)/0.2)] hover:text-[var(--primary-color)] transition-all duration-150">
                                 <span class="text-lg">🧠</span>
                                 <span class="font-medium text-left">选择记忆记录</span>
                             </button>
@@ -1106,7 +1106,7 @@ defineExpose({
                                           class="flex w-full items-start gap-2.5 text-left transition-colors hover:bg-gray-50 dark:hover:bg-gray-700/50"
                                           :class="[
                                             isMobileViewport ? 'px-4 py-3.5' : 'px-3 py-2.5',
-                                            activeApprovalMode === option.value ? 'bg-primary/10 dark:bg-primary/20' : '',
+                                            activeApprovalMode === option.value ? 'bg-[rgb(var(--primary-color-rgb)/0.1)] dark:bg-[rgb(var(--primary-color-rgb)/0.2)]' : '',
                                           ]"
                                           @click="selectApprovalMode(option.value)"
                                         >
@@ -1129,7 +1129,7 @@ defineExpose({
                                                     >{{ option.label }}</span>
                                                     <svg
                                                       v-if="activeApprovalMode === option.value"
-                                                      class="h-4 w-4 flex-shrink-0 text-primary"
+                                                      class="h-4 w-4 flex-shrink-0 text-[var(--primary-color)]"
                                                       fill="none"
                                                       stroke="currentColor"
                                                       viewBox="0 0 24 24"
@@ -1181,7 +1181,7 @@ defineExpose({
                               class="w-full text-left px-2.5 py-1.5 rounded-lg text-xs transition-all flex items-center justify-between"
                               :class="
                                 !selectedModel
-                                  ? 'bg-primary/5 text-primary font-bold'
+                                  ? 'bg-[rgb(var(--primary-color-rgb)/0.05)] text-[var(--primary-color)] font-bold'
                                   : 'text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700/50'
                               "
                             >
@@ -1200,7 +1200,7 @@ defineExpose({
                               class="w-full text-left px-2.5 py-1.5 rounded-lg text-xs transition-all flex items-center justify-between mt-0.5"
                               :class="
                                 selectedModel === model.model_id
-                                  ? 'bg-primary/5 text-primary font-bold'
+                                  ? 'bg-[rgb(var(--primary-color-rgb)/0.05)] text-[var(--primary-color)] font-bold'
                                   : 'text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700/50'
                               "
                             >
@@ -1234,8 +1234,8 @@ defineExpose({
           <div class="bg-white/95 dark:bg-gray-800/95 backdrop-blur-xl border border-gray-200 dark:border-gray-700 p-4 shadow-2xl overflow-y-auto custom-scrollbar ring-1 ring-black/5 rounded-t-3xl max-h-[85vh] pb-12 animate-slide-up" @click.stop>
             <div class="flex items-center justify-between mb-6">
               <div class="flex items-center space-x-2">
-                <span class="w-1.5 h-4 bg-primary rounded-full"></span>
-                <span class="text-[11px] font-black text-gray-800 dark:text-gray-100 uppercase tracking-widest">指令库 · Commands</span>
+                <span class="w-1.5 h-4 bg-[var(--primary-color)] rounded-full"></span>
+                <span class="text-xs font-medium text-gray-800 dark:text-gray-100 tracking-normal">指令库 · Commands</span>
               </div>
               <button @click="closeCommandDrawer" class="w-8 h-8 flex items-center justify-center rounded-full bg-gray-100 dark:bg-gray-700 text-gray-500 hover:bg-gray-200 transition-all">
                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M19 9l-7 7-7-7" /></svg>
@@ -1243,10 +1243,10 @@ defineExpose({
             </div>
             <div class="space-y-6">
               <div v-if="filteredUserCommands.length > 0">
-                <div class="text-[10px] font-black text-blue-500 mb-3 px-1 flex items-center uppercase tracking-tighter">Mine · 我的常用</div>
+                <div class="text-xs font-medium text-gray-700 dark:text-gray-200 mb-3 px-1 flex items-center tracking-normal">Mine · 我的常用</div>
                 <div class="grid grid-cols-2 gap-3">
                   <div v-for="cmd in filteredUserCommands" :key="'mobile-user-'+cmd.id" class="relative">
-                    <button @click="handleShortcutClick(cmd); closeCommandDrawer();" class="w-full text-left p-3.5 rounded-2xl bg-gray-50 dark:bg-gray-900/50 border border-gray-100 dark:border-gray-800 hover:border-primary/30 hover:bg-white dark:hover:bg-gray-900 hover:shadow-md transition-all">
+                    <button @click="handleShortcutClick(cmd); closeCommandDrawer();" class="w-full text-left p-3.5 rounded-2xl bg-gray-50 dark:bg-gray-900/50 border border-gray-100 dark:border-gray-800 hover:border-[rgb(var(--primary-color-rgb)/0.3)] hover:bg-white dark:hover:bg-gray-900 hover:shadow-md transition-all">
                       <div class="text-xs font-bold text-gray-800 dark:text-gray-200 mb-1 truncate">{{ cmd.label }}</div>
                       <div class="text-[9px] text-gray-400 truncate opacity-60 font-mono">{{ cmd.command }}</div>
                     </button>
@@ -1255,7 +1255,7 @@ defineExpose({
                 </div>
               </div>
               <div>
-                <div class="text-[10px] font-black text-gray-400 mb-3 px-1 flex items-center uppercase tracking-tighter">System · 系统功能</div>
+                <div class="text-xs font-medium text-gray-500 dark:text-gray-400 mb-3 px-1 flex items-center tracking-normal">System · 系统功能</div>
                 <div class="grid grid-cols-2 gap-3">
                   <button :disabled="cmd.disabled" v-for="cmd in filteredSystemCommands" :key="'mobile-sys-'+cmd.id" @click="cmd.disabled ? null : (handleShortcutClick(cmd), closeCommandDrawer());" class="w-full text-left p-3.5 rounded-2xl bg-gray-50/50 dark:bg-gray-900/30 border border-transparent hover:bg-gray-100 dark:hover:bg-gray-800 transition-all disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-gray-50/50">
                     <div class="text-xs font-bold text-gray-600 dark:text-gray-400 mb-1 truncate">{{ cmd.label }}</div>
@@ -1275,27 +1275,27 @@ defineExpose({
 @keyframes slide-up { from { transform: translateY(100%); } to { transform: translateY(0); } }
 .animate-slide-up { animation: slide-up 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
 
-/* ── AI 生成中：三点跳动 ── */
+/* ── AI 生成中：三点跳动（TDesign 风格，大幅降幅度） ── */
 @keyframes ai-bounce {
   0%, 80%, 100% { transform: translateY(0); opacity: 0.4; }
-  40%           { transform: translateY(-5px); opacity: 1; }
+  40%           { transform: translateY(-2px); opacity: 1; }
 }
 .ai-dot {
   display: inline-block;
   width: 5px;
   height: 5px;
   border-radius: 50%;
-  background-color: var(--primary-color, #1677ff);
-  animation: ai-bounce 1.2s ease-in-out infinite;
+  background-color: var(--primary-color, #0052D9);
+  animation: ai-bounce 1.4s cubic-bezier(0.38, 0, 0.24, 1) infinite;
 }
 
-/* ── AI 生成中：边框呼吸光晕 ── */
+/* ── AI 生成中：边框呼吸光晕（TDesign 风格，只保留 ring 不发光） ── */
 @keyframes glow-pulse {
-  0%, 100% { box-shadow: 0 0 0 0 rgba(22, 119, 255, 0); }
-  50%       { box-shadow: 0 0 0 4px rgba(22, 119, 255, 0.15), 0 0 16px 2px rgba(22, 119, 255, 0.10); }
+  0%, 100% { box-shadow: 0 0 0 2px rgba(0, 82, 217, 0.10); }
+  50%       { box-shadow: 0 0 0 2px rgba(0, 82, 217, 0.18); }
 }
 .input-glow-processing {
-  animation: glow-pulse 2s ease-in-out infinite;
+  animation: glow-pulse 2.8s cubic-bezier(0.38, 0, 0.24, 1) infinite;
 }
 
 /* ── 滚动条 ── */

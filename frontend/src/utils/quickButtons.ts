@@ -5,9 +5,14 @@ export function encodeQuickTarget(target: string): string {
   return trimmed.includes("%") ? trimmed : encodeURIComponent(trimmed);
 }
 
+/** 移除模型在快捷追问文案前附加的装饰性图标，保持企业场景按钮简洁。 */
+function normalizeQuickButtonLabel(label: string): string {
+  return label.trim().replace(/^[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\uFE0F\u200D\s]+/u, "").trim();
+}
+
 export function buildQuickButtonHtml(label: string, target: string): string {
   const encodedTarget = encodeQuickTarget(target);
-  return `<a class="quick-action-btn" href="quick:${encodedTarget}">${label.trim()}</a>`;
+  return `<a class="quick-action-btn" href="quick:${encodedTarget}">${normalizeQuickButtonLabel(label)}</a>`;
 }
 
 export function parseQuickButtons(text: string): string {

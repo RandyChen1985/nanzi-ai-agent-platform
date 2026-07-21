@@ -118,7 +118,7 @@ const handleScroll = (e: Event) => {
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
             </svg>
           </button>
-          <h3 class="font-black text-gray-800 dark:text-gray-100 text-sm uppercase tracking-widest flex items-center">
+          <h3 class="font-medium text-gray-800 dark:text-gray-100 text-sm tracking-normal flex items-center">
             会话历史
           </h3>
         </div>
@@ -151,7 +151,7 @@ const handleScroll = (e: Event) => {
             v-model="keyword"
             type="search"
             placeholder="搜索历史记录..."
-            class="w-full pl-9 pr-3 py-2 text-xs bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all placeholder-gray-400 text-gray-600 dark:text-gray-300"
+            class="w-full pl-9 pr-3 py-2 text-xs bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-[rgb(var(--primary-color-rgb)/0.2)] focus:border-[var(--primary-color)] transition-all placeholder-gray-400 text-gray-600 dark:text-gray-300"
           />
           <svg
             class="w-4 h-4 text-gray-400 absolute left-3 top-2.5"
@@ -176,9 +176,9 @@ const handleScroll = (e: Event) => {
           class="p-12 flex flex-col items-center justify-center space-y-3 text-gray-400"
         >
           <div
-            class="animate-spin rounded-full h-8 w-8 border-2 border-primary border-t-transparent"
+            class="animate-spin rounded-full h-8 w-8 border-2 border-[var(--primary-color)] border-t-transparent"
           ></div>
-          <span class="text-xs font-bold uppercase tracking-widest">正在安全回溯</span>
+          <span class="text-xs font-normal text-gray-500 tracking-normal">正在安全回溯</span>
         </div>
 
         <div v-else-if="!historyList.length" class="p-12 text-center">
@@ -197,16 +197,16 @@ const handleScroll = (e: Event) => {
                 />
             </svg>
           </div>
-          <p class="text-xs text-gray-400 font-bold uppercase tracking-tighter">时光机暂时空着</p>
+          <p class="text-xs text-gray-400 font-normal tracking-normal">时光机暂时空着</p>
         </div>
 
         <div v-else class="space-y-3 p-2">
           <!-- 遍历日期分组 -->
           <div v-for="group in historyList" :key="group.id" class="mb-4">
             
-            <!-- 分组 Header 标题及一键删除按钮 -->
-            <div class="px-3 py-1.5 flex items-center justify-between bg-gray-100/60 dark:bg-gray-800/40 rounded-xl mb-2 border border-gray-100/40 dark:border-gray-800/30">
-              <span class="text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-widest">{{ group.title }}</span>
+            <!-- 分组 Header：TDesign 风格，去背景色块 -->
+            <div class="px-3 py-1.5 flex items-center justify-between mb-2">
+              <span class="text-xs font-medium text-gray-500 dark:text-gray-400 tracking-normal">{{ group.title }}</span>
               <button 
                 @click.stop="emit('delete-group', group)"
                 class="p-1 hover:bg-red-50 hover:text-red-500 dark:hover:bg-red-950/30 rounded-lg text-gray-400 transition-colors"
@@ -218,20 +218,20 @@ const handleScroll = (e: Event) => {
               </button>
             </div>
 
-            <!-- 遍历组内的会话 Card -->
+            <!-- 遍历组内的会话 Card：TDesign 风格，圆角 9px + 无重阴影 + hover 靠背景 -->
             <div
               v-for="(item, index) in group.items"
               :key="item.trace_id"
               @click="emit('load-chat', item)"
-              class="p-4 rounded-2xl transition-all border border-transparent group relative mb-1.5 overflow-hidden"
+              class="p-4 rounded-td-xl transition-colors border border-transparent group relative mb-1.5 overflow-hidden"
               :class="[
-                activeTraceId === item.trace_id ? 'bg-white dark:bg-gray-800 border-primary/30 shadow-sm ring-1 ring-primary/10' : '',
-                isMobile ? 'cursor-default' : 'cursor-pointer hover:border-primary/20 hover:bg-white dark:hover:bg-gray-800 hover:shadow-md'
+                activeTraceId === item.trace_id ? 'bg-tdSecondaryContainer dark:bg-tdSecondaryContainer-dark border-[rgb(var(--primary-color-rgb)/0.3)]' : '',
+                isMobile ? 'cursor-default' : 'cursor-pointer hover:bg-tdSecondaryContainer dark:hover:bg-tdSecondaryContainer-dark'
               ]"
             >
               <!-- Watermark Number -->
               <div 
-                  class="absolute bottom-2 right-2 w-7 h-7 rounded-full border-[2px] flex items-center justify-center text-[12px] font-black select-none pointer-events-none z-0 -rotate-12 transition-all duration-500 group-hover:scale-110 group-hover:-rotate-6 opacity-30 dark:opacity-40"
+                  class="absolute bottom-2 right-2 w-7 h-7 rounded-full border-[2px] flex items-center justify-center text-[12px] font-normal select-none pointer-events-none z-0 -rotate-12 opacity-20 dark:opacity-30"
                   :style="{ color: `hsl(${((Number(index) || 0) * 137.5) % 360}, 70%, 50%)`, borderColor: `hsl(${((Number(index) || 0) * 137.5) % 360}, 70%, 50%, 0.3)` }"
               >
                   {{ (Number(index) || 0) + 1 }}
@@ -239,17 +239,17 @@ const handleScroll = (e: Event) => {
               
               <div class="relative z-10">
                 <div class="flex items-center justify-between mb-2">
-                  <span class="text-[10px] font-black text-gray-400 uppercase tracking-tighter">{{
+                  <span class="text-[11px] font-normal text-gray-400 tracking-normal">{{
                     formatDate(item.created_at)
                   }}</span>
                   <span
                     v-if="item.turn_count !== undefined"
-                    class="px-1.5 py-0.5 rounded-md bg-gray-100 dark:bg-gray-800 text-[9px] text-gray-500 dark:text-gray-400 font-black border border-gray-200 dark:border-gray-700"
+                    class="px-1.5 py-0.5 rounded-md bg-gray-100 dark:bg-gray-800 text-[11px] text-gray-500 dark:text-gray-400 font-normal border border-gray-200 dark:border-gray-700"
                     >{{ item.turn_count }} 轮对话</span
                   >
                 </div>
                 <p
-                  class="text-xs font-black text-gray-800 dark:text-gray-100 truncate mb-1.5 group-hover:text-primary transition-colors"
+                  class="text-sm font-medium text-gray-800 dark:text-gray-100 truncate mb-1.5 group-hover:text-[var(--primary-color)] transition-colors"
                   :title="item.query"
                 >
                   {{ item.query }}
@@ -270,11 +270,11 @@ const handleScroll = (e: Event) => {
                         class="w-1.5 h-1.5 rounded-full"
                         :class="item.status === 'success' ? 'bg-green-500' : 'bg-red-500'"
                     ></span>
-                    <span class="text-[10px] font-bold uppercase tracking-widest text-gray-400">{{ item.status === "success" ? "Done" : "Error" }}</span>
+                    <span class="text-[11px] font-normal tracking-normal text-gray-400">{{ item.status === "success" ? "Done" : "Error" }}</span>
                   </div>
                   <button
                     @click.stop="emit('open-full-logs', item.trace_id)"
-                    class="mr-8 text-[10px] text-primary font-black flex items-center hover:opacity-80 transition-opacity bg-primary/5 rounded-lg border border-primary/10"
+                    class="mr-8 text-[11px] text-[var(--primary-color)] font-medium flex items-center hover:opacity-80 transition-opacity bg-[rgb(var(--primary-color-rgb)/0.05)] rounded-md border border-[rgb(var(--primary-color-rgb)/0.1)]"
                     :class="isMobile ? 'px-3 py-2' : 'px-2 py-1'"
                   >
                     回溯日志
@@ -303,10 +303,10 @@ const handleScroll = (e: Event) => {
               <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
               <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
             </svg>
-            <span class="ml-2 text-xs font-bold tracking-widest">加载更多...</span>
+            <span class="ml-2 text-xs font-normal text-gray-500 tracking-normal">加载更多...</span>
           </div>
           <!-- No More History Indicator -->
-          <div v-if="!hasMore && historyList.length > 0" class="py-4 text-center text-[10px] text-gray-400 uppercase tracking-widest opacity-60">
+          <div v-if="!hasMore && historyList.length > 0" class="py-4 text-center text-[11px] text-gray-400 tracking-normal opacity-60">
              - 没有更多记录了 -
           </div>
         </div>
