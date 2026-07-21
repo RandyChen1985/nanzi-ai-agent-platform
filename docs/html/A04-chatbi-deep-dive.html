@@ -1,0 +1,67 @@
+<!--
+  微信公众号排版 HTML — NanZi 实战连载 · 第 04 篇（深度修订）
+  使用说明：复制最外层 <section>…</section> 到公众号 HTML 模式
+-->
+<section style="box-sizing:border-box;font-size:16px;color:#3f3f3f;line-height:1.8;letter-spacing:0.5px;text-align:justify;font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue','PingFang SC','Hiragino Sans GB','Microsoft YaHei',Arial,sans-serif;">
+  <section style="margin:0 0 24px 0;padding:24px 16px;background:linear-gradient(135deg,#064e3b 0%,#022c22 48%,#111827 100%);border-radius:10px;text-align:center;box-shadow:0 4px 20px rgba(16,185,129,0.15);">
+    <p style="margin:0 0 6px 0;font-size:13px;color:#6ee7b7;letter-spacing:1px;">NanZi 开源智能体平台实战连载 · 04</p>
+    <p style="margin:0 0 10px 0;font-size:20px;font-weight:bold;color:#f8fafc;line-height:1.55;">深入 ChatBI</p>
+    <p style="margin:0;font-size:15px;color:#a7f3d0;line-height:1.6;">分诊 · 门禁 · Binding · 计划 · 栈 · 交付</p>
+  </section>
+  <section style="margin:0 0 20px 0;padding:14px 16px;background:#fafafa;border:1px solid #e5e7eb;border-radius:10px;">
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">本项目为<strong>个人开源</strong>（MIT）。<a href="https://github.com/RandyChen1985/nanzi-ai-agent-platform" style="color:#059669;text-decoration:none;word-break:break-all;">GitHub</a></p>
+  </section>
+  <section style="margin:0 0 12px 0;"><p style="margin:0;font-size:15px;color:#374151;line-height:1.9;">ChatBI 不是「让模型写一条 SQL」。实现是薄 <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">DataAgentRunner</code> + 厚 <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">runners/chatbi/</code>，外层仍是 AgentScope <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">reply_stream</code>，外面再套分诊、Binding、门禁、计划、自愈、结果栈与交付。</p></section>
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+  <section style="margin:0 0 14px 0;"><p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #10b981;padding-left:12px;">01｜分诊：DataQueryTurnType</p></section>
+  <section style="margin:0 0 12px 0;padding:14px 16px;background:#f0fdf4;border:1px solid #a7f3d0;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:14px;font-weight:bold;color:#065f46;line-height:1.5;">轮次类型（内部最终判定）</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;"><code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">new_data_query</code> 新查数 · <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">data_followup_query</code> 追问查数 · <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">metadata_query</code> 元数据问答 · <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">reuse_previous_result</code> 复用结果 · <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">result_analysis</code>/<code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">result_presentation</code>/<code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">result_action</code> 结果分析/呈现/动作 · <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">context_action</code> · <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">skill_execution</code> · <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">clarification_or_non_data</code> / <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">non_data_request</code> / <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">clarification_required</code> · <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">format_correction</code> · <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">federated_data_query</code> 联邦查数<br/>外层路由只负责选中 ChatBI；不是句句生成 SQL。复用/格式化可跳过 Agent 走 synthesis。</p>
+  </section>
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+  <section style="margin:0 0 14px 0;"><p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #0891b2;padding-left:12px;">02｜SqlQueryBinding 与 SQL 门禁前缀</p></section>
+  <section style="margin:0 0 12px 0;padding:14px 16px;background:#f0fdf4;border:1px solid #a7f3d0;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:14px;font-weight:bold;color:#065f46;line-height:1.5;">Binding</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">统一 Schema/SQL/元数据的表↔数据集↔列绑定，供预检与执行共用：含 <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">sql</code>、<code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">primary_dataset_name</code>、<code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">schema_output</code>、<code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">tables</code>、<code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">preflight_validated</code> 等。防「Schema 一套、执行另一套」。</p>
+  </section>
+  <section style="margin:0 0 12px 0;padding:14px 16px;background:#fffbeb;border:1px solid #fde68a;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:14px;font-weight:bold;color:#b45309;line-height:1.5;">门禁前缀（工具返回文案，不真执行）</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;"><code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">[SCHEMA_GATE]</code> · <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">[SQL_REPEAT_GATE]</code> · <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">[SQL_STATIC_GATE]</code> · <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">[FAILED_SQL_REPEAT_GATE]</code> · <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">[SQL_PLAN_GATE]</code> · <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">[TIME_RANGE_GATE]</code> · 沙箱 <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">[Performance Blocked]</code> · 预检 <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">[TOOL_ERROR] SQL 预检失败</code><br/>静态策略偏只读（SELECT/WITH/EXPLAIN/SHOW/DESC）；禁多语句与危险关键字；sqlglot 做方言校验。</p>
+  </section>
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+  <section style="margin:0 0 14px 0;"><p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #7c3aed;padding-left:12px;">03｜sql_plan 与自愈</p></section>
+  <section style="margin:0 0 12px 0;padding:14px 16px;background:#f0fdf4;border:1px solid #a7f3d0;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:14px;font-weight:bold;color:#065f46;line-height:1.5;">计划 JSON 字段</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;"><code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">goal</code> · <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">tables</code> · <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">fields</code> · <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">metrics</code> · <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">filters</code> · <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">time_range</code> · <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">grain</code> · <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">joins</code> · <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">risk_notes</code><br/><code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">build_platform_sql_plan</code> 基于授权 Schema + 待执行 SQL；前端卡片；高风险可强制先过计划门禁。</p>
+  </section>
+  <section style="margin:0 0 12px 0;padding:14px 16px;background:#ecfeff;border:1px solid #a5f3fc;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:14px;font-weight:bold;color:#0e7490;line-height:1.5;">repair</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">SQL 报错 / 空结果 / 缺计划 → <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">repair_policy</code> 决策 → 再开一轮 <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">reply_stream</code>。空结果结合意图帧诊断，避免无脑重写。</p>
+  </section>
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+  <section style="margin:0 0 14px 0;"><p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #d97706;padding-left:12px;">04｜结果栈 · 门户 · 交付</p></section>
+  <section style="margin:0 0 12px 0;padding:14px 16px;background:#f0fdf4;border:1px solid #a7f3d0;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:14px;font-weight:bold;color:#065f46;line-height:1.5;">结果栈</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;"><code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">chatbi_result_stack</code> / <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">data_result_stack_v1</code>，<code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">push_result_ref</code> 最大深度 <strong>10</strong>。可指「当前/上一个结果」或显式 result_id 下钻，条件继承。</p>
+  </section>
+  <section style="margin:0 0 12px 0;padding:14px 16px;background:#f0fdf4;border:1px solid #a7f3d0;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:14px;font-weight:bold;color:#065f46;line-height:1.5;">数据门户</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">斜杠 <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">/dataset_portal</code>（兼容旧 <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">/dataset_menu</code>）；系统指令 id <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">sys_dataset_portal</code>；按授权生成数据集菜单 + LLM quick 追问。深链：<code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">dataset_portal=1</code>&amp;<code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">report_id</code>&amp;<code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">run_id</code> 等。</p>
+  </section>
+  <section style="margin:0 0 12px 0;padding:14px 16px;background:#faf5ff;border:1px solid #e9d5ff;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:14px;font-weight:bold;color:#6b21a8;line-height:1.5;">简报与黄金报表</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">简报 <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">chatbi_briefs</code>：从结果栈沉淀证据化 brief（version2：title/facts/evidence/markdown），可导出 Word，portal <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">/chatbi-briefs</code>。<br/>订阅表 <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">portal_saved_report_subscriptions</code>：<code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">schedule_type</code>=daily|weekly|monthly|cron → cron_expr；<code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">ai_analysis_enabled</code>；成功/失败通知；<code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">external_channels</code>；<code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">alert_condition</code>；投递审计 <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">portal_saved_report_digest_deliveries</code>。</p>
+  </section>
+  <section style="margin:0 0 16px 0;padding:12px 14px;background:#fef2f2;border-left:4px solid #ef4444;border-radius:0 8px 8px 0;"><p style="margin:0;font-size:14px;color:#7f1d1d;line-height:1.85;"><strong>边界：</strong>口径与元数据质量决定上限。排障先看 Trace：分诊类型、门禁前缀、Binding 表、修复轮次。Few-Shot 案例库值得运营投入。联邦跨库要治理。</p></section>
+
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+  <section style="margin:0 0 16px 0;padding:18px 16px;background:linear-gradient(135deg,#ecfdf5 0%,#f0f9ff 100%);border:1px solid #a7f3d0;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:16px;font-weight:bold;color:#064e3b;">📌 下期预告</p>
+    <p style="margin:0 0 8px 0;font-size:15px;color:#374151;line-height:1.85;"><strong>内置工具箱手册</strong></p>
+    <p style="margin:0;font-size:14px;color:#4b5563;line-height:1.85;">（已按工具清单深度版发布）</p>
+  </section>
+  <section style="margin:20px 0 0 0;padding:16px;text-align:center;background:#f9fafb;border-radius:8px;">
+    <p style="margin:0 0 4px 0;font-size:14px;color:#6b7280;">NanZi 实战连载 · 04</p>
+    <p style="margin:0;font-size:13px;color:#9ca3af;">问数是护栏工程。</p>
+  </section>
+</section>

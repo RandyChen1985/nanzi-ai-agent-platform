@@ -1,0 +1,58 @@
+<!--
+  微信公众号排版 HTML — NanZi 实战连载 · 第 B04 篇（深度修订）
+  使用说明：复制最外层 <section>…</section> 到公众号 HTML 模式
+-->
+<section style="box-sizing:border-box;font-size:16px;color:#3f3f3f;line-height:1.8;letter-spacing:0.5px;text-align:justify;font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue','PingFang SC','Hiragino Sans GB','Microsoft YaHei',Arial,sans-serif;">
+  <section style="margin:0 0 24px 0;padding:24px 16px;background:linear-gradient(135deg,#064e3b 0%,#022c22 48%,#111827 100%);border-radius:10px;text-align:center;box-shadow:0 4px 20px rgba(16,185,129,0.15);">
+    <p style="margin:0 0 6px 0;font-size:13px;color:#6ee7b7;letter-spacing:1px;">NanZi 开源智能体平台实战连载 · B04</p>
+    <p style="margin:0 0 10px 0;font-size:20px;font-weight:bold;color:#f8fafc;line-height:1.55;">工作台与场景模板</p>
+    <p style="margin:0;font-size:15px;color:#a7f3d0;line-height:1.6;">模式 · 八模板 · 深链 · 落地收束</p>
+  </section>
+  <section style="margin:0 0 20px 0;padding:14px 16px;background:#fafafa;border:1px solid #e5e7eb;border-radius:10px;">
+    <p style="margin:0 0 10px 0;font-size:15px;font-weight:bold;color:#111827;">项目声明</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">本项目为<strong>个人开源</strong>（MIT）。仓库：<a href="https://github.com/RandyChen1985/nanzi-ai-agent-platform" style="color:#059669;text-decoration:none;word-break:break-all;">RandyChen1985/nanzi-ai-agent-platform</a></p>
+  </section>
+  <section style="margin:0 0 12px 0;"><p style="margin:0;font-size:15px;color:#374151;line-height:1.9;">工作台把「待办注意力 + 最近结果 + 收藏智能体 + 推荐场景」收成首页；场景模板把行业打法一键安装。它是一线入口，不替代管理后台，也<strong>不绕过</strong>数据权限与 SQL Gate。</p></section>
+  <section style="margin:0 0 16px 0;padding:12px 14px;background:#ecfeff;border-left:4px solid #0891b2;border-radius:0 8px 8px 0;"><p style="margin:0;font-size:14px;color:#0e7490;line-height:1.85;">API <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">GET /api/portal/workbench/home</code> · 页 /dashboard/workbench · 模板服务 <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">scenario_template_service.py</code></p></section>
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+  <section style="margin:0 0 14px 0;"><p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #10b981;padding-left:12px;line-height:1.4;">01｜Workbench 三种模式</p></section>
+  <section style="margin:0 0 12px 0;padding:14px 16px;background:#f0fdf4;border:1px solid #a7f3d0;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#065f46;line-height:1.5;">active / quiet / new_user</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">组装规则：attention 非空 → active；否则若有 attention/results/resume 任一 → quiet；否则 new_user<br/>上限：attention 5 · latest_results 6 · resume 4 · favorite_agents 6 · recommended_scenarios 4<br/>来源：notifications / tasks / reports / conversations / agents / scenarios → source_status ok|empty|error</p>
+  </section>
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+  <section style="margin:0 0 14px 0;"><p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #0891b2;padding-left:12px;line-height:1.4;">02｜八个内置场景模板 ID</p></section>
+  <section style="margin:0 0 12px 0;padding:14px 16px;background:#f0fdf4;border:1px solid #a7f3d0;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#065f46;line-height:1.5;">manifest</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">1. <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">chatbi-business-analysis</code><br/>2. <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">knowledge-qa-assistant</code><br/>3. <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">ops-inspection-assistant</code><br/>4. <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">finance-expense-analysis</code><br/>5. <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">sales-customer-insight</code><br/>6. <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">support-ticket-analysis</code><br/>7. <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">hr-policy-qa</code><br/>8. <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">legal-contract-review</code><br/>前端：/dashboard/scenario-templates、/:templateId、/install</p>
+  </section>
+  <section style="margin:0 0 16px 0;padding:12px 14px;background:#ecfeff;border-left:4px solid #0891b2;border-radius:0 8px 8px 0;"><p style="margin:0;font-size:14px;color:#0e7490;line-height:1.85;">模板预置提示、推荐智能体/工具与示例问法；运营可扩 manifest，不必改 runtime。</p></section>
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+  <section style="margin:0 0 14px 0;"><p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #7c3aed;padding-left:12px;line-height:1.4;">03｜动作与深链</p></section>
+  <section style="margin:0 0 12px 0;padding:14px 16px;background:#f0fdf4;border:1px solid #a7f3d0;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#065f46;line-height:1.5;">item actions</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">open_task / open_task_log → /dashboard/tasks?task_id&amp;run_id<br/>open_digest / open_report → /dashboard/chat?dataset_portal=1&amp;report_id&amp;run_id（可加 delivery=1）<br/>open_conversation → ?conversation_id=<br/>open_agent → ?agent_id=<br/>open_scenario → /dashboard/scenario-templates/{id}</p>
+  </section>
+  <section style="margin:0 0 12px 0;padding:14px 16px;background:#fffbeb;border:1px solid #fde68a;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#b45309;line-height:1.5;">Chat / Embed 实际消费</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">Chat.vue 经 INIT_CONFIG 转发：conversation_id、agent_id、open_saved_report（report_id/run_id/…）、portal_question。<br/>Slash：<code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">/dataset_portal</code>；V1 导航仍走 /dataset-menu*<br/>Embed 事件 <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">OPEN_DATA_PORTAL_FULL</code> → 宿主可去 /dashboard/personal?tab=data</p>
+  </section>
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+  <section style="margin:0 0 14px 0;"><p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #d97706;padding-left:12px;line-height:1.4;">04｜落地建议（第一季收束）</p></section>
+  <section style="margin:0 0 12px 0;padding:14px 16px;background:#f0fdf4;border:1px solid #a7f3d0;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#065f46;line-height:1.5;">推广顺序</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">1）装好平台与 Redis Stack（A02）<br/>2）建 ChatBI/知识专家并过就绪门禁（A03–A04）<br/>3）挂工具/MCP/Skills（A05–A07）<br/>4）通知+调度跑通无人值守（A08–A09）<br/>5）需要时接第三方引擎或 Embed（A10–A11）<br/>6）打开记忆/Grounding/Trace 做运营可观测（B01–B03）<br/>7）工作台只推 1～2 个高价值场景模板，比「万能主助手」更可控</p>
+  </section>
+  <section style="margin:0 0 16px 0;padding:12px 14px;background:#f0fdf4;border-left:4px solid #10b981;border-radius:0 8px 8px 0;"><p style="margin:0;font-size:14px;color:#065f46;line-height:1.85;">第一季完结。下一季可按你的行业场景继续深挖（更多模板、更多 MCP、更细治理）。欢迎 Star 仓库提 Issue。</p></section>
+
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+  <section style="margin:0 0 16px 0;padding:18px 16px;background:linear-gradient(135deg,#ecfdf5 0%,#f0f9ff 100%);border:1px solid #a7f3d0;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:16px;font-weight:bold;color:#064e3b;">📌 下期预告</p>
+    <p style="margin:0 0 8px 0;font-size:15px;color:#374151;line-height:1.85;"><strong>第一季完结</strong></p>
+    <p style="margin:0;font-size:14px;color:#4b5563;line-height:1.85;">欢迎基于业务场景继续定制与投稿。</p>
+  </section>
+  <section style="margin:20px 0 0 0;padding:16px;text-align:center;background:#f9fafb;border-radius:8px;">
+    <p style="margin:0 0 4px 0;font-size:14px;color:#6b7280;">NanZi 实战连载 · B04</p>
+    <p style="margin:0;font-size:13px;color:#9ca3af;">场景化入口，权限不旁路。</p>
+  </section>
+</section>

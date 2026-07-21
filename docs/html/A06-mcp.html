@@ -1,0 +1,91 @@
+<!--
+  微信公众号排版 HTML — NanZi 实战连载 · 第 06 篇（深度修订）
+  使用说明：复制最外层 <section>…</section> 到公众号 HTML 模式
+-->
+<section style="box-sizing:border-box;font-size:16px;color:#3f3f3f;line-height:1.8;letter-spacing:0.5px;text-align:justify;font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue','PingFang SC','Hiragino Sans GB','Microsoft YaHei',Arial,sans-serif;">
+  <section style="margin:0 0 24px 0;padding:24px 16px;background:linear-gradient(135deg,#064e3b 0%,#022c22 48%,#111827 100%);border-radius:10px;text-align:center;box-shadow:0 4px 20px rgba(16,185,129,0.15);">
+    <p style="margin:0 0 6px 0;font-size:13px;color:#6ee7b7;letter-spacing:1px;">NanZi 开源智能体平台实战连载 · 06</p>
+    <p style="margin:0 0 10px 0;font-size:20px;font-weight:bold;color:#f8fafc;line-height:1.55;">MCP 在 NanZi 里怎么用</p>
+    <p style="margin:0;font-size:15px;color:#a7f3d0;line-height:1.6;">登记 · 双通道传输 · 发布进 Toolkit · 证据启发式</p>
+  </section>
+  <section style="margin:0 0 20px 0;padding:14px 16px;background:#fafafa;border:1px solid #e5e7eb;border-radius:10px;">
+    <p style="margin:0 0 10px 0;font-size:15px;font-weight:bold;color:#111827;">项目声明</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">本项目为<strong>个人开源</strong>（MIT）。仓库：<a href="https://github.com/RandyChen1985/nanzi-ai-agent-platform" style="color:#059669;text-decoration:none;word-break:break-all;">RandyChen1985/nanzi-ai-agent-platform</a></p>
+  </section>
+  <section style="margin:0 0 12px 0;"><p style="margin:0;font-size:15px;color:#374151;line-height:1.9;">MCP（Model Context Protocol）让外部系统以标准协议暴露工具。NanZi 不把每个系统写死进核心：登记 Server → 校验连通 → sync 缓存 → <strong>发布</strong> → 智能体版本勾选 → 进 AgentScope Toolkit。本篇按真实 API 与代码路径拆开。</p></section>
+  <section style="margin:0 0 16px 0;padding:12px 14px;background:#ecfeff;border-left:4px solid #0891b2;border-radius:0 8px 8px 0;"><p style="margin:0;font-size:14px;color:#0e7490;line-height:1.85;"><strong>代码入口：</strong><code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">app/api/portal/endpoints/mcp.py</code> · <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">mcp_client.py</code> · <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">mcp_factory.py</code> · 表 <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">sys_mcp_servers</code> / <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">sys_mcp_tool_cache</code>（V43）</p></section>
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+  <section style="margin:0 0 14px 0;"><p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #10b981;padding-left:12px;line-height:1.4;">01｜端到端流水线（先建立心智）</p></section>
+  <section style="margin:0 0 12px 0;padding:14px 16px;background:#f0fdf4;border:1px solid #a7f3d0;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#065f46;line-height:1.5;">五步</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">1）系统配置登记 Server（name + sse_url + auth_headers）<br/>2）创建/更新常自动 sync，也可手动<br/>3）新工具默认<strong>未发布</strong>（is_published=False）<br/>4）发布后出现在门户已发布目录，供版本勾选<br/>5）运行时 Registry 按全名加载 → Factory → Toolkit → ReAct</p>
+  </section>
+  <section style="margin:0 0 16px 0;padding:12px 14px;background:#fffbeb;border-left:4px solid #d97706;border-radius:0 8px 8px 0;"><p style="margin:0;font-size:14px;color:#92400e;line-height:1.85;"><strong>常见翻车：</strong>sync 成功但对话没有工具 → 忘了 publish，或版本 tools JSON 没勾选；勾选了仍失败 → 查 SSE/Direct HTTP、鉴权头、对端超时。</p></section>
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+  <section style="margin:0 0 14px 0;"><p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #0891b2;padding-left:12px;line-height:1.4;">02｜Portal API 全表（/api/portal/mcp）</p></section>
+  <section style="margin:0 0 12px 0;padding:14px 16px;background:#ecfeff;border:1px solid #a5f3fc;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#0e7490;"><code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">POST /verify</code></p>
+    <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.85;"><strong>干什么：</strong>临时连通测试，不落库。</p>
+    <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.85;"><strong>场景：</strong>填 URL 前先验证网关是否活着。</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;"><strong>原理：</strong>临时 session id=<code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">verify_{{uuid8}}</code>，建 <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">McpSseSession</code> 后关闭。权限 <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">element:system:config_save</code>。</p>
+  </section>
+  <section style="margin:0 0 12px 0;padding:14px 16px;background:#ecfeff;border:1px solid #a5f3fc;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#0e7490;"><code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">GET|POST /servers</code> · <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">PUT|DELETE /servers/{id}</code></p>
+    <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.85;"><strong>干什么：</strong>列表/创建/改/删 Server。</p>
+    <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.85;"><strong>场景：</strong>运维登记 Jira、GitHub、内部网关等。</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;"><strong>原理：</strong>请求体字段：<code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">server_name</code>、<code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">sse_url</code>、<code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">auth_headers</code> 默认 "{}"、<code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">enabled_status</code> 创建默认 1。响应含 last_sync_at、tool_count、published_tool_count。创建/更新常自动 <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">sync_tools</code>。</p>
+  </section>
+  <section style="margin:0 0 12px 0;padding:14px 16px;background:#ecfeff;border:1px solid #a5f3fc;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#0e7490;"><code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">POST /servers/{id}/sync</code> · <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">GET .../tools</code></p>
+    <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.85;"><strong>干什么：</strong>拉远端 tools/list 写入缓存；查看缓存行。</p>
+    <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.85;"><strong>场景：</strong>对端加了新工具后刷新平台目录。</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;"><strong>原理：</strong>缓存表字段：tool_name（存全名）、tool_description、parameter_schema、is_published。schema 可带 <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">x-nanzi-mcp-annotations</code> / <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">x-nanzi-evidence-types</code> / <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">x-nanzi-evidence-policy</code>。</p>
+  </section>
+  <section style="margin:0 0 12px 0;padding:14px 16px;background:#ecfeff;border:1px solid #a5f3fc;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#0e7490;"><code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">PUT /tools/{id}/publish?published=</code> · <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">POST /tools/{id}/execute</code></p>
+    <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.85;"><strong>干什么：</strong>发布开关；可选试跑。</p>
+    <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.85;"><strong>场景：</strong>灰度：先试跑再 publish；下线危险工具直接取消发布。</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;"><strong>原理：</strong>只有 <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">is_published=True</code> 才会被 ToolRegistry 从 DB 加载。试跑走 Factory + ainvoke。</p>
+  </section>
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+  <section style="margin:0 0 14px 0;"><p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #7c3aed;padding-left:12px;line-height:1.4;">03｜传输：SSE 优先，Direct HTTP 回落</p></section>
+  <section style="margin:0 0 12px 0;padding:14px 16px;background:#f5f3ff;border:1px solid #ddd6fe;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#5b21b6;line-height:1.5;">McpSseSession.connect()</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">1）优先标准 SSE：<code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">sse_client</code> + <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">ClientSession.initialize</code>，超时 <strong>10s</strong><br/>2）失败 → <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">is_direct_http=True</code>，对 <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">sse_url</code> 发 JSON-RPC 2.0 POST<br/>Direct HTTP：timeout 30s；protocolVersion <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">2024-11-05</code>；clientInfo name=nanzi-ai-agent；顺序 initialize → notifications/initialized → tools/list|call<br/>会话 id：响应头 <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">mcp-session-id</code> 或 body 实验字段；过期标记（session expired 等）+ HTTP 400/401/404/410 可恢复重连一次<br/>空闲清理：60s 轮询，空闲 &gt;300s 关闭会话</p>
+  </section>
+  <section style="margin:0 0 16px 0;padding:12px 14px;background:#ecfeff;border-left:4px solid #0891b2;border-radius:0 8px 8px 0;"><p style="margin:0;font-size:14px;color:#0e7490;line-height:1.85;"><strong>原理意义：</strong>生产网络与网关实现参差不齐；双通道让「标准 MCP」与「HTTP 网关」都能挂上，而不改业务工具代码。</p></section>
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+  <section style="margin:0 0 14px 0;"><p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #d97706;padding-left:12px;line-height:1.4;">04｜命名、发布与进 Toolkit</p></section>
+  <section style="margin:0 0 12px 0;padding:14px 16px;background:#f0fdf4;border:1px solid #a7f3d0;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#065f46;line-height:1.5;">全名格式</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">同步时 <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">full_name = server_name:raw_tool_name</code>，例如 <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">github:create_issue</code>。Registry 查找用全名；调用远端时 <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">split(":",1)[1]</code> 剥前缀。</p>
+  </section>
+  <section style="margin:0 0 12px 0;padding:14px 16px;background:#fffbeb;border:1px solid #fde68a;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#b45309;line-height:1.5;">加载路径</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">版本 <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">AIAgentVersion.tools</code> JSON 列出名字 → <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">ToolRegistry.get_runtime_tools</code> → 静态注册表未命中则查 DB：<code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">McpToolCache</code> 且 published → <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">McpToolFactory.create_tool</code>（source_type=mcp）→ <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">build_toolkit</code> → AgentScope Toolkit。DB 工具缓存 TTL 约 60s。</p>
+  </section>
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+  <section style="margin:0 0 14px 0;"><p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #ef4444;padding-left:12px;line-height:1.4;">05｜只读启发式与 Grounding</p></section>
+  <section style="margin:0 0 12px 0;padding:14px 16px;background:#f0fdf4;border:1px solid #a7f3d0;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#065f46;line-height:1.5;">两条路径</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;"><strong>A. 注解：</strong>readOnlyHint=False → 关闭证据推断；True → 证据类型 <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">external_tool</code>，策略默认 allow_empty_success（可被 x-nanzi-evidence-policy 覆盖）<br/><strong>B. 名称启发式：</strong>取冒号后动作名；mutation 动词（create/update/delete/send…及中文）优先判非只读；否则需匹配 get/list/search/query… 才视为只读并记账 EXTERNAL_TOOL</p>
+  </section>
+  <section style="margin:0 0 16px 0;padding:12px 14px;background:#fef2f2;border-left:4px solid #ef4444;border-radius:0 8px 8px 0;"><p style="margin:0;font-size:14px;color:#7f1d1d;line-height:1.85;"><strong>实战建议：</strong>对会改数据的 MCP，publish 前确认注解；版本勾选配合用户 forbidden_tools；Grounding 开时只读查询更容易形成「有据」卡片。</p></section>
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+  <section style="margin:0 0 14px 0;"><p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #111827;padding-left:12px;line-height:1.4;">06｜排障清单</p></section>
+  <section style="margin:0 0 12px 0;padding:14px 16px;background:#f9fafb;border:1px solid #e5e7eb;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#111827;line-height:1.5;">对照表</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">连不通 → URL/网络/鉴权/SSE 是否被墙<br/>列表空 → 是否 sync、对端 tools/list<br/>对话无工具 → publish + 版本勾选 + Registry 全名一致<br/>调用超时 → 对端与平台 30s；空闲会话是否过期<br/>权限 → 配置菜单 element:system:config_save / menu:system:config</p>
+  </section>
+
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+  <section style="margin:0 0 16px 0;padding:18px 16px;background:linear-gradient(135deg,#ecfdf5 0%,#f0f9ff 100%);border:1px solid #a7f3d0;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:16px;font-weight:bold;color:#064e3b;">📌 下期预告</p>
+    <p style="margin:0 0 8px 0;font-size:15px;color:#374151;line-height:1.85;"><strong>Skills 实战</strong></p>
+    <p style="margin:0;font-size:14px;color:#4b5563;line-height:1.85;">双轨目录、白名单、提及/扫描触发与 create_skills。</p>
+  </section>
+  <section style="margin:20px 0 0 0;padding:16px;text-align:center;background:#f9fafb;border-radius:8px;">
+    <p style="margin:0 0 4px 0;font-size:14px;color:#6b7280;">NanZi 实战连载 · 06</p>
+    <p style="margin:0;font-size:13px;color:#9ca3af;">配置即扩展；发布才进运行时。</p>
+  </section>
+</section>

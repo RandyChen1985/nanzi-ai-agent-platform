@@ -1,0 +1,66 @@
+<!--
+  微信公众号排版 HTML — NanZi 实战连载 · 第 11 篇（深度修订）
+  使用说明：复制最外层 <section>…</section> 到公众号 HTML 模式
+-->
+<section style="box-sizing:border-box;font-size:16px;color:#3f3f3f;line-height:1.8;letter-spacing:0.5px;text-align:justify;font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue','PingFang SC','Hiragino Sans GB','Microsoft YaHei',Arial,sans-serif;">
+  <section style="margin:0 0 24px 0;padding:24px 16px;background:linear-gradient(135deg,#064e3b 0%,#022c22 48%,#111827 100%);border-radius:10px;text-align:center;box-shadow:0 4px 20px rgba(16,185,129,0.15);">
+    <p style="margin:0 0 6px 0;font-size:13px;color:#6ee7b7;letter-spacing:1px;">NanZi 开源智能体平台实战连载 · 11</p>
+    <p style="margin:0 0 10px 0;font-size:20px;font-weight:bold;color:#f8fafc;line-height:1.55;">把 NanZi 嵌进业务系统</p>
+    <p style="margin:0;font-size:15px;color:#a7f3d0;line-height:1.6;">协议事件 · INIT_CONFIG · 水印 · V1</p>
+  </section>
+  <section style="margin:0 0 20px 0;padding:14px 16px;background:#fafafa;border:1px solid #e5e7eb;border-radius:10px;">
+    <p style="margin:0 0 10px 0;font-size:15px;font-weight:bold;color:#111827;">项目声明</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">本项目为<strong>个人开源</strong>（MIT）。仓库：<a href="https://github.com/RandyChen1985/nanzi-ai-agent-platform" style="color:#059669;text-decoration:none;word-break:break-all;">RandyChen1985/nanzi-ai-agent-platform</a></p>
+  </section>
+  <section style="margin:0 0 12px 0;"><p style="margin:0;font-size:15px;color:#374151;line-height:1.9;">业务系统不必重建聊天：Embed IFrame + postMessage，或服务端调 V1。鉴权与路由同一套。文档：docs/md/embed_integration_guide.md · api_integration_guide.md · chatbi_v1_http_api.md。</p></section>
+  <section style="margin:0 0 16px 0;padding:12px 14px;background:#ecfeff;border-left:4px solid #0891b2;border-radius:0 8px 8px 0;"><p style="margin:0;font-size:14px;color:#0e7490;line-height:1.85;">Widget：<code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">/embed/chat</code>（EmbedChat.vue）；门户宿主 Chat.vue iframe 同地址。source 固定 <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">nanzi-agent-embed</code>。</p></section>
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+  <section style="margin:0 0 14px 0;"><p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #10b981;padding-left:12px;line-height:1.4;">01｜Host → Widget 事件</p></section>
+  <section style="margin:0 0 12px 0;padding:14px 16px;background:#f0fdf4;border:1px solid #a7f3d0;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#065f46;line-height:1.5;">类型一览</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;"><code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">INIT_CONFIG</code> · <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">OPEN_SAVED_REPORT</code> · <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">SYNC_STATE</code> · <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">UPDATE_CONTEXT</code> · <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">SET_THEME</code> · <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">STOP_GENERATION</code> · <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">CLEAR_SESSION</code> · <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">RESET_SESSION</code>（可带 new_token）· <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">SEND_COMMAND</code><br/>可用 instance_id 过滤，防多实例串扰。</p>
+  </section>
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+  <section style="margin:0 0 14px 0;"><p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #0891b2;padding-left:12px;line-height:1.4;">02｜Widget → Host 事件</p></section>
+  <section style="margin:0 0 12px 0;padding:14px 16px;background:#f0fdf4;border:1px solid #a7f3d0;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#065f46;line-height:1.5;">已实现发射</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;"><code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">NANZI_WIDGET_READY</code>（挂载）· <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">INIT_SUCCESS</code>（token 有效）· <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">GENERATION_STOPPED</code> · <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">CONVERSATION_CHANGED</code>（含 clear_host_conversation_pin）· <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">USER_FEEDBACK</code>（message_id/trace_id/feedback）· <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">OPEN_DATA_PORTAL_FULL</code>（宿主可跳 /dashboard/personal?tab=data）</p>
+  </section>
+  <section style="margin:0 0 16px 0;padding:12px 14px;background:#fffbeb;border-left:4px solid #d97706;border-radius:0 8px 8px 0;"><p style="margin:0;font-size:14px;color:#92400e;line-height:1.85;">文档里的 REQUEST_RESIZE / TOKEN_EXPIRED 等：Debugger 可能监听，但当前 EmbedChat 未必发射——对接以代码 switch 为准。</p></section>
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+  <section style="margin:0 0 14px 0;"><p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #7c3aed;padding-left:12px;line-height:1.4;">03｜INIT_CONFIG 字段手册</p></section>
+  <section style="margin:0 0 12px 0;padding:14px 16px;background:#f0fdf4;border:1px solid #a7f3d0;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#065f46;">鉴权与会话</p>
+    <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.85;"><strong>干什么：</strong>注入 token 并定位智能体/会话。</p>
+    <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.85;"><strong>场景：</strong>宿主登录后打开工位。</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;"><strong>原理：</strong>token | api_key | apikey（必需其一）；agent_id；conversation_id（销钉 yovole_embed_conv_id）；instance_id；theme/styleVars；welcome_message_override；user_avatar；user_info|user；page_info；open_saved_report{report_id,run_id?,request_id?,detail_tab}；portal_question{query, action fill|send}。生产优先 postMessage 传 token，少写 URL。</p>
+  </section>
+  <section style="margin:0 0 12px 0;padding:14px 16px;background:#ecfeff;border:1px solid #a5f3fc;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#0e7490;">水印</p>
+    <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.85;"><strong>干什么：</strong>防截屏外泄。</p>
+    <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.85;"><strong>场景：</strong>嵌入大屏/客服座席。</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;"><strong>原理：</strong>用户 profile.watermark：enabled（配置 embedchat_watermark_enabled，缺省当 true）、style 默认 user_time、text 默认「南孜系统」。custom 用 text，否则用户名+时间瓦片，透明度约 0.04。</p>
+  </section>
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+  <section style="margin:0 0 14px 0;"><p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #d97706;padding-left:12px;line-height:1.4;">04｜V1 面要点（/api/v1）</p></section>
+  <section style="margin:0 0 12px 0;padding:14px 16px;background:#f0fdf4;border:1px solid #a7f3d0;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#065f46;line-height:1.5;">对话</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;"><code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">POST /chat/completions</code> 自动路由或带 agent_id<br/><code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">POST /chat/agents/{{id}}/chat</code> 直达<br/><code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">GET /chat/logs/{{trace_id}}</code> 全步骤<br/>history / cancel / upload / conversation finalize（强制 LTM flush）/ model_calls</p>
+  </section>
+  <section style="margin:0 0 12px 0;padding:14px 16px;background:#fffbeb;border:1px solid #fde68a;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#b45309;line-height:1.5;">ChatBI / 其他</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;"><code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">POST /chatbi/sql/execute</code>（需 sessionid + API Key）<br/><code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">POST /chatbi/sql/checkauth</code>（public，body username）<br/><code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">POST /schema</code> · <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">GET /users/profile?username=</code> 服务端换 token（Embed 指南）</p>
+  </section>
+  <section style="margin:0 0 16px 0;padding:12px 14px;background:#ecfeff;border-left:4px solid #0891b2;border-radius:0 8px 8px 0;"><p style="margin:0;font-size:14px;color:#0e7490;line-height:1.85;">完整表见 docs/md/api_integration_guide.md。权限确认/外部执行 resume 等也在 V1 chat 下。</p></section>
+
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+  <section style="margin:0 0 16px 0;padding:18px 16px;background:linear-gradient(135deg,#ecfdf5 0%,#f0f9ff 100%);border:1px solid #a7f3d0;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:16px;font-weight:bold;color:#064e3b;">📌 下期预告</p>
+    <p style="margin:0 0 8px 0;font-size:15px;color:#374151;line-height:1.85;"><strong>长期记忆</strong></p>
+    <p style="margin:0;font-size:14px;color:#4b5563;line-height:1.85;">Redis Key、KNN、遗忘曲线与 03:00 整理。</p>
+  </section>
+  <section style="margin:20px 0 0 0;padding:16px;text-align:center;background:#f9fafb;border-radius:8px;">
+    <p style="margin:0 0 4px 0;font-size:14px;color:#6b7280;">NanZi 实战连载 · 11</p>
+    <p style="margin:0;font-size:13px;color:#9ca3af;">嵌入工位，统一鉴权。</p>
+  </section>
+</section>

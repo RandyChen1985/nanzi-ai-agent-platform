@@ -1,0 +1,57 @@
+<!--
+  微信公众号排版 HTML — NanZi 实战连载 · 第 B02 篇（深度修订）
+  使用说明：复制最外层 <section>…</section> 到公众号 HTML 模式
+-->
+<section style="box-sizing:border-box;font-size:16px;color:#3f3f3f;line-height:1.8;letter-spacing:0.5px;text-align:justify;font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue','PingFang SC','Hiragino Sans GB','Microsoft YaHei',Arial,sans-serif;">
+  <section style="margin:0 0 24px 0;padding:24px 16px;background:linear-gradient(135deg,#064e3b 0%,#022c22 48%,#111827 100%);border-radius:10px;text-align:center;box-shadow:0 4px 20px rgba(16,185,129,0.15);">
+    <p style="margin:0 0 6px 0;font-size:13px;color:#6ee7b7;letter-spacing:1px;">NanZi 开源智能体平台实战连载 · B02</p>
+    <p style="margin:0 0 10px 0;font-size:20px;font-weight:bold;color:#f8fafc;line-height:1.55;">Grounding：答案从哪来</p>
+    <p style="margin:0;font-size:15px;color:#a7f3d0;line-height:1.6;">opt-in · 七类证据 · 审计动作 · MCP</p>
+  </section>
+  <section style="margin:0 0 20px 0;padding:14px 16px;background:#fafafa;border:1px solid #e5e7eb;border-radius:10px;">
+    <p style="margin:0 0 10px 0;font-size:15px;font-weight:bold;color:#111827;">项目声明</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">本项目为<strong>个人开源</strong>（MIT）。仓库：<a href="https://github.com/RandyChen1985/nanzi-ai-agent-platform" style="color:#059669;text-decoration:none;word-break:break-all;">RandyChen1985/nanzi-ai-agent-platform</a></p>
+  </section>
+  <section style="margin:0 0 12px 0;"><p style="margin:0;font-size:15px;color:#374151;line-height:1.9;">Grounding = 答案是否「有据可查」。工具成功写入 EvidenceLedger，回合结束 GroundingService.audit；默认 <strong>opt-in</strong>（debug_options.grounding_enabled / 前端 enableGrounding 默认 false）。</p></section>
+  <section style="margin:0 0 16px 0;padding:12px 14px;background:#ecfeff;border-left:4px solid #0891b2;border-radius:0 8px 8px 0;"><p style="margin:0;font-size:14px;color:#0e7490;line-height:1.85;">代码：<code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">app/services/ai/grounding/</code> · EvidenceType / GroundingAction / EvidenceLedger</p></section>
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+  <section style="margin:0 0 14px 0;"><p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #10b981;padding-left:12px;line-height:1.4;">01｜开关位置</p></section>
+  <section style="margin:0 0 12px 0;padding:14px 16px;background:#f0fdf4;border:1px solid #a7f3d0;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#065f46;line-height:1.5;">如何打开</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">请求体 <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">debug_options.grounding_enabled=true</code><br/>EmbedChat / AgentDebug：<code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">enableGrounding</code> 默认 false，发送时映射；RESET_SESSION 会强制关回 false<br/>执行器：<code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">_grounding_enabled()</code> 仅当 is True</p>
+  </section>
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+  <section style="margin:0 0 14px 0;"><p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #0891b2;padding-left:12px;line-height:1.4;">02｜EvidenceType 七类</p></section>
+  <section style="margin:0 0 12px 0;padding:14px 16px;background:#f0fdf4;border:1px solid #a7f3d0;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#065f46;line-height:1.5;">枚举值</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;"><code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">internal_data</code> 问数/SQL<br/><code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">internal_knowledge</code> 知识库<br/><code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">public_web</code> 网页<br/><code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">runtime_state</code> 运行时状态<br/><code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">user_file</code> 用户文件<br/><code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">conversation_memory</code> 记忆<br/><code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">external_tool</code> MCP/外部工具</p>
+  </section>
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+  <section style="margin:0 0 14px 0;"><p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #7c3aed;padding-left:12px;line-height:1.4;">03｜策略与动作</p></section>
+  <section style="margin:0 0 12px 0;padding:14px 16px;background:#f0fdf4;border:1px solid #a7f3d0;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#065f46;line-height:1.5;">记账策略</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">工具成功 → <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">EvidenceLedger.record_success</code> → EvidenceReceipt（类型、摘要、标记）<br/>策略：non_empty / allow_empty_success / structured_success（空成功是否记账）</p>
+  </section>
+  <section style="margin:0 0 12px 0;padding:14px 16px;background:#fffbeb;border:1px solid #fde68a;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#b45309;line-height:1.5;">GroundingAction</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;"><code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">pass</code> · <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">pass_with_warning</code> · <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">pass_without_facts</code> · <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">block_ungrounded_facts</code><br/>风险级：none|low|medium|high。软警告路径：SSE log(category=grounding) + warning_chunk，附 grounding_risk{level,reason,required/available types}——PASS_WITH_WARNING 通常不删答案正文</p>
+  </section>
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+  <section style="margin:0 0 14px 0;"><p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #d97706;padding-left:12px;line-height:1.4;">04｜MCP 只读与证据</p></section>
+  <section style="margin:0 0 12px 0;padding:14px 16px;background:#f0fdf4;border:1px solid #a7f3d0;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#065f46;line-height:1.5;">启发式</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">schema 可声明 x-nanzi-evidence-types<br/>readOnlyHint=False → evidence_inference_disabled<br/>True 且无声明 → EXTERNAL_TOOL + allow_empty_success<br/>另有 Registry 名称动词启发式（见 A06）</p>
+  </section>
+  <section style="margin:0 0 16px 0;padding:12px 14px;background:#fef2f2;border-left:4px solid #ef4444;border-radius:0 8px 8px 0;"><p style="margin:0;font-size:14px;color:#7f1d1d;line-height:1.85;"><strong>边界：</strong>Grounding 证明「模型看过什么」，不自动证明业务结论正确。审计与人工复核仍要。</p></section>
+
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+  <section style="margin:0 0 16px 0;padding:18px 16px;background:linear-gradient(135deg,#ecfdf5 0%,#f0f9ff 100%);border:1px solid #a7f3d0;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:16px;font-weight:bold;color:#064e3b;">📌 下期预告</p>
+    <p style="margin:0 0 8px 0;font-size:15px;color:#374151;line-height:1.85;"><strong>Prompt 与 Trace</strong></p>
+    <p style="margin:0;font-size:14px;color:#4b5563;line-height:1.85;">Studio、轨迹字段与配额顺序。</p>
+  </section>
+  <section style="margin:20px 0 0 0;padding:16px;text-align:center;background:#f9fafb;border-radius:8px;">
+    <p style="margin:0 0 4px 0;font-size:14px;color:#6b7280;">NanZi 实战连载 · B02</p>
+    <p style="margin:0;font-size:13px;color:#9ca3af;">有据可查，默认开关。</p>
+  </section>
+</section>

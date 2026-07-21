@@ -1,0 +1,62 @@
+<!--
+  微信公众号排版 HTML — NanZi 实战连载 · 第 10 篇（深度修订）
+  使用说明：复制最外层 <section>…</section> 到公众号 HTML 模式
+-->
+<section style="box-sizing:border-box;font-size:16px;color:#3f3f3f;line-height:1.8;letter-spacing:0.5px;text-align:justify;font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue','PingFang SC','Hiragino Sans GB','Microsoft YaHei',Arial,sans-serif;">
+  <section style="margin:0 0 24px 0;padding:24px 16px;background:linear-gradient(135deg,#064e3b 0%,#022c22 48%,#111827 100%);border-radius:10px;text-align:center;box-shadow:0 4px 20px rgba(16,185,129,0.15);">
+    <p style="margin:0 0 6px 0;font-size:13px;color:#6ee7b7;letter-spacing:1px;">NanZi 开源智能体平台实战连载 · 10</p>
+    <p style="margin:0 0 10px 0;font-size:20px;font-weight:bold;color:#f8fafc;line-height:1.55;">接入第三方大脑</p>
+    <p style="margin:0;font-size:15px;color:#a7f3d0;line-height:1.6;">分发 · 配置校验 · AUTH_CONTEXT · 选型</p>
+  </section>
+  <section style="margin:0 0 20px 0;padding:14px 16px;background:#fafafa;border:1px solid #e5e7eb;border-radius:10px;">
+    <p style="margin:0 0 10px 0;font-size:15px;font-weight:bold;color:#111827;">项目声明</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">本项目为<strong>个人开源</strong>（MIT）。仓库：<a href="https://github.com/RandyChen1985/nanzi-ai-agent-platform" style="color:#059669;text-decoration:none;word-break:break-all;">RandyChen1985/nanzi-ai-agent-platform</a></p>
+  </section>
+  <section style="margin:0 0 12px 0;"><p style="margin:0;font-size:15px;color:#374151;line-height:1.9;">引擎类型 ≠ 智能体主类型。GENERAL/CHATBI/KNOWLEDGE_BASE 是能力画像；LOCAL / RAGFLOW / OPENCLAW 是运行时后端。RAGFLOW/OPENCLAW <strong>早退</strong>，不走本地 Toolkit、SQL Gate、Skills 全套护栏。</p></section>
+  <section style="margin:0 0 16px 0;padding:12px 14px;background:#ecfeff;border-left:4px solid #0891b2;border-radius:0 8px 8px 0;"><p style="margin:0;font-size:14px;color:#0e7490;line-height:1.85;">代码：<code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">dispatcher.py</code> · <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">RAGExecutor</code> / <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">OpenClawExecutor</code> · <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">openclaw_client.py</code> · <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">sanitize_client_messages_for_identity</code></p></section>
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+  <section style="margin:0 0 14px 0;"><p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #10b981;padding-left:12px;line-height:1.4;">01｜分发路径</p></section>
+  <section style="margin:0 0 12px 0;padding:14px 16px;background:#f0fdf4;border:1px solid #a7f3d0;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#065f46;line-height:1.5;">AgentDispatcher</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;"><code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">engine_type==RAGFLOW</code> → RAGExecutor → RagFlowClient → <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">POST {{base}}/api/v1/agents_openai/{{app_id}}/chat/completions</code>（timeout 60s）<br/><code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">OPENCLAW</code> → OpenClawExecutor → <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">POST {{base_url}}/v1/chat/completions</code>（timeout 180s）<br/>否则 LOCAL：按能力走 Knowledge / DataQuery / Assistant</p>
+  </section>
+  <section style="margin:0 0 16px 0;padding:12px 14px;background:#fffbeb;border-left:4px solid #d97706;border-radius:0 8px 8px 0;"><p style="margin:0;font-size:14px;color:#92400e;line-height:1.85;">创建 UI 常把第三方引擎固定为 GENERAL + general_chat；不走本地版本化工具清单那一套。</p></section>
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+  <section style="margin:0 0 14px 0;"><p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #0891b2;padding-left:12px;line-height:1.4;">02｜engine_config 必填与默认</p></section>
+  <section style="margin:0 0 12px 0;padding:14px 16px;background:#f0fdf4;border:1px solid #a7f3d0;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#065f46;">RAGFLOW</p>
+    <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.85;"><strong>干什么：</strong>托管 RAGFlow Agent App。</p>
+    <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.85;"><strong>场景：</strong>已有 RAGFlow 应用，想统一入口。</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;"><strong>原理：</strong>必填 app_id；可选 dataset_ids、ragflow_similarity_threshold、ragflow_vector_weight。检索默认相似度 0.2、向量权重 0.3、top_k 5（可被系统配置 knowledge_ragflow_* 覆盖）。平台凭据：ragflow_api_url / ragflow_api_key。</p>
+  </section>
+  <section style="margin:0 0 12px 0;padding:14px 16px;background:#ecfeff;border:1px solid #a5f3fc;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#0e7490;">OPENCLAW</p>
+    <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.85;"><strong>干什么：</strong>走 OpenClaw 网关聊天。</p>
+    <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.85;"><strong>场景：</strong>要数据集 ACL 与外部机器人编排。</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;"><strong>原理：</strong>必填 base_url、model；可选 api_key、stream 默认 True、extra_params。安全：safety_check_enabled 默认 True；input/output strategy 默认 append；可配 safety_check_*_prompt。平台回落 openclaw_api_url/api_key。</p>
+  </section>
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+  <section style="margin:0 0 14px 0;"><p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #7c3aed;padding-left:12px;line-height:1.4;">03｜AUTH_CONTEXT（OpenClaw）</p></section>
+  <section style="margin:0 0 12px 0;padding:14px 16px;background:#f0fdf4;border:1px solid #a7f3d0;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#065f46;line-height:1.5;">服务端注入 JSON 键</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;"><code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">userName</code> · <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">realName</code> · <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">channel</code>=openai-user · <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">role</code>=普通用户 · <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">datasets</code> 数组<br/>数据集元素：ragflow_meta_id / ragflow_meta_name / ragflow_meta_desc（来自 PermissionService 可访问元数据集）<br/><strong>不含 apiKey</strong>。作为<strong>首条 system</strong> 插入；空 datasets 时 Prompt 要求拦截 ChatBI。请求 user 字段常为 {user}-{conversation_id}。</p>
+  </section>
+  <section style="margin:0 0 16px 0;padding:12px 14px;background:#fef2f2;border-left:4px solid #ef4444;border-radius:0 8px 8px 0;"><p style="margin:0;font-size:14px;color:#7f1d1d;line-height:1.85;"><strong>sanitize：</strong>丢弃客户端 system；剥离伪造的 AUTH_CONTEXT / USER_PROFILE / Active User Profile 等标记块。身份只信服务端。</p></section>
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+  <section style="margin:0 0 14px 0;"><p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #d97706;padding-left:12px;line-height:1.4;">04｜怎么选</p></section>
+  <section style="margin:0 0 12px 0;padding:14px 16px;background:#f0fdf4;border:1px solid #a7f3d0;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#065f46;line-height:1.5;">决策</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">要平台护栏 / SQL Gate / Skills / 工具审批 → <strong>LOCAL</strong><br/>复用 RAGFlow 托管 App → <strong>RAGFLOW</strong><br/>走 OpenClaw 网关与数据集 ACL → <strong>OPENCLAW</strong><br/>外部能力受对端版本、网络与对方鉴权约束——平台只代理，不内化其工具权限模型。</p>
+  </section>
+
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+  <section style="margin:0 0 16px 0;padding:18px 16px;background:linear-gradient(135deg,#ecfdf5 0%,#f0f9ff 100%);border:1px solid #a7f3d0;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:16px;font-weight:bold;color:#064e3b;">📌 下期预告</p>
+    <p style="margin:0 0 8px 0;font-size:15px;color:#374151;line-height:1.85;"><strong>Embed 与 V1 API</strong></p>
+    <p style="margin:0;font-size:14px;color:#4b5563;line-height:1.85;">postMessage 事件与 INIT_CONFIG 字段。</p>
+  </section>
+  <section style="margin:20px 0 0 0;padding:16px;text-align:center;background:#f9fafb;border-radius:8px;">
+    <p style="margin:0 0 4px 0;font-size:14px;color:#6b7280;">NanZi 实战连载 · 10</p>
+    <p style="margin:0;font-size:13px;color:#9ca3af;">混编专家，统一入口。</p>
+  </section>
+</section>

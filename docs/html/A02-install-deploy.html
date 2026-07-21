@@ -1,0 +1,349 @@
+<!--
+  微信公众号排版 HTML — NanZi 实战连载 · 第 02 篇
+  系列：《NanZi 开源智能体平台实战连载》
+  使用说明：复制最外层 <section>…</section> 到公众号 HTML 模式；全部内联 style
+-->
+
+<section style="box-sizing:border-box;font-size:16px;color:#3f3f3f;line-height:1.8;letter-spacing:0.5px;text-align:justify;font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue','PingFang SC','Hiragino Sans GB','Microsoft YaHei',Arial,sans-serif;">
+
+  <!-- 标题区 -->
+  <section style="margin:0 0 24px 0;padding:24px 16px;background:linear-gradient(135deg,#064e3b 0%,#022c22 48%,#111827 100%);border-radius:10px;text-align:center;box-shadow:0 4px 20px rgba(16,185,129,0.15);">
+    <p style="margin:0 0 6px 0;font-size:13px;font-weight:normal;color:#6ee7b7;line-height:1.5;letter-spacing:1px;">NanZi 开源智能体平台实战连载 · 02</p>
+    <p style="margin:0 0 10px 0;font-size:20px;font-weight:bold;color:#f8fafc;line-height:1.55;letter-spacing:1px;">从零装上 NanZi</p>
+    <p style="margin:0;font-size:15px;font-weight:normal;color:#a7f3d0;line-height:1.6;letter-spacing:0.5px;">依赖拆解 · Docker / 源码双路径 · 二次开发入口</p>
+  </section>
+
+  <!-- 项目声明 -->
+  <section style="margin:0 0 20px 0;padding:14px 16px;background:#fafafa;border:1px solid #e5e7eb;border-radius:10px;">
+    <p style="margin:0 0 10px 0;font-size:15px;font-weight:bold;color:#111827;line-height:1.5;">项目声明</p>
+    <p style="margin:0 0 10px 0;font-size:14px;color:#374151;line-height:1.85;">
+      本项目为<strong>个人开源</strong>，供自由学习交流，遵循 MIT 开源协议。
+    </p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">
+      仓库：<a href="https://github.com/RandyChen1985/nanzi-ai-agent-platform" style="color:#059669;text-decoration:none;word-break:break-all;">RandyChen1985/nanzi-ai-agent-platform</a>
+      · 安装全文：仓库根目录 <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;">HOW_TO_INSTALL.md</code>
+    </p>
+  </section>
+
+  <!-- 导语 -->
+  <section style="margin:0 0 20px 0;">
+    <p style="margin:0 0 12px 0;font-size:15px;color:#374151;line-height:1.9;">
+      上篇把架构与 AgentScope 运行时讲清楚了；这篇解决更土的问题：<strong>怎么把平台跑起来，以及二次开发该动哪里、不该动哪里。</strong>
+    </p>
+    <p style="margin:0;font-size:15px;color:#374151;line-height:1.9;">
+      NanZi 不是免运维 SaaS。你要自备 MySQL、Redis Stack、LLM 网关；知识库 / 部分链路还常要 RAGFlow。读完应能：选对部署路径、完成「能登录 + 配好模型」、知道升级怎么跑增量 SQL、扩展时优先走 MCP/Skills 而不是一上来改 Runner。
+    </p>
+  </section>
+
+  <section style="margin:0 0 16px 0;padding:12px 14px;background:#ecfeff;border-left:4px solid #0891b2;border-radius:0 8px 8px 0;">
+    <p style="margin:0;font-size:14px;color:#0e7490;line-height:1.85;">
+      <strong>两条路径速记：</strong>生产 / 准生产优先 <strong>Docker 离线镜像包</strong>（可无本机装 Python/Node）；日常改代码优先 <strong>源码联调</strong>（venv + 前端构建）。无论哪条路，<strong>先初始化 MySQL</strong>，再拉服务。
+    </p>
+  </section>
+
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+
+  <!-- ========== 01 依赖 ========== -->
+  <section style="margin:0 0 14px 0;">
+    <p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #10b981;padding-left:12px;line-height:1.4;">01｜依赖地图：必装 / 按需 / 别装错</p>
+  </section>
+
+  <section style="margin:0 0 12px 0;padding:4px 0;">
+    <table style="width:100%;border-collapse:collapse;font-size:13px;line-height:1.55;">
+      <thead>
+        <tr>
+          <th style="padding:9px 8px;border:1px solid #e5e7eb;background:#064e3b;color:#ecfdf5;text-align:left;">组件</th>
+          <th style="padding:9px 8px;border:1px solid #e5e7eb;background:#064e3b;color:#ecfdf5;text-align:left;">级别</th>
+          <th style="padding:9px 8px;border:1px solid #e5e7eb;background:#064e3b;color:#ecfdf5;text-align:left;">说明</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td style="padding:9px 8px;border:1px solid #e5e7eb;font-weight:bold;background:#f0fdf4;color:#065f46;">MySQL 8+</td>
+          <td style="padding:9px 8px;border:1px solid #e5e7eb;background:#f0fdf4;color:#065f46;">必装</td>
+          <td style="padding:9px 8px;border:1px solid #e5e7eb;background:#f0fdf4;color:#374151;"><code style="font-size:11px;">utf8mb4</code>；平台配置、RBAC、审计、智能体元数据、JobStore</td>
+        </tr>
+        <tr>
+          <td style="padding:9px 8px;border:1px solid #e5e7eb;font-weight:bold;color:#92400e;background:#fffbeb;">Redis Stack</td>
+          <td style="padding:9px 8px;border:1px solid #e5e7eb;color:#92400e;background:#fffbeb;">必装</td>
+          <td style="padding:9px 8px;border:1px solid #e5e7eb;color:#374151;background:#fffbeb;">必须带 <strong>RediSearch</strong>（如 <code style="font-size:11px;">redis/redis-stack-server</code>）。普通 Redis 不够：LTM 向量、案例/元数据索引、调度锁、权限挂起、Token 会话账本都依赖它</td>
+        </tr>
+        <tr>
+          <td style="padding:9px 8px;border:1px solid #e5e7eb;font-weight:bold;background:#f0fdf4;color:#065f46;">LLM 网关</td>
+          <td style="padding:9px 8px;border:1px solid #e5e7eb;background:#f0fdf4;color:#065f46;">必配</td>
+          <td style="padding:9px 8px;border:1px solid #e5e7eb;background:#f0fdf4;color:#374151;">OpenAI 兼容（OpenAI / DeepSeek / 百炼等）；登录后在【系统配置】填 Key 与 Base URL</td>
+        </tr>
+        <tr>
+          <td style="padding:9px 8px;border:1px solid #e5e7eb;font-weight:bold;color:#374151;">Docker 20.10+</td>
+          <td style="padding:9px 8px;border:1px solid #e5e7eb;color:#374151;">生产必装</td>
+          <td style="padding:9px 8px;border:1px solid #e5e7eb;color:#374151;">Compose v2；离线 <code style="font-size:11px;">docker load</code> 部署</td>
+        </tr>
+        <tr>
+          <td style="padding:9px 8px;border:1px solid #e5e7eb;font-weight:bold;background:#f0fdf4;color:#065f46;">Python 3.11+</td>
+          <td style="padding:9px 8px;border:1px solid #e5e7eb;background:#f0fdf4;color:#065f46;">源码必装</td>
+          <td style="padding:9px 8px;border:1px solid #e5e7eb;background:#f0fdf4;color:#374151;">镜像基于 <code style="font-size:11px;">python:3.11-slim</code>；AgentScope 模块（agent/model/tool/permission/workspace）需可 import。仅用现成镜像时可不上宿主机 Python</td>
+        </tr>
+        <tr>
+          <td style="padding:9px 8px;border:1px solid #e5e7eb;font-weight:bold;color:#374151;">Node.js 18+</td>
+          <td style="padding:9px 8px;border:1px solid #e5e7eb;color:#374151;">源码/自构建</td>
+          <td style="padding:9px 8px;border:1px solid #e5e7eb;color:#374151;">前端 Vue 构建；跨架构打镜像时脚本会在宿主机预编译前端，避免 Qemu OOM</td>
+        </tr>
+        <tr>
+          <td style="padding:9px 8px;border:1px solid #e5e7eb;font-weight:bold;background:#ecfeff;color:#0e7490;">RAGFlow</td>
+          <td style="padding:9px 8px;border:1px solid #e5e7eb;background:#ecfeff;color:#0e7490;">按需</td>
+          <td style="padding:9px 8px;border:1px solid #e5e7eb;background:#ecfeff;color:#374151;">知识库管理 / Knowledge 专家 / RAGFlow 引擎常见依赖；ChatBI 若走外部知识增强也常要。仅测通用对话可后配</td>
+        </tr>
+        <tr>
+          <td style="padding:9px 8px;border:1px solid #e5e7eb;font-weight:bold;color:#374151;">业务库</td>
+          <td style="padding:9px 8px;border:1px solid #e5e7eb;color:#374151;">ChatBI 按需</td>
+          <td style="padding:9px 8px;border:1px solid #e5e7eb;color:#374151;">Oracle / ClickHouse / MySQL / SQL Server 等，在【数据源管理】登记</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section style="margin:0 0 16px 0;padding:12px 14px;background:#fef2f2;border-left:4px solid #ef4444;border-radius:0 8px 8px 0;">
+    <p style="margin:0;font-size:14px;color:#7f1d1d;line-height:1.85;">
+      <strong>最常见翻车：</strong>① Redis 装了社区版却没有 RediSearch；② Docker 里把 <code style="background:#fee2e2;padding:1px 4px;border-radius:3px;">MYSQL_HOST=localhost</code>（容器里的 localhost 是自己）；③ Mac 打 x86 包却用了 <code style="background:#fee2e2;padding:1px 4px;border-radius:3px;">build_native.sh</code>。下文 FAQ 会再钉一次。
+    </p>
+  </section>
+
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+
+  <!-- ========== 02 MySQL ========== -->
+  <section style="margin:0 0 14px 0;">
+    <p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #0891b2;padding-left:12px;line-height:1.4;">02｜无论哪条路：先初始化 MySQL</p>
+  </section>
+
+  <section style="margin:0 0 12px 0;">
+    <p style="margin:0 0 10px 0;font-size:15px;color:#374151;line-height:1.9;">
+      平台库脚本在 <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;">db-prod/</code>，版本化文件名 <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;">V0…VNN-*.sql</code>。心智模型：<strong>结构靠增量脚本演进，不是每次 drop 重建。</strong>
+    </p>
+  </section>
+
+  <section style="margin:0 0 12px 0;padding:14px 16px;background:#1e1e2e;border-radius:8px;">
+    <p style="margin:0 0 6px 0;font-size:12px;color:#a5b4fc;line-height:1.7;font-family:Menlo,Monaco,Consolas,monospace;"># 1) 建库</p>
+    <p style="margin:0 0 10px 0;font-size:12px;color:#e2e8f0;line-height:1.7;font-family:Menlo,Monaco,Consolas,monospace;">CREATE DATABASE nanzi_ai_agent_platform CHARACTER SET utf8mb4 …;</p>
+    <p style="margin:0 0 6px 0;font-size:12px;color:#a5b4fc;line-height:1.7;font-family:Menlo,Monaco,Consolas,monospace;"># 2) 导入结构（二选一，幂等可重复跑）</p>
+    <p style="margin:0 0 4px 0;font-size:12px;color:#e2e8f0;line-height:1.7;font-family:Menlo,Monaco,Consolas,monospace;">./db-prod/apply-sql.sh&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;# 需 venv + requirements</p>
+    <p style="margin:0 0 10px 0;font-size:12px;color:#e2e8f0;line-height:1.7;font-family:Menlo,Monaco,Consolas,monospace;">./db-prod/apply-sql-native.sh&nbsp;# 仅需 mysql 客户端</p>
+    <p style="margin:0 0 6px 0;font-size:12px;color:#a5b4fc;line-height:1.7;font-family:Menlo,Monaco,Consolas,monospace;"># 3) 首次建议导入管理员（脚本末尾也可级联询问）</p>
+    <p style="margin:0;font-size:12px;color:#e2e8f0;line-height:1.7;font-family:Menlo,Monaco,Consolas,monospace;">./db-prod/apply-sql-native.sh db-prod/INIT-USER-ADMIN.sql</p>
+  </section>
+
+  <section style="margin:12px 0 16px 0;padding:14px 16px;background:#f0f9ff;border:1px solid #bae6fd;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:14px;font-weight:bold;color:#075985;">升级时怎么做？</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">
+      拉新代码 / 换新镜像之后，对<strong>已有库</strong>再跑一次 <code style="background:#e0f2fe;padding:1px 4px;border-radius:3px;">apply-sql-native.sh</code>（或 Python 版）。脚本会跳过已存在对象，把新的 <code style="background:#e0f2fe;padding:1px 4px;border-radius:3px;">V*</code> 增量补上。发版说明（如 v1.0.7 Release Notes）会列出本版本新增脚本区间，升级前对照即可。
+    </p>
+  </section>
+
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+
+  <!-- ========== 03 Docker ========== -->
+  <section style="margin:0 0 14px 0;">
+    <p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #7c3aed;padding-left:12px;line-height:1.4;">03｜路径 A：Docker 生产 / 离线部署</p>
+  </section>
+
+  <section style="margin:0 0 12px 0;">
+    <p style="margin:0 0 10px 0;font-size:15px;color:#374151;line-height:1.9;">
+      适合机房、内网、不想在服务器装 Node/Python 的场景。镜像把前后端打进同一服务；MySQL / Redis 一般外挂（你已有的实例）。
+    </p>
+  </section>
+
+  <section style="margin:0 0 10px 0;padding:14px 16px;background:#faf5ff;border:1px solid #e9d5ff;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:14px;font-weight:bold;color:#6b21a8;">① 拿镜像：下载或自构建</p>
+    <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.8;">
+      · <strong>推荐</strong>：GitHub Releases 下载对应版本的 <code style="background:#f3e8ff;padding:1px 4px;border-radius:3px;">linux-amd64</code> / <code style="background:#f3e8ff;padding:1px 4px;border-radius:3px;">linux-arm64</code> tar。
+    </p>
+    <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.8;">
+      · <strong>自构建</strong>（二次开发改过代码后）：
+    </p>
+    <p style="margin:0 0 4px 0;font-size:13px;color:#374151;line-height:1.7;font-family:Menlo,Monaco,Consolas,monospace;background:#1e1e2e;color:#e2e8f0;padding:10px 12px;border-radius:6px;">cd docker<br/>./build_linux_x86.sh 1.0.7&nbsp;&nbsp;# 常见 x86 服务器<br/>./build_linux_arm.sh 1.0.7&nbsp;&nbsp;# 鲲鹏 / Ampere<br/>./build_native.sh 1.0.7&nbsp;&nbsp;&nbsp;&nbsp;# 仅本机试跑</p>
+    <p style="margin:8px 0 0 0;font-size:14px;color:#374151;line-height:1.85;">
+      产物在 <code style="background:#f3e8ff;padding:1px 4px;border-radius:3px;">docker/release/</code>。版本号参数必传。Apple Silicon 打给 x86 服务器时，务必用 <code style="background:#f3e8ff;padding:1px 4px;border-radius:3px;">build_linux_x86.sh</code>，不要用 native。buildx 坏了（Homebrew docker + Colima 常见）先跑 <code style="background:#f3e8ff;padding:1px 4px;border-radius:3px;">./install-buildx.sh</code>。
+    </p>
+  </section>
+
+  <section style="margin:0 0 10px 0;padding:14px 16px;background:#ecfeff;border:1px solid #a5f3fc;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:14px;font-weight:bold;color:#0e7490;">② 目标机：load → 配 .env → 启动</p>
+    <p style="margin:0 0 6px 0;font-size:13px;color:#374151;line-height:1.7;font-family:Menlo,Monaco,Consolas,monospace;background:#1e1e2e;color:#e2e8f0;padding:10px 12px;border-radius:6px;">docker load -i nanzi-ai-agent_…_linux-amd64_….tar<br/># 若 compose 写的是 :latest<br/>docker tag nanzi-ai-agent:1.0.7 nanzi-ai-agent:latest<br/><br/>cd docker &amp;&amp; cp ../env.example .env&nbsp;&nbsp;# 再改 Host/密码/ENCRYPTION_KEY<br/>./start-nanzi-ai-agent.sh<br/>./stop-nanzi-ai-agent.sh&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;# 停止</p>
+    <p style="margin:10px 0 0 0;font-size:14px;color:#374151;line-height:1.85;">
+      <strong>.env 要点：</strong><code style="background:#cffafe;padding:1px 4px;border-radius:3px;">MYSQL_HOST</code> / <code style="background:#cffafe;padding:1px 4px;border-radius:3px;">REDIS_HOST</code> 写宿主机局域网 IP 或 <code style="background:#cffafe;padding:1px 4px;border-radius:3px;">host.docker.internal</code>（Mac/Windows Docker Desktop），严禁容器场景写 <code style="background:#cffafe;padding:1px 4px;border-radius:3px;">127.0.0.1</code>。<code style="background:#cffafe;padding:1px 4px;border-radius:3px;">ENCRYPTION_KEY</code> 必须配置（Fernet 类密钥）。接低版本 Oracle 时可能要 Thick 模式并挂载 Instant Client 卷——详见 <code style="background:#cffafe;padding:1px 4px;border-radius:3px;">docker/README.md</code>。
+    </p>
+  </section>
+
+  <section style="margin:0 0 16px 0;padding:14px 16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;">
+    <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.85;">
+      Compose 有两套思路：<code style="background:#f1f5f9;padding:1px 4px;border-radius:3px;">docker-compose.ai-agent.yml</code> 只起 API、外挂 DB/Redis（常见）；另有全栈编排可一并起依赖。选哪种以你环境为准，原则是<strong>平台库与 Redis Stack 地址对、健康检查能过</strong>。
+    </p>
+  </section>
+
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+
+  <!-- ========== 04 源码 ========== -->
+  <section style="margin:0 0 14px 0;">
+    <p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #d97706;padding-left:12px;line-height:1.4;">04｜路径 B：源码开发联调</p>
+  </section>
+
+  <section style="margin:0 0 12px 0;">
+    <p style="margin:0 0 10px 0;font-size:15px;color:#374151;line-height:1.9;">
+      适合改 Runner、工具、前端、调 Trace。MySQL / Redis Stack 仍建议本机或局域网常驻服务，不要用假依赖糊弄向量检索。
+    </p>
+  </section>
+
+  <section style="margin:0 0 12px 0;padding:14px 16px;background:#1e1e2e;border-radius:8px;">
+    <p style="margin:0 0 4px 0;font-size:12px;color:#a5b4fc;line-height:1.7;font-family:Menlo,Monaco,Consolas,monospace;">python3 -m venv .venv &amp;&amp; source .venv/bin/activate</p>
+    <p style="margin:0 0 4px 0;font-size:12px;color:#e2e8f0;line-height:1.7;font-family:Menlo,Monaco,Consolas,monospace;">pip install -r requirements.txt&nbsp;&nbsp;# 含 agentscope[service,storage,workspace]</p>
+    <p style="margin:0 0 4px 0;font-size:12px;color:#e2e8f0;line-height:1.7;font-family:Menlo,Monaco,Consolas,monospace;">cp env.example .env&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;# 改 MySQL/Redis/ENCRYPTION_KEY</p>
+    <p style="margin:0 0 4px 0;font-size:12px;color:#e2e8f0;line-height:1.7;font-family:Menlo,Monaco,Consolas,monospace;"># 先完成 db-prod 初始化（见上一节）</p>
+    <p style="margin:0 0 4px 0;font-size:12px;color:#86efac;line-height:1.7;font-family:Menlo,Monaco,Consolas,monospace;"># 日常联调：在项目根目录执行 ./dev.sh</p>
+    <p style="margin:0 0 4px 0;font-size:12px;color:#94a3b8;line-height:1.7;font-family:Menlo,Monaco,Consolas,monospace;"># （停旧进程 → 快速编前端 → uvicorn --reload :8001）</p>
+    <p style="margin:0;font-size:12px;color:#e2e8f0;line-height:1.7;font-family:Menlo,Monaco,Consolas,monospace;"># 或分步：uvicorn app.main:app --reload --port 8001<br/>#&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;cd frontend &amp;&amp; npm i &amp;&amp; npm run dev</p>
+  </section>
+
+  <section style="margin:12px 0 16px 0;padding:14px 16px;background:#fffbeb;border:1px solid #fde68a;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:14px;font-weight:bold;color:#b45309;">脚本怎么选？</p>
+    <p style="margin:0 0 4px 0;font-size:14px;color:#374151;line-height:1.75;">· <code style="background:#fef3c7;padding:1px 4px;border-radius:3px;">./dev.sh</code>：前台联调，跳过 vue-tsc，带 reload——日常改代码</p>
+    <p style="margin:0 0 4px 0;font-size:14px;color:#374151;line-height:1.75;">· <code style="background:#fef3c7;padding:1px 4px;border-radius:3px;">scripts/redeploy-fast.sh</code>：后台快速热更新</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.75;">· <code style="background:#fef3c7;padding:1px 4px;border-radius:3px;">scripts/redeploy.sh</code>：完整类型检查后后台发布，偏准生产</p>
+    <p style="margin:8px 0 0 0;font-size:13px;color:#92400e;line-height:1.75;">
+      编译与启停请在你自己的终端执行；配好依赖后用上述脚本即可。
+    </p>
+  </section>
+
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+
+  <!-- ========== 05 登录后 ========== -->
+  <section style="margin:0 0 14px 0;">
+    <p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #059669;padding-left:12px;line-height:1.4;">05｜能访问之后：登录与首次配置</p>
+  </section>
+
+  <section style="margin:0 0 12px 0;padding:14px 16px;background:#f0fdf4;border:1px solid #a7f3d0;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:14px;color:#374151;line-height:1.85;">
+      服务起来后：管理台一般是 <code style="background:#ecfdf5;padding:1px 4px;border-radius:3px;">http://localhost:8001/</code>，Swagger 在 <code style="background:#ecfdf5;padding:1px 4px;border-radius:3px;">/docs</code>。
+    </p>
+    <p style="margin:0 0 8px 0;font-size:14px;color:#374151;line-height:1.85;">
+      若导入了 <code style="background:#ecfdf5;padding:1px 4px;border-radius:3px;">INIT-USER-ADMIN.sql</code>：默认用户 <code style="background:#ecfdf5;padding:1px 4px;border-radius:3px;">admin</code>，用脚本中的预置 API Key 登录。后台初始常为「仅 API Key」模式——<strong>首次登录后立刻在用户管理/个人中心设登录密码</strong>，不要把预置 Key 长期挂在公网。
+    </p>
+    <p style="margin:0 0 6px 0;font-size:14px;font-weight:bold;color:#065f46;">系统配置里必须先做的三件事</p>
+    <p style="margin:0 0 4px 0;font-size:14px;color:#374151;line-height:1.75;">1. <strong>大模型</strong>：厂商、API Key、API Base、默认模型 ID（路由/专家/合成都吃这里）</p>
+    <p style="margin:0 0 4px 0;font-size:14px;color:#374151;line-height:1.75;">2. <strong>RAGFlow</strong>（要用知识库时）：API URL + Token；Docker 下同样别写容器内 localhost</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.75;">3. <strong>数据源</strong>（要用 ChatBI 时）：加连接、测通，再做元数据/授权（下篇建智能体细讲）</p>
+  </section>
+
+  <section style="margin:12px 0 16px 0;padding:14px 16px;background:#fef2f2;border:1px solid #fecaca;border-radius:10px;">
+    <p style="margin:0;font-size:14px;color:#7f1d1d;line-height:1.85;">
+      只装了平台、没配模型：页面能开，对话必挂。只配了模型、没 Redis Stack：登录也许还行，记忆检索 / 案例召回 / 部分调度会静默残废——优先查向量健康与 RediSearch。
+    </p>
+  </section>
+
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+
+  <!-- ========== 06 二次开发 ========== -->
+  <section style="margin:0 0 14px 0;">
+    <p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #dc2626;padding-left:12px;line-height:1.4;">06｜二次开发：该改哪里，不该改哪里</p>
+  </section>
+
+  <section style="margin:0 0 12px 0;">
+    <p style="margin:0 0 10px 0;font-size:15px;color:#374151;line-height:1.9;">
+      上篇说过：本地 AI 唯一运行时是 AgentScope；业务应尽量停在「配置与适配」，少硬耦上游对象。扩展按成本从低到高：
+    </p>
+  </section>
+
+  <section style="margin:0 0 10px 0;padding:14px 16px;background:#f0fdf4;border:1px solid #a7f3d0;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:14px;font-weight:bold;color:#065f46;">A. 不改核心代码（优先）</p>
+    <p style="margin:0 0 4px 0;font-size:14px;color:#374151;line-height:1.75;">· <strong>MCP</strong>：登记 Server → 同步工具 → 智能体版本勾选（连 Jira / 内部 API 网关等）</p>
+    <p style="margin:0 0 4px 0;font-size:14px;color:#374151;line-height:1.75;">· <strong>Generic API Tool</strong>：控制台配置 HTTP 工具 Schema，运行时进 Toolkit</p>
+    <p style="margin:0 0 4px 0;font-size:14px;color:#374151;line-height:1.75;">· <strong>Skills</strong>：平台 / 个人 <code style="background:#ecfdf5;padding:1px 4px;border-radius:3px;">SKILL.md</code> 包 + 版本白名单</p>
+    <p style="margin:0 0 4px 0;font-size:14px;color:#374151;line-height:1.75;">· <strong>Prompt 工厂</strong>：<code style="background:#ecfdf5;padding:1px 4px;border-radius:3px;">architech/prompts/</code> 版本化系统提示词</p>
+    <p style="margin:0 0 4px 0;font-size:14px;color:#374151;line-height:1.75;">· <strong>场景模板 / 斜杠指令</strong>：交付包与门户入口，少写胶水代码</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.75;">· <strong>Embed / V1 API</strong>：业务系统嵌入，不 fork 聊天页（第 11 篇）</p>
+  </section>
+
+  <section style="margin:0 0 10px 0;padding:14px 16px;background:#fff7ed;border:1px solid #fed7aa;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:14px;font-weight:bold;color:#c2410c;">B. 平台内扩展（要懂契约）</p>
+    <p style="margin:0 0 4px 0;font-size:14px;color:#374151;line-height:1.75;">· 新<strong>静态工具</strong>：<code style="background:#ffedd5;padding:1px 4px;border-radius:3px;">app/services/ai/tools/</code> 用平台 <code style="background:#ffedd5;padding:1px 4px;border-radius:3px;">@tool</code> 注册进 Registry → <code style="background:#ffedd5;padding:1px 4px;border-radius:3px;">RuntimeToolSpec</code>，不要直接绑 LangChain</p>
+    <p style="margin:0 0 4px 0;font-size:14px;color:#374151;line-height:1.75;">· 改<strong>路由/意图</strong>：<code style="background:#ffedd5;padding:1px 4px;border-radius:3px;">router_service</code> / <code style="background:#ffedd5;padding:1px 4px;border-radius:3px;">intent_service</code>，先读设计文档再动</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.75;">· 新<strong>Runner / 引擎路径</strong>：遵守 <code style="background:#ffedd5;padding:1px 4px;border-radius:3px;">docs/md/ai_agent_gating_contract.md</code>（工具权限、挂起恢复、SQL/真实性门控哪些必须）</p>
+  </section>
+
+  <section style="margin:0 0 16px 0;padding:14px 16px;background:#fef2f2;border:1px solid #fecaca;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:14px;font-weight:bold;color:#b91c1c;">C. 尽量别这么干</p>
+    <p style="margin:0 0 4px 0;font-size:14px;color:#374151;line-height:1.75;">· 在业务代码里直接 import AgentScope 具体类绕过 <code style="background:#fee2e2;padding:1px 4px;border-radius:3px;">runtime/agentscope</code> 适配层</p>
+    <p style="margin:0 0 4px 0;font-size:14px;color:#374151;line-height:1.75;">· 重新引入 LangChain 执行器 / Message / Tool（平台已明确迁出）</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.75;">· 为图省事关掉 SQL Gate / 权限审批 / 工作区隔离「先跑通再说」——生产会反过来咬你</p>
+  </section>
+
+  <section style="margin:0 0 16px 0;padding:14px 16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:14px;font-weight:bold;color:#334155;">仓库目录速查（二次开发导航）</p>
+    <p style="margin:0 0 3px 0;font-size:13px;color:#374151;line-height:1.7;"><code style="background:#f1f5f9;padding:1px 4px;border-radius:3px;">app/</code> FastAPI + AI 编排；重点 <code style="background:#f1f5f9;padding:1px 4px;border-radius:3px;">services/ai/</code></p>
+    <p style="margin:0 0 3px 0;font-size:13px;color:#374151;line-height:1.7;"><code style="background:#f1f5f9;padding:1px 4px;border-radius:3px;">frontend/</code> Vue 管理台与 EmbedChat</p>
+    <p style="margin:0 0 3px 0;font-size:13px;color:#374151;line-height:1.7;"><code style="background:#f1f5f9;padding:1px 4px;border-radius:3px;">db-prod/</code> 库表增量</p>
+    <p style="margin:0 0 3px 0;font-size:13px;color:#374151;line-height:1.7;"><code style="background:#f1f5f9;padding:1px 4px;border-radius:3px;">docker/</code> 镜像与一键启停</p>
+    <p style="margin:0 0 3px 0;font-size:13px;color:#374151;line-height:1.7;"><code style="background:#f1f5f9;padding:1px 4px;border-radius:3px;">architech/</code> 设计文档与 Prompt</p>
+    <p style="margin:0;font-size:13px;color:#374151;line-height:1.7;"><code style="background:#f1f5f9;padding:1px 4px;border-radius:3px;">tests/CHECKLIST.md</code> 改功能记得勾验收</p>
+  </section>
+
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+
+  <!-- ========== 07 FAQ ========== -->
+  <section style="margin:0 0 14px 0;">
+    <p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #0284c7;padding-left:12px;line-height:1.4;">07｜FAQ：踩坑清单</p>
+  </section>
+
+  <section style="margin:0 0 8px 0;padding:12px 14px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;">
+    <p style="margin:0 0 4px 0;font-size:14px;font-weight:bold;color:#334155;">Q：容器起来又退出，日志 Database health check failed？</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.8;">A：<code style="background:#f1f5f9;padding:1px 4px;border-radius:3px;">MYSQL_HOST</code>/<code style="background:#f1f5f9;padding:1px 4px;border-radius:3px;">REDIS_HOST</code> 写成了 localhost。改成宿主机 IP 或 host.docker.internal。</p>
+  </section>
+
+  <section style="margin:0 0 8px 0;padding:12px 14px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;">
+    <p style="margin:0 0 4px 0;font-size:14px;font-weight:bold;color:#334155;">Q：跨架构 build 前端 Killed / OOM？</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.8;">A：构建脚本已支持宿主机预编译 Vite；确保本机有 node/npm。硬要在容器里编就加大 Docker 内存（≥8GB）。</p>
+  </section>
+
+  <section style="margin:0 0 8px 0;padding:12px 14px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;">
+    <p style="margin:0 0 4px 0;font-size:14px;font-weight:bold;color:#334155;">Q：apply-sql 报 No module named aiomysql？</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.8;">A：先激活 venv 并 <code style="background:#f1f5f9;padding:1px 4px;border-radius:3px;">pip install -r requirements.txt</code>；或改用 <code style="background:#f1f5f9;padding:1px 4px;border-radius:3px;">apply-sql-native.sh</code>。</p>
+  </section>
+
+  <section style="margin:0 0 8px 0;padding:12px 14px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;">
+    <p style="margin:0 0 4px 0;font-size:14px;font-weight:bold;color:#334155;">Q：记忆搜不到、案例不召回？</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.8;">A：先确认是 Redis <strong>Stack</strong>，且健康检查过 RediSearch；再查 <code style="background:#f1f5f9;padding:1px 4px;border-radius:3px;">REDIS_DB</code> 等配置是否与文档一致。</p>
+  </section>
+
+  <section style="margin:0 0 16px 0;padding:12px 14px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;">
+    <p style="margin:0 0 4px 0;font-size:14px;font-weight:bold;color:#334155;">Q：知识库/ChatBI 相关功能全挂？</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.8;">A：检查 RAGFlow URL/Key、网络互通；ChatBI 另查数据源连通与元数据授权。通用助手可先不依赖它们验证编排链路。</p>
+  </section>
+
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+
+  <!-- 下期 -->
+  <section style="margin:0 0 16px 0;padding:18px 16px;background:linear-gradient(135deg,#ecfdf5 0%,#f0f9ff 100%);border:1px solid #a7f3d0;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:16px;font-weight:bold;color:#064e3b;">📌 下期 · 03</p>
+    <p style="margin:0 0 8px 0;font-size:15px;color:#374151;line-height:1.85;">
+      <strong>三种智能体怎么选？通用 / ChatBI / 知识库创建指南</strong>
+    </p>
+    <p style="margin:0;font-size:14px;color:#4b5563;line-height:1.85;">
+      平台跑起来之后，下一篇用 Agent Studio 实操：主类型锁定什么能力、就绪门禁要配齐哪些工具与资源、LOCAL 与外部引擎入口怎么选。
+    </p>
+  </section>
+
+  <section style="margin:0 0 12px 0;padding:12px 16px;background:#f0fdf4;border-left:4px solid #10b981;border-radius:0 6px 6px 0;">
+    <p style="margin:0;font-size:14px;color:#065f46;line-height:1.8;">
+      完整步骤以仓库文档为准：
+      <a href="https://github.com/RandyChen1985/nanzi-ai-agent-platform/blob/main/HOW_TO_INSTALL.md" style="color:#059669;text-decoration:none;">HOW_TO_INSTALL.md</a>
+      ·
+      <a href="https://github.com/RandyChen1985/nanzi-ai-agent-platform/blob/main/docker/README.md" style="color:#059669;text-decoration:none;">docker/README.md</a>
+      ·
+      <a href="https://github.com/RandyChen1985/nanzi-ai-agent-platform" style="color:#059669;text-decoration:none;">GitHub</a>
+    </p>
+  </section>
+
+  <section style="margin:20px 0 0 0;padding:16px;text-align:center;background:#f9fafb;border-radius:8px;">
+    <p style="margin:0 0 4px 0;font-size:14px;color:#6b7280;">NanZi 实战连载 · 02</p>
+    <p style="margin:0;font-size:13px;color:#9ca3af;">先跑起来，再谈编排。</p>
+  </section>
+
+</section>

@@ -1,0 +1,70 @@
+<!--
+  微信公众号排版 HTML — NanZi 实战连载 · 第 09 篇（深度修订）
+  使用说明：复制最外层 <section>…</section> 到公众号 HTML 模式
+-->
+<section style="box-sizing:border-box;font-size:16px;color:#3f3f3f;line-height:1.8;letter-spacing:0.5px;text-align:justify;font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue','PingFang SC','Hiragino Sans GB','Microsoft YaHei',Arial,sans-serif;">
+  <section style="margin:0 0 24px 0;padding:24px 16px;background:linear-gradient(135deg,#064e3b 0%,#022c22 48%,#111827 100%);border-radius:10px;text-align:center;box-shadow:0 4px 20px rgba(16,185,129,0.15);">
+    <p style="margin:0 0 6px 0;font-size:13px;color:#6ee7b7;letter-spacing:1px;">NanZi 开源智能体平台实战连载 · 09</p>
+    <p style="margin:0 0 10px 0;font-size:20px;font-weight:bold;color:#f8fafc;line-height:1.55;">任务调度</p>
+    <p style="margin:0;font-size:15px;color:#a7f3d0;line-height:1.6;">字段 · Job/锁 · 系统作业 · 隐式工具</p>
+  </section>
+  <section style="margin:0 0 20px 0;padding:14px 16px;background:#fafafa;border:1px solid #e5e7eb;border-radius:10px;">
+    <p style="margin:0 0 10px 0;font-size:15px;font-weight:bold;color:#111827;">项目声明</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">本项目为<strong>个人开源</strong>（MIT）。仓库：<a href="https://github.com/RandyChen1985/nanzi-ai-agent-platform" style="color:#059669;text-decoration:none;word-break:break-all;">RandyChen1985/nanzi-ai-agent-platform</a></p>
+  </section>
+  <section style="margin:0 0 12px 0;"><p style="margin:0;font-size:15px;color:#374151;line-height:1.9;">任务中心让智能体「按时自己跑」。调度器用 APScheduler <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">AsyncIOScheduler</code> + MySQL JobStore 表 <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">ai_agent_scheduler_jobs</code>，时区 Asia/Shanghai；执行用 Redis 锁防多实例重入。</p></section>
+  <section style="margin:0 0 16px 0;padding:12px 14px;background:#ecfeff;border-left:4px solid #0891b2;border-radius:0 8px 8px 0;"><p style="margin:0;font-size:14px;color:#0e7490;line-height:1.85;">代码：<code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">scheduler_service.py</code> · 表 <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">ai_agent_scheduled_tasks</code>（V38）· <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">task_manager_tools.py</code></p></section>
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+  <section style="margin:0 0 14px 0;"><p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #10b981;padding-left:12px;line-height:1.4;">01｜AgentScheduledTask 字段</p></section>
+  <section style="margin:0 0 12px 0;padding:14px 16px;background:#f0fdf4;border:1px solid #a7f3d0;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#065f46;line-height:1.5;">核心列</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">name、user_id、agent_id、conversation_id（创建常用 task_conv_{uuid12}）、cron_expr、prompt、source(web|agent)、status(0停/1跑/2错)、config(JSON：notification_channels、task_metrics…)、run_count、last_run_id/at、next_run_at。<br/>跑批会话：{prefix}_run_{uuid12}，会话 id 长度上限 50。</p>
+  </section>
+  <section style="margin:0 0 12px 0;padding:14px 16px;background:#ecfeff;border:1px solid #a5f3fc;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#0e7490;line-height:1.5;">健康指标（config.task_metrics）</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">trigger_count / success_count / failure_count / skipped_count / consecutive_failures / health_status / last_* / last_alert_at</p>
+  </section>
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+  <section style="margin:0 0 14px 0;"><p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #0891b2;padding-left:12px;line-height:1.4;">02｜Job id 与 Redis 锁</p></section>
+  <section style="margin:0 0 12px 0;padding:14px 16px;background:#f0fdf4;border:1px solid #a7f3d0;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#065f46;line-height:1.5;">Job 命名</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">用户任务 <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">task_{{id}}</code><br/>报表订阅 <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">saved_report_subscription_{{id}}</code><br/>系统：<code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">system_audit_log_maintenance</code> · <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">system_memory_consolidation</code> · <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">system_knowledge_metrics_sync</code> · <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">system_third_party_user_sync</code><br/>用户任务/订阅 misfire_grace_time=3600</p>
+  </section>
+  <section style="margin:0 0 12px 0;padding:14px 16px;background:#fffbeb;border:1px solid #fde68a;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#b45309;line-height:1.5;">锁键 SET NX</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;"><code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">lock:task_exec:{{task_id}}:{{YYYYMMDDHHMM}}</code> TTL 300（非手动跑）<br/>consolidation 锁 TTL 3600 · knowledge_metrics 300 · third_party_user_sync 3600<br/>报表订阅<strong>不加</strong>同类执行锁</p>
+  </section>
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+  <section style="margin:0 0 14px 0;"><p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #7c3aed;padding-left:12px;line-height:1.4;">03｜系统作业时刻（上海时区）</p></section>
+  <section style="margin:0 0 12px 0;padding:14px 16px;background:#f0fdf4;border:1px solid #a7f3d0;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#065f46;line-height:1.5;">默认 Cron</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">审计日志维护 02:00（保留天数默认 audit_log_retention_days=90）<br/>记忆整理 03:00<br/>知识指标同步 03:30<br/>第三方用户同步：UserSyncService — hourly/daily(02:00)/weekly(周一 02:00)/off</p>
+  </section>
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+  <section style="margin:0 0 14px 0;"><p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #d97706;padding-left:12px;line-height:1.4;">04｜对话工具（SYSTEM_IMPLICIT）</p></section>
+  <section style="margin:0 0 16px 0;padding:12px 14px;background:#ecfeff;border-left:4px solid #0891b2;border-radius:0 8px 8px 0;"><p style="margin:0;font-size:14px;color:#0e7490;line-height:1.85;"><code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">SYSTEM_IMPLICIT_TOOLS</code> 含：get_current_time + 下列任务工具；Registry 隐式集合还会追加记忆/技能/网页与 send_portal_notification。</p></section>
+  <section style="margin:0 0 12px 0;padding:14px 16px;background:#f0fdf4;border:1px solid #a7f3d0;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#065f46;"><code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">create_recurring_task</code></p>
+    <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.85;"><strong>干什么：</strong>创建周期任务。</p>
+    <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.85;"><strong>场景：</strong>「每天 9 点汇总昨日签单」。</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;"><strong>原理：</strong>参数 name、cron、prompt、notification_channels。Prompt 会包 【自动化指令-任务ID】+ 通知补充。source=agent。</p>
+  </section>
+  <section style="margin:0 0 12px 0;padding:14px 16px;background:#ecfeff;border:1px solid #a5f3fc;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#0e7490;"><code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">get_my_tasks</code> / cancel / start / pause / run_task_manually</p>
+    <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.85;"><strong>干什么：</strong>列表与启停、手动跑一次。</p>
+    <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.85;"><strong>场景：</strong>对话里运维自己的 Cron。</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;"><strong>原理：</strong>start→status=1；pause→0；manual 调 <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">run_task(..., is_manual=True)</code>，手动跑不抢时间片锁。</p>
+  </section>
+  <section style="margin:0 0 16px 0;padding:12px 14px;background:#fef2f2;border-left:4px solid #ef4444;border-radius:0 8px 8px 0;"><p style="margin:0;font-size:14px;color:#7f1d1d;line-height:1.85;">改 Cron 注意 Asia/Shanghai；Redis 抖动会同时影响调度锁与会话历史。</p></section>
+
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+  <section style="margin:0 0 16px 0;padding:18px 16px;background:linear-gradient(135deg,#ecfdf5 0%,#f0f9ff 100%);border:1px solid #a7f3d0;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:16px;font-weight:bold;color:#064e3b;">📌 下期预告</p>
+    <p style="margin:0 0 8px 0;font-size:15px;color:#374151;line-height:1.85;"><strong>第三方引擎</strong></p>
+    <p style="margin:0;font-size:14px;color:#4b5563;line-height:1.85;">RAGFlow / OpenClaw 分发与 AUTH_CONTEXT。</p>
+  </section>
+  <section style="margin:20px 0 0 0;padding:16px;text-align:center;background:#f9fafb;border-radius:8px;">
+    <p style="margin:0 0 4px 0;font-size:14px;color:#6b7280;">NanZi 实战连载 · 09</p>
+    <p style="margin:0;font-size:13px;color:#9ca3af;">无人值守，身份可模拟。</p>
+  </section>
+</section>

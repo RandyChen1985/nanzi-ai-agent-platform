@@ -1,0 +1,97 @@
+<!--
+  微信公众号排版 HTML — NanZi 实战连载 · 第 07 篇（深度修订）
+  使用说明：复制最外层 <section>…</section> 到公众号 HTML 模式
+-->
+<section style="box-sizing:border-box;font-size:16px;color:#3f3f3f;line-height:1.8;letter-spacing:0.5px;text-align:justify;font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue','PingFang SC','Hiragino Sans GB','Microsoft YaHei',Arial,sans-serif;">
+  <section style="margin:0 0 24px 0;padding:24px 16px;background:linear-gradient(135deg,#064e3b 0%,#022c22 48%,#111827 100%);border-radius:10px;text-align:center;box-shadow:0 4px 20px rgba(16,185,129,0.15);">
+    <p style="margin:0 0 6px 0;font-size:13px;color:#6ee7b7;letter-spacing:1px;">NanZi 开源智能体平台实战连载 · 07</p>
+    <p style="margin:0 0 10px 0;font-size:20px;font-weight:bold;color:#f8fafc;line-height:1.55;">Skills 实战</p>
+    <p style="margin:0;font-size:15px;color:#a7f3d0;line-height:1.6;">双轨目录 · frontmatter · 白名单 · 提及/扫描/工具</p>
+  </section>
+  <section style="margin:0 0 20px 0;padding:14px 16px;background:#fafafa;border:1px solid #e5e7eb;border-radius:10px;">
+    <p style="margin:0 0 10px 0;font-size:15px;font-weight:bold;color:#111827;">项目声明</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">本项目为<strong>个人开源</strong>（MIT）。仓库：<a href="https://github.com/RandyChen1985/nanzi-ai-agent-platform" style="color:#059669;text-decoration:none;word-break:break-all;">RandyChen1985/nanzi-ai-agent-platform</a></p>
+  </section>
+  <section style="margin:0 0 12px 0;"><p style="margin:0;font-size:15px;color:#374151;line-height:1.9;">Skill = 可版本管理的「打法说明书」；系统提示词是人格；工具是手脚。三者叠用：提示词定角色，Skill 定流程与约束，工具执行。本篇按目录、字段、白名单、触发链路与对话工具拆开。</p></section>
+  <section style="margin:0 0 16px 0;padding:12px 14px;background:#ecfeff;border-left:4px solid #0891b2;border-radius:0 8px 8px 0;"><p style="margin:0;font-size:14px;color:#0e7490;line-height:1.85;"><strong>代码入口：</strong><code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">skill_resolver.py</code> · <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">skill_metadata.py</code> · <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">system_executive_tools.py</code> · API <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">/api/portal/skills</code> 与 <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">/skills/personal</code></p></section>
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+  <section style="margin:0 0 14px 0;"><p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #10b981;padding-left:12px;line-height:1.4;">01｜双轨目录：平台 vs 个人</p></section>
+  <section style="margin:0 0 12px 0;padding:14px 16px;background:#f0fdf4;border:1px solid #a7f3d0;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#065f46;">平台 Skills</p>
+    <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.85;"><strong>干什么：</strong>落在 <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">SKILLS_DIR</code>：优先 <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">/app/data/skills</code>，否则 <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">~/.agents/skills</code>。每个技能一目录 + <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">SKILL.md</code>。</p>
+    <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.85;"><strong>场景：</strong>公司统一 SOP、问数规范、客服话术——管理员维护，全员可用。</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;"><strong>原理：</strong>管理端 CRUD / toggle / zip 导入；需 <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">menu:skills_management</code>。scope=global。</p>
+  </section>
+  <section style="margin:0 0 12px 0;padding:14px 16px;background:#ecfeff;border:1px solid #a5f3fc;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#0e7490;">个人 Skills</p>
+    <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.85;"><strong>干什么：</strong>路径 <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">agent_workspaces/{{user_key}}/skills/{{skill_id}}/SKILL.md</code>。</p>
+    <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.85;"><strong>场景：</strong>个人习惯、项目专用打法；不污染全局。</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;"><strong>原理：</strong>API 前缀 <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">/api/portal/skills/personal</code>，登录即可，不强制 skills_management 菜单。同 id 时<strong>个人覆盖平台</strong>。</p>
+  </section>
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+  <section style="margin:0 0 14px 0;"><p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #0891b2;padding-left:12px;line-height:1.4;">02｜SKILL.md frontmatter 字段</p></section>
+  <section style="margin:0 0 12px 0;padding:14px 16px;background:#f0fdf4;border:1px solid #a7f3d0;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#065f46;line-height:1.5;">解析器保留的键</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">读文件头 8192 字节内 YAML：任意 <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">key: value</code> → 小写键。常用：<code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">id</code>（默认目录名）、<code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">name</code>、<code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">description</code>、<code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">enabled</code>（默认 true）。门户列表另支持 YAML 块标量。工具侧 create 至少写 name/description。<br/>正文读取有路径 jail：必须在 SKILLS_DIR 或个人 skills 根下。</p>
+  </section>
+  <section style="margin:0 0 16px 0;padding:12px 14px;background:#fffbeb;border-left:4px solid #d97706;border-radius:0 8px 8px 0;"><p style="margin:0;font-size:14px;color:#92400e;line-height:1.85;">禁用：frontmatter <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">enabled: false</code> 或门户 toggle——加载与扫描都会跳过。</p></section>
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+  <section style="margin:0 0 14px 0;"><p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #7c3aed;padding-left:12px;line-height:1.4;">03｜版本白名单 skills_custom</p></section>
+  <section style="margin:0 0 12px 0;padding:14px 16px;background:#f0fdf4;border:1px solid #a7f3d0;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#065f46;line-height:1.5;">AIAgentVersion 字段</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;"><code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">skills_custom</code> 默认 False：不限制公共技能（前端常显示「全部」，skills 存 []）<br/>True：必须非空 <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">skills</code> JSON 字符串数组，只加载勾选的公共 id；个人技能仍合并<br/>校验：custom=true 且 skills 空 → 保存失败</p>
+  </section>
+  <section style="margin:0 0 16px 0;padding:12px 14px;background:#ecfeff;border-left:4px solid #0891b2;border-radius:0 8px 8px 0;"><p style="margin:0;font-size:14px;color:#0e7490;line-height:1.85;">安全场景：生产主助手开 skills_custom，只挂「问数规范」「告警解读」等白名单，避免模型扫到实验技能。</p></section>
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+  <section style="margin:0 0 14px 0;"><p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #d97706;padding-left:12px;line-height:1.4;">04｜运行时三条触发路径</p></section>
+  <section style="margin:0 0 12px 0;padding:14px 16px;background:#fffbeb;border:1px solid #fde68a;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#b45309;"><code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">resolve_skills_from_query</code> · 提及命中</p>
+    <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.85;"><strong>干什么：</strong>用户话里「使用 XX 技能」等模式，或含「技能」/skill。</p>
+    <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.85;"><strong>场景：</strong>显式点名：「用对账技能跑一遍上周差异」。</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;"><strong>原理：</strong>匹配分：精确名/id=1.0，子串名=0.9，id=0.85，描述=0.7；阈值 ≥0.7；display name 子串兜底 0.75。默认 max_results=2，match_source=mention。</p>
+  </section>
+  <section style="margin:0 0 12px 0;padding:14px 16px;background:#fffbeb;border:1px solid #fde68a;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#b45309;"><code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">scan_relevant_skills</code> · 自动扫描</p>
+    <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.85;"><strong>干什么：</strong>未提及注入时，主助手可自动扫相关技能。</p>
+    <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.85;"><strong>场景：</strong>用户没说「技能」但问题像某套 SOP。</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;"><strong>原理：</strong>仅主助手：id <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">sys-agent-chat</code> 或 slug assistant|main|general-chat。配置：<code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">skill_auto_scan_enabled</code> 默认 true；<code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">skill_auto_scan_min_score</code> 默认 0.45；max_results 默认 1（钳制 1–3）。查询过短/寒暄不扫。个人技能 +0.05 分。</p>
+  </section>
+  <section style="margin:0 0 12px 0;padding:14px 16px;background:#fffbeb;border:1px solid #fde68a;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#b45309;">全文预加载阈值</p>
+    <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.85;"><strong>干什么：</strong>高相关时把 SKILL.md 正文预注入，减少再调 read。</p>
+    <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.85;"><strong>场景：</strong>命中后直接按说明书执行。</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;"><strong>原理：</strong><code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">skill_auto_full_load_enabled</code> 默认 true；scan 需分 ≥ <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">skill_auto_full_load_min_score</code>（默认 0.75）；max_count 默认 1；max_bytes 默认 65536（上限 262144）。mention/mounted 可直接满载。</p>
+  </section>
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+  <section style="margin:0 0 14px 0;"><p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #10b981;padding-left:12px;line-height:1.4;">05｜对话工具三件套</p></section>
+  <section style="margin:0 0 12px 0;padding:14px 16px;background:#f0fdf4;border:1px solid #a7f3d0;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#065f46;"><code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">list_available_skills</code></p>
+    <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.85;"><strong>干什么：</strong>列出当前可见技能 id/name/description/scope。</p>
+    <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.85;"><strong>场景：</strong>模型先盘点再选。</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;"><strong>原理：</strong>尊重 skills_custom 与 disabled。</p>
+  </section>
+  <section style="margin:0 0 12px 0;padding:14px 16px;background:#ecfeff;border:1px solid #a5f3fc;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#0e7490;"><code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">read_skill_instruction(skill_id)</code></p>
+    <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.85;"><strong>干什么：</strong>读取 SKILL.md（≤262144 字节）。</p>
+    <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.85;"><strong>场景：</strong>按说明书逐步执行。</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;"><strong>原理：</strong>路径 jail + 可见性过滤。</p>
+  </section>
+  <section style="margin:0 0 12px 0;padding:14px 16px;background:#f5f3ff;border:1px solid #ddd6fe;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#5b21b6;"><code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">create_skills(...)</code></p>
+    <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.85;"><strong>干什么：</strong>对话里创建技能文件。</p>
+    <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.85;"><strong>场景：</strong>沉淀本次打法为可复用 Skill。</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;"><strong>原理：</strong>参数：skill_id/name/description/skill_md_content，scope 默认 personal（global 需 admin）。skill_id 正则 <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">^[a-zA-Z0-9_-]+$</code>。成功回标记 <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">NANZI_SKILL_CREATED:{{json}}</code>。</p>
+  </section>
+  <section style="margin:0 0 16px 0;padding:12px 14px;background:#fef2f2;border-left:4px solid #ef4444;border-radius:0 8px 8px 0;"><p style="margin:0;font-size:14px;color:#7f1d1d;line-height:1.85;"><strong>边界：</strong>Skill 不能替代 RBAC、SQL Gate、工作区隔离、工具审批。它约束「怎么做」，不扩大「能碰什么」。</p></section>
+
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+  <section style="margin:0 0 16px 0;padding:18px 16px;background:linear-gradient(135deg,#ecfdf5 0%,#f0f9ff 100%);border:1px solid #a7f3d0;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:16px;font-weight:bold;color:#064e3b;">📌 下期预告</p>
+    <p style="margin:0 0 8px 0;font-size:15px;color:#374151;line-height:1.85;"><strong>消息通知</strong></p>
+    <p style="margin:0;font-size:14px;color:#4b5563;line-height:1.85;">四通道凭据、简报流水线与失败节流。</p>
+  </section>
+  <section style="margin:20px 0 0 0;padding:16px;text-align:center;background:#f9fafb;border-radius:8px;">
+    <p style="margin:0 0 4px 0;font-size:14px;color:#6b7280;">NanZi 实战连载 · 07</p>
+    <p style="margin:0;font-size:13px;color:#9ca3af;">打法可版本，触发可观测。</p>
+  </section>
+</section>

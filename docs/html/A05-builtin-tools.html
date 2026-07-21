@@ -1,0 +1,303 @@
+<!--
+  微信公众号排版 HTML — NanZi 实战连载 · 第 05 篇（工具手册深度版）
+  使用说明：复制最外层 <section>…</section> 到公众号 HTML 模式
+-->
+
+<section style="box-sizing:border-box;font-size:16px;color:#3f3f3f;line-height:1.8;letter-spacing:0.5px;text-align:justify;font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue','PingFang SC','Hiragino Sans GB','Microsoft YaHei',Arial,sans-serif;">
+
+  <section style="margin:0 0 24px 0;padding:24px 16px;background:linear-gradient(135deg,#064e3b 0%,#022c22 48%,#111827 100%);border-radius:10px;text-align:center;box-shadow:0 4px 20px rgba(16,185,129,0.15);">
+    <p style="margin:0 0 6px 0;font-size:13px;font-weight:normal;color:#6ee7b7;line-height:1.5;letter-spacing:1px;">NanZi 开源智能体平台实战连载 · 05</p>
+    <p style="margin:0 0 10px 0;font-size:20px;font-weight:bold;color:#f8fafc;line-height:1.55;letter-spacing:1px;">内置工具箱手册</p>
+    <p style="margin:0;font-size:15px;font-weight:normal;color:#a7f3d0;line-height:1.6;letter-spacing:0.5px;">每个工具干什么 · 什么场景用 · 背后原理</p>
+  </section>
+
+  <section style="margin:0 0 20px 0;padding:14px 16px;background:#fafafa;border:1px solid #e5e7eb;border-radius:10px;">
+    <p style="margin:0 0 10px 0;font-size:15px;font-weight:bold;color:#111827;line-height:1.5;">项目声明</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">本项目为<strong>个人开源</strong>（MIT）。仓库：<a href="https://github.com/RandyChen1985/nanzi-ai-agent-platform" style="color:#059669;text-decoration:none;word-break:break-all;">RandyChen1985/nanzi-ai-agent-platform</a> · 工具注册表：<code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;">app/services/ai/tools/registry.py</code></p>
+  </section>
+
+  <section style="margin:0 0 20px 0;">
+    <p style="margin:0 0 12px 0;font-size:15px;color:#374151;line-height:1.9;">
+      智能体能力边界 ≈ <strong>挂上了哪些工具</strong>。本篇不写空话，按注册表把平台<strong>静态内置工具</strong>逐项拆开：用途、典型场景、关键原理/约束。另两类「动态工具」——已发布 MCP、启用中的 Generic API（SysApiTool）——放在文末说明。
+    </p>
+  </section>
+
+  <section style="margin:0 0 16px 0;padding:12px 14px;background:#ecfeff;border-left:4px solid #0891b2;border-radius:0 8px 8px 0;">
+    <p style="margin:0;font-size:14px;color:#0e7490;line-height:1.85;">
+      <strong>运行时原理（先记）</strong>：业务工具 → <code style="background:#cffafe;padding:1px 4px;border-radius:3px;">RuntimeToolSpec</code> → AgentScope <code style="background:#cffafe;padding:1px 4px;border-radius:3px;">Toolkit</code> → ReAct 调用。未在智能体版本勾选的工具，模型没有入口。勾选后还要过 <code style="background:#cffafe;padding:1px 4px;border-radius:3px;">permission_scope</code>（read/ask/dangerous）、审批模式、用户级 forbidden 黑名单。部分工具成功调用会写入 Grounding 证据类型（内部数据/知识/网页/文件/记忆/运行时）。
+    </p>
+  </section>
+
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+
+  <!-- ========== 问数 ========== -->
+  <section style="margin:0 0 14px 0;">
+    <p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #10b981;padding-left:12px;line-height:1.4;">01｜问数三件套（ChatBI 核心）</p>
+  </section>
+
+  <section style="margin:0 0 12px 0;padding:14px 16px;background:#f0fdf4;border:1px solid #a7f3d0;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#065f46;"><code style="background:#ecfdf5;padding:1px 5px;border-radius:3px;">get_dataset_schema</code> · 取授权范围内的数据集结构</p>
+    <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.85;"><strong>干什么：</strong>按自然语言关键词检索元数据，返回表/字段 YAML（或等价结构），供模型写 SQL 前「看见」真实 Schema。</p>
+    <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.85;"><strong>场景：</strong>「PUE」「机房能耗」「华东签单」——先摸有哪些表、字段叫什么，再生成 SQL。</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;"><strong>原理：</strong>可走 RAGFlow 向量或本地元数据模糊搜；无结果会反馈「换更通用词」。ChatBI 门禁常要求<strong>先 Schema 后 SQL</strong>；证据类型 INTERNAL_DATA，空成功也可记账。</p>
+  </section>
+
+  <section style="margin:0 0 12px 0;padding:14px 16px;background:#f0fdf4;border:1px solid #a7f3d0;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#065f46;"><code style="background:#ecfdf5;padding:1px 5px;border-radius:3px;">execute_sql_query</code> · 只读 SQL 执行</p>
+    <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.85;"><strong>干什么：</strong>在业务库执行模型生成的查询，返回结构化结果（行数/字节有上限，防把整库灌进上下文）。</p>
+    <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.85;"><strong>场景：</strong>一切「查数、同比、明细抽样」；dry_run 可只验 SQL 不执行。</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;"><strong>原理：</strong>工具层 + ChatBI 外部门禁（SqlQueryBinding、静态风险、重复 SQL、sql_plan 等）。sqlglot 校验；只允许 SELECT/WITH/EXPLAIN/SHOW/DESC 一类只读；禁止多语句与危险关键字。空结果仍可作「暂无数据」证据。</p>
+  </section>
+
+  <section style="margin:0 0 16px 0;padding:14px 16px;background:#f0fdf4;border:1px solid #a7f3d0;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#065f46;"><code style="background:#ecfdf5;padding:1px 5px;border-radius:3px;">update_dashboard_context</code> · 大屏/前端上下文联动</p>
+    <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.85;"><strong>干什么：</strong>让对话驱动前端切换视角（机房、时间窗等），本身多返回成功占位。</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;"><strong>原理：</strong>执行器拦截成功调用 → SSE <code style="background:#ecfdf5;padding:1px 4px;border-radius:3px;">context_update</code> → 前端改状态。适合「边问数边控大屏」。</p>
+  </section>
+
+  <section style="margin:0 0 16px 0;padding:12px 14px;background:#fffbeb;border-left:4px solid #d97706;border-radius:0 8px 8px 0;">
+    <p style="margin:0;font-size:14px;color:#92400e;line-height:1.85;"><strong>就绪提醒：</strong>CHATBI 类型至少要启用 <code style="background:#fef3c7;padding:1px 4px;border-radius:3px;">get_dataset_schema</code> 与/或 <code style="background:#fef3c7;padding:1px 4px;border-radius:3px;">execute_sql_query</code>，否则发布/委派门禁不过。</p>
+  </section>
+
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+
+  <!-- ========== 知识 ========== -->
+  <section style="margin:0 0 14px 0;">
+    <p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #0891b2;padding-left:12px;line-height:1.4;">02｜知识库</p>
+  </section>
+
+  <section style="margin:0 0 16px 0;padding:14px 16px;background:#ecfeff;border:1px solid #a5f3fc;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#0e7490;"><code style="background:#cffafe;padding:1px 5px;border-radius:3px;">search_knowledge_base</code></p>
+    <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.85;"><strong>干什么：</strong>在 RAGFlow 知识库检索文档/手册/制度，返回片段供回答与引用。</p>
+    <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.85;"><strong>场景：</strong>SOP、制度问答、说明书检索。Knowledge 专家就绪必须挂此工具并绑定 dataset_ids。</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;"><strong>原理：</strong>按显式 dataset_ids 或智能体配置/默认库解析范围，并过权限。特征关闭时返回禁用错误。Knowledge Runner 还会在 ReAct <em>前</em>自动预检索。证据 INTERNAL_KNOWLEDGE；空召回也可记账（「未找到」）。</p>
+  </section>
+
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+
+  <!-- ========== 任务 ========== -->
+  <section style="margin:0 0 14px 0;">
+    <p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #7c3aed;padding-left:12px;line-height:1.4;">03｜任务中心（对话里管 Cron）</p>
+  </section>
+
+  <section style="margin:0 0 10px 0;">
+    <p style="margin:0 0 10px 0;font-size:15px;color:#374151;line-height:1.9;">以下工具对接 TaskCenter + APScheduler；创建时绑定<strong>当前智能体身份</strong>与用户。部分属系统隐式工具集，便于助手直接「帮你设个每天 8 点的任务」。</p>
+  </section>
+
+  <section style="margin:0 0 10px 0;padding:14px 16px;background:#faf5ff;border:1px solid #e9d5ff;border-radius:10px;">
+    <p style="margin:0 0 6px 0;font-size:14px;font-weight:bold;color:#6b21a8;"><code style="background:#f3e8ff;padding:1px 4px;border-radius:3px;">create_recurring_task</code></p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">参数：name、cron（标准表达式）、prompt（每次执行时给 AI 的指令）、可选 notification_channels（portal/dingtalk/wechat_work/email）。场景：日报、巡检、周报推送。</p>
+  </section>
+  <section style="margin:0 0 10px 0;padding:14px 16px;background:#faf5ff;border:1px solid #e9d5ff;border-radius:10px;">
+    <p style="margin:0 0 6px 0;font-size:14px;font-weight:bold;color:#6b21a8;"><code style="background:#f3e8ff;padding:1px 4px;border-radius:3px;">get_my_tasks</code> / <code style="background:#f3e8ff;padding:1px 4px;border-radius:3px;">cancel_task</code> / <code style="background:#f3e8ff;padding:1px 4px;border-radius:3px;">start_task</code> / <code style="background:#f3e8ff;padding:1px 4px;border-radius:3px;">pause_task</code> / <code style="background:#f3e8ff;padding:1px 4px;border-radius:3px;">run_task_manually</code></p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">列表当前用户任务；取消；恢复调度；暂停；立即手动跑一轮。证据上 get_my_tasks 属 RUNTIME_STATE。</p>
+  </section>
+
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+
+  <!-- ========== 通知 ========== -->
+  <section style="margin:0 0 14px 0;">
+    <p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #d97706;padding-left:12px;line-height:1.4;">04｜消息通知（读用户配置，不钓 webhook）</p>
+  </section>
+
+  <section style="margin:0 0 10px 0;padding:14px 16px;background:#fffbeb;border:1px solid #fde68a;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:14px;color:#374151;line-height:1.85;">
+      <code style="background:#fef3c7;padding:1px 4px;border-radius:3px;">send_portal_notification</code> — 站内铃铛/Inbox（title、content、level）<br/>
+      <code style="background:#fef3c7;padding:1px 4px;border-radius:3px;">send_dingtalk_message</code> — 钉钉（个人中心已配机器人）<br/>
+      <code style="background:#fef3c7;padding:1px 4px;border-radius:3px;">send_wechat_work_message</code> — 企业微信<br/>
+      <code style="background:#fef3c7;padding:1px 4px;border-radius:3px;">send_email</code> — 邮件（SMTP/收件人来自个人配置）
+    </p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;"><strong>场景：</strong>任务完成摘要、告警、主动提醒。「请用户把 webhook 发给我」是反模式——工具实现故意从用户通知配置取凭据。</p>
+  </section>
+
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+
+  <!-- ========== Jira ========== -->
+  <section style="margin:0 0 14px 0;">
+    <p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #64748b;padding-left:12px;line-height:1.4;">05｜Jira 内置集成</p>
+  </section>
+
+  <section style="margin:0 0 16px 0;padding:14px 16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;">
+    <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.85;">
+      <code style="background:#f1f5f9;padding:1px 4px;border-radius:3px;">jira_search</code> — JQL/关键词搜工单（证据 INTERNAL_KNOWLEDGE，空结果可记账）<br/>
+      <code style="background:#f1f5f9;padding:1px 4px;border-radius:3px;">jira_get_projects</code> — 列项目<br/>
+      <code style="background:#f1f5f9;padding:1px 4px;border-radius:3px;">jira_create_issue</code> — 建单（写操作，通常需审批）
+    </p>
+    <p style="margin:8px 0 0 0;font-size:14px;color:#374151;line-height:1.85;"><strong>场景：</strong>运维/研发助手「查缺陷、建工单」。凭据走环境/系统配置中的 Jira 连接，不是让模型记密码。更通用的外部系统优先用 MCP（第 06 篇）。</p>
+  </section>
+
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+
+  <!-- ========== 工作区 ========== -->
+  <section style="margin:0 0 14px 0;">
+    <p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #b91c1c;padding-left:12px;line-height:1.4;">06｜工作区文件与命令（沙箱隔离）</p>
+  </section>
+
+  <section style="margin:0 0 10px 0;">
+    <p style="margin:0 0 10px 0;font-size:15px;color:#374151;line-height:1.9;">路径校验落在用户私有工作区（docs/uploads/sessions/sandbox），防目录穿越。与 AgentScope 内置别名对应：Read/Write/Bash/Grep/Glob 等。</p>
+  </section>
+
+  <section style="margin:0 0 10px 0;padding:14px 16px;background:#fef2f2;border:1px solid #fecaca;border-radius:10px;">
+    <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.85;">
+      <code style="background:#fee2e2;padding:1px 4px;border-radius:3px;">read_file</code> — 读文件（offset/limit/tail）；证据 USER_FILE<br/>
+      <code style="background:#fee2e2;padding:1px 4px;border-radius:3px;">write_file</code> — 写文件（通常 ask）<br/>
+      <code style="background:#fee2e2;padding:1px 4px;border-radius:3px;">search_text</code> — 工作区内文本检索（类 grep）
+    </p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;"><strong>场景：</strong>改配置草稿、读上传附件、在会话产物里搜关键字。</p>
+  </section>
+
+  <section style="margin:0 0 10px 0;padding:14px 16px;background:#fef2f2;border:1px solid #fecaca;border-radius:10px;">
+    <p style="margin:0 0 6px 0;font-size:14px;font-weight:bold;color:#b91c1c;"><code style="background:#fee2e2;padding:1px 4px;border-radius:3px;">exec_command</code> · Shell</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">执行命令前过危险命令黑名单；用户级 forbidden_commands 可再拦。证据 RUNTIME_STATE。场景：受控脚本、格式转换——生产务必配审批 + 黑名单。</p>
+  </section>
+
+  <section style="margin:0 0 16px 0;padding:14px 16px;background:#fef2f2;border:1px solid #fecaca;border-radius:10px;">
+    <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.85;">
+      <code style="background:#fee2e2;padding:1px 4px;border-radius:3px;">list_process</code> — 列进程<br/>
+      <code style="background:#fee2e2;padding:1px 4px;border-radius:3px;">manage_process</code> — 启停等（保护平台自身 PID）
+    </p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;"><strong>场景：</strong>助手拉起的后台任务管理；误杀防护内置。</p>
+  </section>
+
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+
+  <!-- ========== Skills tools ========== -->
+  <section style="margin:0 0 14px 0;">
+    <p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #059669;padding-left:12px;line-height:1.4;">07｜Skills 相关工具</p>
+  </section>
+
+  <section style="margin:0 0 16px 0;padding:14px 16px;background:#f0fdf4;border:1px solid #a7f3d0;border-radius:10px;">
+    <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.85;">
+      <code style="background:#ecfdf5;padding:1px 4px;border-radius:3px;">list_available_skills</code> — 列出当前可见技能<br/>
+      <code style="background:#ecfdf5;padding:1px 4px;border-radius:3px;">read_skill_instruction</code> — 读取某 skill 的 SKILL.md 正文<br/>
+      <code style="background:#ecfdf5;padding:1px 4px;border-radius:3px;">create_skills</code> — 创建/落盘技能包
+    </p>
+    <p style="margin:8px 0 0 0;font-size:14px;color:#374151;line-height:1.85;"><strong>场景：</strong>模型决定「先看看有哪些打法」或「按某技能说明书执行」。主助手还有关键词自动扫描；细节见 Skills 篇。</p>
+  </section>
+
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+
+  <!-- ========== 辅助 ========== -->
+  <section style="margin:0 0 14px 0;">
+    <p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #0284c7;padding-left:12px;line-height:1.4;">08｜辅助分析与联网</p>
+  </section>
+
+  <section style="margin:0 0 10px 0;padding:14px 16px;background:#f0f9ff;border:1px solid #bae6fd;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:14px;font-weight:bold;color:#075985;"><code style="background:#e0f2fe;padding:1px 4px;border-radius:3px;">sqlite_scratchpad</code></p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">会话隔离的临时 SQLite：可 import JSON 成表再 SQL 清洗/透视，不污染业务主库。目录优先用户私有 sandbox。场景：对查数结果做二次聚合、多表临时 join。</p>
+  </section>
+  <section style="margin:0 0 10px 0;padding:14px 16px;background:#f0f9ff;border:1px solid #bae6fd;border-radius:10px;">
+    <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.85;">
+      <code style="background:#e0f2fe;padding:1px 4px;border-radius:3px;">directory_tree_navigator</code> — 目录树浏览<br/>
+      <code style="background:#e0f2fe;padding:1px 4px;border-radius:3px;">code_syntax_linter</code> — 代码语法检查<br/>
+      <code style="background:#e0f2fe;padding:1px 4px;border-radius:3px;">web_renderer_and_snapshot</code> — Playwright 渲染/快照页面
+    </p>
+  </section>
+  <section style="margin:0 0 10px 0;padding:14px 16px;background:#f0f9ff;border:1px solid #bae6fd;border-radius:10px;">
+    <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.85;">
+      <code style="background:#e0f2fe;padding:1px 4px;border-radius:3px;">fetch_static_web_url</code> — 拉静态页内容（证据 PUBLIC_WEB）<br/>
+      <code style="background:#e0f2fe;padding:1px 4px;border-radius:3px;">web_search_baidu</code> — 百度搜索<br/>
+      <code style="background:#e0f2fe;padding:1px 4px;border-radius:3px;">system_http_request</code> — 受校验的 HTTP 请求（method/url/headers/body；URL 有安全校验）
+    </p>
+    <p style="margin:8px 0 0 0;font-size:14px;color:#374151;line-height:1.85;"><strong>场景：</strong>公网资料补充、调内部 HTTP API（无 MCP 时的轻量方案）。SSRF 等风险靠 URL 校验与权限收紧。</p>
+  </section>
+  <section style="margin:0 0 16px 0;padding:14px 16px;background:#f0f9ff;border:1px solid #bae6fd;border-radius:10px;">
+    <p style="margin:0 0 6px 0;font-size:14px;font-weight:bold;color:#075985;"><code style="background:#e0f2fe;padding:1px 4px;border-radius:3px;">get_current_time</code></p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">取当前时间（默认 Asia/Shanghai）。系统隐式工具；证据 RUNTIME_STATE。场景：写「今天/本周」类相对时间 SQL 或文案前校准时钟。</p>
+  </section>
+
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+
+  <!-- ========== 记忆 ========== -->
+  <section style="margin:0 0 14px 0;">
+    <p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #6b21a8;padding-left:12px;line-height:1.4;">09｜记忆</p>
+  </section>
+
+  <section style="margin:0 0 16px 0;padding:14px 16px;background:#faf5ff;border:1px solid #e9d5ff;border-radius:10px;">
+    <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.85;">
+      <code style="background:#f3e8ff;padding:1px 4px;border-radius:3px;">update_user_preference</code> / <code style="background:#f3e8ff;padding:1px 4px;border-radius:3px;">fetch_user_long_term_memory</code> / <code style="background:#f3e8ff;padding:1px 4px;border-radius:3px;">delete_user_preference</code> — 长期偏好读写删（Redis LTM Hash）<br/>
+      <code style="background:#f3e8ff;padding:1px 4px;border-radius:3px;">memory_search</code> — 按会话摘要/历史向量检索（Redis Stack RediSearch）
+    </p>
+    <p style="margin:8px 0 0 0;font-size:14px;color:#374151;line-height:1.85;"><strong>场景：</strong>「记住我喜欢用表格」「上周我们讨论过的方案」。证据 CONVERSATION_MEMORY；空检索可记账。依赖 Redis Stack。</p>
+  </section>
+
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+
+  <!-- ========== 委派 ========== -->
+  <section style="margin:0 0 14px 0;">
+    <p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #c2410c;padding-left:12px;line-height:1.4;">10｜专家协作</p>
+  </section>
+
+  <section style="margin:0 0 16px 0;padding:14px 16px;background:#fff7ed;border:1px solid #fed7aa;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#c2410c;"><code style="background:#ffedd5;padding:1px 5px;border-radius:3px;">sub_agent_call</code></p>
+    <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.85;"><strong>干什么：</strong>主助手把子任务交给另一个<strong>已就绪</strong>智能体，收回可交付正文。</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;"><strong>原理：</strong>校验目标就绪与权限；默认超时约 120s、结果截断、同目标限流；子流程若弹出 permission_required / external_execution_required，委派模式无法代确认，需用户直接打开子专家。输出会清洗 sql_plan 标签防污染父上下文。</p>
+  </section>
+
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+
+  <!-- ========== Office ========== -->
+  <section style="margin:0 0 14px 0;">
+    <p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #0f766e;padding-left:12px;line-height:1.4;">11｜办公文档 Excel / Word</p>
+  </section>
+
+  <section style="margin:0 0 16px 0;padding:14px 16px;background:#f0fdfa;border:1px solid #99f6e4;border-radius:10px;">
+    <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.85;">
+      <code style="background:#ccfbf1;padding:1px 4px;border-radius:3px;">excel_document_read</code>（read）/ <code style="background:#ccfbf1;padding:1px 4px;border-radius:3px;">excel_document_write</code>（ask）<br/>
+      <code style="background:#ccfbf1;padding:1px 4px;border-radius:3px;">word_document_read</code>（read）/ <code style="background:#ccfbf1;padding:1px 4px;border-radius:3px;">word_document_write</code>（ask）
+    </p>
+    <p style="margin:8px 0 0 0;font-size:14px;color:#374151;line-height:1.85;"><strong>场景：</strong>读上传表格做分析、生成 Excel/Word 交付物并给下载链接。路径限制在附件/工作区；写操作默认要用户确认。</p>
+  </section>
+
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+
+  <!-- ========== 动态 ========== -->
+  <section style="margin:0 0 14px 0;">
+    <p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #334155;padding-left:12px;line-height:1.4;">12｜动态工具（不在静态表里，但同等进 Toolkit）</p>
+  </section>
+
+  <section style="margin:0 0 12px 0;padding:14px 16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:14px;font-weight:bold;color:#334155;">MCP 已发布工具</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">名形如 <code style="background:#f1f5f9;padding:1px 4px;border-radius:3px;">server_name:remote_tool</code>，来自 <code style="background:#f1f5f9;padding:1px 4px;border-radius:3px;">McpToolCache</code> 且 <code style="background:#f1f5f9;padding:1px 4px;border-radius:3px;">is_published=True</code>。智能体版本勾选后加载。只读/写倾向可从命名启发式推断，影响 Grounding 外部工具凭证。详见第 06 篇。</p>
+  </section>
+
+  <section style="margin:0 0 16px 0;padding:14px 16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:14px;font-weight:bold;color:#334155;">Generic API（SysApiTool）</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">控制台配置 HTTP 接口 Schema → 运行时变成工具，无需改 Python。适合「公司内部一个 REST 就能当 Agent 手脚」。工厂：<code style="background:#f1f5f9;padding:1px 4px;border-radius:3px;">GenericApiToolFactory</code>。</p>
+  </section>
+
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+
+  <!-- ========== 扩展 ========== -->
+  <section style="margin:0 0 14px 0;">
+    <p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #dc2626;padding-left:12px;line-height:1.4;">13｜怎么扩展 + 安全清单</p>
+  </section>
+
+  <section style="margin:0 0 12px 0;padding:14px 16px;background:#f0fdf4;border:1px solid #a7f3d0;border-radius:10px;">
+    <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.85;"><strong>由易到难：</strong>① MCP / Generic API → ② Skill 约束调用方式 → ③ 在 <code style="background:#ecfdf5;padding:1px 4px;border-radius:3px;">tools/</code> 用平台 <code style="background:#ecfdf5;padding:1px 4px;border-radius:3px;">@tool</code> 写函数并 <code style="background:#ecfdf5;padding:1px 4px;border-radius:3px;">ToolRegistry.register</code>（Docstring 会进模型可见描述）。</p>
+  </section>
+
+  <section style="margin:0 0 16px 0;padding:14px 16px;background:#fef2f2;border:1px solid #fecaca;border-radius:10px;">
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">
+      □ 版本只勾真正需要的工具（能力面白名单）<br/>
+      □ 写/危险操作走 ask；用户 forbidden_tools/commands<br/>
+      □ 密钥在系统配置/个人中心，不进 Prompt<br/>
+      □ ChatBI 再叠 SQL Gate，不只靠工具层<br/>
+      □ 需要事实审计时打开 Grounding，看证据类型是否匹配
+    </p>
+  </section>
+
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+
+  <section style="margin:0 0 16px 0;padding:18px 16px;background:linear-gradient(135deg,#ecfdf5 0%,#f0f9ff 100%);border:1px solid #a7f3d0;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:16px;font-weight:bold;color:#064e3b;">📌 下期预告 · 06</p>
+    <p style="margin:0 0 8px 0;font-size:15px;color:#374151;line-height:1.85;"><strong>MCP 在 NanZi 里怎么用</strong></p>
+    <p style="margin:0;font-size:14px;color:#4b5563;line-height:1.85;">登记 Server → sync → publish → 挂到智能体；SSE/HTTP 双模式与排障。</p>
+  </section>
+
+  <section style="margin:20px 0 0 0;padding:16px;text-align:center;background:#f9fafb;border-radius:8px;">
+    <p style="margin:0 0 4px 0;font-size:14px;color:#6b7280;">NanZi 实战连载 · 05</p>
+    <p style="margin:0;font-size:13px;color:#9ca3af;">能力边界 ≈ 工具边界。</p>
+  </section>
+
+</section>

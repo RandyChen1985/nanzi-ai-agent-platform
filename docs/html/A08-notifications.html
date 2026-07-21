@@ -1,0 +1,91 @@
+<!--
+  微信公众号排版 HTML — NanZi 实战连载 · 第 08 篇（深度修订）
+  使用说明：复制最外层 <section>…</section> 到公众号 HTML 模式
+-->
+<section style="box-sizing:border-box;font-size:16px;color:#3f3f3f;line-height:1.8;letter-spacing:0.5px;text-align:justify;font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue','PingFang SC','Hiragino Sans GB','Microsoft YaHei',Arial,sans-serif;">
+  <section style="margin:0 0 24px 0;padding:24px 16px;background:linear-gradient(135deg,#064e3b 0%,#022c22 48%,#111827 100%);border-radius:10px;text-align:center;box-shadow:0 4px 20px rgba(16,185,129,0.15);">
+    <p style="margin:0 0 6px 0;font-size:13px;color:#6ee7b7;letter-spacing:1px;">NanZi 开源智能体平台实战连载 · 08</p>
+    <p style="margin:0 0 10px 0;font-size:20px;font-weight:bold;color:#f8fafc;line-height:1.55;">消息通知怎么配</p>
+    <p style="margin:0;font-size:15px;color:#a7f3d0;line-height:1.6;">四通道 · 凭据字段 · send_* · 报表简报与节流</p>
+  </section>
+  <section style="margin:0 0 20px 0;padding:14px 16px;background:#fafafa;border:1px solid #e5e7eb;border-radius:10px;">
+    <p style="margin:0 0 10px 0;font-size:15px;font-weight:bold;color:#111827;">项目声明</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">本项目为<strong>个人开源</strong>（MIT）。仓库：<a href="https://github.com/RandyChen1985/nanzi-ai-agent-platform" style="color:#059669;text-decoration:none;word-break:break-all;">RandyChen1985/nanzi-ai-agent-platform</a></p>
+  </section>
+  <section style="margin:0 0 12px 0;"><p style="margin:0;font-size:15px;color:#374151;line-height:1.9;">通知通道是<strong>用户自己的凭据配置</strong>；任务/报表只选 channel id，不让模型在 Prompt 里钓 webhook。本篇覆盖四通道、个人中心字段、对话工具、黄金报表简报流水线与失败节流。</p></section>
+  <section style="margin:0 0 16px 0;padding:12px 14px;background:#ecfeff;border-left:4px solid #0891b2;border-radius:0 8px 8px 0;"><p style="margin:0;font-size:14px;color:#0e7490;line-height:1.85;">代码：<code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">task_notification_channels.py</code> · <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">notification_service.py</code> · <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">saved_report_digest_service.py</code> · API <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">/api/portal/notifications</code> / <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">/inbox</code></p></section>
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+  <section style="margin:0 0 14px 0;"><p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #10b981;padding-left:12px;line-height:1.4;">01｜四通道 CHANNEL_SPECS</p></section>
+  <section style="margin:0 0 12px 0;padding:14px 16px;background:#f0fdf4;border:1px solid #a7f3d0;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#065f46;line-height:1.5;">channel_id → 工具</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;"><code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">portal</code> → <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">send_portal_notification</code>（站内铃铛）<br/><code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">dingtalk</code> → <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">send_dingtalk_message</code><br/><code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">wechat_work</code> → <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">send_wechat_work_message</code><br/><code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">email</code> → <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">send_email</code><br/>配置键 <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">notification_channels</code>；任务中心 UI 默认常勾 <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">["portal"]</code>。投递补充文案会要求「每个渠道只发送一次」。</p>
+  </section>
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+  <section style="margin:0 0 14px 0;"><p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #0891b2;padding-left:12px;line-height:1.4;">02｜个人中心凭据字段</p></section>
+  <section style="margin:0 0 12px 0;padding:14px 16px;background:#f0fdf4;border:1px solid #a7f3d0;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#065f46;line-height:1.5;">表 user_notification_configs</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">列：user_id、channel_type（仅 dingtalk|wechat_work|email）、config_json；唯一 (user_id, channel_type)。portal 不走此表，直接写 Inbox。</p>
+  </section>
+  <section style="margin:0 0 12px 0;padding:14px 16px;background:#ecfeff;border:1px solid #a5f3fc;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#0e7490;">钉钉 JSON</p>
+    <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.85;"><strong>干什么：</strong>存 webhook 与加签 secret。</p>
+    <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.85;"><strong>场景：</strong>任务失败告警、报表简报。</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;"><strong>原理：</strong>默认 is_enabled=False、webhook_url=""、secret=""。MASKED_KEYS 含 secret → API 回 ******。</p>
+  </section>
+  <section style="margin:0 0 12px 0;padding:14px 16px;background:#ecfeff;border:1px solid #a5f3fc;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#0e7490;">企微 JSON</p>
+    <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.85;"><strong>干什么：</strong>只存 webhook_url。</p>
+    <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.85;"><strong>场景：</strong>群机器人简报。</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;"><strong>原理：</strong>默认 is_enabled=False、webhook_url=""。</p>
+  </section>
+  <section style="margin:0 0 12px 0;padding:14px 16px;background:#ecfeff;border:1px solid #a5f3fc;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#0e7490;">邮件 JSON</p>
+    <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.85;"><strong>干什么：</strong>SMTP 发信。</p>
+    <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.85;"><strong>场景：</strong>对领导的日报邮件。</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;"><strong>原理：</strong>smtp_host/port(默认465)/user/password、sender_name 默认「AI Agent」。smtp_password 脱敏。</p>
+  </section>
+  <section style="margin:0 0 12px 0;padding:14px 16px;background:#f5f3ff;border:1px solid #ddd6fe;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#5b21b6;line-height:1.5;">API</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;"><code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">GET/PUT /api/portal/notifications/config</code> · <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">POST .../test</code> 试发<br/>Inbox：<code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">GET /inbox</code>、unread-count、read、read-all、删除等</p>
+  </section>
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+  <section style="margin:0 0 14px 0;"><p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #7c3aed;padding-left:12px;line-height:1.4;">03｜对话里的 send_* 工具</p></section>
+  <section style="margin:0 0 12px 0;padding:14px 16px;background:#f0fdf4;border:1px solid #a7f3d0;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#065f46;"><code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">send_portal_notification</code></p>
+    <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.85;"><strong>干什么：</strong>写站内消息。</p>
+    <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.85;"><strong>场景：</strong>任务跑完提醒本人。</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;"><strong>原理：</strong>参数 title/content/level(info|success|warning|error)。category=agent，resource_type=agent_message。属于隐式工具集合（常自动可用）。</p>
+  </section>
+  <section style="margin:0 0 12px 0;padding:14px 16px;background:#fffbeb;border:1px solid #fde68a;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#b45309;"><code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">send_dingtalk_message</code> / 企微 / 邮件</p>
+    <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.85;"><strong>干什么：</strong>读用户配置发外部消息。</p>
+    <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.85;"><strong>场景：</strong>把结论推到群或邮箱。</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;"><strong>原理：</strong>钉钉 title+content（可选 HMAC secret）；企微 content；邮件 to_email+subject+content，SMTP 用个人配置。未启用或未配 URL 会失败提示。</p>
+  </section>
+  <section style="margin:0 0 16px 0;padding:12px 14px;background:#fef2f2;border-left:4px solid #ef4444;border-radius:0 8px 8px 0;"><p style="margin:0;font-size:14px;color:#7f1d1d;line-height:1.85;"><strong>反模式：</strong>在系统提示词里写死 webhook。正确做法是任务 config 选 channel id，运行时读 UserNotificationConfig。</p></section>
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+  <section style="margin:0 0 14px 0;"><p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #d97706;padding-left:12px;line-height:1.4;">04｜黄金报表简报流水线</p></section>
+  <section style="margin:0 0 12px 0;padding:14px 16px;background:#f0fdf4;border:1px solid #a7f3d0;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#065f46;line-height:1.5;">触发</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">Job id <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">saved_report_subscription_{{id}}</code>，CronTrigger，时区默认 Asia/Shanghai，misfire_grace_time=3600。<strong>无</strong> Redis 任务锁（与用户 Task 不同）。命中 notify_on_success + 告警条件 hit 后走消化。</p>
+  </section>
+  <section style="margin:0 0 12px 0;padding:14px 16px;background:#f0fdf4;border:1px solid #a7f3d0;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#065f46;line-height:1.5;">三步生成</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">1）<code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">build_deterministic_digest</code>：MAX_RECORDS=5、MAX_FIELDS=5、MAX_CONTENT_LENGTH=3800；mode=fallback<br/>2）<code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">enrich_digest_with_ai</code>（订阅 ai_analysis_enabled 默认 True）：源行上限 10，temperature=0.1；失败回退 fallback<br/>3）深链 <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">APP_PUBLIC_URL</code>/dashboard/chat?dataset_portal=1&amp;report_id=&amp;run_id=<br/>4）<code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">render_mobile_markdown</code>：统计范围/核心结论/AI 分析/关注事项/关键数据/查看完整报表——<strong>不用 Markdown 表格</strong></p>
+  </section>
+  <section style="margin:0 0 12px 0;padding:14px 16px;background:#fffbeb;border:1px solid #fde68a;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#b45309;line-height:1.5;">投递与节流</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">始终写 Inbox（resource_type=saved_report_run）+ 审计 channel=inbox；再按 external_channels 外发并各记 delivery。<br/>失败：Inbox error 必达；外发仅当 notify_on_failure 且 consecutive_failures==1 或 %3==0（与任务中心告警同思路）。订阅默认 notify_on_success=False、notify_on_failure=True。</p>
+  </section>
+
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+  <section style="margin:0 0 16px 0;padding:18px 16px;background:linear-gradient(135deg,#ecfdf5 0%,#f0f9ff 100%);border:1px solid #a7f3d0;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:16px;font-weight:bold;color:#064e3b;">📌 下期预告</p>
+    <p style="margin:0 0 8px 0;font-size:15px;color:#374151;line-height:1.85;"><strong>任务调度</strong></p>
+    <p style="margin:0;font-size:14px;color:#4b5563;line-height:1.85;">Cron、Job/锁、系统作业与对话工具。</p>
+  </section>
+  <section style="margin:20px 0 0 0;padding:16px;text-align:center;background:#f9fafb;border-radius:8px;">
+    <p style="margin:0 0 4px 0;font-size:14px;color:#6b7280;">NanZi 实战连载 · 08</p>
+    <p style="margin:0;font-size:13px;color:#9ca3af;">通知读配置，不钓 webhook。</p>
+  </section>
+</section>

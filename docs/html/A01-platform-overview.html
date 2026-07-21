@@ -1,0 +1,593 @@
+<!--
+  微信公众号排版 HTML — NanZi 实战连载 · 第 01 篇（深度修订）
+  系列：《NanZi 开源智能体平台实战连载》
+  使用说明：
+  1. 复制下方最外层 <section>…</section> 粘贴到公众号 HTML 模式（或 135/秀米）
+  2. 【配图】占位请换成素材库图片
+  3. 全部内联 style，勿依赖外部 CSS/JS
+-->
+
+<section style="box-sizing:border-box;font-size:16px;color:#3f3f3f;line-height:1.8;letter-spacing:0.5px;text-align:justify;font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue','PingFang SC','Hiragino Sans GB','Microsoft YaHei',Arial,sans-serif;">
+
+  <!-- 标题区 -->
+  <section style="margin:0 0 24px 0;padding:24px 16px;background:linear-gradient(135deg,#064e3b 0%,#022c22 48%,#111827 100%);border-radius:10px;text-align:center;box-shadow:0 4px 20px rgba(16,185,129,0.15);">
+    <p style="margin:0 0 6px 0;font-size:13px;font-weight:normal;color:#6ee7b7;line-height:1.5;letter-spacing:1px;">NanZi 开源智能体平台实战连载 · 01</p>
+    <p style="margin:0 0 10px 0;font-size:20px;font-weight:bold;color:#f8fafc;line-height:1.55;letter-spacing:1px;">企业级智能体平台长什么样？</p>
+    <p style="margin:0;font-size:15px;font-weight:normal;color:#a7f3d0;line-height:1.6;letter-spacing:0.5px;">架构分层 · AgentScope 运行时 · RBAC/隔离/授权/额度 · 路由与护栏</p>
+  </section>
+
+  <!-- 项目声明 -->
+  <section style="margin:0 0 20px 0;padding:14px 16px;background:#fafafa;border:1px solid #e5e7eb;border-radius:10px;">
+    <p style="margin:0 0 10px 0;font-size:15px;font-weight:bold;color:#111827;line-height:1.5;">项目声明</p>
+    <p style="margin:0 0 10px 0;font-size:14px;color:#374151;line-height:1.85;">
+      本项目为<strong>个人开源</strong>，供自由学习交流，遵循 MIT 开源协议，可自由分发。
+    </p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">
+      「NanZi」来自我一直使用的网名（南孜），取「孜孜不倦」之意。仓库：
+      <a href="https://github.com/RandyChen1985/nanzi-ai-agent-platform" style="color:#059669;text-decoration:none;word-break:break-all;">RandyChen1985/nanzi-ai-agent-platform</a>
+    </p>
+  </section>
+
+  <!-- 导语 -->
+  <section style="margin:0 0 20px 0;">
+    <p style="margin:0 0 12px 0;font-size:15px;color:#374151;line-height:1.9;">
+      本篇是连载开篇，目标只有一个：把 NanZi <strong>真实跑起来的技术骨架</strong>讲清楚——用了哪些组件、请求怎么走、本地智能体为什么说「跑在 AgentScope 上」、企业侧 <strong>RBAC / 工作区隔离 / 工具授权与白名单 / Token 统计与额度</strong>如何卡住能力面与成本，以及 ChatBI / 知识库又在 Agent 之上叠了什么。
+    </p>
+    <p style="margin:0;font-size:15px;color:#374151;line-height:1.9;">
+      不会铺一堆「赋能」「闭环」空话。读完你应该能回答：<em>用户敲下一句话之后，代码路径大致经过哪些类；谁能调哪个 Agent；文件落在谁的工作区；工具从哪注册进 Toolkit、审批与黑名单怎么拦；Token 怎么记账、额度超额怎么拦；RAGFlow / OpenClaw 为什么不走同一套 ReAct。</em>
+    </p>
+  </section>
+
+  <section style="margin:0 0 20px 0;padding:12px 14px;background:#ecfeff;border-left:4px solid #0891b2;border-radius:0 8px 8px 0;">
+    <p style="margin:0;font-size:14px;color:#0e7490;line-height:1.85;">
+      <strong>先给结论：</strong>自 2026-06 起，本地专家（通用 / 知识库 / ChatBI）的 AI 执行层已迁到 <strong>AgentScope 2.x</strong>（<code style="background:#cffafe;padding:1px 5px;border-radius:3px;">agentscope[service,storage,workspace]</code>），以 <code style="background:#cffafe;padding:1px 5px;border-radius:3px;">Agent + Toolkit + ReActConfig</code> 为唯一本地运行时，<strong>不再依赖 LangChain</strong>。平台侧有一层适配器 <code style="background:#cffafe;padding:1px 5px;border-radius:3px;">app/services/ai/runtime/agentscope/</code>，文档里常称「AgentScope 运行时 / Runtime」——指的就是这套适配 + 上游 Agent 调度，不是另装一个无关产品。RAGFlow、OpenClaw 仍走各自 HTTP 代理，不经 AgentScope ReAct。
+    </p>
+  </section>
+
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+
+  <!-- ========== 01 定位 ========== -->
+  <section style="margin:0 0 14px 0;">
+    <p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #10b981;padding-left:12px;line-height:1.4;">01｜产品定位：编排中枢，不是聊天壳</p>
+  </section>
+
+  <section style="margin:0 0 16px 0;">
+    <p style="margin:0 0 10px 0;font-size:15px;color:#374151;line-height:1.9;">
+      NanZi 做的是<strong>企业级多智能体编排与执行平台</strong>。对话只是入口；背后必须同时具备两件事——<strong>能编排专家干活</strong>，以及<strong>在权限与隔离约束下干活</strong>。缺后者，再强的 Agent 也只是演示壳。
+    </p>
+    <p style="margin:0 0 10px 0;padding:12px 14px;background:#f0fdf4;border-radius:8px;font-size:14px;color:#065f46;line-height:1.85;">
+      <strong>强项</strong>：意图路由 + 多引擎专家（AgentScope / RAGFlow / OpenClaw）+ 企业 ChatBI + MCP·Skills·调度·Embed；以及贯穿全链路的 <strong>RBAC、用户/会话工作区隔离、工具与命令授权、Skills/API 白名单、Token 消耗统计与额度管理</strong>。<br/>
+      <strong>依赖</strong>：MySQL（平台库）+ <strong>Redis Stack</strong>（向量检索与调度锁）+ 自备 LLM 网关（OpenAI 兼容）+ 按需 RAGFlow 与业务库。<br/>
+      <strong>非目标</strong>：不是免运维公有云 SaaS；也不是「只调一个 completion API」的演示页。
+    </p>
+  </section>
+
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+
+  <!-- ========== 02 企业治理 ========== -->
+  <section style="margin:0 0 14px 0;">
+    <p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #b91c1c;padding-left:12px;line-height:1.4;">02｜企业治理：RBAC · 隔离 · 授权 · Token 额度</p>
+  </section>
+
+  <section style="margin:0 0 12px 0;">
+    <p style="margin:0 0 10px 0;font-size:15px;color:#374151;line-height:1.9;">
+      这一节单独写，因为企业落地时，权限与隔离往往比「模型选哪家」更先卡住。NanZi 把治理拆成可组合的几层，而不是只靠一句 system prompt「请遵守权限」。
+    </p>
+  </section>
+
+  <!-- RBAC -->
+  <section style="margin:0 0 12px 0;padding:16px;background-color:#fef2f2;border:1px solid #fecaca;border-radius:10px;">
+    <p style="margin:0 0 10px 0;font-size:15px;font-weight:bold;color:#b91c1c;line-height:1.5;">① 完善的 RBAC（不止登录角色）</p>
+    <p style="margin:0 0 8px 0;font-size:14px;color:#374151;line-height:1.85;">
+      采用 <strong>RBAC</strong>，分系统级与资源级，并支持菜单 / 元素级控制台权限：
+    </p>
+    <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.8;">
+      · <strong>系统角色</strong>：<code style="background:#fee2e2;padding:1px 4px;border-radius:3px;">admin</code> 跳过资源校验；<code style="background:#fee2e2;padding:1px 4px;border-radius:3px;">user</code> 只吃被授权资源。
+    </p>
+    <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.8;">
+      · <strong>业务角色 + 直接授权</strong>：用户可挂多个业务角色；资源类型覆盖 <code style="background:#fee2e2;padding:1px 4px;border-radius:3px;">agent</code> / <code style="background:#fee2e2;padding:1px 4px;border-radius:3px;">dataset</code>（知识库）/ <code style="background:#fee2e2;padding:1px 4px;border-radius:3px;">metadata</code>（ChatBI 元数据）/ <code style="background:#fee2e2;padding:1px 4px;border-radius:3px;">api</code>（V1 接口）等。
+    </p>
+    <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.8;">
+      · <strong>有效权限公式</strong>：<code style="background:#fee2e2;padding:1px 4px;border-radius:3px;">admin OR 用户直接权限 OR 所属业务角色权限并集</code>；聚合结果缓存 Redis（变更角色/直授立即失效）。
+    </p>
+    <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.8;">
+      · <strong>菜单 ≠ 数据</strong>：例如有 <code style="background:#fee2e2;padding:1px 4px;border-radius:3px;">menu:knowledge_management</code> 不等于能检索所有库；写操作还要过 <code style="background:#fee2e2;padding:1px 4px;border-radius:3px;">element:knowledge:*</code> 与 dataset 资源校验。
+    </p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">
+      · <strong>V1 / Embed</strong>：API Key 调用时校验持有者对目标智能体（及白名单 API）的访问权，防止「有 Key 就能打任意 Agent」。
+    </p>
+  </section>
+
+  <!-- Workspace -->
+  <section style="margin:0 0 12px 0;padding:16px;background-color:#fff7ed;border:1px solid #fed7aa;border-radius:10px;">
+    <p style="margin:0 0 10px 0;font-size:15px;font-weight:bold;color:#c2410c;line-height:1.5;">② 用户会话工作区隔离（文件系统级）</p>
+    <p style="margin:0 0 8px 0;font-size:14px;color:#374151;line-height:1.85;">
+      AgentScope <code style="background:#ffedd5;padding:1px 4px;border-radius:3px;">LocalWorkspace</code> 不是共享大盘。平台按身份生成稳定目录键 <code style="background:#ffedd5;padding:1px 4px;border-radius:3px;">user_name__user_id</code>，落在 <code style="background:#ffedd5;padding:1px 4px;border-radius:3px;">agent_workspaces/{user_key}/</code> 下：
+    </p>
+    <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.8;">· <code style="background:#ffedd5;padding:1px 4px;border-radius:3px;">docs/</code> — AI 默认落盘、跨会话共享（仅本人）</p>
+    <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.8;">· <code style="background:#ffedd5;padding:1px 4px;border-radius:3px;">uploads/</code> — 会话附件（仅本人）</p>
+    <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.8;">· <code style="background:#ffedd5;padding:1px 4px;border-radius:3px;">sessions/</code> — 按会话 UUID 隔离的会话沙箱</p>
+    <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.8;">· <code style="background:#ffedd5;padding:1px 4px;border-radius:3px;">skills/</code> — 个人技能目录（与平台公共 skills 分离）</p>
+    <p style="margin:0 0 8px 0;font-size:14px;color:#374151;line-height:1.85;">
+      文件浏览 / 预览 API 走 <code style="background:#ffedd5;padding:1px 4px;border-radius:3px;">fs_access</code>：普通用户只能进<strong>公共目录</strong>（如 branding、平台 skills）+ <strong>本人私有工作区</strong>；越权路径直接拒绝。Admin 另议。这保证「读写文件 / Bash / 个人 Skill」不会串到别人的工作区。
+    </p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">
+      运行时还有 <strong>会话锁</strong>（同用户同会话同 Agent 串行改 AgentState）与 Pending 快照按 <code style="background:#ffedd5;padding:1px 4px;border-radius:3px;">user_id</code> 落 Redis，避免并发把状态写乱、把确认串户。
+    </p>
+  </section>
+
+  <!-- Tool auth -->
+  <section style="margin:0 0 12px 0;padding:16px;background-color:#faf5ff;border:1px solid #e9d5ff;border-radius:10px;">
+    <p style="margin:0 0 10px 0;font-size:15px;font-weight:bold;color:#6b21a8;line-height:1.5;">③ 命令 / 工具授权：scope · 审批 · 黑名单</p>
+    <p style="margin:0 0 8px 0;font-size:14px;color:#374151;line-height:1.85;">
+      工具不是「挂上就能无脑执行」。运行时至少过三道闸：
+    </p>
+    <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.8;">
+      · <strong>permission_scope</strong>：<code style="background:#f3e8ff;padding:1px 4px;border-radius:3px;">read</code> 可直接放行；<code style="background:#f3e8ff;padding:1px 4px;border-radius:3px;">ask</code> / 写类触发用户确认；<code style="background:#f3e8ff;padding:1px 4px;border-radius:3px;">dangerous</code> 可直接 DENY。确认走 AgentScope PermissionEngine → SSE <code style="background:#f3e8ff;padding:1px 4px;border-radius:3px;">permission_required</code> → 用户点确认后续跑。
+    </p>
+    <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.8;">
+      · <strong>智能体 approval_mode</strong>：可配置 <code style="background:#f3e8ff;padding:1px 4px;border-radius:3px;">allow</code> / <code style="background:#f3e8ff;padding:1px 4px;border-radius:3px;">ask</code>（默认）/ <code style="background:#f3e8ff;padding:1px 4px;border-radius:3px;">deny</code>，覆盖整包工具的审批策略。
+    </p>
+    <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.8;">
+      · <strong>只读工具白名单</strong>：如 <code style="background:#f3e8ff;padding:1px 4px;border-radius:3px;">get_dataset_schema</code>、<code style="background:#f3e8ff;padding:1px 4px;border-radius:3px;">search_knowledge_base</code>、<code style="background:#f3e8ff;padding:1px 4px;border-radius:3px;">memory_search</code>、<code style="background:#f3e8ff;padding:1px 4px;border-radius:3px;">get_current_time</code> 等，始终自动 ALLOW，避免无害读操作弹确认轰炸。
+    </p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">
+      · <strong>用户级禁止工具 / 禁止命令</strong>：权限模型支持 <code style="background:#f3e8ff;padding:1px 4px;border-radius:3px;">forbidden_tools</code>、<code style="background:#f3e8ff;padding:1px 4px;border-radius:3px;">forbidden_commands</code>。运行时在工具调用前强制校验；命中命令黑名单（如限制 <code style="background:#f3e8ff;padding:1px 4px;border-radius:3px;">exec_command</code> / Bash 类）直接拦截，理由可审计（如 <code style="background:#f3e8ff;padding:1px 4px;border-radius:3px;">hit_user_command_blacklist</code>）。
+    </p>
+  </section>
+
+  <!-- Whitelists -->
+  <section style="margin:0 0 12px 0;padding:16px;background-color:#ecfeff;border:1px solid #a5f3fc;border-radius:10px;">
+    <p style="margin:0 0 10px 0;font-size:15px;font-weight:bold;color:#0e7490;line-height:1.5;">④ 白名单式收敛：Skills · 工具挂载 · 数据与 API</p>
+    <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.8;">
+      · <strong>智能体工具挂载</strong>：版本配置里勾选哪些工具 / MCP / Generic API 进 Toolkit——没挂上的，模型再「想用」也没有入口。
+    </p>
+    <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.8;">
+      · <strong>Skills 白名单</strong>：开启 <code style="background:#cffafe;padding:1px 4px;border-radius:3px;">skills_custom</code> 后，仅加载勾选的公共技能；未开则兼容「全部公共技能」。个人技能与平台技能目录隔离，禁用即不加载。
+    </p>
+    <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.8;">
+      · <strong>ChatBI 数据权限</strong>：数据集授权 + Schema / SqlQueryBinding / 可选 <code style="background:#cffafe;padding:1px 4px;border-radius:3px;">data_perm</code> 行级约束；数据门户只展示当前用户有权的数据集。
+    </p>
+    <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.8;">
+      · <strong>知识库</strong>：检索范围 = 角色/用户授权库 ∪ 自建 ∪ 默认公开库；有菜单权 ≠ 全库可读。
+    </p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.8;">
+      · <strong>V1 API 白名单</strong>：部分接口路径可配置白名单放行策略，与资源级 agent 校验配合，收紧对外面。
+    </p>
+  </section>
+
+  <!-- Token & Quota -->
+  <section style="margin:0 0 12px 0;padding:16px;background-color:#f0fdf4;border:1px solid #a7f3d0;border-radius:10px;">
+    <p style="margin:0 0 10px 0;font-size:15px;font-weight:bold;color:#065f46;line-height:1.5;">⑤ Token 消耗统计与额度管理</p>
+    <p style="margin:0 0 8px 0;font-size:14px;color:#374151;line-height:1.85;">
+      企业算力不是无限水龙头。NanZi 把「看得见」和「管得住」拆开做：
+    </p>
+    <p style="margin:0 0 8px 0;font-size:14px;font-weight:bold;color:#047857;line-height:1.5;">看得见：多粒度 Token 统计</p>
+    <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.8;">
+      · <strong>会话级实时账本</strong>：AgentScope 侧挂 <code style="background:#ecfdf5;padding:1px 4px;border-radius:3px;">ModelCallStatsMiddleware</code>，在 <code style="background:#ecfdf5;padding:1px 4px;border-radius:3px;">on_model_call</code> 钩子记录每次 LLM 调用的模型名、输入/输出 Token（含缓存命中）、是否含工具调用、耗时；异步追加到 Redis List（键形如 <code style="background:#ecfdf5;padding:1px 4px;border-radius:3px;">nanzi:{uid}:{conv_id}:model_call_stats</code>，TTL 与 AgentState 对齐约 7 天）。SSE 里也可带 <code style="background:#ecfdf5;padding:1px 4px;border-radius:3px;">model_call</code> 事件，调试链路能对上每一次推理。
+    </p>
+    <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.8;">
+      · <strong>审计落库</strong>：执行历史写入 <code style="background:#ecfdf5;padding:1px 4px;border-radius:3px;">AgentExecutionHistory.total_tokens</code> 等字段，供运营按用户聚合。
+    </p>
+    <p style="margin:0 0 8px 0;font-size:14px;color:#374151;line-height:1.8;">
+      · <strong>运营看板</strong>：控制台「Token 统计分析」按今日 / 7 天 / 30 天看总量、输入输出拆分、交互频次、智能体消耗分布，做算力审计而不是拍脑袋。
+    </p>
+    <p style="margin:0 0 8px 0;font-size:14px;font-weight:bold;color:#047857;line-height:1.5;">管得住：分层额度（Quota）</p>
+    <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.8;">
+      · 策略表 <code style="background:#ecfdf5;padding:1px 4px;border-radius:3px;">ai_agent_quota_policies</code>，周期默认<strong>按月</strong>；用量来自当月执行历史 Token 汇总。
+    </p>
+    <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.8;">
+      · <strong>生效优先级</strong>（由高到低）：系统管理员绕过 → <strong>用户专属额度</strong> → <strong>业务角色额度</strong>（多角色取更宽松的限额；角色可配「不限额」）→ <strong>系统默认额度</strong> → 未配置则不限额。
+    </p>
+    <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.8;">
+      · <strong>调用前拦截</strong>：<code style="background:#ecfdf5;padding:1px 4px;border-radius:3px;">AgentService</code> 在对话入口走 <code style="background:#ecfdf5;padding:1px 4px;border-radius:3px;">QuotaService.check_before_call</code>；超额返回 <code style="background:#ecfdf5;padding:1px 4px;border-radius:3px;">quota_exceeded</code>，避免超限后仍烧模型。
+    </p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">
+      · <strong>管理面</strong>：Portal 提供系统 / 角色 / 用户额度 CRUD，以及「我的额度」查询（已用 / 限额 / 剩余 / 策略来源标签）。和 RBAC 同一套运营习惯：按人、按角色控成本。
+    </p>
+  </section>
+
+  <section style="margin:0 0 16px 0;padding:14px 16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:14px;font-weight:bold;color:#334155;">治理心智图（记这一句就够）</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">
+      <strong>谁能进控制台 / 调哪个 Agent</strong>靠 RBAC；<strong>文件与会话落在哪</strong>靠用户工作区隔离；<strong>这一刻能不能执行某工具或某条命令</strong>靠 scope + 审批 + 黑名单；<strong>智能体能力面收多大</strong>靠工具挂载与 Skills / 数据 / API 白名单；<strong>算力烧了多少、还剩多少</strong>靠 Token 统计与分层额度。五层叠在一起，编排才敢接企业生产。
+    </p>
+  </section>
+
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+
+  <!-- ========== 03 技术栈 ========== -->
+  <section style="margin:0 0 14px 0;">
+    <p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #0891b2;padding-left:12px;line-height:1.4;">03｜技术栈：每一层实际用什么</p>
+  </section>
+
+  <section style="margin:0 0 12px 0;">
+    <p style="margin:0 0 10px 0;font-size:15px;color:#374151;line-height:1.9;">
+      读架构前先对齐依赖，避免「听说用了某某」却对不上仓库。
+    </p>
+  </section>
+
+  <section style="margin:0 0 16px 0;padding:4px 0;">
+    <table style="width:100%;border-collapse:collapse;font-size:13px;line-height:1.55;">
+      <thead>
+        <tr>
+          <th style="padding:9px 8px;border:1px solid #e5e7eb;background:#064e3b;color:#ecfdf5;text-align:left;">层级</th>
+          <th style="padding:9px 8px;border:1px solid #e5e7eb;background:#064e3b;color:#ecfdf5;text-align:left;">技术选型</th>
+          <th style="padding:9px 8px;border:1px solid #e5e7eb;background:#064e3b;color:#ecfdf5;text-align:left;">在平台里干什么</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td style="padding:9px 8px;border:1px solid #e5e7eb;font-weight:bold;background:#f0fdf4;color:#065f46;">AI 运行时</td>
+          <td style="padding:9px 8px;border:1px solid #e5e7eb;background:#f0fdf4;color:#374151;">AgentScope 2.x<br/><code style="font-size:11px;">service,storage,workspace</code></td>
+          <td style="padding:9px 8px;border:1px solid #e5e7eb;background:#f0fdf4;color:#374151;">本地 ReAct：Agent、Toolkit、Permission、LocalWorkspace、事件流；模型走 OpenAIChatModel</td>
+        </tr>
+        <tr>
+          <td style="padding:9px 8px;border:1px solid #e5e7eb;font-weight:bold;color:#374151;">后端</td>
+          <td style="padding:9px 8px;border:1px solid #e5e7eb;color:#374151;">FastAPI + Uvicorn/Gunicorn<br/>SQLAlchemy 2 + aiomysql</td>
+          <td style="padding:9px 8px;border:1px solid #e5e7eb;color:#374151;"><code style="font-size:11px;">/api/v1</code> 对话与集成；<code style="font-size:11px;">/api/portal</code> 运营控制台</td>
+        </tr>
+        <tr>
+          <td style="padding:9px 8px;border:1px solid #e5e7eb;font-weight:bold;background:#f0fdf4;color:#065f46;">前端</td>
+          <td style="padding:9px 8px;border:1px solid #e5e7eb;background:#f0fdf4;color:#374151;">Vue 3 + Vite + Tailwind + Pinia</td>
+          <td style="padding:9px 8px;border:1px solid #e5e7eb;background:#f0fdf4;color:#374151;">管理台 + EmbedChat；SSE 由 <code style="font-size:11px;">agentscopeSseHandlers.ts</code> 统一消费</td>
+        </tr>
+        <tr>
+          <td style="padding:9px 8px;border:1px solid #e5e7eb;font-weight:bold;color:#92400e;background:#fffbeb;">状态与检索</td>
+          <td style="padding:9px 8px;border:1px solid #e5e7eb;color:#92400e;background:#fffbeb;"><strong>Redis Stack</strong><br/>（RediSearch / 向量）</td>
+          <td style="padding:9px 8px;border:1px solid #e5e7eb;color:#374151;background:#fffbeb;">会话记忆向量、ChatBI 案例索引、元数据本地索引、权限挂起快照、Token 统计、调度锁</td>
+        </tr>
+        <tr>
+          <td style="padding:9px 8px;border:1px solid #e5e7eb;font-weight:bold;color:#374151;">平台库</td>
+          <td style="padding:9px 8px;border:1px solid #e5e7eb;color:#374151;">MySQL 8 utf8mb4</td>
+          <td style="padding:9px 8px;border:1px solid #e5e7eb;color:#374151;">智能体元数据、RBAC、审计、APScheduler JobStore</td>
+        </tr>
+        <tr>
+          <td style="padding:9px 8px;border:1px solid #e5e7eb;font-weight:bold;background:#f0fdf4;color:#065f46;">调度</td>
+          <td style="padding:9px 8px;border:1px solid #e5e7eb;background:#f0fdf4;color:#374151;">APScheduler AsyncIOScheduler</td>
+          <td style="padding:9px 8px;border:1px solid #e5e7eb;background:#f0fdf4;color:#374151;">智能体定时任务、黄金报表订阅、记忆整理等系统作业</td>
+        </tr>
+        <tr>
+          <td style="padding:9px 8px;border:1px solid #e5e7eb;font-weight:bold;color:#374151;">扩展协议</td>
+          <td style="padding:9px 8px;border:1px solid #e5e7eb;color:#374151;">官方 <code style="font-size:11px;">mcp</code> 包</td>
+          <td style="padding:9px 8px;border:1px solid #e5e7eb;color:#374151;">SSE / Direct HTTP 拉外部工具，缓存后挂进 Toolkit</td>
+        </tr>
+        <tr>
+          <td style="padding:9px 8px;border:1px solid #e5e7eb;font-weight:bold;background:#f0fdf4;color:#065f46;">SQL / 数据</td>
+          <td style="padding:9px 8px;border:1px solid #e5e7eb;background:#f0fdf4;color:#374151;">sqlglot / sqlparse<br/>CK·Oracle·MySQL·SQLServer·DuckDB</td>
+          <td style="padding:9px 8px;border:1px solid #e5e7eb;background:#f0fdf4;color:#374151;">ChatBI 方言解析、门禁与执行适配；办公文档用 openpyxl / python-docx</td>
+        </tr>
+        <tr>
+          <td style="padding:9px 8px;border:1px solid #e5e7eb;font-weight:bold;color:#374151;">模型接入</td>
+          <td style="padding:9px 8px;border:1px solid #e5e7eb;color:#374151;">OpenAI 兼容网关</td>
+          <td style="padding:9px 8px;border:1px solid #e5e7eb;color:#374151;"><code style="font-size:11px;">LLMFactory</code> → AgentScope <code style="font-size:11px;">OpenAIChatModel</code>；路由 / 合成可配独立模型</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section style="margin:0 0 16px 0;padding:12px 14px;background:#fef2f2;border-left:4px solid #ef4444;border-radius:0 8px 8px 0;">
+    <p style="margin:0;font-size:14px;color:#7f1d1d;line-height:1.85;">
+      <strong>部署雷区：</strong>普通 Redis 不够。长期记忆检索、案例库 KNN、元数据本地索引都依赖 RediSearch；健康检查会探 Stack 能力。装错版本，后面「记忆搜不到 / 案例不召回」会非常难查。
+    </p>
+  </section>
+
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+
+  <!-- ========== 04 分层架构 ========== -->
+  <section style="margin:0 0 14px 0;">
+    <p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #7c3aed;padding-left:12px;line-height:1.4;">04｜分层架构：平台全景 → 请求怎么落到 Agent</p>
+  </section>
+
+  <section style="margin:0 0 12px 0;">
+    <p style="margin:0 0 10px 0;font-size:15px;color:#374151;line-height:1.9;">
+      先把<strong>整张平台</strong>看清楚，再 zoom 到一次对话的代码路径。NanZi 不是「前端 + 一个 completion 接口」，而是自上而下五层：接入面 → 核心网关 → 专家集群 → 运行引擎 → 数据与插件。和仓库 README 架构图同一套叙事。
+    </p>
+  </section>
+
+  <section style="margin:0 0 12px 0;padding:12px 14px;background:#fffbeb;border:1px solid #fde68a;border-radius:8px;">
+    <p style="margin:0;font-size:13px;color:#92400e;line-height:1.75;">
+      【配图优先】请直接使用 README 同款架构图 <code style="background:#fef3c7;padding:1px 5px;border-radius:3px;">docs/images/nanzi-platform-architecture-16x9.png</code>，下面文字按该图分层解读。
+    </p>
+  </section>
+
+  <!-- 全景 ASCII -->
+  <section style="margin:0 0 14px 0;padding:14px 12px;background:#1e1e2e;border-radius:8px;overflow-x:auto;">
+    <p style="margin:0 0 8px 0;font-size:12px;color:#a5b4fc;line-height:1.5;font-family:Menlo,Monaco,Consolas,monospace;"># 平台全景（与 README 一致）</p>
+    <p style="margin:0 0 2px 0;font-size:11px;color:#e2e8f0;line-height:1.55;font-family:Menlo,Monaco,Consolas,monospace;white-space:pre;">┌────────────────── NanZi 智能体平台 ──────────────────┐</p>
+    <p style="margin:0 0 2px 0;font-size:11px;color:#94a3b8;line-height:1.55;font-family:Menlo,Monaco,Consolas,monospace;white-space:pre;">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;│&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;│</p>
+    <p style="margin:0 0 2px 0;font-size:11px;color:#6ee7b7;line-height:1.55;font-family:Menlo,Monaco,Consolas,monospace;white-space:pre;">[ Embed Chat SDK ]&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;[ 管理控制后台 Admin ]</p>
+    <p style="margin:0 0 2px 0;font-size:11px;color:#94a3b8;line-height:1.55;font-family:Menlo,Monaco,Consolas,monospace;white-space:pre;">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;\___________ SSE/HTTP ___________/</p>
+    <p style="margin:0 0 2px 0;font-size:11px;color:#fcd34d;line-height:1.55;font-family:Menlo,Monaco,Consolas,monospace;white-space:pre;">┌─────────── 核心网关 Portal Gateway ───────────┐</p>
+    <p style="margin:0 0 2px 0;font-size:11px;color:#fde68a;line-height:1.55;font-family:Menlo,Monaco,Consolas,monospace;white-space:pre;">│ 统一鉴权 · 意图路由 · 任务调度 · 审计回溯&nbsp;&nbsp;&nbsp;&nbsp;│</p>
+    <p style="margin:0 0 2px 0;font-size:11px;color:#fcd34d;line-height:1.55;font-family:Menlo,Monaco,Consolas,monospace;white-space:pre;">└───────────────┬───────────────┬───────────────┘</p>
+    <p style="margin:0 0 2px 0;font-size:11px;color:#94a3b8;line-height:1.55;font-family:Menlo,Monaco,Consolas,monospace;white-space:pre;">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;│&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;│ 状态/队列 → Redis Stack</p>
+    <p style="margin:0 0 2px 0;font-size:11px;color:#fda4af;line-height:1.55;font-family:Menlo,Monaco,Consolas,monospace;white-space:pre;">┌─────────── 智能体专家集群 Expert Pool ────────┐</p>
+    <p style="margin:0 0 2px 0;font-size:11px;color:#fecdd3;line-height:1.55;font-family:Menlo,Monaco,Consolas,monospace;white-space:pre;">│ ChatBI 专家 │ RAG 知识专家 │ 通用/插件助手&nbsp;&nbsp;&nbsp;│</p>
+    <p style="margin:0 0 2px 0;font-size:11px;color:#fda4af;line-height:1.55;font-family:Menlo,Monaco,Consolas,monospace;white-space:pre;">└──────┬──────────────┬──────────────┬─────────┘</p>
+    <p style="margin:0 0 2px 0;font-size:11px;color:#94a3b8;line-height:1.55;font-family:Menlo,Monaco,Consolas,monospace;white-space:pre;">&nbsp;&nbsp;ReAct/自愈SQL&nbsp;&nbsp;&nbsp;&nbsp;托管路由&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;工具链</p>
+    <p style="margin:0 0 2px 0;font-size:11px;color:#a5b4fc;line-height:1.55;font-family:Menlo,Monaco,Consolas,monospace;white-space:pre;">┌─────────── 运行引擎 Execution Engines ────────┐</p>
+    <p style="margin:0 0 2px 0;font-size:11px;color:#c7d2fe;line-height:1.55;font-family:Menlo,Monaco,Consolas,monospace;white-space:pre;">│ AgentScope ReAct │ RAGFlow Agent │ OpenClaw&nbsp;&nbsp;│</p>
+    <p style="margin:0 0 2px 0;font-size:11px;color:#a5b4fc;line-height:1.55;font-family:Menlo,Monaco,Consolas,monospace;white-space:pre;">└──────┬───────────────┬───────────────┬───────┘</p>
+    <p style="margin:0;font-size:11px;color:#86efac;line-height:1.55;font-family:Menlo,Monaco,Consolas,monospace;white-space:pre;">企业多源 DB&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;RAGFlow 知识库&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;MCP Server</p>
+  </section>
+
+  <!-- 五层解读 -->
+  <section style="margin:0 0 10px 0;padding:14px 16px;background:#f0fdf4;border:1px solid #a7f3d0;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:14px;font-weight:bold;color:#065f46;">① 接入层：两种入口，一套中枢</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">
+      <strong>Embed Chat SDK</strong>：把助手嵌进业务系统（IFrame + postMessage，主题/水印/专家直选）。<strong>管理控制后台</strong>：Agent Studio、数据源与元数据、知识库、MCP、Skills、任务、RBAC、Token 额度等运营面。两端都经 SSE/HTTP 打进网关，而不是各玩各的后端。
+    </p>
+  </section>
+
+  <section style="margin:0 0 10px 0;padding:14px 16px;background:#fffbeb;border:1px solid #fde68a;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:14px;font-weight:bold;color:#b45309;">② 核心网关（Portal Gateway）</p>
+    <p style="margin:0 0 8px 0;font-size:14px;color:#374151;line-height:1.85;">
+      架构图上的「网关」是逻辑中枢，实现上对应 FastAPI 的 <code style="background:#fef3c7;padding:1px 4px;border-radius:3px;">/api/v1/*</code>（对话与集成）+ <code style="background:#fef3c7;padding:1px 4px;border-radius:3px;">/api/portal/*</code>（运营）以及编排服务，而不是单独一个叫 PortalGateway 的类。四块能力：
+    </p>
+    <p style="margin:0 0 4px 0;font-size:14px;color:#374151;line-height:1.75;">· <strong>统一鉴权</strong>：登录态 / API Key、RBAC 资源校验、额度预检</p>
+    <p style="margin:0 0 4px 0;font-size:14px;color:#374151;line-height:1.75;">· <strong>意图路由</strong>：直选 / 启发式 / LLM 路由 → Dispatcher</p>
+    <p style="margin:0 0 4px 0;font-size:14px;color:#374151;line-height:1.75;">· <strong>任务调度</strong>：APScheduler + Redis 锁，智能体身份周期任务与报表订阅</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.75;">· <strong>审计回溯</strong>：Trace、执行历史、Token 落库、敏感字段脱敏</p>
+  </section>
+
+  <section style="margin:0 0 10px 0;padding:14px 16px;background:#fef2f2;border:1px solid #fecaca;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:14px;font-weight:bold;color:#b91c1c;">③ 专家集群（Expert Pool）</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">
+      网关选的是「哪类专家干活」：<strong>ChatBI</strong>（问数）、<strong>知识专家</strong>（RAG / Knowledge）、<strong>通用/插件助手</strong>（写作、工具链、通知、任务等）。产品上对应主类型 <code style="background:#fee2e2;padding:1px 4px;border-radius:3px;">CHATBI</code> / <code style="background:#fee2e2;padding:1px 4px;border-radius:3px;">KNOWLEDGE_BASE</code> / <code style="background:#fee2e2;padding:1px 4px;border-radius:3px;">GENERAL</code>，也可挂外部托管专家。多意图时可并行多个专家，再由合成模型聚合。
+    </p>
+  </section>
+
+  <section style="margin:0 0 10px 0;padding:14px 16px;background:#faf5ff;border:1px solid #e9d5ff;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:14px;font-weight:bold;color:#6b21a8;">④ 运行引擎（Execution Engines）</p>
+    <p style="margin:0 0 8px 0;font-size:14px;color:#374151;line-height:1.85;">
+      专家「跑在哪套运行时上」是另一轴：
+    </p>
+    <p style="margin:0 0 4px 0;font-size:14px;color:#374151;line-height:1.75;">· <strong>AgentScope ReAct</strong>（LOCAL）：本地唯一 AI 运行时——思考/行动/观察、工具审批、ChatBI 自愈 SQL</p>
+    <p style="margin:0 0 4px 0;font-size:14px;color:#374151;line-height:1.75;">· <strong>RAGFlow Agent</strong>：托管智能体 HTTP 流式代理，复用其对端检索与对话</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.75;">· <strong>OpenClaw</strong>：安全网关代理，透传 <code style="background:#f3e8ff;padding:1px 4px;border-radius:3px;">AUTH_CONTEXT</code>（身份、频道、可访问数据集）</p>
+  </section>
+
+  <section style="margin:0 0 14px 0;padding:14px 16px;background:#ecfeff;border:1px solid #a5f3fc;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:14px;font-weight:bold;color:#0e7490;">⑤ 数据与插件层</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">
+      引擎向下碰到三类「手脚」：<strong>企业多源数据仓/DB</strong>（Oracle / ClickHouse / MySQL / SQL Server 等，ChatBI 直查）；<strong>RAGFlow 知识库</strong>（非结构化文档）；<strong>MCP Server</strong>（外部系统与 API，工具缓存后挂进 Toolkit）。旁路还有平台 MySQL（配置/RBAC/审计）与 Redis Stack（状态、向量、调度、Token 会话账本）。
+    </p>
+  </section>
+
+  <!-- zoom 到代码路径 -->
+  <section style="margin:0 0 12px 0;">
+    <p style="margin:0 0 10px 0;font-size:15px;color:#374151;line-height:1.9;">
+      <strong>Zoom in：一次本地对话怎么落到 <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;">Agent.reply_stream</code></strong>（对应上图「网关 → 专家 → AgentScope」这一条竖线）
+    </p>
+  </section>
+
+  <section style="margin:0 0 14px 0;padding:14px 14px;background:#111827;border-radius:8px;">
+    <p style="margin:0 0 3px 0;font-size:12px;color:#a5b4fc;line-height:1.65;font-family:Menlo,Monaco,Consolas,monospace;">POST /api/v1/chat/completions&nbsp;&nbsp;(SSE)</p>
+    <p style="margin:0 0 3px 0;font-size:12px;color:#94a3b8;line-height:1.65;font-family:Menlo,Monaco,Consolas,monospace;">&nbsp;&nbsp;│&nbsp;鉴权 · 额度预检 · RBAC</p>
+    <p style="margin:0 0 3px 0;font-size:12px;color:#6ee7b7;line-height:1.65;font-family:Menlo,Monaco,Consolas,monospace;">AgentService.chat_completion_stream()</p>
+    <p style="margin:0 0 3px 0;font-size:12px;color:#fcd34d;line-height:1.65;font-family:Menlo,Monaco,Consolas,monospace;">&nbsp;&nbsp;├─ RouterService.route_query()&nbsp;&nbsp;&nbsp;# 直选 / 启发式 / LLM</p>
+    <p style="margin:0 0 3px 0;font-size:12px;color:#fcd34d;line-height:1.65;font-family:Menlo,Monaco,Consolas,monospace;">&nbsp;&nbsp;└─ AgentDispatcher.dispatch()&nbsp;&nbsp;&nbsp;# 选 Executor</p>
+    <p style="margin:0 0 3px 0;font-size:12px;color:#fda4af;line-height:1.65;font-family:Menlo,Monaco,Consolas,monospace;">薄 Executor → 厚 Runner</p>
+    <p style="margin:0 0 3px 0;font-size:12px;color:#e2e8f0;line-height:1.65;font-family:Menlo,Monaco,Consolas,monospace;">&nbsp;Assistant / Knowledge / DataQuery&nbsp;&nbsp;(→ AgentScope)</p>
+    <p style="margin:0 0 3px 0;font-size:12px;color:#e2e8f0;line-height:1.65;font-family:Menlo,Monaco,Consolas,monospace;">&nbsp;RAGExecutor / OpenClawExecutor&nbsp;&nbsp;&nbsp;&nbsp;(→ 外部 HTTP)</p>
+    <p style="margin:0 0 3px 0;font-size:12px;color:#94a3b8;line-height:1.65;font-family:Menlo,Monaco,Consolas,monospace;">&nbsp;&nbsp;│（LOCAL）</p>
+    <p style="margin:0;font-size:12px;color:#6ee7b7;line-height:1.65;font-family:Menlo,Monaco,Consolas,monospace;">runtime/agentscope → Agent.reply_stream → SSE</p>
+  </section>
+
+  <section style="margin:12px 0 10px 0;padding:14px 16px;background:#faf5ff;border:1px solid #e9d5ff;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:14px;font-weight:bold;color:#6b21a8;">为什么拆 Executor / Runner / Runtime？</p>
+    <p style="margin:0 0 8px 0;font-size:14px;color:#374151;line-height:1.85;">
+      <strong>Executor</strong>（如 <code style="background:#f3e8ff;padding:1px 4px;border-radius:3px;">AssistantExecutor</code>）极薄，只负责「这类请求交给谁」——对应专家池选型结果。
+    </p>
+    <p style="margin:0 0 8px 0;font-size:14px;color:#374151;line-height:1.85;">
+      <strong>Runner</strong>（如 <code style="background:#f3e8ff;padding:1px 4px;border-radius:3px;">AssistantAgentRunner</code>、<code style="background:#f3e8ff;padding:1px 4px;border-radius:3px;">DataAgentRunner</code>）负责业务编排：拼消息、解析工具、消费事件、落 AgentState、ChatBI 守卫。
+    </p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">
+      <strong>Runtime 适配层</strong>（<code style="background:#f3e8ff;padding:1px 4px;border-radius:3px;">runtime/agentscope/</code>）把平台中立的消息 / 工具 / 事件，翻译成 AgentScope 的 <code style="background:#f3e8ff;padding:1px 4px;border-radius:3px;">Msg</code>、<code style="background:#f3e8ff;padding:1px 4px;border-radius:3px;">Toolkit</code>、<code style="background:#f3e8ff;padding:1px 4px;border-radius:3px;">reply_stream</code> 事件，再映回现有 SSE JSON——升级 AgentScope 时，业务 Runner 与前端协议可以稳住。
+    </p>
+  </section>
+
+  <section style="margin:0 0 16px 0;padding:14px 16px;background:#f0f9ff;border:1px solid #bae6fd;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:14px;font-weight:bold;color:#075985;">主类型 vs 引擎（别混）</p>
+    <p style="margin:0 0 8px 0;font-size:14px;color:#374151;line-height:1.85;">
+      专家池里的<strong>主类型</strong>只有三个枚举：<code style="background:#e0f2fe;padding:1px 5px;border-radius:3px;">GENERAL</code> / <code style="background:#e0f2fe;padding:1px 5px;border-radius:3px;">CHATBI</code> / <code style="background:#e0f2fe;padding:1px 5px;border-radius:3px;">KNOWLEDGE_BASE</code>，各自锁定主能力（general_chat / data_query / knowledge_base），发布与子智能体委派有就绪门禁。
+    </p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">
+      <strong>引擎</strong>是另一轴：<code style="background:#e0f2fe;padding:1px 5px;border-radius:3px;">LOCAL</code>（AgentScope）、<code style="background:#e0f2fe;padding:1px 5px;border-radius:3px;">RAGFLOW</code>、<code style="background:#e0f2fe;padding:1px 5px;border-radius:3px;">OPENCLAW</code>。同一工作室可混编——这正是上图「专家集群 × 运行引擎」二维结构的含义。
+    </p>
+  </section>
+
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+
+  <!-- ========== 04 AgentScope ========== -->
+  <section style="margin:0 0 14px 0;">
+    <p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #059669;padding-left:12px;line-height:1.4;">05｜AgentScope 运行时：我们到底怎么用</p>
+  </section>
+
+  <section style="margin:0 0 12px 0;">
+    <p style="margin:0 0 10px 0;font-size:15px;color:#374151;line-height:1.9;">
+      OpenSpec 写得很硬：本地 AI 执行链路 <strong>MUST</strong> 以 AgentScope 为唯一运行时，不得再走 LangChain Tool / Message / ChatOpenAI。NanZi 用的是上游的 <strong>Agent 调度器 + Toolkit + Permission + Workspace + Event</strong>，不是自己手写一套 ReAct while 循环。
+    </p>
+  </section>
+
+  <section style="margin:0 0 12px 0;padding:14px 16px;background:#f0fdf4;border:1px solid #a7f3d0;border-radius:10px;">
+    <p style="margin:0 0 10px 0;font-size:14px;font-weight:bold;color:#065f46;">一次本地专家调用的标准生命周期</p>
+    <p style="margin:0 0 6px 0;font-size:13px;color:#374151;line-height:1.75;">① <code style="background:#ecfdf5;padding:1px 4px;border-radius:3px;">ToolRegistry.get_runtime_tools()</code> → 统一的 <code style="background:#ecfdf5;padding:1px 4px;border-radius:3px;">RuntimeToolSpec[]</code>（静态工具 / Generic API / MCP / 系统隐式工具）</p>
+    <p style="margin:0 0 6px 0;font-size:13px;color:#374151;line-height:1.75;">② <code style="background:#ecfdf5;padding:1px 4px;border-radius:3px;">build_toolkit(specs)</code> → AgentScope <code style="background:#ecfdf5;padding:1px 4px;border-radius:3px;">Toolkit</code>（<code style="background:#ecfdf5;padding:1px 4px;border-radius:3px;">AgentScopeRuntimeTool</code> 包装，可带审批）</p>
+    <p style="margin:0 0 6px 0;font-size:13px;color:#374151;line-height:1.75;">③ 构造 <code style="background:#ecfdf5;padding:1px 4px;border-radius:3px;">Agent(name, system_prompt, model, toolkit, react_config=ReActConfig(max_iters=…), offloader=LocalWorkspace)</code></p>
+    <p style="margin:0 0 6px 0;font-size:13px;color:#374151;line-height:1.75;">④ <code style="background:#ecfdf5;padding:1px 4px;border-radius:3px;">async for event in agent.reply_stream(inputs)</code>：内部 while <code style="background:#ecfdf5;padding:1px 4px;border-radius:3px;">cur_iter &lt; max_iters</code>，在 reasoning / acting 间切换，推理前可触发上下文压缩</p>
+    <p style="margin:0 0 6px 0;font-size:13px;color:#374151;line-height:1.75;">⑤ <code style="background:#ecfdf5;padding:1px 4px;border-radius:3px;">map_standard_agentscope_event()</code> → 平台 SSE（content / log / thinking / permission_required …）</p>
+    <p style="margin:0;font-size:13px;color:#374151;line-height:1.75;">⑥ 正常结束 <code style="background:#ecfdf5;padding:1px 4px;border-radius:3px;">agent_state_store.save()</code>；若 ASK 权限挂起则写入 Redis Pending，确认后再 <code style="background:#ecfdf5;padding:1px 4px;border-radius:3px;">reply_stream(UserConfirmResultEvent)</code> 续跑</p>
+  </section>
+
+  <section style="margin:0 0 12px 0;padding:14px 16px;background:#1e1e2e;border-radius:8px;">
+    <p style="margin:0 0 8px 0;font-size:13px;color:#a5b4fc;line-height:1.6;font-family:Menlo,Monaco,Consolas,monospace;"># AgentScope → 平台 SSE（节选）</p>
+    <p style="margin:0 0 3px 0;font-size:12px;color:#e2e8f0;line-height:1.6;font-family:Menlo,Monaco,Consolas,monospace;">TEXT_BLOCK_DELTA&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;→ {"content": "..."}</p>
+    <p style="margin:0 0 3px 0;font-size:12px;color:#e2e8f0;line-height:1.6;font-family:Menlo,Monaco,Consolas,monospace;">TOOL_CALL_* / RESULT&nbsp;&nbsp;→ type:log + audit trace</p>
+    <p style="margin:0 0 3px 0;font-size:12px;color:#e2e8f0;line-height:1.6;font-family:Menlo,Monaco,Consolas,monospace;">REQUIRE_USER_CONFIRM&nbsp;&nbsp;→ permission_required</p>
+    <p style="margin:0 0 3px 0;font-size:12px;color:#e2e8f0;line-height:1.6;font-family:Menlo,Monaco,Consolas,monospace;">REQUIRE_EXTERNAL_EXEC → external_execution_required</p>
+    <p style="margin:0 0 3px 0;font-size:12px;color:#e2e8f0;line-height:1.6;font-family:Menlo,Monaco,Consolas,monospace;">THINKING_BLOCK_*&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;→ thinking</p>
+    <p style="margin:0;font-size:12px;color:#e2e8f0;line-height:1.6;font-family:Menlo,Monaco,Consolas,monospace;">MODEL_CALL_*&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;→ model_call + Redis Token 统计</p>
+  </section>
+
+  <section style="margin:12px 0 12px 0;padding:14px 16px;background:#ecfeff;border:1px solid #a5f3fc;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:14px;font-weight:bold;color:#0e7490;">适配层里还有什么「平台胶水」</p>
+    <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.8;">· <strong>会话锁</strong> <code style="background:#cffafe;padding:1px 4px;border-radius:3px;">agentscope_session_lock</code>：同会话并发会毁掉 AgentState，必须串行。</p>
+    <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.8;">· <strong>AgentState 持久化</strong>：跨请求恢复 ReAct 进度（cur_iter、context、permission_context）。</p>
+    <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.8;">· <strong>LocalWorkspace</strong>：作为 offloader，工具大结果可落盘；工作区键按用户隔离。</p>
+    <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.8;">· <strong>ModelCallStatsMiddleware</strong>：拦截模型调用，异步写 Redis 耗时 / Token（与第 02 节额度与运营看板同源）。</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.8;">· <strong>无工具短路</strong>：通用助手若未挂工具，可走 synthesis LLM 直出，不必起完整 Agent——省一轮调度开销。</p>
+  </section>
+
+  <section style="margin:0 0 16px 0;padding:14px 16px;background:#fff7ed;border:1px solid #fed7aa;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:14px;font-weight:bold;color:#c2410c;">三类本地 Runner 在 Agent 之上的差异</p>
+    <p style="margin:0 0 8px 0;font-size:14px;color:#374151;line-height:1.85;">
+      <strong>Assistant</strong>：标准 ReAct；工具预检促发调用；Skill 扫描；不绑 <code style="background:#ffedd5;padding:1px 4px;border-radius:3px;">search_knowledge_base</code>（知识走 Knowledge 路径）。
+    </p>
+    <p style="margin:0 0 8px 0;font-size:14px;color:#374151;line-height:1.85;">
+      <strong>Knowledge</strong>：进入 ReAct <em>之前</em>平台自动检索知识库，把召回注入提示词；空召回 / 无引用可拦截胡编。
+    </p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">
+      <strong>ChatBI（DataAgentRunner + chatbi/*）</strong>：同一套 <code style="background:#ffedd5;padding:1px 4px;border-radius:3px;">reply_stream</code>，但外面套了 <code style="background:#ffedd5;padding:1px 4px;border-radius:3px;">DataRunState</code>、Schema 预取、SqlQueryBinding、SQL Gate、<code style="background:#ffedd5;padding:1px 4px;border-radius:3px;">sql_plan</code>、查数完成前拦截最终答、repair 再进一轮流——这是「企业问数」和「裸 Text-to-SQL Agent」的分水岭。细节第 04 篇展开。
+    </p>
+  </section>
+
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+
+  <!-- ========== 05 路由 ========== -->
+  <section style="margin:0 0 14px 0;">
+    <p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #d97706;padding-left:12px;line-height:1.4;">06｜路由原理：直选 → 启发式 → LLM → 分发</p>
+  </section>
+
+  <section style="margin:0 0 12px 0;">
+    <p style="margin:0 0 10px 0;font-size:15px;color:#374151;line-height:1.9;">
+      编排质量一半在路由。<code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;">RouterService</code> + <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;">intent_service</code> 的设计意图是：能短路就别烧路由模型；能直选就别猜。
+    </p>
+  </section>
+
+  <section style="margin:0 0 10px 0;padding:14px 16px;background:#fffbeb;border:1px solid #fde68a;border-radius:10px;">
+    <p style="margin:0 0 6px 0;font-size:14px;font-weight:bold;color:#b45309;">① 专家直选（跳过 LLM 路由）</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">
+      请求带 <code style="background:#fef3c7;padding:1px 4px;border-radius:3px;">agent_id</code> / 名称、Embed 专家模式、或对话 <code style="background:#fef3c7;padding:1px 4px;border-radius:3px;">@提及</code> → <code style="background:#fef3c7;padding:1px 4px;border-radius:3px;">direct_agent_selection=True</code>。业务系统嵌入时应用这个，别把「该找谁」交给概率。
+    </p>
+  </section>
+
+  <section style="margin:0 0 10px 0;padding:14px 16px;background:#ecfeff;border:1px solid #a5f3fc;border-radius:10px;">
+    <p style="margin:0 0 6px 0;font-size:14px;font-weight:bold;color:#0e7490;">② 启发式短路（仍不调路由 LLM）</p>
+    <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.8;">· 纯问候 → 通用助手</p>
+    <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.8;">· 明显联网搜索句式 → 通用助手</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.8;">· 上一轮是 ChatBI，且会话亲和性判定为 <code style="background:#cffafe;padding:1px 4px;border-radius:3px;">BREAK</code> → 强制回通用助手（避免「问完数又闲聊」仍钉在数据专家）</p>
+  </section>
+
+  <section style="margin:0 0 10px 0;padding:14px 16px;background:#f0fdf4;border:1px solid #a7f3d0;border-radius:10px;">
+    <p style="margin:0 0 6px 0;font-size:14px;font-weight:bold;color:#065f46;">③ ChatBI 会话亲和性 KEEP / BREAK / UNCERTAIN</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">
+      <code style="background:#ecfdf5;padding:1px 4px;border-radius:3px;">KEEP</code>：继续待在数据会话，启发式不拆。<code style="background:#ecfdf5;padding:1px 4px;border-radius:3px;">BREAK</code>：明确离开问数。<code style="background:#ecfdf5;padding:1px 4px;border-radius:3px;">UNCERTAIN</code>：灰区，交给 LLM 路由。这比「永远粘在上一个 Agent」稳得多。
+    </p>
+  </section>
+
+  <section style="margin:0 0 10px 0;padding:14px 16px;background:#faf5ff;border:1px solid #e9d5ff;border-radius:10px;">
+    <p style="margin:0 0 6px 0;font-size:14px;font-weight:bold;color:#6b21a8;">④ LLM 语义路由</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">
+      结合近几轮历史与智能体元数据，输出主 <code style="background:#f3e8ff;padding:1px 4px;border-radius:3px;">agent_id</code>、可选 <code style="background:#f3e8ff;padding:1px 4px;border-radius:3px;">secondary_agents</code>、置信度、轮次标签等。低置信或失败回落通用助手。
+    </p>
+  </section>
+
+  <section style="margin:0 0 16px 0;padding:14px 16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;">
+    <p style="margin:0 0 6px 0;font-size:14px;font-weight:bold;color:#334155;">⑤ Dispatcher + 多专家合成</p>
+    <p style="margin:0 0 8px 0;font-size:14px;color:#374151;line-height:1.85;">
+      <code style="background:#f1f5f9;padding:1px 4px;border-radius:3px;">AgentDispatcher</code> 按 <code style="background:#f1f5f9;padding:1px 4px;border-radius:3px;">engine_type</code> 与能力选 Executor；ChatBI 内部分诊（新查数 / 结果分析 / 元数据 / 非数据澄清）发生在 Data 路径内部，不归路由器细拆。
+    </p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">
+      若开启多专家且存在 secondary：并行 dispatch → 队列交错打 log → <strong>合成 LLM</strong>（不是第二轮 ReAct）把多路结果收成一条流式答复。
+    </p>
+  </section>
+
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+
+  <!-- ========== 06 工具与护栏 ========== -->
+  <section style="margin:0 0 14px 0;">
+    <p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #dc2626;padding-left:12px;line-height:1.4;">07｜工具体系与平台护栏（概览）</p>
+  </section>
+
+  <section style="margin:0 0 12px 0;">
+    <p style="margin:0 0 10px 0;font-size:15px;color:#374151;line-height:1.9;">
+      AgentScope 的 Toolkit <strong>只认</strong>从 <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;">RuntimeToolSpec</code> 构建出来的工具。业务侧用平台自己的 <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;">@tool</code>（非 LangChain），经 Registry 变成 Spec，再包装进 <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;">AgentScopeRuntimeTool</code>。来源包括：静态 Python 工具、Generic API（配置型）、MCP 同步缓存、系统隐式工具（任务/时间等）。
+    </p>
+    <p style="margin:0 0 10px 0;font-size:15px;color:#374151;line-height:1.9;">
+      工具能不能执行，不单看「有没有挂上」——还要叠第 02 节那套：<strong>permission_scope / approval_mode / 只读白名单 / forbidden_tools·forbidden_commands</strong>。挂载白名单决定能力面；黑名单与审批决定执行瞬间是否放行。ASK 范围会触发 PermissionEngine → SSE <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;">permission_required</code> → <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;">POST /api/v1/chat/permissions/{id}/confirm</code> 续跑。
+    </p>
+  </section>
+
+  <section style="margin:0 0 16px 0;padding:14px 16px;background:#fef2f2;border:1px solid #fecaca;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:14px;font-weight:bold;color:#b91c1c;">ChatBI 为什么不能只靠 Prompt</p>
+    <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.8;">· <strong>SqlQueryBinding</strong>：表归属、字段、数据权限在 execute 前后同一份绑定校验</p>
+    <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.8;">· <strong>SQL Gate</strong>：未先取 Schema、危险 SQL、重复失败 SQL、性能沙箱等直接拦截，工具返回门禁文案而不是真执行</p>
+    <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.8;">· <strong>sql_plan</strong>：高风险查询可要求先产出平台可审计的结构化计划（前端卡片）</p>
+    <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.8;">· <strong>repair</strong>：SQL 报错 / 空结果可按策略再开一轮 reply_stream</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.8;">· <strong>Grounding</strong>：工具成功写入证据账本，会话级可审计 PASS / 告警 / 拦截无依据回答（与 SQL 硬门禁互补）</p>
+  </section>
+
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+
+  <!-- ========== 07 能力地图 ========== -->
+  <section style="margin:0 0 14px 0;">
+    <p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #0284c7;padding-left:12px;line-height:1.4;">08｜能力地图：后续连载各自打哪一块</p>
+  </section>
+
+  <section style="margin:0 0 16px 0;padding:14px 16px;background:#f0f9ff;border:1px solid #bae6fd;border-radius:10px;">
+    <p style="margin:0 0 6px 0;font-size:14px;color:#374151;line-height:1.75;">本篇只立骨架。首季 15 篇按这条线推进：</p>
+    <p style="margin:0 0 4px 0;font-size:13px;color:#374151;line-height:1.7;"><strong>01–02</strong> 定位 + RBAC/隔离/授权（本篇已覆盖）</p>
+    <p style="margin:0 0 4px 0;font-size:13px;color:#374151;line-height:1.7;"><strong>连载 02</strong> 部署依赖与二次开发入口（Docker / 源码 / db-prod）</p>
+    <p style="margin:0 0 4px 0;font-size:13px;color:#374151;line-height:1.7;"><strong>03</strong> 三类主类型创建与就绪门禁</p>
+    <p style="margin:0 0 4px 0;font-size:13px;color:#374151;line-height:1.7;"><strong>04</strong> ChatBI 全链路深潜（单篇）</p>
+    <p style="margin:0 0 4px 0;font-size:13px;color:#374151;line-height:1.7;"><strong>05–07</strong> 内置工具 · MCP · Skills</p>
+    <p style="margin:0 0 4px 0;font-size:13px;color:#374151;line-height:1.7;"><strong>08–09</strong> 通知通道 · APScheduler 任务中心</p>
+    <p style="margin:0 0 4px 0;font-size:13px;color:#374151;line-height:1.7;"><strong>10–11</strong> RAGFlow / OpenClaw · Embed + V1 API</p>
+    <p style="margin:0;font-size:13px;color:#374151;line-height:1.7;"><strong>12–15</strong> LTM · Grounding · Prompt/Trace · 工作台与场景包</p>
+  </section>
+
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+
+  <!-- ========== 08 边界 ========== -->
+  <section style="margin:0 0 14px 0;">
+    <p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #64748b;padding-left:12px;line-height:1.4;">09｜边界与诚实承诺</p>
+  </section>
+
+  <section style="margin:0 0 16px 0;padding:14px 16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:14px;color:#374151;line-height:1.85;">
+      · 本地路径是 <strong>AgentScope ReAct</strong>；外部引擎是代理，能力受对端版本与网络约束。<br/>
+      · 权限再细，也依赖<strong>运营正确授权</strong>：角色配错、数据集误授，护栏挡不住「有权限的错误人」。<br/>
+      · ChatBI 准确率上限由<strong>元数据与授权质量</strong>决定，护栏防的是越权与胡写 SQL，不是替你补齐错误口径。<br/>
+      · Grounding / 知识引用拦截能降低无依据输出，<strong>不能</strong>承诺零幻觉。<br/>
+      · 开源可二次开发：优先扩展 MCP、Generic API、Skills、Prompt 版本；新 Runner 需遵守门控契约，而不是在业务里硬耦 AgentScope 对象。
+    </p>
+  </section>
+
+  <!-- 下期 -->
+  <section style="margin:0 0 16px 0;padding:18px 16px;background:linear-gradient(135deg,#ecfdf5 0%,#f0f9ff 100%);border:1px solid #a7f3d0;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:16px;font-weight:bold;color:#064e3b;">📌 下期 · 02</p>
+    <p style="margin:0 0 8px 0;font-size:15px;color:#374151;line-height:1.85;">
+      <strong>从零装上 NanZi：依赖、部署与二次开发入口</strong>
+    </p>
+    <p style="margin:0;font-size:14px;color:#4b5563;line-height:1.85;">
+      对照本篇技术栈，走 Docker 离线包与源码联调两条路径：MySQL 初始化、Redis Stack、环境变量、Python≥3.11（AgentScope 要求）、以及「改哪里算扩展、改哪里算动运行时」。
+    </p>
+  </section>
+
+  <section style="margin:0 0 12px 0;padding:12px 16px;background:#f0fdf4;border-left:4px solid #10b981;border-radius:0 6px 6px 0;">
+    <p style="margin:0;font-size:14px;color:#065f46;line-height:1.8;">
+      仓库与设计原文：<a href="https://github.com/RandyChen1985/nanzi-ai-agent-platform" style="color:#059669;text-decoration:none;">GitHub</a>
+      · <code style="font-size:12px;background:#ecfdf5;padding:1px 4px;border-radius:3px;">architech/design/permission_design.md</code>
+      · <code style="font-size:12px;background:#ecfdf5;padding:1px 4px;border-radius:3px;">architech/design/AGENTSCOPE_RUNTIME.md</code>
+      · <code style="font-size:12px;background:#ecfdf5;padding:1px 4px;border-radius:3px;">openspec/specs/agentscope-core-integration</code>
+    </p>
+  </section>
+
+  <section style="margin:20px 0 0 0;padding:16px;text-align:center;background:#f9fafb;border-radius:8px;">
+    <p style="margin:0 0 4px 0;font-size:14px;color:#6b7280;">NanZi 实战连载 · 01（架构与运行时深度版）</p>
+    <p style="margin:0;font-size:13px;color:#9ca3af;">Connect Data. Orchestrate Intelligence.</p>
+  </section>
+
+</section>

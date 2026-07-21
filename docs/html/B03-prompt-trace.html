@@ -1,0 +1,58 @@
+<!--
+  微信公众号排版 HTML — NanZi 实战连载 · 第 B03 篇（深度修订）
+  使用说明：复制最外层 <section>…</section> 到公众号 HTML 模式
+-->
+<section style="box-sizing:border-box;font-size:16px;color:#3f3f3f;line-height:1.8;letter-spacing:0.5px;text-align:justify;font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue','PingFang SC','Hiragino Sans GB','Microsoft YaHei',Arial,sans-serif;">
+  <section style="margin:0 0 24px 0;padding:24px 16px;background:linear-gradient(135deg,#064e3b 0%,#022c22 48%,#111827 100%);border-radius:10px;text-align:center;box-shadow:0 4px 20px rgba(16,185,129,0.15);">
+    <p style="margin:0 0 6px 0;font-size:13px;color:#6ee7b7;letter-spacing:1px;">NanZi 开源智能体平台实战连载 · B03</p>
+    <p style="margin:0 0 10px 0;font-size:20px;font-weight:bold;color:#f8fafc;line-height:1.55;">Prompt 分层与 Trace</p>
+    <p style="margin:0;font-size:15px;color:#a7f3d0;line-height:1.6;">Studio · 轨迹字段 · 配额顺序 · 排障</p>
+  </section>
+  <section style="margin:0 0 20px 0;padding:14px 16px;background:#fafafa;border:1px solid #e5e7eb;border-radius:10px;">
+    <p style="margin:0 0 10px 0;font-size:15px;font-weight:bold;color:#111827;">项目声明</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">本项目为<strong>个人开源</strong>（MIT）。仓库：<a href="https://github.com/RandyChen1985/nanzi-ai-agent-platform" style="color:#059669;text-decoration:none;word-break:break-all;">RandyChen1985/nanzi-ai-agent-platform</a></p>
+  </section>
+  <section style="margin:0 0 12px 0;"><p style="margin:0;font-size:15px;color:#374151;line-height:1.9;">提示词分层 + Trace 观测，让「为什么这么答」可调试。配额在跑前拦截，Token 统计在中间件，历史落库后再喂下月配额。</p></section>
+  <section style="margin:0 0 16px 0;padding:12px 14px;background:#ecfeff;border-left:4px solid #0891b2;border-radius:0 8px 8px 0;"><p style="margin:0;font-size:14px;color:#0e7490;line-height:1.85;">Prompt Studio：/dashboard/prompts · API <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">/api/portal/prompts</code> · Trace <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">GET /api/v1/chat/logs/{{trace_id}}</code></p></section>
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+  <section style="margin:0 0 14px 0;"><p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #10b981;padding-left:12px;line-height:1.4;">01｜Prompt Studio 能改什么</p></section>
+  <section style="margin:0 0 12px 0;padding:14px 16px;background:#f0fdf4;border:1px solid #a7f3d0;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#065f46;line-height:1.5;">API</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;"><code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">GET /</code> 列表 · <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">GET /detail?source&target_id&version</code> · <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">POST /test</code> · <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">POST /save</code>（element:prompts:edit）· <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">POST /optimize</code> · <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">GET /history</code><br/>source：system_config | agent</p>
+  </section>
+  <section style="margin:0 0 12px 0;padding:14px 16px;background:#ecfeff;border:1px solid #a5f3fc;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#0e7490;line-height:1.5;">层的现实</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">历史上的 SYSTEM_PROMPT_REGISTRY 已空；Router / Intent 的 DEFAULT_SYSTEM_PROMPT 仍在代码层（RouterService / IntentService）<br/>Studio 主要编辑<strong>智能体</strong>系统提示（ai_agents / ai_agent_versions）。改完走版本发布，避免热改未发布草稿。</p>
+  </section>
+  <section style="margin:0 0 16px 0;padding:12px 14px;background:#fffbeb;border-left:4px solid #d97706;border-radius:0 8px 8px 0;"><p style="margin:0;font-size:14px;color:#92400e;line-height:1.85;">运行时还会叠：Skills 注入、LTM 画像、工具描述、用户消息——调试时对照 Trace 看实际进模型的轮次。</p></section>
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+  <section style="margin:0 0 14px 0;"><p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #0891b2;padding-left:12px;line-height:1.4;">02｜Trace 记什么</p></section>
+  <section style="margin:0 0 12px 0;padding:14px 16px;background:#f0fdf4;border:1px solid #a7f3d0;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#065f46;line-height:1.5;">AgentExecutionStep</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">step_number、event_type、agent_name、model、temperature、tool_name/input/output、raw_log、execution_time_ms、status、error_message、tokens、span_id/parent_span_id、meta_info、timestamp<br/>event_type 常见：router、agent_execution、tool_call、thought、synthesis、few_shot、model_call<br/>落库：AuditManager → AgentExecutionTrace + AgentExecutionHistory</p>
+  </section>
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+  <section style="margin:0 0 14px 0;"><p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #7c3aed;padding-left:12px;line-height:1.4;">03｜配额与统计顺序</p></section>
+  <section style="margin:0 0 12px 0;padding:14px 16px;background:#f0fdf4;border:1px solid #a7f3d0;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#065f46;line-height:1.5;">三段式</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">1）跑前 <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">QuotaService.check_before_call</code>：按月汇总 AgentExecutionHistory.total_tokens；超限 yield quota_exceeded 并 return<br/>解析顺序：admin → user → role → system<br/>2）跑中 <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">ModelCallStatsMiddleware</code> → Redis LIST <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">nanzi:{{uid}}:{{cid}}:model_call_stats</code><br/>3）跑后 save_history 写 tokens，供下月配额<br/>中间件<strong>只统计不写配额</strong></p>
+  </section>
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+  <section style="margin:0 0 14px 0;"><p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #d97706;padding-left:12px;line-height:1.4;">04｜排障顺序</p></section>
+  <section style="margin:0 0 12px 0;padding:14px 16px;background:#f0fdf4;border:1px solid #a7f3d0;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#065f46;line-height:1.5;">Checklist</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">1）版本是否发布、工具/Skills 是否勾选<br/>2）Trace 看工具是否调用、参数是否合法、哪步报错<br/>3）ChatBI 看 Gate 拒绝原因<br/>4）Grounding 警告是否误伤预期<br/>5）配额是否提前截断<br/>6）第三方引擎则查对端日志（本地 Trace 较薄）</p>
+  </section>
+  <section style="margin:0 0 16px 0;padding:12px 14px;background:#fef2f2;border-left:4px solid #ef4444;border-radius:0 8px 8px 0;"><p style="margin:0;font-size:14px;color:#7f1d1d;line-height:1.85;">不要把生产密钥写进 Prompt；敏感配置走后台与环境变量。</p></section>
+
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+  <section style="margin:0 0 16px 0;padding:18px 16px;background:linear-gradient(135deg,#ecfdf5 0%,#f0f9ff 100%);border:1px solid #a7f3d0;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:16px;font-weight:bold;color:#064e3b;">📌 下期预告</p>
+    <p style="margin:0 0 8px 0;font-size:15px;color:#374151;line-height:1.85;"><strong>工作台场景模板</strong></p>
+    <p style="margin:0;font-size:14px;color:#4b5563;line-height:1.85;">Workbench 模式与 8 个场景 ID。</p>
+  </section>
+  <section style="margin:20px 0 0 0;padding:16px;text-align:center;background:#f9fafb;border-radius:8px;">
+    <p style="margin:0 0 4px 0;font-size:14px;color:#6b7280;">NanZi 实战连载 · B03</p>
+    <p style="margin:0;font-size:13px;color:#9ca3af;">可调试，才可运营。</p>
+  </section>
+</section>

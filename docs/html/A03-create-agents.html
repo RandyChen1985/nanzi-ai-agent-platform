@@ -1,0 +1,78 @@
+<!--
+  微信公众号排版 HTML — NanZi 实战连载 · 第 03 篇（深度修订）
+  使用说明：复制最外层 <section>…</section> 到公众号 HTML 模式
+-->
+<section style="box-sizing:border-box;font-size:16px;color:#3f3f3f;line-height:1.8;letter-spacing:0.5px;text-align:justify;font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue','PingFang SC','Hiragino Sans GB','Microsoft YaHei',Arial,sans-serif;">
+  <section style="margin:0 0 24px 0;padding:24px 16px;background:linear-gradient(135deg,#064e3b 0%,#022c22 48%,#111827 100%);border-radius:10px;text-align:center;box-shadow:0 4px 20px rgba(16,185,129,0.15);">
+    <p style="margin:0 0 6px 0;font-size:13px;color:#6ee7b7;letter-spacing:1px;">NanZi 开源智能体平台实战连载 · 03</p>
+    <p style="margin:0 0 10px 0;font-size:20px;font-weight:bold;color:#f8fafc;line-height:1.55;">三种智能体怎么选？</p>
+    <p style="margin:0;font-size:15px;color:#a7f3d0;line-height:1.6;">类型 · 向导五步 · engine_config · 就绪门禁</p>
+  </section>
+  <section style="margin:0 0 20px 0;padding:14px 16px;background:#fafafa;border:1px solid #e5e7eb;border-radius:10px;">
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">本项目为<strong>个人开源</strong>（MIT）。<a href="https://github.com/RandyChen1985/nanzi-ai-agent-platform" style="color:#059669;text-decoration:none;word-break:break-all;">GitHub</a></p>
+  </section>
+  <section style="margin:0 0 12px 0;"><p style="margin:0;font-size:15px;color:#374151;line-height:1.9;">本篇按控制台真实流程讲：选型 → 版本向导五步 → 引擎配置字段 → 就绪门禁 missing 码 → 发布。不是「点几下就好了」的空教程。</p></section>
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+  <section style="margin:0 0 14px 0;"><p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #10b981;padding-left:12px;">01｜主类型与锁定能力</p></section>
+  <section style="margin:0 0 12px 0;padding:14px 16px;background:#f0fdf4;border:1px solid #a7f3d0;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:14px;font-weight:bold;color:#065f46;line-height:1.5;">三类枚举</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;"><code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">GENERAL</code>→<code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">general_chat</code>；<code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">CHATBI</code>→<code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">data_query</code>；<code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">KNOWLEDGE_BASE</code>→<code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">knowledge_base</code>。<br/><code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">normalize_agent_capabilities</code> 保证主能力在首位，扩展标签可追加但不能替换锁定项。存库字段：<code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">AIAgent.agent_type</code> + JSON <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">capabilities</code>。</p>
+  </section>
+  <section style="margin:0 0 16px 0;padding:12px 14px;background:#ecfeff;border-left:4px solid #0891b2;border-radius:0 8px 8px 0;"><p style="margin:0;font-size:14px;color:#0e7490;line-height:1.85;"><strong>引擎是另一轴：</strong><code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">LOCAL</code> / <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">RAGFLOW</code> / <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">OPENCLAW</code>。类型选错，工具挂再全也别扭。</p></section>
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+  <section style="margin:0 0 14px 0;"><p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #0891b2;padding-left:12px;">02｜版本配置向导（VersionConfigStep）</p></section>
+  <section style="margin:0 0 12px 0;padding:14px 16px;background:#f0fdf4;border:1px solid #a7f3d0;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:14px;font-weight:bold;color:#065f46;line-height:1.5;">五步</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">① <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">agent</code> 智能体信息 · ② <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">model</code> 模型策略 · ③ <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">tools</code> 工具能力 · ④ <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">prompt</code> 系统提示词 · ⑤ <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">review</code> 确认保存<br/><strong>新建 LOCAL</strong>：五步全走。<strong>编辑已有 LOCAL</strong>：从 model 起（不再改 agent 步）。<strong>新建 RAGFLOW/OPENCLAW</strong>：通常只走 agent（外部引擎不吃本地版本工具/提示词向导）。</p>
+  </section>
+  <section style="margin:0 0 12px 0;padding:14px 16px;background:#ecfeff;border:1px solid #a5f3fc;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:14px;font-weight:bold;color:#0e7490;line-height:1.5;">发布状态机</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">草稿保存 → <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">publishVersion</code> → 服务端 <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">evaluate_agent_readiness</code> → 旧 <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">PUBLISHED</code> 归档为 <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">ARCHIVED</code> → 目标版本 <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">PUBLISHED</code> → onboarding <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">COMPLETE</code>。LOCAL 运行时只认已发布版本上的模型/工具/提示词/Skills。</p>
+  </section>
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+  <section style="margin:0 0 14px 0;"><p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #7c3aed;padding-left:12px;">03｜engine_config 字段（按引擎）</p></section>
+  <section style="margin:0 0 12px 0;padding:14px 16px;background:#f0fdf4;border:1px solid #a7f3d0;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:14px;font-weight:bold;color:#065f46;line-height:1.5;">LOCAL</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">可选 <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">dataset_ids</code>（知识增强）、<code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">ragflow_similarity_threshold</code> / <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">ragflow_vector_weight</code>（运行时可能归一进 <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">rag_params</code>）。主能力靠类型锁定；问数工具在版本 tools 里勾。</p>
+  </section>
+  <section style="margin:0 0 12px 0;padding:14px 16px;background:#fffbeb;border:1px solid #fde68a;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:14px;font-weight:bold;color:#b45309;line-height:1.5;">RAGFLOW（必填 app_id）</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">必填 <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">app_id</code>；可选 dataset_ids、相似度/向量权重。Dispatcher → <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">RAGExecutor</code>，打 RAGFlow OpenAI 兼容 Agent 接口。</p>
+  </section>
+  <section style="margin:0 0 12px 0;padding:14px 16px;background:#faf5ff;border:1px solid #e9d5ff;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:14px;font-weight:bold;color:#6b21a8;line-height:1.5;">OPENCLAW（必填 base_url + model）</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">必填 <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">base_url</code>、<code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">model</code>（机器人 ID）；可选 <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">api_key</code>、<code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">safety_check_enabled</code>（默认开）、input/output prompt 与 strategy（默认 append）、<code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">stream</code> 等。→ <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">OpenClawExecutor</code>。</p>
+  </section>
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+  <section style="margin:0 0 14px 0;"><p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #d97706;padding-left:12px;">04｜就绪门禁 missing 码</p></section>
+  <section style="margin:0 0 12px 0;padding:14px 16px;background:#f0fdf4;border:1px solid #a7f3d0;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:14px;font-weight:bold;color:#065f46;line-height:1.5;">evaluate_agent_readiness</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">· <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">published_version</code> — 没有已发布版本<br/>· <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">primary_capability</code> — 缺锁定主能力<br/>· <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">data_query_tool</code> — CHATBI 未启用 <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">get_dataset_schema</code>/<code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">execute_sql_query</code> 任一<br/>· <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">knowledge_base_binding</code> — KB 的 <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">engine_config.dataset_ids</code> 为空<br/>· <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">knowledge_base_tool</code> — 未启用 <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">search_knowledge_base</code><br/><strong>同一套规则</strong>约束发布与 <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;">sub_agent_call</code> 委派。</p>
+  </section>
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+  <section style="margin:0 0 14px 0;"><p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #059669;padding-left:12px;">05｜三类最小可用 checklist</p></section>
+  <section style="margin:0 0 12px 0;padding:14px 16px;background:#f0fdf4;border:1px solid #a7f3d0;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:14px;font-weight:bold;color:#065f46;line-height:1.5;">GENERAL</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">发布版 + general_chat。实战再挂通知/办公/HTTP/任务；主助手开工具预检与 Skill 扫描。</p>
+  </section>
+  <section style="margin:0 0 12px 0;padding:14px 16px;background:#fffbeb;border:1px solid #fde68a;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:14px;font-weight:bold;color:#b45309;line-height:1.5;">CHATBI</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">发布版 + data_query + 问数工具 + 数据源/元数据/数据集授权。门户 /dataset_portal。护栏见第 04 篇。</p>
+  </section>
+  <section style="margin:0 0 12px 0;padding:14px 16px;background:#ecfeff;border:1px solid #a5f3fc;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:14px;font-weight:bold;color:#0e7490;line-height:1.5;">KNOWLEDGE_BASE</p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">发布版 + knowledge_base + dataset_ids + search_knowledge_base。菜单权≠全库可读。</p>
+  </section>
+  <section style="margin:0 0 16px 0;padding:12px 14px;background:#fef2f2;border-left:4px solid #ef4444;border-radius:0 8px 8px 0;"><p style="margin:0;font-size:14px;color:#7f1d1d;line-height:1.85;"><strong>十分钟验收：</strong>通用能触发已挂工具；ChatBI 简单计数 Trace 见 schema/SQL；知识库回答带引用。再叠 MCP/Skills。</p></section>
+
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+  <section style="margin:0 0 16px 0;padding:18px 16px;background:linear-gradient(135deg,#ecfdf5 0%,#f0f9ff 100%);border:1px solid #a7f3d0;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:16px;font-weight:bold;color:#064e3b;">📌 下期预告</p>
+    <p style="margin:0 0 8px 0;font-size:15px;color:#374151;line-height:1.85;"><strong>深入 ChatBI</strong></p>
+    <p style="margin:0;font-size:14px;color:#4b5563;line-height:1.85;">分诊枚举、SQL 门禁前缀、Binding、计划、结果栈与交付。</p>
+  </section>
+  <section style="margin:20px 0 0 0;padding:16px;text-align:center;background:#f9fafb;border-radius:8px;">
+    <p style="margin:0 0 4px 0;font-size:14px;color:#6b7280;">NanZi 实战连载 · 03</p>
+    <p style="margin:0;font-size:13px;color:#9ca3af;">选型与门禁对齐代码，再谈编排。</p>
+  </section>
+</section>
