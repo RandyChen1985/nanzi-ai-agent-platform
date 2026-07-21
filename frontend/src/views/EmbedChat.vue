@@ -676,7 +676,7 @@
                         <div
                           class="rounded-lg p-2 text-xs transition-all duration-300 cursor-pointer"
                           :class="{
-                             'bg-blue-50/50 dark:bg-blue-900/15 border border-blue-100/80 dark:border-blue-800/40 shadow-sm': isActiveThoughtStep(log, msg.isThinking),
+                             'bg-blue-50/50 dark:bg-blue-900/15 border border-blue-100/80 dark:border-blue-800/40 shadow-sm animate-pulse-subtle': isActiveThoughtStep(log, msg.isThinking),
                              'bg-transparent hover:bg-gray-50 dark:hover:bg-gray-700/30': log.status !== 'error' && !isActiveThoughtStep(log, msg.isThinking),
                              'bg-red-50/30 hover:bg-red-50/50 dark:bg-red-900/10 dark:hover:bg-red-900/20 border border-red-100 dark:border-red-900/30': log.status === 'error'
                           }"
@@ -706,7 +706,7 @@
                                >🔒</span>
                                <span
                                  v-if="isActiveThoughtStep(log, msg.isThinking)"
-                                 class="inline-flex items-center px-1 sm:px-1.5 py-px sm:py-0.5 rounded text-[8px] sm:text-[9px] font-bold uppercase tracking-wide text-primary bg-primary/10 border border-primary/20 scale-90 sm:scale-100 origin-center"
+                                 class="inline-flex items-center px-1 sm:px-1.5 py-px sm:py-0.5 rounded text-[8px] sm:text-[9px] font-bold uppercase tracking-wide text-primary bg-primary/10 border border-primary/20 scale-90 sm:scale-100 origin-center animate-pulse"
                                >
                                  进行中
                                </span>
@@ -721,7 +721,7 @@
                              <div class="flex items-center gap-2 flex-shrink-0">
                                <span
                                  v-if="formatLogDuration(log, getDisplayLogs(msg))"
-                                 class="text-[10px] font-mono text-gray-400 dark:text-gray-500"
+                                 class="w-12 text-right justify-end inline-flex text-[10px] font-mono text-gray-400 dark:text-gray-500 flex-shrink-0"
                                  :title="log.status === 'pending' ? '当前步骤已等待时间' : '当前步骤耗时'"
                                >
                                  {{ formatLogDuration(log, getDisplayLogs(msg)) }}
@@ -734,7 +734,16 @@
                                >
                                  <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012-2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3" /></svg>
                                </button>
-                               <svg v-if="log.details" class="w-3 h-3 text-gray-400 transition-transform" :class="{ 'rotate-180': log.isExpanded }" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" /></svg>
+                               <svg
+                                 v-if="log.details"
+                                 class="w-3 h-3 text-gray-400 transition-all duration-200 group-hover/log:opacity-100"
+                                 :class="{ 'rotate-180': log.isExpanded, 'opacity-100': log.isExpanded, 'opacity-0': !log.isExpanded }"
+                                 fill="none"
+                                 stroke="currentColor"
+                                 viewBox="0 0 24 24"
+                               >
+                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+                               </svg>
                              </div>
                           </div>                          <!-- Details -->
                           <div v-if="log.details && log.isExpanded" class="mt-2 pt-2 border-t border-gray-100 dark:border-gray-700/50">
@@ -2726,7 +2735,7 @@ function getSkillFlowBadgesForMessage(msg: Message, allMessages: Message[]): Ski
 
 const formatDurationMs = (durationMs?: number | null): string => {
   if (durationMs === undefined || durationMs === null || Number.isNaN(durationMs)) return "";
-  if (durationMs < 1000) return `${Math.max(1, Math.round(durationMs))}ms`;
+  if (durationMs < 100) return "<0.1s";
   return `${(durationMs / 1000).toFixed(1)}s`;
 };
 
@@ -6818,6 +6827,19 @@ onUnmounted(() => {
   }
 }
 */
+
+/* 思维链局部温和呼吸动效 */
+@keyframes pulse-subtle {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.65;
+  }
+}
+.animate-pulse-subtle {
+  animation: pulse-subtle 3s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
 
 .custom-table-render :deep(table) {
   width: 100%;
