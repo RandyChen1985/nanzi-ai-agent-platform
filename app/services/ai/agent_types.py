@@ -18,6 +18,21 @@ LOCKED_CAPABILITY_BY_TYPE = {
 
 PRIMARY_CAPABILITIES = frozenset(LOCKED_CAPABILITY_BY_TYPE.values())
 
+EXTERNAL_ENGINE_TYPES = frozenset({"RAGFLOW", "OPENCLAW"})
+
+
+def _normalize_engine_type(engine_type: AgentType | str | None) -> str:
+    return str(getattr(engine_type, "value", engine_type) or "LOCAL").strip().upper()
+
+
+def resolve_agent_type_for_engine(
+    engine_type: AgentType | str | None,
+    agent_type: AgentType | str,
+) -> AgentType:
+    """RAGFlow / OpenClaw 固定为通用助手主类型。"""
+    if _normalize_engine_type(engine_type) in EXTERNAL_ENGINE_TYPES:
+        return AgentType.GENERAL
+    return AgentType(agent_type)
 
 def resolve_agent_type(agent: object) -> AgentType:
     """Resolve persisted type with compatibility for pre-migration records."""
@@ -55,3 +70,13 @@ def normalize_agent_capabilities(
         }
     )
     return [LOCKED_CAPABILITY_BY_TYPE[normalized_type], *extensions]
+
+
+def normalize_agent_capabilities_for_agent(
+    *,
+    engine_type: AgentType | str | None,
+    agent_type: AgentType | str,
+    values: Iterable[str] | None,
+) -> list[str]:
+    resolved_type = resolve_agent_type_for_engine(engine_type, agent_type)
+    return normalize_agent_capabilities(resolved_type, values)

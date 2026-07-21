@@ -409,6 +409,38 @@ async def _scheduled_task_wrapper(task_id: int, is_manual: bool = False):
                     if _should_alert_failure(metrics):
                         await _send_task_failure_alert(task.user_id, task, trace_id=trace_id, error=error, metrics=metrics)
                 return
+
+            notification_channels = channels_from_task_config(_task_config(task))
+            if notification_channels:
+                from app.services.task_notification_delivery import ensure_task_notification_deliveries
+
+                await asyncio.sleep(0.5)
+                delivery_ok, delivery_notes = await ensure_task_notification_deliveries(
+                    session,
+                    user_id=task.user_id,
+                    task_name=task.name,
+                    channels=notification_channels,
+                    trace_id=trace_id,
+                    content=str(result.get("content") or ""),
+                )
+                logger.info(
+                    "📬 Task %s notification delivery trace=%s ok=%s notes=%s",
+                    task_id,
+                    trace_id,
+                    delivery_ok,
+                    delivery_notes,
+                )
+                if not delivery_ok:
+                    error = (
+                        "任务已生成结果，但结果通知未全部送达："
+                        + "; ".join(delivery_notes)
+                    )
+                    metrics = await _mark_task_failure(session, task, trace_id=trace_id, error=error)
+                    if _should_alert_failure(metrics):
+                        await _send_task_failure_alert(
+                            task.user_id, task, trace_id=trace_id, error=error, metrics=metrics
+                        )
+                    return
             
             # 5. Update Task Metadata (Atomic update)
             await session.execute(

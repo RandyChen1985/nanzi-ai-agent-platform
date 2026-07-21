@@ -119,16 +119,40 @@ const showAgentTypeHelp = ref(false);
 const showEngineHelp = ref(false);
 const showCapabilityHelp = ref(false);
 const primaryCapabilities = new Set(['general_chat', 'data_query', 'knowledge_base']);
-const extensionCapabilities = computed(() =>
-  (props.agentForm.capabilities || []).filter((item) => !primaryCapabilities.has(item))
+const isExternalEngine = (engineType?: string | null) =>
+  engineType === 'RAGFLOW' || engineType === 'OPENCLAW';
+const normalizeCapabilitiesForForm = (
+  agentType: AgentType,
+  capabilities: string[] | undefined,
+  engineType?: string | null,
+) => {
+  const locked =
+    engineType === 'RAGFLOW' || engineType === 'OPENCLAW'
+      ? 'general_chat'
+      : agentType === 'CHATBI'
+        ? 'data_query'
+        : agentType === 'KNOWLEDGE_BASE'
+          ? 'knowledge_base'
+          : 'general_chat';
+  const extension = (capabilities || []).filter((item) => !primaryCapabilities.has(item));
+  return [locked, ...extension];
+};
+const supportsCapabilityTags = computed(
+  () =>
+    props.agentForm.engine_type === 'LOCAL'
+    || props.agentForm.engine_type === 'RAGFLOW'
+    || props.agentForm.engine_type === 'OPENCLAW',
 );
-const lockedPrimaryCapability = computed(() =>
-  props.agentForm.agent_type === 'CHATBI'
+const lockedPrimaryCapability = computed(() => {
+  if (isExternalEngine(props.agentForm.engine_type)) {
+    return 'general_chat';
+  }
+  return props.agentForm.agent_type === 'CHATBI'
     ? 'data_query'
     : props.agentForm.agent_type === 'KNOWLEDGE_BASE'
       ? 'knowledge_base'
-      : 'general_chat'
-);
+      : 'general_chat';
+});
 const addCapability = () => {
   const value = newCapability.value.trim();
   if (!value || (props.agentForm.capabilities || []).includes(value)) return;
@@ -142,9 +166,16 @@ const selectEngine = (value: 'LOCAL' | 'RAGFLOW' | 'OPENCLAW') => {
   props.agentForm.engine_type = value;
   if (value !== 'LOCAL') {
     props.agentForm.agent_type = 'GENERAL';
-    props.agentForm.capabilities = ['general_chat'];
   }
+  props.agentForm.capabilities = normalizeCapabilitiesForForm(
+    props.agentForm.agent_type || 'GENERAL',
+    props.agentForm.capabilities,
+    value,
+  );
 };
+const extensionCapabilities = computed(() =>
+  (props.agentForm.capabilities || []).filter((item) => !primaryCapabilities.has(item))
+);
 const builtInEngineCapabilities = computed(() =>
   props.agentForm.engine_type === 'RAGFLOW'
     ? ['RAGFlow 远程智能体调用', '工作流执行', '流式对话', ...(engineConfig.value.dataset_ids?.length ? ['知识库检索'] : [])]
@@ -324,6 +355,15 @@ const externalCreationMissingFields = computed(() => {
               </div>
               <div v-else class="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-700">当前类型：<span class="font-semibold">{{ agentTypes.find((item) => item.value === agentForm.agent_type)?.label }}</span><span class="ml-2 font-mono text-xs text-gray-500">{{ lockedPrimaryCapability }}</span></div>
             </div>
+            <div
+              v-else-if="agentForm.engine_type === 'RAGFLOW' || agentForm.engine_type === 'OPENCLAW'"
+              class="rounded-lg border border-blue-100 bg-blue-50 px-3 py-2 text-xs text-gray-600"
+            >
+              <div class="font-semibold text-gray-800">智能体类型：通用助手</div>
+              <p class="mt-1 leading-5">
+                外部引擎固定主能力为 <span class="font-mono">general_chat</span>，可在下方补充扩展能力标签。
+              </p>
+            </div>
             <div>
               <label class="block text-sm font-medium text-gray-700 mb-1">描述信息</label>
               <textarea v-model="agentForm.description" rows="4" placeholder="说明它负责什么业务，以及适合处理哪些问题。" class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/30"></textarea>
@@ -354,7 +394,7 @@ const externalCreationMissingFields = computed(() => {
                 <p class="mt-2 text-[10px] leading-4 text-emerald-700/70">由所选引擎直接提供，无需在后续工具或扩展标签中重复配置。</p>
               </div>
             </div>
-            <div v-if="agentForm.engine_type === 'LOCAL'" class="rounded-xl border border-gray-200 p-4">
+            <div v-if="supportsCapabilityTags" class="rounded-xl border border-gray-200 p-4">
               <div class="flex items-center gap-1.5">
                 <label class="text-sm font-bold text-gray-800">扩展能力标签</label>
                 <button

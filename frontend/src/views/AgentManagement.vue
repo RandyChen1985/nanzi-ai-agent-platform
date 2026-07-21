@@ -190,6 +190,41 @@ const AGENT_TYPE_OPTIONS = [
 const lockedCapabilityForType = (agentType: AgentType) =>
   AGENT_TYPE_OPTIONS.find((option) => option.value === agentType)?.capability ||
   "general_chat";
+const isExternalEngine = (engineType?: string | null) =>
+  engineType === "RAGFLOW" || engineType === "OPENCLAW";
+const normalizeAgentCapabilities = (
+  agentType: AgentType,
+  capabilities: string[] | undefined,
+  engineType?: string | null,
+) => {
+  const locked = isExternalEngine(engineType)
+    ? "general_chat"
+    : lockedCapabilityForType(agentType);
+  const extensions = (capabilities || []).filter(
+    (capability) => !primaryCapabilities.has(capability as any),
+  );
+  return [locked, ...extensions];
+};
+const lockedCapabilityForForm = computed(() => {
+  if (isExternalEngine(agentForm.value.engine_type)) {
+    return "general_chat";
+  }
+  return lockedCapabilityForType(agentForm.value.agent_type || "GENERAL");
+});
+const supportsCapabilityTags = computed(() =>
+  ["LOCAL", "RAGFLOW", "OPENCLAW"].includes(agentForm.value.engine_type || "LOCAL"),
+);
+const selectEngineType = (engineType: "LOCAL" | "RAGFLOW" | "OPENCLAW") => {
+  agentForm.value.engine_type = engineType;
+  if (isExternalEngine(engineType)) {
+    agentForm.value.agent_type = "GENERAL";
+  }
+  agentForm.value.capabilities = normalizeAgentCapabilities(
+    agentForm.value.agent_type || "GENERAL",
+    agentForm.value.capabilities,
+    engineType,
+  );
+};
 const primaryCapabilities = new Set(
   AGENT_TYPE_OPTIONS.map((option) => option.capability),
 );
@@ -998,6 +1033,14 @@ const openAgentModal = (agent?: AIAgent) => {
       engine_type: agent.engine_type || "LOCAL",
       engine_config: agent.engine_config || null,
     };
+    if (isExternalEngine(agentForm.value.engine_type)) {
+      agentForm.value.agent_type = "GENERAL";
+    }
+    agentForm.value.capabilities = normalizeAgentCapabilities(
+      agentForm.value.agent_type,
+      agentForm.value.capabilities,
+      agentForm.value.engine_type,
+    );
 
     // Parse Engine Config for UI
     if (agent.engine_config) {
@@ -1085,7 +1128,11 @@ const saveAgent = async (exitAfterSave = false) => {
   }
   if (agentForm.value.engine_type === 'RAGFLOW' || agentForm.value.engine_type === 'OPENCLAW') {
     agentForm.value.agent_type = 'GENERAL';
-    agentForm.value.capabilities = ['general_chat'];
+    agentForm.value.capabilities = normalizeAgentCapabilities(
+      'GENERAL',
+      agentForm.value.capabilities,
+      agentForm.value.engine_type,
+    );
   }
 
   // Sync UI to Engine Config
@@ -1418,7 +1465,11 @@ const openPreview = (agent: AIAgent) => {
 
 const createExternalEngineAgent = async () => {
   agentForm.value.agent_type = 'GENERAL';
-  agentForm.value.capabilities = ['general_chat'];
+  agentForm.value.capabilities = normalizeAgentCapabilities(
+    'GENERAL',
+    agentForm.value.capabilities,
+    agentForm.value.engine_type,
+  );
   const created = await agentApi.createAgent(agentForm.value);
   selectedAgent.value = created.data;
   isCreatingAgent.value = false;
@@ -2945,7 +2996,7 @@ const formatSkillCountLabel = (agent: AIAgent) => {
           <div v-if="!isEditingAgent" class="mt-3 grid grid-cols-3 gap-3">
             <!-- Local LLM Card -->
             <div
-              @click="agentForm.engine_type = 'LOCAL'"
+              @click="selectEngineType('LOCAL')"
               class="relative flex flex-col items-center p-3 rounded-xl border-2 transition-all cursor-pointer group"
               :class="agentForm.engine_type === 'LOCAL' ? 'bg-blue-50 border-blue-500 shadow-sm' : 'bg-white border-gray-100 hover:border-blue-200'"
             >
@@ -2959,7 +3010,7 @@ const formatSkillCountLabel = (agent: AIAgent) => {
 
             <!-- RAGFlow Card -->
             <div
-              @click="agentForm.engine_type = 'RAGFLOW'"
+              @click="selectEngineType('RAGFLOW')"
               class="relative flex flex-col items-center p-3 rounded-xl border-2 transition-all cursor-pointer group"
               :class="agentForm.engine_type === 'RAGFLOW' ? 'bg-indigo-50 border-indigo-500 shadow-sm' : 'bg-white border-gray-100 hover:border-indigo-200'"
             >
@@ -2973,7 +3024,7 @@ const formatSkillCountLabel = (agent: AIAgent) => {
 
             <!-- OpenClaw Card -->
             <div
-              @click="agentForm.engine_type = 'OPENCLAW'"
+              @click="selectEngineType('OPENCLAW')"
               class="relative flex flex-col items-center p-3 rounded-xl border-2 transition-all cursor-pointer group"
               :class="agentForm.engine_type === 'OPENCLAW' ? 'bg-orange-50 border-orange-500 shadow-sm' : 'bg-white border-gray-100 hover:border-orange-200'"
             >
@@ -3324,7 +3375,17 @@ const formatSkillCountLabel = (agent: AIAgent) => {
           </div>
         </div>
 
-        <div v-if="agentForm.engine_type === 'LOCAL'" class="rounded-xl border border-gray-200 p-4">
+        <div
+          v-else-if="agentForm.engine_type === 'RAGFLOW' || agentForm.engine_type === 'OPENCLAW'"
+          class="rounded-lg border border-blue-100 bg-blue-50 px-3 py-2 text-xs text-gray-600"
+        >
+          <div class="font-semibold text-gray-800">智能体类型：通用助手</div>
+          <p class="mt-1 leading-5">
+            RAGFlow / OpenClaw 引擎固定为通用类型（<span class="font-mono">general_chat</span>），可在下方补充扩展能力标签用于自动路由与委派。
+          </p>
+        </div>
+
+        <div v-if="supportsCapabilityTags" class="rounded-xl border border-gray-200 p-4">
           <div class="flex items-center gap-1.5">
             <label class="text-sm font-bold text-gray-800">扩展能力标签</label>
             <button
@@ -3339,7 +3400,7 @@ const formatSkillCountLabel = (agent: AIAgent) => {
           <div class="mt-3 rounded-lg border border-blue-100 bg-blue-50/70 px-3 py-2">
             <div class="text-[10px] font-bold uppercase tracking-wider text-blue-600">系统内置标签</div>
             <span class="mt-2 inline-flex items-center rounded-full border border-blue-200 bg-white px-2.5 py-1 font-mono text-xs font-semibold text-blue-700">
-              🔒 {{ lockedCapabilityForType(agentForm.agent_type) }}
+              🔒 {{ lockedCapabilityForForm }}
             </span>
           </div>
           <div class="mt-3 flex items-center space-x-2">

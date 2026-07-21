@@ -101,8 +101,6 @@ class AgentManagerService:
         onboarding_key: str,
         user: Any = None,
     ) -> AgentOnboardingResult:
-        from app.services.ai.agent_types import normalize_agent_capabilities
-
         if isinstance(user, dict):
             created_by = user.get("user_name")
             is_admin = user.get("role", "") == "admin"
@@ -139,14 +137,24 @@ class AgentManagerService:
             raise HTTPException(status_code=400, detail=f"Agent with ID/Name '{data.name}' already exists.")
 
         template = await AgentManagerService._resolve_onboarding_template(session, data.agent_type)
+        from app.services.ai.agent_types import (
+            normalize_agent_capabilities_for_agent,
+            resolve_agent_type_for_engine,
+        )
+
+        resolved_agent_type = resolve_agent_type_for_engine(data.engine_type, data.agent_type)
         agent = AIAgent(
             id=str(uuid.uuid4()),
             name=data.name,
             display_name=data.display_name,
             description=data.description,
             avatar_url=data.avatar_url,
-            capabilities=normalize_agent_capabilities(data.agent_type, data.capabilities),
-            agent_type=data.agent_type.value,
+            capabilities=normalize_agent_capabilities_for_agent(
+                engine_type=data.engine_type,
+                agent_type=resolved_agent_type,
+                values=data.capabilities,
+            ),
+            agent_type=resolved_agent_type.value,
             onboarding_key=onboarding_key,
             onboarding_step="VERSION",
             is_system=data.is_system if is_admin and data.is_system is not None else False,
@@ -637,16 +645,24 @@ class AgentManagerService:
             from fastapi import HTTPException
             raise HTTPException(status_code=400, detail=f"Agent with ID/Name '{data.name}' already exists.")
 
-        from app.services.ai.agent_types import normalize_agent_capabilities
+        from app.services.ai.agent_types import (
+            normalize_agent_capabilities_for_agent,
+            resolve_agent_type_for_engine,
+        )
 
+        resolved_agent_type = resolve_agent_type_for_engine(data.engine_type, data.agent_type)
         agent = AIAgent(
             id=str(uuid.uuid4()),
             name=data.name,
             display_name=data.display_name,
             description=data.description,
             avatar_url=data.avatar_url,
-            capabilities=normalize_agent_capabilities(data.agent_type, data.capabilities),
-            agent_type=data.agent_type.value,
+            capabilities=normalize_agent_capabilities_for_agent(
+                engine_type=data.engine_type,
+                agent_type=resolved_agent_type,
+                values=data.capabilities,
+            ),
+            agent_type=resolved_agent_type.value,
             is_system=data.is_system if is_admin and data.is_system is not None else False,
             sort_order=data.sort_order if data.sort_order is not None else 0,
             is_enabled=data.is_enabled if data.is_enabled is not None else True,
@@ -727,13 +743,21 @@ class AgentManagerService:
         agent.display_name = data.display_name
         agent.description = data.description
         agent.avatar_url = data.avatar_url
-        from app.services.ai.agent_types import normalize_agent_capabilities
+        from app.services.ai.agent_types import (
+            normalize_agent_capabilities_for_agent,
+            resolve_agent_type_for_engine,
+        )
 
         # Primary type defines runtime gates and delegation semantics. It is
-        # immutable after creation; only extension capabilities may be edited.
+        # immutable after creation for LOCAL engines; RAGFlow/OpenClaw stay GENERAL.
         original_agent_type = agent.agent_type or "GENERAL"
-        agent.agent_type = original_agent_type
-        agent.capabilities = normalize_agent_capabilities(original_agent_type, data.capabilities)
+        resolved_agent_type = resolve_agent_type_for_engine(agent.engine_type, original_agent_type)
+        agent.agent_type = resolved_agent_type.value
+        agent.capabilities = normalize_agent_capabilities_for_agent(
+            engine_type=agent.engine_type,
+            agent_type=resolved_agent_type,
+            values=data.capabilities,
+        )
         agent.sort_order = data.sort_order if data.sort_order is not None else agent.sort_order
         
         if is_admin and data.is_system is not None:

@@ -223,7 +223,9 @@ def test_creation_flow_is_engine_first_and_external_engines_skip_versions():
     assert "内置能力" in drawer
     assert "RAGFlow 远程智能体调用" in drawer
     assert "OpenClaw 远程任务执行" in drawer
-    assert "v-if=\"agentForm.engine_type === 'LOCAL'\"" in drawer
+    assert "supportsCapabilityTags" in drawer
+    assert "supportsCapabilityTags" in source
+    assert "normalizeAgentCapabilities" in source
 
 
 def test_external_engine_creation_requires_parameters_before_save():

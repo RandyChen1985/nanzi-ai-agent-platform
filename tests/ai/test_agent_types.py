@@ -4,7 +4,9 @@ import pytest
 from app.services.ai.agent_types import (
     AgentType,
     normalize_agent_capabilities,
+    normalize_agent_capabilities_for_agent,
     resolve_agent_type,
+    resolve_agent_type_for_engine,
 )
 
 pytestmark = pytest.mark.no_infrastructure
@@ -39,3 +41,12 @@ def test_legacy_knowledge_agent_type_is_inferred_from_name():
     )
 
     assert resolve_agent_type(agent) is AgentType.KNOWLEDGE_BASE
+
+
+def test_external_engine_forces_general_type_and_general_chat():
+    assert resolve_agent_type_for_engine("RAGFLOW", AgentType.CHATBI) is AgentType.GENERAL
+    assert normalize_agent_capabilities_for_agent(
+        engine_type="OPENCLAW",
+        agent_type=AgentType.CHATBI,
+        values=["data_query", "contract_review"],
+    ) == ["general_chat", "contract_review"]

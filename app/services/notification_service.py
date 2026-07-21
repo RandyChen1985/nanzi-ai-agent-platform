@@ -161,7 +161,7 @@ class NotificationService:
                 "msgtype": "markdown",
                 "markdown": {
                     "title": "消息通知连通性测试",
-                    "text": "### 消息通知连通性测试\n\n您的云书 AI 智能体平台个人中心钉钉通知渠道已配置成功，测试消息发送正常。"
+                    "text": "### 消息通知连通性测试\n\n您的AI 智能体平台个人中心钉钉通知渠道已配置成功，测试消息发送正常。"
                 }
             }
 
@@ -185,7 +185,7 @@ class NotificationService:
             payload = {
                 "msgtype": "markdown",
                 "markdown": {
-                    "content": "### 消息通知连通性测试\n\n您的云书 AI 智能体平台个人中心企业微信通知渠道已配置成功，测试消息发送正常。"
+                    "content": "### 消息通知连通性测试\n\n您的AI 智能体平台个人中心企业微信通知渠道已配置成功，测试消息发送正常。"
                 }
             }
             async with httpx.AsyncClient(timeout=10.0) as client:
@@ -219,9 +219,9 @@ class NotificationService:
                 msg = MIMEMultipart()
                 msg['From'] = formataddr((sender_name, smtp_user))
                 msg['To'] = smtp_user
-                msg['Subject'] = "云书 AI 智能体平台 - 邮件通知连通性测试"
+                msg['Subject'] = "AI 智能体平台 - 邮件通知连通性测试"
                 
-                content = "这是一封来自云书 AI 智能体平台的测试邮件，表明您的邮件通知通道配置已测试成功。"
+                content = "这是一封来自AI 智能体平台的测试邮件，表明您的邮件通知通道配置已测试成功。"
                 msg.attach(MIMEText(content, 'plain', 'utf-8'))
 
                 if smtp_port == 465:
