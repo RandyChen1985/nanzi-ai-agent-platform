@@ -655,6 +655,23 @@
                     </div>
 
                     <div class="relative ml-2 pl-4 py-2 space-y-1.5 border-l border-gray-200 dark:border-gray-700/50">
+                      <!-- 骨架屏占位 (响应初期的等待动效) -->
+                      <div
+                        v-if="msg.isThinking && (!msg.logs || getDisplayLogs(msg).length === 0)"
+                        class="space-y-3 py-1.5 animate-pulse"
+                      >
+                        <div class="flex items-center gap-3">
+                          <div class="h-4.5 w-4.5 rounded-full bg-gray-200 dark:bg-gray-700 flex-shrink-0"></div>
+                          <div class="h-3 w-28 rounded bg-gray-200 dark:bg-gray-700"></div>
+                          <div class="ml-auto h-3 w-8 rounded bg-gray-200 dark:bg-gray-700"></div>
+                        </div>
+                        <div class="flex items-center gap-3 opacity-50">
+                          <div class="h-4.5 w-4.5 rounded-full bg-gray-200 dark:bg-gray-700 flex-shrink-0"></div>
+                          <div class="h-3 w-36 rounded bg-gray-200 dark:bg-gray-700"></div>
+                          <div class="ml-auto h-3 w-8 rounded bg-gray-200 dark:bg-gray-700"></div>
+                        </div>
+                      </div>
+
                       <div
                         v-for="(log, idx) in getDisplayLogs(msg)"
                         :key="idx"
@@ -683,12 +700,17 @@
                           @click="log.details ? (log.isExpanded = !log.isExpanded) : null"
                         >
                           <div class="flex items-center justify-between gap-2">
-                             <div class="font-medium flex items-center gap-2 flex-1 min-w-0"
-                                  :class="{
-                                    'text-red-700 dark:text-red-400': log.status === 'error',
-                                    'text-gray-800 dark:text-gray-100': isActiveThoughtStep(log, msg.isThinking),
-                                    'text-gray-700 dark:text-gray-300': !isActiveThoughtStep(log, msg.isThinking) && log.status !== 'error',
-                                  }">
+                             <div class="flex items-center gap-2 flex-1 min-w-0"
+                                  :class="[
+                                    isTechnicalLogStep(log)
+                                      ? 'text-[11px] font-normal text-gray-500/90 dark:text-gray-400/90'
+                                      : 'font-medium',
+                                    {
+                                      'text-red-700 dark:text-red-400': log.status === 'error',
+                                      'text-gray-800 dark:text-gray-100': isActiveThoughtStep(log, msg.isThinking) && !isTechnicalLogStep(log),
+                                      'text-gray-700 dark:text-gray-300': !isActiveThoughtStep(log, msg.isThinking) && log.status !== 'error' && !isTechnicalLogStep(log),
+                                    }
+                                  ]">
                                <!-- Semantic Icon -->
                                <span class="flex h-3.5 w-3.5 flex-shrink-0 items-center justify-center" :class="{ 'animate-pulse': log.status === 'pending' }">
                                  <template v-if="log.status === 'error'">⚠️</template>
@@ -721,7 +743,8 @@
                              <div class="flex items-center gap-2 flex-shrink-0">
                                <span
                                  v-if="formatLogDuration(log, getDisplayLogs(msg))"
-                                 class="w-12 text-right justify-end inline-flex text-[10px] font-mono text-gray-400 dark:text-gray-500 flex-shrink-0"
+                                 class="w-12 text-right justify-end inline-flex text-[10px] font-mono flex-shrink-0"
+                                 :class="getLogDurationColor(log, getDisplayLogs(msg))"
                                  :title="log.status === 'pending' ? '当前步骤已等待时间' : '当前步骤耗时'"
                                >
                                  {{ formatLogDuration(log, getDisplayLogs(msg)) }}
@@ -2751,6 +2774,32 @@ const formatLogDuration = (log: LogEntry, allLogs?: LogEntry[]): string => {
   }
   return "";
 };
+
+const isTechnicalLogStep = (log: LogEntry): boolean => {
+  return log.category === 'tool' || log.category === 'sql' || log.category === 'permission';
+};
+
+const getLogDurationColor = (log: LogEntry, allLogs?: LogEntry[]): string => {
+  let ms = 0;
+  if (log.execution_time_ms !== undefined && log.execution_time_ms !== null) {
+    ms = log.execution_time_ms;
+  } else if (log.elapsed_time_ms !== undefined && log.elapsed_time_ms !== null) {
+    ms = log.elapsed_time_ms;
+  } else if (isLiveThoughtStepTimer(log, allLogs || []) && log.started_at) {
+    ms = Date.now() - log.started_at;
+  } else {
+    return "text-gray-400 dark:text-gray-500";
+  }
+
+  if (ms < 500) {
+    return "text-emerald-500/80 dark:text-emerald-400/70";
+  } else if (ms < 2000) {
+    return "text-gray-400 dark:text-gray-500";
+  } else {
+    return "text-amber-500 dark:text-amber-400 font-medium";
+  }
+};
+
 // Helper: Format Timestamp for Bubbles (Smart Date)
 const formatBubbleTime = (isoStr: string): string => {
   if (!isoStr) return "";
