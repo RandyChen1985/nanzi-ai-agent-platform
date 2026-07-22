@@ -721,6 +721,13 @@ class AssistantAgentRunner(BaseExecutor):
         if route_hint:
             system_content = f"{route_hint}\n\n{system_content}"
 
+        from app.services.ai.time_anchor import append_time_anchor_for_user_question
+
+        system_content = append_time_anchor_for_user_question(
+            system_content,
+            self._extract_last_user_query(history),
+        )
+
         # 3. Execution Mode Selection
         if not tools:
             # --- Simple Mode (No Tools) ---

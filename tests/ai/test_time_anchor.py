@@ -55,3 +55,49 @@ def test_build_data_query_time_anchor_block_year_boundary_month():
 
     assert "上月：2025-12-01 至 2025-12-31" in block
     assert "本周（周一至今天）：2026-01-05 至 2026-01-05" in block
+
+
+def test_resolve_near_days_expectation():
+    from app.services.ai.time_anchor import resolve_relative_time_expectation
+
+    tz = pytz.timezone(TZ_NAME)
+    now = tz.localize(datetime(2026, 6, 10, 12, 0, 0))
+    exp = resolve_relative_time_expectation("统计近7天活跃", timezone=TZ_NAME, now=now)
+    assert exp is not None
+    assert exp.label == "近7天"
+    assert exp.start.isoformat() == "2026-06-04"
+    assert exp.end.isoformat() == "2026-06-10"
+
+
+def test_append_time_anchor_for_relative_question():
+    from app.services.ai.time_anchor import append_time_anchor_for_user_question
+
+    tz = pytz.timezone(TZ_NAME)
+    now = tz.localize(datetime(2026, 6, 10, 12, 0, 0))
+    out = append_time_anchor_for_user_question(
+        "你是助手。",
+        "帮我看近7天趋势",
+        timezone=TZ_NAME,
+        now=now,
+    )
+    assert out.startswith("[当前时间锚点]")
+    assert "【本轮问题时间解读】「近7天」" in out
+    assert "2026-06-04" in out
+    assert "你是助手。" in out
+
+
+def test_append_time_anchor_skips_plain_greeting():
+    from app.services.ai.time_anchor import append_time_anchor_for_user_question
+
+    base = "系统提示"
+    assert append_time_anchor_for_user_question(base, "你好") == base
+
+
+def test_resolve_relative_date_phrases_batch():
+    from app.services.ai.time_anchor import resolve_relative_date_phrases
+
+    tz = pytz.timezone(TZ_NAME)
+    now = tz.localize(datetime(2026, 6, 10, 12, 0, 0))
+    rows = resolve_relative_date_phrases(["近7天", "下周五"], timezone=TZ_NAME, now=now)
+    assert rows[0]["status"] == "ok" and rows[0]["start"] == "2026-06-04"
+    assert rows[1]["status"] == "ok" and rows[1]["label"] == "下五"

@@ -11,6 +11,9 @@ DEFAULT_GLOBAL_LIMIT = 30
 DEFAULT_PING_PONG_THRESHOLD = 6
 # 仅保留最近若干次调用用于序列模式识别，避免内存无界增长。
 _MAX_SEQUENCE_LEN = 64
+# 取时/相对日期解析：参数差异通常无意义，按工具名聚合并在更低阈值熔断。
+_TIME_ANCHOR_TOOL_NAMES = frozenset({"get_current_time", "resolve_relative_dates"})
+_TIME_ANCHOR_REPEAT_THRESHOLD = 2
 
 
 @dataclass
@@ -62,6 +65,8 @@ class ToolLoopDetector:
 
     @classmethod
     def tool_call_signature(cls, tool_name: str, tool_args: dict[str, Any] | None) -> str:
+        if tool_name in _TIME_ANCHOR_TOOL_NAMES:
+            return f"{tool_name}:"
         normalized_args = cls.normalize_arg_value(tool_args or {})
         try:
             args_text = json.dumps(normalized_args, ensure_ascii=False, sort_keys=True, default=str)
@@ -108,8 +113,12 @@ class ToolLoopDetector:
         count = self._signatures.get(signature, 0) + 1
         self._signatures[signature] = count
 
+        repeat_threshold = max(1, self.threshold)
+        if tool_name in _TIME_ANCHOR_TOOL_NAMES:
+            repeat_threshold = min(repeat_threshold, _TIME_ANCHOR_REPEAT_THRESHOLD)
+
         # 1) 同参重复
-        if count >= max(1, self.threshold):
+        if count >= repeat_threshold:
             return self._fuse(
                 "repeat",
                 count,

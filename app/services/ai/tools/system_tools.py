@@ -99,16 +99,37 @@ async def system_http_request(method: str, url: str, headers: dict = None, body:
         return f"Error executing request: {str(e)}"
 
 @tool
+def resolve_relative_dates(phrases: list[str], timezone: str = "Asia/Shanghai") -> str:
+    """
+    将中文相对日期短语解析为具体起止日期（YYYY-MM-DD），与系统【当前时间锚点】同源。
+
+    使用规则：
+    - 若 system prompt 已含【当前时间锚点】或【本轮问题时间解读】，优先直接引用，勿重复调用。
+    - 仅当需要解析锚点未覆盖的短语时调用；每轮用户问题最多调用 1 次。
+    - phrases: 如 ["近7天", "上周", "下周五"]，可一次传入多个。
+
+    Args:
+        phrases: 相对日期短语列表。
+        timezone: IANA 时区，默认 Asia/Shanghai。
+    """
+    from app.services.ai.time_anchor import resolve_relative_date_phrases
+
+    rows = resolve_relative_date_phrases(phrases, timezone=timezone or None)
+    return json.dumps(rows, ensure_ascii=False)
+
+
+@tool
 def get_current_time(timezone: str = "Asia/Shanghai") -> str:
     """
-    Get the current system time. 
-    
-    CRITICAL USAGE RULE: 
-    - Do NOT use this tool for simple greetings (e.g., "Hello", "Hi").
-    - ONLY use this tool when the user explicitly asks for the current time/date (e.g., "What time is it?") or uses relative time expressions (e.g., "today", "yesterday", "now", "current").
-    
+    获取当前系统时间（含星期）。
+
+    使用规则：
+    - 问候语（你好/在吗）禁止调用。
+    - 若 system prompt 已含【当前时间锚点】，相对时间（今天/近N天/本周等）须直接用锚点日期，禁止为换算日期反复调用本工具。
+    - 每轮用户问题最多调用 1 次；仅当锚点缺失且必须知道「此刻」时再调用。
+
     Args:
-        timezone: Optional timezone string (e.g. 'UTC', 'Asia/Shanghai'). Defaults to 'Asia/Shanghai'.
+        timezone: IANA 时区（如 UTC、Asia/Shanghai），默认 Asia/Shanghai。
     """
     try:
         if timezone:
@@ -127,6 +148,12 @@ def get_current_time(timezone: str = "Asia/Shanghai") -> str:
 
 
 SYSTEM_IMPLICIT_TOOLS = [
-    get_current_time, create_recurring_task, get_my_tasks, 
-    cancel_task, start_task, pause_task, run_task_manually
+    get_current_time,
+    resolve_relative_dates,
+    create_recurring_task,
+    get_my_tasks,
+    cancel_task,
+    start_task,
+    pause_task,
+    run_task_manually,
 ]

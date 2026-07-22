@@ -87,6 +87,7 @@ TOOL_EVIDENCE_TYPES = {
     "web_search_baidu": frozenset({EvidenceType.PUBLIC_WEB}),
     "system_http_request": frozenset({EvidenceType.PUBLIC_WEB}),
     "get_current_time": frozenset({EvidenceType.RUNTIME_STATE}),
+    "resolve_relative_dates": frozenset({EvidenceType.RUNTIME_STATE}),
     "get_my_tasks": frozenset({EvidenceType.RUNTIME_STATE}),
     "list_process": frozenset({EvidenceType.RUNTIME_STATE}),
     "manage_process": frozenset({EvidenceType.RUNTIME_STATE}),
