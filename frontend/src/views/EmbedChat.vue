@@ -3492,7 +3492,7 @@ const loadResourceOptions = async () => {
   resourceOptionsLoading.value = true;
   try {
     const [datasets, knowledge, globalSkills, personalSkills] = await Promise.allSettled([
-      axios.get('/api/portal/metadata/datasets'),
+      axios.get('/api/portal/metadata/datasets/accessible'),
       axios.get('/api/portal/ragflow/datasets', { params: { page: 1, page_size: 100, include_missing: false } }),
       axios.get('/api/portal/skills'),
       axios.get('/api/portal/skills/personal'),

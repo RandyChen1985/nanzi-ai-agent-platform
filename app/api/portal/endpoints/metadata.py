@@ -9,7 +9,7 @@ logger = logging.getLogger(__name__)
 from app.core.orm import get_db_session
 from app.services.metadata_service import MetadataService
 from app.schemas.metadata import (
-    DatasetCreate, DatasetUpdate, DatasetResponse, DatasetDetailResponse, 
+    DatasetCreate, DatasetUpdate, DatasetResponse, DatasetDetailResponse, DatasetOptionResponse,
     TableCreate, TableResponse,
     MetricSchema, MetricResponse,
     RelationshipSchema, RelationshipResponse
@@ -33,6 +33,35 @@ async def list_datasets(
     datasets = await MetadataService.get_datasets(conn)
     await MetadataService.repair_stale_local_sync_flags(datasets)
     return datasets
+
+
+@router.get("/datasets/accessible", response_model=List[DatasetOptionResponse])
+async def list_accessible_datasets(
+    conn: AsyncSession = Depends(get_db_session),
+    user: dict = Depends(get_current_user),
+):
+    """轻量可访问数据集选项：仅当前用户有权限的启用数据集，供会话资源等场景使用。"""
+    user_id = user.get("id") or user.get("user_id")
+    try:
+        user_id_int = int(user_id) if user_id is not None else None
+    except (TypeError, ValueError):
+        user_id_int = None
+    is_admin = user.get("role") == "admin" or user.get("is_admin") is True
+    if not is_admin:
+        # 兼容 roles 列表口径
+        roles = user.get("roles") or []
+        if isinstance(roles, str):
+            roles = [roles]
+        is_admin = "admin" in {str(r).strip().lower() for r in roles}
+
+    datasets = await MetadataService.list_accessible_dataset_options(
+        conn,
+        user_id=user_id_int,
+        is_admin=bool(is_admin),
+        status=1,
+    )
+    return datasets
+
 
 @router.post("/datasets", response_model=DatasetResponse, dependencies=[Depends(require_permission("element", "element:metadata:edit"))])
 async def create_dataset(

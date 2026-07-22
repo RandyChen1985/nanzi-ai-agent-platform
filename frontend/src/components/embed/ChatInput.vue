@@ -133,6 +133,10 @@ const mentionKeyword = ref("");
 const mentionPosition = reactive({ top: 0, left: 0 });
 const showCommandMenu = ref(false);
 const showNewConversationMenu = ref(false);
+const newConversationMenuRef = ref<HTMLElement | HTMLElement[] | null>(null);
+const setNewConversationMenuRef = (el: Element | null) => {
+  newConversationMenuRef.value = (el as HTMLElement | null) ?? null;
+};
 const activeCommandIndex = ref(0);
 const mentionListRef = ref<any>(null);
 const isDrawerExpanded = ref(false);
@@ -549,6 +553,16 @@ const handleGlobalClick = (event: MouseEvent) => {
   if (showModelDropdown.value && modelDropdownRef.value && !modelDropdownRef.value.contains(event.target as Node)) {
     showModelDropdown.value = false;
   }
+  // 新会话类型菜单：点击外部关闭（勿用 mouseleave，否则空隙会误关）
+  if (showNewConversationMenu.value) {
+    const target = event.target as Node;
+    const root = newConversationMenuRef.value;
+    // ref 写在 v-for 内时可能是数组
+    const el = Array.isArray(root) ? root[0] : root;
+    if (el && !el.contains(target)) {
+      showNewConversationMenu.value = false;
+    }
+  }
 };
 
 const handleGlobalKeydown = (event: KeyboardEvent) => {
@@ -563,6 +577,10 @@ const handleGlobalKeydown = (event: KeyboardEvent) => {
     }
     if (showSkillCascade.value) {
       showSkillCascade.value = false;
+      return;
+    }
+    if (showNewConversationMenu.value) {
+      showNewConversationMenu.value = false;
       return;
     }
     showPlusMenu.value = false;
@@ -952,12 +970,23 @@ defineExpose({
                             <div class="relative flex-1 min-w-0 overflow-visible">
                                 <div class="flex items-center gap-2 min-w-0">
                                     <template v-for="cmd in visibleRowSystemCommands" :key="'row-sys-'+cmd.id">
-                                        <div v-if="cmd.id === 'sys_clear'" class="relative flex items-center shrink-0" @mouseleave="showNewConversationMenu = false">
+                                        <div
+                                          v-if="cmd.id === 'sys_clear'"
+                                          :ref="setNewConversationMenuRef"
+                                          class="relative flex items-center shrink-0"
+                                        >
                                           <button :disabled="cmd.disabled" @click="handleShortcutClick(cmd)" class="px-2.5 py-1 text-[10px] font-bold bg-gray-100/80 dark:bg-gray-800 text-gray-500 rounded-l-full whitespace-nowrap hover:bg-gray-200 transition-colors flex-shrink-0 disabled:opacity-40 disabled:cursor-not-allowed">{{ cmd.label }}</button>
                                           <button type="button" @mousedown.stop @click.stop="toggleNewConversationMenu" class="px-1.5 py-1 text-[10px] font-bold bg-gray-100/80 dark:bg-gray-800 text-gray-500 rounded-r-full border-l border-white/70 dark:border-gray-700 hover:bg-gray-200" title="选择会话类型">⌄</button>
-                                          <div v-if="showNewConversationMenu" @mousedown.stop class="absolute left-0 top-full mt-2 z-[100] w-36 rounded-xl border border-gray-200 bg-white dark:bg-gray-800 shadow-xl p-1">
-                                            <button type="button" class="w-full text-left px-3 py-2 rounded-lg text-xs text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700" @click.stop="selectNewConversationType('/new')">💬 新建普通会话</button>
-                                            <button type="button" class="w-full text-left px-3 py-2 rounded-lg text-xs text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700" @click.stop="selectNewConversationType('/project')">📁 新建项目会话</button>
+                                          <!-- pt-2 桥接触发区与面板，避免空隙导致指针落空 -->
+                                          <div
+                                            v-if="showNewConversationMenu"
+                                            @mousedown.stop
+                                            class="absolute left-0 top-full z-[100] pt-2"
+                                          >
+                                            <div class="w-40 rounded-xl border border-gray-200 bg-white dark:bg-gray-800 shadow-xl p-1">
+                                              <button type="button" class="w-full text-left px-3 py-2 rounded-lg text-xs text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700" @click.stop="selectNewConversationType('/new')">💬 新建普通会话</button>
+                                              <button type="button" class="w-full text-left px-3 py-2 rounded-lg text-xs text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700" @click.stop="selectNewConversationType('/project')">📁 新建项目会话</button>
+                                            </div>
                                           </div>
                                         </div>
                                         <button v-else :disabled="cmd.disabled" @click="handleShortcutClick(cmd)" class="px-2.5 py-1 text-[10px] font-bold bg-gray-100/80 dark:bg-gray-800 text-gray-500 rounded-full whitespace-nowrap hover:bg-gray-200 transition-colors flex-shrink-0 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-gray-100">{{ cmd.label }}</button>
