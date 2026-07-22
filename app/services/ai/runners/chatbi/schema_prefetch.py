@@ -35,6 +35,17 @@ from app.services.ai.runtime.agentscope.tools import RuntimeToolSpec
 logger = logging.getLogger(__name__)
 
 
+def _apply_session_resource_scope(dataset_menu: str, debug_options: dict[str, Any] | None) -> str:
+    """项目会话有手动挂载数据集时，只把挂载的数据集注入本轮 Schema 上下文。"""
+    scope = (debug_options or {}).get("resource_scope") or {}
+    mounted = {str(item.get("dataset_name") or item.get("name") or item.get("id") or "").strip() for item in scope.get("datasets", []) if isinstance(item, dict)}
+    mounted.discard("")
+    if not mounted:
+        return dataset_menu
+    blocks = re.split(r"(?=^- Dataset:)", str(dataset_menu or ""), flags=re.MULTILINE)
+    return "".join(block for block in blocks if not block.lstrip().startswith("- Dataset:") or any(name in block.splitlines()[0] for name in mounted))
+
+
 @dataclass
 class SchemaSetupOutcome:
     system_content: str
@@ -137,6 +148,7 @@ async def plan_schema_search_keywords(
         user_id = getattr(runner.config, "user_id", None)
         is_admin = getattr(runner.config, "is_admin", False)
         dataset_menu = await AgentConfigProvider.get_dataset_menu(user_id=user_id, is_admin=is_admin)
+        dataset_menu = _apply_session_resource_scope(dataset_menu, getattr(runner, "debug_options", None))
     except Exception as e:
         logger.warning("[DataAgentRunner] Failed to fetch dataset menu for schema prefetch: %s", e)
         dataset_menu = ""

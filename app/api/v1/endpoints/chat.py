@@ -18,6 +18,7 @@ from app.schemas.response import StandardResponse
 from app.schemas.agent import TraceLogResponse, AgentExecutionHistoryListResponse
 from app.utils.fs_access import get_user_uploads_dir
 from app.services.permission_service import PermissionService
+from app.services.conversation_resource_service import ConversationResourceService
 import logging
 
 
@@ -79,6 +80,13 @@ class ChatCompletionRequest(BaseModel):
         default=None,
         description="事实取证卡片触发的结构化动作，仅影响当前轮",
     )
+
+
+class ConversationResourceScopeRequest(BaseModel):
+    project_name: str = ""
+    datasets: List[Dict[str, Any]] = Field(default_factory=list)
+    knowledge_bases: List[Dict[str, Any]] = Field(default_factory=list)
+    skills: List[Dict[str, Any]] = Field(default_factory=list)
 
 class ChatCompletionResponse(BaseModel):
     content: str
@@ -584,6 +592,8 @@ async def create_chat_completion(
     """
     # Initialize Request Context for Debugging
     effective_debug_options = dict(completion_request.debug_options or {})
+    # 资源范围只能由服务端会话快照决定，禁止客户端通过 debug_options 注入范围。
+    effective_debug_options.pop("resource_scope", None)
     if completion_request.grounding_action:
         effective_debug_options["grounding_action"] = dict(
             completion_request.grounding_action
@@ -595,6 +605,18 @@ async def create_chat_completion(
 
     if not completion_request.messages:
         raise HTTPException(status_code=400, detail="Messages list cannot be empty")
+
+    # 会话资源范围以服务端 Redis 为准，客户端只用于立即刷新 UI，不能伪造范围。
+    conversation_scope = {"project_name": "", "datasets": [], "knowledge_bases": [], "skills": []}
+    if completion_request.conversation_id:
+        conversation_scope = await ConversationResourceService.get(
+            user_info.get("user_id") or user_info.get("id"),
+            completion_request.conversation_id,
+        )
+    if any(conversation_scope.get(key) for key in ("datasets", "knowledge_bases", "skills")):
+        effective_debug_options["resource_scope"] = conversation_scope
+    scoped_kb_ids = [str(item.get("id")) for item in conversation_scope.get("knowledge_bases", []) if item.get("id")]
+    effective_knowledge_dataset_ids = scoped_kb_ids or completion_request.knowledge_dataset_ids
     
     # --- Orchestration / Routing Logic ---
     # DEPRECATED here: Moved to AgentService/ContextManager for better trace and CoT logging.
@@ -641,7 +663,7 @@ async def create_chat_completion(
                     enable_multi_agent=completion_request.enable_multi_agent,
                     debug_options=effective_debug_options,
                     permission_options=completion_request.permission_options,
-                    knowledge_dataset_ids=completion_request.knowledge_dataset_ids,
+                    knowledge_dataset_ids=effective_knowledge_dataset_ids,
                 ):
                     if await request.is_disconnected():
                         await _release_locks_on_client_abort()
@@ -677,7 +699,7 @@ async def create_chat_completion(
             enable_multi_agent=completion_request.enable_multi_agent,
             debug_options=effective_debug_options,
             permission_options=completion_request.permission_options,
-            knowledge_dataset_ids=completion_request.knowledge_dataset_ids,
+            knowledge_dataset_ids=effective_knowledge_dataset_ids,
         )
         return StandardResponse(data=result)
 
@@ -832,6 +854,7 @@ async def get_history(
         agent_map = {}
 
     items = []
+    history_user_id = (user_info or {}).get("user_id") or (user_info or {}).get("id")
     if group_by_conversation:
         rows = result.all()
         for row_obj, turn_count in rows:
@@ -840,6 +863,9 @@ async def get_history(
             if item.agent_id in agent_map:
                 item.agent_name = agent_map[item.agent_id][0]
                 item.agent_display_name = agent_map[item.agent_id][1]
+            if item.conversation_id:
+                scope = await ConversationResourceService.get(history_user_id, item.conversation_id)
+                item.project_name = scope.get("project_name") or None
             items.append(item)
     else:
         rows = result.scalars().all()
@@ -848,6 +874,9 @@ async def get_history(
             if item.agent_id in agent_map:
                 item.agent_name = agent_map[item.agent_id][0]
                 item.agent_display_name = agent_map[item.agent_id][1]
+            if item.conversation_id:
+                scope = await ConversationResourceService.get(history_user_id, item.conversation_id)
+                item.project_name = scope.get("project_name") or None
             items.append(item)
     
     return StandardResponse(data=AgentExecutionHistoryListResponse(
@@ -943,7 +972,14 @@ async def batch_delete_history(
     await db.execute(delete_history_stmt)
     
     await db.commit()
-    
+
+    # 数据库历史删除后同步清理会话 Redis，避免项目资源范围和记忆残留。
+    from app.services.ai.memory_service import memory_service
+    if user_info:
+        user_id = user_info.get("user_id") or user_info.get("id")
+        for conversation_id in payload.conversation_ids:
+            await memory_service.clear_history(user_id, conversation_id)
+
     return StandardResponse(data={"success": True})
 
 @router.get("/logs/{trace_id}", 
@@ -1162,3 +1198,24 @@ async def set_active_conversation(
     user_id = user_info.get("user_id")
     await memory_service.set_active_conversation(user_id, body.conversation_id)
     return StandardResponse(data={"status": "success"})
+
+
+@router.get("/conversation/{conversation_id}/resource-scope", summary="获取会话资源范围")
+async def get_conversation_resource_scope(
+    conversation_id: str,
+    user_info: dict = Depends(require_api_key),
+):
+    user_id = user_info.get("user_id") or user_info.get("id")
+    scope = await ConversationResourceService.get(user_id, conversation_id)
+    return StandardResponse(data=scope)
+
+
+@router.put("/conversation/{conversation_id}/resource-scope", summary="更新会话资源范围")
+async def update_conversation_resource_scope(
+    conversation_id: str,
+    body: ConversationResourceScopeRequest,
+    user_info: dict = Depends(require_api_key),
+):
+    user_id = user_info.get("user_id") or user_info.get("id")
+    scope = await ConversationResourceService.replace(user_id, conversation_id, body.model_dump())
+    return StandardResponse(data=scope)

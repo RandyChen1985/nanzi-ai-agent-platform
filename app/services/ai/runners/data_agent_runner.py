@@ -369,6 +369,7 @@ class DataAgentRunner(BaseExecutor):
         *,
         binding: Any | None = None,
         schema_table_columns: dict[str, list[str]] | None = None,
+        allowed_dataset_names: set[str] | None = None,
     ) -> str:
         from app.core.orm import AsyncSessionLocal
         from app.services.ai.chatbi_sql_query_binding import resolve_sql_schema_preflight_with_binding
@@ -382,6 +383,7 @@ class DataAgentRunner(BaseExecutor):
                 data_source=str(data_source or ""),
                 user_id=self._current_user_id(),
                 is_admin=self._current_user_is_admin(),
+                allowed_dataset_names=allowed_dataset_names,
             )
 
     @staticmethod

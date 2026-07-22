@@ -233,6 +233,8 @@ class MemoryService:
         redis = await get_redis()
         if not redis:
             return
+        from app.services.conversation_resource_service import ConversationResourceService
+        await ConversationResourceService.delete(user_id, conversation_id)
         key = self._get_key(user_id, conversation_id)
         logger.info(f"[MemoryService] Clearing history for key: {key}")
         await redis.delete(key)

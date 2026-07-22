@@ -677,6 +677,7 @@ class AgentService:
         agent_config: Any,
         user_info: Optional[dict[str, Any]] = None,
         skills_log_callback: Optional[callable] = None,
+        resource_scope: Optional[dict[str, Any]] = None,
     ) -> list[str]:
         """挂载与自动匹配技能，返回 skills_injection。"""
         active_skills = []
@@ -684,6 +685,25 @@ class AgentService:
             for file_obj in messages[-1]["files"]:
                 if file_obj.get("type") == "skill":
                     active_skills.append(file_obj)
+
+        scoped_skill_items = [
+            item for item in (resource_scope or {}).get("skills", [])
+            if isinstance(item, dict) and item.get("id")
+        ]
+        if scoped_skill_items:
+            scoped_ids = {str(item["id"]) for item in scoped_skill_items}
+            active_skills = [skill for skill in active_skills if str(skill.get("url") or "") in scoped_ids]
+            mounted_ids = {str(item.get("url") or "") for item in active_skills}
+            active_skills.extend(
+                {
+                    "type": "skill",
+                    "url": str(item["id"]),
+                    "filename": item.get("name") or str(item["id"]),
+                    "skillMeta": item,
+                }
+                for item in scoped_skill_items
+                if str(item["id"]) not in mounted_ids
+            )
 
         mounted_skill_ids = {s.get("url") for s in active_skills if s.get("url")}
         skills_injection = []
@@ -763,7 +783,7 @@ class AgentService:
                     "full instruction preloaded" if full_instruction else "summary only",
                 )
 
-        if user_query:
+        if user_query and not scoped_skill_items:
             try:
                 from app.services.ai.skill_resolver import (
                     load_skill_md_content,
@@ -1236,6 +1256,7 @@ class AgentService:
                 agent_config=agent_config,
                 user_info=user_info,
                 skills_log_callback=skills_log_callback,
+                resource_scope=(debug_options or {}).get("resource_scope"),
             )
 
             for skill_id, skill_name, details_msg in matched_skills_to_log:

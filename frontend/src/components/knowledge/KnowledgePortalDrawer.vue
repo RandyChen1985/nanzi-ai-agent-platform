@@ -146,6 +146,9 @@
 
              <!-- Content List -->
             <div class="flex-1 overflow-y-auto p-4 bg-gray-50/50 dark:bg-gray-900/40 min-h-0 space-y-3 scrollbar-thin">
+              <div v-if="props.projectResourceScope" class="rounded-lg border border-blue-100 bg-blue-50 px-3 py-2 text-xs font-semibold text-blue-700 dark:border-blue-900/50 dark:bg-blue-950/30 dark:text-blue-300">
+                🔒 {{ props.projectResourceScope }}
+              </div>
               <!-- Overview Card -->
               <div class="bg-white dark:bg-gray-800/80 backdrop-blur-xs border border-gray-150 dark:border-gray-800 rounded-xl p-3 flex flex-row items-center justify-between gap-2 shadow-xs select-none">
                 <div class="flex items-center gap-2.5 min-w-0">
@@ -1016,6 +1019,7 @@ const vectorWeight = defineModel<number>("vectorWeight", { default: 0.30 });
 const metadataTopK = defineModel<number>("metadataTopK", { default: 5 });
 
 const props = defineProps<{
+  projectResourceScope?: string;
   datasets: Array<{
     id: string;
     name: string;

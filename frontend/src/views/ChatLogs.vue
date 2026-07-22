@@ -13,13 +13,24 @@ import {
   UserIcon,
   SparklesIcon,
   ChevronDownIcon,
+  ArrowDownTrayIcon,
 } from '@heroicons/vue/24/outline'
 import { format } from 'date-fns'
 import { zhCN } from 'date-fns/locale'
 import { renderMarkdown } from '@/utils/markdown'
 import { useToast } from '@/composables/useToast'
+import { useUser } from '@/composables/useUser'
+import {
+  buildChatSessionMarkdown,
+  buildSessionExportFilename,
+  downloadMarkdownFile,
+  type ChatTraceDetail,
+} from '@/utils/chatSessionExport'
 
 const { showToast } = useToast()
+const { hasPermission } = useUser()
+
+const canExportLogs = computed(() => hasPermission('element:chat_logs:export'))
 
 const cachedUser = localStorage.getItem('user_info')
 const userInfo = ref(cachedUser ? JSON.parse(cachedUser) : null)
@@ -47,6 +58,7 @@ const replyViewMode = ref<'render' | 'source'>('render')
 const showTracePanel = ref(false)
 const traceDetail = ref<any>(null)
 const traceLoading = ref(false)
+const exporting = ref(false)
 
 const selectedLog = computed(
   () => logs.value.find((l) => l.id === selectedId.value) || null,
@@ -205,6 +217,84 @@ const formatStepPayload = (value: unknown) => {
     return JSON.stringify(value, null, 2)
   } catch {
     return String(value)
+  }
+}
+
+const fetchAllTurnsForExport = async (log: AgentExecutionHistory) => {
+  const conversationId = log.conversation_id?.trim()
+  if (!conversationId) {
+    return [log]
+  }
+  const pageSize = 100
+  let page = 1
+  const collected: AgentExecutionHistory[] = []
+  let total = 0
+  do {
+    const res = await agentApi.getChatHistory({
+      conversation_id: conversationId,
+      page,
+      page_size: pageSize,
+    })
+    const batch = res.data.data.items || []
+    total = res.data.data.total ?? batch.length
+    collected.push(...batch)
+    if (collected.length >= total || batch.length < pageSize) break
+    page += 1
+  } while (page <= 50)
+
+  collected.sort(
+    (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime(),
+  )
+  return collected.length ? collected : [log]
+}
+
+const fetchTracesForTurns = async (turns: AgentExecutionHistory[]) => {
+  const tracesByTraceId: Record<string, ChatTraceDetail | undefined> = {}
+  await Promise.all(
+    turns.map(async (turn) => {
+      if (!turn.trace_id) return
+      try {
+        const res = await agentApi.getChatTrace(turn.trace_id)
+        tracesByTraceId[turn.trace_id] = res.data.data as ChatTraceDetail
+      } catch (e) {
+        console.error('Failed to fetch trace for export', turn.trace_id, e)
+        tracesByTraceId[turn.trace_id] = { trace_id: turn.trace_id, steps: [] }
+      }
+    }),
+  )
+  return tracesByTraceId
+}
+
+const exportSession = async (log: AgentExecutionHistory) => {
+  if (!canExportLogs.value) {
+    showToast('无导出权限', 'warning')
+    return
+  }
+  if (exporting.value) return
+  exporting.value = true
+  try {
+    const turns = await fetchAllTurnsForExport(log)
+    const tracesByTraceId = await fetchTracesForTurns(turns)
+    const agentLabel = getAgentName(log.agent_id)
+    const markdown = buildChatSessionMarkdown(turns, tracesByTraceId, {
+      agentLabel,
+      username: log.username,
+      conversationId: log.conversation_id,
+      exportedAt: new Date(),
+    })
+    const filename = buildSessionExportFilename(turns, log.conversation_id)
+    downloadMarkdownFile(filename, markdown)
+    showToast(
+      log.conversation_id
+        ? `已导出会话（${turns.length} 轮）`
+        : '已导出当前轮次',
+      'success',
+    )
+  } catch (e) {
+    console.error('Export session failed', e)
+    showToast('导出失败', 'error')
+  } finally {
+    exporting.value = false
   }
 }
 
@@ -398,7 +488,8 @@ onMounted(() => {
             >
               {{ truncateQuery(log.query) }}
             </p>
-            <div class="mt-2 flex items-center gap-1.5 flex-wrap">
+            <div class="mt-2 flex items-center justify-between gap-1.5">
+              <div class="flex items-center gap-1.5 flex-wrap min-w-0">
               <span
                 class="inline-flex px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wide border"
                 :class="getStatusClass(log.status)"
@@ -411,6 +502,17 @@ onMounted(() => {
                 v-if="log.execution_time_ms"
                 class="text-[10px] font-mono text-gray-400"
               >{{ Math.round(log.execution_time_ms) }}ms</span>
+              </div>
+              <button
+                v-if="canExportLogs"
+                type="button"
+                class="shrink-0 p-1 rounded-md text-gray-400 hover:text-primary hover:bg-primary/5 transition-colors disabled:opacity-40"
+                :disabled="exporting"
+                title="导出会话为 Markdown"
+                @click.stop="exportSession(log)"
+              >
+                <ArrowDownTrayIcon class="w-4 h-4" />
+              </button>
             </div>
           </button>
         </div>
@@ -473,6 +575,16 @@ onMounted(() => {
               >{{ selectedLog.status === 'success' ? '成功' : selectedLog.status === 'error' ? '异常' : selectedLog.status }}</span>
             </div>
             <div class="flex items-center gap-2 shrink-0">
+              <button
+                v-if="canExportLogs"
+                type="button"
+                class="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-semibold rounded-lg border border-gray-200 text-gray-600 hover:text-primary hover:border-primary/30 hover:bg-primary/5 transition-colors disabled:opacity-40"
+                :disabled="exporting"
+                @click="exportSession(selectedLog)"
+              >
+                <ArrowDownTrayIcon class="w-3.5 h-3.5" />
+                {{ exporting ? '导出中…' : '导出会话' }}
+              </button>
               <span class="text-[11px] font-mono text-gray-400">
                 {{ selectedLog.execution_time_ms ? `${Math.round(selectedLog.execution_time_ms)}ms` : '-' }}
               </span>

@@ -116,12 +116,14 @@ export const agentApi = {
   getChatHistory: (params: { 
     page?: number, 
     page_size?: number, 
-    agent_id?: string, 
+    agent_id?: string,
+    conversation_id?: string,
     username?: string,
     keyword?: string, 
     status?: string,
     start_date?: string, 
-    end_date?: string 
+    end_date?: string,
+    group_by_conversation?: boolean,
   }) => axios.get<StandardResponse<AgentExecutionHistoryListResponse>>('/api/v1/chat/history', { params }),
 
   // Get chat trace logs
@@ -139,6 +141,7 @@ export interface AgentExecutionHistory {
   id: number
   trace_id: string
   agent_id: string
+  conversation_id?: string | null
   username?: string
   query?: string
   summary?: string
@@ -147,4 +150,6 @@ export interface AgentExecutionHistory {
   model_id?: string
   execution_time_ms?: number
   created_at: string
+  turn_count?: number
+  agent_display_name?: string
 }

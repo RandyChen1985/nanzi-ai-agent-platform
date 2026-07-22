@@ -181,6 +181,9 @@
             <div
               class="portal-drawer-scroll flex-1 overflow-y-auto overscroll-y-contain p-3 sm:p-4 bg-white dark:bg-gray-900/60 min-h-0 touch-pan-y"
             >
+              <div v-if="projectResourceScope" class="mb-3 rounded-lg border border-blue-100 bg-blue-50 px-3 py-2 text-xs font-semibold text-blue-700 dark:border-blue-900/50 dark:bg-blue-950/30 dark:text-blue-300">
+                🔒 {{ projectResourceScope }}
+              </div>
               <DatasetCapabilityMenu
                 :payload="payload || { groups: [] }"
                 :initial-loading="initialLoading"
@@ -211,6 +214,7 @@ const pinned = defineModel<boolean>("pinned", { default: false });
 
 defineProps<{
   payload: Record<string, unknown> | null;
+  projectResourceScope?: string;
   initialLoading?: boolean;
   backgroundRefreshing?: boolean;
   focusSavedReportRequest?: {

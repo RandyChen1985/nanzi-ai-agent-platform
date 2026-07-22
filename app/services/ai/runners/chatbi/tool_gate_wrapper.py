@@ -119,6 +119,11 @@ def wrap_tools_with_schema_gate(runner: Any, tools: list[RuntimeToolSpec], state
                 str(kwargs.get("data_source") or ""),
                 binding=state.sql_query_binding,
                 schema_table_columns=state.schema_table_columns,
+                allowed_dataset_names={
+                    str(item.get("dataset_name") or item.get("name") or item.get("id") or "").strip()
+                    for item in (runner.debug_options.get("resource_scope", {}).get("datasets", []) or [])
+                    if isinstance(item, dict) and str(item.get("id") or item.get("name") or "").strip()
+                } or None,
             )
             if preflight_error:
                 return preflight_error

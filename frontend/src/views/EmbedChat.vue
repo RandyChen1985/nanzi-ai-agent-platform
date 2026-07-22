@@ -142,6 +142,19 @@
           @switch-to-auto="switchToAuto"
       />
 
+      <!-- Project session resource scope -->
+      <div v-if="resourceScope.project_name" class="flex-shrink-0 px-4 py-2 flex items-center gap-2 text-[11px] text-gray-500 dark:text-gray-400 overflow-x-auto">
+        <span class="font-bold shrink-0">📁 {{ resourceScope.project_name }}</span>
+        <span v-if="resourceScopeCount === 0" class="text-gray-400 shrink-0">未挂载，按默认权限自动使用</span>
+        <template v-else>
+          <span v-for="item in mountedResourceLabels" :key="item.key" class="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-blue-50 text-blue-700 border border-blue-100 shrink-0">
+            {{ item.icon }} {{ item.label }}
+            <button type="button" class="hover:text-red-600" title="移除资源" @click="removeMountedResource(item)">×</button>
+          </span>
+        </template>
+        <button type="button" class="px-2 py-1 rounded-full border border-gray-200 hover:border-primary hover:text-primary shrink-0" @click="openResourceScopeModal">管理会话资源</button>
+      </div>
+
       <!-- Main Chat Area -->
       <div
         class="flex-1 overflow-y-auto p-3 sm:p-4 space-y-4 sm:space-y-6"
@@ -1192,7 +1205,7 @@
     />
 
     <!-- Input Area -->
-    <div class="flex-shrink-0 bg-white dark:bg-gray-900 border-t border-gray-100 dark:border-gray-800 relative z-20">
+    <div class="flex-shrink-0 bg-white dark:bg-gray-900 relative z-20">
       <div
         v-if="quotaBannerMessage"
         class="px-4 py-2 text-xs border-b"
@@ -1248,6 +1261,165 @@
       </ChatInput>
     </div>
 
+    <div
+      v-if="showResourceScopeModal"
+      class="fixed inset-0 z-[80] flex items-center justify-center bg-black/40 p-4"
+      @click.self="closeResourceScopeModal"
+      @keydown.esc="closeResourceScopeModal"
+    >
+      <div
+        class="w-full max-w-2xl max-h-[88vh] flex flex-col overflow-hidden rounded-2xl bg-white dark:bg-gray-800 shadow-2xl"
+        role="dialog"
+        aria-labelledby="resource-scope-modal-title"
+        aria-modal="true"
+      >
+        <div class="flex-shrink-0 px-5 pt-5 pb-3 border-b border-gray-100 dark:border-gray-700">
+          <div class="flex items-start justify-between gap-3">
+            <div class="min-w-0">
+              <h3 id="resource-scope-modal-title" class="text-base font-black text-gray-900 dark:text-gray-100">项目会话资源</h3>
+              <p class="text-xs text-gray-500 dark:text-gray-400 mt-1 leading-relaxed">为本会话命名并可选定数据集、知识库与技能。保存后在本会话内持续生效。</p>
+            </div>
+            <button type="button" class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 text-xl leading-none p-1" aria-label="关闭" @click="closeResourceScopeModal">×</button>
+          </div>
+          <p class="mt-3 text-[11px] leading-relaxed rounded-lg bg-slate-50 dark:bg-gray-900/50 text-slate-600 dark:text-slate-400 border border-slate-100 dark:border-gray-700 px-3 py-2">
+            不选择任何资源时，按账号默认权限使用；选择后仅允许已挂载项（数据集影响 ChatBI / 数据门户，知识库影响检索范围，技能影响自动匹配）。
+          </p>
+          <p v-if="modalResourceOrphanCount > 0" class="mt-2 text-[11px] text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/20 border border-amber-100 dark:border-amber-800/50 rounded-lg px-3 py-2">
+            有 {{ modalResourceOrphanCount }} 项已保存的资源当前不可用，请移除或重新选择。
+          </p>
+        </div>
+
+        <div class="flex-1 overflow-y-auto px-5 py-4 space-y-4 min-h-0">
+          <label class="block">
+            <span class="text-xs font-bold text-gray-500 dark:text-gray-400">项目名称 <span class="text-red-500">*</span></span>
+            <input
+              ref="resourceScopeProjectNameInput"
+              v-model="resourceScopeModalDraft.project_name"
+              class="mt-1.5 w-full rounded-xl border border-gray-200 dark:border-gray-600 bg-gray-50/50 dark:bg-gray-900/30 px-3 py-2.5 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary"
+              placeholder="例如：销售经营分析"
+            />
+          </label>
+
+          <div class="rounded-xl border border-gray-200 dark:border-gray-700 overflow-hidden flex flex-col min-h-[280px]">
+            <div class="flex border-b border-gray-200 dark:border-gray-700 bg-gray-50/80 dark:bg-gray-900/40" role="tablist" aria-label="资源类型">
+              <button
+                v-for="group in resourceOptionGroups"
+                :key="group.key"
+                type="button"
+                role="tab"
+                :id="`resource-scope-tab-${group.key}`"
+                :aria-selected="resourceScopeActiveTab === group.key"
+                :aria-controls="`resource-scope-panel-${group.key}`"
+                class="relative flex-1 min-w-0 px-2 py-2.5 text-xs font-bold transition-colors border-b-2 -mb-px"
+                :class="resourceScopeActiveTab === group.key
+                  ? 'border-primary text-primary bg-white dark:bg-gray-800'
+                  : 'border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'"
+                @click="resourceScopeActiveTab = group.key"
+              >
+                <span class="block truncate text-center">{{ group.shortLabel || group.label }}</span>
+                <span class="mt-0.5 flex items-center justify-center gap-1">
+                  <span
+                    v-if="modalSelectedCount(group.key)"
+                    class="text-[9px] font-black px-1 py-px rounded"
+                    :class="resourceScopeActiveTab === group.key ? 'bg-primary/15 text-primary' : 'bg-gray-200/80 dark:bg-gray-700 text-gray-600 dark:text-gray-300'"
+                  >{{ modalSelectedCount(group.key) }}</span>
+                  <span v-if="modalOrphanSelections(group.key).length" class="text-[9px] font-bold text-amber-600 dark:text-amber-400" title="有失效项">!</span>
+                </span>
+              </button>
+            </div>
+
+            <div
+              v-for="group in resourceOptionGroups"
+              :key="'panel-' + group.key"
+              v-show="resourceScopeActiveTab === group.key"
+              :id="`resource-scope-panel-${group.key}`"
+              role="tabpanel"
+              :aria-labelledby="`resource-scope-tab-${group.key}`"
+              class="flex-1 p-3 space-y-2.5 min-h-0 flex flex-col"
+            >
+              <p class="text-[11px] text-gray-400 dark:text-gray-500 leading-relaxed shrink-0">{{ group.hint }}</p>
+
+              <div v-if="modalSelectedCount(group.key) > 0" class="flex flex-wrap gap-1.5 shrink-0">
+                <button
+                  v-for="chip in modalSelectedChips(group.key)"
+                  :key="chip.key"
+                  type="button"
+                  class="inline-flex items-center gap-1 max-w-full px-2 py-1 rounded-full text-[10px] font-bold border transition-colors"
+                  :class="chip.orphan
+                    ? 'bg-amber-50 text-amber-800 border-amber-200 dark:bg-amber-900/30 dark:text-amber-300 dark:border-amber-700'
+                    : 'bg-blue-50 text-blue-700 border-blue-100 dark:bg-blue-900/30 dark:text-blue-300 dark:border-blue-800'"
+                  :title="chip.orphan ? '资源已不可用，点击移除' : '点击移除'"
+                  @click="removeModalDraftResource(group.key, chip.item)"
+                >
+                  <span class="truncate">{{ chip.label }}</span>
+                  <span class="shrink-0 opacity-70">×</span>
+                </button>
+              </div>
+
+              <input
+                v-model="resourceOptionSearch[group.key]"
+                class="w-full rounded-lg border border-gray-200 dark:border-gray-600 bg-transparent px-3 py-2 text-xs shrink-0"
+                :placeholder="`搜索${group.label}`"
+              />
+
+              <div v-if="resourceOptionsLoading" class="text-xs text-gray-400 py-6 text-center flex-1">正在加载资源…</div>
+              <div v-else-if="sortedModalResourceOptions(group.key).length" class="space-y-0.5 flex-1 min-h-0 overflow-y-auto pr-0.5">
+                <button
+                  v-for="(option, optionIndex) in sortedModalResourceOptions(group.key)"
+                  :key="option.id"
+                  type="button"
+                  role="checkbox"
+                  :aria-checked="resourceModalOptionSelected(group.key, option)"
+                  class="w-full flex items-center gap-3 rounded-xl px-2.5 py-2 text-left transition-colors border border-transparent"
+                  :class="resourceModalOptionSelected(group.key, option)
+                    ? 'bg-primary/5 dark:bg-primary/10 border-primary/20'
+                    : 'hover:bg-gray-50 dark:hover:bg-gray-700/60'"
+                  @click="toggleModalResourceOption(group.key, option)"
+                >
+                  <span class="w-9 h-9 rounded-full flex items-center justify-center text-sm font-black text-white shrink-0" :class="resourceOptionAccent(optionIndex)">{{ resourceOptionInitial(option) }}</span>
+                  <span class="min-w-0 flex-1">
+                    <span class="block text-sm font-bold text-gray-900 dark:text-gray-100 truncate" :title="option.name || option.id">{{ option.name || option.id }}</span>
+                    <span class="block text-xs text-gray-400 dark:text-gray-500 truncate">{{ option.description || option.id }}</span>
+                  </span>
+                  <span
+                    class="w-5 h-5 rounded-md border flex items-center justify-center shrink-0"
+                    :class="resourceModalOptionSelected(group.key, option) ? 'bg-primary border-primary text-white' : 'border-gray-300 dark:border-gray-600'"
+                  >
+                    <svg v-if="resourceModalOptionSelected(group.key, option)" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="m5 12 4 4L19 6" /></svg>
+                  </span>
+                </button>
+              </div>
+              <div v-else class="text-xs text-gray-400 py-6 text-center flex-1">
+                {{ (resourceOptionSearch[group.key] || '').trim() ? '无匹配结果，试试清空搜索' : '暂无可选资源' }}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="flex-shrink-0 px-5 py-4 border-t border-gray-100 dark:border-gray-700 flex flex-wrap items-center justify-between gap-3">
+          <button
+            type="button"
+            class="px-2.5 py-1.5 rounded-lg text-xs text-gray-500 hover:text-primary hover:bg-blue-50 dark:hover:bg-gray-700 disabled:opacity-40"
+            :disabled="resourceOptionsLoading || resourceScopeSaving"
+            @click="refreshResourceOptions"
+          >
+            ↻ 刷新资源列表
+          </button>
+          <div class="flex items-center gap-2 ml-auto">
+            <button type="button" class="px-3 py-2 text-sm text-gray-500 hover:text-gray-700 dark:hover:text-gray-300" :disabled="resourceScopeSaving" @click="closeResourceScopeModal">取消</button>
+            <button
+              type="button"
+              class="px-4 py-2 rounded-lg bg-primary text-white text-sm font-bold disabled:opacity-50 disabled:cursor-not-allowed min-w-[6.5rem]"
+              :disabled="resourceScopeSaving || !resourceScopeModalDraft.project_name.trim()"
+              @click="saveResourceScope"
+            >
+              {{ resourceScopeSaving ? '保存中…' : '保存范围' }}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <ChatCanvas
       :visible="canvasVisible"
       v-model:pinned="canvasPinned"
@@ -1272,8 +1444,9 @@
       v-model:vector-weight="knowledgeVectorWeight"
       v-model:metadata-top-k="knowledgeMetadataTopK"
       :generated-at="knowledgeGeneratedAt"
-      :datasets="knowledgeDatasets"
-      :active-dataset-ids="activeDatasetIds"
+      :project-resource-scope="resourceScope.project_name ? '仅显示当前项目会话资源' : ''"
+      :datasets="scopedKnowledgeDatasets"
+      :active-dataset-ids="scopedActiveDatasetIds"
       :recommendations="datasetRecommendations"
       :pinned-dataset-ids="pinnedDatasetIds"
       :dataset-documents="datasetDocuments"
@@ -2288,13 +2461,14 @@
       v-model:keep-open-on-question="portalKeepOpenOnQuestion"
       v-model:pinned="portalPinned"
       v-model:drawer-width="portalDrawerWidthReactive"
-      :payload="portalNavigationPayload"
+      :payload="scopedPortalNavigationPayload"
+      :project-resource-scope="resourceScope.project_name ? '仅显示当前项目会话资源' : ''"
       :initial-loading="portalLoading && !portalNavigationPayload"
       :background-refreshing="portalBackgroundRefreshing"
       :focus-saved-report-request="savedReportFocusRequest"
       @quick-question="handlePortalQuickQuestion"
-      @record-question-click="(payload) => recordDatasetMenuQuestionClick(portalNavigationPayload, payload)"
-	      @clear-question-click="(payload) => clearDatasetMenuQuestionClick(portalNavigationPayload, payload)"
+      @record-question-click="(payload) => recordDatasetMenuQuestionClick(scopedPortalNavigationPayload, payload)"
+      @clear-question-click="(payload) => clearDatasetMenuQuestionClick(scopedPortalNavigationPayload, payload)"
 	      @refresh="refreshPortalNavigation"
 	      @execute-saved-report="handleExecuteSavedReport"
       @edit-saved-report="openEditReportModal"
@@ -3123,6 +3297,341 @@ watch(() => config.enableMultiAgent, (newVal, oldVal) => {
     }
 });
 const conversationId = ref("");
+const showResourceScopeModal = ref(false);
+const resourceScope = ref({ project_name: '', datasets: [] as any[], knowledge_bases: [] as any[], skills: [] as any[] });
+const resourceScopeDraft = reactive({ project_name: '', datasets: '', knowledge_bases: '', skills: '' });
+const resourceOptionsLoading = ref(false);
+const resourceOptionsLoaded = ref(false);
+const resourceOptionSearch = reactive<Record<string, string>>({ datasets: '', knowledge_bases: '', skills: '' });
+const resourceOptions = reactive<Record<string, any[]>>({ datasets: [], knowledge_bases: [], skills: [] });
+type ResourceScopeGroupKey = 'datasets' | 'knowledge_bases' | 'skills';
+
+const emptyResourceScopeState = () => ({
+  project_name: '',
+  datasets: [] as any[],
+  knowledge_bases: [] as any[],
+  skills: [] as any[],
+});
+
+const resourceOptionGroups: { key: ResourceScopeGroupKey; label: string; shortLabel?: string; hint: string }[] = [
+  {
+    key: 'datasets',
+    label: '数据集',
+    shortLabel: '数据集',
+    hint: '不选则数据门户与 ChatBI 仍按默认权限；选中后仅允许所列数据集。',
+  },
+  {
+    key: 'knowledge_bases',
+    label: '知识库',
+    shortLabel: '知识库',
+    hint: '不选则沿用会话内已选知识库；选中后检索仅限列表内知识库。',
+  },
+  {
+    key: 'skills',
+    label: '技能 (Skills)',
+    shortLabel: '技能',
+    hint: '不选则仍可按问题自动匹配技能；选中后仅加载已挂载技能。',
+  },
+];
+const resourceScopeModalDraft = ref(emptyResourceScopeState());
+const resourceScopeSaving = ref(false);
+const resourceScopeProjectNameInput = ref<HTMLInputElement | null>(null);
+const resourceScopeActiveTab = ref<ResourceScopeGroupKey>('datasets');
+const resourceScopeCount = computed(() => resourceScope.value.datasets.length + resourceScope.value.knowledge_bases.length + resourceScope.value.skills.length);
+const projectSessionHasDatasetScope = computed(() => Boolean(resourceScope.value.project_name) && resourceScope.value.datasets.length > 0);
+const projectSessionHasKnowledgeScope = computed(() => Boolean(resourceScope.value.project_name) && resourceScope.value.knowledge_bases.length > 0);
+const scopedKnowledgeDatasets = computed(() => {
+  if (!resourceScope.value.project_name) return knowledgeDatasets.value;
+  if (!projectSessionHasKnowledgeScope.value) return [];
+  const allowed = new Set(resourceScope.value.knowledge_bases.flatMap((item: any) => [item.id, item.name].filter(Boolean).map(String)));
+  return knowledgeDatasets.value.filter((item: any) => allowed.has(String(item.id || item.ragflow_dataset_id || item.dataset_id)) || allowed.has(String(item.name || item.platform_name || '')));
+});
+const scopedActiveDatasetIds = computed(() => {
+  if (!resourceScope.value.project_name) return activeDatasetIds.value;
+  const allowed = new Set(scopedKnowledgeDatasets.value.map((item: any) => String(item.id || item.ragflow_dataset_id || item.dataset_id)));
+  return activeDatasetIds.value.filter((id: string) => allowed.has(String(id)));
+});
+const scopedPortalNavigationPayload = computed(() => {
+  if (!projectSessionHasDatasetScope.value || !portalNavigationPayload.value) return portalNavigationPayload.value;
+  const allowed = new Set(resourceScope.value.datasets.flatMap((item: any) => [item.id, item.name, item.dataset_name].filter(Boolean).map(String)));
+  return {
+    ...portalNavigationPayload.value,
+    groups: (portalNavigationPayload.value.groups || []).map((group: any) => ({
+      ...group,
+      related_data: (group.related_data || []).filter((item: any) => allowed.has(String(item.dataset || item.display_name || item.id || ''))),
+    })).filter((group: any) => (group.related_data || []).length > 0),
+    dataset_count: resourceScope.value.datasets.length,
+  };
+});
+const mountedResourceLabels = computed(() => [
+  ...resourceScope.value.datasets.map((item: any) => ({ key: `dataset:${item.id}`, icon: '📊', label: item.name || item.id, type: 'datasets', id: item.id })),
+  ...resourceScope.value.knowledge_bases.map((item: any) => ({ key: `knowledge:${item.id}`, icon: '📚', label: item.name || item.id, type: 'knowledge_bases', id: item.id })),
+  ...resourceScope.value.skills.map((item: any) => ({ key: `skill:${item.id}`, icon: '🧩', label: item.name || item.id, type: 'skills', id: item.id })),
+]);
+
+const resourceEntryMatchesOption = (entry: any, option: any) => {
+  const eid = String(entry?.id ?? '').trim();
+  const oid = String(option?.id ?? '').trim();
+  const ename = String(entry?.name ?? '').trim();
+  const oname = String(option?.name ?? '').trim();
+  if (eid && oid && eid === oid) return true;
+  if (ename && oname && ename === oname) return true;
+  if (eid && oname && eid === oname) return true;
+  if (ename && oid && ename === oid) return true;
+  const edn = String(entry?.dataset_name ?? '').trim();
+  const odn = String(option?.dataset_name ?? option?.name ?? '').trim();
+  if (edn && odn && edn === odn) return true;
+  return false;
+};
+
+const remapScopeSelections = (items: any[], options: any[]) =>
+  (items || []).map((selected: any) => {
+    const matched = options.find((option: any) => resourceEntryMatchesOption(selected, option));
+    return matched
+      ? {
+          ...selected,
+          id: matched.id,
+          name: matched.name || selected.name,
+          ...(matched.dataset_name ? { dataset_name: matched.dataset_name } : {}),
+        }
+      : selected;
+  });
+
+const syncResourceScopeDraftStrings = (scope: typeof resourceScope.value) => {
+  resourceScopeDraft.project_name = scope.project_name || '';
+  resourceScopeDraft.datasets = scope.datasets.map((item: any) => item.name || item.id).join(',');
+  resourceScopeDraft.knowledge_bases = scope.knowledge_bases.map((item: any) => item.name || item.id).join(',');
+  resourceScopeDraft.skills = scope.skills.map((item: any) => item.name || item.id).join(',');
+};
+
+const cloneResourceScope = (scope: typeof resourceScope.value) => ({
+  project_name: scope.project_name || '',
+  datasets: scope.datasets.map((item: any) => ({ ...item })),
+  knowledge_bases: scope.knowledge_bases.map((item: any) => ({ ...item })),
+  skills: scope.skills.map((item: any) => ({ ...item })),
+});
+
+const modalDraftSelections = (type: ResourceScopeGroupKey) => resourceScopeModalDraft.value[type] || [];
+
+const modalOrphanSelections = (type: ResourceScopeGroupKey) => {
+  if (!resourceOptionsLoaded.value) return [];
+  const options = resourceOptions[type] || [];
+  if (!options.length) return [];
+  return modalDraftSelections(type).filter((item) => !options.some((option) => resourceEntryMatchesOption(item, option)));
+};
+
+const modalResourceOrphanCount = computed(() =>
+  resourceOptionGroups.reduce((sum, group) => sum + modalOrphanSelections(group.key).length, 0),
+);
+
+const modalSelectedCount = (type: ResourceScopeGroupKey) => modalDraftSelections(type).length;
+
+const modalSelectedChips = (type: ResourceScopeGroupKey) => {
+  const orphans = new Set(modalOrphanSelections(type));
+  return modalDraftSelections(type).map((item: any, index: number) => ({
+    key: `${type}:${item.id || item.name || index}`,
+    item,
+    label: item.name || item.id || '未命名',
+    orphan: orphans.has(item),
+  }));
+};
+
+const resourceModalOptionSelected = (type: ResourceScopeGroupKey, option: any) =>
+  modalDraftSelections(type).some((item) => resourceEntryMatchesOption(item, option));
+
+const resourceOptionInitial = (option: any) => String(option.name || option.id || '?').trim().charAt(0).toUpperCase();
+const resourceOptionAccent = (index: number) => ['bg-teal-500', 'bg-lime-500', 'bg-violet-500', 'bg-green-500', 'bg-sky-500'][index % 5];
+
+const filteredResourceOptions = (type: string) => {
+  const query = (resourceOptionSearch[type] || '').trim().toLowerCase();
+  return (resourceOptions[type] || []).filter((item: any) => !query || `${item.name || ''} ${item.id || ''} ${item.description || ''}`.toLowerCase().includes(query));
+};
+
+const sortedModalResourceOptions = (type: ResourceScopeGroupKey) => {
+  const options = filteredResourceOptions(type);
+  const selected: any[] = [];
+  const rest: any[] = [];
+  for (const option of options) {
+    if (resourceModalOptionSelected(type, option)) selected.push(option);
+    else rest.push(option);
+  }
+  return [...selected, ...rest];
+};
+
+const toggleModalResourceOption = (type: ResourceScopeGroupKey, option: any) => {
+  const selected = resourceModalOptionSelected(type, option);
+  const items = selected
+    ? modalDraftSelections(type).filter((item) => !resourceEntryMatchesOption(item, option))
+    : [
+        ...modalDraftSelections(type),
+        {
+          id: option.id,
+          name: option.name || option.id,
+          ...(option.dataset_name ? { dataset_name: option.dataset_name } : {}),
+        },
+      ];
+  resourceScopeModalDraft.value = { ...resourceScopeModalDraft.value, [type]: items };
+};
+
+const removeModalDraftResource = (type: ResourceScopeGroupKey, item: any) => {
+  const items = modalDraftSelections(type).filter((entry) => entry !== item && String(entry.id || '') !== String(item.id || ''));
+  resourceScopeModalDraft.value = { ...resourceScopeModalDraft.value, [type]: items };
+};
+
+const syncResourceScopeActiveTabForDraft = () => {
+  const withOrphans = resourceOptionGroups.find((group) => modalOrphanSelections(group.key).length > 0);
+  if (withOrphans) {
+    resourceScopeActiveTab.value = withOrphans.key;
+    return;
+  }
+  const withSelection = resourceOptionGroups.find((group) => modalSelectedCount(group.key) > 0);
+  resourceScopeActiveTab.value = withSelection?.key ?? 'datasets';
+};
+
+const loadResourceOptions = async () => {
+  resourceOptionsLoading.value = true;
+  try {
+    const [datasets, knowledge, globalSkills, personalSkills] = await Promise.allSettled([
+      axios.get('/api/portal/metadata/datasets'),
+      axios.get('/api/portal/ragflow/datasets', { params: { page: 1, page_size: 100, include_missing: false } }),
+      axios.get('/api/portal/skills'),
+      axios.get('/api/portal/skills/personal'),
+    ]);
+    if (datasets.status === 'fulfilled') {
+      const raw = datasets.value.data;
+      const list = Array.isArray(raw) ? raw : (raw?.data || raw?.datasets || []);
+      resourceOptions.datasets = list
+        .filter((item: any) => item.status === undefined || item.status === 1 || item.status === '1' || item.status === 'active')
+        .map((item: any) => ({
+          id: String(item.id || item.name),
+          name: item.display_name || item.name || item.dataset_name,
+          dataset_name: item.name || item.dataset_name,
+          description: item.description || item.remark || item.notes || `数据源：${item.data_source || '默认'}`,
+        }));
+    }
+    if (knowledge.status === 'fulfilled') {
+      const data = knowledge.value.data?.data;
+      const list = Array.isArray(data) ? data : (data?.datasets || data?.items || []);
+      resourceOptions.knowledge_bases = list
+        .filter((item: any) => item.status === undefined || item.status === 'active' || item.status === 1 || item.status === '1')
+        .map((item: any) => ({
+          id: String(item.id || item.dataset_id),
+          name: item.name || item.display_name || item.dataset_name,
+          dataset_name: item.id || item.dataset_id,
+          description: item.description || item.summary || item.notes || '暂无知识库描述',
+        }));
+    }
+    resourceOptions.skills = [];
+    for (const result of [globalSkills, personalSkills]) {
+      if (result.status === 'fulfilled') resourceOptions.skills.push(...(result.value.data?.data || [])
+        .filter((item: any) => item.enabled === undefined || item.enabled === true || item.enabled === 'true' || item.enabled === 1 || item.enabled === '1')
+        .map((item: any) => ({ id: String(item.id), name: item.name, description: item.description })));
+    }
+    for (const group of resourceOptionGroups) {
+      const options = resourceOptions[group.key] || [];
+      const key = group.key;
+      resourceScope.value[key] = remapScopeSelections(resourceScope.value[key], options);
+      if (showResourceScopeModal.value) {
+        resourceScopeModalDraft.value[key] = remapScopeSelections(resourceScopeModalDraft.value[key], options);
+      }
+    }
+    resourceOptionsLoaded.value = true;
+  } finally {
+    resourceOptionsLoading.value = false;
+  }
+};
+
+const closeResourceScopeModal = () => {
+  if (resourceScopeSaving.value) return;
+  showResourceScopeModal.value = false;
+};
+
+const openResourceScopeModal = () => {
+  resourceScopeModalDraft.value = cloneResourceScope(resourceScope.value);
+  syncResourceScopeActiveTabForDraft();
+  showResourceScopeModal.value = true;
+  if (!resourceOptionsLoaded.value) void loadResourceOptions();
+  void nextTick(() => resourceScopeProjectNameInput.value?.focus());
+};
+
+const refreshResourceOptions = async () => {
+  resourceOptionsLoaded.value = false;
+  await loadResourceOptions();
+};
+
+const loadResourceScope = async () => {
+  if (!conversationId.value) return;
+  try {
+    const res = await axios.get(`/api/v1/chat/conversation/${encodeURIComponent(conversationId.value)}/resource-scope`, { headers: embedAuthHeaders() });
+    resourceScope.value = res.data?.data || emptyResourceScopeState();
+    syncResourceScopeDraftStrings(resourceScope.value);
+  } catch (error) { console.warn('[ResourceScope] load failed', error); }
+};
+
+const buildPersistableScope = (source: typeof resourceScope.value) => {
+  const normalizeItems = (items: any[]) => items
+    .filter((item) => item?.id !== undefined && item?.id !== null && String(item.id).trim())
+    .map((item) => ({
+      id: String(item.id).trim(),
+      name: item.name || String(item.id).trim(),
+      ...(item.dataset_name ? { dataset_name: item.dataset_name } : {}),
+    }));
+  return {
+    project_name: (source.project_name || '').trim(),
+    datasets: normalizeItems(source.datasets),
+    knowledge_bases: normalizeItems(source.knowledge_bases),
+    skills: normalizeItems(source.skills),
+  };
+};
+
+const persistResourceScope = async (scope: ReturnType<typeof buildPersistableScope>) => {
+  const res = await axios.put(
+    `/api/v1/chat/conversation/${encodeURIComponent(conversationId.value)}/resource-scope`,
+    scope,
+    { headers: embedAuthHeaders() },
+  );
+  const saved = res.data?.data || scope;
+  resourceScope.value = saved;
+  syncResourceScopeDraftStrings(saved);
+  return saved;
+};
+
+const saveResourceScope = async () => {
+  if (!conversationId.value) {
+    showToast('请先开始会话', 'error');
+    return;
+  }
+  const draft = resourceScopeModalDraft.value;
+  if (!draft.project_name.trim()) {
+    showToast('请先填写项目名称', 'warning');
+    return;
+  }
+  resourceScopeSaving.value = true;
+  try {
+    await persistResourceScope(buildPersistableScope(draft));
+    showResourceScopeModal.value = false;
+    showToast('项目会话资源已保存', 'success');
+  } catch (error) {
+    showToast('资源范围更新失败', 'error');
+  } finally {
+    resourceScopeSaving.value = false;
+  }
+};
+
+const removeMountedResource = async (item: any) => {
+  const resourceType = item.type as ResourceScopeGroupKey;
+  const nextItems = resourceScope.value[resourceType].filter((entry: any) => entry.id !== item.id);
+  resourceScope.value = { ...resourceScope.value, [resourceType]: nextItems };
+  resourceScopeSaving.value = true;
+  try {
+    await persistResourceScope(buildPersistableScope(resourceScope.value));
+    showToast('已移除挂载资源', 'success');
+  } catch (error) {
+    showToast('移除失败', 'error');
+  } finally {
+    resourceScopeSaving.value = false;
+  }
+};
 let requestedConversationId = "";
 
 const embedAuthHeaders = (): Record<string, string> | undefined => {
@@ -3150,6 +3659,10 @@ const updateActiveConversationOnServer = async (cid: string) => {
   }
 };
 
+watch(conversationId, () => {
+  void loadResourceScope();
+});
+
 const generateNewConversation = () => {
   const previousId = conversationId.value;
   if (previousId) {
@@ -3159,8 +3672,11 @@ const generateNewConversation = () => {
   // 否则随后 initChat() 会再次强制切回旧会话并重载历史。
   requestedConversationId = "";
   conversationId.value = createConversationId();
+  resourceScope.value = emptyResourceScopeState();
+  Object.assign(resourceScopeDraft, { project_name: '', datasets: '', knowledge_bases: '', skills: '' });
   localStorage.setItem("yovole_embed_conv_id", conversationId.value);
   updateActiveConversationOnServer(conversationId.value);
+  loadResourceScope();
 };
 // Mention State (Moved to ChatInput)
 // const showMentionList = ref(false); // Removed
@@ -3361,6 +3877,7 @@ const resetStallTimer = () => {
 // Slash Commands
 const SYSTEM_SLASH_COMMANDS = [
   { id: "sys_clear", command: "/new", label: "💬 新会话", sort_order: -40 },
+  { id: "sys_project", command: "/project", label: "📁 新建项目会话", sort_order: -39.5 },
   { id: "sys_history", command: "/history", label: "🕒 历史", sort_order: -39 },
   { id: DATASET_PORTAL_SYSTEM_COMMAND_ID, command: DATASET_PORTAL_SLASH_COMMAND, label: "📊 数据门户", sort_order: -35 },
   { id: KNOWLEDGE_PORTAL_SYSTEM_COMMAND_ID, command: KNOWLEDGE_PORTAL_SLASH_COMMAND, label: "📚 知识库中心", sort_order: -34.5 },
@@ -5040,6 +5557,11 @@ const handleSystemCommand = async (cmd: string): Promise<boolean> => {
       userInput.value = "";
       showConfirmModal.value = true;
       return true;
+    case "/project":
+      userInput.value = "";
+      generateNewConversation();
+      openResourceScopeModal();
+      return true;
   }
   return false;
 };
@@ -6029,7 +6551,8 @@ const sendMessage = async () => {
   // 3. API Call
   abortController = new AbortController();
   try {
-    const knowledgeDatasetIds = collectKnowledgeDatasetIds();
+    const mountedKnowledgeDatasetIds = resourceScope.value.knowledge_bases.map((item: any) => String(item.id || '').trim()).filter(Boolean);
+    const knowledgeDatasetIds = mountedKnowledgeDatasetIds.length > 0 ? mountedKnowledgeDatasetIds : collectKnowledgeDatasetIds();
     const body: Record<string, unknown> = {
       messages: buildOutboundMessages(),
       stream: true,
@@ -6046,6 +6569,7 @@ const sendMessage = async () => {
         knowledge_ragflow_similarity_threshold: knowledgeSimilarityThreshold.value,
         knowledge_ragflow_vector_weight: knowledgeVectorWeight.value,
         knowledge_ragflow_metadata_top_k: knowledgeMetadataTopK.value,
+        resource_scope: resourceScope.value,
       },
       permission_options: {
         approval_mode: config.approvalMode || "ask",
