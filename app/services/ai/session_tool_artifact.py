@@ -215,10 +215,12 @@ def consider_turn_artifact_candidate(
 
 
 def should_inject_session_artifact(user_question: str, artifact: Dict[str, Any] | None) -> bool:
-    if not artifact or not str(artifact.get("text_excerpt") or "").strip():
-        structured = artifact.get("structured")
-        if not structured:
-            return False
+    if not artifact:
+        return False
+    has_text = bool(str(artifact.get("text_excerpt") or "").strip())
+    has_structured = bool(artifact.get("structured"))
+    if not has_text and not has_structured:
+        return False
     q = str(user_question or "").strip()
     if not q:
         return False

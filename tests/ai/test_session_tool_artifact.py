@@ -72,6 +72,11 @@ def test_should_inject_on_pure_followup_not_on_fresh_data_request():
     assert should_inject_session_artifact("请重新查询最新数据", artifact) is False
 
 
+def test_should_inject_returns_false_when_artifact_is_none():
+    assert should_inject_session_artifact("把刚才的结果画成柱状图", None) is False
+    assert append_session_tool_artifact_to_system_prompt("base", "总结一下", None) == "base"
+
+
 def test_append_session_artifact_injects_block():
     artifact = build_artifact_payload(
         tool_name="api_tool",
