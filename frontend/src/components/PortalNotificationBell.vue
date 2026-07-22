@@ -319,27 +319,27 @@ onUnmounted(() => {
               <p class="mt-1 text-[11px] text-gray-400">{{ formatDate(detailItem.created_at) }}</p>
             </div>
             <div class="flex items-center gap-1.5 shrink-0">
-              <button
-                type="button"
-                class="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-bold transition-all shadow-sm active:scale-95 border"
-                :class="detailCopied ? 'bg-emerald-50 text-emerald-600 border-emerald-200' : 'bg-gray-50 text-gray-600 border-gray-200 hover:bg-blue-50 hover:text-blue-600 hover:border-blue-200'"
-                :title="detailCopied ? '已复制到剪贴板' : '复制消息完整内容'"
-                @click="copyDetailContent"
-              >
-                <svg v-if="detailCopied" class="h-3.5 w-3.5 text-emerald-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7" />
-                </svg>
-                <svg v-else class="h-3.5 w-3.5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
-                </svg>
-                <span>{{ detailCopied ? '已复制' : '复制内容' }}</span>
-              </button>
               <button type="button" class="shrink-0 rounded-full p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-600" title="关闭详情" aria-label="关闭详情" @click="closeDetail">
                 <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" /></svg>
               </button>
             </div>
           </div>
-          <div class="notification-detail-body flex-1 overflow-y-auto px-5 py-4">
+          <div class="notification-detail-body group relative flex-1 overflow-y-auto px-5 py-4">
+            <button
+              type="button"
+              class="absolute top-3 right-5 z-20 flex h-7 w-7 items-center justify-center rounded-lg border border-gray-200 bg-white/90 shadow-sm backdrop-blur-sm transition-all duration-200 opacity-0 group-hover:opacity-100 hover:scale-105 active:scale-95"
+              :class="detailCopied ? 'border-emerald-300 bg-emerald-50 text-emerald-600 opacity-100' : 'text-gray-400 hover:border-blue-300 hover:bg-white hover:text-blue-600'"
+              :title="detailCopied ? '已复制到剪贴板' : '复制内容'"
+              aria-label="复制消息内容"
+              @click="copyDetailContent"
+            >
+              <svg v-if="detailCopied" class="h-4 w-4 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7" />
+              </svg>
+              <svg v-else class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+              </svg>
+            </button>
             <div class="markdown-body text-sm text-gray-700 leading-relaxed" v-html="detailHtml"></div>
           </div>
           <div class="flex justify-end gap-2 border-t border-gray-100 px-5 py-3">
