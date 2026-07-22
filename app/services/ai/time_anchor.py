@@ -12,6 +12,7 @@ import pytz
 
 _WEEKDAYS_CN = ("星期一", "星期二", "星期三", "星期四", "星期五", "星期六", "星期日")
 TIME_RANGE_GATE_PREFIX = "[TIME_RANGE_GATE]"
+_MAX_RELATIVE_DAYS = 36500
 
 
 @lru_cache(maxsize=1)
@@ -164,8 +165,8 @@ _RELATIVE_TIME_RULES: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"(?:近|过去)\s*(\d+)\s*(?:天|日)"), "near_days"),
     (re.compile(r"(?:今天|当日)"), "today"),
     (re.compile(r"(?:明天|明日)"), "tomorrow"),
-    (re.compile(r"后天"), "day_after_tomorrow"),
     (re.compile(r"大后天"), "day_after_after_tomorrow"),
+    (re.compile(r"后天"), "day_after_tomorrow"),
     (re.compile(r"昨天"), "yesterday"),
     (re.compile(r"前天"), "day_before_yesterday"),
     (re.compile(r"(?:上周|上星期)"), "last_week"),
@@ -286,9 +287,9 @@ def _resolve_this_or_next_weekday(
     prefix = match.group("prefix")
     if prefix in {"本", "这"}:
         target = _weekday_on_or_after(cal["week_start"], weekday_index)
-        return RelativeTimeExpectation(label=f"本{wd_char}", start=target, end=target)
+        return RelativeTimeExpectation(label=f"本周{wd_char}", start=target, end=target)
     target = _weekday_on_or_after(cal["next_week_start"], weekday_index)
-    return RelativeTimeExpectation(label=f"下{wd_char}", start=target, end=target)
+    return RelativeTimeExpectation(label=f"下周{wd_char}", start=target, end=target)
 
 
 def mentions_relative_time_language(text: str) -> bool:
@@ -366,8 +367,11 @@ def resolve_relative_time_expectation(
         if not match:
             continue
         if kind in {"recent_days", "near_days"}:
-            days = max(int(match.group(1)), 1)
-            start = cal["today"] - timedelta(days=days - 1)
+            try:
+                days = min(max(int(match.group(1)), 1), _MAX_RELATIVE_DAYS)
+                start = cal["today"] - timedelta(days=days - 1)
+            except (ValueError, OverflowError):
+                return None
             label = f"近{days}天" if kind == "near_days" else f"最近{days}天"
             return RelativeTimeExpectation(label=label, start=start, end=cal["today"])
         if kind == "today":
@@ -505,7 +509,10 @@ def detect_time_range_mismatch(
 
     sql_min = min(sql_dates)
     sql_max = max(sql_dates)
-    if sql_max >= expectation.start and sql_min <= expectation.end:
+    expected_next_day = expectation.end + timedelta(days=1)
+    if expectation.start == expectation.end and sql_dates == [expectation.start]:
+        return ""
+    if sql_min == expectation.start and sql_max in {expectation.end, expected_next_day}:
         return ""
 
     expected_range = f"{expectation.start.isoformat()} 至 {expectation.end.isoformat()}"
@@ -517,7 +524,7 @@ def detect_time_range_mismatch(
         )
     return (
         f"用户问题含相对时间「{expectation.label}」，按当前时间锚点应为 {expected_range}，"
-        f"但 SQL 中日期字面量 {actual_range} 与该区间无交集。"
+        f"但 SQL 中日期字面量范围为 {actual_range}，未精确对应该区间。"
     )
 
 

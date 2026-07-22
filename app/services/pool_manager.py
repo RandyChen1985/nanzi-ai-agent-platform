@@ -200,26 +200,19 @@ class DataSourcePoolManager:
     @classmethod
     async def _create_postgresql_pool(cls, db_config: Any) -> Any:
         """创建 PostgreSQL 异步连接池。"""
+        from psycopg import sql
         from psycopg_pool import AsyncConnectionPool
         from app.services.data_adapter.postgresql import build_postgresql_conninfo
 
         async def configure_connection(connection: Any) -> None:
-            """让未带 schema 的表名也能解析到用户业务 schema。"""
+            """限定 PostgreSQL 会话的默认 schema 与只读属性。"""
             async with connection.cursor() as cursor:
+                # 非 public 表必须显式使用 schema.table，避免同名表按 search_path 误解析。
                 await cursor.execute(
-                    """
-                    SELECT schema_name
-                    FROM information_schema.schemata
-                    WHERE schema_name NOT IN ('pg_catalog', 'information_schema')
-                    ORDER BY CASE WHEN schema_name = 'public' THEN 1 ELSE 0 END, schema_name
-                    """
+                    sql.SQL("SET search_path TO {}").format(sql.Identifier("public"))
                 )
-                schemas = [row[0] for row in await cursor.fetchall()]
-                if schemas:
-                    search_path = ", ".join(
-                        '"' + str(schema).replace('"', '""') + '"' for schema in schemas
-                    )
-                    await cursor.execute(f"SET search_path TO {search_path}")
+                # 平台仅允许查询，数据库会话层再加一道只读兜底。
+                await cursor.execute("SET default_transaction_read_only TO on")
             await connection.commit()
 
         conninfo = build_postgresql_conninfo(

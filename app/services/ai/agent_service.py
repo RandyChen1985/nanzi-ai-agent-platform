@@ -686,11 +686,41 @@ class AgentService:
                 if file_obj.get("type") == "skill":
                     active_skills.append(file_obj)
 
-        scoped_skill_items = [
+        raw_scoped_skill_items = [
             item for item in (resource_scope or {}).get("skills", [])
             if isinstance(item, dict) and item.get("id")
         ]
-        if scoped_skill_items:
+        scoped_skill_items = []
+        if raw_scoped_skill_items:
+            from app.services.ai.skill_resolver import (
+                list_skill_metas,
+                skill_filter_kwargs_from_config,
+            )
+
+            skill_filter = skill_filter_kwargs_from_config(agent_config)
+            available_skills = list_skill_metas(user_info=user_info, **skill_filter)
+            available_by_key = {
+                (str(item.get("scope") or "global"), str(item.get("id") or "")): item
+                for item in available_skills
+                if item.get("id")
+            }
+            for requested in raw_scoped_skill_items:
+                skill_id = str(requested.get("id") or "").strip()
+                requested_scope = str(requested.get("scope") or "").strip().lower()
+                candidates = [
+                    meta
+                    for (scope, candidate_id), meta in available_by_key.items()
+                    if candidate_id == skill_id and (not requested_scope or scope == requested_scope)
+                ]
+                if len(candidates) == 1:
+                    scoped_skill_items.append(candidates[0])
+                else:
+                    logger.warning(
+                        "[Skills] Ignore unavailable or ambiguous scoped skill id=%s scope=%s",
+                        skill_id,
+                        requested_scope or "unspecified",
+                    )
+        if raw_scoped_skill_items:
             scoped_ids = {str(item["id"]) for item in scoped_skill_items}
             active_skills = [skill for skill in active_skills if str(skill.get("url") or "") in scoped_ids]
             mounted_ids = {str(item.get("url") or "") for item in active_skills}
@@ -783,7 +813,7 @@ class AgentService:
                     "full instruction preloaded" if full_instruction else "summary only",
                 )
 
-        if user_query and not scoped_skill_items:
+        if user_query and not raw_scoped_skill_items:
             try:
                 from app.services.ai.skill_resolver import (
                     load_skill_md_content,

@@ -5,6 +5,14 @@ from app.core.redis import get_redis
 
 logger = logging.getLogger(__name__)
 
+
+def _require_user_id(user_id: Any) -> str:
+    """校验并返回 Redis 用户命名空间，禁止不同匿名请求共享数据。"""
+    if user_id is None or not str(user_id).strip():
+        raise ValueError("记忆存储缺少有效 user_id")
+    return str(user_id)
+
+
 class MemoryService:
     """
     Manages conversation history in Redis.
@@ -31,23 +39,28 @@ class MemoryService:
         Generate Redis Key.
         Format: conversation:{user_id}:{conversation_id}:history
         """
-        # Ensure user_id is string and handle potential None (fallback to 'anonymous' or error?)
-        # For security, we should probably fail if user_id is missing, but for backward compat 
-        # with loose validation systems, we safeguard str conversion.
-        uid = str(user_id) if user_id else "anonymous" 
+        uid = _require_user_id(user_id)
         return f"{self.KEY_PREFIX}:{uid}:{conversation_id}:{self.HISTORY_SUFFIX}"
 
     def _get_data_result_key(self, user_id: str, conversation_id: str) -> str:
-        uid = str(user_id) if user_id else "anonymous"
+        """生成用户最近一次数据结果的 Redis Key。"""
+        uid = _require_user_id(user_id)
         return f"{self.KEY_PREFIX}:{uid}:{conversation_id}:{self.DATA_RESULT_SUFFIX}"
 
     def _get_data_result_stack_key(self, user_id: str, conversation_id: str) -> str:
-        uid = str(user_id) if user_id else "anonymous"
+        """生成用户数据结果栈的 Redis Key。"""
+        uid = _require_user_id(user_id)
         return f"{self.KEY_PREFIX}:{uid}:{conversation_id}:{self.DATA_RESULT_STACK_SUFFIX}"
 
     def _get_session_tool_artifact_key(self, user_id: str, conversation_id: str) -> str:
-        uid = str(user_id) if user_id else "anonymous"
+        """生成用户会话工具快照的 Redis Key。"""
+        uid = _require_user_id(user_id)
         return f"{self.KEY_PREFIX}:{uid}:{conversation_id}:{self.SESSION_TOOL_ARTIFACT_SUFFIX}"
+
+    def _get_active_conversation_key(self, user_id: str) -> str:
+        """生成用户当前活跃会话的 Redis Key。"""
+        uid = _require_user_id(user_id)
+        return f"{self.KEY_PREFIX}:{uid}:active"
 
     async def get_data_result_stack(
         self,
@@ -270,6 +283,13 @@ class MemoryService:
         except Exception as e:
             logger.error("[MemoryService] Failed to set session tool artifact %s: %s", key, e)
 
+    async def delete_session_tool_artifact(self, user_id: str, conversation_id: str) -> None:
+        """删除会话上一轮通用工具结果快照。"""
+        redis = await get_redis()
+        if not redis:
+            return
+        await redis.delete(self._get_session_tool_artifact_key(user_id, conversation_id))
+
     async def clear_history(self, user_id: str, conversation_id: str):
         """
         Delete a conversation history.
@@ -317,11 +337,10 @@ class MemoryService:
         return bool(await redis.exists(self._get_key(user_id, conversation_id)))
 
     async def get_active_conversation(self, user_id: str) -> Optional[str]:
+        key = self._get_active_conversation_key(user_id)
         redis = await get_redis()
         if not redis:
             return None
-        uid = str(user_id) if user_id else "anonymous"
-        key = f"conversation:{uid}:active"
         try:
             val = await redis.get(key)
             if isinstance(val, bytes):
@@ -332,11 +351,10 @@ class MemoryService:
             return None
 
     async def set_active_conversation(self, user_id: str, conversation_id: str):
+        key = self._get_active_conversation_key(user_id)
         redis = await get_redis()
         if not redis:
             return
-        uid = str(user_id) if user_id else "anonymous"
-        key = f"conversation:{uid}:active"
         try:
             await redis.set(key, conversation_id)
             logger.info(f"[MemoryService] Set active conversation for key {key} to {conversation_id}")
@@ -357,7 +375,8 @@ class LongTermMemoryService:
     KEY_PREFIX = "nanzi:agent:ltm"
 
     def _get_key(self, user_id: str) -> str:
-        uid = str(user_id) if user_id else "anonymous"
+        """生成用户长期记忆的 Redis Key。"""
+        uid = _require_user_id(user_id)
         return f"{self.KEY_PREFIX}:{uid}"
 
     async def update_preference(self, user_id: str, key: str, value: str) -> bool:

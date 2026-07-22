@@ -479,20 +479,31 @@ async def resolve_sql_schema_preflight_with_binding(
     allowed_dataset_names: set[str] | None = None,
 ) -> str:
     """基于 SqlQueryBinding 做 SQL 预检；权限放行的未知表会回填进 binding。"""
-    table_columns = (
-        binding.schema_table_columns()
-        if binding and binding.tables
-        else dict(schema_table_columns or {})
+    from app.services.sql_query_execution_service import (
+        check_physical_table_refs_permission,
+        dialect_from_data_source,
     )
-    if not sql.strip() or not table_columns:
-        return ""
 
-    if allowed_dataset_names:
-        mounted = {str(name).strip() for name in allowed_dataset_names if str(name).strip()}
+    mounted = {
+        str(name).strip()
+        for name in (allowed_dataset_names or set())
+        if str(name).strip()
+    }
+    if mounted and binding and binding.primary_dataset_name:
+        if binding.primary_dataset_name not in mounted:
+            return (
+                f"当前项目会话未挂载数据集「{binding.primary_dataset_name}」，"
+                "请先在项目会话资源范围中追加后再查询。"
+            )
+
+    if mounted and sql.strip():
+        dialect = dialect_from_data_source(data_source)
+        _, sql_refs = _extract_physical_table_refs(sql, dialect)
         referenced = {
-            str(item.dataset_name or "").strip()
-            for item in (binding.tables.values() if binding else [])
-            if str(item.dataset_name or "").strip()
+            str(table_binding.dataset_name or "").strip()
+            for ref in sql_refs.values()
+            if binding and (table_binding := binding.get_table(ref)) is not None
+            and str(table_binding.dataset_name or "").strip()
         }
         outside = sorted(referenced - mounted)
         if outside:
@@ -502,10 +513,13 @@ async def resolve_sql_schema_preflight_with_binding(
                 + "。请先在项目会话资源范围中追加该数据集。"
             )
 
-    from app.services.sql_query_execution_service import (
-        check_physical_table_refs_permission,
-        dialect_from_data_source,
+    table_columns = (
+        binding.schema_table_columns()
+        if binding and binding.tables
+        else dict(schema_table_columns or {})
     )
+    if not sql.strip() or not table_columns:
+        return ""
 
     dialect = dialect_from_data_source(data_source)
     unknown_tables = collect_preflight_unknown_tables(

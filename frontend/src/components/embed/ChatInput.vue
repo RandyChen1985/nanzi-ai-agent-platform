@@ -901,11 +901,22 @@ const focus = () => {
   inputRef.value?.focus();
 };
 
+// 新建或切换会话时清除仅属于上一会话的附件与弹层状态。
+const resetSessionState = () => {
+  uploadedFiles.value = [];
+  showPlusMenu.value = false;
+  showSkillCascade.value = false;
+  showExpertCascade.value = false;
+  showMentionList.value = false;
+  mentionKeyword.value = "";
+};
+
 defineExpose({
   uploadedFiles,
   focus,
   openCommandDrawer,
   closeCommandDrawer,
+  resetSessionState,
 });
 </script>
 

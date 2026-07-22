@@ -21,6 +21,7 @@ export interface SessionExportMeta {
   username?: string
   conversationId?: string | null
   exportedAt?: Date
+  failedTraceIds?: string[]
 }
 
 export const formatStepPayload = (value: unknown): string => {
@@ -122,9 +123,16 @@ export const buildChatSessionMarkdown = (
   header.push('', '---', '')
 
   const body = turns.map((turn, i) => {
-    const label = meta.agentLabel
+    const label = turn.agent_display_name || turn.agent_name || meta.agentLabel
     return formatTurnMarkdown(turn, i + 1, tracesByTraceId[turn.trace_id], label)
   })
+
+  if (meta.failedTraceIds?.length) {
+    header.push(
+      `> ⚠️ 共 ${meta.failedTraceIds.length} 条执行链路获取失败；导出文件保留对话正文，但这些轮次的链路不完整。`,
+      '',
+    )
+  }
 
   return [...header, ...body].join('\n')
 }

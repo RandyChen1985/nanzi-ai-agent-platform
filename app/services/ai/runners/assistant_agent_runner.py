@@ -722,7 +722,7 @@ class AssistantAgentRunner(BaseExecutor):
             system_content = f"{route_hint}\n\n{system_content}"
 
         from app.services.ai.session_tool_artifact import (
-            append_session_tool_artifact_to_system_prompt,
+            append_session_tool_artifact_to_history,
             load_session_tool_artifact,
         )
 
@@ -731,12 +731,6 @@ class AssistantAgentRunner(BaseExecutor):
             self._runtime_user_id(),
             self.conversation_id,
         )
-        system_content = append_session_tool_artifact_to_system_prompt(
-            system_content,
-            _user_q_for_artifact,
-            _session_artifact,
-        )
-
         from app.services.ai.time_anchor import append_time_anchor_for_user_question
 
         system_content = append_time_anchor_for_user_question(
@@ -749,6 +743,7 @@ class AssistantAgentRunner(BaseExecutor):
             # --- Simple Mode (No Tools) ---
             # 仅保留最近 10 轮原始历史（20 条消息），防止长对话 Token 无限累积
             pruned_history = history[-20:] if history else history
+            pruned_history = append_session_tool_artifact_to_history(pruned_history, _session_artifact)
             runtime_messages = [SystemMessage(content=system_content)]
             runtime_messages.extend(convert_history_to_messages(pruned_history, strip_thought=True))
             runtime_messages = normalize_messages_for_llm(runtime_messages)
@@ -815,6 +810,14 @@ class AssistantAgentRunner(BaseExecutor):
                 total_tokens=tokens["total_tokens"],
                 timestamp=datetime.fromtimestamp(start_synthesis)
             ))
+            if self.conversation_id:
+                from app.services.ai.session_tool_artifact import persist_turn_artifact_candidate
+
+                await persist_turn_artifact_candidate(
+                    user_id=self._runtime_user_id(),
+                    conversation_id=self.conversation_id,
+                    turn_state={"best": None},
+                )
             return
 
         from app.services.ai.runtime.agentscope.workspace import (
@@ -830,6 +833,7 @@ class AssistantAgentRunner(BaseExecutor):
             tools=tools,
         )
         pruned_history = history[-20:] if history else history
+        pruned_history = append_session_tool_artifact_to_history(pruned_history, _session_artifact)
         runtime_messages = [SystemMessage(content=system_content)]
         runtime_messages.extend(convert_history_to_messages(pruned_history, strip_thought=True))
         runtime_messages = normalize_messages_for_llm(runtime_messages)
@@ -1031,6 +1035,7 @@ class AssistantAgentRunner(BaseExecutor):
                     tools=tools,
                     system_content=native_system_content,
                     runtime_messages=runtime_messages,
+                    user_query=_user_q_for_artifact,
                     max_steps=MAX_STEPS,
                     initial_tool_choice=preflight_tool_choice,
                 ):
@@ -1105,6 +1110,7 @@ class AssistantAgentRunner(BaseExecutor):
         tools: List[RuntimeToolSpec],
         system_content: str,
         runtime_messages: List[BaseMessage],
+        user_query: str,
         max_steps: int,
         initial_tool_choice: Any = None,
     ) -> AsyncGenerator[Dict[str, Any], None]:
@@ -1178,14 +1184,8 @@ class AssistantAgentRunner(BaseExecutor):
                     "trace_id": self.trace_id,
                     "best": None,
                 }
-                state["user_query"] = next(
-                    (
-                        str(getattr(message, "content", ""))
-                        for message in reversed(runtime_messages)
-                        if isinstance(message, HumanMessage)
-                    ),
-                    "",
-                )
+                # 工具快照只是不可信数据附录，本轮意图与持久化问题仍使用用户原文。
+                state["user_query"] = user_query
                 self._session_artifact_turn["user_question"] = state["user_query"]
                 interrupted = False
                 async for chunk in self._stream_agentscope_native_events(
@@ -1714,6 +1714,11 @@ class AssistantAgentRunner(BaseExecutor):
                     )
                 interrupted = False
                 user_query = str(state.get("user_query") or "")
+                self._session_artifact_turn = {
+                    "user_question": user_query,
+                    "trace_id": self.trace_id,
+                    "best": None,
+                }
                 grounding_enabled = self._grounding_enabled()
                 requirement = (
                     self._resolve_turn_grounding_requirement(user_query, ctx)
@@ -1790,6 +1795,13 @@ class AssistantAgentRunner(BaseExecutor):
                             yield buffered_chunk
 
                 if not interrupted and self.conversation_id:
+                    from app.services.ai.session_tool_artifact import persist_turn_artifact_candidate
+
+                    await persist_turn_artifact_candidate(
+                        user_id=self._runtime_user_id(),
+                        conversation_id=self.conversation_id,
+                        turn_state=self._session_artifact_turn,
+                    )
                     tools_fingerprint = build_tools_fingerprint(self.config, tools)
                     await agent_state_store.save(
                         user_id=self._runtime_user_id(),

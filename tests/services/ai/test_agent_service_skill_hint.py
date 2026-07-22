@@ -117,6 +117,44 @@ async def test_inject_skills_preloads_full_instruction_for_mounted_skill(tmp_pat
 
 @pytest.mark.asyncio
 @pytest.mark.no_infrastructure
+async def test_scoped_skill_cannot_bypass_agent_global_allowlist():
+    """会话 scope 提交未在智能体白名单内的全局技能时，不得挂载或回退自动扫描。"""
+    service = AgentService()
+    agent_config = ChatConfig(
+        agent_id="agent-1",
+        agent_name="helper",
+        model_name="test-model",
+        temperature=0,
+        system_prompt="Base prompt",
+        tools=[],
+        skills_custom=True,
+        skills=["allowed-skill"],
+    )
+
+    with (
+        patch("app.services.config_service.ConfigService.get", side_effect=_skill_config_get),
+        patch(
+            "app.services.ai.skill_resolver.list_skill_metas",
+            return_value=[{"id": "allowed-skill", "name": "Allowed", "scope": "global"}],
+        ),
+        patch("app.services.ai.skill_resolver.resolve_skills_from_query") as auto_scan,
+    ):
+        injections = await service._inject_skills(
+            messages=[{"role": "user", "content": "使用禁止技能"}],
+            user_query="使用禁止技能",
+            agent_config=agent_config,
+            user_info={"user_id": 7},
+            resource_scope={
+                "skills": [{"id": "forbidden-skill", "scope": "global"}],
+            },
+        )
+
+    assert injections == []
+    auto_scan.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.no_infrastructure
 async def test_inject_skills_preloads_full_instruction_for_high_confidence_scan(tmp_path):
     service = AgentService()
     skill_dir = tmp_path / "weekly-report"

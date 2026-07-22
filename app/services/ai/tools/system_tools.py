@@ -99,7 +99,7 @@ async def system_http_request(method: str, url: str, headers: dict = None, body:
         return f"Error executing request: {str(e)}"
 
 @tool
-def resolve_relative_dates(phrases: list[str], timezone: str = "Asia/Shanghai") -> str:
+def resolve_relative_dates(phrases: list[str], timezone: str | None = None) -> str:
     """
     将中文相对日期短语解析为具体起止日期（YYYY-MM-DD），与系统【当前时间锚点】同源。
 
@@ -110,7 +110,7 @@ def resolve_relative_dates(phrases: list[str], timezone: str = "Asia/Shanghai") 
 
     Args:
         phrases: 相对日期短语列表。
-        timezone: IANA 时区，默认 Asia/Shanghai。
+        timezone: IANA 时区；未传时使用宿主机默认时区。
     """
     from app.services.ai.time_anchor import resolve_relative_date_phrases
 
@@ -119,7 +119,7 @@ def resolve_relative_dates(phrases: list[str], timezone: str = "Asia/Shanghai") 
 
 
 @tool
-def get_current_time(timezone: str = "Asia/Shanghai") -> str:
+def get_current_time(timezone: str | None = None) -> str:
     """
     获取当前系统时间（含星期）。
 
@@ -129,14 +129,13 @@ def get_current_time(timezone: str = "Asia/Shanghai") -> str:
     - 每轮用户问题最多调用 1 次；仅当锚点缺失且必须知道「此刻」时再调用。
 
     Args:
-        timezone: IANA 时区（如 UTC、Asia/Shanghai），默认 Asia/Shanghai。
+        timezone: IANA 时区（如 UTC、Asia/Shanghai）；未传时使用宿主机默认时区。
     """
     try:
-        if timezone:
-            tz = pytz.timezone(timezone)
-            now = datetime.now(tz)
-        else:
-            now = datetime.now()
+        from app.services.ai.time_anchor import get_default_timezone
+
+        tz = pytz.timezone(timezone or get_default_timezone())
+        now = datetime.now(tz)
         
         # Add Chinese weekday
         weekdays = ["星期一", "星期二", "星期三", "星期四", "星期五", "星期六", "星期日"]

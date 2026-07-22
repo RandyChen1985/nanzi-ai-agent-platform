@@ -151,5 +151,6 @@ export interface AgentExecutionHistory {
   execution_time_ms?: number
   created_at: string
   turn_count?: number
+  agent_name?: string
   agent_display_name?: string
 }

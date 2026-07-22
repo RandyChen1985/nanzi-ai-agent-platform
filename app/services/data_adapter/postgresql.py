@@ -8,6 +8,8 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from jinja2 import BaseLoader, Environment, Undefined
 from psycopg import sql
+from sqlglot import exp, parse
+from sqlglot.errors import ParseError
 
 from .base import DataSourceAdapter, SQLSafetyError, standardize_items
 from .models import LogicalQuery, ResultSet
@@ -75,6 +77,42 @@ class PostgreSQLAdapter(DataSourceAdapter):
     def __init__(self, source_id: int):
         self.source_id = source_id
 
+    def _validate_sql_safety(self, sql_text: str) -> None:
+        """递归校验 PostgreSQL SQL，禁止可写 CTE、DDL 与 EXPLAIN 写操作。"""
+        super()._validate_sql_safety(sql_text)
+        try:
+            statements = parse(sql_text, read="postgres")
+        except ParseError as exc:
+            raise SQLSafetyError(f"PostgreSQL SQL 解析失败: {exc}") from exc
+
+        if len(statements) != 1:
+            raise SQLSafetyError("安全策略违规：禁止同时执行多条 SQL 语句")
+
+        root = statements[0]
+        forbidden_types = tuple(
+            node_type
+            for node_type in (
+                exp.Insert,
+                exp.Update,
+                exp.Delete,
+                exp.Merge,
+                exp.Create,
+                exp.Drop,
+                getattr(exp, "Alter", None),
+                exp.Command,
+            )
+            if node_type is not None
+        )
+        forbidden_node = next(
+            (node for node in root.walk() if isinstance(node, forbidden_types)),
+            None,
+        )
+        if forbidden_node is not None:
+            raise SQLSafetyError(
+                f"安全策略违规：PostgreSQL 查询包含禁止的写入或管理语句 "
+                f"'{type(forbidden_node).__name__}'"
+            )
+
     async def execute(self, query: LogicalQuery) -> ResultSet:
         raise NotImplementedError("本地适配器仅支持执行只读物理 SQL")
 
@@ -128,6 +166,7 @@ class PostgreSQLAdapter(DataSourceAdapter):
                 raw_sql = SQL_LAB_ENV.from_string(raw_sql).render(**(params or {}))
             except Exception:
                 pass
+            self._validate_sql_safety(raw_sql)
             final_sql = f"SELECT * FROM ({raw_sql}) AS _pg_columns LIMIT 0"
             async with pool.connection() as connection:
                 async with connection.cursor() as cursor:
@@ -160,8 +199,10 @@ class PostgreSQLAdapter(DataSourceAdapter):
         ]
 
     async def execute_sql(self, sql_text: str, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """执行通过 PostgreSQL 递归只读校验的物理 SQL。"""
         from app.services.pool_manager import DataSourcePoolManager
 
+        self._validate_sql_safety(sql_text)
         pool = await DataSourcePoolManager.get_pool(self.source_id)
         async with pool.connection() as connection:
             async with connection.cursor() as cursor:

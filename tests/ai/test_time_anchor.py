@@ -100,4 +100,39 @@ def test_resolve_relative_date_phrases_batch():
     now = tz.localize(datetime(2026, 6, 10, 12, 0, 0))
     rows = resolve_relative_date_phrases(["近7天", "下周五"], timezone=TZ_NAME, now=now)
     assert rows[0]["status"] == "ok" and rows[0]["start"] == "2026-06-04"
-    assert rows[1]["status"] == "ok" and rows[1]["label"] == "下五"
+    assert rows[1]["status"] == "ok" and rows[1]["label"] == "下周五"
+
+
+def test_resolve_large_relative_days_is_bounded():
+    """超大的近 N 天不应触发 timedelta 溢出。"""
+    from app.services.ai.time_anchor import resolve_relative_time_expectation
+
+    now = pytz.timezone(TZ_NAME).localize(datetime(2026, 6, 10, 12, 0, 0))
+    exp = resolve_relative_time_expectation("近99999999999999999999天", timezone=TZ_NAME, now=now)
+    assert exp is not None
+    assert exp.label == "近36500天"
+
+
+def test_resolve_day_after_after_tomorrow_before_shorter_token():
+    """大后天必须优先于其子串“后天”匹配。"""
+    from app.services.ai.time_anchor import resolve_relative_time_expectation
+
+    now = pytz.timezone(TZ_NAME).localize(datetime(2026, 6, 10, 12, 0, 0))
+    exp = resolve_relative_time_expectation("大后天的数据", timezone=TZ_NAME, now=now)
+    assert exp is not None
+    assert exp.label == "大后天"
+    assert exp.start.isoformat() == "2026-06-13"
+
+
+def test_time_range_gate_rejects_partially_overlapping_wide_range():
+    """SQL 仅与目标区间相交不代表范围正确。"""
+    from app.services.ai.time_anchor import detect_time_range_mismatch
+
+    now = pytz.timezone(TZ_NAME).localize(datetime(2026, 6, 10, 12, 0, 0))
+    reason = detect_time_range_mismatch(
+        "统计近7天趋势",
+        "SELECT * FROM t WHERE dt BETWEEN '2025-01-01' AND '2026-06-10'",
+        timezone=TZ_NAME,
+        now=now,
+    )
+    assert "未精确对应" in reason

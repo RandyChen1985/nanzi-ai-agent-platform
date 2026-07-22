@@ -1,7 +1,7 @@
 import pytest
 import json
 from unittest.mock import MagicMock, AsyncMock, patch
-from app.services.ai.memory_service import MemoryService
+from app.services.ai.memory_service import LongTermMemoryService, MemoryService
 
 # --- Mocks ---
 
@@ -35,16 +35,33 @@ def mock_redis():
 
 # --- Tests ---
 
-@pytest.mark.asyncio
-async def test_memory_service_get_key():
+def test_memory_service_get_key():
     """测试 Redis Key 生成逻辑"""
     service = MemoryService()
-    key = service._get_key("user123", "conv456")
-    assert key == "conversation:user123:conv456:history"
-    
-    # Test anonymous
-    key_anon = service._get_key(None, "conv789")
-    assert "anonymous" in key_anon
+    assert service._get_key("user123", "conv456") == "conversation:user123:conv456:history"
+    assert service._get_data_result_key("user123", "conv456") == "conversation:user123:conv456:last_data_result"
+    assert service._get_data_result_stack_key("user123", "conv456") == "conversation:user123:conv456:data_result_stack_v1"
+    assert service._get_session_tool_artifact_key("user123", "conv456") == "conversation:user123:conv456:session_tool_artifact_v1"
+    assert service._get_active_conversation_key("user123") == "conversation:user123:active"
+    assert LongTermMemoryService()._get_key("user123") == "nanzi:agent:ltm:user123"
+
+
+@pytest.mark.parametrize("user_id", [None, "", "   "])
+def test_memory_service_rejects_missing_user_id(user_id):
+    """缺少用户身份时，所有用户私有 Redis Key 都必须拒绝生成。"""
+    service = MemoryService()
+    key_builders = [
+        lambda: service._get_key(user_id, "conv456"),
+        lambda: service._get_data_result_key(user_id, "conv456"),
+        lambda: service._get_data_result_stack_key(user_id, "conv456"),
+        lambda: service._get_session_tool_artifact_key(user_id, "conv456"),
+        lambda: service._get_active_conversation_key(user_id),
+        lambda: LongTermMemoryService()._get_key(user_id),
+    ]
+
+    for build_key in key_builders:
+        with pytest.raises(ValueError, match="缺少有效 user_id"):
+            build_key()
 
 @pytest.mark.asyncio
 async def test_memory_service_add_message(mock_redis):
@@ -108,6 +125,6 @@ async def test_memory_service_clear_history(mock_redis):
         mock_get_redis.return_value = mock_redis
         
         await service.clear_history("u1", "c1")
-        assert mock_redis.delete.call_count == 3
+        assert mock_redis.delete.call_count == 4
         mock_redis.delete.assert_any_call("conversation:u1:c1:history")
         mock_redis.delete.assert_any_call("conversation:u1:c1:last_data_result")

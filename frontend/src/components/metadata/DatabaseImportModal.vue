@@ -247,8 +247,9 @@ const confidenceClass = (score?: number) => {
 const quoteTableName = (tableName: string) => {
   const dbType = lockedConfig.value?.db_type || config.value.type || 'mysql'
   if (dbType === 'clickhouse') return tableName
-  if (dbType === 'oracle' || dbType === 'sqlserver' || dbType === 'mssql') {
-    return `"${tableName.replace(/"/g, '""')}"`
+  if (dbType === 'postgresql' || dbType === 'postgres' || dbType === 'pg' || dbType === 'oracle' || dbType === 'sqlserver' || dbType === 'mssql') {
+    // PostgreSQL 的 schema.table 需要逐段引用，不能整体包成一个标识符。
+    return tableName.split('.').map((part) => `"${part.replace(/"/g, '""')}"`).join('.')
   }
   return `\`${tableName.replace(/`/g, '``')}\``
 }
