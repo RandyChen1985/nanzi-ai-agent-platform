@@ -27,6 +27,15 @@ def test_tool_loop_detector_normalizes_whitespace_and_key_order():
     assert verdict.fused is True
 
 
+def test_tool_loop_detector_fuses_on_repeated_get_current_time_regardless_of_args():
+    detector = ToolLoopDetector(threshold=3, enabled=True)
+    first = detector.record("get_current_time", {"timezone": "Asia/Shanghai"})
+    second = detector.record("get_current_time", {"timezone": "UTC"})
+    assert first.fused is False
+    assert second.fused is True
+    assert "get_current_time" in second.message
+
+
 def test_tool_loop_detector_disabled_never_fuses():
     detector = ToolLoopDetector(threshold=1, enabled=False)
     for _ in range(5):

@@ -12,6 +12,7 @@ export type PromptOptimizeSuggestion = {
 
 const props = defineProps<{
   content: string;
+  disabled?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -26,7 +27,7 @@ const optimizeSuggestions = ref<PromptOptimizeSuggestion[]>([]);
 const activeOptimizeTab = ref(0);
 let optimizeAbort: AbortController | null = null;
 
-const canOptimize = computed(() => Boolean((props.content || '').trim()) && !optimizing.value);
+const canOptimize = computed(() => Boolean((props.content || '').trim()) && !optimizing.value && !props.disabled);
 
 const notify = (message: string, type: 'success' | 'error' | 'info' = 'info') => {
   emit('toast', message, type);
@@ -117,7 +118,7 @@ onUnmounted(() => {
     type="button"
     @click="openConfirm"
     :disabled="!canOptimize"
-    class="ml-1 flex items-center px-2.5 py-1 text-[11px] font-semibold rounded-md text-indigo-600 hover:bg-indigo-50 disabled:opacity-50"
+    class="ml-1 flex items-center px-2.5 py-1 text-[11px] font-semibold rounded-md text-indigo-600 hover:bg-indigo-50 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-transparent"
   >
     <SparklesIcon class="w-3.5 h-3.5 mr-1" :class="{ 'animate-spin': optimizing }" />
     AI 润色

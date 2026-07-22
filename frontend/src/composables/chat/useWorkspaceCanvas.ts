@@ -114,7 +114,10 @@ export function useWorkspaceCanvas(options: UseWorkspaceCanvasOptions) {
     if (payload.content.startsWith("canvas://file")) {
       try {
         const url = new URL(payload.content.replace("canvas://", "http://localhost/"));
-        const filePath = url.searchParams.get("path") || "";
+        let filePath = url.searchParams.get("path") || "";
+        if (filePath.includes("###HTML_TAG_PLACEHOLDER_")) {
+          filePath = filePath.replace(/###HTML_TAG_PLACEHOLDER_\d+###/g, "").trim();
+        }
         const resolvedUrl = options.resolveFileUrl(filePath);
         const normalizedPath = ((filePath.toLowerCase().split("?")[0] ?? "").split("#")[0] ?? "");
         const isOfficeFile = [".docx", ".doc", ".xlsx", ".xls", ".xlsm", ".pptx", ".ppt"].some((extension) => normalizedPath.endsWith(extension));

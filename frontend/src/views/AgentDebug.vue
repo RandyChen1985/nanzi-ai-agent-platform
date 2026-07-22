@@ -73,7 +73,6 @@ import SkillCreatedBanner from "@/components/chat/SkillCreatedBanner.vue";
 import { parseSkillCreatedMarker, type SkillCreatedInfo } from "@/utils/skillCreated";
 import WorkspaceBrowserDrawer from "@/components/embed/WorkspaceBrowserDrawer.vue";
 import MemoryBrowserDrawer from "@/components/embed/MemoryBrowserDrawer.vue";
-import SkillBrowserDrawer from "@/components/embed/SkillBrowserDrawer.vue";
 import ChatCanvas from "@/components/embed/ChatCanvas.vue";
 import ChatThinkingHeader from "@/components/chat/ChatThinkingHeader.vue";
 import AttachmentImageThumb from "@/components/embed/AttachmentImageThumb.vue";
@@ -1639,38 +1638,10 @@ watch(memoryPinned, (val) => {
   localStorage.setItem("debug_memory_pinned", val ? "1" : "0");
 });
 
-const showSkillDrawer = ref(false);
-
-const skillKeepOpenOnSelect = ref(
-  readStoredBoolean(
-    "debug_skill_keep_open",
-    typeof window !== "undefined" &&
-      !window.matchMedia("(max-width: 639px)").matches,
-  ),
-);
-watch(skillKeepOpenOnSelect, (val) => {
-  localStorage.setItem("debug_skill_keep_open", val ? "1" : "0");
-});
-
-const skillPinned = ref(
-  typeof window !== "undefined" &&
-    !window.matchMedia("(max-width: 639px)").matches &&
-    readStoredBoolean("debug_skill_pinned", false),
-);
-watch(skillPinned, (val) => {
-  localStorage.setItem("debug_skill_pinned", val ? "1" : "0");
-});
-
 const attachedMemoryConversationIds = computed(() => {
   const memFile = chatInputRef.value?.uploadedFiles?.find((f: any) => f.type === "memory");
   return memFile?.url ? String(memFile.url) : "";
 });
-
-const attachedSkillIds = computed(() =>
-  (chatInputRef.value?.uploadedFiles || [])
-    .filter((f: any) => f.type === "skill")
-    .map((f: any) => String(f.url)),
-);
 
 const showStatsModal = ref(false);
 const loadingStats = ref(false);
@@ -1906,10 +1877,6 @@ const collectKnowledgeDatasetIds = (): string[] => {
   return ids;
 };
 
-const openSkillSelector = () => {
-  showSkillDrawer.value = true;
-};
-
 const skillCreatedInfo = ref<SkillCreatedInfo | null>(null);
 
 watch(
@@ -2086,6 +2053,8 @@ const showQuotaStatusInChat = async () => {
   await nextTick();
   scrollToBottom(true);
 };
+
+const canvasPinned = ref(false);
 
 const handleSystemCommand = async (cmd: string): Promise<boolean> => {
   const normalizedCmd = normalizeAgentSwitchCommand(cmd, agents.value);
@@ -2327,13 +2296,12 @@ watch(
   { deep: true }
 );
 
-const pinnedDrawerDockOffsetRem = (exclude?: "portal" | "workspace" | "memory" | "skill" | "knowledge") => {
+const pinnedDrawerDockOffsetRem = (exclude?: "portal" | "workspace" | "memory" | "knowledge") => {
   let rem = 0;
   if (exclude !== "portal" && showPortalDrawer.value && portalPinned.value) rem += 28;
   if (exclude !== "knowledge" && showKnowledgePortal.value && knowledgePinned.value) rem += 28;
   if (exclude !== "workspace" && showWorkspaceDrawer.value && workspacePinned.value) rem += 28;
   if (exclude !== "memory" && showMemoryDrawer.value && memoryPinned.value) rem += 28;
-  if (exclude !== "skill" && showSkillDrawer.value && skillPinned.value) rem += 28;
   return rem;
 };
 
@@ -2367,12 +2335,6 @@ const workspacePinnedDockClass = computed(() => {
 
 const memoryPinnedDockClass = computed(() => {
   const rem = pinnedDrawerDockOffsetRem("memory");
-  return rem > 0 ? `right-[${rem}rem]` : "right-0";
-});
-
-
-const skillPinnedDockClass = computed(() => {
-  const rem = pinnedDrawerDockOffsetRem("skill");
   return rem > 0 ? `right-[${rem}rem]` : "right-0";
 });
 
@@ -4721,7 +4683,7 @@ onUnmounted(() => {
           @delete-command="confirmDeleteCommand"
           @switch-mode="handleSwitchMode"
           @reorder-commands="handleReorderCommands"
-          @select-skill="openSkillSelector"
+          :agent-id="agentParams.agent_id"
           @select-knowledge-base="openKnowledgePortal"
           @select-local-fs="showWorkspaceDrawer = true"
           @select-memory="openMemorySelector"
@@ -4732,6 +4694,7 @@ onUnmounted(() => {
 
       <ChatCanvas
         :visible="canvasVisible"
+        v-model:pinned="canvasPinned"
         :data="canvasData"
         :overlay="canvasFromWorkspace"
         :dock-side="canvasFromWorkspace ? 'left' : 'right'"
@@ -5473,16 +5436,6 @@ onUnmounted(() => {
     :attached-conversation-ids="attachedMemoryConversationIds"
     @mount="handleMemoryMount"
     @cleared="handleMemoryCleared"
-  />
-
-  <SkillBrowserDrawer
-    v-model="showSkillDrawer"
-    v-model:keep-open-on-select="skillKeepOpenOnSelect"
-    v-model:pinned="skillPinned"
-    :pinned-dock-class="skillPinnedDockClass"
-    :attached-skill-ids="attachedSkillIds"
-    :agent-id="agentParams.agent_id"
-    @select="handleSelectSkill"
   />
 
   <!-- Model Call Stats Modal -->

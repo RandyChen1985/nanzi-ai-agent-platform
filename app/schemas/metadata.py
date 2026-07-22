@@ -83,17 +83,30 @@ class DatasetResponse(DatasetBase):
     id: int
     created_at: datetime
     updated_at: datetime
-    
+
     # RAGFlow Status
     rag_dataset_id: Optional[str] = None
     rag_synced_at: Optional[datetime] = None
     rag_sync_status: Optional[int] = 0
     rag_sync_notes: Optional[str] = None
-    
+
     table_count: int = 0
     metric_count: int = 0
     relationship_count: int = 0
-    
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class DatasetOptionResponse(BaseModel):
+    """会话资源等场景的轻量数据集选项（不含表/指标/关系统计）。"""
+
+    id: int
+    name: str
+    display_name: Optional[str] = None
+    description: Optional[str] = None
+    data_source: Optional[str] = None
+    status: Optional[int] = 1
+
     model_config = ConfigDict(from_attributes=True)
 
 class DatasetDetailResponse(DatasetResponse):
@@ -104,7 +117,7 @@ class DatasetDetailResponse(DatasetResponse):
 # --- DB Import Schemas ---
 
 class DBConnectionConfig(BaseModel):
-    type: str # 'mysql', 'clickhouse'
+    type: str # 'mysql', 'clickhouse', 'oracle', 'sqlserver', 'postgresql'
     host: str
     port: int
     user: str

@@ -16,6 +16,7 @@ class MemoryService:
     HISTORY_SUFFIX = "history"
     DATA_RESULT_SUFFIX = "last_data_result"
     DATA_RESULT_STACK_SUFFIX = "data_result_stack_v1"
+    SESSION_TOOL_ARTIFACT_SUFFIX = "session_tool_artifact_v1"
     
     def __init__(self, max_history_turns: int = 50, ttl: int = 604800):
         """
@@ -43,6 +44,10 @@ class MemoryService:
     def _get_data_result_stack_key(self, user_id: str, conversation_id: str) -> str:
         uid = str(user_id) if user_id else "anonymous"
         return f"{self.KEY_PREFIX}:{uid}:{conversation_id}:{self.DATA_RESULT_STACK_SUFFIX}"
+
+    def _get_session_tool_artifact_key(self, user_id: str, conversation_id: str) -> str:
+        uid = str(user_id) if user_id else "anonymous"
+        return f"{self.KEY_PREFIX}:{uid}:{conversation_id}:{self.SESSION_TOOL_ARTIFACT_SUFFIX}"
 
     async def get_data_result_stack(
         self,
@@ -226,6 +231,45 @@ class MemoryService:
         except Exception as e:
             logger.error(f"[MemoryService] Failed to set last data result for key {key}: {e}")
 
+    async def get_session_tool_artifact(
+        self,
+        user_id: str,
+        conversation_id: str,
+    ) -> Optional[Dict[str, Any]]:
+        """通用智能体：上一轮主工具结果快照。"""
+        redis = await get_redis()
+        if not redis:
+            return None
+        key = self._get_session_tool_artifact_key(user_id, conversation_id)
+        try:
+            raw = await redis.get(key)
+            if not raw:
+                return None
+            if isinstance(raw, bytes):
+                raw = raw.decode("utf-8")
+            parsed = json.loads(raw)
+            return parsed if isinstance(parsed, dict) else None
+        except Exception as e:
+            logger.error("[MemoryService] Failed to get session tool artifact %s: %s", key, e)
+            return None
+
+    async def set_session_tool_artifact(
+        self,
+        user_id: str,
+        conversation_id: str,
+        payload: Dict[str, Any],
+    ) -> None:
+        redis = await get_redis()
+        if not redis:
+            logger.warning("[MemoryService] Redis unavailable for set_session_tool_artifact")
+            return
+        key = self._get_session_tool_artifact_key(user_id, conversation_id)
+        try:
+            await redis.set(key, json.dumps(payload, ensure_ascii=False), ex=self.ttl)
+            logger.info("[MemoryService] Stored session tool artifact for key: %s", key)
+        except Exception as e:
+            logger.error("[MemoryService] Failed to set session tool artifact %s: %s", key, e)
+
     async def clear_history(self, user_id: str, conversation_id: str):
         """
         Delete a conversation history.
@@ -233,11 +277,14 @@ class MemoryService:
         redis = await get_redis()
         if not redis:
             return
+        from app.services.conversation_resource_service import ConversationResourceService
+        await ConversationResourceService.delete(user_id, conversation_id)
         key = self._get_key(user_id, conversation_id)
         logger.info(f"[MemoryService] Clearing history for key: {key}")
         await redis.delete(key)
         await redis.delete(self._get_data_result_key(user_id, conversation_id))
         await redis.delete(self._get_data_result_stack_key(user_id, conversation_id))
+        await redis.delete(self._get_session_tool_artifact_key(user_id, conversation_id))
 
     async def delete_session_memory(
         self,

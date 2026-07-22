@@ -3,6 +3,8 @@ import { computed, ref } from 'vue';
 import type { AIAgent, AIAgentBase, AIAgentVersion, AgentType } from '../../api/agent';
 import type { AIModel } from '../../api/model';
 import MarkdownEditor from '../MarkdownEditor.vue';
+import Modal from '../Modal.vue';
+import MessageRenderer from '../MessageRenderer.vue';
 
 type VersionConfigStep = 'agent' | 'model' | 'tools' | 'prompt' | 'review';
 type ToolGroup = { label: string; icon: string; tools: any[] };
@@ -87,6 +89,31 @@ const isCurrentStepComplete = () =>
     ? props.isVersionConfigStepComplete(props.versionConfigStep)
     : true;
 const goStep = (step: VersionConfigStep) => emit('update:versionConfigStep', step);
+
+// AI 消息排版样式选择与效果预览变量
+const showThemePreviewHelp = ref(false);
+const previewTheme = ref("default");
+const markdownThemeOptions = [
+  { value: 'default', label: '现代', emoji: '✨' },
+  { value: 'minimal', label: '极简', emoji: '🍃' },
+  { value: 'academic', label: '学术', emoji: '📖' },
+  { value: 'apple', label: '苹果', emoji: '🍎' },
+  { value: 'warm', label: '护眼', emoji: '🍂' },
+  { value: 'compact', label: '紧凑', emoji: '🔎' },
+  { value: 'bauhaus', label: '包豪斯', emoji: '📐' },
+  { value: 'editorial', label: '日报', emoji: '📰' },
+  { value: 'zen', label: '禅意', emoji: '🍃' },
+];
+const previewMarkdownContent = ref(
+  "# 南孜数据智能分析报告 📊\n\n我们已为您完成数据检索，本次对比分析了 2026 年度的核心业务指标。点击 [查看详情链接](https://example.com) 可以获取完整报表。\n\n> **业务目标**：通过多端排版持久化，解决多平台多终端切换下的个性化体验断层。\n\n### 1. 核心数据对比\n\n| 业务方向 | 现代风格 | 极简主义 | 包豪斯 / 日报 |\n| :--- | :--- | :--- | :--- |\n| **排版对齐** | 居左对齐 | 两端对齐 | 极致秩序感 |\n| **视觉呈现** | 渐变圆角 | 灰度卡片 | 直角/人文宋体 |\n| **阅读体验** | 现代极速 | 禅意放松 | 纸质印刷级 |\n\n### 2. 核心代码规范\n\n- **单向数据流**：Props 单向绑定，避免双向脏数据。\n- **持久化策略**：前端首屏加载时首选 Redis 用户偏好，辅以 LocalStorage 容错兜底。\n\n```python\n# 核心数据同步逻辑\ndef sync_theme_preference(user_id: int, theme: str):\n    print(f\"Syncing theme {theme} to Redis for user {user_id}\")\n    return {\"status\": \"success\", \"code\": 200}\n```\n\n如有任何疑问，请随时联系管理员或在下方继续提问。"
+);
+const applyPreviewTheme = () => {
+  if (!props.agentForm.engine_config) {
+    props.agentForm.engine_config = {};
+  }
+  props.agentForm.engine_config.default_markdown_theme = previewTheme.value;
+  showThemePreviewHelp.value = false;
+};
 
 const agentTypes: { value: AgentType; label: string; icon: string; description: string }[] = [
   { value: 'GENERAL', label: '通用助手', icon: '💬', description: '适合问答、写作和大多数专业任务' },
@@ -412,6 +439,43 @@ const externalCreationMissingFields = computed(() => {
               </div>
               <div class="mt-3 flex gap-2"><input v-model="newCapability" @keyup.enter="addCapability" placeholder="输入标签并回车" class="min-w-0 flex-1 rounded-lg border border-gray-300 px-3 py-2 text-sm" /><button type="button" @click="addCapability" class="rounded-lg bg-gray-100 px-4 text-xs font-medium text-gray-700">添加</button></div>
               <div class="mt-3 flex min-h-8 flex-wrap gap-2"><span v-for="capability in extensionCapabilities" :key="capability" class="inline-flex items-center rounded-full bg-gray-100 px-2.5 py-1 text-xs text-gray-700">{{ capability }}<button type="button" @click="removeCapability(capability)" class="ml-1 text-gray-400 hover:text-red-500">×</button></span><span v-if="extensionCapabilities.length === 0" class="text-xs text-gray-400">暂无扩展能力</span></div>
+            </div>
+
+            <!-- 推荐排版样式选择 -->
+            <div class="rounded-xl border border-gray-200 p-4">
+              <div class="flex items-center gap-1.5">
+                <label class="text-sm font-bold text-gray-800">推荐排版样式</label>
+                <button
+                  type="button"
+                  class="flex h-5 w-5 items-center justify-center rounded-full border border-blue-200 bg-blue-50 text-xs font-bold text-blue-600 hover:bg-blue-100"
+                  aria-label="查看排版样式效果预览说明"
+                  title="查看排版样式效果预览说明"
+                  @click="previewTheme = agentForm.engine_config?.default_markdown_theme || 'default'; showThemePreviewHelp = true"
+                >?</button>
+              </div>
+              <p class="mt-1 text-xs text-gray-500">指定该智能体默认推荐给用户的 Markdown 排版呈现样式，历史数据未指定则默认为现代样式。</p>
+              
+              <!-- 6个预置样式卡片选择 -->
+              <div class="mt-4 grid grid-cols-3 gap-2">
+                <button
+                  v-for="themeOpt in markdownThemeOptions"
+                  :key="themeOpt.value"
+                  type="button"
+                  @click="
+                    if (!agentForm.engine_config) agentForm.engine_config = {};
+                    agentForm.engine_config.default_markdown_theme = themeOpt.value;
+                  "
+                  class="py-2 px-3 text-xs border rounded-lg font-medium transition-all text-center flex items-center justify-center gap-1.5 active:scale-95"
+                  :class="
+                    (agentForm.engine_config?.default_markdown_theme || 'default') === themeOpt.value
+                      ? 'bg-blue-50 border-blue-200 text-blue-600 shadow-sm font-bold'
+                      : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'
+                  "
+                >
+                  <span>{{ themeOpt.emoji }}</span>
+                  <span>{{ themeOpt.label }}</span>
+                </button>
+              </div>
             </div>
           </div>
 
@@ -751,6 +815,7 @@ const externalCreationMissingFields = computed(() => {
                 placeholder="你是一个..."
                 fill
                 enable-optimize
+                :disabled="!canEditVersion"
               />
             </div>
             <p class="text-[10px] text-gray-400 mt-2 flex-shrink-0">{{ promptCharCount }} 字符</p>
@@ -1064,6 +1129,67 @@ const externalCreationMissingFields = computed(() => {
       </div>
     </div>
   </Teleport>
+
+  <!-- 推荐排版样式效果预览 Modal -->
+  <Modal
+    v-if="showThemePreviewHelp"
+    title="🎨 AI 消息排版样式效果预览"
+    size="max-w-4xl"
+    z-index="10000"
+    @close="showThemePreviewHelp = false"
+  >
+    <div class="space-y-4">
+      <p class="text-xs text-gray-500">点击下方按钮可实时切换并预览不同推荐样式在 AI 会话界面中的最终呈现效果。</p>
+      
+      <!-- 样式切换 Tab 栏 -->
+      <div class="grid grid-cols-3 sm:grid-cols-9 gap-1.5 p-1.5 bg-gray-50 dark:bg-gray-900/50 rounded-xl border border-gray-100 dark:border-gray-800">
+        <button
+          v-for="themeOpt in markdownThemeOptions"
+          :key="themeOpt.value"
+          type="button"
+          @click="previewTheme = themeOpt.value"
+          class="py-2 px-1 rounded-lg text-[10px] sm:text-xs font-semibold transition-all flex items-center justify-center gap-1 active:scale-95"
+          :class="
+            previewTheme === themeOpt.value
+              ? 'bg-white dark:bg-gray-800 text-blue-600 dark:text-blue-400 shadow-sm border border-gray-200/50 dark:border-gray-700'
+              : 'text-gray-500 hover:text-gray-800 dark:hover:text-gray-300'
+          "
+        >
+          <span>{{ themeOpt.emoji }}</span>
+          <span>{{ themeOpt.label }}</span>
+        </button>
+      </div>
+      
+      <!-- 效果预览区域 -->
+      <div class="border border-gray-150 dark:border-gray-700/60 rounded-xl p-4 bg-gray-50/50 dark:bg-gray-900/20">
+        <div class="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-2">样式效果预览</div>
+        
+        <!-- 使用真实的 MessageRenderer 展示排版效果 -->
+        <MessageRenderer
+          :content="previewMarkdownContent"
+          :theme="previewTheme"
+          class="border border-transparent"
+        />
+      </div>
+    </div>
+    
+    <template #footer>
+      <div class="flex justify-end gap-3">
+        <button
+          @click="applyPreviewTheme"
+          class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-medium shadow-sm transition-all"
+        >
+          使用该样式
+        </button>
+        <button
+          @click="showThemePreviewHelp = false"
+          class="px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700 rounded-lg text-xs font-medium transition-all"
+        >
+          关闭
+        </button>
+      </div>
+    </template>
+  </Modal>
 </template>
 
 <style scoped>

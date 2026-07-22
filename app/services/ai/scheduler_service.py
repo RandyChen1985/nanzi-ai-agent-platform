@@ -177,17 +177,26 @@ def _build_scheduled_task_prompt(
 ) -> str:
     from app.services.task_notification_channels import build_notification_delivery_supplement
 
-    body = (
-        f"【自动化指令-任务ID: {task_id}】@{agent_display_name}\n"
-        "这是 TaskCenter 自动任务的本次独立触发。请立即实际执行任务，不要只回复计划、准备开始或执行思路。\n"
-        "如果任务需要获取系统状态、调用工具、发送通知或写入外部系统，必须调用对应工具完成；"
-        "只有工具调用完成后，才能总结执行结果。\n"
-        f"任务内容：{prompt}"
+    global_rules = (
+        "【🌐 TaskCenter 自动化全局执行规则】\n"
+        "1. 无人值守模式：本次为后台自动触发运行，严禁向用户询问确认、索要参数或输出“准备开始/执行思路”等无意义聊天话术。\n"
+        "2. 工具驱动执行：若任务涉及数据查询、系统交互或业务计算，必须立即发起真正的工具调用 (Tool Call) 收集数据。\n"
+        "3. 结果生成要求：只有在所有必要的工具调用执行成功并获取数据后，才能整理最终的分析结论。\n"
+        "4. 禁增追问推荐：本次为后台离线交付，末尾严禁输出“您可能还想了解”、交互式推荐问题列表或快捷按钮（如 quick:xxx）。"
     )
+
+    user_task = (
+        f"【📋 任务执行指令 - ID: {task_id}】@{agent_display_name}\n"
+        f"{str(prompt or '').strip()}"
+    )
+
+    parts = [global_rules, user_task]
+
     supplement = build_notification_delivery_supplement(notification_channels or [])
     if supplement:
-        body = f"{body}\n\n{supplement}"
-    return body
+        parts.append(supplement)
+
+    return "\n\n".join(parts)
 
 
 def _is_busy_task_result(result: Dict[str, Any]) -> bool:

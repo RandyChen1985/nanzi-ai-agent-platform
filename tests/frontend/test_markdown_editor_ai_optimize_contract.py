@@ -11,6 +11,10 @@ def test_markdown_editor_exposes_ai_optimize_when_enabled():
 
     assert "enableOptimize" in editor
     assert "PromptAiOptimize" in editor
+    assert ":disabled=\"disabled\"" in editor
+    assert ":readonly=\"disabled\"" in editor
+    assert "disabled?: boolean" in optimize
+    assert "!props.disabled" in optimize
     assert "AI 润色" in optimize
     assert "/api/portal/prompts/optimize" in optimize
     assert "element:prompts:optimize" in optimize
@@ -28,3 +32,5 @@ def test_agent_version_editor_enables_prompt_ai_optimize():
 
     assert "MarkdownEditor" in drawer
     assert "enable-optimize" in drawer or ':enable-optimize="true"' in drawer or "enableOptimize" in drawer
+    assert ':disabled="!canEditVersion"' in drawer
+

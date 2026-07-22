@@ -8,6 +8,9 @@ import PivotTable from '@/components/embed/PivotTable.vue';
 import { useToast } from '@/composables/useToast';
 import { canWriteWorkspaceFile, isDirectRenderableUrl, resolvePublicUploadsPreviewUrl, saveWorkspaceFileContent } from '@/utils/workspaceFilePreview';
 
+const pinned = defineModel<boolean>('pinned', { default: false });
+const canvasWidth = defineModel<number>('canvasWidth', { default: 520 });
+
 const props = withDefaults(
   defineProps<{
     visible: boolean;
@@ -570,13 +573,93 @@ const analyzeDiff = () => {
   handleClose();
 };
 
+// ==========================================
+// 6. Split-screen Resizer (双栏响应式拖拽调宽)
+// ==========================================
+const CANVAS_WIDTH_STORAGE_KEY = 'nanzi_canvas_preferred_width';
+const customWidth = ref<number | null>(null);
+const isResizing = ref(false);
+
+const loadCustomWidth = () => {
+  if (typeof window === 'undefined') return;
+  const saved = localStorage.getItem(CANVAS_WIDTH_STORAGE_KEY);
+  if (saved) {
+    const parsed = parseInt(saved, 10);
+    if (!isNaN(parsed) && parsed >= 320) {
+      customWidth.value = parsed;
+      canvasWidth.value = parsed;
+    }
+  }
+};
+
+const startResize = (e: MouseEvent) => {
+  if (isFullscreen.value || isMobile.value || props.overlay) return;
+  e.preventDefault();
+  isResizing.value = true;
+  document.body.classList.add('select-none');
+  window.addEventListener('mousemove', handleResizing);
+  window.addEventListener('mouseup', stopResize);
+};
+
+const handleResizing = (e: MouseEvent) => {
+  if (!isResizing.value) return;
+  const viewportWidth = window.innerWidth;
+  let newWidth = 520;
+
+  if (props.dockSide === 'left') {
+    newWidth = e.clientX;
+  } else {
+    newWidth = viewportWidth - e.clientX;
+  }
+
+  const minWidth = 320;
+  const maxWidth = Math.max(minWidth, viewportWidth - 300);
+  const clampedWidth = Math.min(maxWidth, Math.max(minWidth, newWidth));
+
+  customWidth.value = clampedWidth;
+  canvasWidth.value = clampedWidth;
+};
+
+const stopResize = () => {
+  if (!isResizing.value) return;
+  isResizing.value = false;
+  document.body.classList.remove('select-none');
+  window.removeEventListener('mousemove', handleResizing);
+  window.removeEventListener('mouseup', stopResize);
+
+  if (customWidth.value) {
+    localStorage.setItem(CANVAS_WIDTH_STORAGE_KEY, String(customWidth.value));
+  }
+};
+
+const resetWidth = () => {
+  customWidth.value = null;
+  canvasWidth.value = 520;
+  localStorage.removeItem(CANVAS_WIDTH_STORAGE_KEY);
+};
+
+const panelStyle = computed(() => {
+  if (isFullscreen.value || isMobile.value || props.overlay) {
+    return {};
+  }
+  if (customWidth.value) {
+    return {
+      width: `${customWidth.value}px`,
+      maxWidth: `calc(100vw - 300px)`,
+    };
+  }
+  return {};
+});
+
 onMounted(() => {
+  loadCustomWidth();
   mobileMq = window.matchMedia('(max-width: 639px)');
   syncMobile();
   mobileMq.addEventListener('change', syncMobile);
 });
 
 onUnmounted(() => {
+  stopResize();
   mobileMq?.removeEventListener('change', syncMobile);
 });
 
@@ -585,7 +668,7 @@ const slideTransitionName = computed(() =>
 );
 
 const useBodyTeleport = computed(() =>
-  !props.overlay || isFullscreen.value || isMobile.value,
+  !pinned.value && (!props.overlay || isFullscreen.value || isMobile.value),
 );
 
 const panelFrameClass = computed(() => {
@@ -612,7 +695,7 @@ const overlayBackdropClass = computed(() =>
   <teleport to="body" :disabled="!useBodyTeleport">
     <Transition :name="slideTransitionName">
       <div
-        v-if="visible && overlay"
+        v-if="visible && overlay && !pinned"
         class="pointer-events-none"
         :class="overlayBackdropClass"
         aria-hidden="true"
@@ -623,9 +706,34 @@ const overlayBackdropClass = computed(() =>
     <Transition :name="slideTransitionName">
       <div
         v-if="visible"
-        class="bg-white/95 dark:bg-gray-800/95 backdrop-blur-md shadow-2xl flex flex-col transition-all duration-300 border-gray-200 dark:border-gray-700"
-        :class="panelFrameClass"
+        class="bg-white/95 dark:bg-gray-800/95 backdrop-blur-md shadow-2xl flex flex-col border-gray-200 dark:border-gray-700"
+        :class="[panelFrameClass, isResizing ? 'transition-none select-none' : 'transition-all duration-300']"
+        :style="panelStyle"
       >
+      <!-- Drag Overlay Guard during resizing -->
+      <div v-if="isResizing" class="fixed inset-0 z-[300] cursor-col-resize select-none" />
+
+      <!-- Resizer Handle Bar -->
+      <div
+        v-if="!isFullscreen && !isMobile && !overlay"
+        class="absolute top-0 bottom-0 z-50 flex items-center justify-center cursor-col-resize group select-none touch-none transition-colors"
+        :class="[
+          dockSide === 'left' ? '-right-1.5 w-3' : '-left-1.5 w-3',
+          isResizing ? 'bg-primary/30' : 'hover:bg-primary/20'
+        ]"
+        title="按住左右拖拽调整画布宽度（双击重置）"
+        @mousedown="startResize"
+        @dblclick="resetWidth"
+      >
+        <div
+          class="w-1 h-8 rounded-full transition-all flex flex-col items-center justify-center gap-0.5"
+          :class="isResizing ? 'bg-primary scale-110 shadow-sm' : 'bg-gray-300 dark:bg-gray-600 group-hover:bg-primary group-hover:scale-105'"
+        >
+          <div class="w-0.5 h-0.5 rounded-full bg-white dark:bg-gray-900" />
+          <div class="w-0.5 h-0.5 rounded-full bg-white dark:bg-gray-900" />
+          <div class="w-0.5 h-0.5 rounded-full bg-white dark:bg-gray-900" />
+        </div>
+      </div>
       <!-- Header -->
       <div class="p-4 border-b border-gray-100 dark:border-gray-700 flex justify-between items-center flex-shrink-0">
         <div class="flex items-center space-x-2">
@@ -667,6 +775,35 @@ const overlayBackdropClass = computed(() =>
           >
             <span>💡</span>
             <span>AI 分析差异</span>
+          </button>
+
+          <!-- Pin Button -->
+          <button
+            v-if="!isMobile"
+            type="button"
+            @click="pinned = !pinned"
+            class="p-1.5 rounded-lg transition-colors"
+            :class="
+              pinned
+                ? 'text-primary bg-primary/10 hover:bg-primary/20 dark:bg-primary/20 dark:hover:bg-primary/30'
+                : 'text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700'
+            "
+            :title="pinned ? '取消钉住' : '钉住画布（固定在侧边不遮挡对话）'"
+            :aria-label="pinned ? '取消钉住' : '钉住画布'"
+          >
+            <svg
+              class="w-4 h-4 transition-transform duration-200"
+              :class="{ '-rotate-45': pinned }"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path d="M12 17v5" />
+              <path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v3.76" />
+            </svg>
           </button>
 
           <!-- Fullscreen Toggle Button -->

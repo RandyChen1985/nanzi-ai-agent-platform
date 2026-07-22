@@ -36,6 +36,7 @@ const notificationKindLabel = (item: any) => {
 
 const detailHtml = computed(() => renderMarkdown(String(detailItem.value?.content || "")));
 
+const detailCopied = ref(false);
 const closeNotifications = () => {
   open.value = false;
   if (listTimer) clearInterval(listTimer);
@@ -44,6 +45,20 @@ const closeNotifications = () => {
 
 const closeDetail = () => {
   detailItem.value = null;
+  detailCopied.value = false;
+};
+
+const copyDetailContent = async () => {
+  if (!detailItem.value?.content) return;
+  try {
+    await navigator.clipboard.writeText(detailItem.value.content);
+    detailCopied.value = true;
+    setTimeout(() => {
+      detailCopied.value = false;
+    }, 2000);
+  } catch (err) {
+    console.warn("Failed to copy notification content", err);
+  }
 };
 
 const fetchUnreadCount = async () => {
@@ -134,8 +149,9 @@ const markItemRead = async (item: any) => {
 };
 const openNotification = async (item: any) => {
   const meta = item.metadata || {};
-  const savedReportOpenRequest = isSavedReportNotification(item) && meta.report_id
-    ? createSavedReportOpenRequest({ report_id: meta.report_id, run_id: item.resource_id || "" })
+  const reportId = meta.report_id || (item.category === "saved_report" || item.resource_type === "saved_report" ? item.resource_id : null);
+  const savedReportOpenRequest = isSavedReportNotification(item) && reportId
+    ? createSavedReportOpenRequest({ report_id: reportId, run_id: item.resource_id || "" })
     : null;
   const notificationTarget = savedReportOpenRequest
     ? {
@@ -159,7 +175,10 @@ const openNotification = async (item: any) => {
     return;
   }
 
-  // 普通站内消息：打开详情并渲染 Markdown
+  // 智能体/系统站内消息：打开详情弹窗并自动关闭下拉弹框；黄金报表消息保持原样
+  if (!isSavedReportNotification(item)) {
+    closeNotifications();
+  }
   detailItem.value = item;
 };
 const markAllRead = async () => {
@@ -299,11 +318,28 @@ onUnmounted(() => {
               <h3 class="text-base font-black text-gray-800">{{ detailItem.title }}</h3>
               <p class="mt-1 text-[11px] text-gray-400">{{ formatDate(detailItem.created_at) }}</p>
             </div>
-            <button type="button" class="shrink-0 rounded-full p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-600" title="关闭详情" aria-label="关闭详情" @click="closeDetail">
-              <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" /></svg>
-            </button>
+            <div class="flex items-center gap-1.5 shrink-0">
+              <button type="button" class="shrink-0 rounded-full p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-600" title="关闭详情" aria-label="关闭详情" @click="closeDetail">
+                <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" /></svg>
+              </button>
+            </div>
           </div>
-          <div class="notification-detail-body flex-1 overflow-y-auto px-5 py-4">
+          <div class="notification-detail-body group relative flex-1 overflow-y-auto px-5 py-4">
+            <button
+              type="button"
+              class="absolute top-3 right-5 z-20 flex h-7 w-7 items-center justify-center rounded-lg border border-gray-200 bg-white/90 shadow-sm backdrop-blur-sm transition-all duration-200 opacity-0 group-hover:opacity-100 hover:scale-105 active:scale-95"
+              :class="detailCopied ? 'border-emerald-300 bg-emerald-50 text-emerald-600 opacity-100' : 'text-gray-400 hover:border-blue-300 hover:bg-white hover:text-blue-600'"
+              :title="detailCopied ? '已复制到剪贴板' : '复制内容'"
+              aria-label="复制消息内容"
+              @click="copyDetailContent"
+            >
+              <svg v-if="detailCopied" class="h-4 w-4 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7" />
+              </svg>
+              <svg v-else class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+              </svg>
+            </button>
             <div class="markdown-body text-sm text-gray-700 leading-relaxed" v-html="detailHtml"></div>
           </div>
           <div class="flex justify-end gap-2 border-t border-gray-100 px-5 py-3">

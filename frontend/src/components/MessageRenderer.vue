@@ -47,9 +47,12 @@ use([
   PolarComponent
 ]);
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   content: string;
-}>();
+  theme?: 'default' | 'minimal' | 'academic' | 'apple' | 'warm' | 'compact';
+}>(), {
+  theme: 'default'
+});
 
 const emit = defineEmits<{
   (e: 'quick-question', question: string): void;
@@ -112,13 +115,15 @@ interface ContentSegment {
 
   const FILE_PATH_EXTENSIONS =
     'md|csv|txt|py|js|ts|sh|sql|json|pdf|html|css|yaml|yml|log|env|docx?|xlsx?|xlsm|pptx?';
-  const FILE_PATH_SEGMENT = String.raw`[^/\s<>"'，。；：！？、]+`;
+  const FILE_PATH_SEGMENT = String.raw`[^/#\s<>"'，。；：！？、]+`;
   const filePathRegex = new RegExp(
     String.raw`(?:\./|/)?(?:${FILE_PATH_SEGMENT}/)+${FILE_PATH_SEGMENT}\.(?:${FILE_PATH_EXTENSIONS})`,
     'giu',
   );
 
-  const appendOpenLinkToPath = (pathVal: string) => {
+  const appendOpenLinkToPath = (rawPathVal: string) => {
+    const pathVal = rawPathVal.replace(/###HTML_TAG_PLACEHOLDER_\d+###/g, '').trim();
+    if (!pathVal) return rawPathVal;
     const canvasUrl = `canvas://file?path=${encodeURIComponent(pathVal)}`;
     return `${pathVal}<a href="${canvasUrl}" class="inline-flex items-center text-blue-600 dark:text-blue-400 hover:underline font-bold ml-1.5 text-[10.5px]" title="点击在画布中打开文件" style="cursor: pointer;">[打开]</a>`;
   };
@@ -394,7 +399,7 @@ const segments = computed<ContentSegment[]>(() => {
 </script>
 
 <template>
-  <div class="message-renderer space-y-4" @click="handleContentClick">
+  <div :class="['message-renderer', `theme-${theme}`, 'space-y-4']" @click="handleContentClick">
     <div v-for="(segment, idx) in segments" :key="idx">
       <div v-if="segment.type === 'thought'" class="thought-block group mb-6">
         <div class="flex items-center space-x-2 mb-2 text-slate-400">
@@ -807,5 +812,503 @@ const segments = computed<ContentSegment[]>(() => {
     opacity: 1;
     transform: translateY(0);
   }
+}
+
+/* ==================== 极简排版样式 (Minimal Theme) ==================== */
+.theme-minimal :deep(.markdown-body pre):before {
+  display: none !important; /* 隐藏 Mac 控制台圆点 */
+}
+.theme-minimal :deep(.markdown-body pre) {
+  margin-top: 0.75em !important;
+  margin-bottom: 0.75em !important;
+  padding: 0.75em !important;
+  background-color: #f8fafc !important; /* 浅淡灰蓝背景 */
+  border: none !important;              /* 去除代码边框 */
+  border-radius: 6px !important;
+  box-shadow: none !important;
+}
+.theme-minimal :deep(.markdown-body code) {
+  background-color: rgba(15, 23, 42, 0.06) !important;
+  color: #334155 !important;
+}
+.theme-minimal :deep(.markdown-body p) {
+  margin-bottom: 0.75em !important;
+  line-height: 1.6 !important;
+}
+.theme-minimal :deep(.markdown-body h1, .markdown-body h2, .markdown-body h3) {
+  margin-top: 1em !important;
+  margin-bottom: 0.4em !important;
+}
+
+/* ==================== 学术排版样式 (Academic Theme) ==================== */
+.theme-academic :deep(.markdown-body) {
+  font-family: Georgia, Cambria, "Times New Roman", Times, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", serif !important;
+  line-height: 1.8 !important;
+  font-size: 14.5px !important;
+  letter-spacing: 0.03em !important;
+}
+.theme-academic :deep(.markdown-body p) {
+  text-indent: 2em !important; /* 普通段落首行缩进 2 字符 */
+  margin-bottom: 1.2em !important;
+  text-align: justify !important; /* 两端对齐 */
+}
+/* 防止首行缩进影响到代码块、引用、列表、表格和按钮等特殊元素中的段落 */
+.theme-academic :deep(.markdown-body pre p),
+.theme-academic :deep(.markdown-body blockquote p),
+.theme-academic :deep(.markdown-body li p),
+.theme-academic :deep(.markdown-body td p),
+.theme-academic :deep(.markdown-body th p),
+.theme-academic :deep(.markdown-body .quick-action-btn) {
+  text-indent: 0 !important;
+}
+.theme-academic :deep(.markdown-body h1, .markdown-body h2, .markdown-body h3) {
+  font-family: inherit !important;
+  text-align: center !important; /* 标题居中 */
+  margin-top: 1.8em !important;
+  margin-bottom: 0.6em !important;
+  border-bottom: none !important;
+}
+.theme-academic :deep(.markdown-body h1) {
+  font-size: 1.5em !important;
+}
+.theme-academic :deep(.markdown-body h2) {
+  font-size: 1.3em !important;
+}
+.theme-academic :deep(.markdown-body h3) {
+  font-size: 1.15em !important;
+}
+.theme-academic :deep(.markdown-body pre) {
+  background-color: #fafafa !important;
+  border: 1px dashed #d1d5db !important; /* 虚线框 */
+  border-radius: 4px !important;
+  box-shadow: none !important;
+  padding: 1em !important;
+}
+.theme-academic :deep(.markdown-body pre):before {
+  display: none !important; /* 学术排版中不需要 Mac 圆点控制栏 */
+}
+.theme-academic :deep(.markdown-body blockquote) {
+  border-left: 3px double #9ca3af !important; /* 双线边框 */
+  background-color: #f9fafb !important;
+  padding: 0.75em 1.25em !important;
+  margin: 1.2em 0 !important;
+  font-style: normal !important;
+}
+
+/* ==================== 苹果极简样式 (Apple Theme) ==================== */
+.theme-apple :deep(.markdown-body) {
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro", "SF Pro Display", "SF Pro Text", "Helvetica Neue", Helvetica, Arial, sans-serif !important;
+  color: #1d1d1f !important; /* 苹果深黑色字 */
+  line-height: 1.65 !important;
+  font-size: 14.5px !important;
+  letter-spacing: -0.011em !important; /* 苹果系统字体的紧凑字间距 */
+}
+.dark .theme-apple :deep(.markdown-body) {
+  color: #f5f5f7 !important; /* 苹果暗色明亮文字 */
+}
+.theme-apple :deep(.markdown-body a:not(.quick-action-btn):not([href^="quick:"])) {
+  color: #0066cc !important; /* 苹果经典蓝色链接 */
+  text-decoration: none !important;
+  font-weight: 500 !important;
+}
+.dark .theme-apple :deep(.markdown-body a:not(.quick-action-btn):not([href^="quick:"])) {
+  color: #2997ff !important;
+}
+.theme-apple :deep(.markdown-body a:hover) {
+  text-decoration: underline !important;
+}
+.theme-apple :deep(.markdown-body p) {
+  margin-bottom: 1em !important;
+}
+.theme-apple :deep(.markdown-body h1, .markdown-body h2, .markdown-body h3) {
+  color: #1d1d1f !important;
+  font-family: inherit !important;
+  font-weight: 700 !important;
+  letter-spacing: -0.022em !important; /* 标题更紧凑的字距 */
+  border-bottom: none !important;
+}
+.dark .theme-apple :deep(.markdown-body h1, .markdown-body h2, .markdown-body h3) {
+  color: #f5f5f7 !important;
+}
+.theme-apple :deep(.markdown-body h1) {
+  font-size: 1.6em !important;
+  margin-top: 1.2em !important;
+  margin-bottom: 0.4em !important;
+}
+.theme-apple :deep(.markdown-body h2) {
+  font-size: 1.35em !important;
+  margin-top: 1.1em !important;
+  margin-bottom: 0.4em !important;
+}
+.theme-apple :deep(.markdown-body h3) {
+  font-size: 1.18em !important;
+  margin-top: 1em !important;
+  margin-bottom: 0.3em !important;
+}
+.theme-apple :deep(.markdown-body pre) {
+  background-color: #1d1d1f !important; /* 苹果官方开发者代码块底色 */
+  border: 1px solid rgba(255, 255, 255, 0.1) !important;
+  border-radius: 12px !important;
+  padding: 1.25em 1em 1em 1em !important;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15) !important;
+}
+.theme-apple :deep(.markdown-body pre):before {
+  content: "" !important; /* 确保 Mac 三色圆点完美显示 */
+  position: absolute !important;
+  top: 10px !important;
+  left: 12px !important;
+  width: 8px !important;
+  height: 8px !important;
+  border-radius: 50% !important;
+  background-color: #ff5f56 !important;
+  box-shadow: 16px 0 0 #ffbd2e, 32px 0 0 #27c93f !important;
+  display: block !important;
+  z-index: 1 !important;
+}
+.theme-apple :deep(.markdown-body code) {
+  background-color: rgba(0, 0, 0, 0.05) !important;
+  color: #1d1d1f !important;
+  font-family: SFMono-Regular, Consolas, Monaco, monospace !important;
+}
+.dark .theme-apple :deep(.markdown-body code) {
+  background-color: rgba(255, 255, 255, 0.1) !important;
+  color: #f5f5f7 !important;
+}
+.theme-apple :deep(.markdown-body pre code) {
+  background-color: transparent !important;
+  color: #f5f5f7 !important; /* 代码文本亮白 */
+}
+.theme-apple :deep(.markdown-body blockquote) {
+  border-left: 3px solid #86868b !important; /* 苹果经典灰色边线 */
+  background-color: rgba(0, 0, 0, 0.02) !important;
+  color: #86868b !important;
+  padding: 0.8em 1.2em !important;
+  border-radius: 0 8px 8px 0 !important;
+}
+.dark .theme-apple :deep(.markdown-body blockquote) {
+  background-color: rgba(255, 255, 255, 0.02) !important;
+}
+
+/* ==================== 护眼书香样式 (Warm Theme) ==================== */
+.theme-warm :deep(.markdown-body) {
+  font-family: "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Georgia", serif !important;
+  color: #586e75 !important; /* 深褐茶色字 */
+  line-height: 1.85 !important;
+  font-size: 14.5px !important;
+}
+.theme-warm :deep(.markdown-body p) {
+  margin-bottom: 1.1em !important;
+}
+.theme-warm :deep(.markdown-body h1, .markdown-body h2, .markdown-body h3) {
+  color: #b58900 !important; /* 暖棕黄色标题 */
+  border-bottom-color: #eee8d5 !important;
+}
+.theme-warm :deep(.markdown-body pre) {
+  background-color: #f5ece2 !important; /* 温暖浅灰底色 */
+  border: 1px solid #e4dcd3 !important;
+  box-shadow: none !important;
+}
+.theme-warm :deep(.markdown-body pre):before {
+  opacity: 0.7 !important; /* 使圆点半透明融入背景 */
+}
+.theme-warm :deep(.markdown-body code) {
+  background-color: rgba(238, 232, 213, 0.8) !important;
+  color: #b58900 !important;
+}
+.theme-warm :deep(.markdown-body blockquote) {
+  border-left-color: #93a1a1 !important;
+  background-color: rgba(238, 232, 213, 0.3) !important;
+  color: #657b83 !important;
+}
+
+/* ==================== 高密度紧凑样式 (Compact Theme) ==================== */
+.theme-compact :deep(.markdown-body) {
+  font-size: 12.5px !important;
+  line-height: 1.45 !important;
+}
+.theme-compact :deep(.markdown-body p) {
+  margin-bottom: 0.5em !important;
+}
+.theme-compact :deep(.markdown-body h1, .markdown-body h2, .markdown-body h3) {
+  margin-top: 0.8em !important;
+  margin-bottom: 0.3em !important;
+}
+.theme-compact :deep(.markdown-body pre) {
+  margin-top: 0.5em !important;
+  margin-bottom: 0.5em !important;
+  padding: 0.75em 0.5em 0.5em 0.5em !important;
+}
+.theme-compact :deep(.markdown-body pre):before {
+  top: 6px !important;
+  left: 8px !important;
+  scale: 0.85 !important;
+}
+.theme-compact :deep(.markdown-body ul, .markdown-body ol) {
+  margin-bottom: 0.5em !important;
+}
+.theme-compact :deep(.markdown-body li) {
+  margin-bottom: 0.2em !important;
+}
+.theme-compact :deep(.markdown-body blockquote) {
+  margin: 0.6em 0 !important;
+  padding-top: 0.25em !important;
+  padding-bottom: 0.25em !important;
+}
+
+/* ==================== 瑞士包豪斯样式 (Bauhaus Theme) ==================== */
+.theme-bauhaus :deep(.markdown-body) {
+  font-family: "Helvetica Neue", Helvetica, Arial, "PingFang SC", sans-serif !important;
+  color: #111111 !important;
+  line-height: 1.6 !important;
+  font-size: 14px !important;
+  border-radius: 0px !important;
+}
+.dark .theme-bauhaus :deep(.markdown-body) {
+  color: #eeeeee !important;
+}
+.theme-bauhaus :deep(.markdown-body a:not(.quick-action-btn):not([href^="quick:"])) {
+  color: #002fa7 !important; /* 克莱因蓝 */
+  text-decoration: none !important;
+  font-weight: bold !important;
+  border-bottom: 2px solid #002fa7 !important;
+}
+.dark .theme-bauhaus :deep(.markdown-body a:not(.quick-action-btn):not([href^="quick:"])) {
+  color: #38bdf8 !important;
+  border-bottom-color: #38bdf8 !important;
+}
+.theme-bauhaus :deep(.markdown-body a:hover) {
+  background-color: #002fa7 !important;
+  color: #ffffff !important;
+}
+.theme-bauhaus :deep(.markdown-body h1, .markdown-body h2, .markdown-body h3) {
+  font-family: inherit !important;
+  font-weight: 900 !important;
+  color: #000000 !important;
+  border-radius: 0px !important;
+  text-transform: uppercase !important;
+  border-bottom: 2px solid #111111 !important;
+  padding-bottom: 4px !important;
+}
+.dark .theme-bauhaus :deep(.markdown-body h1, .markdown-body h2, .markdown-body h3) {
+  color: #ffffff !important;
+  border-bottom-color: #eeeeee !important;
+}
+.theme-bauhaus :deep(.markdown-body h1) { font-size: 1.6em !important; margin-top: 1.2em !important; }
+.theme-bauhaus :deep(.markdown-body h2) { font-size: 1.35em !important; margin-top: 1.1em !important; }
+.theme-bauhaus :deep(.markdown-body h3) { font-size: 1.18em !important; margin-top: 1em !important; }
+.theme-bauhaus :deep(.markdown-body pre) {
+  background-color: #f3f4f6 !important;
+  border: 1px solid #111111 !important;
+  border-radius: 0px !important;
+  box-shadow: 4px 4px 0px #002fa7 !important; /* 克莱因蓝几何阴影 */
+  padding: 1em !important;
+  position: relative !important;
+}
+.dark .theme-bauhaus :deep(.markdown-body pre) {
+  background-color: #111827 !important;
+  border-color: #eeeeee !important;
+  box-shadow: 4px 4px 0px #38bdf8 !important;
+}
+.theme-bauhaus :deep(.markdown-body pre):before {
+  display: none !important; /* 包豪斯不需要 Mac 控制点 */
+}
+.theme-bauhaus :deep(.markdown-body code) {
+  background-color: #f3f4f6 !important;
+  color: #e60012 !important; /* 包豪斯红单点高亮 */
+  border-radius: 0px !important;
+  border: 1px solid #e5e7eb !important;
+  padding: 2px 4px !important;
+}
+.dark .theme-bauhaus :deep(.markdown-body code) {
+  background-color: #1f2937 !important;
+  color: #f87171 !important;
+  border-color: #374151 !important;
+}
+.theme-bauhaus :deep(.markdown-body pre code) {
+  border: none !important;
+  padding: 0 !important;
+  color: #111111 !important;
+}
+.dark .theme-bauhaus :deep(.markdown-body pre code) {
+  color: #eeeeee !important;
+}
+.theme-bauhaus :deep(.markdown-body blockquote) {
+  border-left: 4px solid #000000 !important;
+  background-color: #f9fafb !important;
+  color: #111111 !important;
+  border-radius: 0px !important;
+  padding: 0.8em 1.2em !important;
+}
+.dark .theme-bauhaus :deep(.markdown-body blockquote) {
+  border-left-color: #eeeeee !important;
+  background-color: #1f2937 !important;
+  color: #eeeeee !important;
+}
+
+/* ==================== 复古日报样式 (Editorial Theme) ==================== */
+.theme-editorial :deep(.markdown-body) {
+  font-family: "Georgia", "Nimbus Roman No9 L", "Songti SC", "Noto Serif SC", serif !important;
+  color: #2c2520 !important; /* 经典油墨棕黑 */
+  line-height: 1.8 !important;
+  font-size: 14.5px !important;
+}
+.dark .theme-editorial :deep(.markdown-body) {
+  color: #e5dcd3 !important;
+}
+.theme-editorial :deep(.markdown-body p) {
+  margin-bottom: 1.2em !important;
+  text-align: justify !important;
+}
+.theme-editorial :deep(.markdown-body p:first-of-type):first-letter {
+  float: left !important;
+  font-size: 2.8em !important;
+  line-height: 0.9 !important;
+  margin-right: 6px !important;
+  font-weight: bold !important;
+  color: #8c2d19 !important; /* 复古报刊红首字下沉 */
+}
+.theme-editorial :deep(.markdown-body pre p:first-of-type):first-letter,
+.theme-editorial :deep(.markdown-body blockquote p:first-of-type):first-letter,
+.theme-editorial :deep(.markdown-body li p:first-of-type):first-letter {
+  float: none !important;
+  font-size: inherit !important;
+  line-height: inherit !important;
+  margin-right: 0 !important;
+  font-weight: inherit !important;
+  color: inherit !important;
+}
+.theme-editorial :deep(.markdown-body h1, .markdown-body h2, .markdown-body h3) {
+  font-family: inherit !important;
+  font-weight: 700 !important;
+  color: #8c2d19 !important; /* 报刊红标题 */
+  border-bottom: 1px solid #dcd1c4 !important;
+  padding-bottom: 6px !important;
+}
+.dark .theme-editorial :deep(.markdown-body h1, .markdown-body h2, .markdown-body h3) {
+  color: #fca5a5 !important;
+  border-bottom-color: #4b3e34 !important;
+}
+.theme-editorial :deep(.markdown-body h1) { font-size: 1.55em !important; margin-top: 1.4em !important; text-align: center !important; }
+.theme-editorial :deep(.markdown-body h2) { font-size: 1.3em !important; margin-top: 1.3em !important; }
+.theme-editorial :deep(.markdown-body h3) { font-size: 1.15em !important; margin-top: 1.1em !important; }
+.theme-editorial :deep(.markdown-body pre) {
+  background-color: #f7f3ed !important; /* 泛黄纸张背景 */
+  border: 1px solid #e2d7c9 !important;
+  border-radius: 4px !important;
+  padding: 1em !important;
+}
+.dark .theme-editorial :deep(.markdown-body pre) {
+  background-color: #2c2520 !important;
+  border-color: #4b3e34 !important;
+}
+.theme-editorial :deep(.markdown-body pre):before {
+  display: none !important;
+}
+.theme-editorial :deep(.markdown-body code) {
+  background-color: rgba(140, 45, 25, 0.06) !important;
+  color: #8c2d19 !important;
+  font-family: inherit !important;
+  font-weight: bold !important;
+}
+.dark .theme-editorial :deep(.markdown-body code) {
+  background-color: rgba(252, 165, 165, 0.1) !important;
+  color: #fca5a5 !important;
+}
+.theme-editorial :deep(.markdown-body pre code) {
+  background-color: transparent !important;
+  font-family: Monaco, monospace !important;
+  font-weight: normal !important;
+  color: #2c2520 !important;
+}
+.dark .theme-editorial :deep(.markdown-body pre code) {
+  color: #e5dcd3 !important;
+}
+.theme-editorial :deep(.markdown-body blockquote) {
+  border-left: 2px solid #8c2d19 !important;
+  background-color: #fcf9f5 !important;
+  font-style: italic !important;
+  color: #61554d !important;
+  padding: 0.8em 1.2em !important;
+  margin: 1.2em 0 !important;
+}
+.dark .theme-editorial :deep(.markdown-body blockquote) {
+  border-left-color: #fca5a5 !important;
+  background-color: #352d27 !important;
+  color: #c4b5a9 !important;
+}
+
+/* ==================== 北欧禅意样式 (Zen Theme) ==================== */
+.theme-zen :deep(.markdown-body) {
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif !important;
+  color: #4a5568 !important; /* 柔和无锋芒中灰 */
+  line-height: 1.75 !important;
+  font-size: 14.5px !important;
+  font-weight: 300 !important; /* 偏轻的字重 */
+  letter-spacing: 0.02em !important;
+}
+.dark .theme-zen :deep(.markdown-body) {
+  color: #cbd5e1 !important;
+}
+.theme-zen :deep(.markdown-body p) {
+  margin-bottom: 1em !important;
+}
+.theme-zen :deep(.markdown-body h1, .markdown-body h2, .markdown-body h3) {
+  font-family: inherit !important;
+  font-weight: 600 !important;
+  color: #2f4f4f !important; /* 森林绿标题 */
+  border-bottom: none !important;
+}
+.dark .theme-zen :deep(.markdown-body h1, .markdown-body h2, .markdown-body h3) {
+  color: #a3e635 !important; /* 柔光绿 */
+}
+.theme-zen :deep(.markdown-body h1) { font-size: 1.5em !important; margin-top: 1.3em !important; }
+.theme-zen :deep(.markdown-body h2) { font-size: 1.28em !important; margin-top: 1.2em !important; }
+.theme-zen :deep(.markdown-body h3) { font-size: 1.15em !important; margin-top: 1.1em !important; }
+.theme-zen :deep(.markdown-body pre) {
+  background-color: #f4f6f4 !important; /* 治愈柔绿底 */
+  border: none !important;
+  border-radius: 18px !important; /* 超圆润大圆角 */
+  padding: 1.2em !important;
+  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.02) !important;
+}
+.dark .theme-zen :deep(.markdown-body pre) {
+  background-color: #1e2920 !important;
+}
+.theme-zen :deep(.markdown-body pre):before {
+  display: none !important;
+}
+.theme-zen :deep(.markdown-body code) {
+  background-color: #e8eee8 !important;
+  color: #2f4f4f !important;
+  border-radius: 6px !important;
+  padding: 2px 5px !important;
+}
+.dark .theme-zen :deep(.markdown-body code) {
+  background-color: #2a3a2d !important;
+  color: #a3e635 !important;
+}
+.theme-zen :deep(.markdown-body pre code) {
+  background-color: transparent !important;
+  color: #4a5568 !important;
+}
+.dark .theme-zen :deep(.markdown-body pre code) {
+  color: #cbd5e1 !important;
+}
+.theme-zen :deep(.markdown-body blockquote) {
+  border-left: 3px solid #8fbc8f !important; /* 治愈系浅灰绿线 */
+  background-color: rgba(143, 188, 143, 0.05) !important;
+  color: #6b8e23 !important;
+  padding: 0.8em 1.2em !important;
+  border-radius: 0 12px 12px 0 !important;
+}
+.dark .theme-zen :deep(.markdown-body blockquote) {
+  background-color: rgba(163, 230, 53, 0.02) !important;
+  color: #a3e635 !important;
+}
+
+/* ==================== 快捷按钮文字颜色强制兜底 (Quick Buttons Contrast Fix) ==================== */
+:deep(.markdown-body .quick-action-btn),
+:deep(.markdown-body a[href^="quick:"]) {
+  color: #ffffff !important;
 }
 </style>

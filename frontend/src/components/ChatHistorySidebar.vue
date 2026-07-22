@@ -239,9 +239,10 @@ const handleScroll = (e: Event) => {
               
               <div class="relative z-10">
                 <div class="flex items-center justify-between mb-2">
-                  <span class="text-[10px] font-black text-gray-400 uppercase tracking-tighter">{{
-                    formatDate(item.created_at)
-                  }}</span>
+                  <div class="flex items-center gap-1.5 min-w-0">
+                    <span v-if="item.project_name" class="px-1.5 py-0.5 rounded-md bg-indigo-50 text-indigo-700 border border-indigo-100 text-[9px] font-black whitespace-nowrap" :title="item.project_name">📁 {{ item.project_name }}</span>
+                    <span class="text-[10px] font-black text-gray-400 uppercase tracking-tighter">{{ formatDate(item.created_at) }}</span>
+                  </div>
                   <span
                     v-if="item.turn_count !== undefined"
                     class="px-1.5 py-0.5 rounded-md bg-gray-100 dark:bg-gray-800 text-[9px] text-gray-500 dark:text-gray-400 font-black border border-gray-200 dark:border-gray-700"

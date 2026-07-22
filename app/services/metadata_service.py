@@ -69,6 +69,39 @@ class MetadataService:
         return datasets
 
     @staticmethod
+    async def list_accessible_dataset_options(
+        db: AsyncSession,
+        *,
+        user_id: Optional[int] = None,
+        is_admin: bool = False,
+        status: int = 1,
+    ) -> List[MetaDataset]:
+        """轻量可访问数据集列表：仅主表字段，按用户 metadata 权限过滤，不做表/指标/关系统计。"""
+        stmt = select(MetaDataset).where(MetaDataset.status == status)
+
+        if not is_admin:
+            if user_id is None:
+                return []
+            from app.models.permission import ResourcePermission, UserRoleRelation
+
+            user_roles_stmt = select(UserRoleRelation.role_id).where(
+                UserRoleRelation.user_id == user_id
+            )
+            permitted_ids_stmt = select(cast(ResourcePermission.resource_id, Integer)).where(
+                ResourcePermission.resource_type == "metadata",
+                ResourcePermission.enabled == True,
+                or_(
+                    ResourcePermission.user_id == user_id,
+                    ResourcePermission.role_id.in_(user_roles_stmt),
+                ),
+            )
+            stmt = stmt.where(MetaDataset.id.in_(permitted_ids_stmt))
+
+        stmt = stmt.order_by(MetaDataset.id.asc())
+        result = await db.execute(stmt)
+        return list(result.scalars().all())
+
+    @staticmethod
     async def get_dataset_by_id(
         db: AsyncSession, 
         dataset_id: int,

@@ -721,6 +721,29 @@ class AssistantAgentRunner(BaseExecutor):
         if route_hint:
             system_content = f"{route_hint}\n\n{system_content}"
 
+        from app.services.ai.session_tool_artifact import (
+            append_session_tool_artifact_to_system_prompt,
+            load_session_tool_artifact,
+        )
+
+        _user_q_for_artifact = self._extract_last_user_query(history)
+        _session_artifact = await load_session_tool_artifact(
+            self._runtime_user_id(),
+            self.conversation_id,
+        )
+        system_content = append_session_tool_artifact_to_system_prompt(
+            system_content,
+            _user_q_for_artifact,
+            _session_artifact,
+        )
+
+        from app.services.ai.time_anchor import append_time_anchor_for_user_question
+
+        system_content = append_time_anchor_for_user_question(
+            system_content,
+            self._extract_last_user_query(history),
+        )
+
         # 3. Execution Mode Selection
         if not tools:
             # --- Simple Mode (No Tools) ---
@@ -1150,6 +1173,11 @@ class AssistantAgentRunner(BaseExecutor):
                     system_content=system_content,
                     max_steps=max_steps,
                 )
+                self._session_artifact_turn = {
+                    "user_question": "",
+                    "trace_id": self.trace_id,
+                    "best": None,
+                }
                 state["user_query"] = next(
                     (
                         str(getattr(message, "content", ""))
@@ -1158,6 +1186,7 @@ class AssistantAgentRunner(BaseExecutor):
                     ),
                     "",
                 )
+                self._session_artifact_turn["user_question"] = state["user_query"]
                 interrupted = False
                 async for chunk in self._stream_agentscope_native_events(
                     event_stream=agent.reply_stream(inputs),
@@ -1171,6 +1200,13 @@ class AssistantAgentRunner(BaseExecutor):
                     yield chunk
 
                 if not interrupted and self.conversation_id:
+                    from app.services.ai.session_tool_artifact import persist_turn_artifact_candidate
+
+                    await persist_turn_artifact_candidate(
+                        user_id=self._runtime_user_id(),
+                        conversation_id=self.conversation_id,
+                        turn_state=getattr(self, "_session_artifact_turn", None),
+                    )
                     await agent_state_store.save(
                         user_id=self._runtime_user_id(),
                         conversation_id=self.conversation_id,
@@ -1831,6 +1867,18 @@ class AssistantAgentRunner(BaseExecutor):
         tool_index: int,
     ) -> Dict[str, Any]:
         is_error = "Error" in str(tool_output) or "安全策略拦截" in str(tool_output) or "Permission Denied" in str(tool_output) or "PermissionDenied" in str(tool_output)
+
+        if not is_error and target_tool is not None:
+            from app.services.ai.session_tool_artifact import consider_turn_artifact_candidate
+
+            consider_turn_artifact_candidate(
+                getattr(self, "_session_artifact_turn", None),
+                tool_name=tool_name,
+                tool_args=tool_args,
+                tool_output=tool_output,
+                source_type=str(getattr(target_tool, "source_type", "static")),
+                permission_scope=str(getattr(target_tool, "permission_scope", "ask")),
+            )
 
         runtime_cfg = getattr(target_tool, "_runtime_config", None)
         t_model = getattr(runtime_cfg, "model_name", self.config.model_name)

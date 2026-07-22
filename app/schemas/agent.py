@@ -119,6 +119,7 @@ class ChatConfig(BaseModel):
     agent_id: str
     agent_name: str
     agent_display_name: Optional[str] = None
+    project_name: Optional[str] = None
     agent_version: Optional[str] = None
     model_name: Optional[str]
     temperature: Optional[float]
@@ -165,6 +166,7 @@ class AgentExecutionHistoryResponse(BaseModel):
     trace_id: str
     agent_id: str
     conversation_id: Optional[str] = None
+    project_name: Optional[str] = None
     username: Optional[str] = None
     query: Optional[str] = None
     summary: Optional[str] = None

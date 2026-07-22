@@ -121,18 +121,6 @@
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                 </svg>
             </button>
-            <!-- Agent Quick Selector Button -->
-            <button
-                @click.stop="toggleAgentSelector"
-                class="p-2 text-gray-400 hover:text-primary hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-all relative group"
-                :class="{ 'text-primary bg-primary/5': showAgentSelector || config.routingMode === 'expert' }"
-                title="切换智能体"
-            >
-                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
-                </svg>
-                <span v-if="config.routingMode === 'expert'" class="absolute -top-0.5 -right-0.5 w-2 h-2 bg-primary rounded-full border-2 border-white dark:border-gray-900 animate-pulse"></span>
-            </button>
             <button
                 @click="showSettings = true"                class="p-2 text-gray-400 hover:text-primary hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-all"
                 title="对话设置"
@@ -148,97 +136,24 @@
           :show-auto-routing-hint="showAutoRoutingHint"
           :show-multi-agent-hint="showMultiAgentHint"
           :multi-agent-hint-message="multiAgentHintMessage"
+          :show-expert-switch-hint="showExpertSwitchHint"
+          :expert-switch-hint-name="expertSwitchHintName"
           :is-mobile="isMobile"
           @switch-to-auto="switchToAuto"
       />
 
-      <!-- Agent Selector Popup -->
-      <transition
-        enter-active-class="transition-all duration-500 cubic-bezier(0.16, 1, 0.3, 1)"
-        enter-from-class="opacity-0 translate-y-[-20px] scale-95 blur-sm"
-        enter-to-class="opacity-100 translate-y-0 scale-100 blur-0"
-        leave-active-class="transition-all duration-300 cubic-bezier(0.7, 0, 0.84, 0)"
-        leave-to-class="opacity-0 translate-y-[-10px] scale-90 blur-sm"
-      >
-        <div v-if="showAgentSelector" class="fixed top-[52px] right-4 w-72 max-h-[70vh] bg-white/95 dark:bg-gray-800/95 backdrop-blur-xl border border-gray-200 dark:border-gray-700 rounded-2xl shadow-2xl z-50 flex flex-col overflow-hidden" @click.stop>
-          <div class="p-3 border-b border-gray-100 dark:border-gray-700 flex items-center justify-between bg-gray-50/50 dark:bg-gray-900/50">
-            <div class="flex items-center space-x-2">
-              <span class="w-1.5 h-4 bg-primary rounded-full"></span>
-              <span class="text-xs font-black text-gray-800 dark:text-gray-100 uppercase tracking-widest">选择智能体专家</span>
-              <button
-                @click.stop="fetchAllowedAgents(true)"
-                class="ml-2 text-gray-400 hover:text-primary transition-all p-1 rounded-md hover:bg-white/50 dark:hover:bg-black/20"
-                :class="{ 'animate-spin text-primary': isLoadingAgents }"
-                title="刷新列表"
-              >
-                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                </svg>
-              </button>
-            </div>
-            <button @click="showAgentSelector = false" class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 transition-colors">
-              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M6 18L18 6M6 6l12 12" /></svg>
-            </button>
-          </div>
-
-          <div class="flex-1 overflow-y-auto p-2 space-y-1 custom-scrollbar">
-            <!-- Loading State -->
-            <div v-if="isLoadingAgents && allowedAgents.length === 0" class="flex flex-col items-center justify-center py-10 opacity-50">
-              <svg class="w-8 h-8 animate-spin text-primary mb-2" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
-              <span class="text-[10px] font-black uppercase tracking-widest">同步中</span>
-            </div>
-            <!-- Auto Mode Option -->
-            <div
-              @click.stop="switchToAuto(); showAgentSelector = false;"
-              class="flex items-center space-x-3 p-3 rounded-xl cursor-pointer transition-all border border-transparent"
-              :class="config.routingMode === 'auto' ? 'bg-primary/10 border-primary/20 ring-1 ring-primary/10' : 'hover:bg-gray-50 dark:hover:bg-gray-700/50'"
-            >
-              <div class="w-10 h-10 rounded-full bg-gradient-to-br from-primary/20 to-primary/10 flex items-center justify-center text-primary shadow-sm border border-primary/10">
-                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
-              </div>
-              <div class="flex-1">
-                <div class="flex items-center space-x-2">
-                  <span class="text-sm font-black" :class="config.routingMode === 'auto' ? 'text-primary' : 'text-gray-800 dark:text-gray-200'">全能助手 (自动)</span>
-                </div>
-                <div class="text-[10px] text-gray-400 font-medium mt-0.5">智能调度最合适的专家处理</div>
-              </div>
-              <div v-if="config.routingMode === 'auto'" class="text-primary">
-                <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd" /></svg>
-              </div>
-            </div>
-
-            <div class="h-px bg-gray-100 dark:bg-gray-700 my-2 mx-2"></div>
-
-            <!-- Individual Agents -->
-            <div
-              v-for="agent in allowedAgents"
-              :key="agent.id"
-              @click.stop="switchToExpert(agent.id); showAgentSelector = false;"
-              class="flex items-center space-x-3 p-3 rounded-xl cursor-pointer transition-all border border-transparent group"
-              :class="config.routingMode === 'expert' && config.expertAgentId === agent.id ? 'bg-primary/10 border-primary/20 ring-1 ring-primary/10' : 'hover:bg-gray-50 dark:hover:bg-gray-700/50'"
-            >
-              <div class="w-10 h-10 rounded-full bg-gray-100 dark:bg-gray-700 flex items-center justify-center overflow-hidden border border-white dark:border-gray-900 shadow-sm transition-transform group-hover:scale-105">
-                <img v-if="agent.avatar_url" :src="agent.avatar_url" class="w-full h-full object-cover" />
-                <span v-else class="text-sm font-black text-gray-400">{{ Array.from(agent.display_name || 'E')[0] }}</span>
-              </div>
-              <div class="flex-1 min-w-0">
-                <div class="flex items-center space-x-1.5">
-                  <span class="text-sm font-bold truncate" :class="config.routingMode === 'expert' && config.expertAgentId === agent.id ? 'text-primary' : 'text-gray-800 dark:text-gray-200'">{{ agent.display_name }}</span>
-                  <span v-if="agent.is_system" class="px-1 py-0.5 rounded text-[8px] bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300 font-black tracking-tighter shrink-0 uppercase">SYS</span>
-                </div>
-                <div class="text-[10px] text-gray-400 truncate mt-0.5">{{ agent.description || '专属能力专家' }}</div>
-              </div>
-              <div v-if="config.routingMode === 'expert' && config.expertAgentId === agent.id" class="text-primary">
-                <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd" /></svg>
-              </div>
-            </div>
-          </div>
-
-          <div class="p-3 bg-gray-50/80 dark:bg-gray-900/80 border-t border-gray-100 dark:border-gray-700 text-center">
-             <span class="text-[9px] text-gray-400 font-bold uppercase tracking-widest">已授权智能体列表</span>
-          </div>
-        </div>
-      </transition>
+      <!-- Project session resource scope -->
+      <div v-if="resourceScope.project_name" class="flex-shrink-0 px-4 py-2 flex items-center gap-2 text-[11px] text-gray-500 dark:text-gray-400 overflow-x-auto">
+        <span class="font-bold shrink-0">📁 {{ resourceScope.project_name }}</span>
+        <span v-if="resourceScopeCount === 0" class="text-gray-400 shrink-0">未挂载，按默认权限自动使用</span>
+        <template v-else>
+          <span v-for="item in mountedResourceLabels" :key="item.key" class="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-blue-50 text-blue-700 border border-blue-100 shrink-0">
+            {{ item.icon }} {{ item.label }}
+            <button type="button" class="hover:text-red-600" title="移除资源" @click="removeMountedResource(item)">×</button>
+          </span>
+        </template>
+        <button type="button" class="px-2 py-1 rounded-full border border-gray-200 hover:border-primary hover:text-primary shrink-0" @click="openResourceScopeModal">管理会话资源</button>
+      </div>
 
       <!-- Main Chat Area -->
       <div
@@ -603,10 +518,10 @@
               </div>
             </div>
             <div
-              class="px-4 py-3 rounded-2xl rounded-tl-sm shadow-md border border-gray-100 dark:border-gray-700 border-l-4 border-l-primary/60 dark:border-l-primary/40 text-sm leading-relaxed min-h-[46px] transition-all duration-300 relative group/bubble"
+              class="px-4 py-3 rounded-2xl rounded-tl-sm shadow-none border border-gray-100 dark:border-gray-700 border-l-4 border-l-primary/60 dark:border-l-primary/40 text-sm leading-relaxed min-h-[46px] transition-all duration-300 relative group/bubble"
               :class="[
                 msg.isThinking
-                    ? 'bg-slate-50/80 dark:bg-slate-800/80 shimmer-thought-card'
+                    ? 'bg-slate-50/80 dark:bg-slate-800/80'
                     : 'bg-white dark:bg-gray-800'
               ]"
             >
@@ -655,6 +570,23 @@
                     </div>
 
                     <div class="relative ml-2 pl-4 py-2 space-y-1.5 border-l border-gray-200 dark:border-gray-700/50">
+                      <!-- 骨架屏占位 (响应初期的等待动效) -->
+                      <div
+                        v-if="msg.isThinking && (!msg.logs || getDisplayLogs(msg).length === 0)"
+                        class="space-y-3 py-1.5 animate-pulse"
+                      >
+                        <div class="flex items-center gap-3">
+                          <div class="h-4.5 w-4.5 rounded-full bg-gray-200 dark:bg-gray-700 flex-shrink-0"></div>
+                          <div class="h-3 w-28 rounded bg-gray-200 dark:bg-gray-700"></div>
+                          <div class="ml-auto h-3 w-8 rounded bg-gray-200 dark:bg-gray-700"></div>
+                        </div>
+                        <div class="flex items-center gap-3 opacity-50">
+                          <div class="h-4.5 w-4.5 rounded-full bg-gray-200 dark:bg-gray-700 flex-shrink-0"></div>
+                          <div class="h-3 w-36 rounded bg-gray-200 dark:bg-gray-700"></div>
+                          <div class="ml-auto h-3 w-8 rounded bg-gray-200 dark:bg-gray-700"></div>
+                        </div>
+                      </div>
+
                       <div
                         v-for="(log, idx) in getDisplayLogs(msg)"
                         :key="idx"
@@ -676,19 +608,24 @@
                         <div
                           class="rounded-lg p-2 text-xs transition-all duration-300 cursor-pointer"
                           :class="{
-                             'bg-blue-50/50 dark:bg-blue-900/15 border border-blue-100/80 dark:border-blue-800/40 shadow-sm': isActiveThoughtStep(log, msg.isThinking),
+                             'bg-blue-50/50 dark:bg-blue-900/15 border border-blue-100/80 dark:border-blue-800/40 shadow-sm animate-pulse-subtle': isActiveThoughtStep(log, msg.isThinking),
                              'bg-transparent hover:bg-gray-50 dark:hover:bg-gray-700/30': log.status !== 'error' && !isActiveThoughtStep(log, msg.isThinking),
                              'bg-red-50/30 hover:bg-red-50/50 dark:bg-red-900/10 dark:hover:bg-red-900/20 border border-red-100 dark:border-red-900/30': log.status === 'error'
                           }"
                           @click="log.details ? (log.isExpanded = !log.isExpanded) : null"
                         >
                           <div class="flex items-center justify-between gap-2">
-                             <div class="font-medium flex items-center gap-2 flex-1 min-w-0"
-                                  :class="{
-                                    'text-red-700 dark:text-red-400': log.status === 'error',
-                                    'text-gray-800 dark:text-gray-100': isActiveThoughtStep(log, msg.isThinking),
-                                    'text-gray-700 dark:text-gray-300': !isActiveThoughtStep(log, msg.isThinking) && log.status !== 'error',
-                                  }">
+                             <div class="flex items-center gap-2 flex-1 min-w-0"
+                                  :class="[
+                                    isTechnicalLogStep(log)
+                                      ? 'text-[11px] font-normal text-gray-500/90 dark:text-gray-400/90'
+                                      : 'font-medium',
+                                    {
+                                      'text-red-700 dark:text-red-400': log.status === 'error',
+                                      'text-gray-800 dark:text-gray-100': isActiveThoughtStep(log, msg.isThinking) && !isTechnicalLogStep(log),
+                                      'text-gray-700 dark:text-gray-300': !isActiveThoughtStep(log, msg.isThinking) && log.status !== 'error' && !isTechnicalLogStep(log),
+                                    }
+                                  ]">
                                <!-- Semantic Icon -->
                                <span class="flex h-3.5 w-3.5 flex-shrink-0 items-center justify-center" :class="{ 'animate-pulse': log.status === 'pending' }">
                                  <template v-if="log.status === 'error'">⚠️</template>
@@ -706,7 +643,7 @@
                                >🔒</span>
                                <span
                                  v-if="isActiveThoughtStep(log, msg.isThinking)"
-                                 class="inline-flex items-center px-1 sm:px-1.5 py-px sm:py-0.5 rounded text-[8px] sm:text-[9px] font-bold uppercase tracking-wide text-primary bg-primary/10 border border-primary/20 scale-90 sm:scale-100 origin-center"
+                                 class="inline-flex items-center px-1 sm:px-1.5 py-px sm:py-0.5 rounded text-[8px] sm:text-[9px] font-bold uppercase tracking-wide text-primary bg-primary/10 border border-primary/20 scale-90 sm:scale-100 origin-center animate-pulse"
                                >
                                  进行中
                                </span>
@@ -721,7 +658,8 @@
                              <div class="flex items-center gap-2 flex-shrink-0">
                                <span
                                  v-if="formatLogDuration(log, getDisplayLogs(msg))"
-                                 class="text-[10px] font-mono text-gray-400 dark:text-gray-500"
+                                 class="w-12 text-right justify-end inline-flex text-[10px] font-mono flex-shrink-0"
+                                 :class="getLogDurationColor(log, getDisplayLogs(msg))"
                                  :title="log.status === 'pending' ? '当前步骤已等待时间' : '当前步骤耗时'"
                                >
                                  {{ formatLogDuration(log, getDisplayLogs(msg)) }}
@@ -734,7 +672,16 @@
                                >
                                  <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012-2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3" /></svg>
                                </button>
-                               <svg v-if="log.details" class="w-3 h-3 text-gray-400 transition-transform" :class="{ 'rotate-180': log.isExpanded }" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" /></svg>
+                               <svg
+                                 v-if="log.details"
+                                 class="w-3 h-3 text-gray-400 transition-all duration-200 group-hover/log:opacity-100"
+                                 :class="{ 'rotate-180': log.isExpanded, 'opacity-100': log.isExpanded, 'opacity-0': !log.isExpanded }"
+                                 fill="none"
+                                 stroke="currentColor"
+                                 viewBox="0 0 24 24"
+                               >
+                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+                               </svg>
                              </div>
                           </div>                          <!-- Details -->
                           <div v-if="log.details && log.isExpanded" class="mt-2 pt-2 border-t border-gray-100 dark:border-gray-700/50">
@@ -933,6 +880,7 @@
                                                                 <MessageRenderer
                                                                   v-if="!msg.groundingBlocked && !msg.datasetNavigation?.groups?.length"
                                                                   :content="msg.content"
+                                                                  :theme="config.markdownTheme"
                                                                   @quick-question="handleQuickQuestion"
                                                                   @show-citation="(payload) => handleShowCitation(msg, payload.id, payload.anchor)"
                                                                   @open-canvas="handleOpenCanvas"
@@ -1257,7 +1205,7 @@
     />
 
     <!-- Input Area -->
-    <div class="flex-shrink-0 bg-white dark:bg-gray-900 border-t border-gray-100 dark:border-gray-800 relative z-20">
+    <div class="flex-shrink-0 bg-white dark:bg-gray-900 relative z-20">
       <div
         v-if="quotaBannerMessage"
         class="px-4 py-2 text-xs border-b"
@@ -1285,6 +1233,10 @@
         :selected-model="config.overrideModel"
         :available-models="availableModels"
         :active-ltm-preference="activeLtmPreference"
+        :agent-id="effectiveEmbedChatAgentId"
+        :routing-mode="config.routingMode"
+        :expert-agent-id="config.expertAgentId"
+        :is-loading-agents="isLoadingAgents"
         @update:approval-mode="(mode) => { config.approvalMode = mode; saveRoutingSettings(); }"
         @update:selected-model="(model) => { config.overrideModel = model; saveRoutingSettings(); }"
         @send="sendMessage"
@@ -1295,8 +1247,10 @@
         @edit-command="editCommand"
         @delete-command="confirmDeleteCommand"
         @switch-mode="handleSwitchMode"
+        @switch-to-auto="switchToAuto"
+        @switch-to-expert="switchToExpert"
+        @refresh-agents="fetchAllowedAgents(true)"
         @reorder-commands="handleReorderCommands"
-        @select-skill="openSkillSelector"
         @select-knowledge-base="openKnowledgePortal"
         @select-local-fs="showWorkspaceDrawer = true"
         @select-memory="openMemorySelector"
@@ -1307,8 +1261,169 @@
       </ChatInput>
     </div>
 
+    <div
+      v-if="showResourceScopeModal"
+      class="fixed inset-0 z-[80] flex items-center justify-center bg-black/40 p-4"
+      @click.self="closeResourceScopeModal"
+      @keydown.esc="closeResourceScopeModal"
+    >
+      <div
+        class="w-full max-w-2xl max-h-[88vh] flex flex-col overflow-hidden rounded-2xl bg-white dark:bg-gray-800 shadow-2xl"
+        role="dialog"
+        aria-labelledby="resource-scope-modal-title"
+        aria-modal="true"
+      >
+        <div class="flex-shrink-0 px-5 pt-5 pb-3 border-b border-gray-100 dark:border-gray-700">
+          <div class="flex items-start justify-between gap-3">
+            <div class="min-w-0">
+              <h3 id="resource-scope-modal-title" class="text-base font-black text-gray-900 dark:text-gray-100">项目会话资源</h3>
+              <p class="text-xs text-gray-500 dark:text-gray-400 mt-1 leading-relaxed">为本会话命名并可选定数据集、知识库与技能。保存后在本会话内持续生效。</p>
+            </div>
+            <button type="button" class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 text-xl leading-none p-1" aria-label="关闭" @click="closeResourceScopeModal">×</button>
+          </div>
+          <p class="mt-3 text-[11px] leading-relaxed rounded-lg bg-slate-50 dark:bg-gray-900/50 text-slate-600 dark:text-slate-400 border border-slate-100 dark:border-gray-700 px-3 py-2">
+            不选择任何资源时，按账号默认权限使用；选择后仅允许已挂载项（数据集影响 ChatBI / 数据门户，知识库影响检索范围，技能影响自动匹配）。
+          </p>
+          <p v-if="modalResourceOrphanCount > 0" class="mt-2 text-[11px] text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/20 border border-amber-100 dark:border-amber-800/50 rounded-lg px-3 py-2">
+            有 {{ modalResourceOrphanCount }} 项已保存的资源当前不可用，请移除或重新选择。
+          </p>
+        </div>
+
+        <div class="flex-1 overflow-y-auto px-5 py-4 space-y-4 min-h-0">
+          <label class="block">
+            <span class="text-xs font-bold text-gray-500 dark:text-gray-400">项目名称 <span class="text-red-500">*</span></span>
+            <input
+              ref="resourceScopeProjectNameInput"
+              v-model="resourceScopeModalDraft.project_name"
+              class="mt-1.5 w-full rounded-xl border border-gray-200 dark:border-gray-600 bg-gray-50/50 dark:bg-gray-900/30 px-3 py-2.5 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary"
+              placeholder="例如：销售经营分析"
+            />
+          </label>
+
+          <div class="rounded-xl border border-gray-200 dark:border-gray-700 overflow-hidden flex flex-col min-h-[280px]">
+            <div class="flex border-b border-gray-200 dark:border-gray-700 bg-gray-50/80 dark:bg-gray-900/40" role="tablist" aria-label="资源类型">
+              <button
+                v-for="group in resourceOptionGroups"
+                :key="group.key"
+                type="button"
+                role="tab"
+                :id="`resource-scope-tab-${group.key}`"
+                :aria-selected="resourceScopeActiveTab === group.key"
+                :aria-controls="`resource-scope-panel-${group.key}`"
+                class="relative flex-1 min-w-0 px-2 py-2.5 text-xs font-bold transition-colors border-b-2 -mb-px"
+                :class="resourceScopeActiveTab === group.key
+                  ? 'border-primary text-primary bg-white dark:bg-gray-800'
+                  : 'border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'"
+                @click="resourceScopeActiveTab = group.key"
+              >
+                <span class="block truncate text-center">{{ group.shortLabel || group.label }}</span>
+                <span class="mt-0.5 flex items-center justify-center gap-1">
+                  <span
+                    v-if="modalSelectedCount(group.key)"
+                    class="text-[9px] font-black px-1 py-px rounded"
+                    :class="resourceScopeActiveTab === group.key ? 'bg-primary/15 text-primary' : 'bg-gray-200/80 dark:bg-gray-700 text-gray-600 dark:text-gray-300'"
+                  >{{ modalSelectedCount(group.key) }}</span>
+                  <span v-if="modalOrphanSelections(group.key).length" class="text-[9px] font-bold text-amber-600 dark:text-amber-400" title="有失效项">!</span>
+                </span>
+              </button>
+            </div>
+
+            <div
+              v-for="group in resourceOptionGroups"
+              :key="'panel-' + group.key"
+              v-show="resourceScopeActiveTab === group.key"
+              :id="`resource-scope-panel-${group.key}`"
+              role="tabpanel"
+              :aria-labelledby="`resource-scope-tab-${group.key}`"
+              class="flex-1 p-3 space-y-2.5 min-h-0 flex flex-col"
+            >
+              <p class="text-[11px] text-gray-400 dark:text-gray-500 leading-relaxed shrink-0">{{ group.hint }}</p>
+
+              <div v-if="modalSelectedCount(group.key) > 0" class="flex flex-wrap gap-1.5 shrink-0">
+                <button
+                  v-for="chip in modalSelectedChips(group.key)"
+                  :key="chip.key"
+                  type="button"
+                  class="inline-flex items-center gap-1 max-w-full px-2 py-1 rounded-full text-[10px] font-bold border transition-colors"
+                  :class="chip.orphan
+                    ? 'bg-amber-50 text-amber-800 border-amber-200 dark:bg-amber-900/30 dark:text-amber-300 dark:border-amber-700'
+                    : 'bg-blue-50 text-blue-700 border-blue-100 dark:bg-blue-900/30 dark:text-blue-300 dark:border-blue-800'"
+                  :title="chip.orphan ? '资源已不可用，点击移除' : '点击移除'"
+                  @click="removeModalDraftResource(group.key, chip.item)"
+                >
+                  <span class="truncate">{{ chip.label }}</span>
+                  <span class="shrink-0 opacity-70">×</span>
+                </button>
+              </div>
+
+              <input
+                v-model="resourceOptionSearch[group.key]"
+                class="w-full rounded-lg border border-gray-200 dark:border-gray-600 bg-transparent px-3 py-2 text-xs shrink-0"
+                :placeholder="`搜索${group.label}`"
+              />
+
+              <div v-if="resourceOptionsLoading" class="text-xs text-gray-400 py-6 text-center flex-1">正在加载资源…</div>
+              <div v-else-if="sortedModalResourceOptions(group.key).length" class="space-y-0.5 flex-1 min-h-0 overflow-y-auto pr-0.5">
+                <button
+                  v-for="(option, optionIndex) in sortedModalResourceOptions(group.key)"
+                  :key="option.id"
+                  type="button"
+                  role="checkbox"
+                  :aria-checked="resourceModalOptionSelected(group.key, option)"
+                  class="w-full flex items-center gap-3 rounded-xl px-2.5 py-2 text-left transition-colors border border-transparent"
+                  :class="resourceModalOptionSelected(group.key, option)
+                    ? 'bg-primary/5 dark:bg-primary/10 border-primary/20'
+                    : 'hover:bg-gray-50 dark:hover:bg-gray-700/60'"
+                  @click="toggleModalResourceOption(group.key, option)"
+                >
+                  <span class="w-9 h-9 rounded-full flex items-center justify-center text-sm font-black text-white shrink-0" :class="resourceOptionAccent(optionIndex)">{{ resourceOptionInitial(option) }}</span>
+                  <span class="min-w-0 flex-1">
+                    <span class="block text-sm font-bold text-gray-900 dark:text-gray-100 truncate" :title="option.name || option.id">{{ option.name || option.id }}</span>
+                    <span class="block text-xs text-gray-400 dark:text-gray-500 truncate">{{ option.description || option.id }}</span>
+                  </span>
+                  <span
+                    class="w-5 h-5 rounded-md border flex items-center justify-center shrink-0"
+                    :class="resourceModalOptionSelected(group.key, option) ? 'bg-primary border-primary text-white' : 'border-gray-300 dark:border-gray-600'"
+                  >
+                    <svg v-if="resourceModalOptionSelected(group.key, option)" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="m5 12 4 4L19 6" /></svg>
+                  </span>
+                </button>
+              </div>
+              <div v-else class="text-xs text-gray-400 py-6 text-center flex-1">
+                {{ (resourceOptionSearch[group.key] || '').trim() ? '无匹配结果，试试清空搜索' : '暂无可选资源' }}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="flex-shrink-0 px-5 py-4 border-t border-gray-100 dark:border-gray-700 flex flex-wrap items-center justify-between gap-3">
+          <button
+            type="button"
+            class="px-2.5 py-1.5 rounded-lg text-xs text-gray-500 hover:text-primary hover:bg-blue-50 dark:hover:bg-gray-700 disabled:opacity-40"
+            :disabled="resourceOptionsLoading || resourceScopeSaving"
+            @click="refreshResourceOptions"
+          >
+            ↻ 刷新资源列表
+          </button>
+          <div class="flex items-center gap-2 ml-auto">
+            <button type="button" class="px-3 py-2 text-sm text-gray-500 hover:text-gray-700 dark:hover:text-gray-300" :disabled="resourceScopeSaving" @click="closeResourceScopeModal">取消</button>
+            <button
+              type="button"
+              class="px-4 py-2 rounded-lg bg-primary text-white text-sm font-bold disabled:opacity-50 disabled:cursor-not-allowed min-w-[6.5rem]"
+              :disabled="resourceScopeSaving || !resourceScopeModalDraft.project_name.trim()"
+              @click="saveResourceScope"
+            >
+              {{ resourceScopeSaving ? '保存中…' : '保存范围' }}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <ChatCanvas
       :visible="canvasVisible"
+      v-model:pinned="canvasPinned"
+      v-model:canvas-width="canvasPinnedWidthReactive"
       :data="canvasData"
       :overlay="canvasFromWorkspace"
       :dock-side="canvasFromWorkspace ? 'left' : 'right'"
@@ -1322,14 +1437,16 @@
     <KnowledgePortalDrawer
       v-model="showKnowledgePortal"
       v-model:pinned="knowledgePinned"
+      v-model:drawer-width="knowledgeDrawerWidthReactive"
       v-model:keep-open-on-question="knowledgeKeepOpenOnQuestion"
       v-model:hallucination-check="hallucinationCheckEnabled"
       v-model:similarity-threshold="knowledgeSimilarityThreshold"
       v-model:vector-weight="knowledgeVectorWeight"
       v-model:metadata-top-k="knowledgeMetadataTopK"
       :generated-at="knowledgeGeneratedAt"
-      :datasets="knowledgeDatasets"
-      :active-dataset-ids="activeDatasetIds"
+      :project-resource-scope="resourceScope.project_name ? '仅显示当前项目会话资源' : ''"
+      :datasets="scopedKnowledgeDatasets"
+      :active-dataset-ids="scopedActiveDatasetIds"
       :recommendations="datasetRecommendations"
       :pinned-dataset-ids="pinnedDatasetIds"
       :dataset-documents="datasetDocuments"
@@ -1350,6 +1467,7 @@
       v-model="showWorkspaceDrawer"
       v-model:keep-open-on-select="workspaceKeepOpenOnSelect"
       v-model:pinned="workspacePinned"
+      v-model:drawer-width="workspaceDrawerWidthReactive"
       :pinned-dock-class="workspacePinnedDockClass"
       :conversation-id="conversationId"
       :session-started="messages.length > 0"
@@ -1365,16 +1483,6 @@
       :attached-conversation-ids="attachedMemoryConversationIds"
       @mount="handleMemoryMount"
       @cleared="handleMemoryCleared"
-    />
-
-    <SkillBrowserDrawer
-      v-model="showSkillDrawer"
-      v-model:keep-open-on-select="skillKeepOpenOnSelect"
-      v-model:pinned="skillPinned"
-      :pinned-dock-class="skillPinnedDockClass"
-      :attached-skill-ids="attachedSkillIds"
-      :agent-id="effectiveEmbedChatAgentId"
-      @select="handleSelectSkill"
     />
 
     <div
@@ -1488,7 +1596,7 @@
                                 <div>
                                     <div class="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2 opacity-70">回答 · Response</div>
                                     <div class="text-gray-600 dark:text-gray-300 text-xs sm:text-sm leading-relaxed">
-                                        <MessageRenderer :content="turn.summary || 'N/A'" />
+                                        <MessageRenderer :content="turn.summary || 'N/A'" :theme="config.markdownTheme" />
                                     </div>
                                 </div>
                             </div>
@@ -2352,13 +2460,15 @@
       v-model="showPortalDrawer"
       v-model:keep-open-on-question="portalKeepOpenOnQuestion"
       v-model:pinned="portalPinned"
-      :payload="portalNavigationPayload"
+      v-model:drawer-width="portalDrawerWidthReactive"
+      :payload="scopedPortalNavigationPayload"
+      :project-resource-scope="resourceScope.project_name ? '仅显示当前项目会话资源' : ''"
       :initial-loading="portalLoading && !portalNavigationPayload"
       :background-refreshing="portalBackgroundRefreshing"
       :focus-saved-report-request="savedReportFocusRequest"
       @quick-question="handlePortalQuickQuestion"
-      @record-question-click="(payload) => recordDatasetMenuQuestionClick(portalNavigationPayload, payload)"
-	      @clear-question-click="(payload) => clearDatasetMenuQuestionClick(portalNavigationPayload, payload)"
+      @record-question-click="(payload) => recordDatasetMenuQuestionClick(scopedPortalNavigationPayload, payload)"
+      @clear-question-click="(payload) => clearDatasetMenuQuestionClick(scopedPortalNavigationPayload, payload)"
 	      @refresh="refreshPortalNavigation"
 	      @execute-saved-report="handleExecuteSavedReport"
       @edit-saved-report="openEditReportModal"
@@ -2381,7 +2491,7 @@
     </div>
 </template>
 <script setup lang="ts">
-import { ref, reactive, onMounted, onUnmounted, nextTick, watch, computed } from "vue";
+import { ref, reactive, onMounted, onUnmounted, nextTick, watch, computed, triggerRef } from "vue";
 import { useRouter } from "vue-router";
 import axios from "@/utils/axios";
 import { finalizeConversation } from "@/utils/conversationFinalize";
@@ -2455,7 +2565,6 @@ import ChatInput from "@/components/embed/ChatInput.vue";
 import WelcomeDashboard from "@/components/embed/WelcomeDashboard.vue";
 import WorkspaceBrowserDrawer from "@/components/embed/WorkspaceBrowserDrawer.vue";
 import MemoryBrowserDrawer from "@/components/embed/MemoryBrowserDrawer.vue";
-import SkillBrowserDrawer from "@/components/embed/SkillBrowserDrawer.vue";
 import SkillCreatedBanner from "@/components/chat/SkillCreatedBanner.vue";
 import { parseSkillCreatedMarker, type SkillCreatedInfo } from "@/utils/skillCreated";
 import AttachmentImageThumb from "@/components/embed/AttachmentImageThumb.vue";
@@ -2696,12 +2805,21 @@ function getDisplayLogs(msg: Message) {
 }
 
 function getThoughtPanelTitle(msg: Message) {
-  return getEmbedThoughtSummaryTitle({
+  const baseTitle = getEmbedThoughtSummaryTitle({
     logs: getDisplayLogs(msg),
     isThinking: msg.isThinking,
     thinkingText: msg.thinkingText,
     turnType: msg.turnType,
   });
+
+  if (msg.isThinking && !msg.isThoughtExpanded) {
+    const logs = getDisplayLogs(msg);
+    const activeLog = logs.find(log => isActiveThoughtStep(log, msg.isThinking));
+    if (activeLog && activeLog.title) {
+      return `${baseTitle} · 正在进行: ${activeLog.title}`;
+    }
+  }
+  return baseTitle;
 }
 
 function getHiddenLogCount(msg: Message) {
@@ -2725,7 +2843,7 @@ function getSkillFlowBadgesForMessage(msg: Message, allMessages: Message[]): Ski
 
 const formatDurationMs = (durationMs?: number | null): string => {
   if (durationMs === undefined || durationMs === null || Number.isNaN(durationMs)) return "";
-  if (durationMs < 1000) return `${Math.max(1, Math.round(durationMs))}ms`;
+  if (durationMs < 100) return "<0.1s";
   return `${(durationMs / 1000).toFixed(1)}s`;
 };
 
@@ -2741,6 +2859,32 @@ const formatLogDuration = (log: LogEntry, allLogs?: LogEntry[]): string => {
   }
   return "";
 };
+
+const isTechnicalLogStep = (log: LogEntry): boolean => {
+  return log.category === 'tool' || log.category === 'sql' || log.category === 'permission';
+};
+
+const getLogDurationColor = (log: LogEntry, allLogs?: LogEntry[]): string => {
+  let ms = 0;
+  if (log.execution_time_ms !== undefined && log.execution_time_ms !== null) {
+    ms = log.execution_time_ms;
+  } else if (log.elapsed_time_ms !== undefined && log.elapsed_time_ms !== null) {
+    ms = log.elapsed_time_ms;
+  } else if (isLiveThoughtStepTimer(log, allLogs || []) && log.started_at) {
+    ms = Date.now() - log.started_at;
+  } else {
+    return "text-gray-400 dark:text-gray-500";
+  }
+
+  if (ms < 500) {
+    return "text-emerald-500/80 dark:text-emerald-400/70";
+  } else if (ms < 2000) {
+    return "text-gray-400 dark:text-gray-500";
+  } else {
+    return "text-amber-500 dark:text-amber-400 font-medium";
+  }
+};
+
 // Helper: Format Timestamp for Bubbles (Smart Date)
 const formatBubbleTime = (isoStr: string): string => {
   if (!isoStr) return "";
@@ -2882,28 +3026,6 @@ const memoryPinned = ref(
 );
 watch(memoryPinned, (val) => {
   localStorage.setItem("embed_memory_pinned", val ? "1" : "0");
-});
-
-const showSkillDrawer = ref(false);
-
-const skillKeepOpenOnSelect = ref(
-  readStoredBoolean(
-    "embed_skill_keep_open",
-    typeof window !== "undefined" &&
-      !window.matchMedia("(max-width: 639px)").matches,
-  ),
-);
-watch(skillKeepOpenOnSelect, (val) => {
-  localStorage.setItem("embed_skill_keep_open", val ? "1" : "0");
-});
-
-const skillPinned = ref(
-  typeof window !== "undefined" &&
-    !window.matchMedia("(max-width: 639px)").matches &&
-    readStoredBoolean("embed_skill_pinned", false),
-);
-watch(skillPinned, (val) => {
-  localStorage.setItem("embed_skill_pinned", val ? "1" : "0");
 });
 
 const attachedMemoryConversationIds = computed(() => {
@@ -3104,13 +3226,18 @@ const config = reactive({
   enableMultiAgent: true,
   showShortcuts: true,
   enableSqlPlan: false,
-  enableGrounding: false,
+  enableGrounding: true, // Embed 默认开启反幻觉校验
   expandThoughts: true, // 思考过程默认展示开关
+  markdownTheme: "default" as "default" | "minimal" | "academic" | "apple" | "warm" | "compact",
 });
 const showAutoRoutingHint = ref(false);
 const showMultiAgentHint = ref(false);
+const showExpertSwitchHint = ref(false);
+const expertSwitchHintName = ref("");
 const showConfirmModal = ref(false);
 const multiAgentHintMessage = ref("");
+let expertSwitchHintTimer: ReturnType<typeof setTimeout> | null = null;
+
 const saveRoutingSettings = () => {
     localStorage.setItem("yovole_routing_mode", config.routingMode);
     localStorage.setItem("yovole_expert_agent_id", config.expertAgentId || "");
@@ -3121,9 +3248,11 @@ const saveRoutingSettings = () => {
     localStorage.setItem("yovole_approval_mode", config.approvalMode || "ask");
     localStorage.setItem("yovole_embed_theme", config.theme || "light");
     localStorage.setItem("yovole_expand_thoughts", config.expandThoughts ? "1" : "0");
+    localStorage.setItem("yovole_markdown_theme", config.markdownTheme || "default");
 };
 const triggerMultiAgentHint = (enabled: boolean) => {
     multiAgentHintMessage.value = enabled ? "已开启多智能体协同模式" : "已切换为单智能体模式";
+    showExpertSwitchHint.value = false;
     showMultiAgentHint.value = true;
     setTimeout(() => {
         showMultiAgentHint.value = false;
@@ -3132,6 +3261,7 @@ const triggerMultiAgentHint = (enabled: boolean) => {
 const switchToAuto = () => {
     config.routingMode = "auto";
     saveRoutingSettings();
+    showExpertSwitchHint.value = false;
     showAutoRoutingHint.value = true;
     setTimeout(() => {
         showAutoRoutingHint.value = false;
@@ -3141,6 +3271,16 @@ const switchToExpert = (agentId: string) => {
     config.expertAgentId = agentId;
     config.routingMode = "expert";
     saveRoutingSettings();
+    const agent = allowedAgents.value.find((a: any) => a.id === agentId);
+    expertSwitchHintName.value = agent?.display_name || agent?.name || "专家";
+    showAutoRoutingHint.value = false;
+    showMultiAgentHint.value = false;
+    showExpertSwitchHint.value = true;
+    if (expertSwitchHintTimer) clearTimeout(expertSwitchHintTimer);
+    expertSwitchHintTimer = setTimeout(() => {
+        showExpertSwitchHint.value = false;
+        expertSwitchHintTimer = null;
+    }, 3000);
 };
 const onModeChange = (mode: string) => {
     saveRoutingSettings();
@@ -3157,6 +3297,341 @@ watch(() => config.enableMultiAgent, (newVal, oldVal) => {
     }
 });
 const conversationId = ref("");
+const showResourceScopeModal = ref(false);
+const resourceScope = ref({ project_name: '', datasets: [] as any[], knowledge_bases: [] as any[], skills: [] as any[] });
+const resourceScopeDraft = reactive({ project_name: '', datasets: '', knowledge_bases: '', skills: '' });
+const resourceOptionsLoading = ref(false);
+const resourceOptionsLoaded = ref(false);
+const resourceOptionSearch = reactive<Record<string, string>>({ datasets: '', knowledge_bases: '', skills: '' });
+const resourceOptions = reactive<Record<string, any[]>>({ datasets: [], knowledge_bases: [], skills: [] });
+type ResourceScopeGroupKey = 'datasets' | 'knowledge_bases' | 'skills';
+
+const emptyResourceScopeState = () => ({
+  project_name: '',
+  datasets: [] as any[],
+  knowledge_bases: [] as any[],
+  skills: [] as any[],
+});
+
+const resourceOptionGroups: { key: ResourceScopeGroupKey; label: string; shortLabel?: string; hint: string }[] = [
+  {
+    key: 'datasets',
+    label: '数据集',
+    shortLabel: '数据集',
+    hint: '不选则数据门户与 ChatBI 仍按默认权限；选中后仅允许所列数据集。',
+  },
+  {
+    key: 'knowledge_bases',
+    label: '知识库',
+    shortLabel: '知识库',
+    hint: '不选则沿用会话内已选知识库；选中后检索仅限列表内知识库。',
+  },
+  {
+    key: 'skills',
+    label: '技能 (Skills)',
+    shortLabel: '技能',
+    hint: '不选则仍可按问题自动匹配技能；选中后仅加载已挂载技能。',
+  },
+];
+const resourceScopeModalDraft = ref(emptyResourceScopeState());
+const resourceScopeSaving = ref(false);
+const resourceScopeProjectNameInput = ref<HTMLInputElement | null>(null);
+const resourceScopeActiveTab = ref<ResourceScopeGroupKey>('datasets');
+const resourceScopeCount = computed(() => resourceScope.value.datasets.length + resourceScope.value.knowledge_bases.length + resourceScope.value.skills.length);
+const projectSessionHasDatasetScope = computed(() => Boolean(resourceScope.value.project_name) && resourceScope.value.datasets.length > 0);
+const projectSessionHasKnowledgeScope = computed(() => Boolean(resourceScope.value.project_name) && resourceScope.value.knowledge_bases.length > 0);
+const scopedKnowledgeDatasets = computed(() => {
+  if (!resourceScope.value.project_name) return knowledgeDatasets.value;
+  if (!projectSessionHasKnowledgeScope.value) return [];
+  const allowed = new Set(resourceScope.value.knowledge_bases.flatMap((item: any) => [item.id, item.name].filter(Boolean).map(String)));
+  return knowledgeDatasets.value.filter((item: any) => allowed.has(String(item.id || item.ragflow_dataset_id || item.dataset_id)) || allowed.has(String(item.name || item.platform_name || '')));
+});
+const scopedActiveDatasetIds = computed(() => {
+  if (!resourceScope.value.project_name) return activeDatasetIds.value;
+  const allowed = new Set(scopedKnowledgeDatasets.value.map((item: any) => String(item.id || item.ragflow_dataset_id || item.dataset_id)));
+  return activeDatasetIds.value.filter((id: string) => allowed.has(String(id)));
+});
+const scopedPortalNavigationPayload = computed(() => {
+  if (!projectSessionHasDatasetScope.value || !portalNavigationPayload.value) return portalNavigationPayload.value;
+  const allowed = new Set(resourceScope.value.datasets.flatMap((item: any) => [item.id, item.name, item.dataset_name].filter(Boolean).map(String)));
+  return {
+    ...portalNavigationPayload.value,
+    groups: (portalNavigationPayload.value.groups || []).map((group: any) => ({
+      ...group,
+      related_data: (group.related_data || []).filter((item: any) => allowed.has(String(item.dataset || item.display_name || item.id || ''))),
+    })).filter((group: any) => (group.related_data || []).length > 0),
+    dataset_count: resourceScope.value.datasets.length,
+  };
+});
+const mountedResourceLabels = computed(() => [
+  ...resourceScope.value.datasets.map((item: any) => ({ key: `dataset:${item.id}`, icon: '📊', label: item.name || item.id, type: 'datasets', id: item.id })),
+  ...resourceScope.value.knowledge_bases.map((item: any) => ({ key: `knowledge:${item.id}`, icon: '📚', label: item.name || item.id, type: 'knowledge_bases', id: item.id })),
+  ...resourceScope.value.skills.map((item: any) => ({ key: `skill:${item.id}`, icon: '🧩', label: item.name || item.id, type: 'skills', id: item.id })),
+]);
+
+const resourceEntryMatchesOption = (entry: any, option: any) => {
+  const eid = String(entry?.id ?? '').trim();
+  const oid = String(option?.id ?? '').trim();
+  const ename = String(entry?.name ?? '').trim();
+  const oname = String(option?.name ?? '').trim();
+  if (eid && oid && eid === oid) return true;
+  if (ename && oname && ename === oname) return true;
+  if (eid && oname && eid === oname) return true;
+  if (ename && oid && ename === oid) return true;
+  const edn = String(entry?.dataset_name ?? '').trim();
+  const odn = String(option?.dataset_name ?? option?.name ?? '').trim();
+  if (edn && odn && edn === odn) return true;
+  return false;
+};
+
+const remapScopeSelections = (items: any[], options: any[]) =>
+  (items || []).map((selected: any) => {
+    const matched = options.find((option: any) => resourceEntryMatchesOption(selected, option));
+    return matched
+      ? {
+          ...selected,
+          id: matched.id,
+          name: matched.name || selected.name,
+          ...(matched.dataset_name ? { dataset_name: matched.dataset_name } : {}),
+        }
+      : selected;
+  });
+
+const syncResourceScopeDraftStrings = (scope: typeof resourceScope.value) => {
+  resourceScopeDraft.project_name = scope.project_name || '';
+  resourceScopeDraft.datasets = scope.datasets.map((item: any) => item.name || item.id).join(',');
+  resourceScopeDraft.knowledge_bases = scope.knowledge_bases.map((item: any) => item.name || item.id).join(',');
+  resourceScopeDraft.skills = scope.skills.map((item: any) => item.name || item.id).join(',');
+};
+
+const cloneResourceScope = (scope: typeof resourceScope.value) => ({
+  project_name: scope.project_name || '',
+  datasets: scope.datasets.map((item: any) => ({ ...item })),
+  knowledge_bases: scope.knowledge_bases.map((item: any) => ({ ...item })),
+  skills: scope.skills.map((item: any) => ({ ...item })),
+});
+
+const modalDraftSelections = (type: ResourceScopeGroupKey) => resourceScopeModalDraft.value[type] || [];
+
+const modalOrphanSelections = (type: ResourceScopeGroupKey) => {
+  if (!resourceOptionsLoaded.value) return [];
+  const options = resourceOptions[type] || [];
+  if (!options.length) return [];
+  return modalDraftSelections(type).filter((item) => !options.some((option) => resourceEntryMatchesOption(item, option)));
+};
+
+const modalResourceOrphanCount = computed(() =>
+  resourceOptionGroups.reduce((sum, group) => sum + modalOrphanSelections(group.key).length, 0),
+);
+
+const modalSelectedCount = (type: ResourceScopeGroupKey) => modalDraftSelections(type).length;
+
+const modalSelectedChips = (type: ResourceScopeGroupKey) => {
+  const orphans = new Set(modalOrphanSelections(type));
+  return modalDraftSelections(type).map((item: any, index: number) => ({
+    key: `${type}:${item.id || item.name || index}`,
+    item,
+    label: item.name || item.id || '未命名',
+    orphan: orphans.has(item),
+  }));
+};
+
+const resourceModalOptionSelected = (type: ResourceScopeGroupKey, option: any) =>
+  modalDraftSelections(type).some((item) => resourceEntryMatchesOption(item, option));
+
+const resourceOptionInitial = (option: any) => String(option.name || option.id || '?').trim().charAt(0).toUpperCase();
+const resourceOptionAccent = (index: number) => ['bg-teal-500', 'bg-lime-500', 'bg-violet-500', 'bg-green-500', 'bg-sky-500'][index % 5];
+
+const filteredResourceOptions = (type: string) => {
+  const query = (resourceOptionSearch[type] || '').trim().toLowerCase();
+  return (resourceOptions[type] || []).filter((item: any) => !query || `${item.name || ''} ${item.id || ''} ${item.description || ''}`.toLowerCase().includes(query));
+};
+
+const sortedModalResourceOptions = (type: ResourceScopeGroupKey) => {
+  const options = filteredResourceOptions(type);
+  const selected: any[] = [];
+  const rest: any[] = [];
+  for (const option of options) {
+    if (resourceModalOptionSelected(type, option)) selected.push(option);
+    else rest.push(option);
+  }
+  return [...selected, ...rest];
+};
+
+const toggleModalResourceOption = (type: ResourceScopeGroupKey, option: any) => {
+  const selected = resourceModalOptionSelected(type, option);
+  const items = selected
+    ? modalDraftSelections(type).filter((item) => !resourceEntryMatchesOption(item, option))
+    : [
+        ...modalDraftSelections(type),
+        {
+          id: option.id,
+          name: option.name || option.id,
+          ...(option.dataset_name ? { dataset_name: option.dataset_name } : {}),
+        },
+      ];
+  resourceScopeModalDraft.value = { ...resourceScopeModalDraft.value, [type]: items };
+};
+
+const removeModalDraftResource = (type: ResourceScopeGroupKey, item: any) => {
+  const items = modalDraftSelections(type).filter((entry) => entry !== item && String(entry.id || '') !== String(item.id || ''));
+  resourceScopeModalDraft.value = { ...resourceScopeModalDraft.value, [type]: items };
+};
+
+const syncResourceScopeActiveTabForDraft = () => {
+  const withOrphans = resourceOptionGroups.find((group) => modalOrphanSelections(group.key).length > 0);
+  if (withOrphans) {
+    resourceScopeActiveTab.value = withOrphans.key;
+    return;
+  }
+  const withSelection = resourceOptionGroups.find((group) => modalSelectedCount(group.key) > 0);
+  resourceScopeActiveTab.value = withSelection?.key ?? 'datasets';
+};
+
+const loadResourceOptions = async () => {
+  resourceOptionsLoading.value = true;
+  try {
+    const [datasets, knowledge, globalSkills, personalSkills] = await Promise.allSettled([
+      axios.get('/api/portal/metadata/datasets/accessible'),
+      axios.get('/api/portal/ragflow/datasets', { params: { page: 1, page_size: 100, include_missing: false } }),
+      axios.get('/api/portal/skills'),
+      axios.get('/api/portal/skills/personal'),
+    ]);
+    if (datasets.status === 'fulfilled') {
+      const raw = datasets.value.data;
+      const list = Array.isArray(raw) ? raw : (raw?.data || raw?.datasets || []);
+      resourceOptions.datasets = list
+        .filter((item: any) => item.status === undefined || item.status === 1 || item.status === '1' || item.status === 'active')
+        .map((item: any) => ({
+          id: String(item.id || item.name),
+          name: item.display_name || item.name || item.dataset_name,
+          dataset_name: item.name || item.dataset_name,
+          description: item.description || item.remark || item.notes || `数据源：${item.data_source || '默认'}`,
+        }));
+    }
+    if (knowledge.status === 'fulfilled') {
+      const data = knowledge.value.data?.data;
+      const list = Array.isArray(data) ? data : (data?.datasets || data?.items || []);
+      resourceOptions.knowledge_bases = list
+        .filter((item: any) => item.status === undefined || item.status === 'active' || item.status === 1 || item.status === '1')
+        .map((item: any) => ({
+          id: String(item.id || item.dataset_id),
+          name: item.name || item.display_name || item.dataset_name,
+          dataset_name: item.id || item.dataset_id,
+          description: item.description || item.summary || item.notes || '暂无知识库描述',
+        }));
+    }
+    resourceOptions.skills = [];
+    for (const result of [globalSkills, personalSkills]) {
+      if (result.status === 'fulfilled') resourceOptions.skills.push(...(result.value.data?.data || [])
+        .filter((item: any) => item.enabled === undefined || item.enabled === true || item.enabled === 'true' || item.enabled === 1 || item.enabled === '1')
+        .map((item: any) => ({ id: String(item.id), name: item.name, description: item.description })));
+    }
+    for (const group of resourceOptionGroups) {
+      const options = resourceOptions[group.key] || [];
+      const key = group.key;
+      resourceScope.value[key] = remapScopeSelections(resourceScope.value[key], options);
+      if (showResourceScopeModal.value) {
+        resourceScopeModalDraft.value[key] = remapScopeSelections(resourceScopeModalDraft.value[key], options);
+      }
+    }
+    resourceOptionsLoaded.value = true;
+  } finally {
+    resourceOptionsLoading.value = false;
+  }
+};
+
+const closeResourceScopeModal = () => {
+  if (resourceScopeSaving.value) return;
+  showResourceScopeModal.value = false;
+};
+
+const openResourceScopeModal = () => {
+  resourceScopeModalDraft.value = cloneResourceScope(resourceScope.value);
+  syncResourceScopeActiveTabForDraft();
+  showResourceScopeModal.value = true;
+  if (!resourceOptionsLoaded.value) void loadResourceOptions();
+  void nextTick(() => resourceScopeProjectNameInput.value?.focus());
+};
+
+const refreshResourceOptions = async () => {
+  resourceOptionsLoaded.value = false;
+  await loadResourceOptions();
+};
+
+const loadResourceScope = async () => {
+  if (!conversationId.value) return;
+  try {
+    const res = await axios.get(`/api/v1/chat/conversation/${encodeURIComponent(conversationId.value)}/resource-scope`, { headers: embedAuthHeaders() });
+    resourceScope.value = res.data?.data || emptyResourceScopeState();
+    syncResourceScopeDraftStrings(resourceScope.value);
+  } catch (error) { console.warn('[ResourceScope] load failed', error); }
+};
+
+const buildPersistableScope = (source: typeof resourceScope.value) => {
+  const normalizeItems = (items: any[]) => items
+    .filter((item) => item?.id !== undefined && item?.id !== null && String(item.id).trim())
+    .map((item) => ({
+      id: String(item.id).trim(),
+      name: item.name || String(item.id).trim(),
+      ...(item.dataset_name ? { dataset_name: item.dataset_name } : {}),
+    }));
+  return {
+    project_name: (source.project_name || '').trim(),
+    datasets: normalizeItems(source.datasets),
+    knowledge_bases: normalizeItems(source.knowledge_bases),
+    skills: normalizeItems(source.skills),
+  };
+};
+
+const persistResourceScope = async (scope: ReturnType<typeof buildPersistableScope>) => {
+  const res = await axios.put(
+    `/api/v1/chat/conversation/${encodeURIComponent(conversationId.value)}/resource-scope`,
+    scope,
+    { headers: embedAuthHeaders() },
+  );
+  const saved = res.data?.data || scope;
+  resourceScope.value = saved;
+  syncResourceScopeDraftStrings(saved);
+  return saved;
+};
+
+const saveResourceScope = async () => {
+  if (!conversationId.value) {
+    showToast('请先开始会话', 'error');
+    return;
+  }
+  const draft = resourceScopeModalDraft.value;
+  if (!draft.project_name.trim()) {
+    showToast('请先填写项目名称', 'warning');
+    return;
+  }
+  resourceScopeSaving.value = true;
+  try {
+    await persistResourceScope(buildPersistableScope(draft));
+    showResourceScopeModal.value = false;
+    showToast('项目会话资源已保存', 'success');
+  } catch (error) {
+    showToast('资源范围更新失败', 'error');
+  } finally {
+    resourceScopeSaving.value = false;
+  }
+};
+
+const removeMountedResource = async (item: any) => {
+  const resourceType = item.type as ResourceScopeGroupKey;
+  const nextItems = resourceScope.value[resourceType].filter((entry: any) => entry.id !== item.id);
+  resourceScope.value = { ...resourceScope.value, [resourceType]: nextItems };
+  resourceScopeSaving.value = true;
+  try {
+    await persistResourceScope(buildPersistableScope(resourceScope.value));
+    showToast('已移除挂载资源', 'success');
+  } catch (error) {
+    showToast('移除失败', 'error');
+  } finally {
+    resourceScopeSaving.value = false;
+  }
+};
 let requestedConversationId = "";
 
 const embedAuthHeaders = (): Record<string, string> | undefined => {
@@ -3184,6 +3659,10 @@ const updateActiveConversationOnServer = async (cid: string) => {
   }
 };
 
+watch(conversationId, () => {
+  void loadResourceScope();
+});
+
 const generateNewConversation = () => {
   const previousId = conversationId.value;
   if (previousId) {
@@ -3193,30 +3672,57 @@ const generateNewConversation = () => {
   // 否则随后 initChat() 会再次强制切回旧会话并重载历史。
   requestedConversationId = "";
   conversationId.value = createConversationId();
+  resourceScope.value = emptyResourceScopeState();
+  Object.assign(resourceScopeDraft, { project_name: '', datasets: '', knowledge_bases: '', skills: '' });
   localStorage.setItem("yovole_embed_conv_id", conversationId.value);
   updateActiveConversationOnServer(conversationId.value);
+  loadResourceScope();
 };
 // Mention State (Moved to ChatInput)
 // const showMentionList = ref(false); // Removed
 // const mentionKeyword = ref(""); // Removed
 // const mentionPosition = reactive({ top: 0, left: 0 }); // Removed
+const fetchUserMarkdownThemePreference = async () => {
+    try {
+        const res = await axios.get("/api/portal/portal-prefs");
+        if (res.data?.data?.markdown_theme) {
+            config.markdownTheme = res.data.data.markdown_theme;
+            localStorage.setItem("user_has_custom_theme", "true");
+        } else {
+            localStorage.removeItem("user_has_custom_theme");
+        }
+    } catch (error) {
+        console.warn("Failed to fetch user markdown theme preference from Redis", error);
+    }
+};
+
 const allowedAgents = ref<any[]>([]);
 const hasFetchedAgents = ref(false);
 const isLoadingAgents = ref(false);
-const toggleAgentSelector = async () => {
-    showAgentSelector.value = !showAgentSelector.value;
-    if (showAgentSelector.value) {
-        await fetchAllowedAgents(true);
-    }
-};
 const fetchAllowedAgents = async (force = false) => {
     if (hasFetchedAgents.value && !force) return;
     isLoadingAgents.value = true;
     try {
+        // 先获取用户在后端持久化的排版样式偏好
+        await fetchUserMarkdownThemePreference();
+
         const res = await axios.get("/api/portal/agents/allowed");
         if (res.data) {
             allowedAgents.value = res.data; // Already filtered by backend
             hasFetchedAgents.value = true;
+            
+            // 自动应用当前激活智能体推荐的排版风格
+            if (config.expertAgentId) {
+                const currentAgent = res.data.find((a: any) => a.id === config.expertAgentId);
+                const hasCustomTheme = localStorage.getItem("user_has_custom_theme") === "true";
+                if (!hasCustomTheme) {
+                    const recommendedTheme = currentAgent?.engine_config?.default_markdown_theme;
+                    if (recommendedTheme) {
+                        config.markdownTheme = recommendedTheme;
+                    }
+                }
+            }
+            
             console.log(`[LifeCycle] Successfully fetched ${res.data.length} allowed agents.`);
             void prefetchPortalNavigationIfEligible();
         }
@@ -3237,12 +3743,25 @@ watch(() => config.token, (newToken) => {
     }
 }, { immediate: true });
 
+// 监听当前激活的智能体变更，自动应用其配置的推荐排版风格
+watch(() => config.expertAgentId, (newAgentId) => {
+    if (newAgentId && allowedAgents.value.length > 0) {
+        const currentAgent = allowedAgents.value.find(a => a.id === newAgentId);
+        const hasCustomTheme = localStorage.getItem("user_has_custom_theme") === "true";
+        if (!hasCustomTheme) {
+            const recommendedTheme = currentAgent?.engine_config?.default_markdown_theme;
+            if (recommendedTheme) {
+                config.markdownTheme = recommendedTheme;
+            } else {
+                config.markdownTheme = "default";
+            }
+        }
+    }
+}, { immediate: true });
+
 const handleSwitchMode = (agent: any) => {
-    config.expertAgentId = agent.id;
-    config.routingMode = "expert";
-    saveRoutingSettings();
     config.overrideAgentId = "";
-    showAutoRoutingHint.value = false;
+    switchToExpert(agent.id);
 };
 
 const listDataQueryAgents = () => {
@@ -3323,6 +3842,7 @@ const startThoughtTimer = (msg: Message) => {
         (Date.now() - msg.thoughtStartTime) /
         1000
       ).toFixed(1);
+      triggerRef(messages);
     }
     // Switch message every 3 seconds (30 * 100ms)
     if (ticks % 30 === 0) {
@@ -3332,6 +3852,7 @@ const startThoughtTimer = (msg: Message) => {
       } else {
         msg.thinkingText = "任务处理中，请稍候...";
       }
+      triggerRef(messages);
     }
   }, 100);
 };
@@ -3356,6 +3877,7 @@ const resetStallTimer = () => {
 // Slash Commands
 const SYSTEM_SLASH_COMMANDS = [
   { id: "sys_clear", command: "/new", label: "💬 新会话", sort_order: -40 },
+  { id: "sys_project", command: "/project", label: "📁 新建项目会话", sort_order: -39.5 },
   { id: "sys_history", command: "/history", label: "🕒 历史", sort_order: -39 },
   { id: DATASET_PORTAL_SYSTEM_COMMAND_ID, command: DATASET_PORTAL_SLASH_COMMAND, label: "📊 数据门户", sort_order: -35 },
   { id: KNOWLEDGE_PORTAL_SYSTEM_COMMAND_ID, command: KNOWLEDGE_PORTAL_SLASH_COMMAND, label: "📚 知识库中心", sort_order: -34.5 },
@@ -3368,7 +3890,6 @@ const isKnowledgeEnabled = ref(true);
 const slashCommands = ref<any[]>([...SYSTEM_SLASH_COMMANDS]);
 // History Sidebar State
 const showHistorySidebar = ref(false);
-const showAgentSelector = ref(false);
 const historyList = ref<any[]>([]);
 const historyPage = ref(1);
 const historyHasMore = ref(true);
@@ -3601,8 +4122,12 @@ const handlePreviewImageUrl = (url: string, filename: string) => {
   });
 };
 
-const resolveFileUrl = (url: string): string => {
-  if (!url) return '';
+const resolveFileUrl = (rawUrl: string): string => {
+  if (!rawUrl) return '';
+  let url = rawUrl;
+  if (url.includes('###HTML_TAG_PLACEHOLDER_')) {
+    url = url.replace(/###HTML_TAG_PLACEHOLDER_\d+###/g, '').trim();
+  }
   if (isDirectRenderableUrl(url)) {
     return url;
   }
@@ -3631,6 +4156,9 @@ const {
   resolveFileUrl,
   showToast,
 });
+
+// 画布钉住状态（钉住后侧边固定，不遮挡对话）
+const canvasPinned = ref(false);
 
 // Long-Term Memory States
 const activeLtmPreference = ref<any>(null);
@@ -4219,16 +4747,6 @@ watch(showSettings, (val) => {
 const activeColor = ref("#1677ff");
 
 // 技能工作流选择器
-const attachedSkillIds = computed(() =>
-  (chatInputRef.value?.uploadedFiles || [])
-    .filter((f: any) => f.type === "skill")
-    .map((f: any) => String(f.url)),
-);
-
-const openSkillSelector = () => {
-  showSkillDrawer.value = true;
-};
-
 const skillCreatedInfo = ref<SkillCreatedInfo | null>(null);
 
 watch(
@@ -4588,7 +5106,7 @@ const applyTheme = (theme: string, styleVars?: Record<string, string>) => {
 };
 const resetSession = (newToken?: string) => {
   messages.value = [];
-  config.enableGrounding = false;
+  config.enableGrounding = true; // 新会话恢复默认开启
   generateNewConversation();
   if (newToken) {
     config.token = newToken;
@@ -5038,6 +5556,11 @@ const handleSystemCommand = async (cmd: string): Promise<boolean> => {
     case "/clear": // legacy alias
       userInput.value = "";
       showConfirmModal.value = true;
+      return true;
+    case "/project":
+      userInput.value = "";
+      generateNewConversation();
+      openResourceScopeModal();
       return true;
   }
   return false;
@@ -5499,11 +6022,8 @@ const openKnowledgePortal = async () => {
   await rawOpenKnowledgePortal();
   const kbExpert = resolveKnowledgeExpertAgent();
   if (kbExpert) {
-    config.expertAgentId = kbExpert.id;
-    config.routingMode = "expert";
-    saveRoutingSettings();
     config.overrideAgentId = "";
-    showAutoRoutingHint.value = false;
+    switchToExpert(kbExpert.id);
   }
 };
 
@@ -5541,33 +6061,55 @@ watch(
 
 
 
-const pinnedDrawerDockOffsetRem = (exclude?: "portal" | "workspace" | "memory" | "skill" | "knowledge") => {
+const pinnedDrawerDockOffsetRem = (exclude?: "portal" | "workspace" | "memory" | "knowledge") => {
   let rem = 0;
   if (exclude !== "portal" && showPortalDrawer.value && portalPinned.value) rem += 28;
   if (exclude !== "knowledge" && showKnowledgePortal.value && knowledgePinned.value) rem += 28;
   if (exclude !== "workspace" && showWorkspaceDrawer.value && workspacePinned.value) rem += 28;
   if (exclude !== "memory" && showMemoryDrawer.value && memoryPinned.value) rem += 28;
-  if (exclude !== "skill" && showSkillDrawer.value && skillPinned.value) rem += 28;
   return rem;
 };
 
-const pinnedDrawerRightRem = computed(() => {
-  if (isMobile.value) return 0;
-  return pinnedDrawerDockOffsetRem();
+// 响应式抽屉宽度 refs（由各抽屉组件通过 v-model:drawerWidth / v-model:canvasWidth 实时同步）
+const portalDrawerWidthReactive = ref(448);
+const knowledgeDrawerWidthReactive = ref(448);
+const workspaceDrawerWidthReactive = ref(448);
+const canvasPinnedWidthReactive = ref(520);
+
+const portalDrawerWidthPx = computed(() => {
+  if (!showPortalDrawer.value || !portalPinned.value || isMobile.value) return 0;
+  return portalDrawerWidthReactive.value;
 });
 
-const saveReportModalOverlayStyle = computed(() => {
-  const rem = pinnedDrawerRightRem.value;
-  return { right: rem > 0 ? `${rem}rem` : "0" };
+const knowledgeDrawerWidthPx = computed(() => {
+  if (!showKnowledgePortal.value || !knowledgePinned.value || isMobile.value) return 0;
+  return knowledgeDrawerWidthReactive.value;
 });
-const saveReportModalOverlayClass = computed(() => {
-  const isPinned = (showPortalDrawer.value && portalPinned.value) || (showKnowledgePortal.value && knowledgePinned.value);
-  return isPinned ? 'right-[28rem]' : 'right-0';
+
+const canvasPinnedWidthPx = computed(() => {
+  if (!canvasVisible.value || !canvasPinned.value || isMobile.value) return 0;
+  return canvasPinnedWidthReactive.value;
+});
+
+const workspaceDrawerWidthPx = computed(() => {
+  if (!showWorkspaceDrawer.value || !workspacePinned.value || isMobile.value) return 0;
+  return workspaceDrawerWidthReactive.value;
+});
+
+const totalPinnedDrawerPx = computed(() => {
+  if (isMobile.value) return 0;
+  let px = 0;
+  px += portalDrawerWidthPx.value;
+  px += knowledgeDrawerWidthPx.value;
+  px += workspaceDrawerWidthPx.value;
+  px += canvasPinnedWidthPx.value;
+  if (showMemoryDrawer.value && memoryPinned.value) px += 448;
+  return px;
 });
 
 const pinnedDrawerMarginStyle = computed(() => {
-  const rem = pinnedDrawerRightRem.value;
-  return { marginRight: rem > 0 ? `min(${rem}rem, 100vw)` : "" };
+  const px = totalPinnedDrawerPx.value;
+  return px > 0 ? { marginRight: `min(${px}px, 100vw)` } : {};
 });
 
 const workspacePinnedDockClass = computed(() => {
@@ -5577,11 +6119,6 @@ const workspacePinnedDockClass = computed(() => {
 
 const memoryPinnedDockClass = computed(() => {
   const rem = pinnedDrawerDockOffsetRem("memory");
-  return rem > 0 ? `right-[${rem}rem]` : "right-0";
-});
-
-const skillPinnedDockClass = computed(() => {
-  const rem = pinnedDrawerDockOffsetRem("skill");
   return rem > 0 ? `right-[${rem}rem]` : "right-0";
 });
 
@@ -6014,7 +6551,8 @@ const sendMessage = async () => {
   // 3. API Call
   abortController = new AbortController();
   try {
-    const knowledgeDatasetIds = collectKnowledgeDatasetIds();
+    const mountedKnowledgeDatasetIds = resourceScope.value.knowledge_bases.map((item: any) => String(item.id || '').trim()).filter(Boolean);
+    const knowledgeDatasetIds = mountedKnowledgeDatasetIds.length > 0 ? mountedKnowledgeDatasetIds : collectKnowledgeDatasetIds();
     const body: Record<string, unknown> = {
       messages: buildOutboundMessages(),
       stream: true,
@@ -6031,6 +6569,7 @@ const sendMessage = async () => {
         knowledge_ragflow_similarity_threshold: knowledgeSimilarityThreshold.value,
         knowledge_ragflow_vector_weight: knowledgeVectorWeight.value,
         knowledge_ragflow_metadata_top_k: knowledgeMetadataTopK.value,
+        resource_scope: resourceScope.value,
       },
       permission_options: {
         approval_mode: config.approvalMode || "ask",
@@ -6288,7 +6827,6 @@ const onUnmountHandlers = ref<{
   onMessage?: (e: MessageEvent) => void;
   onOnline?: () => void;
   onOffline?: () => void;
-  onWindowClick?: () => void;
   onPortalDrawerKeydown?: (e: KeyboardEvent) => void;
 } | null>(null);
 // Lifecycle
@@ -6307,16 +6845,11 @@ onMounted(() => {
     setTimeout(() => (connectionStatus.value = "connected"), 1000);
   };
   const onOffline = () => (connectionStatus.value = "disconnected");
-  const onWindowClick = () => {
-    if (showAgentSelector.value) showAgentSelector.value = false;
-  };
 
   window.addEventListener("message", onMessage);
   window.addEventListener("online", onOnline);
   window.addEventListener("offline", onOffline);
   window.addEventListener("fullscreenchange", updateFullScreenStatus);
-  // Close agent selector on global click
-  window.addEventListener("click", onWindowClick);
   // Initialize or Retrieve Conversation ID
   const savedId = localStorage.getItem("yovole_embed_conv_id");
   if (savedId) {
@@ -6348,6 +6881,17 @@ onMounted(() => {
   }
   const savedExpandThoughts = localStorage.getItem("yovole_expand_thoughts");
   if (savedExpandThoughts !== null) config.expandThoughts = savedExpandThoughts === "1";
+  const savedMarkdownTheme = localStorage.getItem("yovole_markdown_theme");
+  if (
+    savedMarkdownTheme === "default" ||
+    savedMarkdownTheme === "minimal" ||
+    savedMarkdownTheme === "academic" ||
+    savedMarkdownTheme === "apple" ||
+    savedMarkdownTheme === "warm" ||
+    savedMarkdownTheme === "compact"
+  ) {
+    config.markdownTheme = savedMarkdownTheme;
+  }
   const query = new URLSearchParams(window.location.search);
   if (query.get("token")) {
     const token = query.get("token")!;
@@ -6371,7 +6915,7 @@ onMounted(() => {
   }
 
   // Attach cleanup handlers to component instance scope
-  (onUnmountHandlers as any).value = { onMessage, onOnline, onOffline, onWindowClick };
+  (onUnmountHandlers as any).value = { onMessage, onOnline, onOffline };
 });
 onUnmounted(() => {
   window.removeEventListener("resize", updateWidth);
@@ -6380,7 +6924,6 @@ onUnmounted(() => {
   if (handlers?.onMessage) window.removeEventListener("message", handlers.onMessage);
   if (handlers?.onOnline) window.removeEventListener("online", handlers.onOnline);
   if (handlers?.onOffline) window.removeEventListener("offline", handlers.onOffline);
-  if (handlers?.onWindowClick) window.removeEventListener("click", handlers.onWindowClick);
   disposePortalTimers();
   stopPortalLoadingTips();
   if (thoughtTimer) clearInterval(thoughtTimer);
@@ -6719,7 +7262,7 @@ onUnmounted(() => {
   border-color: #10b981;
 }
 
-/* 思维链扫光动效 */
+/* 思维链扫光动效 (已关闭)
 .shimmer-thought-card {
   position: relative !important;
   overflow: hidden !important;
@@ -6756,6 +7299,20 @@ onUnmounted(() => {
   100% {
     transform: translateX(100%);
   }
+}
+*/
+
+/* 思维链局部温和呼吸动效 */
+@keyframes pulse-subtle {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.65;
+  }
+}
+.animate-pulse-subtle {
+  animation: pulse-subtle 3s cubic-bezier(0.4, 0, 0.6, 1) infinite;
 }
 
 .custom-table-render :deep(table) {

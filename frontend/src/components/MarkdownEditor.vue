@@ -10,10 +10,12 @@ const props = withDefaults(defineProps<{
   fill?: boolean;
   theme?: 'light' | 'dark';
   enableOptimize?: boolean;
+  disabled?: boolean;
 }>(), {
   theme: 'light',
   fill: false,
   enableOptimize: false,
+  disabled: false,
 });
 
 const emit = defineEmits<{
@@ -74,6 +76,7 @@ const forwardToast = (message: string, type?: 'success' | 'error' | 'info') => {
         <PromptAiOptimize
           v-if="enableOptimize && activeTab === 'edit'"
           :content="modelValue || ''"
+          :disabled="disabled"
           @apply="applyOptimizedContent"
           @toast="forwardToast"
         />
@@ -94,10 +97,11 @@ const forwardToast = (message: string, type?: 'success' | 'error' | 'info') => {
         :value="modelValue || ''"
         @input="updateValue"
         :placeholder="placeholder"
-        class="absolute inset-0 w-full h-full p-4 text-sm font-mono outline-none border-none resize-none custom-scrollbar leading-relaxed z-10"
-        :class="theme === 'dark'
-          ? 'bg-gray-900 text-gray-100'
-          : 'bg-white text-gray-800'"
+        :readonly="disabled"
+        class="absolute inset-0 w-full h-full p-4 text-sm font-mono outline-none border-none resize-none custom-scrollbar leading-relaxed z-10 transition-colors"
+        :class="[
+          theme === 'dark' ? 'bg-gray-900 text-gray-100' : disabled ? 'bg-gray-50/80 text-gray-600 cursor-not-allowed' : 'bg-white text-gray-800'
+        ]"
       ></textarea>
 
       <div

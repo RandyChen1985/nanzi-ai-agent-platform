@@ -22,6 +22,7 @@ import MetadataDatasetBindingModal from "../components/agent/MetadataDatasetBind
 import DingTalkConfigModal from "../components/agent/DingTalkConfigModal.vue";
 import EmailConfigModal from "../components/agent/EmailConfigModal.vue";
 import WeChatWorkConfigModal from "../components/agent/WeChatWorkConfigModal.vue";
+import MessageRenderer from "../components/MessageRenderer.vue";
 import axios from "@/utils/axios";
 import { createUuid } from "../utils/conversationId";
 
@@ -164,6 +165,29 @@ const isEditingAgent = ref(false);
 const showCapabilityHelp = ref(false);
 const showEngineHelp = ref(false);
 const showAdvancedSafety = ref(false);
+
+// AI 消息排版样式选择与效果预览变量
+const selectedMarkdownTheme = ref("default");
+const showThemePreviewHelp = ref(false);
+const previewTheme = ref("default");
+const markdownThemeOptions = [
+  { value: 'default', label: '现代', emoji: '✨' },
+  { value: 'minimal', label: '极简', emoji: '🍃' },
+  { value: 'academic', label: '学术', emoji: '📖' },
+  { value: 'apple', label: '苹果', emoji: '🍎' },
+  { value: 'warm', label: '护眼', emoji: '🍂' },
+  { value: 'compact', label: '紧凑', emoji: '🔎' },
+  { value: 'bauhaus', label: '包豪斯', emoji: '📐' },
+  { value: 'editorial', label: '日报', emoji: '📰' },
+  { value: 'zen', label: '禅意', emoji: '🍃' },
+];
+const previewMarkdownContent = ref(
+  "# 南孜数据智能分析报告 📊\n\n我们已为您完成数据检索，本次对比分析了 2026 年度的核心业务指标。点击 [查看详情链接](https://example.com) 可以获取完整报表。\n\n> **业务目标**：通过多端排版持久化，解决多平台多终端切换下的个性化体验断层。\n\n### 1. 核心数据对比\n\n| 业务方向 | 现代风格 | 极简主义 | 包豪斯 / 日报 |\n| :--- | :--- | :--- | :--- |\n| **排版对齐** | 居左对齐 | 两端对齐 | 极致秩序感 |\n| **视觉呈现** | 渐变圆角 | 灰度卡片 | 直角/人文宋体 |\n| **阅读体验** | 现代极速 | 禅意放松 | 纸质印刷级 |\n\n### 2. 核心代码规范\n\n- **单向数据流**：Props 单向绑定，避免双向脏数据。\n- **持久化策略**：前端首屏加载时首选 Redis 用户偏好，辅以 LocalStorage 容错兜底。\n\n```python\n# 核心数据同步逻辑\ndef sync_theme_preference(user_id: int, theme: str):\n    print(f\"Syncing theme {theme} to Redis for user {user_id}\")\n    return {\"status\": \"success\", \"code\": 200}\n```\n\n如有任何疑问，请随时联系管理员或在下方继续提问。"
+);
+const applyPreviewTheme = () => {
+  selectedMarkdownTheme.value = previewTheme.value;
+  showThemePreviewHelp.value = false;
+};
 const AGENT_TYPE_OPTIONS = [
   {
     value: "GENERAL",
@@ -995,8 +1019,10 @@ const startAgentCreation = () => {
       safety_check_enabled: true,
       safety_check_input_strategy: "append",
       safety_check_output_strategy: "append",
+      default_markdown_theme: "default",
     },
   };
+  selectedMarkdownTheme.value = "default";
   versionForm.value = {
     model_name: "",
     temperature: 0,
@@ -1031,8 +1057,9 @@ const openAgentModal = (agent?: AIAgent) => {
       agent_type: agent.agent_type || "GENERAL",
       sort_order: agent.sort_order || 0,
       engine_type: agent.engine_type || "LOCAL",
-      engine_config: agent.engine_config || null,
+      engine_config: agent.engine_config ? { ...agent.engine_config } : {},
     };
+    selectedMarkdownTheme.value = agent.engine_config?.default_markdown_theme || "default";
     if (isExternalEngine(agentForm.value.engine_type)) {
       agentForm.value.agent_type = "GENERAL";
     }
@@ -1181,6 +1208,11 @@ const saveAgent = async (exitAfterSave = false) => {
     };
   }
 
+  // 统一补充写入排版样式
+  if (!agentForm.value.engine_config) {
+    agentForm.value.engine_config = {};
+  }
+  agentForm.value.engine_config.default_markdown_theme = selectedMarkdownTheme.value;
 
   try {
     if (isEditingAgent.value && selectedAgent.value) {
@@ -1515,6 +1547,7 @@ const persistNewAgentDraft = async (closeAfterSave: boolean) => {
   agentForm.value.engine_config = {
     ...(agentForm.value.engine_config || {}),
     dataset_ids: datasetIds,
+    default_markdown_theme: selectedMarkdownTheme.value,
   };
   isPersistingNewAgent.value = true;
   try {
@@ -3435,6 +3468,40 @@ const formatSkillCountLabel = (agent: AIAgent) => {
               >暂无扩展能力</span>
           </div>
         </div>
+
+        <!-- 推荐排版样式选择 -->
+        <div class="rounded-xl border border-gray-200 p-4">
+          <div class="flex items-center gap-1.5">
+            <label class="text-sm font-bold text-gray-800">推荐排版样式</label>
+            <button
+              type="button"
+              class="flex h-5 w-5 items-center justify-center rounded-full border border-blue-200 bg-blue-50 text-xs font-bold text-blue-600 hover:bg-blue-100"
+              aria-label="查看排版样式效果预览说明"
+              title="查看排版样式效果预览说明"
+              @click="showThemePreviewHelp = true"
+            >?</button>
+          </div>
+          <p class="mt-1 text-xs text-gray-500">指定该智能体默认推荐给用户的 Markdown 排版呈现样式，历史数据未指定则默认为现代样式。</p>
+          
+          <!-- 6个预置样式卡片选择 -->
+          <div class="mt-4 grid grid-cols-3 gap-2">
+            <button
+              v-for="themeOpt in markdownThemeOptions"
+              :key="themeOpt.value"
+              type="button"
+              @click="selectedMarkdownTheme = themeOpt.value"
+              class="py-2 px-3 text-xs border rounded-lg font-medium transition-all text-center flex items-center justify-center gap-1.5 active:scale-95"
+              :class="
+                selectedMarkdownTheme === themeOpt.value
+                  ? 'bg-blue-50 border-blue-200 text-blue-600 shadow-sm font-bold'
+                  : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'
+              "
+            >
+              <span>{{ themeOpt.emoji }}</span>
+              <span>{{ themeOpt.label }}</span>
+            </button>
+          </div>
+        </div>
         </div>
 
         <div v-if="isOnboardingFlow && onboardingStep === 'VERSION'" class="space-y-5">
@@ -3848,6 +3915,67 @@ const formatSkillCountLabel = (agent: AIAgent) => {
           </span>
         </div>
       </div>
+    </Modal>
+
+    <!-- 推荐排版样式效果预览 Modal -->
+    <Modal
+      v-if="showThemePreviewHelp"
+      title="🎨 AI 消息排版样式效果预览"
+      size="max-w-4xl"
+      z-index="10000"
+      @close="showThemePreviewHelp = false"
+    >
+      <div class="space-y-4">
+        <p class="text-xs text-gray-500">点击下方按钮可实时切换并预览不同推荐样式在 AI 会话界面中的最终呈现效果。</p>
+        
+        <!-- 样式切换 Tab 栏 -->
+        <div class="grid grid-cols-3 sm:grid-cols-9 gap-1.5 p-1.5 bg-gray-50 dark:bg-gray-900/50 rounded-xl border border-gray-100 dark:border-gray-800">
+          <button
+            v-for="themeOpt in markdownThemeOptions"
+            :key="themeOpt.value"
+            type="button"
+            @click="previewTheme = themeOpt.value"
+            class="py-2 px-1 rounded-lg text-[10px] sm:text-xs font-semibold transition-all flex items-center justify-center gap-1 active:scale-95"
+            :class="
+              previewTheme === themeOpt.value
+                ? 'bg-white dark:bg-gray-800 text-blue-600 dark:text-blue-400 shadow-sm border border-gray-200/50 dark:border-gray-700'
+                : 'text-gray-500 hover:text-gray-800 dark:hover:text-gray-300'
+            "
+          >
+            <span>{{ themeOpt.emoji }}</span>
+            <span>{{ themeOpt.label }}</span>
+          </button>
+        </div>
+        
+        <!-- 效果预览区域 -->
+        <div class="border border-gray-150 dark:border-gray-700/60 rounded-xl p-4 bg-gray-50/50 dark:bg-gray-900/20">
+          <div class="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-2">样式效果预览</div>
+          
+          <!-- 使用真实的 MessageRenderer 展示排版效果 -->
+          <MessageRenderer
+            :content="previewMarkdownContent"
+            :theme="previewTheme"
+            class="border border-transparent"
+          />
+        </div>
+      </div>
+      
+      <template #footer>
+        <div class="flex justify-end gap-3">
+          <button
+            @click="applyPreviewTheme"
+            class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-medium shadow-sm transition-all"
+          >
+            使用该样式
+          </button>
+          <button
+            @click="showThemePreviewHelp = false"
+            class="px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700 rounded-lg text-xs font-medium transition-all"
+          >
+            关闭
+          </button>
+        </div>
+      </template>
     </Modal>
   </div>
 </template>

@@ -13,7 +13,6 @@ const datasetPortalDrawer = readSource("src/components/chatbi/DatasetPortalDrawe
 const knowledgePortalDrawer = readSource("src/components/knowledge/KnowledgePortalDrawer.vue");
 const workspaceBrowserDrawer = readSource("src/components/embed/WorkspaceBrowserDrawer.vue");
 const memoryBrowserDrawer = readSource("src/components/embed/MemoryBrowserDrawer.vue");
-const skillBrowserDrawer = readSource("src/components/embed/SkillBrowserDrawer.vue");
 const embedChat = readSource("src/views/EmbedChat.vue");
 const agentDebug = readSource("src/views/AgentDebug.vue");
 
@@ -28,7 +27,6 @@ const drawerMaxZ = Math.max(
   maxZ(knowledgePortalDrawer),
   maxZ(workspaceBrowserDrawer),
   maxZ(memoryBrowserDrawer),
-  maxZ(skillBrowserDrawer),
 );
 
 const expectCanvasLayer = (label: string, pattern: RegExp) => {

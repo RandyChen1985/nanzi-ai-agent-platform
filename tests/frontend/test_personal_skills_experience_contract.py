@@ -8,7 +8,8 @@ PERSONAL_CENTER = ROOT / "frontend" / "src" / "views" / "PersonalCenter.vue"
 SKILLS_MGMT = ROOT / "frontend" / "src" / "views" / "SkillsManagement.vue"
 EMBED = ROOT / "frontend" / "src" / "views" / "EmbedChat.vue"
 DEBUG = ROOT / "frontend" / "src" / "views" / "AgentDebug.vue"
-DRAWER = ROOT / "frontend" / "src" / "components" / "embed" / "SkillBrowserDrawer.vue"
+CASCADE = ROOT / "frontend" / "src" / "components" / "embed" / "SkillCascadeMenu.vue"
+CHAT_INPUT = ROOT / "frontend" / "src" / "components" / "embed" / "ChatInput.vue"
 BANNER = ROOT / "frontend" / "src" / "components" / "chat" / "SkillCreatedBanner.vue"
 SKILL_CREATED_UTIL = ROOT / "frontend" / "src" / "utils" / "skillCreated.ts"
 EXEC_TOOLS = ROOT / "app" / "services" / "ai" / "tools" / "system_executive_tools.py"
@@ -30,16 +31,20 @@ def test_skills_management_supports_personal_only_mode():
 
 
 def test_chat_mount_includes_skill_scope():
-    for path in (EMBED, DEBUG):
+    for path in (EMBED, DEBUG, CHAT_INPUT):
         text = path.read_text(encoding="utf-8")
         assert "scope," in text or "scope:" in text
         assert 'scope === "personal"' in text or "scope === 'personal'" in text
+    for path in (EMBED, DEBUG):
+        text = path.read_text(encoding="utf-8")
         assert "SkillCreatedBanner" in text
 
 
-def test_skill_browser_empty_state_points_to_personal_center():
-    text = DRAWER.read_text(encoding="utf-8")
+def test_skill_cascade_empty_state_points_to_personal_center():
+    text = CASCADE.read_text(encoding="utf-8")
     assert "/dashboard/personal?tab=skills" in text
+    assert "SkillCascadeMenu" in CHAT_INPUT.read_text(encoding="utf-8") or "skill-cascade" in CHAT_INPUT.read_text(encoding="utf-8").lower()
+    assert "SkillCascadeMenu" in CHAT_INPUT.read_text(encoding="utf-8")
 
 
 def test_create_skills_emits_machine_marker():

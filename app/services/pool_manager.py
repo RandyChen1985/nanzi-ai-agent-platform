@@ -133,6 +133,8 @@ class DataSourcePoolManager:
                 pool = await cls._create_oracle_pool(db_config)
             elif db_type in ("sqlserver", "mssql", "tsql"):
                 pool = await cls._create_sqlserver_pool(db_config)
+            elif db_type in ("postgres", "postgresql", "pg"):
+                pool = await cls._create_postgresql_pool(db_config)
             else:
                 raise NotImplementedError(f"不支持的连接池数据库类型: '{db_config.db_type}'")
 
@@ -193,6 +195,50 @@ class DataSourcePoolManager:
             maxsize=50,
             autocommit=True,
         )
+        return pool
+
+    @classmethod
+    async def _create_postgresql_pool(cls, db_config: Any) -> Any:
+        """创建 PostgreSQL 异步连接池。"""
+        from psycopg_pool import AsyncConnectionPool
+        from app.services.data_adapter.postgresql import build_postgresql_conninfo
+
+        async def configure_connection(connection: Any) -> None:
+            """让未带 schema 的表名也能解析到用户业务 schema。"""
+            async with connection.cursor() as cursor:
+                await cursor.execute(
+                    """
+                    SELECT schema_name
+                    FROM information_schema.schemata
+                    WHERE schema_name NOT IN ('pg_catalog', 'information_schema')
+                    ORDER BY CASE WHEN schema_name = 'public' THEN 1 ELSE 0 END, schema_name
+                    """
+                )
+                schemas = [row[0] for row in await cursor.fetchall()]
+                if schemas:
+                    search_path = ", ".join(
+                        '"' + str(schema).replace('"', '""') + '"' for schema in schemas
+                    )
+                    await cursor.execute(f"SET search_path TO {search_path}")
+            await connection.commit()
+
+        conninfo = build_postgresql_conninfo(
+            {
+                "host": db_config.host,
+                "port": db_config.port,
+                "database": db_config.database_name,
+                "user": db_config.db_user,
+                "password": db_config.password,
+            }
+        )
+        pool = AsyncConnectionPool(
+            kwargs=conninfo,
+            configure=configure_connection,
+            min_size=1,
+            max_size=50,
+            open=False,
+        )
+        await pool.open(wait=True)
         return pool
 
     @classmethod

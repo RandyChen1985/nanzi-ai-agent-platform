@@ -70,13 +70,18 @@ def build_notification_delivery_supplement(channels: Iterable[str]) -> str:
     if not normalized:
         return ""
     lines = [
-        "【结果通知要求】任务完成后必须向以下渠道发送执行摘要（含关键结论；失败时说明原因）：",
+        "【🚨 结果通知强制指令 (System Mandatory Command)】",
+        "本次为 TaskCenter 自动化任务运行。任务数据分析或处理完成后，你【必须且必须】通过下发真正的 API 工具调用（Tool Call）将结果推送到以下指定渠道！",
+        "",
+        "⚠️ 极其重要的操作约束：",
+        "1. 严禁仅在文本回答中口头说明“已发送”或仅输出文字总结！必须在系统里触发真正的工具函数调用 (Tool Call)。",
+        "2. 必须按照以下指定渠道清单，触发对应的通知工具：",
     ]
     for channel in normalized:
         _tool, label, hint = CHANNEL_SPECS[channel]
-        lines.append(f"- {label}：{hint}")
+        lines.append(f"   - {label}：{hint}")
     lines.append(
-        "若任务内容已要求相同渠道，每个渠道只发送一次，勿重复调用。"
-        "未列出的渠道不要额外发送。"
+        "3. 必须在成功触发上述通知工具并收到工具返回结果后，再给出最终总结。\n"
+        "4. 每个勾选渠道仅触发一次 API 调用，请勿漏发，也不要重复调用未列出的渠道。"
     )
     return "\n".join(lines)

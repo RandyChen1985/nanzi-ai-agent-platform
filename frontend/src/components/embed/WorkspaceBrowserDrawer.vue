@@ -16,6 +16,7 @@ const LIST_PAGE_SIZE = 200
 const modelValue = defineModel<boolean>({ default: false })
 const keepOpenOnSelect = defineModel<boolean>('keepOpenOnSelect', { default: false })
 const pinned = defineModel<boolean>('pinned', { default: false })
+const drawerWidth = defineModel<number>('drawerWidth', { default: 448 })
 
 const props = withDefaults(
   defineProps<{
@@ -1344,6 +1345,78 @@ const pinnedContainerClass = computed(() => {
 const closeDrawer = () => {
   modelValue.value = false
 }
+
+const CANVAS_WIDTH_STORAGE_KEY = 'nanzi_workspace_browser_drawer_width'
+const customWidth = ref<number | null>(null)
+const isResizing = ref(false)
+
+const loadCustomWidth = () => {
+  if (typeof window === 'undefined') return
+  const saved = localStorage.getItem(CANVAS_WIDTH_STORAGE_KEY)
+  if (saved) {
+    const parsed = parseInt(saved, 10)
+    if (!isNaN(parsed) && parsed >= 320) {
+      customWidth.value = parsed
+      drawerWidth.value = parsed
+    }
+  }
+}
+
+const startResize = (e: MouseEvent) => {
+  if (isMobile.value) return
+  e.preventDefault()
+  isResizing.value = true
+  document.body.classList.add('select-none')
+  window.addEventListener('mousemove', handleResizing)
+  window.addEventListener('mouseup', stopResize)
+}
+
+const handleResizing = (e: MouseEvent) => {
+  if (!isResizing.value) return
+  const viewportWidth = window.innerWidth
+  const newWidth = viewportWidth - e.clientX
+  const minWidth = 320
+  const maxWidth = Math.max(minWidth, viewportWidth - 300)
+  const clampedWidth = Math.min(maxWidth, Math.max(minWidth, newWidth))
+  customWidth.value = clampedWidth
+  drawerWidth.value = clampedWidth
+}
+
+const stopResize = () => {
+  if (!isResizing.value) return
+  isResizing.value = false
+  document.body.classList.remove('select-none')
+  window.removeEventListener('mousemove', handleResizing)
+  window.removeEventListener('mouseup', stopResize)
+  if (customWidth.value) {
+    localStorage.setItem(CANVAS_WIDTH_STORAGE_KEY, String(customWidth.value))
+  }
+}
+
+const resetWidth = () => {
+  customWidth.value = null
+  drawerWidth.value = 448
+  localStorage.removeItem(CANVAS_WIDTH_STORAGE_KEY)
+}
+
+const drawerPanelStyle = computed(() => {
+  if (isMobile.value) return {}
+  if (customWidth.value) {
+    return {
+      width: `${customWidth.value}px`,
+      maxWidth: `calc(100vw - 300px)`,
+    }
+  }
+  return {}
+})
+
+onMounted(() => {
+  loadCustomWidth()
+})
+
+onUnmounted(() => {
+  stopResize()
+})
 </script>
 
 <template>
@@ -1401,11 +1474,34 @@ const closeDrawer = () => {
             v-show="modelValue"
             :class="[
               'bg-white dark:bg-gray-900 shadow-2xl flex flex-col relative z-10 min-h-0 pb-[env(safe-area-inset-bottom,0px)]',
+              isResizing ? 'transition-none select-none' : 'transition-all duration-300',
               isMobile
                 ? 'w-full max-w-none rounded-t-2xl border-t border-gray-200 dark:border-gray-800 h-full max-h-full'
                 : 'w-screen max-w-[min(100vw,28rem)] h-full border-l border-gray-200 dark:border-gray-800',
             ]"
+            :style="drawerPanelStyle"
           >
+            <!-- Drag Overlay Guard during resizing -->
+            <div v-if="isResizing" class="fixed inset-0 z-[300] cursor-col-resize select-none" />
+
+            <!-- Resizer Handle Bar -->
+            <div
+              v-if="!isMobile"
+              class="absolute top-0 bottom-0 -left-1.5 w-3 z-50 flex items-center justify-center cursor-col-resize group select-none touch-none transition-colors"
+              :class="isResizing ? 'bg-primary/30' : 'hover:bg-primary/20'"
+              title="按住左右拖拽调整工作空间宽度（双击重置）"
+              @mousedown="startResize"
+              @dblclick="resetWidth"
+            >
+              <div
+                class="w-1 h-8 rounded-full transition-all flex flex-col items-center justify-center gap-0.5"
+                :class="isResizing ? 'bg-primary scale-110 shadow-sm' : 'bg-gray-300 dark:bg-gray-600 group-hover:bg-primary group-hover:scale-105'"
+              >
+                <div class="w-0.5 h-0.5 rounded-full bg-white dark:bg-gray-900" />
+                <div class="w-0.5 h-0.5 rounded-full bg-white dark:bg-gray-900" />
+                <div class="w-0.5 h-0.5 rounded-full bg-white dark:bg-gray-900" />
+              </div>
+            </div>
             <div
               v-if="isMobile"
               class="shrink-0 flex justify-center pt-2 pb-1"
@@ -1422,7 +1518,7 @@ const closeDrawer = () => {
                 <span class="truncate">浏览工作空间</span>
                 <span
                   v-if="pinned"
-                  class="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wide text-blue-600 bg-blue-50 border border-blue-100 dark:text-blue-300 dark:bg-blue-500/10 dark:border-blue-500/20"
+                  class="hidden sm:inline-flex shrink-0 items-center px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wide whitespace-nowrap text-blue-600 bg-blue-50 border border-blue-100 dark:text-blue-300 dark:bg-blue-500/10 dark:border-blue-500/20"
                 >
                   已钉住
                 </span>

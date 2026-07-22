@@ -12,6 +12,7 @@ const dbTypes = [
   { id: 'clickhouse', name: 'ClickHouse', icon: '🧊', defaultPort: 9000 },
   { id: 'oracle', name: 'Oracle', icon: '🔴', defaultPort: 1521 },
   { id: 'sqlserver', name: 'SQL Server', icon: '🟦', defaultPort: 1433 },
+  { id: 'postgresql', name: 'PostgreSQL', icon: '🐘', defaultPort: 5432 },
 ]
 
 const configs = ref<DbConnectionConfig[]>([])
@@ -37,6 +38,7 @@ const debugResult = ref<{ columns: { name: string; type: string }[]; rows: any[]
 
 const form = reactive({
   name: '',
+  nameSuffix: '',
   type: 'mysql',
   host: '',
   port: 3306,
@@ -56,6 +58,22 @@ const filteredConfigs = computed(() => {
   )
 })
 const isEditing = computed(() => editingId.value !== null)
+const dataSourcePrefix = computed(() => `${form.type}_`)
+const dataSourceName = computed(() => `${dataSourcePrefix.value}${form.nameSuffix.trim()}`)
+
+const sanitizeNameSuffix = () => {
+  form.nameSuffix = form.nameSuffix.replace(/[^a-zA-Z0-9_]/g, '')
+}
+
+const handleNamePaste = (event: ClipboardEvent) => {
+  event.preventDefault()
+  const input = event.target as HTMLInputElement
+  const pasted = event.clipboardData?.getData('text') || ''
+  const cleanText = pasted.replace(/[^a-zA-Z0-9_]/g, '')
+  const start = input.selectionStart ?? form.nameSuffix.length
+  const end = input.selectionEnd ?? start
+  form.nameSuffix = `${form.nameSuffix.slice(0, start)}${cleanText}${form.nameSuffix.slice(end)}`
+}
 
 const setDbType = (type: string) => {
   const db = dbTypes.find((item) => item.id === type)
@@ -70,6 +88,7 @@ const dbTypeColor = (type: string) => {
   if (type === 'clickhouse') return 'bg-cyan-100 text-cyan-700 border-cyan-200'
   if (type === 'oracle') return 'bg-red-100 text-red-700 border-red-200'
   if (type === 'sqlserver' || type === 'mssql') return 'bg-indigo-100 text-indigo-700 border-indigo-200'
+  if (type === 'postgresql' || type === 'postgres' || type === 'pg') return 'bg-purple-100 text-purple-700 border-purple-200'
   return 'bg-gray-100 text-gray-600 border-gray-200'
 }
 
@@ -121,6 +140,7 @@ const openCreateForm = () => {
 const resetForm = () => {
   editingId.value = null
   form.name = ''
+  form.nameSuffix = ''
   form.type = 'mysql'
   form.host = ''
   form.port = 3306
@@ -135,6 +155,8 @@ const resetForm = () => {
 const editConfig = (item: DbConnectionConfig) => {
   editingId.value = item.id
   form.name = item.name
+  const prefix = `${item.db_type}_`
+  form.nameSuffix = item.name.startsWith(prefix) ? item.name.slice(prefix.length) : item.name
   form.type = item.db_type
   form.host = item.host
   form.port = item.port
@@ -162,6 +184,8 @@ const buildUniqueCopyName = (baseName: string) => {
 const copyConfig = (item: DbConnectionConfig) => {
   editingId.value = null
   form.name = buildUniqueCopyName(item.name)
+  const prefix = `${item.db_type}_`
+  form.nameSuffix = form.name.startsWith(prefix) ? form.name.slice(prefix.length) : form.name
   form.type = item.db_type
   form.host = item.host
   form.port = item.port
@@ -181,7 +205,7 @@ const copyConfig = (item: DbConnectionConfig) => {
 
 
 const toConfigPayload = () => ({
-  name: form.name.trim(),
+  name: dataSourceName.value,
   db_type: form.type,
   host: form.host,
   port: form.port,
@@ -194,7 +218,7 @@ const toConfigPayload = () => ({
 const buildSuggestedName = () => {
   const database = form.database.trim().replace(/[^a-zA-Z0-9_]+/g, '_').replace(/^_+|_+$/g, '')
   if (!database) return form.type
-  return `${form.type}_${database}`
+  return database
 }
 
 const testConnection = async () => {
@@ -203,8 +227,8 @@ const testConnection = async () => {
   try {
     await metadataApi.testDbConnection(toConnectionPayload())
     testPassed.value = true
-    if (!form.name.trim()) {
-      form.name = buildSuggestedName()
+    if (!form.nameSuffix.trim()) {
+      form.nameSuffix = buildSuggestedName()
     }
     showToast('连接测试成功', 'success')
   } catch (e: any) {
@@ -229,11 +253,11 @@ const testSavedConnection = async (item: DbConnectionConfig) => {
 }
 
 const saveConfig = async () => {
-  if (!form.name.trim()) {
+  if (!form.nameSuffix.trim()) {
     showToast('请输入数据源名称', 'warning')
     return
   }
-  if (!/^[a-zA-Z0-9_]+$/.test(form.name.trim())) {
+  if (!/^[a-zA-Z0-9_]+$/.test(form.nameSuffix.trim())) {
     showToast('数据源名称仅支持英文、数字与下划线以确保兼容物理匹配', 'warning')
     return
   }
@@ -571,24 +595,35 @@ onUnmounted(() => {
           
           <!-- Modal 主体 -->
           <div class="p-6 space-y-4 max-h-[70vh] overflow-y-auto custom-scrollbar">
-            <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <div class="-mx-1 overflow-x-auto pb-1 custom-scrollbar">
+              <div class="flex w-max gap-2 px-1">
               <button
                 v-for="db in dbTypes"
                 :key="db.id"
                 @click="setDbType(db.id)"
-                class="p-3 rounded-xl border-2 transition-all flex flex-col items-center gap-2"
+                class="w-28 min-w-28 p-2 rounded-xl border-2 transition-all flex flex-col items-center gap-1.5"
                 :class="form.type === db.id ? 'border-primary bg-primary/5 text-primary' : 'border-gray-100 hover:border-gray-200 text-gray-700'"
               >
-                <span class="text-xl">{{ db.icon }}</span>
-                <span class="text-xs font-black">{{ db.name }}</span>
+                <span class="text-lg leading-6">{{ db.icon }}</span>
+                <span class="text-[11px] font-black whitespace-nowrap">{{ db.name }}</span>
               </button>
+              </div>
             </div>
 
             <div>
               <label class="block text-xs font-bold text-gray-400 uppercase tracking-wider mb-1.5">数据源名称</label>
-              <input v-model="form.name" class="w-full border border-gray-200 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-primary/50 text-sm" placeholder="如：default_clickhouse、clickhouse_ods...">
-              <p class="mt-1.5 text-[10px] leading-relaxed text-amber-700 bg-amber-50 border border-amber-100 rounded-lg px-2.5 py-1.5">
-                建议使用外部 SQL 兼容标识，如 clickhouse_xxx, mysql_xxx，ChatBI 本地执行将匹配历史配置。
+                <div class="flex items-center w-full border border-gray-200 rounded-lg focus-within:ring-2 focus-within:ring-primary/50 overflow-hidden text-sm">
+                  <span class="shrink-0 px-3 py-2 bg-gray-50 text-gray-500 font-bold border-r border-gray-200">{{ dataSourcePrefix }}</span>
+                  <input
+                    v-model="form.nameSuffix"
+                    @input="sanitizeNameSuffix"
+                    @paste="handleNamePaste"
+                    class="min-w-0 flex-1 px-3 py-2 focus:outline-none"
+                    placeholder="如：ods、production、analytics"
+                  >
+                </div>
+                <p class="mt-1.5 text-[10px] leading-relaxed text-gray-500 bg-gray-50 border border-gray-100 rounded-lg px-2.5 py-1.5">
+                  前缀由数据库类型自动生成；后缀仅支持英文、数字和下划线，ChatBI 将据此前缀识别 SQL 方言。
               </p>
             </div>
 
@@ -649,7 +684,7 @@ onUnmounted(() => {
               <button @click="showFormModal = false" class="px-4 py-2 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50 text-xs font-bold transition-colors">取消</button>
               <button
                 @click="saveConfig"
-                :disabled="saving || !testPassed || !form.name || !form.host || !form.database"
+                :disabled="saving || !testPassed || !form.nameSuffix.trim() || !form.host || !form.database"
                 class="px-5 py-2 rounded-lg bg-primary text-white hover:bg-primary-dark text-xs font-bold shadow-lg shadow-primary/20 disabled:opacity-50 transition-colors"
               >
                 {{ saving ? '保存中...' : editingId ? '保存修改' : '保存数据源' }}

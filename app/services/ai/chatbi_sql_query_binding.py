@@ -476,6 +476,7 @@ async def resolve_sql_schema_preflight_with_binding(
     data_source: str = "",
     user_id: int | None = None,
     is_admin: bool = False,
+    allowed_dataset_names: set[str] | None = None,
 ) -> str:
     """基于 SqlQueryBinding 做 SQL 预检；权限放行的未知表会回填进 binding。"""
     table_columns = (
@@ -485,6 +486,21 @@ async def resolve_sql_schema_preflight_with_binding(
     )
     if not sql.strip() or not table_columns:
         return ""
+
+    if allowed_dataset_names:
+        mounted = {str(name).strip() for name in allowed_dataset_names if str(name).strip()}
+        referenced = {
+            str(item.dataset_name or "").strip()
+            for item in (binding.tables.values() if binding else [])
+            if str(item.dataset_name or "").strip()
+        }
+        outside = sorted(referenced - mounted)
+        if outside:
+            return (
+                "当前项目会话已限定数据集范围，SQL 引用了未挂载的数据集："
+                + ", ".join(outside)
+                + "。请先在项目会话资源范围中追加该数据集。"
+            )
 
     from app.services.sql_query_execution_service import (
         check_physical_table_refs_permission,
@@ -528,6 +544,11 @@ async def resolve_sql_schema_preflight_with_binding(
                         current.data_source = table_binding.data_source
                     if not current.columns:
                         current.columns = list(table_binding.columns)
+                if allowed_dataset_names and table_binding.dataset_name and table_binding.dataset_name not in allowed_dataset_names:
+                    return (
+                        f"当前项目会话未挂载数据集「{table_binding.dataset_name}」，"
+                        "请先在项目会话资源范围中追加后再查询。"
+                    )
 
     err = build_sql_schema_preflight_error(
         sql,
