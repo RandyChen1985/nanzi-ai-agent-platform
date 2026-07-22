@@ -177,8 +177,28 @@ build_date_format_probe_repair_hint = build_where_condition_probe_repair_hint
 
 def normalize_sql_identifier(identifier: str) -> str:
     value = str(identifier or "").strip()
-    value = value.strip('"').strip("`").strip("[").strip("]")
+    # 逐段清理引用符，保留 PostgreSQL schema.table 的身份信息。
+    parts = [
+        part.strip().strip('"').strip("`").strip("[").strip("]")
+        for part in value.split(".")
+    ]
+    value = ".".join(part for part in parts if part)
     return value.lower()
+
+
+def _resolve_schema_table_key(
+    *,
+    table_name: str,
+    schema_name: str = "",
+    schema_table_columns: dict[str, list[str]],
+) -> tuple[str, str]:
+    """优先使用 schema.table 匹配 Schema，兼容历史短表名元数据。"""
+    short_key = normalize_sql_identifier(table_name)
+    qualified_display = f"{schema_name}.{table_name}" if schema_name else table_name
+    qualified_key = normalize_sql_identifier(qualified_display)
+    if schema_name and qualified_key in schema_table_columns:
+        return qualified_key, qualified_display
+    return short_key, table_name
 
 
 def split_schema_columns(raw: str) -> list[str]:
@@ -686,8 +706,12 @@ def _build_preflight_alias_map(
                     raw_name = str(table.name or "").strip().strip('"').strip("'")
                     if not raw_name:
                         continue
-                    table_name = raw_name.split(".")[-1]
-                    table_norm = normalize_sql_identifier(table_name)
+                    schema_name = str(getattr(table, "db", None) or "").strip().strip('"').strip("'")
+                    table_norm, table_name = _resolve_schema_table_key(
+                        table_name=raw_name.split(".")[-1],
+                        schema_name=schema_name,
+                        schema_table_columns=schema_table_columns,
+                    )
                     if table_norm in cte_names:
                         continue
                     if table_norm not in schema_table_columns:
@@ -717,10 +741,16 @@ def _build_preflight_alias_map(
     table_displays: dict[str, str] = {}
     cte_names = _preflight_cte_names(sql_for_preflight)
     for match in _PREFLIGHT_TABLE_PATTERN.finditer(sql_for_preflight):
-        table = match.group(1).split(".")[-1]
+        raw_table = match.group(1)
+        table_parts = raw_table.split(".")
+        schema_name = ".".join(table_parts[:-1]) if len(table_parts) > 1 else ""
+        table_norm, table = _resolve_schema_table_key(
+            table_name=table_parts[-1],
+            schema_name=schema_name,
+            schema_table_columns=schema_table_columns,
+        )
         alias = match.group(2) or table
         alias_norm = normalize_sql_identifier(alias)
-        table_norm = normalize_sql_identifier(table)
         if table_norm in cte_names:
             continue
         if alias_norm in _PREFLIGHT_RESERVED_ALIASES:

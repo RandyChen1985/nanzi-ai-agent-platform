@@ -1097,7 +1097,8 @@ class DbProfileService:
 
         synonyms = list(profile.ai_tags or []) if isinstance(profile.ai_tags, list) else []
         return {
-            "physical_name": display_table_name,
+            # PostgreSQL 必须保留 schema.table；短表名仅用于默认展示术语。
+            "physical_name": source_table_name,
             "term": (profile.ai_term or display_table_name or "").strip(),
             "description": (profile.ai_description or "").strip(),
             "synonyms": synonyms,

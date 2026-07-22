@@ -24,6 +24,7 @@ const md = buildChatSessionMarkdown(
       status: 'success',
       created_at: '2026-07-22T08:00:00.000Z',
       execution_time_ms: 120,
+      agent_display_name: '数据分析助手',
     },
   ],
   {
@@ -41,7 +42,7 @@ const md = buildChatSessionMarkdown(
       ],
     },
   },
-  { agentLabel: '主助手', username: 'admin', conversationId: 'conv-123' },
+  { agentLabel: '主助手', username: 'admin', conversationId: 'conv-123', failedTraceIds: ['trace-missing'] },
 )
 
 assert.match(md, /^# 聊天会话导出/m)
@@ -50,6 +51,8 @@ assert.match(md, /### 用户提问[\s\S]*你好/)
 assert.match(md, /### 执行链路[\s\S]*Step 1/)
 assert.match(md, /tool_call/)
 assert.match(md, /search/)
+assert.match(md, /智能体:\*\* 数据分析助手/)
+assert.match(md, /执行链路获取失败/)
 
 assert.match(
   buildSessionExportFilename([], 'conversation-id-xyz'),

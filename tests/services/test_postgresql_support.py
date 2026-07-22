@@ -4,11 +4,15 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from app.services.data_adapter.factory import get_adapter
+from app.services.data_adapter.base import SQLSafetyError
 from app.services.data_adapter.postgresql import PostgreSQLAdapter
 from app.services.db_import_service import DBImportService
 from app.services.db_profile_service import DbProfileService
 from app.services.pool_manager import DataSourcePoolManager
-from app.services.sql_query_execution_service import dialect_from_data_source
+from app.services.sql_query_execution_service import (
+    dialect_from_data_source,
+    extract_physical_table_refs_from_select_sql,
+)
 
 
 pytestmark = pytest.mark.no_infrastructure
@@ -129,7 +133,7 @@ async def test_postgresql_adapter_preview_uses_pool_connection():
     cursor.execute.assert_awaited_once()
 
 
-def test_profile_import_preview_strips_postgresql_schema_from_physical_name():
+def test_profile_import_preview_preserves_postgresql_schema_in_physical_name():
     profile = SimpleNamespace(
         table_name="demo.orders",
         ddl="CREATE TABLE \"demo\".\"orders\" (\"id\" integer);",
@@ -141,5 +145,37 @@ def test_profile_import_preview_strips_postgresql_schema_from_physical_name():
 
     table = DbProfileService._profile_to_import_table(profile)
 
-    assert table["physical_name"] == "orders"
+    assert table["physical_name"] == "demo.orders"
     assert table["term"] == "订单明细表"
+
+
+def test_postgresql_table_refs_keep_schema_identity():
+    """同名表位于不同 schema 时，权限门禁必须保留完整物理标识。"""
+    error, refs = extract_physical_table_refs_from_select_sql(
+        "SELECT * FROM permitted.orders p JOIN restricted.orders r ON p.id = r.id",
+        "postgres",
+    )
+
+    assert error is None
+    assert refs == {
+        "permitted.orders": "permitted.orders",
+        "restricted.orders": "restricted.orders",
+    }
+
+
+@pytest.mark.parametrize(
+    "sql_text",
+    [
+        "WITH changed AS (UPDATE accounts SET balance = 0 RETURNING *) "
+        "SELECT * FROM changed LIMIT 1",
+        "WITH created AS (INSERT INTO accounts(balance) VALUES (1) RETURNING *) "
+        "SELECT * FROM created LIMIT 1",
+        "EXPLAIN ANALYZE DELETE FROM accounts",
+    ],
+)
+def test_postgresql_adapter_rejects_nested_write_sql(sql_text):
+    """PostgreSQL 可写 CTE 和 EXPLAIN 写操作必须被递归只读门禁拦截。"""
+    adapter = PostgreSQLAdapter(source_id=11)
+
+    with pytest.raises(SQLSafetyError, match="安全策略违规"):
+        adapter._validate_sql_safety(sql_text)

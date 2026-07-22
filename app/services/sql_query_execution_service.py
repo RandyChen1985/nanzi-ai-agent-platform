@@ -230,14 +230,16 @@ def extract_physical_table_refs_from_select_sql(sql: str, dialect: str) -> Tuple
         frag = _physical_fragment_from_table(table)
         if not frag:
             continue
-        lk = frag.lower()
         schema_lower = _schema_fragment_from_table(table).lower()
+        is_postgresql = to_sqlglot_dialect(dialect) == "postgres"
+        display = f"{schema_lower}.{frag}" if is_postgresql and schema_lower else frag
+        lk = display.lower()
         if lk in skip_aliases:
             continue
         if _is_exempt_builtin_table(lk, dialect, schema_lower=schema_lower):
             continue
         if lk not in refs:
-            refs[lk] = frag
+            refs[lk] = display
 
     return None, refs
 

@@ -329,3 +329,51 @@ async def test_resolve_sql_schema_preflight_enriches_permission_allowed_table(mo
     assert err == ""
     assert binding.get_table("hrmresource").dataset_name == "HR_ds"
     assert binding.preflight_validated is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.no_infrastructure
+async def test_resource_scope_checks_only_tables_referenced_by_current_sql():
+    """binding 中预取的其他数据集不应误拦截，但 SQL 真实引用时必须拦截。"""
+    from unittest.mock import AsyncMock
+
+    from app.services.ai.chatbi_sql_query_binding import (
+        SchemaColumnMeta,
+        SqlQueryBinding,
+        TableBinding,
+        resolve_sql_schema_preflight_with_binding,
+    )
+
+    binding = SqlQueryBinding(
+        primary_dataset_name="dataset_a",
+        tables={
+            "table_a": TableBinding(
+                physical_name="table_a",
+                dataset_name="dataset_a",
+                columns=[SchemaColumnMeta(name="id")],
+            ),
+            "table_b": TableBinding(
+                physical_name="table_b",
+                dataset_name="dataset_b",
+                columns=[SchemaColumnMeta(name="id")],
+            ),
+        },
+    )
+
+    allowed = await resolve_sql_schema_preflight_with_binding(
+        AsyncMock(),
+        sql="SELECT id FROM table_a",
+        binding=binding,
+        data_source="mysql",
+        allowed_dataset_names={"dataset_a"},
+    )
+    blocked = await resolve_sql_schema_preflight_with_binding(
+        AsyncMock(),
+        sql="SELECT id FROM table_b",
+        binding=binding,
+        data_source="mysql",
+        allowed_dataset_names={"dataset_a"},
+    )
+
+    assert allowed == ""
+    assert "dataset_b" in blocked

@@ -31,6 +31,7 @@ from app.services.ai.runners.chatbi.run_state import DataRunState
 from app.services.ai.runners.chatbi import turn_handlers as chatbi_turn_handlers
 from app.services.ai.time_anchor import build_data_query_time_anchor_block
 from app.services.ai.runtime.agentscope.tools import RuntimeToolSpec
+from app.services.conversation_resource_service import ConversationResourceService
 
 logger = logging.getLogger(__name__)
 
@@ -38,12 +39,20 @@ logger = logging.getLogger(__name__)
 def _apply_session_resource_scope(dataset_menu: str, debug_options: dict[str, Any] | None) -> str:
     """项目会话有手动挂载数据集时，只把挂载的数据集注入本轮 Schema 上下文。"""
     scope = (debug_options or {}).get("resource_scope") or {}
-    mounted = {str(item.get("dataset_name") or item.get("name") or item.get("id") or "").strip() for item in scope.get("datasets", []) if isinstance(item, dict)}
-    mounted.discard("")
+    mounted = ConversationResourceService.dataset_names(scope)
     if not mounted:
-        return dataset_menu
+        return "" if ConversationResourceService.has_dataset_scope(scope) else dataset_menu
     blocks = re.split(r"(?=^- Dataset:)", str(dataset_menu or ""), flags=re.MULTILINE)
-    return "".join(block for block in blocks if not block.lstrip().startswith("- Dataset:") or any(name in block.splitlines()[0] for name in mounted))
+    kept: list[str] = []
+    for block in blocks:
+        header = block.splitlines()[0].strip() if block.splitlines() else ""
+        if not header.startswith("- Dataset:"):
+            kept.append(block)
+            continue
+        dataset_name = header.split(":", 1)[1].strip()
+        if dataset_name in mounted:
+            kept.append(block)
+    return "".join(kept)
 
 
 @dataclass
@@ -217,7 +226,14 @@ async def auto_invoke_get_dataset_schema(
     }
     output = ""
     try:
-        result = schema_spec.callable(keywords=keywords or None)
+        resource_scope = (getattr(runner, "debug_options", None) or {}).get("resource_scope") or {}
+        scoped_dataset_ids = ConversationResourceService.dataset_ids(resource_scope)
+        if resource_scope.get("datasets") and not scoped_dataset_ids:
+            raise ValueError("会话数据集范围缺少有效元数据 ID，禁止降级为全量 Schema")
+        call_kwargs: dict[str, Any] = {"keywords": keywords or None}
+        if scoped_dataset_ids:
+            call_kwargs["metadata_dataset_ids"] = scoped_dataset_ids
+        result = schema_spec.callable(**call_kwargs)
         if inspect.isawaitable(result):
             result = await result
         output = str(result or "")

@@ -15,6 +15,7 @@ from app.services.ai.runners.chatbi.constants import (
 )
 from app.services.ai.runners.chatbi.run_state import DataRunState
 from app.services.ai.time_anchor import build_time_range_gate_message, detect_time_range_mismatch
+from app.services.conversation_resource_service import ConversationResourceService
 
 
 def wrap_tools_with_schema_gate(runner: Any, tools: list[RuntimeToolSpec], state: DataRunState) -> list[RuntimeToolSpec]:
@@ -26,6 +27,12 @@ def wrap_tools_with_schema_gate(runner: Any, tools: list[RuntimeToolSpec], state
             original_callable = spec.callable
 
             async def invoke_schema_controlled(*, _original=original_callable, **kwargs: Any) -> Any:
+                resource_scope = (runner.debug_options or {}).get("resource_scope") or {}
+                scoped_dataset_ids = ConversationResourceService.dataset_ids(resource_scope)
+                if resource_scope.get("datasets") and not scoped_dataset_ids:
+                    return f"{SCHEMA_GATE_PREFIX} 会话数据集范围缺少有效元数据 ID，已阻止扩大查询范围。"
+                if scoped_dataset_ids:
+                    kwargs["metadata_dataset_ids"] = scoped_dataset_ids
                 controlled_keywords = str(state.controlled_schema_retry_keywords or "").strip()
                 use_controlled = bool(
                     controlled_keywords and (state.pending_schema_retry or state.schema_miss)
@@ -106,6 +113,26 @@ def wrap_tools_with_schema_gate(runner: Any, tools: list[RuntimeToolSpec], state
             )
             from app.services.sql_query_execution_service import dialect_from_data_source
 
+            allowed_dataset_names = ConversationResourceService.dataset_names(
+                (runner.debug_options or {}).get("resource_scope") or {}
+            )
+            if (
+                ConversationResourceService.has_dataset_scope(
+                    (runner.debug_options or {}).get("resource_scope") or {}
+                )
+                and not allowed_dataset_names
+            ):
+                return f"{SCHEMA_GATE_PREFIX} 会话数据集范围缺少有效数据集名，已阻止 SQL 执行。"
+            requested_dataset_name = str(kwargs.get("dataset_name") or "").strip()
+            if (
+                allowed_dataset_names
+                and requested_dataset_name
+                and requested_dataset_name not in allowed_dataset_names
+            ):
+                return (
+                    f"当前项目会话未挂载数据集「{requested_dataset_name}」，"
+                    "请先在项目会话资源范围中追加后再查询。"
+                )
             dialect = dialect_from_data_source(str(kwargs.get("data_source") or ""))
             state.sql_query_binding = build_sql_query_binding(
                 schema_output=state.schema_output,
@@ -119,11 +146,7 @@ def wrap_tools_with_schema_gate(runner: Any, tools: list[RuntimeToolSpec], state
                 str(kwargs.get("data_source") or ""),
                 binding=state.sql_query_binding,
                 schema_table_columns=state.schema_table_columns,
-                allowed_dataset_names={
-                    str(item.get("dataset_name") or item.get("name") or item.get("id") or "").strip()
-                    for item in (runner.debug_options.get("resource_scope", {}).get("datasets", []) or [])
-                    if isinstance(item, dict) and str(item.get("id") or item.get("name") or "").strip()
-                } or None,
+                allowed_dataset_names=allowed_dataset_names or None,
             )
             if preflight_error:
                 return preflight_error

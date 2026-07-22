@@ -18,7 +18,10 @@ from app.schemas.response import StandardResponse
 from app.schemas.agent import TraceLogResponse, AgentExecutionHistoryListResponse
 from app.utils.fs_access import get_user_uploads_dir
 from app.services.permission_service import PermissionService
-from app.services.conversation_resource_service import ConversationResourceService
+from app.services.conversation_resource_service import (
+    ConversationResourceService,
+    ResourceScopeStorageError,
+)
 import logging
 
 
@@ -87,6 +90,14 @@ class ConversationResourceScopeRequest(BaseModel):
     datasets: List[Dict[str, Any]] = Field(default_factory=list)
     knowledge_bases: List[Dict[str, Any]] = Field(default_factory=list)
     skills: List[Dict[str, Any]] = Field(default_factory=list)
+
+
+async def _load_conversation_resource_scope(user_id: Any, conversation_id: str) -> Dict[str, Any]:
+    """读取服务端资源范围；存储异常时返回 503，禁止静默扩大资源。"""
+    try:
+        return await ConversationResourceService.get(user_id, conversation_id)
+    except ResourceScopeStorageError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 class ChatCompletionResponse(BaseModel):
     content: str
@@ -609,7 +620,7 @@ async def create_chat_completion(
     # 会话资源范围以服务端 Redis 为准，客户端只用于立即刷新 UI，不能伪造范围。
     conversation_scope = {"project_name": "", "datasets": [], "knowledge_bases": [], "skills": []}
     if completion_request.conversation_id:
-        conversation_scope = await ConversationResourceService.get(
+        conversation_scope = await _load_conversation_resource_scope(
             user_info.get("user_id") or user_info.get("id"),
             completion_request.conversation_id,
         )
@@ -864,7 +875,7 @@ async def get_history(
                 item.agent_name = agent_map[item.agent_id][0]
                 item.agent_display_name = agent_map[item.agent_id][1]
             if item.conversation_id:
-                scope = await ConversationResourceService.get(history_user_id, item.conversation_id)
+                scope = await _load_conversation_resource_scope(history_user_id, item.conversation_id)
                 item.project_name = scope.get("project_name") or None
             items.append(item)
     else:
@@ -875,7 +886,7 @@ async def get_history(
                 item.agent_name = agent_map[item.agent_id][0]
                 item.agent_display_name = agent_map[item.agent_id][1]
             if item.conversation_id:
-                scope = await ConversationResourceService.get(history_user_id, item.conversation_id)
+                scope = await _load_conversation_resource_scope(history_user_id, item.conversation_id)
                 item.project_name = scope.get("project_name") or None
             items.append(item)
     
@@ -953,13 +964,18 @@ async def batch_delete_history(
         is_admin = user_info.get("role") == "admin"
         username = user_info.get("user_name")
 
-    # 2. 查询对应的 trace_id 列表，以便级联删除 AgentExecutionTrace
-    stmt = select(AgentExecutionHistory.trace_id).where(AgentExecutionHistory.conversation_id.in_(payload.conversation_ids))
+    # 2. 查询实际命中的 trace 与所有者，后续 Redis 清理必须使用历史真实 user_id。
+    stmt = select(
+        AgentExecutionHistory.trace_id,
+        AgentExecutionHistory.user_id,
+        AgentExecutionHistory.conversation_id,
+    ).where(AgentExecutionHistory.conversation_id.in_(payload.conversation_ids))
     if user_info and not is_admin:
         stmt = stmt.where(AgentExecutionHistory.username == username)
     
     result = await db.execute(stmt)
-    trace_ids = [row for row in result.scalars().all() if row]
+    matched_rows = result.all()
+    trace_ids = [row.trace_id for row in matched_rows if row.trace_id]
 
     # 3. 执行批量级联删除
     if trace_ids:
@@ -976,9 +992,14 @@ async def batch_delete_history(
     # 数据库历史删除后同步清理会话 Redis，避免项目资源范围和记忆残留。
     from app.services.ai.memory_service import memory_service
     if user_info:
-        user_id = user_info.get("user_id") or user_info.get("id")
-        for conversation_id in payload.conversation_ids:
-            await memory_service.clear_history(user_id, conversation_id)
+        actor_user_id = user_info.get("user_id") or user_info.get("id")
+        cleanup_targets = {
+            (str(row.user_id or actor_user_id), str(row.conversation_id))
+            for row in matched_rows
+            if (row.user_id or actor_user_id) and row.conversation_id
+        }
+        for owner_user_id, conversation_id in cleanup_targets:
+            await memory_service.clear_history(owner_user_id, conversation_id)
 
     return StandardResponse(data={"success": True})
 
@@ -1206,7 +1227,7 @@ async def get_conversation_resource_scope(
     user_info: dict = Depends(require_api_key),
 ):
     user_id = user_info.get("user_id") or user_info.get("id")
-    scope = await ConversationResourceService.get(user_id, conversation_id)
+    scope = await _load_conversation_resource_scope(user_id, conversation_id)
     return StandardResponse(data=scope)
 
 
@@ -1215,7 +1236,18 @@ async def update_conversation_resource_scope(
     conversation_id: str,
     body: ConversationResourceScopeRequest,
     user_info: dict = Depends(require_api_key),
+    db: AsyncSession = Depends(get_db_session),
 ):
     user_id = user_info.get("user_id") or user_info.get("id")
-    scope = await ConversationResourceService.replace(user_id, conversation_id, body.model_dump())
+    try:
+        normalized = await ConversationResourceService.normalize_for_user(
+            db,
+            user_info=user_info,
+            scope=body.model_dump(),
+        )
+        scope = await ConversationResourceService.replace(user_id, conversation_id, normalized)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except ResourceScopeStorageError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     return StandardResponse(data=scope)

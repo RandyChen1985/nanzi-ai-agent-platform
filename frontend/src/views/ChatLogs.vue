@@ -242,6 +242,10 @@ const fetchAllTurnsForExport = async (log: AgentExecutionHistory) => {
     page += 1
   } while (page <= 50)
 
+  if (collected.length < total) {
+    throw new Error(`会话共 ${total} 轮，当前导出上限为 ${pageSize * 50} 轮`)
+  }
+
   collected.sort(
     (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime(),
   )
@@ -250,19 +254,21 @@ const fetchAllTurnsForExport = async (log: AgentExecutionHistory) => {
 
 const fetchTracesForTurns = async (turns: AgentExecutionHistory[]) => {
   const tracesByTraceId: Record<string, ChatTraceDetail | undefined> = {}
-  await Promise.all(
-    turns.map(async (turn) => {
+  const failedTraceIds: string[] = []
+  // 分批拉取执行链路，避免大会话同时发起过多请求。
+  for (let offset = 0; offset < turns.length; offset += 8) {
+    await Promise.all(turns.slice(offset, offset + 8).map(async (turn) => {
       if (!turn.trace_id) return
       try {
         const res = await agentApi.getChatTrace(turn.trace_id)
         tracesByTraceId[turn.trace_id] = res.data.data as ChatTraceDetail
       } catch (e) {
         console.error('Failed to fetch trace for export', turn.trace_id, e)
-        tracesByTraceId[turn.trace_id] = { trace_id: turn.trace_id, steps: [] }
+        failedTraceIds.push(turn.trace_id)
       }
-    }),
-  )
-  return tracesByTraceId
+    }))
+  }
+  return { tracesByTraceId, failedTraceIds }
 }
 
 const exportSession = async (log: AgentExecutionHistory) => {
@@ -274,25 +280,27 @@ const exportSession = async (log: AgentExecutionHistory) => {
   exporting.value = true
   try {
     const turns = await fetchAllTurnsForExport(log)
-    const tracesByTraceId = await fetchTracesForTurns(turns)
+    const { tracesByTraceId, failedTraceIds } = await fetchTracesForTurns(turns)
     const agentLabel = getAgentName(log.agent_id)
     const markdown = buildChatSessionMarkdown(turns, tracesByTraceId, {
       agentLabel,
       username: log.username,
       conversationId: log.conversation_id,
       exportedAt: new Date(),
+      failedTraceIds,
     })
     const filename = buildSessionExportFilename(turns, log.conversation_id)
     downloadMarkdownFile(filename, markdown)
+    const successMessage = log.conversation_id
+      ? `已导出会话（${turns.length} 轮）`
+      : '已导出当前轮次'
     showToast(
-      log.conversation_id
-        ? `已导出会话（${turns.length} 轮）`
-        : '已导出当前轮次',
-      'success',
+      failedTraceIds.length ? `${successMessage}，${failedTraceIds.length} 条执行链路获取失败` : successMessage,
+      failedTraceIds.length ? 'warning' : 'success',
     )
   } catch (e) {
     console.error('Export session failed', e)
-    showToast('导出失败', 'error')
+    showToast(e instanceof Error ? `导出失败：${e.message}` : '导出失败', 'error')
   } finally {
     exporting.value = false
   }
