@@ -121,18 +121,6 @@
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                 </svg>
             </button>
-            <!-- Agent Quick Selector Button -->
-            <button
-                @click.stop="toggleAgentSelector"
-                class="p-2 text-gray-400 hover:text-primary hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-all relative group"
-                :class="{ 'text-primary bg-primary/5': showAgentSelector || config.routingMode === 'expert' }"
-                title="切换智能体"
-            >
-                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
-                </svg>
-                <span v-if="config.routingMode === 'expert'" class="absolute -top-0.5 -right-0.5 w-2 h-2 bg-primary rounded-full border-2 border-white dark:border-gray-900 animate-pulse"></span>
-            </button>
             <button
                 @click="showSettings = true"                class="p-2 text-gray-400 hover:text-primary hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-all"
                 title="对话设置"
@@ -148,97 +136,11 @@
           :show-auto-routing-hint="showAutoRoutingHint"
           :show-multi-agent-hint="showMultiAgentHint"
           :multi-agent-hint-message="multiAgentHintMessage"
+          :show-expert-switch-hint="showExpertSwitchHint"
+          :expert-switch-hint-name="expertSwitchHintName"
           :is-mobile="isMobile"
           @switch-to-auto="switchToAuto"
       />
-
-      <!-- Agent Selector Popup -->
-      <transition
-        enter-active-class="transition-all duration-500 cubic-bezier(0.16, 1, 0.3, 1)"
-        enter-from-class="opacity-0 translate-y-[-20px] scale-95 blur-sm"
-        enter-to-class="opacity-100 translate-y-0 scale-100 blur-0"
-        leave-active-class="transition-all duration-300 cubic-bezier(0.7, 0, 0.84, 0)"
-        leave-to-class="opacity-0 translate-y-[-10px] scale-90 blur-sm"
-      >
-        <div v-if="showAgentSelector" class="fixed top-[52px] right-4 w-72 max-h-[70vh] bg-white/95 dark:bg-gray-800/95 backdrop-blur-xl border border-gray-200 dark:border-gray-700 rounded-2xl shadow-2xl z-50 flex flex-col overflow-hidden" @click.stop>
-          <div class="p-3 border-b border-gray-100 dark:border-gray-700 flex items-center justify-between bg-gray-50/50 dark:bg-gray-900/50">
-            <div class="flex items-center space-x-2">
-              <span class="w-1.5 h-4 bg-primary rounded-full"></span>
-              <span class="text-xs font-black text-gray-800 dark:text-gray-100 uppercase tracking-widest">选择智能体专家</span>
-              <button
-                @click.stop="fetchAllowedAgents(true)"
-                class="ml-2 text-gray-400 hover:text-primary transition-all p-1 rounded-md hover:bg-white/50 dark:hover:bg-black/20"
-                :class="{ 'animate-spin text-primary': isLoadingAgents }"
-                title="刷新列表"
-              >
-                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                </svg>
-              </button>
-            </div>
-            <button @click="showAgentSelector = false" class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 transition-colors">
-              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M6 18L18 6M6 6l12 12" /></svg>
-            </button>
-          </div>
-
-          <div class="flex-1 overflow-y-auto p-2 space-y-1 custom-scrollbar">
-            <!-- Loading State -->
-            <div v-if="isLoadingAgents && allowedAgents.length === 0" class="flex flex-col items-center justify-center py-10 opacity-50">
-              <svg class="w-8 h-8 animate-spin text-primary mb-2" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
-              <span class="text-[10px] font-black uppercase tracking-widest">同步中</span>
-            </div>
-            <!-- Auto Mode Option -->
-            <div
-              @click.stop="switchToAuto(); showAgentSelector = false;"
-              class="flex items-center space-x-3 p-3 rounded-xl cursor-pointer transition-all border border-transparent"
-              :class="config.routingMode === 'auto' ? 'bg-primary/10 border-primary/20 ring-1 ring-primary/10' : 'hover:bg-gray-50 dark:hover:bg-gray-700/50'"
-            >
-              <div class="w-10 h-10 rounded-full bg-gradient-to-br from-primary/20 to-primary/10 flex items-center justify-center text-primary shadow-sm border border-primary/10">
-                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
-              </div>
-              <div class="flex-1">
-                <div class="flex items-center space-x-2">
-                  <span class="text-sm font-black" :class="config.routingMode === 'auto' ? 'text-primary' : 'text-gray-800 dark:text-gray-200'">全能助手 (自动)</span>
-                </div>
-                <div class="text-[10px] text-gray-400 font-medium mt-0.5">智能调度最合适的专家处理</div>
-              </div>
-              <div v-if="config.routingMode === 'auto'" class="text-primary">
-                <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd" /></svg>
-              </div>
-            </div>
-
-            <div class="h-px bg-gray-100 dark:bg-gray-700 my-2 mx-2"></div>
-
-            <!-- Individual Agents -->
-            <div
-              v-for="agent in allowedAgents"
-              :key="agent.id"
-              @click.stop="switchToExpert(agent.id); showAgentSelector = false;"
-              class="flex items-center space-x-3 p-3 rounded-xl cursor-pointer transition-all border border-transparent group"
-              :class="config.routingMode === 'expert' && config.expertAgentId === agent.id ? 'bg-primary/10 border-primary/20 ring-1 ring-primary/10' : 'hover:bg-gray-50 dark:hover:bg-gray-700/50'"
-            >
-              <div class="w-10 h-10 rounded-full bg-gray-100 dark:bg-gray-700 flex items-center justify-center overflow-hidden border border-white dark:border-gray-900 shadow-sm transition-transform group-hover:scale-105">
-                <img v-if="agent.avatar_url" :src="agent.avatar_url" class="w-full h-full object-cover" />
-                <span v-else class="text-sm font-black text-gray-400">{{ Array.from(agent.display_name || 'E')[0] }}</span>
-              </div>
-              <div class="flex-1 min-w-0">
-                <div class="flex items-center space-x-1.5">
-                  <span class="text-sm font-bold truncate" :class="config.routingMode === 'expert' && config.expertAgentId === agent.id ? 'text-primary' : 'text-gray-800 dark:text-gray-200'">{{ agent.display_name }}</span>
-                  <span v-if="agent.is_system" class="px-1 py-0.5 rounded text-[8px] bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300 font-black tracking-tighter shrink-0 uppercase">SYS</span>
-                </div>
-                <div class="text-[10px] text-gray-400 truncate mt-0.5">{{ agent.description || '专属能力专家' }}</div>
-              </div>
-              <div v-if="config.routingMode === 'expert' && config.expertAgentId === agent.id" class="text-primary">
-                <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd" /></svg>
-              </div>
-            </div>
-          </div>
-
-          <div class="p-3 bg-gray-50/80 dark:bg-gray-900/80 border-t border-gray-100 dark:border-gray-700 text-center">
-             <span class="text-[9px] text-gray-400 font-bold uppercase tracking-widest">已授权智能体列表</span>
-          </div>
-        </div>
-      </transition>
 
       <!-- Main Chat Area -->
       <div
@@ -1318,6 +1220,10 @@
         :selected-model="config.overrideModel"
         :available-models="availableModels"
         :active-ltm-preference="activeLtmPreference"
+        :agent-id="effectiveEmbedChatAgentId"
+        :routing-mode="config.routingMode"
+        :expert-agent-id="config.expertAgentId"
+        :is-loading-agents="isLoadingAgents"
         @update:approval-mode="(mode) => { config.approvalMode = mode; saveRoutingSettings(); }"
         @update:selected-model="(model) => { config.overrideModel = model; saveRoutingSettings(); }"
         @send="sendMessage"
@@ -1328,8 +1234,10 @@
         @edit-command="editCommand"
         @delete-command="confirmDeleteCommand"
         @switch-mode="handleSwitchMode"
+        @switch-to-auto="switchToAuto"
+        @switch-to-expert="switchToExpert"
+        @refresh-agents="fetchAllowedAgents(true)"
         @reorder-commands="handleReorderCommands"
-        :agent-id="effectiveEmbedChatAgentId"
         @select-knowledge-base="openKnowledgePortal"
         @select-local-fs="showWorkspaceDrawer = true"
         @select-memory="openMemorySelector"
@@ -3150,8 +3058,12 @@ const config = reactive({
 });
 const showAutoRoutingHint = ref(false);
 const showMultiAgentHint = ref(false);
+const showExpertSwitchHint = ref(false);
+const expertSwitchHintName = ref("");
 const showConfirmModal = ref(false);
 const multiAgentHintMessage = ref("");
+let expertSwitchHintTimer: ReturnType<typeof setTimeout> | null = null;
+
 const saveRoutingSettings = () => {
     localStorage.setItem("yovole_routing_mode", config.routingMode);
     localStorage.setItem("yovole_expert_agent_id", config.expertAgentId || "");
@@ -3166,6 +3078,7 @@ const saveRoutingSettings = () => {
 };
 const triggerMultiAgentHint = (enabled: boolean) => {
     multiAgentHintMessage.value = enabled ? "已开启多智能体协同模式" : "已切换为单智能体模式";
+    showExpertSwitchHint.value = false;
     showMultiAgentHint.value = true;
     setTimeout(() => {
         showMultiAgentHint.value = false;
@@ -3174,6 +3087,7 @@ const triggerMultiAgentHint = (enabled: boolean) => {
 const switchToAuto = () => {
     config.routingMode = "auto";
     saveRoutingSettings();
+    showExpertSwitchHint.value = false;
     showAutoRoutingHint.value = true;
     setTimeout(() => {
         showAutoRoutingHint.value = false;
@@ -3183,6 +3097,16 @@ const switchToExpert = (agentId: string) => {
     config.expertAgentId = agentId;
     config.routingMode = "expert";
     saveRoutingSettings();
+    const agent = allowedAgents.value.find((a: any) => a.id === agentId);
+    expertSwitchHintName.value = agent?.display_name || agent?.name || "专家";
+    showAutoRoutingHint.value = false;
+    showMultiAgentHint.value = false;
+    showExpertSwitchHint.value = true;
+    if (expertSwitchHintTimer) clearTimeout(expertSwitchHintTimer);
+    expertSwitchHintTimer = setTimeout(() => {
+        showExpertSwitchHint.value = false;
+        expertSwitchHintTimer = null;
+    }, 3000);
 };
 const onModeChange = (mode: string) => {
     saveRoutingSettings();
@@ -3259,12 +3183,6 @@ const fetchUserMarkdownThemePreference = async () => {
 const allowedAgents = ref<any[]>([]);
 const hasFetchedAgents = ref(false);
 const isLoadingAgents = ref(false);
-const toggleAgentSelector = async () => {
-    showAgentSelector.value = !showAgentSelector.value;
-    if (showAgentSelector.value) {
-        await fetchAllowedAgents(true);
-    }
-};
 const fetchAllowedAgents = async (force = false) => {
     if (hasFetchedAgents.value && !force) return;
     isLoadingAgents.value = true;
@@ -3326,11 +3244,8 @@ watch(() => config.expertAgentId, (newAgentId) => {
 }, { immediate: true });
 
 const handleSwitchMode = (agent: any) => {
-    config.expertAgentId = agent.id;
-    config.routingMode = "expert";
-    saveRoutingSettings();
     config.overrideAgentId = "";
-    showAutoRoutingHint.value = false;
+    switchToExpert(agent.id);
 };
 
 const listDataQueryAgents = () => {
@@ -3458,7 +3373,6 @@ const isKnowledgeEnabled = ref(true);
 const slashCommands = ref<any[]>([...SYSTEM_SLASH_COMMANDS]);
 // History Sidebar State
 const showHistorySidebar = ref(false);
-const showAgentSelector = ref(false);
 const historyList = ref<any[]>([]);
 const historyPage = ref(1);
 const historyHasMore = ref(true);
@@ -5586,11 +5500,8 @@ const openKnowledgePortal = async () => {
   await rawOpenKnowledgePortal();
   const kbExpert = resolveKnowledgeExpertAgent();
   if (kbExpert) {
-    config.expertAgentId = kbExpert.id;
-    config.routingMode = "expert";
-    saveRoutingSettings();
     config.overrideAgentId = "";
-    showAutoRoutingHint.value = false;
+    switchToExpert(kbExpert.id);
   }
 };
 
@@ -6392,7 +6303,6 @@ const onUnmountHandlers = ref<{
   onMessage?: (e: MessageEvent) => void;
   onOnline?: () => void;
   onOffline?: () => void;
-  onWindowClick?: () => void;
   onPortalDrawerKeydown?: (e: KeyboardEvent) => void;
 } | null>(null);
 // Lifecycle
@@ -6411,16 +6321,11 @@ onMounted(() => {
     setTimeout(() => (connectionStatus.value = "connected"), 1000);
   };
   const onOffline = () => (connectionStatus.value = "disconnected");
-  const onWindowClick = () => {
-    if (showAgentSelector.value) showAgentSelector.value = false;
-  };
 
   window.addEventListener("message", onMessage);
   window.addEventListener("online", onOnline);
   window.addEventListener("offline", onOffline);
   window.addEventListener("fullscreenchange", updateFullScreenStatus);
-  // Close agent selector on global click
-  window.addEventListener("click", onWindowClick);
   // Initialize or Retrieve Conversation ID
   const savedId = localStorage.getItem("yovole_embed_conv_id");
   if (savedId) {
@@ -6486,7 +6391,7 @@ onMounted(() => {
   }
 
   // Attach cleanup handlers to component instance scope
-  (onUnmountHandlers as any).value = { onMessage, onOnline, onOffline, onWindowClick };
+  (onUnmountHandlers as any).value = { onMessage, onOnline, onOffline };
 });
 onUnmounted(() => {
   window.removeEventListener("resize", updateWidth);
@@ -6495,7 +6400,6 @@ onUnmounted(() => {
   if (handlers?.onMessage) window.removeEventListener("message", handlers.onMessage);
   if (handlers?.onOnline) window.removeEventListener("online", handlers.onOnline);
   if (handlers?.onOffline) window.removeEventListener("offline", handlers.onOffline);
-  if (handlers?.onWindowClick) window.removeEventListener("click", handlers.onWindowClick);
   disposePortalTimers();
   stopPortalLoadingTips();
   if (thoughtTimer) clearInterval(thoughtTimer);

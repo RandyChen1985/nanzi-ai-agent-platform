@@ -4,6 +4,7 @@ import MentionList from "@/components/agent/MentionList.vue";
 import AttachmentImageThumb from "@/components/embed/AttachmentImageThumb.vue";
 import SkillCascadeMenu from "@/components/embed/SkillCascadeMenu.vue";
 import type { SkillItem } from "@/components/embed/SkillCascadeMenu.vue";
+import ExpertCascadeMenu from "@/components/embed/ExpertCascadeMenu.vue";
 import { isImageAttachment } from "@/utils/attachmentImages";
 import { DATASET_PORTAL_SYSTEM_COMMAND_ID } from "@/constants/datasetPortalCommand";
 
@@ -51,6 +52,12 @@ const props = defineProps<{
   activeLtmPreference?: any;
   /** 当前会话有效智能体 ID，用于过滤平台技能列表 */
   agentId?: string | null;
+  /** 路由模式：auto | expert */
+  routingMode?: string;
+  /** 专家模式下选中的智能体 ID */
+  expertAgentId?: string;
+  /** 专家列表加载中 */
+  isLoadingAgents?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -66,6 +73,9 @@ const emit = defineEmits<{
   (e: 'edit-command', cmd: any): void;
   (e: 'delete-command', cmd: any, event: Event): void;
   (e: 'switch-mode', agent: any): void;
+  (e: 'switch-to-auto'): void;
+  (e: 'switch-to-expert', agentId: string): void;
+  (e: 'refresh-agents'): void;
   (e: 'drag-start', event: DragEvent, index: number): void;
   (e: 'drop-cmd', event: DragEvent, index: number): void;
   (e: 'reorder-commands', data: any[]): void;
@@ -210,6 +220,7 @@ const toggleApprovalMenu = () => {
   showApprovalMenu.value = next;
   if (next) {
     showPlusMenu.value = false;
+    showExpertSelector.value = false;
     nextTick(() => updateApprovalMenuPosition());
   }
 };
@@ -325,6 +336,7 @@ const openDataPortalFromPlusMenu = () => {
     if (props.isProcessing) return;
     showPlusMenu.value = false;
     showSkillCascade.value = false;
+    showExpertCascade.value = false;
     const cmd = filteredSystemCommands.value.find((c) => c.id === DATASET_PORTAL_SYSTEM_COMMAND_ID);
     handleShortcutClick(cmd);
 };
@@ -519,6 +531,14 @@ const handleGlobalClick = (event: MouseEvent) => {
 
 const handleGlobalKeydown = (event: KeyboardEvent) => {
   if (event.key === 'Escape') {
+    if (showExpertSelector.value) {
+      showExpertSelector.value = false;
+      return;
+    }
+    if (showExpertCascade.value) {
+      showExpertCascade.value = false;
+      return;
+    }
     if (showSkillCascade.value) {
       showSkillCascade.value = false;
       return;
@@ -531,6 +551,7 @@ const handleGlobalKeydown = (event: KeyboardEvent) => {
 
 const handleApprovalMenuLayout = () => {
   if (showApprovalMenu.value) updateApprovalMenuPosition();
+  if (showExpertSelector.value && !isMobileViewport.value) updateExpertMenuPosition();
 };
 
 onMounted(() => {
@@ -549,7 +570,28 @@ onUnmounted(() => {
 });
 const showPlusMenu = ref(false);
 const showSkillCascade = ref(false);
+const showExpertCascade = ref(false);
 const skillCascadeRef = ref<InstanceType<typeof SkillCascadeMenu> | null>(null);
+const showExpertSelector = ref(false);
+const expertSelectorRef = ref<HTMLElement | null>(null);
+const expertMenuPosition = reactive({
+  bottom: 0,
+  left: 12,
+});
+
+const updateExpertMenuPosition = () => {
+  const el = expertSelectorRef.value;
+  if (!el) return;
+  const rect = el.getBoundingClientRect();
+  const menuWidth = 280;
+  const gutter = 12;
+  let left = rect.left;
+  if (left + menuWidth > window.innerWidth - gutter) {
+    left = Math.max(gutter, window.innerWidth - menuWidth - gutter);
+  }
+  expertMenuPosition.bottom = Math.max(gutter, window.innerHeight - rect.top + 8);
+  expertMenuPosition.left = Math.max(gutter, left);
+};
 const isUploading = ref(false);
 const fileInputRef = ref<HTMLInputElement | null>(null);
 
@@ -559,21 +601,104 @@ const attachedSkillIds = computed(() =>
     .map((f) => String(f.url)),
 );
 
+const isExpertMode = computed(
+  () => props.routingMode === "expert" && !!props.expertAgentId,
+);
+
+const currentExpertAgent = computed(() => {
+  if (!isExpertMode.value) return null;
+  return props.allowedAgents?.find((a: any) => a.id === props.expertAgentId) || null;
+});
+
+const expertCapsuleLabel = computed(() => {
+  if (isExpertMode.value) {
+    return currentExpertAgent.value?.display_name
+      || currentExpertAgent.value?.name
+      || "专家";
+  }
+  return isMobileViewport.value ? "自动" : "全能助手";
+});
+
+const approvalCapsuleLabel = computed(() => activeApprovalLabel.value);
+
+const inputPlaceholder = computed(() => {
+  if (props.isProcessing) return "";
+  if (isMobileViewport.value) return "今天帮你做些什么？";
+  return "今天帮你做些什么？ @ 选择智能体专家， / 调用技能与指令";
+});
+
 const togglePlusMenu = () => {
   if (props.isProcessing) return;
   showPlusMenu.value = !showPlusMenu.value;
   if (showPlusMenu.value) {
     showApprovalMenu.value = false;
-  } else {
+    showExpertSelector.value = false;
+    // 移动端抽屉与加号菜单互斥
+    if (isMobileViewport.value) {
+      showSkillCascade.value = false;
+      showExpertCascade.value = false;
+    }
+  } else if (!isMobileViewport.value) {
     showSkillCascade.value = false;
+    showExpertCascade.value = false;
   }
 };
 
+const toggleExpertSelector = () => {
+  if (props.isProcessing) return;
+  showExpertSelector.value = !showExpertSelector.value;
+  if (showExpertSelector.value) {
+    showPlusMenu.value = false;
+    showSkillCascade.value = false;
+    showExpertCascade.value = false;
+    showApprovalMenu.value = false;
+    emit("refresh-agents");
+    nextTick(() => {
+      if (!isMobileViewport.value) updateExpertMenuPosition();
+    });
+  }
+};
+
+const selectAutoRouting = () => {
+  emit("switch-to-auto");
+  showExpertSelector.value = false;
+  showExpertCascade.value = false;
+  showPlusMenu.value = false;
+};
+
+const selectExpertAgent = (agentId: string) => {
+  emit("switch-to-expert", agentId);
+  showExpertSelector.value = false;
+  showExpertCascade.value = false;
+  showPlusMenu.value = false;
+};
+
 const openSkillCascade = () => {
+  showExpertCascade.value = false;
   showSkillCascade.value = true;
+  if (isMobileViewport.value) {
+    showPlusMenu.value = false;
+  }
   nextTick(() => {
     skillCascadeRef.value?.resetSearch?.();
   });
+};
+
+const openExpertCascade = () => {
+  showSkillCascade.value = false;
+  showExpertCascade.value = true;
+  if (isMobileViewport.value) {
+    showPlusMenu.value = false;
+  }
+  emit("refresh-agents");
+};
+
+const closeSkillCascade = () => {
+  showSkillCascade.value = false;
+};
+
+const closeExpertCascade = () => {
+  showExpertCascade.value = false;
 };
 
 const mountSkillFromCascade = (skill: SkillItem) => {
@@ -596,17 +721,22 @@ const mountSkillFromCascade = (skill: SkillItem) => {
     },
   });
   showSkillCascade.value = false;
+  showExpertCascade.value = false;
   showPlusMenu.value = false;
 };
 
 const triggerFileInput = () => {
   showPlusMenu.value = false;
   showSkillCascade.value = false;
+  showExpertCascade.value = false;
   fileInputRef.value?.click();
 };
 
 watch(showPlusMenu, (open) => {
-  if (!open) showSkillCascade.value = false;
+  if (!open && !isMobileViewport.value) {
+    showSkillCascade.value = false;
+    showExpertCascade.value = false;
+  }
 });
 
 const isImage = isImageAttachment;
@@ -981,9 +1111,9 @@ defineExpose({
               </div>
             </div>
 
-            <textarea ref="inputRef" :value="modelValue" :disabled="isProcessing" @input="handleInput" @focus="handleFocus" @keydown="handleKeydown" @compositionstart="handleCompositionStart" @compositionend="handleCompositionEnd" @paste="handlePaste" rows="1" class="w-full bg-transparent border-none outline-none focus:ring-0 text-base sm:text-sm placeholder:text-sm px-0 py-1 resize-none max-h-32 text-gray-900 dark:text-gray-100 placeholder-gray-400 peer z-10 relative disabled:cursor-not-allowed" :class="isProcessing ? 'min-h-[46px] opacity-0 pointer-events-none' : 'min-h-[46px] opacity-100'" :placeholder="isProcessing ? '' : '今天帮你做些什么？ @ 选择智能体专家， / 调用技能与指令'"></textarea>
+            <textarea ref="inputRef" :value="modelValue" :disabled="isProcessing" @input="handleInput" @focus="handleFocus" @keydown="handleKeydown" @compositionstart="handleCompositionStart" @compositionend="handleCompositionEnd" @paste="handlePaste" rows="1" class="w-full bg-transparent border-none outline-none focus:ring-0 text-base sm:text-sm placeholder:text-sm px-0 py-1 resize-none max-h-32 text-gray-900 dark:text-gray-100 placeholder-gray-400 peer z-10 relative disabled:cursor-not-allowed" :class="isProcessing ? 'min-h-[46px] opacity-0 pointer-events-none' : 'min-h-[46px] opacity-100'" :placeholder="inputPlaceholder"></textarea>
 
-            <div class="relative z-20 mt-1 flex min-h-9 flex-wrap items-center gap-1.5 sm:gap-2">
+            <div class="relative z-20 mt-1 flex min-h-9 flex-nowrap items-center gap-1 sm:gap-2">
                 <!-- Plus Button & Menu (Premium Glassmorphism Style) -->
                 <div ref="plusMenuContainerRef" class="relative flex-shrink-0 z-30">
                     <button @click="togglePlusMenu" :disabled="isProcessing" class="w-8 h-8 flex items-center justify-center rounded-full text-gray-400 hover:text-primary hover:bg-gray-100 dark:hover:bg-gray-700 transition-all duration-200 focus:outline-none disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-gray-400" :class="{ 'text-primary bg-gray-100 dark:bg-gray-700 rotate-45': showPlusMenu && !isProcessing }" title="添加附件或上下文">
@@ -1005,7 +1135,7 @@ defineExpose({
                     >
                         <div v-if="showPlusMenu" class="absolute bottom-full left-0 mb-2 z-50">
                             <div class="relative">
-                                <div class="w-52 bg-white/95 dark:bg-gray-800/95 backdrop-blur-md rounded-xl shadow-xl border border-gray-200/50 dark:border-gray-700/50 py-1.5 animate-fade-in-up">
+                                <div class="w-52 bg-white dark:bg-gray-800 rounded-xl shadow-xl border border-gray-200 dark:border-gray-700 py-1.5 animate-fade-in-up">
                                     <!-- Data Portal -->
                                     <button
                                       v-if="filteredSystemCommands.some(c => c.id === DATASET_PORTAL_SYSTEM_COMMAND_ID)"
@@ -1017,7 +1147,7 @@ defineExpose({
                                     </button>
 
                                     <!-- Knowledge Base -->
-                                    <button :disabled="isKnowledgePortalDisabled" @click="isKnowledgePortalDisabled ? null : (showPlusMenu = false, showSkillCascade = false, emit('select-knowledge-base'));" class="w-full flex items-center justify-between px-3 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-primary/10 dark:hover:bg-primary/20 hover:text-primary transition-all duration-150 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent">
+                                    <button :disabled="isKnowledgePortalDisabled" @click="isKnowledgePortalDisabled ? null : (showPlusMenu = false, showSkillCascade = false, showExpertCascade = false, emit('select-knowledge-base'));" class="w-full flex items-center justify-between px-3 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-primary/10 dark:hover:bg-primary/20 hover:text-primary transition-all duration-150 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent">
                                         <div class="flex items-center space-x-3">
                                             <span class="text-lg">📚</span>
                                             <span class="font-medium text-left">打开知识库中心</span>
@@ -1025,15 +1155,21 @@ defineExpose({
                                     </button>
 
                                     <!-- Browse Workspace -->
-                                    <button @click="showPlusMenu = false; showSkillCascade = false; emit('select-local-fs');" class="w-full flex items-center space-x-3 px-3 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-primary/10 dark:hover:bg-primary/20 hover:text-primary transition-all duration-150">
+                                    <button @click="showPlusMenu = false; showSkillCascade = false; showExpertCascade = false; emit('select-local-fs');" class="w-full flex items-center space-x-3 px-3 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-primary/10 dark:hover:bg-primary/20 hover:text-primary transition-all duration-150">
                                         <span class="text-lg">💻</span>
                                         <span class="font-medium text-left">浏览工作空间</span>
                                     </button>
 
-                                    <!-- Upload File (Active) -->
+                                    <!-- Upload File -->
                                     <button @click="triggerFileInput" class="w-full flex items-center space-x-3 px-3 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-primary/10 dark:hover:bg-primary/20 hover:text-primary transition-all duration-150">
                                         <span class="text-lg">📁</span>
                                         <span class="font-medium text-left">上传本地文件</span>
+                                    </button>
+
+                                    <!-- Memory Records (moved up) -->
+                                    <button @click="showPlusMenu = false; showSkillCascade = false; showExpertCascade = false; emit('select-memory');" class="w-full flex items-center space-x-3 px-3 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-primary/10 dark:hover:bg-primary/20 hover:text-primary transition-all duration-150">
+                                        <span class="text-lg">🧠</span>
+                                        <span class="font-medium text-left">选择记忆记录</span>
                                     </button>
 
                                     <!-- Skills cascade -->
@@ -1043,44 +1179,279 @@ defineExpose({
                                       :class="showSkillCascade
                                         ? 'bg-gray-100 dark:bg-gray-700/80 text-gray-900 dark:text-gray-100'
                                         : 'text-gray-700 dark:text-gray-200 hover:bg-primary/10 dark:hover:bg-primary/20 hover:text-primary'"
-                                      @mouseenter="openSkillCascade"
+                                      @mouseenter="!isMobileViewport && openSkillCascade()"
                                       @click.stop="openSkillCascade"
                                     >
                                         <div class="flex items-center space-x-3">
                                             <span class="text-lg">⚙️</span>
-                                            <span class="font-medium text-left">调用技能工作流</span>
+                                            <span class="font-medium text-left">技能中心</span>
                                         </div>
                                         <svg class="w-3.5 h-3.5 flex-shrink-0 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
                                         </svg>
                                     </button>
 
-                                    <!-- Memory Records -->
-                                    <button @click="showPlusMenu = false; showSkillCascade = false; emit('select-memory');" class="w-full flex items-center space-x-3 px-3 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-primary/10 dark:hover:bg-primary/20 hover:text-primary transition-all duration-150">
-                                        <span class="text-lg">🧠</span>
-                                        <span class="font-medium text-left">选择记忆记录</span>
+                                    <!-- Expert cascade -->
+                                    <button
+                                      type="button"
+                                      class="w-full flex items-center justify-between px-3 py-2 text-sm transition-all duration-150"
+                                      :class="showExpertCascade
+                                        ? 'bg-gray-100 dark:bg-gray-700/80 text-gray-900 dark:text-gray-100'
+                                        : 'text-gray-700 dark:text-gray-200 hover:bg-primary/10 dark:hover:bg-primary/20 hover:text-primary'"
+                                      @mouseenter="!isMobileViewport && openExpertCascade()"
+                                      @click.stop="openExpertCascade"
+                                    >
+                                        <div class="flex items-center space-x-3">
+                                            <span class="text-lg">🤖</span>
+                                            <span class="font-medium text-left">专家中心</span>
+                                        </div>
+                                        <svg class="w-3.5 h-3.5 flex-shrink-0 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
+                                        </svg>
                                     </button>
                                 </div>
 
+                                <!-- Desktop flyout: Skills -->
                                 <div
-                                  v-if="showSkillCascade"
-                                  class="absolute z-[60]"
-                                  :class="isMobileViewport
-                                    ? 'left-0 bottom-full mb-1.5'
-                                    : 'left-full top-0 ml-1.5'"
+                                  v-if="showSkillCascade && !isMobileViewport"
+                                  class="absolute z-[60] left-full top-0 ml-1.5"
                                   @click.stop
                                 >
                                   <SkillCascadeMenu
                                     ref="skillCascadeRef"
                                     :agent-id="agentId"
                                     :attached-skill-ids="attachedSkillIds"
-                                    :compact="isMobileViewport"
                                     @select="mountSkillFromCascade"
+                                  />
+                                </div>
+
+                                <!-- Desktop flyout: Experts -->
+                                <div
+                                  v-if="showExpertCascade && !isMobileViewport"
+                                  class="absolute z-[60] left-full top-0 ml-1.5"
+                                  @click.stop
+                                >
+                                  <ExpertCascadeMenu
+                                    :routing-mode="routingMode"
+                                    :expert-agent-id="expertAgentId"
+                                    :allowed-agents="allowedAgents"
+                                    :is-loading-agents="isLoadingAgents"
+                                    @select-auto="selectAutoRouting"
+                                    @select-expert="selectExpertAgent"
+                                    @refresh="emit('refresh-agents')"
                                   />
                                 </div>
                             </div>
                         </div>
                     </transition>
+
+                    <!-- Mobile drawer: Skills -->
+                    <Teleport to="body">
+                      <transition
+                        enter-active-class="transition ease-out duration-200"
+                        enter-from-class="opacity-0"
+                        enter-to-class="opacity-100"
+                        leave-active-class="transition ease-in duration-150"
+                        leave-from-class="opacity-100"
+                        leave-to-class="opacity-0"
+                      >
+                        <div
+                          v-if="showSkillCascade && isMobileViewport"
+                          class="fixed inset-0 z-[1200]"
+                          @click="closeSkillCascade"
+                        >
+                          <div class="absolute inset-0 bg-black/40" />
+                          <div
+                            class="absolute inset-x-0 bottom-0 overflow-hidden rounded-t-2xl border-t border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 shadow-2xl pb-[max(0.5rem,env(safe-area-inset-bottom))]"
+                            @click.stop
+                          >
+                            <div class="shrink-0 flex justify-center pt-2 pb-1" aria-hidden="true">
+                              <div class="w-10 h-1 rounded-full bg-gray-300 dark:bg-gray-600" />
+                            </div>
+                            <div class="flex items-center justify-between px-3 pb-1">
+                              <span class="text-sm font-semibold text-gray-900 dark:text-gray-100">技能中心</span>
+                              <button
+                                type="button"
+                                class="text-gray-500 hover:text-gray-700 dark:hover:text-gray-200 p-1"
+                                @click="closeSkillCascade"
+                              >
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M6 18L18 6M6 6l12 12" /></svg>
+                              </button>
+                            </div>
+                            <SkillCascadeMenu
+                              ref="skillCascadeRef"
+                              full-width
+                              :agent-id="agentId"
+                              :attached-skill-ids="attachedSkillIds"
+                              @select="mountSkillFromCascade"
+                            />
+                          </div>
+                        </div>
+                      </transition>
+                    </Teleport>
+
+                    <!-- Mobile drawer: Experts -->
+                    <Teleport to="body">
+                      <transition
+                        enter-active-class="transition ease-out duration-200"
+                        enter-from-class="opacity-0"
+                        enter-to-class="opacity-100"
+                        leave-active-class="transition ease-in duration-150"
+                        leave-from-class="opacity-100"
+                        leave-to-class="opacity-0"
+                      >
+                        <div
+                          v-if="showExpertCascade && isMobileViewport"
+                          class="fixed inset-0 z-[1200]"
+                          @click="closeExpertCascade"
+                        >
+                          <div class="absolute inset-0 bg-black/40" />
+                          <div
+                            class="absolute inset-x-0 bottom-0 overflow-hidden rounded-t-2xl border-t border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 shadow-2xl pb-[max(0.5rem,env(safe-area-inset-bottom))]"
+                            @click.stop
+                          >
+                            <div class="shrink-0 flex justify-center pt-2 pb-1" aria-hidden="true">
+                              <div class="w-10 h-1 rounded-full bg-gray-300 dark:bg-gray-600" />
+                            </div>
+                            <div class="flex items-center justify-end px-3 pb-1">
+                              <button
+                                type="button"
+                                class="text-gray-500 hover:text-gray-700 dark:hover:text-gray-200 p-1"
+                                @click="closeExpertCascade"
+                              >
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M6 18L18 6M6 6l12 12" /></svg>
+                              </button>
+                            </div>
+                            <ExpertCascadeMenu
+                              full-width
+                              :routing-mode="routingMode"
+                              :expert-agent-id="expertAgentId"
+                              :allowed-agents="allowedAgents"
+                              :is-loading-agents="isLoadingAgents"
+                              @select-auto="selectAutoRouting"
+                              @select-expert="selectExpertAgent"
+                              @refresh="emit('refresh-agents')"
+                            />
+                          </div>
+                        </div>
+                      </transition>
+                    </Teleport>
+                </div>
+
+                <!-- Expert routing capsule (桌面端；移动端走加号「专家中心」) -->
+                <div v-if="!isMobileViewport" ref="expertSelectorRef" class="relative flex-shrink-0 z-30">
+                    <button
+                      type="button"
+                      :disabled="isProcessing"
+                      :title="isExpertMode ? `当前专家：${expertCapsuleLabel}` : '全能助手（自动路由）'"
+                      class="flex h-8 items-center gap-0.5 sm:gap-1 rounded-full px-1.5 sm:px-2.5 text-xs font-semibold leading-none transition-colors disabled:cursor-not-allowed disabled:opacity-40 max-w-[5.25rem] sm:max-w-[11rem]"
+                      :class="isExpertMode
+                        ? 'bg-primary/10 text-primary hover:bg-primary/15 dark:bg-primary/20 dark:hover:bg-primary/25'
+                        : 'text-gray-500 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-700/70'"
+                      :aria-expanded="showExpertSelector"
+                      aria-haspopup="listbox"
+                      @click.stop="toggleExpertSelector"
+                    >
+                        <svg
+                          v-if="isExpertMode"
+                          class="h-3.5 w-3.5 flex-shrink-0 opacity-90"
+                          fill="none"
+                          stroke="currentColor"
+                          viewBox="0 0 24 24"
+                          aria-hidden="true"
+                        >
+                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                        </svg>
+                        <svg
+                          v-else
+                          class="h-3.5 w-3.5 flex-shrink-0 opacity-90"
+                          fill="none"
+                          stroke="currentColor"
+                          viewBox="0 0 24 24"
+                          aria-hidden="true"
+                        >
+                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M13 10V3L4 14h7v7l9-11h-7z" />
+                        </svg>
+                        <span class="truncate">{{ expertCapsuleLabel }}</span>
+                        <svg
+                          class="hidden sm:block h-3 w-3 flex-shrink-0 opacity-60 transition-transform"
+                          :class="{ 'rotate-180': showExpertSelector }"
+                          fill="none"
+                          stroke="currentColor"
+                          viewBox="0 0 24 24"
+                        >
+                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 9l6 6 6-6" />
+                        </svg>
+                    </button>
+
+                    <Teleport to="body">
+                      <transition
+                        enter-active-class="transition ease-out duration-150"
+                        enter-from-class="opacity-0"
+                        enter-to-class="opacity-100"
+                        leave-active-class="transition ease-in duration-100"
+                        leave-from-class="opacity-100"
+                        leave-to-class="opacity-0"
+                      >
+                        <div
+                          v-if="showExpertSelector"
+                          class="fixed inset-0 z-[1200]"
+                          @click="showExpertSelector = false"
+                        >
+                          <div
+                            class="absolute inset-0"
+                            :class="isMobileViewport ? 'bg-black/40' : 'bg-transparent'"
+                          />
+                          <div
+                            v-if="isMobileViewport"
+                            class="absolute inset-x-0 bottom-0 overflow-hidden rounded-t-2xl border-t border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 shadow-2xl pb-[max(0.5rem,env(safe-area-inset-bottom))]"
+                            @click.stop
+                          >
+                            <div class="shrink-0 flex justify-center pt-2 pb-1" aria-hidden="true">
+                              <div class="w-10 h-1 rounded-full bg-gray-300 dark:bg-gray-600" />
+                            </div>
+                            <div class="flex items-center justify-end px-3 pb-1">
+                              <button
+                                type="button"
+                                class="text-gray-500 hover:text-gray-700 dark:hover:text-gray-200 transition-colors p-1"
+                                @click="showExpertSelector = false"
+                              >
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M6 18L18 6M6 6l12 12" /></svg>
+                              </button>
+                            </div>
+                            <ExpertCascadeMenu
+                              full-width
+                              :routing-mode="routingMode"
+                              :expert-agent-id="expertAgentId"
+                              :allowed-agents="allowedAgents"
+                              :is-loading-agents="isLoadingAgents"
+                              @select-auto="selectAutoRouting"
+                              @select-expert="selectExpertAgent"
+                              @refresh="emit('refresh-agents')"
+                            />
+                          </div>
+                          <div
+                            v-else
+                            class="absolute"
+                            :style="{
+                              bottom: `${expertMenuPosition.bottom}px`,
+                              left: `${expertMenuPosition.left}px`,
+                            }"
+                            @click.stop
+                          >
+                            <ExpertCascadeMenu
+                              :routing-mode="routingMode"
+                              :expert-agent-id="expertAgentId"
+                              :allowed-agents="allowedAgents"
+                              :is-loading-agents="isLoadingAgents"
+                              @select-auto="selectAutoRouting"
+                              @select-expert="selectExpertAgent"
+                              @refresh="emit('refresh-agents')"
+                            />
+                          </div>
+                        </div>
+                      </transition>
+                    </Teleport>
                 </div>
 
                 <div ref="approvalTriggerWrapperRef" class="relative flex-shrink-0">
@@ -1089,7 +1460,7 @@ defineExpose({
                       type="button"
                       :disabled="isProcessing"
                       :title="`工具批准：${activeApprovalLabel}`"
-                      class="flex h-8 max-w-[9.5rem] items-center gap-1 rounded-full px-2.5 text-xs font-semibold leading-none transition-colors disabled:cursor-not-allowed disabled:opacity-40 sm:max-w-none sm:gap-1.5 sm:px-3"
+                      class="flex h-8 max-w-[9.5rem] sm:max-w-none items-center gap-1 sm:gap-1.5 rounded-full px-2 sm:px-3 text-xs font-semibold leading-none transition-colors disabled:cursor-not-allowed disabled:opacity-40"
                       :class="[
                         approvalTriggerToneClass,
                         showApprovalMenu && !isProcessing
@@ -1104,7 +1475,7 @@ defineExpose({
                     >
                         <svg
                           v-if="activeApprovalMode === 'ask'"
-                          class="h-4 w-4 flex-shrink-0 opacity-90"
+                          class="h-3.5 w-3.5 sm:h-4 sm:w-4 flex-shrink-0 opacity-90"
                           fill="none"
                           stroke="currentColor"
                           viewBox="0 0 24 24"
@@ -1114,7 +1485,7 @@ defineExpose({
                         </svg>
                         <svg
                           v-else-if="activeApprovalMode === 'allow'"
-                          class="h-4 w-4 flex-shrink-0 opacity-90"
+                          class="h-3.5 w-3.5 sm:h-4 sm:w-4 flex-shrink-0 opacity-90"
                           fill="none"
                           stroke="currentColor"
                           viewBox="0 0 24 24"
@@ -1124,7 +1495,7 @@ defineExpose({
                         </svg>
                         <svg
                           v-else
-                          class="h-4 w-4 flex-shrink-0 opacity-90"
+                          class="h-3.5 w-3.5 sm:h-4 sm:w-4 flex-shrink-0 opacity-90"
                           fill="none"
                           stroke="currentColor"
                           viewBox="0 0 24 24"
@@ -1135,7 +1506,7 @@ defineExpose({
                         <span
                           class="truncate"
                           :class="activeApprovalMode === 'ask' ? 'text-gray-700 dark:text-gray-200' : ''"
-                        >{{ activeApprovalLabel }}</span>
+                        >{{ approvalCapsuleLabel }}</span>
                         <svg class="h-3.5 w-3.5 flex-shrink-0 opacity-70 transition-transform" :class="{ 'rotate-180': showApprovalMenu }" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 9l6 6 6-6" />
                         </svg>
@@ -1240,17 +1611,17 @@ defineExpose({
                     </Teleport>
                 </div>
 
-                <div class="flex-1"></div>
+                <div class="min-w-1 flex-1"></div>
                 <!-- Custom Model Dropdown Selector -->
-                <div ref="modelDropdownRef" class="relative">
+                <div ref="modelDropdownRef" class="relative flex-shrink min-w-0">
                     <button
                       :disabled="isProcessing"
                       @click="showModelDropdown = !showModelDropdown"
-                      class="relative flex h-8 items-center gap-1 rounded-full px-2.5 text-xs font-semibold leading-none text-gray-600 transition-colors hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-700/70 sm:gap-1.5 sm:px-3 border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 disabled:opacity-50 disabled:cursor-not-allowed select-none max-w-[9rem] sm:max-w-[14rem]"
+                      class="relative flex h-8 items-center gap-0.5 sm:gap-1.5 rounded-full px-2 sm:px-3 text-xs font-semibold leading-none text-gray-600 transition-colors hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-700/70 border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 disabled:opacity-50 disabled:cursor-not-allowed select-none max-w-[6.5rem] sm:max-w-[14rem]"
                       :title="selectedModel ? `覆盖模型: ${selectedModel}` : '使用智能体默认模型'"
                     >
                         <span v-if="isSelectedModelMultimodal" class="pointer-events-none select-none text-[11px] text-purple-500">🖼️</span>
-                        <span class="pointer-events-none max-w-[7rem] truncate sm:max-w-[12rem] flex-1 text-left">{{ modelLabel }}</span>
+                        <span class="pointer-events-none truncate flex-1 text-left">{{ modelLabel }}</span>
                         <svg class="pointer-events-none h-3.5 w-3.5 flex-shrink-0 text-gray-400 transform transition-transform duration-200" :class="{ 'rotate-180': showModelDropdown }" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M19 9l-7 7-7-7" />
                         </svg>

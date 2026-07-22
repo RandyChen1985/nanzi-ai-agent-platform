@@ -20,10 +20,12 @@ const props = withDefaults(
      * 过滤「平台技能」列表；个人技能始终全量展示。
      */
     agentId?: string | null
-    /** 窄屏时使用上方浮动定位（由父级控制 class 亦可） */
+    /** 窄屏级联浮层宽度 */
     compact?: boolean
+    /** 移动端底部抽屉内铺满宽度 */
+    fullWidth?: boolean
   }>(),
-  { attachedSkillIds: () => [], agentId: null, compact: false },
+  { attachedSkillIds: () => [], agentId: null, compact: false, fullWidth: false },
 )
 
 const emit = defineEmits<{
@@ -163,10 +165,14 @@ void loadSkillsList()
 
 <template>
   <div
-    class="flex flex-col bg-white dark:bg-gray-800 rounded-xl shadow-xl border border-gray-200/60 dark:border-gray-700/60 overflow-hidden"
-    :class="compact ? 'w-[min(20rem,calc(100vw-1.5rem))]' : 'w-80'"
+    class="flex flex-col bg-white dark:bg-gray-800 overflow-hidden border border-gray-200 dark:border-gray-700"
+    :class="fullWidth
+      ? 'w-full max-h-[min(70vh,28rem)] rounded-none border-x-0 border-b-0 shadow-none'
+      : compact
+        ? 'w-[min(20rem,calc(100vw-1.5rem))] max-h-[min(60vh,24rem)] rounded-xl shadow-xl'
+        : 'w-80 max-h-[min(60vh,24rem)] rounded-xl shadow-xl'"
     role="menu"
-    aria-label="技能列表"
+    aria-label="技能中心"
   >
     <div class="p-2.5 pb-1.5 shrink-0 space-y-2">
       <div class="relative">
@@ -285,7 +291,8 @@ void loadSkillsList()
       </button>
     </div>
 
-    <div class="shrink-0 border-t border-gray-100 dark:border-gray-700/80 py-1">
+    <!-- 桌面端保留「管理技能」；移动端底部抽屉不展示 -->
+    <div v-if="!fullWidth" class="shrink-0 border-t border-gray-100 dark:border-gray-700/80 py-1">
       <a
         href="/dashboard/personal?tab=skills"
         target="_blank"
