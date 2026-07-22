@@ -713,6 +713,13 @@ const closeExpertCascade = () => {
   showExpertCascade.value = false;
 };
 
+/** 桌面端：悬停到加号菜单的非级联项时，收起技能/专家飞出层 */
+const closePlusCascadesOnHover = () => {
+  if (isMobileViewport.value) return;
+  showSkillCascade.value = false;
+  showExpertCascade.value = false;
+};
+
 const mountSkillFromCascade = (skill: SkillItem) => {
   if (attachedSkillIds.value.includes(skill.id)) {
     return;
@@ -1151,6 +1158,7 @@ defineExpose({
                                     <!-- Data Portal -->
                                     <button
                                       v-if="filteredSystemCommands.some(c => c.id === DATASET_PORTAL_SYSTEM_COMMAND_ID)"
+                                      @mouseenter="closePlusCascadesOnHover"
                                       @click="openDataPortalFromPlusMenu"
                                       class="w-full flex items-center space-x-3 px-3 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-primary/10 dark:hover:bg-primary/20 hover:text-primary transition-all duration-150"
                                     >
@@ -1159,7 +1167,12 @@ defineExpose({
                                     </button>
 
                                     <!-- Knowledge Base -->
-                                    <button :disabled="isKnowledgePortalDisabled" @click="isKnowledgePortalDisabled ? null : (showPlusMenu = false, showSkillCascade = false, showExpertCascade = false, emit('select-knowledge-base'));" class="w-full flex items-center justify-between px-3 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-primary/10 dark:hover:bg-primary/20 hover:text-primary transition-all duration-150 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent">
+                                    <button
+                                      :disabled="isKnowledgePortalDisabled"
+                                      @mouseenter="closePlusCascadesOnHover"
+                                      @click="isKnowledgePortalDisabled ? null : (showPlusMenu = false, showSkillCascade = false, showExpertCascade = false, emit('select-knowledge-base'));"
+                                      class="w-full flex items-center justify-between px-3 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-primary/10 dark:hover:bg-primary/20 hover:text-primary transition-all duration-150 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent"
+                                    >
                                         <div class="flex items-center space-x-3">
                                             <span class="text-lg">📚</span>
                                             <span class="font-medium text-left">打开知识库中心</span>
@@ -1167,19 +1180,31 @@ defineExpose({
                                     </button>
 
                                     <!-- Browse Workspace -->
-                                    <button @click="showPlusMenu = false; showSkillCascade = false; showExpertCascade = false; emit('select-local-fs');" class="w-full flex items-center space-x-3 px-3 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-primary/10 dark:hover:bg-primary/20 hover:text-primary transition-all duration-150">
+                                    <button
+                                      @mouseenter="closePlusCascadesOnHover"
+                                      @click="showPlusMenu = false; showSkillCascade = false; showExpertCascade = false; emit('select-local-fs');"
+                                      class="w-full flex items-center space-x-3 px-3 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-primary/10 dark:hover:bg-primary/20 hover:text-primary transition-all duration-150"
+                                    >
                                         <span class="text-lg">💻</span>
                                         <span class="font-medium text-left">浏览工作空间</span>
                                     </button>
 
                                     <!-- Upload File -->
-                                    <button @click="triggerFileInput" class="w-full flex items-center space-x-3 px-3 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-primary/10 dark:hover:bg-primary/20 hover:text-primary transition-all duration-150">
+                                    <button
+                                      @mouseenter="closePlusCascadesOnHover"
+                                      @click="triggerFileInput"
+                                      class="w-full flex items-center space-x-3 px-3 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-primary/10 dark:hover:bg-primary/20 hover:text-primary transition-all duration-150"
+                                    >
                                         <span class="text-lg">📁</span>
                                         <span class="font-medium text-left">上传本地文件</span>
                                     </button>
 
                                     <!-- Memory Records (moved up) -->
-                                    <button @click="showPlusMenu = false; showSkillCascade = false; showExpertCascade = false; emit('select-memory');" class="w-full flex items-center space-x-3 px-3 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-primary/10 dark:hover:bg-primary/20 hover:text-primary transition-all duration-150">
+                                    <button
+                                      @mouseenter="closePlusCascadesOnHover"
+                                      @click="showPlusMenu = false; showSkillCascade = false; showExpertCascade = false; emit('select-memory');"
+                                      class="w-full flex items-center space-x-3 px-3 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-primary/10 dark:hover:bg-primary/20 hover:text-primary transition-all duration-150"
+                                    >
                                         <span class="text-lg">🧠</span>
                                         <span class="font-medium text-left">选择记忆记录</span>
                                     </button>

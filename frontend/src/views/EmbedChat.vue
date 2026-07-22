@@ -3052,7 +3052,7 @@ const config = reactive({
   enableMultiAgent: true,
   showShortcuts: true,
   enableSqlPlan: false,
-  enableGrounding: false,
+  enableGrounding: true, // Embed 默认开启反幻觉校验
   expandThoughts: true, // 思考过程默认展示开关
   markdownTheme: "default" as "default" | "minimal" | "academic" | "apple" | "warm" | "compact",
 });
@@ -4589,7 +4589,7 @@ const applyTheme = (theme: string, styleVars?: Record<string, string>) => {
 };
 const resetSession = (newToken?: string) => {
   messages.value = [];
-  config.enableGrounding = false;
+  config.enableGrounding = true; // 新会话恢复默认开启
   generateNewConversation();
   if (newToken) {
     config.token = newToken;

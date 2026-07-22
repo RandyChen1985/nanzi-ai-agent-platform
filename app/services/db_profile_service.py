@@ -98,6 +98,8 @@ class DbProfileService:
             tables_info = await DBImportService.get_oracle_tables(db_config)
         elif db_type in DBImportService._sqlserver_type_aliases():
             tables_info = await DBImportService.get_sqlserver_tables(db_config)
+        elif db_type in DBImportService._postgresql_type_aliases():
+            tables_info = await DBImportService.get_postgresql_tables(db_config)
         else:
             raise ValueError(f"不支持的数据库类型: {config.db_type}")
 
@@ -884,6 +886,10 @@ class DbProfileService:
             query_sql = f'SELECT * FROM {quote}{table_name}{quote} WHERE ROWNUM <= 3'
         elif db_type in ("sqlserver", "mssql") or db_type in DBImportService._sqlserver_type_aliases():
             query_sql = f"SELECT TOP 3 * FROM {quote}{table_name}{quote}"
+        elif db_type in DBImportService._postgresql_type_aliases():
+            parts = [p.strip().strip('"').strip("`") for p in table_name.split(".")]
+            qualified = ".".join(f'"{p.replace(chr(34), chr(34) * 2)}"' for p in parts if p)
+            query_sql = f"SELECT * FROM {qualified} LIMIT 3"
         else:
             query_sql = f"SELECT * FROM {quote}{table_name}{quote} LIMIT 3"
 
@@ -1068,6 +1074,8 @@ class DbProfileService:
 
     @staticmethod
     def _profile_to_import_table(profile: DbTableProfile) -> Dict[str, Any]:
+        source_table_name = str(profile.table_name or "").strip()
+        display_table_name = source_table_name.rsplit(".", 1)[-1]
         ddl_types = DbProfileService._parse_column_types_from_ddl(profile.ddl)
         columns: List[Dict[str, Any]] = []
         for col in profile.columns_profile or []:
@@ -1089,8 +1097,8 @@ class DbProfileService:
 
         synonyms = list(profile.ai_tags or []) if isinstance(profile.ai_tags, list) else []
         return {
-            "physical_name": profile.table_name,
-            "term": (profile.ai_term or profile.table_name or "").strip(),
+            "physical_name": display_table_name,
+            "term": (profile.ai_term or display_table_name or "").strip(),
             "description": (profile.ai_description or "").strip(),
             "synonyms": synonyms,
             "columns": columns,

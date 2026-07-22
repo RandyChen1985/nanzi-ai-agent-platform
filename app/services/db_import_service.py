@@ -4,11 +4,168 @@ import asynch
 import oracledb
 import asyncio
 import os
+import psycopg
 from typing import List, Dict, Any, Optional
+from app.services.data_adapter.postgresql import (
+    POSTGRESQL_TYPES,
+    build_postgresql_conninfo,
+    quote_postgresql_identifier,
+    split_postgresql_identifier,
+)
 
 logger = logging.getLogger(__name__)
 
 class DBImportService:
+    @staticmethod
+    def _postgresql_type_aliases() -> tuple:
+        return POSTGRESQL_TYPES
+
+    @staticmethod
+    async def _postgresql_connect(config: Dict[str, Any]):
+        return await psycopg.AsyncConnection.connect(**build_postgresql_conninfo(config))
+
+    @staticmethod
+    async def test_postgresql_connection(config: Dict[str, Any]) -> bool:
+        conn = None
+        try:
+            conn = await DBImportService._postgresql_connect(config)
+            async with conn.cursor() as cur:
+                await cur.execute("SELECT 1")
+                await cur.fetchone()
+            return True
+        except Exception as e:
+            logger.error(f"PostgreSQL connection test failed: {e}")
+            raise Exception(f"PostgreSQL 连接失败: {str(e)}")
+        finally:
+            if conn:
+                await conn.close()
+
+    @staticmethod
+    async def get_postgresql_tables(config: Dict[str, Any]) -> List[Dict[str, str]]:
+        conn = None
+        try:
+            conn = await DBImportService._postgresql_connect(config)
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    """
+                    SELECT table_schema, table_name,
+                           COALESCE(obj_description(
+                               (quote_ident(table_schema) || '.' || quote_ident(table_name))::regclass,
+                               'pg_class'
+                           ), ''),
+                           table_type
+                    FROM information_schema.tables
+                    WHERE table_schema NOT IN ('pg_catalog', 'information_schema')
+                      AND table_type IN ('BASE TABLE', 'VIEW')
+                    ORDER BY table_schema, table_name
+                    """
+                )
+                rows = await cur.fetchall()
+            return [
+                {
+                    "name": f"{row[0]}.{row[1]}",
+                    "comment": row[2] or "",
+                    "type": "view" if row[3] == "VIEW" else "table",
+                }
+                for row in rows
+            ]
+        except Exception as e:
+            logger.error(f"Failed to get PostgreSQL tables: {e}")
+            raise Exception(f"获取 PostgreSQL 表列表失败: {str(e)}")
+        finally:
+            if conn:
+                await conn.close()
+
+    @staticmethod
+    def _format_postgresql_type(row: tuple) -> str:
+        data_type, udt_name, char_len, precision, scale = row[:5]
+        if data_type == "character varying" and char_len:
+            return f"varchar({char_len})"
+        if data_type == "character" and char_len:
+            return f"char({char_len})"
+        if data_type in ("numeric", "decimal") and precision is not None:
+            return f"{data_type}({precision},{scale or 0})"
+        if data_type == "timestamp with time zone":
+            return "timestamptz"
+        if data_type == "timestamp without time zone":
+            return "timestamp"
+        if data_type == "USER-DEFINED":
+            return udt_name or data_type
+        return data_type or udt_name or "text"
+
+    @staticmethod
+    async def _get_postgresql_ddl_from_connection(conn, table_names: List[str]) -> str:
+        ddls = []
+        async with conn.cursor() as cur:
+            for table_name in table_names:
+                schema_name, physical_name = split_postgresql_identifier(table_name)
+                schema_name = schema_name or "public"
+                await cur.execute(
+                    """
+                    SELECT table_type
+                    FROM information_schema.tables
+                    WHERE table_schema = %s AND table_name = %s
+                    """,
+                    (schema_name, physical_name),
+                )
+                type_row = await cur.fetchone()
+                if not type_row:
+                    continue
+                qualified = ".".join(
+                    [quote_postgresql_identifier(schema_name), quote_postgresql_identifier(physical_name)]
+                )
+                if type_row[0] == "VIEW":
+                    await cur.execute(
+                        """
+                        SELECT view_definition
+                        FROM information_schema.views
+                        WHERE table_schema = %s AND table_name = %s
+                        """,
+                        (schema_name, physical_name),
+                    )
+                    view_row = await cur.fetchone()
+                    if view_row and view_row[0]:
+                        ddls.append(f"CREATE VIEW {qualified} AS\n{view_row[0].strip()};")
+                    continue
+
+                await cur.execute(
+                    """
+                    SELECT column_name, data_type, udt_name,
+                           character_maximum_length, numeric_precision,
+                           numeric_scale, is_nullable, column_default
+                    FROM information_schema.columns
+                    WHERE table_schema = %s AND table_name = %s
+                    ORDER BY ordinal_position
+                    """,
+                    (schema_name, physical_name),
+                )
+                columns = await cur.fetchall()
+                if not columns:
+                    continue
+                column_defs = []
+                for column in columns:
+                    column_type = DBImportService._format_postgresql_type(column[1:6])
+                    nullable = " NOT NULL" if column[6] == "NO" else ""
+                    default = f" DEFAULT {column[7]}" if column[7] else ""
+                    column_defs.append(
+                        f"    {quote_postgresql_identifier(column[0])} {column_type}{nullable}{default}"
+                    )
+                ddls.append(f"CREATE TABLE {qualified} (\n" + ",\n".join(column_defs) + "\n);")
+        return "\n\n".join(ddls)
+
+    @staticmethod
+    async def get_postgresql_ddl(config: Dict[str, Any], table_names: List[str]) -> str:
+        conn = None
+        try:
+            conn = await DBImportService._postgresql_connect(config)
+            return await DBImportService._get_postgresql_ddl_from_connection(conn, table_names)
+        except Exception as e:
+            logger.error(f"Failed to get PostgreSQL DDL: {e}")
+            raise Exception(f"获取 PostgreSQL DDL 失败: {str(e)}")
+        finally:
+            if conn:
+                await conn.close()
+
     @staticmethod
     async def test_mysql_connection(config: Dict[str, Any]) -> bool:
         """测试 MySQL 连接"""
@@ -531,6 +688,8 @@ class DbDdlSession:
 
             dsn = build_sqlserver_odbc_dsn(self.config)
             self._conn = await aioodbc.connect(dsn=dsn, timeout=10)
+        elif self.db_type in DBImportService._postgresql_type_aliases():
+            self._conn = await DBImportService._postgresql_connect(self.config)
         else:
             raise ValueError(f"不支持的数据库类型: {self.db_type}")
         return self
@@ -549,6 +708,8 @@ class DbDdlSession:
                 else:
                     await self._conn.close()
             elif self.db_type in DBImportService._sqlserver_type_aliases():
+                await self._conn.close()
+            elif self.db_type in DBImportService._postgresql_type_aliases():
                 await self._conn.close()
         except Exception as close_err:
             logger.warning(f"[DbDdlSession] close connection failed: {close_err}")
@@ -666,5 +827,10 @@ class DbDdlSession:
                     default = f" DEFAULT {col[6]}" if col[6] else ""
                     col_defs.append(f"    [{col[0]}] {col_type}{nullable}{default}")
                 return f"CREATE TABLE [{table_name}] (\n" + ",\n".join(col_defs) + "\n);"
+
+        if self.db_type in DBImportService._postgresql_type_aliases():
+            return await DBImportService._get_postgresql_ddl_from_connection(
+                self._conn, [table_name]
+            )
 
         raise ValueError(f"不支持的数据库类型: {self.db_type}")

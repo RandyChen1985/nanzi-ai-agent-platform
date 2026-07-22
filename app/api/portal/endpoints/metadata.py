@@ -572,6 +572,8 @@ async def test_db_connection(config: DBConnectionConfig):
             await DBImportService.test_oracle_connection(config.model_dump())
         elif config.type in DBImportService._sqlserver_type_aliases():
             await DBImportService.test_sqlserver_connection(config.model_dump())
+        elif config.type in DBImportService._postgresql_type_aliases():
+            await DBImportService.test_postgresql_connection(config.model_dump())
         else:
             raise HTTPException(status_code=400, detail=f"Unsupported DB type: {config.type}")
         return {"code": 200, "message": "Connection successful"}
@@ -590,6 +592,8 @@ async def list_db_tables(config: DBConnectionConfig):
             tables = await DBImportService.get_oracle_tables(config.model_dump())
         elif config.type in DBImportService._sqlserver_type_aliases():
             tables = await DBImportService.get_sqlserver_tables(config.model_dump())
+        elif config.type in DBImportService._postgresql_type_aliases():
+            tables = await DBImportService.get_postgresql_tables(config.model_dump())
         else:
             raise HTTPException(status_code=400, detail=f"Unsupported DB type: {config.type}")
         return {"code": 200, "data": tables}
@@ -609,6 +613,8 @@ async def get_db_ddl(request: DDLRequest):
             ddl = await DBImportService.get_oracle_ddl(config.model_dump(), request.tables)
         elif config.type in DBImportService._sqlserver_type_aliases():
             ddl = await DBImportService.get_sqlserver_ddl(config.model_dump(), request.tables)
+        elif config.type in DBImportService._postgresql_type_aliases():
+            ddl = await DBImportService.get_postgresql_ddl(config.model_dump(), request.tables)
         else:
             raise HTTPException(status_code=400, detail=f"Unsupported DB type: {config.type}")
         return {"code": 200, "data": ddl}
@@ -873,5 +879,4 @@ async def toggle_table_profile_ignore(
     if not profile:
         raise HTTPException(status_code=404, detail="表画像不存在")
     return {"code": 200, "message": "修改成功", "data": {"is_ignored": profile.is_ignored}}
-
 

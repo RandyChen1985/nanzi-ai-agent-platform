@@ -230,6 +230,13 @@ const scrollProfileListToTop = () => {
 
 const colName = (col: string | { name: string }) => (typeof col === 'string' ? col : col.name)
 
+// PostgreSQL 内部保留 schema.table 用于查询，界面只展示实际表名。
+const displayTableName = (tableName: string) => {
+  const value = String(tableName || '')
+  const dotIndex = value.lastIndexOf('.')
+  return dotIndex >= 0 ? value.slice(dotIndex + 1) : value
+}
+
 const confidenceClass = (score?: number) => {
   if (score == null) return 'bg-gray-100 text-gray-500'
   if (score >= 80) return 'bg-emerald-100 text-emerald-700'
@@ -991,7 +998,7 @@ const dbTypeColor = (type: string) => {
                   </div>
                   <div class="flex flex-col gap-0.5 min-w-0 flex-1">
                     <div class="flex items-center gap-2 flex-wrap">
-                      <span class="text-sm font-mono truncate" :class="isTableImported(table.name) ? 'text-gray-400' : 'text-gray-700'">{{ table.name }}</span>
+                      <span class="text-sm font-mono truncate" :class="isTableImported(table.name) ? 'text-gray-400' : 'text-gray-700'">{{ displayTableName(table.name) }}</span>
                       <span
                         v-if="isTableImported(table.name)"
                         class="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider bg-gray-100 text-gray-500 border border-gray-200"
@@ -1045,6 +1052,14 @@ const dbTypeColor = (type: string) => {
                     :class="importFilter === 'all' ? 'bg-primary text-white' : 'text-gray-600 hover:bg-white'"
                     @click="importFilter = 'all'"
                   >全部可选</button>
+                  <button
+                    type="button"
+                    class="w-full text-left px-2.5 py-1.5 rounded-lg text-xs font-semibold text-primary hover:bg-primary/10 transition-colors"
+                    :disabled="selectableFilteredProfiles.length === 0"
+                    @click="toggleAll"
+                  >
+                    {{ selectableFilteredProfiles.length > 0 && selectableFilteredProfiles.every((t) => selectedTables.includes(t.table_name)) ? '取消全选' : '全选当前结果' }}
+                  </button>
                 </div>
                 <div v-if="availableTags.length" class="border-t p-2 flex-1 min-h-0">
                   <div class="px-1 text-[10px] font-bold text-gray-400 uppercase mb-1">标签</div>
@@ -1112,7 +1127,7 @@ const dbTypeColor = (type: string) => {
                       <div class="min-w-0 flex-1">
                         <div class="flex items-start justify-between gap-2">
                           <div class="min-w-0 flex-1 flex items-center gap-1.5 flex-wrap">
-                            <span class="text-sm font-mono font-bold text-gray-800 break-all">{{ profile.table_name }}</span>
+                            <span class="text-sm font-mono font-bold text-gray-800 break-all">{{ displayTableName(profile.table_name) }}</span>
                             <span v-if="isTableImported(profile.table_name)" class="text-[9px] px-1 py-0.5 rounded font-bold bg-gray-100 text-gray-500">已导入</span>
                             <span v-else class="text-[9px] px-1 py-0.5 rounded font-black shrink-0" :class="profile.table_type === 'view' ? 'bg-amber-100 text-amber-700' : 'bg-blue-100 text-blue-700'">{{ profile.table_type === 'view' ? 'VIEW' : 'TABLE' }}</span>
                             <span v-if="profile.confidence_score != null" class="text-[9px] px-1 py-0.5 rounded font-bold shrink-0" :class="confidenceClass(profile.confidence_score)">{{ profile.confidence_score }}分</span>
@@ -1179,7 +1194,7 @@ const dbTypeColor = (type: string) => {
                 <div class="px-3 py-2 border-b text-[11px] font-bold text-gray-500 shrink-0">表预览</div>
                 <div v-if="!profilePreviewTable" class="flex-1 flex items-center justify-center text-gray-400 text-xs px-3 text-center">点击表查看字段画像</div>
                 <div v-else class="flex-1 overflow-y-auto custom-scrollbar p-3 space-y-2">
-                  <div class="font-mono text-sm font-bold text-gray-800 break-all">{{ profilePreviewTable }}</div>
+                  <div class="font-mono text-sm font-bold text-gray-800 break-all">{{ displayTableName(profilePreviewTable) }}</div>
                   <template v-if="profilePreviewItem">
                     <div v-if="profilePreviewItem.ai_term" class="text-xs text-primary font-semibold">{{ profilePreviewItem.ai_term }}</div>
                     <div v-if="profilePreviewItem.ai_description" class="text-[11px] text-gray-600 leading-relaxed">{{ profilePreviewItem.ai_description }}</div>
@@ -1218,7 +1233,7 @@ const dbTypeColor = (type: string) => {
                             class="min-w-0 flex-1 text-left"
                             @click="focusProfileRelatedTable(rel.table_name)"
                           >
-                            <div class="font-mono text-[10px] font-bold text-gray-800 truncate" :title="rel.table_name">{{ rel.table_name }}</div>
+                            <div class="font-mono text-[10px] font-bold text-gray-800 truncate" :title="rel.table_name">{{ displayTableName(rel.table_name) }}</div>
                             <div v-if="rel.ai_term" class="text-[9px] text-primary truncate">{{ rel.ai_term }}</div>
                             <div class="text-[9px] text-gray-500 mt-0.5 line-clamp-2" :title="rel.reason">{{ rel.reason }}</div>
                           </button>

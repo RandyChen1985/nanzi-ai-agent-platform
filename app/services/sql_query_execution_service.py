@@ -124,6 +124,8 @@ def to_sqlglot_dialect(dialect: str) -> str:
     dialect_lower = str(dialect or "clickhouse").strip().lower()
     if dialect_lower in ("sqlserver", "mssql"):
         return "tsql"
+    if dialect_lower in ("postgres", "postgresql", "pg"):
+        return "postgres"
     return dialect_lower or "clickhouse"
 
 
@@ -136,6 +138,8 @@ def dialect_from_data_source(data_source: Optional[str]) -> str:
         dialect = "oracle"
     elif any(token in ds_lower for token in ("sqlserver", "mssql", "tsql")):
         dialect = "tsql"
+    elif any(token in ds_lower for token in ("postgresql", "postgres", "pg")):
+        dialect = "postgres"
     return dialect
 
 

@@ -104,7 +104,7 @@ class DatasetDetailResponse(DatasetResponse):
 # --- DB Import Schemas ---
 
 class DBConnectionConfig(BaseModel):
-    type: str # 'mysql', 'clickhouse'
+    type: str # 'mysql', 'clickhouse', 'oracle', 'sqlserver', 'postgresql'
     host: str
     port: int
     user: str

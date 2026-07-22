@@ -15,10 +15,14 @@ const debugPanel = readSource("src/components/DebugConfigPanel.vue");
 const agentDebug = readSource("src/views/AgentDebug.vue");
 
 assert.doesNotMatch(settings, />模型选择</, "settings should remove the duplicate model selector");
-assert.match(settings, />反幻觉校验</, "settings should expose the grounding toggle");
-assert.match(settings, /handleSetGrounding\(true\)/, "settings should allow enabling grounding");
-assert.match(settings, /handleSetGrounding\(false\)/, "settings should allow disabling grounding");
-assert.match(embedChat, /enableGrounding:\s*false/, "grounding should default to disabled");
+assert.match(settings, /反幻觉校验/, "settings should expose the grounding toggle");
+assert.match(settings, /handleSetGrounding/, "settings should allow toggling grounding");
+assert.match(
+  settings,
+  /@update:modelValue="handleSetGrounding"/,
+  "settings should bind the grounding Switch to handleSetGrounding",
+);
+assert.match(embedChat, /enableGrounding:\s*true/, "EmbedChat grounding should default to enabled");
 assert.match(
   embedChat,
   /grounding_enabled:\s*config\.enableGrounding/,
@@ -26,8 +30,8 @@ assert.match(
 );
 assert.match(
   embedChat,
-  /const resetSession[\s\S]*?config\.enableGrounding\s*=\s*false/,
-  "starting a new conversation should reset grounding to disabled",
+  /const resetSession[\s\S]*?config\.enableGrounding\s*=\s*true/,
+  "starting a new conversation should reset grounding to the default enabled state",
 );
 
 assert.doesNotMatch(

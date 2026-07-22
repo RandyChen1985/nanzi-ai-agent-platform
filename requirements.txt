@@ -36,3 +36,4 @@ jinja2>=3.0.0
 playwright>=1.40.0
 psutil>=5.9.0
 duckdb>=1.0.0
+psycopg[pool,binary]>=3.2,<4
