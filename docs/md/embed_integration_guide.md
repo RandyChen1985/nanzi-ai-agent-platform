@@ -1,6 +1,6 @@
 # 南孜智能体平台嵌入式组件集成指南
 
-本文档旨在指导第三方业务系统如何快速、安全地集成南孜 AI Agent 聊天组件（EmbedChat）。
+本文档旨在指导第三方业务系统如何快速、安全地集成合思AI Agent 聊天组件（EmbedChat）。
 
 ## 交互流程概览 (Integration Flow)
 

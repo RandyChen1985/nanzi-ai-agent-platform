@@ -1,43 +1,51 @@
 import asyncio
 import sys
 import os
-import json
+import importlib
+import pkgutil
 
 # 添加项目路径
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+# 全量加载模型，确保 SQLAlchemy mapper 完整配置
+# （否则 User.roles relationship 解析 ai_agent_user_role_relations 会失败）
+import app.models as _models_pkg
+for _mod in pkgutil.iter_modules(_models_pkg.__path__):
+    importlib.import_module(f"app.models.{_mod.name}")
+
+from sqlalchemy import text
 from app.core import database
+from app.core.orm import engine
 from app.services.auth_service import AuthService
 from app.core.config import settings
 
 async def reset_and_init():
     print("🚀 开始重置数据库用户...")
-    
+
     await database.init_db()
-    
-    async with database.get_db_connection() as conn:
-        async with conn.cursor() as cursor:
-            # 1. 清空数据
-            print("🧹 清空 ai_agent_users 表...")
-            await cursor.execute("TRUNCATE TABLE ai_agent_users")
-            
-            # 2. 创建管理员 (admin)
-            print("👤 创建管理员账号 (admin)...")
-            admin_key = await AuthService.generate_api_key(
-                user_name="admin",
-                role="admin",
-                remark="超级管理员"
-            )
-            
-            # 3. 创建普通用户 (demo_user)
-            print("👤 创建普通用户 (demo_user)...")
-            
-            # 直接生成 API Key
-            user_key = await AuthService.generate_api_key(
-                user_name="demo_user",
-                role="user",
-                remark="演示用户"
-            )
+
+    # 1. 清空数据（engine.begin() + text()，替代旧的 raw cursor 写法）
+    print("🧹 清空 ai_agent_users 表...")
+    async with engine.begin() as conn:
+        await conn.execute(text("TRUNCATE TABLE ai_agent_users"))
+
+    # 2. 创建管理员 (admin)
+    print("👤 创建管理员账号 (admin)...")
+    admin_key = await AuthService.generate_api_key(
+        user_name="admin",
+        role="admin",
+        remark="超级管理员"
+    )
+
+    # 3. 创建普通用户 (demo_user)
+    print("👤 创建普通用户 (demo_user)...")
+
+    # 直接生成 API Key
+    user_key = await AuthService.generate_api_key(
+        user_name="demo_user",
+        role="user",
+        remark="演示用户"
+    )
 
     print("\n" + "="*50)
     print("✅ 重置完成！请使用以下 Key 登录：")

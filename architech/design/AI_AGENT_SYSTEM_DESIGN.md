@@ -363,7 +363,7 @@ class VisualService:
 - `primary_chart`：包含图表类型和图表配置，例如 ECharts `option`，用于在前端直接渲染；
 - `answer_markdown`：对查询结果的自然语言总结，使用 Markdown 语法，前端负责渲染为 HTML，符合 `openspec/specs/ai-interaction.md` 对 Markdown 的要求；
 - `secondary_widgets`：可扩展 Widget 列表（如 SOP 卡片、统计卡片、告警列表等），每个 Widget 至少包含 `type` 和 `payload` 字段；
-- 南孜 Web 的 `AiAssistant.vue` 仅是上述通用结构的一个适配实现：
+- 合思Web 的 `AiAssistant.vue` 仅是上述通用结构的一个适配实现：
   - `primary_chart` → 映射为组件 `ChatChart` 所需的 `option`；
   - `answer_markdown` → 渲染到消息体 HTML；
   - `secondary_widgets` 中类型为 `sop_card` 的项 → 映射为 `SopCard` 的数据结构。

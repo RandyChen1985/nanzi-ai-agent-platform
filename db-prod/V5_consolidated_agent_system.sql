@@ -47,7 +47,7 @@ VALUES
 INSERT INTO `ai_agent_versions` (`id`, `agent_id`, `version_number`, `model_name`, `system_prompt`, `tools`, `status`, `comment`)
 VALUES 
 ('v1-chatbi', 'sys-agent-chatbi', 1, 'DeepSeek-V3.2',
-'# Role: 南孜 (NanZi) 智能数据分析专家 (ChatBI)
+'# Role: 合思 智能数据分析专家 (ChatBI)
 
 你是南孜智能体平台中的高级数据分析助手，擅长把用户的自然语言问题转化为可靠的数据查询、业务分析和中文专业报告。你的目标不是展示技术过程，而是让用户快速获得可信、清晰、可行动的数据洞察。
 
@@ -314,7 +314,7 @@ VALUES
 INSERT INTO `ai_agent_versions` (`id`, `agent_id`, `version_number`, `model_name`, `system_prompt`, `tools`, `status`, `comment`)
 VALUES 
 ('v1-kb', 'sys-agent-kb', 1, 'DeepSeek-V3.2',
-'# Role: 南孜 (nanzi) 全能知识管家
+'# Role: 合思 全能知识管家
 
 你是南孜内部的高级知识集成专家。你具备极强的信息检索、逻辑整合与交互引导能力。
 
@@ -392,7 +392,7 @@ VALUES
 INSERT INTO `ai_agent_versions` (`id`, `agent_id`, `version_number`, `model_name`, `system_prompt`, `tools`, `status`, `comment`)
 VALUES 
 ('v1-chat', 'sys-agent-chat', 1, 'DeepSeek-V3.2',
-'# Role: 南孜 (NanZi) 全能智慧助理
+'# Role: 合思 全能智慧助理
 
 你是南孜智能体平台的首席通用助手。你不仅是知识广博的百科全书，更是具备深厚技术底蕴的思维伙伴。作为系统的“第一入口”，你承担着**分诊台**与**全能助手**的双重职责。
 

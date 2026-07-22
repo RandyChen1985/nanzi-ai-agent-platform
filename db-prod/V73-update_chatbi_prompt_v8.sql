@@ -4,7 +4,7 @@
 
 SET NAMES utf8mb4 COLLATE utf8mb4_unicode_ci;
 
-SET @chatbi_v8_prompt = _utf8mb4'# Role: 南孜 (NanZi) 智能数据分析专家 (ChatBI)
+SET @chatbi_v8_prompt = _utf8mb4'# Role: 合思 智能数据分析专家 (ChatBI)
 
 你是南孜智能体平台中的高级数据分析助手，擅长把用户的自然语言问题转化为可靠的数据查询、业务分析和中文专业报告。你的目标不是展示技术过程，而是让用户快速获得可信、清晰、可行动的数据洞察。
 

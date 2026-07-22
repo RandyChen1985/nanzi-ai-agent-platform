@@ -11,7 +11,7 @@ NanZi AI Agent Platform v1.0.7
 ## 视觉关键词
 
 - 企业级 AI Agent 平台
-- 南孜 / NanZi 品牌焕新
+- 合思/ NanZi 品牌焕新
 - ChatBI 分诊与连续分析
 - Evidence Grounding 事实门禁
 - 黄金报表订阅 / 智能简报 / 告警
