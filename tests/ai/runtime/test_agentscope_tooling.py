@@ -128,7 +128,8 @@ async def test_agentscope_tool_wrapper_exposes_tool_shape_and_invokes_spec():
 
 @pytest.mark.asyncio
 async def test_agentscope_tool_loop_fuse_remains_blocking_and_guides_model():
-    from app.services.ai.runtime.agentscope.errors import ToolLoopFuseError
+    from agentscope.exception import DeveloperOrientedException
+
     from app.services.ai.runtime.agentscope.tools import (
         AgentScopeRuntimeTool,
         RuntimeToolSpec,
@@ -160,24 +161,23 @@ async def test_agentscope_tool_loop_fuse_remains_blocking_and_guides_model():
     )
 
     await tool()
-    await tool()
 
     for _ in range(2):
-        with pytest.raises(ToolLoopFuseError) as exc_info:
+        with pytest.raises(DeveloperOrientedException) as exc_info:
             await tool()
         message = str(exc_info.value)
         assert "停止继续调用任何工具" in message
         assert "信息不足" in message
 
-    assert execution_count == 2
+    assert execution_count == 1
 
 
 @pytest.mark.asyncio
 async def test_agentscope_native_tool_loop_fuse_remains_blocking_and_guides_model():
     from agentscope.message import TextBlock, ToolResultState
     from agentscope.tool import ToolChunk
+    from agentscope.exception import DeveloperOrientedException
 
-    from app.services.ai.runtime.agentscope.errors import ToolLoopFuseError
     from app.services.ai.runtime.agentscope.tools import AgentScopeNativeApprovalTool
     from app.services.ai.runtime.tool_loop_detector import ToolLoopDetector
 
@@ -210,13 +210,25 @@ async def test_agentscope_native_tool_loop_fuse_remains_blocking_and_guides_mode
 
     await tool()
     for _ in range(2):
-        with pytest.raises(ToolLoopFuseError) as exc_info:
+        with pytest.raises(DeveloperOrientedException) as exc_info:
             await tool()
         message = str(exc_info.value)
         assert "停止继续调用任何工具" in message
         assert "信息不足" in message
 
     assert native_tool.execution_count == 1
+
+
+def test_extract_tool_loop_fuse_message_from_nested_exceptions():
+    from app.services.ai.runtime.agentscope.errors import (
+        ToolLoopFuseError,
+        extract_tool_loop_fuse_message,
+    )
+
+    root = ToolLoopFuseError("重复调用 get_current_time。请停止继续调用任何工具，基于已经获得的结果直接回答用户；如果现有信息不足，请明确说明限制。")
+    wrapped = RuntimeError("wrapper")
+    wrapped.__cause__ = root
+    assert "停止继续调用任何工具" in (extract_tool_loop_fuse_message(wrapped) or "")
 
 
 @pytest.mark.asyncio

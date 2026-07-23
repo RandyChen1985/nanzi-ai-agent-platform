@@ -5,6 +5,7 @@ import inspect
 import logging
 import re
 import asyncio
+from dataclasses import replace
 from typing import List, Dict, Any, AsyncGenerator, Optional, Set
 from datetime import datetime
 
@@ -79,10 +80,11 @@ from app.services.ai.runtime.agentscope.session_lock import (
     agentscope_session_lock,
 )
 from app.services.ai.runtime.agentscope.workspace import get_local_workspace
-from app.services.ai.runtime.agentscope.errors import ToolLoopFuseError
+from app.services.ai.runtime.agentscope.errors import extract_tool_loop_fuse_message
 from app.services.ai.runtime.agentscope.tools import RuntimeToolSpec, runtime_tool_spec_from_legacy_tool
 from app.services.ai.runtime.agentscope.tools import build_toolkit
 from app.services.ai.runtime.tool_loop_detector import ToolLoopDetector
+from app.services.ai.time_anchor import filter_redundant_time_tools
 
 logger = logging.getLogger(__name__)
 
@@ -344,6 +346,11 @@ class AssistantAgentRunner(BaseExecutor):
             capability = None
         semantic_intent = str(self.route_hints.get("semantic_intent") or "").strip().upper()
         semantic_confidence = float(self.route_hints.get("semantic_confidence") or 0.0)
+        semantic_domain = self.route_hints.get("semantic_domain")
+        semantic_operation = self.route_hints.get("semantic_operation")
+        fact_kind = self.route_hints.get("fact_kind")
+        freshness_requirement = self.route_hints.get("freshness_requirement")
+        time_scope = self.route_hints.get("time_scope")
         raw_dataset_ids = self.route_hints.get("matched_dataset_ids") or []
         try:
             matched_dataset_ids = tuple(int(value) for value in raw_dataset_ids)
@@ -364,6 +371,11 @@ class AssistantAgentRunner(BaseExecutor):
                 reasoning=str(self.route_hints.get("request_reasoning") or "router evidence contract"),
                 semantic_intent=self.route_hints.get("semantic_intent"),
                 semantic_confidence=semantic_confidence,
+                semantic_domain=semantic_domain,
+                semantic_operation=semantic_operation,
+                fact_kind=fact_kind,
+                freshness_requirement=freshness_requirement or "unknown",
+                time_scope=time_scope,
                 chatbi_mode=self.route_hints.get("chatbi_mode"),
                 chatbi_evidence_level=str(
                     self.route_hints.get("chatbi_evidence_level") or "none"
@@ -380,6 +392,11 @@ class AssistantAgentRunner(BaseExecutor):
             user_query,
             semantic_intent=self.route_hints.get("semantic_intent"),
             semantic_confidence=self.route_hints.get("semantic_confidence"),
+            semantic_domain=semantic_domain,
+            semantic_operation=semantic_operation,
+            fact_kind=fact_kind,
+            freshness_requirement=freshness_requirement,
+            time_scope=time_scope,
         )
 
     @staticmethod
@@ -467,13 +484,13 @@ class AssistantAgentRunner(BaseExecutor):
             and (references_file or references_attachment_continuation)
         )
         if has_relevant_attachment:
-            return FactRequirement(
+            return replace(
+                requirement,
                 required=True,
                 accepted_types=(
                     requirement.accepted_types
                     | frozenset({EvidenceType.USER_FILE})
                 ),
-                scrutinize_unknown_output=requirement.scrutinize_unknown_output,
             )
         return requirement
 
@@ -754,6 +771,7 @@ class AssistantAgentRunner(BaseExecutor):
             system_content,
             self._extract_last_user_query(history),
         )
+        tools = filter_redundant_time_tools(tools, system_content)
 
         # 3. Execution Mode Selection
         if not tools:
@@ -1200,16 +1218,27 @@ class AssistantAgentRunner(BaseExecutor):
                 )
                 self._session_artifact_turn["user_question"] = state["user_query"]
                 interrupted = False
-                async for chunk in self._stream_agentscope_native_events(
-                    event_stream=agent.reply_stream(inputs),
-                    agent=agent,
-                    tools=tools,
-                    native_model=native_model,
-                    state=state,
-                ):
-                    if is_interrupt_sse_chunk(chunk):
-                        interrupted = True
-                    yield chunk
+                try:
+                    async for chunk in self._stream_agentscope_native_events(
+                        event_stream=agent.reply_stream(inputs),
+                        agent=agent,
+                        tools=tools,
+                        native_model=native_model,
+                        state=state,
+                    ):
+                        if is_interrupt_sse_chunk(chunk):
+                            interrupted = True
+                        yield chunk
+                except Exception as stream_exc:
+                    fuse_message = extract_tool_loop_fuse_message(stream_exc)
+                    if fuse_message is None:
+                        raise
+                    async for chunk in self._stream_tool_loop_fuse_convergence(
+                        state=state,
+                        native_model=native_model,
+                        fuse_message=fuse_message,
+                    ):
+                        yield chunk
 
                 if self.conversation_id:
                     from app.services.ai.session_tool_artifact import persist_turn_artifact_candidate
@@ -1235,12 +1264,6 @@ class AssistantAgentRunner(BaseExecutor):
                 "type": "error",
                 "status": "error",
                 "content": "当前会话正在处理中，请稍后再试。",
-            }
-        except ToolLoopFuseError as fuse_err:
-            yield {
-                "type": "error",
-                "status": "error",
-                "content": f"检测到工具重复调用循环，已停止继续执行。{fuse_err}",
             }
 
     async def _build_native_agent(
@@ -1501,6 +1524,93 @@ class AssistantAgentRunner(BaseExecutor):
     def _build_synthesis_user_message(self, user_query: str, execution_review: str) -> str:
         return AssistantPrompts.synthesis_user_message(user_query, execution_review)
 
+    async def _stream_tool_loop_fuse_convergence(
+        self,
+        *,
+        state: Dict[str, Any],
+        native_model: Any,
+        fuse_message: str,
+    ) -> AsyncGenerator[Dict[str, Any], None]:
+        """工具环熔断后：禁止继续调工具，强制一轮文本收敛回答。"""
+        yield {
+            "type": "log",
+            "id": f"tool_loop_fuse_{uuid.uuid4().hex[:8]}",
+            "title": "工具循环已熔断",
+            "details": "已停止继续调用工具，改为基于已有信息直接回答。",
+            "status": "warning",
+            "category": "tool",
+        }
+        tool_names: Dict[str, str] = state.get("tool_names", {})
+        tool_outputs: Dict[str, str] = state.get("tool_outputs", {})
+        review_lines = [
+            f"- {tool_names[tool_id]}: {truncate_for_context(tool_outputs.get(tool_id, ''))}"
+            for tool_id in tool_names
+            if tool_names.get(tool_id)
+        ]
+        constraint = (
+            "【系统约束·工具循环熔断】禁止再调用任何工具。"
+            "请仅使用系统提示（含时间锚点，若有）与下列已有执行结果直接回答用户；"
+            "信息不足时请明确说明限制，不要猜测未核实的事实。\n"
+            f"熔断原因：{str(fuse_message or '').strip()[:500]}"
+        )
+        if review_lines:
+            execution_review = f"{constraint}\n\n【执行过程回顾】\n" + "\n".join(review_lines)
+        else:
+            execution_review = (
+                f"{constraint}\n\n【执行过程回顾】\n"
+                "- 本轮尚未取得有效工具结果；请优先引用系统提示中的时间锚点与已知上下文作答。"
+            )
+
+        user_query = str(state.get("user_query") or "")
+        if not state.get("synthesis_fb_log_emitted"):
+            state["synthesis_fb_log_emitted"] = True
+            yield {
+                "type": "log",
+                "id": f"synthesis_fb_{uuid.uuid4().hex[:8]}",
+                "title": "📝 汇总已有信息",
+                "details": "正在基于已有信息生成最终回答...",
+                "status": "success",
+            }
+
+        emitted_any = False
+        try:
+            llm = await AgentConfigProvider.get_synthesis_llm(streaming=True, config=self.config)
+            messages = normalize_messages_for_llm([
+                SystemMessage(content=str(state.get("system_content") or self.config.system_prompt or "")),
+                HumanMessage(
+                    content=self._build_synthesis_user_message(user_query, execution_review)
+                ),
+            ])
+            async for chunk in llm.astream(messages):
+                content = sanitize_assistant_stream_text(str(getattr(chunk, "content", None) or ""))
+                if not content:
+                    continue
+                emitted_any = True
+                if not state.get("content_emitted"):
+                    state["content_emitted"] = True
+                    yield {
+                        "type": "log",
+                        "id": f"gen_start_{uuid.uuid4().hex[:8]}",
+                        "title": "✨ 开始生成回复",
+                        "status": "success",
+                    }
+                state["full_content"] = (state.get("full_content") or "") + content
+                yield {"content": content}
+        except Exception as synthesis_err:
+            logger.error(
+                "[AssistantAgentRunner] Tool-loop fuse convergence failed: %s",
+                synthesis_err,
+                exc_info=True,
+            )
+
+        if not emitted_any and not str(state.get("full_content") or "").strip():
+            fallback = (
+                "检测到工具调用出现循环并已安全中止。"
+                "请换一种问法重试，或直接说明你需要的具体日期范围。"
+            )
+            state["full_content"] = fallback
+            yield {"content": fallback}
+
     async def _stream_general_synthesis_fallback(
         self,
         *,
@@ -1616,10 +1726,12 @@ class AssistantAgentRunner(BaseExecutor):
         from agentscope.state import AgentState
 
         restored_state = AgentState.model_validate(pending.snapshot.agent_state)
+        system_content = str(ctx.get("system_content", ""))
+        tools = filter_redundant_time_tools(tools, system_content)
         agent = await self._build_native_agent(
             native_model=native_model,
             tools=tools,
-            system_content=str(ctx.get("system_content", "")),
+            system_content=system_content,
             max_steps=int(ctx.get("max_steps", 5)),
             restored_state=restored_state,
             primary_model_name=str(getattr(native_model, "model", self.config.model_name) or ""),
@@ -1747,23 +1859,35 @@ class AssistantAgentRunner(BaseExecutor):
                     )
                 )
                 buffered_content: List[Dict[str, Any]] = []
-                async for chunk in self._stream_agentscope_native_events(
-                    event_stream=agent.reply_stream(resume_event),
-                    agent=agent,
-                    tools=tools,
-                    native_model=native_model,
-                    state=state,
-                ):
-                    if is_interrupt_sse_chunk(chunk):
-                        interrupted = True
-                    if (
-                        buffer_output
-                        and "content" in chunk
-                        and chunk.get("type") not in {"error"}
+                try:
+                    async for chunk in self._stream_agentscope_native_events(
+                        event_stream=agent.reply_stream(resume_event),
+                        agent=agent,
+                        tools=tools,
+                        native_model=native_model,
+                        state=state,
                     ):
-                        buffered_content.append(chunk)
-                    else:
+                        if is_interrupt_sse_chunk(chunk):
+                            interrupted = True
+                        if (
+                            buffer_output
+                            and "content" in chunk
+                            and chunk.get("type") not in {"error"}
+                        ):
+                            buffered_content.append(chunk)
+                        else:
+                            yield chunk
+                except Exception as stream_exc:
+                    fuse_message = extract_tool_loop_fuse_message(stream_exc)
+                    if fuse_message is None:
+                        raise
+                    async for chunk in self._stream_tool_loop_fuse_convergence(
+                        state=state,
+                        native_model=native_model,
+                        fuse_message=fuse_message,
+                    ):
                         yield chunk
+                    return
 
                 if buffered_content and not interrupted:
                     # 只取用户可见的纯文本输出（type 为 None 或空）进行事实检测，
@@ -1833,12 +1957,6 @@ class AssistantAgentRunner(BaseExecutor):
                 "type": "error",
                 "status": "error",
                 "content": "当前会话正在处理中，请稍后再试。",
-            }
-        except ToolLoopFuseError as fuse_err:
-            yield {
-                "type": "error",
-                "status": "error",
-                "content": f"检测到工具重复调用循环，已停止继续执行。{fuse_err}",
             }
 
     async def resume_agentscope_native_confirmation(

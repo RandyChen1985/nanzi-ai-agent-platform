@@ -19,6 +19,21 @@ class EvidenceType(str, Enum):
     EXTERNAL_TOOL = "external_tool"
 
 
+class FactFreshness(str, Enum):
+    """事实证据的时效语义。
+
+    ``UNKNOWN`` 是旧调用方和旧会话的兼容值：它不额外触发时效阻断，
+    但仍然遵守原有的证据类型与内容相关性校验。
+    """
+
+    STATIC = "static"
+    HISTORICAL = "historical"
+    DYNAMIC = "dynamic"
+    REALTIME = "realtime"
+    REUSE_PREVIOUS = "reuse_previous"
+    UNKNOWN = "unknown"
+
+
 @dataclass(frozen=True)
 class EvidenceReceipt:
     call_id: str
@@ -31,6 +46,11 @@ class EvidenceReceipt:
     marker_digests: frozenset[str] = frozenset()
     strong_marker_digests: frozenset[str] = frozenset()
     empty_success: bool = False
+    observed_at: datetime | None = None
+    source_as_of: datetime | None = None
+    expires_at: datetime | None = None
+    freshness: FactFreshness = FactFreshness.UNKNOWN
+    source_ref: str | None = None
 
     @classmethod
     def create(
@@ -45,7 +65,13 @@ class EvidenceReceipt:
         marker_digests: frozenset[str] = frozenset(),
         strong_marker_digests: frozenset[str] = frozenset(),
         empty_success: bool = False,
+        observed_at: datetime | None = None,
+        source_as_of: datetime | None = None,
+        expires_at: datetime | None = None,
+        freshness: FactFreshness = FactFreshness.UNKNOWN,
+        source_ref: str | None = None,
     ) -> "EvidenceReceipt":
+        created_at = datetime.now(timezone.utc)
         return cls(
             call_id=call_id,
             producer=producer,
@@ -53,8 +79,13 @@ class EvidenceReceipt:
             payload_digest=payload_digest,
             user_id=user_id,
             conversation_id=conversation_id,
-            created_at=datetime.now(timezone.utc),
+            created_at=created_at,
             marker_digests=marker_digests,
             strong_marker_digests=strong_marker_digests,
             empty_success=empty_success,
+            observed_at=observed_at or created_at,
+            source_as_of=source_as_of,
+            expires_at=expires_at,
+            freshness=FactFreshness(freshness),
+            source_ref=source_ref,
         )

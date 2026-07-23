@@ -124,6 +124,23 @@ def test_runtime_diagnostic_is_tool_capability_not_data_route():
     assert decision.allows_data_route is False
 
 
+def test_request_decision_preserves_fact_semantics_for_grounding():
+    decision = resolve_request_decision(
+        "查询当前机器负载",
+        semantic_intent=IntentType.DATA_QUERY,
+        semantic_confidence=0.93,
+        semantic_domain="runtime_environment",
+        semantic_operation="lookup",
+        fact_kind="machine_load",
+        freshness_requirement="realtime",
+    )
+
+    assert decision.semantic_domain == "runtime_environment"
+    assert decision.semantic_operation == "lookup"
+    assert decision.fact_kind == "machine_load"
+    assert decision.freshness_requirement == "realtime"
+
+
 def test_my_server_status_query_is_runtime_diagnostic():
     decision = resolve_request_decision("看看我的服务器状态")
 

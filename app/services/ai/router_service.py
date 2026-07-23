@@ -42,6 +42,11 @@ class RouteResult(BaseModel):
     request_should_delegate: bool = False
     request_delegate_capability: Optional[str] = None
     request_reasoning: Optional[str] = None
+    semantic_domain: Optional[str] = None
+    semantic_operation: Optional[str] = None
+    fact_kind: Optional[str] = None
+    freshness_requirement: str = "unknown"
+    time_scope: Optional[str] = None
     chatbi_mode: Optional[str] = None
     chatbi_evidence_level: str = "none"
     chatbi_reason: Optional[str] = None
@@ -301,6 +306,11 @@ class RouterService:
             user_input,
             semantic_intent=getattr(intent_info, "intent", None),
             semantic_confidence=getattr(intent_info, "confidence", None),
+            semantic_domain=getattr(intent_info, "domain", None),
+            semantic_operation=getattr(intent_info, "operation", None),
+            fact_kind=getattr(intent_info, "fact_kind", None),
+            freshness_requirement=getattr(intent_info, "freshness_requirement", None),
+            time_scope=getattr(intent_info, "time_scope", None),
         )
         previous_chatbi_result = bool(
             last_agent_name
@@ -817,6 +827,13 @@ class RouterService:
                 request_decision.delegate_capability if request_decision else None
             ),
             request_reasoning=(request_decision.reasoning if request_decision else None),
+            semantic_domain=(request_decision.semantic_domain if request_decision else None),
+            semantic_operation=(request_decision.semantic_operation if request_decision else None),
+            fact_kind=(request_decision.fact_kind if request_decision else None),
+            freshness_requirement=(
+                request_decision.freshness_requirement if request_decision else "unknown"
+            ),
+            time_scope=(request_decision.time_scope if request_decision else None),
             chatbi_mode=(request_decision.chatbi_mode if request_decision else None),
             chatbi_evidence_level=(
                 request_decision.chatbi_evidence_level if request_decision else "none"

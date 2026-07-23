@@ -546,6 +546,14 @@ class KnowledgeAgentRunner(AssistantAgentRunner):
             tools=tools,
         )
 
+        from app.services.ai.time_anchor import (
+            append_time_anchor_for_user_question,
+            filter_redundant_time_tools,
+        )
+
+        system_content = append_time_anchor_for_user_question(system_content, user_question)
+        tools = filter_redundant_time_tools(tools, system_content)
+
         # 仅保留最近 5 轮历史对话（最多 10 条消息）
         history = history[-10:]
         runtime_messages = [SystemMessage(content=system_content)]

@@ -31,6 +31,20 @@ def _tool_loop_fuse_message(reason: str) -> str:
     return f"{reason} {_TOOL_LOOP_MODEL_GUIDANCE}".strip()
 
 
+def _raise_tool_loop_fuse(reason: str) -> None:
+    """熔断后抛出可穿透 AgentScope toolkit 软 ERROR 包装的异常。
+
+    Toolkit 会把普通 Exception 收成 ToolChunk(ERROR) 继续 ReAct；
+    DeveloperOrientedException 会向上抛出，便于 runner 硬停工具环并强制文本收敛。
+    """
+    message = _tool_loop_fuse_message(reason)
+    try:
+        from agentscope.exception import DeveloperOrientedException
+    except Exception:
+        raise ToolLoopFuseError(message) from None
+    raise DeveloperOrientedException(message)
+
+
 RuntimeToolAuditStatus = Literal["start", "success", "error"]
 RuntimeEvidencePolicy = Literal["non_empty", "structured_success", "allow_empty_success"]
 
@@ -233,7 +247,7 @@ class AgentScopeRuntimeTool:
             return
         verdict = self.loop_detector.record(self.name, tool_input)
         if verdict.fused:
-            raise ToolLoopFuseError(_tool_loop_fuse_message(verdict.message))
+            _raise_tool_loop_fuse(verdict.message)
 
     async def check_permissions(self, tool_input: dict[str, Any], context: Any) -> Any:
         try:
@@ -331,7 +345,7 @@ class AgentScopeNativeApprovalTool:
             return
         verdict = self.loop_detector.record(self.name, tool_input)
         if verdict.fused:
-            raise ToolLoopFuseError(_tool_loop_fuse_message(verdict.message))
+            _raise_tool_loop_fuse(verdict.message)
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self.native_tool, name)

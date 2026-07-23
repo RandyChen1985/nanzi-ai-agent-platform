@@ -670,6 +670,11 @@ class AgentService:
                     "semantic_reasoning": getattr(r_intent_info, "reasoning", None),
                     "semantic_domain": getattr(r_intent_info, "domain", None),
                     "semantic_operation": getattr(r_intent_info, "operation", None),
+                    "fact_kind": getattr(r_intent_info, "fact_kind", None),
+                    "freshness_requirement": getattr(
+                        r_intent_info, "freshness_requirement", "unknown"
+                    ),
+                    "time_scope": getattr(r_intent_info, "time_scope", None),
                     "request_source": r_request_source,
                     "request_capability": r_request_capability,
                     "request_reasoning": r_request_reasoning,
@@ -1232,6 +1237,11 @@ class AgentService:
                     "semantic_reasoning": getattr(route_intent_evidence, "reasoning", None),
                     "semantic_domain": getattr(route_intent_evidence, "domain", None),
                     "semantic_operation": getattr(route_intent_evidence, "operation", None),
+                    "fact_kind": getattr(route_intent_evidence, "fact_kind", None),
+                    "freshness_requirement": getattr(
+                        route_intent_evidence, "freshness_requirement", "unknown"
+                    ),
+                    "time_scope": getattr(route_intent_evidence, "time_scope", None),
                     "request_source": r_request_source,
                     "request_capability": r_request_capability,
                     "request_reasoning": r_request_reasoning,
@@ -1253,6 +1263,11 @@ class AgentService:
                     "semantic_reasoning": getattr(route_intent_evidence, "reasoning", None),
                     "semantic_domain": getattr(route_intent_evidence, "domain", None),
                     "semantic_operation": getattr(route_intent_evidence, "operation", None),
+                    "fact_kind": getattr(route_intent_evidence, "fact_kind", None),
+                    "freshness_requirement": getattr(
+                        route_intent_evidence, "freshness_requirement", "unknown"
+                    ),
+                    "time_scope": getattr(route_intent_evidence, "time_scope", None),
                     "request_source": r_request_source,
                     "request_capability": r_request_capability,
                     "request_reasoning": r_request_reasoning,

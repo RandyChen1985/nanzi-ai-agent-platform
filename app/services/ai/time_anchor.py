@@ -299,6 +299,25 @@ def mentions_relative_time_language(text: str) -> bool:
     return bool(_RELATIVE_TIME_LANGUAGE.search(q))
 
 
+# 与【当前时间锚点】功能重叠的取时工具：锚点已注入时本轮不再暴露，避免模型空转重复取时。
+TIME_QUERY_TOOL_NAMES = frozenset({"get_current_time", "resolve_relative_dates"})
+
+
+def system_prompt_has_time_anchor(system_content: str | None) -> bool:
+    return "[当前时间锚点]" in str(system_content or "")
+
+
+def filter_redundant_time_tools(tools: list, system_content: str | None) -> list:
+    """若 system prompt 已含时间锚点，则移除取时/相对日期解析工具。"""
+    if not tools or not system_prompt_has_time_anchor(system_content):
+        return list(tools or [])
+    return [
+        tool
+        for tool in tools
+        if str(getattr(tool, "name", "") or "") not in TIME_QUERY_TOOL_NAMES
+    ]
+
+
 def should_attach_time_anchor_block(user_question: str | None) -> bool:
     """是否在 system prompt 中附加【当前时间锚点】（泛化规则，非场景硬编码）。"""
     q = str(text or "").strip() if (text := user_question) else ""

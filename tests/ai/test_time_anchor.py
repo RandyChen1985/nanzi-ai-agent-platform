@@ -93,6 +93,30 @@ def test_append_time_anchor_skips_plain_greeting():
     assert append_time_anchor_for_user_question(base, "你好") == base
 
 
+def test_filter_redundant_time_tools_when_anchor_present():
+    from app.services.ai.time_anchor import filter_redundant_time_tools
+
+    class _Tool:
+        def __init__(self, name: str):
+            self.name = name
+
+    tools = [_Tool("get_current_time"), _Tool("resolve_relative_dates"), _Tool("memory_search")]
+    filtered = filter_redundant_time_tools(tools, "[当前时间锚点]\n- 今天：2026-06-10")
+    assert [t.name for t in filtered] == ["memory_search"]
+
+
+def test_filter_redundant_time_tools_keeps_tools_without_anchor():
+    from app.services.ai.time_anchor import filter_redundant_time_tools
+
+    class _Tool:
+        def __init__(self, name: str):
+            self.name = name
+
+    tools = [_Tool("get_current_time"), _Tool("memory_search")]
+    filtered = filter_redundant_time_tools(tools, "普通系统提示")
+    assert [t.name for t in filtered] == ["get_current_time", "memory_search"]
+
+
 def test_resolve_relative_date_phrases_batch():
     from app.services.ai.time_anchor import resolve_relative_date_phrases
 

@@ -1,8 +1,9 @@
 import pytest
 from types import SimpleNamespace
+from datetime import datetime, timezone
 
 from app.services.ai.grounding.ledger import EvidenceLedger
-from app.services.ai.grounding.models import EvidenceType
+from app.services.ai.grounding.models import EvidenceType, FactFreshness
 
 
 pytestmark = pytest.mark.no_infrastructure
@@ -23,6 +24,34 @@ def test_successful_non_empty_result_creates_scoped_receipt():
     assert not ledger.has_valid_evidence({EvidenceType.INTERNAL_DATA})
     assert receipt.user_id == "7"
     assert receipt.conversation_id == "conv-1"
+
+
+def test_typed_runtime_receipt_gets_realtime_freshness_by_default():
+    ledger = EvidenceLedger(user_id="7", conversation_id="conv-1")
+
+    receipt = ledger.record_success(
+        call_id="runtime-1",
+        producer="list_process",
+        evidence_types={EvidenceType.RUNTIME_STATE},
+        result={"load": 0.2},
+    )
+
+    assert receipt is not None
+    assert receipt.freshness is FactFreshness.REALTIME
+
+
+def test_typed_file_receipt_gets_dynamic_freshness_by_default():
+    ledger = EvidenceLedger(user_id="7", conversation_id="conv-1")
+
+    receipt = ledger.record_success(
+        call_id="file-1",
+        producer="read_file",
+        evidence_types={EvidenceType.USER_FILE},
+        result="file content",
+    )
+
+    assert receipt is not None
+    assert receipt.freshness is FactFreshness.DYNAMIC
 
 
 def test_empty_or_error_like_results_do_not_create_receipts():
@@ -96,6 +125,63 @@ def test_ledger_snapshot_roundtrip_preserves_scoped_receipts():
 
     assert restored.has_valid_evidence({EvidenceType.EXTERNAL_TOOL})
     assert restored.receipts[0].call_id == "call-1"
+
+
+def test_ledger_roundtrip_preserves_freshness_metadata():
+    ledger = EvidenceLedger(user_id="7", conversation_id="conv-1")
+    observed_at = datetime(2026, 7, 23, 2, 0, tzinfo=timezone.utc)
+    source_as_of = datetime(2026, 7, 23, 1, 59, tzinfo=timezone.utc)
+    expires_at = datetime(2026, 7, 23, 2, 1, tzinfo=timezone.utc)
+
+    receipt = ledger.record_success(
+        call_id="call-1",
+        producer="runtime-tool",
+        evidence_types={EvidenceType.RUNTIME_STATE},
+        result={"load": 0.2},
+        observed_at=observed_at,
+        source_as_of=source_as_of,
+        expires_at=expires_at,
+        freshness=FactFreshness.REALTIME,
+        source_ref="host://current-machine",
+    )
+
+    restored = EvidenceLedger.from_snapshot(
+        ledger.to_snapshot(),
+        user_id="7",
+        conversation_id="conv-1",
+    )
+
+    assert receipt is not None
+    assert restored.receipts[0].observed_at == observed_at
+    assert restored.receipts[0].source_as_of == source_as_of
+    assert restored.receipts[0].expires_at == expires_at
+    assert restored.receipts[0].freshness is FactFreshness.REALTIME
+    assert restored.receipts[0].source_ref == "host://current-machine"
+
+
+def test_ledger_restores_legacy_snapshot_without_freshness_fields():
+    created_at = "2026-07-23T02:00:00+00:00"
+    snapshot = [
+        {
+            "call_id": "call-legacy",
+            "producer": "legacy-tool",
+            "evidence_types": ["public_web"],
+            "payload_digest": "digest",
+            "user_id": "7",
+            "conversation_id": "conv-1",
+            "created_at": created_at,
+        }
+    ]
+
+    restored = EvidenceLedger.from_snapshot(
+        snapshot,
+        user_id="7",
+        conversation_id="conv-1",
+    )
+
+    assert len(restored.receipts) == 1
+    assert restored.receipts[0].freshness is FactFreshness.UNKNOWN
+    assert restored.receipts[0].observed_at == restored.receipts[0].created_at
 
 
 def test_ledger_snapshot_rejects_receipt_from_another_scope():

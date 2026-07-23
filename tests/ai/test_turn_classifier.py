@@ -1141,6 +1141,50 @@ async def test_data_query_turn_classifier_uses_llm_for_explicit_new_query():
 
 
 @pytest.mark.asyncio
+async def test_data_query_turn_classifier_prefers_fresh_query_over_unrelated_previous_result():
+    """新的业务主题和时间范围不能被无关的上一轮结果短路。"""
+    llm = object()
+    chat_client = _mock_chat_client("not json")
+
+    with patch(
+        "app.services.ai.config.AgentConfigProvider.get_configured_llm",
+        AsyncMock(return_value=llm),
+    ), patch(
+        "app.services.ai.data_query_turn_classifier.chat_client_from_handle",
+        return_value=chat_client,
+    ):
+        classification, _, _ = await resolve_data_query_turn_classification(
+            "看看这周各智能体的调用情况，并可视化分析一下",
+            [
+                {"role": "assistant", "content": "上一轮是订单金额汇总，结果为 null。"},
+                {"role": "user", "content": "看看这周各智能体的调用情况，并可视化分析一下"},
+            ],
+            has_last_data_result=True,
+        )
+
+    assert classification.turn_type == DataQueryTurnType.NEW_DATA_QUERY
+    assert classification.requires_fresh_data is True
+    assert classification.requires_sql_query is True
+
+
+@pytest.mark.asyncio
+async def test_data_query_turn_classifier_still_reuses_explicit_previous_result_visualization():
+    """纯粹引用上一轮结果的可视化请求仍然可以短路复用。"""
+    classification, _, _ = await resolve_data_query_turn_classification(
+        "把刚才的结果画成柱状图",
+        [
+            {"role": "assistant", "content": "已返回订单金额汇总结果。"},
+            {"role": "user", "content": "把刚才的结果画成柱状图"},
+        ],
+        has_last_data_result=True,
+    )
+
+    assert classification.turn_type == DataQueryTurnType.RESULT_ANALYSIS
+    assert classification.requires_fresh_data is False
+    assert classification.requires_sql_query is False
+
+
+@pytest.mark.asyncio
 async def test_resolve_turn_reuses_routing_intent_evidence_without_second_llm_call():
     """外层已完成语义识别时，通用会话分类不得再次调用意图模型。"""
     evidence = IntentResponse(

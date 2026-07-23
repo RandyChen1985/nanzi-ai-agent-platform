@@ -21,7 +21,7 @@ from app.services.ai.chatbi_sql_user_messages import format_empty_filter_result_
 from app.services.ai.data_query_semantic_intent import DataQuerySemanticIntent, format_empty_result_semantic_repair_context, semantic_intent_from_dict, semantic_intent_to_dict
 from app.services.ai.executors.prompts import DataQueryPrompts
 from app.services.ai.grounding.ledger import EvidenceLedger
-from app.services.ai.grounding.models import EvidenceType
+from app.services.ai.grounding.models import EvidenceType, FactFreshness
 from app.services.ai.grounding.policy import (
     FactRequirement,
     contains_grounding_fact_signal,
@@ -126,6 +126,12 @@ class DataAgentRunner(BaseExecutor):
                     if has_fact_signal
                     else frozenset()
                 ),
+                freshness=(
+                    FactFreshness.DYNAMIC
+                    if self._requires_fresh_data
+                    else FactFreshness.REUSE_PREVIOUS
+                ),
+                allow_conversation_reuse=not self._requires_fresh_data,
             ),
             candidate_text=candidate_text,
             ledger=ledger,
