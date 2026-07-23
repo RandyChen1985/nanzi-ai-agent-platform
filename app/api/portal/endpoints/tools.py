@@ -5,7 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 import uuid
 import json
 
-from app.core.dependencies import require_admin, require_permission
+from app.core.dependencies import require_admin, require_permission, require_api_key
 from app.core.orm import get_db_session
 from app.models.tool import SysApiTool
 from app.models.mcp import McpToolCache
@@ -16,9 +16,9 @@ router = APIRouter()
 @router.get("/mcp", response_model=List[Dict[str, Any]])
 async def list_published_mcp_tools(
     db: AsyncSession = Depends(get_db_session),
-    user: Dict = Depends(require_permission("menu", "menu:system:config"))
+    user: Dict = Depends(require_api_key),
 ):
-    """List all MCP tools that are marked as published"""
+    """列出已发布的 MCP 工具（任意持有有效 API Key 的登录用户可读，供智能体配置勾选）。"""
     # ... (rest of function)
     from sqlalchemy.orm import joinedload
     from app.models.mcp import McpServer
@@ -40,9 +40,9 @@ async def list_published_mcp_tools(
 @router.get("", response_model=List[SysApiToolResponse])
 async def list_tools(
     db: AsyncSession = Depends(get_db_session),
-    user: Dict = Depends(require_permission("menu", "menu:system:config"))
+    user: Dict = Depends(require_api_key),
 ):
-    """List all configured API tools"""
+    """列出系统 HTTP/API 工具（任意持有有效 API Key 的登录用户可读，供智能体配置勾选）。"""
     query = select(SysApiTool).order_by(SysApiTool.created_at.desc())
     result = await db.execute(query)
     return result.scalars().all()
