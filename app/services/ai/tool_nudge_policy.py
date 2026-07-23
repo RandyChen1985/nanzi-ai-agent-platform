@@ -300,6 +300,50 @@ def _build_semantic_sub_agent_message(
     )
 
 
+def _resolve_resource_catalog_nudge(query: str, tools: List[Any]) -> Optional[ToolNudge]:
+    """权限内数据集/知识库目录清单：优先促发 list 工具，禁止误推 search/sub_agent。"""
+    from app.services.ai.intent_service import looks_like_accessible_resource_catalog_query
+
+    if not looks_like_accessible_resource_catalog_query(query):
+        return None
+
+    available = {
+        str(getattr(tool, "name", "") or ""): tool
+        for tool in (tools or [])
+        if getattr(tool, "name", None)
+    }
+    q = (query or "").lower()
+    prefers_kb = any(token in q for token in ("知识库", "knowledge"))
+    prefers_ds = any(token in q for token in ("数据集", "dataset"))
+
+    if prefers_kb and "list_accessible_knowledge_bases" in available:
+        tool_name = "list_accessible_knowledge_bases"
+        label = "当前用户有权限的知识库目录"
+    elif prefers_ds and "list_accessible_datasets" in available:
+        tool_name = "list_accessible_datasets"
+        label = "当前用户有权限的数据集目录"
+    elif "list_accessible_knowledge_bases" in available and not prefers_ds:
+        tool_name = "list_accessible_knowledge_bases"
+        label = "当前用户有权限的知识库目录"
+    elif "list_accessible_datasets" in available:
+        tool_name = "list_accessible_datasets"
+        label = "当前用户有权限的数据集目录"
+    else:
+        return None
+
+    return ToolNudge(
+        tool_name=tool_name,
+        score=0.98,
+        message=(
+            f"【本轮工具优先】用户在询问{label}。"
+            f"必须先调用 {tool_name} 获取权限内轻量目录（id/名称/备注），"
+            "严禁调用 search_knowledge_base 做正文检索，也严禁编造权限清单。"
+            "若工具返回为空，如实说明当前无可访问资源。"
+        ),
+        force_first_call=True,
+    )
+
+
 def _resolve_notification_nudge(query: str, tools: List[Any]) -> Optional[ToolNudge]:
     normalized_query = query.lower()
     if not _contains_any(normalized_query, _NOTIFICATION_ACTION_TERMS):
@@ -308,6 +352,7 @@ def _resolve_notification_nudge(query: str, tools: List[Any]) -> Optional[ToolNu
     available_tool_names = {
         str(getattr(tool, "name", "") or "")
         for tool in (tools or [])
+        if getattr(tool, "name", None)
     }
     for tool_name, channel_terms, channel_label in _NOTIFICATION_CHANNELS:
         if tool_name not in available_tool_names:
@@ -453,6 +498,10 @@ def resolve_tool_nudge(
     notification_nudge = _resolve_notification_nudge(query, tools)
     if notification_nudge is not None:
         return notification_nudge
+
+    catalog_nudge = _resolve_resource_catalog_nudge(query, tools)
+    if catalog_nudge is not None:
+        return catalog_nudge
 
     signals = _query_signals(query)
     if len(signals) < 2:

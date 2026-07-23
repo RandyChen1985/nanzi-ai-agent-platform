@@ -28,6 +28,32 @@ def test_platform_self_help_overrides_knowledge_binding_and_semantic_knowledge()
     assert decision.allows_data_route is False
 
 
+@pytest.mark.parametrize(
+    "query",
+    [
+        "我们有哪些知识库权限",
+        "我们有哪些知识库",
+        "我有哪些知识库",
+        "有哪些知识库权限",
+        "我能访问哪些数据集",
+        "知识库列表",
+    ],
+)
+def test_resource_catalog_query_stays_platform_self_help_not_knowledge_search(query):
+    """权限/目录清单问法不得委派知识库检索。"""
+    decision = resolve_request_decision(
+        query,
+        semantic_intent=IntentType.KNOWLEDGE_BASE,
+        semantic_confidence=0.9,
+        has_knowledge_binding=True,
+    )
+
+    assert decision.source == RequestSource.PLATFORM_SELF_HELP
+    assert decision.capability == RequestCapability.ANSWER
+    assert decision.should_delegate is False
+    assert decision.requires_knowledge_search is False
+
+
 def test_public_web_request_overrides_knowledge_semantics_without_internal_search():
     decision = resolve_request_decision(
         "搜索一下有孚网络的最新信息",

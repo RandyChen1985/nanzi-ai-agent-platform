@@ -456,6 +456,27 @@ def test_knowledge_base_semantic_query_still_forces_knowledge_sub_agent():
     assert nudge.should_force_first_call is True
 
 
+def test_resource_catalog_query_does_not_force_knowledge_sub_agent():
+    tools = [
+        _tool("sub_agent_call", "委派其他专有子智能体执行特定任务（如查数、查手册等）"),
+        _tool("list_accessible_knowledge_bases", "列出当前用户有权限的知识库目录"),
+        _tool("search_knowledge_base", "知识库文档检索"),
+    ]
+
+    nudge = resolve_tool_nudge(
+        "我们有哪些知识库权限",
+        tools,
+        available_sub_agent_names={"knowledge-base"},
+        sub_agent_candidates_by_capability={"knowledge_base": ["knowledge-base"]},
+        semantic_intent=IntentType.KNOWLEDGE_BASE,
+        semantic_confidence=0.9,
+    )
+
+    assert nudge is None or nudge.tool_name != "sub_agent_call"
+    if nudge is not None:
+        assert nudge.tool_name == "list_accessible_knowledge_bases"
+
+
 def test_general_previous_web_info_visualization_does_not_force_data_sub_agent():
     tools = [
         _tool("sub_agent_call", "委派其他专有子智能体执行特定任务（如查数、查手册等）"),

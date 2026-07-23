@@ -26,6 +26,8 @@ const props = defineProps<{
   versionConfigSteps: { id: VersionConfigStep; label: string }[];
   versionConfigProgress: number;
   selectedToolsCount: number;
+  selectedStaticToolsCount: number;
+  selectedMcpToolsCount: number;
   selectedSkillsCount: number;
   promptCharCount: number;
   versionStatusLabel: string;
@@ -580,7 +582,7 @@ const externalCreationMissingFields = computed(() => {
                   />
                 </div>
                 <span class="text-xs font-medium text-primary bg-primary/10 px-2.5 py-1 rounded-full whitespace-nowrap">
-                  已选 {{ selectedToolsCount }} 个
+                  已选 {{ selectedToolsCount }}/{{ allAvailableToolsCount + mcpToolsCount }}
                 </span>
               </div>
               <div class="flex bg-gray-100 p-0.5 rounded-lg text-xs">
@@ -589,19 +591,19 @@ const externalCreationMissingFields = computed(() => {
                   @click="emit('update:toolTab', 'static')"
                   class="px-3 py-1.5 rounded-md transition-all font-medium"
                   :class="toolTab === 'static' ? 'bg-white shadow-sm text-primary' : 'text-gray-400'"
-                >系统工具 ({{ allAvailableToolsCount }})</button>
+                >系统工具 ({{ selectedStaticToolsCount }}/{{ allAvailableToolsCount }})</button>
                 <button
                   type="button"
                   @click="emit('update:toolTab', 'mcp')"
                   class="px-3 py-1.5 rounded-md transition-all font-medium"
                   :class="toolTab === 'mcp' ? 'bg-white shadow-sm text-primary' : 'text-gray-400'"
-                >MCP 工具 ({{ mcpToolsCount }})</button>
+                >MCP 工具 ({{ selectedMcpToolsCount }}/{{ mcpToolsCount }})</button>
                 <button
                   type="button"
                   @click="emit('update:toolTab', 'skills')"
                   class="px-3 py-1.5 rounded-md transition-all font-medium"
                   :class="toolTab === 'skills' ? 'bg-white shadow-sm text-primary' : 'text-gray-400'"
-                >Skills ({{ enabledGlobalSkillsCount }})</button>
+                >Skills ({{ versionForm.skills_custom ? selectedSkillsCount : enabledGlobalSkillsCount }}/{{ enabledGlobalSkillsCount }})</button>
               </div>
             </div>
 
@@ -619,10 +621,7 @@ const externalCreationMissingFields = computed(() => {
                     </svg>
                     <span class="text-xs">{{ group.icon }}</span>
                     <span class="text-xs font-bold text-gray-700">{{ group.label }}</span>
-                    <span class="text-[10px] text-gray-400">({{ group.tools.length }})</span>
-                    <span v-if="getStaticGroupSelectedCount(group.tools) > 0" class="text-[9px] font-bold text-primary bg-primary/10 px-1.5 py-0.5 rounded-full">
-                      已选 {{ getStaticGroupSelectedCount(group.tools) }}
-                    </span>
+                    <span class="text-[10px] text-gray-400">({{ getStaticGroupSelectedCount(group.tools) }}/{{ group.tools.length }})</span>
                   </button>
                 </div>
                 <div v-show="!isStaticGroupCollapsed(group.label)" class="grid grid-cols-1 sm:grid-cols-2 gap-2 p-3">
@@ -692,8 +691,7 @@ const externalCreationMissingFields = computed(() => {
                       <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
                     </svg>
                     <span class="text-[10px] font-bold text-indigo-700 uppercase truncate">{{ serverName }}</span>
-                    <span class="text-[10px] text-indigo-400">({{ tools.length }})</span>
-                    <span v-if="getMcpGroupSelectedCount(tools) > 0" class="text-[9px] font-bold text-indigo-700 bg-indigo-100 px-1.5 py-0.5 rounded-full">已选 {{ getMcpGroupSelectedCount(tools) }}</span>
+                    <span class="text-[10px] text-indigo-400">({{ getMcpGroupSelectedCount(tools) }}/{{ tools.length }})</span>
                   </button>
                   <button v-if="canEditVersion" type="button" @click.stop="emit('toggleSelectAllMcp', serverName, tools)" class="text-[10px] font-bold text-indigo-600 hover:text-indigo-800 ml-2 flex-shrink-0">
                     {{ isAllMcpSelected(serverName, tools) ? '取消全选' : '一键全选' }}
@@ -758,7 +756,7 @@ const externalCreationMissingFields = computed(() => {
               <template v-else>
                 <div class="flex items-center justify-between gap-2">
                   <span class="text-xs font-medium text-primary bg-primary/10 px-2.5 py-1 rounded-full">
-                    已选 {{ selectedSkillsCount }} 个公共技能
+                    已选 {{ selectedSkillsCount }}/{{ enabledGlobalSkillsCount }} 个公共技能
                   </span>
                   <span class="text-[10px] text-amber-600" v-if="selectedSkillsCount === 0">至少选择 1 个公共技能</span>
                 </div>
@@ -837,12 +835,12 @@ const externalCreationMissingFields = computed(() => {
               </div>
               <div class="summary-card">
                 <div class="text-[10px] text-gray-400 uppercase font-bold mb-1">工具能力</div>
-                <div class="text-sm font-semibold text-gray-800">{{ selectedToolsCount }} 个已启用</div>
+                <div class="text-sm font-semibold text-gray-800">{{ selectedToolsCount }}/{{ allAvailableToolsCount + mcpToolsCount }} 个已启用</div>
               </div>
               <div class="summary-card">
                 <div class="text-[10px] text-gray-400 uppercase font-bold mb-1">Skills</div>
                 <div class="text-sm font-semibold text-gray-800">
-                  {{ versionForm.skills_custom ? `自定义 ${selectedSkillsCount} 个` : '全部公共 + 个人' }}
+                  {{ versionForm.skills_custom ? `自定义 ${selectedSkillsCount}/${enabledGlobalSkillsCount}` : '全部公共 + 个人' }}
                 </div>
               </div>
               <div class="summary-card">

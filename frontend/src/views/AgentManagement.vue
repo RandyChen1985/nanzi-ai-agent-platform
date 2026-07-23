@@ -658,6 +658,12 @@ const selectedSkillsCount = computed(() => versionForm.value.skills?.length ?? 0
 const enabledGlobalSkills = computed(() =>
   availableSkills.value.filter((s) => String(s.enabled ?? 'true') !== 'false')
 );
+const selectedStaticToolsCount = computed(() =>
+  allAvailableTools.value.filter((t) => isToolSelected(t.name)).length
+);
+const selectedMcpToolsCount = computed(() =>
+  mcpTools.value.filter((t) => isToolSelected(t.name)).length
+);
 const promptCharCount = computed(() => versionForm.value.system_prompt?.length ?? 0);
 
 const versionConfigProgress = computed(() => {
@@ -3588,6 +3594,8 @@ const formatSkillCountLabel = (agent: AIAgent) => {
       :version-config-steps="versionConfigSteps"
       :version-config-progress="versionConfigProgress"
       :selected-tools-count="selectedToolsCount"
+      :selected-static-tools-count="selectedStaticToolsCount"
+      :selected-mcp-tools-count="selectedMcpToolsCount"
       :selected-skills-count="selectedSkillsCount"
       :prompt-char-count="promptCharCount"
       :version-status-label="versionStatusLabel"

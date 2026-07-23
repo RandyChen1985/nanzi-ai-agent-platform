@@ -73,7 +73,7 @@
                     <template v-else-if="headerExpertLabel">
                         <span class="text-gray-400 normal-case tracking-normal">准备就绪</span>
                         <button
-                            v-if="isMobile && !isUrlAgentPinned"
+                            v-if="!isUrlAgentPinned"
                             type="button"
                             @click.stop="switchToAuto"
                             class="text-gray-400 hover:text-red-500 normal-case tracking-normal font-bold transition-colors shrink-0"

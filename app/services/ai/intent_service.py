@@ -247,9 +247,15 @@ _RESOURCE_CATALOG_SUBJECTS = (
 )
 _RESOURCE_CATALOG_LIST_SIGNALS = (
     "我有哪些",
+    "我们有哪些",
     "我有什么",
+    "我们有什么",
+    "有哪些",
+    "有什么",
     "我能访问",
+    "我们能访问",
     "我能看",
+    "我们能看",
     "我可以看",
     "我可以用",
     "有权限",
@@ -274,6 +280,12 @@ _RESOURCE_CATALOG_BLOCKERS = (
     "机房",
     "metric",
     "统计",
+    "规范",
+    "手册",
+    "sop",
+    "流程",
+    "怎么做",
+    "如何做",
 )
 
 
@@ -295,7 +307,7 @@ def looks_like_accessible_resource_catalog_query(user_question: str) -> bool:
         "knowledge base list",
     }:
         return True
-    if "列表" in q and any(token in q for token in ("我", "有权限", "可访问", "可用")):
+    if "列表" in q and any(token in q for token in ("我", "有权限", "可访问", "可用", "我们")):
         return True
     if any(sig in q for sig in _RESOURCE_CATALOG_LIST_SIGNALS):
         return True
@@ -522,6 +534,9 @@ def looks_like_knowledge_query(user_question: str) -> bool:
     """轻量启发式：用户是否在问 SOP/制度/操作指引（非结构化业务数据，且非联网搜索）。"""
     q = (user_question or "").strip().lower()
     if not q:
+        return False
+    # 权限/目录清单不是文档检索
+    if looks_like_accessible_resource_catalog_query(user_question):
         return False
     formatting_correction_signals = [
         "markdown", "格式", "渲染", "排版", "不符合", "不符",

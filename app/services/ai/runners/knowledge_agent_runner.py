@@ -426,14 +426,34 @@ class KnowledgeAgentRunner(AssistantAgentRunner):
         system_content = f"{KnowledgeChatPrompts.TURN_SYSTEM_HINT}\n\n{system_content}"
 
         # RAG 分类与复用决策
-        is_followup = self._looks_like_rag_followup(user_question, history)
+        from app.services.ai.intent_service import looks_like_accessible_resource_catalog_query
+
+        is_catalog_query = looks_like_accessible_resource_catalog_query(user_question)
+        is_followup = (not is_catalog_query) and self._looks_like_rag_followup(user_question, history)
         prefetched_knowledge_output: str | None = None
         prefetched_citations_raw: list | None = None
         knowledge_service_unavailable = False
         prefetch_had_citations = False
         knowledge_state_prompt = ""
 
-        if is_followup:
+        if is_catalog_query:
+            yield {
+                "type": "log",
+                "id": f"kb_catalog_{uuid.uuid4().hex[:8]}",
+                "title": "知识库目录清单",
+                "details": (
+                    "检测到权限/目录清单询问，跳过 search_knowledge_base 自动检索；"
+                    "请使用 list_accessible_knowledge_bases 返回可访问知识库。"
+                ),
+                "status": "success",
+                "category": "intent",
+            }
+            system_content += (
+                "\n\n【本轮为知识库权限/目录清单】"
+                "必须调用 list_accessible_knowledge_bases 列出当前用户可访问知识库；"
+                "禁止调用 search_knowledge_base 检索文档正文，禁止编造权限清单。"
+            )
+        elif is_followup:
             yield {
                 "type": "log",
                 "id": f"kb_followup_{uuid.uuid4().hex[:8]}",

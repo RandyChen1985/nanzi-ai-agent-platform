@@ -13,6 +13,7 @@ from app.services.ai.chatbi_qualification import ChatBIQualification, ChatBIMode
 
 from app.services.ai.intent_service import (
     IntentType,
+    looks_like_accessible_resource_catalog_query,
     looks_like_context_action,
     looks_like_data_followup,
     looks_like_dynamic_public_fact_query,
@@ -196,6 +197,16 @@ def resolve_request_decision(
             RequestCapability.ANSWER,
             0.95,
             "platform self-service or skills/tools configuration query",
+            semantic_name=effective_intent,
+            semantic_confidence=semantic_score,
+        )
+
+    if looks_like_accessible_resource_catalog_query(q):
+        return _decision(
+            RequestSource.PLATFORM_SELF_HELP,
+            RequestCapability.ANSWER,
+            0.94,
+            "accessible dataset/knowledge-base catalog listing",
             semantic_name=effective_intent,
             semantic_confidence=semantic_score,
         )
