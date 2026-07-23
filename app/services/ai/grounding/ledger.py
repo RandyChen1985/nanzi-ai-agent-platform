@@ -3,10 +3,10 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Iterable
 
-from app.services.ai.grounding.models import EvidenceReceipt, EvidenceType
+from app.services.ai.grounding.models import EvidenceReceipt, EvidenceType, FactFreshness
 
 
 _ASCII_MARKER_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{1,}")
@@ -65,6 +65,38 @@ def _marker_sets(value: Any) -> tuple[frozenset[str], frozenset[str]]:
 
 def _marker_digests(value: Any) -> frozenset[str]:
     return _marker_sets(value)[0]
+
+
+def _parse_datetime(value: Any, *, fallback: datetime | None = None) -> datetime | None:
+    if value in (None, ""):
+        return fallback
+    try:
+        return datetime.fromisoformat(str(value))
+    except (TypeError, ValueError):
+        return fallback
+
+
+def _infer_freshness(evidence_types: frozenset[EvidenceType]) -> FactFreshness:
+    if EvidenceType.RUNTIME_STATE in evidence_types:
+        return FactFreshness.REALTIME
+    if evidence_types and evidence_types <= {EvidenceType.CONVERSATION_MEMORY}:
+        return FactFreshness.REUSE_PREVIOUS
+    if evidence_types & {
+        EvidenceType.INTERNAL_DATA,
+        EvidenceType.INTERNAL_KNOWLEDGE,
+        EvidenceType.PUBLIC_WEB,
+        EvidenceType.USER_FILE,
+        EvidenceType.EXTERNAL_TOOL,
+    }:
+        return FactFreshness.DYNAMIC
+    return FactFreshness.UNKNOWN
+
+
+def _parse_freshness(value: Any) -> FactFreshness:
+    try:
+        return FactFreshness(str(value or FactFreshness.UNKNOWN.value))
+    except (TypeError, ValueError):
+        return FactFreshness.UNKNOWN
 
 
 def _is_error_like_text(text: str) -> bool:
@@ -214,6 +246,17 @@ class EvidenceLedger:
                 "user_id": receipt.user_id,
                 "conversation_id": receipt.conversation_id,
                 "created_at": receipt.created_at.isoformat(),
+                "observed_at": (
+                    receipt.observed_at.isoformat() if receipt.observed_at else None
+                ),
+                "source_as_of": (
+                    receipt.source_as_of.isoformat() if receipt.source_as_of else None
+                ),
+                "expires_at": (
+                    receipt.expires_at.isoformat() if receipt.expires_at else None
+                ),
+                "freshness": receipt.freshness.value,
+                "source_ref": receipt.source_ref,
                 "marker_digests": sorted(receipt.marker_digests),
                 "strong_marker_digests": sorted(receipt.strong_marker_digests),
                 "empty_success": receipt.empty_success,
@@ -257,7 +300,18 @@ class EvidenceLedger:
                         payload_digest=str(raw["payload_digest"]),
                         user_id=receipt_user_id,
                         conversation_id=receipt_conversation_id,
-                        created_at=datetime.fromisoformat(str(raw["created_at"])),
+                        created_at=(created_at := datetime.fromisoformat(str(raw["created_at"]))),
+                        observed_at=_parse_datetime(
+                            raw.get("observed_at"), fallback=created_at
+                        ),
+                        source_as_of=_parse_datetime(raw.get("source_as_of")),
+                        expires_at=_parse_datetime(raw.get("expires_at")),
+                        freshness=_parse_freshness(raw.get("freshness")),
+                        source_ref=(
+                            str(raw.get("source_ref"))
+                            if raw.get("source_ref") is not None
+                            else None
+                        ),
                         marker_digests=frozenset(
                             str(item) for item in raw.get("marker_digests") or []
                         ),
@@ -280,6 +334,11 @@ class EvidenceLedger:
         evidence_types: Iterable[EvidenceType],
         result: Any,
         policy: str = "non_empty",
+        observed_at: datetime | None = None,
+        source_as_of: datetime | None = None,
+        expires_at: datetime | None = None,
+        freshness: FactFreshness = FactFreshness.UNKNOWN,
+        source_ref: str | None = None,
     ) -> EvidenceReceipt | None:
         """记录工具调用取证收据。
 
@@ -302,6 +361,11 @@ class EvidenceLedger:
             if non_empty_success
             else (frozenset(), frozenset())
         )
+        inferred_freshness = (
+            freshness
+            if freshness is not FactFreshness.UNKNOWN
+            else _infer_freshness(normalized_types)
+        )
         receipt = EvidenceReceipt.create(
             call_id=call_id,
             producer=producer,
@@ -312,6 +376,11 @@ class EvidenceLedger:
             marker_digests=marker_digests,
             strong_marker_digests=strong_marker_digests,
             empty_success=not non_empty_success,
+            observed_at=observed_at,
+            source_as_of=source_as_of,
+            expires_at=expires_at,
+            freshness=inferred_freshness,
+            source_ref=source_ref,
         )
         self._receipts.append(receipt)
         return receipt
@@ -321,6 +390,63 @@ class EvidenceLedger:
         if not required:
             return bool(self._receipts)
         return any(receipt.evidence_types & required for receipt in self._receipts)
+
+    def has_fresh_evidence(
+        self,
+        required_types: Iterable[EvidenceType],
+        *,
+        freshness: FactFreshness = FactFreshness.UNKNOWN,
+        max_age_seconds: int | None = None,
+        require_source_as_of: bool = False,
+        allow_reuse: bool = False,
+        now: datetime | None = None,
+    ) -> bool:
+        """判断指定来源是否存在满足时效要求的证据。
+
+        旧收据没有 freshness 字段时按 ``UNKNOWN`` 处理，仍可通过原有门禁；
+        只有调用方明确声明了年龄窗口、过期时间或来源时间要求时，才会新增
+        时效性约束。
+        """
+        required = frozenset(required_types)
+        try:
+            requested_freshness = FactFreshness(freshness)
+        except (TypeError, ValueError):
+            requested_freshness = FactFreshness.UNKNOWN
+        current = now or datetime.now(timezone.utc)
+        if current.tzinfo is None:
+            current = current.replace(tzinfo=timezone.utc)
+
+        for receipt in self._receipts:
+            if required and not (receipt.evidence_types & required):
+                continue
+            if receipt.expires_at is not None:
+                expires_at = receipt.expires_at
+                if expires_at.tzinfo is None:
+                    expires_at = expires_at.replace(tzinfo=timezone.utc)
+                if expires_at <= current:
+                    continue
+            if requested_freshness == FactFreshness.REUSE_PREVIOUS and not allow_reuse:
+                continue
+            if requested_freshness in {
+                FactFreshness.DYNAMIC,
+                FactFreshness.REALTIME,
+            } and receipt.freshness not in {
+                FactFreshness.UNKNOWN,
+                FactFreshness.DYNAMIC,
+                FactFreshness.REALTIME,
+            }:
+                continue
+            if require_source_as_of and receipt.source_as_of is None:
+                continue
+            if max_age_seconds is not None:
+                observed_at = receipt.observed_at or receipt.created_at
+                if observed_at.tzinfo is None:
+                    observed_at = observed_at.replace(tzinfo=timezone.utc)
+                age_seconds = (current - observed_at).total_seconds()
+                if age_seconds > max(0, int(max_age_seconds)):
+                    continue
+            return True
+        return False
 
     def has_candidate_overlap(
         self,

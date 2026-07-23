@@ -1250,6 +1250,28 @@ defineExpose({
                                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
                                         </svg>
                                     </button>
+
+                                    <!-- Mobile: 新会话 / 历史（桌面端快捷指令栏已有，此处方便移动端触发） -->
+                                    <template v-if="isMobileViewport">
+                                        <button
+                                          type="button"
+                                          @mouseenter="closePlusCascadesOnHover"
+                                          @click="showPlusMenu = false; showSkillCascade = false; showExpertCascade = false; emit('system-command', '/new');"
+                                          class="w-full flex items-center space-x-3 px-3 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-primary/10 dark:hover:bg-primary/20 hover:text-primary transition-all duration-150"
+                                        >
+                                            <span class="text-lg">💬</span>
+                                            <span class="font-medium text-left">新会话</span>
+                                        </button>
+                                        <button
+                                          type="button"
+                                          @mouseenter="closePlusCascadesOnHover"
+                                          @click="showPlusMenu = false; showSkillCascade = false; showExpertCascade = false; emit('system-command', '/history');"
+                                          class="w-full flex items-center space-x-3 px-3 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-primary/10 dark:hover:bg-primary/20 hover:text-primary transition-all duration-150"
+                                        >
+                                            <span class="text-lg">🕒</span>
+                                            <span class="font-medium text-left">历史</span>
+                                        </button>
+                                    </template>
                                 </div>
 
                                 <!-- Desktop flyout: Skills -->

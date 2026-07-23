@@ -248,6 +248,11 @@ def classify_turn_from_intent(
             semantic_confidence=intent_info.confidence,
             has_last_data_result=has_last_data_result,
             has_knowledge_binding=has_knowledge_binding,
+            semantic_domain=getattr(intent_info, "domain", None),
+            semantic_operation=getattr(intent_info, "operation", None),
+            fact_kind=getattr(intent_info, "fact_kind", None),
+            freshness_requirement=getattr(intent_info, "freshness_requirement", None),
+            time_scope=getattr(intent_info, "time_scope", None),
         )
     else:
         # 调用方已传入决策对象（通常在启发式阶段计算），但此时语义意图尚未确定；
@@ -263,6 +268,11 @@ def classify_turn_from_intent(
                 semantic_confidence=intent_info.confidence,
                 has_last_data_result=has_last_data_result,
                 has_knowledge_binding=has_knowledge_binding,
+                semantic_domain=getattr(intent_info, "domain", None),
+                semantic_operation=getattr(intent_info, "operation", None),
+                fact_kind=getattr(intent_info, "fact_kind", None),
+                freshness_requirement=getattr(intent_info, "freshness_requirement", None),
+                time_scope=getattr(intent_info, "time_scope", None),
             )
     if (
         request_decision.source in {

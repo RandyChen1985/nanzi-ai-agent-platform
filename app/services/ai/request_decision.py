@@ -13,6 +13,7 @@ from app.services.ai.chatbi_qualification import ChatBIQualification, ChatBIMode
 
 from app.services.ai.intent_service import (
     IntentType,
+    looks_like_accessible_resource_catalog_query,
     looks_like_context_action,
     looks_like_data_followup,
     looks_like_dynamic_public_fact_query,
@@ -64,6 +65,13 @@ class RequestDecision:
     allows_data_route: bool = False
     semantic_intent: Optional[str] = None
     semantic_confidence: float = 0.0
+    semantic_domain: Optional[str] = None
+    semantic_operation: Optional[str] = None
+    fact_kind: Optional[str] = None
+    freshness_requirement: str = "unknown"
+    time_scope: Optional[str] = None
+    max_age_seconds: Optional[int] = None
+    requires_source_timestamp: bool = False
     chatbi_mode: Optional[str] = None
     chatbi_evidence_level: str = "none"
     chatbi_reason: Optional[str] = None
@@ -149,7 +157,7 @@ def apply_chatbi_qualification(
     )
 
 
-def resolve_request_decision(
+def _resolve_request_decision(
     query: str,
     *,
     semantic_intent: Any = None,
@@ -196,6 +204,16 @@ def resolve_request_decision(
             RequestCapability.ANSWER,
             0.95,
             "platform self-service or skills/tools configuration query",
+            semantic_name=effective_intent,
+            semantic_confidence=semantic_score,
+        )
+
+    if looks_like_accessible_resource_catalog_query(q):
+        return _decision(
+            RequestSource.PLATFORM_SELF_HELP,
+            RequestCapability.ANSWER,
+            0.94,
+            "accessible dataset/knowledge-base catalog listing",
             semantic_name=effective_intent,
             semantic_confidence=semantic_score,
         )
@@ -349,4 +367,60 @@ def resolve_request_decision(
         ),
         semantic_name=effective_intent,
         semantic_confidence=semantic_score,
+    )
+
+
+def resolve_request_decision(
+    query: str,
+    *,
+    semantic_intent: Any = None,
+    semantic_confidence: Any = None,
+    turn_intent: Any = None,
+    has_last_data_result: bool = False,
+    has_knowledge_binding: bool = False,
+    semantic_intent_blocks_followup: bool = False,
+    semantic_domain: Any = None,
+    semantic_operation: Any = None,
+    fact_kind: Any = None,
+    freshness_requirement: Any = None,
+    time_scope: Any = None,
+    max_age_seconds: Any = None,
+    requires_source_timestamp: bool = False,
+) -> RequestDecision:
+    """Resolve the legacy source/capability decision and attach fact semantics.
+
+    The source/capability rules remain unchanged.  The additional fields are
+    additive metadata consumed by grounding; callers that do not provide them
+    retain the previous behavior through ``unknown`` defaults.
+    """
+    decision = _resolve_request_decision(
+        query,
+        semantic_intent=semantic_intent,
+        semantic_confidence=semantic_confidence,
+        turn_intent=turn_intent,
+        has_last_data_result=has_last_data_result,
+        has_knowledge_binding=has_knowledge_binding,
+        semantic_intent_blocks_followup=semantic_intent_blocks_followup,
+    )
+
+    def _normalize(value: Any, default: str | None = None) -> str | None:
+        raw = getattr(value, "value", value)
+        normalized = str(raw or "").strip().lower()
+        return normalized or default
+
+    normalized_age: int | None = None
+    if max_age_seconds is not None:
+        try:
+            normalized_age = max(0, int(max_age_seconds))
+        except (TypeError, ValueError):
+            normalized_age = None
+    return replace(
+        decision,
+        semantic_domain=_normalize(semantic_domain),
+        semantic_operation=_normalize(semantic_operation),
+        fact_kind=_normalize(fact_kind),
+        freshness_requirement=_normalize(freshness_requirement, "unknown") or "unknown",
+        time_scope=(str(time_scope).strip() if time_scope is not None else None) or None,
+        max_age_seconds=normalized_age,
+        requires_source_timestamp=bool(requires_source_timestamp),
     )

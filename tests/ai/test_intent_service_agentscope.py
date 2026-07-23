@@ -39,6 +39,29 @@ async def test_intent_service_uses_agentscope_chat_client():
 
 
 @pytest.mark.asyncio
+async def test_intent_service_parses_fact_freshness_and_time_scope():
+    service = IntentService()
+    llm = object()
+    chat_client = _mock_chat_client(
+        '{"intent":"DATA_QUERY","confidence":0.93,"reasoning":"查询当前机器状态",'
+        '"entities":["load"],"domain":"runtime_environment","operation":"lookup",'
+        '"fact_kind":"machine_load","freshness_requirement":"realtime",'
+        '"time_scope":null}'
+    )
+
+    with patch(
+        "app.services.ai.intent_service.chat_client_from_handle",
+        return_value=chat_client,
+    ):
+        result = await service.identify_intent("查询当前机器负载", llm=llm)
+
+    assert result.fact_kind == "machine_load"
+    assert result.freshness_requirement == "realtime"
+    assert result.time_scope is None
+    assert "freshness_requirement" in service._format_instructions()
+
+
+@pytest.mark.asyncio
 async def test_intent_service_parses_json_inside_text():
     service = IntentService()
     llm = object()

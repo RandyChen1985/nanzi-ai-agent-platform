@@ -690,7 +690,9 @@ async def test_route_query_greeting_shortcut_skips_llm(mock_agents_metadata):
 @pytest.mark.parametrize(
     "query",
     [
-        "我有哪些数据集权限",
+        "我有哪些知识库权限",
+        "我们有哪些知识库权限",
+        "我们有哪些知识库",
         "我能访问哪些数据集",
         "列出我的数据集",
         "我有哪些知识库",

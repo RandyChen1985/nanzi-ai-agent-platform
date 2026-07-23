@@ -37,7 +37,7 @@ def _record_previous_result_evidence(
     """将可信的跨轮结构化缓存登记为当前轮派生数据凭证。"""
     from app.core.context import get_current_agent_context
     from app.services.ai.grounding.ledger import EvidenceLedger
-    from app.services.ai.grounding.models import EvidenceType
+    from app.services.ai.grounding.models import EvidenceType, FactFreshness
 
     context = get_current_agent_context()
     ledger = getattr(context, "grounding_evidence_ledger", None) if context else None
@@ -61,6 +61,8 @@ def _record_previous_result_evidence(
         producer="chatbi_previous_result",
         evidence_types={EvidenceType.INTERNAL_DATA},
         result=last_data_result,
+        freshness=FactFreshness.REUSE_PREVIOUS,
+        source_ref="chatbi://previous-result",
     )
 
 

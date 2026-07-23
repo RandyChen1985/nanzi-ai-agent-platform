@@ -78,6 +78,19 @@ def test_platform_prompt_exposes_explicit_authority_and_safe_meta_contract():
     assert "quick:" in prompt
 
 
+def test_platform_prompt_prefers_mermaid_for_structural_diagrams_without_replacing_chatbi_charts():
+    prompt = AgentServicePrompts.prepend_platform_global_system_prompt(
+        None,
+        agent_config=SimpleNamespace(tools=[]),
+    )
+
+    assert "流程图、原理图、系统架构图、组织架构图" in prompt
+    assert "优先使用 Mermaid" in prompt
+    assert "```mermaid" in prompt
+    assert "```chart``` / ECharts" in prompt
+    assert "不要强行改成 Mermaid" in prompt
+
+
 def test_interactive_prompt_keeps_inspirational_quick_suggestions_by_default():
     assembled = assemble_system_prompt(_params())
 

@@ -45,6 +45,39 @@ class ToolLoopFuseError(RuntimeToolError):
     """Raised when repeated identical tool calls exceed the fuse threshold."""
 
 
+_TOOL_LOOP_FUSE_MARKERS = (
+    "停止继续调用任何工具",
+    "系统判断继续执行大概率只会消耗步数",
+    "系统判断已陷入拉锯循环并中止",
+    "系统中止以避免无意义空转",
+    "工具调用总数已达",
+)
+
+
+def extract_tool_loop_fuse_message(exc: BaseException | None) -> str | None:
+    """从异常链 / ExceptionGroup 中提取工具循环熔断信息（若有）。"""
+    if exc is None:
+        return None
+    if isinstance(exc, ToolLoopFuseError):
+        return str(exc)
+    message = str(exc or "").strip()
+    if message and any(marker in message for marker in _TOOL_LOOP_FUSE_MARKERS):
+        return message
+    exceptions = getattr(exc, "exceptions", None)
+    if exceptions:
+        for nested in exceptions:
+            found = extract_tool_loop_fuse_message(nested)
+            if found:
+                return found
+    for attr in ("__cause__", "__context__"):
+        nested = getattr(exc, attr, None)
+        if isinstance(nested, BaseException):
+            found = extract_tool_loop_fuse_message(nested)
+            if found:
+                return found
+    return None
+
+
 class RuntimePermissionError(AgentScopeRuntimeError):
     kind: RuntimeErrorKind = "permission"
 

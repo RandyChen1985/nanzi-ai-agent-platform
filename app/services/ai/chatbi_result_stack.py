@@ -32,6 +32,10 @@ class ChatBIResultRef:
     analysis_context: ChatBIAnalysisContext = field(default_factory=ChatBIAnalysisContext)
     trace_id: str = ""
     created_at: str = field(default_factory=lambda: datetime.now().isoformat())
+    observed_at: str | None = None
+    data_as_of: str | None = None
+    freshness: str = "dynamic"
+    source_ref: str | None = None
     version: int = 1
 
     def to_dict(self) -> dict[str, Any]:

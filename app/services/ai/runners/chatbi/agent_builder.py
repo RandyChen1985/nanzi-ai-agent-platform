@@ -42,7 +42,10 @@ async def build_native_agent(
     primary_model_name: str,
     restored_state: Any = None,
 ) -> Any:
+    from app.services.ai.time_anchor import filter_redundant_time_tools
+
     dar = _runner_module()
+    tools = filter_redundant_time_tools(tools, system_content)
     toolkit = dar.build_toolkit(tools, approval_mode=runner.permission_options.get("approval_mode"), user_id=runner._current_user_id())
     workspace = await dar.get_local_workspace(
         user_id=runner._current_user_id(),

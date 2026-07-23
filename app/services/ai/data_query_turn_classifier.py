@@ -509,6 +509,10 @@ def _can_reuse_previous_result(
     has_last_data_result: bool,
     allow_contextual_llm_reuse: bool = False,
 ) -> bool:
+    # 新业务对象、时间范围或明确查数动作优先于“可视化/分析”动作，
+    # 否则同一句“本周各智能体调用情况并可视化”会被旧结果短路。
+    if _looks_like_explicit_new_data_query(user_query):
+        return False
     if not looks_like_pure_result_followup(user_query):
         return False
     q = (user_query or "").strip().lower()
@@ -960,7 +964,11 @@ async def resolve_data_query_turn_classification(
             skip_intent_llm=True,
             intent=IntentType.DATA_QUERY,
         )
-    elif classification is None and looks_like_pure_result_followup(q):
+    elif (
+        classification is None
+        and not _looks_like_explicit_new_data_query(q)
+        and looks_like_pure_result_followup(q)
+    ):
         classification = _classification_for_clarification(
             "请求类别 LLM 未返回有效结果；检测到结果追问但最近对话中没有可信的可复用数据上下文",
             skip_intent_llm=True,

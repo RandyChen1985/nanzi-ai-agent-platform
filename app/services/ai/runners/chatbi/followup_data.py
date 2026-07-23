@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
@@ -76,12 +76,27 @@ async def save_last_data_result_for_followups(
     user_id = runner._current_user_id()
     if not user_id:
         return
+    observed_at = datetime.now(timezone.utc).isoformat()
+    data_as_of = (
+        normalized.get("data_as_of") or normalized.get("as_of")
+        if isinstance(normalized, dict)
+        else None
+    )
+    source_ref = (
+        f"dataset://{tool_args.get('dataset_name')}"
+        if tool_args.get("dataset_name")
+        else None
+    )
     payload = {
         "sql": tool_args.get("sql") or tool_args.get("query"),
         "data_source": tool_args.get("data_source"),
         "dataset_name": tool_args.get("dataset_name"),
         "rows": normalized,
         "saved_at": datetime.now().isoformat(),
+        "observed_at": observed_at,
+        "freshness": "dynamic",
+        "source_ref": source_ref,
+        "data_as_of": data_as_of,
         "trace_id": runner.trace_id,
     }
     try:
@@ -109,6 +124,10 @@ async def save_last_data_result_for_followups(
             rows=normalized,
             analysis_context=analysis_context,
             trace_id=str(runner.trace_id or ""),
+            observed_at=observed_at,
+            data_as_of=data_as_of,
+            freshness="dynamic",
+            source_ref=source_ref,
         )
         await memory_service.push_data_result_ref(
             user_id,

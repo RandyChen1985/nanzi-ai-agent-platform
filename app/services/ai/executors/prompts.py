@@ -2449,6 +2449,11 @@ class AssistantPrompts:
         semantic_reasoning = route_hints.get("semantic_reasoning")
         semantic_domain = str(route_hints.get("semantic_domain") or "unknown").strip()
         semantic_operation = str(route_hints.get("semantic_operation") or "unknown").strip()
+        fact_kind = str(route_hints.get("fact_kind") or "unknown").strip()
+        freshness_requirement = str(
+            route_hints.get("freshness_requirement") or "unknown"
+        ).strip().lower()
+        time_scope = str(route_hints.get("time_scope") or "").strip()
         chatbi_mode = str(route_hints.get("chatbi_mode") or "").strip().lower()
         chatbi_evidence_level = str(
             route_hints.get("chatbi_evidence_level") or "none"
@@ -2471,6 +2476,9 @@ class AssistantPrompts:
             f"- user_action_type: {action_type}\n"
             f"- semantic_domain: {semantic_domain}\n"
             f"- semantic_operation: {semantic_operation}\n"
+            f"- fact_kind: {fact_kind}\n"
+            f"- freshness_requirement: {freshness_requirement}\n"
+            f"- time_scope: {time_scope or '未指定'}\n"
             "以上只是路由层基于上下文得到的 hint。请结合完整对话自行判断，"
             "不要机械服从；若 hint 与用户当前问题冲突，以用户问题和对话上下文为准。"
         )
@@ -2484,6 +2492,11 @@ class AssistantPrompts:
                 f"- reason: {chatbi_reason or '未提供'}"
             )
         if str(semantic_intent_value or "").upper() != "DATA_QUERY":
+            if freshness_requirement in {"dynamic", "realtime"}:
+                return (
+                    f"{hint}\n【事实时效约束】本轮事实要求为 {freshness_requirement}；"
+                    "必须使用对应来源的当前证据，工具失败时不得编造具体事实。"
+                )
             return hint
         confidence_text = "未知" if semantic_confidence is None else str(semantic_confidence)
         reasoning_text = str(semantic_reasoning or "未提供")
@@ -2507,6 +2520,8 @@ class AssistantPrompts:
             f"- semantic_intent: {semantic_intent_value}\n"
             f"- semantic_confidence: {confidence_text}\n"
             f"- semantic_reasoning: {reasoning_text}\n"
+            f"- freshness_requirement: {freshness_requirement}\n"
+            f"- time_scope: {time_scope or '未指定'}\n"
             f"{action_guidance}\n\n"
             f"{hint}"
         )

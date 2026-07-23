@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from enum import Enum
 
 from app.services.ai.grounding.ledger import EvidenceLedger
-from app.services.ai.grounding.models import EvidenceType
+from app.services.ai.grounding.models import EvidenceType, FactFreshness
 from app.services.ai.request_decision import RequestDecision, RequestSource
 
 
@@ -28,6 +28,11 @@ class FactRequirement:
     required: bool
     accepted_types: frozenset[EvidenceType]
     scrutinize_unknown_output: bool = False
+    freshness: FactFreshness = FactFreshness.UNKNOWN
+    max_age_seconds: int | None = None
+    requires_source_timestamp: bool = False
+    allow_conversation_reuse: bool = False
+    time_scope: str | None = None
 
 
 @dataclass(frozen=True)
@@ -156,10 +161,63 @@ def resolve_fact_requirement(decision: RequestDecision | None) -> FactRequiremen
     if decision is None:
         return FactRequirement(False, frozenset(), scrutinize_unknown_output=True)
     accepted_types = _SOURCE_EVIDENCE_TYPES.get(decision.source, frozenset())
+    domain = str(getattr(decision, "semantic_domain", "") or "").strip().lower()
+    fact_kind = str(getattr(decision, "fact_kind", "") or "").strip().lower()
+    domain_evidence_types = {
+        "chatbi_business_data": frozenset({EvidenceType.INTERNAL_DATA}),
+        "internal_docs": frozenset({EvidenceType.INTERNAL_KNOWLEDGE}),
+        "public_web": frozenset({EvidenceType.PUBLIC_WEB}),
+        "runtime_environment": frozenset({EvidenceType.RUNTIME_STATE}),
+        "local_file": frozenset({EvidenceType.USER_FILE}),
+    }
+    fact_kind_evidence_types = {
+        "business_metric": frozenset({EvidenceType.INTERNAL_DATA}),
+        "runtime_state": frozenset({EvidenceType.RUNTIME_STATE}),
+        "machine_load": frozenset({EvidenceType.RUNTIME_STATE}),
+        "local_file": frozenset({EvidenceType.USER_FILE}),
+        "file_count": frozenset({EvidenceType.USER_FILE}),
+        "public_fact": frozenset({EvidenceType.PUBLIC_WEB}),
+        "knowledge_document": frozenset({EvidenceType.INTERNAL_KNOWLEDGE}),
+    }
+    accepted_types = (
+        domain_evidence_types.get(domain)
+        or fact_kind_evidence_types.get(fact_kind)
+        or accepted_types
+    )
+    raw_freshness = str(
+        getattr(decision, "freshness_requirement", "unknown") or "unknown"
+    ).strip().lower()
+    try:
+        freshness = FactFreshness(raw_freshness)
+    except ValueError:
+        freshness = FactFreshness.UNKNOWN
+    if freshness is FactFreshness.UNKNOWN:
+        if domain == "runtime_environment" or decision.source == RequestSource.RUNTIME_DIAGNOSTIC:
+            freshness = FactFreshness.REALTIME
+        elif domain in {
+            "chatbi_business_data",
+            "local_file",
+            "public_web",
+            "internal_docs",
+        }:
+            freshness = FactFreshness.DYNAMIC
+        elif decision.source == RequestSource.CONVERSATION_CONTEXT:
+            freshness = FactFreshness.REUSE_PREVIOUS
+    max_age_seconds = getattr(decision, "max_age_seconds", None)
+    if max_age_seconds is None and freshness is FactFreshness.REALTIME:
+        max_age_seconds = 30
+    allow_conversation_reuse = freshness is FactFreshness.REUSE_PREVIOUS
     return FactRequirement(
         required=bool(accepted_types),
         accepted_types=accepted_types,
         scrutinize_unknown_output=decision.source == RequestSource.UNKNOWN,
+        freshness=freshness,
+        max_age_seconds=max_age_seconds,
+        requires_source_timestamp=bool(
+            getattr(decision, "requires_source_timestamp", False)
+        ),
+        allow_conversation_reuse=allow_conversation_reuse,
+        time_scope=getattr(decision, "time_scope", None),
     )
 
 
@@ -273,7 +331,18 @@ def evaluate_grounding(
     available_types = ledger.available_evidence_types
     exact_evidence_exists = bool(
         requirement.accepted_types
+        and ledger.has_fresh_evidence(
+            requirement.accepted_types,
+            freshness=requirement.freshness,
+            max_age_seconds=requirement.max_age_seconds,
+            require_source_as_of=requirement.requires_source_timestamp,
+            allow_reuse=requirement.allow_conversation_reuse,
+        )
+    )
+    stale_exact_evidence_exists = bool(
+        requirement.accepted_types
         and ledger.has_valid_evidence(requirement.accepted_types)
+        and not exact_evidence_exists
     )
     if exact_evidence_exists:
         fact_bearing = _contains_structural_external_fact(text)
@@ -291,6 +360,14 @@ def evaluate_grounding(
             )
 
     if requirement.required:
+        if stale_exact_evidence_exists:
+            return GroundingDecision(
+                GroundingAction.PASS_WITH_WARNING,
+                "required evidence is stale or does not satisfy the freshness requirement",
+                requirement.accepted_types,
+                available_types,
+                GroundingRiskLevel.HIGH,
+            )
         if (
             EvidenceType.EXTERNAL_TOOL in available_types
             and requirement.accepted_types

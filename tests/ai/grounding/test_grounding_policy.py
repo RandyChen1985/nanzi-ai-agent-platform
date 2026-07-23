@@ -1,7 +1,8 @@
 import pytest
+from datetime import datetime, timedelta, timezone
 
 from app.services.ai.grounding.ledger import EvidenceLedger
-from app.services.ai.grounding.models import EvidenceType
+from app.services.ai.grounding.models import EvidenceType, FactFreshness
 from app.services.ai.grounding.policy import (
     FactRequirement,
     GroundingAction,
@@ -33,6 +34,31 @@ def test_internal_data_source_requires_matching_evidence():
 
     assert requirement.required
     assert requirement.accepted_types == frozenset({EvidenceType.INTERNAL_DATA})
+
+
+def test_runtime_requirement_defaults_to_realtime_with_short_age_window():
+    requirement = resolve_fact_requirement(
+        _decision(RequestSource.RUNTIME_DIAGNOSTIC, RequestCapability.RUNTIME_TOOL)
+    )
+
+    assert requirement.freshness is FactFreshness.REALTIME
+    assert requirement.max_age_seconds == 30
+    assert requirement.accepted_types == frozenset({EvidenceType.RUNTIME_STATE})
+
+
+def test_explicit_reuse_requirement_allows_previous_conversation_evidence():
+    decision = RequestDecision(
+        source=RequestSource.CONVERSATION_CONTEXT,
+        capability=RequestCapability.CONTEXT_TRANSFORM,
+        confidence=0.9,
+        reasoning="test",
+        freshness_requirement="reuse_previous",
+    )
+
+    requirement = resolve_fact_requirement(decision)
+
+    assert requirement.freshness is FactFreshness.REUSE_PREVIOUS
+    assert requirement.allow_conversation_reuse is True
 
 
 def test_current_conversation_context_is_already_available_evidence():
@@ -691,3 +717,56 @@ def test_warning_decision_exposes_missing_evidence_types_for_inline_notice():
     assert decision.action == GroundingAction.PASS_WITH_WARNING
     assert decision.risk_level.value == "high"
     assert decision.required_evidence_types == frozenset({EvidenceType.RUNTIME_STATE})
+
+
+def test_fresh_runtime_evidence_passes_realtime_requirement():
+    now = datetime.now(timezone.utc)
+    ledger = EvidenceLedger(user_id="u1", conversation_id="c1")
+    ledger.record_success(
+        call_id="runtime-1",
+        producer="list_process",
+        evidence_types={EvidenceType.RUNTIME_STATE},
+        result={"load": 0.2, "host": "server-1"},
+        observed_at=now,
+        freshness=FactFreshness.REALTIME,
+    )
+
+    decision = evaluate_grounding(
+        requirement=FactRequirement(
+            required=True,
+            accepted_types=frozenset({EvidenceType.RUNTIME_STATE}),
+            freshness=FactFreshness.REALTIME,
+            max_age_seconds=30,
+        ),
+        candidate_text="server-1 当前负载为 0.2。",
+        ledger=ledger,
+    )
+
+    assert decision.action == GroundingAction.PASS
+
+
+def test_stale_runtime_evidence_returns_warning_instead_of_silent_pass():
+    now = datetime.now(timezone.utc)
+    ledger = EvidenceLedger(user_id="u1", conversation_id="c1")
+    ledger.record_success(
+        call_id="runtime-old",
+        producer="list_process",
+        evidence_types={EvidenceType.RUNTIME_STATE},
+        result={"load": 0.2, "host": "server-1"},
+        observed_at=now - timedelta(seconds=31),
+        freshness=FactFreshness.REALTIME,
+    )
+
+    decision = evaluate_grounding(
+        requirement=FactRequirement(
+            required=True,
+            accepted_types=frozenset({EvidenceType.RUNTIME_STATE}),
+            freshness=FactFreshness.REALTIME,
+            max_age_seconds=30,
+        ),
+        candidate_text="server-1 当前负载为 0.2。",
+        ledger=ledger,
+    )
+
+    assert decision.action == GroundingAction.PASS_WITH_WARNING
+    assert "stale" in decision.reason

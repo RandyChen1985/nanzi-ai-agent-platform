@@ -6238,6 +6238,7 @@ async def test_data_agent_runner_execute_does_not_require_sql_plan_for_high_risk
 def test_chatbi_grounding_audit_delegates_matching_sql_result(data_config):
     from app.services.ai.runners.data_agent_runner import DataAgentRunner
     from app.services.ai.grounding.service import GroundingService
+    from app.services.ai.grounding.models import FactFreshness
 
     runner = DataAgentRunner(
         config=data_config,
@@ -6259,6 +6260,29 @@ def test_chatbi_grounding_audit_delegates_matching_sql_result(data_config):
 
     assert audit.should_warn is False
     assert audit_mock.call_count == 1
+    requirement = audit_mock.call_args.kwargs["requirement"]
+    assert requirement.freshness is FactFreshness.DYNAMIC
+
+
+def test_chatbi_followup_grounding_allows_previous_result_reuse(data_config):
+    from app.services.ai.runners.data_agent_runner import DataAgentRunner
+    from app.services.ai.grounding.models import FactFreshness
+
+    runner = DataAgentRunner(
+        config=data_config,
+        trace_id="trace-chatbi-grounding-followup",
+        trace_buffer=[],
+        user_info={"user_id": "1"},
+        conversation_id="conv-1",
+    )
+    runner._requires_fresh_data = False
+
+    audit = runner._chatbi_grounding_audit(
+        candidate_text="将刚才结果按区域画图。",
+        evidence_result={"rows": [{"region": "华东", "amount": 100}]},
+    )
+
+    assert audit.should_warn is False
 
 
 def test_chatbi_grounding_audit_returns_warning_for_unrelated_business_fact(data_config):

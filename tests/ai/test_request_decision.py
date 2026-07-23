@@ -28,6 +28,32 @@ def test_platform_self_help_overrides_knowledge_binding_and_semantic_knowledge()
     assert decision.allows_data_route is False
 
 
+@pytest.mark.parametrize(
+    "query",
+    [
+        "我们有哪些知识库权限",
+        "我们有哪些知识库",
+        "我有哪些知识库",
+        "有哪些知识库权限",
+        "我能访问哪些数据集",
+        "知识库列表",
+    ],
+)
+def test_resource_catalog_query_stays_platform_self_help_not_knowledge_search(query):
+    """权限/目录清单问法不得委派知识库检索。"""
+    decision = resolve_request_decision(
+        query,
+        semantic_intent=IntentType.KNOWLEDGE_BASE,
+        semantic_confidence=0.9,
+        has_knowledge_binding=True,
+    )
+
+    assert decision.source == RequestSource.PLATFORM_SELF_HELP
+    assert decision.capability == RequestCapability.ANSWER
+    assert decision.should_delegate is False
+    assert decision.requires_knowledge_search is False
+
+
 def test_public_web_request_overrides_knowledge_semantics_without_internal_search():
     decision = resolve_request_decision(
         "搜索一下有孚网络的最新信息",
@@ -96,6 +122,23 @@ def test_runtime_diagnostic_is_tool_capability_not_data_route():
     assert decision.capability == RequestCapability.RUNTIME_TOOL
     assert decision.should_delegate is False
     assert decision.allows_data_route is False
+
+
+def test_request_decision_preserves_fact_semantics_for_grounding():
+    decision = resolve_request_decision(
+        "查询当前机器负载",
+        semantic_intent=IntentType.DATA_QUERY,
+        semantic_confidence=0.93,
+        semantic_domain="runtime_environment",
+        semantic_operation="lookup",
+        fact_kind="machine_load",
+        freshness_requirement="realtime",
+    )
+
+    assert decision.semantic_domain == "runtime_environment"
+    assert decision.semantic_operation == "lookup"
+    assert decision.fact_kind == "machine_load"
+    assert decision.freshness_requirement == "realtime"
 
 
 def test_my_server_status_query_is_runtime_diagnostic():
