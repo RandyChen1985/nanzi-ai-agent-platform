@@ -146,19 +146,21 @@
 
              <!-- Content List -->
             <div class="flex-1 overflow-y-auto p-4 bg-gray-50/50 dark:bg-gray-900/40 min-h-0 space-y-3 scrollbar-thin">
-              <div v-if="props.projectResourceScope" class="rounded-lg border border-blue-100 bg-blue-50 px-3 py-2 text-xs font-semibold text-blue-700 dark:border-blue-900/50 dark:bg-blue-950/30 dark:text-blue-300">
-                🔒 {{ props.projectResourceScope }}
+              <div v-if="props.projectResourceScope" class="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-xs font-medium text-gray-600 dark:border-gray-700 dark:bg-gray-900/40 dark:text-gray-300">
+                {{ props.projectResourceScope }}
               </div>
               <!-- Overview Card -->
-              <div class="bg-white dark:bg-gray-800/80 backdrop-blur-xs border border-gray-150 dark:border-gray-800 rounded-xl p-3 flex flex-row items-center justify-between gap-2 shadow-xs select-none">
+              <div class="border border-gray-200 dark:border-gray-800 rounded-lg px-3 py-2.5 flex flex-row items-center justify-between gap-2 select-none">
                 <div class="flex items-center gap-2.5 min-w-0">
-                  <div class="flex items-center justify-center w-8 h-8 rounded-lg bg-green-600 dark:bg-green-500 text-white shadow-sm flex-shrink-0 text-xs font-bold">
-                    📚
+                  <div class="flex items-center justify-center w-7 h-7 rounded-md bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 flex-shrink-0">
+                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.2" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
+                    </svg>
                   </div>
                   <div class="min-w-0">
-                    <h3 class="text-xs font-bold text-gray-900 dark:text-gray-100 tracking-wide">我的知识库中心</h3>
-                    <div class="flex flex-wrap items-center gap-1.5 mt-0.5 text-[9px]">
-                      <span class="font-semibold text-green-600 dark:text-green-400">
+                    <h3 class="text-sm font-semibold text-gray-900 dark:text-gray-100">知识库</h3>
+                    <div class="flex flex-wrap items-center gap-1.5 mt-0.5 text-[10px]">
+                      <span class="font-medium text-gray-500 dark:text-gray-400">
                         {{ datasets.length }} 个知识库
                       </span>
                       <template v-if="generatedAt">
@@ -266,14 +268,14 @@
                 </div>
               </transition>
 
-              <!-- ⚙️ 高级选项 (Collapsible) -->
-              <div class="rounded-xl border border-gray-150 dark:border-gray-800 bg-gray-50/20 dark:bg-gray-900/10 p-3 space-y-2.5 transition-all duration-300">
+              <!-- 高级配置 (Collapsible) -->
+              <div class="rounded-lg border border-gray-200 dark:border-gray-800 bg-gray-50/40 dark:bg-gray-900/40 px-3 py-2.5 space-y-2">
                 <div
-                  class="flex items-center justify-between w-full text-[10px] font-bold text-gray-500 hover:text-green-600 dark:text-gray-400 dark:hover:text-green-400 uppercase tracking-wider transition-colors select-none cursor-pointer"
+                  class="flex items-center justify-between w-full text-[11px] font-semibold text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 transition-colors select-none cursor-pointer"
                   @click="showAdvancedConfig = !showAdvancedConfig"
                 >
                   <span class="flex items-center gap-1.5">
-                    <span class="text-xs">⚙️</span> 高级配置
+                    高级配置
                   </span>
                   <svg
                     class="w-3.5 h-3.5 transform transition-transform duration-300 pointer-events-none"
@@ -490,28 +492,20 @@
                 v-else
                 v-for="ds in sortedDatasets"
                 :key="ds.id"
-                class="group/card relative overflow-hidden rounded-xl border p-3.5 sm:p-4 shadow-sm hover:shadow-lg hover:-translate-y-0.5 transition-all duration-300"
+                class="group/card relative overflow-hidden rounded-lg border p-3 sm:p-3.5 transition-colors duration-200"
                 :class="[
                   activeDatasetIds.includes(ds.id)
-                    ? 'border-green-200 dark:border-green-950 bg-green-50/5'
-                    : 'border-gray-150 dark:border-gray-800 bg-white dark:bg-gray-850'
+                    ? 'border-green-300 dark:border-green-800 border-l-[3px] border-l-green-500 bg-white dark:bg-gray-900'
+                    : 'border-gray-200 dark:border-gray-700 border-l-[3px] border-l-transparent bg-white dark:bg-gray-900'
                 ]"
               >
-                <!-- Background decor bubbles matching data portal -->
-                <div
-                  class="pointer-events-none absolute -right-10 -top-10 h-28 w-28 rounded-full opacity-[0.12] blur-2xl transition-opacity duration-300 group-hover/card:opacity-[0.20] bg-green-500"
-                />
-                <div
-                  class="pointer-events-none absolute -left-6 bottom-0 h-20 w-20 rounded-full opacity-[0.05] blur-xl bg-green-500"
-                />
-
                 <div class="relative space-y-2.5">
                   <!-- Header Row -->
                   <div class="flex items-start gap-2.5 min-w-0">
                     <!-- Collapse Toggle Chevron -->
                     <button
                       type="button"
-                      class="flex-shrink-0 flex items-center justify-center w-5 h-9 rounded text-gray-400 hover:text-green-500 hover:bg-green-50/30 dark:hover:bg-green-950/20 transition-all duration-200 cursor-pointer"
+                      class="flex-shrink-0 flex items-center justify-center w-5 h-8 rounded text-gray-400 hover:text-gray-600 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors duration-200 cursor-pointer"
                       @click.stop="toggleCollapse(ds.id)"
                       :title="isCollapsed(ds.id) ? '展开卡片' : '收起卡片'"
                     >
@@ -529,20 +523,22 @@
 
                     <div
                       @click.stop="toggleCollapse(ds.id)"
-                      class="flex-shrink-0 flex items-center justify-center w-9 h-9 rounded-xl shadow-xs border text-[18px] bg-green-50/10 border-green-500/20 text-green-600 dark:bg-green-500/20 dark:border-green-500/30 dark:text-green-400 cursor-pointer hover:opacity-80 transition-opacity select-none"
+                      class="flex-shrink-0 flex items-center justify-center w-8 h-8 rounded-md bg-green-600 text-white cursor-pointer hover:opacity-90 transition-opacity select-none"
                     >
-                      📚
+                      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
+                      </svg>
                     </div>
                     
                     <h4
                       @click.stop="toggleCollapse(ds.id)"
-                      class="flex-1 min-w-0 text-sm font-bold leading-snug break-words pt-0.5 text-gray-800 dark:text-gray-100 flex items-center flex-wrap gap-1.5 cursor-pointer hover:text-green-600 dark:hover:text-green-400 transition-colors select-none"
+                      class="flex-1 min-w-0 text-sm font-semibold leading-snug break-words pt-0.5 text-gray-900 dark:text-gray-100 flex items-center flex-wrap gap-1.5 cursor-pointer hover:text-gray-700 dark:hover:text-gray-200 transition-colors select-none"
                       :title="ds.platform_name || ds.name"
                     >
                       <span>{{ ds.platform_name || ds.name }}</span>
                       <span
                         v-if="isMyCreated(ds)"
-                        class="inline-flex items-center px-1.5 py-0.5 rounded-md text-[9px] font-bold tracking-wider uppercase bg-green-50/50 text-green-600 border border-green-200/30 dark:bg-green-950/20 dark:border-green-800/30 dark:text-green-400 select-none"
+                        class="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-medium bg-gray-100 text-gray-600 border border-gray-200 dark:bg-gray-800 dark:border-gray-700 dark:text-gray-300 select-none"
                       >
                         自建
                       </span>
@@ -585,45 +581,45 @@
                   <div v-show="!isCollapsed(ds.id)" class="space-y-2.5 pt-0.5">
 
                   <!-- Badges list matching pl-11.5 indentation -->
-                  <div class="flex flex-wrap gap-1.5 pl-11.5 min-w-0">
+                  <div class="flex flex-wrap gap-1 pl-10 min-w-0">
                     <template v-if="ds.tags && ds.tags.length">
                       <span
-                        v-for="tag in ds.tags.slice(0, 3)"
+                        v-for="tag in ds.tags.slice(0, 2)"
                         :key="tag"
-                        class="inline-block max-w-full rounded-full border px-2 py-0.5 text-[9px] font-bold leading-tight bg-blue-50 border-blue-200 text-blue-600 dark:bg-blue-950/20 dark:border-blue-800 dark:text-blue-400"
+                        class="inline-block max-w-full rounded border px-1.5 py-0.5 text-[9px] font-medium leading-tight bg-gray-50 border-gray-200 text-gray-600 dark:bg-gray-800/60 dark:border-gray-700 dark:text-gray-300"
                       >
-                        🏷️ {{ tag }}
+                        {{ tag }}
                       </span>
                       <button
-                        v-if="ds.tags.length > 3"
+                        v-if="ds.tags.length > 2"
                         type="button"
-                        class="inline-flex items-center justify-center rounded-full border px-2 py-0.5 text-[9px] font-bold leading-tight bg-gray-100 hover:bg-gray-200 border-gray-250 text-gray-600 dark:bg-gray-850 dark:hover:bg-gray-750 dark:border-gray-700 dark:text-gray-300 transition-all cursor-pointer active:scale-90"
+                        class="inline-flex items-center justify-center rounded border px-1.5 py-0.5 text-[9px] font-medium leading-tight bg-gray-50 hover:bg-gray-100 border-gray-200 text-gray-500 dark:bg-gray-800 dark:hover:bg-gray-750 dark:border-gray-700 dark:text-gray-300 transition-colors cursor-pointer"
                         @click.stop="openAllTagsModal(ds.platform_name || ds.name, ds.tags)"
                         title="查看全部标签"
                       >
-                        +{{ ds.tags.length - 3 }}
+                        +{{ ds.tags.length - 2 }}
                       </button>
                     </template>
                     <span
                       v-else
-                      class="inline-block max-w-full rounded-full border px-2 py-0.5 text-[9px] font-bold leading-tight bg-gray-50 border-gray-200 text-gray-500 dark:bg-gray-800 dark:border-gray-700 dark:text-gray-400"
+                      class="inline-block max-w-full rounded border px-1.5 py-0.5 text-[9px] font-medium leading-tight bg-gray-50 border-gray-200 text-gray-500 dark:bg-gray-800 dark:border-gray-700 dark:text-gray-400"
                     >
-                      🏷️ 未分类
+                      未分类
                     </span>
                     <span
-                      class="inline-block max-w-full rounded-full border px-2 py-0.5 text-[9px] font-bold leading-tight"
+                      class="inline-block max-w-full rounded border px-1.5 py-0.5 text-[9px] font-medium leading-tight"
                       :class="activeDatasetIds.includes(ds.id)
-                        ? 'bg-green-50 border-green-200 text-green-600 dark:bg-green-950/20 dark:border-green-800 dark:text-green-400'
-                        : 'bg-gray-50 border-gray-150 text-gray-400 dark:bg-gray-800 dark:border-gray-700 dark:text-gray-500'"
+                        ? 'bg-green-50 border-green-200 text-green-700 dark:bg-green-950/20 dark:border-green-800 dark:text-green-400'
+                        : 'bg-gray-50 border-gray-200 text-gray-400 dark:bg-gray-800 dark:border-gray-700 dark:text-gray-500'"
                     >
-                      {{ activeDatasetIds.includes(ds.id) ? '● 已启用' : '未启用' }}
+                      {{ activeDatasetIds.includes(ds.id) ? '已启用' : '未启用' }}
                     </span>
                   </div>
 
                   <!-- Description Summary Box (blockquote) -->
                   <blockquote
                     v-if="ds.platform_description || ds.description"
-                    class="relative w-full m-0 px-3.5 py-2.5 text-[11px] leading-relaxed rounded-r-lg border-l-[3px] bg-green-50/40 dark:bg-green-950/10 border-green-500 text-gray-600 dark:text-gray-400 font-medium"
+                    class="relative w-full m-0 px-3 py-2 text-[11px] leading-relaxed rounded-r-md border-l-2 border-gray-300 bg-gray-50/80 text-gray-600 dark:border-gray-600 dark:bg-gray-800/40 dark:text-gray-300 font-medium"
                   >
                     {{ ds.platform_description || ds.description }}
                   </blockquote>
@@ -727,7 +723,7 @@
                                 class="mt-2 pl-4 pr-1 border-t border-dashed border-gray-150 dark:border-gray-800 pt-2 flex flex-col gap-1.5 overflow-hidden"
                               >
                                 <div class="text-[9px] text-gray-400 dark:text-gray-500 flex items-center gap-1 select-none">
-                                  <span class="text-green-500 font-bold">💡</span> 针对该文件的专属提问：
+                                  针对该文件的提问：
                                 </div>
                                 
                                 <div v-if="documentRecommendations[doc.id]?.loading" class="space-y-2 py-1">
@@ -791,10 +787,7 @@
                     class="relative pt-2.5 border-t border-gray-100 dark:border-gray-700/60"
                   >
                     <div class="mb-2 flex items-center justify-between select-none">
-                      <span class="text-[10px] font-bold uppercase tracking-wider flex items-center gap-1.5 text-gray-500 dark:text-gray-400">
-                        <svg class="w-3.5 h-3.5 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                        </svg>
+                      <span class="text-[10px] font-semibold tracking-wide flex items-center gap-1.5 text-gray-500 dark:text-gray-400">
                         你可以这样问
                       </span>
                       
@@ -848,17 +841,14 @@
                     <div v-else-if="(recommendations[ds.id]?.questions?.length || 0) > 0 || (recommendations[ds.id]?.custom_questions?.length || 0) > 0" class="space-y-3.5 w-full">
                       <!-- 置顶快捷推荐 -->
                       <div v-if="(recommendations[ds.id]?.custom_questions?.length || 0) > 0" class="space-y-1.5 w-full">
-                        <div class="flex items-center gap-1 text-[10px] font-semibold text-gray-400 dark:text-gray-500 uppercase select-none">
-                          <svg class="w-3 h-3 text-amber-500 shrink-0" fill="currentColor" viewBox="0 0 20 20">
-                            <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" />
-                          </svg>
-                          <span>📌 置顶快捷提问 / 业务指南</span>
+                        <div class="flex items-center gap-1 text-[10px] font-medium text-gray-400 dark:text-gray-500 select-none">
+                          <span>置顶提问</span>
                         </div>
                         <div class="flex flex-wrap gap-2">
                           <div
                             v-for="(q, idx) in (recommendations[ds.id]?.custom_questions || [])"
                             :key="'c_'+idx"
-                            class="inline-flex items-stretch rounded-lg border border-amber-250 dark:border-amber-900/40 bg-amber-50/20 dark:bg-amber-950/10 shadow-sm hover:shadow hover:-translate-y-0.5 active:translate-y-0 transition-all duration-200 overflow-hidden"
+                            class="inline-flex items-stretch rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900/40 overflow-hidden hover:border-gray-300 dark:hover:border-gray-600 transition-colors"
                           >
                             <!-- Left Question Body (Direct Send) -->
                             <button
@@ -888,17 +878,14 @@
 
                       <!-- 智能生成提问 -->
                       <div v-if="(recommendations[ds.id]?.questions?.length || 0) > 0" class="space-y-1.5 w-full">
-                        <div class="flex items-center gap-1 text-[10px] font-semibold text-gray-400 dark:text-gray-500 uppercase select-none">
-                          <svg class="w-3 h-3 text-green-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
-                          </svg>
-                          <span>智能提问推荐（LLM 动态推断）</span>
+                        <div class="flex items-center gap-1 text-[10px] font-medium text-gray-400 dark:text-gray-500 select-none">
+                          <span>推荐提问</span>
                         </div>
                         <div class="flex flex-wrap gap-2">
                           <div
                             v-for="(q, idx) in (recommendations[ds.id]?.questions || [])"
                             :key="'d_'+idx"
-                            class="inline-flex items-stretch rounded-lg border border-gray-150 dark:border-gray-750 bg-white dark:bg-gray-800 shadow-sm hover:shadow hover:-translate-y-0.5 active:translate-y-0 transition-all duration-200 overflow-hidden"
+                            class="inline-flex items-stretch rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900/40 overflow-hidden hover:border-gray-300 dark:hover:border-gray-600 transition-colors"
                           >
                             <!-- Left Question Body (Direct Send) -->
                             <button
@@ -969,7 +956,7 @@
         >
           <div class="flex items-center justify-between">
             <h4 class="text-xs font-bold text-gray-800 dark:text-gray-100 select-none">
-              🏷️ {{ activeModalDatasetName }} 的所有标签
+              {{ activeModalDatasetName }} 的所有标签
             </h4>
             <button
               type="button"
