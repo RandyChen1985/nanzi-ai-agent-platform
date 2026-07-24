@@ -65,6 +65,7 @@ def test_build_insight_uses_executed_sql_and_permission_notice():
             "tables": [{"physical_name": "pue_daily"}],
         }
     ]
+    assert data["evidence"]["source_ref"] == "dataset://机房能耗数据集"
 
 
 def test_build_insight_marks_repaired_and_exposes_delivery_actions():
@@ -95,6 +96,29 @@ def test_build_insight_binds_actions_to_saved_result():
     data = build_chatbi_insight_meta(state)["data"]
 
     assert data["result_id"] == "result_abc123"
+
+
+def test_build_insight_exposes_evidence_metadata_for_the_evidence_panel():
+    state = _state([{"room_name": "上海一号", "pue": 1.42}])
+
+    data = build_chatbi_insight_meta(
+        state,
+        evidence_metadata={
+            "status": "success_non_empty",
+            "source_ref": "dataset://机房能耗数据集",
+            "observed_at": "2026-07-24T10:00:00+00:00",
+            "source_as_of": "2026-07-24T09:59:00+00:00",
+            "freshness": "dynamic",
+        },
+    )["data"]
+
+    assert data["evidence"] == {
+        "result_status": "success_non_empty",
+        "source_ref": "dataset://机房能耗数据集",
+        "observed_at": "2026-07-24T10:00:00+00:00",
+        "source_as_of": "2026-07-24T09:59:00+00:00",
+        "freshness": "dynamic",
+    }
 
 
 def test_build_insight_returns_none_without_successful_query():

@@ -32,6 +32,11 @@ async def test_data_executor_delegates_to_data_agent_runner(data_config):
         debug_options={"dry_run": True},
         user_info={"id": "u1"},
         conversation_id="c1",
+        route_hints={
+            "semantic_domain": "chatbi_business_data",
+            "reference_mode": "new_query",
+            "needs_fresh_data": True,
+        },
     )
 
     runner_instance = MagicMock()
@@ -56,4 +61,9 @@ async def test_data_executor_delegates_to_data_agent_runner(data_config):
     assert kwargs["debug_options"] == {"dry_run": True}
     assert kwargs["user_info"] == {"id": "u1"}
     assert kwargs["conversation_id"] == "c1"
+    assert kwargs["route_hints"] == {
+        "semantic_domain": "chatbi_business_data",
+        "reference_mode": "new_query",
+        "needs_fresh_data": True,
+    }
     assert executor.step_counter == 3

@@ -12,7 +12,12 @@ from app.services.ai.grounding.policy import (
     resolve_fact_requirement,
     evidence_types_for_capabilities,
 )
-from app.services.ai.request_decision import RequestCapability, RequestDecision, RequestSource
+from app.services.ai.request_decision import (
+    RequestCapability,
+    RequestDecision,
+    RequestSource,
+    resolve_request_decision,
+)
 
 
 pytestmark = pytest.mark.no_infrastructure
@@ -100,6 +105,50 @@ def test_unknown_dynamic_fact_without_evidence_returns_warning():
     )
 
     assert decision.action == GroundingAction.PASS_WITH_WARNING
+
+
+def test_explicit_fresh_data_request_blocks_unsupported_numeric_fact():
+    request = resolve_request_decision(
+        "查询本周订单数",
+        semantic_intent="DATA_QUERY",
+        semantic_confidence=0.95,
+        semantic_domain="chatbi_business_data",
+        semantic_operation="aggregate",
+        fact_kind="business_metric",
+        freshness_requirement="dynamic",
+        reference_mode="new_query",
+        needs_fresh_data=True,
+    )
+
+    decision = evaluate_grounding(
+        requirement=resolve_fact_requirement(request),
+        candidate_text="本周订单数为 100 条。",
+        ledger=EvidenceLedger(user_id="1", conversation_id="c1"),
+    )
+
+    assert decision.action == GroundingAction.BLOCK_UNGROUNDED_FACTS
+
+
+def test_explicit_fresh_data_request_allows_evidence_free_no_result_statement():
+    request = resolve_request_decision(
+        "查询本周订单数",
+        semantic_intent="DATA_QUERY",
+        semantic_confidence=0.95,
+        semantic_domain="chatbi_business_data",
+        semantic_operation="aggregate",
+        fact_kind="business_metric",
+        freshness_requirement="dynamic",
+        reference_mode="new_query",
+        needs_fresh_data=True,
+    )
+
+    decision = evaluate_grounding(
+        requirement=resolve_fact_requirement(request),
+        candidate_text="本轮查询暂无匹配结果，无法提供订单数。",
+        ledger=EvidenceLedger(user_id="1", conversation_id="c1"),
+    )
+
+    assert decision.action == GroundingAction.PASS
 
 
 def test_unknown_dynamic_fact_with_unrelated_receipt_returns_warning():

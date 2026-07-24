@@ -47,6 +47,8 @@ class RouteResult(BaseModel):
     fact_kind: Optional[str] = None
     freshness_requirement: str = "unknown"
     time_scope: Optional[str] = None
+    reference_mode: str = "unknown"
+    needs_fresh_data: bool = False
     chatbi_mode: Optional[str] = None
     chatbi_evidence_level: str = "none"
     chatbi_reason: Optional[str] = None
@@ -302,6 +304,11 @@ class RouterService:
                 )
 
         intent_info = await self._resolve_intent_evidence(user_input, history)
+        previous_chatbi_result = bool(
+            last_agent_name
+            and self._is_data_query_agent(agents_metadata, last_agent_name)
+            and should_inherit_data_agent_session(user_input)
+        )
         request_decision = resolve_request_decision(
             user_input,
             semantic_intent=getattr(intent_info, "intent", None),
@@ -311,11 +318,9 @@ class RouterService:
             fact_kind=getattr(intent_info, "fact_kind", None),
             freshness_requirement=getattr(intent_info, "freshness_requirement", None),
             time_scope=getattr(intent_info, "time_scope", None),
-        )
-        previous_chatbi_result = bool(
-            last_agent_name
-            and self._is_data_query_agent(agents_metadata, last_agent_name)
-            and should_inherit_data_agent_session(user_input)
+            reference_mode=getattr(intent_info, "reference_mode", None),
+            needs_fresh_data=getattr(intent_info, "needs_fresh_data", None),
+            has_last_data_result=previous_chatbi_result,
         )
         chatbi_qualification = await self._resolve_chatbi_qualification(
             user_input,
@@ -834,6 +839,8 @@ class RouterService:
                 request_decision.freshness_requirement if request_decision else "unknown"
             ),
             time_scope=(request_decision.time_scope if request_decision else None),
+            reference_mode=(request_decision.reference_mode if request_decision else "unknown"),
+            needs_fresh_data=(request_decision.needs_fresh_data if request_decision else False),
             chatbi_mode=(request_decision.chatbi_mode if request_decision else None),
             chatbi_evidence_level=(
                 request_decision.chatbi_evidence_level if request_decision else "none"
@@ -959,6 +966,15 @@ class RouterService:
                     request_decision.delegate_capability if request_decision else None
                 ),
                 request_reasoning=(request_decision.reasoning if request_decision else None),
+                semantic_domain=(request_decision.semantic_domain if request_decision else None),
+                semantic_operation=(request_decision.semantic_operation if request_decision else None),
+                fact_kind=(request_decision.fact_kind if request_decision else None),
+                freshness_requirement=(
+                    request_decision.freshness_requirement if request_decision else "unknown"
+                ),
+                time_scope=(request_decision.time_scope if request_decision else None),
+                reference_mode=(request_decision.reference_mode if request_decision else "unknown"),
+                needs_fresh_data=(request_decision.needs_fresh_data if request_decision else False),
                 chatbi_mode=(request_decision.chatbi_mode if request_decision else None),
                 chatbi_evidence_level=(
                     request_decision.chatbi_evidence_level if request_decision else "none"

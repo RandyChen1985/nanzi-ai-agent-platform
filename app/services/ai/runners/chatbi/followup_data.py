@@ -10,6 +10,12 @@ from typing import Any, Dict, List, Optional
 logger = logging.getLogger(__name__)
 
 
+def _result_status(value: Any) -> str:
+    from app.services.ai.grounding.ledger import classify_evidence_result
+
+    return classify_evidence_result(value).value
+
+
 async def load_last_data_result(runner: Any) -> Optional[Dict[str, Any]]:
     if not runner.conversation_id:
         return None
@@ -97,6 +103,7 @@ async def save_last_data_result_for_followups(
         "freshness": "dynamic",
         "source_ref": source_ref,
         "data_as_of": data_as_of,
+        "result_status": _result_status(normalized),
         "trace_id": runner.trace_id,
     }
     try:
@@ -128,6 +135,7 @@ async def save_last_data_result_for_followups(
             data_as_of=data_as_of,
             freshness="dynamic",
             source_ref=source_ref,
+            result_status=payload["result_status"],
         )
         await memory_service.push_data_result_ref(
             user_id,

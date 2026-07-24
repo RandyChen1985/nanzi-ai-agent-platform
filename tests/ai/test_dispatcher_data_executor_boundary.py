@@ -41,10 +41,16 @@ async def test_dispatcher_routes_data_capable_agent_to_data_executor_for_non_kno
         trace_id="trace-dispatch-boundary",
         trace_buffer=[],
         shared_turn=shared_turn,
+        route_hints={
+            "semantic_domain": "chatbi_business_data",
+            "reference_mode": "new_query",
+            "needs_fresh_data": True,
+        },
     )
 
     assert isinstance(executor, DataQueryExecutor)
     assert not hasattr(executor, "turn_classification")
+    assert executor.route_hints["reference_mode"] == "new_query"
 
 
 @pytest.mark.asyncio

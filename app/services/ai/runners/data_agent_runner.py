@@ -8,7 +8,7 @@ import uuid
 import ast
 from dataclasses import dataclass, field, replace
 import inspect
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, AsyncGenerator, Dict, List, Optional
 from agentscope.agent import Agent, ReActConfig
 from app.schemas.agent import AgentExecutionStep, ChatConfig
@@ -20,8 +20,8 @@ from app.services.ai.executors.common import convert_history_to_messages, normal
 from app.services.ai.chatbi_sql_user_messages import format_empty_filter_result_content, map_sql_tool_error_for_user
 from app.services.ai.data_query_semantic_intent import DataQuerySemanticIntent, format_empty_result_semantic_repair_context, semantic_intent_from_dict, semantic_intent_to_dict
 from app.services.ai.executors.prompts import DataQueryPrompts
-from app.services.ai.grounding.ledger import EvidenceLedger
-from app.services.ai.grounding.models import EvidenceType, FactFreshness
+from app.services.ai.grounding.ledger import EvidenceLedger, classify_evidence_result
+from app.services.ai.grounding.models import EvidenceStatus, EvidenceType, FactFreshness
 from app.services.ai.grounding.policy import (
     FactRequirement,
     contains_grounding_fact_signal,
@@ -82,8 +82,9 @@ class UpgradeToFederatedQuery(Exception):
 class DataAgentRunner(BaseExecutor):
     """AgentScope-native runner foundation for ChatBI/DataExecutor migration."""
 
-    def __init__(self, config: ChatConfig, trace_id: str, trace_buffer: List[AgentExecutionStep], debug_options: Dict[str, Any]=None, user_info: Optional[Dict[str, Any]]=None, conversation_id: Optional[str]=None, permission_options: Dict[str, Any]=None):
+    def __init__(self, config: ChatConfig, trace_id: str, trace_buffer: List[AgentExecutionStep], debug_options: Dict[str, Any]=None, user_info: Optional[Dict[str, Any]]=None, conversation_id: Optional[str]=None, permission_options: Dict[str, Any]=None, route_hints: Optional[Dict[str, Any]]=None):
         super().__init__(config, trace_id, trace_buffer, debug_options, user_info, conversation_id, permission_options)
+        self.route_hints = dict(route_hints or {})
         self._last_run_state: _DataRunState | None = None
         self.turn_classification = None
         self.intent_info = None
@@ -98,6 +99,96 @@ class DataAgentRunner(BaseExecutor):
         self._requires_sql_query = True
         self._active_history: List[Dict[str, str]] = []
         self._mixed_task_plan_active = False
+        self._evidence_metadata: Dict[str, Any] = {}
+
+    def _ensure_grounding_ledger(self) -> EvidenceLedger:
+        """Share one ledger with native tools and the final ChatBI guard."""
+        from app.core.context import get_current_agent_context, set_agent_context
+
+        context = get_current_agent_context() or self._ensure_agent_context()
+        ledger = getattr(context, "grounding_evidence_ledger", None)
+        if (
+            not isinstance(ledger, EvidenceLedger)
+            or ledger.user_id != self._runtime_user_id()
+            or ledger.conversation_id != self.conversation_id
+        ):
+            ledger = EvidenceLedger(
+                user_id=self._runtime_user_id(),
+                conversation_id=self.conversation_id,
+            )
+            context.grounding_evidence_ledger = ledger
+            set_agent_context(context)
+        return ledger
+
+    @staticmethod
+    def _evidence_datetime(value: Any) -> datetime | None:
+        if value in (None, ""):
+            return None
+        if isinstance(value, datetime):
+            return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+        try:
+            parsed = datetime.fromisoformat(str(value))
+        except (TypeError, ValueError):
+            return None
+        return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+
+    def _apply_route_semantics_to_turn_classification(self, turn_cls: Any) -> Any:
+        """Use the outer semantic frame as a precedence signal, not a second classifier.
+
+        The ChatBI classifier remains the compatibility fallback.  A trusted
+        outer decision only overrides the cases that historically caused an
+        expensive wrong branch: a new business-data request being mistaken
+        for a previous-result analysis, or a non-ChatBI fact entering the
+        ChatBI executor at all.
+        """
+        domain = str(self.route_hints.get("semantic_domain") or "").strip().lower()
+        reference_mode = str(self.route_hints.get("reference_mode") or "unknown").strip().lower()
+        needs_fresh_data = bool(self.route_hints.get("needs_fresh_data"))
+        confidence = float(self.route_hints.get("semantic_confidence") or 0.0)
+
+        if confidence >= 0.7 and domain in {
+            "local_file",
+            "runtime_environment",
+            "public_web",
+            "internal_docs",
+            "general",
+        }:
+            turn_cls.turn_type = DataQueryTurnType.NON_DATA_REQUEST
+            turn_cls.reasoning = (
+                f"外层语义已确认来源为 {domain}，该请求不是 ChatBI 业务数据查询"
+            )
+            turn_cls.requires_fresh_data = False
+            turn_cls.requires_few_shot = False
+            turn_cls.requires_sql_query = False
+            turn_cls.skip_intent_llm = True
+            return turn_cls
+
+        if (
+            confidence >= 0.7
+            and domain == "chatbi_business_data"
+            and needs_fresh_data
+            and reference_mode in {"new_query", "data_followup_query"}
+            and turn_cls.turn_type
+            in {
+                DataQueryTurnType.REUSE_PREVIOUS_RESULT,
+                DataQueryTurnType.RESULT_ANALYSIS,
+                DataQueryTurnType.RESULT_PRESENTATION,
+                DataQueryTurnType.FORMAT_CORRECTION,
+                DataQueryTurnType.CLARIFICATION_OR_NON_DATA,
+                DataQueryTurnType.CLARIFICATION_REQUIRED,
+            }
+        ):
+            turn_cls.turn_type = (
+                DataQueryTurnType.DATA_FOLLOWUP_QUERY
+                if reference_mode == "data_followup_query"
+                else DataQueryTurnType.NEW_DATA_QUERY
+            )
+            turn_cls.reasoning = "外层语义确认本轮需要获取新的 ChatBI 业务事实"
+            turn_cls.requires_fresh_data = True
+            turn_cls.requires_few_shot = True
+            turn_cls.requires_sql_query = True
+            turn_cls.skip_intent_llm = False
+        return turn_cls
 
     def _chatbi_grounding_audit(
         self,
@@ -106,18 +197,28 @@ class DataAgentRunner(BaseExecutor):
         evidence_result: Any,
     ) -> GroundingAuditResult:
         has_fact_signal = contains_grounding_fact_signal(candidate_text)
-        ledger = EvidenceLedger(
-            user_id=self._runtime_user_id(),
-            conversation_id=self.conversation_id,
+        ledger = self._ensure_grounding_ledger()
+        status, observed_at, source_as_of, evidence_freshness, source_ref = (
+            self._update_evidence_metadata(evidence_result)
         )
         if evidence_result is not None:
-            ledger.record_success(
+            receipt = ledger.record_success(
                 call_id=f"chatbi-final:{uuid.uuid4().hex}",
                 producer="chatbi_final_result",
                 evidence_types={EvidenceType.INTERNAL_DATA},
                 result=evidence_result,
                 policy="allow_empty_success",
+                observed_at=observed_at,
+                source_as_of=source_as_of,
+                freshness=evidence_freshness,
+                source_ref=source_ref,
             )
+            if receipt is not None:
+                self._evidence_metadata["status"] = receipt.status.value
+                if receipt.observed_at is not None:
+                    self._evidence_metadata["observed_at"] = receipt.observed_at.isoformat()
+                if receipt.source_as_of is not None:
+                    self._evidence_metadata["source_as_of"] = receipt.source_as_of.isoformat()
         return GroundingService.audit(
             requirement=FactRequirement(
                 required=has_fact_signal,
@@ -132,11 +233,45 @@ class DataAgentRunner(BaseExecutor):
                     else FactFreshness.REUSE_PREVIOUS
                 ),
                 allow_conversation_reuse=not self._requires_fresh_data,
+                block_unsupported_facts=has_fact_signal and self._requires_fresh_data,
             ),
             candidate_text=candidate_text,
             ledger=ledger,
             enabled=self._grounding_enabled(),
         )
+
+    def _update_evidence_metadata(
+        self, evidence_result: Any
+    ) -> tuple[EvidenceStatus, datetime | None, datetime | None, FactFreshness, str | None]:
+        """Normalize source/time/status once for prompts and the final gate."""
+        status = classify_evidence_result(evidence_result)
+        result_dict = evidence_result if isinstance(evidence_result, dict) else {}
+        observed_at = self._evidence_datetime(
+            result_dict.get("observed_at") or result_dict.get("saved_at")
+        )
+        source_as_of = self._evidence_datetime(
+            result_dict.get("data_as_of") or result_dict.get("source_as_of")
+        ) or observed_at
+        source_ref = result_dict.get("source_ref")
+        if not source_ref and result_dict.get("dataset_name"):
+            source_ref = f"dataset://{result_dict['dataset_name']}"
+        route_freshness = str(
+            self.route_hints.get("freshness_requirement") or "unknown"
+        ).strip().lower()
+        try:
+            evidence_freshness = FactFreshness(route_freshness)
+        except ValueError:
+            evidence_freshness = FactFreshness.UNKNOWN
+        if evidence_freshness is FactFreshness.UNKNOWN and self._requires_fresh_data:
+            evidence_freshness = FactFreshness.DYNAMIC
+        self._evidence_metadata = {
+            "status": status.value,
+            "source_ref": source_ref,
+            "observed_at": observed_at.isoformat() if observed_at else None,
+            "source_as_of": source_as_of.isoformat() if source_as_of else None,
+            "freshness": evidence_freshness.value,
+        }
+        return status, observed_at, source_as_of, evidence_freshness, source_ref
 
     async def _ensure_schema_similarity_threshold(self) -> float:
         """与 fetch_dataset_schema_core 共用 ragflow_similarity_threshold。"""
@@ -182,15 +317,16 @@ class DataAgentRunner(BaseExecutor):
         return name or None
 
     def _runner_context(self, *, system_content: str, max_steps: int) -> Dict[str, Any]:
-        return {'runner_type': 'data', 'config': self.config.model_dump(), 'debug_options': self.debug_options, 'permission_options': self.permission_options, 'system_content': system_content, 'max_steps': max_steps, 'standalone_query': self._standalone_query, 'schema_search_keywords': self._schema_search_keywords, 'semantic_intent': semantic_intent_to_dict(self._semantic_intent), 'requires_fresh_data': self._requires_fresh_data, 'requires_sql_query': bool(getattr(self, '_requires_sql_query', True))}
+        return {'runner_type': 'data', 'config': self.config.model_dump(), 'debug_options': self.debug_options, 'permission_options': self.permission_options, 'route_hints': self.route_hints, 'evidence_metadata': self._evidence_metadata, 'system_content': system_content, 'max_steps': max_steps, 'standalone_query': self._standalone_query, 'schema_search_keywords': self._schema_search_keywords, 'semantic_intent': semantic_intent_to_dict(self._semantic_intent), 'requires_fresh_data': self._requires_fresh_data, 'requires_sql_query': bool(getattr(self, '_requires_sql_query', True))}
 
     @classmethod
     def from_runner_context(cls, *, runner_context: Dict[str, Any], trace_id: str, trace_buffer: List[AgentExecutionStep] | None=None, user_info: Optional[Dict[str, Any]]=None, conversation_id: Optional[str]=None) -> 'DataAgentRunner':
         config = ChatConfig(**runner_context['config'])
-        runner = cls(config=config, trace_id=trace_id, trace_buffer=trace_buffer or [], debug_options=runner_context.get('debug_options'), permission_options=runner_context.get('permission_options'), user_info=user_info, conversation_id=conversation_id)
+        runner = cls(config=config, trace_id=trace_id, trace_buffer=trace_buffer or [], debug_options=runner_context.get('debug_options'), permission_options=runner_context.get('permission_options'), user_info=user_info, conversation_id=conversation_id, route_hints=runner_context.get('route_hints'))
         runner._standalone_query = str(runner_context.get('standalone_query') or '')
         runner._schema_search_keywords = str(runner_context.get('schema_search_keywords') or '')
         runner._semantic_intent = semantic_intent_from_dict(runner_context.get('semantic_intent'))
+        runner._evidence_metadata = dict(runner_context.get('evidence_metadata') or {})
         runner._requires_fresh_data = bool(runner_context.get('requires_fresh_data', True))
         runner._requires_sql_query = bool(runner_context.get('requires_sql_query', True))
         return runner
@@ -443,6 +579,7 @@ class DataAgentRunner(BaseExecutor):
                 yield chunk
 
     async def _execute_raw(self, history: List[Dict[str, str]]) -> AsyncGenerator[Dict[str, Any], None]:
+        self._ensure_grounding_ledger()
         self._active_history = list(history or [])
         model_name = resolve_runtime_model_name(self.config, prefer_synthesis=True)
         incompatible_msg = await ensure_multimodal_compatible(history, model_name)
@@ -522,6 +659,7 @@ class DataAgentRunner(BaseExecutor):
                 turn_cls.requires_sql_query = False
                 turn_cls.intent = IntentType.DATA_QUERY
                 turn_intent_info.intent = IntentType.DATA_QUERY
+        turn_cls = self._apply_route_semantics_to_turn_classification(turn_cls)
         self.turn_classification = turn_cls
         self.intent_info = turn_intent_info
         self.intent_elapsed_ms = turn_elapsed_ms

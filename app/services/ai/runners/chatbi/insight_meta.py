@@ -8,6 +8,7 @@ from collections import defaultdict
 from typing import Any
 
 from app.services.ai.runners.chatbi.run_state import DataRunState
+from app.services.ai.grounding.ledger import classify_evidence_result
 
 _ROW_KEYS = ("rows", "data", "result", "results", "items", "records")
 _DATE_NAME_RE = re.compile(r"(date|time|day|week|month|year|日期|时间|日|周|月|年)", re.I)
@@ -146,7 +147,48 @@ def _build_sources(state: DataRunState) -> list[dict[str, Any]]:
     ]
 
 
-def build_chatbi_insight_meta(state: DataRunState) -> dict[str, Any] | None:
+def _build_evidence_metadata(
+    parsed: Any,
+    evidence_metadata: dict[str, Any] | None = None,
+    state: DataRunState | None = None,
+) -> dict[str, Any]:
+    """Normalize the additive evidence contract consumed by both chat surfaces."""
+    result = parsed if isinstance(parsed, dict) else {}
+    metadata = evidence_metadata if isinstance(evidence_metadata, dict) else {}
+    source_ref = metadata.get("source_ref") or result.get("source_ref")
+    if not source_ref and state is not None:
+        datasets = sorted(
+            {
+                str(binding.dataset_name or "").strip()
+                for binding in state.table_bindings.values()
+                if str(binding.dataset_name or "").strip()
+            }
+        )
+        if len(datasets) == 1:
+            source_ref = f"dataset://{datasets[0]}"
+    return {
+        "result_status": str(
+            metadata.get("status")
+            or result.get("result_status")
+            or classify_evidence_result(parsed).value
+        ),
+        "source_ref": source_ref,
+        "observed_at": metadata.get("observed_at") or result.get("observed_at") or result.get("saved_at"),
+        "source_as_of": (
+            metadata.get("source_as_of")
+            or result.get("source_as_of")
+            or result.get("data_as_of")
+            or result.get("as_of")
+        ),
+        "freshness": str(metadata.get("freshness") or result.get("freshness") or "dynamic"),
+    }
+
+
+def build_chatbi_insight_meta(
+    state: DataRunState,
+    *,
+    evidence_metadata: dict[str, Any] | None = None,
+) -> dict[str, Any] | None:
     """Return an additive SSE event only for a successful structured SQL result."""
     if not state.has_successful_nonempty_sql or state.last_successful_sql_output is None:
         return None
@@ -171,6 +213,7 @@ def build_chatbi_insight_meta(state: DataRunState) -> dict[str, Any] | None:
             "result_id": state.current_result_id or None,
             "sources": _build_sources(state),
             "permission": safe_notice,
+            "evidence": _build_evidence_metadata(parsed, evidence_metadata, state),
             "execution": {
                 "mode": "repaired" if repair_count else "direct",
                 "row_count": len(rows),
@@ -183,11 +226,15 @@ def build_chatbi_insight_meta(state: DataRunState) -> dict[str, Any] | None:
     }
 
 
-def take_chatbi_insight_meta_event(state: DataRunState) -> dict[str, Any] | None:
+def take_chatbi_insight_meta_event(
+    state: DataRunState,
+    *,
+    evidence_metadata: dict[str, Any] | None = None,
+) -> dict[str, Any] | None:
     """Build and mark the additive event so resume/reconcile paths cannot duplicate it."""
     if state.insight_meta_emitted:
         return None
-    event = build_chatbi_insight_meta(state)
+    event = build_chatbi_insight_meta(state, evidence_metadata=evidence_metadata)
     if event is not None:
         state.insight_meta_emitted = True
     return event
@@ -198,6 +245,7 @@ def build_federated_chatbi_insight_meta(
     final_data: Any,
     dataset_names: list[str],
     final_sql: str,
+    evidence_metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
     """Build the same user-facing contract for a successful DuckDB federated join."""
     parsed = _parse_result(final_data)
@@ -215,6 +263,7 @@ def build_federated_chatbi_insight_meta(
                 if str(name or "").strip()
             ],
             "permission": {},
+            "evidence": _build_evidence_metadata(parsed, evidence_metadata),
             "execution": {
                 "mode": "federated",
                 "row_count": len(rows),

@@ -282,7 +282,7 @@ XML 示例：
 3. 输出中的所有 Markdown 表格表头 MUST 使用中文业务术语，禁止保留 visit_id、FOLLOW_UP_DATE 等英文/拼音物理列名。
 4. 如果合适，请附带生成符合 ECharts 格式的 ```chart 块进行可视化展示。
 5. ECharts 图表必须使用标准 ECharts Option 配置；图表 series / legend / tooltip 中的维度名也 MUST 使用中文表头。
-6. **数据源与引用说明 (MUST)**：在正文、表格与 ```chart``` 图表之后、quick 区块之前，单独一行注明数据归属的数据集名称（例如：`（* 数据来源：{{数据集名称}}）`）；多数据集用顿号列出；禁止与 quick 建议混在同一行。
+6. **数据源与时效说明 (MUST)**：在正文、表格与 ```chart``` 图表之后、quick 区块之前，单独一行注明数据来源、观测时间/数据截至时间和时效范围（例如：`（* 数据来源：{{数据集名称}}；数据截至：{{时间}}；时效：本轮查询）`）；多数据集用顿号列出；禁止与 quick 建议混在同一行。
 
 {SharedPrompts.QUICK_SUGGESTIONS_FORMAT}
 
@@ -385,17 +385,19 @@ XML 示例：
         "4. 未执行 SQL、SQL 失败或工具返回错误时，禁止编造查询结论。\n"
         "5. 工具不可用、无权限、无数据集或查询失败时，必须如实说明。\n"
         "6. 用户只是要求基于上一轮结果做解释、可视化、保存、导出时，可复用上一轮结构化结果，不强制重新查数。\n"
-        "7. 长期记忆中的业务别名、组织别名、地点别名可用于用户意图归一化；"
+        "7. 必须区分成功且有数据、成功但无匹配结果、查询失败、无权限/不可用；空结果不能写成查询失败，失败也不能当成零条数据。\n"
+        "8. 任何具体数字、排名、比例或结论都必须来自本轮有效证据；回答中注明数据来源、观测时间/数据截至时间和时效范围。没有证据时只能说明无法确认，不能补写数字。\n"
+        "9. 长期记忆中的业务别名、组织别名、地点别名可用于用户意图归一化；"
         "若记忆指出“用户称呼 A = 数据标准名 B”，生成 SQL 的筛选值应优先使用 B，并在回答中说明已按标准名 B 查询。"
         "但 SQL 中的表名、字段名、指标定义必须以 get_dataset_schema 返回的 columns.name / table_name 为准；"
         "term 仅为业务说明，禁止写入 SQL。\n"
-        "8. SQL 的 FROM/JOIN 只能使用 get_dataset_schema 返回的 table_name（物理表名）；"
+        "10. SQL 的 FROM/JOIN 只能使用 get_dataset_schema 返回的 table_name（物理表名）；"
         "schema 中的 dataset 仅为逻辑数据集 ID（execute_sql_query 的 dataset_name），"
         "不是物理数据库名，严禁写成 FROM dataset.table_name（如 ai_agent_meta.xxx）；"
         "连接目标以 data_source 为准，并通过工具参数 data_source / dataset_name 传递。"
         "table_desc、列 term、metrics_scope、数据集中文名（meta_name）等均为业务说明，严禁直接当作表名；"
         "指标块（metrics）仅提供计算口径参考，不含表结构，禁止把指标块或 metrics_scope 当作可查询的表。\n"
-        "9. 分页语法：禁止 ORDER BY ... AND ROWNUM/LIMIT；Oracle TopN 用子查询包排序后外层 ROWNUM 或 FETCH FIRST；"
+        "11. 分页语法：禁止 ORDER BY ... AND ROWNUM/LIMIT；Oracle TopN 用子查询包排序后外层 ROWNUM 或 FETCH FIRST；"
         "MySQL/ClickHouse 用 LIMIT；SQL Server 用 TOP N 或 ORDER BY ... OFFSET ... FETCH NEXT。"
     )
 
@@ -2392,6 +2394,7 @@ XML 示例：
             "【上一轮结构化查询结果】\n"
             f"{result_json}\n\n"
             "请只基于上一轮结构化查询结果完成分析或可视化，不要声称已重新查询数据库。\n"
+            "如果结果中包含数据来源、观测时间、数据截至时间或 result_status，最终回答必须如实保留；不能把成功空结果写成有数据，也不能补造缺失数字。\n"
             "这是基于已有结果的追问：不要重复上一轮已展示过的图表、表格或核心结论，只输出本轮追问的新增分析或可视化。\n"
             "【排版特别约束】：因为是追问，请直接输出图表（```chart```） and 新增分析，【禁止】再次套用系统提示词中“🎯 核心结论”、“📊 数据概览”、“🔍 分析解读”等三段式完整报告模板，避免重复输出上轮数据表格。\n"
             "整段回答只输出一次，禁止将相同内容重复输出两遍。\n"
@@ -2408,6 +2411,7 @@ XML 示例：
             "【上一轮对话中的查数展示（结构化缓存暂不可用，请以此为准）】\n"
             f"{history_excerpt}\n\n"
             "请只基于上述已有查数展示完成分析或可视化，不要声称已重新查询数据库。\n"
+            "若历史展示没有明确来源或时效，必须说明来源/时间不可核验，不得补造具体数字。\n"
             "这是基于已有结果的追问：不要重复上一轮已展示过的图表、表格或核心结论，只输出本轮追问的新增分析或可视化。\n"
             "【排版特别约束】：因为是追问，请直接输出图表（```chart```） and 新增分析，【禁止】再次套用系统提示词中“🎯 核心结论”、“📊 数据概览”、“🔍 分析解读”等三段式完整报告模板，避免重复输出上轮数据表格。\n"
             "整段回答只输出一次，禁止将相同内容重复输出两遍。\n"
@@ -2417,11 +2421,16 @@ XML 示例：
         )
 
     @staticmethod
-    def synthesis_user_message(user_question: str, execution_review: str) -> str:
+    def synthesis_user_message(
+        user_question: str,
+        execution_review: str,
+        evidence_context: str = "",
+    ) -> str:
         """数据查询最终合成阶段的用户消息。"""
         return (
             f"【当前追问】：{user_question}\n\n"
             f"{execution_review}\n\n"
+            f"{evidence_context}\n\n"
             "请结合上述【执行过程回顾】和查询结果，为用户提供连贯且专业的最终回答。\n"
             "注：如果执行过程主要是执行了一个外部动作（如发送消息、启动/暂停任务等），请直接简洁地告知执行结果即可，无需赘述。\n\n"
             f"{SharedPrompts.DATA_QUERY_MARKDOWN_OUTPUT_FORMAT}\n\n"
@@ -2454,6 +2463,8 @@ class AssistantPrompts:
             route_hints.get("freshness_requirement") or "unknown"
         ).strip().lower()
         time_scope = str(route_hints.get("time_scope") or "").strip()
+        reference_mode = str(route_hints.get("reference_mode") or "unknown").strip().lower()
+        needs_fresh_data = route_hints.get("needs_fresh_data")
         chatbi_mode = str(route_hints.get("chatbi_mode") or "").strip().lower()
         chatbi_evidence_level = str(
             route_hints.get("chatbi_evidence_level") or "none"
@@ -2479,6 +2490,8 @@ class AssistantPrompts:
             f"- fact_kind: {fact_kind}\n"
             f"- freshness_requirement: {freshness_requirement}\n"
             f"- time_scope: {time_scope or '未指定'}\n"
+            f"- reference_mode: {reference_mode}\n"
+            f"- needs_fresh_data: {str(needs_fresh_data).lower() if needs_fresh_data is not None else 'unknown'}\n"
             "以上只是路由层基于上下文得到的 hint。请结合完整对话自行判断，"
             "不要机械服从；若 hint 与用户当前问题冲突，以用户问题和对话上下文为准。"
         )
@@ -2500,7 +2513,12 @@ class AssistantPrompts:
             return hint
         confidence_text = "未知" if semantic_confidence is None else str(semantic_confidence)
         reasoning_text = str(semantic_reasoning or "未提供")
-        if chatbi_mode == "deny":
+        if semantic_domain not in {"chatbi_business_data", "conversation_context", "unknown"}:
+            action_guidance = (
+                f"请求来源为 {semantic_domain}，不是 ChatBI 业务数据；"
+                "禁止调用 data_query/ChatBI 子智能体，应使用与该来源匹配的工具或直接回答。"
+            )
+        elif chatbi_mode == "deny":
             action_guidance = (
                 "ChatBI 资格为 DENY：本轮不是 ChatBI 业务数据请求，禁止调用 data_query/ChatBI 子智能体；"
                 "请按当前请求的真实来源使用本机工具、联网工具或直接回答。"
@@ -2527,11 +2545,16 @@ class AssistantPrompts:
         )
 
     @staticmethod
-    def synthesis_user_message(user_question: str, execution_review: str) -> str:
+    def synthesis_user_message(
+        user_question: str,
+        execution_review: str,
+        evidence_context: str = "",
+    ) -> str:
         """通用助手 ReAct 后最终合成阶段的用户消息。"""
         return (
             f"【当前追问】：{user_question}\n\n"
             f"{execution_review}\n\n"
+            f"{evidence_context}\n\n"
             "请结合上述【执行过程回顾】和最新结果，为用户提供准确、连贯的最终回答。\n"
             "注：如果执行过程主要是执行了一个外部动作（如发送钉钉消息、创建任务等），请直接简洁地告知执行结果即可，无需重复发送的具体内容或进行冗长的总结。\n\n"
             f"{SharedPrompts.MARKDOWN_OUTPUT_FORMAT}"

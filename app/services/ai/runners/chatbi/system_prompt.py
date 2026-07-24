@@ -20,6 +20,17 @@ def build_data_query_state_hint(
     requires_fresh_data = bool(getattr(runner, "_requires_fresh_data", True))
     requires_sql_query = bool(getattr(runner, "_requires_sql_query", True))
     reusable_result = bool(context_action_result) and not requires_fresh_data
+    route_hints = getattr(runner, "route_hints", {}) or {}
+    evidence_metadata = getattr(runner, "_evidence_metadata", {}) or {}
+    if not evidence_metadata and isinstance(context_action_result, dict):
+        evidence_metadata = {
+            "status": context_action_result.get("result_status") or "unknown",
+            "source_ref": context_action_result.get("source_ref"),
+            "observed_at": context_action_result.get("observed_at"),
+            "source_as_of": context_action_result.get("data_as_of")
+            or context_action_result.get("source_as_of"),
+            "freshness": context_action_result.get("freshness") or "unknown",
+        }
 
     if reusable_result or include_context_action:
         allowed_next_action = "reuse_previous_result"
@@ -37,9 +48,33 @@ def build_data_query_state_hint(
         f"sql_query_required: {str(requires_sql_query).lower()}",
         f"allowed_next_action: {allowed_next_action}",
     ]
+    for key in (
+        "semantic_domain",
+        "semantic_operation",
+        "fact_kind",
+        "freshness_requirement",
+        "time_scope",
+        "reference_mode",
+        "needs_fresh_data",
+    ):
+        value = route_hints.get(key)
+        if value not in (None, "", "unknown"):
+            lines.append(f"{key}: {str(value).lower()}")
     if requires_fresh_data:
         lines.append("schema_ready: false")
     lines.append("[/DATA_QUERY_STATE]")
+    if evidence_metadata:
+        lines.extend(
+            [
+                "[EVIDENCE_STATE]",
+                f"result_status: {evidence_metadata.get('status') or 'unknown'}",
+                f"source_ref: {evidence_metadata.get('source_ref') or 'unknown'}",
+                f"observed_at: {evidence_metadata.get('observed_at') or 'unknown'}",
+                f"source_as_of: {evidence_metadata.get('source_as_of') or 'unknown'}",
+                f"freshness: {evidence_metadata.get('freshness') or 'unknown'}",
+                "[/EVIDENCE_STATE]",
+            ]
+        )
     return "\n".join(lines)
 
 

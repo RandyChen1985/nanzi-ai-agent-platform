@@ -351,6 +351,8 @@ class AssistantAgentRunner(BaseExecutor):
         fact_kind = self.route_hints.get("fact_kind")
         freshness_requirement = self.route_hints.get("freshness_requirement")
         time_scope = self.route_hints.get("time_scope")
+        reference_mode = self.route_hints.get("reference_mode")
+        needs_fresh_data = self.route_hints.get("needs_fresh_data")
         raw_dataset_ids = self.route_hints.get("matched_dataset_ids") or []
         try:
             matched_dataset_ids = tuple(int(value) for value in raw_dataset_ids)
@@ -376,6 +378,8 @@ class AssistantAgentRunner(BaseExecutor):
                 fact_kind=fact_kind,
                 freshness_requirement=freshness_requirement or "unknown",
                 time_scope=time_scope,
+                reference_mode=str(reference_mode or "unknown"),
+                needs_fresh_data=bool(needs_fresh_data),
                 chatbi_mode=self.route_hints.get("chatbi_mode"),
                 chatbi_evidence_level=str(
                     self.route_hints.get("chatbi_evidence_level") or "none"
@@ -397,6 +401,8 @@ class AssistantAgentRunner(BaseExecutor):
             fact_kind=fact_kind,
             freshness_requirement=freshness_requirement,
             time_scope=time_scope,
+            reference_mode=reference_mode,
+            needs_fresh_data=needs_fresh_data,
         )
 
     @staticmethod

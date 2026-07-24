@@ -15,6 +15,14 @@ export interface ChatBIInsightSource {
   tables: Array<{ physical_name: string }>;
 }
 
+export interface ChatBIEvidenceMeta {
+  result_status: string;
+  source_ref?: string | null;
+  observed_at?: string | null;
+  source_as_of?: string | null;
+  freshness?: string | null;
+}
+
 export interface ChatBIInsightMeta {
   version: number;
   status: "success";
@@ -26,6 +34,7 @@ export interface ChatBIInsightMeta {
     rule_count?: number;
     message?: string;
   };
+  evidence?: ChatBIEvidenceMeta;
   execution: {
     mode: "direct" | "repaired" | "federated";
     row_count: number;

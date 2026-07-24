@@ -135,6 +135,7 @@ class AgentDispatcher:
                 user_info,
                 conversation_id,
                 permission_options=permission_options,
+                route_hints=route_hints,
             )
 
         logger.info(

@@ -20,6 +20,9 @@ fact_kind 只能描述事实类型，例如 business_metric、machine_load、fil
 public_fact、knowledge_document、previous_query_result、unknown。
 freshness_requirement 只能是：static、historical、dynamic、realtime、
 reuse_previous、unknown；time_scope 填用户明确要求的业务时间范围，没有则为 null。
+reference_mode 只能是：new_query（本轮需要查新的事实）、data_followup_query（基于上下文补充条件但仍需查新数据）、
+reuse_previous（只加工上一轮已有结果）、context_action（对已有上下文执行非查数动作）、unknown。
+needs_fresh_data 是布尔值：本轮若需要重新获取事实数据则为 true；明确复用上一轮结果时为 false。
 
 可选类别（必须三选一）：
 
@@ -52,13 +55,13 @@ reuse_previous、unknown；time_scope 填用户明确要求的业务时间范围
 
 示例：
 用户：各区域上个月的销售额趋势
-输出：{"intent": "DATA_QUERY", "confidence": 0.97, "reasoning": "请求时间序列指标数据", "entities": ["各区域", "销售额", "上个月"], "domain": "chatbi_business_data", "operation": "lookup"}
+输出：{"intent": "DATA_QUERY", "confidence": 0.97, "reasoning": "请求时间序列指标数据", "entities": ["各区域", "销售额", "上个月"], "domain": "chatbi_business_data", "operation": "lookup", "fact_kind": "business_metric", "freshness_requirement": "historical", "time_scope": "上个月", "reference_mode": "new_query", "needs_fresh_data": true}
 
 用户：最近有哪些待处理工单
 输出：{"intent": "DATA_QUERY", "confidence": 0.95, "reasoning": "查询离散业务记录", "entities": ["待处理工单"], "domain": "chatbi_business_data", "operation": "lookup"}
 
 用户：把刚才的结果画成柱状图
-输出：{"intent": "DATA_QUERY", "confidence": 0.93, "reasoning": "对上一轮数据结果的可视化追问", "entities": ["柱状图"], "domain": "conversation_context", "operation": "visualize"}
+输出：{"intent": "DATA_QUERY", "confidence": 0.93, "reasoning": "对上一轮数据结果的可视化追问", "entities": ["柱状图"], "domain": "conversation_context", "operation": "visualize", "fact_kind": "previous_query_result", "freshness_requirement": "reuse_previous", "time_scope": null, "reference_mode": "reuse_previous", "needs_fresh_data": false}
 
 用户：订单退款的标准处理流程是什么
 输出：{"intent": "KNOWLEDGE_BASE", "confidence": 0.9, "reasoning": "询问 SOP 处理流程，非真实记录", "entities": ["订单退款", "处理流程"], "domain": "internal_docs", "operation": "explain"}
@@ -67,7 +70,7 @@ reuse_previous、unknown；time_scope 填用户明确要求的业务时间范围
 输出：{"intent": "GENERAL", "confidence": 0.93, "reasoning": "请求联网检索外部公网最新信息，非内部知识库，由通用助手联网搜索", "entities": ["某品牌"], "domain": "public_web", "operation": "lookup"}
 
 用户：统计一下我机器的文件数
-输出：{"intent": "GENERAL", "confidence": 0.96, "reasoning": "本机文件系统统计，不是 ChatBI 业务数据", "entities": ["机器", "文件数"], "domain": "local_file", "operation": "aggregate"}
+输出：{"intent": "GENERAL", "confidence": 0.96, "reasoning": "本机文件系统统计，不是 ChatBI 业务数据", "entities": ["机器", "文件数"], "domain": "local_file", "operation": "aggregate", "fact_kind": "file_count", "freshness_requirement": "dynamic", "time_scope": null, "reference_mode": "new_query", "needs_fresh_data": true}
 
 用户：你好，你是谁
 输出：{"intent": "GENERAL", "confidence": 0.98, "reasoning": "日常打招呼", "entities": [], "domain": "general", "operation": "explain"}
@@ -698,6 +701,14 @@ class IntentResponse(BaseModel):
         default=None,
         description="Explicit business or calendar time scope requested by the user",
     )
+    reference_mode: str = Field(
+        default="unknown",
+        description="Whether this is a new query, a data follow-up, a previous-result reuse, or a context action",
+    )
+    needs_fresh_data: Optional[bool] = Field(
+        default=None,
+        description="Whether the current turn requires acquiring fresh factual evidence",
+    )
 
 
 class IntentSource(str, Enum):
@@ -753,7 +764,9 @@ class IntentService:
             "fact_kind（business_metric/machine_load/file_count/public_fact/"
             "knowledge_document/previous_query_result/unknown）、"
             "freshness_requirement（static/historical/dynamic/realtime/reuse_previous/unknown）、"
-            "time_scope（明确的业务或日历时间范围，没有则为 null）。"
+            "time_scope（明确的业务或日历时间范围，没有则为 null）、"
+            "reference_mode（new_query/data_followup_query/reuse_previous/context_action/unknown）、"
+            "needs_fresh_data（布尔值）。"
         )
 
     @staticmethod

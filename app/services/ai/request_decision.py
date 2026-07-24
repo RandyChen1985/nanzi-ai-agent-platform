@@ -70,6 +70,8 @@ class RequestDecision:
     fact_kind: Optional[str] = None
     freshness_requirement: str = "unknown"
     time_scope: Optional[str] = None
+    reference_mode: str = "unknown"
+    needs_fresh_data: bool = False
     max_age_seconds: Optional[int] = None
     requires_source_timestamp: bool = False
     chatbi_mode: Optional[str] = None
@@ -88,6 +90,74 @@ def _coerce_confidence(value: Any) -> float:
         return float(value)
     except (TypeError, ValueError):
         return 0.0
+
+
+_REFERENCE_MODES = frozenset(
+    {"new_query", "data_followup_query", "reuse_previous", "context_action", "unknown"}
+)
+
+
+def _normalize_semantic(value: Any, default: str | None = None) -> str | None:
+    raw = getattr(value, "value", value)
+    normalized = str(raw or "").strip().lower()
+    return normalized or default
+
+
+def _normalize_reference_mode(value: Any) -> str:
+    normalized = _normalize_semantic(value, "unknown") or "unknown"
+    return normalized if normalized in _REFERENCE_MODES else "unknown"
+
+
+def _derive_reference_mode(
+    query: str,
+    *,
+    semantic_name: str,
+    semantic_domain: str | None,
+    semantic_operation: str | None,
+    freshness_requirement: str,
+    explicit_reference_mode: Any,
+    has_last_data_result: bool,
+) -> str:
+    explicit = _normalize_reference_mode(explicit_reference_mode)
+    if explicit != "unknown":
+        return explicit
+    if freshness_requirement == "reuse_previous":
+        return "reuse_previous"
+    if semantic_domain == "conversation_context":
+        return "reuse_previous" if has_last_data_result else "context_action"
+    if semantic_domain == "chatbi_business_data":
+        return "new_query"
+    if semantic_name == IntentType.DATA_QUERY.value:
+        if has_last_data_result and looks_like_pure_result_followup(query):
+            return "reuse_previous"
+        return "new_query"
+    if semantic_operation in {"transform", "visualize", "export"} and has_last_data_result:
+        return "context_action"
+    return "unknown"
+
+
+def _derive_needs_fresh_data(
+    decision: RequestDecision,
+    *,
+    semantic_domain: str | None,
+    freshness_requirement: str,
+    reference_mode: str,
+    explicit_value: Any,
+) -> bool:
+    if explicit_value is not None:
+        return bool(explicit_value)
+    if reference_mode in {"reuse_previous", "context_action"}:
+        return False
+    if freshness_requirement in {"historical", "dynamic", "realtime"}:
+        return True
+    if semantic_domain in {
+        "chatbi_business_data",
+        "runtime_environment",
+        "local_file",
+        "public_web",
+    }:
+        return True
+    return decision.capability == RequestCapability.DATA_QUERY
 
 
 def _decision(
@@ -166,6 +236,9 @@ def _resolve_request_decision(
     has_last_data_result: bool = False,
     has_knowledge_binding: bool = False,
     semantic_intent_blocks_followup: bool = False,
+    semantic_domain: Any = None,
+    semantic_operation: Any = None,
+    reference_mode: Any = None,
 ) -> RequestDecision:
     """统一判断请求来源、所需能力和是否允许委派。
 
@@ -177,6 +250,9 @@ def _resolve_request_decision(
     semantic_score = _coerce_confidence(semantic_confidence)
     turn_name = _intent_name(turn_intent)
     effective_intent = semantic_name or turn_name
+    semantic_domain_name = _normalize_semantic(semantic_domain)
+    semantic_operation_name = _normalize_semantic(semantic_operation)
+    reference_mode_name = _normalize_reference_mode(reference_mode)
 
     if not q:
         return _decision(
@@ -258,6 +334,76 @@ def _resolve_request_decision(
             semantic_confidence=semantic_score,
         )
 
+    # The structured domain is a source boundary, not a decoration on the
+    # old intent label.  In particular, local files and runtime facts must
+    # never become ChatBI merely because the user said "统计" or "查询".
+    if semantic_domain_name == "local_file":
+        return _decision(
+            RequestSource.GENERAL,
+            RequestCapability.ANSWER,
+            max(semantic_score, 0.86),
+            "local file/directory request is outside ChatBI business data",
+            semantic_name=effective_intent,
+            semantic_confidence=semantic_score,
+        )
+    if semantic_domain_name == "runtime_environment":
+        return _decision(
+            RequestSource.RUNTIME_DIAGNOSTIC,
+            RequestCapability.RUNTIME_TOOL,
+            max(semantic_score, 0.86),
+            "runtime environment request requires runtime tools, not ChatBI",
+            semantic_name=effective_intent,
+            semantic_confidence=semantic_score,
+        )
+    if semantic_domain_name == "public_web":
+        return _decision(
+            RequestSource.PUBLIC_WEB,
+            RequestCapability.WEB_SEARCH,
+            max(semantic_score, 0.86),
+            "public web request requires refreshed external evidence",
+            semantic_name=effective_intent,
+            semantic_confidence=semantic_score,
+        )
+    if semantic_domain_name == "internal_docs":
+        return _decision(
+            RequestSource.INTERNAL_DOCS,
+            RequestCapability.KNOWLEDGE_SEARCH,
+            max(semantic_score, 0.82),
+            "internal document request requires knowledge retrieval",
+            should_delegate=True,
+            delegate_capability="knowledge_base",
+            requires_knowledge_search=True,
+            semantic_name=effective_intent,
+            semantic_confidence=semantic_score,
+        )
+    if semantic_domain_name == "general":
+        return _decision(
+            RequestSource.GENERAL,
+            RequestCapability.ANSWER,
+            max(semantic_score, 0.8),
+            "general request is outside ChatBI business data",
+            semantic_name=effective_intent,
+            semantic_confidence=semantic_score,
+        )
+    if semantic_domain_name == "conversation_context" and (
+        reference_mode_name in {"reuse_previous", "context_action"}
+        or (
+            has_last_data_result
+            and reference_mode_name not in {"new_query", "data_followup_query"}
+        )
+    ):
+        return _decision(
+            RequestSource.CONVERSATION_CONTEXT,
+            RequestCapability.CONTEXT_TRANSFORM,
+            max(semantic_score, 0.86),
+            "request operates on an existing conversation result",
+            should_delegate=has_last_data_result,
+            delegate_capability="data_query" if has_last_data_result else None,
+            allows_data_route=has_last_data_result,
+            semantic_name=effective_intent,
+            semantic_confidence=semantic_score,
+        )
+
     has_data_semantics = (
         semantic_name == IntentType.DATA_QUERY.value
         or turn_name == IntentType.DATA_QUERY.value
@@ -270,7 +416,10 @@ def _resolve_request_decision(
     has_context_transform_signal = has_explicit_context_transform_signal or (
         has_short_context_signal and (has_last_data_result or has_data_semantics)
     )
-    if has_context_transform_signal:
+    explicit_new_data_context = semantic_domain_name == "conversation_context" and (
+        reference_mode_name in {"new_query", "data_followup_query"}
+    )
+    if has_context_transform_signal and not explicit_new_data_context:
         context_is_data = (
             has_last_data_result
             or has_data_semantics
@@ -386,6 +535,8 @@ def resolve_request_decision(
     time_scope: Any = None,
     max_age_seconds: Any = None,
     requires_source_timestamp: bool = False,
+    reference_mode: Any = None,
+    needs_fresh_data: Any = None,
 ) -> RequestDecision:
     """Resolve the legacy source/capability decision and attach fact semantics.
 
@@ -401,12 +552,34 @@ def resolve_request_decision(
         has_last_data_result=has_last_data_result,
         has_knowledge_binding=has_knowledge_binding,
         semantic_intent_blocks_followup=semantic_intent_blocks_followup,
+        semantic_domain=semantic_domain,
+        semantic_operation=semantic_operation,
+        reference_mode=reference_mode,
     )
 
-    def _normalize(value: Any, default: str | None = None) -> str | None:
-        raw = getattr(value, "value", value)
-        normalized = str(raw or "").strip().lower()
-        return normalized or default
+    normalized_domain = _normalize_semantic(semantic_domain)
+    normalized_operation = _normalize_semantic(semantic_operation)
+    normalized_fact_kind = _normalize_semantic(fact_kind)
+    normalized_freshness = _normalize_semantic(freshness_requirement, "unknown") or "unknown"
+    normalized_time_scope = (
+        (str(time_scope).strip() if time_scope is not None else None) or None
+    )
+    normalized_reference_mode = _derive_reference_mode(
+        query,
+        semantic_name=decision.semantic_intent or "",
+        semantic_domain=normalized_domain,
+        semantic_operation=normalized_operation,
+        freshness_requirement=normalized_freshness,
+        explicit_reference_mode=reference_mode,
+        has_last_data_result=has_last_data_result,
+    )
+    derived_needs_fresh_data = _derive_needs_fresh_data(
+        decision,
+        semantic_domain=normalized_domain,
+        freshness_requirement=normalized_freshness,
+        reference_mode=normalized_reference_mode,
+        explicit_value=needs_fresh_data,
+    )
 
     normalized_age: int | None = None
     if max_age_seconds is not None:
@@ -416,11 +589,13 @@ def resolve_request_decision(
             normalized_age = None
     return replace(
         decision,
-        semantic_domain=_normalize(semantic_domain),
-        semantic_operation=_normalize(semantic_operation),
-        fact_kind=_normalize(fact_kind),
-        freshness_requirement=_normalize(freshness_requirement, "unknown") or "unknown",
-        time_scope=(str(time_scope).strip() if time_scope is not None else None) or None,
+        semantic_domain=normalized_domain,
+        semantic_operation=normalized_operation,
+        fact_kind=normalized_fact_kind,
+        freshness_requirement=normalized_freshness,
+        time_scope=normalized_time_scope,
+        reference_mode=normalized_reference_mode,
+        needs_fresh_data=derived_needs_fresh_data,
         max_age_seconds=normalized_age,
         requires_source_timestamp=bool(requires_source_timestamp),
     )

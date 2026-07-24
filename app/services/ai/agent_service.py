@@ -650,6 +650,33 @@ class AgentService:
             r_chatbi_evidence_level = getattr(route_details, "chatbi_evidence_level", "none")
             r_chatbi_reason = getattr(route_details, "chatbi_reason", None)
             r_matched_dataset_ids = getattr(route_details, "matched_dataset_ids", []) or []
+            r_semantic_domain = getattr(
+                route_details, "semantic_domain", getattr(r_intent_info, "domain", None)
+            )
+            r_semantic_operation = getattr(
+                route_details, "semantic_operation", getattr(r_intent_info, "operation", None)
+            )
+            r_fact_kind = getattr(
+                route_details, "fact_kind", getattr(r_intent_info, "fact_kind", None)
+            )
+            r_freshness_requirement = getattr(
+                route_details,
+                "freshness_requirement",
+                getattr(r_intent_info, "freshness_requirement", "unknown"),
+            )
+            r_time_scope = getattr(
+                route_details, "time_scope", getattr(r_intent_info, "time_scope", None)
+            )
+            r_reference_mode = getattr(
+                route_details,
+                "reference_mode",
+                getattr(r_intent_info, "reference_mode", "unknown"),
+            )
+            r_needs_fresh_data = getattr(
+                route_details,
+                "needs_fresh_data",
+                getattr(r_intent_info, "needs_fresh_data", False),
+            )
 
             trace_buffer.append(AgentExecutionStep(
                 step_number=0,
@@ -668,13 +695,13 @@ class AgentService:
                     "semantic_intent": getattr(r_intent_info, "intent", None),
                     "semantic_confidence": getattr(r_intent_info, "confidence", None),
                     "semantic_reasoning": getattr(r_intent_info, "reasoning", None),
-                    "semantic_domain": getattr(r_intent_info, "domain", None),
-                    "semantic_operation": getattr(r_intent_info, "operation", None),
-                    "fact_kind": getattr(r_intent_info, "fact_kind", None),
-                    "freshness_requirement": getattr(
-                        r_intent_info, "freshness_requirement", "unknown"
-                    ),
-                    "time_scope": getattr(r_intent_info, "time_scope", None),
+                    "semantic_domain": r_semantic_domain,
+                    "semantic_operation": r_semantic_operation,
+                    "fact_kind": r_fact_kind,
+                    "freshness_requirement": r_freshness_requirement,
+                    "time_scope": r_time_scope,
+                    "reference_mode": r_reference_mode,
+                    "needs_fresh_data": r_needs_fresh_data,
                     "request_source": r_request_source,
                     "request_capability": r_request_capability,
                     "request_reasoning": r_request_reasoning,
@@ -1228,6 +1255,33 @@ class AgentService:
                 r_chatbi_evidence_level = getattr(route_details, "chatbi_evidence_level", "none")
                 r_chatbi_reason = getattr(route_details, "chatbi_reason", None)
                 r_matched_dataset_ids = getattr(route_details, "matched_dataset_ids", []) or []
+                r_semantic_domain = getattr(
+                    route_details, "semantic_domain", getattr(route_intent_evidence, "domain", None)
+                )
+                r_semantic_operation = getattr(
+                    route_details, "semantic_operation", getattr(route_intent_evidence, "operation", None)
+                )
+                r_fact_kind = getattr(
+                    route_details, "fact_kind", getattr(route_intent_evidence, "fact_kind", None)
+                )
+                r_freshness_requirement = getattr(
+                    route_details,
+                    "freshness_requirement",
+                    getattr(route_intent_evidence, "freshness_requirement", "unknown"),
+                )
+                r_time_scope = getattr(
+                    route_details, "time_scope", getattr(route_intent_evidence, "time_scope", None)
+                )
+                r_reference_mode = getattr(
+                    route_details,
+                    "reference_mode",
+                    getattr(route_intent_evidence, "reference_mode", "unknown"),
+                )
+                r_needs_fresh_data = getattr(
+                    route_details,
+                    "needs_fresh_data",
+                    getattr(route_intent_evidence, "needs_fresh_data", False),
+                )
                 route_hints = {
                     "turn_labels": r_turn_labels,
                     "relation_to_previous": r_relation,
@@ -1235,13 +1289,13 @@ class AgentService:
                     "semantic_intent": getattr(route_intent_evidence, "intent", None),
                     "semantic_confidence": getattr(route_intent_evidence, "confidence", None),
                     "semantic_reasoning": getattr(route_intent_evidence, "reasoning", None),
-                    "semantic_domain": getattr(route_intent_evidence, "domain", None),
-                    "semantic_operation": getattr(route_intent_evidence, "operation", None),
-                    "fact_kind": getattr(route_intent_evidence, "fact_kind", None),
-                    "freshness_requirement": getattr(
-                        route_intent_evidence, "freshness_requirement", "unknown"
-                    ),
-                    "time_scope": getattr(route_intent_evidence, "time_scope", None),
+                    "semantic_domain": r_semantic_domain,
+                    "semantic_operation": r_semantic_operation,
+                    "fact_kind": r_fact_kind,
+                    "freshness_requirement": r_freshness_requirement,
+                    "time_scope": r_time_scope,
+                    "reference_mode": r_reference_mode,
+                    "needs_fresh_data": r_needs_fresh_data,
                     "request_source": r_request_source,
                     "request_capability": r_request_capability,
                     "request_reasoning": r_request_reasoning,
@@ -1261,13 +1315,13 @@ class AgentService:
                     "semantic_intent": getattr(route_intent_evidence, "intent", None),
                     "semantic_confidence": getattr(route_intent_evidence, "confidence", None),
                     "semantic_reasoning": getattr(route_intent_evidence, "reasoning", None),
-                    "semantic_domain": getattr(route_intent_evidence, "domain", None),
-                    "semantic_operation": getattr(route_intent_evidence, "operation", None),
-                    "fact_kind": getattr(route_intent_evidence, "fact_kind", None),
-                    "freshness_requirement": getattr(
-                        route_intent_evidence, "freshness_requirement", "unknown"
-                    ),
-                    "time_scope": getattr(route_intent_evidence, "time_scope", None),
+                    "semantic_domain": r_semantic_domain,
+                    "semantic_operation": r_semantic_operation,
+                    "fact_kind": r_fact_kind,
+                    "freshness_requirement": r_freshness_requirement,
+                    "time_scope": r_time_scope,
+                    "reference_mode": r_reference_mode,
+                    "needs_fresh_data": r_needs_fresh_data,
                     "request_source": r_request_source,
                     "request_capability": r_request_capability,
                     "request_reasoning": r_request_reasoning,

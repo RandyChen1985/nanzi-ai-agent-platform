@@ -81,7 +81,10 @@ async def _finalize_content_and_persist(
         }
         state.full_content += str(warning.get("content") or "")
         yield warning
-    insight_event = take_chatbi_insight_meta_event(state)
+    insight_event = take_chatbi_insight_meta_event(
+        state,
+        evidence_metadata=getattr(runner, "_evidence_metadata", None),
+    )
     if insight_event is not None:
         yield insight_event
     await _persist_agent_state(
@@ -245,7 +248,10 @@ async def run_native_agent_turn(
             state=state,
         ):
             yield chunk
-        insight_event = take_chatbi_insight_meta_event(state)
+        insight_event = take_chatbi_insight_meta_event(
+            state,
+            evidence_metadata=getattr(runner, "_evidence_metadata", None),
+        )
         if insight_event is not None:
             yield insight_event
         await _persist_agent_state(
@@ -332,7 +338,10 @@ async def run_native_agent_turn(
                 state=state,
             ):
                 yield chunk
-            insight_event = take_chatbi_insight_meta_event(state)
+            insight_event = take_chatbi_insight_meta_event(
+                state,
+                evidence_metadata=getattr(runner, "_evidence_metadata", None),
+            )
             if insight_event is not None:
                 yield insight_event
             await _persist_agent_state(

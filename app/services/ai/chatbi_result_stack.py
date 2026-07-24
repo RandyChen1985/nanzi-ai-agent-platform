@@ -36,6 +36,7 @@ class ChatBIResultRef:
     data_as_of: str | None = None
     freshness: str = "dynamic"
     source_ref: str | None = None
+    result_status: str = "unknown"
     version: int = 1
 
     def to_dict(self) -> dict[str, Any]:

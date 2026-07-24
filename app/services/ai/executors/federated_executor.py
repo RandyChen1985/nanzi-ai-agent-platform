@@ -1321,6 +1321,7 @@ class FederatedQueryExecutor:
                     final_data=final_data,
                     dataset_names=self.datasets,
                     final_sql=join_sql,
+                    evidence_metadata=getattr(self.agent_runner, "_evidence_metadata", None),
                 )
                 if insight_event is not None:
                     yield insight_event

@@ -33,6 +33,7 @@ class FactRequirement:
     requires_source_timestamp: bool = False
     allow_conversation_reuse: bool = False
     time_scope: str | None = None
+    block_unsupported_facts: bool = False
 
 
 @dataclass(frozen=True)
@@ -203,10 +204,23 @@ def resolve_fact_requirement(decision: RequestDecision | None) -> FactRequiremen
             freshness = FactFreshness.DYNAMIC
         elif decision.source == RequestSource.CONVERSATION_CONTEXT:
             freshness = FactFreshness.REUSE_PREVIOUS
+    reference_mode = str(
+        getattr(decision, "reference_mode", "unknown") or "unknown"
+    ).strip().lower()
+    needs_fresh_data = bool(getattr(decision, "needs_fresh_data", False))
+    if reference_mode in {"reuse_previous", "context_action"}:
+        freshness = FactFreshness.REUSE_PREVIOUS
+    elif needs_fresh_data and freshness is FactFreshness.REUSE_PREVIOUS:
+        # A contradictory legacy payload must fail closed: the explicit
+        # current-turn requirement wins over a stale reuse label.
+        freshness = FactFreshness.DYNAMIC
     max_age_seconds = getattr(decision, "max_age_seconds", None)
     if max_age_seconds is None and freshness is FactFreshness.REALTIME:
         max_age_seconds = 30
-    allow_conversation_reuse = freshness is FactFreshness.REUSE_PREVIOUS
+    allow_conversation_reuse = (
+        reference_mode in {"reuse_previous", "context_action"}
+        or freshness is FactFreshness.REUSE_PREVIOUS
+    ) and not needs_fresh_data
     return FactRequirement(
         required=bool(accepted_types),
         accepted_types=accepted_types,
@@ -218,6 +232,7 @@ def resolve_fact_requirement(decision: RequestDecision | None) -> FactRequiremen
         ),
         allow_conversation_reuse=allow_conversation_reuse,
         time_scope=getattr(decision, "time_scope", None),
+        block_unsupported_facts=needs_fresh_data and bool(accepted_types),
     )
 
 
@@ -358,9 +373,25 @@ def evaluate_grounding(
                 requirement.accepted_types,
                 available_types,
             )
+        if requirement.block_unsupported_facts:
+            return GroundingDecision(
+                GroundingAction.BLOCK_UNGROUNDED_FACTS,
+                "fresh-data request is backed only by an empty or unrelated result",
+                requirement.accepted_types,
+                available_types,
+                GroundingRiskLevel.HIGH,
+            )
 
     if requirement.required:
         if stale_exact_evidence_exists:
+            if requirement.block_unsupported_facts and _contains_structural_external_fact(text):
+                return GroundingDecision(
+                    GroundingAction.BLOCK_UNGROUNDED_FACTS,
+                    "fresh-data request has only stale evidence for a concrete fact",
+                    requirement.accepted_types,
+                    available_types,
+                    GroundingRiskLevel.HIGH,
+                )
             return GroundingDecision(
                 GroundingAction.PASS_WITH_WARNING,
                 "required evidence is stale or does not satisfy the freshness requirement",
@@ -410,14 +441,23 @@ def evaluate_grounding(
                 and _contains_structural_external_fact(text)
             )
             return GroundingDecision(
-                GroundingAction.PASS_WITH_WARNING,
+                (
+                    GroundingAction.BLOCK_UNGROUNDED_FACTS
+                    if requirement.block_unsupported_facts and _contains_structural_external_fact(text)
+                    else GroundingAction.PASS_WITH_WARNING
+                ),
                 "compatible internal evidence exists but the source type is not an exact match",
                 requirement.accepted_types,
                 available_types,
                 GroundingRiskLevel.HIGH if high_risk else GroundingRiskLevel.LOW,
             )
         return GroundingDecision(
-            GroundingAction.PASS_WITH_WARNING,
+            (
+                GroundingAction.BLOCK_UNGROUNDED_FACTS
+                if requirement.block_unsupported_facts
+                and _contains_structural_external_fact(text)
+                else GroundingAction.PASS_WITH_WARNING
+            ),
             "required evidence receipt is missing",
             requirement.accepted_types,
             available_types,

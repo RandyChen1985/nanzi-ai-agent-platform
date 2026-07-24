@@ -3495,7 +3495,9 @@ async def test_data_agent_runner_synthesizes_after_repeated_sql_gate(
         model_name = "synthesis-model"
 
         async def astream(self, messages):
+            captured_messages.extend(messages)
             assert "重复调用相同 SQL" in messages[-1].content
+            assert "【证据元数据（必须如实反映到最终回答）】" in messages[-1].content
             yield AIMessage(content="已基于首次 SQL 结果完成回答。")
 
     async def fake_load_context_config():
@@ -3524,10 +3526,11 @@ async def test_data_agent_runner_synthesizes_after_repeated_sql_gate(
     async def fake_get_configured_llm(**kwargs):
         return handle
 
-    async def fake_schema(keywords=None):
+    async def fake_schema(keywords=None, **kwargs):
         return "table_name: demo\ncolumns: id, room, used, total"
 
     sql_calls = 0
+    captured_messages = []
 
     async def fake_sql(sql, data_source, dataset_name):
         nonlocal sql_calls
@@ -6262,6 +6265,26 @@ def test_chatbi_grounding_audit_delegates_matching_sql_result(data_config):
     assert audit_mock.call_count == 1
     requirement = audit_mock.call_args.kwargs["requirement"]
     assert requirement.freshness is FactFreshness.DYNAMIC
+
+
+def test_chatbi_grounding_audit_surfaces_receipt_observation_time(data_config):
+    from app.services.ai.runners.data_agent_runner import DataAgentRunner
+
+    runner = DataAgentRunner(
+        config=data_config,
+        trace_id="trace-chatbi-grounding-observed-at",
+        trace_buffer=[],
+        user_info={"user_id": "1"},
+        conversation_id="conv-1",
+    )
+
+    runner._chatbi_grounding_audit(
+        candidate_text="王强本月金额为 100 万元。",
+        evidence_result={"rows": [{"name": "王强", "amount": 100}]},
+    )
+
+    assert runner._evidence_metadata["observed_at"]
+    assert runner._evidence_metadata["source_as_of"] is None
 
 
 def test_chatbi_followup_grounding_allows_previous_result_reuse(data_config):

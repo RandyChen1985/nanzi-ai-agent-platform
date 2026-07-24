@@ -34,6 +34,22 @@ class FactFreshness(str, Enum):
     UNKNOWN = "unknown"
 
 
+class EvidenceStatus(str, Enum):
+    """Outcome of an evidence-producing call.
+
+    Failed calls are not admitted as receipts, but the explicit values are
+    also used by result envelopes and final guards to avoid collapsing an
+    empty query result into a query failure.
+    """
+
+    SUCCESS_NON_EMPTY = "success_non_empty"
+    SUCCESS_EMPTY = "success_empty"
+    FAILED = "failed"
+    UNAVAILABLE = "unavailable"
+    DENIED = "denied"
+    UNKNOWN = "unknown"
+
+
 @dataclass(frozen=True)
 class EvidenceReceipt:
     call_id: str
@@ -46,6 +62,7 @@ class EvidenceReceipt:
     marker_digests: frozenset[str] = frozenset()
     strong_marker_digests: frozenset[str] = frozenset()
     empty_success: bool = False
+    status: EvidenceStatus = EvidenceStatus.SUCCESS_NON_EMPTY
     observed_at: datetime | None = None
     source_as_of: datetime | None = None
     expires_at: datetime | None = None
@@ -65,6 +82,7 @@ class EvidenceReceipt:
         marker_digests: frozenset[str] = frozenset(),
         strong_marker_digests: frozenset[str] = frozenset(),
         empty_success: bool = False,
+        status: EvidenceStatus | str | None = None,
         observed_at: datetime | None = None,
         source_as_of: datetime | None = None,
         expires_at: datetime | None = None,
@@ -72,6 +90,17 @@ class EvidenceReceipt:
         source_ref: str | None = None,
     ) -> "EvidenceReceipt":
         created_at = datetime.now(timezone.utc)
+        if status is None:
+            normalized_status = (
+                EvidenceStatus.SUCCESS_EMPTY
+                if empty_success
+                else EvidenceStatus.SUCCESS_NON_EMPTY
+            )
+        else:
+            try:
+                normalized_status = EvidenceStatus(status)
+            except (TypeError, ValueError):
+                normalized_status = EvidenceStatus.UNKNOWN
         return cls(
             call_id=call_id,
             producer=producer,
@@ -83,6 +112,7 @@ class EvidenceReceipt:
             marker_digests=marker_digests,
             strong_marker_digests=strong_marker_digests,
             empty_success=empty_success,
+            status=normalized_status,
             observed_at=observed_at or created_at,
             source_as_of=source_as_of,
             expires_at=expires_at,

@@ -263,7 +263,10 @@ async def test_route_query_local_file_domain_blocks_chatbi_even_when_llm_selects
     assert result.agent_id == "agent-general"
     assert result.chatbi_mode == "deny"
     assert result.request_should_delegate is False
-    assert result.request_capability == "data_query"
+    assert result.request_capability == "answer"
+    assert result.semantic_domain == "local_file"
+    assert result.reference_mode == "new_query"
+    assert result.needs_fresh_data is True
 
 
 @pytest.mark.asyncio

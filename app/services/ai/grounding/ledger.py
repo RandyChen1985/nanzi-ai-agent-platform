@@ -6,7 +6,12 @@ import re
 from datetime import datetime, timezone
 from typing import Any, Iterable
 
-from app.services.ai.grounding.models import EvidenceReceipt, EvidenceType, FactFreshness
+from app.services.ai.grounding.models import (
+    EvidenceReceipt,
+    EvidenceStatus,
+    EvidenceType,
+    FactFreshness,
+)
 
 
 _ASCII_MARKER_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{1,}")
@@ -30,6 +35,7 @@ _MARKER_STOPWORDS = {
     "number",
     "price",
 }
+_RESULT_COUNT_KEYS = ("total", "count", "row_count", "affected_rows")
 
 
 def _digest_marker(marker: str) -> str:
@@ -209,13 +215,47 @@ def _is_non_empty_success_result(result: Any) -> bool:
     if isinstance(result, dict):
         if not result:
             return False
+        for key in _RESULT_COUNT_KEYS:
+            value = result.get(key)
+            if isinstance(value, bool) or value in (None, ""):
+                continue
+            try:
+                if float(value) > 0:
+                    return True
+            except (TypeError, ValueError):
+                continue
         payload_values = [
             value
             for key, value in result.items()
-            if key not in {"status", "success", "code", "message_type"}
+            if key not in {
+                "status",
+                "success",
+                "code",
+                "message_type",
+                *_RESULT_COUNT_KEYS,
+            }
         ]
         return any(_is_non_empty_success_result(value) for value in payload_values)
     return True
+
+
+def classify_evidence_result(result: Any) -> EvidenceStatus:
+    """Classify a tool envelope without treating empty success as failure."""
+    if _is_success_result(result):
+        return (
+            EvidenceStatus.SUCCESS_NON_EMPTY
+            if _is_non_empty_success_result(result)
+            else EvidenceStatus.SUCCESS_EMPTY
+        )
+    if result is None:
+        return EvidenceStatus.UNAVAILABLE
+    if isinstance(result, dict):
+        status = str(result.get("status") or result.get("state") or "").strip().lower()
+        if status in {"denied", "forbidden"} or "permission" in str(result.get("message") or "").lower():
+            return EvidenceStatus.DENIED
+        if status in {"unavailable", "not_found", "not_available"}:
+            return EvidenceStatus.UNAVAILABLE
+    return EvidenceStatus.FAILED
 
 
 class EvidenceLedger:
@@ -260,6 +300,7 @@ class EvidenceLedger:
                 "marker_digests": sorted(receipt.marker_digests),
                 "strong_marker_digests": sorted(receipt.strong_marker_digests),
                 "empty_success": receipt.empty_success,
+                "status": receipt.status.value,
             }
             for receipt in self._receipts
         ]
@@ -320,6 +361,15 @@ class EvidenceLedger:
                             for item in raw.get("strong_marker_digests") or []
                         ),
                         empty_success=bool(raw.get("empty_success", False)),
+                        status=(
+                            EvidenceStatus(str(raw.get("status")))
+                            if raw.get("status") is not None
+                            else (
+                                EvidenceStatus.SUCCESS_EMPTY
+                                if bool(raw.get("empty_success", False))
+                                else EvidenceStatus.SUCCESS_NON_EMPTY
+                            )
+                        ),
                     )
                 )
             except (KeyError, TypeError, ValueError):
@@ -376,6 +426,11 @@ class EvidenceLedger:
             marker_digests=marker_digests,
             strong_marker_digests=strong_marker_digests,
             empty_success=not non_empty_success,
+            status=(
+                EvidenceStatus.SUCCESS_NON_EMPTY
+                if non_empty_success
+                else EvidenceStatus.SUCCESS_EMPTY
+            ),
             observed_at=observed_at,
             source_as_of=source_as_of,
             expires_at=expires_at,

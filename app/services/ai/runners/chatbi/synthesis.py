@@ -284,7 +284,17 @@ async def synthesize_from_cached_sql_result(
 
     raw_result = state.last_successful_sql_output
     parsed_result = runner._try_parse_json_output(raw_result)
+    runner._update_evidence_metadata(parsed_result)
     result_json = result_dict_to_json(parsed_result, max_chars=20000)
+    evidence = runner._evidence_metadata or {}
+    evidence_context = (
+        "【证据元数据（必须如实反映到最终回答）】\n"
+        f"- 结果状态：{evidence.get('status') or 'unknown'}\n"
+        f"- 数据来源：{evidence.get('source_ref') or '未识别'}\n"
+        f"- 观测时间：{evidence.get('observed_at') or '未提供'}\n"
+        f"- 数据截至：{evidence.get('source_as_of') or '未提供'}\n"
+        f"- 时效：{evidence.get('freshness') or 'unknown'}"
+    )
     execution_review = (
         "【执行过程回顾】\n"
         "- 已成功执行 SQL 并获得非空结果。\n"
@@ -295,7 +305,13 @@ async def synthesize_from_cached_sql_result(
     synthesis_messages = [SystemMessage(content=_prompt_without_dataset_menu(system_prompt))]
     synthesis_messages.extend(_recent_human_messages(runtime_messages))
     synthesis_messages.append(
-        HumanMessage(content=DataQueryPrompts.synthesis_user_message(user_question, execution_review))
+        HumanMessage(
+            content=DataQueryPrompts.synthesis_user_message(
+                user_question,
+                execution_review,
+                evidence_context=evidence_context,
+            )
+        )
     )
 
     stream_state = SynthesisStreamState()

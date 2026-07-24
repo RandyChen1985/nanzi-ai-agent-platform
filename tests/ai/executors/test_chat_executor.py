@@ -193,6 +193,24 @@ def test_route_hints_expose_data_semantic_evidence_for_delegation():
     assert "sub_agent_call" in hint
 
 
+def test_route_hints_block_chatbi_delegation_for_local_file_domain():
+    from app.services.ai.executors.prompts import AssistantPrompts
+    from app.services.ai.intent_service import IntentType
+
+    hint = AssistantPrompts.route_hints({
+        "semantic_intent": IntentType.DATA_QUERY,
+        "semantic_confidence": 0.96,
+        "semantic_domain": "local_file",
+        "semantic_operation": "aggregate",
+        "fact_kind": "file_count",
+        "reference_mode": "new_query",
+        "needs_fresh_data": True,
+    })
+
+    assert "不是 ChatBI 业务数据" in hint
+    assert "禁止调用 data_query/ChatBI 子智能体" in hint
+
+
 @pytest.mark.asyncio
 async def test_standard_tool_call(chat_config, mock_tool):
     """系统隐式 legacy 工具应转 RuntimeToolSpec，不再触发手写 ReAct。"""

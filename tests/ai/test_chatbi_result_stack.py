@@ -149,4 +149,5 @@ async def test_followup_save_dual_writes_legacy_and_structured_result(monkeypatc
     assert payload["freshness"] == "dynamic"
     assert payload["source_ref"] == "dataset://sales"
     assert payload["observed_at"]
+    assert payload["result_status"] == "success_non_empty"
     assert runner._last_run_state.followup_data_saved is True

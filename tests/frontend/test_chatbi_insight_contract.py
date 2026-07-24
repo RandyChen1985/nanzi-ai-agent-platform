@@ -53,3 +53,15 @@ def test_data_evidence_hides_sql_until_expanded():
     assert "showSql" in source
     assert "meta.final_sql" in source
     assert "已按你的数据权限自动过滤结果" in source
+
+
+def test_data_evidence_panel_shows_source_and_freshness_metadata():
+    types = _source("frontend/src/types/chatbiInsight.ts")
+    source = _source("frontend/src/components/chatbi/ChatBIDataEvidence.vue")
+
+    assert "export interface ChatBIEvidenceMeta" in types
+    assert "evidence?: ChatBIEvidenceMeta" in types
+    for label in ("证据状态", "来源标识", "观测时间", "数据截至", "数据时效"):
+        assert label in source
+    for field in ("result_status", "source_ref", "observed_at", "source_as_of", "freshness"):
+        assert f"meta.evidence?.{field}" in source

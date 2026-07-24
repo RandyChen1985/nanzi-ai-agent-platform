@@ -12,6 +12,7 @@ class DataQueryExecutor(BaseExecutor):
     """ChatBI/DataQuery executor backed by AgentScope native Agent + Toolkit."""
 
     def __init__(self, *args, **kwargs):
+        self.route_hints = kwargs.pop("route_hints", None) or {}
         super().__init__(*args, **kwargs)
         self._runner: DataAgentRunner | None = None
 
@@ -27,6 +28,7 @@ class DataQueryExecutor(BaseExecutor):
             permission_options=self.permission_options,
             user_info=self.user_info,
             conversation_id=self.conversation_id,
+            route_hints=self.route_hints,
         )
         self._runner = runner
         async for chunk in runner.execute(history):
