@@ -6,7 +6,7 @@ import MarkdownEditor from '../MarkdownEditor.vue';
 import Modal from '../Modal.vue';
 import MessageRenderer from '../MessageRenderer.vue';
 
-type VersionConfigStep = 'agent' | 'model' | 'tools' | 'prompt' | 'review';
+type VersionConfigStep = 'agent' | 'model' | 'tools' | 'prompt' | 'welcome' | 'review';
 type ToolGroup = { label: string; icon: string; tools: any[] };
 type SkillItem = { id: string; name?: string; description?: string; enabled?: string | boolean; path?: string };
 
@@ -91,6 +91,40 @@ const isCurrentStepComplete = () =>
     ? props.isVersionConfigStepComplete(props.versionConfigStep)
     : true;
 const goStep = (step: VersionConfigStep) => emit('update:versionConfigStep', step);
+const canPublishLocalVersion = computed(() =>
+  props.agentForm.engine_type === 'LOCAL'
+  && props.canEditVersion
+  && (!props.versionForm.id || props.versionForm.status === 'DRAFT')
+);
+const welcomeIcons = [
+  { value: 'chart', label: '数据' }, { value: 'knowledge', label: '知识' },
+  { value: 'workspace', label: '工作台' }, { value: 'report', label: '报告' },
+  { value: 'alert', label: '提醒' }, { value: 'chat', label: '对话' },
+];
+const welcomeConfig = computed<any>(() => {
+  if (!props.versionForm.welcome_config) {
+    props.versionForm.welcome_config = { enabled: false, mode: 'manual', generation_requirement: '', cards: [] };
+  }
+  return props.versionForm.welcome_config;
+});
+const ensureWelcomeCards = () => {
+  if (welcomeConfig.value.cards?.length === 3) return;
+  welcomeConfig.value.cards = Array.from({ length: 3 }, (_, index) => ({
+    icon: 'chat', title: `欢迎提问 ${index + 1}`, subtitle: '填写卡片说明', prompt: '',
+  }));
+};
+const toggleWelcomeCards = () => {
+  welcomeConfig.value.enabled = !welcomeConfig.value.enabled;
+  if (welcomeConfig.value.enabled) ensureWelcomeCards();
+};
+const setWelcomeMode = (mode: 'manual' | 'ai') => {
+  welcomeConfig.value.mode = mode;
+  if (mode === 'ai') {
+    welcomeConfig.value.cards = [];
+  } else {
+    ensureWelcomeCards();
+  }
+};
 
 // AI 消息排版样式选择与效果预览变量
 const showThemePreviewHelp = ref(false);
@@ -819,7 +853,41 @@ const externalCreationMissingFields = computed(() => {
             <p class="text-[10px] text-gray-400 mt-2 flex-shrink-0">{{ promptCharCount }} 字符</p>
           </div>
 
-          <!-- Step 4: Review -->
+          <!-- Step 4: Welcome cards (LOCAL versions only; parent omits this step otherwise) -->
+          <div v-else-if="versionConfigStep === 'welcome'" class="space-y-5 max-w-3xl">
+            <div class="flex items-start justify-between gap-4 rounded-2xl border border-gray-200 bg-gray-50 p-4">
+              <div>
+                <h3 class="text-sm font-bold text-gray-900">欢迎语设置</h3>
+                <p class="mt-1 text-xs leading-5 text-gray-500">开启后替换聊天页顶部固定能力卡片；关闭时保留平台默认三卡片。</p>
+              </div>
+              <button type="button" :disabled="!canEditVersion" @click="toggleWelcomeCards" class="relative h-6 w-11 flex-shrink-0 rounded-full transition-colors" :class="welcomeConfig.enabled ? 'bg-primary' : 'bg-gray-300'">
+                <span class="absolute left-0.5 top-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform" :class="welcomeConfig.enabled ? 'translate-x-5' : 'translate-x-0'"></span>
+              </button>
+            </div>
+            <template v-if="welcomeConfig.enabled">
+              <div class="flex rounded-lg bg-gray-100 p-1 text-xs font-semibold">
+                <button type="button" :disabled="!canEditVersion" @click="setWelcomeMode('manual')" class="flex-1 rounded-md px-3 py-2" :class="welcomeConfig.mode === 'manual' ? 'bg-white text-primary shadow-sm' : 'text-gray-500'">人工编辑</button>
+                <button type="button" :disabled="!canEditVersion" @click="setWelcomeMode('ai')" class="flex-1 rounded-md px-3 py-2" :class="welcomeConfig.mode === 'ai' ? 'bg-white text-primary shadow-sm' : 'text-gray-500'">随机自动推荐</button>
+              </div>
+              <div v-if="welcomeConfig.mode === 'ai'" class="rounded-xl border border-violet-100 bg-violet-50/60 p-4">
+                <label class="mb-2 block text-xs font-bold text-violet-900">其他推荐要求（可选）</label>
+                <textarea v-model="welcomeConfig.generation_requirement" :disabled="!canEditVersion" rows="2" placeholder="例如：优先推荐月度经营分析和异常排查问题" class="w-full resize-none rounded-lg border border-violet-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-violet-200"></textarea>
+                <p class="mt-3 text-xs leading-5 text-violet-700">每次打开欢迎页时自动推荐 3 张业务卡片；同一智能体在 5 分钟内复用同一组推荐。</p>
+              </div>
+              <div v-if="welcomeConfig.mode === 'manual'" class="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                <div v-for="(card, index) in welcomeConfig.cards" :key="index" class="rounded-xl border border-gray-200 bg-white p-3">
+                  <select v-model="card.icon" :disabled="!canEditVersion" class="mb-2 w-full rounded-md border border-gray-200 px-2 py-1.5 text-xs">
+                    <option v-for="icon in welcomeIcons" :key="icon.value" :value="icon.value">{{ icon.label }}图标</option>
+                  </select>
+                  <input v-model="card.title" :disabled="!canEditVersion" maxlength="40" placeholder="主标题" class="mb-2 w-full rounded-md border border-gray-200 px-2 py-1.5 text-xs" />
+                  <input v-model="card.subtitle" :disabled="!canEditVersion" maxlength="100" placeholder="副标题" class="mb-2 w-full rounded-md border border-gray-200 px-2 py-1.5 text-xs" />
+                  <textarea v-model="card.prompt" :disabled="!canEditVersion" rows="3" maxlength="300" placeholder="点击后发送的问题" class="w-full resize-none rounded-md border border-gray-200 px-2 py-1.5 text-xs"></textarea>
+                </div>
+              </div>
+            </template>
+          </div>
+
+          <!-- Step 5: Review -->
           <div v-else class="space-y-4 max-w-2xl">
             <h3 class="text-sm font-bold text-gray-900">配置总览</h3>
             <div v-if="isCreatingAgent" class="summary-card">
@@ -869,8 +937,10 @@ const externalCreationMissingFields = computed(() => {
 
         <!-- Footer -->
         <div class="px-6 py-4 border-t border-gray-200 bg-gray-50 flex items-center justify-between gap-3 flex-shrink-0">
-          <div v-if="selectedAgent?.is_editable === false" class="text-xs text-amber-700 bg-amber-50 px-3 py-1.5 rounded-lg border border-amber-100">
-            只读模式，无法修改
+          <div v-if="!canEditVersion" class="text-xs text-amber-700 bg-amber-50 px-3 py-1.5 rounded-lg border border-amber-100">
+            <template v-if="selectedAgent?.is_editable === false">只读模式：当前账号无编辑权限</template>
+            <template v-else-if="versionForm.status === 'PUBLISHED'">当前为已发布版本，如需修改请克隆新版本</template>
+            <template v-else>当前版本不可编辑</template>
           </div>
           <div v-else class="flex-1">
             <p v-if="externalCreationMissingFields.length > 0" class="text-xs font-medium text-amber-700">
@@ -889,13 +959,13 @@ const externalCreationMissingFields = computed(() => {
               class="px-5 py-2 text-sm bg-primary text-white rounded-lg hover:bg-primary-dark font-medium shadow-sm disabled:cursor-not-allowed disabled:bg-gray-300 disabled:shadow-none"
             >下一步</button>
             <button
-              v-if="isLastStep() && canEditVersion && (!versionForm.id || versionForm.status === 'DRAFT') && !(isOnboardingFlow && agentForm.engine_type === 'LOCAL')"
+              v-if="isLastStep() && canEditVersion && (!versionForm.id || versionForm.status === 'DRAFT') && !canPublishLocalVersion"
               type="button"
               :disabled="externalCreationMissingFields.length > 0"
               @click="emit('save')"
               class="px-6 py-2 text-sm bg-primary text-white rounded-lg hover:bg-primary-dark font-medium shadow-sm disabled:cursor-not-allowed disabled:bg-gray-300 disabled:shadow-none"
             >{{ isCreatingAgent && agentForm.engine_type !== 'LOCAL' ? `创建 ${agentForm.engine_type === 'RAGFLOW' ? 'RAGFlow' : 'OpenClaw'} 智能体` : isCreatingAgent ? '创建智能体与 V1 草稿' : versionForm.id ? '更新草稿' : '保存为草稿' }}</button>
-            <template v-if="isLastStep() && canEditVersion && (!versionForm.id || versionForm.status === 'DRAFT') && isOnboardingFlow && agentForm.engine_type === 'LOCAL'">
+            <template v-if="isLastStep() && canPublishLocalVersion">
               <button
                 type="button"
                 @click="emit('save')"

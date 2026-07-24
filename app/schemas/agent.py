@@ -25,6 +25,7 @@ class AIAgentVersionBase(BaseModel):
     tools: List[Union[str, ToolConfigItem]] = Field(default_factory=list)
     skills_custom: bool = False
     skills: List[str] = Field(default_factory=list)
+    welcome_config: Optional[Dict[str, Any]] = None
     status: str = "DRAFT"
     comment: Optional[str] = None
 
@@ -119,6 +120,7 @@ class ChatConfig(BaseModel):
     agent_id: str
     agent_name: str
     agent_display_name: Optional[str] = None
+    description: str = ""
     project_name: Optional[str] = None
     agent_version: Optional[str] = None
     model_name: Optional[str]
@@ -129,6 +131,7 @@ class ChatConfig(BaseModel):
     tools: List[Union[str, ToolConfigItem]]
     skills_custom: bool = False
     skills: List[str] = Field(default_factory=list)
+    welcome_config: Optional[Dict[str, Any]] = None
     capabilities: List[str] = Field(default_factory=list)
     engine_type: str = "LOCAL"
     engine_config: Optional[Dict[str, Any]] = None

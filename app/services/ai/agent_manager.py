@@ -7,6 +7,7 @@ from sqlalchemy.orm import selectinload
 from sqlalchemy.exc import IntegrityError
 from app.models.agent import AIAgent, AIAgentVersion
 from app.schemas.agent import ChatConfig, AIAgentBase, AIAgentVersionBase
+from app.services.ai.welcome_card_service import normalize_welcome_config, safe_welcome_config
 import json
 from dataclasses import dataclass
 
@@ -174,6 +175,7 @@ class AgentManagerService:
             tools=template["tools"],
             skills_custom=template["skills_custom"],
             skills=template["skills"],
+            welcome_config=None,
             status="DRAFT",
             comment="Initial onboarding template snapshot",
         )
@@ -374,6 +376,7 @@ class AgentManagerService:
                     agent_id=agent.id,
                     agent_name=agent.name,
                     agent_display_name=agent.display_name or agent.name,
+                    description=agent.description or "",
                     agent_version="managed",
                     model_name=agent.engine_config.get("model", "OpenClaw-Remote") if agent.engine_type == 'OPENCLAW' else "RAGFlow-Remote",
                     temperature=0.0,
@@ -409,6 +412,7 @@ class AgentManagerService:
                 agent_id=agent.id,
                 agent_name=agent.name,
                 agent_display_name=agent.display_name or agent.name,
+                description=agent.description or "",
                 agent_version=f"v{version.version_number}",
                 model_name=version.model_name,
                 temperature=version.temperature,
@@ -418,6 +422,7 @@ class AgentManagerService:
                 tools=tools_list or [],
                 skills_custom=bool(getattr(version, "skills_custom", False)),
                 skills=AgentManagerService._normalize_skills_list(getattr(version, "skills", None)),
+                welcome_config=safe_welcome_config(getattr(version, "welcome_config", None)),
                 capabilities=agent.capabilities or [],
                 engine_type=agent.engine_type,
                 engine_config=agent.engine_config
@@ -463,6 +468,7 @@ class AgentManagerService:
                     tools=tools_list or [],
                     skills_custom=bool(getattr(version, "skills_custom", False)),
                     skills=AgentManagerService._normalize_skills_list(getattr(version, "skills", None)),
+                    welcome_config=safe_welcome_config(getattr(version, "welcome_config", None)),
                     capabilities=version.agent.capabilities or [],
                     engine_type=version.agent.engine_type,
                     engine_config=version.agent.engine_config
@@ -953,6 +959,7 @@ class AgentManagerService:
             tools=AgentManagerService._normalize_tools_for_db(data.tools),
             skills_custom=skills_custom,
             skills=skills_list,
+            welcome_config=normalize_welcome_config(getattr(data, "welcome_config", None)),
             status="DRAFT",
             comment=data.comment
         )
@@ -1006,6 +1013,9 @@ class AgentManagerService:
         version.tools = AgentManagerService._normalize_tools_for_db(data.tools)
         version.skills_custom = skills_custom
         version.skills = skills_list
+        # Keep an existing version setting when an older client omits this newly added field.
+        if data.welcome_config is not None:
+            version.welcome_config = normalize_welcome_config(data.welcome_config)
         version.comment = data.comment or version.comment
         if agent.onboarding_step == "VERSION":
             agent.onboarding_step = "RESOURCE"

@@ -149,7 +149,7 @@
         <span class="font-bold shrink-0">{{ resourceScope.project_name ? `📁 ${resourceScope.project_name}` : '📌 会话固定资源' }}</span>
         <span v-if="resourceScopeCount === 0" class="text-gray-400 shrink-0">未挂载，按默认权限自动使用</span>
         <template v-else>
-          <span v-for="item in mountedResourceLabels" :key="item.key" class="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-blue-50 text-blue-700 border border-blue-100 shrink-0 dark:bg-blue-900/30 dark:text-blue-300 dark:border-blue-800">
+          <span v-for="item in mountedResourceLabels" :key="item.key" class="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-blue-50 text-blue-700 border border-blue-100 shrink-0 dark:bg-blue-900/30 dark:text-blue-300 dark:border-blue-800" :title="`当前会话已锁定在【${item.label}】范围内，AI 问数时将仅分析此资源。点击 × 可解绑。`">
             {{ item.icon }} {{ item.label }}
             <button type="button" class="hover:text-red-600 dark:hover:text-red-400" title="移除资源" @click="removeMountedResource(item)">×</button>
           </span>
@@ -281,6 +281,7 @@
         v-else-if="messages.length === 0"
         :welcome-message="config.welcomeMessage"
         :slash-commands="effectiveSlashCommands"
+        :welcome-cards="welcomeCards"
         @quick-question="handleQuickQuestion"
         @open-data-portal="openPortalDrawer"
         @select-knowledge-base="openKnowledgePortal"
@@ -3297,6 +3298,25 @@ const config = reactive({
   expandThoughts: true, // 思考过程默认展示开关
   markdownTheme: "default" as "default" | "minimal" | "academic" | "apple" | "warm" | "compact",
 });
+const welcomeCards = ref<Array<{ icon: string; title: string; subtitle: string; prompt: string }>>([]);
+
+const loadWelcomeCards = async (agentId?: string) => {
+  const id = String(agentId || '').trim();
+  if (!id) {
+    welcomeCards.value = [];
+    return;
+  }
+  try {
+    const response = await axios.get(`/api/portal/agents/${encodeURIComponent(id)}/welcome-cards`);
+    const cards = response.data?.cards;
+    welcomeCards.value = Array.isArray(cards)
+      ? cards.filter((card: any) => card?.title && card?.subtitle && card?.prompt).slice(0, 3)
+      : [];
+  } catch (error) {
+    console.warn('Failed to load agent welcome cards', error);
+    welcomeCards.value = [];
+  }
+};
 const showAutoRoutingHint = ref(false);
 const showMultiAgentHint = ref(false);
 const showExpertSwitchHint = ref(false);
@@ -3370,6 +3390,7 @@ const resolveUrlPinnedAgent = async (): Promise<boolean> => {
     pinnedAgentCapabilities.value = Array.isArray(agent?.capabilities) ? agent.capabilities : [];
     urlAgentAccessError.value = null;
     config.agentId = pinnedAgentId.value || key;
+    void loadWelcomeCards(config.agentId);
     config.overrideAgentId = "";
     switchToExpert(pinnedAgentId.value || key);
     return true;
@@ -3833,7 +3854,8 @@ const pinMetadataDatasetToSession = async (datasetId: string) => {
   resourceScopeSaving.value = true;
   try {
     await persistResourceScope(buildPersistableScope(nextScope));
-    showToast('已固定到会话', 'success');
+    const dsName = selected.name || selected.display_name || selected.dataset_name || id;
+    showToast(`已固定到会话：后续所有提问将默认锁定在【${dsName}】范围内`, 'success');
   } catch (error) {
     showToast('固定会话数据集失败', 'error');
   } finally {
@@ -3855,7 +3877,7 @@ const unpinMetadataDatasetFromSession = async (datasetId: string) => {
   resourceScopeSaving.value = true;
   try {
     await persistResourceScope(buildPersistableScope(nextScope));
-    showToast('已取消会话挂载', 'success');
+    showToast('已取消会话挂载，问数将恢复默认权限范围', 'info');
   } catch (error) {
     showToast('取消会话挂载失败', 'error');
   } finally {
@@ -4009,6 +4031,15 @@ watch(() => config.token, (newToken) => {
         console.log("[LifeCycle] Token detected/changed, re-fetching context...");
         fetchAllowedAgents(true);
         fetchSlashCommands();
+        // 刷新后专家选择会先从本地恢复，此时需要在 token 到位后再读取其欢迎卡片。
+        void loadWelcomeCards(effectiveEmbedChatAgentId.value);
+    }
+}, { immediate: true });
+
+// 非 URL 深链的专家切换也需要同步刷新版本级欢迎卡片。
+watch(effectiveEmbedChatAgentId, (agentId) => {
+    if (config.token) {
+        void loadWelcomeCards(agentId);
     }
 }, { immediate: true });
 
@@ -5261,6 +5292,7 @@ const handlePostMessage = (event: MessageEvent) => {
         if (data.agent_id) {
           const agentId = String(data.agent_id);
           config.agentId = agentId;
+          void loadWelcomeCards(agentId);
           // 工作台 / 门户指定助手时，切到专家模式并选中该助手
           switchToExpert(agentId);
           if (!data.conversation_id) {

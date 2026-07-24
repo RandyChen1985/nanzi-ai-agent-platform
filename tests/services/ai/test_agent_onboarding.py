@@ -148,6 +148,16 @@ async def test_updating_initial_draft_advances_onboarding_to_resource():
         status="DRAFT",
         system_prompt="old",
         tools=[],
+        welcome_config={
+            "enabled": True,
+            "mode": "manual",
+            "generation_requirement": "",
+            "cards": [
+                {"icon": "chat", "title": "问题一", "subtitle": "说明一", "prompt": "请回答问题一"},
+                {"icon": "chat", "title": "问题二", "subtitle": "说明二", "prompt": "请回答问题二"},
+                {"icon": "chat", "title": "问题三", "subtitle": "说明三", "prompt": "请回答问题三"},
+            ],
+        },
     )
     session.get.side_effect = [agent, version]
 
@@ -161,6 +171,7 @@ async def test_updating_initial_draft_advances_onboarding_to_resource():
 
     assert updated is version
     assert agent.onboarding_step == "RESOURCE"
+    assert version.welcome_config["enabled"] is True
 
 
 @pytest.mark.asyncio

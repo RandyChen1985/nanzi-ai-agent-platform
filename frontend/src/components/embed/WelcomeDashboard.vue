@@ -7,6 +7,7 @@ const { branding } = useBranding();
 const props = defineProps<{
   welcomeMessage: string;
   slashCommands: any[];
+  welcomeCards?: Array<{ icon: string; title: string; subtitle: string; prompt: string }>;
 }>();
 
 const emit = defineEmits<{
@@ -57,6 +58,17 @@ const handleCapabilityClick = (action: CapabilityAction) => {
   emit('open-workspace');
 };
 
+const welcomeCardIcon = (icon: string) => ({
+  chart: '📊', knowledge: '📚', workspace: '💻', report: '📄', alert: '⚠️', chat: '💬',
+}[icon] || '💬');
+
+const welcomeCardSetKey = computed(() => {
+  if (props.welcomeCards?.length === 3) {
+    return `configured:${props.welcomeCards.map(card => [card.icon, card.title, card.subtitle, card.prompt].join(':')).join('|')}`;
+  }
+  return `fallback:${capabilities.map(capability => capability.title).join('|')}`;
+});
+
 // 1. Dynamic Greeting
 const greeting = computed(() => {
   const hour = new Date().getHours();
@@ -89,21 +101,41 @@ const recommendedPrompts = computed(() => {
       </p>
     </div>
 
-    <!-- Core Capabilities (Subtle Row) -->
-    <div class="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-12 w-full animate-fade-in-up delay-100">
-      <button
-        v-for="cap in capabilities"
-        :key="cap.title"
-        type="button"
-        class="p-4 rounded-2xl bg-white dark:bg-gray-800/50 border border-gray-100 dark:border-gray-700 shadow-sm hover:shadow-md hover:border-primary/40 hover:bg-blue-50/30 dark:hover:bg-blue-900/10 transition-all group text-left cursor-pointer"
-        :aria-label="cap.title"
-        @click="handleCapabilityClick(cap.action)"
-      >
-        <div class="text-2xl mb-2 group-hover:scale-110 transition-transform">{{ cap.icon }}</div>
-        <h3 class="text-xs font-bold text-gray-800 dark:text-gray-200 mb-1 group-hover:text-primary transition-colors">{{ cap.title }}</h3>
-        <p class="text-[10px] text-gray-400 leading-normal">{{ cap.desc }}</p>
-      </button>
-    </div>
+    <!-- Version-configured cards replace fixed capabilities only when enabled. -->
+    <Transition name="welcome-card-set" mode="out-in">
+      <div :key="welcomeCardSetKey" class="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-12 w-full">
+        <template v-if="welcomeCards?.length === 3">
+          <button
+            v-for="(card, index) in welcomeCards"
+            :key="card.prompt"
+            type="button"
+            :aria-label="card.title"
+            :style="{ '--welcome-card-index': index }"
+            class="welcome-card-item p-4 rounded-2xl bg-white dark:bg-gray-800/50 border border-gray-100 dark:border-gray-700 shadow-sm hover:shadow-md hover:border-primary/40 hover:bg-blue-50/30 dark:hover:bg-blue-900/10 transition-all group text-left cursor-pointer"
+            @click="emit('quick-question', card.prompt)"
+          >
+            <div class="text-2xl mb-2 group-hover:scale-110 transition-transform">{{ welcomeCardIcon(card.icon) }}</div>
+            <h3 class="text-xs font-bold text-gray-800 dark:text-gray-200 mb-1 group-hover:text-primary transition-colors">{{ card.title }}</h3>
+            <p class="text-[10px] text-gray-400 leading-normal">{{ card.subtitle }}</p>
+          </button>
+        </template>
+        <template v-else>
+          <button
+            v-for="(cap, index) in capabilities"
+            :key="cap.title"
+            type="button"
+            :style="{ '--welcome-card-index': index }"
+            class="welcome-card-item p-4 rounded-2xl bg-white dark:bg-gray-800/50 border border-gray-100 dark:border-gray-700 shadow-sm hover:shadow-md hover:border-primary/40 hover:bg-blue-50/30 dark:hover:bg-blue-900/10 transition-all group text-left cursor-pointer"
+            :aria-label="cap.title"
+            @click="handleCapabilityClick(cap.action)"
+          >
+            <div class="text-2xl mb-2 group-hover:scale-110 transition-transform">{{ cap.icon }}</div>
+            <h3 class="text-xs font-bold text-gray-800 dark:text-gray-200 mb-1 group-hover:text-primary transition-colors">{{ cap.title }}</h3>
+            <p class="text-[10px] text-gray-400 leading-normal">{{ cap.desc }}</p>
+          </button>
+        </template>
+      </div>
+    </Transition>
 
     <!-- Recommended Prompts (Actionable Grid) -->
     <div class="w-full animate-fade-in-up delay-200" v-if="recommendedPrompts.length > 0">
@@ -149,4 +181,42 @@ const recommendedPrompts = computed(() => {
 }
 .delay-100 { animation-delay: 0.1s; }
 .delay-200 { animation-delay: 0.2s; }
+
+.welcome-card-set-enter-active {
+  transition: opacity 260ms cubic-bezier(0.16, 1, 0.3, 1), transform 260ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+.welcome-card-set-leave-active {
+  transition: opacity 140ms ease-out, transform 140ms ease-out;
+}
+.welcome-card-set-enter-from {
+  opacity: 0;
+  transform: translateY(8px);
+}
+.welcome-card-set-leave-to {
+  opacity: 0;
+  transform: translateY(-4px);
+}
+@keyframes welcome-card-reveal {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+.welcome-card-item {
+  animation: welcome-card-reveal 260ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  animation-delay: calc(35ms + var(--welcome-card-index) * 45ms);
+}
+@media (prefers-reduced-motion: reduce) {
+  .welcome-card-set-enter-active,
+  .welcome-card-set-leave-active {
+    transition-duration: 1ms;
+  }
+  .welcome-card-item {
+    animation: none;
+  }
+}
 </style>

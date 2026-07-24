@@ -212,6 +212,21 @@ async def get_active_config(
         raise HTTPException(status_code=404, detail="Active configuration not found for this agent")
     return config
 
+
+@router.get("/{agent_id}/welcome-cards")
+async def get_runtime_welcome_cards(
+    agent_id: str,
+    session: AsyncSession = Depends(get_db_session),
+    user: Dict[str, Any] = Depends(get_current_user),
+):
+    """获取欢迎页卡片：人工模式读固定配置，自动模式读 5 分钟推荐缓存。"""
+    config = await AgentManagerService.get_active_agent_config(session, agent_id=agent_id)
+    if not config:
+        raise HTTPException(status_code=404, detail="Active configuration not found for this agent")
+    from app.services.ai.welcome_card_service import get_runtime_welcome_cards as load_cards
+
+    return {"cards": await load_cards(config)}
+
 @router.get("/{agent_id}/executions", response_model=List[AgentExecutionHistoryResponse])
 async def list_agent_executions(
     agent_id: str, 

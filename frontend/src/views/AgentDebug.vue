@@ -2321,7 +2321,8 @@ const pinMetadataDatasetToSession = async (datasetId: string) => {
     sessionMountedMetadataDatasetIds.value = (saved.data?.data?.datasets || [...(scope.datasets || []), selected])
       .map((item: any) => String(item.id || "").trim())
       .filter(Boolean);
-    showToast("已固定到会话", "success");
+    const dsName = selected.name || dataset?.name || id;
+    showToast(`已固定到会话：后续所有提问将默认锁定在【${dsName}】范围内`, "success");
   } catch (error) {
     console.warn("Failed to pin metadata dataset to session", error);
     showToast("固定会话数据集失败", "error");
@@ -2350,7 +2351,7 @@ const unpinMetadataDatasetFromSession = async (datasetId: string) => {
     sessionMountedMetadataDatasetIds.value = (saved.data?.data?.datasets || nextDatasets)
       .map((item: any) => String(item.id || "").trim())
       .filter(Boolean);
-    showToast("已取消会话挂载", "success");
+    showToast("已取消会话挂载，问数将恢复默认权限范围", "info");
   } catch (error) {
     console.warn("Failed to unpin metadata dataset from session", error);
     showToast("取消会话挂载失败", "error");

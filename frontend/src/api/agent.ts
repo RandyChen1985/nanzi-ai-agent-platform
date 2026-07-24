@@ -64,10 +64,14 @@ export interface AIAgentVersion {
   tools: string[]
   skills_custom?: boolean
   skills?: string[]
+  welcome_config?: WelcomeConfig
   status: 'DRAFT' | 'PUBLISHED' | 'ARCHIVED'
   comment?: string
   created_at: string
 }
+
+export interface WelcomeCard { icon: 'chart' | 'knowledge' | 'workspace' | 'report' | 'alert' | 'chat'; title: string; subtitle: string; prompt: string }
+export interface WelcomeConfig { enabled: boolean; mode: 'manual' | 'ai'; generation_requirement: string; cards: WelcomeCard[] }
 
 export const agentApi = {
   // List all agents

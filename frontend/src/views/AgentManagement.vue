@@ -633,7 +633,7 @@ const getMcpGroupSelectedCount = (tools: any[]) => {
   return tools.filter(tool => isToolSelected(tool.name)).length;
 };
 
-type VersionConfigStep = 'agent' | 'model' | 'tools' | 'prompt' | 'review';
+type VersionConfigStep = 'agent' | 'model' | 'tools' | 'prompt' | 'welcome' | 'review';
 const versionConfigStep = ref<VersionConfigStep>('model');
 const toolSearchQuery = ref('');
 const isCreatingAgent = ref(false);
@@ -649,6 +649,7 @@ const versionConfigSteps = computed<{ id: VersionConfigStep; label: string }[]>(
     { id: 'model', label: '模型策略' },
     { id: 'tools', label: '工具能力' },
     { id: 'prompt', label: '系统提示词' },
+    ...(isLocalCreationEngine.value ? [{ id: 'welcome' as const, label: '欢迎语设置' }] : []),
     { id: 'review', label: '确认保存' },
   ];
 });
@@ -695,6 +696,13 @@ const isVersionConfigStepComplete = (step: VersionConfigStep) => {
   if (step === 'model') return Boolean(versionForm.value.model_name?.trim());
   if (step === 'tools') return true;
   if (step === 'prompt') return Boolean(versionForm.value.system_prompt?.trim());
+  if (step === 'welcome') {
+    const config = versionForm.value.welcome_config;
+    if (!config?.enabled) return true;
+    if (config.mode === 'ai') return true;
+    return Array.isArray(config.cards) && config.cards.length === 3
+      && config.cards.every((card: any) => card?.title?.trim() && card?.subtitle?.trim() && card?.prompt?.trim());
+  }
   return true;
 };
 
@@ -720,6 +728,7 @@ const describeIncompleteVersionConfigStep = (step: VersionConfigStep) => {
   }
   if (step === 'model') return '请先完善模型策略：选择编排模型';
   if (step === 'prompt') return '请先填写系统提示词';
+  if (step === 'welcome') return '请完整填写 3 张欢迎卡片，或关闭欢迎语设置';
   return '请先完成前面的配置步骤';
 };
 
@@ -1685,22 +1694,29 @@ const publishVersionFromEditor = async () => {
       const saved = await persistNewAgentDraft(false);
       if (!saved) return;
     } else {
-      if (!selectedAgent.value || !versionForm.value.id) return;
-      const updated = await agentApi.updateVersion(
-        selectedAgent.value.id,
-        versionForm.value.id,
-        {
-          ...versionForm.value,
-          skills_custom: !!versionForm.value.skills_custom,
-          skills: versionForm.value.skills_custom ? (versionForm.value.skills || []) : [],
-        },
-      );
-      versionForm.value = { ...updated.data };
-      onboardingVersion.value = updated.data;
+      if (!selectedAgent.value) return;
+      const payload = {
+        ...versionForm.value,
+        skills_custom: !!versionForm.value.skills_custom,
+        skills: versionForm.value.skills_custom ? (versionForm.value.skills || []) : [],
+      };
+      if (!versionForm.value.id) {
+        const created = await agentApi.createVersion(selectedAgent.value.id, payload);
+        versionForm.value = { ...created.data };
+        onboardingVersion.value = created.data;
+      } else {
+        const updated = await agentApi.updateVersion(
+          selectedAgent.value.id,
+          versionForm.value.id,
+          payload,
+        );
+        versionForm.value = { ...updated.data };
+        onboardingVersion.value = updated.data;
+      }
     }
 
-    const agentId = onboardingAgent.value?.id || selectedAgent.value?.id;
-    const versionId = onboardingVersion.value?.id || versionForm.value.id;
+    const agentId = selectedAgent.value?.id || onboardingAgent.value?.id;
+    const versionId = versionForm.value.id || onboardingVersion.value?.id;
     if (!agentId || !versionId) return;
 
     await agentApi.publishVersion(agentId, versionId);

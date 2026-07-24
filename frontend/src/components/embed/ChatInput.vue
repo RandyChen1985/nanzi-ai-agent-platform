@@ -1017,7 +1017,7 @@ defineExpose({
         <!-- Attachments Preview Bar -->
         <div v-if="uploadedFiles.filter(f => f.type !== 'knowledge_settings').length > 0" class="flex flex-wrap gap-2 px-1 mb-2 max-h-36 overflow-y-auto no-scrollbar py-1">
             <template v-for="(file, idx) in uploadedFiles" :key="idx">
-              <div v-if="file.type !== 'knowledge_settings'" class="relative flex items-center group bg-gray-100/80 dark:bg-gray-800/80 border border-gray-200/30 dark:border-gray-700/30 rounded-lg p-1.5 pr-8 max-w-[200px] transition-all hover:bg-white dark:hover:bg-gray-800 hover:shadow-sm">
+              <div v-if="file.type !== 'knowledge_settings'" class="relative flex items-center group bg-gray-100/80 dark:bg-gray-800/80 border border-gray-200/30 dark:border-gray-700/30 rounded-lg p-1.5 pr-8 max-w-[200px] transition-all hover:bg-white dark:hover:bg-gray-800 hover:shadow-sm" :title="file.type === 'metadata_dataset' ? `已选择本轮数据集【${file.filename}】，本次提问将优先锁定在此范围内检索。` : ''">
                   <!-- Image Preview -->
                   <AttachmentImageThumb
                     v-if="isImage(file)"
