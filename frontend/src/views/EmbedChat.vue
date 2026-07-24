@@ -3806,7 +3806,7 @@ const pinMetadataDatasetToSession = async (datasetId: string) => {
   const id = String(datasetId || '').trim();
   if (!id) return;
   if (resourceScope.value.datasets.some((item: any) => String(item.id) === id)) {
-    showToast('该数据集已固定到会话', 'info');
+    showToast('该数据集已设为本会话默认', 'info');
     return;
   }
   const selected =
@@ -3819,9 +3819,9 @@ const pinMetadataDatasetToSession = async (datasetId: string) => {
   try {
     await persistResourceScope(buildPersistableScope(nextScope));
     const dsName = selected.name || selected.display_name || selected.dataset_name || id;
-    showToast(`已固定到会话：后续所有提问将默认锁定在【${dsName}】范围内`, 'success');
+    showToast(`已设为本会话默认：后续提问将默认锁定在【${dsName}】`, 'success');
   } catch (error) {
-    showToast('固定会话数据集失败', 'error');
+    showToast('设置会话默认范围失败', 'error');
   } finally {
     resourceScopeSaving.value = false;
   }
@@ -3841,9 +3841,9 @@ const unpinMetadataDatasetFromSession = async (datasetId: string) => {
   resourceScopeSaving.value = true;
   try {
     await persistResourceScope(buildPersistableScope(nextScope));
-    showToast('已取消会话挂载，问数将恢复默认权限范围', 'info');
+    showToast('已取消本会话默认，问数将恢复默认权限范围', 'info');
   } catch (error) {
-    showToast('取消会话挂载失败', 'error');
+    showToast('取消会话默认失败', 'error');
   } finally {
     resourceScopeSaving.value = false;
   }
@@ -6400,6 +6400,16 @@ const pinnedDrawerDockOffsetRem = (exclude?: "portal" | "workspace" | "memory" |
   if (exclude !== "memory" && showMemoryDrawer.value && memoryPinned.value) rem += 28;
   return rem;
 };
+
+const pinnedDrawerRightRem = computed(() => pinnedDrawerDockOffsetRem());
+const saveReportModalOverlayStyle = computed(() => {
+  const rem = pinnedDrawerRightRem.value;
+  return { right: rem > 0 ? `${rem}rem` : "0" };
+});
+const saveReportModalOverlayClass = computed(() => {
+  const isPinned = (showPortalDrawer.value && portalPinned.value) || (showKnowledgePortal.value && knowledgePinned.value);
+  return isPinned ? 'right-[28rem]' : 'right-0';
+});
 
 // 响应式抽屉宽度 refs（由各抽屉组件通过 v-model:drawerWidth / v-model:canvasWidth 实时同步）
 const portalDrawerWidthReactive = ref(448);

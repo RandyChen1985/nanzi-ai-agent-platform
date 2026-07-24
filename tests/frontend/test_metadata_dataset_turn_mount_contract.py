@@ -32,8 +32,8 @@ def test_chat_input_renders_metadata_dataset_chip():
 
 def test_dataset_capability_menu_exposes_card_mount_dropdown():
     source = _source("frontend/src/components/chatbi/DatasetCapabilityMenu.vue")
-    assert "本轮挂载" in source
-    assert "固定到会话" in source
+    assert "仅本次" in source
+    assert "本会话默认" in source
     assert "resolveDatasetIdForGroup" in source
     assert "toggle-metadata-dataset" in source
     assert "pin-metadata-dataset" in source

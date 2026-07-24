@@ -15,19 +15,19 @@
     </div>
 
     <!-- Header -->
-    <div class="bg-gray-50/40 dark:bg-gray-800/10 backdrop-blur-sm border border-gray-150 dark:border-gray-800/80 rounded-xl p-3 flex flex-row items-center justify-between gap-2">
+    <div class="border border-gray-200 dark:border-gray-800 rounded-lg px-3 py-2.5 flex flex-row items-center justify-between gap-2">
       <div class="flex items-center gap-2.5 min-w-0">
-        <div class="flex items-center justify-center w-8 h-8 rounded-lg bg-blue-600 dark:bg-blue-500 text-white shadow-sm flex-shrink-0">
-          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <div class="flex items-center justify-center w-7 h-7 rounded-md bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 flex-shrink-0">
+          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v4a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v4a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v4a2 2 0 01-2 2H6a2 2 0 01-2-2v-4zM14 16a2 2 0 012-2h2a2 2 0 012 2v4a2 2 0 01-2 2h-2a2 2 0 01-2-2v-4z"/>
           </svg>
         </div>
         <div class="min-w-0">
-          <h3 class="text-sm font-bold text-gray-900 dark:text-gray-100 tracking-wide">我的数据门户</h3>
+          <h3 class="text-sm font-semibold text-gray-900 dark:text-gray-100">数据门户</h3>
           <div class="flex flex-wrap items-center gap-1.5 mt-0.5 text-[10px]">
             <span
               v-if="payload.dataset_count !== undefined"
-              class="font-semibold text-blue-600 dark:text-blue-400"
+              class="font-medium text-gray-500 dark:text-gray-400"
             >
               {{ payload.dataset_count }} 个数据集
             </span>
@@ -138,28 +138,28 @@
         </div>
       </div>
     </transition>
-    <!-- 📌 我的黄金报表 (Redis 暂存版) -->
+    <!-- 黄金报表（次要区块，默认收起） -->
     <div
       v-if="!initialLoading"
-      class="rounded-xl border border-blue-150/70 dark:border-blue-900/40 bg-blue-50/10 dark:bg-blue-950/5 p-3.5 space-y-2.5 animate-fade-in-up"
+      class="rounded-lg border border-gray-200 dark:border-gray-800 bg-gray-50/40 dark:bg-gray-900/40 px-3 py-2.5 space-y-2"
     >
       <div
-        class="flex items-center justify-between w-full text-[11px] font-bold text-blue-700 dark:text-blue-400 uppercase tracking-wider transition-colors select-none cursor-pointer"
+        class="flex items-center justify-between w-full text-[11px] font-semibold text-gray-600 dark:text-gray-400 transition-colors select-none cursor-pointer"
         @click="showSavedReportsCollapse = !showSavedReportsCollapse; if (!showSavedReportsCollapse) fetchSavedReports();"
       >
         <span class="flex items-center gap-1.5">
-          <span>📌</span> 我的黄金报表
-          <span 
+          黄金报表
+          <span
             v-if="savedReports.length > 0"
-            class="rounded-full px-1.5 py-0.5 text-[9px] font-bold bg-blue-100 dark:bg-blue-900/60 text-blue-700 dark:text-blue-355"
+            class="rounded px-1.5 py-0.5 text-[9px] font-semibold bg-gray-200/80 dark:bg-gray-800 text-gray-600 dark:text-gray-300"
           >
-            {{ savedReports.length }} 个
+            {{ savedReports.length }}
           </span>
         </span>
-        <div class="flex items-center space-x-2">
+        <div class="flex items-center space-x-1">
           <button
             type="button"
-            class="p-1 rounded hover:bg-blue-100/80 dark:hover:bg-blue-900/40 text-blue-700 dark:text-blue-400 transition-colors cursor-pointer flex items-center justify-center"
+            class="p-1 rounded hover:bg-gray-200/80 dark:hover:bg-gray-800 text-gray-500 dark:text-gray-400 transition-colors cursor-pointer flex items-center justify-center"
             title="放大浏览"
             @click.stop="openSavedReportBrowser"
           >
@@ -169,7 +169,7 @@
           </button>
           <button
             type="button"
-            class="p-1 rounded hover:bg-blue-100/80 dark:hover:bg-blue-900/40 text-blue-700 dark:text-blue-400 transition-colors cursor-pointer flex items-center justify-center"
+            class="p-1 rounded hover:bg-gray-200/80 dark:hover:bg-gray-800 text-gray-500 dark:text-gray-400 transition-colors cursor-pointer flex items-center justify-center"
             title="刷新黄金报表"
             @click.stop="fetchSavedReports"
           >
@@ -265,7 +265,7 @@
             <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
             <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
           </svg>
-          正在加载暂存报表...
+          正在加载黄金报表...
         </div>
         <div v-else-if="filteredSavedReports.length === 0" class="text-center py-6 border border-dashed border-gray-200 dark:border-gray-800 rounded-xl text-gray-400 dark:text-gray-500 text-[11px] select-none">
           暂无已存报表。您可以在 ChatBI 结果中点击 SQL 上方的「添加黄金报表」按钮进行快捷收藏。
@@ -709,16 +709,16 @@
         </div>
       </transition>
 
-      <div class="grid gap-4" :class="{ 'pointer-events-none select-none': showRefreshBusy }">
+      <div class="grid gap-3" :class="{ 'pointer-events-none select-none': showRefreshBusy }">
         <article
           v-for="{ group, visuals } in visibleDisplayGroups"
           :key="group.id || group.title"
-          class="group/card relative overflow-hidden rounded-xl border shadow-sm hover:shadow-lg hover:-translate-y-0.5 transition-all duration-300"
+          class="group/card relative overflow-hidden rounded-lg border transition-colors duration-200"
           :class="[
-            isCardCollapsed(group) ? 'p-2.5 sm:p-3' : 'p-3.5 sm:p-4',
+            isCardCollapsed(group) ? 'p-2.5 sm:p-3' : 'p-3 sm:p-3.5',
             visuals.card, visuals.cardBorder, visuals.cardHover,
             canDragCards ? 'cursor-grab active:cursor-grabbing' : '',
-            dragOverId === (group.id || group.title) ? 'ring-2 ring-blue-400/60 dark:ring-blue-500/60 scale-[1.01]' : '',
+            dragOverId === (group.id || group.title) ? 'border-blue-400 dark:border-blue-500' : '',
             dragSourceId === (group.id || group.title) ? 'opacity-50' : '',
           ]"
           :draggable="canDragCards"
@@ -738,28 +738,18 @@
               <circle cx="4" cy="8" r="1.2"/><circle cx="8" cy="8" r="1.2"/><circle cx="12" cy="8" r="1.2"/>
             </svg>
           </div>
-          <div
-            class="pointer-events-none absolute -right-10 -top-10 h-28 w-28 rounded-full opacity-[0.18] blur-2xl transition-opacity duration-300 group-hover/card:opacity-[0.28]"
-            :class="visuals.decor"
-          />
-          <div
-            class="pointer-events-none absolute -left-6 bottom-0 h-20 w-20 rounded-full opacity-[0.08] blur-xl"
-            :class="visuals.decor"
-          />
 
           <!-- Card Header -->
 
           <div class="relative space-y-2.5">
             <div class="flex items-start gap-2.5 min-w-0">
               <div
-                class="portal-card-icon flex-shrink-0 flex items-center justify-center w-9 h-9 rounded-xl shadow-sm border text-white"
-                :class="visuals.iconBorder"
+                class="portal-card-icon flex-shrink-0 flex items-center justify-center w-8 h-8 rounded-md text-white"
                 :data-theme="visuals.key"
                 v-html="visuals.icon"
               />
               <h4
-                class="flex-1 min-w-0 text-sm font-bold leading-snug break-words pt-0.5"
-                :class="visuals.title"
+                class="flex-1 min-w-0 text-sm font-semibold leading-snug break-words pt-0.5 text-gray-900 dark:text-gray-100"
                 :title="group.title"
               >
                 {{ group.title }}
@@ -798,28 +788,28 @@
                   >
                     <button
                       type="button"
-                      class="flex w-full flex-col text-left px-2.5 py-1.5 rounded-lg transition-colors hover:bg-emerald-50/80 dark:hover:bg-emerald-900/20 group/btn"
+                      class="flex w-full flex-col text-left px-2.5 py-1.5 rounded-lg transition-colors hover:bg-gray-50 dark:hover:bg-gray-800 group/btn"
                       @click="handleToggleTurnMount(group)"
                     >
-                      <span class="text-xs font-bold text-gray-800 dark:text-gray-200 group-hover/btn:text-emerald-600 dark:group-hover/btn:text-emerald-400 flex items-center justify-between">
-                        <span>⚡ {{ isTurnMounted(group) ? '取消本轮挂载' : '本轮挂载' }}</span>
+                      <span class="text-xs font-semibold text-gray-800 dark:text-gray-200 group-hover/btn:text-gray-900 dark:group-hover/btn:text-white flex items-center justify-between">
+                        <span>{{ isTurnMounted(group) ? '取消仅本次' : '仅本次' }}</span>
                         <span v-if="isTurnMounted(group)" class="text-[10px] text-emerald-600 dark:text-emerald-400 font-normal">已开启</span>
                       </span>
                       <span class="text-[10px] text-gray-400 dark:text-gray-500 mt-0.5 leading-tight">
-                        {{ isTurnMounted(group) ? '已限定下一次提问在此范围内' : '仅对下一次提问生效，精准锁定范围' }}
+                        {{ isTurnMounted(group) ? '下一次提问不再限定此范围' : '只对下一次提问生效' }}
                       </span>
                     </button>
                     <button
                       type="button"
-                      class="flex w-full flex-col text-left px-2.5 py-1.5 rounded-lg transition-colors hover:bg-blue-50/80 dark:hover:bg-blue-900/20 group/btn"
+                      class="flex w-full flex-col text-left px-2.5 py-1.5 rounded-lg transition-colors hover:bg-gray-50 dark:hover:bg-gray-800 group/btn"
                       @click="handlePinToSession(group)"
                     >
-                      <span class="text-xs font-bold text-gray-800 dark:text-gray-200 group-hover/btn:text-blue-600 dark:group-hover/btn:text-blue-400 flex items-center justify-between">
-                        <span>📌 {{ isSessionMounted(group) ? '取消会话挂载' : '固定到会话' }}</span>
+                      <span class="text-xs font-semibold text-gray-800 dark:text-gray-200 group-hover/btn:text-gray-900 dark:group-hover/btn:text-white flex items-center justify-between">
+                        <span>{{ isSessionMounted(group) ? '取消本会话默认' : '本会话默认' }}</span>
                         <span v-if="isSessionMounted(group)" class="text-[10px] text-blue-600 dark:text-blue-400 font-normal">已固定</span>
                       </span>
                       <span class="text-[10px] text-gray-400 dark:text-gray-500 mt-0.5 leading-tight">
-                        {{ isSessionMounted(group) ? '作为会话默认范围持续生效中' : '作为会话默认范围，后续提问持续生效' }}
+                        {{ isSessionMounted(group) ? '后续提问恢复默认权限范围' : '后续提问默认限定此范围' }}
                       </span>
                     </button>
                   </div>
@@ -874,13 +864,12 @@
             >
             <div
               v-if="group.tags?.length"
-              class="flex flex-wrap gap-1 pl-11 min-w-0"
+              class="flex flex-wrap gap-1 pl-10 min-w-0"
             >
               <span
-                v-for="tag in group.tags.slice(0, 3)"
+                v-for="tag in group.tags.slice(0, 2)"
                 :key="tag"
-                class="inline-block max-w-full rounded-full border px-2 py-0.5 text-[9px] font-bold leading-tight line-clamp-2 break-all"
-                :class="visuals.tag"
+                class="inline-block max-w-full rounded border px-1.5 py-0.5 text-[9px] font-medium leading-tight line-clamp-2 break-all bg-gray-50 text-gray-600 border-gray-200 dark:bg-gray-800/60 dark:text-gray-300 dark:border-gray-700"
                 :title="tag"
               >
                 {{ formatTagLabel(tag) }}
@@ -889,14 +878,13 @@
 
             <blockquote
               v-if="group.summary"
-              class="portal-card-summary relative w-full m-0 px-3.5 py-2.5 text-xs leading-relaxed rounded-r-lg border-l-[3px]"
-              :class="visuals.quote"
-              :style="{ '--summary-strong': visuals.strongColor }"
+              class="portal-card-summary relative w-full m-0 px-3 py-2 text-xs leading-relaxed rounded-r-md border-l-2 border-gray-300 bg-gray-50/80 text-gray-600 dark:border-gray-600 dark:bg-gray-800/40 dark:text-gray-300"
+              :style="{ '--summary-strong': 'rgb(55 65 81)' }"
               v-html="formatGroupSummary(group.summary)"
             />
 
             <div v-if="group.metrics?.length" class="relative mt-2.5">
-              <div class="mb-1.5 text-[10px] font-bold uppercase tracking-wider flex items-center gap-1 select-none" :class="visuals.sectionLabel">
+              <div class="mb-1.5 text-[10px] font-semibold tracking-wide flex items-center gap-1 select-none text-gray-500 dark:text-gray-400">
                 <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6"/>
                 </svg>
@@ -907,122 +895,104 @@
                   v-for="metric in group.metrics"
                   :key="`${group.id || group.title}-${metric}`"
                   type="button"
-                  class="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-semibold rounded-lg border transition-all active:scale-95"
-                  :class="visuals.questionBtn"
+                  class="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-medium rounded-md border border-gray-200 bg-white text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:bg-gray-900/40 dark:text-gray-300 dark:hover:bg-gray-800 transition-colors"
                   :title="`点击查询「${metric}」趋势`"
                   @click.stop="handleMetricClick(metric, group)"
                 >
                   <span>{{ metric }}</span>
-                  <svg class="w-2.5 h-2.5 opacity-60" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <svg class="w-2.5 h-2.5 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.2" d="M9 5l7 7-7 7"/>
                   </svg>
                 </button>
               </div>
             </div>
 
-          <!-- You Can Ask Section -->
-          <div v-if="group.questions?.length" class="relative mt-4">
-            <div class="mb-2 flex items-center justify-between select-none">
-              <span
-                class="text-[10px] font-bold uppercase tracking-wider flex items-center gap-1"
-                :class="visuals.sectionLabel"
-              >
-                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
-                </svg>
-                你可以这样问
+            <!-- You Can Ask Section -->
+            <div v-if="group.questions?.length" class="relative mt-3">
+              <div class="mb-2 flex items-center justify-between select-none">
                 <span
-                  class="inline-flex items-center justify-center w-3.5 h-3.5 rounded-full text-[9px] font-bold text-gray-400 hover:text-gray-600 dark:text-gray-500 dark:hover:text-gray-300 cursor-help border border-gray-300/70 dark:border-gray-600/70"
-                  :title="QUESTIONS_SECTION_TIP"
-                  aria-label="你可以这样问说明"
-                  @click.stop
-                >?</span>
-              </span>
-              <button
-                type="button"
-                class="inline-flex items-center gap-1 text-[10px] font-bold transition-all duration-200 cursor-pointer active:scale-95 px-2 py-0.5 rounded-md border disabled:opacity-50"
-                :class="visuals.refreshBtn"
-                :disabled="isQuestionsRefreshDisabled(group)"
-                @click.stop="handleRefreshGroupQuestions(group)"
-              >
-                <svg
-                  class="w-3 h-3 opacity-70"
-                  :class="{ 'animate-spin': refreshingGroupIds[group.id || group.title] }"
-                  fill="none" stroke="currentColor" viewBox="0 0 24 24"
+                  class="text-[10px] font-semibold tracking-wide flex items-center gap-1 text-gray-500 dark:text-gray-400"
                 >
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
-                </svg>
-                <span>换一批</span>
-              </button>
-            </div>
-
-            <div v-if="refreshingGroupIds[group.id || group.title]" class="flex flex-wrap gap-2 animate-pulse-slow">
-              <div
-                v-for="i in 3"
-                :key="i"
-                class="inline-flex items-center h-8 w-32 rounded-lg border"
-                :class="visuals.questionSkeleton"
-              ></div>
-            </div>
-            <div v-else class="flex flex-wrap gap-2">
-              <div
-                v-for="question in sortedQuestions(group.questions)"
-                :key="question.query"
-                class="group/qbtn inline-flex items-stretch rounded-lg border transition-all duration-200 hover:-translate-y-0.5 active:translate-y-0 shadow-sm overflow-hidden"
-                :class="visuals.questionBtn"
-              >
+                  你可以这样问
+                  <span
+                    class="inline-flex items-center justify-center w-3.5 h-3.5 rounded-full text-[9px] font-bold text-gray-400 hover:text-gray-600 dark:text-gray-500 dark:hover:text-gray-300 cursor-help border border-gray-300/70 dark:border-gray-600/70"
+                    :title="QUESTIONS_SECTION_TIP"
+                    aria-label="你可以这样问说明"
+                    @click.stop
+                  >?</span>
+                </span>
                 <button
                   type="button"
-                  class="inline-flex items-center gap-1.5 px-3 py-2 text-left text-xs font-semibold cursor-pointer select-none bg-transparent hover:bg-black/5 dark:hover:bg-white/5 transition-colors"
-                  @click="handleQuestionClick(question, group, 'send')"
+                  class="inline-flex items-center gap-1 text-[10px] font-medium transition-colors duration-200 cursor-pointer active:scale-95 px-2 py-0.5 rounded-md border border-gray-200 text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800 disabled:opacity-50"
+                  :disabled="isQuestionsRefreshDisabled(group)"
+                  @click.stop="handleRefreshGroupQuestions(group)"
                 >
                   <svg
-                    class="w-3.5 h-3.5 flex-shrink-0 opacity-80"
+                    class="w-3 h-3 opacity-70"
+                    :class="{ 'animate-spin': refreshingGroupIds[group.id || group.title] }"
                     fill="none" stroke="currentColor" viewBox="0 0 24 24"
                   >
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/>
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
                   </svg>
-                  <span>{{ question.label }}</span>
-                  <span
-                    v-if="question.click_count"
-                    class="ml-1 inline-flex items-center px-1 py-0.5 rounded bg-amber-500/10 text-[9px] font-bold text-amber-600 border border-amber-500/20 dark:bg-amber-500/20 dark:text-amber-300 dark:border-amber-500/30 shadow-sm"
-                  >
-                    🔥 常用 {{ question.click_count }}
-                  </span>
-                </button>
-                <button
-                  type="button"
-                  class="opacity-0 group-hover/qbtn:opacity-100 flex items-center justify-center px-2 border-l transition-all duration-200 cursor-pointer bg-transparent hover:bg-black/5 dark:hover:bg-white/5"
-                  :class="[
-                    visuals.key === 'blue' ? 'border-blue-200/80 dark:border-blue-800/50' :
-                    visuals.key === 'violet' ? 'border-violet-200/80 dark:border-violet-800/50' :
-                    visuals.key === 'emerald' ? 'border-emerald-200/80 dark:border-emerald-800/50' :
-                    visuals.key === 'amber' ? 'border-amber-200/80 dark:border-amber-800/50' :
-                    visuals.key === 'rose' ? 'border-rose-200/80 dark:border-rose-800/50' :
-                    'border-cyan-200/80 dark:border-cyan-800/50'
-                  ]"
-                  title="填入输入框微调"
-                  aria-label="填入输入框微调"
-                  @click.stop="handleQuestionClick(question, group, 'fill')"
-                >
-                  <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
-                    <path stroke-linecap="round" stroke-linejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L6.83 19.82a4.5 4.5 0 01-1.897 1.13l-2.685.8.8-2.685a4.5 4.5 0 011.13-1.897L16.863 4.487zm0 0L19.5 7.125" />
-                  </svg>
+                  <span>换一批</span>
                 </button>
               </div>
-            </div>
-          </div>
 
+              <div v-if="refreshingGroupIds[group.id || group.title]" class="flex flex-wrap gap-2 animate-pulse-slow">
+                <div
+                  v-for="i in 3"
+                  :key="i"
+                  class="inline-flex items-center h-8 w-32 rounded-lg border bg-gray-50 border-gray-100 dark:bg-gray-800/40 dark:border-gray-700"
+                ></div>
+              </div>
+              <div v-else class="flex flex-wrap gap-2">
+                <div
+                  v-for="question in sortedQuestions(group.questions)"
+                  :key="question.query"
+                  class="group/qbtn inline-flex items-stretch rounded-lg border border-gray-200 bg-white text-gray-700 dark:border-gray-700 dark:bg-gray-900/40 dark:text-gray-200 overflow-hidden hover:border-gray-300 dark:hover:border-gray-600 transition-colors"
+                >
+                  <button
+                    type="button"
+                    class="inline-flex items-center gap-1.5 px-3 py-2 text-left text-xs font-medium cursor-pointer select-none bg-transparent hover:bg-gray-50 dark:hover:bg-gray-800/60 transition-colors"
+                    @click="handleQuestionClick(question, group, 'send')"
+                  >
+                    <svg
+                      class="w-3 h-3 opacity-50 flex-shrink-0"
+                      fill="none" stroke="currentColor" viewBox="0 0 24 24"
+                    >
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/>
+                    </svg>
+                    <span>{{ question.label || question.query }}</span>
+                    <span
+                      v-if="question.click_count"
+                      class="ml-1 inline-flex items-center px-1 py-0.5 rounded text-[9px] font-medium text-amber-700 bg-amber-50 border border-amber-200/80 dark:bg-amber-900/30 dark:text-amber-300 dark:border-amber-800/50"
+                    >
+                      常用 {{ question.click_count }}
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    class="opacity-0 group-hover/qbtn:opacity-100 flex items-center justify-center px-2 border-l border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800 transition-all duration-150 cursor-pointer text-gray-400 hover:text-gray-600"
+                    title="填入输入框微调"
+                    aria-label="填入输入框微调"
+                    @click.stop="handleQuestionClick(question, group, 'fill')"
+                  >
+                    <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
+                      <path stroke-linecap="round" stroke-linejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L6.83 19.82a4.5 4.5 0 01-1.897 1.13l-2.685.8.8-2.685a4.5 4.5 0 011.13-1.897L16.863 4.487zm0 0L19.5 7.125" />
+                    </svg>
+                  </button>
+                </div>
+              </div>
+            </div>
 
           <!-- Related Data Section -->
           <div
             v-if="group.related_data?.length"
-            class="relative mt-4 border-t pt-3"
-            :class="visuals.divider"
+            class="relative mt-4 border-t pt-3 border-gray-100 dark:border-gray-800"
           >
             <button
               type="button"
-              class="flex items-center justify-between w-full text-left text-[10px] font-bold text-gray-400 dark:text-gray-500 uppercase tracking-wider hover:text-gray-600 dark:hover:text-gray-300 transition-colors select-none"
+              class="flex items-center justify-between w-full text-left text-[10px] font-semibold text-gray-400 dark:text-gray-500 tracking-wide hover:text-gray-600 dark:hover:text-gray-300 transition-colors select-none"
               @click="toggleGroup(group.id || group.title)"
             >
               <span class="flex items-center gap-1.5">
@@ -1030,7 +1000,7 @@
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 5c0 2.21-3.582 4-8 4s-8-1.79-8-4"/>
                 </svg>
                 相关数据
-                <span class="rounded-full px-1.5 py-0.5 text-[9px] font-bold bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400 normal-case tracking-normal">
+                <span class="rounded px-1.5 py-0.5 text-[9px] font-medium bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400 normal-case tracking-normal">
                   {{ countRelatedTables(group) }} 张表
                 </span>
               </span>
@@ -1147,7 +1117,7 @@
                                 @click.stop="handleRecommendQuestions(group, related, table)"
                               >
                                 <span v-if="tableRecommendState[buildTableDictionaryKey(group, related, table)]?.loading">生成中…</span>
-                                <span v-else>💡 推荐提问</span>
+                                <span v-else>推荐提问</span>
                               </button>
                             </div>
                             <div
@@ -1642,10 +1612,10 @@ const isSessionMounted = (group: DatasetCapabilityGroup) => {
 };
 
 const mountButtonTitle = (group: DatasetCapabilityGroup) => {
-  if (isTurnMounted(group) && isSessionMounted(group)) return "本轮已挂载 · 会话已挂载";
-  if (isTurnMounted(group)) return "本轮已挂载";
-  if (isSessionMounted(group)) return "会话已挂载";
-  return "挂载数据集";
+  if (isTurnMounted(group) && isSessionMounted(group)) return "仅本次 · 本会话默认";
+  if (isTurnMounted(group)) return "仅本次";
+  if (isSessionMounted(group)) return "本会话默认";
+  return "限定问数范围";
 };
 
 const toggleMountMenu = (group: DatasetCapabilityGroup) => {
@@ -1659,7 +1629,7 @@ const handleToggleTurnMount = (group: DatasetCapabilityGroup) => {
   const wasMounted = isTurnMounted(group);
   emit("toggle-metadata-dataset", id);
   openMountMenuGroupKey.value = null;
-  showToast(wasMounted ? `已取消本轮挂载「${group.title}」` : `已本轮挂载「${group.title}」`, "success");
+  showToast(wasMounted ? `已取消仅本次「${group.title}」` : `已限定仅本次「${group.title}」`, "success");
 };
 
 const handlePinToSession = (group: DatasetCapabilityGroup) => {
@@ -2318,7 +2288,7 @@ const openSavedReportBrowser = async () => {
 const handleDeleteReport = async (report: any) => {
   try {
     await axios.delete(`/api/portal/saved-reports/${report.id}`);
-    showToast("删除暂存报表成功", "success");
+    showToast("删除黄金报表成功", "success");
     await fetchSavedReports();
   } catch (error: any) {
     console.error("Failed to delete saved report:", error);
@@ -2746,111 +2716,111 @@ interface GroupVisualTheme {
 const CARD_THEMES: GroupVisualTheme[] = [
   {
     key: "blue",
-    card: "bg-gradient-to-br from-blue-50/95 via-white to-sky-50/50 dark:from-blue-950/35 dark:via-gray-900/50 dark:to-sky-950/15",
-    cardBorder: "border-blue-100/90 dark:border-blue-900/45",
-    cardHover: "hover:border-blue-200 dark:hover:border-blue-700/60",
+    card: "bg-white dark:bg-gray-900",
+    cardBorder: "border-gray-200 dark:border-gray-700 border-l-[3px] border-l-blue-500 dark:border-l-blue-400",
+    cardHover: "hover:border-gray-300 dark:hover:border-gray-600",
     decor: "bg-blue-400",
-    iconBorder: "border-blue-400/20",
+    iconBorder: "",
     icon: `<svg fill="none" stroke="#ffffff" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg>`,
-    title: "text-blue-950 dark:text-blue-100",
-    tag: "bg-blue-100/90 text-blue-700 border-blue-200/70 dark:bg-blue-900/50 dark:text-blue-200 dark:border-blue-800/60",
-    quote: "border-l-blue-500 bg-blue-50/70 text-blue-900/75 dark:bg-blue-950/35 dark:text-blue-200/90 dark:border-l-blue-400",
-    strongColor: "#1d4ed8",
-    sectionLabel: "text-blue-500/80 dark:text-blue-400/80",
-    refreshBtn: "text-blue-700 bg-white/70 border-blue-200/70 hover:bg-blue-50 dark:text-blue-300 dark:bg-blue-950/40 dark:border-blue-800/50 dark:hover:bg-blue-900/50",
-    questionBtn: "border-blue-200/80 bg-white/80 text-blue-800 hover:bg-blue-50 hover:border-blue-300 dark:border-blue-800/50 dark:bg-blue-950/25 dark:text-blue-200 dark:hover:bg-blue-900/40",
-    questionSkeleton: "bg-blue-50/40 border-blue-100/30 dark:bg-blue-950/15 dark:border-blue-900/20",
-    divider: "border-blue-100/80 dark:border-blue-900/35",
+    title: "text-gray-900 dark:text-gray-100",
+    tag: "bg-gray-50 text-gray-600 border-gray-200 dark:bg-gray-800 dark:text-gray-300 dark:border-gray-700",
+    quote: "border-l-gray-300 bg-gray-50/80 text-gray-600 dark:bg-gray-800/40 dark:text-gray-300 dark:border-l-gray-600",
+    strongColor: "#374151",
+    sectionLabel: "text-gray-500 dark:text-gray-400",
+    refreshBtn: "text-gray-600 bg-white border-gray-200 hover:bg-gray-50 dark:text-gray-300 dark:bg-gray-900 dark:border-gray-700 dark:hover:bg-gray-800",
+    questionBtn: "border-gray-200 bg-white text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:bg-gray-900/40 dark:text-gray-200 dark:hover:bg-gray-800",
+    questionSkeleton: "bg-gray-50 border-gray-100 dark:bg-gray-800/40 dark:border-gray-700",
+    divider: "border-gray-100 dark:border-gray-800",
   },
   {
     key: "violet",
-    card: "bg-gradient-to-br from-violet-50/95 via-white to-purple-50/40 dark:from-violet-950/35 dark:via-gray-900/50 dark:to-purple-950/15",
-    cardBorder: "border-violet-100/90 dark:border-violet-900/45",
-    cardHover: "hover:border-violet-200 dark:hover:border-violet-700/60",
+    card: "bg-white dark:bg-gray-900",
+    cardBorder: "border-gray-200 dark:border-gray-700 border-l-[3px] border-l-violet-500 dark:border-l-violet-400",
+    cardHover: "hover:border-gray-300 dark:hover:border-gray-600",
     decor: "bg-violet-400",
-    iconBorder: "border-violet-400/20",
+    iconBorder: "",
     icon: `<svg fill="none" stroke="#ffffff" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/></svg>`,
-    title: "text-violet-950 dark:text-violet-100",
-    tag: "bg-violet-100/90 text-violet-700 border-violet-200/70 dark:bg-violet-900/50 dark:text-violet-200 dark:border-violet-800/60",
-    quote: "border-l-violet-500 bg-violet-50/70 text-violet-900/75 dark:bg-violet-950/35 dark:text-violet-200/90 dark:border-l-violet-400",
-    strongColor: "#6d28d9",
-    sectionLabel: "text-violet-500/80 dark:text-violet-400/80",
-    refreshBtn: "text-violet-700 bg-white/70 border-violet-200/70 hover:bg-violet-50 dark:text-violet-300 dark:bg-violet-950/40 dark:border-violet-800/50 dark:hover:bg-violet-900/50",
-    questionBtn: "border-violet-200/80 bg-white/80 text-violet-800 hover:bg-violet-50 hover:border-violet-300 dark:border-violet-800/50 dark:bg-violet-950/25 dark:text-violet-200 dark:hover:bg-violet-900/40",
-    questionSkeleton: "bg-violet-50/40 border-violet-100/30 dark:bg-violet-950/15 dark:border-violet-900/20",
-    divider: "border-violet-100/80 dark:border-violet-900/35",
+    title: "text-gray-900 dark:text-gray-100",
+    tag: "bg-gray-50 text-gray-600 border-gray-200 dark:bg-gray-800 dark:text-gray-300 dark:border-gray-700",
+    quote: "border-l-gray-300 bg-gray-50/80 text-gray-600 dark:bg-gray-800/40 dark:text-gray-300 dark:border-l-gray-600",
+    strongColor: "#374151",
+    sectionLabel: "text-gray-500 dark:text-gray-400",
+    refreshBtn: "text-gray-600 bg-white border-gray-200 hover:bg-gray-50 dark:text-gray-300 dark:bg-gray-900 dark:border-gray-700 dark:hover:bg-gray-800",
+    questionBtn: "border-gray-200 bg-white text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:bg-gray-900/40 dark:text-gray-200 dark:hover:bg-gray-800",
+    questionSkeleton: "bg-gray-50 border-gray-100 dark:bg-gray-800/40 dark:border-gray-700",
+    divider: "border-gray-100 dark:border-gray-800",
   },
   {
     key: "emerald",
-    card: "bg-gradient-to-br from-emerald-50/95 via-white to-teal-50/40 dark:from-emerald-950/35 dark:via-gray-900/50 dark:to-teal-950/15",
-    cardBorder: "border-emerald-100/90 dark:border-emerald-900/45",
-    cardHover: "hover:border-emerald-200 dark:hover:border-emerald-700/60",
+    card: "bg-white dark:bg-gray-900",
+    cardBorder: "border-gray-200 dark:border-gray-700 border-l-[3px] border-l-emerald-500 dark:border-l-emerald-400",
+    cardHover: "hover:border-gray-300 dark:hover:border-gray-600",
     decor: "bg-emerald-400",
-    iconBorder: "border-emerald-400/20",
+    iconBorder: "",
     icon: `<svg fill="none" stroke="#ffffff" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg>`,
-    title: "text-emerald-950 dark:text-emerald-100",
-    tag: "bg-emerald-100/90 text-emerald-700 border-emerald-200/70 dark:bg-emerald-900/50 dark:text-emerald-200 dark:border-emerald-800/60",
-    quote: "border-l-emerald-500 bg-emerald-50/70 text-emerald-900/75 dark:bg-emerald-950/35 dark:text-emerald-200/90 dark:border-l-emerald-400",
-    strongColor: "#047857",
-    sectionLabel: "text-emerald-500/80 dark:text-emerald-400/80",
-    refreshBtn: "text-emerald-700 bg-white/70 border-emerald-200/70 hover:bg-emerald-50 dark:text-emerald-300 dark:bg-emerald-950/40 dark:border-emerald-800/50 dark:hover:bg-emerald-900/50",
-    questionBtn: "border-emerald-200/80 bg-white/80 text-emerald-800 hover:bg-emerald-50 hover:border-emerald-300 dark:border-emerald-800/50 dark:bg-emerald-950/25 dark:text-emerald-200 dark:hover:bg-emerald-900/40",
-    questionSkeleton: "bg-emerald-50/40 border-emerald-100/30 dark:bg-emerald-950/15 dark:border-emerald-900/20",
-    divider: "border-emerald-100/80 dark:border-emerald-900/35",
+    title: "text-gray-900 dark:text-gray-100",
+    tag: "bg-gray-50 text-gray-600 border-gray-200 dark:bg-gray-800 dark:text-gray-300 dark:border-gray-700",
+    quote: "border-l-gray-300 bg-gray-50/80 text-gray-600 dark:bg-gray-800/40 dark:text-gray-300 dark:border-l-gray-600",
+    strongColor: "#374151",
+    sectionLabel: "text-gray-500 dark:text-gray-400",
+    refreshBtn: "text-gray-600 bg-white border-gray-200 hover:bg-gray-50 dark:text-gray-300 dark:bg-gray-900 dark:border-gray-700 dark:hover:bg-gray-800",
+    questionBtn: "border-gray-200 bg-white text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:bg-gray-900/40 dark:text-gray-200 dark:hover:bg-gray-800",
+    questionSkeleton: "bg-gray-50 border-gray-100 dark:bg-gray-800/40 dark:border-gray-700",
+    divider: "border-gray-100 dark:border-gray-800",
   },
   {
     key: "amber",
-    card: "bg-gradient-to-br from-amber-50/95 via-white to-orange-50/35 dark:from-amber-950/30 dark:via-gray-900/50 dark:to-orange-950/15",
-    cardBorder: "border-amber-100/90 dark:border-amber-900/45",
-    cardHover: "hover:border-amber-200 dark:hover:border-amber-700/60",
+    card: "bg-white dark:bg-gray-900",
+    cardBorder: "border-gray-200 dark:border-gray-700 border-l-[3px] border-l-amber-500 dark:border-l-amber-400",
+    cardHover: "hover:border-gray-300 dark:hover:border-gray-600",
     decor: "bg-amber-400",
-    iconBorder: "border-amber-400/20",
+    iconBorder: "",
     icon: `<svg fill="none" stroke="#ffffff" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/></svg>`,
-    title: "text-amber-950 dark:text-amber-100",
-    tag: "bg-amber-100/90 text-amber-800 border-amber-200/70 dark:bg-amber-900/50 dark:text-amber-200 dark:border-amber-800/60",
-    quote: "border-l-amber-500 bg-amber-50/70 text-amber-900/75 dark:bg-amber-950/35 dark:text-amber-200/90 dark:border-l-amber-400",
-    strongColor: "#b45309",
-    sectionLabel: "text-amber-600/80 dark:text-amber-400/80",
-    refreshBtn: "text-amber-800 bg-white/70 border-amber-200/70 hover:bg-amber-50 dark:text-amber-300 dark:bg-amber-950/40 dark:border-amber-800/50 dark:hover:bg-amber-900/50",
-    questionBtn: "border-amber-200/80 bg-white/80 text-amber-900 hover:bg-amber-50 hover:border-amber-300 dark:border-amber-800/50 dark:bg-amber-950/25 dark:text-amber-200 dark:hover:bg-amber-900/40",
-    questionSkeleton: "bg-amber-50/40 border-amber-100/30 dark:bg-amber-950/15 dark:border-amber-900/20",
-    divider: "border-amber-100/80 dark:border-amber-900/35",
+    title: "text-gray-900 dark:text-gray-100",
+    tag: "bg-gray-50 text-gray-600 border-gray-200 dark:bg-gray-800 dark:text-gray-300 dark:border-gray-700",
+    quote: "border-l-gray-300 bg-gray-50/80 text-gray-600 dark:bg-gray-800/40 dark:text-gray-300 dark:border-l-gray-600",
+    strongColor: "#374151",
+    sectionLabel: "text-gray-500 dark:text-gray-400",
+    refreshBtn: "text-gray-600 bg-white border-gray-200 hover:bg-gray-50 dark:text-gray-300 dark:bg-gray-900 dark:border-gray-700 dark:hover:bg-gray-800",
+    questionBtn: "border-gray-200 bg-white text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:bg-gray-900/40 dark:text-gray-200 dark:hover:bg-gray-800",
+    questionSkeleton: "bg-gray-50 border-gray-100 dark:bg-gray-800/40 dark:border-gray-700",
+    divider: "border-gray-100 dark:border-gray-800",
   },
   {
     key: "rose",
-    card: "bg-gradient-to-br from-rose-50/95 via-white to-pink-50/35 dark:from-rose-950/30 dark:via-gray-900/50 dark:to-pink-950/15",
-    cardBorder: "border-rose-100/90 dark:border-rose-900/45",
-    cardHover: "hover:border-rose-200 dark:hover:border-rose-700/60",
+    card: "bg-white dark:bg-gray-900",
+    cardBorder: "border-gray-200 dark:border-gray-700 border-l-[3px] border-l-rose-500 dark:border-l-rose-400",
+    cardHover: "hover:border-gray-300 dark:hover:border-gray-600",
     decor: "bg-rose-400",
-    iconBorder: "border-rose-400/20",
+    iconBorder: "",
     icon: `<svg fill="none" stroke="#ffffff" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z"/></svg>`,
-    title: "text-rose-950 dark:text-rose-100",
-    tag: "bg-rose-100/90 text-rose-700 border-rose-200/70 dark:bg-rose-900/50 dark:text-rose-200 dark:border-rose-800/60",
-    quote: "border-l-rose-500 bg-rose-50/70 text-rose-900/75 dark:bg-rose-950/35 dark:text-rose-200/90 dark:border-l-rose-400",
-    strongColor: "#be123c",
-    sectionLabel: "text-rose-500/80 dark:text-rose-400/80",
-    refreshBtn: "text-rose-700 bg-white/70 border-rose-200/70 hover:bg-rose-50 dark:text-rose-300 dark:bg-rose-950/40 dark:border-rose-800/50 dark:hover:bg-rose-900/50",
-    questionBtn: "border-rose-200/80 bg-white/80 text-rose-800 hover:bg-rose-50 hover:border-rose-300 dark:border-rose-800/50 dark:bg-rose-950/25 dark:text-rose-200 dark:hover:bg-rose-900/40",
-    questionSkeleton: "bg-rose-50/40 border-rose-100/30 dark:bg-rose-950/15 dark:border-rose-900/20",
-    divider: "border-rose-100/80 dark:border-rose-900/35",
+    title: "text-gray-900 dark:text-gray-100",
+    tag: "bg-gray-50 text-gray-600 border-gray-200 dark:bg-gray-800 dark:text-gray-300 dark:border-gray-700",
+    quote: "border-l-gray-300 bg-gray-50/80 text-gray-600 dark:bg-gray-800/40 dark:text-gray-300 dark:border-l-gray-600",
+    strongColor: "#374151",
+    sectionLabel: "text-gray-500 dark:text-gray-400",
+    refreshBtn: "text-gray-600 bg-white border-gray-200 hover:bg-gray-50 dark:text-gray-300 dark:bg-gray-900 dark:border-gray-700 dark:hover:bg-gray-800",
+    questionBtn: "border-gray-200 bg-white text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:bg-gray-900/40 dark:text-gray-200 dark:hover:bg-gray-800",
+    questionSkeleton: "bg-gray-50 border-gray-100 dark:bg-gray-800/40 dark:border-gray-700",
+    divider: "border-gray-100 dark:border-gray-800",
   },
   {
     key: "cyan",
-    card: "bg-gradient-to-br from-cyan-50/95 via-white to-sky-50/35 dark:from-cyan-950/30 dark:via-gray-900/50 dark:to-sky-950/15",
-    cardBorder: "border-cyan-100/90 dark:border-cyan-900/45",
-    cardHover: "hover:border-cyan-200 dark:hover:border-cyan-700/60",
+    card: "bg-white dark:bg-gray-900",
+    cardBorder: "border-gray-200 dark:border-gray-700 border-l-[3px] border-l-cyan-500 dark:border-l-cyan-400",
+    cardHover: "hover:border-gray-300 dark:hover:border-gray-600",
     decor: "bg-cyan-400",
-    iconBorder: "border-cyan-400/20",
+    iconBorder: "",
     icon: `<svg fill="none" stroke="#ffffff" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 8v8m-4-5v5m-4-2v2m-2 4h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>`,
-    title: "text-cyan-950 dark:text-cyan-100",
-    tag: "bg-cyan-100/90 text-cyan-800 border-cyan-200/70 dark:bg-cyan-900/50 dark:text-cyan-200 dark:border-cyan-800/60",
-    quote: "border-l-cyan-500 bg-cyan-50/70 text-cyan-900/75 dark:bg-cyan-950/35 dark:text-cyan-200/90 dark:border-l-cyan-400",
-    strongColor: "#0e7490",
-    sectionLabel: "text-cyan-600/80 dark:text-cyan-400/80",
-    refreshBtn: "text-cyan-800 bg-white/70 border-cyan-200/70 hover:bg-cyan-50 dark:text-cyan-300 dark:bg-cyan-950/40 dark:border-cyan-800/50 dark:hover:bg-cyan-900/50",
-    questionBtn: "border-cyan-200/80 bg-white/80 text-cyan-900 hover:bg-cyan-50 hover:border-cyan-300 dark:border-cyan-800/50 dark:bg-cyan-950/25 dark:text-cyan-200 dark:hover:bg-cyan-900/40",
-    questionSkeleton: "bg-cyan-50/40 border-cyan-100/30 dark:bg-cyan-950/15 dark:border-cyan-900/20",
-    divider: "border-cyan-100/80 dark:border-cyan-900/35",
+    title: "text-gray-900 dark:text-gray-100",
+    tag: "bg-gray-50 text-gray-600 border-gray-200 dark:bg-gray-800 dark:text-gray-300 dark:border-gray-700",
+    quote: "border-l-gray-300 bg-gray-50/80 text-gray-600 dark:bg-gray-800/40 dark:text-gray-300 dark:border-l-gray-600",
+    strongColor: "#374151",
+    sectionLabel: "text-gray-500 dark:text-gray-400",
+    refreshBtn: "text-gray-600 bg-white border-gray-200 hover:bg-gray-50 dark:text-gray-300 dark:bg-gray-900 dark:border-gray-700 dark:hover:bg-gray-800",
+    questionBtn: "border-gray-200 bg-white text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:bg-gray-900/40 dark:text-gray-200 dark:hover:bg-gray-800",
+    questionSkeleton: "bg-gray-50 border-gray-100 dark:bg-gray-800/40 dark:border-gray-700",
+    divider: "border-gray-100 dark:border-gray-800",
   },
 ];
 
@@ -3409,33 +3379,27 @@ const handleRecommendedQuestionClick = (
 }
 
 .portal-card-icon[data-theme="blue"] {
-  background: linear-gradient(135deg, #3b82f6, #2563eb);
-  box-shadow: 0 4px 12px rgb(59 130 246 / 0.25);
+  background: #2563eb;
 }
 
 .portal-card-icon[data-theme="violet"] {
-  background: linear-gradient(135deg, #8b5cf6, #7c3aed);
-  box-shadow: 0 4px 12px rgb(139 92 246 / 0.25);
+  background: #7c3aed;
 }
 
 .portal-card-icon[data-theme="emerald"] {
-  background: linear-gradient(135deg, #10b981, #0d9488);
-  box-shadow: 0 4px 12px rgb(16 185 129 / 0.25);
+  background: #059669;
 }
 
 .portal-card-icon[data-theme="amber"] {
-  background: linear-gradient(135deg, #f59e0b, #ea580c);
-  box-shadow: 0 4px 12px rgb(245 158 11 / 0.25);
+  background: #d97706;
 }
 
 .portal-card-icon[data-theme="rose"] {
-  background: linear-gradient(135deg, #f43f5e, #db2777);
-  box-shadow: 0 4px 12px rgb(244 63 94 / 0.25);
+  background: #e11d48;
 }
 
 .portal-card-icon[data-theme="cyan"] {
-  background: linear-gradient(135deg, #06b6d4, #0284c7);
-  box-shadow: 0 4px 12px rgb(6 182 212 / 0.25);
+  background: #0891b2;
 }
 
 .portal-card-summary :deep(strong) {

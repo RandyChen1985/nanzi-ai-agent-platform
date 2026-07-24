@@ -78,7 +78,7 @@ def test_dataset_capability_menu_component_contract():
     assert "showRefreshBusy.value" in source
     assert "|| props.payload?.has_datasets === false" not in source
     assert "cacheAgeLabel" in source
-    assert "我的数据门户" in source
+    assert "数据门户" in source
     assert "click_count" in source
     assert "handleQuestionClick" in source
     assert "props.payload.groups" in source
