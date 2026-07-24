@@ -667,15 +667,6 @@ const selectedMcpToolsCount = computed(() =>
 );
 const promptCharCount = computed(() => versionForm.value.system_prompt?.length ?? 0);
 
-const versionConfigProgress = computed(() => {
-  let count = 0;
-  if (isCreatingAgent.value && agentForm.value.name && agentForm.value.display_name) count++;
-  if (versionForm.value.model_name) count++;
-  if (selectedToolsCount.value > 0) count++;
-  if (versionForm.value.system_prompt?.trim()) count++;
-  return count;
-});
-
 const isAgentConfigStepComplete = () => {
   if (!agentForm.value.name?.trim() || !agentForm.value.display_name?.trim()) return false;
   if (agentForm.value.engine_type === 'RAGFLOW' && !String(agentForm.value.engine_config?.app_id || '').trim()) {
@@ -705,6 +696,17 @@ const isVersionConfigStepComplete = (step: VersionConfigStep) => {
   }
   return true;
 };
+
+const versionConfigProgressSteps = computed(() =>
+  versionConfigSteps.value.filter((step) => step.id !== 'review')
+);
+const versionConfigProgress = computed(() =>
+  versionConfigProgressSteps.value.filter((step) => isVersionConfigStepComplete(step.id)).length
+);
+const versionConfigProgressTotal = computed(() => versionConfigProgressSteps.value.length);
+const versionConfigProgressLabels = computed(() =>
+  versionConfigProgressSteps.value.map((step) => step.label).join(' · ')
+);
 
 const canReachVersionConfigStep = (target: VersionConfigStep) => {
   const steps = versionConfigSteps.value;
@@ -3609,6 +3611,8 @@ const formatSkillCountLabel = (agent: AIAgent) => {
       :version-config-step="versionConfigStep"
       :version-config-steps="versionConfigSteps"
       :version-config-progress="versionConfigProgress"
+      :version-config-progress-total="versionConfigProgressTotal"
+      :version-config-progress-labels="versionConfigProgressLabels"
       :selected-tools-count="selectedToolsCount"
       :selected-static-tools-count="selectedStaticToolsCount"
       :selected-mcp-tools-count="selectedMcpToolsCount"

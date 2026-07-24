@@ -25,6 +25,8 @@ const props = defineProps<{
   versionConfigStep: VersionConfigStep;
   versionConfigSteps: { id: VersionConfigStep; label: string }[];
   versionConfigProgress: number;
+  versionConfigProgressTotal: number;
+  versionConfigProgressLabels: string;
   selectedToolsCount: number;
   selectedStaticToolsCount: number;
   selectedMcpToolsCount: number;
@@ -335,7 +337,7 @@ const externalCreationMissingFields = computed(() => {
             外部引擎不创建本地版本，完成当前页面即可创建智能体。
           </div>
           <div v-else class="mt-2 text-[10px] text-gray-400">
-            配置完成度 {{ versionConfigProgress }} / {{ isCreatingAgent ? 4 : 3 }}（{{ isCreatingAgent ? '智能体 · ' : '' }}模型 · 工具 · 提示词）
+            配置完成度 {{ versionConfigProgress }} / {{ versionConfigProgressTotal }}（{{ versionConfigProgressLabels }}）
           </div>
         </div>
 
@@ -873,6 +875,14 @@ const externalCreationMissingFields = computed(() => {
                 <label class="mb-2 block text-xs font-bold text-violet-900">其他推荐要求（可选）</label>
                 <textarea v-model="welcomeConfig.generation_requirement" :disabled="!canEditVersion" rows="2" placeholder="例如：优先推荐月度经营分析和异常排查问题" class="w-full resize-none rounded-lg border border-violet-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-violet-200"></textarea>
                 <p class="mt-3 text-xs leading-5 text-violet-700">每次打开欢迎页时自动推荐 3 张业务卡片；同一智能体在 5 分钟内复用同一组推荐。</p>
+                <div class="mt-3 rounded-lg border border-violet-200/80 bg-white/70 px-3 py-2.5 text-xs leading-5 text-violet-800">
+                  <p class="font-bold">默认推荐规则</p>
+                  <ul class="mt-1 list-disc space-y-0.5 pl-4 text-violet-700">
+                    <li>参考智能体名称、业务描述、系统提示词摘要和上述额外要求。</li>
+                    <li>生成 3 个业务强相关、可直接点击执行的问题，并匹配合适图标、主标题和副标题。</li>
+                    <li>缓存到期后才生成新一组；生成失败时回退平台默认三卡片。</li>
+                  </ul>
+                </div>
               </div>
               <div v-if="welcomeConfig.mode === 'manual'" class="grid grid-cols-1 gap-3 sm:grid-cols-3">
                 <div v-for="(card, index) in welcomeConfig.cards" :key="index" class="rounded-xl border border-gray-200 bg-white p-3">

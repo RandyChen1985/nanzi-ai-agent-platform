@@ -76,3 +76,25 @@ def test_welcome_switch_thumb_stays_within_its_track():
 
     assert "flex-shrink-0" in switch_section
     assert "left-0.5" in switch_section
+
+
+def test_version_progress_uses_current_wizard_steps_including_welcome():
+    management = _source("frontend/src/views/AgentManagement.vue")
+    drawer = _source("frontend/src/components/agent/AgentVersionEditorDrawer.vue")
+
+    assert "const versionConfigProgressSteps = computed" in management
+    assert "step.id !== 'review'" in management
+    assert "isVersionConfigStepComplete(step.id)" in management
+    assert ':version-config-progress-total="versionConfigProgressTotal"' in management
+    assert ':version-config-progress-labels="versionConfigProgressLabels"' in management
+    assert "versionConfigProgressTotal" in drawer
+    assert "versionConfigProgressLabels" in drawer
+
+
+def test_ai_welcome_mode_explains_default_recommendation_rules():
+    drawer = _source("frontend/src/components/agent/AgentVersionEditorDrawer.vue")
+
+    assert "默认推荐规则" in drawer
+    assert "智能体名称、业务描述、系统提示词摘要" in drawer
+    assert "业务强相关、可直接点击执行的问题" in drawer
+    assert "生成失败时回退平台默认三卡片" in drawer
