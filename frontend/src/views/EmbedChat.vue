@@ -131,19 +131,6 @@
         </div>
       </div>
 
-      <ExpertCapsule
-          v-if="!isUrlAgentPinned"
-          :config="config"
-          :current-expert-agent="currentExpertAgent"
-          :show-auto-routing-hint="showAutoRoutingHint"
-          :show-multi-agent-hint="showMultiAgentHint"
-          :multi-agent-hint-message="multiAgentHintMessage"
-          :show-expert-switch-hint="showExpertSwitchHint"
-          :expert-switch-hint-name="expertSwitchHintName"
-          :is-mobile="isMobile"
-          @switch-to-auto="switchToAuto"
-      />
-
       <!-- Project / Session resource scope bar -->
       <div v-if="resourceScope.project_name || resourceScopeCount > 0" class="flex-shrink-0 px-4 py-2 flex items-center gap-2 text-[11px] text-gray-500 dark:text-gray-400 overflow-x-auto border-b border-gray-100 dark:border-gray-800 bg-gray-50/50 dark:bg-gray-800/20">
         <span class="font-bold shrink-0">{{ resourceScope.project_name ? `📁 ${resourceScope.project_name}` : '📌 会话固定资源' }}</span>
@@ -2611,7 +2598,6 @@ import CitationPopover from "@/components/CitationPopover.vue";
 import RagPreviewDrawer from "@/components/RagPreviewDrawer.vue";
 import ChatHistorySidebar from "@/components/ChatHistorySidebar.vue";
 import ConfirmModal from "@/components/ConfirmModal.vue";
-import ExpertCapsule from "@/components/embed/ExpertCapsule.vue";
 import ChatSettings from "@/components/embed/ChatSettings.vue";
 import ChatCanvas from "@/components/embed/ChatCanvas.vue";
 import ChatThinkingHeader from "@/components/chat/ChatThinkingHeader.vue";
@@ -3317,13 +3303,7 @@ const loadWelcomeCards = async (agentId?: string) => {
     welcomeCards.value = [];
   }
 };
-const showAutoRoutingHint = ref(false);
-const showMultiAgentHint = ref(false);
-const showExpertSwitchHint = ref(false);
-const expertSwitchHintName = ref("");
 const showConfirmModal = ref(false);
-const multiAgentHintMessage = ref("");
-let expertSwitchHintTimer: ReturnType<typeof setTimeout> | null = null;
 
 /** URL ?agent_id= 深链锁定：禁止切换专家 / 自动路由 / @提及 */
 const urlPinnedAgentKey = ref("");
@@ -3433,12 +3413,7 @@ const saveRoutingSettings = () => {
     localStorage.setItem("yovole_markdown_theme", config.markdownTheme || "default");
 };
 const triggerMultiAgentHint = (enabled: boolean) => {
-    multiAgentHintMessage.value = enabled ? "已开启多智能体协同模式" : "已切换为单智能体模式";
-    showExpertSwitchHint.value = false;
-    showMultiAgentHint.value = true;
-    setTimeout(() => {
-        showMultiAgentHint.value = false;
-    }, 3000);
+    showToast(enabled ? "已开启多智能体协同模式" : "已切换为单智能体模式", "info");
 };
 const switchToAuto = () => {
     if (isUrlAgentPinned.value) {
@@ -3447,11 +3422,7 @@ const switchToAuto = () => {
     }
     config.routingMode = "auto";
     saveRoutingSettings();
-    showExpertSwitchHint.value = false;
-    showAutoRoutingHint.value = true;
-    setTimeout(() => {
-        showAutoRoutingHint.value = false;
-    }, 3000);
+    showToast("已切换为自动路由模式", "success");
 };
 const switchToExpert = (agentId: string) => {
     if (isUrlAgentPinned.value && pinnedAgentId.value && agentId !== pinnedAgentId.value) {
@@ -3461,24 +3432,17 @@ const switchToExpert = (agentId: string) => {
     config.expertAgentId = agentId;
     config.routingMode = "expert";
     saveRoutingSettings();
-    const agent = allowedAgents.value.find((a: any) => a.id === agentId) || pinnedAgent.value;
-    expertSwitchHintName.value = agent?.display_name || agent?.name || "专家";
-    showAutoRoutingHint.value = false;
-    showMultiAgentHint.value = false;
-    showExpertSwitchHint.value = !isUrlAgentPinned.value;
-    if (expertSwitchHintTimer) clearTimeout(expertSwitchHintTimer);
-    expertSwitchHintTimer = setTimeout(() => {
-        showExpertSwitchHint.value = false;
-        expertSwitchHintTimer = null;
-    }, 3000);
+    // URL 深链锁定初始化时不提示，避免首屏弹出
+    if (!isUrlAgentPinned.value) {
+      const agent = allowedAgents.value.find((a: any) => a.id === agentId) || pinnedAgent.value;
+      const name = agent?.display_name || agent?.name || "专家";
+      showToast(`已切换至专家：${name}`, "success");
+    }
 };
 const onModeChange = (mode: string) => {
     saveRoutingSettings();
     if (mode === "auto") {
-        showAutoRoutingHint.value = true;
-        setTimeout(() => {
-            showAutoRoutingHint.value = false;
-        }, 3000);
+        showToast("已切换为自动路由模式", "success");
     }
 };
 watch(() => config.enableMultiAgent, (newVal, oldVal) => {
@@ -3842,7 +3806,7 @@ const pinMetadataDatasetToSession = async (datasetId: string) => {
   const id = String(datasetId || '').trim();
   if (!id) return;
   if (resourceScope.value.datasets.some((item: any) => String(item.id) === id)) {
-    showToast('该数据集已固定到会话', 'info');
+    showToast('该数据集已设为本会话默认', 'info');
     return;
   }
   const selected =
@@ -3855,9 +3819,9 @@ const pinMetadataDatasetToSession = async (datasetId: string) => {
   try {
     await persistResourceScope(buildPersistableScope(nextScope));
     const dsName = selected.name || selected.display_name || selected.dataset_name || id;
-    showToast(`已固定到会话：后续所有提问将默认锁定在【${dsName}】范围内`, 'success');
+    showToast(`已设为本会话默认：后续提问将默认锁定在【${dsName}】`, 'success');
   } catch (error) {
-    showToast('固定会话数据集失败', 'error');
+    showToast('设置会话默认范围失败', 'error');
   } finally {
     resourceScopeSaving.value = false;
   }
@@ -3877,9 +3841,9 @@ const unpinMetadataDatasetFromSession = async (datasetId: string) => {
   resourceScopeSaving.value = true;
   try {
     await persistResourceScope(buildPersistableScope(nextScope));
-    showToast('已取消会话挂载，问数将恢复默认权限范围', 'info');
+    showToast('已取消本会话默认，问数将恢复默认权限范围', 'info');
   } catch (error) {
-    showToast('取消会话挂载失败', 'error');
+    showToast('取消会话默认失败', 'error');
   } finally {
     resourceScopeSaving.value = false;
   }
@@ -5870,7 +5834,6 @@ const handleSystemCommand = async (cmd: string): Promise<boolean> => {
       return true;
     }
     switchToAuto();
-    showToast("已切换为自动路由模式", "success");
     return true;
   }
   if (normalizedCmd.startsWith("/switch_agent_expert?agent_id=")) {
@@ -5882,7 +5845,6 @@ const handleSystemCommand = async (cmd: string): Promise<boolean> => {
         return true;
       }
       switchToExpert(agentId);
-      showToast("已切换到指定智能体", "success");
     }
     return true;
   }
@@ -6413,10 +6375,7 @@ watch(showKnowledgePortal, (val) => {
       config.routingMode = "auto";
       config.expertAgentId = "";
       saveRoutingSettings();
-      showAutoRoutingHint.value = true;
-      setTimeout(() => {
-        showAutoRoutingHint.value = false;
-      }, 3000);
+      showToast("已切换为自动路由模式", "success");
     }
   }
 });
@@ -6441,6 +6400,16 @@ const pinnedDrawerDockOffsetRem = (exclude?: "portal" | "workspace" | "memory" |
   if (exclude !== "memory" && showMemoryDrawer.value && memoryPinned.value) rem += 28;
   return rem;
 };
+
+const pinnedDrawerRightRem = computed(() => pinnedDrawerDockOffsetRem());
+const saveReportModalOverlayStyle = computed(() => {
+  const rem = pinnedDrawerRightRem.value;
+  return { right: rem > 0 ? `${rem}rem` : "0" };
+});
+const saveReportModalOverlayClass = computed(() => {
+  const isPinned = (showPortalDrawer.value && portalPinned.value) || (showKnowledgePortal.value && knowledgePinned.value);
+  return isPinned ? 'right-[28rem]' : 'right-0';
+});
 
 // 响应式抽屉宽度 refs（由各抽屉组件通过 v-model:drawerWidth / v-model:canvasWidth 实时同步）
 const portalDrawerWidthReactive = ref(448);
