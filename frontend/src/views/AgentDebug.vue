@@ -1790,8 +1790,18 @@ const buildKnowledgeBaseAttachmentHint = (datasetIdLine: string) => {
   return `${expertHint}\n\n【必须执行】${datasetIdLine}`;
 };
 
+const buildDatasetAttachmentHint = (datasetIdLine: string) => {
+  const expert = findUniqueDataQueryAgent();
+  const expertHint = expert
+    ? `本次为数据查询与分析，须优先由数据查询专家「${expert.display_name || expert.name}」（agent_name: ${expert.name}，agent_id: ${expert.id}）处理；自动路由时必须选择该专家，不得分发给主助手或其他专家。`
+    : `本次为数据查询与分析，须优先选择具有数据查询能力的专家智能体处理；自动路由时不得分发给其他无关专家。`;
+
+  return `${expertHint}\n\n【必须执行】${datasetIdLine}`;
+};
+
 const { appendAttachmentContext } = useChatAttachments({
   buildKnowledgeBaseAttachmentHint,
+  buildDatasetAttachmentHint,
 });
 
 const handleSelectLocalFs = (payload: { type: 'local_file' | 'local_dir'; path: string; name: string; size: number; ext: string }) => {
@@ -2242,6 +2252,7 @@ const {
 
 const {
   activeMetadataDatasetIds,
+  syncActiveMetadataDatasetsFromInput,
   toggleMetadataDatasetActive,
 } = useDatasetMount();
 
@@ -2279,42 +2290,77 @@ const loadMetadataDatasetSessionScope = async () => {
   }
 };
 
-const pinMetadataDatasetsToSession = async () => {
+const pinMetadataDatasetToSession = async (datasetId: string) => {
   if (!conversationId.value) {
     showToast("请先开始会话", "error");
     return;
   }
-  if (!activeMetadataDatasetIds.value.length) return;
+  const id = String(datasetId || "").trim();
+  if (!id) return;
   try {
     const res = await axios.get(
       `/api/v1/chat/conversation/${encodeURIComponent(conversationId.value)}/resource-scope`,
       { headers: debugAuthHeaders() },
     );
     const scope = res.data?.data || { project_name: "", datasets: [], knowledge_bases: [], skills: [] };
-    const existingIds = new Set((scope.datasets || []).map((item: any) => String(item.id || "").trim()));
-    const selected = activeMetadataDatasetIds.value
-      .filter((id) => !existingIds.has(id))
-      .map((id) => {
-        const dataset = metadataMountableDatasets.value.find((item) => item.id === id);
-        return { id, name: dataset?.name || id, ...(dataset?.dataset_name ? { dataset_name: dataset.dataset_name } : {}) };
-      });
+    if ((scope.datasets || []).some((item: any) => String(item.id || "").trim() === id)) {
+      showToast("该数据集已固定到会话", "info");
+      return;
+    }
+    const dataset = metadataMountableDatasets.value.find((item) => item.id === id);
+    const selected = {
+      id,
+      name: dataset?.name || id,
+      ...(dataset?.dataset_name ? { dataset_name: dataset.dataset_name } : {}),
+    };
     const saved = await axios.put(
       `/api/v1/chat/conversation/${encodeURIComponent(conversationId.value)}/resource-scope`,
-      { ...scope, datasets: [...(scope.datasets || []), ...selected] },
+      { ...scope, datasets: [...(scope.datasets || []), selected] },
       { headers: debugAuthHeaders() },
     );
-    sessionMountedMetadataDatasetIds.value = (saved.data?.data?.datasets || [...(scope.datasets || []), ...selected])
+    sessionMountedMetadataDatasetIds.value = (saved.data?.data?.datasets || [...(scope.datasets || []), selected])
       .map((item: any) => String(item.id || "").trim())
       .filter(Boolean);
-    showToast("已将本轮数据集固定到会话", "success");
+    showToast("已固定到会话", "success");
   } catch (error) {
-    console.warn("Failed to pin metadata datasets to session", error);
+    console.warn("Failed to pin metadata dataset to session", error);
     showToast("固定会话数据集失败", "error");
   }
 };
 
+const unpinMetadataDatasetFromSession = async (datasetId: string) => {
+  if (!conversationId.value) {
+    showToast("请先开始会话", "error");
+    return;
+  }
+  const id = String(datasetId || "").trim();
+  if (!id) return;
+  try {
+    const res = await axios.get(
+      `/api/v1/chat/conversation/${encodeURIComponent(conversationId.value)}/resource-scope`,
+      { headers: debugAuthHeaders() },
+    );
+    const scope = res.data?.data || { project_name: "", datasets: [], knowledge_bases: [], skills: [] };
+    const nextDatasets = (scope.datasets || []).filter((item: any) => String(item.id || "").trim() !== id);
+    const saved = await axios.put(
+      `/api/v1/chat/conversation/${encodeURIComponent(conversationId.value)}/resource-scope`,
+      { ...scope, datasets: nextDatasets },
+      { headers: debugAuthHeaders() },
+    );
+    sessionMountedMetadataDatasetIds.value = (saved.data?.data?.datasets || nextDatasets)
+      .map((item: any) => String(item.id || "").trim())
+      .filter(Boolean);
+    showToast("已取消会话挂载", "success");
+  } catch (error) {
+    console.warn("Failed to unpin metadata dataset from session", error);
+    showToast("取消会话挂载失败", "error");
+  }
+};
+
 const openPortalDrawer = async () => {
-  await Promise.all([loadMetadataMountableDatasets(), loadMetadataDatasetSessionScope()]);
+  // 挂载匹配异步补齐，不阻塞门户打开
+  void loadMetadataMountableDatasets();
+  void loadMetadataDatasetSessionScope();
   await rawOpenPortalDrawer();
 };
 
@@ -2376,11 +2422,12 @@ watch(showKnowledgePortal, (val) => {
   }
 });
 
-// 监听上传文件的变更，保持知识库激活状态在抽屉卡片里是最新同步的
+// 监听上传文件的变更，保持知识库与数据集激活状态在抽屉卡片里是最新同步的
 watch(
   () => chatInputRef.value?.uploadedFiles,
   () => {
     syncActiveDatasetsFromInput(chatInputRef.value);
+    syncActiveMetadataDatasetsFromInput(chatInputRef.value);
   },
   { deep: true }
 );
@@ -2747,6 +2794,7 @@ const tryLocalChartOptionPatch = (userText: string): boolean => {
 
 const sendMessage = async () => {
   const files = chatInputRef.value?.uploadedFiles ? Array.from(chatInputRef.value.uploadedFiles) as ChatFile[] : [];
+  const turnMetadataDatasetIds = [...activeMetadataDatasetIds.value];
   const content = userInput.value.trim();
   if (!content && files.length === 0) return;
   if (isProcessing.value) return;
@@ -2904,8 +2952,8 @@ const sendMessage = async () => {
     if (knowledgeDatasetIds.length > 0) {
       requestBody.knowledge_dataset_ids = knowledgeDatasetIds;
     }
-    if (activeMetadataDatasetIds.value.length > 0) {
-      requestBody.metadata_dataset_ids = activeMetadataDatasetIds.value;
+    if (turnMetadataDatasetIds.length > 0) {
+      requestBody.metadata_dataset_ids = turnMetadataDatasetIds;
     }
     if (pendingGroundingAction.value) {
       requestBody.grounding_action = pendingGroundingAction.value;
@@ -4009,6 +4057,10 @@ onUnmounted(() => {
                         <div v-else-if="file.type === 'skill'" class="w-8 h-8 rounded bg-white/20 flex items-center justify-center text-white text-sm flex-shrink-0 mr-2 font-mono">
                             ⚙️
                         </div>
+                        <!-- Metadata Dataset Icon -->
+                        <div v-else-if="file.type === 'metadata_dataset'" class="w-8 h-8 rounded bg-white/20 flex items-center justify-center text-white text-sm flex-shrink-0 mr-2">
+                            📊
+                        </div>
                         <!-- Knowledge Base Icon -->
                         <div v-else-if="file.type === 'knowledge_base'" class="w-8 h-8 rounded bg-white/20 flex items-center justify-center text-white text-sm flex-shrink-0 mr-2">
                             📚
@@ -4022,12 +4074,13 @@ onUnmounted(() => {
                             📄
                         </div>
                         <div class="flex-1 min-w-0 flex flex-col">
-                            <span v-if="file.type === 'skill' || file.type === 'knowledge_base' || file.type === 'memory'" class="text-xs font-bold text-white truncate">{{ file.filename }}</span>
+                            <span v-if="file.type === 'skill' || file.type === 'knowledge_base' || file.type === 'metadata_dataset' || file.type === 'memory'" class="text-xs font-bold text-white truncate">{{ file.filename }}</span>
                             <a v-else :href="file.url" target="_blank" class="text-xs font-bold text-white hover:underline truncate">{{ file.filename }}</a>
                             <span class="text-[9px] text-white/70 font-mono">
                                 {{
                                     file.type === 'skill' ? '生态技能' :
                                     file.type === 'knowledge_base' ? '知识库' :
+                                    file.type === 'metadata_dataset' ? '数据集' :
                                     file.type === 'memory' ? '记忆记录' :
                                     formatBytes(file.size)
                                 }}
@@ -5744,8 +5797,9 @@ onUnmounted(() => {
     @quick-question="handlePortalQuickQuestion"
     @record-question-click="(payload) => recordPortalQuestionClick(portalNavigationPayload, payload)"
     @clear-question-click="(payload) => clearPortalQuestionClick(portalNavigationPayload, payload)"
-    @toggle-metadata-dataset="toggleMetadataDatasetActive"
-    @pin-metadata-datasets="pinMetadataDatasetsToSession"
+    @toggle-metadata-dataset="(datasetId) => toggleMetadataDatasetActive(datasetId, chatInputRef, metadataMountableDatasets)"
+    @pin-metadata-dataset="pinMetadataDatasetToSession"
+    @unpin-metadata-dataset="unpinMetadataDatasetFromSession"
     @refresh="refreshPortalNavigation"
     @execute-saved-report="handleExecuteSavedReport"
     @edit-saved-report="openEditReportModal"

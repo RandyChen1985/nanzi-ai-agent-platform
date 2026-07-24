@@ -22,6 +22,7 @@ export interface ChatAttachment {
 
 interface ChatAttachmentOptions {
   buildKnowledgeBaseAttachmentHint: (datasetIdLine: string) => string;
+  buildDatasetAttachmentHint?: (datasetIdLine: string) => string;
 }
 
 export const splitUserMessageContent = (text: string) => {
@@ -39,6 +40,7 @@ export const splitUserMessageContent = (text: string) => {
 
 export const useChatAttachments = ({
   buildKnowledgeBaseAttachmentHint,
+  buildDatasetAttachmentHint,
 }: ChatAttachmentOptions) => {
   const buildImageAttachmentHint = (file: ChatAttachment, path: string) => {
     if (file.type === "local_file") {
@@ -68,6 +70,10 @@ export const useChatAttachments = ({
       if (file.type === "knowledge_base") {
         const datasetLine = `用户本轮已选择知识库，dataset_id：${file.url}。你必须在本轮回复前调用 search_knowledge_base 工具检索后再作答，不得跳过。dataset_ids 请传纯 ID 或单引号列表，例如 ['${file.url}']；禁止使用双引号 JSON 如 ["${file.url}"]。`;
         return buildKnowledgeBaseAttachmentHint(datasetLine);
+      }
+      if (file.type === "metadata_dataset") {
+        const datasetLine = `用户本轮已选择数据集/数据源，dataset_id：${file.url}。本次提问为数据查询与分析，须优先由具数据查询能力的专家处理，且查询只能在已选数据集限定范围内进行。`;
+        return buildDatasetAttachmentHint ? buildDatasetAttachmentHint(datasetLine) : datasetLine;
       }
       if (file.type === "memory") {
         const meta = file.memoryMeta || [];

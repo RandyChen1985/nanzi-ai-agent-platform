@@ -9,6 +9,7 @@ from app.services.ai.tools.data_api import (
     get_dataset_schema,
     execute_sql_query
 )
+from app.services.chatbi_dataset_schema_service import filter_schema_hits_to_scope
 
 # --- SQL Validation Tests ---
 
@@ -224,6 +225,37 @@ async def test_get_dataset_schema_tool_passes_configured_metadata_dataset_ids():
         mock_fetch.assert_awaited_once()
         assert mock_fetch.await_args.kwargs["keywords"] == "销售"
         assert mock_fetch.await_args.kwargs["authorized_dataset_ids"] == [1, 3]
+
+
+@pytest.mark.asyncio
+@pytest.mark.no_infrastructure
+async def test_get_dataset_schema_tool_discards_non_numeric_metadata_dataset_ids():
+    with patch("app.core.orm.AsyncSessionLocal", new_callable=MagicMock), \
+         patch("app.services.chatbi_dataset_schema_service.fetch_dataset_schema_core", new_callable=AsyncMock) as mock_fetch:
+        mock_fetch.return_value = "schema scoped"
+
+        await get_dataset_schema.ainvoke({
+            "keywords": "销售",
+            "metadata_dataset_ids": ["1", "dataset-name", "3"],
+        })
+
+    assert mock_fetch.await_args.kwargs["authorized_dataset_ids"] == [1, 3]
+
+
+@pytest.mark.no_infrastructure
+def test_schema_hit_filter_discards_out_of_scope_and_unattributed_hits():
+    hits = [
+        {"dataset_id": "53", "content": "dataset: pgdemo\ntable_name: orders"},
+        {"dataset_id": "9", "content": "dataset: ai_agent_meta\ntable_name: jobs"},
+        {"content": "table_name: unknown"},
+    ]
+
+    assert filter_schema_hits_to_scope(
+        hits,
+        allowed_metadata_ids={"53"},
+        allowed_dataset_names={"pgdemo"},
+        allowed_rag_ids={"rag-53"},
+    ) == [hits[0]]
 
 @pytest.mark.asyncio
 async def test_execute_sql_query_tool_dry_run():

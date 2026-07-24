@@ -1026,6 +1026,10 @@ defineExpose({
                     class="mr-2"
                     @click="openImagePreview"
                   />
+                  <!-- Metadata Dataset Icon -->
+                  <div v-else-if="file.type === 'metadata_dataset'" class="w-8 h-8 rounded bg-purple-500/10 dark:bg-purple-500/20 flex items-center justify-center text-purple-500 text-sm flex-shrink-0 mr-2">
+                      📊
+                  </div>
                   <!-- Knowledge Base Icon -->
                   <div v-else-if="file.type === 'knowledge_base'" class="w-8 h-8 rounded bg-emerald-500/10 dark:bg-emerald-500/20 flex items-center justify-center text-emerald-500 text-sm flex-shrink-0 mr-2">
                       📚
@@ -1057,6 +1061,7 @@ defineExpose({
                           {{ 
                             file.type === 'skill' ? '生态技能' : 
                             file.type === 'knowledge_base' ? '知识库' : 
+                            file.type === 'metadata_dataset' ? '数据集' :
                             file.type === 'memory' ? '记忆记录' : 
                             file.type === 'local_file' ? (isImage(file) ? '服务器图片' : '服务器文件') :
                             file.type === 'local_dir' ? '服务器目录' :

@@ -360,8 +360,10 @@ async def run_federated_sql_upgrade(
     schema_output = prefetched_schema_output or ""
     if not schema_output.strip():
         from app.core.orm import AsyncSessionLocal
+        from app.core.context import get_current_agent_context
         from app.services.chatbi_dataset_schema_service import fetch_dataset_schema_core
 
+        ctx = get_current_agent_context()
         async with AsyncSessionLocal() as session:
             schema_output = await fetch_dataset_schema_core(
                 session,
@@ -369,6 +371,7 @@ async def run_federated_sql_upgrade(
                 user_id=runner._runtime_user_id(),
                 is_admin=bool(runner.user_info.get("is_admin") if runner.user_info else False),
                 api_key=None,
+                authorized_dataset_ids=getattr(ctx, "metadata_dataset_ids", None),
             )
     else:
         logger.info(

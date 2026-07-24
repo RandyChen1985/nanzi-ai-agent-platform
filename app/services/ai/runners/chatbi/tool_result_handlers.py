@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 from app.services.ai.runtime.agentscope.stream_reconcile import truncate_for_context
@@ -131,6 +132,8 @@ def format_tool_details(
         details = truncate_for_context(str(output or ""), max_len=1000)
     if tool_name == "get_dataset_schema":
         from app.services.schema_chunk_format import format_schema_hit_summary
+        from app.core.context import get_current_agent_context
+        from app.services.ai.runners.chatbi.federated_upgrade import extract_schema_dataset_names
 
         keywords = (
             runner._schema_keywords_from_args(tool_args)
@@ -141,6 +144,37 @@ def format_tool_details(
         prefix_lines: list[str] = []
         if keywords:
             prefix_lines.append(f"[检索关键词] {keywords}")
+        ctx = get_current_agent_context()
+        scope_debug = getattr(ctx, "metadata_dataset_scope_debug", {}) if ctx else {}
+        if scope_debug:
+            def labels(items: Any) -> str:
+                values = [
+                    f"{item.get('id')}({item.get('name') or item.get('display_name')})"
+                    for item in (items or [])
+                    if isinstance(item, dict) and item.get("id")
+                ]
+                return "、".join(values) or "无"
+
+            source_label = {"turn": "本轮限定", "session": "会话限定", "user": "用户可访问范围"}.get(
+                scope_debug.get("source"), "用户可访问范围"
+            )
+            actual_names = extract_schema_dataset_names(str(output or ""))
+            actual_names.update(
+                match.strip()
+                for match in re.findall(r"\bdataset=([^\s]+)", str(output or ""))
+                if match.strip()
+            )
+            actual = "、".join(sorted(actual_names)) or "无"
+            prefix_lines.append(
+                "[数据集范围] "
+                f"{source_label}\n"
+                f"用户可访问：{labels(scope_debug.get('authorized'))}\n"
+                f"会话固定：{labels(scope_debug.get('session'))}\n"
+                f"本轮请求：{'、'.join(scope_debug.get('request_ids') or []) or '无'}\n"
+                f"最终生效：{labels(scope_debug.get('effective'))}\n"
+                f"检索模式：{scope_debug.get('provider') or 'local'}\n"
+                f"实际命中：{actual}"
+            )
         summary = format_schema_hit_summary(output)
         if summary:
             prefix_lines.append(summary)

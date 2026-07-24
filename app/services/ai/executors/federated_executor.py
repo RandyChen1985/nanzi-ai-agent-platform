@@ -1433,6 +1433,7 @@ class FederatedQueryExecutor:
     ) -> tuple[str, str]:
         """repair 时按失败 SQL 涉及表名调用 get_dataset_schema 逻辑补充 Schema。"""
         from app.services.chatbi_dataset_schema_service import fetch_dataset_schema_core
+        from app.core.context import get_current_agent_context
 
         dialect = dialect_from_data_source(data_source)
         keywords = build_repair_schema_search_keywords(
@@ -1449,6 +1450,7 @@ class FederatedQueryExecutor:
             keywords=keywords,
             user_id=int(user_id) if user_id else None,
             is_admin=is_admin,
+            authorized_dataset_ids=getattr(get_current_agent_context(), "metadata_dataset_ids", None),
         )
         merged = merge_repair_schema_snippets(base_snippet, refreshed)
         return merged, keywords

@@ -616,6 +616,7 @@ class AgentService:
         user_info: Optional[dict[str, Any]],
         trace_buffer: list[AgentExecutionStep],
         user_query: str,
+        force_data_query: bool = False,
     ) -> tuple[Any, Any, float, Optional[str]]:
         """解析并校验智能体配置与权限。
         返回: (agent_config, route_details, route_elapsed_ms, permission_denied_err_msg)
@@ -628,6 +629,7 @@ class AgentService:
             version_id=version_id,
             enable_multi_agent=enable_multi_agent,
             user_info=user_info,
+            force_data_query=force_data_query,
         )
         route_elapsed_ms = (asyncio.get_running_loop().time() - route_start) * 1000
 
@@ -1229,6 +1231,7 @@ class AgentService:
                 user_info=user_info,
                 trace_buffer=trace_buffer,
                 user_query=user_query,
+                force_data_query=bool(metadata_dataset_ids),
             )
 
             if agent_config and shared_state is not None:

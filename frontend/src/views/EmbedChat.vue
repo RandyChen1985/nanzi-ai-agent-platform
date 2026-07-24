@@ -144,17 +144,17 @@
           @switch-to-auto="switchToAuto"
       />
 
-      <!-- Project session resource scope -->
-      <div v-if="resourceScope.project_name" class="flex-shrink-0 px-4 py-2 flex items-center gap-2 text-[11px] text-gray-500 dark:text-gray-400 overflow-x-auto">
-        <span class="font-bold shrink-0">📁 {{ resourceScope.project_name }}</span>
+      <!-- Project / Session resource scope bar -->
+      <div v-if="resourceScope.project_name || resourceScopeCount > 0" class="flex-shrink-0 px-4 py-2 flex items-center gap-2 text-[11px] text-gray-500 dark:text-gray-400 overflow-x-auto border-b border-gray-100 dark:border-gray-800 bg-gray-50/50 dark:bg-gray-800/20">
+        <span class="font-bold shrink-0">{{ resourceScope.project_name ? `📁 ${resourceScope.project_name}` : '📌 会话固定资源' }}</span>
         <span v-if="resourceScopeCount === 0" class="text-gray-400 shrink-0">未挂载，按默认权限自动使用</span>
         <template v-else>
-          <span v-for="item in mountedResourceLabels" :key="item.key" class="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-blue-50 text-blue-700 border border-blue-100 shrink-0">
+          <span v-for="item in mountedResourceLabels" :key="item.key" class="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-blue-50 text-blue-700 border border-blue-100 shrink-0 dark:bg-blue-900/30 dark:text-blue-300 dark:border-blue-800">
             {{ item.icon }} {{ item.label }}
-            <button type="button" class="hover:text-red-600" title="移除资源" @click="removeMountedResource(item)">×</button>
+            <button type="button" class="hover:text-red-600 dark:hover:text-red-400" title="移除资源" @click="removeMountedResource(item)">×</button>
           </span>
         </template>
-        <button type="button" class="px-2 py-1 rounded-full border border-gray-200 hover:border-primary hover:text-primary shrink-0" @click="openResourceScopeModal">管理会话资源</button>
+        <button type="button" class="px-2 py-1 rounded-full border border-gray-200 hover:border-primary hover:text-primary dark:border-gray-700 dark:hover:border-primary shrink-0" @click="openResourceScopeModal">管理会话资源</button>
       </div>
 
       <!-- Main Chat Area -->
@@ -382,6 +382,10 @@
                         <div v-else-if="file.type === 'skill'" class="w-8 h-8 rounded bg-white/20 flex items-center justify-center text-white text-sm flex-shrink-0 mr-2 font-mono">
                             ⚙️
                         </div>
+                        <!-- Metadata Dataset Icon -->
+                        <div v-else-if="file.type === 'metadata_dataset'" class="w-8 h-8 rounded bg-white/20 flex items-center justify-center text-white text-sm flex-shrink-0 mr-2">
+                            📊
+                        </div>
                         <!-- Knowledge Base Icon -->
                         <div v-else-if="file.type === 'knowledge_base'" class="w-8 h-8 rounded bg-white/20 flex items-center justify-center text-white text-sm flex-shrink-0 mr-2">
                             📚
@@ -395,7 +399,7 @@
                             📄
                         </div>
                         <div class="flex-1 min-w-0 flex flex-col">
-                            <span v-if="file.type === 'skill' || file.type === 'knowledge_base' || file.type === 'memory'" class="text-xs font-bold text-white truncate">{{ file.filename }}</span>
+                            <span v-if="file.type === 'skill' || file.type === 'knowledge_base' || file.type === 'metadata_dataset' || file.type === 'memory'" class="text-xs font-bold text-white truncate">{{ file.filename }}</span>
                             <template v-else>
                               <span v-if="canPreviewFile(file)" @click="handlePreviewFile(file)" class="text-xs font-bold text-white hover:underline cursor-pointer truncate">{{ file.filename }}</span>
                               <a v-else :href="resolveFileUrl(file.url)" target="_blank" class="text-xs font-bold text-white hover:underline truncate">{{ file.filename }}</a>
@@ -404,6 +408,7 @@
                                 {{
                                     file.type === 'skill' ? '生态技能' :
                                     file.type === 'knowledge_base' ? '知识库' :
+                                    file.type === 'metadata_dataset' ? '数据集' :
                                     file.type === 'memory' ? '记忆记录' :
                                     formatBytes(file.size)
                                 }}
@@ -2513,8 +2518,9 @@
       @quick-question="handlePortalQuickQuestion"
       @record-question-click="(payload) => recordDatasetMenuQuestionClick(scopedPortalNavigationPayload, payload)"
       @clear-question-click="(payload) => clearDatasetMenuQuestionClick(scopedPortalNavigationPayload, payload)"
-      @toggle-metadata-dataset="toggleMetadataDatasetActive"
-      @pin-metadata-datasets="pinMetadataDatasetsToSession"
+      @toggle-metadata-dataset="(datasetId) => toggleMetadataDatasetActive(datasetId, chatInputRef, resourceOptions.datasets)"
+      @pin-metadata-dataset="pinMetadataDatasetToSession"
+      @unpin-metadata-dataset="unpinMetadataDatasetFromSession"
       @refresh="refreshPortalNavigation"
       @execute-saved-report="handleExecuteSavedReport"
       @edit-saved-report="openEditReportModal"
@@ -3152,8 +3158,18 @@ const buildKnowledgeBaseAttachmentHint = (datasetIdLine: string) => {
   return `${expertHint}\n\n【必须执行】${datasetIdLine}`;
 };
 
+const buildDatasetAttachmentHint = (datasetIdLine: string) => {
+  const expert = findUniqueDataQueryAgent();
+  const expertHint = expert
+    ? `本次为数据查询与分析，须优先由数据查询专家「${expert.display_name || expert.name}」（agent_name: ${expert.name}，agent_id: ${expert.id}）处理；自动路由时必须选择该专家，不得分发给主助手或其他专家。`
+    : `本次为数据查询与分析，须优先选择具有数据查询能力的专家智能体处理；自动路由时不得分发给其他无关专家。`;
+
+  return `${expertHint}\n\n【必须执行】${datasetIdLine}`;
+};
+
 const { appendAttachmentContext } = useChatAttachments({
   buildKnowledgeBaseAttachmentHint,
+  buildDatasetAttachmentHint,
 });
 
 const handleSelectLocalFs = (payload: { type: 'local_file' | 'local_dir'; path: string; name: string; size: number; ext: string }) => {
@@ -3454,6 +3470,7 @@ const showResourceScopeModal = ref(false);
 const resourceScope = ref({ project_name: '', datasets: [] as any[], knowledge_bases: [] as any[], skills: [] as any[] });
 const {
   activeMetadataDatasetIds,
+  syncActiveMetadataDatasetsFromInput,
   toggleMetadataDatasetActive,
 } = useDatasetMount();
 const resourceScopeDraft = reactive({ project_name: '', datasets: '', knowledge_bases: '', skills: '' });
@@ -3717,6 +3734,26 @@ const loadResourceOptions = async () => {
   }
 };
 
+/** 仅拉元数据集，供数据门户挂载匹配；避免顺带等待 RAGFlow/Skills。 */
+const ensureMountableMetadataDatasets = async () => {
+  if (resourceOptions.datasets.length) return;
+  try {
+    const res = await axios.get('/api/portal/metadata/datasets/accessible');
+    const raw = res.data;
+    const list = Array.isArray(raw) ? raw : (raw?.data || raw?.datasets || []);
+    resourceOptions.datasets = list
+      .filter((item: any) => item.status === undefined || item.status === 1 || item.status === '1' || item.status === 'active')
+      .map((item: any) => ({
+        id: String(item.id || item.name),
+        name: item.display_name || item.name || item.dataset_name,
+        dataset_name: item.name || item.dataset_name,
+        description: item.description || item.remark || item.notes || `数据源：${item.data_source || '默认'}`,
+      }));
+  } catch (error) {
+    console.warn('Failed to load mountable metadata datasets', error);
+  }
+};
+
 const closeResourceScopeModal = () => {
   if (resourceScopeSaving.value) return;
   showResourceScopeModal.value = false;
@@ -3776,30 +3813,51 @@ const persistResourceScope = async (scope: ReturnType<typeof buildPersistableSco
   return saved;
 };
 
-const pinMetadataDatasetsToSession = async () => {
+const pinMetadataDatasetToSession = async (datasetId: string) => {
   if (!conversationId.value) {
     showToast('请先开始会话', 'error');
     return;
   }
-  const selected = activeMetadataDatasetIds.value
-    .map((id) => (resourceOptions.datasets || []).find((item: any) => String(item.id) === id) || { id, name: id })
-    .filter((item, index, items) => items.findIndex((entry) => String(entry.id) === String(item.id)) === index);
-  if (!selected.length) return;
-
-  const existingIds = new Set(resourceScope.value.datasets.map((item: any) => String(item.id || '').trim()));
+  const id = String(datasetId || '').trim();
+  if (!id) return;
+  if (resourceScope.value.datasets.some((item: any) => String(item.id) === id)) {
+    showToast('该数据集已固定到会话', 'info');
+    return;
+  }
+  const selected =
+    (resourceOptions.datasets || []).find((item: any) => String(item.id) === id) || { id, name: id };
   const nextScope = {
     ...resourceScope.value,
-    datasets: [
-      ...resourceScope.value.datasets,
-      ...selected.filter((item) => !existingIds.has(String(item.id))),
-    ],
+    datasets: [...resourceScope.value.datasets, selected],
   };
   resourceScopeSaving.value = true;
   try {
     await persistResourceScope(buildPersistableScope(nextScope));
-    showToast('已将本轮数据集固定到会话', 'success');
+    showToast('已固定到会话', 'success');
   } catch (error) {
     showToast('固定会话数据集失败', 'error');
+  } finally {
+    resourceScopeSaving.value = false;
+  }
+};
+
+const unpinMetadataDatasetFromSession = async (datasetId: string) => {
+  if (!conversationId.value) {
+    showToast('请先开始会话', 'error');
+    return;
+  }
+  const id = String(datasetId || '').trim();
+  if (!id) return;
+  const nextScope = {
+    ...resourceScope.value,
+    datasets: resourceScope.value.datasets.filter((item: any) => String(item.id) !== id),
+  };
+  resourceScopeSaving.value = true;
+  try {
+    await persistResourceScope(buildPersistableScope(nextScope));
+    showToast('已取消会话挂载', 'success');
+  } catch (error) {
+    showToast('取消会话挂载失败', 'error');
   } finally {
     resourceScopeSaving.value = false;
   }
@@ -6256,7 +6314,8 @@ const openPortalDrawer = async () => {
     showToast("当前智能体不支持数据查询，无法打开数据门户", "warning");
     return;
   }
-  if (!resourceOptionsLoaded.value) await loadResourceOptions();
+  // 只后台补齐元数据集，不 await RAGFlow/Skills 整包（易 502 拖慢打开）
+  void ensureMountableMetadataDatasets();
   await rawOpenPortalDrawer();
 };
 
@@ -6330,11 +6389,12 @@ watch(showKnowledgePortal, (val) => {
   }
 });
 
-// 监听上传文件的变更，保持知识库激活状态在抽屉卡片里是最新同步的
+// 监听上传文件的变更，保持知识库与数据集激活状态在抽屉卡片里是最新同步的
 watch(
   () => chatInputRef.value?.uploadedFiles,
   () => {
     syncActiveDatasetsFromInput(chatInputRef.value);
+    syncActiveMetadataDatasetsFromInput(chatInputRef.value);
   },
   { deep: true }
 );
@@ -6773,6 +6833,7 @@ const sendMessage = async () => {
   }
 
   const messageContent = files.length > 0 ? appendAttachmentContext(content, files) : content;
+  const turnMetadataDatasetIds = [...activeMetadataDatasetIds.value];
 
   // 全局兜底：确保一定存在会话 ID
   if (!conversationId.value) {
@@ -6858,8 +6919,8 @@ const sendMessage = async () => {
     if (knowledgeDatasetIds.length > 0) {
       body.knowledge_dataset_ids = knowledgeDatasetIds;
     }
-    if (activeMetadataDatasetIds.value.length > 0) {
-      body.metadata_dataset_ids = activeMetadataDatasetIds.value;
+    if (turnMetadataDatasetIds.length > 0) {
+      body.metadata_dataset_ids = turnMetadataDatasetIds;
     }
     if (pendingGroundingAction.value) {
       body.grounding_action = pendingGroundingAction.value;

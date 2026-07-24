@@ -1,4 +1,5 @@
 import logging
+from types import SimpleNamespace
 from typing import Optional, List, Dict, Any
 from app.core.orm import AsyncSessionLocal
 from app.services.ai.agent_manager import AgentManagerService
@@ -8,6 +9,15 @@ from app.schemas.agent import ChatConfig
 from app.services.ai.agent_prompts import ContextManagerPrompts
 
 logger = logging.getLogger(__name__)
+
+
+def select_data_query_agent_id(agents: List[Any]) -> Optional[str]:
+    """Return the first enabled agent that can execute ChatBI data queries."""
+    for agent in agents:
+        capabilities = {str(value).strip().casefold() for value in (getattr(agent, "capabilities", None) or [])}
+        if bool(getattr(agent, "is_enabled", False)) and "data_query" in capabilities:
+            return str(getattr(agent, "id", "") or "") or None
+    return None
 
 
 def _normalize_rag_params(engine_config: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
@@ -37,6 +47,7 @@ class AgentContextManager:
         version_id: Optional[str] = None,
         enable_multi_agent: bool = True,
         user_info: Optional[Dict[str, Any]] = None,
+        force_data_query: bool = False,
     ):
         """
         Resolve the appropriate AgentConfig based on inputs or routing.
@@ -56,6 +67,24 @@ class AgentContextManager:
             elif agent_name:
                 agent_config = await AgentManagerService.get_active_agent_config(session, agent_name=agent_name)
             else:
+                if force_data_query:
+                    data_agent_id = select_data_query_agent_id(
+                        await AgentManagerService.list_agents(session, user=user_info or {})
+                    )
+                    if data_agent_id:
+                        agent_config = await AgentManagerService.get_active_agent_config(session, agent_id=data_agent_id)
+                        route_details = SimpleNamespace(
+                            agent_id=data_agent_id,
+                            reasoning="检测到本轮元数据集限定，强制路由到数据查询智能体",
+                            confidence=1.0,
+                            request_source="metadata_dataset_scope",
+                            request_capability="data_query",
+                            request_reasoning="metadata_dataset_ids 非空",
+                            chatbi_mode="forced_by_metadata_dataset_scope",
+                            chatbi_evidence_level="explicit",
+                            chatbi_reason="本轮已选择元数据集",
+                            matched_dataset_ids=[],
+                        )
                 route_user_id = None
                 route_is_admin = False
                 if user_info:
@@ -81,18 +110,19 @@ class AgentContextManager:
                         last_agent_name = msg["agent_name"]
                         break
 
-                route_result = await router_service.route_query(
-                    last_user_msg,
-                    history=history,
-                    enable_multi_agent=enable_multi_agent,
-                    user_id=route_user_id,
-                    is_admin=route_is_admin,
-                    last_agent_name=last_agent_name,
-                )
-                route_details = route_result
+                if agent_config is None:
+                    route_result = await router_service.route_query(
+                        last_user_msg,
+                        history=history,
+                        enable_multi_agent=enable_multi_agent,
+                        user_id=route_user_id,
+                        is_admin=route_is_admin,
+                        last_agent_name=last_agent_name,
+                    )
+                    route_details = route_result
 
-                if route_result and route_result.agent_id:
-                    agent_config = await AgentManagerService.get_active_agent_config(session, agent_id=route_result.agent_id)
+                    if route_result and route_result.agent_id:
+                        agent_config = await AgentManagerService.get_active_agent_config(session, agent_id=route_result.agent_id)
 
         # Fallback: try known general-assistant slugs in DB before synthetic config
         if not agent_config:

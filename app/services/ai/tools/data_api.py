@@ -333,12 +333,9 @@ def _normalize_metadata_dataset_ids(raw: Any) -> Optional[list[int]]:
     normalized: list[int] = []
     for item in values:
         text = str(item).strip()
-        if not text:
+        if not text or not text.isdigit():
             continue
-        try:
-            dataset_id = int(text)
-        except (TypeError, ValueError):
-            continue
+        dataset_id = int(text)
         if dataset_id not in normalized:
             normalized.append(dataset_id)
     return normalized or None

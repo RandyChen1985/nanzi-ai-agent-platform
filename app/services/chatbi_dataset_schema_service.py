@@ -3,7 +3,7 @@ ChatBI 数据集 Schema 获取：与工具 `get_dataset_schema` 共用逻辑，�
 """
 import logging
 import re
-from typing import Optional
+from typing import Any, Optional
 
 from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -15,6 +15,82 @@ from app.services.metadata_service import MetadataService
 from app.services.schema_chunk_format import format_schema_chunk, format_schema_hits
 
 logger = logging.getLogger(__name__)
+
+
+def _schema_dataset_codes(content: Any) -> set[str]:
+    return {
+        match.strip().casefold()
+        for match in re.findall(r"^\s*dataset:\s*([^\s#]+)", str(content or ""), re.MULTILINE)
+        if match.strip()
+    }
+
+
+def filter_schema_hits_to_scope(
+    hits: list[dict[str, Any]],
+    *,
+    allowed_metadata_ids: set[str],
+    allowed_dataset_names: set[str],
+    allowed_rag_ids: set[str],
+) -> list[dict[str, Any]]:
+    """仅保留可证明属于已授权 MetaDataset 范围的 Schema 命中。
+
+    Local 命中通常带 MetaDataset.id；RAGFlow 命中可能带 rag_dataset_id，或仅能从
+    Schema 内容里的 ``dataset: <MetaDataset.name>`` 识别归属。任何无法证明归属的
+    命中都不能进入模型上下文。
+    """
+    allowed_metadata_ids = {str(value).strip() for value in allowed_metadata_ids if str(value).strip()}
+    allowed_dataset_names = {str(value).strip().casefold() for value in allowed_dataset_names if str(value).strip()}
+    allowed_rag_ids = {str(value).strip() for value in allowed_rag_ids if str(value).strip()}
+    accepted: list[dict[str, Any]] = []
+    for hit in hits:
+        checks: list[bool] = []
+        metadata_id = str(hit.get("metadata_dataset_id") or hit.get("dataset_id") or "").strip()
+        if metadata_id:
+            checks.append(metadata_id in allowed_metadata_ids or metadata_id in allowed_rag_ids)
+        rag_id = str(hit.get("rag_dataset_id") or hit.get("ragflow_dataset_id") or "").strip()
+        if rag_id:
+            checks.append(rag_id in allowed_rag_ids)
+        dataset_codes = _schema_dataset_codes(hit.get("content"))
+        if dataset_codes:
+            checks.append(dataset_codes.issubset(allowed_dataset_names))
+        if checks and all(checks):
+            accepted.append(hit)
+    return accepted
+
+
+def _set_metadata_scope_debug(
+    *,
+    authorized_datasets: list[Any],
+    effective_datasets: list[Any],
+    provider: str,
+) -> None:
+    from app.core.context import get_current_agent_context
+    from app.core.context import get_debug_option
+
+    ctx = get_current_agent_context()
+    if ctx is None:
+        return
+    request_scope = get_debug_option("metadata_dataset_scope", {}) or {}
+
+    def serialize(items: list[Any]) -> list[dict[str, str]]:
+        return [
+            {
+                "id": str(getattr(item, "id", "") or ""),
+                "name": str(getattr(item, "name", "") or getattr(item, "dataset_name", "") or ""),
+                "display_name": str(getattr(item, "display_name", "") or ""),
+                "rag_dataset_id": str(getattr(item, "rag_dataset_id", "") or ""),
+            }
+            for item in items
+        ]
+
+    ctx.metadata_dataset_scope_debug = {
+        "source": request_scope.get("source", "user"),
+        "request_ids": list(request_scope.get("request_ids") or []),
+        "session": list(request_scope.get("session") or []),
+        "authorized": serialize(authorized_datasets),
+        "effective": serialize(effective_datasets),
+        "provider": str(provider or "local"),
+    }
 
 
 async def fetch_dataset_schema_core(
@@ -81,6 +157,7 @@ async def _fetch_dataset_schema_impl(
             if u_info.get("role") == "admin":
                 is_admin_eff = True
 
+    provider = await ConfigService.get("metadata_provider", default="local")
     authorized_datasets = await MetadataService.search_datasets(
         session,
         query=None,
@@ -90,19 +167,44 @@ async def _fetch_dataset_schema_impl(
     )
 
     if not authorized_datasets:
+        _set_metadata_scope_debug(
+            authorized_datasets=[],
+            effective_datasets=[],
+            provider=str(provider),
+        )
         return "No authorized datasets found. You do not have permission to view any data."
 
+    all_authorized_datasets = list(authorized_datasets)
     configured_dataset_ids = _normalize_authorized_dataset_ids(authorized_dataset_ids)
     if configured_dataset_ids is not None:
         authorized_datasets = [
             ds for ds in authorized_datasets
-            if getattr(ds, "id", None) in configured_dataset_ids
+            if str(getattr(ds, "id", "")).strip() in configured_dataset_ids
+            or str(getattr(ds, "name", "")).strip() in configured_dataset_ids
+            or str(getattr(ds, "dataset_name", "")).strip() in configured_dataset_ids
+            or str(getattr(ds, "rag_dataset_id", "")).strip() in configured_dataset_ids
         ]
         if not authorized_datasets:
+            _set_metadata_scope_debug(
+                authorized_datasets=all_authorized_datasets,
+                effective_datasets=[],
+                provider=str(provider),
+            )
             return "No configured metadata datasets are authorized for current user."
 
-    provider = await ConfigService.get("metadata_provider", default="local")
+    _set_metadata_scope_debug(
+        authorized_datasets=all_authorized_datasets,
+        effective_datasets=authorized_datasets,
+        provider=str(provider),
+    )
     logger.info("[fetch_dataset_schema_core] provider=%s", str(provider).upper())
+
+    allowed_metadata_ids = {str(getattr(ds, "id", "")).strip() for ds in authorized_datasets}
+    allowed_dataset_names = {
+        str(getattr(ds, "name", "") or getattr(ds, "dataset_name", "")).strip().casefold()
+        for ds in authorized_datasets
+    }
+    allowed_rag_ids = {str(getattr(ds, "rag_dataset_id", "")).strip() for ds in authorized_datasets}
 
     # --- RAGFlow Mode ---
     if provider == "ragflow":
@@ -154,7 +256,12 @@ async def _fetch_dataset_schema_impl(
             return f"No relevant schema info found for '{query}'.\nDebug Logs: {'; '.join(trace_logs)}"
 
         filtered_hits = []
-        for chunk in chunks:
+        for chunk in filter_schema_hits_to_scope(
+            chunks,
+            allowed_metadata_ids=allowed_metadata_ids,
+            allowed_dataset_names=allowed_dataset_names,
+            allowed_rag_ids=allowed_rag_ids,
+        ):
             try:
                 similarity = float(chunk.get("similarity", 0.0) or 0.0)
             except (TypeError, ValueError):
@@ -208,7 +315,12 @@ async def _fetch_dataset_schema_impl(
             )
 
             filtered_hits = []
-            for item in redis_results:
+            for item in filter_schema_hits_to_scope(
+                redis_results,
+                allowed_metadata_ids=allowed_metadata_ids,
+                allowed_dataset_names=allowed_dataset_names,
+                allowed_rag_ids=allowed_rag_ids,
+            ):
                 try:
                     similarity = float(item.get("similarity", 0.0) or 0.0)
                 except (TypeError, ValueError):
@@ -254,7 +366,7 @@ async def _fetch_dataset_schema_impl(
         if configured_dataset_ids is not None:
             found_datasets = [
                 ds for ds in found_datasets
-                if getattr(ds, "id", None) in configured_dataset_ids
+                if str(getattr(ds, "id", "")).strip() in configured_dataset_ids
             ]
             if not found_datasets:
                 return (
@@ -282,16 +394,15 @@ async def _fetch_dataset_schema_impl(
     return schema_text
 
 
-def _normalize_authorized_dataset_ids(raw: Optional[list[int]]) -> Optional[set[int]]:
+def _normalize_authorized_dataset_ids(raw: Optional[list[Any]]) -> Optional[set[str]]:
     if raw is None:
         return None
-    normalized: set[int] = set()
+    normalized: set[str] = set()
     for item in raw:
-        try:
-            normalized.add(int(item))
-        except (TypeError, ValueError):
-            continue
-    return normalized
+        text = str(item or "").strip()
+        if text:
+            normalized.add(text)
+    return normalized or None
 
 
 def _extract_schema_table_refs(schema_text: str) -> list[tuple[str | None, str]]:
@@ -384,7 +495,7 @@ async def _enrich_with_cross_dataset_schema(
     if configured_dataset_ids is not None:
         cross_tables = [
             table for table in cross_tables
-            if getattr(table, "dataset_id", None) in configured_dataset_ids
+            if str(getattr(table, "dataset_id", "")).strip() in configured_dataset_ids
         ]
         if not cross_tables:
             return schema_text

@@ -230,7 +230,18 @@ async def auto_invoke_get_dataset_schema(
     }
     output = ""
     try:
-        result = schema_spec.callable(keywords=keywords or None)
+        from app.core.context import get_current_agent_context
+
+        ctx = get_current_agent_context()
+        metadata_dataset_ids = [
+            str(dataset_id).strip()
+            for dataset_id in (getattr(ctx, "metadata_dataset_ids", None) or [])
+            if str(dataset_id).strip()
+        ]
+        invoke_kwargs: dict[str, Any] = {"keywords": keywords or None}
+        if metadata_dataset_ids:
+            invoke_kwargs["metadata_dataset_ids"] = metadata_dataset_ids
+        result = schema_spec.callable(**invoke_kwargs)
         if inspect.isawaitable(result):
             result = await result
         output = str(result or "")
@@ -245,7 +256,7 @@ async def auto_invoke_get_dataset_schema(
         "id": tool_id,
         "title": "工具完成: get_dataset_schema",
         "details": runner._format_tool_details(
-            "get_dataset_schema", output, preview_state, {"keywords": keywords}
+            "get_dataset_schema", output, preview_state, invoke_kwargs
         ),
         "status": "error" if runner._is_schema_fatal(preview_state) else "success",
         "category": "tool",
@@ -260,7 +271,7 @@ async def auto_invoke_get_dataset_schema(
             model=runner.config.model_name,
             temperature=float(runner.config.temperature or 0),
             tool_name="get_dataset_schema",
-            tool_input={"keywords": keywords},
+            tool_input=invoke_kwargs,
             tool_output=output,
             raw_log=output[:4000],
             execution_time_ms=(time.time() - started_at) * 1000,

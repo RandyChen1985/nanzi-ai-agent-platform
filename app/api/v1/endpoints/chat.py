@@ -755,25 +755,37 @@ async def create_chat_completion(
         effective_debug_options["resource_scope"] = conversation_scope
     scoped_kb_ids = [str(item.get("id")) for item in conversation_scope.get("knowledge_bases", []) if item.get("id")]
     effective_knowledge_dataset_ids = scoped_kb_ids or completion_request.knowledge_dataset_ids
-    from app.services.ai.metadata_dataset_scope import resolve_effective_metadata_dataset_ids
+    from app.services.ai.metadata_dataset_scope import (
+        merge_request_metadata_dataset_ids,
+        resolve_effective_metadata_dataset_ids,
+    )
+
+    history = [msg.model_dump() for msg in completion_request.messages]
 
     session_dataset_ids = [
         str(item.get("id"))
         for item in conversation_scope.get("datasets", []) or []
         if item.get("id")
     ]
-    effective_metadata_dataset_ids = resolve_effective_metadata_dataset_ids(
+    request_metadata_dataset_ids = merge_request_metadata_dataset_ids(
         request_ids=completion_request.metadata_dataset_ids,
+        messages=history,
+    )
+    effective_metadata_dataset_ids = resolve_effective_metadata_dataset_ids(
+        request_ids=request_metadata_dataset_ids,
         session_ids=session_dataset_ids,
     )
+    effective_debug_options["metadata_dataset_scope"] = {
+        "source": "turn" if request_metadata_dataset_ids else ("session" if session_dataset_ids else "user"),
+        "request_ids": list(request_metadata_dataset_ids or []),
+        "session": list(conversation_scope.get("datasets", []) or []),
+    }
     
     # --- Orchestration / Routing Logic ---
     # DEPRECATED here: Moved to AgentService/ContextManager for better trace and CoT logging.
     # We now let agent_service handle the routing if agent_id is missing.
     
     # Convert Pydantic models to dicts for the service
-    history = [msg.model_dump() for msg in completion_request.messages]
-    
     if completion_request.stream:
         lane_user_id = user_info.get("user_id") or user_info.get("id")
         conversation_id = completion_request.conversation_id

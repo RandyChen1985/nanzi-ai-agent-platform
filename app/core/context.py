@@ -28,6 +28,10 @@ class AgentContext(BaseModel):
         default_factory=list,
         description="本轮生效的 MetaDataset ID（已合并本轮优先/会话回退）",
     )
+    metadata_dataset_scope_debug: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="Schema 工具日志用的数据集范围诊断信息",
+    )
     require_explicit_dataset: bool = False
     engine_type: str = "LOCAL"
     engine_config: Optional[Dict[str, Any]] = None

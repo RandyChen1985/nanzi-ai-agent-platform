@@ -763,27 +763,76 @@
               >
                 {{ group.title }}
               </h4>
-              <!-- 置顶按钮 -->
-              <button
-                type="button"
-                class="flex-shrink-0 flex items-center justify-center w-6 h-6 rounded-lg transition-all duration-200 active:scale-90 mt-0.5"
-                :class="isPinned(group)
-                  ? 'text-amber-500 bg-amber-50 dark:bg-amber-900/30 opacity-100'
-                  : 'text-gray-300 dark:text-gray-600 opacity-0 group-hover/card:opacity-100 hover:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-900/20'"
-                :title="isPinned(group) ? '取消置顶' : '置顶此卡片'"
-                :aria-pressed="isPinned(group)"
-                @click.stop="togglePinGroup($event, group)"
-              >
-                <!-- 已置顶：实心图钉 -->
-                <svg v-if="isPinned(group)" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentColor">
-                  <path d="M16 9V4h1c.55 0 1-.45 1-1s-.45-1-1-1H7c-.55 0-1 .45-1 1s.45 1 1 1h1v5c0 1.66-1.34 3-3 3v2h5.97v7l1 1 1-1v-7H19v-2c-1.66 0-3-1.34-3-3z"/>
-                </svg>
-                <!-- 未置顶：线框图钉 -->
-                <svg v-else class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                  <line x1="12" y1="17" x2="12" y2="22"/>
-                  <path d="M5 17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1v4.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24Z"/>
-                </svg>
-              </button>
+              <div class="relative flex-shrink-0 flex items-center gap-0.5 mt-0.5">
+                <!-- 挂载：本轮 / 固定到会话 -->
+                <div
+                  v-if="resolveDatasetIdForGroup(group)"
+                  class="relative"
+                  @click.stop
+                >
+                  <button
+                    type="button"
+                    class="flex items-center justify-center gap-0.5 h-6 rounded-lg transition-all duration-200 active:scale-90 px-1"
+                    :class="isTurnMounted(group) || isSessionMounted(group)
+                      ? 'text-emerald-600 bg-emerald-50 dark:bg-emerald-900/30 opacity-100'
+                      : 'text-gray-300 dark:text-gray-600 opacity-0 group-hover/card:opacity-100 hover:text-emerald-500 hover:bg-emerald-50 dark:hover:bg-emerald-900/20'"
+                    :title="mountButtonTitle(group)"
+                    :aria-expanded="openMountMenuGroupKey === groupKey(group)"
+                    @click="toggleMountMenu(group)"
+                  >
+                    <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      <path d="M12 2v8"/>
+                      <path d="m8 6 4 4 4-4"/>
+                      <path d="M4 14h16"/>
+                      <path d="M6 18h12"/>
+                      <path d="M8 22h8"/>
+                    </svg>
+                    <svg class="w-2.5 h-2.5 opacity-70" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                      <path stroke-linecap="round" stroke-linejoin="round" d="M6 9l6 6 6-6"/>
+                    </svg>
+                  </button>
+                  <div
+                    v-if="openMountMenuGroupKey === groupKey(group)"
+                    class="absolute right-0 top-full z-30 mt-1 w-40 overflow-hidden rounded-lg border border-gray-200 bg-white py-1 shadow-lg dark:border-gray-700 dark:bg-gray-900"
+                  >
+                    <button
+                      type="button"
+                      class="flex w-full items-center px-3 py-2 text-left text-xs font-semibold text-gray-700 hover:bg-gray-50 dark:text-gray-200 dark:hover:bg-gray-800"
+                      @click="handleToggleTurnMount(group)"
+                    >
+                      {{ isTurnMounted(group) ? '取消本轮挂载' : '本轮挂载' }}
+                    </button>
+                    <button
+                      type="button"
+                      class="flex w-full items-center px-3 py-2 text-left text-xs font-semibold text-gray-700 hover:bg-gray-50 dark:text-gray-200 dark:hover:bg-gray-800"
+                      @click="handlePinToSession(group)"
+                    >
+                      {{ isSessionMounted(group) ? '取消会话挂载' : '固定到会话' }}
+                    </button>
+                  </div>
+                </div>
+                <!-- 置顶按钮 -->
+                <button
+                  type="button"
+                  class="flex items-center justify-center w-6 h-6 rounded-lg transition-all duration-200 active:scale-90"
+                  :class="isPinned(group)
+                    ? 'text-amber-500 bg-amber-50 dark:bg-amber-900/30 opacity-100'
+                    : 'text-gray-300 dark:text-gray-600 opacity-0 group-hover/card:opacity-100 hover:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-900/20'"
+                  :title="isPinned(group) ? '取消置顶' : '置顶此卡片'"
+                  :aria-pressed="isPinned(group)"
+                  @click.stop="togglePinGroup($event, group)"
+                >
+                  <!-- 已置顶：实心图钉 -->
+                  <svg v-if="isPinned(group)" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M16 9V4h1c.55 0 1-.45 1-1s-.45-1-1-1H7c-.55 0-1 .45-1 1s.45 1 1 1h1v5c0 1.66-1.34 3-3 3v2h5.97v7l1 1 1-1v-7H19v-2c-1.66 0-3-1.34-3-3z"/>
+                  </svg>
+                  <!-- 未置顶：线框图钉 -->
+                  <svg v-else class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <line x1="12" y1="17" x2="12" y2="22"/>
+                    <path d="M5 17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1v4.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24Z"/>
+                  </svg>
+                </button>
+              </div>
             </div>
 
             <div
@@ -1348,9 +1397,15 @@ const props = withDefaults(defineProps<{
   initialLoading?: boolean;
   backgroundRefreshing?: boolean;
   focusSavedReportRequest?: SavedReportOpenRequest | null;
+  mountableDatasets?: Array<{ id: string; name?: string; dataset_name?: string; display_name?: string; description?: string }>;
+  activeMetadataDatasetIds?: string[];
+  sessionMountedDatasetIds?: string[];
 }>(), {
   initialLoading: false,
   backgroundRefreshing: false,
+  mountableDatasets: () => [],
+  activeMetadataDatasetIds: () => [],
+  sessionMountedDatasetIds: () => [],
 });
 
 const formatGroupSummary = (text: string): string => {
@@ -1387,6 +1442,9 @@ const emit = defineEmits<{
     is_owner?: boolean;
   }): void;
   (event: "edit-saved-report", payload: any): void;
+  (event: "toggle-metadata-dataset", datasetId: string): void;
+  (event: "pin-metadata-dataset", datasetId: string): void;
+  (event: "unpin-metadata-dataset", datasetId: string): void;
 }>();
 
 const menuContainer = ref<HTMLElement | null>(null);
@@ -1483,6 +1541,74 @@ const savePortalPrefs = async (immediate = false) => {
   }
 };
 
+const openMountMenuGroupKey = ref<string | null>(null);
+
+const groupKey = (group: DatasetCapabilityGroup) => String(group.id || group.title || "").trim();
+
+const normalizeToken = (value: unknown) => String(value || "").trim().toLowerCase();
+
+const resolveDatasetIdForGroup = (group: DatasetCapabilityGroup): string | null => {
+  const tokens = new Set<string>();
+  const title = normalizeToken(group.title);
+  if (title) tokens.add(title);
+  for (const related of group.related_data || []) {
+    for (const key of [related.dataset, related.display_name]) {
+      const token = normalizeToken(key);
+      if (token) tokens.add(token);
+    }
+  }
+  if (!tokens.size) return null;
+  const match = (props.mountableDatasets || []).find((dataset) => {
+    const candidates = [dataset.id, dataset.name, dataset.dataset_name, dataset.display_name]
+      .map(normalizeToken)
+      .filter(Boolean);
+    return candidates.some((candidate) => tokens.has(candidate));
+  });
+  return match ? String(match.id) : null;
+};
+
+const isTurnMounted = (group: DatasetCapabilityGroup) => {
+  const id = resolveDatasetIdForGroup(group);
+  return !!id && (props.activeMetadataDatasetIds || []).includes(id);
+};
+
+const isSessionMounted = (group: DatasetCapabilityGroup) => {
+  const id = resolveDatasetIdForGroup(group);
+  return !!id && (props.sessionMountedDatasetIds || []).includes(id);
+};
+
+const mountButtonTitle = (group: DatasetCapabilityGroup) => {
+  if (isTurnMounted(group) && isSessionMounted(group)) return "本轮已挂载 · 会话已挂载";
+  if (isTurnMounted(group)) return "本轮已挂载";
+  if (isSessionMounted(group)) return "会话已挂载";
+  return "挂载数据集";
+};
+
+const toggleMountMenu = (group: DatasetCapabilityGroup) => {
+  const key = groupKey(group);
+  openMountMenuGroupKey.value = openMountMenuGroupKey.value === key ? null : key;
+};
+
+const handleToggleTurnMount = (group: DatasetCapabilityGroup) => {
+  const id = resolveDatasetIdForGroup(group);
+  if (!id) return;
+  const wasMounted = isTurnMounted(group);
+  emit("toggle-metadata-dataset", id);
+  openMountMenuGroupKey.value = null;
+  showToast(wasMounted ? `已取消本轮挂载「${group.title}」` : `已本轮挂载「${group.title}」`, "success");
+};
+
+const handlePinToSession = (group: DatasetCapabilityGroup) => {
+  const id = resolveDatasetIdForGroup(group);
+  if (!id) return;
+  if (isSessionMounted(group)) {
+    emit("unpin-metadata-dataset", id);
+  } else {
+    emit("pin-metadata-dataset", id);
+  }
+  openMountMenuGroupKey.value = null;
+};
+
 const togglePinGroup = async (event: MouseEvent, group: DatasetCapabilityGroup) => {
   event.stopPropagation();
   const id = group.id || group.title;
@@ -1562,6 +1688,7 @@ const buildTableDictionaryKey = (
 
 const handleGlobalClick = () => {
   pinnedTableDictionary.value = null;
+  openMountMenuGroupKey.value = null;
 };
 
 const updatePopoverStyle = (badgeEl: HTMLElement, uniqueId: string) => {

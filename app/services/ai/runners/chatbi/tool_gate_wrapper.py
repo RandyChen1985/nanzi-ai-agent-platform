@@ -56,6 +56,10 @@ def wrap_tools_with_schema_gate(runner: Any, tools: list[RuntimeToolSpec], state
             }
             # 本轮仅有 ID、会话 scope 无对应条目时，仍用 ID 作为允许 token
             if not names:
+                from app.services.ai.runners.chatbi.federated_upgrade import extract_schema_dataset_names
+
+                names = set(extract_schema_dataset_names(state.schema_output or ""))
+            if not names:
                 names = set(effective_dataset_ids)
             return names or None
         names = {
