@@ -18,15 +18,49 @@ from app.services.ai.time_anchor import build_time_range_gate_message, detect_ti
 
 
 def wrap_tools_with_schema_gate(runner: Any, tools: list[RuntimeToolSpec], state: DataRunState) -> list[RuntimeToolSpec]:
+    from app.core.context import get_current_agent_context
+
     resource_scope = (getattr(runner, "debug_options", {}) or {}).get("resource_scope", {}) or {}
-    has_mounted_dataset_scope = bool(resource_scope.get("datasets"))
+
+    def _effective_metadata_dataset_ids() -> list[str] | None:
+        ctx = get_current_agent_context()
+        if ctx and getattr(ctx, "metadata_dataset_ids", None):
+            ids = [str(x).strip() for x in ctx.metadata_dataset_ids if str(x).strip()]
+            if ids:
+                return ids
+        mounted = [
+            str(item.get("id")).strip()
+            for item in (resource_scope.get("datasets", []) or [])
+            if isinstance(item, dict) and str(item.get("id") or "").strip()
+        ]
+        return mounted or None
+
+    effective_dataset_ids = _effective_metadata_dataset_ids()
+    has_mounted_dataset_scope = bool(effective_dataset_ids) or bool(resource_scope.get("datasets"))
     if not state.requires_fresh_data and not has_mounted_dataset_scope:
         return tools
 
     def mounted_dataset_names() -> set[str] | None:
+        scope_datasets = (
+            ((getattr(runner, "debug_options", {}) or {}).get("resource_scope", {}) or {}).get("datasets", [])
+            or []
+        )
+        if effective_dataset_ids:
+            allowed = set(effective_dataset_ids)
+            names = {
+                str(item.get("dataset_name") or item.get("name") or item.get("id") or "").strip()
+                for item in scope_datasets
+                if isinstance(item, dict)
+                and str(item.get("id") or "").strip() in allowed
+                and str(item.get("dataset_name") or item.get("name") or item.get("id") or "").strip()
+            }
+            # 本轮仅有 ID、会话 scope 无对应条目时，仍用 ID 作为允许 token
+            if not names:
+                names = set(effective_dataset_ids)
+            return names or None
         names = {
             str(item.get("dataset_name") or item.get("name") or item.get("id") or "").strip()
-            for item in ((getattr(runner, "debug_options", {}) or {}).get("resource_scope", {}) or {}).get("datasets", []) or []
+            for item in scope_datasets
             if isinstance(item, dict)
             and str(item.get("dataset_name") or item.get("name") or item.get("id") or "").strip()
         }
@@ -38,15 +72,9 @@ def wrap_tools_with_schema_gate(runner: Any, tools: list[RuntimeToolSpec], state
             original_callable = spec.callable
 
             async def invoke_schema_controlled(*, _original=original_callable, **kwargs: Any) -> Any:
-                scope = runner.debug_options.get("resource_scope", {}) or {}
-                mounted_dataset_ids = [
-                    str(item.get("id")).strip()
-                    for item in (scope.get("datasets", []) or [])
-                    if isinstance(item, dict) and str(item.get("id") or "").strip()
-                ]
-                if mounted_dataset_ids:
-                    # Schema 工具本身也必须带上项目会话的元数据 ID，不能只靠菜单文本过滤。
-                    kwargs["metadata_dataset_ids"] = mounted_dataset_ids
+                ids = _effective_metadata_dataset_ids()
+                if ids:
+                    kwargs["metadata_dataset_ids"] = ids
                 controlled_keywords = str(state.controlled_schema_retry_keywords or "").strip()
                 use_controlled = bool(
                     controlled_keywords and (state.pending_schema_retry or state.schema_miss)

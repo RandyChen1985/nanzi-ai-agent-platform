@@ -24,6 +24,10 @@ class AgentContext(BaseModel):
         default_factory=list,
         description="本轮请求结构化传入的知识库 dataset ID（EmbedChat/API）",
     )
+    metadata_dataset_ids: List[str] = Field(
+        default_factory=list,
+        description="本轮生效的 MetaDataset ID（已合并本轮优先/会话回退）",
+    )
     require_explicit_dataset: bool = False
     engine_type: str = "LOCAL"
     engine_config: Optional[Dict[str, Any]] = None

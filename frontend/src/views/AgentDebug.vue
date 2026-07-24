@@ -22,6 +22,7 @@ import type { AgentHandoffNoticeData } from "@/types/agentHandoff";
 import { applyAgentHandoffEvent } from "@/utils/agentHandoff";
 import KnowledgePortalDrawer from "@/components/knowledge/KnowledgePortalDrawer.vue";
 import { useDatasetPortal } from "@/composables/useDatasetPortal";
+import { useDatasetMount } from "@/composables/useDatasetMount";
 import { useKnowledgePortal } from "@/composables/useKnowledgePortal";
 import {
   DATASET_PORTAL_SLASH_COMMAND,
@@ -481,6 +482,8 @@ function getSkillFlowBadgesForMessage(msg: Message, allMessages: Message[]): Ski
   return buildSkillFlowBadges(files, msg.logs || []);
 }
 const conversationId = ref("");
+const metadataMountableDatasets = ref<Array<{ id: string; name?: string; description?: string; dataset_name?: string }>>([]);
+const sessionMountedMetadataDatasetIds = ref<string[]>([]);
 
 const debugAuthHeaders = (): Record<string, string> | undefined => {
   const key = localStorage.getItem("api_key");
@@ -2215,7 +2218,7 @@ const {
   portalBackgroundRefreshing,
   portalKeepOpenOnQuestion,
   portalPinned,
-  openPortalDrawer,
+  openPortalDrawer: rawOpenPortalDrawer,
   closePortalDrawer,
   refreshPortalNavigation,
   handlePortalQuickQuestion,
@@ -2236,6 +2239,84 @@ const {
   keepOpenStorageKey: "debug_portal_keep_open",
   pinStorageKey: "debug_portal_pinned",
 });
+
+const {
+  activeMetadataDatasetIds,
+  toggleMetadataDatasetActive,
+} = useDatasetMount();
+
+const loadMetadataMountableDatasets = async () => {
+  if (metadataMountableDatasets.value.length) return;
+  try {
+    const res = await axios.get("/api/portal/metadata/datasets/accessible", { headers: debugAuthHeaders() });
+    const raw = res.data?.data || res.data?.datasets || res.data || [];
+    metadataMountableDatasets.value = (Array.isArray(raw) ? raw : [])
+      .filter((item: any) => item.status === undefined || item.status === 1 || item.status === "1" || item.status === "active")
+      .map((item: any) => ({
+        id: String(item.id || item.name),
+        name: item.display_name || item.name || item.dataset_name,
+        dataset_name: item.name || item.dataset_name,
+        description: item.description || item.remark || item.notes,
+      }));
+  } catch (error) {
+    console.warn("Failed to load metadata dataset mount options", error);
+    showToast("加载可挂载数据集失败，请稍后重试", "error");
+  }
+};
+
+const loadMetadataDatasetSessionScope = async () => {
+  if (!conversationId.value) return;
+  try {
+    const res = await axios.get(
+      `/api/v1/chat/conversation/${encodeURIComponent(conversationId.value)}/resource-scope`,
+      { headers: debugAuthHeaders() },
+    );
+    sessionMountedMetadataDatasetIds.value = (res.data?.data?.datasets || [])
+      .map((item: any) => String(item.id || "").trim())
+      .filter(Boolean);
+  } catch (error) {
+    console.warn("Failed to load metadata dataset session scope", error);
+  }
+};
+
+const pinMetadataDatasetsToSession = async () => {
+  if (!conversationId.value) {
+    showToast("请先开始会话", "error");
+    return;
+  }
+  if (!activeMetadataDatasetIds.value.length) return;
+  try {
+    const res = await axios.get(
+      `/api/v1/chat/conversation/${encodeURIComponent(conversationId.value)}/resource-scope`,
+      { headers: debugAuthHeaders() },
+    );
+    const scope = res.data?.data || { project_name: "", datasets: [], knowledge_bases: [], skills: [] };
+    const existingIds = new Set((scope.datasets || []).map((item: any) => String(item.id || "").trim()));
+    const selected = activeMetadataDatasetIds.value
+      .filter((id) => !existingIds.has(id))
+      .map((id) => {
+        const dataset = metadataMountableDatasets.value.find((item) => item.id === id);
+        return { id, name: dataset?.name || id, ...(dataset?.dataset_name ? { dataset_name: dataset.dataset_name } : {}) };
+      });
+    const saved = await axios.put(
+      `/api/v1/chat/conversation/${encodeURIComponent(conversationId.value)}/resource-scope`,
+      { ...scope, datasets: [...(scope.datasets || []), ...selected] },
+      { headers: debugAuthHeaders() },
+    );
+    sessionMountedMetadataDatasetIds.value = (saved.data?.data?.datasets || [...(scope.datasets || []), ...selected])
+      .map((item: any) => String(item.id || "").trim())
+      .filter(Boolean);
+    showToast("已将本轮数据集固定到会话", "success");
+  } catch (error) {
+    console.warn("Failed to pin metadata datasets to session", error);
+    showToast("固定会话数据集失败", "error");
+  }
+};
+
+const openPortalDrawer = async () => {
+  await Promise.all([loadMetadataMountableDatasets(), loadMetadataDatasetSessionScope()]);
+  await rawOpenPortalDrawer();
+};
 
 const {
   showKnowledgePortal,
@@ -2822,6 +2903,9 @@ const sendMessage = async () => {
     };
     if (knowledgeDatasetIds.length > 0) {
       requestBody.knowledge_dataset_ids = knowledgeDatasetIds;
+    }
+    if (activeMetadataDatasetIds.value.length > 0) {
+      requestBody.metadata_dataset_ids = activeMetadataDatasetIds.value;
     }
     if (pendingGroundingAction.value) {
       requestBody.grounding_action = pendingGroundingAction.value;
@@ -5652,11 +5736,16 @@ onUnmounted(() => {
     v-model:keep-open-on-question="portalKeepOpenOnQuestion"
     v-model:pinned="portalPinned"
     :payload="portalNavigationPayload"
+    :mountable-datasets="metadataMountableDatasets"
+    :active-metadata-dataset-ids="activeMetadataDatasetIds"
+    :session-mounted-dataset-ids="sessionMountedMetadataDatasetIds"
     :initial-loading="portalLoading && !portalNavigationPayload"
     :background-refreshing="portalBackgroundRefreshing"
     @quick-question="handlePortalQuickQuestion"
     @record-question-click="(payload) => recordPortalQuestionClick(portalNavigationPayload, payload)"
     @clear-question-click="(payload) => clearPortalQuestionClick(portalNavigationPayload, payload)"
+    @toggle-metadata-dataset="toggleMetadataDatasetActive"
+    @pin-metadata-datasets="pinMetadataDatasetsToSession"
     @refresh="refreshPortalNavigation"
     @execute-saved-report="handleExecuteSavedReport"
     @edit-saved-report="openEditReportModal"

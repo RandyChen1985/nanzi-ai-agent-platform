@@ -412,6 +412,7 @@ class AgentService:
         debug_options: Optional[Dict[str, Any]] = None,
         permission_options: Optional[Dict[str, Any]] = None,
         knowledge_dataset_ids: Optional[List[str]] = None,
+        metadata_dataset_ids: Optional[List[str]] = None,
     ) -> AsyncGenerator[Dict[str, Any], None]:
         """
         Main entry point for streaming chat.
@@ -527,6 +528,7 @@ class AgentService:
                     debug_options=debug_options,
                     permission_options=permission_options,
                     knowledge_dataset_ids=knowledge_dataset_ids,
+                    metadata_dataset_ids=metadata_dataset_ids,
                     trace_id=trace_id,
                     trace_buffer=trace_buffer,
                     start_time=asyncio.get_running_loop().time(),
@@ -1203,6 +1205,7 @@ class AgentService:
         debug_options: Optional[Dict[str, Any]],
         permission_options: Optional[Dict[str, Any]],
         knowledge_dataset_ids: Optional[List[str]],
+        metadata_dataset_ids: Optional[List[str]],
         trace_id: str,
         trace_buffer: List[AgentExecutionStep],
         start_time: float,
@@ -1355,6 +1358,7 @@ class AgentService:
                 api_key=api_key,
                 conversation_id=conversation_id,
                 knowledge_dataset_ids=request_knowledge_dataset_ids,
+                metadata_dataset_ids=metadata_dataset_ids,
                 authorized_attachment_paths=self._authorized_attachment_paths(messages),
                 current_turn_attachment_paths=self._current_turn_attachment_paths(messages),
                 trace_buffer=trace_buffer,
@@ -1464,6 +1468,7 @@ class AgentService:
                     api_key=api_key,
                     conversation_id=conversation_id,
                     knowledge_dataset_ids=request_knowledge_dataset_ids,
+                    metadata_dataset_ids=metadata_dataset_ids,
                     authorized_attachment_paths=self._authorized_attachment_paths(messages),
                     current_turn_attachment_paths=self._current_turn_attachment_paths(messages),
                     require_explicit_dataset=True,
@@ -1811,6 +1816,7 @@ class AgentService:
         debug_options: Optional[Dict[str, Any]] = None,
         permission_options: Optional[Dict[str, Any]] = None,
         knowledge_dataset_ids: Optional[List[str]] = None,
+        metadata_dataset_ids: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
         """
         Non-streaming wrapper for chat completion.
@@ -1833,6 +1839,7 @@ class AgentService:
             debug_options=debug_options,
             permission_options=permission_options,
             knowledge_dataset_ids=knowledge_dataset_ids,
+            metadata_dataset_ids=metadata_dataset_ids,
         ):
             if "trace_id" in chunk and chunk.get("status") == "init":
                 trace_id = chunk["trace_id"]

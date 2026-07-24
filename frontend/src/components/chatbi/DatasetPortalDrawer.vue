@@ -184,6 +184,47 @@
               <div v-if="projectResourceScope" class="mb-3 rounded-lg border border-blue-100 bg-blue-50 px-3 py-2 text-xs font-semibold text-blue-700 dark:border-blue-900/50 dark:bg-blue-950/30 dark:text-blue-300">
                 🔒 {{ projectResourceScope }}
               </div>
+              <section class="mb-4 overflow-hidden rounded-xl border border-blue-100 bg-blue-50/50 dark:border-blue-900/50 dark:bg-blue-950/20">
+                <div class="flex items-center justify-between gap-3 border-b border-blue-100 px-3 py-2.5 dark:border-blue-900/50">
+                  <div>
+                    <h3 class="text-sm font-bold text-gray-800 dark:text-gray-100">本轮限定数据集</h3>
+                    <p class="mt-0.5 text-[11px] text-blue-700 dark:text-blue-300">本轮勾选优先于会话挂载</p>
+                  </div>
+                  <button
+                    type="button"
+                    class="shrink-0 rounded-md border border-blue-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-blue-700 transition-colors hover:bg-blue-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-blue-700 dark:bg-gray-900 dark:text-blue-300 dark:hover:bg-blue-950"
+                    :disabled="activeMetadataDatasetIds.length === 0"
+                    @click="emit('pin-metadata-datasets')"
+                  >
+                    将勾选固定到会话
+                  </button>
+                </div>
+                <div v-if="mountableDatasets.length" class="divide-y divide-blue-100 dark:divide-blue-900/50">
+                  <label
+                    v-for="dataset in mountableDatasets"
+                    :key="String(dataset.id)"
+                    class="flex cursor-pointer items-center gap-2.5 px-3 py-2.5 hover:bg-blue-100/50 dark:hover:bg-blue-950/30"
+                  >
+                    <input
+                      :checked="activeMetadataDatasetIds.includes(String(dataset.id))"
+                      type="checkbox"
+                      class="rounded border-gray-300 text-primary focus:ring-primary/30"
+                      @change="emit('toggle-metadata-dataset', String(dataset.id))"
+                    />
+                    <span class="min-w-0 flex-1">
+                      <span class="block truncate text-xs font-semibold text-gray-800 dark:text-gray-100">{{ dataset.name || dataset.id }}</span>
+                      <span v-if="dataset.description" class="block truncate text-[11px] text-gray-500 dark:text-gray-400">{{ dataset.description }}</span>
+                    </span>
+                    <span
+                      v-if="sessionMountedDatasetIds.includes(String(dataset.id))"
+                      class="shrink-0 rounded border border-emerald-200 bg-emerald-50 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-700 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300"
+                    >
+                      会话已挂载
+                    </span>
+                  </label>
+                </div>
+                <p v-else class="px-3 py-3 text-xs text-gray-500 dark:text-gray-400">暂无可挂载的数据集</p>
+              </section>
               <DatasetCapabilityMenu
                 :payload="payload || { groups: [] }"
                 :initial-loading="initialLoading"
@@ -212,9 +253,12 @@ const modelValue = defineModel<boolean>({ default: false });
 const keepOpenOnQuestion = defineModel<boolean>("keepOpenOnQuestion", { default: false });
 const pinned = defineModel<boolean>("pinned", { default: false });
 
-defineProps<{
+withDefaults(defineProps<{
   payload: Record<string, unknown> | null;
   projectResourceScope?: string;
+  mountableDatasets?: Array<{ id: string; name?: string; description?: string }>;
+  activeMetadataDatasetIds?: string[];
+  sessionMountedDatasetIds?: string[];
   initialLoading?: boolean;
   backgroundRefreshing?: boolean;
   focusSavedReportRequest?: {
@@ -222,7 +266,11 @@ defineProps<{
     run_id: string;
     request_id: string;
   } | null;
-}>();
+}>(), {
+  mountableDatasets: () => [],
+  activeMetadataDatasetIds: () => [],
+  sessionMountedDatasetIds: () => [],
+});
 
 const drawerWidth = defineModel<number>('drawerWidth', { default: 448 });
 
@@ -232,6 +280,8 @@ const emit = defineEmits<{
   (event: "record-question-click", payload: { query: string; label?: string; group_id?: string }): void;
   (event: "clear-question-click", payload: { query: string }): void;
   (event: "refresh"): void;
+  (event: "toggle-metadata-dataset", datasetId: string): void;
+  (event: "pin-metadata-datasets"): void;
   (event: "execute-saved-report", payload: {
     id: string;
     title: string;

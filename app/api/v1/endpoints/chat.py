@@ -74,6 +74,10 @@ class ChatCompletionRequest(BaseModel):
         default=None,
         description="本轮结构化指定的 RAGFlow 知识库 dataset ID 列表（优先于消息内文本提示）",
     )
+    metadata_dataset_ids: Optional[List[str]] = Field(
+        default=None,
+        description="本轮结构化指定的 MetaDataset ID 列表（优先于会话挂载；仍需通过权限校验）",
+    )
     debug_options: Optional[Dict[str, Any]] = None
     permission_options: Optional[Dict[str, Any]] = None
     grounding_action: Optional[Dict[str, Any]] = Field(
@@ -751,6 +755,17 @@ async def create_chat_completion(
         effective_debug_options["resource_scope"] = conversation_scope
     scoped_kb_ids = [str(item.get("id")) for item in conversation_scope.get("knowledge_bases", []) if item.get("id")]
     effective_knowledge_dataset_ids = scoped_kb_ids or completion_request.knowledge_dataset_ids
+    from app.services.ai.metadata_dataset_scope import resolve_effective_metadata_dataset_ids
+
+    session_dataset_ids = [
+        str(item.get("id"))
+        for item in conversation_scope.get("datasets", []) or []
+        if item.get("id")
+    ]
+    effective_metadata_dataset_ids = resolve_effective_metadata_dataset_ids(
+        request_ids=completion_request.metadata_dataset_ids,
+        session_ids=session_dataset_ids,
+    )
     
     # --- Orchestration / Routing Logic ---
     # DEPRECATED here: Moved to AgentService/ContextManager for better trace and CoT logging.
@@ -798,6 +813,7 @@ async def create_chat_completion(
                     debug_options=effective_debug_options,
                     permission_options=completion_request.permission_options,
                     knowledge_dataset_ids=effective_knowledge_dataset_ids,
+                    metadata_dataset_ids=effective_metadata_dataset_ids,
                 ):
                     if await request.is_disconnected():
                         await _release_locks_on_client_abort()
@@ -834,6 +850,7 @@ async def create_chat_completion(
             debug_options=effective_debug_options,
             permission_options=completion_request.permission_options,
             knowledge_dataset_ids=effective_knowledge_dataset_ids,
+            metadata_dataset_ids=effective_metadata_dataset_ids,
         )
         return StandardResponse(data=result)
 

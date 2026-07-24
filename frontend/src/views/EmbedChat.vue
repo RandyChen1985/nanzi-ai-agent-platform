@@ -2504,17 +2504,22 @@
       v-model:drawer-width="portalDrawerWidthReactive"
       :payload="scopedPortalNavigationPayload"
       :project-resource-scope="projectSessionHasDatasetScope ? '仅显示当前项目会话已挂载的数据集' : ''"
+      :mountable-datasets="resourceOptions.datasets"
+      :active-metadata-dataset-ids="activeMetadataDatasetIds"
+      :session-mounted-dataset-ids="sessionMountedMetadataDatasetIds"
       :initial-loading="portalLoading && !portalNavigationPayload"
       :background-refreshing="portalBackgroundRefreshing"
       :focus-saved-report-request="savedReportFocusRequest"
       @quick-question="handlePortalQuickQuestion"
       @record-question-click="(payload) => recordDatasetMenuQuestionClick(scopedPortalNavigationPayload, payload)"
       @clear-question-click="(payload) => clearDatasetMenuQuestionClick(scopedPortalNavigationPayload, payload)"
-	      @refresh="refreshPortalNavigation"
-	      @execute-saved-report="handleExecuteSavedReport"
+      @toggle-metadata-dataset="toggleMetadataDatasetActive"
+      @pin-metadata-datasets="pinMetadataDatasetsToSession"
+      @refresh="refreshPortalNavigation"
+      @execute-saved-report="handleExecuteSavedReport"
       @edit-saved-report="openEditReportModal"
-	      @open-full-page="openFullDataPortal"
-	    />
+      @open-full-page="openFullDataPortal"
+    />
 
     <!-- TraceLogViewer -->
     <TraceLogViewer
@@ -2542,6 +2547,7 @@ import { useToast } from "../composables/useToast";
 import { useTokenQuota } from "../composables/useTokenQuota";
 import { buildQuotaStatusMarkdown } from "@/utils/quotaDisplay";
 import { useDatasetPortal } from "@/composables/useDatasetPortal";
+import { useDatasetMount } from "@/composables/useDatasetMount";
 import {
   DATASET_PORTAL_SLASH_COMMAND,
   DATASET_PORTAL_SYSTEM_COMMAND_ID,
@@ -3446,6 +3452,10 @@ watch(() => config.enableMultiAgent, (newVal, oldVal) => {
 const conversationId = ref("");
 const showResourceScopeModal = ref(false);
 const resourceScope = ref({ project_name: '', datasets: [] as any[], knowledge_bases: [] as any[], skills: [] as any[] });
+const {
+  activeMetadataDatasetIds,
+  toggleMetadataDatasetActive,
+} = useDatasetMount();
 const resourceScopeDraft = reactive({ project_name: '', datasets: '', knowledge_bases: '', skills: '' });
 const resourceOptionsLoading = ref(false);
 const resourceOptionsLoaded = ref(false);
@@ -3487,6 +3497,9 @@ const resourceScopeActiveTab = ref<ResourceScopeGroupKey>('datasets');
 const resourceScopeCount = computed(() => resourceScope.value.datasets.length + resourceScope.value.knowledge_bases.length + resourceScope.value.skills.length);
 const projectSessionHasDatasetScope = computed(() => Boolean(resourceScope.value.project_name) && resourceScope.value.datasets.length > 0);
 const projectSessionHasKnowledgeScope = computed(() => Boolean(resourceScope.value.project_name) && resourceScope.value.knowledge_bases.length > 0);
+const sessionMountedMetadataDatasetIds = computed(() =>
+  resourceScope.value.datasets.map((item: any) => String(item.id || '').trim()).filter(Boolean),
+);
 const scopedKnowledgeDatasets = computed(() => {
   if (!resourceScope.value.project_name) return knowledgeDatasets.value;
   if (!projectSessionHasKnowledgeScope.value) return knowledgeDatasets.value;
@@ -3761,6 +3774,35 @@ const persistResourceScope = async (scope: ReturnType<typeof buildPersistableSco
   resourceScope.value = saved;
   syncResourceScopeDraftStrings(saved);
   return saved;
+};
+
+const pinMetadataDatasetsToSession = async () => {
+  if (!conversationId.value) {
+    showToast('请先开始会话', 'error');
+    return;
+  }
+  const selected = activeMetadataDatasetIds.value
+    .map((id) => (resourceOptions.datasets || []).find((item: any) => String(item.id) === id) || { id, name: id })
+    .filter((item, index, items) => items.findIndex((entry) => String(entry.id) === String(item.id)) === index);
+  if (!selected.length) return;
+
+  const existingIds = new Set(resourceScope.value.datasets.map((item: any) => String(item.id || '').trim()));
+  const nextScope = {
+    ...resourceScope.value,
+    datasets: [
+      ...resourceScope.value.datasets,
+      ...selected.filter((item) => !existingIds.has(String(item.id))),
+    ],
+  };
+  resourceScopeSaving.value = true;
+  try {
+    await persistResourceScope(buildPersistableScope(nextScope));
+    showToast('已将本轮数据集固定到会话', 'success');
+  } catch (error) {
+    showToast('固定会话数据集失败', 'error');
+  } finally {
+    resourceScopeSaving.value = false;
+  }
 };
 
 const saveResourceScope = async () => {
@@ -6214,6 +6256,7 @@ const openPortalDrawer = async () => {
     showToast("当前智能体不支持数据查询，无法打开数据门户", "warning");
     return;
   }
+  if (!resourceOptionsLoaded.value) await loadResourceOptions();
   await rawOpenPortalDrawer();
 };
 
@@ -6814,6 +6857,9 @@ const sendMessage = async () => {
     };
     if (knowledgeDatasetIds.length > 0) {
       body.knowledge_dataset_ids = knowledgeDatasetIds;
+    }
+    if (activeMetadataDatasetIds.value.length > 0) {
+      body.metadata_dataset_ids = activeMetadataDatasetIds.value;
     }
     if (pendingGroundingAction.value) {
       body.grounding_action = pendingGroundingAction.value;
