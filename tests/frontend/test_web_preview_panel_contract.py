@@ -51,6 +51,14 @@ def test_web_preview_panel_matches_workspace_drawer_responsive_interactions():
     assert "isMobile ? 'flex-1 min-h-0 w-full' : 'absolute inset-0'" in source
 
 
+def test_web_preview_panel_mobile_layout_has_a_definite_full_height():
+    source = _source()
+
+    assert "fixed inset-x-0 bottom-0 h-full max-w-full" in source
+    assert "? 'w-full h-full flex pointer-events-auto min-h-0'" in source
+    assert "? 'w-full h-full flex justify-center min-h-0 shrink-0'" in source
+
+
 def test_web_preview_panel_contains_page_overflow_and_supports_maximized_view():
     source = _source()
     assert "overflow-hidden" in source

@@ -31,6 +31,7 @@ from app.services.mcp.platform_oauth import (
     normalize_scopes,
     redirect_uri_allowed,
 )
+from app.services.mcp.security_audit import write_security_audit
 
 
 router = APIRouter()
@@ -49,6 +50,28 @@ def _oauth_error(error: str, description: str, status_code: int = 400) -> JSONRe
         {"error": error, "error_description": description},
         status_code,
     )
+
+
+async def _record_oauth_failure(
+    db: AsyncSession,
+    *,
+    error_code: str,
+    client_id: str | None = None,
+    user_id: str | None = None,
+) -> None:
+    """记录 OAuth 失败但不保存 Secret、Token 或原始请求头。"""
+    try:
+        await write_security_audit(
+            db,
+            event_type="oauth_request_failed",
+            client_id=client_id,
+            user_id=user_id,
+            result_status="failed",
+            error_code=error_code,
+        )
+        await db.commit()
+    except Exception:
+        await db.rollback()
 
 
 def _base_url() -> str:
@@ -149,23 +172,29 @@ async def authorize_get(
     db: AsyncSession = Depends(get_db_session),
 ):
     if response_type != "code" or not client_id or not redirect_uri:
+        await _record_oauth_failure(db, error_code="invalid_request", client_id=client_id or None)
         return _oauth_error("invalid_request", "response_type、client_id、redirect_uri 是必填项")
     client = await PlatformMcpOAuthService.get_client(db, client_id)
     if client is None or client.status != "active":
+        await _record_oauth_failure(db, error_code="unauthorized_client", client_id=client_id)
         return _oauth_error("unauthorized_client", "OAuth Client 不存在或已禁用", 401)
     if "authorization_code" not in normalize_scopes(client.allowed_grant_types):
         return _oauth_error("unauthorized_client", "OAuth Client 未启用 authorization_code", 403)
     if not redirect_uri_allowed(redirect_uri, client.redirect_uris or []):
+        await _record_oauth_failure(db, error_code="invalid_redirect_uri", client_id=client_id)
         return _oauth_error("invalid_request", "redirect_uri 未注册")
     requested_scopes = normalize_scopes(scope)
     allowed_scopes = normalize_scopes(client.allowed_scopes)
     if set(requested_scopes) - set(allowed_scopes):
+        await _record_oauth_failure(db, error_code="invalid_scope", client_id=client_id)
         return _oauth_error("invalid_scope", "请求的 Scope 超出 Client 配置")
     if code_challenge_method != "S256" or not code_challenge:
+        await _record_oauth_failure(db, error_code="invalid_pkce", client_id=client_id)
         return _oauth_error("invalid_request", "必须使用 PKCE S256")
     try:
         resource_value = _platform_resource(resource)
     except ValueError as exc:
+        await _record_oauth_failure(db, error_code="invalid_target", client_id=client_id)
         return _oauth_error("invalid_target", str(exc))
 
     user = await AuthService.verify_api_key(admin_token, db) if admin_token else None
@@ -229,6 +258,14 @@ async def authorize_post(
     except ValueError as exc:
         return _oauth_error("invalid_target", str(exc))
     if form.get("approve") != "true":
+        await write_security_audit(
+            db,
+            event_type="oauth_authorization_denied",
+            client_id=client.client_id,
+            user_id=str(user["user_id"]),
+            result_status="denied",
+        )
+        await db.commit()
         params = {"error": "access_denied"}
         if form.get("state"):
             params["state"] = form["state"]
@@ -259,9 +296,25 @@ async def authorize_post(
             code_challenge_method=form["code_challenge_method"],
             resource=grant.resource,
         )
+        await write_security_audit(
+            db,
+            event_type="oauth_authorization_approved",
+            client_id=client.client_id,
+            user_id=str(user["user_id"]),
+            details={"scope_count": len(scopes)},
+        )
         await db.commit()
     except ValueError as exc:
         await db.rollback()
+        await write_security_audit(
+            db,
+            event_type="oauth_authorization_failed",
+            client_id=client.client_id,
+            user_id=str(user["user_id"]),
+            result_status="failed",
+            error_code="invalid_request",
+        )
+        await db.commit()
         return _oauth_error("invalid_request", str(exc))
 
     params = {"code": code}
@@ -278,13 +331,16 @@ async def token(request: Request, db: AsyncSession = Depends(get_db_session)):
     form = await _read_form(request)
     client = await _authenticate_client(request, form, db)
     if client is None:
+        await _record_oauth_failure(db, error_code="invalid_client", client_id=form.get("client_id"))
         return _oauth_error("invalid_client", "Client 认证失败", 401)
     grant_type = form.get("grant_type", "")
     if grant_type not in normalize_scopes(client.allowed_grant_types):
+        await _record_oauth_failure(db, error_code="unauthorized_client", client_id=client.client_id)
         return _oauth_error("unauthorized_client", "Client 未启用该 grant_type", 403)
     try:
         resource_value = _platform_resource(form.get("resource"))
     except ValueError as exc:
+        await _record_oauth_failure(db, error_code="invalid_target", client_id=client.client_id)
         return _oauth_error("invalid_target", str(exc))
     try:
         if grant_type == "authorization_code":
@@ -306,10 +362,24 @@ async def token(request: Request, db: AsyncSession = Depends(get_db_session)):
             )
         else:
             return _oauth_error("unsupported_grant_type", "不支持的 grant_type")
+        await write_security_audit(
+            db,
+            event_type=f"oauth_token_{grant_type}",
+            client_id=client.client_id,
+            user_id=str(result.get("user_id") or "") or None,
+        )
         await db.commit()
         return _oauth_response(result, 200)
     except ValueError as exc:
         await db.rollback()
+        await write_security_audit(
+            db,
+            event_type=f"oauth_token_{grant_type}",
+            client_id=client.client_id,
+            result_status="failed",
+            error_code="invalid_grant",
+        )
+        await db.commit()
         return _oauth_error("invalid_grant", str(exc))
 
 
@@ -318,6 +388,7 @@ async def revoke(request: Request, db: AsyncSession = Depends(get_db_session)):
     form = await _read_form(request)
     client = await _authenticate_client(request, form, db)
     if client is None:
+        await _record_oauth_failure(db, error_code="invalid_client", client_id=form.get("client_id"))
         return _oauth_error("invalid_client", "Client 认证失败", 401)
     token_hash = hash_secret(form.get("token", ""))
     now = datetime.utcnow()
@@ -341,6 +412,13 @@ async def revoke(request: Request, db: AsyncSession = Depends(get_db_session)):
         access.revoked_at = now
     if refresh is not None:
         refresh.revoked_at = now
+    await write_security_audit(
+        db,
+        event_type="oauth_token_revoked",
+        client_id=client.client_id,
+        user_id=(access.user_id if access is not None else (refresh.user_id if refresh is not None else None)),
+        result_status="completed" if access is not None or refresh is not None else "not_found",
+    )
     await db.commit()
     return Response(status_code=200)
 

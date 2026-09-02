@@ -42,6 +42,15 @@ def test_platform_mcp_source_declares_bearer_resource_server_and_tool():
     assert "get_access_token" in source
 
 
+def test_platform_mcp_declares_client_and_user_rate_limits():
+    source = Path("app/services/mcp/platform_mcp.py").read_text(encoding="utf-8")
+
+    assert "check_platform_mcp_rate_limit" in source
+    assert "client_id" in source
+    assert "user_id" in source
+    assert "status_code=429" in source
+
+
 @pytest.mark.asyncio
 async def test_platform_mcp_http_lifecycle_authenticates_and_calls_knowledge_tool(monkeypatch):
     async def fake_verify_token(_token: str) -> AccessToken:

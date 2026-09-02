@@ -25,10 +25,10 @@
         :class="[
           pinned
             ? isMobile
-              ? 'w-full flex pointer-events-auto min-h-0 max-h-[92%]'
+              ? 'w-full h-full flex pointer-events-auto min-h-0'
               : 'h-full flex pointer-events-auto'
             : isMobile
-              ? 'w-full flex justify-center min-h-0 max-h-[92%] shrink-0'
+              ? 'w-full h-full flex justify-center min-h-0 shrink-0'
               : isMaximized
                 ? 'absolute inset-0 flex'
                 : 'absolute inset-y-0 right-0 pl-0 sm:pl-10 max-w-full flex',
@@ -259,7 +259,7 @@ const pinButtonTitle = computed(() => {
 const pinnedContainerClass = computed(() => {
   if (!pinned.value) return '';
   return isMobile.value
-    ? 'fixed inset-x-0 bottom-0 max-w-full flex flex-col justify-end pointer-events-none'
+    ? 'fixed inset-x-0 bottom-0 h-full max-w-full flex flex-col justify-end pointer-events-none'
     : 'fixed inset-y-0 max-w-full flex pointer-events-none';
 });
 

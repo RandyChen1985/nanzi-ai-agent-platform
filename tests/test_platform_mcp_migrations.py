@@ -39,8 +39,32 @@ def test_postgresql_platform_mcp_migration_matches_mysql_contract():
     assert "element:mcp_service:client:secret_reset" in sql
     assert sql.count("COMMENT ON COLUMN") >= 80
     assert "CREATE TABLE IF NOT EXISTS sys_mcp_platform_config" in sql
+
+
+def test_security_audit_migrations_create_oauth_event_table():
+    mysql_sql = (ROOT / "db-prod/V141-mcp-oauth-security-audit.sql").read_text(encoding="utf-8")
+    pg_sql = (ROOT / "db-prod-pg/V42-mcp-oauth-security-audit.sql").read_text(encoding="utf-8")
+
+    for sql in (mysql_sql, pg_sql):
+        assert "sys_mcp_oauth_security_audit_logs" in sql
+        assert "event_type" in sql
+        assert "client_id" in sql
+        assert "user_id" in sql
+        assert "created_at" in sql
+    assert mysql_sql.count(" COMMENT '") >= 11
+    assert pg_sql.count("COMMENT ON COLUMN") >= 11
     assert "ON CONFLICT (id) DO NOTHING" in sql
     assert "INSERT INTO system_configs" not in sql
+
+
+def test_rate_limit_migrations_add_configured_limits_with_comments():
+    mysql_sql = (ROOT / "db-prod/V142-add_mcp_rate_limit_config.sql").read_text(encoding="utf-8")
+    pg_sql = (ROOT / "db-prod-pg/V43-add_mcp_rate_limit_config.sql").read_text(encoding="utf-8")
+
+    for sql in (mysql_sql, pg_sql):
+        assert "rate_limit_client_per_minute" in sql
+        assert "rate_limit_user_per_minute" in sql
+        assert "每分钟调用上限" in sql
 
 
 def test_user_token_permission_is_seeded_by_follow_up_migrations():

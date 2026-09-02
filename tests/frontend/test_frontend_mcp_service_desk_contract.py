@@ -79,13 +79,14 @@ def test_audit_filters_are_collapsed_by_default_and_use_one_dynamic_row():
     assert "展开筛选" in view
     assert "收起筛选" in view
     assert 'v-if="showAuditFilters"' in view
+    assert "overflow-x-auto" in view
     assert "flex-nowrap" in view
     assert "auditFilterOptions" in view
     assert "selectedAuditFilter" in view
     assert "selectedAuditFilterValue" in view
     assert "过滤对象" in view
     assert "过滤值" in view
-    assert 'mt-3 flex flex-nowrap items-end gap-3 overflow-x-auto pb-1' not in view
+    assert 'class="mt-3 space-y-3"' in view
 
 
 def test_client_delete_requires_confirmation_and_keeps_audit_history():
@@ -107,6 +108,71 @@ def test_client_token_issue_uses_primary_button_and_clear_label():
     assert "bg-indigo-600" in clients_section
     assert "hover:bg-indigo-700" in clients_section
     assert "disabled:opacity-50" in clients_section
+
+
+def test_client_card_shows_last_token_issue_time_and_method():
+    view = (ROOT / "frontend/src/views/McpServiceDesk.vue").read_text(encoding="utf-8")
+
+    assert "尚未生成 Access Token" in view
+    assert "最近签发" in view
+    assert "OAuth 用户授权" in view
+    assert "服务台手动生成" in view
+
+
+def test_service_desk_exposes_token_management_client_filters_and_audit_export():
+    view = (ROOT / "frontend/src/views/McpServiceDesk.vue").read_text(encoding="utf-8")
+
+    assert "Token 管理" in view
+    assert "撤销" in view
+    assert "clientSearch" in view
+    assert "clientStatus" in view
+    assert "导出 CSV" in view
+    assert "securityAlert" in view
+    assert "调用限流" in view
+
+
+def test_audit_trend_bars_have_explicit_height_and_render_pixels():
+    view = (ROOT / "frontend/src/views/McpServiceDesk.vue").read_text(encoding="utf-8")
+
+    assert "const trendBarHeight" in view
+    assert "class=\"flex h-20 w-full items-end\"" in view
+    assert "height: trendBarHeight(item.total)" in view
+
+
+def test_reset_secret_is_rendered_inside_the_matching_client_card():
+    view = (ROOT / "frontend/src/views/McpServiceDesk.vue").read_text(encoding="utf-8")
+
+    assert "secretRevealClientId" in view
+    assert "secretRevealClientId === client.client_id" in view
+    assert "Client Secret 已重置，请立即复制保存" in view
+    assert "oneTimeSecret && !secretRevealClientId" in view
+
+
+def test_client_cards_prioritize_primary_action_and_collapse_low_frequency_actions():
+    view = (ROOT / "frontend/src/views/McpServiceDesk.vue").read_text(encoding="utf-8")
+
+    assert "clientActionMenuId" in view
+    assert "更多操作" in view
+    assert "有效 Token" in view
+    assert "最近过期" in view
+    assert "管理员视角：查看全部用户的 Client" in view
+    assert "创建第一个 Client" in view
+    assert "md:grid-cols-2" in view
+    assert "expandedClientIds" in view
+    assert "const expandedClientIds = ref<Set<string>>(new Set())" in view
+    assert "收起详情" in view
+    assert "展开详情" in view
+    assert "最近签发" in view
+    assert "有效 Token 数量" in view
+
+
+def test_client_search_filters_are_collapsed_by_default():
+    view = (ROOT / "frontend/src/views/McpServiceDesk.vue").read_text(encoding="utf-8")
+
+    assert "showClientFilters = ref(false)" in view
+    assert "展开筛选" in view
+    assert "收起筛选" in view
+    assert 'v-if="showClientFilters"' in view
 
 
 def test_service_desk_uses_the_same_dashboard_spacing_and_background_as_mcp_toolkit():
@@ -177,6 +243,46 @@ def test_service_desk_has_oauth_usage_guide_and_copyable_mcp_json():
     assert "Protected Resource Metadata" in view
     assert "copyMcpJson" in view
     assert "服务台生成的当前用户 Token" in view
+
+
+def test_service_desk_places_usage_guide_after_audit_tab():
+    view = (ROOT / "frontend/src/views/McpServiceDesk.vue").read_text(encoding="utf-8")
+
+    assert view.index("label: '审计日志'") < view.index("label: '使用指南'")
+
+
+def test_service_desk_shows_permission_scoped_audit_summary_on_overview():
+    view = (ROOT / "frontend/src/views/McpServiceDesk.vue").read_text(encoding="utf-8")
+
+    assert "auditSummary" in view
+    assert "auditSummaryRange" in view
+    assert "/api/portal/mcp-service/audit/summary" in view
+    assert "24 小时" in view
+    assert "7 天" in view
+    assert "30 天" in view
+    assert "调用次数" in view
+    assert "成功率" in view
+    assert "失败 / 拒绝" in view
+    assert "P95 耗时" in view
+
+
+def test_service_desk_exposes_security_audit_time_filters_and_trend():
+    view = (ROOT / "frontend/src/views/McpServiceDesk.vue").read_text(encoding="utf-8")
+
+    assert "/api/portal/mcp-service/audit/security" in view
+    assert "/api/portal/mcp-service/audit/trend" in view
+    assert "start_at" in view
+    assert "end_at" in view
+    assert "OAuth 安全事件" in view
+    assert "调用趋势" in view
+
+
+def test_service_desk_displays_client_owner_identity_for_global_admin_list():
+    view = (ROOT / "frontend/src/views/McpServiceDesk.vue").read_text(encoding="utf-8")
+
+    assert "owner_real_name" in view
+    assert "owner_user_name" in view
+    assert "所属用户" in view
 
 
 def test_service_desk_can_issue_current_user_token_and_explain_dynamic_oauth():
@@ -274,6 +380,13 @@ def test_service_desk_exposes_only_user_bound_oauth_flow():
     assert "Client Credentials" not in view
 
 
+def test_service_desk_documents_default_redirect_uri_for_empty_input():
+    view = (ROOT / "frontend/src/views/McpServiceDesk.vue").read_text(encoding="utf-8")
+
+    assert "https://localhost/oauth/callback" in view
+    assert "未填写时使用默认回调地址" in view
+
+
 def test_client_card_labels_and_copies_client_id():
     view = (ROOT / "frontend/src/views/McpServiceDesk.vue").read_text(encoding="utf-8")
 
@@ -314,11 +427,37 @@ def test_client_scope_change_shows_reissue_guidance_until_new_token_is_issued():
     view = (ROOT / "frontend/src/views/McpServiceDesk.vue").read_text(encoding="utf-8")
 
     assert "needs_token_regeneration" in view
-    assert "Scope 已变更，请重新生成 MCP Access Token" in view
+    assert "当前 Client 需要重新生成 MCP Access Token" in view
     assert "立即生成" in view
     assert "await loadClients()" in view
     assert "client.needs_token_regeneration" in view
-    assert "Scope 已变更，请重新生成 MCP Access Token" in view
+    assert "当前 Client 需要重新生成 MCP Access Token" in view
+
+
+def test_client_reissue_guidance_is_visible_when_card_is_collapsed():
+    view = (ROOT / "frontend/src/views/McpServiceDesk.vue").read_text(encoding="utf-8")
+
+    card_start = view.index('<div v-for="client in clients"')
+    header_start = view.index('<div class="flex flex-col gap-4', card_start)
+    alert_start = view.index('v-if="client.needs_token_regeneration"', card_start)
+    expanded_start = view.index('v-if="expandedClientIds.has(client.client_id)"', card_start)
+    assert alert_start < header_start or alert_start < expanded_start
+    assert "原有 Access Token 已失效，请重新生成 MCP Access Token" in view
+
+
+def test_unchanged_client_scope_shows_toast_without_saving():
+    view = (ROOT / "frontend/src/views/McpServiceDesk.vue").read_text(encoding="utf-8")
+
+    assert "Scope 未变化，Client Secret 和 Access Token 均未变化" in view
+    assert "JSON.stringify(currentScopes) === JSON.stringify(nextScopes)" in view
+    assert "closeClientScopeEdit(true)" in view
+
+
+def test_reset_secret_refreshes_client_state_for_reissue_guidance():
+    view = (ROOT / "frontend/src/views/McpServiceDesk.vue").read_text(encoding="utf-8")
+
+    reset_branch = view.split("action === 'reset-secret'", 1)[1].split("} else", 1)[0]
+    assert "await loadClients()" in reset_branch
 
 
 def test_client_list_does_not_repeat_manual_token_guidance_banner():

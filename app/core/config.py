@@ -39,6 +39,8 @@ class Settings(BaseSettings):
     REDIS_DB: int = 0
     REDIS_PASSWORD: Optional[str] = None  # 改为 Optional 且默认为 None
     REDIS_ENABLE: bool = True
+    MCP_RATE_LIMIT_CLIENT_PER_MINUTE: int = 120
+    MCP_RATE_LIMIT_USER_PER_MINUTE: int = 60
 
     # Security - API Key Encryption
     # Fernet Key (32 url-safe base64-encoded bytes)

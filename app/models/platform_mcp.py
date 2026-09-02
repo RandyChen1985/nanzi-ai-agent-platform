@@ -18,6 +18,8 @@ class McpPlatformConfig(Base):
     conversation_enabled = Column(Boolean, nullable=False, default=False, comment="会话能力组开关")
     knowledge_enabled = Column(Boolean, nullable=False, default=False, comment="知识库能力组开关")
     metadata_enabled = Column(Boolean, nullable=False, default=False, comment="元数据能力组开关")
+    rate_limit_client_per_minute = Column(Integer, nullable=False, default=120, comment="单个 Client 每分钟调用上限，0 表示关闭")
+    rate_limit_user_per_minute = Column(Integer, nullable=False, default=60, comment="单个用户每分钟调用上限，0 表示关闭")
     created_by = Column(String(64), nullable=True, comment="首次创建人用户 ID")
     updated_by = Column(String(64), nullable=True, comment="最后修改人用户 ID")
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow, comment="创建时间")
@@ -142,6 +144,24 @@ class McpInboundAuditLog(Base):
     created_at = Column(DateTime, default=datetime.utcnow, index=True)
 
 
+class McpOAuthSecurityAuditLog(Base):
+    """OAuth 与 Platform MCP 安全生命周期事件，不保存凭证原文。"""
+
+    __tablename__ = "sys_mcp_oauth_security_audit_logs"
+
+    id = Column(String(36), primary_key=True, comment="安全审计事件 ID")
+    event_type = Column(String(64), nullable=False, index=True, comment="安全事件类型")
+    request_id = Column(String(128), nullable=True, index=True, comment="关联请求 ID")
+    client_id = Column(String(128), nullable=True, index=True, comment="关联 OAuth Client ID")
+    user_id = Column(String(64), nullable=True, index=True, comment="被授权或被操作的用户 ID")
+    actor_user_id = Column(String(64), nullable=True, comment="实际执行管理操作的用户 ID")
+    result_status = Column(String(32), nullable=False, default="completed", comment="事件结果：completed、failed、denied 等")
+    error_code = Column(String(128), nullable=True, comment="OAuth 或限流错误码")
+    details = Column(JSON, nullable=True, comment="脱敏后的事件扩展信息")
+    ip_hash = Column(String(128), nullable=True, comment="请求 IP 的不可逆摘要")
+    created_at = Column(DateTime, default=datetime.utcnow, index=True, comment="事件发生时间")
+
+
 __all__ = [
     "McpPlatformConfig",
     "McpOAuthAccessToken",
@@ -150,4 +170,5 @@ __all__ = [
     "McpOAuthGrant",
     "McpOAuthRefreshToken",
     "McpInboundAuditLog",
+    "McpOAuthSecurityAuditLog",
 ]
