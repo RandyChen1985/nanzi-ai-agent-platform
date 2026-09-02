@@ -1,0 +1,43 @@
+from pathlib import Path
+
+import pytest
+
+
+pytestmark = pytest.mark.no_infrastructure
+
+ROOT = Path(__file__).parents[1]
+
+
+def test_mysql_platform_mcp_migration_creates_oauth_and_audit_tables_and_permissions():
+    sql = (ROOT / "db-prod/V137-create_platform_mcp_oauth.sql").read_text(encoding="utf-8")
+
+    for table in (
+        "sys_mcp_oauth_clients",
+        "sys_mcp_oauth_grants",
+        "sys_mcp_oauth_authorization_codes",
+        "sys_mcp_oauth_access_tokens",
+        "sys_mcp_oauth_refresh_tokens",
+        "sys_mcp_inbound_audit_logs",
+    ):
+        assert f"CREATE TABLE IF NOT EXISTS {table}" in sql
+    assert "platform_enabled" in sql
+    assert "menu:mcp_service" in sql
+    assert "client_secret_hash" in sql
+    assert "WHERE NOT EXISTS" in sql
+    assert sql.count(" COMMENT '") >= 80
+    assert "CREATE TABLE IF NOT EXISTS sys_mcp_platform_config" in sql
+    assert "INSERT IGNORE INTO sys_mcp_platform_config (id) VALUES (1)" in sql
+    assert "INSERT IGNORE INTO system_configs" not in sql
+
+
+def test_postgresql_platform_mcp_migration_matches_mysql_contract():
+    sql = (ROOT / "db-prod-pg/V38-create_platform_mcp_oauth.sql").read_text(encoding="utf-8")
+
+    assert "WHERE NOT EXISTS" in sql
+    assert "sys_mcp_oauth_clients" in sql
+    assert "sys_mcp_inbound_audit_logs" in sql
+    assert "element:mcp_service:client:secret_reset" in sql
+    assert sql.count("COMMENT ON COLUMN") >= 80
+    assert "CREATE TABLE IF NOT EXISTS sys_mcp_platform_config" in sql
+    assert "ON CONFLICT (id) DO NOTHING" in sql
+    assert "INSERT INTO system_configs" not in sql
