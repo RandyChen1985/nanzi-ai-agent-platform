@@ -79,13 +79,14 @@ def test_audit_filters_are_collapsed_by_default_and_use_one_dynamic_row():
     assert "展开筛选" in view
     assert "收起筛选" in view
     assert 'v-if="showAuditFilters"' in view
+    assert "overflow-x-auto" in view
     assert "flex-nowrap" in view
     assert "auditFilterOptions" in view
     assert "selectedAuditFilter" in view
     assert "selectedAuditFilterValue" in view
     assert "过滤对象" in view
     assert "过滤值" in view
-    assert 'mt-3 flex flex-nowrap items-end gap-3 overflow-x-auto pb-1' not in view
+    assert 'class="mt-3 space-y-3"' in view
 
 
 def test_client_delete_requires_confirmation_and_keeps_audit_history():
@@ -113,9 +114,56 @@ def test_client_card_shows_last_token_issue_time_and_method():
     view = (ROOT / "frontend/src/views/McpServiceDesk.vue").read_text(encoding="utf-8")
 
     assert "尚未生成 Access Token" in view
-    assert "最后生成 Token" in view
+    assert "最近签发" in view
     assert "OAuth 用户授权" in view
     assert "服务台手动生成" in view
+
+
+def test_service_desk_exposes_token_management_client_filters_and_audit_export():
+    view = (ROOT / "frontend/src/views/McpServiceDesk.vue").read_text(encoding="utf-8")
+
+    assert "Token 管理" in view
+    assert "撤销" in view
+    assert "clientSearch" in view
+    assert "clientStatus" in view
+    assert "导出 CSV" in view
+    assert "securityAlert" in view
+    assert "调用限流" in view
+
+
+def test_audit_trend_bars_have_explicit_height_and_render_pixels():
+    view = (ROOT / "frontend/src/views/McpServiceDesk.vue").read_text(encoding="utf-8")
+
+    assert "const trendBarHeight" in view
+    assert "class=\"flex h-20 w-full items-end\"" in view
+    assert "height: trendBarHeight(item.total)" in view
+
+
+def test_client_cards_prioritize_primary_action_and_collapse_low_frequency_actions():
+    view = (ROOT / "frontend/src/views/McpServiceDesk.vue").read_text(encoding="utf-8")
+
+    assert "clientActionMenuId" in view
+    assert "更多操作" in view
+    assert "有效 Token" in view
+    assert "最近过期" in view
+    assert "管理员视角：查看全部用户的 Client" in view
+    assert "创建第一个 Client" in view
+    assert "md:grid-cols-2" in view
+    assert "expandedClientIds" in view
+    assert "const expandedClientIds = ref<Set<string>>(new Set())" in view
+    assert "收起详情" in view
+    assert "展开详情" in view
+    assert "最近签发" in view
+    assert "有效 Token 数量" in view
+
+
+def test_client_search_filters_are_collapsed_by_default():
+    view = (ROOT / "frontend/src/views/McpServiceDesk.vue").read_text(encoding="utf-8")
+
+    assert "showClientFilters = ref(false)" in view
+    assert "展开筛选" in view
+    assert "收起筛选" in view
+    assert 'v-if="showClientFilters"' in view
 
 
 def test_service_desk_uses_the_same_dashboard_spacing_and_background_as_mcp_toolkit():

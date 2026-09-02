@@ -18,6 +18,8 @@ class McpPlatformConfig(Base):
     conversation_enabled = Column(Boolean, nullable=False, default=False, comment="会话能力组开关")
     knowledge_enabled = Column(Boolean, nullable=False, default=False, comment="知识库能力组开关")
     metadata_enabled = Column(Boolean, nullable=False, default=False, comment="元数据能力组开关")
+    rate_limit_client_per_minute = Column(Integer, nullable=False, default=120, comment="单个 Client 每分钟调用上限，0 表示关闭")
+    rate_limit_user_per_minute = Column(Integer, nullable=False, default=60, comment="单个用户每分钟调用上限，0 表示关闭")
     created_by = Column(String(64), nullable=True, comment="首次创建人用户 ID")
     updated_by = Column(String(64), nullable=True, comment="最后修改人用户 ID")
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow, comment="创建时间")

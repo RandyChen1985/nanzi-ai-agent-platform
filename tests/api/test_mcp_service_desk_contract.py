@@ -255,6 +255,29 @@ def test_client_list_exposes_last_token_issue_metadata_without_token_value():
     assert '"access_token"' not in source[source.index("def _serialize_client"):source.index("@router.get(\"/overview\")")]
 
 
+def test_service_desk_exposes_token_lifecycle_and_client_query_endpoints():
+    source = Path("app/api/portal/endpoints/mcp_service.py").read_text(encoding="utf-8")
+
+    assert '"/clients/{client_id}/tokens"' in source
+    assert '"/clients/{client_id}/tokens/{token_id}/revoke"' in source
+    assert "token_id" in source
+    assert "revoked_at" in source
+    assert "client_name" in source
+    assert "created_by" in source
+    assert "active_token_count" in source
+    assert "latest_token_expires_at" in source
+
+
+def test_service_desk_exposes_audit_export_and_rate_limit_config():
+    source = Path("app/api/portal/endpoints/mcp_service.py").read_text(encoding="utf-8")
+    model = Path("app/models/platform_mcp.py").read_text(encoding="utf-8")
+
+    assert '"/audit/export"' in source
+    assert "text/csv" in source
+    assert "rate_limit_client_per_minute" in model
+    assert "rate_limit_user_per_minute" in model
+
+
 def test_client_registration_requires_user_authorization_code():
     with pytest.raises(ValueError, match="不支持"):
         mcp_service.McpOAuthClientCreate(

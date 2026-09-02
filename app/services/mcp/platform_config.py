@@ -18,6 +18,8 @@ MCP_PLATFORM_CONFIG_FIELDS = (
     "conversation_enabled",
     "knowledge_enabled",
     "metadata_enabled",
+    "rate_limit_client_per_minute",
+    "rate_limit_user_per_minute",
 )
 
 
@@ -52,7 +54,11 @@ class PlatformMcpConfigService:
     @staticmethod
     def to_dict(config: McpPlatformConfig | None) -> dict[str, Any]:
         return {
-            field_name: bool(getattr(config, field_name, False)) if config else False
+            field_name: (
+                int(getattr(config, field_name, 0) or 0)
+                if field_name.startswith("rate_limit_")
+                else bool(getattr(config, field_name, False))
+            ) if config else (0 if field_name.startswith("rate_limit_") else False)
             for field_name in MCP_PLATFORM_CONFIG_FIELDS
         }
 

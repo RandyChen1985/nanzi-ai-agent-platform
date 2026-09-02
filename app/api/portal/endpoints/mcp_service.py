@@ -5,10 +5,13 @@
 
 from __future__ import annotations
 
+import csv
+import io
 from datetime import datetime, timedelta
 from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -120,6 +123,8 @@ class McpServiceConfigUpdate(BaseModel):
     conversation_enabled: bool | None = None
     knowledge_enabled: bool | None = None
     metadata_enabled: bool | None = None
+    rate_limit_client_per_minute: int | None = Field(default=None, ge=0, le=100000)
+    rate_limit_user_per_minute: int | None = Field(default=None, ge=0, le=100000)
 
 
 class McpOAuthClientCreate(BaseModel):
@@ -243,6 +248,8 @@ def _serialize_client(
     owner_real_name: str | None = None,
     last_token_issued_at: datetime | None = None,
     last_token_issue_method: str | None = None,
+    active_token_count: int = 0,
+    latest_token_expires_at: datetime | None = None,
 ) -> dict[str, Any]:
     return {
         "id": client.id,
@@ -261,6 +268,8 @@ def _serialize_client(
         "has_issued_token": last_token_issued_at is not None,
         "last_token_issued_at": last_token_issued_at.isoformat() if last_token_issued_at else None,
         "last_token_issue_method": last_token_issue_method,
+        "active_token_count": active_token_count,
+        "latest_token_expires_at": latest_token_expires_at.isoformat() if latest_token_expires_at else None,
         "created_at": client.created_at.isoformat() if client.created_at else None,
         "updated_at": client.updated_at.isoformat() if client.updated_at else None,
         "disabled_at": client.disabled_at.isoformat() if client.disabled_at else None,
@@ -309,6 +318,21 @@ def _serialize_security_audit(log: McpOAuthSecurityAuditLog) -> dict[str, Any]:
         "error_code": log.error_code,
         "details": log.details or {},
         "created_at": log.created_at.isoformat() if log.created_at else None,
+    }
+
+
+def _serialize_token(token: McpOAuthAccessToken) -> dict[str, Any]:
+    return {
+        "id": token.id,
+        "client_id": token.client_id,
+        "user_id": token.user_id,
+        "scopes": list(token.scopes or []),
+        "scope_version": int(token.scope_version or 1),
+        "issue_method": "oauth_authorization" if token.grant_id else "manual_user_token",
+        "issued_at": token.issued_at.isoformat() if token.issued_at else None,
+        "expires_at": token.expires_at.isoformat() if token.expires_at else None,
+        "revoked_at": token.revoked_at.isoformat() if token.revoked_at else None,
+        "status": "revoked" if token.revoked_at else ("expired" if token.expires_at <= datetime.utcnow() else "active"),
     }
 
 
@@ -388,6 +412,18 @@ async def audit_summary(
         )
         or 0
     )
+    failed_calls = int(
+        await db.scalar(
+            select(func.count()).select_from(McpInboundAuditLog)
+            .where(*filters, McpInboundAuditLog.result_status == "failed")
+        ) or 0
+    )
+    denied_calls = int(
+        await db.scalar(
+            select(func.count()).select_from(McpInboundAuditLog)
+            .where(*filters, McpInboundAuditLog.result_status == "denied")
+        ) or 0
+    )
     average_latency = await db.scalar(
         select(func.avg(McpInboundAuditLog.latency_ms)).where(
             *filters, McpInboundAuditLog.latency_ms.is_not(None)
@@ -416,6 +452,8 @@ async def audit_summary(
         "total_calls": total_calls,
         "success_rate": round(completed_calls / total_calls * 100, 2) if total_calls else 0,
         "failed_or_denied": failed_or_denied,
+        "failed_calls": failed_calls,
+        "denied_calls": denied_calls,
         "average_latency_ms": round(float(average_latency), 2) if average_latency is not None else None,
         "p95_latency_ms": int(p95_latency) if p95_latency is not None else None,
     }
@@ -495,6 +533,55 @@ async def list_audit(
     }
 
 
+@router.get("/audit/export")
+async def export_audit(
+    start_at: datetime | None = Query(default=None),
+    end_at: datetime | None = Query(default=None),
+    user: dict = Depends(require_mcp_service_permission("element:mcp_service:audit:read")),
+    db: AsyncSession = Depends(get_db_session),
+) -> StreamingResponse:
+    """导出当前可见范围内的脱敏调用审计 CSV。"""
+    if start_at and end_at and start_at > end_at:
+        raise HTTPException(status_code=400, detail="start_at 不能晚于 end_at")
+    filters = []
+    if user.get("role") != "admin":
+        filters.append(McpInboundAuditLog.user_id == _current_user_id(user))
+    if start_at:
+        filters.append(McpInboundAuditLog.created_at >= start_at)
+    if end_at:
+        filters.append(McpInboundAuditLog.created_at <= end_at)
+    rows = (
+        await db.execute(
+            select(McpInboundAuditLog)
+            .where(*filters)
+            .order_by(McpInboundAuditLog.created_at.desc())
+            .limit(10000)
+        )
+    ).scalars().all()
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["时间", "请求 ID", "Client ID", "用户 ID", "方法", "认证方式", "状态", "状态码", "耗时(ms)", "错误码"])
+    for row in rows:
+        writer.writerow([
+            row.created_at.isoformat() if row.created_at else "",
+            row.request_id,
+            row.client_id,
+            row.user_id or "",
+            row.method_name,
+            row.auth_type,
+            row.result_status,
+            row.status_code,
+            row.latency_ms if row.latency_ms is not None else "",
+            row.error_code or "",
+        ])
+    content = "\ufeff" + output.getvalue()
+    return StreamingResponse(
+        iter([content]),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": "attachment; filename=mcp-audit.csv"},
+    )
+
+
 @router.get("/audit/security")
 async def list_security_audit(
     page: int = Query(default=1, ge=1),
@@ -570,6 +657,34 @@ async def audit_trend(
     }
 
 
+@router.get("/audit/security/alerts")
+async def security_audit_alerts(
+    user: dict = Depends(require_mcp_service_permission("element:mcp_service:audit:read")),
+    db: AsyncSession = Depends(get_db_session),
+) -> dict[str, Any]:
+    """返回最近安全异常的轻量告警摘要，避免引入额外告警表。"""
+    filters = [
+        McpOAuthSecurityAuditLog.created_at >= datetime.utcnow() - timedelta(minutes=15),
+        McpOAuthSecurityAuditLog.result_status.in_(["failed", "denied"]),
+    ]
+    if user.get("role") != "admin":
+        filters.append(McpOAuthSecurityAuditLog.user_id == _current_user_id(user))
+    recent_count = int(await db.scalar(select(func.count()).select_from(McpOAuthSecurityAuditLog).where(*filters)) or 0)
+    rate_limited_count = int(
+        await db.scalar(
+            select(func.count()).select_from(McpOAuthSecurityAuditLog)
+            .where(*filters, McpOAuthSecurityAuditLog.event_type == "mcp_rate_limited")
+        ) or 0
+    )
+    return {
+        "window_minutes": 15,
+        "recent_failure_count": recent_count,
+        "rate_limited_count": rate_limited_count,
+        "alert": recent_count >= 5 or rate_limited_count >= 3,
+        "message": "最近 15 分钟安全异常较多，请检查 OAuth 审计日志。" if recent_count >= 5 else None,
+    }
+
+
 @router.patch("/config")
 async def update_config(
     payload: McpServiceConfigUpdate,
@@ -582,8 +697,13 @@ async def update_config(
         "conversation_enabled",
         "knowledge_enabled",
         "metadata_enabled",
+        "rate_limit_client_per_minute",
+        "rate_limit_user_per_minute",
     )
-    if payload.platform_enabled is not None:
+    if payload.platform_enabled is not None or any(
+        getattr(payload, field_name) is not None
+        for field_name in ("rate_limit_client_per_minute", "rate_limit_user_per_minute")
+    ):
         await _require_element_permission(user, db, "element:mcp_service:config:edit")
     if any(
         getattr(payload, field_name) is not None
@@ -622,23 +742,41 @@ async def update_config(
 
 @router.get("/clients")
 async def list_clients(
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=100),
+    search: str | None = Query(default=None, max_length=200),
+    status: str | None = Query(default=None, pattern="^(active|disabled)$"),
     user: dict = Depends(require_mcp_service_permission("element:mcp_service:client:read")),
     db: AsyncSession = Depends(get_db_session),
-) -> list[dict[str, Any]]:
+) -> dict[str, Any]:
     current_user_id = _current_user_id(user)
+    filters = [McpOAuthClient.status != "deleted"]
+    if user.get("role") != "admin":
+        filters.append(McpOAuthClient.created_by == current_user_id)
+    if search and search.strip():
+        keyword = f"%{search.strip()}%"
+        filters.append(
+            McpOAuthClient.client_name.ilike(keyword)
+            | McpOAuthClient.client_id.ilike(keyword)
+            | McpOAuthClient.created_by.ilike(keyword)
+        )
+    if status:
+        filters.append(McpOAuthClient.status == status)
+    total = int(await db.scalar(select(func.count()).select_from(McpOAuthClient).where(*filters)) or 0)
     rows = (
         await db.execute(
             select(McpOAuthClient)
-            .where(
-                McpOAuthClient.status != "deleted",
-                *([] if user.get("role") == "admin" else [McpOAuthClient.created_by == current_user_id]),
-            )
+            .where(*filters)
             .order_by(McpOAuthClient.created_at.desc())
+            .offset((page - 1) * page_size)
+            .limit(page_size)
         )
     ).scalars().all()
     client_ids = [row.client_id for row in rows]
     current_scope_tokens: set[tuple[str, int]] = set()
     latest_tokens: dict[str, McpOAuthAccessToken] = {}
+    active_token_counts: dict[str, int] = {}
+    latest_token_expiries: dict[str, datetime] = {}
     if client_ids:
         token_rows = (
             await db.execute(
@@ -668,12 +806,18 @@ async def list_clients(
             row.client_id: row
             for row in reversed(all_token_rows)
         }
+        now = datetime.utcnow()
+        for token in all_token_rows:
+            if token.revoked_at is None and token.expires_at > now:
+                active_token_counts[token.client_id] = active_token_counts.get(token.client_id, 0) + 1
+            if token.expires_at and token.client_id not in latest_token_expiries:
+                latest_token_expiries[token.client_id] = token.expires_at
     owner_ids = {int(row.created_by) for row in rows if str(row.created_by or "").isdigit()}
     owner_rows = (
         await db.execute(select(User).where(User.id.in_(owner_ids)))
     ).scalars().all() if owner_ids else []
     owners = {str(owner.id): owner for owner in owner_rows}
-    return [
+    items = [
         _serialize_client(
             row,
             needs_token_regeneration=(
@@ -686,9 +830,70 @@ async def list_clients(
             last_token_issue_method=(
                 "oauth_authorization" if latest_tokens.get(row.client_id).grant_id else "manual_user_token"
             ) if latest_tokens.get(row.client_id) else None,
+            active_token_count=active_token_counts.get(row.client_id, 0),
+            latest_token_expires_at=latest_token_expiries.get(row.client_id),
         )
         for row in rows
     ]
+    return {"items": items, "page": page, "page_size": page_size, "total": total, "has_more": page * page_size < total}
+
+
+@router.get("/clients/{client_id}/tokens")
+async def list_client_tokens(
+    client_id: str,
+    include_revoked: bool = Query(default=True),
+    user: dict = Depends(require_mcp_service_permission("element:mcp_service:client:read")),
+    db: AsyncSession = Depends(get_db_session),
+) -> list[dict[str, Any]]:
+    client = await _get_owned_client(db, client_id, user)
+    if client is None:
+        raise HTTPException(status_code=404, detail="OAuth Client 不存在")
+    filters = [McpOAuthAccessToken.client_id == client_id]
+    if not include_revoked:
+        filters.extend((McpOAuthAccessToken.revoked_at.is_(None), McpOAuthAccessToken.expires_at > datetime.utcnow()))
+    rows = (
+        await db.execute(
+            select(McpOAuthAccessToken)
+            .where(*filters)
+            .order_by(McpOAuthAccessToken.issued_at.desc())
+            .limit(100)
+        )
+    ).scalars().all()
+    return [_serialize_token(row) for row in rows]
+
+
+@router.post("/clients/{client_id}/tokens/{token_id}/revoke")
+async def revoke_client_token(
+    client_id: str,
+    token_id: str,
+    user: dict = Depends(require_mcp_service_permission("element:mcp_service:client:token_issue")),
+    db: AsyncSession = Depends(get_db_session),
+) -> dict[str, str]:
+    client = await _get_owned_client(db, client_id, user)
+    if client is None:
+        raise HTTPException(status_code=404, detail="OAuth Client 不存在")
+    token = (
+        await db.execute(
+            select(McpOAuthAccessToken).where(
+                McpOAuthAccessToken.id == token_id,
+                McpOAuthAccessToken.client_id == client_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if token is None:
+        raise HTTPException(status_code=404, detail="Access Token 不存在")
+    if token.revoked_at is None:
+        token.revoked_at = datetime.utcnow()
+        await db.commit()
+        await write_security_audit(
+            db,
+            event_type="oauth_access_token_revoked_by_admin",
+            client_id=client_id,
+            user_id=token.user_id,
+            actor_user_id=_current_user_id(user),
+        )
+        await db.commit()
+    return {"token_id": token.id, "status": "revoked"}
 
 
 @router.post("/clients", status_code=201)

@@ -81,7 +81,15 @@ async def check_platform_mcp_rate_limit(principal: McpPrincipal) -> None:
     """按 Client 和用户分别执行一分钟固定窗口限流；Redis 不可用时不阻断业务。"""
     client_limit = int(settings.MCP_RATE_LIMIT_CLIENT_PER_MINUTE)
     user_limit = int(settings.MCP_RATE_LIMIT_USER_PER_MINUTE)
-    if client_limit <= 0 or user_limit <= 0:
+    try:
+        async with AsyncSessionLocal() as db:
+            config = await PlatformMcpConfigService.get(db)
+        if config is not None:
+            client_limit = int(config.rate_limit_client_per_minute or 0)
+            user_limit = int(config.rate_limit_user_per_minute or 0)
+    except Exception as exc:
+        logger.warning("MCP rate-limit config lookup failed, using environment defaults: %s", exc)
+    if client_limit <= 0 and user_limit <= 0:
         return
     client_redis = await redis.get_redis()
     if client_redis is None:
@@ -91,6 +99,8 @@ async def check_platform_mcp_rate_limit(principal: McpPrincipal) -> None:
         (f"client:{principal.client_id}", client_limit),
         (f"user:{principal.user_id or 'anonymous'}", user_limit),
     ):
+        if limit <= 0:
+            continue
         key = f"mcp_rate_limit:{identity}:{window}"
         current = await client_redis.incr(key)
         if current == 1:

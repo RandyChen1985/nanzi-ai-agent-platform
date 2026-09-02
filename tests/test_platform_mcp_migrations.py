@@ -57,6 +57,16 @@ def test_security_audit_migrations_create_oauth_event_table():
     assert "INSERT INTO system_configs" not in sql
 
 
+def test_rate_limit_migrations_add_configured_limits_with_comments():
+    mysql_sql = (ROOT / "db-prod/V142-add_mcp_rate_limit_config.sql").read_text(encoding="utf-8")
+    pg_sql = (ROOT / "db-prod-pg/V43-add_mcp_rate_limit_config.sql").read_text(encoding="utf-8")
+
+    for sql in (mysql_sql, pg_sql):
+        assert "rate_limit_client_per_minute" in sql
+        assert "rate_limit_user_per_minute" in sql
+        assert "每分钟调用上限" in sql
+
+
 def test_user_token_permission_is_seeded_by_follow_up_migrations():
     mysql = (ROOT / "db-prod/V138-add_mcp_user_access_token_permission.sql").read_text(encoding="utf-8")
     postgres = (ROOT / "db-prod-pg/V39-add_mcp_user_access_token_permission.sql").read_text(encoding="utf-8")
