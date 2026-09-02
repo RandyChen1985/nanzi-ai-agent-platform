@@ -66,6 +66,36 @@ def test_split_sql_skips_database_switching_statements():
     ]
 
 
+def test_split_sql_keeps_prepared_conditional_ddl_in_one_statement():
+    module = load_apply_sql_module()
+
+    statements = module.split_sql_statements(
+        """
+        SET @v71_sql = IF(1 = 1, 'ALTER TABLE t DROP PRIMARY KEY', 'SELECT 1');
+        PREPARE v71_stmt FROM @v71_sql;
+        EXECUTE v71_stmt;
+        DEALLOCATE PREPARE v71_stmt;
+        """
+    )
+
+    assert len(statements) == 1
+    assert "SET @v71_sql" in statements[0]
+    assert "PREPARE v71_stmt" in statements[0]
+    assert "DEALLOCATE PREPARE v71_stmt" in statements[0]
+
+
+def test_v71_uses_conditional_same_session_blocks_for_each_schema_change():
+    module = load_apply_sql_module()
+    sql_path = Path(__file__).resolve().parents[1] / "db-prod" / "V71-add_audit_log_partitions.sql"
+
+    statements = module.split_sql_statements(sql_path.read_text(encoding="utf-8"))
+
+    assert len(statements) == 13
+    assert all("PREPARE v71_stmt" in statement for statement in statements[:-1])
+    assert all("DEALLOCATE PREPARE v71_stmt" in statement for statement in statements[:-1])
+    assert "INSERT IGNORE INTO `system_configs`" in statements[-1]
+
+
 def test_confirmation_rejects_non_yes(monkeypatch, capsys):
     module = load_apply_sql_module()
     config = module.DbConfig(

@@ -7,6 +7,7 @@ import sys
 from dataclasses import dataclass
 
 import aiomysql
+from pymysql.constants import CLIENT
 
 
 DATABASE_SWITCH_RE = re.compile(r"^\s*(CREATE\s+DATABASE\b|USE\b)", re.IGNORECASE)
@@ -145,7 +146,34 @@ def split_sql_statements(sql_content):
             if not DATABASE_SWITCH_RE.match(clean_stmt):
                 statements.append(clean_stmt)
                 
-    return statements
+    # 条件 DDL 需要把 SET 用户变量、PREPARE、EXECUTE、DEALLOCATE 保持在同一
+    # 个 MySQL 会话中；否则每条语句单独执行时，后续 PREPARE 看不到变量。
+    merged_statements = []
+    prepared_block = []
+    for statement_index, statement in enumerate(statements):
+        normalized = statement.lstrip().upper()
+        if prepared_block:
+            prepared_block.append(statement)
+            if normalized.startswith("DEALLOCATE PREPARE"):
+                merged_statements.append(";\n".join(prepared_block))
+                prepared_block = []
+            continue
+
+        if normalized.startswith("SET @"):
+            # 仅在后续确实紧跟 PREPARE 时进入块，普通 SET @ 仍保持原行为。
+            if statement_index + 1 < len(statements) and statements[
+                statement_index + 1
+            ].lstrip().upper().startswith("PREPARE "):
+                prepared_block = [statement]
+                continue
+
+        merged_statements.append(statement)
+
+    if prepared_block:
+        # 让缺少 DEALLOCATE 的 SQL 继续按原语句执行并由 MySQL 返回明确错误。
+        merged_statements.extend(prepared_block)
+
+    return merged_statements
 
 
 def confirm_execution(config, file_path):
@@ -236,6 +264,7 @@ async def apply_sql(file_path, config):
             password=config.password,
             db=config.database,
             autocommit=True,
+            client_flag=CLIENT.MULTI_STATEMENTS,
         )
     except Exception as e:
         print(f"❌ Connection to '{config.database}' failed: {e}")
@@ -258,7 +287,12 @@ async def apply_sql(file_path, config):
                 for i, stmt in enumerate(statements):
                     try:
                         await cur.execute(stmt)
-                        print(f"   -> Affected rows: {cur.rowcount}")
+                        affected_rows = cur.rowcount
+                        # MULTI_STATEMENTS 会为 PREPARE/EXECUTE/DEALLOCATE 产生多个
+                        # protocol result；必须消费完，否则下一条 SQL 会遇到未读结果。
+                        while await cur.nextset():
+                            pass
+                        print(f"   -> Affected rows: {affected_rows}")
                     except Exception as sqle:
                         err_code = getattr(sqle, "args", [0])[0]
                         if err_code in (1007, 1050, 1054, 1060, 1061, 1062, 1091):

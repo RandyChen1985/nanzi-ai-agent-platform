@@ -86,10 +86,7 @@ echo "  Host     : $PG_HOST"
 echo "  Port     : $PG_PORT"
 echo "  User     : $PG_USER"
 echo "  Database : $PG_DATABASE"
-echo "  SQL files:"
-for sql_file in "${SQL_FILES[@]}"; do
-    echo "    - $sql_file"
-done
+echo "  SQL files : 本次共 ${#SQL_FILES[@]} 个脚本需要导入"
 echo "  Password : ******"
 read -r -p "确认无误请输入 YES 继续执行：" CONFIRM_INPUT
 case "$CONFIRM_INPUT" in
@@ -109,11 +106,13 @@ COMMON_ARGS=(
     --yes
 )
 
-for sql_file in "${SQL_FILES[@]}"; do
+for ((index = 0; index < ${#SQL_FILES[@]}; index++)); do
+    sql_file="${SQL_FILES[$index]}"
+    script_number=$((index + 1))
     echo "---------------------------------------------------"
-    echo "🚀 Applying $sql_file..."
+    echo "🚀 正在导入第 ${script_number}/${#SQL_FILES[@]} 个脚本..."
     if ! "$PYTHON_BIN" "$SCRIPT_DIR/apply_sql.py" "$sql_file" "${COMMON_ARGS[@]}"; then
-        echo "❌ Failed to apply $sql_file" >&2
+        echo "❌ 导入失败：$(basename "$sql_file")" >&2
         exit 1
     fi
 done
