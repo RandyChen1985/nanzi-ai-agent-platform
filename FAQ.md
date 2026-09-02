@@ -41,6 +41,7 @@
     - [3.4.4 MCP 三步向导与同一服务地址多命名空间注册规范](#344-mcp-三步向导与同一服务地址多命名空间注册规范)
     - [3.4.5 自有 MCP 如何接收和使用 NanZi 用户身份](#345-自有-mcp-如何接收和使用-nanzi-用户身份)
     - [3.4.6 如何使用 MCP Echo 测试服务验证真实调用链路](#346-如何使用-mcp-echo-测试服务验证真实调用链路)
+    - [3.4.7 NanZi 平台级 MCP 如何对外提供服务](#347-nanzi-平台级-mcp-如何对外提供服务)
   - [3.5 平台全量工具矩阵与功能清单 (Platform Tool Registry & Built-in Matrix)](#35-平台全量工具矩阵与功能清单-platform-tool-registry--built-in-matrix)
   - [3.6 平台多级记忆系统与上下文管理专题 (Memory & Context Architecture)](#36-平台多级记忆系统与上下文管理专题-memory--context-architecture)
     - [3.6.1 四大多级记忆机制深度剖析 (会话记忆 / 溢出压缩 / 每日摘要 / 长期向量记忆)](#361-四大多级记忆机制深度剖析)
@@ -1363,6 +1364,29 @@ NanZi 登录用户
 | `request_context` | 签名请求 ID 与 Header 收到状态 |
 
 Echo 不会返回原始 Bearer Token、完整 JWS、私钥或 `jti`，只会返回中间为 `***` 的脱敏样例和 `processing_log`。浏览器也无法直接查看后端发往 MCP 的 Header，应以 Echo 返回的 `user_assertion_received`、`user_assertion_valid`、`verified_user_id` 和 `request_context.request_id` 作为验证依据。详细步骤见：[MCP Echo 测试服务使用说明](docs/md/mcp_echo_test_server.md)。
+
+#### 3.4.7 NanZi 平台级 MCP 如何对外提供服务
+
+NanZi 对外提供的是一个统一的 **NanZi Platform MCP**，智能体、会话和元数据都作为同一个 MCP 服务下的方法组，不拆成多个独立 Server：
+
+| 方法组 | 示例方法 | 用途 |
+| --- | --- | --- |
+| `agent.*` | `agent.list_allowed`、`agent.invoke` | 查询当前用户可用智能体并发起调用；Client Credentials 只能列出白名单内系统智能体 |
+| `conversation.*` | `conversation.continue` | 在用户授权范围内继续自己的会话 |
+| `knowledge.*` | `knowledge.search` | 在授权知识库范围内检索文档内容 |
+| `metadata.*` | `metadata.list_datasets`、`metadata.search`、`metadata.get_dataset`、`metadata.get_schema`、`metadata.get_metrics` | 查询受权限控制的数据集、表、字段和指标元数据 |
+
+第一期已接入上述方法，只支持能安全保存 `client_secret` 的 **Confidential Client**，采用 OAuth2 标准授权（完整 OIDC 的 ID Token/JWKS 作为后续扩展）：
+
+1. 外部系统由拥有 `element:mcp_service:client:manage` 权限的用户在【MCP 服务台】中注册，获得 `client_id` 和只展示一次的 `client_secret`。
+2. 用户代表外部系统访问时，外部系统跳转 NanZi 授权页；用户复用当前 NanZi 登录会话并确认授权。
+3. 外部系统用 Authorization Code + PKCE 换取 OAuth2 Access Token；不应把 NanZi 用户 API Key 或 OIDC ID Token 当作 MCP Bearer Token。
+4. 外部系统请求 `https://<NanZi 域名>/mcp/platform`，每次携带 `Authorization: Bearer <access_token>`。
+5. NanZi 服务端验证 opaque Token 摘要、Resource/Audience、Scope、Client 状态和用户授权关系，再按用户权限执行具体 MCP 方法。
+
+管理权限采用三层开关：Platform MCP 总开关、能力组开关、Client 独立开关。三层任一关闭，调用都会被拒绝或对应方法不再发布；关闭对外服务不会影响 NanZi 作为 MCP Client 调用外部业务 MCP。
+
+MCP 服务台入口和完整的端点、Token、数据表、审计、错误码与验收方案见：[NanZi 平台级 MCP 对外服务技术方案](architech/design/mcp-platform-inbound-service-design.md)。
 
 ---
 

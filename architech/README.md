@@ -19,6 +19,7 @@
 | [CHAT_BI_DESIGN.md](./design/CHAT_BI_DESIGN.md) | ChatBI |
 | [redis_key_design.md](./design/redis_key_design.md) | Redis Key |
 | [mcp-business-integration-authentication-design.md](./design/mcp-business-integration-authentication-design.md) | MCP 业务集成认证、用户身份透传与 Echo 联调测试服务 |
+| [mcp-platform-inbound-service-design.md](./design/mcp-platform-inbound-service-design.md) | NanZi 平台级 MCP 对外服务、OAuth2 授权、管理页与元数据方法方案 |
 
 ## 集成与契约（`docs/md/`）
 
