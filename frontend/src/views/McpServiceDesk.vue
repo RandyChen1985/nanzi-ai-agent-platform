@@ -11,6 +11,8 @@ type Client = {
   status: 'active' | 'disabled' | 'deleted'
   allowed_grant_types: string[]
   allowed_scopes: string[]
+  scope_version: number
+  needs_token_regeneration?: boolean
   redirect_uris: string[]
   client_secret?: string | null
 }
@@ -64,10 +66,15 @@ const oneTimeAccessToken = ref('')
 const accessTokenInfo = ref<Record<string, any>>({})
 const tokenWizardStep = ref<1 | 2>(1)
 const clientDetails = ref<Client | null>(null)
+const showClientScopeEdit = ref(false)
+const clientScopeEditTarget = ref<Client | null>(null)
 const copied = ref('')
 const tokenForm = reactive({
   scopes: [] as string[],
   expires_in: 3600,
+})
+const clientScopeEditForm = reactive({
+  scopes: [] as string[],
 })
 const auditFilters = reactive({
   client_id: '',
@@ -126,7 +133,7 @@ const tokenExpiryOptions = [
   [3600, '1 小时'],
   [28800, '8 小时'],
   [86400, '1 天'],
-  [604800, '7 天'],
+  [2592000, '30 天'],
 ] as const
 
 const scopeSummary = (client: Client) => {
@@ -138,6 +145,20 @@ const scopeSummary = (client: Client) => {
 
 const openClientDetails = (client: Client) => {
   clientDetails.value = client
+}
+
+const openClientScopeEdit = (client: Client) => {
+  if (!canManageClient.value || client.status === 'deleted') return
+  clientScopeEditTarget.value = client
+  clientScopeEditForm.scopes = [...client.allowed_scopes]
+  showClientScopeEdit.value = true
+}
+
+const closeClientScopeEdit = (force = false) => {
+  if (saving.value && !force) return
+  showClientScopeEdit.value = false
+  clientScopeEditTarget.value = null
+  clientScopeEditForm.scopes = []
 }
 
 const canEditConfig = computed(() => hasPermission('element:mcp_service:config:edit'))
@@ -406,6 +427,7 @@ const issueCurrentUserToken = async () => {
     )
     oneTimeAccessToken.value = response.data.access_token || ''
     accessTokenInfo.value = response.data || {}
+    await loadClients()
     tokenWizardStep.value = 2
   } catch (err: any) {
     error.value = err?.response?.data?.detail || '当前用户 Token 生成失败'
@@ -456,6 +478,24 @@ const createClient = async () => {
     await loadClients()
   } catch (err: any) {
     error.value = err?.response?.data?.detail || 'Client 创建失败'
+  } finally {
+    saving.value = false
+  }
+}
+
+const saveClientScopes = async () => {
+  const client = clientScopeEditTarget.value
+  if (!client || !clientScopeEditForm.scopes.length || saving.value) return
+  saving.value = true
+  error.value = ''
+  try {
+    await api.patch(`/api/portal/mcp-service/clients/${encodeURIComponent(client.client_id)}`, {
+      allowed_scopes: clientScopeEditForm.scopes,
+    })
+    await loadClients()
+    closeClientScopeEdit(true)
+  } catch (err: any) {
+    error.value = err?.response?.data?.detail || 'Client Scope 更新失败'
   } finally {
     saving.value = false
   }
@@ -773,9 +813,6 @@ onMounted(load)
             <button v-if="canManageClient" type="button" class="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-bold text-white hover:bg-indigo-700" @click="showCreate = true">创建 Client</button>
           </div>
         </div>
-        <div class="mb-4 rounded-xl border border-blue-100 bg-blue-50 p-4 text-sm leading-6 text-blue-900">
-          <span class="font-bold">人工登录接入：</span>点击某个启用 Client 的“生成 MCP Access Token”，生成的 Token 只代表当前登录用户；管理员生成的是管理员身份，demo 用户生成的是 demo 身份。
-        </div>
         <div v-if="!clients.length" class="rounded-xl bg-slate-50 p-8 text-center text-sm text-slate-500">暂无外部 Client</div>
         <div v-else class="space-y-3">
           <div v-for="client in clients" :key="client.client_id" class="rounded-2xl border border-slate-200 p-5 transition-colors hover:border-indigo-200">
@@ -792,10 +829,15 @@ onMounted(load)
               <div class="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-2 xl:justify-end">
                 <span class="rounded-full px-2 py-1 text-xs font-bold" :class="client.status === 'active' ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-500'">{{ client.status === 'active' ? '启用' : '停用' }}</span>
                 <button v-if="canIssueToken" type="button" class="inline-flex shrink-0 items-center justify-center whitespace-nowrap rounded-xl bg-indigo-600 px-3 py-2 text-xs font-bold text-white shadow-sm transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50" :disabled="client.status !== 'active' || !client.allowed_scopes.length" @click="openTokenIssue(client)">生成 MCP Access Token</button>
+                <button v-if="canManageClient" type="button" class="inline-flex shrink-0 items-center justify-center whitespace-nowrap rounded-xl border border-indigo-200 bg-white px-3 py-2 text-xs font-bold text-indigo-700 transition hover:bg-indigo-50" @click="openClientScopeEdit(client)">编辑 Scope</button>
                 <button v-if="canManageClient" type="button" class="text-xs font-bold text-indigo-700" @click="toggleClient(client)">{{ client.status === 'active' ? '停用' : '启用' }}</button>
                 <button v-if="canResetSecret" type="button" class="text-xs font-bold text-amber-700" @click="resetSecret(client)">重置 Secret</button>
                 <button v-if="canManageClient" type="button" class="text-xs font-bold text-rose-700" @click="removeClient(client)">删除</button>
               </div>
+            </div>
+            <div v-if="client.needs_token_regeneration" class="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-900">
+              <div><span class="font-bold">Scope 已变更，请重新生成 MCP Access Token</span><span class="ml-1">原有 Token 已失效，需要使用新 Scope 重新生成。</span></div>
+              <button v-if="canIssueToken" type="button" class="shrink-0 rounded-lg bg-amber-600 px-3 py-1.5 font-bold text-white hover:bg-amber-700 disabled:cursor-not-allowed disabled:opacity-50" :disabled="client.status !== 'active' || !client.allowed_scopes.length" @click="openTokenIssue(client)">立即生成</button>
             </div>
             <div class="mt-4 border-t border-slate-100 pt-4">
               <div class="mb-3 flex items-center gap-2">
@@ -962,6 +1004,59 @@ onMounted(load)
       </div>
 
       <div
+        v-if="showClientScopeEdit && clientScopeEditTarget"
+        class="fixed inset-0 z-50 overflow-y-auto bg-slate-900/50 p-4"
+        @click.self="closeClientScopeEdit"
+      >
+        <div class="flex min-h-full items-center justify-center">
+          <div class="flex max-h-[calc(100vh-2rem)] w-full max-w-2xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
+            <div class="flex shrink-0 items-center justify-between border-b border-slate-100 px-6 py-5">
+              <div>
+                <h2 class="text-xl font-black">编辑 Client Scope</h2>
+                <p class="mt-1 text-xs font-normal text-slate-500">调整这个 Client 可以申请的 MCP 方法范围。</p>
+              </div>
+              <button type="button" class="text-2xl text-slate-400 hover:text-slate-600" aria-label="关闭编辑 Scope 弹框" :disabled="saving" @click="closeClientScopeEdit">×</button>
+            </div>
+
+            <div class="min-h-0 flex-1 overflow-y-auto px-6 py-5">
+              <div class="space-y-4">
+                <div class="rounded-xl bg-slate-50 p-4">
+                  <div class="text-sm font-black text-slate-800">{{ clientScopeEditTarget.client_name }}</div>
+                  <code class="mt-1 block break-all text-xs text-slate-500">{{ clientScopeEditTarget.client_id }}</code>
+                </div>
+                <div>
+                  <div class="flex items-center justify-between gap-3">
+                    <div>
+                      <div class="text-sm font-bold">允许 Scope</div>
+                      <p class="mt-1 text-xs text-slate-500">外部系统只能在这里勾选的 Scope 中申请用户 Token。</p>
+                    </div>
+                    <span class="shrink-0 rounded-full bg-indigo-50 px-2.5 py-1 text-xs font-bold text-indigo-700">{{ clientScopeEditForm.scopes.length }} 项</span>
+                  </div>
+                  <div class="mt-2 max-h-64 overflow-y-auto rounded-xl border border-slate-200 bg-slate-50 p-3">
+                    <div class="grid gap-2 sm:grid-cols-2">
+                      <label v-for="item in scopeOptions" :key="item[0]" class="flex items-start gap-2 rounded-lg bg-white p-3 text-xs font-normal shadow-sm">
+                        <input v-model="clientScopeEditForm.scopes" type="checkbox" :value="item[0]" class="mt-1" />
+                        <span><span class="block font-bold text-slate-700">{{ item[1] }}</span><code class="mt-1 block text-[11px] text-slate-400">{{ item[0] }}</code></span>
+                      </label>
+                    </div>
+                  </div>
+                </div>
+                <div class="rounded-xl border border-amber-200 bg-amber-50 p-4 text-xs leading-5 text-amber-900">
+                  <div class="font-bold">保存后会发生什么？</div>
+                  <p class="mt-1">Scope 变更会让该 Client 已有的 Access Token 和授权关系失效。保存后，外部系统需要重新完成用户授权并获取 Token。</p>
+                </div>
+              </div>
+            </div>
+
+            <div class="flex shrink-0 justify-end gap-3 border-t border-slate-100 bg-white px-6 py-4">
+              <button type="button" class="rounded-xl px-4 py-2 font-bold text-slate-500 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50" :disabled="saving" @click="closeClientScopeEdit">取消</button>
+              <button type="button" class="rounded-xl bg-indigo-600 px-5 py-2 font-bold text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50" :disabled="saving || !clientScopeEditForm.scopes.length" @click="saveClientScopes">{{ saving ? '保存中…' : '保存 Scope' }}</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div
         v-if="showTokenIssue"
         class="fixed inset-0 z-50 overflow-y-auto bg-slate-900/50 p-4"
         @click.self="closeTokenWizard"
@@ -995,7 +1090,7 @@ onMounted(load)
                   <select v-model.number="tokenForm.expires_in" class="mt-2 w-full rounded-xl border border-slate-200 bg-white p-3">
                     <option v-for="item in tokenExpiryOptions" :key="item[0]" :value="item[0]">{{ item[1] }}</option>
                   </select>
-                  <span class="mt-1 block text-xs font-normal text-slate-500">Token 到期后需要重新登录平台并生成；最长 7 天。</span>
+                  <span class="mt-1 block text-xs font-normal text-slate-500">Token 到期后需要重新登录平台并生成；最长 30 天。</span>
                 </label>
                 <div>
                   <div class="flex items-center justify-between gap-3">

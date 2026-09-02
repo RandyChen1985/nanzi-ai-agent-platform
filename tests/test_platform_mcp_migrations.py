@@ -51,3 +51,15 @@ def test_user_token_permission_is_seeded_by_follow_up_migrations():
         assert "element:mcp_service:client:token_issue" in sql
         assert "ai_agent_resource_permissions" in sql
         assert "WHERE NOT EXISTS" in sql
+
+
+def test_scope_version_migration_tracks_client_scope_changes_and_token_issuance():
+    mysql = (ROOT / "db-prod/V139-add_mcp_scope_version.sql").read_text(encoding="utf-8")
+    postgres = (ROOT / "db-prod-pg/V40-add_mcp_scope_version.sql").read_text(encoding="utf-8")
+
+    assert "sys_mcp_oauth_clients" in mysql
+    assert "sys_mcp_oauth_access_tokens" in mysql
+    assert "scope_version" in mysql
+    assert "scope_version" in postgres
+    assert "ADD COLUMN" in mysql
+    assert "ADD COLUMN IF NOT EXISTS" in postgres

@@ -44,7 +44,7 @@ DEFAULT_SCOPES = (
 SUPPORTED_GRANT_TYPES = ("authorization_code", "refresh_token")
 ACCESS_TOKEN_TTL_SECONDS = 3600
 MIN_ACCESS_TOKEN_TTL_SECONDS = 300
-MAX_ACCESS_TOKEN_TTL_SECONDS = 7 * 24 * 3600
+MAX_ACCESS_TOKEN_TTL_SECONDS = 30 * 24 * 3600
 REFRESH_TOKEN_TTL_SECONDS = 30 * 24 * 3600
 AUTHORIZATION_CODE_TTL_SECONDS = 300
 
@@ -257,6 +257,7 @@ class PlatformMcpOAuthService:
             grant_id=grant_id,
             resource=resource,
             scopes=list(scopes),
+            scope_version=int(getattr(client, "scope_version", 1) or 1),
             issued_at=now,
             expires_at=access_expires,
         )

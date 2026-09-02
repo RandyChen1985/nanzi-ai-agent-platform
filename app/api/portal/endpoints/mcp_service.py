@@ -163,7 +163,7 @@ class McpAccessTokenCreate(BaseModel):
     """服务台为当前登录用户签发个人 MCP Access Token 的请求。"""
 
     scopes: list[str] = Field(default_factory=list)
-    expires_in: int = Field(default=3600, ge=300, le=604800)
+    expires_in: int = Field(default=3600, ge=300, le=2592000)
 
     @field_validator("scopes")
     @classmethod
@@ -226,7 +226,11 @@ class McpOAuthClientUpdate(BaseModel):
         return cleaned
 
 
-def _serialize_client(client: McpOAuthClient) -> dict[str, Any]:
+def _serialize_client(
+    client: McpOAuthClient,
+    *,
+    needs_token_regeneration: bool = False,
+) -> dict[str, Any]:
     return {
         "id": client.id,
         "client_id": client.client_id,
@@ -235,6 +239,8 @@ def _serialize_client(client: McpOAuthClient) -> dict[str, Any]:
         "redirect_uris": list(client.redirect_uris or []),
         "allowed_grant_types": list(client.allowed_grant_types or []),
         "allowed_scopes": list(client.allowed_scopes or []),
+        "scope_version": int(client.scope_version or 1),
+        "needs_token_regeneration": needs_token_regeneration,
         "status": client.status,
         "created_by": client.created_by,
         "created_at": client.created_at.isoformat() if client.created_at else None,
@@ -453,7 +459,36 @@ async def list_clients(
             .order_by(McpOAuthClient.created_at.desc())
         )
     ).scalars().all()
-    return [_serialize_client(row) for row in rows]
+    client_ids = [row.client_id for row in rows]
+    current_scope_tokens: set[tuple[str, int]] = set()
+    if client_ids:
+        token_rows = (
+            await db.execute(
+                select(
+                    McpOAuthAccessToken.client_id,
+                    McpOAuthAccessToken.scope_version,
+                ).where(
+                    McpOAuthAccessToken.client_id.in_(client_ids),
+                    McpOAuthAccessToken.user_id == current_user_id,
+                    McpOAuthAccessToken.revoked_at.is_(None),
+                    McpOAuthAccessToken.expires_at > datetime.utcnow(),
+                )
+            )
+        ).all()
+        current_scope_tokens = {
+            (client_id, int(scope_version or 1))
+            for client_id, scope_version in token_rows
+        }
+    return [
+        _serialize_client(
+            row,
+            needs_token_regeneration=(
+                int(row.scope_version or 1) > 1
+                and (row.client_id, int(row.scope_version or 1)) not in current_scope_tokens
+            ),
+        )
+        for row in rows
+    ]
 
 
 @router.post("/clients", status_code=201)
@@ -504,6 +539,11 @@ async def update_client(
         if invalid:
             raise HTTPException(status_code=400, detail=f"Scope 不支持: {sorted(invalid)}")
         changes["allowed_scopes"] = normalize_scopes(changes["allowed_scopes"])
+    scope_changed = (
+        "allowed_scopes" in changes
+        and normalize_scopes(changes["allowed_scopes"])
+        != normalize_scopes(client.allowed_scopes)
+    )
     effective_grants = set(
         normalize_scopes(changes.get("allowed_grant_types", client.allowed_grant_types))
     )
@@ -521,6 +561,8 @@ async def update_client(
         client.disabled_at = datetime.utcnow()
     elif changes.get("status") == "active":
         client.disabled_at = None
+    if scope_changed:
+        client.scope_version = int(client.scope_version or 1) + 1
 
     # Client 的授权范围、授权模式或状态发生安全性变化时，旧 Token 和用户
     # 授权关系不能继续沿用旧权限；恢复调用必须重新授权。

@@ -77,6 +77,16 @@ def test_service_desk_exposes_current_user_access_token_with_expiry_and_permissi
     assert "element:mcp_service:client:token_issue" in source
 
 
+def test_client_scope_version_is_returned_and_changes_trigger_reissue_state():
+    source = Path("app/api/portal/endpoints/mcp_service.py").read_text(encoding="utf-8")
+
+    assert '"scope_version":' in source
+    assert '"needs_token_regeneration":' in source
+    assert "scope_changed" in source
+    assert "client.scope_version = int(client.scope_version or 1) + 1" in source
+    assert "McpOAuthAccessToken.scope_version" in source
+
+
 def test_current_user_access_token_request_validates_expiry_and_scopes():
     payload = mcp_service.McpAccessTokenCreate(
         scopes=["agent:invoke", "agent:invoke"],
@@ -86,8 +96,17 @@ def test_current_user_access_token_request_validates_expiry_and_scopes():
     assert payload.scopes == ["agent:invoke"]
     assert payload.expires_in == 900
 
+    long_lived_payload = mcp_service.McpAccessTokenCreate(
+        scopes=["agent:invoke"],
+        expires_in=30 * 24 * 60 * 60,
+    )
+    assert long_lived_payload.expires_in == 30 * 24 * 60 * 60
+
     with pytest.raises(ValueError):
         mcp_service.McpAccessTokenCreate(scopes=["agent:invoke"], expires_in=299)
+
+    with pytest.raises(ValueError):
+        mcp_service.McpAccessTokenCreate(scopes=["agent:invoke"], expires_in=30 * 24 * 60 * 60 + 1)
 
     with pytest.raises(ValueError):
         mcp_service.McpAccessTokenCreate(scopes=["unknown:scope"], expires_in=900)

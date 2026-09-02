@@ -523,7 +523,9 @@ OAuth2 Authorization Code + PKCE 适合 CRM、门户等程序化系统发起用�
 3. 后端从当前登录会话读取 `user_id`，不接受页面或请求体传入的 `user_id`，也不提供用户选择框；
 4. 生成的 Token 绑定“当前用户 + 当前 Client + 当前 Scope”，只显示本次，调用时仍使用 `Authorization: Bearer <access_token>`。
 
-因此，管理员登录后生成的是管理员身份，demo 用户登录后生成的是 demo 用户身份。该入口不是管理员代发 Token，也不是永久 Bearer Key；Token 仍写入 `sys_mcp_oauth_access_tokens`，支持过期、Client 停用和撤销。当前有效期可选 15 分钟、1 小时、8 小时、1 天或 7 天。生成成功后向导进入第二步，既可以单独复制 Access Token，也可以复制已经填入真实 Endpoint 和 Token 的完整 `mcpServers` JSON，直接粘贴到 Cursor、Claude Desktop 等客户端。
+因此，管理员登录后生成的是管理员身份，demo 用户登录后生成的是 demo 用户身份。该入口不是管理员代发 Token，也不是永久 Bearer Key；Token 仍写入 `sys_mcp_oauth_access_tokens`，支持过期、Client 停用和撤销。当前有效期可选 15 分钟、1 小时、8 小时、1 天或 30 天。生成成功后向导进入第二步，既可以单独复制 Access Token，也可以复制已经填入真实 Endpoint 和 Token 的完整 `mcpServers` JSON，直接粘贴到 Cursor、Claude Desktop 等客户端。
+
+Client 的 `scope_version` 从 1 开始。实际编辑 `allowed_scopes` 时递增版本，并撤销该 Client 的历史 Token 和用户授权关系；新签发的 Access Token 保存签发时的 Scope 版本。服务台查询 Client 列表时，仅当当前登录用户没有未过期、未撤销且版本匹配的 Token，才返回 `needs_token_regeneration=true`，页面提示“Scope 已变更，请重新生成 MCP Access Token”。因此这个提示可以在刷新页面后继续保留，直到用户重新生成 Token；Token 过期后也会再次提示。
 
 该快捷 Token 不创建 OAuth 用户授权 Grant、不签发 Refresh Token；它只复用同一 Resource Server 的 Bearer 校验和用户权限链路。需要长期无人值守、自动续期或多用户授权的外部程序，仍使用标准 OAuth2。
 
@@ -1721,7 +1723,7 @@ unique(client_id, user_id, resource)
 | `POST /api/portal/mcp-service/clients/{client_id}/user-access-token` | 为当前登录用户生成短期个人 Access Token | `client:token_issue` |
 | `GET /api/portal/mcp-service/audit` | 分页查询入站 MCP 调用审计 | `audit:read` |
 
-服务台接口先校验 `menu:mcp_service`，再校验表中的元素权限；前端 Tab 和按钮隐藏仅用于交互控制，不能替代后端鉴权。Client 管理接口在权限检查之后还会统一追加 `created_by = 当前登录用户 ID` 条件；管理员不会因为角色而绕过这一所有权条件。审计日志也只展示当前用户自己 Client 的入站调用记录。
+服务台接口先校验 `menu:mcp_service`，再校验表中的元素权限；前端 Tab 和按钮隐藏仅用于交互控制，不能替代后端鉴权。Client 管理接口在权限检查之后还会统一追加 `created_by = 当前登录用户 ID` 条件；管理员不会因为角色而绕过这一所有权条件。审计日志也只展示当前用户自己 Client 的入站调用记录。Client 列表同时返回 `scope_version` 和 `needs_token_regeneration`，供前端持续提示 Scope 变更后的重新生成操作。
 
 ### 14.4 内部服务接口
 
@@ -1938,7 +1940,7 @@ WWW-Authenticate: Bearer error="insufficient_scope", scope="agent:invoke"
 - 全链路使用 HTTPS；
 - Access Token 只通过 `Authorization` Header 传递；
 - 禁止通过 URL 查询参数传递 Token；
-- OAuth2 动态 Access Token 默认有效 1 小时；服务台人工个人 Token 可选 15 分钟至 7 天，且必须设置过期时间；
+- OAuth2 动态 Access Token 默认有效 1 小时；服务台人工个人 Token 可选 15 分钟至 30 天，且必须设置过期时间；
 - Refresh Token 轮换；
 - Client Secret 只保存哈希；
 - 授权码只保存哈希且一次性使用；

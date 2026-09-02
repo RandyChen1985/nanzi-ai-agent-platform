@@ -172,6 +172,8 @@ def test_service_desk_can_issue_current_user_token_and_explain_dynamic_oauth():
     assert "user-access-token" in view
     assert "动态获取" in view
     assert "当前登录用户" in view
+    assert "[2592000, '30 天']" in view
+    assert "最长 30 天" in view
 
 
 def test_service_desk_token_issue_uses_second_step_with_token_and_direct_mcp_json_copy():
@@ -270,6 +272,35 @@ def test_client_card_uses_compact_permission_summary_and_on_demand_details():
     clients_section = view.split("activeTab === 'clients'", 1)[1].split("activeTab === 'methods'", 1)[0]
     assert "inline-flex max-w-full items-center gap-1 rounded-full" not in clients_section
     assert "不增加额外限制（用户模式仍受用户权限限制）" not in clients_section
+
+
+def test_client_scope_can_be_edited_from_client_card():
+    view = (ROOT / "frontend/src/views/McpServiceDesk.vue").read_text(encoding="utf-8")
+
+    assert "编辑 Scope" in view
+    assert "showClientScopeEdit" in view
+    assert "clientScopeEditForm" in view
+    assert "保存 Scope" in view
+    assert "allowed_scopes: clientScopeEditForm.scopes" in view
+    assert "Scope 变更会让该 Client 已有的 Access Token 和授权关系失效" in view
+
+
+def test_client_scope_change_shows_reissue_guidance_until_new_token_is_issued():
+    view = (ROOT / "frontend/src/views/McpServiceDesk.vue").read_text(encoding="utf-8")
+
+    assert "needs_token_regeneration" in view
+    assert "Scope 已变更，请重新生成 MCP Access Token" in view
+    assert "立即生成" in view
+    assert "await loadClients()" in view
+    assert "client.needs_token_regeneration" in view
+    assert "Scope 已变更，请重新生成 MCP Access Token" in view
+
+
+def test_client_list_does_not_repeat_manual_token_guidance_banner():
+    view = (ROOT / "frontend/src/views/McpServiceDesk.vue").read_text(encoding="utf-8")
+    clients_section = view.split("activeTab === 'clients'", 1)[1].split("activeTab === 'methods'", 1)[0]
+
+    assert "人工登录接入：" not in clients_section
 
 
 def test_login_reloads_backend_oauth_endpoint_after_same_origin_login():

@@ -4,6 +4,7 @@ import pytest
 
 from app.services.mcp.platform_oauth import (
     ACCESS_TOKEN_TTL_SECONDS,
+    MAX_ACCESS_TOKEN_TTL_SECONDS,
     MCP_RESOURCE,
     McpPrincipal,
     build_pkce_challenge,
@@ -81,11 +82,12 @@ def test_custom_access_token_ttl_has_a_safe_bounded_range():
 
     assert resolve_access_token_ttl(None) == ACCESS_TOKEN_TTL_SECONDS
     assert resolve_access_token_ttl(900) == 900
+    assert resolve_access_token_ttl(30 * 24 * 60 * 60) == MAX_ACCESS_TOKEN_TTL_SECONDS
 
     with pytest.raises(ValueError):
         resolve_access_token_ttl(299)
     with pytest.raises(ValueError):
-        resolve_access_token_ttl(604801)
+        resolve_access_token_ttl(MAX_ACCESS_TOKEN_TTL_SECONDS + 1)
 
 
 def test_authorized_scope_can_be_narrowed_by_a_requested_resource():
