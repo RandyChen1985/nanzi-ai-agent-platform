@@ -523,7 +523,7 @@ OAuth2 Authorization Code + PKCE 适合 CRM、门户等程序化系统发起用�
 3. 后端从当前登录会话读取 `user_id`，不接受页面或请求体传入的 `user_id`，也不提供用户选择框；
 4. 生成的 Token 绑定“当前用户 + 当前 Client + 当前 Scope”，只显示本次，调用时仍使用 `Authorization: Bearer <access_token>`。
 
-因此，管理员登录后生成的是管理员身份，demo 用户登录后生成的是 demo 用户身份。该入口不是管理员代发 Token，也不是永久 Bearer Key；Token 仍写入 `sys_mcp_oauth_access_tokens`，支持过期、Client 停用和撤销。当前有效期可选 15 分钟、1 小时、8 小时、1 天或 30 天。生成成功后向导进入第二步，既可以单独复制 Access Token，也可以复制已经填入真实 Endpoint 和 Token 的完整 `mcpServers` JSON，直接粘贴到 Cursor、Claude Desktop 等客户端。
+生成的 Token 始终代表生成时登录的用户本人。该入口不是代发其他用户身份，也不是永久 Bearer Key；Token 仍写入 `sys_mcp_oauth_access_tokens`，支持过期、Client 停用和撤销。当前有效期可选 15 分钟、1 小时、8 小时、1 天、7 天、15 天或 30 天。生成成功后向导进入第二步，既可以单独复制 Access Token，也可以复制已经填入真实 Endpoint 和 Token 的完整 `mcpServers` JSON，直接粘贴到 Cursor、Claude Desktop 等客户端。
 
 Client 的 `scope_version` 从 1 开始。实际编辑 `allowed_scopes` 时递增版本，并撤销该 Client 的历史 Token 和用户授权关系；新签发的 Access Token 保存签发时的 Scope 版本。服务台查询 Client 列表时，仅当当前登录用户没有未过期、未撤销且版本匹配的 Token，才返回 `needs_token_regeneration=true`，页面提示“Scope 已变更，请重新生成 MCP Access Token”。因此这个提示可以在刷新页面后继续保留，直到用户重新生成 Token；Token 过期后也会再次提示。
 
@@ -1940,7 +1940,7 @@ WWW-Authenticate: Bearer error="insufficient_scope", scope="agent:invoke"
 - 全链路使用 HTTPS；
 - Access Token 只通过 `Authorization` Header 传递；
 - 禁止通过 URL 查询参数传递 Token；
-- OAuth2 动态 Access Token 默认有效 1 小时；服务台人工个人 Token 可选 15 分钟至 30 天，且必须设置过期时间；
+- OAuth2 动态 Access Token 默认有效 1 小时；服务台人工个人 Token 可选 15 分钟、1 小时、8 小时、1 天、7 天、15 天或 30 天，且必须设置过期时间；
 - Refresh Token 轮换；
 - Client Secret 只保存哈希；
 - 授权码只保存哈希且一次性使用；

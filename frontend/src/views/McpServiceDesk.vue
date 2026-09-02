@@ -133,6 +133,8 @@ const tokenExpiryOptions = [
   [3600, '1 小时'],
   [28800, '8 小时'],
   [86400, '1 天'],
+  [604800, '7 天'],
+  [1296000, '15 天'],
   [2592000, '30 天'],
 ] as const
 
@@ -638,7 +640,7 @@ onMounted(load)
           </div>
           <div class="mt-5 rounded-xl border border-emerald-100 bg-emerald-50 p-4 text-sm leading-6 text-emerald-950">
             <p class="font-bold">这个 Token 代表谁？</p>
-            <p class="mt-1">代表当前登录用户本人：管理员登录生成管理员身份，demo 用户登录生成 demo 身份。Token 到期后，重新登录或返回 Client 卡片重新生成，不需要理解 OAuth2 授权跳转。</p>
+            <p class="mt-1">代表当前登录用户本人。Token 到期后，重新登录或返回 Client 卡片重新生成，不需要理解 OAuth2 授权跳转。</p>
             <p class="mt-1 font-bold">页面生成的 Token 和 OAuth2 获取的 Access Token 调用方式相同，都是 `Authorization: Bearer &lt;access_token&gt;`。</p>
           </div>
         </div>

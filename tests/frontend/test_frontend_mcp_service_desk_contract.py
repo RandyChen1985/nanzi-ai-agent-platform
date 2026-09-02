@@ -173,6 +173,8 @@ def test_service_desk_can_issue_current_user_token_and_explain_dynamic_oauth():
     assert "动态获取" in view
     assert "当前登录用户" in view
     assert "[2592000, '30 天']" in view
+    assert "[604800, '7 天']" in view
+    assert "[1296000, '15 天']" in view
     assert "最长 30 天" in view
 
 
@@ -223,6 +225,13 @@ def test_service_desk_guide_explains_client_secret_scenarios_and_sample_code():
     assert "requests.post" in view
     assert "Authorization: Bearer" in view
     assert "不要把 Client Secret 放进 Cursor" in view
+
+
+def test_service_desk_guide_uses_generic_current_user_identity_wording():
+    view = (ROOT / "frontend/src/views/McpServiceDesk.vue").read_text(encoding="utf-8")
+
+    assert "代表当前登录用户本人" in view
+    assert "管理员登录生成管理员身份，demo 用户登录生成 demo 身份" not in view
 
 
 def test_service_desk_client_form_exposes_method_scopes_without_resource_whitelists():
