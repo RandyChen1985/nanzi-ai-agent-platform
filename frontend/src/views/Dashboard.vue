@@ -319,6 +319,7 @@ const menuGroups: MenuGroup[] = [
       { name: '智能体中心', to: '/dashboard/agent-management', icon: 'agent_mgmt', perm: 'menu:agent_management', activeNames: ['AgentManagement'] },
       { name: '技能工作台', to: '/dashboard/skills', icon: 'skills', perm: 'menu:skills_management', activeNames: ['SkillsManagement'] },
       { name: 'MCP 工具集', to: '/dashboard/mcp', icon: 'mcp', perm: 'menu:mcp_management', activeNames: ['McpManagement'] },
+      { name: 'MCP 服务台', to: '/dashboard/mcp-service', icon: 'mcp', perm: 'menu:mcp_service', activeNames: ['McpServiceDesk'] },
       { name: '记忆工作台', to: '/dashboard/memory', icon: 'memory', perm: 'menu:memory_management', activeNames: ['MemoryManagement'] },
       { name: '提示词工坊', to: '/dashboard/prompts', icon: 'prompts', perm: 'menu:prompts', desktopOnly: true, activeNames: ['PromptStudio'] },
 

@@ -1,6 +1,6 @@
 # NanZi 平台级 MCP 对外服务技术方案
 
-> 文档状态：方案设计
+> 文档状态：方案设计与第一期实现
 >
 > 适用版本：NanZi AI Agent Platform
 >
@@ -28,7 +28,7 @@ Platform MCP 总开关
 外部 Client 独立开关（CRM / OA / 工单系统）
 ```
 
-第一期规划提供智能体、知识库和元数据三类方法；当前代码已将以下方法全部注册并接入现有权限和执行链：
+第一期提供智能体、知识库和元数据三类方法；当前代码已将以下方法全部注册并接入现有权限和执行链：
 
 ```text
 NanZi Platform MCP
@@ -64,16 +64,16 @@ notification.send
 
 ### 1.1 当前代码落地边界
 
-本次先落地一个可运行、可继续扩展的垂直切片：
+当前代码已落地一个可运行、可继续扩展的统一能力入口：
 
 | 已落地内容 | 当前行为 |
 |---|---|
-| OAuth2 发现与授权端点 | 提供 OAuth2 Authorization Code + PKCE、Client Credentials、Refresh Token、Revoke 和 RFC 发现端点；本期不发布 OIDC Discovery、UserInfo、ID Token 或 JWKS，用户授权复用当前 `admin_token` 登录会话 |
+| OAuth2 发现与授权端点 | 提供 OAuth2 Authorization Code + PKCE、Refresh Token、Revoke 和 RFC 发现端点；本期不发布 OIDC Discovery、UserInfo、ID Token 或 JWKS，用户授权复用当前 `admin_token` 登录会话 |
 | Access Token | 使用高熵 opaque Bearer Token，数据库只保存 SHA-256 摘要并支持过期、撤销和 Client 停用；后续可在不改变 MCP 调用协议的情况下切换为独立 JWT + JWKS |
 | Platform MCP 入站入口 | `POST /mcp/platform`，通过 FastMCP Resource Server 校验 OAuth Bearer Token |
 | 已注册方法 | 9 个方法均已注册并可按总开关、能力组开关和 OAuth Client Scope 发布；默认配置仍为关闭 |
-| MCP 服务台 | 独立菜单 `/dashboard/mcp-service` 和 `/api/portal/mcp-service`，当前支持总开关、能力组开关、Client 创建/停用/Secret 重置、Scope/知识库白名单配置和方法查看；用户授权关系与调用审计页面为后续切片 |
-| 数据库 | MySQL `V137`、PostgreSQL `V38` 增加入站 OAuth Client、授权、Token、审计表及菜单/元素权限；必须按迁移执行，代码不会自动改库 |
+| MCP 服务台 | 独立菜单 `/dashboard/mcp-service` 和 `/api/portal/mcp-service`，支持使用指南、总开关、能力组开关、Client 创建/编辑/停用/软删除/Secret 重置、Scope、智能体/知识库/元数据集白名单配置、方法查看、为当前登录用户生成个人 Access Token，以及入站调用审计查询；使用指南可复制通用 `mcpServers` JSON；用户授权关系与授权事件审计仍为后续切片 |
+| 数据库 | MySQL `V137`、PostgreSQL `V38` 增加入站 OAuth Client、授权、Token、审计表及菜单/元素权限；MySQL `V138`、PostgreSQL `V39` 增加当前用户 Token 签发功能权限；必须按迁移执行，代码不会自动改库 |
 
 因此，服务台中 9 个方法的状态会根据实现状态和能力组开关显示为“已启用/已关闭”；总开关或对应能力组关闭时，方法不会出现在 MCP `tools/list`，直接调用也会被拒绝。当前 Platform MCP 默认关闭，完成迁移后由拥有服务台配置权限的人员按“总开关 → 能力组 → Client”顺序开启。
 
@@ -145,15 +145,14 @@ NanZi Platform MCP
 | OIDC | 完整 OIDC Provider 能力的后续扩展；第一期不发布 OIDC Discovery、ID Token、Nonce、JWKS 或 UserInfo |
 | OAuth2 Access Token | MCP 每次请求使用的 Bearer 访问凭证 |
 | Authorization Code + PKCE | 外部系统代表具体用户调用时使用 |
-| Client Credentials | 外部系统代表自身调用、不绑定具体用户时使用 |
 
 第一期 Client 类型决策：
 
 - **第一期只实现 `Confidential Client`**，面向 CRM、OA、工单系统等有后端能力、可以安全保存 `client_secret` 的外部系统。
-- 用户代表性调用仍然使用 Authorization Code + PKCE；系统代表性调用使用 Client Credentials。
+- 所有调用都使用 Authorization Code + PKCE 建立用户授权关系；Refresh Token 只用于续期同一用户的授权。
 - `Public Client` 不属于第一期验收范围。后续如果支持浏览器、移动端、桌面端或其他无法安全保存 Secret 的客户端，只允许使用 Authorization Code + PKCE，不生成也不依赖 `client_secret`。
 
-用户身份和系统身份必须分开理解：
+外部系统身份和用户身份必须分开理解，但 Platform MCP 的每次业务调用都必须绑定用户：
 
 ```text
 client_id + client_secret
@@ -166,9 +165,7 @@ MCP Access Token
     → 把外部系统、用户、Audience、Scope 和会话绑定起来
 ```
 
-### 3.2 两种授权模式
-
-#### 用户授权模式
+### 3.2 用户授权模式
 
 外部系统代表具体用户调用 NanZi。
 
@@ -199,36 +196,6 @@ scope = agent:invoke metadata:read
 - 需要关联用户自己的会话和数据资源；
 - 需要按照用户权限过滤元数据。
 
-#### 客户端凭证模式
-
-外部系统只代表自身调用 NanZi，不代表某个具体用户。
-
-```text
-CRM 后台
-    ↓ client_id + client_secret
-NanZi OAuth2 Token Endpoint
-    ↓
-客户端 Access Token
-    ↓
-NanZi Platform MCP
-```
-
-此时只能得到：
-
-```text
-client_id = crm-system
-user_id = null
-```
-
-适用场景：
-
-- 定时任务；
-- 后台自动化；
-- 系统级智能体调用；
-- 不需要用户会话和用户数据权限的场景。
-
-客户端凭证模式不能伪造用户身份，也不能通过请求参数传入 `user_id` 后获得用户权限。
-
 ## 4. 总体技术架构
 
 ```mermaid
@@ -237,10 +204,6 @@ flowchart LR
     C -->|Authorization Code + PKCE| AS[NanZi OAuth2 Authorization Server]
     AS -->|用户授权后的 Access Token| C
     C -->|Bearer Access Token| PM[NanZi Platform MCP]
-
-    M[外部系统后台] -->|Client Credentials| AS
-    AS -->|客户端 Access Token| M
-    M -->|Bearer Access Token| PM
 
     PM --> AUTH[OAuth2 Resource Server 验证]
     AUTH --> PRINCIPAL[McpPrincipal]
@@ -348,7 +311,6 @@ GET /.well-known/oauth-authorization-server
   "response_types_supported": ["code"],
   "grant_types_supported": [
     "authorization_code",
-    "client_credentials",
     "refresh_token"
   ],
   "code_challenge_methods_supported": ["S256"],
@@ -524,36 +486,9 @@ NanZi 验证通过后返回：
 
 当前实现的 Access Token 有效期为 3600 秒，Refresh Token 有效期为 30 天；Refresh Token 只由外部系统后端安全保存，不返回给浏览器页面。
 
-### 6.3 客户端凭证流程
+### 6.3 Refresh Token
 
-适用于不绑定用户的系统级调用。
-
-```http
-POST /oauth/token
-Content-Type: application/x-www-form-urlencoded
-Authorization: Basic base64(client_id:client_secret)
-
-grant_type=client_credentials&
-scope=agent:invoke&
-resource=https%3A%2F%2Fnanzi.example.com%2Fmcp%2Fplatform
-```
-
-返回的 Token 不包含 `user_id`：
-
-```json
-{
-  "access_token": "opaque-client-access-token-value",
-  "token_type": "Bearer",
-  "expires_in": 3600,
-  "scope": "agent:invoke"
-}
-```
-
-客户端凭证模式调用智能体时，只能使用管理员为该 Client 配置的系统级智能体和资源范围。
-
-### 6.4 Refresh Token
-
-用户授权模式可以使用 Refresh Token；客户端凭证模式不需要 Refresh Token。
+用户授权完成后可以使用 Refresh Token 续期同一用户的授权，不会改变用户身份。
 
 Refresh Token 要求：
 
@@ -578,6 +513,19 @@ NanZi Platform MCP Access Token 密钥
 ```
 
 如果未来切换为 JWT，Platform MCP Access Token 的签名密钥必须独立维护并通过 JWKS 发布公钥；当前 opaque Token 不提供 Access Token JWKS 地址，业务方不需要验签 Access Token。
+
+### 7.1.1 人工登录快捷签发：当前用户个人 Token
+
+OAuth2 Authorization Code + PKCE 适合 CRM、门户等程序化系统发起用户授权，但人工临时接入、联调和 Cursor/桌面客户端配置不需要用户先理解完整 OAuth 流程。服务台提供一个受权限控制的快捷入口：
+
+1. 用户先正常登录 NanZi，进入【MCP 服务台】→【外部 Client】；
+2. 在一个启用的 Client 上点击“生成当前用户 Access Token”，选择有效期和 Scope；
+3. 后端从当前登录会话读取 `user_id`，不接受页面或请求体传入的 `user_id`，也不提供用户选择框；
+4. 生成的 Token 绑定“当前用户 + 当前 Client + 当前 Scope”，只显示本次，调用时仍使用 `Authorization: Bearer <access_token>`。
+
+因此，管理员登录后生成的是管理员身份，demo 用户登录后生成的是 demo 用户身份。该入口不是管理员代发 Token，也不是永久 Bearer Key；Token 仍写入 `sys_mcp_oauth_access_tokens`，支持过期、Client 停用和撤销。当前有效期可选 15 分钟、1 小时、8 小时、1 天或 7 天。生成成功后向导进入第二步，既可以单独复制 Access Token，也可以复制已经填入真实 Endpoint 和 Token 的完整 `mcpServers` JSON，直接粘贴到 Cursor、Claude Desktop 等客户端。
+
+该快捷 Token 不创建 OAuth 用户授权 Grant、不签发 Refresh Token；它只复用同一 Resource Server 的 Bearer 校验和用户权限链路。需要长期无人值守、自动续期或多用户授权的外部程序，仍使用标准 OAuth2。
 
 ### 7.2 Access Token Payload（JWT 扩展设计）
 
@@ -607,36 +555,19 @@ NanZi Platform MCP Access Token 密钥
 }
 ```
 
-客户端凭证模式示例：
-
-```json
-{
-  "iss": "https://nanzi.example.com",
-  "aud": "https://nanzi.example.com/mcp/platform",
-  "sub": "nanzi:client:crm-system",
-  "client_id": "crm-system",
-  "token_use": "mcp_access",
-  "grant_type": "client_credentials",
-  "scope": ["agent:invoke"],
-  "jti": "access-jti-system-abc",
-  "iat": 1788300000,
-  "exp": 1788300900
-}
-```
-
 ### 7.3 JWT Payload 字段说明（未来扩展）
 
-| 字段 | 类型 | 用户授权模式 | 客户端凭证模式 | 用途 |
+| 字段 | 类型 | Authorization Code + PKCE | 服务台个人 Token | 用途 |
 |---|---|---:|---:|---|
 | `iss` | string | 必须 | 必须 | 标识 NanZi 授权服务器 |
 | `aud` | string | 必须 | 必须 | 限制只能访问 Platform MCP |
-| `sub` | string | 必须 | 必须 | 用户或客户端主体 |
-| `client_id` | string | 必须 | 必须 | 识别外部系统 |
+| `sub` | string | 必须 | 必须 | 当前 NanZi 用户主体 |
+| `client_id` | string | 必须 | 必须 | 识别外部系统或服务台绑定的 Client |
 | `token_use` | string | 必须 | 必须 | 必须为 `mcp_access` |
-| `grant_type` | string | 必须 | 必须 | `authorization_code` 或 `client_credentials` |
-| `user_id` | string | 必须 | 不允许 | 关联 NanZi 用户 |
+| `grant_type` | string | 必须 | 必须 | `authorization_code` 或 `manual_user_token` |
+| `user_id` | string | 必须 | 必须 | 关联 NanZi 用户，不能省略 |
 | `scope` | array | 必须 | 必须 | 方法和能力范围 |
-| `session_id` | string | 建议 | 不允许 | 关联用户 MCP 会话 |
+| `session_id` | string | 建议 | 可选 | 关联用户 MCP 会话 |
 | `jti` | string | 必须 | 必须 | 撤销、重放和审计 |
 | `iat` | number | 必须 | 必须 | 签发时间 |
 | `exp` | number | 必须 | 必须 | 过期时间 |
@@ -726,9 +657,9 @@ class McpPrincipal:
 
 其中：
 
-- `auth_type`：`user_delegated` 或 `client_credentials`；
-- `client_id`：外部系统；
-- `user_id`：用户授权模式才有；
+- `auth_type`：固定为 `user_delegated`；
+- `client_id`：外部系统或服务台绑定的 Client；
+- `user_id`：必填，来自 NanZi 登录用户；
 - `scopes`：Token 中的 Scope 与客户端策略的交集；
 - `session_id`：用户授权模式可用于关联会话；
 - `request_id`：本次 MCP 调用链路 ID。
@@ -748,19 +679,11 @@ class McpPrincipal:
   ∩ 方法自身安全策略
 ```
 
-对于用户授权模式：
-
 ```text
 user_id = Token.user_id
 ```
 
-对于客户端凭证模式：
-
-```text
-user_id = null
-```
-
-客户端凭证模式不能通过参数补充用户身份。
+所有 Platform MCP 方法都必须基于已验证的 `user_id` 执行，不能通过参数补充、替换或伪造用户身份。
 
 ## 9. Platform MCP 方法设计
 
@@ -803,9 +726,7 @@ conversation.continue
 agent:list
 ```
 
-用户授权模式：只返回当前用户有权使用的智能体。
-
-客户端凭证模式：只返回管理员为该 Client 配置的系统级智能体。
+只返回当前用户有权使用、且当前 Client 白名单允许的智能体。
 
 输入：
 
@@ -852,7 +773,7 @@ agent:list
 agent:invoke
 ```
 
-用户授权模式要求：
+用户授权要求：
 
 - Token 必须存在 `user_id`；
 - 用户必须有权使用指定智能体；
@@ -903,8 +824,7 @@ agent:invoke
 - 不把完整 Access Token 传入智能体 Prompt；
 - 智能体可使用平台已有工具，但继续执行原有权限预检；
 - 如果智能体调用下游业务 MCP，使用现有 NanZi 出站 User Assertion 机制；
-- 用户授权模式下，下游 `X-Nanzi-User-Assertion` 的用户身份来自已验证的 `McpPrincipal.user_id`；
-- 客户端凭证模式没有用户身份，不生成用户级断言；
+- 下游 `X-Nanzi-User-Assertion` 的用户身份来自已验证的 `McpPrincipal.user_id`；
 - 高风险写操作应通过后续独立的确认机制处理。
 
 ### 9.4 `conversation.continue`
@@ -935,11 +855,9 @@ conversation.user_id == McpPrincipal.user_id
 
 不能仅凭 `conversation_id` 查询和继续会话。
 
-对于客户端凭证模式，第一期不允许调用用户会话继续方法；如果未来支持系统会话，需要单独定义 `system_session_id` 和客户端资源隔离规则。
-
 ### 9.5 `metadata.list_datasets`
 
-用途：列出当前用户或 Client 被授权查看的数据集。
+用途：列出当前用户有权限、且当前 Client 允许查看的数据集。
 
 所需 Scope：
 
@@ -947,9 +865,7 @@ conversation.user_id == McpPrincipal.user_id
 metadata:read
 ```
 
-用户授权模式：复用 NanZi 当前用户元数据权限。
-
-客户端凭证模式：使用管理员为 Client 配置的数据集白名单。
+服务端复用 NanZi 当前用户元数据权限，并与 Client 数据集白名单取交集。
 
 返回：
 
@@ -999,7 +915,7 @@ metadata:search
 服务端处理：
 
 1. 校验 `metadata:search`；
-2. 根据用户或 Client 资源范围过滤数据集；
+2. 根据当前用户权限和 Client 资源范围过滤数据集；
 3. 使用现有元数据检索服务；
 4. 过滤无权限表和字段；
 5. 对敏感字段按字段策略脱敏；
@@ -1056,7 +972,7 @@ metadata:read
 必须校验：
 
 - 数据集存在且已发布；
-- 当前用户或 Client 有该数据集权限；
+- 当前用户和 Client 共同允许该数据集；
 - 数据集未被删除；
 - `dataset_id` 不来自未验证的跨租户输入。
 
@@ -1154,17 +1070,12 @@ metadata:metrics:read
 knowledge:search
 ```
 
-用户授权模式要求：
+用户授权要求：
 
 - Token 必须存在 `user_id`；
 - 用户必须拥有目标知识库和文档的访问权限；
 - 当前 Client 必须允许检索目标知识库；
 - 请求参数中的知识库 ID 不能扩大用户或 Client 的权限范围。
-
-客户端凭证模式：
-
-- 第一阶段不建议开放知识库检索的客户端凭证模式；
-- 如果后续开放，必须只使用管理员为 Client 配置的知识库白名单，不绑定 NanZi 用户。
 
 输入：
 
@@ -1292,16 +1203,12 @@ allowed_scopes
 - `null`：Client 不增加知识库范围限制，但用户授权模式仍必须通过 NanZi 当前用户的知识库权限校验；服务台创建 Client 时知识库输入框为空会保存为 `null`。
 - `[]`：Client 明确没有任何知识库访问范围，`knowledge.search` 不会返回结果。
 
-当前第一期的 `knowledge.search` 只接受带用户身份的 Authorization Code / Refresh Token；`Client Credentials` 没有关联用户身份，暂不允许调用该方法。
+当前第一期的 `knowledge.search` 只接受带用户身份的 Authorization Code / Refresh Token；所有 Platform MCP 方法都要求已验证的 NanZi 用户身份。
 
 有效资源范围：
 
 ```text
-用户授权模式：
 用户权限 ∩ Client 资源白名单
-
-客户端凭证模式：
-Client 资源白名单
 ```
 
 ## 11. 会话、用户和下游 MCP 关联
@@ -1359,15 +1266,15 @@ NanZi AgentContext
 下游 User Assertion.user_context.user_id
 ```
 
-对于客户端凭证模式：
+所有 Platform MCP 调用都要求 Access Token 已绑定 NanZi 用户：
 
 ```text
-user_id = null
+user_id = verified NanZi user
     ↓
-不生成用户级 X-Nanzi-User-Assertion
+生成用户级 X-Nanzi-User-Assertion（如后续调用下游业务 MCP）
 ```
 
-不能把客户端凭证模式的 `client_id` 当成业务用户 ID。
+历史上如果数据库中存在没有 `user_id` 的旧 Token，运行时会在 Resource Server 阶段拒绝；不能把 `client_id` 当成业务用户 ID。
 
 ## 12. 管理页面设计
 
@@ -1393,7 +1300,7 @@ user_id = null
 | MCP 工具集 | NanZi 调用外部 MCP | 平台出站 MCP 和个人出站 MCP | 继续沿用现有权限 |
 | MCP 服务台 | 外部系统调用 NanZi | NanZi Platform MCP 入站服务 | 拥有 `menu:mcp_service` 的用户 |
 
-`MCP 服务台`是一个统一的 NanZi Platform MCP 管理页面，不为 `agent.*`、`knowledge.*` 和 `metadata.*` 建立多套独立的 MCP Server 配置页面。当前已实现的管理 Tab 是“服务总览 / 服务配置 / 外部 Client / 能力与 Scope”；“用户授权 / 调用审计”权限标识已预留，页面和查询 API 后续增加。
+`MCP 服务台`是一个统一的 NanZi Platform MCP 管理页面，不为 `agent.*`、`knowledge.*` 和 `metadata.*` 建立多套独立的 MCP Server 配置页面。当前已实现的管理 Tab 是“服务总览 / 使用指南 / 服务配置 / 外部 Client / 能力与 Scope / 审计日志”；使用指南解释 OAuth2 授权、Access Token 与 MCP Endpoint 的关系，并提供可复制的通用 `mcpServers` JSON；“审计日志”查询入站调用记录，按权限显示筛选、分页和详情。
 
 #### 12.1.1 菜单与功能权限
 
@@ -1416,8 +1323,9 @@ user_id = null
 | `element:mcp_service:config:read` | 只读 | 查看 OAuth、Resource、Audience 等配置 |
 | `element:mcp_service:config:edit` | 操作 | 修改 Platform MCP 配置和总开关 |
 | `element:mcp_service:client:read` | 只读 | 查看外部 Client 列表和详情 |
-| `element:mcp_service:client:manage` | 操作 | 创建、编辑、启停 Client，配置 Scope 和资源范围 |
+| `element:mcp_service:client:manage` | 操作 | 创建、编辑、启停和软删除 Client，配置 Scope 和资源范围 |
 | `element:mcp_service:client:secret_reset` | 高风险操作 | 重置 Client Secret |
+| `element:mcp_service:client:token_issue` | 高风险操作 | 为当前登录用户生成个人 MCP Access Token，不允许指定其他用户 |
 | `element:mcp_service:capability:read` | 只读 | 查看能力组、方法和 Scope |
 | `element:mcp_service:capability:manage` | 操作 | 启停能力组、修改方法 Scope |
 | `element:mcp_service:grant:read` | 只读 | 查看外部应用用户授权关系 |
@@ -1453,9 +1361,9 @@ user_id = null
 | 服务名称 | NanZi Platform MCP |
 | MCP Endpoint | `https://nanzi.example.com/mcp/platform` |
 | Audience | `https://nanzi.example.com/mcp/platform` |
-| 授权模式 | OAuth2 Authorization Code + PKCE、Client Credentials |
+| 授权模式 | OAuth2 Authorization Code + PKCE、Refresh Token |
 | 状态 | 启用 |
-| 已发布方法数 | 当前为 1，后续方法按实现情况增加 |
+| 已发布方法数 | 当前为 9，后续方法按实现情况增加 |
 | 授权客户端数 | 5 |
 | 近 24 小时调用数 | 1,280 |
 
@@ -1494,7 +1402,7 @@ user_id = null
 
 ### 12.3 外部系统接入页
 
-拥有 `element:mcp_service:client:read` 的用户可以查看外部 Client；拥有 `element:mcp_service:client:manage` 的用户可以创建、编辑、启停 Client 和配置权限范围。重置 Secret 还必须具备独立的 `element:mcp_service:client:secret_reset` 权限。
+拥有 `element:mcp_service:client:read` 的用户可以查看外部 Client；拥有 `element:mcp_service:client:manage` 的用户可以创建、编辑、启停、软删除 Client 和配置权限范围。重置 Secret 还必须具备独立的 `element:mcp_service:client:secret_reset` 权限。
 
 列表字段：
 
@@ -1503,14 +1411,14 @@ user_id = null
 | 接入名称 | CRM 系统、OA 系统 |
 | `client_id` | 系统生成，可复制 |
 | Client 类型 | Confidential（第一期） |
-| 授权模式 | 用户授权 / 客户端凭证 / 两者 |
+| 授权模式 | 用户授权（Authorization Code + PKCE）/ Refresh Token |
 | 已授权 Scope | 方法权限 |
 | 智能体范围 | 允许调用的智能体 |
 | 知识库范围 | 允许检索的知识库 |
 | 元数据范围 | 允许查看的数据集 |
 | 状态 | 启用 / 禁用 |
 | 最近调用 | 最近一次请求时间 |
-| 操作 | 编辑、禁用、重置密钥、查看审计 |
+| 操作 | 编辑、禁用、软删除、重置密钥、查看审计 |
 
 ### 12.4 创建外部系统
 
@@ -1519,7 +1427,7 @@ user_id = null
 ```text
 接入名称：        [ CRM 系统                         ]
 Client 类型：     [ Confidential                       ]
-允许授权模式：    [ ☑ 用户授权  ☑ 客户端凭证          ]
+允许授权模式：    [ ☑ 用户授权（Authorization Code + PKCE） ]
 Redirect URI：    [ https://crm.example.com/oauth/callback ]
 允许 Scope：      [ ☑ agent:list                     ]
                   [ ☑ agent:invoke                   ]
@@ -1537,7 +1445,10 @@ Redirect URI：    [ https://crm.example.com/oauth/callback ]
 - `client_secret` 只明文显示一次；
 - 页面提示管理员立即安全保存；
 - 后续只能显示脱敏值；
-- 重置 Secret 后旧 Secret 立即失效；
+- 停用 Client 前必须二次确认；停用后该 Client 下已有的 Access Token、Refresh Token 立即失效，重新启用后也需要重新获取 Token；
+- 重置 Secret 前必须二次确认；重置后旧 Secret 立即失效，该 Client 下已有的 Access Token、Refresh Token 也立即失效；
+- 删除 Client 前必须二次确认；删除采用软删除，状态变为 `deleted`，从默认 Client 列表隐藏；该 Client 下已有的 Access Token、Refresh Token 和 active 授权关系立即失效，且不能再次启用；Client 行和历史审计记录保留，便于追溯；
+- 软删除复用现有 `sys_mcp_oauth_clients.status` 字段，不新增表或迁移；删除不会物理删除 Client、Token、授权关系或审计数据。
 - 第一期不创建 Public Client；后续支持时，Public Client 不生成 Secret，必须使用 Authorization Code + PKCE。
 
 ### 12.5 方法与 Scope 页
@@ -1548,15 +1459,15 @@ Redirect URI：    [ https://crm.example.com/oauth/callback ]
 
 | 方法 | 中文说明 | Scope | 用户身份要求 | 风险等级 | 状态 |
 |---|---|---|---:|---|---|
-| `agent.list_allowed` | 查询可用智能体 | `agent:list` | 否；用户模式按用户权限，Client Credentials 仅按系统智能体白名单 | 低 | 已发布 |
+| `agent.list_allowed` | 查询可用智能体 | `agent:list` | 是；当前用户权限 ∩ Client 智能体白名单 | 低 | 已发布 |
 | `agent.invoke` | 调用智能体 | `agent:invoke` | 是 | 中 | 已发布 |
 | `conversation.continue` | 继续会话 | `conversation:continue` | 是 | 中 | 已发布 |
 | `knowledge.search` | 搜索知识库 | `knowledge:search` | 是 | 中 | 已发布 |
-| `metadata.list_datasets` | 列出数据集 | `metadata:read` | 否；用户模式按用户权限，Client Credentials 按数据集白名单 | 低 | 已发布 |
-| `metadata.search` | 搜索元数据 | `metadata:search` | 否；用户模式按用户权限，Client Credentials 按数据集白名单 | 低 | 已发布 |
-| `metadata.get_dataset` | 获取数据集信息 | `metadata:read` | 否；用户模式按用户权限，Client Credentials 按数据集白名单 | 中 | 已发布 |
-| `metadata.get_schema` | 获取表字段结构 | `metadata:read` | 否；用户模式按用户权限，Client Credentials 按数据集白名单 | 中 | 已发布 |
-| `metadata.get_metrics` | 获取指标口径 | `metadata:metrics:read` | 否；用户模式按用户权限，Client Credentials 按数据集白名单 | 中 | 已发布 |
+| `metadata.list_datasets` | 列出数据集 | `metadata:read` | 是；当前用户权限 ∩ Client 数据集白名单 | 低 | 已发布 |
+| `metadata.search` | 搜索元数据 | `metadata:search` | 是；当前用户权限 ∩ Client 数据集白名单 | 低 | 已发布 |
+| `metadata.get_dataset` | 获取数据集信息 | `metadata:read` | 是；当前用户权限 ∩ Client 数据集白名单 | 中 | 已发布 |
+| `metadata.get_schema` | 获取表字段结构 | `metadata:read` | 是；当前用户权限 ∩ Client 数据集白名单 | 中 | 已发布 |
+| `metadata.get_metrics` | 获取指标口径 | `metadata:metrics:read` | 是；当前用户权限 ∩ Client 数据集白名单 | 中 | 已发布 |
 
 新增平台能力时，必须先注册方法元数据，再进入客户端 Scope 配置。
 
@@ -1603,20 +1514,18 @@ Redirect URI：    [ https://crm.example.com/oauth/callback ]
 - 后续 MCP 请求返回 401；
 - 审计记录保留。
 
-### 12.7 调用审计页（后续切片）
+### 12.7 调用审计页（已实现）
 
-`element:mcp_service:audit:read` 是后续调用审计查询页的预留权限。当前代码会写入入站调用审计表，但尚未提供服务台查询页面和 API。
+拥有 `element:mcp_service:audit:read` 的用户可以在服务台打开“审计日志”Tab。后端查询接口为 `GET /api/portal/mcp-service/audit`，查询结果只包含业务审计字段，不返回 Access Token、Client Secret、Refresh Token 或原始请求 Header。
+
+该表的审计粒度是“通过 Bearer 校验并进入 MCP 方法处理链的调用”。完全未通过认证、因此尚未解析出 Client 和用户身份的 401 请求不会写入本表，应通过网关或应用访问日志查看；方法执行后的成功、失败和权限拒绝会按调用链写入本表。
 
 支持按以下条件过滤：
 
-- 外部系统；
-- NanZi 用户；
-- MCP 方法；
-- 智能体；
-- 数据集；
-- 请求 ID；
-- 状态码；
-- 时间范围。
+- 页面默认折叠筛选区；展开后使用“过滤对象”下拉列表选择一个条件，再在右侧输入值或选择枚举值；
+- 可选过滤对象包括外部系统、NanZi 用户、MCP 方法、智能体、数据集、请求 ID、认证类型、结果状态和状态码；
+- 条件值仍按字段保留，已填写的多个条件可以组合查询；查询和重置按钮固定在同一行，不需要横向滚动才能操作；
+- 时间范围由后端接口保留支持，页面后续可按实际使用频率增加时间控件。
 
 禁止在页面展示：
 
@@ -1735,8 +1644,8 @@ unique(client_id, user_id, resource)
 | `jti` | varchar(128) | JWT ID，唯一 |
 | `token_hash` | varchar(128) | 可选，Token 摘要 |
 | `client_id` | varchar(128) | Client ID |
-| `user_id` | varchar(64) | 用户授权模式的用户 ID，可为空 |
-| `grant_id` | varchar(36) | 用户授权关系，可为空 |
+| `user_id` | varchar(64) | NanZi 用户 ID；当前运行时必须存在，历史兼容记录可为空 |
+| `grant_id` | varchar(36) | OAuth 用户授权关系；服务台个人 Token 为空 |
 | `resource` | varchar(255) | 目标 MCP 资源 |
 | `scopes` | JSON / TEXT | Token Scope |
 | `session_id` | varchar(128) | 用户 MCP 会话，可为空 |
@@ -1773,8 +1682,8 @@ unique(client_id, user_id, resource)
 | `request_id` | varchar(128) | NanZi 请求 ID |
 | `client_request_id` | varchar(128) | 外部幂等键，可为空 |
 | `client_id` | varchar(128) | 外部系统 |
-| `user_id` | varchar(64) | 用户 ID，可为空 |
-| `auth_type` | varchar(32) | `user_delegated` / `client_credentials` |
+| `user_id` | varchar(64) | NanZi 用户 ID；当前运行时必须存在，历史兼容记录可为空 |
+| `auth_type` | varchar(32) | 当前为 `user_delegated` |
 | `method_name` | varchar(128) | MCP 方法 |
 | `agent_id` | varchar(128) | 智能体 ID，可为空 |
 | `conversation_id` | varchar(128) | 会话 ID，可为空 |
@@ -1803,7 +1712,7 @@ unique(client_id, user_id, resource)
 | 端点 | 用途 |
 |---|---|
 | `GET /oauth/authorize` | 用户授权入口 |
-| `POST /oauth/token` | Authorization Code、Client Credentials、Refresh Token 换取 Access Token |
+| `POST /oauth/token` | Authorization Code 或 Refresh Token 换取用户 Access Token |
 | `POST /oauth/revoke` | 撤销当前 Client 的具体 Access Token 或 Refresh Token；授权关系批量撤销为后续服务台能力 |
 | `GET /.well-known/oauth-authorization-server` | OAuth2 授权服务器发现 |
 | `GET /.well-known/oauth-protected-resource/mcp/platform` | RFC 9728 MCP Protected Resource Metadata |
@@ -1831,6 +1740,9 @@ unique(client_id, user_id, resource)
 | `GET /api/portal/mcp-service/clients` | 查看外部 Client | `client:read` |
 | `POST /api/portal/mcp-service/clients` | 创建 Confidential Client | `client:manage` |
 | `PATCH /api/portal/mcp-service/clients/{client_id}` | 编辑或启停 Client | `client:manage` |
+| `DELETE /api/portal/mcp-service/clients/{client_id}` | 软删除 Client，并撤销其 Token 与 active 授权关系 | `client:manage` |
+| `POST /api/portal/mcp-service/clients/{client_id}/user-access-token` | 为当前登录用户生成短期个人 Access Token | `client:token_issue` |
+| `GET /api/portal/mcp-service/audit` | 分页查询入站 MCP 调用审计 | `audit:read` |
 
 服务台接口先校验 `menu:mcp_service`，再校验表中的元素权限；前端 Tab 和按钮隐藏仅用于交互控制，不能替代后端鉴权。
 
@@ -1843,7 +1755,8 @@ McpOAuthService
     ├── register_client
     ├── create_authorization_code
     ├── exchange_authorization_code
-    ├── issue_client_credentials_token
+    ├── issue_user_access_token
+    ├── issue_current_user_access_token
     ├── rotate_refresh_token
     └── revoke_grant
 
@@ -1868,6 +1781,7 @@ PlatformMetadataMcpToolService
 McpInboundAuditService
     ├── record_authorization_event
     ├── record_token_event
+    ├── query_tool_calls
     └── record_tool_call
 ```
 
@@ -1918,18 +1832,59 @@ CRM 不需要、也不应该在请求参数中传：
 
 NanZi 从 Access Token 得到用户身份。
 
-### 15.2 客户端凭证模式调用
+### 15.1.1 人工登录后生成当前用户 Token
+
+人工联调或 Cursor 等只支持静态 Header 的客户端，可以直接使用服务台生成的个人 Token：
+
+```text
+管理员登录 NanZi
+    ↓ 点击“生成当前用户 Access Token”
+NanZi 从登录会话得到 admin.user_id
+    ↓ 生成短期 opaque Bearer Token
+Authorization: Bearer <admin-token>
+    ↓
+POST /mcp/platform
+    ↓
+McpPrincipal.user_id = admin.user_id
+```
+
+demo 用户执行完全相同的流程时，`McpPrincipal.user_id` 是 demo 用户的 ID。外部调用方不需要、也不能通过 MCP 参数覆盖这个身份；业务方法继续按该用户的 NanZi 权限、Client Scope 和资源范围执行。
+
+服务台生成 Token 的请求示例：
+
+```http
+POST /api/portal/mcp-service/clients/{client_id}/user-access-token
+Authorization: Bearer <当前登录 NanZi 用户的 API Key 或登录态对应凭证>
+Content-Type: application/json
+
+{
+  "scopes": ["agent:invoke", "knowledge:search"],
+  "expires_in": 3600
+}
+```
+
+注意：上面的 `Authorization` 是服务台管理接口调用者的当前登录凭证；返回 JSON 中的 `access_token` 才是后续 MCP 请求使用的 Bearer Token。请求体没有 `user_id` 字段，后端始终使用当前登录用户。
+
+### 15.2 程序化用户授权换 Token
+
+业务系统必须先引导具体用户完成 NanZi 登录和授权，再由后端使用 `client_id + client_secret + code + code_verifier` 换取用户 Access Token。Client Secret 只保存在业务方后端，浏览器、Cursor 或 MCP JSON 中只使用最终的 Bearer Access Token。
 
 ```python
+# 运行在业务方后端 OAuth 回调中；callback_code 和 pkce_code_verifier
+# 来自前面的授权跳转与 PKCE 流程。
+import os
 import requests
 
+base_url = os.environ["NANZI_BASE_URL"].rstrip("/")
 token_response = requests.post(
-    "https://nanzi.example.com/oauth/token",
-    auth=(client_id, client_secret),
+    f"{base_url}/oauth/token",
+    auth=(os.environ["NANZI_CLIENT_ID"], os.environ["NANZI_CLIENT_SECRET"]),
     data={
-        "grant_type": "client_credentials",
-        "scope": "agent:invoke",
-        "resource": "https://nanzi.example.com/mcp/platform",
+        "grant_type": "authorization_code",
+        "code": callback_code,
+        "redirect_uri": os.environ["NANZI_REDIRECT_URI"],
+        "code_verifier": pkce_code_verifier,
+        "resource": os.environ["NANZI_RESOURCE"],
     },
     timeout=15,
 )
@@ -1937,7 +1892,13 @@ token_response.raise_for_status()
 access_token = token_response.json()["access_token"]
 ```
 
-该 Token 不绑定用户，只能使用 Client 配置的系统级能力。
+之后每次 MCP 请求只携带：
+
+```http
+Authorization: Bearer <access_token>
+```
+
+如果 Access Token 到期，业务后端使用同一授权关系的 Refresh Token 续期；Refresh Token 不会改变绑定的用户。
 
 ## 16. 错误处理
 
@@ -2000,7 +1961,7 @@ WWW-Authenticate: Bearer error="insufficient_scope", scope="agent:invoke"
 - 全链路使用 HTTPS；
 - Access Token 只通过 `Authorization` Header 传递；
 - 禁止通过 URL 查询参数传递 Token；
-- Access Token 短期有效，建议 15 分钟；
+- OAuth2 动态 Access Token 默认有效 1 小时；服务台人工个人 Token 可选 15 分钟至 7 天，且必须设置过期时间；
 - Refresh Token 轮换；
 - Client Secret 只保存哈希；
 - 授权码只保存哈希且一次性使用；
@@ -2088,16 +2049,18 @@ Metadata 方法：
 
 ## 18. 审计和可观测性
 
-### 18.1 授权审计
+### 18.1 授权审计（规划）
 
-记录：
+后续授权事件审计计划记录：
 
-- Client 注册、编辑、禁用；
+- Client 注册、编辑、禁用、软删除；
 - Client Secret 创建和重置；
 - 用户授权同意或拒绝；
 - 用户撤销外部应用；
 - Authorization Code 签发和消费失败；
 - Access Token 签发、刷新和撤销。
+
+当前版本暂未建立独立的 OAuth 授权事件审计查询链路；服务台现阶段提供的是 18.2 所述的 MCP 方法调用审计。
 
 ### 18.2 调用审计
 
@@ -2245,26 +2208,7 @@ sequenceDiagram
     MCP-->>CRM: 返回结构化 MCP 结果
 ```
 
-### 21.2 客户端凭证调用
-
-```mermaid
-sequenceDiagram
-    participant System as 外部系统后台
-    participant AS as NanZi OAuth2 Authorization Server
-    participant MCP as NanZi Platform MCP
-    participant Audit as Audit
-
-    System->>AS: client_credentials + client_id/secret
-    AS-->>System: client-bound Access Token
-    System->>MCP: tools/call + Bearer Access Token
-    MCP->>MCP: 校验 Token 和 Client Scope
-    MCP->>MCP: 创建 McpPrincipal(user_id=null)
-    MCP->>MCP: 校验 Client 的智能体白名单
-    MCP->>Audit: 记录 client、method、request_id
-    MCP-->>System: 返回系统级调用结果
-```
-
-### 21.3 元数据检索
+### 21.2 元数据检索
 
 ```mermaid
 sequenceDiagram
@@ -2354,7 +2298,7 @@ sequenceDiagram
 - `jti` 被撤销返回 401；
 - 缺少 `client_id` 返回 401；
 - 用户授权 Token 缺少 `user_id` 时拒绝用户级方法；
-- Client Credentials Token 不允许调用用户会话继续方法。
+- 没有 `user_id` 的 Token 在 Resource Server 阶段拒绝，不能调用任何 Platform MCP 方法。
 
 ### 23.3 鉴权测试
 
@@ -2406,10 +2350,9 @@ Echo MCP 可以作为下游测试服务，用于确认用户授权模式下 NanZ
 4. 增加 Authorization Server Metadata；未来 JWT 模式再增加 JWKS；
 5. 增加 OAuth Client 管理；
 6. 实现 Authorization Code + PKCE；
-7. 实现 Client Credentials；
-8. 实现 Access Token、Refresh Token 和撤销；
-9. 实现 `McpPrincipal`；
-10. 实现入站审计。
+7. 实现 Access Token、Refresh Token 和撤销；
+8. 实现 `McpPrincipal`；
+9. 实现入站审计。
 
 阶段一不实现 Public Client 注册；Public Client + PKCE-only 作为后续治理增强项。
 
@@ -2435,7 +2378,7 @@ Echo MCP 可以作为下游测试服务，用于确认用户授权模式下 NanZ
 7. 增加敏感字段脱敏；
 8. 增加元数据访问审计。
 
-### 阶段四：Platform MCP 知识库方法
+### 阶段四：Platform MCP 知识库方法（已实现）
 
 1. 实现 `knowledge.search`；
 2. 复用现有知识库和文档权限；
@@ -2460,7 +2403,6 @@ Echo MCP 可以作为下游测试服务，用于确认用户授权模式下 NanZ
 ### 授权验收
 
 - 外部系统能通过 OAuth2 Authorization Code + PKCE 完成用户授权；
-- 外部系统能通过 Client Credentials 获取系统级 Token；
 - 第一期外部系统均为 Confidential Client，Client Secret 只保存在外部系统后端，不下发到浏览器、移动端或桌面端前端；
 - 用户 API Key 不会返回给外部系统；
 - Access Token 的 `aud` 精确绑定 Platform MCP；
@@ -2522,13 +2464,13 @@ X-User-ID: 123
 
 问题：请求方可以篡改为其他用户，不能作为可信身份依据。
 
-### 26.3 客户端凭证加明文用户 ID
+### 26.3 Client Secret 加明文用户 ID
 
 ```text
 client_id + client_secret + user_id
 ```
 
-客户端凭证只能证明系统身份，明文 `user_id` 不能证明用户真的授权了该系统代表自己调用。
+`client_id + client_secret` 只能证明外部系统身份，明文 `user_id` 不能证明用户真的授权了该系统代表自己调用。Platform MCP 只接受由 NanZi 用户授权产生、并在服务端绑定 `user_id` 的 Access Token。
 
 ### 26.4 把全部平台权限放进 Token
 
@@ -2594,7 +2536,7 @@ report.get
     ├── 每个方法独立 Scope
     ├── 每个 Client 独立权限范围
     ├── 用户授权后自动绑定 user_id
-    ├── 客户端凭证模式不绑定用户
+    ├── 所有 Access Token 都绑定用户
     ├── 用户和资源权限仍由 NanZi 服务端执行
     └── 所有调用统一审计
 ```

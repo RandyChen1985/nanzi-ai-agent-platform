@@ -36,6 +36,8 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from app.core.orm import get_db_session
 from app.services.mcp.echo_server import echo_mcp, echo_mcp_lifespan
+from app.services.mcp.platform_mcp import platform_mcp, platform_mcp_lifespan
+from app.api.mcp_platform import router as mcp_platform_router
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from sqlalchemy.exc import OperationalError as SQLAlchemyOperationalError
@@ -96,7 +98,7 @@ async def lifespan(app: FastAPI):
 
     # Mounted Starlette 子应用不会自动执行自己的 lifespan；显式托管
     # FastMCP 的 session manager，否则首次请求会报 Task group 未初始化。
-    async with echo_mcp_lifespan():
+    async with echo_mcp_lifespan(), platform_mcp_lifespan():
         yield
     # Shutdown
     from app.services.ai.runtime.agentscope.workspace import stop_docker_workspace_reaper
@@ -336,6 +338,11 @@ app.add_middleware(
 
 # 内置平台 Echo MCP：创建配置后供所有智能体挂载，用于验证实际出站请求。
 app.mount("/mcp/echo", echo_mcp.streamable_http_app())
+app.mount("/mcp", platform_mcp.streamable_http_app())
+
+# Platform MCP 的 OAuth2/OIDC discovery 与授权端点必须位于 SPA catch-all 之前，
+# 且不复用现有 /api/portal 的 API Key 鉴权链路。
+app.include_router(mcp_platform_router)
 
 # Routers
 # 挂载 API V1 路由 (外部集成接口)

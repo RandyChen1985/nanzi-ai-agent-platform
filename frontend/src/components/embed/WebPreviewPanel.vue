@@ -34,7 +34,8 @@
                 : 'absolute inset-y-0 right-0 pl-0 sm:pl-10 max-w-full flex',
         ]"
       >
-        <section
+          <section
+          ref="previewPanel"
           :class="[
             'relative z-10 flex min-h-0 min-w-0 flex-col overflow-hidden border-gray-200 bg-white shadow-2xl dark:border-gray-700 dark:bg-gray-900',
             isResizing ? 'select-none transition-none' : 'transition-all duration-300',
@@ -136,9 +137,18 @@
                 title="调整网页显示比例，解决固定宽度网页的横向溢出"
                 @change="savePreviewZoom"
               >
-                <option value="auto">自动适配（{{ effectiveZoom }}%）</option>
+                <option value="auto">铺满窗口（自动适配 {{ effectiveZoom }}%）</option>
                 <option v-for="zoom in PREVIEW_ZOOM_OPTIONS" :key="zoom" :value="zoom">{{ zoom }}%</option>
               </select>
+              <button
+                v-if="previewZoom !== 'auto'"
+                type="button"
+                class="rounded-md px-1.5 py-1 text-[11px] font-semibold text-blue-600 hover:bg-blue-50 dark:text-blue-300 dark:hover:bg-blue-950/40"
+                title="恢复为铺满窗口的自动适配比例"
+                @click="setAutoZoom"
+              >
+                铺满
+              </button>
             </label>
             <button
               v-if="safeUrl"
@@ -152,14 +162,11 @@
           </div>
 
           <div v-if="safeUrl" class="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-gray-100 dark:bg-gray-950">
-            <div class="shrink-0 border-b border-amber-200 bg-amber-50 px-4 py-2 text-[11px] leading-relaxed text-amber-800 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-200">
-              外部网页可能使用固定宽度布局或禁止嵌入，面板会自适应可用空间；如仍有横向滚动，请点击“最大化查看”或“在新窗口打开”。
-            </div>
-            <div class="min-h-0 min-w-0 flex-1 overflow-hidden bg-white dark:bg-gray-900">
+            <div class="relative min-h-0 min-w-0 flex-1 overflow-hidden bg-white dark:bg-gray-900">
               <iframe
                 :key="frameKey"
                 :src="safeUrl"
-                class="block h-full min-h-0 min-w-0 w-full max-w-full border-0 bg-white dark:bg-gray-900"
+                class="absolute inset-0 border-0 bg-white dark:bg-gray-900"
                 :style="frameScaleStyle"
                 title="网页预览内容"
                 sandbox="allow-forms allow-modals allow-popups allow-presentation allow-scripts"
@@ -177,7 +184,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import { isBrowserOpenableUrl } from '@/utils/messageBrowserLinks';
 
 const props = defineProps<{
@@ -194,6 +201,7 @@ const pinned = defineModel<boolean>('pinned', { default: false });
 const panelWidth = defineModel<number>('panelWidth', { default: 448 });
 
 const frameKey = ref(0);
+const previewPanel = ref<HTMLElement | null>(null);
 const isMobile = ref(
   typeof window !== 'undefined' && window.matchMedia('(max-width: 639px)').matches,
 );
@@ -201,11 +209,14 @@ let mobileMq: MediaQueryList | null = null;
 const customWidth = ref<number | null>(null);
 const isResizing = ref(false);
 const isMaximized = ref(false);
+const renderedPanelWidth = ref<number | null>(null);
 const previewZoom = ref<'auto' | number>('auto');
 const PREVIEW_ZOOM_OPTIONS = [40, 50, 60, 67, 75, 80, 90, 100];
+const DESKTOP_PAGE_BASE_WIDTH = 1040;
 const WEB_PREVIEW_PANEL_WIDTH_STORAGE_KEY = 'nanzi_web_preview_panel_width';
-const WEB_PREVIEW_ZOOM_STORAGE_KEY = 'nanzi_web_preview_zoom';
+const WEB_PREVIEW_ZOOM_STORAGE_KEY = 'nanzi_web_preview_zoom_v2';
 const viewportWidth = ref(typeof window !== 'undefined' ? window.innerWidth : 1024);
+let panelResizeObserver: ResizeObserver | null = null;
 
 const safeUrl = computed(() => {
   const value = props.url?.trim() || '';
@@ -227,8 +238,9 @@ const effectiveZoom = computed(() => {
   if (isMobile.value) return 100;
 
   const maxPanelWidth = Math.max(320, viewportWidth.value - 300);
-  const availableWidth = Math.min(customWidth.value || panelWidth.value, maxPanelWidth);
-  const steppedZoom = Math.round((availableWidth / 1440) * 100 / 5) * 5;
+  const fallbackWidth = Math.min(customWidth.value || panelWidth.value, maxPanelWidth);
+  const availableWidth = renderedPanelWidth.value || fallbackWidth;
+  const steppedZoom = Math.floor((availableWidth / DESKTOP_PAGE_BASE_WIDTH) * 100 / 5) * 5;
   return Math.max(40, Math.min(100, steppedZoom));
 });
 
@@ -299,6 +311,11 @@ const savePreviewZoom = () => {
   localStorage.setItem(WEB_PREVIEW_ZOOM_STORAGE_KEY, String(previewZoom.value));
 };
 
+const setAutoZoom = () => {
+  previewZoom.value = 'auto';
+  savePreviewZoom();
+};
+
 const startResize = (event: MouseEvent) => {
   if (isMobile.value) return;
   event.preventDefault();
@@ -341,6 +358,32 @@ const syncViewportWidth = () => {
   viewportWidth.value = window.innerWidth;
 };
 
+const syncRenderedPanelWidth = () => {
+  const width = previewPanel.value?.getBoundingClientRect().width || 0;
+  renderedPanelWidth.value = width || null;
+};
+
+const observePreviewPanel = async () => {
+  await nextTick();
+  panelResizeObserver?.disconnect();
+  if (!previewPanel.value) {
+    renderedPanelWidth.value = null;
+    return;
+  }
+  syncRenderedPanelWidth();
+  panelResizeObserver?.observe(previewPanel.value);
+};
+
+watch(() => props.visible, (visible) => {
+  if (visible) {
+    setAutoZoom();
+    void observePreviewPanel();
+  } else {
+    panelResizeObserver?.disconnect();
+    renderedPanelWidth.value = null;
+  }
+});
+
 watch(() => props.url, () => {
   frameKey.value += 1;
 });
@@ -348,15 +391,21 @@ watch(() => props.url, () => {
 onMounted(() => {
   loadCustomWidth();
   loadPreviewZoom();
+  if (props.visible) setAutoZoom();
   mobileMq = window.matchMedia('(max-width: 639px)');
   syncMobile();
   mobileMq.addEventListener('change', syncMobile);
   window.addEventListener('resize', syncViewportWidth);
+  panelResizeObserver = typeof ResizeObserver !== 'undefined'
+    ? new ResizeObserver(syncRenderedPanelWidth)
+    : null;
+  void observePreviewPanel();
 });
 
 onUnmounted(() => {
   stopResize();
   mobileMq?.removeEventListener('change', syncMobile);
   window.removeEventListener('resize', syncViewportWidth);
+  panelResizeObserver?.disconnect();
 });
 </script>

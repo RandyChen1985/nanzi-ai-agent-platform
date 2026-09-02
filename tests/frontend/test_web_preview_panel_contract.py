@@ -32,7 +32,7 @@ def test_web_preview_panel_exposes_new_window_fallback_and_close_action():
     assert "在新窗口打开" in source
     assert "target=\"_blank\"" in source
     assert "emit('close')" in source
-    assert "禁止嵌入" in source or "不支持面板预览" in source
+    assert "外部网页可能使用固定宽度布局" not in source
 
 
 def test_web_preview_panel_matches_workspace_drawer_responsive_interactions():
@@ -64,7 +64,14 @@ def test_web_preview_panel_supports_scaled_page_preview():
     source = _source()
     assert "const previewZoom = ref<'auto' | number>('auto')" in source
     assert "PREVIEW_ZOOM_OPTIONS" in source
+    assert "DESKTOP_PAGE_BASE_WIDTH = 1040" in source
+    assert "WEB_PREVIEW_ZOOM_STORAGE_KEY = 'nanzi_web_preview_zoom_v2'" in source
     assert "自动适配" in source
+    assert "铺满窗口" in source
+    assert "setAutoZoom" in source
+    assert "if (visible) {\n    setAutoZoom();" in source
+    assert "ResizeObserver" in source
+    assert "renderedPanelWidth" in source
     assert "effectiveZoom" in source
     assert "frameScaleStyle" in source
     assert "transformOrigin: 'top left'" in source

@@ -4,7 +4,7 @@
 
 **Goal:** 在 NanZi 中落地统一的 Platform MCP 入站基座，使用 OAuth2 标准授权关联外部 Client 与 NanZi 用户，并先端到端实现 `knowledge.search`。
 
-**Architecture:** NanZi 同时作为 OAuth2 Authorization Server 和 MCP Resource Server，完整 OIDC 作为后续扩展。外部系统使用 Authorization Code + PKCE（用户授权）或 Client Credentials（系统调用）获得 opaque Bearer Access Token；Platform MCP 的 TokenVerifier 从数据库恢复并校验 token，再将 `client_id`、用户身份、scope 和资源信息注入 `McpPrincipal`。知识库检索复用现有 RAGFlow 客户端，但目标知识库必须经过用户权限、Client 白名单和请求范围三者交集过滤。服务台作为独立 `/dashboard/mcp-service` 菜单，由 `menu:mcp_service` 和 `element:mcp_service:*` 控制。
+**Architecture:** NanZi 同时作为 OAuth2 Authorization Server 和 MCP Resource Server，完整 OIDC 作为后续扩展。外部系统使用 Authorization Code + PKCE 完成用户授权，使用 Refresh Token 续期同一用户的授权，获得 opaque Bearer Access Token；Platform MCP 的 TokenVerifier 从数据库恢复并校验 token，再将 `client_id`、已验证用户身份、scope 和资源信息注入 `McpPrincipal`。知识库检索复用现有 RAGFlow 客户端，但目标知识库必须经过用户权限、Client 白名单和请求范围三者交集过滤。服务台作为独立 `/dashboard/mcp-service` 菜单，由 `menu:mcp_service` 和 `element:mcp_service:*` 控制。
 
 **Tech Stack:** FastAPI、FastMCP、SQLAlchemy 2.x async、Pydantic 2、Vue 3 + TypeScript、MySQL/PostgreSQL 版本化 SQL 迁移。
 
@@ -15,13 +15,13 @@
 - [x] 新增入站 OAuth Client、授权码、Access Token、Refresh Token、授权关系和调用审计 ORM 模型。
 - [x] 新增 OAuth2 token 签发/校验服务；当前 Access Token 使用 opaque Token，不复用用户 API Key，不信任请求体中的 `user_id`。
 - [x] 新增 OAuth2 authorize、token、revoke 和 RFC 发现端点；首期只接受 Confidential Client，并校验 redirect URI、PKCE、scope、resource；完整 OIDC 端点后续扩展。
-- [x] 先写单元测试覆盖 client_secret 哈希校验、PKCE、过期/撤销边界、用户授权 token 与 client credentials token 的用户绑定差异、scope 上限，并完成 RED → GREEN。
+- [x] 先写单元测试覆盖 client_secret 哈希校验、PKCE、过期/撤销边界、用户绑定 Token、scope 上限，并完成 RED → GREEN。
 
 ## 2. Platform MCP Resource Server 与 `knowledge.search`
 
 - [x] 新增 `McpPrincipal` 和 FastMCP `TokenVerifier`，只接受 `Authorization: Bearer <OAuth Access Token>`，强制校验 token、resource、过期时间、Client 状态和 Platform MCP 总开关。
 - [x] 建立统一方法注册表，当前实际发布 `knowledge.search`，保留 `agent.*`、`conversation.*`、`metadata.*` 扩展点；每个方法声明 scope、能力组和是否需要用户身份。
-- [x] 新增 `knowledge.search` 工具：用户授权模式下执行用户知识库权限 ∩ Client 知识库白名单 ∩ 请求知识库范围；Client Credentials 首期拒绝用户知识库检索。
+- [x] 新增 `knowledge.search` 工具：执行用户知识库权限 ∩ Client 知识库白名单 ∩ 请求知识库范围；没有已验证用户的 Token 直接拒绝。
 - [x] 返回结构化结果与 citations，不能返回连接密钥、内部存储地址或未授权知识库内容；记录脱敏调用审计。
 - [x] 挂载 `/.well-known/oauth-protected-resource`、`/.well-known/oauth-authorization-server` 和 `/mcp/platform`，确保不被 SPA catch-all 或旧 API 鉴权误拦截；当前 opaque Token 不提供 JWKS。
 - [x] 先写 verifier、scope、知识库交集和 MCP tool contract 测试，再实现并运行聚焦测试。

@@ -43,6 +43,45 @@ def test_service_desk_hides_tabs_and_disables_switches_without_read_permission()
     assert "!canReadConfig" in view
 
 
+def test_service_desk_exposes_permission_gated_audit_tab_and_filters():
+    view = (ROOT / "frontend/src/views/McpServiceDesk.vue").read_text(encoding="utf-8")
+
+    assert "'audit'" in view
+    assert "label: '审计日志'" in view
+    assert "element:mcp_service:audit:read" in view
+    assert "/api/portal/mcp-service/audit" in view
+    assert "request_id" in view
+    assert "method_name" in view
+    assert "result_status" in view
+    assert "查看详情" in view
+
+
+def test_audit_filters_are_collapsed_by_default_and_use_one_dynamic_row():
+    view = (ROOT / "frontend/src/views/McpServiceDesk.vue").read_text(encoding="utf-8")
+
+    assert "const showAuditFilters = ref(false)" in view
+    assert "展开筛选" in view
+    assert "收起筛选" in view
+    assert 'v-if="showAuditFilters"' in view
+    assert "flex-nowrap" in view
+    assert "auditFilterOptions" in view
+    assert "selectedAuditFilter" in view
+    assert "selectedAuditFilterValue" in view
+    assert "过滤对象" in view
+    assert "过滤值" in view
+    assert 'mt-3 flex flex-nowrap items-end gap-3 overflow-x-auto pb-1' not in view
+
+
+def test_client_delete_requires_confirmation_and_keeps_audit_history():
+    view = (ROOT / "frontend/src/views/McpServiceDesk.vue").read_text(encoding="utf-8")
+
+    assert "ClientConfirmAction = 'disable' | 'reset-secret' | 'delete'" in view
+    assert "确认删除 Client" in view
+    assert "删除后会发生什么？" in view
+    assert "审计记录会保留" in view
+    assert "api.delete" in view
+
+
 def test_service_desk_uses_the_same_dashboard_spacing_and_background_as_mcp_toolkit():
     toolkit = (ROOT / "frontend/src/views/McpManagement.vue").read_text(encoding="utf-8")
     service_desk = (ROOT / "frontend/src/views/McpServiceDesk.vue").read_text(encoding="utf-8")
@@ -64,6 +103,155 @@ def test_service_desk_configuration_cards_expose_clear_capsule_switches():
     assert "translate-x-5" in view
     assert "已开启" in view
     assert "已关闭" in view
+
+
+def test_service_desk_refresh_reuses_workbench_refresh_interaction():
+    view = (ROOT / "frontend/src/views/McpServiceDesk.vue").read_text(encoding="utf-8")
+
+    assert "workbench-refresh-btn" in view
+    assert ":disabled=\"loading\"" in view
+    assert "刷新中" in view
+    assert "animate-spin" in view
+
+
+def test_service_overview_addresses_have_individual_help_dialogs():
+    view = (ROOT / "frontend/src/views/McpServiceDesk.vue").read_text(encoding="utf-8")
+
+    assert "endpointHelpItems" in view
+    assert "EndpointHelpKey" in view
+    assert "openEndpointHelp" in view
+    assert "showEndpointHelp" in view
+    for key in ("endpoint", "resource", "oauth", "protected"):
+        assert f"key: '{key}'" in view
+    assert "MCP 请求实际发送到这里" in view
+    assert "OAuth2 获取 Token 时使用" in view
+    assert "发现授权服务器和资源信息" in view
+    assert "复制地址" in view
+
+
+def test_client_modal_is_viewport_safe_and_scope_list_can_scroll():
+    view = (ROOT / "frontend/src/views/McpServiceDesk.vue").read_text(encoding="utf-8")
+
+    assert "max-h-[calc(100vh-2rem)]" in view
+    assert "overflow-y-auto" in view
+    assert "min-h-0 flex-1" in view
+    assert "允许 Scope" in view
+    assert "max-h-56" in view
+
+
+def test_service_desk_has_oauth_usage_guide_and_copyable_mcp_json():
+    view = (ROOT / "frontend/src/views/McpServiceDesk.vue").read_text(encoding="utf-8")
+
+    assert "type Tab = 'overview' | 'guide' | 'config' | 'clients' | 'methods' | 'audit'" in view
+    assert "label: '使用指南'" in view
+    assert "mcpServers" in view
+    assert "NANZI_PLATFORM_MCP_ACCESS_TOKEN" in view
+    assert "Authorization Code + PKCE" in view
+    assert "Protected Resource Metadata" in view
+    assert "copyMcpJson" in view
+    assert "服务台生成的当前用户 Token" in view
+
+
+def test_service_desk_can_issue_current_user_token_and_explain_dynamic_oauth():
+    view = (ROOT / "frontend/src/views/McpServiceDesk.vue").read_text(encoding="utf-8")
+
+    assert "生成当前用户 Access Token" in view
+    assert "showTokenIssue" in view
+    assert "expires_in" in view
+    assert "user-access-token" in view
+    assert "动态获取" in view
+    assert "当前登录用户" in view
+
+
+def test_service_desk_token_issue_uses_second_step_with_token_and_direct_mcp_json_copy():
+    view = (ROOT / "frontend/src/views/McpServiceDesk.vue").read_text(encoding="utf-8")
+
+    assert "tokenWizardStep" in view
+    assert "tokenWizardStep === 2" in view
+    assert "复制 Access Token" in view
+    assert "generatedMcpJson" in view
+    assert "复制 MCP JSON" in view
+    assert "直接粘贴" in view
+
+
+def test_client_destructive_actions_require_confirmation_and_explain_token_impact():
+    view = (ROOT / "frontend/src/views/McpServiceDesk.vue").read_text(encoding="utf-8")
+
+    assert "openClientConfirm" in view
+    assert "确认停用 Client" in view
+    assert "确认重置 Client Secret" in view
+    assert "Access Token、Refresh Token 会立即失效" in view
+    assert "旧 Client Secret 立即失效" in view
+    assert "confirmClientAction" in view
+
+
+def test_service_desk_guide_prioritizes_manual_low_code_usage_before_programmatic_oauth():
+    view = (ROOT / "frontend/src/views/McpServiceDesk.vue").read_text(encoding="utf-8")
+
+    manual_index = view.index("人工 / 低代码客户端")
+    programmatic_index = view.index("程序化系统接入")
+
+    assert manual_index < programmatic_index
+    assert "Cursor" in view
+    assert "Claude Desktop" in view
+    assert "Dify" in view
+    assert "登录 NanZi" in view
+    assert "重新生成" in view
+
+
+def test_service_desk_guide_explains_client_secret_scenarios_and_sample_code():
+    view = (ROOT / "frontend/src/views/McpServiceDesk.vue").read_text(encoding="utf-8")
+
+    assert "Client Secret 只用于获取 Access Token" in view
+    assert "始终代表完成 NanZi 登录授权的用户" in view
+    assert "client_credentials" not in view
+    assert "Client Credentials" not in view
+    assert "curl" in view
+    assert "requests.post" in view
+    assert "Authorization: Bearer" in view
+    assert "不要把 Client Secret 放进 Cursor" in view
+
+
+def test_service_desk_client_form_exposes_all_platform_mcp_resource_scopes():
+    view = (ROOT / "frontend/src/views/McpServiceDesk.vue").read_text(encoding="utf-8")
+
+    assert "agent:list" in view
+    assert "agent:invoke" in view
+    assert "当前已发布，需用户授权" not in view
+    assert "（待接入）" not in view
+    assert "allowed_agent_ids" in view
+    assert "allowed_metadata_dataset_ids" in view
+    assert "当前用户有权限且在 Client 白名单内" in view
+    assert "用户授权 Token 仍只能访问当前用户有权限的元数据" in view
+
+
+def test_service_desk_exposes_only_user_bound_oauth_flow():
+    view = (ROOT / "frontend/src/views/McpServiceDesk.vue").read_text(encoding="utf-8")
+
+    assert "authorization_code" in view
+    assert "Authorization Code + PKCE" in view
+    assert "authorizationCodePython" in view
+    assert "client_credentials" not in view
+    assert "Client Credentials" not in view
+
+
+def test_client_card_labels_and_copies_client_id():
+    view = (ROOT / "frontend/src/views/McpServiceDesk.vue").read_text(encoding="utf-8")
+
+    assert "Client ID" in view
+    assert "client-id-" in view
+    assert "Client ID 用于 Token Endpoint" in view
+    assert "复制 Client ID" in view
+
+
+def test_client_card_uses_capsule_labels_for_identity_and_resource_limits():
+    view = (ROOT / "frontend/src/views/McpServiceDesk.vue").read_text(encoding="utf-8")
+
+    assert 'class="rounded-full bg-slate-100 px-2 py-1 text-[11px] font-bold text-slate-600"' in view
+    assert "class=\"inline-flex max-w-full items-center gap-1 rounded-full" in view
+    for label in ("授权", "Scope", "智能体", "知识库", "元数据集"):
+        assert f"<span class=\"shrink-0 font-semibold" in view
+        assert label in view
 
 
 def test_login_reloads_backend_oauth_endpoint_after_same_origin_login():

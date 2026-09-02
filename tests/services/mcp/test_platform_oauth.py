@@ -3,6 +3,7 @@ from datetime import datetime, timedelta
 import pytest
 
 from app.services.mcp.platform_oauth import (
+    ACCESS_TOKEN_TTL_SECONDS,
     MCP_RESOURCE,
     McpPrincipal,
     build_pkce_challenge,
@@ -49,7 +50,6 @@ def test_principal_keeps_client_and_user_identity_separate():
     assert principal.client_id == "crm-system"
     assert principal.user_id == "123"
     assert principal.is_user_delegated is True
-    assert principal.is_client_credentials is False
 
 
 def test_secret_hash_is_one_way_and_time_independent_for_verification():
@@ -65,15 +65,27 @@ def test_access_token_expiry_is_explicit():
     now = datetime.utcnow()
     principal = McpPrincipal(
         client_id="crm-system",
-        user_id=None,
+        user_id="123",
         scopes=("agent:list",),
         resource=MCP_RESOURCE,
-        auth_type="client_credentials",
+        auth_type="user_delegated",
         expires_at=now + timedelta(minutes=1),
     )
 
     assert principal.is_expired(now) is False
     assert principal.is_expired(now + timedelta(minutes=2)) is True
+
+
+def test_custom_access_token_ttl_has_a_safe_bounded_range():
+    from app.services.mcp.platform_oauth import resolve_access_token_ttl
+
+    assert resolve_access_token_ttl(None) == ACCESS_TOKEN_TTL_SECONDS
+    assert resolve_access_token_ttl(900) == 900
+
+    with pytest.raises(ValueError):
+        resolve_access_token_ttl(299)
+    with pytest.raises(ValueError):
+        resolve_access_token_ttl(604801)
 
 
 def test_knowledge_scope_is_the_intersection_of_all_boundaries():

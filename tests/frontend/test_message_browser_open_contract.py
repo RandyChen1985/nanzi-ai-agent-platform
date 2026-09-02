@@ -102,6 +102,25 @@ return api.appendBrowserOpenActions(once);
     assert result.count('data-open-browser-url=') == 1
 
 
+def test_browser_link_helper_adds_action_after_code_wrapped_http_url():
+    result = _run_typescript(
+        MODULE,
+        """
+const html = api.appendBrowserOpenActionsToCode(
+  '<code>https://example.com/a?x=1&amp;y=2</code>' +
+  '<code>SELECT * FROM orders</code>'
+);
+return {
+  html,
+  actionCount: (html.match(/data-open-browser-url=/g) || []).length,
+};
+""",
+    )
+    assert result["actionCount"] == 1
+    assert "</code><button" in result["html"]
+    assert 'data-open-browser-url="https://example.com/a?x=1&amp;y=2"' in result["html"]
+
+
 def test_message_renderer_exposes_browser_open_prop_event_and_click_proxy():
     source = _source("frontend/src/components/MessageRenderer.vue")
 
@@ -109,6 +128,7 @@ def test_message_renderer_exposes_browser_open_prop_event_and_click_proxy():
     assert "enableBrowserOpen: false" in source
     assert "(e: 'open-browser-url', url: string): void;" in source
     assert "appendBrowserOpenActions" in source
+    assert "appendBrowserOpenActionsToCode" in source
     assert "isBrowserOpenableUrl" in source
     assert "if (props.enableBrowserOpen)" in source
     assert "const browserOpenButton = target.closest<HTMLButtonElement>('[data-open-browser-url]');" in source

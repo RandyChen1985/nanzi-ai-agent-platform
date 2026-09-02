@@ -19,14 +19,14 @@ def test_platform_mcp_exposes_standard_oauth_oidc_discovery_and_token_routes():
     assert "/.well-known/oauth-protected-resource/mcp/platform" in paths
 
 
-def test_platform_mcp_token_endpoint_supports_the_two_approved_client_auth_forms():
+def test_platform_mcp_token_endpoint_supports_user_authorization_and_refresh():
     source = Path("app/api/mcp_platform.py").read_text(encoding="utf-8")
 
     assert "client_secret_basic" in source
     assert "client_secret_post" in source
     assert "authorization_code" in source
-    assert "client_credentials" in source
     assert "refresh_token" in source
+    assert "client_credentials" not in source
 
 
 def test_platform_mcp_authorization_redirect_preserves_login_return_url():

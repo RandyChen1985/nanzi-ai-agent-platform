@@ -44,11 +44,61 @@ def test_mcp_service_desk_uses_dedicated_platform_config_storage():
     assert "ConfigService.set_config" not in source
 
 
+def test_mcp_client_management_is_scoped_to_current_user_id_even_for_admin():
+    source = Path("app/api/portal/endpoints/mcp_service.py").read_text(encoding="utf-8")
+
+    assert "def _current_user_id" in source
+    assert "def _get_owned_client" in source
+    assert "McpOAuthClient.created_by == current_user_id" in source
+    assert "created_by=current_user_id" in source
+    assert 'created_by=str(user.get("user_name") or user.get("user_id"))' not in source
+    assert "owner_client_ids = select(McpOAuthClient.client_id)" in source
+
+    for endpoint in (
+        'async def get_overview(',
+        'async def list_audit(',
+        'async def list_clients(',
+        'async def update_client(',
+        'async def delete_client(',
+        'async def reset_client_secret(',
+        'async def create_current_user_access_token(',
+    ):
+        segment = source.split(endpoint, 1)[1].split("\n@router", 1)[0]
+        assert "current_user_id" in segment or "_get_owned_client" in segment
+
+
+def test_service_desk_exposes_current_user_access_token_with_expiry_and_permission():
+    source = Path("app/api/portal/endpoints/mcp_service.py").read_text(encoding="utf-8")
+
+    assert "user-access-token" in source
+    assert "McpAccessTokenCreate" in source
+    assert "expires_in" in source
+    assert "user_id" in source
+    assert "element:mcp_service:client:token_issue" in source
+
+
+def test_current_user_access_token_request_validates_expiry_and_scopes():
+    payload = mcp_service.McpAccessTokenCreate(
+        scopes=["agent:invoke", "agent:invoke"],
+        expires_in=900,
+    )
+
+    assert payload.scopes == ["agent:invoke"]
+    assert payload.expires_in == 900
+
+    with pytest.raises(ValueError):
+        mcp_service.McpAccessTokenCreate(scopes=["agent:invoke"], expires_in=299)
+
+    with pytest.raises(ValueError):
+        mcp_service.McpAccessTokenCreate(scopes=["unknown:scope"], expires_in=900)
+
+
 def test_mcp_service_desk_exposes_dedicated_config_tab():
     view = Path("frontend/src/views/McpServiceDesk.vue").read_text(encoding="utf-8")
 
-    assert "type Tab = 'overview' | 'config' | 'clients' | 'methods'" in view
+    assert "type Tab = 'overview' | 'guide' | 'config' | 'clients' | 'methods'" in view
     assert "label: '服务配置'" in view
+    assert "label: '使用指南'" in view
     assert "activeTab === 'config'" in view
 
 
@@ -59,7 +109,64 @@ def test_mcp_service_router_exposes_overview_clients_and_methods():
     assert "/config" in paths
     assert "/clients" in paths
     assert "/clients/{client_id}" in paths
+    assert "/clients/{client_id}/user-access-token" in paths
     assert "/methods" in paths
+
+
+def test_client_delete_is_soft_delete_and_revokes_credentials():
+    source = Path("app/api/portal/endpoints/mcp_service.py").read_text(encoding="utf-8")
+
+    assert '@router.delete("/clients/{client_id}")' in source
+    assert 'client.status = "deleted"' in source
+    assert "McpOAuthAccessToken" in source
+    assert "McpOAuthRefreshToken" in source
+    assert "McpOAuthGrant" in source
+    assert 'status="revoked"' in source
+    assert 'McpOAuthClient.status != "deleted"' in source
+
+
+def test_mcp_service_exposes_inbound_audit_query_with_read_permission():
+    source = Path("app/api/portal/endpoints/mcp_service.py").read_text(encoding="utf-8")
+
+    paths = {getattr(route, "path", None) for route in mcp_service.router.routes}
+    assert "/audit" in paths
+    assert "McpInboundAuditLog" in source
+    assert "element:mcp_service:audit:read" in source
+    assert "request_id" in source
+    assert "result_status" in source
+    audit_segment = source.split('@router.get("/audit")', 1)[1].split('@router.get("/clients")', 1)[0]
+    assert "client_secret" not in audit_segment
+
+
+def test_audit_serializer_returns_business_fields_without_credentials():
+    from datetime import datetime
+    from types import SimpleNamespace
+
+    payload = mcp_service._serialize_audit_log(SimpleNamespace(
+        id="audit-1",
+        request_id="req-1",
+        client_request_id=None,
+        client_id="client-1",
+        user_id="user-1",
+        auth_type="user_delegated",
+        method_name="agent.invoke",
+        agent_id="agent-1",
+        conversation_id="conv-1",
+        dataset_id=None,
+        scopes=["agent:invoke"],
+        status_code=200,
+        result_status="completed",
+        error_code=None,
+        latency_ms=12,
+        created_at=datetime(2026, 9, 2, 12, 0, 0),
+    ))
+
+    assert payload["request_id"] == "req-1"
+    assert payload["user_id"] == "user-1"
+    assert payload["scopes"] == ["agent:invoke"]
+    assert "access_token" not in payload
+    assert "client_secret" not in payload
+    assert "authorization" not in payload
 
 
 def test_mcp_service_runtime_dependencies_are_imported():
@@ -67,15 +174,22 @@ def test_mcp_service_runtime_dependencies_are_imported():
     assert hasattr(mcp_service, "McpOAuthAccessToken")
 
 
-def test_client_credentials_only_registration_does_not_need_redirect_uri():
-    client = mcp_service.McpOAuthClientCreate(
-        client_name="CRM 后台任务",
-        redirect_uris=[],
-        allowed_grant_types=["client_credentials"],
-        allowed_scopes=["agent:list"],
-    )
+def test_client_registration_requires_user_authorization_code():
+    with pytest.raises(ValueError, match="不支持"):
+        mcp_service.McpOAuthClientCreate(
+            client_name="CRM 后台任务",
+            redirect_uris=[],
+            allowed_grant_types=["client_credentials"],
+            allowed_scopes=["agent:list"],
+        )
 
-    assert client.redirect_uris == []
+    with pytest.raises(ValueError, match="redirect_uri"):
+        mcp_service.McpOAuthClientCreate(
+            client_name="CRM 用户授权",
+            redirect_uris=[],
+            allowed_grant_types=["authorization_code"],
+            allowed_scopes=["agent:list"],
+        )
 
 
 def test_client_security_changes_revoke_existing_grants_and_tokens():

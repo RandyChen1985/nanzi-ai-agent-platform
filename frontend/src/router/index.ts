@@ -205,6 +205,12 @@ const router = createRouter({
           meta: { perm: 'menu:mcp_management', title: 'MCP 工具集' }
         },
         {
+          path: 'mcp-service',
+          name: 'McpServiceDesk',
+          component: () => import('../views/McpServiceDesk.vue'),
+          meta: { perm: 'menu:mcp_service', title: 'MCP 服务台' }
+        },
+        {
           path: 'memory',
           name: 'MemoryManagement',
           component: () => import('../views/MemoryManagement.vue'),
@@ -292,6 +298,7 @@ const MENU_HOME_CANDIDATES: Array<{ perm: string; name: string }> = [
   { perm: 'menu:agent_management', name: 'AgentManagement' },
   { perm: 'menu:skills_management', name: 'SkillsManagement' },
   { perm: 'menu:mcp_management', name: 'McpManagement' },
+  { perm: 'menu:mcp_service', name: 'McpServiceDesk' },
   { perm: 'menu:chat_logs', name: 'ChatLogs' },
   { perm: 'menu:metadata', name: 'Metadata' },
   { perm: 'menu:task_center', name: 'TaskCenter' },

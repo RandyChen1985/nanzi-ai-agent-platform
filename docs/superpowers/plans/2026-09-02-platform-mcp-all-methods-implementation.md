@@ -22,7 +22,7 @@
 
 - 用户身份只取自已验证的 `McpPrincipal.user_id` 对应的当前 NanZi 用户记录，不接受工具参数中的 `user_id`。
 - 用户授权模式下，智能体/元数据权限分别复用现有 `AgentManagerService` 和 `MetadataService`；Client 白名单与用户权限取交集。
-- Client Credentials 仅允许管理员配置的系统智能体和元数据白名单；不允许调用用户会话和需要用户身份的智能体执行。
+- 所有 Platform MCP 方法都要求已验证的 NanZi 用户；用户权限与 Client 智能体/元数据白名单取交集，不支持没有用户身份的 Token。
 - `conversation.continue` 必须验证会话归属，不能仅凭会话 ID 查询或继续。
 - 元数据只返回数据集、表、字段、指标描述，不返回连接凭据、行级权限配置、内部数据源地址或实际业务数据。
 - 所有工具失败都写入审计；审计写失败不能覆盖业务结果。
@@ -37,7 +37,7 @@
 1. 九个方法定义均为 `implemented=True`，名称、Scope、能力组与设计一致。
 2. 分页游标只能由 NanZi 生成，篡改或错误格式被拒绝，且分页前已经完成权限过滤。
 3. 用户上下文从数据库用户记录构造，扩展字段只保留安全 JSON；不从 OAuth claims 或请求参数信任角色和用户名。
-4. 用户权限与 Client 的 `allowed_agent_ids` / `allowed_metadata_dataset_ids` 取交集；Client Credentials 没有显式白名单时无资源权限。
+4. 用户权限与 Client 的 `allowed_agent_ids` / `allowed_metadata_dataset_ids` 取交集；没有已验证用户时拒绝资源访问。
 5. Agent、会话和元数据序列化结果不包含 API Key、密码、连接信息、行过滤配置等敏感字段。
 6. 元数据搜索只在已授权数据集内匹配 dataset/table/column/metric，并遵守 limit 与 resource_types。
 
@@ -88,7 +88,7 @@ PYTHONPATH=. .venv/bin/pytest --confcutdir=tests \
 - `metadata.get_dataset` 返回单个授权数据集摘要；
 - `metadata.get_schema` 返回授权表和字段，按需返回同数据集内的关系；
 - `metadata.get_metrics` 只返回授权数据集指标及业务口径；
-- 对 Client Credentials 强制使用 Client 配置的数据集白名单。
+- 对已验证用户强制执行 Client 配置的数据集白名单，并与用户数据集权限取交集。
 
 运行全部 MCP 服务测试并修正序列化、异步查询和兼容性问题。
 

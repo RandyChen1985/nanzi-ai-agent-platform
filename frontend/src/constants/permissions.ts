@@ -55,6 +55,24 @@ export const MENU_TREE = [
         children: []
     },
     {
+        id: 'menu:mcp_service',
+        label: 'MCP 服务台',
+        children: [
+            { id: 'element:mcp_service:overview:read', label: '查看服务总览' },
+            { id: 'element:mcp_service:config:read', label: '查看服务配置' },
+            { id: 'element:mcp_service:config:edit', label: '修改服务开关' },
+            { id: 'element:mcp_service:client:read', label: '查看外部 Client' },
+            { id: 'element:mcp_service:client:manage', label: '管理外部 Client' },
+            { id: 'element:mcp_service:client:secret_reset', label: '重置 Client Secret' },
+            { id: 'element:mcp_service:client:token_issue', label: '生成当前用户 Access Token' },
+            { id: 'element:mcp_service:capability:read', label: '查看能力与 Scope' },
+            { id: 'element:mcp_service:capability:manage', label: '管理能力与 Scope' },
+            { id: 'element:mcp_service:grant:read', label: '查看用户授权' },
+            { id: 'element:mcp_service:grant:revoke', label: '撤销用户授权' },
+            { id: 'element:mcp_service:audit:read', label: '查看调用审计' }
+        ]
+    },
+    {
         id: 'menu:memory_management',
         label: '记忆工作台',
         children: [

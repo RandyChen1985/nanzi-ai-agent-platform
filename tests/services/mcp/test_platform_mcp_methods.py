@@ -42,6 +42,7 @@ def test_all_platform_mcp_methods_are_implemented_and_registered_by_definition()
         assert definition.implemented is True
         assert definition.scope == scope
         assert definition.capability_group == capability_group
+        assert definition.requires_user is True
 
 
 @pytest.mark.asyncio
@@ -348,3 +349,57 @@ async def test_agent_list_allowed_applies_client_whitelist_to_user_allowed_agent
     result = await agent_list_allowed(limit=20)
 
     assert [item["agent_id"] for item in result["items"]] == ["agent-allowed"]
+
+
+@pytest.mark.asyncio
+async def test_metadata_scope_intersects_user_access_and_client_whitelist(monkeypatch):
+    from app.services.mcp.platform_oauth import McpPrincipal
+
+    principal = McpPrincipal(
+        client_id="crm",
+        user_id="123",
+        scopes=("metadata:read",),
+        resource="mcp:nanzi-platform",
+        auth_type="user_delegated",
+    )
+
+    async def fake_client(_db, _principal):
+        return SimpleNamespace(allowed_metadata_dataset_ids=["7", "8"])
+
+    async def fake_user(_db, _principal):
+        return SimpleNamespace(id=123), {"user_id": "123", "role": "user"}
+
+    async def fake_accessible(*_args, **_kwargs):
+        return [SimpleNamespace(id=7), SimpleNamespace(id=9)]
+
+    monkeypatch.setattr(platform_mcp_module, "_load_client", fake_client)
+    monkeypatch.setattr(platform_mcp_module, "_load_principal_user", fake_user)
+    monkeypatch.setattr(
+        platform_mcp_module.MetadataService,
+        "list_accessible_dataset_options",
+        fake_accessible,
+    )
+
+    assert await platform_mcp_module._resolve_metadata_dataset_ids(object(), principal) == ["7"]
+    assert await platform_mcp_module._resolve_metadata_dataset_ids(object(), principal, ["9"]) == []
+
+
+@pytest.mark.asyncio
+async def test_metadata_scope_requires_a_user_principal(monkeypatch):
+    from app.services.mcp.platform_oauth import McpPrincipal
+
+    principal = McpPrincipal(
+        client_id="client-1",
+        user_id=None,
+        scopes=("metadata:read",),
+        resource="mcp:nanzi-platform",
+        auth_type="unknown",
+    )
+
+    async def fake_client(_db, _principal):
+        return SimpleNamespace(allowed_metadata_dataset_ids=None)
+
+    monkeypatch.setattr(platform_mcp_module, "_load_client", fake_client)
+
+    with pytest.raises(PermissionError, match="用户授权"):
+        await platform_mcp_module._resolve_metadata_dataset_ids(object(), principal)

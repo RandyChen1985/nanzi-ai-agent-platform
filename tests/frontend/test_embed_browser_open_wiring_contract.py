@@ -27,6 +27,11 @@ def test_embed_chat_wires_browser_url_to_web_preview_for_current_and_history_mes
     assert ":url=\"webPreviewUrl\"" in source
     assert "BrowserPanel" in source
     assert ':open-url="browserOpenUrl"' not in source
+    assert "const webPreviewPinned = ref(false);" in source
+    assert "const webPreviewPanelWidthReactive = ref(448);" in source
+    assert 'v-model:pinned="webPreviewPinned"' in source
+    assert 'v-model:panel-width="webPreviewPanelWidthReactive"' in source
+    assert "webPreviewPanelWidthPx" in source
 
 
 def test_automation_browser_panel_does_not_receive_web_preview_url():
