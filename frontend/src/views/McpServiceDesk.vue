@@ -14,6 +14,12 @@ type Client = {
   allowed_scopes: string[]
   scope_version: number
   needs_token_regeneration?: boolean
+  created_by?: string | null
+  owner_user_name?: string | null
+  owner_real_name?: string | null
+  has_issued_token?: boolean
+  last_token_issued_at?: string | null
+  last_token_issue_method?: 'oauth_authorization' | 'manual_user_token' | null
   redirect_uris: string[]
   client_secret?: string | null
 }
@@ -37,6 +43,18 @@ type AuditLog = {
   created_at?: string | null
 }
 
+type SecurityAuditLog = {
+  id: string
+  event_type: string
+  request_id?: string | null
+  client_id?: string | null
+  user_id?: string | null
+  actor_user_id?: string | null
+  result_status: string
+  error_code?: string | null
+  created_at?: string | null
+}
+
 type ClientConfirmAction = 'disable' | 'reset-secret' | 'delete'
 
 const { hasPermission, isAdmin } = useUser()
@@ -53,6 +71,11 @@ const auditTotal = ref(0)
 const auditPage = ref(1)
 const auditPageSize = 20
 const auditLoading = ref(false)
+const showAuditFilters = ref(false)
+const auditStartAt = ref('')
+const auditEndAt = ref('')
+const securityAuditLogs = ref<SecurityAuditLog[]>([])
+const auditTrend = ref<Array<{ at: string; total: number; completed: number; failed: number; denied: number }>>([])
 const auditSummaryRange = ref<'24h' | '7d' | '30d'>('24h')
 const auditSummary = ref<Record<string, any>>({})
 const auditSummaryLoading = ref(false)
@@ -227,6 +250,8 @@ const loadAudit = async () => {
       page: auditPage.value,
       page_size: auditPageSize,
     }
+    if (auditStartAt.value) params.start_at = auditStartAt.value
+    if (auditEndAt.value) params.end_at = auditEndAt.value
     Object.entries(auditFilters).forEach(([key, value]) => {
       if (value.trim()) params[key] = value.trim()
     })
@@ -240,15 +265,34 @@ const loadAudit = async () => {
   }
 }
 
+const loadSecurityAudit = async () => {
+  if (!canReadAudit.value) return
+  const params: Record<string, string | number> = { page: 1, page_size: 20 }
+  if (auditStartAt.value) params.start_at = auditStartAt.value
+  if (auditEndAt.value) params.end_at = auditEndAt.value
+  const response = await api.get('/api/portal/mcp-service/audit/security', { params })
+  securityAuditLogs.value = response.data?.items || []
+}
+
+const loadAuditTrend = async () => {
+  if (!canReadAudit.value) return
+  const response = await api.get('/api/portal/mcp-service/audit/trend', {
+    params: { range: auditSummaryRange.value },
+  })
+  auditTrend.value = response.data?.items || []
+}
+
 const applyAuditFilters = async () => {
   auditPage.value = 1
-  await loadAudit()
+  await Promise.all([loadAudit(), loadSecurityAudit()])
 }
 
 const resetAuditFilters = async () => {
   Object.keys(auditFilters).forEach((key) => {
     auditFilters[key as keyof typeof auditFilters] = ''
   })
+  auditStartAt.value = ''
+  auditEndAt.value = ''
   await applyAuditFilters()
 }
 
@@ -281,7 +325,11 @@ const load = async () => {
     if (canReadAudit.value) await loadAuditSummary()
     if (canReadClients.value) await loadClients()
     if (canReadMethods.value) await loadMethods()
-    if (canReadAudit.value) await loadAudit()
+    if (canReadAudit.value) {
+      await loadAudit()
+      await loadSecurityAudit()
+      await loadAuditTrend()
+    }
   } catch (err: any) {
     error.value = err?.response?.data?.detail || 'MCP 服务台数据加载失败'
   } finally {
@@ -868,6 +916,7 @@ onMounted(load)
             <div class="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
               <div class="min-w-0">
                 <div class="text-base font-black text-slate-800">{{ client.client_name }}</div>
+                <div class="mt-1 text-xs text-slate-500">所属用户：{{ client.owner_real_name || client.owner_user_name || client.created_by || '未知用户' }}</div>
                 <div class="mt-1 flex flex-wrap items-center gap-2">
                   <span class="rounded-full bg-slate-100 px-2 py-1 text-[11px] font-bold text-slate-600">Client ID</span>
                   <code class="break-all text-xs text-slate-500">{{ client.client_id }}</code>
@@ -884,6 +933,10 @@ onMounted(load)
                 <button v-if="canManageClient" type="button" class="text-xs font-bold text-rose-700" @click="removeClient(client)">删除</button>
               </div>
             </div>
+            <p class="mt-2 text-right text-[11px] text-slate-400">
+              <template v-if="client.has_issued_token">最后生成 Token：{{ formatAuditTime(client.last_token_issued_at) }} · {{ client.last_token_issue_method === 'oauth_authorization' ? 'OAuth 用户授权' : '服务台手动生成' }}</template>
+              <template v-else>尚未生成 Access Token</template>
+            </p>
             <div v-if="client.needs_token_regeneration" class="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-900">
               <div><span class="font-bold">Scope 已变更，请重新生成 MCP Access Token</span><span class="ml-1">原有 Token 已失效，需要使用新 Scope 重新生成。</span></div>
               <button v-if="canIssueToken" type="button" class="shrink-0 rounded-lg bg-amber-600 px-3 py-1.5 font-bold text-white hover:bg-amber-700 disabled:cursor-not-allowed disabled:opacity-50" :disabled="client.status !== 'active' || !client.allowed_scopes.length" @click="openTokenIssue(client)">立即生成</button>
@@ -926,17 +979,59 @@ onMounted(load)
           <span class="rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-600">共 {{ auditTotal }} 条</span>
         </div>
 
-        <div class="mt-5 flex flex-nowrap items-center gap-3">
-          <select v-model="selectedAuditFilter" class="w-44 shrink-0 rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm">
-            <option v-for="item in auditFilterOptions" :key="item.key" :value="item.key">{{ item.label }}</option>
-          </select>
-          <select v-if="selectedAuditFilterMeta.kind === 'select'" v-model="selectedAuditFilterValue" class="min-w-0 flex-1 rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm">
-            <option value="">全部</option>
-            <option v-for="item in selectedAuditFilterMeta.options || []" :key="item[0]" :value="item[0]">{{ item[1] }}</option>
-          </select>
-          <input v-else v-model="selectedAuditFilterValue" :inputmode="selectedAuditFilterMeta.kind === 'number' ? 'numeric' : undefined" class="min-w-0 flex-1 rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm" :class="selectedAuditFilterMeta.key === 'method_name' ? 'font-mono' : ''" :placeholder="selectedAuditFilterMeta.placeholder" @keyup.enter="applyAuditFilters" />
-          <button type="button" class="shrink-0 rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-xs font-bold text-slate-600 hover:bg-slate-100" @click="resetAuditFilters">重置</button>
-          <button type="button" class="shrink-0 rounded-lg bg-indigo-600 px-4 py-2.5 text-xs font-bold text-white hover:bg-indigo-700 disabled:opacity-50" :disabled="auditLoading" @click="applyAuditFilters">{{ auditLoading ? '查询中…' : '查询' }}</button>
+        <div class="mt-5 flex items-center justify-between gap-3">
+          <span class="text-xs text-slate-500">可按时间、Client、用户、方法和结果筛选</span>
+          <button type="button" class="shrink-0 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-600 hover:bg-slate-100" @click="showAuditFilters = !showAuditFilters">{{ showAuditFilters ? '收起筛选' : '展开筛选' }}</button>
+        </div>
+        <div v-if="showAuditFilters" class="mt-3 space-y-3">
+          <div class="flex flex-wrap items-center gap-3">
+            <label class="flex shrink-0 items-center gap-2 text-xs font-bold text-slate-500">开始 <input v-model="auditStartAt" type="datetime-local" class="rounded-lg border border-slate-200 bg-white px-2 py-2 text-xs font-normal" /></label>
+            <label class="flex shrink-0 items-center gap-2 text-xs font-bold text-slate-500">结束 <input v-model="auditEndAt" type="datetime-local" class="rounded-lg border border-slate-200 bg-white px-2 py-2 text-xs font-normal" /></label>
+          </div>
+          <div class="flex flex-nowrap items-center gap-3 overflow-x-auto pb-1">
+            <label class="shrink-0 text-xs font-bold text-slate-500">过滤对象</label>
+            <select v-model="selectedAuditFilter" class="w-44 shrink-0 rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm">
+              <option v-for="item in auditFilterOptions" :key="item.key" :value="item.key">{{ item.label }}</option>
+            </select>
+            <select v-if="selectedAuditFilterMeta.kind === 'select'" v-model="selectedAuditFilterValue" class="min-w-0 flex-1 rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm">
+              <option value="">全部</option>
+              <option v-for="item in selectedAuditFilterMeta.options || []" :key="item[0]" :value="item[0]">{{ item[1] }}</option>
+            </select>
+            <label class="shrink-0 text-xs font-bold text-slate-500">过滤值</label>
+            <input v-if="selectedAuditFilterMeta.kind !== 'select'" v-model="selectedAuditFilterValue" :inputmode="selectedAuditFilterMeta.kind === 'number' ? 'numeric' : undefined" class="min-w-0 flex-1 rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm" :class="selectedAuditFilterMeta.key === 'method_name' ? 'font-mono' : ''" :placeholder="selectedAuditFilterMeta.placeholder" @keyup.enter="applyAuditFilters" />
+            <button type="button" class="shrink-0 rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-xs font-bold text-slate-600 hover:bg-slate-100" @click="resetAuditFilters">重置</button>
+            <button type="button" class="shrink-0 rounded-lg bg-indigo-600 px-4 py-2.5 text-xs font-bold text-white hover:bg-indigo-700 disabled:opacity-50" :disabled="auditLoading" @click="applyAuditFilters">{{ auditLoading ? '查询中…' : '查询' }}</button>
+          </div>
+        </div>
+
+        <div class="mt-5 rounded-xl border border-indigo-100 bg-indigo-50/50 p-4">
+          <div class="flex items-center justify-between gap-3">
+            <h3 class="text-sm font-black text-slate-800">调用趋势</h3>
+            <select v-model="auditSummaryRange" class="rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs font-bold" @change="Promise.all([loadAuditSummary(), loadAuditTrend()])">
+              <option value="24h">近 24 小时</option><option value="7d">近 7 天</option><option value="30d">近 30 天</option>
+            </select>
+          </div>
+          <div v-if="auditTrend.length" class="mt-4 flex h-28 items-end gap-1 overflow-x-auto">
+            <div v-for="item in auditTrend" :key="item.at" class="flex min-w-8 flex-1 flex-col items-center justify-end gap-1" :title="formatAuditTime(item.at) + '：' + item.total + ' 次'">
+              <div class="w-full rounded-t bg-indigo-400" :style="{ height: Math.max(4, (item.total / Math.max(...auditTrend.map(point => point.total), 1)) * 100) + '%' }" />
+              <span class="text-[9px] text-slate-400">{{ item.total }}</span>
+            </div>
+          </div>
+          <div v-else class="py-6 text-center text-xs text-slate-400">当前周期暂无调用数据</div>
+        </div>
+
+        <div class="mt-5 rounded-xl border border-amber-100 bg-amber-50/40 p-4">
+          <div class="flex items-center justify-between gap-3">
+            <h3 class="text-sm font-black text-slate-800">OAuth 安全事件</h3>
+            <span class="text-xs text-slate-500">共 {{ securityAuditLogs.length }} 条</span>
+          </div>
+          <div v-if="!securityAuditLogs.length" class="py-6 text-center text-xs text-slate-400">当前筛选范围暂无 OAuth 安全事件</div>
+          <div v-else class="mt-3 overflow-x-auto">
+            <table class="min-w-[720px] w-full text-left text-xs">
+              <thead class="border-b border-amber-100 text-slate-500"><tr><th class="p-2">时间</th><th class="p-2">事件</th><th class="p-2">Client</th><th class="p-2">用户</th><th class="p-2">结果</th></tr></thead>
+              <tbody><tr v-for="log in securityAuditLogs" :key="log.id" class="border-b border-amber-100/60 last:border-0"><td class="whitespace-nowrap p-2 text-slate-500">{{ formatAuditTime(log.created_at) }}</td><td class="p-2 font-mono text-indigo-700">{{ log.event_type }}</td><td class="p-2 font-mono">{{ log.client_id || '—' }}</td><td class="p-2">{{ log.user_id || log.actor_user_id || '—' }}</td><td class="p-2">{{ log.result_status }}</td></tr></tbody>
+            </table>
+          </div>
         </div>
 
         <div v-if="auditLoading" class="py-12 text-center text-sm text-slate-500">审计日志加载中…</div>

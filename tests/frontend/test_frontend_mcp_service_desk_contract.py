@@ -109,6 +109,15 @@ def test_client_token_issue_uses_primary_button_and_clear_label():
     assert "disabled:opacity-50" in clients_section
 
 
+def test_client_card_shows_last_token_issue_time_and_method():
+    view = (ROOT / "frontend/src/views/McpServiceDesk.vue").read_text(encoding="utf-8")
+
+    assert "尚未生成 Access Token" in view
+    assert "最后生成 Token" in view
+    assert "OAuth 用户授权" in view
+    assert "服务台手动生成" in view
+
+
 def test_service_desk_uses_the_same_dashboard_spacing_and_background_as_mcp_toolkit():
     toolkit = (ROOT / "frontend/src/views/McpManagement.vue").read_text(encoding="utf-8")
     service_desk = (ROOT / "frontend/src/views/McpServiceDesk.vue").read_text(encoding="utf-8")

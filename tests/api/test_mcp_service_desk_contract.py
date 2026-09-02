@@ -244,6 +244,17 @@ def test_mcp_service_runtime_dependencies_are_imported():
     assert hasattr(mcp_service, "McpOAuthAccessToken")
 
 
+def test_client_list_exposes_last_token_issue_metadata_without_token_value():
+    source = Path("app/api/portal/endpoints/mcp_service.py").read_text(encoding="utf-8")
+
+    assert "has_issued_token" in source
+    assert "last_token_issued_at" in source
+    assert "last_token_issue_method" in source
+    assert "manual_user_token" in source
+    assert "oauth_authorization" in source
+    assert '"access_token"' not in source[source.index("def _serialize_client"):source.index("@router.get(\"/overview\")")]
+
+
 def test_client_registration_requires_user_authorization_code():
     with pytest.raises(ValueError, match="不支持"):
         mcp_service.McpOAuthClientCreate(

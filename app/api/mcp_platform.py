@@ -31,6 +31,7 @@ from app.services.mcp.platform_oauth import (
     normalize_scopes,
     redirect_uri_allowed,
 )
+from app.services.mcp.security_audit import write_security_audit
 
 
 router = APIRouter()
@@ -229,6 +230,14 @@ async def authorize_post(
     except ValueError as exc:
         return _oauth_error("invalid_target", str(exc))
     if form.get("approve") != "true":
+        await write_security_audit(
+            db,
+            event_type="oauth_authorization_denied",
+            client_id=client.client_id,
+            user_id=str(user["user_id"]),
+            result_status="denied",
+        )
+        await db.commit()
         params = {"error": "access_denied"}
         if form.get("state"):
             params["state"] = form["state"]
@@ -259,9 +268,25 @@ async def authorize_post(
             code_challenge_method=form["code_challenge_method"],
             resource=grant.resource,
         )
+        await write_security_audit(
+            db,
+            event_type="oauth_authorization_approved",
+            client_id=client.client_id,
+            user_id=str(user["user_id"]),
+            details={"scope_count": len(scopes)},
+        )
         await db.commit()
     except ValueError as exc:
         await db.rollback()
+        await write_security_audit(
+            db,
+            event_type="oauth_authorization_failed",
+            client_id=client.client_id,
+            user_id=str(user["user_id"]),
+            result_status="failed",
+            error_code="invalid_request",
+        )
+        await db.commit()
         return _oauth_error("invalid_request", str(exc))
 
     params = {"code": code}
@@ -306,10 +331,24 @@ async def token(request: Request, db: AsyncSession = Depends(get_db_session)):
             )
         else:
             return _oauth_error("unsupported_grant_type", "不支持的 grant_type")
+        await write_security_audit(
+            db,
+            event_type=f"oauth_token_{grant_type}",
+            client_id=client.client_id,
+            user_id=str(result.get("user_id") or "") or None,
+        )
         await db.commit()
         return _oauth_response(result, 200)
     except ValueError as exc:
         await db.rollback()
+        await write_security_audit(
+            db,
+            event_type=f"oauth_token_{grant_type}",
+            client_id=client.client_id,
+            result_status="failed",
+            error_code="invalid_grant",
+        )
+        await db.commit()
         return _oauth_error("invalid_grant", str(exc))
 
 
@@ -341,6 +380,13 @@ async def revoke(request: Request, db: AsyncSession = Depends(get_db_session)):
         access.revoked_at = now
     if refresh is not None:
         refresh.revoked_at = now
+    await write_security_audit(
+        db,
+        event_type="oauth_token_revoked",
+        client_id=client.client_id,
+        user_id=(access.user_id if access is not None else (refresh.user_id if refresh is not None else None)),
+        result_status="completed" if access is not None or refresh is not None else "not_found",
+    )
     await db.commit()
     return Response(status_code=200)
 

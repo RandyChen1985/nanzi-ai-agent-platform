@@ -12,6 +12,7 @@ import uuid
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import Any, Iterable, Mapping
+from fastapi import HTTPException
 
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
@@ -21,6 +22,7 @@ from mcp.server.auth.settings import AuthSettings
 from mcp.server.fastmcp import Context, FastMCP
 
 from app.core.config import settings
+from app.core import redis
 from app.core.orm import AsyncSessionLocal
 from app.models.agent import AIAgent, AIAgentVersion
 from app.models.audit import AgentExecutionHistory
@@ -52,6 +54,7 @@ from app.services.mcp.platform_mcp_support import (
     serialize_metadata_metric,
     serialize_metadata_schema,
 )
+from app.services.mcp.security_audit import write_security_audit
 from app.services.permission_service import PermissionService
 from app.services.metadata_service import MetadataService
 from app.services.mcp.transport_security import build_mcp_transport_security
@@ -72,6 +75,28 @@ class PlatformMcpMethodDefinition:
     requires_user: bool
     description: str
     implemented: bool = False
+
+
+async def check_platform_mcp_rate_limit(principal: McpPrincipal) -> None:
+    """按 Client 和用户分别执行一分钟固定窗口限流；Redis 不可用时不阻断业务。"""
+    client_limit = int(settings.MCP_RATE_LIMIT_CLIENT_PER_MINUTE)
+    user_limit = int(settings.MCP_RATE_LIMIT_USER_PER_MINUTE)
+    if client_limit <= 0 or user_limit <= 0:
+        return
+    client_redis = await redis.get_redis()
+    if client_redis is None:
+        return
+    window = int(time.time() // 60)
+    for identity, limit in (
+        (f"client:{principal.client_id}", client_limit),
+        (f"user:{principal.user_id or 'anonymous'}", user_limit),
+    ):
+        key = f"mcp_rate_limit:{identity}:{window}"
+        current = await client_redis.incr(key)
+        if current == 1:
+            await client_redis.expire(key, 70)
+        if current > limit:
+            raise HTTPException(status_code=429, detail="Platform MCP 请求过于频繁，请稍后重试")
 
 
 PLATFORM_MCP_METHODS = (
@@ -308,6 +333,15 @@ async def _write_audit(
                     latency_ms=latency_ms,
                 )
             )
+            if status_code == 429:
+                await write_security_audit(
+                    db,
+                    event_type="mcp_rate_limited",
+                    client_id=principal.client_id,
+                    user_id=principal.user_id,
+                    result_status="denied",
+                    error_code="MCP_RATE_LIMITED",
+                )
             await db.commit()
     except Exception as exc:  # 审计失败不能把检索结果变成不可用
         logger.warning("Platform MCP audit write failed: %s", exc)
@@ -355,6 +389,7 @@ async def _validate_platform_method(
     principal: McpPrincipal,
     method_name: str,
 ) -> PlatformMcpMethodDefinition:
+    await check_platform_mcp_rate_limit(principal)
     definition = get_method_definition(method_name)
     if definition is None or not definition.implemented:
         raise RuntimeError(f"MCP_METHOD_NOT_IMPLEMENTED: {method_name}")
@@ -376,6 +411,8 @@ def _validate_limit(value: int, *, default: int, maximum: int) -> int:
 
 
 def _mcp_error_status(exc: BaseException) -> int:
+    if isinstance(exc, HTTPException):
+        return exc.status_code
     if isinstance(exc, ValueError):
         return 400
     if isinstance(exc, LookupError):

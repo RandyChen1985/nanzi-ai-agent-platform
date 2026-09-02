@@ -18,11 +18,11 @@
 - Modify: `tests/services/mcp/test_platform_mcp.py`
 - Modify: `tests/test_platform_mcp_migrations.py`
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 断言 OAuth 安全事件模型/写入入口、`/audit/security`、时间筛选参数、趋势字段、全局 Client 管理与用户显示名、Redis 限流配置和 429 行为。
 
-- [ ] **Step 2: 运行测试确认失败**
+- [x] **Step 2: 运行测试确认失败**
 
 ```bash
 PYTHONPATH=. .venv/bin/pytest tests/api/test_mcp_service_desk_contract.py tests/services/mcp/test_platform_mcp.py tests/test_platform_mcp_migrations.py -q
@@ -38,15 +38,15 @@ pytest --confcutdir=tests/frontend tests/frontend/test_frontend_mcp_service_desk
 - Create: `db-prod/V141-mcp-oauth-security-audit.sql`
 - Create: `db-prod-pg/V42-mcp-oauth-security-audit.sql`
 
-- [ ] **Step 1: 增加 OAuth 安全事件模型和脱敏序列化**
+- [x] **Step 1: 增加 OAuth 安全事件模型和脱敏序列化**
 
 保存事件类型、Client、用户、结果、错误码、请求 ID、IP 摘要和时间，不保存凭证或原始 Header。
 
-- [ ] **Step 2: 在 OAuth 授权、Token、Refresh、Revoke 及服务台 Client/Scope/Secret 操作写事件**
+- [x] **Step 2: 在 OAuth 授权、Token、Refresh、Revoke 及服务台 Client/Scope/Secret 操作写事件**
 
 写审计失败只记录 warning，不影响既有 OAuth 或管理操作。
 
-- [ ] **Step 3: 增加 MySQL/PostgreSQL 迁移**
+- [x] **Step 3: 增加 MySQL/PostgreSQL 迁移**
 
 只新增安全事件表及必要索引，不直接连接数据库执行。
 
@@ -57,15 +57,15 @@ pytest --confcutdir=tests/frontend tests/frontend/test_frontend_mcp_service_desk
 - Modify: `app/services/mcp/platform_mcp.py`
 - Modify: `app/core/config.py` 或现有限流配置位置
 
-- [ ] **Step 1: 给调用审计和安全审计增加时间范围参数**
+- [x] **Step 1: 给调用审计和安全审计增加时间范围参数**
 
 支持开始/结束时间和快捷周期，管理员看全局，普通用户按当前用户过滤。
 
-- [ ] **Step 2: 增加趋势聚合接口**
+- [x] **Step 2: 增加趋势聚合接口**
 
 返回按小时/天的调用总数、成功、失败、拒绝，按选择周期自动选择粒度。
 
-- [ ] **Step 3: 在 MCP 入口增加 Client/用户 Redis 固定窗口限流**
+- [x] **Step 3: 在 MCP 入口增加 Client/用户 Redis 固定窗口限流**
 
 默认 Client 120 次/分钟、用户 60 次/分钟；任一超限返回 429，并写入安全事件/调用审计可追溯信息。
 
@@ -75,11 +75,11 @@ pytest --confcutdir=tests/frontend tests/frontend/test_frontend_mcp_service_desk
 - Modify: `app/api/portal/endpoints/mcp_service.py`
 - Modify: `frontend/src/views/McpServiceDesk.vue`
 
-- [ ] **Step 1: 管理员查询、修改、停用、删除和重置全局 Client**
+- [x] **Step 1: 管理员查询、修改、停用、删除和重置全局 Client**
 
 普通用户继续使用 `created_by` 隔离；Client 返回 `owner_user_id`、`owner_user_name`、`owner_real_name`。
 
-- [ ] **Step 2: 总览数量和 Client 卡片显示所属用户**
+- [x] **Step 2: 总览数量和 Client 卡片显示所属用户**
 
 管理员显示全局计数；卡片展示真实姓名，缺失时回退用户名/用户 ID。
 
@@ -88,7 +88,7 @@ pytest --confcutdir=tests/frontend tests/frontend/test_frontend_mcp_service_desk
 **Files:**
 - Modify: `tests/CHECKLIST.md`
 
-- [ ] **Step 1: 运行定向测试、类型检查和差异检查**
+- [x] **Step 1: 运行定向测试、类型检查和差异检查**
 
 ```bash
 PYTHONPATH=. .venv/bin/pytest tests/api/test_mcp_service_desk_contract.py tests/services/mcp/test_platform_mcp.py tests/test_platform_mcp_migrations.py -q

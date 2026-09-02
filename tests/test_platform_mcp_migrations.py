@@ -51,6 +51,8 @@ def test_security_audit_migrations_create_oauth_event_table():
         assert "client_id" in sql
         assert "user_id" in sql
         assert "created_at" in sql
+    assert mysql_sql.count(" COMMENT '") >= 11
+    assert pg_sql.count("COMMENT ON COLUMN") >= 11
     assert "ON CONFLICT (id) DO NOTHING" in sql
     assert "INSERT INTO system_configs" not in sql
 
