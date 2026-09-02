@@ -2,6 +2,7 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import api from '../utils/axios'
 import { useUser } from '../composables/useUser'
+import { copyToClipboard } from '../utils/clipboard'
 
 type Tab = 'overview' | 'guide' | 'config' | 'clients' | 'methods' | 'audit'
 type Client = {
@@ -38,7 +39,7 @@ type AuditLog = {
 
 type ClientConfirmAction = 'disable' | 'reset-secret' | 'delete'
 
-const { hasPermission } = useUser()
+const { hasPermission, isAdmin } = useUser()
 const activeTab = ref<Tab>('overview')
 const loading = ref(false)
 const saving = ref(false)
@@ -286,7 +287,16 @@ const toggleConfig = async (key: string) => {
 }
 
 const copyValue = async (key: string, value: string) => {
-  await navigator.clipboard.writeText(value)
+  try {
+    const copiedSuccessfully = await copyToClipboard(value)
+    if (!copiedSuccessfully) {
+      error.value = '复制失败，请手动复制'
+      return
+    }
+  } catch {
+    error.value = '复制失败，请手动复制'
+    return
+  }
   copied.value = key
   window.setTimeout(() => { if (copied.value === key) copied.value = '' }, 1400)
 }
@@ -874,6 +884,7 @@ onMounted(load)
           <div>
             <h2 class="text-lg font-black">MCP 入站调用审计</h2>
             <p class="mt-1 text-sm text-slate-500">查看外部系统调用 NanZi Platform MCP 的记录；这里只展示审计字段，不展示 Token、Secret 或原始请求头。</p>
+            <p class="mt-1 text-sm text-slate-500">{{ isAdmin ? '管理员可查看全部 MCP 入站调用记录。' : '其他用户仅能查看自己发起的调用记录。' }}</p>
           </div>
           <span class="rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-600">共 {{ auditTotal }} 条</span>
         </div>

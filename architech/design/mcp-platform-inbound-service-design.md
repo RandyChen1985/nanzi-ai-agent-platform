@@ -1282,7 +1282,7 @@ user_id = verified NanZi user
 | MCP 工具集 | NanZi 调用外部 MCP | 平台出站 MCP 和个人出站 MCP | 继续沿用现有权限 |
 | MCP 服务台 | 外部系统调用 NanZi | NanZi Platform MCP 入站服务 | 拥有 `menu:mcp_service` 的用户 |
 
-`MCP 服务台`是一个统一的 NanZi Platform MCP 管理页面，不为 `agent.*`、`knowledge.*` 和 `metadata.*` 建立多套独立的 MCP Server 配置页面。当前已实现的管理 Tab 是“服务总览 / 使用指南 / 服务配置 / 外部 Client / 能力与 Scope / 审计日志”；使用指南解释 OAuth2 授权、Access Token 与 MCP Endpoint 的关系，并提供可复制的通用 `mcpServers` JSON；“审计日志”查询入站调用记录，按权限显示筛选、分页和详情。
+`MCP 服务台`是一个统一的 NanZi Platform MCP 管理页面，不为 `agent.*`、`knowledge.*` 和 `metadata.*` 建立多套独立的 MCP Server 配置页面。当前已实现的管理 Tab 是“服务总览 / 使用指南 / 服务配置 / 外部 Client / 能力与 Scope / 审计日志”；使用指南解释 OAuth2 授权、Access Token 与 MCP Endpoint 的关系，并提供可复制的通用 `mcpServers` JSON；“审计日志”查询入站调用记录，按权限显示筛选、分页和详情。审计数据范围按调用身份隔离：管理员可查看全部记录，其他用户仅能查看 `user_id` 等于当前登录用户的记录。
 
 #### 12.1.1 菜单与功能权限
 
@@ -1498,7 +1498,7 @@ Redirect URI：    [ https://crm.example.com/oauth/callback ]
 
 ### 12.7 调用审计页（已实现）
 
-拥有 `element:mcp_service:audit:read` 的用户可以在服务台打开“审计日志”Tab。后端查询接口为 `GET /api/portal/mcp-service/audit`，查询结果只包含业务审计字段，不返回 Access Token、Client Secret、Refresh Token 或原始请求 Header。
+拥有 `element:mcp_service:audit:read` 的用户可以在服务台打开“审计日志”Tab。后端查询接口为 `GET /api/portal/mcp-service/audit`，查询结果只包含业务审计字段，不返回 Access Token、Client Secret、Refresh Token 或原始请求 Header。管理员可以查看全部用户的 MCP 入站调用记录；其他用户只能查看 `user_id` 等于当前登录用户的调用记录，即使调用使用的是其他用户创建的 Client，也不会扩大可见范围。
 
 该表的审计粒度是“通过 Bearer 校验并进入 MCP 方法处理链的调用”。完全未通过认证、因此尚未解析出 Client 和用户身份的 401 请求不会写入本表，应通过网关或应用访问日志查看；方法执行后的成功、失败和权限拒绝会按调用链写入本表。
 
@@ -1723,7 +1723,7 @@ unique(client_id, user_id, resource)
 | `POST /api/portal/mcp-service/clients/{client_id}/user-access-token` | 为当前登录用户生成短期个人 Access Token | `client:token_issue` |
 | `GET /api/portal/mcp-service/audit` | 分页查询入站 MCP 调用审计 | `audit:read` |
 
-服务台接口先校验 `menu:mcp_service`，再校验表中的元素权限；前端 Tab 和按钮隐藏仅用于交互控制，不能替代后端鉴权。Client 管理接口在权限检查之后还会统一追加 `created_by = 当前登录用户 ID` 条件；管理员不会因为角色而绕过这一所有权条件。审计日志也只展示当前用户自己 Client 的入站调用记录。Client 列表同时返回 `scope_version` 和 `needs_token_regeneration`，供前端持续提示 Scope 变更后的重新生成操作。
+服务台接口先校验 `menu:mcp_service`，再校验表中的元素权限；前端 Tab 和按钮隐藏仅用于交互控制，不能替代后端鉴权。Client 管理接口在权限检查之后还会统一追加 `created_by = 当前登录用户 ID` 条件；管理员不会因为角色而绕过这一所有权条件。审计查询则按调用身份区分数据范围：管理员查看全量，普通用户只查看 `McpInboundAuditLog.user_id = 当前登录用户 ID` 的记录；请求中的 `user_id` 筛选条件不能扩大普通用户的可见范围。Client 列表同时返回 `scope_version` 和 `needs_token_regeneration`，供前端持续提示 Scope 变更后的重新生成操作。
 
 ### 14.4 内部服务接口
 

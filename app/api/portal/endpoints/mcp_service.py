@@ -343,11 +343,13 @@ async def list_audit(
     if start_at and end_at and start_at > end_at:
         raise HTTPException(status_code=400, detail="start_at 不能晚于 end_at")
 
-    current_user_id = _current_user_id(user)
-    owner_client_ids = select(McpOAuthClient.client_id).where(
-        McpOAuthClient.created_by == current_user_id
-    )
-    filters = [McpInboundAuditLog.client_id.in_(owner_client_ids)]
+    if user.get("role") == "admin":
+        # 管理员可以查看所有用户的入站调用审计；具体元素权限仍由统一依赖校验。
+        filters = []
+    else:
+        # 审计归属以实际调用身份为准，而不是以 Client 创建人或请求筛选参数为准。
+        current_user_id = _current_user_id(user)
+        filters = [McpInboundAuditLog.user_id == current_user_id]
     exact_filters = {
         "client_id": client_id,
         "user_id": user_id,

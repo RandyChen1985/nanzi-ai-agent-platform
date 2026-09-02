@@ -8,7 +8,6 @@ import uuid
 from contextlib import asynccontextmanager
 from collections.abc import Mapping
 from typing import Any
-from urllib.parse import urlsplit
 
 import jwt
 from mcp.server.fastmcp import Context, FastMCP
@@ -21,6 +20,10 @@ from app.services.mcp.mcp_auth_policy import (
     load_mcp_private_key,
     resolve_mcp_auth_headers,
 )
+from app.services.mcp.transport_security import (
+    _parse_public_url,
+    build_mcp_transport_security,
+)
 from app.services.mcp.user_context_assertion import verify_user_assertion
 
 
@@ -32,53 +35,11 @@ _USER_CONTEXT_FIELDS = ("user_id", "user_name", "real_name", "dept_code", "org_p
 _AGENT_CONTEXT_FIELDS = ("agent_id", "agent_version_id", "agent_name")
 
 
-def _parse_public_url(public_url: str | None) -> tuple[str, str] | None:
-    """解析平台公网 Origin，返回 (origin, host[:port])。"""
-    value = str(public_url or "").strip()
-    if not value:
-        return None
-
-    parsed = urlsplit(value)
-    if parsed.scheme.lower() not in {"http", "https"} or not parsed.netloc:
-        return None
-    if (
-        parsed.username
-        or parsed.password
-        or parsed.query
-        or parsed.fragment
-        or parsed.path not in ("", "/")
-    ):
-        return None
-
-    try:
-        hostname = parsed.hostname
-        port = parsed.port
-    except ValueError:
-        return None
-    if not hostname:
-        return None
-
-    hostname = hostname.lower()
-    host = f"[{hostname}]" if ":" in hostname else hostname
-    host_with_port = f"{host}:{port}" if port is not None else host
-    origin = f"{parsed.scheme.lower()}://{host_with_port}"
-    return origin, host_with_port
-
-
 def build_echo_transport_security(
     public_url: str | None,
 ) -> TransportSecuritySettings | None:
     """根据公网地址构造 Echo MCP 的 DNS rebinding 防护配置。"""
-    parsed = _parse_public_url(public_url)
-    if parsed is None:
-        return None
-
-    origin, host = parsed
-    return TransportSecuritySettings(
-        enable_dns_rebinding_protection=True,
-        allowed_hosts=[host],
-        allowed_origins=[origin],
-    )
+    return build_mcp_transport_security(public_url)
 
 
 def resolve_echo_base_url(request_base_url: str, public_url: str | None) -> str:

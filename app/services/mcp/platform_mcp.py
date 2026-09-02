@@ -54,6 +54,7 @@ from app.services.mcp.platform_mcp_support import (
 )
 from app.services.permission_service import PermissionService
 from app.services.metadata_service import MetadataService
+from app.services.mcp.transport_security import build_mcp_transport_security
 
 
 logger = logging.getLogger(__name__)
@@ -191,6 +192,7 @@ platform_mcp = PlatformFastMCP(
     streamable_http_path="/platform",
     json_response=True,
     stateless_http=True,
+    transport_security=build_mcp_transport_security(settings.APP_PUBLIC_URL),
     token_verifier=PlatformMcpTokenVerifier(),
     auth=AuthSettings(
         issuer_url=_platform_base_url(),

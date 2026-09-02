@@ -45,6 +45,13 @@ def test_main_mounts_platform_mcp_before_spa_catch_all_and_hosts_oauth_routes():
     assert "platform_mcp_lifespan" in source
 
 
+def test_platform_mcp_uses_public_url_for_transport_security():
+    source = Path("app/services/mcp/platform_mcp.py").read_text(encoding="utf-8")
+
+    assert "build_mcp_transport_security" in source
+    assert "transport_security=build_mcp_transport_security(settings.APP_PUBLIC_URL)" in source
+
+
 def test_platform_mcp_uses_the_canonical_resource_uri_at_oauth_boundaries():
     source = Path("app/api/mcp_platform.py").read_text(encoding="utf-8")
 

@@ -736,7 +736,7 @@ onBeforeUnmount(() => {
                   <div>
                      <label class="block text-sm font-medium text-gray-700">提供商</label>
                      <div class="relative mt-1">
-                         <button type="button" class="provider-select-trigger" @click.stop="showProviderMenu = !showProviderMenu; showModelPicker = false">
+                         <button type="button" class="provider-select-trigger model-form-control" @click.stop="showProviderMenu = !showProviderMenu; showModelPicker = false">
                              <span class="flex items-center gap-2 min-w-0">
                                  <span class="provider-icon" :style="{ backgroundColor: selectedProvider.color }">{{ selectedProvider.icon }}</span>
                                  <span class="truncate">{{ selectedProvider.label }}</span>
@@ -764,12 +764,12 @@ onBeforeUnmount(() => {
                   </div>
                   <div>
                      <label class="block text-sm font-medium text-gray-700">API Base URL</label>
-                     <input v-model="modelForm.api_base_url" class="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-primary focus:border-primary sm:text-sm" :placeholder="providerBaseUrlHint" />
+                     <input v-model="modelForm.api_base_url" class="model-form-control mt-1" :placeholder="providerBaseUrlHint" />
                      <p class="provider-url-hint text-xs text-gray-500 mt-1">{{ providerBaseUrlHint }}</p>
                   </div>
                   <div>
                      <label class="block text-sm font-medium text-gray-700">API Key</label>
-                     <input v-model="modelForm.api_key" type="password" class="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-primary focus:border-primary sm:text-sm" :placeholder="isEditingModel && modelForm.has_api_key ? '已配置，留空则保留原密钥' : '留空则使用系统默认密钥'" />
+                     <input v-model="modelForm.api_key" type="password" class="model-form-control mt-1" :placeholder="isEditingModel && modelForm.has_api_key ? '已配置，留空则保留原密钥' : '留空则使用系统默认密钥'" />
                   </div>
                   <div>
                      <div class="flex items-center justify-between">
@@ -781,7 +781,7 @@ onBeforeUnmount(() => {
                          </button>
                      </div>
                      <div class="relative mt-1">
-                         <input v-model="modelForm.model_id" :class="modelIdConflict ? 'border-red-400 focus:ring-red-500 focus:border-red-500' : 'border-gray-300 focus:ring-primary focus:border-primary'" class="block w-full rounded-md shadow-sm sm:text-sm font-mono pr-3" placeholder="例如: gpt-4o" />
+                         <input v-model="modelForm.model_id" :class="{ 'model-form-control-invalid': modelIdConflict }" class="model-form-control font-mono pr-3" placeholder="例如: gpt-4o" />
                          <div v-if="showModelPicker" class="model-picker-menu" @click.stop>
                              <div class="flex items-center justify-between gap-3 px-3 py-2 border-b border-gray-100 text-xs text-gray-500">
                                  <span>选择 {{ providerLabels[String(modelForm.provider)] || modelForm.provider }} 模型</span>
@@ -798,7 +798,7 @@ onBeforeUnmount(() => {
                   </div>
                   <div>
                      <label class="block text-sm font-medium text-gray-700">模型类型</label>
-                     <select v-model="modelForm.type" class="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-primary focus:border-primary sm:text-sm">
+                     <select v-model="modelForm.type" class="model-form-control mt-1">
                          <option value="llm">LLM (文本生成)</option>
                          <option value="embedding">Embedding (向量)</option>
                          <option value="multimodal">Multimodal (多模态)</option>
@@ -806,7 +806,7 @@ onBeforeUnmount(() => {
                   </div>
                   <div>
                      <label class="block text-sm font-medium text-gray-700">模型名称</label>
-                     <input v-model="modelForm.name" class="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-primary focus:border-primary sm:text-sm" placeholder="例如: GPT-4o 生产版" />
+                     <input v-model="modelForm.name" class="model-form-control mt-1" placeholder="例如: GPT-4o 生产版" />
                      <p class="text-xs text-gray-500 mt-1">用于系统界面展示，不影响实际 API 调用</p>
                   </div>
                   <template v-if="modelForm.type !== 'embedding'">
@@ -1055,26 +1055,47 @@ onBeforeUnmount(() => {
   font-size: 0.5rem;
 }
 
+.model-form-control {
+  display: block;
+  width: 100%;
+  min-height: 2.75rem;
+  border: 1.5px solid rgb(203 213 225);
+  border-radius: 0.625rem;
+  background: rgb(248 250 252);
+  padding: 0.65rem 0.8rem;
+  color: rgb(30 41 59);
+  outline: none;
+  transition: border-color 150ms, background-color 150ms, box-shadow 150ms;
+}
+
+.model-form-control::placeholder {
+  color: rgb(148 163 184);
+}
+
+.model-form-control:focus {
+  border-color: rgb(96 165 250);
+  background: white;
+  box-shadow: 0 0 0 3px rgb(219 234 254), 0 1px 2px rgba(15, 23, 42, 0.08);
+}
+
+.model-form-control-invalid,
+.model-form-control-invalid:focus {
+  border-color: rgb(248 113 113);
+  box-shadow: 0 0 0 3px rgb(254 226 226);
+}
+
 .provider-select-trigger {
   display: flex;
-  width: 100%;
   align-items: center;
   justify-content: space-between;
   gap: 0.75rem;
-  border: 1px solid rgb(209 213 219);
-  border-radius: 0.375rem;
-  background: white;
-  padding: 0.45rem 0.65rem;
   font-size: 0.875rem;
   color: rgb(31 41 55);
-  transition: border-color 150ms, box-shadow 150ms;
 }
 
-.provider-select-trigger:hover,
-.provider-select-trigger:focus {
-  border-color: rgb(37 99 235);
-  box-shadow: 0 0 0 2px rgb(219 234 254);
-  outline: none;
+.provider-select-trigger:hover {
+  border-color: rgb(148 163 184);
+  background: white;
 }
 
 .provider-menu,

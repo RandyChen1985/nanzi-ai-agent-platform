@@ -23,6 +23,15 @@ def test_mcp_service_desk_has_independent_route_menu_and_read_only_copy_fields()
     assert "element:mcp_service:config:edit" in view
 
 
+def test_service_desk_copy_actions_use_http_compatible_clipboard_helper():
+    view = (ROOT / "frontend/src/views/McpServiceDesk.vue").read_text(encoding="utf-8")
+
+    assert "import { copyToClipboard } from '../utils/clipboard'" in view
+    assert "await copyToClipboard(value)" in view
+    assert "await navigator.clipboard.writeText(value)" not in view
+    assert "复制失败，请手动复制" in view
+
+
 def test_mcp_toolkit_route_remains_outbound_route():
     router = (ROOT / "frontend/src/router/index.ts").read_text(encoding="utf-8")
 
@@ -54,6 +63,13 @@ def test_service_desk_exposes_permission_gated_audit_tab_and_filters():
     assert "method_name" in view
     assert "result_status" in view
     assert "查看详情" in view
+
+
+def test_audit_tab_explains_role_based_visibility():
+    view = (ROOT / "frontend/src/views/McpServiceDesk.vue").read_text(encoding="utf-8")
+
+    assert "管理员可查看全部 MCP 入站调用记录" in view
+    assert "其他用户仅能查看自己发起的调用记录" in view
 
 
 def test_audit_filters_are_collapsed_by_default_and_use_one_dynamic_row():

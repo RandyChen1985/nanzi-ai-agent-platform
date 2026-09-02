@@ -52,7 +52,6 @@ def test_mcp_client_management_is_scoped_to_current_user_id_even_for_admin():
     assert "McpOAuthClient.created_by == current_user_id" in source
     assert "created_by=current_user_id" in source
     assert 'created_by=str(user.get("user_name") or user.get("user_id"))' not in source
-    assert "owner_client_ids = select(McpOAuthClient.client_id)" in source
 
     for endpoint in (
         'async def get_overview(',
@@ -144,7 +143,7 @@ def test_client_delete_is_soft_delete_and_revokes_credentials():
     assert 'McpOAuthClient.status != "deleted"' in source
 
 
-def test_mcp_service_exposes_inbound_audit_query_with_read_permission():
+def test_mcp_service_exposes_inbound_audit_query_with_read_permission_and_user_scope():
     source = Path("app/api/portal/endpoints/mcp_service.py").read_text(encoding="utf-8")
 
     paths = {getattr(route, "path", None) for route in mcp_service.router.routes}
@@ -155,6 +154,17 @@ def test_mcp_service_exposes_inbound_audit_query_with_read_permission():
     assert "result_status" in source
     audit_segment = source.split('@router.get("/audit")', 1)[1].split('@router.get("/clients")', 1)[0]
     assert "client_secret" not in audit_segment
+    assert 'if user.get("role") == "admin":' in audit_segment
+    assert "McpInboundAuditLog.user_id == current_user_id" in audit_segment
+    assert "owner_client_ids = select(McpOAuthClient.client_id)" not in audit_segment
+
+
+def test_audit_scope_is_independent_from_client_ownership():
+    source = Path("app/api/portal/endpoints/mcp_service.py").read_text(encoding="utf-8")
+
+    audit_segment = source.split('@router.get("/audit")', 1)[1].split('@router.get("/clients")', 1)[0]
+    assert "McpOAuthClient.created_by == current_user_id" not in audit_segment
+    assert "McpInboundAuditLog.user_id == current_user_id" in audit_segment
 
 
 def test_audit_serializer_returns_business_fields_without_credentials():
