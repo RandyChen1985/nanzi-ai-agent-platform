@@ -159,6 +159,47 @@ def test_mcp_service_exposes_inbound_audit_query_with_read_permission_and_user_s
     assert "owner_client_ids = select(McpOAuthClient.client_id)" not in audit_segment
 
 
+def test_mcp_service_exposes_permission_scoped_audit_summary():
+    source = Path("app/api/portal/endpoints/mcp_service.py").read_text(encoding="utf-8")
+
+    assert 'async def audit_summary(' in source
+    assert '"/audit/summary"' in source
+    assert 'element:mcp_service:audit:read' in source
+    assert 'Literal["24h", "7d", "30d"]' in source
+    for field in ("total_calls", "success_rate", "failed_or_denied", "average_latency_ms", "p95_latency_ms"):
+        assert f'"{field}"' in source
+
+
+def test_mcp_service_supports_security_audit_and_time_range_queries():
+    source = Path("app/api/portal/endpoints/mcp_service.py").read_text(encoding="utf-8")
+
+    assert 'async def list_security_audit(' in source
+    assert '"/audit/security"' in source
+    assert "start_at: datetime | None" in source
+    assert "end_at: datetime | None" in source
+    assert "McpOAuthSecurityAuditLog" in source
+    assert "event_type" in source
+
+
+def test_mcp_service_exposes_audit_trend_aggregation():
+    source = Path("app/api/portal/endpoints/mcp_service.py").read_text(encoding="utf-8")
+
+    assert 'async def audit_trend(' in source
+    assert '"/audit/trend"' in source
+    assert "bucket" in source
+    assert "completed" in source
+    assert "denied" in source
+
+
+def test_admin_can_manage_global_clients_and_client_owner_is_serialized():
+    source = Path("app/api/portal/endpoints/mcp_service.py").read_text(encoding="utf-8")
+
+    assert "owner_user_name" in source
+    assert "owner_real_name" in source
+    assert 'user.get("role") == "admin"' in source
+    assert "select(User)" in source
+
+
 def test_audit_scope_is_independent_from_client_ownership():
     source = Path("app/api/portal/endpoints/mcp_service.py").read_text(encoding="utf-8")
 
@@ -212,13 +253,13 @@ def test_client_registration_requires_user_authorization_code():
             allowed_scopes=["agent:list"],
         )
 
-    with pytest.raises(ValueError, match="redirect_uri"):
-        mcp_service.McpOAuthClientCreate(
-            client_name="CRM 用户授权",
-            redirect_uris=[],
-            allowed_grant_types=["authorization_code"],
-            allowed_scopes=["agent:list"],
-        )
+    client = mcp_service.McpOAuthClientCreate(
+        client_name="CRM 用户授权",
+        redirect_uris=[],
+        allowed_grant_types=["authorization_code"],
+        allowed_scopes=["agent:list"],
+    )
+    assert client.redirect_uris == ["https://localhost/oauth/callback"]
 
 
 def test_client_security_changes_revoke_existing_grants_and_tokens():

@@ -179,6 +179,46 @@ def test_service_desk_has_oauth_usage_guide_and_copyable_mcp_json():
     assert "服务台生成的当前用户 Token" in view
 
 
+def test_service_desk_places_usage_guide_after_audit_tab():
+    view = (ROOT / "frontend/src/views/McpServiceDesk.vue").read_text(encoding="utf-8")
+
+    assert view.index("label: '审计日志'") < view.index("label: '使用指南'")
+
+
+def test_service_desk_shows_permission_scoped_audit_summary_on_overview():
+    view = (ROOT / "frontend/src/views/McpServiceDesk.vue").read_text(encoding="utf-8")
+
+    assert "auditSummary" in view
+    assert "auditSummaryRange" in view
+    assert "/api/portal/mcp-service/audit/summary" in view
+    assert "24 小时" in view
+    assert "7 天" in view
+    assert "30 天" in view
+    assert "调用次数" in view
+    assert "成功率" in view
+    assert "失败 / 拒绝" in view
+    assert "P95 耗时" in view
+
+
+def test_service_desk_exposes_security_audit_time_filters_and_trend():
+    view = (ROOT / "frontend/src/views/McpServiceDesk.vue").read_text(encoding="utf-8")
+
+    assert "/api/portal/mcp-service/audit/security" in view
+    assert "/api/portal/mcp-service/audit/trend" in view
+    assert "start_at" in view
+    assert "end_at" in view
+    assert "OAuth 安全事件" in view
+    assert "调用趋势" in view
+
+
+def test_service_desk_displays_client_owner_identity_for_global_admin_list():
+    view = (ROOT / "frontend/src/views/McpServiceDesk.vue").read_text(encoding="utf-8")
+
+    assert "owner_real_name" in view
+    assert "owner_user_name" in view
+    assert "所属用户" in view
+
+
 def test_service_desk_can_issue_current_user_token_and_explain_dynamic_oauth():
     view = (ROOT / "frontend/src/views/McpServiceDesk.vue").read_text(encoding="utf-8")
 
@@ -272,6 +312,13 @@ def test_service_desk_exposes_only_user_bound_oauth_flow():
     assert "authorizationCodePython" in view
     assert "client_credentials" not in view
     assert "Client Credentials" not in view
+
+
+def test_service_desk_documents_default_redirect_uri_for_empty_input():
+    view = (ROOT / "frontend/src/views/McpServiceDesk.vue").read_text(encoding="utf-8")
+
+    assert "https://localhost/oauth/callback" in view
+    assert "未填写时使用默认回调地址" in view
 
 
 def test_client_card_labels_and_copies_client_id():

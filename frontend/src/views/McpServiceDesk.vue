@@ -53,6 +53,9 @@ const auditTotal = ref(0)
 const auditPage = ref(1)
 const auditPageSize = 20
 const auditLoading = ref(false)
+const auditSummaryRange = ref<'24h' | '7d' | '30d'>('24h')
+const auditSummary = ref<Record<string, any>>({})
+const auditSummaryLoading = ref(false)
 
 const selectedAudit = ref<AuditLog | null>(null)
 const showCreate = ref(false)
@@ -177,11 +180,11 @@ const canReadMethods = computed(() => hasPermission('element:mcp_service:capabil
 const canReadAudit = computed(() => hasPermission('element:mcp_service:audit:read'))
 const availableTabs = computed(() => [
   canReadOverview.value ? { id: 'overview' as Tab, label: '服务总览' } : null,
-  canReadGuide.value ? { id: 'guide' as Tab, label: '使用指南' } : null,
   canReadConfig.value ? { id: 'config' as Tab, label: '服务配置' } : null,
   canReadClients.value ? { id: 'clients' as Tab, label: '外部 Client' } : null,
   canReadMethods.value ? { id: 'methods' as Tab, label: '能力与 Scope' } : null,
   canReadAudit.value ? { id: 'audit' as Tab, label: '审计日志' } : null,
+  canReadGuide.value ? { id: 'guide' as Tab, label: '使用指南' } : null,
 ].filter(Boolean) as Array<{ id: Tab; label: string }>)
 
 const loadOverview = async () => {
@@ -191,6 +194,20 @@ const loadOverview = async () => {
   }
   if (canReadConfig.value) {
     config.value = (await api.get('/api/portal/mcp-service/config')).data
+  }
+}
+
+const loadAuditSummary = async () => {
+  if (!canReadAudit.value) return
+  auditSummaryLoading.value = true
+  try {
+    auditSummary.value = (await api.get('/api/portal/mcp-service/audit/summary', {
+      params: { range: auditSummaryRange.value },
+    })).data
+  } catch {
+    auditSummary.value = {}
+  } finally {
+    auditSummaryLoading.value = false
   }
 }
 
@@ -261,6 +278,7 @@ const load = async () => {
       activeTab.value = availableTabs.value[0]?.id || 'overview'
     }
     await loadOverview()
+    if (canReadAudit.value) await loadAuditSummary()
     if (canReadClients.value) await loadClients()
     if (canReadMethods.value) await loadMethods()
     if (canReadAudit.value) await loadAudit()
@@ -763,6 +781,25 @@ onMounted(load)
           <div class="rounded-2xl bg-white p-5 shadow-sm"><div class="text-sm text-slate-500">活跃 Client</div><div class="mt-2 text-2xl font-black">{{ overview.active_client_count ?? 0 }}</div></div>
           <div class="rounded-2xl bg-white p-5 shadow-sm"><div class="text-sm text-slate-500">已发布方法</div><div class="mt-2 text-2xl font-black">{{ overview.published_method_count ?? 0 }}</div></div>
         </div>
+        <div v-if="canReadAudit" class="rounded-2xl bg-white p-6 shadow-sm">
+          <div class="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h2 class="text-lg font-black">MCP 调用概览</h2>
+              <p class="mt-1 text-sm text-slate-500">基于你有权限查看的审计日志统计。</p>
+            </div>
+            <select v-model="auditSummaryRange" class="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-bold text-slate-600" aria-label="审计统计周期" :disabled="auditSummaryLoading" @change="loadAuditSummary">
+              <option value="24h">近 24 小时</option>
+              <option value="7d">近 7 天</option>
+              <option value="30d">近 30 天</option>
+            </select>
+          </div>
+          <div class="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <div class="rounded-xl bg-slate-50 p-4"><div class="text-xs text-slate-500">调用次数</div><div class="mt-2 text-2xl font-black text-slate-800">{{ auditSummary.total_calls ?? '—' }}</div></div>
+            <div class="rounded-xl bg-emerald-50 p-4"><div class="text-xs text-emerald-700">成功率</div><div class="mt-2 text-2xl font-black text-emerald-700">{{ auditSummary.success_rate != null ? auditSummary.success_rate + '%' : '—' }}</div></div>
+            <div class="rounded-xl bg-rose-50 p-4"><div class="text-xs text-rose-700">失败 / 拒绝</div><div class="mt-2 text-2xl font-black text-rose-700">{{ auditSummary.failed_or_denied ?? '—' }}</div></div>
+            <div class="rounded-xl bg-indigo-50 p-4"><div class="text-xs text-indigo-700">P95 耗时</div><div class="mt-2 text-2xl font-black text-indigo-700">{{ auditSummary.p95_latency_ms != null ? auditSummary.p95_latency_ms + ' ms' : '—' }}</div></div>
+          </div>
+        </div>
         <div class="rounded-2xl bg-white p-6 shadow-sm"><h2 class="text-lg font-black">外部系统接入信息</h2><div class="mt-4 grid gap-3"><div v-for="item in endpointHelpItems" :key="item.key" class="flex flex-wrap items-center gap-3 rounded-xl bg-slate-50 p-3"><span class="flex w-full items-center gap-1.5 text-sm font-bold text-slate-600 sm:w-48"><span>{{ item.label }}</span><button type="button" class="inline-flex h-5 w-5 items-center justify-center rounded-full border border-indigo-300 text-xs font-black text-indigo-600 hover:bg-indigo-50" :aria-label="`查看${item.label}说明`" @click="openEndpointHelp(item.key)">?</button></span><code class="min-w-0 flex-1 break-all text-xs">{{ item.value || '—' }}</code><button v-if="item.value" type="button" class="rounded-lg border border-indigo-200 px-3 py-1 text-xs font-bold text-indigo-700" @click="copyValue(item.key, item.value)">{{ copied === item.key ? '已复制' : '复制地址' }}</button></div></div></div>
       </section>
 
@@ -989,7 +1026,7 @@ onMounted(load)
                   <div class="text-sm font-bold">允许授权模式</div>
                   <div class="mt-2 flex items-start gap-2 rounded-xl border border-indigo-100 bg-indigo-50 p-3 text-sm"><span class="mt-0.5 text-indigo-600">✓</span><span><span class="block font-bold text-indigo-950">用户授权（Authorization Code + PKCE）</span><span class="mt-1 block text-xs font-normal text-indigo-800">唯一授权方式；Access Token 始终绑定完成 NanZi 登录授权的用户。</span></span></div>
                 </div>
-                <label class="block text-sm font-bold">Redirect URI（每行一个）<span class="ml-1.5 rounded-full bg-slate-100 px-1.5 py-0.5 text-xs font-normal text-slate-500">选填</span><textarea v-model="form.redirect_uris" class="mt-2 min-h-24 w-full rounded-xl border border-slate-200 p-3 font-normal" placeholder="https://crm.example.com/oauth/callback" /><span class="mt-1 block text-xs font-normal text-slate-500">仅程序 OAuth 授权回调时需要填写；人工手动生成 Token 可留空。填写后 NanZi 只会回调到此处，必须与业务系统实际地址完全一致。</span></label>
+                <label class="block text-sm font-bold">Redirect URI（每行一个）<span class="ml-1.5 rounded-full bg-slate-100 px-1.5 py-0.5 text-xs font-normal text-slate-500">选填</span><textarea v-model="form.redirect_uris" class="mt-2 min-h-24 w-full rounded-xl border border-slate-200 p-3 font-normal" placeholder="https://crm.example.com/oauth/callback" /><span class="mt-1 block text-xs font-normal text-slate-500">未填写时使用默认回调地址 https://localhost/oauth/callback；人工手动生成 Token 可留空。程序 OAuth 使用真实业务回调时，请填写并保持地址完全一致。</span></label>
                 <div>
                   <div class="flex items-center justify-between gap-3">
                     <div>

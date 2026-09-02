@@ -39,6 +39,18 @@ def test_postgresql_platform_mcp_migration_matches_mysql_contract():
     assert "element:mcp_service:client:secret_reset" in sql
     assert sql.count("COMMENT ON COLUMN") >= 80
     assert "CREATE TABLE IF NOT EXISTS sys_mcp_platform_config" in sql
+
+
+def test_security_audit_migrations_create_oauth_event_table():
+    mysql_sql = (ROOT / "db-prod/V141-mcp-oauth-security-audit.sql").read_text(encoding="utf-8")
+    pg_sql = (ROOT / "db-prod-pg/V42-mcp-oauth-security-audit.sql").read_text(encoding="utf-8")
+
+    for sql in (mysql_sql, pg_sql):
+        assert "sys_mcp_oauth_security_audit_logs" in sql
+        assert "event_type" in sql
+        assert "client_id" in sql
+        assert "user_id" in sql
+        assert "created_at" in sql
     assert "ON CONFLICT (id) DO NOTHING" in sql
     assert "INSERT INTO system_configs" not in sql
 

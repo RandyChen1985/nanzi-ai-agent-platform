@@ -5,8 +5,8 @@
 
 from __future__ import annotations
 
-from datetime import datetime
-from typing import Any
+from datetime import datetime, timedelta
+from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -127,7 +127,7 @@ class McpOAuthClientCreate(BaseModel):
         cleaned = [value.strip() for value in values if value.strip()]
         if any("*" in value for value in cleaned):
             raise ValueError("redirect_uris 必须是不含通配符的精确地址")
-        return list(dict.fromkeys(cleaned))
+        return list(dict.fromkeys(cleaned)) or ["https://localhost/oauth/callback"]
 
     @field_validator("allowed_grant_types")
     @classmethod
@@ -319,6 +319,72 @@ async def get_config(
     db: AsyncSession = Depends(get_db_session),
 ) -> dict[str, Any]:
     return _serialize_config(await PlatformMcpConfigService.get(db))
+
+
+@router.get("/audit/summary")
+async def audit_summary(
+    range: Literal["24h", "7d", "30d"] = Query(default="24h"),
+    user: dict = Depends(require_mcp_service_permission("element:mcp_service:audit:read")),
+    db: AsyncSession = Depends(get_db_session),
+) -> dict[str, Any]:
+    """返回当前用户可见范围内的 MCP 审计调用汇总。"""
+    if user.get("role") == "admin":
+        filters = []
+    else:
+        filters = [McpInboundAuditLog.user_id == _current_user_id(user)]
+
+    period_hours = {"24h": 24, "7d": 7 * 24, "30d": 30 * 24}[range]
+    filters.append(McpInboundAuditLog.created_at >= datetime.utcnow() - timedelta(hours=period_hours))
+    total_calls = int(
+        await db.scalar(select(func.count()).select_from(McpInboundAuditLog).where(*filters)) or 0
+    )
+    completed_calls = int(
+        await db.scalar(
+            select(func.count())
+            .select_from(McpInboundAuditLog)
+            .where(*filters, McpInboundAuditLog.result_status == "completed")
+        )
+        or 0
+    )
+    failed_or_denied = int(
+        await db.scalar(
+            select(func.count())
+            .select_from(McpInboundAuditLog)
+            .where(*filters, McpInboundAuditLog.result_status.in_(["failed", "denied"]))
+        )
+        or 0
+    )
+    average_latency = await db.scalar(
+        select(func.avg(McpInboundAuditLog.latency_ms)).where(
+            *filters, McpInboundAuditLog.latency_ms.is_not(None)
+        )
+    )
+    latency_count = int(
+        await db.scalar(
+            select(func.count())
+            .select_from(McpInboundAuditLog)
+            .where(*filters, McpInboundAuditLog.latency_ms.is_not(None))
+        )
+        or 0
+    )
+    p95_latency = None
+    if latency_count:
+        p95_offset = max(0, (latency_count * 95 + 99) // 100 - 1)
+        p95_latency = await db.scalar(
+            select(McpInboundAuditLog.latency_ms)
+            .where(*filters, McpInboundAuditLog.latency_ms.is_not(None))
+            .order_by(McpInboundAuditLog.latency_ms.asc())
+            .offset(p95_offset)
+            .limit(1)
+        )
+    return {
+        "range": range,
+        "total_calls": total_calls,
+        "success_rate": round(completed_calls / total_calls * 100, 2) if total_calls else 0,
+        "failed_or_denied": failed_or_denied,
+        "average_latency_ms": round(float(average_latency), 2) if average_latency is not None else None,
+        "p95_latency_ms": int(p95_latency) if p95_latency is not None else None,
+    }
 
 
 @router.get("/audit")
