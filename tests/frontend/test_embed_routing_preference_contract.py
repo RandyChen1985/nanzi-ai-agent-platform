@@ -66,6 +66,21 @@ def test_clicking_auto_routing_keeps_settings_open_for_further_choice():
     assert "saveAndClose();" not in auto_branch
 
 
+def test_setting_changes_save_without_closing_the_settings_modal():
+    source = SETTINGS.read_text(encoding="utf-8")
+    script = source.split("</script>", 1)[0]
+
+    assert "const saveSettings = () =>" in script
+    assert "const saveAndClose =" not in script
+    assert "const close = () => emit('update:visible', false);" in script
+
+    setting_handlers = script.split("const handleSetTheme", 1)[1].split(
+        "const showConfirmModal", 1
+    )[0]
+    assert "saveAndClose" not in setting_handlers
+    assert setting_handlers.count("saveSettings();") >= 10
+
+
 def test_routing_mode_help_text_explains_latency_and_delegation():
     source = SETTINGS.read_text(encoding="utf-8")
 

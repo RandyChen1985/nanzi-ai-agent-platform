@@ -202,12 +202,33 @@ def test_client_security_changes_revoke_existing_grants_and_tokens():
     assert "revoked_at" in source
 
 
-def test_service_desk_exposes_client_resource_whitelist_and_explicit_read_permissions():
+def test_service_desk_does_not_expose_client_resource_whitelist():
     source = Path("app/api/portal/endpoints/mcp_service.py").read_text(encoding="utf-8")
+    model = Path("app/models/platform_mcp.py").read_text(encoding="utf-8")
+    oauth = Path("app/services/mcp/platform_oauth.py").read_text(encoding="utf-8")
+    runtime = Path("app/services/mcp/platform_mcp.py").read_text(encoding="utf-8")
     frontend = Path("frontend/src/views/McpServiceDesk.vue").read_text(encoding="utf-8")
 
-    assert "allowed_knowledge_base_ids" in source
     assert "element:mcp_service:config:read" in source
-    assert "allowed_knowledge_base_ids" in frontend
-    assert "不增加额外限制" in frontend
-    assert "return ids.length ? ids : null" in frontend
+    for field in (
+        "allowed_agent_ids",
+        "allowed_knowledge_base_ids",
+        "allowed_metadata_dataset_ids",
+    ):
+        assert field not in source
+        assert field not in model
+        assert field not in oauth
+        assert field not in runtime
+        assert field not in frontend
+    assert "当前用户角色和权限" in frontend
+    assert "Client 仅控制 MCP 方法 Scope" in frontend
+
+
+def test_client_payload_rejects_legacy_resource_whitelist_fields():
+    with pytest.raises(ValueError):
+        mcp_service.McpOAuthClientCreate(
+            client_name="legacy-client",
+            redirect_uris=["https://example.com/callback"],
+            allowed_scopes=["agent:list"],
+            allowed_agent_ids=["agent-1"],
+        )

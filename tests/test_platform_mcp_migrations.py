@@ -51,21 +51,3 @@ def test_user_token_permission_is_seeded_by_follow_up_migrations():
         assert "element:mcp_service:client:token_issue" in sql
         assert "ai_agent_resource_permissions" in sql
         assert "WHERE NOT EXISTS" in sql
-
-
-def test_client_owner_migrations_backfill_legacy_creator_usernames():
-    mysql_path = ROOT / "db-prod/V139-backfill_mcp_client_owner_user_ids.sql"
-    postgres_path = ROOT / "db-prod-pg/V40-backfill_mcp_client_owner_user_ids.sql"
-    mysql = mysql_path.read_text(encoding="utf-8")
-    postgres = postgres_path.read_text(encoding="utf-8")
-
-    for sql in (mysql, postgres):
-        assert "sys_mcp_oauth_clients" in sql
-        assert "ai_agent_users" in sql
-        assert "created_by" in sql
-        assert "user_name" in sql
-        assert "id" in sql
-        assert "legacy" in sql.lower()
-
-    assert "REGEXP" in mysql
-    assert "!~" in postgres

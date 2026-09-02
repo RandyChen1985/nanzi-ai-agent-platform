@@ -9,7 +9,7 @@ from app.services.mcp.platform_oauth import (
     build_pkce_challenge,
     filter_requested_scopes,
     hash_secret,
-    intersect_knowledge_base_ids,
+    intersect_authorized_ids,
     verify_pkce,
 )
 
@@ -88,11 +88,7 @@ def test_custom_access_token_ttl_has_a_safe_bounded_range():
         resolve_access_token_ttl(604801)
 
 
-def test_knowledge_scope_is_the_intersection_of_all_boundaries():
-    assert intersect_knowledge_base_ids(
-        ["kb-a", "kb-b"],
-        ["kb-b", "kb-c"],
-        ["kb-b", "kb-c"],
-    ) == ["kb-b"]
-    assert intersect_knowledge_base_ids(["kb-a"], [], None) == []
-    assert intersect_knowledge_base_ids(None, ["kb-a"], None) == ["kb-a"]
+def test_authorized_scope_can_be_narrowed_by_a_requested_resource():
+    assert intersect_authorized_ids(["kb-a", "kb-b"], ["kb-b", "kb-c"]) == ["kb-b"]
+    assert intersect_authorized_ids(["kb-a"], []) == []
+    assert intersect_authorized_ids(None, ["kb-a"]) == ["kb-a"]

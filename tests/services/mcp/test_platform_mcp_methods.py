@@ -13,7 +13,6 @@ from app.services.mcp.platform_mcp_support import (
     build_platform_user_info,
     decode_platform_cursor,
     encode_platform_cursor,
-    intersect_resource_ids,
     serialize_metadata_dataset,
     serialize_metadata_schema,
 )
@@ -69,13 +68,6 @@ def test_platform_cursor_is_signed_and_rejects_tampering():
     assert decode_platform_cursor(
         "agent.list_allowed", cursor[:-1] + ("A" if cursor[-1] != "A" else "B")
     ) is None
-
-
-def test_resource_intersection_distinguishes_unrestricted_from_explicit_empty():
-    assert intersect_resource_ids(None, ["a", "b"], None) == ["a", "b"]
-    assert intersect_resource_ids(["a", "b"], ["b"], None) == ["b"]
-    assert intersect_resource_ids(None, [], None) == []
-    assert intersect_resource_ids(["a"], None, ["b"]) == []
 
 
 def test_platform_user_info_comes_from_user_record_without_credentials():
@@ -292,7 +284,7 @@ class _FakeSession:
 
 
 @pytest.mark.asyncio
-async def test_agent_list_allowed_applies_client_whitelist_to_user_allowed_agents(monkeypatch):
+async def test_agent_list_allowed_uses_the_current_users_authorized_agents(monkeypatch):
     from app.services.mcp.platform_mcp import agent_list_allowed
     from app.services.mcp.platform_oauth import McpPrincipal
 
@@ -314,7 +306,7 @@ async def test_agent_list_allowed_applies_client_whitelist_to_user_allowed_agent
         SimpleNamespace(
             id="agent-blocked",
             name="blocked",
-            display_name="Client 禁止的助手",
+            display_name="当前用户可用的助手",
             description="不可用",
             is_enabled=True,
         ),
@@ -324,7 +316,7 @@ async def test_agent_list_allowed_applies_client_whitelist_to_user_allowed_agent
         return None
 
     async def fake_client(_db, _principal):
-        return SimpleNamespace(allowed_agent_ids=["agent-allowed"])
+        return SimpleNamespace()
 
     async def fake_user(_db, _principal):
         return SimpleNamespace(id=123), {"user_id": "123", "user_name": "alice"}
@@ -348,11 +340,11 @@ async def test_agent_list_allowed_applies_client_whitelist_to_user_allowed_agent
 
     result = await agent_list_allowed(limit=20)
 
-    assert [item["agent_id"] for item in result["items"]] == ["agent-allowed"]
+    assert [item["agent_id"] for item in result["items"]] == ["agent-allowed", "agent-blocked"]
 
 
 @pytest.mark.asyncio
-async def test_metadata_scope_intersects_user_access_and_client_whitelist(monkeypatch):
+async def test_metadata_scope_uses_user_access_and_requested_scope(monkeypatch):
     from app.services.mcp.platform_oauth import McpPrincipal
 
     principal = McpPrincipal(
@@ -364,7 +356,7 @@ async def test_metadata_scope_intersects_user_access_and_client_whitelist(monkey
     )
 
     async def fake_client(_db, _principal):
-        return SimpleNamespace(allowed_metadata_dataset_ids=["7", "8"])
+        return SimpleNamespace()
 
     async def fake_user(_db, _principal):
         return SimpleNamespace(id=123), {"user_id": "123", "role": "user"}
@@ -380,8 +372,8 @@ async def test_metadata_scope_intersects_user_access_and_client_whitelist(monkey
         fake_accessible,
     )
 
-    assert await platform_mcp_module._resolve_metadata_dataset_ids(object(), principal) == ["7"]
-    assert await platform_mcp_module._resolve_metadata_dataset_ids(object(), principal, ["9"]) == []
+    assert await platform_mcp_module._resolve_metadata_dataset_ids(object(), principal) == ["7", "9"]
+    assert await platform_mcp_module._resolve_metadata_dataset_ids(object(), principal, ["9"]) == ["9"]
 
 
 @pytest.mark.asyncio
@@ -397,7 +389,7 @@ async def test_metadata_scope_requires_a_user_principal(monkeypatch):
     )
 
     async def fake_client(_db, _principal):
-        return SimpleNamespace(allowed_metadata_dataset_ids=None)
+        return SimpleNamespace()
 
     monkeypatch.setattr(platform_mcp_module, "_load_client", fake_client)
 

@@ -1371,7 +1371,7 @@ NanZi 对外提供的是一个统一的 **NanZi Platform MCP**，智能体、会
 
 | 方法组 | 示例方法 | 用途 |
 | --- | --- | --- |
-| `agent.*` | `agent.list_allowed`、`agent.invoke` | 查询当前用户可用智能体并发起调用；结果取用户权限与 Client 智能体白名单交集 |
+| `agent.*` | `agent.list_allowed`、`agent.invoke` | 查询当前用户可用智能体并发起调用；结果由当前用户角色与权限决定 |
 | `conversation.*` | `conversation.continue` | 在用户授权范围内继续自己的会话 |
 | `knowledge.*` | `knowledge.search` | 在授权知识库范围内检索文档内容 |
 | `metadata.*` | `metadata.list_datasets`、`metadata.search`、`metadata.get_dataset`、`metadata.get_schema`、`metadata.get_metrics` | 查询受权限控制的数据集、表、字段和指标元数据 |
@@ -1385,6 +1385,8 @@ NanZi 对外提供的是一个统一的 **NanZi Platform MCP**，智能体、会
 3. 外部系统用 Authorization Code + PKCE 换取 OAuth2 Access Token；不应把 NanZi 用户 API Key 或 OIDC ID Token 当作 MCP Bearer Token。
 4. 外部系统请求 `https://<NanZi 域名>/mcp/platform`，每次携带 `Authorization: Bearer <access_token>`。
 5. NanZi 服务端验证 opaque Token 摘要、Resource/Audience、Scope、Client 状态和用户授权关系，再按用户权限执行具体 MCP 方法。
+
+服务台中的 Client 按创建人隔离：拥有菜单和元素权限只代表可以使用对应功能，不代表可以查看或操作所有 Client。每个用户只能看到、编辑、停用、删除、重置 Secret 或生成 Token 给自己创建的 Client，管理员也遵守同样的限制；Client 的 `created_by` 保存 NanZi `user_id`，不是用户名。
 
 如果是人工登录后临时使用，不需要先走完整 OAuth2：用户登录 NanZi 后，在【MCP 服务台】→【外部 Client】点击“生成当前用户 Access Token”，选择有效期和 Scope 即可。生成后向导会进入第二步，可单独复制 Access Token，也可复制已经填入真实 Endpoint 和 Token 的完整 MCP JSON，直接粘贴到 Cursor、Claude Desktop 等客户端。这个 Token 的 `user_id` 始终取当前登录会话：管理员登录生成管理员 Token，demo 用户登录生成 demo 用户 Token；页面不提供用户选择，也不允许代发其他用户身份。生成后调用时仍使用 `Authorization: Bearer <access_token>`，Token 只显示本次并会按所选有效期过期。
 

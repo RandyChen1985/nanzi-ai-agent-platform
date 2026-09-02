@@ -82,6 +82,17 @@ def test_client_delete_requires_confirmation_and_keeps_audit_history():
     assert "api.delete" in view
 
 
+def test_client_token_issue_uses_primary_button_and_clear_label():
+    view = (ROOT / "frontend/src/views/McpServiceDesk.vue").read_text(encoding="utf-8")
+
+    assert "生成 MCP Access Token" in view
+    assert "生成当前用户 Access Token" not in view
+    clients_section = view.split("activeTab === 'clients'", 1)[1].split("activeTab === 'methods'", 1)[0]
+    assert "bg-indigo-600" in clients_section
+    assert "hover:bg-indigo-700" in clients_section
+    assert "disabled:opacity-50" in clients_section
+
+
 def test_service_desk_uses_the_same_dashboard_spacing_and_background_as_mcp_toolkit():
     toolkit = (ROOT / "frontend/src/views/McpManagement.vue").read_text(encoding="utf-8")
     service_desk = (ROOT / "frontend/src/views/McpServiceDesk.vue").read_text(encoding="utf-8")
@@ -155,7 +166,7 @@ def test_service_desk_has_oauth_usage_guide_and_copyable_mcp_json():
 def test_service_desk_can_issue_current_user_token_and_explain_dynamic_oauth():
     view = (ROOT / "frontend/src/views/McpServiceDesk.vue").read_text(encoding="utf-8")
 
-    assert "生成当前用户 Access Token" in view
+    assert "生成 MCP Access Token" in view
     assert "showTokenIssue" in view
     assert "expires_in" in view
     assert "user-access-token" in view
@@ -212,17 +223,18 @@ def test_service_desk_guide_explains_client_secret_scenarios_and_sample_code():
     assert "不要把 Client Secret 放进 Cursor" in view
 
 
-def test_service_desk_client_form_exposes_all_platform_mcp_resource_scopes():
+def test_service_desk_client_form_exposes_method_scopes_without_resource_whitelists():
     view = (ROOT / "frontend/src/views/McpServiceDesk.vue").read_text(encoding="utf-8")
 
     assert "agent:list" in view
     assert "agent:invoke" in view
     assert "当前已发布，需用户授权" not in view
     assert "（待接入）" not in view
-    assert "allowed_agent_ids" in view
-    assert "allowed_metadata_dataset_ids" in view
-    assert "当前用户有权限且在 Client 白名单内" in view
-    assert "用户授权 Token 仍只能访问当前用户有权限的元数据" in view
+    assert "allowed_agent_ids" not in view
+    assert "allowed_knowledge_base_ids" not in view
+    assert "allowed_metadata_dataset_ids" not in view
+    assert "Client 仅控制 MCP 方法 Scope" in view
+    assert "当前用户角色和权限" in view
 
 
 def test_service_desk_exposes_only_user_bound_oauth_flow():
@@ -244,14 +256,20 @@ def test_client_card_labels_and_copies_client_id():
     assert "复制 Client ID" in view
 
 
-def test_client_card_uses_capsule_labels_for_identity_and_resource_limits():
+def test_client_card_uses_compact_permission_summary_and_on_demand_details():
     view = (ROOT / "frontend/src/views/McpServiceDesk.vue").read_text(encoding="utf-8")
 
     assert 'class="rounded-full bg-slate-100 px-2 py-1 text-[11px] font-bold text-slate-600"' in view
-    assert "class=\"inline-flex max-w-full items-center gap-1 rounded-full" in view
-    for label in ("授权", "Scope", "智能体", "知识库", "元数据集"):
-        assert f"<span class=\"shrink-0 font-semibold" in view
-        assert label in view
+    assert "权限摘要" in view
+    assert "查看权限详情" in view
+    assert "md:grid-cols-2" in view
+    assert "scopeSummary" in view
+    assert "资源权限：由当前登录用户的角色和权限决定" in view
+    assert "Client 不再配置" in view
+
+    clients_section = view.split("activeTab === 'clients'", 1)[1].split("activeTab === 'methods'", 1)[0]
+    assert "inline-flex max-w-full items-center gap-1 rounded-full" not in clients_section
+    assert "不增加额外限制（用户模式仍受用户权限限制）" not in clients_section
 
 
 def test_login_reloads_backend_oauth_endpoint_after_same_origin_login():

@@ -11,9 +11,6 @@ type Client = {
   status: 'active' | 'disabled' | 'deleted'
   allowed_grant_types: string[]
   allowed_scopes: string[]
-  allowed_agent_ids?: string[] | null
-  allowed_knowledge_base_ids?: string[] | null
-  allowed_metadata_dataset_ids?: string[] | null
   redirect_uris: string[]
   client_secret?: string | null
 }
@@ -53,7 +50,7 @@ const auditTotal = ref(0)
 const auditPage = ref(1)
 const auditPageSize = 20
 const auditLoading = ref(false)
-const showAuditFilters = ref(false)
+
 const selectedAudit = ref<AuditLog | null>(null)
 const showCreate = ref(false)
 const oneTimeSecret = ref('')
@@ -66,6 +63,7 @@ const tokenClient = ref<Client | null>(null)
 const oneTimeAccessToken = ref('')
 const accessTokenInfo = ref<Record<string, any>>({})
 const tokenWizardStep = ref<1 | 2>(1)
+const clientDetails = ref<Client | null>(null)
 const copied = ref('')
 const tokenForm = reactive({
   scopes: [] as string[],
@@ -113,9 +111,6 @@ const form = reactive({
   redirect_uris: '',
   allowed_grant_types: ['authorization_code'],
   allowed_scopes: ['knowledge:search'],
-  allowed_agent_ids: '',
-  allowed_knowledge_base_ids: '',
-  allowed_metadata_dataset_ids: '',
 })
 const scopeOptions = [
   ['knowledge:search', '知识库搜索'],
@@ -133,6 +128,17 @@ const tokenExpiryOptions = [
   [86400, '1 天'],
   [604800, '7 天'],
 ] as const
+
+const scopeSummary = (client: Client) => {
+  const scopes = client.allowed_scopes || []
+  if (!scopes.length) return '未配置 Scope'
+  const visible = scopes.slice(0, 2).join('、')
+  return scopes.length > 2 ? `${visible} 等 ${scopes.length} 项` : visible
+}
+
+const openClientDetails = (client: Client) => {
+  clientDetails.value = client
+}
 
 const canEditConfig = computed(() => hasPermission('element:mcp_service:config:edit'))
 const canManageCapability = computed(() => hasPermission('element:mcp_service:capability:manage'))
@@ -440,18 +446,6 @@ const createClient = async () => {
     const response = await api.post('/api/portal/mcp-service/clients', {
       ...form,
       redirect_uris: form.redirect_uris.split(/\r?\n|,/).map(item => item.trim()).filter(Boolean),
-      allowed_knowledge_base_ids: (() => {
-        const ids = form.allowed_knowledge_base_ids.split(/\r?\n|,/).map(item => item.trim()).filter(Boolean)
-        return ids.length ? ids : null
-      })(),
-      allowed_agent_ids: (() => {
-        const ids = form.allowed_agent_ids.split(/\r?\n|,/).map(item => item.trim()).filter(Boolean)
-        return ids.length ? ids : null
-      })(),
-      allowed_metadata_dataset_ids: (() => {
-        const ids = form.allowed_metadata_dataset_ids.split(/\r?\n|,/).map(item => item.trim()).filter(Boolean)
-        return ids.length ? ids : null
-      })(),
     })
     oneTimeSecret.value = response.data.client_secret || ''
     showCreate.value = false
@@ -459,9 +453,6 @@ const createClient = async () => {
     form.redirect_uris = ''
     form.allowed_grant_types = ['authorization_code']
     form.allowed_scopes = ['knowledge:search']
-    form.allowed_agent_ids = ''
-    form.allowed_knowledge_base_ids = ''
-    form.allowed_metadata_dataset_ids = ''
     await loadClients()
   } catch (err: any) {
     error.value = err?.response?.data?.detail || 'Client 创建失败'
@@ -638,13 +629,13 @@ onMounted(load)
           <div class="flex flex-wrap items-start justify-between gap-3">
             <div>
               <h2 class="text-lg font-black">程序化系统接入</h2>
-              <p class="mt-1 text-sm text-slate-500">适合 CRM、OA、后台服务和无人值守任务，通过标准 OAuth2 动态获取 Access Token。</p>
+              <p class="mt-1 text-sm text-slate-500">适合 CRM、OA、后台服务和无人值守任务，通过标准 OAuth2 动态获取绑定用户的 Access Token。</p>
             </div>
             <span class="rounded-full bg-indigo-50 px-3 py-1 text-xs font-bold text-indigo-700">OAuth2 / OIDC 标准方向</span>
           </div>
           <div class="mt-5 grid gap-3 md:grid-cols-2">
             <div class="rounded-xl border border-slate-200 bg-slate-50 p-4"><h3 class="text-sm font-black">需要关联用户</h3><p class="mt-1 text-xs leading-5 text-slate-500">使用 Authorization Code + PKCE，用户在 NanZi 授权页确认后，Access Token 会绑定对应 user_id。</p></div>
-            <div class="rounded-xl border border-slate-200 bg-slate-50 p-4"><h3 class="text-sm font-black">调用方式</h3><p class="mt-1 text-xs leading-5 text-slate-500">调用 MCP 时统一携带 Authorization: Bearer；NanZi 服务端校验 Token、Scope、Client 和资源权限。</p></div>
+            <div class="rounded-xl border border-slate-200 bg-slate-50 p-4"><h3 class="text-sm font-black">调用方式</h3><p class="mt-1 text-xs leading-5 text-slate-500">调用 MCP 时统一携带 Authorization: Bearer；NanZi 服务端校验 Token、Scope、Client 和当前用户角色权限。</p></div>
           </div>
           <div class="mt-5 rounded-xl border border-blue-100 bg-blue-50 p-4 text-sm leading-6 text-blue-900">
             <p class="font-bold">程序化流程</p>
@@ -662,7 +653,7 @@ onMounted(load)
               <thead class="bg-slate-50 text-xs text-slate-500"><tr class="border-b border-slate-200"><th class="p-3">凭证</th><th class="p-3">放在哪里</th><th class="p-3">作用</th><th class="p-3">是否代表用户</th></tr></thead>
               <tbody>
                 <tr class="border-b border-slate-100"><td class="p-3 font-mono font-bold text-amber-700">client_id + client_secret</td><td class="p-3">业务方后端 Token Endpoint 请求</td><td class="p-3">证明外部 Client，并兑换用户授权后的 Access Token</td><td class="p-3">本身不代表用户；用户登录并同意授权后，兑换出的 Token 才绑定该用户</td></tr>
-                <tr><td class="p-3 font-mono font-bold text-indigo-700">Authorization: Bearer &lt;access_token&gt;</td><td class="p-3">每次 MCP 请求</td><td class="p-3">调用 NanZi Platform MCP</td><td class="p-3">始终代表完成 NanZi 登录授权的用户，并受用户权限和 Client 白名单限制</td></tr>
+                <tr><td class="p-3 font-mono font-bold text-indigo-700">Authorization: Bearer &lt;access_token&gt;</td><td class="p-3">每次 MCP 请求</td><td class="p-3">调用 NanZi Platform MCP</td><td class="p-3">始终代表完成 NanZi 登录授权的用户，并受该用户角色和权限限制</td></tr>
               </tbody>
             </table>
           </div>
@@ -775,7 +766,7 @@ onMounted(load)
         <div class="mb-5 flex flex-wrap items-start justify-between gap-3">
           <div>
             <h2 class="text-lg font-black">外部 Client</h2>
-            <p class="mt-1 text-sm text-slate-500">第一期只支持 Confidential Client，Secret 只在创建或重置时显示一次。</p>
+            <p class="mt-1 text-sm text-slate-500">Secret 只在创建或重置时显示一次。</p>
           </div>
           <div class="flex flex-wrap gap-2">
             <button v-if="canReadGuide" type="button" class="rounded-xl border border-indigo-200 px-4 py-2 text-sm font-bold text-indigo-700 hover:bg-indigo-50" @click="activeTab = 'guide'">？使用指南</button>
@@ -783,14 +774,14 @@ onMounted(load)
           </div>
         </div>
         <div class="mb-4 rounded-xl border border-blue-100 bg-blue-50 p-4 text-sm leading-6 text-blue-900">
-          <span class="font-bold">人工登录接入：</span>点击某个启用 Client 的“生成当前用户 Access Token”，生成的 Token 只代表当前登录用户；管理员生成的是管理员身份，demo 用户生成的是 demo 身份。
+          <span class="font-bold">人工登录接入：</span>点击某个启用 Client 的“生成 MCP Access Token”，生成的 Token 只代表当前登录用户；管理员生成的是管理员身份，demo 用户生成的是 demo 身份。
         </div>
         <div v-if="!clients.length" class="rounded-xl bg-slate-50 p-8 text-center text-sm text-slate-500">暂无外部 Client</div>
         <div v-else class="space-y-3">
-          <div v-for="client in clients" :key="client.client_id" class="rounded-xl border border-slate-200 p-4">
-            <div class="flex flex-wrap items-center justify-between gap-3">
+          <div v-for="client in clients" :key="client.client_id" class="rounded-2xl border border-slate-200 p-5 transition-colors hover:border-indigo-200">
+            <div class="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
               <div class="min-w-0">
-                <div class="font-black">{{ client.client_name }}</div>
+                <div class="text-base font-black text-slate-800">{{ client.client_name }}</div>
                 <div class="mt-1 flex flex-wrap items-center gap-2">
                   <span class="rounded-full bg-slate-100 px-2 py-1 text-[11px] font-bold text-slate-600">Client ID</span>
                   <code class="break-all text-xs text-slate-500">{{ client.client_id }}</code>
@@ -798,35 +789,35 @@ onMounted(load)
                 </div>
                 <p class="mt-1 text-xs text-slate-400">Client ID 用于 Token Endpoint，需配合 Client Secret 获取 Access Token；不能直接调用 MCP。</p>
               </div>
-              <div class="flex flex-wrap items-center gap-3">
+              <div class="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-2 xl:justify-end">
                 <span class="rounded-full px-2 py-1 text-xs font-bold" :class="client.status === 'active' ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-500'">{{ client.status === 'active' ? '启用' : '停用' }}</span>
-                <button v-if="canIssueToken" type="button" class="text-xs font-bold text-indigo-700 disabled:cursor-not-allowed disabled:text-slate-400" :disabled="client.status !== 'active' || !client.allowed_scopes.length" @click="openTokenIssue(client)">生成当前用户 Access Token</button>
+                <button v-if="canIssueToken" type="button" class="inline-flex shrink-0 items-center justify-center whitespace-nowrap rounded-xl bg-indigo-600 px-3 py-2 text-xs font-bold text-white shadow-sm transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50" :disabled="client.status !== 'active' || !client.allowed_scopes.length" @click="openTokenIssue(client)">生成 MCP Access Token</button>
                 <button v-if="canManageClient" type="button" class="text-xs font-bold text-indigo-700" @click="toggleClient(client)">{{ client.status === 'active' ? '停用' : '启用' }}</button>
                 <button v-if="canResetSecret" type="button" class="text-xs font-bold text-amber-700" @click="resetSecret(client)">重置 Secret</button>
                 <button v-if="canManageClient" type="button" class="text-xs font-bold text-rose-700" @click="removeClient(client)">删除</button>
               </div>
             </div>
-            <div class="mt-3 flex flex-wrap gap-2 text-xs">
-              <span class="inline-flex max-w-full items-center gap-1 rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-slate-600">
-                <span class="shrink-0 font-semibold text-slate-500">授权</span>
-                <span class="min-w-0 break-words">用户授权（Authorization Code + PKCE）</span>
-              </span>
-              <span class="inline-flex max-w-full items-center gap-1 rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-slate-600">
-                <span class="shrink-0 font-semibold text-slate-500">Scope</span>
-                <span class="min-w-0 break-words">{{ client.allowed_scopes.join('、') || '未配置' }}</span>
-              </span>
-              <span class="inline-flex max-w-full items-center gap-1 rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-slate-600">
-                <span class="shrink-0 font-semibold text-slate-500">智能体</span>
-                <span class="min-w-0 break-words">{{ client.allowed_agent_ids?.length ? client.allowed_agent_ids.join('、') : '不增加额外限制（用户模式仍受用户权限限制）' }}</span>
-              </span>
-              <span class="inline-flex max-w-full items-center gap-1 rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-slate-600">
-                <span class="shrink-0 font-semibold text-slate-500">知识库</span>
-                <span class="min-w-0 break-words">{{ client.allowed_knowledge_base_ids?.length ? client.allowed_knowledge_base_ids.join('、') : '不增加额外限制（用户模式仍受用户权限限制）' }}</span>
-              </span>
-              <span class="inline-flex max-w-full items-center gap-1 rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-slate-600">
-                <span class="shrink-0 font-semibold text-slate-500">元数据集</span>
-                <span class="min-w-0 break-words">{{ client.allowed_metadata_dataset_ids?.length ? client.allowed_metadata_dataset_ids.join('、') : '不增加额外限制（用户模式仍受用户权限限制）' }}</span>
-              </span>
+            <div class="mt-4 border-t border-slate-100 pt-4">
+              <div class="mb-3 flex items-center gap-2">
+                <span class="text-xs font-bold uppercase tracking-wide text-slate-500">权限摘要</span>
+                <span class="text-[11px] text-slate-400">调用权限会同时受用户自身权限限制</span>
+              </div>
+              <div class="grid gap-3 md:grid-cols-2">
+                <div class="rounded-xl bg-slate-50 px-3 py-3">
+                  <div class="text-[11px] font-bold text-slate-400">授权方式</div>
+                  <div class="mt-1 text-sm font-bold text-slate-700">用户授权</div>
+                  <div class="mt-1 text-xs text-slate-500">Authorization Code + PKCE</div>
+                </div>
+                <div class="rounded-xl bg-slate-50 px-3 py-3">
+                  <div class="text-[11px] font-bold text-slate-400">Scope</div>
+                  <div class="mt-1 text-sm font-bold text-slate-700">{{ client.allowed_scopes.length }} 项已授权</div>
+                  <div class="mt-1 truncate text-xs text-slate-500" :title="client.allowed_scopes.join('、')">{{ scopeSummary(client) }}</div>
+                </div>
+              </div>
+              <p class="mt-3 rounded-xl border border-blue-100 bg-blue-50 px-3 py-2 text-xs leading-5 text-blue-900">资源权限：由当前登录用户的角色和权限决定，Client 不再配置智能体、知识库或元数据集白名单。Client 仅控制 MCP 方法 Scope。</p>
+              <div class="mt-3 flex justify-end">
+                <button type="button" class="text-xs font-bold text-indigo-700 hover:text-indigo-900" @click="openClientDetails(client)">查看权限详情 →</button>
+              </div>
             </div>
           </div>
         </div>
@@ -843,34 +834,17 @@ onMounted(load)
           <span class="rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-600">共 {{ auditTotal }} 条</span>
         </div>
 
-        <div class="mt-5 rounded-xl border border-slate-200 bg-slate-50 p-3">
-          <div class="flex flex-nowrap items-center justify-between gap-3">
-            <button type="button" class="inline-flex shrink-0 items-center gap-2 rounded-lg px-2 py-1.5 text-sm font-bold text-slate-700 hover:bg-white" :aria-expanded="showAuditFilters" @click="showAuditFilters = !showAuditFilters">
-              <span>筛选条件</span>
-              <span class="rounded-full bg-indigo-100 px-2 py-0.5 text-xs font-bold text-indigo-700">{{ activeAuditFilterCount }} 项</span>
-              <span class="text-xs text-indigo-700">{{ showAuditFilters ? '收起筛选' : '展开筛选' }}</span>
-              <span class="text-xs text-slate-400" aria-hidden="true">{{ showAuditFilters ? '▲' : '▼' }}</span>
-            </button>
-            <span class="shrink-0 text-xs text-slate-400">默认收起，展开后选择过滤对象并输入值</span>
-          </div>
-          <div v-if="showAuditFilters" class="mt-3 flex flex-nowrap items-end gap-3">
-            <label class="w-48 shrink-0 text-xs font-bold text-slate-600">过滤对象
-              <select v-model="selectedAuditFilter" class="mt-1 w-full rounded-lg border border-slate-200 bg-white p-2.5 text-sm font-normal">
-                <option v-for="item in auditFilterOptions" :key="item.key" :value="item.key">{{ item.label }}</option>
-              </select>
-            </label>
-            <label class="min-w-0 flex-1 text-xs font-bold text-slate-600">过滤值
-              <select v-if="selectedAuditFilterMeta.kind === 'select'" v-model="selectedAuditFilterValue" class="mt-1 w-full rounded-lg border border-slate-200 bg-white p-2.5 text-sm font-normal">
-                <option value="">全部</option>
-                <option v-for="item in selectedAuditFilterMeta.options || []" :key="item[0]" :value="item[0]">{{ item[1] }}</option>
-              </select>
-              <input v-else v-model="selectedAuditFilterValue" :inputmode="selectedAuditFilterMeta.kind === 'number' ? 'numeric' : undefined" class="mt-1 w-full rounded-lg border border-slate-200 bg-white p-2.5 text-sm font-normal" :class="selectedAuditFilterMeta.key === 'method_name' ? 'font-mono' : ''" :placeholder="selectedAuditFilterMeta.placeholder" @keyup.enter="applyAuditFilters" />
-            </label>
-            <div class="ml-auto flex shrink-0 items-end gap-2">
-              <button type="button" class="rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-xs font-bold text-slate-600 hover:bg-slate-100" @click="resetAuditFilters">重置</button>
-              <button type="button" class="rounded-lg bg-indigo-600 px-4 py-2.5 text-xs font-bold text-white hover:bg-indigo-700 disabled:opacity-50" :disabled="auditLoading" @click="applyAuditFilters">{{ auditLoading ? '查询中…' : '查询' }}</button>
-            </div>
-          </div>
+        <div class="mt-5 flex flex-nowrap items-center gap-3">
+          <select v-model="selectedAuditFilter" class="w-44 shrink-0 rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm">
+            <option v-for="item in auditFilterOptions" :key="item.key" :value="item.key">{{ item.label }}</option>
+          </select>
+          <select v-if="selectedAuditFilterMeta.kind === 'select'" v-model="selectedAuditFilterValue" class="min-w-0 flex-1 rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm">
+            <option value="">全部</option>
+            <option v-for="item in selectedAuditFilterMeta.options || []" :key="item[0]" :value="item[0]">{{ item[1] }}</option>
+          </select>
+          <input v-else v-model="selectedAuditFilterValue" :inputmode="selectedAuditFilterMeta.kind === 'number' ? 'numeric' : undefined" class="min-w-0 flex-1 rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm" :class="selectedAuditFilterMeta.key === 'method_name' ? 'font-mono' : ''" :placeholder="selectedAuditFilterMeta.placeholder" @keyup.enter="applyAuditFilters" />
+          <button type="button" class="shrink-0 rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-xs font-bold text-slate-600 hover:bg-slate-100" @click="resetAuditFilters">重置</button>
+          <button type="button" class="shrink-0 rounded-lg bg-indigo-600 px-4 py-2.5 text-xs font-bold text-white hover:bg-indigo-700 disabled:opacity-50" :disabled="auditLoading" @click="applyAuditFilters">{{ auditLoading ? '查询中…' : '查询' }}</button>
         </div>
 
         <div v-if="auditLoading" class="py-12 text-center text-sm text-slate-500">审计日志加载中…</div>
@@ -899,6 +873,46 @@ onMounted(load)
       </section>
 
       <div
+        v-if="clientDetails"
+        class="fixed inset-0 z-50 overflow-y-auto bg-slate-900/50 p-4"
+        @click.self="clientDetails = null"
+      >
+        <div class="flex min-h-full items-center justify-center">
+          <div class="w-full max-w-2xl rounded-2xl bg-white shadow-2xl">
+            <div class="flex items-start justify-between border-b border-slate-100 px-6 py-5">
+              <div>
+                <h2 class="text-xl font-black text-slate-800">权限详情</h2>
+                <p class="mt-1 text-sm text-slate-500">{{ clientDetails.client_name }} · {{ clientDetails.client_id }}</p>
+              </div>
+              <button type="button" class="text-2xl text-slate-400 hover:text-slate-600" aria-label="关闭权限详情" @click="clientDetails = null">×</button>
+            </div>
+            <div class="space-y-4 px-6 py-5 text-sm">
+              <div class="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                <div class="text-xs font-bold text-slate-400">授权方式</div>
+                <div class="mt-1 font-bold text-slate-700">用户授权（Authorization Code + PKCE）</div>
+                <div class="mt-1 text-xs text-slate-500">所有 Access Token 都必须绑定完成 NanZi 登录授权的用户。</div>
+              </div>
+              <div class="rounded-xl border border-slate-200 p-4">
+                <div class="text-xs font-bold text-slate-400">允许 Scope（{{ clientDetails.allowed_scopes.length }} 项）</div>
+                <div class="mt-2 flex flex-wrap gap-2">
+                  <code v-for="scope in clientDetails.allowed_scopes" :key="scope" class="rounded-lg bg-indigo-50 px-2.5 py-1.5 text-xs font-bold text-indigo-700">{{ scope }}</code>
+                  <span v-if="!clientDetails.allowed_scopes.length" class="text-xs text-slate-500">未配置</span>
+                </div>
+              </div>
+              <div class="rounded-xl border border-blue-100 bg-blue-50 p-4">
+                <div class="text-xs font-bold text-blue-700">资源权限</div>
+                <p class="mt-2 text-sm leading-6 text-blue-950">智能体、知识库、元数据集等资源，统一按当前登录用户的角色和权限判断；Client 不保存、不配置资源白名单。</p>
+                <p class="mt-2 text-xs leading-5 text-blue-800">因此同一个 Client 被不同用户使用时，实际可访问资源会随用户身份变化。</p>
+              </div>
+            </div>
+            <div class="flex justify-end border-t border-slate-100 px-6 py-4">
+              <button type="button" class="rounded-xl bg-indigo-600 px-5 py-2 font-bold text-white hover:bg-indigo-700" @click="clientDetails = null">知道了</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div
         v-if="showCreate"
         class="fixed inset-0 z-50 overflow-y-auto bg-slate-900/50 p-4"
         @click.self="showCreate = false"
@@ -920,7 +934,7 @@ onMounted(load)
                   <div class="text-sm font-bold">允许授权模式</div>
                   <div class="mt-2 flex items-start gap-2 rounded-xl border border-indigo-100 bg-indigo-50 p-3 text-sm"><span class="mt-0.5 text-indigo-600">✓</span><span><span class="block font-bold text-indigo-950">用户授权（Authorization Code + PKCE）</span><span class="mt-1 block text-xs font-normal text-indigo-800">唯一授权方式；Access Token 始终绑定完成 NanZi 登录授权的用户。</span></span></div>
                 </div>
-                <label class="block text-sm font-bold">Redirect URI（每行一个）<textarea v-model="form.redirect_uris" class="mt-2 min-h-24 w-full rounded-xl border border-slate-200 p-3" placeholder="https://crm.example.com/oauth/callback" /><span class="mt-1 block text-xs font-normal text-slate-500">必填；用户授权完成后，NanZi 只会回调到这里，必须与业务系统实际地址完全一致。</span></label>
+                <label class="block text-sm font-bold">Redirect URI（每行一个）<span class="ml-1.5 rounded-full bg-slate-100 px-1.5 py-0.5 text-xs font-normal text-slate-500">选填</span><textarea v-model="form.redirect_uris" class="mt-2 min-h-24 w-full rounded-xl border border-slate-200 p-3 font-normal" placeholder="https://crm.example.com/oauth/callback" /><span class="mt-1 block text-xs font-normal text-slate-500">仅程序 OAuth 授权回调时需要填写；人工手动生成 Token 可留空。填写后 NanZi 只会回调到此处，必须与业务系统实际地址完全一致。</span></label>
                 <div>
                   <div class="flex items-center justify-between gap-3">
                     <div>
@@ -935,15 +949,13 @@ onMounted(load)
                     </div>
                   </div>
                 </div>
-                <label v-if="form.allowed_scopes.includes('agent:list') || form.allowed_scopes.includes('agent:invoke')" class="block text-sm font-bold">智能体白名单（可选）<textarea v-model="form.allowed_agent_ids" class="mt-2 min-h-24 w-full rounded-xl border border-slate-200 p-3 font-mono text-sm" placeholder="每行填写一个智能体 ID" /><span class="mt-1 block text-xs font-normal text-slate-500">留空表示不增加 Client 限制；用户授权 Token 仍只能访问当前用户有权限且在 Client 白名单内的智能体。</span></label>
-                <label v-if="form.allowed_scopes.includes('knowledge:search')" class="block text-sm font-bold">知识库白名单（可选）<textarea v-model="form.allowed_knowledge_base_ids" class="mt-2 min-h-24 w-full rounded-xl border border-slate-200 p-3 font-mono text-sm" placeholder="每行填写一个 RAGFlow Dataset ID" /><span class="mt-1 block text-xs font-normal text-slate-500">留空表示不增加 Client 限制，用户授权模式仍只可搜索该用户有权限的知识库。</span></label>
-                <label v-if="form.allowed_scopes.includes('metadata:read') || form.allowed_scopes.includes('metadata:search') || form.allowed_scopes.includes('metadata:metrics:read')" class="block text-sm font-bold">元数据集白名单（可选）<textarea v-model="form.allowed_metadata_dataset_ids" class="mt-2 min-h-24 w-full rounded-xl border border-slate-200 p-3 font-mono text-sm" placeholder="每行填写一个元数据集 ID" /><span class="mt-1 block text-xs font-normal text-slate-500">留空表示不增加 Client 限制；用户授权 Token 仍只能访问当前用户有权限的元数据。</span></label>
+                <div class="rounded-xl border border-blue-100 bg-blue-50 p-4 text-xs leading-5 text-blue-900">资源访问不在 Client 中单独配置。调用时会按 Access Token 代表的当前用户角色和权限校验；Client 这里只配置允许申请的 MCP 方法 Scope。</div>
               </div>
             </div>
 
             <div class="flex shrink-0 justify-end gap-3 border-t border-slate-100 bg-white px-6 py-4">
               <button type="button" class="rounded-xl px-4 py-2 font-bold text-slate-500 hover:bg-slate-50" @click="showCreate = false">取消</button>
-              <button type="button" class="rounded-xl bg-indigo-600 px-5 py-2 font-bold text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50" :disabled="saving || !form.client_name || !form.allowed_grant_types.length || !form.allowed_scopes.length || (form.allowed_grant_types.includes('authorization_code') && !form.redirect_uris.trim())" @click="createClient">创建并显示 Secret</button>
+              <button type="button" class="rounded-xl bg-indigo-600 px-5 py-2 font-bold text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50" :disabled="saving || !form.client_name || !form.allowed_grant_types.length || !form.allowed_scopes.length" @click="createClient">创建并显示 Secret</button>
             </div>
           </div>
         </div>
@@ -958,7 +970,7 @@ onMounted(load)
           <div class="flex max-h-[calc(100vh-2rem)] w-full max-w-xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
             <div class="flex shrink-0 items-center justify-between border-b border-slate-100 px-6 py-5">
               <div>
-                <h2 class="text-xl font-black">{{ tokenWizardStep === 1 ? '生成当前用户 Access Token' : 'Token 已生成，复制配置' }}</h2>
+                <h2 class="text-xl font-black">{{ tokenWizardStep === 1 ? '生成 MCP Access Token' : 'Token 已生成，复制配置' }}</h2>
                 <p class="mt-1 text-xs font-normal text-slate-500">{{ tokenWizardStep === 1 ? '生成后只能代表当前登录用户，不支持选择或代发其他用户身份。' : '可以单独复制 Access Token，也可以复制完整 MCP JSON 直接粘贴到客户端。' }}</p>
               </div>
               <button type="button" class="text-2xl text-slate-400 hover:text-slate-600" aria-label="关闭生成用户 Token 弹框" @click="closeTokenWizard">×</button>
@@ -1098,7 +1110,7 @@ onMounted(load)
                 <section class="rounded-xl border border-indigo-100 bg-indigo-50 p-4">
                   <h3 class="font-black text-indigo-950">方式一：人工登录后直接生成</h3>
                   <ol class="mt-2 list-decimal space-y-1 pl-5">
-                    <li>使用目标用户登录 NanZi，进入“外部 Client”，点击“生成当前用户 Access Token”。</li>
+                    <li>使用目标用户登录 NanZi，进入“外部 Client”，点击“生成 MCP Access Token”。</li>
                     <li>选择有效期和 Scope，生成结果只显示本次，请复制保存。</li>
                     <li>调用 MCP 时，把它放到请求头：<code>Authorization: Bearer &lt;access_token&gt;</code>。</li>
                   </ol>

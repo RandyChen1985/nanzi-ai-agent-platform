@@ -41,14 +41,13 @@ from app.services.mcp.platform_oauth import (
     McpPrincipal,
     PlatformMcpTokenVerifier,
     access_token_to_principal,
-    intersect_knowledge_base_ids,
+    intersect_authorized_ids,
 )
 from app.services.mcp.platform_config import PlatformMcpConfigService
 from app.services.mcp.platform_mcp_support import (
     build_platform_user_info,
     decode_platform_cursor,
     encode_platform_cursor,
-    intersect_resource_ids,
     serialize_metadata_dataset,
     serialize_metadata_metric,
     serialize_metadata_schema,
@@ -251,10 +250,9 @@ async def _resolve_knowledge_scope(
             principal.user_name,
         )
         user_allowed = access.get("accessible_ids")
-        client_allowed = getattr(client_row, "allowed_knowledge_base_ids", None)
-        if user_allowed is None and client_allowed is None and requested is None:
-            # 管理员和未配置 Client 白名单都表示“不增加额外限制”，此时需要
-            # 从平台目录得到实际 dataset ID，不能把 None 误当成空权限。
+        if user_allowed is None and requested is None:
+            # 管理员没有资源 ID 限制时，从平台目录得到实际 dataset ID，不能
+            # 把 None 误当成空权限。
             user_allowed = (
                 await db.execute(
                     select(KnowledgeBaseMetadata.ragflow_dataset_id).where(
@@ -262,7 +260,7 @@ async def _resolve_knowledge_scope(
                     )
                 )
             ).scalars().all()
-        effective = intersect_knowledge_base_ids(user_allowed, client_allowed, requested or None)
+        effective = intersect_authorized_ids(user_allowed, requested or None)
         if not effective:
             # 对外不区分“用户无权限”和“Client 未配置”，避免探测资源存在性。
             raise PermissionError("没有可检索的知识库范围")
@@ -405,8 +403,7 @@ async def _resolve_metadata_dataset_ids(
     principal: McpPrincipal,
     requested_ids: str | Iterable[str] | None = None,
 ) -> list[str]:
-    client = await _load_client(db, principal)
-    client_allowed = getattr(client, "allowed_metadata_dataset_ids", None)
+    await _load_client(db, principal)
 
     user, user_info = await _load_principal_user(db, principal)
     accessible = await MetadataService.list_accessible_dataset_options(
@@ -417,9 +414,8 @@ async def _resolve_metadata_dataset_ids(
     )
     user_allowed: Iterable[Any] | None = [item.id for item in accessible]
 
-    return intersect_resource_ids(
+    return intersect_authorized_ids(
         user_allowed,
-        client_allowed,
         _normalize_requested_ids(
             requested_ids,
             field_name="dataset_ids",
@@ -456,7 +452,6 @@ async def _load_authorized_agent(
     principal: McpPrincipal,
     user_info: dict[str, Any],
     agent_id: str,
-    client: McpOAuthClient,
 ) -> AIAgent:
     normalized_agent_id = str(agent_id or "").strip()
     if not normalized_agent_id:
@@ -465,11 +460,6 @@ async def _load_authorized_agent(
     if agent is None or not agent.is_enabled:
         raise LookupError("agent_not_found")
 
-    client_allowed = getattr(client, "allowed_agent_ids", None)
-    if client_allowed is not None and normalized_agent_id not in {
-        str(value).strip() for value in client_allowed if str(value).strip()
-    }:
-        raise PermissionError("agent_forbidden")
     from app.services.ai.agent_manager import AgentManagerService
 
     if not await AgentManagerService._user_can_execute_agent(db, agent, user_info):
@@ -584,7 +574,7 @@ async def agent_list_allowed(
         offset = offset or 0
 
         async with AsyncSessionLocal() as db:
-            client = await _load_client(db, principal)
+            await _load_client(db, principal)
             _, user_info = await _load_principal_user(db, principal)
             from app.services.ai.agent_manager import AgentManagerService
 
@@ -593,10 +583,6 @@ async def agent_list_allowed(
                 user=user_info,
                 keyword=normalized_keyword or None,
             )
-            client_allowed = getattr(client, "allowed_agent_ids", None)
-            if client_allowed is not None:
-                allowed_set = {str(item).strip() for item in client_allowed if str(item).strip()}
-                agents = [agent for agent in agents if str(agent.id) in allowed_set]
             agents = list(agents)
             versions: dict[str, AIAgentVersion] = {}
             agent_ids = [str(agent.id) for agent in agents]
@@ -687,9 +673,9 @@ async def _agent_call_common(
             raise ValueError("message 不能超过 10000 个字符")
 
         async with AsyncSessionLocal() as db:
-            client = await _load_client(db, principal)
+            await _load_client(db, principal)
             _, user_info = await _load_principal_user(db, principal)
-            agent = await _load_authorized_agent(db, principal, user_info, agent_id, client)
+            agent = await _load_authorized_agent(db, principal, user_info, agent_id)
             if normalized_conversation_id:
                 existing = await _load_owned_conversation(
                     db,
@@ -833,7 +819,7 @@ async def conversation_continue(
         if len(normalized_message) > 10000:
             raise ValueError("message 不能超过 10000 个字符")
         async with AsyncSessionLocal() as db:
-            client = await _load_client(db, principal)
+            await _load_client(db, principal)
             _, user_info = await _load_principal_user(db, principal)
             existing = await _load_owned_conversation(
                 db,
@@ -845,7 +831,6 @@ async def conversation_continue(
                 principal,
                 user_info,
                 str(existing.agent_id),
-                client,
             )
             result = await _invoke_agent(
                 db,

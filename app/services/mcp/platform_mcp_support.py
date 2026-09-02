@@ -6,7 +6,7 @@ import base64
 import hashlib
 import hmac
 import json
-from collections.abc import Iterable, Mapping
+from collections.abc import Mapping
 from typing import Any
 
 from app.core.config import settings
@@ -34,33 +34,6 @@ def build_platform_user_info(user: Any) -> dict[str, Any]:
         "org_path": getter("org_path"),
         "extra_data": sanitize_user_extra_data(getter("extra_data")),
     }
-
-
-def _clean_resource_ids(values: Iterable[Any] | None) -> set[str] | None:
-    if values is None:
-        return None
-    return {str(value).strip() for value in values if str(value).strip()}
-
-
-def intersect_resource_ids(
-    user_allowed: Iterable[Any] | None,
-    client_allowed: Iterable[Any] | None,
-    requested: Iterable[Any] | None = None,
-) -> list[str]:
-    """计算用户、Client 白名单和请求范围的交集。
-
-    ``None`` 表示这一层没有额外限制，空集合表示这一层明确没有权限。
-    """
-    user_set, client_set, requested_set = (
-        _clean_resource_ids(values)
-        for values in (user_allowed, client_allowed, requested)
-    )
-    result = user_set
-    if client_set is not None:
-        result = client_set if result is None else result & client_set
-    if requested_set is not None:
-        result = requested_set if result is None else result & requested_set
-    return sorted(result or set())
 
 
 def _cursor_secret() -> bytes:
@@ -177,7 +150,6 @@ __all__ = [
     "build_platform_user_info",
     "decode_platform_cursor",
     "encode_platform_cursor",
-    "intersect_resource_ids",
     "serialize_metadata_dataset",
     "serialize_metadata_metric",
     "serialize_metadata_schema",

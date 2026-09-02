@@ -72,8 +72,8 @@ notification.send
 | Access Token | 使用高熵 opaque Bearer Token，数据库只保存 SHA-256 摘要并支持过期、撤销和 Client 停用；后续可在不改变 MCP 调用协议的情况下切换为独立 JWT + JWKS |
 | Platform MCP 入站入口 | `POST /mcp/platform`，通过 FastMCP Resource Server 校验 OAuth Bearer Token |
 | 已注册方法 | 9 个方法均已注册并可按总开关、能力组开关和 OAuth Client Scope 发布；默认配置仍为关闭 |
-| MCP 服务台 | 独立菜单 `/dashboard/mcp-service` 和 `/api/portal/mcp-service`，支持使用指南、总开关、能力组开关、Client 创建/编辑/停用/软删除/Secret 重置、Scope、智能体/知识库/元数据集白名单配置、方法查看、为当前登录用户生成个人 Access Token，以及入站调用审计查询；使用指南可复制通用 `mcpServers` JSON；用户授权关系与授权事件审计仍为后续切片 |
-| 数据库 | MySQL `V137`、PostgreSQL `V38` 增加入站 OAuth Client、授权、Token、审计表及菜单/元素权限；MySQL `V138`、PostgreSQL `V39` 增加当前用户 Token 签发功能权限；必须按迁移执行，代码不会自动改库 |
+| MCP 服务台 | 独立菜单 `/dashboard/mcp-service` 和 `/api/portal/mcp-service`，支持使用指南、总开关、能力组开关、Client 创建/编辑/停用/软删除/Secret 重置、Scope、方法查看、为当前登录用户生成个人 Access Token，以及入站调用审计查询；使用指南可复制通用 `mcpServers` JSON；资源权限统一复用当前用户角色与权限；用户授权关系与授权事件审计仍为后续切片 |
+| 数据库 | MySQL `V137`、PostgreSQL `V38` 增加入站 OAuth Client、授权、Token、审计表及菜单/元素权限；MySQL `V138`、PostgreSQL `V39` 增加当前用户 Token 签发功能权限；历史数据库中的资源白名单列和值保留但不再使用；必须按迁移执行，代码不会自动改库 |
 
 因此，服务台中 9 个方法的状态会根据实现状态和能力组开关显示为“已启用/已关闭”；总开关或对应能力组关闭时，方法不会出现在 MCP `tools/list`，直接调用也会被拒绝。当前 Platform MCP 默认关闭，完成迁移后由拥有服务台配置权限的人员按“总开关 → 能力组 → Client”顺序开启。
 
@@ -726,7 +726,7 @@ conversation.continue
 agent:list
 ```
 
-只返回当前用户有权使用、且当前 Client 白名单允许的智能体。
+只返回当前用户有权使用的智能体。Client 的 `allowed_scopes` 只控制是否允许调用该 MCP 方法，不控制具体智能体。
 
 输入：
 
@@ -857,7 +857,7 @@ conversation.user_id == McpPrincipal.user_id
 
 ### 9.5 `metadata.list_datasets`
 
-用途：列出当前用户有权限、且当前 Client 允许查看的数据集。
+用途：列出当前用户有权限查看的数据集。
 
 所需 Scope：
 
@@ -865,7 +865,7 @@ conversation.user_id == McpPrincipal.user_id
 metadata:read
 ```
 
-服务端复用 NanZi 当前用户元数据权限，并与 Client 数据集白名单取交集。
+服务端只复用 NanZi 当前用户的元数据角色与权限；请求中的 `dataset_ids` 只能进一步缩小本次查询范围。
 
 返回：
 
@@ -915,7 +915,7 @@ metadata:search
 服务端处理：
 
 1. 校验 `metadata:search`；
-2. 根据当前用户权限和 Client 资源范围过滤数据集；
+2. 根据当前用户权限过滤数据集，请求中的数据集范围只能进一步缩小结果；
 3. 使用现有元数据检索服务；
 4. 过滤无权限表和字段；
 5. 对敏感字段按字段策略脱敏；
@@ -1094,20 +1094,12 @@ knowledge:search
 输入约束：
 
 - `query` 必填，长度受平台配置限制；
-- `knowledge_base_ids` 可选；未指定时只在用户和 Client 的权限交集内检索；
+- `knowledge_base_ids` 可选；未指定时只在当前用户有权限的知识库内检索；
 - `top_k` 默认 5，设置上限，防止一次返回过多内容；
 - `filters` 只能使用平台允许的文档属性过滤条件；
 - 不接受 `user_id`、任意内部索引名或数据源连接信息。
 
-有效检索范围：
-
-```text
-用户可访问知识库和文档
-    ∩
-Client 允许的知识库白名单
-    ∩
-请求指定的知识库范围（如果指定）
-```
+有效检索范围：当前用户可访问的知识库和文档，再与请求指定的知识库范围（如果指定）取交集。
 
 返回：
 
@@ -1187,29 +1179,17 @@ Token Scope
 - 元数据集是否授权给该用户；
 - 字段是否受敏感字段策略限制。
 
-### 10.3 客户端资源白名单
+### 10.3 资源权限规则
 
-管理员可以为 Client 配置：
+Client 不再配置智能体、知识库或元数据集白名单。保留的 `allowed_scopes` 只表示该 Client 可以申请哪些 MCP 方法；具体资源访问完全由 Access Token 绑定的 NanZi 用户角色与权限决定。
 
-```text
-allowed_agent_ids
-allowed_knowledge_base_ids
-allowed_metadata_dataset_ids
-allowed_scopes
-```
+所有 Platform MCP 方法都要求已验证的 NanZi 用户身份，执行规则如下：
 
-其中 `allowed_knowledge_base_ids` 有两种明确语义：
-
-- `null`：Client 不增加知识库范围限制，但用户授权模式仍必须通过 NanZi 当前用户的知识库权限校验；服务台创建 Client 时知识库输入框为空会保存为 `null`。
-- `[]`：Client 明确没有任何知识库访问范围，`knowledge.search` 不会返回结果。
-
-当前第一期的 `knowledge.search` 只接受带用户身份的 Authorization Code / Refresh Token；所有 Platform MCP 方法都要求已验证的 NanZi 用户身份。
-
-有效资源范围：
-
-```text
-用户权限 ∩ Client 资源白名单
-```
+- `agent.list_allowed` 和 `agent.invoke` 只使用当前用户有权使用的智能体；
+- `knowledge.search` 只检索当前用户有权限的知识库和文档；请求指定的知识库范围只能进一步缩小结果；
+- 元数据方法只返回当前用户有权限的数据集、表、字段和指标；请求指定的数据集只能进一步缩小结果；
+- 同一个 Client 被不同用户使用时，实际可访问资源随 Token 代表的用户身份变化；
+- 历史数据库中的白名单列和历史值保留，但当前代码不再读写、展示或执行这些字段。
 
 ## 11. 会话、用户和下游 MCP 关联
 
@@ -1323,7 +1303,7 @@ user_id = verified NanZi user
 | `element:mcp_service:config:read` | 只读 | 查看 OAuth、Resource、Audience 等配置 |
 | `element:mcp_service:config:edit` | 操作 | 修改 Platform MCP 配置和总开关 |
 | `element:mcp_service:client:read` | 只读 | 查看外部 Client 列表和详情 |
-| `element:mcp_service:client:manage` | 操作 | 创建、编辑、启停和软删除 Client，配置 Scope 和资源范围 |
+| `element:mcp_service:client:manage` | 操作 | 创建、编辑、启停和软删除 Client，配置 Scope |
 | `element:mcp_service:client:secret_reset` | 高风险操作 | 重置 Client Secret |
 | `element:mcp_service:client:token_issue` | 高风险操作 | 为当前登录用户生成个人 MCP Access Token，不允许指定其他用户 |
 | `element:mcp_service:capability:read` | 只读 | 查看能力组、方法和 Scope |
@@ -1402,7 +1382,7 @@ user_id = verified NanZi user
 
 ### 12.3 外部系统接入页
 
-拥有 `element:mcp_service:client:read` 的用户可以查看外部 Client；拥有 `element:mcp_service:client:manage` 的用户可以创建、编辑、启停、软删除 Client 和配置权限范围。重置 Secret 还必须具备独立的 `element:mcp_service:client:secret_reset` 权限。
+拥有 `element:mcp_service:client:read` 的用户可以查看外部 Client；拥有 `element:mcp_service:client:manage` 的用户可以创建、编辑、启停、软删除 Client 和配置权限范围。重置 Secret 还必须具备独立的 `element:mcp_service:client:secret_reset` 权限。上述权限只决定能否使用对应功能，不扩大 Client 的数据范围：每个用户（包括管理员）只能查看和操作自己创建的 Client。
 
 列表字段：
 
@@ -1448,26 +1428,26 @@ Redirect URI：    [ https://crm.example.com/oauth/callback ]
 - 停用 Client 前必须二次确认；停用后该 Client 下已有的 Access Token、Refresh Token 立即失效，重新启用后也需要重新获取 Token；
 - 重置 Secret 前必须二次确认；重置后旧 Secret 立即失效，该 Client 下已有的 Access Token、Refresh Token 也立即失效；
 - 删除 Client 前必须二次确认；删除采用软删除，状态变为 `deleted`，从默认 Client 列表隐藏；该 Client 下已有的 Access Token、Refresh Token 和 active 授权关系立即失效，且不能再次启用；Client 行和历史审计记录保留，便于追溯；
-- 软删除复用现有 `sys_mcp_oauth_clients.status` 字段，不新增表或迁移；删除不会物理删除 Client、Token、授权关系或审计数据。
+- 软删除复用现有 `sys_mcp_oauth_clients.status` 字段，不物理删除 Client、Token、授权关系或审计数据；新建 Client 的 `created_by` 保存 NanZi 用户 ID。历史数据保留，但不通过历史资源白名单恢复额外授权。
 - 第一期不创建 Public Client；后续支持时，Public Client 不生成 Secret，必须使用 Authorization Code + PKCE。
 
 ### 12.5 方法与 Scope 页
 
-拥有 `element:mcp_service:capability:read` 的用户可以查看方法与 Scope；拥有 `element:mcp_service:capability:manage` 的用户可以启用或关闭能力组、调整方法 Scope 和配置资源范围。
+拥有 `element:mcp_service:capability:read` 的用户可以查看方法与 Scope；拥有 `element:mcp_service:capability:manage` 的用户可以启用或关闭能力组、调整方法 Scope。资源范围不在 Client 中配置，统一由当前用户角色与权限决定。
 
 展示当前 Platform MCP 的完整方法清单。只有标记为“已发布”的方法才会出现在 MCP `tools/list` 中：
 
 | 方法 | 中文说明 | Scope | 用户身份要求 | 风险等级 | 状态 |
 |---|---|---|---:|---|---|
-| `agent.list_allowed` | 查询可用智能体 | `agent:list` | 是；当前用户权限 ∩ Client 智能体白名单 | 低 | 已发布 |
+| `agent.list_allowed` | 查询可用智能体 | `agent:list` | 是；当前用户角色与权限 | 低 | 已发布 |
 | `agent.invoke` | 调用智能体 | `agent:invoke` | 是 | 中 | 已发布 |
 | `conversation.continue` | 继续会话 | `conversation:continue` | 是 | 中 | 已发布 |
 | `knowledge.search` | 搜索知识库 | `knowledge:search` | 是 | 中 | 已发布 |
-| `metadata.list_datasets` | 列出数据集 | `metadata:read` | 是；当前用户权限 ∩ Client 数据集白名单 | 低 | 已发布 |
-| `metadata.search` | 搜索元数据 | `metadata:search` | 是；当前用户权限 ∩ Client 数据集白名单 | 低 | 已发布 |
-| `metadata.get_dataset` | 获取数据集信息 | `metadata:read` | 是；当前用户权限 ∩ Client 数据集白名单 | 中 | 已发布 |
-| `metadata.get_schema` | 获取表字段结构 | `metadata:read` | 是；当前用户权限 ∩ Client 数据集白名单 | 中 | 已发布 |
-| `metadata.get_metrics` | 获取指标口径 | `metadata:metrics:read` | 是；当前用户权限 ∩ Client 数据集白名单 | 中 | 已发布 |
+| `metadata.list_datasets` | 列出数据集 | `metadata:read` | 是；当前用户角色与权限 | 低 | 已发布 |
+| `metadata.search` | 搜索元数据 | `metadata:search` | 是；当前用户角色与权限 | 低 | 已发布 |
+| `metadata.get_dataset` | 获取数据集信息 | `metadata:read` | 是；当前用户角色与权限 | 中 | 已发布 |
+| `metadata.get_schema` | 获取表字段结构 | `metadata:read` | 是；当前用户角色与权限 | 中 | 已发布 |
+| `metadata.get_metrics` | 获取指标口径 | `metadata:metrics:read` | 是；当前用户角色与权限 | 中 | 已发布 |
 
 新增平台能力时，必须先注册方法元数据，再进入客户端 Scope 配置。
 
@@ -1572,12 +1552,9 @@ Redirect URI：    [ https://crm.example.com/oauth/callback ]
 | `client_secret_hash` | varchar(128) | Secret 哈希，Public Client 为空 |
 | `redirect_uris` | JSON / TEXT | 精确匹配的回调地址列表 |
 | `allowed_grant_types` | JSON / TEXT | 允许的 grant types |
-| `allowed_scopes` | JSON / TEXT | 允许的 Scope |
-| `allowed_agent_ids` | JSON / TEXT | 允许的智能体 ID |
-| `allowed_knowledge_base_ids` | JSON / TEXT | 允许检索的知识库 ID |
-| `allowed_metadata_dataset_ids` | JSON / TEXT | 允许的数据集 ID |
+| `allowed_scopes` | JSON / TEXT | 允许的 MCP 方法 Scope；不包含资源白名单 |
 | `status` | varchar(20) | `active` / `disabled` |
-| `created_by` | varchar(64) | 创建管理员 |
+| `created_by` | varchar(64) | 创建人的 NanZi 用户 ID；服务台所有 Client 管理查询都按当前登录用户 ID 过滤，管理员也不能查看或操作其他用户的 Client |
 | `created_at` | datetime | 创建时间 |
 | `updated_at` | datetime | 更新时间 |
 | `disabled_at` | datetime | 禁用时间 |
@@ -1744,7 +1721,7 @@ unique(client_id, user_id, resource)
 | `POST /api/portal/mcp-service/clients/{client_id}/user-access-token` | 为当前登录用户生成短期个人 Access Token | `client:token_issue` |
 | `GET /api/portal/mcp-service/audit` | 分页查询入站 MCP 调用审计 | `audit:read` |
 
-服务台接口先校验 `menu:mcp_service`，再校验表中的元素权限；前端 Tab 和按钮隐藏仅用于交互控制，不能替代后端鉴权。
+服务台接口先校验 `menu:mcp_service`，再校验表中的元素权限；前端 Tab 和按钮隐藏仅用于交互控制，不能替代后端鉴权。Client 管理接口在权限检查之后还会统一追加 `created_by = 当前登录用户 ID` 条件；管理员不会因为角色而绕过这一所有权条件。审计日志也只展示当前用户自己 Client 的入站调用记录。
 
 ### 14.4 内部服务接口
 
@@ -1848,7 +1825,7 @@ POST /mcp/platform
 McpPrincipal.user_id = admin.user_id
 ```
 
-demo 用户执行完全相同的流程时，`McpPrincipal.user_id` 是 demo 用户的 ID。外部调用方不需要、也不能通过 MCP 参数覆盖这个身份；业务方法继续按该用户的 NanZi 权限、Client Scope 和资源范围执行。
+demo 用户执行完全相同的流程时，`McpPrincipal.user_id` 是 demo 用户的 ID。外部调用方不需要、也不能通过 MCP 参数覆盖这个身份；业务方法继续按该用户的 NanZi 角色权限和 Client Scope 执行。
 
 服务台生成 Token 的请求示例：
 
@@ -2307,7 +2284,7 @@ sequenceDiagram
 - 用户不能继续其他用户会话；
 - `user_id` 工具参数不能覆盖 Token 用户；
 - 用户只能看到自己的授权元数据；
-- Client 只能看到白名单数据集；
+- 用户只能看到和访问自己角色权限允许的数据集；Client 不再配置资源白名单；
 - `metadata:read` 不能自动获得指标 Scope；
 - 未授权数据集不能通过搜索关键词探测存在性；
 - `agent.list_allowed` 不返回未授权智能体。
@@ -2382,21 +2359,19 @@ Echo MCP 可以作为下游测试服务，用于确认用户授权模式下 NanZ
 
 1. 实现 `knowledge.search`；
 2. 复用现有知识库和文档权限；
-3. 增加 Client 知识库白名单；
-4. 过滤未授权文档和内容片段；
-5. 返回引用信息和 `request_id`；
-6. 增加知识库检索审计。
+3. 过滤未授权文档和内容片段；
+4. 返回引用信息和 `request_id`；
+5. 增加知识库检索审计。
 
 ### 阶段五：治理增强
 
 1. 增加异步 `task.get`；
-2. 增加细粒度智能体和数据集白名单；
-3. 增加调用配额和速率限制；
-4. 增加用户授权管理页；
-5. 增加密钥自动轮换；
-6. 增加高风险操作确认；
-7. 评估动态 Client 注册；
-8. 评估多租户和企业统一身份策略。
+2. 增加调用配额和速率限制；
+3. 增加用户授权管理页；
+4. 增加密钥自动轮换；
+5. 增加高风险操作确认；
+6. 评估动态 Client 注册；
+7. 评估多租户和企业统一身份策略。
 
 ## 25. 验收标准
 
@@ -2422,9 +2397,9 @@ Echo MCP 可以作为下游测试服务，用于确认用户授权模式下 NanZ
 ### 元数据方法验收
 
 - 用户只能检索授权数据集；
-- Client 只能访问管理员配置的数据集白名单；
+- Client 只能访问 Token 所代表用户有权限的数据集；
 - `metadata.search`、`metadata.get_schema` 和 `metadata.get_metrics` 各自执行 Scope 校验；
-- `knowledge.search` 执行 `knowledge:search`、用户知识库权限和 Client 知识库白名单校验；
+- `knowledge.search` 执行 `knowledge:search` 和用户知识库权限校验；
 - 知识库响应不包含未授权文档和管理配置；
 - 元数据响应不包含真实业务数据和连接凭证；
 - 敏感字段按平台策略脱敏；

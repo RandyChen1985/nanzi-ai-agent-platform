@@ -121,24 +121,18 @@ def redirect_uri_allowed(redirect_uri: str, registered: Iterable[str]) -> bool:
     return bool(redirect_uri and redirect_uri in {str(item) for item in registered})
 
 
-def intersect_knowledge_base_ids(
+def intersect_authorized_ids(
     user_allowed: Iterable[str] | None,
-    client_allowed: Iterable[str] | None,
     requested: Iterable[str] | None = None,
 ) -> list[str]:
-    """计算用户权限、Client 白名单和请求范围的交集。
-
-    ``None`` 代表该边界没有额外限制；空集合代表明确没有任何权限。
-    """
+    """计算当前用户授权资源与请求范围的交集。"""
     def _clean(values: Iterable[str] | None) -> set[str] | None:
         if values is None:
             return None
         return {str(value).strip() for value in values if str(value).strip()}
 
-    user_set, client_set, requested_set = map(_clean, (user_allowed, client_allowed, requested))
+    user_set, requested_set = map(_clean, (user_allowed, requested))
     result = user_set
-    if client_set is not None:
-        result = client_set if result is None else result & client_set
     if requested_set is not None:
         result = requested_set if result is None else result & requested_set
     return sorted(result or set())
@@ -206,9 +200,6 @@ class PlatformMcpOAuthService:
         redirect_uris: Sequence[str],
         allowed_scopes: Sequence[str],
         allowed_grant_types: Sequence[str] = ("authorization_code",),
-        allowed_agent_ids: Sequence[str] | None = None,
-        allowed_knowledge_base_ids: Sequence[str] | None = None,
-        allowed_metadata_dataset_ids: Sequence[str] | None = None,
         created_by: str | None = None,
     ) -> tuple[McpOAuthClient, str, str]:
         if not client_name.strip():
@@ -233,13 +224,6 @@ class PlatformMcpOAuthService:
             redirect_uris=list(redirect_uris),
             allowed_grant_types=list(allowed_grant_types),
             allowed_scopes=filter_requested_scopes(allowed_scopes, DEFAULT_SCOPES),
-            allowed_agent_ids=list(allowed_agent_ids) if allowed_agent_ids is not None else None,
-            allowed_knowledge_base_ids=(
-                list(allowed_knowledge_base_ids) if allowed_knowledge_base_ids is not None else None
-            ),
-            allowed_metadata_dataset_ids=(
-                list(allowed_metadata_dataset_ids) if allowed_metadata_dataset_ids is not None else None
-            ),
             created_by=created_by,
         )
         db.add(client)
@@ -541,7 +525,7 @@ __all__ = [
     "filter_requested_scopes",
     "generate_client_id_secret",
     "hash_secret",
-    "intersect_knowledge_base_ids",
+    "intersect_authorized_ids",
     "normalize_scopes",
     "redirect_uri_allowed",
     "resolve_access_token_ttl",

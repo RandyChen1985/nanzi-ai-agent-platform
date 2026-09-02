@@ -9,7 +9,7 @@ from datetime import datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -114,13 +114,12 @@ class McpServiceConfigUpdate(BaseModel):
 
 
 class McpOAuthClientCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     client_name: str = Field(..., min_length=1, max_length=200)
     redirect_uris: list[str] = Field(default_factory=list)
     allowed_grant_types: list[str] = Field(default_factory=lambda: ["authorization_code"])
     allowed_scopes: list[str] = Field(default_factory=list)
-    allowed_agent_ids: list[str] | None = None
-    allowed_knowledge_base_ids: list[str] | None = None
-    allowed_metadata_dataset_ids: list[str] | None = None
 
     @field_validator("redirect_uris")
     @classmethod
@@ -179,13 +178,12 @@ class McpAccessTokenCreate(BaseModel):
 
 
 class McpOAuthClientUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     client_name: str | None = Field(default=None, min_length=1, max_length=200)
     redirect_uris: list[str] | None = None
     allowed_grant_types: list[str] | None = None
     allowed_scopes: list[str] | None = None
-    allowed_agent_ids: list[str] | None = None
-    allowed_knowledge_base_ids: list[str] | None = None
-    allowed_metadata_dataset_ids: list[str] | None = None
     status: str | None = None
 
     @field_validator("status")
@@ -237,9 +235,6 @@ def _serialize_client(client: McpOAuthClient) -> dict[str, Any]:
         "redirect_uris": list(client.redirect_uris or []),
         "allowed_grant_types": list(client.allowed_grant_types or []),
         "allowed_scopes": list(client.allowed_scopes or []),
-        "allowed_agent_ids": client.allowed_agent_ids,
-        "allowed_knowledge_base_ids": client.allowed_knowledge_base_ids,
-        "allowed_metadata_dataset_ids": client.allowed_metadata_dataset_ids,
         "status": client.status,
         "created_by": client.created_by,
         "created_at": client.created_at.isoformat() if client.created_at else None,
@@ -475,9 +470,6 @@ async def create_client(
             redirect_uris=payload.redirect_uris,
             allowed_scopes=payload.allowed_scopes,
             allowed_grant_types=payload.allowed_grant_types,
-            allowed_agent_ids=payload.allowed_agent_ids,
-            allowed_knowledge_base_ids=payload.allowed_knowledge_base_ids,
-            allowed_metadata_dataset_ids=payload.allowed_metadata_dataset_ids,
             created_by=current_user_id,
         )
         await db.commit()
