@@ -41,6 +41,7 @@
     - [3.4.4 MCP 三步向导与同一服务地址多命名空间注册规范](#344-mcp-三步向导与同一服务地址多命名空间注册规范)
     - [3.4.5 自有 MCP 如何接收和使用 NanZi 用户身份](#345-自有-mcp-如何接收和使用-nanzi-用户身份)
     - [3.4.6 如何使用 MCP Echo 测试服务验证真实调用链路](#346-如何使用-mcp-echo-测试服务验证真实调用链路)
+    - [3.4.7 NanZi 平台级 MCP 如何对外提供服务](#347-nanzi-平台级-mcp-如何对外提供服务)
   - [3.5 平台全量工具矩阵与功能清单 (Platform Tool Registry & Built-in Matrix)](#35-平台全量工具矩阵与功能清单-platform-tool-registry--built-in-matrix)
   - [3.6 平台多级记忆系统与上下文管理专题 (Memory & Context Architecture)](#36-平台多级记忆系统与上下文管理专题-memory--context-architecture)
     - [3.6.1 四大多级记忆机制深度剖析 (会话记忆 / 溢出压缩 / 每日摘要 / 长期向量记忆)](#361-四大多级记忆机制深度剖析)
@@ -1363,6 +1364,59 @@ NanZi 登录用户
 | `request_context` | 签名请求 ID 与 Header 收到状态 |
 
 Echo 不会返回原始 Bearer Token、完整 JWS、私钥或 `jti`，只会返回中间为 `***` 的脱敏样例和 `processing_log`。浏览器也无法直接查看后端发往 MCP 的 Header，应以 Echo 返回的 `user_assertion_received`、`user_assertion_valid`、`verified_user_id` 和 `request_context.request_id` 作为验证依据。详细步骤见：[MCP Echo 测试服务使用说明](../../docs/md/mcp_echo_test_server.md)。
+
+#### 3.4.7 NanZi 平台级 MCP 如何对外提供服务
+
+NanZi 对外提供的是一个统一的 **NanZi Platform MCP**，智能体、会话和元数据都作为同一个 MCP 服务下的方法组，不拆成多个独立 Server：
+
+| 方法组 | 示例方法 | 用途 |
+| --- | --- | --- |
+| `agent.*` | `agent.list_allowed`、`agent.invoke` | 查询当前用户可用智能体并发起调用；结果由当前用户角色与权限决定 |
+| `conversation.*` | `conversation.continue` | 在用户授权范围内继续自己的会话 |
+| `knowledge.*` | `knowledge.search` | 在授权知识库范围内检索文档内容 |
+| `metadata.*` | `metadata.list_datasets`、`metadata.search`、`metadata.get_dataset`、`metadata.get_schema`、`metadata.get_metrics` | 查询受权限控制的数据集、表、字段和指标元数据 |
+
+第一期已接入上述方法，只支持能安全保存 `client_secret` 的 **Confidential Client**，采用 OAuth2 标准授权（完整 OIDC 的 ID Token/JWKS 作为后续扩展）：
+
+实际使用时建议先按场景选择：Cursor、Claude Desktop、Dify、Coze、n8n 等人工配置型客户端，优先使用【MCP 服务台】为当前登录用户生成的个人 Token；CRM、OA、后台服务等无人值守程序集成，再使用下面的 OAuth2 动态授权流程。
+
+1. 外部系统由拥有 `element:mcp_service:client:manage` 权限的用户在【MCP 服务台】中注册，获得 `client_id` 和只展示一次的 `client_secret`。
+2. 用户代表外部系统访问时，外部系统跳转 NanZi 授权页；用户复用当前 NanZi 登录会话并确认授权。
+3. 外部系统用 Authorization Code + PKCE 换取 OAuth2 Access Token；不应把 NanZi 用户 API Key 或 OIDC ID Token 当作 MCP Bearer Token。
+4. 外部系统请求 `https://<NanZi 域名>/mcp/platform`，每次携带 `Authorization: Bearer <access_token>`。
+5. NanZi 服务端验证 opaque Token 摘要、Resource/Audience、Scope、Client 状态和用户授权关系，再按用户权限执行具体 MCP 方法。
+
+服务台中的 Client 按创建人隔离：拥有菜单和元素权限只代表可以使用对应功能，不代表可以查看或操作所有 Client。每个用户只能看到、编辑、停用、删除、重置 Secret 或生成 Token 给自己创建的 Client，管理员也遵守同样的限制；Client 的 `created_by` 保存 NanZi `user_id`，不是用户名。
+
+如果是人工登录后临时使用，不需要先走完整 OAuth2：用户登录 NanZi 后，在【MCP 服务台】→【外部 Client】点击“生成当前用户 Access Token”，选择有效期和 Scope 即可。生成后向导会进入第二步，可单独复制 Access Token，也可复制已经填入真实 Endpoint 和 Token 的完整 MCP JSON，直接粘贴到 Cursor、Claude Desktop 等客户端。这个 Token 的 `user_id` 始终取当前登录会话：管理员登录生成管理员 Token，demo 用户登录生成 demo 用户 Token；页面不提供用户选择，也不允许代发其他用户身份。生成后调用时仍使用 `Authorization: Bearer <access_token>`，Token 只显示本次并会按所选有效期过期。
+
+Client 的“停用”和“重置 Secret”属于会让凭证失效的操作，页面会先弹出确认框并说明影响范围。确认停用后，该 Client 已生成的 Access Token、Refresh Token 会立即失效；确认重置后，旧 Client Secret 以及该 Client 已生成的 Access Token、Refresh Token 会立即失效，业务方需要重新获取 Token。启用 Client 不需要二次确认，但也不能恢复已经撤销的旧 Token。
+
+Client Secret 的使用方式：它只放在业务方后端请求 `/oauth/token` 时，用来证明“这是哪个外部系统”；Access Token 才放在每次 MCP 请求的 `Authorization: Bearer` Header 中。Platform MCP 不签发没有用户身份的 Token，每个 Access Token 都必须绑定完成 NanZi 用户授权的用户：
+
+```bash
+TOKEN_RESPONSE=$(curl --request POST "https://nanzi.example.com/oauth/token" \
+  --user "$NANZI_CLIENT_ID:$NANZI_CLIENT_SECRET" \
+  --header "Content-Type: application/x-www-form-urlencoded" \
+  --data-urlencode "grant_type=authorization_code" \
+  --data-urlencode "code=$AUTHORIZATION_CODE" \
+  --data-urlencode "redirect_uri=$NANZI_REDIRECT_URI" \
+  --data-urlencode "code_verifier=$PKCE_CODE_VERIFIER" \
+  --data-urlencode "resource=https://nanzi.example.com/mcp/platform")
+ACCESS_TOKEN=$(printf "%s" "$TOKEN_RESPONSE" | jq -r '.access_token')
+curl --request POST "https://nanzi.example.com/mcp/platform" \
+  --header "Authorization: Bearer $ACCESS_TOKEN" \
+  --header "Content-Type: application/json" \
+  --data '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}'
+```
+
+其中 `$AUTHORIZATION_CODE` 和 `$PKCE_CODE_VERIFIER` 来自同一次用户授权流程；业务方后端使用 `client_id + client_secret + code + code_verifier` 换取的 Access Token 才代表该用户。Client Secret 不应放进 Cursor、浏览器、移动端或 MCP JSON；Cursor 等人工配置场景直接在服务台生成当前用户 Token 即可。完整 curl、Python 和两种场景的向导说明见：[NanZi 平台级 MCP 对外服务技术方案](../../architech/design/mcp-platform-inbound-service-design.md) 的“外部系统调用示例”章节。
+
+因此两条链路的定位是：人工联调、Cursor/桌面客户端等使用服务台生成的当前用户个人 Token；CRM、OA、后台任务等程序化集成使用标准 OAuth2 动态获取 Token。服务台个人 Token 不创建 Refresh Token，过期后由当前用户重新登录并生成，不能把 NanZi 登录 Cookie 或用户 API Key 交给第三方。
+
+管理权限采用三层开关：Platform MCP 总开关、能力组开关、Client 独立开关。三层任一关闭，调用都会被拒绝或对应方法不再发布；关闭对外服务不会影响 NanZi 作为 MCP Client 调用外部业务 MCP。
+
+MCP 服务台中的“使用指南”Tab 提供 OAuth2 调用流程、Endpoint/Metadata 地址用途和可复制的通用 `mcpServers` JSON；完整的端点、Token、数据表、审计、错误码与验收方案见：[NanZi 平台级 MCP 对外服务技术方案](../../architech/design/mcp-platform-inbound-service-design.md)。
 
 ---
 

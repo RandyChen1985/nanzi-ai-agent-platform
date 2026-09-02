@@ -88,6 +88,15 @@ def _parse_extra_data(raw: Any, allowed_keys: set[str] | None = None) -> dict[st
     return filtered
 
 
+def sanitize_user_extra_data(raw: Any) -> dict[str, Any]:
+    """清洗用户扩展字段，供内部运行时和 User Assertion 共用。"""
+    try:
+        return _parse_extra_data(raw)
+    except ValueError:
+        # 扩展字段是可选上下文；格式错误不应阻断已认证用户的主请求。
+        return {}
+
+
 def _text(value: Any) -> str | None:
     if value is None:
         return None

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue';
 import { linkifyGeneratedFileUrls, resolveGeneratedFileHref } from '@/utils/generatedFileUrl';
+import { appendBrowserOpenActions, appendBrowserOpenActionsToCode, isBrowserOpenableUrl } from '@/utils/messageBrowserLinks';
 import { renderMarkdown } from '@/utils/markdown';
 import { enhanceMarkdownTablesForMobile } from '@/utils/markdownTableResponsive';
 import { parseQuickButtons, postProcessQuickButtonHtml, stripQuickButtons } from '@/utils/quickButtons';
@@ -58,14 +59,18 @@ const props = withDefaults(defineProps<{
   conversationId?: string;
   /** 为 true 时不渲染 quick 按钮（例如同条消息已有业务确认卡） */
   hideQuickButtons?: boolean;
+  /** 为 true 时为 HTTP(S) 链接追加在右侧浏览器打开的操作按钮 */
+  enableBrowserOpen?: boolean;
 }>(), {
   theme: 'default',
   hideQuickButtons: false,
+  enableBrowserOpen: false,
 });
 
 const emit = defineEmits<{
   (e: 'quick-question', question: string): void;
   (e: 'show-citation', payload: { id: string; anchor: HTMLElement }): void;
+  (e: 'open-browser-url', url: string): void;
   (e: 'open-canvas', payload: {
     type: 'html' | 'code' | 'mermaid' | 'pdf' | 'csv' | 'image' | 'compare';
     title: string;
@@ -167,7 +172,7 @@ interface ContentSegment {
       if (resolvedGeneratedFileHref !== val) {
         return `${attr}="${resolvedGeneratedFileHref}"`;
       }
-      if (val.startsWith('http://') || val.startsWith('https://') || val.startsWith('data:')) {
+      if (isBrowserOpenableUrl(val) || val.startsWith('data:')) {
         return match;
       }
       if (val.includes('uploads/')) {
@@ -175,8 +180,7 @@ interface ContentSegment {
         const newVal = '/static/uploads/' + parts[parts.length - 1];
         return `${attr}="${newVal}"`;
       }
-      if (!val.startsWith('http://') &&
-          !val.startsWith('https://') &&
+      if (!isBrowserOpenableUrl(val) &&
           !val.startsWith('data:') &&
           !val.startsWith('quick:') &&
           !val.startsWith('canvas:') &&
@@ -230,6 +234,11 @@ interface ContentSegment {
     // 兜底：Markdown 反引号会把路径包进 <code>，上面占位符还原后再处理一次 code 内文本
     res = res.replace(/<code>([^<]*)<\/code>/gi, (_match, inner) => `<code>${injectOpenLinksForPaths(inner)}</code>`);
 
+    if (props.enableBrowserOpen) {
+      res = appendBrowserOpenActionsToCode(res);
+      res = appendBrowserOpenActions(res);
+    }
+
     // 表格由外层容器负责横向滚动，避免 table 自身 display:block 后出现右侧空白
     res = res.replace(/<table\b[^>]*>[\s\S]*?<\/table>/gi, (table) => {
       const responsiveTable = enhanceMarkdownTablesForMobile(table);
@@ -277,6 +286,15 @@ const handleContentClick = (event: MouseEvent) => {
       event.stopPropagation();
       return;
     }
+  }
+
+  const browserOpenButton = target.closest<HTMLButtonElement>('[data-open-browser-url]');
+  if (browserOpenButton && props.enableBrowserOpen) {
+    const href = browserOpenButton.getAttribute('data-open-browser-url') || '';
+    if (isBrowserOpenableUrl(href)) emit('open-browser-url', href);
+    event.preventDefault();
+    event.stopPropagation();
+    return;
   }
 
   const linkEl = target.closest('a');
@@ -640,6 +658,28 @@ const segments = computed<ContentSegment[]>(() => {
 <style scoped>
 .chart { height: 100%; width: 100%; }
 .markdown-body :deep(a[href^="http"]) { color: #2563eb !important; text-decoration: underline !important; cursor: pointer !important; }
+.markdown-body :deep(.message-link-open) {
+  display: inline-flex !important;
+  flex: 0 0 auto !important;
+  align-items: center !important;
+  white-space: nowrap !important;
+  margin-left: 6px !important;
+  padding: 1px 6px !important;
+  border: 1px solid #bfdbfe !important;
+  border-radius: 5px !important;
+  background: #eff6ff !important;
+  color: #2563eb !important;
+  font-size: 11px !important;
+  line-height: 1.5 !important;
+  cursor: pointer !important;
+  vertical-align: middle !important;
+  transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease !important;
+}
+.markdown-body :deep(.message-link-open:hover) {
+  border-color: #93c5fd !important;
+  background: #dbeafe !important;
+  color: #1d4ed8 !important;
+}
 
 /* Quick Action Buttons (Universal Styling) */
 .markdown-body :deep(.quick-action-btn),

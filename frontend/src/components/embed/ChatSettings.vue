@@ -50,20 +50,19 @@ watch(() => props.visible, (visible) => {
   }
 });
 
-const saveAndClose = () => {
+const saveSettings = () => {
   emit('save-settings');
-  close();
 };
 
 const handleSetTheme = (theme: string) => {
   emit('set-theme', theme);
-  saveAndClose();
+  saveSettings();
 };
 
 const handleSetColor = (color: string) => {
   activeColor.value = color;
   emit('set-color', color);
-  saveAndClose();
+  saveSettings();
 };
 
 const handleColorInput = (e: any) => {
@@ -86,12 +85,12 @@ const handleSetExpertAgent = (event: Event) => {
     const agentId = String((event.target as HTMLSelectElement)?.value || '').trim();
     if (!agentId) return;
     emit('switch-to-expert', agentId);
-    saveAndClose();
+    saveSettings();
 };
 
 const handleSetMultiAgent = (enabled: boolean) => {
     if (props.config.enableMultiAgent === enabled) {
-        saveAndClose();
+        saveSettings();
         return;
     }
     props.config.enableMultiAgent = enabled;
@@ -99,12 +98,12 @@ const handleSetMultiAgent = (enabled: boolean) => {
         enabled ? "多智能体协同已开启" : "多智能体协同已关闭",
         enabled ? "success" : "info"
     );
-    saveAndClose();
+    saveSettings();
 };
 
 const handleSetSqlPlan = (enabled: boolean) => {
     if (props.config.enableSqlPlan === enabled) {
-        saveAndClose();
+        saveSettings();
         return;
     }
     props.config.enableSqlPlan = enabled;
@@ -112,12 +111,12 @@ const handleSetSqlPlan = (enabled: boolean) => {
         enabled ? "SQL PLAN 中间层已开启" : "SQL PLAN 中间层已关闭",
         enabled ? "success" : "info"
     );
-    saveAndClose();
+    saveSettings();
 };
 
 const handleSetExpandThoughts = (enabled: boolean) => {
     if (props.config.expandThoughts === enabled) {
-        saveAndClose();
+        saveSettings();
         return;
     }
     props.config.expandThoughts = enabled;
@@ -125,12 +124,12 @@ const handleSetExpandThoughts = (enabled: boolean) => {
         enabled ? "思考过程默认展开已开启" : "思考过程默认展开已关闭",
         enabled ? "success" : "info"
     );
-    saveAndClose();
+    saveSettings();
 };
 
 const handleSetMarkdownTheme = (theme: string) => {
     if (props.config.markdownTheme === theme) {
-        saveAndClose();
+        saveSettings();
         return;
     }
     props.config.markdownTheme = theme;
@@ -155,7 +154,7 @@ const handleSetMarkdownTheme = (theme: string) => {
     const name = themeNames[theme] || theme;
     showToast(`排版样式已切换为: ${name}`, "success");
 
-    saveAndClose();
+    saveSettings();
 };
 
 const handleSetMessageBorder = (hidden: boolean) => {
@@ -166,12 +165,12 @@ const handleSetMessageBorder = (hidden: boolean) => {
         hidden ? "AI 消息外框已隐藏" : "AI 消息外框已显示",
         hidden ? "success" : "info",
     );
-    saveAndClose();
+    saveSettings();
 };
 
 const handleSetBashBanner = (visible: boolean) => {
     if (props.config.showBashBanner === visible) {
-      saveAndClose();
+      saveSettings();
       return;
     }
 
@@ -181,12 +180,12 @@ const handleSetBashBanner = (visible: boolean) => {
       visible ? "Bash 运行环境横幅提示已开启" : "Bash 运行环境横幅提示已关闭",
       visible ? "success" : "info",
     );
-    saveAndClose();
+    saveSettings();
 };
 
 const handleSetGrounding = (enabled: boolean) => {
     if (props.config.enableGrounding === enabled) {
-      saveAndClose();
+      saveSettings();
       return;
     }
 
@@ -195,7 +194,7 @@ const handleSetGrounding = (enabled: boolean) => {
       enabled ? "反幻觉校验已开启" : "反幻觉校验已关闭",
       enabled ? "success" : "info",
     );
-    saveAndClose();
+    saveSettings();
 };
 
 const showConfirmModal = ref(false);

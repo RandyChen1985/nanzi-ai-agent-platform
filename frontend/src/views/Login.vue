@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { ref, reactive, onMounted, onUnmounted, watch, computed } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRouter, useRoute } from 'vue-router'
 import axios from 'axios'
 import { useBranding } from '../composables/useBranding'
 
 const router = useRouter()
+const route = useRoute()
 const { branding, loadBranding } = useBranding()
 const activeTab = ref<'sso' | 'password' | 'apikey'>('password')
 const ssoEnabled = ref(false)
@@ -224,7 +225,19 @@ const handleLogin = async () => {
           localStorage.setItem('api_key', userData.api_key)
           
           // 普通业务用户进入个人工作台；管理员保留平台概览入口。
-          if (userData.role !== 'admin') {
+          const returnPath = typeof route.query.next === 'string'
+            && route.query.next.startsWith('/')
+            && !route.query.next.startsWith('//')
+            ? route.query.next
+            : ''
+          if (returnPath) {
+            // OAuth 授权端点由后端处理；必须整页请求，不能只让 SPA 改地址。
+            if (returnPath.startsWith('/oauth/authorize')) {
+              window.location.assign(returnPath)
+            } else {
+              router.push(returnPath)
+            }
+          } else if (userData.role !== 'admin') {
             router.push('/dashboard/workbench')
           } else {
             router.push('/dashboard')

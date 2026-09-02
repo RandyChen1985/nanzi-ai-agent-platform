@@ -763,10 +763,12 @@
                                                                   :content="visibleStreamBody(msg)"
                                                                   :theme="config.markdownTheme"
                                                                   :conversation-id="conversationId"
+                                                                  :enable-browser-open="true"
                                                                   :hide-quick-buttons="!!msg.businessConfirmation || !!msg.userQuestion"
                                                                   @quick-question="handleQuickQuestion"
                                                                   @show-citation="(payload) => handleShowCitation(msg, payload.id, payload.anchor)"
                                                                   @open-canvas="handleOpenCanvas"
+                                                                  @open-browser-url="handleOpenWebPreviewUrl"
                                                                 />
                                                                 <ErrorDetailCard
                                                                   v-if="msg.errorDetail?.rawError"
@@ -1386,6 +1388,8 @@
                                           :content="stripInternalContextBlocks(turn.summary || 'N/A')"
                                           :theme="config.markdownTheme"
                                           :conversation-id="conversationId"
+                                          :enable-browser-open="true"
+                                          @open-browser-url="handleOpenWebPreviewUrl"
                                         />
                                     </div>
                                 </div>
@@ -1979,6 +1983,14 @@
       @update:approval-mode="updateBrowserApprovalMode"
       @ask-ai-crop="handleBrowserCropAskAi"
     />
+    <WebPreviewPanel
+      :visible="webPreviewVisible"
+      :url="webPreviewUrl"
+      :pinned-dock-right="webPreviewDockRightPx"
+      v-model:pinned="webPreviewPinned"
+      v-model:panel-width="webPreviewPanelWidthReactive"
+      @close="closeWebPreviewPanel"
+    />
     </div>
 </template>
 <script setup lang="ts">
@@ -2051,6 +2063,8 @@ import ReusableResultNotice from "@/components/chat/ReusableResultNotice.vue";
 import ErrorDetailCard from "@/components/chat/ErrorDetailCard.vue";
 import ChatBIMonitorDialog from "@/components/chatbi/ChatBIMonitorDialog.vue";
 import BrowserPanel from "@/components/embed/BrowserPanel.vue";
+import WebPreviewPanel from "@/components/embed/WebPreviewPanel.vue";
+import { isBrowserOpenableUrl } from "@/utils/messageBrowserLinks";
 import ChatBIMetadataGuide from "@/components/chatbi/ChatBIMetadataGuide.vue";
 import AgentHandoffNotice from "@/components/chat/AgentHandoffNotice.vue";
 import type { ChatBIInsightMeta } from "@/types/chatbiInsight";
@@ -2869,6 +2883,8 @@ const browserPinned = ref(true);
 const browserPanelOpening = ref(false);
 const browserEnvironmentError = ref<string | null>(null);
 const browserRefreshSignal = ref(0);
+const webPreviewVisible = ref(false);
+const webPreviewUrl = ref<string | null>(null);
 let browserOpenGeneration = 0;
 
 const attachBrowserSession = async (
@@ -2941,6 +2957,18 @@ const openBrowserPanel = async () => {
   } finally {
     if (generation === browserOpenGeneration) browserPanelOpening.value = false;
   }
+};
+
+const handleOpenWebPreviewUrl = (url: string) => {
+  if (!isBrowserOpenableUrl(url)) return;
+  browserPanelVisible.value = false;
+  webPreviewUrl.value = url;
+  webPreviewVisible.value = true;
+};
+
+const closeWebPreviewPanel = () => {
+  webPreviewVisible.value = false;
+  webPreviewUrl.value = null;
 };
 
 const handleBrowserCropAskAi = async ({ image, question }: { image: string; question: string }) => {
@@ -7109,7 +7137,7 @@ watch(
 
 
 
-const pinnedDrawerDockOffsetRem = (exclude?: "portal" | "workspace" | "memory" | "knowledge" | "browser") => {
+const pinnedDrawerDockOffsetRem = (exclude?: "portal" | "workspace" | "memory" | "knowledge" | "browser" | "webPreview") => {
   let rem = 0;
   if (exclude !== "portal" && showPortalDrawer.value && portalPinned.value) rem += 28;
   if (exclude !== "knowledge" && showKnowledgePortal.value && knowledgePinned.value) rem += 28;
@@ -7117,6 +7145,9 @@ const pinnedDrawerDockOffsetRem = (exclude?: "portal" | "workspace" | "memory" |
   if (exclude !== "memory" && showMemoryDrawer.value && memoryPinned.value) rem += 28;
   if (exclude !== "browser" && browserPanelVisible.value && browserPinned.value && !isMobile.value) {
     rem += browserPanelWidthReactive.value / 16;
+  }
+  if (exclude !== "webPreview" && webPreviewVisible.value && webPreviewPinned.value && !isMobile.value) {
+    rem += webPreviewPanelWidthReactive.value / 16;
   }
   return rem;
 };
@@ -7137,6 +7168,8 @@ const knowledgeDrawerWidthReactive = ref(448);
 const workspaceDrawerWidthReactive = ref(448);
 const canvasPinnedWidthReactive = ref(520);
 const browserPanelWidthReactive = ref(520);
+const webPreviewPinned = ref(false);
+const webPreviewPanelWidthReactive = ref(448);
 
 const portalDrawerWidthPx = computed(() => {
   if (!showPortalDrawer.value || !portalPinned.value || isMobile.value) return 0;
@@ -7163,6 +7196,13 @@ const browserPanelWidthPx = computed(() => {
   return browserPanelWidthReactive.value;
 });
 
+const webPreviewPanelWidthPx = computed(() => {
+  if (!webPreviewVisible.value || !webPreviewPinned.value || isMobile.value) return 0;
+  return webPreviewPanelWidthReactive.value;
+});
+
+const webPreviewDockRightPx = computed(() => pinnedDrawerDockOffsetRem("webPreview") * 16);
+
 const totalPinnedDrawerPx = computed(() => {
   if (isMobile.value || windowWidth.value < 768) return 0;
   let px = 0;
@@ -7171,6 +7211,7 @@ const totalPinnedDrawerPx = computed(() => {
   px += workspaceDrawerWidthPx.value;
   px += canvasPinnedWidthPx.value;
   px += browserPanelWidthPx.value;
+  px += webPreviewPanelWidthPx.value;
   if (showMemoryDrawer.value && memoryPinned.value) px += 448;
   return px;
 });
