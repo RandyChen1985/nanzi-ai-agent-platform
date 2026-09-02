@@ -83,7 +83,8 @@ def test_client_scope_version_is_returned_and_changes_trigger_reissue_state():
     assert '"needs_token_regeneration":' in source
     assert "scope_changed" in source
     assert "client.scope_version = int(client.scope_version or 1) + 1" in source
-    assert "McpOAuthAccessToken.scope_version" in source
+    assert "McpOAuthAccessToken.revoked_at" in source
+    assert "McpOAuthAccessToken.expires_at" in source
 
 
 def test_current_user_access_token_request_validates_expiry_and_scopes():
@@ -266,6 +267,24 @@ def test_service_desk_exposes_token_lifecycle_and_client_query_endpoints():
     assert "created_by" in source
     assert "active_token_count" in source
     assert "latest_token_expires_at" in source
+
+
+def test_scope_only_client_update_does_not_revalidate_unrelated_redirect_uri():
+    source = Path("app/api/portal/endpoints/mcp_service.py").read_text(encoding="utf-8")
+
+    assert "redirect_config_changed" in source
+    assert "if redirect_config_changed:" in source
+
+
+def test_client_reissue_state_covers_all_invalidated_token_paths_without_false_revoke():
+    source = Path("app/api/portal/endpoints/mcp_service.py").read_text(encoding="utf-8")
+
+    assert "needs_token_regeneration=(" in source
+    assert "has_issued_token" in source
+    assert "active_token_count" in source
+    assert "security_changed" in source
+    assert "scope_changed or grant_types_changed or status_changed" in source
+    assert "row.status == \"active\"" in source
 
 
 def test_service_desk_exposes_audit_export_and_rate_limit_config():

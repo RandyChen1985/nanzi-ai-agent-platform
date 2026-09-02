@@ -139,6 +139,15 @@ def test_audit_trend_bars_have_explicit_height_and_render_pixels():
     assert "height: trendBarHeight(item.total)" in view
 
 
+def test_reset_secret_is_rendered_inside_the_matching_client_card():
+    view = (ROOT / "frontend/src/views/McpServiceDesk.vue").read_text(encoding="utf-8")
+
+    assert "secretRevealClientId" in view
+    assert "secretRevealClientId === client.client_id" in view
+    assert "Client Secret 已重置，请立即复制保存" in view
+    assert "oneTimeSecret && !secretRevealClientId" in view
+
+
 def test_client_cards_prioritize_primary_action_and_collapse_low_frequency_actions():
     view = (ROOT / "frontend/src/views/McpServiceDesk.vue").read_text(encoding="utf-8")
 
@@ -418,11 +427,37 @@ def test_client_scope_change_shows_reissue_guidance_until_new_token_is_issued():
     view = (ROOT / "frontend/src/views/McpServiceDesk.vue").read_text(encoding="utf-8")
 
     assert "needs_token_regeneration" in view
-    assert "Scope 已变更，请重新生成 MCP Access Token" in view
+    assert "当前 Client 需要重新生成 MCP Access Token" in view
     assert "立即生成" in view
     assert "await loadClients()" in view
     assert "client.needs_token_regeneration" in view
-    assert "Scope 已变更，请重新生成 MCP Access Token" in view
+    assert "当前 Client 需要重新生成 MCP Access Token" in view
+
+
+def test_client_reissue_guidance_is_visible_when_card_is_collapsed():
+    view = (ROOT / "frontend/src/views/McpServiceDesk.vue").read_text(encoding="utf-8")
+
+    card_start = view.index('<div v-for="client in clients"')
+    header_start = view.index('<div class="flex flex-col gap-4', card_start)
+    alert_start = view.index('v-if="client.needs_token_regeneration"', card_start)
+    expanded_start = view.index('v-if="expandedClientIds.has(client.client_id)"', card_start)
+    assert alert_start < header_start or alert_start < expanded_start
+    assert "原有 Access Token 已失效，请重新生成 MCP Access Token" in view
+
+
+def test_unchanged_client_scope_shows_toast_without_saving():
+    view = (ROOT / "frontend/src/views/McpServiceDesk.vue").read_text(encoding="utf-8")
+
+    assert "Scope 未变化，Client Secret 和 Access Token 均未变化" in view
+    assert "JSON.stringify(currentScopes) === JSON.stringify(nextScopes)" in view
+    assert "closeClientScopeEdit(true)" in view
+
+
+def test_reset_secret_refreshes_client_state_for_reissue_guidance():
+    view = (ROOT / "frontend/src/views/McpServiceDesk.vue").read_text(encoding="utf-8")
+
+    reset_branch = view.split("action === 'reset-secret'", 1)[1].split("} else", 1)[0]
+    assert "await loadClients()" in reset_branch
 
 
 def test_client_list_does_not_repeat_manual_token_guidance_banner():

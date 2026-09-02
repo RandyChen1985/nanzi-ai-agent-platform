@@ -2,6 +2,7 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import api from '../utils/axios'
 import { useUser } from '../composables/useUser'
+import { useToast } from '../composables/useToast'
 import { copyToClipboard } from '../utils/clipboard'
 
 type Tab = 'overview' | 'guide' | 'config' | 'clients' | 'methods' | 'audit'
@@ -71,6 +72,7 @@ type ClientToken = {
 type ClientConfirmAction = 'disable' | 'reset-secret' | 'delete'
 
 const { hasPermission, isAdmin } = useUser()
+const { showToast } = useToast()
 const activeTab = ref<Tab>('overview')
 const loading = ref(false)
 const saving = ref(false)
@@ -105,6 +107,7 @@ const trendMax = computed(() => Math.max(...auditTrend.value.map(item => item.to
 const selectedAudit = ref<AuditLog | null>(null)
 const showCreate = ref(false)
 const oneTimeSecret = ref('')
+const secretRevealClientId = ref<string | null>(null)
 const showClientConfirm = ref(false)
 const clientConfirmAction = ref<ClientConfirmAction | null>(null)
 const clientConfirmTarget = ref<Client | null>(null)
@@ -648,6 +651,7 @@ const createClient = async () => {
       redirect_uris: form.redirect_uris.split(/\r?\n|,/).map(item => item.trim()).filter(Boolean),
     })
     oneTimeSecret.value = response.data.client_secret || ''
+    secretRevealClientId.value = null
     showCreate.value = false
     form.client_name = ''
     form.redirect_uris = ''
@@ -664,6 +668,13 @@ const createClient = async () => {
 const saveClientScopes = async () => {
   const client = clientScopeEditTarget.value
   if (!client || !clientScopeEditForm.scopes.length || saving.value) return
+  const currentScopes = [...(client.allowed_scopes || [])].sort()
+  const nextScopes = [...clientScopeEditForm.scopes].sort()
+  if (JSON.stringify(currentScopes) === JSON.stringify(nextScopes)) {
+    showToast('Scope 未变化，Client Secret 和 Access Token 均未变化', 'info')
+    closeClientScopeEdit(true)
+    return
+  }
   saving.value = true
   error.value = ''
   try {
@@ -714,6 +725,8 @@ const confirmClientAction = async () => {
     } else if (action === 'reset-secret') {
       const response = await api.post(`/api/portal/mcp-service/clients/${encodeURIComponent(client.client_id)}/secret`)
       oneTimeSecret.value = response.data.client_secret || ''
+      secretRevealClientId.value = client.client_id
+      await loadClients()
     } else {
       await api.delete(`/api/portal/mcp-service/clients/${encodeURIComponent(client.client_id)}`)
       await loadClients()
@@ -779,7 +792,7 @@ onMounted(load)
       </div>
 
       <div v-if="error" class="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{{ error }}</div>
-      <div v-if="oneTimeSecret" class="rounded-2xl border border-amber-200 bg-amber-50 p-4">
+      <div v-if="oneTimeSecret && !secretRevealClientId" class="rounded-2xl border border-amber-200 bg-amber-50 p-4">
         <div class="font-bold text-amber-900">Client Secret 只显示本次，请立即复制保存</div>
         <div class="mt-3 flex gap-2">
           <code class="min-w-0 flex-1 break-all rounded-lg bg-white px-3 py-2 text-sm">{{ oneTimeSecret }}</code>
@@ -1035,6 +1048,10 @@ onMounted(load)
         <div v-if="!clients.length" class="rounded-xl bg-slate-50 p-8 text-center text-sm text-slate-500"><div class="text-base font-bold text-slate-700">暂无外部 Client</div><p class="mt-2">创建 Client 后，外部系统可以通过 OAuth2 授权访问 NanZi Platform MCP。</p><button v-if="canManageClient" type="button" class="mt-4 rounded-xl bg-indigo-600 px-4 py-2 text-xs font-bold text-white" @click="showCreate = true">创建第一个 Client</button></div>
         <div v-else class="space-y-3">
           <div v-for="client in clients" :key="client.client_id" class="rounded-2xl border border-slate-200 p-5 transition-colors hover:border-indigo-200">
+            <div v-if="client.needs_token_regeneration" class="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-900">
+              <div><span class="font-bold">当前 Client 需要重新生成 MCP Access Token</span><span class="ml-1">原有 Access Token 已失效，请重新生成 MCP Access Token。</span></div>
+              <button v-if="canIssueToken" type="button" class="shrink-0 rounded-lg bg-amber-600 px-3 py-1.5 font-bold text-white hover:bg-amber-700 disabled:cursor-not-allowed disabled:opacity-50" :disabled="client.status !== 'active' || !client.allowed_scopes.length" @click="openTokenIssue(client)">立即生成</button>
+            </div>
             <div class="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
               <div class="min-w-0">
                 <div class="text-base font-black text-slate-800">{{ client.client_name }}</div>
@@ -1060,6 +1077,10 @@ onMounted(load)
                 </div>
               </div>
             </div>
+            <div v-if="oneTimeSecret && secretRevealClientId === client.client_id" class="mt-4 rounded-xl border border-amber-200/80 bg-amber-50/80 p-4">
+              <div class="font-bold text-amber-900">Client Secret 已重置，请立即复制保存</div>
+              <div class="mt-3 flex min-w-0 items-center gap-2"><code class="min-w-0 flex-1 break-all rounded-lg bg-white px-3 py-2 text-sm text-slate-700">{{ oneTimeSecret }}</code><button type="button" class="shrink-0 rounded-lg bg-amber-500 px-3 py-2 text-sm font-bold text-white hover:bg-amber-600" @click="copyValue('secret', oneTimeSecret)">{{ copied === 'secret' ? '已复制' : '复制' }}</button></div>
+            </div>
             <p class="mt-2 text-right text-[11px] text-slate-400">
               <template v-if="client.has_issued_token">最近签发：{{ formatClientTime(client.last_token_issued_at) }} · {{ client.last_token_issue_method === 'oauth_authorization' ? 'OAuth 用户授权' : '手动签发' }}</template>
               <template v-else>尚未生成 Access Token</template>
@@ -1069,10 +1090,6 @@ onMounted(load)
               <div class="rounded-xl border border-slate-100 bg-slate-50 px-3 py-3"><div class="text-[11px] font-bold text-slate-400">Token 状态</div><div class="mt-1 text-sm font-bold" :class="(client.active_token_count || 0) > 0 ? 'text-emerald-700' : 'text-slate-600'">{{ (client.active_token_count || 0) > 0 ? '状态正常' : (client.has_issued_token ? '暂无有效 Token' : '尚未生成') }}</div></div>
               <div class="rounded-xl border border-slate-100 bg-slate-50 px-3 py-3"><div class="text-[11px] font-bold text-slate-400">有效 Token 数量</div><div class="mt-1 text-sm font-bold text-slate-700">{{ client.active_token_count || 0 }} 个</div></div>
               <div class="rounded-xl border border-slate-100 bg-slate-50 px-3 py-3"><div class="text-[11px] font-bold text-slate-400">最近过期时间</div><div class="mt-1 text-sm font-bold text-slate-700">{{ client.latest_token_expires_at ? formatClientTime(client.latest_token_expires_at) : '—' }}</div></div>
-            </div>
-            <div v-if="client.needs_token_regeneration" class="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-900">
-              <div><span class="font-bold">Scope 已变更，请重新生成 MCP Access Token</span><span class="ml-1">原有 Token 已失效，需要使用新 Scope 重新生成。</span></div>
-              <button v-if="canIssueToken" type="button" class="shrink-0 rounded-lg bg-amber-600 px-3 py-1.5 font-bold text-white hover:bg-amber-700 disabled:cursor-not-allowed disabled:opacity-50" :disabled="client.status !== 'active' || !client.allowed_scopes.length" @click="openTokenIssue(client)">立即生成</button>
             </div>
             <div class="mt-4 border-t border-slate-100 pt-4">
               <div class="mb-3 flex items-center gap-2">

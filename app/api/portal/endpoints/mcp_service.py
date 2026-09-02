@@ -773,28 +773,10 @@ async def list_clients(
         )
     ).scalars().all()
     client_ids = [row.client_id for row in rows]
-    current_scope_tokens: set[tuple[str, int]] = set()
     latest_tokens: dict[str, McpOAuthAccessToken] = {}
     active_token_counts: dict[str, int] = {}
     latest_token_expiries: dict[str, datetime] = {}
     if client_ids:
-        token_rows = (
-            await db.execute(
-                select(
-                    McpOAuthAccessToken.client_id,
-                    McpOAuthAccessToken.scope_version,
-                ).where(
-                    McpOAuthAccessToken.client_id.in_(client_ids),
-                    McpOAuthAccessToken.user_id == current_user_id,
-                    McpOAuthAccessToken.revoked_at.is_(None),
-                    McpOAuthAccessToken.expires_at > datetime.utcnow(),
-                )
-            )
-        ).all()
-        current_scope_tokens = {
-            (client_id, int(scope_version or 1))
-            for client_id, scope_version in token_rows
-        }
         all_token_rows = (
             await db.execute(
                 select(McpOAuthAccessToken)
@@ -820,9 +802,15 @@ async def list_clients(
     items = [
         _serialize_client(
             row,
+            # Scope、Secret、停用/启用等安全变更都会撤销旧 Token。只要该
+            # Client 曾经签发过 Token 且当前没有有效 Token，就需要重新生成；
+            # 停用期间不提示，重新启用后再提示；新建但尚未签发 Token
+            # 的 Client 不显示重复提示。
             needs_token_regeneration=(
-                int(row.scope_version or 1) > 1
-                and (row.client_id, int(row.scope_version or 1)) not in current_scope_tokens
+                row.status == "active"
+                and
+                latest_tokens.get(row.client_id) is not None
+                and active_token_counts.get(row.client_id, 0) == 0
             ),
             owner_user_name=owners.get(str(row.created_by)).user_name if owners.get(str(row.created_by)) else None,
             owner_real_name=owners.get(str(row.created_by)).real_name if owners.get(str(row.created_by)) else None,
@@ -958,19 +946,27 @@ async def update_client(
         and normalize_scopes(changes["allowed_scopes"])
         != normalize_scopes(client.allowed_scopes)
     )
+    grant_types_changed = (
+        "allowed_grant_types" in changes
+        and normalize_scopes(changes["allowed_grant_types"])
+        != normalize_scopes(client.allowed_grant_types)
+    )
+    status_changed = "status" in changes and changes["status"] != client.status
     effective_grants = set(
         normalize_scopes(changes.get("allowed_grant_types", client.allowed_grant_types))
     )
-    effective_redirect_uris = changes.get("redirect_uris", client.redirect_uris) or []
-    if "authorization_code" not in effective_grants:
-        raise HTTPException(
-            status_code=400,
-            detail="Client 必须启用 authorization_code，所有 Token 都必须绑定用户",
-        )
-    if "authorization_code" in effective_grants and not effective_redirect_uris:
-        raise HTTPException(status_code=400, detail="authorization_code 模式必须配置至少一个 redirect_uri")
-    if "refresh_token" in effective_grants and "authorization_code" not in effective_grants:
-        raise HTTPException(status_code=400, detail="refresh_token 必须和 authorization_code 一起启用")
+    redirect_config_changed = "allowed_grant_types" in changes or "redirect_uris" in changes
+    if redirect_config_changed:
+        effective_redirect_uris = changes.get("redirect_uris", client.redirect_uris) or []
+        if "authorization_code" not in effective_grants:
+            raise HTTPException(
+                status_code=400,
+                detail="Client 必须启用 authorization_code，所有 Token 都必须绑定用户",
+            )
+        if "authorization_code" in effective_grants and not effective_redirect_uris:
+            raise HTTPException(status_code=400, detail="authorization_code 模式必须配置至少一个 redirect_uri")
+        if "refresh_token" in effective_grants and "authorization_code" not in effective_grants:
+            raise HTTPException(status_code=400, detail="refresh_token 必须和 authorization_code 一起启用")
     if changes.get("status") == "disabled":
         client.disabled_at = datetime.utcnow()
     elif changes.get("status") == "active":
@@ -980,7 +976,8 @@ async def update_client(
 
     # Client 的授权范围、授权模式或状态发生安全性变化时，旧 Token 和用户
     # 授权关系不能继续沿用旧权限；恢复调用必须重新授权。
-    if any(key in changes for key in ("allowed_scopes", "allowed_grant_types", "status")):
+    security_changed = scope_changed or grant_types_changed or status_changed
+    if security_changed:
         revoked_at = datetime.utcnow()
         await db.execute(
             update(McpOAuthAccessToken)
