@@ -34,3 +34,10 @@ def test_mcp_tool_tester_exposes_request_and_response_details_tab():
     assert "activeTab.value = 'details'" in SOURCE
     assert "运行测试后查看本次调用详情" in SOURCE
     assert "watch([() => props.tool, () => props.isOpen]" in SOURCE
+
+
+def test_mcp_tool_tester_normalizes_nullable_scalar_types_for_inputs():
+    assert "getScalarType" in SOURCE
+    assert "getScalarType(prop) === 'string'" in SOURCE
+    assert "getScalarType(prop) === 'integer'" in SOURCE
+    assert "getScalarType(prop) === 'boolean'" in SOURCE

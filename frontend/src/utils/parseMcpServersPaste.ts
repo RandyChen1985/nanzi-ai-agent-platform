@@ -107,6 +107,20 @@ export const parseMcpServersPaste = (raw: string): ParseMcpServersPasteResult =>
   }
 
   if (!entries.length) {
+    const hasCommand = Object.values(map).some((val) => {
+      if (val && typeof val === 'object' && !Array.isArray(val)) {
+        const v = val as Record<string, unknown>
+        return Boolean(v.command || v.cmd)
+      }
+      return false
+    })
+    if (hasCommand) {
+      return {
+        ok: false,
+        error:
+          '检测到本地命令行（STDIO）模式的 MCP 配置。本平台为云端 Web 架构，不支持直接启动本地进程；请使用 mcp-proxy 或将该服务以 SSE / HTTP 远程服务形态部署后填入 URL。',
+      }
+    }
     return { ok: false, error: '配置中未找到有效的 url / serverUrl 字段' }
   }
   const firstEntry = entries[0]

@@ -40,6 +40,8 @@ async def list_published_mcp_tools(
         .options(joinedload(McpToolCache.server))
         .where(
             McpToolCache.is_published == True,
+            McpToolCache.is_available == True,
+            McpServer.enabled_status == 1,
             or_(global_cond, personal_cond)
         )
     )

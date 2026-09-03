@@ -2,7 +2,7 @@ import json
 import logging
 import hashlib
 import re
-from typing import Dict, Any
+from typing import Dict, Any, List, Optional
 from pydantic import create_model, Field
 from app.services.ai.tools.tool_compat import StructuredTool
 from app.models.mcp import McpToolCache
@@ -46,6 +46,46 @@ def _build_model_tool_name(tool_name: str) -> str:
     return f"mcp_{readable_name[:max_readable_length]}_{name_hash}"
 
 
+def _map_schema_type(param_def: dict[str, Any]) -> Any:
+    """根据 JSON Schema 定义映射为 Python/Pydantic 字段类型。"""
+    raw_type = param_def.get("type")
+
+    # 兼容 type 为列表的情况，如 ["string", "null"]
+    if isinstance(raw_type, list):
+        non_null_types = [t for t in raw_type if t != "null"]
+        type_str = non_null_types[0] if non_null_types else "string"
+    elif isinstance(raw_type, str):
+        type_str = raw_type
+    else:
+        if "items" in param_def:
+            type_str = "array"
+        elif "properties" in param_def:
+            type_str = "object"
+        elif "enum" in param_def:
+            type_str = "string"
+        else:
+            return Any
+
+    if type_str == "integer":
+        return int
+    if type_str == "number":
+        return float
+    if type_str == "boolean":
+        return bool
+    if type_str == "array":
+        return list
+    if type_str == "object":
+        return dict
+    if type_str == "string":
+        return str
+    return Any
+
+
+def _schema_allows_null(param_def: dict[str, Any]) -> bool:
+    raw_type = param_def.get("type")
+    return isinstance(raw_type, list) and "null" in raw_type
+
+
 class McpToolFactory:
     @staticmethod
     def create_tool(tool_record: McpToolCache) -> StructuredTool:
@@ -60,19 +100,24 @@ class McpToolFactory:
 
         fields = {}
         for param_name, param_def in properties.items():
-            p_type = str
-            type_str = param_def.get("type", "string")
-            if type_str == "integer": p_type = int
-            elif type_str == "boolean": p_type = bool
-            elif type_str == "number": p_type = float
-            
+            if not isinstance(param_def, dict):
+                param_def = {}
+            mapped_type = _map_schema_type(param_def)
             p_desc = param_def.get("description", "")
-            p_default = ... if param_name in required_fields else param_def.get("default", None)
-            
-            fields[param_name] = (p_type, Field(default=p_default, description=p_desc))
+            is_required = param_name in required_fields
+
+            if is_required:
+                p_default = ...
+                field_type = Optional[mapped_type] if _schema_allows_null(param_def) else mapped_type
+            else:
+                p_default = param_def.get("default", None)
+                field_type = Optional[mapped_type]
+
+            fields[param_name] = (field_type, Field(default=p_default, description=p_desc))
         
         # Create dynamic Pydantic model for args
-        args_schema = create_model(f"Mcp_{tool_record.tool_name.replace(':', '_')}Args", **fields)
+        clean_name = re.sub(r"[^a-zA-Z0-9_]+", "_", str(tool_record.tool_name)).strip("_") or "Tool"
+        args_schema = create_model(f"Mcp_{clean_name}Args", **fields)
         
         # 2. Define execution logic
         async def _execute(**kwargs) -> Any:
@@ -111,6 +156,8 @@ class McpToolFactory:
             description=tool_record.tool_description or "",
             args_schema=args_schema
         )
+        tool.display_name = tool_record.tool_name
+
         declared_types = set()
         for value in schema_def.get("x-nanzi-evidence-types") or []:
             try:
@@ -118,12 +165,36 @@ class McpToolFactory:
             except (TypeError, ValueError):
                 logger.warning("Ignoring invalid evidence type %r for %s", value, tool_record.tool_name)
         annotations = schema_def.get("x-nanzi-mcp-annotations") or {}
-        if annotations.get("readOnlyHint") is False or annotations.get("read_only_hint") is False:
+
+        # 只读权限与证据推断
+        from app.services.ai.tools.registry import _is_read_only_mcp_tool
+        annotation_read_only = (
+            annotations.get("readOnlyHint") is True
+            or annotations.get("read_only_hint") is True
+        )
+        annotation_mutating = (
+            annotations.get("readOnlyHint") is False
+            or annotations.get("read_only_hint") is False
+        )
+        inferred_read_only = _is_read_only_mcp_tool(
+            name=tool_record.tool_name,
+            description=str(tool_record.tool_description or ""),
+        )
+        if annotation_mutating:
+            read_only = False
             tool.evidence_inference_disabled = True
+        else:
+            # readOnlyHint 是远端自报的提示，不能覆盖变更动作的保守推断。
+            read_only = inferred_read_only
+
+        tool.is_read_only = read_only
+        tool.permission_scope = "read" if read_only else "ask"
+
         if declared_types:
             tool.evidence_types = frozenset(declared_types)
-        elif annotations.get("readOnlyHint") is True or annotations.get("read_only_hint") is True:
+        elif annotation_read_only or read_only:
             tool.evidence_types = frozenset({EvidenceType.EXTERNAL_TOOL})
+
         if getattr(tool, "evidence_types", None):
             declared_policy = schema_def.get("x-nanzi-evidence-policy")
             tool.evidence_policy = (

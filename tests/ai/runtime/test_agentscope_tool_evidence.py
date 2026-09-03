@@ -226,6 +226,7 @@ async def test_mcp_tool_factory_uses_model_safe_name_and_preserves_remote_tool_n
         server_id="server-1",
         tool_name="list_events",
         arguments={"glibId": "pt3_v3"},
+        require_user_context=True,
     )
 
 
@@ -410,7 +411,7 @@ async def test_workspace_native_read_tool_records_inferred_file_evidence():
         )
     )
     try:
-        await runtime_tool_from_native(NativeRead())()
+        await runtime_tool_from_native(NativeRead())(file_path="foo.txt")
     finally:
         set_agent_context(None)
 

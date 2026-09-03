@@ -425,6 +425,7 @@ class RuntimeToolSpec:
     source_type: ToolSourceType
     callable: Callable[..., Any]
     permission_scope: RuntimePermissionScope = "ask"
+    display_name: str | None = None
     evidence_types: frozenset[EvidenceType] = frozenset()
     evidence_policy: RuntimeEvidencePolicy = "non_empty"
     evidence_inference_disabled: bool = False
@@ -571,6 +572,7 @@ class AgentScopeRuntimeTool:
     ) -> None:
         self.spec = spec
         self.name = spec.name
+        self.display_name = spec.display_name or spec.name
         self.description = spec.description
         self.input_schema = spec.parameters_schema
         self.is_read_only = spec.is_read_only
@@ -1258,7 +1260,10 @@ def runtime_tool_spec_from_legacy_tool(
     name = getattr(tool, "name", None) or getattr(tool, "__name__", None)
     if not name:
         raise ValueError("Legacy tool is missing a name")
-    resolved_scope = permission_scope or infer_runtime_permission_scope(name, source_type)
+    tool_scope = getattr(tool, "permission_scope", None)
+    if not tool_scope and getattr(tool, "is_read_only", False):
+        tool_scope = "read"
+    resolved_scope = permission_scope or tool_scope or infer_runtime_permission_scope(name, source_type)
     evidence_types = _normalize_evidence_types(
         getattr(tool, "evidence_types", None),
         tool_name=name,
@@ -1267,6 +1272,7 @@ def runtime_tool_spec_from_legacy_tool(
 
     return RuntimeToolSpec(
         name=name,
+        display_name=getattr(tool, "display_name", None),
         description=getattr(tool, "description", None) or getattr(tool, "__doc__", "") or "",
         parameters_schema=_schema_from_legacy_tool(tool),
         source_type=source_type,

@@ -35,6 +35,7 @@ const loading = ref(false)
 const result = ref<unknown>(null)
 const error = ref<string | null>(null)
 const args = ref<Record<string, any>>({})
+const rawJsonArgs = ref<Record<string, string>>({})
 const activeTab = ref<'input' | 'details'>('input')
 const requestPayload = ref<{ arguments: Record<string, any> } | null>(null)
 const requestCopied = ref(false)
@@ -52,8 +53,35 @@ const schema = computed(() => {
 const properties = computed(() => schema.value.properties || {})
 const requiredFields = computed(() => schema.value.required || [])
 
+const getScalarType = (prop: any): string => {
+  if (!prop) return ''
+  if (typeof prop.type === 'string') return prop.type
+  if (Array.isArray(prop.type)) return prop.type.find((type: unknown) => type !== 'null') || ''
+  return ''
+}
+
+const isComplexType = (prop: any): boolean => {
+  if (!prop) return false
+  const t = prop.type
+  if (t === 'object' || t === 'array') return true
+  if (Array.isArray(t) && (t.includes('object') || t.includes('array'))) return true
+  if (!t && (prop.properties || prop.items)) return true
+  return false
+}
+
+const getPlaceholder = (prop: any): string => {
+  if (prop.type === 'array' || prop.items) {
+    return 'JSON 数组格式，例如: ["item1", "item2"]'
+  }
+  if (prop.type === 'object' || prop.properties) {
+    return 'JSON 对象格式，例如: {"key": "value"}'
+  }
+  return prop.description || '请输入 JSON 内容'
+}
+
 watch([() => props.tool, () => props.isOpen], () => {
   args.value = {}
+  rawJsonArgs.value = {}
   result.value = null
   error.value = null
   activeTab.value = 'input'
@@ -172,8 +200,36 @@ const executeTool = async () => {
   loading.value = true
   result.value = null
   error.value = null
+
+  // 整理参数，解析复杂类型的 JSON
+  const finalArgs: Record<string, any> = {}
+  for (const [key, prop] of Object.entries(properties.value as Record<string, any>)) {
+    if (isComplexType(prop)) {
+      const raw = (rawJsonArgs.value[key] ?? '').trim()
+      if (raw) {
+        try {
+          finalArgs[key] = JSON.parse(raw)
+        } catch (err: any) {
+          showToast(`参数 ${key} 的 JSON 格式错误: ${err.message}`, 'error')
+          loading.value = false
+          return
+        }
+      } else if (requiredFields.value.includes(key)) {
+        showToast(`必填参数 ${key} 不能为空`, 'error')
+        loading.value = false
+        return
+      }
+    } else if (args.value[key] !== undefined && args.value[key] !== '') {
+      finalArgs[key] = args.value[key]
+    } else if (requiredFields.value.includes(key)) {
+      showToast(`必填参数 ${key} 不能为空`, 'error')
+      loading.value = false
+      return
+    }
+  }
+
   requestPayload.value = {
-    arguments: JSON.parse(JSON.stringify(args.value))
+    arguments: JSON.parse(JSON.stringify(finalArgs))
   }
   requestCopied.value = false
   copied.value = false
@@ -181,7 +237,7 @@ const executeTool = async () => {
 
   try {
     const res = await axios.post(`/api/portal/mcp/tools/${props.tool.id}/execute`, {
-      arguments: args.value
+      arguments: finalArgs
     })
 
     mcpAuth.value = res.data.mcp_auth || null
@@ -255,22 +311,30 @@ const executeTool = async () => {
                 {{ key }} <span v-if="requiredFields.includes(key)" class="text-red-500">*</span>
               </label>
               <input
-                v-if="prop.type === 'string' || !prop.type"
+                v-if="getScalarType(prop) === 'string' || (!prop.type && !isComplexType(prop))"
                 v-model="args[key]"
                 class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent outline-none transition-all"
                 :placeholder="prop.description"
               />
               <input
-                v-else-if="prop.type === 'integer' || prop.type === 'number'"
+                v-else-if="getScalarType(prop) === 'integer' || getScalarType(prop) === 'number'"
                 type="number"
                 v-model.number="args[key]"
                 class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent outline-none"
                 :placeholder="prop.description"
               />
-              <label v-else-if="prop.type === 'boolean'" class="flex items-center space-x-2 cursor-pointer">
+              <label v-else-if="getScalarType(prop) === 'boolean'" class="flex items-center space-x-2 cursor-pointer">
                 <input type="checkbox" v-model="args[key]" class="w-4 h-4 text-primary border-gray-300 rounded focus:ring-primary" />
                 <span class="text-xs text-gray-500">{{ prop.description || '启用' }}</span>
               </label>
+              <div v-else-if="isComplexType(prop)">
+                <textarea
+                  v-model="rawJsonArgs[key]"
+                  rows="3"
+                  class="w-full px-3 py-2 text-xs font-mono border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent outline-none transition-all"
+                  :placeholder="getPlaceholder(prop)"
+                ></textarea>
+              </div>
               <p v-if="prop.description" class="text-[10px] text-gray-400 mt-1">{{ prop.description }}</p>
             </div>
           </div>

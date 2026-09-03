@@ -24,7 +24,9 @@ async def test_session_expired_retry(mock_session):
     with patch("httpx.AsyncClient") as MockClient:
         # Mock context manager
         mock_client_instance = AsyncMock()
+        mock_client_instance.is_closed = False
         MockClient.return_value.__aenter__.return_value = mock_client_instance
+        mock_session._http_client = mock_client_instance
         
         # Define responses: 
         # 1. 401 SessionExpired
@@ -78,7 +80,9 @@ async def test_session_expired_retry_fail(mock_session):
     # Test that it doesn't loop infinitely
     with patch("httpx.AsyncClient") as MockClient:
         mock_client_instance = AsyncMock()
+        mock_client_instance.is_closed = False
         MockClient.return_value.__aenter__.return_value = mock_client_instance
+        mock_session._http_client = mock_client_instance
         
         expired_response = Response(401, json={
             "RequestId": "req-2",
@@ -129,7 +133,9 @@ async def test_direct_http_tool_call_reinitializes_after_server_loses_session(
         AsyncMock(return_value=mock_session),
     ), patch("httpx.AsyncClient") as MockClient:
         mock_client_instance = AsyncMock()
+        mock_client_instance.is_closed = False
         MockClient.return_value.__aenter__.return_value = mock_client_instance
+        mock_session._http_client = mock_client_instance
         mock_client_instance.post.side_effect = [
             expired_response,
             initialize_response,
@@ -180,7 +186,9 @@ async def test_direct_http_json_rpc_session_error_reinitializes(mock_session):
         AsyncMock(return_value=mock_session),
     ), patch("httpx.AsyncClient") as MockClient:
         mock_client_instance = AsyncMock()
+        mock_client_instance.is_closed = False
         MockClient.return_value.__aenter__.return_value = mock_client_instance
+        mock_session._http_client = mock_client_instance
         mock_client_instance.post.side_effect = [
             rpc_error,
             initialize_response,
@@ -248,7 +256,9 @@ async def test_failed_initialized_notification_does_not_reenter_recovery_lock(mo
 
     with patch("httpx.AsyncClient") as MockClient:
         mock_client_instance = AsyncMock()
+        mock_client_instance.is_closed = False
         MockClient.return_value.__aenter__.return_value = mock_client_instance
+        mock_session._http_client = mock_client_instance
         mock_client_instance.post.side_effect = [initialize_response, notification_error]
 
         with pytest.raises(Exception, match="HTTP 404"):

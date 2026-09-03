@@ -550,6 +550,11 @@ async def update_mcp_server(
             await McpClientService.sync_tools(server_id)
         except Exception as e:
             logger.warning(f"Sync failed during update for server {server_id}: {e}")
+    else:
+        try:
+            await McpClientService.evict_session(server_id)
+        except Exception as e:
+            logger.warning(f"Evicting session failed during disable for server {server_id}: {e}")
     
     # Return with updated counts
     count_stmt = select(func.count(McpToolCache.id)).where(McpToolCache.server_id == server_id)
@@ -606,6 +611,10 @@ async def delete_mcp_server(
     
     await db.commit()
     _clear_runtime_tool_cache()
+    try:
+        await McpClientService.evict_session(server_id)
+    except Exception as e:
+        logger.warning(f"Evicting session failed during delete for server {server_id}: {e}")
     return {"message": "Server and associated tools deleted"}
 
 @router.post("/servers/{server_id}/sync")

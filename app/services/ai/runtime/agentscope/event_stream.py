@@ -198,10 +198,30 @@ async def stream_pending_tool_interrupt(
     )
     from app.core.context import get_current_agent_context
 
+    def _resolve_tool_display_name(target_name: str, *containers: Any) -> str:
+        for container in containers:
+            if not container:
+                continue
+            if isinstance(container, dict):
+                matched = container.get(target_name)
+                if matched:
+                    d_name = getattr(matched, "display_name", None)
+                    if d_name:
+                        return str(d_name)
+            elif isinstance(container, (list, tuple, set)):
+                for t in container:
+                    if getattr(t, "name", None) == target_name:
+                        d_name = getattr(t, "display_name", None)
+                        if d_name:
+                            return str(d_name)
+        return target_name
+
     request_id_field = _pending_request_id_field(kind)
     for tool_call in getattr(event, "tool_calls", []) or []:
         tool_id = getattr(tool_call, "id", "") or f"call_{uuid.uuid4().hex[:8]}"
         tool_name = getattr(tool_call, "name", "")
+        display_name = _resolve_tool_display_name(tool_name, tools, getattr(runner, "tools", None))
+
         raw_args = getattr(tool_call, "input", "") or "{}"
         try:
             tool_args = json.loads(raw_args) if isinstance(raw_args, str) else raw_args
@@ -242,14 +262,15 @@ async def stream_pending_tool_interrupt(
             "reply_id": pending.reply_id,
             "expires_in_seconds": 600,
             "title": (
-                f"需要确认工具调用: {tool_name}"
+                f"需要确认工具调用: {display_name}"
                 if kind == "permission"
-                else f"需要外部执行工具: {tool_name}"
+                else f"需要外部执行工具: {display_name}"
             ),
             "details": f"参数: {json.dumps(tool_args, ensure_ascii=False)}",
             "tool_call": {
                 "id": tool_id,
                 "name": tool_name,
+                "display_name": display_name,
                 "args": tool_args,
             },
         }
