@@ -1852,12 +1852,24 @@ onUnmounted(() => {
                 </div>
                 <p class="mt-1 text-xs text-slate-400">Client ID 用于 Token Endpoint，需配合 Client Secret 获取 Access Token；不能直接调用 MCP。</p>
               </div>
-              <div class="relative flex shrink-0 flex-wrap items-center gap-x-3 gap-y-2 xl:justify-end">
-                <span class="rounded-full px-2 py-1 text-xs font-bold" :class="client.status === 'active' ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-500'">{{ client.status === 'active' ? '启用' : '停用' }}</span>
+              <div data-testid="client-actions" class="relative flex shrink-0 flex-wrap items-center gap-x-3 gap-y-2 xl:justify-end">
                 <button v-if="canIssueToken" type="button" class="inline-flex shrink-0 items-center justify-center whitespace-nowrap rounded-xl bg-indigo-600 px-3 py-2 text-xs font-bold text-white shadow-sm transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50" :disabled="client.status !== 'active' || !client.allowed_scopes.length" @click="openTokenIssue(client)">生成 MCP Access Token</button>
                 <button v-if="canReadClients" type="button" class="inline-flex shrink-0 items-center justify-center whitespace-nowrap rounded-xl border border-indigo-200 bg-indigo-50 px-3 py-2 text-xs font-bold text-indigo-700 hover:bg-indigo-100" @click="openTokenDetails(client)">Token 管理 <span class="ml-1 rounded-full bg-white px-1.5 py-0.5 text-[10px]">{{ client.token_total_count || 0 }}</span></button>
                 <button type="button" class="inline-flex shrink-0 items-center justify-center whitespace-nowrap rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-600 hover:bg-slate-50" @click="clientActionMenuId = clientActionMenuId === client.client_id ? null : client.client_id">更多操作 <span class="ml-1">⌄</span></button>
-                <button type="button" class="text-xs font-bold text-indigo-700 hover:text-indigo-900" @click="toggleClientExpanded(client.client_id)">{{ expandedClientIds.has(client.client_id) ? '收起详情' : '展开详情' }}</button>
+                <button
+                  type="button"
+                  class="inline-flex h-9 w-9 items-center justify-center rounded-lg text-indigo-700 transition hover:bg-indigo-50 hover:text-indigo-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400 focus-visible:ring-offset-2"
+                  :aria-label="expandedClientIds.has(client.client_id) ? '收起 Client 详情' : '展开 Client 详情'"
+                  :title="expandedClientIds.has(client.client_id) ? '收起详情' : '展开详情'"
+                  :aria-expanded="expandedClientIds.has(client.client_id)"
+                  :aria-controls="'client-details-' + client.client_id"
+                  @click="toggleClientExpanded(client.client_id)"
+                >
+                  <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path v-if="expandedClientIds.has(client.client_id)" d="m6 9 6 6 6-6" />
+                    <path v-else d="m9 6 6 6-6 6" />
+                  </svg>
+                </button>
                 <div v-if="clientActionMenuId === client.client_id" class="absolute right-0 top-11 z-20 w-44 rounded-xl border border-slate-200 bg-white p-1.5 shadow-xl">
                   <button v-if="canManageClientItem(client)" type="button" class="block w-full rounded-lg px-3 py-2 text-left text-xs font-bold text-indigo-700 hover:bg-indigo-50" @click="clientActionMenuId = null; openClientEdit(client)">编辑基本信息</button>
                   <button v-if="canManageClientItem(client)" type="button" class="block w-full rounded-lg px-3 py-2 text-left text-xs font-bold text-indigo-700 hover:bg-indigo-50" @click="clientActionMenuId = null; openClientScopeEdit(client)">编辑 Scope</button>
@@ -1885,7 +1897,7 @@ onUnmounted(() => {
               <span class="rounded-full bg-orange-50 px-2.5 py-1 font-bold text-orange-700">已过期 {{ client.expired_token_count || 0 }}</span>
               <span class="rounded-full bg-slate-100 px-2.5 py-1 font-bold text-slate-500">已撤销 {{ client.revoked_token_count || 0 }}</span>
             </div>
-            <div v-if="expandedClientIds.has(client.client_id)">
+            <div v-if="expandedClientIds.has(client.client_id)" :id="'client-details-' + client.client_id">
             <div class="mt-4 grid gap-3 md:grid-cols-3">
               <div class="rounded-xl border border-slate-100 bg-slate-50 px-3 py-3"><div class="text-[11px] font-bold text-slate-400">Token 状态</div><div class="mt-1 text-sm font-bold" :class="(client.active_token_count || 0) > 0 ? 'text-emerald-700' : 'text-slate-600'">{{ (client.active_token_count || 0) > 0 ? '状态正常' : (client.has_issued_token ? '暂无有效 Token' : '尚未生成') }}</div></div>
               <div class="rounded-xl border border-slate-100 bg-slate-50 px-3 py-3"><div class="text-[11px] font-bold text-slate-400">有效 Token 数量</div><div class="mt-1 text-sm font-bold text-slate-700">{{ client.active_token_count || 0 }} 个</div></div>
@@ -1920,6 +1932,10 @@ onUnmounted(() => {
                 <button type="button" class="text-xs font-bold text-indigo-700 hover:text-indigo-900" @click="openClientDetails(client)">查看权限详情 →</button>
               </div>
             </div>
+            </div>
+            <div data-testid="client-status" aria-label="Client 状态" class="mt-3 flex items-center justify-end gap-2 text-xs">
+              <span class="h-2 w-2 rounded-full" :class="client.status === 'active' ? 'bg-emerald-500' : 'bg-slate-400'" aria-hidden="true"></span>
+              <span class="font-bold" :class="client.status === 'active' ? 'text-emerald-700' : 'text-slate-500'">状态：{{ client.status === 'active' ? '启用' : '停用' }}</span>
             </div>
           </div>
           <div class="flex items-center justify-end gap-3 pt-2 text-xs text-slate-500"><span>第 {{ clientPage }} / {{ Math.max(1, Math.ceil(clientTotal / 20)) }} 页</span><button type="button" class="rounded-lg border border-slate-200 px-3 py-1.5 disabled:opacity-40" :disabled="clientPage <= 1" @click="changeClientPage(-1)">上一页</button><button type="button" class="rounded-lg border border-slate-200 px-3 py-1.5 disabled:opacity-40" :disabled="clientPage >= Math.ceil(clientTotal / 20)" @click="changeClientPage(1)">下一页</button></div>

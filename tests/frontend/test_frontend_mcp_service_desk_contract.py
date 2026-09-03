@@ -412,6 +412,32 @@ def test_client_card_uses_compact_permission_summary_and_on_demand_details():
     assert "不增加额外限制（用户模式仍受用户权限限制）" not in clients_section
 
 
+def test_client_status_is_present_in_card_footer_separate_from_action_buttons():
+    view = (ROOT / "frontend/src/views/McpServiceDesk.vue").read_text(encoding="utf-8")
+    card = view.split('<div v-for="client in clients"', 1)[1]
+
+    actions_start = card.index('data-testid="client-actions"')
+    status_start = card.index('data-testid="client-status"')
+    status_end = card.index('</div>', status_start) + len('</div>')
+    status_block = card[status_start:status_end]
+    assert status_start > actions_start
+    assert 'class="mt-3 flex items-center justify-end gap-2 text-xs"' in card
+    assert 'aria-label="Client 状态"' in card
+    assert '<button' not in status_block
+    assert '@click' not in status_block
+
+
+def test_client_detail_toggle_uses_icon_button_with_accessibility_label():
+    view = (ROOT / "frontend/src/views/McpServiceDesk.vue").read_text(encoding="utf-8")
+
+    assert ":aria-label=\"expandedClientIds.has(client.client_id) ? '收起 Client 详情' : '展开 Client 详情'\"" in view
+    assert ":title=\"expandedClientIds.has(client.client_id) ? '收起详情' : '展开详情'\"" in view
+    assert ":aria-controls=\"'client-details-' + client.client_id\"" in view
+    assert "@click=\"toggleClientExpanded(client.client_id)\"" in view
+    assert "<svg" in view
+    assert "展开详情</button>" not in view
+
+
 def test_shared_client_mutations_are_owner_scoped_in_ui():
     view = (ROOT / "frontend/src/views/McpServiceDesk.vue").read_text(encoding="utf-8")
     clients_section = view.split("activeTab === 'clients'", 1)[1].split("activeTab === 'methods'", 1)[0]
