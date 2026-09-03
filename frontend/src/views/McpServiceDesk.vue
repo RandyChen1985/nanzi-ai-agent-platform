@@ -2685,8 +2685,26 @@ onUnmounted(() => {
                   </button>
                 </div>
                 <div v-else class="mt-2 rounded-xl border border-amber-200/80 bg-amber-50/80 p-3 text-xs text-amber-900">
-                  <div class="font-bold">暂无可用的有效 Token</div>
-                  <div class="mt-0.5 text-amber-800">请先在「外部 Client」卡片点击「生成 MCP Access Token」，生成后会自动收录至本下拉列表供随时选用。</div>
+                  <div class="flex items-center justify-between">
+                    <span class="flex items-center gap-1.5 font-bold">
+                      <svg class="h-4 w-4 shrink-0 text-amber-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <circle cx="12" cy="12" r="10" />
+                        <line x1="12" y1="8" x2="12" y2="12" />
+                        <line x1="12" y1="16" x2="12.01" y2="16" />
+                      </svg>
+                      本机未暂存 Token 明文
+                    </span>
+                    <button
+                      type="button"
+                      class="text-xs font-bold text-indigo-700 underline hover:text-indigo-900"
+                      @click="playgroundMethod = null; activeTab = 'clients'"
+                    >
+                      前往「外部 Client」签发 ➔
+                    </button>
+                  </div>
+                  <div class="mt-1 text-[11px] leading-relaxed text-amber-800">
+                    按 OAuth2 安全规范，数据库仅保存 SHA-256 密文哈希，无法逆向还原历史明文。若您持有已生成的有效 Token 可直接粘贴；或者前往「外部 Client」签发一次，生成后本机将自动记忆并在此常驻列出供随时选用。
+                  </div>
                 </div>
               </div>
 
