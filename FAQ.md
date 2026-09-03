@@ -1375,10 +1375,10 @@ NanZi 对外提供的是一个统一的 **NanZi Platform MCP**，智能体、会
 
 | 方法组 | 示例方法 | 用途 |
 | --- | --- | --- |
-| `agent.*` | `agent.list_allowed`、`agent.invoke` | 查询当前用户可用智能体并发起调用；结果由当前用户角色与权限决定 |
-| `conversation.*` | `conversation.continue` | 在用户授权范围内继续自己的会话 |
-| `knowledge.*` | `knowledge.search` | 在授权知识库范围内检索文档内容 |
-| `metadata.*` | `metadata.list_datasets`、`metadata.search`、`metadata.get_dataset`、`metadata.get_schema`、`metadata.get_metrics` | 查询受权限控制的数据集、表、字段和指标元数据 |
+| `agent` | `agent_list_allowed`、`agent_invoke` | 查询当前用户可用智能体并发起调用；结果由当前用户角色与权限决定 |
+| `conversation` | `conversation_continue` | 在用户授权范围内继续自己的会话 |
+| `knowledge` | `knowledge_search` | 在授权知识库范围内检索文档内容 |
+| `metadata` | `metadata_list_datasets`、`metadata_search`、`metadata_get_dataset`、`metadata_get_schema`、`metadata_get_metrics` | 查询受权限控制的数据集、表、字段和指标元数据 |
 
 第一期已接入上述方法，只支持能安全保存 `client_secret` 的 **Confidential Client**，采用 OAuth2 标准授权（完整 OIDC 的 ID Token/JWKS 作为后续扩展）：
 

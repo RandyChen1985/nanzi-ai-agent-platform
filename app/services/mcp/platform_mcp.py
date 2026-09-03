@@ -111,7 +111,7 @@ async def check_platform_mcp_rate_limit(principal: McpPrincipal) -> None:
 
 PLATFORM_MCP_METHODS = (
     PlatformMcpMethodDefinition(
-        name="agent.list_allowed",
+        name="agent_list_allowed",
         scope="agent:list",
         capability_group="agent",
         requires_user=True,
@@ -119,7 +119,7 @@ PLATFORM_MCP_METHODS = (
         implemented=True,
     ),
     PlatformMcpMethodDefinition(
-        name="agent.invoke",
+        name="agent_invoke",
         scope="agent:invoke",
         capability_group="agent",
         requires_user=True,
@@ -127,7 +127,7 @@ PLATFORM_MCP_METHODS = (
         implemented=True,
     ),
     PlatformMcpMethodDefinition(
-        name="conversation.continue",
+        name="conversation_continue",
         scope="conversation:continue",
         capability_group="conversation",
         requires_user=True,
@@ -135,7 +135,7 @@ PLATFORM_MCP_METHODS = (
         implemented=True,
     ),
     PlatformMcpMethodDefinition(
-        name="knowledge.search",
+        name="knowledge_search",
         scope="knowledge:search",
         capability_group="knowledge",
         requires_user=True,
@@ -143,7 +143,7 @@ PLATFORM_MCP_METHODS = (
         implemented=True,
     ),
     PlatformMcpMethodDefinition(
-        name="metadata.list_datasets",
+        name="metadata_list_datasets",
         scope="metadata:read",
         capability_group="metadata",
         requires_user=True,
@@ -151,7 +151,7 @@ PLATFORM_MCP_METHODS = (
         implemented=True,
     ),
     PlatformMcpMethodDefinition(
-        name="metadata.search",
+        name="metadata_search",
         scope="metadata:search",
         capability_group="metadata",
         requires_user=True,
@@ -159,7 +159,7 @@ PLATFORM_MCP_METHODS = (
         implemented=True,
     ),
     PlatformMcpMethodDefinition(
-        name="metadata.get_dataset",
+        name="metadata_get_dataset",
         scope="metadata:read",
         capability_group="metadata",
         requires_user=True,
@@ -167,7 +167,7 @@ PLATFORM_MCP_METHODS = (
         implemented=True,
     ),
     PlatformMcpMethodDefinition(
-        name="metadata.get_schema",
+        name="metadata_get_schema",
         scope="metadata:read",
         capability_group="metadata",
         requires_user=True,
@@ -175,7 +175,7 @@ PLATFORM_MCP_METHODS = (
         implemented=True,
     ),
     PlatformMcpMethodDefinition(
-        name="metadata.get_metrics",
+        name="metadata_get_metrics",
         scope="metadata:metrics:read",
         capability_group="metadata",
         requires_user=True,
@@ -268,7 +268,7 @@ async def _resolve_knowledge_scope(
 ) -> tuple[list[str], list[str]]:
     """返回 (有效 dataset ids, 审计/诊断信息)。"""
     if not principal.is_user_delegated or principal.user_id is None:
-        raise PermissionError("knowledge.search 需要用户授权模式")
+        raise PermissionError("knowledge_search 需要用户授权模式")
 
     requested = normalize_dataset_ids(requested_ids)
     if requested_ids is not None and not requested:
@@ -311,7 +311,7 @@ async def _resolve_knowledge_scope(
 async def _write_audit(
     principal: McpPrincipal,
     *,
-    method_name: str = "knowledge.search",
+    method_name: str = "knowledge_search",
     request_id: str,
     result_status: str,
     status_code: int,
@@ -597,7 +597,7 @@ async def _invoke_agent(
 
 
 @platform_mcp.tool(
-    name="agent.list_allowed",
+    name="agent_list_allowed",
     description="查询当前 OAuth 主体可以使用的已启用 NanZi 智能体。",
     structured_output=True,
 )
@@ -612,12 +612,12 @@ async def agent_list_allowed(
     principal = _principal_from_context()
     request_id = _request_id(principal)
     try:
-        await _validate_platform_method(principal, "agent.list_allowed")
+        await _validate_platform_method(principal, "agent_list_allowed")
         normalized_keyword = str(keyword or "").strip()
         if len(normalized_keyword) > 100:
             raise ValueError("keyword 不能超过 100 个字符")
         safe_limit = _validate_limit(limit, default=20, maximum=100)
-        offset = decode_platform_cursor("agent.list_allowed", cursor)
+        offset = decode_platform_cursor("agent_list_allowed", cursor)
         if cursor and offset is None:
             raise ValueError("cursor 无效或已被篡改")
         offset = offset or 0
@@ -665,12 +665,12 @@ async def agent_list_allowed(
                 for agent in page
             ]
             next_cursor = (
-                encode_platform_cursor("agent.list_allowed", offset + safe_limit)
+                encode_platform_cursor("agent_list_allowed", offset + safe_limit)
                 if offset + safe_limit < len(agents) else None
             )
         await _write_audit(
             principal,
-            method_name="agent.list_allowed",
+            method_name="agent_list_allowed",
             request_id=request_id,
             result_status="completed",
             status_code=200,
@@ -680,7 +680,7 @@ async def agent_list_allowed(
     except PermissionError:
         await _write_audit(
             principal,
-            method_name="agent.list_allowed",
+            method_name="agent_list_allowed",
             request_id=request_id,
             result_status="denied",
             status_code=403,
@@ -691,7 +691,7 @@ async def agent_list_allowed(
     except Exception as exc:
         await _write_audit(
             principal,
-            method_name="agent.list_allowed",
+            method_name="agent_list_allowed",
             request_id=request_id,
             result_status="failed",
             status_code=_mcp_error_status(exc),
@@ -790,7 +790,7 @@ async def _agent_call_common(
 
 
 @platform_mcp.tool(
-    name="agent.invoke",
+    name="agent_invoke",
     description="以当前 NanZi 用户身份调用一个已授权智能体。",
     structured_output=True,
 )
@@ -806,11 +806,11 @@ async def agent_invoke(
     principal = _principal_from_context()
     request_id = _request_id(principal)
     try:
-        await _validate_platform_method(principal, "agent.invoke")
+        await _validate_platform_method(principal, "agent_invoke")
     except PermissionError:
         await _write_audit(
             principal,
-            method_name="agent.invoke",
+            method_name="agent_invoke",
             request_id=request_id,
             client_request_id=client_request_id,
             agent_id=str(agent_id or "")[:128] or None,
@@ -824,7 +824,7 @@ async def agent_invoke(
     except Exception as exc:
         await _write_audit(
             principal,
-            method_name="agent.invoke",
+            method_name="agent_invoke",
             request_id=request_id,
             client_request_id=client_request_id,
             agent_id=str(agent_id or "")[:128] or None,
@@ -837,7 +837,7 @@ async def agent_invoke(
         raise
     return await _agent_call_common(
         principal,
-        method_name="agent.invoke",
+        method_name="agent_invoke",
         agent_id=agent_id,
         message=message,
         conversation_id=conversation_id,
@@ -846,7 +846,7 @@ async def agent_invoke(
 
 
 @platform_mcp.tool(
-    name="conversation.continue",
+    name="conversation_continue",
     description="继续当前 NanZi 用户拥有的会话。",
     structured_output=True,
 )
@@ -861,7 +861,7 @@ async def conversation_continue(
     principal = _principal_from_context()
     request_id = _request_id(principal)
     try:
-        await _validate_platform_method(principal, "conversation.continue")
+        await _validate_platform_method(principal, "conversation_continue")
         normalized_message = str(message or "").strip()
         if not normalized_message:
             raise ValueError("message 不能为空")
@@ -890,7 +890,7 @@ async def conversation_continue(
             )
         await _write_audit(
             principal,
-            method_name="conversation.continue",
+            method_name="conversation_continue",
             request_id=request_id,
             client_request_id=client_request_id,
             agent_id=str(agent.id),
@@ -908,7 +908,7 @@ async def conversation_continue(
     except PermissionError:
         await _write_audit(
             principal,
-            method_name="conversation.continue",
+            method_name="conversation_continue",
             request_id=request_id,
             client_request_id=client_request_id,
             conversation_id=str(conversation_id or "")[:128],
@@ -921,7 +921,7 @@ async def conversation_continue(
     except Exception as exc:
         await _write_audit(
             principal,
-            method_name="conversation.continue",
+            method_name="conversation_continue",
             request_id=request_id,
             client_request_id=client_request_id,
             conversation_id=str(conversation_id or "")[:128],
@@ -934,7 +934,7 @@ async def conversation_continue(
 
 
 @platform_mcp.tool(
-    name="metadata.list_datasets",
+    name="metadata_list_datasets",
     description="列出当前 OAuth 主体可以查看的 NanZi 元数据数据集。",
     structured_output=True,
 )
@@ -947,7 +947,7 @@ async def metadata_list_datasets(
     principal = _principal_from_context()
     request_id = _request_id(principal)
     try:
-        await _validate_platform_method(principal, "metadata.list_datasets")
+        await _validate_platform_method(principal, "metadata_list_datasets")
         safe_limit = _validate_limit(limit, default=100, maximum=100)
         async with AsyncSessionLocal() as db:
             dataset_ids = await _resolve_metadata_dataset_ids(db, principal)
@@ -955,7 +955,7 @@ async def metadata_list_datasets(
             items = [serialize_metadata_dataset(item) for item in datasets[:safe_limit]]
         await _write_audit(
             principal,
-            method_name="metadata.list_datasets",
+            method_name="metadata_list_datasets",
             request_id=request_id,
             result_status="completed",
             status_code=200,
@@ -966,7 +966,7 @@ async def metadata_list_datasets(
     except PermissionError:
         await _write_audit(
             principal,
-            method_name="metadata.list_datasets",
+            method_name="metadata_list_datasets",
             request_id=request_id,
             result_status="denied",
             status_code=403,
@@ -977,7 +977,7 @@ async def metadata_list_datasets(
     except Exception as exc:
         await _write_audit(
             principal,
-            method_name="metadata.list_datasets",
+            method_name="metadata_list_datasets",
             request_id=request_id,
             result_status="failed",
             status_code=_mcp_error_status(exc),
@@ -1081,7 +1081,7 @@ def _metadata_search_items(
 
 
 @platform_mcp.tool(
-    name="metadata.search",
+    name="metadata_search",
     description="在有权限的 NanZi 元数据数据集、表、字段和指标中搜索。",
     structured_output=True,
 )
@@ -1097,7 +1097,7 @@ async def metadata_search(
     principal = _principal_from_context()
     request_id = _request_id(principal)
     try:
-        await _validate_platform_method(principal, "metadata.search")
+        await _validate_platform_method(principal, "metadata_search")
         normalized_query = str(query or "").strip()
         if not normalized_query:
             raise ValueError("query 不能为空")
@@ -1127,7 +1127,7 @@ async def metadata_search(
             )
         await _write_audit(
             principal,
-            method_name="metadata.search",
+            method_name="metadata_search",
             request_id=request_id,
             result_status="completed",
             status_code=200,
@@ -1138,7 +1138,7 @@ async def metadata_search(
     except PermissionError:
         await _write_audit(
             principal,
-            method_name="metadata.search",
+            method_name="metadata_search",
             request_id=request_id,
             result_status="denied",
             status_code=403,
@@ -1149,7 +1149,7 @@ async def metadata_search(
     except Exception as exc:
         await _write_audit(
             principal,
-            method_name="metadata.search",
+            method_name="metadata_search",
             request_id=request_id,
             result_status="failed",
             status_code=_mcp_error_status(exc),
@@ -1179,7 +1179,7 @@ async def _load_one_authorized_dataset(
 
 
 @platform_mcp.tool(
-    name="metadata.get_dataset",
+    name="metadata_get_dataset",
     description="获取一个已授权 NanZi 元数据数据集的安全摘要。",
     structured_output=True,
 )
@@ -1192,13 +1192,13 @@ async def metadata_get_dataset(
     principal = _principal_from_context()
     request_id = _request_id(principal)
     try:
-        await _validate_platform_method(principal, "metadata.get_dataset")
+        await _validate_platform_method(principal, "metadata_get_dataset")
         async with AsyncSessionLocal() as db:
             dataset, _ = await _load_one_authorized_dataset(db, principal, dataset_id)
             payload = serialize_metadata_dataset(dataset)
         await _write_audit(
             principal,
-            method_name="metadata.get_dataset",
+            method_name="metadata_get_dataset",
             request_id=request_id,
             result_status="completed",
             status_code=200,
@@ -1209,7 +1209,7 @@ async def metadata_get_dataset(
     except PermissionError:
         await _write_audit(
             principal,
-            method_name="metadata.get_dataset",
+            method_name="metadata_get_dataset",
             request_id=request_id,
             result_status="denied",
             status_code=403,
@@ -1221,7 +1221,7 @@ async def metadata_get_dataset(
     except Exception as exc:
         await _write_audit(
             principal,
-            method_name="metadata.get_dataset",
+            method_name="metadata_get_dataset",
             request_id=request_id,
             result_status="failed",
             status_code=_mcp_error_status(exc),
@@ -1233,7 +1233,7 @@ async def metadata_get_dataset(
 
 
 @platform_mcp.tool(
-    name="metadata.get_schema",
+    name="metadata_get_schema",
     description="获取已授权 NanZi 数据集的表和字段结构。",
     structured_output=True,
 )
@@ -1248,7 +1248,7 @@ async def metadata_get_schema(
     principal = _principal_from_context()
     request_id = _request_id(principal)
     try:
-        await _validate_platform_method(principal, "metadata.get_schema")
+        await _validate_platform_method(principal, "metadata_get_schema")
         selected_names = _normalize_requested_ids(table_names, field_name="table_names")
         selected_name_set = set(selected_names) if selected_names is not None else None
         async with AsyncSessionLocal() as db:
@@ -1277,7 +1277,7 @@ async def metadata_get_schema(
                 ]
         await _write_audit(
             principal,
-            method_name="metadata.get_schema",
+            method_name="metadata_get_schema",
             request_id=request_id,
             result_status="completed",
             status_code=200,
@@ -1288,7 +1288,7 @@ async def metadata_get_schema(
     except PermissionError:
         await _write_audit(
             principal,
-            method_name="metadata.get_schema",
+            method_name="metadata_get_schema",
             request_id=request_id,
             result_status="denied",
             status_code=403,
@@ -1300,7 +1300,7 @@ async def metadata_get_schema(
     except Exception as exc:
         await _write_audit(
             principal,
-            method_name="metadata.get_schema",
+            method_name="metadata_get_schema",
             request_id=request_id,
             result_status="failed",
             status_code=_mcp_error_status(exc),
@@ -1312,7 +1312,7 @@ async def metadata_get_schema(
 
 
 @platform_mcp.tool(
-    name="metadata.get_metrics",
+    name="metadata_get_metrics",
     description="获取当前 OAuth 主体可以查看的 NanZi 业务指标口径。",
     structured_output=True,
 )
@@ -1326,7 +1326,7 @@ async def metadata_get_metrics(
     principal = _principal_from_context()
     request_id = _request_id(principal)
     try:
-        await _validate_platform_method(principal, "metadata.get_metrics")
+        await _validate_platform_method(principal, "metadata_get_metrics")
         safe_limit = _validate_limit(limit, default=100, maximum=100)
         requested_ids = [dataset_id] if dataset_id else None
         async with AsyncSessionLocal() as db:
@@ -1347,7 +1347,7 @@ async def metadata_get_metrics(
             items = [serialize_metadata_metric(item) for item in metrics[:safe_limit]]
         await _write_audit(
             principal,
-            method_name="metadata.get_metrics",
+            method_name="metadata_get_metrics",
             request_id=request_id,
             result_status="completed",
             status_code=200,
@@ -1358,7 +1358,7 @@ async def metadata_get_metrics(
     except PermissionError:
         await _write_audit(
             principal,
-            method_name="metadata.get_metrics",
+            method_name="metadata_get_metrics",
             request_id=request_id,
             result_status="denied",
             status_code=403,
@@ -1370,7 +1370,7 @@ async def metadata_get_metrics(
     except Exception as exc:
         await _write_audit(
             principal,
-            method_name="metadata.get_metrics",
+            method_name="metadata_get_metrics",
             request_id=request_id,
             result_status="failed",
             status_code=_mcp_error_status(exc),
@@ -1382,7 +1382,7 @@ async def metadata_get_metrics(
 
 
 @platform_mcp.tool(
-    name="knowledge.search",
+    name="knowledge_search",
     description="在当前 NanZi 用户与 OAuth Client 共同允许的知识库范围内搜索文档片段。",
     structured_output=True,
 )
@@ -1433,7 +1433,7 @@ async def knowledge_search(
         elapsed = int((time.monotonic() - started) * 1000)
         await _write_audit(
             principal,
-            method_name="knowledge.search",
+            method_name="knowledge_search",
             request_id=request_id,
             result_status="completed",
             status_code=200,
@@ -1450,7 +1450,7 @@ async def knowledge_search(
     except PermissionError:
         await _write_audit(
             principal,
-            method_name="knowledge.search",
+            method_name="knowledge_search",
             request_id=request_id,
             result_status="denied",
             status_code=403,
@@ -1461,7 +1461,7 @@ async def knowledge_search(
     except Exception as exc:
         await _write_audit(
             principal,
-            method_name="knowledge.search",
+            method_name="knowledge_search",
             request_id=request_id,
             result_status="failed",
             status_code=_mcp_error_status(exc),

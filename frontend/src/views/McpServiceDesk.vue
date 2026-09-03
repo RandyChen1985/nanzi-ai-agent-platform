@@ -204,7 +204,7 @@ type AuditFilterOption = {
 const auditFilterOptions: AuditFilterOption[] = [
   { key: 'client_id', label: 'Client', kind: 'text', placeholder: 'Client ID' },
   { key: 'user_id', label: 'NanZi 用户', kind: 'text', placeholder: 'user_id' },
-  { key: 'method_name', label: 'MCP 方法', kind: 'text', placeholder: 'agent.invoke' },
+  { key: 'method_name', label: 'MCP 方法', kind: 'text', placeholder: 'agent_invoke' },
   { key: 'agent_id', label: '智能体', kind: 'text', placeholder: 'agent_id' },
   { key: 'dataset_id', label: '数据集', kind: 'text', placeholder: 'dataset_id' },
   { key: 'request_id', label: '请求 ID', kind: 'text', placeholder: 'request_id' },
@@ -213,7 +213,7 @@ const auditFilterOptions: AuditFilterOption[] = [
   { key: 'status_code', label: '状态码', kind: 'number', placeholder: '例如 200' },
 ]
 const selectedAuditFilter = ref<AuditFilterKey>('client_id')
-const selectedAuditFilterMeta = computed(() => auditFilterOptions.find(item => item.key === selectedAuditFilter.value) || auditFilterOptions[0])
+const selectedAuditFilterMeta = computed<AuditFilterOption>(() => auditFilterOptions.find(item => item.key === selectedAuditFilter.value) || auditFilterOptions[0]!)
 const selectedAuditFilterValue = computed({
   get: () => auditFilters[selectedAuditFilter.value],
   set: (value: string) => { auditFilters[selectedAuditFilter.value] = value },
@@ -268,8 +268,9 @@ const openClientScopeEdit = (client: Client) => {
   showClientScopeEdit.value = true
 }
 
-const closeClientScopeEdit = (force = false) => {
-  if (saving.value && !force) return
+const closeClientScopeEdit = (force: boolean | Event = false) => {
+  const isForced = typeof force === 'boolean' ? force : false
+  if (saving.value && !isForced) return
   showClientScopeEdit.value = false
   clientScopeEditTarget.value = null
   clientScopeEditForm.scopes = []
@@ -327,8 +328,9 @@ const openClientEdit = (client: Client) => {
   showClientEdit.value = true
 }
 
-const closeClientEdit = (force = false) => {
-  if (saving.value && !force) return
+const closeClientEdit = (force: boolean | Event = false) => {
+  const isForced = typeof force === 'boolean' ? force : false
+  if (saving.value && !isForced) return
   showClientEdit.value = false
   clientEditTarget.value = null
 }
@@ -465,26 +467,26 @@ const openPlayground = (method: any) => {
   playgroundResponse.value = ''
   playgroundStatus.value = ''
   playgroundLatency.value = null
-  if (!playgroundToken.value && activeSessionRecentTokens.value.length > 0) {
+  if (!playgroundToken.value && activeSessionRecentTokens.value.length > 0 && activeSessionRecentTokens.value[0]?.token) {
     playgroundToken.value = activeSessionRecentTokens.value[0].token
   }
   const defaultParams: Record<string, any> = {}
-  if (method.name === 'metadata.list_datasets') {
+  if (method.name === 'metadata_list_datasets') {
     defaultParams.limit = 5
-  } else if (method.name === 'metadata.search') {
+  } else if (method.name === 'metadata_search') {
     defaultParams.query = '测试'
-  } else if (method.name === 'knowledge.search') {
+  } else if (method.name === 'knowledge_search') {
     defaultParams.query = '知识库检索测试'
     defaultParams.top_k = 3
-  } else if (method.name === 'agent.list_allowed') {
+  } else if (method.name === 'agent_list_allowed') {
     // 无参数
-  } else if (method.name === 'agent.invoke') {
+  } else if (method.name === 'agent_invoke') {
     defaultParams.agent_id = 'agent_id_here'
     defaultParams.message = '你好'
-  } else if (method.name === 'conversation.continue') {
+  } else if (method.name === 'conversation_continue') {
     defaultParams.conversation_id = 'conversation_id_here'
     defaultParams.message = '继续'
-  } else if (method.name === 'metadata.get_dataset' || method.name === 'metadata.get_schema' || method.name === 'metadata.get_metrics') {
+  } else if (method.name === 'metadata_get_dataset' || method.name === 'metadata_get_schema' || method.name === 'metadata_get_metrics') {
     defaultParams.dataset_id = 'dataset_id_here'
   }
   playgroundParams.value = JSON.stringify(defaultParams, null, 2)
@@ -560,6 +562,10 @@ const loadAuditSummary = async () => {
   } finally {
     auditSummaryLoading.value = false
   }
+}
+
+const handleAuditSummaryRangeChange = async () => {
+  await Promise.all([loadAuditSummary(), loadAuditTrend()])
 }
 
 const loadClients = async () => {
@@ -1068,8 +1074,9 @@ const openClientConfirm = (action: ClientConfirmAction, client: Client) => {
   showClientConfirm.value = true
 }
 
-const closeClientConfirm = (force = false) => {
-  if (saving.value && !force) return
+const closeClientConfirm = (force: boolean | Event = false) => {
+  const isForced = typeof force === 'boolean' ? force : false
+  if (saving.value && !isForced) return
   showClientConfirm.value = false
   clientConfirmAction.value = null
   clientConfirmTarget.value = null
@@ -2063,7 +2070,7 @@ onUnmounted(() => {
                 <span aria-hidden="true" class="text-xs text-slate-400">{{ showAuditTrend ? '⌃' : '⌄' }}</span>
               </button>
             </h3>
-            <select v-model="auditSummaryRange" class="rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs font-bold" @change="Promise.all([loadAuditSummary(), loadAuditTrend()])">
+            <select v-model="auditSummaryRange" class="rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs font-bold" @change="handleAuditSummaryRangeChange">
               <option value="24h">近 24 小时</option><option value="7d">近 7 天</option><option value="30d">近 30 天</option>
             </select>
           </div>

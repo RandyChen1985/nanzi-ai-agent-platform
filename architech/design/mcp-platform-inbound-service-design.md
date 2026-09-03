@@ -32,15 +32,15 @@ Platform MCP 总开关
 
 ```text
 NanZi Platform MCP
-├── agent.list_allowed
-├── agent.invoke
-├── conversation.continue
-├── knowledge.search
-├── metadata.list_datasets
-├── metadata.search
-├── metadata.get_dataset
-├── metadata.get_schema
-└── metadata.get_metrics
+├── agent_list_allowed
+├── agent_invoke
+├── conversation_continue
+├── knowledge_search
+├── metadata_list_datasets
+├── metadata_search
+├── metadata_get_dataset
+├── metadata_get_schema
+└── metadata_get_metrics
 ```
 
 后续可以继续追加：

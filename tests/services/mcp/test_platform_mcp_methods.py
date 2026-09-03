@@ -23,15 +23,15 @@ pytestmark = pytest.mark.no_infrastructure
 
 def test_all_platform_mcp_methods_are_implemented_and_registered_by_definition():
     expected = {
-        "agent.list_allowed": ("agent:list", "agent"),
-        "agent.invoke": ("agent:invoke", "agent"),
-        "conversation.continue": ("conversation:continue", "conversation"),
-        "knowledge.search": ("knowledge:search", "knowledge"),
-        "metadata.list_datasets": ("metadata:read", "metadata"),
-        "metadata.search": ("metadata:search", "metadata"),
-        "metadata.get_dataset": ("metadata:read", "metadata"),
-        "metadata.get_schema": ("metadata:read", "metadata"),
-        "metadata.get_metrics": ("metadata:metrics:read", "metadata"),
+        "agent_list_allowed": ("agent:list", "agent"),
+        "agent_invoke": ("agent:invoke", "agent"),
+        "conversation_continue": ("conversation:continue", "conversation"),
+        "knowledge_search": ("knowledge:search", "knowledge"),
+        "metadata_list_datasets": ("metadata:read", "metadata"),
+        "metadata_search": ("metadata:search", "metadata"),
+        "metadata_get_dataset": ("metadata:read", "metadata"),
+        "metadata_get_schema": ("metadata:read", "metadata"),
+        "metadata_get_metrics": ("metadata:metrics:read", "metadata"),
     }
 
     assert {item.name for item in PLATFORM_MCP_METHODS} == set(expected)
@@ -60,13 +60,13 @@ async def test_all_implemented_methods_are_visible_when_platform_and_groups_are_
 
 
 def test_platform_cursor_is_signed_and_rejects_tampering():
-    cursor = encode_platform_cursor("agent.list_allowed", 20)
+    cursor = encode_platform_cursor("agent_list_allowed", 20)
 
     assert cursor
-    assert decode_platform_cursor("agent.list_allowed", cursor) == 20
-    assert decode_platform_cursor("metadata.search", cursor) is None
+    assert decode_platform_cursor("agent_list_allowed", cursor) == 20
+    assert decode_platform_cursor("metadata_search", cursor) is None
     assert decode_platform_cursor(
-        "agent.list_allowed", cursor[:-1] + ("A" if cursor[-1] != "A" else "B")
+        "agent_list_allowed", cursor[:-1] + ("A" if cursor[-1] != "A" else "B")
     ) is None
 
 
