@@ -800,8 +800,8 @@ onMounted(load)
         </div>
       </div>
 
-      <div v-if="availableTabs.length" class="flex gap-2 border-b border-slate-200">
-        <button v-for="tab in availableTabs" :key="tab.id" class="border-b-2 px-4 py-3 text-sm font-bold" :class="activeTab === tab.id ? 'border-indigo-600 text-indigo-700' : 'border-transparent text-slate-500'" @click="activeTab = tab.id">{{ tab.label }}</button>
+      <div v-if="availableTabs.length" class="flex flex-nowrap gap-2 overflow-x-auto border-b border-slate-200">
+        <button v-for="tab in availableTabs" :key="tab.id" class="shrink-0 whitespace-nowrap border-b-2 px-4 py-3 text-sm font-bold" :class="activeTab === tab.id ? 'border-indigo-600 text-indigo-700' : 'border-transparent text-slate-500'" @click="activeTab = tab.id">{{ tab.label }}</button>
       </div>
       <div v-else class="rounded-2xl border border-amber-200 bg-amber-50 p-5 text-sm text-amber-800">当前账号只有菜单权限，尚未分配 MCP 服务台的具体查看权限。</div>
 
@@ -1119,7 +1119,28 @@ onMounted(load)
         </div>
       </section>
 
-      <section v-else-if="activeTab === 'methods' && canReadMethods" class="rounded-2xl bg-white p-6 shadow-sm"><h2 class="text-lg font-black">能力与 Scope</h2><div class="mt-4 overflow-x-auto"><table class="w-full text-left text-sm"><thead><tr class="border-b text-slate-500"><th class="p-3">方法</th><th class="p-3">Scope</th><th class="p-3">能力组</th><th class="p-3">身份/权限模式</th><th class="p-3">状态</th></tr></thead><tbody><tr v-for="method in methods" :key="method.name" class="border-b last:border-0"><td class="p-3 font-mono font-bold">{{ method.name }}</td><td class="p-3 font-mono text-indigo-700">{{ method.scope }}</td><td class="p-3">{{ method.capability_group }}</td><td class="p-3">必须用户授权</td><td class="p-3" :class="method.implemented && method.enabled ? 'text-emerald-600' : 'text-slate-400'">{{ !method.implemented ? '待接入' : (method.enabled ? '已启用' : '已关闭') }}</td></tr></tbody></table></div></section>
+      <section v-else-if="activeTab === 'methods' && canReadMethods" class="rounded-2xl bg-white p-4 shadow-sm sm:p-6">
+        <h2 class="text-lg font-black">能力与 Scope</h2>
+        <div class="mt-4 hidden overflow-x-auto md:block">
+          <table class="w-full min-w-[680px] text-left text-sm">
+            <thead><tr class="border-b text-slate-500"><th class="p-3">方法</th><th class="p-3">Scope</th><th class="p-3">能力组</th><th class="p-3">身份/权限模式</th><th class="p-3">状态</th></tr></thead>
+            <tbody><tr v-for="method in methods" :key="method.name" class="border-b last:border-0"><td class="p-3 font-mono font-bold">{{ method.name }}</td><td class="p-3 font-mono text-indigo-700">{{ method.scope }}</td><td class="p-3">{{ method.capability_group }}</td><td class="p-3">必须用户授权</td><td class="p-3" :class="method.implemented && method.enabled ? 'text-emerald-600' : 'text-slate-400'">{{ !method.implemented ? '待接入' : (method.enabled ? '已启用' : '已关闭') }}</td></tr></tbody>
+          </table>
+        </div>
+        <div class="mt-4 space-y-3 md:hidden">
+          <article v-for="method in methods" :key="method.name" class="rounded-xl border border-slate-200 bg-slate-50/70 p-4">
+            <div class="break-all font-mono text-sm font-black text-slate-900">{{ method.name }}</div>
+            <div class="mt-3 flex flex-wrap gap-2 text-xs">
+              <code class="break-all rounded-full bg-indigo-50 px-2.5 py-1 font-bold text-indigo-700">{{ method.scope }}</code>
+              <span class="rounded-full bg-slate-200 px-2.5 py-1 font-semibold text-slate-600">{{ method.capability_group }}</span>
+            </div>
+            <div class="mt-3 flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-xs text-slate-500">
+              <span>身份：必须用户授权</span>
+              <span class="font-bold" :class="method.implemented && method.enabled ? 'text-emerald-600' : 'text-slate-400'">{{ !method.implemented ? '待接入' : (method.enabled ? '已启用' : '已关闭') }}</span>
+            </div>
+          </article>
+        </div>
+      </section>
 
       <section v-else-if="activeTab === 'audit' && canReadAudit" class="rounded-2xl bg-white p-6 shadow-sm">
         <div class="flex flex-wrap items-start justify-between gap-3">
