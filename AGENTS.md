@@ -30,7 +30,7 @@
 
 ## Git 协作：创建 / 更新 Pull Request
 
-用户要求创建或更新 PR 时，**必须**按仓库根目录 [`PULL_REQUEST_TEMPLATE.md`](./PULL_REQUEST_TEMPLATE.md) 填写标题与正文（概要、核心变更、Commit Log、测试覆盖、备注），不要使用默认的 Summary/Test plan 两段式。提交前同步更新 `tests/CHECKLIST.md`，并在 PR 中注明。
+用户要求创建或更新 PR 时，**必须**按仓库根目录 [`PULL_REQUEST_TEMPLATE.md`](./PULL_REQUEST_TEMPLATE.md) 填写标题与正文（概要、核心变更、表结构变更清单、Commit Log、测试覆盖、备注），不要使用默认的 Summary/Test plan 两段式。提交前同步更新 `tests/CHECKLIST.md`，并在 PR 中注明。
 
 ## 开发环境服务启停
 

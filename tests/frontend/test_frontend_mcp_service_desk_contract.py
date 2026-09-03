@@ -412,6 +412,53 @@ def test_client_card_uses_compact_permission_summary_and_on_demand_details():
     assert "不增加额外限制（用户模式仍受用户权限限制）" not in clients_section
 
 
+def test_client_status_is_present_in_card_footer_separate_from_action_buttons():
+    view = (ROOT / "frontend/src/views/McpServiceDesk.vue").read_text(encoding="utf-8")
+    card = view.split('<div v-for="client in clients"', 1)[1]
+
+    actions_start = card.index('data-testid="client-actions"')
+    status_start = card.index('data-testid="client-status"')
+    status_end = card.index('</div>', status_start) + len('</div>')
+    status_block = card[status_start:status_end]
+    assert status_start > actions_start
+    assert 'class="mt-3 flex items-center justify-end gap-2 text-xs"' in card
+    assert 'aria-label="Client 状态"' in card
+    assert '<button' not in status_block
+    assert '@click' not in status_block
+
+
+def test_client_detail_toggle_uses_icon_button_with_accessibility_label():
+    view = (ROOT / "frontend/src/views/McpServiceDesk.vue").read_text(encoding="utf-8")
+
+    assert ":aria-label=\"expandedClientIds.has(client.client_id) ? '收起 Client 详情' : '展开 Client 详情'\"" in view
+    assert ":title=\"expandedClientIds.has(client.client_id) ? '收起详情' : '展开详情'\"" in view
+    assert ":aria-controls=\"'client-details-' + client.client_id\"" in view
+    assert "@click=\"toggleClientExpanded(client.client_id)\"" in view
+    assert "<svg" in view
+    assert "展开详情</button>" not in view
+
+
+def test_shared_client_mutations_are_owner_scoped_in_ui():
+    view = (ROOT / "frontend/src/views/McpServiceDesk.vue").read_text(encoding="utf-8")
+    clients_section = view.split("activeTab === 'clients'", 1)[1].split("activeTab === 'methods'", 1)[0]
+
+    assert "const { hasPermission, isAdmin, userInfo } = useUser()" in view
+    assert "const isClientOwner = (client: Client) =>" in view
+    assert "!!currentUserId.value" in view
+    assert "const canManageClientItem = (client: Client) =>" in view
+    assert "String(client.created_by ?? '') === currentUserId.value" in view
+    assert 'v-if="canManageClientItem(client)"' in clients_section
+    assert 'v-if="canResetSecretForClient(client)"' in clients_section
+    assert "canRevokeAllClientTokens(tokenDetailsClient)" in view
+
+
+def test_client_edit_save_force_closes_after_saving():
+    view = (ROOT / "frontend/src/views/McpServiceDesk.vue").read_text(encoding="utf-8")
+
+    assert "const closeClientEdit = (force = false)" in view
+    assert "closeClientEdit(true)" in view
+
+
 def test_client_scope_can_be_edited_from_client_card():
     view = (ROOT / "frontend/src/views/McpServiceDesk.vue").read_text(encoding="utf-8")
 
@@ -465,6 +512,28 @@ def test_client_list_does_not_repeat_manual_token_guidance_banner():
     clients_section = view.split("activeTab === 'clients'", 1)[1].split("activeTab === 'methods'", 1)[0]
 
     assert "人工登录接入：" not in clients_section
+
+
+def test_service_desk_exposes_client_token_lifecycle_summary_and_physical_delete_ui():
+    view = (ROOT / "frontend/src/views/McpServiceDesk.vue").read_text(encoding="utf-8")
+
+    for field in (
+        "token_total_count",
+        "expiring_token_count",
+        "expired_token_count",
+        "revoked_token_count",
+    ):
+        assert field in view
+    assert "即将过期" in view
+    assert "selectedTokenIds" in view
+    assert "tokenStatusFilter" in view
+    assert "filteredClientTokens" in view
+    assert "物理删除" in view
+    assert "/tokens/delete" in view
+    assert "删除已选 Token" in view
+    assert "getTokenStatus(token) === 'active' && canDeleteClientToken(token)" in view
+    assert "const getTokenStatus = (token: ClientToken)" in view
+    assert "tokenClock.value = Date.now()" in view
 
 
 def test_login_reloads_backend_oauth_endpoint_after_same_origin_login():

@@ -61,9 +61,14 @@ instance.interceptors.response.use(
       
       switch (status) {
         case 401:
-          // In embedded mode, we don't want to force redirect or clear critical tokens immediately
-          if (window.location.pathname.startsWith('/embed/') || window.location.pathname.includes('EmbedChat')) {
-            console.warn("[Auth] 401 unauthorized in embed mode. Token might be missing from URL or expired.");
+          // In embedded mode or explicit probe request, we don't want to force redirect or clear critical tokens immediately
+          if (
+            window.location.pathname.startsWith('/embed/') ||
+            window.location.pathname.includes('EmbedChat') ||
+            (error.config?.url?.startsWith('/mcp/') && !error.config?.url?.includes('/portal/')) ||
+            error.config?.headers?.['X-Ignore-Auth-Redirect']
+          ) {
+            console.warn("[Auth] 401 unauthorized suppressed for embed or probe request.");
             break;
           }
           // 未授权，清除本地存储并跳转登录

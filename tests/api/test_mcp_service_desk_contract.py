@@ -269,6 +269,30 @@ def test_service_desk_exposes_token_lifecycle_and_client_query_endpoints():
     assert "latest_token_expires_at" in source
 
 
+def test_client_token_management_exposes_lifecycle_counts_and_physical_delete_routes():
+    source = Path("app/api/portal/endpoints/mcp_service.py").read_text(encoding="utf-8")
+
+    for field in (
+        "token_total_count",
+        "expiring_token_count",
+        "expired_token_count",
+        "revoked_token_count",
+    ):
+        assert field in source
+    assert '@router.delete("/clients/{client_id}/tokens/{token_id}")' in source
+    assert '@router.post("/clients/{client_id}/tokens/delete")' in source
+    assert "delete(McpOAuthAccessToken)" in source
+    delete_segment = source.split('@router.delete("/clients/{client_id}/tokens/{token_id}")', 1)[1].split("\n@router", 1)[0]
+    batch_delete_segment = source.split('@router.post("/clients/{client_id}/tokens/delete")', 1)[1].split("\n@router", 1)[0]
+    for segment in (delete_segment, batch_delete_segment):
+        assert "McpOAuthGrant" not in segment
+        assert "McpOAuthRefreshToken" not in segment
+        assert "McpOAuthAccessToken" in segment
+    assert ".where(*filters)" in source[source.index("async def list_client_tokens"):source.index('@router.delete("/clients/{client_id}/tokens/{token_id}")')]
+    assert ".limit(100)" not in source[source.index("async def list_client_tokens"):source.index('@router.delete("/clients/{client_id}/tokens/{token_id}")')]
+    assert "oauth_access_token_deleted" in source
+
+
 def test_scope_only_client_update_does_not_revalidate_unrelated_redirect_uri():
     source = Path("app/api/portal/endpoints/mcp_service.py").read_text(encoding="utf-8")
 
@@ -283,7 +307,8 @@ def test_client_reissue_state_covers_all_invalidated_token_paths_without_false_r
     assert "has_issued_token" in source
     assert "active_token_count" in source
     assert "security_changed" in source
-    assert "scope_changed or grant_types_changed or status_changed" in source
+    assert "redirect_uris_changed" in source
+    assert "scope_changed or grant_types_changed or redirect_uris_changed or status_changed" in source
     assert "row.status == \"active\"" in source
 
 
@@ -323,6 +348,14 @@ def test_client_security_changes_revoke_existing_grants_and_tokens():
     assert "McpOAuthAccessToken" in source
     assert "McpOAuthRefreshToken" in source
     assert "revoked_at" in source
+
+
+def test_playground_does_not_return_complete_access_token():
+    source = Path("app/api/portal/endpoints/mcp_service.py").read_text(encoding="utf-8")
+    playground = source.split('@router.post("/playground/test")', 1)[1]
+
+    assert '"token_masked"' in playground
+    assert '"token_used"' not in playground
 
 
 def test_service_desk_does_not_expose_client_resource_whitelist():

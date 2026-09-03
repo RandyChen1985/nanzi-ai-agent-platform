@@ -87,3 +87,15 @@ def test_scope_version_migration_tracks_client_scope_changes_and_token_issuance(
     assert "scope_version" in postgres
     assert "ADD COLUMN" in mysql
     assert "ADD COLUMN IF NOT EXISTS" in postgres
+
+
+def test_shared_client_migration_adds_is_shared_column():
+    mysql = (ROOT / "db-prod/V143-add_mcp_client_is_shared.sql").read_text(encoding="utf-8")
+    postgres = (ROOT / "db-prod-pg/V44-add_mcp_client_is_shared.sql").read_text(encoding="utf-8")
+
+    assert "sys_mcp_oauth_clients" in mysql
+    assert "is_shared" in mysql
+    assert "idx_mcp_oauth_client_is_shared" in mysql
+    assert "sys_mcp_oauth_clients" in postgres
+    assert "is_shared" in postgres
+    assert "idx_mcp_oauth_client_is_shared" in postgres
