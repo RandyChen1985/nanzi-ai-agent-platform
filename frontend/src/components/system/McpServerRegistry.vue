@@ -273,7 +273,7 @@ const buildServerPayload = (server: any) => {
     user_assertion_key_id: server.user_assertion_key_id || null,
     user_assertion_issuer: server.user_assertion_issuer || 'nanzi-platform',
   }
-  // 认证 Header 不从服务端回显。编辑时未修改认证区域，后端保留原配置。
+  // 编辑时未修改认证区域，后端保留原配置；当前编辑表单会直接回显已有值。
   if (isEditing.value && !authHeadersTouched.value) {
     delete payload.auth_headers
   }
@@ -598,8 +598,7 @@ const openEditModal = (server: any) => {
     server_name: server.server_name,
     remark: server.remark || '',
     sse_url: server.sse_url,
-    // 认证 Header 是敏感信息，服务端不会回显；留空表示沿用已有配置。
-    auth_headers: '{}',
+    auth_headers: server.auth_headers || '{}',
     enabled_status: server.enabled_status,
     credential_mode: server.credential_mode || 'static',
     user_assertion_enabled: Boolean(server.user_assertion_enabled),
@@ -1525,7 +1524,7 @@ onMounted(fetchServers)
                   <span class="text-primary cursor-pointer hover:underline" @click="headerPairs[0] = {key: 'Authorization', value: 'Bearer '}; authHeadersTouched = true">[常用推荐：Authorization]</span>
                 </p>
                 <p v-if="isEditing" class="text-[10px] text-amber-600 leading-relaxed">
-                  已有认证信息不会回显；不修改下方内容并保存时，会保留原配置。需要更换认证信息时，请重新填写。
+                  已有认证信息会直接回显；不修改下方内容并保存时，会保留原配置。
                 </p>
               
                 <div class="space-y-2 bg-gray-50 p-3 rounded-lg border border-gray-100 max-h-[150px] overflow-y-auto custom-scrollbar">

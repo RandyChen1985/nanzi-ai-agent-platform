@@ -82,8 +82,8 @@ def test_private_key_is_write_only():
     assert "user_assertion_private_key" not in McpServerWrite.model_fields
 
 
-def test_mcp_response_never_contains_auth_header_values():
-    assert "auth_headers" not in McpServerResponse.model_fields
+def test_mcp_response_includes_auth_header_values_for_editing():
+    assert "auth_headers" in McpServerResponse.model_fields
 
 
 def test_legacy_static_mode_remains_valid_without_user_assertion_config():

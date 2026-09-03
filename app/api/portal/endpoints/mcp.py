@@ -70,6 +70,7 @@ def _normalized_remark(value: Optional[str]) -> Optional[str]:
 
 class McpServerResponse(McpServerBase):
     id: str
+    auth_headers: Optional[str] = "{}"
     scope: str = "global"
     user_id: Optional[int] = None
     last_sync_at: Optional[Any] = None
@@ -472,9 +473,7 @@ async def create_mcp_server(
     except Exception as e:
         logger.warning(f"Initial sync failed for new server {server_id}: {e}")
         
-    response_data = {
-        key: value for key, value in server_data.items() if key != "auth_headers"
-    }
+    response_data = dict(server_data)
     return {**response_data, "id": server_id, "tool_count": 0, "published_tool_count": 0}
 
 @router.put("/servers/{server_id}", response_model=McpServerResponse)
@@ -567,7 +566,8 @@ async def update_mcp_server(
     )
     pub = (await db.execute(pub_stmt)).scalar() or 0
     
-    response_data = data.model_dump(exclude={"fixed_token", "auth_headers"})
+    response_data = data.model_dump(exclude={"fixed_token"})
+    response_data["auth_headers"] = server.auth_headers or "{}"
     response_data["server_name"] = server_name
     response_data["user_assertion_audience"] = server.user_assertion_audience
     response_data["user_assertion_key_id"] = server.user_assertion_key_id
