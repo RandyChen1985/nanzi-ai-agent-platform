@@ -17,11 +17,17 @@ PREPARE v71_stmt FROM @v71_sql;
 EXECUTE v71_stmt;
 DEALLOCATE PREPARE v71_stmt;
 
-SET @v71_sql = IF(EXISTS (
-    SELECT 1 FROM information_schema.columns
-    WHERE table_schema = DATABASE() AND table_name = 'ai_agent_access_logs'
-      AND column_name = 'id' AND FIND_IN_SET('auto_increment', LOWER(extra)) > 0
-), 'ALTER TABLE `ai_agent_access_logs` MODIFY COLUMN `id` BIGINT NOT NULL', 'SELECT 1');
+SET @v71_sql = IF(
+    (SELECT COUNT(*) FROM information_schema.statistics
+     WHERE table_schema = DATABASE() AND table_name = 'ai_agent_access_logs'
+       AND index_name = 'PRIMARY') = 1
+    AND EXISTS (SELECT 1 FROM information_schema.statistics
+     WHERE table_schema = DATABASE() AND table_name = 'ai_agent_access_logs'
+       AND index_name = 'PRIMARY' AND column_name = 'id' AND seq_in_index = 1)
+    AND EXISTS (SELECT 1 FROM information_schema.columns
+     WHERE table_schema = DATABASE() AND table_name = 'ai_agent_access_logs'
+       AND column_name = 'id' AND FIND_IN_SET('auto_increment', LOWER(extra)) > 0),
+    'ALTER TABLE `ai_agent_access_logs` MODIFY COLUMN `id` BIGINT NOT NULL', 'SELECT 1');
 PREPARE v71_stmt FROM @v71_sql;
 EXECUTE v71_stmt;
 DEALLOCATE PREPARE v71_stmt;
@@ -89,11 +95,17 @@ PREPARE v71_stmt FROM @v71_sql;
 EXECUTE v71_stmt;
 DEALLOCATE PREPARE v71_stmt;
 
-SET @v71_sql = IF(EXISTS (
-    SELECT 1 FROM information_schema.columns
-    WHERE table_schema = DATABASE() AND table_name = 'ai_agent_execution_traces'
-      AND column_name = 'id' AND FIND_IN_SET('auto_increment', LOWER(extra)) > 0
-), 'ALTER TABLE `ai_agent_execution_traces` MODIFY COLUMN `id` BIGINT NOT NULL', 'SELECT 1');
+SET @v71_sql = IF(
+    (SELECT COUNT(*) FROM information_schema.statistics
+     WHERE table_schema = DATABASE() AND table_name = 'ai_agent_execution_traces'
+       AND index_name = 'PRIMARY') = 1
+    AND EXISTS (SELECT 1 FROM information_schema.statistics
+     WHERE table_schema = DATABASE() AND table_name = 'ai_agent_execution_traces'
+       AND index_name = 'PRIMARY' AND column_name = 'id' AND seq_in_index = 1)
+    AND EXISTS (SELECT 1 FROM information_schema.columns
+     WHERE table_schema = DATABASE() AND table_name = 'ai_agent_execution_traces'
+       AND column_name = 'id' AND FIND_IN_SET('auto_increment', LOWER(extra)) > 0),
+    'ALTER TABLE `ai_agent_execution_traces` MODIFY COLUMN `id` BIGINT NOT NULL', 'SELECT 1');
 PREPARE v71_stmt FROM @v71_sql;
 EXECUTE v71_stmt;
 DEALLOCATE PREPARE v71_stmt;

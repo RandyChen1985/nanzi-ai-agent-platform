@@ -168,7 +168,8 @@ execute_sql_file() {
         local preview="$2"
         set +e
         # 每条语句单独 session：必须每次先 SET NAMES，否则中文提示词等会乱码。
-        printf 'SET NAMES utf8mb4 COLLATE utf8mb4_unicode_ci;\n%s\n' "$payload" | $MYSQL_CMD 2>"$err_log"
+        # 标准输出静音，避免 SELECT 1 等幂等探测语句在终端刷屏；错误仍写入 err_log
+        printf 'SET NAMES utf8mb4 COLLATE utf8mb4_unicode_ci;\n%s\n' "$payload" | $MYSQL_CMD >/dev/null 2>"$err_log"
         local status=$?
         set -e
         if [ $status -ne 0 ]; then
@@ -269,6 +270,8 @@ execute_sql_file() {
                     fi
                     prepared_block=""
                     prepared_preview=""
+                    # 预处理块消费完毕后重置临时前缀，避免多组 PREPARE 连续堆叠累积
+                    session_prefix=""
                 fi
                 stmt=""
                 continue
