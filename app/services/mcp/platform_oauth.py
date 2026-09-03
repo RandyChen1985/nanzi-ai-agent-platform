@@ -201,6 +201,7 @@ class PlatformMcpOAuthService:
         allowed_scopes: Sequence[str],
         allowed_grant_types: Sequence[str] = ("authorization_code",),
         created_by: str | None = None,
+        is_shared: bool = False,
     ) -> tuple[McpOAuthClient, str, str]:
         if not client_name.strip():
             raise ValueError("client_name is required")
@@ -224,6 +225,7 @@ class PlatformMcpOAuthService:
             redirect_uris=list(redirect_uris),
             allowed_grant_types=list(allowed_grant_types),
             allowed_scopes=filter_requested_scopes(allowed_scopes, DEFAULT_SCOPES),
+            is_shared=bool(is_shared),
             created_by=created_by,
         )
         db.add(client)

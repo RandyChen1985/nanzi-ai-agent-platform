@@ -23,6 +23,20 @@ def test_methods_tab_has_responsive_table_and_mobile_cards():
     assert "待接入" in methods_section
 
 
+def test_playground_defaults_match_registered_tool_signatures():
+    source = _source()
+    playground_defaults = source.split("const openPlayground", 1)[1].split("const executePlaygroundTest", 1)[0]
+
+    assert "defaultParams.limit = 5" in playground_defaults
+    assert "defaultParams.top_k = 3" in playground_defaults
+    assert "defaultParams.message = '你好'" in playground_defaults
+    assert "defaultParams.page" not in playground_defaults
+    assert "defaultParams.page_size" not in playground_defaults
+    assert "defaultParams.prompt" not in playground_defaults
+    assert "defaultParams.limit = 3" not in playground_defaults
+    assert "res.data.token_used" not in source
+
+
 def test_service_desk_tabs_stay_single_line_and_scroll_on_mobile():
     source = _source()
     tab_bar = source.split("availableTabs.length", 1)[1].split("activeTab === 'guide'", 1)[0]

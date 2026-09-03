@@ -11,10 +11,14 @@ axios.interceptors.response.use(
   response => response,
   error => {
     if (error.response && error.response.status === 401) {
-      // In embedded mode, we don't want to force redirect to login
+      // In embedded mode or mcp probe/playground, we don't want to force redirect to login
       // instead, we let the component handle the state (e.g. showing "No Permission")
-      if (window.location.pathname.startsWith('/embed/')) {
-        console.warn("[Auth] 401 error suppressed for embed route");
+      if (
+        window.location.pathname.startsWith('/embed/') ||
+        (error.config?.url?.startsWith('/mcp/') && !error.config?.url?.includes('/portal/')) ||
+        error.config?.headers?.['X-Ignore-Auth-Redirect']
+      ) {
+        console.warn("[Auth] 401 error suppressed for embed or probe request");
         return Promise.reject(error);
       }
 

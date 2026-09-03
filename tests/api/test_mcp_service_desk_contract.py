@@ -283,7 +283,8 @@ def test_client_reissue_state_covers_all_invalidated_token_paths_without_false_r
     assert "has_issued_token" in source
     assert "active_token_count" in source
     assert "security_changed" in source
-    assert "scope_changed or grant_types_changed or status_changed" in source
+    assert "redirect_uris_changed" in source
+    assert "scope_changed or grant_types_changed or redirect_uris_changed or status_changed" in source
     assert "row.status == \"active\"" in source
 
 
@@ -323,6 +324,14 @@ def test_client_security_changes_revoke_existing_grants_and_tokens():
     assert "McpOAuthAccessToken" in source
     assert "McpOAuthRefreshToken" in source
     assert "revoked_at" in source
+
+
+def test_playground_does_not_return_complete_access_token():
+    source = Path("app/api/portal/endpoints/mcp_service.py").read_text(encoding="utf-8")
+    playground = source.split('@router.post("/playground/test")', 1)[1]
+
+    assert '"token_masked"' in playground
+    assert '"token_used"' not in playground
 
 
 def test_service_desk_does_not_expose_client_resource_whitelist():

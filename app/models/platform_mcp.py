@@ -44,6 +44,7 @@ class McpOAuthClient(Base):
     allowed_grant_types = Column(JSON, nullable=False, default=list)
     allowed_scopes = Column(JSON, nullable=False, default=list)
     scope_version = Column(Integer, nullable=False, default=1, comment="Client Scope 版本，每次 Scope 变更递增")
+    is_shared = Column(Boolean, nullable=False, default=False, index=True, comment="是否为全员共享 Client")
     status = Column(String(20), nullable=False, default="active", index=True)
     created_by = Column(String(64), nullable=True, comment="创建人用户 ID")
     created_at = Column(DateTime, default=datetime.utcnow)

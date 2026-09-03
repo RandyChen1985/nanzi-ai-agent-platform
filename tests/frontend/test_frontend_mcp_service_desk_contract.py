@@ -412,6 +412,27 @@ def test_client_card_uses_compact_permission_summary_and_on_demand_details():
     assert "不增加额外限制（用户模式仍受用户权限限制）" not in clients_section
 
 
+def test_shared_client_mutations_are_owner_scoped_in_ui():
+    view = (ROOT / "frontend/src/views/McpServiceDesk.vue").read_text(encoding="utf-8")
+    clients_section = view.split("activeTab === 'clients'", 1)[1].split("activeTab === 'methods'", 1)[0]
+
+    assert "const { hasPermission, isAdmin, userInfo } = useUser()" in view
+    assert "const isClientOwner = (client: Client) =>" in view
+    assert "!!currentUserId.value" in view
+    assert "const canManageClientItem = (client: Client) =>" in view
+    assert "String(client.created_by ?? '') === currentUserId.value" in view
+    assert 'v-if="canManageClientItem(client)"' in clients_section
+    assert 'v-if="canResetSecretForClient(client)"' in clients_section
+    assert "canRevokeAllClientTokens(tokenDetailsClient)" in view
+
+
+def test_client_edit_save_force_closes_after_saving():
+    view = (ROOT / "frontend/src/views/McpServiceDesk.vue").read_text(encoding="utf-8")
+
+    assert "const closeClientEdit = (force = false)" in view
+    assert "closeClientEdit(true)" in view
+
+
 def test_client_scope_can_be_edited_from_client_card():
     view = (ROOT / "frontend/src/views/McpServiceDesk.vue").read_text(encoding="utf-8")
 

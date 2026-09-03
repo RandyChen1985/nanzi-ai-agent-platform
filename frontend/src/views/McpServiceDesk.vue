@@ -14,6 +14,7 @@ type Client = {
   allowed_grant_types: string[]
   allowed_scopes: string[]
   scope_version: number
+  is_shared?: boolean
   needs_token_regeneration?: boolean
   created_by?: string | null
   owner_user_name?: string | null
@@ -61,6 +62,8 @@ type SecurityAuditLog = {
 type ClientToken = {
   id: string
   user_id?: string | null
+  user_name?: string | null
+  real_name?: string | null
   scopes: string[]
   issue_method: 'oauth_authorization' | 'manual_user_token'
   issued_at?: string | null
@@ -69,9 +72,23 @@ type ClientToken = {
   status: 'active' | 'expired' | 'revoked'
 }
 
+type Grant = {
+  id: string
+  client_id: string
+  client_name: string
+  user_id: string
+  scopes: string[]
+  resource: string
+  status: 'active' | 'revoked'
+  consented_at?: string | null
+  last_used_at?: string | null
+  revoked_at?: string | null
+  created_at?: string | null
+}
+
 type ClientConfirmAction = 'disable' | 'reset-secret' | 'delete'
 
-const { hasPermission, isAdmin } = useUser()
+const { hasPermission, isAdmin, userInfo } = useUser()
 const { showToast } = useToast()
 const activeTab = ref<Tab>('overview')
 const loading = ref(false)
@@ -124,6 +141,28 @@ const tokenWizardStep = ref<1 | 2>(1)
 const clientDetails = ref<Client | null>(null)
 const showClientScopeEdit = ref(false)
 const clientScopeEditTarget = ref<Client | null>(null)
+const showClientEdit = ref(false)
+const clientEditTarget = ref<Client | null>(null)
+const clientEditForm = reactive({
+  client_name: '',
+  redirect_uris: '',
+  is_shared: false,
+})
+
+const showGrants = ref(false)
+const grants = ref<Grant[]>([])
+const grantsLoading = ref(false)
+
+const showPlayground = ref(false)
+const playgroundMethod = ref<any>(null)
+const playgroundParams = ref('{}')
+const playgroundTesting = ref(false)
+const playgroundToken = ref('')
+const playgroundResponse = ref('')
+const playgroundStatus = ref<'success' | 'failed' | ''>('')
+const playgroundLatency = ref<number | null>(null)
+
+const exportingAudit = ref(false)
 const copied = ref('')
 const tokenForm = reactive({
   scopes: [] as string[],
@@ -174,6 +213,7 @@ const form = reactive({
   redirect_uris: '',
   allowed_grant_types: ['authorization_code'],
   allowed_scopes: ['knowledge:search'],
+  is_shared: false,
 })
 const scopeOptions = [
   ['knowledge:search', '知识库搜索'],
@@ -201,12 +241,17 @@ const scopeSummary = (client: Client) => {
   return scopes.length > 2 ? `${visible} 等 ${scopes.length} 项` : visible
 }
 
+const currentUserId = computed(() => String(userInfo.value?.user_id ?? userInfo.value?.id ?? ''))
+const isClientOwner = (client: Client) => (
+  !!currentUserId.value && String(client.created_by ?? '') === currentUserId.value
+)
+
 const openClientDetails = (client: Client) => {
   clientDetails.value = client
 }
 
 const openClientScopeEdit = (client: Client) => {
-  if (!canManageClient.value || client.status === 'deleted') return
+  if (!canManageClientItem(client) || client.status === 'deleted') return
   clientScopeEditTarget.value = client
   clientScopeEditForm.scopes = [...client.allowed_scopes]
   showClientScopeEdit.value = true
@@ -230,6 +275,17 @@ const canReadGuide = computed(() => canReadOverview.value)
 const canReadClients = computed(() => hasPermission('element:mcp_service:client:read'))
 const canReadMethods = computed(() => hasPermission('element:mcp_service:capability:read'))
 const canReadAudit = computed(() => hasPermission('element:mcp_service:audit:read'))
+const canReadGrants = computed(() => hasPermission('element:mcp_service:grant:read'))
+const canRevokeGrants = computed(() => hasPermission('element:mcp_service:grant:revoke'))
+const canManageClientItem = (client: Client) => (
+  canManageClient.value && (isAdmin.value || isClientOwner(client))
+)
+const canResetSecretForClient = (client: Client) => (
+  canResetSecret.value && (isAdmin.value || isClientOwner(client))
+)
+const canRevokeAllClientTokens = (client: Client | null) => (
+  !!client && canIssueToken.value && (isAdmin.value || isClientOwner(client))
+)
 const availableTabs = computed(() => [
   canReadOverview.value ? { id: 'overview' as Tab, label: '服务总览' } : null,
   canReadConfig.value ? { id: 'config' as Tab, label: '服务配置' } : null,
@@ -238,6 +294,164 @@ const availableTabs = computed(() => [
   canReadAudit.value ? { id: 'audit' as Tab, label: '审计日志' } : null,
   canReadGuide.value ? { id: 'guide' as Tab, label: '使用指南' } : null,
 ].filter(Boolean) as Array<{ id: Tab; label: string }>)
+
+const openClientEdit = (client: Client) => {
+  if (!canManageClientItem(client) || client.status === 'deleted') return
+  clientEditTarget.value = client
+  clientEditForm.client_name = client.client_name
+  clientEditForm.redirect_uris = (client.redirect_uris || []).join('\n')
+  clientEditForm.is_shared = !!client.is_shared
+  showClientEdit.value = true
+}
+
+const closeClientEdit = (force = false) => {
+  if (saving.value && !force) return
+  showClientEdit.value = false
+  clientEditTarget.value = null
+}
+
+const saveClientEdit = async () => {
+  const client = clientEditTarget.value
+  if (!client || !canManageClientItem(client) || !clientEditForm.client_name.trim() || saving.value) return
+  saving.value = true
+  error.value = ''
+  try {
+    const redirectUris = clientEditForm.redirect_uris
+      .split(/\r?\n|,/)
+      .map(item => item.trim())
+      .filter(Boolean)
+    await api.patch(`/api/portal/mcp-service/clients/${encodeURIComponent(client.client_id)}`, {
+      client_name: clientEditForm.client_name.trim(),
+      redirect_uris: redirectUris,
+      is_shared: clientEditForm.is_shared,
+    })
+    showToast('Client 基本信息已更新', 'success')
+    await loadClients()
+    closeClientEdit(true)
+  } catch (err: any) {
+    error.value = err?.response?.data?.detail || 'Client 更新失败'
+  } finally {
+    saving.value = false
+  }
+}
+
+const revokeAllClientTokens = async (client: Client) => {
+  if (!canRevokeAllClientTokens(client)) return
+  if (!window.confirm(`确定要撤销 Client【${client.client_name}】下全部有效 Token 吗？此操作不可逆。`)) return
+  try {
+    await api.post(`/api/portal/mcp-service/clients/${client.client_id}/tokens/revoke-all`)
+    showToast('已撤销该 Client 下全部有效 Token', 'success')
+    await openTokenDetails(client)
+    await loadClients()
+  } catch (err: any) {
+    error.value = err?.response?.data?.detail || '批量撤销 Token 失败'
+  }
+}
+
+const loadGrants = async () => {
+  if (!canReadGrants.value) return
+  grantsLoading.value = true
+  try {
+    const response = await api.get('/api/portal/mcp-service/grants')
+    grants.value = response.data || []
+  } catch (err: any) {
+    error.value = err?.response?.data?.detail || '授权记录加载失败'
+  } finally {
+    grantsLoading.value = false
+  }
+}
+
+const revokeGrant = async (grant: Grant) => {
+  if (!window.confirm(`确定要解除对【${grant.client_name || grant.client_id}】的授权吗？该应用已签发的全部 Token 将立即失效。`)) return
+  try {
+    await api.post(`/api/portal/mcp-service/grants/${grant.id}/revoke`)
+    showToast('已成功解除授权', 'success')
+    await loadGrants()
+    await loadClients()
+  } catch (err: any) {
+    error.value = err?.response?.data?.detail || '解除授权失败'
+  }
+}
+
+const removeAuditFilter = async (key: AuditFilterKey) => {
+  auditFilters[key] = ''
+  await applyAuditFilters()
+}
+
+const openPlayground = (method: any) => {
+  playgroundMethod.value = method
+  playgroundResponse.value = ''
+  playgroundStatus.value = ''
+  playgroundLatency.value = null
+  const defaultParams: Record<string, any> = {}
+  if (method.name === 'metadata.list_datasets') {
+    defaultParams.limit = 5
+  } else if (method.name === 'metadata.search') {
+    defaultParams.query = '测试'
+  } else if (method.name === 'knowledge.search') {
+    defaultParams.query = '知识库检索测试'
+    defaultParams.top_k = 3
+  } else if (method.name === 'agent.list_allowed') {
+    // 无参数
+  } else if (method.name === 'agent.invoke') {
+    defaultParams.agent_id = 'agent_id_here'
+    defaultParams.message = '你好'
+  } else if (method.name === 'conversation.continue') {
+    defaultParams.conversation_id = 'conversation_id_here'
+    defaultParams.message = '继续'
+  } else if (method.name === 'metadata.get_dataset' || method.name === 'metadata.get_schema' || method.name === 'metadata.get_metrics') {
+    defaultParams.dataset_id = 'dataset_id_here'
+  }
+  playgroundParams.value = JSON.stringify(defaultParams, null, 2)
+  showPlayground.value = true
+}
+
+const executePlaygroundTest = async () => {
+  if (!playgroundMethod.value || playgroundTesting.value) return
+  const tokenToUse = playgroundToken.value.trim()
+  if (!tokenToUse) {
+    playgroundStatus.value = 'failed'
+    playgroundResponse.value = '请先输入 Bearer Access Token。\n\n提示：你可以在「外部 Client」列表中找到已启用的 Client，点击「生成 MCP Access Token」，复制后粘贴至此处进行在线调试。'
+    return
+  }
+  let parsedArgs = {}
+  try {
+    parsedArgs = JSON.parse(playgroundParams.value || '{}')
+  } catch {
+    playgroundStatus.value = 'failed'
+    playgroundResponse.value = '参数 JSON 格式不合法，请检查后再试'
+    return
+  }
+  playgroundTesting.value = true
+  playgroundResponse.value = ''
+  playgroundStatus.value = ''
+  const startTime = Date.now()
+  try {
+    const res = await api.post('/api/portal/mcp-service/playground/test', {
+      method_name: playgroundMethod.value.name,
+      arguments: parsedArgs,
+      token: tokenToUse,
+    }, {
+      headers: {
+        'X-Ignore-Auth-Redirect': 'true',
+      },
+    })
+    playgroundLatency.value = res.data.latency_ms ?? (Date.now() - startTime)
+    if (res.data.status === 'success') {
+      playgroundStatus.value = 'success'
+      playgroundResponse.value = JSON.stringify(res.data.response, null, 2)
+    } else {
+      playgroundStatus.value = 'failed'
+      playgroundResponse.value = JSON.stringify(res.data.response || { error: res.data.error || '调用失败' }, null, 2)
+    }
+  } catch (err: any) {
+    playgroundLatency.value = Date.now() - startTime
+    playgroundStatus.value = 'failed'
+    playgroundResponse.value = JSON.stringify(err?.response?.data || { error: err?.message || '请求发生异常' }, null, 2)
+  } finally {
+    playgroundTesting.value = false
+  }
+}
 
 const loadOverview = async () => {
   if (canReadOverview.value) {
@@ -311,11 +525,34 @@ const revokeClientToken = async (token: ClientToken) => {
   }
 }
 
-const exportAudit = () => {
-  const params = new URLSearchParams()
-  if (auditStartAt.value) params.set('start_at', auditStartAt.value)
-  if (auditEndAt.value) params.set('end_at', auditEndAt.value)
-  window.open(`/api/portal/mcp-service/audit/export?${params.toString()}`, '_blank')
+const exportAudit = async () => {
+  exportingAudit.value = true
+  try {
+    const params: Record<string, string | number> = {}
+    if (auditStartAt.value) params.start_at = auditStartAt.value
+    if (auditEndAt.value) params.end_at = auditEndAt.value
+    Object.entries(auditFilters).forEach(([key, value]) => {
+      if (value.trim()) params[key] = value.trim()
+    })
+    const response = await api.get('/api/portal/mcp-service/audit/export', {
+      params,
+      responseType: 'blob',
+    })
+    const blob = new Blob([response.data], { type: 'text/csv;charset=utf-8;' })
+    const url = window.URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.setAttribute('download', `mcp-audit-${new Date().toISOString().slice(0, 10)}.csv`)
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+    window.URL.revokeObjectURL(url)
+    showToast('审计日志导出成功', 'success')
+  } catch (err: any) {
+    error.value = err?.response?.data?.detail || '审计日志导出失败'
+  } finally {
+    exportingAudit.value = false
+  }
 }
 
 const loadMethods = async () => {
@@ -625,9 +862,9 @@ const closeTokenWizard = () => {
 }
 
 const openClientConfirm = (action: ClientConfirmAction, client: Client) => {
-  if (action === 'disable' && !canManageClient.value) return
-  if (action === 'reset-secret' && !canResetSecret.value) return
-  if (action === 'delete' && !canManageClient.value) return
+  if (action === 'disable' && !canManageClientItem(client)) return
+  if (action === 'reset-secret' && !canResetSecretForClient(client)) return
+  if (action === 'delete' && !canManageClientItem(client)) return
   clientConfirmAction.value = action
   clientConfirmTarget.value = client
   showClientConfirm.value = true
@@ -667,7 +904,7 @@ const createClient = async () => {
 
 const saveClientScopes = async () => {
   const client = clientScopeEditTarget.value
-  if (!client || !clientScopeEditForm.scopes.length || saving.value) return
+  if (!client || !canManageClientItem(client) || !clientScopeEditForm.scopes.length || saving.value) return
   const currentScopes = [...(client.allowed_scopes || [])].sort()
   const nextScopes = [...clientScopeEditForm.scopes].sort()
   if (JSON.stringify(currentScopes) === JSON.stringify(nextScopes)) {
@@ -691,7 +928,7 @@ const saveClientScopes = async () => {
 }
 
 const toggleClient = async (client: Client) => {
-  if (!canManageClient.value) return
+  if (!canManageClientItem(client)) return
   if (client.status === 'active') {
     openClientConfirm('disable', client)
     return
@@ -742,12 +979,12 @@ const confirmClientAction = async () => {
 }
 
 const resetSecret = (client: Client) => {
-  if (!canResetSecret.value) return
+  if (!canResetSecretForClient(client)) return
   openClientConfirm('reset-secret', client)
 }
 
 const removeClient = (client: Client) => {
-  if (!canManageClient.value || client.status === 'deleted') return
+  if (!canManageClientItem(client) || client.status === 'deleted') return
   openClientConfirm('delete', client)
 }
 
@@ -793,7 +1030,10 @@ onMounted(load)
 
       <div v-if="error" class="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{{ error }}</div>
       <div v-if="oneTimeSecret && !secretRevealClientId" class="rounded-2xl border border-amber-200 bg-amber-50 p-4">
-        <div class="font-bold text-amber-900">Client Secret 只显示本次，请立即复制保存</div>
+        <div class="flex items-center justify-between">
+          <div class="font-bold text-amber-900">Client Secret 只显示本次，请立即复制保存</div>
+          <button type="button" class="text-xs font-bold text-amber-700 hover:text-amber-900 underline" @click="oneTimeSecret = ''; secretRevealClientId = null">已保存并关闭</button>
+        </div>
         <div class="mt-3 flex gap-2">
           <code class="min-w-0 flex-1 break-all rounded-lg bg-white px-3 py-2 text-sm">{{ oneTimeSecret }}</code>
           <button class="rounded-lg bg-amber-500 px-3 py-2 text-sm font-bold text-white" @click="copyValue('secret', oneTimeSecret)">{{ copied === 'secret' ? '已复制' : '复制' }}</button>
@@ -854,6 +1094,61 @@ onMounted(load)
             </div>
           </div>
           <p class="mt-4 text-xs leading-5 text-slate-500">不要把真实 Token、NanZi 用户 API Key 或 Client Secret 提交到代码仓库。Client Secret 只用于 OAuth Token Endpoint，Access Token 才用于调用 MCP。</p>
+        </div>
+
+        <div class="rounded-2xl bg-white p-6 shadow-sm">
+          <div class="flex items-center justify-between">
+            <div>
+              <h2 class="text-lg font-black">主流客户端详细配置指南</h2>
+              <p class="mt-1 text-sm text-slate-500">快速将 NanZi Platform MCP 接入你常用的桌面工具与工作流系统。</p>
+            </div>
+            <span class="rounded-full bg-indigo-50 px-3 py-1 text-xs font-bold text-indigo-700">配置路径 & 示例</span>
+          </div>
+
+          <div class="mt-5 grid gap-4 md:grid-cols-2">
+            <!-- Claude Desktop 配置指南 -->
+            <div class="rounded-xl border border-slate-200 bg-slate-50/60 p-4">
+              <div class="flex items-center gap-2">
+                <span class="text-base font-bold text-slate-800">Claude Desktop</span>
+                <span class="rounded-full bg-slate-200 px-2 py-0.5 text-[11px] font-bold text-slate-600">桌面端</span>
+              </div>
+              <p class="mt-1.5 text-xs text-slate-500">打开本地 Claude Desktop 配置文件进行配置：</p>
+              <div class="mt-2 space-y-1.5 font-mono text-xs">
+                <div class="rounded-lg bg-slate-200/70 p-2 break-all text-slate-700">
+                  <span class="font-bold text-slate-500">macOS:</span> ~/Library/Application Support/Claude/claude_desktop_config.json
+                </div>
+                <div class="rounded-lg bg-slate-200/70 p-2 break-all text-slate-700">
+                  <span class="font-bold text-slate-500">Windows:</span> %APPDATA%\Claude\claude_desktop_config.json
+                </div>
+              </div>
+              <p class="mt-3 text-xs leading-5 text-slate-600">
+                将上方「复制 MCP JSON」的内容合并到配置文件的 <code class="rounded bg-slate-200 px-1 py-0.5 text-slate-800">"mcpServers"</code> 节点下，保存后完全退出并重启 Claude Desktop 即可。
+              </p>
+            </div>
+
+            <!-- Dify / Coze / n8n 低代码集成指南 -->
+            <div class="rounded-xl border border-slate-200 bg-slate-50/60 p-4">
+              <div class="flex items-center gap-2">
+                <span class="text-base font-bold text-slate-800">Dify / Coze / n8n</span>
+                <span class="rounded-full bg-indigo-100 px-2 py-0.5 text-[11px] font-bold text-indigo-800">工作流 / Agent</span>
+              </div>
+              <p class="mt-1.5 text-xs text-slate-500">在工作流与低代码智能体编排平台中接入：</p>
+              <ul class="mt-2 space-y-2 text-xs leading-5 text-slate-600">
+                <li class="flex items-start gap-1.5">
+                  <span class="font-bold text-indigo-600">•</span>
+                  <span><strong>Dify:</strong> 在「工具」-「自定义 MCP 工具」中填入本平台的 MCP SSE/HTTP 地址，鉴权 Header 选择 <code class="font-mono text-slate-800">Authorization: Bearer &lt;Token&gt;</code>。</span>
+                </li>
+                <li class="flex items-start gap-1.5">
+                  <span class="font-bold text-indigo-600">•</span>
+                  <span><strong>Coze / 扣子:</strong> 在插件/工具中配置外部 HTTP API，请求头携带当前用户签发的 Access Token。</span>
+                </li>
+                <li class="flex items-start gap-1.5">
+                  <span class="font-bold text-indigo-600">•</span>
+                  <span><strong>n8n:</strong> 使用 HTTP Request 节点调用 MCP JSON-RPC 接口或使用 Community MCP 节点，指定 Bearer Auth 凭据。</span>
+                </li>
+              </ul>
+            </div>
+          </div>
         </div>
 
         <div class="rounded-2xl bg-white p-6 shadow-sm">
@@ -1030,13 +1325,14 @@ onMounted(load)
             <p class="mt-1 text-sm text-slate-500">Secret 只在创建或重置时显示一次。</p>
           </div>
           <div class="flex flex-wrap gap-2">
+            <button v-if="canReadGrants" type="button" class="rounded-xl border border-indigo-200 px-4 py-2 text-sm font-bold text-indigo-700 hover:bg-indigo-50" @click="showGrants = true; loadGrants()">已授权应用 (Grants)</button>
             <button v-if="canReadGuide" type="button" class="rounded-xl border border-indigo-200 px-4 py-2 text-sm font-bold text-indigo-700 hover:bg-indigo-50" @click="activeTab = 'guide'">？使用指南</button>
             <button v-if="canManageClient" type="button" class="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-bold text-white hover:bg-indigo-700" @click="showCreate = true">创建 Client</button>
           </div>
         </div>
         <div class="mb-5 flex items-center justify-between gap-3">
           <span v-if="isAdmin" class="text-xs font-bold text-indigo-700">管理员视角：查看全部用户的 Client</span>
-          <span v-else class="text-xs text-slate-500">仅展示当前账号创建的 Client</span>
+          <span v-else class="text-xs text-slate-500">展示当前账号创建及全员共享的 Client</span>
           <button type="button" class="shrink-0 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-600 hover:bg-slate-50" @click="showClientFilters = !showClientFilters">{{ showClientFilters ? '收起筛选' : '展开筛选' }}</button>
         </div>
         <div v-if="showClientFilters" class="mb-5 flex flex-wrap items-center gap-3 rounded-xl bg-slate-50 p-3">
@@ -1054,7 +1350,10 @@ onMounted(load)
             </div>
             <div class="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
               <div class="min-w-0">
-                <div class="text-base font-black text-slate-800">{{ client.client_name }}</div>
+                <div class="flex items-center gap-2">
+                  <div class="text-base font-black text-slate-800">{{ client.client_name }}</div>
+                  <span v-if="client.is_shared" class="rounded-full bg-blue-100 px-2 py-0.5 text-[11px] font-bold text-blue-800">全员共享</span>
+                </div>
                 <div class="mt-1 text-xs text-slate-500">所属用户：<span class="font-bold text-slate-700">{{ client.owner_real_name || client.owner_user_name || '未知用户' }}</span><span class="ml-1">· ID {{ client.created_by || '—' }}</span></div>
                 <div class="group mt-1 flex flex-wrap items-center gap-2">
                   <span class="rounded-full bg-slate-100 px-2 py-1 text-[11px] font-bold text-slate-600">Client ID</span>
@@ -1070,15 +1369,19 @@ onMounted(load)
                 <button type="button" class="text-xs font-bold text-indigo-700 hover:text-indigo-900" @click="toggleClientExpanded(client.client_id)">{{ expandedClientIds.has(client.client_id) ? '收起详情' : '展开详情' }}</button>
                 <div v-if="clientActionMenuId === client.client_id" class="absolute right-0 top-11 z-20 w-44 rounded-xl border border-slate-200 bg-white p-1.5 shadow-xl">
                   <button type="button" class="block w-full rounded-lg px-3 py-2 text-left text-xs font-bold text-slate-700 hover:bg-slate-50" @click="clientActionMenuId = null; openTokenDetails(client)">Token 管理</button>
-                  <button v-if="canManageClient" type="button" class="block w-full rounded-lg px-3 py-2 text-left text-xs font-bold text-indigo-700 hover:bg-indigo-50" @click="clientActionMenuId = null; openClientScopeEdit(client)">编辑 Scope</button>
-                  <button v-if="canManageClient" type="button" class="block w-full rounded-lg px-3 py-2 text-left text-xs font-bold text-indigo-700 hover:bg-indigo-50" @click="clientActionMenuId = null; toggleClient(client)">{{ client.status === 'active' ? '停用 Client' : '启用 Client' }}</button>
-                  <button v-if="canResetSecret" type="button" class="block w-full rounded-lg px-3 py-2 text-left text-xs font-bold text-amber-700 hover:bg-amber-50" @click="clientActionMenuId = null; resetSecret(client)">重置 Secret</button>
-                  <button v-if="canManageClient" type="button" class="block w-full rounded-lg px-3 py-2 text-left text-xs font-bold text-rose-700 hover:bg-rose-50" @click="clientActionMenuId = null; removeClient(client)">删除 Client</button>
+                  <button v-if="canManageClientItem(client)" type="button" class="block w-full rounded-lg px-3 py-2 text-left text-xs font-bold text-indigo-700 hover:bg-indigo-50" @click="clientActionMenuId = null; openClientEdit(client)">编辑基本信息</button>
+                  <button v-if="canManageClientItem(client)" type="button" class="block w-full rounded-lg px-3 py-2 text-left text-xs font-bold text-indigo-700 hover:bg-indigo-50" @click="clientActionMenuId = null; openClientScopeEdit(client)">编辑 Scope</button>
+                  <button v-if="canManageClientItem(client)" type="button" class="block w-full rounded-lg px-3 py-2 text-left text-xs font-bold text-indigo-700 hover:bg-indigo-50" @click="clientActionMenuId = null; toggleClient(client)">{{ client.status === 'active' ? '停用 Client' : '启用 Client' }}</button>
+                  <button v-if="canResetSecretForClient(client)" type="button" class="block w-full rounded-lg px-3 py-2 text-left text-xs font-bold text-amber-700 hover:bg-amber-50" @click="clientActionMenuId = null; resetSecret(client)">重置 Secret</button>
+                  <button v-if="canManageClientItem(client)" type="button" class="block w-full rounded-lg px-3 py-2 text-left text-xs font-bold text-rose-700 hover:bg-rose-50" @click="clientActionMenuId = null; removeClient(client)">删除 Client</button>
                 </div>
               </div>
             </div>
             <div v-if="oneTimeSecret && secretRevealClientId === client.client_id" class="mt-4 rounded-xl border border-amber-200/80 bg-amber-50/80 p-4">
-              <div class="font-bold text-amber-900">Client Secret 已重置，请立即复制保存</div>
+              <div class="flex items-center justify-between">
+                <div class="font-bold text-amber-900">Client Secret 已重置，请立即复制保存</div>
+                <button type="button" class="text-xs font-bold text-amber-700 hover:text-amber-900 underline" @click="oneTimeSecret = ''; secretRevealClientId = null">已保存并关闭</button>
+              </div>
               <div class="mt-3 flex min-w-0 items-center gap-2"><code class="min-w-0 flex-1 break-all rounded-lg bg-white px-3 py-2 text-sm text-slate-700">{{ oneTimeSecret }}</code><button type="button" class="shrink-0 rounded-lg bg-amber-500 px-3 py-2 text-sm font-bold text-white hover:bg-amber-600" @click="copyValue('secret', oneTimeSecret)">{{ copied === 'secret' ? '已复制' : '复制' }}</button></div>
             </div>
             <p class="mt-2 text-right text-[11px] text-slate-400">
@@ -1093,10 +1396,10 @@ onMounted(load)
             </div>
             <div class="mt-4 border-t border-slate-100 pt-4">
               <div class="mb-3 flex items-center gap-2">
-                <span class="text-xs font-bold uppercase tracking-wide text-slate-500">权限摘要</span>
+                <span class="text-xs font-bold uppercase tracking-wide text-slate-500">权限与回调摘要</span>
                 <span class="text-[11px] text-slate-400">调用权限会同时受用户自身权限限制</span>
               </div>
-              <div class="grid gap-3 md:grid-cols-2">
+              <div class="grid gap-3 md:grid-cols-3">
                 <div class="rounded-xl bg-slate-50 px-3 py-3">
                   <div class="text-[11px] font-bold text-slate-400">授权方式</div>
                   <div class="mt-1 text-sm font-bold text-slate-700">用户授权</div>
@@ -1106,6 +1409,13 @@ onMounted(load)
                   <div class="text-[11px] font-bold text-slate-400">Scope</div>
                   <div class="mt-1 text-sm font-bold text-slate-700">{{ client.allowed_scopes.length }} 项已授权</div>
                   <div class="mt-1 truncate text-xs text-slate-500" :title="client.allowed_scopes.join('、')">{{ scopeSummary(client) }}</div>
+                </div>
+                <div class="rounded-xl bg-slate-50 px-3 py-3">
+                  <div class="text-[11px] font-bold text-slate-400">回调地址 (Redirect URIs)</div>
+                  <div class="mt-1 max-h-12 overflow-y-auto space-y-0.5">
+                    <div v-for="uri in (client.redirect_uris || [])" :key="uri" class="truncate font-mono text-xs text-slate-600" :title="uri">{{ uri }}</div>
+                    <div v-if="!(client.redirect_uris || []).length" class="text-xs text-slate-400">未配置</div>
+                  </div>
                 </div>
               </div>
               <p class="mt-3 rounded-xl border border-blue-100 bg-blue-50 px-3 py-2 text-xs leading-5 text-blue-900">资源权限：由当前登录用户的角色和权限决定，Client 不再配置智能体、知识库或元数据集白名单。Client 仅控制 MCP 方法 Scope。</p>
@@ -1120,11 +1430,26 @@ onMounted(load)
       </section>
 
       <section v-else-if="activeTab === 'methods' && canReadMethods" class="rounded-2xl bg-white p-4 shadow-sm sm:p-6">
-        <h2 class="text-lg font-black">能力与 Scope</h2>
+        <div class="flex items-center justify-between">
+          <h2 class="text-lg font-black">能力与 Scope</h2>
+          <span class="text-xs text-slate-500">支持只读 MCP 方法在线探针测试</span>
+        </div>
         <div class="mt-4 hidden overflow-x-auto md:block">
           <table class="w-full min-w-[680px] text-left text-sm">
-            <thead><tr class="border-b text-slate-500"><th class="p-3">方法</th><th class="p-3">Scope</th><th class="p-3">能力组</th><th class="p-3">身份/权限模式</th><th class="p-3">状态</th></tr></thead>
-            <tbody><tr v-for="method in methods" :key="method.name" class="border-b last:border-0"><td class="p-3 font-mono font-bold">{{ method.name }}</td><td class="p-3 font-mono text-indigo-700">{{ method.scope }}</td><td class="p-3">{{ method.capability_group }}</td><td class="p-3">必须用户授权</td><td class="p-3" :class="method.implemented && method.enabled ? 'text-emerald-600' : 'text-slate-400'">{{ !method.implemented ? '待接入' : (method.enabled ? '已启用' : '已关闭') }}</td></tr></tbody>
+            <thead><tr class="border-b text-slate-500"><th class="p-3">方法</th><th class="p-3">Scope</th><th class="p-3">能力组</th><th class="p-3">身份/权限模式</th><th class="p-3">状态</th><th class="p-3">操作</th></tr></thead>
+            <tbody>
+              <tr v-for="method in methods" :key="method.name" class="border-b last:border-0">
+                <td class="p-3 font-mono font-bold">{{ method.name }}</td>
+                <td class="p-3 font-mono text-indigo-700">{{ method.scope }}</td>
+                <td class="p-3">{{ method.capability_group }}</td>
+                <td class="p-3">必须用户授权</td>
+                <td class="p-3" :class="method.implemented && method.enabled ? 'text-emerald-600' : 'text-slate-400'">{{ !method.implemented ? '待接入' : (method.enabled ? '已启用' : '已关闭') }}</td>
+                <td class="p-3">
+                  <button v-if="method.implemented && method.enabled" type="button" class="rounded-lg bg-indigo-50 px-2.5 py-1 text-xs font-bold text-indigo-700 hover:bg-indigo-100" @click="openPlayground(method)">在线调试</button>
+                  <span v-else class="text-xs text-slate-400">—</span>
+                </td>
+              </tr>
+            </tbody>
           </table>
         </div>
         <div class="mt-4 space-y-3 md:hidden">
@@ -1138,6 +1463,9 @@ onMounted(load)
               <span>身份：必须用户授权</span>
               <span class="font-bold" :class="method.implemented && method.enabled ? 'text-emerald-600' : 'text-slate-400'">{{ !method.implemented ? '待接入' : (method.enabled ? '已启用' : '已关闭') }}</span>
             </div>
+            <div v-if="method.implemented && method.enabled" class="mt-3 border-t border-slate-100 pt-2 flex justify-end">
+              <button type="button" class="rounded-lg bg-indigo-50 px-2.5 py-1 text-xs font-bold text-indigo-700 hover:bg-indigo-100" @click="openPlayground(method)">在线调试</button>
+            </div>
           </article>
         </div>
       </section>
@@ -1149,11 +1477,45 @@ onMounted(load)
             <p class="mt-1 text-sm text-slate-500">查看外部系统调用 NanZi Platform MCP 的记录；这里只展示审计字段，不展示 Token、Secret 或原始请求头。</p>
             <p class="mt-1 text-sm text-slate-500">{{ isAdmin ? '管理员可查看全部 MCP 入站调用记录。' : '其他用户仅能查看自己发起的调用记录。' }}</p>
           </div>
-          <div class="flex items-center gap-2"><span class="rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-600">共 {{ auditTotal }} 条</span><button type="button" class="rounded-lg border border-indigo-200 bg-white px-3 py-2 text-xs font-bold text-indigo-700 hover:bg-indigo-50" @click="exportAudit">导出 CSV</button></div>
+          <div class="flex items-center gap-2">
+            <span class="rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-600">共 {{ auditTotal }} 条</span>
+            <button
+              type="button"
+              class="rounded-lg border border-indigo-200 bg-white px-3 py-2 text-xs font-bold text-indigo-700 hover:bg-indigo-50 disabled:cursor-not-allowed disabled:opacity-50"
+              :disabled="exportingAudit"
+              @click="exportAudit"
+            >
+              {{ exportingAudit ? '正在导出…' : '导出 CSV' }}
+            </button>
+          </div>
         </div>
 
-        <div class="mt-3 flex items-center justify-end">
-          <button type="button" class="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-600 hover:bg-slate-50" @click="showAuditFilters = !showAuditFilters">{{ showAuditFilters ? '收起筛选' : '展开筛选' }}</button>
+        <div class="mt-3 flex flex-wrap items-center justify-between gap-2">
+          <div class="flex flex-wrap items-center gap-1.5">
+            <template v-for="item in auditFilterOptions" :key="item.key">
+              <span
+                v-if="auditFilters[item.key] && auditFilters[item.key].trim()"
+                class="inline-flex items-center gap-1 rounded-full border border-indigo-200/60 bg-indigo-50 px-2.5 py-1 text-xs font-medium text-indigo-700"
+              >
+                <span>{{ item.label }}: {{ auditFilters[item.key] }}</span>
+                <button
+                  type="button"
+                  class="ml-0.5 rounded-full px-1 font-bold text-indigo-500 hover:bg-indigo-200 hover:text-indigo-800"
+                  :aria-label="`清除 ${item.label} 筛选`"
+                  @click="removeAuditFilter(item.key)"
+                >×</button>
+              </span>
+            </template>
+            <span v-if="!activeAuditFilterCount" class="text-xs text-slate-400">无已生效筛选条件</span>
+          </div>
+          <button
+            type="button"
+            class="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-600 hover:bg-slate-50"
+            @click="showAuditFilters = !showAuditFilters"
+          >
+            <span>{{ showAuditFilters ? '收起筛选' : '展开筛选' }}</span>
+            <span v-if="activeAuditFilterCount" class="rounded-full bg-indigo-600 px-1.5 py-0.2 text-[10px] font-bold text-white">{{ activeAuditFilterCount }}</span>
+          </button>
         </div>
         <div v-if="showAuditFilters" class="mt-3 space-y-3">
           <div class="flex flex-nowrap items-center gap-3 overflow-x-auto pb-1">
@@ -1293,6 +1655,13 @@ onMounted(load)
                   <div class="mt-2 flex items-start gap-2 rounded-xl border border-indigo-100 bg-indigo-50 p-3 text-sm"><span class="mt-0.5 text-indigo-600">✓</span><span><span class="block font-bold text-indigo-950">用户授权（Authorization Code + PKCE）</span><span class="mt-1 block text-xs font-normal text-indigo-800">唯一授权方式；Access Token 始终绑定完成 NanZi 登录授权的用户。</span></span></div>
                 </div>
                 <label class="block text-sm font-bold">Redirect URI（每行一个）<span class="ml-1.5 rounded-full bg-slate-100 px-1.5 py-0.5 text-xs font-normal text-slate-500">选填</span><textarea v-model="form.redirect_uris" class="mt-2 min-h-24 w-full rounded-xl border border-slate-200 p-3 font-normal" placeholder="https://crm.example.com/oauth/callback" /><span class="mt-1 block text-xs font-normal text-slate-500">未填写时使用默认回调地址 https://localhost/oauth/callback；人工手动生成 Token 可留空。程序 OAuth 使用真实业务回调时，请填写并保持地址完全一致。</span></label>
+                <label class="flex cursor-pointer items-center gap-3 rounded-xl border border-slate-200 bg-slate-50 p-3.5 text-sm font-bold text-slate-700">
+                  <input v-model="form.is_shared" type="checkbox" class="h-4 w-4 rounded text-indigo-600 focus:ring-indigo-500" />
+                  <div>
+                    <span>全员共享 Client</span>
+                    <span class="mt-0.5 block text-xs font-normal text-slate-500">勾选后，平台其他用户在外部 Client 列表中可见，并能为该 Client 签发个人 Token。</span>
+                  </div>
+                </label>
                 <div>
                   <div class="flex items-center justify-between gap-3">
                     <div>
@@ -1466,19 +1835,274 @@ onMounted(load)
         <div class="flex min-h-full items-center justify-center">
           <div class="flex max-h-[calc(100vh-2rem)] w-full max-w-3xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
             <div class="flex shrink-0 items-center justify-between border-b border-slate-100 px-6 py-5">
-              <div><h2 class="text-xl font-black">Token 生命周期</h2><p class="mt-1 text-xs text-slate-500">{{ tokenDetailsClient.client_name }} · 仅展示脱敏元数据，不展示 Token 原文。</p></div>
+              <div>
+                <div class="flex items-center gap-3">
+                  <h2 class="text-xl font-black">Token 生命周期</h2>
+                  <button
+                    v-if="canRevokeAllClientTokens(tokenDetailsClient) && clientTokens.some(t => t.status === 'active')"
+                    type="button"
+                    class="rounded-lg border border-rose-200 bg-rose-50 px-2.5 py-1 text-xs font-bold text-rose-700 hover:bg-rose-100"
+                    @click="revokeAllClientTokens(tokenDetailsClient)"
+                  >
+                    一键撤销全部 Token
+                  </button>
+                </div>
+                <p class="mt-1 text-xs text-slate-500">{{ tokenDetailsClient.client_name }} · 仅展示脱敏元数据，不展示 Token 原文。</p>
+              </div>
               <button type="button" class="text-2xl text-slate-400" aria-label="关闭 Token 管理" @click="showTokenDetails = false">×</button>
             </div>
             <div class="min-h-0 flex-1 overflow-y-auto px-6 py-5">
               <div v-if="tokenDetailsLoading" class="py-10 text-center text-sm text-slate-500">Token 记录加载中…</div>
               <div v-else-if="!clientTokens.length" class="rounded-xl bg-slate-50 p-8 text-center text-sm text-slate-500">暂无 Token 生成记录</div>
               <div v-else class="overflow-x-auto rounded-xl border border-slate-200">
-                <table class="min-w-[760px] w-full text-left text-xs"><thead class="bg-slate-50 text-slate-500"><tr><th class="p-3">用户</th><th class="p-3">生成方式</th><th class="p-3">生成时间</th><th class="p-3">过期时间</th><th class="p-3">状态</th><th class="p-3">操作</th></tr></thead>
-                  <tbody><tr v-for="token in clientTokens" :key="token.id" class="border-t border-slate-100"><td class="p-3">{{ token.user_id || '—' }}</td><td class="p-3">{{ token.issue_method === 'oauth_authorization' ? 'OAuth 用户授权' : '服务台手动生成' }}</td><td class="whitespace-nowrap p-3 text-slate-500">{{ formatAuditTime(token.issued_at) }}</td><td class="whitespace-nowrap p-3 text-slate-500">{{ formatAuditTime(token.expires_at) }}</td><td class="p-3"><span :class="token.status === 'active' ? 'text-emerald-600' : 'text-slate-500'">{{ token.status === 'active' ? '有效' : token.status === 'expired' ? '已过期' : '已撤销' }}</span></td><td class="p-3"><button v-if="token.status === 'active'" type="button" class="font-bold text-rose-700" @click="revokeClientToken(token)">撤销</button><span v-else class="text-slate-400">—</span></td></tr></tbody>
+                <table class="min-w-[850px] w-full text-left text-xs">
+                  <thead class="bg-slate-50 text-slate-500">
+                    <tr>
+                      <th class="p-3">授权用户</th>
+                      <th class="p-3">Scope 范围</th>
+                      <th class="p-3">生成方式</th>
+                      <th class="p-3">生成时间</th>
+                      <th class="p-3">过期时间</th>
+                      <th class="p-3">状态</th>
+                      <th class="p-3">操作</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr v-for="token in clientTokens" :key="token.id" class="border-t border-slate-100">
+                      <td class="p-3">
+                        <div class="font-bold text-slate-700">{{ token.real_name || token.user_name || '用户 ID: ' + (token.user_id || '—') }}</div>
+                        <div v-if="token.real_name && token.user_name" class="text-[11px] text-slate-400">@{{ token.user_name }} (ID: {{ token.user_id }})</div>
+                      </td>
+                      <td class="p-3">
+                        <div class="flex max-w-[200px] flex-wrap gap-1">
+                          <span v-for="sc in (token.scopes || [])" :key="sc" class="rounded bg-indigo-50 px-1.5 py-0.5 font-mono text-[10px] text-indigo-700">{{ sc }}</span>
+                          <span v-if="!(token.scopes || []).length" class="text-slate-400">—</span>
+                        </div>
+                      </td>
+                      <td class="p-3">{{ token.issue_method === 'oauth_authorization' ? 'OAuth 用户授权' : '服务台手动生成' }}</td>
+                      <td class="whitespace-nowrap p-3 text-slate-500">{{ formatAuditTime(token.issued_at) }}</td>
+                      <td class="whitespace-nowrap p-3 text-slate-500">{{ formatAuditTime(token.expires_at) }}</td>
+                      <td class="p-3">
+                        <span :class="token.status === 'active' ? 'font-bold text-emerald-600' : (token.status === 'expired' ? 'text-amber-600' : 'text-slate-400')">
+                          {{ token.status === 'active' ? '有效' : token.status === 'expired' ? '已过期' : '已撤销' }}
+                        </span>
+                      </td>
+                      <td class="p-3">
+                        <button v-if="token.status === 'active'" type="button" class="font-bold text-rose-700 hover:text-rose-900" @click="revokeClientToken(token)">撤销</button>
+                        <span v-else class="text-slate-400">—</span>
+                      </td>
+                    </tr>
+                  </tbody>
                 </table>
               </div>
             </div>
             <div class="flex shrink-0 justify-end border-t border-slate-100 px-6 py-4"><button type="button" class="rounded-xl bg-indigo-600 px-5 py-2 font-bold text-white" @click="showTokenDetails = false">关闭</button></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Client 基本信息编辑弹窗 -->
+      <div
+        v-if="showClientEdit && clientEditTarget"
+        class="fixed inset-0 z-50 overflow-y-auto bg-slate-900/50 p-4"
+        @click.self="closeClientEdit"
+      >
+        <div class="flex min-h-full items-center justify-center">
+          <div class="flex max-h-[calc(100vh-2rem)] w-full max-w-lg flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
+            <div class="flex shrink-0 items-center justify-between border-b border-slate-100 px-6 py-5">
+              <div>
+                <h2 class="text-xl font-black text-slate-800">编辑 Client 基本信息</h2>
+                <p class="mt-1 text-xs text-slate-500">{{ clientEditTarget.client_name }} · {{ clientEditTarget.client_id }}</p>
+              </div>
+              <button type="button" class="text-2xl text-slate-400 hover:text-slate-600" aria-label="关闭编辑" :disabled="saving" @click="closeClientEdit">×</button>
+            </div>
+            <div class="min-h-0 flex-1 overflow-y-auto px-6 py-5">
+              <div class="space-y-4">
+                <label class="block text-sm font-bold text-slate-700">
+                  Client 名称
+                  <input v-model="clientEditForm.client_name" class="mt-2 w-full rounded-xl border border-slate-200 p-3 text-sm font-normal" placeholder="例如 CRM 生产系统" />
+                </label>
+                <label class="block text-sm font-bold text-slate-700">
+                  Redirect URIs（每行一个）
+                  <textarea v-model="clientEditForm.redirect_uris" class="mt-2 min-h-24 w-full rounded-xl border border-slate-200 p-3 font-mono text-xs font-normal" placeholder="https://crm.example.com/oauth/callback" />
+                  <span class="mt-1 block text-xs font-normal text-slate-500">外部系统 OAuth 回调地址，需保持精确匹配。</span>
+                </label>
+                <label class="flex cursor-pointer items-center gap-3 rounded-xl border border-slate-200 bg-slate-50 p-3.5 text-sm font-bold text-slate-700">
+                  <input v-model="clientEditForm.is_shared" type="checkbox" class="h-4 w-4 rounded text-indigo-600 focus:ring-indigo-500" />
+                  <div>
+                    <span>全员共享 Client</span>
+                    <span class="mt-0.5 block text-xs font-normal text-slate-500">勾选后，平台其他普通用户也能复用该 Client 并生成个人 Token。</span>
+                  </div>
+                </label>
+              </div>
+            </div>
+            <div class="flex shrink-0 justify-end gap-3 border-t border-slate-100 bg-white px-6 py-4">
+              <button type="button" class="rounded-xl px-4 py-2 font-bold text-slate-500 hover:bg-slate-50" :disabled="saving" @click="closeClientEdit">取消</button>
+              <button type="button" class="rounded-xl bg-indigo-600 px-5 py-2 font-bold text-white hover:bg-indigo-700 disabled:opacity-50" :disabled="saving || !clientEditForm.client_name.trim()" @click="saveClientEdit">{{ saving ? '保存中…' : '保存修改' }}</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 应用授权管理 (Grants) 弹窗 -->
+      <div
+        v-if="showGrants"
+        class="fixed inset-0 z-50 overflow-y-auto bg-slate-900/50 p-4"
+        @click.self="showGrants = false"
+      >
+        <div class="flex min-h-full items-center justify-center">
+          <div class="flex max-h-[calc(100vh-2rem)] w-full max-w-4xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
+            <div class="flex shrink-0 items-center justify-between border-b border-slate-100 px-6 py-5">
+              <div>
+                <h2 class="text-xl font-black text-slate-800">已授权的外部应用 (OAuth Grants)</h2>
+                <p class="mt-1 text-xs text-slate-500">{{ isAdmin ? '管理员可查看并管理全平台的授权关系' : '展示当前账号已同意授权访问 NanZi 平台的外部系统' }}</p>
+              </div>
+              <button type="button" class="text-2xl text-slate-400 hover:text-slate-600" aria-label="关闭授权管理" @click="showGrants = false">×</button>
+            </div>
+            <div class="min-h-0 flex-1 overflow-y-auto px-6 py-5">
+              <div v-if="grantsLoading" class="py-10 text-center text-sm text-slate-500">授权记录加载中…</div>
+              <div v-else-if="!grants.length" class="rounded-xl bg-slate-50 p-8 text-center text-sm text-slate-500">暂无已授权的应用</div>
+              <div v-else class="overflow-x-auto rounded-xl border border-slate-200">
+                <table class="min-w-[760px] w-full text-left text-xs">
+                  <thead class="bg-slate-50 text-slate-500">
+                    <tr>
+                      <th class="p-3">应用名称 / Client ID</th>
+                      <th v-if="isAdmin" class="p-3">授权用户 ID</th>
+                      <th class="p-3">授予 Scope</th>
+                      <th class="p-3">授权时间</th>
+                      <th class="p-3">最近使用</th>
+                      <th class="p-3">状态</th>
+                      <th v-if="canRevokeGrants" class="p-3">操作</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr v-for="grant in grants" :key="grant.id" class="border-t border-slate-100">
+                      <td class="p-3">
+                        <div class="font-bold text-slate-700">{{ grant.client_name }}</div>
+                        <div class="font-mono text-[11px] text-slate-400">{{ grant.client_id }}</div>
+                      </td>
+                      <td v-if="isAdmin" class="p-3 font-mono text-slate-600">{{ grant.user_id }}</td>
+                      <td class="p-3">
+                        <div class="flex max-w-[220px] flex-wrap gap-1">
+                          <span v-for="sc in grant.scopes" :key="sc" class="rounded bg-indigo-50 px-1.5 py-0.5 font-mono text-[10px] text-indigo-700">{{ sc }}</span>
+                        </div>
+                      </td>
+                      <td class="whitespace-nowrap p-3 text-slate-500">{{ formatAuditTime(grant.consented_at) }}</td>
+                      <td class="whitespace-nowrap p-3 text-slate-500">{{ grant.last_used_at ? formatAuditTime(grant.last_used_at) : '—' }}</td>
+                      <td class="p-3">
+                        <span :class="grant.status === 'active' ? 'font-bold text-emerald-600' : 'text-slate-400'">
+                          {{ grant.status === 'active' ? '生效中' : '已解除' }}
+                        </span>
+                      </td>
+                      <td v-if="canRevokeGrants" class="p-3">
+                        <button
+                          v-if="grant.status === 'active'"
+                          type="button"
+                          class="font-bold text-rose-700 hover:text-rose-900"
+                          @click="revokeGrant(grant)"
+                        >
+                          解除授权
+                        </button>
+                        <span v-else class="text-slate-400">—</span>
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+            <div class="flex shrink-0 justify-end border-t border-slate-100 px-6 py-4">
+              <button type="button" class="rounded-xl bg-indigo-600 px-5 py-2 font-bold text-white hover:bg-indigo-700" @click="showGrants = false">关闭</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- MCP 在线调试 Playground 探针弹窗 -->
+      <div
+        v-if="showPlayground && playgroundMethod"
+        class="fixed inset-0 z-50 overflow-y-auto bg-slate-900/50 p-4"
+        @click.self="showPlayground = false"
+      >
+        <div class="flex min-h-full items-center justify-center">
+          <div class="flex max-h-[calc(100vh-2rem)] w-full max-w-3xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
+            <div class="flex shrink-0 items-center justify-between border-b border-slate-100 px-6 py-5">
+              <div>
+                <div class="flex items-center gap-2">
+                  <h2 class="text-xl font-black text-slate-800">MCP 在线探针调试</h2>
+                  <span class="rounded bg-indigo-50 px-2 py-0.5 font-mono text-xs font-bold text-indigo-700">{{ playgroundMethod.name }}</span>
+                </div>
+                <p class="mt-1 text-xs text-slate-500">发起真实的 JSON-RPC 2.0 探针调用并测试只读方法回显，实时检验鉴权与数据响应。</p>
+              </div>
+              <button type="button" class="text-2xl text-slate-400 hover:text-slate-600" aria-label="关闭调试探针" @click="showPlayground = false">×</button>
+            </div>
+            <div class="min-h-0 flex-1 space-y-4 overflow-y-auto px-6 py-5 text-sm">
+              <div class="grid gap-3 sm:grid-cols-3">
+                <div class="rounded-xl bg-slate-50 p-3">
+                  <span class="text-xs font-bold text-slate-400">所需 Scope</span>
+                  <div class="mt-1 font-mono text-xs font-bold text-indigo-700">{{ playgroundMethod.scope }}</div>
+                </div>
+                <div class="rounded-xl bg-slate-50 p-3">
+                  <span class="text-xs font-bold text-slate-400">所属能力组</span>
+                  <div class="mt-1 text-xs font-bold text-slate-700">{{ playgroundMethod.capability_group }}</div>
+                </div>
+                <div class="rounded-xl bg-slate-50 p-3">
+                  <span class="text-xs font-bold text-slate-400">测试耗时</span>
+                  <div class="mt-1 text-xs font-bold text-slate-700">{{ playgroundLatency != null ? `${playgroundLatency} ms` : '—' }}</div>
+                </div>
+              </div>
+
+              <div>
+                <div class="flex items-center justify-between">
+                  <label class="block text-xs font-bold text-slate-700">
+                    调用 Bearer Token <span class="text-rose-500">*</span>
+                  </label>
+                  <span class="text-[11px] text-slate-400">请手动输入在「外部 Client」中签发的个人 Token</span>
+                </div>
+                <input
+                  v-model="playgroundToken"
+                  class="mt-1.5 w-full rounded-xl border border-slate-200 bg-white p-2.5 font-mono text-xs outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+                  placeholder="请在此输入或粘贴你已生成的 MCP Access Token"
+                />
+              </div>
+
+              <div>
+                <div class="flex items-center justify-between">
+                  <label class="text-xs font-bold text-slate-600">请求参数 arguments (JSON)</label>
+                  <span class="text-[11px] text-slate-400">JSON-RPC 2.0 tools/call 结构</span>
+                </div>
+                <textarea
+                  v-model="playgroundParams"
+                  rows="4"
+                  class="mt-1.5 w-full rounded-xl border border-slate-200 bg-slate-900 p-3 font-mono text-xs text-slate-100 outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+                  placeholder="{}"
+                />
+              </div>
+
+              <div>
+                <div class="flex items-center justify-between">
+                  <label class="text-xs font-bold text-slate-600">响应结果</label>
+                  <span
+                    v-if="playgroundStatus"
+                    class="rounded-full px-2 py-0.5 text-[11px] font-bold"
+                    :class="playgroundStatus === 'success' ? 'bg-emerald-100 text-emerald-700' : 'bg-rose-100 text-rose-700'"
+                  >
+                    {{ playgroundStatus === 'success' ? '调用成功' : '调用失败' }}
+                  </span>
+                </div>
+                <pre class="mt-1.5 max-h-60 overflow-y-auto rounded-xl border border-slate-200 bg-slate-950 p-3 font-mono text-xs leading-5 text-slate-100"><code>{{ playgroundResponse || '点击下方「发送探针请求」后在此显示响应回显…' }}</code></pre>
+              </div>
+            </div>
+            <div class="flex shrink-0 justify-end gap-3 border-t border-slate-100 bg-white px-6 py-4">
+              <button type="button" class="rounded-xl px-4 py-2 font-bold text-slate-500 hover:bg-slate-50" @click="showPlayground = false">关闭</button>
+              <button
+                type="button"
+                class="rounded-xl bg-indigo-600 px-5 py-2 font-bold text-white hover:bg-indigo-700 disabled:opacity-50"
+                :disabled="playgroundTesting"
+                @click="executePlaygroundTest"
+              >
+                {{ playgroundTesting ? '发送中…' : '发送探针请求' }}
+              </button>
+            </div>
           </div>
         </div>
       </div>
