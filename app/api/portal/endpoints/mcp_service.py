@@ -15,7 +15,7 @@ import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
-from sqlalchemy import func, or_, select, update
+from sqlalchemy import and_, delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -201,6 +201,10 @@ class McpAccessTokenCreate(BaseModel):
         return cleaned
 
 
+class McpAccessTokenDeleteBatch(BaseModel):
+    token_ids: list[str] = Field(min_length=1, max_length=100)
+
+
 class McpOAuthClientUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -260,6 +264,10 @@ def _serialize_client(
     last_token_issued_at: datetime | None = None,
     last_token_issue_method: str | None = None,
     active_token_count: int = 0,
+    token_total_count: int = 0,
+    expiring_token_count: int = 0,
+    expired_token_count: int = 0,
+    revoked_token_count: int = 0,
     latest_token_expires_at: datetime | None = None,
 ) -> dict[str, Any]:
     return {
@@ -281,6 +289,10 @@ def _serialize_client(
         "last_token_issued_at": last_token_issued_at.isoformat() if last_token_issued_at else None,
         "last_token_issue_method": last_token_issue_method,
         "active_token_count": active_token_count,
+        "token_total_count": token_total_count,
+        "expiring_token_count": expiring_token_count,
+        "expired_token_count": expired_token_count,
+        "revoked_token_count": revoked_token_count,
         "latest_token_expires_at": latest_token_expires_at.isoformat() if latest_token_expires_at else None,
         "created_at": client.created_at.isoformat() if client.created_at else None,
         "updated_at": client.updated_at.isoformat() if client.updated_at else None,
@@ -836,12 +848,31 @@ async def list_clients(
     client_ids = [row.client_id for row in rows]
     latest_tokens: dict[str, McpOAuthAccessToken] = {}
     active_token_counts: dict[str, int] = {}
+    token_total_counts: dict[str, int] = {}
+    expiring_token_counts: dict[str, int] = {}
+    expired_token_counts: dict[str, int] = {}
+    revoked_token_counts: dict[str, int] = {}
     latest_token_expiries: dict[str, datetime] = {}
     if client_ids:
+        owned_client_ids = [
+            row.client_id for row in rows if str(row.created_by or "") == current_user_id
+        ]
+        visible_token_filters = [McpOAuthAccessToken.client_id.in_(client_ids)]
+        if user.get("role") != "admin":
+            shared_client_ids = [client_id for client_id in client_ids if client_id not in owned_client_ids]
+            visible_token_filters.append(
+                or_(
+                    McpOAuthAccessToken.client_id.in_(owned_client_ids),
+                    and_(
+                        McpOAuthAccessToken.client_id.in_(shared_client_ids),
+                        McpOAuthAccessToken.user_id == current_user_id,
+                    ),
+                )
+            )
         all_token_rows = (
             await db.execute(
                 select(McpOAuthAccessToken)
-                .where(McpOAuthAccessToken.client_id.in_(client_ids))
+                .where(*visible_token_filters)
                 .order_by(McpOAuthAccessToken.issued_at.desc(), McpOAuthAccessToken.created_at.desc())
             )
         ).scalars().all()
@@ -851,8 +882,15 @@ async def list_clients(
         }
         now = datetime.utcnow()
         for token in all_token_rows:
-            if token.revoked_at is None and token.expires_at > now:
+            token_total_counts[token.client_id] = token_total_counts.get(token.client_id, 0) + 1
+            if token.revoked_at is not None:
+                revoked_token_counts[token.client_id] = revoked_token_counts.get(token.client_id, 0) + 1
+            elif token.expires_at <= now:
+                expired_token_counts[token.client_id] = expired_token_counts.get(token.client_id, 0) + 1
+            else:
                 active_token_counts[token.client_id] = active_token_counts.get(token.client_id, 0) + 1
+                if token.expires_at <= now + timedelta(hours=24):
+                    expiring_token_counts[token.client_id] = expiring_token_counts.get(token.client_id, 0) + 1
             if token.expires_at and token.client_id not in latest_token_expiries:
                 latest_token_expiries[token.client_id] = token.expires_at
     owner_ids = {int(row.created_by) for row in rows if str(row.created_by or "").isdigit()}
@@ -880,6 +918,10 @@ async def list_clients(
                 "oauth_authorization" if latest_tokens.get(row.client_id).grant_id else "manual_user_token"
             ) if latest_tokens.get(row.client_id) else None,
             active_token_count=active_token_counts.get(row.client_id, 0),
+            token_total_count=token_total_counts.get(row.client_id, 0),
+            expiring_token_count=expiring_token_counts.get(row.client_id, 0),
+            expired_token_count=expired_token_counts.get(row.client_id, 0),
+            revoked_token_count=revoked_token_counts.get(row.client_id, 0),
             latest_token_expires_at=latest_token_expiries.get(row.client_id),
         )
         for row in rows
@@ -908,7 +950,6 @@ async def list_client_tokens(
             select(McpOAuthAccessToken)
             .where(*filters)
             .order_by(McpOAuthAccessToken.issued_at.desc())
-            .limit(100)
         )
     ).scalars().all()
     user_ids = {int(row.user_id) for row in rows if str(row.user_id or "").isdigit()}
@@ -924,6 +965,108 @@ async def list_client_tokens(
         )
         for row in rows
     ]
+
+
+@router.delete("/clients/{client_id}/tokens/{token_id}")
+async def delete_client_token(
+    client_id: str,
+    token_id: str,
+    user: dict = Depends(require_mcp_service_permission("element:mcp_service:client:token_issue")),
+    db: AsyncSession = Depends(get_db_session),
+) -> dict[str, str]:
+    """物理删除指定 Access Token，不影响 OAuth Grant 或 Refresh Token。"""
+    client = await _get_owned_client(db, client_id, user, allow_shared=True)
+    if client is None:
+        raise HTTPException(status_code=404, detail="OAuth Client 不存在")
+    token = (
+        await db.execute(
+            select(McpOAuthAccessToken).where(
+                McpOAuthAccessToken.id == token_id,
+                McpOAuthAccessToken.client_id == client_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if token is None:
+        raise HTTPException(status_code=404, detail="Access Token 不存在")
+    current_user_id = _current_user_id(user)
+    if user.get("role") != "admin" and client.created_by != current_user_id and token.user_id != current_user_id:
+        raise HTTPException(status_code=403, detail="无权删除其他用户的 Access Token")
+
+    now = datetime.utcnow()
+    token_status = "revoked" if token.revoked_at else ("expired" if token.expires_at <= now else "active")
+    await db.execute(
+        delete(McpOAuthAccessToken).where(
+            McpOAuthAccessToken.id == token_id,
+            McpOAuthAccessToken.client_id == client_id,
+        )
+    )
+    await db.commit()
+    await write_security_audit(
+        db,
+        event_type="oauth_access_token_deleted",
+        client_id=client_id,
+        user_id=token.user_id,
+        actor_user_id=current_user_id,
+        details={"token_id": token_id, "token_status": token_status},
+    )
+    try:
+        await db.commit()
+    except Exception:
+        await db.rollback()
+    return {"token_id": token_id, "status": "deleted"}
+
+
+@router.post("/clients/{client_id}/tokens/delete")
+async def delete_client_tokens(
+    client_id: str,
+    payload: McpAccessTokenDeleteBatch,
+    user: dict = Depends(require_mcp_service_permission("element:mcp_service:client:token_issue")),
+    db: AsyncSession = Depends(get_db_session),
+) -> dict[str, Any]:
+    """批量物理删除选中的 Access Token，不影响 OAuth Grant 或 Refresh Token。"""
+    client = await _get_owned_client(db, client_id, user, allow_shared=True)
+    if client is None:
+        raise HTTPException(status_code=404, detail="OAuth Client 不存在")
+    token_ids = list(dict.fromkeys(payload.token_ids))
+    filters = [
+        McpOAuthAccessToken.client_id == client_id,
+        McpOAuthAccessToken.id.in_(token_ids),
+    ]
+    current_user_id = _current_user_id(user)
+    if user.get("role") != "admin" and client.created_by != current_user_id:
+        filters.append(McpOAuthAccessToken.user_id == current_user_id)
+    tokens = (await db.execute(select(McpOAuthAccessToken).where(*filters))).scalars().all()
+    if not tokens:
+        return {"client_id": client_id, "status": "deleted", "deleted_count": 0}
+
+    now = datetime.utcnow()
+    await db.execute(
+        delete(McpOAuthAccessToken).where(
+            McpOAuthAccessToken.client_id == client_id,
+            McpOAuthAccessToken.id.in_([token.id for token in tokens]),
+        )
+    )
+    await db.commit()
+    await write_security_audit(
+        db,
+        event_type="oauth_access_token_deleted",
+        client_id=client_id,
+        user_id=None,
+        actor_user_id=current_user_id,
+        details={
+            "token_ids": [token.id for token in tokens],
+            "deleted_count": len(tokens),
+            "token_statuses": {
+                token.id: "revoked" if token.revoked_at else ("expired" if token.expires_at <= now else "active")
+                for token in tokens
+            },
+        },
+    )
+    try:
+        await db.commit()
+    except Exception:
+        await db.rollback()
+    return {"client_id": client_id, "status": "deleted", "deleted_count": len(tokens)}
 
 
 @router.post("/clients/{client_id}/tokens/{token_id}/revoke")

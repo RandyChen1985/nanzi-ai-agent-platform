@@ -488,6 +488,28 @@ def test_client_list_does_not_repeat_manual_token_guidance_banner():
     assert "人工登录接入：" not in clients_section
 
 
+def test_service_desk_exposes_client_token_lifecycle_summary_and_physical_delete_ui():
+    view = (ROOT / "frontend/src/views/McpServiceDesk.vue").read_text(encoding="utf-8")
+
+    for field in (
+        "token_total_count",
+        "expiring_token_count",
+        "expired_token_count",
+        "revoked_token_count",
+    ):
+        assert field in view
+    assert "即将过期" in view
+    assert "selectedTokenIds" in view
+    assert "tokenStatusFilter" in view
+    assert "filteredClientTokens" in view
+    assert "物理删除" in view
+    assert "/tokens/delete" in view
+    assert "删除已选 Token" in view
+    assert "getTokenStatus(token) === 'active' && canDeleteClientToken(token)" in view
+    assert "const getTokenStatus = (token: ClientToken)" in view
+    assert "tokenClock.value = Date.now()" in view
+
+
 def test_login_reloads_backend_oauth_endpoint_after_same_origin_login():
     login = (ROOT / "frontend/src/views/Login.vue").read_text(encoding="utf-8")
 

@@ -12,10 +12,11 @@ import hmac
 import secrets
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Iterable, Sequence
 
 from mcp.server.auth.provider import AccessToken
+from pydantic import Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -160,17 +161,31 @@ class McpPrincipal:
         return bool(self.expires_at and self.expires_at <= (now or utcnow()))
 
 
+class PlatformAccessToken(AccessToken):
+    """扩展 FastMCP AccessToken，携带 subject 与 claims。"""
+
+    subject: str | None = None
+    claims: dict[str, Any] = Field(default_factory=dict)
+
+
 def access_token_to_principal(token: AccessToken) -> McpPrincipal:
-    claims = dict(token.claims or {})
+    claims = dict(getattr(token, "claims", None) or {})
+    subject = getattr(token, "subject", None) or claims.get("user_id")
+    exp_dt = None
+    if token.expires_at:
+        try:
+            exp_dt = datetime.fromtimestamp(token.expires_at, tz=timezone.utc).replace(tzinfo=None)
+        except Exception:
+            exp_dt = None
     return McpPrincipal(
         client_id=token.client_id,
-        user_id=token.subject,
+        user_id=str(subject) if subject is not None else None,
         scopes=tuple(token.scopes),
         resource=token.resource or MCP_RESOURCE,
         auth_type="user_delegated",
         user_name=claims.get("user_name"),
         claims=claims,
-        expires_at=datetime.utcfromtimestamp(token.expires_at) if token.expires_at else None,
+        expires_at=exp_dt,
     )
 
 
@@ -493,11 +508,16 @@ class PlatformMcpOAuthService:
             return None
         user_name = user.user_name
 
-        return AccessToken(
+        exp_dt = row.expires_at
+        if exp_dt.tzinfo is None:
+            exp_dt = exp_dt.replace(tzinfo=timezone.utc)
+        expires_at_ts = int(exp_dt.timestamp())
+
+        return PlatformAccessToken(
             token=token,
             client_id=row.client_id,
             scopes=normalize_scopes(row.scopes),
-            expires_at=int(row.expires_at.timestamp()),
+            expires_at=expires_at_ts,
             resource=row.resource,
             subject=row.user_id,
             claims={"jti": row.jti, "user_name": user_name},
@@ -521,6 +541,7 @@ __all__ = [
     "DEFAULT_SCOPES",
     "MCP_RESOURCE",
     "McpPrincipal",
+    "PlatformAccessToken",
     "PlatformMcpOAuthService",
     "PlatformMcpTokenVerifier",
     "access_token_to_principal",
