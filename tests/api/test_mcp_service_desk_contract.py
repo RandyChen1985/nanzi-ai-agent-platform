@@ -192,6 +192,77 @@ def test_mcp_service_exposes_audit_trend_aggregation():
     assert "denied" in source
 
 
+def test_mcp_service_exposes_client_usage_analytics_with_audit_scope():
+    source = Path("app/api/portal/endpoints/mcp_service.py").read_text(encoding="utf-8")
+
+    paths = {getattr(route, "path", None) for route in mcp_service.router.routes}
+    assert "/clients/{client_id}/usage" in paths
+    assert 'async def client_usage(' in source
+    assert 'range: Literal["7d", "30d", "90d"]' in source
+    assert "element:mcp_service:audit:read" in source
+    usage_segment = source.split('@router.get("/clients/{client_id}/usage")', 1)[1].split("@router.get", 1)[0]
+    assert "McpInboundAuditLog.client_id == client_id" in usage_segment
+    assert "McpInboundAuditLog.user_id == current_user_id" in usage_segment
+    for field in (
+        '"summary"', '"daily_trend"', '"method_distribution"',
+        '"status_distribution"', '"auth_distribution"',
+        '"user_distribution"', '"resource_distribution"',
+        '"p95_latency_ms"', '"active_user_count"',
+    ):
+        assert field in usage_segment
+
+
+def test_client_usage_analytics_never_serializes_credentials_or_request_payload():
+    source = Path("app/api/portal/endpoints/mcp_service.py").read_text(encoding="utf-8")
+    usage_segment = source.split('@router.get("/clients/{client_id}/usage")', 1)[1].split("@router.get", 1)[0]
+    assert "access_token" not in usage_segment
+    assert "client_secret" not in usage_segment
+    assert "request_headers" not in usage_segment
+    assert "tool_input" not in usage_segment
+    assert "tool_output" not in usage_segment
+
+
+def test_client_usage_analytics_uses_database_aggregates_instead_of_loading_all_details():
+    source = Path("app/api/portal/endpoints/mcp_service.py").read_text(encoding="utf-8")
+    usage_segment = source.split('@router.get("/clients/{client_id}/usage")', 1)[1].split("@router.get", 1)[0]
+    assert "func.count()" in usage_segment
+    assert ".group_by(" in usage_segment
+    assert "select(McpInboundAuditLog.latency_ms)" in usage_segment
+
+
+def test_client_usage_summary_exposes_completed_calls_explicitly():
+    source = Path("app/api/portal/endpoints/mcp_service.py").read_text(encoding="utf-8")
+    usage_segment = source.split('@router.get("/clients/{client_id}/usage")', 1)[1].split("@router.get", 1)[0]
+    assert '"completed_calls"' in usage_segment
+
+
+def test_client_usage_user_distribution_includes_account_identity_fields():
+    source = Path("app/api/portal/endpoints/mcp_service.py").read_text(encoding="utf-8")
+    usage_segment = source.split('@router.get("/clients/{client_id}/usage")', 1)[1].split("@router.get", 1)[0]
+    assert "select(User.id, User.user_name, User.real_name)" in usage_segment
+    for field in ('"display_name"', '"user_name"', '"real_name"'):
+        assert field in usage_segment
+
+
+def test_usage_date_range_returns_complete_natural_day_buckets():
+    start_at, end_at, dates = mcp_service._usage_date_range("7d")
+    assert len(dates) == 7
+    assert dates[0] == start_at.date().isoformat()
+    assert dates[-1] == end_at.date().isoformat()
+    assert start_at.hour == 0
+    assert end_at.hour == 23
+
+
+def test_usage_resource_counts_keeps_multiple_resource_dimensions_and_other():
+    items = mcp_service._serialize_usage_resource_distribution([
+        ("agent", "agent-1", 1),
+        ("conversation", "conv-1", 1),
+    ], other_total=1)
+    assert {item["type"] + ":" + item["name"] for item in items} == {
+        "agent:agent-1", "conversation:conv-1", "other:其他"
+    }
+
+
 def test_admin_can_manage_global_clients_and_client_owner_is_serialized():
     source = Path("app/api/portal/endpoints/mcp_service.py").read_text(encoding="utf-8")
 

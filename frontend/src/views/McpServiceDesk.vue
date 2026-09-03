@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, reactive, ref } from 'vue'
 import api from '../utils/axios'
 import { useUser } from '../composables/useUser'
 import { useToast } from '../composables/useToast'
@@ -49,6 +49,28 @@ type AuditLog = {
   error_code?: string | null
   latency_ms?: number | null
   created_at?: string | null
+}
+
+type ClientUsage = {
+  range: '7d' | '30d' | '90d'
+  start_at: string
+  end_at: string
+  summary: {
+    total_calls: number
+    completed_calls: number
+    success_rate: number
+    failed_calls: number
+    denied_calls: number
+    average_latency_ms: number | null
+    p95_latency_ms: number | null
+    active_user_count: number
+  }
+  daily_trend: Array<{ date: string; total: number; completed: number; failed: number; denied: number }>
+  method_distribution: Array<{ name: string; total: number; success_rate: number }>
+  status_distribution: Array<{ name: string; total: number }>
+  auth_distribution: Array<{ name: string; total: number }>
+  user_distribution: Array<{ user_id: string; user_name?: string | null; real_name?: string | null; display_name: string; total: number }>
+  resource_distribution: Array<{ type: string; name: string; total: number }>
 }
 
 type SecurityAuditLog = {
@@ -127,6 +149,14 @@ const auditSummaryRange = ref<'24h' | '7d' | '30d'>('24h')
 const auditSummary = ref<Record<string, any>>({})
 const auditSummaryLoading = ref(false)
 const trendMax = computed(() => Math.max(...auditTrend.value.map(item => item.total), 1))
+const showClientUsage = ref(false)
+const clientUsageTarget = ref<Client | null>(null)
+const clientUsageRange = ref<'7d' | '30d' | '90d'>('30d')
+const clientUsage = ref<ClientUsage | null>(null)
+const clientUsageLoading = ref(false)
+const clientUsageError = ref('')
+const clientUsageMax = computed(() => Math.max(...(clientUsage.value?.daily_trend || []).map(item => item.total), 1))
+const clientUsageTrendRef = ref<HTMLElement | null>(null)
 
 const selectedAudit = ref<AuditLog | null>(null)
 const showCreate = ref(false)
@@ -583,6 +613,48 @@ const applyClientFilters = async () => {
   await loadClients()
 }
 
+const loadClientUsage = async () => {
+  const client = clientUsageTarget.value
+  if (!client) return
+  clientUsageLoading.value = true
+  clientUsageError.value = ''
+  clientUsage.value = null
+  try {
+    const response = await api.get(`/api/portal/mcp-service/clients/${encodeURIComponent(client.client_id)}/usage`, {
+      params: { range: clientUsageRange.value },
+    })
+    clientUsage.value = response.data
+  } catch (err: any) {
+    clientUsageError.value = err?.response?.data?.detail || '使用统计加载失败，请稍后重试'
+  } finally {
+    clientUsageLoading.value = false
+    if (clientUsage.value) {
+      await nextTick()
+      requestAnimationFrame(() => {
+        if (clientUsageTrendRef.value) {
+          clientUsageTrendRef.value.scrollLeft = clientUsageTrendRef.value.scrollWidth
+        }
+      })
+    }
+  }
+}
+
+const openClientUsage = async (client: Client) => {
+  clientActionMenuId.value = null
+  clientUsageTarget.value = client
+  clientUsageRange.value = '30d'
+  showClientUsage.value = true
+  await loadClientUsage()
+}
+
+const closeClientUsage = () => {
+  if (clientUsageLoading.value) return
+  showClientUsage.value = false
+  clientUsageTarget.value = null
+  clientUsage.value = null
+  clientUsageError.value = ''
+}
+
 const changeClientPage = async (delta: number) => {
   const pageCount = Math.max(1, Math.ceil(clientTotal.value / 20))
   const nextPage = clientPage.value + delta
@@ -832,6 +904,11 @@ const auditAuthTypeLabel = (authType: string) => authType === 'user_delegated' ?
 
 const formatAuditTime = (value?: string | null) => value ? new Date(value).toLocaleString('zh-CN', { hour12: false }) : '—'
 const trendBarHeight = (total: number) => `${Math.max(6, Math.round((total / trendMax.value) * 88))}px`
+const usageBarWidth = (total: number, max: number) => `${Math.max(total ? 4 : 0, Math.round(total / Math.max(max, 1) * 100))}%`
+const usagePercent = (total: number, overall: number) => overall ? `${Math.round(total / overall * 100)}%` : '0%'
+const usageStatusLabel = (name: string) => ({ completed: '成功', failed: '失败', denied: '拒绝' }[name] || name)
+const usageAuthLabel = (name: string) => name === 'user_delegated' ? '用户授权' : name
+const usageResourceLabel = (name: string) => name || '其他'
 const formatClientTime = (value?: string | null) => value ? new Date(value).toLocaleString('zh-CN', { hour12: false, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }).replace(/\//g, '-') : '—'
 const toggleClientExpanded = (clientId: string) => {
   const next = new Set(expandedClientIds.value)
@@ -1860,7 +1937,7 @@ onUnmounted(() => {
                 <p class="mt-1 text-xs text-slate-400">Client ID 用于 Token Endpoint，需配合 Client Secret 获取 Access Token；不能直接调用 MCP。</p>
               </div>
               <div data-testid="client-actions" class="relative flex shrink-0 flex-wrap items-center gap-x-3 gap-y-2 xl:justify-end">
-                <button v-if="canIssueToken" type="button" class="inline-flex shrink-0 items-center justify-center whitespace-nowrap rounded-xl bg-indigo-600 px-3 py-2 text-xs font-bold text-white shadow-sm transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50" :disabled="client.status !== 'active' || !client.allowed_scopes.length" @click="openTokenIssue(client)">生成 MCP Access Token</button>
+                <button v-if="canIssueToken" type="button" class="inline-flex shrink-0 items-center justify-center whitespace-nowrap rounded-xl border border-indigo-200 bg-indigo-50 px-3 py-2 text-xs font-bold text-indigo-700 transition hover:bg-indigo-100 disabled:cursor-not-allowed disabled:opacity-50" :disabled="client.status !== 'active' || !client.allowed_scopes.length" @click="openTokenIssue(client)">生成 MCP Access Token</button>
                 <button v-if="canReadClients" type="button" class="inline-flex shrink-0 items-center justify-center whitespace-nowrap rounded-xl border border-indigo-200 bg-indigo-50 px-3 py-2 text-xs font-bold text-indigo-700 hover:bg-indigo-100" @click="openTokenDetails(client)">Token 管理 <span class="ml-1 rounded-full bg-white px-1.5 py-0.5 text-[10px]">{{ client.token_total_count || 0 }}</span></button>
                 <button type="button" class="inline-flex shrink-0 items-center justify-center whitespace-nowrap rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-600 hover:bg-slate-50" @click="clientActionMenuId = clientActionMenuId === client.client_id ? null : client.client_id">更多操作 <span class="ml-1">⌄</span></button>
                 <button
@@ -1879,6 +1956,7 @@ onUnmounted(() => {
                 </button>
                 <div v-if="clientActionMenuId === client.client_id" class="absolute right-0 top-11 z-20 w-44 rounded-xl border border-slate-200 bg-white p-1.5 shadow-xl">
                   <button v-if="canManageClientItem(client)" type="button" class="block w-full rounded-lg px-3 py-2 text-left text-xs font-bold text-indigo-700 hover:bg-indigo-50" @click="clientActionMenuId = null; openClientEdit(client)">编辑基本信息</button>
+                  <button v-if="canReadAudit" type="button" class="block w-full rounded-lg px-3 py-2 text-left text-xs font-bold text-indigo-700 hover:bg-indigo-50" @click="openClientUsage(client)">使用统计</button>
                   <button v-if="canManageClientItem(client)" type="button" class="block w-full rounded-lg px-3 py-2 text-left text-xs font-bold text-indigo-700 hover:bg-indigo-50" @click="clientActionMenuId = null; openClientScopeEdit(client)">编辑 Scope</button>
                   <button v-if="canManageClientItem(client)" type="button" class="block w-full rounded-lg px-3 py-2 text-left text-xs font-bold text-indigo-700 hover:bg-indigo-50" @click="clientActionMenuId = null; toggleClient(client)">{{ client.status === 'active' ? '停用 Client' : '启用 Client' }}</button>
                   <button v-if="canResetSecretForClient(client)" type="button" class="block w-full rounded-lg px-3 py-2 text-left text-xs font-bold text-amber-700 hover:bg-amber-50" @click="clientActionMenuId = null; resetSecret(client)">重置 Secret</button>
@@ -2138,6 +2216,94 @@ onUnmounted(() => {
           <div class="flex gap-2"><button type="button" class="rounded-lg border border-slate-200 px-3 py-1.5 font-bold disabled:cursor-not-allowed disabled:opacity-40" :disabled="auditLoading || auditPage <= 1" @click="changeAuditPage(-1)">上一页</button><button type="button" class="rounded-lg border border-slate-200 px-3 py-1.5 font-bold disabled:cursor-not-allowed disabled:opacity-40" :disabled="auditLoading || auditPage >= Math.ceil(auditTotal / auditPageSize)" @click="changeAuditPage(1)">下一页</button></div>
         </div>
       </section>
+
+      <div
+        v-if="showClientUsage && clientUsageTarget"
+        class="fixed inset-0 z-50 overflow-y-auto bg-slate-900/50 p-4"
+        @click.self="closeClientUsage"
+      >
+        <div class="flex min-h-full items-center justify-center">
+          <div class="w-full max-w-6xl max-h-[calc(100vh-2rem)] overflow-y-auto rounded-2xl bg-white shadow-2xl">
+            <header class="sticky top-0 z-10 flex items-start justify-between gap-4 border-b border-slate-100 bg-white px-6 py-5">
+              <div class="min-w-0">
+                <h2 class="text-xl font-black text-slate-800">使用统计</h2>
+                <p class="mt-1 break-all text-sm text-slate-500">{{ clientUsageTarget.client_name }} · {{ clientUsageTarget.client_id }}</p>
+                <p class="mt-1 text-xs text-slate-400">{{ isAdmin ? '管理员：统计该 Client 的全部用户调用' : '仅统计当前用户发起的调用' }}</p>
+              </div>
+              <div class="flex shrink-0 items-center gap-3">
+                <select v-model="clientUsageRange" class="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-600" :disabled="clientUsageLoading" aria-label="使用统计周期" @change="loadClientUsage">
+                  <option value="7d">近 7 天</option>
+                  <option value="30d">近 30 天</option>
+                  <option value="90d">近 90 天</option>
+                </select>
+                <button type="button" class="text-2xl text-slate-400 hover:text-slate-600" aria-label="关闭使用统计" @click="closeClientUsage">×</button>
+              </div>
+            </header>
+
+            <div v-if="clientUsageLoading" class="px-6 py-16 text-center text-sm text-slate-500">使用统计加载中…</div>
+            <div v-else-if="clientUsageError" class="px-6 py-16 text-center">
+              <p class="text-sm text-rose-600">{{ clientUsageError }}</p>
+              <button type="button" class="mt-4 rounded-lg bg-indigo-600 px-4 py-2 text-xs font-bold text-white hover:bg-indigo-700" @click="loadClientUsage">重新加载</button>
+            </div>
+            <div v-else-if="clientUsage" class="space-y-5 px-6 py-5">
+              <div class="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
+                <div class="rounded-xl border border-slate-100 bg-slate-50/80 p-3"><div class="flex items-center gap-1.5 text-[11px] font-bold text-slate-500"><svg class="h-4 w-4 shrink-0 text-indigo-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 19V5"/><path d="M4 19h17"/><path d="M8 16v-5"/><path d="M12 16V8"/><path d="M16 16v-3"/></svg>调用总量</div><div class="mt-1 text-lg font-black text-slate-800">{{ clientUsage.summary.total_calls }}</div></div>
+                <div class="rounded-xl border border-slate-100 bg-slate-50/80 p-3"><div class="flex items-center gap-1.5 text-[11px] font-bold text-slate-500"><svg class="h-4 w-4 shrink-0 text-emerald-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="m8 12 2.5 2.5L16 9"/></svg>成功率</div><div class="mt-1 text-lg font-black text-emerald-600">{{ clientUsage.summary.success_rate }}%</div></div>
+                <div class="rounded-xl border border-slate-100 bg-slate-50/80 p-3"><div class="flex items-center gap-1.5 text-[11px] font-bold text-slate-500"><svg class="h-4 w-4 shrink-0 text-rose-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m12 3 9 16H3L12 3Z"/><path d="M12 9v4"/><path d="M12 16h.01"/></svg>失败 / 拒绝</div><div class="mt-1 text-lg font-black text-rose-600">{{ clientUsage.summary.failed_calls }} / {{ clientUsage.summary.denied_calls }}</div></div>
+                <div class="rounded-xl border border-slate-100 bg-slate-50/80 p-3"><div class="flex items-center gap-1.5 text-[11px] font-bold text-slate-500"><svg class="h-4 w-4 shrink-0 text-indigo-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>活跃用户</div><div class="mt-1 text-lg font-black text-indigo-600">{{ clientUsage.summary.active_user_count }}</div></div>
+                <div class="rounded-xl border border-slate-100 bg-slate-50/80 p-3"><div class="flex items-center gap-1.5 text-[11px] font-bold text-slate-500"><svg class="h-4 w-4 shrink-0 text-slate-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>平均耗时</div><div class="mt-1 text-lg font-black text-slate-800">{{ clientUsage.summary.average_latency_ms == null ? '—' : `${clientUsage.summary.average_latency_ms} ms` }}</div></div>
+                <div class="rounded-xl border border-slate-100 bg-slate-50/80 p-3"><div class="flex items-center gap-1.5 text-[11px] font-bold text-slate-500"><svg class="h-4 w-4 shrink-0 text-slate-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 15a8 8 0 1 1 16 0"/><path d="M12 15 16 9"/><path d="M4 19h16"/></svg>P95 耗时</div><div class="mt-1 text-lg font-black text-slate-800">{{ clientUsage.summary.p95_latency_ms == null ? '—' : `${clientUsage.summary.p95_latency_ms} ms` }}</div></div>
+              </div>
+
+              <div class="grid gap-5 lg:grid-cols-2">
+                <section class="rounded-xl border border-slate-200 p-4">
+                  <div class="flex items-center justify-between gap-3"><h3 class="text-sm font-black text-slate-800">每日调用趋势</h3><div class="flex gap-2 text-[10px] text-slate-500"><span><i class="mr-1 inline-block h-2 w-2 rounded-full bg-indigo-400" />成功</span><span><i class="mr-1 inline-block h-2 w-2 rounded-full bg-rose-400" />失败</span><span><i class="mr-1 inline-block h-2 w-2 rounded-full bg-amber-400" />拒绝</span></div></div>
+                  <div v-if="!clientUsage.daily_trend.length" class="py-10 text-center text-xs text-slate-400">当前周期暂无调用数据</div>
+                  <div v-else ref="clientUsageTrendRef" class="mt-4 flex h-44 items-end gap-1 overflow-x-auto">
+                    <div v-for="item in clientUsage.daily_trend" :key="item.date" class="flex min-w-8 flex-none flex-col items-center justify-end gap-1" :title="`${item.date}：${item.total} 次`">
+                      <div class="flex h-32 w-full items-end"><div class="flex w-full flex-col justify-end overflow-hidden rounded-t transition-[height]" :style="{ height: `${Math.max(item.total ? 8 : 0, Math.round(item.total / clientUsageMax * 120))}px` }"><div class="w-full bg-indigo-400" :style="{ height: `${item.total ? item.completed / item.total * 100 : 0}%` }" /><div class="w-full bg-rose-400" :style="{ height: `${item.total ? item.failed / item.total * 100 : 0}%` }" /><div class="w-full bg-amber-400" :style="{ height: `${item.total ? item.denied / item.total * 100 : 0}%` }" /></div></div>
+                      <span class="text-[10px] text-slate-500">{{ item.total }}</span><span class="text-[9px] text-slate-400">{{ item.date.slice(5) }}</span>
+                    </div>
+                  </div>
+                  <div v-if="clientUsage.daily_trend.length" class="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-slate-500"><span>成功 {{ clientUsage.summary.completed_calls }}</span><span>失败 {{ clientUsage.summary.failed_calls }}</span><span>拒绝 {{ clientUsage.summary.denied_calls }}</span></div>
+                </section>
+
+                <section class="rounded-xl border border-slate-200 p-4">
+                  <h3 class="text-sm font-black text-slate-800">按方法分布</h3>
+                  <div v-if="!clientUsage.method_distribution.length" class="py-10 text-center text-xs text-slate-400">当前周期暂无调用数据</div>
+                  <div v-else class="mt-4 space-y-3">
+                    <div v-for="item in clientUsage.method_distribution" :key="item.name"><div class="flex items-center justify-between gap-3 text-xs"><code class="min-w-0 break-all font-bold text-indigo-700">{{ item.name }}</code><span class="shrink-0 text-slate-500">{{ item.total }} 次 · {{ item.success_rate }}%</span></div><div class="mt-1 h-2 rounded-full bg-slate-100"><div class="h-2 rounded-full bg-indigo-500" :style="{ width: usageBarWidth(item.total, clientUsage.summary.total_calls) }" /></div></div>
+                  </div>
+                </section>
+
+                <section class="rounded-xl border border-slate-200 p-4">
+                  <h3 class="text-sm font-black text-slate-800">结果状态分布</h3>
+                  <div v-if="!clientUsage.status_distribution.length" class="py-10 text-center text-xs text-slate-400">当前周期暂无调用数据</div>
+                  <div v-else class="mt-4 space-y-3"><div v-for="item in clientUsage.status_distribution" :key="item.name"><div class="flex items-center justify-between text-xs"><span class="font-bold text-slate-700">{{ usageStatusLabel(item.name) }}</span><span class="text-slate-500">{{ item.total }} 次 · {{ usagePercent(item.total, clientUsage.summary.total_calls) }}</span></div><div class="mt-1 h-2 rounded-full bg-slate-100"><div class="h-2 rounded-full bg-emerald-500" :style="{ width: usageBarWidth(item.total, clientUsage.summary.total_calls) }" /></div></div></div>
+                </section>
+
+                <section class="rounded-xl border border-slate-200 p-4">
+                  <h3 class="text-sm font-black text-slate-800">认证类型分布</h3>
+                  <div v-if="!clientUsage.auth_distribution.length" class="py-10 text-center text-xs text-slate-400">当前周期暂无调用数据</div>
+                  <div v-else class="mt-4 space-y-3"><div v-for="item in clientUsage.auth_distribution" :key="item.name"><div class="flex items-center justify-between text-xs"><span class="font-bold text-slate-700">{{ usageAuthLabel(item.name) }}</span><span class="text-slate-500">{{ item.total }} 次 · {{ usagePercent(item.total, clientUsage.summary.total_calls) }}</span></div><div class="mt-1 h-2 rounded-full bg-slate-100"><div class="h-2 rounded-full bg-purple-500" :style="{ width: usageBarWidth(item.total, clientUsage.summary.total_calls) }" /></div></div></div>
+                </section>
+
+                <section class="rounded-xl border border-slate-200 p-4">
+                  <h3 class="text-sm font-black text-slate-800">用户调用排行</h3>
+                  <div v-if="!clientUsage.user_distribution.length" class="py-10 text-center text-xs text-slate-400">当前周期暂无调用数据</div>
+                  <div v-else class="mt-4 space-y-2"><div v-for="item in clientUsage.user_distribution.slice(0, 10)" :key="item.user_id" class="flex items-center justify-between gap-3 rounded-lg bg-slate-50 px-3 py-2 text-xs"><span class="min-w-0 truncate text-slate-700" :title="`${item.display_name} · user_id=${item.user_id}`"><span class="font-bold">{{ item.display_name }}</span><span v-if="item.real_name && item.user_name" class="ml-1 text-slate-400">@{{ item.user_name }}</span></span><span class="shrink-0 font-bold text-indigo-700">{{ item.total }} 次 · {{ usagePercent(item.total, clientUsage.summary.total_calls) }}</span></div></div>
+                </section>
+
+                <section class="rounded-xl border border-slate-200 p-4">
+                  <h3 class="text-sm font-black text-slate-800">资源关联排行</h3>
+                  <div v-if="!clientUsage.resource_distribution.length" class="py-10 text-center text-xs text-slate-400">当前周期暂无调用数据</div>
+                  <div v-else class="mt-4 space-y-2"><div v-for="item in clientUsage.resource_distribution.slice(0, 10)" :key="`${item.type}-${item.name}`" class="flex items-center justify-between gap-3 rounded-lg bg-slate-50 px-3 py-2 text-xs"><span class="min-w-0 break-all text-slate-700"><span class="mr-1 rounded bg-indigo-50 px-1.5 py-0.5 font-bold text-indigo-700">{{ item.type }}</span>{{ usageResourceLabel(item.name) }}</span><span class="shrink-0 font-bold text-indigo-700">{{ item.total }} 次</span></div></div>
+                </section>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
 
       <div
         v-if="clientDetails"

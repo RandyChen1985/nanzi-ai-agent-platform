@@ -345,6 +345,40 @@ def _serialize_security_audit(log: McpOAuthSecurityAuditLog) -> dict[str, Any]:
     }
 
 
+def _usage_date_range(usage_range: Literal["7d", "30d", "90d"]) -> tuple[datetime, datetime, list[str]]:
+    days = {"7d": 7, "30d": 30, "90d": 90}[usage_range]
+    today = datetime.utcnow().date()
+    start_date = today - timedelta(days=days - 1)
+    start_at = datetime.combine(start_date, datetime.min.time())
+    end_at = datetime.combine(today, datetime.max.time())
+    dates = [(start_date + timedelta(days=offset)).isoformat() for offset in range(days)]
+    return start_at, end_at, dates
+
+
+def _sort_usage_distribution(items: dict[str, int]) -> list[dict[str, Any]]:
+    return [
+        {"name": name, "total": total}
+        for name, total in sorted(items.items(), key=lambda item: (-item[1], item[0]))
+    ]
+
+
+def _serialize_usage_resource_distribution(
+    rows: list[tuple[str, str, int]],
+    other_total: int = 0,
+) -> list[dict[str, Any]]:
+    counts: dict[tuple[str, str], int] = {}
+    for resource_type, resource_name, total in rows:
+        counts[(resource_type, resource_name)] = int(total)
+    if other_total:
+        counts[("other", "其他")] = int(other_total)
+    return [
+        {"type": resource_type, "name": name, "total": total}
+        for (resource_type, name), total in sorted(
+            counts.items(), key=lambda item: (-item[1], item[0][0], item[0][1])
+        )
+    ]
+
+
 def _serialize_token(
     token: McpOAuthAccessToken,
     *,
@@ -503,6 +537,236 @@ async def audit_summary(
         "denied_calls": denied_calls,
         "average_latency_ms": round(float(average_latency), 2) if average_latency is not None else None,
         "p95_latency_ms": int(p95_latency) if p95_latency is not None else None,
+    }
+
+
+@router.get("/clients/{client_id}/usage")
+async def client_usage(
+    client_id: str,
+    range: Literal["7d", "30d", "90d"] = Query(default="30d"),
+    user: dict = Depends(require_mcp_service_permission("element:mcp_service:audit:read")),
+    db: AsyncSession = Depends(get_db_session),
+) -> dict[str, Any]:
+    """返回指定 Client 在当前用户可见范围内的调用统计。"""
+    client = await _get_owned_client(db, client_id, user, allow_shared=True)
+    if client is None or client.status == "deleted":
+        raise HTTPException(status_code=404, detail="OAuth Client 不存在")
+
+    start_at, end_at, dates = _usage_date_range(range)
+    filters = [
+        McpInboundAuditLog.client_id == client_id,
+        McpInboundAuditLog.created_at >= start_at,
+        McpInboundAuditLog.created_at <= end_at,
+    ]
+    if user.get("role") != "admin":
+        current_user_id = _current_user_id(user)
+        filters.append(McpInboundAuditLog.user_id == current_user_id)
+
+    daily = {
+        day: {"total": 0, "completed": 0, "failed": 0, "denied": 0}
+        for day in dates
+    }
+    methods: dict[str, dict[str, int]] = {}
+    statuses: dict[str, int] = {}
+    auth_types: dict[str, int] = {}
+    users: dict[str, int] = {}
+    status_rows = (
+        await db.execute(
+            select(
+                McpInboundAuditLog.result_status,
+                func.count().label("total"),
+            )
+            .where(*filters)
+            .group_by(McpInboundAuditLog.result_status)
+        )
+    ).all()
+    statuses = {
+        str(status or "unknown"): int(total)
+        for status, total in status_rows
+    }
+
+    daily_rows = (
+        await db.execute(
+            select(
+                func.date(McpInboundAuditLog.created_at).label("date"),
+                McpInboundAuditLog.result_status,
+                func.count().label("total"),
+            )
+            .where(*filters)
+            .group_by(
+                func.date(McpInboundAuditLog.created_at),
+                McpInboundAuditLog.result_status,
+            )
+        )
+    ).all()
+    for day_value, status_value, total in daily_rows:
+        if day_value is None:
+            continue
+        day = day_value.isoformat() if hasattr(day_value, "isoformat") else str(day_value)
+        if day not in daily:
+            continue
+        status = str(status_value or "unknown")
+        daily[day]["total"] += int(total)
+        if status in daily[day]:
+            daily[day][status] += int(total)
+
+    method_rows = (
+        await db.execute(
+            select(
+                McpInboundAuditLog.method_name,
+                McpInboundAuditLog.result_status,
+                func.count().label("total"),
+            )
+            .where(*filters)
+            .group_by(
+                McpInboundAuditLog.method_name,
+                McpInboundAuditLog.result_status,
+            )
+        )
+    ).all()
+    for method_value, status_value, total in method_rows:
+        method = str(method_value or "unknown")
+        method_item = methods.setdefault(method, {"total": 0, "completed": 0})
+        method_item["total"] += int(total)
+        if status_value == "completed":
+            method_item["completed"] += int(total)
+
+    auth_rows = (
+        await db.execute(
+            select(
+                McpInboundAuditLog.auth_type,
+                func.count().label("total"),
+            )
+            .where(*filters)
+            .group_by(McpInboundAuditLog.auth_type)
+        )
+    ).all()
+    auth_types = {
+        str(auth_type or "unknown"): int(total)
+        for auth_type, total in auth_rows
+    }
+
+    user_rows = (
+        await db.execute(
+            select(
+                McpInboundAuditLog.user_id,
+                func.count().label("total"),
+            )
+            .where(*filters, McpInboundAuditLog.user_id.is_not(None))
+            .group_by(McpInboundAuditLog.user_id)
+        )
+    ).all()
+    users = {str(user_id): int(total) for user_id, total in user_rows}
+    numeric_user_ids: list[int] = []
+    for user_id in users:
+        try:
+            numeric_user_ids.append(int(user_id))
+        except (TypeError, ValueError):
+            continue
+    user_identity: dict[str, tuple[str | None, str | None]] = {}
+    if numeric_user_ids:
+        identity_rows = (
+            await db.execute(
+                select(User.id, User.user_name, User.real_name).where(User.id.in_(numeric_user_ids))
+            )
+        ).all()
+        user_identity = {
+            str(user_id): (user_name, real_name)
+            for user_id, user_name, real_name in identity_rows
+        }
+
+    resource_rows: list[tuple[str, str, int]] = []
+    for resource_type, column in (
+        ("agent", McpInboundAuditLog.agent_id),
+        ("conversation", McpInboundAuditLog.conversation_id),
+        ("dataset", McpInboundAuditLog.dataset_id),
+    ):
+        grouped_resource_rows = (
+            await db.execute(
+                select(column.label("name"), func.count().label("total"))
+                .where(*filters, column.is_not(None))
+                .group_by(column)
+            )
+        ).all()
+        for resource_name, total in grouped_resource_rows:
+            if resource_name is not None:
+                resource_rows.append((resource_type, str(resource_name), int(total)))
+
+    other_total = int(
+        await db.scalar(
+            select(func.count())
+            .select_from(McpInboundAuditLog)
+            .where(
+                *filters,
+                McpInboundAuditLog.agent_id.is_(None),
+                McpInboundAuditLog.conversation_id.is_(None),
+                McpInboundAuditLog.dataset_id.is_(None),
+            )
+        )
+        or 0
+    )
+    latencies = list(
+        (
+            await db.execute(
+                select(McpInboundAuditLog.latency_ms)
+                .where(*filters, McpInboundAuditLog.latency_ms.is_not(None))
+                .order_by(McpInboundAuditLog.latency_ms.asc())
+            )
+        )
+        .scalars()
+        .all()
+    )
+    latencies = [int(latency) for latency in latencies]
+    total_calls = sum(statuses.values())
+    completed_calls = statuses.get("completed", 0)
+    failed_calls = statuses.get("failed", 0)
+    denied_calls = statuses.get("denied", 0)
+    sorted_latencies = sorted(latencies)
+    p95_latency = (
+        sorted_latencies[max(0, (len(sorted_latencies) * 95 + 99) // 100 - 1)]
+        if sorted_latencies
+        else None
+    )
+    return {
+        "range": range,
+        "start_at": start_at.isoformat(),
+        "end_at": end_at.isoformat(),
+        "summary": {
+            "total_calls": total_calls,
+            "completed_calls": completed_calls,
+            "success_rate": round(completed_calls / total_calls * 100, 2) if total_calls else 0,
+            "failed_calls": failed_calls,
+            "denied_calls": denied_calls,
+            "average_latency_ms": round(sum(latencies) / len(latencies), 2) if latencies else None,
+            "p95_latency_ms": p95_latency,
+            "active_user_count": len(users),
+        },
+        "daily_trend": [{"date": day, **values} for day, values in daily.items()],
+        "method_distribution": [
+            {
+                "name": name,
+                "total": item["total"],
+                "success_rate": round(item["completed"] / item["total"] * 100, 2),
+            }
+            for name, item in sorted(methods.items(), key=lambda item: (-item[1]["total"], item[0]))
+        ],
+        "status_distribution": _sort_usage_distribution(statuses),
+        "auth_distribution": _sort_usage_distribution(auth_types),
+        "user_distribution": [
+            {
+                "user_id": name,
+                "user_name": user_identity.get(name, (None, None))[0],
+                "real_name": user_identity.get(name, (None, None))[1],
+                "display_name": (
+                    user_identity.get(name, (None, None))[1]
+                    or user_identity.get(name, (None, None))[0]
+                    or f"用户 #{name}"
+                ),
+                "total": total,
+            }
+            for name, total in sorted(users.items(), key=lambda item: (-item[1], item[0]))
+        ],
+        "resource_distribution": _serialize_usage_resource_distribution(resource_rows, other_total),
     }
 
 

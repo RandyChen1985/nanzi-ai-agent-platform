@@ -277,6 +277,76 @@ def test_service_desk_exposes_security_audit_time_filters_and_trend():
     assert "调用趋势" in view
 
 
+def test_client_more_actions_exposes_usage_analytics_modal():
+    view = (ROOT / "frontend/src/views/McpServiceDesk.vue").read_text(encoding="utf-8")
+    clients_section = view.split("activeTab === 'clients'", 1)[1].split("activeTab === 'methods'", 1)[0]
+    assert "使用统计" in clients_section
+    assert "openClientUsage" in view
+    assert "/api/portal/mcp-service/clients/${encodeURIComponent(client.client_id)}/usage" in view
+    for field in ("daily_trend", "method_distribution", "status_distribution", "auth_distribution", "user_distribution", "resource_distribution"):
+        assert field in view
+
+
+def test_client_usage_modal_supports_ranges_loading_error_and_scroll():
+    view = (ROOT / "frontend/src/views/McpServiceDesk.vue").read_text(encoding="utf-8")
+    assert "clientUsageRange" in view
+    assert "近 7 天" in view
+    assert "近 30 天" in view
+    assert "近 90 天" in view
+    assert "使用统计" in view
+    assert "重新加载" in view
+    assert "当前周期暂无调用数据" in view
+    assert "max-h-[calc(100vh-2rem)]" in view
+    assert "overflow-y-auto" in view
+    assert "clientUsage.summary.completed_calls" in view
+
+
+def test_client_usage_user_ranking_displays_account_identity_instead_of_only_id():
+    view = (ROOT / "frontend/src/views/McpServiceDesk.vue").read_text(encoding="utf-8")
+    usage_modal = view.split('v-if="showClientUsage && clientUsageTarget"', 1)[1]
+    user_ranking = usage_modal.split("用户调用排行", 1)[1].split("资源关联排行", 1)[0]
+    assert "item.display_name" in user_ranking
+    assert "item.user_name" in user_ranking
+    assert "user_id=" in user_ranking
+
+
+def test_client_usage_kpis_fit_one_row_on_large_screens_with_compact_cards():
+    view = (ROOT / "frontend/src/views/McpServiceDesk.vue").read_text(encoding="utf-8")
+    usage_modal = view.split('v-if="showClientUsage && clientUsageTarget"', 1)[1]
+    assert "grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6" in usage_modal
+    assert "text-[11px] font-bold" in usage_modal
+    assert "mt-1 text-lg font-black" in usage_modal
+
+
+def test_client_usage_kpis_include_six_compact_inline_svg_icons():
+    view = (ROOT / "frontend/src/views/McpServiceDesk.vue").read_text(encoding="utf-8")
+    usage_modal = view.split('v-if="showClientUsage && clientUsageTarget"', 1)[1]
+    kpi_grid = usage_modal.split('<div class="grid gap-5 lg:grid-cols-2">', 1)[0]
+    assert kpi_grid.count("<svg") == 6
+    assert kpi_grid.count('aria-hidden="true"') == 6
+    assert kpi_grid.count("h-4 w-4 shrink-0") == 6
+
+
+def test_client_usage_trend_defaults_to_the_latest_day_after_rendering():
+    view = (ROOT / "frontend/src/views/McpServiceDesk.vue").read_text(encoding="utf-8")
+    assert "nextTick" in view
+    assert "clientUsageTrendRef" in view
+    assert "scrollLeft = clientUsageTrendRef.value.scrollWidth" in view
+    assert 'ref="clientUsageTrendRef"' in view
+
+
+def test_client_usage_trend_items_keep_intrinsic_width_for_horizontal_scrolling():
+    view = (ROOT / "frontend/src/views/McpServiceDesk.vue").read_text(encoding="utf-8")
+    trend = view.split('ref="clientUsageTrendRef"', 1)[1].split('</div>', 1)[0]
+    assert "min-w-8 flex-none" in trend
+
+
+def test_client_usage_trend_scrolls_after_loading_branch_mounts():
+    view = (ROOT / "frontend/src/views/McpServiceDesk.vue").read_text(encoding="utf-8")
+    load_usage = view.split("const loadClientUsage = async () =>", 1)[1].split("const openClientUsage", 1)[0]
+    assert "clientUsageLoading.value = false\n    if (clientUsage.value) {\n      await nextTick()" in load_usage
+
+
 def test_service_desk_displays_client_owner_identity_for_global_admin_list():
     view = (ROOT / "frontend/src/views/McpServiceDesk.vue").read_text(encoding="utf-8")
 
@@ -394,6 +464,19 @@ def test_client_card_labels_and_copies_client_id():
     assert "client-id-" in view
     assert "Client ID 用于 Token Endpoint" in view
     assert "复制 Client ID" in view
+
+
+def test_client_token_action_uses_soft_primary_treatment_while_create_remains_primary():
+    view = (ROOT / "frontend/src/views/McpServiceDesk.vue").read_text(encoding="utf-8")
+    client_actions = view.split('data-testid="client-actions"', 1)[1]
+    token_button = client_actions.split('@click="openTokenIssue(client)"', 1)[0].rsplit("<button", 1)[1]
+    create_button = view.split('@click="showCreate = true"', 1)[0].rsplit("<button", 1)[1]
+
+    assert "border-indigo-200" in token_button
+    assert "bg-indigo-50" in token_button
+    assert "text-indigo-700" in token_button
+    assert "bg-indigo-600" not in token_button
+    assert "bg-indigo-600" in create_button
 
 
 def test_client_card_uses_compact_permission_summary_and_on_demand_details():
