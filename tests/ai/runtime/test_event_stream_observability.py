@@ -127,6 +127,28 @@ async def test_tool_call_start_preserves_inline_arguments_for_completion_metadat
 
 
 @pytest.mark.asyncio
+async def test_tool_call_start_emits_explicit_tool_category():
+    state = new_native_stream_state()
+    event = SimpleNamespace(
+        type="TOOL_CALL_START",
+        tool_call_id="read-2",
+        tool_call_name="Read",
+        arguments={"file_path": "/workspace/docs/report.md"},
+    )
+
+    chunks = [
+        chunk
+        async for chunk in map_standard_agentscope_event(
+            event,
+            state=state,
+            emit_observability=False,
+        )
+    ]
+
+    assert chunks[-1]["category"] == "tool"
+
+
+@pytest.mark.asyncio
 async def test_custom_state_updated_emits_context_update():
     state = new_native_stream_state()
     event = SimpleNamespace(

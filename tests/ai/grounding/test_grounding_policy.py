@@ -12,6 +12,7 @@ from app.services.ai.grounding.policy import (
     resolve_fact_requirement,
     evidence_types_for_capabilities,
 )
+from app.services.ai.grounding.service import GroundingService
 from app.services.ai.request_decision import (
     RequestCapability,
     RequestDecision,
@@ -39,6 +40,115 @@ def test_internal_data_source_requires_matching_evidence():
 
     assert requirement.required
     assert requirement.accepted_types == frozenset({EvidenceType.INTERNAL_DATA})
+
+
+def test_success_receipt_allows_non_concrete_execution_summary_without_marker_overlap():
+    ledger = EvidenceLedger(user_id="1", conversation_id="c1")
+    ledger.record_success(
+        call_id="call-1",
+        producer="report_query",
+        evidence_types={EvidenceType.EXTERNAL_TOOL},
+        result={"status": "ok", "data": {"state": "healthy"}},
+        policy="allow_empty_success",
+    )
+
+    decision = GroundingService.audit(
+        requirement=FactRequirement(
+            required=True,
+            accepted_types=frozenset({EvidenceType.EXTERNAL_TOOL}),
+            freshness=FactFreshness.DYNAMIC,
+            block_unsupported_facts=True,
+        ),
+        candidate_text="已成功调用查询工具，查询已完成。",
+        ledger=ledger,
+    ).decision
+
+    assert decision.action is GroundingAction.PASS
+
+
+@pytest.mark.parametrize(
+    "candidate_text",
+    [
+        "成功查询，结果为北京。",
+        "已成功调用查询工具，库存充足。",
+        "已成功查询，系统支持退票。",
+    ],
+)
+def test_business_conclusion_is_not_treated_as_execution_summary(candidate_text):
+    ledger = EvidenceLedger(user_id="1", conversation_id="c1")
+    ledger.record_success(
+        call_id="call-1",
+        producer="report_query",
+        evidence_types={EvidenceType.EXTERNAL_TOOL},
+        result={"status": "ok", "data": {"state": "healthy"}},
+        policy="allow_empty_success",
+    )
+
+    decision = GroundingService.audit(
+        requirement=FactRequirement(
+            required=True,
+            accepted_types=frozenset({EvidenceType.EXTERNAL_TOOL}),
+            freshness=FactFreshness.DYNAMIC,
+            block_unsupported_facts=True,
+        ),
+        candidate_text=candidate_text,
+        ledger=ledger,
+    ).decision
+
+    assert decision.action is GroundingAction.PASS_WITH_WARNING
+
+
+def test_non_concrete_operational_status_without_receipt_is_not_released():
+    decision = GroundingService.audit(
+        requirement=FactRequirement(
+            required=True,
+            accepted_types=frozenset({EvidenceType.EXTERNAL_TOOL}),
+            freshness=FactFreshness.DYNAMIC,
+            block_unsupported_facts=True,
+        ),
+        candidate_text="系统运行平稳。",
+        ledger=EvidenceLedger(user_id="1", conversation_id="c1"),
+    ).decision
+
+    assert decision.action is not GroundingAction.PASS
+
+
+def test_completed_sync_status_without_receipt_is_not_released():
+    decision = GroundingService.audit(
+        requirement=FactRequirement(
+            required=True,
+            accepted_types=frozenset({EvidenceType.EXTERNAL_TOOL}),
+            freshness=FactFreshness.DYNAMIC,
+            block_unsupported_facts=True,
+        ),
+        candidate_text="数据同步完成。",
+        ledger=EvidenceLedger(user_id="1", conversation_id="c1"),
+    ).decision
+
+    assert decision.action is not GroundingAction.PASS
+
+
+def test_success_receipt_does_not_release_unrelated_concrete_fact():
+    ledger = EvidenceLedger(user_id="1", conversation_id="c1")
+    ledger.record_success(
+        call_id="call-1",
+        producer="report_query",
+        evidence_types={EvidenceType.EXTERNAL_TOOL},
+        result={"city": "上海", "temperature": 26},
+    )
+
+    decision = GroundingService.audit(
+        requirement=FactRequirement(
+            required=True,
+            accepted_types=frozenset({EvidenceType.EXTERNAL_TOOL}),
+            freshness=FactFreshness.DYNAMIC,
+            block_unsupported_facts=True,
+        ),
+        candidate_text="北京明天有 38 度。",
+        ledger=ledger,
+    ).decision
+
+    assert decision.action is GroundingAction.PASS_WITH_WARNING
 
 
 def test_runtime_requirement_defaults_to_realtime_with_short_age_window():

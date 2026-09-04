@@ -40,6 +40,27 @@ def test_typed_runtime_receipt_gets_realtime_freshness_by_default():
     assert receipt.freshness is FactFreshness.REALTIME
 
 
+def test_ledger_can_require_fresh_receipt_from_specific_producer():
+    ledger = EvidenceLedger(user_id="1", conversation_id="c1")
+    ledger.record_success(
+        call_id="call-1",
+        producer="weather_lookup",
+        evidence_types={EvidenceType.EXTERNAL_TOOL},
+        result={"city": "上海", "temperature": 26},
+    )
+
+    assert ledger.has_fresh_evidence_from_producer(
+        "weather_lookup",
+        {EvidenceType.EXTERNAL_TOOL},
+        freshness=FactFreshness.DYNAMIC,
+    )
+    assert not ledger.has_fresh_evidence_from_producer(
+        "finance_lookup",
+        {EvidenceType.EXTERNAL_TOOL},
+        freshness=FactFreshness.DYNAMIC,
+    )
+
+
 def test_typed_file_receipt_gets_dynamic_freshness_by_default():
     ledger = EvidenceLedger(user_id="7", conversation_id="conv-1")
 
