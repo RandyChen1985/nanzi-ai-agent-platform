@@ -24,10 +24,12 @@ from app.services.ai.config import AgentConfigProvider
 from app.services.ai.agent_manager import AgentManagerService
 from app.services.ai.executors.base import BaseExecutor
 from app.services.ai.grounding.ledger import EvidenceLedger
-from app.services.ai.grounding.models import EvidenceType
+from app.services.ai.grounding.models import EvidenceType, FactFreshness
 from app.services.ai.grounding.policy import (
     FactRequirement,
     GroundingRiskLevel,
+    contains_grounding_fact_signal,
+    is_non_concrete_execution_summary,
     resolve_fact_requirement,
 )
 from app.services.ai.grounding.service import GroundingService
@@ -350,6 +352,18 @@ def _is_grounding_bufferable_chunk(chunk: Dict[str, Any]) -> bool:
         "retraction",
     }:
         return False
+    return not chunk_type and "content" in chunk
+
+
+def _is_strict_evidence_bufferable_chunk(chunk: Dict[str, Any]) -> bool:
+    """在当前轮证据门禁下暂存所有可能成为最终正文的文本事件。"""
+    chunk_type = str(chunk.get("type") or "")
+    if chunk_type in {
+        "answer_delta",
+        "process_narration_promote",
+        "retraction",
+    }:
+        return True
     return not chunk_type and "content" in chunk
 
 
@@ -698,6 +712,11 @@ class AssistantAgentRunner(BaseExecutor):
         )
 
     @staticmethod
+    def _normalize_grounding_block_mode(value: Any) -> str:
+        mode = str(value or "strict_buffer").strip().lower()
+        return mode if mode in {"strict_buffer", "stream_with_retraction"} else "strict_buffer"
+
+    @staticmethod
     def _grounding_decision_metadata(requirement: FactRequirement) -> Dict[str, Any]:
         return {
             "decision_origin": requirement.decision_origin,
@@ -708,6 +727,262 @@ class AssistantAgentRunner(BaseExecutor):
             ),
             "decision_conflicts": list(requirement.decision_conflicts),
         }
+
+    @staticmethod
+    def _resolve_current_turn_evidence_types(
+        tool_name: str,
+        tools: List[Any],
+    ) -> frozenset[EvidenceType]:
+        """Return evidence types that make a mounted tool a current-turn source."""
+        normalized_name = str(tool_name or "").strip()
+        target_tool = next(
+            (
+                tool
+                for tool in tools or []
+                if str(getattr(tool, "name", "") or "").strip() == normalized_name
+            ),
+            None,
+        )
+        if target_tool is None:
+            return frozenset()
+
+        from app.services.ai.tool_policy import resolve_tool_metadata
+
+        evidence_types = frozenset(getattr(target_tool, "evidence_types", None) or ())
+        permission_scope = str(
+            getattr(target_tool, "permission_scope", "") or ""
+        ).strip().lower()
+        try:
+            metadata = resolve_tool_metadata(target_tool)
+        except Exception:
+            # 预检异常时仍依据运行时的最小安全声明判断证据类型，避免异常路径
+            # 把严格门禁一并绕过。
+            return evidence_types if permission_scope == "read" else frozenset()
+        if getattr(metadata, "nudge_mode", "") != "evidence":
+            return frozenset()
+        return evidence_types
+
+    @staticmethod
+    def _build_tool_preflight_evidence_metadata(
+        tool_nudge: Any,
+        tools: List[Any],
+        evidence_contracts: Optional[List[Any]] = None,
+        *,
+        grounding_enabled: bool = True,
+    ) -> Dict[str, Any]:
+        """Return safe metadata for a nudge that requires current-turn evidence."""
+        evidence_types = AssistantAgentRunner._resolve_current_turn_evidence_types(
+            str(getattr(tool_nudge, "tool_name", "") or ""),
+            tools,
+        )
+        required = bool(
+            grounding_enabled
+            and getattr(tool_nudge, "should_force_first_call", False)
+            and evidence_types
+        )
+        metadata: Dict[str, Any] = {
+            "current_turn_evidence_required": required,
+            "required_evidence_types": sorted(
+                str(getattr(item, "value", item)) for item in evidence_types
+            )
+            if required
+            else [],
+        }
+        if evidence_contracts:
+            metadata["evidence_contracts"] = [
+                contract.to_dict()
+                if hasattr(contract, "to_dict")
+                else dict(contract)
+                for contract in evidence_contracts
+            ]
+        return metadata
+
+    @staticmethod
+    def _parse_evidence_contracts(raw_contracts: Any) -> tuple[dict[str, Any], ...]:
+        if not isinstance(raw_contracts, list):
+            return ()
+        contracts: list[dict[str, Any]] = []
+        for raw in raw_contracts:
+            if not isinstance(raw, dict):
+                continue
+            tool_name = str(raw.get("tool_name") or "").strip()
+            evidence_types: list[str] = []
+            for value in raw.get("required_evidence_types") or []:
+                try:
+                    evidence_types.append(EvidenceType(value).value)
+                except (TypeError, ValueError):
+                    continue
+            if tool_name and evidence_types:
+                contracts.append(
+                    {
+                        "tool_name": tool_name,
+                        "required_evidence_types": sorted(set(evidence_types)),
+                        "freshness": str(raw.get("freshness") or "current_turn"),
+                    }
+                )
+        return tuple(contracts)
+
+    @staticmethod
+    def _resolve_contract_freshness(value: Any) -> FactFreshness | None:
+        normalized = str(value or "current_turn").strip().lower()
+        if normalized == "current_turn":
+            return FactFreshness.DYNAMIC
+        try:
+            return FactFreshness(normalized)
+        except (TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def _resolve_resume_evidence_contracts(
+        state: Dict[str, Any],
+        tools: List[Any],
+    ) -> tuple[dict[str, Any], ...]:
+        """优先恢复首次预检合同；仅对没有合同字段的旧快照兼容重算。"""
+        if "evidence_contracts" in state:
+            return AssistantAgentRunner._parse_evidence_contracts(
+                state.get("evidence_contracts")
+            )
+
+        from app.services.ai.tool_nudge_policy import resolve_tool_nudge_plan
+
+        plan = resolve_tool_nudge_plan(str(state.get("user_query") or ""), tools)
+        if plan is None:
+            return ()
+        return tuple(
+            contract.to_dict()
+            for contract in plan.evidence_contracts
+        )
+
+    @staticmethod
+    def _evidence_contracts_satisfied(
+        contracts: tuple[dict[str, Any], ...],
+        *,
+        candidate_text: str,
+        ledger: EvidenceLedger,
+    ) -> tuple[bool, str]:
+        if not contracts:
+            return True, ""
+        try:
+            has_concrete_claim = (
+                contains_grounding_fact_signal(candidate_text)
+                and not is_non_concrete_execution_summary(candidate_text)
+            )
+        except Exception:
+            has_concrete_claim = True
+        for contract in contracts:
+            try:
+                required_types = frozenset(
+                    EvidenceType(value)
+                    for value in contract["required_evidence_types"]
+                )
+            except (TypeError, ValueError, KeyError):
+                return False, "evidence contract contains an invalid evidence type"
+            freshness = AssistantAgentRunner._resolve_contract_freshness(
+                contract.get("freshness")
+            )
+            if freshness is None:
+                return False, "evidence contract contains an invalid freshness"
+            producer = contract["tool_name"]
+            if not ledger.has_fresh_evidence_from_producer(
+                producer,
+                required_types,
+                freshness=freshness,
+                allow_reuse=freshness is FactFreshness.REUSE_PREVIOUS,
+            ):
+                return False, f"evidence contract missing fresh receipt from {producer}"
+            if has_concrete_claim and not ledger.has_candidate_overlap_from_producer(
+                candidate_text,
+                producer,
+                required_types,
+                freshness=freshness,
+                allow_reuse=freshness is FactFreshness.REUSE_PREVIOUS,
+            ):
+                return False, f"answer is not correlated with evidence contract {producer}"
+        return True, ""
+
+    @staticmethod
+    def _should_block_current_turn_evidence(
+        *,
+        grounding_decision: Any,
+        contracts_satisfied: bool,
+        contracts_reason: str,
+        required_evidence_types: frozenset[EvidenceType],
+    ) -> bool:
+        """按风险等级决定阻断当前轮具体结论还是降级提示。
+
+        没有成功收据、证据过期、来源冲突和合同格式错误意味着事实没有可靠
+        来源，必须阻断。若对应外部工具已经成功返回，仅因模型改写后无法通过
+        marker 关联校验，则保留回答并提示用户核对，避免把合理的自然语言改写
+        当成硬错误。内部数据和知识库仍属于高风险事实域，不走该降级路径。
+        """
+        reason = str(contracts_reason or "").strip().lower()
+        correlation_only = reason.startswith(
+            "answer is not correlated with evidence contract"
+        ) or str(getattr(grounding_decision, "reason", "")).strip().lower() == (
+            "matching evidence type exists but the answer is not correlated with its content"
+        )
+        if correlation_only and not (
+            required_evidence_types
+            & {EvidenceType.INTERNAL_DATA, EvidenceType.INTERNAL_KNOWLEDGE}
+        ):
+            return False
+
+        if not contracts_satisfied:
+            return True
+
+        risk_level = getattr(grounding_decision, "risk_level", None)
+        try:
+            return GroundingRiskLevel(risk_level) is GroundingRiskLevel.HIGH
+        except (TypeError, ValueError):
+            return True
+
+    @staticmethod
+    def _build_downgraded_grounding_warning(
+        *,
+        grounding_audit: Any,
+        grounding_decision: Any,
+        contracts_reason: str,
+    ) -> Dict[str, Any]:
+        """为已取证但关联度不足的回答生成中风险提示。"""
+        warning_chunk = getattr(grounding_audit, "warning_chunk", None)
+        warning_risk = (
+            warning_chunk.get("grounding_risk")
+            if isinstance(warning_chunk, dict)
+            else None
+        )
+        if not isinstance(warning_risk, dict) or warning_risk.get("level") == "high":
+            return GroundingService.warning_chunk(
+                risk_level=GroundingRiskLevel.MEDIUM,
+                reason=(
+                    contracts_reason
+                    or "matching evidence exists but answer correlation is incomplete"
+                ),
+                required_types=getattr(
+                    grounding_decision, "required_evidence_types", frozenset()
+                ),
+                available_types=getattr(
+                    grounding_decision, "available_evidence_types", frozenset()
+                ),
+            )
+        return warning_chunk
+
+    @staticmethod
+    def _current_turn_grounding_ledger(ledger: EvidenceLedger) -> EvidenceLedger:
+        """构造只含当前轮可复核收据的审计视图。"""
+        reusable_freshness = FactFreshness.REUSE_PREVIOUS.value
+        snapshot = ledger.to_snapshot()
+        current_turn_snapshot = [
+            receipt
+            for receipt in snapshot
+            if receipt.get("freshness") != reusable_freshness
+        ]
+        if len(current_turn_snapshot) == len(snapshot):
+            return ledger
+        return EvidenceLedger.from_snapshot(
+            current_turn_snapshot,
+            user_id=ledger.user_id,
+            conversation_id=ledger.conversation_id,
+        )
 
     def _resolve_turn_grounding_requirement(
         self,
@@ -861,6 +1136,13 @@ class AssistantAgentRunner(BaseExecutor):
         chunks_buffer = []
         full_text = ""
         has_attempted_tool = False
+        interrupted = False
+        strict_tool_evidence_required = False
+        strict_tool_evidence_types = frozenset()
+        strict_evidence_contracts: tuple[dict[str, Any], ...] = ()
+        grounding_block_mode = self._normalize_grounding_block_mode(
+            self.debug_options.get("grounding_block_mode")
+        )
 
         from app.core.context import set_agent_context
         import asyncio
@@ -930,17 +1212,71 @@ class AssistantAgentRunner(BaseExecutor):
                     pass
 
         async for chunk in merge_streams(self._execute_core(history)):
+            if is_interrupt_sse_chunk(chunk):
+                interrupted = True
+
+            if (
+                chunk.get("type") == "log"
+                and chunk.get("category") == "tool_preflight"
+                and grounding_enabled
+                and chunk.get("current_turn_evidence_required") is True
+            ):
+                parsed_types = set()
+                for raw_type in chunk.get("required_evidence_types") or []:
+                    try:
+                        parsed_types.add(EvidenceType(raw_type))
+                    except (TypeError, ValueError):
+                        continue
+                if parsed_types:
+                    strict_tool_evidence_required = True
+                    strict_tool_evidence_types = frozenset(parsed_types)
+                    strict_evidence_contracts = self._parse_evidence_contracts(
+                        chunk.get("evidence_contracts")
+                    )
+                    grounding_block_mode = self._normalize_grounding_block_mode(
+                        chunk.get("grounding_block_mode", grounding_block_mode)
+                    )
+                    buffer_output = True
+                    grounding_requirement = replace(
+                        grounding_requirement,
+                        required=True,
+                        accepted_types=strict_tool_evidence_types,
+                        block_unsupported_facts=True,
+                        freshness=FactFreshness.DYNAMIC,
+                        allow_conversation_reuse=False,
+                        evidence_mode="required",
+                        decision_origin="tool_preflight",
+                        decision_confidence=1.0,
+                    )
+
             if self._chunk_indicates_tool_attempt(chunk):
                 has_attempted_tool = True
 
             if buffer_output:
                 full_text = process_narration_events.accumulate_visible_answer(full_text, chunk)
-            if buffer_output and _is_grounding_bufferable_chunk(chunk):
+            should_buffer_chunk = buffer_output and (
+                _is_grounding_bufferable_chunk(chunk)
+                or (
+                    strict_tool_evidence_required
+                    and _is_strict_evidence_bufferable_chunk(chunk)
+                )
+            )
+            stream_strict_chunk = (
+                strict_tool_evidence_required
+                and grounding_block_mode == "stream_with_retraction"
+                and _is_strict_evidence_bufferable_chunk(chunk)
+            )
+            if should_buffer_chunk and not stream_strict_chunk:
                 chunks_buffer.append(chunk)
             else:
                 yield chunk
 
         if not buffer_output:
+            return
+
+        # 权限确认/外部执行挂起时，当前轮尚未完成，不能提前把暂存文本判定为无证据。
+        # 恢复入口会根据挂起的工具重新建立同一轮证据门禁。
+        if interrupted:
             return
 
         should_intercept = (
@@ -949,17 +1285,104 @@ class AssistantAgentRunner(BaseExecutor):
             and self._is_hallucinated_data_reply(full_text)
         )
 
+        audit_ledger = (
+            self._current_turn_grounding_ledger(self._evidence_ledger)
+            if strict_tool_evidence_required
+            else self._evidence_ledger
+        )
         evaluated_requirement = self._refine_unknown_requirement_from_evidence(
             grounding_requirement,
             user_query=user_query,
-            ledger=self._evidence_ledger,
+            ledger=audit_ledger,
         )
         grounding_audit = GroundingService.audit(
             requirement=evaluated_requirement,
             candidate_text=full_text,
-            ledger=self._evidence_ledger,
+            ledger=audit_ledger,
         )
         grounding_decision = grounding_audit.decision
+        contracts_satisfied, contracts_reason = self._evidence_contracts_satisfied(
+            strict_evidence_contracts,
+            candidate_text=full_text,
+            ledger=audit_ledger,
+        )
+        current_turn_evidence_blocked = self._should_block_current_turn_evidence(
+            grounding_decision=grounding_decision,
+            contracts_satisfied=contracts_satisfied,
+            contracts_reason=contracts_reason,
+            required_evidence_types=strict_tool_evidence_types,
+        )
+
+        if strict_tool_evidence_required and (
+            grounding_audit.should_warn or not contracts_satisfied
+        ):
+            if current_turn_evidence_blocked:
+                logger.warning(
+                    "[AssistantAgentRunner] Current-turn evidence gate blocked answer: %s",
+                    contracts_reason or grounding_decision.reason,
+                )
+                yield {
+                    "type": "log",
+                    "id": f"grounding_blocked_{uuid.uuid4().hex[:8]}",
+                    "title": "当前轮工具证据校验未通过",
+                    "details": (
+                        "本轮要求使用当前工具结果，但未获得与具体回答匹配的有效证据，"
+                        "已阻止未经核实的具体结论。"
+                    ),
+                    "status": "error",
+                    "category": "grounding",
+                    "grounding_blocked": True,
+                    "grounding_decision": self._grounding_decision_metadata(
+                        evaluated_requirement
+                    ),
+                }
+                safe_content = (
+                    "本轮未获得与当前问题匹配的实时工具结果，"
+                    "暂时无法可靠提供具体结论。请稍后重试。"
+                )
+                if grounding_block_mode == "stream_with_retraction":
+                    yield {
+                        "type": "retraction",
+                        "content": safe_content,
+                        "grounding_blocked": True,
+                        "final": True,
+                    }
+                else:
+                    yield {
+                        "type": "answer_delta",
+                        "content": safe_content,
+                        "phase": "synthesis",
+                        "grounding_blocked": True,
+                    }
+            else:
+                logger.warning(
+                    "[AssistantAgentRunner] Current-turn evidence gate downgraded to warning: %s",
+                    contracts_reason or grounding_decision.reason,
+                )
+                for chunk in chunks_buffer:
+                    yield chunk
+                yield {
+                    "type": "log",
+                    "id": f"grounding_warning_{uuid.uuid4().hex[:8]}",
+                    "title": "事实来源风险提示已追加",
+                    "details": (
+                        "本轮已获得工具结果，但回答与结果的关联度不足，"
+                        "已保留回答并提示核对原始来源。"
+                    ),
+                    "status": "warning",
+                    "category": "grounding",
+                    "grounding_blocked": False,
+                    "grounding_downgraded": True,
+                    "grounding_decision": self._grounding_decision_metadata(
+                        evaluated_requirement
+                    ),
+                }
+                yield self._build_downgraded_grounding_warning(
+                    grounding_audit=grounding_audit,
+                    grounding_decision=grounding_decision,
+                    contracts_reason=contracts_reason,
+                )
+            return
 
         if should_intercept:
             logger.warning(
@@ -1238,11 +1661,13 @@ class AssistantAgentRunner(BaseExecutor):
 
         # 工具预检（Tool Preflight）：由本轮已绑定工具的 name+description 与问题相关度驱动，
         # 识别该不该用工具、用哪个，并按配置力度促发模型调用（记忆类有专门便签，故跳过）。
-        # 模式 agent_tool_preflight_mode：off=关闭；soft=仅注入强约束便签；hard=便签+首步强制调用。
+        # 模式 agent_tool_preflight_mode：off=关闭；soft=普通工具注入便签；hard=便签+首步强制调用。
+        # 证据型只读工具即使在 soft 模式也必须首步取证，避免模型凭上下文直接生成动态事实。
         preflight_tool_choice = None
         _preflight_user_query = user_query
         from app.services.ai.tool_nudge_policy import (
             is_automatic_delivery_context,
+            is_tool_meta_query,
             looks_like_explicit_user_question_request,
         )
 
@@ -1254,7 +1679,10 @@ class AssistantAgentRunner(BaseExecutor):
             if grounding_enabled
             else FactRequirement(required=False, accepted_types=frozenset())
         )
-        grounding_requires_tool = turn_grounding_requirement.required
+        grounding_requires_tool = (
+            turn_grounding_requirement.required
+            and not is_tool_meta_query(_preflight_user_query)
+        )
         retry_evidence_types = (
             self._parse_grounding_retry_evidence_types(
                 self.debug_options.get("grounding_action")
@@ -1271,17 +1699,39 @@ class AssistantAgentRunner(BaseExecutor):
             and looks_like_explicit_user_question_request(_preflight_user_query)
             and any(tool.name == "ask_user_question" for tool in tools)
         )
+        preflight_mode = "soft"
+        grounding_block_mode = self._normalize_grounding_block_mode(
+            self.debug_options.get("grounding_block_mode")
+        )
+        evidence_contracts: tuple[dict[str, Any], ...] = ()
         try:
             if explicit_user_question_requested or not recall_query_pending:
                 preflight_mode = str(
                     await ConfigService.get("agent_tool_preflight_mode", "soft") or "soft"
                 ).strip().lower()
                 if (
+                    grounding_enabled
+                    and "grounding_block_mode" not in self.debug_options
+                ):
+                    try:
+                        grounding_block_mode = self._normalize_grounding_block_mode(
+                            await ConfigService.get(
+                                "agent_grounding_block_mode",
+                                "strict_buffer",
+                            )
+                        )
+                    except Exception:
+                        grounding_block_mode = "strict_buffer"
+                if (
                     explicit_user_question_requested
                     or grounding_requires_tool
                     or preflight_mode not in {"off", "false", "0", "none"}
                 ):
-                    from app.services.ai.tool_nudge_policy import ToolNudge, resolve_tool_nudge
+                    from app.services.ai.tool_nudge_policy import (
+                        ToolNudge,
+                        resolve_tool_nudge,
+                        resolve_tool_nudge_plan,
+                    )
 
                     (
                         available_sub_agent_names,
@@ -1291,6 +1741,7 @@ class AssistantAgentRunner(BaseExecutor):
                         tools,
                         retry_evidence_types,
                     )
+                    evidence_plan = None
                     if matching_retry_tool is not None:
                         tool_nudge = ToolNudge(
                             tool_name=matching_retry_tool.name,
@@ -1302,23 +1753,37 @@ class AssistantAgentRunner(BaseExecutor):
                             force_first_call=True,
                         )
                     else:
-                        tool_nudge = resolve_tool_nudge(
-                            user_query,
+                        evidence_plan = resolve_tool_nudge_plan(
+                            _preflight_user_query,
                             tools,
-                            available_sub_agent_names=available_sub_agent_names,
-                            sub_agent_candidates_by_capability=sub_agent_candidates_by_capability,
-                            semantic_intent=getattr(self.turn_decision, "semantic_intent", None),
-                            semantic_confidence=getattr(self.turn_decision, "semantic_confidence", None),
-                            turn_intent=self.turn_decision.semantic_intent,
-                            request_decision=grounding_request_decision,
-                            turn_decision=self.turn_decision,
-                            exclude_tools=(
-                                {"ask_user_question"}
-                                if not interactive_question_allowed
-                                else None
-                            ),
-                            allow_explicit_question=interactive_question_allowed,
                         )
+                        if evidence_plan is not None:
+                            evidence_contracts = tuple(
+                                contract.to_dict()
+                                for contract in evidence_plan.evidence_contracts
+                            )
+                            tool_nudge = replace(
+                                evidence_plan.primary,
+                                message=evidence_plan.message,
+                            )
+                        else:
+                            tool_nudge = resolve_tool_nudge(
+                                user_query,
+                                tools,
+                                available_sub_agent_names=available_sub_agent_names,
+                                sub_agent_candidates_by_capability=sub_agent_candidates_by_capability,
+                                semantic_intent=getattr(self.turn_decision, "semantic_intent", None),
+                                semantic_confidence=getattr(self.turn_decision, "semantic_confidence", None),
+                                turn_intent=self.turn_decision.semantic_intent,
+                                request_decision=grounding_request_decision,
+                                turn_decision=self.turn_decision,
+                                exclude_tools=(
+                                    {"ask_user_question"}
+                                    if not interactive_question_allowed
+                                    else None
+                                ),
+                                allow_explicit_question=interactive_question_allowed,
+                            )
                     if tool_nudge is None and grounding_requires_tool:
                         capability_name = next(
                             (
@@ -1389,6 +1854,16 @@ class AssistantAgentRunner(BaseExecutor):
                                 tool_nudge.recommended_force_mode()
                             )
                             force_applied = preflight_tool_choice is not None
+                        evidence_metadata = self._build_tool_preflight_evidence_metadata(
+                            tool_nudge,
+                            tools,
+                            evidence_contracts=(
+                                list(evidence_plan.evidence_contracts)
+                                if evidence_plan is not None
+                                else None
+                            ),
+                            grounding_enabled=grounding_enabled,
+                        )
                         logger.info(
                             "[ToolPreflight] mode=%s tool=%s score=%s forced=%s",
                             preflight_mode,
@@ -1407,6 +1882,9 @@ class AssistantAgentRunner(BaseExecutor):
                             ),
                             "status": "success",
                             "category": "tool_preflight",
+                            "force_first_call": force_applied,
+                            "grounding_block_mode": grounding_block_mode,
+                            **evidence_metadata,
                             "tool_metadata": (
                                 tool_nudge.metadata.to_dict()
                                 if tool_nudge.metadata is not None
@@ -1415,6 +1893,45 @@ class AssistantAgentRunner(BaseExecutor):
                         }
         except Exception as preflight_err:
             logger.warning("[ToolPreflight] Failed to resolve tool preflight: %s", preflight_err)
+            from app.services.ai.tool_nudge_policy import resolve_evidence_tool_fallback_nudge
+
+            fallback_nudge = resolve_evidence_tool_fallback_nudge(
+                _preflight_user_query,
+                tools,
+            )
+            if fallback_nudge is not None:
+                native_system_content = (
+                    f"{fallback_nudge.message}\n\n{native_system_content}"
+                )
+                preflight_tool_choice = self._build_preflight_tool_choice(
+                    fallback_nudge.recommended_force_mode()
+                )
+                force_applied = preflight_tool_choice is not None
+                evidence_metadata = self._build_tool_preflight_evidence_metadata(
+                    fallback_nudge,
+                    tools,
+                    grounding_enabled=grounding_enabled,
+                )
+                yield {
+                    "type": "log",
+                    "id": f"tool_preflight_fallback_{uuid.uuid4().hex[:8]}",
+                    "title": "工具预检异常：已启用证据保护",
+                    "details": (
+                        f"工具预检暂时异常，已锁定证据工具「{fallback_nudge.tool_name}」；"
+                        "必须先取得本轮工具结果，再回答动态事实。"
+                    ),
+                    "status": "warning",
+                    "category": "tool_preflight",
+                    "force_first_call": force_applied,
+                    "grounding_block_mode": grounding_block_mode,
+                    "preflight_fallback": True,
+                    **evidence_metadata,
+                    "tool_metadata": (
+                        fallback_nudge.metadata.to_dict()
+                        if fallback_nudge.metadata is not None
+                        else None
+                    ),
+                }
 
         if (
             tools
@@ -1430,6 +1947,8 @@ class AssistantAgentRunner(BaseExecutor):
                     runtime_messages=runtime_messages,
                     max_steps=MAX_STEPS,
                     initial_tool_choice=preflight_tool_choice,
+                    grounding_block_mode=grounding_block_mode,
+                    evidence_contracts=evidence_contracts,
                 ):
                     yield chunk
                 return
@@ -1513,6 +2032,8 @@ class AssistantAgentRunner(BaseExecutor):
         runtime_messages: List[BaseMessage],
         max_steps: int,
         initial_tool_choice: Any = None,
+        grounding_block_mode: str = "strict_buffer",
+        evidence_contracts: tuple[dict[str, Any], ...] = (),
     ) -> AsyncGenerator[Dict[str, Any], None]:
         agent_name = self._runtime_agent_name()
         tools_fingerprint = build_tools_fingerprint(self.config, tools)
@@ -1580,6 +2101,12 @@ class AssistantAgentRunner(BaseExecutor):
                     max_steps=max_steps,
                 )
                 state["execution_backend"] = self._execution_backend
+                state["grounding_block_mode"] = self._normalize_grounding_block_mode(
+                    grounding_block_mode
+                )
+                state["evidence_contracts"] = [
+                    dict(contract) for contract in evidence_contracts
+                ]
                 self._session_artifact_turn = {
                     "user_question": "",
                     "trace_id": self.trace_id,
@@ -1772,6 +2299,7 @@ class AssistantAgentRunner(BaseExecutor):
                         f"模型已收到错误反馈，将重新生成回答。"
                     ),
                     "status": "error",
+                    "category": "tool",
                 }
                 return
 
@@ -2430,6 +2958,22 @@ class AssistantAgentRunner(BaseExecutor):
                     pending,
                     loop_detector=loop_detector,
                 )
+                pending_tool_call = getattr(pending, "tool_call", None)
+                pending_tool_name = (
+                    pending_tool_call.get("name")
+                    if isinstance(pending_tool_call, dict)
+                    else getattr(pending_tool_call, "name", "")
+                )
+                grounding_block_mode = self._normalize_grounding_block_mode(
+                    state.get(
+                        "grounding_block_mode",
+                        self.debug_options.get("grounding_block_mode"),
+                    )
+                )
+                strict_tool_evidence_types = self._resolve_current_turn_evidence_types(
+                    str(pending_tool_name or ""),
+                    tools,
+                )
                 if external_execution_results:
                     self._record_external_execution_evidence(
                         ledger=ledger,
@@ -2438,22 +2982,44 @@ class AssistantAgentRunner(BaseExecutor):
                     )
                 interrupted = False
                 user_query = str(state.get("user_query") or "")
+                strict_evidence_contracts = self._resolve_resume_evidence_contracts(
+                    state,
+                    tools,
+                )
                 self._session_artifact_turn = {
                     "user_question": user_query,
                     "trace_id": self.trace_id,
                     "best": None,
                 }
                 grounding_enabled = self._grounding_enabled()
+                strict_tool_evidence_required = bool(
+                    grounding_enabled and strict_tool_evidence_types
+                )
                 requirement = (
                     self._resolve_turn_grounding_requirement(user_query, ctx)
                     if grounding_enabled
                     else FactRequirement(required=False, accepted_types=frozenset())
                 )
-                buffer_output = (
-                    grounding_enabled
-                    and self._should_buffer_grounding_output(
+                if strict_tool_evidence_required:
+                    requirement = replace(
                         requirement,
-                        run_data_guard=False,
+                        required=True,
+                        accepted_types=strict_tool_evidence_types,
+                        block_unsupported_facts=True,
+                        freshness=FactFreshness.DYNAMIC,
+                        allow_conversation_reuse=False,
+                        evidence_mode="required",
+                        decision_origin="tool_preflight",
+                        decision_confidence=1.0,
+                    )
+                buffer_output = (
+                    strict_tool_evidence_required
+                    or (
+                        grounding_enabled
+                        and self._should_buffer_grounding_output(
+                            requirement,
+                            run_data_guard=False,
+                        )
                     )
                 )
                 buffered_content: List[Dict[str, Any]] = []
@@ -2477,10 +3043,24 @@ class AssistantAgentRunner(BaseExecutor):
                             )
                         if (
                             buffer_output
-                            and _is_grounding_bufferable_chunk(chunk)
+                            and (
+                                _is_grounding_bufferable_chunk(chunk)
+                                or (
+                                    strict_tool_evidence_required
+                                    and _is_strict_evidence_bufferable_chunk(chunk)
+                                )
+                            )
                             and chunk.get("type") not in {"error"}
                         ):
-                            buffered_content.append(chunk)
+                            stream_strict_chunk = (
+                                strict_tool_evidence_required
+                                and grounding_block_mode == "stream_with_retraction"
+                                and _is_strict_evidence_bufferable_chunk(chunk)
+                            )
+                            if not stream_strict_chunk:
+                                buffered_content.append(chunk)
+                            else:
+                                yield chunk
                         else:
                             yield chunk
                 except Exception as stream_exc:
@@ -2509,17 +3089,95 @@ class AssistantAgentRunner(BaseExecutor):
                             conversation_id=self.conversation_id,
                         ),
                     )
+                    audit_ledger = (
+                        self._current_turn_grounding_ledger(ledger)
+                        if strict_tool_evidence_required
+                        else ledger
+                    )
                     evaluated_requirement = self._refine_unknown_requirement_from_evidence(
                         requirement,
                         user_query=user_query,
-                        ledger=ledger,
+                        ledger=audit_ledger,
                     )
                     grounding_audit = GroundingService.audit(
                         requirement=evaluated_requirement,
                         candidate_text=candidate_text,
-                        ledger=ledger,
+                        ledger=audit_ledger,
                     )
                     decision = grounding_audit.decision
+                    contracts_satisfied, contracts_reason = self._evidence_contracts_satisfied(
+                        strict_evidence_contracts,
+                        candidate_text=candidate_text,
+                        ledger=audit_ledger,
+                    )
+                    current_turn_evidence_blocked = self._should_block_current_turn_evidence(
+                        grounding_decision=decision,
+                        contracts_satisfied=contracts_satisfied,
+                        contracts_reason=contracts_reason,
+                        required_evidence_types=strict_tool_evidence_types,
+                    )
+                    if strict_tool_evidence_required and (
+                        grounding_audit.should_warn or not contracts_satisfied
+                    ):
+                        if current_turn_evidence_blocked:
+                            yield {
+                                "type": "log",
+                                "id": f"grounding_blocked_{uuid.uuid4().hex[:8]}",
+                                "title": "当前轮工具证据校验未通过",
+                                "details": (
+                                    "本轮要求使用当前工具结果，但未获得与具体回答匹配的有效证据，"
+                                    "已阻止未经核实的具体结论。"
+                                ),
+                                "status": "error",
+                                "category": "grounding",
+                                "grounding_blocked": True,
+                                "grounding_decision": self._grounding_decision_metadata(
+                                    evaluated_requirement
+                                ),
+                            }
+                            safe_content = (
+                                "本轮未获得与当前问题匹配的实时工具结果，"
+                                "暂时无法可靠提供具体结论。请稍后重试。"
+                            )
+                            if grounding_block_mode == "stream_with_retraction":
+                                yield {
+                                    "type": "retraction",
+                                    "content": safe_content,
+                                    "grounding_blocked": True,
+                                    "final": True,
+                                }
+                            else:
+                                yield {
+                                    "type": "answer_delta",
+                                    "content": safe_content,
+                                    "phase": "synthesis",
+                                    "grounding_blocked": True,
+                                }
+                        else:
+                            for buffered_chunk in buffered_content:
+                                yield buffered_chunk
+                            yield {
+                                "type": "log",
+                                "id": f"grounding_resume_warning_{uuid.uuid4().hex[:8]}",
+                                "title": "事实来源风险提示已追加",
+                                "details": (
+                                    "本轮已获得工具结果，但回答与结果的关联度不足，"
+                                    "已保留回答并提示核对原始来源。"
+                                ),
+                                "status": "warning",
+                                "category": "grounding",
+                                "grounding_blocked": False,
+                                "grounding_downgraded": True,
+                                "grounding_decision": self._grounding_decision_metadata(
+                                    evaluated_requirement
+                                ),
+                            }
+                            yield self._build_downgraded_grounding_warning(
+                                grounding_audit=grounding_audit,
+                                grounding_decision=decision,
+                                contracts_reason=contracts_reason,
+                            )
+                        return
                     if grounding_audit.should_warn:
                         for buffered_chunk in buffered_content:
                             yield buffered_chunk
@@ -2658,7 +3316,7 @@ class AssistantAgentRunner(BaseExecutor):
         if not isinstance(t_temp, (int, float)): t_temp = float(self.config.temperature or 0)
 
         trace_step = AgentExecutionStep(
-            step_number=self.step_counter, event_type="tool_call", agent_name=self.config.agent_name,
+            step_number=self._increment_step(), event_type="tool_call", agent_name=self.config.agent_name,
             model=t_model, temperature=t_temp, tool_name=tool_name, tool_input=tool_args,
             tool_output=tool_output if isinstance(tool_output, (dict, list)) else {"raw": str(tool_output)},
             execution_time_ms=duration_tool, status="success" if not is_error else "error",
@@ -2677,6 +3335,7 @@ class AssistantAgentRunner(BaseExecutor):
             "title": f"工具完成: {tool_name} ({duration_tool:.0f}ms)",
             "details": display_output,
             "status": "success" if not is_error else "error",
+            "category": "tool",
             "model": t_model,
             "temperature": t_temp,
         }

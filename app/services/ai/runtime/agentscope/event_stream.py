@@ -568,6 +568,7 @@ async def map_standard_agentscope_event(
                         f"已拦截，将向模型注入错误反馈以纠正。"
                     ),
                     "status": "error",
+                    "category": "tool",
                 }
                 return
 
@@ -577,6 +578,7 @@ async def map_standard_agentscope_event(
             "title": f"调用工具: {tool_name}",
             "details": "参数: {}",
             "status": "pending",
+            "category": "tool",
         }
         if tool_name == "Bash" and not state.get("bash_env_emitted"):
             state["bash_env_emitted"] = True

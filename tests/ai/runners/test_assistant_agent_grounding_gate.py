@@ -485,6 +485,102 @@ async def test_current_turn_evidence_gate_releases_answer_with_matching_receipt(
 
 
 @pytest.mark.asyncio
+async def test_current_turn_evidence_gate_warns_when_successful_external_receipt_has_weak_overlap():
+    runner = _runner(debug_options={"grounding_enabled": True})
+
+    async def fake_core(_history):
+        runner._evidence_ledger.record_success(
+            call_id="mcp-weather-1",
+            producer="weather_lookup",
+            evidence_types={EvidenceType.EXTERNAL_TOOL},
+            result={"city": "上海", "temperature": 26},
+        )
+        yield {
+            "type": "log",
+            "category": "tool_preflight",
+            "current_turn_evidence_required": True,
+            "required_evidence_types": ["external_tool"],
+            "evidence_contracts": [
+                {
+                    "tool_name": "weather_lookup",
+                    "required_evidence_types": ["external_tool"],
+                    "freshness": "current_turn",
+                }
+            ],
+        }
+        yield {
+            "type": "answer_delta",
+            "content": "上海预计有 27 度。",
+            "phase": "synthesis",
+        }
+
+    with patch.object(runner, "_execute_core", fake_core):
+        events = [
+            event
+            async for event in runner.execute(
+                [{"role": "user", "content": "查询今天上海天气"}]
+            )
+        ]
+
+    answer = "".join(
+        str(event.get("content") or "")
+        for event in events
+        if event.get("type") == "answer_delta"
+    )
+    assert "上海预计有 27 度" in answer
+    assert not any(event.get("grounding_blocked") is True for event in events)
+    warning = next(event for event in events if event.get("grounding_risk"))
+    assert warning["grounding_risk"]["level"] == "medium"
+
+
+@pytest.mark.asyncio
+async def test_current_turn_evidence_gate_blocks_weak_overlap_for_internal_data():
+    runner = _runner(debug_options={"grounding_enabled": True})
+
+    async def fake_core(_history):
+        runner._evidence_ledger.record_success(
+            call_id="data-query-1",
+            producer="data_lookup",
+            evidence_types={EvidenceType.INTERNAL_DATA},
+            result={"region": "华东", "amount": 100},
+        )
+        yield {
+            "type": "log",
+            "category": "tool_preflight",
+            "current_turn_evidence_required": True,
+            "required_evidence_types": ["internal_data"],
+            "evidence_contracts": [
+                {
+                    "tool_name": "data_lookup",
+                    "required_evidence_types": ["internal_data"],
+                    "freshness": "current_turn",
+                }
+            ],
+        }
+        yield {
+            "type": "answer_delta",
+            "content": "华南地区销售额 999 万元。",
+            "phase": "synthesis",
+        }
+
+    with patch.object(runner, "_execute_core", fake_core):
+        events = [
+            event
+            async for event in runner.execute(
+                [{"role": "user", "content": "查询内部销售额"}]
+            )
+        ]
+
+    assert any(event.get("grounding_blocked") is True for event in events)
+    answer = "".join(
+        str(event.get("content") or "")
+        for event in events
+        if event.get("type") == "answer_delta"
+    )
+    assert "暂时无法可靠提供具体结论" in answer
+
+
+@pytest.mark.asyncio
 async def test_current_turn_evidence_gate_does_not_reuse_historical_receipt():
     runner = _runner(debug_options={"grounding_enabled": True})
 

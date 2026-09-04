@@ -446,10 +446,56 @@ class EvidenceLedger:
             return bool(self._receipts)
         return any(receipt.evidence_types & required for receipt in self._receipts)
 
+    @staticmethod
+    def _normalize_current_time(now: datetime | None) -> datetime:
+        current = now or datetime.now(timezone.utc)
+        if current.tzinfo is None:
+            current = current.replace(tzinfo=timezone.utc)
+        return current
+
+    @staticmethod
+    def _receipt_matches_freshness(
+        receipt: EvidenceReceipt,
+        *,
+        requested_freshness: FactFreshness,
+        max_age_seconds: int | None,
+        require_source_as_of: bool,
+        allow_reuse: bool,
+        current: datetime,
+    ) -> bool:
+        if receipt.expires_at is not None:
+            expires_at = receipt.expires_at
+            if expires_at.tzinfo is None:
+                expires_at = expires_at.replace(tzinfo=timezone.utc)
+            if expires_at <= current:
+                return False
+        if requested_freshness == FactFreshness.REUSE_PREVIOUS and not allow_reuse:
+            return False
+        if requested_freshness in {
+            FactFreshness.DYNAMIC,
+            FactFreshness.REALTIME,
+        } and receipt.freshness not in {
+            FactFreshness.UNKNOWN,
+            FactFreshness.DYNAMIC,
+            FactFreshness.REALTIME,
+        }:
+            return False
+        if require_source_as_of and receipt.source_as_of is None:
+            return False
+        if max_age_seconds is not None:
+            observed_at = receipt.observed_at or receipt.created_at
+            if observed_at.tzinfo is None:
+                observed_at = observed_at.replace(tzinfo=timezone.utc)
+            age_seconds = (current - observed_at).total_seconds()
+            if age_seconds > max(0, int(max_age_seconds)):
+                return False
+        return True
+
     def has_fresh_evidence(
         self,
         required_types: Iterable[EvidenceType],
         *,
+        producer: str | None = None,
         freshness: FactFreshness = FactFreshness.UNKNOWN,
         max_age_seconds: int | None = None,
         require_source_as_of: bool = False,
@@ -467,41 +513,46 @@ class EvidenceLedger:
             requested_freshness = FactFreshness(freshness)
         except (TypeError, ValueError):
             requested_freshness = FactFreshness.UNKNOWN
-        current = now or datetime.now(timezone.utc)
-        if current.tzinfo is None:
-            current = current.replace(tzinfo=timezone.utc)
+        current = self._normalize_current_time(now)
 
         for receipt in self._receipts:
+            if producer is not None and receipt.producer != str(producer):
+                continue
             if required and not (receipt.evidence_types & required):
                 continue
-            if receipt.expires_at is not None:
-                expires_at = receipt.expires_at
-                if expires_at.tzinfo is None:
-                    expires_at = expires_at.replace(tzinfo=timezone.utc)
-                if expires_at <= current:
-                    continue
-            if requested_freshness == FactFreshness.REUSE_PREVIOUS and not allow_reuse:
+            if not self._receipt_matches_freshness(
+                receipt,
+                requested_freshness=requested_freshness,
+                max_age_seconds=max_age_seconds,
+                require_source_as_of=require_source_as_of,
+                allow_reuse=allow_reuse,
+                current=current,
+            ):
                 continue
-            if requested_freshness in {
-                FactFreshness.DYNAMIC,
-                FactFreshness.REALTIME,
-            } and receipt.freshness not in {
-                FactFreshness.UNKNOWN,
-                FactFreshness.DYNAMIC,
-                FactFreshness.REALTIME,
-            }:
-                continue
-            if require_source_as_of and receipt.source_as_of is None:
-                continue
-            if max_age_seconds is not None:
-                observed_at = receipt.observed_at or receipt.created_at
-                if observed_at.tzinfo is None:
-                    observed_at = observed_at.replace(tzinfo=timezone.utc)
-                age_seconds = (current - observed_at).total_seconds()
-                if age_seconds > max(0, int(max_age_seconds)):
-                    continue
             return True
         return False
+
+    def has_fresh_evidence_from_producer(
+        self,
+        producer: str,
+        required_types: Iterable[EvidenceType],
+        *,
+        freshness: FactFreshness = FactFreshness.UNKNOWN,
+        max_age_seconds: int | None = None,
+        require_source_as_of: bool = False,
+        allow_reuse: bool = False,
+        now: datetime | None = None,
+    ) -> bool:
+        """判断指定工具 producer 是否提供了满足时效要求的成功收据。"""
+        return self.has_fresh_evidence(
+            required_types,
+            producer=producer,
+            freshness=freshness,
+            max_age_seconds=max_age_seconds,
+            require_source_as_of=require_source_as_of,
+            allow_reuse=allow_reuse,
+            now=now,
+        )
 
     def has_candidate_overlap(
         self,
@@ -509,11 +560,73 @@ class EvidenceLedger:
         required_types: Iterable[EvidenceType],
         *,
         allow_empty: bool = False,
+        freshness: FactFreshness = FactFreshness.UNKNOWN,
+        max_age_seconds: int | None = None,
+        require_source_as_of: bool = False,
+        allow_reuse: bool = False,
+        now: datetime | None = None,
     ) -> bool:
         required = frozenset(required_types)
+        try:
+            requested_freshness = FactFreshness(freshness)
+        except (TypeError, ValueError):
+            requested_freshness = FactFreshness.UNKNOWN
+        current = self._normalize_current_time(now)
         candidate_markers, candidate_strong_markers = _marker_sets(candidate_text)
         for receipt in self._receipts:
             if required and not (receipt.evidence_types & required):
+                continue
+            if not self._receipt_matches_freshness(
+                receipt,
+                requested_freshness=requested_freshness,
+                max_age_seconds=max_age_seconds,
+                require_source_as_of=require_source_as_of,
+                allow_reuse=allow_reuse,
+                current=current,
+            ):
+                continue
+            if allow_empty and receipt.empty_success:
+                return True
+            if candidate_strong_markers & receipt.strong_marker_digests:
+                return True
+            if len(candidate_markers & receipt.marker_digests) >= 2:
+                return True
+        return False
+
+    def has_candidate_overlap_from_producer(
+        self,
+        candidate_text: str,
+        producer: str,
+        required_types: Iterable[EvidenceType],
+        *,
+        allow_empty: bool = False,
+        freshness: FactFreshness = FactFreshness.UNKNOWN,
+        max_age_seconds: int | None = None,
+        require_source_as_of: bool = False,
+        allow_reuse: bool = False,
+        now: datetime | None = None,
+    ) -> bool:
+        """只在指定 producer 的收据中寻找候选回答的关键标记关联。"""
+        required = frozenset(required_types)
+        try:
+            requested_freshness = FactFreshness(freshness)
+        except (TypeError, ValueError):
+            requested_freshness = FactFreshness.UNKNOWN
+        current = self._normalize_current_time(now)
+        candidate_markers, candidate_strong_markers = _marker_sets(candidate_text)
+        for receipt in self._receipts:
+            if receipt.producer != str(producer):
+                continue
+            if required and not (receipt.evidence_types & required):
+                continue
+            if not self._receipt_matches_freshness(
+                receipt,
+                requested_freshness=requested_freshness,
+                max_age_seconds=max_age_seconds,
+                require_source_as_of=require_source_as_of,
+                allow_reuse=allow_reuse,
+                current=current,
+            ):
                 continue
             if allow_empty and receipt.empty_success:
                 return True

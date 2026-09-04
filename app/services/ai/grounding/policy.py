@@ -84,6 +84,48 @@ _EXECUTION_CLAIM_RE = re.compile(
     r"(?:已经|已|刚刚|成功|根据).{0,10}(?:调用|查询|检索|搜索|读取|检查|执行).{0,12}(?:结果|到|完成|成功)?",
     re.IGNORECASE,
 )
+_EXECUTION_SUMMARY_RE = re.compile(
+    r"(?:"
+    r"(?:已|已经|刚刚|成功|完成|完成后).{0,12}"
+    r"(?:调用|查询|检索|搜索|读取|检查|执行|同步|处理).{0,12}"
+    r"(?:完成|成功|结束|同步|处理|结果)?(?:了|啊|呢|呀|啦)?"
+    r"|"
+    r"(?:查询|检索|搜索|读取|执行|同步|处理|数据)"
+    r"(?:已|已经)?(?:完成|结束|同步|处理)(?:了|啊|呢|呀|啦)?"
+    r"(?:(?:并|且)(?:已|已经)?(?:返回|拿到)(?:结果|数据)?)?"
+    r"|"
+    r"(?:结果|数据)(?:已|已经)?(?:返回|拿到)(?:结果|数据)?(?:了|啊|呢|呀|啦)?"
+    r"|"
+    r"(?:可以|可|请)?继续(?:下一步)?"
+    r")",
+    re.IGNORECASE,
+)
+_OPERATIONAL_STATUS_RE = re.compile(
+    r"(?:系统|服务|工具|查询|数据|任务|连接|接口).{0,8}"
+    r"(?:正常|运行平稳|运行正常|状态正常|(?:已)?(?:完成|同步|成功|失败|异常)|"
+    r"(?:执行|处理|同步)(?:完成|成功|结束))",
+    re.IGNORECASE,
+)
+_OPERATIONAL_SUMMARY_CLAUSE_RE = re.compile(
+    r"(?:"
+    r"(?:已|已经|刚刚)?(?:成功|完成)?(?:调用|查询|检索|搜索|读取|检查|执行|同步|处理){1,2}"
+    r"(?:工具|接口|任务|数据|结果)?(?:已|已经)?(?:完成|成功|结束|同步|处理|结果)?"
+    r"(?:了|啊|呢|呀|啦)?"
+    r"|"
+    r"(?:已|已经|刚刚)?(?:成功|完成)?(?:调用|查询|检索|搜索|读取|检查|执行|同步|处理)"
+    r"(?:工具|接口|任务|数据|结果)(?:调用|查询|检索|搜索|读取|检查|执行|同步|处理)"
+    r"(?:已|已经)?(?:完成|成功|结束|同步|处理|结果)?(?:了|啊|呢|呀|啦)?"
+    r"|"
+    r"(?:查询|检索|搜索|读取|执行|同步|处理|数据)"
+    r"(?:已|已经)?(?:完成|结束|同步|处理)(?:了|啊|呢|呀|啦)?"
+    r"(?:(?:并|且)(?:已|已经)?(?:返回|拿到)(?:结果|数据)?)?"
+    r"|"
+    r"(?:结果|数据)(?:已|已经)?(?:返回|拿到)(?:结果|数据)?(?:了|啊|呢|呀|啦)?"
+    r"|"
+    r"(?:可以|可|请)?继续(?:下一步)?"
+    r")$",
+    re.IGNORECASE,
+)
 _DYNAMIC_FACT_RE = re.compile(
     r"(?:当前|目前|现在|最近|最新|实时|今天|今日|本周|本月|今年).{0,40}(?:是|为|有|达到|排名|最好|最高|最低|正常|异常|运行|发生)",
     re.IGNORECASE,
@@ -191,6 +233,10 @@ def _ledger_has_partial_overlap(
     candidate_text: str,
     *,
     evidence_types: frozenset[EvidenceType] | None = None,
+    freshness: FactFreshness = FactFreshness.UNKNOWN,
+    max_age_seconds: int | None = None,
+    require_source_as_of: bool = False,
+    allow_reuse: bool = False,
 ) -> bool:
     search_types = evidence_types or ledger.available_evidence_types
     if not search_types:
@@ -199,6 +245,10 @@ def _ledger_has_partial_overlap(
         candidate_text,
         search_types,
         allow_empty=False,
+        freshness=freshness,
+        max_age_seconds=max_age_seconds,
+        require_source_as_of=require_source_as_of,
+        allow_reuse=allow_reuse,
     )
 
 
@@ -233,6 +283,10 @@ def _is_cross_domain_high_risk_warning(
         ledger,
         candidate_text,
         evidence_types=available_types & _READ_SIDE_EVIDENCE_TYPES,
+        freshness=requirement.freshness,
+        max_age_seconds=requirement.max_age_seconds,
+        require_source_as_of=requirement.requires_source_timestamp,
+        allow_reuse=requirement.allow_conversation_reuse,
     )
 
 
@@ -265,6 +319,10 @@ def resolve_soft_warning_risk_level(
         ledger,
         candidate_text,
         evidence_types=overlap_types & _READ_SIDE_EVIDENCE_TYPES,
+        freshness=requirement.freshness,
+        max_age_seconds=requirement.max_age_seconds,
+        require_source_as_of=requirement.requires_source_timestamp,
+        allow_reuse=requirement.allow_conversation_reuse,
     ):
         return GroundingRiskLevel.MEDIUM
 
@@ -272,6 +330,10 @@ def resolve_soft_warning_risk_level(
         ledger,
         candidate_text,
         evidence_types=available_types & _READ_SIDE_EVIDENCE_TYPES,
+        freshness=requirement.freshness,
+        max_age_seconds=requirement.max_age_seconds,
+        require_source_as_of=requirement.requires_source_timestamp,
+        allow_reuse=requirement.allow_conversation_reuse,
     ):
         return GroundingRiskLevel.MEDIUM
 
@@ -279,6 +341,10 @@ def resolve_soft_warning_risk_level(
         ledger,
         candidate_text,
         evidence_types=overlap_types & _READ_SIDE_EVIDENCE_TYPES,
+        freshness=requirement.freshness,
+        max_age_seconds=requirement.max_age_seconds,
+        require_source_as_of=requirement.requires_source_timestamp,
+        allow_reuse=requirement.allow_conversation_reuse,
     ):
         return GroundingRiskLevel.MEDIUM
 
@@ -506,10 +572,12 @@ def _contains_structural_external_fact(text: str) -> bool:
     has_fact_value = bool(_FACT_VALUE_RE.search(text))
     has_numeric_table_value = has_table and bool(re.search(r"\d", text))
     has_execution_claim = bool(_EXECUTION_CLAIM_RE.search(text))
+    has_operational_status = bool(_OPERATIONAL_STATUS_RE.search(text))
     has_dynamic_fact = _contains_dynamic_fact_assertion(text)
     has_generic_assertion = bool(_GENERIC_FACT_ASSERTION_RE.search(text))
     return (
         has_execution_claim
+        or has_operational_status
         or has_dynamic_fact
         or has_generic_assertion
         or has_fact_value
@@ -519,9 +587,35 @@ def _contains_structural_external_fact(text: str) -> bool:
     )
 
 
+def _is_non_concrete_execution_summary(text: str) -> bool:
+    """允许有成功收据支撑的执行状态总结，不扩大到具体业务事实。"""
+    if not _EXECUTION_SUMMARY_RE.search(text):
+        return False
+    clauses = [clause.strip() for clause in _CLAUSE_SPLIT_RE.split(text) if clause.strip()]
+    if not clauses or not all(
+        _OPERATIONAL_SUMMARY_CLAUSE_RE.fullmatch(clause)
+        for clause in clauses
+    ):
+        return False
+    return not any(
+        (
+            _FACT_VALUE_RE.search(text),
+            _CONCRETE_DETAIL_RE.search(text),
+            _MARKDOWN_TABLE_SEPARATOR_RE.search(text),
+            _DYNAMIC_FACT_RE.search(text),
+            _GENERIC_FACT_ASSERTION_RE.search(text),
+        )
+    )
+
+
 def contains_grounding_fact_signal(text: str) -> bool:
     """Public, conservative fact-signal check shared by runner boundaries."""
     return _contains_structural_external_fact(str(text or "").strip())
+
+
+def is_non_concrete_execution_summary(text: str) -> bool:
+    """Return whether text is only an operational completion summary."""
+    return _is_non_concrete_execution_summary(str(text or "").strip())
 
 
 def _is_pure_no_result_response(text: str) -> bool:
@@ -602,10 +696,21 @@ def evaluate_grounding(
         and not exact_evidence_exists
     )
     if exact_evidence_exists:
+        if _is_non_concrete_execution_summary(text):
+            return GroundingDecision(
+                GroundingAction.PASS,
+                "successful evidence receipt supports a non-concrete execution summary",
+                requirement.accepted_types,
+                available_types,
+            )
         receipt_correlated = ledger.has_candidate_overlap(
             text,
             requirement.accepted_types,
             allow_empty=_is_pure_no_result_response(text),
+            freshness=requirement.freshness,
+            max_age_seconds=requirement.max_age_seconds,
+            require_source_as_of=requirement.requires_source_timestamp,
+            allow_reuse=requirement.allow_conversation_reuse,
         )
         if not fact_bearing or receipt_correlated:
             return GroundingDecision(
@@ -653,6 +758,10 @@ def evaluate_grounding(
                 text,
                 {EvidenceType.EXTERNAL_TOOL},
                 allow_empty=_is_pure_no_result_response(text),
+                freshness=requirement.freshness,
+                max_age_seconds=requirement.max_age_seconds,
+                require_source_as_of=requirement.requires_source_timestamp,
+                allow_reuse=requirement.allow_conversation_reuse,
             )
         ):
             return GroundingDecision(
@@ -721,6 +830,10 @@ def evaluate_grounding(
                     text,
                     {EvidenceType.EXTERNAL_TOOL},
                     allow_empty=_is_pure_no_result_response(text),
+                    freshness=requirement.freshness,
+                    max_age_seconds=requirement.max_age_seconds,
+                    require_source_as_of=requirement.requires_source_timestamp,
+                    allow_reuse=requirement.allow_conversation_reuse,
                 )
             ):
                 return GroundingDecision(
@@ -730,7 +843,14 @@ def evaluate_grounding(
                 )
             requirement_groups = _infer_evidence_requirement_groups(text)
             if requirement_groups and all(
-                ledger.has_candidate_overlap(text, alternatives)
+                ledger.has_candidate_overlap(
+                    text,
+                    alternatives,
+                    freshness=requirement.freshness,
+                    max_age_seconds=requirement.max_age_seconds,
+                    require_source_as_of=requirement.requires_source_timestamp,
+                    allow_reuse=requirement.allow_conversation_reuse,
+                )
                 for alternatives in requirement_groups
             ):
                 return GroundingDecision(
@@ -741,7 +861,14 @@ def evaluate_grounding(
             missing_groups = tuple(
                 alternatives
                 for alternatives in requirement_groups
-                if not ledger.has_candidate_overlap(text, alternatives)
+                if not ledger.has_candidate_overlap(
+                    text,
+                    alternatives,
+                    freshness=requirement.freshness,
+                    max_age_seconds=requirement.max_age_seconds,
+                    require_source_as_of=requirement.requires_source_timestamp,
+                    allow_reuse=requirement.allow_conversation_reuse,
+                )
             )
             missing_types = frozenset(
                 evidence_type

@@ -102,6 +102,10 @@ class GenericApiToolFactory:
             description=tool_config.description or "",
             args_schema=args_schema
         )
+        # Generic API 配置表中的接口统一视为只读查询，包括使用 POST
+        # 携带复杂查询条件的接口；写操作不应通过该表注册。
+        tool.is_read_only = True
+        tool.permission_scope = "read"
         declared_types = set()
         for value in schema_def.get("x-nanzi-evidence-types") or []:
             try:
@@ -110,7 +114,7 @@ class GenericApiToolFactory:
                 logger.warning("Ignoring invalid evidence type %r for %s", value, tool_config.name)
         if declared_types:
             tool.evidence_types = frozenset(declared_types)
-        elif str(tool_config.method or "").strip().upper() == "GET":
+        elif tool.is_read_only:
             tool.evidence_types = frozenset({EvidenceType.EXTERNAL_TOOL})
         if getattr(tool, "evidence_types", None):
             declared_policy = schema_def.get("x-nanzi-evidence-policy")
