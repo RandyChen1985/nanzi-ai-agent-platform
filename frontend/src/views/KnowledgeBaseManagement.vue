@@ -91,6 +91,8 @@ const aiAnalyzing = ref(false)
 const customQuestions = ref<{ label: string, query: string }[]>([])
 const deletingDataset = ref<KnowledgeBase | null>(null)
 const deletingDocument = ref<KnowledgeDocument | null>(null)
+const pendingPermissionRemoval = ref<{ type: string; id: number } | null>(null)
+const pendingFolderRemoval = ref<{ dataset: KnowledgeBase; folderName: string } | null>(null)
 
 const form = ref({
   name: '',
@@ -439,19 +441,25 @@ const submitPermissions = async () => {
 
 const removePermission = async (type: string, id: number) => {
   if (!selectedDatasetId.value) return
-  const typeText = type === 'role' ? '角色' : '用户'
-  if (!confirm(`确定要移除该${typeText}的知识库访问授权吗？`)) return
+  pendingPermissionRemoval.value = { type, id }
+}
+
+const confirmRemovePermission = async () => {
+  const pending = pendingPermissionRemoval.value
+  if (!pending || !selectedDatasetId.value) return
   try {
     await axios.delete(`/api/portal/ragflow/datasets/${selectedDatasetId.value}/permissions`, {
       data: {
-        target_type: type,
-        target_id: id
+        target_type: pending.type,
+        target_id: pending.id
       }
     })
     showToast('取消授权成功', 'success')
     await fetchDatasetPermissions(selectedDatasetId.value)
   } catch (err) {
     showToast('取消授权失败', 'error')
+  } finally {
+    pendingPermissionRemoval.value = null
   }
 }
 
@@ -704,10 +712,13 @@ const confirmRenameFolder = async (dataset: KnowledgeBase, oldName: string) => {
 
 // 删除文件夹 (解绑文件，不物理删除文件)
 const removeFolder = async (dataset: KnowledgeBase, folderName: string) => {
-  if (!confirm(`确定要删除文件夹「${folderName}」吗？其中的所有文档将自动移入未分类根目录（不会删除物理文档）。`)) {
-    return
-  }
+  pendingFolderRemoval.value = { dataset, folderName }
+}
 
+const confirmRemoveFolder = async () => {
+  const pending = pendingFolderRemoval.value
+  if (!pending) return
+  const { dataset, folderName } = pending
   const localMetadata = dataset.local_metadata || {}
   const extraConfig = { ...(localMetadata.extra_config || {}) }
   const structure = { ...(extraConfig.folder_structure || {}) }
@@ -720,6 +731,8 @@ const removeFolder = async (dataset: KnowledgeBase, folderName: string) => {
     showToast('文件夹已删除', 'success')
   } catch (err) {
     showToast('删除文件夹失败: ' + extractError(err), 'error')
+  } finally {
+    pendingFolderRemoval.value = null
   }
 }
 
@@ -2622,6 +2635,22 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
       :loading="deleting"
       @confirm="confirmDeleteDocument"
       @cancel="deletingDocument = null"
+    />
+    <ConfirmModal
+      v-if="pendingPermissionRemoval"
+      title="确认移除知识库授权"
+      :message="`确定要移除该${pendingPermissionRemoval.type === 'role' ? '角色' : '用户'}的知识库访问授权吗？`"
+      confirm-text="确认移除"
+      @confirm="confirmRemovePermission"
+      @cancel="pendingPermissionRemoval = null"
+    />
+    <ConfirmModal
+      v-if="pendingFolderRemoval"
+      title="确认删除文件夹"
+      :message="`确定要删除文件夹「${pendingFolderRemoval.folderName}」吗？其中的所有文档将自动移入未分类根目录（不会删除物理文档）。`"
+      confirm-text="确认删除"
+      @confirm="confirmRemoveFolder"
+      @cancel="pendingFolderRemoval = null"
     />
 
     <!-- View chunks modal -->

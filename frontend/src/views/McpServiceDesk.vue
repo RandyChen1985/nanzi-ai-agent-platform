@@ -4,6 +4,7 @@ import api from '../utils/axios'
 import { useUser } from '../composables/useUser'
 import { useToast } from '../composables/useToast'
 import { copyToClipboard } from '../utils/clipboard'
+import ConfirmModal from '../components/ConfirmModal.vue'
 
 type Tab = 'overview' | 'guide' | 'config' | 'clients' | 'methods' | 'audit'
 type ResourceWhitelistField = 'allowed_agent_ids' | 'allowed_knowledge_base_ids' | 'allowed_metadata_dataset_ids'
@@ -174,6 +175,12 @@ const secretRevealClientId = ref<string | null>(null)
 const showClientConfirm = ref(false)
 const clientConfirmAction = ref<ClientConfirmAction | null>(null)
 const clientConfirmTarget = ref<Client | null>(null)
+const showConfirmModal = ref(false)
+const confirmModalTitle = ref('请确认操作')
+const confirmModalMessage = ref('')
+const confirmModalType = ref<'danger' | 'primary' | 'warning'>('danger')
+const confirmModalLoading = ref(false)
+const confirmModalAction = ref<(() => void | Promise<void>) | null>(null)
 const showTokenIssue = ref(false)
 const showTokenDetails = ref(false)
 const tokenDetailsClient = ref<Client | null>(null)
@@ -560,15 +567,21 @@ const saveClientEdit = async () => {
 
 const revokeAllClientTokens = async (client: Client) => {
   if (!canRevokeAllClientTokens(client)) return
-  if (!window.confirm(`确定要撤销 Client【${client.client_name}】下全部有效 Token 吗？此操作不可逆。`)) return
-  try {
-    await api.post(`/api/portal/mcp-service/clients/${client.client_id}/tokens/revoke-all`)
-    showToast('已撤销该 Client 下全部有效 Token', 'success')
-    await openTokenDetails(client)
-    await loadClients()
-  } catch (err: any) {
-    error.value = err?.response?.data?.detail || '批量撤销 Token 失败'
-  }
+  openConfirmModal(
+    '确认撤销全部 Token',
+    `确定要撤销 Client【${client.client_name}】下全部有效 Token 吗？此操作不可逆。`,
+    async () => {
+      try {
+        await api.post(`/api/portal/mcp-service/clients/${client.client_id}/tokens/revoke-all`)
+        showToast('已撤销该 Client 下全部有效 Token', 'success')
+        await openTokenDetails(client)
+        await loadClients()
+      } catch (err: any) {
+        error.value = err?.response?.data?.detail || '批量撤销 Token 失败'
+      }
+    },
+    'warning',
+  )
 }
 
 const loadGrants = async () => {
@@ -585,15 +598,21 @@ const loadGrants = async () => {
 }
 
 const revokeGrant = async (grant: Grant) => {
-  if (!window.confirm(`确定要解除对【${grant.client_name || grant.client_id}】的授权吗？该应用已签发的全部 Token 将立即失效。`)) return
-  try {
-    await api.post(`/api/portal/mcp-service/grants/${grant.id}/revoke`)
-    showToast('已成功解除授权', 'success')
-    await loadGrants()
-    await loadClients()
-  } catch (err: any) {
-    error.value = err?.response?.data?.detail || '解除授权失败'
-  }
+  openConfirmModal(
+    '确认解除应用授权',
+    `确定要解除对【${grant.client_name || grant.client_id}】的授权吗？该应用已签发的全部 Token 将立即失效。`,
+    async () => {
+      try {
+        await api.post(`/api/portal/mcp-service/grants/${grant.id}/revoke`)
+        showToast('已成功解除授权', 'success')
+        await loadGrants()
+        await loadClients()
+      } catch (err: any) {
+        error.value = err?.response?.data?.detail || '解除授权失败'
+      }
+    },
+    'warning',
+  )
 }
 
 const removeAuditFilter = async (key: AuditFilterKey) => {
@@ -915,19 +934,20 @@ const deleteClientToken = async (token: ClientToken) => {
   const warning = getTokenStatus(token) === 'active'
     ? '该 Token 当前仍有效，物理删除后将立即失效且无法恢复，确定继续吗？'
     : '物理删除后将无法查看这条 Token 历史记录，确定继续吗？'
-  if (!window.confirm(warning)) return
-  tokenDeleteLoading.value = true
-  try {
-    await api.delete(`/api/portal/mcp-service/clients/${encodeURIComponent(tokenDetailsClient.value.client_id)}/tokens/${encodeURIComponent(token.id)}`)
-    showToast('Access Token 已物理删除', 'success')
-    selectedTokenIds.value = selectedTokenIds.value.filter(id => id !== token.id)
-    await loadClientTokens(tokenDetailsClient.value)
-    await loadClients()
-  } catch (err: any) {
-    error.value = err?.response?.data?.detail || 'Access Token 删除失败'
-  } finally {
-    tokenDeleteLoading.value = false
-  }
+  openConfirmModal('确认物理删除 Token', warning, async () => {
+    tokenDeleteLoading.value = true
+    try {
+      await api.delete(`/api/portal/mcp-service/clients/${encodeURIComponent(tokenDetailsClient.value!.client_id)}/tokens/${encodeURIComponent(token.id)}`)
+      showToast('Access Token 已物理删除', 'success')
+      selectedTokenIds.value = selectedTokenIds.value.filter(id => id !== token.id)
+      await loadClientTokens(tokenDetailsClient.value!)
+      await loadClients()
+    } catch (err: any) {
+      error.value = err?.response?.data?.detail || 'Access Token 删除失败'
+    } finally {
+      tokenDeleteLoading.value = false
+    }
+  })
 }
 
 const deleteSelectedClientTokens = async () => {
@@ -936,33 +956,36 @@ const deleteSelectedClientTokens = async () => {
   const warning = hasActiveToken
     ? '选中项包含仍有效的 Token，物理删除后将立即失效且无法恢复，确定继续吗？'
     : `确定物理删除选中的 ${selectedDeletableTokens.value.length} 条 Token 历史记录吗？`
-  if (!window.confirm(warning)) return
-  tokenDeleteLoading.value = true
-  try {
-    await api.post(`/api/portal/mcp-service/clients/${encodeURIComponent(tokenDetailsClient.value.client_id)}/tokens/delete`, {
-      token_ids: selectedDeletableTokens.value.map(token => token.id),
-    })
-    showToast('选中的 Access Token 已物理删除', 'success')
-    selectedTokenIds.value = []
-    await loadClientTokens(tokenDetailsClient.value)
-    await loadClients()
-  } catch (err: any) {
-    error.value = err?.response?.data?.detail || 'Access Token 批量删除失败'
-  } finally {
-    tokenDeleteLoading.value = false
-  }
+  openConfirmModal('确认批量物理删除 Token', warning, async () => {
+    tokenDeleteLoading.value = true
+    try {
+      await api.post(`/api/portal/mcp-service/clients/${encodeURIComponent(tokenDetailsClient.value!.client_id)}/tokens/delete`, {
+        token_ids: selectedDeletableTokens.value.map(token => token.id),
+      })
+      showToast('选中的 Access Token 已物理删除', 'success')
+      selectedTokenIds.value = []
+      await loadClientTokens(tokenDetailsClient.value!)
+      await loadClients()
+    } catch (err: any) {
+      error.value = err?.response?.data?.detail || 'Access Token 批量删除失败'
+    } finally {
+      tokenDeleteLoading.value = false
+    }
+  })
 }
 
 const revokeClientToken = async (token: ClientToken) => {
   if (!tokenDetailsClient.value || getTokenStatus(token) !== 'active' || tokenDeleteLoading.value) return
-  if (!window.confirm('确定撤销这个 Access Token 吗？撤销后无法恢复。')) return
-  try {
-    await api.post(`/api/portal/mcp-service/clients/${tokenDetailsClient.value.client_id}/tokens/${token.id}/revoke`)
-    await loadClientTokens(tokenDetailsClient.value)
-    await loadClients()
-  } catch (err: any) {
-    error.value = err?.response?.data?.detail || 'Token 撤销失败'
-  }
+  openConfirmModal('确认撤销 Token', '确定撤销这个 Access Token 吗？撤销后无法恢复。', async () => {
+    try {
+      await api.post(`/api/portal/mcp-service/clients/${tokenDetailsClient.value!.client_id}/tokens/${token.id}/revoke`)
+      showToast('Access Token 已撤销', 'success')
+      await loadClientTokens(tokenDetailsClient.value!)
+      await loadClients()
+    } catch (err: any) {
+      error.value = err?.response?.data?.detail || 'Token 撤销失败'
+    }
+  }, 'warning')
 }
 
 const exportAudit = async () => {
@@ -1092,6 +1115,10 @@ const remainingTokenDays = (value?: string | null) => {
   if (expiresAt === null || !Number.isFinite(expiresAt)) return null
   const remainingMs = expiresAt - tokenClock.value
   return remainingMs <= 0 ? 0 : Math.ceil(remainingMs / (24 * 60 * 60 * 1000))
+}
+const tokenRemainingLabel = (token: ClientToken) => {
+  const days = remainingTokenDays(token.expires_at)
+  return days === null ? '—' : days === 0 ? '已过期' : `还剩 ${days} 天`
 }
 const toggleClientExpanded = (clientId: string) => {
   const next = new Set(expandedClientIds.value)
@@ -1323,6 +1350,38 @@ const closeTokenWizard = () => {
   tokenWizardStep.value = 1
   oneTimeAccessToken.value = ''
   accessTokenInfo.value = {}
+}
+
+const openConfirmModal = (
+  title: string,
+  message: string,
+  action: () => void | Promise<void>,
+  type: 'danger' | 'primary' | 'warning' = 'danger',
+) => {
+  confirmModalTitle.value = title
+  confirmModalMessage.value = message
+  confirmModalType.value = type
+  confirmModalAction.value = action
+  showConfirmModal.value = true
+}
+
+const closeConfirmModal = () => {
+  if (confirmModalLoading.value) return
+  showConfirmModal.value = false
+  confirmModalAction.value = null
+}
+
+const submitConfirmModal = async () => {
+  const action = confirmModalAction.value
+  if (!action || confirmModalLoading.value) return
+  confirmModalLoading.value = true
+  try {
+    await action()
+  } finally {
+    confirmModalLoading.value = false
+    showConfirmModal.value = false
+    confirmModalAction.value = null
+  }
 }
 
 const openClientConfirm = (action: ClientConfirmAction, client: Client) => {
@@ -2877,15 +2936,13 @@ onUnmounted(() => {
               <div v-if="tokenDetailsLoading" class="py-10 text-center text-sm text-slate-500">Token 记录加载中…</div>
               <div v-else-if="!filteredClientTokens.length" class="rounded-xl bg-slate-50 p-8 text-center text-sm text-slate-500">当前筛选下暂无 Token 记录</div>
               <div v-else class="overflow-x-auto rounded-xl border border-slate-200">
-                <table class="min-w-[850px] w-full text-left text-xs">
+                <table class="min-w-[760px] w-full text-left text-xs">
                   <thead class="bg-slate-50 text-slate-500">
                     <tr>
                       <th class="w-10 p-3"><input type="checkbox" :checked="allVisibleTokensSelected" :disabled="!deletableVisibleTokens.length || tokenDeleteLoading" aria-label="全选可删除 Token" @change="toggleAllVisibleTokens" /></th>
-                      <th class="p-3">授权用户</th>
                       <th class="p-3">Scope 范围</th>
                       <th class="p-3">生成方式</th>
-                      <th class="p-3">生成时间</th>
-                      <th class="p-3">过期时间</th>
+                      <th class="p-3">时间信息</th>
                       <th class="p-3">状态</th>
                       <th class="p-3">操作</th>
                     </tr>
@@ -2894,18 +2951,17 @@ onUnmounted(() => {
                     <tr v-for="token in filteredClientTokens" :key="token.id" class="border-t border-slate-100">
                       <td class="p-3"><input type="checkbox" :checked="selectedTokenIds.includes(token.id)" :disabled="!canDeleteClientToken(token) || tokenDeleteLoading" :aria-label="`选择 Token ${token.id}`" @change="toggleTokenSelection(token)" /></td>
                       <td class="p-3">
-                        <div class="font-bold text-slate-700">{{ token.real_name || token.user_name || '用户 ID: ' + (token.user_id || '—') }}</div>
-                        <div v-if="token.real_name && token.user_name" class="text-[11px] text-slate-400">@{{ token.user_name }} (ID: {{ token.user_id }})</div>
-                      </td>
-                      <td class="p-3">
                         <div class="flex max-w-[200px] flex-wrap gap-1">
                           <span v-for="sc in (token.scopes || [])" :key="sc" class="rounded bg-indigo-50 px-1.5 py-0.5 font-mono text-[10px] text-indigo-700">{{ sc }}</span>
                           <span v-if="!(token.scopes || []).length" class="text-slate-400">—</span>
                         </div>
                       </td>
                       <td class="p-3">{{ token.issue_method === 'oauth_authorization' ? 'OAuth 用户授权' : '服务台手动生成' }}</td>
-                      <td class="whitespace-nowrap p-3 text-slate-500">{{ formatAuditTime(token.issued_at) }}</td>
-                      <td class="whitespace-nowrap p-3 text-slate-500">{{ formatAuditTime(token.expires_at) }}</td>
+                      <td class="whitespace-nowrap p-3 text-slate-500">
+                        <div>生成：{{ formatAuditTime(token.issued_at) }}</div>
+                        <div>过期：{{ formatAuditTime(token.expires_at) }}</div>
+                        <div :class="tokenRemainingLabel(token) === '已过期' ? 'font-bold text-rose-600' : 'text-slate-500'">{{ tokenRemainingLabel(token) }}</div>
+                      </td>
                       <td class="p-3">
                         <span :class="getTokenStatus(token) === 'active' ? 'font-bold text-emerald-600' : (getTokenStatus(token) === 'expired' ? 'text-amber-600' : 'text-slate-400')">
                           {{ getTokenStatus(token) === 'active' ? '有效' : getTokenStatus(token) === 'expired' ? '已过期' : '已撤销' }}
@@ -3356,5 +3412,16 @@ grant_type=authorization_code&amp;code=&lt;callback_code&gt;&amp;redirect_uri=&l
           </div>
         </div>
       </div>
+
+      <ConfirmModal
+        v-if="showConfirmModal"
+        :title="confirmModalTitle"
+        :message="confirmModalMessage"
+        :type="confirmModalType"
+        :loading="confirmModalLoading"
+        confirm-text="确认操作"
+        @confirm="submitConfirmModal"
+        @cancel="closeConfirmModal"
+      />
   </div>
 </template>

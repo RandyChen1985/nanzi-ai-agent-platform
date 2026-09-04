@@ -3,6 +3,7 @@ import { ref, onMounted, computed } from 'vue'
 import { toolApi, type SysApiTool, type SysApiToolCreate } from '../../api/tool'
 import { useToast } from '../../composables/useToast'
 import { useUser } from '../../composables/useUser'
+import ConfirmModal from '../ConfirmModal.vue'
 import { 
   PencilSquareIcon,
   TrashIcon,
@@ -20,6 +21,8 @@ const toolMethodFilter = ref('all')
 const toolStatusFilter = ref('all')
 const showModal = ref(false)
 const isEditing = ref(false)
+const showDeleteConfirm = ref(false)
+const deletingTool = ref<SysApiTool | null>(null)
 
 const toolForm = ref<Partial<SysApiToolCreate> & { id?: string; parameter_schema_str: string; headers_str: string }>({
   name: '',
@@ -153,14 +156,23 @@ const saveTool = async () => {
     }
 }
 
-const deleteTool = async (tool: SysApiTool) => {
-    if (!confirm(`确定要删除工具 "${tool.name}" 吗?`)) return
+const deleteTool = (tool: SysApiTool) => {
+    deletingTool.value = tool
+    showDeleteConfirm.value = true
+}
+
+const confirmDeleteTool = async () => {
+    const tool = deletingTool.value
+    if (!tool) return
     try {
         await toolApi.delete(tool.id)
         showToast('已删除', 'success')
         fetchTools()
     } catch(e: any) {
         showToast('删除失败', 'error')
+    } finally {
+        showDeleteConfirm.value = false
+        deletingTool.value = null
     }
 }
 
@@ -335,6 +347,15 @@ onMounted(() => {
               </div>
           </div>
       </div>
+
+      <ConfirmModal
+          v-if="showDeleteConfirm"
+          title="确认删除工具"
+          :message="`确定要删除工具「${deletingTool?.name || ''}」吗？删除后无法恢复。`"
+          confirm-text="确认删除"
+          @confirm="confirmDeleteTool"
+          @cancel="showDeleteConfirm = false; deletingTool = null"
+      />
   </div>
 </template>
 

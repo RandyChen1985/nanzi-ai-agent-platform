@@ -681,6 +681,23 @@ def test_service_desk_exposes_client_token_lifecycle_summary_and_physical_delete
     assert "tokenClock.value = Date.now()" in view
 
 
+def test_token_lifecycle_table_hides_authorized_user_column():
+    view = (ROOT / "frontend/src/views/McpServiceDesk.vue").read_text(encoding="utf-8")
+    token_table = view.split('<h2 class="text-xl font-black">Token 生命周期</h2>', 1)[1].split('<!-- Client 基本信息编辑弹窗 -->', 1)[0]
+
+    assert "授权用户" not in token_table
+    assert '<th class="p-3">时间信息</th>' in token_table
+    assert '<th class="p-3">生成时间</th>' not in token_table
+    assert '<th class="p-3">过期时间</th>' not in token_table
+    for heading in ("Scope 范围", "生成方式", "状态", "操作"):
+        assert heading in token_table
+    assert "生成：" in token_table
+    assert "过期：" in token_table
+    assert "tokenRemainingLabel(token)" in token_table
+    assert "const tokenRemainingLabel" in view
+    assert "还剩 ${days} 天" in view
+
+
 def test_login_reloads_backend_oauth_endpoint_after_same_origin_login():
     login = (ROOT / "frontend/src/views/Login.vue").read_text(encoding="utf-8")
 
