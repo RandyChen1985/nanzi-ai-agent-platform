@@ -15,7 +15,14 @@ from app.models.mcp import McpServer, McpToolCache
 from app.models.agent import AIAgent, AIAgentVersion
 from app.services.ai.tools.mcp_client import McpClientService, McpSseSession
 from app.services.ai.tools.mcp_factory import McpToolFactory
-from app.services.mcp.mcp_auth_policy import generate_mcp_private_key_pem
+from app.services.mcp.mcp_auth_policy import (
+    _parse_auth_headers,
+    encrypt_mcp_auth_headers,
+    generate_mcp_private_key_pem,
+    mcp_auth_headers_configured,
+    mcp_auth_headers_summary,
+    resolve_mcp_auth_headers,
+)
 from app.services.mcp.echo_server import (
     ECHO_SERVER_ID,
     ECHO_SERVER_NAME,
@@ -56,6 +63,8 @@ class McpServerWrite(McpServerBase):
 
     auth_headers: Optional[str] = "{}"
     fixed_token: Optional[str] = Field(default=None, exclude=True)
+    authorization_enabled: Optional[bool] = None
+    auth_headers_patch: Optional[Dict[str, Optional[str]]] = None
 
     @model_validator(mode="after")
     def validate_user_assertion_config(self):
@@ -70,7 +79,9 @@ def _normalized_remark(value: Optional[str]) -> Optional[str]:
 
 class McpServerResponse(McpServerBase):
     id: str
-    auth_headers: Optional[str] = "{}"
+    auth_headers_configured: bool = False
+    authorization_configured: bool = False
+    masked_auth_headers: Dict[str, str] = Field(default_factory=dict)
     scope: str = "global"
     user_id: Optional[int] = None
     last_sync_at: Optional[Any] = None
@@ -223,6 +234,62 @@ async def _find_server_with_name(
         stmt = stmt.where(McpServer.id != exclude_server_id)
     return (await db.execute(stmt)).scalar_one_or_none()
 
+
+def _remove_header_case_insensitive(headers: Dict[str, str], target: str) -> None:
+    for key in list(headers):
+        if str(key).strip().casefold() == target.casefold():
+            headers.pop(key, None)
+
+
+def _set_header_case_insensitive(headers: Dict[str, str], key: str, value: str) -> None:
+    _remove_header_case_insensitive(headers, key)
+    headers[key] = value
+
+
+def _apply_mcp_auth_update(server: McpServer, data: McpServerWrite) -> None:
+    """应用认证更新；编辑界面只提交 Header 增量，避免回显或覆盖旧密钥。"""
+    has_patch = "auth_headers_patch" in data.model_fields_set
+    has_authorization_control = (
+        "authorization_enabled" in data.model_fields_set
+        or data.fixed_token is not None
+    )
+
+    if not has_patch and not has_authorization_control:
+        if "auth_headers" in data.model_fields_set:
+            server.auth_headers = encrypt_mcp_auth_headers(data.auth_headers)
+        return
+
+    headers = resolve_mcp_auth_headers(server)
+    for key, value in (data.auth_headers_patch or {}).items():
+        normalized_key = str(key).strip()
+        if not normalized_key:
+            continue
+        if normalized_key.casefold() == "authorization":
+            raise HTTPException(status_code=400, detail="Authorization 请通过独立开关配置")
+        if value is None:
+            _remove_header_case_insensitive(headers, normalized_key)
+        else:
+            _set_header_case_insensitive(headers, normalized_key, str(value))
+
+    if data.authorization_enabled is False:
+        _remove_header_case_insensitive(headers, "Authorization")
+        server.fixed_token_encrypted = None
+    elif data.fixed_token is not None:
+        token = str(data.fixed_token).strip()
+        if not token:
+            raise HTTPException(status_code=400, detail="Authorization Token 不能为空")
+        server.fixed_token_encrypted = get_api_key_manager().encrypt_api_key(token)
+        _remove_header_case_insensitive(headers, "Authorization")
+    elif data.authorization_enabled is True and not any(
+        str(key).strip().casefold() == "authorization" and str(value).strip()
+        for key, value in headers.items()
+    ):
+        raise HTTPException(status_code=400, detail="开启 Authorization 后请输入 Token")
+
+    if server.fixed_token_encrypted:
+        _remove_header_case_insensitive(headers, "Authorization")
+    server.auth_headers = encrypt_mcp_auth_headers(headers)
+
 @router.post("/verify")
 async def verify_mcp_server(
     data: McpServerWrite,
@@ -230,12 +297,11 @@ async def verify_mcp_server(
 ):
     """Test connection and return discovered tools without saving"""
     temp_id = f"verify_{uuid.uuid4().hex[:8]}"
-    auth_headers = {}
-    if data.auth_headers:
-        try: auth_headers = json.loads(data.auth_headers)
-        except: pass
+    auth_headers = _parse_auth_headers(data.auth_headers)
+    if data.authorization_enabled is False:
+        _remove_header_case_insensitive(auth_headers, "Authorization")
     if data.fixed_token:
-        auth_headers["Authorization"] = f"Bearer {data.fixed_token}"
+        _set_header_case_insensitive(auth_headers, "Authorization", f"Bearer {data.fixed_token}")
 
     McpClientService._sessions[temp_id] = McpSseSession(temp_id, data.sse_url, auth_headers)
     
@@ -302,6 +368,8 @@ async def list_mcp_servers(
         pub_count = (await db.execute(pub_stmt)).scalar() or 0
         
         item = McpServerResponse.model_validate(s)
+        item.auth_headers_configured = mcp_auth_headers_configured(s)
+        item.authorization_configured, item.masked_auth_headers = mcp_auth_headers_summary(s)
         item.tool_count = total_count
         item.published_tool_count = pub_count
         item.stale_tool_count = stale_count
@@ -413,6 +481,8 @@ async def create_echo_test_mcp(
     response.tool_count = 1
     response.published_tool_count = 1
     response.stale_tool_count = 0
+    response.auth_headers_configured = mcp_auth_headers_configured(server)
+    response.authorization_configured, response.masked_auth_headers = mcp_auth_headers_summary(server)
     return response
 
 @router.post("/servers", response_model=McpServerResponse)
@@ -439,17 +509,31 @@ async def create_mcp_server(
 
     user_id = _get_user_id(user) if target_scope == "personal" else None
     server_id = str(uuid.uuid4())
-    server_data = data.model_dump(exclude={"fixed_token"})
+    server_data = data.model_dump(exclude={"fixed_token", "authorization_enabled", "auth_headers_patch"})
+    auth_headers = _parse_auth_headers(data.auth_headers)
+    raw_authorization = next(
+        (
+            value
+            for key, value in auth_headers.items()
+            if str(key).strip().casefold() == "authorization"
+        ),
+        None,
+    )
+    if data.authorization_enabled is False:
+        _remove_header_case_insensitive(auth_headers, "Authorization")
+    elif data.fixed_token:
+        _remove_header_case_insensitive(auth_headers, "Authorization")
+    elif data.authorization_enabled is True and not raw_authorization:
+        raise HTTPException(status_code=400, detail="开启 Authorization 后请输入 Token")
+    server_data["auth_headers"] = encrypt_mcp_auth_headers(auth_headers)
     server_data["server_name"] = server_name
     server_data["remark"] = _normalized_remark(data.remark)
     server_data["scope"] = target_scope
     server_data["user_id"] = user_id
     
     if data.fixed_token:
-        from app.utils.encryption import get_api_key_manager
         server_data["fixed_token_encrypted"] = get_api_key_manager().encrypt_api_key(data.fixed_token)
     if data.user_assertion_enabled:
-        from app.utils.encryption import get_api_key_manager
         server_data["user_assertion_audience"] = (
             data.user_assertion_audience or _default_user_assertion_audience(server_id)
         )
@@ -472,9 +556,28 @@ async def create_mcp_server(
         await McpClientService.sync_tools(server_id)
     except Exception as e:
         logger.warning(f"Initial sync failed for new server {server_id}: {e}")
-        
-    response_data = dict(server_data)
-    return {**response_data, "id": server_id, "tool_count": 0, "published_tool_count": 0}
+
+    authorization_configured, masked_auth_headers = mcp_auth_headers_summary(new_server)
+    return {
+        "server_name": server_name,
+        "sse_url": data.sse_url,
+        "enabled_status": data.enabled_status,
+        "scope": target_scope,
+        "remark": server_data["remark"],
+        "credential_mode": data.credential_mode,
+        "user_assertion_enabled": data.user_assertion_enabled,
+        "user_assertion_header": data.user_assertion_header,
+        "user_assertion_audience": server_data.get("user_assertion_audience"),
+        "user_assertion_key_id": server_data.get("user_assertion_key_id"),
+        "user_assertion_issuer": server_data.get("user_assertion_issuer"),
+        "auth_headers_configured": mcp_auth_headers_configured(new_server),
+        "authorization_configured": authorization_configured,
+        "masked_auth_headers": masked_auth_headers,
+        "id": server_id,
+        "tool_count": 0,
+        "published_tool_count": 0,
+        "stale_tool_count": 0,
+    }
 
 @router.put("/servers/{server_id}", response_model=McpServerResponse)
 async def update_mcp_server(
@@ -509,8 +612,7 @@ async def update_mcp_server(
         await _migrate_server_name_references(db, server_id, server.server_name, server_name)
     server.server_name = server_name
     server.sse_url = data.sse_url
-    if "auth_headers" in data.model_fields_set:
-        server.auth_headers = data.auth_headers
+    _apply_mcp_auth_update(server, data)
     server.credential_mode = data.credential_mode
     server.user_assertion_enabled = data.user_assertion_enabled
     server.user_assertion_header = data.user_assertion_header
@@ -526,13 +628,9 @@ async def update_mcp_server(
         server.user_assertion_audience = data.user_assertion_audience
         server.user_assertion_key_id = data.user_assertion_key_id
         server.user_assertion_issuer = data.user_assertion_issuer
-    if data.fixed_token:
-        from app.utils.encryption import get_api_key_manager
-        server.fixed_token_encrypted = get_api_key_manager().encrypt_api_key(data.fixed_token)
     if data.user_assertion_enabled and not server.user_assertion_key_id:
         server.user_assertion_key_id = f"mcp-{uuid.uuid4().hex[:16]}"
     if data.user_assertion_enabled and not server.user_assertion_private_key_encrypted:
-        from app.utils.encryption import get_api_key_manager
         server.user_assertion_private_key_encrypted = get_api_key_manager().encrypt_api_key(
             generate_mcp_private_key_pem()
         )
@@ -571,12 +669,15 @@ async def update_mcp_server(
     )
     pub = (await db.execute(pub_stmt)).scalar() or 0
     
-    response_data = data.model_dump(exclude={"fixed_token"})
-    response_data["auth_headers"] = server.auth_headers or "{}"
+    response_data = data.model_dump(exclude={"fixed_token", "auth_headers"})
     response_data["server_name"] = server_name
     response_data["user_assertion_audience"] = server.user_assertion_audience
     response_data["user_assertion_key_id"] = server.user_assertion_key_id
     response_data["user_assertion_issuer"] = server.user_assertion_issuer
+    response_data["auth_headers_configured"] = mcp_auth_headers_configured(server)
+    response_data["authorization_configured"], response_data["masked_auth_headers"] = (
+        mcp_auth_headers_summary(server)
+    )
     return {
         **response_data,
         "id": server_id,

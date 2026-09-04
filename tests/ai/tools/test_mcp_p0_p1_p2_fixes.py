@@ -277,6 +277,49 @@ async def test_mcp_get_session_does_not_serialize_different_cache_misses_on_db_l
 
 
 @pytest.mark.asyncio
+async def test_mcp_get_session_cleans_failed_connection_from_cache():
+    """连接失败后不得把不可用 session 留在缓存中。"""
+    original_sessions = McpClientService._sessions
+    original_creation_locks = McpClientService._session_creation_locks
+    original_cleanup_task = McpClientService._cleanup_task
+    McpClientService._sessions = {}
+    McpClientService._session_creation_locks = {}
+    McpClientService._cleanup_task = None
+
+    async def fake_cleanup_loop():
+        await asyncio.Future()
+
+    failed_session = None
+
+    async def fake_load_server(_server_id):
+        return SimpleNamespace(sse_url="https://example.test/mcp")
+
+    async def fail_connect(self):
+        nonlocal failed_session
+        failed_session = self
+        raise ConnectionError("stream unavailable")
+
+    try:
+        with (
+            patch.object(McpClientService, "_idle_cleanup_loop", side_effect=fake_cleanup_loop),
+            patch.object(McpClientService, "_load_server", side_effect=fake_load_server),
+            patch.object(McpSseSession, "connect", new=fail_connect),
+        ):
+            with pytest.raises(ConnectionError, match="stream unavailable"):
+                await McpClientService.get_session("server-connect-failed")
+
+        assert failed_session is not None
+        assert failed_session.session is None
+        assert "server-connect-failed" not in McpClientService._sessions
+    finally:
+        if McpClientService._cleanup_task:
+            McpClientService._cleanup_task.cancel()
+        McpClientService._sessions = original_sessions
+        McpClientService._session_creation_locks = original_creation_locks
+        McpClientService._cleanup_task = original_cleanup_task
+
+
+@pytest.mark.asyncio
 async def test_mcp_direct_http_client_allows_long_running_tool_calls():
     """Direct HTTP 的底层客户端超时不得短于统一的 120 秒工具调用上限。"""
     session = McpSseSession(

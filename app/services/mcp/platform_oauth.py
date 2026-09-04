@@ -17,7 +17,7 @@ from typing import Any, Iterable, Sequence
 
 from mcp.server.auth.provider import AccessToken
 from pydantic import Field
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.orm import AsyncSessionLocal
@@ -124,16 +124,19 @@ def redirect_uri_allowed(redirect_uri: str, registered: Iterable[str]) -> bool:
 
 def intersect_authorized_ids(
     user_allowed: Iterable[str] | None,
+    client_allowed: Iterable[str] | None = None,
     requested: Iterable[str] | None = None,
 ) -> list[str]:
-    """计算当前用户授权资源与请求范围的交集。"""
+    """计算用户权限、Client 白名单与请求范围的三方交集。"""
     def _clean(values: Iterable[str] | None) -> set[str] | None:
         if values is None:
             return None
         return {str(value).strip() for value in values if str(value).strip()}
 
-    user_set, requested_set = map(_clean, (user_allowed, requested))
+    user_set, client_set, requested_set = map(_clean, (user_allowed, client_allowed, requested))
     result = user_set
+    if client_set is not None:
+        result = client_set if result is None else result & client_set
     if requested_set is not None:
         result = requested_set if result is None else result & requested_set
     return sorted(result or set())
@@ -214,6 +217,9 @@ class PlatformMcpOAuthService:
         client_name: str,
         redirect_uris: Sequence[str],
         allowed_scopes: Sequence[str],
+        allowed_agent_ids: Sequence[str] | None = None,
+        allowed_knowledge_base_ids: Sequence[str] | None = None,
+        allowed_metadata_dataset_ids: Sequence[str] | None = None,
         allowed_grant_types: Sequence[str] = ("authorization_code",),
         created_by: str | None = None,
         is_shared: bool = False,
@@ -240,6 +246,15 @@ class PlatformMcpOAuthService:
             redirect_uris=list(redirect_uris),
             allowed_grant_types=list(allowed_grant_types),
             allowed_scopes=filter_requested_scopes(allowed_scopes, DEFAULT_SCOPES),
+            allowed_agent_ids=list(allowed_agent_ids) if allowed_agent_ids is not None else None,
+            allowed_knowledge_base_ids=(
+                list(allowed_knowledge_base_ids)
+                if allowed_knowledge_base_ids is not None else None
+            ),
+            allowed_metadata_dataset_ids=(
+                list(allowed_metadata_dataset_ids)
+                if allowed_metadata_dataset_ids is not None else None
+            ),
             is_shared=bool(is_shared),
             created_by=created_by,
         )
@@ -345,6 +360,25 @@ class PlatformMcpOAuthService:
         )
         await db.flush()
         return raw_code
+
+    @staticmethod
+    async def invalidate_unconsumed_authorization_codes(
+        db: AsyncSession,
+        *,
+        client_id: str,
+        invalidated_at: datetime | None = None,
+    ) -> None:
+        """安全策略变化时，让该 Client 尚未兑换的授权码立即失效。"""
+        now = invalidated_at or utcnow()
+        await db.execute(
+            update(McpOAuthAuthorizationCode)
+            .where(
+                McpOAuthAuthorizationCode.client_id == client_id,
+                McpOAuthAuthorizationCode.consumed_at.is_(None),
+                McpOAuthAuthorizationCode.expires_at > now,
+            )
+            .values(expires_at=now)
+        )
 
     @staticmethod
     async def _get_or_create_grant(

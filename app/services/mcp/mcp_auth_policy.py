@@ -11,6 +11,7 @@ from app.services.mcp.user_context_assertion import issue_user_assertion
 
 
 DEFAULT_ASSERTION_HEADER = "X-Nanzi-User-Assertion"
+MCP_AUTH_HEADERS_PREFIX = "enc:v1:"
 
 
 def generate_mcp_private_key_pem() -> str:
@@ -39,14 +40,58 @@ def _parse_auth_headers(raw: Any) -> dict[str, str]:
     return {str(key): str(item) for key, item in value.items() if str(key).strip()}
 
 
+def encrypt_mcp_auth_headers(raw: Any) -> str:
+    """加密保存 MCP 静态认证头，兼容接口传入的 JSON 字符串或映射。"""
+    headers = _parse_auth_headers(raw)
+    payload = json.dumps(headers, ensure_ascii=False, separators=(",", ":"))
+    encrypted = get_api_key_manager().encrypt_api_key(payload)
+    return f"{MCP_AUTH_HEADERS_PREFIX}{encrypted}"
+
+
+def _stored_auth_headers(raw: Any) -> Any:
+    if isinstance(raw, str) and raw.startswith(MCP_AUTH_HEADERS_PREFIX):
+        encrypted = raw[len(MCP_AUTH_HEADERS_PREFIX):]
+        return get_api_key_manager().decrypt_api_key(encrypted)
+    return raw
+
+
+def mcp_auth_headers_configured(server: Any) -> bool:
+    """只返回认证配置状态，不向 API 响应暴露认证头内容。"""
+    try:
+        return bool(_parse_auth_headers(_stored_auth_headers(getattr(server, "auth_headers", None))))
+    except (TypeError, ValueError):
+        # 历史脏值仍视为已配置，避免 UI 误导用户覆盖未知凭据。
+        raw = getattr(server, "auth_headers", None)
+        return bool(str(raw or "").strip() not in {"", "{}", "null"})
+
+
 def resolve_mcp_auth_headers(server: Any) -> dict[str, str]:
     """解析固定 MCP 凭证，优先使用新加密字段并兼容旧 auth_headers。"""
-    headers = _parse_auth_headers(getattr(server, "auth_headers", None))
+    headers = _parse_auth_headers(_stored_auth_headers(getattr(server, "auth_headers", None)))
     encrypted_token = getattr(server, "fixed_token_encrypted", None)
     if encrypted_token:
         token = get_api_key_manager().decrypt_api_key(encrypted_token)
         headers["Authorization"] = f"Bearer {token}"
     return headers
+
+
+def mcp_auth_headers_summary(server: Any) -> tuple[bool, dict[str, str]]:
+    """返回 Authorization 状态与脱敏后的其他 Header，不返回任何凭证原文。"""
+    try:
+        headers = resolve_mcp_auth_headers(server)
+    except (TypeError, ValueError):
+        return False, {}
+
+    authorization_configured = any(
+        str(key).strip().casefold() == "authorization" and str(value).strip()
+        for key, value in headers.items()
+    )
+    masked_headers = {
+        str(key): "********"
+        for key in headers
+        if str(key).strip().casefold() != "authorization"
+    }
+    return authorization_configured, masked_headers
 
 
 def load_mcp_private_key(server: Any) -> Any:

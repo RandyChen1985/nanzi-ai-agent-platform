@@ -10,7 +10,7 @@ class McpServer(Base):
     server_name = Column(String(100), nullable=False)
     remark = Column(String(500), nullable=True)
     sse_url = Column(Text, nullable=False)
-    auth_headers = Column(Text, nullable=True)  # JSON string
+    auth_headers = Column(Text, nullable=True)  # 加密后的 JSON 字符串；兼容历史明文
     credential_mode = Column(String(40), nullable=False, default="static")
     fixed_token_encrypted = Column(Text, nullable=True)
     user_assertion_enabled = Column(Boolean, nullable=False, default=False)

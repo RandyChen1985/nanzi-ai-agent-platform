@@ -5,6 +5,7 @@ import 'highlight.js/styles/github.css';
 import MermaidRenderer from '@/components/MermaidRenderer.vue';
 import CanvasMarkdownRenderer from '@/components/embed/CanvasMarkdownRenderer.vue';
 import WorkspaceDirectorySaveDialog from '@/components/embed/WorkspaceDirectorySaveDialog.vue';
+import ConfirmModal from '@/components/ConfirmModal.vue';
 import PivotTable from '@/components/embed/PivotTable.vue';
 import { useToast } from '@/composables/useToast';
 import { buildGeneratedWorkspaceFilename, canWriteWorkspaceFile, createWorkspaceEntry, isDirectRenderableUrl, resolvePublicUploadsPreviewUrl, saveWorkspaceFileContent } from '@/utils/workspaceFilePreview';
@@ -65,6 +66,7 @@ const outputCopied = ref(false);
 const editorContent = ref('');
 const savedContent = ref('');
 const saving = ref(false);
+const pendingOverwrite = ref<{ path: string; content: string } | null>(null);
 const effectiveSourcePath = ref('');
 const showSaveDialog = ref(false);
 const isMobile = ref(
@@ -586,23 +588,33 @@ const handleDirectorySave = async (payload: { parentPath: string; name: string }
     markContentSaved(savedPath, content);
     showSaveDialog.value = false;
   } catch (err: any) {
-    if (err.response?.status === 409 && window.confirm('同名文件已存在，是否覆盖？')) {
-      try {
-        await saveWorkspaceFileContent({
-          path: fullPath,
-          content,
-          conversationId: resolveConversationId(),
-        });
-        markContentSaved(fullPath, content);
-        showSaveDialog.value = false;
-      } catch (overwriteError: any) {
-        const errMsg = overwriteError.response?.data?.detail || overwriteError.response?.data?.message || overwriteError.message || '保存失败';
-        showToast(errMsg, 'error');
-      }
+    if (err.response?.status === 409) {
+      pendingOverwrite.value = { path: fullPath, content };
     } else if (err.response?.status !== 409) {
       const errMsg = err.response?.data?.detail || err.response?.data?.message || err.message || '保存失败';
       showToast(errMsg, 'error');
     }
+  } finally {
+    saving.value = false;
+  }
+};
+
+const confirmOverwrite = async () => {
+  const pending = pendingOverwrite.value;
+  if (!pending || saving.value) return;
+  pendingOverwrite.value = null;
+  saving.value = true;
+  try {
+    await saveWorkspaceFileContent({
+      path: pending.path,
+      content: pending.content,
+      conversationId: resolveConversationId(),
+    });
+    markContentSaved(pending.path, pending.content);
+    showSaveDialog.value = false;
+  } catch (err: any) {
+    const errMsg = err.response?.data?.detail || err.response?.data?.message || err.message || '保存失败';
+    showToast(errMsg, 'error');
   } finally {
     saving.value = false;
   }
@@ -1606,6 +1618,15 @@ const overlayBackdropClass = computed(() =>
       </div>
     </Transition>
   </teleport>
+
+  <ConfirmModal
+    v-if="pendingOverwrite"
+    title="确认覆盖文件"
+    message="同名文件已存在，覆盖后将替换原文件内容。确定继续吗？"
+    confirm-text="确认覆盖"
+    @confirm="confirmOverwrite"
+    @cancel="pendingOverwrite = null"
+  />
 </template>
 
 <style scoped>

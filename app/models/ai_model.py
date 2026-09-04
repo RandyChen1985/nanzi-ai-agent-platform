@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, Boolean, DateTime, Text, Integer, UniqueConstraint
+from sqlalchemy import Column, String, Boolean, DateTime, Text, Integer, Float, UniqueConstraint
 from datetime import datetime
 from app.core.orm import Base
 
@@ -18,6 +18,7 @@ class AIModel(Base):
     api_key = Column(Text, nullable=True)
     context_size = Column(Integer, nullable=True)  # Model context window in tokens
     max_output_tokens = Column(Integer, nullable=True)  # Per-request output cap in tokens
+    temperature = Column(Float, nullable=True)  # Model test/default temperature; NULL follows global config
     thinking_enable = Column(Boolean, nullable=False, default=False)
     thinking_only = Column(Boolean, nullable=False, default=False)
     allow_disable_thinking = Column(Boolean, nullable=False, default=True)

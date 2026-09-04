@@ -120,6 +120,16 @@
         </button>
       </div>
     </div>
+
+    <ConfirmModal
+      v-if="showClearConfirm"
+      title="确认清除额度配置"
+      message="清除后将不再使用当前专属额度，并恢复继承上级策略。确定继续吗？"
+      confirm-text="确认清除"
+      :loading="saving"
+      @confirm="confirmClearPolicy"
+      @cancel="showClearConfirm = false"
+    />
   </div>
 </template>
 
@@ -127,6 +137,7 @@
 import { computed, ref, watch } from 'vue'
 import axios from 'axios'
 import TokenAmount from '@/components/common/TokenAmount.vue'
+import ConfirmModal from '@/components/ConfirmModal.vue'
 import { formatTokenInputHint } from '@/utils/tokenFormat'
 import { useToast } from '@/composables/useToast'
 
@@ -158,6 +169,7 @@ const form = ref({ enabled: false, limit_tokens: 100000 as number | null })
 const unlimited = ref(true)
 const inherit = ref(true)
 const saving = ref(false)
+const showClearConfirm = ref(false)
 const effective = ref<QuotaStatus | null>(null)
 
 const scopeTitle = computed(() => {
@@ -234,7 +246,11 @@ const savePolicy = async () => {
 }
 
 const clearPolicy = async () => {
-  if (!confirm('确定清除该额度配置？')) return
+  showClearConfirm.value = true
+}
+
+const confirmClearPolicy = async () => {
+  if (!showClearConfirm.value) return
   saving.value = true
   try {
     await axios.delete(apiBase.value)
@@ -248,6 +264,7 @@ const clearPolicy = async () => {
     showToast(error?.response?.data?.detail || '清除失败', 'error')
   } finally {
     saving.value = false
+    showClearConfirm.value = false
   }
 }
 

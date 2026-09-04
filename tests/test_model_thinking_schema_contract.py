@@ -47,6 +47,19 @@ def test_builtin_volcengine_provider_is_accepted_by_model_registry_schema():
     assert model.provider == "volcengine"
 
 
+def test_model_temperature_is_optional_and_limited_to_extended_platform_range():
+    assert AIModelCreate(**model_payload()).temperature is None
+    assert AIModelCreate(**model_payload(temperature=0)).temperature == 0
+    assert AIModelCreate(**model_payload(temperature=0.8)).temperature == 0.8
+    assert AIModelCreate(**model_payload(temperature=1.2)).temperature == 1.2
+
+    with pytest.raises(ValidationError):
+        AIModelCreate(**model_payload(temperature=2.01))
+
+    with pytest.raises(ValidationError):
+        AIModelUpdate(temperature=-0.01)
+
+
 def test_thinking_configuration_normalizes_effort_order_and_legacy_response_text():
     model = AIModelCreate(
         **model_payload(

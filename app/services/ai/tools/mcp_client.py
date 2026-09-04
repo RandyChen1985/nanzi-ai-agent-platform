@@ -211,7 +211,16 @@ class McpClientService:
                         cls._session_creation_locks.pop(cache_key, None)
 
         session = cls._sessions[cache_key]
-        await session.connect()
+        try:
+            await session.connect()
+        except Exception:
+            try:
+                await session.close()
+            finally:
+                async with cls._sessions_lock:
+                    if cls._sessions.get(cache_key) is session:
+                        cls._sessions.pop(cache_key, None)
+            raise
         session.update_activity()
         return session
 
@@ -330,6 +339,7 @@ class McpClientService:
         session_mgr = await cls.get_session(server_id, **session_kwargs)
         try:
             if not session_mgr.is_direct_http:
+                transport_retry = False
                 try:
                     response = await asyncio.wait_for(
                         session_mgr.session.call_tool(tool_name, arguments),
@@ -352,6 +362,44 @@ class McpClientService:
                         }
                     return text if text else {"success": True, "content": ""}
                 except Exception as e:
+                    if not transport_retry and isinstance(
+                        e, (ConnectionError, TimeoutError, EOFError, OSError, httpx.HTTPError)
+                    ):
+                        transport_retry = True
+                        original_error = e
+                        try:
+                            await session_mgr.close()
+                            await session_mgr.connect()
+                            response = await asyncio.wait_for(
+                                session_mgr.session.call_tool(tool_name, arguments),
+                                timeout=120.0,
+                            )
+                            text = "".join(
+                                getattr(item, "text", "")
+                                for item in (getattr(response, "content", None) or [])
+                            )
+                            if bool(
+                                getattr(response, "isError", False)
+                                or getattr(response, "is_error", False)
+                            ):
+                                raise RuntimeError(
+                                    text or f"MCP tool '{tool_name}' returned an error"
+                                )
+                            structured_content = getattr(response, "structuredContent", None)
+                            if structured_content is None:
+                                structured_content = getattr(response, "structured_content", None)
+                            if structured_content is not None:
+                                return {
+                                    "success": True,
+                                    "content": text,
+                                    "structured_content": structured_content,
+                                }
+                            return text if text else {"success": True, "content": ""}
+                        except Exception as retry_error:
+                            e = RuntimeError(
+                                f"{original_error}; reconnect retry failed: {retry_error}"
+                            )
+
                     if not ephemeral_session:
                         await session_mgr.close()
                     raise RuntimeError(f"MCP tool '{tool_name}' failed: {e}") from e

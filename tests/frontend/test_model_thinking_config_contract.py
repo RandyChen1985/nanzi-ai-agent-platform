@@ -8,9 +8,11 @@ pytestmark = pytest.mark.no_infrastructure
 ROOT = Path(__file__).resolve().parents[2]
 MODEL_API = ROOT / "frontend/src/api/model.ts"
 MODEL_REGISTRY = ROOT / "frontend/src/components/system/ModelRegistry.vue"
+SYSTEM_CONFIG = ROOT / "frontend/src/views/SystemConfig.vue"
 CHAT_INPUT = ROOT / "frontend/src/components/embed/ChatInput.vue"
 EMBED_CHAT = ROOT / "frontend/src/views/EmbedChat.vue"
 AGENT_DEBUG = ROOT / "frontend/src/views/AgentDebug.vue"
+AGENT_MANAGEMENT = ROOT / "frontend/src/views/AgentManagement.vue"
 
 
 def test_model_api_declares_thinking_configuration():
@@ -78,6 +80,95 @@ def test_model_registry_preserves_hidden_values_and_sends_configuration():
     assert "thinking_enable: modelForm.value.thinking_enable" in source
     assert "thinking_only: modelForm.value.thinking_only" in source
     assert "allow_disable_thinking: modelForm.value.allow_disable_thinking" in source
+
+
+def test_model_temperature_defaults_from_global_config_and_is_sent_to_test_and_save():
+    source = MODEL_REGISTRY.read_text(encoding="utf-8")
+
+    assert "globalTemperature" in source
+    assert "/api/portal/system/configs" in source
+    assert "temperature: normalizeTemperature" in source
+    assert "模型温度" in source
+
+
+def test_agent_version_temperature_defaults_from_selected_model():
+    source = AGENT_MANAGEMENT.read_text(encoding="utf-8")
+    drawer = (ROOT / "frontend/src/components/agent/AgentVersionEditorDrawer.vue").read_text(encoding="utf-8")
+
+    assert "globalModelTemperature" in source
+    assert "setOrchestratorModel" in drawer
+    assert "selectedModel.temperature" in drawer
+    assert "@change=\"setOrchestratorModel" in drawer
+
+
+def test_agent_version_shows_temperature_difference_hint_below_slider():
+    drawer = (ROOT / "frontend/src/components/agent/AgentVersionEditorDrawer.vue").read_text(encoding="utf-8")
+
+    assert "orchestratorTemperatureMismatch" in drawer
+    assert "当前版本温度" in drawer
+    assert 'v-if="orchestratorTemperatureMismatch"' in drawer
+    slider_index = drawer.index(':value="versionForm.temperature"')
+    hint_index = drawer.index('v-if="orchestratorTemperatureMismatch"')
+    assert hint_index > slider_index
+
+
+def test_temperature_controls_allow_two_and_warn_above_one():
+    registry = MODEL_REGISTRY.read_text(encoding="utf-8")
+    drawer = (ROOT / "frontend/src/components/agent/AgentVersionEditorDrawer.vue").read_text(encoding="utf-8")
+    management = AGENT_MANAGEMENT.read_text(encoding="utf-8")
+
+    assert 'type="range"' in registry
+    assert 'max="2"' in registry
+    assert 'step="0.05"' in registry
+    assert 'type="range" min="0" max="2" step="0.1"' in drawer
+    assert 'min="0" max="2" step="0.05"' in management
+    for source in (registry, drawer, management):
+        assert "温度大于 1" in source
+        assert "请确认官方模型文档是否支持" in source
+
+
+def test_model_temperature_has_provider_reference_help():
+    source = MODEL_REGISTRY.read_text(encoding="utf-8")
+    reference_path = ROOT / "frontend/src/utils/temperatureReference.ts"
+
+    assert "showTemperatureGuide" in source
+    assert "温度参考" in source
+    assert "temperatureReference" in source
+    assert reference_path.exists()
+    reference = reference_path.read_text(encoding="utf-8")
+    for provider in ("OpenAI", "DeepSeek", "GLM", "Kimi", "Qwen"):
+        assert provider in reference
+    for field in ("range", "recommendation", "scenarios", "officialUrl"):
+        assert field in reference
+
+
+def test_global_temperature_shows_plain_language_scale_guidance():
+    source = SYSTEM_CONFIG.read_text(encoding="utf-8")
+    guidance = (ROOT / "frontend/src/utils/temperatureGuidance.ts").read_text(encoding="utf-8")
+
+    assert "getTemperatureGuidance" in source
+    assert "temperatureScaleGuidance" in source
+    assert "temperatureScaleGuidance" in guidance
+    assert "0.0～0.3" in guidance
+    assert "更稳定严谨，适合查数、代码和规则问答" in guidance
+    assert "0.4～0.8" in guidance
+    assert "准确性和表达多样性较均衡，适合日常对话" in guidance
+    assert "0.9～1.0" in guidance
+    assert "回答更灵活，措辞变化更多" in guidance
+
+
+def test_temperature_controls_explain_effects_in_plain_language():
+    registry = MODEL_REGISTRY.read_text(encoding="utf-8")
+    drawer = (ROOT / "frontend/src/components/agent/AgentVersionEditorDrawer.vue").read_text(encoding="utf-8")
+    management = AGENT_MANAGEMENT.read_text(encoding="utf-8")
+    guidance_path = ROOT / "frontend/src/utils/temperatureGuidance.ts"
+
+    for source in (registry, drawer, management):
+        assert "getTemperatureGuidance" in source
+    assert guidance_path.exists()
+    guidance = guidance_path.read_text(encoding="utf-8")
+    for phrase in ("更稳定严谨", "适合日常对话", "措辞变化更多", "可能偏离主题"):
+        assert phrase in guidance
 
 
 def test_model_registry_allows_model_discovery_without_prevalidating_api_key():
@@ -237,12 +328,12 @@ def test_reasoning_panel_is_collapsible_and_uses_light_quote_style():
         assert 'v-model="msg.isThoughtExpanded"' in source
 
 
-def test_reasoning_panel_uses_model_inference_label():
+def test_reasoning_panel_uses_model_inference_icon_and_label():
     timeline = (ROOT / "frontend/src/components/chat/ChatExecutionTimeline.vue").read_text(encoding="utf-8")
     assert 'props.hasAnswer ? "执行完成" : "执行过程"' in timeline
     assert "深度思考" in timeline
     assert "item.textKind === 'reasoning'" in timeline
-    assert "💭" in timeline
+    assert "<CpuChipIcon" in timeline
     assert "isReasoningBodyOpen" in timeline
     assert "item.textKind === 'reasoning' ? '🧠'" not in timeline
     assert 'item.category === "intent"' in timeline

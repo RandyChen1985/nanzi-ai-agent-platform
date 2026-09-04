@@ -8,7 +8,7 @@ from __future__ import annotations
 import csv
 import io
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Literal
 
 import httpx
@@ -82,6 +82,42 @@ def _current_user_id(user: dict) -> str:
     return current_user_id
 
 
+def _normalize_resource_ids(value: Any, field_name: str) -> list[str] | None:
+    """保留 NULL/空数组语义，并清理白名单中的空白与重复 ID。"""
+    if value is None:
+        return None
+    if not isinstance(value, list):
+        raise ValueError(f"{field_name} 必须是数组或 null")
+    if any(not isinstance(item, str) for item in value):
+        raise ValueError(f"{field_name} 中的资源 ID 必须是字符串")
+    cleaned = list(dict.fromkeys(str(item).strip() for item in value if str(item).strip()))
+    if len(cleaned) > 1000:
+        raise ValueError(f"{field_name} 数量不能超过 1000")
+    return cleaned
+
+
+def _serialize_mcp_datetime(value: datetime | None) -> str | None:
+    """将 MCP 时间以带 UTC 标记的 ISO-8601 字符串返回给调用方。"""
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    else:
+        value = value.astimezone(timezone.utc)
+    return value.isoformat().replace("+00:00", "Z")
+
+
+def _validate_resource_ids_are_accessible(
+    resource_ids: list[str],
+    accessible_ids: set[str],
+    field_name: str,
+) -> list[str]:
+    invalid_ids = set(resource_ids) - accessible_ids
+    if invalid_ids:
+        raise ValueError(f"{field_name} 包含无效或无权限的资源")
+    return resource_ids
+
+
 async def _get_owned_client(
     db: AsyncSession,
     client_id: str,
@@ -108,6 +144,65 @@ async def _get_owned_client(
             select(McpOAuthClient).where(*conditions)
         )
     ).scalar_one_or_none()
+
+
+async def _get_accessible_resource_ids(
+    db: AsyncSession,
+    user: dict,
+    resource_type: Literal["agent", "knowledge_base", "metadata_dataset"],
+) -> set[str]:
+    """使用与资源候选列表相同的用户权限口径，返回启用资源 ID。"""
+    user_id = int(user["user_id"])
+    if resource_type == "agent":
+        from app.services.ai.agent_manager import AgentManagerService
+
+        agents = await AgentManagerService.list_allowed_agents(db, user=user)
+        return {str(agent.id) for agent in agents}
+    if resource_type == "knowledge_base":
+        from app.models.knowledge import KnowledgeBaseMetadata
+
+        access = await PermissionService(db).get_knowledge_base_access(
+            user_id,
+            user.get("user_name"),
+        )
+        statement = select(KnowledgeBaseMetadata.ragflow_dataset_id).where(
+            KnowledgeBaseMetadata.status != "deleted",
+        )
+        accessible_ids = access.get("accessible_ids")
+        if accessible_ids is not None:
+            statement = statement.where(
+                KnowledgeBaseMetadata.ragflow_dataset_id.in_(list(accessible_ids))
+            )
+        rows = (await db.execute(statement)).scalars().all()
+        return {str(value) for value in rows if value}
+
+    from app.services.metadata_service import MetadataService
+
+    datasets = await MetadataService.list_accessible_dataset_options(
+        db,
+        user_id=user_id,
+        is_admin=user.get("role") == "admin",
+        status=1,
+    )
+    return {str(dataset.id) for dataset in datasets}
+
+
+async def _validate_client_resource_policies(
+    db: AsyncSession,
+    user: dict,
+    values: dict[str, Any],
+) -> None:
+    resource_type_by_field = {
+        "allowed_agent_ids": "agent",
+        "allowed_knowledge_base_ids": "knowledge_base",
+        "allowed_metadata_dataset_ids": "metadata_dataset",
+    }
+    for field_name, resource_type in resource_type_by_field.items():
+        resource_ids = values.get(field_name)
+        if not resource_ids:
+            continue
+        accessible_ids = await _get_accessible_resource_ids(db, user, resource_type)
+        _validate_resource_ids_are_accessible(resource_ids, accessible_ids, field_name)
 
 
 async def _require_element_permission(
@@ -143,7 +238,20 @@ class McpOAuthClientCreate(BaseModel):
     redirect_uris: list[str] = Field(default_factory=list)
     allowed_grant_types: list[str] = Field(default_factory=lambda: ["authorization_code"])
     allowed_scopes: list[str] = Field(default_factory=list)
+    allowed_agent_ids: list[str] | None = None
+    allowed_knowledge_base_ids: list[str] | None = None
+    allowed_metadata_dataset_ids: list[str] | None = None
     is_shared: bool = False
+
+    @field_validator(
+        "allowed_agent_ids",
+        "allowed_knowledge_base_ids",
+        "allowed_metadata_dataset_ids",
+        mode="before",
+    )
+    @classmethod
+    def validate_resource_ids(cls, values: list[str] | None, info: Any) -> list[str] | None:
+        return _normalize_resource_ids(values, info.field_name)
 
     @field_validator("redirect_uris")
     @classmethod
@@ -212,8 +320,21 @@ class McpOAuthClientUpdate(BaseModel):
     redirect_uris: list[str] | None = None
     allowed_grant_types: list[str] | None = None
     allowed_scopes: list[str] | None = None
+    allowed_agent_ids: list[str] | None = None
+    allowed_knowledge_base_ids: list[str] | None = None
+    allowed_metadata_dataset_ids: list[str] | None = None
     status: str | None = None
     is_shared: bool | None = None
+
+    @field_validator(
+        "allowed_agent_ids",
+        "allowed_knowledge_base_ids",
+        "allowed_metadata_dataset_ids",
+        mode="before",
+    )
+    @classmethod
+    def validate_resource_ids(cls, values: list[str] | None, info: Any) -> list[str] | None:
+        return _normalize_resource_ids(values, info.field_name)
 
     @field_validator("status")
     @classmethod
@@ -258,6 +379,7 @@ class McpOAuthClientUpdate(BaseModel):
 def _serialize_client(
     client: McpOAuthClient,
     *,
+    include_resource_details: bool = True,
     needs_token_regeneration: bool = False,
     owner_user_name: str | None = None,
     owner_real_name: str | None = None,
@@ -270,7 +392,18 @@ def _serialize_client(
     revoked_token_count: int = 0,
     latest_token_expires_at: datetime | None = None,
 ) -> dict[str, Any]:
-    return {
+    resource_values = {
+        "allowed_agent_ids": _normalize_resource_ids(client.allowed_agent_ids, "allowed_agent_ids"),
+        "allowed_knowledge_base_ids": _normalize_resource_ids(
+            client.allowed_knowledge_base_ids,
+            "allowed_knowledge_base_ids",
+        ),
+        "allowed_metadata_dataset_ids": _normalize_resource_ids(
+            client.allowed_metadata_dataset_ids,
+            "allowed_metadata_dataset_ids",
+        ),
+    }
+    result = {
         "id": client.id,
         "client_id": client.client_id,
         "client_name": client.client_name,
@@ -278,6 +411,19 @@ def _serialize_client(
         "redirect_uris": list(client.redirect_uris or []),
         "allowed_grant_types": list(client.allowed_grant_types or []),
         "allowed_scopes": list(client.allowed_scopes or []),
+        "resource_policy_summary": {
+            field_name: {
+                "mode": (
+                    "unrestricted"
+                    if values is None
+                    else "none"
+                    if not values
+                    else "restricted"
+                ),
+                "count": len(values) if values is not None else None,
+            }
+            for field_name, values in resource_values.items()
+        },
         "scope_version": int(client.scope_version or 1),
         "is_shared": bool(client.is_shared),
         "needs_token_regeneration": needs_token_regeneration,
@@ -286,19 +432,22 @@ def _serialize_client(
         "owner_user_name": owner_user_name,
         "owner_real_name": owner_real_name,
         "has_issued_token": last_token_issued_at is not None,
-        "last_token_issued_at": last_token_issued_at.isoformat() if last_token_issued_at else None,
+        "last_token_issued_at": _serialize_mcp_datetime(last_token_issued_at),
         "last_token_issue_method": last_token_issue_method,
         "active_token_count": active_token_count,
         "token_total_count": token_total_count,
         "expiring_token_count": expiring_token_count,
         "expired_token_count": expired_token_count,
         "revoked_token_count": revoked_token_count,
-        "latest_token_expires_at": latest_token_expires_at.isoformat() if latest_token_expires_at else None,
+        "latest_token_expires_at": _serialize_mcp_datetime(latest_token_expires_at),
         "created_at": client.created_at.isoformat() if client.created_at else None,
         "updated_at": client.updated_at.isoformat() if client.updated_at else None,
         "disabled_at": client.disabled_at.isoformat() if client.disabled_at else None,
         "client_secret": None,
     }
+    if include_resource_details:
+        result.update(resource_values)
+    return result
 
 
 def _serialize_config(config: McpPlatformConfig | None) -> dict[str, Any]:
@@ -394,9 +543,9 @@ def _serialize_token(
         "scopes": list(token.scopes or []),
         "scope_version": int(token.scope_version or 1),
         "issue_method": "oauth_authorization" if token.grant_id else "manual_user_token",
-        "issued_at": token.issued_at.isoformat() if token.issued_at else None,
-        "expires_at": token.expires_at.isoformat() if token.expires_at else None,
-        "revoked_at": token.revoked_at.isoformat() if token.revoked_at else None,
+        "issued_at": _serialize_mcp_datetime(token.issued_at),
+        "expires_at": _serialize_mcp_datetime(token.expires_at),
+        "revoked_at": _serialize_mcp_datetime(token.revoked_at),
         "status": "revoked" if token.revoked_at else ("expired" if token.expires_at <= datetime.utcnow() else "active"),
     }
 
@@ -1165,6 +1314,10 @@ async def list_clients(
     items = [
         _serialize_client(
             row,
+            include_resource_details=(
+                user.get("role") == "admin"
+                or str(row.created_by or "") == current_user_id
+            ),
             # Scope、Secret、停用/启用等安全变更都会撤销旧 Token。只要该
             # Client 曾经签发过 Token 且当前没有有效 Token，就需要重新生成；
             # 停用期间不提示，重新启用后再提示；新建但尚未签发 Token
@@ -1191,6 +1344,94 @@ async def list_clients(
         for row in rows
     ]
     return {"items": items, "page": page, "page_size": page_size, "total": total, "has_more": page * page_size < total}
+
+
+@router.get("/clients/{client_id}/resource-options")
+async def client_resource_options(
+    client_id: str,
+    resource_type: Literal["agent", "knowledge_base", "metadata_dataset"],
+    keyword: str | None = Query(default=None, max_length=100),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=50, ge=1, le=100),
+    user: dict = Depends(require_mcp_service_permission("element:mcp_service:client:manage")),
+    db: AsyncSession = Depends(get_db_session),
+) -> dict[str, Any]:
+    """返回当前用户可见的资源候选项，供 Client 白名单编辑器使用。"""
+    client = await _get_owned_client(db, client_id, user)
+    if client is None or client.status == "deleted":
+        raise HTTPException(status_code=404, detail="OAuth Client 不存在")
+
+    normalized_keyword = str(keyword or "").strip().casefold()
+    items: list[dict[str, Any]] = []
+    if resource_type == "agent":
+        from app.services.ai.agent_manager import AgentManagerService
+
+        agents = await AgentManagerService.list_allowed_agents(
+            db,
+            user=user,
+            keyword=normalized_keyword or None,
+        )
+        items = [
+            {
+                "id": str(agent.id),
+                "name": agent.display_name or agent.name,
+                "description": agent.description or "",
+            }
+            for agent in agents
+        ]
+    elif resource_type == "knowledge_base":
+        from app.models.knowledge import KnowledgeBaseMetadata
+
+        access = await PermissionService(db).get_knowledge_base_access(
+            int(user["user_id"]),
+            user.get("user_name"),
+        )
+        statement = select(KnowledgeBaseMetadata).where(KnowledgeBaseMetadata.status != "deleted")
+        accessible_ids = access.get("accessible_ids")
+        if accessible_ids is not None:
+            statement = statement.where(KnowledgeBaseMetadata.ragflow_dataset_id.in_(list(accessible_ids)))
+        rows = (await db.execute(statement.order_by(KnowledgeBaseMetadata.name.asc()))).scalars().all()
+        items = [
+            {
+                "id": str(row.ragflow_dataset_id),
+                "name": row.name,
+                "description": row.description or "",
+            }
+            for row in rows
+        ]
+    else:
+        from app.services.metadata_service import MetadataService
+
+        datasets = await MetadataService.list_accessible_dataset_options(
+            db,
+            user_id=int(user["user_id"]),
+            is_admin=user.get("role") == "admin",
+            status=1,
+        )
+        items = [
+            {
+                "id": str(dataset.id),
+                "name": dataset.display_name or dataset.name,
+                "description": dataset.description or "",
+            }
+            for dataset in datasets
+        ]
+
+    if normalized_keyword and resource_type != "agent":
+        items = [
+            item for item in items
+            if normalized_keyword in f"{item['id']} {item['name']} {item['description']}".casefold()
+        ]
+    total = len(items)
+    start = (page - 1) * page_size
+    return {
+        "resource_type": resource_type,
+        "items": items[start:start + page_size],
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "has_more": start + page_size < total,
+    }
 
 
 @router.get("/clients/{client_id}/tokens")
@@ -1496,11 +1737,15 @@ async def create_client(
 ) -> dict[str, Any]:
     current_user_id = _current_user_id(user)
     try:
+        await _validate_client_resource_policies(db, user, payload.model_dump())
         client, client_id, client_secret = await PlatformMcpOAuthService.create_client(
             db,
             client_name=payload.client_name,
             redirect_uris=payload.redirect_uris,
             allowed_scopes=payload.allowed_scopes,
+            allowed_agent_ids=payload.allowed_agent_ids,
+            allowed_knowledge_base_ids=payload.allowed_knowledge_base_ids,
+            allowed_metadata_dataset_ids=payload.allowed_metadata_dataset_ids,
             allowed_grant_types=payload.allowed_grant_types,
             created_by=current_user_id,
             is_shared=payload.is_shared,
@@ -1546,6 +1791,28 @@ async def update_client(
         if invalid:
             raise HTTPException(status_code=400, detail=f"Scope 不支持: {sorted(invalid)}")
         changes["allowed_scopes"] = normalize_scopes(changes["allowed_scopes"])
+    resource_policy_changed = False
+    changed_resource_types: list[str] = []
+    resource_type_by_field = {
+        "allowed_agent_ids": "agent",
+        "allowed_knowledge_base_ids": "knowledge_base",
+        "allowed_metadata_dataset_ids": "metadata_dataset",
+    }
+    for field_name, resource_type in resource_type_by_field.items():
+        if field_name not in changes:
+            continue
+        changes[field_name] = _normalize_resource_ids(changes[field_name], field_name)
+        current_value = _normalize_resource_ids(getattr(client, field_name), field_name)
+        if (
+            (changes[field_name] is None) != (current_value is None)
+            or set(changes[field_name] or []) != set(current_value or [])
+        ):
+            resource_policy_changed = True
+            changed_resource_types.append(resource_type)
+    try:
+        await _validate_client_resource_policies(db, user, changes)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     scope_changed = (
         "allowed_scopes" in changes
         and normalize_scopes(changes["allowed_scopes"])
@@ -1585,7 +1852,7 @@ async def update_client(
 
     # Client 的授权范围、授权模式或状态发生安全性变化时，旧 Token 和用户
     # 授权关系不能继续沿用旧权限；恢复调用必须重新授权。
-    security_changed = scope_changed or grant_types_changed or redirect_uris_changed or status_changed
+    security_changed = scope_changed or grant_types_changed or redirect_uris_changed or status_changed or resource_policy_changed
     if security_changed:
         revoked_at = datetime.utcnow()
         await db.execute(
@@ -1606,6 +1873,11 @@ async def update_client(
             )
             .values(status="revoked", revoked_at=revoked_at)
         )
+        await PlatformMcpOAuthService.invalidate_unconsumed_authorization_codes(
+            db,
+            client_id=client_id,
+            invalidated_at=revoked_at,
+        )
     for key, value in changes.items():
         setattr(client, key, value)
     await db.commit()
@@ -1615,7 +1887,16 @@ async def update_client(
         client_id=client.client_id,
         actor_user_id=_current_user_id(user),
         user_id=client.created_by,
-        details={"changed_fields": sorted(changes)},
+        details={
+            "changed_fields": sorted(changes),
+            "resource_policy_changed": resource_policy_changed,
+            "resource_types": changed_resource_types,
+            "resource_counts": {
+                resource_type: len(changes[field_name]) if changes[field_name] is not None else None
+                for field_name, resource_type in resource_type_by_field.items()
+                if field_name in changes
+            },
+        },
     )
     await db.commit()
     return _serialize_client(client)

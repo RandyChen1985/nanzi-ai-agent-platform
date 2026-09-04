@@ -109,6 +109,12 @@ class AIModelBase(BaseModel):
         le=10_000_000,
         description="Maximum output tokens per request",
     )
+    temperature: Optional[float] = Field(
+        default=None,
+        ge=0,
+        le=2,
+        description="Model test/default temperature, from 0 to 2",
+    )
     thinking_enable: bool = False
     thinking_only: bool = False
     allow_disable_thinking: bool = True
@@ -163,6 +169,7 @@ class AIModelUpdate(BaseModel):
     api_base_url: Optional[str] = None
     context_size: Optional[int] = Field(default=None, gt=0, le=10_000_000)
     max_output_tokens: Optional[int] = Field(default=None, gt=0, le=10_000_000)
+    temperature: Optional[float] = Field(default=None, ge=0, le=2)
     thinking_enable: Optional[bool] = None
     thinking_only: Optional[bool] = None
     allow_disable_thinking: Optional[bool] = None
@@ -226,6 +233,7 @@ class AIModelTestRequest(BaseModel):
     api_key: Optional[str] = None
     context_size: Optional[int] = Field(default=None, gt=0, le=10_000_000)
     max_output_tokens: Optional[int] = Field(default=None, gt=0, le=10_000_000)
+    temperature: Optional[float] = Field(default=None, ge=0, le=2)
     model_config_id: Optional[str] = None
 
     @field_validator("context_size", "max_output_tokens", mode="before")

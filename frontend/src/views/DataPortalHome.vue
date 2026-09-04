@@ -108,7 +108,7 @@
               @pin="toggleReportPinned"
               @share="openReportInfo"
               @copy="copyReport"
-              @delete="deleteReport"
+              @delete="requestDeleteReport"
               @subscription="openReportSubscription"
               @open-specs="showSpecsModal = true"
             />
@@ -268,6 +268,15 @@
         </div>
       </div>
     </div>
+
+    <ConfirmModal
+      v-if="deletingReport"
+      title="确认删除固化报表"
+      :message="`确定删除「${deletingReport.title}」吗？删除后将无法恢复。`"
+      confirm-text="确认删除"
+      @confirm="confirmDeleteReport"
+      @cancel="deletingReport = null"
+    />
   </div>
 </template>
 
@@ -276,6 +285,7 @@ import { computed, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import axios from "@/utils/axios";
 import { useToast } from "@/composables/useToast";
+import ConfirmModal from "@/components/ConfirmModal.vue";
 import DataPortalOverview from "@/components/data-portal/DataPortalOverview.vue";
 import DataPortalReportSection from "@/components/data-portal/DataPortalReportSection.vue";
 import DataPortalSceneSection from "@/components/data-portal/DataPortalSceneSection.vue";
@@ -310,6 +320,7 @@ const { showToast } = useToast();
 const showCreateModal = ref(false);
 const editingReport = ref<DataPortalReportItem | null>(null);
 const showSpecsModal = ref(false);
+const deletingReport = ref<DataPortalReportItem | null>(null);
 const activeSpecsTab = ref<"concept" | "workflow" | "practice">("concept");
 
 const sections: Array<{ value: Section; label: string; mobileLabel: string; icon: string }> = [
@@ -462,14 +473,22 @@ const copyReport = async (report: DataPortalReportItem) => {
   }
 };
 
-const deleteReport = async (report: DataPortalReportItem) => {
-  if (!report.is_owner || !window.confirm(`确定删除「${report.title}」吗？`)) return;
+const requestDeleteReport = (report: DataPortalReportItem) => {
+  if (!report.is_owner) return;
+  deletingReport.value = report;
+};
+
+const confirmDeleteReport = async () => {
+  const report = deletingReport.value;
+  if (!report) return;
   try {
     await axios.delete(`/api/portal/saved-reports/${report.id}`);
     showToast("固化报表已删除", "success");
     await refresh();
   } catch (error: any) {
     showToast(error.response?.data?.detail || "删除报表失败", "error");
+  } finally {
+    deletingReport.value = null;
   }
 };
 

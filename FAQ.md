@@ -1273,7 +1273,7 @@ flowchart LR
 
 ##### 页面上需要配置什么？
 
-原有的「身份认证」区域保持不变，仍然用于按需填写业务 MCP 要求的 `Authorization`、API Key 等 Header。`Authorization` 是否配置与用户身份传递相互独立；即使不配置 Authorization，也可以开启用户身份传递。不需要用户手工生成公钥或私钥。
+页面将 MCP 自身认证拆成两部分：Authorization 使用独立开关，开启后只填写 Token 内容，系统固定补全 `Bearer` 前缀；其他 API Key 或租户信息放在「其他 Header」区域。编辑已有配置时不会回显密钥原文，只显示开关状态或 `********`，点击「编辑」后填写新值才会替换，直接保存会保留原配置。Authorization 是否配置与用户身份传递相互独立；即使不配置 Authorization，也可以开启用户身份传递。不需要用户手工生成公钥或私钥。
 
 系统会针对当前 MCP 自动生成并保存签名密钥：
 
@@ -1388,11 +1388,20 @@ NanZi 对外提供的是一个统一的 **NanZi Platform MCP**，智能体、会
 
 1. 在【服务配置】打开 Platform MCP 总开关，再按需打开 `agent`、`conversation`、`knowledge`、`metadata` 能力组开关。
 2. 在【外部 Client】点击“创建 Client”，填写接入名称、Redirect URI 和允许申请的 Scope；创建成功后立即复制只展示一次的 `client_secret`。
-3. 临时接入 Cursor、Claude Desktop 等客户端时，在对应 Client 卡片点击“生成当前用户 Access Token”，选择有效期和 Scope。
-4. 在 Token 向导第二步复制 Access Token 或完整 MCP JSON，粘贴到客户端的 MCP 配置中。
-5. 在【能力与 Scope】确认方法是否已发布，在【审计日志】检查后续 `tools/list`、`tools/call` 请求。
+3. 如需限制该 Client 可以访问的具体资源，在 Client 卡片的“资源访问”区域分别编辑智能体、知识库和数据集白名单。每类资源都有独立的勾选弹框，支持搜索、全选当前结果、清空和恢复全部用户可访问资源。
+4. 临时接入 Cursor、Claude Desktop 等客户端时，在对应 Client 卡片点击“生成当前用户 Access Token”，选择有效期和 Scope。
+5. 在 Token 向导第二步复制 Access Token 或完整 MCP JSON，粘贴到客户端的 MCP 配置中。
+6. 在【能力与 Scope】确认方法是否已发布，在【审计日志】检查后续 `tools/list`、`tools/call` 请求。
 
 Client 按创建人隔离；即使是管理员，也只能管理自己创建的 Client。服务台只显示凭证原文一次，不要把 Client Secret、Access Token 或 NanZi 用户 API Key 提交到代码仓库。
+
+资源白名单的三种状态如下：
+
+- **绿色：跟随用户权限**：该 Client 不额外限制此类资源，实际访问范围由当前用户权限决定；
+- **黄色：已限制 N 项**：该 Client 只允许配置的资源，实际结果仍会与当前用户权限取交集；
+- **红色：禁止访问**：该类资源保存为空数组，全部拒绝。
+
+白名单只能缩小权限，不能让 Client 获得当前用户原本没有的资源。服务端保存时还会校验资源存在、启用状态和当前用户权限；直接构造请求提交非法或越权资源 ID 也会被拒绝。
 
 ##### 3.4.7.2 如何给 Cursor 等客户端生成个人 Token
 
@@ -1403,7 +1412,7 @@ Client 按创建人隔离；即使是管理员，也只能管理自己创建的 
 3. 点击“生成当前用户 Access Token”，选择需要的 Scope 和有效期。
 4. 复制 Token 或生成的 `mcpServers` JSON，并在客户端中使用。
 
-这个 Token 永远代表当前登录用户，不能选择或代发其他用户身份；调用时统一携带 `Authorization: Bearer <access_token>`。Token 过期后重新登录并生成即可，个人 Token 不创建 Refresh Token。
+这个 Token 永远代表当前登录用户，不能选择或代发其他用户身份；调用时统一携带 `Authorization: Bearer <access_token>`。Token 过期后重新登录并生成即可，个人 Token 不创建 Refresh Token。修改 Client 的 Scope、资源白名单、回调地址、授权模式或状态后，原有 Token、Refresh Token、授权关系和未消费授权码会失效，需要重新授权或生成 Token。
 
 ##### 3.4.7.3 外部系统如何通过 OAuth2 调用 NanZi MCP
 
@@ -1427,6 +1436,8 @@ Token Endpoint 支持 `authorization_code` 和 `refresh_token`，但 Platform MC
 | `invalid_scope` | Client 允许的 Scope、授权时请求的 Scope、Token 中的 Scope 是否一致 |
 | `invalid_client` | Client 是否仍为 active，Secret 是否为最新一次重置后的值 |
 | `401/403` 或资源为空 | Token 是否过期/撤销，以及当前用户是否有目标 Agent、会话、知识库或数据集权限 |
+| 某类资源全部无法访问 | 该 Client 对应资源白名单是否为红色“禁止访问”（空数组），或黄色白名单是否未包含目标资源 |
+| 修改白名单后原 Token 不能调用 | 这是安全策略生效行为；重新生成当前用户 Token，OAuth 客户端则重新完成授权流程 |
 
 停用 Client、重置 Secret 或删除 Client 都会使相关 Token 立即失效；删除是软删除，审计记录仍会保留。关闭 Platform MCP 不影响 NanZi 作为 MCP Client 调用外部业务 MCP。
 

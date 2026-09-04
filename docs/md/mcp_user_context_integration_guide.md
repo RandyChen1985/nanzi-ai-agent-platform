@@ -42,11 +42,12 @@ X-Request-ID: <request-id>
 
 开启某个 MCP 的 UserContext 时配置：
 
-1. 按原方式配置 MCP 的 `Authorization` 或其他认证 Header；
-2. 打开“开启用户身份传递”开关；
-3. 保存 MCP。系统会自动生成当前 MCP 的 Audience、Key ID 和签名私钥；Issuer 固定为 `nanzi-platform`。
+1. 在独立的 Authorization 开关中选择是否启用；开启后只填写 Token 内容，页面自动补全 `Bearer` 前缀；
+2. 在“其他 Header”区域按需配置除 Authorization 外的 Header；
+3. 按需打开“开启用户身份传递”开关；
+4. 保存 MCP。系统会自动生成当前 MCP 的 Audience、Key ID 和签名私钥；Issuer 固定为 `nanzi-platform`。
 
-Token 编辑时不回显，留空表示沿用原值。UserContext 不重复配置固定 Authorization Bearer Token；私钥不让用户在页面中填写，由平台为当前 MCP 生成并加密保存。
+编辑时 Authorization Token 和其他 Header 值都不会回显，只显示开关状态或 `********`。点击“编辑”后填写新值才会替换原配置；不编辑直接保存会沿用原值。私钥不让用户在页面中填写，由平台为当前 MCP 生成并加密保存。
 
 保存后，MCP 管理页面会以只读方式显示当前 MCP 的 Audience、Issuer 和“公钥获取地址（JWKS）”，并提供复制按钮。把 Audience 复制到业务 MCP 的 `aud` 校验配置，把 Issuer 复制到 `iss` 校验配置，把 JWKS 地址配置到公钥发现配置中。Key ID 不需要单独复制，业务方根据 JWT Header 的 `kid` 从 JWKS 自动选择公钥。
 

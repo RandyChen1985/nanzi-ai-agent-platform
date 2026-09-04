@@ -108,6 +108,38 @@ async def test_model_management_persists_optional_token_limits(
 
 
 @pytest.mark.asyncio
+async def test_model_management_persists_temperature(
+    client: AsyncClient,
+    admin_headers,
+):
+    model_id = f"temperature-{uuid.uuid4().hex}"
+    response = await client.post(
+        "/api/portal/models",
+        json={
+            "name": "Temperature Model",
+            "model_id": model_id,
+            "provider": "openai",
+            "type": "llm",
+            "temperature": 0.35,
+            "api_key": "sk-temperature-test",
+        },
+        headers=admin_headers,
+    )
+
+    assert response.status_code == 200
+    assert response.json()["temperature"] == 0.35
+
+    updated = await client.put(
+        f"/api/portal/models/{response.json()['id']}",
+        json={"temperature": 0.8},
+        headers=admin_headers,
+    )
+
+    assert updated.status_code == 200
+    assert updated.json()["temperature"] == 0.8
+
+
+@pytest.mark.asyncio
 async def test_model_management_defaults_thinking_configuration(
     client: AsyncClient,
     admin_headers,

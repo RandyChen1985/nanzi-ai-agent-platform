@@ -28,6 +28,7 @@ import type { MarkdownTheme } from "@/types/markdownTheme";
 import axios from "@/utils/axios";
 import { createUuid } from "../utils/conversationId";
 import { copyToClipboard } from "../utils/clipboard";
+import { getTemperatureGuidance } from "../utils/temperatureGuidance";
 import {
   BookOpenIcon,
   ChartBarIcon,
@@ -51,6 +52,7 @@ const currentToolConfig = ref<any>({});
 
 // Model Management
 const models = ref<AIModel[]>([]);
+const globalModelTemperature = ref(0);
 const globalAgentToolcallTimeout = ref(120);
 const fetchModels = async () => {
   try {
@@ -58,6 +60,20 @@ const fetchModels = async () => {
     models.value = res.data;
   } catch (error) {
     console.error("Failed to fetch models", error);
+  }
+};
+
+const fetchGlobalModelTemperature = async () => {
+  try {
+    const res = await axios.get('/api/portal/system/configs');
+    const groups = res.data as Record<string, Array<{ key: string; value?: string | number | null }>>;
+    const item = Object.values(groups).flat().find((config) => config.key === 'llm_temperature');
+    const value = Number(item?.value);
+    if (Number.isFinite(value)) {
+      globalModelTemperature.value = Math.min(1, Math.max(0, value));
+    }
+  } catch (error) {
+    console.warn('Failed to fetch global model temperature', error);
   }
 };
 
@@ -1134,6 +1150,15 @@ const setOrchestratorTemperature = (value: number) => {
   versionForm.value.temperature = value;
 };
 
+const setOnboardingModel = (event: Event) => {
+  const modelName = (event.target as HTMLSelectElement).value;
+  versionForm.value.model_name = modelName;
+  const selectedModel = models.value.find((model) => model.model_id === modelName);
+  if (selectedModel) {
+    versionForm.value.temperature = selectedModel.temperature ?? globalModelTemperature.value;
+  }
+};
+
 const setSynthesisTemperature = (value: number) => {
   versionForm.value.synthesis_temperature = value;
 };
@@ -1388,7 +1413,7 @@ const startAgentCreation = () => {
   hideMessageBorder.value = true;
   versionForm.value = {
     model_name: "",
-    temperature: 0,
+    temperature: globalModelTemperature.value,
     synthesis_model_name: "",
     synthesis_temperature: 0.7,
     system_prompt: "",
@@ -1761,7 +1786,7 @@ const openVersionModal = (
     // Default system prompt from selected agent or empty
     versionForm.value = {
       model_name: "gpt-4o",
-      temperature: 0,
+      temperature: globalModelTemperature.value,
       synthesis_model_name: "",
       synthesis_temperature: 0.7,
       system_prompt: "",
@@ -2589,6 +2614,7 @@ const closeCardMenus = () => {
 onMounted(() => {
   fetchAgents();
   fetchModels();
+  fetchGlobalModelTemperature();
   fetchGlobalAgentToolcallTimeout();
   fetchTools();
   const cached = localStorage.getItem("user_info");
@@ -3953,14 +3979,20 @@ const formatSkillCountLabel = (agent: AIAgent) => {
           <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div>
               <label class="mb-1 block text-sm font-medium text-gray-700">模型 <span class="text-red-500">*</span></label>
-              <input v-model="versionForm.model_name" list="onboarding-models" class="w-full rounded-lg border border-gray-300 px-3 py-2 outline-none focus:ring-2 focus:ring-primary" />
-              <datalist id="onboarding-models">
-                <option v-for="model in models" :key="model.id || model.name" :value="model.name" />
-              </datalist>
+              <select v-model="versionForm.model_name" @change="setOnboardingModel" class="w-full rounded-lg border border-gray-300 px-3 py-2 outline-none focus:ring-2 focus:ring-primary">
+                <option value="" disabled>请选择编排模型</option>
+                <option v-for="model in models.filter((item) => item.is_active && (item.type === 'llm' || item.type === 'multimodal'))" :key="model.id || model.model_id" :value="model.model_id">{{ model.name }}（{{ model.model_id }}）</option>
+              </select>
             </div>
             <div>
               <label class="mb-1 block text-sm font-medium text-gray-700">温度 {{ versionForm.temperature ?? 0 }}</label>
-              <input v-model.number="versionForm.temperature" type="range" min="0" max="2" step="0.1" class="mt-3 w-full accent-primary" />
+              <input v-model.number="versionForm.temperature" type="range" min="0" max="2" step="0.05" class="mt-3 w-full accent-primary" />
+              <p class="mt-2 text-[11px] leading-4 text-gray-500">
+                当前 {{ Number(versionForm.temperature ?? 0).toFixed(2) }}：{{ getTemperatureGuidance(versionForm.temperature) }}
+              </p>
+              <p v-if="Number(versionForm.temperature) > 1" class="mt-2 text-[11px] leading-4 text-amber-600">
+                温度大于 1，请确认官方模型文档是否支持该范围；部分模型可能不支持或忽略该参数。
+              </p>
             </div>
           </div>
           <div>
@@ -4023,6 +4055,7 @@ const formatSkillCountLabel = (agent: AIAgent) => {
       :global-agent-toolcall-timeout="globalAgentToolcallTimeout"
       :selected-agent="selectedAgent"
       :models="models"
+      :global-model-temperature="globalModelTemperature"
       :can-edit-version="canEditVersion"
       :tool-tab="toolTab"
       :tool-search-query="toolSearchQuery"

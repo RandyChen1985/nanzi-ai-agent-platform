@@ -99,6 +99,7 @@ const loading = ref(false)
 const showAddModal = ref(false)
 const isEditing = ref(false)
 const editingId = ref('')
+const editingAuthHeadersConfigured = ref(false)
 
 // Tool Tester Logic
 const showTester = ref(false)
@@ -237,15 +238,85 @@ const publishAllCurrentServerTools = async () => {
 
 // Headers Editing Logic
 const headerMode = ref<'simple' | 'advanced'>('simple')
-const headerPairs = ref<{ key: string, value: string }[]>([{ key: '', value: '' }])
+type HeaderPair = {
+  key: string
+  value: string
+  maskedValue?: string
+  existing?: boolean
+  editing?: boolean
+  changed?: boolean
+  removed?: boolean
+}
+
+const headerPairs = ref<HeaderPair[]>([{ key: '', value: '' }])
 const authHeadersTouched = ref(false)
+const authorizationEnabled = ref(false)
+const authorizationEditing = ref(false)
+const authorizationToken = ref('')
+
+const isAuthorizationHeader = (key: string) => key.trim().toLowerCase() === 'authorization'
+
+const updateAuthorizationEnabled = (enabled: boolean) => {
+  authorizationEnabled.value = enabled
+  if (enabled) {
+    authorizationEditing.value = true
+  } else {
+    authorizationEditing.value = false
+    authorizationToken.value = ''
+  }
+}
+
+const startAuthorizationEdit = () => {
+  authorizationEditing.value = true
+  authorizationToken.value = ''
+}
+
+const cancelAuthorizationEdit = () => {
+  authorizationEditing.value = false
+  authorizationToken.value = ''
+}
+
+const handleAuthorizationInput = (event: Event) => {
+  authorizationToken.value = (event.target as HTMLInputElement).value
+}
 
 const addHeaderPair = () => {
   headerPairs.value.push({ key: '', value: '' })
 }
+
 const removeHeaderPair = (index: number) => {
+  const pair = headerPairs.value[index]
+  if (pair?.existing) {
+    pair.removed = true
+    pair.changed = true
+    pair.editing = false
+    return
+  }
   headerPairs.value.splice(index, 1)
   if (headerPairs.value.length === 0) addHeaderPair()
+}
+
+const editHeaderPair = (index: number) => {
+  const pair = headerPairs.value[index]
+  if (!pair) return
+  pair.editing = true
+  pair.changed = false
+  pair.value = ''
+}
+
+const cancelHeaderPairEdit = (index: number) => {
+  const pair = headerPairs.value[index]
+  if (!pair) return
+  pair.editing = false
+  pair.changed = false
+  pair.value = ''
+}
+
+const restoreHeaderPair = (index: number) => {
+  const pair = headerPairs.value[index]
+  if (!pair) return
+  pair.removed = false
+  pair.changed = false
 }
 
 const newServer = ref({
@@ -263,6 +334,7 @@ const newServer = ref({
 })
 
 const buildServerPayload = (server: any) => {
+  const isFormPayload = isEditing.value || server === newServer.value
   const payload: Record<string, any> = {
     ...server,
     scope: props.scope,
@@ -273,8 +345,51 @@ const buildServerPayload = (server: any) => {
     user_assertion_key_id: server.user_assertion_key_id || null,
     user_assertion_issuer: server.user_assertion_issuer || 'nanzi-platform',
   }
-  // 编辑时未修改认证区域，后端保留原配置；当前编辑表单会直接回显已有值。
-  if (isEditing.value && !authHeadersTouched.value) {
+
+  if (isFormPayload) {
+    payload.authorization_enabled = authorizationEnabled.value
+    if (authorizationEnabled.value && authorizationEditing.value && authorizationToken.value.trim()) {
+      payload.fixed_token = authorizationToken.value.trim()
+    }
+
+    if (isEditing.value) {
+      delete payload.auth_headers
+      const patch: Record<string, string | null> = {}
+      headerPairs.value.forEach((pair) => {
+        const key = pair.key.trim()
+        if (!key || isAuthorizationHeader(key)) return
+        if (pair.existing) {
+          if (pair.removed && pair.changed) patch[key] = null
+          else if (pair.changed && pair.value.trim()) patch[key] = pair.value.trim()
+        } else if (pair.value.trim()) {
+          patch[key] = pair.value.trim()
+        }
+      })
+      if (Object.keys(patch).length) payload.auth_headers_patch = patch
+    } else if (headerMode.value === 'simple') {
+      const dynamicHeaders: Record<string, string> = {}
+      headerPairs.value.forEach((pair) => {
+        const key = pair.key.trim()
+        if (key && !isAuthorizationHeader(key) && pair.value.trim()) {
+          dynamicHeaders[key] = pair.value.trim()
+        }
+      })
+      payload.auth_headers = JSON.stringify(dynamicHeaders, null, 2)
+    } else {
+      try {
+        const advancedHeaders = JSON.parse(newServer.value.auth_headers || '{}')
+        if (advancedHeaders && typeof advancedHeaders === 'object' && !Array.isArray(advancedHeaders)) {
+          Object.keys(advancedHeaders).forEach((key) => {
+            if (isAuthorizationHeader(key)) delete advancedHeaders[key]
+          })
+        }
+        payload.auth_headers = JSON.stringify(advancedHeaders || {}, null, 2)
+      } catch {
+        payload.auth_headers = '{}'
+      }
+    }
+  } else if (isEditing.value && !authHeadersTouched.value) {
+    // 兼容其他调用方：编辑时未修改认证区域，后端保留原配置。
     delete payload.auth_headers
   }
   return payload
@@ -482,10 +597,10 @@ const copyMcpCode = async () => {
 
 // Sync Header Pairs to JSON string
 watch(headerPairs, (newPairs) => {
-  if (headerMode.value === 'simple') {
+  if (headerMode.value === 'simple' && !isEditing.value) {
     const obj: Record<string, string> = {}
     newPairs.forEach(p => {
-      if (p.key.trim()) obj[p.key.trim()] = p.value
+      if (p.key.trim() && !isAuthorizationHeader(p.key)) obj[p.key.trim()] = p.value
     })
     newServer.value.auth_headers = JSON.stringify(obj, null, 2)
   }
@@ -495,7 +610,16 @@ watch(headerPairs, (newPairs) => {
 const syncJsonToPairs = () => {
   try {
     const obj = JSON.parse(newServer.value.auth_headers)
-    const pairs = Object.entries(obj).map(([k, v]) => ({ key: k, value: String(v) }))
+    const entries = Object.entries(obj)
+    const authorizationEntry = entries.find(([key]) => isAuthorizationHeader(key))
+    if (authorizationEntry) {
+      authorizationEnabled.value = true
+      authorizationEditing.value = true
+      authorizationToken.value = String(authorizationEntry[1]).replace(/^Bearer\s+/i, '').trim()
+    }
+    const pairs = entries
+      .filter(([key]) => !isAuthorizationHeader(key))
+      .map(([k, v]) => ({ key: k, value: String(v) }))
     headerPairs.value = pairs.length > 0 ? pairs : [{ key: '', value: '' }]
   } catch (e) {
     console.error("Invalid JSON for headers")
@@ -542,6 +666,7 @@ const createEchoTestMcp = async () => {
 const resetWizard = () => {
   isEditing.value = false
   editingId.value = ''
+  editingAuthHeadersConfigured.value = false
   wizardStep.value = 1
   createdServer.value = null
   publishAllLoading.value = false
@@ -567,6 +692,9 @@ const resetWizard = () => {
   headerPairs.value = [{ key: '', value: '' }]
   headerMode.value = 'simple'
   authHeadersTouched.value = false
+  authorizationEnabled.value = false
+  authorizationEditing.value = false
+  authorizationToken.value = ''
 }
 
 const closeWizard = () => {
@@ -588,6 +716,7 @@ defineExpose({
 const openEditModal = (server: any) => {
   isEditing.value = true
   editingId.value = server.id
+  editingAuthHeadersConfigured.value = Boolean(server.auth_headers_configured)
   wizardStep.value = 1
   serverNameSuffix.value = stripMcpServerNamePrefix(
     server.server_name,
@@ -598,7 +727,7 @@ const openEditModal = (server: any) => {
     server_name: server.server_name,
     remark: server.remark || '',
     sse_url: server.sse_url,
-    auth_headers: server.auth_headers || '{}',
+    auth_headers: '{}',
     enabled_status: server.enabled_status,
     credential_mode: server.credential_mode || 'static',
     user_assertion_enabled: Boolean(server.user_assertion_enabled),
@@ -607,8 +736,22 @@ const openEditModal = (server: any) => {
     user_assertion_key_id: server.user_assertion_key_id || '',
     user_assertion_issuer: server.user_assertion_issuer || 'nanzi-platform',
   }
+  authorizationEnabled.value = Boolean(server.authorization_configured)
+  authorizationEditing.value = false
+  authorizationToken.value = ''
+  const maskedHeaders = Object.entries(server.masked_auth_headers || {})
+  headerPairs.value = maskedHeaders.length
+    ? maskedHeaders.map(([key, value]) => ({
+      key,
+      value: '',
+      maskedValue: String(value),
+      existing: true,
+      editing: false,
+      changed: false,
+      removed: false,
+    }))
+    : [{ key: '', value: '' }]
   syncFullServerName()
-  syncJsonToPairs()
   authHeadersTouched.value = false
   showAddModal.value = true
 }
@@ -723,10 +866,17 @@ const applyMcpJsonPaste = (options?: { connect?: boolean }) => {
   newServer.value.sse_url = entry.url
 
   const headerEntries = Object.entries(entry.headers || {})
-  if (headerEntries.length) {
+  const authorizationEntry = headerEntries.find(([key]) => isAuthorizationHeader(key))
+  authorizationEnabled.value = Boolean(authorizationEntry)
+  authorizationEditing.value = Boolean(authorizationEntry)
+  authorizationToken.value = authorizationEntry
+    ? String(authorizationEntry[1]).replace(/^Bearer\s+/i, '').trim()
+    : ''
+  const dynamicHeaderEntries = headerEntries.filter(([key]) => !isAuthorizationHeader(key))
+  if (dynamicHeaderEntries.length) {
     headerMode.value = 'simple'
-    headerPairs.value = headerEntries.map(([key, value]) => ({ key, value }))
-    newServer.value.auth_headers = JSON.stringify(Object.fromEntries(headerEntries), null, 2)
+    headerPairs.value = dynamicHeaderEntries.map(([key, value]) => ({ key, value }))
+    newServer.value.auth_headers = JSON.stringify(Object.fromEntries(dynamicHeaderEntries), null, 2)
   } else {
     headerPairs.value = [{ key: '', value: '' }]
     newServer.value.auth_headers = '{}'
@@ -761,7 +911,7 @@ const handleVerify = async () => {
   
   verifying.value = true
   try {
-    const res = await axios.post('/api/portal/mcp/verify', newServer.value)
+    const res = await axios.post('/api/portal/mcp/verify', buildServerPayload(newServer.value))
     discoveredTools.value = res.data.tools
     wizardStep.value = 2
     if (!normalizeMcpServerNameSuffix(serverNameSuffix.value)) {
@@ -811,8 +961,15 @@ const addServer = async () => {
     showToast('请填写完整信息', 'warning')
     return
   }
+  if (authorizationEnabled.value && authorizationEditing.value && !authorizationToken.value.trim()) {
+    showToast('请输入 Authorization Token', 'warning')
+    return
+  }
   if (headerMode.value === 'advanced') {
-    try { JSON.parse(newServer.value.auth_headers) }
+    try {
+      JSON.parse(newServer.value.auth_headers)
+      syncJsonToPairs()
+    }
     catch (e) { showToast('JSON 格式错误', 'error'); return }
   }
 
@@ -1508,54 +1665,91 @@ onMounted(fetchServers)
               </div>
             </div>
           
+            <!-- Authorization Editor -->
+            <div v-if="connectionInputTab === 'manual' || isEditing" class="order-2 rounded-lg border border-indigo-100 bg-indigo-50/50 p-3">
+              <div class="flex items-center justify-between gap-3">
+                <div class="min-w-0">
+                  <label class="block text-xs font-bold text-gray-700">Authorization</label>
+                  <p class="mt-1 text-[10px] leading-relaxed text-gray-500">Bearer 前缀固定，只填写 Token。</p>
+                </div>
+                <Switch
+                  :model-value="authorizationEnabled"
+                  aria-label="Authorization 开关"
+                  @update:model-value="updateAuthorizationEnabled"
+                />
+              </div>
+              <div v-if="authorizationEnabled" class="mt-3 flex items-center gap-2">
+                <span class="shrink-0 rounded border border-indigo-100 bg-white px-2 py-2 font-mono text-xs text-gray-500">Bearer</span>
+                <input
+                  :value="authorizationEditing ? authorizationToken : '********'"
+                  type="password"
+                  :readonly="isEditing && !authorizationEditing"
+                  placeholder="请输入 Token"
+                  aria-label="Authorization Token"
+                  class="min-w-0 flex-1 rounded-lg border border-gray-200 bg-white px-3 py-2 text-xs font-mono outline-none focus:ring-1 focus:ring-primary"
+                  @input="handleAuthorizationInput"
+                />
+                <button
+                  v-if="isEditing && !authorizationEditing"
+                  type="button"
+                  class="shrink-0 rounded border border-indigo-200 bg-white px-2.5 py-2 text-[10px] font-semibold text-indigo-700 hover:bg-indigo-50"
+                  @click="startAuthorizationEdit"
+                >编辑</button>
+                <button
+                  v-else-if="isEditing && authorizationEditing"
+                  type="button"
+                  class="shrink-0 rounded border border-gray-200 bg-white px-2.5 py-2 text-[10px] font-semibold text-gray-600 hover:bg-gray-50"
+                  @click="cancelAuthorizationEdit"
+                >取消</button>
+              </div>
+              <p v-if="isEditing && authorizationEnabled" class="mt-2 text-[10px] leading-relaxed text-amber-600">已配置 Token 不会回显；点击“编辑”后填写新 Token，保存后才会替换。</p>
+            </div>
+
             <!-- Dynamic Headers Editor -->
             <div v-if="connectionInputTab === 'manual' || isEditing" class="order-2">
-              <div class="flex justify-between items-center mb-2">
-                <label class="block text-xs font-bold text-gray-700 uppercase tracking-wider">身份认证 (可选)</label>
-                <button @click="toggleHeaderMode" class="text-[10px] text-primary font-bold flex items-center hover:underline">
-                  <component :is="headerMode === 'simple' ? CodeBracketIcon : ListBulletIcon" class="w-3 h-3 mr-1" />
+              <div class="mb-2 flex items-center justify-between gap-3">
+                <div>
+                  <label class="block text-xs font-bold uppercase tracking-wider text-gray-700">其他 Header（可选）</label>
+                  <p class="mt-1 text-[10px] leading-relaxed text-gray-400">Authorization 已单独配置；这里填写其他 Header。</p>
+                </div>
+                <button v-if="!isEditing" type="button" @click="toggleHeaderMode" class="flex items-center text-[10px] font-bold text-primary hover:underline">
+                  <component :is="headerMode === 'simple' ? CodeBracketIcon : ListBulletIcon" class="mr-1 h-3 w-3" />
                   切换到{{ headerMode === 'simple' ? '高级 JSON' : '可视化列表' }}
                 </button>
               </div>
 
               <div v-if="headerMode === 'simple'" class="space-y-3">
-                <p class="text-[10px] text-gray-400 leading-relaxed">
-                  如果服务需要令牌或 API Key，请添加下方项。
-                  <span class="text-primary cursor-pointer hover:underline" @click="headerPairs[0] = {key: 'Authorization', value: 'Bearer '}; authHeadersTouched = true">[常用推荐：Authorization]</span>
-                </p>
-                <p v-if="isEditing" class="text-[10px] text-amber-600 leading-relaxed">
-                  已有认证信息会直接回显；不修改下方内容并保存时，会保留原配置。
-                </p>
-              
-                <div class="space-y-2 bg-gray-50 p-3 rounded-lg border border-gray-100 max-h-[150px] overflow-y-auto custom-scrollbar">
-                  <div v-for="(pair, index) in headerPairs" :key="index" class="flex gap-2">
-                    <div class="flex-1">
-                      <input 
-                        v-model="pair.key"
-                        @input="authHeadersTouched = true"
-                        placeholder="名称 (如 Authorization)" 
-                        class="w-full px-3 py-1.5 text-xs border rounded focus:ring-1 focus:ring-primary outline-none" 
-                      />
-                    </div>
-                    <div class="flex-1">
-                      <input 
-                        v-model="pair.value"
-                        @input="authHeadersTouched = true"
-                        :placeholder="pair.key === 'Authorization' ? 'Bearer sk-...' : '内容 (Value)'" 
-                        class="w-full px-3 py-1.5 text-xs border rounded focus:ring-1 focus:ring-primary outline-none" 
-                      />
-                    </div>
-                    <button @click="removeHeaderPair(index)" class="p-1.5 text-gray-400 hover:text-red-500">
-                      <TrashIcon class="w-4 h-4" />
-                    </button>
+                <div class="max-h-[180px] space-y-2 overflow-y-auto rounded-lg border border-gray-100 bg-gray-50 p-3 custom-scrollbar">
+                  <div v-for="(pair, index) in headerPairs" :key="index" class="flex items-center gap-2">
+                    <template v-if="pair.existing && !pair.editing && !pair.removed">
+                      <input :value="pair.key" readonly class="min-w-0 flex-1 rounded border bg-white px-3 py-1.5 text-xs text-gray-600 outline-none" />
+                      <input :value="pair.maskedValue || '********'" readonly type="password" class="min-w-0 flex-1 rounded border bg-white px-3 py-1.5 text-xs text-gray-600 outline-none" />
+                      <button type="button" class="shrink-0 rounded border border-indigo-200 bg-white px-2 py-1.5 text-[10px] font-semibold text-indigo-700 hover:bg-indigo-50" @click="editHeaderPair(index)">编辑</button>
+                      <button type="button" class="shrink-0 p-1.5 text-gray-400 hover:text-red-500" aria-label="删除 Header" @click="removeHeaderPair(index)">
+                        <TrashIcon class="h-4 w-4" />
+                      </button>
+                    </template>
+                    <template v-else-if="pair.existing && pair.removed">
+                      <span class="min-w-0 flex-1 text-xs text-gray-400 line-through">{{ pair.key }}</span>
+                      <span class="flex-1 text-[10px] text-red-500">保存后删除</span>
+                      <button type="button" class="shrink-0 text-[10px] font-semibold text-indigo-700 hover:underline" @click="restoreHeaderPair(index)">撤销</button>
+                    </template>
+                    <template v-else>
+                      <input v-model="pair.key" :readonly="pair.existing" placeholder="名称（如 X-Tenant）" class="min-w-0 flex-1 rounded border px-3 py-1.5 text-xs outline-none focus:ring-1 focus:ring-primary" @input="pair.changed = true; authHeadersTouched = true" />
+                      <input v-model="pair.value" :type="pair.existing ? 'password' : 'text'" :placeholder="pair.existing ? '请输入新值' : '内容（Value）'" class="min-w-0 flex-1 rounded border px-3 py-1.5 text-xs outline-none focus:ring-1 focus:ring-primary" @input="pair.changed = true; authHeadersTouched = true" />
+                      <button v-if="pair.existing" type="button" class="shrink-0 rounded border border-gray-200 bg-white px-2 py-1.5 text-[10px] font-semibold text-gray-600 hover:bg-gray-50" @click="cancelHeaderPairEdit(index)">取消</button>
+                      <button v-else type="button" class="shrink-0 p-1.5 text-gray-400 hover:text-red-500" aria-label="删除 Header" @click="removeHeaderPair(index)">
+                        <TrashIcon class="h-4 w-4" />
+                      </button>
+                    </template>
                   </div>
-                  <button @click="addHeaderPair" class="mt-2 text-[10px] font-bold text-primary flex items-center hover:underline">
-                    <PlusIcon class="w-3 h-3 mr-1" /> 继续添加
+                  <button type="button" @click="addHeaderPair" class="mt-2 flex items-center text-[10px] font-bold text-primary hover:underline">
+                    <PlusIcon class="mr-1 h-3 w-3" /> 继续添加
                   </button>
                 </div>
               </div>
               <div v-else>
-                <textarea v-model="newServer.auth_headers" rows="4" @input="authHeadersTouched = true" class="w-full px-3 py-2 text-sm border rounded-lg focus:ring-2 focus:ring-primary outline-none font-mono bg-gray-900 text-green-400" placeholder='{}'></textarea>
+                <textarea v-model="newServer.auth_headers" rows="4" @input="authHeadersTouched = true" class="w-full rounded-lg border bg-gray-900 px-3 py-2 font-mono text-sm text-green-400 outline-none focus:ring-2 focus:ring-primary" placeholder='{}'></textarea>
               </div>
             </div>
           </div>
