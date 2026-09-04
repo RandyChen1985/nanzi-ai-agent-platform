@@ -1,5 +1,5 @@
 from typing import List, Optional, Dict, Any
-from pydantic import BaseModel, Field, ConfigDict, field_validator
+from pydantic import BaseModel, Field, ConfigDict, field_validator, model_validator
 from datetime import datetime
 
 def _validate_cron_expr(v: Optional[str]) -> Optional[str]:
@@ -43,6 +43,27 @@ class TaskUpdate(BaseModel):
         return _validate_cron_expr(v)
 
 class TaskResponse(TaskBase):
+    # 覆盖父类严格校验：从 DB 读取时宽容处理历史非法 cron，不崩溃列表页
+    @field_validator("cron_expr", mode="before")
+    @classmethod
+    def validate_cron_expr(cls, v: str) -> str:  # type: ignore[override]
+        try:
+            return _validate_cron_expr(v)  # type: ignore[return-value]
+        except ValueError:
+            # 历史脏数据：保留原值，不阻断列表接口
+            return v
+
+    cron_valid: bool = True  # 历史非法 cron 时为 False，供前端显示警告
+
+    @model_validator(mode="after")
+    def _set_cron_valid(self) -> "TaskResponse":
+        try:
+            _validate_cron_expr(self.cron_expr)
+            self.cron_valid = True
+        except ValueError:
+            self.cron_valid = False
+        return self
+
     id: int
     user_id: int
     creator_name: Optional[str] = None

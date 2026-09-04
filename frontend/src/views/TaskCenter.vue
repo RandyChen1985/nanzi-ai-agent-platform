@@ -1443,7 +1443,16 @@ onMounted(async () => {
                     class="w-2 h-2 rounded-full mr-2"
                     :class="task.status === 1 ? 'bg-green-500 animate-pulse' : 'bg-gray-300'"
                   ></span>
-                  <span class="text-[10px] font-bold text-blue-600" :title="`Cron: ${task.cron_expr}`">{{ formatTaskSchedule(task.cron_expr) }}</span>
+                  <span
+                    v-if="task.cron_valid === false"
+                    class="text-[10px] font-bold text-red-500 bg-red-50 px-1.5 py-0.5 rounded mr-1"
+                    :title="`无效 Cron: ${task.cron_expr}`"
+                  >⚠️ Cron无效</span>
+                  <span
+                    v-else
+                    class="text-[10px] font-bold text-blue-600"
+                    :title="`Cron: ${task.cron_expr}`"
+                  >{{ formatTaskSchedule(task.cron_expr) }}</span>
                 </div>
               </div>
             </div>
@@ -1594,7 +1603,15 @@ onMounted(async () => {
               </div>
             </td>
             <td class="px-4 py-4 hidden md:table-cell">
-              <span class="inline-flex whitespace-nowrap rounded-lg bg-blue-50 px-2 py-1 text-[11px] font-bold text-blue-700" :title="`Cron: ${task.cron_expr}`">{{ formatTaskSchedule(task.cron_expr) }}</span>
+              <template v-if="task.cron_valid === false">
+                <span
+                  class="inline-flex whitespace-nowrap rounded-lg bg-red-50 px-2 py-1 text-[11px] font-bold text-red-600"
+                  :title="`无效 Cron: ${task.cron_expr}`"
+                >⚠️ Cron无效</span>
+              </template>
+              <template v-else>
+                <span class="inline-flex whitespace-nowrap rounded-lg bg-blue-50 px-2 py-1 text-[11px] font-bold text-blue-700" :title="`Cron: ${task.cron_expr}`">{{ formatTaskSchedule(task.cron_expr) }}</span>
+              </template>
             </td>
             <td class="px-4 py-4">
               <span class="whitespace-nowrap text-xs font-medium text-gray-600">{{ formatNextRunCompact(task.next_run_at) }}</span>
