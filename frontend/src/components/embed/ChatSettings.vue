@@ -197,6 +197,21 @@ const handleSetGrounding = (enabled: boolean) => {
     saveSettings();
 };
 
+const handleSetGroundingBlockMode = (enabled: boolean) => {
+    const mode = enabled ? 'stream_with_retraction' : 'strict_buffer';
+    if (props.config.groundingBlockMode === mode) {
+      saveSettings();
+      return;
+    }
+
+    props.config.groundingBlockMode = mode;
+    showToast(
+      enabled ? "已开启实时输出，校验失败时会自动撤回" : "已切换为安全缓冲输出",
+      enabled ? "info" : "success",
+    );
+    saveSettings();
+};
+
 const showConfirmModal = ref(false);
 
 const confirmReset = () => {
@@ -587,6 +602,24 @@ const handleLogout = () => {
                 </div>
               </div>
               <Switch :modelValue="config.enableGrounding" @update:modelValue="handleSetGrounding" class="scale-[0.8] origin-right" />
+            </div>
+
+            <!-- Switch Row 5: Streaming Retraction Toggle -->
+            <div v-if="config.enableGrounding" class="flex items-start justify-between py-1">
+              <div class="flex items-start space-x-2.5 pr-2">
+                <div class="mt-0.5 text-gray-400 dark:text-gray-500 shrink-0">
+                  <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7h8m-8 5h5m-5 5h8M5 4h14a2 2 0 012 2v12a2 2 0 01-2 2H5a2 2 0 01-2-2V6a2 2 0 012-2z" /></svg>
+                </div>
+                <div>
+                  <h5 class="text-xs font-black text-gray-700 dark:text-gray-200">实时输出</h5>
+                  <p class="text-[9.5px] text-gray-400 dark:text-gray-500 leading-normal mt-0.5">校验失败后撤回，内容可能短暂显示</p>
+                </div>
+              </div>
+              <Switch
+                :modelValue="config.groundingBlockMode === 'stream_with_retraction'"
+                @update:modelValue="handleSetGroundingBlockMode"
+                class="scale-[0.8] origin-right"
+              />
             </div>
 
           </div>
