@@ -1,10 +1,13 @@
 <script setup lang="ts">
 import { ref, onMounted, onBeforeUnmount, computed } from 'vue'
 import { modelApi, type AIModel, type AIModelCreate, type AIModelOption, type AIModelReference, type AIModelUpdate, type ReasoningEffort } from '../../api/model'
+import axios from '@/utils/axios'
 import { useToast } from '../../composables/useToast'
 import { useUser } from '../../composables/useUser'
 import ConfirmModal from '../ConfirmModal.vue'
 import ModelUsageDrawer from './ModelUsageDrawer.vue'
+import { getTemperatureGuidance } from '../../utils/temperatureGuidance'
+import { temperatureReference, type TemperatureReference } from '../../utils/temperatureReference'
 import { 
   PlayIcon,
   PencilSquareIcon,
@@ -17,6 +20,7 @@ const { hasPermission } = useUser()
 const canSave = hasPermission('element:system:config_save')
 
 const models = ref<AIModel[]>([])
+const globalTemperature = ref(0)
 const loadingModels = ref(false)
 const modelSearchQuery = ref('')
 const modelProviderFilter = ref('all')
@@ -40,6 +44,7 @@ const modelUsageError = ref('')
 const showProviderMenu = ref(false)
 const showModelPicker = ref(false)
 const showAdvancedModelOptions = ref(false)
+const showTemperatureGuide = ref(false)
 const loadingDiscoveredModels = ref(false)
 const discoveredModels = ref<AIModelOption[]>([])
 const reasoningEffortOptions: Array<{ value: ReasoningEffort; label: string; description: string }> = [
@@ -59,6 +64,7 @@ const modelForm = ref<ModelForm>({
   type: 'llm',
   api_base_url: 'https://api.openai.com/v1',
   api_key: '',
+  temperature: 0,
   is_active: true,
   thinking_enable: false,
   thinking_only: false,
@@ -115,6 +121,8 @@ const lastProvider = ref<string>('openai')
 const selectedProvider = computed(() =>
     providerCatalog.find((item) => item.value === String(modelForm.value.provider)) || providerCatalog[0]!
 )
+const isCurrentTemperatureProvider = (reference: TemperatureReference) =>
+    reference.providerKeys.includes(String(modelForm.value.provider))
 const providerMeta = (provider: string) =>
     providerCatalog.find((item) => item.value === provider) || providerCatalog[providerCatalog.length - 1]!
 const knownProviderValues = new Set(providerCatalog.map((provider) => provider.value))
@@ -166,6 +174,7 @@ const normalizeThinkingConfiguration = (model: ModelForm): ModelForm => {
         : null
     return {
         ...model,
+        temperature: normalizeTemperature(model.temperature),
         thinking_enable: model.thinking_enable ?? false,
         thinking_only: model.thinking_only ?? false,
         allow_disable_thinking: model.allow_disable_thinking ?? true,
@@ -173,6 +182,24 @@ const normalizeThinkingConfiguration = (model: ModelForm): ModelForm => {
         supported_reasoning_efforts: supportedReasoningEfforts.length
             ? supportedReasoningEfforts
             : [...defaultSupportedReasoningEfforts],
+    }
+}
+
+const normalizeTemperature = (value: unknown, fallback = globalTemperature.value): number => {
+    if (value === null || value === undefined || value === '') return fallback
+    const parsed = Number(value)
+    if (!Number.isFinite(parsed)) return fallback
+    return Math.min(2, Math.max(0, parsed))
+}
+
+const fetchGlobalTemperature = async () => {
+    try {
+        const response = await axios.get('/api/portal/system/configs')
+        const groups = response.data as Record<string, Array<{ key: string; value?: string | number | null }>>
+        const item = Object.values(groups).flat().find((config) => config.key === 'llm_temperature')
+        globalTemperature.value = normalizeTemperature(item?.value, 0)
+    } catch (error) {
+        console.warn('Failed to fetch global model temperature', error)
     }
 }
 
@@ -404,6 +431,7 @@ const testCurrentModel = async () => {
             api_key: modelForm.value.api_key,
             context_size: normalizeOptionalInt(modelForm.value.context_size),
             max_output_tokens: normalizeOptionalInt(modelForm.value.max_output_tokens),
+            temperature: normalizeTemperature(modelForm.value.temperature),
             model_config_id: modelForm.value.id,
         })
         if (response.data.status === 'success') {
@@ -446,6 +474,7 @@ const openModelModal = (model?: AIModel, isClone = false) => {
             type: 'llm',
             api_base_url: providerDefaultBaseUrls.openai,
             api_key: '',
+            temperature: globalTemperature.value,
             is_active: true,
         })
     }
@@ -474,6 +503,7 @@ const saveModel = async () => {
             api_base_url: modelForm.value.api_base_url,
             context_size: normalizeOptionalInt(modelForm.value.context_size),
             max_output_tokens: normalizeOptionalInt(modelForm.value.max_output_tokens),
+            temperature: normalizeTemperature(modelForm.value.temperature),
             thinking_enable: modelForm.value.thinking_enable,
             thinking_only: modelForm.value.thinking_only,
             allow_disable_thinking: modelForm.value.allow_disable_thinking,
@@ -544,6 +574,7 @@ defineExpose({ refresh: fetchModels })
 
 onMounted(() => {
   fetchModels()
+  fetchGlobalTemperature()
   document.addEventListener('click', closeFloatingMenus)
 })
 
@@ -623,6 +654,7 @@ onBeforeUnmount(() => {
                         <div class="text-sm font-semibold text-gray-900">{{ m.name }}</div>
                         <div class="mt-1 text-xs text-gray-500 font-mono truncate max-w-[520px]" :title="m.model_id">{{ m.model_id }}</div>
                         <div class="mt-2 flex min-h-[1.5rem] flex-wrap gap-1.5 text-[11px]">
+                            <span v-if="m.type !== 'embedding'" class="token-limit-badge">温度 {{ normalizeTemperature(m.temperature).toFixed(2) }}</span>
                             <span v-if="m.context_size" class="token-limit-badge">输入 {{ formatTokenSize(m.context_size) }}</span>
                             <span v-if="m.max_output_tokens" class="token-limit-badge">输出 {{ formatTokenSize(m.max_output_tokens) }}</span>
                         </div>
@@ -810,6 +842,38 @@ onBeforeUnmount(() => {
                      <p class="text-xs text-gray-500 mt-1">用于系统界面展示，不影响实际 API 调用</p>
                   </div>
                   <template v-if="modelForm.type !== 'embedding'">
+                      <section class="mb-3 rounded-lg border border-blue-100 bg-blue-50/50 p-3">
+                          <div class="flex items-center justify-between gap-3">
+                              <div>
+                                  <div class="flex items-center gap-1.5">
+                                      <label class="block text-sm font-medium text-gray-700">模型温度 {{ normalizeTemperature(modelForm.temperature).toFixed(2) }}</label>
+                                      <button
+                                          type="button"
+                                          class="inline-flex h-4 w-4 items-center justify-center rounded-full border border-blue-300 text-[10px] font-bold leading-none text-blue-600 hover:bg-blue-100"
+                                          aria-label="查看温度参考"
+                                          title="查看各家模型温度参考"
+                                          @click="showTemperatureGuide = true"
+                                      >?</button>
+                                  </div>
+                                  <p class="mt-1 text-xs text-gray-500">新建模型默认跟随全局温度，可按模型单独调整；测试连接会使用这里的值。</p>
+                              </div>
+                              <span class="shrink-0 text-xs text-blue-600">0～2</span>
+                          </div>
+                          <input
+                              v-model.number="modelForm.temperature"
+                              type="range"
+                              min="0"
+                              max="2"
+                              step="0.05"
+                              class="mt-3 h-1.5 w-full cursor-pointer appearance-none rounded-lg bg-blue-100 accent-blue-600"
+                          />
+                          <p class="mt-2 text-[11px] leading-4 text-gray-500">
+                              当前 {{ normalizeTemperature(modelForm.temperature).toFixed(2) }}：{{ getTemperatureGuidance(modelForm.temperature) }}
+                          </p>
+                          <p v-if="normalizeTemperature(modelForm.temperature) > 1" class="mt-2 text-[11px] leading-4 text-amber-600">
+                              温度大于 1，请确认官方模型文档是否支持该范围；部分模型可能不支持或忽略该参数。
+                          </p>
+                      </section>
                       <button type="button" class="advanced-options-toggle" :aria-expanded="showAdvancedModelOptions" @click="showAdvancedModelOptions = !showAdvancedModelOptions">
                           <span class="flex items-center gap-2">
                               <svg class="w-4 h-4 transition-transform" :class="showAdvancedModelOptions ? 'rotate-90' : ''" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" /></svg>
@@ -946,6 +1010,73 @@ onBeforeUnmount(() => {
                   <button @click="saveModel" :disabled="modelIdConflict" class="px-4 py-2 bg-primary border border-transparent rounded-md text-sm font-medium text-white hover:bg-primary-dark disabled:opacity-50 disabled:cursor-not-allowed">保存</button>
               </div>
           </div>
+      </div>
+
+      <div
+        v-if="showTemperatureGuide"
+        class="fixed inset-0 z-[70] flex items-center justify-center bg-slate-950/45 p-4 backdrop-blur-sm"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="temperature-guide-title"
+        @click="showTemperatureGuide = false"
+      >
+        <div class="max-h-[90vh] w-full max-w-4xl overflow-y-auto rounded-2xl bg-white p-5 text-left shadow-2xl sm:p-6" @click.stop>
+          <div class="flex items-start justify-between gap-4">
+            <div>
+              <h3 id="temperature-guide-title" class="text-lg font-bold text-slate-900">模型温度参考</h3>
+              <p class="mt-1 text-xs leading-5 text-slate-500">
+                温度越低，回答通常越稳定确定；温度越高，表达通常越多样。以下是官方文档中的范围、示例或限制，不是所有模型通用的固定标准。
+              </p>
+            </div>
+            <button
+              type="button"
+              class="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-xl leading-none text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+              aria-label="关闭温度参考"
+              title="关闭"
+              @click="showTemperatureGuide = false"
+            >×</button>
+          </div>
+
+          <div class="mt-4 overflow-hidden rounded-xl border border-slate-200">
+            <div class="overflow-x-auto">
+              <table class="min-w-[760px] w-full divide-y divide-slate-200 text-xs">
+                <thead class="bg-slate-50 text-left text-slate-500">
+                  <tr>
+                    <th class="px-3 py-2.5 font-semibold">供应商</th>
+                    <th class="px-3 py-2.5 font-semibold">官方范围 / 限制</th>
+                    <th class="px-3 py-2.5 font-semibold">官方示例 / 参考</th>
+                    <th class="px-3 py-2.5 font-semibold">适合场景</th>
+                    <th class="px-3 py-2.5 font-semibold">文档</th>
+                  </tr>
+                </thead>
+                <tbody class="divide-y divide-slate-100 text-slate-600">
+                  <tr
+                    v-for="reference in temperatureReference"
+                    :key="reference.provider"
+                    :class="isCurrentTemperatureProvider(reference) ? 'bg-blue-50/70' : 'bg-white'"
+                  >
+                    <td class="px-3 py-3 align-top font-semibold text-slate-800">
+                      <span class="inline-flex items-center gap-1.5">
+                        {{ reference.provider }}
+                        <span v-if="isCurrentTemperatureProvider(reference)" class="rounded-full bg-blue-100 px-1.5 py-0.5 text-[10px] font-medium text-blue-700">当前</span>
+                      </span>
+                    </td>
+                    <td class="px-3 py-3 align-top leading-5">{{ reference.range }}</td>
+                    <td class="px-3 py-3 align-top leading-5">{{ reference.recommendation }}</td>
+                    <td class="px-3 py-3 align-top leading-5">{{ reference.scenarios }}</td>
+                    <td class="px-3 py-3 align-top">
+                      <a :href="reference.officialUrl" target="_blank" rel="noopener noreferrer" class="font-medium text-blue-600 hover:text-blue-800 hover:underline">官方文档</a>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <p class="mt-3 text-[11px] leading-5 text-amber-700">
+            提醒：同一家供应商的不同模型也可能有不同限制；特别是温度大于 1，或接近供应商范围上限时，请以具体模型官方文档为准。
+          </p>
+        </div>
       </div>
 
       <ConfirmModal

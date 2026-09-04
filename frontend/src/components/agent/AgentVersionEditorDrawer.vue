@@ -7,6 +7,7 @@ import Modal from '../Modal.vue';
 import MessageRenderer from '../MessageRenderer.vue';
 import { normalizeMarkdownTheme, type MarkdownTheme } from '@/types/markdownTheme';
 import { mcpToolDisplayName } from '../../utils/mcpToolDisplayName';
+import { getTemperatureGuidance } from '../../utils/temperatureGuidance';
 
 type VersionConfigStep = 'agent' | 'model' | 'tools' | 'prompt' | 'welcome' | 'review';
 type ToolGroup = { label: string; icon: string; tools: any[] };
@@ -22,6 +23,7 @@ const props = defineProps<{
   globalAgentToolcallTimeout: number;
   selectedAgent: AIAgent | null;
   models: AIModel[];
+  globalModelTemperature: number;
   canEditVersion: boolean;
   toolTab: 'static' | 'mcp' | 'skills';
   toolSearchQuery: string;
@@ -93,6 +95,39 @@ const emit = defineEmits<{
 }>();
 
 const llmModels = () => props.models.filter((m) => (m.type === 'llm' || m.type === 'multimodal') && m.is_active);
+
+const setOrchestratorModel = (event: Event) => {
+  const modelName = (event.target as HTMLSelectElement).value;
+  props.versionForm.model_name = modelName;
+  const selectedModel = llmModels().find((model) => model.model_id === modelName);
+  if (selectedModel) {
+    props.versionForm.temperature = selectedModel.temperature ?? props.globalModelTemperature;
+  }
+};
+
+const selectedOrchestratorModel = computed(() =>
+  llmModels().find((model) => model.model_id === props.versionForm.model_name) ?? null,
+);
+
+const modelTemperatureForVersion = computed(() =>
+  selectedOrchestratorModel.value?.temperature ?? props.globalModelTemperature,
+);
+
+const orchestratorTemperatureMismatch = computed(() => {
+  const versionTemperature = Number(props.versionForm.temperature);
+  return Boolean(
+    selectedOrchestratorModel.value
+    && Number.isFinite(versionTemperature)
+    && Math.abs(versionTemperature - modelTemperatureForVersion.value) > 0.001,
+  );
+});
+
+const orchestratorTemperatureAboveOne = computed(() => Number(props.versionForm.temperature) > 1);
+
+const formatTemperature = (value: unknown) => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed.toFixed(2) : '—';
+};
 
 const stepIndex = () => props.versionConfigSteps.findIndex((s) => s.id === props.versionConfigStep);
 const isFirstStep = () => stepIndex() <= 0;
@@ -649,7 +684,7 @@ const externalCreationMissingFields = computed(() => {
                 </p>
                 <select
                   :value="versionForm.model_name"
-                  @change="versionForm.model_name = ($event.target as HTMLSelectElement).value"
+                  @change="setOrchestratorModel"
                   :disabled="!canEditVersion"
                   class="w-full px-3 py-2 border border-gray-200 rounded-lg outline-none focus:ring-2 focus:ring-primary/30 bg-white text-sm"
                 >
@@ -666,12 +701,21 @@ const externalCreationMissingFields = computed(() => {
                     </div>
                   </div>
                   <input
-                    type="range" min="0" max="1" step="0.1"
+                    type="range" min="0" max="2" step="0.1"
                     :value="versionForm.temperature"
                     @input="versionForm.temperature = Number(($event.target as HTMLInputElement).value)"
                     :disabled="!canEditVersion"
                     class="w-full h-1.5 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-blue-600"
                   />
+                  <p class="mt-2 text-[11px] leading-4 text-gray-500">
+                    当前 {{ formatTemperature(versionForm.temperature) }}：{{ getTemperatureGuidance(versionForm.temperature) }}
+                  </p>
+                  <p v-if="orchestratorTemperatureMismatch" class="mt-2 text-[11px] leading-4 text-amber-600">
+                    当前版本温度 {{ formatTemperature(versionForm.temperature) }}，与模型配置温度 {{ formatTemperature(modelTemperatureForVersion) }} 不一致；版本配置将以当前值为准。
+                  </p>
+                  <p v-if="orchestratorTemperatureAboveOne" class="mt-2 text-[11px] leading-4 text-amber-600">
+                    温度大于 1，请确认官方模型文档是否支持该范围；部分模型可能不支持或忽略该参数。
+                  </p>
                 </div>
               </div>
 
@@ -708,6 +752,12 @@ const externalCreationMissingFields = computed(() => {
                     :disabled="!canEditVersion"
                     class="w-full h-1.5 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-emerald-600"
                   />
+                  <p class="mt-2 text-[11px] leading-4 text-gray-500">
+                    当前 {{ formatTemperature(versionForm.synthesis_temperature) }}：{{ getTemperatureGuidance(versionForm.synthesis_temperature) }}
+                  </p>
+                  <p v-if="Number(versionForm.synthesis_temperature) > 1" class="mt-2 text-[11px] leading-4 text-amber-600">
+                    温度大于 1，请确认官方模型文档是否支持该范围；部分模型可能不支持或忽略该参数。
+                  </p>
                 </div>
               </div>
             </div>

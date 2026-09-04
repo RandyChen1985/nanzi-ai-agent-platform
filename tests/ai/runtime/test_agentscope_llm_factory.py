@@ -912,6 +912,41 @@ async def test_model_connection_test_passes_form_token_limits(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_model_connection_test_prefers_model_temperature_over_global(monkeypatch):
+    from app.api.portal.endpoints.models import _test_model_connection
+    from app.services.ai.runtime.agentscope import chat as chat_module
+    from app.core.llm import client as llm_client
+
+    async def fake_config_get(key):
+        return {"llm_temperature": "0.35"}.get(key)
+
+    captured = {}
+
+    def fake_get_chat_model(**kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace(model_name=kwargs["model"])
+
+    class FakeChatClient:
+        async def generate_text(self, messages):
+            return "pong"
+
+    monkeypatch.setattr(llm_client.ConfigServiceProxy, "get", staticmethod(fake_config_get))
+    monkeypatch.setattr(llm_client.LLMFactory, "get_chat_model", staticmethod(fake_get_chat_model))
+    monkeypatch.setattr(llm_client, "_lookup_ai_model_record", lambda model: None)
+    monkeypatch.setattr(chat_module, "chat_client_from_handle", lambda handle: FakeChatClient())
+
+    result = await _test_model_connection(
+        model_id="model-with-temperature",
+        model_type="llm",
+        api_key="sk-test",
+        temperature=0.8,
+    )
+
+    assert result["status"] == "success"
+    assert captured["temperature"] == 0.8
+
+
+@pytest.mark.asyncio
 async def test_get_llm_async_uses_config_service_fallbacks(monkeypatch):
     from app.core.llm import client
 

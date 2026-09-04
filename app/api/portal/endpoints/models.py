@@ -396,6 +396,7 @@ async def test_model(
         api_base_url=model_obj.api_base_url,
         context_size=model_obj.context_size,
         max_output_tokens=model_obj.max_output_tokens,
+        temperature=model_obj.temperature,
     )
 
 
@@ -408,6 +409,7 @@ async def _test_model_connection(
     api_base_url: str | None = None,
     context_size: int | None = None,
     max_output_tokens: int | None = None,
+    temperature: float | None = None,
 ):
     try:
         if model_type == "embedding":
@@ -429,6 +431,7 @@ async def _test_model_connection(
             provider=provider,
             context_size=context_size,
             max_output_tokens=max_output_tokens,
+            temperature=temperature,
         )
         
         if not llm:
@@ -552,4 +555,5 @@ async def test_model_config(
         api_base_url=resolve_model_api_base_url(request.provider, request.api_base_url),
         context_size=request.context_size,
         max_output_tokens=request.max_output_tokens,
+        temperature=request.temperature,
     )

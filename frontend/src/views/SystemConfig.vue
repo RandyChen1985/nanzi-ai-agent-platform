@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, computed, nextTick, watch } from 'vue'
 import axios from '@/utils/axios'
+import { getTemperatureGuidance, temperatureScaleGuidance } from '../utils/temperatureGuidance'
 import { useToast } from '../composables/useToast'
 import { useUser } from '../composables/useUser'
 import { modelApi, type AIModel } from '../api/model'
@@ -3192,6 +3193,14 @@ onUnmounted(() => {
                                             <span v-else-if="['ragflow_similarity_threshold', 'chatbi_sample_similarity_threshold', 'knowledge_ragflow_similarity_threshold'].includes(item.key)" class="text-[10px] text-gray-500 font-sans ml-1 select-none">(极高门槛)</span>
                                             <span v-else-if="['ragflow_vector_weight', 'chatbi_sample_vector_similarity_weight', 'knowledge_ragflow_vector_weight'].includes(item.key)" class="text-[10px] text-gray-500 font-sans ml-1 select-none">(只看语义)</span>
                                           </span>
+                                      </div>
+                                      <div v-if="item.key === 'llm_temperature'" class="mt-2 grid grid-cols-1 gap-1 text-[11px] leading-4 text-gray-500 sm:grid-cols-3 sm:gap-2">
+                                          <p v-for="guidance in temperatureScaleGuidance" :key="guidance.range">
+                                              <span class="font-medium text-gray-600">{{ guidance.range }}</span>：{{ guidance.description }}
+                                          </p>
+                                          <p class="sm:col-span-3 text-blue-600">
+                                              当前 {{ Number(item.value).toFixed(2) }}：{{ getTemperatureGuidance(item.value) }}
+                                          </p>
                                       </div>
                                   </div>
                                   <div class="w-16">

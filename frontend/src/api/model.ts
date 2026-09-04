@@ -11,6 +11,7 @@ export interface AIModel {
   api_base_url?: string
   context_size?: number | null
   max_output_tokens?: number | null
+  temperature?: number | null
   thinking_enable: boolean
   thinking_only: boolean
   allow_disable_thinking: boolean
@@ -30,6 +31,7 @@ export interface AIModelCreate {
   api_base_url?: string
   context_size?: number | null
   max_output_tokens?: number | null
+  temperature?: number | null
   thinking_enable?: boolean
   thinking_only?: boolean
   allow_disable_thinking?: boolean
@@ -47,6 +49,7 @@ export interface AIModelUpdate {
   api_base_url?: string
   context_size?: number | null
   max_output_tokens?: number | null
+  temperature?: number | null
   thinking_enable?: boolean
   thinking_only?: boolean
   allow_disable_thinking?: boolean
@@ -90,6 +93,7 @@ export interface AIModelTestRequest {
   api_key?: string | null
   context_size?: number | null
   max_output_tokens?: number | null
+  temperature?: number | null
   model_config_id?: string
 }
 

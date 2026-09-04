@@ -346,6 +346,18 @@ def test_model_token_limit_migrations_are_optional_and_idempotent():
     assert 'ADD COLUMN IF NOT EXISTS "max_output_tokens" INTEGER NULL' in postgres_migration
 
 
+def test_model_temperature_migrations_are_optional_and_idempotent():
+    mysql_migration = (ROOT / "db-prod" / "V144-add_ai_model_temperature.sql").read_text(encoding="utf-8")
+    postgres_migration = (PG_PROD / "V45-add_ai_model_temperature.sql").read_text(encoding="utf-8")
+
+    for migration in (mysql_migration, postgres_migration):
+        assert "temperature" in migration
+        assert "NULL" in migration
+
+    assert "information_schema.columns" in mysql_migration
+    assert 'ADD COLUMN IF NOT EXISTS "temperature" DOUBLE PRECISION NULL' in postgres_migration
+
+
 def test_pg_example_migrations_use_postgresql_boolean_and_column_comment():
     v4 = (PG_PROD / "V4-add_category_to_chatbi_examples.sql").read_text(encoding="utf-8")
     v5_path = PG_PROD / "V5-register_example_search_tool.sql"
