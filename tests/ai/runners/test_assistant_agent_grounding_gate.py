@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from app.schemas.agent import ChatConfig
-from app.services.ai.grounding.models import EvidenceType
+from app.services.ai.grounding.models import EvidenceType, FactFreshness
 from app.services.ai.grounding.ledger import EvidenceLedger
 from app.services.ai.grounding.policy import FactRequirement
 from app.services.ai.grounding.service import GroundingService
@@ -124,6 +124,677 @@ def test_grounding_requires_explicit_boolean_true():
     assert _runner(debug_options={"grounding_enabled": False})._grounding_enabled() is False
     assert _runner(debug_options={"grounding_enabled": "true"})._grounding_enabled() is False
     assert _runner(debug_options={"grounding_enabled": True})._grounding_enabled() is True
+
+
+def test_tool_preflight_marks_evidence_capable_nudge_as_current_turn_required():
+    from app.services.ai.tool_nudge_policy import ToolNudge
+
+    runner = _runner()
+    tool = RuntimeToolSpec(
+        name="mcp_get_tickets",
+        description="查询票务结果",
+        parameters_schema={"type": "object"},
+        source_type="mcp",
+        permission_scope="read",
+        callable=lambda: "ok",
+        evidence_types=frozenset({EvidenceType.EXTERNAL_TOOL}),
+    )
+    nudge = ToolNudge(
+        tool_name=tool.name,
+        score=1.0,
+        message="必须先调用工具",
+        force_first_call=True,
+    )
+
+    metadata = runner._build_tool_preflight_evidence_metadata(nudge, [tool])
+
+    assert metadata == {
+        "current_turn_evidence_required": True,
+        "required_evidence_types": ["external_tool"],
+    }
+
+
+def test_disabled_grounding_does_not_mark_preflight_as_strict_evidence():
+    from app.services.ai.tool_nudge_policy import ToolNudge
+
+    runner = _runner(debug_options={"grounding_enabled": False})
+    tool = RuntimeToolSpec(
+        name="mcp_get_tickets",
+        description="查询票务结果",
+        parameters_schema={"type": "object"},
+        source_type="mcp",
+        permission_scope="read",
+        callable=lambda: "ok",
+        evidence_types=frozenset({EvidenceType.EXTERNAL_TOOL}),
+    )
+    nudge = ToolNudge(
+        tool_name=tool.name,
+        score=1.0,
+        message="必须先调用工具",
+        force_first_call=True,
+    )
+
+    metadata = runner._build_tool_preflight_evidence_metadata(
+        nudge,
+        [tool],
+        grounding_enabled=False,
+    )
+
+    assert metadata == {
+        "current_turn_evidence_required": False,
+        "required_evidence_types": [],
+    }
+
+
+@pytest.mark.asyncio
+async def test_current_turn_evidence_gate_blocks_unverified_specific_answer():
+    runner = _runner(debug_options={"grounding_enabled": True})
+
+    async def fake_core(_history):
+        yield {
+            "type": "log",
+            "category": "tool_preflight",
+            "current_turn_evidence_required": True,
+            "required_evidence_types": ["external_tool"],
+        }
+        yield {
+            "type": "answer_delta",
+            "content": "明天车次 G1 的票价是 100 元。",
+            "phase": "synthesis",
+        }
+
+    with patch.object(runner, "_execute_core", fake_core):
+        events = [
+            event
+            async for event in runner.execute(
+                [{"role": "user", "content": "查询明天高铁票"}]
+            )
+        ]
+
+    answer = "".join(
+        str(event.get("content") or "")
+        for event in events
+        if event.get("type") == "answer_delta"
+    )
+    assert "G1" not in answer
+    assert "100 元" not in answer
+    assert "暂时无法可靠提供具体结论" in answer
+    assert any(
+        event.get("type") == "log"
+        and event.get("grounding_blocked") is True
+        for event in events
+    )
+
+
+@pytest.mark.asyncio
+async def test_disabled_grounding_does_not_reenable_strict_preflight_gate():
+    runner = _runner(debug_options={"grounding_enabled": False})
+
+    async def fake_core(_history):
+        yield {
+            "type": "log",
+            "category": "tool_preflight",
+            "current_turn_evidence_required": True,
+            "required_evidence_types": ["external_tool"],
+        }
+        yield {
+            "type": "answer_delta",
+            "content": "明天车次 G1 的票价是 100 元。",
+            "phase": "synthesis",
+        }
+
+    with patch.object(runner, "_execute_core", fake_core):
+        events = [
+            event
+            async for event in runner.execute(
+                [{"role": "user", "content": "查询明天高铁票"}]
+            )
+        ]
+
+    assert any(
+        event.get("type") == "answer_delta"
+        and "G1" in str(event.get("content") or "")
+        for event in events
+    )
+    assert not any(event.get("grounding_blocked") is True for event in events)
+
+
+@pytest.mark.asyncio
+async def test_stream_with_retraction_emits_speculative_answer_then_retraction():
+    runner = _runner(
+        debug_options={
+            "grounding_enabled": True,
+            "grounding_block_mode": "stream_with_retraction",
+        }
+    )
+
+    async def fake_core(_history):
+        yield {
+            "type": "log",
+            "category": "tool_preflight",
+            "current_turn_evidence_required": True,
+            "required_evidence_types": ["external_tool"],
+        }
+        yield {
+            "type": "answer_delta",
+            "content": "北京今天有 38 度。",
+            "phase": "synthesis",
+        }
+
+    with patch.object(runner, "_execute_core", fake_core):
+        events = [
+            event
+            async for event in runner.execute(
+                [{"role": "user", "content": "查询今天北京天气"}]
+            )
+        ]
+
+    answer_index = next(
+        index
+        for index, event in enumerate(events)
+        if event.get("type") == "answer_delta"
+        and "北京今天有" in str(event.get("content") or "")
+    )
+    retraction_index = next(
+        index
+        for index, event in enumerate(events)
+        if event.get("type") == "retraction"
+    )
+    assert answer_index < retraction_index
+    assert "北京今天有" not in str(events[retraction_index].get("content") or "")
+
+
+@pytest.mark.asyncio
+async def test_multi_tool_evidence_contracts_are_checked_independently():
+    runner = _runner(debug_options={"grounding_enabled": True})
+
+    async def fake_core(_history):
+        runner._evidence_ledger.record_success(
+            call_id="weather-1",
+            producer="weather_lookup",
+            evidence_types={EvidenceType.EXTERNAL_TOOL},
+            result={"city": "上海", "temperature": 26},
+        )
+        yield {
+            "type": "log",
+            "category": "tool_preflight",
+            "current_turn_evidence_required": True,
+            "required_evidence_types": ["external_tool"],
+            "evidence_contracts": [
+                {
+                    "tool_name": "weather_lookup",
+                    "required_evidence_types": ["external_tool"],
+                    "freshness": "current_turn",
+                },
+                {
+                    "tool_name": "train_lookup",
+                    "required_evidence_types": ["external_tool"],
+                    "freshness": "current_turn",
+                },
+            ],
+        }
+        yield {
+            "type": "answer_delta",
+            "content": "上海天气 26 度；北京到上海高铁票价 100 元。",
+            "phase": "synthesis",
+        }
+
+    with patch.object(runner, "_execute_core", fake_core):
+        events = [
+            event
+            async for event in runner.execute(
+                [{"role": "user", "content": "查上海天气并查北京到上海高铁"}]
+            )
+        ]
+
+    assert any(event.get("grounding_blocked") is True for event in events)
+
+
+@pytest.mark.asyncio
+async def test_multi_tool_evidence_contracts_release_each_correlated_result():
+    runner = _runner()
+
+    async def fake_core(_history):
+        runner._evidence_ledger.record_success(
+            call_id="weather-1",
+            producer="weather_lookup",
+            evidence_types={EvidenceType.EXTERNAL_TOOL},
+            result={"city": "上海", "temperature": 26},
+        )
+        runner._evidence_ledger.record_success(
+            call_id="train-1",
+            producer="train_lookup",
+            evidence_types={EvidenceType.EXTERNAL_TOOL},
+            result="北京到上海高铁 G1 票价 100 元",
+        )
+        yield {
+            "type": "log",
+            "category": "tool_preflight",
+            "current_turn_evidence_required": True,
+            "required_evidence_types": ["external_tool"],
+            "evidence_contracts": [
+                {
+                    "tool_name": "weather_lookup",
+                    "required_evidence_types": ["external_tool"],
+                    "freshness": "current_turn",
+                },
+                {
+                    "tool_name": "train_lookup",
+                    "required_evidence_types": ["external_tool"],
+                    "freshness": "current_turn",
+                },
+            ],
+        }
+        yield {
+            "type": "answer_delta",
+            "content": "上海天气 26 度；北京到上海高铁 G1 票价 100 元。",
+            "phase": "synthesis",
+        }
+
+    with patch.object(runner, "_execute_core", fake_core):
+        events = [
+            event
+            async for event in runner.execute(
+                [{"role": "user", "content": "查上海天气并查北京到上海高铁"}]
+            )
+        ]
+
+    assert any(
+        event.get("type") == "answer_delta"
+        and "上海天气" in str(event.get("content") or "")
+        for event in events
+    )
+    assert not any(event.get("grounding_blocked") is True for event in events)
+
+
+def test_evidence_contract_freshness_is_normalized_and_invalid_values_fail_closed():
+    runner = _runner()
+
+    assert runner._resolve_contract_freshness("current_turn") is FactFreshness.DYNAMIC
+    assert runner._resolve_contract_freshness("realtime") is FactFreshness.REALTIME
+    assert runner._resolve_contract_freshness("not-a-freshness") is None
+
+
+def test_resume_prefers_persisted_evidence_contracts_without_replanning(monkeypatch):
+    runner = _runner()
+    persisted_contracts = [
+        {
+            "tool_name": "weather_lookup",
+            "required_evidence_types": ["external_tool"],
+            "freshness": "current_turn",
+        }
+    ]
+
+    def fail_if_replanned(*_args, **_kwargs):
+        raise AssertionError("resume must not recompute the original evidence plan")
+
+    monkeypatch.setattr(
+        "app.services.ai.tool_nudge_policy.resolve_tool_nudge_plan",
+        fail_if_replanned,
+    )
+
+    contracts = runner._resolve_resume_evidence_contracts(
+        {
+            "user_query": "查上海天气",
+            "evidence_contracts": persisted_contracts,
+        },
+        [],
+    )
+
+    assert contracts == tuple(persisted_contracts)
+
+
+@pytest.mark.asyncio
+async def test_current_turn_evidence_gate_releases_answer_with_matching_receipt():
+    runner = _runner()
+
+    async def fake_core(_history):
+        runner._evidence_ledger.record_success(
+            call_id="mcp-ticket-1",
+            producer="mcp_get_tickets",
+            evidence_types={EvidenceType.EXTERNAL_TOOL},
+            result="车次 G1 票价 100 元",
+        )
+        yield {
+            "type": "log",
+            "category": "tool_preflight",
+            "current_turn_evidence_required": True,
+            "required_evidence_types": ["external_tool"],
+        }
+        yield {
+            "type": "answer_delta",
+            "content": "车次 G1 的票价是 100 元。",
+            "phase": "synthesis",
+        }
+
+    with patch.object(runner, "_execute_core", fake_core):
+        events = [
+            event
+            async for event in runner.execute(
+                [{"role": "user", "content": "查询明天高铁票"}]
+            )
+        ]
+
+    answer = "".join(
+        str(event.get("content") or "")
+        for event in events
+        if event.get("type") == "answer_delta"
+    )
+    assert answer == "车次 G1 的票价是 100 元。"
+    assert not any(event.get("grounding_blocked") is True for event in events)
+
+
+@pytest.mark.asyncio
+async def test_current_turn_evidence_gate_warns_when_successful_external_receipt_has_weak_overlap():
+    runner = _runner(debug_options={"grounding_enabled": True})
+
+    async def fake_core(_history):
+        runner._evidence_ledger.record_success(
+            call_id="mcp-weather-1",
+            producer="weather_lookup",
+            evidence_types={EvidenceType.EXTERNAL_TOOL},
+            result={"city": "上海", "temperature": 26},
+        )
+        yield {
+            "type": "log",
+            "category": "tool_preflight",
+            "current_turn_evidence_required": True,
+            "required_evidence_types": ["external_tool"],
+            "evidence_contracts": [
+                {
+                    "tool_name": "weather_lookup",
+                    "required_evidence_types": ["external_tool"],
+                    "freshness": "current_turn",
+                }
+            ],
+        }
+        yield {
+            "type": "answer_delta",
+            "content": "上海预计有 27 度。",
+            "phase": "synthesis",
+        }
+
+    with patch.object(runner, "_execute_core", fake_core):
+        events = [
+            event
+            async for event in runner.execute(
+                [{"role": "user", "content": "查询今天上海天气"}]
+            )
+        ]
+
+    answer = "".join(
+        str(event.get("content") or "")
+        for event in events
+        if event.get("type") == "answer_delta"
+    )
+    assert "上海预计有 27 度" in answer
+    assert not any(event.get("grounding_blocked") is True for event in events)
+    warning = next(event for event in events if event.get("grounding_risk"))
+    assert warning["grounding_risk"]["level"] == "medium"
+
+
+@pytest.mark.asyncio
+async def test_current_turn_evidence_gate_blocks_weak_overlap_for_internal_data():
+    runner = _runner(debug_options={"grounding_enabled": True})
+
+    async def fake_core(_history):
+        runner._evidence_ledger.record_success(
+            call_id="data-query-1",
+            producer="data_lookup",
+            evidence_types={EvidenceType.INTERNAL_DATA},
+            result={"region": "华东", "amount": 100},
+        )
+        yield {
+            "type": "log",
+            "category": "tool_preflight",
+            "current_turn_evidence_required": True,
+            "required_evidence_types": ["internal_data"],
+            "evidence_contracts": [
+                {
+                    "tool_name": "data_lookup",
+                    "required_evidence_types": ["internal_data"],
+                    "freshness": "current_turn",
+                }
+            ],
+        }
+        yield {
+            "type": "answer_delta",
+            "content": "华南地区销售额 999 万元。",
+            "phase": "synthesis",
+        }
+
+    with patch.object(runner, "_execute_core", fake_core):
+        events = [
+            event
+            async for event in runner.execute(
+                [{"role": "user", "content": "查询内部销售额"}]
+            )
+        ]
+
+    assert any(event.get("grounding_blocked") is True for event in events)
+    answer = "".join(
+        str(event.get("content") or "")
+        for event in events
+        if event.get("type") == "answer_delta"
+    )
+    assert "暂时无法可靠提供具体结论" in answer
+
+
+@pytest.mark.asyncio
+async def test_current_turn_evidence_gate_does_not_reuse_historical_receipt():
+    runner = _runner(debug_options={"grounding_enabled": True})
+
+    async def fake_core(_history):
+        runner._evidence_ledger.record_success(
+            call_id="historical-ticket-1",
+            producer="previous-turn:mcp_get_tickets",
+            evidence_types={EvidenceType.EXTERNAL_TOOL},
+            result="车次 G1 票价 100 元",
+            freshness=FactFreshness.REUSE_PREVIOUS,
+        )
+        yield {
+            "type": "log",
+            "category": "tool_preflight",
+            "current_turn_evidence_required": True,
+            "required_evidence_types": ["external_tool"],
+        }
+        yield {
+            "type": "answer_delta",
+            "content": "车次 G1 的票价是 100 元。",
+            "phase": "synthesis",
+        }
+
+    with patch.object(runner, "_execute_core", fake_core):
+        events = [
+            event
+            async for event in runner.execute(
+                [{"role": "user", "content": "查询明天高铁票"}]
+            )
+        ]
+
+    answer = "".join(
+        str(event.get("content") or "")
+        for event in events
+        if event.get("type") == "answer_delta"
+    )
+    assert "G1" not in answer
+    assert any(event.get("grounding_blocked") is True for event in events)
+
+
+@pytest.mark.asyncio
+async def test_preflight_failure_keeps_current_turn_evidence_gate_fail_closed():
+    runner = _runner(debug_options={"grounding_enabled": True})
+    tool = RuntimeToolSpec(
+        name="mcp_get_tickets",
+        description="查询高铁票车次和票价",
+        parameters_schema={"type": "object"},
+        source_type="mcp",
+        permission_scope="read",
+        callable=lambda: "ok",
+        evidence_types=frozenset({EvidenceType.EXTERNAL_TOOL}),
+    )
+
+    with patch.object(
+        runner,
+        "_resolve_runtime_tools_from_config",
+        AsyncMock(return_value=[tool]),
+    ), patch.object(
+        runner,
+        "_resolve_available_sub_agent_delegation_info",
+        AsyncMock(return_value=(set(), {})),
+    ), patch(
+        "app.services.config_service.ConfigService.get",
+        AsyncMock(side_effect=["5", "soft"]),
+    ), patch(
+        "app.services.ai.tool_nudge_policy.resolve_tool_nudge",
+        side_effect=RuntimeError("preflight resolver failed"),
+    ), patch(
+        "app.services.ai.config.AgentConfigProvider.get_configured_llm",
+        AsyncMock(return_value=SimpleNamespace(native_model=None)),
+    ), patch(
+        "app.services.ai.session_tool_artifact.load_session_tool_artifact",
+        AsyncMock(return_value=None),
+    ):
+        events = [
+            event
+            async for event in runner._execute_core(
+                [{"role": "user", "content": "查询明天高铁票"}]
+            )
+        ]
+
+    preflight = next(
+        event
+        for event in events
+        if event.get("type") == "log" and event.get("category") == "tool_preflight"
+    )
+    assert preflight["current_turn_evidence_required"] is True
+    assert preflight["force_first_call"] is True
+    assert preflight["required_evidence_types"] == ["external_tool"]
+
+
+@pytest.mark.asyncio
+async def test_current_turn_evidence_gate_releases_explicit_no_result_answer():
+    runner = _runner()
+
+    async def fake_core(_history):
+        yield {
+            "type": "log",
+            "category": "tool_preflight",
+            "current_turn_evidence_required": True,
+            "required_evidence_types": ["external_tool"],
+        }
+        yield {"content": "本轮没有获取到实时结果，暂时无法确认。"}
+
+    with patch.object(runner, "_execute_core", fake_core):
+        events = [
+            event
+            async for event in runner.execute(
+                [{"role": "user", "content": "查询明天高铁票"}]
+            )
+        ]
+
+    assert "本轮没有获取到实时结果" in "".join(
+        str(event.get("content") or "") for event in events
+    )
+    assert not any(event.get("grounding_blocked") is True for event in events)
+
+
+@pytest.mark.asyncio
+async def test_current_turn_evidence_gate_waits_for_interrupted_tool_resume():
+    runner = _runner(debug_options={"grounding_enabled": True})
+
+    async def fake_core(_history):
+        yield {
+            "type": "log",
+            "category": "tool_preflight",
+            "current_turn_evidence_required": True,
+            "required_evidence_types": ["external_tool"],
+        }
+        yield {
+            "type": "external_execution_required",
+            "status": "pending",
+            "tool_call": {"name": "mcp_get_tickets"},
+        }
+        yield {
+            "type": "answer_delta",
+            "content": "车次 G1 的票价是 100 元。",
+            "phase": "synthesis",
+        }
+
+    with patch.object(runner, "_execute_core", fake_core):
+        events = [
+            event
+            async for event in runner.execute(
+                [{"role": "user", "content": "查询明天高铁票"}]
+            )
+        ]
+
+    assert not any(event.get("grounding_blocked") is True for event in events)
+    assert not any(
+        event.get("type") == "answer_delta"
+        and "G1" in str(event.get("content") or "")
+        for event in events
+    )
+
+
+@pytest.mark.asyncio
+async def test_resumed_evidence_tool_answer_is_blocked_without_successful_receipt():
+    runner = _runner(debug_options={"grounding_enabled": True})
+    agent = SimpleNamespace(reply_stream=lambda _event: object(), state={})
+    native_model = SimpleNamespace(model="test")
+    state = {"user_query": "查询明天高铁票"}
+    tool = RuntimeToolSpec(
+        name="mcp_get_tickets",
+        description="查询票务结果",
+        parameters_schema={"type": "object"},
+        source_type="mcp",
+        permission_scope="read",
+        callable=lambda: "ok",
+        evidence_types=frozenset({EvidenceType.EXTERNAL_TOOL}),
+    )
+    pending = SimpleNamespace(
+        snapshot=SimpleNamespace(evidence_receipts=[]),
+        tool_call=SimpleNamespace(name=tool.name),
+    )
+
+    async def fake_stream(**_kwargs):
+        yield {"type": "answer_delta", "content": "车次 G1 的票价是 100 元。"}
+
+    with patch.object(
+        runner,
+        "_create_tool_loop_detector",
+        AsyncMock(return_value=None),
+    ), patch.object(
+        runner,
+        "_resolve_pending_runtime",
+        AsyncMock(return_value=(agent, [tool], native_model, state)),
+    ), patch.object(
+        runner,
+        "_stream_agentscope_native_events",
+        fake_stream,
+    ), patch(
+        "app.services.ai.runners.assistant_agent_runner.agent_state_store.save",
+        AsyncMock(return_value=None),
+    ), patch.object(
+        assistant_runner_module.agentscope_session_lock,
+        "hold",
+        _unlocked_session,
+    ):
+        events = [
+            event
+            async for event in runner._resume_agentscope_native_stream(
+                pending=pending,
+                resume_event=object(),
+            )
+        ]
+
+    answer = "".join(
+        str(event.get("content") or "")
+        for event in events
+        if event.get("type") == "answer_delta"
+    )
+    assert "G1" not in answer
+    assert any(event.get("grounding_blocked") is True for event in events)
 
 
 @pytest.mark.asyncio

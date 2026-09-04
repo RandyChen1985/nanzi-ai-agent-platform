@@ -9,9 +9,11 @@ from app.services.ai.grounding.policy import (
     GroundingRiskLevel,
     contains_grounding_fact_signal,
     evaluate_grounding,
+    is_non_concrete_execution_summary,
     resolve_fact_requirement,
     evidence_types_for_capabilities,
 )
+from app.services.ai.grounding.service import GroundingService
 from app.services.ai.request_decision import (
     RequestCapability,
     RequestDecision,
@@ -39,6 +41,270 @@ def test_internal_data_source_requires_matching_evidence():
 
     assert requirement.required
     assert requirement.accepted_types == frozenset({EvidenceType.INTERNAL_DATA})
+
+
+def test_success_receipt_allows_non_concrete_execution_summary_without_marker_overlap():
+    ledger = EvidenceLedger(user_id="1", conversation_id="c1")
+    ledger.record_success(
+        call_id="call-1",
+        producer="report_query",
+        evidence_types={EvidenceType.EXTERNAL_TOOL},
+        result={"status": "ok", "data": {"state": "healthy"}},
+        policy="allow_empty_success",
+    )
+
+    decision = GroundingService.audit(
+        requirement=FactRequirement(
+            required=True,
+            accepted_types=frozenset({EvidenceType.EXTERNAL_TOOL}),
+            freshness=FactFreshness.DYNAMIC,
+            block_unsupported_facts=True,
+        ),
+        candidate_text="已成功调用查询工具，查询已完成。",
+        ledger=ledger,
+    ).decision
+
+    assert decision.action is GroundingAction.PASS
+
+
+@pytest.mark.parametrize(
+    "candidate_text",
+    [
+        "系统状态正常。",
+        "系统运行平稳。",
+        "服务运行正常。",
+        "连接正常。",
+    ],
+)
+def test_operational_status_is_not_treated_as_execution_summary(candidate_text):
+    ledger = EvidenceLedger(user_id="1", conversation_id="c1")
+    ledger.record_success(
+        call_id="call-1",
+        producer="report_query",
+        evidence_types={EvidenceType.EXTERNAL_TOOL},
+        result={"status": "ok", "data": {"city": "上海", "temperature": 26}},
+        policy="allow_empty_success",
+    )
+
+    decision = GroundingService.audit(
+        requirement=FactRequirement(
+            required=True,
+            accepted_types=frozenset({EvidenceType.EXTERNAL_TOOL}),
+            freshness=FactFreshness.DYNAMIC,
+            block_unsupported_facts=True,
+        ),
+        candidate_text=candidate_text,
+        ledger=ledger,
+    ).decision
+
+    assert not is_non_concrete_execution_summary(candidate_text)
+    assert decision.action is GroundingAction.PASS_WITH_WARNING
+
+
+def test_data_sync_remains_an_execution_summary_after_successful_receipt():
+    ledger = EvidenceLedger(user_id="1", conversation_id="c1")
+    ledger.record_success(
+        call_id="call-1",
+        producer="report_query",
+        evidence_types={EvidenceType.EXTERNAL_TOOL},
+        result={"status": "ok", "data": {"rows": 3}},
+        policy="allow_empty_success",
+    )
+
+    decision = GroundingService.audit(
+        requirement=FactRequirement(
+            required=True,
+            accepted_types=frozenset({EvidenceType.EXTERNAL_TOOL}),
+            freshness=FactFreshness.DYNAMIC,
+            block_unsupported_facts=True,
+        ),
+        candidate_text="数据已同步。",
+        ledger=ledger,
+    ).decision
+
+    assert decision.action is GroundingAction.PASS
+
+
+@pytest.mark.parametrize(
+    "candidate_text",
+    [
+        "查询已完成了。",
+        "查询完成啊。",
+        "查询完成呢。",
+        "查询已完成，可以继续。",
+        "查询已完成并返回结果。",
+        "查询已完成，结果已返回。",
+    ],
+)
+def test_safe_execution_summary_suffixes_remain_releasable(candidate_text):
+    ledger = EvidenceLedger(user_id="1", conversation_id="c1")
+    ledger.record_success(
+        call_id="call-1",
+        producer="report_query",
+        evidence_types={EvidenceType.EXTERNAL_TOOL},
+        result={"status": "ok", "data": {"rows": 3}},
+        policy="allow_empty_success",
+    )
+
+    decision = GroundingService.audit(
+        requirement=FactRequirement(
+            required=True,
+            accepted_types=frozenset({EvidenceType.EXTERNAL_TOOL}),
+            freshness=FactFreshness.DYNAMIC,
+            block_unsupported_facts=True,
+        ),
+        candidate_text=candidate_text,
+        ledger=ledger,
+    ).decision
+
+    assert decision.action is GroundingAction.PASS
+
+
+@pytest.mark.parametrize(
+    "candidate_text, expected_action",
+    [
+        ("查询结果。", GroundingAction.PASS),
+        ("数据已成功。", GroundingAction.PASS_WITH_WARNING),
+        ("查询已成功。", GroundingAction.PASS_WITH_WARNING),
+    ],
+)
+def test_incomplete_status_phrases_are_not_execution_summaries(
+    candidate_text, expected_action
+):
+    ledger = EvidenceLedger(user_id="1", conversation_id="c1")
+    ledger.record_success(
+        call_id="call-1",
+        producer="report_query",
+        evidence_types={EvidenceType.EXTERNAL_TOOL},
+        result={"status": "ok", "data": {"rows": 3}},
+        policy="allow_empty_success",
+    )
+
+    decision = GroundingService.audit(
+        requirement=FactRequirement(
+            required=True,
+            accepted_types=frozenset({EvidenceType.EXTERNAL_TOOL}),
+            freshness=FactFreshness.DYNAMIC,
+            block_unsupported_facts=True,
+        ),
+        candidate_text=candidate_text,
+        ledger=ledger,
+    ).decision
+
+    assert not is_non_concrete_execution_summary(candidate_text)
+    assert decision.action is expected_action
+
+
+def test_expired_external_receipt_cannot_correlate_fresh_answer():
+    now = datetime(2026, 9, 4, 8, 0, tzinfo=timezone.utc)
+    ledger = EvidenceLedger(user_id="1", conversation_id="c1")
+    ledger.record_success(
+        call_id="expired-weather",
+        producer="weather_lookup",
+        evidence_types={EvidenceType.EXTERNAL_TOOL},
+        result={"city": "北京", "temperature": 38},
+        observed_at=now - timedelta(minutes=10),
+        expires_at=now - timedelta(seconds=1),
+        freshness=FactFreshness.DYNAMIC,
+    )
+
+    decision = evaluate_grounding(
+        requirement=FactRequirement(
+            required=True,
+            accepted_types=frozenset({EvidenceType.EXTERNAL_TOOL}),
+            freshness=FactFreshness.DYNAMIC,
+            block_unsupported_facts=True,
+        ),
+        candidate_text="北京今天 38 度。",
+        ledger=ledger,
+    )
+
+    assert decision.action is GroundingAction.PASS_WITH_WARNING
+
+
+@pytest.mark.parametrize(
+    "candidate_text",
+    [
+        "成功查询，结果为北京。",
+        "已成功调用查询工具，库存充足。",
+        "已成功查询，系统支持退票。",
+    ],
+)
+def test_business_conclusion_is_not_treated_as_execution_summary(candidate_text):
+    ledger = EvidenceLedger(user_id="1", conversation_id="c1")
+    ledger.record_success(
+        call_id="call-1",
+        producer="report_query",
+        evidence_types={EvidenceType.EXTERNAL_TOOL},
+        result={"status": "ok", "data": {"state": "healthy"}},
+        policy="allow_empty_success",
+    )
+
+    decision = GroundingService.audit(
+        requirement=FactRequirement(
+            required=True,
+            accepted_types=frozenset({EvidenceType.EXTERNAL_TOOL}),
+            freshness=FactFreshness.DYNAMIC,
+            block_unsupported_facts=True,
+        ),
+        candidate_text=candidate_text,
+        ledger=ledger,
+    ).decision
+
+    assert decision.action is GroundingAction.PASS_WITH_WARNING
+
+
+def test_non_concrete_operational_status_without_receipt_is_not_released():
+    decision = GroundingService.audit(
+        requirement=FactRequirement(
+            required=True,
+            accepted_types=frozenset({EvidenceType.EXTERNAL_TOOL}),
+            freshness=FactFreshness.DYNAMIC,
+            block_unsupported_facts=True,
+        ),
+        candidate_text="系统运行平稳。",
+        ledger=EvidenceLedger(user_id="1", conversation_id="c1"),
+    ).decision
+
+    assert decision.action is not GroundingAction.PASS
+
+
+def test_completed_sync_status_without_receipt_is_not_released():
+    decision = GroundingService.audit(
+        requirement=FactRequirement(
+            required=True,
+            accepted_types=frozenset({EvidenceType.EXTERNAL_TOOL}),
+            freshness=FactFreshness.DYNAMIC,
+            block_unsupported_facts=True,
+        ),
+        candidate_text="数据同步完成。",
+        ledger=EvidenceLedger(user_id="1", conversation_id="c1"),
+    ).decision
+
+    assert decision.action is not GroundingAction.PASS
+
+
+def test_success_receipt_does_not_release_unrelated_concrete_fact():
+    ledger = EvidenceLedger(user_id="1", conversation_id="c1")
+    ledger.record_success(
+        call_id="call-1",
+        producer="report_query",
+        evidence_types={EvidenceType.EXTERNAL_TOOL},
+        result={"city": "上海", "temperature": 26},
+    )
+
+    decision = GroundingService.audit(
+        requirement=FactRequirement(
+            required=True,
+            accepted_types=frozenset({EvidenceType.EXTERNAL_TOOL}),
+            freshness=FactFreshness.DYNAMIC,
+            block_unsupported_facts=True,
+        ),
+        candidate_text="北京明天有 38 度。",
+        ledger=ledger,
+    ).decision
+
+    assert decision.action is GroundingAction.PASS_WITH_WARNING
 
 
 def test_runtime_requirement_defaults_to_realtime_with_short_age_window():
@@ -856,7 +1122,32 @@ def test_stale_runtime_evidence_returns_warning_instead_of_silent_pass():
 
     assert decision.action == GroundingAction.PASS_WITH_WARNING
     assert "stale" in decision.reason
-    assert decision.risk_level == GroundingRiskLevel.MEDIUM
+    assert decision.risk_level == GroundingRiskLevel.HIGH
+
+
+def test_evidence_rejected_by_source_timestamp_requirement_stays_high_risk():
+    ledger = EvidenceLedger(user_id="u1", conversation_id="c1")
+    ledger.record_success(
+        call_id="runtime-without-source-time",
+        producer="list_process",
+        evidence_types={EvidenceType.RUNTIME_STATE},
+        result={"load": 0.2, "host": "server-1"},
+        freshness=FactFreshness.REALTIME,
+    )
+
+    decision = evaluate_grounding(
+        requirement=FactRequirement(
+            required=True,
+            accepted_types=frozenset({EvidenceType.RUNTIME_STATE}),
+            freshness=FactFreshness.REALTIME,
+            requires_source_timestamp=True,
+        ),
+        candidate_text="server-1 当前负载为 0.2。",
+        ledger=ledger,
+    )
+
+    assert decision.action is GroundingAction.PASS_WITH_WARNING
+    assert decision.risk_level is GroundingRiskLevel.HIGH
 
 
 def test_fresh_stale_evidence_allows_refusal_without_warning():

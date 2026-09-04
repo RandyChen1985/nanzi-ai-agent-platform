@@ -1,14 +1,22 @@
+import logging
 from types import SimpleNamespace
 
 import pytest
 
+from app.services.ai import tool_nudge_policy
 from app.services.ai.tool_nudge_policy import (
     STRONG_FORCE_SCORE,
+    ToolNudge,
     is_automatic_delivery_context,
+    is_tool_meta_query,
     looks_like_explicit_user_question_request,
     resolve_tool_nudge,
+    resolve_evidence_tool_fallback_nudge,
+    resolve_tool_nudge_plan,
     should_consider_tool_nudge,
 )
+from app.services.ai.grounding.models import EvidenceType
+from app.services.ai.tool_policy import ToolMetadata
 from app.services.ai.intent_service import IntentType
 from app.services.ai.request_decision import (
     RequestCapability,
@@ -24,6 +32,133 @@ pytestmark = pytest.mark.no_infrastructure
 
 def _tool(name: str, description: str = ""):
     return SimpleNamespace(name=name, description=description)
+
+
+def _evidence_tool(name: str, description: str):
+    return SimpleNamespace(
+        name=name,
+        description=description,
+        permission_scope="read",
+        source_type="generic_api",
+        evidence_types={EvidenceType.EXTERNAL_TOOL},
+    )
+
+
+def test_capability_only_query_does_not_force_an_evidence_tool():
+    nudge = resolve_tool_nudge(
+        "你们支持查天气吗？",
+        [_evidence_tool("weather_lookup", "查询指定城市的实时天气和未来天气")],
+    )
+
+    assert nudge is None or nudge.force_first_call is False
+
+
+def test_common_capability_question_variants_do_not_force_an_evidence_tool():
+    tool = _evidence_tool("weather_lookup", "查询指定城市的实时天气和未来天气")
+
+    assert resolve_tool_nudge("可以查天气吗？", [tool]) is None
+    assert resolve_tool_nudge("能查天气吗？", [tool]) is None
+
+
+def test_tool_meta_query_detection_has_a_public_cross_module_api():
+    assert is_tool_meta_query("你们支持查天气吗？") is True
+    assert is_tool_meta_query("查询上海明天实时天气") is False
+
+
+def test_capability_question_starting_with_query_is_not_forced_to_call_tool():
+    tool = _evidence_tool("weather_lookup", "查询指定城市的实时天气和未来天气")
+
+    assert resolve_tool_nudge("查询天气工具支持哪些城市？", [tool]) is None
+
+
+def test_capability_question_with_real_target_still_uses_tool():
+    nudge = resolve_tool_nudge(
+        "查询上海明天实时天气",
+        [_evidence_tool("weather_lookup", "查询指定城市的实时天气和未来天气")],
+    )
+
+    assert nudge is not None
+    assert nudge.tool_name == "weather_lookup"
+    assert nudge.force_first_call is True
+
+
+def test_capability_question_with_concrete_target_is_not_treated_as_meta_only():
+    nudge = resolve_tool_nudge(
+        "支持查询上海明天实时天气吗？",
+        [_evidence_tool("weather_lookup", "查询指定城市的实时天气和未来天气")],
+    )
+
+    assert nudge is not None
+    assert nudge.tool_name == "weather_lookup"
+    assert nudge.force_first_call is True
+
+
+def test_evidence_fallback_requires_the_higher_minimum_score():
+    assert resolve_evidence_tool_fallback_nudge(
+        "天气情况",
+        [_evidence_tool("weather_lookup", "查询城市天气")],
+    ) is None
+
+
+def test_evidence_fallback_rejects_ambiguous_best_candidate():
+    tools = [
+        _evidence_tool("weather_a", "查询上海天气温度"),
+        _evidence_tool("weather_b", "查询上海天气降雨"),
+    ]
+
+    assert resolve_evidence_tool_fallback_nudge("查询上海天气", tools) is None
+
+
+def test_evidence_fallback_skips_capability_questions():
+    assert resolve_evidence_tool_fallback_nudge(
+        "有没有天气查询工具",
+        [_evidence_tool("weather_lookup", "查询天气")],
+    ) is None
+
+
+def test_evidence_fallback_logs_metadata_resolution_failure_without_result_details(
+    monkeypatch,
+    caplog,
+):
+    def raise_metadata_error(_tool):
+        raise RuntimeError("secret tool arguments should not be logged")
+
+    monkeypatch.setattr(tool_nudge_policy, "resolve_tool_metadata", raise_metadata_error)
+    with caplog.at_level(logging.WARNING, logger="app.services.ai.tool_nudge_policy"):
+        nudge = resolve_evidence_tool_fallback_nudge(
+            "查询上海天气",
+            [_evidence_tool("weather_lookup", "查询上海天气")],
+        )
+
+    assert nudge is not None
+    assert "weather_lookup" in caplog.text
+    assert "secret tool arguments" not in caplog.text
+
+
+def test_multi_tool_plan_requires_two_distinct_high_confidence_read_tools():
+    tools = [
+        _evidence_tool("weather_lookup", "查询上海明天天气"),
+        _evidence_tool("train_lookup", "查询北京到上海的高铁车票"),
+    ]
+
+    plan = resolve_tool_nudge_plan(
+        "查上海明天天气，并查北京到上海的高铁",
+        tools,
+    )
+
+    assert plan is not None
+    assert [contract.tool_name for contract in plan.evidence_contracts] == [
+        "weather_lookup",
+        "train_lookup",
+    ]
+    assert plan.primary.tool_name == "weather_lookup"
+
+
+def test_ambiguous_multi_tool_query_does_not_create_a_partial_plan():
+    assert resolve_tool_nudge_plan(
+        "查天气并顺便看看情况",
+        [_evidence_tool("weather_lookup", "查询天气")],
+    ) is None
 
 
 def _office_tools(*names):
@@ -188,12 +323,42 @@ def test_nudges_tool_by_description_relevance():
     assert "exec_command" in nudge.message
 
 
+def test_generic_read_only_mcp_evidence_tool_forces_first_call():
+    tool = SimpleNamespace(
+        name="mcp_get_tickets",
+        description="查询明天高铁票的车次和票价",
+        source_type="mcp",
+        permission_scope="read",
+        evidence_types=frozenset({EvidenceType.EXTERNAL_TOOL}),
+    )
+
+    nudge = resolve_tool_nudge("查询明天高铁票", [tool])
+
+    assert nudge is not None
+    assert nudge.tool_name == "mcp_get_tickets"
+    assert nudge.should_force_first_call is True
+    assert nudge.metadata is not None
+    assert nudge.metadata.nudge_mode == "evidence"
+
+
 def test_high_relevance_recommends_specific_tool_force_mode():
     tools = [_tool("exec_command", "执行 shell 命令查看系统负载与内存占用")]
     nudge = resolve_tool_nudge("帮我看一下系统负载内存占用", tools)
     assert nudge is not None
     assert nudge.score >= STRONG_FORCE_SCORE
     assert nudge.recommended_force_mode() == "exec_command"
+
+
+def test_low_relevance_evidence_nudge_still_targets_the_specific_tool():
+    nudge = ToolNudge(
+        tool_name="mcp_get_tickets",
+        score=0.1,
+        message="必须先取得本轮工具结果",
+        force_first_call=True,
+        metadata=ToolMetadata(nudge_mode="evidence"),
+    )
+
+    assert nudge.recommended_force_mode() == "mcp_get_tickets"
 
 
 def test_no_nudge_when_no_tool_is_relevant():

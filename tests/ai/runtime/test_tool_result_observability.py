@@ -106,6 +106,24 @@ def test_successful_bash_output_containing_error_is_not_a_failure():
     assert is_tool_result_error("bash", "Command failed: exit 1") is True
 
 
+def test_tool_observation_advances_trace_step_number():
+    runner = _runner_for_observation()
+
+    result = runner._build_tool_observation(
+        tool_id="bash-step",
+        tool_name="Bash",
+        tool_args={"command": "uptime"},
+        tool_output="up 1 day",
+        duration_tool=12,
+        target_tool=None,
+        tool_index=0,
+        tool_result_state="success",
+    )
+
+    assert result["trace"].step_number == 2
+    assert runner.step_counter == 2
+
+
 def test_failed_bash_exposes_a_sanitized_concrete_reason():
     output = "Command failed: cat /Users/demo/secret.txt\n\nStderr:\nPermission denied"
 

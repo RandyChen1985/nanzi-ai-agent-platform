@@ -39,8 +39,41 @@ def test_create_tool_schema_parsing(mock_tool_config):
     assert fields["include_details"].annotation == bool
     # 验证默认值
     assert fields["include_details"].default is False
+    assert tool.is_read_only is True
+    assert tool.permission_scope == "read"
     assert tool.evidence_types == frozenset({"external_tool"})
     assert tool.evidence_policy == "allow_empty_success"
+
+
+def test_generic_api_post_query_is_read_only_and_evidence_tool():
+    config = SysApiTool(
+        name="report_query",
+        method="POST",
+        url_template="http://api.example.com/report",
+        parameter_schema={"properties": {"date": {"type": "string"}}},
+    )
+
+    tool = GenericApiToolFactory.create_tool(config)
+
+    assert tool.is_read_only is True
+    assert tool.permission_scope == "read"
+    assert tool.evidence_types == frozenset({EvidenceType.EXTERNAL_TOOL})
+
+
+def test_generic_api_empty_method_uses_consistent_read_only_metadata():
+    config = SysApiTool(
+        name="default_get_user",
+        method="",
+        url_template="http://api.example.com/users",
+        parameter_schema={"properties": {}},
+    )
+
+    tool = GenericApiToolFactory.create_tool(config)
+
+    assert tool.is_read_only is True
+    assert tool.permission_scope == "read"
+    assert tool.evidence_types == frozenset({EvidenceType.EXTERNAL_TOOL})
+
 
 @pytest.mark.asyncio
 async def test_execute_request_get_with_path_substitution(mock_tool_config):

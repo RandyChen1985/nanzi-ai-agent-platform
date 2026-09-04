@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Mapping
 
 
@@ -852,13 +852,53 @@ def resolve_tool_metadata(
 ) -> ToolMetadata:
     """Resolve explicit metadata and fall back to neutral values."""
     name = str(getattr(tool, "name", tool) or "").strip()
+    permission_scope = str(getattr(tool, "permission_scope", "") or "").strip()
+    source_type = str(getattr(tool, "source_type", "") or "").strip()
+    evidence_types = frozenset(getattr(tool, "evidence_types", None) or ())
+
+    # 运行时权限是工具实例的事实来源，优先级高于按名称推断的历史元数据。
+    # 否则，一个动态注册的 POST/写工具只要恰好撞名 execute_sql_query 等已知
+    # 只读工具，就会被误标为 evidence，进而触发错误的首步强制调用。
+    if permission_scope and permission_scope != "read":
+        base_metadata = None
+        if metadata_by_name and name in metadata_by_name:
+            base_metadata = metadata_by_name[name]
+        elif name in _KNOWN_TOOL_METADATA:
+            base_metadata = _KNOWN_TOOL_METADATA[name]
+        if base_metadata is not None:
+            return replace(
+                base_metadata,
+                side_effect=(
+                    "unknown"
+                    if base_metadata.side_effect == "read"
+                    else base_metadata.side_effect
+                ),
+                nudge_mode=(
+                    "fallback"
+                    if base_metadata.nudge_mode == "evidence"
+                    else base_metadata.nudge_mode
+                ),
+            )
+        return ToolMetadata(
+            source=source_type or "unknown",
+            side_effect="unknown",
+        )
+
     if metadata_by_name and name in metadata_by_name:
         return metadata_by_name[name]
     if name in _KNOWN_TOOL_METADATA:
         return _KNOWN_TOOL_METADATA[name]
 
-    permission_scope = str(getattr(tool, "permission_scope", "") or "").strip()
-    source_type = str(getattr(tool, "source_type", "") or "").strip()
+    if evidence_types and permission_scope == "read":
+        return ToolMetadata(
+            capability=("external_tool" if source_type in {"mcp", "generic_api"} else "unknown"),
+            source=source_type or "unknown",
+            freshness="dynamic",
+            side_effect="read",
+            confirmation="none",
+            idempotent="yes",
+            nudge_mode="evidence",
+        )
     if permission_scope or source_type:
         return ToolMetadata(
             source=source_type or "unknown",

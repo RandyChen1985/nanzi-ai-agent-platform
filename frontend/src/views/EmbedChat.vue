@@ -2868,6 +2868,7 @@ const config = reactive({
   showShortcuts: true,
   enableSqlPlan: false,
   enableGrounding: true, // Embed 默认开启反幻觉校验
+  groundingBlockMode: "strict_buffer" as "strict_buffer" | "stream_with_retraction",
   expandThoughts: true, // 思考过程默认展示开关
   markdownTheme: "default" as "default" | "minimal" | "academic" | "apple" | "warm" | "compact",
   hideMessageBorder: true,
@@ -3242,6 +3243,7 @@ const saveRoutingSettings = () => {
     localStorage.setItem("yovole_approval_mode", config.approvalMode || "ask");
     localStorage.setItem("yovole_embed_theme", config.theme || "light");
     localStorage.setItem("yovole_expand_thoughts", config.expandThoughts ? "1" : "0");
+    localStorage.setItem("yovole_grounding_block_mode", config.groundingBlockMode || "strict_buffer");
     localStorage.setItem("yovole_markdown_theme", config.markdownTheme || "default");
     localStorage.setItem("yovole_hide_message_border", config.hideMessageBorder ? "1" : "0");
 };
@@ -7809,6 +7811,7 @@ const sendMessageInternal = async (snapshot: ChatSendSnapshot) => {
         model: config.overrideModel || undefined,
         enable_sql_plan: config.enableSqlPlan,
         grounding_enabled: config.enableGrounding,
+        grounding_block_mode: config.groundingBlockMode,
         browser_session_id: browserSessionId.value || undefined,
         ignore_ltm: ltmIgnoredVal,
         hallucination_check: hallucinationCheckEnabled.value || undefined,
@@ -8168,6 +8171,10 @@ onMounted(() => {
   }
   const savedExpandThoughts = localStorage.getItem("yovole_expand_thoughts");
   if (savedExpandThoughts !== null) config.expandThoughts = savedExpandThoughts === "1";
+  const savedGroundingBlockMode = localStorage.getItem("yovole_grounding_block_mode");
+  if (savedGroundingBlockMode === "strict_buffer" || savedGroundingBlockMode === "stream_with_retraction") {
+    config.groundingBlockMode = savedGroundingBlockMode;
+  }
   const savedMarkdownTheme = localStorage.getItem("yovole_markdown_theme");
   if (
     savedMarkdownTheme === "default" ||

@@ -14,6 +14,7 @@
 """
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass, replace
 from typing import Any, List, Mapping, Optional, Sequence, Set
@@ -27,6 +28,9 @@ from app.services.ai.request_decision import (
 from app.services.ai.chatbi_qualification import ChatBIMode
 from app.services.ai.turn_decision import TurnDecision
 from app.services.ai.tool_policy import ToolMetadata, resolve_tool_metadata
+from app.services.ai.grounding.models import EvidenceType
+
+logger = logging.getLogger(__name__)
 
 # 不主动促发的工具（写入/管理/记忆维护类）：避免推动模型产生副作用或与专门机制重复。
 _NUDGE_EXCLUDED_TOOLS = frozenset({
@@ -161,12 +165,53 @@ _STOP_FRAGMENTS = frozenset({
     "the", "and", "for", "with", "this", "that", "what", "how", "please", "help",
 })
 
+_TOOL_META_QUERY_TERMS = (
+    "支持", "能否", "可以吗", "能不能", "有没有", "有哪些", "什么工具", "工具有哪些",
+    "怎么用", "如何用", "怎么查", "如何查询", "需要什么参数", "参数怎么填", "有什么接口", "有没有接口",
+)
+_TOOL_META_QUESTION_RE = re.compile(r"(?:支持|能|可以|是否).{0,24}(?:吗|么|\?|？)$")
+_TOOL_META_OBJECT_TERMS = ("工具", "接口", "能力", "功能", "参数")
+_TOOL_EXECUTION_TERMS = (
+    "查询", "查", "查看", "搜索", "检索", "获取", "帮我找", "分析",
+    "调用", "使用", "执行", "运行", "给我", "请提供", "告诉我",
+)
+_TOOL_CONCRETE_TARGET_RE = re.compile(
+    r"(?:\d{4}[-/.]\d{1,2}[-/.]\d{1,2}|\d{1,2}:\d{2}|\d{2,}|"
+    r"[A-Za-z]{2,}\d+|今天|明天|后天|本周|本月|实时|上海|北京|广州|深圳|杭州)",
+    re.IGNORECASE,
+)
+
 _CJK_RUN = re.compile(r"[\u4e00-\u9fff]+")
 _ALNUM_TOKEN = re.compile(r"[a-zA-Z][a-zA-Z0-9_]{1,}")
 
 
 def _normalize(text: str) -> str:
     return re.sub(r"\s+", "", (text or "").lower())
+
+
+def _looks_like_tool_meta_query(query: str) -> bool:
+    """识别仅询问工具能力/用法的元问题，不把真实任务误判成元问题。"""
+    normalized = _normalize(query)
+    if not normalized or not (
+        _contains_any(normalized, _TOOL_META_QUERY_TERMS)
+        or _TOOL_META_QUESTION_RE.search(normalized)
+    ):
+        return False
+    if "有没有" in normalized and not _contains_any(normalized, _TOOL_META_OBJECT_TERMS):
+        return False
+    # “支持查询上海明天天气吗”同时包含能力询问和真实目标，仍应走正常取证链路；
+    # 仅有“支持查天气吗”这类没有具体目标的询问才属于元问题。
+    if (
+        _contains_any(normalized, _TOOL_EXECUTION_TERMS)
+        and _TOOL_CONCRETE_TARGET_RE.search(normalized)
+    ):
+        return False
+    return True
+
+
+def is_tool_meta_query(query: str) -> bool:
+    """判断用户是否只在咨询工具能力，而非请求执行具体任务。"""
+    return _looks_like_tool_meta_query(query)
 
 
 def looks_like_explicit_user_question_request(user_query: str) -> bool:
@@ -306,6 +351,8 @@ class ToolNudge:
 
     def recommended_force_mode(self) -> str:
         """hard 模式下推荐 of ToolChoice.mode：高相关度锁定具体工具，否则 required。"""
+        if self.metadata is not None and self.metadata.nudge_mode == "evidence":
+            return self.tool_name
         if self.score >= STRONG_FORCE_SCORE:
             return self.tool_name
         return "required"
@@ -313,6 +360,43 @@ class ToolNudge:
     @property
     def should_force_first_call(self) -> bool:
         return self.force_first_call
+
+
+@dataclass(frozen=True)
+class EvidenceContract:
+    tool_name: str
+    required_evidence_types: frozenset[EvidenceType]
+    freshness: str = "current_turn"
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "tool_name": self.tool_name,
+            "required_evidence_types": sorted(
+                str(getattr(evidence_type, "value", evidence_type))
+                for evidence_type in self.required_evidence_types
+            ),
+            "freshness": self.freshness,
+        }
+
+
+@dataclass(frozen=True)
+class ToolNudgePlan:
+    nudges: tuple[ToolNudge, ...]
+    evidence_contracts: tuple[EvidenceContract, ...]
+
+    @property
+    def primary(self) -> ToolNudge:
+        return self.nudges[0]
+
+    @property
+    def message(self) -> str:
+        ordered_tools = "、".join(contract.tool_name for contract in self.evidence_contracts)
+        return (
+            f"{self.primary.message}\n"
+            f"【多工具取证计划】请按顺序完成以下独立工具调用：{ordered_tools}。"
+            "每个工具都必须取得当轮成功结果后，才能在最终回答中使用对应事实；"
+            "不要用一个工具的结果替代另一个工具的证据。"
+        )
 
 
 def _resolve_explicit_user_question_nudge(
@@ -919,6 +1003,9 @@ def resolve_tool_nudge(
     if explicit_office_nudge is not None:
         return explicit_office_nudge
 
+    if _looks_like_tool_meta_query(query):
+        return None
+
     if not should_consider_tool_nudge(query):
         return None
 
@@ -1144,12 +1231,181 @@ def resolve_tool_nudge(
         return None
 
     tool_name = str(getattr(best_tool, "name", "") or "")
+    metadata = resolve_tool_metadata(
+        best_tool,
+        metadata_by_name=tool_metadata,
+    )
+    evidence_types = frozenset(getattr(best_tool, "evidence_types", None) or ())
     return ToolNudge(
         tool_name=tool_name,
         score=round(best_score, 3),
         message=_build_message(tool_name, _short_capability(best_tool)),
-        metadata=resolve_tool_metadata(
-            best_tool,
-            metadata_by_name=tool_metadata,
+        force_first_call=bool(
+            evidence_types and metadata.nudge_mode == "evidence"
         ),
+        metadata=metadata,
     )
+
+
+def resolve_evidence_tool_fallback_nudge(
+    user_query: str,
+    tools: List[Any],
+    *,
+    min_score: float = 0.35,
+) -> Optional[ToolNudge]:
+    """在常规预检异常时，为证据型只读工具提供 fail-closed 兜底。
+
+    该路径只看运行时显式声明为 ``read`` 且带证据类型的工具，避免预检自身
+    出错时又依赖同一条可能失败的复杂路由分支。它不处理写工具、委派工具或
+    记忆复用工具；命中后始终锁定具体工具，不能退化为任意 ``required``。
+    """
+    query = (user_query or "").strip()
+    if _looks_like_tool_meta_query(query) or not should_consider_tool_nudge(query):
+        return None
+    signals = _query_signals(query)
+    if len(signals) < 2:
+        return None
+
+    candidates: list[tuple[float, Any, ToolMetadata]] = []
+    for tool in tools or []:
+        name = str(getattr(tool, "name", "") or "").strip()
+        permission_scope = str(getattr(tool, "permission_scope", "") or "").strip().lower()
+        evidence_types = frozenset(getattr(tool, "evidence_types", None) or ())
+        if (
+            not name
+            or name in _NUDGE_EXCLUDED_TOOLS
+            or name in {"sub_agent_call", "sub_agent_batch_call"}
+            or permission_scope != "read"
+            or not evidence_types
+        ):
+            continue
+        try:
+            metadata = resolve_tool_metadata(tool)
+        except Exception as exc:
+            logger.warning(
+                "[ToolPreflight] Metadata resolution failed for tool=%s; "
+                "using runtime safety metadata: %s",
+                name,
+                type(exc).__name__,
+            )
+            # 即使元数据解析器本身就是故障源，显式的 runtime read+evidence
+            # 声明仍足以建立最小安全合同。
+            source_type = str(getattr(tool, "source_type", "") or "").strip()
+            metadata = ToolMetadata(
+                capability=(
+                    "external_tool"
+                    if source_type in {"mcp", "generic_api"}
+                    else "unknown"
+                ),
+                source=source_type or "unknown",
+                freshness="dynamic",
+                side_effect="read",
+                confirmation="none",
+                idempotent="yes",
+                nudge_mode="evidence",
+            )
+        if metadata.nudge_mode != "evidence":
+            continue
+        score = relevance_score(signals, _tool_text(tool))
+        if score <= 0:
+            continue
+        candidates.append((score, tool, metadata))
+
+    candidates.sort(key=lambda item: item[0], reverse=True)
+    if not candidates:
+        return None
+    best_score, best_tool, best_metadata = candidates[0]
+    if best_score < min_score:
+        return None
+    if len(candidates) > 1 and best_score - candidates[1][0] < 0.10:
+        return None
+    tool_name = str(getattr(best_tool, "name", "") or "").strip()
+    return ToolNudge(
+        tool_name=tool_name,
+        score=round(best_score, 3),
+        message=_build_message(tool_name, _short_capability(best_tool)),
+        force_first_call=True,
+        metadata=best_metadata,
+    )
+
+
+def _split_evidence_intent_clauses(query: str) -> list[str]:
+    return [
+        clause.strip()
+        for clause in re.split(r"(?:并且|同时|以及|另外|顺便|并)", _normalize(query))
+        if clause.strip()
+    ]
+
+
+def resolve_tool_nudge_plan(
+    user_query: str,
+    tools: List[Any],
+    *,
+    min_score: float = 0.35,
+    min_gap: float = 0.10,
+) -> Optional[ToolNudgePlan]:
+    """仅为明确的多意图只读查询生成独立证据合同计划。"""
+    query = (user_query or "").strip()
+    if (
+        _looks_like_tool_meta_query(query)
+        or not should_consider_tool_nudge(query)
+    ):
+        return None
+    if (
+        any(str(getattr(tool, "name", "") or "") == "todo_write" for tool in tools or [])
+        and _looks_like_multi_step_request(query)
+    ):
+        return None
+    clauses = _split_evidence_intent_clauses(query)
+    if len(clauses) < 2:
+        return None
+
+    resolved: list[tuple[str, Any, float, ToolMetadata, frozenset[EvidenceType]]] = []
+    for clause in clauses:
+        signals = _query_signals(clause)
+        if len(signals) < 2:
+            return None
+        candidates: list[tuple[float, Any, ToolMetadata, frozenset[EvidenceType]]] = []
+        for tool in tools or []:
+            name = str(getattr(tool, "name", "") or "").strip()
+            permission_scope = str(
+                getattr(tool, "permission_scope", "") or ""
+            ).strip().lower()
+            evidence_types = frozenset(getattr(tool, "evidence_types", None) or ())
+            if not name or permission_scope != "read" or not evidence_types:
+                continue
+            try:
+                metadata = resolve_tool_metadata(tool)
+            except Exception:
+                continue
+            if metadata.nudge_mode != "evidence":
+                continue
+            score = relevance_score(signals, _tool_text(tool))
+            if score > 0:
+                candidates.append((score, tool, metadata, evidence_types))
+        candidates.sort(key=lambda item: item[0], reverse=True)
+        if not candidates or candidates[0][0] < min_score:
+            return None
+        if len(candidates) > 1 and candidates[0][0] - candidates[1][0] < min_gap:
+            return None
+        score, tool, metadata, evidence_types = candidates[0]
+        name = str(getattr(tool, "name", "") or "").strip()
+        resolved.append((name, tool, score, metadata, evidence_types))
+
+    if len({item[0] for item in resolved}) != len(resolved):
+        return None
+    nudges = tuple(
+        ToolNudge(
+            tool_name=name,
+            score=round(score, 3),
+            message=_build_message(name, _short_capability(tool)),
+            force_first_call=True,
+            metadata=metadata,
+        )
+        for name, tool, score, metadata, _ in resolved
+    )
+    contracts = tuple(
+        EvidenceContract(tool_name=name, required_evidence_types=evidence_types)
+        for name, _, _, _, evidence_types in resolved
+    )
+    return ToolNudgePlan(nudges=nudges, evidence_contracts=contracts)

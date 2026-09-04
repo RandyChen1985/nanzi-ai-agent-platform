@@ -1,6 +1,6 @@
 import pytest
 from types import SimpleNamespace
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from app.services.ai.grounding.ledger import EvidenceLedger
 from app.services.ai.grounding.models import EvidenceType, FactFreshness
@@ -38,6 +38,27 @@ def test_typed_runtime_receipt_gets_realtime_freshness_by_default():
 
     assert receipt is not None
     assert receipt.freshness is FactFreshness.REALTIME
+
+
+def test_ledger_can_require_fresh_receipt_from_specific_producer():
+    ledger = EvidenceLedger(user_id="1", conversation_id="c1")
+    ledger.record_success(
+        call_id="call-1",
+        producer="weather_lookup",
+        evidence_types={EvidenceType.EXTERNAL_TOOL},
+        result={"city": "上海", "temperature": 26},
+    )
+
+    assert ledger.has_fresh_evidence_from_producer(
+        "weather_lookup",
+        {EvidenceType.EXTERNAL_TOOL},
+        freshness=FactFreshness.DYNAMIC,
+    )
+    assert not ledger.has_fresh_evidence_from_producer(
+        "finance_lookup",
+        {EvidenceType.EXTERNAL_TOOL},
+        freshness=FactFreshness.DYNAMIC,
+    )
 
 
 def test_typed_file_receipt_gets_dynamic_freshness_by_default():
@@ -218,6 +239,36 @@ def test_ledger_matches_candidate_against_hashed_result_markers():
     assert not ledger.has_candidate_overlap(
         "上海明天天气晴，最高温度 28 度。",
         {EvidenceType.EXTERNAL_TOOL},
+    )
+
+
+def test_candidate_overlap_ignores_expired_receipts_for_global_and_producer_scopes():
+    now = datetime(2026, 9, 4, 8, 0, tzinfo=timezone.utc)
+    ledger = EvidenceLedger(user_id="7", conversation_id="conv-1")
+    ledger.record_success(
+        call_id="expired-weather",
+        producer="weather_lookup",
+        evidence_types={EvidenceType.EXTERNAL_TOOL},
+        result={"city": "北京", "temperature": 38},
+        observed_at=now - timedelta(minutes=10),
+        expires_at=now - timedelta(seconds=1),
+        freshness=FactFreshness.DYNAMIC,
+    )
+
+    candidate = "北京今天 38 度。"
+
+    assert not ledger.has_candidate_overlap(
+        candidate,
+        {EvidenceType.EXTERNAL_TOOL},
+        freshness=FactFreshness.DYNAMIC,
+        now=now,
+    )
+    assert not ledger.has_candidate_overlap_from_producer(
+        candidate,
+        "weather_lookup",
+        {EvidenceType.EXTERNAL_TOOL},
+        freshness=FactFreshness.DYNAMIC,
+        now=now,
     )
 
 
