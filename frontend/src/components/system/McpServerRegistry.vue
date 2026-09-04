@@ -1719,9 +1719,6 @@ onMounted(fetchServers)
               </div>
 
               <div v-if="headerMode === 'simple'" class="space-y-3">
-                <p v-if="isEditing" class="text-[10px] leading-relaxed text-amber-600">
-                  认证信息不会回显；已配置项显示为 ********，点击“编辑”后填写新值。
-                </p>
                 <div class="max-h-[180px] space-y-2 overflow-y-auto rounded-lg border border-gray-100 bg-gray-50 p-3 custom-scrollbar">
                   <div v-for="(pair, index) in headerPairs" :key="index" class="flex items-center gap-2">
                     <template v-if="pair.existing && !pair.editing && !pair.removed">
