@@ -143,6 +143,35 @@ const openOnlineUsers = () => {
   }
 };
 
+const formatActiveRelativeTime = (lastActive: string | number | undefined | null) => {
+  if (!lastActive) return "刚刚活跃";
+  const ts = typeof lastActive === "string" ? Number(lastActive) : lastActive;
+  if (!ts || isNaN(ts)) return "刚刚活跃";
+  const timeMs = ts < 1e11 ? ts * 1000 : ts;
+  const diff = Date.now() - timeMs;
+  if (diff < 0 || diff < 60_000) {
+    return "刚刚活跃";
+  }
+  const minutes = Math.floor(diff / 60_000);
+  if (minutes < 60) {
+    return `${minutes} 分钟前`;
+  }
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) {
+    return `${hours} 小时前`;
+  }
+  return `${Math.floor(hours / 24)} 天前`;
+};
+
+const formatExactActiveTime = (lastActive: string | number | undefined | null) => {
+  if (!lastActive) return "";
+  const ts = typeof lastActive === "string" ? Number(lastActive) : lastActive;
+  if (!ts || isNaN(ts)) return "";
+  const timeMs = ts < 1e11 ? ts * 1000 : ts;
+  const d = new Date(timeMs);
+  return `最后活跃: ${d.toLocaleString("zh-CN", { hour12: false })}`;
+};
+
 const logout = () => {
   showLogoutDialog.value = true;
 };
@@ -1017,9 +1046,17 @@ const filteredMenuGroups = computed(() => {
                     </div>
                     <div class="text-[10px] text-gray-400 font-mono mt-0.5 truncate">@{{ user.user_name }}</div>
                   </div>
-                  <div class="text-[10px] text-green-500 font-bold uppercase tracking-widest flex items-center gap-1 flex-shrink-0">
-                    <span class="w-1.5 h-1.5 rounded-full bg-green-500"></span>
-                    Active
+                  <div class="flex flex-col items-end flex-shrink-0 text-right">
+                    <div class="text-[10px] text-green-500 font-bold uppercase tracking-widest flex items-center gap-1">
+                      <span class="w-1.5 h-1.5 rounded-full bg-green-500"></span>
+                      Active
+                    </div>
+                    <span
+                      class="text-[10px] text-gray-400 dark:text-gray-500 font-mono mt-0.5"
+                      :title="formatExactActiveTime(user.last_active)"
+                    >
+                      {{ formatActiveRelativeTime(user.last_active) }}
+                    </span>
                   </div>
                 </div>
               </div>

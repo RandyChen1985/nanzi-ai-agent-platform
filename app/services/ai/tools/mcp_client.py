@@ -313,6 +313,8 @@ class McpClientService:
         session_key: Optional[str] = None
         if require_user_context or user_info or agent_info or request_id or private_key:
             server = await cls._load_server(server_id)
+            if getattr(server, "enabled_status", 1) != 1:
+                raise ValueError("MCP 服务已禁用，无法执行工具")
             signed_user_enabled = bool(getattr(server, "user_assertion_enabled", False))
             if signed_user_enabled and require_user_context:
                 user_id = str((user_info or {}).get("user_id") or "").strip()

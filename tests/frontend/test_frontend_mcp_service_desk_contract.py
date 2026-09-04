@@ -739,3 +739,25 @@ def test_external_client_card_and_list_view_mode_toggle_contract():
     assert "openTokenDetails(client)" in client_section
     assert "openResourceWhitelist(client, config)" in client_section
     assert "openClientDetails(client)" in client_section
+
+
+def test_mcp_server_registry_status_toggle_payload_contract():
+    registry_file = ROOT / "frontend/src/components/system/McpServerRegistry.vue"
+    content = registry_file.read_text(encoding="utf-8")
+
+    # 1. 验证 toggleServerStatus 中 enabled_status 在 buildServerPayload 之后，确保禁用状态不被覆盖
+    assert "toggleServerStatus" in content
+    toggle_section = content.split("const toggleServerStatus = async", 1)[1].split("const fetchServerUsage", 1)[0]
+    assert "...buildServerPayload(server)" in toggle_section
+    assert "enabled_status: nextStatus" in toggle_section
+    # 确保 enabled_status 出现在 ...buildServerPayload 之后
+    assert toggle_section.index("enabled_status: nextStatus") > toggle_section.index("...buildServerPayload(server)")
+
+    # 2. 验证已连接服务搜索框与清除按钮
+    assert "searchQuery" in content
+    assert "filteredServers" in content
+    assert "placeholder=\"搜索服务或工具...\"" in content
+
+    # 3. 验证文案统一为「已连接服务」，无多余后缀
+    assert "已连接服务 (平台)" not in content
+    assert "已连接服务" in content

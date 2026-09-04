@@ -35,6 +35,8 @@ import {
   ShoppingBagIcon,
   DocumentDuplicateIcon,
   ChevronLeftIcon,
+  ChevronDownIcon,
+  XMarkIcon,
   CheckCircleIcon,
   InformationCircleIcon,
   DocumentTextIcon,
@@ -47,6 +49,10 @@ const props = withDefaults(defineProps<{
   scope: 'global'
 })
 
+const emit = defineEmits<{
+  (e: 'server-count-changed', payload: { scope: 'global' | 'personal'; count: number }): void
+}>()
+
 const { showToast } = useToast()
 const { userInfo } = useUser()
 const canSave = computed(() => {
@@ -57,6 +63,24 @@ const canSave = computed(() => {
 const namePrefix = computed(() =>
   buildMcpServerNamePrefix(props.scope, userInfo.value?.user_name),
 )
+
+const servers = ref<any[]>([])
+const searchQuery = ref('')
+const showAddDropdown = ref(false)
+
+const filteredServers = computed(() => {
+  const query = searchQuery.value.trim().toLowerCase()
+  if (!query) return servers.value
+  return servers.value.filter((s: any) => {
+    const nameMatch = (s.server_name || '').toLowerCase().includes(query)
+    const descMatch = (s.description || '').toLowerCase().includes(query)
+    const urlMatch = (s.url || '').toLowerCase().includes(query)
+    const toolMatch = Array.isArray(s.tools) && s.tools.some((t: any) =>
+      (t.name || '').toLowerCase().includes(query) || (t.description || '').toLowerCase().includes(query)
+    )
+    return nameMatch || descMatch || urlMatch || toolMatch
+  })
+})
 
 /** 用户只填后缀；保存时与固定前缀拼接 */
 const serverNameSuffix = ref('')
@@ -96,7 +120,6 @@ const getApiErrorMessage = (error: any, fallback: string) => {
   return message || fallback
 }
 
-const servers = ref<any[]>([])
 const loading = ref(false)
 const showAddModal = ref(false)
 const isEditing = ref(false)
@@ -653,6 +676,10 @@ const fetchServers = async () => {
       params: { scope: props.scope }
     })
     servers.value = res.data
+    emit('server-count-changed', {
+      scope: props.scope,
+      count: Array.isArray(res.data) ? res.data.length : 0,
+    })
   } catch (e) {
     showToast(getApiErrorMessage(e, '获取 MCP 服务列表失败'), 'error')
   } finally {
@@ -776,16 +803,17 @@ const toggleServerStatus = async (server: any, enabled: boolean) => {
   statusLoading.value[server.id] = true
   try {
     const response = await axios.put(`/api/portal/mcp/servers/${server.id}`, {
+      ...buildServerPayload(server),
       server_name: server.server_name,
       remark: server.remark || '',
       sse_url: server.sse_url,
       enabled_status: nextStatus,
-      ...buildServerPayload(server),
     })
     const savedStatus = Number(response.data?.enabled_status ?? nextStatus)
     server.enabled_status = savedStatus
     if (selectedServer.value?.id === server.id) {
       selectedServer.value = { ...selectedServer.value, enabled_status: savedStatus }
+      fetchTools(server.id)
     }
     showToast(savedStatus === 1 ? 'MCP 服务已启用' : 'MCP 服务已禁用', 'success')
     return true
@@ -1164,10 +1192,10 @@ onMounted(fetchServers)
     >
       <!-- Market Guide (High Contrast with Dynamic Scope Theme) -->
       <div 
-        class="border-b border-white/10 p-3 text-white transition-colors duration-300 sm:p-4"
+        class="border-b border-white/10 px-3 py-2 text-white transition-colors duration-300 sm:px-4 sm:py-2.5"
         :class="props.scope === 'personal' ? 'bg-slate-950' : 'bg-slate-900'"
       >
-        <div class="flex items-start justify-between gap-3">
+        <div class="flex items-center justify-between gap-3">
           <div class="min-w-0 flex-1">
             <h4 
               class="flex items-center text-sm font-black transition-colors duration-300"
@@ -1176,53 +1204,127 @@ onMounted(fetchServers)
               <ShoppingBagIcon class="mr-1.5 h-4 w-4 shrink-0" />
               探索 MCP 市场
             </h4>
-            <p class="mt-1 text-[10px] leading-relaxed text-slate-400 sm:line-clamp-none">
+            <p class="mt-0.5 text-[10px] leading-relaxed text-slate-400 truncate">
               {{ props.scope === 'personal' ? '去魔搭寻找并接入私有扩展' : '去魔搭寻找更多公共工具集' }}
             </p>
-            <div class="mt-2">
-              <a 
-                href="https://modelscope.cn/mcp" 
-                target="_blank" 
-                class="inline-flex items-center rounded px-2 py-1 text-[10px] font-bold text-white shadow-sm transition-all duration-200"
-                :class="props.scope === 'personal' ? 'bg-emerald-600 hover:bg-emerald-500' : 'bg-indigo-600 hover:bg-indigo-500'"
-              >
-                立即前往市场
-                <MagnifyingGlassIcon class="ml-1 h-3 w-3" />
-              </a>
-            </div>
+          </div>
+          <div class="shrink-0">
+            <a
+              href="https://modelscope.cn/mcp"
+              target="_blank"
+              class="inline-flex items-center rounded px-2.5 py-1 text-[10px] font-bold text-white shadow-sm transition-all duration-200 whitespace-nowrap"
+              :class="props.scope === 'personal' ? 'bg-emerald-600 hover:bg-emerald-500' : 'bg-indigo-600 hover:bg-indigo-500'"
+            >
+              立即前往市场
+              <MagnifyingGlassIcon class="ml-1 h-3 w-3" />
+            </a>
           </div>
         </div>
       </div>
 
-      <div class="flex items-center justify-between gap-2 border-b border-gray-100 bg-gray-50/80 p-3 sm:p-4">
-        <div class="flex min-w-0 flex-wrap items-center gap-2">
-          <h3 class="text-[11px] font-bold uppercase tracking-wider text-gray-500 sm:text-xs">
-            {{ props.scope === 'personal' ? '已连接服务' : '已连接服务 (平台)' }}
+      <div class="flex items-center justify-between gap-2 border-b border-gray-100 bg-gray-50/80 px-3 py-2 sm:px-4 sm:py-2.5">
+        <div class="flex shrink-0 items-center gap-1.5">
+          <h3 class="text-[11px] font-bold uppercase tracking-wider text-gray-500 sm:text-xs whitespace-nowrap">
+            已连接服务
           </h3>
-          <span v-if="props.scope === 'global' && !canSave" class="rounded border border-amber-200/60 bg-amber-50 px-1.5 py-0.5 text-[10px] font-normal text-amber-600">
-            管理员可编辑
+          <span v-if="props.scope === 'global' && !canSave" class="rounded border border-amber-200/60 bg-amber-50 px-1.5 py-0.5 text-[9px] font-normal text-amber-600 shrink-0">
+            只读
           </span>
         </div>
-        <div v-if="canSave" class="flex shrink-0 items-center gap-1.5">
+
+        <!-- 搜索框 -->
+        <div class="flex min-w-[100px] max-w-[180px] flex-1 items-center">
+          <div class="relative w-full">
+            <MagnifyingGlassIcon class="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-gray-400" />
+            <input
+              v-model="searchQuery"
+              type="text"
+              placeholder="搜索服务或工具..."
+              class="h-7 w-full rounded-md border border-gray-200 bg-white pl-7 pr-6 text-[11px] leading-none text-gray-700 shadow-sm transition-all placeholder:text-gray-400 focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200"
+            />
+            <button
+              v-if="searchQuery"
+              type="button"
+              @click="searchQuery = ''"
+              class="absolute right-1.5 top-1/2 -translate-y-1/2 rounded p-0.5 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200"
+              title="清空搜索"
+            >
+              <XMarkIcon class="h-3 w-3" />
+            </button>
+          </div>
+        </div>
+
+        <!-- 右侧操作区 -->
+        <div v-if="canSave" class="relative flex shrink-0 items-center">
+          <!-- 个人 MCP: 仅单一添加按钮 -->
           <button
-            v-if="props.scope === 'global'"
-            type="button"
-            @click="createEchoTestMcp"
-            class="flex items-center rounded-md border border-indigo-200 bg-indigo-50 px-2 py-1.5 text-[10px] font-bold text-indigo-700 transition-colors hover:bg-indigo-100 sm:px-2.5"
-            title="创建平台内置 Echo 测试 MCP；不会展示固定 Token 或用户身份签名原文"
-          >
-            <BeakerIcon class="mr-1 h-3.5 w-3.5" />
-            创建 Echo 测试 MCP
-          </button>
-          <button
+            v-if="props.scope === 'personal'"
             type="button"
             @click="resetWizard(); showAddModal = true"
-            class="flex items-center rounded-md px-2.5 py-1.5 text-[11px] font-bold text-white shadow-sm transition-all sm:px-3"
-            :class="props.scope === 'personal' ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-primary hover:bg-primary-dark'"
+            class="inline-flex h-7 items-center justify-center rounded-md bg-emerald-600 px-2.5 text-[11px] font-bold leading-none text-white shadow-sm transition-all hover:bg-emerald-700 sm:px-3"
           >
-            <PlusIcon class="mr-1 h-3.5 w-3.5" />
-            添加
+            <PlusIcon class="mr-1 h-3.5 w-3.5 shrink-0" />
+            <span>添加</span>
           </button>
+
+          <!-- 平台 MCP: 分裂式添加按钮 + 更多操作下拉 -->
+          <div v-else class="relative inline-flex h-7 items-stretch rounded-md shadow-sm">
+            <button
+              type="button"
+              @click="resetWizard(); showAddModal = true"
+              class="inline-flex h-full items-center justify-center rounded-l-md bg-primary px-2.5 text-[11px] font-bold leading-none text-white transition-all hover:bg-primary-dark sm:px-3"
+            >
+              <PlusIcon class="mr-1 h-3.5 w-3.5 shrink-0" />
+              <span>添加</span>
+            </button>
+            <button
+              type="button"
+              @click.stop="showAddDropdown = !showAddDropdown"
+              class="inline-flex h-full items-center justify-center rounded-r-md border-l border-white/20 bg-primary px-1.5 text-white transition-all hover:bg-primary-dark"
+              title="更多添加选项"
+            >
+              <ChevronDownIcon class="h-3.5 w-3.5 shrink-0 transition-transform duration-200" :class="{ 'rotate-180': showAddDropdown }" />
+            </button>
+
+            <!-- 遮罩关闭 -->
+            <div
+              v-if="showAddDropdown"
+              class="fixed inset-0 z-20 cursor-default"
+              @click="showAddDropdown = false"
+            ></div>
+
+            <!-- 下拉浮层 -->
+            <div
+              v-if="showAddDropdown"
+              class="absolute right-0 top-full z-30 mt-1.5 w-52 origin-top-right rounded-xl border border-gray-100 bg-white p-1.5 shadow-xl ring-1 ring-black/5 dark:border-gray-700 dark:bg-gray-800"
+              @click.stop
+            >
+              <button
+                type="button"
+                @click="showAddDropdown = false; resetWizard(); showAddModal = true"
+                class="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs font-semibold text-gray-700 transition-colors hover:bg-blue-50 hover:text-primary dark:text-gray-200 dark:hover:bg-gray-700"
+              >
+                <PlusIcon class="h-4 w-4 text-primary shrink-0" />
+                <div class="min-w-0 flex-1">
+                  <div>添加 MCP 服务</div>
+                  <div class="text-[10px] font-normal text-gray-400">配置自定义工具服务</div>
+                </div>
+              </button>
+
+              <button
+                type="button"
+                @click="showAddDropdown = false; createEchoTestMcp()"
+                class="mt-0.5 flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs font-semibold text-indigo-700 transition-colors hover:bg-indigo-50 dark:text-indigo-400 dark:hover:bg-indigo-950/40"
+                title="创建平台内置 Echo 测试 MCP；不会展示固定 Token 或用户身份签名原文"
+              >
+                <BeakerIcon class="h-4 w-4 text-indigo-600 shrink-0" />
+                <div class="min-w-0 flex-1">
+                  <div>创建 Echo 测试 MCP</div>
+                  <div class="text-[10px] font-normal text-gray-400">平台内置联调诊断服务</div>
+                </div>
+              </button>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -1233,9 +1335,19 @@ onMounted(fetchServers)
         <div v-else-if="servers.length === 0" class="p-8 text-center text-sm italic text-gray-400">
           暂无配置 MCP 服务
         </div>
+        <div v-else-if="filteredServers.length === 0" class="p-8 text-center">
+          <p class="text-xs text-gray-400">未找到匹配的 MCP 服务</p>
+          <button
+            type="button"
+            @click="searchQuery = ''"
+            class="mt-2 text-[11px] font-medium text-primary hover:underline"
+          >
+            清空搜索关键词
+          </button>
+        </div>
         <div v-else class="divide-y divide-gray-50">
-          <div 
-            v-for="server in servers" 
+          <div
+            v-for="server in filteredServers"
             :key="server.id"
             @click="selectServer(server)"
             class="cursor-pointer p-3 transition-all hover:bg-blue-50/30 sm:p-4"

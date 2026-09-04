@@ -140,3 +140,21 @@ return { visibleByChunk, accumulated };
         "可见前文\n\n## 结论",
     ]
     assert "内部" in result["accumulated"]
+
+
+def test_execution_timeline_sanitizes_visible_text_and_copy_payloads():
+    timeline = (ROOT / "frontend/src/components/chat/ChatExecutionTimeline.vue").read_text(
+        encoding="utf-8"
+    )
+
+    assert 'from "@/utils/streamContentSanitize"' in timeline
+    assert "function visibleTimelineText" in timeline
+    assert "visibleTimelineText(item.content)" in timeline
+    assert "visibleTimelineText(child.details)" in timeline
+    assert "visibleTimelineText(subStep.details)" in timeline
+    assert "visibleTimelineText(nestedStep.details)" in timeline
+    assert "hasVisibleTimelineText(nestedStep.details)" in timeline
+    assert '@click="nestedStep.details ?' not in timeline
+    assert 'v-if="nestedStep.details"' not in timeline
+    assert "visibleTimelineText(item.details)" in timeline
+    assert "const visibleText = visibleTimelineText(text)" in timeline

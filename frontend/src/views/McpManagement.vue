@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
+import axios from '../utils/axios'
 import McpServerRegistry from '../components/system/McpServerRegistry.vue'
 import McpFlowGuideBanner from '../components/mcp/McpFlowGuideBanner.vue'
 import McpAuditLogTab from '../components/mcp/McpAuditLogTab.vue'
@@ -17,6 +18,42 @@ const router = useRouter()
 const { isAdmin } = useUser()
 const activeScope = ref<'global' | 'personal' | 'audit'>(props.personalOnly ? 'personal' : 'global')
 const registryRef = ref<InstanceType<typeof McpServerRegistry> | null>(null)
+
+// 平台 MCP 与我的 MCP 数量计数
+const serverCounts = ref<{
+  global: number
+  personal: number
+}>({
+  global: 0,
+  personal: 0,
+})
+
+const fetchServerCounts = async () => {
+  try {
+    const [globalRes, personalRes] = await Promise.allSettled([
+      axios.get('/api/portal/mcp/servers', { params: { scope: 'global' } }),
+      axios.get('/api/portal/mcp/servers', { params: { scope: 'personal' } }),
+    ])
+    if (globalRes.status === 'fulfilled' && Array.isArray(globalRes.value.data)) {
+      serverCounts.value.global = globalRes.value.data.length
+    }
+    if (personalRes.status === 'fulfilled' && Array.isArray(personalRes.value.data)) {
+      serverCounts.value.personal = personalRes.value.data.length
+    }
+  } catch (err) {
+    console.error('获取 MCP 计数失败', err)
+  }
+}
+
+const handleServerCountChanged = (payload: { scope: 'global' | 'personal'; count: number }) => {
+  if (payload.scope === 'global' || payload.scope === 'personal') {
+    serverCounts.value[payload.scope] = payload.count
+  }
+}
+
+onMounted(() => {
+  void fetchServerCounts()
+})
 
 // 流程指引横幅状态与持久化
 const MCP_FLOW_GUIDE_KEY = 'nanzi_mcp_flow_guide_dismissed'
@@ -131,7 +168,13 @@ const handleBannerAction = (action: 'add' | 'marketplace') => {
         <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064" />
         </svg>
-        平台 MCP
+        <span>平台 MCP</span>
+        <span
+          class="inline-flex items-center justify-center rounded-full px-2 py-0.5 text-xs font-semibold tabular-nums transition-colors"
+          :class="activeScope === 'global' ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/50 dark:text-blue-300' : 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400'"
+        >
+          {{ serverCounts.global }}
+        </span>
       </button>
       <button
         id="tab-personal-mcp"
@@ -143,7 +186,13 @@ const handleBannerAction = (action: 'add' | 'marketplace') => {
         <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
         </svg>
-        我的 MCP
+        <span>我的 MCP</span>
+        <span
+          class="inline-flex items-center justify-center rounded-full px-2 py-0.5 text-xs font-semibold tabular-nums transition-colors"
+          :class="activeScope === 'personal' ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/50 dark:text-emerald-300' : 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400'"
+        >
+          {{ serverCounts.personal }}
+        </span>
       </button>
       <button
         v-if="isAdmin"
@@ -163,7 +212,13 @@ const handleBannerAction = (action: 'add' | 'marketplace') => {
     <!-- 主体区域：个人中心随页面滚动；控制台保留定高裁剪 -->
     <div :class="personalOnly ? 'min-h-[28rem]' : 'min-h-0 flex-1 overflow-hidden'">
       <McpAuditLogTab v-if="activeScope === 'audit' && isAdmin" />
-      <McpServerRegistry v-else ref="registryRef" :key="activeScope" :scope="activeScope === 'audit' ? 'global' : activeScope" />
+      <McpServerRegistry
+        v-else
+        ref="registryRef"
+        :key="activeScope"
+        :scope="activeScope === 'audit' ? 'global' : activeScope"
+        @server-count-changed="handleServerCountChanged"
+      />
     </div>
 
     <!-- MCP 设计规范与全流程指引 Modal -->

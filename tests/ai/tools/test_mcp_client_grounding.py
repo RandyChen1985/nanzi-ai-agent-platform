@@ -105,6 +105,31 @@ async def test_signed_mcp_call_fails_closed_without_runtime_identity(monkeypatch
 
 
 @pytest.mark.asyncio
+async def test_mcp_call_rejects_disabled_server_before_recreating_session(monkeypatch):
+    """旧运行时工具对象不能绕过服务停用状态重新建立 MCP 会话。"""
+    server = SimpleNamespace(
+        id="server-1",
+        enabled_status=0,
+        user_assertion_enabled=False,
+    )
+    load_server = AsyncMock(return_value=server)
+    get_session = AsyncMock()
+    monkeypatch.setattr(McpClientService, "_load_server", load_server)
+    monkeypatch.setattr(McpClientService, "get_session", get_session)
+
+    with pytest.raises(ValueError, match="MCP 服务已禁用"):
+        await McpClientService.call_remote_tool(
+            "server-1",
+            "get-data",
+            {},
+            require_user_context=True,
+        )
+
+    load_server.assert_awaited_once_with("server-1")
+    get_session.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_mcp_sdk_exception_is_raised_instead_of_returned_as_text(monkeypatch):
     session_mgr = SimpleNamespace(
         is_direct_http=False,
