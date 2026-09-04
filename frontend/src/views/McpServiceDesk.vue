@@ -1833,68 +1833,6 @@ onUnmounted(() => {
       </section>
 
       <section v-if="activeTab === 'overview' && canReadOverview" class="space-y-5">
-        <div class="grid gap-4 md:grid-cols-3">
-          <!-- 服务状态 -->
-          <div class="group flex items-center justify-between rounded-2xl border border-slate-100 bg-white p-5 shadow-xs transition-all duration-200 hover:border-emerald-200 hover:shadow-md">
-            <div>
-              <div class="text-xs font-bold uppercase tracking-wider text-slate-400">服务状态</div>
-              <div class="mt-1.5 flex items-center gap-2">
-                <span class="text-2xl font-black" :class="overview.platform_enabled ? 'text-emerald-600' : 'text-slate-400'">
-                  {{ overview.platform_enabled ? '已启用' : '已关闭' }}
-                </span>
-                <span
-                  class="inline-block h-2 w-2 rounded-full"
-                  :class="overview.platform_enabled ? 'bg-emerald-500 animate-pulse' : 'bg-slate-300'"
-                />
-              </div>
-              <div class="mt-1 text-xs text-slate-400">Platform MCP 核心入口</div>
-            </div>
-            <div
-              class="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl transition-transform duration-200 group-hover:scale-110"
-              :class="overview.platform_enabled ? 'bg-emerald-50 text-emerald-600' : 'bg-slate-100 text-slate-400'"
-            >
-              <svg class="h-6 w-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <rect x="2" y="2" width="20" height="8" rx="2" ry="2" />
-                <rect x="2" y="14" width="20" height="8" rx="2" ry="2" />
-                <line x1="6" y1="6" x2="6.01" y2="6" />
-                <line x1="6" y1="18" x2="6.01" y2="18" />
-              </svg>
-            </div>
-          </div>
-
-          <!-- 活跃 Client -->
-          <div class="group flex items-center justify-between rounded-2xl border border-slate-100 bg-white p-5 shadow-xs transition-all duration-200 hover:border-indigo-200 hover:shadow-md">
-            <div>
-              <div class="text-xs font-bold uppercase tracking-wider text-slate-400">活跃 Client</div>
-              <div class="mt-1.5 text-2xl font-black text-slate-800">{{ overview.active_client_count ?? 0 }}</div>
-              <div class="mt-1 text-xs text-slate-400">外部系统与授权接入数</div>
-            </div>
-            <div class="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-indigo-50 text-indigo-600 transition-transform duration-200 group-hover:scale-110">
-              <svg class="h-6 w-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
-                <circle cx="9" cy="7" r="4" />
-                <path d="M22 21v-2a4 4 0 0 0-3-3.87" />
-                <path d="M16 3.13a4 4 0 0 1 0 7.75" />
-              </svg>
-            </div>
-          </div>
-
-          <!-- 已发布方法 -->
-          <div class="group flex items-center justify-between rounded-2xl border border-slate-100 bg-white p-5 shadow-xs transition-all duration-200 hover:border-purple-200 hover:shadow-md">
-            <div>
-              <div class="text-xs font-bold uppercase tracking-wider text-slate-400">已发布方法</div>
-              <div class="mt-1.5 text-2xl font-black text-slate-800">{{ overview.published_method_count ?? 0 }}</div>
-              <div class="mt-1 text-xs text-slate-400">平台提供的 MCP Tools</div>
-            </div>
-            <div class="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-purple-50 text-purple-600 transition-transform duration-200 group-hover:scale-110">
-              <svg class="h-6 w-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <polyline points="16 18 22 12 16 6" />
-                <polyline points="8 6 2 12 8 18" />
-              </svg>
-            </div>
-          </div>
-        </div>
-
         <div v-if="canReadAudit" class="rounded-2xl bg-white p-6 shadow-sm">
           <div class="flex flex-wrap items-center justify-between gap-3">
             <div>
@@ -1967,6 +1905,69 @@ onUnmounted(() => {
             </div>
           </div>
         </div>
+
+        <div class="grid gap-4 md:grid-cols-3">
+          <!-- 服务状态 -->
+          <div class="group flex items-center justify-between rounded-2xl border border-slate-100 bg-white p-5 shadow-xs transition-all duration-200 hover:border-emerald-200 hover:shadow-md">
+            <div>
+              <div class="text-xs font-bold uppercase tracking-wider text-slate-400">服务状态</div>
+              <div class="mt-1.5 flex items-center gap-2">
+                <span class="text-2xl font-black" :class="overview.platform_enabled ? 'text-emerald-600' : 'text-slate-400'">
+                  {{ overview.platform_enabled ? '已启用' : '已关闭' }}
+                </span>
+                <span
+                  class="inline-block h-2 w-2 rounded-full"
+                  :class="overview.platform_enabled ? 'bg-emerald-500 animate-pulse' : 'bg-slate-300'"
+                />
+              </div>
+              <div class="mt-1 text-xs text-slate-400">Platform MCP 核心入口</div>
+            </div>
+            <div
+              class="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl transition-transform duration-200 group-hover:scale-110"
+              :class="overview.platform_enabled ? 'bg-emerald-50 text-emerald-600' : 'bg-slate-100 text-slate-400'"
+            >
+              <svg class="h-6 w-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="2" y="2" width="20" height="8" rx="2" ry="2" />
+                <rect x="2" y="14" width="20" height="8" rx="2" ry="2" />
+                <line x1="6" y1="6" x2="6.01" y2="6" />
+                <line x1="6" y1="18" x2="6.01" y2="18" />
+              </svg>
+            </div>
+          </div>
+
+          <!-- 活跃 Client -->
+          <div class="group flex items-center justify-between rounded-2xl border border-slate-100 bg-white p-5 shadow-xs transition-all duration-200 hover:border-indigo-200 hover:shadow-md">
+            <div>
+              <div class="text-xs font-bold uppercase tracking-wider text-slate-400">活跃 Client</div>
+              <div class="mt-1.5 text-2xl font-black text-slate-800">{{ overview.active_client_count ?? 0 }}</div>
+              <div class="mt-1 text-xs text-slate-400">外部系统与授权接入数</div>
+            </div>
+            <div class="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-indigo-50 text-indigo-600 transition-transform duration-200 group-hover:scale-110">
+              <svg class="h-6 w-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
+                <circle cx="9" cy="7" r="4" />
+                <path d="M22 21v-2a4 4 0 0 0-3-3.87" />
+                <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+              </svg>
+            </div>
+          </div>
+
+          <!-- 已发布方法 -->
+          <div class="group flex items-center justify-between rounded-2xl border border-slate-100 bg-white p-5 shadow-xs transition-all duration-200 hover:border-purple-200 hover:shadow-md">
+            <div>
+              <div class="text-xs font-bold uppercase tracking-wider text-slate-400">已发布方法</div>
+              <div class="mt-1.5 text-2xl font-black text-slate-800">{{ overview.published_method_count ?? 0 }}</div>
+              <div class="mt-1 text-xs text-slate-400">平台提供的 MCP Tools</div>
+            </div>
+            <div class="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-purple-50 text-purple-600 transition-transform duration-200 group-hover:scale-110">
+              <svg class="h-6 w-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="16 18 22 12 16 6" />
+                <polyline points="8 6 2 12 8 18" />
+              </svg>
+            </div>
+          </div>
+        </div>
+
         <div class="rounded-2xl bg-white p-6 shadow-sm"><h2 class="text-lg font-black">外部系统接入信息</h2><div class="mt-4 grid gap-3"><div v-for="item in endpointHelpItems" :key="item.key" class="group relative flex flex-wrap items-center gap-3 rounded-xl bg-slate-50 p-3"><span class="flex w-full items-center gap-1.5 text-sm font-bold text-slate-600 sm:w-48"><span>{{ item.label }}</span><button type="button" class="inline-flex h-5 w-5 items-center justify-center rounded-full border border-indigo-300 text-xs font-black text-indigo-600 hover:bg-indigo-50" :aria-label="`查看${item.label}说明`" @click="openEndpointHelp(item.key)">?</button></span><code class="min-w-0 flex-1 break-all pr-10 text-xs">{{ item.value || '—' }}</code><button v-if="item.value" type="button" class="absolute right-3 top-1/2 inline-flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-full border border-slate-200/70 bg-white/80 text-sm font-bold text-indigo-600 opacity-0 shadow-sm transition-opacity hover:border-indigo-200 hover:bg-white focus-visible:opacity-100 group-hover:opacity-100 max-md:opacity-100" :aria-label="`复制${item.label}地址`" :title="copied === item.key ? '已复制' : `复制${item.label}地址`" @click="copyValue(item.key, item.value)">{{ copied === item.key ? '✓' : '⧉' }}</button></div></div></div>
       </section>
 

@@ -284,6 +284,13 @@ def test_service_desk_shows_permission_scoped_audit_summary_on_overview():
     assert "P95 耗时" in view
 
 
+def test_service_desk_places_mcp_call_overview_before_service_status_cards():
+    view = (ROOT / "frontend/src/views/McpServiceDesk.vue").read_text(encoding="utf-8")
+    overview_section = view.split("activeTab === 'overview' && canReadOverview", 1)[1].split("activeTab === 'config'", 1)[0]
+
+    assert overview_section.index("MCP 调用概览") < overview_section.index(">服务状态</div>")
+
+
 def test_service_desk_exposes_security_audit_time_filters_and_trend():
     view = (ROOT / "frontend/src/views/McpServiceDesk.vue").read_text(encoding="utf-8")
 
