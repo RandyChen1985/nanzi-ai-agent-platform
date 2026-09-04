@@ -1,11 +1,14 @@
+import logging
 from types import SimpleNamespace
 
 import pytest
 
+from app.services.ai import tool_nudge_policy
 from app.services.ai.tool_nudge_policy import (
     STRONG_FORCE_SCORE,
     ToolNudge,
     is_automatic_delivery_context,
+    is_tool_meta_query,
     looks_like_explicit_user_question_request,
     resolve_tool_nudge,
     resolve_evidence_tool_fallback_nudge,
@@ -57,6 +60,11 @@ def test_common_capability_question_variants_do_not_force_an_evidence_tool():
     assert resolve_tool_nudge("能查天气吗？", [tool]) is None
 
 
+def test_tool_meta_query_detection_has_a_public_cross_module_api():
+    assert is_tool_meta_query("你们支持查天气吗？") is True
+    assert is_tool_meta_query("查询上海明天实时天气") is False
+
+
 def test_capability_question_starting_with_query_is_not_forced_to_call_tool():
     tool = _evidence_tool("weather_lookup", "查询指定城市的实时天气和未来天气")
 
@@ -106,6 +114,25 @@ def test_evidence_fallback_skips_capability_questions():
         "有没有天气查询工具",
         [_evidence_tool("weather_lookup", "查询天气")],
     ) is None
+
+
+def test_evidence_fallback_logs_metadata_resolution_failure_without_result_details(
+    monkeypatch,
+    caplog,
+):
+    def raise_metadata_error(_tool):
+        raise RuntimeError("secret tool arguments should not be logged")
+
+    monkeypatch.setattr(tool_nudge_policy, "resolve_tool_metadata", raise_metadata_error)
+    with caplog.at_level(logging.WARNING, logger="app.services.ai.tool_nudge_policy"):
+        nudge = resolve_evidence_tool_fallback_nudge(
+            "查询上海天气",
+            [_evidence_tool("weather_lookup", "查询上海天气")],
+        )
+
+    assert nudge is not None
+    assert "weather_lookup" in caplog.text
+    assert "secret tool arguments" not in caplog.text
 
 
 def test_multi_tool_plan_requires_two_distinct_high_confidence_read_tools():

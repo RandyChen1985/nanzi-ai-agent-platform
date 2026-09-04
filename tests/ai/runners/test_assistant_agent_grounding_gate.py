@@ -154,9 +154,41 @@ def test_tool_preflight_marks_evidence_capable_nudge_as_current_turn_required():
     }
 
 
+def test_disabled_grounding_does_not_mark_preflight_as_strict_evidence():
+    from app.services.ai.tool_nudge_policy import ToolNudge
+
+    runner = _runner(debug_options={"grounding_enabled": False})
+    tool = RuntimeToolSpec(
+        name="mcp_get_tickets",
+        description="查询票务结果",
+        parameters_schema={"type": "object"},
+        source_type="mcp",
+        permission_scope="read",
+        callable=lambda: "ok",
+        evidence_types=frozenset({EvidenceType.EXTERNAL_TOOL}),
+    )
+    nudge = ToolNudge(
+        tool_name=tool.name,
+        score=1.0,
+        message="必须先调用工具",
+        force_first_call=True,
+    )
+
+    metadata = runner._build_tool_preflight_evidence_metadata(
+        nudge,
+        [tool],
+        grounding_enabled=False,
+    )
+
+    assert metadata == {
+        "current_turn_evidence_required": False,
+        "required_evidence_types": [],
+    }
+
+
 @pytest.mark.asyncio
 async def test_current_turn_evidence_gate_blocks_unverified_specific_answer():
-    runner = _runner()
+    runner = _runner(debug_options={"grounding_enabled": True})
 
     async def fake_core(_history):
         yield {
@@ -192,6 +224,39 @@ async def test_current_turn_evidence_gate_blocks_unverified_specific_answer():
         and event.get("grounding_blocked") is True
         for event in events
     )
+
+
+@pytest.mark.asyncio
+async def test_disabled_grounding_does_not_reenable_strict_preflight_gate():
+    runner = _runner(debug_options={"grounding_enabled": False})
+
+    async def fake_core(_history):
+        yield {
+            "type": "log",
+            "category": "tool_preflight",
+            "current_turn_evidence_required": True,
+            "required_evidence_types": ["external_tool"],
+        }
+        yield {
+            "type": "answer_delta",
+            "content": "明天车次 G1 的票价是 100 元。",
+            "phase": "synthesis",
+        }
+
+    with patch.object(runner, "_execute_core", fake_core):
+        events = [
+            event
+            async for event in runner.execute(
+                [{"role": "user", "content": "查询明天高铁票"}]
+            )
+        ]
+
+    assert any(
+        event.get("type") == "answer_delta"
+        and "G1" in str(event.get("content") or "")
+        for event in events
+    )
+    assert not any(event.get("grounding_blocked") is True for event in events)
 
 
 @pytest.mark.asyncio
@@ -241,7 +306,7 @@ async def test_stream_with_retraction_emits_speculative_answer_then_retraction()
 
 @pytest.mark.asyncio
 async def test_multi_tool_evidence_contracts_are_checked_independently():
-    runner = _runner()
+    runner = _runner(debug_options={"grounding_enabled": True})
 
     async def fake_core(_history):
         runner._evidence_ledger.record_success(
@@ -350,6 +415,35 @@ def test_evidence_contract_freshness_is_normalized_and_invalid_values_fail_close
     assert runner._resolve_contract_freshness("not-a-freshness") is None
 
 
+def test_resume_prefers_persisted_evidence_contracts_without_replanning(monkeypatch):
+    runner = _runner()
+    persisted_contracts = [
+        {
+            "tool_name": "weather_lookup",
+            "required_evidence_types": ["external_tool"],
+            "freshness": "current_turn",
+        }
+    ]
+
+    def fail_if_replanned(*_args, **_kwargs):
+        raise AssertionError("resume must not recompute the original evidence plan")
+
+    monkeypatch.setattr(
+        "app.services.ai.tool_nudge_policy.resolve_tool_nudge_plan",
+        fail_if_replanned,
+    )
+
+    contracts = runner._resolve_resume_evidence_contracts(
+        {
+            "user_query": "查上海天气",
+            "evidence_contracts": persisted_contracts,
+        },
+        [],
+    )
+
+    assert contracts == tuple(persisted_contracts)
+
+
 @pytest.mark.asyncio
 async def test_current_turn_evidence_gate_releases_answer_with_matching_receipt():
     runner = _runner()
@@ -392,7 +486,7 @@ async def test_current_turn_evidence_gate_releases_answer_with_matching_receipt(
 
 @pytest.mark.asyncio
 async def test_current_turn_evidence_gate_does_not_reuse_historical_receipt():
-    runner = _runner()
+    runner = _runner(debug_options={"grounding_enabled": True})
 
     async def fake_core(_history):
         runner._evidence_ledger.record_success(
@@ -433,7 +527,7 @@ async def test_current_turn_evidence_gate_does_not_reuse_historical_receipt():
 
 @pytest.mark.asyncio
 async def test_preflight_failure_keeps_current_turn_evidence_gate_fail_closed():
-    runner = _runner()
+    runner = _runner(debug_options={"grounding_enabled": True})
     tool = RuntimeToolSpec(
         name="mcp_get_tickets",
         description="查询高铁票车次和票价",
@@ -511,7 +605,7 @@ async def test_current_turn_evidence_gate_releases_explicit_no_result_answer():
 
 @pytest.mark.asyncio
 async def test_current_turn_evidence_gate_waits_for_interrupted_tool_resume():
-    runner = _runner()
+    runner = _runner(debug_options={"grounding_enabled": True})
 
     async def fake_core(_history):
         yield {
@@ -549,7 +643,7 @@ async def test_current_turn_evidence_gate_waits_for_interrupted_tool_resume():
 
 @pytest.mark.asyncio
 async def test_resumed_evidence_tool_answer_is_blocked_without_successful_receipt():
-    runner = _runner()
+    runner = _runner(debug_options={"grounding_enabled": True})
     agent = SimpleNamespace(reply_stream=lambda _event: object(), state={})
     native_model = SimpleNamespace(model="test")
     state = {"user_query": "查询明天高铁票"}
