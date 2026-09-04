@@ -6,6 +6,8 @@ import { useToast } from '../composables/useToast'
 import { copyToClipboard } from '../utils/clipboard'
 
 type Tab = 'overview' | 'guide' | 'config' | 'clients' | 'methods' | 'audit'
+type ResourceWhitelistField = 'allowed_agent_ids' | 'allowed_knowledge_base_ids' | 'allowed_metadata_dataset_ids'
+type ResourcePolicySummary = { mode: 'unrestricted' | 'none' | 'restricted'; count: number | null }
 type Client = {
   client_id: string
   client_name: string
@@ -13,6 +15,10 @@ type Client = {
   status: 'active' | 'disabled' | 'deleted'
   allowed_grant_types: string[]
   allowed_scopes: string[]
+  allowed_agent_ids?: string[] | null
+  allowed_knowledge_base_ids?: string[] | null
+  allowed_metadata_dataset_ids?: string[] | null
+  resource_policy_summary?: Partial<Record<ResourceWhitelistField, ResourcePolicySummary>>
   scope_version: number
   is_shared?: boolean
   needs_token_regeneration?: boolean
@@ -114,6 +120,9 @@ type Grant = {
 }
 
 type ClientConfirmAction = 'disable' | 'reset-secret' | 'delete'
+type ResourceType = 'agent' | 'knowledge_base' | 'metadata_dataset'
+type ResourceOption = { id: string; name: string; description?: string }
+type ResourceWhitelistConfig = { field: ResourceWhitelistField; resourceType: ResourceType; title: string; buttonLabel: string }
 
 const { hasPermission, isAdmin, userInfo } = useUser()
 const { showToast } = useToast()
@@ -188,6 +197,31 @@ const clientEditForm = reactive({
   client_name: '',
   redirect_uris: '',
   is_shared: false,
+})
+const resourceWhitelistConfigs: ResourceWhitelistConfig[] = [
+  { field: 'allowed_agent_ids', resourceType: 'agent', title: '智能体白名单', buttonLabel: '编辑智能体白名单' },
+  { field: 'allowed_knowledge_base_ids', resourceType: 'knowledge_base', title: '知识库白名单', buttonLabel: '编辑知识库白名单' },
+  { field: 'allowed_metadata_dataset_ids', resourceType: 'metadata_dataset', title: '元数据集白名单', buttonLabel: '编辑数据集白名单' },
+]
+const showResourceWhitelistModal = ref(false)
+const resourceWhitelistModal = reactive({
+  field: 'allowed_agent_ids' as ResourceWhitelistField,
+  resourceType: 'agent' as ResourceType,
+  title: '智能体白名单',
+  target: null as Client | null,
+  options: [] as ResourceOption[],
+  selectedIds: [] as string[],
+  search: '',
+  page: 1,
+  total: 0,
+  hasMore: false,
+  loading: false,
+  unrestricted: true,
+})
+const resourceWhitelistConfirm = reactive({
+  visible: false,
+  resourceLabel: '',
+  value: [] as string[],
 })
 
 const showGrants = ref(false)
@@ -282,6 +316,30 @@ const scopeSummary = (client: Client) => {
   return scopes.length > 2 ? `${visible} 等 ${scopes.length} 项` : visible
 }
 
+const resourcePolicySummary = (client: Client, field: ResourceWhitelistField) => {
+  const policy = client.resource_policy_summary?.[field]
+  if (policy?.mode === 'unrestricted') return '跟随用户权限'
+  if (policy?.mode === 'none') return '禁止全部'
+  if (policy?.mode === 'restricted') return `已限制 ${policy.count || 0} 项`
+  const ids = client[field]
+  if (!ids) return '资源策略详情不可见'
+  if (ids === null) return '跟随用户权限'
+  if (!ids.length) return '禁止全部'
+  return `已限制 ${ids.length} 项`
+}
+
+const resourcePolicyButtonClass = (client: Client, field: ResourceWhitelistField) => {
+  const policy = client.resource_policy_summary?.[field]
+  if (policy?.mode === 'unrestricted') return 'border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
+  if (policy?.mode === 'none') return 'border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100'
+  if (policy?.mode === 'restricted') return 'border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100'
+  const ids = client[field]
+  if (!ids) return 'border-slate-200 bg-slate-50 text-slate-500'
+  if (ids === null) return 'border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
+  if (!ids.length) return 'border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100'
+  return 'border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100'
+}
+
 const currentUserId = computed(() => String(userInfo.value?.user_id ?? userInfo.value?.id ?? ''))
 const isClientOwner = (client: Client) => (
   !!currentUserId.value && String(client.created_by ?? '') === currentUserId.value
@@ -304,6 +362,116 @@ const closeClientScopeEdit = (force: boolean | Event = false) => {
   showClientScopeEdit.value = false
   clientScopeEditTarget.value = null
   clientScopeEditForm.scopes = []
+}
+
+const closeResourceWhitelistModal = (force = false) => {
+  if (saving.value && !force) return
+  showResourceWhitelistModal.value = false
+  resourceWhitelistModal.target = null
+  resourceWhitelistModal.options = []
+  resourceWhitelistModal.selectedIds = []
+  resourceWhitelistModal.search = ''
+  resourceWhitelistConfirm.visible = false
+}
+
+const loadResourceOptions = async (reset = true) => {
+  const client = resourceWhitelistModal.target
+  if (!client || resourceWhitelistModal.loading) return
+  if (reset) {
+    resourceWhitelistModal.page = 1
+    resourceWhitelistModal.options = []
+  }
+  resourceWhitelistModal.loading = true
+  try {
+    const response = await api.get(`/api/portal/mcp-service/clients/${encodeURIComponent(client.client_id)}/resource-options`, {
+      params: {
+        resource_type: resourceWhitelistModal.resourceType,
+        keyword: resourceWhitelistModal.search.trim() || undefined,
+        page: resourceWhitelistModal.page,
+        page_size: 50,
+      },
+    })
+    const items = (response.data?.items || []) as ResourceOption[]
+    resourceWhitelistModal.options = reset ? items : [...resourceWhitelistModal.options, ...items]
+    resourceWhitelistModal.total = Number(response.data?.total || 0)
+    resourceWhitelistModal.hasMore = !!response.data?.has_more
+  } catch (err: any) {
+    error.value = err?.response?.data?.detail || '资源候选列表加载失败'
+  } finally {
+    resourceWhitelistModal.loading = false
+  }
+}
+
+const openResourceWhitelist = async (client: Client, config: ResourceWhitelistConfig) => {
+  if (!canManageClientItem(client) || client.status === 'deleted') return
+  resourceWhitelistModal.field = config.field
+  resourceWhitelistModal.resourceType = config.resourceType
+  resourceWhitelistModal.title = config.title
+  resourceWhitelistModal.target = client
+  resourceWhitelistModal.selectedIds = [...(client[config.field] || [])]
+  resourceWhitelistModal.unrestricted = client[config.field] === null
+  resourceWhitelistModal.search = ''
+  showResourceWhitelistModal.value = true
+  await loadResourceOptions()
+}
+
+const selectAllCurrentResourceOptions = () => {
+  if (resourceWhitelistModal.unrestricted) return
+  resourceWhitelistModal.selectedIds = Array.from(new Set([
+    ...resourceWhitelistModal.selectedIds,
+    ...resourceWhitelistModal.options.map(item => item.id),
+  ]))
+}
+
+const restoreAllAccessibleResources = () => {
+  resourceWhitelistModal.unrestricted = true
+  resourceWhitelistModal.selectedIds = []
+}
+
+const loadMoreResourceOptions = async () => {
+  if (!resourceWhitelistModal.hasMore || resourceWhitelistModal.loading) return
+  resourceWhitelistModal.page += 1
+  await loadResourceOptions(false)
+}
+
+const persistResourceWhitelist = async (value: string[] | null) => {
+  const client = resourceWhitelistModal.target
+  if (!client || !canManageClientItem(client) || saving.value) return
+  saving.value = true
+  error.value = ''
+  try {
+    await api.patch(`/api/portal/mcp-service/clients/${encodeURIComponent(client.client_id)}`, { [resourceWhitelistModal.field]: value })
+    showToast('资源白名单已更新', 'success')
+    await loadClients()
+    closeResourceWhitelistModal(true)
+  } catch (err: any) {
+    error.value = err?.response?.data?.detail || '资源白名单更新失败'
+  } finally {
+    saving.value = false
+  }
+}
+
+const saveResourceWhitelist = async () => {
+  if (!resourceWhitelistModal.unrestricted && !resourceWhitelistModal.selectedIds.length) {
+    resourceWhitelistConfirm.resourceLabel = resourceWhitelistModal.title.replace('白名单', '')
+    resourceWhitelistConfirm.value = []
+    resourceWhitelistConfirm.visible = true
+    return
+  }
+  const value = resourceWhitelistModal.unrestricted ? null : [...resourceWhitelistModal.selectedIds]
+  await persistResourceWhitelist(value)
+}
+
+const cancelResourceWhitelistConfirm = () => {
+  resourceWhitelistConfirm.visible = false
+  resourceWhitelistConfirm.value = []
+}
+
+const confirmResourceWhitelistSave = async () => {
+  const value = [...resourceWhitelistConfirm.value]
+  resourceWhitelistConfirm.visible = false
+  resourceWhitelistConfirm.value = []
+  await persistResourceWhitelist(value)
 }
 
 const canEditConfig = computed(() => hasPermission('element:mcp_service:config:edit'))
@@ -358,7 +526,7 @@ const openClientEdit = (client: Client) => {
   showClientEdit.value = true
 }
 
-const closeClientEdit = (force: boolean | Event = false) => {
+const closeClientEdit = (force = false) => {
   const isForced = typeof force === 'boolean' ? force : false
   if (saving.value && !isForced) return
   showClientEdit.value = false
@@ -685,15 +853,15 @@ const loadClientTokens = async (client: Client) => {
 
 const isTokenExpiring = (token: ClientToken) => {
   if (getTokenStatus(token) !== 'active' || !token.expires_at) return false
-  const expiresAt = new Date(token.expires_at).getTime()
-  return Number.isFinite(expiresAt) && expiresAt > tokenClock.value && expiresAt <= tokenClock.value + 24 * 60 * 60 * 1000
+  const expiresAt = parseMcpTimestamp(token.expires_at)?.getTime() ?? null
+  return expiresAt !== null && Number.isFinite(expiresAt) && expiresAt > tokenClock.value && expiresAt <= tokenClock.value + 24 * 60 * 60 * 1000
 }
 
 const getTokenStatus = (token: ClientToken): ClientToken['status'] => {
   if (token.revoked_at) return 'revoked'
   if (!token.expires_at) return token.status
-  const expiresAt = new Date(token.expires_at).getTime()
-  return Number.isFinite(expiresAt) && expiresAt <= tokenClock.value ? 'expired' : 'active'
+  const expiresAt = parseMcpTimestamp(token.expires_at)?.getTime() ?? null
+  return expiresAt !== null && Number.isFinite(expiresAt) && expiresAt <= tokenClock.value ? 'expired' : 'active'
 }
 
 const tokenStatusCounts = computed(() => {
@@ -902,14 +1070,29 @@ const auditResultLabel = (status: string) => ({
 
 const auditAuthTypeLabel = (authType: string) => authType === 'user_delegated' ? '用户授权' : authType
 
-const formatAuditTime = (value?: string | null) => value ? new Date(value).toLocaleString('zh-CN', { hour12: false }) : '—'
+const parseMcpTimestamp = (value?: string | null) => {
+  if (!value) return null
+  const rawValue = value.trim()
+  if (!rawValue) return null
+  const isoValue = rawValue.includes('T') ? rawValue : rawValue.replace(' ', 'T')
+  const normalizedValue = /(?:Z|[+-]\d{2}:?\d{2})$/i.test(isoValue) ? isoValue : `${isoValue}Z`
+  const parsed = new Date(normalizedValue)
+  return Number.isFinite(parsed.getTime()) ? parsed : null
+}
+const formatAuditTime = (value?: string | null) => parseMcpTimestamp(value)?.toLocaleString('zh-CN', { hour12: false }) || '—'
 const trendBarHeight = (total: number) => `${Math.max(6, Math.round((total / trendMax.value) * 88))}px`
 const usageBarWidth = (total: number, max: number) => `${Math.max(total ? 4 : 0, Math.round(total / Math.max(max, 1) * 100))}%`
 const usagePercent = (total: number, overall: number) => overall ? `${Math.round(total / overall * 100)}%` : '0%'
 const usageStatusLabel = (name: string) => ({ completed: '成功', failed: '失败', denied: '拒绝' }[name] || name)
 const usageAuthLabel = (name: string) => name === 'user_delegated' ? '用户授权' : name
 const usageResourceLabel = (name: string) => name || '其他'
-const formatClientTime = (value?: string | null) => value ? new Date(value).toLocaleString('zh-CN', { hour12: false, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }).replace(/\//g, '-') : '—'
+const formatClientTime = (value?: string | null) => parseMcpTimestamp(value)?.toLocaleString('zh-CN', { hour12: false, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }).replace(/\//g, '-') || '—'
+const remainingTokenDays = (value?: string | null) => {
+  const expiresAt = parseMcpTimestamp(value)?.getTime() ?? null
+  if (expiresAt === null || !Number.isFinite(expiresAt)) return null
+  const remainingMs = expiresAt - tokenClock.value
+  return remainingMs <= 0 ? 0 : Math.ceil(remainingMs / (24 * 60 * 60 * 1000))
+}
 const toggleClientExpanded = (clientId: string) => {
   const next = new Set(expandedClientIds.value)
   if (next.has(clientId)) next.delete(clientId)
@@ -1982,11 +2165,17 @@ onUnmounted(() => {
               <span class="rounded-full bg-orange-50 px-2.5 py-1 font-bold text-orange-700">已过期 {{ client.expired_token_count || 0 }}</span>
               <span class="rounded-full bg-slate-100 px-2.5 py-1 font-bold text-slate-500">已撤销 {{ client.revoked_token_count || 0 }}</span>
             </div>
+            <div class="mt-3 flex flex-wrap items-center gap-2 rounded-xl border border-indigo-100 bg-indigo-50/40 px-3 py-2">
+              <span class="mr-1 text-xs font-black text-slate-700">资源访问</span>
+              <template v-for="config in resourceWhitelistConfigs" :key="config.field">
+                <button v-if="canManageClientItem(client)" type="button" class="rounded-lg border px-2.5 py-1.5 text-[11px] font-bold shadow-sm transition" :class="resourcePolicyButtonClass(client, config.field)" :title="resourcePolicySummary(client, config.field)" @click="openResourceWhitelist(client, config)">{{ config.buttonLabel }}</button>
+              </template>
+            </div>
             <div v-if="expandedClientIds.has(client.client_id)" :id="'client-details-' + client.client_id">
             <div class="mt-4 grid gap-3 md:grid-cols-3">
               <div class="rounded-xl border border-slate-100 bg-slate-50 px-3 py-3"><div class="text-[11px] font-bold text-slate-400">Token 状态</div><div class="mt-1 text-sm font-bold" :class="(client.active_token_count || 0) > 0 ? 'text-emerald-700' : 'text-slate-600'">{{ (client.active_token_count || 0) > 0 ? '状态正常' : (client.has_issued_token ? '暂无有效 Token' : '尚未生成') }}</div></div>
               <div class="rounded-xl border border-slate-100 bg-slate-50 px-3 py-3"><div class="text-[11px] font-bold text-slate-400">有效 Token 数量</div><div class="mt-1 text-sm font-bold text-slate-700">{{ client.active_token_count || 0 }} 个</div></div>
-              <div class="rounded-xl border border-slate-100 bg-slate-50 px-3 py-3"><div class="text-[11px] font-bold text-slate-400">最近过期时间</div><div class="mt-1 text-sm font-bold text-slate-700">{{ client.latest_token_expires_at ? formatClientTime(client.latest_token_expires_at) : '—' }}</div></div>
+              <div class="rounded-xl border border-slate-100 bg-slate-50 px-3 py-3"><div class="text-[11px] font-bold text-slate-400">最近过期时间</div><div class="mt-1 text-sm font-bold text-slate-700">{{ client.latest_token_expires_at ? formatClientTime(client.latest_token_expires_at) : '—' }}</div><div class="mt-1 text-xs font-bold" :class="remainingTokenDays(client.latest_token_expires_at) === 0 ? 'text-rose-600' : 'text-slate-500'">{{ remainingTokenDays(client.latest_token_expires_at) === null ? '—' : remainingTokenDays(client.latest_token_expires_at) === 0 ? '已过期' : `还剩 ${remainingTokenDays(client.latest_token_expires_at)} 天` }}</div></div>
             </div>
             <div class="mt-4 border-t border-slate-100 pt-4">
               <div class="mb-3 flex items-center gap-2">
@@ -2012,7 +2201,14 @@ onUnmounted(() => {
                   </div>
                 </div>
               </div>
-              <p class="mt-3 rounded-xl border border-blue-100 bg-blue-50 px-3 py-2 text-xs leading-5 text-blue-900">资源权限：由当前登录用户的角色和权限决定，Client 不再配置智能体、知识库或元数据集白名单。Client 仅控制 MCP 方法 Scope。</p>
+              <div class="mt-4 grid gap-3 md:grid-cols-3">
+                <div v-for="config in resourceWhitelistConfigs" :key="config.field" class="rounded-xl border border-indigo-100 bg-indigo-50/50 p-3">
+                  <div class="text-xs font-bold text-slate-500">{{ config.title }}</div>
+                  <div class="mt-1 text-sm font-black text-slate-800">{{ resourcePolicySummary(client, config.field) }}</div>
+                  <p class="mt-1 text-[11px] leading-4 text-slate-500">实际权限仍受当前用户权限限制</p>
+                </div>
+              </div>
+              <p class="mt-3 rounded-xl border border-blue-100 bg-blue-50 px-3 py-2 text-xs leading-5 text-blue-900">资源权限按“当前用户权限 ∩ Client 白名单”生效；未配置白名单时跟随用户权限，配置空白名单时表示该 Client 不可访问此类资源。</p>
               <div class="mt-3 flex justify-end">
                 <button type="button" class="text-xs font-bold text-indigo-700 hover:text-indigo-900" @click="openClientDetails(client)">查看权限详情 →</button>
               </div>
@@ -2334,8 +2530,8 @@ onUnmounted(() => {
               </div>
               <div class="rounded-xl border border-blue-100 bg-blue-50 p-4">
                 <div class="text-xs font-bold text-blue-700">资源权限</div>
-                <p class="mt-2 text-sm leading-6 text-blue-950">智能体、知识库、元数据集等资源，统一按当前登录用户的角色和权限判断；Client 不保存、不配置资源白名单。</p>
-                <p class="mt-2 text-xs leading-5 text-blue-800">因此同一个 Client 被不同用户使用时，实际可访问资源会随用户身份变化。</p>
+                <p class="mt-2 text-sm leading-6 text-blue-950">智能体、知识库、元数据集等资源，按当前登录用户权限与 Client 白名单的交集判断。</p>
+                <p class="mt-2 text-xs leading-5 text-blue-800">未配置白名单时跟随用户权限；配置空白名单时，该 Client 对此类资源没有访问权限。</p>
               </div>
             </div>
             <div class="flex justify-end border-t border-slate-100 px-6 py-4">
@@ -2389,7 +2585,7 @@ onUnmounted(() => {
                     </div>
                   </div>
                 </div>
-                <div class="rounded-xl border border-blue-100 bg-blue-50 p-4 text-xs leading-5 text-blue-900">资源访问不在 Client 中单独配置。调用时会按 Access Token 代表的当前用户角色和权限校验；Client 这里只配置允许申请的 MCP 方法 Scope。</div>
+                <div class="rounded-xl border border-blue-100 bg-blue-50 p-4 text-xs leading-5 text-blue-900">创建 Client 后，可在 Client 卡片的资源访问区域配置白名单；实际调用仍会按 Access Token 代表的当前用户权限取交集。</div>
               </div>
             </div>
 
@@ -2450,6 +2646,91 @@ onUnmounted(() => {
               <button type="button" class="rounded-xl px-4 py-2 font-bold text-slate-500 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50" :disabled="saving" @click="closeClientScopeEdit">取消</button>
               <button type="button" class="rounded-xl bg-indigo-600 px-5 py-2 font-bold text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50" :disabled="saving || !clientScopeEditForm.scopes.length" @click="saveClientScopes">{{ saving ? '保存中…' : '保存 Scope' }}</button>
             </div>
+          </div>
+        </div>
+      </div>
+
+      <div
+        v-if="showResourceWhitelistModal && resourceWhitelistModal.target"
+        class="fixed inset-0 z-50 overflow-y-auto bg-slate-900/50 p-4"
+        @click.self="closeResourceWhitelistModal()"
+      >
+        <div class="flex min-h-full items-center justify-center">
+          <div class="flex max-h-[calc(100vh-2rem)] w-full max-w-2xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
+            <div class="flex shrink-0 items-center justify-between border-b border-slate-100 px-6 py-5">
+              <div>
+                <h2 class="text-xl font-black">编辑{{ resourceWhitelistModal.title }}</h2>
+                <p class="mt-1 text-xs font-normal text-slate-500">{{ resourceWhitelistModal.target.client_name }} · 当前用户可访问资源候选</p>
+              </div>
+              <button type="button" class="text-2xl text-slate-400 hover:text-slate-600" aria-label="关闭资源白名单弹框" :disabled="saving" @click="() => closeResourceWhitelistModal()">×</button>
+            </div>
+
+            <div class="min-h-0 flex-1 overflow-y-auto px-6 py-5">
+              <div class="space-y-4">
+                <div class="grid gap-2 sm:grid-cols-2">
+                  <label class="flex cursor-pointer items-start gap-3 rounded-xl border border-indigo-100 bg-indigo-50 p-4 text-sm">
+                    <input :checked="resourceWhitelistModal.unrestricted" type="radio" name="resource-whitelist-mode" class="mt-0.5 h-4 w-4 text-indigo-600 focus:ring-indigo-500" @change="resourceWhitelistModal.unrestricted = true" />
+                    <span><span class="block font-bold text-indigo-950">跟随用户权限（推荐）</span><span class="mt-1 block text-xs font-normal text-indigo-800">不额外限制 Client；每个用户仍只能访问自己的授权资源。</span></span>
+                  </label>
+                  <label class="flex cursor-pointer items-start gap-3 rounded-xl border border-slate-200 bg-white p-4 text-sm">
+                    <input :checked="!resourceWhitelistModal.unrestricted" type="radio" name="resource-whitelist-mode" class="mt-0.5 h-4 w-4 text-indigo-600 focus:ring-indigo-500" @change="resourceWhitelistModal.unrestricted = false" />
+                    <span><span class="block font-bold text-slate-800">仅允许指定资源</span><span class="mt-1 block text-xs font-normal text-slate-500">只允许下方勾选的资源；一个都不选则全部禁止。</span></span>
+                  </label>
+                </div>
+                <div class="flex flex-wrap items-center gap-2">
+                  <input v-model="resourceWhitelistModal.search" class="min-w-0 flex-1 rounded-lg border border-slate-200 px-3 py-2 text-sm" placeholder="搜索资源名称或 ID" @keyup.enter="loadResourceOptions()" />
+                  <button type="button" class="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-600 hover:bg-slate-50" @click="loadResourceOptions()">查询</button>
+                  <button type="button" class="rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-2 text-xs font-bold text-indigo-700 hover:bg-indigo-100 disabled:opacity-50" :disabled="resourceWhitelistModal.unrestricted" @click="selectAllCurrentResourceOptions">勾选当前搜索结果</button>
+                  <button type="button" class="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-bold text-amber-700 hover:bg-amber-100" @click="restoreAllAccessibleResources">取消限制，跟随用户权限</button>
+                </div>
+                <div class="flex items-center justify-between text-xs text-slate-500">
+                  <span>{{ resourceWhitelistModal.unrestricted ? '当前设置：跟随用户权限' : (resourceWhitelistModal.selectedIds.length ? `已选择 ${resourceWhitelistModal.selectedIds.length} 项资源` : '当前设置：禁止访问全部资源') }}</span>
+                  <span>候选 {{ resourceWhitelistModal.total }} 项</span>
+                </div>
+                <div class="max-h-80 overflow-y-auto rounded-xl border border-slate-200 bg-slate-50 p-3">
+                  <div v-if="resourceWhitelistModal.loading && !resourceWhitelistModal.options.length" class="py-8 text-center text-xs text-slate-400">加载中…</div>
+                  <div v-else-if="!resourceWhitelistModal.options.length" class="py-8 text-center text-xs text-slate-400">当前用户暂无可选资源</div>
+                  <label v-for="item in resourceWhitelistModal.options" v-else :key="item.id" class="flex items-start gap-3 rounded-lg bg-white p-3 text-xs shadow-sm" :class="resourceWhitelistModal.unrestricted ? 'opacity-60' : ''">
+                    <input v-model="resourceWhitelistModal.selectedIds" type="checkbox" :value="item.id" :disabled="resourceWhitelistModal.unrestricted" class="mt-0.5 h-4 w-4 rounded text-indigo-600 focus:ring-indigo-500" />
+                    <span class="min-w-0"><span class="block font-bold text-slate-700">{{ item.name }}</span><code class="mt-1 block break-all text-[11px] text-slate-400">{{ item.id }}</code><span v-if="item.description" class="mt-1 block text-slate-500">{{ item.description }}</span></span>
+                  </label>
+                  <button v-if="resourceWhitelistModal.hasMore" type="button" class="mt-3 w-full rounded-lg border border-slate-200 bg-white py-2 text-xs font-bold text-indigo-700 hover:bg-indigo-50 disabled:opacity-50" :disabled="resourceWhitelistModal.loading" @click="loadMoreResourceOptions">{{ resourceWhitelistModal.loading ? '加载中…' : '加载更多' }}</button>
+                </div>
+              </div>
+            </div>
+
+            <div class="flex shrink-0 justify-end gap-3 border-t border-slate-100 bg-white px-6 py-4">
+              <button type="button" class="rounded-xl px-4 py-2 font-bold text-slate-500 hover:bg-slate-50 disabled:opacity-50" :disabled="saving" @click="() => closeResourceWhitelistModal()">取消</button>
+              <button type="button" class="rounded-xl bg-indigo-600 px-5 py-2 font-bold text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50" :disabled="saving" @click="saveResourceWhitelist">{{ saving ? '保存中…' : '保存白名单' }}</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div
+        v-if="resourceWhitelistConfirm.visible"
+        class="fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/50 p-4"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="resource-whitelist-confirm-title"
+      >
+        <div class="w-full max-w-md rounded-2xl bg-white shadow-2xl">
+          <div class="flex items-start justify-between border-b border-slate-100 px-6 py-5">
+            <div>
+              <h2 id="resource-whitelist-confirm-title" class="text-lg font-black text-slate-800">确认禁止全部资源</h2>
+              <p class="mt-1 text-sm text-slate-500">正在设置：{{ resourceWhitelistConfirm.resourceLabel }}</p>
+            </div>
+            <button type="button" class="text-2xl text-slate-400 hover:text-slate-600" aria-label="关闭确认弹框" @click="cancelResourceWhitelistConfirm">×</button>
+          </div>
+          <div class="px-6 py-5">
+            <div class="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm leading-6 text-rose-900">
+              确定禁止该 Client 访问全部{{ resourceWhitelistConfirm.resourceLabel }}吗？
+              <div class="mt-1 text-xs text-rose-700">保存后，该 Client 将无法访问此类资源；如需恢复，可选择“跟随用户权限”。</div>
+            </div>
+          </div>
+          <div class="flex justify-end gap-3 border-t border-slate-100 px-6 py-4">
+            <button type="button" class="rounded-xl px-4 py-2 font-bold text-slate-500 hover:bg-slate-50" @click="cancelResourceWhitelistConfirm">取消</button>
+            <button type="button" class="rounded-xl bg-rose-600 px-5 py-2 font-bold text-white hover:bg-rose-700 disabled:cursor-not-allowed disabled:opacity-50" :disabled="saving" @click="confirmResourceWhitelistSave">{{ saving ? '保存中…' : '确认禁止' }}</button>
           </div>
         </div>
       </div>
@@ -2651,7 +2932,7 @@ onUnmounted(() => {
       <div
         v-if="showClientEdit && clientEditTarget"
         class="fixed inset-0 z-50 overflow-y-auto bg-slate-900/50 p-4"
-        @click.self="closeClientEdit"
+        @click.self="() => closeClientEdit()"
       >
         <div class="flex min-h-full items-center justify-center">
           <div class="flex max-h-[calc(100vh-2rem)] w-full max-w-lg flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
@@ -2660,7 +2941,7 @@ onUnmounted(() => {
                 <h2 class="text-xl font-black text-slate-800">编辑 Client 基本信息</h2>
                 <p class="mt-1 text-xs text-slate-500">{{ clientEditTarget.client_name }} · {{ clientEditTarget.client_id }}</p>
               </div>
-              <button type="button" class="text-2xl text-slate-400 hover:text-slate-600" aria-label="关闭编辑" :disabled="saving" @click="closeClientEdit">×</button>
+              <button type="button" class="text-2xl text-slate-400 hover:text-slate-600" aria-label="关闭编辑" :disabled="saving" @click="() => closeClientEdit()">×</button>
             </div>
             <div class="min-h-0 flex-1 overflow-y-auto px-6 py-5">
               <div class="space-y-4">
@@ -2683,7 +2964,7 @@ onUnmounted(() => {
               </div>
             </div>
             <div class="flex shrink-0 justify-end gap-3 border-t border-slate-100 bg-white px-6 py-4">
-              <button type="button" class="rounded-xl px-4 py-2 font-bold text-slate-500 hover:bg-slate-50" :disabled="saving" @click="closeClientEdit">取消</button>
+              <button type="button" class="rounded-xl px-4 py-2 font-bold text-slate-500 hover:bg-slate-50" :disabled="saving" @click="() => closeClientEdit()">取消</button>
               <button type="button" class="rounded-xl bg-indigo-600 px-5 py-2 font-bold text-white hover:bg-indigo-700 disabled:opacity-50" :disabled="saving || !clientEditForm.client_name.trim()" @click="saveClientEdit">{{ saving ? '保存中…' : '保存修改' }}</button>
             </div>
           </div>

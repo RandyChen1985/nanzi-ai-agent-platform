@@ -166,6 +166,24 @@ def test_client_cards_prioritize_primary_action_and_collapse_low_frequency_actio
     assert "有效 Token 数量" in view
 
 
+def test_client_card_shows_remaining_token_days_next_to_latest_expiry():
+    view = (ROOT / "frontend/src/views/McpServiceDesk.vue").read_text(encoding="utf-8")
+
+    assert "const remainingTokenDays" in view
+    assert "还剩" in view
+    assert "已过期" in view
+    assert "remainingTokenDays(client.latest_token_expires_at)" in view
+
+
+def test_mcp_timestamps_without_offset_are_parsed_as_utc_for_expiry_checks():
+    view = (ROOT / "frontend/src/views/McpServiceDesk.vue").read_text(encoding="utf-8")
+
+    assert "const parseMcpTimestamp" in view
+    assert "parseMcpTimestamp(token.expires_at)" in view
+    assert "parseMcpTimestamp(value)" in view
+    assert "${isoValue}Z" in view
+
+
 def test_client_search_filters_are_collapsed_by_default():
     view = (ROOT / "frontend/src/views/McpServiceDesk.vue").read_text(encoding="utf-8")
 
@@ -426,18 +444,62 @@ def test_service_desk_guide_uses_generic_current_user_identity_wording():
     assert "管理员登录生成管理员身份，demo 用户登录生成 demo 身份" not in view
 
 
-def test_service_desk_client_form_exposes_method_scopes_without_resource_whitelists():
+def test_service_desk_exposes_resource_whitelist_editors():
     view = (ROOT / "frontend/src/views/McpServiceDesk.vue").read_text(encoding="utf-8")
 
     assert "agent:list" in view
     assert "agent:invoke" in view
     assert "当前已发布，需用户授权" not in view
     assert "（待接入）" not in view
-    assert "allowed_agent_ids" not in view
-    assert "allowed_knowledge_base_ids" not in view
-    assert "allowed_metadata_dataset_ids" not in view
-    assert "Client 仅控制 MCP 方法 Scope" in view
-    assert "当前用户角色和权限" in view
+    assert "allowed_agent_ids" in view
+    assert "allowed_knowledge_base_ids" in view
+    assert "allowed_metadata_dataset_ids" in view
+    assert "编辑智能体白名单" in view
+    assert "编辑知识库白名单" in view
+    assert "编辑数据集白名单" in view
+    assert "resource-options" in view
+    assert 'type="checkbox"' in view
+    assert "跟随用户权限" in view
+    assert "仅允许指定资源" in view
+    assert "勾选当前搜索结果" in view
+    assert "取消限制，跟随用户权限" in view
+
+
+def test_service_desk_resource_whitelist_save_is_field_scoped():
+    view = (ROOT / "frontend/src/views/McpServiceDesk.vue").read_text(encoding="utf-8")
+
+    assert "resourceWhitelistModal.field" in view
+    assert "resourceWhitelistModal.selectedIds" in view
+    assert "{ [resourceWhitelistModal.field]: value }" in view
+    assert "await loadClients()" in view
+    assert "确定禁止该 Client 访问全部" in view
+    assert "resourceWhitelistConfirm" in view
+    assert "confirmResourceWhitelistSave" in view
+
+
+def test_resource_whitelist_buttons_are_visible_without_expanding_client_details():
+    view = (ROOT / "frontend/src/views/McpServiceDesk.vue").read_text(encoding="utf-8")
+    clients_section = view.split("activeTab === 'clients'", 1)[1].split("activeTab === 'methods'", 1)[0]
+    expanded_details = clients_section.index('<div v-if="expandedClientIds.has(client.client_id)"')
+
+    assert "resourceWhitelistConfigs" in clients_section
+    assert "{{ config.buttonLabel }}" in clients_section
+    assert "openResourceWhitelist(client, config)" in clients_section
+    assert "resourcePolicyButtonClass(client, config.field)" in clients_section
+    assert "bg-emerald-50" in view
+    assert "bg-amber-50" in view
+    assert "bg-rose-50" in view
+
+
+def test_resource_whitelist_save_shows_success_feedback_and_supports_hidden_summaries():
+    view = (ROOT / "frontend/src/views/McpServiceDesk.vue").read_text(encoding="utf-8")
+    clients_section = view.split("activeTab === 'clients'", 1)[1].split("activeTab === 'methods'", 1)[0]
+
+    assert "showToast('资源白名单已更新', 'success')" in view
+    assert "resource_policy_summary" in view
+    assert "资源策略详情不可见" in view
+    assert ':title="resourcePolicySummary(client, config.field)"' in clients_section
+    assert "创建 Client 后，可在 Client 卡片的资源访问区域配置白名单" in view
 
 
 def test_service_desk_exposes_only_user_bound_oauth_flow():
@@ -487,8 +549,8 @@ def test_client_card_uses_compact_permission_summary_and_on_demand_details():
     assert "查看权限详情" in view
     assert "md:grid-cols-2" in view
     assert "scopeSummary" in view
-    assert "资源权限：由当前登录用户的角色和权限决定" in view
-    assert "Client 不再配置" in view
+    assert "资源权限按“当前用户权限 ∩ Client 白名单”生效" in view
+    assert "Client 白名单" in view
 
     clients_section = view.split("activeTab === 'clients'", 1)[1].split("activeTab === 'methods'", 1)[0]
     assert "inline-flex max-w-full items-center gap-1 rounded-full" not in clients_section

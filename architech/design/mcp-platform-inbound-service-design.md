@@ -72,8 +72,8 @@ notification.send
 | Access Token | 使用高熵 opaque Bearer Token，数据库只保存 SHA-256 摘要并支持过期、撤销和 Client 停用；后续可在不改变 MCP 调用协议的情况下切换为独立 JWT + JWKS |
 | Platform MCP 入站入口 | `POST /mcp/platform`，通过 FastMCP Resource Server 校验 OAuth Bearer Token |
 | 已注册方法 | 9 个方法均已注册并可按总开关、能力组开关和 OAuth Client Scope 发布；默认配置仍为关闭 |
-| MCP 服务台 | 独立菜单 `/dashboard/mcp-service` 和 `/api/portal/mcp-service`，支持使用指南、总开关、能力组开关、Client 创建/编辑/停用/软删除/Secret 重置、Scope、方法查看、为当前登录用户生成个人 Access Token，以及入站调用审计查询；使用指南可复制通用 `mcpServers` JSON；资源权限统一复用当前用户角色与权限；用户授权关系与授权事件审计仍为后续切片 |
-| 数据库 | MySQL `V137`、PostgreSQL `V38` 增加入站 OAuth Client、授权、Token、审计表及菜单/元素权限；MySQL `V138`、PostgreSQL `V39` 增加当前用户 Token 签发功能权限；历史数据库中的资源白名单列和值保留但不再使用；必须按迁移执行，代码不会自动改库 |
+| MCP 服务台 | 独立菜单 `/dashboard/mcp-service` 和 `/api/portal/mcp-service`，支持使用指南、总开关、能力组开关、Client 创建/编辑/停用/软删除/Secret 重置、Scope、智能体/知识库/元数据数据集三类资源白名单、方法查看、为当前登录用户生成个人 Access Token，以及入站调用审计查询；资源白名单按 Client 独立配置，运行时仍受当前用户权限约束；使用指南可复制通用 `mcpServers` JSON；用户授权关系与授权事件审计仍为后续切片 |
+| 数据库 | MySQL `V137`、PostgreSQL `V38` 增加入站 OAuth Client、授权、Token、审计表及菜单/元素权限；MySQL `V138`、PostgreSQL `V39` 增加当前用户 Token 签发功能权限；Client 资源白名单复用已有 `allowed_agent_ids`、`allowed_knowledge_base_ids`、`allowed_metadata_dataset_ids` 三个 JSON 字段，不新增迁移；必须按迁移执行，代码不会自动改库 |
 
 因此，服务台中 9 个方法的状态会根据实现状态和能力组开关显示为“已启用/已关闭”；总开关或对应能力组关闭时，方法不会出现在 MCP `tools/list`，直接调用也会被拒绝。当前 Platform MCP 默认关闭，完成迁移后由拥有服务台配置权限的人员按“总开关 → 能力组 → Client”顺序开启。
 
@@ -347,6 +347,7 @@ client_type = confidential
 redirect_uris
 允许的 scopes
 允许的智能体
+允许的知识库
 允许的元数据资源
 ```
 
@@ -1183,15 +1184,16 @@ Token Scope
 
 ### 10.3 资源权限规则
 
-Client 不再配置智能体、知识库或元数据集白名单。保留的 `allowed_scopes` 只表示该 Client 可以申请哪些 MCP 方法；具体资源访问完全由 Access Token 绑定的 NanZi 用户角色与权限决定。
+Client 可以分别配置智能体、知识库和元数据数据集白名单。三个字段均采用三态语义：`NULL` 表示该 Client 不增加限制，空数组表示禁止访问该类资源，非空数组表示只允许列出的资源。`allowed_scopes` 仍只表示该 Client 可以申请哪些 MCP 方法，不替代资源白名单。
 
 所有 Platform MCP 方法都要求已验证的 NanZi 用户身份，执行规则如下：
 
-- `agent.list_allowed` 和 `agent.invoke` 只使用当前用户有权使用的智能体；
-- `knowledge.search` 只检索当前用户有权限的知识库和文档；请求指定的知识库范围只能进一步缩小结果；
-- 元数据方法只返回当前用户有权限的数据集、表、字段和指标；请求指定的数据集只能进一步缩小结果；
+- `agent.list_allowed` 和 `agent.invoke` 只使用当前用户有权使用且在 Client 智能体白名单内的智能体；
+- `knowledge.search` 只检索当前用户有权限且在 Client 知识库白名单内的知识库和文档；请求指定的知识库范围只能进一步缩小结果；
+- 元数据方法只返回当前用户有权限且在 Client 数据集白名单内的数据集、表、字段和指标；请求指定的数据集只能进一步缩小结果；
 - 同一个 Client 被不同用户使用时，实际可访问资源随 Token 代表的用户身份变化；
-- 历史数据库中的白名单列和历史值保留，但当前代码不再读写、展示或执行这些字段。
+- 白名单资源 ID 在服务台保存时必须存在、处于启用状态且属于当前操作者可访问范围；运行时资源不存在、停用或无权访问统一返回无权访问语义，不泄露资源是否存在；
+- Client 列表对所有者/管理员返回白名单明细，对其他可见用户仅返回每类资源的策略摘要。
 
 ## 11. 会话、用户和下游 MCP 关联
 
@@ -1431,11 +1433,13 @@ Redirect URI：    [ https://crm.example.com/oauth/callback ]
 - 重置 Secret 前必须二次确认；重置后旧 Secret 立即失效，该 Client 下已有的 Access Token、Refresh Token 也立即失效；
 - 删除 Client 前必须二次确认；删除采用软删除，状态变为 `deleted`，从默认 Client 列表隐藏；该 Client 下已有的 Access Token、Refresh Token 和 active 授权关系立即失效，且不能再次启用；Client 行和历史审计记录保留，便于追溯；
 - 软删除复用现有 `sys_mcp_oauth_clients.status` 字段，不物理删除 Client、Token、授权关系或审计数据；新建 Client 的 `created_by` 保存 NanZi 用户 ID。历史数据保留，但不通过历史资源白名单恢复额外授权。
+- 三类资源白名单分别通过独立的勾选弹框配置；每个弹框支持搜索、复选、全选当前结果、清空和恢复为“跟随用户权限”。保存只提交当前资源类型字段。
+- 白名单或其他安全策略发生实际变化时，立即撤销该 Client 的 Access Token、Refresh Token、有效授权关系和未消费授权码，并记录资源类型与数量摘要；不递增仅用于方法 Scope 的 `scope_version`。
 - 第一期不创建 Public Client；后续支持时，Public Client 不生成 Secret，必须使用 Authorization Code + PKCE。
 
 ### 12.5 方法与 Scope 页
 
-拥有 `element:mcp_service:capability:read` 的用户可以查看方法与 Scope；拥有 `element:mcp_service:capability:manage` 的用户可以启用或关闭能力组、调整方法 Scope。资源范围不在 Client 中配置，统一由当前用户角色与权限决定。
+拥有 `element:mcp_service:capability:read` 的用户可以查看方法与 Scope；拥有 `element:mcp_service:capability:manage` 的用户可以启用或关闭能力组、调整方法 Scope。具体资源范围在 Client 卡片中按智能体、知识库、元数据数据集分别配置，最终仍由当前用户角色与权限共同约束。
 
 展示当前 Platform MCP 的完整方法清单。只有标记为“已发布”的方法才会出现在 MCP `tools/list` 中：
 
@@ -1554,7 +1558,10 @@ Redirect URI：    [ https://crm.example.com/oauth/callback ]
 | `client_secret_hash` | varchar(128) | Secret 哈希，Public Client 为空 |
 | `redirect_uris` | JSON / TEXT | 精确匹配的回调地址列表 |
 | `allowed_grant_types` | JSON / TEXT | 允许的 grant types |
-| `allowed_scopes` | JSON / TEXT | 允许的 MCP 方法 Scope；不包含资源白名单 |
+| `allowed_scopes` | JSON / TEXT | 允许的 MCP 方法 Scope |
+| `allowed_agent_ids` | JSON / TEXT | 智能体资源白名单；`NULL` 跟随用户权限，空数组禁止全部，非空数组限制为指定 ID |
+| `allowed_knowledge_base_ids` | JSON / TEXT | 知识库资源白名单；三态语义同上 |
+| `allowed_metadata_dataset_ids` | JSON / TEXT | 元数据数据集资源白名单；三态语义同上 |
 | `status` | varchar(20) | `active` / `disabled` |
 | `created_by` | varchar(64) | 创建人的 NanZi 用户 ID；服务台所有 Client 管理查询都按当前登录用户 ID 过滤，管理员也不能查看或操作其他用户的 Client |
 | `created_at` | datetime | 创建时间 |
@@ -1719,11 +1726,12 @@ unique(client_id, user_id, resource)
 | `GET /api/portal/mcp-service/clients` | 查看外部 Client | `client:read` |
 | `POST /api/portal/mcp-service/clients` | 创建 Confidential Client | `client:manage` |
 | `PATCH /api/portal/mcp-service/clients/{client_id}` | 编辑或启停 Client | `client:manage` |
+| `GET /api/portal/mcp-service/clients/{client_id}/resource-options` | 查询当前用户可配置的智能体、知识库或元数据数据集选项 | `client:read` |
 | `DELETE /api/portal/mcp-service/clients/{client_id}` | 软删除 Client，并撤销其 Token 与 active 授权关系 | `client:manage` |
 | `POST /api/portal/mcp-service/clients/{client_id}/user-access-token` | 为当前登录用户生成短期个人 Access Token | `client:token_issue` |
 | `GET /api/portal/mcp-service/audit` | 分页查询入站 MCP 调用审计 | `audit:read` |
 
-服务台接口先校验 `menu:mcp_service`，再校验表中的元素权限；前端 Tab 和按钮隐藏仅用于交互控制，不能替代后端鉴权。Client 管理接口在权限检查之后还会统一追加 `created_by = 当前登录用户 ID` 条件；管理员不会因为角色而绕过这一所有权条件。审计查询则按调用身份区分数据范围：管理员查看全量，普通用户只查看 `McpInboundAuditLog.user_id = 当前登录用户 ID` 的记录；请求中的 `user_id` 筛选条件不能扩大普通用户的可见范围。Client 列表同时返回 `scope_version` 和 `needs_token_regeneration`，供前端持续提示 Scope 变更后的重新生成操作。
+服务台接口先校验 `menu:mcp_service`，再校验表中的元素权限；前端 Tab 和按钮隐藏仅用于交互控制，不能替代后端鉴权。Client 管理接口在权限检查之后还会统一追加 `created_by = 当前登录用户 ID` 条件；管理员不会因为角色而绕过这一所有权条件。审计查询则按调用身份区分数据范围：管理员查看全量，普通用户只查看 `McpInboundAuditLog.user_id = 当前登录用户 ID` 的记录；请求中的 `user_id` 筛选条件不能扩大普通用户的可见范围。Client 列表同时返回 `scope_version` 和 `needs_token_regeneration`，供前端持续提示 Scope 或资源策略变更后的重新生成操作；白名单明细仅返回给所有者/管理员，其他可见用户只返回资源策略摘要。
 
 ### 14.4 内部服务接口
 
@@ -2110,6 +2118,22 @@ public JWKS
 
 如果需要立即切断所有调用，应同时禁用 Client 或撤销该 Client 的全部 Token。
 
+### 19.2.1 Client 资源策略变更
+
+修改智能体、知识库或元数据数据集白名单属于 Client 安全策略变更：
+
+```text
+白名单实际发生变化
+    ↓
+撤销该 Client 的 Access Token、Refresh Token 和有效 OAuth Grant
+    ↓
+立即失效该 Client 尚未消费的 Authorization Code
+    ↓
+记录资源类型和数量摘要，不记录资源 ID 或凭证
+```
+
+资源白名单变化不递增 `scope_version`，但服务台仍通过 `needs_token_regeneration` 提示重新生成 Access Token。未消费授权码不能在白名单变化后重新激活旧 Grant。
+
 ### 19.3 用户授权撤销
 
 用户在“已授权的外部应用”点击撤销：
@@ -2286,7 +2310,10 @@ sequenceDiagram
 - 用户不能继续其他用户会话；
 - `user_id` 工具参数不能覆盖 Token 用户；
 - 用户只能看到自己的授权元数据；
-- 用户只能看到和访问自己角色权限允许的数据集；Client 不再配置资源白名单；
+- 用户只能看到和访问自己角色权限允许且在 Client 白名单内的数据集；
+- `NULL` 表示跟随用户权限，空数组表示禁止该类资源，非空数组表示与用户权限取交集；
+- 白名单保存时拒绝不存在、停用或超出当前用户权限的资源 ID；
+- 未授权或不存在的 Agent、知识库和数据集不得通过错误差异探测资源是否存在；
 - `metadata:read` 不能自动获得指标 Scope；
 - 未授权数据集不能通过搜索关键词探测存在性；
 - `agent.list_allowed` 不返回未授权智能体。

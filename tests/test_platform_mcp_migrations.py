@@ -41,6 +41,19 @@ def test_postgresql_platform_mcp_migration_matches_mysql_contract():
     assert "CREATE TABLE IF NOT EXISTS sys_mcp_platform_config" in sql
 
 
+def test_existing_platform_mcp_migrations_contain_resource_whitelist_columns():
+    mysql = (ROOT / "db-prod/V137-create_platform_mcp_oauth.sql").read_text(encoding="utf-8")
+    postgres = (ROOT / "db-prod-pg/V38-create_platform_mcp_oauth.sql").read_text(encoding="utf-8")
+
+    for field in (
+        "allowed_agent_ids",
+        "allowed_knowledge_base_ids",
+        "allowed_metadata_dataset_ids",
+    ):
+        assert field in mysql
+        assert field in postgres
+
+
 def test_security_audit_migrations_create_oauth_event_table():
     mysql_sql = (ROOT / "db-prod/V141-mcp-oauth-security-audit.sql").read_text(encoding="utf-8")
     pg_sql = (ROOT / "db-prod-pg/V42-mcp-oauth-security-audit.sql").read_text(encoding="utf-8")

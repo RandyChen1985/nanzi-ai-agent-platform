@@ -275,10 +275,10 @@ async def _resolve_knowledge_scope(
         raise ValueError("knowledge_base_ids 格式无效")
 
     async with AsyncSessionLocal() as db:
-        client = await db.execute(
+        client_result = await db.execute(
             select(McpOAuthClient).where(McpOAuthClient.client_id == principal.client_id)
         )
-        client_row = client.scalar_one_or_none()
+        client_row = client_result.scalar_one_or_none()
         if client_row is None or client_row.status != "active":
             raise PermissionError("OAuth Client 不存在或已禁用")
 
@@ -297,7 +297,11 @@ async def _resolve_knowledge_scope(
                     )
                 )
             ).scalars().all()
-        effective = intersect_authorized_ids(user_allowed, requested or None)
+        effective = intersect_authorized_ids(
+            user_allowed,
+            getattr(client_row, "allowed_knowledge_base_ids", None),
+            requested or None,
+        )
         if not effective:
             # 对外不区分“用户无权限”和“Client 未配置”，避免探测资源存在性。
             raise PermissionError("没有可检索的知识库范围")
@@ -452,7 +456,7 @@ async def _resolve_metadata_dataset_ids(
     principal: McpPrincipal,
     requested_ids: str | Iterable[str] | None = None,
 ) -> list[str]:
-    await _load_client(db, principal)
+    client = await _load_client(db, principal)
 
     user, user_info = await _load_principal_user(db, principal)
     accessible = await MetadataService.list_accessible_dataset_options(
@@ -465,6 +469,7 @@ async def _resolve_metadata_dataset_ids(
 
     return intersect_authorized_ids(
         user_allowed,
+        getattr(client, "allowed_metadata_dataset_ids", None),
         _normalize_requested_ids(
             requested_ids,
             field_name="dataset_ids",
@@ -501,13 +506,22 @@ async def _load_authorized_agent(
     principal: McpPrincipal,
     user_info: dict[str, Any],
     agent_id: str,
+    client: McpOAuthClient | None = None,
 ) -> AIAgent:
     normalized_agent_id = str(agent_id or "").strip()
     if not normalized_agent_id:
         raise ValueError("agent_id 不能为空")
     agent = await db.get(AIAgent, normalized_agent_id)
     if agent is None or not agent.is_enabled:
-        raise LookupError("agent_not_found")
+        raise PermissionError("agent_forbidden")
+
+    if client is None:
+        client = await _load_client(db, principal)
+    allowed_agent_ids = getattr(client, "allowed_agent_ids", None)
+    if allowed_agent_ids is not None and normalized_agent_id not in {
+        str(value).strip() for value in allowed_agent_ids
+    }:
+        raise PermissionError("agent_forbidden")
 
     from app.services.ai.agent_manager import AgentManagerService
 
@@ -623,7 +637,7 @@ async def agent_list_allowed(
         offset = offset or 0
 
         async with AsyncSessionLocal() as db:
-            await _load_client(db, principal)
+            client = await _load_client(db, principal)
             _, user_info = await _load_principal_user(db, principal)
             from app.services.ai.agent_manager import AgentManagerService
 
@@ -633,6 +647,10 @@ async def agent_list_allowed(
                 keyword=normalized_keyword or None,
             )
             agents = list(agents)
+            allowed_agent_ids = getattr(client, "allowed_agent_ids", None)
+            if allowed_agent_ids is not None:
+                allowed_agent_id_set = {str(value).strip() for value in allowed_agent_ids}
+                agents = [agent for agent in agents if str(agent.id) in allowed_agent_id_set]
             versions: dict[str, AIAgentVersion] = {}
             agent_ids = [str(agent.id) for agent in agents]
             if agent_ids:
@@ -722,9 +740,9 @@ async def _agent_call_common(
             raise ValueError("message 不能超过 10000 个字符")
 
         async with AsyncSessionLocal() as db:
-            await _load_client(db, principal)
+            client = await _load_client(db, principal)
             _, user_info = await _load_principal_user(db, principal)
-            agent = await _load_authorized_agent(db, principal, user_info, agent_id)
+            agent = await _load_authorized_agent(db, principal, user_info, agent_id, client)
             if normalized_conversation_id:
                 existing = await _load_owned_conversation(
                     db,
@@ -868,7 +886,7 @@ async def conversation_continue(
         if len(normalized_message) > 10000:
             raise ValueError("message 不能超过 10000 个字符")
         async with AsyncSessionLocal() as db:
-            await _load_client(db, principal)
+            client = await _load_client(db, principal)
             _, user_info = await _load_principal_user(db, principal)
             existing = await _load_owned_conversation(
                 db,
@@ -880,6 +898,7 @@ async def conversation_continue(
                 principal,
                 user_info,
                 str(existing.agent_id),
+                client,
             )
             result = await _invoke_agent(
                 db,

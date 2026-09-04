@@ -1,6 +1,9 @@
 from datetime import datetime, timedelta
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
+from sqlalchemy.dialects.sqlite import dialect
 
 from app.services.mcp.platform_oauth import (
     ACCESS_TOKEN_TTL_SECONDS,
@@ -91,6 +94,34 @@ def test_custom_access_token_ttl_has_a_safe_bounded_range():
 
 
 def test_authorized_scope_can_be_narrowed_by_a_requested_resource():
-    assert intersect_authorized_ids(["kb-a", "kb-b"], ["kb-b", "kb-c"]) == ["kb-b"]
-    assert intersect_authorized_ids(["kb-a"], []) == []
-    assert intersect_authorized_ids(None, ["kb-a"]) == ["kb-a"]
+    assert intersect_authorized_ids(
+        ["kb-a", "kb-b"],
+        ["kb-b", "kb-c"],
+        ["kb-b", "kb-c"],
+    ) == ["kb-b"]
+
+
+def test_intersect_authorized_ids_distinguishes_none_and_empty_client_policy():
+    assert intersect_authorized_ids(["a", "b"], None) == ["a", "b"]
+    assert intersect_authorized_ids(["a", "b"], []) == []
+    assert intersect_authorized_ids(None, ["a", "b"]) == ["a", "b"]
+
+
+@pytest.mark.asyncio
+async def test_security_policy_changes_expire_unconsumed_authorization_codes():
+    from app.services.mcp.platform_oauth import PlatformMcpOAuthService
+
+    db = SimpleNamespace(execute=AsyncMock())
+    invalidated_at = datetime.utcnow()
+
+    await PlatformMcpOAuthService.invalidate_unconsumed_authorization_codes(
+        db,
+        client_id="client-id",
+        invalidated_at=invalidated_at,
+    )
+
+    statement = db.execute.await_args.args[0]
+    sql = str(statement.compile(dialect=dialect()))
+    assert "sys_mcp_oauth_authorization_codes" in sql
+    assert "expires_at" in sql
+    assert "consumed_at" in sql

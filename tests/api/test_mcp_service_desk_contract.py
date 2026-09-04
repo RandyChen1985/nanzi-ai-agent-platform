@@ -1,4 +1,5 @@
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -340,6 +341,15 @@ def test_service_desk_exposes_token_lifecycle_and_client_query_endpoints():
     assert "latest_token_expires_at" in source
 
 
+def test_mcp_oauth_timestamps_are_serialized_with_explicit_utc_offset():
+    source = Path("app/api/portal/endpoints/mcp_service.py").read_text(encoding="utf-8")
+
+    assert "def _serialize_mcp_datetime" in source
+    assert "replace(\"+00:00\", \"Z\")" in source
+    assert "_serialize_mcp_datetime(latest_token_expires_at)" in source
+    assert "_serialize_mcp_datetime(token.expires_at)" in source
+
+
 def test_client_token_management_exposes_lifecycle_counts_and_physical_delete_routes():
     source = Path("app/api/portal/endpoints/mcp_service.py").read_text(encoding="utf-8")
 
@@ -429,7 +439,7 @@ def test_playground_does_not_return_complete_access_token():
     assert '"token_used"' not in playground
 
 
-def test_service_desk_does_not_expose_client_resource_whitelist():
+def test_service_desk_exposes_client_resource_whitelist_fields_across_layers():
     source = Path("app/api/portal/endpoints/mcp_service.py").read_text(encoding="utf-8")
     model = Path("app/models/platform_mcp.py").read_text(encoding="utf-8")
     oauth = Path("app/services/mcp/platform_oauth.py").read_text(encoding="utf-8")
@@ -442,20 +452,136 @@ def test_service_desk_does_not_expose_client_resource_whitelist():
         "allowed_knowledge_base_ids",
         "allowed_metadata_dataset_ids",
     ):
-        assert field not in source
-        assert field not in model
-        assert field not in oauth
-        assert field not in runtime
-        assert field not in frontend
-    assert "当前用户角色和权限" in frontend
-    assert "Client 仅控制 MCP 方法 Scope" in frontend
+        assert field in source
+        assert field in model
+        assert field in oauth
+        assert field in runtime
+        assert field in frontend
+    assert "resource_policy_changed" in source
+    assert "intersect_authorized_ids" in runtime
 
 
-def test_client_payload_rejects_legacy_resource_whitelist_fields():
+def test_client_payload_accepts_resource_whitelist_fields_and_preserves_three_states():
+    unrestricted = mcp_service.McpOAuthClientCreate(
+        client_name="resource-policy-client",
+        redirect_uris=["https://example.com/oauth/callback"],
+        allowed_scopes=["agent:list"],
+        allowed_agent_ids=None,
+        allowed_knowledge_base_ids=None,
+        allowed_metadata_dataset_ids=None,
+    )
+    empty = mcp_service.McpOAuthClientUpdate(allowed_agent_ids=[])
+    selected = mcp_service.McpOAuthClientUpdate(
+        allowed_knowledge_base_ids=[" kb-1 ", "kb-1", "kb-2"]
+    )
+
+    assert unrestricted.allowed_agent_ids is None
+    assert unrestricted.allowed_knowledge_base_ids is None
+    assert unrestricted.allowed_metadata_dataset_ids is None
+    assert empty.allowed_agent_ids == []
+    assert selected.allowed_knowledge_base_ids == ["kb-1", "kb-2"]
+
+
+def test_client_payload_rejects_unknown_resource_policy_fields():
     with pytest.raises(ValueError):
         mcp_service.McpOAuthClientCreate(
-            client_name="legacy-client",
+            client_name="unknown-policy-client",
             redirect_uris=["https://example.com/callback"],
             allowed_scopes=["agent:list"],
-            allowed_agent_ids=["agent-1"],
+            allowed_resource_ids=["resource-1"],
         )
+
+
+def test_client_payload_rejects_non_array_resource_policy_values():
+    with pytest.raises(ValueError, match="必须是数组或 null"):
+        mcp_service.McpOAuthClientUpdate(allowed_agent_ids="agent-1")
+
+    with pytest.raises(ValueError, match="必须是字符串"):
+        mcp_service.McpOAuthClientUpdate(allowed_agent_ids=["agent-1", 2])
+
+
+def test_resource_policy_validation_rejects_ids_outside_accessible_resources():
+    assert mcp_service._validate_resource_ids_are_accessible(
+        ["agent-1"],
+        {"agent-1", "agent-2"},
+        "allowed_agent_ids",
+    ) == ["agent-1"]
+
+    with pytest.raises(ValueError, match="无效或无权限"):
+        mcp_service._validate_resource_ids_are_accessible(
+            ["not-existing"],
+            {"agent-1"},
+            "allowed_agent_ids",
+        )
+
+
+def test_client_serialization_hides_resource_ids_but_keeps_policy_summary():
+    client = SimpleNamespace(
+        id="db-id",
+        client_id="client-id",
+        client_name="client",
+        client_type="confidential",
+        redirect_uris=[],
+        allowed_grant_types=["authorization_code"],
+        allowed_scopes=["agent:list"],
+        allowed_agent_ids=["agent-1", "agent-2"],
+        allowed_knowledge_base_ids=[],
+        allowed_metadata_dataset_ids=None,
+        scope_version=1,
+        is_shared=True,
+        status="active",
+        created_by="1",
+        created_at=None,
+        updated_at=None,
+        disabled_at=None,
+    )
+
+    serialized = mcp_service._serialize_client(client, include_resource_details=False)
+
+    assert "allowed_agent_ids" not in serialized
+    assert "allowed_knowledge_base_ids" not in serialized
+    assert "allowed_metadata_dataset_ids" not in serialized
+    assert serialized["resource_policy_summary"] == {
+        "allowed_agent_ids": {"mode": "restricted", "count": 2},
+        "allowed_knowledge_base_ids": {"mode": "none", "count": 0},
+        "allowed_metadata_dataset_ids": {"mode": "unrestricted", "count": None},
+    }
+
+
+def test_client_list_uses_owner_scoped_resource_serialization_and_invalidates_codes():
+    source = Path("app/api/portal/endpoints/mcp_service.py").read_text(encoding="utf-8")
+
+    assert "include_resource_details" in source
+    assert "row.created_by" in source
+    assert "invalidate_unconsumed_authorization_codes" in source
+    assert "resource_policy_changed" in source
+
+
+def test_resource_policy_audit_records_types_and_counts_without_ids():
+    source = Path("app/api/portal/endpoints/mcp_service.py").read_text(encoding="utf-8")
+    audit_segment = source.split('event_type="client_updated"', 1)[1].split("await db.commit()", 1)[0]
+
+    assert "resource_types" in audit_segment
+    assert "resource_counts" in audit_segment
+    assert "allowed_agent_ids" not in audit_segment
+
+
+def test_resource_options_endpoint_uses_user_scoped_sources_and_pagination():
+    source = Path("app/api/portal/endpoints/mcp_service.py").read_text(encoding="utf-8")
+
+    assert 'resource_type: Literal["agent", "knowledge_base", "metadata_dataset"]' in source
+    assert "AgentManagerService.list_allowed_agents" in source
+    assert "get_knowledge_base_access" in source
+    assert "list_accessible_dataset_options" in source
+    assert '"resource_type": resource_type' in source
+    assert '"items": items' in source
+    assert '"has_more":' in source
+
+
+def test_resource_whitelist_changes_revoke_tokens_and_grants():
+    source = Path("app/api/portal/endpoints/mcp_service.py").read_text(encoding="utf-8")
+
+    assert "resource_policy_changed" in source
+    assert "McpOAuthAccessToken.revoked_at" in source
+    assert "McpOAuthRefreshToken.revoked_at" in source
+    assert "McpOAuthGrant.status" in source

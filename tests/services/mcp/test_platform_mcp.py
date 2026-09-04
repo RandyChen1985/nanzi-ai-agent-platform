@@ -20,13 +20,13 @@ pytestmark = pytest.mark.no_infrastructure
 
 
 def test_platform_mcp_is_one_server_with_knowledge_search_extension_point():
-    method = get_method_definition("knowledge.search")
+    method = get_method_definition("knowledge_search")
 
     assert method is not None
     assert method.scope == "knowledge:search"
     assert method.capability_group == "knowledge"
     assert method.requires_user is True
-    assert "knowledge.search" in {item.name for item in PLATFORM_MCP_METHODS}
+    assert "knowledge_search" in {item.name for item in PLATFORM_MCP_METHODS}
 
 
 def test_platform_mcp_resource_path_is_stable():
@@ -38,7 +38,7 @@ def test_platform_mcp_source_declares_bearer_resource_server_and_tool():
 
     assert "PlatformMcpTokenVerifier" in source
     assert "AuthSettings" in source
-    assert 'name="knowledge.search"' in source
+    assert 'name="knowledge_search"' in source
     assert "get_access_token" in source
 
 
@@ -111,7 +111,7 @@ async def test_platform_mcp_http_lifecycle_authenticates_and_calls_knowledge_too
                 json={"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}},
             )
             assert tools.status_code == 200, tools.text
-            assert "knowledge.search" in tools.text
+            assert "knowledge_search" in tools.text
 
             called = await client.post(
                 "/platform",
@@ -119,7 +119,7 @@ async def test_platform_mcp_http_lifecycle_authenticates_and_calls_knowledge_too
                     "jsonrpc": "2.0",
                     "id": 3,
                     "method": "tools/call",
-                    "params": {"name": "knowledge.search", "arguments": {"query": "测试"}},
+                    "params": {"name": "knowledge_search", "arguments": {"query": "测试"}},
                 },
             )
             assert called.status_code == 200, called.text

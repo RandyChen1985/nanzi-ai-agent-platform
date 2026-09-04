@@ -1,3 +1,4 @@
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -42,6 +43,118 @@ def test_all_platform_mcp_methods_are_implemented_and_registered_by_definition()
         assert definition.scope == scope
         assert definition.capability_group == capability_group
         assert definition.requires_user is True
+
+
+def test_platform_mcp_runtime_restores_client_resource_whitelist_checks():
+    source = Path("app/services/mcp/platform_mcp.py").read_text(encoding="utf-8")
+
+    assert "allowed_agent_ids" in source
+    assert "allowed_knowledge_base_ids" in source
+    assert "allowed_metadata_dataset_ids" in source
+    assert "AgentManagerService.list_allowed_agents" in source
+    assert "intersect_authorized_ids" in source
+    assert "agent_forbidden" in source
+
+
+@pytest.mark.asyncio
+async def test_agent_resource_denial_does_not_reveal_missing_or_disabled_agent():
+    from app.services.mcp.platform_mcp import _load_authorized_agent
+    from app.services.mcp.platform_oauth import McpPrincipal
+
+    class FakeDb:
+        async def get(self, *_args):
+            return None
+
+    principal = McpPrincipal(
+        client_id="client",
+        user_id="123",
+        scopes=("agent:invoke",),
+        resource="mcp:nanzi-platform",
+        auth_type="user_delegated",
+    )
+
+    with pytest.raises(PermissionError, match="agent_forbidden"):
+        await _load_authorized_agent(
+            FakeDb(),
+            principal,
+            {"user_id": "123", "role": "user"},
+            "missing-agent",
+            SimpleNamespace(allowed_agent_ids=None),
+        )
+
+
+@pytest.mark.asyncio
+async def test_agent_authorized_loader_applies_client_whitelist_at_runtime(monkeypatch):
+    from app.services.ai.agent_manager import AgentManagerService
+    from app.services.mcp.platform_mcp import _load_authorized_agent
+    from app.services.mcp.platform_oauth import McpPrincipal
+
+    class FakeDb:
+        async def get(self, *_args):
+            return SimpleNamespace(id="agent-1", is_enabled=True)
+
+    async def can_execute(*_args):
+        return True
+
+    monkeypatch.setattr(AgentManagerService, "_user_can_execute_agent", can_execute)
+    principal = McpPrincipal(
+        client_id="client",
+        user_id="123",
+        scopes=("agent:invoke",),
+        resource="mcp:nanzi-platform",
+        auth_type="user_delegated",
+    )
+
+    agent = await _load_authorized_agent(
+        FakeDb(),
+        principal,
+        {"user_id": "123", "role": "user"},
+        "agent-1",
+        SimpleNamespace(allowed_agent_ids=["agent-1"]),
+    )
+    assert agent.id == "agent-1"
+
+    with pytest.raises(PermissionError, match="agent_forbidden"):
+        await _load_authorized_agent(
+            FakeDb(),
+            principal,
+            {"user_id": "123", "role": "user"},
+            "agent-1",
+            SimpleNamespace(allowed_agent_ids=["agent-2"]),
+        )
+
+
+@pytest.mark.asyncio
+async def test_metadata_dataset_resolver_applies_client_whitelist_at_runtime(monkeypatch):
+    async def fake_load_client(_db, _principal):
+        return SimpleNamespace(allowed_metadata_dataset_ids=["2"])
+
+    async def fake_load_user(_db, _principal):
+        return SimpleNamespace(id=123), {"role": "user", "user_id": "123"}
+
+    async def fake_list_accessible(*_args, **_kwargs):
+        return [SimpleNamespace(id=1), SimpleNamespace(id=2), SimpleNamespace(id=3)]
+
+    monkeypatch.setattr(platform_mcp_module, "_load_client", fake_load_client)
+    monkeypatch.setattr(platform_mcp_module, "_load_principal_user", fake_load_user)
+    monkeypatch.setattr(
+        platform_mcp_module.MetadataService,
+        "list_accessible_dataset_options",
+        fake_list_accessible,
+    )
+
+    from app.services.mcp.platform_mcp import _resolve_metadata_dataset_ids
+    from app.services.mcp.platform_oauth import McpPrincipal
+
+    principal = McpPrincipal(
+        client_id="client",
+        user_id="123",
+        scopes=("metadata:read",),
+        resource="mcp:nanzi-platform",
+        auth_type="user_delegated",
+    )
+
+    assert await _resolve_metadata_dataset_ids(object(), principal, ["1", "2", "3"]) == ["2"]
 
 
 @pytest.mark.asyncio
