@@ -512,24 +512,35 @@ watch([cronMode, cronConfig], () => {
   try {
       let expr = ''
       const [h, m] = (time || '00:00').split(':').map(Number)
+      // 若 time 被清空或格式非法，h/m 可能是 NaN，直接 bail out
+      if (isNaN(h) || isNaN(m)) {
+        console.warn('Invalid time value, skipping cron build')
+        return
+      }
       
       switch (cronMode.value) {
         case 'daily':
-          expr = `${m || 0} ${h || 0} * * *`
+          expr = `${m} ${h} * * *`
           break
         case 'weekly':
-          expr = `${m || 0} ${h || 0} * * ${weekday}`
+          expr = `${m} ${h} * * ${weekday}`
           break
-        case 'monthly':
-          expr = `${m || 0} ${h || 0} ${day} * *`
+        case 'monthly': {
+          const safeDay = Math.min(31, Math.max(1, Math.floor(day) || 1))
+          expr = `${m} ${h} ${safeDay} * *`
           break
-        case 'interval':
+        }
+        case 'interval': {
+          const val = Math.max(1, Math.floor(intervalValue || 1))
           if (intervalUnit === 'minutes') {
-             expr = `*/${intervalValue} * * * *`
+             const safeVal = Math.min(val, 59)
+             expr = `*/${safeVal} * * * *`
           } else {
-             expr = `0 */${intervalValue} * * *`
+             const safeVal = Math.min(val, 23)
+             expr = `0 */${safeVal} * * *`
           }
           break
+        }
       }
       editingTask.value.cron_expr = expr
   } catch (e) {
@@ -562,8 +573,14 @@ const parseCronToUI = (expr: string) => {
         return
     }
 
-    // Standard Check
-    const timeStr = `${String(hour).padStart(2, '0')}:${String(min).padStart(2, '0')}`
+    // Standard Check: hour 和 min 必须是纯数字，否则无法回显到 time picker
+    const hourNum = parseInt(hour, 10)
+    const minNum = parseInt(min, 10)
+    if (isNaN(hourNum) || isNaN(minNum)) {
+        cronMode.value = 'custom'
+        return
+    }
+    const timeStr = `${String(hourNum).padStart(2, '0')}:${String(minNum).padStart(2, '0')}`
     if (dom === '*' && mon === '*' && dow === '*') {
         cronMode.value = 'daily'
         cronConfig.value.time = timeStr
@@ -1994,7 +2011,7 @@ onMounted(async () => {
                <!-- Interval -->
                <div v-if="cronMode === 'interval'" class="flex items-center space-x-2">
                    <span class="text-xs text-gray-500">每隔</span>
-                   <input type="number" min="1" v-model.number="cronConfig.intervalValue" class="w-20 border rounded-lg px-2 py-1.5 text-sm text-center" />
+                   <input type="number" min="1" :max="cronConfig.intervalUnit === 'minutes' ? 59 : 23" v-model.number="cronConfig.intervalValue" class="w-20 border rounded-lg px-2 py-1.5 text-sm text-center" />
                    <select v-model="cronConfig.intervalUnit" class="border rounded-lg px-2 py-1.5 text-sm bg-white">
                       <option value="minutes">分钟</option>
                       <option value="hours">小时</option>

@@ -1,6 +1,18 @@
 from typing import List, Optional, Dict, Any
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, Field, ConfigDict, field_validator
 from datetime import datetime
+
+def _validate_cron_expr(v: Optional[str]) -> Optional[str]:
+    """用 APScheduler CronTrigger 预校验 cron 表达式，避免非法值入库引发调度崩溃。"""
+    if v is None:
+        return v
+    from apscheduler.triggers.cron import CronTrigger
+    try:
+        CronTrigger.from_crontab(v)
+    except (ValueError, KeyError) as e:
+        raise ValueError(f"无效的 Cron 表达式 '{v}'：{e}")
+    return v
+
 
 class TaskBase(BaseModel):
     name: str = Field(..., description="任务名称")
@@ -8,6 +20,11 @@ class TaskBase(BaseModel):
     cron_expr: str = Field(..., description="Cron 表达式")
     prompt: str = Field(..., description="执行指令")
     config: Optional[Dict[str, Any]] = None
+
+    @field_validator("cron_expr")
+    @classmethod
+    def validate_cron_expr(cls, v: str) -> str:
+        return _validate_cron_expr(v)  # type: ignore[return-value]
 
 class TaskCreate(TaskBase):
     pass
@@ -19,6 +36,11 @@ class TaskUpdate(BaseModel):
     prompt: Optional[str] = None
     status: Optional[int] = None
     config: Optional[Dict[str, Any]] = None
+
+    @field_validator("cron_expr")
+    @classmethod
+    def validate_cron_expr(cls, v: Optional[str]) -> Optional[str]:
+        return _validate_cron_expr(v)
 
 class TaskResponse(TaskBase):
     id: int

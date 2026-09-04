@@ -1237,10 +1237,18 @@ class TaskSchedulerService:
             return
             
         job_id = f"task_{task.id}"
-        trigger = CronTrigger.from_crontab(
-            task.cron_expr,
-            timezone=get_cached_platform_timezone(),
-        )
+        try:
+            trigger = CronTrigger.from_crontab(
+                task.cron_expr,
+                timezone=get_cached_platform_timezone(),
+            )
+        except (ValueError, KeyError) as e:
+            logger.error(
+                f"❌ Task {task.id} ('{task.name}') has invalid cron_expr '{task.cron_expr}': {e}. "
+                f"Skipping scheduling. Please fix the cron expression in the task configuration."
+            )
+            return
+
         existing_job = self._scheduler.get_job(job_id)
         if existing_job and repr(existing_job.trigger) == repr(trigger):
             return
