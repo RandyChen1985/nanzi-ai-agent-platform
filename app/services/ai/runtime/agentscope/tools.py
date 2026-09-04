@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import json
 import logging
 import os
 import re
@@ -18,6 +19,7 @@ from app.services.ai.runtime.agentscope.tool_timeout import (
     DEFAULT_AGENT_MAX_TOOLCALL_TIMEOUT,
     effective_tool_timeout,
 )
+from app.services.ai.runtime.agentscope.stream_reconcile import truncate_for_context
 
 
 logger = logging.getLogger(__name__)
@@ -56,6 +58,18 @@ def _raise_tool_loop_fuse(reason: str) -> None:
     except Exception:
         raise ToolLoopFuseError(message) from None
     raise DeveloperOrientedException(message)
+
+
+def _format_runtime_tool_result(result: Any) -> str:
+    """将工具结果转换为模型可读文本，并限制进入上下文的长度。"""
+    if isinstance(result, str):
+        text = result
+    else:
+        try:
+            text = json.dumps(result, ensure_ascii=False, default=str)
+        except (TypeError, ValueError):
+            text = str(result)
+    return truncate_for_context(text)
 
 
 RuntimeToolAuditStatus = Literal["start", "success", "error"]
@@ -684,7 +698,7 @@ class AgentScopeRuntimeTool:
         try:
             res = await self.spec.invoke(kwargs)
             return ToolChunk(
-                content=[TextBlock(text=str(res))],
+                content=[TextBlock(text=_format_runtime_tool_result(res))],
                 state=ToolResultState.SUCCESS,
             )
         except Exception as exc:
@@ -1209,6 +1223,9 @@ def build_toolkit(
 
 
 def _schema_from_legacy_tool(tool: Any) -> dict[str, Any]:
+    mcp_input_schema = getattr(tool, "mcp_input_schema", None)
+    if isinstance(mcp_input_schema, dict):
+        return mcp_input_schema
     args_schema = getattr(tool, "args_schema", None)
     if args_schema is not None and hasattr(args_schema, "model_json_schema"):
         return args_schema.model_json_schema()

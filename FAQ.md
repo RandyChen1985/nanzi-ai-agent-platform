@@ -1273,7 +1273,7 @@ flowchart LR
 
 ##### 页面上需要配置什么？
 
-原有的「身份认证」区域保持不变，仍然用于按需填写业务 MCP 要求的 `Authorization`、API Key 等 Header。`Authorization` 是否配置与用户身份传递相互独立；即使不配置 Authorization，也可以开启用户身份传递。不需要用户手工生成公钥或私钥。
+页面将 MCP 自身认证拆成两部分：Authorization 使用独立开关，开启后只填写 Token 内容，系统固定补全 `Bearer` 前缀；其他 API Key 或租户信息放在「其他 Header」区域。编辑已有配置时不会回显密钥原文，只显示开关状态或 `********`，点击「编辑」后填写新值才会替换，直接保存会保留原配置。Authorization 是否配置与用户身份传递相互独立；即使不配置 Authorization，也可以开启用户身份传递。不需要用户手工生成公钥或私钥。
 
 系统会针对当前 MCP 自动生成并保存签名密钥：
 

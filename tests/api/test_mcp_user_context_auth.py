@@ -1,12 +1,15 @@
 from pathlib import Path
+import json
 
 import pytest
 
 from app.api.portal.endpoints.mcp import (
     McpServerResponse,
     McpServerWrite,
+    _apply_mcp_auth_update,
     _default_user_assertion_audience,
 )
+from app.services.mcp import mcp_auth_policy
 
 
 pytestmark = pytest.mark.no_infrastructure
@@ -82,8 +85,103 @@ def test_private_key_is_write_only():
     assert "user_assertion_private_key" not in McpServerWrite.model_fields
 
 
-def test_mcp_response_includes_auth_header_values_for_editing():
-    assert "auth_headers" in McpServerResponse.model_fields
+def test_mcp_response_does_not_include_auth_header_values_for_editing():
+    assert "auth_headers" not in McpServerResponse.model_fields
+    assert "auth_headers_configured" in McpServerResponse.model_fields
+    assert "authorization_configured" in McpServerResponse.model_fields
+    assert "masked_auth_headers" in McpServerResponse.model_fields
+
+
+def test_mcp_auth_summary_separates_authorization_from_masked_dynamic_headers():
+    server = type(
+        "McpServerStub",
+        (),
+        {
+            "auth_headers": '{"Authorization":"Bearer secret-token","X-Tenant":"tenant-a"}',
+            "fixed_token_encrypted": None,
+        },
+    )()
+
+    configured, masked = mcp_auth_policy.mcp_auth_headers_summary(server)
+
+    assert configured is True
+    assert masked == {"X-Tenant": "********"}
+
+
+def test_mcp_auth_update_replaces_token_and_patches_dynamic_headers_without_echoing_values():
+    server = type(
+        "McpServerStub",
+        (),
+        {
+            "auth_headers": mcp_auth_policy.encrypt_mcp_auth_headers({"X-Tenant": "tenant-a"}),
+            "fixed_token_encrypted": None,
+        },
+    )()
+    data = McpServerWrite(
+        **_payload(
+            auth_headers="{}",
+            authorization_enabled=True,
+            fixed_token="new-token",
+            auth_headers_patch={"X-Tenant": "tenant-b"},
+        )
+    )
+
+    _apply_mcp_auth_update(server, data)
+
+    assert mcp_auth_policy.resolve_mcp_auth_headers(server) == {
+        "X-Tenant": "tenant-b",
+        "Authorization": "Bearer new-token",
+    }
+    assert "new-token" not in server.auth_headers
+
+
+def test_mcp_auth_update_can_disable_authorization_and_remove_dynamic_header():
+    server = type(
+        "McpServerStub",
+        (),
+        {
+            "auth_headers": mcp_auth_policy.encrypt_mcp_auth_headers({"X-Tenant": "tenant-a"}),
+            "fixed_token_encrypted": mcp_auth_policy.get_api_key_manager().encrypt_api_key("old-token"),
+        },
+    )()
+    data = McpServerWrite(
+        **_payload(
+            auth_headers="{}",
+            authorization_enabled=False,
+            auth_headers_patch={"X-Tenant": None},
+        )
+    )
+
+    _apply_mcp_auth_update(server, data)
+
+    assert mcp_auth_policy.resolve_mcp_auth_headers(server) == {}
+    assert server.fixed_token_encrypted is None
+
+
+def test_mcp_server_endpoints_store_auth_headers_encrypted_and_return_status_only():
+    source = Path("app/api/portal/endpoints/mcp.py").read_text(encoding="utf-8")
+
+    assert 'server_data["auth_headers"] = encrypt_mcp_auth_headers(auth_headers)' in source
+    assert 'server.auth_headers = encrypt_mcp_auth_headers(data.auth_headers)' in source
+    assert "auth_headers_patch" in source
+    assert "authorization_enabled" in source
+    assert 'response_data["auth_headers"]' not in source
+    assert "item.auth_headers_configured = mcp_auth_headers_configured(s)" in source
+
+
+def test_mcp_auth_headers_support_encrypted_and_legacy_storage():
+    headers = {"Authorization": "Bearer secret-token", "X-Tenant": "tenant-a"}
+
+    encrypt_mcp_auth_headers = getattr(mcp_auth_policy, "encrypt_mcp_auth_headers", None)
+    resolve_mcp_auth_headers = mcp_auth_policy.resolve_mcp_auth_headers
+    assert callable(encrypt_mcp_auth_headers)
+    encrypted = encrypt_mcp_auth_headers(headers)
+    server = type("McpServerStub", (), {"auth_headers": encrypted})()
+    assert encrypted.startswith("enc:v1:")
+    assert resolve_mcp_auth_headers(server) == headers
+
+    legacy_server = type("McpServerStub", (), {"auth_headers": json.dumps(headers)})()
+    assert resolve_mcp_auth_headers(legacy_server) == headers
 
 
 def test_legacy_static_mode_remains_valid_without_user_assertion_config():

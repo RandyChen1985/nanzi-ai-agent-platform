@@ -1,3 +1,4 @@
+import json
 import re
 from unittest.mock import AsyncMock
 
@@ -7,12 +8,14 @@ from app.core.context import AgentContext, set_agent_context
 from app.services.ai.grounding.ledger import EvidenceLedger
 from app.services.ai.grounding.models import EvidenceType
 from app.services.ai.runtime.agentscope.tools import (
+    AgentScopeRuntimeTool,
     RuntimeToolSpec,
     runtime_tool_from_native,
     runtime_tool_from_spec,
     runtime_tool_spec_from_legacy_tool,
     runtime_tool_spec_from_native_agentscope_tool,
 )
+from app.services.ai.runtime.agentscope.chat import legacy_tools_to_openai_schemas
 from app.services.ai.tools.registry import ToolRegistry
 from app.services.ai.tools.mcp_factory import McpToolFactory
 from app.models.mcp import McpToolCache
@@ -197,6 +200,77 @@ def test_mcp_read_only_annotation_assigns_evidence_without_name_heuristic():
 
     assert resolved.evidence_types == frozenset({EvidenceType.EXTERNAL_TOOL})
     assert resolved.evidence_policy == "allow_empty_success"
+
+
+def test_mcp_nested_schema_is_preserved_for_runtime_and_openai_exports():
+    nested_schema = {
+        "type": "object",
+        "properties": {
+            "filters": {
+                "type": "object",
+                "properties": {
+                    "tags": {"type": "array", "items": {"type": "string"}},
+                    "status": {"type": "string", "enum": ["open", "closed"]},
+                },
+                "required": ["tags"],
+            }
+        },
+        "required": ["filters"],
+    }
+    record = McpToolCache(
+        id="tool-nested-schema",
+        server_id="server-1",
+        tool_name="crm:search",
+        tool_description="Search CRM",
+        parameter_schema=__import__("json").dumps(nested_schema),
+        is_published=True,
+    )
+
+    legacy = McpToolFactory.create_tool(record)
+    runtime_spec = runtime_tool_spec_from_legacy_tool(legacy, source_type="mcp")
+    openai_schema = legacy_tools_to_openai_schemas([legacy])[0]["function"]["parameters"]
+
+    assert runtime_spec.parameters_schema == nested_schema
+    assert openai_schema == nested_schema
+
+
+@pytest.mark.asyncio
+async def test_runtime_tool_serializes_structured_result_as_json():
+    async def invoke(**_kwargs):
+        return {"message": "查询成功", "items": [1, 2]}
+
+    spec = RuntimeToolSpec(
+        name="mcp-search",
+        description="search",
+        parameters_schema={"type": "object", "properties": {}},
+        source_type="mcp",
+        callable=invoke,
+    )
+
+    result = await AgentScopeRuntimeTool(spec)()
+    text = result.content[0].text
+
+    assert json.loads(text) == {"message": "查询成功", "items": [1, 2]}
+
+
+@pytest.mark.asyncio
+async def test_runtime_tool_truncates_oversized_result_with_marker():
+    async def invoke(**_kwargs):
+        return {"payload": "x" * 5000}
+
+    spec = RuntimeToolSpec(
+        name="mcp-large-result",
+        description="large result",
+        parameters_schema={"type": "object", "properties": {}},
+        source_type="mcp",
+        callable=invoke,
+    )
+
+    result = await AgentScopeRuntimeTool(spec)()
+    text = result.content[0].text
+
+    assert "… [输出已截断]" in text
+    assert len(text) <= 4000 + len("\n… [输出已截断]")
 
 
 @pytest.mark.asyncio

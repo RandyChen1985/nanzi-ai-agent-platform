@@ -62,7 +62,23 @@ def test_mcp_registry_preserves_auth_policy_when_toggling_server_status():
     assert "user_assertion_enabled" in payload_builder
     assert "user_assertion_audience" in payload_builder
     assert "...buildServerPayload(server)" in source[source.index("const toggleServerStatus"):source.index("const fetchServerUsage")]
-    assert "auth_headers: server.auth_headers || '{}'" in source
+    assert "auth_headers: server.auth_headers || '{}'" not in source
+    assert "已有认证信息会直接回显" not in source
+    assert "认证信息不会回显" in source
+    assert "authorizationEnabled" in source
+    assert "authorizationEditing" in source
+    assert "Bearer" in source
+    assert "masked_auth_headers" in source
+    assert "auth_headers_patch" in source
+    assert "startAuthorizationEdit" in source
+
+
+def test_mcp_registry_does_not_render_server_authentication_values():
+    source = COMPONENT.read_text(encoding="utf-8")
+
+    assert "auth_headers_configured" in source
+    assert "auth_headers: server.auth_headers" not in source
+    assert "认证信息不会回显" in source
 
 
 def test_mcp_tool_tester_exposes_sanitized_user_assertion_status():

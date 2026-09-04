@@ -157,6 +157,8 @@ class McpToolFactory:
             args_schema=args_schema
         )
         tool.display_name = tool_record.tool_name
+        # 保留远端原始 Schema；args_schema 仅负责兼容本地参数校验，不能替代嵌套约束。
+        tool.mcp_input_schema = schema_def
 
         declared_types = set()
         for value in schema_def.get("x-nanzi-evidence-types") or []:

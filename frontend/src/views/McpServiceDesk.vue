@@ -186,7 +186,7 @@ const showTokenDetails = ref(false)
 const tokenDetailsClient = ref<Client | null>(null)
 const clientTokens = ref<ClientToken[]>([])
 const tokenDetailsLoading = ref(false)
-const tokenStatusFilter = ref<TokenStatusFilter>('all')
+const tokenStatusFilter = ref<TokenStatusFilter>('active')
 const selectedTokenIds = ref<string[]>([])
 const tokenDeleteLoading = ref(false)
 const tokenClock = ref(Date.now())
@@ -853,7 +853,7 @@ const changeClientPage = async (delta: number) => {
 const openTokenDetails = async (client: Client) => {
   tokenDetailsClient.value = client
   showTokenDetails.value = true
-  tokenStatusFilter.value = 'all'
+  tokenStatusFilter.value = 'active'
   selectedTokenIds.value = []
   clientTokens.value = []
   await loadClientTokens(client)
@@ -2886,7 +2886,7 @@ onUnmounted(() => {
 
       <div v-if="showTokenDetails && tokenDetailsClient" class="fixed inset-0 z-50 overflow-y-auto bg-slate-900/50 p-4" @click.self="showTokenDetails = false">
         <div class="flex min-h-full items-center justify-center">
-          <div class="flex max-h-[calc(100vh-2rem)] w-full max-w-3xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
+          <div class="flex max-h-[calc(100vh-2rem)] w-full max-w-4xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
             <div class="flex shrink-0 items-center justify-between border-b border-slate-100 px-6 py-5">
               <div>
                 <div class="flex items-center gap-3">
@@ -2907,11 +2907,46 @@ onUnmounted(() => {
             <div class="min-h-0 flex-1 overflow-y-auto px-6 py-5">
               <div class="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-100 bg-slate-50 p-3">
                 <div class="flex flex-wrap gap-1.5 text-[11px] font-bold">
-                  <span class="rounded-full bg-white px-2.5 py-1 text-slate-600">全部 {{ tokenStatusCounts.all }}</span>
-                  <span class="rounded-full bg-emerald-50 px-2.5 py-1 text-emerald-700">有效 {{ tokenStatusCounts.active }}</span>
-                  <span class="rounded-full bg-amber-50 px-2.5 py-1 text-amber-700">24 小时内到期 {{ tokenStatusCounts.expiring }}</span>
-                  <span class="rounded-full bg-orange-50 px-2.5 py-1 text-orange-700">已过期 {{ tokenStatusCounts.expired }}</span>
-                  <span class="rounded-full bg-slate-200 px-2.5 py-1 text-slate-600">已撤销 {{ tokenStatusCounts.revoked }}</span>
+                  <button
+                    type="button"
+                    class="cursor-pointer rounded-full px-2.5 py-1 transition-all"
+                    :class="tokenStatusFilter === 'all' ? 'bg-slate-700 text-white shadow-xs ring-2 ring-slate-700/20' : 'bg-white text-slate-600 border border-slate-200/60 hover:bg-slate-100 hover:text-slate-800'"
+                    @click="tokenStatusFilter = 'all'"
+                  >
+                    全部 {{ tokenStatusCounts.all }}
+                  </button>
+                  <button
+                    type="button"
+                    class="cursor-pointer rounded-full px-2.5 py-1 transition-all"
+                    :class="tokenStatusFilter === 'active' ? 'bg-emerald-600 text-white shadow-xs ring-2 ring-emerald-600/20' : 'bg-emerald-50 text-emerald-700 border border-emerald-200/60 hover:bg-emerald-100'"
+                    @click="tokenStatusFilter = 'active'"
+                  >
+                    有效 {{ tokenStatusCounts.active }}
+                  </button>
+                  <button
+                    type="button"
+                    class="cursor-pointer rounded-full px-2.5 py-1 transition-all"
+                    :class="tokenStatusFilter === 'expiring' ? 'bg-amber-500 text-white shadow-xs ring-2 ring-amber-500/20' : 'bg-amber-50 text-amber-700 border border-amber-200/60 hover:bg-amber-100'"
+                    @click="tokenStatusFilter = 'expiring'"
+                  >
+                    24 小时内到期 {{ tokenStatusCounts.expiring }}
+                  </button>
+                  <button
+                    type="button"
+                    class="cursor-pointer rounded-full px-2.5 py-1 transition-all"
+                    :class="tokenStatusFilter === 'expired' ? 'bg-orange-500 text-white shadow-xs ring-2 ring-orange-500/20' : 'bg-orange-50 text-orange-700 border border-orange-200/60 hover:bg-orange-100'"
+                    @click="tokenStatusFilter = 'expired'"
+                  >
+                    已过期 {{ tokenStatusCounts.expired }}
+                  </button>
+                  <button
+                    type="button"
+                    class="cursor-pointer rounded-full px-2.5 py-1 transition-all"
+                    :class="tokenStatusFilter === 'revoked' ? 'bg-slate-600 text-white shadow-xs ring-2 ring-slate-600/20' : 'bg-slate-200 text-slate-600 border border-slate-300/60 hover:bg-slate-300'"
+                    @click="tokenStatusFilter = 'revoked'"
+                  >
+                    已撤销 {{ tokenStatusCounts.revoked }}
+                  </button>
                 </div>
                 <div class="flex flex-wrap items-center gap-2">
                   <label class="text-xs font-bold text-slate-500">筛选状态</label>

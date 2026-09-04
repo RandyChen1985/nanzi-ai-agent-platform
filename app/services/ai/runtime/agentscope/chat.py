@@ -298,15 +298,19 @@ def legacy_tools_to_openai_schemas(tools: list[Any]) -> list[dict[str, Any]]:
         name = getattr(tool, "name", None)
         if not name:
             continue
-        args_schema = getattr(tool, "args_schema", None)
-        if args_schema is not None and hasattr(args_schema, "model_json_schema"):
-            parameters = args_schema.model_json_schema()
+        mcp_input_schema = getattr(tool, "mcp_input_schema", None)
+        if isinstance(mcp_input_schema, dict):
+            parameters = mcp_input_schema
         else:
-            parameters = (
-                getattr(tool, "input_schema", None)
-                or getattr(tool, "parameters_schema", None)
-                or {"type": "object", "properties": {}}
-            )
+            args_schema = getattr(tool, "args_schema", None)
+            if args_schema is not None and hasattr(args_schema, "model_json_schema"):
+                parameters = args_schema.model_json_schema()
+            else:
+                parameters = (
+                    getattr(tool, "input_schema", None)
+                    or getattr(tool, "parameters_schema", None)
+                    or {"type": "object", "properties": {}}
+                )
         schemas.append(
             {
                 "type": "function",

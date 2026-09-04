@@ -427,7 +427,6 @@ async def _test_model_connection(
             api_key=api_key,
             base_url=api_base_url,
             provider=provider,
-            temperature=0,
             context_size=context_size,
             max_output_tokens=max_output_tokens,
         )

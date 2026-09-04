@@ -1,5 +1,6 @@
 import asyncio
 import pytest
+from types import SimpleNamespace
 from unittest.mock import MagicMock, AsyncMock, patch
 from app.services.ai.tools.mcp_client import McpClientService, McpSseSession
 from httpx import Response
@@ -226,6 +227,64 @@ async def test_sse_list_tools_reconnects_once_after_transport_failure(mock_sessi
     assert tools == ["lookup"]
     mock_session.close.assert_awaited_once()
     mock_session.connect.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_sse_tool_call_reconnects_once_after_transport_failure(mock_session):
+    stale_client = MagicMock()
+    stale_client.call_tool = AsyncMock(side_effect=ConnectionError("stream closed"))
+    fresh_client = MagicMock()
+    fresh_client.call_tool = AsyncMock(
+        return_value=SimpleNamespace(
+            content=[SimpleNamespace(text="ok")],
+            isError=False,
+            structuredContent=None,
+        )
+    )
+    mock_session.is_direct_http = False
+    mock_session.session = stale_client
+    mock_session.close = AsyncMock(side_effect=lambda: setattr(mock_session, "session", None))
+    mock_session.connect = AsyncMock(side_effect=lambda: setattr(mock_session, "session", fresh_client))
+
+    with patch.object(
+        McpClientService,
+        "get_session",
+        AsyncMock(return_value=mock_session),
+    ):
+        result = await McpClientService.call_remote_tool(SERVER_ID, "lookup", {})
+
+    assert result == "ok"
+    stale_client.call_tool.assert_awaited_once()
+    fresh_client.call_tool.assert_awaited_once_with("lookup", {})
+    mock_session.close.assert_awaited_once()
+    mock_session.connect.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_sse_tool_call_does_not_retry_mcp_business_error(mock_session):
+    client = MagicMock()
+    client.call_tool = AsyncMock(
+        return_value=SimpleNamespace(
+            content=[SimpleNamespace(text="permission denied")],
+            isError=True,
+            structuredContent=None,
+        )
+    )
+    mock_session.is_direct_http = False
+    mock_session.session = client
+    mock_session.close = AsyncMock()
+    mock_session.connect = AsyncMock()
+
+    with patch.object(
+        McpClientService,
+        "get_session",
+        AsyncMock(return_value=mock_session),
+    ):
+        with pytest.raises(RuntimeError, match="permission denied"):
+            await McpClientService.call_remote_tool(SERVER_ID, "lookup", {})
+
+    client.call_tool.assert_awaited_once_with("lookup", {})
+    mock_session.connect.assert_not_awaited()
 
 
 @pytest.mark.asyncio

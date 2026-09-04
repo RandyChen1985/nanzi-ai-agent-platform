@@ -450,17 +450,20 @@ SSE / Streamable HTTP URL
 
 ### 9.2 认证模式
 
-保留原有“身份认证” Header 配置，在其下新增一个按 MCP 独立生效的胶囊开关：
+MCP 自身认证与 UserContext 是两个相互独立的 MCP 级配置：
 
 ```text
+Authorization：关闭 / 开启
 开启用户身份传递：关闭 / 开启
 ```
 
-关闭时完全沿用旧的 `Authorization` 或其他 Header 配置；开启时，在原有 Header 基础上增加签名 UserContext。
+Authorization 开启时，页面固定显示 `Bearer` 前缀，用户只填写 Token 内容；关闭时不发送 Authorization。UserContext 开启时，在 MCP 自身认证 Header 基础上增加签名 UserContext。
 
-### 9.3 原有 MCP 身份认证配置
+### 9.3 MCP 自身认证 Header 配置
 
-原有“身份认证（可选）”区域保持不变。`Authorization: Bearer` Header 仍然用于认证 MCP 接口本身，固定 Authorization Bearer Token 仍按照原来的方式配置，不在 UserContext 区域重复展示。
+Authorization 使用独立开关管理，不与其他 Header 混在动态列表中。除 Authorization 外的 Header 仍可在“其他 Header”区域按键值配置。创建时可录入新值；编辑时服务端只返回配置状态和脱敏值 `********`，已有值需要点击“编辑”后重新填写，未编辑的值由后端保留。
+
+该页面调整只复用现有 `auth_headers` 和 `fixed_token_encrypted` 字段，不新增数据库字段、不需要数据迁移；历史 `auth_headers` 中的 Authorization 仍兼容读取。
 
 ### 9.4 UserContext 配置
 

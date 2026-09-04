@@ -875,17 +875,25 @@ async def test_model_connection_test_passes_form_token_limits(monkeypatch):
     from app.services.ai.runtime.agentscope import chat as chat_module
     from app.core.llm import client as llm_client
 
+    async def fake_config_get(key):
+        return {
+            "llm_model_name": "system-model",
+            "llm_temperature": "0.35",
+        }.get(key)
+
     captured = {}
 
-    async def fake_get_llm_async(**kwargs):
+    def fake_get_chat_model(**kwargs):
         captured.update(kwargs)
-        return object()
+        return SimpleNamespace(model_name=kwargs["model"])
 
     class FakeChatClient:
         async def generate_text(self, messages):
             return "pong"
 
-    monkeypatch.setattr(llm_client, "get_llm_async", fake_get_llm_async)
+    monkeypatch.setattr(llm_client.ConfigServiceProxy, "get", staticmethod(fake_config_get))
+    monkeypatch.setattr(llm_client.LLMFactory, "get_chat_model", staticmethod(fake_get_chat_model))
+    monkeypatch.setattr(llm_client, "_lookup_ai_model_record", lambda model: None)
     monkeypatch.setattr(chat_module, "chat_client_from_handle", lambda handle: FakeChatClient())
 
     result = await _test_model_connection(
@@ -900,6 +908,7 @@ async def test_model_connection_test_passes_form_token_limits(monkeypatch):
     assert result["status"] == "success"
     assert captured["context_size"] == 262144
     assert captured["max_output_tokens"] == 8192
+    assert captured["temperature"] == 0.35
 
 
 @pytest.mark.asyncio
