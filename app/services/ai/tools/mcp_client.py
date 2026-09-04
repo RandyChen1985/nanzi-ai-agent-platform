@@ -10,6 +10,7 @@ from mcp.client.sse import sse_client
 from app.core.orm import AsyncSessionLocal
 from app.models.mcp import McpServer, McpToolCache
 from app.services.mcp.mcp_auth_policy import build_mcp_headers, resolve_mcp_auth_headers
+from app.services.mcp.outbound_audit import record_outbound_audit_log
 from sqlalchemy import select, update
 
 logger = logging.getLogger(__name__)
@@ -337,6 +338,10 @@ class McpClientService:
             session_kwargs = {"session_key": session_key, "auth_headers": auth_headers}
 
         session_mgr = await cls.get_session(server_id, **session_kwargs)
+        start_time = time.perf_counter()
+        call_status = "success"
+        call_error: Optional[str] = None
+        call_result: Any = None
         try:
             if not session_mgr.is_direct_http:
                 transport_retry = False
@@ -355,12 +360,14 @@ class McpClientService:
                     if structured_content is None:
                         structured_content = getattr(response, "structured_content", None)
                     if structured_content is not None:
-                        return {
+                        call_result = {
                             "success": True,
                             "content": text,
                             "structured_content": structured_content,
                         }
-                    return text if text else {"success": True, "content": ""}
+                        return call_result
+                    call_result = text if text else {"success": True, "content": ""}
+                    return call_result
                 except Exception as e:
                     if not transport_retry and isinstance(
                         e, (ConnectionError, TimeoutError, EOFError, OSError, httpx.HTTPError)
@@ -389,12 +396,14 @@ class McpClientService:
                             if structured_content is None:
                                 structured_content = getattr(response, "structured_content", None)
                             if structured_content is not None:
-                                return {
+                                call_result = {
                                     "success": True,
                                     "content": text,
                                     "structured_content": structured_content,
                                 }
-                            return text if text else {"success": True, "content": ""}
+                                return call_result
+                            call_result = text if text else {"success": True, "content": ""}
+                            return call_result
                         except Exception as retry_error:
                             e = RuntimeError(
                                 f"{original_error}; reconnect retry failed: {retry_error}"
@@ -431,16 +440,43 @@ class McpClientService:
                     if structured_content is None:
                         structured_content = res.get("structured_content")
                     if structured_content is not None:
-                        return {
+                        call_result = {
                             "success": True,
                             "content": text,
                             "structured_content": structured_content,
                         }
-                    return text if text else {"success": True, "content": ""}
+                        return call_result
+                    call_result = text if text else {"success": True, "content": ""}
+                    return call_result
                 if res is None:
-                    return {"success": True, "content": ""}
-                return str(res)
+                    call_result = {"success": True, "content": ""}
+                    return call_result
+                call_result = str(res)
+                return call_result
+        except Exception as call_exc:
+            call_status = "failed"
+            call_error = str(call_exc)
+            raise
         finally:
+            latency_ms = int((time.perf_counter() - start_time) * 1000)
+            try:
+                asyncio.create_task(
+                    record_outbound_audit_log(
+                        server_id=server_id,
+                        tool_name=tool_name,
+                        arguments=arguments,
+                        user_info=user_info,
+                        agent_info=agent_info,
+                        request_id=request_id,
+                        status=call_status,
+                        latency_ms=latency_ms,
+                        error_message=call_error,
+                        tool_output=call_result,
+                    )
+                )
+            except Exception as audit_dispatch_err:
+                logger.warning("[MCP] Failed to dispatch outbound audit log: %s", audit_dispatch_err)
+
             if ephemeral_session:
                 await session_mgr.close()
                 if session_key:

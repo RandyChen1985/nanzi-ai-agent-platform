@@ -710,3 +710,32 @@ def test_login_reloads_backend_oauth_endpoint_after_same_origin_login():
 
     assert "window.location.assign(returnPath)" in login
     assert "oauth/authorize" in login
+
+
+def test_external_client_card_and_list_view_mode_toggle_contract():
+    view = (ROOT / "frontend/src/views/McpServiceDesk.vue").read_text(encoding="utf-8")
+
+    # 验证响应式变量与 localStorage 持久化
+    assert "const clientViewMode = ref<'card' | 'list'>((localStorage.getItem('mcp_client_view_mode') as 'card' | 'list') || 'card')" in view
+    assert "localStorage.setItem('mcp_client_view_mode', newMode)" in view
+
+    # 验证视图切换按钮组与位置（在筛选按钮旁）
+    assert 'data-testid="client-view-mode-toggle"' in view
+    assert "title=\"卡片视图\"" in view
+    assert "title=\"列表视图\"" in view
+    assert "@click=\"clientViewMode = 'card'\"" in view
+    assert "@click=\"clientViewMode = 'list'\"" in view
+
+    # 验证卡片视图与列表视图结构
+    assert 'v-if="clientViewMode === \'card\'"' in view
+    assert '<!-- 列表视图 (List View) -->' in view
+
+    # 验证列表视图表格列与核心交互
+    client_section = view.split('<!-- 列表视图 (List View) -->', 1)[1].split('<!-- 分页器（卡片与列表共用） -->', 1)[0]
+    assert "<table" in client_section
+    for col in ("Client 信息", "状态", "Scope 授权", "Token 概览", "资源白名单", "最近签发", "操作"):
+        assert col in client_section
+    assert "openTokenIssue(client)" in client_section
+    assert "openTokenDetails(client)" in client_section
+    assert "openResourceWhitelist(client, config)" in client_section
+    assert "openClientDetails(client)" in client_section

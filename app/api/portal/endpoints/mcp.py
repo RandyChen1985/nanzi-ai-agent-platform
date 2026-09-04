@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Request, status, Query
 from typing import List, Optional, Dict, Any, Literal
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, delete, update, func
+from sqlalchemy import select, delete, update, func, case, or_
 import uuid
 import json
 import time
@@ -11,7 +11,7 @@ import secrets
 from app.core.config import settings
 from app.core.orm import get_db_session
 from app.core.dependencies import require_admin, require_permission, require_api_key
-from app.models.mcp import McpServer, McpToolCache
+from app.models.mcp import McpServer, McpToolCache, McpOutboundAuditLog
 from app.models.agent import AIAgent, AIAgentVersion
 from app.services.ai.tools.mcp_client import McpClientService, McpSseSession
 from app.services.ai.tools.mcp_factory import McpToolFactory
@@ -960,3 +960,237 @@ async def toggle_tool_publish(
     await db.commit()
     _clear_runtime_tool_cache()
     return {"status": "success", "is_published": published}
+
+
+@router.get("/servers/{server_id}/outbound-logs")
+async def get_mcp_server_outbound_logs(
+    server_id: str,
+    tool_name: Optional[str] = None,
+    status: Optional[str] = None,
+    range: str = "7d",
+    page: int = 1,
+    page_size: int = 20,
+    db: AsyncSession = Depends(get_db_session),
+    user: Dict = Depends(require_api_key),
+) -> Dict[str, Any]:
+    server_stmt = select(McpServer).where(McpServer.id == server_id)
+    server = (await db.execute(server_stmt)).scalar_one_or_none()
+    if not server:
+        raise HTTPException(status_code=404, detail="Server not found")
+
+    if server.scope == "personal" and server.user_id != _get_user_id(user) and user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="无法查看其他用户的私有 MCP 调用日志")
+
+    from datetime import datetime, timedelta
+    now = datetime.utcnow()
+    if range == "24h":
+        start_time = now - timedelta(hours=24)
+    elif range == "30d":
+        start_time = now - timedelta(days=30)
+    else:
+        start_time = now - timedelta(days=7)
+
+    filters = [
+        McpOutboundAuditLog.server_id == server_id,
+        McpOutboundAuditLog.created_at >= start_time,
+    ]
+    if tool_name:
+        filters.append(McpOutboundAuditLog.tool_name == tool_name)
+    if status and status != "all":
+        filters.append(McpOutboundAuditLog.status == status)
+
+    # 聚合指标计算
+    summary_stmt = select(
+        func.count().label("total"),
+        func.sum(case((McpOutboundAuditLog.status == "success", 1), else_=0)).label("success_count"),
+        func.sum(case((McpOutboundAuditLog.status != "success", 1), else_=0)).label("failed_count"),
+        func.avg(McpOutboundAuditLog.latency_ms).label("avg_latency"),
+    ).where(McpOutboundAuditLog.server_id == server_id, McpOutboundAuditLog.created_at >= start_time)
+
+    summary_row = (await db.execute(summary_stmt)).one()
+    total_calls = summary_row.total or 0
+    success_calls = int(summary_row.success_count or 0)
+    failed_calls = int(summary_row.failed_count or 0)
+    avg_latency = round(float(summary_row.avg_latency or 0), 1)
+    success_rate = round((success_calls / total_calls * 100), 1) if total_calls > 0 else 100.0
+
+    # 分页流水查询
+    count_stmt = select(func.count()).select_from(McpOutboundAuditLog).where(*filters)
+    filtered_total = (await db.execute(count_stmt)).scalar() or 0
+
+    logs_stmt = (
+        select(McpOutboundAuditLog)
+        .where(*filters)
+        .order_by(McpOutboundAuditLog.created_at.desc())
+        .offset((max(1, page) - 1) * page_size)
+        .limit(page_size)
+    )
+    log_rows = (await db.execute(logs_stmt)).scalars().all()
+
+    items = [
+        {
+            "id": log.id,
+            "server_id": log.server_id,
+            "server_name": log.server_name,
+            "tool_name": log.tool_name,
+            "agent_id": log.agent_id,
+            "agent_name": log.agent_name,
+            "user_id": log.user_id,
+            "user_name": log.user_name,
+            "trace_id": log.trace_id,
+            "status": log.status,
+            "latency_ms": log.latency_ms,
+            "error_message": log.error_message,
+            "tool_input": log.tool_input,
+            "tool_output": log.tool_output,
+            "created_at": log.created_at.isoformat() if log.created_at else None,
+        }
+        for log in log_rows
+    ]
+
+    return {
+        "items": items,
+        "total": filtered_total,
+        "page": page,
+        "page_size": page_size,
+        "summary": {
+            "total_calls": total_calls,
+            "success_calls": success_calls,
+            "failed_calls": failed_calls,
+            "success_rate": success_rate,
+            "avg_latency_ms": avg_latency,
+        },
+    }
+
+
+@router.get("/outbound-logs")
+async def get_all_mcp_outbound_logs(
+    server_id: Optional[str] = None,
+    tool_name: Optional[str] = None,
+    status: Optional[str] = None,
+    range: str = "7d",
+    page: int = 1,
+    page_size: int = 20,
+    db: AsyncSession = Depends(get_db_session),
+    user: Dict = Depends(require_api_key),
+) -> Dict[str, Any]:
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="只有系统管理员可查看全平台 MCP 审计日志")
+
+    # 获取所有 MCP servers 供下拉列表和范围筛选
+    server_query = select(McpServer.id, McpServer.server_name).order_by(McpServer.server_name)
+    server_rows = (await db.execute(server_query)).all()
+    accessible_server_ids = [row.id for row in server_rows]
+    server_options = [{"id": row.id, "server_name": row.server_name} for row in server_rows]
+
+    if not accessible_server_ids:
+        return {
+            "items": [],
+            "total": 0,
+            "page": page,
+            "page_size": page_size,
+            "server_options": [],
+            "summary": {
+                "total_calls": 0,
+                "success_calls": 0,
+                "failed_calls": 0,
+                "success_rate": 100.0,
+                "avg_latency_ms": 0,
+            },
+        }
+
+    from datetime import datetime, timedelta
+    now = datetime.utcnow()
+    if range == "24h":
+        start_time = now - timedelta(hours=24)
+    elif range == "30d":
+        start_time = now - timedelta(days=30)
+    else:
+        start_time = now - timedelta(days=7)
+
+    filters = [
+        McpOutboundAuditLog.created_at >= start_time,
+    ]
+    if server_id:
+        if server_id not in accessible_server_ids:
+            raise HTTPException(status_code=403, detail="无权查看该 MCP 服务的调用日志")
+        filters.append(McpOutboundAuditLog.server_id == server_id)
+    else:
+        filters.append(McpOutboundAuditLog.server_id.in_(accessible_server_ids))
+
+    if tool_name:
+        filters.append(McpOutboundAuditLog.tool_name.ilike(f"%{tool_name}%"))
+    if status and status != "all":
+        filters.append(McpOutboundAuditLog.status == status)
+
+    # 聚合指标计算
+    summary_filters = [
+        McpOutboundAuditLog.created_at >= start_time,
+    ]
+    if server_id:
+        summary_filters.append(McpOutboundAuditLog.server_id == server_id)
+    else:
+        summary_filters.append(McpOutboundAuditLog.server_id.in_(accessible_server_ids))
+
+    summary_stmt = select(
+        func.count().label("total"),
+        func.sum(case((McpOutboundAuditLog.status == "success", 1), else_=0)).label("success_count"),
+        func.sum(case((McpOutboundAuditLog.status != "success", 1), else_=0)).label("failed_count"),
+        func.avg(McpOutboundAuditLog.latency_ms).label("avg_latency"),
+    ).where(*summary_filters)
+
+    summary_row = (await db.execute(summary_stmt)).one()
+    total_calls = summary_row.total or 0
+    success_calls = int(summary_row.success_count or 0)
+    failed_calls = int(summary_row.failed_count or 0)
+    avg_latency = round(float(summary_row.avg_latency or 0), 1)
+    success_rate = round((success_calls / total_calls * 100), 1) if total_calls > 0 else 100.0
+
+    # 分页流水查询
+    count_stmt = select(func.count()).select_from(McpOutboundAuditLog).where(*filters)
+    filtered_total = (await db.execute(count_stmt)).scalar() or 0
+
+    logs_stmt = (
+        select(McpOutboundAuditLog)
+        .where(*filters)
+        .order_by(McpOutboundAuditLog.created_at.desc())
+        .offset((max(1, page) - 1) * page_size)
+        .limit(page_size)
+    )
+    log_rows = (await db.execute(logs_stmt)).scalars().all()
+
+    items = [
+        {
+            "id": log.id,
+            "server_id": log.server_id,
+            "server_name": log.server_name,
+            "tool_name": log.tool_name,
+            "agent_id": log.agent_id,
+            "agent_name": log.agent_name,
+            "user_id": log.user_id,
+            "user_name": log.user_name,
+            "trace_id": log.trace_id,
+            "status": log.status,
+            "latency_ms": log.latency_ms,
+            "error_message": log.error_message,
+            "tool_input": log.tool_input,
+            "tool_output": log.tool_output,
+            "created_at": log.created_at.isoformat() if log.created_at else None,
+        }
+        for log in log_rows
+    ]
+
+    return {
+        "items": items,
+        "total": filtered_total,
+        "page": page,
+        "page_size": page_size,
+        "server_options": server_options,
+        "summary": {
+            "total_calls": total_calls,
+            "success_calls": success_calls,
+            "failed_calls": failed_calls,
+            "success_rate": success_rate,
+            "avg_latency_ms": avg_latency,
+        },
+    }
