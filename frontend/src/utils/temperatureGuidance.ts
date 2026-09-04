@@ -29,5 +29,5 @@ export const getTemperatureGuidance = (value: unknown): string => {
     if (guidance) return guidance.description
     return '创造性和随机性更强，但可能偏离主题；请先确认模型官方文档支持。'
   }
-  return temperatureScaleGuidance[1].description
+  return temperatureScaleGuidance[1]?.description ?? '准确性和表达多样性较均衡，适合日常对话。'
 }
