@@ -3,6 +3,8 @@ import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import McpServerRegistry from '../components/system/McpServerRegistry.vue'
 import McpFlowGuideBanner from '../components/mcp/McpFlowGuideBanner.vue'
+import McpAuditLogTab from '../components/mcp/McpAuditLogTab.vue'
+import { useUser } from '../composables/useUser'
 
 const props = withDefaults(defineProps<{
   /** 仅展示「我的 MCP」，用于个人中心（无需 menu:mcp_management） */
@@ -12,7 +14,8 @@ const props = withDefaults(defineProps<{
 })
 
 const router = useRouter()
-const activeScope = ref<'global' | 'personal'>(props.personalOnly ? 'personal' : 'global')
+const { isAdmin } = useUser()
+const activeScope = ref<'global' | 'personal' | 'audit'>(props.personalOnly ? 'personal' : 'global')
 const registryRef = ref<InstanceType<typeof McpServerRegistry> | null>(null)
 
 // 流程指引横幅状态与持久化
@@ -142,11 +145,25 @@ const handleBannerAction = (action: 'add' | 'marketplace') => {
         </svg>
         我的 MCP
       </button>
+      <button
+        v-if="isAdmin"
+        id="tab-audit-logs"
+        type="button"
+        @click="activeScope = 'audit'"
+        class="flex cursor-pointer items-center gap-2 border-b-2 px-4 py-2.5 text-sm font-medium transition-colors"
+        :class="activeScope === 'audit' ? 'border-indigo-600 font-bold text-indigo-600 dark:border-indigo-400 dark:text-indigo-400' : 'border-transparent text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200'"
+      >
+        <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+        </svg>
+        审计日志
+      </button>
     </div>
 
     <!-- 主体区域：个人中心随页面滚动；控制台保留定高裁剪 -->
     <div :class="personalOnly ? 'min-h-[28rem]' : 'min-h-0 flex-1 overflow-hidden'">
-      <McpServerRegistry ref="registryRef" :key="activeScope" :scope="activeScope" />
+      <McpAuditLogTab v-if="activeScope === 'audit' && isAdmin" />
+      <McpServerRegistry v-else ref="registryRef" :key="activeScope" :scope="activeScope === 'audit' ? 'global' : activeScope" />
     </div>
 
     <!-- MCP 设计规范与全流程指引 Modal -->

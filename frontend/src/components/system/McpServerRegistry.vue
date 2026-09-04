@@ -37,7 +37,9 @@ import {
   ChevronLeftIcon,
   CheckCircleIcon,
   InformationCircleIcon,
+  DocumentTextIcon,
 } from '@heroicons/vue/24/outline'
+import McpServerLogModal from './McpServerLogModal.vue'
 
 const props = withDefaults(defineProps<{
   scope?: 'global' | 'personal'
@@ -108,6 +110,15 @@ const toolToTest = ref<any>(null)
 const openTester = (tool: any) => {
   toolToTest.value = tool
   showTester.value = true
+}
+
+// Outbound Audit Log Modal
+const showLogModal = ref(false)
+const selectedLogServer = ref<any>(null)
+
+const openLogModal = (server: any) => {
+  selectedLogServer.value = server
+  showLogModal.value = true
 }
 
 const wizardStep = ref<1 | 2 | 3>(1) // 1: Input & Verify, 2: Preview & Name, 3: Success & Publish Guide
@@ -1272,16 +1283,21 @@ onMounted(fetchServers)
               </span>
               <div class="flex items-center gap-1">
                 <span class="mr-1 hidden text-[9px] italic text-gray-400 sm:inline" v-if="server.last_sync_at">同步于 {{ new Date(server.last_sync_at).toLocaleString() }}</span>
-                <div v-if="canSave" class="flex space-x-0.5" @click.stop>
-                  <button type="button" @click="openEditModal(server)" class="rounded p-1.5 text-gray-400 transition-colors hover:bg-white hover:text-blue-500" title="编辑配置">
-                    <PencilSquareIcon class="h-4 w-4" />
+                <div class="flex items-center space-x-0.5" @click.stop>
+                  <button type="button" @click="openLogModal(server)" class="rounded p-1.5 text-gray-400 transition-colors hover:bg-white hover:text-indigo-600" title="出站调用日志">
+                    <DocumentTextIcon class="h-4 w-4" />
                   </button>
-                  <button type="button" @click="syncTools(server.id)" :disabled="syncLoading[server.id]" class="rounded p-1.5 text-gray-400 transition-colors hover:bg-white hover:text-primary">
-                    <CloudArrowDownIcon class="h-4 w-4" :class="syncLoading[server.id] ? 'animate-bounce' : ''" />
-                  </button>
-                  <button type="button" @click="confirmDeleteServer(server)" class="rounded p-1.5 text-gray-400 transition-colors hover:bg-white hover:text-red-500">
-                    <TrashIcon class="h-4 w-4" />
-                  </button>
+                  <template v-if="canSave">
+                    <button type="button" @click="openEditModal(server)" class="rounded p-1.5 text-gray-400 transition-colors hover:bg-white hover:text-blue-500" title="编辑配置">
+                      <PencilSquareIcon class="h-4 w-4" />
+                    </button>
+                    <button type="button" @click="syncTools(server.id)" :disabled="syncLoading[server.id]" class="rounded p-1.5 text-gray-400 transition-colors hover:bg-white hover:text-primary" title="同步工具">
+                      <CloudArrowDownIcon class="h-4 w-4" :class="syncLoading[server.id] ? 'animate-bounce' : ''" />
+                    </button>
+                    <button type="button" @click="confirmDeleteServer(server)" class="rounded p-1.5 text-gray-400 transition-colors hover:bg-white hover:text-red-500" title="删除服务">
+                      <TrashIcon class="h-4 w-4" />
+                    </button>
+                  </template>
                 </div>
               </div>
             </div>
@@ -1334,6 +1350,15 @@ onMounted(fetchServers)
           </div>
           
           <div class="flex flex-wrap items-center gap-2 pl-8 sm:pl-0 lg:pl-0">
+            <button
+              type="button"
+              @click="openLogModal(selectedServer)"
+              class="flex items-center rounded border border-gray-200 bg-white px-2 py-1 text-[11px] font-bold text-slate-700 hover:text-indigo-600 hover:border-indigo-200 shadow-xs transition-colors"
+              title="查看该服务的出站调用日志"
+            >
+              <DocumentTextIcon class="mr-1 h-3.5 w-3.5 text-indigo-500" />
+              调用日志
+            </button>
             <div v-if="canSave && selectedToolIds.size > 0" class="flex items-center space-x-2 rounded-lg border border-gray-200 bg-white p-1 shadow-sm animate-fade-in">
               <button @click="batchUpdateStatus(true)" :disabled="!canManageSelectedTools" class="rounded bg-green-600 px-3 py-1 text-[10px] font-bold text-white shadow-sm transition-all hover:bg-green-700 disabled:cursor-not-allowed disabled:opacity-50">批量发布</button>
               <button @click="batchUpdateStatus(false)" :disabled="!canManageSelectedTools" class="rounded bg-slate-600 px-3 py-1 text-[10px] font-bold text-white shadow-sm transition-all hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-50">批量下线</button>
@@ -2065,6 +2090,13 @@ onMounted(fetchServers)
       :loading="statusConfirmLoading"
       @confirm="executeStatusChange"
       @cancel="cancelStatusConfirm"
+    />
+
+    <!-- Outbound Audit Log Modal -->
+    <McpServerLogModal
+      :visible="showLogModal"
+      :server="selectedLogServer"
+      @close="showLogModal = false"
     />
   </div>
 </template>

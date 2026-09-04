@@ -22,8 +22,8 @@ const appVersion = import.meta.env.VITE_APP_VERSION || "Dev Build";
 const dashboardContentSpacing = computed(() => {
   if (route.name === "AIChat") return "p-0";
   if (route.name === "PersonalCenter") return "px-3 sm:px-4";
-  if (route.name === "PersonalWorkbench") return "p-0 sm:px-4 sm:pt-3 sm:pb-4 md:px-8 md:pt-4 md:pb-8";
-  return "p-0 sm:p-4 md:p-8";
+  if (route.name === "PersonalWorkbench") return "p-0 sm:px-4 sm:pt-2.5 sm:pb-4 md:px-6 md:pt-3 md:pb-6 lg:px-8 lg:pt-3.5 lg:pb-6";
+  return "p-0 sm:px-4 sm:pt-2.5 sm:pb-4 md:px-6 md:pt-3 md:pb-6 lg:px-8 lg:pt-3.5 lg:pb-6";
 });
 
 const showLogoutDialog = ref(false);

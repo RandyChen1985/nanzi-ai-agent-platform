@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, Boolean, DateTime, Text, Integer, ForeignKey
+from sqlalchemy import Column, String, Boolean, DateTime, Text, Integer, ForeignKey, JSON
 from sqlalchemy.orm import relationship
 from datetime import datetime
 from app.core.orm import Base
@@ -45,3 +45,24 @@ class McpToolCache(Base):
     updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
 
     server = relationship("McpServer", back_populates="tools")
+
+
+class McpOutboundAuditLog(Base):
+    """MCP 外部出站工具调用审计日志"""
+    __tablename__ = "sys_mcp_outbound_audit_logs"
+
+    id = Column(String(36), primary_key=True)
+    server_id = Column(String(36), ForeignKey("sys_mcp_servers.id", ondelete="CASCADE"), nullable=False, index=True)
+    server_name = Column(String(100), nullable=True)
+    tool_name = Column(String(255), nullable=False, index=True)
+    agent_id = Column(String(36), nullable=True, index=True)
+    agent_name = Column(String(100), nullable=True)
+    user_id = Column(String(64), nullable=True, index=True)
+    user_name = Column(String(64), nullable=True)
+    trace_id = Column(String(64), nullable=True, index=True)
+    status = Column(String(32), nullable=False, default="success", index=True)
+    latency_ms = Column(Integer, nullable=True)
+    error_message = Column(Text, nullable=True)
+    tool_input = Column(JSON, nullable=True)
+    tool_output = Column(JSON, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
