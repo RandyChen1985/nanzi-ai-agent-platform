@@ -257,6 +257,26 @@ def test_detector_fuses_repeated_body_block_after_three_cycles():
     assert verdict.repeat_count >= 3
 
 
+def test_default_detector_fuses_repeated_body_block_after_fifteen_cycles():
+    detector = StreamRepetitionDetector(threshold=100)
+    body_block = (
+        "第一段内容说明这里的查询结果。\n"
+        "第二段内容说明生成文件。\n"
+        "第三段内容说明处理已经完成。\n"
+    )
+
+    verdict = detector.feed(body_block * 14)
+
+    assert verdict.fused is False
+    assert detector.is_fused is False
+
+    verdict = detector.feed(body_block)
+
+    assert verdict.fused is True
+    assert verdict.repeat_count >= 15
+    assert detector.is_fused is True
+
+
 def test_detector_ignores_short_common_words():
     detector = StreamRepetitionDetector(threshold=3, min_phrase_len=6)
     # 简短词汇（如“好的”、“是的”）不应误触发熔断

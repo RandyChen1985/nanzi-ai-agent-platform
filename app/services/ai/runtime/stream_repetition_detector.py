@@ -12,7 +12,7 @@ DEFAULT_REPETITION_THRESHOLD = 20
 # 默认参与重复判定的最小有效句子长度（字符数），避免误杀“好的”、“然后”等简短连词
 DEFAULT_MIN_PHRASE_LEN = 6
 # 相同正文块连续出现的周期数。正文块需要至少包含两个句子。
-DEFAULT_BLOCK_REPETITION_THRESHOLD = 3
+DEFAULT_BLOCK_REPETITION_THRESHOLD = 15
 # 参与正文块重复判定的最小有效字符数。
 DEFAULT_MIN_BLOCK_LEN = 40
 # 无句末标点的短文本片段连续重复阈值。
@@ -47,7 +47,7 @@ class StreamRepetitionDetector:
 
     检测策略：
     仅对句末标点分隔出的完整有效句子进行连续重复检测。达到 ``threshold``（默认 20）次的
-    相同句子，或相同正文块达到 ``block_threshold``（默认 3）个周期，会触发熔断。
+    相同句子，或相同正文块达到 ``block_threshold``（默认 15）个周期，会触发熔断。
     长度达到 4 个字符的短句连续重复 20 次，或无标点短文本片段连续重复
     ``compact_threshold``（默认 20）次，也会触发熔断。Markdown 代码块和纯格式行不参与判断。
     """
@@ -129,7 +129,7 @@ class StreamRepetitionDetector:
         return "".join(filtered)
 
     def _block_verdict(self) -> Optional[RepetitionVerdict]:
-        """识别至少两个句子组成的、连续重复三周期的正文块。"""
+        """识别至少两个句子组成的、连续重复十五周期的正文块。"""
         history = self._phrase_history
         max_block_size = min(8, len(history) // self.block_threshold)
         for block_size in range(2, max_block_size + 1):
