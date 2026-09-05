@@ -590,8 +590,9 @@ class MemoryService:
         用于后续路由的会话粘性（让追问沿用上一轮智能体）。
         agent_type: 处理该轮的智能体类型（如 system/agent/rag 等主类型）。仅对 assistant 消息记录。
         agent_display_name: 处理该轮的智能体展示名。仅对 assistant 消息记录。
-        tool_run_text: A 项——本轮工具调用转录纯文本（独立字段，不拼入 content），
-        仅用于后续轮上下文重建，不直接展示给用户。
+        tool_run_text: 本轮已完成且成功的工具最终结果文本（独立字段，不拼入
+        content），仅用于后续轮上下文重建，不直接展示给用户；过程日志、思考
+        卡片和失败调用不应写入此字段。
         """
         redis = await get_redis()
         if not redis:
@@ -633,7 +634,12 @@ class MemoryService:
             if reusable_result_status:
                 message["reusable_result_status"] = str(reusable_result_status)
         if tool_run_text:
+            from app.services.ai.runtime.agentscope.tool_result_context import (
+                TOOL_RESULT_CONTEXT_VERSION,
+            )
+
             message["tool_run_text"] = tool_run_text
+            message["tool_run_text_version"] = TOOL_RESULT_CONTEXT_VERSION
 
         # 单调 seq：独立计数器分配，与 list 索引解耦。
         # 先 INCR 取新 seq（在 rpush 之前已知），供摘要游标 synced_seq 判定增量窗口。

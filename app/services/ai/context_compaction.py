@@ -9,6 +9,8 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
+from app.services.ai.runtime.agentscope.tool_result_context import is_trusted_tool_result_context
+
 COMPACTION_MARKER = "[早前对话摘录]"
 HISTORICAL_CONTEXT_OPEN = '<historical_context executable="false">'
 HISTORICAL_CONTEXT_CLOSE = "</historical_context>"
@@ -129,9 +131,10 @@ def _condense(text: str, limit: int) -> str:
 
 
 def _structured_tool_block(tool_run_text: Any, per_message_chars: int) -> str:
-    """把某条消息的工具转录 ``tool_run_text`` 解析为「结构化优先」的摘要行。
+    """把某条消息的最终工具结果 ``tool_run_text`` 解析为摘要行。
 
     现网 ``tool_run_text`` 由 ``assistant_agent_runner.resolve_tool_run_text`` 生成，
+    只包含已收到最终成功状态的工具调用；
     形如每行一个工具：``{tool_name}: {arg_preview} -> {output} (data_blocks=N)``。
     方案 B 在此做「结构化优先，超出截断」：
 
@@ -194,12 +197,15 @@ def build_overflow_digest(
         if role not in _ROLE_LABELS:
             continue
         text = _condense(_flatten_content(msg.get("content")), per_message_chars)
-        # 工具结果（tool_run_text）同样会随 content 一起注入模型上下文（见
+        # 最终工具结果（tool_run_text）同样会随 content 一起注入模型上下文（见
         # convert_history_to_messages），摘录也应收纳，否则工具返回的结论在压缩
         # 后会断档。方案 B：按工具结构化解析，优先保留「工具名 + 结论」，超出
         # per_message_chars 再截断；并以独立「工具 ▸」标签区分，避免与正文平铺
         # 一锅、被单条超长工具结果挤占全文配额。
-        tool_text = _structured_tool_block(msg.get("tool_run_text"), per_message_chars)
+        tool_text = _structured_tool_block(
+            msg.get("tool_run_text") if is_trusted_tool_result_context(msg) else None,
+            per_message_chars,
+        )
         if text and tool_text:
             lines.append(f"- {_ROLE_LABELS[role]}：{text} · 工具 ▸ {tool_text}")
         elif text:

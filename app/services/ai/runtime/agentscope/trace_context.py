@@ -84,7 +84,18 @@ class TraceSpanContext:
 
         # 出栈：恢复父级 Span ID
         if self._token:
-            current_span_var.reset(self._token)
+            try:
+                current_span_var.reset(self._token)
+            except ValueError:
+                # 流式 async generator 可能在不同 asyncio Context 中恢复；
+                # 该 Context 无法消费原 token，此时直接恢复进入本 Span 前的
+                # 父值，避免正常聊天因 trace 收尾异常而失败。
+                logger.debug(
+                    "Trace span token belongs to another context; restoring parent span directly"
+                )
+                current_span_var.set(self.parent_span_id)
+            finally:
+                self._token = None
 
     # --- 支持 with 语法 ---
     def __enter__(self) -> "TraceSpanContext":

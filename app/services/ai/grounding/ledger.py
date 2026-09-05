@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from dataclasses import replace
 from datetime import datetime, timezone
 from typing import Any, Iterable
 
@@ -11,6 +12,7 @@ from app.services.ai.grounding.models import (
     EvidenceStatus,
     EvidenceType,
     FactFreshness,
+    ToolResultEnvelope,
 )
 
 
@@ -187,6 +189,10 @@ def _is_success_result(result: Any) -> bool:
 def _is_non_empty_success_result(result: Any) -> bool:
     if not _is_success_result(result):
         return False
+    # AgentScope 原生工具可能返回 ToolChunk；空 content 是成功但无证据内容，
+    # 不能因为对象本身存在就误判为 SUCCESS_NON_EMPTY。
+    if hasattr(result, "content") and hasattr(result, "state"):
+        return bool(getattr(result, "content", None))
     if isinstance(result, str):
         text = result.strip()
         if not text:
@@ -268,6 +274,32 @@ class EvidenceLedger:
     def receipts(self) -> tuple[EvidenceReceipt, ...]:
         return tuple(self._receipts)
 
+    def rebind_call_id(self, old_call_id: str, new_call_id: str) -> bool:
+        """把工具封装层 ID 对齐到 AgentScope 事件中的真实 tool_call_id。
+
+        AgentScope 调用 Python 工具时不会把模型的 ``tool_call_id`` 作为参数
+        传入，运行时只能先生成内部 ID，再在结果事件带回元数据后完成对齐。
+        这只改收据索引，不改变结果内容或证据资格；若目标 ID 已有收据则丢弃
+        旧 ID，避免重试/恢复产生重复凭证。
+        """
+
+        old = str(old_call_id or "").strip()
+        new = str(new_call_id or "").strip()
+        if not old or not new or old == new:
+            return False
+        if not any(receipt.call_id == old for receipt in self._receipts):
+            return False
+        if any(receipt.call_id == new for receipt in self._receipts):
+            self._receipts = [
+                receipt for receipt in self._receipts if receipt.call_id != old
+            ]
+            return True
+        self._receipts = [
+            replace(receipt, call_id=new) if receipt.call_id == old else receipt
+            for receipt in self._receipts
+        ]
+        return True
+
     @property
     def available_evidence_types(self) -> frozenset[EvidenceType]:
         return frozenset(
@@ -297,6 +329,7 @@ class EvidenceLedger:
                 ),
                 "freshness": receipt.freshness.value,
                 "source_ref": receipt.source_ref,
+                "truncated": receipt.truncated,
                 "marker_digests": sorted(receipt.marker_digests),
                 "strong_marker_digests": sorted(receipt.strong_marker_digests),
                 "empty_success": receipt.empty_success,
@@ -353,6 +386,7 @@ class EvidenceLedger:
                             if raw.get("source_ref") is not None
                             else None
                         ),
+                        truncated=bool(raw.get("truncated", False)),
                         marker_digests=frozenset(
                             str(item) for item in raw.get("marker_digests") or []
                         ),
@@ -389,6 +423,7 @@ class EvidenceLedger:
         expires_at: datetime | None = None,
         freshness: FactFreshness = FactFreshness.UNKNOWN,
         source_ref: str | None = None,
+        truncated: bool = False,
     ) -> EvidenceReceipt | None:
         """记录工具调用取证收据。
 
@@ -436,15 +471,67 @@ class EvidenceLedger:
             expires_at=expires_at,
             freshness=inferred_freshness,
             source_ref=source_ref,
+            truncated=truncated,
         )
         self._receipts.append(receipt)
         return receipt
 
-    def has_valid_evidence(self, required_types: Iterable[EvidenceType]) -> bool:
+    def record_envelope(
+        self,
+        envelope: ToolResultEnvelope,
+        *,
+        evidence_types: Iterable[EvidenceType],
+        policy: str = "non_empty",
+        expires_at: datetime | None = None,
+        freshness: FactFreshness = FactFreshness.UNKNOWN,
+    ) -> EvidenceReceipt | None:
+        """仅从已完成且具备证据资格的统一凭证生成收据。
+
+        运行时工具、恢复执行和 ChatBI 最终结果都应走这里。这样展示层的
+        thinking/log/summary 文本即使包含数字或业务名词，也没有进入账本的
+        入口；失败重试也只会留下最终成功调用对应的收据。
+        """
+
+        if not isinstance(envelope, ToolResultEnvelope):
+            return None
+        if not envelope.evidence_eligible:
+            return None
+        if envelope.status not in {
+            EvidenceStatus.SUCCESS_NON_EMPTY,
+            EvidenceStatus.SUCCESS_EMPTY,
+        }:
+            return None
+        return self.record_success(
+            call_id=envelope.call_id,
+            producer=envelope.producer,
+            evidence_types=evidence_types,
+            result=envelope.result,
+            policy=policy,
+            observed_at=envelope.observed_at,
+            source_as_of=envelope.source_as_of,
+            expires_at=expires_at,
+            freshness=freshness,
+            source_ref=envelope.source_ref,
+            truncated=envelope.truncated,
+        )
+
+    def has_valid_evidence(
+        self,
+        required_types: Iterable[EvidenceType],
+        *,
+        allow_truncated: bool = True,
+    ) -> bool:
         required = frozenset(required_types)
         if not required:
-            return bool(self._receipts)
-        return any(receipt.evidence_types & required for receipt in self._receipts)
+            return any(
+                allow_truncated or not receipt.truncated
+                for receipt in self._receipts
+            )
+        return any(
+            receipt.evidence_types & required
+            and (allow_truncated or not receipt.truncated)
+            for receipt in self._receipts
+        )
 
     @staticmethod
     def _normalize_current_time(now: datetime | None) -> datetime:
@@ -461,8 +548,11 @@ class EvidenceLedger:
         max_age_seconds: int | None,
         require_source_as_of: bool,
         allow_reuse: bool,
+        allow_truncated: bool,
         current: datetime,
     ) -> bool:
+        if receipt.truncated and not allow_truncated:
+            return False
         if receipt.expires_at is not None:
             expires_at = receipt.expires_at
             if expires_at.tzinfo is None:
@@ -500,6 +590,7 @@ class EvidenceLedger:
         max_age_seconds: int | None = None,
         require_source_as_of: bool = False,
         allow_reuse: bool = False,
+        allow_truncated: bool = True,
         now: datetime | None = None,
     ) -> bool:
         """判断指定来源是否存在满足时效要求的证据。
@@ -526,6 +617,7 @@ class EvidenceLedger:
                 max_age_seconds=max_age_seconds,
                 require_source_as_of=require_source_as_of,
                 allow_reuse=allow_reuse,
+                allow_truncated=allow_truncated,
                 current=current,
             ):
                 continue
@@ -541,6 +633,7 @@ class EvidenceLedger:
         max_age_seconds: int | None = None,
         require_source_as_of: bool = False,
         allow_reuse: bool = False,
+        allow_truncated: bool = True,
         now: datetime | None = None,
     ) -> bool:
         """判断指定工具 producer 是否提供了满足时效要求的成功收据。"""
@@ -551,6 +644,7 @@ class EvidenceLedger:
             max_age_seconds=max_age_seconds,
             require_source_as_of=require_source_as_of,
             allow_reuse=allow_reuse,
+            allow_truncated=allow_truncated,
             now=now,
         )
 
@@ -564,6 +658,7 @@ class EvidenceLedger:
         max_age_seconds: int | None = None,
         require_source_as_of: bool = False,
         allow_reuse: bool = False,
+        allow_truncated: bool = True,
         now: datetime | None = None,
     ) -> bool:
         required = frozenset(required_types)
@@ -582,6 +677,7 @@ class EvidenceLedger:
                 max_age_seconds=max_age_seconds,
                 require_source_as_of=require_source_as_of,
                 allow_reuse=allow_reuse,
+                allow_truncated=allow_truncated,
                 current=current,
             ):
                 continue
@@ -604,6 +700,7 @@ class EvidenceLedger:
         max_age_seconds: int | None = None,
         require_source_as_of: bool = False,
         allow_reuse: bool = False,
+        allow_truncated: bool = True,
         now: datetime | None = None,
     ) -> bool:
         """只在指定 producer 的收据中寻找候选回答的关键标记关联。"""
@@ -625,6 +722,7 @@ class EvidenceLedger:
                 max_age_seconds=max_age_seconds,
                 require_source_as_of=require_source_as_of,
                 allow_reuse=allow_reuse,
+                allow_truncated=allow_truncated,
                 current=current,
             ):
                 continue

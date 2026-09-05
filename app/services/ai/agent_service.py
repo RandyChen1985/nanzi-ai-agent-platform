@@ -33,6 +33,7 @@ from app.services.ai.runtime.conversation_run_registry import track_conversation
 from app.services.ai.executors.common import _attachment_abs_path, extract_tokens_from_message
 from app.services.ai.runtime.agentscope.text_sanitize import sanitize_assistant_stream_text
 from app.services.ai.runtime.agentscope.compat import HumanMessage, SystemMessage
+from app.services.ai.runtime.agentscope.tool_result_context import is_trusted_tool_result_context
 from app.services.ai.runtime.execution_observability import ExecutionPerformanceTracker
 from app.core.orm import AsyncSessionLocal
 from app.services.ai.grounding.policy import resolve_fact_requirement
@@ -342,6 +343,7 @@ def _history_messages_for_context(history: List[Dict[str, Any]]) -> List[Dict[st
         "agent_name",
         "agent_display_name",
         "tool_run_text",
+        "tool_run_text_version",
         "seq",
     )
     context_messages: List[Dict[str, Any]] = []
@@ -361,6 +363,14 @@ def _history_messages_for_context(history: List[Dict[str, Any]]) -> List[Dict[st
     return context_messages
 
 
+def _trusted_tool_run_text(message: Dict[str, Any]) -> str:
+    """只为上下文预算统计读取已标记版本的最终工具结果。"""
+
+    if not is_trusted_tool_result_context(message):
+        return ""
+    return str(message.get("tool_run_text") or "")
+
+
 def _window_for_context(
     server_history: List[Dict[str, Any]],
     max_context_messages: int,
@@ -369,7 +379,8 @@ def _window_for_context(
     """C 项：用 token 预算主导窗口，条数上限仅作绝对兜底。
 
     从历史尾部（最近）倒序累计每条消息的估算 token（``content`` 与工具摘要
-    ``tool_run_text`` 均计入，与 convert_history_to_messages 实际注入模型的内容一致）。
+    ``tool_run_text``（仅最终成功工具结果）均计入，与
+    convert_history_to_messages 实际注入模型的内容一致）。
 
     **优先级（token 优先）：**
     1. 首选由 token 预算 ``max_tokens``（默认 64k）决定保留多少历史 —— 这是主约束；
@@ -392,7 +403,7 @@ def _window_for_context(
         if not isinstance(msg, dict):
             continue
         content = str(msg.get("content") or "")
-        tool_text = str(msg.get("tool_run_text") or "")
+        tool_text = _trusted_tool_run_text(msg)
         total_tokens += estimate_text_tokens(content + tool_text)
         kept += 1
         # 主判据：token 预算超限即截断（token 优先）
@@ -1253,6 +1264,7 @@ class AgentService:
         knowledge_dataset_ids: Optional[List[str]] = None,
         metadata_dataset_ids: Optional[List[str]] = None,
         reusable_result_id: Optional[str] = None,
+        quick_context: Optional[Dict[str, Any]] = None,
         request_observability: Optional[Dict[str, Any]] = None,
     ) -> AsyncGenerator[Dict[str, Any], None]:
         """
@@ -1695,6 +1707,7 @@ class AgentService:
                     knowledge_dataset_ids=knowledge_dataset_ids,
                     metadata_dataset_ids=metadata_dataset_ids,
                     reusable_result_id=reusable_result_id,
+                    quick_context=quick_context,
                     request_observability=request_observability,
                     trace_id=trace_id,
                     trace_buffer=trace_buffer,
@@ -2347,7 +2360,9 @@ class AgentService:
             window = automatic_window
 
         before_tokens = sum(
-            estimate_text_tokens(str(message.get("content") or "") + str(message.get("tool_run_text") or ""))
+            estimate_text_tokens(
+                str(message.get("content") or "") + _trusted_tool_run_text(message)
+            )
             for message in full_history
         )
 
@@ -2382,7 +2397,9 @@ class AgentService:
             {"schema_version": 1, "source_seq": source_seq, "messages": compacted},
         )
         after_tokens = sum(
-            estimate_text_tokens(str(message.get("content") or "") + str(message.get("tool_run_text") or ""))
+            estimate_text_tokens(
+                str(message.get("content") or "") + _trusted_tool_run_text(message)
+            )
             for message in compacted
         )
         event = dict(event)
@@ -2460,7 +2477,7 @@ class AgentService:
                 token_used = sum(
                     estimate_text_tokens(
                         str(msg.get("content") or "")
-                        + str(msg.get("tool_run_text") or "")
+                        + _trusted_tool_run_text(msg)
                     )
                     for msg in full_history
                     if isinstance(msg, dict)
@@ -2626,9 +2643,10 @@ class AgentService:
             for msg in dropped or []:
                 role = (msg.get("role") or "").strip()
                 text = _flatten_content(msg.get("content"))
-                # 工具结果（tool_run_text）同样会注入模型上下文，摘要也应看到，
-                # 否则工具返回的结论/数据在语义摘要里会缺失。
-                tool_text = _flatten_content(msg.get("tool_run_text"))
+                # 最终工具结果（tool_run_text）同样会注入模型上下文，摘要也应看到，
+                # 否则工具返回的结论/数据在语义摘要里会缺失；过程日志和思考卡片
+                # 不在此字段内。
+                tool_text = _flatten_content(_trusted_tool_run_text(msg))
                 if tool_text:
                     text = f"{text} · 工具结果：{tool_text}".strip(
                         " ·"
@@ -2759,6 +2777,7 @@ class AgentService:
         trace_buffer: list[AgentExecutionStep],
         user_query: str,
         force_data_query: bool = False,
+        quick_result_followup: bool = False,
         conversation_id: Optional[str] = None,
         route_progress: Optional[RouteProgressCallback] = None,
     ) -> tuple[Any, Any, float, Optional[str]]:
@@ -2781,6 +2800,7 @@ class AgentService:
                 enable_multi_agent=enable_multi_agent,
                 user_info=user_info,
                 force_data_query=force_data_query,
+                quick_result_followup=quick_result_followup,
                 conversation_id=conversation_id,
                 on_progress=route_progress,
             )
@@ -3455,6 +3475,7 @@ class AgentService:
         start_time: float,
         shared_state: Optional[Dict[str, Any]] = None,
         reusable_result_id: Optional[str] = None,
+        quick_context: Optional[Dict[str, Any]] = None,
         request_observability: Optional[Dict[str, Any]] = None,
         agent_max_toolcall_timeout_seconds: Optional[float] = None,
     ) -> AsyncGenerator[Dict[str, Any], None]:
@@ -3470,20 +3491,40 @@ class AgentService:
         lane_user_id = (user_info or {}).get("user_id") or (user_info or {}).get("id")
         performance_tracker = ExecutionPerformanceTracker()
 
+        from app.services.ai.quick_result_context import normalize_quick_result_context
+
+        normalized_quick_context = normalize_quick_result_context(quick_context)
+        # 只有快捷按钮明确声明为“需要新数据”，且请求没有显式选择专家时，
+        # 才改变入口路由。上下文本身不进入模型消息，也不替代本轮工具凭证。
+        quick_result_followup = bool(
+            normalized_quick_context
+            and not (agent_id or agent_name or version_id)
+        )
+
         try:
             reusable_decision_query = user_query
-            if (shared_state or {}).get("clicked_reusable_reply"):
-                # 正文和执行器只接收清理后的动作文本；这个内部标记仅用于保留
-                # “点击旧回复”带来的复用意图，不会被送入模型上下文。
-                from app.services.ai.reusable_result import CLICKED_REPLY_MARKER
+            if quick_result_followup:
+                # ChatBI 快捷追问明确要求重新取数，不能因为当前问题与旧结果
+                # 相似而进入 reusable-result 复用路径；历史仍保留给模型理解指代。
+                from app.services.ai.reusable_result import ReusableResultDecision
 
-                reusable_decision_query = f"{user_query}\n{CLICKED_REPLY_MARKER}"
-            reusable_result_decision = await self._resolve_reusable_result_decision(
-                user_info=user_info,
-                conversation_id=conversation_id,
-                user_query=reusable_decision_query,
-                preferred_result_id=reusable_result_id,
-            )
+                reusable_result_decision = ReusableResultDecision(
+                    mode="none",
+                    reason="quick_context_requires_fresh_data",
+                )
+            else:
+                if (shared_state or {}).get("clicked_reusable_reply"):
+                    # 正文和执行器只接收清理后的动作文本；这个内部标记仅用于保留
+                    # “点击旧回复”带来的复用意图，不会被送入模型上下文。
+                    from app.services.ai.reusable_result import CLICKED_REPLY_MARKER
+
+                    reusable_decision_query = f"{user_query}\n{CLICKED_REPLY_MARKER}"
+                reusable_result_decision = await self._resolve_reusable_result_decision(
+                    user_info=user_info,
+                    conversation_id=conversation_id,
+                    user_query=reusable_decision_query,
+                    preferred_result_id=reusable_result_id,
+                )
             from app.services.ai.reusable_result import (
                 build_reusable_result_status_event,
                 prepare_reusable_route_input,
@@ -3507,6 +3548,7 @@ class AgentService:
                     "user_info": user_info,
                     "trace_buffer": trace_buffer,
                     "user_query": route_user_query,
+                    "quick_result_followup": quick_result_followup,
                     "conversation_id": conversation_id,
                 },
             )
@@ -3548,6 +3590,20 @@ class AgentService:
                 preparation_elapsed_ms = (
                     asyncio.get_running_loop().time() - (shared_state or {}).get("preparation_started_at", start_time)
                 ) * 1000
+                if quick_result_followup:
+                    yield _build_preparation_parent_log(
+                        status="success",
+                        details="快捷分析需要重新查询实时数据，但当前没有可用的数据查询智能体。",
+                        execution_time_ms=preparation_elapsed_ms,
+                    )
+                    yield {
+                        "content": (
+                            "这条快捷分析需要重新查询实时数据，但当前没有可用的数据查询智能体。"
+                            "请稍后重试，或选择一个支持数据查询的智能体后再继续。"
+                        ),
+                        "status": "success",
+                    }
+                    return
                 yield _build_preparation_parent_log(
                     status="error",
                     details="鉴权及上下文与能力准备失败：未找到可用目标专家。",
@@ -3683,6 +3739,16 @@ class AgentService:
                     stage_timings_ms={"route_resolution": route_elapsed_ms},
                 )
 
+            if quick_result_followup:
+                turn_decision = turn_decision.model_copy(
+                    update={
+                        "quick_result_followup": True,
+                        "needs_fresh_data": True,
+                        "freshness_requirement": "realtime",
+                        "reference_mode": "new_query",
+                    }
+                )
+
             # 路由完成后才知道本轮 Runner 的事实域。专用路径只接收自己的结果类型；
             # 通用 Assistant 保留跨类型加工能力（例如数据转图、网页转 Markdown）。
             allowed_reusable_result_types: Collection[str] | None = None
@@ -3690,7 +3756,7 @@ class AgentService:
                 allowed_reusable_result_types = {"knowledge"}
             elif turn_decision.turn_kind == "data_query":
                 allowed_reusable_result_types = {"data"}
-            if allowed_reusable_result_types is not None:
+            if allowed_reusable_result_types is not None and not quick_result_followup:
                 reusable_result_decision = await self._resolve_reusable_result_decision(
                     user_info=user_info,
                     conversation_id=conversation_id,
@@ -4490,6 +4556,7 @@ class AgentService:
         knowledge_dataset_ids: Optional[List[str]] = None,
         metadata_dataset_ids: Optional[List[str]] = None,
         reusable_result_id: Optional[str] = None,
+        quick_context: Optional[Dict[str, Any]] = None,
         request_observability: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """
@@ -4516,6 +4583,7 @@ class AgentService:
             knowledge_dataset_ids=knowledge_dataset_ids,
             metadata_dataset_ids=metadata_dataset_ids,
             reusable_result_id=reusable_result_id,
+            quick_context=quick_context,
             request_observability=request_observability,
         ):
             if "trace_id" in chunk and chunk.get("status") == "init":

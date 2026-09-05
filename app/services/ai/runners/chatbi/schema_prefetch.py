@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import inspect
 import logging
 import re
 import time
@@ -277,9 +276,9 @@ async def auto_invoke_get_dataset_schema(
         invoke_kwargs: dict[str, Any] = {"keywords": keywords or None}
         if metadata_dataset_ids:
             invoke_kwargs["metadata_dataset_ids"] = metadata_dataset_ids
-        result = schema_spec.callable(**invoke_kwargs)
-        if inspect.isawaitable(result):
-            result = await result
+        # 预取仍然是一次真实工具调用，必须经过 RuntimeToolSpec 的统一最终
+        # 收口，才能生成 ToolResultEnvelope；不要直接绕过到 callable。
+        result = await schema_spec.invoke(invoke_kwargs, call_id=tool_id)
         output = str(result or "")
     except Exception as exc:
         logger.error("[DataAgentRunner] Auto get_dataset_schema failed: %s", exc)

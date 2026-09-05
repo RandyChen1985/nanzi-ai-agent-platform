@@ -118,6 +118,7 @@ class TurnDecision(BaseModel):
     time_scope: Optional[str] = None
     reference_mode: str = "unknown"
     needs_fresh_data: bool = False
+    quick_result_followup: bool = False
     max_age_seconds: Optional[int] = None
     requires_source_timestamp: bool = False
     chatbi_mode: Optional[str] = None

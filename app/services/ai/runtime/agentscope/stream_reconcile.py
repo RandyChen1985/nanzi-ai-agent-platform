@@ -31,14 +31,43 @@ def build_tool_review_lines(
     tool_names: dict | None,
     tool_outputs: dict | None,
     *,
+    tool_result_states: dict | None = None,
     max_len: int = DEFAULT_TOOL_OUTPUT_MAX_LEN,
 ) -> list[str]:
-    """构造兜底合成输入，排除仅用于编排状态的工具结果。"""
+    """构造兜底合成输入，排除过程状态和仅用于编排的工具结果。
+
+    ``tool_result_states`` 中有对应调用 ID 时，只接受最终成功状态；缺少对应
+    状态的旧事件仍按 payload 做错误过滤，兼容没有 AgentScope 最终状态的回顾调用方。
+    """
 
     names = tool_names or {}
     outputs = tool_outputs or {}
     lines: list[str] = []
+    has_final_state_map = isinstance(tool_result_states, dict) and bool(tool_result_states)
     for tool_id, output in outputs.items():
+        if isinstance(tool_result_states, dict):
+            result_state = tool_result_states.get(tool_id)
+            if (
+                has_final_state_map
+                and tool_id not in tool_result_states
+            ):
+                continue
+            if (
+                tool_id in tool_result_states
+                and str(result_state or "").strip().lower()
+                not in {"success", "succeeded", "finished", "completed"}
+            ):
+                continue
+            # 状态成功仍不能覆盖 payload 自身的错误标记；这里是给兜底
+            # synthesis 的模型上下文，也要与 EvidenceLedger 保持同一收口语义。
+            from app.services.ai.grounding.ledger import classify_evidence_result
+            from app.services.ai.grounding.models import EvidenceStatus
+
+            if classify_evidence_result(output) not in {
+                EvidenceStatus.SUCCESS_NON_EMPTY,
+                EvidenceStatus.SUCCESS_EMPTY,
+            }:
+                continue
         tool_name = str(names.get(tool_id) or tool_id or "").strip()
         if not tool_name or tool_name.casefold() in BOOKKEEPING_TOOL_NAMES:
             continue
@@ -157,6 +186,7 @@ def needs_tool_synthesis_fallback(
     used_tools: bool,
     tool_names: dict | None = None,
     tool_outputs: dict | None = None,
+    tool_result_states: dict | None = None,
     min_complete_chars: int = DEFAULT_MIN_COMPLETE_CHARS,
 ) -> bool:
     """Only synthesize when tools ran but no usable final text was streamed."""
@@ -164,7 +194,13 @@ def needs_tool_synthesis_fallback(
         return False
     if (streamed or "").strip() or (agent_text or "").strip():
         return False
-    return bool(build_tool_review_lines(tool_names, tool_outputs))
+    return bool(
+        build_tool_review_lines(
+            tool_names,
+            tool_outputs,
+            tool_result_states=tool_result_states,
+        )
+    )
 
 
 GENERIC_SYNTHESIS_EMPTY_FALLBACK = (

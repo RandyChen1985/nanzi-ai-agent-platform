@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import re
 
 from app.services.ai.grounding.ledger import EvidenceLedger
 from app.services.ai.grounding.models import EvidenceType
@@ -11,6 +12,7 @@ from app.services.ai.grounding.policy import (
     GroundingAction,
     GroundingDecision,
     GroundingRiskLevel,
+    contains_grounding_fact_signal,
     evaluate_grounding,
 )
 
@@ -24,6 +26,12 @@ _EVIDENCE_TYPE_LABELS = {
     EvidenceType.EXTERNAL_TOOL: "外部工具结果",
     EvidenceType.CONVERSATION_MEMORY: "会话记忆",
 }
+
+_UNCERTAIN_RESPONSE_RE = re.compile(
+    r"(?:无法|不能(?:确认|确定)?|不确定|不足|未找到|没有找到|未获得|未能|暂无|"
+    r"没有(?:拿到|获得|返回)(?:有效)?(?:结果|数据|信息)|请(?:提供|补充))",
+    re.IGNORECASE,
+)
 
 
 def _format_evidence_type_labels(evidence_types: frozenset[EvidenceType]) -> str:
@@ -48,6 +56,12 @@ def _humanize_grounding_reason(
         if required_types and not available_types:
             return f"本轮没有找到与回答对应的{required}证据。"
         return f"本轮没有找到与回答对应的证据，需要{required}，当前获得的是{available}。"
+    if normalized.lower().startswith("evidence contract missing fresh receipt"):
+        return (
+            f"本轮没有拿到与当前问题对应的{required}。"
+            if required_types
+            else "本轮没有拿到与当前问题对应的可核对结果。"
+        )
     if "stale evidence" in normalized.lower():
         return f"本轮{required}证据已经过期，不能证明当前状态。"
     if "compatible internal evidence" in normalized.lower():
@@ -71,6 +85,47 @@ class GroundingAuditResult:
     @property
     def should_warn(self) -> bool:
         return self.warning_chunk is not None
+
+
+@dataclass(frozen=True)
+class GroundingGuidance:
+    """面向用户的安全降级回复及其是否保留了原始不确定性说明。"""
+
+    content: str
+    retained_candidate: bool
+
+
+def _is_retainable_uncertainty(text: str) -> bool:
+    normalized = str(text or "").strip()
+    return bool(
+        normalized
+        and _UNCERTAIN_RESPONSE_RE.search(normalized)
+        and not contains_grounding_fact_signal(normalized)
+    )
+
+
+def _next_step_guidance(
+    reason: str,
+    required_types: frozenset[EvidenceType],
+) -> str:
+    lowered = str(reason or "").lower()
+    if "stale" in lowered or "过期" in lowered:
+        return "重新查询最新结果，或明确你需要的时间范围。"
+    if "truncated" in lowered or "截断" in lowered:
+        return "缩小查询范围，分批获取结果，这样更容易确认完整信息。"
+    if "empty" in lowered or "unrelated" in lowered or "为空" in lowered:
+        return "换一个更具体的关键词，或补充项目、对象和时间范围。"
+    if EvidenceType.INTERNAL_DATA in required_types:
+        return "补充数据集、指标、筛选范围或时间条件。"
+    if EvidenceType.INTERNAL_KNOWLEDGE in required_types:
+        return "补充制度、手册名称或更具体的业务关键词。"
+    if EvidenceType.USER_FILE in required_types:
+        return "确认要查询的附件或文件，并补充页码、工作表或关键词。"
+    if required_types & {EvidenceType.PUBLIC_WEB, EvidenceType.EXTERNAL_TOOL}:
+        return "补充具体名称、账号、地区或时间范围后再试。"
+    if EvidenceType.RUNTIME_STATE in required_types:
+        return "补充主机、服务或时间范围后再试。"
+    return "你可以重新查询一次，也可以补充更具体的名称、范围或时间条件。"
 
 
 class GroundingService:
@@ -153,3 +208,43 @@ class GroundingService:
                 ),
             },
         }
+
+    @staticmethod
+    def guided_response(
+        *,
+        candidate_text: str,
+        reason: str,
+        required_types: frozenset[EvidenceType] = frozenset(),
+        available_types: frozenset[EvidenceType] = frozenset(),
+        contracts_reason: str = "",
+    ) -> GroundingGuidance:
+        """生成安全降级回复，优先保留模型已经表达的“不确定”说明。
+
+        该方法不会保留带有具体未经核实事实的原文，只保留纯不确定性说明；
+        这样可以避免用户被硬阻断，同时不放行数字、状态或业务结论。
+        """
+
+        effective_reason = str(contracts_reason or reason or "").strip()
+        user_reason = _humanize_grounding_reason(
+            effective_reason,
+            required_types=required_types,
+            available_types=available_types,
+        )
+        guidance = _next_step_guidance(effective_reason, required_types)
+        candidate = str(candidate_text or "").strip()
+        if _is_retainable_uncertainty(candidate):
+            return GroundingGuidance(
+                content=(
+                    f"{candidate}\n\n"
+                    f"你可以：{guidance}"
+                ),
+                retained_candidate=True,
+            )
+        return GroundingGuidance(
+            content=(
+                "我先不直接给出具体结论，以免把未核实的信息当成事实。\n\n"
+                f"{user_reason}\n\n"
+                f"你可以：{guidance}"
+            ),
+            retained_candidate=False,
+        )

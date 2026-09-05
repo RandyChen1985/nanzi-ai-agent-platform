@@ -35,6 +35,7 @@ from app.services.ai.runtime.agentscope.messages import RuntimeContentBlock, Run
 from app.services.ai.runtime.agentscope.agent_runtime import build_model_config, build_tools_fingerprint, load_context_config
 from app.services.ai.runtime.agentscope.event_stream import is_interrupt_sse_chunk, map_standard_agentscope_event
 from app.services.ai.runtime.agentscope.stream_reconcile import truncate_for_context
+from app.services.ai.runtime.agentscope.tool_result import build_tool_result_envelope
 from app.services.ai.runtime.agentscope.session_lock import SessionLockTimeout, agentscope_session_lock
 from app.services.ai.runtime.agentscope.state_store import agent_state_store
 from app.services.ai.runtime.agentscope.workspace import get_local_workspace
@@ -149,6 +150,19 @@ class DataAgentRunner(BaseExecutor):
         ChatBI executor at all.
         """
         decision = self.turn_decision
+        if bool(getattr(decision, "quick_result_followup", False)):
+            # 快捷按钮只提供“来自上一轮查数结果”的路由线索，不能把旧结果
+            # 当作本轮答案。无论分类器将措辞识别成结果分析还是展示动作，
+            # 都必须回到新查询分支重新取得工具凭证。
+            turn_cls.turn_type = DataQueryTurnType.NEW_DATA_QUERY
+            turn_cls.reasoning = "快捷结果追问要求重新获取 ChatBI 业务数据"
+            turn_cls.requires_fresh_data = True
+            turn_cls.requires_few_shot = True
+            turn_cls.requires_sql_query = True
+            turn_cls.skip_intent_llm = False
+            turn_cls.intent = IntentType.DATA_QUERY
+            return turn_cls
+
         domain = str(getattr(decision, "semantic_domain", None) or "").strip().lower()
         reference_mode = str(getattr(decision, "reference_mode", None) or "unknown").strip().lower()
         needs_fresh_data = bool(getattr(decision, "needs_fresh_data", False))
@@ -210,16 +224,21 @@ class DataAgentRunner(BaseExecutor):
             self._update_evidence_metadata(evidence_result)
         )
         if evidence_result is not None:
-            receipt = ledger.record_success(
+            envelope = build_tool_result_envelope(
                 call_id=f"chatbi-final:{uuid.uuid4().hex}",
                 producer="chatbi_final_result",
-                evidence_types={EvidenceType.INTERNAL_DATA},
                 result=evidence_result,
-                policy="allow_empty_success",
+                evidence_policy="allow_empty_success",
+                result_state="success",
                 observed_at=observed_at,
                 source_as_of=source_as_of,
-                freshness=evidence_freshness,
                 source_ref=source_ref,
+            )
+            receipt = ledger.record_envelope(
+                envelope,
+                evidence_types={EvidenceType.INTERNAL_DATA},
+                policy="allow_empty_success",
+                freshness=evidence_freshness,
             )
             if receipt is not None:
                 self._evidence_metadata["status"] = receipt.status.value

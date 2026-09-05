@@ -764,6 +764,7 @@
                                                                   :theme="config.markdownTheme"
                                                                   :conversation-id="conversationId"
                                                                   :enable-browser-open="true"
+                                                                  :quick-context="quickContextForMessage(msg)"
                                                                   :hide-quick-buttons="!!msg.businessConfirmation || !!msg.userQuestion"
                                                                   @quick-question="handleQuickQuestion"
                                                                   @show-citation="(payload) => handleShowCitation(msg, payload.id, payload.anchor)"
@@ -2256,6 +2257,7 @@ interface ChatSendSnapshot {
   clientRequestId: string;
   groundingAction?: Record<string, unknown>;
   reusableResultId?: string | null;
+  quickContext?: QuickQuestionContext;
 }
 
 interface ChatSendOverrides {
@@ -2264,6 +2266,18 @@ interface ChatSendOverrides {
   clientRequestId?: string;
   groundingAction?: Record<string, unknown>;
   reusableResultId?: string | null;
+  quickContext?: QuickQuestionContext;
+}
+
+interface QuickQuestionContext {
+  source: "chatbi_result";
+  result_id?: string;
+  requires_fresh_data: true;
+}
+
+interface QuickQuestionPayload {
+  question: string;
+  quick_context?: QuickQuestionContext;
 }
 interface DatasetCapabilityQuestion {
   label: string;
@@ -6972,15 +6986,43 @@ const handleChatBIResultAction = async (
   }
 };
 
-const handleQuickQuestion = async (content: string, action: "send" | "fill" = "send", sourceContent?: string) => {
-  if (!content) return;
+/**
+ * 仅给已经确认产生过数据结果的 assistant 消息附加快捷追问上下文。
+ * 该上下文不会显示在 Markdown、用户气泡或 messages 中，只作为请求级路由提示。
+ */
+const quickContextForMessage = (msg: Message): QuickQuestionContext | undefined => {
+  if (msg.role !== "agent") return undefined;
+
+  const resultId = msg.chatbiInsight?.result_id || undefined;
+  // reusableResultStatus 可能来自知识库或其他结果类型，不能单独证明这是 ChatBI。
+  // hasDataOutput 和 chatbiInsight 都由服务端查数结果事件/历史字段确认。
+  const hasVerifiedDataResult = msg.hasDataOutput === true || Boolean(msg.chatbiInsight?.result_id);
+  if (!hasVerifiedDataResult) return undefined;
+
+  return {
+    source: "chatbi_result",
+    result_id: resultId,
+    requires_fresh_data: true,
+  };
+};
+
+const handleQuickQuestion = async (
+  content: string | QuickQuestionPayload,
+  action: "send" | "fill" = "send",
+  sourceContent?: string,
+) => {
+  const question = typeof content === "string" ? content : content.question;
+  const quickContext = action === "send" && typeof content !== "string"
+    ? content.quick_context
+    : undefined;
+  if (!question) return;
   if (action === "send" && (isProcessing.value || remoteRunActive.value || sendLocked.value)) return;
   const selectedSource = sourceContent?.trim();
   const nextContent = selectedSource
-    ? `${content}${USER_MESSAGE_CONTEXT_DIVIDER}【被点击的 AI 回复】\n${selectedSource}`
-    : content;
+    ? `${question}${USER_MESSAGE_CONTEXT_DIVIDER}【被点击的 AI 回复】\n${selectedSource}`
+    : question;
   if (action === "send") {
-    await sendMessage({ content: nextContent });
+    await sendMessage({ content: nextContent, quickContext });
   } else {
     userInput.value = nextContent;
   }
@@ -7699,6 +7741,7 @@ const captureSendSnapshot = (overrides: ChatSendOverrides = {}): ChatSendSnapsho
   reusableResultId: overrides.reusableResultId !== undefined
     ? (overrides.reusableResultId || undefined)
     : (selectedReusableResultId.value || undefined),
+  quickContext: overrides.quickContext ? { ...overrides.quickContext } : undefined,
 });
 
 const sendPreparedMessage = async (
@@ -7838,6 +7881,7 @@ const sendMessageInternal = async (snapshot: ChatSendSnapshot) => {
     }
     if (snapshot.groundingAction) body.grounding_action = snapshot.groundingAction;
     if (snapshot.reusableResultId) body.reusable_result_id = snapshot.reusableResultId;
+    if (snapshot.quickContext) body.quick_context = { ...snapshot.quickContext };
     body.client_request_id = snapshot.clientRequestId;
     // 结果选择是一次性的：请求体已经捕获后立即消费，避免下一轮普通提问误带旧 ID。
     if (snapshot.reusableResultId) selectedReusableResultId.value = null;

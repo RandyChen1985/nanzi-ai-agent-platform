@@ -1,5 +1,6 @@
 const INTERNAL_CONTEXT_BLOCKS = [
   "backend_tool_run_summary",
+  "backend_tool_result_context",
   "backend_injected_attachments",
   "system_injected_attachments",
   "USER_PROFILE",
