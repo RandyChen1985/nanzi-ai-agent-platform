@@ -379,6 +379,14 @@ class ChatMessage(BaseModel):
     files: Optional[List[ChatFile]] = Field(default=None, description="单条消息挂载的附件")
 
 
+class ChatBIQuickContext(BaseModel):
+    """快捷按钮的内部路由提示；不进入用户消息和模型可见正文。"""
+
+    source: Literal["chatbi_result"]
+    result_id: Optional[str] = Field(default=None, max_length=128)
+    requires_fresh_data: bool = True
+
+
 class ChatCompletionRequest(BaseModel):
     messages: List[ChatMessage]
     stream: bool = False
@@ -410,6 +418,10 @@ class ChatCompletionRequest(BaseModel):
         default=None,
         max_length=128,
         description="用户明确选择用于下一轮分析的会话结果 ID",
+    )
+    quick_context: Optional[ChatBIQuickContext] = Field(
+        default=None,
+        description="快捷结果追问的内部路由元数据，不展示给用户",
     )
 
 
@@ -1457,6 +1469,11 @@ async def create_chat_completion(
     }
 
     # Convert Pydantic models to dicts for the service
+    quick_context = (
+        completion_request.quick_context.model_dump(exclude_none=True)
+        if completion_request.quick_context
+        else None
+    )
     if completion_request.stream:
         lane_user_id = chat_user_id
         conversation_id = completion_request.conversation_id
@@ -1491,6 +1508,7 @@ async def create_chat_completion(
                     knowledge_dataset_ids=effective_knowledge_dataset_ids,
                     metadata_dataset_ids=effective_metadata_dataset_ids,
                     reusable_result_id=completion_request.reusable_result_id,
+                    quick_context=quick_context,
                     request_observability=request_observability,
                 ):
                     if isinstance(chunk, dict):
@@ -1637,6 +1655,7 @@ async def create_chat_completion(
                 knowledge_dataset_ids=effective_knowledge_dataset_ids,
                 metadata_dataset_ids=effective_metadata_dataset_ids,
                 reusable_result_id=completion_request.reusable_result_id,
+                quick_context=quick_context,
                 request_observability=request_observability,
             )
         except Exception:

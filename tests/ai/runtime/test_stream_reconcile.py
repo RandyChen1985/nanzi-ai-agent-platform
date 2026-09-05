@@ -91,6 +91,30 @@ def test_tool_review_lines_exclude_todo_write_output():
     ) == ["- browser_read_visible: 北京天气：晴"]
 
 
+def test_tool_review_lines_exclude_non_final_tool_results():
+    assert build_tool_review_lines(
+        {"ok": "search", "failed": "search", "pending": "search"},
+        {"ok": "最终数据", "failed": "失败文本", "pending": "中间输出"},
+        tool_result_states={"ok": "success", "failed": "error"},
+    ) == ["- search: 最终数据"]
+
+
+def test_tool_review_lines_exclude_error_payload_with_success_state():
+    assert build_tool_review_lines(
+        {"call": "search"},
+        {"call": '{"status":"error","message":"上游失败，订单数 100"}'},
+        tool_result_states={"call": "success"},
+    ) == []
+
+
+def test_tool_review_lines_keep_legacy_payload_when_final_state_map_is_empty():
+    assert build_tool_review_lines(
+        {"call": "search"},
+        {"call": "最终数据"},
+        tool_result_states={},
+    ) == ["- search: 最终数据"]
+
+
 def test_no_synthesis_without_tools():
     assert not needs_tool_synthesis_fallback("", "", used_tools=False)
 

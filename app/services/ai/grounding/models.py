@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import Enum
+from typing import Any
 
 
 class EvidenceType(str, Enum):
@@ -51,6 +52,26 @@ class EvidenceStatus(str, Enum):
 
 
 @dataclass(frozen=True)
+class ToolResultEnvelope:
+    """工具最终结果的内部取证凭证。
+
+    这是 grounding/runtime 之间的内部合同，不改变工具返回给模型的原始
+    payload。只有工具调用已经收口后的结果才能创建该对象；过程日志、思考
+    卡片和错误展示文本不应被包装成 envelope。
+    """
+
+    status: EvidenceStatus
+    call_id: str
+    producer: str
+    result: Any
+    source_ref: str | None
+    observed_at: datetime
+    source_as_of: datetime | None
+    truncated: bool
+    evidence_eligible: bool
+
+
+@dataclass(frozen=True)
 class EvidenceReceipt:
     call_id: str
     producer: str
@@ -68,6 +89,7 @@ class EvidenceReceipt:
     expires_at: datetime | None = None
     freshness: FactFreshness = FactFreshness.UNKNOWN
     source_ref: str | None = None
+    truncated: bool = False
 
     @classmethod
     def create(
@@ -88,6 +110,7 @@ class EvidenceReceipt:
         expires_at: datetime | None = None,
         freshness: FactFreshness = FactFreshness.UNKNOWN,
         source_ref: str | None = None,
+        truncated: bool = False,
     ) -> "EvidenceReceipt":
         created_at = datetime.now(timezone.utc)
         if status is None:
@@ -118,4 +141,5 @@ class EvidenceReceipt:
             expires_at=expires_at,
             freshness=FactFreshness(freshness),
             source_ref=source_ref,
+            truncated=bool(truncated),
         )

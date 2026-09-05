@@ -8,6 +8,7 @@ import os
 import re
 import shlex
 import time
+import uuid
 from dataclasses import dataclass
 from typing import Any, Callable, Literal
 
@@ -20,6 +21,12 @@ from app.services.ai.runtime.agentscope.tool_timeout import (
     effective_tool_timeout,
 )
 from app.services.ai.runtime.agentscope.stream_reconcile import truncate_for_context
+from app.services.ai.runtime.agentscope.tool_result import (
+    attach_tool_call_id_metadata,
+    build_tool_result_envelope,
+    is_tool_execution_success,
+    is_tool_result_failure_state,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -70,6 +77,11 @@ def _format_runtime_tool_result(result: Any) -> str:
         except (TypeError, ValueError):
             text = str(result)
     return truncate_for_context(text)
+
+
+def _new_tool_call_id(tool_name: str) -> str:
+    """为一次运行时工具调用生成稳定的内部调用标识。"""
+    return f"{tool_name}:{uuid.uuid4().hex}"
 
 
 RuntimeToolAuditStatus = Literal["start", "success", "error"]
@@ -143,21 +155,49 @@ def _record_evidence_result(
     evidence_types: frozenset[EvidenceType],
     evidence_policy: str,
     result: Any,
-) -> None:
+    result_state: Any = None,
+    call_id: str | None = None,
+) -> Any:
+    envelope = build_tool_result_envelope(
+        call_id=call_id or f"{tool_name}:{time.time_ns()}",
+        producer=tool_name,
+        result=result,
+        evidence_policy=evidence_policy,
+        result_state=result_state,
+    )
     if not evidence_types:
-        return
+        return envelope
     from app.core.context import get_current_agent_context
 
     context = get_current_agent_context()
     ledger = getattr(context, "grounding_evidence_ledger", None)
     if ledger is not None:
-        ledger.record_success(
-            call_id=f"{tool_name}:{time.time_ns()}",
-            producer=tool_name,
+        ledger.record_envelope(
+            envelope,
             evidence_types=evidence_types,
-            result=result,
             policy=evidence_policy,
         )
+    return envelope
+
+
+def _stream_final_result_state(chunks: list[Any]) -> str | None:
+    """把流式 chunk 收敛成一个最终状态，拒绝中间错误冒充成功。"""
+
+    states = [getattr(chunk, "state", None) for chunk in chunks]
+    normalized_states = [
+        str(getattr(state, "value", state) or "").strip().lower()
+        for state in states
+    ]
+    if any(is_tool_result_failure_state(state) for state in normalized_states):
+        return "error"
+    if any(normalized_states):
+        success_states = {"success", "succeeded", "finished", "completed"}
+        return (
+            "success"
+            if all(state in success_states for state in normalized_states if state)
+            else "unknown"
+        )
+    return None
 
 
 def _redact_runtime_tool_arguments(
@@ -451,7 +491,12 @@ class RuntimeToolSpec:
     def is_read_only(self) -> bool:
         return self.permission_scope == "read"
 
-    async def invoke(self, arguments: dict[str, Any] | None = None) -> Any:
+    async def invoke(
+        self,
+        arguments: dict[str, Any] | None = None,
+        *,
+        call_id: str | None = None,
+    ) -> Any:
         arguments = arguments or {}
         call_arguments, timeout_seconds = _prepare_timeout_arguments(
             self.name,
@@ -476,22 +521,33 @@ class RuntimeToolSpec:
                 call_arguments,
                 timeout_seconds,
             )
+            result_state = (
+                _stream_final_result_state(result)
+                if isinstance(result, (list, tuple))
+                else None
+            )
+            if result_state is None and not is_tool_execution_success(result):
+                result_state = "error"
+            envelope = _record_evidence_result(
+                tool_name=self.name,
+                evidence_types=self.evidence_types,
+                evidence_policy=self.evidence_policy,
+                result=result,
+                result_state=result_state,
+                call_id=call_id,
+            )
+            result_ok = is_tool_execution_success(result, result_state=result_state)
             await self._emit_audit(
                 RuntimeToolAuditEvent(
                     tool_name=self.name,
-                    status="success",
+                    status="success" if result_ok else "error",
                     source_type=self.source_type,
                     permission_scope=self.permission_scope,
                     arguments=audit_arguments,
                     elapsed_ms=(time.perf_counter() - start) * 1000,
                     result_preview=_preview_result(result),
+                    error=None if result_ok else "工具明确返回了失败结果",
                 )
-            )
-            _record_evidence_result(
-                tool_name=self.name,
-                evidence_types=self.evidence_types,
-                evidence_policy=self.evidence_policy,
-                result=result,
             )
             return result
         except TimeoutError as exc:
@@ -500,6 +556,14 @@ class RuntimeToolSpec:
                 cause=exc,
                 details={"tool_name": self.name, "timeout_seconds": timeout_seconds},
             )
+            _record_evidence_result(
+                tool_name=self.name,
+                evidence_types=self.evidence_types,
+                evidence_policy=self.evidence_policy,
+                result={"status": "error", "message": str(wrapped)},
+                result_state="error",
+                call_id=call_id,
+            )
             await self._emit_error_audit(audit_arguments, start, wrapped)
             raise wrapped from exc
         except Exception as exc:
@@ -507,6 +571,14 @@ class RuntimeToolSpec:
                 f"Tool '{self.name}' failed: {exc}",
                 cause=exc,
                 details={"tool_name": self.name},
+            )
+            _record_evidence_result(
+                tool_name=self.name,
+                evidence_types=self.evidence_types,
+                evidence_policy=self.evidence_policy,
+                result={"status": "error", "message": str(wrapped)},
+                result_state="error",
+                call_id=call_id,
             )
             await self._emit_error_audit(audit_arguments, start, wrapped)
             raise wrapped from exc
@@ -695,11 +767,17 @@ class AgentScopeRuntimeTool:
         from agentscope.tool import ToolChunk
 
         self._check_tool_loop(kwargs)
+        call_id = _new_tool_call_id(self.spec.name)
         try:
-            res = await self.spec.invoke(kwargs)
+            res = await self.spec.invoke(kwargs, call_id=call_id)
             return ToolChunk(
                 content=[TextBlock(text=_format_runtime_tool_result(res))],
-                state=ToolResultState.SUCCESS,
+                state=(
+                    ToolResultState.SUCCESS
+                    if is_tool_execution_success(res)
+                    else ToolResultState.ERROR
+                ),
+                metadata={"nanzi_call_id": call_id},
             )
         except Exception as exc:
             if isinstance(exc, PermissionError):
@@ -723,6 +801,7 @@ class AgentScopeRuntimeTool:
             return ToolChunk(
                 content=[TextBlock(text=f"工具 [{self.spec.name}] 调用发生异常: {exc}")],
                 state=ToolResultState.ERROR,
+                metadata={"nanzi_call_id": call_id},
             )
 
 
@@ -871,6 +950,7 @@ class AgentScopeNativeApprovalTool:
 
     async def __call__(self, **kwargs: Any) -> Any:
         self._check_tool_loop(kwargs)
+        call_id = _new_tool_call_id(self.name)
         from app.services.ai.runtime.agentscope.workspace import (
             WORKSPACE_BUILTIN_TOOL_NAMES,
             enhance_workspace_error_message,
@@ -885,6 +965,17 @@ class AgentScopeNativeApprovalTool:
             from agentscope.message import TextBlock, ToolResultState
             from agentscope.tool import ToolChunk
 
+            _record_evidence_result(
+                tool_name=self.name,
+                evidence_types=self.evidence_types,
+                evidence_policy=self.evidence_policy,
+                result={
+                    "status": "error",
+                    "message": f"缺少必填参数 {required_argument}",
+                },
+                result_state="error",
+                call_id=call_id,
+            )
             return ToolChunk(
                 content=[
                     TextBlock(
@@ -900,6 +991,7 @@ class AgentScopeNativeApprovalTool:
                 ],
                 state=ToolResultState.ERROR,
                 is_last=True,
+                metadata={"nanzi_call_id": call_id},
             )
 
         is_file_tool = self.name in (WORKSPACE_BUILTIN_TOOL_NAMES | {"read_file", "write_file", "edit_file", "glob_files", "search_text"})
@@ -941,9 +1033,18 @@ class AgentScopeNativeApprovalTool:
                     start=start,
                     timeout_seconds=timeout_seconds,
                     is_file_tool=is_file_tool,
+                    call_id=call_id,
                 )
         except Exception as exc:
             if isinstance(exc, PermissionError):
+                _record_evidence_result(
+                    tool_name=self.name,
+                    evidence_types=self.evidence_types,
+                    evidence_policy=self.evidence_policy,
+                    result={"status": "denied", "message": str(exc)},
+                    result_state="denied",
+                    call_id=call_id,
+                )
                 raise
             from app.services.ai.runtime.agentscope.errors import ToolLoopFuseError
 
@@ -965,8 +1066,19 @@ class AgentScopeNativeApprovalTool:
                         "timeout_seconds": timeout_seconds,
                     },
                 )
+                _record_evidence_result(
+                    tool_name=self.name,
+                    evidence_types=self.evidence_types,
+                    evidence_policy=self.evidence_policy,
+                    result={"status": "error", "message": str(wrapped)},
+                    result_state="error",
+                    call_id=call_id,
+                )
                 await self._emit_error_audit(audit_arguments, start, wrapped)
-                return self._native_error_chunk(f"工具 [{self.name}] 调用超时: {wrapped}")
+                return self._native_error_chunk(
+                    f"工具 [{self.name}] 调用超时: {wrapped}",
+                    call_id=call_id,
+                )
             from agentscope.message import TextBlock, ToolResultState
             from agentscope.tool import ToolChunk
 
@@ -975,6 +1087,14 @@ class AgentScopeNativeApprovalTool:
                 f"Tool '{self.name}' failed: {msg}",
                 cause=exc,
                 details={"tool_name": self.name},
+            )
+            _record_evidence_result(
+                tool_name=self.name,
+                evidence_types=self.evidence_types,
+                evidence_policy=self.evidence_policy,
+                result={"status": "error", "message": str(wrapped)},
+                result_state="error",
+                call_id=call_id,
             )
             await self._emit_error_audit(audit_arguments, start, wrapped)
             logger.warning(
@@ -985,28 +1105,42 @@ class AgentScopeNativeApprovalTool:
             return ToolChunk(
                 content=[TextBlock(text=f"工具 [{self.name}] 调用发生异常: {msg}")],
                 state=ToolResultState.ERROR,
+                is_last=True,
+                metadata={"nanzi_call_id": call_id},
             )
 
         if is_file_tool and isinstance(result, str):
             result = enhance_workspace_error_message(result)
+
+        result = attach_tool_call_id_metadata(result, call_id)
 
         _record_evidence_result(
             tool_name=self.name,
             evidence_types=self.evidence_types,
             evidence_policy=self.evidence_policy,
             result=result,
+            call_id=call_id,
         )
+        result_ok = is_tool_execution_success(result)
         await self._emit_audit(
             RuntimeToolAuditEvent(
                 tool_name=self.name,
-                status="success",
+                status="success" if result_ok else "error",
                 source_type=self.source_type,
                 permission_scope=self.permission_scope,
                 arguments=audit_arguments,
                 elapsed_ms=(time.perf_counter() - start) * 1000,
                 result_preview=_preview_result(result),
+                error=None if result_ok else "工具明确返回了失败结果",
             )
         )
+        if not result_ok:
+            return self._native_error_chunk(
+                _format_runtime_tool_result(result),
+                call_id=call_id,
+            )
+        if result is None:
+            return self._native_empty_success_chunk(call_id=call_id)
         return result
 
     async def _stream_native_result(
@@ -1017,19 +1151,28 @@ class AgentScopeNativeApprovalTool:
         start: float,
         timeout_seconds: float,
         is_file_tool: bool,
+        call_id: str,
     ) -> Any:
         chunks: list[Any] = []
         try:
             async with asyncio.timeout(timeout_seconds):
                 async for chunk in generator:
                     chunks.append(chunk)
-                    yield chunk
+                    yield attach_tool_call_id_metadata(chunk, call_id)
         except asyncio.CancelledError:
             await _close_async_generator(generator)
             raise
         except Exception as exc:
             await _close_async_generator(generator)
             if isinstance(exc, PermissionError):
+                _record_evidence_result(
+                    tool_name=self.name,
+                    evidence_types=self.evidence_types,
+                    evidence_policy=self.evidence_policy,
+                    result={"status": "denied", "message": str(exc)},
+                    result_state="denied",
+                    call_id=call_id,
+                )
                 raise
             from app.services.ai.runtime.agentscope.errors import ToolLoopFuseError
 
@@ -1051,8 +1194,19 @@ class AgentScopeNativeApprovalTool:
                         "timeout_seconds": timeout_seconds,
                     },
                 )
+                _record_evidence_result(
+                    tool_name=self.name,
+                    evidence_types=self.evidence_types,
+                    evidence_policy=self.evidence_policy,
+                    result={"status": "error", "message": str(wrapped)},
+                    result_state="error",
+                    call_id=call_id,
+                )
                 await self._emit_error_audit(audit_arguments, start, wrapped)
-                yield self._native_error_chunk(f"工具 [{self.name}] 调用超时: {wrapped}")
+                yield self._native_error_chunk(
+                    f"工具 [{self.name}] 调用超时: {wrapped}",
+                    call_id=call_id,
+                )
                 return
             from app.services.ai.runtime.agentscope.workspace import enhance_workspace_error_message
 
@@ -1062,13 +1216,24 @@ class AgentScopeNativeApprovalTool:
                 cause=exc,
                 details={"tool_name": self.name},
             )
+            _record_evidence_result(
+                tool_name=self.name,
+                evidence_types=self.evidence_types,
+                evidence_policy=self.evidence_policy,
+                result={"status": "error", "message": str(wrapped)},
+                result_state="error",
+                call_id=call_id,
+            )
             await self._emit_error_audit(audit_arguments, start, wrapped)
             logger.warning(
                 "[NativeTool] Tool '%s' execution failed gracefully: %s",
                 self.name,
                 msg,
             )
-            yield self._native_error_chunk(f"工具 [{self.name}] 调用发生异常: {msg}")
+            yield self._native_error_chunk(
+                f"工具 [{self.name}] 调用发生异常: {msg}",
+                call_id=call_id,
+            )
             return
 
         _record_evidence_result(
@@ -1076,21 +1241,26 @@ class AgentScopeNativeApprovalTool:
             evidence_types=self.evidence_types,
             evidence_policy=self.evidence_policy,
             result=chunks,
+            result_state=_stream_final_result_state(chunks),
+            call_id=call_id,
         )
+        result_state = _stream_final_result_state(chunks)
+        result_ok = is_tool_execution_success(chunks, result_state=result_state)
         await self._emit_audit(
             RuntimeToolAuditEvent(
                 tool_name=self.name,
-                status="success",
+                status="success" if result_ok else "error",
                 source_type=self.source_type,
                 permission_scope=self.permission_scope,
                 arguments=audit_arguments,
                 elapsed_ms=(time.perf_counter() - start) * 1000,
                 result_preview=_preview_result(chunks),
+                error=None if result_ok else "流式工具明确返回了失败结果",
             )
         )
 
     @staticmethod
-    def _native_error_chunk(message: str) -> Any:
+    def _native_error_chunk(message: str, *, call_id: str | None = None) -> Any:
         from agentscope.message import TextBlock, ToolResultState
         from agentscope.tool import ToolChunk
 
@@ -1098,6 +1268,29 @@ class AgentScopeNativeApprovalTool:
             content=[TextBlock(text=message)],
             state=ToolResultState.ERROR,
             is_last=True,
+            metadata=(
+                {"nanzi_call_id": call_id}
+                if call_id
+                else {}
+            ),
+        )
+
+    @staticmethod
+    def _native_empty_success_chunk(*, call_id: str | None = None) -> Any:
+        """把无返回体的动作工具转换为合法的 AgentScope 空成功块。"""
+
+        from agentscope.message import ToolResultState
+        from agentscope.tool import ToolChunk
+
+        return ToolChunk(
+            content=[],
+            state=ToolResultState.SUCCESS,
+            is_last=True,
+            metadata=(
+                {"nanzi_call_id": call_id}
+                if call_id
+                else {}
+            ),
         )
 
     async def _emit_error_audit(

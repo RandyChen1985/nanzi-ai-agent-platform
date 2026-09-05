@@ -57,6 +57,7 @@ class AgentContextManager:
         enable_multi_agent: bool = True,
         user_info: Optional[Dict[str, Any]] = None,
         force_data_query: bool = False,
+        quick_result_followup: bool = False,
         conversation_id: Optional[str] = None,
         on_progress: Optional[RouteProgressCallback] = None,
     ):
@@ -78,6 +79,28 @@ class AgentContextManager:
                 agent_config = await AgentManagerService.get_active_agent_config(session, agent_id=agent_id)
             elif agent_name:
                 agent_config = await AgentManagerService.get_active_agent_config(session, agent_name=agent_name)
+            elif quick_result_followup:
+                # 快捷结果追问只提供“上一轮来自查数结果”的路由提示，不能把结果本身
+                # 当作证据。这里仅在调用方没有显式指定专家时选择数据查询专家，后续
+                # 仍由权限校验、DataQueryExecutor 和本轮证据门禁完成真正的安全判断。
+                visible_agents = await AgentManagerService.list_allowed_agents(session, user_info)
+                data_agent_id = select_data_query_agent_id(visible_agents)
+                if data_agent_id:
+                    agent_config = await AgentManagerService.get_active_agent_config(
+                        session,
+                        agent_id=data_agent_id,
+                    )
+                if agent_config:
+                    route_details = TurnDecision.for_direct_agent_selection(agent_config)
+                    logger.info(
+                        "Resolved quick-result follow-up to data-query agent: %s",
+                        getattr(agent_config, "agent_id", None),
+                    )
+                else:
+                    # 不允许快捷上下文失效后静默回退 Main，否则会重新出现“看似查数、
+                    # 实际未调用工具”的风险。调用方会返回统一的无可用专家提示。
+                    logger.warning("No enabled data-query agent available for quick-result follow-up")
+                    return None, None
             else:
                 agent_config = await AgentManagerService.get_active_agent_config(
                     session, agent_id=DEFAULT_MAIN_AGENT_ID

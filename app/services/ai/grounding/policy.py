@@ -37,6 +37,8 @@ class FactRequirement:
     max_age_seconds: int | None = None
     requires_source_timestamp: bool = False
     allow_conversation_reuse: bool = False
+    # 截断结果可支持单条事实，但不能支持“全部/总数”等完整性结论。
+    allow_truncated: bool = True
     time_scope: str | None = None
     block_unsupported_facts: bool = False
     evidence_mode: str = EvidenceContractMode.NONE.value
@@ -108,6 +110,11 @@ _OPERATIONAL_STATUS_RE = re.compile(
 )
 _OPERATIONAL_SUMMARY_CLAUSE_RE = re.compile(
     r"(?:"
+    r"(?:工具|接口|任务|数据|结果)?"
+    r"(?:调用|查询|检索|搜索|读取|检查|执行|同步|处理)"
+    r"(?:工具|接口|任务|数据|结果)?(?:已|已经)?"
+    r"(?:完成|结束|同步|处理)(?:了|啊|呢|呀|啦){0,3}"
+    r"|"
     r"(?:已|已经|刚刚)?(?:成功|完成)?(?:调用|查询|检索|搜索|读取|检查|执行|同步|处理){1,2}"
     r"(?:工具|接口|任务|数据|结果)?(?:已|已经)?(?:完成|成功|结束|同步|处理|结果)?"
     r"(?:了|啊|呢|呀|啦)?"
@@ -126,8 +133,9 @@ _OPERATIONAL_SUMMARY_CLAUSE_RE = re.compile(
     r")$",
     re.IGNORECASE,
 )
+_SUMMARY_COMPLETION_RE = re.compile(r"(?:完成|结束|同步|处理)")
 _DYNAMIC_FACT_RE = re.compile(
-    r"(?:当前|目前|现在|最近|最新|实时|今天|今日|本周|本月|今年).{0,40}(?:是|为|有|达到|排名|最好|最高|最低|正常|异常|运行|发生)",
+    r"(?:当前|目前|现在|最近|最新|实时|今天|今日|本周|本月|今年).{0,40}(?:是|为|(?<!没)有|达到|排名|最好|最高|最低|正常|异常|运行|发生)",
     re.IGNORECASE,
 )
 _DYNAMIC_INTERROGATIVE_RE = re.compile(
@@ -167,6 +175,10 @@ _KNOWLEDGE_FACT_RE = re.compile(
 )
 _MEMORY_FACT_RE = re.compile(
     r"(?:记忆|记录|历史记录|长期记忆|短期记忆|对话记录|上次|之前说过|您曾经|您提过|您说过)",
+    re.IGNORECASE,
+)
+_COMPLETE_RESULT_CLAIM_RE = re.compile(
+    r"(?:全部|所有|总数|合计|共计|完整|每一(?:条|项|个)|全部记录|完整列表|一共)",
     re.IGNORECASE,
 )
 
@@ -589,12 +601,29 @@ def _contains_structural_external_fact(text: str) -> bool:
 
 def _is_non_concrete_execution_summary(text: str) -> bool:
     """允许有成功收据支撑的执行状态总结，不扩大到具体业务事实。"""
-    if not _EXECUTION_SUMMARY_RE.search(text):
+    normalized_clauses = [
+        re.sub(r"^(?:本轮|本次|此次|当前)(?:的)?", "", clause).strip()
+        for clause in _CLAUSE_SPLIT_RE.split(text)
+        if clause.strip()
+    ]
+    normalized_text = "，".join(normalized_clauses)
+    has_execution_summary_shape = bool(_EXECUTION_SUMMARY_RE.search(normalized_text))
+    if not has_execution_summary_shape and not (
+        normalized_clauses
+        and all(
+            _OPERATIONAL_SUMMARY_CLAUSE_RE.fullmatch(clause)
+            for clause in normalized_clauses
+        )
+        and _SUMMARY_COMPLETION_RE.search(normalized_text)
+    ):
         return False
-    clauses = [clause.strip() for clause in _CLAUSE_SPLIT_RE.split(text) if clause.strip()]
-    if not clauses or not all(
+    # “查询已成功/数据已成功”只是一个不完整状态短语，不能因为有成功收据
+    # 就被当作纯过程总结放行；至少要出现完成、结束、同步或处理语义。
+    if not _SUMMARY_COMPLETION_RE.search(normalized_text):
+        return False
+    if not normalized_clauses or not all(
         _OPERATIONAL_SUMMARY_CLAUSE_RE.fullmatch(clause)
-        for clause in clauses
+        for clause in normalized_clauses
     ):
         return False
     return not any(
@@ -616,6 +645,12 @@ def contains_grounding_fact_signal(text: str) -> bool:
 def is_non_concrete_execution_summary(text: str) -> bool:
     """Return whether text is only an operational completion summary."""
     return _is_non_concrete_execution_summary(str(text or "").strip())
+
+
+def requires_complete_result_evidence(text: str) -> bool:
+    """判断回答是否声称结果覆盖全集，而非仅陈述已返回的部分结果。"""
+
+    return bool(_COMPLETE_RESULT_CLAIM_RE.search(str(text or "")))
 
 
 def _is_pure_no_result_response(text: str) -> bool:
@@ -673,6 +708,9 @@ def evaluate_grounding(
     text = str(candidate_text or "").strip()
     available_types = ledger.available_evidence_types
     fact_bearing = _contains_structural_external_fact(text)
+    allow_truncated = bool(
+        requirement.allow_truncated and not requires_complete_result_evidence(text)
+    )
     if requirement.block_unsupported_facts and not fact_bearing:
         return GroundingDecision(
             GroundingAction.PASS,
@@ -688,11 +726,15 @@ def evaluate_grounding(
             max_age_seconds=requirement.max_age_seconds,
             require_source_as_of=requirement.requires_source_timestamp,
             allow_reuse=requirement.allow_conversation_reuse,
+            allow_truncated=allow_truncated,
         )
     )
     stale_exact_evidence_exists = bool(
         requirement.accepted_types
-        and ledger.has_valid_evidence(requirement.accepted_types)
+        and ledger.has_valid_evidence(
+            requirement.accepted_types,
+            allow_truncated=allow_truncated,
+        )
         and not exact_evidence_exists
     )
     if exact_evidence_exists:
@@ -711,6 +753,7 @@ def evaluate_grounding(
             max_age_seconds=requirement.max_age_seconds,
             require_source_as_of=requirement.requires_source_timestamp,
             allow_reuse=requirement.allow_conversation_reuse,
+            allow_truncated=allow_truncated,
         )
         if not fact_bearing or receipt_correlated:
             return GroundingDecision(
@@ -762,6 +805,7 @@ def evaluate_grounding(
                 max_age_seconds=requirement.max_age_seconds,
                 require_source_as_of=requirement.requires_source_timestamp,
                 allow_reuse=requirement.allow_conversation_reuse,
+                allow_truncated=allow_truncated,
             )
         ):
             return GroundingDecision(
@@ -834,6 +878,7 @@ def evaluate_grounding(
                     max_age_seconds=requirement.max_age_seconds,
                     require_source_as_of=requirement.requires_source_timestamp,
                     allow_reuse=requirement.allow_conversation_reuse,
+                    allow_truncated=allow_truncated,
                 )
             ):
                 return GroundingDecision(
@@ -850,6 +895,7 @@ def evaluate_grounding(
                     max_age_seconds=requirement.max_age_seconds,
                     require_source_as_of=requirement.requires_source_timestamp,
                     allow_reuse=requirement.allow_conversation_reuse,
+                    allow_truncated=allow_truncated,
                 )
                 for alternatives in requirement_groups
             ):
@@ -868,6 +914,7 @@ def evaluate_grounding(
                     max_age_seconds=requirement.max_age_seconds,
                     require_source_as_of=requirement.requires_source_timestamp,
                     allow_reuse=requirement.allow_conversation_reuse,
+                    allow_truncated=allow_truncated,
                 )
             )
             missing_types = frozenset(

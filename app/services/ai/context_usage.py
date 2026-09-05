@@ -10,6 +10,7 @@ from app.core.redis import get_redis
 from app.services.ai.memory_service import memory_service
 from app.services.config_service import ConfigService
 from app.services.schema_chunk_format import estimate_text_tokens
+from app.services.ai.runtime.agentscope.tool_result_context import is_trusted_tool_result_context
 
 logger = logging.getLogger(__name__)
 
@@ -109,7 +110,11 @@ async def estimate_context_usage(
             sum(
                 estimate_text_tokens(
                     str(message.get("content") or "")
-                    + str(message.get("tool_run_text") or "")
+                    + (
+                        str(message.get("tool_run_text") or "")
+                        if is_trusted_tool_result_context(message)
+                        else ""
+                    )
                 )
                 for message in history
                 if isinstance(message, Mapping)

@@ -218,12 +218,94 @@ async def test_current_turn_evidence_gate_blocks_unverified_specific_answer():
     )
     assert "G1" not in answer
     assert "100 元" not in answer
-    assert "暂时无法可靠提供具体结论" in answer
+    assert "先不直接给出具体结论" in answer
+    assert "可以" in answer or "补充" in answer
+    assert not any(event.get("grounding_blocked") is True for event in events)
+
+
+@pytest.mark.asyncio
+async def test_current_turn_evidence_gate_keeps_uncertainty_reply_and_guides_user():
+    runner = _runner(debug_options={"grounding_enabled": True})
+
+    async def fake_core(_history):
+        yield {
+            "type": "log",
+            "category": "tool_preflight",
+            "current_turn_evidence_required": True,
+            "required_evidence_types": ["external_tool"],
+            "evidence_contracts": [
+                {
+                    "tool_name": "github_search",
+                    "required_evidence_types": ["external_tool"],
+                    "freshness": "current_turn",
+                }
+            ],
+        }
+        yield {
+            "type": "answer_delta",
+            "content": "我暂时无法确认具体结果，当前没有拿到可核对的信息。",
+            "phase": "synthesis",
+        }
+
+    with patch.object(runner, "_execute_core", fake_core):
+        events = [
+            event
+            async for event in runner.execute(
+                [{"role": "user", "content": "查看我的开源项目"}]
+            )
+        ]
+
+    answer = "".join(
+        str(event.get("content") or "")
+        for event in events
+        if event.get("type") == "answer_delta"
+    )
+    assert "我暂时无法确认具体结果" in answer
+    assert "可以" in answer or "补充" in answer
+    assert "本轮未获得与当前问题匹配的实时工具结果" not in answer
+    assert not any(event.get("grounding_blocked") is True for event in events)
     assert any(
         event.get("type") == "log"
-        and event.get("grounding_blocked") is True
+        and event.get("status") == "warning"
+        and event.get("category") == "grounding"
         for event in events
     )
+
+
+@pytest.mark.asyncio
+async def test_current_turn_evidence_gate_replaces_unverified_facts_with_guidance():
+    runner = _runner(debug_options={"grounding_enabled": True})
+
+    async def fake_core(_history):
+        yield {
+            "type": "log",
+            "category": "tool_preflight",
+            "current_turn_evidence_required": True,
+            "required_evidence_types": ["external_tool"],
+        }
+        yield {
+            "type": "answer_delta",
+            "content": "你的 GitHub 项目有 12 个，最近一次更新是 2026-09-05。",
+            "phase": "synthesis",
+        }
+
+    with patch.object(runner, "_execute_core", fake_core):
+        events = [
+            event
+            async for event in runner.execute(
+                [{"role": "user", "content": "查看我的开源项目"}]
+            )
+        ]
+
+    answer = "".join(
+        str(event.get("content") or "")
+        for event in events
+        if event.get("type") == "answer_delta"
+    )
+    assert "12 个" not in answer
+    assert "2026-09-05" not in answer
+    assert "可以" in answer or "补充" in answer
+    assert not any(event.get("grounding_blocked") is True for event in events)
 
 
 @pytest.mark.asyncio
@@ -347,7 +429,7 @@ async def test_multi_tool_evidence_contracts_are_checked_independently():
             )
         ]
 
-    assert any(event.get("grounding_blocked") is True for event in events)
+    assert not any(event.get("grounding_blocked") is True for event in events)
 
 
 @pytest.mark.asyncio
@@ -442,6 +524,23 @@ def test_resume_prefers_persisted_evidence_contracts_without_replanning(monkeypa
     )
 
     assert contracts == tuple(persisted_contracts)
+
+
+def test_resume_without_persisted_contracts_does_not_replan(monkeypatch):
+    runner = _runner()
+
+    def fail_if_replanned(*_args, **_kwargs):
+        raise AssertionError("resume must not recompute a missing legacy plan")
+
+    monkeypatch.setattr(
+        "app.services.ai.tool_nudge_policy.resolve_tool_nudge_plan",
+        fail_if_replanned,
+    )
+
+    assert runner._resolve_resume_evidence_contracts(
+        {"user_query": "查上海天气"},
+        [],
+    ) == ()
 
 
 @pytest.mark.asyncio
@@ -571,13 +670,14 @@ async def test_current_turn_evidence_gate_blocks_weak_overlap_for_internal_data(
             )
         ]
 
-    assert any(event.get("grounding_blocked") is True for event in events)
+    assert not any(event.get("grounding_blocked") is True for event in events)
     answer = "".join(
         str(event.get("content") or "")
         for event in events
         if event.get("type") == "answer_delta"
     )
-    assert "暂时无法可靠提供具体结论" in answer
+    assert "先不直接给出具体结论" in answer
+    assert "可以" in answer or "补充" in answer
 
 
 @pytest.mark.asyncio
@@ -618,7 +718,7 @@ async def test_current_turn_evidence_gate_does_not_reuse_historical_receipt():
         if event.get("type") == "answer_delta"
     )
     assert "G1" not in answer
-    assert any(event.get("grounding_blocked") is True for event in events)
+    assert not any(event.get("grounding_blocked") is True for event in events)
 
 
 @pytest.mark.asyncio
@@ -794,7 +894,7 @@ async def test_resumed_evidence_tool_answer_is_blocked_without_successful_receip
         if event.get("type") == "answer_delta"
     )
     assert "G1" not in answer
-    assert any(event.get("grounding_blocked") is True for event in events)
+    assert not any(event.get("grounding_blocked") is True for event in events)
 
 
 @pytest.mark.asyncio

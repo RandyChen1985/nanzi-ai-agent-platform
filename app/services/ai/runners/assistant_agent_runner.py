@@ -30,6 +30,7 @@ from app.services.ai.grounding.policy import (
     GroundingRiskLevel,
     contains_grounding_fact_signal,
     is_non_concrete_execution_summary,
+    requires_complete_result_evidence,
     resolve_fact_requirement,
 )
 from app.services.ai.grounding.service import GroundingService
@@ -74,9 +75,12 @@ from app.services.ai.runtime.agentscope.event_stream import (
     new_native_stream_state,
 )
 from app.services.ai.runtime.agentscope.tool_result import (
+    build_final_tool_result_context,
+    build_tool_result_envelope,
     extract_tool_result_error_reason,
     is_tool_result_error,
     normalize_tool_result_state,
+    tool_call_id_from_metadata,
 )
 from app.services.ai.runtime.agentscope import process_narration as process_narration_events
 from app.services.ai.runtime.agentscope.text_sanitize import sanitize_assistant_stream_text
@@ -85,7 +89,6 @@ from app.services.ai.runtime.agentscope.stream_reconcile import (
     GENERIC_SYNTHESIS_EMPTY_FALLBACK,
     compute_stream_reconcile_gap,
     needs_tool_synthesis_fallback,
-    truncate_for_context,
     truncate_for_display,
 )
 from app.services.ai.runtime.agentscope.session_lock import (
@@ -835,23 +838,19 @@ class AssistantAgentRunner(BaseExecutor):
     @staticmethod
     def _resolve_resume_evidence_contracts(
         state: Dict[str, Any],
-        tools: List[Any],
+        tools: List[Any] | None = None,
     ) -> tuple[dict[str, Any], ...]:
-        """优先恢复首次预检合同；仅对没有合同字段的旧快照兼容重算。"""
+        """只恢复首次预检保存的合同，不在 resume 热路径重新规划。
+
+        ``tools`` 参数保留是为了兼容已有测试和外部调用方，但有意不使用。
+        旧快照没有合同字段时按空合同继续，由当前轮已有的工具结果/grounding
+        门禁负责校验，避免工具集变更后凭用户原话生成一套不一致的新合同。
+        """
         if "evidence_contracts" in state:
             return AssistantAgentRunner._parse_evidence_contracts(
                 state.get("evidence_contracts")
             )
-
-        from app.services.ai.tool_nudge_policy import resolve_tool_nudge_plan
-
-        plan = resolve_tool_nudge_plan(str(state.get("user_query") or ""), tools)
-        if plan is None:
-            return ()
-        return tuple(
-            contract.to_dict()
-            for contract in plan.evidence_contracts
-        )
+        return ()
 
     @staticmethod
     def _evidence_contracts_satisfied(
@@ -869,6 +868,7 @@ class AssistantAgentRunner(BaseExecutor):
             )
         except Exception:
             has_concrete_claim = True
+        allow_truncated = not requires_complete_result_evidence(candidate_text)
         for contract in contracts:
             try:
                 required_types = frozenset(
@@ -888,6 +888,7 @@ class AssistantAgentRunner(BaseExecutor):
                 required_types,
                 freshness=freshness,
                 allow_reuse=freshness is FactFreshness.REUSE_PREVIOUS,
+                allow_truncated=allow_truncated,
             ):
                 return False, f"evidence contract missing fresh receipt from {producer}"
             if has_concrete_claim and not ledger.has_candidate_overlap_from_producer(
@@ -896,6 +897,7 @@ class AssistantAgentRunner(BaseExecutor):
                 required_types,
                 freshness=freshness,
                 allow_reuse=freshness is FactFreshness.REUSE_PREVIOUS,
+                allow_truncated=allow_truncated,
             ):
                 return False, f"answer is not correlated with evidence contract {producer}"
         return True, ""
@@ -1321,38 +1323,44 @@ class AssistantAgentRunner(BaseExecutor):
                     "[AssistantAgentRunner] Current-turn evidence gate blocked answer: %s",
                     contracts_reason or grounding_decision.reason,
                 )
+                guidance = GroundingService.guided_response(
+                    candidate_text=full_text,
+                    reason=grounding_decision.reason,
+                    required_types=frozenset(
+                        strict_tool_evidence_types
+                        or grounding_decision.required_evidence_types
+                    ),
+                    available_types=grounding_decision.available_evidence_types,
+                    contracts_reason=contracts_reason,
+                )
                 yield {
                     "type": "log",
-                    "id": f"grounding_blocked_{uuid.uuid4().hex[:8]}",
-                    "title": "当前轮工具证据校验未通过",
+                    "id": f"grounding_guidance_{uuid.uuid4().hex[:8]}",
+                    "title": "已切换为安全说明",
                     "details": (
-                        "本轮要求使用当前工具结果，但未获得与具体回答匹配的有效证据，"
-                        "已阻止未经核实的具体结论。"
+                        "当前没有足够可核对依据，未展示未经核实的具体结论；"
+                        "可以补充查询条件后继续。"
                     ),
-                    "status": "error",
+                    "status": "warning",
                     "category": "grounding",
-                    "grounding_blocked": True,
+                    "grounding_downgraded": True,
                     "grounding_decision": self._grounding_decision_metadata(
                         evaluated_requirement
                     ),
                 }
-                safe_content = (
-                    "本轮未获得与当前问题匹配的实时工具结果，"
-                    "暂时无法可靠提供具体结论。请稍后重试。"
-                )
                 if grounding_block_mode == "stream_with_retraction":
                     yield {
                         "type": "retraction",
-                        "content": safe_content,
-                        "grounding_blocked": True,
+                        "content": guidance.content,
+                        "grounding_downgraded": True,
                         "final": True,
                     }
                 else:
                     yield {
                         "type": "answer_delta",
-                        "content": safe_content,
+                        "content": guidance.content,
                         "phase": "synthesis",
-                        "grounding_blocked": True,
+                        "grounding_downgraded": True,
                     }
             else:
                 logger.warning(
@@ -2279,6 +2287,14 @@ class AssistantAgentRunner(BaseExecutor):
             tool_id = getattr(event, "tool_call_id", "")
             tool_name = tool_names.get(tool_id, "")
 
+            # 工具封装层先生成内部凭证 ID，AgentScope 结果事件才带有模型侧
+            # tool_call_id。此处完成一次性对齐，避免账本收据与执行链路脱节。
+            internal_call_id = tool_call_id_from_metadata(event)
+            if internal_call_id and internal_call_id != tool_id:
+                ledger = getattr(self, "_evidence_ledger", None)
+                if ledger is not None:
+                    ledger.rebind_call_id(internal_call_id, str(tool_id or ""))
+
             # 方案二：ghost 工具检测 —— 若该工具在 TOOL_CALL_START 时已被标记为未知工具，
             # 跳过正常的 observation 处理，只给用户输出错误提示。
             # LLM 侧已由 AgentScope 框架在内部把 TOOL_RESULT_END 写入 context，
@@ -2554,6 +2570,7 @@ class AssistantAgentRunner(BaseExecutor):
             used_tools=bool(state.get("used_tools")),
             tool_names=state.get("tool_names"),
             tool_outputs=state.get("tool_outputs"),
+            tool_result_states=state.get("tool_result_states"),
         ):
             if not streamed.strip() and not agent_text.strip():
                 if (
@@ -2561,6 +2578,7 @@ class AssistantAgentRunner(BaseExecutor):
                     and not build_tool_review_lines(
                         state.get("tool_names"),
                         state.get("tool_outputs"),
+                        tool_result_states=state.get("tool_result_states"),
                     )
                 ):
                     async for chunk in self._stream_general_synthesis_fallback(
@@ -2602,7 +2620,11 @@ class AssistantAgentRunner(BaseExecutor):
         }
         tool_names: Dict[str, str] = state.get("tool_names", {})
         tool_outputs: Dict[str, str] = state.get("tool_outputs", {})
-        review_lines = build_tool_review_lines(tool_names, tool_outputs)
+        review_lines = build_tool_review_lines(
+            tool_names,
+            tool_outputs,
+            tool_result_states=state.get("tool_result_states"),
+        )
         constraint = (
             "【系统约束·工具循环熔断】禁止再调用任何工具。"
             "请仅使用系统提示（含时间锚点，若有）与下列已有执行结果直接回答用户；"
@@ -2680,7 +2702,11 @@ class AssistantAgentRunner(BaseExecutor):
             return
         tool_names: Dict[str, str] = state.get("tool_names", {})
         tool_outputs: Dict[str, str] = state.get("tool_outputs", {})
-        review_lines = build_tool_review_lines(tool_names, tool_outputs)
+        review_lines = build_tool_review_lines(
+            tool_names,
+            tool_outputs,
+            tool_result_states=state.get("tool_result_states"),
+        )
         if not review_lines:
             logger.warning("[AssistantAgentRunner] Synthesis skipped: no tool review lines")
             state["full_content"] = (state.get("full_content") or "") + GENERIC_SYNTHESIS_EMPTY_FALLBACK
@@ -2904,11 +2930,16 @@ class AssistantAgentRunner(BaseExecutor):
             tool = tools_by_name.get(tool_name)
             if tool is None or not tool.evidence_types:
                 continue
-            ledger.record_success(
+            envelope = build_tool_result_envelope(
                 call_id=str(getattr(result, "id", "") or f"{tool_name}:{uuid.uuid4().hex}"),
                 producer=tool_name,
-                evidence_types=tool.evidence_types,
                 result=getattr(result, "output", None),
+                evidence_policy=tool.evidence_policy,
+                result_state=state_value,
+            )
+            ledger.record_envelope(
+                envelope,
+                evidence_types=tool.evidence_types,
                 policy=tool.evidence_policy,
             )
 
@@ -3073,7 +3104,12 @@ class AssistantAgentRunner(BaseExecutor):
                         fuse_message=fuse_message,
                     ):
                         yield chunk
+                    self._last_turn_tool_meta = state
                     return
+
+                # Resume 也必须更新同一份最终工具元数据；否则保存点可能继续
+                # 使用恢复前的旧摘要，把失败/中间结果带入下一轮上下文。
+                self._last_turn_tool_meta = state
 
                 if (buffered_content or grounding_candidate_text) and not interrupted:
                     candidate_text = grounding_candidate_text or "".join(
@@ -3120,38 +3156,44 @@ class AssistantAgentRunner(BaseExecutor):
                         grounding_audit.should_warn or not contracts_satisfied
                     ):
                         if current_turn_evidence_blocked:
+                            guidance = GroundingService.guided_response(
+                                candidate_text=candidate_text,
+                                reason=decision.reason,
+                                required_types=frozenset(
+                                    strict_tool_evidence_types
+                                    or decision.required_evidence_types
+                                ),
+                                available_types=decision.available_evidence_types,
+                                contracts_reason=contracts_reason,
+                            )
                             yield {
                                 "type": "log",
-                                "id": f"grounding_blocked_{uuid.uuid4().hex[:8]}",
-                                "title": "当前轮工具证据校验未通过",
+                                "id": f"grounding_guidance_{uuid.uuid4().hex[:8]}",
+                                "title": "已切换为安全说明",
                                 "details": (
-                                    "本轮要求使用当前工具结果，但未获得与具体回答匹配的有效证据，"
-                                    "已阻止未经核实的具体结论。"
+                                    "当前没有足够可核对依据，未展示未经核实的具体结论；"
+                                    "可以补充查询条件后继续。"
                                 ),
-                                "status": "error",
+                                "status": "warning",
                                 "category": "grounding",
-                                "grounding_blocked": True,
+                                "grounding_downgraded": True,
                                 "grounding_decision": self._grounding_decision_metadata(
                                     evaluated_requirement
                                 ),
                             }
-                            safe_content = (
-                                "本轮未获得与当前问题匹配的实时工具结果，"
-                                "暂时无法可靠提供具体结论。请稍后重试。"
-                            )
                             if grounding_block_mode == "stream_with_retraction":
                                 yield {
                                     "type": "retraction",
-                                    "content": safe_content,
-                                    "grounding_blocked": True,
+                                    "content": guidance.content,
+                                    "grounding_downgraded": True,
                                     "final": True,
                                 }
                             else:
                                 yield {
                                     "type": "answer_delta",
-                                    "content": safe_content,
+                                    "content": guidance.content,
                                     "phase": "synthesis",
-                                    "grounding_blocked": True,
+                                    "grounding_downgraded": True,
                                 }
                         else:
                             for buffered_chunk in buffered_content:
@@ -3417,36 +3459,12 @@ class AssistantAgentRunner(BaseExecutor):
         }
 
     def resolve_has_tool_meta(self) -> bool:
-        """A 项：本轮是否存在待跨轮持久化的工具元数据。"""
-        meta = getattr(self, "_last_turn_tool_meta", None)
-        return bool(meta and meta.get("tool_names"))
+        """本轮是否存在可安全跨轮持久化的最终工具结果。"""
+        return bool(self.resolve_tool_run_text())
 
     def resolve_tool_run_text(self, *, max_total_chars: int = 4000) -> str:
-        """A 项：把本轮工具调用转成可读转录文本（供跨轮持久化进历史，不污染 assistant 展示内容）。
-
-        聚合 state 中的 tool_names / tool_args_text / tool_outputs / tool_data，
-        按工具顺序输出 "工具: 参数 -> 结果"。输出按 max_total_chars 截断。
-        """
-        meta = getattr(self, "_last_turn_tool_meta", None)
-        if not meta:
-            return ""
-        tool_names: Dict[str, str] = meta.get("tool_names") or {}
-        tool_args_text: Dict[str, str] = meta.get("tool_args_text") or {}
-        tool_outputs: Dict[str, str] = meta.get("tool_outputs") or {}
-        tool_data: Dict[str, List[Dict[str, Any]]] = meta.get("tool_data") or {}
-        if not tool_names:
-            return ""
-
-        lines: List[str] = []
-        for tool_id, tool_name in tool_names.items():
-            try:
-                arg_preview = tool_args_text.get(tool_id) or "{}"
-                out = str(tool_outputs.get(tool_id) or "")
-            except Exception:
-                continue
-            data_blocks = tool_data.get(tool_id) or []
-            block_note = f" (data_blocks={len(data_blocks)})" if data_blocks else ""
-            lines.append(f"{tool_name}: {arg_preview} -> {truncate_for_context(out, max_len=800)}{block_note}")
-        if not lines:
-            return ""
-        return "\n".join(lines)[: max_total_chars]
+        """仅持久化本轮已收到最终成功状态的工具结果。"""
+        return build_final_tool_result_context(
+            getattr(self, "_last_turn_tool_meta", None),
+            max_total_chars=max_total_chars,
+        )

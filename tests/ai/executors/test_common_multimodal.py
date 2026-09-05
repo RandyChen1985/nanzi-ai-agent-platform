@@ -2,7 +2,7 @@ import base64
 import os
 
 import pytest
-from app.services.ai.runtime.agentscope.compat import HumanMessage, SystemMessage
+from app.services.ai.runtime.agentscope.compat import AIMessage, HumanMessage, SystemMessage
 
 from app.services.ai.executors.common import (
     append_system_instruction,
@@ -198,6 +198,40 @@ def test_historical_vision_sidecar_kept_for_followup():
     assert "vision_sidecar" in messages[0].content
     assert "用户本轮已上传图片" not in messages[0].content
     assert _plain_user_text(history[0]["content"]).startswith("看这张图")
+
+
+def test_history_injects_final_tool_results_as_separate_internal_context():
+    messages = convert_history_to_messages(
+        [
+            {
+                "role": "assistant",
+                "content": "已处理",
+                "tool_run_text": "search_knowledge_base: {} -> 权限申请流程",
+                "tool_run_text_version": "final_tool_result_v2",
+            }
+        ]
+    )
+
+    assert isinstance(messages[0], AIMessage)
+    assert "<backend_tool_result_context>" in messages[0].content
+    assert "权限申请流程" in messages[0].content
+    assert "不包含思考、执行日志或失败调用" in messages[0].content
+    assert "<backend_tool_run_summary>" not in messages[0].content
+
+
+def test_legacy_unversioned_tool_run_text_is_not_injected_into_llm_context():
+    messages = convert_history_to_messages(
+        [
+            {
+                "role": "assistant",
+                "content": "已处理",
+                "tool_run_text": "backend_tool_run_summary: -> 订单总数 999",
+            }
+        ]
+    )
+
+    assert "backend_tool_run_summary" not in messages[0].content
+    assert "订单总数 999" not in messages[0].content
 
 
 def test_normalize_messages_for_llm_merges_system_messages_at_beginning():

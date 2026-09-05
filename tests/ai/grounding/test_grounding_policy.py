@@ -70,6 +70,18 @@ def test_success_receipt_allows_non_concrete_execution_summary_without_marker_ov
 @pytest.mark.parametrize(
     "candidate_text",
     [
+        "本轮查询工具已完成。",
+        "本次查询完成，结果已返回。",
+        "工具调用完成了呢。",
+    ],
+)
+def test_operational_summary_tolerates_common_prefixes_and_tone_words(candidate_text):
+    assert is_non_concrete_execution_summary(candidate_text) is True
+
+
+@pytest.mark.parametrize(
+    "candidate_text",
+    [
         "系统状态正常。",
         "系统运行平稳。",
         "服务运行正常。",

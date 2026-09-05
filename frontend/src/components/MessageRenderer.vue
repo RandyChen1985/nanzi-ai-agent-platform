@@ -61,6 +61,12 @@ const props = withDefaults(defineProps<{
   hideQuickButtons?: boolean;
   /** 为 true 时为 HTTP(S) 链接追加在右侧浏览器打开的操作按钮 */
   enableBrowserOpen?: boolean;
+  /** 当前消息若有已验证的 ChatBI 结果，quick 链接会携带仅供路由使用的隐藏上下文 */
+  quickContext?: {
+    source: 'chatbi_result';
+    result_id?: string;
+    requires_fresh_data: boolean;
+  };
 }>(), {
   theme: 'default',
   hideQuickButtons: false,
@@ -68,7 +74,10 @@ const props = withDefaults(defineProps<{
 });
 
 const emit = defineEmits<{
-  (e: 'quick-question', question: string): void;
+  (e: 'quick-question', payload: string | {
+    question: string;
+    quick_context: NonNullable<typeof props.quickContext>;
+  }): void;
   (e: 'show-citation', payload: { id: string; anchor: HTMLElement }): void;
   (e: 'open-browser-url', url: string): void;
   (e: 'open-canvas', payload: {
@@ -308,7 +317,15 @@ const handleContentClick = (event: MouseEvent) => {
         let question = '';
         try { question = decodeURIComponent(decodeURIComponent(rawQuestion)); }
         catch { question = decodeURIComponent(rawQuestion); }
-        if (question) emit('quick-question', question.trim());
+        if (question) {
+          const normalizedQuestion = question.trim();
+          emit(
+            'quick-question',
+            props.quickContext
+              ? { question: normalizedQuestion, quick_context: props.quickContext }
+              : normalizedQuestion,
+          );
+        }
         return;
       } else {
         const lowerHref = ((href.toLowerCase().split('?')[0] ?? '').split('#')[0] ?? '');

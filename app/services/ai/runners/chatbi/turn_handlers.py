@@ -38,6 +38,7 @@ def _record_previous_result_evidence(
     from app.core.context import get_current_agent_context
     from app.services.ai.grounding.ledger import EvidenceLedger
     from app.services.ai.grounding.models import EvidenceType, FactFreshness
+    from app.services.ai.runtime.agentscope.tool_result import build_tool_result_envelope
 
     context = get_current_agent_context()
     ledger = getattr(context, "grounding_evidence_ledger", None) if context else None
@@ -56,13 +57,18 @@ def _record_previous_result_evidence(
         )
         return
 
-    ledger.record_success(
+    envelope = build_tool_result_envelope(
         call_id=f"{turn_type.value}:{uuid.uuid4().hex}",
         producer="chatbi_previous_result",
-        evidence_types={EvidenceType.INTERNAL_DATA},
         result=last_data_result,
-        freshness=FactFreshness.REUSE_PREVIOUS,
+        evidence_policy="allow_empty_success",
         source_ref="chatbi://previous-result",
+    )
+    ledger.record_envelope(
+        envelope,
+        evidence_types={EvidenceType.INTERNAL_DATA},
+        policy="allow_empty_success",
+        freshness=FactFreshness.REUSE_PREVIOUS,
     )
 
 

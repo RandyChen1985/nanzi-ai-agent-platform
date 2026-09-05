@@ -11,6 +11,7 @@ from typing import Any, AsyncIterator, Callable, Dict, List, Optional, TypeVar
 
 from app.services.ai.runtime.agentscope.compat import AIMessage, BaseMessage, HumanMessage, SystemMessage
 from app.services.ai.executors.prompts import SharedPrompts
+from app.services.ai.runtime.agentscope.tool_result_context import is_trusted_tool_result_context
 from app.utils.fs_paths import get_data_base_dir, normalize_under_base
 
 logger = logging.getLogger(__name__)
@@ -434,14 +435,19 @@ def convert_history_to_messages(history: List[Dict[str, str]], strip_thought: bo
             if agent_display:
                 cleaned_content = f"[本回复由智能体「{agent_display}」生成]\n\n{cleaned_content}".strip()
             # A 项：本轮工具调用转录只注入 LLM 上下文，不落到展示用 server history 的 content。
-            tool_text = (m.get("tool_run_text") or "").strip()
+            tool_text = (
+                (m.get("tool_run_text") or "").strip()
+                if is_trusted_tool_result_context(m)
+                else ""
+            )
             if tool_text:
                 cleaned_content = (
                     f"{cleaned_content}\n\n"
-                    f"<backend_tool_run_summary>"
-                    f"\n以下为本轮执行过程中调用的工具及其关键结果（供你理解上一轮工具执行情况）：\n"
+                    f"<backend_tool_result_context>"
+                    f"\n以下仅包含本轮已完成且成功的工具最终结果（供你理解上一轮工具执行情况）；"
+                    f"不包含思考、执行日志或失败调用：\n"
                     f"{tool_text}"
-                    f"\n</backend_tool_run_summary>"
+                    f"\n</backend_tool_result_context>"
                 ).strip()
             messages.append(AIMessage(content=cleaned_content))
         elif role == "system":

@@ -151,6 +151,7 @@ def test_build_overflow_digest_keeps_tool_name_and_conclusion_over_args():
                 "get_model_size: {\"model\": \"deepseek-r1\"} "
                 "-> 671B MoE (data_blocks=0)"
             ),
+            "tool_run_text_version": "final_tool_result_v2",
         }
     ]
     digest = build_overflow_digest(dropped)
@@ -174,6 +175,7 @@ def test_build_overflow_digest_truncates_overlong_tool_output_per_tool():
                 "render_report: {} -> " + ("长" * 500) + " (data_blocks=1)\n"
                 "send_email: {} -> 已发送给 user\n"
             ),
+            "tool_run_text_version": "final_tool_result_v2",
         }
     ]
     digest = build_overflow_digest(dropped)

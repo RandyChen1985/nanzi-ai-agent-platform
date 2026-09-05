@@ -1,7 +1,6 @@
 """KnowledgeAgentRunner：知识库问答专用执行链路。"""
 from __future__ import annotations
 
-import inspect
 import logging
 import time
 import uuid
@@ -13,6 +12,8 @@ from app.services.ai.executors.common import (
     tools_include_named,
 )
 from app.services.ai.executors.prompts import KnowledgeChatPrompts
+from app.services.ai.grounding.ledger import EvidenceLedger
+from app.services.ai.grounding.models import EvidenceType
 from app.services.ai.grounding.policy import GroundingRiskLevel
 from app.services.ai.grounding.service import GroundingService
 from app.services.ai.runners.assistant_agent_runner import AssistantAgentRunner
@@ -25,6 +26,7 @@ from app.services.ai.runtime.agentscope.tools import (
     RuntimeToolSpec,
     runtime_tool_spec_from_legacy_tool,
 )
+from app.services.ai.runtime.agentscope.tool_result import build_tool_result_envelope
 from app.services.ai.tool_capability import RegistryToolProvider, resolve_tool_capabilities
 from app.services.ai.knowledge_utils import (
     NO_KNOWLEDGE_DATASET_MESSAGE,
@@ -60,6 +62,26 @@ class KnowledgeAgentRunner(AssistantAgentRunner):
         self._valid_citation_ids: Set[str] = set()
         self._rag_empty = False
         self._knowledge_retrieval_succeeded = False
+
+    def _ensure_knowledge_grounding_ledger(self) -> EvidenceLedger:
+        """为知识库预检与后续 AgentScope 工具调用共享同一份账本。"""
+        from app.core.context import get_current_agent_context, set_agent_context
+
+        context = get_current_agent_context() or self._ensure_agent_context()
+        ledger = getattr(context, "grounding_evidence_ledger", None)
+        if (
+            not isinstance(ledger, EvidenceLedger)
+            or ledger.user_id != self._runtime_user_id()
+            or ledger.conversation_id != self.conversation_id
+        ):
+            ledger = EvidenceLedger(
+                user_id=self._runtime_user_id(),
+                conversation_id=self.conversation_id,
+            )
+            context.grounding_evidence_ledger = ledger
+            set_agent_context(context)
+        self._evidence_ledger = ledger
+        return ledger
 
     @staticmethod
     def _is_knowledge_reusable_result(result: Any) -> bool:
@@ -271,9 +293,9 @@ class KnowledgeAgentRunner(AssistantAgentRunner):
             tool_kwargs: Dict[str, Any] = {"query": query or ""}
             if dataset_ids:
                 tool_kwargs["dataset_ids"] = dataset_ids
-            result = kb_spec.callable(**tool_kwargs)
-            if inspect.isawaitable(result):
-                result = await result
+            # 预检也是一次真实的知识库工具调用，必须走 RuntimeToolSpec 的
+            # 最终收口，以便统一生成 ToolResultEnvelope 并进入共享账本。
+            result = await kb_spec.invoke(tool_kwargs, call_id=tool_id)
             output = str(result or "")
             self._valid_citation_ids = collect_citation_ids_from_payload(output)
         except Exception as exc:
@@ -329,6 +351,18 @@ class KnowledgeAgentRunner(AssistantAgentRunner):
             try:
                 from app.services.ai.tools.advanced_auxiliary_tools import web_search_baidu_raw
                 web_results = await web_search_baidu_raw(query=query, max_results=3)
+                web_envelope = build_tool_result_envelope(
+                    call_id=web_tool_id,
+                    producer="web_search_baidu_raw",
+                    result={"items": web_results},
+                    evidence_policy="non_empty",
+                    result_state="success",
+                )
+                self._ensure_knowledge_grounding_ledger().record_envelope(
+                    web_envelope,
+                    evidence_types={EvidenceType.PUBLIC_WEB},
+                    policy="non_empty",
+                )
                 web_duration = (time.time() - web_started) * 1000
                 yield {
                     "type": "log",
@@ -517,6 +551,7 @@ class KnowledgeAgentRunner(AssistantAgentRunner):
         from app.services.config_service import ConfigService
 
         self._knowledge_retrieval_succeeded = False
+        self._ensure_knowledge_grounding_ledger()
 
         if not await is_knowledge_base_enabled():
             yield {
