@@ -98,6 +98,7 @@ async def test_memory_service_add_message(mock_redis):
             process_timeline=[{"kind": "log", "title": "调用工具: search", "status": "success"}],
             reusable_result_id="rr-1",
             reusable_result_status="reused",
+            tool_run_text="search: {} -> 权限申请流程",
             status="cancelled",
         )
         
@@ -118,6 +119,7 @@ async def test_memory_service_add_message(mock_redis):
         assert assistant_data["process_timeline"][0]["title"] == "调用工具: search"
         assert assistant_data["reusable_result_id"] == "rr-1"
         assert assistant_data["reusable_result_status"] == "reused"
+        assert assistant_data["tool_run_text_version"] == "final_tool_result_v2"
         assert assistant_data["status"] == "cancelled"
         
         # 验证 LTRIM 和 EXPIRE 也在 Pipeline 中被调用

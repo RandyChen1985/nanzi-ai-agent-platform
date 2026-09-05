@@ -42,6 +42,7 @@ def test_internal_context_markers_are_removed_but_sql_protocol_is_preserved():
 const strip = api.stripInternalContextBlocks;
 return {
   tool: strip('正文\\n<backend_tool_run_summary>工具结果</backend_tool_run_summary>\\n结尾'),
+  toolResult: strip('正文\\n<backend_tool_result_context>最终结果</backend_tool_result_context>\\n结尾'),
   attachments: strip('<backend_injected_attachments>服务器路径</backend_injected_attachments>回答'),
   systemAttachments: strip('<system_injected_attachments>系统附件</system_injected_attachments>回答'),
   reasoning: strip('前置<reasoning>内部推理</reasoning>正文'),
@@ -57,6 +58,7 @@ return {
     )
 
     assert result["tool"] == "正文\n\n结尾"
+    assert result["toolResult"] == "正文\n\n结尾"
     assert result["attachments"] == "回答"
     assert result["systemAttachments"] == "回答"
     assert result["reasoning"] == "前置正文"
@@ -74,7 +76,7 @@ def test_unclosed_internal_block_is_hidden_from_the_visible_tail():
         "frontend/src/utils/streamContentSanitize.ts",
         """
  return {
-   xml: api.stripInternalContextBlocks('正常回答\\n<backend_tool_run_summary>尚未闭合的内部内容'),
+   xml: api.stripInternalContextBlocks('正常回答\\n<backend_tool_result_context>尚未闭合的内部内容'),
    system: api.stripInternalContextBlocks('正常回答\\n<!-- SYSTEM_BLOCK_START: 当前用户画像 -->\\n内部画像'),
    historical: api.stripInternalContextBlocks('正常回答\\n<历史上下文 executable="false">尚未闭合的历史任务'),
  };
