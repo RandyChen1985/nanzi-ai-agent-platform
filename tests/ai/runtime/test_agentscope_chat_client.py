@@ -128,7 +128,78 @@ async def test_chat_client_collects_streaming_final_text():
         ]
     )
 
-    assert text == "final answer"
+    assert text == "partialfinal answer"
+
+
+@pytest.mark.asyncio
+async def test_generate_text_accumulates_all_stream_deltas():
+    # 回归：旧逻辑只在遭遇 is_last 标记时整体覆盖、非首块增量会被丢弃。
+    # 此处所有增量块均不携带 is_last（末端才作为哨兵），累积结果必须完整。
+    from agentscope.message import TextBlock
+    from agentscope.model import ChatResponse
+
+    from app.services.ai.runtime.agentscope.chat import AgentScopeChatClient
+    from app.services.ai.runtime.agentscope.messages import (
+        RuntimeContentBlock,
+        RuntimeMessage,
+    )
+
+    async def fake_stream() -> AsyncIterator[ChatResponse]:
+        for part in ("hello ", "world", "!"):
+            yield ChatResponse(content=[TextBlock(text=part)], is_last=False)
+        yield ChatResponse(content=[], is_last=True)
+
+    class FakeNativeModel:
+        async def __call__(self, messages, **kwargs):
+            return fake_stream()
+
+    client = AgentScopeChatClient(FakeNativeModel())
+
+    text = await client.generate_text(
+        [
+            RuntimeMessage(
+                role="user",
+                content=[RuntimeContentBlock(type="text", text="say hi")],
+            )
+        ]
+    )
+
+    assert text == "hello world!"
+
+
+@pytest.mark.asyncio
+async def test_generate_text_accumulates_deltas_after_is_last_sentinel():
+    # is_last 仅是哨兵，正文增量依旧逐块累积，不能被末块覆盖而截断。
+    from agentscope.message import TextBlock
+    from agentscope.model import ChatResponse
+
+    from app.services.ai.runtime.agentscope.chat import AgentScopeChatClient
+    from app.services.ai.runtime.agentscope.messages import (
+        RuntimeContentBlock,
+        RuntimeMessage,
+    )
+
+    async def fake_stream() -> AsyncIterator[ChatResponse]:
+        yield ChatResponse(content=[TextBlock(text="first")], is_last=False)
+        yield ChatResponse(content=[TextBlock(text=" -mid")], is_last=True)
+        yield ChatResponse(content=[TextBlock(text=" -tail")], is_last=False)
+
+    class FakeNativeModel:
+        async def __call__(self, messages, **kwargs):
+            return fake_stream()
+
+    client = AgentScopeChatClient(FakeNativeModel())
+
+    text = await client.generate_text(
+        [
+            RuntimeMessage(
+                role="user",
+                content=[RuntimeContentBlock(type="text", text="x")],
+            )
+        ]
+    )
+
+    assert text == "first -mid -tail"
 
 
 @pytest.mark.asyncio

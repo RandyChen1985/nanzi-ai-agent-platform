@@ -7437,6 +7437,22 @@ const applyPermissionStreamEvent = (msg: Message, data: any) => {
 
   if (applyReusableResultStatusEvent(msg, data)) return;
 
+  if (data?.type === "run_status") {
+    // 恢复流（权限确认 / 外部执行）在末尾同样发射 run_status 作为终态，
+    // 补齐主流程 8022 的完成收尾，避免被 dispatchAgentscopeStreamEvent 静默丢弃，
+    // 造成恢复后消息的 Stall 计时与“进行中/已完成”文案失收。
+    if (msg.pendingPermission) msg.pendingPermission.status = "completed";
+    if (msg.pendingExternalExecution) msg.pendingExternalExecution.status = "completed";
+    msg.isThinking = false;
+    clearStallTimer();
+    showStalledPrompt.value = false;
+    markOutputCompleted();
+    if (data.status === "success") {
+      (msg as any).status = "success";
+    }
+    return;
+  }
+
   if (applyChatBIInsightEvent(msg, data) || applyChatBIMetadataGuideEvent(msg, data) || applyAgentHandoffEvent(msg, data)) return;
 
   if (dispatchAgentscopeStreamEvent(msg, data, addEmbedLogFromStream, messages.value, handleBashEnvEvent)) {
@@ -8009,6 +8025,10 @@ const sendMessageInternal = async (snapshot: ChatSendSnapshot) => {
 
         try {
           const data = JSON.parse(dataStr);
+          if (data?.type === "keepalive") {
+            // 后端静默期心跳帧：仅用于续命 Stall 计时与连接保活，无业务负载。
+            continue;
+          }
           applyStreamTraceId(agentMsg.value, data);
           if (handleBufferedBodyEvent(data)) {
             // 已进入正文缓冲。

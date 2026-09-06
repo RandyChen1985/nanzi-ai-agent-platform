@@ -199,19 +199,18 @@ class AgentScopeChatClient:
             result = await result
 
         if _safe_getattr(result, "__aiter__"):
+            # 与 stream_messages / generate_message 一致：逐块累加增量正文。
+            # 旧逻辑仅在遇到 is_last 标记时整体覆盖、且非首块会被丢弃，遇“增量 delta +
+            # 末端仅作哨兵”的流式返回会截断/错乱（审计发现）。
             final_text = ""
             async for chunk in result:  # type: ignore[union-attr]
-                text = _response_text(chunk)
-                if _safe_getattr(chunk, "is_last", False):
-                    final_text = text
-                elif not final_text:
-                    final_text += text
+                final_text += _response_text(chunk)
             return final_text
 
         if isinstance(result, AsyncIterator):
             final_text = ""
             async for chunk in result:
-                final_text = _response_text(chunk)
+                final_text += _response_text(chunk)
             return final_text
 
         return _response_text(result)

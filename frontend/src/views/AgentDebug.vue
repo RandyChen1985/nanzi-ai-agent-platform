@@ -3344,7 +3344,10 @@ const sendMessageInternal = async (snapshot: ChatSendSnapshot) => {
 
           try {
             const data = JSON.parse(dataStr);
-
+            if (data?.type === "keepalive") {
+              // 后端静默期心跳帧：仅用于连接保活，无业务负载。
+              continue;
+            }
             applyStreamTraceId(agentMsg.value, data);
 
             // Handle Structured Logs
@@ -3643,6 +3646,22 @@ const submitPendingExternalExecution = async (msg: Message) => {
 const applyPermissionStreamEvent = (msg: Message, data: any) => {
   if (data.agent_name && !msg.agentName) msg.agentName = data.agent_name;
   if (data.agent_display_name && !msg.agentDisplayName) msg.agentDisplayName = data.agent_display_name;
+
+  if (data?.type === "run_status") {
+    // 恢复流末尾的 run_status 终态：与主流程 3357 保持一致，避免被静默丢弃。
+    if (msg.pendingPermission) msg.pendingPermission.status = "completed";
+    if (msg.pendingExternalExecution) msg.pendingExternalExecution.status = "completed";
+    msg.isThinking = false;
+    markOutputCompleted();
+    if (thoughtTimer) {
+      clearInterval(thoughtTimer);
+      thoughtTimer = null;
+    }
+    if (data.status === "success") {
+      (msg as any).status = "success";
+    }
+    return;
+  }
 
   if (applyStreamTraceId(msg, data)) {
 

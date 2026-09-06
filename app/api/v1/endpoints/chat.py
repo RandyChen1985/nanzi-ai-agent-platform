@@ -1579,6 +1579,7 @@ async def create_chat_completion(
 
         async def sse_generator() -> AsyncGenerator[str, None]:
             client_disconnected = False
+            last_keepalive = 0.0
             try:
                 run_config_payload = json.dumps(
                     {
@@ -1604,6 +1605,13 @@ async def create_chat_completion(
                     except asyncio.TimeoutError:
                         if producer_task.done() and queue.empty():
                             break
+                        # 长时间静默（纯推理/工具执行、无事件输出）时周期性下发 keepalive
+                        # 数据帧：既能防止代理/中间层超时断流，也能让前端读循环 resetStallTimer，
+                        # 避免在真实 2s 静默窗口内误弹“AI 还在思考”Stall 提示。
+                        now = time.monotonic()
+                        if now - last_keepalive >= 1.0:
+                            yield "data: {\"type\":\"keepalive\"}\n\n"
+                            last_keepalive = now
                         continue
 
                     if tag == "chunk":

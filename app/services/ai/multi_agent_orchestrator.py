@@ -237,6 +237,34 @@ async def _execute_multi_agent_impl(
             "status": "success",
         }
 
+        # 聚合各专家 executor 的输出标记，透出给 ExecutionStep，使多 Agent 路径
+        # 的 has_data_output / tool_run_text 与单 Agent 分支保持语义对称
+        # （内部控制事件，不转发给前端）。
+        try:
+            flag_hdo = any(
+                callable(getattr(ex, "resolve_has_data_output", None))
+                and bool(ex.resolve_has_data_output())
+                for ex in executors
+            )
+        except Exception:
+            flag_hdo = False
+        flag_trt = ""
+        for ex in executors:
+            try:
+                resolve_trt = getattr(ex, "resolve_tool_run_text", None)
+                if callable(resolve_trt):
+                    text = resolve_trt() or ""
+                    if text:
+                        flag_trt = text
+                        break
+            except Exception:
+                continue
+        yield {
+            "type": "multi_agent_output_flag",
+            "has_data_output": flag_hdo,
+            "tool_run_text": flag_trt or None,
+        }
+
         async for chunk in agent_service._synthesize_multi_agent_results(
             primary_config,
             user_query,

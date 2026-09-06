@@ -133,6 +133,7 @@ class ExecutionStep(BasePipelineStep):
         secondary_agents = getattr(route_details, "secondary_agents", []) if route_details else []
 
         executor_stream = None
+        resolved_executor: Any = None
         if enable_multi_agent and secondary_agents and self.agent_service and hasattr(self.agent_service, "_execute_multi_agent"):
             executor_stream = self.agent_service._execute_multi_agent(
                 agent_config,
@@ -163,57 +164,79 @@ class ExecutionStep(BasePipelineStep):
             )
             if hasattr(executor, "execute"):
                 executor_stream = executor.execute(messages)
-
-            resolve_has_data_output = getattr(executor, "resolve_has_data_output", None)
-            if callable(resolve_has_data_output):
-                has_data_output = bool(resolve_has_data_output())
-
-            resolve_tool_run_text = getattr(executor, "resolve_tool_run_text", None)
-            if callable(resolve_tool_run_text):
-                tool_run_text = resolve_tool_run_text() or None
+            resolved_executor = executor
 
         if executor_stream:
             if performance_tracker is not None:
                 performance_tracker.mark("executor_start")
-            async for chunk in executor_stream:
-                if isinstance(chunk, dict):
-                    chunk = await _enrich_terminal_error_chunk(
-                        chunk,
-                        config=agent_config,
-                        model_name=getattr(agent_config, "model_name", None),
-                    )
-                    full_response_content = _accumulate_stream_content(full_response_content, chunk)
-                    full_reasoning_content = _accumulate_reasoning_content(
-                        full_reasoning_content, chunk
-                    )
-                    execution_status = _apply_turn_status_signal(execution_status, chunk)
-                    if chunk.get("type") == "reusable_result_status":
-                        status = str(chunk.get("status") or "")
-                        result_id = str(chunk.get("result_id") or "").strip()
-                        if status in {"saved", "reused"} and result_id:
-                            existing = shared_state.get("reusable_result_status")
-                            if not (
-                                isinstance(existing, dict)
-                                and existing.get("status") == "reused"
-                                and status == "saved"
-                            ):
-                                shared_state["reusable_result_status"] = {
-                                    "status": status,
-                                    "result_id": result_id,
-                                }
-                    if performance_tracker is not None:
-                        performance_tracker.observe_chunk(chunk)
-                    sync_execution_state()
-                yield chunk
+            try:
+                async for chunk in executor_stream:
+                    if isinstance(chunk, dict):
+                        chunk = await _enrich_terminal_error_chunk(
+                            chunk,
+                            config=agent_config,
+                            model_name=getattr(agent_config, "model_name", None),
+                        )
+                        full_response_content = _accumulate_stream_content(
+                            full_response_content, chunk
+                        )
+                        full_reasoning_content = _accumulate_reasoning_content(
+                            full_reasoning_content, chunk
+                        )
+                        execution_status = _apply_turn_status_signal(
+                            execution_status, chunk
+                        )
+                        if chunk.get("type") == "reusable_result_status":
+                            status = str(chunk.get("status") or "")
+                            result_id = str(chunk.get("result_id") or "").strip()
+                            if status in {"saved", "reused"} and result_id:
+                                existing = shared_state.get("reusable_result_status")
+                                if not (
+                                    isinstance(existing, dict)
+                                    and existing.get("status") == "reused"
+                                    and status == "saved"
+                                ):
+                                    shared_state["reusable_result_status"] = {
+                                        "status": status,
+                                        "result_id": result_id,
+                                    }
+                        if chunk.get("type") == "multi_agent_output_flag":
+                            # 多智能体路径在聚合时透出 has_data_output/tool_run_text，
+                            # 与单 agent 分支的 executor.resolve_* 结果保持对称。
+                            flag_hdo = chunk.get("has_data_output")
+                            if flag_hdo is not None:
+                                has_data_output = bool(flag_hdo)
+                            flag_trt = chunk.get("tool_run_text")
+                            if flag_trt is not None:
+                                tool_run_text = str(flag_trt) or None
+                        if performance_tracker is not None:
+                            performance_tracker.observe_chunk(chunk)
+                        sync_execution_state()
+                    if chunk.get("type") != "multi_agent_output_flag":
+                        yield chunk
+            finally:
+                # 执行中取消/异常时显式释放 executor 流，避免底层生成的协程/连接残留
+                cam_close = getattr(executor_stream, "aclose", None)
+                if callable(cam_close):
+                    try:
+                        await cam_close()
+                    except Exception:
+                        logger.warning(
+                            "[ExecutionStep] Failed to close executor stream",
+                            exc_info=True,
+                        )
             if performance_tracker is not None:
                 performance_tracker.mark("executor_finish")
 
-            if "executor" in locals():
-                resolve_has_data_output = getattr(executor, "resolve_has_data_output", None)
+            if resolved_executor is not None:
+                resolve_has_data_output = getattr(
+                    resolved_executor, "resolve_has_data_output", None
+                )
                 if callable(resolve_has_data_output):
                     has_data_output = bool(resolve_has_data_output())
-
-                resolve_tool_run_text = getattr(executor, "resolve_tool_run_text", None)
+                resolve_tool_run_text = getattr(
+                    resolved_executor, "resolve_tool_run_text", None
+                )
                 if callable(resolve_tool_run_text):
                     tool_run_text = resolve_tool_run_text() or None
                 sync_execution_state()

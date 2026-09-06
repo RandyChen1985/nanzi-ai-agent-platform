@@ -479,6 +479,7 @@ class ContextCompactor:
                 "kept": len(full_history),
             }
 
+        smart_digest = None
         if mode == "smart":
             smart_digest = await cls.try_llm_overflow_digest(
                 full_history,
@@ -490,6 +491,24 @@ class ContextCompactor:
                 event["origin"] = "llm"
 
         source_seq = max((int(message.get("seq") or 0) for message in history), default=0)
+        if smart_digest and smart_digest.get("content"):
+            # 让 digest 键与快照头一致：smart 摘要必须同样持久化，否则后续轮
+            # apply_context_snapshot 读到的是 smart digest 头，而 get_digest 仍返回
+            # 确定性摘录，造成“双摘要锚点对碰”。quality 高于 maybe_compact_overflow
+            # 内确定性 digest 的 quality=0，故能以相同 source_seq 覆盖之。
+            try:
+                await MemoryService().set_digest_if_current(
+                    user_id,
+                    conversation_id,
+                    str(smart_digest.get("content") or ""),
+                    source_seq=source_seq,
+                    quality=1,
+                    allow_newer_seq=True,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "[Compaction] Failed to persist smart digest: %s", exc
+                )
         await memory_service.set_context_snapshot(
             user_id,
             conversation_id,

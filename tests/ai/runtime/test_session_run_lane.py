@@ -44,6 +44,12 @@ class FakeRedis:
     async def exists(self, key):
         return 1 if key in self.store else 0
 
+    async def scan_iter(self, match=None, count=50):
+        prefix = (match or "").rstrip("*")
+        for k in list(self.store.keys()):
+            if not prefix or k.startswith(prefix):
+                yield k
+
 
 @pytest.mark.asyncio
 async def test_conversation_run_lane_force_release(monkeypatch):
@@ -105,6 +111,73 @@ async def test_conversation_run_lane_acquire_and_release(monkeypatch):
         wait_seconds=0.2,
     )
     assert third is not None
+
+
+@pytest.mark.asyncio
+async def test_conversation_run_lane_acquire_clears_stale_agent_locks(monkeypatch):
+    # 回归：成功取得会话 lane 后，应尽力清除该会话遗留的 per-agent 孤儿锁，
+    # 避免后续 executor 在 agent_lock 上空等（“双层会话锁叠加”削弱并发吞吐）。
+    fake = FakeRedis()
+    lane = ConversationRunLane()
+    conversation_id = f"conv-stale-{uuid.uuid4().hex}"
+
+    from app.services.ai.memory_service import memory_service
+
+    agent_key = (
+        f"{memory_service.KEY_PREFIX}:u1:{conversation_id}:agent_lock:main_agent"
+    )
+    fake.store[agent_key] = "orphan-token"
+
+    async def _redis():
+        return fake
+
+    async def _config_get(key, default=None):
+        return default
+
+    monkeypatch.setattr("app.core.redis.get_redis", _redis)
+    monkeypatch.setattr("app.services.config_service.ConfigService.get", _config_get)
+
+    handle = await lane.acquire(
+        user_id="u1",
+        conversation_id=conversation_id,
+        trace_id="trace-stale",
+    )
+    assert handle is not None
+    assert agent_key not in fake.store
+
+
+@pytest.mark.asyncio
+async def test_conversation_run_lane_acquire_clears_stale_agent_locks_is_best_effort(
+    monkeypatch,
+):
+    # 残留清除是尽力而为：即使 per-agent 锁清理解析失败，也不影响 lane 获取。
+    fake = FakeRedis()
+    lane = ConversationRunLane()
+    conversation_id = f"conv-stale-best-effort-{uuid.uuid4().hex}"
+
+    async def _redis():
+        return fake
+
+    async def _config_get(key, default=None):
+        return default
+
+    async def _boom(**_kwargs):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr("app.core.redis.get_redis", _redis)
+    monkeypatch.setattr("app.services.config_service.ConfigService.get", _config_get)
+    monkeypatch.setattr(
+        "app.services.ai.runtime.agentscope.session_lock.AgentScopeSessionLock."
+        "force_release_all_for_conversation",
+        _boom,
+    )
+
+    handle = await lane.acquire(
+        user_id="u1",
+        conversation_id=conversation_id,
+        trace_id="trace-best-effort",
+    )
+    assert handle is not None
 
 
 @pytest.mark.asyncio

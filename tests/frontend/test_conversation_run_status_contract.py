@@ -136,3 +136,22 @@ def test_context_compaction_control_is_user_triggered_on_both_chat_surfaces():
 
     api_source = (ROOT / "frontend/src/api/agent.ts").read_text(encoding="utf-8")
     assert "context_compactions/manual" in api_source
+
+
+def test_resume_flow_run_status_triggers_completion_finalization_on_both_surfaces():
+    """恢复流（权限确认 / 外部执行）末尾的 run_status 不得被静默丢弃。
+
+    主流 sendMessage 已有 run_status 完成收尾；恢复流事件走 applyPermissionStreamEvent，
+    该函数此前未处理 run_status，导致恢复后 Stall 计时与“进行中/已完成”文案失收（Bug-17）。
+    必须在两个聊天表面的 applyPermissionStreamEvent 内补齐完成收尾。
+    """
+    for relative_path in (
+        "frontend/src/views/EmbedChat.vue",
+        "frontend/src/views/AgentDebug.vue",
+    ):
+        source = (ROOT / relative_path).read_text(encoding="utf-8")
+        fn_start = source.index("const applyPermissionStreamEvent")
+        region = source[fn_start : fn_start + 3000]
+        assert 'type === "run_status"' in region, f"{relative_path} 恢复流未处理 run_status"
+        assert "markOutputCompleted()" in region, f"{relative_path} 恢复流未做完成收尾"
+        assert 'data.status === "success"' in region, f"{relative_path} 恢复流未按 success 状态收尾"
