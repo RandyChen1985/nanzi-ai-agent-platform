@@ -152,6 +152,13 @@ TOOL_EVIDENCE_TYPES = {
     "ask_user_question": frozenset({EvidenceType.RUNTIME_STATE}),
     "session_status": frozenset({EvidenceType.RUNTIME_STATE}),
     "get_runtime_capabilities": frozenset({EvidenceType.RUNTIME_STATE}),
+    "list_accessible_datasets": frozenset({EvidenceType.INTERNAL_DATA}),
+    "list_accessible_knowledge_bases": frozenset({EvidenceType.INTERNAL_KNOWLEDGE}),
+    "list_available_agents": frozenset({EvidenceType.RUNTIME_STATE}),
+    "list_accessible_directories": frozenset({EvidenceType.RUNTIME_STATE}),
+    "list_available_skills": frozenset({EvidenceType.RUNTIME_STATE}),
+    "read_skill_instruction": frozenset({EvidenceType.RUNTIME_STATE}),
+    "publish_generated_file": frozenset({EvidenceType.USER_FILE}),
 }
 
 # 工具取证策略：
@@ -162,6 +169,12 @@ TOOL_EVIDENCE_POLICY: dict[str, str] = {
     # 数据查询：查询成功但返回空行 = "暂无数据"，属于合法事实依据
     "execute_sql_query": "allow_empty_success",
     "get_dataset_schema": "allow_empty_success",
+    "list_accessible_datasets": "allow_empty_success",
+    "list_accessible_knowledge_bases": "allow_empty_success",
+    "list_available_agents": "allow_empty_success",
+    "list_accessible_directories": "allow_empty_success",
+    "list_available_skills": "allow_empty_success",
+    "read_skill_instruction": "allow_empty_success",
     # 记忆/知识/文件检索：查无结果 = "未找到"，属于合法事实依据
     "memory_search": "allow_empty_success",
     "fetch_user_long_term_memory": "allow_empty_success",

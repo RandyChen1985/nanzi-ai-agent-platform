@@ -552,3 +552,19 @@ async def list_accessible_directories() -> str:
     except Exception as e:
         logger.error("[list_accessible_directories] failed: %s", e, exc_info=True)
         return f"列出可访问目录失败: {e}"
+
+
+# Grounding 证据声明（双重保障）：使工具不仅在 registry 查表可解析，其自身对象也显式具备元数据
+from app.services.ai.grounding.models import EvidenceType
+
+list_accessible_datasets.evidence_types = frozenset({EvidenceType.INTERNAL_DATA})
+list_accessible_datasets.evidence_policy = "allow_empty_success"
+
+list_accessible_knowledge_bases.evidence_types = frozenset({EvidenceType.INTERNAL_KNOWLEDGE})
+list_accessible_knowledge_bases.evidence_policy = "allow_empty_success"
+
+list_available_agents.evidence_types = frozenset({EvidenceType.RUNTIME_STATE})
+list_available_agents.evidence_policy = "allow_empty_success"
+
+list_accessible_directories.evidence_types = frozenset({EvidenceType.RUNTIME_STATE})
+list_accessible_directories.evidence_policy = "allow_empty_success"

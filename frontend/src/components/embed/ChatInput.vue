@@ -131,7 +131,19 @@ const props = defineProps<{
   dockerWorkspaceUptimeSeconds?: number | null;
   /** Docker 沙箱错误信息 */
   dockerWorkspaceError?: string;
+  /** 当前会话是否开启反幻觉校验 */
+  enableGrounding?: boolean;
+  /** 反幻觉阻断模式：严格缓冲 | 实时撤回 */
+  groundingBlockMode?: "strict_buffer" | "stream_with_retraction";
 }>();
+
+const textareaPaddingRightClass = computed(() => {
+  const hasContext = Boolean(props.contextUsage && props.contextUsage.physical_window);
+  const hasGrounding = Boolean(props.enableGrounding);
+  if (hasContext && hasGrounding) return "pr-48";
+  if (hasContext || hasGrounding) return "pr-28";
+  return "";
+});
 
 const isInteractionLocked = computed(() => props.isProcessing || props.isSubmitting === true);
 
@@ -319,6 +331,8 @@ const emit = defineEmits<{
   (e: 'stop-docker-workspace'): void;
   (e: 'restart-docker-workspace'): void;
   (e: 'open-docker-terminal'): void;
+  (e: 'disable-grounding'): void;
+  (e: 'open-grounding-settings'): void;
 }>();
 
 const isDockerSandboxPolicy = computed(() => {
@@ -1701,7 +1715,7 @@ defineExpose({
                 <span class="ai-dot" style="animation-delay: 0ms"></span>
                 <span class="ai-dot" style="animation-delay: 150ms"></span>
                 <span class="ai-dot" style="animation-delay: 300ms"></span>
-                <span class="ml-1.5 text-[11px] font-medium text-primary/70 select-none">{{ isProcessing ? 'AI 正在生成回复…' : isSubmitting ? '准备发送…' : '' }}</span>
+                <span class="ml-1.5 text-[11px] font-medium text-primary/70 select-none">{{ isProcessing ? (enableGrounding ? 'AI 正在生成并严格核验证据…' : 'AI 正在生成回复…') : isSubmitting ? '准备发送…' : '' }}</span>
             </div>
 
             <div
@@ -1744,14 +1758,52 @@ defineExpose({
 
             <textarea ref="inputRef" :value="modelValue" :disabled="isInteractionLocked" @input="handleInput" @focus="handleFocus" @keydown="handleKeydown" @compositionstart="handleCompositionStart" @compositionend="handleCompositionEnd" @paste="handlePaste" rows="1" class="w-full bg-transparent border-none outline-none focus:ring-0 text-base sm:text-sm placeholder:text-sm px-0 py-1 resize-none max-h-32 text-gray-900 dark:text-gray-100 placeholder-gray-400 peer z-10 relative disabled:cursor-not-allowed" :class="[
               isInteractionLocked ? 'min-h-[46px] opacity-0 pointer-events-none' : 'min-h-[46px] opacity-100',
-              contextUsage && contextUsage.physical_window ? 'pr-24' : '',
+              textareaPaddingRightClass,
             ]" :placeholder="inputPlaceholder"></textarea>
 
-            <div
-              v-if="contextUsage && contextUsage.physical_window"
-              ref="contextUsageContainerRef"
-              class="absolute right-2 top-2 z-30"
-            >
+            <!-- 输入框内部右上角状态浮标组 (反幻觉浮标 + 上下文用量胶囊，0 额外垂直空间占用) -->
+            <div class="absolute right-2 top-2 z-30 flex items-center gap-1.5 pointer-events-auto">
+              <!-- 反幻觉校验浮标 (开启时呈现) -->
+              <div
+                v-if="enableGrounding"
+                data-testid="grounding-status-pill"
+                class="inline-flex items-center gap-1 rounded-full border border-emerald-200/90 bg-emerald-50/95 dark:border-emerald-800/80 dark:bg-emerald-950/70 px-2 py-0.5 text-[10px] font-medium leading-none text-emerald-700 dark:text-emerald-300 shadow-sm transition-all select-none backdrop-blur-sm"
+              >
+                <button
+                  type="button"
+                  class="flex items-center gap-1 hover:opacity-80 transition-opacity focus:outline-none"
+                  @click="emit('open-grounding-settings')"
+                  :title="`反幻觉校验已开启 (${groundingBlockMode === 'stream_with_retraction' ? '实时撤回' : '严格缓冲'})，点击可调整设置`"
+                >
+                  <span class="relative flex h-1.5 w-1.5 shrink-0">
+                    <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                    <span class="relative inline-flex rounded-full h-1.5 w-1.5 bg-emerald-500"></span>
+                  </span>
+                  <svg class="h-3 w-3 text-emerald-600 dark:text-emerald-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+                  </svg>
+                  <span class="font-semibold">反幻觉</span>
+                  <span class="opacity-70 text-[9px]">({{ groundingBlockMode === 'stream_with_retraction' ? '实时' : '缓冲' }})</span>
+                </button>
+                <button
+                  type="button"
+                  class="ml-0.5 rounded-full p-0.5 hover:bg-emerald-200/80 dark:hover:bg-emerald-800/80 text-emerald-600 dark:text-emerald-400 hover:text-emerald-900 transition-colors focus:outline-none"
+                  @click.stop="emit('disable-grounding')"
+                  title="关闭反幻觉校验"
+                  aria-label="关闭反幻觉校验"
+                >
+                  <svg class="h-2.5 w-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+
+              <!-- 上下文使用详情胶囊 -->
+              <div
+                v-if="contextUsage && contextUsage.physical_window"
+                ref="contextUsageContainerRef"
+                class="relative"
+              >
                 <button
                   type="button"
                   data-testid="context-usage-indicator"
@@ -2146,6 +2198,7 @@ defineExpose({
                       </div>
                     </div>
                 </div>
+              </div>
             </div>
 
             <div class="relative z-20 mt-1 flex min-h-7 flex-nowrap items-center gap-0.5 sm:gap-1.5">

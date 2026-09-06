@@ -158,10 +158,13 @@
                 </svg>
             </button>
             <button
-                @click="showSettings = true"                class="p-2 text-gray-400 hover:text-primary hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-all"
-                title="对话设置"
+                @click="showSettings = true"
+                class="relative p-2 text-gray-400 hover:text-primary hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-all"
+                :class="config.enableGrounding ? 'text-emerald-600 dark:text-emerald-400 bg-emerald-50/50 dark:bg-emerald-950/20' : ''"
+                :title="config.enableGrounding ? '对话设置 (反幻觉校验已开启)' : '对话设置'"
             >
                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" /><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
+                <span v-if="config.enableGrounding" class="absolute right-1 top-1 h-1.5 w-1.5 rounded-full bg-emerald-500 ring-2 ring-white dark:ring-gray-800" />
             </button>
             <button
                 @click="toggleBrowserPanel"
@@ -1093,6 +1096,8 @@
         :docker-workspace-started-at="dockerWorkspaceStartedAt"
         :docker-workspace-uptime-seconds="dockerWorkspaceUptimeSeconds"
         :docker-workspace-error="dockerWorkspaceError"
+        :enable-grounding="config.enableGrounding"
+        :grounding-block-mode="config.groundingBlockMode"
         @start-docker-workspace="ensureDockerWorkspace"
         @refresh-docker-workspace="refreshDockerWorkspaceStatus"
         @stop-docker-workspace="stopDockerWorkspace"
@@ -1123,6 +1128,8 @@
         @system-command="handleSystemCommand"
         @ignore-ltm="handleIgnoreLtm"
         @dismiss-ltm="activeLtmPreference = null"
+        @disable-grounding="disableGroundingWithToast"
+        @open-grounding-settings="showSettings = true"
       >
         <template #banner>
           <div class="mx-3 mt-2">
@@ -2881,7 +2888,7 @@ const config = reactive({
   enableMultiAgent: true,
   showShortcuts: true,
   enableSqlPlan: false,
-  enableGrounding: true, // Embed 默认开启反幻觉校验
+  enableGrounding: false, // Embed 默认关闭反幻觉校验，由用户在右上角设置中主动开启
   groundingBlockMode: "strict_buffer" as "strict_buffer" | "stream_with_retraction",
   expandThoughts: true, // 思考过程默认展示开关
   markdownTheme: "default" as "default" | "minimal" | "academic" | "apple" | "warm" | "compact",
@@ -5024,6 +5031,11 @@ const handleIgnoreLtm = () => {
   showToast("已在此会话本轮提问中忽略该记忆偏好", "info");
 };
 
+const disableGroundingWithToast = () => {
+  config.enableGrounding = false;
+  showToast("反幻觉校验已关闭", "info");
+};
+
 const canPreviewFile = (file: any) => {
   const ext = (file.ext || '').toLowerCase();
   return ext === 'pdf' || ext === 'csv' || ext === 'jpg' || ext === 'jpeg' || ext === 'png' || ext === 'webp' || ext === 'gif';
@@ -6088,7 +6100,7 @@ const applyTheme = (theme: string, styleVars?: Record<string, string>) => {
 };
 const resetSession = async (newToken?: string, ticket?: string) => {
   messages.value = [];
-  config.enableGrounding = true; // 新会话恢复默认开启
+  config.enableGrounding = false; // 新会话恢复默认关闭
   generateNewConversation();
   if (ticket) {
     const ticketOk = await exchangeTicketAndApply(ticket);
@@ -6665,7 +6677,7 @@ const handleSystemCommand = async (cmd: string): Promise<boolean> => {
       userInput.value = "";
       // 与新会话一致：先清空当前对话内容并换新 conversation_id，再打开项目资源配置
       messages.value = [];
-      config.enableGrounding = true;
+      config.enableGrounding = false;
       generateNewConversation();
       postMessageToHost({
         type: "CONVERSATION_CHANGED",
