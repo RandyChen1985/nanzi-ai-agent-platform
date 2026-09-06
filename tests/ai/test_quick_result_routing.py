@@ -46,10 +46,54 @@ def test_normalize_quick_result_context_rejects_untrusted_metadata(raw):
 
 
 def test_quick_result_context_is_not_treated_as_reusable_result():
-    source = Path("app/services/ai/agent_service.py").read_text(encoding="utf-8")
+    from app.services.ai.reusable_result import (
+        quick_result_reuse_decision,
+        should_attempt_reusable_reuse,
+    )
 
-    assert "quick_context_requires_fresh_data" in source
-    assert "allowed_reusable_result_types is not None and not quick_result_followup" in source
+    # —— 行为断言：quick-result（新查询）上下文必须产出硬性「不复用」决策 ——
+    decision = quick_result_reuse_decision()
+    assert decision.mode == "none"
+    assert decision.reason == "quick_context_requires_fresh_data"
+
+    # quick_result_followup 时，即使存在候选结果类型白名单，也禁止复用尝试
+    assert (
+        should_attempt_reusable_reuse(
+            quick_result_followup=True,
+            allowed_reusable_result_types={"data"},
+        )
+        is False
+    )
+    assert (
+        should_attempt_reusable_reuse(
+            quick_result_followup=True,
+            allowed_reusable_result_types=None,
+        )
+        is False
+    )
+
+    # 仅当「非 quick-result」且「存在候选类型白名单」时才允许复用尝试
+    assert (
+        should_attempt_reusable_reuse(
+            quick_result_followup=False,
+            allowed_reusable_result_types={"data"},
+        )
+        is True
+    )
+    assert (
+        should_attempt_reusable_reuse(
+            quick_result_followup=False,
+            allowed_reusable_result_types=None,
+        )
+        is False
+    )
+
+
+def test_quick_result_missing_data_agent_prompts_for_retry():
+    # 用户可见的降级文案契约：快捷分析需实时数据但无数据查询智能体时提示重试。
+    source = Path("app/services/ai/pipeline/steps/route_step.py").read_text(
+        encoding="utf-8"
+    )
     assert "没有可用的数据查询智能体" in source
 
 

@@ -13,27 +13,28 @@ sequenceDiagram
     participant U as 用户
     participant FE as EmbedChat / ChatInput
     participant API as POST /api/v1/chat/completions
-    participant AS as AgentService
-    participant CM as AgentContextManager
-    participant MAIN as Main / 父专家
-    participant DP as AgentDispatcher
-    participant EX as Executor
+    participant AS as AgentService (门面)
+    participant PR as PipelineRunner
+    participant PS as PipelineSteps (Preflight / Context / Route / Assemble)
+    participant ES as ExecutionStep / Executors
+    participant FS as FinalizeStep
     participant LLM as 模型 / 外部引擎
 
     U->>FE: 输入 + 可选附件(文件/知识库/技能)
     FE->>FE: appendAttachmentContext 拼上下文
     FE->>API: SSE stream + agent_id + conversation_id
     API->>AS: chat_completion_stream
-    AS->>AS: Redis 会话记忆读写
-    AS->>CM: resolve_agent_config
-    CM->>MAIN: 无指定 agent 时直接进入默认 Main
-    AS->>AS: 智能体权限 / 注入技能&LTM
-    AS->>DP: dispatch + TurnDecision / route_hints
-    DP->>EX: Chat / Data / RAG / OpenClaw
-    EX->>LLM: 流式调用 + 工具循环
-    LLM-->>EX: token / log / citation
-    EX-->>AS: chunk
-    AS-->>API: SSE data: {...}
+    AS->>PR: PipelineContext + PipelineRunner([Steps...])
+    Note over PR,PS: 1. PreflightStep (鉴权/锁/Quota/问答卡回执)<br/>2. ContextStep (历史/窗口裁剪/记忆压缩)<br/>3. RouteStep (意图/专家绑定/直答拦截)<br/>4. AssembleStep (分层Prompt组装/防注入边界)
+    PR->>PS: 按序驱动前置步骤
+    PS-->>API: 透传中间过程日志 (SSE)
+    PR->>ES: 5. ExecutionStep
+    ES->>LLM: 调度执行器流式推理 + 工具循环
+    LLM-->>ES: token / log / citation
+    ES-->>API: SSE chunk (content / reasoning / logs)
+    PR->>FS: 6. FinalizeStep
+    FS->>FS: Token聚合 / 消息与摘要持久化 / 审计上报
+    FS-->>API: run_status (persisting=True)
     API-->>FE: 解析 SSE 更新气泡
     FE-->>U: 展示回复与思考日志
 ```
@@ -132,19 +133,51 @@ sequenceDiagram
 
 ---
 
-## 4. AgentService 编排核心
+## 4. 后端管道化编排核心（AgentService & PipelineRunner）
 
-**文件**：`app/services/ai/agent_service.py` → `chat_completion_stream`
+**入口文件**：`app/services/ai/agent_service.py` → `chat_completion_stream`
+**管道框架**：`app/services/ai/pipeline/`（`PipelineRunner`, `PipelineContext`, `BasePipelineStep`）
 
-### 4.1 会话记忆（Redis）
+`AgentService` 作为系统门面（Facade），不再承载全部的流式过程代码，而是构建统一状态对象 `PipelineContext`，并委托给 `PipelineRunner` 按序驱动 6 阶段处理器：
 
-**实现**：`app/services/ai/memory_service.py` → `MemoryService`
+```mermaid
+flowchart LR
+    P1["1. PreflightStep<br/>(鉴权/锁/Quota/问答卡)"] --> P2["2. ContextStep<br/>(历史/窗口裁剪/记忆压缩)"]
+    P2 --> P3["3. RouteStep<br/>(意图识别/专家绑定/直答)"]
+    P3 --> P4["4. AssembleStep<br/>(Prompt分层/防注入边界)"]
+    P4 --> P5["5. ExecutionStep<br/>(Runner调度/流式推导)"]
+    P5 --> P6["6. FinalizeStep<br/>(Token统计/落库/审计收敛)"]
 
-有 `conversation_id` 时，`AgentService` 会：
+    classDef step fill:#1e293b,stroke:#3b82f6,stroke-width:1.5px,color:#fff;
+    class P1,P2,P3,P4,P5,P6 step;
+```
 
-1. 从 Redis 拉取该用户、该会话的历史
-2. 将本轮 user 消息**异步** `add_message` 写入 Redis
-3. 用「历史 + 本轮」组成后续 `messages`（再经 Main/指定专家与执行器处理）
+- **短路跳过（Short-Circuit）**：若在 PreflightStep 发生配额耗尽，或在 RouteStep 触发直通模型问答拦截，流水线会自动跳过中间重逻辑，直达 FinalizeStep。
+- **生命周期收敛保护**：即使客户端中断或中途出现 `asyncio.CancelledError`，`PipelineRunner` 仍会确保 `FinalizeStep` 被执行，保障连接锁释放、Token 聚合与审计完整。
+
+---
+
+### 4.1 阶段一：PreflightStep（准入、锁与输入风控）
+
+**实现**：`app/services/ai/pipeline/steps/preflight_step.py`
+
+1. **初始状态**：向下游和客户端发送 `trace_id` 与 `init` 握手状态。
+2. **Token 配额预检**：通过 `QuotaService.check_before_call` 校验账户配额，超限直接阻断并置状态为 `quota_exceeded`。
+3. **分布式会话锁排队**：检测 `conversation_run_lane` 会话独占锁，若有未完任务则推送排队等待日志。
+4. **消息规范化与用户问题回执**：净化消息中客户端元数据，并校验恢复用户选择题问答卡（User Question）提交的回执记录。
+
+---
+
+### 4.2 阶段二：ContextStep（会话记忆、窗口裁剪与溢出压缩）
+
+**实现**：`app/services/ai/pipeline/steps/context_step.py` 与 `app/services/ai/memory_service.py`
+
+有 `conversation_id` 时，`ContextStep` 会：
+1. 从 Redis 拉取该用户、该会话的历史并合并上下文快照。
+2. 将本轮 user 消息异步 `add_message` 写入 Redis。
+3. 按照 Token 预算与最大轮数进行滑动窗口裁剪（`_window_for_context`）。
+4. 触发溢出滑动压缩（`_maybe_compact_overflow`），超限时生成 `context_summarized` 阶段性摘要与持久化事件。
+5. 自动富化技能元数据（`enrich_messages_with_skill_meta`）。
 
 #### Redis Key 设计
 
@@ -413,62 +446,61 @@ session summary 写入成功后，会由 `DailySummaryService.refresh_for_date(u
 
 规格与设计背景：[`docs/superpowers/specs/2026-05-27-memory-search-redis-stack-design.md`](docs/superpowers/specs/2026-05-27-memory-search-redis-stack-design.md)。
 
-### 4.2 解析 @ 智能体
+### 4.3 阶段三：RouteStep（意图识别、专家绑定与直答拦截）
 
-- 正文形如 `@某智能体名 问题`，且未传 `agent_id` 时
-- 拆出 `agent_name`，按名称直接选智能体
+**实现**：`app/services/ai/pipeline/steps/route_step.py`
 
-### 4.3 解析智能体配置（默认 Main / 指定专家）
+1. **@ 显式路由匹配**：识别正文 `@某智能体名 问题`，精准提取目标 Agent 名称。
+2. **快捷分析与可复用结果检测**：结合 `quick_context` 与 `reusable_result` 判定是否直接复用上一轮数据。
+3. **专家解析与意图决策**：异步驱动 `_start_route_resolution`，产出统一决策对象 `TurnDecision` 及目标 `agent_config`（支持默认 Main 委派或直达指定专家）。
+4. **Session MCP 工具挂载**：动态加载并绑定该会话调试范围内的 MCP 工具。
+5. **直通模型问答拦截**：若识别为咨询当前运行模型类型等轻量问题，直接构造回答并标记 `answered_directly`，跳过后续重逻辑。
 
-**文件**：`app/services/ai/context_manager.py` → `resolve_agent_config`
+---
 
-| 条件 | 行为 |
-|------|------|
-| 传了 `version_id` | 加载指定版本配置 |
-| 传了 `agent_id` / `agent_name` | 直接加载该智能体；设置 `route_hints.direct_agent_selection=True` |
-| 都未传 | 直接加载默认 `Main`，创建默认 Main 智能委派决策；不调用外层语义 Router |
-| 仍无配置 | 回退 **Assistant** 默认配置 |
+### 4.4 阶段四：AssembleStep（分层提示词组装与安全边界注入）
 
-默认 Main 的入口决策不需要额外的 `router_log`；Main 调用 `sub_agent_call` / `sub_agent_batch_call` 时，委派过程和子代理结果写入执行 trace。各 executor 仍可消费 `TurnDecision` 中的通用 hint，但不据此重新推导外层专家。
+**实现**：`app/services/ai/pipeline/steps/assemble_step.py`
 
-### 4.4 智能体访问权限
+1. **能力目录日志**：发布 `_build_capability_catalog_log`，明确当前轮次可用的数据集、技能与工具清单。
+2. **PromptAssembler 分层提示词拼装**：
+   - 驱动分层组装器（稳定前缀 `stable_prefix` + 动态后缀 `dynamic_suffix`）。
+   - 注入平台全局守则、用户画像、技能工作流（Skills）、长期记忆（LTM）及子代理协同提示。
+3. **聊天历史边界防注入保护**：注入 `build_chat_history_boundary_prompt`，隔离模型对多轮历史消息的指令遵循边界。
+4. **调试配置覆盖**：支持 `system_prompt_override` 与宿主注入上下文（`injected_context`）。
 
-- 非 `admin`：检查 `permissions.agents` 是否包含当前 `agent_id`
-- 无权限：直接 yield 拒绝文案，不进入执行器
+---
 
-### 4.5 上下文注入（`system_prompt` 与 `messages`）
+### 4.5 阶段五：ExecutionStep（执行调度与流式输出推导）
 
-详见 [PROMPT_LAYERS.md](./PROMPT_LAYERS.md)。摘要如下：
+**实现**：`app/services/ai/pipeline/steps/execution_step.py`
 
-**`agent_config.system_prompt`（LOCAL）** — 在 DB 智能体专规之上 prepend；最后一步加上 **`PLATFORM_GLOBAL_SYSTEM_PROMPT`**（平台全局守则，常量见 `agent_prompts.py`）。典型栈顶→栈底：全局守则 → 预加载记忆 → 跨会话 hint → LTM → 技能发现/技能全文 → **DB system_prompt**。
+1. **Meta 元数据广播**：向前端下发 `meta` 事件（包含智能体名称、显示名、公共模型标识、Turn 分类与决策轨迹）。
+2. **执行器调度**：
+   - 多智能体协同：`_execute_multi_agent`（并行派发与 LLM 结果合成）；
+   - 单智能体执行：`AgentDispatcher.dispatch` → 对应执行器 `execute` 流式产出。
+3. **流式累积与状态机推进**：
+   - 流式内容累加（`_accumulate_stream_content`）、思考内容累加（`_accumulate_reasoning_content`）；
+   - 错误块自动富化（`_enrich_terminal_error_chunk`）；
+   - 状态信号推进（`_apply_turn_status_signal`）。
+4. **门禁与降级兜底**：
+   - 空回复兜底（`_maybe_empty_response_fallback`）；
+   - 定时任务工具调用强制门禁（`requires_tool_execution`）。
 
-**不进独立 `messages` system 行（已并入 PromptAssembler）**：
+---
 
-- **用户画像**（账号、部门、称呼）：由 `PromptAssembler` 写入 `stable_prefix`（与平台全局守则、DB `system_prompt` 同栈）；查数轮次可在裁剪逻辑中省略。启用 `cache_reorder` 时画像位于 cache boundary 之前，避免长对话截断丢失。
-- **Embed 宿主上下文**：`debug_options.injected_context` → 仍为独立 `role: system`（设备、页面信息、移动/桌面 UI）。
+### 4.6 阶段六：FinalizeStep（Token统计、持久化落库与审计收敛）
 
-跨会话「最近聊了啥」：**不**自动注入摘要全文；条件注入 `[跨会话记忆检索]` hint + 模型调用 **`memory_search`**（§4.1）。
+**实现**：`app/services/ai/pipeline/steps/finalize_step.py`
 
-**主助手专属编排**（`agent_service.py`）：
-
-- **Skill 自动扫描**：未挂载/口头解析技能时，对主通用助手按用户问题扫描技能库（`skill_auto_scan_enabled` / `min_score` / `max_results`），注入 Frontmatter 摘要。
-- **工具预检**：在 `AssistantAgentRunner` 内按 `agent_tool_preflight_mode`（`off` / `soft` / `hard`）注入工具促发便签，可选首步强制 `ToolChoice`（见 `tool_nudge_policy.py`）。
-
-**调试**：`system_prompt_override` 在全部 prepend **之后**整段替换（含全局块）。
-
-`AgentContextManager.setup_context` 将 `user_id`、`admin`、`api_key`、`conversation_id` 写入运行时上下文，供工具与 SQL 改写使用。
-
-### 4.6 执行分支
-
-| 条件 | 路径 |
-|------|------|
-| `enable_multi_agent` 且 `route_details.secondary_agents` 非空 | `_execute_multi_agent` 多智能体协同 |
-| 否则 | `AgentDispatcher.dispatch` → 单执行器 `execute` 流式产出 |
-
-### 4.7 收尾
-
-- 将 assistant 全文异步写入 Redis（有 `conversation_id` 时）
-- 审计 / trace 持久化到数据库（步骤、工具调用等）
+1. **Token 消耗统计**：从 `TraceBuffer` 聚合计算 `prompt_tokens`、`completion_tokens` 与 `total_tokens` 并下发 `meta` 事件。
+2. **终态状态通知**：下发 `run_status`，通知前端当前轮次的最终持久化与完成状态。
+3. **消息与会话摘要持久化**：
+   - 将 Assistant 回复内容写入 Redis 历史；
+   - 异步触发 `SessionSummaryService` 会话摘要合并与跨会话索引更新。
+4. **审计与性能打点**：
+   - 记录完整审计事务 `AuditManager.log_transaction`；
+   - 采集各阶段执行性能快照（`ExecutionPerformanceTracker`）。
 
 ---
 

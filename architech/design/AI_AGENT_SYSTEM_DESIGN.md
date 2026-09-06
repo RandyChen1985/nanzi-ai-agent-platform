@@ -104,7 +104,18 @@
 app/
 ├── api/v1/endpoints/chat.py
 ├── services/ai/
-│   ├── agent_service.py          # 编排中枢
+│   ├── agent_service.py          # 门面层（参数收集、启动 PipelineRunner、向后兼容代理）
+│   ├── pipeline/                 # 管道化执行引擎（责任链模式）
+│   │   ├── base.py               # BasePipelineStep 抽象基类
+│   │   ├── context.py            # PipelineContext 全生命周期强类型状态载体
+│   │   ├── runner.py             # PipelineRunner 调度器（短路跳过、异常收敛）
+│   │   └── steps/                # 6 个清晰的阶段处理器
+│   │       ├── preflight_step.py # 1. 鉴权、锁排队、Quota 与输入风控
+│   │       ├── context_step.py   # 2. 会话历史加载、窗口裁剪与记忆压缩
+│   │       ├── route_step.py     # 3. @路由、意图与专家绑定、模型直答
+│   │       ├── assemble_step.py  # 4. 分层 Prompt 组装与安全边界注入
+│   │       ├── execution_step.py # 5. Runner 执行器调度与流式输出推导
+│   │       └── finalize_step.py  # 6. Token 统计、持久化落库与审计收敛
 │   ├── dispatcher.py             # Executor 分发
 │   ├── executors/                # 薄封装（assistant / knowledge / data / rag / openclaw）
 │   ├── runners/                  # AssistantAgentRunner、KnowledgeAgentRunner、DataAgentRunner
@@ -112,14 +123,15 @@ app/
 │   └── tools/                    # 业务工具 + ToolRegistry
 ```
 
-#### 5.1.2 核心流程
-1. **统一入口**：`POST /api/v1/chat/completions`。
-2. **入口与分发**：ContextManager 解析默认 `Main` 或指定专家；`AgentDispatcher` 根据最终 Agent 选择 Executor。`RouterService` 仅兼容保留，不参与默认主链路。
-3. **本地执行**（`TurnType=KNOWLEDGE` 优先）：
-   - **Knowledge**：`KnowledgeAgentRunner` → 自动知识库检索 + AgentScope ReAct。
-   - **ChatBI**：`DataAgentRunner` → AgentScope ReAct + ChatBI 守卫（schema 前置、SQL 自愈）。
-   - **Assistant**：无工具直出；有工具 → `AssistantAgentRunner` → AgentScope `reply_stream`。
-4. **流式响应**：`map_standard_agentscope_event()` 将 AgentScope 事件转为 SSE chunk。
+#### 5.1.2 核心流程（责任链/管道模式）
+1. **统一入口与门面调度**：`POST /api/v1/chat/completions` 接入，`AgentService` 构建 `PipelineContext` 并委托给 `PipelineRunner` 启动 6 阶段责任链。
+2. **6 阶段有序流转**：
+   - **PreflightStep**：初始化握手，验证 Token Quota 额度，检测分布式会话排队锁，恢复问答卡回执。
+   - **ContextStep**：拉取 Redis 历史，基于 Token 预算进行滑动窗口裁剪，触发溢出压缩（`context_summarized`）。
+   - **RouteStep**：解析 `@mention`、快捷分析及可复用结果，决策 `TurnDecision` 与目标 Agent 配置（默认 Main 智能委派或直达指定专家），拦截当前模型直通问答。
+   - **AssembleStep**：发布能力目录日志，驱动 `assemble_system_prompt` 分层组装，注入聊天历史防越权边界。
+   - **ExecutionStep**：下发 Meta 事件，分发至 `AgentDispatcher` 执行器（单 Agent 或多 Agent 并行），流式输出 SSE chunk。
+   - **FinalizeStep**：聚合 Token 消耗，持久化 Assistant 回复至 Redis，异步触发会话摘要合并，记录事务审计日志。
 
 #### 5.1.3 核心调用链路 (ChatBI 时序图)
 

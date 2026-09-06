@@ -182,7 +182,8 @@ async def _ask_model(
 
 def _is_ai_explanation_disabled(clean_error: str, exc: BaseException) -> bool:
     return (
-        isinstance(exc, DockerSandboxUnavailableError)
+        "自动任务未实际调用任何工具" in clean_error
+        or isinstance(exc, DockerSandboxUnavailableError)
         or is_context_window_api_error(clean_error)
         or is_multimodal_api_error(clean_error)
     )
