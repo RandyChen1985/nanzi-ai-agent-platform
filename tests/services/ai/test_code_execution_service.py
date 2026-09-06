@@ -195,3 +195,15 @@ async def test_shared_shell_capture_returns_stdout_stderr_and_exit_code(tmp_path
     assert result.stderr == "err"
     assert result.exit_code == 4
     assert result.timed_out is False
+
+
+@pytest.mark.asyncio
+async def test_shared_shell_capture_timeout_preserves_output(tmp_path: Path):
+    from app.services.ai.code_execution_service import run_shell_command_capture
+
+    result = await run_shell_command_capture(
+        "printf 'before-timeout'; sleep 5", cwd=tmp_path, timeout_seconds=0.1,
+    )
+    assert result.timed_out is True
+    assert result.stdout == 'before-timeout'
+    assert result.exit_code is not None

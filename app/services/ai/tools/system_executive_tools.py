@@ -784,3 +784,13 @@ def create_skills(
         )
     except Exception as e:
         return f"错误：创建技能失败，原因: {str(e)}"
+
+
+# Grounding 证据声明（双重保障）
+from app.services.ai.grounding.models import EvidenceType
+
+list_available_skills.evidence_types = frozenset({EvidenceType.RUNTIME_STATE})
+list_available_skills.evidence_policy = "allow_empty_success"
+
+read_skill_instruction.evidence_types = frozenset({EvidenceType.RUNTIME_STATE})
+read_skill_instruction.evidence_policy = "allow_empty_success"

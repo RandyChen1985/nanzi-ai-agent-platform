@@ -47,7 +47,7 @@ class HallucinationEvaluator:
             llm = await get_llm_async(streaming=False, temperature=0.1)  # Low temp to reduce random judgment
             if not llm:
                 logger.warning("[HallucinationEvaluator] Failed to get LLM; bypass check")
-                return {"is_hallucinated": False, "reason": "无法获取大模型句柄，跳过判定"}
+                return {"is_hallucinated": False, "reason": "无法获取大模型句柄，跳过 LLM 判定（降级为规则兜底）"}
 
             chat_client = chat_client_from_handle(llm)
             user_content = (
@@ -91,4 +91,4 @@ class HallucinationEvaluator:
                 f"[HallucinationEvaluator] Evaluation failed: {e}", exc_info=True
             )
 
-        return {"is_hallucinated": False, "reason": "检测异常，默认放行"}
+        return {"is_hallucinated": False, "reason": "LLM 检测异常/格式非法，未完成评估（降级为规则兜底）"}

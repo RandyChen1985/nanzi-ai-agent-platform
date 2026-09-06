@@ -723,6 +723,29 @@ def resolve_reusable_result(
     return ReusableResultDecision(mode="fallback", reason=reason)
 
 
+def quick_result_reuse_decision() -> ReusableResultDecision:
+    """quick-result（快捷点按触发的新查询）上下文的硬性复用决策。
+
+    契约：只要本轮是 quick_result_followup，就必须跳过对历史 reusable-result 的复用，
+    直接当作全新实时查询处理。
+    """
+    return ReusableResultDecision(mode="none", reason="quick_context_requires_fresh_data")
+
+
+def should_attempt_reusable_reuse(
+    *,
+    quick_result_followup: bool,
+    allowed_reusable_result_types: Collection[str] | None = None,
+) -> bool:
+    """quick-result 新查询上下文必须禁用 reusable-result 复用尝试。
+
+    仅当「不是 quick_result_followup」且「确实存在候选结果类型白名单」时，才允许尝试复用。
+    这是 reusable-result 类型门禁的纯逻辑部分；是否真正执行复用解析由调用方结合运行时
+    能力（如 agent_service._resolve_reusable_result_decision）共同决定。
+    """
+    return allowed_reusable_result_types is not None and not quick_result_followup
+
+
 __all__ = [
     "RESULT_TYPES",
     "REUSABLE_RESULT_VERSION",
@@ -734,6 +757,8 @@ __all__ = [
     "normalize_legacy_data_result",
     "normalize_legacy_reusable_result",
     "prepare_reusable_route_input",
+    "quick_result_reuse_decision",
     "resolve_reusable_result",
     "sanitize_reusable_result_payload",
+    "should_attempt_reusable_reuse",
 ]

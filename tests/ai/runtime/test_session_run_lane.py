@@ -44,6 +44,12 @@ class FakeRedis:
     async def exists(self, key):
         return 1 if key in self.store else 0
 
+    async def scan_iter(self, match=None, count=50):
+        prefix = (match or "").rstrip("*")
+        for k in list(self.store.keys()):
+            if not prefix or k.startswith(prefix):
+                yield k
+
 
 @pytest.mark.asyncio
 async def test_conversation_run_lane_force_release(monkeypatch):
@@ -105,6 +111,88 @@ async def test_conversation_run_lane_acquire_and_release(monkeypatch):
         wait_seconds=0.2,
     )
     assert third is not None
+
+
+@pytest.mark.asyncio
+async def test_conversation_run_lane_acquire_preserves_agent_locks(monkeypatch):
+    # 回归：成功取得会话 lane 后，不能自动清理同会话的 per-agent 会话锁。
+    # 正常 run 持锁期间若其 lane 因续约故障 / 进程暂停 / 显式取消而先行失效，
+    # 旧 run 的 executor 仍可能握着自己的 agent_lock 在跑，无条件清理会误删活跃锁、
+    # 破坏互斥并并发操作同一 AgentState。孤儿 agent_lock 依靠自身 TTL 过期自愈。
+    fake = FakeRedis()
+    lane = ConversationRunLane()
+    conversation_id = f"conv-stale-{uuid.uuid4().hex}"
+
+    from app.services.ai.memory_service import memory_service
+
+    agent_key = (
+        f"{memory_service.KEY_PREFIX}:u1:{conversation_id}:agent_lock:main_agent"
+    )
+    fake.store[agent_key] = "orphan-token"
+
+    async def _redis():
+        return fake
+
+    async def _config_get(key, default=None):
+        return default
+
+    monkeypatch.setattr("app.core.redis.get_redis", _redis)
+    monkeypatch.setattr("app.services.config_service.ConfigService.get", _config_get)
+
+    handle = await lane.acquire(
+        user_id="u1",
+        conversation_id=conversation_id,
+        trace_id="trace-stale",
+    )
+    assert handle is not None
+    # 遗留的 agent_lock 必须保留，交由 TTL 自愈，而不是被 acquire 误删
+    assert fake.store.get(agent_key) == "orphan-token"
+
+
+@pytest.mark.asyncio
+async def test_conversation_run_lane_acquire_does_not_call_force_release(monkeypatch):
+    # 取得 lane 时绝不应触发 force_release_all_for_conversation（外层取消路径
+    # conversation_run_cancel 才是唯一清理点）。若误触发，活跃 run 的 agent_lock
+    # 会被误删，破坏互斥。
+    fake = FakeRedis()
+    lane = ConversationRunLane()
+    conversation_id = f"conv-norelease-{uuid.uuid4().hex}"
+
+    from app.services.ai.memory_service import memory_service
+
+    agent_key = (
+        f"{memory_service.KEY_PREFIX}:u1:{conversation_id}:agent_lock:main_agent"
+    )
+    fake.store[agent_key] = "active-token"
+
+    async def _redis():
+        return fake
+
+    async def _config_get(key, default=None):
+        return default
+
+    called = {"flag": False}
+
+    async def _should_not_be_called(**_kwargs):
+        called["flag"] = True
+        return 1
+
+    monkeypatch.setattr("app.core.redis.get_redis", _redis)
+    monkeypatch.setattr("app.services.config_service.ConfigService.get", _config_get)
+    monkeypatch.setattr(
+        "app.services.ai.runtime.agentscope.session_lock.AgentScopeSessionLock."
+        "force_release_all_for_conversation",
+        _should_not_be_called,
+    )
+
+    handle = await lane.acquire(
+        user_id="u1",
+        conversation_id=conversation_id,
+        trace_id="trace-norelease",
+    )
+    assert handle is not None
+    assert called["flag"] is False
+    assert fake.store.get(agent_key) == "active-token"
 
 
 @pytest.mark.asyncio

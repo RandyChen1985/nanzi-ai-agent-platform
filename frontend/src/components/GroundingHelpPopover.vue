@@ -150,8 +150,8 @@ onBeforeUnmount(() => {
               </div>
             </div>
           </div>
-          <p class="mt-2 text-[10px] leading-4 text-gray-400">
-            开启可降低无依据回答风险，但不代表结果绝对正确。
+          <p class="mt-2 text-[10px] leading-relaxed text-gray-400 dark:text-gray-400">
+            开启可降低无依据回答风险，但不代表结果绝对正确；事实依据核验可能略微增加响应耗时。
           </p>
         </div>
       </div>

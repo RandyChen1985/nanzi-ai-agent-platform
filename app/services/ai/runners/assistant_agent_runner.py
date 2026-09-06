@@ -2555,10 +2555,16 @@ class AssistantAgentRunner(BaseExecutor):
         gap = compute_stream_reconcile_gap(streamed, synthesis_agent_text)
         if gap.strip():
             logger.info(
-                "[AssistantAgentRunner] Stream reconcile gap chars=%d streamed=%d agent=%d",
+                "[AssistantAgentRunner] Stream reconcile gap chars=%d streamed=%d agent=%d "
+                "streamed_head=%r streamed_tail=%r agent_head=%r agent_tail=%r narration=%d",
                 len(gap),
                 len(streamed),
                 len(agent_text),
+                streamed[:90].replace("\n", "\\n"),
+                streamed[-90:].replace("\n", "\\n"),
+                synthesis_agent_text[:90].replace("\n", "\\n"),
+                synthesis_agent_text[-90:].replace("\n", "\\n"),
+                len(str(state.get("process_narration") or "")),
             )
             async for chunk in self._emit_reply_text_chunks(state, gap):
                 yield chunk
@@ -2778,6 +2784,10 @@ class AssistantAgentRunner(BaseExecutor):
 
         synthesis_tokens = extract_tokens_from_message(last_synthesis_chunk)
         if synthesis_tokens["prompt_tokens"] or synthesis_tokens["completion_tokens"]:
+            # 本函数已自行记录一条 synthesis trace；必须置位该标志，
+            # 否则外层记录器（_stream_agentscope_native_events 末尾）会再补一条内容相同的
+            # synthesis step，造成同一轮合成被记录两遍、step_counter 重复累加。
+            state["synthesis_recorded"] = True
             self._increment_step()
             self.trace_buffer.append(
                 AgentExecutionStep(

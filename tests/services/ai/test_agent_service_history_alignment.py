@@ -42,7 +42,7 @@ def test_context_excludes_interrupted_turn_but_keeps_completed_history():
         {"role": "assistant", "content": "被终止的半截回答", "status": "cancelled"},
     ]
 
-    context = agent_service._history_messages_for_context(history)
+    context = agent_service.history_messages_for_llm(history)
 
     assert context == [
         {"role": "user", "content": "已完成的问题"},

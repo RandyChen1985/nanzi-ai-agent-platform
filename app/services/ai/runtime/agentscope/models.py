@@ -270,6 +270,8 @@ def create_openai_chat_model(config: AgentScopeModelConfig):
         "stream": config.streaming,
         "parameters": parameters,
         "max_retries": config.max_retries,
+        # AgentScope owns the retry budget; SDK retries would multiply it.
+        "client_kwargs": {"max_retries": 0},
     }
     if config.provider == "azure":
         from app.utils.model_providers import azure_openai_request_config
@@ -282,10 +284,10 @@ def create_openai_chat_model(config: AgentScopeModelConfig):
             api_key=config.api_key,
             base_url=azure_base_url,
         )
-        model_kwargs["client_kwargs"] = {
+        model_kwargs["client_kwargs"].update({
             "default_headers": {"api-key": config.api_key},
             "default_query": {"api-version": api_version},
-        }
+        })
     if config.context_size is not None:
         model_kwargs["context_size"] = config.context_size
 

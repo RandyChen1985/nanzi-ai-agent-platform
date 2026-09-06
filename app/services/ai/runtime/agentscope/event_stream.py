@@ -90,7 +90,13 @@ def new_native_stream_state(
 
 
 def extract_latest_assistant_text(agent: Any, *, include_thinking: bool = False) -> str:
-    """从 AgentState.context 提取最近一条 assistant 可展示文本（流式未发 TEXT_BLOCK_DELTA 时兜底）。"""
+    """从 AgentState.context 提取最近一条 assistant 可展示文本（流式未发 TEXT_BLOCK_DELTA 时兜底）。
+
+    注意 reconcile 对齐语义：同一条 assistant 消息可能包含工具环多轮输出的多个
+    text block（过程旁白 + 最终正文）。这里只取最后一个有可见文本的 block（最终
+    正文），避免把过程旁白与正文拼接，导致 `compute_stream_reconcile_gap` 把
+    “旁白前缀 + 已展示正文”当作差额整段补发，造成用户看到重复输出。
+    """
     from app.services.ai.runtime.agentscope.text_sanitize import sanitize_assistant_stream_text
 
     agent_state = getattr(agent, "state", None)
@@ -112,10 +118,15 @@ def extract_latest_assistant_text(agent: Any, *, include_thinking: bool = False)
                 text = str(getattr(block, "text", "") or "")
                 if text.strip():
                     parts.append(text)
-        if parts:
-            cleaned = sanitize_assistant_stream_text("".join(parts))
-            if cleaned.strip():
-                return cleaned
+        if not parts:
+            continue
+        # 只取最后一个有可见文本的 block（最终正文），避免把过程旁白拼进来。
+        last_block = sanitize_assistant_stream_text(parts[-1])
+        if last_block.strip():
+            return last_block
+        cleaned = sanitize_assistant_stream_text("".join(parts))
+        if cleaned.strip():
+            return cleaned
     return ""
 
 

@@ -433,3 +433,139 @@ async def test_memory_service_set_digest_if_current_allows_newer_seq_for_same_br
 
     assert written is True
     pipe.execute.assert_awaited_once()
+
+
+def _make_digest_fake_redis(*, stored_seq, stored_quality):
+    """构造模拟 Redis，模拟已存 digest 的 seq/quality（事务路径可写）。"""
+
+    class _Pipeline:
+        def __init__(self):
+            self.commands = []
+            self.set_cmds = []
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return False
+
+        async def watch(self, key):
+            self.commands.append(("watch", key))
+
+        async def get(self, key):
+            self.commands.append(("get", key))
+            if key.endswith(":digest_seq"):
+                return str(stored_seq)
+            if key.endswith(":digest_quality"):
+                return str(stored_quality)
+            if key.endswith(":seq_counter"):
+                return str(max(stored_seq, 0))
+            return None
+
+        def multi(self):
+            self.commands.append(("multi",))
+
+        def set(self, key, value, ex=None):
+            self.set_cmds.append(("set", key, value, ex))
+
+        def reset(self):
+            self.commands.append(("reset",))
+
+        async def execute(self):
+            self.commands.append(("execute",))
+            return [True]
+
+    class _Redis:
+        def __init__(self):
+            self.pipe = _Pipeline()
+
+        async def get(self, key):
+            if key.endswith(":seq_counter"):
+                return str(max(stored_seq, 0))
+            if key.endswith(":digest_seq"):
+                return str(stored_seq)
+            if key.endswith(":digest_quality"):
+                return str(stored_quality)
+            if key.endswith(":digest"):
+                return "OLD-DIGEST"
+            return None
+
+        def pipeline(self):
+            return self.pipe
+
+    redis = _Redis()
+    return redis
+
+
+@pytest.mark.asyncio
+async def test_memory_service_set_digest_if_current_override_same_seq_same_quality():
+    """路由二次重压：同 seq、同 quality=0 的确定性摘要应能覆盖（override=True）。"""
+    service = MemoryService()
+    redis = _make_digest_fake_redis(stored_seq=3, stored_quality=0)
+
+    with patch(
+        "app.services.ai.memory_service.get_redis",
+        new_callable=AsyncMock,
+        return_value=redis,
+    ):
+        written = await service.set_digest_if_current(
+            "u1",
+            "c1",
+            "REBUILT-DIGEST",
+            source_seq=3,
+            quality=0,
+            allow_newer_seq=True,
+            override_same_seq_same_quality=True,
+        )
+
+    assert written is True
+    assert ("set", "conversation:u1:c1:digest", "REBUILT-DIGEST", service.ttl) in redis.pipe.set_cmds
+
+
+@pytest.mark.asyncio
+async def test_memory_service_set_digest_if_current_keeps_rejecting_without_override():
+    """同 seq、同 quality=0、override=False：保持原语义，仍拒绝覆盖。"""
+    service = MemoryService()
+    redis = _make_digest_fake_redis(stored_seq=3, stored_quality=0)
+
+    with patch(
+        "app.services.ai.memory_service.get_redis",
+        new_callable=AsyncMock,
+        return_value=redis,
+    ):
+        written = await service.set_digest_if_current(
+            "u1",
+            "c1",
+            "SHOULD-NOT-WRITE",
+            source_seq=3,
+            quality=0,
+            allow_newer_seq=True,
+        )
+
+    assert written is False
+    assert not redis.pipe.set_cmds
+
+
+@pytest.mark.asyncio
+async def test_memory_service_set_digest_if_current_override_never_downgrades_llm():
+    """override=True 也绝不能把 quality=1 的 LLM 摘要降级覆盖成 quality=0。"""
+    service = MemoryService()
+    redis = _make_digest_fake_redis(stored_seq=3, stored_quality=1)
+
+    with patch(
+        "app.services.ai.memory_service.get_redis",
+        new_callable=AsyncMock,
+        return_value=redis,
+    ):
+        written = await service.set_digest_if_current(
+            "u1",
+            "c1",
+            "MUST-NOT-OVERRIDE-LLM",
+            source_seq=3,
+            quality=0,
+            allow_newer_seq=True,
+            override_same_seq_same_quality=True,
+        )
+
+    assert written is False
+    assert not redis.pipe.set_cmds

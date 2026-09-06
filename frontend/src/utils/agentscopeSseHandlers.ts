@@ -1011,11 +1011,10 @@ export async function resumeExternalExecutionStream(options: {
   while (true) {
     const { done, value } = await reader.read();
     if (done) break;
+    // createSseLineParser.feed/flush 已剥离 `data: ` 前缀并 trim，
+    // 返回的是纯 JSON payload 数组，无需（也不应）再做 data: 前缀二次过滤。
     const lines = parser.feed(decoder.decode(value, { stream: true }));
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (!trimmed.startsWith("data:")) continue;
-      const payload = trimmed.slice(5).trim();
+    for (const payload of lines) {
       if (payload === "[DONE]") return;
       try {
         options.onEvent(JSON.parse(payload));
@@ -1024,10 +1023,7 @@ export async function resumeExternalExecutionStream(options: {
       }
     }
   }
-  for (const line of parser.flush()) {
-    const trimmed = line.trim();
-    if (!trimmed.startsWith("data:")) continue;
-    const payload = trimmed.slice(5).trim();
+  for (const payload of parser.flush()) {
     if (payload === "[DONE]") continue;
     try {
       options.onEvent(JSON.parse(payload));

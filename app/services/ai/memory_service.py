@@ -344,6 +344,7 @@ class MemoryService:
         source_revision: Optional[int] = None,
         quality: int = 0,
         allow_newer_seq: bool = False,
+        override_same_seq_same_quality: bool = False,
     ) -> bool:
         """仅在摘要来源仍对应当前历史时写入 digest。
 
@@ -351,6 +352,12 @@ class MemoryService:
         竞态，避免较旧的后台摘要覆盖更新历史对应的摘要。上下文压缩摘要可以
         ``allow_newer_seq=True``：同一分支在摘要生成期间追加 assistant 消息不应让
         这个“历史前缀摘要”失效；分支 revision 变化和更高 source_seq 的摘要仍会淘汰它。
+
+        ``override_same_seq_same_quality=True`` 允许同 source_seq 且同 quality 的
+        确定性摘要互相覆盖：路由阶段按目标模型 budget 二次重压出的确定性摘要是
+        该窗口的权威版本，需能以相同 seq/quality 覆盖 pre-route 阶段落的确定性摘要，
+        否则 Redis 上的 digest 会停留在旧窗口，与 executor 实际所见的窗口不一致。
+        （仍拒绝更高 source_seq 与更高 stored_quality，绝不把 LLM 摘要降级覆盖。）
         """
         redis = await get_redis()
         if not redis:
@@ -372,8 +379,18 @@ class MemoryService:
                     return False
             stored_seq = int(await redis.get(digest_seq_key) or -1)
             stored_quality = int(await redis.get(digest_quality_key) or -1)
-            if stored_seq > int(source_seq) or (
-                stored_seq == int(source_seq) and stored_quality >= int(quality)
+            if (
+                stored_seq > int(source_seq)
+                or (
+                    stored_seq == int(source_seq)
+                    and (
+                        stored_quality > int(quality)
+                        or (
+                            not override_same_seq_same_quality
+                            and stored_quality >= int(quality)
+                        )
+                    )
+                )
             ):
                 return False
 
@@ -398,8 +415,18 @@ class MemoryService:
                         return False
                 stored_seq = int(await pipe.get(digest_seq_key) or -1)
                 stored_quality = int(await pipe.get(digest_quality_key) or -1)
-                if stored_seq > int(source_seq) or (
-                    stored_seq == int(source_seq) and stored_quality >= int(quality)
+                if (
+                    stored_seq > int(source_seq)
+                    or (
+                        stored_seq == int(source_seq)
+                        and (
+                            stored_quality > int(quality)
+                            or (
+                                not override_same_seq_same_quality
+                                and stored_quality >= int(quality)
+                            )
+                        )
+                    )
                 ):
                     await pipe.reset()
                     return False

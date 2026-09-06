@@ -28,7 +28,7 @@ async def test_platform_context_summarized_event_is_persisted_with_scope_metadat
     }
 
     with patch(
-        "app.services.ai.agent_service.context_compaction_log_service.append_event",
+        "app.services.ai.context.compactor.context_compaction_log_service.append_event",
         append_event,
     ):
         await service._persist_context_compaction_event(
@@ -113,10 +113,10 @@ async def test_platform_persistence_timeout_does_not_fail_the_sse_path():
         await asyncio.sleep(10)
 
     with patch(
-        "app.services.ai.agent_service.context_compaction_log_service.append_event",
+        "app.services.ai.context.compactor.context_compaction_log_service.append_event",
         side_effect=_hang,
     ), patch(
-        "app.services.ai.agent_service.context_compaction_log_service.APPEND_TIMEOUT_SECONDS",
+        "app.services.ai.context.compactor.context_compaction_log_service.APPEND_TIMEOUT_SECONDS",
         0.01,
     ):
         await service._persist_context_compaction_event(
@@ -163,7 +163,7 @@ async def test_resolved_model_compaction_persistence_uses_request_user_id():
     with patch.object(
         service,
         "_resolve_and_verify_agent",
-        new=AsyncMock(return_value=(agent_config, None, 0.0, "stop")),
+        new=AsyncMock(return_value=(agent_config, None, 0.0, None)),
     ), patch.object(
         service,
         "_resolve_runtime_model_info_safe",
@@ -188,9 +188,8 @@ async def test_resolved_model_compaction_persistence_uses_request_user_id():
     ):
         chunks = [
             chunk
-            async for chunk in service._run_chat_turn_stream(
+            async for chunk in service.chat_completion_stream(
                 messages=[{"role": "user", "content": "测试"}],
-                user_query="测试",
                 agent_id=None,
                 agent_name="主助手",
                 version_id=None,
@@ -202,10 +201,6 @@ async def test_resolved_model_compaction_persistence_uses_request_user_id():
                 permission_options=None,
                 knowledge_dataset_ids=None,
                 metadata_dataset_ids=None,
-                trace_id="trace-1",
-                trace_buffer=[],
-                start_time=0.0,
-                shared_state=shared_state,
             )
         ]
 

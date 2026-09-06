@@ -23,11 +23,15 @@ flowchart TB
         U["用户消息 + 附件/技能/知识库"]
     end
 
-    subgraph AS["AgentService"]
-        M["Redis 会话记忆"]
-        CM["ContextManager<br/>默认 Main / 指定专家"]
-        INJ["注入: 技能/LTM/记忆/Skill扫描/用户画像 stable_prefix"]
-        DP["AgentDispatcher"]
+    subgraph AS["AgentService 管道架构 (PipelineRunner)"]
+        S1["1. PreflightStep<br/>(Quota/会话锁排队/输入风控)"]
+        S2["2. ContextStep<br/>(Redis历史/窗口裁剪/溢出压缩)"]
+        S3["3. RouteStep<br/>(@路由/意图识别/专家绑定/模型直答)"]
+        S4["4. AssembleStep<br/>(Prompt分层组装/防注入边界)"]
+        S5["5. ExecutionStep<br/>(调度 Dispatcher 与流式推导)"]
+        S6["6. FinalizeStep<br/>(Token聚合/持久化落库/审计收敛)"]
+
+        S1 --> S2 --> S3 --> S4 --> S5 --> S6
     end
 
     subgraph EX["Executor"]
@@ -38,13 +42,12 @@ flowchart TB
         O["OpenClawExecutor"]
     end
 
-    U --> M
-    M --> CM --> INJ --> DP
-    DP --> D & K & A & R & O
-    D & K & A & R & O --> SSE["流式 content / log"]
+    U --> S1
+    S5 --> D & K & A & R & O
+    D & K & A & R & O --> SSE["流式 content / reasoning / log"]
 ```
 
-**一轮请求的主路径**：Redis 读历史 -> 解析默认 Main 或指定专家 -> 注入上下文 -> Main 按需委派 -> Dispatcher 选 Executor -> ReAct/合成 -> 写回 Redis + Trace。
+**一轮请求的主路径**：`PipelineContext` 初始化 ➔ `PreflightStep`（Quota预检/排队锁） ➔ `ContextStep`（Redis 读历史/窗口裁剪/溢出压缩） ➔ `RouteStep`（解析默认 Main 或指定专家/直答拦截） ➔ `AssembleStep`（分层 Prompt 组装与边界注入） ➔ `ExecutionStep`（Dispatcher 调度执行器 / ReAct / 多Agent合成） ➔ `FinalizeStep`（Token 聚合 / 写回 Redis 与会话摘要 / 审计日志持久化）。
 
 当前分类边界：
 

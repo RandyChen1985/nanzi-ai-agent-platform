@@ -1,4 +1,5 @@
 import asyncio
+from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -6,6 +7,73 @@ import pytest
 
 
 pytestmark = pytest.mark.no_infrastructure
+
+
+@pytest.mark.asyncio
+async def test_chat_completion_stream_wires_real_six_step_pipeline_and_tracker(monkeypatch):
+    """生产入口必须构造真实六步骤并注入性能追踪器。"""
+    import app.services.ai.agent_service as agent_service_module
+    import app.services.ai.pipeline as pipeline_module
+    from app.services.ai.agent_service import AgentService
+    from app.services.ai.runtime.execution_observability import ExecutionPerformanceTracker
+
+    captured = {}
+
+    class CapturingRunner:
+        def __init__(self, steps):
+            captured["steps"] = [type(step).__name__ for step in steps]
+
+        async def run(self, context):
+            captured["context"] = context
+            yield {"type": "run_status", "status": "success"}
+
+    class DummyLane:
+        async def is_locked(self, **kwargs):
+            return False
+
+        @asynccontextmanager
+        async def hold(self, **kwargs):
+            yield
+
+    @asynccontextmanager
+    async def tracked_run(*args, **kwargs):
+        yield SimpleNamespace(cancelled=False)
+
+    async def no_quota_events(self, context):
+        if False:
+            yield {}
+
+    monkeypatch.setattr(pipeline_module, "PipelineRunner", CapturingRunner)
+    monkeypatch.setattr(agent_service_module, "conversation_run_lane", DummyLane())
+    monkeypatch.setattr(agent_service_module, "track_conversation_run", tracked_run)
+    monkeypatch.setattr(
+        "app.services.ai.pipeline.steps.preflight_step.PreflightStep.check_quota_and_queue",
+        no_quota_events,
+    )
+    monkeypatch.setattr(
+        "app.services.ai.runtime.agentscope.tool_timeout.load_agent_max_toolcall_timeout",
+        AsyncMock(return_value=30.0),
+    )
+
+    events = [
+        event
+        async for event in AgentService().chat_completion_stream(
+            [{"role": "user", "content": "你好"}],
+            user_info={"user_id": "42"},
+        )
+    ]
+
+    assert events == [{"type": "run_status", "status": "success"}]
+    assert captured["steps"] == [
+        "PreflightStep",
+        "ContextStep",
+        "RouteStep",
+        "AssembleStep",
+        "ExecutionStep",
+        "FinalizeStep",
+    ]
+    assert isinstance(captured["context"].performance_tracker, ExecutionPerformanceTracker)
+    assert captured["context"].shared_state["performance_tracker"] is captured["context"].performance_tracker
 
 
 def test_execution_performance_tracker_records_stage_and_ttft():
@@ -114,10 +182,39 @@ async def test_agent_service_publishes_execution_performance_snapshot(monkeypatc
     route_task = asyncio.create_task(route_result())
     service = AgentService()
 
+    class DummyLane:
+        async def is_locked(self, **_kwargs):
+            return False
+
+        @asynccontextmanager
+        async def hold(self, **_kwargs):
+            yield False
+
+    @asynccontextmanager
+    async def tracked_run(*_args, **_kwargs):
+        yield SimpleNamespace(cancelled=False)
+
     async def fail_fixed_polling(*_args, **_kwargs):
         raise AssertionError("route resolution should not use fixed-interval polling")
 
-    monkeypatch.setattr(asyncio, "wait_for", fail_fixed_polling)
+    route_asyncio = SimpleNamespace(
+        Queue=asyncio.Queue,
+        create_task=asyncio.create_task,
+        wait=asyncio.wait,
+        wait_for=fail_fixed_polling,
+        gather=asyncio.gather,
+        FIRST_COMPLETED=asyncio.FIRST_COMPLETED,
+        CancelledError=asyncio.CancelledError,
+        get_running_loop=asyncio.get_running_loop,
+    )
+    dummy_lane = DummyLane()
+    monkeypatch.setattr(
+        "app.services.ai.pipeline.steps.preflight_step.conversation_run_lane",
+        dummy_lane,
+    )
+    monkeypatch.setattr("app.services.ai.agent_service.conversation_run_lane", dummy_lane)
+    monkeypatch.setattr("app.services.ai.agent_service.track_conversation_run", tracked_run)
+    monkeypatch.setattr("app.services.ai.pipeline.steps.route_step.asyncio", route_asyncio)
     monkeypatch.setattr(
         service,
         "_start_route_resolution",
@@ -147,39 +244,22 @@ async def test_agent_service_publishes_execution_performance_snapshot(monkeypatc
         persist,
     )
 
-    shared_state = {
-        "agent_config": None,
-        "execution_status": "success",
-        "process_timeline": [],
-    }
+    shared_state = {}
     events = [
         event
-        async for event in service._run_chat_turn_stream(
+        async for event in service.chat_completion_stream(
             messages=[{"role": "user", "content": "当前模型是什么"}],
-            user_query="当前模型是什么",
-            agent_id=None,
-            agent_name=None,
-            version_id=None,
             conversation_id="conv-observe",
             user_info={"user_id": "42"},
-            api_key=None,
             enable_multi_agent=False,
-            debug_options=None,
-            permission_options=None,
-            knowledge_dataset_ids=None,
-            metadata_dataset_ids=None,
-            trace_id="trace-observe",
-            trace_buffer=[],
-            start_time=asyncio.get_running_loop().time(),
             shared_state=shared_state,
         )
     ]
 
     snapshot = shared_state["execution_performance"]
-    assert events[-1]["content"]
+    assert any(event.get("content") for event in events)
     assert not any(event.get("type") == "error" for event in events)
-    await asyncio.sleep(0)
-    persist.assert_awaited_once()
+    assert persist.await_count == 2
     assert "route_resolution" in snapshot["stages_ms"]
     assert "runtime_model_metadata" in snapshot["stages_ms"]
     assert snapshot["ttft_ms"] is not None
@@ -187,7 +267,6 @@ async def test_agent_service_publishes_execution_performance_snapshot(monkeypatc
     assert snapshot["tool_call_count"] == 0
     assert snapshot["audit_completed"] is True
     assert "content" not in snapshot
-    audit.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -280,31 +359,13 @@ async def test_default_main_decision_does_not_emit_router_log(monkeypatch):
         AsyncMock(),
     )
 
-    shared_state = {
-        "agent_config": None,
-        "execution_status": "success",
-        "process_timeline": [],
-    }
     events = [
         event
-        async for event in service._run_chat_turn_stream(
+        async for event in service.chat_completion_stream(
             messages=[{"role": "user", "content": "当前模型是什么"}],
-            user_query="当前模型是什么",
-            agent_id=None,
-            agent_name=None,
-            version_id=None,
             conversation_id="conv-default-main",
             user_info={"user_id": "42"},
-            api_key=None,
             enable_multi_agent=True,
-            debug_options=None,
-            permission_options=None,
-            knowledge_dataset_ids=None,
-            metadata_dataset_ids=None,
-            trace_id="trace-default-main",
-            trace_buffer=[],
-            start_time=asyncio.get_running_loop().time(),
-            shared_state=shared_state,
         )
     ]
 

@@ -166,6 +166,20 @@ def compute_stream_reconcile_gap(streamed: str, agent_text: str) -> str:
         ):
             return ""
 
+    # AgentScope 会把工具环多轮输出的过程旁白与最终正文拼进同一条 assistant 文本
+    # （extract_latest_assistant_text 按 text block """.join""）。此时 agent 相对
+    # streamed 多出的往往只是开头的过程话术，而最终正文已全部流式展示。若去除空白后
+    # agent 以 streamed 结尾，说明正文无任何新增，再整段补发会把已展示正文与旁白重复发一遍。
+    compact_agent = _compact_reply(agent_raw)
+    compact_streamed = _compact_reply(streamed_stripped)
+    if (
+        compact_agent
+        and compact_streamed
+        and len(compact_agent) > len(compact_streamed)
+        and compact_agent.endswith(compact_streamed)
+    ):
+        return ""
+
     if len(agent_raw) > len(streamed_stripped) + 20:
         return agent_raw
 

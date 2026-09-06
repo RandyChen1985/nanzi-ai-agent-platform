@@ -22,7 +22,7 @@ assert.match(
   /@update:modelValue="handleSetGrounding"/,
   "settings should bind the grounding Switch to handleSetGrounding",
 );
-assert.match(embedChat, /enableGrounding:\s*true/, "EmbedChat grounding should default to enabled");
+assert.match(embedChat, /enableGrounding:\s*false/, "EmbedChat grounding should default to disabled");
 assert.match(
   embedChat,
   /grounding_enabled:\s*config\.enableGrounding/,
@@ -30,8 +30,8 @@ assert.match(
 );
 assert.match(
   embedChat,
-  /const resetSession[\s\S]*?config\.enableGrounding\s*=\s*true/,
-  "starting a new conversation should reset grounding to the default enabled state",
+  /const resetSession[\s\S]*?config\.enableGrounding\s*=\s*false/,
+  "starting a new conversation should reset grounding to the default disabled state",
 );
 
 assert.doesNotMatch(
@@ -58,7 +58,7 @@ assert.match(
 );
 assert.match(
   agentDebug,
-  /:selected-model="debugConfig\.model"[\s\S]*?@update:selected-model="debugConfig\.model = \$event"/,
+  /:selected-model="debugConfig\.model"[\s\S]*?@update:selected-model="(debugConfig\.model = \$event|handleDebugModelSelection)"/,
   "the AgentDebug input model selector should remain available",
 );
 
@@ -115,7 +115,7 @@ for (const [source, surface] of [
 }
 assert.match(
   settings,
-  /if \(props\.config\.enableGrounding === enabled\)[\s\S]*?saveAndClose\(\);[\s\S]*?return;/,
+  /if \(props\.config\.enableGrounding === enabled\)[\s\S]*?(saveAndClose|saveSettings)\(\);[\s\S]*?return;/,
   "chat settings should not show a Toast when the state did not change",
 );
 assert.match(
@@ -123,5 +123,10 @@ assert.match(
   /@change="handleGroundingChange"/,
   "AgentDebug should show feedback after the checkbox value changes",
 );
+
+const chatInput = readSource("src/components/embed/ChatInput.vue");
+assert.match(chatInput, /data-testid="grounding-status-pill"/, "ChatInput should render grounding status pill when enabled");
+assert.match(embedChat, /@disable-grounding="disableGroundingWithToast"/, "EmbedChat should support closing grounding from pill");
+assert.match(chatInput, /AI 正在生成并严格核验证据…/, "ChatInput should display grounding verification message during generation");
 
 console.log("groundingToggle.test.ts passed");

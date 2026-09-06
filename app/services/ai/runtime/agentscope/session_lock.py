@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import uuid
 from contextlib import asynccontextmanager
 from typing import AsyncIterator
+
+from app.services.ai.runtime.lock_renewal import renew_lock_during_hold
 
 logger = logging.getLogger(__name__)
 
@@ -166,9 +169,15 @@ class AgentScopeSessionLock:
                 f"Failed to acquire AgentScope session lock for conversation={conversation_id}"
             )
         key, token = handle
+        renewal = asyncio.create_task(
+            renew_lock_during_hold(key=key, token=token, ttl_seconds=ttl_seconds)
+        )
         try:
             yield True
         finally:
+            renewal.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await renewal
             await self.release(key, token)
 
 

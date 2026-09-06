@@ -216,6 +216,31 @@ class PendingAgentScopeConfirmationRegistry:
             return None
         return request
 
+    async def peek_async(
+        self,
+        request_id: str,
+        *,
+        user_id: str | int | None = None,
+    ) -> PendingAgentScopeConfirmation | None:
+        """非破坏式读取：先查内存，再查 Redis 快照，均不删除。
+
+        供恢复流程「先校验、后消费」使用：避免在配额/会话锁校验失败或用户取消时，
+        快照已被 pop 删除导致确认结果丢失、无法重试。
+        """
+        self.prune_sync()
+        request = self._items.get(request_id)
+        if request and not request.is_expired():
+            if request.user_id and user_id is not None and str(request.user_id) != str(user_id):
+                return None
+            return request
+        if request:
+            self._items.pop(request_id, None)
+
+        snapshot = await pending_agentscope_store.peek(request_id, user_id=user_id)
+        if not snapshot:
+            return None
+        return PendingAgentScopeConfirmation.from_snapshot(snapshot)
+
     def prune_sync(self) -> None:
         now = time.time()
         expired = [

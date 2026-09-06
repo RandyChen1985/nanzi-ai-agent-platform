@@ -89,9 +89,10 @@ class PendingAgentScopeStore:
         if redis:
             key = self._key(user_id, request_id)
             try:
-                raw = await redis.get(key)
+                # 用 GETDEL 原子取删，避免 get+delete 两个往返之间存在并发双消费窗口
+                # （多 worker / 按钮连点并发恢复时会双读到同一快照）。
+                raw = await redis.getdel(key)
                 if raw:
-                    await redis.delete(key)
                     if isinstance(raw, bytes):
                         raw = raw.decode("utf-8")
                     snapshot = self._from_dict(json.loads(raw))

@@ -228,7 +228,7 @@ async def test_map_standard_agentscope_event_interrupts_on_external_execution():
         conversation_id = "c"
 
         def _runtime_user_id(self):
-            return None
+            return "test_user_ext"
 
         def _runtime_agent_name(self):
             return "GeneralAgent"
@@ -391,3 +391,67 @@ def test_extract_latest_assistant_text_reads_last_assistant_msg():
     )()
 
     assert extract_latest_assistant_text(agent) == "final answer"
+
+
+def test_extract_latest_assistant_text_takes_last_block_for_multiblock_msg():
+    """工具环同一条 assistant 消息含「过程旁白 + 最终正文」多个 text block 时，
+    只应取最后一个 block（最终正文），否则 reconcile 会把旁白与正文拼接、
+    当作差额整段补发，造成用户看到重复输出。"""
+    from agentscope.message import Msg, TextBlock
+    from agentscope.state import AgentState
+
+    narration = ["两个数据都拿到了。让我获取更多数据。", "数据齐全了。现在整理保存。"]
+    body = "## 业务洞察\n" + ("优秀分析结果 " * 10)
+
+    agent = type(
+        "FakeAgent",
+        (),
+        {
+            "state": AgentState(
+                session_id="s2",
+                reply_id="r2",
+                context=[
+                    Msg(
+                        name="assistant",
+                        role="assistant",
+                        content=[
+                            TextBlock(text=narration[0]),
+                            TextBlock(text=narration[1]),
+                            TextBlock(text=body),
+                        ],
+                    )
+                ],
+            )
+        },
+    )()
+
+    extracted = extract_latest_assistant_text(agent)
+    assert extracted == body
+    assert "两个数据都拿到了" not in extracted
+    assert "数据齐全了" not in extracted
+
+
+def test_extract_latest_assistant_text_join_fallback_when_last_block_empty():
+    """最后一个 block 为空时回退到拼接，避免整条丢失。"""
+    from agentscope.message import Msg, TextBlock
+    from agentscope.state import AgentState
+
+    agent = type(
+        "FakeAgent",
+        (),
+        {
+            "state": AgentState(
+                session_id="s3",
+                reply_id="r3",
+                context=[
+                    Msg(
+                        name="assistant",
+                        role="assistant",
+                        content=[TextBlock(text="正文一"), TextBlock(text="")],
+                    )
+                ],
+            )
+        },
+    )()
+
+    assert extract_latest_assistant_text(agent) == "正文一"

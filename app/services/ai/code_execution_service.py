@@ -156,6 +156,14 @@ async def run_shell_command_capture(
             await communicate_task
         stdout, stderr = communicate_task.result()
     except BaseException:
+        try:
+            if process.returncode is None:
+                if os.name == "posix":
+                    os.killpg(os.getpgid(process.pid), signal.SIGKILL)
+                else:
+                    process.kill()
+        except (ProcessLookupError, PermissionError, OSError):
+            pass
         if not communicate_task.done():
             communicate_task.cancel()
             await asyncio.gather(communicate_task, return_exceptions=True)
@@ -350,6 +358,11 @@ class CodeExecutionHandle:
             if os.name == "posix":
                 process_kwargs["start_new_session"] = True
             self._process = await asyncio.create_subprocess_exec(*command, **process_kwargs)
+            from app.services.ai.runtime.conversation_run_registry import get_current_run_handle
+            current_handle = get_current_run_handle()
+            if current_handle is not None:
+                current_handle.track_process(self._process)
+
             self.started.set()
             await self._emit(
                 "started",
@@ -380,7 +393,12 @@ class CodeExecutionHandle:
                 )
                 await self._emit("timeout", {"message": result.error})
                 return
+            except BaseException:
+                await self._terminate_process()
+                raise
             finally:
+                if current_handle is not None:
+                    current_handle.untrack_process(self._process)
                 for task in drain_tasks:
                     if not task.done():
                         task.cancel()

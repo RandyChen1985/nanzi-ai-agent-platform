@@ -3344,7 +3344,10 @@ const sendMessageInternal = async (snapshot: ChatSendSnapshot) => {
 
           try {
             const data = JSON.parse(dataStr);
-
+            if (data?.type === "keepalive") {
+              // 后端静默期心跳帧：仅用于连接保活，无业务负载。
+              continue;
+            }
             applyStreamTraceId(agentMsg.value, data);
 
             // Handle Structured Logs
@@ -3641,11 +3644,40 @@ const submitPendingExternalExecution = async (msg: Message) => {
 };
 
 const applyPermissionStreamEvent = (msg: Message, data: any) => {
+  // 无条件写入 trace_id —— 不作为门控（恢复流 permission_result/log 等多不带
+  // trace_id，若作为 gate 会整体丢帧，见 EmbedChat 同函数做法）。
+  applyStreamTraceId(msg, data);
   if (data.agent_name && !msg.agentName) msg.agentName = data.agent_name;
   if (data.agent_display_name && !msg.agentDisplayName) msg.agentDisplayName = data.agent_display_name;
 
-  if (applyStreamTraceId(msg, data)) {
+  if (data?.type === "run_status") {
+    // 恢复流末尾的 run_status 终态：status 为 success / rejected / error 等真实结果，
+    // 按终态映射，避免把“用户拒绝/执行失败”错误显示为已完成。
+    if (msg.pendingPermission) {
+      msg.pendingPermission.status =
+        data.status === "rejected" || data.status === "denied"
+          ? "rejected"
+          : data.status === "error" || data.status === "failed"
+            ? "error"
+            : "approved";
+    }
+    if (msg.pendingExternalExecution) {
+      msg.pendingExternalExecution.status =
+        data.status === "error" || data.status === "failed" ? "error" : "completed";
+    }
+    msg.isThinking = false;
+    markOutputCompleted();
+    if (thoughtTimer) {
+      clearInterval(thoughtTimer);
+      thoughtTimer = null;
+    }
+    if (data.status === "success") {
+      (msg as any).status = "success";
+    }
+    return;
+  }
 
+  {
     if (dispatchAgentscopeStreamEvent(msg, data, addRealLog, messages.value)) {
       if (data.type === "error") {
         if (msg.pendingPermission) msg.pendingPermission.status = "error";
@@ -3731,6 +3763,15 @@ const applyPermissionStreamEvent = (msg: Message, data: any) => {
       if (msg.pendingPermission) msg.pendingPermission.status = "error";
       msg.isThinking = false;
       applyStreamErrorMessage(msg, data);
+    } else if (data.type === "retraction") {
+      msg.content = stripInternalContextBlocks(String(data.content || ""));
+      if (data.final !== false) {
+        msg.isThinking = false;
+        if (thoughtTimer) {
+          clearInterval(thoughtTimer);
+          thoughtTimer = null;
+        }
+      }
     } else if (
       data.content &&
       data.type !== "reasoning_content" &&
@@ -3762,87 +3803,6 @@ const applyPermissionStreamEvent = (msg: Message, data: any) => {
     return;
   }
 
-  if (data.type === "log") {
-    addRealLog(msg, data);
-  } else if (data.type === "router_log") {
-    const thoughtText = data.thought || "No reasoning provided.";
-    const agentName = data.selected_agent || "Unknown";
-    const conf = data.confidence !== undefined ? `(置信度: ${data.confidence})` : "";
-    addRealLog(msg, {
-      id: data.id || "route:target_selection",
-      parent_id: data.parent_id || "route:target_config",
-      title: "智能路由决策",
-      details: `**思考过程 (Chain of Thought):**\n${thoughtText}\n\n**最终选择:** ${agentName} ${conf}`,
-      status: "success",
-      isDebug: true,
-      isRouter: true,
-    });
-  } else if (data.type === "debug" && data.subtype === "raw_prompt") {
-    msg.rawPrompt = data.data;
-    addRealLog(msg, {
-      title: "Debug: Raw Prompt Captured",
-      details: 'Click "Raw Prompt" button to view.',
-      status: "success",
-      isDebug: true,
-    });
-  } else if (mergeStreamCitations(msg, data)) {
-    // Citations are merged and de-duplicated by the shared stream normalizer.
-  } else if (data.type === "context") {
-    addRealLog(msg, {
-      title: "✨ Context Updated",
-      details: JSON.stringify(data.data, null, 2),
-      status: "success",
-    });
-    if (data.data) {
-      agentContext.value = { ...agentContext.value, ...data.data };
-    }
-  } else if (applyChatBIInsightEvent(msg, data) || applyChatBIMetadataGuideEvent(msg, data) || applyAgentHandoffEvent(msg, data)) {
-    return;
-  } else if (data.type === "thinking" && data.status === "continuing") {
-    msg.isThinking = true;
-  } else if (data.type === "meta") {
-    if (data.agent_name) msg.agentName = data.agent_name;
-    if (data.agent_type) msg.agentType = data.agent_type;
-    if (data.agent_display_name) msg.agentDisplayName = data.agent_display_name;
-    if (data.rag_retrieval) ragRetrievalMeta.value = data.rag_retrieval;
-    if (data.permission_notice) msg.permissionNotice = data.permission_notice;
-  } else if (data.type === "error") {
-    if (msg.pendingPermission) msg.pendingPermission.status = "error";
-    msg.isThinking = false;
-    applyStreamErrorMessage(msg, data);
-  } else if (data.type === "retraction") {
-    msg.content = stripInternalContextBlocks(String(data.content || ""));
-    if (data.final !== false) {
-      msg.isThinking = false;
-      if (thoughtTimer) {
-        clearInterval(thoughtTimer);
-        thoughtTimer = null;
-      }
-    }
-  } else if (data.content) {
-    const piece = sanitizeStreamContent(String(data.content));
-    if (piece) {
-      if (msg.isThoughtExpanded && !msg.content) {
-        msg.isThoughtExpanded = false;
-      }
-      appendAssistantBodyDelta(msg, piece);
-      if (msg.isThinking) {
-        msg.isThinking = false;
-        if (thoughtTimer) {
-          clearInterval(thoughtTimer);
-          thoughtTimer = null;
-        }
-      }
-    }
-  }
-
-  if (data.status === "generating" && msg.content) {
-    msg.isThinking = false;
-  } else if (data.type === "error" || data.status === "error") {
-    msg.isThinking = false;
-    applyStreamErrorMessage(msg, data);
-  }
-  if (data.intent) msg.intent = data.intent;
 };
 
 const submitBusinessConfirmation = async (

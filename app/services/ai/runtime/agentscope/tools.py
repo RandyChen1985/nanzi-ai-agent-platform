@@ -28,6 +28,11 @@ from app.services.ai.runtime.agentscope.tool_result import (
     is_tool_result_failure_state,
 )
 
+from app.services.ai.runtime.agentscope.tool_parallel import (
+    is_tool_concurrency_safe,
+    execute_with_concurrency_guard,
+)
+
 
 logger = logging.getLogger(__name__)
 
@@ -486,10 +491,22 @@ class RuntimeToolSpec:
     timeout_seconds: float | None = None
     audit_callback: Callable[[RuntimeToolAuditEvent], Any] | None = None
     native_tool: Any | None = None
+    is_concurrency_safe: bool | None = None
 
     @property
     def is_read_only(self) -> bool:
         return self.permission_scope == "read"
+
+    @property
+    def concurrency_safe(self) -> bool:
+        return is_tool_concurrency_safe(
+            tool_name=self.name,
+            permission_scope=self.permission_scope,
+            approval_mode="allow",
+            source_type=self.source_type,
+            custom_flag=self.is_concurrency_safe,
+            read_only_tool_names=READ_ONLY_TOOL_NAMES,
+        )
 
     async def invoke(
         self,
@@ -643,11 +660,21 @@ def filter_valid_runtime_tool_specs(
 
 
 class AgentScopeRuntimeTool:
-    is_concurrency_safe = False
     is_external_tool = False
     is_state_injected = False
     is_mcp = False
     mcp_name = None
+
+    @property
+    def is_concurrency_safe(self) -> bool:
+        return is_tool_concurrency_safe(
+            tool_name=self.name,
+            permission_scope=self.spec.permission_scope,
+            approval_mode=self.approval_mode,
+            source_type=self.spec.source_type,
+            custom_flag=self.spec.is_concurrency_safe,
+            read_only_tool_names=READ_ONLY_TOOL_NAMES,
+        )
 
     def __init__(
         self,
@@ -769,7 +796,10 @@ class AgentScopeRuntimeTool:
         self._check_tool_loop(kwargs)
         call_id = _new_tool_call_id(self.spec.name)
         try:
-            res = await self.spec.invoke(kwargs, call_id=call_id)
+            async def _invoke():
+                return await self.spec.invoke(kwargs, call_id=call_id)
+
+            res = await execute_with_concurrency_guard(_invoke)
             return ToolChunk(
                 content=[TextBlock(text=_format_runtime_tool_result(res))],
                 state=(
@@ -843,6 +873,18 @@ class AgentScopeNativeApprovalTool:
         verdict = self.loop_detector.record(self.name, tool_input)
         if verdict.fused:
             _raise_tool_loop_fuse(verdict.message)
+
+    @property
+    def is_concurrency_safe(self) -> bool:
+        native_flag = getattr(self.native_tool, "is_concurrency_safe", None)
+        return is_tool_concurrency_safe(
+            tool_name=self.name,
+            permission_scope=self.permission_scope,
+            approval_mode=self.approval_mode,
+            source_type=self.source_type,
+            custom_flag=native_flag,
+            read_only_tool_names=READ_ONLY_TOOL_NAMES,
+        )
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self.native_tool, name)
@@ -1022,10 +1064,13 @@ class AgentScopeNativeApprovalTool:
                     result = await result
                 return result
 
-            result = await asyncio.wait_for(
-                invoke_native(),
-                timeout=timeout_seconds,
-            )
+            async def _guarded_native_invoke():
+                return await asyncio.wait_for(
+                    invoke_native(),
+                    timeout=timeout_seconds,
+                )
+
+            result = await execute_with_concurrency_guard(_guarded_native_invoke)
             if inspect.isasyncgen(result):
                 return self._stream_native_result(
                     result,
@@ -1493,6 +1538,7 @@ def runtime_tool_spec_from_legacy_tool(
         evidence_inference_disabled=(
             getattr(tool, "evidence_inference_disabled", False) is True
         ),
+        is_concurrency_safe=getattr(tool, "is_concurrency_safe", None),
     )
 
 
@@ -1531,6 +1577,7 @@ def runtime_tool_spec_from_native_agentscope_tool(
             getattr(tool, "evidence_inference_disabled", False) is True
         ),
         native_tool=tool,
+        is_concurrency_safe=getattr(tool, "is_concurrency_safe", None),
     )
 
 
