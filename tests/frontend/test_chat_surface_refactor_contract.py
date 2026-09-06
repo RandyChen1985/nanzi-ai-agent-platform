@@ -82,6 +82,15 @@ def test_chat_surfaces_keep_permission_and_external_execution_panels():
         assert "拒绝" in source[permission_at:external_at]
 
 
+def test_external_execution_resume_consumes_shared_sse_parser_payloads_directly():
+    shared = _read("frontend/src/utils/agentscopeSseHandlers.ts")
+    resume_stream = shared[shared.index("export async function resumeExternalExecutionStream") :]
+
+    assert "for (const payload of lines)" in resume_stream
+    assert "for (const payload of parser.flush())" in resume_stream
+    assert 'startsWith("data:")' not in resume_stream
+
+
 def test_stop_generation_cancels_backend_run_before_aborting_sse():
     embed = _read("frontend/src/views/EmbedChat.vue")
     debug = _read("frontend/src/views/AgentDebug.vue")

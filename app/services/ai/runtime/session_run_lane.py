@@ -1,14 +1,16 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import uuid
 from contextlib import asynccontextmanager
 from typing import AsyncIterator
 
-logger = logging.getLogger(__name__)
-
 from app.services.ai.conversation_identity import require_user_id
+from app.services.ai.runtime.lock_renewal import renew_lock_during_hold
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_LOCK_TTL_SECONDS = 600
 DEFAULT_WAIT_SECONDS = 0.0
@@ -141,11 +143,13 @@ class ConversationRunLane:
                 logger.warning("[ConversationRunLane] acquire failed: %s", exc)
                 return None
             if acquired:
-                # 既然本 run 已独占会话 lane，任何残留的 per-agent 会话锁都必然是
-                # 上次被中断/崩溃 run 的孤儿锁。主动清掉它们，避免后续 executor 在
-                # 本应立即可用的 agent_lock 上干等 wait_seconds（“双层会话锁叠加”
-                # 削弱并发吞吐的主因）。此处是尽力而为，失败不影响主流程。
-                await self._clear_stale_agent_locks(user_id, conversation_id)
+                # 刻意不在拿到 lane 后自动清理同会话的 per-agent 会话锁：单独凭借
+                # “取得了 lane”无法证明那些 agent_lock 属于已终止的 run——正常 run
+                # 持锁期间，若其 lane 因续约故障 / 进程暂停 / 被显式取消而先行失效，
+                # 旧 run 的 executor 仍可能握着自己 agent_lock 在跑。此时无条件清理会
+                # 误删活跃锁、破坏互斥并并发操作同一 AgentState。孤儿 agent_lock 依靠
+                # 自身 TTL 过期自愈；显式取消路径（force_release_all_for_conversation）
+                # 已在任务停止后负责删除对应锁。
                 return key, token
             if wait <= 0:
                 break
@@ -160,42 +164,6 @@ class ConversationRunLane:
             trace_id,
         )
         return None
-
-    async def _clear_stale_agent_locks(
-        self,
-        user_id: str | int | None,
-        conversation_id: str | None,
-    ) -> None:
-        """尽力清除该会话遗留的 per-agent 会话锁（孤儿锁）。
-
-        进入 conversation_run_lane 即代表当前会话已无其他合法 run 在运行，因此
-        同会话内仍存在的 per-agent session_lock 必然是上次被中断 run 的残留。
-        不清除的话，本 run 内的 executor 会在 agentscope_session_lock.hold 上
-        空等至 wait_seconds，造成本可避免的延迟（“双层会话锁叠加”）。
-        """
-        if not conversation_id or not user_id:
-            return
-        try:
-            from app.services.ai.runtime.agentscope.session_lock import (
-                agentscope_session_lock,
-            )
-
-            released = await agentscope_session_lock.force_release_all_for_conversation(
-                user_id=user_id,
-                conversation_id=conversation_id,
-            )
-            if released:
-                logger.info(
-                    "[ConversationRunLane] cleared %d stale agent session lock(s) "
-                    "for conversation=%s",
-                    released,
-                    conversation_id,
-                )
-        except Exception as exc:
-            logger.warning(
-                "[ConversationRunLane] failed to clear stale agent session locks: %s",
-                exc,
-            )
 
     async def release(self, key: str | None, token: str | None) -> None:
         if not key or not token:
@@ -353,9 +321,24 @@ class ConversationRunLane:
             return
 
         key, token = handle
+        effective_ttl = (
+            ttl_seconds
+            if ttl_seconds is not None
+            else await self._ttl_seconds()
+        )
+        renewal = asyncio.create_task(
+            renew_lock_during_hold(
+                key=key,
+                token=token,
+                ttl_seconds=effective_ttl,
+            )
+        )
         try:
             yield True
         finally:
+            renewal.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await renewal
             await self.release(key, token)
 
 

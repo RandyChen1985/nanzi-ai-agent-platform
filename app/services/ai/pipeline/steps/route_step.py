@@ -26,8 +26,6 @@ from app.services.ai.reusable_result import (
     should_attempt_reusable_reuse,
     CLICKED_REPLY_MARKER,
 )
-from app.services.ai.memory_service import memory_service
-from app.services.ai.conversation_identity import require_user_id
 
 logger = logging.getLogger(__name__)
 
@@ -345,20 +343,6 @@ class RouteStep(BasePipelineStep):
                     "runtime_model_info": runtime_model_info.public_dict(),
                 }
                 yield {"content": response, "status": "success"}
-                if conversation_id:
-                    u_id = require_user_id(user_info)
-                    asyncio.create_task(
-                        memory_service.add_message(
-                            u_id,
-                            conversation_id,
-                            "assistant",
-                            response,
-                            trace_id=trace_id,
-                            agent_name=agent_config.agent_name,
-                            agent_type=_public_agent_type(agent_config),
-                            agent_display_name=(agent_config.agent_display_name or agent_config.agent_name),
-                        )
-                    )
                 context.execution_status = "answered_directly"
                 shared_state["execution_status"] = "answered_directly"
                 return

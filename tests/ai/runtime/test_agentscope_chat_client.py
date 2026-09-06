@@ -100,6 +100,9 @@ async def test_chat_client_extracts_non_streaming_text():
 
 @pytest.mark.asyncio
 async def test_chat_client_collects_streaming_final_text():
+    # AgentScope 流式契约：增量块(is_last=False)逐块射出，末尾由基类 __call__ 的
+    # 累积器补发一个携带完整正文的终帧(is_last=True)。终帧 content 是整段累积
+    # 后的完整结果，而不是最后一块增量——不能把终帧再次拼到已累积文本之后。
     from agentscope.message import TextBlock
     from agentscope.model import ChatResponse
 
@@ -111,7 +114,8 @@ async def test_chat_client_collects_streaming_final_text():
 
     async def fake_stream() -> AsyncIterator[ChatResponse]:
         yield ChatResponse(content=[TextBlock(text="partial")], is_last=False)
-        yield ChatResponse(content=[TextBlock(text="final answer")], is_last=True)
+        # 终帧按契约携带完整正文（= 全部增量拼合后的结果）
+        yield ChatResponse(content=[TextBlock(text="partialfinal answer")], is_last=True)
 
     class FakeNativeModel:
         async def __call__(self, messages, **kwargs):
@@ -168,8 +172,10 @@ async def test_generate_text_accumulates_all_stream_deltas():
 
 
 @pytest.mark.asyncio
-async def test_generate_text_accumulates_deltas_after_is_last_sentinel():
-    # is_last 仅是哨兵，正文增量依旧逐块累积，不能被末块覆盖而截断。
+async def test_generate_text_does_not_double_count_complete_terminal_frame():
+    # 回归（P1）：旧逻辑在流式下无条件累加每个 chunk 的 content，导致“增量汇总 +
+    # 完整终帧”被重复拼接（例如最终正文出现两遍）。契约下终帧 content 已是完整
+    # 正文，必须用终帧覆盖累加的增量，而不是再次追加。
     from agentscope.message import TextBlock
     from agentscope.model import ChatResponse
 
@@ -180,9 +186,13 @@ async def test_generate_text_accumulates_deltas_after_is_last_sentinel():
     )
 
     async def fake_stream() -> AsyncIterator[ChatResponse]:
-        yield ChatResponse(content=[TextBlock(text="first")], is_last=False)
-        yield ChatResponse(content=[TextBlock(text=" -mid")], is_last=True)
-        yield ChatResponse(content=[TextBlock(text=" -tail")], is_last=False)
+        yield ChatResponse(content=[TextBlock(text="今天天气")], is_last=False)
+        yield ChatResponse(content=[TextBlock(text=" 不错，适合出门")], is_last=False)
+        # 终帧 = 完整累积结果；若再逐块累加会被重复拼接两次
+        yield ChatResponse(
+            content=[TextBlock(text="今天天气 不错，适合出门")],
+            is_last=True,
+        )
 
     class FakeNativeModel:
         async def __call__(self, messages, **kwargs):
@@ -199,7 +209,44 @@ async def test_generate_text_accumulates_deltas_after_is_last_sentinel():
         ]
     )
 
-    assert text == "first -mid -tail"
+    # 结果是完整终帧（恰好等于增量拼合），绝不能把终帧再追加到增量之后
+    assert text == "今天天气 不错，适合出门"
+
+
+@pytest.mark.asyncio
+async def test_generate_message_does_not_double_count_complete_terminal_frame():
+    # 回归（P1 扩展）：generate_message 走流式时同样必须区分增量块与完整终帧，
+    # 否则会把完整终帧追加到已拼合的增量之后，造成重复。
+    from agentscope.message import TextBlock
+    from agentscope.model import ChatResponse
+
+    from app.services.ai.runtime.agentscope.chat import AgentScopeChatClient
+    from app.services.ai.runtime.agentscope.messages import (
+        RuntimeContentBlock,
+        RuntimeMessage,
+    )
+
+    async def fake_stream() -> AsyncIterator[ChatResponse]:
+        yield ChatResponse(content=[TextBlock(text="你好，")], is_last=False)
+        yield ChatResponse(content=[TextBlock(text="世界")], is_last=False)
+        yield ChatResponse(content=[TextBlock(text="你好，世界")], is_last=True)
+
+    class FakeNativeModel:
+        async def __call__(self, messages, tools=None, **kwargs):
+            return fake_stream()
+
+    client = AgentScopeChatClient(FakeNativeModel())
+
+    msg = await client.generate_message(
+        [
+            RuntimeMessage(
+                role="user",
+                content=[RuntimeContentBlock(type="text", text="打招呼")],
+            )
+        ]
+    )
+
+    assert msg.content == "你好，世界"
 
 
 @pytest.mark.asyncio

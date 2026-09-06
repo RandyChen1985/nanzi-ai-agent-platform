@@ -403,6 +403,11 @@ class ContextCompactor:
                         source_revision=context_revision,
                         quality=0,
                         allow_newer_seq=True,
+                        # 路由阶段按目标模型 budget 二次重压出的确定性摘要，是
+                        # executor 实际所见窗口的权威版本；允许它以相同 seq/quality
+                        # 覆盖 pre-route 阶段落的确定性摘要，保证 Redis digest 与
+                        # 模型实际上下文一致。pre-route 与手动压缩保持原语义。
+                        override_same_seq_same_quality=enable_llm_summary,
                     )
                 except Exception as exc:
                     logger.warning("[Compaction] Failed to persist digest: %s", exc)

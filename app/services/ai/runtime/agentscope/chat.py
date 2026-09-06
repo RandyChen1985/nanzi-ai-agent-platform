@@ -3,6 +3,7 @@ from __future__ import annotations
 import inspect
 import json
 from collections.abc import AsyncIterator
+from dataclasses import replace
 from typing import Any
 
 from agentscope.message import Base64Source, DataBlock, Msg, TextBlock, URLSource
@@ -199,12 +200,17 @@ class AgentScopeChatClient:
             result = await result
 
         if _safe_getattr(result, "__aiter__"):
-            # 与 stream_messages / generate_message 一致：逐块累加增量正文。
-            # 旧逻辑仅在遇到 is_last 标记时整体覆盖、且非首块会被丢弃，遇“增量 delta +
-            # 末端仅作哨兵”的流式返回会截断/错乱（审计发现）。
+            # AgentScope 基类 ChatModelBase.__call__（_stream/累积器）保证流式返回
+            # 形如“增量块(is_last=False) + 完整终帧(is_last=True)”，末帧 content 是
+            # 整段累积后的完整正文。因此前面这些增量块逐段累加，遇 is_last=True 时
+            # 以完整正文覆盖已累积内容，避免“增量汇总 + 完整末帧”的重复拼接。
             final_text = ""
             async for chunk in result:  # type: ignore[union-attr]
-                final_text += _response_text(chunk)
+                text = _response_text(chunk)
+                if getattr(chunk, "is_last", False):
+                    final_text = text or final_text
+                else:
+                    final_text += text
             return final_text
 
         if isinstance(result, AsyncIterator):
@@ -226,9 +232,27 @@ class AgentScopeChatClient:
         if inspect.isawaitable(result):
             result = await result
         if _safe_getattr(result, "__aiter__"):
-            final_message = AIMessage(content="")
-            async for chunk in self.stream_messages(messages, tools=tools, **kwargs):
-                final_message += chunk
+            # AgentScope 基类 __call__ 流式返回“增量块(is_last=False) + 完整终帧
+            # (is_last=True)”，终帧 content 是整段累积后的完整正文、tool_calls 也
+            # 只在该终帧完整给出。这里直接消费 result（而不是 stream_messages，
+            # 以免对新会话重复发请求），逐块累加文本，遇 is_last=True 时以终帧的
+            # 完整 AIMessage 覆盖累加的增量内容。
+            content_parts: list[str] = []
+            final_message: AIMessage | None = None
+            async for chunk in result:  # type: ignore[union-attr]
+                message = _chat_response_to_message(chunk)
+                if getattr(chunk, "is_last", False):
+                    final_message = message
+                else:
+                    content_parts.append(message.content or "")
+            if final_message is None:
+                return AIMessage(content="".join(content_parts))
+            # 终帧 content 已是完整文本；仅当其为空（例如纯工具调用终帧）时回退到增量累积
+            if not final_message.content and content_parts:
+                return replace(
+                    final_message,
+                    content="".join(content_parts),
+                )
             return final_message
         return _chat_response_to_message(result)
 

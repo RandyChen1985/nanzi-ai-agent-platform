@@ -182,10 +182,39 @@ async def test_agent_service_publishes_execution_performance_snapshot(monkeypatc
     route_task = asyncio.create_task(route_result())
     service = AgentService()
 
+    class DummyLane:
+        async def is_locked(self, **_kwargs):
+            return False
+
+        @asynccontextmanager
+        async def hold(self, **_kwargs):
+            yield False
+
+    @asynccontextmanager
+    async def tracked_run(*_args, **_kwargs):
+        yield SimpleNamespace(cancelled=False)
+
     async def fail_fixed_polling(*_args, **_kwargs):
         raise AssertionError("route resolution should not use fixed-interval polling")
 
-    monkeypatch.setattr(asyncio, "wait_for", fail_fixed_polling)
+    route_asyncio = SimpleNamespace(
+        Queue=asyncio.Queue,
+        create_task=asyncio.create_task,
+        wait=asyncio.wait,
+        wait_for=fail_fixed_polling,
+        gather=asyncio.gather,
+        FIRST_COMPLETED=asyncio.FIRST_COMPLETED,
+        CancelledError=asyncio.CancelledError,
+        get_running_loop=asyncio.get_running_loop,
+    )
+    dummy_lane = DummyLane()
+    monkeypatch.setattr(
+        "app.services.ai.pipeline.steps.preflight_step.conversation_run_lane",
+        dummy_lane,
+    )
+    monkeypatch.setattr("app.services.ai.agent_service.conversation_run_lane", dummy_lane)
+    monkeypatch.setattr("app.services.ai.agent_service.track_conversation_run", tracked_run)
+    monkeypatch.setattr("app.services.ai.pipeline.steps.route_step.asyncio", route_asyncio)
     monkeypatch.setattr(
         service,
         "_start_route_resolution",

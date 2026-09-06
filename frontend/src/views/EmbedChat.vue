@@ -7438,11 +7438,21 @@ const applyPermissionStreamEvent = (msg: Message, data: any) => {
   if (applyReusableResultStatusEvent(msg, data)) return;
 
   if (data?.type === "run_status") {
-    // 恢复流（权限确认 / 外部执行）在末尾同样发射 run_status 作为终态，
-    // 补齐主流程 8022 的完成收尾，避免被 dispatchAgentscopeStreamEvent 静默丢弃，
-    // 造成恢复后消息的 Stall 计时与“进行中/已完成”文案失收。
-    if (msg.pendingPermission) msg.pendingPermission.status = "completed";
-    if (msg.pendingExternalExecution) msg.pendingExternalExecution.status = "completed";
+    // 恢复流（权限确认 / 外部执行）在末尾发射 run_status 作为终态，其 status 为
+    // success / rejected / error 等真实执行结果。按终态映射状态，避免把“用户拒绝”
+    // 或“执行失败”错误显示为已完成（拒绝/失败必须保留其自身语义）。
+    if (msg.pendingPermission) {
+      msg.pendingPermission.status =
+        data.status === "rejected" || data.status === "denied"
+          ? "rejected"
+          : data.status === "error" || data.status === "failed"
+            ? "error"
+            : "approved";
+    }
+    if (msg.pendingExternalExecution) {
+      msg.pendingExternalExecution.status =
+        data.status === "error" || data.status === "failed" ? "error" : "completed";
+    }
     msg.isThinking = false;
     clearStallTimer();
     showStalledPrompt.value = false;

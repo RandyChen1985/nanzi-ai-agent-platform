@@ -43,6 +43,8 @@
 
 ![Architecture](docs/images/nanzi-platform-architecture-16x9.png)
 
+![End-to-End Flow](docs/images/e2e.png)
+
 ```text
 ┌──────────────────────────────────────────────────────────┐
 │                     NanZi 智能体平台                     │

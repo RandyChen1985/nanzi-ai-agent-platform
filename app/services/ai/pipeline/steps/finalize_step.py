@@ -120,7 +120,6 @@ class FinalizeStep(BasePipelineStep):
             )
             should_persist = bool(
                 conversation_id
-                and context.execution_status != "answered_directly"
                 and _should_persist_turn_history(
                     context.full_response_content,
                     final_process_timeline,
