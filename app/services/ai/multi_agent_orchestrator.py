@@ -204,45 +204,57 @@ async def _execute_multi_agent_impl(
     results_task = asyncio.gather(*tasks, return_exceptions=True)
     stream_error = None
 
-    # 消费日志队列，同时等待所有子任务完成
-    while not results_task.done() or not queue.empty():
-        try:
-            chunk = await asyncio.wait_for(queue.get(), timeout=0.1)
-            if chunk.get("type") == "error" and stream_error is None:
-                stream_error = chunk
-                for task in tasks:
-                    if not task.done():
-                        task.cancel()
+    try:
+        # 消费日志队列，同时等待所有子任务完成
+        while not results_task.done() or not queue.empty():
+            try:
+                chunk = await asyncio.wait_for(queue.get(), timeout=0.1)
+                if chunk.get("type") == "error" and stream_error is None:
+                    stream_error = chunk
+                    for task in tasks:
+                        if not task.done():
+                            task.cancel()
+                yield chunk
+                queue.task_done()
+            except (asyncio.TimeoutError, asyncio.QueueEmpty):
+                if results_task.done() and queue.empty():
+                    break
+                await asyncio.sleep(0.01)
+
+        if stream_error is not None:
+            # 已将流式错误直接交给前端；取消剩余专家并跳过合成
+            await results_task
+            return
+
+        agent_results = await results_task
+        agent_outputs = [r for r in agent_results if isinstance(r, dict)]
+
+        # 4. 最终合成
+        yield {
+            "type": "log",
+            "title": "结果聚合",
+            "details": "正在汇总各专家意见并组织最终回答...",
+            "status": "success",
+        }
+
+        async for chunk in agent_service._synthesize_multi_agent_results(
+            primary_config,
+            user_query,
+            agent_outputs,
+            trace_buffer,
+        ):
             yield chunk
-            queue.task_done()
-        except (asyncio.TimeoutError, asyncio.QueueEmpty):
-            if results_task.done() and queue.empty():
-                break
-            await asyncio.sleep(0.01)
-
-    if stream_error is not None:
-        # 已将流式错误直接交给前端；取消剩余专家并跳过合成
-        await results_task
-        return
-
-    agent_results = await results_task
-    agent_outputs = [r for r in agent_results if isinstance(r, dict)]
-
-    # 4. 最终合成
-    yield {
-        "type": "log",
-        "title": "结果聚合",
-        "details": "正在汇总各专家意见并组织最终回答...",
-        "status": "success",
-    }
-
-    async for chunk in agent_service._synthesize_multi_agent_results(
-        primary_config,
-        user_query,
-        agent_outputs,
-        trace_buffer,
-    ):
-        yield chunk
+    finally:
+        # 生成器被提前关闭/取消（客户端断连、外层 CancelledError）时，确保子任务被清理，
+        # 避免持有 LLM/执行器连接的 asyncio task 在无人消费的队列上继续空转泄漏。
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+        if results_task is not None and not results_task.done():
+            try:
+                await asyncio.gather(*tasks, return_exceptions=True)
+            except Exception:  # 收尾阶段异常不应再次污染主流程
+                logger.warning("multi-agent cleanup raised", exc_info=True)
 
 
 async def _synthesize_multi_agent_results_impl(

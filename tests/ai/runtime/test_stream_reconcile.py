@@ -154,3 +154,20 @@ def test_collapse_repeated_reply_exact_duplicate_halves():
 def test_collapse_repeated_reply_keeps_unique_content():
     text = "唯一回答 " * 20
     assert collapse_repeated_reply(text) == text
+
+
+def test_compute_gap_no_replay_when_agent_just_prepends_narration_to_streamed_body():
+    # 工具环：AgentState 把过程旁白（“两个数据都拿到了…”）拼在最终正文前，
+    # 而 streamed 已从正文中部开始展示、最终正文全部在流式阶段发出（agent 以 streamed 结尾）。
+    body = "全部完成！以下是最终汇总：\n\n## 结论\n" + ("正文段落内容 " * 30)
+    streamed = "整理中..." + body
+    agent = "两个数据都拿到了。让我获取更多数据。\n\n文件已存在，先读取。\n\n" + streamed
+    assert compute_stream_reconcile_gap(streamed, agent) == ""
+
+
+def test_compute_gap_still_emits_real_suffix_even_when_prefix_narration_exists():
+    # 即使 agent 用旁白作前缀，只要尾部相对 streamed 确有新增，仍应补发该新增。
+    streamed = "开头正文。结论已经给出。"
+    agent = "让我先查询。\n\n" + streamed + "\n\n补充：数据更新时间为 09:00。"
+    gap = compute_stream_reconcile_gap(streamed, agent)
+    assert gap == "\n\n补充：数据更新时间为 09:00。"

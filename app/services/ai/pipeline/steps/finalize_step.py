@@ -46,7 +46,12 @@ class FinalizeStep(BasePipelineStep):
         self, context: PipelineContext
     ) -> AsyncGenerator[Dict[str, Any], None]:
         if context.user_question_cancelled:
-            return
+            # 取消卡路径：执行状态已置为 cancelled（context_step 同步）。此前的实现在这里直接早退，
+            # 导致不发 run_status / 不审计 / 不持久化 / 跳过 performance 快照，与 run_handle 取消路径
+            # （走完整 finalize）终态收拢语义分裂。这里不再早退，交由下方统一完成收拢，
+            # 并保证即使 content 为空也会发射 run_status=cancelled 以对齐取消语义。
+            if not context.execution_status:
+                context.execution_status = "cancelled"
 
         shared_state = context.shared_state or {}
         agent_config = shared_state.get("agent_config") or getattr(context, "agent_config", None)
@@ -124,8 +129,7 @@ class FinalizeStep(BasePipelineStep):
             )
 
             if (
-                context.execution_status != "answered_directly"
-                and context.execution_status not in SHORT_CIRCUIT_NO_FINALIZE_STATUSES
+                context.execution_status not in SHORT_CIRCUIT_NO_FINALIZE_STATUSES
             ):
                 yield {
                     "type": "run_status",

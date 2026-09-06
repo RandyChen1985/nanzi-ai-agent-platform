@@ -31,18 +31,20 @@ def trusted_tool_run_text(message: Dict[str, Any]) -> str:
 def history_messages_for_token_budget(
     history: List[Dict[str, Any]],
 ) -> List[Dict[str, Any]]:
-    """剔除被打断的未完成轮次，保留正常完成的历史记录。
+    """剔除被打断/被取消的未完成轮次，保留正常完成的历史记录。
 
     ⚠️ 注意：此函数（Token 预算用，字段原样保留）与 agent_service.py 中的
     history_messages_for_llm（进模型用，做 allowed_keys 字段过滤 + cancelled/interrupted
-    双阶段清理）语义不同，请勿合并，否则会导致字段泄漏或断轮清理失效。
+    双阶段清理）语义不同，请勿合并后丢弃 allowed_keys 字段过滤，否则会导致字段泄漏。
+    二者在「剔除断轮（interrupted/cancelled）」上保持一致：cancelled 半截轮绝不进入
+    token 预算窗口或最终发给 executor 的上下文。
     """
     cleaned: List[Dict[str, Any]] = []
     for msg in history or []:
         if not isinstance(msg, dict):
             continue
         status = str(msg.get("status") or "").strip().lower()
-        if status == "interrupted":
+        if status in ("interrupted", "cancelled"):
             continue
         cleaned.append(msg)
     return cleaned
@@ -75,6 +77,11 @@ def window_for_context(
             break
     if cut_index is None:
         return server_history
+    # 绝不返回空窗口：当最新一条消息本身已超预算（cut_index == len-1）时，
+    # server_history[cut_index+1:] 会得到 []，导致全部历史（含最新一条）被清空、
+    # 下游只收到孤立的 user 消息。此时至少保留最新这一条最相关的上下文。
+    if cut_index >= len(server_history) - 1:
+        return server_history[-1:]
     return server_history[cut_index + 1 :]
 
 

@@ -73,9 +73,10 @@ class RouteStep(BasePipelineStep):
             return
 
         normalized_quick_context = normalize_quick_result_context(context.quick_context)
-        quick_result_followup = bool(
-            normalized_quick_context and not (agent_id or agent_name or version_id)
-        )
+        # 一旦命中 fresh-data 快捷上下文（normalize_quick_result_context 强制 requires_fresh_data=True），
+        # 就必须以 quick_result_followup 处理：跳过历史 reusable-result 复用、强制 needs_fresh_data。
+        # 此前额外排除「显式指定 agent/version」会让显式路由时绕过该实时契约，从而可能复用上一轮旧快照。
+        quick_result_followup = bool(normalized_quick_context)
 
         reusable_decision_query = user_query
         if quick_result_followup:

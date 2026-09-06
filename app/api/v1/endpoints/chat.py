@@ -31,6 +31,7 @@ from app.services.ai.reusable_result import (
     normalize_legacy_data_result,
 )
 from app.services.ai.runtime.agentscope.tool_timeout import load_agent_max_toolcall_timeout
+from app.services.ai.error_response_service import sanitize_error_text
 from app.utils.env import get_env
 import logging
 
@@ -1611,6 +1612,22 @@ async def create_chat_completion(
                         yield "data: [DONE]\n\n"
                         break
                     elif tag == "error":
+                        # producer 异常路径：必须向客户端发出 error 帧并补 [DONE]，
+                        # 否则连接被静默关闭，前端 isChatStreamDone 永不置真、用户只看到"回答中断"
+                        # 却没有任何错误原因。error 帧 shape 与链路内错误帧保持一致（type=error, content）。
+                        try:
+                            err_text = sanitize_error_text(payload) if payload is not None else "未知错误"
+                        except Exception:  # 兜底：即便序列化失败也绝不静默关闭
+                            err_text = "服务处理出错，请稍后重试"
+                        yield (
+                            "data: "
+                            + json.dumps(
+                                {"type": "error", "content": err_text},
+                                ensure_ascii=False,
+                            )
+                            + "\n\n"
+                        )
+                        yield "data: [DONE]\n\n"
                         break
             except asyncio.CancelledError:
                 client_disconnected_event.set()

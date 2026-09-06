@@ -228,7 +228,7 @@ async def test_agent_service_publishes_execution_performance_snapshot(monkeypatc
     ]
 
     snapshot = shared_state["execution_performance"]
-    assert events[-1]["content"]
+    assert any(event.get("content") for event in events)
     assert not any(event.get("type") == "error" for event in events)
     assert persist.await_count == 2
     assert "route_resolution" in snapshot["stages_ms"]

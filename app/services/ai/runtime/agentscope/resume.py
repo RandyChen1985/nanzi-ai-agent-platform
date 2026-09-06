@@ -48,7 +48,7 @@ class AgentScopeResumeHandler:
         if user_info:
             current_user_id = user_info.get("user_id") or user_info.get("id")
 
-        pending = await pending_agentscope_confirmations.pop_async(
+        pending = await pending_agentscope_confirmations.peek_async(
             permission_request_id,
             user_id=current_user_id,
         )
@@ -121,6 +121,20 @@ class AgentScopeResumeHandler:
                 conversation_id=conversation_id,
                 trace_id=pending.trace_id,
             ):
+                # 进入会话锁后再消费快照：确保配额/会话忙等校验失败时快照仍保留、可重试，
+                # 避免「先消费后执行 validate」导致确认结果被永久丢失。
+                consumed = await pending_agentscope_confirmations.pop_async(
+                    permission_request_id,
+                    user_id=current_user_id,
+                )
+                if consumed is None:
+                    yield {
+                        "type": "error",
+                        "status": "error",
+                        "content": "该工具确认已被另一请求处理，请重新发起或稍后重试。",
+                    }
+                    return
+                pending = consumed
                 async for chunk in runner.resume_agentscope_native_confirmation(
                     pending,
                     confirmed=confirmed,
@@ -274,7 +288,7 @@ class AgentScopeResumeHandler:
         if user_info:
             current_user_id = user_info.get("user_id") or user_info.get("id")
 
-        pending = await pending_agentscope_confirmations.pop_async(
+        pending = await pending_agentscope_confirmations.peek_async(
             external_execution_request_id,
             user_id=current_user_id,
         )
@@ -348,6 +362,19 @@ class AgentScopeResumeHandler:
                 conversation_id=conversation_id,
                 trace_id=pending.trace_id,
             ):
+                # 进入会话锁后再消费快照：防止配额/会话忙校验失败时快照被提前删除而丢失。
+                consumed = await pending_agentscope_confirmations.pop_async(
+                    external_execution_request_id,
+                    user_id=current_user_id,
+                )
+                if consumed is None:
+                    yield {
+                        "type": "error",
+                        "status": "error",
+                        "content": "该外部执行请求已被另一请求处理，请重新发起或稍后重试。",
+                    }
+                    return
+                pending = consumed
                 async for chunk in runner.resume_agentscope_external_execution(
                     pending,
                     execution_results=execution_results,

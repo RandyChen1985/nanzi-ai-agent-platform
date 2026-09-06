@@ -9,9 +9,12 @@ Resolve awaitables first, then dump JSON-compatible structures.
 from __future__ import annotations
 
 import inspect
+import logging
 from typing import Any
 
 from pydantic import TypeAdapter
+
+logger = logging.getLogger(__name__)
 
 
 async def resolve_awaitables(
@@ -102,7 +105,40 @@ async def serialize_jsonable(
         path=path,
         awaitable_cache=awaitable_cache,
     )
-    return TypeAdapter(Any).dump_python(resolved, mode="json")
+    try:
+        return TypeAdapter(Any).dump_python(resolved, mode="json")
+    except Exception as exc:
+        # 兜底：state 中可能混入不可 JSON 化的运行期对象（如 StreamRepetitionDetector）。
+        # 若直接抛错会让整条中断/挂起流程失败、前端拿不到 permission_request_id。这里降级为把
+        # 未知对象字符串化，保证快照仍可保存、确认流程可继续。
+        logger.warning(
+            "JSON-serializing %r failed (%s); sanitizing unknown objects as str()",
+            path,
+            exc,
+        )
+        return _json_safe(resolved)
+
+
+def _json_safe(value: Any) -> Any:
+    """递归把任意结构转换为 JSON 安全结构；未知对象降级为 str()，绝不抛错。"""
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, dict):
+        return {_json_safe(k): _json_safe(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple, set)):
+        return [_json_safe(v) for v in value]
+    dump = getattr(value, "model_dump", None)
+    if callable(dump):
+        try:
+            return _json_safe(dump(mode="python"))
+        except Exception:
+            pass
+    try:
+        if isinstance(value, type):
+            return str(value.__name__)
+        return str(value)
+    except Exception:
+        return None
 
 
 async def serialize_agent_state(

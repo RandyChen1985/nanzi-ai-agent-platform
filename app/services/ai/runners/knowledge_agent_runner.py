@@ -155,20 +155,18 @@ class KnowledgeAgentRunner(AssistantAgentRunner):
                 return False
         elif has_knowledge_citation_markers(text_clean):
             return False
-        # 2. 如果没有任何引用，且是偏事实性描述或表格/列表，且没有拒绝词，判定为幻觉
+        # 2. 无引用标记时：仅当回答表现出"具体事实断言"结构（表格 / 较长编号列表）且无拒绝措辞，
+        #    才保守地认为可能编造。仅凭文本长度（len>120）不判定为幻觉——RAG 已召回时未编号的
+        #    长段落仍可能忠实，避免把正确长答案误判为幻觉并触发强制重写。
         refusal_keywords = ["未找到", "没有找到", "暂无", "无法", "抱歉", "没有", "换个关键词", "换关键词", "不具备", "不能", "未提及", "未在"]
         has_refusal = any(kw in text_clean for kw in refusal_keywords)
 
-        is_factual = False
-        if "|" in text_clean and "---" in text_clean:
-            is_factual = True
-        elif len(text_clean) > 100 and ("-" in text_clean or "1." in text_clean):
-            is_factual = True
-        elif len(text_clean) > 120:
-            is_factual = True
-
-        if is_factual and not has_refusal:
+        is_structured_factual = ("|" in text_clean and "---" in text_clean) or (
+            len(text_clean) > 100 and ("-" in text_clean or "1." in text_clean)
+        )
+        if is_structured_factual and not has_refusal:
             return True
+        return False
     def _looks_like_rag_followup(self, query: str, history: List[Dict[str, str]]) -> bool:
         """识别对上一轮检索结果的追问、翻译、总结、解释等上下文操作，以跳过本轮不必要的知识库重复检索。"""
         if not history or len(history) < 2:
@@ -414,7 +412,9 @@ class KnowledgeAgentRunner(AssistantAgentRunner):
                     "content": combined_context,
                     "citations": new_citations
                 })
-                self._valid_citation_ids = [c["chunk_id"] for c in new_citations]
+                self._valid_citation_ids = {
+                    str(idx) for idx in range(1, len(new_citations) + 1)
+                }
                 
             except Exception as web_exc:
                 logger.error(f"[KnowledgeAgentRunner] Web search backoff failed: {web_exc}", exc_info=True)
