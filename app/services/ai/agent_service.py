@@ -2,6 +2,7 @@ import logging
 import time
 import uuid
 import asyncio
+from dataclasses import dataclass
 from datetime import datetime
 from typing import List, Dict, Any, Optional, AsyncGenerator, Collection
 
@@ -850,6 +851,24 @@ def _build_preparation_parent_log(
     if execution_time_ms is not None:
         event["execution_time_ms"] = max(1.0, float(execution_time_ms))
     return event
+
+
+@dataclass
+class TurnPreflightContext:
+    skills_injection: List[str]
+    matched_skills_to_log: List[tuple]
+    effective_prompt_tool_names: List[str]
+    ltm_profile: Optional[Dict[str, Any]]
+    ltm_loaded_data: Optional[Dict[str, Any]]
+    memory_recall_hint: Optional[str]
+    preloaded_memories_text: Optional[str]
+    user_profile: Optional[str]
+    accessible_resources: Optional[Dict[str, Any]]
+    delegable_agents: Optional[List[Any]]
+    delegable_agent_count: int
+    roster_loaded: bool
+    agent_system_prompt: Optional[str]
+    sub_agents_context: Optional[str]
 
 
 class AgentService:
@@ -3453,6 +3472,179 @@ class AgentService:
 
             return ReusableResultDecision(mode="none", reason="resolver_unavailable")
 
+    async def _gather_turn_preflight_context(
+        self,
+        *,
+        agent_config: Any,
+        user_info: Optional[Dict[str, Any]],
+        user_query: str,
+        turn_decision: Any,
+        messages: List[Dict[str, str]],
+        debug_options: Optional[Dict[str, Any]],
+    ) -> TurnPreflightContext:
+        """并发预取技能、长期记忆、用户画像、权限目录、专家花名册与有效工具清单 (P0 TTFT 并发提速)"""
+        matched_skills_to_log: List[tuple] = []
+        def skills_log_callback(skill_id: str, skill_name: str, details_msg: str) -> None:
+            matched_skills_to_log.append((skill_id, skill_name, details_msg))
+
+        early_turn_kind = getattr(turn_decision, "turn_kind", None)
+        accessible_resources = (
+            getattr(turn_decision, "accessible_resources", None)
+            if early_turn_kind != "data_query"
+            else None
+        )
+        agent_system_prompt = getattr(agent_config, "system_prompt", "") or ""
+
+        async def _fetch_skills() -> List[str]:
+            try:
+                return await self._inject_skills(
+                    messages=messages,
+                    user_query=user_query,
+                    agent_config=agent_config,
+                    user_info=user_info,
+                    skills_log_callback=skills_log_callback,
+                    resource_scope=(debug_options or {}).get("resource_scope"),
+                )
+            except Exception as err:
+                logger.warning(f"Error in concurrent _inject_skills: {err}")
+                return []
+
+        async def _fetch_memory():
+            try:
+                return await self._load_memory_context(
+                    user_info=user_info,
+                    early_turn_kind=early_turn_kind,
+                    debug_options=debug_options,
+                    user_query=user_query,
+                )
+            except Exception as err:
+                logger.warning(f"Error in concurrent _load_memory_context: {err}")
+                return None, None, None, None
+
+        async def _fetch_user_context() -> Optional[str]:
+            try:
+                if user_info and should_inject_user_context(early_turn_kind):
+                    id_msg = await self._build_user_context_msg(user_info)
+                    return id_msg.get("content")
+            except Exception as err:
+                logger.warning(f"Error in concurrent _build_user_context_msg: {err}")
+            return None
+
+        async def _fetch_catalog() -> Any:
+            if early_turn_kind != "data_query" and not accessible_resources and user_info:
+                try:
+                    from app.services.ai.accessible_resource_catalog import (
+                        build_accessible_resource_catalog,
+                    )
+                    raw_resource_user_id = user_info.get("user_id") or user_info.get("id")
+                    resource_user_id = None
+                    if raw_resource_user_id is not None:
+                        try:
+                            resource_user_id = int(raw_resource_user_id)
+                        except (TypeError, ValueError):
+                            resource_user_id = None
+                    return await build_accessible_resource_catalog(
+                        user_id=resource_user_id,
+                        user_name=(user_info.get("user_name") or user_info.get("username")),
+                        is_admin=user_info.get("role") == "admin",
+                    )
+                except Exception as err:
+                    logger.warning(f"Error in concurrent build_accessible_resource_catalog: {err}")
+            return accessible_resources
+
+        async def _fetch_roster():
+            from app.services.ai.skill_resolver import is_main_general_agent
+            has_subagent_tool = any(
+                (isinstance(t, str) and t in ("sub_agent_call", "sub_agent_batch_call"))
+                or (isinstance(t, dict) and t.get("name") in ("sub_agent_call", "sub_agent_batch_call"))
+                or (getattr(t, "name", None) in ("sub_agent_call", "sub_agent_batch_call"))
+                for t in (getattr(agent_config, "tools", None) or [])
+            )
+            if not (is_main_general_agent(agent_config) or has_subagent_tool):
+                return None, 0, False, agent_system_prompt, None
+
+            try:
+                from app.core.orm import AsyncSessionLocal
+                from app.models.agent import AIAgent
+                from app.services.ai.agent_roster import (
+                    AGENT_ROSTER_PLACEHOLDER,
+                    build_sub_agents_context,
+                    format_agent_roster_markdown,
+                    inject_agent_roster,
+                    resolve_delegable_system_agents_for_user,
+                )
+
+                async with AsyncSessionLocal() as session:
+                    delegable_agents = await resolve_delegable_system_agents_for_user(
+                        session,
+                        user_info=user_info,
+                        current_agent_id=getattr(agent_config, "agent_id", None),
+                    )
+                    delegable_agent_count = len(delegable_agents or [])
+                    roster_loaded = True
+                    current_agent_row = await session.get(AIAgent, getattr(agent_config, "agent_id", None))
+                    current_desc = (current_agent_row.description if current_agent_row else "") or ""
+                    updated_prompt = agent_system_prompt
+                    if AGENT_ROSTER_PLACEHOLDER in (agent_system_prompt or ""):
+                        roster_md = format_agent_roster_markdown(
+                            delegable_agents,
+                            current_display_name=getattr(agent_config, "agent_display_name", None) or getattr(agent_config, "agent_name", None) or "主助手",
+                            current_description=current_desc,
+                        )
+                        updated_prompt = inject_agent_roster(agent_system_prompt, roster_md)
+                    sub_agents_context = build_sub_agents_context(delegable_agents)
+                    return delegable_agents, delegable_agent_count, roster_loaded, updated_prompt, sub_agents_context
+            except Exception as sa_err:
+                logger.warning(f"Failed to build main-agent roster/sub-agents context: {sa_err}")
+                return None, 0, False, agent_system_prompt, None
+
+        async def _fetch_tools() -> List[str]:
+            try:
+                from app.services.ai.prompt_assembler import (
+                    resolve_effective_prompt_tool_names_for_turn,
+                )
+                return await resolve_effective_prompt_tool_names_for_turn(
+                    agent_config,
+                    current_user_query=user_query,
+                    turn_decision=turn_decision,
+                )
+            except Exception as err:
+                logger.warning(f"Error in concurrent resolve_effective_prompt_tool_names_for_turn: {err}")
+                return []
+
+        (
+            skills_injection,
+            (ltm_profile, ltm_loaded_data, memory_recall_hint, preloaded_memories_text),
+            user_profile,
+            res_accessible_resources,
+            (delegable_agents, delegable_agent_count, roster_loaded, updated_prompt, sub_agents_context),
+            effective_prompt_tool_names,
+        ) = await asyncio.gather(
+            _fetch_skills(),
+            _fetch_memory(),
+            _fetch_user_context(),
+            _fetch_catalog(),
+            _fetch_roster(),
+            _fetch_tools(),
+        )
+
+        return TurnPreflightContext(
+            skills_injection=skills_injection,
+            matched_skills_to_log=matched_skills_to_log,
+            effective_prompt_tool_names=effective_prompt_tool_names,
+            ltm_profile=ltm_profile,
+            ltm_loaded_data=ltm_loaded_data,
+            memory_recall_hint=memory_recall_hint,
+            preloaded_memories_text=preloaded_memories_text,
+            user_profile=user_profile,
+            accessible_resources=res_accessible_resources,
+            delegable_agents=delegable_agents,
+            delegable_agent_count=delegable_agent_count,
+            roster_loaded=roster_loaded,
+            agent_system_prompt=updated_prompt,
+            sub_agents_context=sub_agents_context,
+        )
+
 
     async def _run_chat_turn_stream(
         self,
@@ -3933,24 +4125,6 @@ class AgentService:
             )
             performance_tracker.mark("context_setup")
 
-            # 2. Inject Active Skills
-            matched_skills_to_log = []
-            def skills_log_callback(skill_id, skill_name, details_msg):
-                matched_skills_to_log.append((skill_id, skill_name, details_msg))
-
-            skills_injection = await self._inject_skills(
-                messages=messages,
-                user_query=user_query,
-                agent_config=agent_config,
-                user_info=user_info,
-                skills_log_callback=skills_log_callback,
-                resource_scope=(debug_options or {}).get("resource_scope"),
-            )
-            performance_tracker.mark("skill_injection")
-
-            for skill_id, skill_name, details_msg in matched_skills_to_log:
-                yield self._build_skill_log_chunk(skill_id, skill_name, details_msg)
-
             early_turn_kind = turn_decision.turn_kind
             turn_intent_elapsed_ms = 0.0
             dispatch_turn_decision = turn_decision
@@ -3984,102 +4158,34 @@ class AgentService:
                 )
                 performance_tracker.mark("knowledge_context_setup")
 
-            # Prompt inventory must match the tools that the selected executor
-            # will expose. The published version's tools are authoritative.
-            from app.services.ai.prompt_assembler import (
-                resolve_effective_prompt_tool_names_for_turn,
-            )
-
-            effective_prompt_tool_names = await resolve_effective_prompt_tool_names_for_turn(
-                agent_config,
-                current_user_query=user_query,
-                turn_decision=turn_decision,
-            )
-
-            # 3. Load Memory Context
-            ltm_profile, ltm_loaded_data, memory_recall_hint, preloaded_memories_text = await self._load_memory_context(
+            # 2. 并发预取技能、记忆、权限资源、专家通讯录与工具清单 (P0 TTFT 并发优化)
+            preflight_ctx = await self._gather_turn_preflight_context(
+                agent_config=agent_config,
                 user_info=user_info,
-                early_turn_kind=early_turn_kind,
-                debug_options=debug_options,
                 user_query=user_query,
+                turn_decision=turn_decision,
+                messages=messages,
+                debug_options=debug_options,
             )
-            performance_tracker.mark("memory_load")
+            performance_tracker.mark("preflight_concurrency_load")
 
-            user_profile = None
-            if user_info and should_inject_user_context(early_turn_kind):
-                id_msg = await self._build_user_context_msg(user_info)
-                user_profile = id_msg.get("content")
+            # 保持向后兼容：技能匹配日志顺序 yield
+            for skill_id, skill_name, details_msg in preflight_ctx.matched_skills_to_log:
+                yield self._build_skill_log_chunk(skill_id, skill_name, details_msg)
 
-            accessible_resources = (
-                getattr(turn_decision, "accessible_resources", None)
-                if early_turn_kind != "data_query"
-                else None
-            )
-            if early_turn_kind != "data_query" and not accessible_resources and user_info:
-                from app.services.ai.accessible_resource_catalog import (
-                    build_accessible_resource_catalog,
-                )
-
-                raw_resource_user_id = user_info.get("user_id") or user_info.get("id")
-                resource_user_id = None
-                if raw_resource_user_id is not None:
-                    try:
-                        resource_user_id = int(raw_resource_user_id)
-                    except (TypeError, ValueError):
-                        resource_user_id = None
-                accessible_resources = await build_accessible_resource_catalog(
-                    user_id=resource_user_id,
-                    user_name=(
-                        user_info.get("user_name")
-                        or user_info.get("username")
-                    ),
-                    is_admin=user_info.get("role") == "admin",
-                )
-
-            # --- 主助手或显式配置了 sub_agent_call 的智能体：动态专家清单 + sub_agent_call 通讯录 ---
-            agent_system_prompt = agent_config.system_prompt
-            sub_agents_context = None
-            delegable_agent_count = 0
-            roster_loaded = False
-            from app.services.ai.skill_resolver import is_main_general_agent
-            has_subagent_tool = any(
-                (isinstance(t, str) and t in ("sub_agent_call", "sub_agent_batch_call"))
-                or (isinstance(t, dict) and t.get("name") in ("sub_agent_call", "sub_agent_batch_call"))
-                or (getattr(t, "name", None) in ("sub_agent_call", "sub_agent_batch_call"))
-                for t in (agent_config.tools or [])
-            )
-            if is_main_general_agent(agent_config) or has_subagent_tool:
-                try:
-                    from app.core.orm import AsyncSessionLocal
-                    from app.models.agent import AIAgent
-                    from app.services.ai.agent_roster import (
-                        AGENT_ROSTER_PLACEHOLDER,
-                        build_sub_agents_context,
-                        format_agent_roster_markdown,
-                        inject_agent_roster,
-                        resolve_delegable_system_agents_for_user,
-                    )
-
-                    async with AsyncSessionLocal() as session:
-                        delegable_agents = await resolve_delegable_system_agents_for_user(
-                            session,
-                            user_info=user_info,
-                            current_agent_id=agent_config.agent_id,
-                        )
-                        delegable_agent_count = len(delegable_agents or [])
-                        roster_loaded = True
-                        current_agent_row = await session.get(AIAgent, agent_config.agent_id)
-                        current_desc = (current_agent_row.description if current_agent_row else "") or ""
-                        if AGENT_ROSTER_PLACEHOLDER in (agent_system_prompt or ""):
-                            roster_md = format_agent_roster_markdown(
-                                delegable_agents,
-                                current_display_name=agent_config.agent_display_name or agent_config.agent_name or "主助手",
-                                current_description=current_desc,
-                            )
-                            agent_system_prompt = inject_agent_roster(agent_system_prompt, roster_md)
-                        sub_agents_context = build_sub_agents_context(delegable_agents)
-                except Exception as sa_err:
-                    logger.warning(f"Failed to build main-agent roster/sub-agents context: {sa_err}")
+            skills_injection = preflight_ctx.skills_injection
+            effective_prompt_tool_names = preflight_ctx.effective_prompt_tool_names
+            ltm_profile = preflight_ctx.ltm_profile
+            ltm_loaded_data = preflight_ctx.ltm_loaded_data
+            memory_recall_hint = preflight_ctx.memory_recall_hint
+            preloaded_memories_text = preflight_ctx.preloaded_memories_text
+            user_profile = preflight_ctx.user_profile
+            accessible_resources = preflight_ctx.accessible_resources
+            delegable_agents = preflight_ctx.delegable_agents
+            delegable_agent_count = preflight_ctx.delegable_agent_count
+            roster_loaded = preflight_ctx.roster_loaded
+            agent_system_prompt = preflight_ctx.agent_system_prompt
+            sub_agents_context = preflight_ctx.sub_agents_context
 
             session_scope = (debug_options or {}).get("resource_scope") or {}
             authorized_scope = (request_observability or {}).get("authorized_resource_scope") or {}

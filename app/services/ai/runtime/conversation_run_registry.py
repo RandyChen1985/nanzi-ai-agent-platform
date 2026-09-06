@@ -75,6 +75,7 @@ class ConversationRunHandle:
     cancel_event: asyncio.Event = field(default_factory=asyncio.Event)
     task: asyncio.Task[Any] | None = None
     _processes: set[Any] = field(default_factory=set)
+    _tasks: set[asyncio.Task[Any]] = field(default_factory=set)
     persistence_task: asyncio.Task[Any] | None = None
     finished: asyncio.Event = field(default_factory=asyncio.Event)
 
@@ -89,6 +90,14 @@ class ConversationRunHandle:
     def untrack_process(self, process: Any) -> None:
         self._processes.discard(process)
 
+    def track_task(self, task: asyncio.Task[Any]) -> None:
+        if task is not None and not task.done():
+            self._tasks.add(task)
+            task.add_done_callback(self._tasks.discard)
+
+    def untrack_task(self, task: asyncio.Task[Any]) -> None:
+        self._tasks.discard(task)
+
     async def stop_children(self) -> int:
         stopped = 0
         for process in list(self._processes):
@@ -97,9 +106,24 @@ class ConversationRunHandle:
             stopped += 1
         return stopped
 
+    async def stop_tasks(self) -> int:
+        stopped = 0
+        current = asyncio.current_task()
+        pending: list[asyncio.Task[Any]] = []
+        for task in list(self._tasks):
+            if task is not current and not task.done():
+                task.cancel()
+                pending.append(task)
+                stopped += 1
+            self._tasks.discard(task)
+        if pending:
+            await asyncio.gather(*pending, return_exceptions=True)
+        return stopped
+
     async def request_stop(self, *, cancel_task: bool = True) -> None:
         self.cancel_event.set()
         await self.stop_children()
+        await self.stop_tasks()
         task = self.task
         if not cancel_task or task is None or task.done():
             return
@@ -211,5 +235,16 @@ async def track_conversation_run(
                 )
         with contextlib.suppress(Exception):
             await handle.stop_children()
+        with contextlib.suppress(Exception):
+            await handle.stop_tasks()
         handle.finished.set()
         conversation_run_registry.unregister(handle)
+
+
+def track_current_run_task(task: asyncio.Task[Any]) -> bool:
+    """若当前协程运行在某会话上下文中，将 task 绑定至该会话生命周期，支持级联取消。"""
+    handle = get_current_run_handle()
+    if handle is not None:
+        handle.track_task(task)
+        return True
+    return False

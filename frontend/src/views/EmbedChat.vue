@@ -7607,15 +7607,27 @@ const confirmPendingPermission = async (msg: Message, confirmed: boolean) => {
     if (!reader) throw new Error("No body");
     const decoder = new TextDecoder();
     const parser = createSseLineParser();
+    let isPermissionStreamDone = false;
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
       const dataLines = parser.feed(decoder.decode(value, { stream: true }));
       for (const dataStr of dataLines) {
-        if (dataStr === "[DONE]") continue;
+        if (dataStr === "[DONE]") {
+          isPermissionStreamDone = true;
+          break;
+        }
         applyPermissionStreamEvent(msg, JSON.parse(dataStr));
       }
       scrollToBottom();
+      if (isPermissionStreamDone) {
+        try {
+          await reader.cancel();
+        } catch {
+          // ignore
+        }
+        break;
+      }
     }
     for (const dataStr of parser.flush()) {
       if (dataStr !== "[DONE]") applyPermissionStreamEvent(msg, JSON.parse(dataStr));
@@ -7840,6 +7852,65 @@ const sendMessageInternal = async (snapshot: ChatSendSnapshot) => {
   // SSE 可能因切后台/网络变化提前结束；在状态接口确认释放前继续阻止新一轮发送。
   remoteRunActive.value = true;
   abortController = new AbortController();
+  // 首片正文立即显示，后续正文按帧合并更新。
+  let pendingContentBuffer = "";
+  let contentRafId: number | null = null;
+
+  const flushContentBuffer = () => {
+    if (pendingContentBuffer) {
+      appendAssistantBodyDelta(agentMsg.value, pendingContentBuffer);
+      pendingContentBuffer = "";
+      scrollToBottom();
+    }
+    if (contentRafId !== null) {
+      cancelAnimationFrame(contentRafId);
+      contentRafId = null;
+    }
+  };
+
+  const queueContentDelta = (piece: string) => {
+    if (!piece) return;
+    // 首片正文立即显示。
+    if (!agentMsg.value.content && !pendingContentBuffer) {
+      appendAssistantBodyDelta(agentMsg.value, piece);
+      scrollToBottom();
+      return;
+    }
+    pendingContentBuffer += piece;
+    if (contentRafId === null) {
+      contentRafId = requestAnimationFrame(flushContentBuffer);
+    }
+  };
+
+  // 正文在公共 dispatcher 之前消费，避免 answer_delta 绕过缓冲。
+  // 撤回使缓冲失效；其他事件先刷出正文，保持 SSE 顺序。
+  const handleBufferedBodyEvent = (data: Record<string, any>): boolean => {
+    if (data.type === "retraction") {
+      pendingContentBuffer = "";
+      if (contentRafId !== null) {
+        cancelAnimationFrame(contentRafId);
+        contentRafId = null;
+      }
+      return false;
+    }
+    if (data.type === "answer" || data.type === "answer_delta") {
+      const piece = data.type === "answer_delta"
+        ? String(data.content || "")
+        : sanitizeStreamContent(String(data.content || ""));
+      if (piece) {
+        queueContentDelta(piece);
+        agentMsg.value.isThinking = false;
+        if (thoughtTimer) {
+          clearInterval(thoughtTimer);
+          thoughtTimer = null;
+        }
+      }
+      return true;
+    }
+    if (data.type) flushContentBuffer();
+    return false;
+  };
+
   try {
     const mountedKnowledgeDatasetIds = resourceScope.value.knowledge_bases.map((item: any) => String(item.id || '').trim()).filter(Boolean);
     const knowledgeDatasetIds = mountedKnowledgeDatasetIds.length > 0 ? mountedKnowledgeDatasetIds : collectKnowledgeDatasetIds();
@@ -7905,6 +7976,8 @@ const sendMessageInternal = async (snapshot: ChatSendSnapshot) => {
     if (!reader) throw new Error("No body");
 
     const sseLineParser = createSseLineParser();
+
+    let isChatStreamDone = false;
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
@@ -7912,7 +7985,10 @@ const sendMessageInternal = async (snapshot: ChatSendSnapshot) => {
       const dataLines = sseLineParser.feed(decoder.decode(value, { stream: true }));
 
       for (const dataStr of dataLines) {
-        if (dataStr === "[DONE]") continue;
+        if (dataStr === "[DONE]") {
+          isChatStreamDone = true;
+          break;
+        }
 
         // Any SSE data frame means the stream is alive. Keep the fallback
         // prompt hidden while logs, narration, tool events, or answer deltas
@@ -7922,14 +7998,20 @@ const sendMessageInternal = async (snapshot: ChatSendSnapshot) => {
         try {
           const data = JSON.parse(dataStr);
           applyStreamTraceId(agentMsg.value, data);
-          if (data.type === "duplicate_request") {
+          if (handleBufferedBodyEvent(data)) {
+            // 已进入正文缓冲。
+          } else if (data.type === "duplicate_request") {
+            flushContentBuffer();
             agentMsg.value.isThinking = false;
             (agentMsg.value as any).status = "duplicate_request";
             agentMsg.value.content = String(data.content || "相同发送请求已提交，请等待原任务完成。\n");
             remoteRunActive.value = true;
             void refreshCurrentRunStatus();
           } else if (data.type === "run_status") {
+            flushContentBuffer();
             agentMsg.value.isThinking = false;
+            clearStallTimer();
+            showStalledPrompt.value = false;
             markOutputCompleted();
             if (data.status === "success") {
               (agentMsg.value as any).status = "success";
@@ -8013,22 +8095,18 @@ const sendMessageInternal = async (snapshot: ChatSendSnapshot) => {
                 ltmAlertedInSession.value = true;
               }
             }
-          } else if (data.type === "retraction") {
-            agentMsg.value.content = stripInternalContextBlocks(String(data.content || ""));
-            if (data.final !== false) {
-              agentMsg.value.isThinking = false;
-            }
           } else if (data.type === "error") {
+            flushContentBuffer();
             agentMsg.value.isThinking = false;
             (agentMsg.value as any).status = "error";
             applyStreamErrorMessage(agentMsg.value, data);
           } else if (data.type === "answer" || data.type === "answer_delta" || data.content) {
             const piece = sanitizeStreamContent(String(data.content || ""));
             if (piece) {
-              if (agentMsg.value.isThoughtExpanded && !agentMsg.value.content) {
+              if (agentMsg.value.isThoughtExpanded && !agentMsg.value.content && !pendingContentBuffer) {
                 agentMsg.value.isThoughtExpanded = false;
               }
-              appendAssistantBodyDelta(agentMsg.value, piece);
+              queueContentDelta(piece);
               resetStallTimer();
               if (agentMsg.value.isThinking) {
                 agentMsg.value.isThinking = false;
@@ -8039,17 +8117,28 @@ const sendMessageInternal = async (snapshot: ChatSendSnapshot) => {
               }
             }
           } else if (data.status === "generating") {
-            if (agentMsg.value.content) {
+            if (agentMsg.value.content || pendingContentBuffer) {
               agentMsg.value.isThinking = false;
             }
           } else if (data.type === "error" || data.status === "error") {
+            flushContentBuffer();
             agentMsg.value.isThinking = false;
             applyStreamErrorMessage(agentMsg.value, data);
           }
-          scrollToBottom();
+          if (!pendingContentBuffer) {
+            scrollToBottom();
+          }
         } catch (e) {
           console.error("Failed to parse SSE event:", dataStr, e);
         }
+      }
+      if (isChatStreamDone) {
+        try {
+          await reader.cancel();
+        } catch {
+          // ignore
+        }
+        break;
       }
     }
     for (const dataStr of sseLineParser.flush()) {
@@ -8058,16 +8147,19 @@ const sendMessageInternal = async (snapshot: ChatSendSnapshot) => {
       try {
         const data = JSON.parse(dataStr);
         applyStreamTraceId(agentMsg.value, data);
+        if (handleBufferedBodyEvent(data)) continue;
         if (applyReusableResultStatusEvent(agentMsg.value, data)) continue;
         if (data.type === "log") addEmbedLogFromStream(agentMsg.value, data);
         else if (mergeStreamCitations(agentMsg.value, data)) continue;
         else if (dispatchAgentscopeStreamEvent(agentMsg.value, data, addEmbedLogFromStream, messages.value, handleBashEnvEvent)) continue;
-        else if (data.content) appendAssistantBodyDelta(agentMsg.value, sanitizeStreamContent(String(data.content)));
+        else if (data.content) queueContentDelta(sanitizeStreamContent(String(data.content)));
       } catch (e) {
         console.error("Failed to parse final SSE event:", dataStr, e);
       }
     }
+    flushContentBuffer();
   } catch (e: any) {
+    flushContentBuffer();
     if (e.name === "AbortError") {
       agentMsg.value.content += "\n[用户终止]";
     } else if (document.visibilityState === "hidden") {
@@ -8076,6 +8168,7 @@ const sendMessageInternal = async (snapshot: ChatSendSnapshot) => {
       agentMsg.value.content += `\n[错误: ${e.message}]`;
     }
   } finally {
+    flushContentBuffer();
     isProcessing.value = false;
     void refreshCurrentRunStatus();
     agentMsg.value.isThinking = false;
