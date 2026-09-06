@@ -1761,33 +1761,33 @@ defineExpose({
               textareaPaddingRightClass,
             ]" :placeholder="inputPlaceholder"></textarea>
 
-            <!-- 输入框内部右上角状态浮标组 (反幻觉浮标 + 上下文用量胶囊，0 额外垂直空间占用) -->
+            <!-- 输入框内部右上角状态浮标组 (反幻觉浮标 + 上下文用量胶囊，完全对齐且低饱和淡雅配色) -->
             <div class="absolute right-2 top-2 z-30 flex items-center gap-1.5 pointer-events-auto">
-              <!-- 反幻觉校验浮标 (开启时呈现) -->
+              <!-- 反幻觉校验浮标 (开启时呈现，极淡灰底+微绿点缀) -->
               <div
                 v-if="enableGrounding"
                 data-testid="grounding-status-pill"
-                class="inline-flex items-center gap-1 rounded-full border border-emerald-200/90 bg-emerald-50/95 dark:border-emerald-800/80 dark:bg-emerald-950/70 px-2 py-0.5 text-[10px] font-medium leading-none text-emerald-700 dark:text-emerald-300 shadow-sm transition-all select-none backdrop-blur-sm"
+                class="inline-flex h-[22px] box-border items-center gap-1 rounded-full border border-slate-200/80 bg-slate-50/80 hover:bg-slate-100/90 dark:border-slate-700/70 dark:bg-slate-800/70 dark:hover:bg-slate-700/80 px-2 text-[10px] font-medium leading-none text-slate-600 dark:text-slate-300 transition-colors select-none"
               >
                 <button
                   type="button"
-                  class="flex items-center gap-1 hover:opacity-80 transition-opacity focus:outline-none"
+                  class="flex items-center gap-1 hover:text-slate-900 dark:hover:text-slate-100 transition-colors focus:outline-none"
                   @click="emit('open-grounding-settings')"
                   :title="`反幻觉校验已开启 (${groundingBlockMode === 'stream_with_retraction' ? '实时撤回' : '严格缓冲'})，点击可调整设置`"
                 >
                   <span class="relative flex h-1.5 w-1.5 shrink-0">
-                    <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                    <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-60"></span>
                     <span class="relative inline-flex rounded-full h-1.5 w-1.5 bg-emerald-500"></span>
                   </span>
-                  <svg class="h-3 w-3 text-emerald-600 dark:text-emerald-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <svg class="h-3 w-3 text-emerald-600/75 dark:text-emerald-400/75 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
                   </svg>
-                  <span class="font-semibold">反幻觉</span>
-                  <span class="opacity-70 text-[9px]">({{ groundingBlockMode === 'stream_with_retraction' ? '实时' : '缓冲' }})</span>
+                  <span>反幻觉</span>
+                  <span class="opacity-60 text-slate-400 dark:text-slate-500 text-[9px]">({{ groundingBlockMode === 'stream_with_retraction' ? '实时' : '缓冲' }})</span>
                 </button>
                 <button
                   type="button"
-                  class="ml-0.5 rounded-full p-0.5 hover:bg-emerald-200/80 dark:hover:bg-emerald-800/80 text-emerald-600 dark:text-emerald-400 hover:text-emerald-900 transition-colors focus:outline-none"
+                  class="ml-0.5 rounded-full p-0.5 text-slate-400 hover:text-slate-600 hover:bg-slate-200/60 dark:text-slate-400 dark:hover:text-slate-200 dark:hover:bg-slate-700/80 transition-colors focus:outline-none"
                   @click.stop="emit('disable-grounding')"
                   title="关闭反幻觉校验"
                   aria-label="关闭反幻觉校验"
@@ -1802,12 +1802,12 @@ defineExpose({
               <div
                 v-if="contextUsage && contextUsage.physical_window"
                 ref="contextUsageContainerRef"
-                class="relative"
+                class="relative flex items-center"
               >
                 <button
                   type="button"
                   data-testid="context-usage-indicator"
-                  class="inline-flex items-center gap-1 rounded-full border px-2 py-1 text-[10px] font-medium leading-none transition-colors focus:outline-none focus:ring-2 focus:ring-primary/20"
+                  class="inline-flex h-[22px] box-border items-center gap-1 rounded-full border px-2 text-[10px] font-medium leading-none transition-colors focus:outline-none focus:ring-2 focus:ring-primary/20"
                   :class="contextUsageTone.badge"
                   :aria-expanded="showContextUsageDetails"
                   aria-haspopup="dialog"

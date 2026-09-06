@@ -17,6 +17,14 @@ from app.services.ai.runtime.tool_loop_detector import (
     AGENT_TOOL_LOOP_GLOBAL_LIMIT_KEY,
     validate_agent_tool_loop_global_limit,
 )
+from app.services.ai.runtime.agentscope.tool_parallel import (
+    AGENTSCOPE_PARALLEL_TOOL_EXECUTION_KEY,
+    AGENTSCOPE_MAX_CONCURRENT_TOOLS_KEY,
+    validate_agentscope_parallel_tool_execution,
+    validate_agentscope_max_concurrent_tools,
+    set_parallel_tool_execution_enabled,
+    set_max_concurrency_limit,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +53,12 @@ def validate_config_update(key: str, value: str) -> None:
         validate_agent_max_toolcall_timeout(value)
     elif key == AGENT_TOOL_LOOP_GLOBAL_LIMIT_KEY:
         validate_agent_tool_loop_global_limit(value)
+    elif key == AGENTSCOPE_PARALLEL_TOOL_EXECUTION_KEY:
+        enabled = validate_agentscope_parallel_tool_execution(value)
+        set_parallel_tool_execution_enabled(enabled)
+    elif key == AGENTSCOPE_MAX_CONCURRENT_TOOLS_KEY:
+        limit = validate_agentscope_max_concurrent_tools(value)
+        set_max_concurrency_limit(limit)
 
 _SYSTEM_CONFIGS_TABLE = Table(
     "system_configs",
