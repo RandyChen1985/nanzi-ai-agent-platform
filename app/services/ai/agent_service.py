@@ -1995,8 +1995,46 @@ class AgentService:
         turn_decision: Any,
         messages: List[Dict[str, str]],
         debug_options: Optional[Dict[str, Any]],
+        conversation_id: Optional[str] = None,
     ) -> TurnPreflightContext:
-        """并发预取技能、长期记忆、用户画像、权限目录、专家花名册与有效工具清单 (P0 TTFT 并发提速)"""
+        """并发预取技能、长期记忆、用户画像、权限目录、专家花名册与有效工具清单 (P0 TTFT 并发提速)。"""
+
+        async def _prewarm_workspace() -> None:
+            """首句工作区并发预热：提前构建会话工作区并填充 `_workspace_cache`，
+            使后续 execute 阶段 `_build_native_agent` 命中缓存，避免首句把建目录 +
+            技能硬链接 + LocalWorkspace.initialize 串行累加在首个 token 之前。
+
+            需在有会话 id 且沙箱策略真正会使用工作区时才预热；任何异常单独容错，
+            不阻断其它预取协程与主流程。
+            """
+            if not conversation_id:
+                return
+            try:
+                info = user_info or {}
+                raw_user_id = info.get("user_id") or info.get("id")
+                runtime_user_id = str(raw_user_id) if raw_user_id is not None else None
+                raw_user_name = info.get("user_name") or info.get("username")
+                runtime_user_name = (
+                    str(raw_user_name).strip() if raw_user_name is not None else None
+                )
+                from app.services.ai.runtime.agentscope.workspace import (
+                    get_local_workspace,
+                )
+
+                await get_local_workspace(
+                    user_id=runtime_user_id,
+                    conversation_id=conversation_id,
+                    user_name=runtime_user_name,
+                    user_info=user_info,
+                    skills_custom=bool(getattr(agent_config, "skills_custom", False)),
+                    allowed_global_skills=list(getattr(agent_config, "skills", None) or []),
+                )
+            except Exception as err:
+                logger.warning(
+                    "[Preflight] Workspace prewarm skipped for conversation=%s: %s",
+                    conversation_id,
+                    err,
+                )
         matched_skills_to_log: List[tuple] = []
         def skills_log_callback(skill_id: str, skill_name: str, details_msg: str) -> None:
             matched_skills_to_log.append((skill_id, skill_name, details_msg))
@@ -2133,6 +2171,7 @@ class AgentService:
             res_accessible_resources,
             (delegable_agents, delegable_agent_count, roster_loaded, updated_prompt, sub_agents_context),
             effective_prompt_tool_names,
+            _prewarm_workspace_result,
         ) = await asyncio.gather(
             _fetch_skills(),
             _fetch_memory(),
@@ -2140,6 +2179,7 @@ class AgentService:
             _fetch_catalog(),
             _fetch_roster(),
             _fetch_tools(),
+            _prewarm_workspace(),
         )
 
         return TurnPreflightContext(

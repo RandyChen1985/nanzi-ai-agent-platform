@@ -334,3 +334,86 @@ async def test_duplicate_client_request_id_does_not_start_another_stream(monkeyp
         "content": "相同发送请求已提交，正在等待原任务完成，请勿重复操作。",
     }
     assert lines[-1] == "data: [DONE]"
+
+
+@pytest.mark.no_infrastructure
+@pytest.mark.asyncio
+async def test_chat_completion_stream_producer_hard_timeout_releases_locks(mocker):
+    """
+    A3 回归测试：当 producer 在后台（FinalizeStep 落库/摘要等）陷入无限挂起，
+    游离任务不应永久占用会话锁。producer 硬超时看门狗应取消 producer，
+    并释放会话锁，使该会话可继续被新请求使用。
+    """
+    import asyncio
+    from app.core.orm import get_db_session
+    from app.api.v1.endpoints import chat as chat_endpoint
+    from app.services.ai.runtime import conversation_run_cancel as crc
+
+    release_calls = {"count": 0}
+    release_called = asyncio.Event()
+
+    async def _fake_release(**kwargs):
+        release_calls["count"] += 1
+        release_called.set()
+        return {"success": True, "lane_released": True, "session_locks_released": 0}
+
+    mocker.patch.object(
+        crc, "release_conversation_run_locks", side_effect=_fake_release
+    )
+
+    # 模拟 FinalizeStep 挂死：产出正文后再也不返回。
+    async def _hung_stream(*args, **kwargs):
+        yield {"content": "Hello"}
+        await asyncio.sleep(3600)  # 模拟无限挂起
+        yield {"content": " never reached "}
+
+    mocker.patch(
+        "app.services.ai.agent_service.agent_service.chat_completion_stream",
+        side_effect=_hung_stream,
+    )
+
+    # 把硬超时压到极小，便于测试；其余配置键一律返回空（不使用）。
+    async def _tiny_config(key, default=None):
+        if key == "agent_chat_producer_hard_timeout_seconds":
+            return "0.2"
+        return default
+
+    mocker.patch.object(chat_endpoint.ConfigService, "get", side_effect=_tiny_config)
+
+    async def _override_get_db_session():
+        yield MagicMock()
+
+    app.dependency_overrides[chat_endpoint.require_api_key] = lambda: {
+        "user_id": 1,
+        "role": "admin",
+        "username": "admin",
+    }
+    app.dependency_overrides[get_db_session] = _override_get_db_session
+
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            payload = {
+                "messages": [{"role": "user", "content": "Hi"}],
+                "stream": True,
+                "conversation_id": "conv-watchdog-timeout",
+            }
+            async with client.stream(
+                "POST",
+                "/api/v1/chat/completions",
+                json=payload,
+                headers={"X-API-Key": "test-key"},
+            ) as resp:
+                assert resp.status_code == 200
+                # producer 无限挂起时不会下发 [DONE]；读取直到流因 producer 被
+                # 看门狗取消而自行结束即可。
+                async for _line in resp.aiter_lines():
+                    pass
+        # 等待看门狗强释放锁（producer 自身的 CancelledError 分支也会触发一次，
+        # 因此断言“至少调用过”即可）。
+        await asyncio.wait_for(release_called.wait(), timeout=2.0)
+        assert release_calls["count"] >= 1
+    finally:
+        app.dependency_overrides.pop(chat_endpoint.require_api_key, None)
+        app.dependency_overrides.pop(get_db_session, None)

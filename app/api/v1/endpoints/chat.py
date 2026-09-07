@@ -1596,6 +1596,74 @@ async def create_chat_completion(
             name=f"chat-producer-{conversation_id or 'unknown'}",
         )
 
+        # ---- producer 硬超时看门狗（A3）----
+        # 正常情况下：客户端读完 [DONE] 或中途断开后，producer 仍会在后台把
+        # FinalizeStep 的落库/摘要/审计跑完，随后随 `track_conversation_run` /
+        # `conversation_run_lane.hold` 退出自然释放会话锁；此时看门狗跟随
+        # producer 提前结束，不会残留。
+        # 最坏情况：FinalizeStep 因 Redis/DB 挂起等因素无限卡住，producer 变成
+        # 无人回收的游离任务，同时一直占用会话 lane 锁，导致该会话后续所有消息
+        # 都“会话忙”。看门狗在硬超时后 cancel producer（其 CancelledError 分支
+        # 会释放锁），并兜底再强释放一次锁，保证会话尽快可复用。
+        async def _producer_watchdog(
+            hard_timeout: float, lock_grace_seconds: float = 5.0
+        ) -> None:
+            try:
+                await asyncio.wait_for(
+                    asyncio.shield(producer_task), timeout=hard_timeout
+                )
+            except asyncio.TimeoutError:
+                logger.error(
+                    "[ChatAPI] producer hard timeout %.0fs conversation=%s; "
+                    "force-cancelling producer and releasing session locks.",
+                    hard_timeout,
+                    conversation_id,
+                )
+                if not producer_task.done():
+                    producer_task.cancel()
+                # 留一点宽限，让 producer 的 CancelledError 分支自己完成自然锁释放；
+                # 无论结果如何，下方都会再幂等强释放一次兜底。
+                try:
+                    await asyncio.wait_for(
+                        asyncio.shield(producer_task), timeout=lock_grace_seconds
+                    )
+                except (asyncio.TimeoutError, asyncio.CancelledError):
+                    pass
+                try:
+                    await _release_locks_on_client_abort()
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:
+                    logger.warning(
+                        "[ChatAPI] watchdog failed to release locks conversation=%s: %s",
+                        conversation_id,
+                        exc,
+                    )
+            except asyncio.CancelledError:
+                # 看门狗自身被取消（如进程关闭）：尽量同步收尾 producer，避免锁残留。
+                if not producer_task.done():
+                    producer_task.cancel()
+                raise
+
+        async def _producer_hard_timeout() -> float:
+            # 默认 600s；配置异常时回落 600s。0/负值表示“不经看门狗”（关闭兜底）。
+            try:
+                raw = await ConfigService.get(
+                    "agent_chat_producer_hard_timeout_seconds", "600"
+                )
+                return max(0.0, float(raw))
+            except (TypeError, ValueError):
+                return 600.0
+
+        _producer_hard_timeout_seconds = await _producer_hard_timeout()
+        if _producer_hard_timeout_seconds > 0:
+            # 看门狗随 producer 结束而结束：`wait_for` 会在 producer 完成后提前返回，
+            # 不会为了等满整个 hard_timeout 而残留。
+            asyncio.create_task(
+                _producer_watchdog(_producer_hard_timeout_seconds),
+                name=f"chat-producer-watchdog-{conversation_id or 'unknown'}",
+            )
+
         async def sse_generator() -> AsyncGenerator[str, None]:
             client_disconnected = False
             last_keepalive = 0.0

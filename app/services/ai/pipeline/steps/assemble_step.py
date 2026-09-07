@@ -143,6 +143,7 @@ class AssembleStep(BasePipelineStep):
                     turn_decision=turn_decision,
                     messages=context.messages,
                     debug_options=debug_options,
+                    conversation_id=context.conversation_id,
                 )
                 shared_state["preflight_ctx"] = preflight_ctx
                 if context.performance_tracker is not None:
