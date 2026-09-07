@@ -154,3 +154,35 @@
   - data/knowledge/search 或要求证据：从第一个字符起仍是原 `process_narration -> promote` 协议。
 
 - [ ] **Step 4: 报告未覆盖的真实环境边界。** 明确说明本轮不启动 `./dev.sh`，也不调用真实模型、外部工具、Redis 或浏览器；这些仅能在用户启动服务后用实际对话验收。
+
+### Task 6: 修复 EmbedChat 执行卡片总耗时被候选正文提前冻结
+
+**Files:**
+- Modify: `tests/frontend/test_chat_shared_helpers_behavior.py`
+- Modify: `frontend/src/views/EmbedChat.vue`
+
+- [x] **Step 1: 写失败的前端契约测试。** 断言 `handleBufferedBodyEvent()` 处理 `answer` / `answer_delta` 时不清理 `thoughtTimer`，并断言主请求 `finally` 在停止计时器前调用统一收尾函数，按 `thoughtStartTime` 刷新最终 `thoughtDuration`。
+
+- [x] **Step 2: 运行目标测试确认失败。**
+
+  Run: `pytest --confcutdir=tests/frontend tests/frontend/test_chat_shared_helpers_behavior.py -q -k 'total_duration'`
+
+  Expected: FAIL，指出正文缓冲处理仍提前清理 `thoughtTimer`，且尚无最终耗时收尾函数。
+
+- [x] **Step 3: 实现最小修复。** 在 `EmbedChat.vue` 增加 `finishThoughtTimer(msg)`：若存在 `thoughtStartTime`，以当前时间减去原始开始时间并保留一位小数，然后清理计时器并置空；从 `handleBufferedBodyEvent()` 删除正文到达时的计时器清理；在主请求 `finally` 调用该函数。
+
+- [x] **Step 4: 运行目标测试和相关候选撤回测试。**
+
+  Run: `pytest --confcutdir=tests/frontend tests/frontend/test_chat_shared_helpers_behavior.py -q -k 'total_duration or candidate_answer_delta or invalidates_raf_buffer'`
+
+  Expected: PASS，候选正文可撤回且总耗时只在流结束时冻结。
+
+- [x] **Step 5: 运行完整前端契约、类型检查和差异卫生检查。**
+
+  Run: `pytest --confcutdir=tests/frontend tests/frontend/test_chat_shared_helpers_behavior.py -q`
+
+  Run: `./node_modules/.bin/vue-tsc --noEmit`（工作目录：`frontend`）
+
+  Run: `git diff --check`
+
+  Expected: 全部通过。

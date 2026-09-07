@@ -4685,6 +4685,14 @@ const startThoughtTimer = (msg: Message) => {
     }
   }, 100);
 };
+const finishThoughtTimer = (msg: Message) => {
+  if (msg.thoughtStartTime) {
+    msg.thoughtDuration = ((Date.now() - msg.thoughtStartTime) / 1000).toFixed(1);
+    triggerRef(messages);
+  }
+  if (thoughtTimer) clearInterval(thoughtTimer);
+  thoughtTimer = null;
+};
 const clearStallTimer = () => {
   if (stallTimer) {
     clearTimeout(stallTimer);
@@ -7942,10 +7950,6 @@ const sendMessageInternal = async (snapshot: ChatSendSnapshot) => {
       if (piece) {
         queueContentDelta(piece);
         agentMsg.value.isThinking = false;
-        if (thoughtTimer) {
-          clearInterval(thoughtTimer);
-          thoughtTimer = null;
-        }
       }
       return true;
     }
@@ -8101,8 +8105,7 @@ const sendMessageInternal = async (snapshot: ChatSendSnapshot) => {
             // Additive ChatBI evidence event; answer content stays unchanged.
           } else if (dispatchAgentscopeStreamEvent(agentMsg.value, data, addEmbedLogFromStream, messages.value, handleBashEnvEvent)) {
             if (
-              (data.type === "permission_required" || (data.type === "retraction" && data.final !== false))
-              && thoughtTimer
+              data.type === "permission_required" && thoughtTimer
             ) {
               clearInterval(thoughtTimer);
               thoughtTimer = null;
@@ -8161,10 +8164,6 @@ const sendMessageInternal = async (snapshot: ChatSendSnapshot) => {
               resetStallTimer();
               if (agentMsg.value.isThinking) {
                 agentMsg.value.isThinking = false;
-                if (thoughtTimer) {
-                  clearInterval(thoughtTimer);
-                  thoughtTimer = null;
-                }
               }
             }
           } else if (data.status === "generating") {
@@ -8231,7 +8230,7 @@ const sendMessageInternal = async (snapshot: ChatSendSnapshot) => {
     showStalledPrompt.value = false;
     void refreshEmbedContextUsage();
     void refreshEmbedContextCompactions(true);
-    if (thoughtTimer) clearInterval(thoughtTimer);
+    finishThoughtTimer(agentMsg.value);
     // Final cleanup: stop any remaining log spinners
     finalizeAllPendingStreamLogs(agentMsg.value);
     scrollToBottom();

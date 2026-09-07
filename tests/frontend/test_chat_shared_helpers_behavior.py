@@ -453,6 +453,30 @@ def test_embed_chat_invalidates_raf_buffer_before_dispatching_retraction():
     assert embed.index("if (handleBufferedBodyEvent(data))", handler) < dispatcher
 
 
+def test_embed_chat_total_duration_stays_live_until_main_stream_finishes():
+    embed = (ROOT / "frontend/src/views/EmbedChat.vue").read_text(encoding="utf-8")
+
+    assert "const finishThoughtTimer = (msg: Message) =>" in embed
+    helper_start = embed.index("const finishThoughtTimer = (msg: Message) =>")
+    helper_end = embed.index("const clearStallTimer", helper_start)
+    helper = embed[helper_start:helper_end]
+    assert "Date.now() - msg.thoughtStartTime" in helper
+    assert "msg.thoughtDuration =" in helper
+    assert "clearInterval(thoughtTimer)" in helper
+    assert "thoughtTimer = null" in helper
+
+    handler_start = embed.index("const handleBufferedBodyEvent")
+    handler_end = embed.index("if (data.type) flushContentBuffer();", handler_start)
+    assert "clearInterval(thoughtTimer)" not in embed[handler_start:handler_end]
+
+    main_stream_finally = embed.index("  } finally {", handler_end)
+    main_stream = embed[handler_end:main_stream_finally]
+    assert "data.type === \"permission_required\" && thoughtTimer" in main_stream
+    assert main_stream.count("clearInterval(thoughtTimer)") == 1
+    final_cleanup = embed.index("finalizeAllPendingStreamLogs(agentMsg.value)", main_stream_finally)
+    assert "finishThoughtTimer(agentMsg.value);" in embed[main_stream_finally:final_cleanup]
+
+
 def test_process_narration_from_parallel_agents_stays_on_separate_timeline_items():
     result = _run_typescript(
         "frontend/src/utils/agentscopeSseHandlers.ts",
