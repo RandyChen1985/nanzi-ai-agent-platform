@@ -1,0 +1,260 @@
+<!--
+  微信公众号排版 HTML — NanZi AI 智能体平台 v1.0.14.0
+  风格：墨色编辑风（少渐变、少彩虹色块、优雅深墨色调）
+  使用说明：
+  1. 复制下方 <section> 内全部内容，粘贴到微信公众平台编辑器「HTML」模式（或 135/秀米 等工具）
+  2. 封面图可在编辑器中自行上传替换
+  3. 外链在发布前预览确认；部分链接需绑定公众号域名白名单
+  4. 不支持 <style>、<script>、class/id 选择器，全部采用内联 style
+-->
+
+<section style="box-sizing:border-box;font-size:16px;color:#44403c;line-height:1.85;letter-spacing:0.3px;text-align:justify;font-family:Georgia,'Songti SC','Noto Serif SC','PingFang SC','Hiragino Sans GB','Microsoft YaHei',serif;">
+
+  <!-- 标题区：实底墨色，无渐变光晕 -->
+  <section style="margin:0 0 28px 0;padding:28px 18px 24px 18px;background:#1c1917;border-radius:2px;text-align:left;">
+    <p style="margin:0 0 6px 0;font-size:12px;font-weight:normal;color:#a8a29e;line-height:1.4;letter-spacing:2px;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">NANZI · RELEASE NOTES</p>
+    <p style="margin:0 0 10px 0;font-size:22px;font-weight:bold;color:#fafaf9;line-height:1.45;letter-spacing:0.5px;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">NanZi 开源智能体平台 v1.0.14.0</p>
+    <p style="margin:0;font-size:14px;font-weight:normal;color:#d6d3d1;line-height:1.7;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">责任链流水线 · 平台 MCP 服务台 · 模型级 Temperature 配置 · 全链路体验加固</p>
+  </section>
+
+  <!-- 项目声明 -->
+  <section style="margin:0 0 22px 0;padding:0 0 18px 0;border-bottom:1px solid #e7e5e4;">
+    <p style="margin:0 0 10px 0;font-size:13px;font-weight:bold;color:#1c1917;line-height:1.5;letter-spacing:1px;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">项目声明</p>
+    <p style="margin:0 0 8px 0;font-size:14px;color:#57534e;line-height:1.85;text-align:justify;">
+      本项目为<strong style="color:#1c1917;">个人开源</strong>，供自由学习交流，遵循 MIT 开源协议，可自由分发与商业化使用。
+    </p>
+    <p style="margin:0;font-size:14px;color:#57534e;line-height:1.85;text-align:justify;">
+      「NanZi」取自我常用的网名「南孜」，寓「孜孜不倦」——持续学习、打磨与探索生产级智能体工程实践。
+    </p>
+  </section>
+
+  <!-- 仓库链接 -->
+  <section style="margin:0 0 22px 0;padding:12px 0 12px 14px;border-left:3px solid #1c1917;">
+    <p style="margin:0;font-size:14px;color:#44403c;line-height:1.7;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+      <strong style="color:#1c1917;">GitHub：</strong>
+      <a href="https://github.com/RandyChen1985/nanzi-ai-agent-platform" style="color:#44403c;text-decoration:underline;word-break:break-all;">RandyChen1985/nanzi-ai-agent-platform</a>
+    </p>
+  </section>
+
+  <!-- 导语 -->
+  <section style="margin:0 0 28px 0;">
+    <p style="margin:0 0 14px 0;font-size:15px;color:#292524;line-height:1.9;">
+      NanZi 开源智能体平台正式发布 <strong style="color:#1c1917;">v1.0.14.0</strong> 版本！本次迭代是一次以<strong>架构解耦、极速吞吐与开放生态</strong>为核心的里程碑大版本。我们系统性重构了核心<strong>AI 编排责任链流水线</strong>，全面开放了<strong>全功能平台 MCP 服务台与双向生态闭环</strong>（包含企业级用户身份透传签名机制），单独新增了备受期待的<strong>模型级 Temperature 采样温度配置</strong>，并在<strong>平台综合体验、元数据调度与安全防线</strong>上进行了全方位的工业级加固。
+    </p>
+    <p style="margin:0;font-size:14px;color:#78716c;line-height:1.75;">
+      本次变更自 <code style="font-size:12px;background:#f5f5f4;padding:2px 6px;border-radius:2px;color:#44403c;">2a4072f2</code> 至 <code style="font-size:12px;background:#f5f5f4;padding:2px 6px;border-radius:2px;color:#44403c;">933a5f46</code>，共 <strong>125 个提交</strong>（106 个非 Merge 提交），涉及 <strong>416 个文件</strong>，约 <strong>55,678 行新增</strong>。
+    </p>
+  </section>
+
+  <!-- 章节一：核心更新亮点 -->
+  <section style="margin:0 0 32px 0;">
+    <p style="margin:0 0 16px 0;font-size:18px;font-weight:bold;color:#1c1917;line-height:1.4;border-bottom:2px solid #1c1917;padding-bottom:6px;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+      🚀 核心更新亮点 (Key Features)
+    </p>
+
+    <!-- 亮点 1：AI 编排责任链管道化重构与工程解耦 -->
+    <section style="margin:0 0 20px 0;padding:16px;background:#f5f5f4;border-radius:2px;">
+      <p style="margin:0 0 8px 0;font-size:16px;font-weight:bold;color:#1c1917;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        1. 🏗️ AI 编排责任链管道化重构与工程解耦
+      </p>
+      <ul style="margin:0 0 12px 0;padding-left:20px;font-size:14px;color:#44403c;line-height:1.8;">
+        <li><strong style="color:#1c1917;">6 阶责任链流水线</strong>：将原先单体庞大的 <code style="font-size:12px;background:#e7e5e4;padding:2px 4px;border-radius:2px;">AgentService</code> 解耦为 <code style="font-size:12px;background:#e7e5e4;padding:2px 4px;border-radius:2px;">PreflightStep</code> → <code style="font-size:12px;background:#e7e5e4;padding:2px 4px;border-radius:2px;">ContextStep</code> → <code style="font-size:12px;background:#e7e5e4;padding:2px 4px;border-radius:2px;">RouteStep</code> → <code style="font-size:12px;background:#e7e5e4;padding:2px 4px;border-radius:2px;">AssembleStep</code> → <code style="font-size:12px;background:#e7e5e4;padding:2px 4px;border-radius:2px;">ExecutionStep</code> → <code style="font-size:12px;background:#e7e5e4;padding:2px 4px;border-radius:2px;">FinalizeStep</code>，职责严格内聚，彻底清理冗余分支与死代码。</li>
+        <li><strong style="color:#1c1917;">分布式锁看门狗自动续约 (Watchdog)</strong>：引入后台守护协程，长任务与多轮推理期间自动为 Redis 会话锁续约，任务结束即刻释放，根除 409 会话忙与锁超时失效。</li>
+        <li><strong style="color:#1c1917;">长推理静默心跳与终态收敛</strong>：深度思考和工具等待期间自动下发 <code style="font-size:12px;background:#e7e5e4;padding:2px 4px;border-radius:2px;">heartbeat</code> 心跳，防止反向代理网关 SSE 断连；保证流式终态状态机必定收敛，告别前端死锁转圈。</li>
+        <li><strong style="color:#1c1917;">候选正文毫秒直出与首句工作区并发预热</strong>：首段文字以候选增量实时直出（TTFT 大幅缩短），触发工具时协议级 <code style="font-size:12px;background:#e7e5e4;padding:2px 4px;border-radius:2px;">retraction</code> 平滑转为过程引导；装配阶段异步并行初始化工作区与 Docker 沙箱，工具冷启动延迟归零；修复思考卡片防过早折叠。</li>
+        <li><strong style="color:#1c1917;">多工具并发异步调度</strong>：模型单轮次发出的无依赖工具调用由串行累加升级为异步并行执行（<code style="font-size:12px;background:#e7e5e4;padding:2px 4px;border-radius:2px;">asyncio.gather</code>），多源查数与检索耗时锐减 60%+，并设并发配额保护。</li>
+        <li><strong style="color:#1c1917;">工具证据分级响应门禁</strong>：三级事实置信度判定。工具查询失败或无数据时强约束模型事实防御，杜绝幻觉胡编；提供工具元查询与多级追溯 API。</li>
+      </ul>
+      <section style="margin:8px 0 0 0;padding:16px;background:#fafaf9;border:1px dashed #d6d3d1;border-radius:4px;text-align:center;color:#78716c;font-size:13px;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        <p style="margin:0 0 4px 0;font-size:18px;">📷</p>
+        <p style="margin:0;">【示例截图占位】：AgentService 责任链流水线流转与生命周期控制</p>
+      </section>
+    </section>
+
+    <!-- 亮点 2：全功能平台 MCP 服务台与双向生态闭环（含调用第三方 MCP 身份透传深度解析） -->
+    <section style="margin:0 0 20px 0;padding:16px;background:#f5f5f4;border-radius:2px;">
+      <p style="margin:0 0 8px 0;font-size:16px;font-weight:bold;color:#1c1917;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        2. 🌐 全功能平台 MCP 服务台与双向生态闭环
+      </p>
+      <ul style="margin:0 0 12px 0;padding-left:20px;font-size:14px;color:#44403c;line-height:1.8;">
+        <li><strong style="color:#1c1917;">平台全面开放为标准 MCP Server (入站)</strong>：外部应用（如 Cursor、Claude Desktop、VSCode 或自研系统）只需配置 NanZi 的 MCP 端点，即可直连调用平台内的通用智能体、ChatBI 数据查询、知识库检索与元数据工具。对外暴露的工具名统一规范为标准下划线风格。</li>
+        <li><strong style="color:#1c1917;">企业级 OAuth 2.0 与 Scope 版本控制</strong>：
+          构建完整的客户端凭据生成、OAuth 授权体系；支持 7天/30天/永久等自定义 Token 有效期；引入 <code style="font-size:12px;background:#e7e5e4;padding:2px 4px;border-radius:2px;">scope_version</code>，权限调整后旧 Token 自动失效防越权；支持全员共享 Client 协作。
+        </li>
+        <li>
+          <strong style="color:#1c1917;">调用第三方 MCP 的用户身份上下文透传 (UserContext Assertion 核心特性)</strong>：
+          <ul style="margin:6px 0 6px 0;padding-left:18px;color:#57534e;">
+            <li><strong>解决的痛点</strong>：过去平台调用外部企业自研 MCP 工具时，只能配置全局统一的静态 Token。第三方系统无法知道是哪位具体员工在操作，无法落实<strong>数据行级权限控制、部门级权限隔离或精准操作审计</strong>；若将用户信息放在 Prompt 参数中，极易被模型遗漏或篡改。</li>
+            <li><strong>双轨分离认证协议</strong>：支持独立的 <code style="font-size:12px;background:#e7e5e4;padding:2px 4px;border-radius:2px;">Authorization: Bearer</code>（证明请求来自 NanZi 平台合法客户端）与 <code style="font-size:12px;background:#e7e5e4;padding:2px 4px;border-radius:2px;">X-Nanzi-User-Assertion</code>（携带当前真实用户身份凭证的 JWS 签名串），两者互不耦合、各自独立生效。</li>
+            <li><strong>防伪造非对称签名与密钥隔离</strong>：平台在后端为每个开启的第三方 MCP 独立生成非对称签名私钥（Ed25519/EdDSA）与专属 Audience，私钥在数据库高强度加密，绝不回显前端；第三方 MCP 服务仅需读取公钥验证签名。</li>
+            <li><strong>结构化 Payload 规范</strong>：JWS 签名载荷包含标准字段：主体 <code style="font-size:12px;background:#e7e5e4;padding:2px 4px;border-radius:2px;">sub</code>、<code style="font-size:12px;background:#e7e5e4;padding:2px 4px;border-radius:2px;">user_context</code>（真实用户 ID、用户名、姓名、部门代码、组织路径）、安全过滤后的扩展属性、发起调用的智能体信息（ID、版本、名称）以及防重放攻击的 <code style="font-size:12px;background:#e7e5e4;padding:2px 4px;border-radius:2px;">jti</code> 和 60 秒极短有效期（<code style="font-size:12px;background:#e7e5e4;padding:2px 4px;border-radius:2px;">exp</code>）。</li>
+            <li><strong>公钥发现与一键生成对接代码</strong>：平台对外暴露标准 JWKS 公钥发现端点（<code style="font-size:12px;background:#e7e5e4;padding:2px 4px;border-radius:2px;">/.well-known/nanzi/mcp/{mcp_server_id}/jwks.json</code>）；管理页面提供 Python / Java 双语言的一键生成验签中间件代码，开箱即用。</li>
+            <li><strong>内置 Echo 诊断测试服务</strong>：平台提供一键创建 Echo 测试 MCP 实例，可全链路模拟并回显 Bearer Token 与 UserContext 验签结果（<code style="font-size:12px;background:#e7e5e4;padding:2px 4px;border-radius:2px;">user_assertion_received=true</code>、<code style="font-size:12px;background:#e7e5e4;padding:2px 4px;border-radius:2px;">user_assertion_valid=true</code>），让开发者零成本排查 DNS rebinding、Header 传递与验签全流程。</li>
+          </ul>
+        </li>
+        <li><strong style="color:#1c1917;">出站调用全链路独立审计 (Outbound Audit)</strong>：新增 <code style="font-size:12px;background:#e7e5e4;padding:2px 4px;border-radius:2px;">sys_mcp_outbound_audit_logs</code> 独立审计表，在服务台全局「审计日志」Tab 中集中展示智能体发起的外部 MCP 工具调用快照、完整入参出参、时延（毫秒）与全局 Trace ID。</li>
+      </ul>
+      <section style="margin:8px 0 0 0;padding:16px;background:#fafaf9;border:1px dashed #d6d3d1;border-radius:4px;text-align:center;color:#78716c;font-size:13px;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        <p style="margin:0 0 4px 0;font-size:18px;">📷</p>
+        <p style="margin:0;">【示例截图占位】：平台 MCP 服务台 Client 管理、UserContext 身份透传开关与出站独立审计 Tab</p>
+      </section>
+    </section>
+
+    <!-- 亮点 3：模型级 Temperature 配置 -->
+    <section style="margin:0 0 20px 0;padding:16px;background:#f5f5f4;border-radius:2px;">
+      <p style="margin:0 0 8px 0;font-size:16px;font-weight:bold;color:#1c1917;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        3. 🌡️ 模型级 Temperature 采样温度独立配置
+      </p>
+      <ul style="margin:0 0 12px 0;padding-left:20px;font-size:14px;color:#44403c;line-height:1.8;">
+        <li><strong style="color:#1c1917;">精细化温度调优 (0.0 ~ 2.0)</strong>：在底层 <code style="font-size:12px;background:#e7e5e4;padding:2px 4px;border-radius:2px;">ai_models</code> 表新增 <code style="font-size:12px;background:#e7e5e4;padding:2px 4px;border-radius:2px;">temperature</code> 字段，允许管理员在模型管理页面中为不同模型单独配置专属采样温度。</li>
+        <li><strong style="color:#1c1917;">智能体创建自动继承与测试覆盖</strong>：新建智能体及进行模型连通性测试时，优先自动采用对应模型的专属温度设置；未单独设置时平滑回退至全局默认值，兼顾代码分析严谨性（低温 0.1~0.2）与创意构思灵活性（高温 0.7~0.9）。</li>
+        <li><strong style="color:#1c1917;">前端引导与安全索引访问</strong>：前端模型配置面板补充温度参考说明与推荐值提示，修复类型索引安全访问机制。</li>
+      </ul>
+      <section style="margin:8px 0 0 0;padding:16px;background:#fafaf9;border:1px dashed #d6d3d1;border-radius:4px;text-align:center;color:#78716c;font-size:13px;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        <p style="margin:0 0 4px 0;font-size:18px;">📷</p>
+        <p style="margin:0;">【示例截图占位】：模型管理温度配置滑块与参数推荐指引</p>
+      </section>
+    </section>
+
+    <!-- 亮点 4：其他综合提升与加固 -->
+    <section style="margin:0 0 20px 0;padding:16px;background:#f5f5f4;border-radius:2px;">
+      <p style="margin:0 0 8px 0;font-size:16px;font-weight:bold;color:#1c1917;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        4. 🛡️ 平台综合体验、元数据调度与安全防线全面加固
+      </p>
+      <ul style="margin:0 0 12px 0;padding-left:20px;font-size:14px;color:#44403c;line-height:1.8;">
+        <li><strong style="color:#1c1917;">EmbedChat 浮标与轻量化</strong>：嵌入组件反幻觉开关默认关闭提供极速响应，输入框内集成悬浮状态指示与浮标交互，移动端与窄屏体验更优；正文防刷屏熔断周期调整为 15 周期。</li>
+        <li><strong style="color:#1c1917;">元数据大表分批生成与数据库探测优先</strong>：实体关系发现支持分批生成与诊断日志，修复截断，取消数量上限；优先根据外键和同名字段进行物理探测，再批量调用 AI，大幅节约 Token；提供元数据同步实时日志流与进度条。</li>
+        <li><strong style="color:#1c1917;">Cron 表达式容错自愈与可视化生成</strong>：彻底解决历史非法 Cron 表达式导致的任务列表 500 崩溃，统一前后端可视化生成器与双向校验规则。</li>
+        <li><strong style="color:#1c1917;">单次超时基线统一</strong>：统一全局单次工具调用超时基准为 60s（<code style="font-size:12px;background:#e7e5e4;padding:2px 4px;border-radius:2px;">agent_max_toolcall_timeout</code>），防止无效任务无限等待。</li>
+        <li><strong style="color:#1c1917;">文件上传防覆盖与下载时效签名</strong>：统一文件名安全生成规则，彻底修复同名并发上传覆盖冲突；加固生成文件下载链接的时效性签名校验。</li>
+        <li><strong style="color:#1c1917;">前端排版打磨与在线用户统计修复</strong>：统一菜单图标库，优化消息气泡底部操作按钮排版，修复移动端 Excel 导出重复显示及在线用户多标签页计数重复问题。</li>
+        <li><strong style="color:#1c1917;">自动化测试全矩阵覆盖</strong>：新增 30+ 组自动化测试用例，涵盖责任链管道、锁看门狗、流式直出、MCP OAuth 等核心模块，同步更新 <code style="font-size:12px;background:#e7e5e4;padding:2px 4px;border-radius:2px;">tests/CHECKLIST.md</code>。</li>
+      </ul>
+    </section>
+
+  </section>
+
+  <!-- 章节二：数据库升级说明 -->
+  <section style="margin:0 0 32px 0;">
+    <p style="margin:0 0 16px 0;font-size:18px;font-weight:bold;color:#1c1917;line-height:1.4;border-bottom:2px solid #1c1917;padding-bottom:6px;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+      🗄️ 数据库增量升级 (Database Upgrades)
+    </p>
+    <p style="margin:0 0 12px 0;font-size:14px;color:#57534e;line-height:1.75;">
+      从 v1.0.13.0 升级至 v1.0.14.0，平台主库需执行以下增量迁移脚本（MySQL 位于 <code style="font-size:12px;background:#f5f5f4;padding:2px 4px;border-radius:2px;">db-prod/</code>，PostgreSQL 位于 <code style="font-size:12px;background:#f5f5f4;padding:2px 4px;border-radius:2px;">db-prod-pg/</code>）：
+    </p>
+
+    <!-- 表格：增量脚本对照 -->
+    <table style="width:100%;border-collapse:collapse;margin:0 0 16px 0;font-size:13px;line-height:1.6;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+      <thead>
+        <tr style="background:#1c1917;color:#fafaf9;">
+          <th style="padding:8px 10px;text-align:left;border:1px solid #44403c;">MySQL 脚本</th>
+          <th style="padding:8px 10px;text-align:left;border:1px solid #44403c;">PG 脚本</th>
+          <th style="padding:8px 10px;text-align:left;border:1px solid #44403c;">核心变更内容</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr style="background:#ffffff;">
+          <td style="padding:8px 10px;border:1px solid #e7e5e4;">V110</td>
+          <td style="padding:8px 10px;border:1px solid #e7e5e4;">V37</td>
+          <td style="padding:8px 10px;border:1px solid #e7e5e4;">sys_mcp_servers 增加固定凭证与签名 UserContext 透传配置</td>
+        </tr>
+        <tr style="background:#f5f5f4;">
+          <td style="padding:8px 10px;border:1px solid #e7e5e4;">V136</td>
+          <td style="padding:8px 10px;border:1px solid #e7e5e4;">V36</td>
+          <td style="padding:8px 10px;border:1px solid #e7e5e4;">统一全局单次工具调用超时默认值为 60 秒</td>
+        </tr>
+        <tr style="background:#ffffff;">
+          <td style="padding:8px 10px;border:1px solid #e7e5e4;">V137</td>
+          <td style="padding:8px 10px;border:1px solid #e7e5e4;">V38</td>
+          <td style="padding:8px 10px;border:1px solid #e7e5e4;">创建平台 MCP OAuth 核心配置、Client 与 Token 支持表</td>
+        </tr>
+        <tr style="background:#f5f5f4;">
+          <td style="padding:8px 10px;border:1px solid #e7e5e4;">V138</td>
+          <td style="padding:8px 10px;border:1px solid #e7e5e4;">V39</td>
+          <td style="padding:8px 10px;border:1px solid #e7e5e4;">增加 MCP 用户访问令牌管理权限点</td>
+        </tr>
+        <tr style="background:#ffffff;">
+          <td style="padding:8px 10px;border:1px solid #e7e5e4;">V139</td>
+          <td style="padding:8px 10px;border:1px solid #e7e5e4;">V40</td>
+          <td style="padding:8px 10px;border:1px solid #e7e5e4;">新增 scope_version 字段支持 Scope 变更后 Token 自动失效</td>
+        </tr>
+        <tr style="background:#f5f5f4;">
+          <td style="padding:8px 10px;border:1px solid #e7e5e4;">V141</td>
+          <td style="padding:8px 10px;border:1px solid #e7e5e4;">V42</td>
+          <td style="padding:8px 10px;border:1px solid #e7e5e4;">创建 sys_mcp_oauth_security_audit_logs 安全生命周期审计表</td>
+        </tr>
+        <tr style="background:#ffffff;">
+          <td style="padding:8px 10px;border:1px solid #e7e5e4;">V142</td>
+          <td style="padding:8px 10px;border:1px solid #e7e5e4;">V43</td>
+          <td style="padding:8px 10px;border:1px solid #e7e5e4;">sys_mcp_platform_config 增加 Client 与 User 级调用频率限制</td>
+        </tr>
+        <tr style="background:#f5f5f4;">
+          <td style="padding:8px 10px;border:1px solid #e7e5e4;">V143</td>
+          <td style="padding:8px 10px;border:1px solid #e7e5e4;">V44</td>
+          <td style="padding:8px 10px;border:1px solid #e7e5e4;">sys_mcp_oauth_clients 增加 is_shared 全员共享 Client 标记</td>
+        </tr>
+        <tr style="background:#ffffff;">
+          <td style="padding:8px 10px;border:1px solid #e7e5e4;">V144</td>
+          <td style="padding:8px 10px;border:1px solid #e7e5e4;">V45</td>
+          <td style="padding:8px 10px;border:1px solid #e7e5e4;">ai_models 表增加模型级采样温度 temperature 字段</td>
+        </tr>
+        <tr style="background:#f5f5f4;">
+          <td style="padding:8px 10px;border:1px solid #e7e5e4;">V145</td>
+          <td style="padding:8px 10px;border:1px solid #e7e5e4;">V46</td>
+          <td style="padding:8px 10px;border:1px solid #e7e5e4;">创建 sys_mcp_outbound_audit_logs 外部 MCP 出站调用全量独立审计表</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <!-- 章节三：极速升级指引 -->
+  <section style="margin:0 0 32px 0;">
+    <p style="margin:0 0 16px 0;font-size:18px;font-weight:bold;color:#1c1917;line-height:1.4;border-bottom:2px solid #1c1917;padding-bottom:6px;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+      🛠️ 极速升级指引 (Upgrade Guide)
+    </p>
+
+    <!-- 源码部署 -->
+    <section style="margin:0 0 18px 0;padding:14px;background:#f5f5f4;border-radius:2px;">
+      <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#1c1917;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        方式一：源码拉取升级（开发与虚机部署）
+      </p>
+      <pre style="margin:0;padding:10px;background:#292524;color:#f5f5f4;border-radius:2px;font-size:12px;line-height:1.6;overflow-x:auto;font-family:Menlo,Consolas,Monaco,monospace;"><code># 1. 拉取最新代码
+git fetch origin && git checkout main && git pull origin main
+
+# 2. 执行数据库增量升级 (自动幂等执行新版本迁移)
+./db-prod/apply-sql-native.sh   # PG 执行: ./db-prod-pg/apply-sql.sh
+
+# 3. 启动/重启平台（自动准备依赖环境）
+./dev.sh</code></pre>
+    </section>
+
+    <!-- Docker 部署 -->
+    <section style="margin:0 0 18px 0;padding:14px;background:#f5f5f4;border-radius:2px;">
+      <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#1c1917;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        方式二：Docker 容器化升级（生产环境推荐）
+      </p>
+      <pre style="margin:0;padding:10px;background:#292524;color:#f5f5f4;border-radius:2px;font-size:12px;line-height:1.6;overflow-x:auto;font-family:Menlo,Consolas,Monaco,monospace;"><code># 1. 执行数据库增量升级
+./db-prod/apply-sql-native.sh
+
+# 2. 导入官方 Release 镜像归档（以 x86_64 为例）
+docker load -i nanzi-ai-agent_1.0.14.0_linux-amd64_*.tar
+
+# 3. 重启容器服务
+cd docker && ./start-nanzi-ai-agent.sh</code></pre>
+    </section>
+  </section>
+
+  <!-- 结语与引导 -->
+  <section style="margin:28px 0 0 0;padding:20px 16px;background:#1c1917;border-radius:2px;text-align:center;">
+    <p style="margin:0 0 8px 0;font-size:16px;font-weight:bold;color:#fafaf9;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+      持续迭代 · 孜孜不倦
+    </p>
+    <p style="margin:0 0 14px 0;font-size:13px;color:#a8a29e;line-height:1.6;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+      欢迎在 GitHub 提交 Issue 与 PR，一起打造更完善、更好用的企业级开源智能体平台！
+    </p>
+    <p style="margin:0;font-size:14px;font-weight:bold;color:#fafaf9;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+      🌟 如果觉得 NanZi 对你有帮助，请在 GitHub 点亮 Star 支持！
+    </p>
+  </section>
+
+</section>
