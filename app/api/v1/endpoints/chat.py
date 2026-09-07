@@ -91,7 +91,13 @@ async def _conversation_belongs_to_user(
     user_id: str,
     conversation_id: str,
 ) -> bool:
-    """仅允许读取已有且明确归属于当前用户的会话结果。"""
+    """判断会话是否归属当前用户，用于避免读取他人会话结果。
+
+    新创建的空会话尚无执行历史，但仍可能已被该用户通过「设置活跃会话」声明归属；
+    同时该用户在该会话下也可能已有 Redis 消息历史。因此只要三者任一成立即视为归属，
+    避免空会话被误判为不存在而返回 404。读取侧本身按“用户+会话”Redis 前缀隔离，
+    因此该判定不会造成跨用户数据泄露。
+    """
     from sqlalchemy import select
     from app.models.audit import AgentExecutionHistory
 
@@ -104,7 +110,20 @@ async def _conversation_belongs_to_user(
         .limit(1)
     )
     result = await db.execute(statement)
-    return result.scalar_one_or_none() is not None
+    if result.scalar_one_or_none() is not None:
+        return True
+
+    # 空会话回退：该用户该会话已有 Redis 历史，或该会话正是该用户的活跃会话。
+    try:
+        if await memory_service.history_exists(user_id, conversation_id):
+            return True
+        active = await memory_service.get_active_conversation(user_id)
+        if active and str(active) == conversation_id:
+            return True
+    except Exception:
+        # Redis 不可用时不做额外判定，保持原有 DB 判定结果（即未命中则拒绝）。
+        pass
+    return False
 
 
 @public_router.get("/generated-files/{artifact_id}")

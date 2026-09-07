@@ -242,3 +242,68 @@ def test_history_reusable_metadata_skips_admin_cross_user_queries():
 def test_history_reusable_metadata_reads_only_the_requested_page_window():
     assert _history_reusable_metadata_window(1, 20) == {"limit": 40, "offset": 0}
     assert _history_reusable_metadata_window(2, 20) == {"limit": 40, "offset": 40}
+
+
+@pytest.mark.asyncio
+async def test_list_reusable_results_returns_empty_for_owned_empty_conversation(monkeypatch):
+    """空会话（新创建、尚无任何执行历史）应视为归属并返回 200 空列表，而不是 404。
+
+    新会话创建时前端会设置 active conversation = 该 cid，因此 active 判定应视为归属。
+    """
+    monkeypatch.setattr(memory_service, "get_reusable_result", AsyncMock(return_value=None))
+    monkeypatch.setattr(memory_service, "get_reusable_result_stack", AsyncMock(return_value=[]))
+    monkeypatch.setattr(memory_service, "get_last_data_result", AsyncMock(return_value=None))
+    monkeypatch.setattr(memory_service, "history_exists", AsyncMock(return_value=False))
+    monkeypatch.setattr(
+        memory_service,
+        "get_active_conversation",
+        AsyncMock(return_value="new-conv"),
+    )
+    # DB 无执行历史 → 旧实现会因归属失败返回 404
+    db_override, _ = _fake_db_session(conversation_owned=False)
+    app.dependency_overrides[chat_endpoint.require_api_key] = _fake_require_api_key({"user_id": "7"})
+    app.dependency_overrides[get_db_session] = db_override
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.get(
+                "/api/v1/chat/reusable-results?conversation_id=new-conv",
+                headers={"X-API-Key": "test-key"},
+            )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    assert response.json()["data"]["items"] == []
+    assert response.json()["data"]["total"] == 0
+
+
+@pytest.mark.asyncio
+async def test_list_reusable_results_still_404s_unowned_conversation_with_no_trace(monkeypatch):
+    """对既无执行历史、也不是活跃会话、也无 Redis 历史痕遁的其他用户会话，仍应 404。"""
+    monkeypatch.setattr(
+        memory_service,
+        "get_reusable_result",
+        AsyncMock(return_value={
+            "result_id": "rr-secret",
+            "result_type": "data",
+            "status": "success",
+            "text_excerpt": "private result",
+        }),
+    )
+    monkeypatch.setattr(memory_service, "get_reusable_result_stack", AsyncMock(return_value=[]))
+    monkeypatch.setattr(memory_service, "get_last_data_result", AsyncMock(return_value=None))
+    monkeypatch.setattr(memory_service, "history_exists", AsyncMock(return_value=False))
+    monkeypatch.setattr(memory_service, "get_active_conversation", AsyncMock(return_value="my-other-conv"))
+    db_override, _ = _fake_db_session(conversation_owned=False)
+    app.dependency_overrides[chat_endpoint.require_api_key] = _fake_require_api_key({"user_id": "7"})
+    app.dependency_overrides[get_db_session] = db_override
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.get(
+                "/api/v1/chat/reusable-results?conversation_id=stranger-conv",
+                headers={"X-API-Key": "test-key"},
+            )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 404
