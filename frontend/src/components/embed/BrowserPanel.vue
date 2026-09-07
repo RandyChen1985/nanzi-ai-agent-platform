@@ -822,7 +822,10 @@
                       <span v-else-if="browserInstallStatus === 'success'" class="text-emerald-300">已完成</span>
                       <span v-else class="text-red-300">失败</span>
                     </div>
-                    <pre class="max-h-36 overflow-auto whitespace-pre-wrap break-all font-mono leading-relaxed">{{ installLogs.join('\n') }}</pre>
+                    <pre
+                      ref="installLogsRef"
+                      class="max-h-36 overflow-auto whitespace-pre-wrap break-all font-mono leading-relaxed"
+                    >{{ installLogs.join('\n') }}</pre>
                   </div>
                 </div>
 
@@ -1200,6 +1203,22 @@ const controlOwner = ref<ControlOwner>('ai');
 const copiedCmd = ref<string | null>(null);
 const browserInstallStatus = ref<'idle' | 'running' | 'success' | 'error'>('idle');
 const installLogs = ref<string[]>([]);
+const installLogsRef = ref<HTMLPreElement | null>(null);
+
+const scrollInstallLogsToBottom = async () => {
+  await nextTick();
+  if (installLogsRef.value) {
+    installLogsRef.value.scrollTop = installLogsRef.value.scrollHeight;
+  }
+};
+
+watch(
+  [() => installLogs.value.length, browserInstallStatus],
+  () => {
+    void scrollInstallLogsToBottom();
+  },
+  { flush: 'post' },
+);
 
 const installBrowserEnvironment = async () => {
   if (browserInstallStatus.value === 'running') return;
