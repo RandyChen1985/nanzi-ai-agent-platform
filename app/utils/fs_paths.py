@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 from typing import Optional
 
 
@@ -11,6 +12,19 @@ def get_data_base_dir() -> str:
         base = os.path.abspath("data")
     os.makedirs(base, exist_ok=True)
     return os.path.normpath(base)
+
+
+def _is_under_base(normalized_path: str, normalized_base: str) -> bool:
+    """判断规范化后的路径是否位于基础目录之下（等于 base 或在其子目录中）。
+
+    使用 Path.is_relative_to 避免 sibling 目录前缀混淆（如 /app/data2），
+    同时天然正确支持根目录 / 边界与跨平台路径分隔符。
+    """
+    try:
+        return Path(normalized_path).is_relative_to(Path(normalized_base))
+    except (ValueError, TypeError):
+        return False
+
 
 def normalize_under_base(path: str, base: Optional[str] = None) -> Optional[str]:
     """将路径规范化为绝对路径，且必须在 base 目录下，否则返回 None。"""
@@ -36,18 +50,18 @@ def normalize_under_base(path: str, base: Optional[str] = None) -> Optional[str]
         
     # 2. 兼容性：如果输入的是相对路径，尝试拼接在 base_dir 之下
     target_abs = os.path.abspath(path)
-    if not os.path.normpath(target_abs).startswith(normalized_base):
+    if not _is_under_base(os.path.normpath(target_abs), normalized_base):
         cleaned_path = path
         if cleaned_path.startswith("./"):
             cleaned_path = cleaned_path[2:]
         elif cleaned_path.startswith("../"):
             cleaned_path = cleaned_path[3:]
-        
+
         target_relative = os.path.normpath(os.path.join(normalized_base, cleaned_path))
-        if target_relative.startswith(normalized_base):
+        if _is_under_base(target_relative, normalized_base):
             target_abs = target_relative
-            
+
     normalized_target = os.path.normpath(target_abs)
-    if not normalized_target.startswith(normalized_base):
+    if not _is_under_base(normalized_target, normalized_base):
         return None
     return normalized_target

@@ -542,8 +542,9 @@ async def _scheduled_task_wrapper(task_id: int, is_manual: bool = False, retry_a
 
     logger.info(f"🔔 Triggering {'MANUAL ' if is_manual else 'SCHEDULED '}task {task_id} (attempt={retry_attempt})")
 
+    # ── 阶段 0：短连接读取任务元数据 + 活跃性检查（无需持锁）──
+    # 只在读写的短窗口内持有连接，读完立即归还，避免在整个执行周期（最长 execution_timeout 秒）占用连接池连接。
     async with AsyncSessionLocal() as session:
-        # 1. Fetch Task Details
         stmt = select(AgentScheduledTask).where(AgentScheduledTask.id == task_id)
         result = await session.execute(stmt)
         task = result.scalar_one_or_none()
@@ -556,38 +557,71 @@ async def _scheduled_task_wrapper(task_id: int, is_manual: bool = False, retry_a
         task_config = _task_config(task)
         execution_timeout = execution_timeout_from_task_config(task_config)
 
-        # 2. 执行期互斥锁：执行期间持有，覆盖手动与定时触发，跨节点互斥
-        lock_token = await _acquire_task_execution_lock(
-            task_id, execution_timeout + _TASK_EXEC_LOCK_TTL_BUFFER_SEC
-        )
-        if lock_token is None:
-            logger.warning(f"⏩ Task {task_id} skipped: an execution is already in progress (locked).")
-            await _mark_task_skipped(session, task, reason="任务正在执行中，本次触发已跳过")
-            return
+        # 快照后续需要的标量字段：阶段 0 结束（session 关闭）后 task 会被 detached/expired，
+        # 直接访问其属性会抛 DetachedInstanceError，因此先取出纯值备用。
+        task_id_snapshot = task.id
+        task_user_id = task.user_id
+        task_name = task.name
+        task_conversation_id = task.conversation_id
+        task_agent_id = task.agent_id
+        task_prompt = task.prompt
 
-        try:
+    # 阶段 0 连接已归还连接池。
+
+    # ── 阶段 1：执行期互斥锁（Redis，无需 DB 连接）──
+    # 获取到锁后，直到本函数结束前都必须释放锁，使用 try/finally 兜底。
+    lock_token = await _acquire_task_execution_lock(
+        task_id_snapshot, execution_timeout + _TASK_EXEC_LOCK_TTL_BUFFER_SEC
+    )
+    if lock_token is None:
+        logger.warning(f"⏩ Task {task_id} skipped: an execution is already in progress (locked).")
+        async with AsyncSessionLocal() as locked_session:
+            locked_task = (
+                await locked_session.execute(
+                    select(AgentScheduledTask).where(AgentScheduledTask.id == task_id_snapshot)
+                )
+            ).scalar_one_or_none()
+            if locked_task is not None:
+                await _mark_task_skipped(locked_session, locked_task, reason="任务正在执行中，本次触发已跳过")
+        return
+
+    try:
+
+        # ── 阶段 1.1：用户/Agent 元数据 + 标记「已开始」（短连接，写后即释放）──
+        async with AsyncSessionLocal() as session:
+            # 阶段 0 结束后的 task 已 detached/expired，需重新按 id 查询以绑定本连接，
+            # 供下面的 _mark_task_* helper（内部会访问 task.config）使用。
+            phase1_task = (
+                await session.execute(
+                    select(AgentScheduledTask).where(AgentScheduledTask.id == task_id_snapshot)
+                )
+            ).scalar_one_or_none()
+            if phase1_task is None:
+                logger.error(f"Task {task_id} disappeared before execution; aborting.")
+                return
+
             # 3. User Impersonation
-            user_stmt = select(User).where(User.id == task.user_id)
+            user_stmt = select(User).where(User.id == task_user_id)
             user_result = await session.execute(user_stmt)
             user = user_result.scalar_one_or_none()
 
             if not user:
-                logger.error(f"Task {task_id} failed: User {task.user_id} not found.")
+                logger.error(f"Task {task_id} failed: User {task_user_id} not found.")
                 metrics = await _mark_task_failure(
                     session,
-                    task,
+                    phase1_task,
                     trace_id=None,
-                    error=f"任务用户不存在：{task.user_id}",
+                    error=f"任务用户不存在：{task_user_id}",
                 )
                 if _should_alert_failure(metrics):
-                    await _send_task_failure_alert(task.user_id, task, trace_id=None, error=f"任务用户不存在：{task.user_id}", metrics=metrics)
+                    await _send_task_failure_alert(task_user_id, phase1_task, trace_id=None, error=f"任务用户不存在：{task_user_id}", metrics=metrics)
                 return
 
             # 3.1 Fetch Agent Name for Forced Routing
             from app.models.agent import AIAgent
-            agent_stmt = select(AIAgent.display_name).where(AIAgent.id == task.agent_id)
+            agent_stmt = select(AIAgent.display_name).where(AIAgent.id == task_agent_id)
             agent_res = await session.execute(agent_stmt)
-            agent_display_name = agent_res.scalar_one_or_none() or task.agent_id
+            agent_display_name = agent_res.scalar_one_or_none() or task_agent_id
 
             user_info = {
                 "user_id": user.id,
@@ -596,128 +630,151 @@ async def _scheduled_task_wrapper(task_id: int, is_manual: bool = False, retry_a
                 "role": user.role,
                 "is_scheduled_task": True,
                 "quick_suggestions_forbidden": True,
-                "task_name": task.name,
+                "task_name": task_name,
                 "requires_tool_execution": True,
             }
 
-            from app.services.task_notification_channels import channels_from_task_config
-            from app.services.task_execution_options import (
-                debug_options_from_task_config,
-                knowledge_dataset_ids_from_scope,
-                metadata_dataset_ids_from_scope,
-                permission_options_from_task_config,
-                resource_scope_from_task_config,
-            )
-
             # 4. Execute via Agent Service
-            try:
-                await _mark_task_attempt_started(session, task)
+            # 标记「已开始」并提交（_mark_task_attempt_started 内部会 commit），
+            # 随后离开本 with 块立即释放连接，让长 LLM 调用不再占用连接池连接。
+            await _mark_task_attempt_started(session, phase1_task)
 
-                resource_scope = resource_scope_from_task_config(task_config)
-                debug_options = debug_options_from_task_config(task_config)
-                knowledge_ids = knowledge_dataset_ids_from_scope(resource_scope)
-                metadata_ids = metadata_dataset_ids_from_scope(resource_scope)
+        # ── 阶段 2：长 LLM 调用。此时不持有任何数据库连接 ──
+        from app.services.task_notification_channels import channels_from_task_config
+        from app.services.task_execution_options import (
+            debug_options_from_task_config,
+            knowledge_dataset_ids_from_scope,
+            metadata_dataset_ids_from_scope,
+            permission_options_from_task_config,
+            resource_scope_from_task_config,
+        )
 
-                full_prompt = _build_scheduled_task_prompt(
-                    task_id,
-                    agent_display_name,
-                    task.prompt,
-                    notification_channels=channels_from_task_config(task_config),
-                )
-                run_conversation_id = _new_task_run_conversation_id(task.conversation_id)
+        resource_scope = resource_scope_from_task_config(task_config)
+        debug_options = debug_options_from_task_config(task_config)
+        knowledge_ids = knowledge_dataset_ids_from_scope(resource_scope)
+        metadata_ids = metadata_dataset_ids_from_scope(resource_scope)
+        # 提前统一计算通知渠道，阶段2构建 prompt 与阶段3通知投递共用，避免重复调用。
+        notification_channels = channels_from_task_config(task_config)
 
-                logger.info(
-                    "🚀 Executing task %s ('%s') | Agent: %s | TaskConvID: %s | RunConvID: %s | Timeout: %ss",
-                    task_id,
-                    task.name,
-                    task.agent_id,
-                    task.conversation_id,
-                    run_conversation_id,
-                    execution_timeout,
-                )
+        full_prompt = _build_scheduled_task_prompt(
+            task_id_snapshot,
+            agent_display_name,
+            task_prompt,
+            notification_channels=notification_channels,
+        )
+        run_conversation_id = _new_task_run_conversation_id(task_conversation_id)
 
-                # NOTE: We don't generate trace_id here, we let agent_service generate it
-                # and capture it from the response to ensure consistency with Audit Logs.
-                try:
-                    result = await asyncio.wait_for(
-                        agent_service.chat_completion(
-                            messages=[{"role": "user", "content": full_prompt}],
-                            agent_id=task.agent_id,
-                            conversation_id=run_conversation_id,
-                            user_info=user_info,
-                            enable_multi_agent=True,
-                            debug_options=debug_options,
-                            permission_options=permission_options_from_task_config(task_config),
-                            knowledge_dataset_ids=knowledge_ids or None,
-                            metadata_dataset_ids=metadata_ids or None,
-                        ),
-                        timeout=execution_timeout,
+        logger.info(
+            "🚀 Executing task %s ('%s') | Agent: %s | TaskConvID: %s | RunConvID: %s | Timeout: %ss",
+            task_id_snapshot,
+            task_name,
+            task_agent_id,
+            task_conversation_id,
+            run_conversation_id,
+            execution_timeout,
+        )
+
+        # NOTE: We don't generate trace_id here, we let agent_service generate it
+        # and capture it from the response to ensure consistency with Audit Logs.
+        result: Optional[Dict[str, Any]] = None
+        execution_error: Optional[str] = None
+        try:
+            result = await asyncio.wait_for(
+                agent_service.chat_completion(
+                    messages=[{"role": "user", "content": full_prompt}],
+                    agent_id=task_agent_id,
+                    conversation_id=run_conversation_id,
+                    user_info=user_info,
+                    enable_multi_agent=True,
+                    debug_options=debug_options,
+                    permission_options=permission_options_from_task_config(task_config),
+                    knowledge_dataset_ids=knowledge_ids or None,
+                    metadata_dataset_ids=metadata_ids or None,
+                ),
+                timeout=execution_timeout,
+            )
+        except asyncio.TimeoutError:
+            execution_error = f"任务执行超时（超过 {execution_timeout} 秒），本次运行已中断"
+            logger.error(f"❌ Task {task_id} execution timed out: {execution_error}")
+        except Exception as exec_e:
+            execution_error = str(exec_e)
+            logger.error(f"❌ Task {task_id} execution raised error: {exec_e}", exc_info=True)
+
+        trace_id = result.get('trace_id') if result else None
+
+        if execution_error is None:
+            content_preview = (result or {}).get('content', '')[:100]
+            logger.info(f"✅ Task {task_id} finished. Trace: {trace_id}. Response: {content_preview}...")
+
+        # ── 阶段 3：执行结果落库 + 结果通知投递（短连接，重新读取任务实体）──
+        async with AsyncSessionLocal() as session:
+            # 阶段 1.1 结束后的 task 已 detached，重新按 id 查询以绑定到本连接。
+            fresh_task = (
+                await session.execute(select(AgentScheduledTask).where(AgentScheduledTask.id == task_id_snapshot))
+            ).scalar_one_or_none()
+
+            if execution_error is not None:
+                logger.error(f"❌ Task {task_id} execution failed: {execution_error}")
+                if fresh_task is not None:
+                    await _handle_task_execution_failure(
+                        session,
+                        fresh_task,
+                        trace_id=trace_id,
+                        error=execution_error,
+                        is_manual=is_manual,
+                        retry_attempt=retry_attempt,
+                        task_config=task_config,
                     )
-                except asyncio.TimeoutError:
-                    raise TimeoutError(f"任务执行超时（超过 {execution_timeout} 秒），本次运行已中断")
-
-                trace_id = result.get('trace_id')
-                content_preview = result.get('content', '')[:100]
-                logger.info(f"✅ Task {task_id} finished. Trace: {trace_id}. Response: {content_preview}...")
-
-                if _is_incomplete_task_result(result):
-                    error = _task_result_error(result)
-                    logger.warning(
-                        "⏸️ Task %s skipped run metadata update because execution did not complete. status=%s trace=%s error=%s",
-                        task_id,
-                        result.get("status"),
-                        trace_id,
-                        error,
-                    )
-                    if _is_busy_task_result(result):
-                        await _mark_task_skipped(session, task, reason=error)
-                    else:
-                        await _handle_task_execution_failure(
-                            session,
-                            task,
-                            trace_id=trace_id,
-                            error=error,
-                            is_manual=is_manual,
-                            retry_attempt=retry_attempt,
-                            task_config=task_config,
-                        )
-                    return
-
-                # 5. Update Task Metadata (Atomic update)
-                # 执行成功先落库，结果通知投递单独记录，投递失败不再把任务标失败。
-                await session.execute(
-                    update(AgentScheduledTask)
-                    .where(AgentScheduledTask.id == task_id)
-                    .values(
-                        last_run_id=trace_id,
-                        last_run_at=datetime.now(),
-                        run_count=AgentScheduledTask.run_count + 1
-                    )
-                )
-                await session.commit()
-                await _mark_task_success(
-                    session,
-                    task,
-                    trace_id=trace_id,
-                    message="任务执行成功",
-                )
-                logger.info(f"📊 Updated run_count and last_run_id for task {task_id}")
-
-            except Exception as e:
-                logger.error(f"❌ Task {task_id} execution failed: {e}", exc_info=True)
-                await _handle_task_execution_failure(
-                    session,
-                    task,
-                    trace_id=None,
-                    error=str(e),
-                    is_manual=is_manual,
-                    retry_attempt=retry_attempt,
-                    task_config=task_config,
-                )
                 return
 
+            if fresh_task is None:
+                logger.error(f"Task {task_id}: record disappeared during execution; skipping metadata update.")
+                return
+
+            if _is_incomplete_task_result(result):
+                error = _task_result_error(result)
+                logger.warning(
+                    "⏸️ Task %s skipped run metadata update because execution did not complete. status=%s trace=%s error=%s",
+                    task_id,
+                    result.get("status"),
+                    trace_id,
+                    error,
+                )
+                if _is_busy_task_result(result):
+                    await _mark_task_skipped(session, fresh_task, reason=error)
+                else:
+                    await _handle_task_execution_failure(
+                        session,
+                        fresh_task,
+                        trace_id=trace_id,
+                        error=error,
+                        is_manual=is_manual,
+                        retry_attempt=retry_attempt,
+                        task_config=task_config,
+                    )
+                return
+
+            # 5. Update Task Metadata (Atomic update)
+            # 执行成功先落库，结果通知投递单独记录，投递失败不再把任务标失败。
+            await session.execute(
+                update(AgentScheduledTask)
+                .where(AgentScheduledTask.id == task_id_snapshot)
+                .values(
+                    last_run_id=trace_id,
+                    last_run_at=datetime.now(),
+                    run_count=AgentScheduledTask.run_count + 1
+                )
+            )
+            await session.commit()
+            await _mark_task_success(
+                session,
+                fresh_task,
+                trace_id=trace_id,
+                message="任务执行成功",
+            )
+            logger.info(f"📊 Updated run_count and last_run_id for task {task_id}")
+
             # 6. 结果通知投递（与任务执行状态解耦）
-            notification_channels = channels_from_task_config(task_config)
             if notification_channels:
                 delivery_ok = False
                 delivery_notes: List[str] = []
@@ -727,8 +784,8 @@ async def _scheduled_task_wrapper(task_id: int, is_manual: bool = False, retry_a
                     await asyncio.sleep(0.5)
                     delivery_ok, delivery_notes = await ensure_task_notification_deliveries(
                         session,
-                        user_id=task.user_id,
-                        task_name=task.name,
+                        user_id=task_user_id,
+                        task_name=task_name,
                         channels=notification_channels,
                         trace_id=trace_id,
                         content=str(result.get("content") or ""),
@@ -745,19 +802,19 @@ async def _scheduled_task_wrapper(task_id: int, is_manual: bool = False, retry_a
                     delivery_notes,
                 )
                 delivery_metrics = await _record_task_delivery_result(
-                    session, task, ok=delivery_ok, notes=delivery_notes
+                    session, fresh_task, ok=delivery_ok, notes=delivery_notes
                 )
                 if not delivery_ok and _should_alert_delivery_failure(delivery_metrics):
                     error = "任务执行成功，但结果通知投递失败：" + "; ".join(delivery_notes)
                     await _send_task_failure_alert(
-                        task.user_id, task, trace_id=trace_id, error=error,
+                        task_user_id, fresh_task, trace_id=trace_id, error=error,
                         metrics=delivery_metrics, kind="delivery",
                     )
 
             # Allow logs to flush
             await asyncio.sleep(0.5)
-        finally:
-            await _release_task_execution_lock(task_id, lock_token)
+    finally:
+        await _release_task_execution_lock(task_id_snapshot, lock_token)
 
 
 async def _system_audit_log_maintenance_job():
