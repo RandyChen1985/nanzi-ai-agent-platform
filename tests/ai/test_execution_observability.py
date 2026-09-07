@@ -127,6 +127,66 @@ def test_execution_performance_tracker_ignores_control_events_for_ttft():
     assert result["total_elapsed_ms"] == 400.0
 
 
+def test_execution_performance_tracker_distinguishes_visible_activity_from_body_ttft():
+    from app.services.ai.runtime.execution_observability import (
+        ExecutionPerformanceTracker,
+    )
+
+    ticks = iter([10.0, 10.1, 10.3, 10.5])
+    tracker = ExecutionPerformanceTracker(clock=lambda: next(ticks))
+
+    tracker.observe_chunk({"type": "log", "content": "正在处理"})
+    tracker.observe_chunk({"type": "process_narration", "content": "我先查询。"})
+    tracker.observe_chunk({"type": "retraction", "content": "", "final": False})
+    tracker.observe_chunk({"type": "process_narration_promote", "content": "查询结果"})
+
+    result = tracker.snapshot(trace_buffer=[], status="success")
+
+    assert result["first_visible_activity_ms"] == 100.0
+    assert result["ttft_ms"] == 300.0
+
+
+def test_execution_performance_tracker_candidate_answer_counts_activity_and_body_ttft():
+    from app.services.ai.runtime.execution_observability import (
+        ExecutionPerformanceTracker,
+    )
+
+    ticks = iter([20.0, 20.15, 20.2])
+    tracker = ExecutionPerformanceTracker(clock=lambda: next(ticks))
+
+    tracker.observe_chunk({"type": "reasoning_content", "content": "内部推理"})
+    tracker.observe_chunk({"type": "answer_delta", "content": "候选正文", "phase": "candidate"})
+
+    result = tracker.snapshot(trace_buffer=[], status="success")
+
+    # 候选正文在绝大多数 general 轮就是用户最终看到的正文，按其首见时间计入 TTFT。
+    assert result["first_visible_activity_ms"] == 150.0
+    assert result["ttft_ms"] == 150.0
+
+
+def test_execution_performance_tracker_retraction_resets_ttft_for_confirmed_body():
+    from app.services.ai.runtime.execution_observability import (
+        ExecutionPerformanceTracker,
+    )
+
+    ticks = iter([20.0, 20.15, 20.4, 20.5, 20.6])
+    tracker = ExecutionPerformanceTracker(clock=lambda: next(ticks))
+
+    # 候选正文被撤回（正文从气泡删除），TTFT 之前占位的首见正文不再有效，
+    # 应为后续确认正文保留测量窗口；无确认正文时保持未记录。
+    tracker.observe_chunk({"type": "answer_delta", "content": "草稿", "phase": "candidate"})
+    tracker.observe_chunk({"type": "retraction", "content": "", "final": False})
+
+    no_followup = tracker.snapshot(trace_buffer=[], status="success")
+    assert no_followup["ttft_ms"] is None
+
+    tracker.observe_chunk({"type": "process_narration_promote", "content": "确认正文"})
+    result = tracker.snapshot(trace_buffer=[], status="success")
+
+    assert result["first_visible_activity_ms"] == 150.0
+    assert result["ttft_ms"] == 500.0
+
+
 def test_default_main_execution_log_uses_delegation_language():
     from app.schemas.agent import ChatConfig
     from app.services.ai.agent_service import _build_turn_execution_log

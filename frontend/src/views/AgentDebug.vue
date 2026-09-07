@@ -65,7 +65,7 @@ import {
   type GroundingBlockedAction,
   type GroundingBlockedPayload,
 } from "@/utils/agentscopeSseHandlers";
-import { hydrateHistoryProcessTimeline } from "@/utils/processTimeline";
+import { hydrateHistoryProcessTimeline, timelineHasPending } from "@/utils/processTimeline";
 import { normalizeSubagentTraceMeta, type SubagentTraceMeta } from "@/utils/subagentTrace";
 import {
   buildBusinessConfirmationUserMessage,
@@ -3434,7 +3434,11 @@ const sendMessageInternal = async (snapshot: ChatSendSnapshot) => {
             else if (data.type === "answer_delta" || data.content) {
               const piece = sanitizeStreamContent(String(data.content));
               if (piece) {
-                if (agentMsg.value.isThoughtExpanded && !agentMsg.value.content) {
+                if (
+                  agentMsg.value.isThoughtExpanded
+                  && !agentMsg.value.content
+                  && !timelineHasPending(agentMsg.value.processTimeline)
+                ) {
                   agentMsg.value.isThoughtExpanded = false;
                 }
                 appendAssistantBodyDelta(agentMsg.value, piece);
@@ -3695,7 +3699,13 @@ const applyPermissionStreamEvent = (msg: Message, data: any) => {
       ) {
         const piece = sanitizeStreamContent(String(data.content));
         if (piece) {
-          if (msg.isThoughtExpanded && !msg.content) msg.isThoughtExpanded = false;
+          if (
+            msg.isThoughtExpanded
+            && !msg.content
+            && !timelineHasPending(msg.processTimeline)
+          ) {
+            msg.isThoughtExpanded = false;
+          }
           appendAssistantBodyDelta(msg, piece);
           if (msg.isThinking) {
             msg.isThinking = false;
@@ -3783,7 +3793,13 @@ const applyPermissionStreamEvent = (msg: Message, data: any) => {
     ) {
       const piece = sanitizeStreamContent(String(data.content));
       if (piece) {
-        if (msg.isThoughtExpanded && !msg.content) msg.isThoughtExpanded = false;
+        if (
+          msg.isThoughtExpanded
+          && !msg.content
+          && !timelineHasPending(msg.processTimeline)
+        ) {
+          msg.isThoughtExpanded = false;
+        }
         appendAssistantBodyDelta(msg, piece);
         if (msg.isThinking) {
           msg.isThinking = false;

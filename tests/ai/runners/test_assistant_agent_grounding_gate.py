@@ -126,6 +126,70 @@ def test_grounding_requires_explicit_boolean_true():
     assert _runner(debug_options={"grounding_enabled": True})._grounding_enabled() is True
 
 
+def test_candidate_answer_streaming_is_limited_to_general_without_evidence_duty():
+    runner = _runner()
+    requirement = FactRequirement(required=False, accepted_types=frozenset())
+
+    assert runner._should_enable_candidate_answer_streaming(
+        grounding_enabled=False,
+        grounding_requirement=requirement,
+        run_data_guard=False,
+        evidence_contracts=(),
+    ) is True
+
+
+@pytest.mark.parametrize(
+    ("turn_kind", "requirement", "grounding_enabled", "run_data_guard", "evidence_contracts"),
+    [
+        ("data_query", FactRequirement(required=False, accepted_types=frozenset()), False, False, ()),
+        ("knowledge", FactRequirement(required=False, accepted_types=frozenset()), False, False, ()),
+        ("general", FactRequirement(required=True, accepted_types=frozenset()), False, False, ()),
+        (
+            "general",
+            FactRequirement(required=False, accepted_types=frozenset()),
+            True,
+            True,
+            (),
+        ),
+        (
+            "general",
+            FactRequirement(required=False, accepted_types=frozenset()),
+            False,
+            False,
+            ({"type": "web"},),
+        ),
+    ],
+)
+def test_candidate_answer_streaming_stays_closed_for_evidence_or_non_general_turns(
+    turn_kind,
+    requirement,
+    grounding_enabled,
+    run_data_guard,
+    evidence_contracts,
+):
+    runner = _runner()
+    runner.turn_decision = runner.turn_decision.model_copy(update={"turn_kind": turn_kind})
+
+    assert runner._should_enable_candidate_answer_streaming(
+        grounding_enabled=grounding_enabled,
+        grounding_requirement=requirement,
+        run_data_guard=run_data_guard,
+        evidence_contracts=evidence_contracts,
+    ) is False
+
+
+def test_candidate_answer_streaming_stays_closed_without_turn_decision():
+    runner = _runner()
+    runner.turn_decision = None
+
+    assert runner._should_enable_candidate_answer_streaming(
+        grounding_enabled=False,
+        grounding_requirement=FactRequirement(required=False, accepted_types=frozenset()),
+        run_data_guard=False,
+        evidence_contracts=(),
+    ) is False
+
+
 def test_tool_preflight_marks_evidence_capable_nudge_as_current_turn_required():
     from app.services.ai.tool_nudge_policy import ToolNudge
 

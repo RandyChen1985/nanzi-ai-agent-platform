@@ -714,6 +714,40 @@ class AssistantAgentRunner(BaseExecutor):
             or requirement.scrutinize_unknown_output
         )
 
+    def _should_enable_candidate_answer_streaming(
+        self,
+        *,
+        grounding_enabled: bool,
+        grounding_requirement: FactRequirement,
+        run_data_guard: bool,
+        evidence_contracts: tuple[dict[str, Any], ...],
+    ) -> bool:
+        """仅为没有当轮证据责任的一般对话放开候选正文。
+
+        判断基于路由和已建立的证据合同，而非文本启发式；任何无法确认
+        责任边界的旧入口都保持保守协议。是否缓冲 grounding 输出在此处
+        收敛推导，调用方无需重复计算。
+        """
+        decision = self.turn_decision
+        if not (
+            decision is not None
+            and str(decision.turn_kind or "").strip().lower() == "general"
+        ):
+            return False
+        buffer_output = (
+            grounding_enabled
+            and self._should_buffer_grounding_output(
+                grounding_requirement,
+                run_data_guard=run_data_guard,
+            )
+        )
+        return bool(
+            not grounding_requirement.required
+            and not grounding_requirement.scrutinize_unknown_output
+            and not buffer_output
+            and not evidence_contracts
+        )
+
     @staticmethod
     def _normalize_grounding_block_mode(value: Any) -> str:
         mode = str(value or "strict_buffer").strip().lower()
@@ -1957,6 +1991,14 @@ class AssistantAgentRunner(BaseExecutor):
                     initial_tool_choice=preflight_tool_choice,
                     grounding_block_mode=grounding_block_mode,
                     evidence_contracts=evidence_contracts,
+                    candidate_answer_enabled=self._should_enable_candidate_answer_streaming(
+                        grounding_enabled=grounding_enabled,
+                        grounding_requirement=turn_grounding_requirement,
+                        run_data_guard=self._should_run_data_hallucination_guard(
+                            _preflight_user_query
+                        ),
+                        evidence_contracts=evidence_contracts,
+                    ),
                 ):
                     yield chunk
                 return
@@ -2042,6 +2084,7 @@ class AssistantAgentRunner(BaseExecutor):
         initial_tool_choice: Any = None,
         grounding_block_mode: str = "strict_buffer",
         evidence_contracts: tuple[dict[str, Any], ...] = (),
+        candidate_answer_enabled: bool = False,
     ) -> AsyncGenerator[Dict[str, Any], None]:
         agent_name = self._runtime_agent_name()
         tools_fingerprint = build_tools_fingerprint(self.config, tools)
@@ -2107,6 +2150,7 @@ class AssistantAgentRunner(BaseExecutor):
                 state = new_native_stream_state(
                     system_content=system_content,
                     max_steps=max_steps,
+                    candidate_answer_enabled=candidate_answer_enabled,
                 )
                 state["execution_backend"] = self._execution_backend
                 state["grounding_block_mode"] = self._normalize_grounding_block_mode(
@@ -2407,7 +2451,8 @@ class AssistantAgentRunner(BaseExecutor):
                     state,
                     tool_name=getattr(event, "tool_call_name", None),
                 ):
-                    yield chunk
+                    async for item in self._yield_process_narration_chunk(state, chunk):
+                        yield item
             elif event_type == "MODEL_CALL_END":
                 self._record_agent_scope_model_call(
                     event,

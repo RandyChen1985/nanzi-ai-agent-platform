@@ -8,7 +8,8 @@ from typing import Any, Callable, Iterable
 
 
 _MODEL_TRACE_EVENTS = frozenset({"thought", "synthesis", "model_call"})
-_ANSWER_CHUNK_TYPES = frozenset({"", "answer_delta"})
+_ANSWER_CHUNK_TYPES = frozenset({"", "answer_delta", "process_narration_promote"})
+_VISIBLE_ACTIVITY_CHUNK_TYPES = _ANSWER_CHUNK_TYPES | frozenset({"process_narration"})
 
 
 def _elapsed_ms(started_at: float, now: float) -> float:
@@ -20,6 +21,15 @@ def _is_visible_answer_chunk(chunk: Any) -> bool:
         return False
     chunk_type = str(chunk.get("type") or "")
     if chunk_type not in _ANSWER_CHUNK_TYPES:
+        return False
+    return bool(str(chunk.get("content") or "").strip())
+
+
+def _is_visible_activity_chunk(chunk: Any) -> bool:
+    if not isinstance(chunk, dict):
+        return False
+    chunk_type = str(chunk.get("type") or "")
+    if chunk_type not in _VISIBLE_ACTIVITY_CHUNK_TYPES:
         return False
     return bool(str(chunk.get("content") or "").strip())
 
@@ -43,6 +53,7 @@ class ExecutionPerformanceTracker:
     started_at: float | None = None
     _stage_marks: dict[str, float] = field(default_factory=dict, init=False)
     _ttft_ms: float | None = field(default=None, init=False)
+    _first_visible_activity_ms: float | None = field(default=None, init=False)
 
     def __post_init__(self) -> None:
         if self.started_at is None:
@@ -58,12 +69,23 @@ class ExecutionPerformanceTracker:
         )
 
     def observe_chunk(self, chunk: Any) -> None:
-        """仅记录首个回答正文片段，不保存正文内容。"""
-        if self._ttft_ms is None and _is_visible_answer_chunk(chunk):
-            self._ttft_ms = _elapsed_ms(
-                self.started_at or 0.0,
-                self.clock(),
-            )
+        """记录首个可见活动与首个正文片段，不保存正文内容。
+
+        retraction 会把已展示的正文从气泡清空（候选正文被撤回），因此复位
+        正文首见时间，让后续确认正文重建测量窗口；可见活动度量不受影响。
+        """
+        if isinstance(chunk, dict) and str(chunk.get("type") or "") == "retraction":
+            self._ttft_ms = None
+            return
+        is_activity = _is_visible_activity_chunk(chunk)
+        is_answer = _is_visible_answer_chunk(chunk)
+        if not is_activity and not is_answer:
+            return
+        elapsed = _elapsed_ms(self.started_at or 0.0, self.clock())
+        if is_activity and self._first_visible_activity_ms is None:
+            self._first_visible_activity_ms = elapsed
+        if is_answer and self._ttft_ms is None:
+            self._ttft_ms = elapsed
 
     def snapshot(
         self,
@@ -78,6 +100,7 @@ class ExecutionPerformanceTracker:
                 self.clock(),
             ),
             "stages_ms": dict(self._stage_marks),
+            "first_visible_activity_ms": self._first_visible_activity_ms,
             "ttft_ms": self._ttft_ms,
             "model_call_count": _count_trace_events(
                 trace_buffer,

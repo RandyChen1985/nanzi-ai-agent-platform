@@ -18,6 +18,7 @@ import {
   finishTimelineReasoning,
   normalizeProcessNarrationText,
   promoteTimelineNarration,
+  timelineHasPending,
   upsertTimelineLog,
   upsertTimelineTodo,
   type ProcessTimelineItem,
@@ -664,7 +665,9 @@ export function handleUserQuestion<T extends AgentStreamMessage>(
 export function collapseSecondaryFoldsOnBody<T extends AgentStreamMessage>(msg: T): void {
   msg.isProcessNarrationExpanded = false;
   msg.isReasoningExpanded = false;
-  msg.isThoughtExpanded = false;
+  if (!timelineHasPending(msg.processTimeline)) {
+    msg.isThoughtExpanded = false;
+  }
 }
 
 export function assistantBodyHasStarted<T extends AgentStreamMessage>(msg: T): boolean {

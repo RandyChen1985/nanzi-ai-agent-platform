@@ -571,11 +571,15 @@ function hasVisibleTimelineText(text?: string | null): boolean {
 }
 
 watch(hasPending, (pending) => {
-  if (pending && !props.hasAnswer) expanded.value = true;
+  if (pending) {
+    expanded.value = true;
+  } else if (props.hasAnswer) {
+    expanded.value = false;
+  }
 }, { immediate: true });
 
 watch(() => props.hasAnswer, (answer) => {
-  if (answer) expanded.value = false;
+  if (answer && !hasPending.value) expanded.value = false;
 }, { immediate: true });
 
 function isReasoningBodyOpen(item: ProcessTimelineTextItem): boolean {

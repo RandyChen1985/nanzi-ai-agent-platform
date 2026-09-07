@@ -2190,7 +2190,7 @@ import {
   type GroundingBlockedAction,
   type GroundingBlockedPayload,
 } from "@/utils/agentscopeSseHandlers";
-import { hydrateHistoryProcessTimeline } from "@/utils/processTimeline";
+import { hydrateHistoryProcessTimeline, timelineHasPending } from "@/utils/processTimeline";
 import { normalizeSubagentTraceMeta, type SubagentTraceMeta } from "@/utils/subagentTrace";
 import {
   buildBusinessConfirmationUserMessage,
@@ -7341,7 +7341,7 @@ const addEmbedLogFromStream = (msg: Message, data: any) => {
   }
   if (data.turn_type && category === "intent") {
     msg.turnType = data.turn_type;
-    if (msg.isThinking) {
+    if (msg.isThinking && !timelineHasPending(msg.processTimeline)) {
       msg.isThoughtExpanded = config.expandThoughts;
     }
   }
@@ -7482,7 +7482,9 @@ const applyPermissionStreamEvent = (msg: Message, data: any) => {
     ) {
       const piece = sanitizeStreamContent(String(data.content || ""));
       if (piece) {
-        if (msg.isThoughtExpanded && !msg.content) msg.isThoughtExpanded = false;
+        if (msg.isThoughtExpanded && !msg.content && !timelineHasPending(msg.processTimeline)) {
+          msg.isThoughtExpanded = false;
+        }
         appendAssistantBodyDelta(msg, piece);
         if (msg.isThinking) msg.isThinking = false;
         resetStallTimer();
@@ -7525,7 +7527,9 @@ const applyPermissionStreamEvent = (msg: Message, data: any) => {
   } else if (data.content) {
     const piece = sanitizeStreamContent(String(data.content || ""));
     if (piece) {
-      if (msg.isThoughtExpanded && !msg.content) msg.isThoughtExpanded = false;
+      if (msg.isThoughtExpanded && !msg.content && !timelineHasPending(msg.processTimeline)) {
+        msg.isThoughtExpanded = false;
+      }
       appendAssistantBodyDelta(msg, piece);
       if (msg.isThinking) msg.isThinking = false;
       resetStallTimer();
@@ -8113,9 +8117,9 @@ const sendMessageInternal = async (snapshot: ChatSendSnapshot) => {
             }
             if (data.turn_type) {
               agentMsg.value.turnType = data.turn_type;
-              if (typeof data.thought_expanded_default === "boolean") {
-                agentMsg.value.isThoughtExpanded = data.thought_expanded_default;
-              } else {
+              if (data.thought_expanded_default === true) {
+                agentMsg.value.isThoughtExpanded = true;
+              } else if (typeof data.thought_expanded_default !== "boolean") {
                 agentMsg.value.isThoughtExpanded = config.expandThoughts;
               }
             }
@@ -8145,7 +8149,12 @@ const sendMessageInternal = async (snapshot: ChatSendSnapshot) => {
           } else if (data.type === "answer" || data.type === "answer_delta" || data.content) {
             const piece = sanitizeStreamContent(String(data.content || ""));
             if (piece) {
-              if (agentMsg.value.isThoughtExpanded && !agentMsg.value.content && !pendingContentBuffer) {
+              if (
+                agentMsg.value.isThoughtExpanded
+                && !agentMsg.value.content
+                && !pendingContentBuffer
+                && !timelineHasPending(agentMsg.value.processTimeline)
+              ) {
                 agentMsg.value.isThoughtExpanded = false;
               }
               queueContentDelta(piece);

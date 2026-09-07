@@ -59,6 +59,7 @@ def new_native_stream_state(
     *,
     system_content: str = "",
     max_steps: int = 5,
+    candidate_answer_enabled: bool = False,
 ) -> Dict[str, Any]:
     return {
         "tool_names": {},
@@ -75,6 +76,8 @@ def new_native_stream_state(
         "full_content": "",
         "pending_reply_text": "",
         "pending_reply_emitted": False,
+        "candidate_answer_enabled": candidate_answer_enabled,
+        "candidate_reply_start": None,
         "process_narration": "",
         "reply_phase": "before_tool",
         "current_reply_used_tools": False,

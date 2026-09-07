@@ -65,6 +65,62 @@ def test_text_without_tools_promotes_to_answer_only_when_the_turn_ends():
     assert state["pending_reply_text"] == ""
 
 
+def test_candidate_text_enters_body_immediately_without_promote():
+    state = new_native_stream_state(candidate_answer_enabled=True)
+
+    events = on_text_delta(state, "这是直接回答。")
+    completion_events = on_model_call_end(state)
+
+    assert events == [
+        {
+            "type": "answer_delta",
+            "content": "这是直接回答。",
+            "phase": "candidate",
+        }
+    ]
+    assert completion_events == []
+    assert state["full_content"] == "这是直接回答。"
+    assert state["process_narration"] == ""
+    assert state["pending_reply_text"] == ""
+
+
+def test_candidate_text_is_retracted_then_committed_as_narration_before_tool():
+    state = new_native_stream_state(candidate_answer_enabled=True)
+    events = on_text_delta(state, "我先直接给出一个草稿。")
+    events.extend(on_tool_call_start(state, tool_name="search_knowledge_base"))
+
+    assert events == [
+        {
+            "type": "answer_delta",
+            "content": "我先直接给出一个草稿。",
+            "phase": "candidate",
+        },
+        {"type": "retraction", "content": "", "final": False},
+        {"type": "process_narration", "content": "我先直接给出一个草稿。"},
+        {"type": "process_narration_commit", "content": "我先直接给出一个草稿。"},
+    ]
+    assert state["full_content"] == ""
+    assert state["process_narration"] == "我先直接给出一个草稿。"
+    assert state["pending_reply_text"] == ""
+
+
+def test_candidate_text_survives_bookkeeping_tool_without_retraction():
+    state = new_native_stream_state(candidate_answer_enabled=True)
+    events = on_text_delta(state, "这是无需检索的回答。")
+    events.extend(on_tool_call_start(state, tool_name="todo_write"))
+    events.extend(on_model_call_end(state))
+
+    assert events == [
+        {
+            "type": "answer_delta",
+            "content": "这是无需检索的回答。",
+            "phase": "candidate",
+        }
+    ]
+    assert state["full_content"] == "这是无需检索的回答。"
+    assert state["process_narration"] == ""
+
+
 def test_tool_then_final_answer_promotes_once_after_the_last_model_turn():
     state = new_native_stream_state()
     events = []

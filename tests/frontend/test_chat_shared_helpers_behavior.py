@@ -279,7 +279,7 @@ def test_process_narration_handler_is_shared_across_chat_surfaces():
     assert "skillNoticeLabel" in timeline
     assert "深度思考" in timeline
     assert "item.textKind === 'reasoning'" in timeline
-    assert "💭" in timeline
+    assert "CpuChipIcon" in timeline
     assert "isReasoningBodyOpen" in timeline
     assert "isReasoningContentExpanded" in timeline
     assert "formatDuration(item.execution_time_ms)" in timeline
@@ -294,7 +294,7 @@ def test_process_narration_handler_is_shared_across_chat_surfaces():
     assert 'v-if="isToolTimelineItem(child)"' in timeline
     assert 'if (item.subagent || item.status === "error" || item.category === "tool_resolution") return false;' in timeline
     assert "🛠️" not in timeline
-    assert "inline-flex h-3 w-3 shrink-0 items-center justify-center text-[11px] leading-none" in timeline
+    assert ".thought-status-dot" in timeline
     assert "shrink-0 truncate rounded-full border border-purple-100 bg-purple-50" in (
         ROOT / "frontend/src/components/chat/ChatThinkingHeader.vue"
     ).read_text(encoding="utf-8")
@@ -320,14 +320,14 @@ def test_todo_card_supports_collapse_close_and_auto_collapse_when_completed():
     assert "展开任务清单" in source
     assert "关闭任务清单" in source
     assert "watch(" in source
-    assert "  todo," in source
-    assert "next.counts.completed === next.todos.length" in source
+    assert "todo.value.counts" in source
+    assert "todo.value.counts?.completed === todo.value.todos.length" in source
 
 
 def test_embed_chat_treats_every_parsed_sse_event_as_stream_activity():
     embed = (ROOT / "frontend/src/views/EmbedChat.vue").read_text(encoding="utf-8")
 
-    assert "if (dataStr === \"[DONE]\") continue;\n\n        // Any SSE data frame" in embed
+    assert 'if (dataStr === "[DONE]") {\n          isChatStreamDone = true;\n          break;\n        }' in embed
     assert "// Any SSE data frame means the stream is alive" in embed
     assert "if (dataStr === \"[DONE]\") continue;\n      resetStallTimer();\n      try" in embed
 
@@ -378,7 +378,7 @@ def test_execution_timeline_pending_rows_use_indicator_without_full_row_backgrou
 def test_execution_timeline_pending_indicator_precedes_content_and_action_rows_align_duration():
     timeline = (ROOT / "frontend/src/components/chat/ChatExecutionTimeline.vue").read_text(encoding="utf-8")
 
-    assert timeline.count('class="flex w-full items-center gap-2 text-left"') == 2
+    assert timeline.count('class="flex w-full items-center gap-2 text-left"') >= 4
     assert 'class="thought-status-dot shrink-0"' in timeline
     assert timeline.index('class="thought-status-dot shrink-0"') < timeline.index('class="min-w-0 flex-1 truncate"')
     assert 'class="w-fit max-w-full whitespace-pre-wrap break-words font-sans"' in timeline
@@ -423,6 +423,34 @@ return {
     assert result["content"] == "我先查询。"
     assert result["timeline"] == []
     assert result["isThinking"] is False
+
+
+def test_candidate_answer_delta_can_be_retracted_without_finishing_the_stream():
+    result = _run_typescript(
+        "frontend/src/utils/agentscopeSseHandlers.ts",
+        """
+const msg = { content: '', processTimeline: [], isThinking: true };
+api.dispatchAgentscopeStreamEvent(msg, { type: 'answer_delta', content: '候选正文', phase: 'candidate' }, () => {});
+api.dispatchAgentscopeStreamEvent(msg, { type: 'retraction', content: '', final: false }, () => {});
+return { content: msg.content, isThinking: msg.isThinking, timeline: msg.processTimeline };
+""",
+    )
+
+    assert result == {"content": "", "isThinking": True, "timeline": []}
+
+
+def test_embed_chat_invalidates_raf_buffer_before_dispatching_retraction():
+    embed = (ROOT / "frontend/src/views/EmbedChat.vue").read_text(encoding="utf-8")
+    handler = embed.index("const handleBufferedBodyEvent")
+    retraction = embed.index('if (data.type === "retraction")', handler)
+    dispatcher = embed.index(
+        "dispatchAgentscopeStreamEvent(agentMsg.value, data",
+        handler,
+    )
+
+    assert "pendingContentBuffer = \"\"" in embed[retraction:dispatcher]
+    assert "cancelAnimationFrame(contentRafId)" in embed[retraction:dispatcher]
+    assert embed.index("if (handleBufferedBodyEvent(data))", handler) < dispatcher
 
 
 def test_process_narration_from_parallel_agents_stays_on_separate_timeline_items():
@@ -677,6 +705,8 @@ return target.processTimeline;
         "status": "success",
         "category": "tool",
         "isExpanded": False,
+        "children": [],
+        "childrenExpanded": True,
     }]
 
 
@@ -959,7 +989,7 @@ return { pending, finished };
 """,
     )
 
-    assert result == {"pending": "调用工具: search · 进行中", "finished": ""}
+    assert result == {"pending": "调用工具 · search · 进行中", "finished": ""}
 
 
 def test_process_timeline_counts_nested_pending_tools_as_in_progress():
@@ -996,7 +1026,7 @@ return {
 
     assert result == {
         "nestedPending": True,
-        "nestedStep": "调用工具: search · 进行中",
+        "nestedStep": "调用工具 · search · 进行中",
         "idle": False,
     }
 
@@ -1306,3 +1336,55 @@ return api.getToolPermissionDisplay({
     )
 
     assert result["isCompact"] is False
+
+
+def test_collapse_secondary_folds_preserves_thought_expanded_when_timeline_pending():
+    result = _run_typescript(
+        "frontend/src/utils/agentscopeSseHandlers.ts",
+        """
+const pendingMsg = {
+  isProcessNarrationExpanded: true,
+  isReasoningExpanded: true,
+  isThoughtExpanded: true,
+  processTimeline: [{ id: 'step-1', kind: 'log', title: 'Bash', status: 'pending' }]
+};
+api.collapseSecondaryFoldsOnBody(pendingMsg);
+
+const completedMsg = {
+  isProcessNarrationExpanded: true,
+  isReasoningExpanded: true,
+  isThoughtExpanded: true,
+  processTimeline: [{ id: 'step-1', kind: 'log', title: 'Bash', status: 'success' }]
+};
+api.collapseSecondaryFoldsOnBody(completedMsg);
+
+return {
+  pendingThought: pendingMsg.isThoughtExpanded,
+  pendingProcess: pendingMsg.isProcessNarrationExpanded,
+  completedThought: completedMsg.isThoughtExpanded,
+};
+""",
+    )
+
+    assert result["pendingThought"] is True
+    assert result["pendingProcess"] is False
+    assert result["completedThought"] is False
+
+
+def test_chat_execution_timeline_watch_and_meta_guard_premature_fold():
+    timeline_code = (ROOT / "frontend/src/components/chat/ChatExecutionTimeline.vue").read_text(encoding="utf-8")
+    embed_code = (ROOT / "frontend/src/views/EmbedChat.vue").read_text(encoding="utf-8")
+    debug_code = (ROOT / "frontend/src/views/AgentDebug.vue").read_text(encoding="utf-8")
+
+    # ChatExecutionTimeline: pending 状态必定展开，且仅在无 pending 时响应 hasAnswer 折叠
+    assert "if (pending) {" in timeline_code
+    assert "expanded.value = true;" in timeline_code
+    assert "if (answer && !hasPending.value) expanded.value = false;" in timeline_code
+
+    # EmbedChat: meta 事件不因非 data_query 强制将 isThoughtExpanded 抹杀为 false
+    assert "if (data.thought_expanded_default === true) {" in embed_code
+    assert "agentMsg.value.isThoughtExpanded = true;" in embed_code
+    assert "!timelineHasPending(agentMsg.value.processTimeline)" in embed_code
+
+    # AgentDebug: 包含 pending 守卫
+    assert "!timelineHasPending(agentMsg.value.processTimeline)" in debug_code

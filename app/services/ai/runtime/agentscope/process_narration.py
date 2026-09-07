@@ -40,6 +40,38 @@ def _commit_pending_as_narration(state: Dict[str, Any]) -> List[Dict[str, Any]]:
     return events
 
 
+def _candidate_reply_is_active(state: Dict[str, Any]) -> bool:
+    return state.get("candidate_reply_start") is not None
+
+
+def _clear_candidate_reply(state: Dict[str, Any]) -> None:
+    state["candidate_reply_start"] = None
+
+
+def _retract_candidate_as_narration(state: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """撤回已进入正文气泡的候选文本，再作为过程说明提交。
+
+    候选文本与 pending_reply_text 同源。必须先截断确认正文并发送
+    retraction，前端才不会把接下来的过程说明误当作已确认回答。
+    """
+    if not _candidate_reply_is_active(state):
+        return _commit_pending_as_narration(state)
+
+    start = int(state.get("candidate_reply_start") or 0)
+    state["full_content"] = str(state.get("full_content") or "")[:start]
+    state["content_emitted"] = bool(state["full_content"])
+    state["pending_reply_emitted"] = False
+    _clear_candidate_reply(state)
+    return [
+        {
+            "type": "retraction",
+            "content": state["full_content"],
+            "final": False,
+        },
+        *_commit_pending_as_narration(state),
+    ]
+
+
 def _current_model_uses_only_bookkeeping_tools(state: Dict[str, Any]) -> bool:
     tool_names = state.get("current_reply_tool_names")
     if not isinstance(tool_names, list) or not tool_names:
@@ -99,6 +131,14 @@ def on_text_delta(state: Dict[str, Any], delta: str) -> List[Dict[str, Any]]:
         return []
 
     state["pending_reply_text"] = pending + text
+    if state.get("candidate_answer_enabled"):
+        if state.get("candidate_reply_start") is None:
+            state["candidate_reply_start"] = len(str(state.get("full_content") or ""))
+        state["full_content"] = str(state.get("full_content") or "") + text
+        state["content_emitted"] = True
+        state["pending_reply_emitted"] = False
+        return [{"type": "answer_delta", "content": text, "phase": "candidate"}]
+
     state["pending_reply_emitted"] = True
     return [{"type": "process_narration", "content": text}]
 
@@ -124,7 +164,8 @@ def on_tool_call_start(
         # 保留 pending_reply_text，使“正文 -> 最后一次 todo_write -> 结束”
         # 能在 model_call_end 时正常提升为最终正文。
         return []
-    return _commit_pending_as_narration(state)
+    state["candidate_answer_enabled"] = False
+    return _retract_candidate_as_narration(state)
 
 
 def on_tool_result_end(state: Dict[str, Any]) -> None:
@@ -140,6 +181,11 @@ def on_tool_result_end(state: Dict[str, Any]) -> None:
 def on_model_call_end(state: Dict[str, Any]) -> List[Dict[str, Any]]:
     pending = _pending_text(state)
     if not pending:
+        return []
+    if _candidate_reply_is_active(state):
+        state["pending_reply_text"] = ""
+        state["pending_reply_emitted"] = False
+        _clear_candidate_reply(state)
         return []
     if (
         state.get("current_reply_used_tools")
