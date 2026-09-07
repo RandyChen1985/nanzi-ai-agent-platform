@@ -1411,9 +1411,20 @@ const debugConfig = reactive({
 });
 
 const handleDebugModelSelection = (model: string) => {
+  const previousModel = debugConfig.model;
+  if (previousModel === model) {
+    return;
+  }
   debugConfig.model = model;
   debugConfig.thinkingEnableOverride = null;
   debugConfig.reasoningEffortOverride = null;
+  if (model) {
+    const found = availableModels.value.find((m) => m.model_id === model);
+    const displayName = found?.name || model;
+    showToast(`已切换模型为: ${displayName}`, "success");
+  } else {
+    showToast("已恢复为默认模型", "info");
+  }
 };
 
 const { contextUsage, refreshContextUsage } = useContextUsage();

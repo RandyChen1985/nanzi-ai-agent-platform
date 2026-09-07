@@ -3282,10 +3282,21 @@ const saveRoutingPreference = async (mode: "auto" | "expert", agentId = "") => {
     }
 };
 const handleEmbedModelSelection = (model: string) => {
+    const previousModel = config.overrideModel;
+    if (previousModel === model) {
+        return;
+    }
     config.overrideModel = model;
     thinkingEnableOverride.value = null;
     reasoningEffortOverride.value = null;
     saveRoutingSettings();
+    if (model) {
+        const found = availableModels.value.find((m) => m.model_id === model);
+        const displayName = found?.name || model;
+        showToast(`已切换模型为: ${displayName}`, "success");
+    } else {
+        showToast("已恢复为默认模型", "info");
+    }
 };
 const resetEmbedThinkingOverrides = () => {
     thinkingEnableOverride.value = null;
