@@ -57,6 +57,25 @@ def parse_date_from_query(query: Optional[str]) -> Optional[str]:
     return None
 
 
+_RECENCY_ONLY_PATTERN = re.compile(
+    r"^(?:最近|近期|上次|之前|以前|以往|过往|历史|以往对话|历史对话|最近的对话|最近的聊天|前几次|以往会话|之前的对话|回顾|回顾对话)$",
+    re.IGNORECASE,
+)
+
+
+def _is_recency_only_query(query: Optional[str]) -> bool:
+    """判断查询词是否仅为纯粹的时间泛指词（如'最近'、'近期'、'上次'、'历史对话'等），
+
+    而没有具体的业务主题关键词。这类查询应该直接按时间倒序召回活跃会话，而非作为关键词过滤。
+    """
+    if not query:
+        return False
+    cleaned = re.sub(r"[\s\-_，,。？！?!]+", "", query.strip())
+    if not cleaned:
+        return False
+    return bool(_RECENCY_ONLY_PATTERN.match(cleaned))
+
+
 @tool
 async def memory_search(
     scope: str = "summary",
@@ -102,11 +121,16 @@ async def memory_search(
         except Exception as e:
             logger.warning("[memory_search] failed to fetch daily memory for date=%s: %s", target_day, e)
 
-    # 3. 执行常规的全局搜索
+    # 3. 规范化检索 query：针对“最近”、“近期”、“上次”、“历史”、“过往”等无具体业务关键词的泛时间提问，
+    # 转换为 query=None 进行纯时间倒序（Last Active）摘要召回，避免被文本推导式过滤为 0 条。
+    is_recency_only_query = _is_recency_only_query(query)
+    effective_query = None if is_recency_only_query else (query.strip() if query else None)
+
+    # 执行常规搜索
     try:
         data = await SessionSummaryService.search_for_user(
             user_id=uid,
-            query=query,
+            query=effective_query,
             scope=scope_norm,
             conversation_id=conversation_id,
             limit=top_k,
@@ -114,6 +138,30 @@ async def memory_search(
     except Exception as e:
         logger.error("[memory_search] failed: %s", e)
         return f"记忆检索失败: {e}"
+
+    # 4. 兜底回退：如果指定了具体关键词且未匹配到任何结果，同时未限制特定日期，
+    # 则自动回退拉取最近活跃的会话摘要，防止因关键词字面偏差导致明明有历史却完全无法召回。
+    used_fallback_recency = False
+    if (
+        scope_norm in ("summary", "both")
+        and not data.get("summaries")
+        and not day_sessions
+        and not daily_summary_data
+        and effective_query
+        and not target_day
+    ):
+        try:
+            fallback_data = await SessionSummaryService.search_for_user(
+                user_id=uid,
+                query=None,
+                scope="summary",
+                limit=top_k,
+            )
+            if fallback_data.get("summaries"):
+                data["summaries"] = fallback_data["summaries"]
+                used_fallback_recency = True
+        except Exception as e:
+            logger.warning("[memory_search] recency fallback failed: %s", e)
 
     lines = []
 
@@ -159,14 +207,18 @@ async def memory_search(
     filtered_global = [s for s in global_summaries if s.get("conversation_id") not in day_cids]
 
     if filtered_global:
-        if target_day:
+        if used_fallback_recency:
+            lines.append(f"未找到与关键词「{effective_query}」直接相关的历史会话，已为您呈现最近活跃的会话摘要：\n")
+        elif is_recency_only_query:
+            lines.append("## 最近活跃的会话摘要\n")
+        elif target_day:
             lines.append("## 其他匹配的全局会话摘要\n")
         else:
             lines.append("## 匹配的会话摘要\n")
 
         for i, s in enumerate(filtered_global, 1):
             score = s.get("score")
-            score_txt = f" (相关度: {score:.3f})" if score is not None else ""
+            score_txt = f" (相关度: {score:.3f})" if (score is not None and not used_fallback_recency and not is_recency_only_query) else ""
             ts = int(s.get("last_active") or 0)
             active_time_str = datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M:%S") if ts > 0 else "未知"
             lines.append(
