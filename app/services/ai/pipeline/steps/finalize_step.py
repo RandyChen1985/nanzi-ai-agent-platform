@@ -168,6 +168,22 @@ class FinalizeStep(BasePipelineStep):
                     ),
                     name=f"persist-cancelled-turn-{conversation_id}",
                 )
+            elif conversation_id and context.shared_state.get("context_user_message"):
+                # 本轮未产生可持久化的有效输出（异常早退、短路或空取消等），
+                # 清理本轮在 ContextStep 预写入的孤儿用户消息，保持会话轮次对称。
+                u_id = context.lane_user_id
+                user_msg = context.shared_state.get("context_user_message") or {}
+                user_content = user_msg.get("content")
+                from app.services.ai.memory_service import memory_service
+
+                await await_unless_cancelling(
+                    lambda: memory_service.rollback_last_user_message(
+                        user_id=u_id,
+                        conversation_id=conversation_id,
+                        expected_content=user_content,
+                    ),
+                    name=f"rollback-orphan-user-msg-{conversation_id}",
+                )
 
             is_scheduled_task = bool(user_info and user_info.get("is_scheduled_task"))
             if (

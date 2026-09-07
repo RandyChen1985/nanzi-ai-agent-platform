@@ -71,6 +71,23 @@ redis.call('SET', stack_key, cjson.encode(next_stack), 'EX', ARGV[2])
 return 1
 """
 
+_ROLLBACK_ORPHAN_USER_MESSAGE_SCRIPT = """
+local key = KEYS[1]
+local raw = redis.call('LINDEX', key, -1)
+if not raw then
+    return 0
+end
+local ok, msg = pcall(cjson.decode, raw)
+if ok and type(msg) == 'table' and msg['role'] == 'user' then
+    local expected = ARGV[1]
+    if expected == '' or msg['content'] == expected then
+        redis.call('RPOP', key)
+        return 1
+    end
+end
+return 0
+"""
+
 class MemoryService:
     """
     Manages conversation history in Redis.
@@ -686,6 +703,42 @@ class MemoryService:
             logger.info(f"[MemoryService] Added message to key: {key}. TraceID: {trace_id}")
         except Exception as e:
             logger.error(f"[MemoryService] Failed to add message to key {key}: {e}")
+
+    async def rollback_last_user_message(
+        self,
+        user_id: str,
+        conversation_id: str,
+        expected_content: Optional[str] = None,
+    ) -> bool:
+        """若会话末尾为未配对的 user 消息，将其从 Redis 历史中安全回滚弹出。"""
+        redis = await get_redis()
+        if not redis:
+            logger.warning(
+                "[MemoryService] Redis client not available for rollback_last_user_message"
+            )
+            return False
+        key = self._get_key(user_id, conversation_id)
+        try:
+            res = await redis.eval(
+                _ROLLBACK_ORPHAN_USER_MESSAGE_SCRIPT,
+                1,
+                key,
+                expected_content or "",
+            )
+            success = bool(res == 1)
+            if success:
+                logger.info(
+                    "[MemoryService] Successfully rolled back orphan user message for key: %s",
+                    key,
+                )
+            return success
+        except Exception as e:
+            logger.error(
+                "[MemoryService] Failed to rollback last user message for key %s: %s",
+                key,
+                e,
+            )
+            return False
 
     async def update_last_user_message_content(
         self,

@@ -880,3 +880,29 @@ async def test_pipeline_runner_sanitizes_unhandled_step_exception():
     assert "top-secret" not in str(error_chunk)
     assert "/private/internal/path" not in str(error_chunk)
     enrich_error.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_finalize_step_rolls_back_orphan_user_message_on_failure():
+    """当本轮没有可持久化的输出时，FinalizeStep 应当安全回滚预写入的孤儿 User 消息。"""
+    context = PipelineContext(
+        messages=[{"role": "user", "content": "测试孤儿消息"}],
+        user_info={"user_id": 123},
+        conversation_id="conv_orphan_test",
+    )
+    context.lane_user_id = "123"
+    context.execution_status = "error"
+    context.shared_state["context_user_message"] = {"role": "user", "content": "测试孤儿消息"}
+
+    with patch(
+        "app.services.ai.memory_service.memory_service.rollback_last_user_message",
+        new_callable=AsyncMock,
+        return_value=True,
+    ) as mock_rollback:
+        _ = [chunk async for chunk in FinalizeStep().run(context)]
+
+    mock_rollback.assert_awaited_once_with(
+        user_id="123",
+        conversation_id="conv_orphan_test",
+        expected_content="测试孤儿消息",
+    )

@@ -3320,8 +3320,25 @@ const sendMessageInternal = async (snapshot: ChatSendSnapshot) => {
     if (!response.ok) {
       let errorDetails = `Status: ${response.status} ${response.statusText}`;
       try {
-        const errData = await response.json();
-        if (errData.message) errorDetails = errData.message;
+        const errorText = await response.text();
+        if (errorText) {
+          try {
+            const errData = JSON.parse(errorText);
+            if (errData.detail) {
+              errorDetails = typeof errData.detail === "string"
+                ? errData.detail
+                : Array.isArray(errData.detail)
+                  ? errData.detail.map((d: any) => d.msg || JSON.stringify(d)).join("; ")
+                  : JSON.stringify(errData.detail);
+            } else if (errData.message) {
+              errorDetails = errData.message;
+            } else {
+              errorDetails = errorText;
+            }
+          } catch {
+            errorDetails = errorText;
+          }
+        }
       } catch (e) {}
       throw new Error(errorDetails);
     }

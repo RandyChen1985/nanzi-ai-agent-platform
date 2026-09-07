@@ -7629,6 +7629,40 @@ const submitUserQuestion = async (
   await sendMessage();
 };
 
+const parseFetchErrorMessage = async (response: Response): Promise<string> => {
+  let errorMessage = response.statusText || `HTTP ${response.status}`;
+  try {
+    const errorText = await response.text();
+    if (errorText) {
+      try {
+        const errorJson = JSON.parse(errorText);
+        if (errorJson?.detail) {
+          if (typeof errorJson.detail === "string") {
+            errorMessage = errorJson.detail;
+          } else if (Array.isArray(errorJson.detail)) {
+            errorMessage = errorJson.detail
+              .map((d: any) => d.msg || (typeof d === "string" ? d : JSON.stringify(d)))
+              .join("; ");
+          } else if (typeof errorJson.detail === "object" && errorJson.detail.message) {
+            errorMessage = String(errorJson.detail.message);
+          } else {
+            errorMessage = JSON.stringify(errorJson.detail);
+          }
+        } else if (errorJson?.message) {
+          errorMessage = String(errorJson.message);
+        } else {
+          errorMessage = errorText;
+        }
+      } catch {
+        errorMessage = errorText;
+      }
+    }
+  } catch {
+    // ignore stream read error
+  }
+  return errorMessage;
+};
+
 const confirmPendingPermission = async (msg: Message, confirmed: boolean) => {
   const pending = msg.pendingPermission;
   if (!pending || pending.status !== "pending" || pending.isSubmitting) return;
@@ -7652,7 +7686,7 @@ const confirmPendingPermission = async (msg: Message, confirmed: boolean) => {
       body: JSON.stringify({ confirmed }),
       credentials: "include",
     });
-    if (!response.ok) throw new Error(response.statusText);
+    if (!response.ok) throw new Error(await parseFetchErrorMessage(response));
     const reader = response.body?.getReader();
     if (!reader) throw new Error("No body");
     const decoder = new TextDecoder();
@@ -8016,7 +8050,7 @@ const sendMessageInternal = async (snapshot: ChatSendSnapshot) => {
       signal: abortController.signal,
       credentials: "include"
     });
-    if (!response.ok) throw new Error(response.statusText);
+    if (!response.ok) throw new Error(await parseFetchErrorMessage(response));
     const reader = response.body?.getReader();
     const decoder = new TextDecoder();
     if (!reader) throw new Error("No body");
