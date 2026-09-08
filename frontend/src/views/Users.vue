@@ -190,8 +190,21 @@
               <tr v-for="user in users" :key="user.id" class="group hover:bg-gray-50/80 transition-colors">
                 <td class="px-5 py-4 whitespace-nowrap">
                   <div class="min-w-0">
-                    <div class="text-sm font-semibold text-gray-900 truncate max-w-[14rem]" :title="user.user_name">
-                      {{ user.user_name }}
+                    <div class="flex items-center gap-1.5 min-w-0">
+                      <span class="text-sm font-semibold text-gray-900 truncate max-w-[14rem]" :title="user.user_name">
+                        {{ user.user_name }}
+                      </span>
+                      <!-- 2FA 开启安全徽标 -->
+                      <span
+                        v-if="user.two_factor_enabled"
+                        class="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-medium bg-emerald-50 text-emerald-700 border border-emerald-200/80 shrink-0 cursor-default"
+                        title="已开启 Google 两步验证 (2FA)"
+                      >
+                        <svg class="w-3 h-3 text-emerald-600 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+                        </svg>
+                        <span>2FA</span>
+                      </span>
                     </div>
                     <div class="mt-0.5 flex items-center gap-1.5 text-xs text-gray-400">
                       <span>{{ user.real_name || "未设置姓名" }}</span>
@@ -311,9 +324,21 @@
         >
           <div class="flex justify-between items-start gap-3">
             <div class="min-w-0 flex-1">
-              <h3 class="text-base font-semibold text-gray-900 truncate">
-                {{ user.user_name }}
-              </h3>
+              <div class="flex items-center gap-1.5 min-w-0">
+                <h3 class="text-base font-semibold text-gray-900 truncate">
+                  {{ user.user_name }}
+                </h3>
+                <span
+                  v-if="user.two_factor_enabled"
+                  class="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-medium bg-emerald-50 text-emerald-700 border border-emerald-200/80 shrink-0"
+                  title="已开启 Google 两步验证 (2FA)"
+                >
+                  <svg class="w-3 h-3 text-emerald-600 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+                  </svg>
+                  <span>2FA</span>
+                </span>
+              </div>
               <p class="text-xs text-gray-500 mt-0.5">
                 {{ user.real_name || "未设置姓名" }} · #{{ user.id }}
               </p>
@@ -371,6 +396,16 @@
               <button v-if="canEditUser" @click="openSetPasswordDialog(user)" class="p-1.5 rounded-lg text-gray-500 hover:bg-emerald-50" title="密码">
                 <LockClosedIcon class="w-4 h-4" />
               </button>
+              <button
+                v-if="canEditUser && user.two_factor_enabled"
+                @click="openDisable2FADialog(user)"
+                class="p-1.5 rounded-lg text-purple-600 hover:bg-purple-50"
+                title="关闭 2FA"
+              >
+                <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 11V7a4 4 0 118 0m-4 8v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2z" />
+                </svg>
+              </button>
               <button v-if="canResetUserKey" @click="regenerateApiKey(user)" class="p-1.5 rounded-lg text-gray-500 hover:bg-amber-50" title="重置 Key">
                 <ArrowPathIcon class="w-4 h-4" />
               </button>
@@ -426,6 +461,17 @@
         >
           <LockClosedIcon class="w-4 h-4 text-emerald-500" />
           设置密码
+        </button>
+        <button
+          v-if="canEditUser && openRowMenuUser.two_factor_enabled"
+          type="button"
+          class="w-full text-left px-3 py-2 text-sm text-purple-700 hover:bg-purple-50 flex items-center gap-2"
+          @click="openDisable2FADialog(openRowMenuUser); closeMenus()"
+        >
+          <svg class="w-4 h-4 text-purple-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 11V7a4 4 0 118 0m-4 8v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2z" />
+          </svg>
+          关闭 2FA
         </button>
         <button
           v-if="canResetUserKey"
@@ -1396,6 +1442,49 @@
       </div>
     </div>
 
+    <!-- Disable 2FA Dialog -->
+    <div
+      v-if="showDisable2FADialog"
+      class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[9990]"
+      @click.self="closeDisable2FADialog"
+    >
+      <div
+        class="bg-white rounded-xl p-6 w-full max-w-md shadow-2xl text-center"
+      >
+        <div class="w-12 h-12 bg-purple-50 text-purple-600 rounded-full flex items-center justify-center mx-auto mb-3">
+          <svg class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 11V7a4 4 0 118 0m-4 8v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2z" />
+          </svg>
+        </div>
+        <h2 class="text-lg font-bold mb-2 text-gray-900">关闭两步验证 (2FA)</h2>
+        <p class="text-sm text-gray-600 leading-relaxed mb-6">
+          确定要为用户
+          <strong class="text-gray-900 font-semibold">{{ userToDisable2FA?.user_name }}</strong>
+          强制关闭两步验证吗？<br />
+          <span class="text-xs text-gray-400 mt-1 block">关闭后该用户将不再需要动态验证码，恢复为仅凭账号密码登录。</span>
+        </p>
+        <div class="flex justify-center gap-3">
+          <button
+            type="button"
+            @click="closeDisable2FADialog"
+            :disabled="disabling2FA"
+            class="px-5 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 text-sm font-medium text-gray-700 disabled:opacity-50"
+          >
+            取消
+          </button>
+          <button
+            type="button"
+            @click="executeDisable2FA"
+            :disabled="disabling2FA"
+            class="px-5 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 text-sm font-medium transition-colors inline-flex items-center gap-1.5 disabled:opacity-50"
+          >
+            <span v-if="disabling2FA" class="animate-spin w-4 h-4 border-2 border-white border-t-transparent rounded-full"></span>
+            <span>{{ disabling2FA ? '关闭中...' : '确认关闭' }}</span>
+          </button>
+        </div>
+      </div>
+    </div>
+
     <!-- SSO Sync Modal -->
     <div
       v-if="showSsoModal"
@@ -1782,7 +1871,8 @@ const toggleRowMenu = (user: any, event?: MouseEvent) => {
   if (trigger) {
     const rect = trigger.getBoundingClientRect();
     const menuWidth = 160;
-    const estimatedHeight = user.user_name === "admin" ? 88 : 128;
+    const extraItems = canEditUser.value && user.two_factor_enabled ? 36 : 0;
+    const estimatedHeight = (user.user_name === "admin" ? 88 : 128) + extraItems;
     const gap = 4;
     // 默认贴在按钮下方；仅当下方空间不足时再向上翻
     const spaceBelow = window.innerHeight - rect.bottom - gap;
@@ -1809,6 +1899,7 @@ const showEditDialog = ref(false);
 const showDeleteDialog = ref(false);
 const showRegenerateDialog = ref(false);
 const showSetPasswordDialog = ref(false);
+const showDisable2FADialog = ref(false);
 const showViewKeyDialog = ref(false);
 const showSsoModal = ref(false);
 const showThirdPartyDrawer = ref(false);
@@ -1816,9 +1907,11 @@ const showSystemQuotaModal = ref(false);
 const userToDelete = ref<any>(null);
 const userToRegenerate = ref<any>(null);
 const userToSetPassword = ref<any>(null);
+const userToDisable2FA = ref<any>(null);
 const userToViewKey = ref<any>(null);
 const loadingViewKey = ref(false);
 const settingPassword = ref(false);
+const disabling2FA = ref(false);
 const viewedApiKey = ref("");
 const setPasswordForm = ref({ password: "", confirm: "" });
 const userSetPasswordPolicy = computed(() => {
@@ -2492,6 +2585,34 @@ const executeSetPassword = async () => {
     showToast(e.response?.data?.detail || "密码设置失败", "error");
   } finally {
     settingPassword.value = false;
+  }
+};
+
+const openDisable2FADialog = (user: any) => {
+  userToDisable2FA.value = user;
+  showDisable2FADialog.value = true;
+};
+const closeDisable2FADialog = () => {
+  showDisable2FADialog.value = false;
+  userToDisable2FA.value = null;
+  disabling2FA.value = false;
+};
+const executeDisable2FA = async () => {
+  if (!userToDisable2FA.value?.id) return;
+  disabling2FA.value = true;
+  try {
+    const res = await axios.post(`/api/portal/management/users/${userToDisable2FA.value.id}/disable-2fa`);
+    if (res.data?.status === "success") {
+      showToast(res.data?.message || "两步验证已成功关闭", "success");
+      closeDisable2FADialog();
+      fetchUsers();
+    } else {
+      showToast(res.data?.message || "关闭失败", "error");
+    }
+  } catch (e: any) {
+    showToast(e.response?.data?.detail || "关闭两步验证失败", "error");
+  } finally {
+    disabling2FA.value = false;
   }
 };
 

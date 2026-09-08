@@ -158,3 +158,23 @@ async def test_register_online_state_with_bool_values():
             assert not isinstance(val, bool)
             assert isinstance(val, (str, int, float, bytes))
 
+@pytest.mark.asyncio
+async def test_admin_disable_user_two_factor():
+    """测试管理员在用户管理中强制关闭用户的两步验证 (2FA)"""
+    from app.api.portal.endpoints.management import disable_user_two_factor
+    from app.models.user import User
+
+    mock_db = AsyncMock()
+    mock_user = User(id=88, user_name="test_operator", two_factor_enabled=1, two_factor_secret="JBSWY3DPEHPK3PXP")
+    mock_db.get.return_value = mock_user
+
+    admin_payload = {"user_name": "admin", "role": "admin"}
+
+    res = await disable_user_two_factor(user_id=88, admin=admin_payload, db=mock_db)
+
+    assert res["status"] == "success"
+    assert res["user_id"] == 88
+    assert mock_user.two_factor_enabled == 0
+    assert mock_user.two_factor_secret is None
+    mock_db.commit.assert_awaited_once()
+

@@ -380,6 +380,7 @@ async def list_users(
             "role_names": role_names,
             "remark": row.remark,
             "status": row.status,
+            "two_factor_enabled": bool(row.two_factor_enabled),
             "created_at": row.created_at.isoformat() if row.created_at else None,
             "updated_at": row.updated_at.isoformat() if row.updated_at else None,
             "allowed_resources": []
@@ -749,6 +750,26 @@ async def set_user_password(
         raise HTTPException(status_code=500, detail="密码设置失败")
 
     return {"status": "success", "message": "密码设置成功", "user_id": user_id}
+
+@router.post("/users/{user_id}/disable-2fa")
+async def disable_user_two_factor(
+    user_id: int,
+    admin: dict = Depends(require_permission("element", "element:user:edit")),
+    db: AsyncSession = Depends(get_db_session)
+):
+    """
+    管理员强制关闭指定用户的两步验证 (2FA / TOTP)。
+    """
+    user = await db.get(User, user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    user.two_factor_enabled = 0
+    user.two_factor_secret = None
+    await db.commit()
+
+    logger.info(f"Admin {admin.get('user_name')} disabled 2FA for user {user.user_name} (ID: {user_id})")
+    return {"status": "success", "message": f"用户 {user.user_name} 的两步验证已成功关闭", "user_id": user_id}
 
 @router.get("/resources/available")
 async def get_available_resources(
