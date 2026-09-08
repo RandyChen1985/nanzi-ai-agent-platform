@@ -39,7 +39,7 @@ class SsoSyncRequest(BaseModel):
     role_ids: Optional[List[int]] = []
 
 class SetPasswordRequest(BaseModel):
-    password: str = Field(..., min_length=6, description="新密码")
+    password: str = Field(..., min_length=8, max_length=32, description="新密码（须符合等保复杂度要求）")
 
 # ... existing code ...
 
@@ -731,6 +731,11 @@ async def set_user_password(
     user = await db.get(User, user_id)
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
+
+    # 校验密码复杂度（等保要求）
+    valid, msg = AuthService.validate_password_complexity(request.password, username=user.user_name)
+    if not valid:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=msg)
 
     # bcrypt 限制密码长度为 72 字节
     password_bytes = request.password.encode('utf-8')

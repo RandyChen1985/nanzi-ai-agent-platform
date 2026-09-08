@@ -151,6 +151,7 @@ interface ContentSegment {
   const appendOpenLinkToPath = (rawPathVal: string) => {
     const pathVal = rawPathVal.replace(/###HTML_TAG_PLACEHOLDER_\d+###/g, '').trim();
     if (!pathVal) return rawPathVal;
+    if (/^\/?(?:api|static|assets)\//i.test(pathVal)) return rawPathVal;
     const canvasUrl = `canvas://file?path=${encodeURIComponent(pathVal)}`;
     return `${pathVal}<a href="${canvasUrl}" class="inline-flex items-center text-blue-600 dark:text-blue-400 hover:underline font-bold ml-1.5 text-[10.5px]" title="点击在画布中打开文件" style="cursor: pointer;">[打开]</a>`;
   };
@@ -176,12 +177,13 @@ interface ContentSegment {
     }
 
     // 智能将服务器物理绝对路径重映射为可加载的网络相对路径（uploads 转静态托管，其他绝对路径转 fs 预览 API）
+    const isHttpUrl = (val: string) => /^https?:\/\//i.test(String(val || '').trim());
     res = res.replace(/(src|href)=["']([^"']*)["']/gi, (match, attr, val) => {
       const resolvedGeneratedFileHref = resolveGeneratedFileHref(val);
       if (resolvedGeneratedFileHref !== val) {
         return `${attr}="${resolvedGeneratedFileHref}"`;
       }
-      if (isBrowserOpenableUrl(val) || val.startsWith('data:')) {
+      if (isHttpUrl(val) || val.startsWith('data:')) {
         return match;
       }
       if (val.includes('uploads/')) {
@@ -189,7 +191,7 @@ interface ContentSegment {
         const newVal = '/static/uploads/' + parts[parts.length - 1];
         return `${attr}="${newVal}"`;
       }
-      if (!isBrowserOpenableUrl(val) &&
+      if (!isHttpUrl(val) &&
           !val.startsWith('data:') &&
           !val.startsWith('quick:') &&
           !val.startsWith('canvas:') &&
@@ -674,7 +676,9 @@ const segments = computed<ContentSegment[]>(() => {
 
 <style scoped>
 .chart { height: 100%; width: 100%; }
-.markdown-body :deep(a[href^="http"]) { color: #2563eb !important; text-decoration: underline !important; cursor: pointer !important; }
+.markdown-body :deep(a[href^="http"]),
+.markdown-body :deep(a[href^="/api/"]),
+.markdown-body :deep(a.generated-file-link) { color: #2563eb !important; text-decoration: underline !important; cursor: pointer !important; }
 .markdown-body :deep(.message-link-open) {
   display: inline-flex !important;
   flex: 0 0 auto !important;

@@ -349,3 +349,13 @@ def test_browser_panel_element_hover_inspector_contract():
     assert "cursorCoords" in panel_source
     assert "Element Hover Inspector" in panel_source
     assert "hoveredElement.role || hoveredElement.tag" in panel_source
+
+
+def test_browser_panel_install_logs_auto_scroll():
+    panel_source = (ROOT / "frontend/src/components/embed/BrowserPanel.vue").read_text(encoding="utf-8")
+
+    assert 'ref="installLogsRef"' in panel_source
+    assert "const installLogsRef = ref<HTMLPreElement | null>(null);" in panel_source
+    assert "scrollInstallLogsToBottom" in panel_source
+    assert "installLogsRef.value.scrollTop = installLogsRef.value.scrollHeight" in panel_source
+    assert "watch(" in panel_source

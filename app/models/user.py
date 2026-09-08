@@ -17,8 +17,11 @@ class User(Base):
     api_key_encrypted = Column(Text, nullable=True)
     api_key_hash = Column(String(64), index=True, nullable=True)
     password_hash = Column(String(128), nullable=True)
+    password_updated_at = Column(DateTime, nullable=True, comment='密码最后修改时间')
     remark = Column(String(255))
     status = Column(Integer, default=1) # 1=enabled, 0=disabled
+    two_factor_enabled = Column(Boolean, default=False, nullable=False, comment='是否启用两步验证(2FA)')
+    two_factor_secret = Column(String(512), nullable=True, comment='两步验证TOTP密钥')
     
     created_at = Column(DateTime, default=datetime.now)
     updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)

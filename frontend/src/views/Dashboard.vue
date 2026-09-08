@@ -89,6 +89,15 @@ const fetchUserInfo = async () => {
     if (response.data && response.data.status === "success") {
       userInfo.value = response.data.data;
       localStorage.setItem("user_info", JSON.stringify(response.data.data));
+      // 触发登录后密码到期检测（方式 1: 轻量 Toast 提醒）
+      triggerLoginPasswordNoticeToast(response.data.data);
+      // 检查当前会话是否临时关闭过 Banner
+      const uid = response.data.data.id || response.data.data.user_id || 'current';
+      if (sessionStorage.getItem(`dismiss_pwd_banner_${uid}`)) {
+        isPasswordExpireBannerDismissed.value = true;
+      } else {
+        isPasswordExpireBannerDismissed.value = false;
+      }
     }
   } catch (e) {
     console.error("Auth check failed", e);
@@ -99,8 +108,141 @@ const fetchUserInfo = async () => {
   }
 };
 
+// 密码到期提醒状态管理 (方式 1: 登录即时 Toast + 方式 2: 全局常驻 Top Banner)
+const isPasswordExpireBannerDismissed = ref(false);
+
+const passwordExpireNoticeData = computed(() => {
+  const pwdInfo = (userInfo.value as any)?.password_info;
+  if (!pwdInfo || !pwdInfo.has_password) return null;
+
+  const isExpired = !!pwdInfo.is_expired || (typeof pwdInfo.days_until_next_change === 'number' && pwdInfo.days_until_next_change <= 0);
+  const daysUntil = typeof pwdInfo.days_until_next_change === 'number' ? pwdInfo.days_until_next_change : 999;
+  const daysSince = pwdInfo.days_since_last_change ?? 0;
+  const expireDays = pwdInfo.password_expire_days ?? 30;
+
+  // 触发条件：已过期 或 剩余天数 <= 7 天（覆盖 7天、3天、1天及过期）
+  if (!isExpired && daysUntil > 7) {
+    return null;
+  }
+
+  let level: 'expired' | 'urgent' | 'warning' | 'notice' = 'notice';
+  let message = '';
+
+  if (isExpired) {
+    level = 'expired';
+    message = `安全警示：您的登录密码已超过有效周期（已过 ${daysSince} 天），为了账号安全请尽快修改密码！`;
+  } else if (daysUntil <= 1) {
+    level = 'urgent';
+    message = `安全预警：您的登录密码还有最后 1 天即将过期，请尽快修改密码！`;
+  } else if (daysUntil <= 3) {
+    level = 'warning';
+    message = `安全提醒：您的登录密码还有 ${daysUntil} 天即将过期，建议及时前往修改。`;
+  } else {
+    level = 'notice';
+    message = `安全提醒：您的登录密码将在 ${daysUntil} 天后到期（有效周期 ${expireDays} 天），建议提前修改。`;
+  }
+
+  return {
+    level,
+    message,
+    isExpired,
+    daysUntil,
+    daysSince,
+    expireDays,
+  };
+});
+
+const showPasswordExpireBanner = computed(() => {
+  if (!passwordExpireNoticeData.value) return false;
+  // 已过期（逾期）状态下，横幅强制一直显示，不允许被关闭隐藏
+  if (passwordExpireNoticeData.value.isExpired) return true;
+  if (isPasswordExpireBannerDismissed.value) return false;
+  return true;
+});
+
+const passwordExpireBannerStyle = computed(() => {
+  const data = passwordExpireNoticeData.value;
+  if (!data) return {} as any;
+
+  switch (data.level) {
+    case 'expired':
+      return {
+        wrapper: 'bg-red-50 dark:bg-red-950/40 border-red-200 dark:border-red-900/60 text-red-800 dark:text-red-200',
+        btn: 'bg-red-600 hover:bg-red-700 text-white',
+        iconType: 'error',
+      };
+    case 'urgent':
+      return {
+        wrapper: 'bg-rose-50 dark:bg-rose-950/40 border-rose-200 dark:border-rose-900/60 text-rose-900 dark:text-rose-200',
+        btn: 'bg-rose-600 hover:bg-rose-700 text-white',
+        iconType: 'warning',
+      };
+    case 'warning':
+      return {
+        wrapper: 'bg-amber-50 dark:bg-amber-950/40 border-amber-200 dark:border-amber-900/60 text-amber-900 dark:text-amber-200',
+        btn: 'bg-amber-600 hover:bg-amber-700 text-white',
+        iconType: 'warning',
+      };
+    case 'notice':
+    default:
+      return {
+        wrapper: 'bg-yellow-50 dark:bg-yellow-950/40 border-yellow-200 dark:border-yellow-900/60 text-yellow-900 dark:text-yellow-200',
+        btn: 'bg-yellow-600 hover:bg-yellow-700 text-white',
+        iconType: 'info',
+      };
+  }
+});
+
+const dismissPasswordExpireBanner = () => {
+  if (passwordExpireNoticeData.value?.isExpired) return;
+  isPasswordExpireBannerDismissed.value = true;
+  const uid = (userInfo.value as any)?.id || (userInfo.value as any)?.user_id || 'current';
+  sessionStorage.setItem(`dismiss_pwd_banner_${uid}`, '1');
+};
+
+const goToChangePassword = () => {
+  router.push({
+    path: '/dashboard/personal',
+    query: { tab: 'info', subtab: 'security' }
+  });
+};
+
+const triggerLoginPasswordNoticeToast = (info: any) => {
+  const pwdInfo = info?.password_info;
+  if (!pwdInfo || !pwdInfo.has_password) return;
+
+  const isExpired = !!pwdInfo.is_expired || (typeof pwdInfo.days_until_next_change === 'number' && pwdInfo.days_until_next_change <= 0);
+  const daysUntil = typeof pwdInfo.days_until_next_change === 'number' ? pwdInfo.days_until_next_change : 999;
+  const daysSince = pwdInfo.days_since_last_change ?? 0;
+  const expireDays = pwdInfo.password_expire_days ?? 30;
+
+  if (!isExpired && daysUntil > 7) return;
+
+  const uid = info.id || info.user_id || 'current';
+  const sessionToastKey = `pwd_toast_notified_${uid}_${isExpired ? 'expired' : daysUntil}`;
+  if (sessionStorage.getItem(sessionToastKey)) return;
+
+  sessionStorage.setItem(sessionToastKey, '1');
+
+  if (isExpired) {
+    showToast(`安全警示：您的登录密码已超过有效周期（已过 ${daysSince} 天），请尽快修改密码！`, 'error');
+  } else if (daysUntil <= 1) {
+    showToast(`安全预警：您的登录密码还有最后 1 天即将过期，请尽快修改！`, 'warning');
+  } else if (daysUntil <= 3) {
+    showToast(`安全提醒：您的登录密码还有 ${daysUntil} 天即将过期，建议及时修改。`, 'warning');
+  } else {
+    showToast(`安全提醒：您的登录密码将在 ${daysUntil} 天后到期（修改周期 ${expireDays} 天），请注意及时修改。`, 'info');
+  }
+};
+
+const handleUserInfoUpdated = async () => {
+  isPasswordExpireBannerDismissed.value = false;
+  await fetchUserInfo();
+};
+
 onMounted(async () => {
   loadBranding();
+  window.addEventListener('user-info-updated', handleUserInfoUpdated);
   await fetchUserInfo();
   // 在线人数仅管理员可见，普通用户不请求、不展示
   if (userInfo.value.role === "admin") {
@@ -248,6 +390,7 @@ onMounted(() => {
 
 onUnmounted(() => {
   document.removeEventListener("keydown", handleEscape);
+  window.removeEventListener("user-info-updated", handleUserInfoUpdated);
   stopOnlineUsersRefresh();
 });
 
@@ -770,6 +913,60 @@ const filteredMenuGroups = computed(() => {
           </button>
         </div>
       </header>
+
+      <!-- 全局密码到期/即将到期常驻横幅 (Top Banner) -->
+      <transition
+        enter-active-class="transition-all duration-300 ease-out"
+        enter-from-class="opacity-0 -translate-y-2 max-h-0"
+        enter-to-class="opacity-100 translate-y-0 max-h-16"
+        leave-active-class="transition-all duration-200 ease-in"
+        leave-from-class="opacity-100 translate-y-0 max-h-16"
+        leave-to-class="opacity-0 -translate-y-2 max-h-0"
+      >
+        <div
+          v-if="showPasswordExpireBanner && passwordExpireNoticeData"
+          class="flex-shrink-0 px-4 py-2 sm:py-2.5 text-xs sm:text-sm font-medium border-b flex items-center justify-between gap-3 shadow-xs z-10 overflow-hidden"
+          :class="passwordExpireBannerStyle.wrapper"
+        >
+          <div class="flex items-center gap-2.5 min-w-0">
+            <!-- 警示图标 -->
+            <svg v-if="passwordExpireBannerStyle.iconType === 'error'" class="w-4 h-4 shrink-0 text-red-600 dark:text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+            </svg>
+            <svg v-else-if="passwordExpireBannerStyle.iconType === 'warning'" class="w-4 h-4 shrink-0 text-amber-600 dark:text-amber-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+            </svg>
+            <svg v-else class="w-4 h-4 shrink-0 text-yellow-600 dark:text-yellow-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            <span class="truncate leading-tight">
+              {{ passwordExpireNoticeData.message }}
+            </span>
+          </div>
+
+          <div class="flex items-center gap-2 shrink-0">
+            <button
+              type="button"
+              @click="goToChangePassword"
+              class="px-2.5 py-1 rounded-md text-xs font-semibold shadow-xs transition-colors cursor-pointer"
+              :class="passwordExpireBannerStyle.btn"
+            >
+              立即修改
+            </button>
+            <button
+              v-if="!passwordExpireNoticeData.isExpired"
+              type="button"
+              @click="dismissPasswordExpireBanner"
+              class="p-1 rounded-md hover:bg-black/5 dark:hover:bg-white/10 transition-colors opacity-70 hover:opacity-100 cursor-pointer"
+              title="暂时忽略"
+            >
+              <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
+        </div>
+      </transition>
 
       <!-- Main Scrollable Content -->
       <main 

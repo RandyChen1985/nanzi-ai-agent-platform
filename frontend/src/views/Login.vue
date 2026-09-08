@@ -155,17 +155,86 @@ watch(activeTab, () => {
     password.value = ''
     apiKey.value = ''
     error.value = ''
+    isTwoFactorStep.value = false
+    twoFactorCode.value = ''
+    twoFactorToken.value = ''
 })
+
+const isTwoFactorStep = ref(false)
+const twoFactorToken = ref('')
+const twoFactorUsername = ref('')
+const twoFactorCode = ref('')
+
+const handleLoginSuccess = (userData: any) => {
+    localStorage.setItem('user_info', JSON.stringify(userData))
+    localStorage.setItem('api_key', userData.api_key)
+    
+    // 普通业务用户进入个人工作台；管理员保留平台概览入口。
+    const returnPath = typeof route.query.next === 'string'
+      && route.query.next.startsWith('/')
+      && !route.query.next.startsWith('//')
+      ? route.query.next
+      : ''
+    if (returnPath) {
+      // OAuth 授权端点由后端处理；必须整页请求，不能只让 SPA 改地址。
+      if (returnPath.startsWith('/oauth/authorize')) {
+        window.location.assign(returnPath)
+      } else {
+        router.push(returnPath)
+      }
+    } else if (userData.role !== 'admin') {
+      router.push('/dashboard/workbench')
+    } else {
+      router.push('/dashboard')
+    }
+}
+
+const cancelTwoFactor = () => {
+    isTwoFactorStep.value = false
+    twoFactorToken.value = ''
+    twoFactorCode.value = ''
+    error.value = ''
+}
+
+const handleTwoFactorLogin = async () => {
+    if (!twoFactorCode.value || twoFactorCode.value.trim().length !== 6) {
+        error.value = '请输入 6 位 Google 动态验证码'
+        return
+    }
+    loading.value = true
+    error.value = ''
+    try {
+        const response = await axios.post('/api/portal/auth/login/2fa', {
+            two_factor_token: twoFactorToken.value,
+            code: twoFactorCode.value.trim()
+        })
+        if (response.data?.status === 'success') {
+            handleLoginSuccess(response.data.data)
+        }
+    } catch (e: any) {
+        console.error('2FA Login Error:', e)
+        const serverDetail = e.response?.data?.detail
+        error.value = typeof serverDetail === 'string' ? serverDetail : '动态验证码错误或已过期，请重试'
+    } finally {
+        loading.value = false
+    }
+}
+
+const hideLoginApiKey = ref(false)
 
 const fetchPublicConfig = async () => {
     try {
         const response = await axios.get('/api/portal/auth/config/public')
         if (response.data?.status === 'success') {
             ssoEnabled.value = response.data.data?.yovole_sso_enabled === true
+            hideLoginApiKey.value = response.data.data?.hide_login_apikey === true
             const tz = response.data.data?.platform_timezone
             if (tz) {
                 const { setPlatformTimezone } = await import('@/utils/platformTimezone')
                 setPlatformTimezone(tz)
+            }
+            if (hideLoginApiKey.value && activeTab.value === 'apikey') {
+                activeTab.value = 'password'
             }
             if (ssoEnabled.value && !branding.value.hide_login_sso) {
                 activeTab.value = 'sso'
@@ -219,29 +288,15 @@ const handleLogin = async () => {
     error.value = ''
     try {
         const response = await axios.post(endpoint, payload)
-        if (response.data?.status === 'success') {
-          const userData = response.data.data
-          localStorage.setItem('user_info', JSON.stringify(userData))
-          localStorage.setItem('api_key', userData.api_key)
-          
-          // 普通业务用户进入个人工作台；管理员保留平台概览入口。
-          const returnPath = typeof route.query.next === 'string'
-            && route.query.next.startsWith('/')
-            && !route.query.next.startsWith('//')
-            ? route.query.next
-            : ''
-          if (returnPath) {
-            // OAuth 授权端点由后端处理；必须整页请求，不能只让 SPA 改地址。
-            if (returnPath.startsWith('/oauth/authorize')) {
-              window.location.assign(returnPath)
-            } else {
-              router.push(returnPath)
-            }
-          } else if (userData.role !== 'admin') {
-            router.push('/dashboard/workbench')
-          } else {
-            router.push('/dashboard')
-          }
+        if (response.data?.status === 'two_factor_required') {
+            // 命中两步验证拦截，切换至动态验证码输入流程
+            isTwoFactorStep.value = true
+            twoFactorToken.value = response.data.data?.two_factor_token || ''
+            twoFactorUsername.value = response.data.data?.user_name || username.value
+            twoFactorCode.value = ''
+            error.value = ''
+        } else if (response.data?.status === 'success') {
+            handleLoginSuccess(response.data.data)
         }
     } catch (e: any) {
         console.error('Login Error:', e)
@@ -378,14 +433,18 @@ const handleLogin = async () => {
 
         <div class="flex-1 flex flex-col justify-center px-6 lg:px-7 xl:px-10 py-6 xl:py-0">
             <div class="mb-6 xl:mb-10">
-                <h2 class="text-2xl font-bold text-slate-900 tracking-tight">欢迎回来</h2>
-                <p class="text-slate-400 text-xs mt-1">请输入您的凭据以访问控制台</p>
+                <h2 class="text-2xl font-bold text-slate-900 tracking-tight">
+                    {{ isTwoFactorStep ? '两步验证' : '欢迎回来' }}
+                </h2>
+                <p class="text-slate-400 text-xs mt-1">
+                    {{ isTwoFactorStep ? '该账号已启用两步验证保护，请输入动态验证码' : '请输入您的凭据以访问控制台' }}
+                </p>
             </div>
 
-            <!-- Tabs -->
-            <div class="flex space-x-6 xl:space-x-8 border-b border-slate-100 mb-5 xl:mb-8">
+            <!-- 常规登录 Tabs (仅在非 2FA 阶段展示) -->
+            <div v-if="!isTwoFactorStep" class="flex space-x-6 xl:space-x-8 border-b border-slate-100 mb-5 xl:mb-8">
                 <button 
-                    v-for="tab in [{id:'sso', name:'SSO 登录'}, {id:'password', name:'本地账号'}, {id:'apikey', name:'API Key'}].filter(t => t.id !== 'sso' || (ssoEnabled && showSsoFromBranding))" 
+                    v-for="tab in [{id:'sso', name:'SSO 登录'}, {id:'password', name:'本地账号'}, {id:'apikey', name:'API Key'}].filter(t => (t.id !== 'sso' || (ssoEnabled && showSsoFromBranding)) && (t.id !== 'apikey' || !hideLoginApiKey))" 
                     :key="tab.id"
                     @click="activeTab = tab.id as any"
                     class="pb-3 text-sm font-semibold transition-all relative"
@@ -396,7 +455,8 @@ const handleLogin = async () => {
                 </button>
             </div>
 
-            <form @submit.prevent="handleLogin" class="space-y-4 xl:space-y-6">
+            <!-- 常规登录表单 -->
+            <form v-if="!isTwoFactorStep" @submit.prevent="handleLogin" class="space-y-4 xl:space-y-6">
                 <div class="space-y-4">
                     <div v-if="activeTab === 'password' || activeTab === 'sso'" class="space-y-4 animate-fade-slide-up">
                         <div class="space-y-1.5">
@@ -429,7 +489,7 @@ const handleLogin = async () => {
                         <div class="space-y-1.5">
                             <label class="text-[11px] font-bold text-slate-400 uppercase tracking-wider ml-1">API Key (X-API-Key)</label>
                             <textarea 
-                                v-model="apiKey"
+                                v-model="apiKey" 
                                 rows="3"
                                 class="w-full bg-slate-50 border border-slate-200 rounded-lg px-4 py-2.5 text-sm text-slate-900 outline-none focus:border-blue-500 focus:bg-white transition-all resize-none font-mono"
                                 placeholder="ys_..."
@@ -451,6 +511,63 @@ const handleLogin = async () => {
                     <span v-if="loading" class="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin mr-3"></span>
                     {{ loading ? '连接中...' : (activeTab === 'sso' ? '统一认证登录' : '进入平台 / LOGIN') }}
                 </button>
+            </form>
+
+            <!-- 两步验证 (2FA) 动态码输入表单 -->
+            <form v-else @submit.prevent="handleTwoFactorLogin" class="space-y-5 animate-fade-slide-up">
+                <div class="p-3.5 bg-blue-50/60 rounded-xl border border-blue-100 flex items-center gap-3">
+                    <div class="w-9 h-9 rounded-lg bg-blue-600 text-white flex items-center justify-center font-bold text-base flex-shrink-0 shadow-sm">
+                        🔐
+                    </div>
+                    <div class="min-w-0">
+                        <div class="flex items-center gap-2">
+                            <span class="text-xs font-bold text-slate-800">Google 身份验证器</span>
+                            <span class="text-[10px] px-1.5 py-0.5 bg-blue-100 text-blue-800 rounded font-mono">2FA</span>
+                        </div>
+                        <p class="text-[11px] text-slate-500 truncate mt-0.5 font-mono">账号：@{{ twoFactorUsername }}</p>
+                    </div>
+                </div>
+
+                <div class="space-y-2">
+                    <div class="flex items-center justify-between">
+                        <label class="text-[11px] font-bold text-slate-500 uppercase tracking-wider">
+                            6 位动态验证码
+                        </label>
+                        <span class="text-[10px] text-slate-400">30 秒自动刷新</span>
+                    </div>
+                    <input 
+                        v-model="twoFactorCode"
+                        type="text" 
+                        maxlength="6"
+                        autofocus
+                        class="w-full bg-slate-50 border border-slate-200 rounded-lg py-3 text-center text-2xl font-mono tracking-[0.35em] text-slate-900 outline-none focus:border-blue-500 focus:bg-white focus:ring-2 focus:ring-blue-100 transition-all font-bold placeholder:text-slate-300 placeholder:tracking-widest"
+                        placeholder="000000"
+                    />
+                </div>
+
+                <div v-if="error" class="p-3 bg-red-50 text-red-600 text-[11px] rounded-lg flex items-center gap-2 animate-shake">
+                    <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                    <span>验证失败: {{ error }}</span>
+                </div>
+
+                <button 
+                    type="submit" 
+                    class="w-full bg-blue-600 hover:bg-blue-700 text-white rounded-lg py-3 text-sm font-bold shadow-lg shadow-blue-600/10 transition-all active:scale-[0.98] disabled:opacity-70 flex justify-center items-center"
+                    :disabled="loading || !twoFactorCode || twoFactorCode.length !== 6"
+                >
+                    <span v-if="loading" class="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin mr-3"></span>
+                    {{ loading ? '验证中...' : '完成验证并进入平台' }}
+                </button>
+
+                <div class="text-center pt-2">
+                    <button
+                        type="button"
+                        @click="cancelTwoFactor"
+                        class="text-xs text-slate-400 hover:text-slate-600 transition-colors inline-flex items-center gap-1 font-medium"
+                    >
+                        <span>← 返回修改账号密码</span>
+                    </button>
+                </div>
             </form>
 
             <div class="mt-8 pt-5 xl:mt-12 xl:pt-8 border-t border-slate-50 text-center">

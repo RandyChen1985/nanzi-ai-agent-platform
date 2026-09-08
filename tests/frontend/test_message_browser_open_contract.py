@@ -54,6 +54,10 @@ return {
   javascript: api.isBrowserOpenableUrl('javascript:alert(1)'),
   data: api.isBrowserOpenableUrl('data:text/html,<script>alert(1)</script>'),
   local: api.isBrowserOpenableUrl('/api/v1/chat/generated-files/a'),
+  internalGenFile: api.isBrowserOpenableUrl('https://example.com/api/v1/chat/generated-files/a?token=x'),
+  internalCh: api.isBrowserOpenableUrl('https://example.com/api/v1/ch'),
+  internalChat: api.isBrowserOpenableUrl('http://localhost:8080/api/v1/chat'),
+  internalStatic: api.isBrowserOpenableUrl('https://example.com/static/uploads/1.png'),
   quick: api.isBrowserOpenableUrl('quick:查询订单')
 };
 """,
@@ -65,6 +69,10 @@ return {
         "javascript": False,
         "data": False,
         "local": False,
+        "internalGenFile": False,
+        "internalCh": False,
+        "internalChat": False,
+        "internalStatic": False,
         "quick": False,
     }
 
@@ -75,6 +83,8 @@ def test_browser_link_helper_adds_only_http_sibling_action_and_escapes_attribute
         """
 const html = api.appendBrowserOpenActions(
   '<a href="https://example.com/a?x=1&amp;y=2">外部</a>' +
+  '<a href="https://example.com/api/v1/chat/generated-files/0123456789abcdef0123456789abcdef?token=xyz">点击下载文档</a>' +
+  '<a href="/api/v1/ch">内部接口</a>' +
   '<a href="quick:查询">快捷</a>' +
   '<a href="javascript:alert(1)">脚本</a>'
 );
@@ -87,6 +97,7 @@ return {
     assert result["actionCount"] == 1
     assert 'class="message-link-open"' in result["html"]
     assert 'data-open-browser-url="https://example.com/a?x=1&amp;y=2"' in result["html"]
+    assert "点击下载文档" in result["html"]
     assert "quick:查询" in result["html"]
     assert "javascript:alert(1)" in result["html"]
 
@@ -150,3 +161,12 @@ def test_message_renderer_browser_open_action_has_compact_non_shrinking_style():
         "hover",
     ):
         assert token in source
+
+
+def test_message_renderer_does_not_rewrite_generated_file_url_to_fs_preview():
+    source = _source("frontend/src/components/MessageRenderer.vue")
+
+    assert "isHttpUrl = (val: string)" in source
+    assert "if (isHttpUrl(val) || val.startsWith('data:'))" in source
+    assert "if (!isHttpUrl(val) &&" in source
+    assert "a[href^=\"/api/\"]" in source
