@@ -2909,13 +2909,17 @@ const webPreviewVisible = ref(false);
 const webPreviewUrl = ref<string | null>(null);
 let browserOpenGeneration = 0;
 
+const hasValidAuthCredentials = (): boolean => {
+  return Boolean(config.token || hasPermission.value || accountInfo.value || currentUser.value);
+};
+
 const attachBrowserSession = async (
   sessionId: string,
   approvalMode?: string,
   openingGeneration?: number,
 ): Promise<boolean> => {
   if (!sessionId) return false;
-  if (!config.token) {
+  if (!hasValidAuthCredentials()) {
     showToast("浏览器需要有效的登录凭证", "warning");
     return false;
   }
@@ -2928,13 +2932,21 @@ const attachBrowserSession = async (
     if (openingGeneration !== undefined && openingGeneration !== browserOpenGeneration) return false;
     browserSessionId.value = sessionId;
     browserViewerToken.value = tokenResponse.data.token;
-    browserApprovalMode.value = approvalMode === "autopilot" ? "autopilot" : "guarded";
+    browserApprovalMode.value = approvalMode === "guarded" ? "guarded" : "autopilot";
     browserPinned.value = true;
     browserPanelVisible.value = true;
     return true;
   } catch (error: any) {
     if (openingGeneration !== undefined && openingGeneration !== browserOpenGeneration) return false;
-    showToast(error?.response?.data?.detail || "连接服务端浏览器失败", "error");
+    const detail = String(error?.response?.data?.detail || "");
+    const isEnvironmentFailure =
+      error?.response?.status === 503 || /playwright|chromium|install-deps|运行环境未就绪/i.test(detail);
+    if (isEnvironmentFailure) {
+      browserEnvironmentError.value = detail || "服务端浏览器环境未就绪，请检查 Playwright/Chromium 安装状态";
+      browserPanelVisible.value = true;
+    } else {
+      showToast(detail || "连接服务端浏览器失败", "error");
+    }
     return false;
   }
 };
@@ -2945,7 +2957,7 @@ const openBrowserPanel = async () => {
     browserPanelVisible.value = true;
     return;
   }
-  if (!config.token) {
+  if (!hasValidAuthCredentials()) {
     showToast("浏览器需要有效的登录凭证", "warning");
     return;
   }
@@ -4038,11 +4050,11 @@ watch(conversationId, () => {
 const DOCKER_WORKSPACE_BANNER_DISMISSED_KEY = "nanzi_dismissed_docker_workspace_banner";
 
 const readDockerWorkspaceBannerDismissed = (): boolean => {
+  // 不做持久化防打扰，刷新页面或切换会话后始终重新展示；并清理可能遗留的 localStorage 标记
   try {
-    return localStorage.getItem(DOCKER_WORKSPACE_BANNER_DISMISSED_KEY) === "true";
-  } catch {
-    return false;
-  }
+    localStorage.removeItem(DOCKER_WORKSPACE_BANNER_DISMISSED_KEY);
+  } catch {}
+  return false;
 };
 
 const { contextUsage, refreshContextUsage } = useContextUsage();
@@ -4073,7 +4085,7 @@ const showDockerWorkspaceControl = computed(() => {
   if (dockerWorkspaceStatus.value === "error") {
     return true;
   }
-  // 其他状态（idle / starting）在有效 docker 策略下尊重用户的关闭偏好
+  // 未运行状态在未手动点击叉号时始终提示，不作持久化防打扰
   return effectiveSandboxPolicy.value === "docker" && !dockerWorkspaceBannerDismissed.value;
 });
 
@@ -4088,10 +4100,8 @@ const resetDockerWorkspaceState = () => {
 };
 
 const dismissDockerWorkspaceBanner = () => {
+  // 仅在当前视图临时收起，不写入 localStorage，避免下次刷新再也不显示
   dockerWorkspaceBannerDismissed.value = true;
-  try {
-    localStorage.setItem(DOCKER_WORKSPACE_BANNER_DISMISSED_KEY, "true");
-  } catch {}
 };
 
 const refreshDockerWorkspaceStatus = async (showFeedback = false) => {

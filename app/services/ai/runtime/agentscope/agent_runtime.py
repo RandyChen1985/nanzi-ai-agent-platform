@@ -27,12 +27,18 @@ async def load_injection_config(*, inject_runtime_state: bool | None = None) -> 
     from app.services.config_service import ConfigService
     from app.services.platform_timezone import get_cached_platform_timezone
 
+    keys = {"agentscope_inject_time_interval_hours": "0.5"}
+    if inject_runtime_state is None:
+        keys["agentscope_inject_runtime_state"] = "true"
+
+    configs = await ConfigService.get_many(keys)
+
     enabled = inject_runtime_state
     if enabled is None:
-        raw = await ConfigService.get("agentscope_inject_runtime_state")
+        raw = configs.get("agentscope_inject_runtime_state")
         enabled = _config_flag_enabled(raw, default=True)
 
-    interval_raw = await ConfigService.get("agentscope_inject_time_interval_hours")
+    interval_raw = configs.get("agentscope_inject_time_interval_hours")
     try:
         time_interval = float(interval_raw) if interval_raw not in (None, "") else 0.5
     except (TypeError, ValueError):
@@ -114,23 +120,27 @@ async def load_context_config() -> Any:
     from agentscope.agent import ContextConfig
     from app.services.config_service import ConfigService
 
-    async def _float(key: str, default: float) -> float:
-        raw = await ConfigService.get(key)
+    configs = await ConfigService.get_many({
+        "agentscope_context_trigger_ratio": "0.8",
+        "agentscope_context_reserve_ratio": "0.1",
+        "agentscope_tool_result_limit": "2000",
+    })
+
+    def _float(val: Any, default: float) -> float:
         try:
-            return float(raw) if raw not in (None, "") else default
+            return float(val) if val not in (None, "") else default
         except (TypeError, ValueError):
             return default
 
-    async def _int(key: str, default: int) -> int:
-        raw = await ConfigService.get(key)
+    def _int(val: Any, default: int) -> int:
         try:
-            return int(raw) if raw not in (None, "") else default
+            return int(val) if val not in (None, "") else default
         except (TypeError, ValueError):
             return default
 
-    trigger_ratio = await _float("agentscope_context_trigger_ratio", 0.8)
-    reserve_ratio = await _float("agentscope_context_reserve_ratio", 0.1)
-    tool_result_limit = await _int("agentscope_tool_result_limit", 2000)
+    trigger_ratio = _float(configs.get("agentscope_context_trigger_ratio"), 0.8)
+    reserve_ratio = _float(configs.get("agentscope_context_reserve_ratio"), 0.1)
+    tool_result_limit = _int(configs.get("agentscope_tool_result_limit"), 2000)
 
     trigger_ratio = min(max(trigger_ratio, 0.5), 0.89)
     reserve_ratio = min(max(reserve_ratio, 0.05), trigger_ratio - 0.05)

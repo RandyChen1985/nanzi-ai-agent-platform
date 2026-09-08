@@ -7,7 +7,7 @@ from app.core.context import get_current_agent_context
 from app.core.orm import AsyncSessionLocal
 from app.schemas.browser import BrowserToolResult
 from app.services.ai.browser.browser_runtime import browser_runtime
-from app.services.ai.browser.browser_worker import BrowserEnvironmentError
+from app.services.ai.browser.browser_worker import BrowserEnvironmentError, BrowserWaitTimeout
 from app.services.ai.tools.tool_compat import tool
 
 
@@ -129,20 +129,41 @@ async def browser_press(
 
 @tool
 async def browser_wait_for(
-    condition: Literal["text", "url", "target", "page_state"] = "text",
+    condition: Literal["text", "url", "target", "page_state", "element", "network_idle", "ready"] = "text",
     value: str = "",
-    timeout_ms: int = 5000,
+    target_ref: Optional[str] = None,
+    snapshot_id: Optional[str] = None,
+    timeout_ms: int = 10000,
 ) -> str:
-    """等待页面文本、URL、可见目标或页面状态满足条件，并返回最新快照。"""
+    """等待页面文本、URL、可见目标元素或网络加载完成，并返回最新快照。超时上限支持至 30000ms（最高30秒）。"""
     context = _context_or_error()
     session = await _owned_session(context)
-    snapshot = await browser_runtime.wait_for(
-        session.id,
-        condition=condition,
-        value=value,
-        timeout_ms=timeout_ms,
-    )
-    return json.dumps(snapshot.model_dump(mode="json"), ensure_ascii=False)
+    try:
+        snapshot = await browser_runtime.wait_for(
+            session.id,
+            condition=condition,
+            value=value,
+            target_ref=target_ref,
+            snapshot_id=snapshot_id,
+            timeout_ms=timeout_ms,
+        )
+        return json.dumps(snapshot.model_dump(mode="json"), ensure_ascii=False)
+    except (BrowserWaitTimeout, TimeoutError) as exc:
+        # 页面等待超时非致命异常：自动截取并返回当前最新快照，避免红色工具报错阻断模型决策
+        try:
+            current_snapshot = await browser_runtime.snapshot(session.id)
+            payload = current_snapshot.model_dump(mode="json")
+            payload["wait_status"] = "timeout"
+            payload["wait_warning"] = (
+                f"页面在设定时间内未达成等待条件（{exc}）。已为您返回当前最新的页面快照，"
+                "请检查页面是否正在加载中、是否弹出验证码或已有部分数据可直接读取。"
+            )
+            return json.dumps(payload, ensure_ascii=False)
+        except Exception:
+            return json.dumps({
+                "wait_status": "timeout",
+                "message": f"页面等待超时（{exc}）。建议调用 browser_snapshot 查看页面当前状态。",
+            }, ensure_ascii=False)
 
 
 @tool

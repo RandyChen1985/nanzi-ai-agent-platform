@@ -359,3 +359,13 @@ def test_browser_panel_install_logs_auto_scroll():
     assert "scrollInstallLogsToBottom" in panel_source
     assert "installLogsRef.value.scrollTop = installLogsRef.value.scrollHeight" in panel_source
     assert "watch(" in panel_source
+
+
+def test_browser_panel_auth_credentials_contract():
+    chat_source = (ROOT / "frontend/src/views/EmbedChat.vue").read_text(encoding="utf-8")
+
+    assert "const hasValidAuthCredentials = (): boolean =>" in chat_source
+    assert "Boolean(config.token || hasPermission.value || accountInfo.value || currentUser.value)" in chat_source
+    assert "!hasValidAuthCredentials()" in chat_source
+    assert "browserEnvironmentError.value = detail ||" in chat_source
+

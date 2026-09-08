@@ -255,6 +255,80 @@ class PermissionService:
     async def _fetch_permission_details(self, perm_set: PermissionSet) -> PermissionSetDetail:
         details = PermissionSetDetail()
 
+        # 完整权限 ID 精确中文映射表（最高优先级匹配）
+        exact_permission_mapping = {
+            # 菜单类
+            "menu:dashboard": "系统概览",
+            "menu:ai_chat": "智能助手",
+            "menu:data_sources": "数据源管理",
+            "menu:metadata": "元数据管理",
+            "menu:agent_management": "智能体中心",
+            "menu:skills_management": "技能工作台",
+            "menu:mcp_management": "MCP 工具集",
+            "menu:mcp_service": "MCP 服务台",
+            "menu:memory_management": "记忆工作台",
+            "menu:chatbi_examples": "案例集管理",
+            "menu:knowledge_management": "知识库管理",
+            "menu:knowledge_retrieval_test": "检索测试",
+            "menu:agent_debug": "智能体调试",
+            "menu:playground": "接口调试台",
+            "menu:chat_logs": "聊天日志",
+            "menu:system": "系统管理",
+            "menu:system:users": "用户管理",
+            "menu:system:roles": "角色管理",
+            "menu:system:config": "系统配置",
+            "menu:system:audit": "审计日志",
+            "menu:prompts": "提示词工坊",
+            "menu:task_center": "任务调度台",
+            "menu:widget_debug": "组件调试台",
+
+            # MCP 服务台四段式功能点
+            "element:mcp_service:overview:read": "MCP服务台-查看服务总览",
+            "element:mcp_service:config:read": "MCP服务台-查看服务配置",
+            "element:mcp_service:config:edit": "MCP服务台-修改服务开关",
+            "element:mcp_service:client:read": "MCP服务台-查看外部Client",
+            "element:mcp_service:client:manage": "MCP服务台-管理外部Client",
+            "element:mcp_service:client:secret_reset": "MCP服务台-重置Client Secret",
+            "element:mcp_service:client:token_issue": "MCP服务台-生成用户AccessToken",
+            "element:mcp_service:capability:read": "MCP服务台-查看能力与Scope",
+            "element:mcp_service:capability:manage": "MCP服务台-管理能力与Scope",
+            "element:mcp_service:grant:read": "MCP服务台-查看用户授权",
+            "element:mcp_service:grant:revoke": "MCP服务台-撤销用户授权",
+            "element:mcp_service:audit:read": "MCP服务台-查看调用审计",
+
+            # 技能工作台
+            "element:skills:admin": "技能工作台-平台管理与审核",
+
+            # 任务调度台
+            "element:task:manage": "任务调度台-任务管理",
+
+            # 记忆工作台
+            "element:memory:config_save": "记忆工作台-保存服务配置",
+            "element:memory:config_index": "记忆工作台-索引检查与重建",
+            "element:memory:view_data": "记忆工作台-查看记忆数据",
+            "element:memory:delete": "记忆工作台-删除记忆",
+            "element:memory:view_all_users": "记忆工作台-按任意用户筛选",
+            "element:memory:test_search": "记忆工作台-记忆检索测试",
+
+            # 提示词工坊与聊天日志
+            "element:prompts:optimize": "提示词工坊-AI优化建议",
+            "element:chat_logs:export": "聊天日志-导出日志",
+
+            # 数据源与元数据
+            "element:metadata:import": "元数据管理-智能导入",
+            "element:metadata:sync": "元数据管理-同步至RAGFlow",
+            "element:metadata:edit": "元数据管理-编辑数据集",
+            "element:metadata:delete": "元数据管理-删除数据集",
+            "element:metadata:view_yaml": "元数据管理-查看YAML",
+            "element:metadata:edit_table": "元数据管理-配置表结构",
+            "element:metadata:delete_table": "元数据管理-删除物理表",
+
+            # 案例集
+            "element:chatbi_example:audit": "案例集管理-审核反馈",
+            "element:chatbi_example:sync": "案例集管理-同步至RAGFlow",
+            "element:chatbi_example:delete": "案例集管理-废弃删除",
+        }
+
         # 中文映射字典 (支持多种可能的键名格式)
         menu_name_mapping = {
             'dashboard': '仪表盘',
@@ -262,13 +336,16 @@ class PermissionService:
             'ai_chat': '智能助手',
             'metadata': '元数据管理',
             'Metadata': '元数据管理',
+            'data_sources': '数据源管理',
             'agent_management': '智能体中心',
             'Agent_management': '智能体中心',
             'skills_management': '技能工作台',
+            'mcp_management': 'MCP 工具集',
+            'mcp_service': 'MCP 服务台',
             'agent_debug': '智能体调试',
             'playground': '接口调试台',
             'chat_logs': '聊天日志',
-            'chatbi_examples': '用户反馈管理',
+            'chatbi_examples': '案例集管理',
             'users': '用户管理',
             'roles': '角色管理',
             'config': '系统配置',
@@ -289,9 +366,12 @@ class PermissionService:
             'user': '用户管理',
             'role': '角色管理',
             'system': '系统管理',
-            'chatbi_example': '用户反馈管理',
+            'chatbi_example': '案例集管理',
             'knowledge': '知识库开发平台',
-            'memory': '记忆工作台'
+            'memory': '记忆工作台',
+            'skills': '技能工作台',
+            'mcp_service': 'MCP服务台',
+            'task': '任务调度台'
         }
 
         element_action_mapping = {
@@ -312,7 +392,15 @@ class PermissionService:
             'upload_document': '上传文档',
             'delete_document': '删除文档',
             'parse_document': '解析文档',
-            'test_retrieval': '检索测试'
+            'test_retrieval': '检索测试',
+            'admin': '管理与审核',
+            'manage': '管理',
+            'overview': '服务总览',
+            'config': '配置',
+            'client': '外部Client',
+            'capability': '能力与Scope',
+            'grant': '用户授权',
+            'read': '查看'
         }
 
         # 1. Agents
@@ -400,10 +488,13 @@ class PermissionService:
         if perm_set.menus:
             details.menus = []
             for m_id in perm_set.menus:
-                # 提取菜单键名
-                menu_key = m_id.split(':')[-1] if ':' in m_id else m_id
-                # 使用映射表获取中文名称，如果没有映射则使用原键名的首字母大写
-                display_name = menu_name_mapping.get(menu_key, menu_key.capitalize())
+                # 优先查全量精确映射表
+                if m_id in exact_permission_mapping:
+                    display_name = exact_permission_mapping[m_id]
+                else:
+                    # 提取菜单键名
+                    menu_key = m_id.split(':')[-1] if ':' in m_id else m_id
+                    display_name = menu_name_mapping.get(menu_key, menu_name_mapping.get(m_id, menu_key.replace('_', ' ').capitalize()))
                 details.menus.append(
                     ResourceDetail(
                         id=m_id,
@@ -416,21 +507,23 @@ class PermissionService:
         if perm_set.elements:
             details.elements = []
             for e_id in perm_set.elements:
-                # 解析元素ID格式: element:模块:操作
-                parts = e_id.split(':')
-                if len(parts) >= 3:
-                    module = parts[1]  # 模块
-                    action = parts[2]  # 操作
-
-                    # 获取模块和操作的中文映射
-                    module_name = element_module_mapping.get(module, module)
-                    action_name = element_action_mapping.get(action, action)
-
-                    # 组合成完整的中文描述
-                    display_name = f"{module_name}-{action_name}"
+                # 1. 优先查全量精确映射表
+                if e_id in exact_permission_mapping:
+                    display_name = exact_permission_mapping[e_id]
                 else:
-                    # 如果格式不符合预期，使用原有逻辑
-                    display_name = e_id.split(':')[-1]
+                    # 2. 动态多段式规则拆分: element:模块:操作[:子操作...]
+                    parts = e_id.split(':')
+                    if len(parts) >= 3:
+                        module = parts[1]  # 模块
+                        action_tokens = parts[2:]  # 操作与子操作
+                        module_name = element_module_mapping.get(module, module)
+
+                        # 对每个操作词进行翻译并拼接
+                        translated_actions = [element_action_mapping.get(tok, tok) for tok in action_tokens]
+                        action_name = "".join(translated_actions) if len(translated_actions) > 1 else translated_actions[0]
+                        display_name = f"{module_name}-{action_name}"
+                    else:
+                        display_name = e_id.split(':')[-1]
 
                 details.elements.append(
                     ResourceDetail(

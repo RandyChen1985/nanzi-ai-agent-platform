@@ -383,6 +383,7 @@ async def list_users(
             "two_factor_enabled": bool(row.two_factor_enabled),
             "created_at": row.created_at.isoformat() if row.created_at else None,
             "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+            "last_login_at": row.last_login_at.strftime("%Y-%m-%d %H:%M:%S") if row.last_login_at else None,
             "allowed_resources": []
         })
 

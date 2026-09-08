@@ -514,3 +514,32 @@ async def test_browser_open_result_contains_session_approval_mode(monkeypatch):
     payload = json.loads(await browser_open.ainvoke({}))
 
     assert payload["approval_mode"] == "guarded"
+
+
+def test_browser_open_result_recovers_from_truncated_output():
+    # 模拟工具输出因过长被 truncate_for_context 截断导致 JSON 损坏的场景
+    truncated_output = (
+        '{"session_id":"bs-truncated-123","snapshot_id":"snap-abc","url":"https://www.baidu.com/",'
+        '"title":"百度一下","approval_mode":"guarded","elements":[{"id":"el-1","tag":"div"'
+        '\n… [输出已截断]'
+    )
+    event = build_browser_session_event("browser_open", truncated_output)
+    assert event is not None
+    assert event["session_id"] == "bs-truncated-123"
+    assert event["url"] == "https://www.baidu.com/"
+    assert event["title"] == "百度一下"
+    assert event["approval_mode"] == "guarded"
+
+
+def test_browser_open_result_falls_back_to_agent_context(monkeypatch):
+    class FakeContext:
+        browser_session_id = "bs-context-456"
+
+    monkeypatch.setattr(
+        "app.core.context.get_current_agent_context",
+        lambda: FakeContext(),
+    )
+    event = build_browser_session_event("browser_open", "")
+    assert event is not None
+    assert event["session_id"] == "bs-context-456"
+

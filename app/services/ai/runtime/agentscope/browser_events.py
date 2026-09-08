@@ -1,16 +1,60 @@
-from __future__ import annotations
-
 import json
+import re
 from typing import Any
+
+
+def _extract_field_fallback(raw: str, field_name: str) -> str | None:
+    pattern = rf'"{field_name}"\s*:\s*"((?:[^"\\]|\\.)*)"'
+    match = re.search(pattern, raw)
+    if match:
+        try:
+            return json.loads(f'"{match.group(1)}"')
+        except Exception:
+            return match.group(1)
+    return None
+
+
+def _fallback_from_agent_context() -> dict[str, Any] | None:
+    try:
+        from app.core.context import get_current_agent_context
+
+        ctx = get_current_agent_context()
+        if ctx and getattr(ctx, "browser_session_id", None):
+            return {
+                "session_id": str(ctx.browser_session_id),
+                "url": None,
+                "title": None,
+                "approval_mode": None,
+            }
+    except Exception:
+        pass
+    return None
 
 
 def _browser_result_payload(output: Any) -> dict[str, Any] | None:
     raw = output.get("text") if isinstance(output, dict) else output
+    raw_str = str(raw or "").strip()
+    if not raw_str:
+        return _fallback_from_agent_context()
+
     try:
-        payload = json.loads(str(raw or ""))
+        payload = json.loads(raw_str)
+        if isinstance(payload, dict):
+            return payload
     except (TypeError, ValueError):
-        return None
-    return payload if isinstance(payload, dict) else None
+        pass
+
+    # 兜底：工具输出过大（快照 DOM elements 过多）被上下文截断时，通过正则提取关键头部字段
+    session_id = _extract_field_fallback(raw_str, "session_id")
+    if session_id:
+        return {
+            "session_id": session_id,
+            "url": _extract_field_fallback(raw_str, "url"),
+            "title": _extract_field_fallback(raw_str, "title"),
+            "approval_mode": _extract_field_fallback(raw_str, "approval_mode"),
+        }
+
+    return _fallback_from_agent_context()
 
 
 def build_browser_session_event(tool_name: str, output: Any) -> dict[str, Any] | None:

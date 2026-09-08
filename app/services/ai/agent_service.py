@@ -791,6 +791,46 @@ def _build_preparation_parent_log(
     return event
 
 
+def _build_workspace_sandbox_log(
+    *,
+    policy: str,
+    is_sandbox: bool,
+    cached: bool = False,
+    status: str = "success",
+    error_message: Optional[str] = None,
+    execution_time_ms: Optional[float] = None,
+) -> Dict[str, Any]:
+    """构建沙箱工作区准备日志项。"""
+    policy_labels = {
+        "docker": "Docker 容器",
+        "local": "本地环境",
+        "e2b": "E2B 沙箱",
+        "ssh": "SSH 远程沙箱",
+    }
+    policy_label = policy_labels.get(policy, policy)
+    if status == "error":
+        details = f"策略：{policy_label}；状态：异常（{error_message or '初始化失败'}）"
+    elif is_sandbox:
+        cache_text = "复用存活容器" if cached else "已拉起隔离容器"
+        details = f"策略：{policy_label}；状态：就绪（{cache_text}，端口与工具就绪）"
+    else:
+        cache_text = "命中会话缓存" if cached else "目录与技能加载完成"
+        details = f"策略：{policy_label}；状态：就绪（{cache_text}）"
+
+    event: Dict[str, Any] = {
+        "type": "log",
+        "id": "workspace:sandbox",
+        "parent_id": "preparation:auth_context_capability",
+        "title": "沙箱工作区准备",
+        "details": details,
+        "status": status,
+        "category": "system",
+    }
+    if execution_time_ms is not None:
+        event["execution_time_ms"] = max(1.0, float(execution_time_ms))
+    return event
+
+
 @dataclass
 class TurnPreflightContext:
     skills_injection: List[str]
@@ -807,6 +847,7 @@ class TurnPreflightContext:
     roster_loaded: bool
     agent_system_prompt: Optional[str]
     sub_agents_context: Optional[str]
+    workspace_warmup_log: Optional[Dict[str, Any]] = None
 
 
 class AgentService:
@@ -1996,10 +2037,18 @@ class AgentService:
         messages: List[Dict[str, str]],
         debug_options: Optional[Dict[str, Any]],
         conversation_id: Optional[str] = None,
+        request_observability: Optional[Dict[str, Any]] = None,
+        performance_tracker: Optional[Any] = None,
     ) -> TurnPreflightContext:
         """并发预取技能、长期记忆、用户画像、权限目录、专家花名册与有效工具清单 (P0 TTFT 并发提速)。"""
+        from contextlib import nullcontext
 
-        async def _prewarm_workspace() -> None:
+        def _measure(span_name: str):
+            if performance_tracker is not None and hasattr(performance_tracker, "measure"):
+                return performance_tracker.measure(span_name)
+            return nullcontext()
+
+        async def _prewarm_workspace() -> Optional[Dict[str, Any]]:
             """首句工作区并发预热：提前构建会话工作区并填充 `_workspace_cache`，
             使后续 execute 阶段 `_build_native_agent` 命中缓存，避免首句把建目录 +
             技能硬链接 + LocalWorkspace.initialize 串行累加在首个 token 之前。
@@ -2008,8 +2057,33 @@ class AgentService:
             不阻断其它预取协程与主流程。
             """
             if not conversation_id:
-                return
+                return None
+            start_time = time.monotonic()
+            policy = "local"
             try:
+                from app.services.config_service import (
+                    ConfigService,
+                    resolve_effective_sandbox_policy,
+                )
+                from app.services.ai.runtime.agentscope.workspace import (
+                    get_local_workspace,
+                    SANDBOX_POLICY_LOCAL,
+                    SANDBOX_POLICY_DOCKER,
+                    SANDBOX_POLICY_E2B,
+                    SANDBOX_POLICY_SSH,
+                    _docker_workspace_cache,
+                    _workspace_cache,
+                    resolve_workspace_root,
+                    resolve_session_workdir,
+                    _resolve_sandbox_user_key,
+                )
+
+                policy = resolve_effective_sandbox_policy(
+                    await ConfigService.get("sandbox_policy", SANDBOX_POLICY_LOCAL),
+                    SANDBOX_POLICY_LOCAL,
+                )
+                is_sandbox = policy in (SANDBOX_POLICY_DOCKER, SANDBOX_POLICY_E2B, SANDBOX_POLICY_SSH)
+
                 info = user_info or {}
                 raw_user_id = info.get("user_id") or info.get("id")
                 runtime_user_id = str(raw_user_id) if raw_user_id is not None else None
@@ -2017,23 +2091,74 @@ class AgentService:
                 runtime_user_name = (
                     str(raw_user_name).strip() if raw_user_name is not None else None
                 )
-                from app.services.ai.runtime.agentscope.workspace import (
-                    get_local_workspace,
-                )
 
-                await get_local_workspace(
-                    user_id=runtime_user_id,
-                    conversation_id=conversation_id,
-                    user_name=runtime_user_name,
-                    user_info=user_info,
-                    skills_custom=bool(getattr(agent_config, "skills_custom", False)),
-                    allowed_global_skills=list(getattr(agent_config, "skills", None) or []),
+                was_cached = False
+                try:
+                    root = await resolve_workspace_root()
+                    if policy == SANDBOX_POLICY_DOCKER:
+                        sandbox_user_key = _resolve_sandbox_user_key(
+                            user_id=runtime_user_id,
+                            user_name=runtime_user_name,
+                            user_info=user_info,
+                        )
+                        if sandbox_user_key:
+                            docker_cache_key = f"{os.path.abspath(root)}::{sandbox_user_key}::{SANDBOX_POLICY_DOCKER}"
+                            cached_dk = _docker_workspace_cache.get(docker_cache_key)
+                            if cached_dk is not None and getattr(cached_dk, "is_alive", True):
+                                was_cached = True
+                    else:
+                        workdir = resolve_session_workdir(
+                            root=root,
+                            user_id=runtime_user_id,
+                            user_name=runtime_user_name,
+                            user_info=user_info,
+                            conversation_id=conversation_id,
+                        )
+                        skills_custom = bool(getattr(agent_config, "skills_custom", False))
+                        allowed_global_skills = list(getattr(agent_config, "skills", None) or [])
+                        skills_fp = (
+                            f"custom:{','.join(sorted(str(s) for s in allowed_global_skills if str(s).strip()))}"
+                            if skills_custom
+                            else "all"
+                        )
+                        cache_key = f"{workdir}::{skills_fp}::{policy}"
+                        if cache_key in _workspace_cache:
+                            was_cached = True
+                except Exception:
+                    pass
+
+                with _measure("workspace_prewarm"):
+                    await get_local_workspace(
+                        user_id=runtime_user_id,
+                        conversation_id=conversation_id,
+                        user_name=runtime_user_name,
+                        user_info=user_info,
+                        skills_custom=bool(getattr(agent_config, "skills_custom", False)),
+                        allowed_global_skills=list(getattr(agent_config, "skills", None) or []),
+                    )
+                elapsed_ms = (time.monotonic() - start_time) * 1000.0
+                return _build_workspace_sandbox_log(
+                    policy=policy,
+                    is_sandbox=is_sandbox,
+                    cached=was_cached,
+                    status="success",
+                    execution_time_ms=elapsed_ms,
                 )
             except Exception as err:
+                elapsed_ms = (time.monotonic() - start_time) * 1000.0
                 logger.warning(
                     "[Preflight] Workspace prewarm skipped for conversation=%s: %s",
                     conversation_id,
                     err,
+                )
+                is_sandbox = policy in ("docker", "e2b", "ssh")
+                return _build_workspace_sandbox_log(
+                    policy=policy,
+                    is_sandbox=is_sandbox,
+                    cached=False,
+                    status="error",
+                    error_message=str(err),
+                    execution_time_ms=elapsed_ms,
                 )
         matched_skills_to_log: List[tuple] = []
         def skills_log_callback(skill_id: str, skill_name: str, details_msg: str) -> None:
@@ -2049,35 +2174,38 @@ class AgentService:
 
         async def _fetch_skills() -> List[str]:
             try:
-                return await self._inject_skills(
-                    messages=messages,
-                    user_query=user_query,
-                    agent_config=agent_config,
-                    user_info=user_info,
-                    skills_log_callback=skills_log_callback,
-                    resource_scope=(debug_options or {}).get("resource_scope"),
-                )
+                with _measure("skills_inject"):
+                    return await self._inject_skills(
+                        messages=messages,
+                        user_query=user_query,
+                        agent_config=agent_config,
+                        user_info=user_info,
+                        skills_log_callback=skills_log_callback,
+                        resource_scope=(debug_options or {}).get("resource_scope"),
+                    )
             except Exception as err:
                 logger.warning(f"Error in concurrent _inject_skills: {err}")
                 return []
 
         async def _fetch_memory():
             try:
-                return await self._load_memory_context(
-                    user_info=user_info,
-                    early_turn_kind=early_turn_kind,
-                    debug_options=debug_options,
-                    user_query=user_query,
-                )
+                with _measure("memory_load"):
+                    return await self._load_memory_context(
+                        user_info=user_info,
+                        early_turn_kind=early_turn_kind,
+                        debug_options=debug_options,
+                        user_query=user_query,
+                    )
             except Exception as err:
                 logger.warning(f"Error in concurrent _load_memory_context: {err}")
                 return None, None, None, None
 
         async def _fetch_user_context() -> Optional[str]:
             try:
-                if user_info and should_inject_user_context(early_turn_kind):
-                    id_msg = await self._build_user_context_msg(user_info)
-                    return id_msg.get("content")
+                with _measure("user_context"):
+                    if user_info and should_inject_user_context(early_turn_kind):
+                        id_msg = await self._build_user_context_msg(user_info)
+                        return id_msg.get("content")
             except Exception as err:
                 logger.warning(f"Error in concurrent _build_user_context_msg: {err}")
             return None
@@ -2085,21 +2213,39 @@ class AgentService:
         async def _fetch_catalog() -> Any:
             if early_turn_kind != "data_query" and not accessible_resources and user_info:
                 try:
-                    from app.services.ai.accessible_resource_catalog import (
-                        build_accessible_resource_catalog,
-                    )
-                    raw_resource_user_id = user_info.get("user_id") or user_info.get("id")
-                    resource_user_id = None
-                    if raw_resource_user_id is not None:
-                        try:
-                            resource_user_id = int(raw_resource_user_id)
-                        except (TypeError, ValueError):
-                            resource_user_id = None
-                    return await build_accessible_resource_catalog(
-                        user_id=resource_user_id,
-                        user_name=(user_info.get("user_name") or user_info.get("username")),
-                        is_admin=user_info.get("role") == "admin",
-                    )
+                    with _measure("catalog_fetch"):
+                        raw_resource_user_id = user_info.get("user_id") or user_info.get("id")
+                        resource_user_id = None
+                        if raw_resource_user_id is not None:
+                            try:
+                                resource_user_id = int(raw_resource_user_id)
+                            except (TypeError, ValueError):
+                                resource_user_id = None
+
+                        target_user_name = user_info.get("user_name") or user_info.get("username")
+                        target_is_admin = user_info.get("role") == "admin"
+
+                        # 优先复用本轮入口已加载的快照，避免重复查询数据库与权限表
+                        snapshot = (request_observability or {}).get("resource_snapshot")
+                        if (
+                            snapshot is not None
+                            and hasattr(snapshot, "matches")
+                            and snapshot.matches(
+                                user_id=resource_user_id,
+                                user_name=target_user_name,
+                                is_admin=target_is_admin,
+                            )
+                        ):
+                            return getattr(snapshot, "prompt", "")
+
+                        from app.services.ai.accessible_resource_catalog import (
+                            build_accessible_resource_catalog,
+                        )
+                        return await build_accessible_resource_catalog(
+                            user_id=resource_user_id,
+                            user_name=target_user_name,
+                            is_admin=target_is_admin,
+                        )
                 except Exception as err:
                     logger.warning(f"Error in concurrent build_accessible_resource_catalog: {err}")
             return accessible_resources
@@ -2116,36 +2262,37 @@ class AgentService:
                 return None, 0, False, agent_system_prompt, None
 
             try:
-                from app.core.orm import AsyncSessionLocal
-                from app.models.agent import AIAgent
-                from app.services.ai.agent_roster import (
-                    AGENT_ROSTER_PLACEHOLDER,
-                    build_sub_agents_context,
-                    format_agent_roster_markdown,
-                    inject_agent_roster,
-                    resolve_delegable_system_agents_for_user,
-                )
-
-                async with AsyncSessionLocal() as session:
-                    delegable_agents = await resolve_delegable_system_agents_for_user(
-                        session,
-                        user_info=user_info,
-                        current_agent_id=getattr(agent_config, "agent_id", None),
+                with _measure("roster_fetch"):
+                    from app.core.orm import AsyncSessionLocal
+                    from app.models.agent import AIAgent
+                    from app.services.ai.agent_roster import (
+                        AGENT_ROSTER_PLACEHOLDER,
+                        build_sub_agents_context,
+                        format_agent_roster_markdown,
+                        inject_agent_roster,
+                        resolve_delegable_system_agents_for_user,
                     )
-                    delegable_agent_count = len(delegable_agents or [])
-                    roster_loaded = True
-                    current_agent_row = await session.get(AIAgent, getattr(agent_config, "agent_id", None))
-                    current_desc = (current_agent_row.description if current_agent_row else "") or ""
-                    updated_prompt = agent_system_prompt
-                    if AGENT_ROSTER_PLACEHOLDER in (agent_system_prompt or ""):
-                        roster_md = format_agent_roster_markdown(
-                            delegable_agents,
-                            current_display_name=getattr(agent_config, "agent_display_name", None) or getattr(agent_config, "agent_name", None) or "主助手",
-                            current_description=current_desc,
+
+                    async with AsyncSessionLocal() as session:
+                        delegable_agents = await resolve_delegable_system_agents_for_user(
+                            session,
+                            user_info=user_info,
+                            current_agent_id=getattr(agent_config, "agent_id", None),
                         )
-                        updated_prompt = inject_agent_roster(agent_system_prompt, roster_md)
-                    sub_agents_context = build_sub_agents_context(delegable_agents)
-                    return delegable_agents, delegable_agent_count, roster_loaded, updated_prompt, sub_agents_context
+                        delegable_agent_count = len(delegable_agents or [])
+                        roster_loaded = True
+                        current_agent_row = await session.get(AIAgent, getattr(agent_config, "agent_id", None))
+                        current_desc = (current_agent_row.description if current_agent_row else "") or ""
+                        updated_prompt = agent_system_prompt
+                        if AGENT_ROSTER_PLACEHOLDER in (agent_system_prompt or ""):
+                            roster_md = format_agent_roster_markdown(
+                                delegable_agents,
+                                current_display_name=getattr(agent_config, "agent_display_name", None) or getattr(agent_config, "agent_name", None) or "主助手",
+                                current_description=current_desc,
+                            )
+                            updated_prompt = inject_agent_roster(agent_system_prompt, roster_md)
+                        sub_agents_context = build_sub_agents_context(delegable_agents)
+                        return delegable_agents, delegable_agent_count, roster_loaded, updated_prompt, sub_agents_context
             except Exception as sa_err:
                 logger.warning(f"Failed to build main-agent roster/sub-agents context: {sa_err}")
                 return None, 0, False, agent_system_prompt, None
@@ -2197,6 +2344,7 @@ class AgentService:
             roster_loaded=roster_loaded,
             agent_system_prompt=updated_prompt,
             sub_agents_context=sub_agents_context,
+            workspace_warmup_log=_prewarm_workspace_result,
         )
 
 

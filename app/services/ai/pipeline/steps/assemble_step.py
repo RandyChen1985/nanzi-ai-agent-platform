@@ -144,6 +144,8 @@ class AssembleStep(BasePipelineStep):
                     messages=context.messages,
                     debug_options=debug_options,
                     conversation_id=context.conversation_id,
+                    request_observability=context.request_observability,
+                    performance_tracker=context.performance_tracker,
                 )
                 shared_state["preflight_ctx"] = preflight_ctx
                 if context.performance_tracker is not None:
@@ -230,6 +232,11 @@ class AssembleStep(BasePipelineStep):
             authorized_dataset_count=authorized_scope.get("datasets"),
             authorized_knowledge_base_count=authorized_scope.get("knowledge_bases"),
         )
+
+        # 1.1 产出沙箱工作区准备日志（如果存在）
+        workspace_warmup_log = getattr(preflight_ctx, "workspace_warmup_log", None)
+        if workspace_warmup_log:
+            yield workspace_warmup_log
 
         # 2. 分层 Prompt 组装
         cache_boundary_enabled, cache_reorder_enabled = await resolve_prompt_assembler_flags()

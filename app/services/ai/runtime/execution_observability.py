@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import time
+import asyncio
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Any, Callable, Iterable
 
@@ -52,6 +54,7 @@ class ExecutionPerformanceTracker:
     clock: Callable[[], float] = time.perf_counter
     started_at: float | None = None
     _stage_marks: dict[str, float] = field(default_factory=dict, init=False)
+    _spans: dict[str, dict[str, Any]] = field(default_factory=dict, init=False)
     _ttft_ms: float | None = field(default=None, init=False)
     _first_visible_activity_ms: float | None = field(default=None, init=False)
 
@@ -67,6 +70,26 @@ class ExecutionPerformanceTracker:
             self.started_at or 0.0,
             self.clock(),
         )
+
+    @contextmanager
+    def measure(self, stage: str):
+        """记录独立区间；并发区间允许重叠，不能相加作为总耗时。"""
+        started = self.clock()
+        status = "success"
+        try:
+            yield
+        except asyncio.CancelledError:
+            status = "cancelled"
+            raise
+        except BaseException:
+            status = "error"
+            raise
+        finally:
+            self._spans[stage] = {
+                "start_ms": _elapsed_ms(self.started_at or 0.0, started),
+                "duration_ms": _elapsed_ms(started, self.clock()),
+                "status": status,
+            }
 
     def observe_chunk(self, chunk: Any) -> None:
         """记录首个可见活动与首个正文片段，不保存正文内容。
@@ -100,6 +123,7 @@ class ExecutionPerformanceTracker:
                 self.clock(),
             ),
             "stages_ms": dict(self._stage_marks),
+            "spans": {name: dict(span) for name, span in self._spans.items()},
             "first_visible_activity_ms": self._first_visible_activity_ms,
             "ttft_ms": self._ttft_ms,
             "model_call_count": _count_trace_events(

@@ -220,6 +220,43 @@ class ConfigService:
         return default
 
     @staticmethod
+    async def get_many(defaults: Dict[str, Optional[str]]) -> Dict[str, Optional[str]]:
+        """批量读取一组配置；沿用 get 的缓存、空值和默认值语义。"""
+        if not defaults:
+            return {}
+        values = dict(defaults)
+        redis = await get_redis()
+        keys = list(defaults)
+        cached = await redis.mget([f"{CACHE_PREFIX}{key}" for key in keys]) if redis else [None] * len(keys)
+        missing = []
+        for key, value in zip(keys, cached):
+            if value is None:
+                missing.append(key)
+            else:
+                values[key] = value
+        if not missing:
+            return values
+        try:
+            async with AsyncSessionLocal() as session:
+                result = await session.execute(
+                    select(_SYSTEM_CONFIGS_TABLE.c.key, _SYSTEM_CONFIGS_TABLE.c.value)
+                    .where(_SYSTEM_CONFIGS_TABLE.c.key.in_(missing))
+                )
+                rows = result.fetchall()
+            if redis:
+                pipe = redis.pipeline(transaction=False)
+                for key, value in rows:
+                    pipe.set(f"{CACHE_PREFIX}{key}", value, ex=CACHE_TTL)
+                if rows:
+                    await pipe.execute()
+            for key, value in rows:
+                if value is not None and value != "":
+                    values[key] = value
+        except Exception as exc:
+            logger.error("Failed to fetch config batch: %s", exc)
+        return values
+
+    @staticmethod
     async def set_config(
         key: str, 
         value: str, 

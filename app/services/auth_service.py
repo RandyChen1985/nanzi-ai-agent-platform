@@ -650,3 +650,24 @@ class AuthService:
         finally:
             if is_local:
                 await session.close()
+
+    @staticmethod
+    async def record_user_login(user_id: int, db: Optional[AsyncSession] = None) -> None:
+        """
+        记录用户登录时间
+        """
+        session, is_local = await AuthService._get_session(db)
+        try:
+            user = await session.get(User, user_id)
+            if user:
+                user.last_login_at = datetime.now()
+                await session.commit()
+        except Exception as e:
+            logger.warning(f"Failed to record last_login_at for user {user_id}: {e}")
+            try:
+                await session.rollback()
+            except Exception:
+                pass
+        finally:
+            if is_local:
+                await session.close()

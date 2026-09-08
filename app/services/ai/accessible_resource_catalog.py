@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from collections.abc import Iterable
 from typing import Any, Optional
 
@@ -16,6 +17,26 @@ from app.services.permission_service import PermissionService
 
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class AccessibleResourceSnapshot:
+    """请求内的目录摘要，无 ORM/Session；不能作为工具执行授权凭据。"""
+
+    user_id: Optional[int]
+    user_name: Optional[str]
+    is_admin: bool
+    status: str
+    dataset_count: int
+    knowledge_base_count: int
+    prompt: str
+
+    @property
+    def counts(self) -> dict[str, int | str]:
+        return {"status": self.status, "datasets": self.dataset_count, "knowledge_bases": self.knowledge_base_count}
+
+    def matches(self, *, user_id: Optional[int], user_name: Optional[str], is_admin: bool) -> bool:
+        return (self.user_id, self.user_name, self.is_admin) == (user_id, user_name, is_admin)
 
 DEFAULT_MAX_ITEMS = 20
 DEFAULT_MAX_CHARS = 4000
@@ -102,8 +123,22 @@ async def fetch_accessible_resource_counts(
     is_admin: bool = False,
 ) -> dict[str, int | str]:
     """Return permission-filtered counts for the user-facing execution trace."""
+    snapshot = await fetch_accessible_resource_snapshot(
+        db, user_id=user_id, user_name=user_name, is_admin=is_admin,
+    )
+    return snapshot.counts
+
+
+async def fetch_accessible_resource_snapshot(
+    db: Any,
+    *,
+    user_id: Optional[int],
+    user_name: Optional[str] = None,
+    is_admin: bool = False,
+) -> AccessibleResourceSnapshot:
+    """同一组权限查询同时生成统计与模型目录，供当前请求复用。"""
     if user_id is None:
-        return {"status": "empty", "datasets": 0, "knowledge_bases": 0}
+        return AccessibleResourceSnapshot(user_id, user_name, is_admin, "empty", 0, 0, "")
 
     datasets = await MetadataService.list_accessible_dataset_options(
         db,
@@ -118,11 +153,11 @@ async def fetch_accessible_resource_counts(
         is_admin=is_admin,
         permission_service=PermissionService(db),
     )
-    return {
-        "status": knowledge_catalog.status,
-        "datasets": len(datasets),
-        "knowledge_bases": len(_knowledge_bases_for_prompt(knowledge_catalog.items)),
-    }
+    return AccessibleResourceSnapshot(
+        user_id, user_name, is_admin, knowledge_catalog.status,
+        len(datasets), len(_knowledge_bases_for_prompt(knowledge_catalog.items)),
+        render_accessible_resource_catalog(datasets=datasets, knowledge_bases=knowledge_catalog.items),
+    )
 
 
 def render_accessible_resource_catalog(
