@@ -405,12 +405,12 @@
       size="max-w-2xl"
       @close="showGuideModal = false"
     >
-      <div class="space-y-5 py-1">
+      <div class="space-y-3.5 sm:space-y-5 py-1">
         <!-- 渠道副标题与类型徽标 -->
-        <div class="flex items-center justify-between p-3.5 bg-gray-50 rounded-xl border border-gray-100">
-          <div class="text-xs text-gray-600 leading-relaxed">{{ activeGuide.subtitle }}</div>
+        <div class="flex items-center justify-between p-3 sm:p-3.5 bg-gray-50 rounded-xl border border-gray-100">
+          <div class="text-xs text-gray-600 leading-relaxed pr-2">{{ activeGuide.subtitle }}</div>
           <span
-            class="px-2.5 py-0.5 text-[11px] font-medium rounded-md border shrink-0 ml-3"
+            class="px-2.5 py-0.5 text-[11px] font-medium rounded-md border shrink-0"
             :class="activeGuide.badgeColor"
           >
             {{ getChannelName(activeGuide.channel) }}通道
@@ -419,17 +419,17 @@
 
         <!-- 步骤指引卡片 -->
         <div>
-          <div class="flex items-center space-x-1.5 mb-3 text-xs font-semibold text-gray-700 uppercase tracking-wider">
+          <div class="flex items-center space-x-1.5 mb-2.5 sm:mb-3 text-xs font-semibold text-gray-700 uppercase tracking-wider">
             <span class="w-1.5 h-3.5 bg-blue-600 rounded-sm inline-block"></span>
             <span>配置步骤指引</span>
           </div>
-          <div class="space-y-2.5">
+          <div class="space-y-2 sm:space-y-2.5">
             <div
               v-for="(step, index) in activeGuide.steps"
               :key="index"
-              class="flex items-start p-3 bg-white rounded-lg border border-gray-100 hover:border-gray-200 transition-colors"
+              class="flex items-start p-2.5 sm:p-3 bg-white rounded-lg border border-gray-100 hover:border-gray-200 transition-colors"
             >
-              <span class="flex items-center justify-center w-5 h-5 rounded-full bg-blue-50 text-blue-600 text-xs font-bold shrink-0 mt-0.5 mr-3">
+              <span class="flex items-center justify-center w-5 h-5 rounded-full bg-blue-50 text-blue-600 text-xs font-bold shrink-0 mt-0.5 mr-2.5 sm:mr-3">
                 {{ index + 1 }}
               </span>
               <div class="flex-1 min-w-0">
@@ -442,18 +442,18 @@
 
         <!-- 官方文档与资源链接 -->
         <div v-if="activeGuide.links && activeGuide.links.length > 0">
-          <div class="flex items-center space-x-1.5 mb-2.5 text-xs font-semibold text-gray-700 uppercase tracking-wider">
+          <div class="flex items-center space-x-1.5 mb-2 sm:mb-2.5 text-xs font-semibold text-gray-700 uppercase tracking-wider">
             <span class="w-1.5 h-3.5 bg-green-600 rounded-sm inline-block"></span>
             <span>官方资源与文档入口</span>
           </div>
-          <div class="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-2 sm:gap-2.5">
             <a
               v-for="link in activeGuide.links"
               :key="link.url"
               :href="link.url"
               target="_blank"
               rel="noopener noreferrer"
-              class="flex items-center justify-between p-3 rounded-lg border border-gray-100 bg-gray-50/70 hover:bg-blue-50/50 hover:border-blue-200 text-xs text-gray-700 hover:text-blue-600 transition-all group"
+              class="flex items-center justify-between p-2.5 sm:p-3 rounded-lg border border-gray-100 bg-gray-50/70 hover:bg-blue-50/50 hover:border-blue-200 text-xs text-gray-700 hover:text-blue-600 transition-all group"
             >
               <div class="flex items-center space-x-2 truncate">
                 <svg class="w-4 h-4 text-gray-400 group-hover:text-blue-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -484,7 +484,7 @@
         <div class="flex justify-end">
           <button
             type="button"
-            class="px-4 py-1.5 text-xs font-medium text-gray-600 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors cursor-pointer"
+            class="w-full sm:w-auto px-5 py-2.5 sm:py-1.5 text-xs sm:text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 active:bg-blue-800 sm:text-gray-700 sm:bg-gray-100 sm:hover:bg-gray-200 rounded-xl sm:rounded-lg shadow-sm sm:shadow-none transition-all cursor-pointer text-center"
             @click="showGuideModal = false"
           >
             我知道了
