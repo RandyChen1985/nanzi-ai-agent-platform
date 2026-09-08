@@ -150,6 +150,12 @@ NanZi 开源智能体平台是企业级的多智能体编排与数据智能洞�
 
 详细的库表结构说明，请参考：[db-prod/README.md](db-prod/README.md)。
 
+> 💡 **小贴士：若使用 Docker 部署 MySQL，手动登录执行 SQL 避免中文丢失**  
+> 如果您通过 `docker exec` 进入 MySQL 容器（如容器名为 `laplace-mysql`）手动执行或更新 SQL，容器终端默认语言环境可能非 UTF-8，容易导致写入的中文变成问号或丢失。请使用以下命令指定 UTF-8 语言与客户端字符集登录：
+> ```bash
+> docker exec -it -e LANG=C.UTF-8 -e LC_ALL=C.UTF-8 laplace-mysql mysql --default-character-set=utf8mb4 -u root -p
+> ```
+
 ---
 
 ### 3.2 主库选项 B：PostgreSQL（二选一）
@@ -535,3 +541,13 @@ INFO:     Uvicorn running on http://0.0.0.0:8001 (Press CTRL+C to quit)
 *   **调度器节点**：`TASK_SCHEDULER_ENABLED` 未配置时默认为 `true`。多节点部署时只保留一个节点为 `true`，其他 API 节点设置为 `false`；关闭节点仍可提供 API、任务管理和「立即执行」，但不会启动 Cron 定时器。修改 Docker Compose、Kubernetes ConfigMap 或 `.env` 后必须重启对应服务。
 *   **重试配置**：进入 **任务中心 → 编辑定时任务 → 执行失败策略**，设置最大重试次数（`0–3`，默认 `0`）和重试间隔（`1–60` 分钟，默认 `5` 分钟）。该策略只对定时触发失败生效，「立即执行」不会自动重试。
 *   **排查顺序**：确认只有一个节点为 `true`、所有节点连接同一主库和 Redis，再检查任务是否启用、Cron 表达式和平台时区；任务定义修改后通常等待约 30 秒同步。
+
+### Q6: 使用 Docker 运行 MySQL 容器，手动登录执行 SQL 时中文内容丢失或变为问号
+*   **原因**：通过 `docker exec -it <container> mysql ...` 进入容器时，容器终端默认的环境变量（`LANG` / `LC_ALL`）通常为 POSIX/C，且 `mysql` 命令行客户端在没有显式指定 `--default-character-set` 时容易回退到 `latin1` 字符集，导致在终端粘贴或执行含中文的 SQL（如系统配置描述 `system_configs`、工具说明 `sys_api_tools` 等）时，中文字符被错误转码为问号 `???` 或直接丢失。
+*   **解决**：登录 MySQL 容器时显式声明 UTF-8 环境变量与客户端字符集：
+    ```bash
+    docker exec -it -e LANG=C.UTF-8 -e LC_ALL=C.UTF-8 laplace-mysql mysql --default-character-set=utf8mb4 -u root -p
+    ```
+    *（注：将 `laplace-mysql` 替换为您实际运行的 MySQL 容器名）*
+    以此方式登录后，容器环境及客户端连接均强制锁定为 `utf8mb4`，再次执行或贴入含中文的 SQL 语句就不会丢失中文了。
+

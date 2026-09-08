@@ -279,6 +279,12 @@
      ALTER DATABASE nanzi_ai CHARACTER SET = utf8mb4 COLLATE = utf8mb4_unicode_ci;
      ```
   4. **检查连接串参数**：确保 `.env` 中的数据库连接 URL 包含 UTF-8 字符集声明（如 `mysql+aiomysql://root:password@127.0.0.1:3306/nanzi_ai?charset=utf8mb4`）。
+  5. **Docker MySQL 容器内执行 SQL 中文丢失/乱码（重要）**：
+     如果通过 `docker exec` 进入 MySQL 容器（如容器名为 `laplace-mysql`）手动执行或粘贴 SQL，由于容器内部默认语言环境可能非 UTF-8，且 `mysql` 客户端容易回退为 `latin1`，导致中文直接丢失或变为问号 `???`。请在登录容器时显式注入 UTF-8 环境变量与客户端字符集参数：
+     ```bash
+     docker exec -it -e LANG=C.UTF-8 -e LC_ALL=C.UTF-8 laplace-mysql mysql --default-character-set=utf8mb4 -u root -p
+     ```
+     以该方式登录后，容器会话与客户端均锁定为 `utf8mb4`，执行包含中文的迁移或配置更新语句（如 `system_configs`、`sys_api_tools` 中的中文说明）就不会发生中文丢失问题。
 
 ##### Q6: 元数据管理检索与知识库依赖：Redis 向量版和 RAGFlow 是什么关系？该如何选型？
 
