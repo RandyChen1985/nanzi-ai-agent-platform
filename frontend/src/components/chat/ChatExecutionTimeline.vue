@@ -439,6 +439,7 @@ import {
   ClockIcon,
   Cog6ToothIcon,
   CpuChipIcon,
+  CubeIcon,
   ExclamationTriangleIcon,
   FolderOpenIcon,
   LockClosedIcon,
@@ -669,6 +670,7 @@ function iconFor(item: ProcessTimelineLogItem): string {
   if (item.title.includes("请求校验")) return "🛡️";
   if (item.title.includes("会话上下文")) return "🗂️";
   if (item.title.includes("知识库和专家清单加载")) return "📚";
+  if (item.title.includes("沙箱") || item.title.includes("工作区")) return "📦";
   if (item.title.includes("Prompt 组装")) return "🧩";
   if (item.title.includes("获取可用专家")) return "📚";
   if (item.title.includes("准备知识资源范围")) return "📋";
@@ -696,6 +698,7 @@ function timelineIconFor(item: ProcessTimelineLogItem): any {
   if (item.title.includes("鉴权及上下文与能力准备") || item.title.includes("请求校验")) return ShieldCheckIcon;
   if (item.title.includes("会话上下文")) return FolderOpenIcon;
   if (item.title.includes("知识库和专家清单加载") || item.title.includes("获取可用专家")) return BookOpenIcon;
+  if (item.title.includes("沙箱") || item.title.includes("工作区")) return CubeIcon;
   if (item.title.includes("Prompt 组装")) return PuzzlePieceIcon;
   if (item.title.includes("准备知识资源范围") || item.category === "context_summarized" || item.title.includes("平台摘录")) return ClipboardDocumentListIcon;
   if (item.title.includes("加载入口专家配置") || item.title.includes("加载目标专家配置")) return Cog6ToothIcon;

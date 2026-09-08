@@ -2909,13 +2909,17 @@ const webPreviewVisible = ref(false);
 const webPreviewUrl = ref<string | null>(null);
 let browserOpenGeneration = 0;
 
+const hasValidAuthCredentials = (): boolean => {
+  return Boolean(config.token || hasPermission.value || accountInfo.value || currentUser.value);
+};
+
 const attachBrowserSession = async (
   sessionId: string,
   approvalMode?: string,
   openingGeneration?: number,
 ): Promise<boolean> => {
   if (!sessionId) return false;
-  if (!config.token) {
+  if (!hasValidAuthCredentials()) {
     showToast("浏览器需要有效的登录凭证", "warning");
     return false;
   }
@@ -2934,7 +2938,15 @@ const attachBrowserSession = async (
     return true;
   } catch (error: any) {
     if (openingGeneration !== undefined && openingGeneration !== browserOpenGeneration) return false;
-    showToast(error?.response?.data?.detail || "连接服务端浏览器失败", "error");
+    const detail = String(error?.response?.data?.detail || "");
+    const isEnvironmentFailure =
+      error?.response?.status === 503 || /playwright|chromium|install-deps|运行环境未就绪/i.test(detail);
+    if (isEnvironmentFailure) {
+      browserEnvironmentError.value = detail || "服务端浏览器环境未就绪，请检查 Playwright/Chromium 安装状态";
+      browserPanelVisible.value = true;
+    } else {
+      showToast(detail || "连接服务端浏览器失败", "error");
+    }
     return false;
   }
 };
@@ -2945,7 +2957,7 @@ const openBrowserPanel = async () => {
     browserPanelVisible.value = true;
     return;
   }
-  if (!config.token) {
+  if (!hasValidAuthCredentials()) {
     showToast("浏览器需要有效的登录凭证", "warning");
     return;
   }

@@ -308,6 +308,7 @@ async def resolve_runnable_delegable_system_agents(
     current_agent_id: str | None,
 ) -> List[Any]:
     """Return permitted system agents that have a loadable, ready runtime."""
+    import json
     from app.services.ai.agent_readiness import evaluate_agent_readiness
     from app.services.ai.agent_types import resolve_agent_type
 
@@ -318,23 +319,85 @@ async def resolve_runnable_delegable_system_agents(
         is_admin=is_admin,
         current_agent_id=current_agent_id,
     )
+    if not permitted:
+        return []
+
+    # 批量读取本地专家的最新发布版本，消除 N 次串行 DB 查询
+    local_agents = [
+        a for a in permitted
+        if getattr(a, "engine_type", None) not in ("RAGFLOW", "OPENCLAW")
+    ]
+    local_agent_ids = [str(getattr(a, "id", "") or "") for a in local_agents if getattr(a, "id", None)]
+
+    published_versions: Optional[Dict[str, Any]] = {}
+    if local_agent_ids and hasattr(AgentManagerService, "_latest_published_versions_by_agent"):
+        try:
+            published_versions = await AgentManagerService._latest_published_versions_by_agent(
+                session, local_agent_ids
+            )
+        except Exception as exc:
+            logger.debug("[agent_delegate_tool] Batch version load fallback: %s", exc)
+            published_versions = None
+    elif local_agent_ids:
+        published_versions = None
+
     runnable: List[Any] = []
     for agent in permitted:
-        config = await AgentManagerService.get_active_agent_config(
-            session,
-            agent_id=str(getattr(agent, "id", "") or ""),
-        )
-        if not config:
+        if not getattr(agent, "is_enabled", True):
             continue
-        readiness = evaluate_agent_readiness(
-            agent_type=resolve_agent_type(agent),
-            capabilities=config.capabilities,
-            engine_config=config.engine_config,
-            tools=config.tools,
-            has_published_version=True,
-        )
-        if readiness.ready:
-            runnable.append(agent)
+
+        agent_type = resolve_agent_type(agent)
+        engine_type = getattr(agent, "engine_type", None)
+
+        if engine_type in ("RAGFLOW", "OPENCLAW"):
+            readiness = evaluate_agent_readiness(
+                agent_type=agent_type,
+                capabilities=getattr(agent, "capabilities", None) or [],
+                engine_config=getattr(agent, "engine_config", None) or {},
+                tools=[],
+                has_published_version=True,
+            )
+            if readiness.ready:
+                runnable.append(agent)
+            continue
+
+        if published_versions is not None:
+            agent_id = str(getattr(agent, "id", "") or "")
+            version = published_versions.get(agent_id)
+            if not version:
+                continue
+            tools_list = getattr(version, "tools", None) or []
+            if isinstance(tools_list, str):
+                try:
+                    tools_list = json.loads(tools_list)
+                except Exception:
+                    tools_list = []
+            readiness = evaluate_agent_readiness(
+                agent_type=agent_type,
+                capabilities=getattr(version, "capabilities", None) or [],
+                engine_config=getattr(version, "engine_config", None) or {},
+                tools=tools_list or [],
+                has_published_version=True,
+            )
+            if readiness.ready:
+                runnable.append(agent)
+        else:
+            # Fallback 逐个加载配置
+            config = await AgentManagerService.get_active_agent_config(
+                session,
+                agent_id=str(getattr(agent, "id", "") or ""),
+            )
+            if not config:
+                continue
+            readiness = evaluate_agent_readiness(
+                agent_type=agent_type,
+                capabilities=config.capabilities,
+                engine_config=config.engine_config,
+                tools=config.tools,
+                has_published_version=True,
+            )
+            if readiness.ready:
+                runnable.append(agent)
 
     return sorted(
         runnable,

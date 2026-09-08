@@ -1258,11 +1258,6 @@ async def get_local_workspace(
         conversation_id=conversation_id,
     )
     os.makedirs(workdir, exist_ok=True)
-    skill_paths = discover_platform_skill_paths(
-        user_info=user_info,
-        skills_custom=skills_custom,
-        allowed_global_skills=allowed_global_skills,
-    )
     skills_fp = (
         f"custom:{','.join(sorted(str(s) for s in (allowed_global_skills or []) if str(s).strip()))}"
         if skills_custom
@@ -1284,6 +1279,13 @@ async def get_local_workspace(
         if sandbox_cache_key is not None:
             _touch_docker_workspace(sandbox_cache_key)
         return cached
+
+    # 命中已有工作区时扫描结果本来就不会被使用；仅初始化时读取技能目录。
+    skill_paths = discover_platform_skill_paths(
+        user_info=user_info,
+        skills_custom=skills_custom,
+        allowed_global_skills=allowed_global_skills,
+    )
 
     is_sandbox = policy in (SANDBOX_POLICY_DOCKER, SANDBOX_POLICY_E2B, SANDBOX_POLICY_SSH)
 

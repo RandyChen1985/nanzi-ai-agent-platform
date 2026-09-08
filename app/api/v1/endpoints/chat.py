@@ -1445,17 +1445,19 @@ async def create_chat_completion(
             )
 
     authorized_resource_scope: Dict[str, Any] = {"status": "unavailable"}
+    accessible_resource_snapshot = None
     try:
-        from app.services.ai.accessible_resource_catalog import fetch_accessible_resource_counts
+        from app.services.ai.accessible_resource_catalog import fetch_accessible_resource_snapshot
 
         raw_numeric_user_id = user_info.get("user_id") or user_info.get("id")
         numeric_user_id = int(raw_numeric_user_id) if raw_numeric_user_id is not None else None
-        authorized_resource_scope = await fetch_accessible_resource_counts(
+        accessible_resource_snapshot = await fetch_accessible_resource_snapshot(
             db,
             user_id=numeric_user_id,
             user_name=user_info.get("user_name") or user_info.get("username"),
             is_admin=user_info.get("role") == "admin",
         )
+        authorized_resource_scope = accessible_resource_snapshot.counts
     except Exception as exc:  # 目录统计只用于可观测性，不能阻断聊天请求
         logger.warning("Failed to load authorized resource counts for trace: %s", exc)
 
@@ -1463,6 +1465,7 @@ async def create_chat_completion(
     request_observability = {
         "authenticated": True,
         "parameters_validated": True,
+        "resource_snapshot": accessible_resource_snapshot,
         "idempotency_status": (
             "已通过"
             if request_claim is not None
