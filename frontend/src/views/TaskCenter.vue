@@ -35,6 +35,7 @@ const taskApprovalMode = ref<TaskApprovalMode>('allow')
 const taskResourceScope = ref<TaskResourceScope>(emptyResourceScope())
 const taskThinkingEnableOverride = ref<boolean | null>(null)
 const taskReasoningEffortOverride = ref<ReasoningEffort | null>(null)
+const taskTemperatureOverride = ref<number | null>(null)
 const taskMaxRetries = ref(0)
 const taskRetryDelayMinutes = ref(5)
 
@@ -65,6 +66,8 @@ const hydrateExecutionOptions = (config: Record<string, any> | undefined) => {
     ? cfg.reasoning_effort
     : null
   if (taskThinkingEnableOverride.value === false) taskReasoningEffortOverride.value = null
+  const temp = cfg.temperature
+  taskTemperatureOverride.value = typeof temp === 'number' && Number.isFinite(temp) ? temp : null
   const mode = String(cfg.approval_mode || 'allow').toLowerCase()
   taskApprovalMode.value = mode === 'ask' || mode === 'deny' || mode === 'allow' ? mode : 'allow'
   taskMaxRetries.value = clampNumber(cfg.max_retries, 0, 0, MAX_TASK_RETRIES)
@@ -86,6 +89,7 @@ const handleTaskModelSelection = (model: string) => {
   taskModel.value = model
   taskThinkingEnableOverride.value = null
   taskReasoningEffortOverride.value = null
+  taskTemperatureOverride.value = null
 }
 
 const props = withDefaults(defineProps<{
@@ -265,6 +269,53 @@ const selectedEditingAgent = computed(() =>
 )
 const isAgentAvatarUrl = (url?: string) =>
   Boolean(url && (url.startsWith('http') || url.startsWith('/') || url.startsWith('data:')))
+
+const isMainAgent = (agent: AIAgent | string) => {
+  if (typeof agent === 'string') return agent === 'sys-agent-chat' || agent === 'main'
+  return (
+    agent.id === 'sys-agent-chat' ||
+    ['main', 'assistant', 'general-chat'].includes(String(agent.name || '').trim().toLowerCase())
+  )
+}
+
+const systemAgents = computed(() => {
+  const sys = agents.value.filter((agent) => agent.is_system || isMainAgent(agent))
+  return [...sys].sort((a, b) => {
+    const aMain = isMainAgent(a) ? 1 : 0
+    const bMain = isMainAgent(b) ? 1 : 0
+    if (aMain !== bMain) return bMain - aMain
+    return (b.sort_order || 0) - (a.sort_order || 0)
+  })
+})
+
+const customAgents = computed(() => {
+  return agents.value
+    .filter((agent) => !agent.is_system && !isMainAgent(agent))
+    .sort((a, b) => (b.sort_order || 0) - (a.sort_order || 0))
+})
+
+const agentTab = ref<'system' | 'custom'>('system')
+
+const syncAgentTab = () => {
+  if (selectedEditingAgent.value) {
+    agentTab.value =
+      selectedEditingAgent.value.is_system || isMainAgent(selectedEditingAgent.value)
+        ? 'system'
+        : 'custom'
+  } else {
+    agentTab.value = 'system'
+  }
+}
+
+const toggleAgentDropdown = () => {
+  if (!showAgentDropdown.value) {
+    syncAgentTab()
+    showAgentDropdown.value = true
+  } else {
+    showAgentDropdown.value = false
+  }
+}
+
 const selectEditingAgent = (agentId: string) => {
   editingTask.value.agent_id = agentId
   showAgentDropdown.value = false
@@ -669,10 +720,12 @@ const fetchAgents = async () => {
 }
 
 const openCreateModal = async () => {
-  editingTask.value = { name: '', agent_id: agents.value[0]?.id || '', cron_expr: '0 8 * * *', prompt: '', status: 1 }
+  const defaultAgentId = systemAgents.value[0]?.id || agents.value[0]?.id || ''
+  editingTask.value = { name: '', agent_id: defaultAgentId, cron_expr: '0 8 * * *', prompt: '', status: 1 }
   notificationChannels.value = ['portal']
   hydrateExecutionOptions({})
   showAgentDropdown.value = false
+  syncAgentTab()
   cronMode.value = 'daily'
   cronConfig.value = { time: '08:00', weekday: 1, day: 1, intervalValue: 30, intervalUnit: 'minutes' }
   showEditModal.value = true
@@ -691,6 +744,7 @@ const openEditModal = async (task: AgentTask) => {
     : []
   hydrateExecutionOptions(cfg)
   showAgentDropdown.value = false
+  syncAgentTab()
   parseCronToUI(task.cron_expr || '')
   showEditModal.value = true
   await fetchPersonalNotificationConfigs()
@@ -728,6 +782,11 @@ const saveTask = async () => {
       baseConfig.reasoning_effort = taskReasoningEffortOverride.value
     } else {
       delete baseConfig.reasoning_effort
+    }
+    if (taskTemperatureOverride.value !== null && taskTemperatureOverride.value !== undefined) {
+      baseConfig.temperature = taskTemperatureOverride.value
+    } else {
+      delete baseConfig.temperature
     }
     baseConfig.max_retries = clampNumber(taskMaxRetries.value, 0, 0, MAX_TASK_RETRIES)
     baseConfig.retry_delay_seconds = clampNumber(
@@ -1886,7 +1945,7 @@ onMounted(async () => {
               <button
                 type="button"
                 class="flex w-full items-center justify-between rounded-xl border border-gray-200 bg-white px-3 py-2 text-left shadow-sm outline-none transition-all hover:border-gray-300 focus:border-primary focus:ring-2 focus:ring-primary/20"
-                @click.stop="showAgentDropdown = !showAgentDropdown"
+                @click.stop="toggleAgentDropdown"
               >
                 <div class="flex min-w-0 flex-1 items-center gap-2">
                   <div class="flex h-7 w-7 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-gray-100 bg-gray-50 text-sm">
@@ -1896,12 +1955,26 @@ onMounted(async () => {
                       class="h-full w-full object-cover"
                     />
                     <span v-else-if="selectedEditingAgent?.avatar_url" class="text-sm">{{ selectedEditingAgent?.avatar_url }}</span>
-                    <span v-else class="text-sm">{{ selectedEditingAgent?.is_system ? '🔒' : '👤' }}</span>
+                    <span v-else class="text-sm">{{ selectedEditingAgent && isMainAgent(selectedEditingAgent) ? '🌟' : (selectedEditingAgent?.is_system ? '🔒' : '👤') }}</span>
                   </div>
-                  <div class="min-w-0">
-                    <p class="truncate text-sm font-bold text-gray-800">
-                      {{ selectedEditingAgent?.display_name || '选择智能体' }}
-                    </p>
+                  <div class="min-w-0 flex-1">
+                    <div class="flex items-center gap-1.5">
+                      <p class="truncate text-sm font-bold text-gray-800">
+                        {{ selectedEditingAgent?.display_name || '选择智能体' }}
+                      </p>
+                      <span
+                        v-if="selectedEditingAgent && isMainAgent(selectedEditingAgent)"
+                        class="shrink-0 rounded border border-amber-200 bg-amber-50 px-1 text-[8px] font-semibold text-amber-600"
+                      >MAIN</span>
+                      <span
+                        v-else-if="selectedEditingAgent?.is_system"
+                        class="shrink-0 rounded border border-blue-200 bg-blue-50 px-1 text-[8px] font-mono text-blue-600"
+                      >SYSTEM</span>
+                      <span
+                        v-else-if="selectedEditingAgent"
+                        class="shrink-0 rounded border border-gray-200 bg-gray-50 px-1 text-[8px] font-mono text-gray-500"
+                      >CUSTOM</span>
+                    </div>
                     <p v-if="selectedEditingAgent?.name" class="truncate text-[10px] font-mono text-gray-400">
                       {{ selectedEditingAgent.name }}
                     </p>
@@ -1920,50 +1993,146 @@ onMounted(async () => {
 
               <div
                 v-show="showAgentDropdown"
-                class="absolute left-0 right-0 z-50 mt-1 max-h-72 overflow-y-auto rounded-xl border border-gray-200 bg-white py-1 px-1 shadow-xl"
+                class="absolute left-0 right-0 z-50 mt-1 max-h-80 flex flex-col rounded-xl border border-gray-200 bg-white p-1.5 shadow-xl"
               >
-                <button
-                  v-for="agent in agents"
-                  :key="agent.id"
-                  type="button"
-                  class="my-1 flex w-full cursor-pointer items-start gap-2.5 rounded-lg border p-2 text-left transition-all"
-                  :class="
-                    editingTask.agent_id === agent.id
-                      ? 'border-primary/40 bg-primary/5 ring-1 ring-primary/5'
-                      : 'border-transparent hover:bg-gray-50'
-                  "
-                  @click.stop="selectEditingAgent(agent.id)"
-                >
-                  <div
-                    class="flex h-7 w-7 shrink-0 items-center justify-center overflow-hidden rounded border border-gray-100 bg-gray-50 text-sm"
-                    :class="editingTask.agent_id === agent.id ? 'border-primary/20 bg-primary/10' : ''"
+                <!-- Tab 切换头 -->
+                <div class="flex items-center gap-1 rounded-lg bg-gray-100/90 p-1 mb-1 shrink-0">
+                  <button
+                    type="button"
+                    class="flex flex-1 items-center justify-center gap-1.5 rounded-md py-1 text-xs font-semibold transition-all"
+                    :class="
+                      agentTab === 'system'
+                        ? 'bg-white text-blue-600 shadow-sm'
+                        : 'text-gray-500 hover:text-gray-700'
+                    "
+                    @click.stop="agentTab = 'system'"
                   >
-                    <img
-                      v-if="isAgentAvatarUrl(agent.avatar_url)"
-                      :src="agent.avatar_url"
-                      class="h-full w-full object-cover"
-                    />
-                    <span v-else-if="agent.avatar_url" class="text-sm">{{ agent.avatar_url }}</span>
-                    <span v-else class="text-sm">{{ agent.is_system ? '🔒' : '👤' }}</span>
-                  </div>
-                  <div class="min-w-0 flex-1">
-                    <div class="flex items-center justify-between gap-2">
-                      <span
-                        class="truncate text-xs font-bold text-gray-800"
-                        :class="editingTask.agent_id === agent.id ? 'text-primary' : ''"
-                      >{{ agent.display_name }}</span>
-                      <span
-                        v-if="agent.is_system"
-                        class="shrink-0 rounded border border-gray-200 bg-gray-50 px-1 text-[8px] font-mono text-gray-400"
-                      >SYSTEM</span>
-                    </div>
-                    <div class="mt-0.5 truncate font-mono text-[9px] text-gray-400">{{ agent.name }}</div>
-                    <div class="mt-1 line-clamp-2 break-words text-[10px] leading-relaxed text-gray-500" :title="agent.description">
-                      {{ agent.description || '暂无备注说明信息' }}
-                    </div>
-                  </div>
-                </button>
-                <p v-if="!agents.length" class="px-3 py-4 text-center text-xs text-gray-400">暂无可选智能体</p>
+                    <span class="h-1.5 w-1.5 rounded-full" :class="agentTab === 'system' ? 'bg-blue-600' : 'bg-gray-400'"></span>
+                    系统智能体
+                    <span
+                      class="rounded px-1 text-[9px] font-normal"
+                      :class="agentTab === 'system' ? 'bg-blue-50 text-blue-600' : 'bg-gray-200/70 text-gray-500'"
+                    >{{ systemAgents.length }}</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    class="flex flex-1 items-center justify-center gap-1.5 rounded-md py-1 text-xs font-semibold transition-all"
+                    :class="
+                      agentTab === 'custom'
+                        ? 'bg-white text-emerald-600 shadow-sm'
+                        : 'text-gray-500 hover:text-gray-700'
+                    "
+                    @click.stop="agentTab = 'custom'"
+                  >
+                    <span class="h-1.5 w-1.5 rounded-full" :class="agentTab === 'custom' ? 'bg-emerald-600' : 'bg-gray-400'"></span>
+                    自定义智能体
+                    <span
+                      class="rounded px-1 text-[9px] font-normal"
+                      :class="agentTab === 'custom' ? 'bg-emerald-50 text-emerald-600' : 'bg-gray-200/70 text-gray-500'"
+                    >{{ customAgents.length }}</span>
+                  </button>
+                </div>
+
+                <!-- Tab 内容滚动区 -->
+                <div class="flex-1 overflow-y-auto space-y-1 pr-0.5">
+                  <!-- 系统智能体 Tab 页面 -->
+                  <template v-if="agentTab === 'system'">
+                    <button
+                      v-for="agent in systemAgents"
+                      :key="agent.id"
+                      type="button"
+                      class="my-0.5 flex w-full cursor-pointer items-start gap-2.5 rounded-lg border p-2 text-left transition-all"
+                      :class="
+                        editingTask.agent_id === agent.id
+                          ? 'border-primary/40 bg-primary/5 ring-1 ring-primary/5'
+                          : 'border-transparent hover:bg-gray-50'
+                      "
+                      @click.stop="selectEditingAgent(agent.id)"
+                    >
+                      <div
+                        class="flex h-7 w-7 shrink-0 items-center justify-center overflow-hidden rounded border border-gray-100 bg-gray-50 text-sm"
+                        :class="editingTask.agent_id === agent.id ? 'border-primary/20 bg-primary/10' : ''"
+                      >
+                        <img
+                          v-if="isAgentAvatarUrl(agent.avatar_url)"
+                          :src="agent.avatar_url"
+                          class="h-full w-full object-cover"
+                        />
+                        <span v-else-if="agent.avatar_url" class="text-sm">{{ agent.avatar_url }}</span>
+                        <span v-else class="text-sm">{{ isMainAgent(agent) ? '🌟' : '🔒' }}</span>
+                      </div>
+                      <div class="min-w-0 flex-1">
+                        <div class="flex items-center justify-between gap-2">
+                          <span
+                            class="truncate text-xs font-bold text-gray-800"
+                            :class="editingTask.agent_id === agent.id ? 'text-primary' : ''"
+                          >{{ agent.display_name }}</span>
+                          <div class="flex items-center gap-1 shrink-0">
+                            <span
+                              v-if="isMainAgent(agent)"
+                              class="rounded border border-amber-200 bg-amber-50 px-1 text-[8px] font-semibold text-amber-600"
+                            >MAIN</span>
+                            <span
+                              v-else
+                              class="rounded border border-blue-200 bg-blue-50 px-1 text-[8px] font-mono text-blue-600"
+                            >SYSTEM</span>
+                          </div>
+                        </div>
+                        <div class="mt-0.5 truncate font-mono text-[9px] text-gray-400">{{ agent.name }}</div>
+                        <div class="mt-1 line-clamp-2 break-words text-[10px] leading-relaxed text-gray-500" :title="agent.description">
+                          {{ agent.description || '暂无备注说明信息' }}
+                        </div>
+                      </div>
+                    </button>
+                    <p v-if="!systemAgents.length" class="px-3 py-6 text-center text-xs text-gray-400">暂无系统智能体</p>
+                  </template>
+
+                  <!-- 自定义智能体 Tab 页面 -->
+                  <template v-else-if="agentTab === 'custom'">
+                    <button
+                      v-for="agent in customAgents"
+                      :key="agent.id"
+                      type="button"
+                      class="my-0.5 flex w-full cursor-pointer items-start gap-2.5 rounded-lg border p-2 text-left transition-all"
+                      :class="
+                        editingTask.agent_id === agent.id
+                          ? 'border-primary/40 bg-primary/5 ring-1 ring-primary/5'
+                          : 'border-transparent hover:bg-gray-50'
+                      "
+                      @click.stop="selectEditingAgent(agent.id)"
+                    >
+                      <div
+                        class="flex h-7 w-7 shrink-0 items-center justify-center overflow-hidden rounded border border-gray-100 bg-gray-50 text-sm"
+                        :class="editingTask.agent_id === agent.id ? 'border-primary/20 bg-primary/10' : ''"
+                      >
+                        <img
+                          v-if="isAgentAvatarUrl(agent.avatar_url)"
+                          :src="agent.avatar_url"
+                          class="h-full w-full object-cover"
+                        />
+                        <span v-else-if="agent.avatar_url" class="text-sm">{{ agent.avatar_url }}</span>
+                        <span v-else class="text-sm">👤</span>
+                      </div>
+                      <div class="min-w-0 flex-1">
+                        <div class="flex items-center justify-between gap-2">
+                          <span
+                            class="truncate text-xs font-bold text-gray-800"
+                            :class="editingTask.agent_id === agent.id ? 'text-primary' : ''"
+                          >{{ agent.display_name }}</span>
+                          <span
+                            class="shrink-0 rounded border border-gray-200 bg-gray-50 px-1 text-[8px] font-mono text-gray-500"
+                          >CUSTOM</span>
+                        </div>
+                        <div class="mt-0.5 truncate font-mono text-[9px] text-gray-400">{{ agent.name }}</div>
+                        <div class="mt-1 line-clamp-2 break-words text-[10px] leading-relaxed text-gray-500" :title="agent.description">
+                          {{ agent.description || '暂无备注说明信息' }}
+                        </div>
+                      </div>
+                    </button>
+                    <p v-if="!customAgents.length" class="px-3 py-6 text-center text-xs text-gray-400">暂无自定义智能体</p>
+                  </template>
+                </div>
               </div>
             </div>
           </div>
@@ -2141,6 +2310,7 @@ onMounted(async () => {
               :resource-scope="taskResourceScope"
               :thinking-enable-override="taskThinkingEnableOverride"
               :reasoning-effort-override="taskReasoningEffortOverride"
+              :temperature-override="taskTemperatureOverride"
               :agent-id="editingTask.agent_id"
               @update:prompt="editingTask.prompt = $event"
               @update:model="handleTaskModelSelection"
@@ -2148,6 +2318,7 @@ onMounted(async () => {
               @update:resource-scope="taskResourceScope = $event"
               @update:thinking-enable-override="taskThinkingEnableOverride = $event"
               @update:reasoning-effort-override="taskReasoningEffortOverride = $event"
+              @update:temperature-override="taskTemperatureOverride = $event"
             />
           </div>
 

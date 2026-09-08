@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from typing import Any, Dict, List, Mapping, Optional, Sequence
 
 APPROVAL_MODE_KEY = "approval_mode"
@@ -9,6 +10,7 @@ MODEL_KEY = "model"
 RESOURCE_SCOPE_KEY = "resource_scope"
 THINKING_ENABLE_KEY = "thinking_enable"
 REASONING_EFFORT_KEY = "reasoning_effort"
+TEMPERATURE_KEY = "temperature"
 VALID_APPROVAL_MODES = frozenset({"ask", "allow", "deny"})
 VALID_REASONING_EFFORTS = frozenset({"none", "minimal", "low", "medium", "high", "xhigh"})
 DEFAULT_APPROVAL_MODE = "allow"
@@ -36,6 +38,19 @@ def normalize_thinking_enable(raw: Any) -> Optional[bool]:
 def normalize_reasoning_effort(raw: Any) -> Optional[str]:
     value = str(raw or "").strip().lower()
     return value if value in VALID_REASONING_EFFORTS else None
+
+
+def normalize_temperature(raw: Any) -> Optional[float]:
+    """规范化任务配置中的采样温度，有效范围 0.0 ~ 2.0，四舍五入保留两位小数。"""
+    if raw is None or raw == "":
+        return None
+    try:
+        val = float(raw)
+        if math.isnan(val) or math.isinf(val):
+            return None
+        return round(max(0.0, min(val, 2.0)), 2)
+    except (TypeError, ValueError):
+        return None
 
 
 def _normalize_scope_items(raw: Any) -> List[Dict[str, Any]]:
@@ -125,6 +140,9 @@ def debug_options_from_task_config(config: Optional[Mapping[str, Any]]) -> Dict[
     reasoning_effort = normalize_reasoning_effort(cfg.get(REASONING_EFFORT_KEY))
     if reasoning_effort and thinking_enable is not False:
         options[REASONING_EFFORT_KEY] = reasoning_effort
+    temperature = normalize_temperature(cfg.get(TEMPERATURE_KEY))
+    if TEMPERATURE_KEY in cfg and temperature is not None:
+        options[TEMPERATURE_KEY] = temperature
     return options
 
 
@@ -134,6 +152,7 @@ def merge_execution_options_into_config(
     approval_mode: Any = None,
     model: Any = None,
     resource_scope: Any = None,
+    temperature: Any = None,
 ) -> Dict[str, Any]:
     merged = dict(config or {})
     if approval_mode is not None:
@@ -145,6 +164,12 @@ def merge_execution_options_into_config(
         else:
             merged.pop(MODEL_KEY, None)
             merged.pop("model_id", None)
+    if temperature is not None:
+        temp_val = normalize_temperature(temperature)
+        if temp_val is not None:
+            merged[TEMPERATURE_KEY] = temp_val
+        else:
+            merged.pop(TEMPERATURE_KEY, None)
     if resource_scope is not None:
         scope = normalize_resource_scope(resource_scope)
         has_any = bool(

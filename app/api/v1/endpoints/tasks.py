@@ -24,6 +24,7 @@ from app.services.resource_scope_normalizer import (
 )
 from app.services.task_execution_options import (
     normalize_reasoning_effort,
+    normalize_temperature,
     normalize_thinking_enable,
 )
 
@@ -52,7 +53,7 @@ async def _sanitize_task_config(
     owner_info: Dict[str, Any],
     config: Any,
 ) -> Any:
-    """收敛资源范围，并只保留合法的任务级模型思考覆盖值。"""
+    """收敛资源范围，并只保留合法的任务级模型思考与温度覆盖值。"""
     if not isinstance(config, dict):
         return config
     sanitized = dict(config)
@@ -70,6 +71,12 @@ async def _sanitize_task_config(
             sanitized.pop("reasoning_effort", None)
         else:
             sanitized["reasoning_effort"] = reasoning_effort
+    if "temperature" in sanitized:
+        temperature = normalize_temperature(sanitized.get("temperature"))
+        if temperature is None:
+            sanitized.pop("temperature", None)
+        else:
+            sanitized["temperature"] = temperature
     if "resource_scope" not in sanitized:
         return sanitized
     normalized = await normalize_resource_scope_for_user(

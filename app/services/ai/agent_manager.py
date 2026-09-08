@@ -539,11 +539,12 @@ class AgentManagerService:
             else_=1,
         )
         enabled_first = case((AIAgent.is_enabled == True, 0), else_=1)
+        system_first = case((AIAgent.is_system == True, 0), else_=1)
         query = select(AIAgent).order_by(
             main_first,
             enabled_first,
+            system_first,
             AIAgent.sort_order.desc(),
-            AIAgent.is_system.desc(),
             AIAgent.display_name,
         )
         result = await session.execute(query)
