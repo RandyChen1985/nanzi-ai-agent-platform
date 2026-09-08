@@ -1229,6 +1229,8 @@ remote（推荐用于独立部署）：平台不直接连接业务数据库，�
 local（适用于同一平台可直连数据库）：平台使用本地已配置的数据源连接池直接执行 SQL，不调用远程 SQL 服务。请确保数据库连接已在本平台的数据源管理中配置完成；remote 专用的 URL、API Key 和数据源 ID 在此模式下不会生效。
 
 切换模式并保存后，新的 SQL 查询才会按对应路径执行。`,
+    'hide_login_apikey': '关闭登录页的 API Key (访问凭证) 选项卡。开启后登录页将不再展示 API Key 快捷登录 Tab，仅展示本地账号或 SSO。',
+    'password_expire_days': '用户密码修改的有效间隔天数（天）。个人中心将根据此间隔展示距上次修改已过天数与剩余有效天数，只能输入纯数字，默认 30 天。',
     'platform_timezone': '平台业务时区（IANA）。用于定时任务、当前时间锚点与前端时间展示。默认 Asia/Shanghai。修改后会刷新缓存并尝试重载调度器。外部数据库服务器时区不受此项控制。',
     'agentscope_inject_runtime_state': '向 Agent 上下文注入运行时状态（当前时间、任务态、上下文占用等）。时区跟随「平台业务时区」。关闭后不注入 hint，不影响工具权限与 HITL。',
     'agentscope_inject_time_interval_hours': '时间字段重复注入的最小间隔（小时）。仅在开启运行时状态注入时生效。默认 0.5（约 30 分钟）。',
@@ -1631,6 +1633,8 @@ const handleDatasetSelect = (val: string | string[]) => {
 
 /** 左侧简短说明；右侧控件下方仍用 item.description 展示详细备注 */
 const configShortDescriptions: Record<string, string> = {
+  hide_login_apikey: '关闭登录页的 API Key 选项卡。开启后登录页仅展示账号密码或 SSO 登录。',
+  password_expire_days: '密码修改有效间隔天数（天）。个人中心将依据此天数提醒用户及时更新密码。默认 30 天。',
   agentscope_inject_runtime_state: '是否向 Agent 上下文注入运行时状态（当前时间、任务态、上下文占用）。',
   agentscope_inject_time_interval_hours: '运行时时间字段重复注入的最小间隔（小时）。',
   download_url_prefix: '生成文件下载链接时使用的公网地址前缀。',
@@ -1701,6 +1705,8 @@ const getVisibleItems = (items: ConfigItem[] | undefined, category: string) => {
   }
   if (category === 'general') {
     const order = [
+      'hide_login_apikey',
+      'password_expire_days',
       'platform_timezone',
       'agentscope_inject_runtime_state',
       'agentscope_inject_time_interval_hours',
@@ -3215,6 +3221,60 @@ onUnmounted(() => {
                                       />
                                   </div>
                               </div>
+                          </div>
+                          <div v-else-if="item.key === 'hide_login_apikey'">
+                             <div class="flex items-center gap-3">
+                               <button
+                                 type="button"
+                                 :disabled="isConfigItemDisabled(String(category), item)"
+                                 @click="item.value = item.value === 'true' ? 'false' : 'true'"
+                                 class="relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed shadow-inner"
+                                 :class="item.value === 'true' ? 'bg-primary' : 'bg-gray-200'"
+                               >
+                                 <span
+                                   aria-hidden="true"
+                                   class="pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out"
+                                   :class="item.value === 'true' ? 'translate-x-5' : 'translate-x-0'"
+                                 ></span>
+                               </button>
+                               <span class="text-xs font-medium" :class="item.value === 'true' ? 'text-primary font-semibold' : 'text-gray-500'">
+                                 {{ item.value === 'true' ? '开启（隐藏 API Key 选项卡）' : '关闭（显示 API Key 选项卡）' }}
+                               </span>
+                             </div>
+                             <p
+                               v-if="item.description"
+                               class="mt-1.5 text-[11px] text-gray-500 leading-relaxed"
+                             >{{ item.description }}</p>
+                          </div>
+                          <div v-else-if="item.key === 'password_expire_days'">
+                             <div class="flex items-center gap-2 max-w-xs">
+                               <input
+                                 type="number"
+                                 min="1"
+                                 step="1"
+                                 :value="item.value"
+                                 :disabled="isConfigItemDisabled(String(category), item)"
+                                 @keypress="!/[0-9]/.test(($event as KeyboardEvent).key) && ($event as KeyboardEvent).preventDefault()"
+                                 @input="(e) => {
+                                   const raw = (e.target as HTMLInputElement).value.replace(/\D/g, '')
+                                   item.value = raw
+                                   ;(e.target as HTMLInputElement).value = raw
+                                 }"
+                                 @blur="() => {
+                                   if (!item.value || parseInt(item.value, 10) < 1) {
+                                     item.value = '30'
+                                   }
+                                 }"
+                                 class="w-28 px-3 py-1.5 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none transition-all disabled:bg-gray-100 disabled:cursor-not-allowed"
+                                 placeholder="30"
+                               />
+                               <span class="text-xs font-semibold text-gray-500">天</span>
+                               <span class="text-[11px] text-gray-400">（默认 30 天）</span>
+                             </div>
+                             <p
+                               v-if="item.description"
+                               class="mt-1.5 text-[11px] text-gray-500 leading-relaxed"
+                             >{{ item.description }}</p>
                           </div>
                           <div v-else-if="['embedchat_watermark_enabled', 'yovole_sso_enabled', 'knowledge_base_enabled', 'agentscope_inject_runtime_state'].includes(item.key)">
                              <div class="flex items-center">

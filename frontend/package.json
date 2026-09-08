@@ -29,12 +29,14 @@
     "markdown-it-texmath": "^1.0.0",
     "mermaid": "^11.12.2",
     "pinia": "^3.0.4",
+    "qrcode": "^1.5.4",
     "vue": "^3.5.24",
     "vue-echarts": "^6.6.9",
     "vue-router": "^4.6.4"
   },
   "devDependencies": {
     "@types/node": "^24.10.1",
+    "@types/qrcode": "^1.5.5",
     "@vitejs/plugin-vue": "^6.0.1",
     "@vue/tsconfig": "^0.8.1",
     "autoprefixer": "^10.4.23",

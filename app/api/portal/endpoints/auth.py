@@ -119,6 +119,20 @@ async def login(
         if result["status"] == "success":
             user = result["user"]
             user_id = int(user["user_id"])
+
+            # 2FA 检查：若开启了 Google 二次验证，不下发正式 Session Cookie，返回临时票据
+            if user.get("two_factor_enabled"):
+                two_factor_token = await AuthService.create_2fa_pending_token(user_id)
+                return {
+                    "status": "two_factor_required",
+                    "data": {
+                        "two_factor_required": True,
+                        "two_factor_token": two_factor_token,
+                        "user_name": user["user_name"],
+                        "real_name": user.get("real_name") or user["user_name"]
+                    }
+                }
+
             api_key = await AuthService.get_decrypted_api_key(user_id, db=db)
             
             if not api_key:
@@ -165,8 +179,62 @@ async def login(
         }
     }
 
+class TwoFactorLoginRequest(BaseModel):
+    two_factor_token: str = Field(..., description="两步验证临时凭证")
+    code: str = Field(..., description="Google 身份验证器 6 位动态验证码")
+
+@router.post("/login/2fa", summary="两步验证二次登录")
+async def two_factor_login(
+    request: TwoFactorLoginRequest,
+    response: Response,
+    db: AsyncSession = Depends(get_db_session)
+):
+    """
+    两步验证登录接口 (使用 6 位 TOTP 动态码验证)
+    """
+    user = await AuthService.verify_and_consume_2fa_pending_token(
+        request.two_factor_token,
+        request.code,
+        db=db
+    )
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="动态验证码错误或已失效，请重新输入"
+        )
+    
+    user_id = int(user["user_id"])
+    api_key = await AuthService.get_decrypted_api_key(user_id, db=db)
+    if not api_key:
+        raise HTTPException(500, "User has no valid API Key for session")
+
+    response.set_cookie(
+        key="admin_token",
+        value=api_key,
+        httponly=True,
+        max_age=86400,
+        samesite="lax",
+        secure=False
+    )
+    # 注册在线状态到 Redis
+    await AuthService.register_online_state(api_key, user)
+
+    # 聚合权限信息返回给前端
+    from app.services.permission_service import PermissionService
+    perm_service = PermissionService(db)
+    perms_response = await perm_service.get_user_permissions(user_id)
+
+    return {
+        "status": "success",
+        "data": {
+            **user,
+            "api_key": api_key,
+            "permissions": perms_response.permissions.model_dump()
+        }
+    }
+
 class PasswordChangeRequest(BaseModel):
-    password: str = Field(..., min_length=6, description="新密码")
+    password: str = Field(..., min_length=8, max_length=32, description="新密码（须符合等保复杂度要求）")
 
 @router.put("/password", summary="修改密码")
 async def change_password(
@@ -178,11 +246,16 @@ async def change_password(
     修改当前用户密码
     """
     user_id = int(user["user_id"])
+    username = user.get("user_name")
+    
+    # 校验密码复杂度（等保要求）
+    valid, msg = AuthService.validate_password_complexity(request.password, username=username)
+    if not valid:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=msg)
     
     # 检查密码长度，bcrypt 限制密码长度为 72 字节
     password_bytes = request.password.encode('utf-8')
     if len(password_bytes) > 72:
-        # 截断密码到 72 字节并解码回字符串
         password = password_bytes[:72].decode('utf-8', errors='ignore')
     else:
         password = request.password
@@ -230,6 +303,35 @@ async def get_current_user_info(
     watermark_style = await ConfigService.get("embedchat_watermark_style") or "user_time"
     watermark_text = await ConfigService.get("embedchat_watermark_text") or "南孜系统"
 
+    two_factor_enabled = await AuthService.get_user_2fa_status(user_id, db=db)
+
+    from app.models.user import User
+    from datetime import datetime
+    user_obj = await db.get(User, user_id)
+    
+    # 获取密码修改间隔配置天数（默认 30 天）
+    password_expire_days_val = await ConfigService.get("password_expire_days") or "30"
+    try:
+        password_expire_days = max(1, int(password_expire_days_val))
+    except (ValueError, TypeError):
+        password_expire_days = 30
+
+    has_password = bool(user_obj and user_obj.password_hash)
+    password_updated_at = None
+    days_since_last_change = None
+    days_until_next_change = None
+    is_expired = False
+
+    if has_password and user_obj:
+        dt = user_obj.password_updated_at or user_obj.updated_at or user_obj.created_at
+        if dt:
+            password_updated_at = dt.strftime("%Y-%m-%d %H:%M:%S")
+            now = datetime.now()
+            delta = now - dt
+            days_since_last_change = max(0, delta.days)
+            days_until_next_change = password_expire_days - days_since_last_change
+            is_expired = days_until_next_change <= 0
+
     return {
         "status": "success",
         "data": {
@@ -244,6 +346,15 @@ async def get_current_user_info(
             "created_at": user.get("created_at"),
             "remark": user.get("remark"),
             "status": "active",
+            "two_factor_enabled": two_factor_enabled,
+            "password_info": {
+                "has_password": has_password,
+                "password_updated_at": password_updated_at,
+                "password_expire_days": password_expire_days,
+                "days_since_last_change": days_since_last_change,
+                "days_until_next_change": days_until_next_change,
+                "is_expired": is_expired,
+            },
             "permissions": perms_response.permissions.model_dump(),
             "watermark": {
                 "enabled": watermark_enabled,
@@ -251,6 +362,133 @@ async def get_current_user_info(
                 "text": watermark_text
             }
         }
+    }
+
+class EnableTwoFactorRequest(BaseModel):
+    code: str = Field(..., min_length=6, max_length=6, description="Google 身份验证器 6 位动态验证码")
+
+class DisableTwoFactorRequest(BaseModel):
+    code: Optional[str] = Field(None, description="Google 身份验证器 6 位动态验证码")
+    password: Optional[str] = Field(None, description="用户当前登录密码")
+
+@router.get("/2fa/status", summary="获取两步验证状态")
+async def get_two_factor_status(
+    user: dict = Depends(require_api_key),
+    db: AsyncSession = Depends(get_db_session)
+):
+    """
+    获取当前登录用户的两步验证 (2FA) 状态
+    """
+    user_id = int(user["user_id"])
+    enabled = await AuthService.get_user_2fa_status(user_id, db=db)
+    return {
+        "status": "success",
+        "data": {
+            "enabled": enabled
+        }
+    }
+
+@router.post("/2fa/setup", summary="发起两步验证绑定")
+async def setup_two_factor(
+    user: dict = Depends(require_api_key),
+    db: AsyncSession = Depends(get_db_session)
+):
+    """
+    发起两步验证绑定，生成 Base32 临时 Secret 及 otpauth 链接
+    """
+    from app.services.totp_service import TotpService
+    user_id = int(user["user_id"])
+    secret = TotpService.generate_secret()
+    await AuthService.create_2fa_setup_cache(user_id, secret, ttl=600)
+    
+    from app.services.branding_settings_service import BrandingSettingsService
+    branding = await BrandingSettingsService.get_public_branding()
+    issuer = (branding.get("product_name") or "NanZi Platform").strip()
+    
+    otpauth_url = TotpService.generate_otpauth_url(
+        user_name=user.get("user_name", "user"),
+        secret=secret,
+        issuer=issuer
+    )
+    return {
+        "status": "success",
+        "data": {
+            "secret": secret,
+            "otpauth_url": otpauth_url
+        }
+    }
+
+@router.post("/2fa/enable", summary="确认开启两步验证")
+async def enable_two_factor(
+    request: EnableTwoFactorRequest,
+    user: dict = Depends(require_api_key),
+    db: AsyncSession = Depends(get_db_session)
+):
+    """
+    提交手机 Google 身份验证器生成的 6 位动态码，验证成功后正式启用 2FA
+    """
+    from app.services.totp_service import TotpService
+    user_id = int(user["user_id"])
+    secret = await AuthService.get_2fa_setup_cache(user_id)
+    if not secret:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="两步验证设置会话已过期或未发起，请重新点击开启"
+        )
+    
+    if not TotpService.verify_code(secret, request.code):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="动态验证码错误，请确保手机时间同步后重新输入"
+        )
+    
+    await AuthService.enable_user_2fa(user_id, secret, db=db)
+    await AuthService.clear_2fa_setup_cache(user_id)
+    return {
+        "status": "success",
+        "message": "两步验证开启成功"
+    }
+
+@router.post("/2fa/disable", summary="关闭两步验证")
+async def disable_two_factor(
+    request: DisableTwoFactorRequest,
+    user: dict = Depends(require_api_key),
+    db: AsyncSession = Depends(get_db_session)
+):
+    """
+    关闭两步验证 (需校验动态码或当前登录密码)
+    """
+    from app.services.totp_service import TotpService
+    from app.models.user import User
+    user_id = int(user["user_id"])
+    
+    user_obj = await db.get(User, user_id)
+    if not user_obj:
+        raise HTTPException(status_code=404, detail="用户不存在")
+    
+    if not user_obj.two_factor_enabled:
+        return {"status": "success", "message": "两步验证尚未开启"}
+
+    verified = False
+    if request.code:
+        secret = await AuthService.get_user_2fa_secret(user_id, db=db)
+        if secret and TotpService.verify_code(secret, request.code):
+            verified = True
+            
+    if not verified and request.password and user_obj.password_hash:
+        if AuthService.verify_password_hash(request.password, user_obj.password_hash):
+            verified = True
+            
+    if not verified:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="验证失败，请输入正确的 6 位 Google 动态验证码或当前登录密码"
+        )
+
+    await AuthService.disable_user_2fa(user_id, db=db)
+    return {
+        "status": "success",
+        "message": "两步验证已关闭"
     }
 
 @router.get("/permissions", summary="获取当前用户权限列表")
@@ -298,6 +536,93 @@ async def validate_user_apikey(
     }
 
 
+class ResetMyApiKeyRequest(BaseModel):
+    password: Optional[str] = Field(None, description="登录密码")
+    code: Optional[str] = Field(None, description="Google 身份验证器 6 位动态验证码")
+
+@router.post("/api-key/reset", summary="重置当前用户 API Key")
+async def reset_my_api_key(
+    request: ResetMyApiKeyRequest,
+    response: Response,
+    user: dict = Depends(require_api_key),
+    db: AsyncSession = Depends(get_db_session)
+):
+    """
+    当前用户重置个人 API Key：
+    - 若未开启两步验证，必须校验当前登录密码；
+    - 若已开启两步验证，可通过当前登录密码或 Google 动态验证码（二选一）校验。
+    """
+    from app.services.totp_service import TotpService
+    from app.models.user import User
+
+    user_id = int(user["user_id"])
+    user_obj = await db.get(User, user_id)
+    if not user_obj:
+        raise HTTPException(status_code=404, detail="用户不存在")
+
+    is_2fa = bool(user_obj.two_factor_enabled)
+    verified = False
+
+    # 1. 动态码验证（仅当开启 2FA 且提供了验证码时有效）
+    if is_2fa and request.code and request.code.strip():
+        secret = await AuthService.get_user_2fa_secret(user_id, db=db)
+        if secret and TotpService.verify_code(secret, request.code.strip()):
+            verified = True
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="动态验证码错误或已失效"
+            )
+
+    # 2. 密码验证
+    if not verified and request.password:
+        if not user_obj.password_hash:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="当前账户尚未设置登录密码，请先设置密码或使用动态验证码"
+            )
+        if AuthService.verify_password_hash(request.password, user_obj.password_hash):
+            verified = True
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="登录密码错误"
+            )
+
+    if not verified:
+        if is_2fa:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="请提供当前登录密码或 6 位 Google 动态验证码进行身份验证"
+            )
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="请提供当前登录密码进行身份验证"
+            )
+
+    new_api_key = await AuthService.reset_api_key(user_id, db=db)
+    if not new_api_key:
+        raise HTTPException(status_code=500, detail="重置 API Key 失败")
+
+    # 同步更新当前会话 Cookie 与在线状态
+    response.set_cookie(
+        key="admin_token",
+        value=new_api_key,
+        httponly=True,
+        max_age=86400,
+        samesite="lax",
+        secure=False
+    )
+    await AuthService.register_online_state(new_api_key, user)
+
+    return {
+        "status": "success",
+        "message": "API Key 重置成功",
+        "api_key": new_api_key
+    }
+
+
 @router.get("/config/public", summary="获取公开配置")
 async def get_public_config(
     db: AsyncSession = Depends(get_db_session)
@@ -313,11 +638,13 @@ async def get_public_config(
     )
 
     sso_enabled = await ConfigService.get("yovole_sso_enabled") == "true"
+    hide_login_apikey = await ConfigService.get("hide_login_apikey") == "true"
     platform_timezone = await get_platform_timezone()
     return {
         "status": "success",
         "data": {
             "yovole_sso_enabled": sso_enabled,
+            "hide_login_apikey": hide_login_apikey,
             "platform_timezone": platform_timezone or DEFAULT_PLATFORM_TIMEZONE,
             PLATFORM_TIMEZONE_CONFIG_KEY: platform_timezone or DEFAULT_PLATFORM_TIMEZONE,
         }
