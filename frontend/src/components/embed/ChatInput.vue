@@ -13,6 +13,7 @@ import ContextCompactionTimeline from "@/components/chat/ContextCompactionTimeli
 import { formatContextTokens, type ContextUsage } from "@/composables/useContextUsage";
 import { isImageAttachment } from "@/utils/attachmentImages";
 import { DATASET_PORTAL_SYSTEM_COMMAND_ID } from "@/constants/datasetPortalCommand";
+import { getTemperatureGuidance } from "@/utils/temperatureGuidance";
 import {
   ArchiveBoxIcon,
   ArrowPathIcon,
@@ -66,6 +67,7 @@ type ModelOption = {
   name?: string;
   model_id: string;
   type?: string;
+  temperature?: number | null;
   thinking_enable?: boolean;
   thinking_only?: boolean;
   allow_disable_thinking?: boolean;
@@ -108,6 +110,7 @@ const props = defineProps<{
   contextCompactionActionLoading?: boolean;
   thinkingEnableOverride?: boolean | null;
   reasoningEffortOverride?: ReasoningEffort | null;
+  temperatureOverride?: number | null;
   activeLtmPreference?: any;
   /** 当前会话有效智能体 ID，用于过滤平台技能列表 */
   agentId?: string | null;
@@ -303,6 +306,7 @@ const emit = defineEmits<{
   (e: 'update:selectedModel', val: string): void;
   (e: 'update:thinking-enable-override', val: boolean | null): void;
   (e: 'update:reasoning-effort-override', val: ReasoningEffort | null): void;
+  (e: 'update:temperature-override', val: number | null): void;
   (e: 'send'): void;
   (e: 'stop'): void;
   (e: 'system-command', cmd: string): void;
@@ -832,11 +836,67 @@ const backFromThinkingPanel = () => {
   showThinkingPanel.value = false;
 };
 
-/** 点模型行：移动端进思考二级；桌面端选中即关菜单 */
+/** 模型默认温度（未配置则为 0.7） */
+const defaultModelTemperature = computed(() => {
+  const t = selectedModelConfig.value?.temperature;
+  return typeof t === "number" && Number.isFinite(t) ? t : 0.7;
+});
+
+/** 实际生效温度 */
+const effectiveTemperature = computed(() => {
+  if (props.temperatureOverride !== null && props.temperatureOverride !== undefined) {
+    return props.temperatureOverride;
+  }
+  return defaultModelTemperature.value;
+});
+
+/** 是否跟随模型默认温度 */
+const isFollowingDefaultTemperature = computed(() => {
+  return props.temperatureOverride === null || props.temperatureOverride === undefined;
+});
+
+/** 触发器按钮上的温度徽章：仅在手动调整过温度时显示 */
+const temperatureSummaryLabel = computed(() => {
+  if (isFollowingDefaultTemperature.value) return "";
+  const val = Number(effectiveTemperature.value.toFixed(2));
+  return `T:${val}`;
+});
+
+/** 触发器按钮鼠标悬停完整提示 */
+const modelTriggerTooltip = computed(() => {
+  if (!props.selectedModel) return "使用智能体默认模型";
+  const parts = [`覆盖模型: ${modelLabel.value}`];
+  if (thinkingSummaryLabel.value) {
+    parts.push(`思考: ${thinkingSummaryLabel.value}`);
+  }
+  if (!isFollowingDefaultTemperature.value) {
+    const valStr = effectiveTemperature.value.toFixed(2);
+    parts.push(`自定义温度: ${valStr}${effectiveTemperature.value > 1 ? " (超出1.0)" : ""}`);
+  }
+  return parts.join(" · ");
+});
+
+const PRESET_TEMPERATURES = [
+  { label: "严谨", value: 0.2, desc: "更稳定严谨，适合查数、代码和规则问答" },
+  { label: "均衡", value: 0.7, desc: "准确性和多样性较均衡，适合日常对话" },
+  { label: "发散", value: 1.0, desc: "回答更灵活，措辞变化更多" },
+];
+
+const setCustomTemperature = (val: number) => {
+  const clamped = Math.min(2.0, Math.max(0.0, Math.round(val * 100) / 100));
+  emit("update:temperature-override", clamped);
+};
+
+const resetTemperatureToDefault = () => {
+  emit("update:temperature-override", null);
+};
+
+/** 点模型行：移动端进思考/参数二级；桌面端选中即关菜单 */
 const selectModel = (model: ModelOption) => {
   emit("update:selectedModel", model.model_id);
   emit("update:thinking-enable-override", null);
   emit("update:reasoning-effort-override", null);
+  emit("update:temperature-override", null);
   if (isMobileViewport.value && model.thinking_enable) {
     showThinkingPanel.value = true;
     return;
@@ -844,7 +904,7 @@ const selectModel = (model: ModelOption) => {
   closeModelMenu();
 };
 
-/** 点思考标签 / 箭头：打开思考设置（桌面侧栏 / 移动二级） */
+/** 点思考/参数标签 / 箭头：打开思考与参数设置（桌面侧栏 / 移动二级） */
 const openThinkingSettings = (model: ModelOption, event?: Event) => {
   event?.stopPropagation();
   event?.preventDefault();
@@ -852,6 +912,7 @@ const openThinkingSettings = (model: ModelOption, event?: Event) => {
   if (props.selectedModel !== model.model_id) {
     emit("update:thinking-enable-override", null);
     emit("update:reasoning-effort-override", null);
+    emit("update:temperature-override", null);
   }
   showModelDropdown.value = true;
   showThinkingPanel.value = true;
@@ -862,6 +923,7 @@ const resetModelSelection = () => {
   emit("update:selectedModel", "");
   emit("update:thinking-enable-override", null);
   emit("update:reasoning-effort-override", null);
+  emit("update:temperature-override", null);
   closeModelMenu();
 };
 
@@ -878,8 +940,6 @@ const toggleThinkingForSession = () => {
 
 const selectReasoningEffort = (effort: ReasoningEffort | null) => {
   emit("update:reasoning-effort-override", effort);
-  // 选完强度即关闭，主路径更快
-  closeModelMenu();
 };
 
 /** 未覆盖时高亮「跟随模型默认」，而不是落到模型注册档位 */
@@ -2201,7 +2261,10 @@ defineExpose({
               </div>
             </div>
 
-            <div class="relative z-20 mt-1 flex min-h-7 flex-nowrap items-center gap-0.5 sm:gap-1.5">
+            <div
+              class="relative mt-1 flex min-h-7 flex-nowrap items-center gap-0.5 sm:gap-1.5"
+              :class="showModelDropdown || showPlusMenu ? 'z-50' : 'z-20'"
+            >
                 <!-- Plus Button & Menu (Premium Glassmorphism Style) -->
                 <div ref="plusMenuContainerRef" class="relative flex-shrink-0 z-30">
                     <button @click="togglePlusMenu" :disabled="isInteractionLocked" class="w-8 h-8 sm:w-7 sm:h-7 flex items-center justify-center rounded-full text-gray-400 hover:text-primary hover:bg-gray-100 dark:hover:bg-gray-700 transition-all duration-200 focus:outline-none disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-gray-400" :class="{ 'text-primary bg-gray-100 dark:bg-gray-700 rotate-45': showPlusMenu && !isInteractionLocked }" title="添加附件或上下文">
@@ -2834,17 +2897,30 @@ defineExpose({
 
                 <div class="min-w-1 flex-1"></div>
                 <!-- Custom Model Dropdown Selector -->
-                <div ref="modelDropdownRef" class="relative flex-shrink min-w-0">
+                <div
+                  ref="modelDropdownRef"
+                  class="relative flex-shrink min-w-0"
+                  :class="{ 'z-50': showModelDropdown }"
+                >
                     <button
                       ref="modelDropdownTriggerRef"
                       :disabled="isInteractionLocked"
                       @click="toggleModelDropdown"
-                      class="relative flex h-7 items-center gap-0.5 sm:gap-1 rounded-full px-1.5 sm:px-2.5 text-[11px] sm:text-xs font-semibold leading-none text-gray-600 transition-colors hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-700/70 disabled:opacity-50 disabled:cursor-not-allowed select-none max-w-[min(46vw,10.5rem)] sm:max-w-[280px]"
-                      :title="selectedModel ? `覆盖模型: ${modelLabel}${thinkingSummaryLabel ? ` · ${thinkingSummaryLabel}` : ''}` : '使用智能体默认模型'"
+                      class="relative flex h-7 items-center gap-0.5 sm:gap-1 rounded-full px-1.5 sm:px-2.5 text-[11px] sm:text-xs font-semibold leading-none text-gray-600 transition-colors hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-700/70 disabled:opacity-50 disabled:cursor-not-allowed select-none max-w-[min(48vw,12rem)] sm:max-w-[320px]"
+                      :title="modelTriggerTooltip"
                     >
                         <PhotoIcon v-if="isSelectedModelMultimodal" class="pointer-events-none hidden h-3.5 w-3.5 shrink-0 text-purple-500 sm:inline" aria-hidden="true" />
                         <span class="pointer-events-none truncate flex-1 min-w-0 text-left">{{ modelLabel }}</span>
                         <span v-if="thinkingSummaryLabel" class="pointer-events-none flex-shrink-0 rounded-full bg-violet-50 px-1 py-0.5 text-[8px] sm:px-1.5 sm:text-[9px] font-semibold text-violet-600 dark:bg-violet-950/50 dark:text-violet-300">{{ thinkingSummaryLabel }}</span>
+                        <span
+                          v-if="temperatureSummaryLabel"
+                          class="pointer-events-none flex-shrink-0 rounded-full px-1 py-0.5 text-[8px] sm:px-1.5 sm:text-[9px] font-semibold transition-colors"
+                          :class="effectiveTemperature > 1
+                            ? 'bg-amber-50 text-amber-600 dark:bg-amber-950/60 dark:text-amber-300'
+                            : 'bg-sky-50 text-sky-600 dark:bg-sky-950/60 dark:text-sky-300'"
+                        >
+                          {{ temperatureSummaryLabel }}
+                        </span>
                         <svg class="pointer-events-none h-3 w-3 sm:h-3.5 sm:w-3.5 flex-shrink-0 text-gray-400 transform transition-transform duration-200" :class="{ 'rotate-180': showModelDropdown }" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M19 9l-7 7-7-7" />
                         </svg>
@@ -2854,10 +2930,10 @@ defineExpose({
                     <transition name="slide-up">
                         <div
                           v-show="showModelDropdown"
-                          class="z-30 overflow-hidden bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl shadow-xl"
+                          class="z-50 overflow-hidden bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl shadow-xl"
                           :class="isMobileViewport
                             ? 'fixed max-h-[min(70vh,420px)]'
-                            : (showThinkingPanel && selectedModelConfig?.thinking_enable
+                            : (showThinkingPanel && selectedModelConfig
                               ? 'absolute bottom-full mb-2 right-0 w-[min(560px,calc(100vw-24px))] max-h-[min(448px,calc(100vh-96px))] origin-bottom-right'
                               : 'absolute bottom-full mb-2 right-0 w-[min(300px,calc(100vw-24px))] max-h-[min(448px,calc(100vh-96px))] origin-bottom-right')"
                           :style="isMobileViewport ? {
@@ -2922,10 +2998,20 @@ defineExpose({
                                         v-if="model.thinking_enable"
                                         type="button"
                                         class="inline-flex items-center gap-0.5 rounded-full bg-violet-50 px-1.5 py-0.5 text-[9px] font-medium text-violet-600 hover:bg-violet-100 dark:bg-violet-950/50 dark:text-violet-300 dark:hover:bg-violet-900/50"
-                                        :title="isMobileViewport ? '思考设置' : '调整本次会话思考'"
+                                        :title="isMobileViewport ? '思考与参数设置' : '调整本次会话思考与温度'"
                                         @click="openThinkingSettings(model, $event)"
                                       >
                                         <span>{{ selectedModel === model.model_id ? (thinkingSummaryLabel || '思考') : '思考' }}</span>
+                                        <svg class="h-3 w-3 opacity-70" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m9 5 7 7-7 7" /></svg>
+                                      </button>
+                                      <button
+                                        v-else
+                                        type="button"
+                                        class="inline-flex items-center gap-0.5 rounded-full bg-gray-100 px-1.5 py-0.5 text-[9px] font-medium text-gray-500 hover:bg-gray-200 dark:bg-gray-700/60 dark:text-gray-300 dark:hover:bg-gray-700"
+                                        :title="isMobileViewport ? '模型参数设置' : '调整模型参数与温度'"
+                                        @click="openThinkingSettings(model, $event)"
+                                      >
+                                        <span>{{ selectedModel === model.model_id && !isFollowingDefaultTemperature ? `T:${effectiveTemperature.toFixed(1)}` : '参数' }}</span>
                                         <svg class="h-3 w-3 opacity-70" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m9 5 7 7-7 7" /></svg>
                                       </button>
                                     </div>
@@ -2936,10 +3022,10 @@ defineExpose({
                                 </div>
                               </div>
 
-                              <!-- 二级（移动）/ 侧栏（桌面）：思考设置 -->
+                              <!-- 二级（移动）/ 侧栏（桌面）：模型参数与思考设置 -->
                               <div
-                                v-if="showThinkingPanel && selectedModelConfig?.thinking_enable"
-                                class="w-full flex-shrink-0 border-gray-100 bg-gray-50/70 p-3 dark:border-gray-700 dark:bg-gray-900/60 sm:w-[240px] sm:border-l sm:border-t-0"
+                                v-if="showThinkingPanel && selectedModelConfig"
+                                class="w-full flex-shrink-0 border-gray-100 bg-gray-50/70 p-3 dark:border-gray-700 dark:bg-gray-900/60 sm:w-[250px] sm:border-l sm:border-t-0 flex flex-col overflow-y-auto custom-scrollbar"
                                 :class="isMobileViewport
                                   ? 'min-h-0 flex-1 overflow-y-auto overscroll-contain touch-pan-y border-0'
                                   : 'border-t sm:border-t-0'"
@@ -2955,7 +3041,9 @@ defineExpose({
                                     <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7" /></svg>
                                   </button>
                                   <div class="min-w-0 flex-1">
-                                    <div class="text-[11px] font-bold text-gray-800 dark:text-gray-100">思考模式</div>
+                                    <div class="text-[11px] font-bold text-gray-800 dark:text-gray-100">
+                                      {{ selectedModelConfig.thinking_enable ? '思考与参数' : '模型参数' }}
+                                    </div>
                                     <div class="mt-0.5 truncate text-[10px] text-gray-500 dark:text-gray-400">{{ thinkingPanelSubtitle }}</div>
                                   </div>
                                   <button
@@ -2968,88 +3056,172 @@ defineExpose({
                                 </div>
                                 <div v-else class="mb-3 flex items-center justify-between gap-2">
                                   <div class="min-w-0">
-                                    <div class="text-[11px] font-bold text-gray-800 dark:text-gray-100">思考模式</div>
+                                    <div class="text-[11px] font-bold text-gray-800 dark:text-gray-100">
+                                      {{ selectedModelConfig.thinking_enable ? '思考与参数' : '模型参数' }}
+                                    </div>
                                     <div class="mt-0.5 truncate text-[10px] text-gray-500 dark:text-gray-400">{{ thinkingPanelSubtitle }}</div>
                                   </div>
-                                  <button
-                                    v-if="canToggleThinking"
-                                    type="button"
-                                    class="relative inline-flex h-6 w-11 flex-shrink-0 overflow-hidden rounded-full p-0 transition-colors"
-                                    :class="thinkingEnabledForSession ? 'bg-primary' : 'bg-gray-300 dark:bg-gray-600'"
-                                    @click="toggleThinkingForSession"
-                                    :aria-pressed="thinkingEnabledForSession"
-                                    aria-label="切换本次会话思考模式"
-                                    :title="thinkingEnabledForSession ? '关闭本次会话思考' : '开启本次会话思考'"
-                                  >
-                                    <span class="absolute left-0.5 top-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform" :class="thinkingEnabledForSession ? 'translate-x-5' : 'translate-x-0.5'"></span>
-                                  </button>
-                                  <span v-else class="rounded-full bg-violet-100 px-2 py-1 text-[10px] font-semibold text-violet-700 dark:bg-violet-950/60 dark:text-violet-300">
-                                    已开启
-                                  </span>
+                                  <template v-if="selectedModelConfig.thinking_enable">
+                                    <button
+                                      v-if="canToggleThinking"
+                                      type="button"
+                                      class="relative inline-flex h-6 w-11 flex-shrink-0 overflow-hidden rounded-full p-0 transition-colors"
+                                      :class="thinkingEnabledForSession ? 'bg-primary' : 'bg-gray-300 dark:bg-gray-600'"
+                                      @click="toggleThinkingForSession"
+                                      :aria-pressed="thinkingEnabledForSession"
+                                      aria-label="切换本次会话思考模式"
+                                      :title="thinkingEnabledForSession ? '关闭本次会话思考' : '开启本次会话思考'"
+                                    >
+                                      <span class="absolute left-0.5 top-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform" :class="thinkingEnabledForSession ? 'translate-x-5' : 'translate-x-0.5'"></span>
+                                    </button>
+                                    <span v-else class="rounded-full bg-violet-100 px-2 py-1 text-[10px] font-semibold text-violet-700 dark:bg-violet-950/60 dark:text-violet-300">
+                                      已开启
+                                    </span>
+                                  </template>
                                 </div>
 
-                                <div v-if="isMobileViewport" class="mb-3 flex items-center justify-between">
-                                  <div class="text-[10px] font-semibold text-gray-500 dark:text-gray-400">本次会话思考</div>
-                                  <button
-                                    v-if="canToggleThinking"
-                                    type="button"
-                                    class="relative inline-flex h-6 w-11 flex-shrink-0 overflow-hidden rounded-full p-0 transition-colors"
-                                    :class="thinkingEnabledForSession ? 'bg-primary' : 'bg-gray-300 dark:bg-gray-600'"
-                                    @click="toggleThinkingForSession"
-                                    :aria-pressed="thinkingEnabledForSession"
-                                    aria-label="切换本次会话思考模式"
-                                    :title="thinkingEnabledForSession ? '关闭本次会话思考' : '开启本次会话思考'"
-                                  >
-                                    <span class="absolute left-0.5 top-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform" :class="thinkingEnabledForSession ? 'translate-x-5' : 'translate-x-0.5'"></span>
-                                  </button>
-                                  <span v-else class="rounded-full bg-violet-100 px-2 py-1 text-[10px] font-semibold text-violet-700 dark:bg-violet-950/60 dark:text-violet-300">
-                                    已开启
-                                  </span>
-                                </div>
+                                <!-- 思考模块（仅在模型支持思考时显示） -->
+                                <template v-if="selectedModelConfig.thinking_enable">
+                                  <div v-if="isMobileViewport" class="mb-3 flex items-center justify-between">
+                                    <div class="text-[10px] font-semibold text-gray-500 dark:text-gray-400">本次会话思考</div>
+                                    <button
+                                      v-if="canToggleThinking"
+                                      type="button"
+                                      class="relative inline-flex h-6 w-11 flex-shrink-0 overflow-hidden rounded-full p-0 transition-colors"
+                                      :class="thinkingEnabledForSession ? 'bg-primary' : 'bg-gray-300 dark:bg-gray-600'"
+                                      @click="toggleThinkingForSession"
+                                      :aria-pressed="thinkingEnabledForSession"
+                                      aria-label="切换本次会话思考模式"
+                                      :title="thinkingEnabledForSession ? '关闭本次会话思考' : '开启本次会话思考'"
+                                    >
+                                      <span class="absolute left-0.5 top-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform" :class="thinkingEnabledForSession ? 'translate-x-5' : 'translate-x-0.5'"></span>
+                                    </button>
+                                    <span v-else class="rounded-full bg-violet-100 px-2 py-1 text-[10px] font-semibold text-violet-700 dark:bg-violet-950/60 dark:text-violet-300">
+                                      已开启
+                                    </span>
+                                  </div>
 
-                                <div v-if="thinkingEnabledForSession" class="relative">
-                                  <div class="mb-2 rounded-lg border border-gray-200 bg-white px-2.5 py-2 text-[10px] text-gray-500 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-400">
-                                    开启思考可能增加响应耗时，适合复杂推理任务。
+                                  <div v-if="thinkingEnabledForSession" class="relative mb-2">
+                                    <div class="mb-2 rounded-lg border border-gray-200 bg-white px-2.5 py-2 text-[10px] text-gray-500 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-400">
+                                      开启思考可能增加响应耗时，适合复杂推理任务。
+                                    </div>
+                                    <div class="mb-1 text-[10px] font-semibold text-gray-500 dark:text-gray-400">思考强度</div>
+                                    <div class="max-h-[160px] overflow-y-auto rounded-lg border border-gray-200 bg-white p-1 custom-scrollbar dark:border-gray-700 dark:bg-gray-800">
+                                      <button
+                                        type="button"
+                                        class="w-full rounded-md px-2 py-1.5 text-left text-xs transition-colors hover:bg-gray-50 dark:hover:bg-gray-700/60"
+                                        :class="isFollowingModelEffort ? 'bg-primary/5 font-semibold text-primary' : 'text-gray-700 dark:text-gray-300'"
+                                        title="不覆盖模型注册配置"
+                                        @click="selectReasoningEffort(null)"
+                                      >
+                                        <span class="flex items-center justify-between gap-2">
+                                          <span>跟随模型默认</span>
+                                          <span v-if="isFollowingModelEffort">✓</span>
+                                        </span>
+                                      </button>
+                                      <button
+                                        v-for="option in supportedReasoningEfforts"
+                                        :key="option.value"
+                                        type="button"
+                                        class="w-full rounded-md px-2 py-1.5 text-left text-xs transition-colors hover:bg-gray-50 dark:hover:bg-gray-700/60"
+                                        :class="!isFollowingModelEffort && selectedReasoningEffort === option.value ? 'bg-primary/5 font-semibold text-primary' : 'text-gray-700 dark:text-gray-300'"
+                                        :title="option.description"
+                                        @click="selectReasoningEffort(option.value)"
+                                      >
+                                        <span class="flex items-center justify-between gap-2">
+                                          <span>{{ option.label }}</span>
+                                          <span v-if="!isFollowingModelEffort && selectedReasoningEffort === option.value">✓</span>
+                                        </span>
+                                      </button>
+                                      <div v-if="supportedReasoningEfforts.length === 0" class="px-2 py-2 text-[10px] text-gray-400">模型未配置可选思考强度</div>
+                                    </div>
                                   </div>
-                                  <div class="mb-1 text-[10px] font-semibold text-gray-500 dark:text-gray-400">思考强度</div>
-                                  <div class="max-h-[240px] overflow-y-auto rounded-lg border border-gray-200 bg-white p-1 custom-scrollbar dark:border-gray-700 dark:bg-gray-800">
-                                    <button
-                                      type="button"
-                                      class="w-full rounded-md px-2 py-1.5 text-left text-xs transition-colors hover:bg-gray-50 dark:hover:bg-gray-700/60"
-                                      :class="isFollowingModelEffort ? 'bg-primary/5 font-semibold text-primary' : 'text-gray-700 dark:text-gray-300'"
-                                      title="不覆盖模型注册配置"
-                                      @click="selectReasoningEffort(null)"
-                                    >
-                                      <span class="flex items-center justify-between gap-2">
-                                        <span>跟随模型默认</span>
-                                        <span v-if="isFollowingModelEffort">✓</span>
+                                  <button
+                                    v-else-if="canToggleThinking"
+                                    type="button"
+                                    class="mb-2 w-full rounded-lg border border-gray-200 bg-white px-2.5 py-2 text-left text-[10px] text-gray-500 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-400"
+                                    @click="toggleThinkingForSession"
+                                  >
+                                    关闭思考后，本次会话将以非思考模式发送。
+                                  </button>
+                                </template>
+
+                                <!-- 采样温度调节卡片 (Temperature) -->
+                                <div :class="selectedModelConfig.thinking_enable ? 'mt-1 border-t border-gray-200/80 pt-2.5 dark:border-gray-700/80' : ''">
+                                  <div class="mb-1.5 flex items-center justify-between">
+                                    <span class="text-[10px] font-semibold text-gray-500 dark:text-gray-400">采样温度 (Temperature)</span>
+                                    <div class="flex items-center gap-1.5">
+                                      <span
+                                        class="font-mono text-xs font-semibold"
+                                        :class="effectiveTemperature > 1 ? 'text-amber-600 dark:text-amber-400' : 'text-primary'"
+                                      >
+                                        {{ effectiveTemperature.toFixed(2) }}
                                       </span>
-                                    </button>
+                                      <button
+                                        v-if="!isFollowingDefaultTemperature"
+                                        type="button"
+                                        class="text-[10px] text-gray-400 hover:text-primary transition-colors underline decoration-dotted"
+                                        title="恢复跟随模型默认值"
+                                        @click="resetTemperatureToDefault"
+                                      >
+                                        恢复默认
+                                      </button>
+                                      <span v-else class="text-[9px] text-gray-400">跟随默认</span>
+                                    </div>
+                                  </div>
+
+                                  <!-- 滑块调节 -->
+                                  <div class="px-0.5 py-1">
+                                    <input
+                                      type="range"
+                                      min="0"
+                                      max="2"
+                                      step="0.05"
+                                      :value="effectiveTemperature"
+                                      @input="setCustomTemperature(Number(($event.target as HTMLInputElement).value))"
+                                      class="h-1.5 w-full cursor-pointer appearance-none rounded-lg bg-gray-200 accent-primary dark:bg-gray-700"
+                                      :title="`当前温度: ${effectiveTemperature.toFixed(2)}`"
+                                    />
+                                    <div class="mt-1 flex justify-between text-[9px] text-gray-400 select-none">
+                                      <span>0.0 严谨</span>
+                                      <span>1.0 均衡</span>
+                                      <span>2.0 发散</span>
+                                    </div>
+                                  </div>
+
+                                  <!-- 快捷预设场景胶囊 -->
+                                  <div class="mt-2 grid grid-cols-3 gap-1">
                                     <button
-                                      v-for="option in supportedReasoningEfforts"
-                                      :key="option.value"
+                                      v-for="preset in PRESET_TEMPERATURES"
+                                      :key="preset.value"
                                       type="button"
-                                      class="w-full rounded-md px-2 py-1.5 text-left text-xs transition-colors hover:bg-gray-50 dark:hover:bg-gray-700/60"
-                                      :class="!isFollowingModelEffort && selectedReasoningEffort === option.value ? 'bg-primary/5 font-semibold text-primary' : 'text-gray-700 dark:text-gray-300'"
-                                      :title="option.description"
-                                      @click="selectReasoningEffort(option.value)"
+                                      class="rounded-md border py-1 text-center text-[10px] transition-colors"
+                                      :class="!isFollowingDefaultTemperature && Math.abs(effectiveTemperature - preset.value) < 0.01
+                                        ? 'border-primary bg-primary/10 font-semibold text-primary'
+                                        : 'border-gray-200 bg-white text-gray-600 hover:border-gray-300 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300 dark:hover:border-gray-600'"
+                                      :title="preset.desc"
+                                      @click="setCustomTemperature(preset.value)"
                                     >
-                                      <span class="flex items-center justify-between gap-2">
-                                        <span>{{ option.label }}</span>
-                                        <span v-if="!isFollowingModelEffort && selectedReasoningEffort === option.value">✓</span>
-                                      </span>
+                                      {{ preset.label }} {{ preset.value }}
                                     </button>
-                                    <div v-if="supportedReasoningEfforts.length === 0" class="px-2 py-2 text-[10px] text-gray-400">模型未配置可选思考强度</div>
+                                  </div>
+
+                                  <!-- 动态指引与说明 -->
+                                  <div class="mt-2 rounded-lg border border-gray-200/70 bg-white p-2 text-[10px] leading-relaxed text-gray-500 shadow-xs dark:border-gray-700/60 dark:bg-gray-800/80 dark:text-gray-400">
+                                    {{ getTemperatureGuidance(effectiveTemperature) }}
+                                  </div>
+
+                                  <!-- 温度大于 1 时的警示说明（部分模型仅支持 0.0~1.0） -->
+                                  <div
+                                    v-if="effectiveTemperature > 1"
+                                    class="mt-1.5 flex items-start gap-1.5 rounded-lg border border-amber-200 bg-amber-50/90 p-2 text-[10px] leading-snug text-amber-800 dark:border-amber-900/50 dark:bg-amber-950/40 dark:text-amber-300"
+                                  >
+                                    <svg class="h-3.5 w-3.5 flex-shrink-0 text-amber-500 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                                    </svg>
+                                    <span>当前温度大于 1.0。部分模型仅支持 0.0～1.0 范围，超出范围可能被服务商忽略或引发调用异常，请确认模型官方文档支持。</span>
                                   </div>
                                 </div>
-                                <button
-                                  v-else-if="canToggleThinking"
-                                  type="button"
-                                  class="mt-2 w-full rounded-lg border border-gray-200 bg-white px-2.5 py-2 text-left text-[10px] text-gray-500 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-400"
-                                  @click="toggleThinkingForSession"
-                                >
-                                  关闭思考后，本次会话将以非思考模式发送。
-                                </button>
                               </div>
                             </div>
                         </div>

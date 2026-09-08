@@ -19,7 +19,7 @@ def test_docker_workspace_banner_has_start_running_and_retry_states():
     assert "defineEmits" in source
     assert "关闭 Docker 沙箱提示" in source
     assert '(event: "close")' in source
-    assert "AUTO_DISMISS_SECONDS = 4" in source
+    assert "AUTO_DISMISS_SECONDS = 3" in source
     assert "handleMouseEnter" in source
     assert "handleMouseLeave" in source
 

@@ -1084,6 +1084,7 @@
         :context-compaction-action-loading="contextCompactionActionLoading"
         :thinking-enable-override="thinkingEnableOverride"
         :reasoning-effort-override="reasoningEffortOverride"
+        :temperature-override="temperatureOverride"
         :active-ltm-preference="activeLtmPreference"
         :agent-id="effectiveEmbedChatAgentId"
         :attached-mcp-tool-names="(resourceScope.mcp_tools || []).map((item: any) => String(item.name || '')).filter(Boolean)"
@@ -1107,6 +1108,7 @@
         @update:selected-model="handleEmbedModelSelection"
         @update:thinking-enable-override="thinkingEnableOverride = $event"
         @update:reasoning-effort-override="reasoningEffortOverride = $event"
+        @update:temperature-override="temperatureOverride = $event"
         @send="sendMessage"
         @refresh-context-compactions="refreshEmbedContextCompactions(true)"
         @manual-context-compaction="manualCompactEmbedContext"
@@ -3070,6 +3072,7 @@ const updateBrowserApprovalMode = async (mode: BrowserApprovalMode) => {
 };
 const thinkingEnableOverride = ref<boolean | null>(null);
 const reasoningEffortOverride = ref<ReasoningEffort | null>(null);
+const temperatureOverride = ref<number | null>(null);
 const welcomeCards = ref<Array<{ icon: string; title: string; subtitle: string; prompt: string }>>([]);
 const showPersonalResources = ref(false);
 const personalResourcesTab = ref<PersonalResourceTab>("tokens");
@@ -3301,6 +3304,7 @@ const handleEmbedModelSelection = (model: string) => {
     config.overrideModel = model;
     thinkingEnableOverride.value = null;
     reasoningEffortOverride.value = null;
+    temperatureOverride.value = null;
     saveRoutingSettings();
     if (model) {
         const found = availableModels.value.find((m) => m.model_id === model);
@@ -3313,6 +3317,7 @@ const handleEmbedModelSelection = (model: string) => {
 const resetEmbedThinkingOverrides = () => {
     thinkingEnableOverride.value = null;
     reasoningEffortOverride.value = null;
+    temperatureOverride.value = null;
 };
 const switchToAuto = () => {
     if (isRoutingSettingsLocked.value) {
@@ -8044,6 +8049,9 @@ const sendMessageInternal = async (snapshot: ChatSendSnapshot) => {
     }
     if (reasoningEffortOverride.value !== null) {
       (body.debug_options as Record<string, unknown>).reasoning_effort = reasoningEffortOverride.value;
+    }
+    if (temperatureOverride.value !== null && temperatureOverride.value !== undefined) {
+      (body.debug_options as Record<string, unknown>).temperature = temperatureOverride.value;
     }
     if (knowledgeDatasetIds.length > 0) {
       body.knowledge_dataset_ids = knowledgeDatasetIds;

@@ -15,7 +15,7 @@ const emit = defineEmits<{
   (event: "close"): void;
 }>();
 
-const AUTO_DISMISS_SECONDS = 4;
+const AUTO_DISMISS_SECONDS = 3;
 const remainingSeconds = ref(AUTO_DISMISS_SECONDS);
 let countdownTimer: ReturnType<typeof setInterval> | null = null;
 

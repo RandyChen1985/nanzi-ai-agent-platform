@@ -356,3 +356,37 @@ def test_history_loaders_restore_process_timeline_for_thinking_card():
     assert "hydrateHistoryProcessTimeline" in debug
     assert "item.process_timeline" in embed
     assert "m.process_timeline" in debug
+
+
+def test_chat_input_and_embedchat_temperature_override_contract():
+    chat_input_source = CHAT_INPUT.read_text(encoding="utf-8")
+    embed_chat_source = EMBED_CHAT.read_text(encoding="utf-8")
+
+    # ChatInput 声明了 temperatureOverride 与 update:temperature-override
+    assert "temperatureOverride?: number | null;" in chat_input_source
+    assert "(e: 'update:temperature-override', val: number | null): void;" in chat_input_source
+    assert "effectiveTemperature" in chat_input_source
+    assert "defaultModelTemperature" in chat_input_source
+    assert "setCustomTemperature" in chat_input_source
+    assert "resetTemperatureToDefault" in chat_input_source
+    assert "采样温度 (Temperature)" in chat_input_source
+    assert "PRESET_TEMPERATURES" in chat_input_source
+    assert "getTemperatureGuidance" in chat_input_source
+
+    # EmbedChat 声明了 temperatureOverride 并绑定至 ChatInput 和 debug_options
+    assert "const temperatureOverride = ref<number | null>(null);" in embed_chat_source
+    assert ':temperature-override="temperatureOverride"' in embed_chat_source
+    assert '@update:temperature-override="temperatureOverride = $event"' in embed_chat_source
+    assert "(body.debug_options as Record<string, unknown>).temperature = temperatureOverride.value;" in embed_chat_source
+    assert "temperatureOverride.value = null;" in embed_chat_source
+
+    # 温度大于 1 时的警示提示与高亮样式
+    assert "effectiveTemperature > 1" in chat_input_source
+    assert "当前温度大于 1.0" in chat_input_source
+    assert "text-amber-600" in chat_input_source
+
+    # 触发器按钮上的温度微徽章与详细 Tooltip
+    assert "temperatureSummaryLabel" in chat_input_source
+    assert "modelTriggerTooltip" in chat_input_source
+    assert "自定义温度:" in chat_input_source
+

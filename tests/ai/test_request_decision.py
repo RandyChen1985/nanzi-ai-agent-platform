@@ -37,6 +37,11 @@ def test_current_model_identity_queries_are_detected(query):
         "模型怎么配置",
         "如何切换模型",
         "什么是大语言模型",
+        "帮我介绍一下大模型的温度是什么意思",
+        "我想知道 帮我介绍一下大模型的温度是什么意思",
+        "大模型的上下文长度是什么",
+        "大模型的token是什么意思",
+        "大模型的原理是什么",
     ],
 )
 def test_model_configuration_or_definition_queries_are_not_identity_queries(query):

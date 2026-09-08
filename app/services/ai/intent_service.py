@@ -190,14 +190,25 @@ _EXPLICIT_INTERNAL_DOC_MARKERS = (
     "内部知识库", "企业知识库", "知识库中", "知识库里的", "知识库内",
     "公司手册", "企业手册", "内部手册",
 )
+_CURRENT_MODEL_NON_IDENTITY_MARKERS = (
+    "温度", "temperature", "token", "上下文", "context", "窗口",
+    "参数量", "原理", "概念", "定义", "意思", "解释", "含义",
+    "区别", "特点", "怎么用", "如何用", "怎么设置", "如何设置",
+    "怎么调", "如何调", "为什么", "优缺点", "提示词", "prompt",
+    "微调", "权重", "架构", "嵌入", "embedding",
+)
 _CURRENT_MODEL_IDENTITY_PATTERNS = (
     re.compile(
-        r"(?:当前|本轮|现在|你|系统|平台).{0,16}(?:用|使用|采用|调用|是).{0,8}"
+        r"(?:当前|本轮|现在|本次|你|系统|平台).{0,12}(?:用|使用|采用|调用|是).{0,6}"
         r"(?:什么|哪个|哪一个)?(?:模型|大模型|llm)",
         re.IGNORECASE,
     ),
     re.compile(
-        r"(?:模型|大模型|llm).{0,8}(?:是什么|是哪个|什么模型|名称|名字)",
+        r"(?:当前|本轮|现在|本次).{0,6}(?:模型|大模型|llm)\s*(?:是什么|是哪个|名称|名字)?",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"(?:模型|大模型|llm)\s*(?:的)?\s*(?:名称|名字|标识|版本)\s*(?:是什么|是哪个)?",
         re.IGNORECASE,
     ),
     re.compile(r"what\s+model\s+are\s+you\s+(?:using|running)", re.IGNORECASE),
@@ -339,6 +350,9 @@ def looks_like_current_model_query(user_question: str) -> bool:
     """判断用户是否在询问本轮实际使用的模型身份。"""
     q = (user_question or "").strip()
     if not q:
+        return False
+    q_lower = q.lower()
+    if any(marker in q_lower for marker in _CURRENT_MODEL_NON_IDENTITY_MARKERS):
         return False
     return any(pattern.search(q) for pattern in _CURRENT_MODEL_IDENTITY_PATTERNS)
 
