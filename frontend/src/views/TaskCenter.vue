@@ -295,6 +295,21 @@ const customAgents = computed(() => {
 })
 
 const agentTab = ref<'system' | 'custom'>('system')
+const agentSearchQuery = ref('')
+
+const filterAgentList = (list: AIAgent[]) => {
+  const query = agentSearchQuery.value.trim().toLowerCase()
+  if (!query) return list
+  return list.filter((agent) => {
+    const matchName = String(agent.name || '').toLowerCase().includes(query)
+    const matchDisplay = String(agent.display_name || '').toLowerCase().includes(query)
+    const matchDesc = String(agent.description || '').toLowerCase().includes(query)
+    return matchName || matchDisplay || matchDesc
+  })
+}
+
+const filteredSystemAgents = computed(() => filterAgentList(systemAgents.value))
+const filteredCustomAgents = computed(() => filterAgentList(customAgents.value))
 
 const syncAgentTab = () => {
   if (selectedEditingAgent.value) {
@@ -305,6 +320,20 @@ const syncAgentTab = () => {
   } else {
     agentTab.value = 'system'
   }
+}
+
+const currentAgentTabTotalCount = computed(() => {
+  return agentTab.value === 'system' ? systemAgents.value.length : customAgents.value.length
+})
+
+const showAgentSearchInput = computed(() => {
+  return currentAgentTabTotalCount.value > 5 || !!agentSearchQuery.value.trim()
+})
+
+const switchAgentTab = (tab: 'system' | 'custom') => {
+  if (agentTab.value === tab) return
+  agentTab.value = tab
+  agentSearchQuery.value = ''
 }
 
 const toggleAgentDropdown = () => {
@@ -319,6 +348,7 @@ const toggleAgentDropdown = () => {
 const selectEditingAgent = (agentId: string) => {
   editingTask.value.agent_id = agentId
   showAgentDropdown.value = false
+  agentSearchQuery.value = ''
 }
 const handleAgentDropdownOutsideClick = (e: MouseEvent) => {
   if (agentDropdownRef.value && !agentDropdownRef.value.contains(e.target as Node)) {
@@ -725,6 +755,7 @@ const openCreateModal = async () => {
   notificationChannels.value = ['portal']
   hydrateExecutionOptions({})
   showAgentDropdown.value = false
+  agentSearchQuery.value = ''
   syncAgentTab()
   cronMode.value = 'daily'
   cronConfig.value = { time: '08:00', weekday: 1, day: 1, intervalValue: 30, intervalUnit: 'minutes' }
@@ -744,6 +775,7 @@ const openEditModal = async (task: AgentTask) => {
     : []
   hydrateExecutionOptions(cfg)
   showAgentDropdown.value = false
+  agentSearchQuery.value = ''
   syncAgentTab()
   parseCronToUI(task.cron_expr || '')
   showEditModal.value = true
@@ -1993,10 +2025,10 @@ onMounted(async () => {
 
               <div
                 v-show="showAgentDropdown"
-                class="absolute left-0 right-0 z-50 mt-1 max-h-80 flex flex-col rounded-xl border border-gray-200 bg-white p-1.5 shadow-xl"
+                class="absolute left-0 right-0 z-50 mt-1 max-h-96 flex flex-col rounded-xl border border-gray-200 bg-white p-1.5 shadow-xl"
               >
                 <!-- Tab 切换头 -->
-                <div class="flex items-center gap-1 rounded-lg bg-gray-100/90 p-1 mb-1 shrink-0">
+                <div class="flex items-center gap-1 rounded-lg bg-gray-100/90 p-1 mb-1.5 shrink-0">
                   <button
                     type="button"
                     class="flex flex-1 items-center justify-center gap-1.5 rounded-md py-1 text-xs font-semibold transition-all"
@@ -2005,14 +2037,14 @@ onMounted(async () => {
                         ? 'bg-white text-blue-600 shadow-sm'
                         : 'text-gray-500 hover:text-gray-700'
                     "
-                    @click.stop="agentTab = 'system'"
+                    @click.stop="switchAgentTab('system')"
                   >
                     <span class="h-1.5 w-1.5 rounded-full" :class="agentTab === 'system' ? 'bg-blue-600' : 'bg-gray-400'"></span>
                     系统智能体
                     <span
                       class="rounded px-1 text-[9px] font-normal"
                       :class="agentTab === 'system' ? 'bg-blue-50 text-blue-600' : 'bg-gray-200/70 text-gray-500'"
-                    >{{ systemAgents.length }}</span>
+                    >{{ agentSearchQuery ? `${filteredSystemAgents.length}/${systemAgents.length}` : systemAgents.length }}</span>
                   </button>
 
                   <button
@@ -2023,23 +2055,60 @@ onMounted(async () => {
                         ? 'bg-white text-emerald-600 shadow-sm'
                         : 'text-gray-500 hover:text-gray-700'
                     "
-                    @click.stop="agentTab = 'custom'"
+                    @click.stop="switchAgentTab('custom')"
                   >
                     <span class="h-1.5 w-1.5 rounded-full" :class="agentTab === 'custom' ? 'bg-emerald-600' : 'bg-gray-400'"></span>
                     自定义智能体
                     <span
                       class="rounded px-1 text-[9px] font-normal"
                       :class="agentTab === 'custom' ? 'bg-emerald-50 text-emerald-600' : 'bg-gray-200/70 text-gray-500'"
-                    >{{ customAgents.length }}</span>
+                    >{{ agentSearchQuery ? `${filteredCustomAgents.length}/${customAgents.length}` : customAgents.length }}</span>
                   </button>
                 </div>
 
+                <!-- 搜索过滤输入框：仅当前分类智能体数 > 5 或已有搜索词时展示 -->
+                <div v-if="showAgentSearchInput" class="px-0.5 pb-1.5 shrink-0">
+                  <div class="relative flex items-center">
+                    <svg
+                      class="pointer-events-none absolute left-2.5 h-3.5 w-3.5 text-gray-400"
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                    >
+                      <path
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        stroke-width="2"
+                        d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
+                      />
+                    </svg>
+                    <input
+                      v-model="agentSearchQuery"
+                      type="text"
+                      placeholder="搜索智能体名称、标识或说明..."
+                      class="w-full rounded-lg border border-gray-200 bg-gray-50/70 py-1.5 pl-8 pr-7 text-xs text-gray-700 placeholder-gray-400 outline-none transition-all focus:border-primary/50 focus:bg-white focus:ring-2 focus:ring-primary/20"
+                      @click.stop
+                    />
+                    <button
+                      v-if="agentSearchQuery"
+                      type="button"
+                      class="absolute right-2 flex h-4 w-4 items-center justify-center rounded-full text-gray-400 hover:bg-gray-200 hover:text-gray-600 transition-colors"
+                      title="清空搜索"
+                      @click.stop="agentSearchQuery = ''"
+                    >
+                      <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                      </svg>
+                    </button>
+                  </div>
+                </div>
+
                 <!-- Tab 内容滚动区 -->
-                <div class="flex-1 overflow-y-auto space-y-1 pr-0.5">
+                <div class="flex-1 overflow-y-auto space-y-1 pr-0.5 min-h-[160px]">
                   <!-- 系统智能体 Tab 页面 -->
                   <template v-if="agentTab === 'system'">
                     <button
-                      v-for="agent in systemAgents"
+                      v-for="agent in filteredSystemAgents"
                       :key="agent.id"
                       type="button"
                       class="my-0.5 flex w-full cursor-pointer items-start gap-2.5 rounded-lg border p-2 text-left transition-all"
@@ -2085,13 +2154,26 @@ onMounted(async () => {
                         </div>
                       </div>
                     </button>
-                    <p v-if="!systemAgents.length" class="px-3 py-6 text-center text-xs text-gray-400">暂无系统智能体</p>
+                    <div v-if="!filteredSystemAgents.length" class="px-3 py-8 text-center text-xs text-gray-400">
+                      <p v-if="agentSearchQuery">
+                        未找到与 "<span class="text-gray-600 font-medium">{{ agentSearchQuery }}</span>" 匹配的系统智能体
+                      </p>
+                      <p v-else>暂无系统智能体</p>
+                      <button
+                        v-if="agentSearchQuery"
+                        type="button"
+                        class="mt-2 text-[11px] text-primary hover:underline"
+                        @click.stop="agentSearchQuery = ''"
+                      >
+                        清空搜索条件
+                      </button>
+                    </div>
                   </template>
 
                   <!-- 自定义智能体 Tab 页面 -->
                   <template v-else-if="agentTab === 'custom'">
                     <button
-                      v-for="agent in customAgents"
+                      v-for="agent in filteredCustomAgents"
                       :key="agent.id"
                       type="button"
                       class="my-0.5 flex w-full cursor-pointer items-start gap-2.5 rounded-lg border p-2 text-left transition-all"
@@ -2130,7 +2212,20 @@ onMounted(async () => {
                         </div>
                       </div>
                     </button>
-                    <p v-if="!customAgents.length" class="px-3 py-6 text-center text-xs text-gray-400">暂无自定义智能体</p>
+                    <div v-if="!filteredCustomAgents.length" class="px-3 py-8 text-center text-xs text-gray-400">
+                      <p v-if="agentSearchQuery">
+                        未找到与 "<span class="text-gray-600 font-medium">{{ agentSearchQuery }}</span>" 匹配的自定义智能体
+                      </p>
+                      <p v-else>暂无自定义智能体</p>
+                      <button
+                        v-if="agentSearchQuery"
+                        type="button"
+                        class="mt-2 text-[11px] text-primary hover:underline"
+                        @click.stop="agentSearchQuery = ''"
+                      >
+                        清空搜索条件
+                      </button>
+                    </div>
                   </template>
                 </div>
               </div>

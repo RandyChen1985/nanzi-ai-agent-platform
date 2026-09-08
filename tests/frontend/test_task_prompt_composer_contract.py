@@ -42,11 +42,12 @@ def test_task_prompt_composer_exposes_model_approval_and_resources():
     assert "showThinkingPanel" in text
     assert "scrollSelectedModelIntoView" in text
     assert "modelListScrollRef" in text
-    assert 'data-model-current' in text
-    assert "默认思考" in text or "已开启" in text
-    assert "关闭本次任务思考" in text
     assert "({{ option.value }})" not in text
     assert "本次任务" in text
+    assert "modelSearchQuery" in text
+    assert "filteredAvailableModels" in text
+    assert "shouldShowDefaultModelOption" in text
+    assert "搜索模型名称或标识..." in text
 
 
 def test_task_prompt_composer_panels_escape_modal_clipping():
@@ -146,6 +147,10 @@ def test_task_center_groups_agents_by_system_and_custom():
     assert "agentTab" in text
     assert "syncAgentTab" in text
     assert "toggleAgentDropdown" in text
+    assert "agentSearchQuery" in text
+    assert "filteredSystemAgents" in text
+    assert "filteredCustomAgents" in text
+    assert "搜索智能体名称、标识或说明..." in text
     assert "系统智能体" in text
     assert "自定义智能体" in text
     assert "MAIN" in text

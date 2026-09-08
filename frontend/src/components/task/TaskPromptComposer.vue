@@ -97,6 +97,23 @@ const setTriggerRef = (panel: Exclude<PanelKey, null>, el: unknown) => {
   triggerRefs.value[panel] = el instanceof HTMLElement ? el : null
 }
 const availableModels = ref<AIModel[]>([])
+const modelSearchQuery = ref('')
+const filteredAvailableModels = computed(() => {
+  const list = availableModels.value
+  const q = modelSearchQuery.value.trim().toLowerCase()
+  if (!q) return list
+  return list.filter((item) => {
+    const name = String(item.name || '').toLowerCase()
+    const id = String(item.model_id || '').toLowerCase()
+    return name.includes(q) || id.includes(q)
+  })
+})
+
+const shouldShowDefaultModelOption = computed(() => {
+  const q = modelSearchQuery.value.trim().toLowerCase()
+  if (!q) return true
+  return '使用智能体默认模型'.includes(q) || '默认模型'.includes(q)
+})
 const optionLists = ref<Record<'datasets' | 'knowledge_bases' | 'skills' | 'mcp_tools', TaskScopeItem[]>>({
   datasets: [],
   knowledge_bases: [],
@@ -494,6 +511,7 @@ const closePanel = () => {
   cancelPendingClose()
   activePanel.value = null
   showThinkingPanel.value = false
+  modelSearchQuery.value = ''
 }
 
 const scrollSelectedModelIntoView = () => {
@@ -517,6 +535,7 @@ const scheduleClose = (event?: PointerEvent) => {
     if (focused && panelRef.value?.contains(focused)) return
     activePanel.value = null
     showThinkingPanel.value = false
+    modelSearchQuery.value = ''
   }, CLOSE_DELAY_MS)
 }
 
@@ -525,6 +544,7 @@ const togglePanel = (panel: PanelKey) => {
   const next = activePanel.value === panel ? null : panel
   activePanel.value = next
   optionSearch.value = ''
+  modelSearchQuery.value = ''
   showThinkingPanel.value = false
   if (next === 'skills') skillScopeTab.value = 'global'
   if (next === 'mcp_tools') {
@@ -879,9 +899,48 @@ watch(
             <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
           </button>
         </div>
+
+        <!-- 模型搜索过滤输入框 -->
+        <div class="shrink-0 border-b border-gray-100 p-1.5">
+          <div class="relative flex items-center">
+            <svg
+              class="pointer-events-none absolute left-2.5 h-3.5 w-3.5 text-gray-400"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                stroke-width="2"
+                d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
+              />
+            </svg>
+            <input
+              v-model="modelSearchQuery"
+              type="text"
+              placeholder="搜索模型名称或标识..."
+              class="w-full rounded-lg border border-gray-200 bg-gray-50/70 py-1.5 pl-8 pr-7 text-xs text-gray-700 placeholder-gray-400 outline-none transition-all focus:border-primary/50 focus:bg-white focus:ring-2 focus:ring-primary/20"
+              @click.stop
+            />
+            <button
+              v-if="modelSearchQuery"
+              type="button"
+              class="absolute right-2 flex h-4 w-4 items-center justify-center rounded-full text-gray-400 hover:bg-gray-200 hover:text-gray-600 transition-colors"
+              title="清空搜索"
+              @click.stop="modelSearchQuery = ''"
+            >
+              <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
+        </div>
+
         <div class="flex min-h-0 flex-1 flex-col sm:flex-row">
           <div ref="modelListScrollRef" class="min-h-0 min-w-0 flex-1 overflow-y-auto p-1">
             <button
+              v-if="shouldShowDefaultModelOption"
               type="button"
               class="flex w-full items-center justify-between rounded-lg px-2.5 py-1.5 text-left text-xs"
               :class="!model ? 'bg-primary/5 font-bold text-primary' : 'text-gray-700 hover:bg-gray-50'"
@@ -892,7 +951,7 @@ watch(
               <span v-if="!model">✓</span>
             </button>
             <button
-              v-for="item in availableModels"
+              v-for="item in filteredAvailableModels"
               :key="item.model_id"
               type="button"
               class="mt-0.5 flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-left text-xs"
@@ -930,6 +989,23 @@ watch(
                 </button>
               </span>
             </button>
+
+            <!-- 无匹配时的空状态 -->
+            <div
+              v-if="filteredAvailableModels.length === 0 && !shouldShowDefaultModelOption"
+              class="px-3 py-6 text-center text-xs text-gray-400"
+            >
+              <p v-if="modelSearchQuery">未找到与 "<span class="text-gray-600 font-medium">{{ modelSearchQuery }}</span>" 匹配的模型</p>
+              <p v-else>暂无可用模型</p>
+              <button
+                v-if="modelSearchQuery"
+                type="button"
+                class="mt-1.5 text-[11px] text-primary hover:underline"
+                @click.stop="modelSearchQuery = ''"
+              >
+                清空搜索
+              </button>
+            </div>
           </div>
 
           <div
