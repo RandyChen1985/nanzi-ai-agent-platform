@@ -8,6 +8,7 @@ import { renderMarkdown } from '../utils/markdown'
 import { copyToClipboard } from '../utils/clipboard'
 import { generateQRCodeDataUrl } from '../utils/qrcode'
 import { checkPasswordPolicy } from '../utils/passwordPolicy'
+import { MENU_TREE } from '../constants/permissions'
 
 const { branding, loadBranding } = useBranding()
 
@@ -446,6 +447,32 @@ const fetchPermissions = async () => {
     }
 }
 
+// 建立 MENU_TREE 权限 ID 到标准中文标签的扁平化字典映射
+const permissionLabelMap = computed(() => {
+    const map = new Map<string, string>()
+    const traverse = (nodes: any[]) => {
+        if (!nodes || !Array.isArray(nodes)) return
+        for (const node of nodes) {
+            if (node.id && node.label) {
+                map.set(node.id, node.label)
+            }
+            if (node.children && Array.isArray(node.children)) {
+                traverse(node.children)
+            }
+        }
+    }
+    traverse(MENU_TREE)
+    return map
+})
+
+const getPermissionDisplayName = (item: any): string => {
+    if (!item) return ''
+    if (item.id && permissionLabelMap.value.has(item.id)) {
+        return permissionLabelMap.value.get(item.id)!
+    }
+    return item.display_name || item.name || item.id || ''
+}
+
 watch(activeTab, (val) => {
     const nextQuery: Record<string, any> = { ...route.query }
     if (val === 'info') {
@@ -489,10 +516,8 @@ onMounted(() => {
 <template>
 <div class="min-h-full bg-white">
     <div>
-        <h2 class="px-4 pt-5 text-lg font-bold text-gray-900 sm:px-6 sm:pt-6 sm:text-xl">个人中心</h2>
-        
         <!-- Tabs -->
-        <div class="mt-4 border-b border-gray-200 px-4 sm:mt-6 sm:px-6">
+        <div class="border-b border-gray-200 px-4 sm:px-6">
             <nav class="-mb-px flex space-x-4 sm:space-x-8 overflow-x-auto">
                 <button
                     @click="activeTab = 'info'"
@@ -674,16 +699,22 @@ onMounted(() => {
                             </div>
                         </div>
 
-                        <!-- 右侧：用户ID与创建时间（节省空间，提升布局利用率） -->
+                        <!-- 右侧：用户ID与时间信息（上下双行结构排布，紧凑规整） -->
                         <div class="flex items-center gap-4 sm:gap-6 pt-2 sm:pt-0 border-t sm:border-t-0 border-gray-200/60 sm:border-l sm:border-gray-200 sm:pl-6 shrink-0">
                             <div>
                                 <span class="block text-gray-400 font-medium uppercase text-[10px] mb-0.5">用户ID</span>
                                 <span class="font-mono text-gray-800 font-bold text-xs sm:text-sm">{{ userInfo.user_id }}</span>
                             </div>
-                            <div class="w-px h-7 bg-gray-200 hidden sm:block"></div>
-                            <div>
-                                <span class="block text-gray-400 font-medium uppercase text-[10px] mb-0.5">创建时间</span>
-                                <span class="text-gray-700 text-xs sm:text-sm font-medium">{{ userInfo.created_at || '-' }}</span>
+                            <div class="w-px h-9 bg-gray-200 hidden sm:block"></div>
+                            <div class="flex flex-col justify-center gap-1.5">
+                                <div class="flex items-center gap-2">
+                                    <span class="text-gray-400 font-medium text-[10px] sm:text-[11px] shrink-0">创建时间</span>
+                                    <span class="font-mono text-gray-700 text-xs sm:text-[13px] font-medium">{{ userInfo.created_at || '-' }}</span>
+                                </div>
+                                <div class="flex items-center gap-2">
+                                    <span class="text-gray-400 font-medium text-[10px] sm:text-[11px] shrink-0">上次登录</span>
+                                    <span class="font-mono text-gray-700 text-xs sm:text-[13px] font-medium">{{ userInfo.last_login_at || '-' }}</span>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -1151,7 +1182,7 @@ onMounted(() => {
                                 <span class="text-[10px] font-bold text-gray-400">{{ permissions.details?.menus?.length || 0 }}</span>
                             </div>
                             <div class="p-3 flex flex-wrap gap-1.5">
-                                <span v-for="item in permissions.details?.menus" :key="item.id" class="px-2 py-1 bg-indigo-50 text-indigo-700 rounded text-[10px] font-bold border border-indigo-100">{{ item.display_name }}</span>
+                                <span v-for="item in permissions.details?.menus" :key="item.id" class="px-2 py-1 bg-indigo-50 text-indigo-700 rounded text-[10px] font-bold border border-indigo-100">{{ getPermissionDisplayName(item) }}</span>
                             </div>
                         </div>
                          <!-- Elements -->
@@ -1161,7 +1192,7 @@ onMounted(() => {
                                 <span class="text-[10px] font-bold text-gray-400">{{ permissions.details?.elements?.length || 0 }}</span>
                             </div>
                             <div class="p-3 flex flex-wrap gap-1.5">
-                                <span v-for="item in permissions.details?.elements" :key="item.id" class="px-2 py-1 bg-rose-50 text-rose-700 rounded text-[10px] font-bold border border-rose-100">{{ item.display_name }}</span>
+                                <span v-for="item in permissions.details?.elements" :key="item.id" class="px-2 py-1 bg-rose-50 text-rose-700 rounded text-[10px] font-bold border border-rose-100">{{ getPermissionDisplayName(item) }}</span>
                             </div>
                         </div>
                     </div>

@@ -54,6 +54,8 @@ async def sso_login(
 
         # 注册在线状态到 Redis
         await AuthService.register_online_state(api_key, user)
+        # 记录用户登录时间
+        await AuthService.record_user_login(user_id, db=db)
         
         # 聚合权限信息返回给前端
         from app.services.permission_service import PermissionService
@@ -104,6 +106,7 @@ async def login(
             samesite="lax",
             secure=False
         )
+        await AuthService.record_user_login(int(user["user_id"]), db=db)
 
     # 2. Password Login
     elif request.username and request.password:
@@ -148,6 +151,8 @@ async def login(
             )
             # 注册在线状态到 Redis
             await AuthService.register_online_state(api_key, user)
+            # 记录用户登录时间
+            await AuthService.record_user_login(user_id, db=db)
         elif result["status"] == "error_no_password":
              raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN, 
@@ -218,6 +223,8 @@ async def two_factor_login(
     )
     # 注册在线状态到 Redis
     await AuthService.register_online_state(api_key, user)
+    # 记录用户登录时间
+    await AuthService.record_user_login(user_id, db=db)
 
     # 聚合权限信息返回给前端
     from app.services.permission_service import PermissionService
@@ -344,6 +351,7 @@ async def get_current_user_info(
             "org_path": user.get("org_path"),
             "extra_data": user.get("extra_data"),
             "created_at": user.get("created_at"),
+            "last_login_at": user_obj.last_login_at.strftime("%Y-%m-%d %H:%M:%S") if (user_obj and user_obj.last_login_at) else None,
             "remark": user.get("remark"),
             "status": "active",
             "two_factor_enabled": two_factor_enabled,

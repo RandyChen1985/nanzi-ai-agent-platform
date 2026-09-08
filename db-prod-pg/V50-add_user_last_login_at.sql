@@ -1,0 +1,2 @@
+-- V50: 增加用户上次登录时间字段
+ALTER TABLE ai_agent_users ADD COLUMN IF NOT EXISTS last_login_at TIMESTAMP WITHOUT TIME ZONE NULL;
