@@ -22,9 +22,10 @@ logger = logging.getLogger(__name__)
 # 发送重试：仅对网络/传输类异常重试；渠道返回的业务错误码（如 webhook 配置错误）不重试
 _SEND_RETRY_DELAYS_SEC = (2.0, 5.0)
 _TRUNCATED_NOTE = "\n\n…（内容超出渠道长度限制，已截断）"
-# 企业微信 markdown 上限 4096 字节；钉钉 markdown 上限 20000 字节，留出余量
+# 企业微信 markdown 上限 4096 字节；钉钉 markdown 上限 20000 字节；飞书富文本/卡片建议 20000 字节，留出余量
 _WECHAT_WORK_MAX_BYTES = 4000
 _DINGTALK_MAX_BYTES = 18000
+_FEISHU_MAX_BYTES = 20000
 
 
 def _truncate_utf8(text: str, max_bytes: int) -> str:
@@ -67,6 +68,11 @@ class NotificationService:
         "wechat_work": {
             "is_enabled": False,
             "webhook_url": ""
+        },
+        "feishu": {
+            "is_enabled": False,
+            "webhook_url": "",
+            "secret": ""
         },
         "email": {
             "is_enabled": False,
@@ -176,6 +182,8 @@ class NotificationService:
             return await cls._test_dingtalk(config_data)
         elif channel_type == "wechat_work":
             return await cls._test_wechat_work(config_data)
+        elif channel_type == "feishu":
+            return await cls._test_feishu(config_data)
         elif channel_type == "email":
             return await cls._test_email(config_data)
         return False, f"Unsupported channel type: {channel_type}"
@@ -234,6 +242,57 @@ class NotificationService:
                     return True, ""
                 else:
                     return False, f"{resp_data.get('errmsg')} (Code: {resp_data.get('errcode')})"
+        except Exception as e:
+            return False, str(e)
+
+    @classmethod
+    async def _test_feishu(cls, config: Dict[str, Any]) -> Tuple[bool, str]:
+        webhook_url = config.get("webhook_url")
+        secret = config.get("secret")
+        if not webhook_url:
+            return False, "Webhook 地址不能为空"
+
+        try:
+            timestamp = str(int(time.time()))
+            payload: Dict[str, Any] = {
+                "msg_type": "interactive",
+                "card": {
+                    "schema": "2.0",
+                    "header": {
+                        "title": {
+                            "tag": "plain_text",
+                            "content": "消息通知连通性测试"
+                        },
+                        "template": "blue"
+                    },
+                    "body": {
+                        "elements": [
+                            {
+                                "tag": "markdown",
+                                "content": "您的 AI 智能体平台个人中心飞书通知渠道已配置成功，测试消息发送正常。"
+                            }
+                        ]
+                    }
+                }
+            }
+            if secret:
+                string_to_sign = f"{timestamp}\n{secret}"
+                hmac_code = hmac.new(
+                    string_to_sign.encode("utf-8"),
+                    digestmod=hashlib.sha256
+                ).digest()
+                sign = base64.b64encode(hmac_code).decode("utf-8")
+                payload["timestamp"] = timestamp
+                payload["sign"] = sign
+
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                response = await client.post(webhook_url, json=payload)
+                resp_data = response.json()
+                code = resp_data.get("code") if "code" in resp_data else resp_data.get("StatusCode")
+                if code == 0:
+                    return True, ""
+                errmsg = resp_data.get("msg") or resp_data.get("StatusMessage") or str(resp_data)
+                return False, f"{errmsg} (Code: {code})"
         except Exception as e:
             return False, str(e)
 
@@ -350,6 +409,72 @@ class NotificationService:
             return (True, "") if data.get("errcode") == 0 else (False, str(data.get("errmsg") or data))
 
         return await _send_with_retries(send_once, channel="wechat_work")
+
+    @classmethod
+    async def send_feishu(cls, db: AsyncSession, user_id: int, title: str, content: str) -> Tuple[bool, str]:
+        """Send message using user's configured Feishu channel"""
+        db_record = await cls.get_config_by_type_raw(db, user_id, "feishu")
+        if not db_record or not db_record.config_json:
+            return False, "用户未配置飞书通知"
+
+        data = json.loads(db_record.config_json)
+        if not data.get("is_enabled"):
+            return False, "用户未启用飞书通知"
+
+        return await cls._send_feishu_msg_real(data, title, content)
+
+    @classmethod
+    async def _send_feishu_msg_real(cls, config: Dict[str, Any], title: str, content: str) -> Tuple[bool, str]:
+        webhook_url = config.get("webhook_url")
+        secret = config.get("secret")
+        if not webhook_url:
+            return False, "用户未配置飞书 Webhook 地址"
+
+        body = _truncate_utf8(content, _FEISHU_MAX_BYTES)
+
+        async def send_once() -> Tuple[bool, str]:
+            timestamp = str(int(time.time()))
+            payload: Dict[str, Any] = {
+                "msg_type": "interactive",
+                "card": {
+                    "schema": "2.0",
+                    "header": {
+                        "title": {
+                            "tag": "plain_text",
+                            "content": title or "任务结果通知"
+                        },
+                        "template": "blue"
+                    },
+                    "body": {
+                        "elements": [
+                            {
+                                "tag": "markdown",
+                                "content": body
+                            }
+                        ]
+                    }
+                }
+            }
+            if secret:
+                string_to_sign = f"{timestamp}\n{secret}"
+                hmac_code = hmac.new(
+                    string_to_sign.encode("utf-8"),
+                    digestmod=hashlib.sha256
+                ).digest()
+                sign = base64.b64encode(hmac_code).decode("utf-8")
+                payload["timestamp"] = timestamp
+                payload["sign"] = sign
+
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                response = await client.post(webhook_url, json=payload)
+                resp_data = response.json()
+                code = resp_data.get("code") if "code" in resp_data else resp_data.get("StatusCode")
+                if code == 0:
+                    return True, ""
+                errmsg = resp_data.get("msg") or resp_data.get("StatusMessage") or str(resp_data)
+                return False, f"{errmsg} (Code: {code})"
+
+        return await _send_with_retries(send_once, channel="feishu")
 
     @staticmethod
     def parse_email_recipients(raw: Any) -> List[str]:

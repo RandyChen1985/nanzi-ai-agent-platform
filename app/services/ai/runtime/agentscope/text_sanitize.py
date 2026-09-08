@@ -44,6 +44,7 @@ _TASKCENTER_META_MARKERS = (
     "send_portal_notification",
     "send_dingtalk_message",
     "send_wechat_work_message",
+    "send_feishu_message",
     "无需也不应调用",
     "无需、也不应调用",
     "将由系统统一投递",

@@ -47,6 +47,7 @@ _PROVISIONAL_PATTERNS = (
 _EXTERNAL_SENDERS = {
     "dingtalk": "send_dingtalk",
     "wechat_work": "send_wechat_work",
+    "feishu": "send_feishu",
     "email": "send_email",
 }
 

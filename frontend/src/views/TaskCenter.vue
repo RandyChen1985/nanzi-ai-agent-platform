@@ -364,6 +364,7 @@ const notificationChannelOptions = [
   { value: 'portal', label: '站内消息' },
   { value: 'dingtalk', label: '钉钉' },
   { value: 'wechat_work', label: '企业微信' },
+  { value: 'feishu', label: '飞书' },
   { value: 'email', label: '邮件' },
 ] as const
 const notificationChannels = ref<string[]>(['portal'])
@@ -376,6 +377,7 @@ const promptOverlapsNotificationChannels = computed(() => {
     portal: ['站内', '铃铛', 'inbox', '门户消息', '消息中心'],
     dingtalk: ['钉钉', 'dingtalk'],
     wechat_work: ['企微', '企业微信', 'wechat'],
+    feishu: ['飞书', 'feishu', 'lark'],
     email: ['邮件', '邮箱', 'email', 'smtp'],
   }
   return notificationChannels.value.some((channel) =>
@@ -386,7 +388,7 @@ const isNotificationChannelReady = (channel: string) => {
   if (channel === 'portal') return true
   const cfg = personalNotificationConfigs.value[channel]
   if (!cfg || !cfg.is_enabled) return false
-  if (channel === 'dingtalk' || channel === 'wechat_work') {
+  if (channel === 'dingtalk' || channel === 'wechat_work' || channel === 'feishu') {
     return Boolean(String(cfg.webhook_url || '').trim())
   }
   if (channel === 'email') {

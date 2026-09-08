@@ -87,6 +87,7 @@ const emit = defineEmits<{
   openDingTalkConfig: [name: string];
   openEmailConfig: [name: string];
   openWeChatWorkConfig: [name: string];
+  openFeishuConfig: [name: string];
   openRagSelector: [type: 'agent' | 'dataset', mode: 'app_id' | 'dataset_ids' | 'agent_kb_immediate'];
   copySystemPrompt: [];
   nextStep: [];
@@ -987,6 +988,9 @@ const externalCreationMissingFields = computed(() => {
                         </button>
                         <button v-if="tool.name === 'send_wechat_work_message'" type="button" @click="emit('openWeChatWorkConfig', tool.name)" class="tool-action-btn" title="企微">
                           <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" /></svg>
+                        </button>
+                        <button v-if="tool.name === 'send_feishu_message'" type="button" @click="emit('openFeishuConfig', tool.name)" class="tool-action-btn" title="飞书">
+                          <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" /></svg>
                         </button>
                         <button
                           v-if="tool.name === 'search_knowledge_base' && (selectedAgent?.engine_type || agentForm.engine_type) === 'LOCAL'"

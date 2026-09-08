@@ -29,7 +29,7 @@ export interface AgentTask {
   last_attempt_at?: string
   last_finished_at?: string
   last_alert_at?: string
-  /** May include notification_channels: portal | dingtalk | wechat_work | email */
+  /** May include notification_channels: portal | dingtalk | wechat_work | feishu | email */
   config?: {
     notification_channels?: string[]
     task_metrics?: Record<string, any>
