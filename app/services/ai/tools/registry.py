@@ -19,6 +19,7 @@ from app.services.ai.tools.task_manager_tools import (
 from app.services.ai.tools.notification_tools import (
     send_dingtalk_message,
     send_email,
+    send_feishu_message,
     send_portal_notification,
     send_wechat_work_message,
 )
@@ -290,6 +291,7 @@ class ToolRegistry:
     _dingtalk_tool = send_dingtalk_message()
     _email_tool = send_email()
     _wechat_work_tool = send_wechat_work_message()
+    _feishu_tool = send_feishu_message()
     _portal_notification_tool = send_portal_notification()
 
     _registry: Dict[str, Any] = {
@@ -312,6 +314,7 @@ class ToolRegistry:
         "send_dingtalk_message": _dingtalk_tool,
         "send_email": _email_tool,
         "send_wechat_work_message": _wechat_work_tool,
+        "send_feishu_message": _feishu_tool,
         "send_portal_notification": _portal_notification_tool,
         # Register Jira Tools
         "jira_search": _jira_search,

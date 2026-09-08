@@ -42,11 +42,12 @@ def test_task_prompt_composer_exposes_model_approval_and_resources():
     assert "showThinkingPanel" in text
     assert "scrollSelectedModelIntoView" in text
     assert "modelListScrollRef" in text
-    assert 'data-model-current' in text
-    assert "默认思考" in text or "已开启" in text
-    assert "关闭本次任务思考" in text
     assert "({{ option.value }})" not in text
     assert "本次任务" in text
+    assert "modelSearchQuery" in text
+    assert "filteredAvailableModels" in text
+    assert "shouldShowDefaultModelOption" in text
+    assert "搜索模型名称或标识..." in text
 
 
 def test_task_prompt_composer_panels_escape_modal_clipping():
@@ -95,8 +96,26 @@ def test_task_center_wires_prompt_composer_into_config():
     assert "hydrateExecutionOptions" in text
     assert "taskThinkingEnableOverride" in text
     assert "taskReasoningEffortOverride" in text
+    assert "taskTemperatureOverride" in text
     assert "update:thinking-enable-override" in text
     assert "update:reasoning-effort-override" in text
+    assert "update:temperature-override" in text
+    assert "baseConfig.temperature" in text
+
+
+def test_task_prompt_composer_temperature_controls_contract():
+    text = COMPOSER.read_text(encoding="utf-8")
+    assert "temperatureOverride" in text
+    assert "temperatureSummaryLabel" in text
+    assert "effectiveTemperature" in text
+    assert "采样温度 (Temperature)" in text
+    assert "isTemperatureOverLimit" in text
+    assert "严谨 0.2" in text
+    assert "均衡 0.7" in text
+    assert "发散 1.0" in text
+    assert "跟随默认" in text
+    assert "当前温度大于 1.0" in text
+    assert "modelTriggerTooltip" in text
 
 
 def test_task_thinking_effort_options_are_expanded():
@@ -115,4 +134,34 @@ def test_scheduler_reads_task_execution_options_from_config():
     assert "knowledge_dataset_ids" in scheduler
     assert "metadata_dataset_ids" in scheduler
     assert "DEFAULT_APPROVAL_MODE = \"allow\"" in options
+    assert "TEMPERATURE_KEY = \"temperature\"" in options
+    assert "normalize_temperature" in options
     assert "resource_scope" in options
+
+
+def test_task_center_groups_agents_by_system_and_custom():
+    text = TASK_CENTER.read_text(encoding="utf-8")
+    assert "systemAgents" in text
+    assert "customAgents" in text
+    assert "isMainAgent" in text
+    assert "agentTab" in text
+    assert "syncAgentTab" in text
+    assert "toggleAgentDropdown" in text
+    assert "agentSearchQuery" in text
+    assert "filteredSystemAgents" in text
+    assert "filteredCustomAgents" in text
+    assert "搜索智能体名称、标识或说明..." in text
+    assert "系统智能体" in text
+    assert "自定义智能体" in text
+    assert "MAIN" in text
+    assert "SYSTEM" in text
+    assert "CUSTOM" in text
+    assert "systemAgents.value[0]?.id || agents.value[0]?.id" in text
+
+
+def test_agent_manager_service_prioritizes_system_agents():
+    agent_manager = (ROOT / "app" / "services" / "ai" / "agent_manager.py").read_text(encoding="utf-8")
+    assert "system_first = case((AIAgent.is_system == True, 0), else_=1)" in agent_manager
+    # 验证 system_first 在 sort_order 之前
+    assert agent_manager.index("system_first") < agent_manager.index("AIAgent.sort_order.desc()")
+

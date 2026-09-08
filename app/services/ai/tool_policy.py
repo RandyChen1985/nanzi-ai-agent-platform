@@ -212,6 +212,15 @@ _KNOWN_TOOL_METADATA: Mapping[str, ToolMetadata] = {
         idempotent="no",
         nudge_mode="explicit",
     ),
+    "send_feishu_message": ToolMetadata(
+        capability="notification",
+        source="platform_control",
+        freshness="current_turn",
+        side_effect="external_message",
+        confirmation="ask",
+        idempotent="no",
+        nudge_mode="explicit",
+    ),
     "send_portal_notification": ToolMetadata(
         capability="notification",
         source="platform_control",

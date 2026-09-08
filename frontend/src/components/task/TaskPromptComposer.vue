@@ -47,6 +47,7 @@ const props = withDefaults(
     resourceScope: TaskResourceScope
     thinkingEnableOverride?: boolean | null
     reasoningEffortOverride?: ReasoningEffort | null
+    temperatureOverride?: number | null
     agentId?: string | null
   }>(),
   {
@@ -63,6 +64,7 @@ const emit = defineEmits<{
   (e: 'update:resourceScope', value: TaskResourceScope): void
   (e: 'update:thinking-enable-override', value: boolean | null): void
   (e: 'update:reasoning-effort-override', value: ReasoningEffort | null): void
+  (e: 'update:temperature-override', value: number | null): void
 }>()
 
 type PanelKey = 'model' | 'approval' | 'datasets' | 'knowledge_bases' | 'skills' | 'mcp_tools' | null
@@ -95,6 +97,23 @@ const setTriggerRef = (panel: Exclude<PanelKey, null>, el: unknown) => {
   triggerRefs.value[panel] = el instanceof HTMLElement ? el : null
 }
 const availableModels = ref<AIModel[]>([])
+const modelSearchQuery = ref('')
+const filteredAvailableModels = computed(() => {
+  const list = availableModels.value
+  const q = modelSearchQuery.value.trim().toLowerCase()
+  if (!q) return list
+  return list.filter((item) => {
+    const name = String(item.name || '').toLowerCase()
+    const id = String(item.model_id || '').toLowerCase()
+    return name.includes(q) || id.includes(q)
+  })
+})
+
+const shouldShowDefaultModelOption = computed(() => {
+  const q = modelSearchQuery.value.trim().toLowerCase()
+  if (!q) return true
+  return '使用智能体默认模型'.includes(q) || '默认模型'.includes(q)
+})
 const optionLists = ref<Record<'datasets' | 'knowledge_bases' | 'skills' | 'mcp_tools', TaskScopeItem[]>>({
   datasets: [],
   knowledge_bases: [],
@@ -162,6 +181,69 @@ const thinkingSummaryLabel = computed(() => {
 const isFollowingModelEffort = computed(
   () => props.reasoningEffortOverride === null || props.reasoningEffortOverride === undefined,
 )
+
+/** 模型默认温度（未配置则为 0.7） */
+const defaultModelTemperature = computed(() => {
+  const t = (selectedModelConfig.value as any)?.temperature
+  return typeof t === 'number' && Number.isFinite(t) ? t : 0.7
+})
+
+/** 实际生效温度 */
+const effectiveTemperature = computed(() => {
+  if (props.temperatureOverride !== null && props.temperatureOverride !== undefined) {
+    return props.temperatureOverride
+  }
+  return defaultModelTemperature.value
+})
+
+/** 是否存在手动温度覆盖 */
+const hasTemperatureOverride = computed(
+  () => props.temperatureOverride !== null && props.temperatureOverride !== undefined,
+)
+
+/** 温度微徽章文案：仅当手动覆盖时显示 [T: 0.2] */
+const temperatureSummaryLabel = computed(() => {
+  if (!hasTemperatureOverride.value || props.temperatureOverride === null || props.temperatureOverride === undefined) {
+    return ''
+  }
+  return `T: ${props.temperatureOverride.toFixed(props.temperatureOverride % 1 === 0 ? 1 : 2).replace(/\.?0+$/, (m) => (m.length > 2 ? '.0' : m))}`
+})
+
+const isTemperatureOverLimit = computed(() => effectiveTemperature.value > 1.0)
+
+const getTemperatureGuidance = (temp: number) => {
+  if (temp <= 0.3) return '适合代码、SQL、数据提取与逻辑严密任务'
+  if (temp <= 0.8) return '适合常规问答、通用对话与分析任务'
+  if (temp <= 1.2) return '适合创意发散、头脑风暴与开放写作'
+  return '高发散度：回答极具多样性，但可能降低连贯性'
+}
+
+const setTemperaturePreset = (temp: number) => {
+  emit('update:temperature-override', Math.round(temp * 100) / 100)
+}
+
+const handleTemperatureSliderChange = (event: Event) => {
+  const val = parseFloat((event.target as HTMLInputElement).value)
+  if (Number.isFinite(val)) {
+    emit('update:temperature-override', Math.round(val * 100) / 100)
+  }
+}
+
+const resetTemperatureOverride = () => {
+  emit('update:temperature-override', null)
+}
+
+const modelTriggerTooltip = computed(() => {
+  const base = selectedModelConfig.value?.name || selectedModelConfig.value?.model_id || '当前模型'
+  const parts = [`模型: ${base}`]
+  if (selectedModelConfig.value?.thinking_enable) {
+    parts.push(`思考: ${thinkingSummaryLabel.value || '开启'}`)
+  }
+  if (hasTemperatureOverride.value && props.temperatureOverride !== null && props.temperatureOverride !== undefined) {
+    parts.push(`自定义温度: ${props.temperatureOverride.toFixed(2)}`)
+  }
+  return parts.join(' · ')
+})
 
 const thinkingPanelSubtitle = computed(() => {
   const name = selectedModelConfig.value?.name || selectedModelConfig.value?.model_id || '当前模型'
@@ -429,6 +511,7 @@ const closePanel = () => {
   cancelPendingClose()
   activePanel.value = null
   showThinkingPanel.value = false
+  modelSearchQuery.value = ''
 }
 
 const scrollSelectedModelIntoView = () => {
@@ -452,6 +535,7 @@ const scheduleClose = (event?: PointerEvent) => {
     if (focused && panelRef.value?.contains(focused)) return
     activePanel.value = null
     showThinkingPanel.value = false
+    modelSearchQuery.value = ''
   }, CLOSE_DELAY_MS)
 }
 
@@ -460,6 +544,7 @@ const togglePanel = (panel: PanelKey) => {
   const next = activePanel.value === panel ? null : panel
   activePanel.value = next
   optionSearch.value = ''
+  modelSearchQuery.value = ''
   showThinkingPanel.value = false
   if (next === 'skills') skillScopeTab.value = 'global'
   if (next === 'mcp_tools') {
@@ -477,16 +562,20 @@ const selectModel = (modelId: string) => {
   emit('update:model', modelId)
   emit('update:thinking-enable-override', null)
   emit('update:reasoning-effort-override', null)
+  emit('update:temperature-override', null)
   showThinkingPanel.value = false
   if (!modelId) closePanel()
 }
 
 const selectModelOption = (model: AIModel) => {
-  emit('update:model', model.model_id)
-  emit('update:thinking-enable-override', null)
-  emit('update:reasoning-effort-override', null)
+  if (props.model !== model.model_id) {
+    emit('update:model', model.model_id)
+    emit('update:thinking-enable-override', null)
+    emit('update:reasoning-effort-override', null)
+    emit('update:temperature-override', null)
+  }
   showThinkingPanel.value = false
-  // 点模型行仅选中；思考设置通过右侧「思考」按钮打开
+  // 点模型行仅选中；参数设置通过右侧「思考」/「参数」按钮打开
 }
 
 const openThinkingSettings = (model: AIModel, event?: Event) => {
@@ -496,6 +585,7 @@ const openThinkingSettings = (model: AIModel, event?: Event) => {
   if (props.model !== model.model_id) {
     emit('update:thinking-enable-override', null)
     emit('update:reasoning-effort-override', null)
+    emit('update:temperature-override', null)
   }
   activePanel.value = 'model'
   showThinkingPanel.value = true
@@ -711,13 +801,21 @@ watch(
       <button
         :ref="(el) => setTriggerRef('model', el)"
         type="button"
-        class="inline-flex h-7 max-w-[14rem] items-center gap-1 rounded-full border px-2 text-[11px] font-semibold transition"
+        class="inline-flex h-7 max-w-[15rem] items-center gap-1 rounded-full border px-2 text-[11px] font-semibold transition"
         :class="activePanel === 'model' ? 'border-blue-200 bg-blue-50 text-blue-700' : 'border-gray-200 bg-white text-gray-600 hover:bg-gray-50'"
+        :title="modelTriggerTooltip"
         @click.stop="togglePanel('model')"
       >
         <span class="truncate">{{ modelLabel }}</span>
         <span v-if="thinkingSummaryLabel" class="shrink-0 rounded-full bg-violet-50 px-1.5 py-0.5 text-[9px] font-semibold text-violet-600">
           {{ thinkingSummaryLabel }}
+        </span>
+        <span
+          v-if="temperatureSummaryLabel"
+          class="shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-semibold"
+          :class="isTemperatureOverLimit ? 'bg-amber-100 text-amber-800' : 'bg-sky-50 text-sky-600'"
+        >
+          {{ temperatureSummaryLabel }}
         </span>
         <svg class="h-3 w-3 shrink-0 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
       </button>
@@ -801,9 +899,48 @@ watch(
             <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
           </button>
         </div>
+
+        <!-- 模型搜索过滤输入框 -->
+        <div class="shrink-0 border-b border-gray-100 p-1.5">
+          <div class="relative flex items-center">
+            <svg
+              class="pointer-events-none absolute left-2.5 h-3.5 w-3.5 text-gray-400"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                stroke-width="2"
+                d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
+              />
+            </svg>
+            <input
+              v-model="modelSearchQuery"
+              type="text"
+              placeholder="搜索模型名称或标识..."
+              class="w-full rounded-lg border border-gray-200 bg-gray-50/70 py-1.5 pl-8 pr-7 text-xs text-gray-700 placeholder-gray-400 outline-none transition-all focus:border-primary/50 focus:bg-white focus:ring-2 focus:ring-primary/20"
+              @click.stop
+            />
+            <button
+              v-if="modelSearchQuery"
+              type="button"
+              class="absolute right-2 flex h-4 w-4 items-center justify-center rounded-full text-gray-400 hover:bg-gray-200 hover:text-gray-600 transition-colors"
+              title="清空搜索"
+              @click.stop="modelSearchQuery = ''"
+            >
+              <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
+        </div>
+
         <div class="flex min-h-0 flex-1 flex-col sm:flex-row">
           <div ref="modelListScrollRef" class="min-h-0 min-w-0 flex-1 overflow-y-auto p-1">
             <button
+              v-if="shouldShowDefaultModelOption"
               type="button"
               class="flex w-full items-center justify-between rounded-lg px-2.5 py-1.5 text-left text-xs"
               :class="!model ? 'bg-primary/5 font-bold text-primary' : 'text-gray-700 hover:bg-gray-50'"
@@ -814,7 +951,7 @@ watch(
               <span v-if="!model">✓</span>
             </button>
             <button
-              v-for="item in availableModels"
+              v-for="item in filteredAvailableModels"
               :key="item.model_id"
               type="button"
               class="mt-0.5 flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-left text-xs"
@@ -834,21 +971,49 @@ watch(
                   v-if="item.thinking_enable"
                   type="button"
                   class="inline-flex items-center gap-0.5 rounded-full bg-violet-50 px-1.5 py-0.5 text-[9px] font-medium text-violet-600 hover:bg-violet-100"
-                  title="调整本次任务思考"
+                  title="调整本次任务思考与参数"
                   @click="openThinkingSettings(item, $event)"
                 >
                   <span>{{ model === item.model_id ? (thinkingSummaryLabel || '思考') : '思考' }}</span>
                   <svg class="h-3 w-3 opacity-70" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m9 5 7 7-7 7" /></svg>
                 </button>
+                <button
+                  v-else
+                  type="button"
+                  class="inline-flex items-center gap-0.5 rounded-full bg-gray-100 px-1.5 py-0.5 text-[9px] font-medium text-gray-600 hover:bg-gray-200"
+                  title="调整本次任务参数"
+                  @click="openThinkingSettings(item, $event)"
+                >
+                  <span>参数</span>
+                  <svg class="h-3 w-3 opacity-70" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m9 5 7 7-7 7" /></svg>
+                </button>
               </span>
             </button>
+
+            <!-- 无匹配时的空状态 -->
+            <div
+              v-if="filteredAvailableModels.length === 0 && !shouldShowDefaultModelOption"
+              class="px-3 py-6 text-center text-xs text-gray-400"
+            >
+              <p v-if="modelSearchQuery">未找到与 "<span class="text-gray-600 font-medium">{{ modelSearchQuery }}</span>" 匹配的模型</p>
+              <p v-else>暂无可用模型</p>
+              <button
+                v-if="modelSearchQuery"
+                type="button"
+                class="mt-1.5 text-[11px] text-primary hover:underline"
+                @click.stop="modelSearchQuery = ''"
+              >
+                清空搜索
+              </button>
+            </div>
           </div>
 
           <div
-            v-if="showThinkingPanel && selectedModelConfig?.thinking_enable"
-            class="w-full shrink-0 border-t border-gray-100 bg-gray-50/70 p-3 sm:w-[240px] sm:border-l sm:border-t-0"
+            v-if="showThinkingPanel && selectedModelConfig"
+            class="w-full shrink-0 border-t border-gray-100 bg-gray-50/70 p-3 sm:w-[260px] sm:border-l sm:border-t-0 max-h-[380px] overflow-y-auto space-y-3"
           >
-            <div class="mb-3 flex items-center justify-between gap-2">
+            <!-- 头部：思考开关 或 参数标题 -->
+            <div v-if="selectedModelConfig.thinking_enable" class="flex items-center justify-between gap-2">
               <div class="min-w-0">
                 <div class="text-xs font-bold text-gray-800">思考模式</div>
                 <div class="mt-0.5 truncate text-[10px] text-gray-500">{{ thinkingPanelSubtitle }}</div>
@@ -869,44 +1034,137 @@ watch(
                 已开启
               </span>
             </div>
-
-            <div v-if="thinkingEnabledForTask">
-              <div class="mb-2 rounded-lg border border-gray-200 bg-white px-2.5 py-2 text-[10px] text-gray-500">
-                开启思考可能增加响应耗时，适合复杂推理任务。
-              </div>
-              <div class="mb-1 text-[10px] font-semibold text-gray-500">思考强度</div>
-              <div class="max-h-[220px] overflow-y-auto rounded-lg border border-gray-200 bg-white p-1">
-                <button
-                  type="button"
-                  class="w-full rounded-md px-2 py-1.5 text-left text-xs transition-colors hover:bg-gray-50"
-                  :class="isFollowingModelEffort ? 'bg-primary/5 font-semibold text-primary' : 'text-gray-700'"
-                  title="不覆盖模型注册配置"
-                  @click="selectReasoningEffort(null)"
-                >
-                  <span class="flex items-center justify-between gap-2">
-                    <span>跟随模型默认</span>
-                    <span v-if="isFollowingModelEffort">✓</span>
-                  </span>
-                </button>
-                <button
-                  v-for="option in supportedReasoningEfforts"
-                  :key="option.value"
-                  type="button"
-                  class="w-full rounded-md px-2 py-1.5 text-left text-xs transition-colors hover:bg-gray-50"
-                  :class="!isFollowingModelEffort && selectedReasoningEffort === option.value ? 'bg-primary/5 font-semibold text-primary' : 'text-gray-700'"
-                  :title="option.description"
-                  @click="selectReasoningEffort(option.value)"
-                >
-                  <span class="flex items-center justify-between gap-2">
-                    <span>{{ option.label }}</span>
-                    <span v-if="!isFollowingModelEffort && selectedReasoningEffort === option.value">✓</span>
-                  </span>
-                </button>
-                <div v-if="supportedReasoningEfforts.length === 0" class="px-2 py-2 text-[10px] text-gray-400">模型未配置可选思考强度</div>
+            <div v-else class="flex items-center justify-between gap-2">
+              <div class="min-w-0">
+                <div class="text-xs font-bold text-gray-800">模型参数设置</div>
+                <div class="mt-0.5 truncate text-[10px] text-gray-500">{{ thinkingPanelSubtitle }}</div>
               </div>
             </div>
-            <div v-else-if="canToggleThinking" class="mt-2 rounded-lg border border-gray-200 bg-white px-2.5 py-2 text-[10px] text-gray-500">
-              关闭思考后，本次任务将以非思考模式执行。
+
+            <!-- 思考设置详情 -->
+            <div v-if="selectedModelConfig.thinking_enable">
+              <div v-if="thinkingEnabledForTask">
+                <div class="mb-2 rounded-lg border border-gray-200 bg-white px-2.5 py-2 text-[10px] text-gray-500">
+                  开启思考可能增加响应耗时，适合复杂推理任务。
+                </div>
+                <div class="mb-1 text-[10px] font-semibold text-gray-500">思考强度</div>
+                <div class="max-h-[140px] overflow-y-auto rounded-lg border border-gray-200 bg-white p-1">
+                  <button
+                    type="button"
+                    class="w-full rounded-md px-2 py-1.5 text-left text-xs transition-colors hover:bg-gray-50"
+                    :class="isFollowingModelEffort ? 'bg-primary/5 font-semibold text-primary' : 'text-gray-700'"
+                    title="不覆盖模型注册配置"
+                    @click="selectReasoningEffort(null)"
+                  >
+                    <span class="flex items-center justify-between gap-2">
+                      <span>跟随模型默认</span>
+                      <span v-if="isFollowingModelEffort">✓</span>
+                    </span>
+                  </button>
+                  <button
+                    v-for="option in supportedReasoningEfforts"
+                    :key="option.value"
+                    type="button"
+                    class="w-full rounded-md px-2 py-1.5 text-left text-xs transition-colors hover:bg-gray-50"
+                    :class="!isFollowingModelEffort && selectedReasoningEffort === option.value ? 'bg-primary/5 font-semibold text-primary' : 'text-gray-700'"
+                    :title="option.description"
+                    @click="selectReasoningEffort(option.value)"
+                  >
+                    <span class="flex items-center justify-between gap-2">
+                      <span>{{ option.label }}</span>
+                      <span v-if="!isFollowingModelEffort && selectedReasoningEffort === option.value">✓</span>
+                    </span>
+                  </button>
+                  <div v-if="supportedReasoningEfforts.length === 0" class="px-2 py-1.5 text-[10px] text-gray-400">模型未配置可选思考强度</div>
+                </div>
+              </div>
+              <div v-else-if="canToggleThinking" class="rounded-lg border border-gray-200 bg-white px-2.5 py-2 text-[10px] text-gray-500">
+                关闭思考后，本次任务将以非思考模式执行。
+              </div>
+            </div>
+
+            <!-- 采样温度卡片 (所有模型均展示) -->
+            <div class="rounded-xl border border-gray-200 bg-white p-2.5 shadow-sm">
+              <div class="flex items-center justify-between">
+                <span class="text-[11px] font-semibold text-gray-700">采样温度 (Temperature)</span>
+                <span
+                  class="font-mono text-xs font-bold transition-colors"
+                  :class="isTemperatureOverLimit ? 'text-amber-600' : hasTemperatureOverride ? 'text-primary' : 'text-gray-600'"
+                >
+                  {{ effectiveTemperature.toFixed(2) }}
+                </span>
+              </div>
+
+              <!-- 滑块 -->
+              <div class="mt-2.5">
+                <input
+                  type="range"
+                  min="0"
+                  max="2"
+                  step="0.05"
+                  :value="effectiveTemperature"
+                  class="h-1.5 w-full cursor-pointer appearance-none rounded-lg bg-gray-200 accent-primary"
+                  @input="handleTemperatureSliderChange"
+                />
+                <div class="mt-1 flex justify-between text-[9px] text-gray-400 font-mono">
+                  <span>0.0</span>
+                  <span>1.0</span>
+                  <span>2.0</span>
+                </div>
+              </div>
+
+              <!-- 预设场景胶囊 -->
+              <div class="mt-2 flex flex-wrap items-center gap-1.5">
+                <button
+                  type="button"
+                  class="rounded border px-1.5 py-0.5 text-[10px] transition-colors"
+                  :class="effectiveTemperature === 0.2 ? 'border-primary/40 bg-primary/10 font-semibold text-primary' : 'border-gray-200 bg-gray-50 text-gray-600 hover:bg-gray-100'"
+                  @click="setTemperaturePreset(0.2)"
+                >
+                  严谨 0.2
+                </button>
+                <button
+                  type="button"
+                  class="rounded border px-1.5 py-0.5 text-[10px] transition-colors"
+                  :class="effectiveTemperature === 0.7 ? 'border-primary/40 bg-primary/10 font-semibold text-primary' : 'border-gray-200 bg-gray-50 text-gray-600 hover:bg-gray-100'"
+                  @click="setTemperaturePreset(0.7)"
+                >
+                  均衡 0.7
+                </button>
+                <button
+                  type="button"
+                  class="rounded border px-1.5 py-0.5 text-[10px] transition-colors"
+                  :class="effectiveTemperature === 1.0 ? 'border-primary/40 bg-primary/10 font-semibold text-primary' : 'border-gray-200 bg-gray-50 text-gray-600 hover:bg-gray-100'"
+                  @click="setTemperaturePreset(1.0)"
+                >
+                  发散 1.0
+                </button>
+                <button
+                  v-if="hasTemperatureOverride"
+                  type="button"
+                  class="ml-auto text-[10px] text-gray-400 hover:text-primary transition-colors underline"
+                  title="清除本次温度覆盖，跟随模型默认值"
+                  @click="resetTemperatureOverride"
+                >
+                  跟随默认
+                </button>
+              </div>
+
+              <!-- 场景指引说明 -->
+              <p class="mt-2 text-[10px] leading-tight text-gray-400">
+                {{ getTemperatureGuidance(effectiveTemperature) }}
+              </p>
+
+              <!-- 大于 1.0 醒目警示卡片 -->
+              <div
+                v-if="isTemperatureOverLimit"
+                class="mt-2 rounded-lg border border-amber-200 bg-amber-50/80 p-2 text-[10px] leading-relaxed text-amber-700"
+              >
+                <div class="flex items-start gap-1 font-semibold">
+                  <span>⚠️</span>
+                  <span>当前温度大于 1.0。部分模型仅支持 0.0～1.0 范围，超出范围可能被服务商忽略或引发调用异常，请确认模型官方文档支持。</span>
+                </div>
+              </div>
             </div>
           </div>
         </div>

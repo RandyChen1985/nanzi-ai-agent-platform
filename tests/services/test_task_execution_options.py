@@ -4,6 +4,7 @@ from app.services.task_execution_options import (
     merge_execution_options_into_config,
     metadata_dataset_ids_from_scope,
     normalize_approval_mode,
+    normalize_temperature,
     permission_options_from_task_config,
     resource_scope_from_task_config,
 )
@@ -84,3 +85,41 @@ def test_merge_execution_options_into_config_clears_empty_scope():
     assert "model" not in merged
     assert "resource_scope" not in merged
     assert merged["notification_channels"] == ["portal"]
+
+
+def test_normalize_temperature_bounds_and_rounding():
+    assert normalize_temperature(None) is None
+    assert normalize_temperature("") is None
+    assert normalize_temperature("invalid") is None
+    assert normalize_temperature(0.7) == 0.7
+    assert normalize_temperature("0.25") == 0.25
+    assert normalize_temperature(-0.5) == 0.0
+    assert normalize_temperature(2.5) == 2.0
+    assert normalize_temperature(1.054) == 1.05
+
+
+def test_debug_options_from_task_config_includes_temperature():
+    debug = debug_options_from_task_config({"model": "qwen3.6", "temperature": 0.2})
+    assert debug["model"] == "qwen3.6"
+    assert debug["temperature"] == 0.2
+
+    # 非法温度不注入
+    debug_invalid = debug_options_from_task_config({"model": "qwen3.6", "temperature": "not_a_number"})
+    assert "temperature" not in debug_invalid
+
+
+def test_merge_execution_options_into_config_supports_temperature():
+    merged = merge_execution_options_into_config(
+        {"model": "gpt-4o"},
+        temperature=0.75,
+    )
+    assert merged["temperature"] == 0.75
+
+    # 传入 None 清空
+    cleared = merge_execution_options_into_config(
+        {"model": "gpt-4o", "temperature": 0.75},
+        temperature=None,
+    )
+    # 当 temperature 未传（None）时保留原有值或不变更
+    assert cleared["temperature"] == 0.75
+

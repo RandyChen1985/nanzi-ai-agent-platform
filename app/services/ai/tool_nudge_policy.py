@@ -669,6 +669,11 @@ _NOTIFICATION_CHANNELS = (
         "企业微信群机器人",
     ),
     (
+        "send_feishu_message",
+        ("飞书", "feishu", "lark"),
+        "飞书群机器人",
+    ),
+    (
         "send_email",
         ("邮件", "邮箱", "email", "mail"),
         "邮件",

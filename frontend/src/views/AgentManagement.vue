@@ -22,6 +22,7 @@ import MetadataDatasetBindingModal from "../components/agent/MetadataDatasetBind
 import DingTalkConfigModal from "../components/agent/DingTalkConfigModal.vue";
 import EmailConfigModal from "../components/agent/EmailConfigModal.vue";
 import WeChatWorkConfigModal from "../components/agent/WeChatWorkConfigModal.vue";
+import FeishuConfigModal from "../components/agent/FeishuConfigModal.vue";
 import AgentFlowGuideBanner from "../components/agent/AgentFlowGuideBanner.vue";
 import MessageRenderer from "../components/MessageRenderer.vue";
 import type { MarkdownTheme } from "@/types/markdownTheme";
@@ -47,6 +48,7 @@ const showMetadataDatasetBindingModal = ref(false);
 const showDingTalkModal = ref(false);
 const showEmailModal = ref(false);
 const showWeChatWorkModal = ref(false);
+const showFeishuModal = ref(false);
 const currentConfiguringTool = ref("");
 const currentToolConfig = ref<any>({});
 
@@ -2220,6 +2222,20 @@ const openWeChatWorkConfig = (toolName: string) => {
   showWeChatWorkModal.value = true;
 };
 
+const openFeishuConfig = (toolName: string) => {
+  currentConfiguringTool.value = toolName;
+  const existing = versionForm.value.tools?.find(t =>
+    (typeof t === 'string' ? t === toolName : (t as any).name === toolName)
+  );
+
+  if (existing && typeof existing === 'object') {
+    currentToolConfig.value = { ...(existing as any) };
+  } else {
+    currentToolConfig.value = { name: toolName };
+  }
+  showFeishuModal.value = true;
+};
+
 
 const handleToolConfigSave = (newConfig: any) => {
   const tools = [...(versionForm.value.tools || [])];
@@ -4112,6 +4128,7 @@ const formatSkillCountLabel = (agent: AIAgent) => {
       @open-ding-talk-config="openDingTalkConfig"
       @open-email-config="openEmailConfig"
       @open-we-chat-work-config="openWeChatWorkConfig"
+      @open-feishu-config="openFeishuConfig"
       @open-rag-selector="openRagSelector"
       @copy-system-prompt="copySystemPrompt"
       @next-step="nextVersionStep"
@@ -4316,6 +4333,13 @@ const formatSkillCountLabel = (agent: AIAgent) => {
 
     <WeChatWorkConfigModal
       v-model:model="showWeChatWorkModal"
+      :config="currentToolConfig"
+      :readonly="!canEditVersion"
+      @save="handleToolConfigSave"
+    />
+
+    <FeishuConfigModal
+      v-model:model="showFeishuModal"
       :config="currentToolConfig"
       :readonly="!canEditVersion"
       @save="handleToolConfigSave"

@@ -424,6 +424,7 @@ async def _send_task_failure_alert(
         external_senders = {
             "dingtalk": NotificationService.send_dingtalk,
             "wechat_work": NotificationService.send_wechat_work,
+            "feishu": NotificationService.send_feishu,
             "email": NotificationService.send_email,
         }
 
@@ -957,6 +958,7 @@ async def _saved_report_subscription_wrapper(subscription_id: int, is_manual: bo
         senders = {
             "dingtalk": NotificationService.send_dingtalk,
             "wechat_work": NotificationService.send_wechat_work,
+            "feishu": NotificationService.send_feishu,
             "email": NotificationService.send_email,
         }
         for channel in subscription.external_channels or []:
@@ -1045,6 +1047,7 @@ async def _saved_report_subscription_wrapper(subscription_id: int, is_manual: bo
                         senders = {
                             "dingtalk": NotificationService.send_dingtalk,
                             "wechat_work": NotificationService.send_wechat_work,
+                            "feishu": NotificationService.send_feishu,
                             "email": NotificationService.send_email,
                         }
                         for channel in subscription.external_channels or []:

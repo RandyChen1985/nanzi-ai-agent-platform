@@ -318,3 +318,53 @@ class send_portal_notification(BaseTool):
 
     def _run(self, title: str, content: str, level: str = "info") -> str:
         raise NotImplementedError("Use _arun instead")
+
+
+class FeishuInput(BaseModel):
+    title: str = Field(description="The title of the message card (visible in notifications)")
+    content: str = Field(description="The main body of the message in Markdown format")
+
+
+class send_feishu_message(BaseTool):
+    name: str = "send_feishu_message"
+    description: str = (
+        "发送飞书群机器人 Markdown 卡片消息。Send a Markdown message card to Feishu. "
+        "本工具会自动读取当前用户在个人中心 -> 消息通知里的飞书 Webhook/加签配置，"
+        "无需用户在本轮对话中提供 webhook 或群聊目标。"
+    )
+    args_schema: Type[BaseModel] = FeishuInput
+
+    async def _arun(self, title: str, content: str) -> str:
+        """Use the tool asynchronously."""
+        from app.core.context import get_current_agent_context
+        from app.core.orm import AsyncSessionLocal
+        from app.services.notification_service import NotificationService
+
+        agent_ctx = get_current_agent_context()
+        if not agent_ctx or not agent_ctx.user_id:
+            return "Error: 无法确定当前用户，飞书消息未发送。"
+
+        try:
+            user_id = int(agent_ctx.user_id)
+        except (TypeError, ValueError):
+            return "Error: 当前用户 ID 无效，飞书消息未发送。"
+
+        cleaned_title = str(title or "").strip()
+        cleaned_content = str(content or "").strip()
+        if not cleaned_content:
+            return "Error: 正文内容不能为空。"
+
+        try:
+            async with AsyncSessionLocal() as db:
+                ok, err = await NotificationService.send_feishu(
+                    db, user_id=user_id, title=cleaned_title or "智能体消息通知", content=cleaned_content
+                )
+                if ok:
+                    return f"Successfully sent Feishu message: {cleaned_title or '智能体消息通知'}"
+                return f"Failed to send Feishu message: {err}"
+        except Exception as e:
+            logger.error("Feishu Tool Error: %s", e, exc_info=True)
+            return f"Error executing Feishu tool: {str(e)}"
+
+    def _run(self, title: str, content: str) -> str:
+        raise NotImplementedError("Use _arun instead")
