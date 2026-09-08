@@ -15,7 +15,8 @@ const emit = defineEmits<{
   (event: "close"): void;
 }>();
 
-const remainingSeconds = ref(6);
+const AUTO_DISMISS_SECONDS = 4;
+const remainingSeconds = ref(AUTO_DISMISS_SECONDS);
 let countdownTimer: ReturnType<typeof setInterval> | null = null;
 
 const clearCountdown = () => {
@@ -28,7 +29,7 @@ const clearCountdown = () => {
 const startCountdown = () => {
   clearCountdown();
   if (props.workspaceStatus !== "idle") return;
-  remainingSeconds.value = 6;
+  remainingSeconds.value = AUTO_DISMISS_SECONDS;
   countdownTimer = setInterval(() => {
     if (remainingSeconds.value > 1) {
       remainingSeconds.value -= 1;
