@@ -30,7 +30,7 @@ def test_deployment_checklist_is_admin_only_and_reachable_from_overview():
 
     assert "userInfo?.role === 'admin'" in overview
     assert "DeploymentChecklist" in overview
-    assert "DeploymentChecklist" in system_config
+    assert "DeploymentChecklist" not in system_config
     assert "标记为完成" in checklist
     assert "前往配置" in checklist
     assert "isExpanded" in checklist

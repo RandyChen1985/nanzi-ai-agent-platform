@@ -6,7 +6,6 @@ import { useToast } from '../composables/useToast'
 import { useUser } from '../composables/useUser'
 import { modelApi, type AIModel } from '../api/model'
 import ModelRegistry from '../components/system/ModelRegistry.vue'
-import DeploymentChecklist from '../components/system/DeploymentChecklist.vue'
 import ToolRegistry from '../components/system/ToolRegistry.vue'
 import RagFlowResourceSelector from '../components/RagFlowResourceSelector.vue'
 import ConfirmModal from '../components/ConfirmModal.vue'
@@ -2025,7 +2024,6 @@ onUnmounted(() => {
   <div class="flex h-full min-h-0 flex-col gap-4 sm:gap-6">
     <div class="flex flex-shrink-0 flex-col gap-3">
       <h1 class="text-xl font-semibold text-gray-900 sm:text-2xl">系统配置与诊断</h1>
-      <DeploymentChecklist v-if="userInfo?.role === 'admin'" compact />
       <!-- Tabs：窄屏横向滚动，避免文字被挤成竖排 -->
       <div
         class="-mx-1 overflow-x-auto px-1"
