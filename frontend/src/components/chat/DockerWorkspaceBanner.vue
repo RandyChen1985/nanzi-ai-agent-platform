@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import { ref, computed, watch, onMounted, onUnmounted } from "vue";
 
 export type DockerWorkspaceStatus = "idle" | "starting" | "stopping" | "running" | "error";
 
@@ -14,6 +14,75 @@ const emit = defineEmits<{
   (event: "refresh"): void;
   (event: "close"): void;
 }>();
+
+const remainingSeconds = ref(6);
+let countdownTimer: ReturnType<typeof setInterval> | null = null;
+
+const clearCountdown = () => {
+  if (countdownTimer) {
+    clearInterval(countdownTimer);
+    countdownTimer = null;
+  }
+};
+
+const startCountdown = () => {
+  clearCountdown();
+  if (props.workspaceStatus !== "idle") return;
+  remainingSeconds.value = 6;
+  countdownTimer = setInterval(() => {
+    if (remainingSeconds.value > 1) {
+      remainingSeconds.value -= 1;
+    } else {
+      clearCountdown();
+      emit("close");
+    }
+  }, 1000);
+};
+
+const handleMouseEnter = () => {
+  clearCountdown();
+};
+
+const handleMouseLeave = () => {
+  if (props.workspaceStatus === "idle") {
+    clearCountdown();
+    countdownTimer = setInterval(() => {
+      if (remainingSeconds.value > 1) {
+        remainingSeconds.value -= 1;
+      } else {
+        clearCountdown();
+        emit("close");
+      }
+    }, 1000);
+  }
+};
+
+const handleStart = () => {
+  clearCountdown();
+  emit("start");
+};
+
+watch(
+  () => props.workspaceStatus,
+  (status) => {
+    if (status === "idle") {
+      startCountdown();
+    } else {
+      clearCountdown();
+    }
+  },
+  { immediate: true },
+);
+
+onMounted(() => {
+  if (props.workspaceStatus === "idle") {
+    startCountdown();
+  }
+});
+
+onUnmounted(() => {
+  clearCountdown();
+});
 
 const statusCopy = computed(() => {
   switch (props.workspaceStatus) {
@@ -67,7 +136,9 @@ const statusCopy = computed(() => {
   <div
     role="status"
     data-testid="docker-workspace-banner"
-    :class="`mb-2 flex flex-wrap items-center gap-2 rounded-xl border px-3 py-2 text-xs shadow-sm ${statusCopy.box}`"
+    :class="`mb-2 flex flex-wrap items-center gap-2 rounded-xl border px-3 py-2 text-xs shadow-sm ${statusCopy.box} transition-opacity duration-300`"
+    @mouseenter="handleMouseEnter"
+    @mouseleave="handleMouseLeave"
   >
     <span class="font-semibold">{{ statusCopy.icon }} {{ statusCopy.title }}</span>
     <span :class="statusCopy.hintTone">{{ statusCopy.hint }}</span>
@@ -77,7 +148,7 @@ const statusCopy = computed(() => {
         type="button"
         class="rounded-lg border border-indigo-200 bg-white/70 px-2.5 py-1 font-medium text-indigo-700 hover:bg-indigo-100 disabled:cursor-not-allowed disabled:opacity-60 dark:border-indigo-500/40 dark:bg-indigo-950/30 dark:text-indigo-200 dark:hover:bg-indigo-900/50"
         :aria-label="workspaceStatus === 'error' ? '重试启动 Docker 沙箱' : '启动我的 Docker 沙箱'"
-        @click="emit('start')"
+        @click="handleStart"
       >
         {{ workspaceStatus === "error" ? "重试启动" : "启动我的 Docker 沙箱" }}
       </button>
@@ -95,12 +166,13 @@ const statusCopy = computed(() => {
       </span>
       <button
         type="button"
-        class="rounded-lg px-2 py-1 text-gray-500/80 hover:bg-black/5 hover:text-gray-700 dark:text-gray-300/80 dark:hover:bg-white/10 dark:hover:text-gray-100"
+        class="rounded-lg px-2 py-1 text-gray-500/80 hover:bg-black/5 hover:text-gray-700 dark:text-gray-300/80 dark:hover:bg-white/10 dark:hover:text-gray-100 inline-flex items-center gap-1"
         aria-label="关闭 Docker 沙箱提示"
-        title="关闭提示"
+        :title="workspaceStatus === 'idle' ? `${remainingSeconds}秒后自动关闭` : '关闭提示'"
         @click="emit('close')"
       >
-        ×
+        <span>×</span>
+        <span v-if="workspaceStatus === 'idle'" class="text-[10px] opacity-70 font-mono">({{ remainingSeconds }}s)</span>
       </button>
     </div>
   </div>

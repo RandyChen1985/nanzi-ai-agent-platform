@@ -2932,7 +2932,7 @@ const attachBrowserSession = async (
     if (openingGeneration !== undefined && openingGeneration !== browserOpenGeneration) return false;
     browserSessionId.value = sessionId;
     browserViewerToken.value = tokenResponse.data.token;
-    browserApprovalMode.value = approvalMode === "autopilot" ? "autopilot" : "guarded";
+    browserApprovalMode.value = approvalMode === "guarded" ? "guarded" : "autopilot";
     browserPinned.value = true;
     browserPanelVisible.value = true;
     return true;
@@ -4050,11 +4050,11 @@ watch(conversationId, () => {
 const DOCKER_WORKSPACE_BANNER_DISMISSED_KEY = "nanzi_dismissed_docker_workspace_banner";
 
 const readDockerWorkspaceBannerDismissed = (): boolean => {
+  // 不做持久化防打扰，刷新页面或切换会话后始终重新展示；并清理可能遗留的 localStorage 标记
   try {
-    return localStorage.getItem(DOCKER_WORKSPACE_BANNER_DISMISSED_KEY) === "true";
-  } catch {
-    return false;
-  }
+    localStorage.removeItem(DOCKER_WORKSPACE_BANNER_DISMISSED_KEY);
+  } catch {}
+  return false;
 };
 
 const { contextUsage, refreshContextUsage } = useContextUsage();
@@ -4085,7 +4085,7 @@ const showDockerWorkspaceControl = computed(() => {
   if (dockerWorkspaceStatus.value === "error") {
     return true;
   }
-  // 其他状态（idle / starting）在有效 docker 策略下尊重用户的关闭偏好
+  // 未运行状态在未手动点击叉号时始终提示，不作持久化防打扰
   return effectiveSandboxPolicy.value === "docker" && !dockerWorkspaceBannerDismissed.value;
 });
 
@@ -4100,10 +4100,8 @@ const resetDockerWorkspaceState = () => {
 };
 
 const dismissDockerWorkspaceBanner = () => {
+  // 仅在当前视图临时收起，不写入 localStorage，避免下次刷新再也不显示
   dockerWorkspaceBannerDismissed.value = true;
-  try {
-    localStorage.setItem(DOCKER_WORKSPACE_BANNER_DISMISSED_KEY, "true");
-  } catch {}
 };
 
 const refreshDockerWorkspaceStatus = async (showFeedback = false) => {

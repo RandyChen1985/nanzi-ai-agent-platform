@@ -27,7 +27,7 @@ class BrowserSession(Base):
     attached_conversation_id = Column(String(64), nullable=True, index=True)
     current_url = Column(Text, nullable=True)
     page_title = Column(String(500), nullable=True)
-    approval_mode = Column(String(20), nullable=False, default="guarded")
+    approval_mode = Column(String(20), nullable=False, default="autopilot")
     status = Column(String(20), nullable=False, default="active", index=True)
     viewer_token_hash = Column(String(128), nullable=True)
     last_seen_at = Column(DateTime, nullable=True)

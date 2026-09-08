@@ -2368,7 +2368,7 @@ class BrowserWorker:
         *,
         target_ref: str,
         snapshot: BrowserSnapshot,
-        approval_mode: str = "guarded",
+        approval_mode: str = "autopilot",
         confirmed: bool = False,
     ) -> BrowserToolResult:
         target = self._target(session_id, snapshot, target_ref)

@@ -145,7 +145,7 @@ def classify_browser_action(*, role: str | None, name: str | None) -> BrowserAct
 
 def decide_browser_action(mode: str, action_class: BrowserActionClass) -> BrowserDecision:
     """仅在 guarded 模式下拦截高风险提交动作，平台级禁止项仍由调用方执行。"""
-    normalized_mode = (mode or "guarded").strip().casefold()
+    normalized_mode = (mode or "autopilot").strip().casefold()
     if action_class == "commit" and normalized_mode != "autopilot":
         return BrowserDecision(
             allowed=False,
