@@ -1673,3 +1673,67 @@ async def test_worker_check_environment():
         assert env["playwright_installed"] is True
         assert env["chromium_installed"] is True
         assert env["chromium_executable"] == "/dummy/path/to/chrome"
+
+
+@pytest.mark.asyncio
+async def test_worker_wait_for_accepts_target_ref_and_snapshot(tmp_path):
+    from app.services.ai.browser.browser_worker import BrowserWaitTimeout
+
+    fake_playwright = FakePlaywright()
+    worker = BrowserWorker(
+        playwright_factory=lambda: fake_playwright,
+        url_validator=lambda url: url,
+        screenshot_dir=None,
+    )
+    await worker.open(
+        session_id="bs-wait-target-ref",
+        profile_path=str(tmp_path / "profile-wait-target-ref"),
+        url="https://example.com/flights",
+    )
+    page = fake_context_page(fake_playwright)
+    page.evaluate = AsyncMock(
+        return_value={
+            "scroll_x": 0,
+            "scroll_y": 0,
+            "viewport_width": 1280,
+            "viewport_height": 800,
+            "document_width": 1280,
+            "document_height": 800,
+            "page_text": "航班查询结果",
+            "visible_text": "航班列表已加载",
+        }
+    )
+
+    # 1. 验证传入 target_ref 和 snapshot 时不会发生 unexpected keyword argument 异常
+    snapshot = await worker.snapshot("bs-wait-target-ref")
+    waited = await worker.wait_for(
+        "bs-wait-target-ref",
+        condition="text",
+        value="航班",
+        target_ref="e1",
+        snapshot=snapshot,
+        timeout_ms=1000,
+    )
+    assert waited.url == "https://example.com/flights"
+
+    # 2. 验证支持 condition="ready" 自动映射为网络空闲等待
+    waited_ready = await worker.wait_for(
+        "bs-wait-target-ref",
+        condition="ready",
+        target_ref=None,
+        snapshot=None,
+        timeout_ms=1000,
+    )
+    assert waited_ready.url == "https://example.com/flights"
+
+    # 3. 验证超时异常携带清晰秒数与条件说明
+    with pytest.raises(BrowserWaitTimeout) as exc_info:
+        await worker.wait_for(
+            "bs-wait-target-ref",
+            condition="url",
+            value="/non_existent_path",
+            timeout_ms=100,
+        )
+    assert "秒内页面等待未满足" in str(exc_info.value)
+
+

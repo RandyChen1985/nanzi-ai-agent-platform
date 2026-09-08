@@ -1309,25 +1309,30 @@ class BrowserWorker:
         self,
         session_id: str,
         *,
-        condition: str,
-        value: str,
-        timeout_ms: int = 5000,
+        condition: str = "text",
+        value: str = "",
+        target_ref: str | None = None,
+        snapshot: BrowserSnapshot | None = None,
+        timeout_ms: int = 10000,
+        **kwargs: Any,
     ) -> BrowserSnapshot:
         """等待受限页面条件满足后返回新快照，不执行任意页面脚本。"""
         handle = self._handle(session_id)
         normalized_condition = str(condition or "text").strip().lower()
+        if normalized_condition == "ready":
+            normalized_condition = "network_idle"
         if normalized_condition not in {"text", "url", "target", "page_state", "element", "network_idle"}:
             raise ValueError("等待条件必须是 text、url、target、page_state、element 或 network_idle")
-        timeout = max(100, min(int(timeout_ms or 5000), 15000))
+        timeout = max(100, min(int(timeout_ms or 10000), 30000))
         expected = str(value or "").strip()
-        if normalized_condition != "network_idle" and not expected:
-            raise ValueError("等待条件值不能为空")
+        if normalized_condition != "network_idle" and not expected and not target_ref:
+            raise ValueError("等待条件值或目标元素引用不能为空")
         deadline = asyncio.get_running_loop().time() + (timeout / 1000)
         while True:
             current_url = str(getattr(handle.page, "url", "") or "")
             if normalized_condition == "url" and expected in current_url:
                 return await self.snapshot(session_id)
-            if normalized_condition in {"text", "target"}:
+            if normalized_condition in {"text", "target"} and expected:
                 context = await self._snapshot_page_context(handle.page)
                 haystack = context.get("visible_text" if normalized_condition == "target" else "page_text", "")
                 if expected.casefold() in str(haystack).casefold():
@@ -1337,7 +1342,20 @@ class BrowserWorker:
                 current_state = "captcha" if captcha else "ready"
                 if expected.casefold() == current_state:
                     return await self.snapshot(session_id)
-            if normalized_condition == "element":
+            if normalized_condition in {"element", "target"} and target_ref:
+                try:
+                    if snapshot is not None:
+                        target = self._target(session_id, snapshot, target_ref)
+                        locator = self._locator_for(handle.page, target)
+                    else:
+                        locator = handle.page.locator(f"[data-ref='{target_ref}'], #{target_ref}")
+                    is_visible = getattr(locator, "is_visible", None)
+                    visible = bool(is_visible and await _maybe_await(is_visible()))
+                except Exception:
+                    visible = False
+                if visible:
+                    return await self.snapshot(session_id)
+            if normalized_condition == "element" and expected:
                 try:
                     locator = handle.page.locator(expected)
                     is_visible = getattr(locator, "is_visible", None)
@@ -1348,7 +1366,8 @@ class BrowserWorker:
                     return await self.snapshot(session_id)
             remaining_sec = deadline - asyncio.get_running_loop().time()
             if remaining_sec <= 0:
-                raise BrowserWaitTimeout(f"等待浏览器条件超时：{normalized_condition}={expected}")
+                cond_desc = f"条件[{normalized_condition}], 预期[{expected or target_ref or '就绪'}]"
+                raise BrowserWaitTimeout(f"在 {int(round(timeout / 1000))} 秒内页面等待未满足：{cond_desc}")
             # network_idle：等待高频加载/轮询请求逐渐平息，而不是瞬时空闲。
             if normalized_condition == "network_idle":
                 idle_ready = await self._network_idle_or_timeout(handle.page, min(2.0, max(0.1, remaining_sec)))
@@ -1356,7 +1375,7 @@ class BrowserWorker:
                     return await self.snapshot(session_id)
                 remaining_sec = deadline - asyncio.get_running_loop().time()
                 if remaining_sec <= 0:
-                    raise BrowserWaitTimeout(f"等待浏览器条件超时：{normalized_condition}=<network-idle>")
+                    raise BrowserWaitTimeout(f"在 {int(round(timeout / 1000))} 秒内网络未完全空闲就绪")
             wait_for_timeout = getattr(handle.page, "wait_for_timeout", None)
             if callable(wait_for_timeout):
                 await _maybe_await(wait_for_timeout(min(250, max(1, int(remaining_sec * 1000)))))
