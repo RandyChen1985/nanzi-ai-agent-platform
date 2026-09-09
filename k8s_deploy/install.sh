@@ -51,6 +51,10 @@ DRY_RUN=false
 AUTO_CONFIRM=false
 UPGRADE_MODE=false
 UPGRADE_TARGET_TAG=""
+IMAGE_LIST_MODE=false
+IMAGE_LIST_FILTER=""
+IMAGE_IMPORT_MODE=false
+IMAGE_IMPORT_FILES=""
 
 show_help() {
   printf "\n"
@@ -61,11 +65,16 @@ show_help() {
   printf "  %-26s %b\n" "-u, --upgrade [TAG]" "快速更新镜像模式（跳过中间件向导，支持自动探测新版本并滚动更新）"
   printf "  %-26s %b\n" "-d, --dry-run, --try" "模拟演练模式（仅生成/更新本地配置并做语法预检，不下发真实变更）"
   printf "  %-26s %b\n" "-y, --yes" "自动确认模式（尽可能使用默认值/现有配置进行快速下发）"
+  printf "  %-26s %b\n" "--images [关键字]" "只读列出节点容器运行时（ctr -n k8s.io）中已导入的镜像；可带关键字过滤，如 --images nanzi"
+  printf "  %-26s %b\n" "--import <镜像tar> [tar...]" "将本地镜像 tar 导入容器运行时（ctr -n k8s.io images import），支持多个文件"
   printf "\n"
   printf "%b使用示例：%b\n" "${C_BOLD}" "${C_RESET}"
   printf "  %s                           # 首次安装或全量配置向导（若已运行会自动提示是否仅升级镜像）\n" "$0"
   printf "  %s --upgrade                 # 快速交互式升级镜像（自动探测 containerd 中新导入的 Tag）\n" "$0"
   printf "  %s --upgrade 1.0.15.0        # 一键升级到指定镜像版本并平滑滚动发布\n" "$0"
+  printf "  %s --images                  # 查看节点容器运行时中已导入的全部镜像\n" "$0"
+  printf "  %s --images nanzi-ai-agent   # 只查看 NanZi 相关镜像（手动检查本地是否已导入）\n" "$0"
+  printf "  %s --import ./nanzi.tar      # 导入本地镜像 tar 到 containerd（非 K3s 集群用 ctr -n k8s.io）\n" "$0"
   printf "  %s --try                     # 模拟演练模式：输入配置并验证语法，不创建实际集群资源\n" "$0"
   printf "  %s -y                        # 快速应用当前已配置好的 YAML\n" "$0"
   printf "\n"
@@ -92,6 +101,26 @@ while [ $# -gt 0 ]; do
     -y|--yes|--non-interactive)
       AUTO_CONFIRM=true
       shift
+      ;;
+    --images|--list-images)
+      IMAGE_LIST_MODE=true
+      shift
+      if [ $# -gt 0 ] && [ "${1#-}" = "$1" ]; then
+        IMAGE_LIST_FILTER="$1"
+        shift
+      fi
+      ;;
+    --import)
+      IMAGE_IMPORT_MODE=true
+      shift
+      while [ $# -gt 0 ] && [ "${1#-}" = "$1" ]; do
+        IMAGE_IMPORT_FILES="${IMAGE_IMPORT_FILES}${IMAGE_IMPORT_FILES:+ }$1"
+        shift
+      done
+      if [ -z "$IMAGE_IMPORT_FILES" ]; then
+        printf "%b⚠ --import 需要一个或多个镜像 tar 文件路径%b\n" "${C_YELLOW}" "${C_RESET}"
+        exit 1
+      fi
       ;;
     *)
       printf "%b⚠ 未知参数: %s (可使用 -h 查看帮助)%b\n" "${C_YELLOW}" "$1" "${C_RESET}"
@@ -421,6 +450,94 @@ EOF
   fi
   exit 0
 }
+
+# ==============================================================================
+# 镜像工具模式：--images（列出）/ --import（导入）独立入口，不进入部署向导
+# ==============================================================================
+
+# 解析操作节点容器运行时的命令前缀（非 K3s 优先 ctr -n k8s.io，无 ctr 回退 k3s ctr）
+resolve_container_tool_cmd() {
+  local sudo_prefix=""
+  if [ "$(id -u)" != "0" ]; then
+    if command -v sudo >/dev/null 2>&1; then
+      sudo_prefix="sudo"
+    fi
+  fi
+  if command -v ctr >/dev/null 2>&1; then
+    CONTAINER_TOOL_CMD="${sudo_prefix:+$sudo_prefix }ctr -n k8s.io"
+  elif command -v k3s >/dev/null 2>&1; then
+    CONTAINER_TOOL_CMD="${sudo_prefix:+$sudo_prefix }k3s ctr"
+  else
+    CONTAINER_TOOL_CMD=""
+  fi
+}
+
+run_list_images() {
+  print_header "📦 节点容器运行时已导入镜像 (ctr -n k8s.io)"
+  resolve_container_tool_cmd
+  if [ -z "$CONTAINER_TOOL_CMD" ]; then
+    log_error "当前节点未找到 ctr / k3s 命令，无法读取容器运行时镜像。"
+    printf "%b请在 containerd 所在节点执行（普通 containerd 或 K3s 均可）。%b\n" "${C_GRAY}" "${C_RESET}"
+    exit 1
+  fi
+  if [ -n "$IMAGE_LIST_FILTER" ]; then
+    log_info "执行: ${CONTAINER_TOOL_CMD} images list（按关键字过滤: ${IMAGE_LIST_FILTER}）"
+    if ! $CONTAINER_TOOL_CMD images list | grep -E -- "$IMAGE_LIST_FILTER"; then
+      log_warn "未匹配到包含 [${IMAGE_LIST_FILTER}] 的镜像。"
+    fi
+  else
+    log_info "执行: ${CONTAINER_TOOL_CMD} images list"
+    $CONTAINER_TOOL_CMD images list
+  fi
+  printf "\n"
+  log_info "便捷过滤：$0 --images nanzi-ai-agent"
+  exit 0
+}
+
+run_import_images() {
+  print_header "📦 导入本地镜像 tar 到节点容器运行时"
+  resolve_container_tool_cmd
+  if [ -z "$CONTAINER_TOOL_CMD" ]; then
+    log_error "当前节点未找到 ctr / k3s 命令，无法导入镜像。"
+    printf "%b请在 containerd 所在节点执行（普通 containerd 或 K3s 均可）。%b\n" "${C_GRAY}" "${C_RESET}"
+    exit 1
+  fi
+
+  imported_count=0
+  for image_file in $IMAGE_IMPORT_FILES; do
+    if [ ! -f "$image_file" ]; then
+      log_error "镜像文件不存在: $image_file"
+      continue
+    fi
+    if [ "$DRY_RUN" = "true" ]; then
+      log_success "[DRY-RUN 演练] ${CONTAINER_TOOL_CMD} images import $image_file"
+      continue
+    fi
+    log_info "正在导入 $image_file ..."
+    if $CONTAINER_TOOL_CMD images import "$image_file"; then
+      log_success "导入完成: $image_file"
+      imported_count=$((imported_count + 1))
+    else
+      log_error "导入失败: $image_file（请确认是 OCI/docker 镜像存档，且当前用户对 containerd 有操作权限）"
+    fi
+  done
+
+  printf "\n"
+  if [ "$imported_count" -gt 0 ]; then
+    log_info "共成功导入 ${imported_count} 个文件，可执行 $0 --images nanzi-ai-agent 确认导入结果。"
+  else
+    log_warn "没有镜像被成功导入。"
+  fi
+  exit 0
+}
+
+# 独立工具模式：--images / --import 命中即执行并退出，不进入部署向导
+if [ "$IMAGE_LIST_MODE" = "true" ]; then
+  run_list_images
+fi
+if [ "$IMAGE_IMPORT_MODE" = "true" ]; then
+  run_import_images
+fi
 
 # ==============================================================================
 # 0. 环境自检：检查 kubectl 与 Kubernetes / K3s 集群连通性
