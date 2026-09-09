@@ -846,6 +846,8 @@ class ConversationRunStatusResponse(BaseModel):
     active: bool = False
     trace_id: Optional[str] = None
     ttl_seconds: Optional[int] = None
+    sandbox_degraded: bool = False
+    sandbox_degraded_message: Optional[str] = None
 
 
 @router.get(
@@ -865,6 +867,19 @@ async def get_conversation_run_status(
         user_id=user_id,
         conversation_id=conversation_id,
     )
+    # 携带会话级沙箱降级提示（降级运行、Bash 不可用），供前端展示明确通知。
+    try:
+        from app.services.ai.runtime.sandbox_degradation import get_sandbox_degraded
+
+        degraded_msg = await get_sandbox_degraded(conversation_id)
+    except Exception:
+        degraded_msg = None
+    if degraded_msg:
+        status["sandbox_degraded"] = True
+        status["sandbox_degraded_message"] = degraded_msg
+    else:
+        status["sandbox_degraded"] = False
+        status["sandbox_degraded_message"] = None
     return StandardResponse(data=ConversationRunStatusResponse(**status))
 
 @router.get("/conversation/{conversation_id}",

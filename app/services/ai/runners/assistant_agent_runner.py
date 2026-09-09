@@ -96,10 +96,18 @@ from app.services.ai.runtime.agentscope.session_lock import (
     agentscope_session_lock,
 )
 from app.services.ai.runtime.agentscope.workspace import (
+    DockerSandboxUnavailableError,
+    _workspace_native_name_for_spec,
     bind_configured_tools_to_workspace,
+    build_host_only_workspace,
     get_local_workspace,
     get_workspace_execution_backend,
     get_workspace_offloader,
+)
+from app.services.ai.runtime.agentscope.k8s_workspace import K8sSandboxUnavailableError
+from app.services.ai.runtime.sandbox_degradation import (
+    clear_sandbox_degraded,
+    set_sandbox_degraded,
 )
 from app.services.ai.runtime.agentscope.errors import extract_tool_loop_fuse_message
 from app.services.ai.runtime.agentscope.tools import (
@@ -2279,14 +2287,52 @@ class AssistantAgentRunner(BaseExecutor):
             primary_model_name=primary_model_name,
         )
         injection_config = await load_injection_config()
-        workspace = await get_local_workspace(
-            user_id=self._runtime_user_id(),
-            user_name=self._runtime_user_name(),
-            user_info=self.user_info,
-            conversation_id=self.conversation_id,
-            skills_custom=bool(getattr(self.config, "skills_custom", False)),
-            allowed_global_skills=list(getattr(self.config, "skills", None) or []),
+        # 沙箱失败策略：仅当本轮工具集确实需要沙箱 Bash 时才 fail-closed；
+        # 纯对话/只读轮次降级为宿主本地工作区（文件工具可用，Bash 移除），避免沙箱
+        # 拉不起来时阻断整轮聊天。
+        requires_sandbox_bash = any(
+            _workspace_native_name_for_spec(spec) == "Bash" for spec in tools
         )
+        try:
+            workspace = await get_local_workspace(
+                user_id=self._runtime_user_id(),
+                user_name=self._runtime_user_name(),
+                user_info=self.user_info,
+                conversation_id=self.conversation_id,
+                skills_custom=bool(getattr(self.config, "skills_custom", False)),
+                allowed_global_skills=list(getattr(self.config, "skills", None) or []),
+            )
+        except (DockerSandboxUnavailableError, K8sSandboxUnavailableError) as exc:
+            if requires_sandbox_bash:
+                raise
+            logger.warning(
+                "[agent] Sandbox workspace unavailable (conversation=%s); degrading to host local workspace, Bash disabled: %s",
+                self.conversation_id,
+                exc,
+            )
+            await set_sandbox_degraded(
+                str(self.conversation_id or ""),
+                "沙箱当前不可用，本轮已降级为本地执行（Bash 工具不可用）；沙箱恢复后将自动恢复。",
+            )
+            workspace = (
+                None,
+                await build_host_only_workspace(
+                    user_id=self._runtime_user_id(),
+                    user_name=self._runtime_user_name(),
+                    user_info=self.user_info,
+                    conversation_id=self.conversation_id,
+                    skills_custom=bool(getattr(self.config, "skills_custom", False)),
+                    allowed_global_skills=list(getattr(self.config, "skills", None) or []),
+                ),
+            )
+            # 移除沙箱 Bash 工具，剩余文件工具由宿主工作区承载。
+            tools = [
+                spec for spec in tools
+                if _workspace_native_name_for_spec(spec) != "Bash"
+            ]
+        else:
+            # 沙箱构建成功：清除历史降级提示，恢复后由前端自动隐藏。
+            await clear_sandbox_degraded(str(self.conversation_id or ""))
         # 仅挂载 agent 后端配置的工具；已配置的 Bash/Read 等换成会话 workdir 版本，不额外注入未绑定的内置工具。
         tools = await bind_configured_tools_to_workspace(
             workspace,

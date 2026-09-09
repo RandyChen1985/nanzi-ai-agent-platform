@@ -27,7 +27,7 @@ async def _sandbox_bash_env(state: Dict[str, Any] | None = None) -> str:
     """
     if state is not None:
         execution_backend = str(state.get("execution_backend") or "").strip().lower()
-        if execution_backend in {"host", "docker", "e2b", "ssh"}:
+        if execution_backend in {"host", "docker", "e2b", "ssh", "k8s"}:
             return execution_backend
         return _get_env_once()
 
@@ -39,7 +39,7 @@ async def _sandbox_bash_env(state: Dict[str, Any] | None = None) -> str:
     policy = resolve_effective_sandbox_policy(
         await ConfigService.get("sandbox_policy", "local"),
     )
-    if policy in ("docker", "e2b", "ssh"):
+    if policy in ("docker", "e2b", "ssh", "k8s"):
         return policy
     return _get_env_once()
 

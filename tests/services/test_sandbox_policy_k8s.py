@@ -873,3 +873,70 @@ async def test_k8s_workspace_restart_recreates_via_get_local_workspace(monkeypat
     assert result["status"] == "running"
     assert result["pod_name"] == "as-ws-alice__1"
     assert result["started_at"] is not None
+
+
+@pytest.mark.asyncio
+async def test_k8s_workspace_status_best_effort_running_when_cache_missed(monkeypatch):
+    from app.services.ai.runtime.agentscope import workspace as ws_module
+    from app.services.ai.runtime.agentscope.workspace import k8s_workspace_status
+
+    async def fake_get(key, default=None):
+        return "agent-sandboxes" if key == "sandbox_k8s_namespace" else "k8s"
+
+    monkeypatch.setattr("app.services.config_service.ConfigService.get", fake_get)
+
+    async def fake_root():
+        return "/data"
+
+    monkeypatch.setattr(ws_module, "resolve_workspace_root", fake_root)
+
+    async def fake_probe(namespace, pod_name):
+        return {
+            "available": True,
+            "found": True,
+            "phase": "Running",
+            "start_time": "2026-09-09T10:00:00+00:00",
+            "ready": True,
+        }
+
+    monkeypatch.setattr(
+        "app.services.ai.runtime.agentscope.k8s_workspace.read_k8s_sandbox_pod",
+        fake_probe,
+    )
+    ws_module._k8s_workspace_cache.clear()
+
+    result = await k8s_workspace_status(
+        user_id=1,
+        user_name="alice",
+        conversation_id="conv-1",
+    )
+    assert result["status"] == "running"
+    assert result["running"] is True
+    assert result["pod_name"] == "as-ws-alice--1"
+    assert result["started_at"] == "2026-09-09T10:00:00+00:00"
+
+
+@pytest.mark.asyncio
+async def test_build_host_only_workspace_initializes_local(tmp_path, monkeypatch):
+    from app.services.ai.runtime.agentscope import workspace as ws_module
+    from app.services.ai.runtime.agentscope.workspace import build_host_only_workspace
+
+    fake_local = MagicMock()
+    fake_local.initialize = AsyncMock()
+
+    async def fake_root():
+        return str(tmp_path)
+
+    monkeypatch.setattr(ws_module, "resolve_workspace_root", fake_root)
+    monkeypatch.setattr(ws_module, "resolve_session_workdir", lambda *a, **k: str(tmp_path))
+    monkeypatch.setattr(ws_module, "discover_platform_skill_paths", lambda **kwargs: [])
+    monkeypatch.setattr(ws_module, "_preseed_session_skills", lambda *a, **k: None)
+    monkeypatch.setattr("agentscope.workspace.LocalWorkspace", lambda **kwargs: fake_local)
+
+    ws = await build_host_only_workspace(
+        user_id=1,
+        user_name="alice",
+        conversation_id="conv-1",
+    )
+    assert ws is fake_local
+    fake_local.initialize.assert_awaited_once()
