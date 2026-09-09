@@ -339,6 +339,21 @@ cd k8s_deploy
 * `./nanzi-k8s.sh test`：快速探测 Service Endpoint 与 ClusterIP 连通性。
 * 镜像更新与滚动发布详见 [upgrade.md](./upgrade.md)。
 
+#### K8s 沙箱“网关预置镜像”（可选加速）
+
+K8s 沙箱（`sandbox_policy = k8s`）每次冷启动都会初始化 AgentScope 网关环境（在 Pod 内装 venv/依赖），较慢。可选用 [build-k8s-sandbox-image.sh](./build-k8s-sandbox-image.sh) 手动构建一个“网关预置镜像”（把网关环境与 gateway 脚本打进镜像），构建/导入后把系统配置 `sandbox_k8s_image` 填为 `nanzi-sandbox-k8s:<版本>`，新沙箱 Pod 冷启动将直接复用、从数十秒降到秒级。
+
+```bash
+# 在可访问 Docker 的构建机（本目录）执行：构建 + 导出 + 自动导入节点 containerd
+./build-k8s-sandbox-image.sh --version 1.0.0
+./build-k8s-sandbox-image.sh --dry-run            # 只预览 Dockerfile 与命令
+# 复核节点是否已导入：
+./install.sh check-sandbox-image nanzi-sandbox-k8s:1.0.0
+```
+
+* 不构建预置镜像也能正常使用：默认 `python:3.11-slim` 由集群直接拉取，AgentScope 会在 Pod 内自动初始化网关环境。
+* 详细说明（构建内容/依赖版本/升级后重建时机）见 [upgrade.md](./upgrade.md) 顶部“可选加速”章节；系统配置页 `sandbox_k8s_image` 下方也有操作提示。
+
 ---
 
 ### 手动逐步部署：第 0 步：确认你手里有什么

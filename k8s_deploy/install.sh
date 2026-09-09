@@ -55,6 +55,8 @@ IMAGE_LIST_MODE=false
 IMAGE_LIST_FILTER=""
 IMAGE_IMPORT_MODE=false
 IMAGE_IMPORT_FILES=""
+CHECK_IMAGE_MODE=false
+CHECK_IMAGE_REF=""
 INSTALL_MODE=false
 
 show_help() {
@@ -67,6 +69,7 @@ show_help() {
   printf "  %-30s %b\n" "upgrade, -u, --upgrade [TAG]" "快速更新镜像模式（滚动升级；可带目标 Tag）"
   printf "  %-30s %b\n" "images, --images [关键字]" "只读列出节点容器运行时（ctr -n k8s.io）已导入的镜像，可带关键字过滤"
   printf "  %-30s %b\n" "import, --import <镜像tar> [tar...]" "将本地镜像 tar 导入容器运行时（ctr -n k8s.io images import）"
+  printf "  %-30s %b\n" "check-sandbox-image, --check-sandbox-image [镜像]" "检查节点是否已导入指定 K8s 沙箱镜像（缺省 nanzi-sandbox-k8s:latest），未导入时给出构建引导"
   printf "\n"
   printf "%b常用选项：%b\n" "${C_BOLD}" "${C_RESET}"
   printf "  %-30s %b\n" "-d, --dry-run, --try" "模拟演练模式（仅生成/更新本地配置并做语法预检，不下发真实变更）"
@@ -82,6 +85,7 @@ show_help() {
   printf "  %-30s # 查看节点容器运行时中已导入的全部镜像\n" "$0 images"
   printf "  %-30s # 只查看 NanZi 相关镜像（手动检查本地是否已导入）\n" "$0 images nanzi-ai-agent"
   printf "  %-30s # 导入本地镜像 tar 到 containerd（非 K3s 集群用 ctr -n k8s.io）\n" "$0 import ./nanzi.tar"
+  printf "  %-30s # 检查节点是否已导入 K8s 沙箱预置镜像\n" "$0 check-sandbox-image nanzi-sandbox-k8s:1.0.0"
   printf "  %-30s # 查看完整帮助\n" "$0 help"
   printf "\n"
   exit 0
@@ -117,6 +121,14 @@ while [ $# -gt 0 ]; do
       shift
       if [ $# -gt 0 ] && [ "${1#-}" = "$1" ]; then
         IMAGE_LIST_FILTER="$1"
+        shift
+      fi
+      ;;
+    check-sandbox-image|--check-sandbox-image)
+      CHECK_IMAGE_MODE=true
+      shift
+      if [ $# -gt 0 ] && [ "${1#-}" = "$1" ]; then
+        CHECK_IMAGE_REF="$1"
         shift
       fi
       ;;
@@ -548,12 +560,55 @@ run_import_images() {
   exit 0
 }
 
-# 独立工具模式：--images / --import 命中即执行并退出，不进入部署向导
+# 检查节点是否已导入指定 K8s 沙箱镜像（预置镜像未导入会导致沙箱 Pod 拉取失败）
+run_check_sandbox_image() {
+  image_ref="${1:-}"
+  print_header "🧪 K8s 沙箱镜像检查"
+  if [ -z "$image_ref" ]; then
+    prompt_input "要检查的沙箱镜像（如 nanzi-sandbox-k8s:1.0.0，回车默认）" "nanzi-sandbox-k8s:latest" image_ref
+  fi
+  image_ref="$(printf '%s' "$image_ref" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
+  if [ -z "$image_ref" ]; then
+    image_ref="nanzi-sandbox-k8s:latest"
+  fi
+
+  resolve_container_tool_cmd
+  if [ -z "$CONTAINER_TOOL_CMD" ]; then
+    log_error "当前节点未找到 ctr / k3s 命令，无法检查镜像。"
+    printf "%b请在 containerd 所在节点执行（普通 containerd 或 K3s 均可）。%b\n" "${C_GRAY}" "${C_RESET}"
+    return 1
+  fi
+
+  log_info "正在节点容器运行时中检索：${image_ref} ..."
+  if $CONTAINER_TOOL_CMD images list 2>/dev/null | grep -q -- "$image_ref"; then
+    log_success "节点已导入沙箱镜像：${image_ref}"
+    printf "%b提示：将系统配置 sandbox_k8s_image 指向该镜像即可加速沙箱冷启动。%b\n\n" "${C_GRAY}" "${C_RESET}"
+  else
+    log_warn "节点未找到沙箱镜像：${image_ref}"
+    printf "\n%b请确认沙箱镜像来源：%b\n" "${C_BOLD}" "${C_RESET}"
+    printf "  %b① 使用网关预置镜像（推荐加速冷启动）：%b\n" "${C_CYAN}" "${C_RESET}"
+    printf "     ./build-k8s-sandbox-image.sh --version <版本>      # 构建并导入\n"
+    printf "     ./install.sh import nanzi-sandbox-k8s_<版本>.tar   # 或仅导入已有 tar\n"
+    printf "     ./install.sh check-sandbox-image nanzi-sandbox-k8s:<版本>   # 复核\n"
+    printf "  %b② 若 sandbox_k8s_image 仍为官方默认 python:3.11-slim，集群可直接拉取，可忽略此提示。%b\n\n" "${C_GRAY}" "${C_RESET}"
+  fi
+  return 0
+}
+
+# 独立工具模式：--images / --import / --check-sandbox-image 命中即执行并退出
 if [ "$IMAGE_LIST_MODE" = "true" ]; then
   run_list_images
 fi
 if [ "$IMAGE_IMPORT_MODE" = "true" ]; then
   run_import_images
+fi
+if [ "$CHECK_IMAGE_MODE" = "true" ]; then
+  run_check_sandbox_image "$CHECK_IMAGE_REF"
+  rc=$?
+  if [ "$rc" -ne 0 ]; then
+    exit "$rc"
+  fi
+  exit 0
 fi
 
 # 安全门：未指定任何显式命令时只展示帮助，绝不误入安装向导
@@ -658,6 +713,13 @@ echo
 prompt_confirm "是否同时部署云原生 Pod 安全沙箱 RBAC (sandbox-rbac.example.yaml)？" "Y" enable_sandbox_rbac
 if [ "$enable_sandbox_rbac" = "true" ]; then
   apply_resource "-f" "sandbox-rbac.example.yaml" "沙箱 RBAC 权限与绑定"
+fi
+
+echo
+prompt_confirm "是否检查 K8s 沙箱镜像是否已导入节点（若 sandbox_k8s_image 使用自定义预置镜像需先导入）？" "N" check_sandbox_now
+if [ "$check_sandbox_now" = "true" ]; then
+  prompt_input "要检查的沙箱镜像" "nanzi-sandbox-k8s:latest" _sandbox_check_img
+  run_check_sandbox_image "$_sandbox_check_img" || true
 fi
 
 # ==============================================================================

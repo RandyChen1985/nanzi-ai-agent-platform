@@ -1876,7 +1876,7 @@ const configShortDescriptions: Record<string, string> = {
   sandbox_policy: '安全沙箱执行策略。local 表示在宿主机扩展进程内直接执行（当前默认）；docker 表示在自动构建的 Docker 容器内执行；e2b 表示在 E2B 云端沙箱内执行；ssh 表示在 SSH 远程主机上执行。',
   sandbox_docker_base_image: 'docker 策略使用的容器基础镜像（留空默认使用官方标准镜像 python:3.11-slim）。',
   sandbox_k8s_namespace: 'k8s 策略沙箱 Pod 运行的命名空间（默认 agent-sandboxes）。',
-  sandbox_k8s_image: 'k8s 策略沙箱容器运行的基础镜像（默认 python:3.11-slim）。',
+  sandbox_k8s_image: 'k8s 策略沙箱容器运行的基础镜像（默认 python:3.11-slim）。可填自动构建的“网关预置镜像” nanzi-sandbox-k8s:<版本> 加速冷启动（构建方式见下方提示）。',
   sandbox_k8s_existing_pvc: 'k8s 策略可选已存在的共享 PVC 名称（留空表示动态独立临时卷；填写如 nanzi-app-data，通过 subPath 挂载到 /workspace）。',
   sandbox_k8s_storage_class: 'k8s 策略动态创建独立 PVC 时的存储类名称（StorageClass，留空表示使用集群默认 StorageClass）。',
   sandbox_k8s_storage_size: 'k8s 策略动态创建独立 PVC 时的申请容量（默认 1Gi）。',
@@ -4106,6 +4106,18 @@ onUnmounted(() => {
                               <p class="mt-1 text-[11px] text-gray-500">
                                 请填写平台可在集群中拉取到的容器镜像完整路径（需内置 Python 3.11 与 Debian/Ubuntu 基础环境）。
                               </p>
+                            </div>
+
+                            <!-- 可选加速：K8s 沙箱网关预置镜像构建提示 -->
+                            <div class="mt-2 space-y-1.5 rounded-xl border border-sky-200 bg-sky-50/70 p-3 text-[11px] leading-relaxed text-sky-900 dark:border-sky-500/30 dark:bg-sky-950/40 dark:text-sky-100">
+                              <div class="font-semibold text-sky-800 dark:text-sky-100">🚀 可选加速：K8s 沙箱“网关预置镜像”</div>
+                              <div>沙箱每次冷启动都会初始化 AgentScope 网关环境（装 venv/依赖），较慢。可先手动构建一个预置镜像（把网关环境直接打进镜像），把本项填为该镜像后，新沙箱 Pod 冷启动会直接复用、从几十秒降到秒级。</div>
+                              <div>在可访问 Docker 的构建机（k8s_deploy 目录）执行构建与导入：
+                                <code class="mt-1 block rounded bg-white/70 px-1.5 py-0.5 font-mono text-sky-800 dark:bg-gray-900/60 dark:text-sky-100">./build-k8s-sandbox-image.sh --version 1.0.0</code>
+                                <span class="block">脚本会自动 docker build → save → 导入节点 containerd（ctr -n k8s.io / k3s ctr）。</span>
+                              </div>
+                              <div>本项填写格式：<span class="font-mono">nanzi-sandbox-k8s:&lt;版本&gt;</span>（可选用上方预置列表或“自定义镜像地址”）。未使用预置镜像时留空/保持默认 <span class="font-mono">python:3.11-slim</span>，由集群直接拉取即可，无需预置。</div>
+                              <div>想先确认节点已导入该镜像：<span class="font-mono">./install.sh check-sandbox-image nanzi-sandbox-k8s:&lt;版本&gt;</span></div>
                             </div>
                           </div>
                           <div v-else>

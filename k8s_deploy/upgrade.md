@@ -3,6 +3,21 @@
 不建议手动删除 Pod。更新镜像后，应该通过 Deployment 做滚动更新。
 
 > [!TIP]
+> **可选加速：K8s 沙箱网关预置镜像** —— AgentScope 沙箱网关环境位于 Pod 内
+> `/root/.agentscope`（临时写层），每次新 Pod 冷启动都要跑 bootstrap（apt + uv + venv +
+> 安装依赖），这是 K8s 沙箱比 Docker 冷启动慢的根本原因。可用
+> [`build-k8s-sandbox-image.sh`](./build-k8s-sandbox-image.sh) 构建一个**网关预置镜像**，
+> 把 venv 与 gateway 脚本直接打进镜像；配置 `sandbox_k8s_image` 指向它后，新 Pod 冷启动
+> 直接可用，从数十秒降到秒级：
+>
+> ```bash
+> ./build-k8s-sandbox-image.sh --version 1.0.0     # docker build + save
+> ./build-k8s-sandbox-image.sh --dry-run           # 只预览 Dockerfile 与命令
+> # 产物 nanzi-sandbox-k8s:1.0.0 + tar；脚本会自动尝试导入节点（ctr -n k8s.io / k3s ctr）
+> # 随后把系统配置 sandbox_k8s_image 设为 nanzi-sandbox-k8s:1.0.0
+> ```
+
+> [!TIP]
 > **一键自动升级（推荐）**：目录向导安装器已深度集成镜像滚动发布流程，在将镜像导入节点后，直接运行：
 >
 > ```bash
