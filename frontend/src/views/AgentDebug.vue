@@ -3564,7 +3564,7 @@ const sendMessageInternal = async (snapshot: ChatSendSnapshot) => {
       });
     }
   } finally {
-    isProcessing.value = false;
+    isProcessing.value = agentMsg.value.pendingPermission?.status === "pending" || agentMsg.value.pendingExternalExecution?.status === "pending";
     void refreshCurrentRunStatus();
     void refreshDebugContextUsage();
     void refreshDebugContextCompactions(true);
@@ -3687,11 +3687,14 @@ const applyPermissionStreamEvent = (msg: Message, data: any) => {
     // 按终态映射，避免把“用户拒绝/执行失败”错误显示为已完成。
     if (msg.pendingPermission) {
       msg.pendingPermission.status =
-        data.status === "rejected" || data.status === "denied"
+        data.status === "awaiting_permission"
+          ? "pending"
+          : data.status === "rejected" || data.status === "denied"
           ? "rejected"
           : data.status === "error" || data.status === "failed"
             ? "error"
             : "approved";
+      if (data.status === "awaiting_permission") msg.pendingPermission.expanded = true;
     }
     if (msg.pendingExternalExecution) {
       msg.pendingExternalExecution.status =

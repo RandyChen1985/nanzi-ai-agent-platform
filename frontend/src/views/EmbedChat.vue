@@ -7477,11 +7477,14 @@ const applyPermissionStreamEvent = (msg: Message, data: any) => {
     // 或“执行失败”错误显示为已完成（拒绝/失败必须保留其自身语义）。
     if (msg.pendingPermission) {
       msg.pendingPermission.status =
-        data.status === "rejected" || data.status === "denied"
+        data.status === "awaiting_permission"
+          ? "pending"
+          : data.status === "rejected" || data.status === "denied"
           ? "rejected"
           : data.status === "error" || data.status === "failed"
             ? "error"
             : "approved";
+      if (data.status === "awaiting_permission") msg.pendingPermission.expanded = true;
     }
     if (msg.pendingExternalExecution) {
       msg.pendingExternalExecution.status =
@@ -8282,7 +8285,7 @@ const sendMessageInternal = async (snapshot: ChatSendSnapshot) => {
     }
   } finally {
     flushContentBuffer();
-    isProcessing.value = false;
+    isProcessing.value = agentMsg.value.pendingPermission?.status === "pending" || agentMsg.value.pendingExternalExecution?.status === "pending";
     void refreshCurrentRunStatus();
     agentMsg.value.isThinking = false;
     void refreshQuota();
