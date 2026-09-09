@@ -32,6 +32,7 @@ from pydantic import BaseModel
 
 from app.core.dependencies import require_api_key
 from app.schemas.response import StandardResponse
+from app.services.ai.runtime.agentscope.k8s_workspace import K8sSandboxUnavailableError
 from app.services.ai.runtime.agentscope.docker_prebuild import (
     docker_workspace_prebuild_status,
     prebuild_docker_workspace_image,
@@ -45,6 +46,10 @@ from app.services.ai.runtime.agentscope.workspace import (
     stop_docker_workspace as stop_docker_workspace_runtime,
     restart_docker_workspace as restart_docker_workspace_runtime,
     exec_docker_workspace_command as exec_docker_workspace_command_runtime,
+    ensure_k8s_workspace as ensure_k8s_workspace_runtime,
+    k8s_workspace_status as k8s_workspace_status_runtime,
+    restart_k8s_workspace as restart_k8s_workspace_runtime,
+    stop_k8s_workspace as stop_k8s_workspace_runtime,
 )
 
 router = APIRouter()
@@ -405,6 +410,154 @@ async def get_docker_workspace_status_endpoint(
     return StandardResponse(
         data=status,
         message="Docker 沙箱状态查询完成。",
+    )
+
+
+@router.post(
+    "/sandbox/k8s/workspace/ensure",
+    response_model=StandardResponse[Dict[str, Any]],
+    summary="启动或复用当前用户的 Kubernetes 沙箱 Pod",
+)
+async def ensure_k8s_workspace_endpoint(
+    body: DockerWorkspaceEnsureRequest,
+    user_info: Dict[str, Any] = Depends(require_api_key),
+):
+    """只确保当前用户 Pod 运行，不在 Pod 内执行用户命令。"""
+    conversation_id = body.conversation_id.strip()
+    if not conversation_id:
+        raise HTTPException(status_code=400, detail="conversation_id 不能为空")
+
+    try:
+        result = await ensure_k8s_workspace_runtime(
+            user_id=user_info.get("user_id") or user_info.get("id"),
+            user_name=user_info.get("user_name") or user_info.get("username"),
+            user_info=user_info,
+            conversation_id=conversation_id,
+        )
+    except K8sSandboxUnavailableError as exc:
+        status_code = 409 if exc.reason_code == "k8s_policy_not_effective" else 503
+        raise HTTPException(
+            status_code=status_code,
+            detail={
+                "reason_code": exc.reason_code,
+                "message": exc.user_message,
+            },
+        ) from exc
+
+    return StandardResponse(
+        data=result,
+        message="Kubernetes 沙箱 Pod 已运行。",
+    )
+
+
+@router.post(
+    "/sandbox/k8s/workspace/stop",
+    response_model=StandardResponse[Dict[str, Any]],
+    summary="停止当前用户的 Kubernetes 沙箱 Pod",
+)
+async def stop_k8s_workspace_endpoint(
+    body: DockerWorkspaceEnsureRequest,
+    user_info: Dict[str, Any] = Depends(require_api_key),
+):
+    """停止当前用户的 Kubernetes 沙箱 Pod 并清理缓存。"""
+    conversation_id = body.conversation_id.strip()
+    if not conversation_id:
+        raise HTTPException(status_code=400, detail="conversation_id 不能为空")
+
+    try:
+        result = await stop_k8s_workspace_runtime(
+            user_id=user_info.get("user_id") or user_info.get("id"),
+            user_name=user_info.get("user_name") or user_info.get("username"),
+            user_info=user_info,
+            conversation_id=conversation_id,
+        )
+    except K8sSandboxUnavailableError as exc:
+        status_code = 409 if exc.reason_code == "k8s_policy_not_effective" else 503
+        raise HTTPException(
+            status_code=status_code,
+            detail={
+                "reason_code": exc.reason_code,
+                "message": exc.user_message,
+            },
+        ) from exc
+
+    return StandardResponse(
+        data=result,
+        message="Kubernetes 沙箱 Pod 已停止。",
+    )
+
+
+@router.post(
+    "/sandbox/k8s/workspace/restart",
+    response_model=StandardResponse[Dict[str, Any]],
+    summary="重启当前用户的 Kubernetes 沙箱 Pod（销毁旧 Pod 并拉起新 Pod）",
+)
+async def restart_k8s_workspace_endpoint(
+    body: DockerWorkspaceEnsureRequest,
+    user_info: Dict[str, Any] = Depends(require_api_key),
+):
+    """销毁旧 Kubernetes 沙箱 Pod 并重新拉起全新的 Pod。"""
+    conversation_id = body.conversation_id.strip()
+    if not conversation_id:
+        raise HTTPException(status_code=400, detail="conversation_id 不能为空")
+
+    try:
+        result = await restart_k8s_workspace_runtime(
+            user_id=user_info.get("user_id") or user_info.get("id"),
+            user_name=user_info.get("user_name") or user_info.get("username"),
+            user_info=user_info,
+            conversation_id=conversation_id,
+        )
+    except K8sSandboxUnavailableError as exc:
+        status_code = 409 if exc.reason_code == "k8s_policy_not_effective" else 503
+        raise HTTPException(
+            status_code=status_code,
+            detail={
+                "reason_code": exc.reason_code,
+                "message": exc.user_message,
+            },
+        ) from exc
+
+    return StandardResponse(
+        data=result,
+        message="Kubernetes 沙箱 Pod 已重启完成。",
+    )
+
+
+@router.get(
+    "/sandbox/k8s/workspace/status",
+    response_model=StandardResponse[Dict[str, Any]],
+    summary="查询当前用户的 Kubernetes 沙箱 Pod 状态",
+)
+async def get_k8s_workspace_status_endpoint(
+    conversation_id: str = Query(..., min_length=1),
+    user_info: Dict[str, Any] = Depends(require_api_key),
+):
+    """只查询当前用户 Pod，不触发 K8s 沙箱初始化。"""
+    conversation_id = conversation_id.strip()
+    if not conversation_id:
+        raise HTTPException(status_code=400, detail="conversation_id 不能为空")
+
+    try:
+        status = await k8s_workspace_status_runtime(
+            user_id=user_info.get("user_id") or user_info.get("id"),
+            user_name=user_info.get("user_name") or user_info.get("username"),
+            user_info=user_info,
+            conversation_id=conversation_id,
+        )
+    except K8sSandboxUnavailableError as exc:
+        status_code = 409 if exc.reason_code == "k8s_policy_not_effective" else 503
+        raise HTTPException(
+            status_code=status_code,
+            detail={
+                "reason_code": exc.reason_code,
+                "message": exc.user_message,
+            },
+        ) from exc
+
+    return StandardResponse(
+        data=status,
+        message="Kubernetes 沙箱状态查询完成。",
     )
 
 
