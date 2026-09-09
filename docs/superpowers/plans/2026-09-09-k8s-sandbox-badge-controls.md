@@ -1298,64 +1298,54 @@ Expected: `AssertionError`（k8s 文案未出现）。
   backend?: "docker" | "k8s";
 ```
 
-2) 增加术语计算（放在 `statusCopy` computed 之前）：
+2) 增加字面术语计算（放在 `statusCopy` computed 之前）。**设计约束：docker 分支必须使用与旧版完全一致、以完整字面量出现的文案**（既有契约测试断言源码中含 "Docker 沙箱容器已运行" 等连续字面串，不能用模板拼接拆散）：
 
 ```ts
-const backendTerm = computed(() => props.backend === "k8s"
-  ? {
-      subject: "Kubernetes 沙箱 Pod",
-      hintSubject: "当前用户沙箱 Pod",
+const statusTexts = computed(() => {
+  if (props.backend === "k8s") {
+    return {
+      startingTitle: "Kubernetes 沙箱 Pod 创建中",
+      startingHint: "正在创建或复用当前用户的沙箱 Pod",
+      stoppingTitle: "Kubernetes 沙箱 Pod 停止中",
+      stoppingHint: "正在停止并清理当前用户的沙箱 Pod",
+      runningTitle: "Kubernetes 沙箱 Pod 已运行",
+      runningHint: props.containerId
+        ? `当前用户 Pod：${props.containerId}`
+        : "Bash 将绑定到当前用户的沙箱 Pod",
+      errorTitle: "Kubernetes 沙箱 Pod 启动失败",
+      errorHint: props.workspaceError || "请检查集群网络、RBAC 与镜像拉取状态",
+      idleTitle: "Kubernetes 沙箱 Pod 未启动",
+      idleHint: "启动后，Bash 命令将绑定到当前用户的沙箱 Pod",
+      startLabel: "启动我的沙箱 Pod",
+      retryLabel: "重试启动",
       closeLabel: "关闭沙箱提示",
-    }
-  : {
-      subject: "Docker 沙箱容器",
-      hintSubject: "当前用户的 Docker 容器",
-      closeLabel: "关闭 Docker 沙箱提示",
-    });
-
-const subjectTerms = computed(() => {
-  const t = backendTerm.value;
+    };
+  }
   return {
-    startingTitle: `${t.subject}启动中`,
-    startingHint: props.backend === "k8s"
-      ? "正在创建或复用当前用户的沙箱 Pod"
-      : "正在创建或复用当前用户的 Docker 容器",
-    stoppingTitle: `${t.subject}停止中`,
-    stoppingHint: props.backend === "k8s"
-      ? "正在停止并清理当前用户的沙箱 Pod"
-      : "正在停止并清理当前用户的 Docker 容器",
-    runningTitle: `${t.subject}已运行`,
+    startingTitle: "Docker 沙箱容器启动中",
+    startingHint: "正在创建或复用当前用户的 Docker 容器",
+    stoppingTitle: "Docker 沙箱容器停止中",
+    stoppingHint: "正在停止并清理当前用户的 Docker 容器",
+    runningTitle: "Docker 沙箱容器已运行",
     runningHint: props.containerId
-      ? (props.backend === "k8s" ? `当前用户 Pod：${props.containerId}` : `当前用户容器：${props.containerId}`)
-      : (props.backend === "k8s"
-          ? "Bash 将绑定到当前用户的沙箱 Pod"
-          : "Bash 将绑定到当前用户的 Docker 容器"),
-    errorTitle: `${t.subject}启动失败`,
-    errorHint: props.workspaceError || (props.backend === "k8s"
-      ? "请检查集群网络、RBAC 与镜像拉取状态"
-      : "请检查 Docker daemon、镜像和权限"),
-    idleTitle: `${t.subject}未启动`,
-    idleHint: props.backend === "k8s"
-      ? "启动后，Bash 命令将绑定到当前用户的沙箱 Pod"
-      : "启动后，Bash 命令将绑定到当前用户的 Docker 容器",
-    startLabel: props.backend === "k8s" ? "启动我的沙箱 Pod" : "启动我的 Docker 沙箱",
+      ? `当前用户容器：${props.containerId}`
+      : "Bash 将绑定到当前用户的 Docker 容器",
+    errorTitle: "Docker 沙箱容器启动失败",
+    errorHint: props.workspaceError || "请检查 Docker daemon、镜像和权限",
+    idleTitle: "Docker 沙箱容器未启动",
+    idleHint: "启动后，Bash 命令将绑定到当前用户的 Docker 容器",
+    startLabel: "启动我的 Docker 沙箱",
     retryLabel: "重试启动",
+    closeLabel: "关闭 Docker 沙箱提示",
   };
 });
 ```
 
-3) `statusCopy` computed 各分支文案替换为 `subjectTerms.value.*`（start/refresh/close 相关 aria 与按钮文案一并替换）：
-   - `starting`：`title: subjectTerms.value.startingTitle`、`hint: subjectTerms.value.startingHint`
-   - `stopping`：`stoppingTitle/stoppingHint`
-   - `running`：`runningTitle` + `hint: subjectTerms.value.runningHint`
-   - `error`：`errorTitle` + `hint: subjectTerms.value.errorHint`
-   - default：`idleTitle/idleHint`
-   - 启动按钮：`:aria-label="workspaceStatus === 'error' ? subjectTerms.value.retryLabel : subjectTerms.value.startLabel"`，按钮文案 `{{ workspaceStatus === "error" ? subjectTerms.value.retryLabel : subjectTerms.value.startLabel }}`
+3) `statusCopy` computed 改为在顶部取 `const t = statusTexts.value;` 并在各分支用 `t.startingTitle` / `t.startingHint` / `t.stoppingTitle` / `t.stoppingHint` / `t.runningTitle` / `t.runningHint` / `t.errorTitle` / `t.errorHint` / `t.idleTitle` / `t.idleHint`（icon/box/hintTone 与颜色 class 保持原样，仍为 `computed(() => { switch (...) {...} })`）：
+   - 启动按钮：`:aria-label="workspaceStatus === 'error' ? statusTexts.value.retryLabel : statusTexts.value.startLabel"`，按钮文案 `{{ workspaceStatus === "error" ? statusTexts.value.retryLabel : statusTexts.value.startLabel }}`
    - running 刷新按钮 aria 改为 `刷新沙箱状态`
-   - 关闭按钮 aria/title 用 `backendTerm.value.closeLabel`（title 保留倒计时提示）
+   - 关闭按钮 aria/title 用 `statusTexts.value.closeLabel`（idle 的 title 保留 `N秒后自动关闭` 倒计时）
 4) template 顶部 `data-testid="docker-workspace-banner"` 保留。
-
-> 注意：`statusCopy` 原实现直接 return 对象字面量；请改为 `return { icon, title: subjectTerms.value.xxx, hint: subjectTerms.value.xxx, box, hintTone }`，box/hintTone 与颜色 class 保持原样。最终 `statusCopy` 仍然是一个 `computed(() => { switch (...) {...} })`。
 
 - [ ] **Step 4: 运行确认通过**
 
