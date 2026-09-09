@@ -303,6 +303,99 @@ class ExampleService:
         return target_kb_id
 
     @staticmethod
+    async def _sync_local_vectors(db: AsyncSession, example: ChatBIExample) -> bool:
+        """
+        将单条案例同步/清理到本地 Redis 向量索引，返回是否成功。
+
+        供 sync_to_ragflow（RAGFlow 模式）与 sync_to_local_redis（本地模式）复用，
+        避免重复实现本地 Redis 写入/清理逻辑。
+        """
+        try:
+            from app.services.ai.example_index_service import ExampleIndexService
+            from app.services.ai.embedding_client import EmbeddingClient
+            if example.status == "approved" and example.feedback_type != "down":
+                dataset_name = "通用数据集"
+                try:
+                    stmt_ds = select(MetaDataset.display_name).where(MetaDataset.id == example.dataset_id)
+                    res_ds = await db.execute(stmt_ds)
+                    dataset_name = res_ds.scalar() or "通用数据集"
+                except Exception:
+                    pass
+
+                text_to_embed = example.refined_query or example.user_query
+                if text_to_embed:
+                    embedding = await EmbeddingClient.embed_text(text_to_embed, use_global=True)
+                    await ExampleIndexService.upsert_vector(
+                        example_id=example.id,
+                        dataset_id=example.dataset_id or 0,
+                        dataset_name=dataset_name,
+                        question=example.refined_query or example.user_query,
+                        raw_query=example.user_query,
+                        context_summary=example.context_summary or "",
+                        sql_text=example.sql_text,
+                        trace_id=example.trace_id or "",
+                        agent_id=example.agent_id or "",
+                        sql_metadata=example.sql_metadata,
+                        embedding=embedding
+                    )
+            elif example.status in ["deprecated", "rejected"] or example.feedback_type == "down":
+                await ExampleIndexService.delete_vector(example.id)
+            return True
+        except Exception as e:
+            logger.error(f"[ExampleSync] Local Redis sync failed for example {example.id}: {e}")
+            return False
+
+    @staticmethod
+    async def sync_to_local_redis(example_id: int):
+        """
+        本地模式 (metadata_provider=local) 专用：仅将案例同步到本地 Redis 向量索引，
+        不连接 RAGFlow，避免在未部署 RAGFlow 时触发误报 failed。检索时本地模式走
+        Redis HNSW KNN，因此该路径足以覆盖本地模式的案例召回。
+        """
+        async with AsyncSessionLocal() as db:
+            try:
+                stmt = select(ChatBIExample).where(ChatBIExample.id == example_id)
+                result = await db.execute(stmt)
+                example = result.scalars().first()
+                if not example or example.rag_sync_status == "syncing":
+                    return
+
+                example.rag_sync_status = "syncing"
+                await db.commit()
+
+                ok = await ExampleService._sync_local_vectors(db, example)
+                if not ok:
+                    example.rag_sync_status = "failed"
+                    example.rag_sync_error = "本地 Redis 向量同步失败，请检查 Redis 与 Embedding 配置"
+                    await db.commit()
+                    return
+
+                # 本地模式下仅维护本地向量，状态语义自行闭环：
+                # 被清理 -> removed；approved 同步成功 -> synced；其余 -> pending
+                if example.status in ["deprecated", "rejected"] or example.feedback_type == "down":
+                    example.rag_sync_status = "removed"
+                    example.rag_doc_id = None
+                elif example.status == "approved":
+                    example.rag_sync_status = "synced"
+                    example.rag_synced_at = datetime.now()
+                else:
+                    example.rag_sync_status = "pending"
+                await db.commit()
+                logger.info(f"[ExampleLocalSync] Synced example {example_id} to local Redis vectors.")
+            except Exception as e:
+                logger.error(f"[ExampleLocalSync] Failed for example {example_id}: {e}", exc_info=True)
+                try:
+                    stmt_err = select(ChatBIExample).where(ChatBIExample.id == example_id)
+                    res_err = await db.execute(stmt_err)
+                    ex_err = res_err.scalars().first()
+                    if ex_err:
+                        ex_err.rag_sync_status = "failed"
+                        ex_err.rag_sync_error = str(e)
+                        await db.commit()
+                except Exception:
+                    pass
+
+    @staticmethod
     async def sync_to_ragflow(example_id: int):
         """
         同步经验到 RAGFlow。使用增强后的 Markdown 模板。
@@ -320,39 +413,8 @@ class ExampleService:
                 example.rag_sync_status = "syncing"
                 await db.commit()
 
-                # 联动本地 Redis 同步与清理
-                try:
-                    from app.services.ai.example_index_service import ExampleIndexService
-                    from app.services.ai.embedding_client import EmbeddingClient
-                    if example.status == "approved" and example.feedback_type != "down":
-                        dataset_name = "通用数据集"
-                        try:
-                            stmt_ds = select(MetaDataset.display_name).where(MetaDataset.id == example.dataset_id)
-                            res_ds = await db.execute(stmt_ds)
-                            dataset_name = res_ds.scalar() or "通用数据集"
-                        except Exception:
-                            pass
-
-                        text_to_embed = example.refined_query or example.user_query
-                        if text_to_embed:
-                            embedding = await EmbeddingClient.embed_text(text_to_embed, use_global=True)
-                            await ExampleIndexService.upsert_vector(
-                                example_id=example.id,
-                                dataset_id=example.dataset_id or 0,
-                                dataset_name=dataset_name,
-                                question=example.refined_query or example.user_query,
-                                raw_query=example.user_query,
-                                context_summary=example.context_summary or "",
-                                sql_text=example.sql_text,
-                                trace_id=example.trace_id or "",
-                                agent_id=example.agent_id or "",
-                                sql_metadata=example.sql_metadata,
-                                embedding=embedding
-                            )
-                    elif example.status in ["deprecated", "rejected"] or example.feedback_type == "down":
-                        await ExampleIndexService.delete_vector(example.id)
-                except Exception as redis_err:
-                    logger.error(f"[ExampleSync] Local Redis sync failed for example {example_id}: {redis_err}")
+                # 1.1 联动本地 Redis 同步与清理（供 RAGFlow / 本地模式共用）
+                await ExampleService._sync_local_vectors(db, example)
 
                 # 2. 环境检查
                 if example.status not in ["approved", "deprecated"]:

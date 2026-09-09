@@ -648,12 +648,12 @@ onMounted(async () => {
 
         <!-- 一键同步按钮 -->
         <button
-          v-if="hasPermission('element:chatbi_example:sync') && !isLocalMode"
+          v-if="hasPermission('element:chatbi_example:sync')"
           type="button"
           class="inline-flex w-full items-center justify-center gap-1.5 rounded-lg border border-indigo-200 bg-indigo-50 px-3.5 py-2 text-sm font-medium text-indigo-700 shadow-sm transition-all hover:bg-indigo-100 disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto"
-          :disabled="loading || !isEngineReady"
-          :title="!isEngineReady ? 'RAGFlow 服务未就绪' : '一键同步至 RAGFlow'"
-          @click="isEngineReady && (showSyncAllConfirm = true)"
+          :disabled="loading || (!isLocalMode && !isEngineReady)"
+          :title="isLocalMode ? '一键同步至本地向量索引' : (!isEngineReady ? 'RAGFlow 服务未就绪' : '一键同步至 RAGFlow')"
+          @click="(isLocalMode || isEngineReady) && (showSyncAllConfirm = true)"
         >
           <CloudArrowUpIcon class="h-4 w-4 text-indigo-600" />
           <span class="hidden sm:inline">一键同步</span>
@@ -717,13 +717,15 @@ onMounted(async () => {
               <th scope="col" class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">分类</th>
               <th scope="col" class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">反馈</th>
               <th scope="col" class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">状态</th>
-              <th scope="col" class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">RAG 同步</th>
+              <template v-if="!isLocalMode">
+                <th scope="col" class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">RAG 同步</th>
+              </template>
               <th scope="col" class="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">操作</th>
             </tr>
           </thead>
           <tbody class="bg-white divide-y divide-gray-200">
             <tr v-if="!loading && examples.length === 0">
-              <td colspan="7" class="px-6 py-14 text-center">
+              <td :colspan="isLocalMode ? 6 : 7" class="px-6 py-14 text-center">
                 <p class="text-sm text-gray-500 font-medium">
                   <template v-if="hasActiveFilters">
                     没有符合当前筛选条件的案例
@@ -820,14 +822,16 @@ onMounted(async () => {
                   {{ getStatusLabel(ex.status).label }}
                 </span>
               </td>
-              <td class="px-4 py-3.5 whitespace-nowrap">
-                <div class="flex flex-col">
-                  <span :class="['text-xs font-semibold', getRagStatusDisplay(ex).color]">
-                    {{ getRagStatusDisplay(ex).label }}
-                  </span>
-                  <span v-if="ex.rag_synced_at" class="text-[10px] text-gray-400 font-mono">{{ new Date(ex.rag_synced_at).toLocaleString() }}</span>
-                </div>
-              </td>
+              <template v-if="!isLocalMode">
+                <td class="px-4 py-3.5 whitespace-nowrap">
+                  <div class="flex flex-col">
+                    <span :class="['text-xs font-semibold', getRagStatusDisplay(ex).color]">
+                      {{ getRagStatusDisplay(ex).label }}
+                    </span>
+                    <span v-if="ex.rag_synced_at" class="text-[10px] text-gray-400 font-mono">{{ new Date(ex.rag_synced_at).toLocaleString() }}</span>
+                  </div>
+                </td>
+              </template>
               <td class="px-4 py-3.5 whitespace-nowrap text-right text-sm font-medium">
                 <div class="flex items-center justify-end gap-1">
                   <!-- 高频编辑/详情按钮 -->
@@ -1008,7 +1012,7 @@ onMounted(async () => {
         <div class="flex justify-between items-center pt-4 border-t">
           <div class="text-[10px] text-gray-400">
             <span v-if="currentExample.rag_sync_status === 'synced'" class="text-green-500 flex items-center">
-              <CheckCircleIcon class="w-3 h-3 mr-1" /> 已同步到 RAGFlow
+              <CheckCircleIcon class="w-3 h-3 mr-1" /> {{ isLocalMode ? '已同步到本地向量索引' : '已同步到 RAGFlow' }}
             </span>
             <span v-else-if="currentExample.rag_sync_status === 'pending' && currentExample.rag_synced_at" class="text-orange-500 flex items-center font-bold">
               <InformationCircleIcon class="w-3 h-3 mr-1" /> 内容已变更，建议重新同步
@@ -1033,7 +1037,9 @@ onMounted(async () => {
     <ConfirmModal
       v-if="showSyncAllConfirm"
       title="一键同步确认"
-      message="确定要将所有状态为'已通过'的案例重新同步到 RAGFlow 吗？这可能会覆盖 RAGFlow 中已有的对应记录。"
+      :message="isLocalMode
+        ? '确定要将所有状态为\'已通过\'的案例重新同步到本地向量索引 (Redis) 吗？'
+        : '确定要将所有状态为\'已通过\'的案例重新同步到 RAGFlow 吗？这可能会覆盖 RAGFlow 中已有的对应记录。'"
       confirmText="开始同步"
       type="primary"
       @confirm="syncAllToRag"
@@ -1069,14 +1075,14 @@ onMounted(async () => {
         </button>
 
         <button
-          v-if="openRowMenuExample.status === 'approved' && !isLocalMode"
+          v-if="openRowMenuExample.status === 'approved'"
           type="button"
           class="w-full text-left px-3.5 py-2 text-xs font-medium text-blue-600 hover:bg-blue-50/70 flex items-center gap-2 transition-colors disabled:opacity-50"
-          :disabled="!isEngineReady"
+          :disabled="!isLocalMode && !isEngineReady"
           @click="syncToRag(openRowMenuExample.id); closeMenus()"
         >
           <CloudArrowUpIcon class="w-4 h-4 text-blue-500 shrink-0" />
-          同步到 RAGFlow
+          {{ isLocalMode ? '同步到本地向量索引' : '同步到 RAGFlow' }}
         </button>
 
         <div class="my-1 border-t border-gray-100"></div>
