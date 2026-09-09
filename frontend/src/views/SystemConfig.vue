@@ -11,6 +11,7 @@ import RagFlowResourceSelector from '../components/RagFlowResourceSelector.vue'
 import ConfirmModal from '../components/ConfirmModal.vue'
 import RedisKeyCleanupModal from '../components/system/RedisKeyCleanupModal.vue'
 import Switch from '../components/Switch.vue'
+import { copyToClipboard } from '../utils/clipboard'
 import { useRouter, useRoute } from 'vue-router'
 import {
   CircleStackIcon,
@@ -343,6 +344,18 @@ const runtimeEnv = computed(() =>
   configGroups.value?.sandbox?.find(x => x.key === 'sandbox_runtime_env')?.value ?? 'host',
 )
 
+/** 平台后端是否运行在 Kubernetes Pod 内（由后端动态探测注入，仅 in-cluster 部署为 true）。
+ * 非 K8s 部署（宿主机 / 普通 Docker）时 k8s 沙箱策略无 in-cluster 凭证可用，故禁用该选项。 */
+const inK8sEnv = computed(() =>
+  configGroups.value?.sandbox?.find(x => x.key === 'sandbox_runtime_in_k8s')?.value === 'true',
+)
+
+/** 当前环境能否连接 Docker daemon（由后端动态探测注入）：配了 DOCKER_HOST 或存在 /var/run/docker.sock 即可用。
+ * 宿主机/普通 Docker 默认可用；K8s Pod 未挂 socket 且未配 DOCKER_HOST 时不可用，故禁用 docker 选项。 */
+const dockerAvailable = computed(() =>
+  configGroups.value?.sandbox?.find(x => x.key === 'sandbox_docker_available')?.value === 'true',
+)
+
 /** local 策略实际执行位置的动态描述（随平台部署环境变化） */
 const sandboxLocalExecDesc = computed(() =>
   runtimeEnv.value === 'docker'
@@ -359,6 +372,7 @@ const sandboxPolicyShortDesc = computed(() =>
 const sandboxPolicyTip = computed(() => `安全沙箱执行策略：
 * local（默认）：Bash / 文件工具在${sandboxLocalExecDesc.value}，性能最好，但代码运行在${runtimeEnv.value === 'docker' ? '平台容器内部' : '宿主机上'}。
 * docker：在 Docker 容器内执行${runtimeEnv.value === 'docker' ? '（平台通过挂载的宿主机 Docker Socket 动态创建与管理沙箱容器）' : ''}。首次使用或基础镜像变更时，系统会自动构建并启动容器；每个用户的容器工作区固定挂载到该用户自己的平台工作区目录。
+* k8s：在 Kubernetes 集群内动态拉起独立 Pod 执行，适用于云原生生产部署。可通过 ServiceAccount 自动管理 Pod 与存储卷，支持 subPath 共享挂载与独立专属 PVC 两种模式。
 * e2b：在 E2B 云端沙箱内执行。需在下方填写 API Key 或配置 E2B_API_KEY 环境变量。
 * ssh：在 SSH 远程主机上执行。平台所在主机通过 ssh 连接下方指定的远程主机，把远程目录作为沙箱工作区；支持密码（依赖 sshpass）与私钥两种认证。
 注意：不同策略有各自的配置项，仅在切换到对应策略时生效。`)
@@ -376,10 +390,20 @@ const sandboxPolicyOptions = computed(() => [
   {
     value: 'docker',
     label: 'docker（Docker 容器）',
-    disabled: false,
-    desc: runtimeEnv.value === 'docker'
-      ? '通过宿主机 Docker Socket 动态创建沙箱容器执行，工作区按用户隔离'
-      : '在自动构建的 Docker 容器内执行，工作区按用户隔离',
+    disabled: !dockerAvailable.value,
+    desc: dockerAvailable.value
+      ? (runtimeEnv.value === 'docker'
+          ? '通过宿主机 Docker Socket 动态创建沙箱容器执行，工作区按用户隔离'
+          : '在自动构建的 Docker 容器内执行，工作区按用户隔离')
+      : '当前环境无法连接 Docker daemon（未检测到 DOCKER_HOST / docker.sock）',
+  },
+  {
+    value: 'k8s',
+    label: 'k8s（Kubernetes 原生 Pod）',
+    disabled: !inK8sEnv.value,
+    desc: inK8sEnv.value
+      ? '在 Kubernetes 集群内动态拉起独立 Pod 执行，适用于云原生生产环境'
+      : '仅当平台后端本身运行在 K8s Pod 内才可用（当前环境非 K8s in-cluster）',
   },
   {
     value: 'e2b',
@@ -397,6 +421,7 @@ const sandboxPolicyOptions = computed(() => [
 const sandboxPolicyIcons = {
   local: ComputerDesktopIcon,
   docker: CubeIcon,
+  k8s: ServerStackIcon,
   e2b: CloudIcon,
   ssh: ServerIcon,
 } as const
@@ -468,6 +493,52 @@ const selectDockerBaseImage = (item: ConfigItem, preset: string) => {
 const toggleDockerBaseImage = (item: ConfigItem) => {
   if (isConfigItemDisabled(String('sandbox'), item)) return
   dockerBaseImageOpen.value = !dockerBaseImageOpen.value
+}
+
+/** k8s 策略沙箱容器基础镜像候选清单：内置官方标准镜像 + 「自定义…」手动输入（可填私有仓库或镜像加速地址）。
+ * k8s 策略直接用现成镜像启动 Pod（无需 Dockerfile 预构建），因此只提供下拉选择与自定义输入。 */
+const k8sImagePresets: { label: string; value: string }[] = [
+  { label: 'python:3.11-slim（官方精简版，默认）', value: 'python:3.11-slim' },
+  { label: 'python:3.11-slim-bookworm（官方精简 Debian12）', value: 'python:3.11-slim-bookworm' },
+  { label: 'python:3.11-slim-bullseye（官方精简 Debian11）', value: 'python:3.11-slim-bullseye' },
+  { label: 'python:3.11（官方完整版）', value: 'python:3.11' },
+  { label: 'python:3.12-slim（官方精简，实验版）', value: 'python:3.12-slim' },
+]
+const k8sImageOpen = ref(false)
+const k8sImageShowCustom = ref(false)
+
+const isCustomK8sImage = computed(() => {
+  const cur = (configGroups.value?.sandbox?.find(x => x.key === 'sandbox_k8s_image')?.value ?? '').trim()
+  if (k8sImageShowCustom.value) return true
+  if (!cur) return false
+  return !k8sImagePresets.some(p => p.value === cur)
+})
+
+/** 当前值是否命中所选预设，用于展示下拉按钮文案 */
+const currentK8sImageLabel = computed(() => {
+  const cur = (configGroups.value?.sandbox?.find(x => x.key === 'sandbox_k8s_image')?.value ?? '').trim()
+  if (isCustomK8sImage.value) {
+    return cur ? `自定义镜像：${cur}` : '自定义镜像地址…'
+  }
+  const matched = k8sImagePresets.find(p => p.value === cur)
+  return matched ? matched.label : (cur ? `自定义镜像：${cur}` : (k8sImagePresets[0]?.label || 'python:3.11-slim'))
+})
+
+/** 点击预设后写入 item.value 并关闭面板 */
+const selectK8sImage = (item: ConfigItem, preset: string) => {
+  if (preset === '_custom') {
+    k8sImageShowCustom.value = true
+    k8sImageOpen.value = false
+    return
+  }
+  item.value = preset
+  k8sImageShowCustom.value = false
+  k8sImageOpen.value = false
+}
+/** 拉起/收起下拉时联动重置 */
+const toggleK8sImage = (item: ConfigItem) => {
+  if (isConfigItemDisabled(String('sandbox'), item)) return
+  k8sImageOpen.value = !k8sImageOpen.value
 }
 
 const applyDockerPrebuildStatus = (data: any) => {
@@ -1375,9 +1446,52 @@ local（适用于同一平台可直连数据库）：平台使用本地已配置
     'sandbox_policy': `安全沙箱执行策略：
 * local（默认）：Bash / 文件工具在宿主机扩展进程内直接执行，性能最好，但代码运行在宿主机上。
 * docker：在 Docker 容器内执行。首次使用或基础镜像变更时，系统会自动构建并启动容器；每个用户的容器工作区固定挂载到该用户自己的平台工作区目录。
+* k8s：在 Kubernetes 原生 Pod 内执行，适用于云原生分布式生产环境，支持共享 PVC 与独立动态卷隔离。
 * e2b：在 E2B 云端沙箱内执行。需在下方填写 API Key 或配置 E2B_API_KEY 环境变量。
 * ssh：在 SSH 远程主机上执行。平台所在主机通过 ssh 连接下方指定的远程主机，把远程目录作为沙箱工作区；支持密码（依赖 sshpass）与私钥两种认证。
-注意：不同策略有各自的配置项，仅在切换到对应策略时生效。`
+注意：不同策略有各自的配置项，仅在切换到对应策略时生效。`,
+    'sandbox_k8s_existing_pvc': `【参数作用】
+用于决定 Kubernetes 沙箱 Pod 的工作目录是「复用已有的共享持久卷（Shared PVC）」还是「为每次会话动态申请全新独立临时卷（Dynamic PVC）」。
+
+【可以为空吗？】
+可以为空（默认留空，也是推荐用法）。
+
+【留空（默认处理）时的行为】
+* 模式：动态独立临时卷模式。
+* 行为：平台会自动通过 K8s API 在命名空间中为当前用户会话申请一块全新的独立专属 PVC（命名如 as-pvc-{workspace_id}，容量由 sandbox_k8s_storage_size 决定）。
+* 销毁回收：沙箱会话到期并超时关闭后，该独立 PVC 随 Pod 一同被物理删除（由 sandbox_k8s_delete_pvc_on_close 控制）。
+* 适用：各用户、各会话之间磁盘 100% 物理绝对隔离，阅后即焚、不留痕迹。
+
+【不留空时，填什么格式？】
+* 格式要求：填写 Kubernetes 集群目标命名空间（默认 agent-sandboxes）中【已存在的 PVC 资源名称】。
+* 填写示例：nanzi-app-data 或 agent-shared-pvc。
+* ⚠️ 注意：仅填写标准的 K8s 资源名（纯字母、数字、短横线），不要写成路径（例如不要加 / 或 /app/data）。
+
+【最终会生成和挂载什么路径？】
+1. 沙箱容器内路径：固定挂载为沙箱 Pod 内部的 /workspace。
+2. 底层 PVC 物理子路径：平台通过 Kubernetes 原生 subPath 机制，自动将卷内的相对路径 agent_workspaces/{sandbox_user_key}/sandbox 映射挂入沙箱。
+3. 安全隔离防越权：沙箱只能读写该用户自己的专属子目录，绝不会访问整块共享 PVC 的根目录或其他用户的数据；若为未认证/匿名用户，平台会前置拦截禁止挂载共享卷。
+4. 公共文档只读共享：若平台配置了公共知识库文档，底层卷内的 docs 目录会自动以只读模式（readOnly: true）挂载至沙箱内的 /workspace/docs。`,
+    'sandbox_k8s_storage_class': `【参数作用】
+指定动态创建独立专属 PVC 时所使用的 Kubernetes 存储类（StorageClass）。
+
+【生效前提】
+⚠️ 仅在上方 sandbox_k8s_existing_pvc 留空时生效。如果已指定了已有共享 PVC，此配置项会被自动忽略。
+
+【可以为空吗？】
+可以为空（默认留空）。
+
+【留空（默认处理）时的行为】
+平台在向 Kubernetes API 发起创建 PVC 请求时，不指定 storageClassName；Kubernetes 集群会自动选用集群管理员标记为 (default) 的默认 StorageClass 进行存储动态供给。
+
+【不留空时，填什么格式？】
+* 格式要求：填写集群中已存在的 StorageClass 名称。可在 K8s 运维终端通过 kubectl get sc 命令查询。
+* 填写示例：
+  - 本地轻量集群：local-path、nfs-client、openebs-hostpath
+  - AWS EKS：gp3、gp2
+  - 阿里云 ACK：alicloud-disk-topology、alicloud-disk-ssd
+  - 腾讯云 TKE：cbs
+* 适用场景：集群中没有配置默认 StorageClass，或者希望沙箱使用特定高性能 SSD 磁盘池时填写。`
   }
   if (key === 'sandbox_policy') return sandboxPolicyTip.value
   return tips[key] || ''
@@ -1621,6 +1735,64 @@ const testSandboxConnection = async (policy: 'e2b' | 'ssh') => {
   }
 }
 
+// --- K8s Sandbox RBAC Checking Logic ---
+const k8sChecking = ref(false)
+const k8sCheckResult = ref<{
+  ok: boolean
+  message: string
+  namespace?: string
+  details?: {
+    pods_create?: boolean
+    pvc_create?: boolean
+    [key: string]: any
+  }
+  suggestion?: string
+} | null>(null)
+const k8sRbacCommandCopied = ref(false)
+
+const copyK8sRbacCommand = async () => {
+  const cmd = 'kubectl apply -f k8s_deploy/sandbox-rbac.example.yaml'
+  const ok = await copyToClipboard(cmd)
+  if (ok) {
+    k8sRbacCommandCopied.value = true
+    showToast('RBAC 授权命令已复制到剪贴板', 'success')
+    window.setTimeout(() => {
+      k8sRbacCommandCopied.value = false
+    }, 2000)
+  } else {
+    showToast('复制失败，请手动复制', 'error')
+  }
+}
+
+const checkK8sRbac = async () => {
+  if (k8sChecking.value) return
+  k8sChecking.value = true
+  k8sCheckResult.value = null
+  try {
+    const targetNs = findConfigItemByKey('sandbox_k8s_namespace')?.value?.trim() || undefined
+    const res = await axios.post('/api/v1/admin/sandbox/k8s/check-rbac', null, {
+      params: targetNs ? { namespace: targetNs } : {},
+    })
+    const data = res.data?.data || res.data
+    k8sCheckResult.value = data
+    if (data?.ok) {
+      showToast(data.message || 'K8s 沙箱 RBAC 权限校验通过', 'success')
+    } else {
+      showToast(data.message || 'K8s 沙箱 RBAC 权限不足或未就绪', 'warning')
+    }
+  } catch (err: any) {
+    const detail = err.response?.data?.detail || err.response?.data?.message || err.message || '请求失败'
+    k8sCheckResult.value = {
+      ok: false,
+      message: `检测失败：${detail}`,
+      suggestion: '请在集群中执行 kubectl apply -f k8s_deploy/sandbox-rbac.example.yaml 为平台 ServiceAccount 授权',
+    }
+    showToast(`校验请求失败：${detail}`, 'error')
+  } finally {
+    k8sChecking.value = false
+  }
+}
+
 const loadEmbedConfigFromModel = () => {
   if (!canSave) return
   const model = embeddingModelsForConfig.value.find((m) => m.id === selectedEmbedModelId.value)
@@ -1703,6 +1875,16 @@ const configShortDescriptions: Record<string, string> = {
   agent_context_llm_summary_enabled: '是否用当前会话模型对历史做语义摘要，失败或超时会自动降级为确定性摘录。',
   sandbox_policy: '安全沙箱执行策略。local 表示在宿主机扩展进程内直接执行（当前默认）；docker 表示在自动构建的 Docker 容器内执行；e2b 表示在 E2B 云端沙箱内执行；ssh 表示在 SSH 远程主机上执行。',
   sandbox_docker_base_image: 'docker 策略使用的容器基础镜像（留空默认使用官方标准镜像 python:3.11-slim）。',
+  sandbox_k8s_namespace: 'k8s 策略沙箱 Pod 运行的命名空间（默认 agent-sandboxes）。',
+  sandbox_k8s_image: 'k8s 策略沙箱容器运行的基础镜像（默认 python:3.11-slim）。',
+  sandbox_k8s_existing_pvc: 'k8s 策略可选已存在的共享 PVC 名称（留空表示动态独立临时卷；填写如 nanzi-app-data，通过 subPath 挂载到 /workspace）。',
+  sandbox_k8s_storage_class: 'k8s 策略动态创建独立 PVC 时的存储类名称（StorageClass，留空表示使用集群默认 StorageClass）。',
+  sandbox_k8s_storage_size: 'k8s 策略动态创建独立 PVC 时的申请容量（默认 1Gi）。',
+  sandbox_k8s_cpu_request: 'k8s 策略沙箱 Pod CPU 请求保障（requests.cpu，默认 100m），留空表示不设 requests。',
+  sandbox_k8s_cpu_limit: 'k8s 策略沙箱 Pod CPU 限制上限（limits.cpu，例如 1000m、2），留空表示不限。',
+  sandbox_k8s_memory_request: 'k8s 策略沙箱 Pod 内存请求保障（requests.memory，默认 128Mi），留空表示不设 requests。',
+  sandbox_k8s_memory_limit: 'k8s 策略沙箱 Pod 内存限制上限（limits.memory，例如 512Mi、1Gi），留空表示不限。',
+  sandbox_k8s_delete_pvc_on_close: 'k8s 策略沙箱到期关闭时是否同步删除动态创建的独立专属 PVC（默认 true）。',
   sandbox_e2b_api_key: 'e2b 策略使用的 E2B API Key，留空则读取 E2B_API_KEY 环境变量。',
   sandbox_e2b_template: 'e2b 策略使用的沙箱模板名，留空使用默认模板 base。',
   sandbox_e2b_timeout_seconds: 'e2b 策略沙箱超时时间（秒），默认 300。',
@@ -1830,12 +2012,19 @@ const getVisibleItems = (items: ConfigItem[] | undefined, category: string) => {
     })
   }
   if (category === 'sandbox') {
-    // 内部键不对用户展示：预构建标记 + 平台运行环境（后者仅用于 local 文案动态显示）
-    list = list.filter(x => x.key !== 'sandbox_docker_prebuild_done' && x.key !== 'sandbox_runtime_env')
+    // 内部键不对用户展示：预构建标记 + 平台运行环境 + K8s in-cluster / Docker daemon 可用性探测标记（后者仅用于对应策略可用性判断）
+    list = list.filter(x => x.key !== 'sandbox_docker_prebuild_done' && x.key !== 'sandbox_runtime_env' && x.key !== 'sandbox_runtime_in_k8s' && x.key !== 'sandbox_docker_available')
     // 按当前 sandbox 策略动态过滤：仅展示与该策略相关的配置项
     const policy = targetSandboxPolicy()
     const policyKeySets: Record<string, string[]> = {
       docker: ['sandbox_docker_base_image'],
+      k8s: [
+        'sandbox_k8s_namespace', 'sandbox_k8s_image', 'sandbox_k8s_existing_pvc',
+        'sandbox_k8s_storage_class', 'sandbox_k8s_storage_size',
+        'sandbox_k8s_cpu_request', 'sandbox_k8s_cpu_limit',
+        'sandbox_k8s_memory_request', 'sandbox_k8s_memory_limit',
+        'sandbox_k8s_delete_pvc_on_close'
+      ],
       e2b: ['sandbox_e2b_api_key', 'sandbox_e2b_template', 'sandbox_e2b_timeout_seconds'],
       ssh: [
         'sandbox_ssh_host', 'sandbox_ssh_port', 'sandbox_ssh_user', 'sandbox_ssh_auth_type',
@@ -2963,8 +3152,92 @@ onUnmounted(() => {
                                </button>
                              </div>
                              <p class="mt-1.5 text-[11px] text-gray-500 leading-relaxed">
-                                切换策略后，沙箱 Bash / 文件工具在对应环境内执行。local 表示{{ sandboxLocalExecDesc }}；docker、e2b 与 ssh 策略的配置项在下方按需填写，仅在对应策略被选中时生效。
+                                切换策略后，沙箱 Bash / 文件工具在对应环境内执行。local 表示{{ sandboxLocalExecDesc }}；docker、k8s、e2b 与 ssh 策略的配置项在下方按需填写，仅在对应策略被选中时生效。
                              </p>
+
+                             <div v-if="item.value === 'k8s'" class="mt-3 text-xs bg-sky-50/70 p-3.5 rounded-xl border border-sky-100 leading-relaxed space-y-3">
+                                 <div class="space-y-1">
+                                   <div class="flex items-center gap-1.5 font-semibold text-sky-900 text-xs">
+                                     <ServerStackIcon class="h-4 w-4 text-sky-600 shrink-0" />
+                                     <span>Kubernetes 集群沙箱配置与 RBAC 权限指引</span>
+                                   </div>
+                                   <p class="text-sky-700 text-[11px] leading-relaxed">
+                                     在 Kubernetes 生产集群中，平台需通过 API Server 在目标命名空间（默认 <code class="font-mono text-sky-800 bg-sky-100/80 px-1 py-0.5 rounded">agent-sandboxes</code>）动态创建和管理独立的沙箱 Pod / PVC。
+                                   </p>
+                                 </div>
+
+                                 <!-- 运维命令指引 -->
+                                 <div class="bg-gray-900 text-gray-100 rounded-lg p-3 font-mono text-[11px] shadow-sm space-y-1.5">
+                                   <div class="flex items-center justify-between text-gray-400 text-[10px] border-b border-gray-800 pb-1">
+                                     <span># 在管理集群的运维终端执行一次性授权</span>
+                                     <button
+                                       type="button"
+                                       @click="copyK8sRbacCommand"
+                                       class="inline-flex items-center gap-1 text-sky-400 hover:text-sky-300 transition-colors cursor-pointer"
+                                       title="点击复制命令"
+                                     >
+                                       <span v-if="k8sRbacCommandCopied" class="text-emerald-400 font-medium">✓ 已复制</span>
+                                       <span v-else class="font-sans">📋 复制命令</span>
+                                     </button>
+                                   </div>
+                                   <div class="text-emerald-400 break-all select-all font-mono">
+                                     kubectl apply -f k8s_deploy/sandbox-rbac.example.yaml
+                                   </div>
+                                 </div>
+
+                                 <!-- 权限检测操作栏 -->
+                                 <div class="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-sky-100/80">
+                                   <span class="text-sky-800 text-[11px]">
+                                     配置好 RBAC 后，点击右侧按钮实时探测当前平台 Pod 是否具备所需权限：
+                                   </span>
+                                   <button
+                                     type="button"
+                                     @click="checkK8sRbac"
+                                     :disabled="k8sChecking"
+                                     class="inline-flex items-center justify-center py-1.5 px-3 border border-sky-300 rounded-md shadow-sm text-xs font-medium text-white bg-sky-600 hover:bg-sky-700 disabled:opacity-50 transition-colors whitespace-nowrap cursor-pointer"
+                                   >
+                                     <ArrowPathIcon v-if="k8sChecking" class="animate-spin h-3.5 w-3.5 mr-1.5" />
+                                     <span v-else class="mr-1.5">⚡</span>
+                                     {{ k8sChecking ? "正在探测 K8s 权限..." : "校验 K8s 集群与 RBAC 权限" }}
+                                   </button>
+                                 </div>
+
+                                 <!-- 校验结果面板 -->
+                                 <div v-if="k8sCheckResult" class="rounded-lg p-2.5 text-[11px] transition-all"
+                                   :class="k8sCheckResult.ok ? 'bg-emerald-50 border border-emerald-200 text-emerald-800' : 'bg-amber-50 border border-amber-200 text-amber-900'">
+                                   <div class="flex items-start gap-2">
+                                     <div class="shrink-0 mt-0.5">
+                                       <CheckCircleIcon v-if="k8sCheckResult.ok" class="h-4 w-4 text-emerald-600" />
+                                       <XCircleIcon v-else class="h-4 w-4 text-amber-600" />
+                                     </div>
+                                     <div class="space-y-1 min-w-0">
+                                       <div class="font-medium">
+                                         {{ k8sCheckResult.message }}
+                                       </div>
+                                       <div v-if="k8sCheckResult.details" class="flex flex-wrap gap-3 text-[10px] text-gray-600">
+                                         <span class="flex items-center gap-1">
+                                           命名空间: <code class="font-mono bg-white/70 px-1 py-0.5 rounded">{{ k8sCheckResult.namespace }}</code>
+                                         </span>
+                                         <span class="flex items-center gap-1">
+                                           Pod 创建权限:
+                                           <span :class="k8sCheckResult.details.pods_create ? 'text-emerald-600 font-semibold' : 'text-red-600 font-semibold'">
+                                             {{ k8sCheckResult.details.pods_create ? '具备' : '缺少' }}
+                                           </span>
+                                         </span>
+                                         <span class="flex items-center gap-1">
+                                           PVC 创建权限:
+                                           <span :class="k8sCheckResult.details.pvc_create ? 'text-emerald-600 font-semibold' : 'text-red-600 font-semibold'">
+                                             {{ k8sCheckResult.details.pvc_create ? '具备' : '缺少' }}
+                                           </span>
+                                         </span>
+                                       </div>
+                                       <div v-if="k8sCheckResult.suggestion" class="text-gray-600 text-[10px]">
+                                         💡 <strong>处置建议：</strong>{{ k8sCheckResult.suggestion }}
+                                       </div>
+                                     </div>
+                                   </div>
+                                 </div>
+                             </div>
 
                              <div v-if="item.value === 'e2b'" class="mt-3 text-xs text-violet-700 bg-violet-50/60 p-3 rounded-xl border border-violet-100/60 leading-relaxed select-none space-y-1.5">
                                  <div>🌐 <strong>E2B 云端沙箱服务</strong>：E2B（<a href="https://e2b.dev" target="_blank" rel="noopener noreferrer" class="font-medium text-violet-800 underline decoration-violet-300 hover:decoration-violet-600">e2b.dev</a>）是第三方 AI 云端沙箱平台。选择本策略后，Bash 命令在 E2B 云端沙箱内执行；文件读写 / 搜索仍走平台上配置的本地工作目录，不随沙箱上传。</div>
@@ -3176,7 +3449,13 @@ onUnmounted(() => {
                           </div>
                           <div v-else-if="['ragflow_dataset_ids', 'knowledge_ragflow_dataset_ids'].includes(item.key)">
                                <div class="flex space-x-2">
-                                   <input type="text" v-model="item.value" :disabled="isConfigItemDisabled(String(category), item)" class="shadow-sm focus:ring-primary focus:border-primary block w-full sm:text-sm border-gray-300 rounded-md bg-gray-100 disabled:opacity-70 disabled:cursor-not-allowed" />
+                                   <input
+                                type="text"
+                                v-model="item.value"
+                                :disabled="isConfigItemDisabled(String(category), item)"
+                                :placeholder="item.key === 'sandbox_k8s_existing_pvc' ? '例如 nanzi-app-data（可选，留空为独立临时卷）' : (item.key === 'sandbox_k8s_storage_class' ? '例如 local-path、gp3（可选，留空使用默认存储类）' : '')"
+                                class="shadow-sm focus:ring-primary focus:border-primary block w-full sm:text-sm border-gray-300 rounded-md bg-gray-100 disabled:opacity-70 disabled:cursor-not-allowed"
+                              />
                                    <button
                                        v-if="canSave"
                                        @click="openDatasetSelector(item)"
@@ -3435,7 +3714,7 @@ onUnmounted(() => {
                                class="mt-1.5 text-[11px] text-gray-500 leading-relaxed"
                              >{{ item.description }}</p>
                           </div>
-                          <div v-else-if="['agent_context_compaction_enabled', 'agent_context_llm_summary_enabled'].includes(item.key)">
+                          <div v-else-if="['agent_context_compaction_enabled', 'agent_context_llm_summary_enabled', 'sandbox_k8s_delete_pvc_on_close'].includes(item.key)">
                              <select v-model="item.value" :disabled="isConfigItemDisabled(String(category), item)" class="shadow-sm focus:ring-primary focus:border-primary block w-full sm:text-sm border-gray-300 rounded-md bg-gray-100 p-2 disabled:opacity-70 disabled:cursor-not-allowed">
                                 <option value="true">true (开启)</option>
                                 <option value="false">false (关闭)</option>
@@ -3766,6 +4045,69 @@ onUnmounted(() => {
                                </a>
                              </div>
                           </div>
+                          <div v-else-if="item.key === 'sandbox_k8s_image'" class="space-y-2.5">
+                            <div class="relative">
+                              <button
+                                type="button"
+                                @click="toggleK8sImage(item)"
+                                :disabled="isConfigItemDisabled(String(category), item)"
+                                aria-haspopup="listbox"
+                                :aria-expanded="k8sImageOpen"
+                                class="shadow-sm focus:ring-primary focus:border-primary block w-full sm:text-sm border-gray-300 rounded-md bg-gray-100 p-2 text-left disabled:opacity-70 disabled:cursor-not-allowed"
+                                title="选择内置镜像或自定义镜像地址"
+                              >
+                                <span class="block font-medium text-gray-700 truncate">{{ currentK8sImageLabel }}</span>
+                              </button>
+                              <ChevronDownIcon class="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+                              <div
+                                v-if="k8sImageOpen"
+                                class="fixed inset-0 z-30"
+                                @click="k8sImageOpen = false"
+                                @contextmenu.prevent="k8sImageOpen = false"
+                              ></div>
+                              <div
+                                v-if="k8sImageOpen"
+                                class="absolute left-0 top-full mt-1 w-full z-40 bg-white rounded-lg border border-gray-200 shadow-lg py-1 max-h-72 overflow-y-auto"
+                                role="listbox"
+                              >
+                                <button
+                                  v-for="preset in k8sImagePresets"
+                                  :key="preset.value"
+                                  type="button"
+                                  @click="selectK8sImage(item, preset.value)"
+                                  role="option"
+                                  :aria-selected="item.value === preset.value && !isCustomK8sImage"
+                                  class="block w-full px-3 py-2 text-left text-sm transition-colors hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                                  :class="item.value === preset.value && !isCustomK8sImage ? 'bg-indigo-50 font-medium text-primary' : 'text-gray-700'"
+                                >
+                                  <span class="block">{{ preset.label }}</span>
+                                </button>
+                                <button
+                                  type="button"
+                                  @click="selectK8sImage(item, '_custom')"
+                                  role="option"
+                                  :aria-selected="isCustomK8sImage"
+                                  class="block w-full px-3 py-2 text-left text-sm transition-colors hover:bg-gray-50"
+                                  :class="isCustomK8sImage ? 'bg-indigo-50 font-medium text-primary' : 'text-gray-700'"
+                                >
+                                  自定义镜像地址…
+                                </button>
+                              </div>
+                            </div>
+
+                            <div v-if="isCustomK8sImage" class="pt-0.5">
+                              <input
+                                type="text"
+                                v-model="item.value"
+                                :disabled="isConfigItemDisabled(String(category), item)"
+                                class="shadow-sm focus:ring-primary focus:border-primary block w-full sm:text-sm border-gray-300 rounded-md bg-white p-2 font-mono disabled:opacity-70 disabled:cursor-not-allowed"
+                                placeholder="如 registry.example.com/ai/python:3.11-slim"
+                              />
+                              <p class="mt-1 text-[11px] text-gray-500">
+                                请填写平台可在集群中拉取到的容器镜像完整路径（需内置 Python 3.11 与 Debian/Ubuntu 基础环境）。
+                              </p>
+                            </div>
+                          </div>
                           <div v-else>
                              <input type="text" v-model="item.value" :disabled="isConfigItemDisabled(String(category), item)" class="shadow-sm focus:ring-primary focus:border-primary block w-full sm:text-sm border-gray-300 rounded-md bg-gray-100 disabled:opacity-70 disabled:cursor-not-allowed" />
                              <div v-if="canSave && item.key === 'sandbox_e2b_timeout_seconds'" class="mt-3">
@@ -3800,6 +4142,17 @@ onUnmounted(() => {
                                  使用当前填写值测试，不会保存配置；会检查 SSH 认证和远程工作目录。
                                </p>
                              </div>
+                              <div v-else-if="item.key === 'sandbox_k8s_existing_pvc'" class="mt-2 text-xs text-sky-800 bg-sky-50/70 p-3 rounded-xl border border-sky-100/80 leading-relaxed space-y-1.5">
+                                <div>💡 <strong>参数作用与是否必填：</strong>可选参数（<strong>建议留空</strong>）。用于决定沙箱 Pod 是共享已有 PVC 还是每次会话创建全新独立卷。</div>
+                                <div>📂 <strong>留空（默认处理）：</strong>走<strong>独立临时 PVC 模式</strong>。平台会自动在集群中申请一张独立的专属 PVC（按下方 storage_size 大小），会话结束且超时后随 Pod 自动删除，用户/会话间数据物理隔离。</div>
+                                <div>🔗 <strong>填写的格式：</strong>填写 Kubernetes 集群当前命名空间中<strong>已存在的 PVC 资源名称</strong>（例如 <code class="font-mono text-sky-900 bg-white/80 px-1 py-0.5 rounded border border-sky-200">nanzi-app-data</code> 或 <code class="font-mono text-sky-900 bg-white/80 px-1 py-0.5 rounded border border-sky-200">agent-shared-pvc</code>，纯名称，不带路径）。</div>
+                                <div>🎯 <strong>最终映射路径：</strong>挂载至沙箱容器内部的 <code class="font-mono text-sky-900 bg-white/80 px-1 py-0.5 rounded border border-sky-200">/workspace</code>。底层通过 <code class="font-mono text-sky-900 bg-white/80 px-1 py-0.5 rounded border border-sky-200">subPath: agent_workspaces/{user_key}/sandbox</code> 精准隔离，沙箱内只能读写该用户自身目录，无法越权访问整卷根目录；若平台挂载了公共文档，则自动只读挂载至 <code class="font-mono text-sky-900 bg-white/80 px-1 py-0.5 rounded border border-sky-200">/workspace/docs</code>。</div>
+                              </div>
+                              <div v-else-if="item.key === 'sandbox_k8s_storage_class'" class="mt-2 text-xs text-sky-800 bg-sky-50/70 p-3 rounded-xl border border-sky-100/80 leading-relaxed space-y-1.5">
+                                <div>💡 <strong>参数作用与生效前提：</strong>可选参数（<strong>默认留空</strong>）。<strong>仅在上方 sandbox_k8s_existing_pvc 留空（即动态创建独立卷模式）时生效</strong>；若指定了已有 PVC，则此配置项自动被忽略。</div>
+                                <div>⚙️ <strong>留空（默认处理）：</strong>创建 PVC 时不指定 StorageClass，Kubernetes 会自动使用集群管理员标记为 <code class="font-mono text-sky-900 bg-white/80 px-1 py-0.5 rounded border border-sky-200">(default)</code> 的默认存储类进行自动分配。</div>
+                                <div>📝 <strong>填写的格式：</strong>填写集群支持的存储类标识名称（可通过运维终端命令 <code class="font-mono text-sky-900 bg-white/80 px-1 py-0.5 rounded border border-sky-200">kubectl get sc</code> 查询，例如 <code class="font-mono text-sky-900 bg-white/80 px-1 py-0.5 rounded border border-sky-200">local-path</code>、<code class="font-mono text-sky-900 bg-white/80 px-1 py-0.5 rounded border border-sky-200">nfs-client</code> 或云厂商提供的 <code class="font-mono text-sky-900 bg-white/80 px-1 py-0.5 rounded border border-sky-200">gp3</code>、<code class="font-mono text-sky-900 bg-white/80 px-1 py-0.5 rounded border border-sky-200">alicloud-disk-topology</code>）。</div>
+                              </div>
                           </div>
                        </div>
                    </div>

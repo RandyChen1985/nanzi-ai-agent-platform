@@ -76,6 +76,7 @@
     - [4.3.1 什么是 Few-Shot 案例集？为什么它不可或缺？](#431-什么是-few-shot-案例集为什么它不可或缺)
     - [4.3.2 动态 Few-Shot 向量相似度召回流程](#432-动态-few-shot-向量相似度召回流程)
     - [4.3.3 案例沉淀的双向闭环](#433-案例沉淀的双向闭环)
+    - [4.3.4 案例向量同步的目标随检索模式自动区分](#434-案例向量同步的目标随检索模式自动区分)
   - [4.4 常见 ChatBI 问答与 SQL 执行排查 Q&amp;A](#44-常见-chatbi-问答与-sql-执行排查-qa)
   - [4.5 数据门户与固化报表专题 (Saved Reports)](#45-数据门户与固化报表专题)
     - [4.5.1 什么是固化报表？为什么全平台统一定名「固化报表」？](#451-什么是固化报表为什么全平台统一定名固化报表)
@@ -334,7 +335,7 @@ graph TD
 | `embed_api_url` | `http://localhost:11434/v1` 或占位地址 | 改为您自建的向量模型服务地址（如 Ollama 的 `/v1` 端点或 OpenAI 兼容的 Embedding 接口） | • **影响语义向量化生成**：ChatBI 元数据语义检索、Few-Shot 历史优秀案例相似度向量匹配以及会话长期记忆检索均依赖此端点生成文本向量。 |
 | `metadata_provider` | `redis` | 按需设置为 `redis` 或 `ragflow` | • **影响 ChatBI 元数据检索引擎选型**：决定数据表结构、字段注释与语义字典使用 Redis 向量索引召回还是 RAGFlow 召回（两者均需独立部署）。 |
 | `knowledge_ragflow_api_url` | 空 / 占位地址 | *(可选)* 若启用知识库功能，配置为您独立部署的 RAGFlow API 地址及 Key；若不使用知识库可留空 | • **影响企业文档知识库 (RAG)**：控制知识库数据集同步、文档切片解析、混合检索召回与重排序 (Rerank) 功能。 |
-| `sandbox_policy` | `local` 或 `docker` | 推荐生产/容器化环境配置为 `docker` | • **影响智能体执行代码的安全隔离级别**：`docker` 模式下智能体执行 Python/Shell 在独立隔离容器中运行，防止污染宿主机；若配置为 `local` 则在平台宿主进程内直接执行。 |
+| `sandbox_policy` | `local`、`docker` 或 `k8s` | 推荐宿主机单机环境为 `docker`，Kubernetes 集群环境为 `k8s` | • **影响智能体执行代码的安全隔离级别**：`docker` 模式下通过宿主机 Docker 容器隔离运行；`k8s` 模式下直接通过 Kubernetes API 动态拉起独立轻量 Pod 执行（免挂载宿主机 Docker Socket）；若配置为 `local` 则在平台宿主进程内直接执行。 |
 | `TASK_SCHEDULER_ENABLED` | `true`（未配置时也是 `true`） | 单节点保持 `true`；多节点仅一台为 `true`，其余 API 节点设为 `false`；修改后重启对应服务 | 控制当前节点是否启动 APScheduler。关闭节点仍提供 API、任务管理和“立即执行”；开启节点约每 30 秒从共享任务库对账。 |
 
 ---
@@ -2130,6 +2131,15 @@ sequenceDiagram
 - **主动录入**：数据分析师在【案例集管理】中录入高频疑难提问与标准 SQL；
 - **一键采纳**：在【聊天日志】中，如果用户对某次生成的 SQL 点赞或业务验证正确，管理员可“一键采纳沉淀为案例”。
 
+#### 4.3.4 案例向量同步的目标随检索模式自动区分
+
+审核通过后，【案例集管理】中的“一键同步 / 单条同步”会**按 `metadata_provider` 检索模式自动选择同步目标**：
+
+- **RAGFlow 模式**（`metadata_provider = ragflow`）：同步到 RAGFlow 知识库（`chatbi-sample-knowledge-base`），并**同时联动**写入本地 Redis 向量索引；
+- **本地模式**（`metadata_provider = local`）：**仅同步到本地 Redis 向量索引（RediSearch/HNSW）**，全程不连接 RAGFlow，避免未部署 RAGFlow 时误报同步失败。此模式下案例列表的“RAG 同步”状态列会自动隐藏。
+
+本地模式真正的全量向量重建入口是【系统配置 → 参数设置】中的“重构本地向量数据”，或服务启动时 `metadata_provider=local` 触发的自动同步。
+
 ---
 
 ### 4.4 常见 ChatBI 问答与 SQL 执行排查 Q&A
@@ -2633,7 +2643,36 @@ sequenceDiagram
 
 ---
 
-#### 7.3.6 智能体上下文预算管控与两阶段溢出压缩
+#### 7.3.6 Kubernetes 原生 Pod 安全沙箱（k8s 策略详解）
+
+在通过 Kubernetes 部署平台生产环境时，由于禁止向应用 Pod 暴露宿主机 Docker Socket（`/var/run/docker.sock`），平台提供了**云原生 Pod 安全沙箱策略（`sandbox_policy = "k8s"`）**。
+
+##### 1. 为什么 Kubernetes 环境优先推荐 k8s 沙箱策略？
+- **消除特权与逃逸风险**：无需将宿主机 Docker 控制权暴露给 Pod，符合金融/政企高安全合规基线；
+- **全生态标准运行时适配**：完全解耦底层容器运行时，无论集群是 containerd、CRI-O 还是 Docker Engine 均可平滑运行；
+- **跨节点分布式弹性调度**：代码执行 Pod 由 Kubernetes Master 统一调度至资源充裕的 Worker 节点，支持 Pod 级 CPU/内存 Limit 配额管控；
+- **标准 MCP 协议调用**：沙箱 Pod 内部以后台子进程启动 FastMCP Gateway 服务，上层智能体调用 `sandbox::bash`、`sandbox::read` 与 Docker 模式完全无感一致。
+
+##### 2. 工作区与共享持久卷（PVC）挂载设计
+很多运维人员关心：*智能体在 Pod 沙箱中生成的数据分析图表与文件，平台和用户如何实时获取？*
+- **推荐方案（复用共享 PVC）**：
+  - 在【系统配置】中配置 `sandbox_k8s_existing_pvc` 指向 NanZi 平台挂载的数据卷（如 `nanzi-ai-agent-data`）；
+  - 平台通过 Kubernetes `subPath` 机制，自动将用户工作区目录 `agent_workspaces/{user_key}/sandbox` 挂载至沙箱 Pod 内的 `/workspace`，同时以只读方式挂载 `docs` 文档目录；
+  - 智能体在沙箱内写入的文件在宿主机及平台主容器中毫秒级可见并提供下载链接，体验与 Docker 挂载 100% 对齐；
+  - **防误删保护**：NanZi 定制生命周期适配器在沙箱 Pod 结束或超时清理时，绝对不会误删任何共享持久卷；
+- **动态独立 PVC 方案**：若留空 `sandbox_k8s_existing_pvc`，平台将为每个用户动态申请专属独立 PVC（通过 `sandbox_k8s_storage_class` 与 `sandbox_k8s_storage_size` 控制），并可通过 `sandbox_k8s_delete_pvc_on_close` 开关配置沙箱关闭时是否连带销毁 PVC。
+
+##### 3. 所需权限与 RBAC 配置
+NanZi 平台 Pod 仅需在沙箱命名空间拥有管理 Pod 与 PVC 的最小权限：
+```bash
+# 应用最小权限 RBAC 模板
+kubectl apply -f k8s_deploy/sandbox-rbac.example.yaml
+```
+详细部署说明请参考 [`k8s_deploy/README.md`](k8s_deploy/README.md)。
+
+---
+
+#### 7.3.7 智能体上下文预算管控与两阶段溢出压缩
 
 - **`agent_context_max_tokens`**：会话上下文 Token 预算上限（默认 `64000`）；
 - **`Completion Reserve` 动态预留与安全水位线对齐**：
@@ -2644,15 +2683,15 @@ sequenceDiagram
   1. **确定性结构化摘录**：提取早期轮次的提问、工具调用结论及核心工件；
   2. **LLM 语义摘要降级**：可选利用后台小模型生成语义摘要，失败自动降级为确定性摘录，确保关键上下文永不丢失。
 
-#### 7.3.7 生成文件与工件发布配置 (File Download Prefix)
+#### 7.3.8 生成文件与工件发布配置 (File Download Prefix)
 
 - **`file_download_url_prefix`**：智能体通过 `publish_generated_file` 工具发布图表、报告等生成文件时，拼接公网绝对下载链接的地址前缀（例如 `https://agent.yourdomain.com`）。若留空，则默认生成以 `/api/v1/chat/artifacts/download/...` 开头的相对路径。
 
-#### 7.3.8 AgentScope 运行时状态注入与时间感知
+#### 7.3.9 AgentScope 运行时状态注入与时间感知
 
 - **`agentscope_inject_runtime_state`**：开启后，系统在每轮对话开始前向 Agent 注入当前精确北京时间、当前活跃任务数及上下文用量指标，使 Agent 具备准确的现实时间感知（如正确判断“今天星期几”、“上周五的数据”等）。
 
-#### 7.3.9 系统参数修改后的生效机制 (Save & Hot Reloading)
+#### 7.3.10 系统参数修改后的生效机制 (Save & Hot Reloading)
 
 很多管理员在配置系统时常见疑问：“*为什么我在【系统设置 -> 参数设置】中修改了模型名称、温度系数或 RAGFlow 地址后，在智能助手或后端请求中似乎没有立即产生效果？*”
 

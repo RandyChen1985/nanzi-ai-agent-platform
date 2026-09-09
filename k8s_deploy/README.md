@@ -568,17 +568,64 @@ kubectl -n nanzi-ai-agent get ingress
 | --- | --- | --- |
 | LLM/模型 | 系统配置或模型管理 | 新增模型的 Provider、Base URL、模型名和 API Key，并设置默认模型 |
 | RAGFlow 知识库 | 系统配置 → 知识库设置 | 开启知识库，填写 RAGFlow API 地址、API Key 和默认知识库 ID |
+| 代码安全沙箱 | 系统配置 → 安全沙箱 | 切换为 `k8s` 策略，为 Agent 提供 Kubernetes 原生 Pod 隔离执行环境 |
 | SSO、Jira 等 | 对应第三方集成配置 | 先确认外部服务、网络和凭据，再按功能页面启用 |
 
 当前 K8S `ConfigMap` 只放基础运行参数，不会自动把 RAGFlow 或模型凭据注入应用；这些
 敏感配置由平台保存并使用 `ENCRYPTION_KEY` 加密。基础部署完成后，至少分别验证健康检查、
 管理员登录、模型调用和（启用时）知识库检索。
 
+## 云原生安全沙箱配置（Kubernetes 原生 Pod 隔离）
+
+在 Kubernetes 生产环境中，**严禁将宿主机 `/var/run/docker.sock` 挂载到应用 Pod**（避免容器逃逸与节点特权扩散）。
+NanZi 平台提供了**云原生 Pod 安全沙箱策略（`sandbox_policy = "k8s"`）**，直接通过 Kubernetes API 动态拉起独立隔离的 Pod 为智能体执行 Python / Shell 代码、数据分析与工件生成。
+
+### 1. 核心架构与原理
+- **免 Docker Socket**：智能体执行环境完全解耦宿主机 Docker daemon，原生适配 containerd、CRI-O 等所有标准 Kubernetes 运行时与多节点集群调度；
+- **MCP 协议通信**：Pod 内部以后台子进程运行 FastMCP Gateway 服务，上层智能体通过标准 MCP 协议调用 `sandbox::bash`、`sandbox::read` 等工具；
+- **共享持久卷 subPath 挂载（体验与 Docker 100% 对齐）**：
+  - 配置 `sandbox_k8s_existing_pvc` 指向平台的主 PVC（如 `nanzi-ai-agent-data`）；
+  - 自动通过 `subPath: agent_workspaces/{user_key}/sandbox` 挂载用户隔离私有目录，并以只读方式挂载 `docs` 文档库；
+  - 智能体在沙箱内生成的图表、CSV 数据和文件工件，平台主服务毫秒级直读并生成下载链接；
+- **生命周期保护**：
+  - 会话结束或 30 分钟无交互超时后，自动销毁沙箱 Pod，释放集群 CPU / 内存资源；
+  - 平台定制适配器（NanZiK8sAdapter）保证在 Pod 销毁时**绝不误删共享 PVC**；若未指定已有 PVC 采用独立动态 PVC，可通过配置控制是否随 Pod 连带清理。
+
+### 2. 配置与开启步骤
+
+#### 步骤一：创建 ServiceAccount 与 RBAC 授权
+应用 Pod 需要在沙箱命名空间内具备创建、查看和删除 Pod/PVC 的权限。参考 `k8s_deploy/sandbox-rbac.example.yaml`：
+
+```bash
+kubectl apply -f k8s_deploy/sandbox-rbac.example.yaml
+```
+
+并在 `k8s_deploy/deployment.yaml` 中为应用 Pod 绑定该 ServiceAccount（若尚未绑定）：
+```yaml
+spec:
+  template:
+    spec:
+      serviceAccountName: nanzi-ai-agent-sa
+```
+
+#### 步骤二：在管理控制台启用 K8S 沙箱
+管理员登录平台，进入 **系统管理 → 系统配置 → 参数配置** 面板：
+1. 找到【安全沙箱】分组；
+2. 将 **沙箱策略（`sandbox_policy`）** 切换为 **`k8s`（Kubernetes Pod 沙箱）**；
+3. 根据集群环境调整参数：
+   - `sandbox_k8s_namespace`：沙箱 Pod 运行的命名空间（默认 `nanzi-ai-agent`）；
+   - `sandbox_k8s_image`：沙箱基础镜像（默认 `python:3.11-slim`，或企业已安装数据科学包的镜像）；
+   - `sandbox_k8s_existing_pvc`：推荐填写平台主 PVC 名称（例如 `nanzi-ai-agent-data`）；
+   - `sandbox_k8s_cpu_limit` / `sandbox_k8s_memory_limit`：单 Pod 资源配额限制（如 `1` / `1Gi`）；
+   - `sandbox_k8s_delete_pvc_on_close`：关闭沙箱时是否清理独立 PVC（使用已有 PVC 时不受此影响）；
+4. 保存配置即可生效，无需重启 NanZi 主服务。
+
 ## 启动后常用操作
 
 | 目的 | 命令 | 说明 |
 | --- | --- | --- |
 | 查看应用状态 | `kubectl -n nanzi-ai-agent get pod` | `Running` 且 `READY` 为 `1/1` 才是基础正常 |
+| 查看沙箱 Pod | `kubectl -n nanzi-ai-agent get pod -l app.kubernetes.io/managed-by=agentscope` | 查看当前正在运行的智能体代码执行 Pod |
 | 查看启动日志 | `kubectl -n nanzi-ai-agent logs deployment/nanzi-ai-agent` | 优先看数据库、Redis 和必填配置错误 |
 | 查看详细事件 | `kubectl -n nanzi-ai-agent describe pod <pod名>` | 排查镜像拉取、PVC、探针失败 |
 | 临时停止应用 | `kubectl -n nanzi-ai-agent scale deployment/nanzi-ai-agent --replicas=0` | 不删除 PVC，数据保留 |
@@ -597,9 +644,8 @@ kubectl -n nanzi-ai-agent get ingress
 - **多副本基础设施：可以继续建设，但当前不能直接视为完整高可用。** 浏览器运行时、
   SSE/人工接管事件和部分执行状态仍有进程内注册表；调度器虽然使用数据库 JobStore
   和部分 Redis 锁，但当前启动方式不是完整的单 Leader 调度。
-- **默认不启用 Docker Socket。** 现有 Docker Compose 使用 DooD 方式让应用控制宿主机
-  Docker；K8S 中直接挂载 `/var/run/docker.sock` 会扩大 Pod 权限边界，必须针对执行隔离、
-  宿主机路径映射和安全策略单独设计。
+- **默认不启用宿主机 Docker Socket。** 推荐在 K8S 中直接使用 `sandbox_policy=k8s`
+  原生 Pod 安全沙箱，通过 Kubernetes API 和最小 RBAC 细粒度控制 Pod 生命周期，无需向容器暴露宿主机 Docker 控制权。
 
 ## 目录内容
 
@@ -612,6 +658,7 @@ kubectl -n nanzi-ai-agent get ingress
 | `pvc.yaml` | `/app/data` 的 20Gi、`ReadWriteOnce` PVC |
 | `deployment.yaml` | 单副本 Deployment、环境变量、PVC 和 `/health` 探针 |
 | `service.yaml` | ClusterIP Service，端口 80 转发到容器 8001 |
+| `sandbox-rbac.example.yaml` | Kubernetes Pod 安全沙箱所需的最小 RBAC 权限与 ServiceAccount 示例 |
 | `data-init-job.example.yaml` | 可选的一次性公共文档初始化 Job，不在默认 Kustomize 资源中 |
 | `ingress.example.yaml` | ingress-nginx 的可选示例，含 SSE 超时和会话粘性 |
 
@@ -632,7 +679,10 @@ kubectl -n nanzi-ai-agent get ingress
 | Ingress 返回 404/502/504 | Ingress Class、域名、TLS、Service 端口或后端 Pod 不匹配 | 先绕过 Ingress 用 `port-forward` 验证 Service，再检查 Ingress 事件和 Controller 日志 |
 | SSE 中途断开、浏览器人工接管异常 | 代理缓冲/超时、会话粘性未配置或连接经过多个代理 | 使用示例中的超时和关闭缓冲设置；非 NGINX Controller 按其语法配置，并验证长连接 |
 | 修改 ConfigMap/Secret 后应用仍使用旧值 | 环境变量只在进程启动时读取 | 修改后执行 `kubectl -n nanzi-ai-agent rollout restart deployment/nanzi-ai-agent`，再检查新 Pod 日志 |
-| Docker 沙箱、代码执行或部分工具不可用 | 默认清单没有挂载 Docker Socket，避免把宿主机 Docker 控制权暴露给 Pod | 这是默认安全边界，不要直接照搬 Compose 的 Socket 挂载；需要该能力时单独设计隔离执行器 |
+| 代码执行沙箱不可用或报 Docker 权限错误 | 集群内未挂载 Docker Socket（默认安全边界） | 推荐在系统配置中将沙箱策略切换为 `k8s`，并应用 `sandbox-rbac.example.yaml` 授予必要权限，无需任何 Docker Socket 挂载 |
+| K8S 沙箱 Pod 创建报 403 Forbidden | 应用 Pod 未绑定具沙箱命名空间权限的 ServiceAccount | 检查 ServiceAccount 是否已绑定 `sandbox-rbac.example.yaml` 中定义的 RoleBinding |
+| 多副本后任务重复、会话丢失或取消不生效 | 调度器和部分浏览器/执行状态仍然是进程级状态 | 不要只修改 `replicas`；先完成共享存储、会话路由、Scheduler Leader 和跨 Pod 运行态验证 |
+| Pod 被 OOMKilled 或请求超时 | Playwright、Agent 执行和并发模型调用需要更多 CPU/内存 | 查看 `kubectl describe pod` 的退出原因，根据压测调整 requests/limits 和并发策略 |
 | 多副本后任务重复、会话丢失或取消不生效 | 调度器和部分浏览器/执行状态仍然是进程级状态 | 不要只修改 `replicas`；先完成共享存储、会话路由、Scheduler Leader 和跨 Pod 运行态验证 |
 | Pod 被 OOMKilled 或请求超时 | Playwright、Agent 执行和并发模型调用需要更多 CPU/内存 | 查看 `kubectl describe pod` 的退出原因，根据压测调整 requests/limits 和并发策略 |
 

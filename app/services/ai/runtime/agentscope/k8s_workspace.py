@@ -1,0 +1,427 @@
+"""NanZi-specific K8sWorkspace mount and lifecycle adapter.
+
+Adapts AgentScope's K8sWorkspace to support:
+1. Shared cluster PVC with subPath (matching Docker's user workspace & public docs behavior).
+2. Local pre-creation of subPath directories to prevent Kubernetes MountVolume failures.
+3. Identity guard: Prohibit unauthenticated users from mounting shared PVC root.
+4. Non-privileged namespace creation graceful fallback (handling 403 Forbidden).
+5. Automatic resource requests + limits configuration to prevent scheduler over-allocation.
+6. Dynamic isolated PVC creation per user/session with optional delete_pvc_on_close.
+"""
+from __future__ import annotations
+
+import logging
+import os
+from typing import Any
+
+logger = logging.getLogger(__name__)
+
+DEFAULT_K8S_CPU_REQUEST = "100m"
+DEFAULT_K8S_MEMORY_REQUEST = "128Mi"
+
+
+class K8sSandboxUnavailableError(RuntimeError):
+    """Normalized K8s sandbox unavailability error with user-friendly diagnosis."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        reason_code: str = "k8s_sandbox_unavailable",
+        user_message: str | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.reason_code = reason_code
+        self.user_message = user_message or (
+            "Kubernetes 沙箱不可用，代码未执行。请检查集群网络、命名空间权限（RBAC）与镜像拉取状态。"
+        )
+
+
+def _ensure_local_subpath_dirs(
+    user_key: str | None,
+    candidate_roots: list[str] | None = None,
+) -> None:
+    """Pre-create subPath directories on the local filesystem if the shared volume is mounted locally.
+
+    ``subPath`` paths are relative to the shared PVC's root (e.g. the
+    platform data dir ``/app/data``), so the directories must physically
+    exist *inside the PVC* before kubelet mounts them, or the Pod stays in
+    ``ContainerCreating`` / MountVolume failure. This is only effective when
+    the PVC is actually mounted on this platform container (hostPath /
+    local PVC); it is a best-effort pre-flight helper, never a guarantee for
+    remotely-bound volumes.
+    """
+    search_dirs: list[str] = []
+    if candidate_roots:
+        search_dirs.extend(candidate_roots)
+    search_dirs.extend([
+        os.environ.get("DATA_DIR", ""),
+        "/app/data",
+        "data",
+    ])
+
+    # Normalise real paths so genuine platform roots are not visited twice.
+    seen: set[str] = set()
+    for candidate in search_dirs:
+        if not candidate:
+            continue
+        try:
+            abs_cand = os.path.realpath(os.path.abspath(candidate))
+        except (TypeError, ValueError):
+            continue
+        if abs_cand in seen:
+            continue
+        seen.add(abs_cand)
+        try:
+            if not os.path.isdir(abs_cand):
+                continue
+            if user_key:
+                user_sandbox_dir = os.path.join(
+                    abs_cand, "agent_workspaces", user_key, "sandbox"
+                )
+                os.makedirs(user_sandbox_dir, exist_ok=True)
+            docs_dir = os.path.join(abs_cand, "docs")
+            os.makedirs(docs_dir, exist_ok=True)
+            logger.debug(
+                "[k8s_workspace] Successfully ensured local subPath directories in %s",
+                abs_cand,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "[k8s_workspace] Failed to ensure local subPath directory in candidate %s: %s",
+                candidate,
+                exc,
+            )
+
+
+def build_k8s_workspace_with_nanzi_adapter(
+    base_workspace_class: type[Any],
+    *,
+    existing_pvc: str | None = None,
+    sandbox_user_key: str | None = None,
+    public_docs_mounted: bool = True,
+    local_data_root: str | None = None,
+    **kwargs: Any,
+) -> Any:
+    """Instantiate an AgentScope K8s workspace with NanZi storage and mount enhancements."""
+
+    class _NanZiK8sWorkspace(base_workspace_class):
+        def __init__(
+            self,
+            *,
+            existing_pvc: str | None = None,
+            sandbox_user_key: str | None = None,
+            public_docs_mounted: bool = True,
+            local_data_root: str | None = None,
+            **init_kwargs: Any,
+        ) -> None:
+            # Normalize resources: if only limits are specified, ensure sensible requests
+            # to prevent Kubernetes from defaulting requests = limits (which starves the cluster).
+            res = init_kwargs.get("resources")
+            if isinstance(res, dict):
+                res_dict = dict(res)
+                limits = res_dict.get("limits") or {}
+                requests = res_dict.get("requests") or {}
+                if limits and not requests:
+                    # Provide default lightweight requests
+                    res_dict["requests"] = {
+                        "cpu": DEFAULT_K8S_CPU_REQUEST,
+                        "memory": DEFAULT_K8S_MEMORY_REQUEST,
+                    }
+                    init_kwargs["resources"] = res_dict
+
+            super().__init__(**init_kwargs)
+            self._nanzi_existing_pvc = (existing_pvc or "").strip() or None
+            self._nanzi_sandbox_user_key = (sandbox_user_key or "").strip() or None
+            self._nanzi_public_docs_mounted = public_docs_mounted
+            self._nanzi_local_data_root = local_data_root
+
+        async def _ensure_namespace(self) -> None:
+            """Ensure the target namespace exists. Gracefully tolerate RBAC 403 Forbidden."""
+            try:
+                await super()._ensure_namespace()
+            except Exception as exc:  # noqa: BLE001
+                status = getattr(exc, "status", None)
+                if status in (403, 409):
+                    logger.warning(
+                        "[k8s_workspace] Namespace %r check/creation returned HTTP %s. "
+                        "Assuming namespace is pre-created by cluster administrator: %s",
+                        self._namespace,
+                        status,
+                        exc,
+                    )
+                    return
+                logger.error(
+                    "[k8s_workspace] Failed to verify namespace %r: %s",
+                    self._namespace,
+                    exc,
+                )
+                raise K8sSandboxUnavailableError(
+                    f"无法访问 Kubernetes 命名空间 {self._namespace}，请检查集群连接与 RBAC 权限: {exc}",
+                    reason_code="k8s_namespace_inaccessible",
+                ) from exc
+
+        async def _ensure_pvc(self) -> None:
+            """Ensure PVC exists; if using an existing shared PVC, skip dynamic creation."""
+            if self._nanzi_existing_pvc:
+                logger.info(
+                    "K8sWorkspace: Using existing shared PVC %r for pod %r",
+                    self._nanzi_existing_pvc,
+                    self._pod_name,
+                )
+                return
+            await super()._ensure_pvc()
+
+        async def _create_pod(self) -> None:
+            """Create the workspace Pod with optional subPath and public docs mounts."""
+            if not self._nanzi_existing_pvc:
+                # Default isolated dynamic PVC path
+                return await super()._create_pod()
+
+            # Security Guard: shared PVC mode MUST have an authenticated user identity
+            if not self._nanzi_sandbox_user_key:
+                raise ValueError(
+                    "K8S 共享 PVC 沙箱策略要求必须具备已认证的用户身份（sandbox_user_key 不能为空），"
+                    "以防止未授权访问或越权挂载持久卷根目录。"
+                )
+
+            # Ensure host/PVC subPath directories physically exist before kubelet mounts them.
+            # subPath is relative to the shared PVC root; the platform data dir root is
+            # normally the parent of the resolved workspace root (e.g. /app/data), so we
+            # probe the parent first, then the root itself, then the data-root conventions.
+            candidate_roots: list[str] = []
+            if self._nanzi_local_data_root:
+                parent = os.path.dirname(
+                    os.path.realpath(os.path.abspath(self._nanzi_local_data_root))
+                )
+                candidate_roots = [parent, self._nanzi_local_data_root]
+            _ensure_local_subpath_dirs(self._nanzi_sandbox_user_key, candidate_roots)
+
+            from kubernetes_asyncio import client as k8s_client
+            try:
+                from agentscope.workspace._k8s._constants import POD_WORKDIR
+            except ImportError:
+                POD_WORKDIR = "/workspace"
+
+            container_env = None
+            if self.env:
+                container_env = [
+                    k8s_client.V1EnvVar(name=k, value=v)
+                    for k, v in self.env.items()
+                ]
+
+            user_subpath = f"agent_workspaces/{self._nanzi_sandbox_user_key}/sandbox"
+
+            volume_mounts = [
+                k8s_client.V1VolumeMount(
+                    name="shared-data",
+                    mount_path=POD_WORKDIR,
+                    sub_path=user_subpath,
+                ),
+            ]
+
+            if self._nanzi_public_docs_mounted:
+                volume_mounts.append(
+                    k8s_client.V1VolumeMount(
+                        name="shared-data",
+                        mount_path=f"{POD_WORKDIR}/public/docs",
+                        sub_path="docs",
+                        read_only=True,
+                    ),
+                )
+
+            container = k8s_client.V1Container(
+                name="workspace",
+                image=self._image,
+                image_pull_policy=self._image_pull_policy,
+                command=["sleep", "infinity"],
+                working_dir=POD_WORKDIR,
+                ports=[
+                    k8s_client.V1ContainerPort(
+                        container_port=self.gateway_port,
+                    ),
+                ],
+                resources=(
+                    k8s_client.V1ResourceRequirements(**self._resources)
+                    if self._resources
+                    else None
+                ),
+                volume_mounts=volume_mounts,
+                env=container_env,
+            )
+
+            volumes = [
+                k8s_client.V1Volume(
+                    name="shared-data",
+                    persistent_volume_claim=(
+                        k8s_client.V1PersistentVolumeClaimVolumeSource(
+                            claim_name=self._nanzi_existing_pvc,
+                        )
+                    ),
+                ),
+            ]
+
+            spec_kwargs: dict[str, Any] = {
+                "restart_policy": "OnFailure",
+                "containers": [container],
+                "volumes": volumes,
+            }
+            if self._node_selector:
+                spec_kwargs["node_selector"] = self._node_selector
+            if self._tolerations:
+                spec_kwargs["tolerations"] = [
+                    k8s_client.V1Toleration(**t) for t in self._tolerations
+                ]
+            if self._service_account:
+                spec_kwargs["service_account_name"] = self._service_account
+            if self._image_pull_secrets:
+                spec_kwargs["image_pull_secrets"] = [
+                    k8s_client.V1LocalObjectReference(name=s)
+                    for s in self._image_pull_secrets
+                ]
+
+            pod = k8s_client.V1Pod(
+                metadata=k8s_client.V1ObjectMeta(
+                    name=self._pod_name,
+                    namespace=self._namespace,
+                    labels={
+                        "app.kubernetes.io/managed-by": "agentscope",
+                        "agentscope.workspace": "true",
+                        "agentscope.workspace.id": self.workspace_id,
+                    },
+                ),
+                spec=k8s_client.V1PodSpec(**spec_kwargs),
+            )
+            try:
+                await self._v1.create_namespaced_pod(self._namespace, pod)
+            except Exception as exc:  # noqa: BLE001
+                logger.error(
+                    "[k8s_workspace] Failed to create pod %r in namespace %r: %s",
+                    self._pod_name,
+                    self._namespace,
+                    exc,
+                )
+                raise K8sSandboxUnavailableError(
+                    f"创建 Kubernetes 沙箱 Pod 失败（命名空间: {self._namespace}, 镜像: {self._image}）: {exc}",
+                    reason_code="k8s_pod_creation_failed",
+                ) from exc
+
+        async def _teardown_backend(self) -> None:
+            """Teardown backend. If using an existing shared PVC, never delete the PVC."""
+            if self._nanzi_existing_pvc:
+                # Temporarily disable delete_pvc_on_close so shared app PVC is never touched
+                original_flag = self._delete_pvc_on_close
+                self._delete_pvc_on_close = False
+                try:
+                    await super()._teardown_backend()
+                finally:
+                    self._delete_pvc_on_close = original_flag
+                return
+
+            await super()._teardown_backend()
+
+    return _NanZiK8sWorkspace(
+        existing_pvc=existing_pvc,
+        sandbox_user_key=sandbox_user_key,
+        public_docs_mounted=public_docs_mounted,
+        local_data_root=local_data_root,
+        **kwargs,
+    )
+
+
+async def check_k8s_rbac_status(
+    namespace: str | None = None,
+) -> dict[str, Any]:
+    """Check Kubernetes cluster connectivity and RBAC permissions for the sandbox namespace."""
+    from app.services.config_service import ConfigService
+
+    target_namespace = (
+        namespace
+        or (await ConfigService.get("sandbox_k8s_namespace", "agent-sandboxes"))
+    ).strip() or "agent-sandboxes"
+
+    try:
+        from kubernetes_asyncio import client as k8s_client, config as k8s_async_config
+    except ImportError:
+        return {
+            "ok": False,
+            "error_type": "missing_dependency",
+            "namespace": target_namespace,
+            "message": "未安装 kubernetes-asyncio 依赖包，请在环境中安装。",
+        }
+
+    # 1. 尝试加载 InCluster 或 KubeConfig 凭据
+    loaded = False
+    try:
+        k8s_async_config.load_incluster_config()
+        loaded = True
+    except Exception:
+        try:
+            await k8s_async_config.load_kube_config()
+            loaded = True
+        except Exception as exc:
+            return {
+                "ok": False,
+                "error_type": "no_k8s_config",
+                "namespace": target_namespace,
+                "message": f"未检测到 Kubernetes 集群连接凭据（既非集群内 InCluster Pod，也未在本地读取到有效 kubeconfig）：{exc}",
+                "remedy": "如果是在本地测试，请确保 ~/.kube/config 存在；如果在集群内运行，请确保平台 Pod 绑定了 ServiceAccount。",
+            }
+
+    # 2. 发起权限与连通性自检
+    try:
+        async with k8s_client.ApiClient() as api_client:
+            auth_v1 = k8s_client.AuthorizationV1Api(api_client)
+
+            # 自检 Pod 创建权限 (SelfSubjectAccessReview)
+            review_pod = k8s_client.V1SelfSubjectAccessReview(
+                spec=k8s_client.V1SelfSubjectAccessReviewSpec(
+                    resource_attributes=k8s_client.V1ResourceAttributes(
+                        namespace=target_namespace,
+                        verb="create",
+                        resource="pods",
+                    )
+                )
+            )
+            res_pod = await auth_v1.create_self_subject_access_review(review_pod)
+            can_create_pods = bool(res_pod.status.allowed)
+
+            # 自检 PVC 创建权限
+            review_pvc = k8s_client.V1SelfSubjectAccessReview(
+                spec=k8s_client.V1SelfSubjectAccessReviewSpec(
+                    resource_attributes=k8s_client.V1ResourceAttributes(
+                        namespace=target_namespace,
+                        verb="create",
+                        resource="persistentvolumeclaims",
+                    )
+                )
+            )
+            res_pvc = await auth_v1.create_self_subject_access_review(review_pvc)
+            can_create_pvcs = bool(res_pvc.status.allowed)
+
+            if not can_create_pods:
+                return {
+                    "ok": False,
+                    "error_type": "rbac_forbidden",
+                    "namespace": target_namespace,
+                    "can_create_pods": False,
+                    "can_create_pvcs": can_create_pvcs,
+                    "message": f"K8s API 连接成功，但在命名空间 [{target_namespace}] 内缺少 Pods 创建权限（RBAC 尚未授权）。",
+                    "remedy": "kubectl apply -f k8s_deploy/sandbox-rbac.example.yaml",
+                }
+
+            return {
+                "ok": True,
+                "namespace": target_namespace,
+                "can_create_pods": True,
+                "can_create_pvcs": can_create_pvcs,
+                "message": f"Kubernetes 集群连接正常，已具备命名空间 [{target_namespace}] 的 Pod 与 PVC 操作权限！",
+            }
+    except Exception as exc:
+        return {
+            "ok": False,
+            "error_type": "api_error",
+            "namespace": target_namespace,
+            "message": f"连接 Kubernetes API Server 发生异常：{exc}",
+            "remedy": "请检查集群网络连通性、API Server 地址及网络策略（NetworkPolicy）。",
+        }

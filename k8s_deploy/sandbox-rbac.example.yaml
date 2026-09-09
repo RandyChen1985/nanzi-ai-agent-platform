@@ -1,0 +1,59 @@
+# NanZi AI Agent Platform - Kubernetes 沙箱 Pod 生命周期管理 RBAC 权限配置样例
+#
+# 架构说明：
+# 平台主服务运行在 `nanzi-ai-agent` 命名空间，动态创建的沙箱 Pod 隔离运行在 `agent-sandboxes` 命名空间。
+# 本配置遵循最小特权原则（Principle of Least Privilege），只授予操作沙箱命名空间内 Pod 与 PVC 的权限，绝不授予集群级特权。
+
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: agent-sandboxes
+  labels:
+    app.kubernetes.io/part-of: nanzi-ai-agent-platform
+    app.kubernetes.io/component: sandbox
+
+---
+# 平台后端 Pod 使用的 ServiceAccount
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: nanzi-ai-agent-sa
+  namespace: nanzi-ai-agent
+
+---
+# 授予管理沙箱资源专用的 Role（限定在 agent-sandboxes 命名空间）
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: nanzi-sandbox-manager-role
+  namespace: agent-sandboxes
+rules:
+  # Pod 生命周期管理
+  - apiGroups: [""]
+    resources: ["pods", "pods/log", "pods/status"]
+    verbs: ["create", "get", "list", "watch", "update", "delete"]
+  # Pod 交互式命令执行 (exec)
+  - apiGroups: [""]
+    resources: ["pods/exec"]
+    verbs: ["create", "get"]
+  # 存储卷 (PVC) 生命周期管理
+  - apiGroups: [""]
+    resources: ["persistentvolumeclaims", "persistentvolumeclaims/status"]
+    verbs: ["create", "get", "list", "watch", "update", "delete"]
+
+---
+# 跨命名空间角色绑定：将 nanzi-ai-agent 命名空间的 ServiceAccount 绑定到 agent-sandboxes 的 Role
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: nanzi-sandbox-manager-binding
+  namespace: agent-sandboxes
+subjects:
+  - kind: ServiceAccount
+    name: nanzi-ai-agent-sa
+    namespace: nanzi-ai-agent
+roleRef:
+  kind: Role
+  name: nanzi-sandbox-manager-role
+  apiGroup: rbac.authorization.k8s.io

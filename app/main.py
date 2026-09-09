@@ -89,9 +89,13 @@ async def lifespan(app: FastAPI):
     import asyncio
     from app.services.ai.local_vector_rebuild import maybe_rebuild_local_vectors_on_startup
     from app.services.ai.memory_index_service import maybe_ensure_memory_index_on_startup
-    from app.services.ai.runtime.agentscope.workspace import start_docker_workspace_reaper
+    from app.services.ai.runtime.agentscope.workspace import (
+        start_docker_workspace_reaper,
+        start_k8s_workspace_reaper,
+    )
 
     start_docker_workspace_reaper()
+    start_k8s_workspace_reaper()
     asyncio.create_task(maybe_rebuild_local_vectors_on_startup())
     # 记忆摘要索引：Redis 重启后易丢失，启动时自动 ensure（设计文档约定）
     asyncio.create_task(maybe_ensure_memory_index_on_startup())
@@ -101,9 +105,15 @@ async def lifespan(app: FastAPI):
     async with echo_mcp_lifespan(), platform_mcp_lifespan():
         yield
     # Shutdown
-    from app.services.ai.runtime.agentscope.workspace import stop_docker_workspace_reaper
+    from app.services.ai.runtime.agentscope.workspace import (
+        stop_docker_workspace_reaper,
+        stop_k8s_workspace_reaper,
+    )
 
-    await stop_docker_workspace_reaper()
+    await asyncio.gather(
+        stop_docker_workspace_reaper(),
+        stop_k8s_workspace_reaper(),
+    )
     from app.services.ai.scheduler_service import scheduler_service
     await scheduler_service.stop()
     await GlobalHttpClient.close()

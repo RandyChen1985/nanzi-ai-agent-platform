@@ -41,10 +41,17 @@ _docker_workspace_cache: dict[str, Any] = {}
 _docker_workspace_refcounts: dict[str, int] = {}
 _docker_workspace_locks: dict[str, asyncio.Lock] = {}
 _docker_workspace_last_used: dict[str, float] = {}
+_k8s_workspace_cache: dict[str, Any] = {}
+_k8s_workspace_refcounts: dict[str, int] = {}
+_k8s_workspace_locks: dict[str, asyncio.Lock] = {}
+_k8s_workspace_last_used: dict[str, float] = {}
+_k8s_workspace_reaper_task: asyncio.Task[None] | None = None
 _workspace_sandbox_refs: dict[str, str] = {}
 _docker_workspace_reaper_task: asyncio.Task[None] | None = None
 
 DOCKER_WORKSPACE_INIT_RETRY_DELAY_SECONDS = 0.5
+K8S_WORKSPACE_IDLE_SECONDS = 1800.0
+K8S_WORKSPACE_REAPER_INTERVAL_SECONDS = 60.0
 
 
 class DockerSandboxUnavailableError(RuntimeError):
@@ -541,6 +548,7 @@ def _preseed_session_skills(workdir: str, skill_paths: list[str]) -> None:
 
 SANDBOX_POLICY_LOCAL = "local"
 SANDBOX_POLICY_DOCKER = "docker"
+SANDBOX_POLICY_K8S = "k8s"
 SANDBOX_POLICY_E2B = "e2b"
 SANDBOX_POLICY_SSH = "ssh"
 DOCKER_WORKSPACE_IDLE_SECONDS = 30 * 60
@@ -549,6 +557,7 @@ KNOWN_SANDBOX_POLICIES = frozenset(
     {
         SANDBOX_POLICY_LOCAL,
         SANDBOX_POLICY_DOCKER,
+        SANDBOX_POLICY_K8S,
         SANDBOX_POLICY_E2B,
         SANDBOX_POLICY_SSH,
     }
@@ -925,6 +934,159 @@ async def _evict_docker_workspace_cache_entry(
     return 1 if sandbox_ws is not None else 0
 
 
+async def _acquire_k8s_workspace(
+    *,
+    root: str,
+    user_key: str,
+    skill_paths: list[str] | None,
+) -> tuple[Any, str]:
+    """Acquire one process-local K8s workspace reference per user."""
+    cache_key = f"{os.path.abspath(root)}::{user_key}::{SANDBOX_POLICY_K8S}"
+    lock = _k8s_workspace_locks.setdefault(cache_key, asyncio.Lock())
+    async with lock:
+        workspace = _k8s_workspace_cache.get(cache_key)
+        if workspace is None or getattr(workspace, "is_alive", True) is False:
+            workspace = await _policy_k8s_workspace(
+                skill_paths,
+                workspace_id=user_key,
+                sandbox_user_key=user_key,
+                workspace_root=root,
+            )
+            _k8s_workspace_cache[cache_key] = workspace
+            _k8s_workspace_refcounts[cache_key] = 0
+        _k8s_workspace_refcounts[cache_key] = (
+            _k8s_workspace_refcounts.get(cache_key, 0) + 1
+        )
+        _k8s_workspace_last_used[cache_key] = time.monotonic()
+    return workspace, cache_key
+
+
+async def _release_k8s_workspace(cache_key: str, *, reason: str) -> None:
+    """Release one conversation reference and close the user Pod when active count reaches zero."""
+    lock = _k8s_workspace_locks.get(cache_key)
+    if lock is None:
+        return
+    workspace = None
+    async with lock:
+        current = _k8s_workspace_refcounts.get(cache_key, 0)
+        if current > 1:
+            _k8s_workspace_refcounts[cache_key] = current - 1
+            return
+        workspace = _k8s_workspace_cache.pop(cache_key, None)
+        _k8s_workspace_refcounts.pop(cache_key, None)
+        _k8s_workspace_last_used.pop(cache_key, None)
+    if workspace is not None:
+        await _close_workspace_safely(workspace, reason=reason)
+
+
+def _touch_k8s_workspace(cache_key: str) -> None:
+    if cache_key in _k8s_workspace_cache:
+        _k8s_workspace_last_used[cache_key] = time.monotonic()
+
+
+async def _evict_k8s_workspace_cache_entry(
+    cache_key: str,
+    *,
+    reason: str,
+    expected_last_used: float | None = None,
+) -> int:
+    """Evict one user K8s workspace and all conversation cache entries using it."""
+    lock = _k8s_workspace_locks.get(cache_key)
+    if lock is None:
+        return 0
+
+    cached_pairs: list[Any] = []
+    async with lock:
+        if (
+            expected_last_used is not None
+            and _k8s_workspace_last_used.get(cache_key) != expected_last_used
+        ):
+            return 0
+        sandbox_ws = _k8s_workspace_cache.pop(cache_key, None)
+        _k8s_workspace_refcounts.pop(cache_key, None)
+        _k8s_workspace_last_used.pop(cache_key, None)
+        for workspace_cache_key, sandbox_ref in list(_workspace_sandbox_refs.items()):
+            if sandbox_ref != cache_key:
+                continue
+            cached = _workspace_cache.pop(workspace_cache_key, None)
+            _workspace_sandbox_refs.pop(workspace_cache_key, None)
+            if cached is not None:
+                cached_pairs.append(cached)
+
+    to_close: list[Any] = []
+    if sandbox_ws is not None:
+        to_close.append(sandbox_ws)
+    for cached in cached_pairs:
+        sandbox, local = _normalize_workspace_pair(cached)
+        to_close.extend((sandbox, local))
+
+    closed_ids: set[int] = set()
+    for workspace in to_close:
+        if workspace is None or id(workspace) in closed_ids:
+            continue
+        closed_ids.add(id(workspace))
+        await _close_workspace_safely(workspace, reason=reason)
+    return 1 if sandbox_ws is not None else 0
+
+
+async def reap_idle_k8s_workspaces(
+    *,
+    idle_seconds: float = K8S_WORKSPACE_IDLE_SECONDS,
+    now: float | None = None,
+) -> int:
+    """Close user K8s workspaces idle for at least ``idle_seconds``."""
+    if idle_seconds < 0:
+        raise ValueError("idle_seconds must be non-negative")
+    current = time.monotonic() if now is None else now
+    stale_keys = [
+        cache_key
+        for cache_key, last_used in list(_k8s_workspace_last_used.items())
+        if current - last_used >= idle_seconds
+    ]
+
+    reaped = 0
+    for cache_key in stale_keys:
+        lock = _k8s_workspace_locks.get(cache_key)
+        if lock is None:
+            continue
+        async with lock:
+            last_used = _k8s_workspace_last_used.get(cache_key)
+            if last_used is None or current - last_used < idle_seconds:
+                continue
+        reaped += await _evict_k8s_workspace_cache_entry(
+            cache_key,
+            reason="K8s workspace idle timeout",
+            expected_last_used=last_used,
+        )
+    return reaped
+
+
+async def _release_sandbox_workspace(cache_key: str, *, reason: str) -> None:
+    """Polymorphic release for any sandbox reference (Docker or K8s).
+
+    The channel is resolved from the cache_key policy suffix (never a
+    substring scan), so a user identity containing ``k8s`` can never be
+    misrouted. Unknown/absent keys are a safe no-op.
+    """
+    k8s_key = f"::{SANDBOX_POLICY_K8S}"
+    if cache_key and str(cache_key).endswith(k8s_key):
+        await _release_k8s_workspace(cache_key, reason=reason)
+    elif (
+        cache_key in _k8s_workspace_cache
+        or cache_key in _k8s_workspace_refcounts
+        or cache_key in _k8s_workspace_last_used
+    ):
+        await _release_k8s_workspace(cache_key, reason=reason)
+    else:
+        await _release_docker_workspace(cache_key, reason=reason)
+
+
+def _touch_sandbox_workspace(cache_key: str) -> None:
+    """Polymorphic touch for any sandbox reference (Docker or K8s)."""
+    _touch_docker_workspace(cache_key)
+    _touch_k8s_workspace(cache_key)
+
+
 async def reap_idle_docker_workspaces(
     *,
     idle_seconds: float = DOCKER_WORKSPACE_IDLE_SECONDS,
@@ -1006,6 +1168,60 @@ async def stop_docker_workspace_reaper() -> None:
 
     for cache_key in list(_docker_workspace_cache):
         await _evict_docker_workspace_cache_entry(
+            cache_key,
+            reason="application shutdown",
+        )
+
+
+async def _k8s_workspace_reaper_loop(
+    *,
+    idle_seconds: float,
+    interval_seconds: float,
+) -> None:
+    while True:
+        await asyncio.sleep(interval_seconds)
+        try:
+            await reap_idle_k8s_workspaces(idle_seconds=idle_seconds)
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001
+            logger.exception("[workspace] K8s workspace reaper iteration failed")
+
+
+def start_k8s_workspace_reaper(
+    *,
+    idle_seconds: float = K8S_WORKSPACE_IDLE_SECONDS,
+    interval_seconds: float = K8S_WORKSPACE_REAPER_INTERVAL_SECONDS,
+) -> asyncio.Task[None]:
+    """Start the process-local Kubernetes idle reaper once (idempotent)."""
+    global _k8s_workspace_reaper_task
+    if _k8s_workspace_reaper_task is not None and not _k8s_workspace_reaper_task.done():
+        return _k8s_workspace_reaper_task
+    if interval_seconds <= 0:
+        raise ValueError("interval_seconds must be positive")
+    _k8s_workspace_reaper_task = asyncio.create_task(
+        _k8s_workspace_reaper_loop(
+            idle_seconds=idle_seconds,
+            interval_seconds=interval_seconds,
+        )
+    )
+    return _k8s_workspace_reaper_task
+
+
+async def stop_k8s_workspace_reaper() -> None:
+    """Stop the K8s idle reaper and close remaining cached K8s workspaces."""
+    global _k8s_workspace_reaper_task
+    task = _k8s_workspace_reaper_task
+    _k8s_workspace_reaper_task = None
+    if task is not None and not task.done():
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+    for cache_key in list(_k8s_workspace_cache):
+        await _evict_k8s_workspace_cache_entry(
             cache_key,
             reason="application shutdown",
         )
@@ -1166,6 +1382,136 @@ async def _policy_ssh_workspace(
     return workspace
 
 
+async def _policy_k8s_workspace(
+    skill_paths: list[str] | None,
+    config_overrides: Mapping[str, Any] | None = None,
+    *,
+    sandbox_user_key: str | None = None,
+    workspace_id: str | None = None,
+    workspace_root: str | None = None,
+) -> Any:
+    """Build an initialized K8sWorkspace (containerized sandbox on Kubernetes)."""
+    from agentscope.workspace import K8sWorkspace
+    from app.services.ai.runtime.agentscope.k8s_workspace import (
+        build_k8s_workspace_with_nanzi_adapter,
+    )
+    from app.services.ai.runtime.agentscope.workspace_container_mcp import (
+        build_container_tool_mcp,
+    )
+
+    namespace = (
+        await _sandbox_config_value(
+            "sandbox_k8s_namespace", "agent-sandboxes", config_overrides
+        )
+    ).strip() or "agent-sandboxes"
+    image = (
+        await _sandbox_config_value(
+            "sandbox_k8s_image", "python:3.11-slim", config_overrides
+        )
+    ).strip() or "python:3.11-slim"
+    existing_pvc = (
+        await _sandbox_config_value(
+            "sandbox_k8s_existing_pvc", "", config_overrides
+        )
+    ).strip() or None
+    storage_class = (
+        await _sandbox_config_value(
+            "sandbox_k8s_storage_class", "", config_overrides
+        )
+    ).strip() or None
+    storage_size = (
+        await _sandbox_config_value(
+            "sandbox_k8s_storage_size", "1Gi", config_overrides
+        )
+    ).strip() or "1Gi"
+    cpu_request = (
+        await _sandbox_config_value(
+            "sandbox_k8s_cpu_request", "100m", config_overrides
+        )
+    ).strip() or None
+    memory_request = (
+        await _sandbox_config_value(
+            "sandbox_k8s_memory_request", "128Mi", config_overrides
+        )
+    ).strip() or None
+    cpu_limit = (
+        await _sandbox_config_value(
+            "sandbox_k8s_cpu_limit", "1000m", config_overrides
+        )
+    ).strip() or None
+    memory_limit = (
+        await _sandbox_config_value(
+            "sandbox_k8s_memory_limit", "1Gi", config_overrides
+        )
+    ).strip() or None
+    delete_pvc_raw = (
+        await _sandbox_config_value(
+            "sandbox_k8s_delete_pvc_on_close", "false", config_overrides
+        )
+    ).strip().lower()
+    delete_pvc_on_close = delete_pvc_raw in ("1", "true", "yes", "on")
+
+    # 安全守卫：共享 PVC 模式严禁在未认证/空 user_key 状态下使用
+    if existing_pvc and not sandbox_user_key:
+        raise ValueError(
+            "K8S 共享 PVC 沙箱策略要求必须具备已认证的用户身份（sandbox_user_key 不能为空），"
+            "以防止未授权访问或越权挂载持久卷根目录。"
+        )
+
+    # 资源保障 (requests) 与上限 (limits) 规范组装
+    resources: dict[str, Any] = {}
+    requests: dict[str, str] = {}
+    limits: dict[str, str] = {}
+    if cpu_request:
+        requests["cpu"] = cpu_request
+    if memory_request:
+        requests["memory"] = memory_request
+    if requests:
+        resources["requests"] = requests
+
+    if cpu_limit:
+        limits["cpu"] = cpu_limit
+    if memory_limit:
+        limits["memory"] = memory_limit
+    if limits:
+        resources["limits"] = limits
+
+    effective_workspace_id = workspace_id or (
+        f"nanzi-ws-{sandbox_user_key}" if sandbox_user_key else None
+    )
+
+    kwargs: dict[str, Any] = {
+        "namespace": namespace,
+        "image": image,
+        "storage_class": storage_class,
+        "storage_size": storage_size,
+        "delete_pvc_on_close": delete_pvc_on_close,
+        "resources": resources or None,
+        "default_mcps": [build_container_tool_mcp()],
+        "skill_paths": skill_paths,
+    }
+    if effective_workspace_id:
+        kwargs["workspace_id"] = effective_workspace_id
+
+    workspace = build_k8s_workspace_with_nanzi_adapter(
+        K8sWorkspace,
+        existing_pvc=existing_pvc,
+        sandbox_user_key=sandbox_user_key,
+        public_docs_mounted=True,
+        local_data_root=workspace_root,
+        **kwargs,
+    )
+    try:
+        await workspace.initialize()
+    except Exception:
+        await _close_workspace_safely(workspace, reason="K8s initialization failure")
+        raise
+
+    workspace._platform_sandbox_policy = SANDBOX_POLICY_K8S
+    workspace._platform_execution_backend = SANDBOX_POLICY_K8S
+    return workspace
+
+
 async def _sandbox_config_value(
     key: str,
     default: str,
@@ -1199,7 +1545,9 @@ async def build_sandbox_workspace_for_test(
         return await _policy_e2b_workspace([], config_overrides)
     if normalized == SANDBOX_POLICY_SSH:
         return await _policy_ssh_workspace([], config_overrides)
-    raise ValueError("仅支持 e2b 或 ssh 沙箱连接测试")
+    if normalized == SANDBOX_POLICY_K8S:
+        return await _policy_k8s_workspace([], config_overrides)
+    raise ValueError("仅支持 k8s、e2b 或 ssh 沙箱连接测试")
 
 
 async def get_local_workspace(
@@ -1236,11 +1584,18 @@ async def get_local_workspace(
             await ConfigService.get("sandbox_policy", SANDBOX_POLICY_LOCAL),
             SANDBOX_POLICY_LOCAL,
         )
-        if policy_without_conversation == SANDBOX_POLICY_DOCKER:
-            raise DockerSandboxUnavailableError(
-                "Docker sandbox requires a conversation_id",
-                reason_code="docker_workspace_start_failed",
-                user_message="缺少会话 ID，Docker 沙箱未启动，Bash 未执行。",
+        if policy_without_conversation in (SANDBOX_POLICY_DOCKER, SANDBOX_POLICY_K8S):
+            if policy_without_conversation == SANDBOX_POLICY_DOCKER:
+                raise DockerSandboxUnavailableError(
+                    "Docker sandbox requires a conversation_id",
+                    reason_code="docker_workspace_start_failed",
+                    user_message="缺少会话 ID，Docker 沙箱未启动，Bash 未执行。",
+                )
+            from app.services.ai.runtime.agentscope.k8s_workspace import K8sSandboxUnavailableError
+            raise K8sSandboxUnavailableError(
+                "K8s sandbox requires a conversation_id",
+                reason_code="k8s_workspace_start_failed",
+                user_message="缺少会话 ID，K8S 沙箱未启动，代码未执行。",
             )
         return None
 
@@ -1277,7 +1632,7 @@ async def get_local_workspace(
     if cached is not None:
         sandbox_cache_key = _workspace_sandbox_refs.get(cache_key)
         if sandbox_cache_key is not None:
-            _touch_docker_workspace(sandbox_cache_key)
+            _touch_sandbox_workspace(sandbox_cache_key)
         return cached
 
     # 命中已有工作区时扫描结果本来就不会被使用；仅初始化时读取技能目录。
@@ -1287,7 +1642,12 @@ async def get_local_workspace(
         allowed_global_skills=allowed_global_skills,
     )
 
-    is_sandbox = policy in (SANDBOX_POLICY_DOCKER, SANDBOX_POLICY_E2B, SANDBOX_POLICY_SSH)
+    is_sandbox = policy in (
+        SANDBOX_POLICY_DOCKER,
+        SANDBOX_POLICY_K8S,
+        SANDBOX_POLICY_E2B,
+        SANDBOX_POLICY_SSH,
+    )
 
     sandbox_ws = None
     sandbox_cache_key: str | None = None
@@ -1305,6 +1665,21 @@ async def get_local_workspace(
                         "Docker sandbox requires an authenticated user identity"
                     )
                 sandbox_ws, sandbox_cache_key = await _acquire_docker_workspace(
+                    root=root,
+                    user_key=sandbox_user_key,
+                    skill_paths=skill_paths,
+                )
+            elif policy == SANDBOX_POLICY_K8S:
+                sandbox_user_key = _resolve_sandbox_user_key(
+                    user_id=user_id,
+                    user_name=user_name,
+                    user_info=user_info,
+                )
+                if not sandbox_user_key:
+                    raise RuntimeError(
+                        "K8s sandbox requires an authenticated user identity"
+                    )
+                sandbox_ws, sandbox_cache_key = await _acquire_k8s_workspace(
                     root=root,
                     user_key=sandbox_user_key,
                     skill_paths=skill_paths,
@@ -1350,7 +1725,7 @@ async def get_local_workspace(
             sandbox_ws._platform_execution_backend = policy
     except Exception as exc:
         if sandbox_cache_key is not None:
-            await _release_docker_workspace(
+            await _release_sandbox_workspace(
                 sandbox_cache_key,
                 reason="host LocalWorkspace initialization failure",
             )
@@ -1366,6 +1741,14 @@ async def get_local_workspace(
             raise DockerSandboxUnavailableError(
                 str(exc),
                 reason_code=_docker_init_reason_code(exc),
+            ) from exc
+        if policy == SANDBOX_POLICY_K8S:
+            from app.services.ai.runtime.agentscope.k8s_workspace import K8sSandboxUnavailableError
+            if isinstance(exc, K8sSandboxUnavailableError):
+                raise
+            raise K8sSandboxUnavailableError(
+                str(exc),
+                reason_code="k8s_workspace_start_failed",
             ) from exc
         return None
 
@@ -1985,7 +2368,7 @@ async def delete_workspace_for_session(
     for cached, sandbox_cache_key in cached_workspaces:
         sandbox_ws, local_ws = _normalize_workspace_pair(cached)
         if sandbox_cache_key is not None:
-            await _release_docker_workspace(
+            await _release_sandbox_workspace(
                 sandbox_cache_key,
                 reason="session deletion",
             )
@@ -2011,6 +2394,10 @@ def clear_workspace_cache() -> None:
     _docker_workspace_refcounts.clear()
     _docker_workspace_locks.clear()
     _docker_workspace_last_used.clear()
+    _k8s_workspace_cache.clear()
+    _k8s_workspace_refcounts.clear()
+    _k8s_workspace_locks.clear()
+    _k8s_workspace_last_used.clear()
 
 
 def normalize_workspace_tool_names(tool_names: set[str] | frozenset[str]) -> set[str]:

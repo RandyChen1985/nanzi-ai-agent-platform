@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.orm import AsyncSessionLocal
 from app.core.redis import get_redis
 from app.core.config import settings
-from app.utils.env import get_env
+from app.utils.env import get_env, in_k8s, docker_available
 from app.services.ai.runtime.agentscope.tool_timeout import (
     AGENT_MAX_TOOLCALL_TIMEOUT_KEY,
     validate_agent_max_toolcall_timeout,
@@ -32,6 +32,7 @@ CACHE_PREFIX = "sys_config:"
 CACHE_TTL = 300  # 5 minutes
 SANDBOX_POLICY_KEY = "sandbox_policy"
 SANDBOX_POLICY_DOCKER = "docker"
+SANDBOX_POLICY_K8S = "k8s"
 
 
 def resolve_effective_sandbox_policy(
@@ -40,8 +41,8 @@ def resolve_effective_sandbox_policy(
 ) -> str:
     """解析当前部署环境允许实际执行的沙箱策略。
 
-    无论平台后端运行在宿主机还是 Docker 容器中（挂载 /var/run/docker.sock 后支持 DooD 模式），
-    均原生支持执行用户配置的有效沙箱策略（local / docker / e2b / ssh）。
+    无论平台后端运行在宿主机还是 Docker 容器中（挂载 /var/run/docker.sock 后支持 DooD 模式）或 K8s 集群中，
+    均原生支持执行用户配置的有效沙箱策略（local / docker / k8s / e2b / ssh）。
     """
     normalized = str(value or default).strip().lower()
     return normalized
@@ -376,6 +377,28 @@ class ConfigService:
             "key": "sandbox_runtime_env",
             "value": get_env(),  # "docker" | "host"
             "description": "平台后端进程运行环境（自动探测）：docker=平台部署在容器内，host=平台运行在宿主机。local 沙箱策略即在该环境内直接执行。",
+            "is_secret": False,
+            "readonly": True
+        })
+
+        # 追加平台后端是否运行在 Kubernetes Pod 内的只读探测结果（不落库）。
+        # k8s 沙箱策略依赖 in-cluster 凭证（load_incluster_config）动态创建 Pod/PVC，
+        # 因此仅当平台后端自身跑在 K8s 里时该策略才可用；宿主机/普通 Docker 部署时前端据此禁用 k8s 选项。
+        grouped.setdefault("sandbox", []).append({
+            "key": "sandbox_runtime_in_k8s",
+            "value": "true" if in_k8s() else "false",
+            "description": "平台后端是否运行在 Kubernetes Pod 内（自动探测）。仅当为 true 时，sandbox_policy 的 k8s 沙箱策略才可选可用。",
+            "is_secret": False,
+            "readonly": True
+        })
+
+        # 追加 Docker daemon 可用性只读探测结果（不落库）。
+        # docker 沙箱通过 docker SDK from_env 连接 daemon（DOCKER_HOST 或 /var/run/docker.sock）。
+        # 宿主机/普通 Docker 默认可用；K8s Pod 未挂载 socket 且未配 DOCKER_HOST 时不可用，前端据此禁用 docker 选项。
+        grouped.setdefault("sandbox", []).append({
+            "key": "sandbox_docker_available",
+            "value": "true" if docker_available() else "false",
+            "description": "当前环境能否连接 Docker daemon（自动探测）：显式配置了 DOCKER_HOST 或存在 /var/run/docker.sock 即判定可用。为 false 时 sandbox_policy 的 docker 沙箱策略不可选。",
             "is_secret": False,
             "readonly": True
         })

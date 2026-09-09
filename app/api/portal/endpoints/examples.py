@@ -10,6 +10,7 @@ from app.models.chatbi_example import ChatBIExample
 from app.models.user import User
 from app.models.agent import AIAgent
 from app.services.chatbi_example_service import ExampleService
+from app.services.config_service import ConfigService
 
 router = APIRouter()
 
@@ -224,19 +225,28 @@ async def sync_all_examples(
     _=Depends(require_api_key)
 ):
     """
-    一键同步所有审核通过 (approved) 的案例至 RAGFlow。
+    一键同步所有审核通过 (approved) 的案例。
+
+    - 本地模式 (metadata_provider=local)：仅同步到本地 Redis 向量索引，不连接 RAGFlow；
+    - RAGFlow 模式：同步到 RAGFlow（并联动本地 Redis 向量）。
     """
     stmt = select(ChatBIExample).where(ChatBIExample.status == "approved")
     result = await db.execute(stmt)
     examples = result.scalars().all()
-    
+
     if not examples:
         return {"code": 200, "message": "当前没有状态为'已通过'的案例需要同步。"}
 
+    metadata_provider = await ConfigService.get("metadata_provider", default="local")
+    is_local_mode = str(metadata_provider or "").strip().lower() == "local"
+
+    target = (ExampleService.sync_to_local_redis
+              if is_local_mode else ExampleService.sync_to_ragflow)
     for ex in examples:
-        background_tasks.add_task(ExampleService.sync_to_ragflow, ex.id)
-        
-    return {"code": 200, "message": f"已成功触发 {len(examples)} 条已通过案例的同步任务。"}
+        background_tasks.add_task(target, ex.id)
+
+    mode_label = "本地 Redis 向量索引" if is_local_mode else "RAGFlow"
+    return {"code": 200, "message": f"已成功触发 {len(examples)} 条已通过案例到{mode_label}的同步任务。"}
 
 @router.post("/audit")
 async def audit_example(
@@ -268,7 +278,10 @@ async def sync_example(
     _=Depends(require_api_key)
 ):
     """
-    手动触发同步至 RAGFlow。
+    手动触发单条案例同步。
+
+    - 本地模式 (metadata_provider=local)：仅同步到本地 Redis 向量索引，不连接 RAGFlow；
+    - RAGFlow 模式：同步到 RAGFlow（并联动本地 Redis 向量）。
     """
     stmt = select(ChatBIExample).where(ChatBIExample.id == example_id)
     result = await db.execute(stmt)
@@ -283,5 +296,11 @@ async def sync_example(
             detail=f"只有审核通过或已废弃的记录允许同步。当前状态: {example.status}"
         )
 
-    background_tasks.add_task(ExampleService.sync_to_ragflow, example_id)
-    return {"code": 200, "message": "已开启异步同步任务。"}
+    metadata_provider = await ConfigService.get("metadata_provider", default="local")
+    is_local_mode = str(metadata_provider or "").strip().lower() == "local"
+
+    target = (ExampleService.sync_to_local_redis
+              if is_local_mode else ExampleService.sync_to_ragflow)
+    background_tasks.add_task(target, example_id)
+    mode_label = "本地 Redis 向量索引" if is_local_mode else "RAGFlow"
+    return {"code": 200, "message": f"已开启异步同步到{mode_label}的任务。"}

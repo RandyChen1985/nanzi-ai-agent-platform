@@ -2069,6 +2069,7 @@ class AgentService:
                     get_local_workspace,
                     SANDBOX_POLICY_LOCAL,
                     SANDBOX_POLICY_DOCKER,
+                    SANDBOX_POLICY_K8S,
                     SANDBOX_POLICY_E2B,
                     SANDBOX_POLICY_SSH,
                     _docker_workspace_cache,
@@ -2082,7 +2083,12 @@ class AgentService:
                     await ConfigService.get("sandbox_policy", SANDBOX_POLICY_LOCAL),
                     SANDBOX_POLICY_LOCAL,
                 )
-                is_sandbox = policy in (SANDBOX_POLICY_DOCKER, SANDBOX_POLICY_E2B, SANDBOX_POLICY_SSH)
+                is_sandbox = policy in (
+                    SANDBOX_POLICY_DOCKER,
+                    SANDBOX_POLICY_K8S,
+                    SANDBOX_POLICY_E2B,
+                    SANDBOX_POLICY_SSH,
+                )
 
                 info = user_info or {}
                 raw_user_id = info.get("user_id") or info.get("id")

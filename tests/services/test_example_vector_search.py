@@ -10,7 +10,7 @@ pytestmark = pytest.mark.no_infrastructure
 @pytest.mark.asyncio
 async def test_example_index_ensure_index():
     mock_redis = AsyncMock()
-    mock_redis.execute_command = AsyncMock(side_effect=Exception("Index does not exist"))
+    mock_redis.execute_command = AsyncMock(side_effect=[Exception("Index does not exist"), "OK"])
     
     with patch("app.services.ai.example_index_service.get_redis", return_value=mock_redis), \
          patch("app.services.ai.example_index_service.EmbeddingClient.get_dimensions", return_value=1536):
@@ -195,6 +195,66 @@ async def test_chatbi_example_search_local_split():
         call_args = mock_local_search.call_args[1]
         assert call_args["authorized_dataset_ids"] == [42]
         assert call_args["top_k"] == 5
+
+
+@pytest.mark.asyncio
+async def test_sync_local_vectors_approved_upserts_redis():
+    """审核通过的案例在本地路径下应被写入 Redis 向量索引（不触碰 RAGFlow）。"""
+    from unittest.mock import MagicMock
+    from app.services.chatbi_example_service import ExampleService
+
+    db = MagicMock()
+    db.execute = AsyncMock(return_value=MagicMock(scalar=AsyncMock(return_value="销售数据集")))
+    example = MagicMock()
+    example.id = 12
+    example.status = "approved"
+    example.feedback_type = "up"
+    example.dataset_id = 42
+    example.refined_query = "查询全年销售额"
+    example.user_query = "全年销售额"
+    example.context_summary = "用户想了解全年销售情况"
+    example.sql_text = "SELECT sum(amount) FROM orders"
+    example.trace_id = "t123"
+    example.agent_id = "a456"
+    example.sql_metadata = {"tables": ["orders"]}
+
+    with patch("app.services.ai.embedding_client.EmbeddingClient.embed_text", new_callable=AsyncMock, return_value=[0.1] * 1536) as mock_embed, \
+         patch("app.services.ai.example_index_service.ExampleIndexService.upsert_vector", new_callable=AsyncMock) as mock_upsert, \
+         patch("app.services.ai.example_index_service.ExampleIndexService.delete_vector", new_callable=AsyncMock) as mock_delete:
+
+        ok = await ExampleService._sync_local_vectors(db, example)
+
+    assert ok is True
+    mock_embed.assert_called_once()
+    mock_upsert.assert_awaited_once()
+    mock_delete.assert_not_awaited()
+    upsert_kwargs = mock_upsert.await_args[1]
+    assert upsert_kwargs["example_id"] == 12
+    assert upsert_kwargs["dataset_id"] == 42
+    assert upsert_kwargs["question"] == "查询全年销售额"
+    assert upsert_kwargs["sql_text"] == "SELECT sum(amount) FROM orders"
+
+
+@pytest.mark.asyncio
+async def test_sync_local_vectors_deprecated_deletes_redis():
+    """废弃/驳回/点踩的案例在本地路径下应从 Redis 向量索引删除。"""
+    from unittest.mock import MagicMock
+    from app.services.chatbi_example_service import ExampleService
+
+    db = MagicMock()
+    example = MagicMock()
+    example.id = 99
+    example.status = "deprecated"
+    example.feedback_type = "up"
+
+    with patch("app.services.ai.example_index_service.ExampleIndexService.delete_vector", new_callable=AsyncMock) as mock_delete, \
+         patch("app.services.ai.example_index_service.ExampleIndexService.upsert_vector", new_callable=AsyncMock) as mock_upsert:
+
+        ok = await ExampleService._sync_local_vectors(db, example)
+
+    assert ok is True
+    mock_delete.assert_awaited_once_with(99)
+    mock_upsert.assert_not_awaited()
 
 @pytest.mark.asyncio
 async def test_chatbi_example_search_local_fallback_mysql():

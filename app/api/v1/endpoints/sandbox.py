@@ -476,3 +476,31 @@ async def test_sandbox_connection(
                         policy,
                         type(exc).__name__,
                     )
+
+
+@router.post(
+    "/admin/sandbox/k8s/check-rbac",
+    response_model=StandardResponse[Dict[str, Any]],
+    summary="校验 Kubernetes 集群连接与沙箱命名空间 RBAC 权限",
+)
+async def check_k8s_rbac_endpoint(
+    namespace: str | None = Query(None, description="可选指定待探测的沙箱命名空间，留空则读取系统配置"),
+    user_info: Dict[str, Any] = Depends(require_api_key),
+):
+    """校验当前平台 Pod 是否具备连接 Kubernetes API Server 并创建/管理沙箱 Pod 的权限。"""
+    _require_admin(user_info)
+    from app.services.ai.runtime.agentscope.k8s_workspace import check_k8s_rbac_status
+
+    result = await check_k8s_rbac_status(namespace=namespace)
+    if "details" not in result and "can_create_pods" in result:
+        result["details"] = {
+            "pods_create": result.get("can_create_pods", False),
+            "pvc_create": result.get("can_create_pvcs", False),
+        }
+    if "suggestion" not in result and "remedy" in result:
+        result["suggestion"] = result.get("remedy")
+    return StandardResponse(
+        data=result,
+        message=result.get("message") or "success",
+    )
+
