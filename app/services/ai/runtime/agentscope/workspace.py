@@ -1396,6 +1396,7 @@ async def _policy_k8s_workspace(
         build_k8s_workspace_with_nanzi_adapter,
     )
     from app.services.ai.runtime.agentscope.workspace_container_mcp import (
+        K8S_GATEWAY_VENV_PYTHON,
         build_container_tool_mcp,
     )
 
@@ -1487,7 +1488,15 @@ async def _policy_k8s_workspace(
         "storage_size": storage_size,
         "delete_pvc_on_close": delete_pvc_on_close,
         "resources": resources or None,
-        "default_mcps": [build_container_tool_mcp()],
+        # Kubernetes sandbox images (python:3.11-slim) do not ship ``mcp`` in
+        # the system Python; the gateway venv at
+        # ``/root/.agentscope/.venv/bin/python`` does. Pin the inline
+        # ``sandbox`` MCP server to the gateway venv interpreter, otherwise
+        # Bash MCP registration fails inside the sandbox gateway (HTTP 500)
+        # and no usable Bash tool is exposed to the platform.
+        "default_mcps": [
+            build_container_tool_mcp(interpreter=K8S_GATEWAY_VENV_PYTHON)
+        ],
         "skill_paths": skill_paths,
     }
     if effective_workspace_id:
@@ -2270,6 +2279,366 @@ async def exec_docker_workspace_command(
                 await client.close()
             except Exception:
                 pass
+
+# ---------------------------------------------------------------------------
+# Kubernetes sandbox runtime family (mirrors the Docker runtime family above)
+# ---------------------------------------------------------------------------
+
+
+async def _k8s_runtime_guard(
+    *,
+    user_id: str | int | None,
+    conversation_id: str | None,
+    user_name: str | None,
+    user_info: dict[str, Any] | None,
+    operation: str,
+) -> str:
+    """Validate session / effective policy / identity for a k8s runtime op.
+
+    Returns the resolved ``sandbox_user_key``. Raises
+    ``K8sSandboxUnavailableError`` with user-friendly text otherwise.
+    """
+    from app.services.ai.runtime.agentscope.k8s_workspace import K8sSandboxUnavailableError
+
+    if not str(conversation_id or "").strip():
+        raise K8sSandboxUnavailableError(
+            f"K8s sandbox {operation} requires a conversation_id",
+            reason_code=f"k8s_workspace_{operation}_failed",
+            user_message="缺少会话 ID，无法操作当前用户的 Kubernetes 沙箱。",
+        )
+
+    from app.services.config_service import (
+        ConfigService,
+        resolve_effective_sandbox_policy,
+    )
+
+    policy = resolve_effective_sandbox_policy(
+        await ConfigService.get("sandbox_policy", SANDBOX_POLICY_LOCAL),
+        SANDBOX_POLICY_LOCAL,
+    )
+    if policy != SANDBOX_POLICY_K8S:
+        raise K8sSandboxUnavailableError(
+            f"K8s sandbox {operation} requested while effective policy is {policy!r}",
+            reason_code="k8s_policy_not_effective",
+            user_message="当前不是 Kubernetes 沙箱模式，无需操作沙箱 Pod。",
+        )
+
+    user_key = _resolve_sandbox_user_key(
+        user_id=user_id,
+        user_name=user_name,
+        user_info=user_info,
+    )
+    if not user_key:
+        raise K8sSandboxUnavailableError(
+            f"K8s sandbox {operation} requires an authenticated user identity",
+            reason_code="k8s_identity_required",
+            user_message="缺少当前用户身份，无法操作 Kubernetes 沙箱。",
+        )
+    return user_key
+
+
+async def _evict_all_k8s_workspaces_for_user(sandbox_user_key: str, *, reason: str) -> None:
+    """Evict the user's K8s workspaces under every workspace root (and close Pods)."""
+    matching_keys = [
+        k for k in list(_k8s_workspace_cache.keys())
+        if f"::{sandbox_user_key}::" in k or k.endswith(f"::{sandbox_user_key}")
+    ]
+    for key in matching_keys:
+        try:
+            await _evict_k8s_workspace_cache_entry(key, reason=reason)
+        except Exception as exc:
+            logger.warning("[workspace] Failed to evict k8s cache key %s: %s", key, exc)
+
+
+async def _k8s_workspace_pod_identity(workspace: Any) -> tuple[str | None, str | None]:
+    """Return (namespace, pod_name) best-effort for a live k8s workspace."""
+    from app.services.config_service import ConfigService
+
+    namespace = getattr(workspace, "_namespace", None) or (
+        await ConfigService.get("sandbox_k8s_namespace", "agent-sandboxes")
+    ).strip() or "agent-sandboxes"
+    pod_name = getattr(workspace, "_pod_name", None) or getattr(workspace, "pod_name", None)
+    return namespace, pod_name
+
+
+def _uptime_from_started_at(started_at: str | None) -> int | None:
+    """Seconds since ``started_at`` (UTC ISO), or None when unavailable."""
+    if not started_at:
+        return None
+    try:
+        from datetime import datetime, timezone
+
+        started = datetime.fromisoformat(str(started_at))
+        if started.tzinfo is None:
+            started = started.replace(tzinfo=timezone.utc)
+        return max(0, int((datetime.now(timezone.utc) - started).total_seconds()))
+    except Exception:
+        return None
+
+
+def k8s_workspace_metadata(workspace: Any) -> dict[str, Any]:
+    """Return safe, user-facing metadata for an initialized K8s workspace.
+
+    ``started_at`` reflects the process-recorded ``_platform_started_at`` set
+    by ``_record_k8s_started_at`` during ensure/restart (live Pod start time
+    is preferred by ``k8s_workspace_status``, which queries the Pod itself).
+    """
+    pod_name = getattr(workspace, "_pod_name", None) or getattr(workspace, "pod_name", None)
+    started_at = getattr(workspace, "_platform_started_at", None)
+    return {
+        "status": "running" if getattr(workspace, "is_alive", True) else "stopped",
+        "execution_backend": getattr(
+            workspace,
+            "_platform_execution_backend",
+            SANDBOX_POLICY_K8S,
+        ),
+        "workspace_id": getattr(workspace, "workspace_id", None),
+        "pod_name": pod_name,
+        "started_at": started_at,
+        "uptime_seconds": _uptime_from_started_at(started_at),
+    }
+
+
+def _record_k8s_started_at(workspace: Any) -> None:
+    """Best-effort record of the Pod start time on the workspace object.
+
+    Called on ensure/restart success so the running duration stays visible even
+    when a live Pod probe is unavailable (mirrors Docker's
+    ``_platform_started_at`` semantics).
+    """
+    from datetime import datetime, timezone
+
+    if getattr(workspace, "_platform_started_at", None):
+        return
+    workspace._platform_started_at = datetime.now(timezone.utc).isoformat()
+
+
+async def k8s_workspace_status(
+    *,
+    user_id: str | int | None,
+    conversation_id: str | None,
+    user_name: str | None = None,
+    user_info: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Inspect the current user's K8s workspace Pod without initializing it.
+
+    Read-only: never builds a workspace or creates a Pod. Returns ``idle``
+    when no process-local workspace exists for this user. When a workspace is
+    cached, prefers the live Pod phase via ``read_k8s_sandbox_pod`` and
+    degrades to the cached ``is_alive`` view when the lookup is unavailable.
+    """
+    user_key = await _k8s_runtime_guard(
+        user_id=user_id,
+        user_name=user_name,
+        user_info=user_info,
+        conversation_id=conversation_id,
+        operation="status",
+    )
+
+    root = await resolve_workspace_root()
+    cache_key = f"{os.path.abspath(root)}::{user_key}::{SANDBOX_POLICY_K8S}"
+    workspace = _k8s_workspace_cache.get(cache_key)
+    if workspace is None or getattr(workspace, "is_alive", True) is False:
+        return {
+            "status": "idle",
+            "running": False,
+            "execution_backend": SANDBOX_POLICY_K8S,
+            "workspace_id": user_key,
+            "pod_name": None,
+            "started_at": None,
+            "uptime_seconds": None,
+        }
+
+    namespace, pod_name = await _k8s_workspace_pod_identity(workspace)
+    started_at = getattr(workspace, "_platform_started_at", None)
+
+    if pod_name:
+        try:
+            from app.services.ai.runtime.agentscope.k8s_workspace import (
+                read_k8s_sandbox_pod,
+            )
+
+            pod_info = await read_k8s_sandbox_pod(
+                namespace=namespace or "agent-sandboxes",
+                pod_name=pod_name,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("[workspace] k8s status pod probe failed for %s: %s", pod_name, exc)
+            pod_info = {"available": False, "found": None, "phase": None, "start_time": None}
+
+        if pod_info.get("available") and pod_info.get("found"):
+            phase = pod_info.get("phase")
+            live_start = pod_info.get("start_time") or started_at
+            if phase == "Running":
+                return {
+                    "status": "running",
+                    "running": True,
+                    "execution_backend": SANDBOX_POLICY_K8S,
+                    "workspace_id": user_key,
+                    "pod_name": pod_name,
+                    "started_at": live_start,
+                    "uptime_seconds": _uptime_from_started_at(live_start),
+                }
+            if phase == "Pending":
+                return {
+                    "status": "starting",
+                    "running": False,
+                    "execution_backend": SANDBOX_POLICY_K8S,
+                    "workspace_id": user_key,
+                    "pod_name": pod_name,
+                    "started_at": None,
+                    "uptime_seconds": None,
+                }
+            # Succeeded / Failed / Unknown -> stopped view
+            return {
+                "status": "stopped",
+                "running": False,
+                "execution_backend": SANDBOX_POLICY_K8S,
+                "workspace_id": user_key,
+                "pod_name": pod_name,
+                "started_at": None,
+                "uptime_seconds": None,
+            }
+        if pod_info.get("available") and pod_info.get("found") is False:
+            # Confirmed absent (e.g. deleted out-of-band): idle view.
+            return {
+                "status": "idle",
+                "running": False,
+                "execution_backend": SANDBOX_POLICY_K8S,
+                "workspace_id": user_key,
+                "pod_name": pod_name,
+                "started_at": None,
+                "uptime_seconds": None,
+            }
+        # unavailable probe -> degrade to cached view below
+
+    is_alive = bool(getattr(workspace, "is_alive", True))
+    return {
+        "status": "running" if is_alive else "stopped",
+        "running": is_alive,
+        "execution_backend": SANDBOX_POLICY_K8S,
+        "workspace_id": user_key,
+        "pod_name": pod_name,
+        "started_at": started_at,
+        "uptime_seconds": _uptime_from_started_at(started_at) if is_alive else None,
+    }
+
+
+async def ensure_k8s_workspace(
+    *,
+    user_id: str | int | None,
+    conversation_id: str | None,
+    user_name: str | None = None,
+    user_info: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Start (warm up) or reuse the current user's K8s sandbox workspace.
+
+    Mirrors ``ensure_docker_workspace``: goes through ``get_local_workspace``
+    so the Pod shares the exact cache key with the next chat turn.
+    """
+    user_key = await _k8s_runtime_guard(
+        user_id=user_id,
+        user_name=user_name,
+        user_info=user_info,
+        conversation_id=conversation_id,
+        operation="ensure",
+    )
+
+    workspace_pair = await get_local_workspace(
+        user_id=user_id,
+        conversation_id=str(conversation_id).strip(),
+        user_name=user_name,
+        user_info=user_info,
+    )
+    sandbox_ws, _local_ws = _normalize_workspace_pair(workspace_pair)
+    if (
+        sandbox_ws is None
+        or getattr(sandbox_ws, "_platform_sandbox_policy", None)
+        != SANDBOX_POLICY_K8S
+    ):
+        from app.services.ai.runtime.agentscope.k8s_workspace import K8sSandboxUnavailableError
+
+        raise K8sSandboxUnavailableError(
+            "K8s workspace was not bound to the current session",
+            reason_code="k8s_workspace_ensure_failed",
+            user_message="Kubernetes 沙箱未成功绑定当前会话，请稍后重试。",
+        )
+
+    _record_k8s_started_at(sandbox_ws)
+    return k8s_workspace_metadata(sandbox_ws)
+
+
+async def stop_k8s_workspace(
+    *,
+    user_id: str | int | None,
+    conversation_id: str | None,
+    user_name: str | None = None,
+    user_info: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Stop the current user's K8s sandbox: evict caches and close the Pod."""
+    user_key = await _k8s_runtime_guard(
+        user_id=user_id,
+        user_name=user_name,
+        user_info=user_info,
+        conversation_id=conversation_id,
+        operation="stop",
+    )
+    await _evict_all_k8s_workspaces_for_user(
+        user_key,
+        reason="user requested sandbox stop",
+    )
+    return {
+        "status": "stopped",
+        "execution_backend": SANDBOX_POLICY_K8S,
+        "workspace_id": user_key,
+        "pod_name": None,
+        "started_at": None,
+        "uptime_seconds": None,
+    }
+
+
+async def restart_k8s_workspace(
+    *,
+    user_id: str | int | None,
+    conversation_id: str | None,
+    user_name: str | None = None,
+    user_info: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Delete the current user's K8s sandbox Pod and recreate it fresh."""
+    user_key = await _k8s_runtime_guard(
+        user_id=user_id,
+        user_name=user_name,
+        user_info=user_info,
+        conversation_id=conversation_id,
+        operation="restart",
+    )
+    await _evict_all_k8s_workspaces_for_user(
+        user_key,
+        reason="user requested sandbox restart",
+    )
+
+    workspace_pair = await get_local_workspace(
+        user_id=user_id,
+        conversation_id=str(conversation_id).strip(),
+        user_name=user_name,
+        user_info=user_info,
+    )
+    sandbox_ws, _local_ws = _normalize_workspace_pair(workspace_pair)
+    if (
+        sandbox_ws is None
+        or getattr(sandbox_ws, "_platform_sandbox_policy", None)
+        != SANDBOX_POLICY_K8S
+    ):
+        from app.services.ai.runtime.agentscope.k8s_workspace import K8sSandboxUnavailableError
+
+        raise K8sSandboxUnavailableError(
+            "K8s workspace was not recreated for the current session",
+            reason_code="k8s_workspace_restart_failed",
+            user_message="Kubernetes 沙箱重启失败，请稍后重试。",
+        )
+
+    _record_k8s_started_at(sandbox_ws)
+    return k8s_workspace_metadata(sandbox_ws)
 
 
 def docker_workspace_runtime_metadata(workspace: Any) -> dict[str, Any]:
@@ -3440,6 +3809,27 @@ async def bind_configured_tools_to_workspace(
         if sandbox_bash is None and any(
             _workspace_native_name_for_spec(spec) == "Bash" for spec in specs
         ):
+            if (
+                getattr(sandbox_ws, "_platform_sandbox_policy", None)
+                == SANDBOX_POLICY_K8S
+            ):
+                # Kubernetes 沙箱：Pod/RBAC 正常但网关未能提供 Bash MCP 工具时，
+                # 应报 Kubernetes 专属诊断而非遗留的 Docker 文案。常见根因是沙箱内
+                # 的 Bash MCP 子进程使用了未安装 mcp 包的系统 Python（应使用网关
+                # 虚拟环境 /root/.agentscope/.venv/bin/python）。
+                from app.services.ai.runtime.agentscope.k8s_workspace import (
+                    K8sSandboxUnavailableError,
+                )
+
+                raise K8sSandboxUnavailableError(
+                    "Kubernetes sandbox Bash MCP is unavailable",
+                    reason_code="k8s_sandbox_mcp_unavailable",
+                    user_message=(
+                        "Kubernetes 沙箱中的 Bash 工具不可用，Bash 未执行。"
+                        "请检查沙箱网关与 Bash MCP 注册状态（K8s 沙箱的 Bash MCP "
+                        "子进程需使用网关虚拟环境解释器）。"
+                    ),
+                )
             raise DockerSandboxUnavailableError(
                 "Docker sandbox Bash MCP is unavailable",
                 reason_code="docker_workspace_start_failed",
