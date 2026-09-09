@@ -540,9 +540,18 @@ class ExampleService:
             logger.warning(f"[ExampleSync] Cleanup failed: {e}")
 
     @staticmethod
-    async def search_examples(query: str, dataset_id: int = None, top_k: int = None, history: List[Any] = None) -> List[Dict[str, Any]]:
+    async def search_examples(query: str, dataset_id: int = None, top_k: int = None, history: List[Any] = None, stats_dump: Dict = None, provider_override: str = None, threshold_override: float = None, vector_weight_override: float = None) -> List[Dict[str, Any]]:
         """
         从经验库中检索相似案例。支持意图改写（De-contextualization）。
+
+        `stats_dump`（可选）为调用方传入的 dict 引用：若提供，函数会把本次检索的过程统计
+        （模式、top_k、相似度阈值、召回数 / 阈值过滤数、MySQL 兜底命中数等）写入其中，
+        以便思考卡片等表面透出"为什么没命中"的诊断信息。返回类型保持不变。
+
+        `provider_override` / `threshold_override` / `vector_weight_override`（可选）供
+        检索测试等场景临时覆盖系统配置：默认均为 None 时不改变任何既有行为；传入后
+        分别覆盖 `metadata_provider` 检索模式、`chatbi_sample_similarity_threshold`
+        相似度阈值与 `chatbi_sample_vector_similarity_weight` 向量权重。
         """
         try:
             # 动态获取 Top K 检索条数
@@ -552,6 +561,10 @@ class ExampleService:
 
             logger.info(f"[ExampleSearch] >>> Start searching examples for query: '{query}' (top_k={top_k})")
             
+            def _apply_stats(stats: Dict[str, Any]) -> None:
+                if stats_dump is not None:
+                    stats_dump.update(stats)
+
             # 1. 意图改写：如果 query 太短或包含代词，尝试根据 history 进行改写
             search_query = query
             if history and (len(query) < 8 or any(p in query for p in ["那", "它", "这个", "之前", "上一个", "刚才", "统计结果"])):
@@ -562,9 +575,16 @@ class ExampleService:
                     logger.warning(f"[ExampleSearch] Intent rewrite failed: {ree}")
 
             # 2. 判断服务模式
-            metadata_provider = await ConfigService.get("metadata_provider")
+            metadata_provider = provider_override or (await ConfigService.get("metadata_provider"))
             if metadata_provider == "local":
                 logger.info("[ExampleSearch] Using Local Redis HNSW Vector Search")
+                _apply_stats({"query": query, "rewritten_query": search_query, "top_k": top_k, "mode": "local"})
+                threshold_str = await ConfigService.get("chatbi_sample_similarity_threshold")
+                if threshold_override is not None:
+                    similarity_threshold = float(threshold_override)
+                else:
+                    similarity_threshold = float(threshold_str) if threshold_str else 0.4
+                _apply_stats({"similarity_threshold": similarity_threshold})
                 try:
                     from app.services.ai.example_index_service import ExampleIndexService
                     from app.services.ai.embedding_client import EmbeddingClient
@@ -577,28 +597,38 @@ class ExampleService:
                         authorized_dataset_ids=authorized_dataset_ids,
                         top_k=top_k
                     )
+                    _apply_stats({"vector_recalled": len(examples)})
                     
                     # 关联读取并应用相似度阈值过滤，且丢弃 sql 为空的案例，防止无 SQL 问答混入 SQL 生成 Prompt 中
-                    threshold_str = await ConfigService.get("chatbi_sample_similarity_threshold")
-                    similarity_threshold = float(threshold_str) if threshold_str else 0.4
-                    
                     filtered_examples = [
                         ex for ex in examples 
                         if ex.get("similarity", 0.0) >= similarity_threshold 
                         and ex.get("sql") and str(ex.get("sql")).strip()
                     ]
+                    _apply_stats({"valid_sql_after_filter": len(filtered_examples)})
                     
                     logger.info(f"[ExampleSearch] Local Redis search returned {len(examples)} examples, filtered to {len(filtered_examples)} valid SQL examples above threshold ({similarity_threshold}).")
                     if filtered_examples:
                         return filtered_examples
                     
                     logger.info("[ExampleSearch] Local Redis search returned empty or no valid SQL examples passed threshold. Falling back to MySQL LIKE search.")
-                    return await ExampleService._search_mysql_fallback(search_query, dataset_id, top_k)
+                    fb = await ExampleService._search_mysql_fallback(search_query, dataset_id, top_k)
+                    _apply_stats({
+                        "mysql_fallback_hits": len(fb),
+                        "mysql_keywords": search_query.split(),
+                    })
+                    return fb
                 except Exception as local_err:
                     logger.warning(f"[ExampleSearch] Local Redis search failed: {local_err}. Falling back to MySQL LIKE search.")
-                    return await ExampleService._search_mysql_fallback(search_query, dataset_id, top_k)
+                    fb = await ExampleService._search_mysql_fallback(search_query, dataset_id, top_k)
+                    _apply_stats({
+                        "mysql_fallback_hits": len(fb),
+                        "mysql_keywords": search_query.split(),
+                    })
+                    return fb
 
             # 3. 走 RAGFlow 检索逻辑
+            _apply_stats({"query": query, "rewritten_query": search_query, "top_k": top_k, "mode": "ragflow"})
             try:
                 target_kb_id = await ExampleService.ensure_chatbi_sample_kb_id()
             except Exception as e:
@@ -609,8 +639,15 @@ class ExampleService:
             threshold_str = await ConfigService.get("chatbi_sample_similarity_threshold")
             weight_str = await ConfigService.get("chatbi_sample_vector_similarity_weight")
             
-            similarity_threshold = float(threshold_str) if threshold_str else 0.4
-            vector_weight = float(weight_str) if weight_str else 0.5
+            if threshold_override is not None:
+                similarity_threshold = float(threshold_override)
+            else:
+                similarity_threshold = float(threshold_str) if threshold_str else 0.4
+            if vector_weight_override is not None:
+                vector_weight = float(vector_weight_override)
+            else:
+                vector_weight = float(weight_str) if weight_str else 0.5
+            _apply_stats({"similarity_threshold": similarity_threshold, "vector_similarity_weight": vector_weight})
 
             logger.info(f"[ExampleSearch] RAGFlow Params: KB_ID={target_kb_id}, Query='{search_query}', Threshold={similarity_threshold}, VectorWeight={vector_weight}, TopK={top_k}")
 
@@ -625,6 +662,7 @@ class ExampleService:
             )
             
             logger.info(f"[ExampleSearch] RAGFlow returned {len(results)} raw chunks.")
+            _apply_stats({"vector_recalled": len(results)})
             
             examples = []
             for i, res in enumerate(results):
@@ -670,6 +708,7 @@ class ExampleService:
                         })
             
             logger.info(f"[ExampleSearch] Final Matched Examples: {len(examples)} (After parsing)")
+            _apply_stats({"valid_sql_after_filter": len(examples)})
             return examples
         except Exception as e:
             logger.error(f"[ExampleSearch] Search execution exception: {e}", exc_info=True)

@@ -3,6 +3,8 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import String, cast, desc, select, func
 from typing import Optional, List
+import time
+import logging
 
 from app.core.orm import get_db_session as get_db
 from app.core.dependencies import require_api_key
@@ -11,6 +13,8 @@ from app.models.user import User
 from app.models.agent import AIAgent
 from app.services.chatbi_example_service import ExampleService
 from app.services.config_service import ConfigService
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -38,6 +42,14 @@ class UpdateExampleRequest(BaseModel):
     sql_text: Optional[str] = None
     sql_metadata: Optional[dict] = None
     category: Optional[str] = None
+
+class ExampleSearchTestRequest(BaseModel):
+    """案例集检索测试请求体（只读、不落库）。"""
+    query: str
+    metadata_provider: Optional[str] = "default"  # default / local / ragflow
+    top_k: Optional[int] = None
+    similarity_threshold: Optional[float] = None
+    vector_weight: Optional[float] = None
 
 @router.post("/{id}/enhance")
 async def trigger_manual_enhance(
@@ -304,3 +316,95 @@ async def sync_example(
     background_tasks.add_task(target, example_id)
     mode_label = "本地 Redis 向量索引" if is_local_mode else "RAGFlow"
     return {"code": 200, "message": f"已开启异步同步到{mode_label}的任务。"}
+
+@router.post("/search-test")
+async def search_test_examples(
+    request: ExampleSearchTestRequest,
+    _=Depends(require_api_key)
+):
+    """
+    案例集检索测试（只读模拟）：以与真实运行完全一致的链路在经验库中检索相似案例，
+    支持临时覆盖检索模式 / Top K / 相似度阈值 / 向量权重，返回命中结果与过程日志，
+    便于管理员验证样例集命中情况与调参效果。不落库、不产生副作用。
+    """
+    query = (request.query or "").strip()
+    if not query:
+        raise HTTPException(status_code=400, detail="检索问题不能为空。")
+
+    start_ts = time.time()
+
+    provider_override = None
+    if request.metadata_provider in ("local", "ragflow"):
+        provider_override = request.metadata_provider
+
+    stats: dict = {}
+    logs: List[str] = []
+    items: List[dict] = []
+
+    def _mode_label(mode: Optional[str]) -> str:
+        return "local · Redis 向量检索" if mode == "local" else ("ragflow · RAGFlow" if mode == "ragflow" else "未知")
+
+    try:
+        items = await ExampleService.search_examples(
+            query,
+            dataset_id=None,
+            top_k=request.top_k,
+            history=None,
+            stats_dump=stats,
+            provider_override=provider_override,
+            threshold_override=request.similarity_threshold,
+            vector_weight_override=request.vector_weight,
+        )
+    except Exception as exc:  # 检索链路内部多数已兜底，此处兜住意外异常
+        logs.append(f"[ERROR] 检索过程发生异常: {exc}")
+        logger.exception("[ExampleSearchTest] search failed")
+
+    elapsed_ms = round((time.time() - start_ts) * 1000)
+    mode = stats.get("mode")
+    logs.extend([
+        f"[MODE] 检索模式: {_mode_label(mode)}"
+        + (f"（来自手动覆盖）" if provider_override else "（跟随系统配置）"),
+    ])
+    if stats.get("query"):
+        rewritten = stats.get("rewritten_query")
+        if rewritten and rewritten != stats.get("query"):
+            logs.append(f"[QUERY] 检索词: 「{rewritten}」（原问题改写而来）")
+        else:
+            logs.append(f"[QUERY] 检索词: 「{stats.get('query')}」")
+    else:
+        logs.append(f"[QUERY] 检索词: 「{query}」")
+    logs.append(f"[QUERY] 未进行意图改写（测试无对话历史）")
+    if stats.get("top_k") is not None:
+        logs.append(f"[PARAM] top_k={stats.get('top_k')}")
+    if stats.get("similarity_threshold") is not None:
+        logs.append(f"[PARAM] 相似度阈值={stats.get('similarity_threshold'):.2f}")
+    if stats.get("vector_similarity_weight") is not None:
+        logs.append(f"[PARAM] 向量权重={stats.get('vector_similarity_weight'):.2f}")
+    if stats.get("vector_recalled") is not None:
+        logs.append(f"[RETRIEVE] 向量/原始召回 {stats.get('vector_recalled')} 条")
+    if stats.get("valid_sql_after_filter") is not None:
+        logs.append(f"[FILTER] 阈值与可用 SQL 过滤后有效 {stats.get('valid_sql_after_filter')} 条")
+    if "mysql_fallback_hits" in stats:
+        keywords = stats.get("mysql_keywords") or []
+        kw_text = "、".join(keywords) if keywords else "（无）"
+        logs.append(f"[FALLBACK] 关键词兜底 {stats.get('mysql_fallback_hits')} 条〔{kw_text}〕")
+
+    logs.append(f"[TIME] 检索耗时 {elapsed_ms}ms")
+
+    found = len(items) > 0
+    if found:
+        logs.append(f"[HIT] 命中 {len(items)} 条相似案例")
+    else:
+        logs.append("[MISS] 未找到足够相似的优质 SQL 案例")
+
+    return {
+        "code": 200,
+        "data": {
+            "found": found,
+            "provider": mode or "unknown",
+            "count": len(items),
+            "items": items,
+            "logs": logs,
+            "elapsed_ms": elapsed_ms,
+        },
+    }

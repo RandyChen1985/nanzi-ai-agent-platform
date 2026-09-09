@@ -2,6 +2,7 @@
 import { ref, onMounted, computed, watch } from "vue";
 import { useRouter } from 'vue-router';
 import ExampleFlowGuideBanner from '../components/example/ExampleFlowGuideBanner.vue';
+import ExampleSearchTestModal from '../components/example/ExampleSearchTestModal.vue';
 import axios from "@/utils/axios";
 import { useToast } from "../composables/useToast";
 import { useUser } from "../composables/useUser";
@@ -50,6 +51,9 @@ const restoreExampleFlowGuide = () => {
 
 const showHelp = ref(false);
 const activeHelpTab = ref<'flow' | 'dataflow' | 'practice'>('flow');
+
+/** 案例集检索测试弹窗（模拟器） */
+const searchTestModalRef = ref<InstanceType<typeof ExampleSearchTestModal> | null>(null);
 
 const handleExampleBannerAction = (type: 'sync_all') => {
   if (type === 'sync_all') {
@@ -635,15 +639,24 @@ onMounted(async () => {
           </button>
         </div>
 
-        <!-- 导出 Markdown 按钮 -->
+        <!-- 导出 Markdown 按钮（纯图标） -->
         <button
           type="button"
-          class="inline-flex w-full items-center justify-center gap-1.5 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-700 shadow-sm transition-all hover:bg-gray-50 hover:text-blue-600 active:scale-95 sm:w-auto"
+          class="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-gray-300 bg-white text-gray-500 shadow-sm transition-colors hover:bg-gray-50 hover:text-blue-600"
           title="将当前案例列表格式化导出为 Markdown 文档"
           @click="exportToMarkdown"
         >
-          <DocumentArrowDownIcon class="h-4 w-4 text-gray-500" />
-          <span>导出</span>
+          <DocumentArrowDownIcon class="h-4 w-4" />
+        </button>
+
+        <!-- 案例集检索测试按钮（纯图标） -->
+        <button
+          type="button"
+          class="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-amber-200 bg-amber-50 text-amber-600 shadow-sm transition-colors hover:bg-amber-100"
+          title="案例集检索测试：输入问题验证样例集命中情况，可临时调节 Top K / 阈值等参数"
+          @click="searchTestModalRef?.open()"
+        >
+          <MagnifyingGlassIcon class="h-4 w-4" />
         </button>
 
         <!-- 一键同步按钮 -->
@@ -656,7 +669,7 @@ onMounted(async () => {
           @click="(isLocalMode || isEngineReady) && (showSyncAllConfirm = true)"
         >
           <CloudArrowUpIcon class="h-4 w-4 text-indigo-600" />
-          <span class="hidden sm:inline">一键同步</span>
+          <span class="hidden sm:inline">同步</span>
         </button>
       </div>
     </div>
@@ -1303,6 +1316,9 @@ onMounted(async () => {
         </div>
       </div>
     </div>
+
+    <!-- 案例集检索测试弹窗 -->
+    <ExampleSearchTestModal ref="searchTestModalRef" />
 </template>
 
 <style scoped>

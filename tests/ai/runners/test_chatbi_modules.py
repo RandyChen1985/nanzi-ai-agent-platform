@@ -40,7 +40,10 @@ from app.services.ai.runners.chatbi.schema_prefetch import (
     is_invalid_schema_search_keywords,
     should_rewrite_contextual_new_data_query,
 )
-from app.services.ai.runners.chatbi.few_shot import skip_few_shot_log
+from app.services.ai.runners.chatbi.few_shot import (
+    _format_search_stats_digest,
+    skip_few_shot_log,
+)
 
 
 pytestmark = pytest.mark.no_infrastructure
@@ -389,6 +392,66 @@ def test_skip_few_shot_log_shape():
     log = skip_few_shot_log()
     assert log["title"] == "跳过经验库检索"
     assert log["type"] == "log"
+
+
+def test_format_search_stats_digest_includes_process_and_hint():
+    # 有召回但被阈值过滤，应包含过滤注释
+    digest = _format_search_stats_digest(
+        {
+            "mode": "local",
+            "top_k": 5,
+            "similarity_threshold": 0.4,
+            "vector_recalled": 8,
+            "valid_sql_after_filter": 0,
+            "mysql_fallback_hits": 0,
+            "query": "上月销售额",
+            "rewritten_query": "上月销售额",
+            "mysql_keywords": ["上月", "销售额"],
+        },
+        elapsed_ms=23.0,
+    )
+    assert "local · Redis 向量检索" in digest
+    assert "top_k=5" in digest
+    assert "阈值" in digest
+    assert "向量召回 8 条" in digest
+    assert "检索词: 「上月销售额」" in digest
+    assert "关键词兜底 0 条〔上月、销售额〕" in digest
+    assert "23ms" in digest
+    assert "未通过过滤" in digest
+
+
+def test_format_search_stats_digest_shows_rewritten_keyword():
+    # 意图改写后检索词与原问题不同，应标注改写来源
+    digest = _format_search_stats_digest(
+        {
+            "mode": "ragflow",
+            "top_k": 5,
+            "vector_recalled": 3,
+            "valid_sql_after_filter": 0,
+            "query": "那个呢",
+            "rewritten_query": "华东机房上个月的 PUE",
+        },
+        elapsed_ms=9.0,
+    )
+    assert "检索词: 「华东机房上个月的 PUE」（原问题改写而来）" in digest
+    assert "ragflow · RAGFlow" in digest
+
+
+def test_format_search_stats_digest_empty_recall_hint():
+    # 向量库本身召回为 0
+    digest = _format_search_stats_digest(
+        {"mode": "ragflow", "top_k": 5, "vector_recalled": 0, "valid_sql_after_filter": 0},
+        elapsed_ms=5.0,
+    )
+    assert "ragflow · RAGFlow" in digest
+    assert "未检索到任何近邻案例" in digest
+
+
+def test_format_search_stats_digest_handles_missing_fields():
+    # 统计缺失时不应抛错，只渲染已填字段
+    digest = _format_search_stats_digest({}, elapsed_ms=10.0)
+    assert "检索模式: ?" in digest
+    assert "10ms" in digest
 
 
 @pytest.mark.asyncio
