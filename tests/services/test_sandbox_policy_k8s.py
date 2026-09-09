@@ -51,6 +51,9 @@ async def test_policy_k8s_workspace_build_and_initialize():
             "requests": {"cpu": "200m", "memory": "256Mi"},
             "limits": {"cpu": "2000m", "memory": "4Gi"},
         }
+        assert call_kwargs["default_mcps"][0].model_dump(mode="json")["mcp_config"]["command"] == (
+            "/root/.agentscope/.venv/bin/python"
+        )
 
 
 @pytest.mark.asyncio
@@ -480,3 +483,136 @@ async def test_k8s_reaper_start_stop_and_idle_reap():
         ws_module._k8s_workspace_refcounts.clear()
         ws_module._k8s_workspace_last_used.clear()
         ws_module._k8s_workspace_locks.clear()
+
+
+@pytest.mark.asyncio
+async def test_read_k8s_sandbox_pod_running():
+    from app.services.ai.runtime.agentscope.k8s_workspace import read_k8s_sandbox_pod
+
+    pod_status = MagicMock()
+    pod_status.phase = "Running"
+    pod_status.start_time = None
+    container_state = MagicMock()
+    container_state.ready = True
+    pod_status.container_statuses = [container_state]
+    pod = MagicMock()
+    pod.metadata.creation_timestamp = None
+    pod.status = pod_status
+
+    mock_core = MagicMock()
+    mock_core.read_namespaced_pod = AsyncMock(return_value=pod)
+    mock_client = MagicMock()
+    mock_client.CoreV1Api.return_value = mock_core
+
+    class FakeApiClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc_val, exc_tb):
+            return None
+
+    mock_client.ApiClient = FakeApiClient
+    mock_config = MagicMock()
+    mock_config.load_incluster_config.return_value = None
+    mock_k8s = MagicMock()
+    mock_k8s.client = mock_client
+    mock_k8s.config = mock_config
+
+    with patch.dict("sys.modules", {
+        "kubernetes_asyncio": mock_k8s,
+        "kubernetes_asyncio.client": mock_client,
+        "kubernetes_asyncio.config": mock_config,
+    }):
+        result = await read_k8s_sandbox_pod(namespace="agent-sandboxes", pod_name="as-ws-admin--1")
+    assert result["available"] is True
+    assert result["found"] is True
+    assert result["phase"] == "Running"
+    assert result["ready"] is True
+
+
+@pytest.mark.asyncio
+async def test_read_k8s_sandbox_pod_not_found():
+    from app.services.ai.runtime.agentscope.k8s_workspace import read_k8s_sandbox_pod
+
+    async def _raise_404(*args, **kwargs):
+        exc = Exception("not found")
+        exc.status = 404
+        raise exc
+
+    mock_core = MagicMock()
+    mock_core.read_namespaced_pod = AsyncMock(side_effect=_raise_404)
+    mock_client = MagicMock()
+    mock_client.CoreV1Api.return_value = mock_core
+
+    class FakeApiClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc_val, exc_tb):
+            return None
+
+    mock_client.ApiClient = FakeApiClient
+    mock_config = MagicMock()
+    mock_config.load_incluster_config.return_value = None
+    mock_k8s = MagicMock()
+    mock_k8s.client = mock_client
+    mock_k8s.config = mock_config
+
+    with patch.dict("sys.modules", {
+        "kubernetes_asyncio": mock_k8s,
+        "kubernetes_asyncio.client": mock_client,
+        "kubernetes_asyncio.config": mock_config,
+    }):
+        result = await read_k8s_sandbox_pod(namespace="agent-sandboxes", pod_name="as-ws-missing")
+    assert result["available"] is True
+    assert result["found"] is False
+    assert result["phase"] is None
+
+
+@pytest.mark.asyncio
+async def test_read_k8s_sandbox_pod_missing_dependency():
+    from app.services.ai.runtime.agentscope.k8s_workspace import read_k8s_sandbox_pod
+
+    with patch.dict("sys.modules", {"kubernetes_asyncio": None}):
+        result = await read_k8s_sandbox_pod(namespace="agent-sandboxes", pod_name="as-ws-admin--1")
+    assert result["available"] is False
+    assert result["found"] is None
+
+
+@pytest.mark.asyncio
+async def test_read_k8s_sandbox_pod_api_error_degrades():
+    from app.services.ai.runtime.agentscope.k8s_workspace import read_k8s_sandbox_pod
+
+    async def _raise_forbidden(*args, **kwargs):
+        exc = Exception("forbidden")
+        exc.status = 403
+        raise exc
+
+    mock_core = MagicMock()
+    mock_core.read_namespaced_pod = AsyncMock(side_effect=_raise_forbidden)
+    mock_client = MagicMock()
+    mock_client.CoreV1Api.return_value = mock_core
+
+    class FakeApiClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc_val, exc_tb):
+            return None
+
+    mock_client.ApiClient = FakeApiClient
+    mock_config = MagicMock()
+    mock_config.load_incluster_config.return_value = None
+    mock_k8s = MagicMock()
+    mock_k8s.client = mock_client
+    mock_k8s.config = mock_config
+
+    with patch.dict("sys.modules", {
+        "kubernetes_asyncio": mock_k8s,
+        "kubernetes_asyncio.client": mock_client,
+        "kubernetes_asyncio.config": mock_config,
+    }):
+        result = await read_k8s_sandbox_pod(namespace="agent-sandboxes", pod_name="as-ws-admin--1")
+    assert result["available"] is False
+    assert result["found"] is None
+    assert result["phase"] is None
