@@ -91,6 +91,33 @@ confirm_action() {
   return 1
 }
 
+# ==============================================================================
+# 运行环境探测：K3s（本机 systemd 服务） vs 标准 Kubernetes 集群
+# 说明：脚本核心子命令均基于 kubectl，任意 K8s 集群可用；
+#      仅 restart-k3s / restart-all / status 第 1 节依赖本机 K3s 服务。
+# ==============================================================================
+is_k3s_env() {
+  # 1. k3s 可执行文件在 PATH 中
+  if command -v k3s >/dev/null 2>&1; then
+    return 0
+  fi
+  # 2. systemd 中存在 k3s 服务单元（k3s server 常见部署方式）
+  if systemctl list-unit-files 2>/dev/null | grep -q '^k3s\.service'; then
+    return 0
+  fi
+  # 3. K3s 内置 containerd socket 存在
+  if [ -S /run/k3s/containerd/containerd.sock ]; then
+    return 0
+  fi
+  return 1
+}
+
+if is_k3s_env; then
+  IS_K3S=1
+else
+  IS_K3S=0
+fi
+
 # 等待 K3s API 恢复函数
 wait_for_k3s_api() {
   log_info "正在探测 K3s API Server 连通性..."
@@ -106,7 +133,11 @@ wait_for_k3s_api() {
     sleep 2
   done
   printf "  %b✔ API Server 响应成功！%b                                      \n" "${C_GREEN}" "${C_RESET}"
-  log_success "K3s 服务状态: $(systemctl is-active k3s 2>/dev/null || echo 'running')"
+  if [ "$IS_K3S" = "1" ]; then
+    log_success "K3s 服务状态: $(systemctl is-active k3s 2>/dev/null || echo 'unknown')"
+  else
+    log_success "API Server 连通正常（非 K3s 环境，跳过 systemctl 检查）"
+  fi
 }
 
 # ==============================================================================
@@ -116,8 +147,13 @@ case "${1:-}" in
   status)
     print_header "NanZi AI Agent 平台 & K3s 集群运行状态"
 
-    print_section "⚡" "1. K3s 系统服务状态 (systemctl)"
-    systemctl status k3s --no-pager 2>/dev/null || true
+    if [ "$IS_K3S" = "1" ]; then
+      print_section "⚡" "1. K3s 系统服务状态 (systemctl)"
+      systemctl status k3s --no-pager 2>/dev/null || true
+    else
+      print_section "⚡" "1. 集群类型"
+      printf "  %b标准 Kubernetes 集群（未检测到本机 K3s 服务），跳过 systemctl 检查；以下状态均为纯 kubectl 查询。%b\n" "${C_GRAY}" "${C_RESET}"
+    fi
 
     print_section "🖥" "2. 集群节点列表 (Nodes)"
     kubectl get nodes -o wide
@@ -170,7 +206,69 @@ case "${1:-}" in
     log_success "NanZi Pod 滚动重启完成！"
     ;;
 
+  restart-pod-force)
+    print_header "强制重启 Pod 以加载节点上最新同名镜像"
+    if ! confirm_action "将触发 rollout restart，使新 Pod 强制换到节点 containerd 中已导入的当前 Deployment 同名镜像。确定继续？"; then
+      exit 0
+    fi
+
+    log_info "① 读取 Deployment 当前镜像引用..."
+    current_image=$(kubectl get deployment/"$DEPLOYMENT" -n "$NAMESPACE" -o jsonpath='{.spec.template.spec.containers[0].image}' 2>/dev/null || true)
+    if [ -n "$current_image" ]; then
+      log_info "Deployment 当前 image: ${current_image}"
+      image_ref=$(printf '%s' "$current_image" | sed 's#^.*/##')      # 形如 nanzi-ai-agent:latest
+      image_name=$(printf '%s' "$image_ref" | sed 's/:.*$//')          # 形如 nanzi-ai-agent
+    else
+      image_ref=""
+      image_name=""
+      log_warn "未能读取 Deployment/${DEPLOYMENT} 的镜像引用，跳过本地镜像探测。"
+    fi
+
+    log_info "② 探测本机容器运行时中的镜像（请先确认已完成新镜像导入覆盖）..."
+    image_found=0
+    if [ -n "$image_ref" ]; then
+      if [ "$IS_K3S" = "1" ]; then
+        if command -v k3s >/dev/null 2>&1; then
+          k3s ctr images list 2>/dev/null | grep -F "$image_ref" && image_found=1 || true
+        elif [ -S /run/k3s/containerd/containerd.sock ]; then
+          ctr -a /run/k3s/containerd/containerd.sock -n k8s.io images list 2>/dev/null | grep -F "$image_ref" && image_found=1 || true
+        fi
+      elif command -v crictl >/dev/null 2>&1; then
+        crictl images --digests 2>/dev/null | grep -F "$image_name" && image_found=1 || true
+      elif command -v ctr >/dev/null 2>&1; then
+        ctr -n k8s.io images list 2>/dev/null | grep -F "$image_ref" && image_found=1 || true
+      fi
+    fi
+
+    if [ "$image_found" = "1" ]; then
+      log_success "已在本机容器运行时中找到 ${image_ref}，新 Pod 将解析到该最新镜像。"
+    else
+      log_warn "未在本机容器运行时中确认到 ${image_ref:-<未知>}：若尚未完成导入覆盖，新 Pod 可能 ImagePullBackOff 或仍是旧镜像。"
+      if ! confirm_action "未确认到本地镜像，仍要强制重启吗？"; then
+        exit 0
+      fi
+    fi
+
+    log_info "③ 触发 Deployment/${DEPLOYMENT} 滚动更新（新 Pod 启动时按当前镜像引用解析节点本地最新 digest）..."
+    kubectl rollout restart deployment/"$DEPLOYMENT" -n "$NAMESPACE"
+
+    log_info "④ 等待新 Pod 就绪与健康检查通过..."
+    kubectl rollout status deployment/"$DEPLOYMENT" -n "$NAMESPACE" --timeout=180s
+
+    print_section "✨" "最新 Pod 运行状态"
+    kubectl get pods -n "$NAMESPACE" -o wide
+    printf "\n"
+    log_success "强制重启完成！核对新 Pod 是否吃到最新镜像："
+    log_info "  kubectl -n ${NAMESPACE} describe pod <新 Pod 名> | grep -A2 'Image:'"
+    log_info "  将其中 Image ID 与上方本地镜像列表中的 DIGEST 对比，一致即已生效。"
+    ;;
+
   restart-k3s)
+    if [ "$IS_K3S" != "1" ]; then
+      log_error "当前环境未检测到 K3s 服务（systemctl k3s），restart-k3s 仅适用于 K3s 节点。"
+      log_info "标准 Kubernetes 集群请使用集群自身的控制面维护方式（如 drain 节点后重启 kubelet，或云厂商节点组滚动升级）。"
+      exit 1
+    fi
     print_header "重启 K3s 集群服务"
     if ! confirm_action "确定要重启底层 K3s 服务吗？（K3s 短暂不可用，会等待 API 自动恢复）"; then
       exit 0
@@ -189,6 +287,11 @@ case "${1:-}" in
     ;;
 
   restart-all)
+    if [ "$IS_K3S" != "1" ]; then
+      log_error "当前环境未检测到 K3s 服务（systemctl k3s），restart-all 仅适用于 K3s 节点。"
+      log_info "标准 Kubernetes 集群请使用集群自身的控制面维护方式（如 drain 节点后重启 kubelet，或云厂商节点组滚动升级）。"
+      exit 1
+    fi
     print_header "全量级平滑重启：K3s 守护进程 + NanZi 业务 Pod"
     if ! confirm_action "确定要执行全量重启吗？（先重启 K3s 服务，再滚动重启 NanZi 平台 Pod）"; then
       exit 0
@@ -263,11 +366,12 @@ case "${1:-}" in
     printf "%b%bNanZi AI Agent Platform - K8s / K3s 快捷运维工具%b\n" "${C_BOLD}" "${C_CYAN}" "${C_RESET}"
     printf "%b用法: %s <子命令>%b\n\n" "${C_GRAY}" "$0" "${C_RESET}"
     printf "%b常用运维指令：%b\n" "${C_BOLD}" "${C_RESET}"
-    printf "  %b%-13s%b %b\n" "${C_GREEN}" "status" "${C_RESET}" "查看 K3s 服务、集群节点、NanZi 资源与沙箱 Pod/PVC 状态"
+    printf "  %b%-13s%b %b\n" "${C_GREEN}" "status" "${C_RESET}" "查看集群节点、NanZi 资源与沙箱 Pod/PVC 状态（K3s 节点另含本机服务状态）"
     printf "  %b%-13s%b %b\n" "${C_GREEN}" "sandboxes" "${C_RESET}" "专门监控 agent-sandboxes 命名空间下的沙箱 Pod 与 PVC"
-    printf "  %b%-13s%b %b\n" "${C_GREEN}" "restart-pod" "${C_RESET}" "通过 Deployment 平滑滚动重启 NanZi 业务 Pod"
-    printf "  %b%-13s%b %b\n" "${C_GREEN}" "restart-k3s" "${C_RESET}" "重启底层 K3s 服务并等待 API Server 自动恢复"
-    printf "  %b%-13s%b %b\n" "${C_GREEN}" "restart-all" "${C_RESET}" "先重启 K3s 并在 API 就绪后自动滚动重启业务 Pod"
+    printf "  %b%-18s%b %b\n" "${C_GREEN}" "restart-pod" "${C_RESET}" "通过 Deployment 平滑滚动重启 NanZi 业务 Pod"
+    printf "  %b%-18s%b %b\n" "${C_GREEN}" "restart-pod-force" "${C_RESET}" "强制滚动重启，使新 Pod 换到节点容器运行时中最新导入的同名镜像并等待就绪"
+    printf "  %b%-18s%b %b\n" "${C_GREEN}" "restart-k3s" "${C_RESET}" "重启底层 K3s 服务并等待 API Server 自动恢复（仅 K3s 环境）"
+    printf "  %b%-18s%b %b\n" "${C_GREEN}" "restart-all" "${C_RESET}" "先重启 K3s 并在 API 就绪后自动滚动重启业务 Pod（仅 K3s 环境）"
     printf "  %b%-13s%b %b\n" "${C_GREEN}" "logs" "${C_RESET}" "持续追踪 NanZi Pod 最新的 300 条容器日志 (-f)"
     printf "  %b%-13s%b %b\n" "${C_GREEN}" "events" "${C_RESET}" "按时间倒序查看主平台与沙箱的 Kubernetes 调度事件"
     printf "  %b%-13s%b %b\n" "${C_GREEN}" "test" "${C_RESET}" "测试 Service Endpoint 与 ClusterIP 80 端口 HTTP 连通性"

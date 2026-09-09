@@ -84,7 +84,7 @@
 | --- | --- |
 | `install.sh` | 向导式交互安装/升级/运维工具：集群自检、分步配置生成与幂等 apply；支持 `install` 显式子命令、`upgrade`（滚动升级）、`images`/`import`/`check-sandbox-image`（节点镜像查看/导入/沙箱镜像检查）、`--dry-run` 演练、`-y` 免交互等 |
 | `build-k8s-sandbox-image.sh` | 构建 K8s 沙箱“网关预置镜像”（把 AgentScope 网关 venv + gateway 脚本打进镜像），加速沙箱 Pod 冷启动；docker build → save → 自动导入节点 containerd |
-| `nanzi-k8s.sh` | K3s 与 NanZi 运维快捷脚本：`status`/`sandboxes`/`restart-pod`/`restart-k3s`/`restart-all`/`logs`/`events`/`test`；重启类命令带 y/N 二次确认 |
+| `nanzi-k8s.sh` | K8s / K3s 运维快捷脚本：`status`/`sandboxes`/`restart-pod`/`restart-pod-force`/`restart-k3s`/`restart-all`/`logs`/`events`/`test`；重启类命令带 y/N 二次确认。核心子命令均为纯 `kubectl`，任意标准 K8s 集群可用；脚本会自动探测本机是否运行 K3s，非 K3s 环境会跳过 systemctl 检查并拒绝 `restart-k3s`/`restart-all` |
 
 **辅助资源与文档**
 
@@ -108,7 +108,7 @@ K8s 沙箱（`sandbox_policy = k8s`）的网关环境放在 Pod 内的 `/root/.a
 ### 一、前置条件
 
 - 一台**能访问 Docker daemon** 的构建机（节点宿主机或开发机均可，**不要在 NanZi 平台 Pod 内执行**，脚本会自检拦截）；
-- 构建机可访问 PyPI（拉取 `mcp/fastapi/uvicorn/httpx/agentscope`），网络受限请加 `--proxy`；
+- 构建机可访问 PyPI（拉取 `mcp/uvicorn/fastapi/httpx` 网关基础依赖与 agentscope 工具链依赖 `docstring_parser/jinja2/aiofiles/tree_sitter/tree_sitter_bash/python-frontmatter`，清单见 `build-k8s-sandbox-image.sh` 的 `BASE_REQS`），网络受限请加 `--proxy`；
 - 需要访问本仓库 `k8s_deploy/`（内含 `build-k8s-sandbox-image.sh` 与 `sandbox-image/_mcp_gateway_app.py` 模板）。
 
 ### 二、构建并导入
@@ -349,10 +349,11 @@ cd k8s_deploy
 * **幂等执行**：支持随时中断并安全重入，已存在的 PVC 和 Secret 会受到安全保护。
 
 日常运维管理可配合使用 [nanzi-k8s.sh](./nanzi-k8s.sh)：
-* `./nanzi-k8s.sh status`：一览 K3s 服务、集群节点、主平台及 `agent-sandboxes` 沙箱 Pod 与 PVC 状态；
+* `./nanzi-k8s.sh status`：一览本机 K3s 服务（K3s 节点）、集群节点、主平台及 `agent-sandboxes` 沙箱 Pod 与 PVC 状态；
 * `./nanzi-k8s.sh sandboxes`：专门监控沙箱命名空间下的活跃 Pod 与动态持久卷；
 * `./nanzi-k8s.sh restart-pod`：平滑滚动重启 NanZi Pod 并等待就绪；
-* `./nanzi-k8s.sh restart-k3s`：重启 K3s 服务并等待 API Server 自动恢复；
+* `./nanzi-k8s.sh restart-pod-force`：**强制滚动重启以加载节点上最新同名镜像**（适合“先手动 build + 导入覆盖 `nanzi-ai-agent:latest`，再让 Pod 换到新镜像”的场景）；重启前会探测本机容器运行时确认镜像已导入，未导入会告警并可中止；
+* `./nanzi-k8s.sh restart-k3s`：重启 K3s 服务并等待 API Server 自动恢复（**仅 K3s 环境**）；
 * `./nanzi-k8s.sh logs`：实时跟踪 300 条容器日志；
 * `./nanzi-k8s.sh test`：快速探测 Service Endpoint 与 ClusterIP 连通性。
 * 镜像更新与滚动发布详见 [upgrade.md](./upgrade.md)。
@@ -1039,16 +1040,23 @@ spec:
 上面多数操作（以及沙箱监控、K3s/平台重启、日志/事件等）都已封装到 [nanzi-k8s.sh](./nanzi-k8s.sh)，
 一键即可完成。直接运行（无参数）会打印帮助（真实输出）：
 
+> **非 K3s 集群也能用吗？可以。** 除 `restart-k3s`、`restart-all` 外的所有子命令都是纯
+> `kubectl` 操作，只要本机 kubeconfig 指向任意标准 K8s 集群（kubeadm / RKE / EKS / ACK 等）
+> 即可直接使用。脚本启动时会自动探测本机是否运行 K3s（`k3s` 命令、`k3s.service` systemd
+> 单元或 `/run/k3s/containerd/containerd.sock`）：非 K3s 环境下 `status` 会自动跳过第 1 节
+> systemctl 检查，`restart-k3s` / `restart-all` 会被拒绝并提示改用集群自身的控制面维护方式。
+
 ```text
 NanZi AI Agent Platform - K8s / K3s 快捷运维工具
 用法: nanzi-k8s.sh <子命令>
 
 常用运维指令：
-  status        查看 K3s 服务、集群节点、NanZi 资源与沙箱 Pod/PVC 状态
+  status        查看集群节点、NanZi 资源与沙箱 Pod/PVC 状态（K3s 节点另含本机服务状态）
   sandboxes     专门监控 agent-sandboxes 命名空间下的沙箱 Pod 与 PVC
   restart-pod   通过 Deployment 平滑滚动重启 NanZi 业务 Pod
-  restart-k3s   重启底层 K3s 服务并等待 API Server 自动恢复
-  restart-all   先重启 K3s 并在 API 就绪后自动滚动重启业务 Pod
+  restart-pod-force  强制滚动重启，使新 Pod 换到节点容器运行时中最新导入的同名镜像并等待就绪
+  restart-k3s   重启底层 K3s 服务并等待 API Server 自动恢复（仅 K3s 环境）
+  restart-all   先重启 K3s 并在 API 就绪后自动滚动重启业务 Pod（仅 K3s 环境）
   logs          持续追踪 NanZi Pod 最新的 300 条容器日志 (-f)
   events        按时间倒序查看主平台与沙箱的 Kubernetes 调度事件
   test          测试 Service Endpoint 与 ClusterIP 80 端口 HTTP 连通性
@@ -1118,6 +1126,7 @@ ingress.networking.k8s.io/nanzi-ai-agent   traefik   *   10.90.10.64   80   11h
 | `Pending` 或 PVC 挂载失败 | 集群没有默认 StorageClass、容量不足或 RWO 卷仍被旧 Pod 占用 | 检查 `kubectl -n nanzi-ai-agent describe pvc nanzi-ai-agent-data`；不要为了排障删除 PVC |
 | Pod 正常但公共文档/上传文件消失 | PVC 挂载 `/app/data` 后遮住了镜像内同路径内容，或 PVC 没有初始化 | 按“初始化 `/app/data`”章节把必要的 `data/` 内容同步到 PVC |
 | `CrashLoopBackOff` | 应用启动阶段连接数据库/Redis失败、必填环境变量缺失或镜像启动异常 | 先看 `kubectl -n nanzi-ai-agent logs deployment/nanzi-ai-agent --previous`，再核对 ConfigMap、Secret、DNS、端口和网络策略 |
+| 沙箱 Bash/exec 报 `HTTP 500: No module named 'xxx'`（如 `docstring_parser`/`jinja2`） | 网关预置镜像内的 agentscope 缺少工具链核心依赖（官方 `_GATEWAY_BASE_REQUIREMENTS` 清单遗漏，Bash/MCP 工具加载 `agentscope.tool` 时触发；缺 `docstring_parser` 最常见，补上后可能继续缺 `jinja2` 等） | 用新版 `build-k8s-sandbox-image.sh` 重建并重新导入预置镜像（`BASE_REQS` 已补齐并经 smoke import 验证）；已运行 Pod 可临时 `kubectl exec` 补装：`kubectl exec -it -n agent-sandboxes <pod> -- /root/.agentscope/.venv/bin/pip install docstring_parser jinja2 aiofiles tree_sitter tree_sitter_bash python-frontmatter` |
 | 数据库连接失败或表不存在 | 地址、端口、账号、数据库类型错误，或迁移没有完成 | 确认 `DATABASE_TYPE` 与实际数据库一致；MySQL 和 PostgreSQL 迁移分别执行一次，不要混用 |
 | Redis 连接成功但向量/知识库功能异常 | Redis 不是 Redis Stack/RediSearch、密码错误或 `REDIS_DB` 不为 0 | 检查 Redis 版本、认证和 `REDIS_DB=0`；所有副本必须连接同一个 Redis |
 | Ingress 返回 404/502/504 | Ingress Class、域名、TLS、Service 端口或后端 Pod 不匹配 | 先绕过 Ingress 用 `port-forward` 验证 Service，再检查 Ingress 事件和 Controller 日志 |
