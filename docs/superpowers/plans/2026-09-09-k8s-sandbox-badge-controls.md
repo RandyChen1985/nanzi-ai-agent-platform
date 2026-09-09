@@ -285,7 +285,7 @@ git commit -m "feat(sandbox): K8s 沙箱 Pod 只读状态查询辅助与降级�
 
 **Files:**
 - Modify: `app/services/ai/runtime/agentscope/workspace.py`
-- Test: `tests/services/test_sandbox_policy_k8s.py`（追加 5 个用例）
+- Test: `tests/services/test_sandbox_policy_k8s.py`（追加 7 个用例）
 
 - [ ] **Step 1: 写失败测试**
 
@@ -459,7 +459,7 @@ async def test_k8s_workspace_ensure_reuses_cached_workspace(monkeypatch):
 
     monkeypatch.setattr(ws_module, "get_local_workspace", fake_get_local_workspace)
 
-    meta = await k8s_workspace_metadata(existing)
+    meta = k8s_workspace_metadata(existing)
     assert meta["execution_backend"] == "k8s"
     assert meta["status"] == "running"
     assert meta["pod_name"] == "as-ws-alice__1"
@@ -477,7 +477,7 @@ async def test_k8s_workspace_ensure_reuses_cached_workspace(monkeypatch):
 @pytest.mark.asyncio
 async def test_k8s_workspace_stop_evicts_cache_and_returns_stopped(monkeypatch):
     from app.services.ai.runtime.agentscope import workspace as ws_module
-    from app.services.ai.runtime.agentscope.workspace import k8s_workspace_stop
+    from app.services.ai.runtime.agentscope.workspace import stop_k8s_workspace
 
     await _patch_k8s_policy(monkeypatch)
 
@@ -497,7 +497,7 @@ async def test_k8s_workspace_stop_evicts_cache_and_returns_stopped(monkeypatch):
     ws_module._k8s_workspace_locks[K8S_RUNTIME_CACHE_KEY] = asyncio.Lock()
 
     try:
-        result = await k8s_workspace_stop(
+        result = await stop_k8s_workspace(
             user_id=1,
             user_name="alice",
             conversation_id="conv-1",
@@ -514,7 +514,7 @@ async def test_k8s_workspace_stop_evicts_cache_and_returns_stopped(monkeypatch):
 @pytest.mark.asyncio
 async def test_k8s_workspace_restart_recreates_via_get_local_workspace(monkeypatch):
     from app.services.ai.runtime.agentscope import workspace as ws_module
-    from app.services.ai.runtime.agentscope.workspace import k8s_workspace_restart
+    from app.services.ai.runtime.agentscope.workspace import restart_k8s_workspace
 
     await _patch_k8s_policy(monkeypatch)
 
@@ -538,7 +538,7 @@ async def test_k8s_workspace_restart_recreates_via_get_local_workspace(monkeypat
     ws_module._k8s_workspace_cache.clear()
     ws_module._k8s_workspace_locks.clear()
 
-    result = await k8s_workspace_restart(
+    result = await restart_k8s_workspace(
         user_id=1,
         user_name="alice",
         conversation_id="conv-1",
@@ -551,7 +551,7 @@ async def test_k8s_workspace_restart_recreates_via_get_local_workspace(monkeypat
 - [ ] **Step 2: 运行确认失败**
 
 Run: `.venv/bin/python -m pytest tests/services/test_sandbox_policy_k8s.py -q`
-Expected: `ImportError`（`k8s_workspace_status` / `k8s_workspace_metadata` / `k8s_workspace_stop` / `k8s_workspace_restart` 未定义）。
+Expected: `ImportError`（`k8s_workspace_status` / `k8s_workspace_metadata` / `stop_k8s_workspace` / `restart_k8s_workspace` 未定义）。
 
 - [ ] **Step 3: 实现 —— 在 `def docker_workspace_runtime_metadata(` 定义之前插入以下代码**（保持 docker 族内部顺序不变）
 
@@ -920,7 +920,7 @@ async def restart_k8s_workspace(
 - [ ] **Step 4: 运行确认通过**
 
 Run: `.venv/bin/python -m pytest tests/services/test_sandbox_policy_k8s.py -q`
-Expected: 全部 PASS（5 个新用例 + 既有用例）。
+Expected: 全部 PASS（7 个新用例 + 既有用例）。
 
 - [ ] **Step 5: Commit**
 
@@ -2090,7 +2090,7 @@ Expected: 退出码 0。
 在 `tests/CHECKLIST.md` 顶部表格新增一行（对照既有条目格式）：
 
 ```markdown
-| Kubernetes 沙箱输入框浮标 Pod 状态/启停控制（状态展示、运行时长、手动启动/停止/重启与停止二次确认） (K8s Sandbox Input Badge Pod Status & Lifecycle Controls) | `app/services/ai/runtime/agentscope/k8s_workspace.py`, `app/services/ai/runtime/agentscope/workspace.py`, `app/api/v1/endpoints/sandbox.py`, `frontend/src/components/embed/ChatInput.vue`, `frontend/src/views/EmbedChat.vue`, `frontend/src/components/chat/DockerWorkspaceBanner.vue`, `tests/services/test_sandbox_policy_k8s.py`, `tests/api/v1/test_sandbox_k8s_workspace_ops.py`, `tests/frontend/test_chat_sandbox_workspace_contract.py`, `docs/superpowers/specs/2026-09-09-k8s-sandbox-workspace-badge-controls-design.md`, `tests/CHECKLIST.md` | **K8s 沙箱浮标与 Docker 对等的 Pod 生命周期闭环**：① **后端只读状态查询辅助**：`read_k8s_sandbox_pod` 通过 kubernetes-asyncio 只读探测 Pod phase/startTime，SDK 缺失/无凭据/RBAC 受限/404 均降级不抛 500；② **k8s runtime 族**：`k8s_workspace_status`（只读、未缓存返回 idle、实时 Pod phase 优先、降级 is_alive 视图）、`ensure_k8s_workspace`（走 `get_local_workspace` 与聊天同缓存键预热）、`stop_k8s_workspace`（逐出缓存并关闭 Pod）、`restart_k8s_workspace`（重建）与元数据函数，策略不符/无会话/无身份统一抛 `K8sSandboxUnavailableError`；③ **用户端点**：`/api/v1/sandbox/k8s/workspace/{status,ensure,stop,restart}`，仅当前登录用户操作自身会话；④ **前端通用化**：`dockerWorkspace*` 更名 `sandboxWorkspace*` 并新增 `sandboxBackend`（docker|k8s）术语维度；浮标展示 Pod 状态点/Pod 名/每秒滚动运行时长/空闲 30m 自动回收提示，k8s「操作」菜单仅重启 Pod/停止关机（无终端）；⑤ **k8s 停止二次确认**：复用 EmbedChat `<ConfirmModal>`，文案警示动态独立卷随 PVC 删除与重建耗时；⑥ **Docker 回归**：docker 浮标文案/交互与既有端点契约不变。 | ✅ 后端 9 项定向单测（Pod 探测 4 项 + runtime 5 项）+ 5 项端点单测 + 前端契约测试全绿；`vue-tsc --noEmit` 零报错；未代跑真实服务与启动脚本 | 2026-09-09 |
+| Kubernetes 沙箱输入框浮标 Pod 状态/启停控制（状态展示、运行时长、手动启动/停止/重启与停止二次确认） (K8s Sandbox Input Badge Pod Status & Lifecycle Controls) | `app/services/ai/runtime/agentscope/k8s_workspace.py`, `app/services/ai/runtime/agentscope/workspace.py`, `app/api/v1/endpoints/sandbox.py`, `frontend/src/components/embed/ChatInput.vue`, `frontend/src/views/EmbedChat.vue`, `frontend/src/components/chat/DockerWorkspaceBanner.vue`, `tests/services/test_sandbox_policy_k8s.py`, `tests/api/v1/test_sandbox_k8s_workspace_ops.py`, `tests/frontend/test_chat_sandbox_workspace_contract.py`, `docs/superpowers/specs/2026-09-09-k8s-sandbox-workspace-badge-controls-design.md`, `tests/CHECKLIST.md` | **K8s 沙箱浮标与 Docker 对等的 Pod 生命周期闭环**：① **后端只读状态查询辅助**：`read_k8s_sandbox_pod` 通过 kubernetes-asyncio 只读探测 Pod phase/startTime，SDK 缺失/无凭据/RBAC 受限/404 均降级不抛 500；② **k8s runtime 族**：`k8s_workspace_status`（只读、未缓存返回 idle、实时 Pod phase 优先、降级 is_alive 视图）、`ensure_k8s_workspace`（走 `get_local_workspace` 与聊天同缓存键预热）、`stop_k8s_workspace`（逐出缓存并关闭 Pod）、`restart_k8s_workspace`（重建）与元数据函数，策略不符/无会话/无身份统一抛 `K8sSandboxUnavailableError`；③ **用户端点**：`/api/v1/sandbox/k8s/workspace/{status,ensure,stop,restart}`，仅当前登录用户操作自身会话；④ **前端通用化**：`dockerWorkspace*` 更名 `sandboxWorkspace*` 并新增 `sandboxBackend`（docker|k8s）术语维度；浮标展示 Pod 状态点/Pod 名/每秒滚动运行时长/空闲 30m 自动回收提示，k8s「操作」菜单仅重启 Pod/停止关机（无终端）；⑤ **k8s 停止二次确认**：复用 EmbedChat `<ConfirmModal>`，文案警示动态独立卷随 PVC 删除与重建耗时；⑥ **Docker 回归**：docker 浮标文案/交互与既有端点契约不变。 | ✅ 后端 11 项定向单测（Pod 探测 4 项 + runtime 7 项）+ 5 项端点单测 + 前端契约测试全绿；`vue-tsc --noEmit` 零报错；未代跑真实服务与启动脚本 | 2026-09-09 |
 ```
 
 - [ ] **Step 5: Commit**
