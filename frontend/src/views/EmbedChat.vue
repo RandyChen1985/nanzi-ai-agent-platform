@@ -4185,9 +4185,13 @@ const dismissSandboxWorkspaceBanner = () => {
   sandboxWorkspaceBannerDismissed.value = true;
 };
 
+/** 沙箱状态查询防重入（starting 状态下也允许手动刷新，仅拦并发请求）。 */
+let sandboxStatusRefreshInFlight = false;
+
 const refreshSandboxWorkspaceStatus = async (showFeedback = false) => {
   if (!isSandboxWorkspacePolicy.value || !conversationId.value) return;
-  if (sandboxWorkspaceStatus.value === "starting") return;
+  if (sandboxStatusRefreshInFlight) return;
+  sandboxStatusRefreshInFlight = true;
   const requestedConversationId = conversationId.value;
   try {
     const response = await axios.get(
@@ -4230,12 +4234,19 @@ const refreshSandboxWorkspaceStatus = async (showFeedback = false) => {
     if (conversationId.value === requestedConversationId) {
       sandboxWorkspaceStatusLoaded.value = true;
     }
+    sandboxStatusRefreshInFlight = false;
   }
 };
 
-/** 启动后轻量轮询 status，直到 Pod 进入 running 或超时，避免一直停在“创建中”。 */
-const pollSandboxWorkspaceUntilRunning = async (cid: string) => {
-  for (let attempt = 0; attempt < 8; attempt += 1) {
+/** 启动后自动轮询 status（每 2s，最长 ~60s），直到 Pod 就绪，避免一直停在“创建中”。 */
+/** 启动后自动轮询 status（每 2s，最长 ~60s），直到 Pod 就绪；readyToast=false 时为静默预热。 */
+const pollSandboxWorkspaceUntilRunning = async (
+  cid: string,
+  opts: { readyToast?: boolean } = {},
+) => {
+  const { readyToast = true } = opts;
+  const MAX_ATTEMPTS = 30; // 60s
+  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt += 1) {
     await new Promise((resolve) => setTimeout(resolve, 2000));
     if (conversationId.value !== cid) return;
     try {
@@ -4252,12 +4263,52 @@ const pollSandboxWorkspaceUntilRunning = async (cid: string) => {
         ? data.uptime_seconds
         : null;
       if (mapped === "running") {
-        showToast("沙箱已就绪", "success");
+        if (readyToast) {
+          showToast("沙箱已就绪", "success");
+        }
         return;
       }
     } catch {
       // 单次查询失败不中断轮询，继续尝试
     }
+  }
+  // 超时仍未就绪：停留在当前状态并提示可手动刷新
+  if (conversationId.value === cid && sandboxWorkspaceStatus.value !== "running") {
+    showToast("Pod 仍在创建中（可能镜像拉取较慢），可稍后点「刷新」查看", "info");
+  }
+};
+
+/** 会话打开/新建后自动预热一次（每个会话仅一次、静默；仅当查询确认未运行且当前无任务）。 */
+let autoWarmedConversationKey = "";
+
+const maybeAutoWarmSandbox = async () => {
+  if (!isSandboxWorkspacePolicy.value || !conversationId.value) return;
+  if (isProcessing.value || remoteRunActive.value) return;
+  if (!sandboxWorkspaceStatusLoaded.value) return;
+  const status = sandboxWorkspaceStatus.value;
+  if (status === "running" || status === "starting" || status === "error") return;
+  const key = `${conversationId.value}::${sandboxBackend.value}`;
+  if (autoWarmedConversationKey === key) return;
+  autoWarmedConversationKey = key;
+  try {
+    const response = await axios.post(
+      `${sandboxWorkspaceBaseEndpoint.value}/ensure`,
+      { conversation_id: conversationId.value },
+      { headers: embedAuthHeaders() },
+    );
+    const data = response.data?.data ?? response.data;
+    const mapped = mapSandboxStatus(String(data?.status || "idle"));
+    sandboxWorkspaceStatus.value = mapped;
+    sandboxWorkspaceInstanceId.value = instanceIdFromData(data);
+    sandboxWorkspaceStartedAt.value = data?.started_at || null;
+    sandboxWorkspaceUptimeSeconds.value = typeof data?.uptime_seconds === "number"
+      ? data.uptime_seconds
+      : null;
+    if (mapped !== "running") {
+      void pollSandboxWorkspaceUntilRunning(String(conversationId.value), { readyToast: false });
+    }
+  } catch {
+    // 自动预热失败静默：用户可手动「启动」，或发送消息时按既有降级逻辑处理
   }
 };
 
@@ -4398,7 +4449,7 @@ const restartSandboxWorkspace = async () => {
 
 watch(
   [conversationId, effectiveSandboxPolicy],
-  ([conversation, policy], previous) => {
+  async ([conversation, policy], previous) => {
     const previousConversation = String(previous?.[0] || "");
     const previousPolicy = String(previous?.[1] || "");
     if (
@@ -4409,7 +4460,9 @@ watch(
     ) {
       resetSandboxWorkspaceState();
       if (isSandboxWorkspacePolicy.value && conversation) {
-        void refreshSandboxWorkspaceStatus();
+        await refreshSandboxWorkspaceStatus();
+        // 打开/新建会话后自动预热沙箱（默认开启，每个会话一次、静默）
+        void maybeAutoWarmSandbox();
       }
     }
   },
