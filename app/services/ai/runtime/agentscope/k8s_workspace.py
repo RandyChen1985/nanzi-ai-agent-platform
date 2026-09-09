@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import logging
 import os
+import time
+import uuid
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -521,4 +523,113 @@ async def read_k8s_sandbox_pod(
         "phase": phase,
         "start_time": start_time_text,
         "ready": container_ready,
+    }
+
+
+# 沙箱 Pod 内执行命令的容器名（k8s_workspace 创建 Pod 时使用）
+K8S_SANDBOX_CONTAINER = "workspace"
+
+
+async def exec_k8s_sandbox_command(
+    namespace: str,
+    pod_name: str,
+    command: str,
+    *,
+    workdir: str = "",
+) -> dict[str, Any]:
+    """Execute a one-shot shell command inside a running sandbox Pod.
+
+    Equivalent of ``kubectl exec`` via the Kubernetes WebSocket exec
+    (``v4.channel.k8s.io``) protocol. The kubernetes_asyncio pre-load path
+    merges stdout+stderr and does not surface the error channel, so:
+
+    * a workdir marker is printed at the end to recover the real ``PWD``;
+    * ``exit_code`` is reported as ``None`` when the underlying library does not
+      expose it (the terminal UI degrades gracefully).
+    """
+    from kubernetes_asyncio.stream.ws_client import WsApiClient
+    from kubernetes_asyncio import client as k8s_client
+    from kubernetes_asyncio import config as k8s_async_config
+
+    cmd_clean = str(command or "").strip()
+    if not cmd_clean:
+        return {"stdout": "", "stderr": "", "output": "", "exit_code": None,
+                "duration_ms": 0, "workdir": workdir or "/workspace"}
+
+    # 凭据加载：in-cluster 优先，其次 kubeconfig
+    try:
+        k8s_async_config.load_incluster_config()
+    except Exception:
+        try:
+            await k8s_async_config.load_kube_config()
+        except Exception as exc:
+            raise K8sSandboxUnavailableError(
+                f"无法加载 Kubernetes 凭据以在 Pod 内执行命令: {exc}",
+                reason_code="k8s_exec_credentials",
+                user_message="当前后端无法连接 Kubernetes 集群以执行沙箱命令，请检查集群连接与 RBAC。",
+            ) from exc
+
+    start = time.monotonic()
+    marker = f"__NANZI_PWD_{uuid.uuid4().hex}__"
+    shell = (workdir or "").strip() or "/workspace"
+    wrapped = (
+        f"cd '{shell}' 2>/dev/null; "
+        f"{{ {cmd_clean}\n}}\n"
+        f"__NZ_RET=$?\n"
+        f"printf '\\n{marker}:%s\\n' \"$PWD\"\n"
+        f"exit $__NZ_RET"
+    )
+
+    api_client = None
+    try:
+        api_client = WsApiClient()
+        core = k8s_client.CoreV1Api(api_client=api_client)
+        resp = await core.connect_get_namespaced_pod_exec(
+            name=pod_name,
+            namespace=namespace,
+            container=K8S_SANDBOX_CONTAINER,
+            command=["/bin/bash", "-lc", wrapped],
+            stdin=False,
+            stdout=True,
+            stderr=True,
+            tty=False,
+        )
+        # pre-load 模式：返回 stdout+stderr 合并字符串
+        output = resp if isinstance(resp, str) else str(resp or "")
+    except Exception as exc:  # noqa: BLE001
+        if getattr(exc, "status", None) == 404:
+            raise K8sSandboxUnavailableError(
+                f"沙箱 Pod {pod_name} 不存在或已销毁",
+                reason_code="k8s_pod_not_found",
+                user_message="Kubernetes 沙箱 Pod 不存在或已销毁，请先启动沙箱后再进入终端。",
+            ) from exc
+        raise K8sSandboxUnavailableError(
+            f"在沙箱 Pod {pod_name} 内执行命令失败: {exc}",
+            reason_code="k8s_exec_failed",
+            user_message=f"沙箱命令执行失败，请检查 Pod 状态与集群连通性。",
+        ) from exc
+    finally:
+        if api_client is not None:
+            try:
+                await api_client.close()
+            except Exception:
+                pass
+
+    final_workdir = shell
+    clean_output = output
+    if marker in clean_output:
+        parts = clean_output.split(f"{marker}:")
+        clean_output = parts[0].rstrip("\r\n")
+        if len(parts) > 1:
+            tail = parts[1].splitlines()
+            if tail and tail[0].strip():
+                final_workdir = tail[0].strip()
+
+    return {
+        "stdout": clean_output,
+        "stderr": "",
+        "output": clean_output,
+        "exit_code": None,
+        "duration_ms": max(0, int((time.monotonic() - start) * 1000)),
+        "workdir": final_workdir,
     }

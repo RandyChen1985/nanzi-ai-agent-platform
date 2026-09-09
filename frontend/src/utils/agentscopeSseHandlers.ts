@@ -837,7 +837,7 @@ export function dispatchAgentscopeStreamEvent<T extends AgentStreamMessage>(
     businessConfirmation?: BusinessConfirmationState;
     userQuestion?: UserQuestionState;
   }>,
-  onBashEnv?: (env: "host" | "docker" | "e2b" | "ssh") => void,
+  onBashEnv?: (env: "host" | "docker" | "e2b" | "ssh" | "k8s") => void,
 ): boolean {
   switch (data.type) {
     case "run_config": {
@@ -960,7 +960,7 @@ export function dispatchAgentscopeStreamEvent<T extends AgentStreamMessage>(
     case "bash_env":
       if (onBashEnv) {
         const envVal = data.env;
-        if (envVal === "docker" || envVal === "host" || envVal === "e2b" || envVal === "ssh") {
+        if (envVal === "docker" || envVal === "host" || envVal === "e2b" || envVal === "ssh" || envVal === "k8s") {
           onBashEnv(envVal);
         }
       }

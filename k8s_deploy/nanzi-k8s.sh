@@ -78,6 +78,19 @@ log_error() {
   printf "%b✖%b  %s\n" "${C_RED}" "${C_RESET}" "$*"
 }
 
+# 危险操作二次确认：默认 N（回车取消），仅输入 y/yes 才放行
+confirm_action() {
+  prompt_label="$1"
+  printf "  %b?%b %s [y/N]: " "${C_YELLOW}" "${C_RESET}" "$prompt_label"
+  read -r input || input=""
+  input="$(printf '%s' "$input" | tr '[:upper:]' '[:lower:]')"
+  if [ "$input" = "y" ] || [ "$input" = "yes" ]; then
+    return 0
+  fi
+  printf "%b已取消，未执行任何变更。%b\n" "${C_YELLOW}" "${C_RESET}"
+  return 1
+}
+
 # 等待 K3s API 恢复函数
 wait_for_k3s_api() {
   log_info "正在探测 K3s API Server 连通性..."
@@ -143,6 +156,9 @@ case "${1:-}" in
 
   restart-pod)
     print_header "滚动重启 NanZi 平台 Pod"
+    if ! confirm_action "确定要滚动重启 NanZi 平台 Pod 吗？（会触发 rollout restart，期间短暂不可用）"; then
+      exit 0
+    fi
     log_info "触发 Deployment/${DEPLOYMENT} 滚动更新..."
     kubectl rollout restart deployment/"$DEPLOYMENT" -n "$NAMESPACE"
 
@@ -156,6 +172,9 @@ case "${1:-}" in
 
   restart-k3s)
     print_header "重启 K3s 集群服务"
+    if ! confirm_action "确定要重启底层 K3s 服务吗？（K3s 短暂不可用，会等待 API 自动恢复）"; then
+      exit 0
+    fi
     log_info "执行 systemctl restart k3s..."
     systemctl restart k3s
 
@@ -171,6 +190,9 @@ case "${1:-}" in
 
   restart-all)
     print_header "全量级平滑重启：K3s 守护进程 + NanZi 业务 Pod"
+    if ! confirm_action "确定要执行全量重启吗？（先重启 K3s 服务，再滚动重启 NanZi 平台 Pod）"; then
+      exit 0
+    fi
     log_info "第 1 步：重启底层 K3s 服务..."
     systemctl restart k3s
 
@@ -241,14 +263,14 @@ case "${1:-}" in
     printf "%b%bNanZi AI Agent Platform - K8s / K3s 快捷运维工具%b\n" "${C_BOLD}" "${C_CYAN}" "${C_RESET}"
     printf "%b用法: %s <子命令>%b\n\n" "${C_GRAY}" "$0" "${C_RESET}"
     printf "%b常用运维指令：%b\n" "${C_BOLD}" "${C_RESET}"
-    printf "  %-15s %b\n" "${C_GREEN}status${C_RESET}" "查看 K3s 服务、集群节点、NanZi 资源与沙箱 Pod/PVC 状态"
-    printf "  %-15s %b\n" "${C_GREEN}sandboxes${C_RESET}" "专门监控 agent-sandboxes 命名空间下的沙箱 Pod 与 PVC"
-    printf "  %-15s %b\n" "${C_GREEN}restart-pod${C_RESET}" "通过 Deployment 平滑滚动重启 NanZi 业务 Pod"
-    printf "  %-15s %b\n" "${C_GREEN}restart-k3s${C_RESET}" "重启底层 K3s 服务并等待 API Server 自动恢复"
-    printf "  %-15s %b\n" "${C_GREEN}restart-all${C_RESET}" "先重启 K3s 并在 API 就绪后自动滚动重启业务 Pod"
-    printf "  %-15s %b\n" "${C_GREEN}logs${C_RESET}" "持续追踪 NanZi Pod 最新的 300 条容器日志 (-f)"
-    printf "  %-15s %b\n" "${C_GREEN}events${C_RESET}" "按时间倒序查看主平台与沙箱的 Kubernetes 调度事件"
-    printf "  %-15s %b\n" "${C_GREEN}test${C_RESET}" "测试 Service Endpoint 与 ClusterIP 80 端口 HTTP 连通性"
+    printf "  %b%-13s%b %b\n" "${C_GREEN}" "status" "${C_RESET}" "查看 K3s 服务、集群节点、NanZi 资源与沙箱 Pod/PVC 状态"
+    printf "  %b%-13s%b %b\n" "${C_GREEN}" "sandboxes" "${C_RESET}" "专门监控 agent-sandboxes 命名空间下的沙箱 Pod 与 PVC"
+    printf "  %b%-13s%b %b\n" "${C_GREEN}" "restart-pod" "${C_RESET}" "通过 Deployment 平滑滚动重启 NanZi 业务 Pod"
+    printf "  %b%-13s%b %b\n" "${C_GREEN}" "restart-k3s" "${C_RESET}" "重启底层 K3s 服务并等待 API Server 自动恢复"
+    printf "  %b%-13s%b %b\n" "${C_GREEN}" "restart-all" "${C_RESET}" "先重启 K3s 并在 API 就绪后自动滚动重启业务 Pod"
+    printf "  %b%-13s%b %b\n" "${C_GREEN}" "logs" "${C_RESET}" "持续追踪 NanZi Pod 最新的 300 条容器日志 (-f)"
+    printf "  %b%-13s%b %b\n" "${C_GREEN}" "events" "${C_RESET}" "按时间倒序查看主平台与沙箱的 Kubernetes 调度事件"
+    printf "  %b%-13s%b %b\n" "${C_GREEN}" "test" "${C_RESET}" "测试 Service Endpoint 与 ClusterIP 80 端口 HTTP 连通性"
     printf "\n"
     exit 1
     ;;

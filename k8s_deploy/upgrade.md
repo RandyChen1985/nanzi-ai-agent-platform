@@ -12,6 +12,46 @@
 > ```
 >
 > 脚本会自动判断镜像 Tag 是否变动：Tag 变动时调用 `kubectl set image`，同 Tag 时调用 `rollout restart`，自动等待健康检查就绪并同步更新 `kustomization.yaml`。
+>
+> **导入镜像请用文件方式，不要用管道**：`docker save ... | ctr images import -` 在镜像较大时很慢且易因传输/缓冲问题中断。正确做法见下方「导入本地镜像」，本目录也提供一键工具：
+>
+> ```bash
+> ./install.sh --import nanzi-ai-agent_1.0.15.0.tar   # 自动识别 K3s/普通 containerd 并导入
+> ./install.sh --images nanzi-ai-agent                 # 确认是否已导入成功
+> ```
+
+## 导入本地镜像（K3s / 非 K3s 通用）
+
+更新镜像前，先把它导入**节点容器运行时**。**使用文件方式导入，不要用管道**（`docker save ... | ctr images import -` 大镜像上很慢、且易中断，还可能因 `ctr import -` 的某些版本异常导致导入不完整）。
+
+### 1. 导出为 tar 文件
+
+```bash
+docker save -o nanzi-ai-agent_1.0.15.0.tar nanzi-ai-agent:1.0.15.0
+```
+
+### 2. 导入到节点容器运行时
+
+**K3s（k3s 自带 containerd）：**
+
+```bash
+sudo k3s ctr images import nanzi-ai-agent_1.0.15.0.tar
+```
+
+**非 K3s / 普通 containerd（Kubernetes 节点，使用其专用 namespace）：**
+
+```bash
+sudo ctr -n k8s.io images import nanzi-ai-agent_1.0.15.0.tar
+```
+
+### 3. 使用目录工具一键导入（自动识别环境）
+
+```bash
+./install.sh --import nanzi-ai-agent_1.0.15.0.tar
+./install.sh --images nanzi-ai-agent      # 确认是否已导入成功
+```
+
+> 说明：如果镜像是在节点本地 `docker build` 出来的（不在 Docker daemon 里，而是已做成 tar），把 tar 放到节点后同样用 `ctr -n k8s.io images import <tar>` 或 `./install.sh --import <tar>` 导入即可，无需再经过 docker。导入后用 `./install.sh --images nanzi-ai-agent` 或 `crictl images | grep nanzi` 复核 Tag 是否一致。
 
 ## 镜像 Tag 发生变化
 
@@ -27,11 +67,10 @@ nanzi-ai-agent:1.0.14.0
 nanzi-ai-agent:1.0.15.0
 ```
 
-先把镜像导入 K3s：
+先把镜像导入节点容器运行时（**文件方式，勿用管道**）：见上方「导入本地镜像」小节；K3s 用 `sudo k3s ctr images import <tar>`，非 K3s 用 `sudo ctr -n k8s.io images import <tar>`，或直接：
 
 ```bash
-docker save nanzi-ai-agent:1.0.15.0 \
-  | k3s ctr images import -
+./install.sh --import nanzi-ai-agent_1.0.15.0.tar
 ```
 
 然后更新 Deployment：
@@ -89,9 +128,10 @@ nanzi-ai-agent:1.0.14.0
 重新导入镜像后，Deployment 不会自动发现镜像内容发生变化，需要主动滚动重启：
 
 ```bash
-docker save nanzi-ai-agent:1.0.14.0 \
-  | k3s ctr images import -
+# 1) 重新导入镜像（文件方式，勿用管道；K3s/非 K3s 命令见上方「导入本地镜像」）
+./install.sh --import nanzi-ai-agent_1.0.14.0.tar
 
+# 2) 触发滚动重启
 kubectl rollout restart deployment/nanzi-ai-agent \
   -n nanzi-ai-agent
 

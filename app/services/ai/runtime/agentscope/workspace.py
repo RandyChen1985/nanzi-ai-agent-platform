@@ -2422,10 +2422,12 @@ async def k8s_workspace_status(
 ) -> dict[str, Any]:
     """Inspect the current user's K8s workspace Pod without initializing it.
 
-    Read-only: never builds a workspace or creates a Pod. Returns ``idle``
-    when no process-local workspace exists for this user. When a workspace is
-    cached, prefers the live Pod phase via ``read_k8s_sandbox_pod`` and
-    degrades to the cached ``is_alive`` view when the lookup is unavailable.
+    Read-only: never builds a workspace or creates a Pod. When a process-local
+    workspace is cached, prefers the live Pod phase via ``read_k8s_sandbox_pod``
+    and degrades to the cached ``is_alive`` view when the lookup is unavailable.
+    When nothing is cached (multi-worker forwarding / cache already reaped),
+    reflects a best-effort Pod probe by name so a live Pod is still reported as
+    running instead of a misleading ``idle``.
     """
     user_key = await _k8s_runtime_guard(
         user_id=user_id,
@@ -2439,6 +2441,11 @@ async def k8s_workspace_status(
     cache_key = f"{os.path.abspath(root)}::{user_key}::{SANDBOX_POLICY_K8S}"
     workspace = _k8s_workspace_cache.get(cache_key)
     if workspace is None or getattr(workspace, "is_alive", True) is False:
+        # 进程内无活跃缓存（多 worker 转发、缓存已被回收/reaper 清理等场景）：
+        # 仍按约定 Pod 名做一次只读探测真实状态，绝不创建/修改任何资源。
+        probed = await _k8s_probe_workspace_pod(user_key)
+        if probed is not None:
+            return probed
         return {
             "status": "idle",
             "running": False,
@@ -2521,6 +2528,63 @@ async def k8s_workspace_status(
         "pod_name": pod_name,
         "started_at": started_at,
         "uptime_seconds": _uptime_from_started_at(started_at) if is_alive else None,
+    }
+
+
+async def _k8s_probe_workspace_pod(user_key: str) -> dict[str, Any] | None:
+    """Best-effort live Pod probe for a user key without a process-local workspace.
+
+    AgentScope ``K8sWorkspace`` builds the Pod name from ``workspace_id``
+    (``= user_key``) as ``as-ws-<sanitized>``, where ``_`` is replaced by ``-``.
+    Reflection is read-only and never mutates cluster state. Returns a status
+    dict when the Pod is found, or ``None`` when absent / probe unavailable
+    (callers fall back to ``idle``).
+    """
+    from app.services.ai.runtime.agentscope.k8s_workspace import read_k8s_sandbox_pod
+    from app.services.config_service import ConfigService
+
+    namespace = (
+        await ConfigService.get("sandbox_k8s_namespace", "agent-sandboxes")
+    ).strip() or "agent-sandboxes"
+    pod_name = f"as-ws-{str(user_key).replace('_', '-')}"
+    try:
+        info = await read_k8s_sandbox_pod(namespace=namespace, pod_name=pod_name)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[workspace] k8s best-effort pod probe failed for %s: %s", pod_name, exc)
+        return None
+
+    if not info.get("available") or info.get("found") is not True:
+        return None
+
+    phase = info.get("phase")
+    if phase == "Running":
+        return {
+            "status": "running",
+            "running": True,
+            "execution_backend": SANDBOX_POLICY_K8S,
+            "workspace_id": user_key,
+            "pod_name": pod_name,
+            "started_at": info.get("start_time"),
+            "uptime_seconds": _uptime_from_started_at(info.get("start_time")),
+        }
+    if phase == "Pending":
+        return {
+            "status": "starting",
+            "running": False,
+            "execution_backend": SANDBOX_POLICY_K8S,
+            "workspace_id": user_key,
+            "pod_name": pod_name,
+            "started_at": None,
+            "uptime_seconds": None,
+        }
+    return {
+        "status": "stopped",
+        "running": False,
+        "execution_backend": SANDBOX_POLICY_K8S,
+        "workspace_id": user_key,
+        "pod_name": pod_name,
+        "started_at": None,
+        "uptime_seconds": None,
     }
 
 
@@ -2669,7 +2733,12 @@ def get_workspace_execution_backend(workspace: Any) -> str | None:
     if sandbox_ws is None:
         return None
     backend = getattr(sandbox_ws, "_platform_execution_backend", None)
-    if backend in {SANDBOX_POLICY_DOCKER, SANDBOX_POLICY_E2B, SANDBOX_POLICY_SSH}:
+    if backend in {
+        SANDBOX_POLICY_DOCKER,
+        SANDBOX_POLICY_E2B,
+        SANDBOX_POLICY_SSH,
+        SANDBOX_POLICY_K8S,
+    }:
         return backend
     return None
 
@@ -2693,6 +2762,46 @@ async def get_local_workspace_offloader(
         allowed_global_skills=allowed_global_skills,
     )
     return get_workspace_offloader(workspace)
+
+
+async def build_host_only_workspace(
+    *,
+    user_id: str | int | None,
+    conversation_id: str | None,
+    user_name: str | None = None,
+    user_info: dict[str, Any] | None = None,
+    skills_custom: bool = False,
+    allowed_global_skills: list[str] | None = None,
+) -> Any:
+    """Build a host-only ``LocalWorkspace`` for sandbox-unavailable degradation.
+
+    Used by the chat runner when a sandbox policy (k8s/docker/e2b/ssh) fails to
+    initialize: a pure-conversation turn can still proceed with host-backed file
+    tools (Read/Write/Edit/Glob/Grep) and without the sandbox Bash tool. Never
+    touches a sandbox and never creates a Pod/container. Mirrors the host
+    workspace construction inside ``get_local_workspace`` (root/workdir/skills
+    pre-seed + ``LocalWorkspace.initialize``).
+    """
+    from agentscope.workspace import LocalWorkspace
+
+    root = await resolve_workspace_root()
+    workdir = resolve_session_workdir(
+        root=root,
+        user_id=user_id,
+        user_name=user_name,
+        user_info=user_info,
+        conversation_id=conversation_id,
+    )
+    os.makedirs(workdir, exist_ok=True)
+    skill_paths = discover_platform_skill_paths(
+        user_info=user_info,
+        skills_custom=skills_custom,
+        allowed_global_skills=allowed_global_skills,
+    )
+    _preseed_session_skills(workdir, skill_paths)
+    local_ws = LocalWorkspace(workdir=workdir, skill_paths=skill_paths)
+    await local_ws.initialize()
+    return local_ws
 
 
 def get_workspace_offloader(workspace: Any) -> Any | None:
@@ -4048,3 +4157,69 @@ async def build_workspace_toolkit(
         skills_or_loaders=skills,
         mcps=mcps,
     )
+
+
+async def _k8s_named_pod_identity(user_key: str) -> tuple[str, str]:
+    """Return (namespace, pod_name) derived from config + the user key."""
+    from app.services.config_service import ConfigService
+
+    namespace = (
+        await ConfigService.get("sandbox_k8s_namespace", "agent-sandboxes")
+    ).strip() or "agent-sandboxes"
+    pod_name = f"as-ws-{str(user_key).replace('_', '-')}"
+    return namespace, pod_name
+
+
+async def exec_k8s_workspace_command(
+    *,
+    user_id: str | int | None,
+    conversation_id: str | None,
+    command: str,
+    workdir: str | None = None,
+    user_name: str | None = None,
+    user_info: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Execute a one-shot shell command inside the current user's K8s sandbox Pod.
+
+    Mirrors ``exec_docker_workspace_command`` for the Kubernetes backend: the Pod
+    is located from the process-local cache (falling back to the derived name),
+    and the command runs via the Kubernetes WebSocket exec. Returns the same
+    output shape the Docker terminal UI consumes.
+    """
+    user_key = await _k8s_runtime_guard(
+        user_id=user_id,
+        user_name=user_name,
+        user_info=user_info,
+        conversation_id=conversation_id,
+        operation="exec",
+    )
+
+    root = await resolve_workspace_root()
+    cache_key = f"{os.path.abspath(root)}::{user_key}::{SANDBOX_POLICY_K8S}"
+    workspace = _k8s_workspace_cache.get(cache_key)
+    if workspace is not None and getattr(workspace, "is_alive", True):
+        namespace, pod_name = await _k8s_workspace_pod_identity(workspace)
+    else:
+        namespace, pod_name = await _k8s_named_pod_identity(user_key)
+
+    if not pod_name:
+        from app.services.ai.runtime.agentscope.k8s_workspace import K8sSandboxUnavailableError
+
+        raise K8sSandboxUnavailableError(
+            "unable to locate K8s sandbox Pod",
+            reason_code="k8s_pod_not_found",
+            user_message="未能定位 Kubernetes 沙箱 Pod，请先启动沙箱后再进入终端。",
+        )
+
+    from app.services.ai.runtime.agentscope.k8s_workspace import exec_k8s_sandbox_command
+
+    result = await exec_k8s_sandbox_command(
+        namespace=namespace,
+        pod_name=pod_name,
+        command=command,
+        workdir=workdir,
+    )
+    result["execution_backend"] = SANDBOX_POLICY_K8S
+    result["workspace_id"] = user_key
+    result["pod_name"] = pod_name
+    return result

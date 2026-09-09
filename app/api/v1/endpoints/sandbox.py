@@ -47,6 +47,7 @@ from app.services.ai.runtime.agentscope.workspace import (
     restart_docker_workspace as restart_docker_workspace_runtime,
     exec_docker_workspace_command as exec_docker_workspace_command_runtime,
     ensure_k8s_workspace as ensure_k8s_workspace_runtime,
+    exec_k8s_workspace_command as exec_k8s_workspace_command_runtime,
     k8s_workspace_status as k8s_workspace_status_runtime,
     restart_k8s_workspace as restart_k8s_workspace_runtime,
     stop_k8s_workspace as stop_k8s_workspace_runtime,
@@ -558,6 +559,45 @@ async def get_k8s_workspace_status_endpoint(
     return StandardResponse(
         data=status,
         message="Kubernetes 沙箱状态查询完成。",
+    )
+
+
+@router.post(
+    "/sandbox/k8s/workspace/exec",
+    response_model=StandardResponse[Dict[str, Any]],
+    summary="在当前用户的 Kubernetes 沙箱 Pod 中执行终端命令",
+)
+async def exec_k8s_workspace_endpoint(
+    body: DockerWorkspaceExecRequest,
+    user_info: Dict[str, Any] = Depends(require_api_key),
+):
+    """执行交互终端命令并返回输出（等价 kubectl exec，逐条命令）。"""
+    conversation_id = body.conversation_id.strip()
+    if not conversation_id:
+        raise HTTPException(status_code=400, detail="conversation_id 不能为空")
+
+    try:
+        result = await exec_k8s_workspace_command_runtime(
+            user_id=user_info.get("user_id") or user_info.get("id"),
+            user_name=user_info.get("user_name") or user_info.get("username"),
+            user_info=user_info,
+            conversation_id=conversation_id,
+            command=body.command,
+            workdir=body.workdir,
+        )
+    except K8sSandboxUnavailableError as exc:
+        status_code = 409 if exc.reason_code in ("k8s_policy_not_effective", "k8s_pod_not_found") else 503
+        raise HTTPException(
+            status_code=status_code,
+            detail={
+                "reason_code": exc.reason_code,
+                "message": exc.user_message,
+            },
+        ) from exc
+
+    return StandardResponse(
+        data=result,
+        message="命令执行完成。",
     )
 
 

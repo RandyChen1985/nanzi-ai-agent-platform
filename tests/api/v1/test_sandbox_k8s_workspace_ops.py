@@ -132,3 +132,36 @@ async def test_ensure_k8s_workspace_endpoint_policy_not_effective(monkeypatch):
         )
     assert exc_info.value.status_code == 409
     assert exc_info.value.detail["reason_code"] == "k8s_policy_not_effective"
+
+
+@pytest.mark.asyncio
+async def test_exec_k8s_workspace_endpoint(monkeypatch):
+    from app.api.v1.endpoints.sandbox import DockerWorkspaceExecRequest, exec_k8s_workspace_endpoint
+
+    captured = {}
+
+    async def fake_exec(**kwargs):
+        captured.update(kwargs)
+        return {
+            "output": "hi",
+            "stdout": "hi",
+            "stderr": "",
+            "exit_code": None,
+            "duration_ms": 5,
+            "workdir": "/workspace",
+            "execution_backend": "k8s",
+            "pod_name": "as-ws-alice--1",
+        }
+
+    monkeypatch.setattr(
+        "app.api.v1.endpoints.sandbox.exec_k8s_workspace_command_runtime",
+        fake_exec,
+    )
+    response = await exec_k8s_workspace_endpoint(
+        body=DockerWorkspaceExecRequest(conversation_id="conv-1", command="ls"),
+        user_info={"id": 1, "username": "alice"},
+    )
+    assert response.data["output"] == "hi"
+    assert response.data["pod_name"] == "as-ws-alice--1"
+    assert captured["command"] == "ls"
+    assert captured["conversation_id"] == "conv-1"

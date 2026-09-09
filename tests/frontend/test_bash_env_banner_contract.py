@@ -25,31 +25,32 @@ SETTINGS = ROOT / "frontend/src/components/embed/ChatSettings.vue"
 def test_dispatch_accepts_optional_onbashenv_callback_and_handles_bash_env_event():
     source = HANDLER.read_text(encoding="utf-8")
     assert (
-        'onBashEnv?: (env: "host" | "docker" | "e2b" | "ssh") => void' in source
+        'onBashEnv?: (env: "host" | "docker" | "e2b" | "ssh" | "k8s") => void' in source
     )
     assert "case \"bash_env\":" in source
     # 仅当值为合法的 host / docker / e2b / ssh 之一时才回调，避免脏数据触发横幅
     assert (
-        'if (envVal === "docker" || envVal === "host" || envVal === "e2b" || envVal === "ssh")'
+        'if (envVal === "docker" || envVal === "host" || envVal === "e2b" || envVal === "ssh" || envVal === "k8s")'
         in source
     )
     assert "onBashEnv(envVal)" in source
     # onBashEnv 为可选参数，默认不触发任何横幅逻辑，避免破坏其它调用点
     assert (
-        'onBashEnv?: (env: "host" | "docker" | "e2b" | "ssh") => void' in source
+        'onBashEnv?: (env: "host" | "docker" | "e2b" | "ssh" | "k8s") => void' in source
     )
 
 
 def test_bash_env_banner_component_has_env_variants_copy_and_dismiss():
     source = BANNER.read_text(encoding="utf-8")
     # props: 四种 env 多态（host / docker / e2b / ssh）
-    assert "env: 'host' | 'docker' | 'e2b' | 'ssh'" in source
+    assert "env: 'host' | 'docker' | 'e2b' | 'ssh' | 'k8s'" in source
     assert "defineProps" in source
     # 四种分支皆有文案与配色（字面量 class 保证 Tailwind JIT 提取）
     assert "运行在 Docker 沙箱" in source
     assert "运行在宿主机上" in source
     assert "运行在 E2B 沙箱" in source
     assert "运行在远端 SSH 主机" in source
+    assert "运行在 Kubernetes 沙箱" in source
     assert "sandbox" in source.lower()
     assert "emerald" in source and "amber" in source
     assert "violet" in source and "sky" in source

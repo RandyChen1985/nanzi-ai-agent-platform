@@ -2177,7 +2177,7 @@ defineExpose({
                                   'bg-gray-300 dark:bg-gray-600': (sandboxWorkspaceStatus || 'idle') === 'idle'
                                 }"
                               ></span>
-                              <span class="font-medium text-gray-700 dark:text-gray-200">
+                              <span class="shrink-0 whitespace-nowrap font-medium text-gray-700 dark:text-gray-200">
                                 {{ sandboxStatusText }}
                               </span>
                               <span
@@ -2232,15 +2232,14 @@ defineExpose({
                                   class="absolute right-0 bottom-full mb-1.5 z-50 w-28 rounded-lg bg-white dark:bg-gray-800 py-1 shadow-lg ring-1 ring-black/5 dark:ring-white/10 border border-gray-100 dark:border-gray-700 text-[10px] font-sans"
                                   @click.stop
                                 >
-                                  <!-- 进入终端仅 Docker 后端提供 -->
+                                  <!-- 沙箱终端：Docker 进容器，K8s 进 Pod -->
                                   <button
-                                    v-if="sandboxBackend === 'docker'"
                                     type="button"
                                     class="flex w-full items-center gap-1.5 px-2.5 py-1 text-gray-700 dark:text-gray-200 hover:bg-indigo-50 dark:hover:bg-indigo-950/40 hover:text-indigo-600 dark:hover:text-indigo-300 transition-colors"
                                     @click="showSandboxActionsMenu = false; emit('open-docker-terminal')"
                                   >
                                     <CommandLineIcon class="h-3.5 w-3.5 text-emerald-500" />
-                                    <span>进入终端</span>
+                                    <span>{{ sandboxBackend === 'k8s' ? '进入 Pod' : '进入终端' }}</span>
                                   </button>
                                   <button
                                     type="button"
