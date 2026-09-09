@@ -259,6 +259,11 @@ def extract_tokens_from_message(msg: Any) -> dict:
             if isinstance(p_details, dict) and "cached_tokens" in p_details:
                 res["cache_input_tokens"] = int(p_details.get("cached_tokens") or 0)
                 res["usage_source"] = "openai_prompt_tokens_details"
+            else:
+                cache_read = getattr(usage_obj, "cache_read_input_tokens", None)
+                if cache_read is not None:
+                    res["cache_input_tokens"] = int(cache_read)
+                    res["usage_source"] = "cache_read_input_tokens"
         return res
     return res
 

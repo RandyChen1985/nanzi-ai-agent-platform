@@ -253,6 +253,7 @@ async def test_knowledge_agent_runner_prompt_layout_stable_before_dynamic():
         trace_id="t-layout",
         trace_buffer=[],
         turn_decision=turn_decision,
+        conversation_id="c-layout-enabled",
     )
 
     captured_system_contents = []
@@ -275,6 +276,13 @@ async def test_knowledge_agent_runner_prompt_layout_stable_before_dynamic():
         if False:
             yield {}
 
+    async def fake_config_get(key, default=None):
+        if key == "agent_prompt_layout_mode":
+            return "enabled"
+        if key == "agent_prompt_cache_rollout_percent":
+            return "100"
+        return "5"
+
     with patch(
         "app.services.ai.runners.knowledge_agent_runner.is_knowledge_base_enabled",
         AsyncMock(return_value=True),
@@ -288,7 +296,7 @@ async def test_knowledge_agent_runner_prompt_layout_stable_before_dynamic():
         AsyncMock(return_value=MagicMock()),
     ), patch(
         "app.services.config_service.ConfigService.get",
-        AsyncMock(return_value="5"),
+        side_effect=fake_config_get,
     ), patch.object(
         runner, "_execute_with_agentscope_native_agent", side_effect=fake_execute_agentscope
     ), patch.object(
@@ -308,3 +316,91 @@ async def test_knowledge_agent_runner_prompt_layout_stable_before_dynamic():
     if "本轮执行上下文（平台路由快照）" in system_text:
         assert stable_idx < system_text.index("本轮执行上下文（平台路由快照）")
         assert system_text.count("本轮执行上下文（平台路由快照）") == 1
+
+
+@pytest.mark.asyncio
+async def test_knowledge_agent_runner_prompt_layout_legacy_preserves_traditional_order():
+    """legacy 布局必须还原传统前置顺序：TURN_SYSTEM_HINT/路由在稳定系统提示之前。"""
+    from app.services.ai.turn_decision import TurnDecision
+
+    config = ChatConfig(
+        agent_id="kb-agent",
+        agent_name="知识库助手",
+        model_name="test",
+        temperature=0.0,
+        system_prompt="STABLE_KB_PROMPT: 知识助手基础指引",
+        tools=[],
+        capabilities=["knowledge_base"],
+        engine_config={"dataset_ids": ["kb-dataset-1"]},
+    )
+    turn_decision = TurnDecision(
+        route_status="resolved",
+        turn_kind="knowledge",
+        capability="knowledge_search",
+    )
+    runner = KnowledgeAgentRunner(
+        config=config,
+        trace_id="t-legacy",
+        trace_buffer=[],
+        turn_decision=turn_decision,
+        # 不传 conversation_id：应回到 legacy，不误入 enabled 桶。
+    )
+
+    captured_system_contents = []
+
+    async def fake_execute_agentscope(**kwargs):
+        captured_system_contents.append(kwargs.get("system_content", ""))
+        yield {"content": "ok"}
+
+    from app.services.ai.runtime.agentscope.tools import RuntimeToolSpec
+
+    kb_tool = RuntimeToolSpec(
+        name="search_knowledge_base",
+        description="search kb",
+        parameters_schema={},
+        source_type="system",
+        callable=lambda **kw: "ok",
+    )
+
+    async def fake_auto_invoke(*args, **kwargs):
+        if False:
+            yield {}
+
+    async def fake_config_get(key, default=None):
+        if key == "agent_prompt_layout_mode":
+            return "legacy"
+        if key == "agent_prompt_cache_rollout_percent":
+            return "0"
+        return "5"
+
+    with patch(
+        "app.services.ai.runners.knowledge_agent_runner.is_knowledge_base_enabled",
+        AsyncMock(return_value=True),
+    ), patch(
+        "app.services.ai.runners.knowledge_agent_runner.resolve_knowledge_dataset_ids",
+        AsyncMock(return_value=(["kb-1"], None)),
+    ), patch.object(
+        runner, "_auto_invoke_search_knowledge_base", side_effect=fake_auto_invoke
+    ), patch(
+        "app.services.ai.runners.knowledge_agent_runner.AgentConfigProvider.get_configured_llm",
+        AsyncMock(return_value=MagicMock()),
+    ), patch(
+        "app.services.config_service.ConfigService.get",
+        side_effect=fake_config_get,
+    ), patch.object(
+        runner, "_execute_with_agentscope_native_agent", side_effect=fake_execute_agentscope
+    ), patch.object(
+        runner, "_resolve_knowledge_tools", AsyncMock(return_value=[kb_tool])
+    ):
+        events = []
+        async for chunk in runner.execute([{"role": "user", "content": "查询知识"}]):
+            events.append(chunk)
+
+    assert len(captured_system_contents) >= 1
+    system_text = captured_system_contents[0]
+    assert "STABLE_KB_PROMPT" in system_text
+    stable_idx = system_text.index("STABLE_KB_PROMPT")
+    from app.services.ai.executors.prompts import KnowledgeChatPrompts
+    if KnowledgeChatPrompts.TURN_SYSTEM_HINT in system_text:
+        # legacy：TURN_SYSTEM_HINT 传统前置，出现在稳定提示之前。
+        assert system_text.index(KnowledgeChatPrompts.TURN_SYSTEM_HINT) < stable_idx

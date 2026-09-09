@@ -43,6 +43,28 @@ class BaseExecutor(ABC):
         """Return whether this request explicitly enabled grounding audits."""
         return self.debug_options.get("grounding_enabled") is True
 
+    async def _using_cache_layout(self) -> bool:
+        """是否启用 prompt-cache 稳定前缀布局（enabled 灰度桶）。
+
+        legacy/observe 一律返回 False，保持传统前后置行为；只有进入
+        enabled 灰度桶时，runner 才把动态内容放到稳定段之后。
+        任何配置读取异常一律失败回退到传统布局，绝不误开新布局。
+        """
+        try:
+            from app.services.ai.prompt_assembler import (
+                resolve_prompt_layout_config,
+                should_use_prompt_cache_layout,
+            )
+
+            cfg = await resolve_prompt_layout_config()
+            return should_use_prompt_cache_layout(
+                cfg.mode,
+                cfg.rollout_percent,
+                self.conversation_id,
+            )
+        except Exception:
+            return False
+
     @abstractmethod
     async def execute(
         self,

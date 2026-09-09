@@ -346,8 +346,14 @@ def append_time_anchor_for_user_question(
     *,
     timezone: str | None = None,
     now: datetime | None = None,
+    prepend: bool = True,
 ) -> str:
-    """在需要时将时间锚点块前置到 system prompt（已含锚点时跳过）。"""
+    """在需要时将时间锚点块加入 system prompt（已含锚点时跳过）。
+
+    ``prepend=True`` 保持传统行为——时间锚点块置于最前；
+    ``prepend=False`` 将时间锚点块追加到末尾，供 prompt-cache 稳定前缀布局
+    （enabled 桶）使用，避免动态锚点切断稳定前缀。
+    """
     base = str(system_content or "")
     if not should_attach_time_anchor_block(user_question):
         return base
@@ -371,7 +377,10 @@ def append_time_anchor_for_user_question(
             f"\n【本轮问题时间解读】「{expectation.label}」"
             f"→ {expectation.start.isoformat()} 至 {expectation.end.isoformat()}\n"
         )
-    return f"{block}{extra}\n\n{base}"
+    anchor_body = f"{block}{extra}"
+    if prepend:
+        return f"{anchor_body}\n\n{base}"
+    return f"{base}\n\n{anchor_body}".strip("\n")
 
 
 def resolve_relative_time_expectation(

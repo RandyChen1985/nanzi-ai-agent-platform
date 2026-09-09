@@ -413,7 +413,9 @@ async def test_assistant_agent_runner_prompt_layout_stable_before_dynamic_and_no
     with patch(
         "app.services.ai.config.AgentConfigProvider.get_synthesis_llm",
         AsyncMock(return_value=FakeSimpleLLM()),
-    ), patch.object(runner, "_resolve_runtime_tools_from_config", AsyncMock(return_value=[])):
+    ), patch.object(runner, "_resolve_runtime_tools_from_config", AsyncMock(return_value=[])), patch.object(
+        runner, "_using_cache_layout", AsyncMock(return_value=True)
+    ):
         events = []
         async for chunk in runner.execute([{"role": "user", "content": "hello"}]):
             events.append(chunk)

@@ -10,6 +10,21 @@ from app.services.ai.executors.prompts import DataQueryPrompts
 from app.services.ai.time_anchor import build_data_query_time_anchor_block
 
 
+async def _runner_uses_cache_layout(runner: Any) -> bool:
+    """Determine whether to enable the prompt-cache layout.
+
+    Tolerates runners/mocks that do not expose ``_using_cache_layout``
+    (fail closed to the traditional layout).
+    """
+    method = getattr(runner, "_using_cache_layout", None)
+    if not callable(method):
+        return False
+    result = method()
+    if hasattr(result, "__await__"):
+        return bool(await result)
+    return bool(result)
+
+
 def build_data_query_state_hint(
     runner: Any,
     *,
@@ -90,46 +105,73 @@ async def build_system_content(
     include_context_action: bool = False,
 ) -> str:
     system_prompt = runner.config.system_prompt or ""
-    if "{dataset_menu}" in system_prompt:
+    use_cache_layout = await _runner_uses_cache_layout(runner)
+    has_menu_placeholder = "{dataset_menu}" in system_prompt
+    dataset_menu = ""
+    if has_menu_placeholder:
         user_id = runner.user_info.get("user_id") if runner.user_info else None
         is_admin = runner.user_info.get("role") == "admin" if runner.user_info else False
         dataset_menu = await AgentConfigProvider.get_dataset_menu(
             user_id=user_id,
             is_admin=is_admin,
         )
-        system_prompt = system_prompt.replace("{dataset_menu}", dataset_menu)
-    context_action_prompt = ""
-    if include_context_action:
-        context_action_prompt = f"\n\n{DataQueryPrompts.context_action_guide()}"
-    time_anchor = build_data_query_time_anchor_block()
+    context_action_prompt = DataQueryPrompts.context_action_guide() if include_context_action else ""
+    time_anchor = build_data_query_time_anchor_block().strip()
     sql_plan_block = (
-        DataQueryPrompts.SQL_PLAN_ENFORCEMENT + "\n\n"
-        if runner._is_sql_plan_enabled()
-        else ""
-    )
+        DataQueryPrompts.SQL_PLAN_ENFORCEMENT if runner._is_sql_plan_enabled() else ""
+    ).strip()
     state_hint = build_data_query_state_hint(
         runner,
         context_action_result=context_action_result,
         include_context_action=include_context_action,
-    )
-    stable_blocks = [
+    ).strip()
+
+    if use_cache_layout:
+        # enabled 灰度桶：稳定段（缓存可复用）在前，用户动态内容全部后置。
+        # dataset_menu 是按用户动态生成的内容，不能放进稳定前缀。
+        stable_prompt = (
+            system_prompt.replace("{dataset_menu}", "") if has_menu_placeholder else system_prompt
+        )
+        stable_blocks = [
+            DataQueryPrompts.GLOBAL_GUARDRAILS,
+            DataQueryPrompts.SQL_PAGINATION_SYNTAX_GUIDE,
+        ]
+        if sql_plan_block:
+            stable_blocks.append(sql_plan_block)
+        stable_blocks.append(DataQueryPrompts.FOLLOWUP_REUSE_CONSTRAINT)
+        if stable_prompt.strip():
+            stable_blocks.append(stable_prompt.strip())
+        dynamic_blocks = []
+        if dataset_menu.strip():
+            dynamic_blocks.append(dataset_menu.strip())
+        if time_anchor:
+            dynamic_blocks.append(time_anchor)
+        if state_hint:
+            dynamic_blocks.append(state_hint)
+        if context_action_prompt.strip():
+            dynamic_blocks.append(context_action_prompt.strip())
+        return "\n\n".join(b for b in (*stable_blocks, *dynamic_blocks) if b)
+
+    # legacy/observe：还原传统顺序（不改动默认路径行为）。
+    tail_prompt = (
+        system_prompt.replace("{dataset_menu}", dataset_menu) if has_menu_placeholder else system_prompt
+    ).strip()
+    if context_action_prompt.strip():
+        tail_prompt = f"{tail_prompt}\n\n{context_action_prompt.strip()}" if tail_prompt else context_action_prompt.strip()
+    parts = [
         DataQueryPrompts.GLOBAL_GUARDRAILS,
         DataQueryPrompts.SQL_PAGINATION_SYNTAX_GUIDE,
     ]
-    if sql_plan_block.strip():
-        stable_blocks.append(sql_plan_block.strip())
-    stable_blocks.append(DataQueryPrompts.FOLLOWUP_REUSE_CONSTRAINT)
-    if system_prompt.strip():
-        stable_blocks.append(system_prompt.strip())
-
-    dynamic_blocks = [
-        time_anchor.strip(),
-        state_hint.strip(),
-    ]
-    if context_action_prompt.strip():
-        dynamic_blocks.append(context_action_prompt.strip())
-
-    return "\n\n".join(b for b in (*stable_blocks, *dynamic_blocks) if b)
+    if sql_plan_block:
+        parts.append(sql_plan_block)
+    if time_anchor:
+        parts.append(time_anchor)
+    parts.append(DataQueryPrompts.FOLLOWUP_REUSE_CONSTRAINT)
+    if state_hint:
+        parts.append(state_hint)
+    if tail_prompt:
+        parts.append(tail_prompt)
+    return "\n\n".join(p for p in parts if p and p.strip())
 
 
 def build_context_action_result_message(

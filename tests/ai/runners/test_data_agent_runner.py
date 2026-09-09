@@ -481,7 +481,9 @@ async def test_data_agent_runner_system_content_includes_data_guardrails(data_co
 
     runner = DataAgentRunner(config=data_config, trace_id="trace-data", trace_buffer=[])
 
-    system_content = await runner._build_system_content()
+    # enabled 灰度布局下验证稳定提示在前、动态时间锚点在后。
+    with patch.object(runner, "_using_cache_layout", AsyncMock(return_value=True)):
+        system_content = await runner._build_system_content()
 
     assert DataQueryPrompts.GLOBAL_GUARDRAILS in system_content
     assert DataQueryPrompts.SQL_PAGINATION_SYNTAX_GUIDE in system_content
