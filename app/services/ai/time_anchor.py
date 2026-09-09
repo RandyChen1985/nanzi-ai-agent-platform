@@ -148,7 +148,7 @@ def build_data_query_time_anchor_block(
         f"- 今年（年初至今天）：{year_start.isoformat()} 至 {today.isoformat()}\n"
         f"- 去年：{last_year_start.isoformat()} 至 {last_year_end.isoformat()}\n"
         "\n"
-        "【相对时间使用规则】\n"
+        "【相对时间使用规则】【相对时间 SQL 规则】\n"
         "1. 用户问题含相对时间时，必须使用以上锚点换算为具体 YYYY-MM-DD 起止日（含 API/SQL/MCP 参数），禁止臆测年份或月份。\n"
         "2. 「本月/当月」默认按「月初至今（含今天）」；若用户明确要求整月，使用「本月完整自然月」起止日。\n"
         "3. 已注入本锚点时，优先直接引用锚点日期；每轮用户问题内 get_current_time / resolve_relative_dates 最多各调用 1 次，禁止重复取时。\n"

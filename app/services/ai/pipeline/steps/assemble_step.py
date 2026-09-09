@@ -18,6 +18,8 @@ from app.services.ai.prompt_assembler import (
     PromptAssemblyInput,
     assemble_system_prompt,
     resolve_prompt_assembler_flags,
+    resolve_prompt_layout_config,
+    should_use_prompt_cache_layout,
 )
 from app.services.ai.business_context import sanitize_injected_context
 from app.services.ai.agent_prompts import AgentServicePrompts
@@ -240,6 +242,32 @@ class AssembleStep(BasePipelineStep):
 
         # 2. 分层 Prompt 组装
         cache_boundary_enabled, cache_reorder_enabled = await resolve_prompt_assembler_flags()
+        layout_config = await resolve_prompt_layout_config()
+        effective_layout_mode = "legacy"
+        if layout_config.mode == "observe":
+            effective_layout_mode = "observe"
+        elif layout_config.mode == "enabled":
+            if should_use_prompt_cache_layout(
+                "enabled",
+                layout_config.rollout_percent,
+                context.conversation_id,
+            ):
+                effective_layout_mode = "enabled"
+            else:
+                effective_layout_mode = "legacy"
+
+        shared_state["prompt_layout_mode"] = layout_config.mode
+        shared_state["effective_prompt_layout_mode"] = effective_layout_mode
+
+        from app.core.context import get_current_agent_context
+
+        current_ctx = get_current_agent_context()
+        if current_ctx is not None:
+            if getattr(current_ctx, "runtime_model_info", None) is None:
+                current_ctx.runtime_model_info = {}
+            if isinstance(current_ctx.runtime_model_info, dict):
+                current_ctx.runtime_model_info["prompt_layout_mode"] = effective_layout_mode
+
         engine_type = (
             (getattr(agent_config, "engine_type", None) or "LOCAL") if agent_config else "LOCAL"
         )
@@ -263,6 +291,7 @@ class AssembleStep(BasePipelineStep):
             quick_suggestions_forbidden=forbid_quick_suggestions,
             runtime_tool_names=effective_prompt_tool_names,
             turn_decision=turn_decision,
+            prompt_layout_mode=effective_layout_mode,
         )
         assembled_prompt = assemble_system_prompt(assembly_input)
 
@@ -281,6 +310,9 @@ class AssembleStep(BasePipelineStep):
                 "dynamic_chars": len(assembled_prompt.dynamic_suffix),
                 "cache_boundary_enabled": assembled_prompt.cache_boundary_enabled,
                 "cache_reorder_enabled": assembled_prompt.cache_reorder_enabled,
+                "prompt_layout_mode": layout_config.mode,
+                "effective_prompt_layout_mode": effective_layout_mode,
+                "prompt_cache_rollout_percent": layout_config.rollout_percent,
                 "section_names": list(assembled_prompt.section_names),
                 "section_char_counts": assembled_prompt.section_char_counts or {},
             }

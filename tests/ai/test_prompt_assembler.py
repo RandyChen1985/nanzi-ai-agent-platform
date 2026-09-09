@@ -1,4 +1,5 @@
 import asyncio
+from dataclasses import FrozenInstanceError
 from types import SimpleNamespace
 
 import pytest
@@ -6,15 +7,152 @@ import pytest
 from app.services.ai.prompt_assembler import (
     NANZI_PROMPT_CACHE_BOUNDARY,
     PromptAssemblyInput,
+    PromptLayoutConfig,
+    PromptPlan,
     assemble_system_prompt,
+    resolve_prompt_layout_config,
     resolve_prompt_assembler_flags,
     resolve_effective_prompt_tool_names,
     resolve_effective_prompt_tool_names_for_turn,
+    should_use_prompt_cache_layout,
 )
 from app.services.ai.agent_prompts import AgentServicePrompts
+from app.services.ai.prompt_sections import PromptSection
 from app.services.ai.turn_decision import TurnDecision
 
 pytestmark = pytest.mark.no_infrastructure
+
+
+@pytest.mark.asyncio
+async def test_resolve_prompt_layout_config_normalizes_config_values(monkeypatch):
+    values = {
+        "agent_prompt_layout_mode": " ENABLED ",
+        "agent_prompt_cache_rollout_percent": "100",
+    }
+
+    async def fake_get(key, default=None):
+        return values.get(key, default)
+
+    monkeypatch.setattr("app.services.config_service.ConfigService.get", fake_get)
+
+    config = await resolve_prompt_layout_config()
+
+    assert config.mode == "enabled"
+    assert config.rollout_percent == 100
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("rollout", ["-1", "101", "100.5", "125.5"])
+async def test_resolve_prompt_layout_config_fails_closed_for_out_of_range_or_non_integer_rollout(
+    monkeypatch, rollout
+):
+    async def fake_get(key, default=None):
+        values = {
+            "agent_prompt_layout_mode": "enabled",
+            "agent_prompt_cache_rollout_percent": rollout,
+        }
+        return values.get(key, default)
+
+    monkeypatch.setattr("app.services.config_service.ConfigService.get", fake_get)
+
+    config = await resolve_prompt_layout_config()
+
+    assert config.mode == "enabled"
+    assert config.rollout_percent == 0
+
+
+@pytest.mark.asyncio
+async def test_resolve_prompt_layout_config_fails_closed_for_invalid_values(monkeypatch):
+    values = {
+        "agent_prompt_layout_mode": "unsupported",
+        "agent_prompt_cache_rollout_percent": "Infinity",
+    }
+
+    async def fake_get(key, default=None):
+        return values.get(key, default)
+
+    monkeypatch.setattr("app.services.config_service.ConfigService.get", fake_get)
+
+    config = await resolve_prompt_layout_config()
+
+    assert config.mode == "legacy"
+    assert config.rollout_percent == 0
+
+
+@pytest.mark.asyncio
+async def test_resolve_prompt_layout_config_defaults_to_legacy_and_zero(monkeypatch):
+    async def fake_get(key, default=None):
+        return default
+
+    monkeypatch.setattr("app.services.config_service.ConfigService.get", fake_get)
+
+    assert await resolve_prompt_layout_config() == PromptLayoutConfig()
+
+
+@pytest.mark.asyncio
+async def test_resolve_prompt_layout_config_reads_new_values_concurrently(monkeypatch):
+    active = 0
+    max_active = 0
+
+    async def fake_get(key, default=None):
+        nonlocal active, max_active
+        active += 1
+        max_active = max(max_active, active)
+        try:
+            await asyncio.sleep(0)
+            return {"agent_prompt_layout_mode": "enabled", "agent_prompt_cache_rollout_percent": "50"}.get(
+                key, default
+            )
+        finally:
+            active -= 1
+
+    monkeypatch.setattr("app.services.config_service.ConfigService.get", fake_get)
+
+    assert await resolve_prompt_layout_config() == PromptLayoutConfig("enabled", 50)
+    assert max_active == 2
+
+
+@pytest.mark.asyncio
+async def test_explicit_legacy_layout_cannot_be_enabled_by_old_boolean_flags(monkeypatch):
+    values = {
+        "agent_prompt_layout_mode": "legacy",
+        "agent_prompt_cache_rollout_percent": "100",
+        "agent_prompt_cache_boundary_enabled": "true",
+        "agent_prompt_cache_reorder_enabled": "true",
+    }
+
+    async def fake_get(key, default=None):
+        return values.get(key, default)
+
+    monkeypatch.setattr("app.services.config_service.ConfigService.get", fake_get)
+
+    config = await resolve_prompt_layout_config()
+
+    assert await resolve_prompt_assembler_flags() == (True, True)
+    assert should_use_prompt_cache_layout(config.mode, config.rollout_percent, "conversation-a") is False
+
+
+def test_prompt_layout_config_is_immutable():
+    config = PromptLayoutConfig()
+
+    with pytest.raises(FrozenInstanceError):
+        config.mode = "enabled"
+
+
+def test_prompt_layout_uses_enabled_session_bucket_and_fails_closed_without_conversation():
+    assert should_use_prompt_cache_layout("enabled", 100, "conversation-a") is True
+    assert should_use_prompt_cache_layout("enabled", 0, "conversation-a") is False
+    assert should_use_prompt_cache_layout("observe", 100, "conversation-a") is False
+    assert should_use_prompt_cache_layout("enabled", 100, "") is False
+
+
+def test_prompt_layout_session_bucket_is_deterministic():
+    decisions = [
+        should_use_prompt_cache_layout("enabled", 43, "conversation-deterministic")
+        for _ in range(3)
+    ]
+
+    assert decisions == [decisions[0]] * 3
 
 
 @pytest.mark.asyncio
@@ -92,6 +230,114 @@ def test_cache_reorder_places_agent_db_before_dynamic_blocks():
     preloaded_idx = text.index("Preloaded block")
 
     assert agent_idx < boundary_idx < preloaded_idx
+
+
+def test_enabled_layout_renders_stable_sections_before_all_turn_context_without_marker():
+    assembled = assemble_system_prompt(
+        _params(
+            layout_mode="enabled",
+            cache_boundary_enabled=True,
+            cache_reorder_enabled=True,
+            user_profile="User profile",
+            accessible_resources="Accessible resources",
+            sub_agents_context="Sub-agent context",
+            turn_decision=TurnDecision(source="current_turn"),
+        )
+    )
+
+    assert "NANZI_PROMPT_CACHE_BOUNDARY" not in assembled.full_text
+    assert "<!-- NANZI_CACHE_BOUNDARY -->" not in assembled.full_text
+    assert assembled.full_text.index("Agent DB prompt") < assembled.full_text.index("User profile")
+    assert assembled.full_text.index("Agent DB prompt") < assembled.full_text.index("本轮执行上下文")
+    assert assembled.full_text.index("Agent DB prompt") < assembled.full_text.index("Accessible resources")
+    assert assembled.full_text.index("Agent DB prompt") < assembled.full_text.index("Sub-agent context")
+    assert assembled.section_names[:2] == ("platform_fixed", "agent_system_prompt")
+    assert "platform_capabilities" in assembled.section_names
+    assert "user_profile" in assembled.section_names
+    assert assembled.section_char_counts["agent_system_prompt"] == len("Agent DB prompt")
+
+
+def test_prompt_plan_renders_only_its_stable_then_dynamic_sections():
+    plan = PromptPlan(
+        stable_sections=(
+            PromptSection("stable", 0, "stable text", stability="stable"),
+        ),
+        dynamic_sections=(
+            PromptSection("dynamic", 0, "dynamic text", stability="dynamic"),
+        ),
+    )
+
+    assert plan.render_stable() == "stable text"
+    assert plan.render_dynamic() == "dynamic text"
+    assert plan.render() == "stable text\n\ndynamic text"
+
+
+def test_prompt_plan_uses_one_filtered_sorted_sequence_for_render_and_metadata():
+    plan = PromptPlan(
+        stable_sections=(
+            PromptSection("stable_later", 20, "stable later", stability="stable"),
+            PromptSection("stable_first", 10, "stable first", stability="stable"),
+            PromptSection("disabled", 0, "hidden", enabled=False, stability="stable"),
+        ),
+        dynamic_sections=(
+            PromptSection("dynamic_later", 20, "dynamic later", stability="dynamic"),
+            PromptSection("dynamic_first", 10, "dynamic first", stability="dynamic"),
+            PromptSection("blank", 0, "   ", stability="dynamic"),
+        ),
+    )
+
+    assert plan.render_stable() == "stable first\n\nstable later"
+    assert plan.render_dynamic() == "dynamic first\n\ndynamic later"
+    assert plan.render() == "stable first\n\nstable later\n\ndynamic first\n\ndynamic later"
+    assert plan.section_names() == (
+        "stable_first",
+        "stable_later",
+        "dynamic_first",
+        "dynamic_later",
+    )
+    assert plan.section_char_counts() == {
+        "stable_first": len("stable first"),
+        "stable_later": len("stable later"),
+        "dynamic_first": len("dynamic first"),
+        "dynamic_later": len("dynamic later"),
+    }
+
+
+def test_prompt_plan_rejects_duplicate_section_names():
+    with pytest.raises(ValueError, match="重复"):
+        PromptPlan(
+            stable_sections=(PromptSection("same", 0, "stable", stability="stable"),),
+            dynamic_sections=(PromptSection("same", 0, "dynamic", stability="dynamic"),),
+        )
+
+
+@pytest.mark.parametrize(
+    ("runtime_tool_names", "quick_suggestions_forbidden"),
+    (
+        (set(), False),
+        ({"Bash", "exec_command"}, False),
+        ({"Bash", "ask_user_question"}, False),
+        ({"browser_snapshot"}, True),
+    ),
+)
+def test_legacy_platform_prompt_equals_fixed_and_dynamic_sections(
+    runtime_tool_names, quick_suggestions_forbidden
+):
+    kwargs = {
+        "agent_config": SimpleNamespace(tools=[]),
+        "runtime_tool_names": runtime_tool_names,
+        "quick_suggestions_forbidden": quick_suggestions_forbidden,
+    }
+
+    legacy = AgentServicePrompts.prepend_platform_global_system_prompt(None, **kwargs)
+    split = "\n\n".join(
+        (
+            AgentServicePrompts.platform_fixed_system_prompt(),
+            AgentServicePrompts.platform_dynamic_capability_prompt(**kwargs),
+        )
+    )
+
+    assert legacy == split
 
 
 def test_platform_prompt_exposes_explicit_authority_and_safe_meta_contract():

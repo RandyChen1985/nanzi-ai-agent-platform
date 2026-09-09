@@ -112,15 +112,24 @@ async def build_system_content(
         context_action_result=context_action_result,
         include_context_action=include_context_action,
     )
-    return (
-        f"{DataQueryPrompts.GLOBAL_GUARDRAILS}\n\n"
-        f"{DataQueryPrompts.SQL_PAGINATION_SYNTAX_GUIDE}\n\n"
-        f"{sql_plan_block}"
-        f"{time_anchor}\n\n"
-        f"{DataQueryPrompts.FOLLOWUP_REUSE_CONSTRAINT}\n\n"
-        f"{state_hint}\n\n"
-        f"{system_prompt}{context_action_prompt}"
-    )
+    stable_blocks = [
+        DataQueryPrompts.GLOBAL_GUARDRAILS,
+        DataQueryPrompts.SQL_PAGINATION_SYNTAX_GUIDE,
+    ]
+    if sql_plan_block.strip():
+        stable_blocks.append(sql_plan_block.strip())
+    stable_blocks.append(DataQueryPrompts.FOLLOWUP_REUSE_CONSTRAINT)
+    if system_prompt.strip():
+        stable_blocks.append(system_prompt.strip())
+
+    dynamic_blocks = [
+        time_anchor.strip(),
+        state_hint.strip(),
+    ]
+    if context_action_prompt.strip():
+        dynamic_blocks.append(context_action_prompt.strip())
+
+    return "\n\n".join(b for b in (*stable_blocks, *dynamic_blocks) if b)
 
 
 def build_context_action_result_message(

@@ -232,6 +232,37 @@ def _extract_tool_calls_detail(content: Any) -> list[dict[str, Any]]:
     return tool_calls
 
 
+def _extract_usage_details(usage_obj: Any) -> tuple[int, int, int, str]:
+    """从 AgentScope/OpenAI/Anthropic usage 提取 token 与归一化缓存命中。"""
+    if usage_obj is None:
+        return 0, 0, 0, "unavailable"
+    in_tokens = int(
+        _safe_getattr(usage_obj, "input_tokens", 0)
+        or _safe_getattr(usage_obj, "prompt_tokens", 0)
+        or 0
+    )
+    out_tokens = int(
+        _safe_getattr(usage_obj, "output_tokens", 0)
+        or _safe_getattr(usage_obj, "completion_tokens", 0)
+        or 0
+    )
+    cache_tokens = 0
+    source = "agentscope_usage"
+
+    cached = _safe_getattr(usage_obj, "cache_input_tokens", None)
+    if cached is not None:
+        cache_tokens = int(cached)
+    else:
+        p_details = _safe_getattr(usage_obj, "prompt_tokens_details", None)
+        if isinstance(p_details, dict) and "cached_tokens" in p_details:
+            cache_tokens = int(p_details.get("cached_tokens") or 0)
+            source = "openai_prompt_tokens_details"
+        elif _safe_getattr(usage_obj, "cache_read_input_tokens", None) is not None:
+            cache_tokens = int(_safe_getattr(usage_obj, "cache_read_input_tokens") or 0)
+            source = "cache_read_input_tokens"
+    return in_tokens, out_tokens, cache_tokens, source
+
+
 async def _stream_with_stats(
     gen: AsyncGenerator,
     *,
@@ -305,15 +336,14 @@ async def _stream_with_stats(
     final_text = last_complete_text if last_complete_text is not None else "".join(full_text_chunks)
     final_reasoning = last_complete_reasoning if last_complete_reasoning is not None else "".join(full_reasoning_chunks)
 
+    in_tokens, out_tokens, cache_tokens, usage_source = _extract_usage_details(last_usage)
     record = {
         **record_base,
-        "input_tokens": _safe_getattr(last_usage, "input_tokens", 0) or 0,
-        "output_tokens": _safe_getattr(last_usage, "output_tokens", 0) or 0,
-        "cache_input_tokens": _safe_getattr(last_usage, "cache_input_tokens", 0) or 0,
-        "total_tokens": (
-            (_safe_getattr(last_usage, "input_tokens", 0) or 0)
-            + (_safe_getattr(last_usage, "output_tokens", 0) or 0)
-        ),
+        "input_tokens": in_tokens,
+        "output_tokens": out_tokens,
+        "cache_input_tokens": cache_tokens,
+        "total_tokens": in_tokens + out_tokens,
+        "usage_source": usage_source,
         "has_tool_calls": has_tool_calls,
         "tool_names": all_tool_names,
         "tool_calls": all_tool_calls,
@@ -356,6 +386,7 @@ class ModelCallStatsMiddleware(MiddlewareBase):
         completion_reserve: int | None = None,
         request_input_budget: int | None = None,
         prompt_overhead_reservation: int | None = None,
+        prompt_layout_mode: str | None = None,
     ) -> None:
         self._user_id = user_id
         self._conversation_id = conversation_id
@@ -367,6 +398,7 @@ class ModelCallStatsMiddleware(MiddlewareBase):
         self._completion_reserve = completion_reserve
         self._request_input_budget = request_input_budget
         self._prompt_overhead_reservation = prompt_overhead_reservation
+        self._prompt_layout_mode = prompt_layout_mode
         self._call_index = 0
         # 平台侧对话上下文预算（agent_context_max_tokens，默认 64k）的缓存与解析标记。
         # None 表示「尚未解析」，解析一次后缓存，避免每轮工具调用重复查配置。
@@ -509,6 +541,7 @@ class ModelCallStatsMiddleware(MiddlewareBase):
             "message_roles": message_roles,
             "contains_compaction": contains_compaction,
             "context_breakdown": context_breakdown,
+            "prompt_layout_mode": self._prompt_layout_mode,
         }
 
         # ── 流式响应：return 包装后的 async generator ──────────────────────
@@ -526,9 +559,7 @@ class ModelCallStatsMiddleware(MiddlewareBase):
         tool_calls = _extract_tool_calls_detail(_safe_getattr(result, "content", None))
         has_tool_calls = bool(tool_calls)
         tool_names = [c["name"] for c in tool_calls]
-        input_tokens = _safe_getattr(usage, "input_tokens", 0) or 0
-        output_tokens = _safe_getattr(usage, "output_tokens", 0) or 0
-        cache_input_tokens = _safe_getattr(usage, "cache_input_tokens", 0) or 0
+        input_tokens, output_tokens, cache_input_tokens, usage_source = _extract_usage_details(usage)
         
         response_text = _safe_getattr(result, "text", "") or ""
         reasoning_content = _safe_getattr(result, "reasoning_content", "") or ""
@@ -558,6 +589,7 @@ class ModelCallStatsMiddleware(MiddlewareBase):
             "output_tokens": output_tokens,
             "cache_input_tokens": cache_input_tokens,
             "total_tokens": input_tokens + output_tokens,
+            "usage_source": usage_source,
             "has_tool_calls": has_tool_calls,
             "tool_names": tool_names,
             "tool_calls": tool_calls,

@@ -110,6 +110,7 @@ def build_runtime_middlewares(
                 prompt_overhead_reservation=runtime_info.get(
                     "prompt_overhead_reservation_tokens"
                 ),
+                prompt_layout_mode=runtime_info.get("prompt_layout_mode"),
             )
         )
     return middlewares

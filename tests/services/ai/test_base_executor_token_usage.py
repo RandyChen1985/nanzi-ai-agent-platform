@@ -49,3 +49,37 @@ def test_record_llm_token_usage_skips_zero_usage():
     runner = _StubExecutor(config=config, trace_id="trace-2", trace_buffer=[])
     runner.record_llm_token_usage(prompt_tokens=0, completion_tokens=0)
     assert runner.trace_buffer == []
+
+
+def test_extract_tokens_reads_openai_cached_prompt_tokens():
+    from app.services.ai.executors.common import extract_tokens_from_message
+
+    message = SimpleNamespace(
+        response_metadata={
+            "token_usage": {
+                "prompt_tokens": 100,
+                "completion_tokens": 5,
+                "prompt_tokens_details": {"cached_tokens": 80},
+            }
+        }
+    )
+    tokens = extract_tokens_from_message(message)
+    assert tokens["prompt_tokens"] == 100
+    assert tokens["completion_tokens"] == 5
+    assert tokens["cache_input_tokens"] == 80
+    assert tokens["usage_source"] == "openai_prompt_tokens_details"
+
+
+def test_extract_tokens_defaults_cache_input_tokens_to_zero_when_missing():
+    from app.services.ai.executors.common import extract_tokens_from_message
+
+    message = SimpleNamespace(
+        response_metadata={
+            "token_usage": {
+                "prompt_tokens": 100,
+                "completion_tokens": 5,
+            }
+        }
+    )
+    tokens = extract_tokens_from_message(message)
+    assert tokens["cache_input_tokens"] == 0

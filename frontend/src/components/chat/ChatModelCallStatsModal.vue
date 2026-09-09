@@ -95,11 +95,16 @@ const statsSummary = computed(() => {
   const totalDuration = props.stats.reduce((acc: number, cur: any) => acc + (cur.elapsed_ms || 0), 0);
   const totalIn = props.stats.reduce((acc: number, cur: any) => acc + (cur.input_tokens || 0), 0);
   const totalOut = props.stats.reduce((acc: number, cur: any) => acc + (cur.output_tokens || 0), 0);
+  const totalCacheIn = props.stats.reduce((acc: number, cur: any) => acc + (cur.cache_input_tokens || 0), 0);
+  const hitRate = totalIn > 0 && totalCacheIn > 0 ? Math.round((totalCacheIn / totalIn) * 100) : 0;
   return {
     totalCalls: props.stats.length,
     totalDuration: (totalDuration / 1000).toFixed(2),
     totalIn,
     totalOut,
+    totalCacheIn,
+    hitRate,
+    hasCacheHit: totalCacheIn > 0,
   };
 });
 </script>
@@ -150,7 +155,7 @@ const statsSummary = computed(() => {
       <!-- Content -->
       <div v-else class="space-y-4">
         <!-- Summary stats -->
-        <div class="grid grid-cols-4 gap-2 text-center">
+        <div class="grid grid-cols-5 gap-1.5 sm:gap-2 text-center">
           <div class="bg-gray-50 dark:bg-gray-900/40 p-2 rounded-lg border border-gray-100/50 dark:border-gray-700/30">
             <div class="text-[10px] text-gray-400 dark:text-gray-500">调用次数</div>
             <div class="text-xs font-bold text-gray-700 dark:text-gray-200 mt-0.5">{{ statsSummary.totalCalls }}</div>
@@ -166,6 +171,18 @@ const statsSummary = computed(() => {
           <div class="bg-gray-50 dark:bg-gray-900/40 p-2 rounded-lg border border-gray-100/50 dark:border-gray-700/30">
             <div class="text-[10px] text-gray-400 dark:text-gray-500">总输出</div>
             <div class="text-xs font-bold text-gray-700 dark:text-gray-200 mt-0.5">{{ statsSummary.totalOut }}</div>
+          </div>
+          <div
+            class="p-2 rounded-lg border transition-colors"
+            :class="statsSummary.hasCacheHit
+              ? 'bg-emerald-50/60 dark:bg-emerald-950/30 border-emerald-200/80 dark:border-emerald-800/40 text-emerald-600 dark:text-emerald-400'
+              : 'bg-gray-50 dark:bg-gray-900/40 border-gray-100/50 dark:border-gray-700/30 text-gray-700 dark:text-gray-200'"
+          >
+            <div class="text-[10px]" :class="statsSummary.hasCacheHit ? 'text-emerald-600 dark:text-emerald-400 font-medium' : 'text-gray-400 dark:text-gray-500'">缓存命中</div>
+            <div class="text-xs font-bold mt-0.5">
+              {{ statsSummary.totalCacheIn }}
+              <span v-if="statsSummary.hasCacheHit" class="text-[10px] font-normal">({{ statsSummary.hitRate }}%)</span>
+            </div>
           </div>
         </div>
 
@@ -210,12 +227,16 @@ const statsSummary = computed(() => {
                   {{ stat.input_message_count }}
                 </span>
               </div>
-              <div class="flex justify-between border-b border-gray-100/50 dark:border-gray-700/20 pb-1">
+              <div class="flex justify-between items-center border-b border-gray-100/50 dark:border-gray-700/20 pb-1">
                 <span class="text-gray-400">输入 Token:</span>
-                <span class="font-medium text-gray-700 dark:text-gray-300 font-mono">
+                <span class="font-medium text-gray-700 dark:text-gray-300 font-mono flex items-center">
                   {{ stat.input_tokens }}
-                  <span v-if="stat.cache_input_tokens > 0" class="text-[10px] text-green-500 font-normal ml-0.5" :title="'命中上下文缓存 Token: ' + stat.cache_input_tokens">
-                    (hit:{{ stat.cache_input_tokens }}, {{ ((stat.cache_input_tokens / stat.input_tokens) * 100).toFixed(0) }}%)
+                  <span
+                    v-if="stat.cache_input_tokens > 0"
+                    class="inline-flex items-center px-1.5 py-0.2 rounded text-[10px] font-sans font-medium bg-emerald-50 text-emerald-600 dark:bg-emerald-950/40 dark:text-emerald-400 border border-emerald-200/60 dark:border-emerald-800/40 ml-1.5"
+                    :title="'命中上下文缓存 Token: ' + stat.cache_input_tokens"
+                  >
+                    命中: {{ stat.cache_input_tokens }} ({{ Math.round((stat.cache_input_tokens / stat.input_tokens) * 100) }}%)
                   </span>
                 </span>
               </div>

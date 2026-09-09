@@ -359,12 +359,41 @@ class AgentServicePrompts:
         return "\n".join(lines)
 
     @staticmethod
+    def platform_fixed_system_prompt() -> str:
+        """返回不随本轮用户、工具或运行环境变化的平台固定规则。"""
+        return "\n\n".join(
+            (
+                AgentServicePrompts.PLATFORM_GLOBAL_SYSTEM_PROMPT,
+                AgentServicePrompts._PLATFORM_EXECUTION_BIAS_SECTION,
+                AgentServicePrompts._PLATFORM_TOOL_CALL_STYLE_SECTION,
+                AgentServicePrompts._PLATFORM_CAPABILITY_GAP_SECTION,
+            )
+        )
+
+    @staticmethod
+    def platform_dynamic_capability_prompt(
+        agent_config: Any = None,
+        *,
+        quick_suggestions_forbidden: bool = False,
+        runtime_tool_names: Optional[Iterable[str]] = None,
+    ) -> str:
+        """返回仅依赖本轮可用能力的动态平台规则。"""
+        return AgentServicePrompts.prepend_platform_global_system_prompt(
+            None,
+            agent_config=agent_config,
+            quick_suggestions_forbidden=quick_suggestions_forbidden,
+            runtime_tool_names=runtime_tool_names,
+            _include_fixed=False,
+        )
+
+    @staticmethod
     def prepend_platform_global_system_prompt(
         system_prompt: Optional[str],
         agent_config: Any = None,
         *,
         quick_suggestions_forbidden: bool = False,
         runtime_tool_names: Optional[Iterable[str]] = None,
+        _include_fixed: bool = True,
     ) -> str:
         """将平台全局守则置于 system_prompt 最前（在所有编排层 prepend 之后调用），并根据绑定的工具进行动态瘦身。"""
         # 获取所有可用工具的名称
@@ -408,11 +437,9 @@ class AgentServicePrompts:
         tool_names = {agentscope_tool_aliases.get(name, name) for name in tool_names}
 
         # 1. 基础部分：核心规则只有一个来源，动态能力按需追加。
-        prompt_parts = [AgentServicePrompts.PLATFORM_GLOBAL_SYSTEM_PROMPT]
-
-        prompt_parts.append(AgentServicePrompts._PLATFORM_EXECUTION_BIAS_SECTION)
-        prompt_parts.append(AgentServicePrompts._PLATFORM_TOOL_CALL_STYLE_SECTION)
-        prompt_parts.append(AgentServicePrompts._PLATFORM_CAPABILITY_GAP_SECTION)
+        prompt_parts = []
+        if _include_fixed:
+            prompt_parts.append(AgentServicePrompts.platform_fixed_system_prompt())
 
         tool_inventory = AgentServicePrompts._build_platform_tool_inventory_section(tool_names)
         if tool_inventory:

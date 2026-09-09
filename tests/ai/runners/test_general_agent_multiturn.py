@@ -17,6 +17,7 @@ def isolate_general_runtime(monkeypatch):
         yield True
 
     monkeypatch.setattr("app.core.redis.get_redis", _no_redis)
+    monkeypatch.setattr("app.services.config_service.get_redis", _no_redis)
     monkeypatch.setattr(
         "app.services.ai.runners.assistant_agent_runner.get_local_workspace",
         AsyncMock(return_value=None),
@@ -175,6 +176,8 @@ async def test_general_runner_second_turn_skips_repeat_read_with_restored_state(
     from agentscope.model import ChatModelBase, ChatResponse
     from agentscope.state import AgentState
 
+    from unittest.mock import MagicMock
+
     from app.core.llm.client import AgentScopeLLMHandle
     from app.services.ai.runners.assistant_agent_runner import AssistantAgentRunner
     from app.services.ai.runtime.agentscope.agent_runtime import build_tools_fingerprint
@@ -202,6 +205,10 @@ async def test_general_runner_second_turn_skips_repeat_read_with_restored_state(
     class FakeModel(ChatModelBase):
         class Parameters(BaseModel):
             pass
+
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self.formatter = type("FakeFormatter", (), {"supported_input_media_types": ["image", "text"]})()
 
         async def _call_api(self, model_name, messages, tools=None, tool_choice=None, **kwargs):
             tool_results = [
@@ -314,7 +321,14 @@ async def test_general_runner_second_turn_skips_repeat_read_with_restored_state(
         conversation_id="c-multiturn",
     )
 
+    fake_workspace = MagicMock()
     with patch(
+        "app.services.ai.runners.assistant_agent_runner.get_local_workspace",
+        AsyncMock(return_value=fake_workspace),
+    ), patch(
+        "app.services.ai.runners.assistant_agent_runner.bind_configured_tools_to_workspace",
+        AsyncMock(return_value=[runtime_spec]),
+    ), patch(
         "app.services.ai.config.AgentConfigProvider.get_configured_llm",
         AsyncMock(return_value=handle),
     ), patch(
@@ -345,5 +359,72 @@ async def test_general_runner_second_turn_skips_repeat_read_with_restored_state(
     assert any(
         chunk.get("content") == "second turn answer"
         for chunk in turn2_events
-        if "content" in chunk and "type" not in chunk
+        if "content" in chunk
     )
+
+
+@pytest.mark.asyncio
+async def test_assistant_agent_runner_prompt_layout_stable_before_dynamic_and_no_duplicate_route():
+    """AssistantAgentRunner 稳定系统提示词必须先于动态路由和安全模式，且路由提示不重复。"""
+    from unittest.mock import MagicMock
+    from app.schemas.agent import ChatConfig
+    from app.services.ai.runners.assistant_agent_runner import AssistantAgentRunner
+    from app.services.ai.turn_decision import TurnDecision
+
+    config = ChatConfig(
+        agent_id="test-agent",
+        agent_name="test_bot",
+        system_prompt="STABLE_BOT_PROMPT: You are a helpful assistant.",
+        engine_type="LOCAL",
+        model_name="test-model",
+        temperature=0.7,
+        tools=[],
+    )
+    turn_decision = TurnDecision(
+        route_status="resolved",
+        turn_kind="chat",
+        capability="chat",
+        turn_labels=["chat"],
+        user_action_type="chat",
+    )
+
+    captured_system_messages = []
+
+    class FakeSimpleLLM:
+        async def astream(self, messages):
+            for m in messages:
+                if getattr(m, "content", None) and "STABLE_BOT_PROMPT" in str(m.content):
+                    captured_system_messages.append(str(m.content))
+            chunk = MagicMock()
+            chunk.content = "simple reply"
+            yield chunk
+
+    runner = AssistantAgentRunner(
+        config=config,
+        trace_id="trace-layout",
+        trace_buffer=[],
+        turn_decision=turn_decision,
+        debug_options={
+            "grounding_enabled": True,
+            "grounding_action": {"type": "method"},
+        },
+    )
+
+    with patch(
+        "app.services.ai.config.AgentConfigProvider.get_synthesis_llm",
+        AsyncMock(return_value=FakeSimpleLLM()),
+    ), patch.object(runner, "_resolve_runtime_tools_from_config", AsyncMock(return_value=[])):
+        events = []
+        async for chunk in runner.execute([{"role": "user", "content": "hello"}]):
+            events.append(chunk)
+
+    assert len(captured_system_messages) >= 1
+    system_text = captured_system_messages[0]
+    stable_idx = system_text.index("STABLE_BOT_PROMPT")
+    # 动态安全规则和路由决策必须存在，且稳定提示词必须在动态内容之前
+    assert "【安全回答模式】" in system_text
+    assert stable_idx < system_text.index("【安全回答模式】")
+    assert "【本轮执行决策（仅供参考）】" in system_text
+    assert stable_idx < system_text.index("【本轮执行决策（仅供参考）】")
+    # 路由决策快照只出现一次
+    assert system_text.count("【本轮执行决策（仅供参考）】") == 1

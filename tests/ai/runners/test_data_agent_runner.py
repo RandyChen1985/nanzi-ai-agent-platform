@@ -67,6 +67,7 @@ def isolate_data_agent_runtime(monkeypatch):
         yield True
 
     monkeypatch.setattr("app.core.redis.get_redis", _no_redis)
+    monkeypatch.setattr("app.services.config_service.get_redis", _no_redis)
     monkeypatch.setattr(
         "app.services.ai.runners.data_agent_runner.get_local_workspace",
         AsyncMock(return_value=None),
@@ -490,8 +491,10 @@ async def test_data_agent_runner_system_content_includes_data_guardrails(data_co
     assert "【相对时间 SQL 规则】" in system_content
     assert DataQueryPrompts.SQL_PLAN_ENFORCEMENT not in system_content
     assert "<sql_plan>" not in system_content
-    assert DataQueryPrompts.FOLLOWUP_REUSE_CONSTRAINT in system_content
     assert data_config.system_prompt in system_content
+    # 稳定提示词必须在动态时间锚点和状态提示之前
+    assert system_content.index(data_config.system_prompt) < system_content.index("[当前时间锚点]")
+    assert system_content.index(data_config.system_prompt) < system_content.index("[DATA_QUERY_STATE]")
 
 
 @pytest.mark.asyncio
@@ -1643,7 +1646,7 @@ async def test_data_agent_runner_stores_successful_sql_result_for_followups(
     async def fake_get_configured_llm(**kwargs):
         return handle
 
-    async def fake_schema(keywords=None):
+    async def fake_schema(keywords=None, **kwargs):
         return "table_name: users\ncolumns: status"
 
     sql_rows = [{"status": "启用", "total_count": 8}]
@@ -1807,7 +1810,7 @@ async def test_data_agent_runner_injects_few_shot_examples(
     async def fake_get_configured_llm(**kwargs):
         return handle
 
-    async def fake_schema(keywords=None):
+    async def fake_schema(keywords=None, **kwargs):
         return "table_name: users\ncolumns: status"
 
     async def fake_sql(sql, data_source, dataset_name):
@@ -2067,7 +2070,7 @@ async def test_data_agent_runner_rewrites_contextual_query_and_plans_schema_keyw
         }
     ]
 
-    async def fake_schema(keywords=None):
+    async def fake_schema(keywords=None, **kwargs):
         assert keywords == "上海机房 PUE 本月 趋势 pue_daily room_name"
         return "table_name: pue_daily\ncolumns: day, pue, room_name"
 
@@ -5407,7 +5410,7 @@ async def test_data_agent_runner_execute_repairs_sql_error_before_final_answer(
         fake_config_get,
     )
 
-    async def fake_schema(keywords=None):
+    async def fake_schema(keywords=None, **kwargs):
         return "table_name: demo\ncolumns: id, bad_col"
 
     async def fake_sql(sql, data_source, dataset_name):
@@ -5531,7 +5534,7 @@ async def test_data_agent_runner_double_repair_when_model_skips_sql_twice(
         fake_config_get,
     )
 
-    async def fake_schema(keywords=None):
+    async def fake_schema(keywords=None, **kwargs):
         return "table_name: demo\ncolumns: id, room, used, total"
 
     async def fake_sql(sql, data_source, dataset_name):
@@ -5679,7 +5682,7 @@ async def test_data_agent_runner_execute_rechecks_empty_sql_before_final_answer(
         fake_config_get,
     )
 
-    async def fake_schema(keywords=None):
+    async def fake_schema(keywords=None, **kwargs):
         return "table_name: demo\ncolumns: id, room, used, total"
 
     async def fake_sql(sql, data_source, dataset_name):
@@ -5825,7 +5828,7 @@ async def test_data_agent_runner_execute_continues_repair_when_late_empty_sql_fo
         fake_config_get,
     )
 
-    async def fake_schema(keywords=None):
+    async def fake_schema(keywords=None, **kwargs):
         return "table_name: demo\ncolumns: id, room"
 
     async def fake_sql(sql, data_source, dataset_name):
@@ -5967,7 +5970,7 @@ async def test_data_agent_runner_execute_retries_schema_miss_before_sql(
 
     schema_calls = 0
 
-    async def fake_schema(keywords=None):
+    async def fake_schema(keywords=None, **kwargs):
         nonlocal schema_calls
         schema_calls += 1
         if schema_calls == 1:
@@ -6346,7 +6349,7 @@ async def test_data_agent_runner_execute_does_not_require_sql_plan_for_high_risk
         fake_config_get,
     )
 
-    async def fake_schema(keywords=None):
+    async def fake_schema(keywords=None, **kwargs):
         return "table_name: demo\ncolumns: room, used, total"
 
     async def fake_sql(sql, data_source, dataset_name):

@@ -1510,15 +1510,23 @@ class AssistantAgentRunner(BaseExecutor):
             if self._grounding_enabled()
             else None
         )
+        dynamic_appends = []
         if isinstance(grounding_action, dict) and grounding_action.get("type") == "method":
-            system_content = (
+            dynamic_appends.append(
                 "【安全回答模式】本轮只提供查询步骤、分析框架或排查方法；"
-                "不得输出未经工具核实的具体数据、状态、排名或动态事实。\n\n"
-                f"{system_content}"
+                "不得输出未经工具核实的具体数据、状态、排名或动态事实。"
             )
         route_hint = AssistantPrompts.turn_decision_context(self.turn_decision)
-        if route_hint:
-            system_content = f"{route_hint}\n\n{system_content}"
+        if (
+            route_hint
+            and route_hint not in system_content
+            and "本轮执行上下文（平台路由快照）" not in system_content
+            and "【本轮执行决策（仅供参考）】" not in system_content
+        ):
+            dynamic_appends.append(route_hint)
+
+        if dynamic_appends:
+            system_content = f"{system_content}\n\n" + "\n\n".join(dynamic_appends)
 
         from app.services.ai.session_tool_artifact import (
             build_session_tool_artifact_context_message,

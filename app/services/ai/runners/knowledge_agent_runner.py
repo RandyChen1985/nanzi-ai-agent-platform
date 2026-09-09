@@ -244,6 +244,7 @@ class KnowledgeAgentRunner(AssistantAgentRunner):
             configured_tools,
             implicit_tools=system_tools,
             provider=RegistryToolProvider(
+                registry=ToolRegistry,
                 legacy_converter=runtime_tool_spec_from_legacy_tool,
                 evidence_attacher=ToolRegistry._attach_evidence_metadata,
             ),
@@ -624,12 +625,20 @@ class KnowledgeAgentRunner(AssistantAgentRunner):
         grounding_enabled = self._grounding_enabled()
 
         system_content = self.config.system_prompt or ""
-        system_content = f"{KnowledgeChatPrompts.TURN_SYSTEM_HINT}\n\n{system_content}"
+        dynamic_appends = []
+        if KnowledgeChatPrompts.TURN_SYSTEM_HINT not in system_content:
+            dynamic_appends.append(KnowledgeChatPrompts.TURN_SYSTEM_HINT)
         decision_context = AgentServicePrompts.turn_decision_context(
             self.turn_decision
         )
-        if decision_context:
-            system_content = f"{decision_context}\n\n{system_content}"
+        if (
+            decision_context
+            and decision_context not in system_content
+            and "本轮执行上下文（平台路由快照）" not in system_content
+        ):
+            dynamic_appends.append(decision_context)
+        if dynamic_appends:
+            system_content = f"{system_content}\n\n" + "\n\n".join(dynamic_appends)
         if reusable_knowledge_result and reusable_decision.result:
             session_artifact_context = build_session_tool_artifact_context_message(
                 reusable_decision.result,
@@ -801,14 +810,14 @@ class KnowledgeAgentRunner(AssistantAgentRunner):
                 "系统已自动复用上一轮检索到的事实文献上下文，跳过了本次 search_knowledge_base 重复检索。"
                 "请直接在多轮对话历史中结合上一轮的回答来响应用户，无需再次检索。"
             )
-            native_system_content = f"{followup_hint}\n\n{system_content}"
+            native_system_content = f"{system_content}\n\n{followup_hint}"
         elif prefetch_had_citations:
             native_system_content = (
-                f"{KnowledgeChatPrompts.PREFETCH_DONE_CORRECTION_MSG}\n\n{system_content}"
+                f"{system_content}\n\n{KnowledgeChatPrompts.PREFETCH_DONE_CORRECTION_MSG}"
             )
         else:
             native_system_content = (
-                f"{KnowledgeChatPrompts.SEARCH_CORRECTION_MSG}\n\n{system_content}"
+                f"{system_content}\n\n{KnowledgeChatPrompts.SEARCH_CORRECTION_MSG}"
             )
 
         # 预检索成功后仍保留 search_knowledge_base 注册，避免模型受用户附件/系统提示
@@ -828,7 +837,7 @@ class KnowledgeAgentRunner(AssistantAgentRunner):
         )
         if question_nudge is not None:
             native_system_content = (
-                f"{question_nudge.message}\n\n{native_system_content}"
+                f"{native_system_content}\n\n{question_nudge.message}"
             )
             initial_tool_choice = self._build_preflight_tool_choice(
                 question_nudge.recommended_force_mode()
