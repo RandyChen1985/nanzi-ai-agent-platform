@@ -102,11 +102,18 @@ const formatCreatedAt = (value: string) => {
           </div>
         </div>
         <div class="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-gray-500">
-          <span>源版本：{{ statusLabel(sourceVersion.status) }}</span>
-          <span>创建于 {{ formatCreatedAt(sourceVersion.created_at) }}</span>
-          <span v-if="sourceVersion.comment">备注：{{ sourceVersion.comment }}</span>
+          <span>源版本状态：{{ statusLabel(sourceVersion.status) }}（{{ formatCreatedAt(sourceVersion.created_at) }}）</span>
+          <span>当前线上发布：{{ formatCreatedAt(publishedVersion.created_at) }}</span>
         </div>
-        <p class="mt-1 text-xs text-gray-500">只读对比 · 历史/草稿版本 → 当前线上版本</p>
+        <div class="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+          <div class="rounded-lg bg-white/80 px-2.5 py-1.5 text-gray-600 border border-indigo-100/60">
+            <span class="font-medium text-gray-700">V{{ sourceVersion.version_number }} 备注：</span>{{ sourceVersion.comment || '无备注' }}
+          </div>
+          <div class="rounded-lg bg-white/80 px-2.5 py-1.5 text-gray-600 border border-indigo-100/60">
+            <span class="font-medium text-gray-700">线上 V{{ publishedVersion.version_number }} 备注：</span>{{ publishedVersion.comment || '无备注' }}
+          </div>
+        </div>
+        <p class="mt-1 text-[11px] text-gray-400">只读对比 · 历史/草稿版本 → 当前线上版本</p>
       </div>
 
       <div

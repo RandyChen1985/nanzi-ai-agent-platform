@@ -118,6 +118,41 @@ const typedScalarDifference = buildAgentVersionDiff(
 );
 assert.ok(typedScalarDifference.groups.find((group) => group.id === "model")?.items.some((item) => item.key === "temperature" && item.changed));
 
+// 测试工具调用超时时间 (toolcall_timeout_seconds) 变更
+const toolTimeoutDifference = buildAgentVersionDiff(
+  makeVersion({ toolcall_timeout_seconds: 120 }),
+  makeVersion({ status: "PUBLISHED", toolcall_timeout_seconds: null }),
+);
+const toolTimeoutItem = toolTimeoutDifference.groups.find((group) => group.id === "tools")?.items.find((item) => item.key === "toolcall_timeout_seconds");
+assert.ok(toolTimeoutItem?.changed);
+assert.equal(toolTimeoutItem?.sourceText, "120 秒");
+assert.equal(toolTimeoutItem?.publishedText, "跟随全局配置");
+
+// 测试欢迎卡片图标 (icon) 变更
+const cardIconDifference = buildAgentVersionDiff(
+  makeVersion({
+    welcome_config: {
+      enabled: true,
+      mode: "manual",
+      generation_requirement: "",
+      cards: [{ icon: "chart", title: "问候", subtitle: "你好", prompt: "打个招呼" }],
+    },
+  }),
+  makeVersion({
+    status: "PUBLISHED",
+    welcome_config: {
+      enabled: true,
+      mode: "manual",
+      generation_requirement: "",
+      cards: [{ icon: "knowledge", title: "问候", subtitle: "你好", prompt: "打个招呼" }],
+    },
+  }),
+);
+const cardIconItem = cardIconDifference.groups.find((group) => group.id === "welcome")?.items.find((item) => item.key === "welcome.cards.0.icon");
+assert.ok(cardIconItem?.changed);
+assert.equal(cardIconItem?.sourceText, "chart");
+assert.equal(cardIconItem?.publishedText, "knowledge");
+
 const published = makeVersion({ id: "online", status: "PUBLISHED", version_number: 3 });
 const archived = makeVersion({ id: "history", status: "ARCHIVED", version_number: 2 });
 const diffPair = getAgentVersionDiffPair([published, archived], archived.id);
