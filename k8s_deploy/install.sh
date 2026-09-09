@@ -96,7 +96,7 @@ while [ $# -gt 0 ]; do
       INSTALL_MODE=true
       shift
       ;;
-    -u|--upgrade)
+    upgrade|-u|--upgrade)
       UPGRADE_MODE=true
       shift
       if [ $# -gt 0 ] && [ "${1#-}" = "$1" ]; then
@@ -112,7 +112,7 @@ while [ $# -gt 0 ]; do
       AUTO_CONFIRM=true
       shift
       ;;
-    --images|--list-images)
+    images|--images|--list-images)
       IMAGE_LIST_MODE=true
       shift
       if [ $# -gt 0 ] && [ "${1#-}" = "$1" ]; then
@@ -120,7 +120,7 @@ while [ $# -gt 0 ]; do
         shift
       fi
       ;;
-    --import)
+    import|--import)
       IMAGE_IMPORT_MODE=true
       shift
       while [ $# -gt 0 ] && [ "${1#-}" = "$1" ]; do
@@ -128,7 +128,7 @@ while [ $# -gt 0 ]; do
         shift
       done
       if [ -z "$IMAGE_IMPORT_FILES" ]; then
-        printf "%b⚠ --import 需要一个或多个镜像 tar 文件路径%b\n" "${C_YELLOW}" "${C_RESET}"
+        printf "%b⚠ import/--import 需要一个或多个镜像 tar 文件路径%b\n" "${C_YELLOW}" "${C_RESET}"
         exit 1
       fi
       ;;
@@ -387,12 +387,18 @@ run_upgrade_flow() {
     printf "%b│%b  目标版本: %bnanzi-ai-agent:%s%b\n" "${C_YELLOW}" "${C_RESET}" "${C_RED}" "${UPGRADE_TAG}" "${C_RESET}"
     printf "%b╰──────────────────────────────────────────────────────────────────╯%b\n" "${C_YELLOW}" "${C_RESET}"
     printf "\n"
-    printf "%b请先将镜像导入 K3s containerd，可选以下方式之一：%b\n" "${C_BOLD}" "${C_RESET}"
-    printf "  %b① 从 Docker daemon 导出后导入（已在本机构建）：%b\n" "${C_CYAN}" "${C_RESET}"
-    printf "     docker save %s:%s | k3s ctr images import -\n" "${UPGRADE_IMAGE}" "${UPGRADE_TAG}"
+    printf "%b请先将镜像导入节点容器运行时（文件式，勿用管道：docker save ... | ctr images import - 大镜像很慢且易中断），可选以下方式之一：%b\n" "${C_BOLD}" "${C_RESET}"
+    printf "  %b① 从 Docker daemon 导出为 tar 再导入（已在本机构建）：%b\n" "${C_CYAN}" "${C_RESET}"
+    printf "     docker save -o nanzi-ai-agent_%s.tar %s:%s\n" "${UPGRADE_TAG}" "${UPGRADE_IMAGE}" "${UPGRADE_TAG}"
+    printf "     k3s ctr images import nanzi-ai-agent_%s.tar            # K3s\n" "${UPGRADE_TAG}"
+    printf "     ctr -n k8s.io images import nanzi-ai-agent_%s.tar      # 非 K3s（普通 containerd）\n" "${UPGRADE_TAG}"
     printf "  %b② 从本地 tar 包直接导入：%b\n" "${C_CYAN}" "${C_RESET}"
     printf "     k3s ctr images import /path/to/nanzi-ai-agent_%s.tar\n" "${UPGRADE_TAG}"
-    printf "  %b③ 若使用外部镜像仓库（如 registry.example.com），集群可直接拉取，可忽略此提示。%b\n\n" "${C_GRAY}" "${C_RESET}"
+    printf "     ctr -n k8s.io images import /path/to/nanzi-ai-agent_%s.tar   # 非 K3s\n" "${UPGRADE_TAG}"
+    printf "  %b③ 使用本目录导入/查看镜像工具：%b\n" "${C_CYAN}" "${C_RESET}"
+    printf "     ./install.sh --import /path/to/nanzi-ai-agent_%s.tar\n" "${UPGRADE_TAG}"
+    printf "     ./install.sh --images nanzi-ai-agent\n"
+    printf "  %b④ 若使用外部镜像仓库（如 registry.example.com），集群可直接拉取，可忽略此提示。%b\n\n" "${C_GRAY}" "${C_RESET}"
     prompt_confirm "镜像未在本地 containerd 中检测到，是否仍然强制继续下发升级（适用于外部仓库拉取场景）？" "N" force_continue
     if [ "$force_continue" != "true" ]; then
       log_warn "已取消升级。请先完成镜像导入后重新执行: ./install.sh --upgrade ${UPGRADE_TAG}"
@@ -904,8 +910,10 @@ if [ -z "$detected_nanzi_tags" ] && command -v docker >/dev/null 2>&1; then
         printf "      • %bnanzi-ai-agent:%s%b\n" "${C_YELLOW}" "$dt" "${C_RESET}"
       done
       latest_dt=$(echo "$docker_nanzi" | tail -n 1)
-      printf "      %b提示：K3s 运行在 containerd 中，需手动导入后 Pod 才能读取。可执行：%b\n" "${C_GRAY}" "${C_RESET}"
-      printf "      %bdocker save nanzi-ai-agent:%s | k3s ctr images import -%b\n\n" "${C_CYAN}" "$latest_dt" "${C_RESET}"
+      printf "      %b提示：镜像需导入节点容器运行时后 Pod 才能读取。可执行（文件式，勿用管道）：%b\n" "${C_GRAY}" "${C_RESET}"
+      printf "      %bdocker save -o nanzi-ai-agent_%s.tar nanzi-ai-agent:%s%b\n" "${C_CYAN}" "$latest_dt" "$latest_dt" "${C_RESET}"
+      printf "      %bk3s ctr images import nanzi-ai-agent_%s.tar        # K3s%b\n" "${C_CYAN}" "$latest_dt" "${C_RESET}"
+      printf "      %bctr -n k8s.io images import nanzi-ai-agent_%s.tar   # 非 K3s%b\n\n" "${C_CYAN}" "$latest_dt" "${C_RESET}"
     fi
   fi
 fi
@@ -922,11 +930,15 @@ else
   log_warn "未在当前节点的 containerd (k3s ctr) 中探测到 nanzi-ai-agent 镜像。"
   printf "\n"
   printf "  %b💡 【镜像导入引导提醒】%b\n" "${C_BOLD}${C_YELLOW}" "${C_RESET}"
-  printf "  若您是单机离线部署，需确保镜像已载入 K3s containerd：\n"
-  printf "    %b1. 从已有的 Docker daemon 镜像直接导入：%b\n" "${C_CYAN}" "${C_RESET}"
-  printf "       docker save nanzi-ai-agent:<版本> | k3s ctr images import -\n"
+  printf "  若您是单机离线部署，需确保镜像已载入节点容器运行时（文件式导入，勿用管道）：\n"
+  printf "    %b1. 从已有的 Docker daemon 镜像导出为 tar 后导入：%b\n" "${C_CYAN}" "${C_RESET}"
+  printf "       docker save -o nanzi-ai-agent_<版本>.tar nanzi-ai-agent:<版本>\n"
+  printf "       k3s ctr images import nanzi-ai-agent_<版本>.tar        # K3s\n"
+  printf "       ctr -n k8s.io images import nanzi-ai-agent_<版本>.tar   # 非 K3s\n"
   printf "    %b2. 或从本地 tar 文件直接导入：%b\n" "${C_CYAN}" "${C_RESET}"
   printf "       k3s ctr images import /path/to/nanzi-ai-agent_<版本>.tar\n"
+  printf "       ctr -n k8s.io images import /path/to/nanzi-ai-agent_<版本>.tar  # 非 K3s\n"
+  printf "    %b3. 或用目录工具一键导入：%b ./install.sh --import /path/to/nanzi-ai-agent_<版本>.tar\n" "${C_CYAN}" "${C_RESET}"
   printf "    %b（若您打算使用外部镜像仓库如 registry.example.com，可忽略此提示并在下一步填写完整镜像仓库地址）%b\n\n" "${C_GRAY}" "${C_RESET}"
 fi
 
