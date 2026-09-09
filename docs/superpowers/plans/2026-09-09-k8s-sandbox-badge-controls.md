@@ -1781,13 +1781,11 @@ git commit -m "feat(chat): ChatInput 沙箱浮标面板 docker/k8s 通用化与�
 ```python
 def test_embed_chat_routes_k8s_workspace_endpoints_and_stop_confirm():
     source = EMBED.read_text(encoding="utf-8")
-    # k8s 端点路由
-    assert "/api/v1/sandbox/k8s/workspace/status" in source
-    assert "/api/v1/sandbox/k8s/workspace/ensure" in source
-    assert "/api/v1/sandbox/k8s/workspace/stop" in source
-    assert "/api/v1/sandbox/k8s/workspace/restart" in source
-    # docker 端点保留
-    assert "/api/v1/sandbox/docker/workspace/status" in source
+    # k8s / docker workspace 端点按 backend 路由到各自 base
+    assert "/api/v1/sandbox/k8s/workspace" in source
+    assert "/api/v1/sandbox/docker/workspace" in source
+    # 4 个动作（status/ensure/stop/restart）均通过 base 拼接调用
+    assert source.count("sandboxWorkspaceBaseEndpoint.value}/") >= 4
     # k8s 停止前二次确认
     assert "showSandboxStopConfirm" in source
     assert "<ConfirmModal" in source
