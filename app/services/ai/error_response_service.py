@@ -17,6 +17,7 @@ from app.services.ai.multimodal_support import (
     unwrap_exception_message,
 )
 from app.services.ai.runtime.agentscope.chat import chat_client_from_handle
+from app.services.ai.runtime.agentscope.k8s_workspace import K8sSandboxUnavailableError
 from app.services.ai.runtime.agentscope.messages import RuntimeContentBlock, RuntimeMessage
 from app.services.ai.runtime.agentscope.workspace import DockerSandboxUnavailableError
 
@@ -184,6 +185,7 @@ def _is_ai_explanation_disabled(clean_error: str, exc: BaseException) -> bool:
     return (
         "自动任务未实际调用任何工具" in clean_error
         or isinstance(exc, DockerSandboxUnavailableError)
+        or isinstance(exc, K8sSandboxUnavailableError)
         or is_context_window_api_error(clean_error)
         or is_multimodal_api_error(clean_error)
     )
@@ -202,7 +204,7 @@ async def build_error_presentation(
 
     clean_error = sanitize_error_text(exc)
     if _is_ai_explanation_disabled(clean_error, exc):
-        if isinstance(exc, DockerSandboxUnavailableError):
+        if isinstance(exc, (DockerSandboxUnavailableError, K8sSandboxUnavailableError)):
             content = exc.user_message
         else:
             content = _static_error_content(clean_error, model_name=model_name)

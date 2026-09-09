@@ -215,6 +215,41 @@ async def test_bind_docker_workspace_fails_closed_when_bash_mcp_missing():
 
 
 @pytest.mark.asyncio
+async def test_bind_k8s_workspace_reports_k8s_bash_mcp_failure():
+    from app.services.ai.runtime.agentscope import workspace as workspace_module
+    from app.services.ai.runtime.agentscope.k8s_workspace import K8sSandboxUnavailableError
+    from app.services.ai.runtime.agentscope.tools import RuntimeToolSpec
+
+    class FakeSandbox:
+        _platform_sandbox_policy = "k8s"
+
+        async def list_mcps(self):
+            return []
+
+    class FakeNativeBash:
+        name = "Bash"
+
+    async def fake_call(**kwargs):
+        return kwargs
+
+    spec = RuntimeToolSpec(
+        name="Bash",
+        description="bash",
+        parameters_schema={"type": "object", "properties": {}},
+        source_type="system",
+        callable=fake_call,
+        native_tool=FakeNativeBash(),
+        permission_scope="ask",
+    )
+
+    with pytest.raises(K8sSandboxUnavailableError, match="Kubernetes sandbox Bash MCP is unavailable"):
+        await workspace_module.bind_configured_tools_to_workspace(
+            (FakeSandbox(), None),
+            [spec],
+        )
+
+
+@pytest.mark.asyncio
 async def test_bind_sandbox_mcp_bash_as_canonical_bash_tool_name():
     from app.services.ai.runtime.agentscope import workspace as workspace_module
     from app.services.ai.runtime.agentscope.tools import RuntimeToolSpec
@@ -1565,6 +1600,7 @@ async def test_docker_workspace_adapter_adds_child_bind_mounts(tmp_path):
 
 def test_container_tool_mcp_uses_logical_workspace_path():
     from app.services.ai.runtime.agentscope.workspace_container_mcp import (
+        K8S_GATEWAY_VENV_PYTHON,
         build_container_tool_mcp,
     )
 
@@ -1572,6 +1608,17 @@ def test_container_tool_mcp_uses_logical_workspace_path():
 
     assert spec["mcp_config"]["cwd"] == "/workspace"
     assert spec["mcp_config"]["env"]["SANDBOX_WORKDIR"] == "/workspace"
+    # 默认解释器保持 PATH 解析的 ``python``（Docker/E2B 网关 venv 已在 PATH 首位），
+    # 避免回归破坏现有沙箱的 Bash MCP 启动。
+    assert spec["mcp_config"]["command"] == "python"
+
+    # Kubernetes 沙箱镜像的系统 python:3.11-slim 不带 mcp，必须固定使用网关
+    # 虚拟环境解释器，否则沙箱网关内 Bash MCP 注册失败（HTTP 500）。
+    k8s_spec = build_container_tool_mcp(
+        interpreter=K8S_GATEWAY_VENV_PYTHON
+    ).model_dump(mode="json")
+    assert k8s_spec["mcp_config"]["command"] == K8S_GATEWAY_VENV_PYTHON
+    assert k8s_spec["mcp_config"]["args"] == spec["mcp_config"]["args"]
 
 
 @pytest.mark.asyncio
