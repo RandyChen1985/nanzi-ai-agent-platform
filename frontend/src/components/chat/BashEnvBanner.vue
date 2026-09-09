@@ -2,7 +2,7 @@
 import { computed } from 'vue'
 
 const props = defineProps<{
-  env: 'host' | 'docker' | 'e2b' | 'ssh'
+  env: 'host' | 'docker' | 'e2b' | 'ssh' | 'k8s'
 }>()
 
 const emit = defineEmits<{
@@ -17,6 +17,15 @@ const CONTENT = {
     icon: '🟢',
     title: 'Bash 运行在 Docker 沙箱',
     hint: '命令在隔离的 Docker 容器内执行，仍需遵守命令安全规则',
+    box: 'border-emerald-200 bg-emerald-50/90 text-emerald-900 shadow-sm dark:border-emerald-500/30 dark:bg-emerald-950/40 dark:text-emerald-100',
+    hintTone: 'text-emerald-700/80 dark:text-emerald-200/70',
+    btn: 'text-emerald-700/60 hover:bg-emerald-100/80 dark:text-emerald-200/60 dark:hover:bg-emerald-900/60',
+    btnClose: 'text-emerald-700/70 hover:bg-emerald-100/80 dark:text-emerald-200/70 dark:hover:bg-emerald-900/60',
+  },
+  k8s: {
+    icon: '🟢',
+    title: 'Bash 运行在 Kubernetes 沙箱',
+    hint: '命令在隔离的 Kubernetes 沙箱 Pod 内执行，仍需遵守命令安全规则',
     box: 'border-emerald-200 bg-emerald-50/90 text-emerald-900 shadow-sm dark:border-emerald-500/30 dark:bg-emerald-950/40 dark:text-emerald-100',
     hintTone: 'text-emerald-700/80 dark:text-emerald-200/70',
     btn: 'text-emerald-700/60 hover:bg-emerald-100/80 dark:text-emerald-200/60 dark:hover:bg-emerald-900/60',

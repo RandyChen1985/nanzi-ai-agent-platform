@@ -2177,7 +2177,7 @@ defineExpose({
                                   'bg-gray-300 dark:bg-gray-600': (sandboxWorkspaceStatus || 'idle') === 'idle'
                                 }"
                               ></span>
-                              <span class="font-medium text-gray-700 dark:text-gray-200">
+                              <span class="shrink-0 whitespace-nowrap font-medium text-gray-700 dark:text-gray-200">
                                 {{ sandboxStatusText }}
                               </span>
                               <span

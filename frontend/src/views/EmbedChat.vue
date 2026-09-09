@@ -1154,6 +1154,26 @@
             </div>
             <div class="mt-2">
               <Transition name="bash-banner-fade">
+                <div
+                  v-if="sandboxDegradedMessage"
+                  role="status"
+                  class="mb-2 flex items-start justify-between gap-2 rounded-xl border border-amber-200 bg-amber-50/90 px-3 py-2 text-xs text-amber-900 dark:border-amber-500/30 dark:bg-amber-950/40 dark:text-amber-100"
+                >
+                  <div class="flex items-start gap-2 min-w-0">
+                    <span class="font-semibold shrink-0">⚠ 沙箱降级</span>
+                    <span class="text-amber-800/90 dark:text-amber-200/80 break-words">{{ sandboxDegradedMessage }}</span>
+                  </div>
+                  <button
+                    type="button"
+                    class="shrink-0 rounded px-1 text-amber-600/90 hover:text-amber-700 dark:text-amber-300/80 dark:hover:text-amber-200"
+                    title="隐藏提示"
+                    @click="dismissSandboxDegraded"
+                  >
+                    ×
+                  </button>
+                </div>
+              </Transition>
+              <Transition name="bash-banner-fade">
                 <DockerWorkspaceBanner
                   v-if="showSandboxWorkspaceControl"
                   :workspace-status="sandboxWorkspaceStatus"
@@ -2840,12 +2860,17 @@ const openEmbedTrace = (traceId: string) => {
 };
 const isProcessing = ref(false);
 const { locked: sendLocked, runExclusive: runSendExclusive } = createChatSendGate();
-const bashBannerEnv = ref<"host" | "docker" | "e2b" | "ssh" | null>(null);
+const bashBannerEnv = ref<"host" | "docker" | "e2b" | "ssh" | "k8s" | null>(null);
 const bashBannerDismissed = ref(false);
 const showBashBanner = computed(
   () => bashBannerEnv.value !== null && !bashBannerDismissed.value && config.showBashBanner
 );
-const handleBashEnvEvent = (env: "host" | "docker" | "e2b" | "ssh") => {
+/** 会话级沙箱降级提示：沙箱不可用、本轮降级为本地执行（Bash 不可用）。 */
+const sandboxDegradedMessage = ref("");
+const dismissSandboxDegraded = () => {
+  sandboxDegradedMessage.value = "";
+};
+const handleBashEnvEvent = (env: "host" | "docker" | "e2b" | "ssh" | "k8s") => {
   bashBannerEnv.value = env;
   bashBannerDismissed.value = false;
 };
@@ -4043,7 +4068,14 @@ const {
     `/api/v1/chat/conversation/${encodeURIComponent(cid)}/run-status`,
     { headers: embedAuthHeaders() },
   );
-  return response.data?.data || {};
+  const body = (response.data?.data || {}) as Record<string, any>;
+  // 沙箱降级状态：后端在会话降级为本地执行时置位，待沙箱恢复后自动清除。
+  if (body && body.sandbox_degraded && body.sandbox_degraded_message) {
+    sandboxDegradedMessage.value = String(body.sandbox_degraded_message);
+  } else {
+    sandboxDegradedMessage.value = "";
+  }
+  return body;
 });
 
 const refreshCurrentRunStatus = () => (
@@ -4192,6 +4224,34 @@ const refreshSandboxWorkspaceStatus = async (showFeedback = false) => {
   }
 };
 
+/** 启动后轻量轮询 status，直到 Pod 进入 running 或超时，避免一直停在“创建中”。 */
+const pollSandboxWorkspaceUntilRunning = async (cid: string) => {
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 2000));
+    if (conversationId.value !== cid) return;
+    try {
+      const response = await axios.get(
+        `${sandboxWorkspaceBaseEndpoint.value}/status`,
+        { params: { conversation_id: cid }, headers: embedAuthHeaders() },
+      );
+      const data = response.data?.data ?? response.data;
+      const mapped = mapSandboxStatus(String(data?.status || "idle"));
+      sandboxWorkspaceStatus.value = mapped;
+      sandboxWorkspaceInstanceId.value = instanceIdFromData(data);
+      sandboxWorkspaceStartedAt.value = data?.started_at || null;
+      sandboxWorkspaceUptimeSeconds.value = typeof data?.uptime_seconds === "number"
+        ? data.uptime_seconds
+        : null;
+      if (mapped === "running") {
+        showToast("沙箱已就绪", "success");
+        return;
+      }
+    } catch {
+      // 单次查询失败不中断轮询，继续尝试
+    }
+  }
+};
+
 const ensureSandboxWorkspace = async () => {
   if (!isSandboxWorkspacePolicy.value || !conversationId.value) return;
   if (sandboxWorkspaceStatus.value === "starting") return;
@@ -4215,6 +4275,10 @@ const ensureSandboxWorkspace = async () => {
     sandboxWorkspaceUptimeSeconds.value = typeof data?.uptime_seconds === "number" ? data.uptime_seconds : 0;
     sandboxWorkspaceStatus.value = mapped;
     showToast(mapped === "starting" ? "沙箱启动中..." : "沙箱已启动", mapped === "starting" ? "info" : "success");
+    // 非 running（如刚创建、Pending）时自动轮询直到就绪，无需用户手动刷新。
+    if (mapped !== "running") {
+      void pollSandboxWorkspaceUntilRunning(requestedConversationId);
+    }
   } catch (error: any) {
     if (conversationId.value !== requestedConversationId) return;
     const detail = error?.response?.data?.detail;
