@@ -205,12 +205,16 @@ def build_k8s_workspace_with_nanzi_adapter(
             except ImportError:
                 POD_WORKDIR = "/workspace"
 
-            container_env = None
-            if self.env:
-                container_env = [
-                    k8s_client.V1EnvVar(name=k, value=v)
-                    for k, v in self.env.items()
-                ]
+            # 沙箱 Pod 可能因平台重启/缓存丢失被重复 initialize：bootstrap 会再次执行
+            # `uv venv /root/.agentscope/.venv`。uv 默认拒绝覆盖已存在的 venv（exit 2），
+            # 导致整条初始化失败（状态异常、Bash MCP 不可用）。注入 UV_VENV_CLEAR=1
+            # 使 venv 创建幂等：已存在则 clear 重建，不存在则正常创建。
+            merged_env = dict(self.env or {})
+            merged_env.setdefault("UV_VENV_CLEAR", "1")
+            container_env = [
+                k8s_client.V1EnvVar(name=k, value=str(v))
+                for k, v in merged_env.items()
+            ] if merged_env else None
 
             user_subpath = f"agent_workspaces/{self._nanzi_sandbox_user_key}/sandbox"
 

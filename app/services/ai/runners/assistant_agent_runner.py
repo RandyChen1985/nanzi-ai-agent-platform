@@ -2294,15 +2294,29 @@ class AssistantAgentRunner(BaseExecutor):
             _workspace_native_name_for_spec(spec) == "Bash" for spec in tools
         )
         try:
-            workspace = await get_local_workspace(
-                user_id=self._runtime_user_id(),
-                user_name=self._runtime_user_name(),
-                user_info=self.user_info,
-                conversation_id=self.conversation_id,
-                skills_custom=bool(getattr(self.config, "skills_custom", False)),
-                allowed_global_skills=list(getattr(self.config, "skills", None) or []),
+            workspace = await asyncio.wait_for(
+                get_local_workspace(
+                    user_id=self._runtime_user_id(),
+                    user_name=self._runtime_user_name(),
+                    user_info=self.user_info,
+                    conversation_id=self.conversation_id,
+                    skills_custom=bool(getattr(self.config, "skills_custom", False)),
+                    allowed_global_skills=list(getattr(self.config, "skills", None) or []),
+                ),
+                timeout=90.0,
             )
-        except (DockerSandboxUnavailableError, K8sSandboxUnavailableError) as exc:
+        except (DockerSandboxUnavailableError, K8sSandboxUnavailableError, asyncio.TimeoutError) as exc:
+            if isinstance(exc, asyncio.TimeoutError):
+                logger.warning(
+                    "[agent] Sandbox workspace init timed out (conversation=%s); treating as unavailable: %s",
+                    self.conversation_id,
+                    exc,
+                )
+                exc = K8sSandboxUnavailableError(
+                    "sandbox workspace init timeout",
+                    reason_code="k8s_workspace_init_timeout",
+                    user_message="沙箱启动超时（可能镜像拉取或集群调度较慢），已按沙箱不可用处理，可稍后重试。",
+                )
             if requires_sandbox_bash:
                 raise
             logger.warning(
