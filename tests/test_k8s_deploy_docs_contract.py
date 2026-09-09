@@ -45,6 +45,18 @@ def test_k8s_default_resources_do_not_apply_secret_or_data_init_job():
     assert "data-init-job.example.yaml" not in text
 
 
+def test_k8s_deployment_binds_the_sandbox_rbac_service_account():
+    deployment = (K8S_DIR / "deployment.yaml").read_text(encoding="utf-8")
+    service_account = (K8S_DIR / "serviceaccount.yaml").read_text(encoding="utf-8")
+    kustomization = (K8S_DIR / "kustomization.yaml").read_text(encoding="utf-8")
+    docs = (K8S_DIR / "README.md").read_text(encoding="utf-8")
+
+    assert "serviceAccountName: nanzi-ai-agent-sa" in deployment
+    assert "name: nanzi-ai-agent-sa" in service_account
+    assert "- serviceaccount.yaml" in kustomization
+    assert "默认 Deployment 已绑定" in docs
+
+
 def test_k8s_docs_include_k3s_single_node_practical_flow():
     text = (K8S_DIR / "README.md").read_text(encoding="utf-8")
 
@@ -59,3 +71,16 @@ def test_k8s_docs_include_k3s_single_node_practical_flow():
     assert "K3s 官方快速开始" in text
     assert "failCgroupV1: false" in text
     assert "stat -fc %T /sys/fs/cgroup" in text
+
+
+def test_k8s_docs_cover_wizard_install_script_and_ops_tools():
+    text = (K8S_DIR / "README.md").read_text(encoding="utf-8")
+
+    assert "install.sh" in text
+    assert "./install.sh --try" in text
+    assert "nanzi-k8s.sh" in text
+    assert "agent-sandboxes" in text
+    assert "upgrade.md" in text
+    assert (K8S_DIR / "install.sh").is_file()
+    assert (K8S_DIR / "nanzi-k8s.sh").is_file()
+    assert (K8S_DIR / "upgrade.md").is_file()

@@ -5,6 +5,7 @@ namespace: nanzi-ai-agent
 
 resources:
   - namespace.yaml
+  - serviceaccount.yaml
   - configmap.yaml
   - pvc.yaml
   - deployment.yaml
