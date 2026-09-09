@@ -57,3 +57,5 @@ def test_k8s_docs_include_k3s_single_node_practical_flow():
     assert "6443" in text
     assert "8472" in text
     assert "K3s 官方快速开始" in text
+    assert "failCgroupV1: false" in text
+    assert "stat -fc %T /sys/fs/cgroup" in text

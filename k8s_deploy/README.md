@@ -206,11 +206,64 @@ kubectl -n nanzi-ai-agent get pod,svc,pvc
 
 | 现象 | 检查命令 | 常见原因 |
 | --- | --- | --- |
+| K3s 启动失败/不断自动重启 | `sudo journalctl -u k3s -n 100 --no-pager` | 宿主机使用 cgroup v1，新版 K3s (>= v1.31) 默认禁止 Kubelet 在 cgroup v1 上运行 |
 | 系统 Pod 长时间 `ContainerCreating` | `sudo journalctl -u k3s -n 200 --no-pager` | 镜像下载、DNS、磁盘或 CNI 尚未完成 |
 | NanZi `ImagePullBackOff` | `kubectl -n nanzi-ai-agent describe pod <pod名>` | 只执行了 `docker load`，但镜像没有导入 K3s containerd，或标签不一致 |
 | PVC 一直 `Pending` | `kubectl -n nanzi-ai-agent describe pvc nanzi-ai-agent-data` | `local-path` 未 Ready、没有默认 StorageClass 或磁盘空间不足 |
 | Pod Ready 但访问失败 | `kubectl -n nanzi-ai-agent get svc,pod` | 端口转发、Service 选择器、应用探针或外部 DB/Redis 配置错误 |
 | Ingress 占用 80/443 | `kubectl -n kube-system get pods,svc | grep -i traefik` | K3s 默认 Traefik/ServiceLB 与服务器已有 Nginx 或网关冲突 |
+
+#### 典型排查：宿主机 cgroup v1 导致 K3s 启动失败与循环重启
+
+**问题原因：**
+
+通过以下命令检查宿主机的 cgroup 驱动模式：
+
+```bash
+stat -fc %T /sys/fs/cgroup
+```
+
+如果输出为 `tmpfs`，说明服务器仍在使用旧的 **cgroup v1**（如果是 cgroup v2 会输出 `cgroup2fs`）。  
+新安装的高版本 K3s（如 `v1.36.4+k3s1`）所携带的 Kubelet 默认启用了对 cgroup v1 的校验拦截，禁止在 cgroup v1 宿主机上启动，导致 systemd 中 K3s 不断崩溃并自动重启，在日志中报出明确错误：
+
+```text
+kubelet is configured to not run on a host using cgroup v1
+```
+
+**最终解决方案（无需重装 K3s，也无需重启服务器）：**
+
+通过 Kubelet drop-in 配置目录显式声明允许 cgroup v1：
+
+1. 创建 Kubelet 附加配置目录：
+
+```bash
+sudo mkdir -p /var/lib/rancher/k3s/agent/etc/kubelet.conf.d
+```
+
+2. 新建配置文件 `/var/lib/rancher/k3s/agent/etc/kubelet.conf.d/10-cgroup-v1.conf`：
+
+```bash
+sudo tee /var/lib/rancher/k3s/agent/etc/kubelet.conf.d/10-cgroup-v1.conf << 'EOF'
+apiVersion: kubelet.config.k8s.io/v1beta1
+kind: KubeletConfiguration
+failCgroupV1: false
+EOF
+```
+
+3. 重载配置并重启 K3s：
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl restart k3s
+```
+
+4. 验证服务与集群状态：
+
+```bash
+sudo systemctl status k3s --no-pager
+sudo kubectl get nodes -o wide
+sudo kubectl get pods -A
+```
 
 单机只使用 `port-forward` 时不需要额外配置 Ingress；如果服务器已有 80/443 服务，
 可以继续使用 `port-forward`，或由运维方在安装 K3s 时明确规划 Traefik、ServiceLB 和
