@@ -506,6 +506,9 @@ const k8sImagePresets: { label: string; value: string }[] = [
 ]
 const k8sImageOpen = ref(false)
 const k8sImageShowCustom = ref(false)
+/** “构建镜像”引导弹窗：平台无法直接列节点镜像，这里给出构建/导入/查看指引 */
+const showK8sImageGuide = ref(false)
+const k8sImageGuideTab = ref<"standard" | "k3s">("standard")
 
 const isCustomK8sImage = computed(() => {
   const cur = (configGroups.value?.sandbox?.find(x => x.key === 'sandbox_k8s_image')?.value ?? '').trim()
@@ -4096,13 +4099,24 @@ onUnmounted(() => {
                             </div>
 
                             <div v-if="isCustomK8sImage" class="pt-0.5">
-                              <input
-                                type="text"
-                                v-model="item.value"
-                                :disabled="isConfigItemDisabled(String(category), item)"
-                                class="shadow-sm focus:ring-primary focus:border-primary block w-full sm:text-sm border-gray-300 rounded-md bg-white p-2 font-mono disabled:opacity-70 disabled:cursor-not-allowed"
-                                placeholder="如 registry.example.com/ai/python:3.11-slim"
-                              />
+                              <div class="flex gap-2">
+                                <input
+                                  type="text"
+                                  v-model="item.value"
+                                  :disabled="isConfigItemDisabled(String(category), item)"
+                                  class="shadow-sm focus:ring-primary focus:border-primary block w-full min-w-0 flex-1 sm:text-sm border-gray-300 rounded-md bg-white p-2 font-mono disabled:opacity-70 disabled:cursor-not-allowed"
+                                  placeholder="如 registry.example.com/ai/python:3.11-slim"
+                                />
+                                <button
+                                  type="button"
+                                  :disabled="isConfigItemDisabled(String(category), item)"
+                                  class="inline-flex shrink-0 items-center gap-1 rounded-md border border-sky-200 bg-sky-50 px-2.5 py-1.5 text-xs font-medium text-sky-700 hover:bg-sky-100 disabled:opacity-50 whitespace-nowrap"
+                                  title="沙箱镜像需先在节点构建并导入；点击查看构建/导入/查看指引"
+                                  @click="showK8sImageGuide = true"
+                                >
+                                  构建镜像
+                                </button>
+                              </div>
                               <p class="mt-1 text-[11px] text-gray-500">
                                 请填写平台可在集群中拉取到的容器镜像完整路径（需内置 Python 3.11 与 Debian/Ubuntu 基础环境）。
                               </p>
@@ -4117,7 +4131,7 @@ onUnmounted(() => {
                                 <span class="block">脚本会自动 docker build → save → 导入节点 containerd（ctr -n k8s.io / k3s ctr）。</span>
                               </div>
                               <div>本项填写格式：<span class="font-mono">nanzi-sandbox-k8s:&lt;版本&gt;</span>（可选用上方预置列表或“自定义镜像地址”）。未使用预置镜像时留空/保持默认 <span class="font-mono">python:3.11-slim</span>，由集群直接拉取即可，无需预置。</div>
-                              <div>想先确认节点已导入该镜像：<span class="font-mono">./install.sh check-sandbox-image nanzi-sandbox-k8s:&lt;版本&gt;</span></div>
+                              <div>想先确认节点已导入该镜像（含版本号核对）：<span class="font-mono">./install.sh check-sandbox-image nanzi-sandbox-k8s:&lt;版本&gt;</span> 或 <span class="font-mono">./install.sh images nanzi-sandbox-k8s</span></div>
                             </div>
                           </div>
                           <div v-else>
@@ -4257,6 +4271,94 @@ onUnmounted(() => {
       @confirm="executeRebuildVectors"
       @cancel="showRebuildConfirm = false"
     />
+
+    <!-- K8s 沙箱镜像：构建 / 导入 / 查看指引 Modal -->
+    <div v-if="showK8sImageGuide" class="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-fade-in" @click.self="showK8sImageGuide = false">
+      <div class="bg-white dark:bg-gray-800 rounded-2xl shadow-2xl max-w-2xl w-full overflow-hidden border border-gray-100 dark:border-gray-700 flex flex-col text-[13px]">
+        <div class="px-5 py-3.5 border-b border-gray-100 dark:border-gray-700 flex justify-between items-center bg-sky-50/50 dark:bg-sky-950/30">
+          <div>
+            <h3 class="text-md font-bold text-gray-900 dark:text-gray-100">构建 / 导入 K8s 沙箱镜像</h3>
+            <p class="text-[11px] text-gray-500 dark:text-gray-400 mt-0.5">平台（Pod 内）无法直接读取节点镜像列表，请按以下指引在<b>节点/构建机</b>完成构建与导入</p>
+          </div>
+          <button type="button" class="rounded-lg p-1.5 text-gray-400 hover:bg-gray-200/60 hover:text-gray-600 dark:hover:bg-gray-700" aria-label="关闭" @click="showK8sImageGuide = false">
+            ✕
+          </button>
+        </div>
+
+        <div class="flex-1 overflow-y-auto px-5 py-4 space-y-4 custom-scrollbar">
+          <!-- Tab 切换：标准 containerd / K3s -->
+          <div class="inline-flex rounded-lg border border-gray-200 dark:border-gray-600 p-0.5 bg-gray-50 dark:bg-gray-900/40">
+            <button
+              type="button"
+              class="px-3 py-1 rounded-md text-xs font-medium transition-colors"
+              :class="k8sImageGuideTab === 'standard' ? 'bg-white dark:bg-gray-700 text-sky-700 dark:text-sky-200 shadow-sm' : 'text-gray-500 hover:text-gray-700 dark:text-gray-400'"
+              @click="k8sImageGuideTab = 'standard'"
+            >
+              标准 containerd
+            </button>
+            <button
+              type="button"
+              class="px-3 py-1 rounded-md text-xs font-medium transition-colors"
+              :class="k8sImageGuideTab === 'k3s' ? 'bg-white dark:bg-gray-700 text-sky-700 dark:text-sky-200 shadow-sm' : 'text-gray-500 hover:text-gray-700 dark:text-gray-400'"
+              @click="k8sImageGuideTab = 'k3s'"
+            >
+              K3s（自带 containerd）
+            </button>
+          </div>
+
+          <!-- 当前 Tab 的查看 / 导入命令 -->
+          <div v-if="k8sImageGuideTab === 'standard'" class="space-y-2">
+            <div>
+              <div class="font-medium text-gray-700 dark:text-gray-200 mb-1">① 查看节点（普通 containerd）是否已有该镜像及版本：</div>
+              <code class="block rounded-lg bg-gray-900 text-emerald-300 px-3 py-2 text-xs font-mono select-all">ctr -n k8s.io images ls | grep nanzi-sandbox-k8s</code>
+            </div>
+            <div>
+              <div class="font-medium text-gray-700 dark:text-gray-200 mb-1">② 导入镜像：</div>
+              <code class="block rounded-lg bg-gray-900 text-emerald-300 px-3 py-2 text-xs font-mono select-all">ctr -n k8s.io images import nanzi-sandbox-k8s_1.0.0.tar</code>
+            </div>
+          </div>
+          <div v-else class="space-y-2">
+            <div>
+              <div class="font-medium text-gray-700 dark:text-gray-200 mb-1">① 查看节点（K3s 自带 containerd）是否已有该镜像及版本：</div>
+              <code class="block rounded-lg bg-gray-900 text-emerald-300 px-3 py-2 text-xs font-mono select-all">k3s ctr images ls | grep nanzi-sandbox-k8s</code>
+            </div>
+            <div>
+              <div class="font-medium text-gray-700 dark:text-gray-200 mb-1">② 导入镜像：</div>
+              <code class="block rounded-lg bg-gray-900 text-emerald-300 px-3 py-2 text-xs font-mono select-all">k3s ctr images import nanzi-sandbox-k8s_1.0.0.tar</code>
+            </div>
+            <p class="text-[11px] text-amber-600 dark:text-amber-400">K3s 自带一套 containerd；若机器上另有系统 containerd，普通 <code class="font-mono">ctr -n k8s.io</code> 导入不会进入 K3s 运行时，必须用 <code class="font-mono">k3s ctr</code>。</p>
+          </div>
+          <p class="text-[11px] text-gray-500 dark:text-gray-400 -mt-1">看到形如 <code class="font-mono">docker.io/library/nanzi-sandbox-k8s:1.0.0</code> 即已就绪——请<b>仔细核对版本号（如 1.0.0）与下方配置填写一致</b>，Tag 对不上会导致 Pod 拉取不到。</p>
+
+          <div class="border-t border-gray-100 dark:border-gray-700 pt-3 space-y-2">
+            <div class="font-medium text-gray-700 dark:text-gray-200">③ 构建网关预置镜像（在可访问 Docker 的构建机，k8s_deploy 目录）：</div>
+            <code class="block rounded-lg bg-gray-900 text-emerald-300 px-3 py-2 text-xs font-mono select-all">cd k8s_deploy &amp;&amp; ./build-k8s-sandbox-image.sh --version 1.0.0</code>
+            <p class="text-[11px] text-gray-500 dark:text-gray-400">脚本自动 docker build → save 出 tar → 导入节点运行时；先看一遍可加 <code class="font-mono">--dry-run</code>。</p>
+          </div>
+
+          <div class="border-t border-gray-100 dark:border-gray-700 pt-3 space-y-2">
+            <div class="font-medium text-gray-700 dark:text-gray-200">④ 一键导入 / 复核（也可用目录工具自动识别运行时）：</div>
+            <code class="block rounded-lg bg-gray-900 text-emerald-300 px-3 py-2 text-xs font-mono select-all">./install.sh import nanzi-sandbox-k8s_1.0.0.tar</code>
+            <code class="block rounded-lg bg-gray-900 text-emerald-300 px-3 py-2 text-xs font-mono select-all">./install.sh check-sandbox-image nanzi-sandbox-k8s:1.0.0</code>
+          </div>
+
+          <div class="border-t border-gray-100 dark:border-gray-700 pt-3">
+            <div class="font-medium text-gray-700 dark:text-gray-200">⑤ 填回本配置：</div>
+            <p class="text-[11px] text-gray-500 dark:text-gray-400 mt-1">把本项填为 <code class="font-mono">nanzi-sandbox-k8s:1.0.0</code>（或 registry 完整路径），保存后新建/重启沙箱 Pod 生效。</p>
+          </div>
+        </div>
+
+        <div class="px-5 py-3 border-t border-gray-100 dark:border-gray-700 flex justify-end bg-gray-50/50 dark:bg-gray-900/30">
+          <button
+            type="button"
+            class="rounded-lg bg-sky-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-sky-500"
+            @click="showK8sImageGuide = false"
+          >
+            我知道了
+          </button>
+        </div>
+      </div>
+    </div>
 
     <!-- LLM Model Name Explanation Modal -->
     <div v-if="showModelExplanation" class="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-fade-in" @click.self="showModelExplanation = false">

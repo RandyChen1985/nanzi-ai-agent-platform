@@ -2203,8 +2203,7 @@ defineExpose({
                               <button
                                 type="button"
                                 class="inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[9px] text-gray-500 hover:text-indigo-600 hover:bg-indigo-50 dark:text-gray-400 dark:hover:text-indigo-300 dark:hover:bg-gray-700 transition-colors disabled:opacity-50"
-                                title="手动检测刷新沙箱状态"
-                                :disabled="(sandboxWorkspaceStatus || 'idle') === 'starting' || (sandboxWorkspaceStatus || 'idle') === 'stopping'"
+                                title="手动检测刷新沙箱状态（创建中/停止中也允许查询）"
                                 @click.stop="emit('refresh-sandbox-workspace', true)"
                               >
                                 <ArrowPathIcon class="h-3 w-3" :class="{ 'animate-spin': (sandboxWorkspaceStatus || 'idle') === 'starting' || (sandboxWorkspaceStatus || 'idle') === 'stopping' }" aria-hidden="true" />
