@@ -191,27 +191,80 @@ async def stream_with_retry(
 
 
 def extract_tokens_from_message(msg: Any) -> dict:
-    """从 runtime message/chunk 提取 token 用量。"""
-    res = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+    """从 runtime message/chunk 提取 token 用量，归一化 OpenAI-compatible cached tokens。"""
+    res = {
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
+        "total_tokens": 0,
+        "cache_input_tokens": 0,
+        "usage_source": "unavailable",
+    }
     if not msg:
         return res
     if hasattr(msg, "usage_metadata") and msg.usage_metadata:
         um = msg.usage_metadata
-        res["prompt_tokens"] = um.get("input_tokens") or 0
-        res["completion_tokens"] = um.get("output_tokens") or 0
-        res["total_tokens"] = um.get("total_tokens") or (
-            res["prompt_tokens"] + res["completion_tokens"]
+        res["prompt_tokens"] = int(um.get("input_tokens") or 0)
+        res["completion_tokens"] = int(um.get("output_tokens") or 0)
+        res["total_tokens"] = int(
+            um.get("total_tokens") or (res["prompt_tokens"] + res["completion_tokens"])
         )
+        res["usage_source"] = "usage_metadata"
+        details = um.get("input_token_details") or {}
+        if isinstance(details, dict) and "cache_read" in details:
+            res["cache_input_tokens"] = int(details.get("cache_read") or 0)
+            res["usage_source"] = "input_token_details.cache_read"
+        elif "cache_read_input_tokens" in um:
+            res["cache_input_tokens"] = int(um.get("cache_read_input_tokens") or 0)
+            res["usage_source"] = "cache_read_input_tokens"
+        elif "cache_input_tokens" in um:
+            res["cache_input_tokens"] = int(um.get("cache_input_tokens") or 0)
+            res["usage_source"] = "cache_input_tokens"
         return res
     if hasattr(msg, "response_metadata") and isinstance(msg.response_metadata, dict):
         tu = msg.response_metadata.get("token_usage")
         if isinstance(tu, dict):
-            res["prompt_tokens"] = tu.get("prompt_tokens") or tu.get("input_tokens") or 0
-            res["completion_tokens"] = tu.get("completion_tokens") or tu.get("output_tokens") or 0
-            res["total_tokens"] = tu.get("total_tokens") or (
-                res["prompt_tokens"] + res["completion_tokens"]
+            res["prompt_tokens"] = int(tu.get("prompt_tokens") or tu.get("input_tokens") or 0)
+            res["completion_tokens"] = int(tu.get("completion_tokens") or tu.get("output_tokens") or 0)
+            res["total_tokens"] = int(
+                tu.get("total_tokens") or (res["prompt_tokens"] + res["completion_tokens"])
             )
+            res["usage_source"] = "token_usage"
+            prompt_details = tu.get("prompt_tokens_details")
+            if isinstance(prompt_details, dict) and "cached_tokens" in prompt_details:
+                res["cache_input_tokens"] = int(prompt_details.get("cached_tokens") or 0)
+                res["usage_source"] = "openai_prompt_tokens_details"
+            elif "cache_read_input_tokens" in tu:
+                res["cache_input_tokens"] = int(tu.get("cache_read_input_tokens") or 0)
+                res["usage_source"] = "cache_read_input_tokens"
+            elif "cache_input_tokens" in tu:
+                res["cache_input_tokens"] = int(tu.get("cache_input_tokens") or 0)
+                res["usage_source"] = "cache_input_tokens"
+            elif "cached_tokens" in tu:
+                res["cache_input_tokens"] = int(tu.get("cached_tokens") or 0)
+                res["usage_source"] = "cached_tokens"
             return res
+    usage_obj = getattr(msg, "usage", None)
+    if usage_obj is not None:
+        p_tokens = getattr(usage_obj, "input_tokens", None) or getattr(usage_obj, "prompt_tokens", 0) or 0
+        c_tokens = getattr(usage_obj, "output_tokens", None) or getattr(usage_obj, "completion_tokens", 0) or 0
+        res["prompt_tokens"] = int(p_tokens)
+        res["completion_tokens"] = int(c_tokens)
+        res["total_tokens"] = res["prompt_tokens"] + res["completion_tokens"]
+        res["usage_source"] = "agentscope_usage"
+        cache_val = getattr(usage_obj, "cache_input_tokens", None)
+        if cache_val is not None:
+            res["cache_input_tokens"] = int(cache_val)
+        else:
+            p_details = getattr(usage_obj, "prompt_tokens_details", None)
+            if isinstance(p_details, dict) and "cached_tokens" in p_details:
+                res["cache_input_tokens"] = int(p_details.get("cached_tokens") or 0)
+                res["usage_source"] = "openai_prompt_tokens_details"
+            else:
+                cache_read = getattr(usage_obj, "cache_read_input_tokens", None)
+                if cache_read is not None:
+                    res["cache_input_tokens"] = int(cache_read)
+                    res["usage_source"] = "cache_read_input_tokens"
+        return res
     return res
 
 

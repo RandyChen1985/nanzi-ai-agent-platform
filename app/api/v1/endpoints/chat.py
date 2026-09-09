@@ -1178,6 +1178,8 @@ class ModelCallStatDetail(BaseModel):
     overhead_reservation_tokens: Optional[int] = Field(None, description="历史之外的总预留 Token")
     message_roles: Optional[Dict[str, int]] = Field(default_factory=dict, description="各角色消息条数统计")
     contains_compaction: bool = Field(False, description="是否包含早前对话的裁剪摘录")
+    prompt_layout_mode: Optional[str] = Field(None, description="提示词布局模式 (legacy/observe/enabled)")
+    usage_source: Optional[str] = Field(None, description="Token 用量来源")
     context_breakdown: Optional[ContextBreakdown] = Field(
         None,
         description="系统提示词、工具 schema 和对话消息的 Token 组成估算",

@@ -92,7 +92,12 @@ async def inject_few_shot_examples(
         )
         few_shot_block = ExampleService.build_few_shot_prompt(examples)
         if few_shot_block:
-            system_content = f"{few_shot_block}\n\n---\n\n{system_content}"
+            if await runner._using_cache_layout():
+                # enabled 灰度桶：few-shot 动态示例追加到稳定前缀之后，避免切断缓存前缀。
+                system_content = f"{system_content}\n\n---\n\n{few_shot_block}"
+            else:
+                # legacy/observe：保留传统前置行为。
+                system_content = f"{few_shot_block}\n\n---\n\n{system_content}"
         example_ids = [ex["id"] for ex in examples if ex.get("id")]
         similarities = [ex.get("similarity", 0) for ex in examples if ex.get("id")]
         if example_ids:

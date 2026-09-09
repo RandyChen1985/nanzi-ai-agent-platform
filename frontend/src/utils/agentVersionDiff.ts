@@ -77,6 +77,7 @@ const createItem = (
   sourceValue: unknown,
   publishedValue: unknown,
   explicitChange?: VersionDiffChange,
+  formatText?: (value: unknown) => string,
 ): VersionDiffItem => {
   const change = explicitChange || (equalValue(sourceValue, publishedValue) ? "unchanged" : "modified");
   return {
@@ -86,8 +87,8 @@ const createItem = (
     changed: change !== "unchanged",
     sourceValue,
     publishedValue,
-    sourceText: textValue(sourceValue),
-    publishedText: textValue(publishedValue),
+    sourceText: formatText ? formatText(sourceValue) : textValue(sourceValue),
+    publishedText: formatText ? formatText(publishedValue) : textValue(publishedValue),
   };
 };
 
@@ -218,9 +219,15 @@ const compareWelcome = (source: AIAgentVersion, published: AIAgentVersion): Vers
     const publishedCard: Record<string, unknown> = isRecord(publishedCardValue)
       ? publishedCardValue
       : {};
-    for (const field of ["title", "subtitle", "prompt"] as const) {
+    for (const field of ["icon", "title", "subtitle", "prompt"] as const) {
       const label =
-        field === "title" ? "标题" : field === "subtitle" ? "副标题" : "Prompt";
+        field === "icon"
+          ? "图标"
+          : field === "title"
+            ? "标题"
+            : field === "subtitle"
+              ? "副标题"
+              : "Prompt";
       fields.push(
         createItem(
           `welcome.cards.${index}.${field}`,
@@ -257,22 +264,42 @@ export const buildAgentVersionDiff = (
     {
       id: "model",
       label: "模型策略",
-      items: compareFields(
-        [
-          ["model_name", "主模型"],
-          ["temperature", "温度"],
-          ["synthesis_model_name", "合成模型"],
-          ["synthesis_temperature", "合成温度"],
-        ],
-        source,
-        published,
-      ),
+      items: [
+        createItem("model_name", "主模型 (编排)", source.model_name, published.model_name),
+        createItem("temperature", "主模型采样温度", source.temperature, published.temperature),
+        createItem(
+          "synthesis_model_name",
+          "合成模型 (裁判)",
+          source.synthesis_model_name,
+          published.synthesis_model_name,
+          undefined,
+          (val) => (val ? String(val) : "跟随编排模型"),
+        ),
+        createItem(
+          "synthesis_temperature",
+          "合成模型采样温度",
+          source.synthesis_temperature,
+          published.synthesis_temperature,
+          undefined,
+          (val) => (val != null && val !== "" ? String(val) : "跟随编排模型"),
+        ),
+      ],
       changedCount: 0,
     },
     {
       id: "tools",
       label: "工具",
-      items: compareNamedCollections("tools", "工具", source.tools, published.tools),
+      items: [
+        createItem(
+          "toolcall_timeout_seconds",
+          "单次工具调用超时",
+          source.toolcall_timeout_seconds,
+          published.toolcall_timeout_seconds,
+          undefined,
+          (val) => (val != null && val !== "" ? `${val} 秒` : "跟随全局配置"),
+        ),
+        ...compareNamedCollections("tools", "工具", source.tools, published.tools),
+      ],
       changedCount: 0,
     },
     {

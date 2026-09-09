@@ -125,3 +125,38 @@ def test_resolve_relative_date_phrases_batch():
     rows = resolve_relative_date_phrases(["近7天", "下周五"], timezone=TZ_NAME, now=now)
     assert rows[0]["status"] == "ok" and rows[0]["start"] == "2026-06-04"
     assert rows[1]["status"] == "ok" and rows[1]["label"] == "下五"
+
+
+def test_append_time_anchor_prepend_false_appends_after_base():
+    from app.services.ai.time_anchor import append_time_anchor_for_user_question
+
+    tz = pytz.timezone(TZ_NAME)
+    now = tz.localize(datetime(2026, 6, 10, 12, 0, 0))
+    base = "你是助手。"
+    out = append_time_anchor_for_user_question(
+        base,
+        "帮我看近7天趋势",
+        timezone=TZ_NAME,
+        now=now,
+        prepend=False,
+    )
+    # 追加模式下，base 在前，时间锚点在末尾。
+    assert out.startswith(base)
+    assert out.rindex("[当前时间锚点]") > out.index(base)
+
+
+def test_append_time_anchor_prepend_true_keeps_traditional_front():
+    from app.services.ai.time_anchor import append_time_anchor_for_user_question
+
+    tz = pytz.timezone(TZ_NAME)
+    now = tz.localize(datetime(2026, 6, 10, 12, 0, 0))
+    base = "你是助手。"
+    out = append_time_anchor_for_user_question(
+        base,
+        "帮我看近7天趋势",
+        timezone=TZ_NAME,
+        now=now,
+        prepend=True,
+    )
+    assert out.startswith("[当前时间锚点]")
+    assert out.index(base) > 0

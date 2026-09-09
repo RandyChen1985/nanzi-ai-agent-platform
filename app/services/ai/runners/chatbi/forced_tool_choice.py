@@ -16,6 +16,12 @@ class ForcedFirstToolChoiceModel:
         self._tool_choice = tool_choice_for_model(inner, tool_choice)
         self._consumed = False
 
+    @property
+    def formatter(self) -> Any:
+        if hasattr(self._inner, "formatter"):
+            return self._inner.formatter
+        return type("DefaultFormatter", (), {"supported_input_media_types": ["image", "text"]})()
+
     def __getattr__(self, name: str) -> Any:
         return getattr(self._inner, name)
 

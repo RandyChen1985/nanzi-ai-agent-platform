@@ -1172,6 +1172,61 @@ const showExplanation = (item: ConfigItem) => {
 
 const getCategoryTip = (key: string) => {
   const tips: Record<string, string> = {
+    'agent_prompt_layout_mode': `【提示词缓存优化核心原理】
+OpenAI、DeepSeek、Claude 等大模型具备 KV 提示词缓存（Prompt Cache）能力：当发给模型的 System Prompt 从第一个 Token 开始有足够长（通常需 >1024 Tokens）且完全一致的公共前缀时，命中的 Token 计费可降低 50%~90%，且首字响应延迟（TTFT）大幅缩短。
+
+【三种模式详细解析与排布举例】
+
+1️⃣ legacy（传统兼容模式）：
+* 排布举例：[当前时间锚点] ➔ [本轮路由快照] ➔ [平台固定规则 5K] ➔ [智能体发布提示词 10K]
+* 为什么命中率低：因为把每秒都在变化的“时间”或每轮都在变化的“路由快照”放在了最头部，导致发送给大模型的第一个字符永远在变，彻底打碎服务端的 KV 缓存，多轮对话命中率通常为 0%。
+* 适用场景：极端异常时的全局紧急回退兜底。
+
+2️⃣ observe（仅观测基线模式）：
+* 排布举例：保持与 legacy 完全一致的传统排布发送，业务逻辑 0 变动、0 风险。
+* 核心作用：打通并记录大模型供应商真实返回的 cached_tokens / cache_read 命中字段，在调用明细弹框与后台日志中呈现真实命中数据。
+* 适用场景：新功能上线前观察当前环境的基线缓存命中水平，作为优化前的对照组。
+
+3️⃣ enabled（启用稳定前缀优化模式）：
+* 排布举例：
+  ┌─ 稳定前缀层（命中缓存金矿，~15K Tokens 保持绝对一致）
+  │   ├── 平台固定规则与格式规范
+  │   └── 智能体发布版本 System Prompt
+  └─ 动态后缀层（后置追加，变化不打断头部缓存）
+      ├── 动态时间锚点
+      ├── 用户画像与个性化记忆
+      └── 本轮执行路由快照与上下文
+* 效果举例：
+  - 第 1 轮问答：模型加载并建立稳定前缀缓存；
+  - 第 2 轮及后续追问：由于前面 15K 内容完全一致，模型瞬间命中缓存！响应大幅提速，Token 计费显著减免。
+* 灰度配合：选择 enabled 后，可配合下方的 rollout_percent 滑块按会话哈希百分比灰度放量（如先放 20% 验证稳定性，再逐步拉至 100%）。`,
+    'agent_prompt_cache_rollout_percent': `【大白话通俗解释】
+把这个百分比想象成一个「流量阀门」：
+上面的模式是「总开关（要选为 enabled 才能开阀）」，这个百分比就是「控制放行多少水流（0% ~ 100%）」。
+它是用来控制「到底让线上多少比例的对话窗口，去体验新的提示词缓存优化」。
+
+【为什么不一下子全开？有什么好处？】
+在线上生产环境中，直接对所有用户改动提示词可能有不可预知的兼容风险。
+通过这个百分比，您可以像大厂做“灰度发布”一样：先放 10%~20% 的对话去试水，确认模型回答完全正常、速度确实加快了，再放心地把滑块拉满到 100%。
+
+【不同数值具体举例（大白话）】
+
+📌 设为 0%（虽然开了总关，但滴水不放）：
+* 举例：线上即使有 100 个用户在聊天，所有人的对话全都走老逻辑，新优化 0 生效。
+* 作用：即开即关的安全刹车（紧急情况下秒级熔断）。
+
+📌 设为 20%（小范围灰度试水，做效果对比）：
+* 举例：线上有 100 个对话窗口，系统会随机分流 20 个对话开启缓存新布局，其余 80 个对话依然走老逻辑。
+* 作用：您可以打开「调用明细指标」对比这两部分对话的耗时和命中率，验证新布局的加速效果。
+
+📌 设为 50%（半量放行）：
+* 举例：一半对话走新布局，一半走老逻辑，进一步扩大观察范围。
+
+📌 设为 100%（全量开启，推荐稳定后使用）：
+* 举例：所有用户的全部对话窗口，100% 全量享受「稳定层前置」带来的极速响应和 Token 费用大减免。
+
+【特别安心机制：同一会话绝不来回跳变】
+系统是根据每个对话窗口的唯一 ID 进行锁定的。比如用户张三开了一个窗口正在聊天，如果他的这个窗口命中了 20% 的新优化，那么无论他聊 5 轮还是 10 轮，这个窗口里的所有问答都会稳定走新优化，绝不会第 1 句走新、第 2 句突然跳回老逻辑。`,
     'llm_temperature': '大模型温度系数，范围为 0.0 至 1.0。趋近于 0.0 表示回答更加确定、严谨和精准（适合数据查询与逻辑推理）；趋近于 1.0 表示回答更具创造力、发散性和随机性。',
     'multimodal_model_name': '会话当前模型不支持识图时，用该默认多模态模型解析本轮图片为文字，再交给原模型继续回答。留空则直接提示用户当前模型不支持图片理解。',
     'agent_max_iterations': 'ReAct 智能体单次对话的最大思考与工具调用轮数限制。建议设定在 10-20 之间，过小可能导致任务未完成便终止，过大可能因死循环消耗过多 Token。',
@@ -1658,13 +1713,22 @@ const configShortDescriptions: Record<string, string> = {
   sandbox_ssh_password: 'ssh 策略密码认证的登录密码（敏感信息），仅在认证方式为 password 时使用。',
   sandbox_ssh_private_key: 'ssh 策略私钥认证的私钥内容（敏感信息），仅在认证方式为 key 时使用。',
   sandbox_ssh_remote_workdir: 'ssh 策略远程沙箱的工作目录（默认 /workspace），由平台自动创建 data/skills/sessions 等子目录。',
+  agent_prompt_layout_mode: '提示词缓存布局策略：legacy（传统布局）、observe（仅观测命中指标）、enabled（全量启用优化）。',
+  agent_prompt_cache_rollout_percent: '提示词缓存灰度生效比例（0-100%），基于会话哈希分桶控制新布局灰度。',
 }
 
 const getVisibleItems = (items: ConfigItem[] | undefined, category: string) => {
   if (!items) return []
   let list = [...items]
   if (category === 'agent') {
+    const layoutModeItem = list.find(x => x.key === 'agent_prompt_layout_mode')
+    const layoutMode = (layoutModeItem?.value ?? 'legacy').trim()
+    if (layoutMode !== 'enabled') {
+      list = list.filter(x => x.key !== 'agent_prompt_cache_rollout_percent')
+    }
     const order = [
+      'agent_prompt_layout_mode',
+      'agent_prompt_cache_rollout_percent',
       'agent_max_iterations',
       'agent_tool_loop_global_limit',
       'agent_max_toolcall_timeout',
@@ -2514,6 +2578,7 @@ onUnmounted(() => {
                     class="block w-full rounded-lg border-gray-300 shadow-sm focus:border-primary focus:ring-primary text-sm font-mono"
                     placeholder="/favicon.svg 或 /branding/icon.png"
                   />
+
                   <button
                     type="button"
                     class="text-sm text-primary hover:text-primary/80 disabled:opacity-50"
@@ -2747,7 +2812,47 @@ onUnmounted(() => {
                          </p>
                       </div>
                        <div class="md:col-span-2 relative">
-                          <div v-if="item.key === 'llm_model_name'">
+                          <div v-if="item.key === 'agent_prompt_layout_mode'">
+                              <select v-model="item.value" :disabled="isConfigItemDisabled(String(category), item)" class="shadow-sm focus:ring-primary focus:border-primary block w-full sm:text-sm border-gray-300 rounded-md bg-gray-100 p-2 disabled:opacity-70 disabled:cursor-not-allowed">
+                                 <option value="legacy">legacy (传统布局：动态内容前置，按原逻辑拼装)</option>
+                                 <option value="observe">observe (仅观测：保持传统布局发送，仅统计供应商命中指标)</option>
+                                 <option value="enabled">enabled (启用优化：按灰度比例启用稳定层前置缓存布局)</option>
+                              </select>
+                          </div>
+                          <div v-else-if="item.key === 'agent_prompt_cache_rollout_percent'">
+                              <div class="flex items-center space-x-4">
+                                  <div class="flex-1">
+                                      <input
+                                        type="range"
+                                        min="0"
+                                        max="100"
+                                        step="1"
+                                        :value="Number(item.value) || 0"
+                                        :disabled="isConfigItemDisabled(String(category), item)"
+                                        @input="(e) => item.value = String(Math.min(100, Math.max(0, parseInt((e.target as HTMLInputElement).value) || 0)))"
+                                        class="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-primary disabled:opacity-50"
+                                      />
+                                      <div class="flex justify-between text-xs text-gray-400 mt-1 font-mono">
+                                          <span>0% (全走传统布局)</span>
+                                          <span>50%</span>
+                                          <span>100% (全量生效)</span>
+                                      </div>
+                                  </div>
+                                  <div class="w-20 flex items-center gap-1">
+                                      <input
+                                        type="number"
+                                        v-model="item.value"
+                                        :disabled="isConfigItemDisabled(String(category), item)"
+                                        min="0"
+                                        max="100"
+                                        step="1"
+                                        class="block w-full sm:text-sm border-gray-300 rounded-md bg-white text-center focus:ring-primary focus:border-primary disabled:opacity-70"
+                                      />
+                                      <span class="text-xs text-gray-500 font-medium">%</span>
+                                  </div>
+                              </div>
+                          </div>
+                          <div v-else-if="item.key === 'llm_model_name'">
                               <select v-model="item.value" :disabled="isConfigItemDisabled(String(category), item)" class="shadow-sm focus:ring-primary focus:border-primary block w-full sm:text-sm border-gray-300 rounded-md bg-gray-100 p-2 disabled:opacity-70 disabled:cursor-not-allowed">
                                  <option value="" disabled>选择默认模型...</option>
                                  <option v-for="m in models.filter(x => x.type === 'llm' && x.is_active)" :key="m.id" :value="m.model_id">

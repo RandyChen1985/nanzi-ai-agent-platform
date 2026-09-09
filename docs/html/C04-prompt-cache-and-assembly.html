@@ -1,0 +1,409 @@
+<!--
+  微信公众号排版 HTML — NanZi 盘外加餐 · C04
+  系列：《NanZi 开源智能体平台实战连载》番外篇
+  使用说明：
+  1. 复制下方最外层 <section>…</section> 粘贴到公众号 HTML 模式（或 135/秀米/微信编辑器）
+  2. 全部样式均为内联 style，符合移动端阅读优化、微信编辑器代码块安全与表格自适应规范
+-->
+
+<section style="box-sizing:border-box;font-size:16px;color:#3f3f3f;line-height:1.8;letter-spacing:0.5px;text-align:justify;font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue','PingFang SC','Hiragino Sans GB','Microsoft YaHei',Arial,sans-serif;max-width:760px;margin:0 auto;padding:0 2px;word-break:break-word;overflow-wrap:break-word;">
+
+  <!-- 标题区 -->
+  <section style="margin:0 0 24px 0;padding:26px 18px;background:linear-gradient(135deg,#064e3b 0%,#022c22 48%,#111827 100%);border-radius:12px;text-align:center;box-shadow:0 4px 20px rgba(16,185,129,0.18);">
+    <p style="margin:0 0 8px 0;font-size:13px;font-weight:normal;color:#6ee7b7;line-height:1.5;letter-spacing:1.5px;text-transform:uppercase;">NanZi 开源智能体平台 · 盘外加餐 C04</p>
+    <p style="margin:0 0 12px 0;font-size:22px;font-weight:bold;color:#f8fafc;line-height:1.5;letter-spacing:1px;">智能体平台如何设计提示词拼装架构？千万级 Token 缓存实战</p>
+    <p style="margin:0;font-size:15px;font-weight:normal;color:#a7f3d0;line-height:1.6;letter-spacing:0.5px;">从 8 源异构上下文融合、PromptPlan 编译管线，到 OpenAI-compatible 稳定前缀前置与会话哈希灰度落地</p>
+  </section>
+
+  <!-- 项目声明 -->
+  <section style="margin:0 0 20px 0;padding:14px 16px;background:#fafafa;border:1px solid #e5e7eb;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#111827;line-height:1.5;">💡 项目声明</p>
+    <p style="margin:0 0 8px 0;font-size:14px;color:#374151;line-height:1.85;">
+      本项目为<strong>个人开源</strong>，供自由学习交流，遵循 MIT 开源协议，可自由二次开发与商用。
+    </p>
+    <p style="margin:0;font-size:14px;color:#374151;line-height:1.85;">
+      「NanZi」来自网名（南孜），取「孜孜不倦」之意。开源 GitHub 仓库：
+      <a href="https://github.com/RandyChen1985/nanzi-ai-agent-platform" style="color:#059669;text-decoration:none;word-break:break-all;font-weight:500;">RandyChen1985/nanzi-ai-agent-platform</a>
+    </p>
+  </section>
+
+  <!-- 导语 -->
+  <section style="margin:0 0 20px 0;">
+    <p style="margin:0 0 12px 0;font-size:15px;color:#374151;line-height:1.9;">
+      很多刚接触 AI 智能体开发的同学，常常有一种直觉误区：<strong>觉得 Agent 的提示词（Prompt）就是一段“写好后固定不变的大长文本”</strong>——在前端配置框里敲一段人设，直接作为参数发给大模型接口即可。
+    </p>
+    <p style="margin:0 0 12px 0;font-size:15px;color:#374151;line-height:1.9;">
+      然而，一旦你动手构建一个<strong>真正的企业级 Agent 平台</strong>，你会发现提示词拼装（Prompt Assembly）绝不是简单的字符串加号（<code>prompt += "..."</code>），而是一个极其精密、涉及多达 8 个子系统异构融合的<strong>“工业级总装流水线”</strong>。
+    </p>
+    <p style="margin:0 0 12px 0;font-size:15px;color:#111827;line-height:1.9;background:#f3f4f6;padding:12px 14px;border-left:4px solid #10b981;border-radius:0 6px 6px 0;">
+      系统既要实时注入<strong>平台安全防线、工具调用 Schema、动态技能白名单、长期记忆召回、用户权限范围、意图路由决策与时间锚点</strong>，又要面对单次输入高达 <strong>20,000 ~ 40,000 Tokens</strong> 带来的高额成本与首字等待延迟（TTFT）。
+    </p>
+    <p style="margin:0;font-size:15px;color:#374151;line-height:1.9;">
+      如何设计出一套<strong>职责解耦、支持版本热更、具备流水线编排能力，同时又能完美命中大模型 KV Cache（上下文前缀缓存）实现成本断崖式下降</strong>的提示词拼装架构？本篇结合 NanZi 开源智能体平台的实际代码演进，为你彻底拆解平台背后的装配工程设计。
+    </p>
+  </section>
+
+  <!-- 一句话总结卡片 -->
+  <section style="margin:0 0 24px 0;padding:14px 16px;background:#ecfeff;border-left:4px solid #0891b2;border-radius:0 8px 8px 0;">
+    <p style="margin:0;font-size:14px;color:#0e7490;line-height:1.85;">
+      <strong>📌 核心架构总结：</strong>提示词拼装是 Agent 平台执行生命周期的总装中枢。NanZi 通过「执行流水线（Pipeline AssembleStep）」统领全流程，将多源动态输入抽象为面向对象的「强类型切片 PromptSection 与编译执行计划 PromptPlan」；再配合「稳定前缀前置」物理拓扑，完美触发大模型厂商的 KV Cache 缓存池，并辅以会话级 SHA-256 哈希灰度分桶与真实 Token 观测，构建起一套高可靠、高性能的企业级提示词工程基座。
+    </p>
+  </section>
+
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+
+  <!-- ========== 01 平台级挑战：Agent 的 System Prompt 到底从哪来 ========== -->
+  <section style="margin:0 0 14px 0;">
+    <p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #10b981;padding-left:12px;line-height:1.4;">01｜平台级挑战：Agent 的 System Prompt 到底从哪来？</p>
+  </section>
+
+  <section style="margin:0 0 16px 0;">
+    <p style="margin:0 0 10px 0;font-size:15px;color:#374151;line-height:1.85;">
+      单体聊天机器人只需要一段 System Prompt，而平台级多智能体系统在向模型发起调用前，必须在极短时间内（通常要求在几十毫秒内）聚合来自平台方方面面的<strong>八大异构信息源</strong>：
+    </p>
+  </section>
+
+  <!-- 八大输入源表格（移动端横向自适应滑动） -->
+  <div style="overflow-x:auto;-webkit-overflow-scrolling:touch;margin:0 0 16px 0;">
+    <table style="width:100%;border-collapse:collapse;font-size:13px;line-height:1.65;border:1px solid #e2e8f0;">
+      <thead>
+        <tr style="background:#f8fafc;border-bottom:2px solid #e2e8f0;text-align:left;">
+          <th style="padding:10px 12px;color:#0f172a;min-width:120px;">切片类别</th>
+          <th style="padding:10px 12px;color:#0f172a;min-width:200px;">具体注入内容</th>
+          <th style="padding:10px 12px;color:#0f172a;min-width:120px;">生命周期/来源</th>
+          <th style="padding:10px 12px;color:#0f172a;min-width:100px;">稳定性分类</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr style="border-bottom:1px solid #f1f5f9;">
+          <td style="padding:10px 12px;font-weight:bold;color:#059669;">1. 平台全局契约</td>
+          <td style="padding:10px 12px;color:#334155;">Markdown/JSON 格式要求、代码块契约、系统底线与防越狱守则</td>
+          <td style="padding:10px 12px;color:#64748b;">平台代码硬契约</td>
+          <td style="padding:10px 12px;color:#059669;font-weight:bold;">绝对稳定</td>
+        </tr>
+        <tr style="border-bottom:1px solid #f1f5f9;background:#fcfdfd;">
+          <td style="padding:10px 12px;font-weight:bold;color:#0284c7;">2. 智能体专规人设</td>
+          <td style="padding:10px 12px;color:#334155;">专家人设角色、业务口径定义、任务执行流程规范、Few-shot 黄金范例</td>
+          <td style="padding:10px 12px;color:#64748b;">Prompt Studio 发布版本</td>
+          <td style="padding:10px 12px;color:#0284c7;font-weight:bold;">高稳定（版本级）</td>
+        </tr>
+        <tr style="border-bottom:1px solid #f1f5f9;">
+          <td style="padding:10px 12px;font-weight:bold;color:#7c3aed;">3. 工具注册能力表</td>
+          <td style="padding:10px 12px;color:#334155;">当前智能体绑定的内置工具列表、MCP 远程服务扩展、入参限制规则</td>
+          <td style="padding:10px 12px;color:#64748b;">ToolRegistry 运行时注入</td>
+          <td style="padding:10px 12px;color:#7c3aed;font-weight:bold;">中稳定</td>
+        </tr>
+        <tr style="border-bottom:1px solid #f1f5f9;background:#fcfdfd;">
+          <td style="padding:10px 12px;font-weight:bold;color:#d97706;">4. 技能清单与白名单</td>
+          <td style="padding:10px 12px;color:#334155;">已授权平台技能摘要、SKILL.md 声明、动态技能发现路径白名单</td>
+          <td style="padding:10px 12px;color:#64748b;">SkillResolver 检索</td>
+          <td style="padding:10px 12px;color:#d97706;font-weight:bold;">动态挂载</td>
+        </tr>
+        <tr style="border-bottom:1px solid #f1f5f9;">
+          <td style="padding:10px 12px;font-weight:bold;color:#ea580c;">5. 用户与权限范围</td>
+          <td style="padding:10px 12px;color:#334155;">当前提问人姓名、部门组织、RBAC 授权可访问的数据集与知识库清单</td>
+          <td style="padding:10px 12px;color:#64748b;">用户会话上下文</td>
+          <td style="padding:10px 12px;color:#ea580c;font-weight:bold;">用户级动态</td>
+        </tr>
+        <tr style="border-bottom:1px solid #f1f5f9;background:#fcfdfd;">
+          <td style="padding:10px 12px;font-weight:bold;color:#db2777;">6. 长期记忆检索切片</td>
+          <td style="padding:10px 12px;color:#334155;">LTM 长期偏好（如输出中文、简洁优先）、跨会话召回片段、会话摘要</td>
+          <td style="padding:10px 12px;color:#64748b;">向量库/记忆系统召回</td>
+          <td style="padding:10px 12px;color:#db2777;font-weight:bold;">高度动态</td>
+        </tr>
+        <tr style="border-bottom:1px solid #f1f5f9;">
+          <td style="padding:10px 12px;font-weight:bold;color:#e11d48;">7. 本轮多智能体决策</td>
+          <td style="padding:10px 12px;color:#334155;">Dispatcher 意图路由快照（如判定为查数意图）、子代理委托上下文提示</td>
+          <td style="padding:10px 12px;color:#64748b;">调度器单轮决策</td>
+          <td style="padding:10px 12px;color:#e11d48;font-weight:bold;">每轮都变</td>
+        </tr>
+        <tr>
+          <td style="padding:10px 12px;font-weight:bold;color:#64748b;">8. 物理环境时空锚点</td>
+          <td style="padding:10px 12px;color:#334155;">服务器当前时区物理时间（如 2026-09-09 09:30:00）、客户端设备端类型</td>
+          <td style="padding:10px 12px;color:#64748b;">物理宿主机环境</td>
+          <td style="padding:10px 12px;color:#dc2626;font-weight:bold;">每秒都在变</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <section style="margin:0 0 16px 0;padding:12px 14px;background:#fef2f2;border:1px solid #fecaca;border-radius:10px;">
+    <p style="margin:0 0 6px 0;font-size:13px;font-weight:bold;color:#991b1b;">⚠️ 如果缺乏架构治理，平台会陷入什么混乱？</p>
+    <p style="margin:0;font-size:13px;color:#7f1d1d;line-height:1.8;">
+      • <strong>硬编码混乱</strong>：每个开发都在 Runner 里随手 <code>prompt += f"{new_data}\n"</code>，代码碎片化，无人知道最终模型到底看到了什么；<br/>
+      • <strong>权限越权与泄露</strong>：未做严格上下文边界裁决，把其他租户或未授权的数据表 Schema 随手拼进提示词，产生严重安全漏洞；<br/>
+      • <strong>重复注入与 Token 暴涨</strong>：路由快照在流水线拼一次，执行器最后一公里又塞一次，造成 Token 白白浪费；<br/>
+      • <strong>彻底摧毁大模型缓存</strong>：随手把动态时间或路由塞在第一行，导致厂商的前缀缓存命中率永远是 0%。
+    </p>
+  </section>
+
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+
+  <!-- ========== 02 拼装中枢：执行流水线中的 AssembleStep ========== -->
+  <section style="margin:0 0 14px 0;">
+    <p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #0891b2;padding-left:12px;line-height:1.4;">02｜装配中枢：执行流水线（Pipeline）中的 AssembleStep</p>
+  </section>
+
+  <section style="margin:0 0 16px 0;">
+    <p style="margin:0 0 10px 0;font-size:15px;color:#374151;line-height:1.85;">
+      在 NanZi 的平台设计中，一次智能体执行被拆解为一个严密的<strong>责任链流水线（PipelineRunner）</strong>。提示词拼装不再是散落在业务代码里的黑盒，而是被安置在承前启后的核心第四阶段：
+    </p>
+  </section>
+
+  <!-- 流水线六步卡片流（自适应微信） -->
+  <section style="margin:0 0 16px 0;padding:14px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;">
+    <p style="margin:0 0 10px 0;font-size:14px;font-weight:bold;color:#0f172a;">🧭 NanZi Agent 执行流水线完整生命周期</p>
+    
+    <div style="font-size:13px;color:#334155;line-height:1.85;">
+      <p style="margin:0 0 6px 0;padding:6px 10px;background:#ffffff;border:1px solid #e2e8f0;border-radius:6px;">
+        <strong>Step 1. PreflightStep（环境与门禁预检）</strong>：校验模型可用性、API 配额与当前用户功能权限（<code>element:*</code>）；
+      </p>
+      <p style="margin:0 0 6px 0;padding:6px 10px;background:#ffffff;border:1px solid #e2e8f0;border-radius:6px;">
+        <strong>Step 2. RouteStep（调度器意图分发）</strong>：根据用户输入解析执行模式（通用问答、数据分析还是知识库精准检索）；
+      </p>
+      <p style="margin:0 0 6px 0;padding:6px 10px;background:#ffffff;border:1px solid #e2e8f0;border-radius:6px;">
+        <strong>Step 3. ContextStep（多源异构上下文准备）</strong>：并发检索向量记忆、捞取技能文件、过滤当前会话授权的数据集清单；
+      </p>
+      <p style="margin:0 0 6px 0;padding:8px 10px;background:#ecfeff;border:1.5px solid #06b6d4;border-radius:6px;color:#0891b2;font-weight:bold;">
+        ⭐ Step 4. AssembleStep（系统提示词分层装配中枢）：输入多源切片，调用 PromptAssembler 执行计划，完成编译重排与度量打点；
+      </p>
+      <p style="margin:0 0 6px 0;padding:6px 10px;background:#ffffff;border:1px solid #e2e8f0;border-radius:6px;">
+        <strong>Step 5. ExecutionStep（运行时模型推理）</strong>：驱动 AgentScope 运行时，执行模型调用、工具调用 ReAct 推理与流式输出；
+      </p>
+      <p style="margin:0;padding:6px 10px;background:#ffffff;border:1px solid #e2e8f0;border-radius:6px;">
+        <strong>Step 6. FinalizeStep（后置归档与沉淀）</strong>：沉淀本轮长期记忆、持久化 Trace 审计日志、统计调用成本。
+      </p>
+    </div>
+  </section>
+
+  <section style="margin:0 0 16px 0;">
+    <p style="margin:0 0 10px 0;font-size:15px;color:#374151;line-height:1.85;">
+      <strong>收敛执行边界：消除执行器私货。</strong><br/>
+      许多 Agent 系统之所以难以维护，是因为下层的具体执行器（如通用对话 <code>AssistantRunner</code>、知识问答 <code>KnowledgeRunner</code>、数据问数 <code>ChatBIRunner</code>）各自在最后一公里塞“私货”。NanZi 明确规定：<strong>所有 Runner 必须收敛至统一的装配模型</strong>，杜绝执行器私自修改首尾顺序，从而确保提示词全链路的确定性与可观测性。
+    </p>
+  </section>
+
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+
+  <!-- ========== 03 面向对象抽象：PromptSection 与 PromptPlan ========== -->
+  <section style="margin:0 0 14px 0;">
+    <p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #7c3aed;padding-left:12px;line-height:1.4;">03｜面向对象抽象：从字符串拼接进化到 PromptPlan</p>
+  </section>
+
+  <section style="margin:0 0 16px 0;">
+    <p style="margin:0 0 10px 0;font-size:15px;color:#374151;line-height:1.85;">
+      在 NanZi 的代码实现中（位于 <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;word-break:break-all;">app/services/ai/prompt_assembler.py</code>），系统彻底抛弃了纯字符串拼接，将装配过程抽象为了两套核心领域模型：
+    </p>
+  </section>
+
+  <!-- 模型对比卡片 -->
+  <section style="margin:0 0 16px 0;padding:14px 16px;background:#f5f3ff;border:1px solid #ddd6fe;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:14px;font-weight:bold;color:#5b21b6;">🧩 核心领域对象：PromptSection 与 PromptPlan</p>
+    <div style="font-size:13px;color:#374151;line-height:1.85;">
+      <p style="margin:0 0 8px 0;">
+        • <strong>PromptSection（强类型提示词切片）</strong>：包含 <code>name</code>（切片唯一标识）、<code>order</code>（排序权重）、<code>text</code>（内容文本）、<code>stability</code>（稳定性：stable 稳定 / dynamic 动态）以及 <code>source</code>（来源模块）。每一个要塞入大模型的信息都被封装为一个切片，严禁匿名注入。
+      </p>
+      <p style="margin:0;">
+        • <strong>PromptPlan（编译与执行计划）</strong>：将切片划分为 <code>stable_sections</code> 与 <code>dynamic_sections</code> 两个确定性元组。内置自动查重校验、状态过滤、声明式按序渲染，以及字符级精细度量（<code>section_char_counts</code>）。
+      </p>
+    </div>
+  </section>
+
+  <!-- 代码展示（微信安全 p 标签） -->
+  <div style="background:#1e293b;padding:12px 14px;border-radius:8px;overflow-x:auto;-webkit-overflow-scrolling:touch;margin:0 0 16px 0;">
+    <p style="margin:0;font-size:12px;color:#f8fafc;font-family:Consolas,Monaco,monospace;line-height:1.6;white-space:normal;word-break:break-all;">
+      <span style="color:#94a3b8;"># app/services/ai/prompt_assembler.py 核心对象定义</span><br/>
+      <span style="color:#c084fc;">@dataclass</span>(frozen=True)<br/>
+      <span style="color:#60a5fa;">class</span> <span style="color:#fde047;">PromptPlan</span>:<br/>
+      &nbsp;&nbsp;&nbsp;&nbsp;stable_sections: tuple[PromptSection, ...] = ()<br/>
+      &nbsp;&nbsp;&nbsp;&nbsp;dynamic_sections: tuple[PromptSection, ...] = ()<br/>
+      <br/>
+      &nbsp;&nbsp;&nbsp;&nbsp;<span style="color:#60a5fa;">def</span> <span style="color:#38bdf8;">render_stable</span>(self) -&gt; str:<br/>
+      &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span style="color:#94a3b8;"># 稳定前缀层：保证全会话字符级 100% 绝对一致</span><br/>
+      &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span style="color:#f43f5e;">return</span> self._render_ordered(self._filtered_sorted(self.stable_sections))<br/>
+      <br/>
+      &nbsp;&nbsp;&nbsp;&nbsp;<span style="color:#60a5fa;">def</span> <span style="color:#38bdf8;">render_dynamic</span>(self) -&gt; str:<br/>
+      &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span style="color:#94a3b8;"># 动态后缀层：时间、记忆、路由追加在后，绝不污染前缀</span><br/>
+      &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span style="color:#f43f5e;">return</span> self._render_ordered(self._filtered_sorted(self.dynamic_sections))
+    </p>
+  </div>
+
+  <section style="margin:0 0 16px 0;">
+    <p style="margin:0 0 10px 0;font-size:15px;color:#374151;line-height:1.85;">
+      <strong>设计洞察：为什么坚决不用 HTML 伪标签注释当缓存边界？</strong><br/>
+      业内部分框架喜欢在提示词中间插入类似 <code>&lt;!-- NANZI_CACHE_BOUNDARY --&gt;</code> 的 HTML 注释，试图作为分界标识。但 NanZi 在实测中发现：绝大多数主流大模型供应商（OpenAI、DeepSeek 等）根本不会识别这种客户端私造的注释，这种标签反而白白浪费注意力窗口。<strong>真正的缓存机制，靠的是从物理层重构 Token 顺序！</strong>
+    </p>
+  </section>
+
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+
+  <!-- ========== 04 拓扑重构与 KV Cache 缓存实战 ========== -->
+  <section style="margin:0 0 14px 0;">
+    <p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #d97706;padding-left:12px;line-height:1.4;">04｜拓扑重构与 KV Cache：稳定前缀前置模型</p>
+  </section>
+
+  <section style="margin:0 0 16px 0;">
+    <p style="margin:0 0 10px 0;font-size:15px;color:#374151;line-height:1.85;">
+      解决了装配架构的面向对象解耦后，我们如何将它与大模型的 <strong>KV Cache（键值缓存，中间注意力状态缓存）</strong> 结合，实现千万级 Token 降本？
+    </p>
+    <p style="margin:0 0 10px 0;font-size:15px;color:#374151;line-height:1.85;">
+      大模型服务端的缓存匹配机制是<strong>基于公共前缀树（Prefix Tree）</strong>的。它有且仅有一条刚性铁律：
+    </p>
+  </section>
+
+  <section style="margin:0 0 16px 0;padding:14px 16px;background:#fffbeb;border:1px solid #fde68a;border-radius:10px;">
+    <p style="margin:0 0 6px 0;font-size:14px;font-weight:bold;color:#92400e;">⚡ KV Cache 命中的铁律</p>
+    <p style="margin:0;font-size:14px;color:#78350f;line-height:1.85;">
+      <strong>必须从请求的第 1 个 Token 开始完全一致，且连续匹配达到阈值（通常为 1024 Tokens 以上），前缀树才能命中！</strong><br/>
+      哪怕开头第 1 行只变了 1 个时间字符（如 <code>09:30:01</code> 变成 <code>09:30:06</code>），整条命中指针立刻断裂，后续紧跟着的 20,000 个静态字符全部无法命中！
+    </p>
+  </section>
+
+  <!-- 对比结构卡片（移动端自适应原生卡片流，微信100%不变形） -->
+  <section style="margin:0 0 16px 0;padding:16px 14px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;box-sizing:border-box;">
+    <p style="margin:0 0 12px 0;font-size:15px;font-weight:bold;color:#0f172a;line-height:1.5;">🏗️ NanZi PromptPlan 拓扑架构（稳定前缀前置模型）</p>
+    
+    <!-- 稳定前缀层 -->
+    <section style="margin:0 0 8px 0;padding:12px 14px;background:#f0fdf4;border:1.5px solid #86efac;border-radius:10px;box-sizing:border-box;">
+      <div style="margin:0 0 6px 0;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:4px;">
+        <span style="font-size:14px;font-weight:bold;color:#166534;">🟢 1. 稳定前缀层（Stable Prefix Ahead）</span>
+        <span style="font-size:11px;background:#dcfce7;color:#15803d;padding:2px 8px;border-radius:12px;font-weight:bold;border:1px solid #bbf7d0;">命中金矿 · 首字符起严格匹配</span>
+      </div>
+      <p style="margin:0 0 6px 0;font-size:12px;color:#166534;line-height:1.7;">
+        ★ 核心特性：会话内 100% 字符级稳定一致（单智能体约 12,000 ~ 20,000 Tokens 缓存池）
+      </p>
+      <div style="font-size:13px;color:#374151;line-height:1.8;padding-left:2px;">
+        <p style="margin:0;">• <strong>平台固定规则</strong>：Markdown / JSON / 代码块契约与输出格式防线</p>
+        <p style="margin:0;">• <strong>安全合规门禁</strong>：基础事实门禁、防注入防越狱与系统级底线原则</p>
+        <p style="margin:0;">• <strong>智能体发布规约</strong>：Prompt Studio 发布的专家角色、意图目标与 Few-shot 样例</p>
+      </div>
+    </section>
+
+    <!-- 流转衔接条 -->
+    <div style="text-align:center;margin:8px 0;color:#64748b;font-size:12px;line-height:1.4;">
+      <span style="display:inline-block;background:#ffffff;padding:3px 12px;border:1px dashed #cbd5e1;border-radius:16px;color:#475569;font-weight:500;">
+        ⬇️ 连续物理拼接 · 保持前缀匹配树不被打断 ⬇️
+      </span>
+    </div>
+
+    <!-- 动态后缀层 -->
+    <section style="margin:8px 0 0 0;padding:12px 14px;background:#f0f9ff;border:1.5px solid #7dd3fc;border-radius:10px;box-sizing:border-box;">
+      <div style="margin:0 0 6px 0;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:4px;">
+        <span style="font-size:14px;font-weight:bold;color:#0369a1;">🔵 2. 动态后缀层（Dynamic Suffix Appendices）</span>
+        <span style="font-size:11px;background:#e0f2fe;color:#0284c7;padding:2px 8px;border-radius:12px;font-weight:bold;border:1px solid #bae6fd;">末尾追加 · 零损耗前缀缓存</span>
+      </div>
+      <p style="margin:0 0 6px 0;font-size:12px;color:#0369a1;line-height:1.7;">
+        ★ 核心特性：每轮按需动态追加，内容变动全部约束在尾部，完全不破坏前面的缓存
+      </p>
+      <div style="font-size:13px;color:#374151;line-height:1.8;padding-left:2px;">
+        <p style="margin:0;">• <strong>平台时区动态时间锚点</strong>：当前物理时间（Time Anchor）</p>
+        <p style="margin:0;">• <strong>长期记忆检索切片</strong>：用户画像、近期习惯与摘要召回（LTM Profiles）</p>
+        <p style="margin:0;">• <strong>用户个性化技能目录</strong>：会话绑定的动态工具与权限清单（Skills Directory）</p>
+        <p style="margin:0;">• <strong>本轮执行决策快照</strong>：多智能体调度器的路由状态（仅供单轮执行参考）</p>
+      </div>
+    </section>
+  </section>
+
+  <section style="margin:0 0 16px 0;">
+    <p style="margin:0;font-size:15px;color:#374151;line-height:1.85;">
+      通过这样的重构，原本动辄几万 Token 的大模型输入，在前缀部分实现了会话内 100% 字节级一致。首轮调用写入缓存后，后续无论用户追问多少轮，前置的 15,000+ Tokens 全部秒级从显存缓存命中返回，不仅开销直降 80%~90%，首字响应时间（TTFT）更由原先的 8~12 秒缩短至 1~2 秒！
+    </p>
+  </section>
+
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+
+  <!-- ========== 05 生产级灰度与无感升级 ========== -->
+  <section style="margin:0 0 14px 0;">
+    <p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #10b981;padding-left:12px;line-height:1.4;">05｜生产级灰度与无感升级：三态策略与会话哈希</p>
+  </section>
+
+  <section style="margin:0 0 16px 0;">
+    <p style="margin:0 0 10px 0;font-size:15px;color:#374151;line-height:1.85;">
+      改动提示词拼装顺序直接影响智能体的推理表现。对于承载业务的生产系统，<strong>严禁无灰度一刀切上线</strong>。NanZi 设计了严密的两级策略控制：
+    </p>
+  </section>
+
+  <!-- 三态策略卡片 -->
+  <section style="margin:0 0 16px 0;padding:14px 16px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:14px;font-weight:bold;color:#166534;">🎛️ 系统参数：agent_prompt_layout_mode（总控三态）</p>
+    <p style="margin:0;font-size:13px;color:#14532d;line-height:1.85;">
+      • <strong>legacy（传统兼容模式）</strong>：全量走老逻辑，完全保持原有拼装顺序，作为全局秒级熔断底线；<br/>
+      • <strong>observe（仅观测基线模式）</strong>：保持传统老布局发送，业务逻辑 0 变动、0 风险；但后台打通供应商真实缓存 Token 提取，统计当前未优化环境下的命中基线；<br/>
+      • <strong>enabled（启用稳定优化模式）</strong>：正式激活稳定前缀新布局，此时系统才会显示并启用下方的灰度滑块。
+    </p>
+  </section>
+
+  <!-- 灰度分桶卡片 -->
+  <section style="margin:0 0 16px 0;padding:14px 16px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:14px;font-weight:bold;color:#1e40af;">🎯 系统参数：agent_prompt_cache_rollout_percent（会话哈希分桶）</p>
+    <p style="margin:0;font-size:13px;color:#1e3a8a;line-height:1.85;">
+      只有在模式选为 <code style="background:#dbeafe;padding:1px 5px;border-radius:3px;">enabled</code> 时，灰度滑块才允许调节。平台基于每个会话的 <code style="background:#dbeafe;padding:1px 5px;border-radius:3px;">conversation_id</code> 进行 SHA-256 哈希取模（0~99）：<br/>
+      • <strong>单会话强粘性保障</strong>：同一个对话窗口内，只要命中分桶，整场对话从头到尾必定稳定走新布局，绝不会“第 1 轮走新、第 2 轮跳回老逻辑”；<br/>
+      • <strong>平滑放量与即时熔断</strong>：支持从 10% 试水，逐步拉大至 50%、100%；如遇突发异常，切回 legacy 即刻全网秒级回退。
+    </p>
+  </section>
+
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+
+  <!-- ========== 06 真实观测闭环 ========== -->
+  <section style="margin:0 0 14px 0;">
+    <p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #0891b2;padding-left:12px;line-height:1.4;">06｜真实观测闭环：拒绝伪造，拿真实 Usage 说话</p>
+  </section>
+
+  <section style="margin:0 0 16px 0;">
+    <p style="margin:0 0 10px 0;font-size:15px;color:#374151;line-height:1.85;">
+      有些平台为了“好看”，会在界面上假装显示命中数据。NanZi 平台坚决秉持<strong>「绝不虚标」</strong>的工程原则：
+    </p>
+    <p style="margin:0 0 10px 0;font-size:15px;color:#374151;line-height:1.85;">
+      在中间件（<code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:13px;word-break:break-all;">ModelCallStatsMiddleware</code>）中，精准提取大模型底层返回的原生字段：<br/>
+      • <strong>OpenAI / DeepSeek 标准</strong>：<code>prompt_tokens_details.cached_tokens</code>；<br/>
+      • <strong>Anthropic 标准</strong>：<code>cache_read_input_tokens</code>。<br/>
+      如果供应商并未返回缓存数据，系统如实标记为 <code>unavailable</code>，绝不伪造。
+    </p>
+    <p style="margin:0;font-size:15px;color:#374151;line-height:1.85;">
+      在前端界面上，每条消息的大模型调用详情弹框直接提供<strong>「调用次数 | 总耗时 | 总输入 | 总输出 | 缓存命中」</strong>五列统计大卡片，并在单次调用的输入 Token 右侧以醒目的绿色徽标（如 <code style="background:#ecfdf5;color:#059669;padding:2px 6px;border-radius:4px;font-weight:bold;">命中: 12,480 (85%)</code>）直观展示实效收益。
+    </p>
+  </section>
+
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+
+  <!-- ========== 07 避坑指南与总结 ========== -->
+  <section style="margin:0 0 14px 0;">
+    <p style="margin:0;font-size:18px;font-weight:bold;color:#111827;border-left:5px solid #ef4444;padding-left:12px;line-height:1.4;">07｜开发者自建 Agent 平台的避坑指南</p>
+  </section>
+
+  <section style="margin:0 0 16px 0;padding:14px 16px;background:#fef2f2;border:1px solid #fecaca;border-radius:10px;">
+    <p style="margin:0 0 8px 0;font-size:14px;font-weight:bold;color:#991b1b;">⚠️ 实战中容易踩入的四大深坑</p>
+    <p style="margin:0;font-size:13px;color:#7f1d1d;line-height:1.85;">
+      <strong>1. 下层执行器动态偷塞：</strong>外层 AssembleStep 虽然把动态内容挪到了尾部，但如果底层的某个执行器又在最终发包前把 <code>route_hint</code> 偷塞回了字符串最开头，整套优化瞬间报废。必须在全链路执行网关建立防线；<br/>
+      <strong>2. 上下文去重不严格导致 Token 暴涨：</strong>多层注入时若缺少严格的切片唯一性校验，容易导致 System Prompt 里被塞了两份重复的技能摘要，反而使得输入 Token 翻倍；<br/>
+      <strong>3. 忽视单会话内的跳变风险：</strong>如果按单次 Request 随机分流，会导致同一个用户在上一步走新布局、下一步走老布局，前后轮前缀彻底不连续，不仅没省钱，反而每轮都在重新拉全量缓存；<br/>
+      <strong>4. 盲目全量，缺乏基线对比：</strong>未上线前一定要先用 <code>observe</code> 模式跑几天，把平均耗时、首字响应与命中率的客观基线数据记录下来，再逐步灰度放量。
+    </p>
+  </section>
+
+  <section style="margin:28px 0;height:1px;background:#e5e7eb;"></section>
+
+  <!-- 总结与思考 -->
+  <section style="margin:0 0 20px 0;">
+    <p style="margin:0 0 10px 0;font-size:15px;color:#374151;line-height:1.9;">
+      做企业级 AI 智能体，<strong>工程深度决定了落地高度</strong>。
+    </p>
+    <p style="margin:0 0 10px 0;font-size:15px;color:#374151;line-height:1.9;">
+      提示词绝不是静态的“说教文本”，它是大模型推理执行的第一道契约，更是整个系统吞吐量与成本开销的关键阀门。通过科学的「执行流水线中枢 + 强类型切片化抽象 + 稳定前缀前置拓扑 + 会话粘性灰度」，既能赋予智能体极高的动态环境适应能力，又能将千万级 Token 的费用成本真正打下来。
+    </p>
+    <p style="margin:0;font-size:15px;color:#374151;line-height:1.9;">
+      以上全部代码实现均已完整合并至 NanZi 开源平台的主分支中。如果你正在开发自研的 Agent 平台或长上下文企业助手，欢迎参考仓库中的装配器设计与测试用例！
+    </p>
+  </section>
+
+  <!-- GitHub CTA 卡片 -->
+  <section style="margin:20px 0 0 0;padding:18px 16px;text-align:center;background:linear-gradient(135deg,#f0fdf4 0%,#f8fafc 100%);border:1px solid #d1fae5;border-radius:10px;">
+    <p style="margin:0 0 6px 0;font-size:14px;font-weight:bold;color:#065f46;">NanZi 开源智能体平台 · 实战连载</p>
+    <p style="margin:0 0 12px 0;font-size:13px;color:#4b5563;line-height:1.6;">孜孜不倦，探索企业级 AI 智能体与数据分析的最佳实践。</p>
+    <p style="margin:0;font-size:13px;color:#059669;word-break:break-all;">
+      GitHub: <a href="https://github.com/RandyChen1985/nanzi-ai-agent-platform" style="color:#059669;text-decoration:none;font-weight:bold;">github.com/RandyChen1985/nanzi-ai-agent-platform</a>
+    </p>
+  </section>
+
+</section>

@@ -906,3 +906,106 @@ async def test_finalize_step_rolls_back_orphan_user_message_on_failure():
         conversation_id="conv_orphan_test",
         expected_content="测试孤儿消息",
     )
+
+
+@pytest.mark.asyncio
+async def test_assemble_step_uses_enabled_layout_only_for_selected_conversation():
+    """AssembleStep 在 enabled 模式下只对命中灰度比例的会话启用缓存布局。"""
+    from app.services.ai.pipeline.steps.assemble_step import AssembleStep
+    from app.services.ai.prompt_assembler import PromptLayoutConfig
+
+    class DummyAgentConfig:
+        system_prompt = "You are assistant."
+        engine_type = "LOCAL"
+
+    step = AssembleStep()
+
+    context_hit = PipelineContext(
+        messages=[{"role": "user", "content": "hi"}],
+        user_info={"user_id": 123},
+        conversation_id="conv_hit",
+    )
+    context_hit.shared_state["agent_config"] = DummyAgentConfig()
+
+    context_miss = PipelineContext(
+        messages=[{"role": "user", "content": "hi"}],
+        user_info={"user_id": 123},
+        conversation_id="conv_miss",
+    )
+    context_miss.shared_state["agent_config"] = DummyAgentConfig()
+
+    with patch(
+        "app.services.ai.context_manager.AgentContextManager.setup_context",
+        new_callable=AsyncMock,
+    ), patch(
+        "app.services.ai.pipeline.steps.assemble_step.resolve_prompt_assembler_flags",
+        new_callable=AsyncMock,
+        return_value=(False, False),
+    ), patch(
+        "app.services.ai.pipeline.steps.assemble_step.resolve_prompt_layout_config",
+        new_callable=AsyncMock,
+        return_value=PromptLayoutConfig(mode="enabled", rollout_percent=50),
+    ), patch(
+        "app.services.ai.pipeline.steps.assemble_step.should_use_prompt_cache_layout",
+        side_effect=lambda mode, pct, cid: cid == "conv_hit",
+    ), patch(
+        "app.services.ai.pipeline.steps.assemble_step.assemble_system_prompt",
+        wraps=assemble_system_prompt if "assemble_system_prompt" in locals() else None,
+    ) as mock_assemble:
+        from app.services.ai.prompt_assembler import assemble_system_prompt as real_assemble
+        mock_assemble.side_effect = real_assemble
+
+        _ = [chunk async for chunk in step.run(context_hit)]
+        assert mock_assemble.call_args.args[0].prompt_layout_mode == "enabled"
+
+        mock_assemble.reset_mock()
+        _ = [chunk async for chunk in step.run(context_miss)]
+        assert mock_assemble.call_args.args[0].prompt_layout_mode == "legacy"
+
+
+@pytest.mark.asyncio
+async def test_assemble_step_records_layout_mode_and_prompt_plan_in_debug_meta():
+    """AssembleStep 在 return_raw_prompt 时应记录 prompt_layout_mode 与 plan 统计。"""
+    from app.services.ai.pipeline.steps.assemble_step import AssembleStep
+    from app.services.ai.prompt_assembler import PromptLayoutConfig
+
+    class DummyAgentConfig:
+        system_prompt = "You are assistant."
+        engine_type = "LOCAL"
+
+    debug_opts = {"return_raw_prompt": True}
+    context = PipelineContext(
+        messages=[{"role": "user", "content": "hi"}],
+        user_info={"user_id": 123},
+        conversation_id="conv_observe",
+        debug_options=debug_opts,
+    )
+    context.shared_state["agent_config"] = DummyAgentConfig()
+
+    step = AssembleStep()
+
+    with patch(
+        "app.services.ai.context_manager.AgentContextManager.setup_context",
+        new_callable=AsyncMock,
+    ), patch(
+        "app.services.ai.pipeline.steps.assemble_step.resolve_prompt_assembler_flags",
+        new_callable=AsyncMock,
+        return_value=(False, False),
+    ), patch(
+        "app.services.ai.pipeline.steps.assemble_step.resolve_prompt_layout_config",
+        new_callable=AsyncMock,
+        return_value=PromptLayoutConfig(mode="observe", rollout_percent=100),
+    ):
+        _ = [chunk async for chunk in step.run(context)]
+
+    from app.core.context import get_current_agent_context
+
+    ctx = get_current_agent_context()
+    if ctx and isinstance(ctx.runtime_model_info, dict):
+        assert ctx.runtime_model_info.get("prompt_layout_mode") == "observe"
+
+    meta = debug_opts.get("prompt_assembler_meta") or {}
+    assert meta.get("prompt_layout_mode") == "observe"
+    assert meta.get("effective_prompt_layout_mode") == "observe"
+    assert "stable_chars" in meta
+    assert "dynamic_chars" in meta

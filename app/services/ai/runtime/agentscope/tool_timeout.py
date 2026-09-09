@@ -131,14 +131,23 @@ def apply_agent_tool_timeout(
 ) -> list[Any]:
     """给一批运行时工具应用当前版本选定的配置超时快照。"""
     configured_timeout = resolve_agent_toolcall_timeout(global_timeout, agent_timeout)
+    from dataclasses import is_dataclass
+
     result = []
     for spec in specs:
-        result.append(
-            replace(
-                spec,
-                timeout_seconds=effective_tool_timeout(configured_timeout),
+        if is_dataclass(spec) and not isinstance(spec, type):
+            result.append(
+                replace(
+                    spec,
+                    timeout_seconds=effective_tool_timeout(configured_timeout),
+                )
             )
-        )
+        else:
+            try:
+                setattr(spec, "timeout_seconds", effective_tool_timeout(configured_timeout))
+            except Exception:
+                pass
+            result.append(spec)
     return result
 
 
