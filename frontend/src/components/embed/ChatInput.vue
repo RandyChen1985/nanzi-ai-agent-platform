@@ -124,20 +124,22 @@ const props = defineProps<{
   isLoadingAgents?: boolean;
   /** URL agent_id 深链锁定：隐藏专家切换/@，禁止切自动路由 */
   lockExpertAgent?: boolean;
-  /** Docker 沙箱工作区运行状态 */
-  dockerWorkspaceStatus?: "idle" | "starting" | "stopping" | "running" | "error";
-  /** 当前用户分配的 Docker 容器 ID */
-  dockerWorkspaceContainerId?: string | null;
-  /** Docker 沙箱容器启动时间 (ISO 8601) */
-  dockerWorkspaceStartedAt?: string | null;
-  /** Docker 沙箱容器运行时长秒数 */
-  dockerWorkspaceUptimeSeconds?: number | null;
-  /** Docker 沙箱错误信息 */
-  dockerWorkspaceError?: string;
+  /** 沙箱工作区运行状态 */
+  sandboxWorkspaceStatus?: "idle" | "starting" | "stopping" | "running" | "error";
+  /** 当前用户分配的沙箱实例标识（Docker 容器 ID / K8s Pod 名） */
+  sandboxWorkspaceInstanceId?: string | null;
+  /** 沙箱启动时间 (ISO 8601) */
+  sandboxWorkspaceStartedAt?: string | null;
+  /** 沙箱运行时长秒数 */
+  sandboxWorkspaceUptimeSeconds?: number | null;
+  /** 沙箱错误信息 */
+  sandboxWorkspaceError?: string;
   /** 当前会话是否开启反幻觉校验 */
   enableGrounding?: boolean;
   /** 反幻觉阻断模式：严格缓冲 | 实时撤回 */
   groundingBlockMode?: "strict_buffer" | "stream_with_retraction";
+  /** 沙箱后端：docker | k8s（决定浮标术语与「操作」菜单项） */
+  sandboxBackend?: "docker" | "k8s";
 }>();
 
 const textareaPaddingRightClass = computed(() => {
@@ -330,10 +332,10 @@ const emit = defineEmits<{
   (e: 'dismiss-ltm'): void;
   (e: 'refresh-context-compactions'): void;
   (e: 'manual-context-compaction', retainRatio: 0.25 | 0.5 | 0.75, mode: "fast" | "smart"): void;
-  (e: 'start-docker-workspace'): void;
-  (e: 'refresh-docker-workspace', manualFeedback?: boolean): void;
-  (e: 'stop-docker-workspace'): void;
-  (e: 'restart-docker-workspace'): void;
+  (e: 'start-sandbox-workspace'): void;
+  (e: 'refresh-sandbox-workspace', manualFeedback?: boolean): void;
+  (e: 'stop-sandbox-workspace'): void;
+  (e: 'restart-sandbox-workspace'): void;
   (e: 'open-docker-terminal'): void;
   (e: 'disable-grounding'): void;
   (e: 'open-grounding-settings'): void;
@@ -344,31 +346,86 @@ const isDockerSandboxPolicy = computed(() => {
   return policy === "docker";
 });
 
-const showDockerActionsMenu = ref(false);
-const dockerActionsDropdownRef = ref<HTMLElement | null>(null);
+const isSandboxBackendPolicy = computed(() => {
+  const policy = String(props.contextUsage?.sandbox_policy || "").trim().toLowerCase();
+  return policy === "docker" || policy === "k8s";
+});
 
-const dockerUptimeNow = ref(Date.now());
-let dockerUptimeTimer: ReturnType<typeof setInterval> | null = null;
+const sandboxBackend = computed<"docker" | "k8s">(
+  () => props.sandboxBackend || (
+    String(props.contextUsage?.sandbox_policy || "").trim().toLowerCase() === "k8s" ? "k8s" : "docker"
+  ),
+);
 
-const dockerUptimeSeconds = computed(() => {
-  if (props.dockerWorkspaceStatus !== 'running') return 0;
-  if (props.dockerWorkspaceStartedAt) {
+const sandboxStatusText = computed(() => {
+  const status = props.sandboxWorkspaceStatus || "idle";
+  if (sandboxBackend.value === "k8s") {
+    switch (status) {
+      case "running": return "Pod 已运行";
+      case "starting": return "Pod 创建中...";
+      case "stopping": return "Pod 终止中...";
+      case "error": return "Pod 启动失败";
+      default: return "Pod 未启动";
+    }
+  }
+  switch (status) {
+    case "running": return "容器已运行";
+    case "starting": return "容器启动中...";
+    case "stopping": return "容器关机中...";
+    case "error": return "容器启动失败";
+    default: return "容器未启动";
+  }
+});
+
+const sandboxInstanceLabel = computed(() => {
+  const instance = props.sandboxWorkspaceInstanceId;
+  if (!instance) return "";
+  return sandboxBackend.value === "k8s"
+    ? `Pod: ${instance}`
+    : `容器 ID: ${instance}`;
+});
+
+const sandboxStartButtonLabel = computed(() =>
+  props.sandboxWorkspaceStatus === "error"
+    ? "重试启动"
+    : (sandboxBackend.value === "k8s" ? "启动沙箱 Pod" : "启动容器"),
+);
+
+const sandboxReclaimHint = computed(() =>
+  sandboxBackend.value === "k8s"
+    ? "空闲 30m 自动回收沙箱"
+    : "空闲 30m 自动回收",
+);
+
+const showSandboxActionsMenu = ref(false);
+const sandboxActionsDropdownRef = ref<HTMLElement | null>(null);
+
+const sandboxUptimeNow = ref(Date.now());
+let sandboxUptimeTimer: ReturnType<typeof setInterval> | null = null;
+
+const sandboxUptimeSeconds = computed(() => {
+  if (props.sandboxWorkspaceStatus !== 'running') return 0;
+  if (props.sandboxWorkspaceStartedAt) {
     try {
-      const started = new Date(props.dockerWorkspaceStartedAt).getTime();
+      const started = new Date(props.sandboxWorkspaceStartedAt).getTime();
       if (!Number.isNaN(started) && started > 0) {
-        return Math.max(0, Math.floor((dockerUptimeNow.value - started) / 1000));
+        return Math.max(0, Math.floor((sandboxUptimeNow.value - started) / 1000));
       }
     } catch {}
   }
-  if (typeof props.dockerWorkspaceUptimeSeconds === 'number') {
-    return Math.max(0, props.dockerWorkspaceUptimeSeconds);
+  if (typeof props.sandboxWorkspaceUptimeSeconds === 'number') {
+    return Math.max(0, props.sandboxWorkspaceUptimeSeconds);
   }
   return 0;
 });
 
-const dockerUptimeFormatted = computed(() => {
-  if (props.dockerWorkspaceStatus !== 'running') return '';
-  const seconds = dockerUptimeSeconds.value;
+const sandboxUptimeFormatted = computed(() => {
+  if (props.sandboxWorkspaceStatus !== 'running') return '';
+  if (!props.sandboxWorkspaceStartedAt && typeof props.sandboxWorkspaceUptimeSeconds !== 'number') {
+    // 无启动时刻也无后端时长信息时不显示时长行
+    return '';
+  }
+  const seconds = sandboxUptimeSeconds.value;
   if (seconds < 60) {
     return `${Math.max(1, seconds)}秒`;
   }
@@ -1072,13 +1129,20 @@ const toggleContextUsageDetails = async () => {
   closeContextCompactionDetails();
   showContextUsageDetails.value = !showContextUsageDetails.value;
   if (showContextUsageDetails.value) {
-    if (isDockerSandboxPolicy.value) {
-      emit('refresh-docker-workspace', false);
-    }
     await nextTick();
     updateContextUsageDetailsPlacement();
   }
 };
+
+watch(showContextUsageDetails, (open) => {
+  if (open) {
+    if (isSandboxBackendPolicy.value) {
+      void nextTick(() => {
+        emit('refresh-sandbox-workspace', false);
+      });
+    }
+  }
+});
 
 const updateContextCompactionDetailsPlacement = () => {
   const container = contextUsageContainerRef.value;
@@ -1181,8 +1245,8 @@ const handleGlobalClick = (event: MouseEvent) => {
   if (showContextCompactionDetails.value && contextUsageContainerRef.value && !contextUsageContainerRef.value.contains(event.target as Node)) {
     closeContextCompactionDetails();
   }
-  if (showDockerActionsMenu.value && dockerActionsDropdownRef.value && !dockerActionsDropdownRef.value.contains(event.target as Node)) {
-    showDockerActionsMenu.value = false;
+  if (showSandboxActionsMenu.value && sandboxActionsDropdownRef.value && !sandboxActionsDropdownRef.value.contains(event.target as Node)) {
+    showSandboxActionsMenu.value = false;
   }
   if (showApprovalMenu.value) {
     const target = event.target as Node;
@@ -1271,17 +1335,17 @@ onMounted(() => {
   document.addEventListener('keydown', handleGlobalKeydown);
   window.addEventListener('resize', handleApprovalMenuLayout);
   window.addEventListener('scroll', handleApprovalMenuLayout, true);
-  dockerUptimeTimer = setInterval(() => {
-    if (showContextUsageDetails.value && props.dockerWorkspaceStatus === 'running') {
-      dockerUptimeNow.value = Date.now();
+  sandboxUptimeTimer = setInterval(() => {
+    if (showContextUsageDetails.value && props.sandboxWorkspaceStatus === 'running') {
+      sandboxUptimeNow.value = Date.now();
     }
   }, 1000);
 });
 
 onUnmounted(() => {
-  if (dockerUptimeTimer) {
-    clearInterval(dockerUptimeTimer);
-    dockerUptimeTimer = null;
+  if (sandboxUptimeTimer) {
+    clearInterval(sandboxUptimeTimer);
+    sandboxUptimeTimer = null;
   }
   closeContextUsageDetails();
   closeContextCompactionDetails();
@@ -2097,9 +2161,9 @@ defineExpose({
                           </span>
                         </div>
 
-                        <!-- Docker 容器运行状态与控制明细 -->
+                        <!-- 沙箱运行状态与控制明细 -->
                         <div
-                          v-if="isDockerSandboxPolicy"
+                          v-if="isSandboxBackendPolicy"
                           class="flex flex-col gap-1.5 rounded-lg bg-gray-50/90 dark:bg-gray-800/70 p-2 text-[10px] font-mono border border-gray-100/90 dark:border-gray-700/70"
                         >
                           <div class="flex items-center justify-between gap-2">
@@ -2107,76 +2171,73 @@ defineExpose({
                               <span
                                 class="inline-block h-2 w-2 shrink-0 rounded-full"
                                 :class="{
-                                  'bg-emerald-500 shadow-sm shadow-emerald-500/50': (dockerWorkspaceStatus || 'idle') === 'running',
-                                  'bg-amber-400 animate-pulse': (dockerWorkspaceStatus || 'idle') === 'starting' || (dockerWorkspaceStatus || 'idle') === 'stopping',
-                                  'bg-rose-500 shadow-sm shadow-rose-500/50': (dockerWorkspaceStatus || 'idle') === 'error',
-                                  'bg-gray-300 dark:bg-gray-600': (dockerWorkspaceStatus || 'idle') === 'idle'
+                                  'bg-emerald-500 shadow-sm shadow-emerald-500/50': (sandboxWorkspaceStatus || 'idle') === 'running',
+                                  'bg-amber-400 animate-pulse': (sandboxWorkspaceStatus || 'idle') === 'starting' || (sandboxWorkspaceStatus || 'idle') === 'stopping',
+                                  'bg-rose-500 shadow-sm shadow-rose-500/50': (sandboxWorkspaceStatus || 'idle') === 'error',
+                                  'bg-gray-300 dark:bg-gray-600': (sandboxWorkspaceStatus || 'idle') === 'idle'
                                 }"
                               ></span>
                               <span class="font-medium text-gray-700 dark:text-gray-200">
-                                {{
-                                  (dockerWorkspaceStatus || 'idle') === 'running' ? '容器已运行' :
-                                  (dockerWorkspaceStatus || 'idle') === 'starting' ? '容器启动中...' :
-                                  (dockerWorkspaceStatus || 'idle') === 'stopping' ? '容器关机中...' :
-                                  (dockerWorkspaceStatus || 'idle') === 'error' ? '容器启动失败' : '容器未启动'
-                                }}
+                                {{ sandboxStatusText }}
                               </span>
                               <span
-                                v-if="dockerWorkspaceContainerId"
-                                class="truncate text-[9px] text-gray-400 dark:text-gray-500 max-w-[110px]"
-                                :title="`当前容器 ID: ${dockerWorkspaceContainerId}`"
+                                v-if="sandboxWorkspaceInstanceId"
+                                class="truncate text-[9px] text-gray-400 dark:text-gray-500 max-w-[150px]"
+                                :title="sandboxInstanceLabel"
                               >
-                                {{ dockerWorkspaceContainerId.slice(0, 12) }}
+                                {{ sandboxBackend === 'k8s' ? sandboxWorkspaceInstanceId : sandboxWorkspaceInstanceId.slice(0, 12) }}
                               </span>
                             </div>
 
                             <div class="shrink-0 flex items-center gap-1">
                               <button
-                                v-if="(dockerWorkspaceStatus || 'idle') === 'idle' || (dockerWorkspaceStatus || 'idle') === 'error'"
+                                v-if="(sandboxWorkspaceStatus || 'idle') === 'idle' || (sandboxWorkspaceStatus || 'idle') === 'error'"
                                 type="button"
                                 class="rounded bg-indigo-600 px-2 py-0.5 text-[9px] font-medium text-white shadow-sm hover:bg-indigo-500 active:scale-95 transition-all disabled:opacity-50"
                                 :disabled="isInteractionLocked"
-                                :title="(dockerWorkspaceStatus || 'idle') === 'error' ? (dockerWorkspaceError || '重试启动 Docker 沙箱') : '启动当前用户的 Docker 沙箱容器'"
-                                @click.stop="emit('start-docker-workspace')"
+                                :title="(sandboxWorkspaceStatus || 'idle') === 'error' ? (sandboxWorkspaceError || '重试启动沙箱') : (sandboxBackend === 'k8s' ? '启动当前用户的 Kubernetes 沙箱 Pod' : '启动当前用户的 Docker 沙箱容器')"
+                                @click.stop="emit('start-sandbox-workspace')"
                               >
-                                {{ (dockerWorkspaceStatus || 'idle') === 'error' ? '重试启动' : '启动容器' }}
+                                {{ sandboxStartButtonLabel }}
                               </button>
                               <button
                                 type="button"
                                 class="inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[9px] text-gray-500 hover:text-indigo-600 hover:bg-indigo-50 dark:text-gray-400 dark:hover:text-indigo-300 dark:hover:bg-gray-700 transition-colors disabled:opacity-50"
-                                title="手动检测刷新 Docker 沙箱状态"
-                                :disabled="(dockerWorkspaceStatus || 'idle') === 'starting' || (dockerWorkspaceStatus || 'idle') === 'stopping'"
-                                @click.stop="emit('refresh-docker-workspace', true)"
+                                title="手动检测刷新沙箱状态"
+                                :disabled="(sandboxWorkspaceStatus || 'idle') === 'starting' || (sandboxWorkspaceStatus || 'idle') === 'stopping'"
+                                @click.stop="emit('refresh-sandbox-workspace', true)"
                               >
-                                <ArrowPathIcon class="h-3 w-3" :class="{ 'animate-spin': (dockerWorkspaceStatus || 'idle') === 'starting' || (dockerWorkspaceStatus || 'idle') === 'stopping' }" aria-hidden="true" />
+                                <ArrowPathIcon class="h-3 w-3" :class="{ 'animate-spin': (sandboxWorkspaceStatus || 'idle') === 'starting' || (sandboxWorkspaceStatus || 'idle') === 'stopping' }" aria-hidden="true" />
                                 <span>刷新</span>
                               </button>
 
-                              <!-- Docker 容器运行时的操作下拉菜单 (进入 | 重启 | 关机) -->
+                              <!-- 沙箱运行时的操作下拉菜单 -->
                               <div
-                                v-if="(dockerWorkspaceStatus || 'idle') === 'running'"
-                                ref="dockerActionsDropdownRef"
+                                v-if="(sandboxWorkspaceStatus || 'idle') === 'running'"
+                                ref="sandboxActionsDropdownRef"
                                 class="relative inline-block text-left"
                               >
                                 <button
                                   type="button"
-                                  class="inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[9px] text-gray-500 hover:text-indigo-600 hover:bg-indigo-50 dark:text-gray-400 dark:hover:text-indigo-300 dark:hover:bg-gray-700 transition-colors" :class="{ 'text-indigo-600 bg-indigo-50 dark:text-indigo-300 dark:bg-gray-700': showDockerActionsMenu }"
-                                  title="Docker 容器管理操作"
-                                  @click.stop="showDockerActionsMenu = !showDockerActionsMenu"
+                                  class="inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[9px] text-gray-500 hover:text-indigo-600 hover:bg-indigo-50 dark:text-gray-400 dark:hover:text-indigo-300 dark:hover:bg-gray-700 transition-colors" :class="{ 'text-indigo-600 bg-indigo-50 dark:text-indigo-300 dark:bg-gray-700': showSandboxActionsMenu }"
+                                  title="沙箱管理操作"
+                                  @click.stop="showSandboxActionsMenu = !showSandboxActionsMenu"
                                 >
                                   <span>操作</span>
-                                  <ChevronDownIcon class="h-2.5 w-2.5 transition-transform duration-200" :class="{ 'rotate-180': showDockerActionsMenu }" />
+                                  <ChevronDownIcon class="h-2.5 w-2.5 transition-transform duration-200" :class="{ 'rotate-180': showSandboxActionsMenu }" />
                                 </button>
 
                                 <div
-                                  v-if="showDockerActionsMenu"
+                                  v-if="showSandboxActionsMenu"
                                   class="absolute right-0 bottom-full mb-1.5 z-50 w-28 rounded-lg bg-white dark:bg-gray-800 py-1 shadow-lg ring-1 ring-black/5 dark:ring-white/10 border border-gray-100 dark:border-gray-700 text-[10px] font-sans"
                                   @click.stop
                                 >
+                                  <!-- 进入终端仅 Docker 后端提供 -->
                                   <button
+                                    v-if="sandboxBackend === 'docker'"
                                     type="button"
                                     class="flex w-full items-center gap-1.5 px-2.5 py-1 text-gray-700 dark:text-gray-200 hover:bg-indigo-50 dark:hover:bg-indigo-950/40 hover:text-indigo-600 dark:hover:text-indigo-300 transition-colors"
-                                    @click="showDockerActionsMenu = false; emit('open-docker-terminal')"
+                                    @click="showSandboxActionsMenu = false; emit('open-docker-terminal')"
                                   >
                                     <CommandLineIcon class="h-3.5 w-3.5 text-emerald-500" />
                                     <span>进入终端</span>
@@ -2184,16 +2245,16 @@ defineExpose({
                                   <button
                                     type="button"
                                     class="flex w-full items-center gap-1.5 px-2.5 py-1 text-gray-700 dark:text-gray-200 hover:bg-indigo-50 dark:hover:bg-indigo-950/40 hover:text-indigo-600 dark:hover:text-indigo-300 transition-colors"
-                                    @click="showDockerActionsMenu = false; emit('restart-docker-workspace')"
+                                    @click="showSandboxActionsMenu = false; emit('restart-sandbox-workspace')"
                                   >
                                     <ArrowPathIcon class="h-3.5 w-3.5 text-indigo-500" />
-                                    <span>重启容器</span>
+                                    <span>{{ sandboxBackend === 'k8s' ? '重启 Pod' : '重启容器' }}</span>
                                   </button>
                                   <div class="my-0.5 border-t border-gray-100 dark:border-gray-700/60"></div>
                                   <button
                                     type="button"
                                     class="flex w-full items-center gap-1.5 px-2.5 py-1 text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/40 transition-colors"
-                                    @click="showDockerActionsMenu = false; emit('stop-docker-workspace')"
+                                    @click="showSandboxActionsMenu = false; emit('stop-sandbox-workspace')"
                                   >
                                     <PowerIcon class="h-3.5 w-3.5 text-rose-500" />
                                     <span>停止关机</span>
@@ -2205,15 +2266,15 @@ defineExpose({
 
                           <!-- 运行时长与自动回收说明（仅在运行中展示） -->
                           <div
-                            v-if="(dockerWorkspaceStatus || 'idle') === 'running' && dockerUptimeFormatted"
+                            v-if="(sandboxWorkspaceStatus || 'idle') === 'running' && sandboxUptimeFormatted"
                             class="flex items-center justify-between text-[9px] text-gray-400 dark:text-gray-500 pt-1 border-t border-gray-200/50 dark:border-gray-700/50"
                           >
                             <span class="flex items-center gap-1">
                               <ClockIcon class="h-3 w-3 text-emerald-500/80 shrink-0" aria-hidden="true" />
-                              <span>运行时长：<strong class="text-gray-600 dark:text-gray-300 font-medium">{{ dockerUptimeFormatted }}</strong></span>
+                              <span>运行时长：<strong class="text-gray-600 dark:text-gray-300 font-medium">{{ sandboxUptimeFormatted }}</strong></span>
                             </span>
-                            <span class="text-[8.5px] text-gray-400/80 dark:text-gray-500/80" title="容器连续空闲 30 分钟后将自动销毁释放资源">
-                              空闲 30m 自动回收
+                            <span class="text-[8.5px] text-gray-400/80 dark:text-gray-500/80" title="沙箱连续空闲 30 分钟后将自动销毁释放资源">
+                              {{ sandboxReclaimHint }}
                             </span>
                           </div>
                         </div>
