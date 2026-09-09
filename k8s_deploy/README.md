@@ -302,7 +302,46 @@ curl -sfL https://get.k3s.io \
 
 如果你不熟悉 Kubernetes，可以只按本节操作；后面的章节用于解释细节和排查问题。
 
-### 第 0 步：确认你手里有什么
+### 推荐快捷向导：使用 `install.sh` 一键交互式部署
+
+为降低手动编辑 YAML 易出现的格式错误与命名空间遗漏风险，目录提供了向导式安装器 [install.sh](./install.sh)。它会自动自检环境、探测本地镜像、引导填写数据库/Redis 参数并按步骤安全幂等应用：
+
+```bash
+cd k8s_deploy
+
+# 方式 1：交互向导部署（推荐，逐项确认并提供智能默认值）
+./install.sh
+
+# 方式 2：快速镜像升级（平滑滚动发布，自动跳过中间件向导）
+./install.sh --upgrade            # 交互探测并确认，或直接指定版本：./install.sh --upgrade 1.0.15.0
+
+# 方式 3：模拟演练模式（Try / Dry-Run，仅做配置生成与语法预检，不下发真实集群变更）
+./install.sh --try                # 或 ./install.sh --dry-run
+
+# 方式 4：免交互极速部署（适合已有配置快速生效）
+./install.sh -y
+
+# 查看帮助
+./install.sh --help
+```
+
+向导具备以下特性：
+* **环境自检与智能分流**：检测 `kubectl` 连通性；若检测到 NanZi 已在集群平稳运行，直接运行 `./install.sh` 会主动提示您是否仅升级镜像；
+* **本地镜像检测**：自动探测当前节点容器运行时（K3s containerd / crictl / docker）中的 `nanzi-ai-agent` 镜像 Tag 并自动推荐为默认版本；若未导入则提供单行导入命令；
+* **幂等执行**：支持随时中断并安全重入，已存在的 PVC 和 Secret 会受到安全保护。
+
+日常运维管理可配合使用 [nanzi-k8s.sh](./nanzi-k8s.sh)：
+* `./nanzi-k8s.sh status`：一览 K3s 服务、集群节点、主平台及 `agent-sandboxes` 沙箱 Pod 与 PVC 状态；
+* `./nanzi-k8s.sh sandboxes`：专门监控沙箱命名空间下的活跃 Pod 与动态持久卷；
+* `./nanzi-k8s.sh restart-pod`：平滑滚动重启 NanZi Pod 并等待就绪；
+* `./nanzi-k8s.sh restart-k3s`：重启 K3s 服务并等待 API Server 自动恢复；
+* `./nanzi-k8s.sh logs`：实时跟踪 300 条容器日志；
+* `./nanzi-k8s.sh test`：快速探测 Service Endpoint 与 ClusterIP 连通性。
+* 镜像更新与滚动发布详见 [upgrade.md](./upgrade.md)。
+
+---
+
+### 手动逐步部署：第 0 步：确认你手里有什么
 
 部署需要同时具备下面几类东西：
 
@@ -653,7 +692,7 @@ NanZi 平台提供了**云原生 Pod 安全沙箱策略（`sandbox_policy = "k8s
 kubectl apply -f k8s_deploy/sandbox-rbac.example.yaml
 ```
 
-并在 `k8s_deploy/deployment.yaml` 中为应用 Pod 绑定该 ServiceAccount（若尚未绑定）：
+默认 Deployment 已绑定该 ServiceAccount；如果使用自定义 Deployment，也必须保留以下字段：
 ```yaml
 spec:
   template:
@@ -711,9 +750,13 @@ spec:
 | `pvc.yaml` | `/app/data` 的 20Gi、`ReadWriteOnce` PVC |
 | `deployment.yaml` | 单副本 Deployment、环境变量、PVC 和 `/health` 探针 |
 | `service.yaml` | ClusterIP Service，端口 80 转发到容器 8001 |
+| `serviceaccount.yaml` | 应用 Pod 的 ServiceAccount 声明 |
 | `sandbox-rbac.example.yaml` | Kubernetes Pod 安全沙箱所需的最小 RBAC 权限与 ServiceAccount 示例 |
 | `data-init-job.example.yaml` | 可选的一次性公共文档初始化 Job，不在默认 Kustomize 资源中 |
 | `ingress.example.yaml` | ingress-nginx 的可选示例，含 SSE 超时和会话粘性 |
+| `nanzi-k8s.sh` | K3s 与 NanZi 运维管理快捷脚本（支持 status/restart-pod/restart-k3s/restart-all/logs/events/test） |
+| `upgrade.md` | 镜像更新与滚动发布操作说明（Tag 变化/不变场景） |
+| `install.sh` | 向导式交互安装脚本（集群环境自检、分步配置生成与幂等 apply） |
 
 ## 常见问题与注意事项
 
@@ -776,6 +819,8 @@ kubectl -n nanzi-ai-agent rollout status deployment/nanzi-ai-agent
 
 PVC 不随 Deployment 回滚，回滚前应确认新版本没有改变数据格式；删除 PVC 会造成用户文件、
 上传内容和工作区数据丢失，禁止把删除 PVC 当作常规排障步骤。
+
+更详细的镜像 Tag 变动与不变更场景下的滚动发布实操命令，请参考 [upgrade.md](./upgrade.md)。
 
 ## 多副本前置条件
 

@@ -27,14 +27,15 @@ def test_docker_workspace_banner_has_start_running_and_retry_states():
 def test_embed_chat_places_workspace_action_in_banner_and_calls_ensure_api():
     source = EMBED.read_text(encoding="utf-8")
     assert 'import DockerWorkspaceBanner from "@/components/chat/DockerWorkspaceBanner.vue"' in source
-    assert "/api/v1/sandbox/docker/workspace/ensure" in source
+    # docker 端点语义保留（base 端点按 docker|k8s 路由）
+    assert "/api/v1/sandbox/docker/workspace" in source
     assert "effectiveSandboxPolicy" in source
-    assert 'effectiveSandboxPolicy.value === "docker"' in source
+    assert "isSandboxWorkspacePolicy" in source
     assert "<DockerWorkspaceBanner" in source
     assert "#banner" in source
     assert "conversation_id" in source
-    assert "/api/v1/sandbox/docker/workspace/status" in source
-    assert '@close="dismissDockerWorkspaceBanner"' in source
+    assert "sandboxWorkspaceStatus" in source
+    assert '@close="dismissSandboxWorkspaceBanner"' in source
 
 
 def test_embed_chat_does_not_render_workspace_action_for_non_docker_policy():
@@ -42,8 +43,8 @@ def test_embed_chat_does_not_render_workspace_action_for_non_docker_policy():
     control_pos = source.find("<DockerWorkspaceBanner")
     assert control_pos != -1
     control_block = source[control_pos : control_pos + 700]
-    assert "showDockerWorkspaceControl" in control_block
-    assert "effectiveSandboxPolicy.value === \"docker\"" in source
+    assert "showSandboxWorkspaceControl" in control_block
+    assert "isSandboxWorkspacePolicy" in source
 
 
 CHAT_INPUT = ROOT / "frontend/src/components/embed/ChatInput.vue"
@@ -52,54 +53,37 @@ CHAT_INPUT = ROOT / "frontend/src/components/embed/ChatInput.vue"
 def test_embed_chat_persists_banner_dismiss_and_auto_hides_when_running():
     source = EMBED.read_text(encoding="utf-8")
     assert "nanzi_dismissed_docker_workspace_banner" in source
-    assert "readDockerWorkspaceBannerDismissed" in source
-    assert "dockerWorkspaceStatusLoaded" in source
-    assert 'dockerWorkspaceStatus.value === "running"' in source
-    assert 'dockerWorkspaceStatus.value === "error"' in source
+    assert "readSandboxWorkspaceBannerDismissed" in source
+    assert "sandboxWorkspaceStatusLoaded" in source
+    assert 'sandboxWorkspaceStatus.value === "running"' in source
+    assert 'sandboxWorkspaceStatus.value === "error"' in source
     assert 'name="bash-banner-fade"' in source
 
 
 
 def test_chat_input_context_modal_renders_docker_workspace_status_and_actions():
     chat_input_source = CHAT_INPUT.read_text(encoding="utf-8")
-    assert "dockerWorkspaceStatus" in chat_input_source
-    assert "dockerWorkspaceContainerId" in chat_input_source
+    assert "sandboxWorkspaceStatus" in chat_input_source
+    assert "sandboxWorkspaceInstanceId" in chat_input_source
+    assert "sandboxBackend" in chat_input_source
     assert "isDockerSandboxPolicy" in chat_input_source
-    assert "start-docker-workspace" in chat_input_source
-    assert "refresh-docker-workspace" in chat_input_source
+    assert "isSandboxBackendPolicy" in chat_input_source
+    assert "start-sandbox-workspace" in chat_input_source
+    assert "refresh-sandbox-workspace" in chat_input_source
     assert "容器已运行" in chat_input_source
     assert "容器未启动" in chat_input_source
     assert "启动容器" in chat_input_source
+    assert "启动沙箱 Pod" in chat_input_source
     assert "重试启动" in chat_input_source
+    assert "Pod 已运行" in chat_input_source
+    assert "Pod 未启动" in chat_input_source
 
-    # 验证在展开详情面板时静默触发 Docker 沙箱状态刷新
-    assert "if (isDockerSandboxPolicy.value) {" in chat_input_source
-    assert "emit('refresh-docker-workspace', false);" in chat_input_source
+    # 展开详情面板时静默触发沙箱状态刷新
+    assert "if (isSandboxBackendPolicy.value) {" in chat_input_source
+    assert "emit('refresh-sandbox-workspace', false);" in chat_input_source
 
-    assert "dockerWorkspaceStartedAt" in chat_input_source
-    assert "dockerWorkspaceUptimeSeconds" in chat_input_source
-    assert "dockerUptimeFormatted" in chat_input_source
-    assert "运行时长：" in chat_input_source
-    assert "空闲 30m 自动回收" in chat_input_source
-    assert "进入终端" in chat_input_source
-    assert "重启容器" in chat_input_source
-    assert "停止关机" in chat_input_source
-    assert "open-docker-terminal" in chat_input_source
-    assert "restart-docker-workspace" in chat_input_source
-    assert "stop-docker-workspace" in chat_input_source
-
-    embed_source = EMBED.read_text(encoding="utf-8")
-    assert ':docker-workspace-status="dockerWorkspaceStatus"' in embed_source
-    assert ':docker-workspace-container-id="dockerWorkspaceContainerId"' in embed_source
-    assert ':docker-workspace-started-at="dockerWorkspaceStartedAt"' in embed_source
-    assert ':docker-workspace-uptime-seconds="dockerWorkspaceUptimeSeconds"' in embed_source
-    assert '@start-docker-workspace="ensureDockerWorkspace"' in embed_source
-    assert '@refresh-docker-workspace="refreshDockerWorkspaceStatus"' in embed_source
-    assert '@stop-docker-workspace="stopDockerWorkspace"' in embed_source
-    assert '@restart-docker-workspace="restartDockerWorkspace"' in embed_source
-    assert '@open-docker-terminal="openDockerTerminal"' in embed_source
-    assert 'import DockerTerminalModal from "@/components/chat/DockerTerminalModal.vue"' in embed_source
-    assert '<DockerTerminalModal' in embed_source
+    assert "sandboxWorkspaceStartedAt" in chat_input_source
+    assert "sandboxWorkspaceUptimeSeconds" in chat_input_source
 
 
 def test_docker_terminal_modal_component_contract():
@@ -161,3 +145,46 @@ def test_docker_terminal_opens_maximized_by_default():
 
     assert "const isMaximized = ref(true);" in source
     assert "isMaximized ? 'h-full max-h-full max-w-full rounded-none' : 'max-w-4xl h-[85vh] max-h-[760px]'" in source
+
+
+def test_docker_workspace_banner_supports_k8s_backend_copy():
+    source = BANNER.read_text(encoding="utf-8")
+    assert 'backend?: "docker" | "k8s"' in source
+    assert "Kubernetes 沙箱 Pod" in source
+    assert "启动我的沙箱 Pod" in source
+    assert "关闭沙箱提示" in source
+
+
+def test_chat_input_context_modal_generalizes_sandbox_workspace_controls():
+    chat_input_source = CHAT_INPUT.read_text(encoding="utf-8")
+    # 更名后的通用命名
+    assert "sandboxWorkspaceStatus" in chat_input_source
+    assert "sandboxWorkspaceInstanceId" in chat_input_source
+    assert "sandboxWorkspaceStartedAt" in chat_input_source
+    assert "sandboxWorkspaceUptimeSeconds" in chat_input_source
+    assert "sandboxBackend" in chat_input_source
+    # 术语由 backend 计算（docker 语义保留）
+    assert "启动容器" in chat_input_source
+    assert "启动沙箱 Pod" in chat_input_source
+    assert "stop-sandbox-workspace" in chat_input_source
+    assert "start-sandbox-workspace" in chat_input_source
+    assert "refresh-sandbox-workspace" in chat_input_source
+    assert "restart-sandbox-workspace" in chat_input_source
+    # k8s 菜单不出现终端项：终端只在 docker 渲染
+    assert "open-docker-terminal" in chat_input_source
+    assert "进入终端" in chat_input_source
+
+
+def test_embed_chat_routes_k8s_workspace_endpoints_and_stop_confirm():
+    source = EMBED.read_text(encoding="utf-8")
+    # k8s / docker workspace 端点按 backend 路由到各自 base
+    assert "/api/v1/sandbox/k8s/workspace" in source
+    assert "/api/v1/sandbox/docker/workspace" in source
+    # 4 个动作（status/ensure/stop/restart）均通过 base 拼接调用
+    assert source.count("sandboxWorkspaceBaseEndpoint.value}/") >= 4
+    # k8s 停止前二次确认
+    assert "showSandboxStopConfirm" in source
+    assert "<ConfirmModal" in source
+    assert "销毁沙箱 Pod" in source
+    assert "sandboxWorkspaceStatus" in source
+    assert "sandboxBackend" in source

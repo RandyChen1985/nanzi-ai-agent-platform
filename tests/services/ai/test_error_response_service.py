@@ -141,6 +141,26 @@ async def test_docker_sandbox_error_uses_specialized_message_without_ai():
 
 
 @pytest.mark.asyncio
+async def test_k8s_sandbox_error_uses_specialized_message_without_ai():
+    from app.services.ai.runtime.agentscope.k8s_workspace import K8sSandboxUnavailableError
+
+    with patch(
+        "app.services.ai.error_response_service.AgentConfigProvider.get_configured_llm",
+        new=AsyncMock(),
+    ) as get_current:
+        result = await build_error_presentation(
+            K8sSandboxUnavailableError(
+                "gateway failed to add MCP 'sandbox'",
+                user_message="Kubernetes 沙箱中的 Bash 工具不可用，Bash 未执行。",
+            )
+        )
+
+    assert result.ai_status == "disabled"
+    assert result.content == "Kubernetes 沙箱中的 Bash 工具不可用，Bash 未执行。"
+    get_current.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_explanation_prompt_receives_structured_safe_diagnostic_context():
     primary = _client("读取文件没有完成，请检查路径和权限后重试。")
 

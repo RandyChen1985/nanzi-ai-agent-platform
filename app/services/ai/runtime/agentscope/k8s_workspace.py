@@ -425,3 +425,100 @@ async def check_k8s_rbac_status(
             "message": f"连接 Kubernetes API Server 发生异常：{exc}",
             "remedy": "请检查集群网络连通性、API Server 地址及网络策略（NetworkPolicy）。",
         }
+
+
+async def read_k8s_sandbox_pod(
+    namespace: str,
+    pod_name: str,
+) -> dict[str, Any]:
+    """Read a sandbox Pod's live status without creating or mutating anything.
+
+    Return contract:
+    - ``{"available": True, "found": True, "phase": str|None, "start_time": str|None,
+       "ready": bool|None}`` when the Pod exists;
+    - ``{"available": True, "found": False, ...}`` when the Pod is confirmed
+      absent (HTTP 404);
+    - ``{"available": False, "found": None, ...}`` when the lookup cannot be
+      trusted (missing dependency, no cluster credentials, RBAC/API error).
+      Callers must degrade gracefully in that case instead of failing hard.
+    """
+    try:
+        from kubernetes_asyncio import client as k8s_client
+        from kubernetes_asyncio import config as k8s_async_config
+    except ImportError:
+        logger.warning("[k8s_workspace] kubernetes-asyncio is not installed; cannot read pod status")
+        return {
+            "available": False,
+            "found": None,
+            "phase": None,
+            "start_time": None,
+            "ready": None,
+        }
+
+    try:
+        k8s_async_config.load_incluster_config()
+    except Exception:
+        try:
+            await k8s_async_config.load_kube_config()
+        except Exception as exc:
+            logger.warning("[k8s_workspace] No cluster credentials to read pod %s: %s", pod_name, exc)
+            return {
+                "available": False,
+                "found": None,
+                "phase": None,
+                "start_time": None,
+                "ready": None,
+            }
+
+    try:
+        async with k8s_client.ApiClient() as api_client:
+            core_v1 = k8s_client.CoreV1Api(api_client)
+            pod = await core_v1.read_namespaced_pod(name=pod_name, namespace=namespace)
+    except Exception as exc:
+        if getattr(exc, "status", None) == 404:
+            logger.info("[k8s_workspace] Sandbox pod %s/%s not found", namespace, pod_name)
+            return {
+                "available": True,
+                "found": False,
+                "phase": None,
+                "start_time": None,
+                "ready": None,
+            }
+        logger.warning("[k8s_workspace] Failed to read pod %s/%s: %s", namespace, pod_name, exc)
+        return {
+            "available": False,
+            "found": None,
+            "phase": None,
+            "start_time": None,
+            "ready": None,
+        }
+
+    status = getattr(pod, "status", None)
+    phase = getattr(status, "phase", None)
+    container_ready: bool | None = None
+    container_statuses = getattr(status, "container_statuses", None) or []
+    if container_statuses:
+        container_ready = any(
+            bool(getattr(cs, "ready", False)) for cs in container_statuses
+        )
+    start_time = getattr(status, "start_time", None)
+    if start_time is None:
+        metadata = getattr(pod, "metadata", None)
+        start_time = getattr(metadata, "creation_timestamp", None)
+    start_time_text: str | None = None
+    if start_time is not None:
+        from datetime import datetime, timezone
+
+        if isinstance(start_time, datetime):
+            if start_time.tzinfo is None:
+                start_time = start_time.replace(tzinfo=timezone.utc)
+            start_time_text = start_time.astimezone(timezone.utc).isoformat()
+        else:
+            start_time_text = str(start_time)
+    return {
+        "available": True,
+        "found": True,
+        "phase": phase,
+        "start_time": start_time_text,
+        "ready": container_ready,
+    }

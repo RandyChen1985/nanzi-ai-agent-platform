@@ -23,6 +23,8 @@ spec:
         app.kubernetes.io/component: api
         app.kubernetes.io/part-of: nanzi-ai-agent-platform
     spec:
+      # 该账号通过 agent-sandboxes 中的 RoleBinding 获得沙箱 Pod/PVC 管理权限。
+      serviceAccountName: nanzi-ai-agent-sa
       terminationGracePeriodSeconds: 60
       containers:
         - name: api

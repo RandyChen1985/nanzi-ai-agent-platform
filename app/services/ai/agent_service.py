@@ -77,9 +77,10 @@ def _format_execution_error_for_user(
     model_name: Optional[str] = None,
 ) -> str:
     """Use safe, actionable text for sandbox failures without leaking internals."""
+    from app.services.ai.runtime.agentscope.k8s_workspace import K8sSandboxUnavailableError
     from app.services.ai.runtime.agentscope.workspace import DockerSandboxUnavailableError
 
-    if isinstance(exc, DockerSandboxUnavailableError):
+    if isinstance(exc, (DockerSandboxUnavailableError, K8sSandboxUnavailableError)):
         return exc.user_message
     from app.services.ai.multimodal_support import format_execution_error
 

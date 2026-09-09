@@ -22,6 +22,16 @@ Constraint recap (see the platform design notes):
 The script is kept as a single Python ``str`` so it can be compiled
 and unit-tested on the host while also being executable inside the
 container by ``python``.
+
+Interpreter resolution matters: the gateway always ships ``mcp`` inside
+its own virtualenv (``/root/.agentscope/.venv``), but a stock
+``python:3.11-slim`` sandbox image does NOT install ``mcp`` into the
+system Python. If the MCP subprocess is spawned as plain ``python`` and
+``PATH`` does not point at the gateway venv first, the ``sandbox`` MCP
+registration fails with ``ModuleNotFoundError: No module named 'mcp'``
+inside the gateway. Kubernetes sandboxes therefore pin the absolute
+gateway-venv interpreter; Docker/E2B sandboxes keep the default
+``python`` resolution.
 """
 
 from __future__ import annotations
@@ -38,6 +48,16 @@ CONTAINER_MCP_NAME = "sandbox"
 # Working directory inside the container/sandbox. Matches
 # AgentScope's ``CONTAINER_WORKDIR``.
 CONTAINER_WORKDIR = "/workspace"
+
+# Absolute interpreter of the AgentScope gateway virtualenv inside the
+# sandbox container. The gateway always installs ``mcp`` (plus fastapi /
+# uvicorn) there, while the stock ``python:3.11-slim`` system Python does
+# not. Kubernetes sandbox pods must spawn the inline ``sandbox`` MCP server
+# with this interpreter so ``from mcp.server.fastmcp import FastMCP``
+# resolves; a bare ``python`` command can silently resolve to the system
+# interpreter and make the whole MCP registration fail (HTTP 500 in the
+# gateway, and no usable Bash tool downstream).
+K8S_GATEWAY_VENV_PYTHON = "/root/.agentscope/.venv/bin/python"
 
 # The inline FastMCP stdio server. It must be syntactically valid
 # Python and use only the stdlib + ``mcp`` (already present in the
@@ -150,24 +170,37 @@ mcp.run(transport="stdio")
 '''
 
 
-def build_container_tool_mcp(workdir: str = CONTAINER_WORKDIR) -> MCPClient:
+def build_container_tool_mcp(
+    workdir: str = CONTAINER_WORKDIR,
+    *,
+    interpreter: str = "python",
+) -> MCPClient:
     """Return the stateful STDIO MCP handshake for the sandbox tools.
 
-    The gateway (inside the container) spawns ``python -c <script>``
+    The gateway (inside the container) spawns ``<interpreter> -c <script>``
     with its default inherited environment; we pin a container-side
     working directory via ``cwd`` and expose it under
     :data:`CONTAINER_MCP_NAME`. Docker sandboxes bind the user's host
     workspace to this logical path; the platform's host-side file tools
     translate it back to the real user workspace for previews and artifacts.
+
+    ``interpreter`` defaults to ``python`` (resolved through ``PATH``),
+    which is correct for Docker/E2B sandboxes whose gateway venv is already
+    first on ``PATH``. Kubernetes sandbox pods must pass
+    :data:`K8S_GATEWAY_VENV_PYTHON` so the MCP child process uses the venv
+    that actually ships the ``mcp`` package (see module docstring).
     """
     resolved_workdir = str(workdir or CONTAINER_WORKDIR).strip()
     if not resolved_workdir.startswith("/"):
         raise ValueError("sandbox workdir must be an absolute path")
+    interpreter_cmd = (interpreter or "python").strip()
+    if not interpreter_cmd:
+        raise ValueError("sandbox MCP interpreter must not be empty")
     return MCPClient(
         name=CONTAINER_MCP_NAME,
         is_stateful=True,
         mcp_config=StdioMCPConfig(
-            command="python",
+            command=interpreter_cmd,
             args=["-c", _INLINE_SERVER],
             cwd=resolved_workdir,
             env={"SANDBOX_WORKDIR": resolved_workdir},
