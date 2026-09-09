@@ -59,6 +59,26 @@ CONTAINER_WORKDIR = "/workspace"
 # gateway, and no usable Bash tool downstream).
 K8S_GATEWAY_VENV_PYTHON = "/root/.agentscope/.venv/bin/python"
 
+# AgentScope 网关运行时还需这些工具链核心依赖（官方 _GATEWAY_BASE_REQUIREMENTS
+# 只含 mcp/uvicorn/fastapi/httpx，而 gateway 加载/调用 MCP 与 Bash 工具时会全量
+# import agentscope.tool：tool/_types→_utils 需 docstring_parser；_toolkit 需
+# jinja2；_builtin 需 aiofiles/tree_sitter/tree_sitter_bash/python-frontmatter）。
+# 缺失表现为沙箱 Bash 报 "HTTP 500: No module named 'xxx'"。
+# 清单用于两处：① K8sWorkspace 的 ``extra_pip`` —— K8s 冷启动 bootstrap 的
+# ``uv pip install <_GATEWAY_BASE_REQUIREMENTS + extra_pip>`` 一并安装（未配
+# 预置镜像的 Pod 也覆盖）；② k8s_deploy/build-k8s-sandbox-image.sh 的 BASE_REQS
+# （预置镜像）。已按干净 venv 实测：装齐后 import agentscope.mcp + agentscope.tool
+# （含 Bash/Read/Write/Edit/Glob/Grep 等内置工具）全部通过；docker 预构建镜像因
+# ``uv pip install agentscope`` 不带 --no-deps 天然完整，不受影响。
+K8S_GATEWAY_EXTRA_PIP: tuple[str, ...] = (
+    "docstring_parser",
+    "jinja2",
+    "aiofiles",
+    "tree_sitter",
+    "tree_sitter_bash",
+    "python-frontmatter",
+)
+
 # The inline FastMCP stdio server. It must be syntactically valid
 # Python and use only the stdlib + ``mcp`` (already present in the
 # gateway venv). ``run(transport="stdio")`` blocks serving requests.

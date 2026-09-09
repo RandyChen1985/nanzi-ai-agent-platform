@@ -1396,6 +1396,7 @@ async def _policy_k8s_workspace(
         build_k8s_workspace_with_nanzi_adapter,
     )
     from app.services.ai.runtime.agentscope.workspace_container_mcp import (
+        K8S_GATEWAY_EXTRA_PIP,
         K8S_GATEWAY_VENV_PYTHON,
         build_container_tool_mcp,
     )
@@ -1497,6 +1498,10 @@ async def _policy_k8s_workspace(
         "default_mcps": [
             build_container_tool_mcp(interpreter=K8S_GATEWAY_VENV_PYTHON)
         ],
+        # K8s 冷启动 bootstrap 只装 _GATEWAY_BASE_REQUIREMENTS + extra_pip：
+        # 补上 agentscope 工具链核心依赖，避免网关加载 Bash/MCP 工具时报
+        # "HTTP 500: No module named 'xxx'"（预置镜像另由 BASE_REQS 保证）。
+        "extra_pip": list(K8S_GATEWAY_EXTRA_PIP),
         "skill_paths": skill_paths,
     }
     if effective_workspace_id:

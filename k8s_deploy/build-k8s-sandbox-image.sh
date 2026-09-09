@@ -8,9 +8,11 @@
 #   沙箱比 Docker 冷启动慢的根本原因。且只要 /root/.agentscope/_mcp_gateway_app.py
 #   存在，AgentScope 会整体跳过 bootstrap（含 Docker 镜像构建也走此快路径）。
 #
-#   本脚本构建一个“预置镜像”：把网关 venv（mcp/fastapi/uvicorn/httpx + agentscope）
-#   与 gateway 脚本模板直接打进镜像。配置 sandbox_k8s_image 指向该镜像后，
-#   新 Pod 起来直接可用，冷启动从数十秒降到秒级。
+#   本脚本构建一个“预置镜像”：把网关 venv（mcp/fastapi/uvicorn/httpx +
+#   agentscope 工具链核心依赖）与 gateway 脚本模板直接打进镜像。配置
+#   sandbox_k8s_image 指向该镜像后，新 Pod 起来直接可用，冷启动从数十秒降到秒级。
+#   （agentscope 官方 _GATEWAY_BASE_REQUIREMENTS 遗漏工具链依赖，缺失会报
+#   "HTTP 500: No module named 'xxx'"；补充清单与原因见 BASE_REQS 注释。）
 #
 # 用法（在可访问 Docker daemon 的构建机/节点执行）：
 #   ./build-k8s-sandbox-image.sh                          # 默认 python:3.11-slim -> nanzi-sandbox-k8s:latest
@@ -45,7 +47,13 @@ GATEWAY_HOME="/root/.agentscope"
 GATEWAY_VENV="$GATEWAY_HOME/.venv"
 GATEWAY_SCRIPT_NAME="_mcp_gateway_app.py"
 # agentscope.workspace._utils._GATEWAY_BASE_REQUIREMENTS + agentscope(--no-deps)
-BASE_REQS=("mcp<2.0.0" "uvicorn" "fastapi" "httpx")
+# 额外补充 agentscope 核心依赖（官方 _GATEWAY_BASE_REQUIREMENTS 清单遗漏）：
+#   gateway 加载/调用 MCP 与 Bash 工具时会全量 import agentscope.tool
+#   （tool/_types → _utils 需 docstring_parser；_toolkit 需 jinja2；_builtin 需
+#   aiofiles/tree_sitter/tree_sitter_bash/python-frontmatter）。缺失会报
+#   "HTTP 500: No module named 'xxx'"。以上为实测补全集（干净 venv 迭代验证到
+#   import agentscope.mcp + agentscope.tool 全部通过）。
+BASE_REQS=("mcp<2.0.0" "uvicorn" "fastapi" "httpx" "docstring_parser" "jinja2" "aiofiles" "tree_sitter" "tree_sitter_bash" "python-frontmatter")
 
 # ---- 参数 ----
 BASE_IMAGE="python:3.11-slim"
@@ -162,11 +170,12 @@ RUN $UV_INSTALL
 # venv 已存在时允许幂等 clear（兜底，正常预置后不再重复创建）
 ENV UV_VENV_CLEAR=1
 
-# 预置网关 venv（与 agentscope _GATEWAY_BASE_REQUIREMENTS 一致）
+# 预置网关 venv（agentscope _GATEWAY_BASE_REQUIREMENTS + 工具链所需核心依赖，见 BASE_REQS 注释）
 RUN uv venv $GATEWAY_VENV \\
  && uv pip install --python $GATEWAY_VENV/bin/python \\
-      "mcp<2.0.0" uvicorn fastapi httpx \\
- && uv pip install --python $GATEWAY_VENV/bin/python --no-deps "$AP"
+      "mcp<2.0.0" uvicorn fastapi httpx docstring_parser jinja2 aiofiles tree_sitter tree_sitter_bash python-frontmatter \\
+ && uv pip install --python $GATEWAY_VENV/bin/python --no-deps "$AP" \\
+ && $GATEWAY_VENV/bin/python -c "import docstring_parser; import agentscope.mcp; import agentscope.tool"
 
 # 预置 gateway 脚本 → AgentScope 判定已初始化，新 Pod 冷启动跳过整个 bootstrap
 COPY _mcp_gateway_app.py $GATEWAY_HOME/_mcp_gateway_app.py
