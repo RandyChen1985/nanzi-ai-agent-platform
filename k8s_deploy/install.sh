@@ -130,19 +130,19 @@ print_header() {
 }
 
 log_info() {
-  printf "%bℹ%b  %s\n" "${C_CYAN}" "${C_RESET}" "$*"
+  printf "%bℹ%b  %b\n" "${C_CYAN}" "${C_RESET}" "$*"
 }
 
 log_success() {
-  printf "%b✔%b  %s\n" "${C_GREEN}" "${C_RESET}" "$*"
+  printf "%b✔%b  %b\n" "${C_GREEN}" "${C_RESET}" "$*"
 }
 
 log_warn() {
-  printf "%b⚠%b  %s\n" "${C_YELLOW}" "${C_RESET}" "$*"
+  printf "%b⚠%b  %b\n" "${C_YELLOW}" "${C_RESET}" "$*"
 }
 
 log_error() {
-  printf "%b✖%b  %s\n" "${C_RED}" "${C_RESET}" "$*"
+  printf "%b✖%b  %b\n" "${C_RED}" "${C_RESET}" "$*"
 }
 
 # 统一的资源下发/演练函数
