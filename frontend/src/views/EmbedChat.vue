@@ -1548,6 +1548,14 @@
       :auth-token="config.token"
       @close="showDockerTerminal = false"
     />
+    <!-- Kubernetes 沙箱 Pod 终端 -->
+    <K8sTerminalModal
+      :show="showK8sTerminal"
+      :pod-name="sandboxWorkspaceInstanceId"
+      :conversation-id="conversationId"
+      :auth-token="config.token"
+      @close="showK8sTerminal = false"
+    />
     <!-- K8s 沙箱停止二次确认 -->
     <ConfirmModal
       v-if="showSandboxStopConfirm"
@@ -2132,6 +2140,7 @@ import ChatTodoCard from "@/components/chat/ChatTodoCard.vue";
 import BashEnvBanner from "@/components/chat/BashEnvBanner.vue";
 import DockerWorkspaceBanner from "@/components/chat/DockerWorkspaceBanner.vue";
 import DockerTerminalModal from "@/components/chat/DockerTerminalModal.vue";
+import K8sTerminalModal from "@/components/chat/K8sTerminalModal.vue";
 import ChatInput from "@/components/embed/ChatInput.vue";
 import WelcomeDashboard from "@/components/embed/WelcomeDashboard.vue";
 import PersonalResourcesModal from "@/components/embed/PersonalResourcesModal.vue";
@@ -4291,17 +4300,22 @@ const ensureSandboxWorkspace = async () => {
 };
 
 const showDockerTerminal = ref(false);
+const showK8sTerminal = ref(false);
 
 const openDockerTerminal = () => {
-  if (sandboxBackend.value !== "docker") {
-    showToast("仅 Docker 沙箱支持终端", "warning");
-    return;
-  }
   if (sandboxWorkspaceStatus.value !== "running") {
     showToast("沙箱未在运行中，请先启动", "warning");
     return;
   }
-  showDockerTerminal.value = true;
+  if (sandboxBackend.value === "k8s") {
+    showK8sTerminal.value = true;
+    return;
+  }
+  if (sandboxBackend.value === "docker") {
+    showDockerTerminal.value = true;
+    return;
+  }
+  showToast("当前沙箱不支持终端", "warning");
 };
 
 const confirmStopSandboxWorkspace = async () => {

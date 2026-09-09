@@ -4157,3 +4157,69 @@ async def build_workspace_toolkit(
         skills_or_loaders=skills,
         mcps=mcps,
     )
+
+
+async def _k8s_named_pod_identity(user_key: str) -> tuple[str, str]:
+    """Return (namespace, pod_name) derived from config + the user key."""
+    from app.services.config_service import ConfigService
+
+    namespace = (
+        await ConfigService.get("sandbox_k8s_namespace", "agent-sandboxes")
+    ).strip() or "agent-sandboxes"
+    pod_name = f"as-ws-{str(user_key).replace('_', '-')}"
+    return namespace, pod_name
+
+
+async def exec_k8s_workspace_command(
+    *,
+    user_id: str | int | None,
+    conversation_id: str | None,
+    command: str,
+    workdir: str | None = None,
+    user_name: str | None = None,
+    user_info: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Execute a one-shot shell command inside the current user's K8s sandbox Pod.
+
+    Mirrors ``exec_docker_workspace_command`` for the Kubernetes backend: the Pod
+    is located from the process-local cache (falling back to the derived name),
+    and the command runs via the Kubernetes WebSocket exec. Returns the same
+    output shape the Docker terminal UI consumes.
+    """
+    user_key = await _k8s_runtime_guard(
+        user_id=user_id,
+        user_name=user_name,
+        user_info=user_info,
+        conversation_id=conversation_id,
+        operation="exec",
+    )
+
+    root = await resolve_workspace_root()
+    cache_key = f"{os.path.abspath(root)}::{user_key}::{SANDBOX_POLICY_K8S}"
+    workspace = _k8s_workspace_cache.get(cache_key)
+    if workspace is not None and getattr(workspace, "is_alive", True):
+        namespace, pod_name = await _k8s_workspace_pod_identity(workspace)
+    else:
+        namespace, pod_name = await _k8s_named_pod_identity(user_key)
+
+    if not pod_name:
+        from app.services.ai.runtime.agentscope.k8s_workspace import K8sSandboxUnavailableError
+
+        raise K8sSandboxUnavailableError(
+            "unable to locate K8s sandbox Pod",
+            reason_code="k8s_pod_not_found",
+            user_message="未能定位 Kubernetes 沙箱 Pod，请先启动沙箱后再进入终端。",
+        )
+
+    from app.services.ai.runtime.agentscope.k8s_workspace import exec_k8s_sandbox_command
+
+    result = await exec_k8s_sandbox_command(
+        namespace=namespace,
+        pod_name=pod_name,
+        command=command,
+        workdir=workdir,
+    )
+    result["execution_backend"] = SANDBOX_POLICY_K8S
+    result["workspace_id"] = user_key
+    result["pod_name"] = pod_name
+    return result

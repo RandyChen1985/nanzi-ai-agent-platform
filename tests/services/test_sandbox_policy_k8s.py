@@ -940,3 +940,89 @@ async def test_build_host_only_workspace_initializes_local(tmp_path, monkeypatch
     )
     assert ws is fake_local
     fake_local.initialize.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_exec_k8s_sandbox_command_returns_output_and_workdir():
+    import re
+
+    from app.services.ai.runtime.agentscope.k8s_workspace import exec_k8s_sandbox_command
+
+    core = MagicMock()
+
+    def fake_exec(name, namespace, container, command, **kw):
+        cmd = command[-1] if isinstance(command, list) and command else ""
+        m = re.search(r"(__NANZI_PWD_[0-9a-f]+__)", cmd or "")
+        marker = m.group(1) if m else "x"
+        return f"hello world\n{marker}:/workspace\n"
+
+    core.connect_get_namespaced_pod_exec = AsyncMock(side_effect=fake_exec)
+
+    mock_client = MagicMock()
+    mock_client.CoreV1Api.return_value = core
+    mock_config = MagicMock()
+    mock_config.load_incluster_config.return_value = None
+    mock_ws = MagicMock()
+    mock_ws.WsApiClient.return_value = MagicMock(close=AsyncMock())
+
+    k8s = MagicMock()
+    k8s.client = mock_client
+    k8s.config = mock_config
+    stream = MagicMock()
+    stream.ws_client = mock_ws
+
+    with patch.dict("sys.modules", {
+        "kubernetes_asyncio": k8s,
+        "kubernetes_asyncio.client": mock_client,
+        "kubernetes_asyncio.config": mock_config,
+        "kubernetes_asyncio.stream": stream,
+        "kubernetes_asyncio.stream.ws_client": mock_ws,
+    }):
+        result = await exec_k8s_sandbox_command(
+            namespace="agent-sandboxes",
+            pod_name="as-ws-admin--1",
+            command="ls",
+        )
+    assert result["output"] == "hello world"
+    assert result["workdir"] == "/workspace"
+    assert result["exit_code"] is None
+    assert isinstance(result["duration_ms"], int)
+
+
+@pytest.mark.asyncio
+async def test_exec_k8s_workspace_command_derives_pod_and_returns(monkeypatch):
+    from app.services.ai.runtime.agentscope import workspace as ws_module
+    from app.services.ai.runtime.agentscope.workspace import exec_k8s_workspace_command
+
+    await _patch_k8s_policy(monkeypatch)
+
+    async def fake_root():
+        return "/data"
+
+    monkeypatch.setattr(ws_module, "resolve_workspace_root", fake_root)
+    ws_module._k8s_workspace_cache.clear()
+
+    async def fake_exec_cmd(namespace, pod_name, command, workdir=None):
+        return {
+            "output": "hi",
+            "stdout": "hi",
+            "stderr": "",
+            "exit_code": None,
+            "duration_ms": 5,
+            "workdir": "/workspace",
+        }
+
+    monkeypatch.setattr(
+        "app.services.ai.runtime.agentscope.k8s_workspace.exec_k8s_sandbox_command",
+        fake_exec_cmd,
+    )
+
+    result = await exec_k8s_workspace_command(
+        user_id=1,
+        user_name="alice",
+        conversation_id="conv-1",
+        command="ls",
+    )
+    assert result["pod_name"] == "as-ws-alice--1"
+    assert result["execution_backend"] == "k8s"
+    assert result["output"] == "hi"
