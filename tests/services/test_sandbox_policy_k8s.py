@@ -7,11 +7,18 @@ pytestmark = pytest.mark.no_infrastructure
 
 
 @pytest.mark.asyncio
-async def test_policy_k8s_workspace_build_and_initialize():
+async def test_policy_k8s_workspace_build_and_initialize(monkeypatch):
     from app.services.ai.runtime.agentscope.workspace import (
         _policy_k8s_workspace,
         SANDBOX_POLICY_K8S,
     )
+
+    # 避免任何 config 键触达真实 Redis（redis asyncio 连接跨 event loop 复用时
+    # 会在组合测试顺序下抛 "Future attached to a different loop"）。
+    async def fake_get(key, default=None):
+        return default
+
+    monkeypatch.setattr("app.services.config_service.ConfigService.get", fake_get)
 
     mock_ws = MagicMock()
     mock_ws.initialize = AsyncMock()
@@ -214,6 +221,10 @@ async def test_nanzi_k8s_adapter_create_pod_spec_structure(tmp_path):
     assert container.resources.requests["memory"] == "128Mi"
     assert container.resources.limits["cpu"] == "1000m"
     assert container.resources.limits["memory"] == "1Gi"
+
+    # 校验 uv venv 幂等开关注入（避免 Pod 重复 initialize 时 bootstrap 因 venv 已存在而失败）
+    env_map = {e.name: e.value for e in (container.env or [])}
+    assert env_map.get("UV_VENV_CLEAR") == "1"
 
 
 @pytest.mark.asyncio

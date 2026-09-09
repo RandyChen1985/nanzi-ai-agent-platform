@@ -2135,13 +2135,19 @@ class AgentService:
                     pass
 
                 with _measure("workspace_prewarm"):
-                    await get_local_workspace(
-                        user_id=runtime_user_id,
-                        conversation_id=conversation_id,
-                        user_name=runtime_user_name,
-                        user_info=user_info,
-                        skills_custom=bool(getattr(agent_config, "skills_custom", False)),
-                        allowed_global_skills=list(getattr(agent_config, "skills", None) or []),
+                    # 预热只是“抢跑”，绝不允许它拖死整轮：沙箱初始化（拉镜像/k8s
+                    # bootstrap/等待锁）可能长时间挂起，这里强制上限，超时按失败返回
+                    # error log，由主流程继续（不在此 await 上无限等待）。
+                    await asyncio.wait_for(
+                        get_local_workspace(
+                            user_id=runtime_user_id,
+                            conversation_id=conversation_id,
+                            user_name=runtime_user_name,
+                            user_info=user_info,
+                            skills_custom=bool(getattr(agent_config, "skills_custom", False)),
+                            allowed_global_skills=list(getattr(agent_config, "skills", None) or []),
+                        ),
+                        timeout=60.0,
                     )
                 elapsed_ms = (time.monotonic() - start_time) * 1000.0
                 return _build_workspace_sandbox_log(

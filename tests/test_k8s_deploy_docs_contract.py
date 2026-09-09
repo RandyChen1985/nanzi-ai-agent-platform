@@ -84,3 +84,26 @@ def test_k8s_docs_cover_wizard_install_script_and_ops_tools():
     assert (K8S_DIR / "install.sh").is_file()
     assert (K8S_DIR / "nanzi-k8s.sh").is_file()
     assert (K8S_DIR / "upgrade.md").is_file()
+
+
+def test_k8s_build_sandbox_image_script_and_docs_contract():
+    """网关预置镜像构建脚本与文档指引契约。"""
+    build_script = K8S_DIR / "build-k8s-sandbox-image.sh"
+    assert build_script.is_file()
+    script_source = build_script.read_text(encoding="utf-8")
+    assert "build-k8s-sandbox-image.sh" in script_source
+    assert "_mcp_gateway_app.py" in script_source
+    assert 'GATEWAY_HOME="/root/.agentscope"' in script_source
+    assert "mcp<2.0.0" in script_source
+    assert "sandbox_k8s_image" in script_source
+    template = K8S_DIR / "sandbox-image" / "_mcp_gateway_app.py"
+    assert template.is_file()
+
+    upgrade_text = (K8S_DIR / "upgrade.md").read_text(encoding="utf-8")
+    assert "build-k8s-sandbox-image.sh" in upgrade_text
+    assert "网关预置镜像" in upgrade_text
+
+    readme_text = (K8S_DIR / "README.md").read_text(encoding="utf-8")
+    assert "build-k8s-sandbox-image.sh" in readme_text
+    assert "网关预置镜像" in readme_text
+    assert "check-sandbox-image" in readme_text
