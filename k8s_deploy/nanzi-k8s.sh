@@ -78,6 +78,19 @@ log_error() {
   printf "%b✖%b  %s\n" "${C_RED}" "${C_RESET}" "$*"
 }
 
+# 危险操作二次确认：默认 N（回车取消），仅输入 y/yes 才放行
+confirm_action() {
+  prompt_label="$1"
+  printf "  %b?%b %s [y/N]: " "${C_YELLOW}" "${C_RESET}" "$prompt_label"
+  read -r input || input=""
+  input="$(printf '%s' "$input" | tr '[:upper:]' '[:lower:]')"
+  if [ "$input" = "y" ] || [ "$input" = "yes" ]; then
+    return 0
+  fi
+  printf "%b已取消，未执行任何变更。%b\n" "${C_YELLOW}" "${C_RESET}"
+  return 1
+}
+
 # 等待 K3s API 恢复函数
 wait_for_k3s_api() {
   log_info "正在探测 K3s API Server 连通性..."
@@ -143,6 +156,9 @@ case "${1:-}" in
 
   restart-pod)
     print_header "滚动重启 NanZi 平台 Pod"
+    if ! confirm_action "确定要滚动重启 NanZi 平台 Pod 吗？（会触发 rollout restart，期间短暂不可用）"; then
+      exit 0
+    fi
     log_info "触发 Deployment/${DEPLOYMENT} 滚动更新..."
     kubectl rollout restart deployment/"$DEPLOYMENT" -n "$NAMESPACE"
 
@@ -156,6 +172,9 @@ case "${1:-}" in
 
   restart-k3s)
     print_header "重启 K3s 集群服务"
+    if ! confirm_action "确定要重启底层 K3s 服务吗？（K3s 短暂不可用，会等待 API 自动恢复）"; then
+      exit 0
+    fi
     log_info "执行 systemctl restart k3s..."
     systemctl restart k3s
 
@@ -171,6 +190,9 @@ case "${1:-}" in
 
   restart-all)
     print_header "全量级平滑重启：K3s 守护进程 + NanZi 业务 Pod"
+    if ! confirm_action "确定要执行全量重启吗？（先重启 K3s 服务，再滚动重启 NanZi 平台 Pod）"; then
+      exit 0
+    fi
     log_info "第 1 步：重启底层 K3s 服务..."
     systemctl restart k3s
 
