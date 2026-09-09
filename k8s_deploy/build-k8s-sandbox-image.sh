@@ -35,10 +35,10 @@ else
   C_GREEN=''; C_CYAN=''; C_YELLOW=''; C_RED=''; C_BOLD=''; C_RESET=''
 fi
 
-log_info()   { printf "%bℹ%b  %s\n" "${C_CYAN}" "${C_RESET}" "$*"; }
-log_success(){ printf "%b✔%b  %s\n" "${C_GREEN}" "${C_RESET}" "$*"; }
-log_warn()   { printf "%b⚠%b  %s\n" "${C_YELLOW}" "${C_RESET}" "$*"; }
-log_error()  { printf "%b✖%b  %s\n" "${C_RED}" "${C_RESET}" "$*"; }
+log_info()   { printf "%bℹ%b  %b\n" "${C_CYAN}" "${C_RESET}" "$*"; }
+log_success(){ printf "%b✔%b  %b\n" "${C_GREEN}" "${C_RESET}" "$*"; }
+log_warn()   { printf "%b⚠%b  %b\n" "${C_YELLOW}" "${C_RESET}" "$*"; }
+log_error()  { printf "%b✖%b  %b\n" "${C_RED}" "${C_RESET}" "$*"; }
 
 # ---- 常量（与 agentscope workspace._k8s/_utils 布局严格一致）----
 GATEWAY_HOME="/root/.agentscope"
@@ -211,14 +211,22 @@ log_success "已导出：$TAR_FILE"
 
 if [ "$DO_IMPORT" = "true" ]; then
   IMPORTED=false
-  if command -v ctr >/dev/null 2>&1; then
-    log_info "正在导入节点 containerd（ctr -n k8s.io）..."
-    if sudo -n ctr -n k8s.io images import "$TAR_FILE" 2>/dev/null || ctr -n k8s.io images import "$TAR_FILE" 2>/dev/null; then
-      IMPORTED=true
-    fi
-  elif command -v k3s >/dev/null 2>&1; then
+  # 运行时选择：K3s（命令或 socket）优先——K3s 自带 containerd 是 kubelet 读取的那套；
+  # 没有 K3s 时用系统 containerd（普通 K8s 节点）。
+  if command -v k3s >/dev/null 2>&1; then
     log_info "正在导入 K3s containerd（k3s ctr）..."
     if sudo -n k3s ctr images import "$TAR_FILE" 2>/dev/null || k3s ctr images import "$TAR_FILE" 2>/dev/null; then
+      IMPORTED=true
+    fi
+  elif [ -S "/run/k3s/containerd/containerd.sock" ]; then
+    log_info "正在导入 K3s containerd（ctr -a socket）..."
+    if sudo -n ctr -a /run/k3s/containerd/containerd.sock -n k8s.io images import "$TAR_FILE" 2>/dev/null \
+      || ctr -a /run/k3s/containerd/containerd.sock -n k8s.io images import "$TAR_FILE" 2>/dev/null; then
+      IMPORTED=true
+    fi
+  elif command -v ctr >/dev/null 2>&1; then
+    log_info "正在导入节点 containerd（ctr -n k8s.io）..."
+    if sudo -n ctr -n k8s.io images import "$TAR_FILE" 2>/dev/null || ctr -n k8s.io images import "$TAR_FILE" 2>/dev/null; then
       IMPORTED=true
     fi
   fi

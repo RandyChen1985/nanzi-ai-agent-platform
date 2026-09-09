@@ -492,10 +492,16 @@ resolve_container_tool_cmd() {
       sudo_prefix="sudo"
     fi
   fi
-  if command -v ctr >/dev/null 2>&1; then
-    CONTAINER_TOOL_CMD="${sudo_prefix:+$sudo_prefix }ctr -n k8s.io"
-  elif command -v k3s >/dev/null 2>&1; then
+  # 运行时选择：优先 K3s（命令在 PATH，或虽不在 PATH 但 K3s socket 存在）；否则系统
+  # containerd（普通 K8s 节点）。注意 K3s 与独立系统 containerd 是两套 daemon，普通
+  # `ctr -n k8s.io`（默认连系统 socket）导不进 K3s 运行时。
+  if command -v k3s >/dev/null 2>&1; then
     CONTAINER_TOOL_CMD="${sudo_prefix:+$sudo_prefix }k3s ctr"
+  elif [ -S "/run/k3s/containerd/containerd.sock" ]; then
+    # K3s 二进制不在 PATH 但 K3s 运行时存在：直接用其 socket
+    CONTAINER_TOOL_CMD="${sudo_prefix:+$sudo_prefix }ctr -a /run/k3s/containerd/containerd.sock -n k8s.io"
+  elif command -v ctr >/dev/null 2>&1; then
+    CONTAINER_TOOL_CMD="${sudo_prefix:+$sudo_prefix }ctr -n k8s.io"
   else
     CONTAINER_TOOL_CMD=""
   fi
