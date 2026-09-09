@@ -1037,3 +1037,132 @@ async def test_exec_k8s_workspace_command_derives_pod_and_returns(monkeypatch):
     assert result["pod_name"] == "as-ws-alice--1"
     assert result["execution_backend"] == "k8s"
     assert result["output"] == "hi"
+
+
+@pytest.mark.asyncio
+async def test_read_k8s_sandbox_pod_terminating_sets_deleting():
+    from datetime import datetime, timezone
+
+    from app.services.ai.runtime.agentscope.k8s_workspace import read_k8s_sandbox_pod
+
+    pod_status = MagicMock()
+    pod_status.phase = "Running"
+    pod_status.start_time = None
+    pod_status.container_statuses = []
+    pod = MagicMock()
+    pod.metadata.creation_timestamp = None
+    pod.metadata.deletion_timestamp = datetime.now(timezone.utc)
+    pod.status = pod_status
+
+    mock_core = MagicMock()
+    mock_core.read_namespaced_pod = AsyncMock(return_value=pod)
+    mock_client = MagicMock()
+    mock_client.CoreV1Api.return_value = mock_core
+
+    class FakeApiClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc_val, exc_tb):
+            return None
+
+    mock_client.ApiClient = FakeApiClient
+    mock_config = MagicMock()
+    mock_config.load_incluster_config.return_value = None
+    mock_k8s = MagicMock()
+    mock_k8s.client = mock_client
+    mock_k8s.config = mock_config
+
+    with patch.dict("sys.modules", {
+        "kubernetes_asyncio": mock_k8s,
+        "kubernetes_asyncio.client": mock_client,
+        "kubernetes_asyncio.config": mock_config,
+    }):
+        result = await read_k8s_sandbox_pod(namespace="agent-sandboxes", pod_name="as-ws-admin--1")
+    assert result["found"] is True
+    assert result["deleting"] is True
+
+
+@pytest.mark.asyncio
+async def test_k8s_workspace_status_terminating_reports_stopping(monkeypatch):
+    from app.services.ai.runtime.agentscope import workspace as ws_module
+    from app.services.ai.runtime.agentscope.workspace import k8s_workspace_status
+
+    await _patch_k8s_policy(monkeypatch)
+
+    async def fake_root():
+        return "/data"
+
+    monkeypatch.setattr(ws_module, "resolve_workspace_root", fake_root)
+
+    existing = MagicMock()
+    existing.is_alive = True
+    existing._pod_name = "as-ws-alice__1"
+    existing._namespace = "agent-sandboxes"
+    existing._platform_started_at = "2026-09-09T10:00:00+00:00"
+
+    async def fake_probe(namespace, pod_name):
+        return {
+            "available": True,
+            "found": True,
+            "phase": "Running",
+            "start_time": "2026-09-09T10:00:00+00:00",
+            "ready": False,
+            "deleting": True,
+        }
+
+    monkeypatch.setattr(
+        "app.services.ai.runtime.agentscope.k8s_workspace.read_k8s_sandbox_pod",
+        fake_probe,
+    )
+    ws_module._k8s_workspace_cache.clear()
+    ws_module._k8s_workspace_cache[K8S_RUNTIME_CACHE_KEY] = existing
+
+    result = await k8s_workspace_status(
+        user_id=1,
+        user_name="alice",
+        conversation_id="conv-1",
+    )
+    assert result["status"] == "stopping"
+    assert result["running"] is False
+
+
+@pytest.mark.asyncio
+async def test_k8s_workspace_status_best_effort_terminating_reports_stopping(monkeypatch):
+    from app.services.ai.runtime.agentscope import workspace as ws_module
+    from app.services.ai.runtime.agentscope.workspace import k8s_workspace_status
+
+    async def fake_get(key, default=None):
+        return "agent-sandboxes" if key == "sandbox_k8s_namespace" else "k8s"
+
+    monkeypatch.setattr("app.services.config_service.ConfigService.get", fake_get)
+
+    async def fake_root():
+        return "/data"
+
+    monkeypatch.setattr(ws_module, "resolve_workspace_root", fake_root)
+
+    async def fake_probe(namespace, pod_name):
+        return {
+            "available": True,
+            "found": True,
+            "phase": "Running",
+            "start_time": "2026-09-09T10:00:00+00:00",
+            "ready": False,
+            "deleting": True,
+        }
+
+    monkeypatch.setattr(
+        "app.services.ai.runtime.agentscope.k8s_workspace.read_k8s_sandbox_pod",
+        fake_probe,
+    )
+    ws_module._k8s_workspace_cache.clear()
+
+    result = await k8s_workspace_status(
+        user_id=1,
+        user_name="alice",
+        conversation_id="conv-1",
+    )
+    assert result["status"] == "stopping"
+    assert result["running"] is False
+    assert result["pod_name"] == "as-ws-alice--1"

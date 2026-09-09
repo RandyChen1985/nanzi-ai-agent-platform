@@ -2477,6 +2477,17 @@ async def k8s_workspace_status(
             phase = pod_info.get("phase")
             live_start = pod_info.get("start_time") or started_at
             if phase == "Running":
+                if pod_info.get("deleting"):
+                    # Terminating：phase 仍为 Running，但 Pod 正在删除，映射为 stopping
+                    return {
+                        "status": "stopping",
+                        "running": False,
+                        "execution_backend": SANDBOX_POLICY_K8S,
+                        "workspace_id": user_key,
+                        "pod_name": pod_name,
+                        "started_at": None,
+                        "uptime_seconds": None,
+                    }
                 return {
                     "status": "running",
                     "running": True,
@@ -2558,6 +2569,17 @@ async def _k8s_probe_workspace_pod(user_key: str) -> dict[str, Any] | None:
 
     phase = info.get("phase")
     if phase == "Running":
+        if info.get("deleting"):
+            # Terminating：phase 仍为 Running，但 Pod 正在删除，映射为 stopping
+            return {
+                "status": "stopping",
+                "running": False,
+                "execution_backend": SANDBOX_POLICY_K8S,
+                "workspace_id": user_key,
+                "pod_name": pod_name,
+                "started_at": None,
+                "uptime_seconds": None,
+            }
         return {
             "status": "running",
             "running": True,

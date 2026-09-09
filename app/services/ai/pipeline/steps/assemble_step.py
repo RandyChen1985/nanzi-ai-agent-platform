@@ -28,6 +28,53 @@ from app.core.config import settings
 logger = logging.getLogger(__name__)
 
 
+#: 沙箱工作区准备日志的固定 id（占位与最终行共用，前端按 id merge 更新）
+_WORKSPACE_LOG_ID = "workspace:sandbox"
+_WORKSPACE_PARENT_ID = "preparation:auth_context_capability"
+
+
+async def _effective_policy_is_sandbox() -> bool:
+    """当前有效沙箱策略是否为真正的沙箱（会初始化隔离 Pod/容器）。"""
+    try:
+        from app.services.ai.runtime.agentscope.workspace import (
+            SANDBOX_POLICY_DOCKER,
+            SANDBOX_POLICY_E2B,
+            SANDBOX_POLICY_K8S,
+            SANDBOX_POLICY_LOCAL,
+            SANDBOX_POLICY_SSH,
+        )
+        from app.services.config_service import (
+            ConfigService,
+            resolve_effective_sandbox_policy,
+        )
+
+        policy = resolve_effective_sandbox_policy(
+            await ConfigService.get("sandbox_policy", SANDBOX_POLICY_LOCAL),
+            SANDBOX_POLICY_LOCAL,
+        )
+        return policy in {
+            SANDBOX_POLICY_DOCKER,
+            SANDBOX_POLICY_K8S,
+            SANDBOX_POLICY_E2B,
+            SANDBOX_POLICY_SSH,
+        }
+    except Exception:
+        return False
+
+
+def _build_workspace_placeholder_log() -> Dict[str, Any]:
+    """准备阶段先发一条“创建中”占位日志，预热完成后由同 id 最终日志覆盖更新。"""
+    return {
+        "type": "log",
+        "id": _WORKSPACE_LOG_ID,
+        "parent_id": _WORKSPACE_PARENT_ID,
+        "title": "沙箱工作区准备",
+        "details": "沙箱工作区创建中（正在拉起隔离容器/Pod），请稍候…",
+        "status": "pending",
+        "category": "system",
+    }
+
+
 class AssembleStep(BasePipelineStep):
     """管道第四阶段：系统提示词分层组装、能力目录与安全边界注入"""
 
@@ -138,17 +185,39 @@ class AssembleStep(BasePipelineStep):
                 route_details = shared_state.get("route_details")
                 if not turn_decision and route_details:
                     turn_decision = getattr(route_details, "turn_decision", None)
-                preflight_ctx = await self.agent_service._gather_turn_preflight_context(
-                    agent_config=agent_config,
-                    user_info=user_info,
-                    user_query=str(context.user_query or shared_state.get("user_query") or ""),
-                    turn_decision=turn_decision,
-                    messages=context.messages,
-                    debug_options=debug_options,
-                    conversation_id=context.conversation_id,
-                    request_observability=context.request_observability,
-                    performance_tracker=context.performance_tracker,
+                # 占位先行：沙箱策略且预热会真实创建 Pod/容器时，先让准备卡片显示
+                # “沙箱工作区创建中…”，预热完成后由同 id 的最终日志覆盖更新为就绪/失败。
+                placeholder_sent = (
+                    bool(context.conversation_id)
+                    and await _effective_policy_is_sandbox()
                 )
+                if placeholder_sent:
+                    yield _build_workspace_placeholder_log()
+                try:
+                    preflight_ctx = await self.agent_service._gather_turn_preflight_context(
+                        agent_config=agent_config,
+                        user_info=user_info,
+                        user_query=str(context.user_query or shared_state.get("user_query") or ""),
+                        turn_decision=turn_decision,
+                        messages=context.messages,
+                        debug_options=debug_options,
+                        conversation_id=context.conversation_id,
+                        request_observability=context.request_observability,
+                        performance_tracker=context.performance_tracker,
+                    )
+                except Exception as exc:
+                    # 兜底：异常时把占位更新为失败，避免一直停在“创建中”。
+                    if placeholder_sent:
+                        yield {
+                            "type": "log",
+                            "id": _WORKSPACE_LOG_ID,
+                            "parent_id": _WORKSPACE_PARENT_ID,
+                            "title": "沙箱工作区准备",
+                            "details": f"沙箱工作区准备失败（{exc}）",
+                            "status": "error",
+                            "category": "system",
+                        }
+                    raise
                 shared_state["preflight_ctx"] = preflight_ctx
                 if context.performance_tracker is not None:
                     context.performance_tracker.mark("preflight_concurrency_load")

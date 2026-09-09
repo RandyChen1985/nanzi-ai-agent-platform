@@ -2287,12 +2287,9 @@ class AssistantAgentRunner(BaseExecutor):
             primary_model_name=primary_model_name,
         )
         injection_config = await load_injection_config()
-        # 沙箱失败策略：仅当本轮工具集确实需要沙箱 Bash 时才 fail-closed；
-        # 纯对话/只读轮次降级为宿主本地工作区（文件工具可用，Bash 移除），避免沙箱
-        # 拉不起来时阻断整轮聊天。
-        requires_sandbox_bash = any(
-            _workspace_native_name_for_spec(spec) == "Bash" for spec in tools
-        )
+        # 沙箱失败策略：一律降级为宿主本地工作区（文件工具可用、Bash 工具移除），保证聊天
+        # 不被沙箱拉不起阻断（“你好”等纯对话可继续；需要执行的轮次模型会看到 Bash 不可用
+        # 而说明，而不是整轮报错）。沙箱恢复后下一轮自动回到完整模式（清除降级标记）。
         try:
             workspace = await asyncio.wait_for(
                 get_local_workspace(
@@ -2317,8 +2314,6 @@ class AssistantAgentRunner(BaseExecutor):
                     reason_code="k8s_workspace_init_timeout",
                     user_message="沙箱启动超时（可能镜像拉取或集群调度较慢），已按沙箱不可用处理，可稍后重试。",
                 )
-            if requires_sandbox_bash:
-                raise
             logger.warning(
                 "[agent] Sandbox workspace unavailable (conversation=%s); degrading to host local workspace, Bash disabled: %s",
                 self.conversation_id,

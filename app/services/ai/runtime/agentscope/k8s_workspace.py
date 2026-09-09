@@ -507,9 +507,11 @@ async def read_k8s_sandbox_pod(
         container_ready = any(
             bool(getattr(cs, "ready", False)) for cs in container_statuses
         )
+    metadata = getattr(pod, "metadata", None)
+    # Terminating 的 Pod phase 仍为 Running，需用 deletionTimestamp 识别删除中
+    deleting = bool(getattr(metadata, "deletion_timestamp", None))
     start_time = getattr(status, "start_time", None)
     if start_time is None:
-        metadata = getattr(pod, "metadata", None)
         start_time = getattr(metadata, "creation_timestamp", None)
     start_time_text: str | None = None
     if start_time is not None:
@@ -527,6 +529,7 @@ async def read_k8s_sandbox_pod(
         "phase": phase,
         "start_time": start_time_text,
         "ready": container_ready,
+        "deleting": deleting,
     }
 
 
