@@ -63,69 +63,81 @@
     </p>
   </section>
 
-  <!-- 八大输入源表格 -->
-  <div style="overflow-x:auto;-webkit-overflow-scrolling:touch;margin:0 0 16px 0;">
-    <table style="width:100%;border-collapse:collapse;font-size:13px;line-height:1.65;border:1px solid #e5e7eb;">
-      <thead>
-        <tr style="background:#f9fafb;border-bottom:2px solid #e5e7eb;text-align:left;">
-          <th style="padding:10px 12px;color:#111827;min-width:120px;">切片类别</th>
-          <th style="padding:10px 12px;color:#111827;min-width:200px;">具体注入内容</th>
-          <th style="padding:10px 12px;color:#111827;min-width:120px;">生命周期/来源</th>
-          <th style="padding:10px 12px;color:#111827;min-width:100px;">稳定性分类</th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr style="border-bottom:1px solid #f3f4f6;">
-          <td style="padding:10px 12px;font-weight:bold;color:#111827;">1. 平台全局契约</td>
-          <td style="padding:10px 12px;color:#4b5563;">Markdown/JSON 格式要求、代码块契约、系统底线与防越狱守则</td>
-          <td style="padding:10px 12px;color:#6b7280;">平台代码硬契约</td>
-          <td style="padding:10px 12px;font-weight:bold;color:#111827;">绝对稳定</td>
-        </tr>
-        <tr style="border-bottom:1px solid #f3f4f6;background:#fcfdfd;">
-          <td style="padding:10px 12px;font-weight:bold;color:#111827;">2. 智能体专规人设</td>
-          <td style="padding:10px 12px;color:#4b5563;">专家人设角色、业务口径定义、任务执行流程规范、Few-shot 黄金范例</td>
-          <td style="padding:10px 12px;color:#6b7280;">Prompt Studio 发布版本</td>
-          <td style="padding:10px 12px;font-weight:bold;color:#111827;">高稳定（版本级）</td>
-        </tr>
-        <tr style="border-bottom:1px solid #f3f4f6;">
-          <td style="padding:10px 12px;font-weight:bold;color:#111827;">3. 工具注册能力表</td>
-          <td style="padding:10px 12px;color:#4b5563;">当前智能体绑定的内置工具列表、MCP 远程服务扩展、入参限制规则</td>
-          <td style="padding:10px 12px;color:#6b7280;">ToolRegistry 运行时注入</td>
-          <td style="padding:10px 12px;font-weight:bold;color:#111827;">中稳定</td>
-        </tr>
-        <tr style="border-bottom:1px solid #f3f4f6;background:#fcfdfd;">
-          <td style="padding:10px 12px;font-weight:bold;color:#111827;">4. 技能清单与白名单</td>
-          <td style="padding:10px 12px;color:#4b5563;">已授权平台技能摘要、SKILL.md 声明、动态技能发现路径白名单</td>
-          <td style="padding:10px 12px;color:#6b7280;">SkillResolver 检索</td>
-          <td style="padding:10px 12px;font-weight:bold;color:#111827;">动态挂载</td>
-        </tr>
-        <tr style="border-bottom:1px solid #f3f4f6;">
-          <td style="padding:10px 12px;font-weight:bold;color:#111827;">5. 用户与权限范围</td>
-          <td style="padding:10px 12px;color:#4b5563;">当前提问人姓名、部门组织、RBAC 授权可访问的数据集与知识库清单</td>
-          <td style="padding:10px 12px;color:#6b7280;">用户会话上下文</td>
-          <td style="padding:10px 12px;font-weight:bold;color:#111827;">用户级动态</td>
-        </tr>
-        <tr style="border-bottom:1px solid #f3f4f6;background:#fcfdfd;">
-          <td style="padding:10px 12px;font-weight:bold;color:#111827;">6. 长期记忆检索切片</td>
-          <td style="padding:10px 12px;color:#4b5563;">LTM 长期偏好（如输出中文、简洁优先）、跨会话召回片段、会话摘要</td>
-          <td style="padding:10px 12px;color:#6b7280;">向量库/记忆系统召回</td>
-          <td style="padding:10px 12px;font-weight:bold;color:#111827;">高度动态</td>
-        </tr>
-        <tr style="border-bottom:1px solid #f3f4f6;">
-          <td style="padding:10px 12px;font-weight:bold;color:#111827;">7. 本轮多智能体决策</td>
-          <td style="padding:10px 12px;color:#4b5563;">Dispatcher 意图路由快照（如判定为查数意图）、子代理委托上下文提示</td>
-          <td style="padding:10px 12px;color:#6b7280;">调度器单轮决策</td>
-          <td style="padding:10px 12px;font-weight:bold;color:#111827;">每轮都变</td>
-        </tr>
-        <tr>
-          <td style="padding:10px 12px;font-weight:bold;color:#111827;">8. 物理环境时空锚点</td>
-          <td style="padding:10px 12px;color:#4b5563;">服务器当前时区物理时间（如 2026-09-09 09:30:00）、客户端设备端类型</td>
-          <td style="padding:10px 12px;color:#6b7280;">物理宿主机环境</td>
-          <td style="padding:10px 12px;font-weight:bold;color:#b91c1c;">每秒都在变</td>
-        </tr>
-      </tbody>
-    </table>
-  </div>
+  <!-- 八大输入源表格（宽屏铺满 + 移动端自适应左右滑动） -->
+  <section style="margin:0 0 16px 0;box-sizing:border-box;">
+    <p style="margin:0 0 8px 0;font-size:12px;color:#6b7280;line-height:1.5;">
+      <strong>📊 提示词八大输入源与稳定性分级清单</strong>
+      <span style="color:#9ca3af;font-size:11px;margin-left:6px;">（👉 移动端支持左右滑动查看完整内容）</span>
+    </p>
+    <section style="overflow-x:auto;-webkit-overflow-scrolling:touch;width:100%;box-sizing:border-box;padding-bottom:4px;">
+      <table style="width:100%;min-width:600px;border-collapse:collapse;font-size:12px;line-height:1.6;border:1px solid #e5e7eb;">
+        <colgroup>
+          <col style="width:19%;"/>
+          <col style="width:45%;"/>
+          <col style="width:20%;"/>
+          <col style="width:16%;"/>
+        </colgroup>
+        <thead>
+          <tr style="background:#f9fafb;border-bottom:2px solid #e5e7eb;text-align:left;">
+            <th style="padding:10px 10px;color:#111827;white-space:nowrap;">切片类别</th>
+            <th style="padding:10px 10px;color:#111827;white-space:nowrap;">具体注入内容</th>
+            <th style="padding:10px 10px;color:#111827;white-space:nowrap;">生命周期/来源</th>
+            <th style="padding:10px 10px;color:#111827;white-space:nowrap;text-align:center;">稳定性分类</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr style="border-bottom:1px solid #f3f4f6;">
+            <td style="padding:9px 10px;font-weight:bold;color:#111827;white-space:nowrap;">1. 平台全局契约</td>
+            <td style="padding:9px 10px;color:#4b5563;word-break:break-word;">Markdown/JSON 格式要求、代码块契约、系统底线与防越狱守则</td>
+            <td style="padding:9px 10px;color:#6b7280;word-break:break-word;">平台代码硬契约</td>
+            <td style="padding:9px 10px;font-weight:bold;color:#111827;text-align:center;white-space:nowrap;">绝对稳定</td>
+          </tr>
+          <tr style="border-bottom:1px solid #f3f4f6;background:#fcfdfd;">
+            <td style="padding:9px 10px;font-weight:bold;color:#111827;white-space:nowrap;">2. 智能体专规人设</td>
+            <td style="padding:9px 10px;color:#4b5563;word-break:break-word;">专家人设角色、业务口径定义、任务执行流程规范、Few-shot 范例</td>
+            <td style="padding:9px 10px;color:#6b7280;word-break:break-word;">Prompt Studio 版本</td>
+            <td style="padding:9px 10px;font-weight:bold;color:#111827;text-align:center;white-space:nowrap;">高稳定（版本级）</td>
+          </tr>
+          <tr style="border-bottom:1px solid #f3f4f6;">
+            <td style="padding:9px 10px;font-weight:bold;color:#111827;white-space:nowrap;">3. 工具注册能力表</td>
+            <td style="padding:9px 10px;color:#4b5563;word-break:break-word;">当前智能体绑定的内置工具列表、MCP 远程服务扩展、入参限制规则</td>
+            <td style="padding:9px 10px;color:#6b7280;word-break:break-word;">ToolRegistry 注入</td>
+            <td style="padding:9px 10px;font-weight:bold;color:#111827;text-align:center;white-space:nowrap;">中稳定</td>
+          </tr>
+          <tr style="border-bottom:1px solid #f3f4f6;background:#fcfdfd;">
+            <td style="padding:9px 10px;font-weight:bold;color:#111827;white-space:nowrap;">4. 技能清单与白名单</td>
+            <td style="padding:9px 10px;color:#4b5563;word-break:break-word;">已授权平台技能摘要、SKILL.md 声明、动态技能发现路径白名单</td>
+            <td style="padding:9px 10px;color:#6b7280;word-break:break-word;">SkillResolver 检索</td>
+            <td style="padding:9px 10px;font-weight:bold;color:#111827;text-align:center;white-space:nowrap;">动态挂载</td>
+          </tr>
+          <tr style="border-bottom:1px solid #f3f4f6;">
+            <td style="padding:9px 10px;font-weight:bold;color:#111827;white-space:nowrap;">5. 用户与权限范围</td>
+            <td style="padding:9px 10px;color:#4b5563;word-break:break-word;">当前提问人姓名、部门组织、RBAC 授权可访问的数据集与知识库清单</td>
+            <td style="padding:9px 10px;color:#6b7280;word-break:break-word;">用户会话上下文</td>
+            <td style="padding:9px 10px;font-weight:bold;color:#111827;text-align:center;white-space:nowrap;">用户级动态</td>
+          </tr>
+          <tr style="border-bottom:1px solid #f3f4f6;background:#fcfdfd;">
+            <td style="padding:9px 10px;font-weight:bold;color:#111827;white-space:nowrap;">6. 长期记忆检索切片</td>
+            <td style="padding:9px 10px;color:#4b5563;word-break:break-word;">LTM 长期偏好（如输出中文、简洁优先）、跨会话召回片段、会话摘要</td>
+            <td style="padding:9px 10px;color:#6b7280;word-break:break-word;">向量库/记忆系统</td>
+            <td style="padding:9px 10px;font-weight:bold;color:#111827;text-align:center;white-space:nowrap;">高度动态</td>
+          </tr>
+          <tr style="border-bottom:1px solid #f3f4f6;">
+            <td style="padding:9px 10px;font-weight:bold;color:#111827;white-space:nowrap;">7. 本轮多智能体决策</td>
+            <td style="padding:9px 10px;color:#4b5563;word-break:break-word;">Dispatcher 意图路由快照（如判定查数）、子代理委托上下文提示</td>
+            <td style="padding:9px 10px;color:#6b7280;word-break:break-word;">调度器单轮决策</td>
+            <td style="padding:9px 10px;font-weight:bold;color:#111827;text-align:center;white-space:nowrap;">每轮都变</td>
+          </tr>
+          <tr>
+            <td style="padding:9px 10px;font-weight:bold;color:#111827;white-space:nowrap;">8. 物理环境时空锚点</td>
+            <td style="padding:9px 10px;color:#4b5563;word-break:break-word;">服务器当前时区物理时间（如 2026-09-09 09:30:00）、客户端设备类型</td>
+            <td style="padding:9px 10px;color:#6b7280;word-break:break-word;">物理宿主机环境</td>
+            <td style="padding:9px 10px;font-weight:bold;color:#b91c1c;text-align:center;white-space:nowrap;">每秒都在变</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+  </section>
 
   <section style="margin:0 0 16px 0;padding:12px 14px;background:#fef2f2;border:1px solid #fecaca;border-radius:10px;">
     <p style="margin:0 0 6px 0;font-size:13px;font-weight:bold;color:#991b1b;">⚠️ 如果缺乏架构治理，平台会陷入什么混乱？</p>
@@ -134,6 +146,97 @@
       • <strong>权限越权与泄露</strong>：未做严格上下文边界裁决，把其他租户或未授权的数据表 Schema 随手拼进提示词，产生严重安全漏洞；<br/>
       • <strong>重复注入与 Token 暴涨</strong>：路由快照在流水线拼一次，执行器最后一公里又塞一次，造成 Token 白白浪费；<br/>
       • <strong>彻底摧毁大模型缓存</strong>：随手把动态时间或路由塞在第一行，导致厂商的前缀缓存命中率永远是 0%。
+    </p>
+  </section>
+
+  <!-- 最终提示词结构骨架实录卡片（微信安全高兼容自适应卡片流） -->
+  <section style="margin:0 0 16px 0;padding:16px 14px;background:#ffffff;border:1px solid #e5e7eb;border-radius:12px;box-sizing:border-box;">
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#111827;line-height:1.5;">👁️ 架构透视：真正发给大模型的系统提示词结构全貌</p>
+    <p style="margin:0 0 12px 0;font-size:13px;color:#4b5563;line-height:1.7;">
+      这一整包 System Prompt 拼装完成后，在物理 Token 上从上到下严格按以下顺序排布（以企业级经营分析专家为例）：
+    </p>
+
+    <!-- 第一部分：稳定前缀层（浅灰微边框卡片，绝不变形） -->
+    <section style="margin:0 0 10px 0;padding:12px 14px;background:#f9fafb;border:1px solid #d1d5db;border-left:4px solid #4b5563;border-radius:8px;">
+      <p style="margin:0 0 8px 0;font-size:13px;font-weight:bold;color:#111827;line-height:1.6;">
+        🟢 第一部分：稳定前缀层（会话内 100% 恒定，命中 KV Cache · 约 13,500 Tokens）
+      </p>
+      
+      <p style="margin:0 0 4px 0;font-size:13px;font-weight:bold;color:#111827;line-height:1.6;">
+        【1. 平台全局硬契约 · 约 1,500 Tokens】
+      </p>
+      <p style="margin:0 0 8px 0;padding-left:8px;font-size:12px;color:#4b5563;line-height:1.75;">
+        你是由 NanZi 平台驱动的企业级 AI 智能体助手，必须遵守以下不可违背的系统契约：<br/>
+        • <strong>输出协议</strong>：所有报表分析必须输出标准 Markdown 表格与可渲染图表代码块；<br/>
+        • <strong>防幻觉底线</strong>：禁止编造未经工具或数据源核实的数据；无权限时直接拒绝；<br/>
+        • <strong>工具调用规范</strong>：仅允许调用本轮注册的系统工具，遵循参数严格校验契约。
+      </p>
+
+      <p style="margin:0 0 4px 0;font-size:13px;font-weight:bold;color:#111827;line-height:1.6;">
+        【2. 智能体发布专规（Prompt Studio 发布的专家角色） · 约 12,000 Tokens】
+      </p>
+      <p style="margin:0;padding-left:8px;font-size:12px;color:#4b5563;line-height:1.75;">
+        你是一名资深的「企业经营分析专家」，精通财务指标拆解与 SQL 问数建模：<br/>
+        • <strong>核心职责</strong>：拆解业务指标异动，结合销售毛利、获客成本进行结构化归因；<br/>
+        • <strong>业务口径</strong>：同比环比保留两位小数，异常数据必须标注警戒标识与行动建议；<br/>
+        • <strong>黄金样例（Few-Shot 范例库）</strong>：<br/>
+        &nbsp;&nbsp;[样例1] 用户：分析上月华东区营收波动原因<br/>
+        &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;助手：&lt;思考过程&gt;...&lt;SQL分析与归因结论看板&gt;...
+      </p>
+    </section>
+
+    <!-- 流转衔接条 -->
+    <div style="text-align:center;margin:8px 0;color:#6b7280;font-size:12px;line-height:1.4;">
+      <span style="display:inline-block;background:#ffffff;padding:2px 12px;border:1px dashed #d1d5db;border-radius:12px;color:#4b5563;">
+        ⬇️ 连续物理拼接 · 不打断前缀树匹配 ⬇️
+      </span>
+    </div>
+
+    <!-- 第二部分：动态后缀层（浅灰微边框卡片，绝不变形） -->
+    <section style="margin:0 0 10px 0;padding:12px 14px;background:#f9fafb;border:1px solid #d1d5db;border-left:4px solid #6b7280;border-radius:8px;">
+      <p style="margin:0 0 8px 0;font-size:13px;font-weight:bold;color:#111827;line-height:1.6;">
+        🔵 第二部分：动态后缀层（尾部按需追加，零损耗前缀缓存 · 动态变量）
+      </p>
+      
+      <p style="margin:0 0 4px 0;font-size:13px;font-weight:bold;color:#111827;line-height:1.6;">
+        【3. 运行时动态工具与技能目录（Skills Directory）】
+      </p>
+      <p style="margin:0 0 6px 0;padding-left:8px;font-size:12px;color:#4b5563;line-height:1.75;">
+        当前已授权加载技能清单：[财务指标计算器]、[跨租户报表导出工具]
+      </p>
+
+      <p style="margin:0 0 4px 0;font-size:13px;font-weight:bold;color:#111827;line-height:1.6;">
+        【4. 当前提问用户画像与授权资源边界】
+      </p>
+      <p style="margin:0 0 6px 0;padding-left:8px;font-size:12px;color:#4b5563;line-height:1.75;">
+        当前会话用户：张经理（财务分析部 · 高级主管）<br/>
+        本会话有权访问的数据集范围：[d_sales_orders_monthly]、[dim_store_locations]
+      </p>
+
+      <p style="margin:0 0 4px 0;font-size:13px;font-weight:bold;color:#111827;line-height:1.6;">
+        【5. 长期记忆偏好召回（LTM Profiles & Recall）】
+      </p>
+      <p style="margin:0 0 6px 0;padding-left:8px;font-size:12px;color:#4b5563;line-height:1.75;">
+        记忆片段：用户习惯阅读紧凑型摘要；图表偏好使用堆叠柱状图展示趋势。
+      </p>
+
+      <p style="margin:0 0 4px 0;font-size:13px;font-weight:bold;color:#111827;line-height:1.6;">
+        【6. 本轮多智能体调度决策快照（仅供单轮参考）】
+      </p>
+      <p style="margin:0 0 6px 0;padding-left:8px;font-size:12px;color:#4b5563;line-height:1.75;">
+        【本轮执行上下文】调度器判定意图为 DATA_QUERY；已委派 ChatBI 执行数据核验。
+      </p>
+
+      <p style="margin:0 0 4px 0;font-size:13px;font-weight:bold;color:#b91c1c;line-height:1.6;">
+        【7. 物理时空时间锚点（每秒都在变，严格沉底）】
+      </p>
+      <p style="margin:0;padding-left:8px;font-size:12px;color:#4b5563;line-height:1.75;">
+        【当前时间锚点】：2026-09-09 11:30:00（Asia/Shanghai 时区）
+      </p>
+    </section>
+
+    <p style="margin:0;font-size:12px;color:#4b5563;line-height:1.7;">
+      💡 <strong>结构洞察：</strong>前两段静态内容高达 <strong>13,500+ Tokens</strong>，在一个对话窗口多轮流转中<strong>一个字符都不变</strong>；所有动态变化的内容全部有序置于第三至第七段的尾部。大模型服务端前缀树在第 1 个字符即成功匹配，毫秒级直接读取显存缓存！
     </p>
   </section>
 
