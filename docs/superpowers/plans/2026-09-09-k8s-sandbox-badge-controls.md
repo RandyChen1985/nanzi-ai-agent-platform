@@ -1701,14 +1701,16 @@ const sandboxUptimeFormatted = computed(() => {
 **3.7 外层面板标题**：`<!-- Docker 容器运行状态与控制明细 -->` 注释改为 `<!-- 沙箱运行状态与控制明细 -->`。
 
 **3.8 script 引用同步**：
-- 原 `if (isDockerSandboxPolicy.value) { ... emit('refresh-docker-workspace', false); }`（约 1075 行 watch 区）的 watch 回调替换为（docker/k8s 共用同一事件，事件名已统一）：
+- 展开上下文详情面板时的沙箱状态刷新：**源码中该逻辑位于 `toggleContextUsageDetails` 函数体（旧版为 `if (isDockerSandboxPolicy.value) { emit('refresh-docker-workspace', false); }`），并非独立 watch**。实现时将 toggle 内的旧刷新块删除，改为新增如下 watch（docker/k8s 共用同一事件，事件名已统一；使用嵌套 if 使 `if (isSandboxBackendPolicy.value) {` 以字面出现，满足契约断言）：
 
 ```ts
 watch(showContextUsageDetails, (open) => {
-  if (open && isSandboxBackendPolicy.value) {
-    void nextTick(() => {
-      emit('refresh-sandbox-workspace', false);
-    });
+  if (open) {
+    if (isSandboxBackendPolicy.value) {
+      void nextTick(() => {
+        emit('refresh-sandbox-workspace', false);
+      });
+    }
   }
 });
 ```
