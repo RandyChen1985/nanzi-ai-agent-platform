@@ -55,36 +55,46 @@ IMAGE_LIST_MODE=false
 IMAGE_LIST_FILTER=""
 IMAGE_IMPORT_MODE=false
 IMAGE_IMPORT_FILES=""
+INSTALL_MODE=false
 
 show_help() {
   printf "\n"
   printf "%b%bNanZi AI Agent Platform - Kubernetes 部署与镜像升级向导%b\n" "${C_BOLD}" "${C_CYAN}" "${C_RESET}"
-  printf "%b用法: %s [选项]%b\n\n" "${C_GRAY}" "$0" "${C_RESET}"
-  printf "%b支持的选项：%b\n" "${C_BOLD}" "${C_RESET}"
-  printf "  %-26s %b\n" "-h, --help" "显示此帮助信息并退出"
-  printf "  %-26s %b\n" "-u, --upgrade [TAG]" "快速更新镜像模式（跳过中间件向导，支持自动探测新版本并滚动更新）"
-  printf "  %-26s %b\n" "-d, --dry-run, --try" "模拟演练模式（仅生成/更新本地配置并做语法预检，不下发真实变更）"
-  printf "  %-26s %b\n" "-y, --yes" "自动确认模式（尽可能使用默认值/现有配置进行快速下发）"
-  printf "  %-26s %b\n" "--images [关键字]" "只读列出节点容器运行时（ctr -n k8s.io）中已导入的镜像；可带关键字过滤，如 --images nanzi"
-  printf "  %-26s %b\n" "--import <镜像tar> [tar...]" "将本地镜像 tar 导入容器运行时（ctr -n k8s.io images import），支持多个文件"
+  printf "%b用法: %s <命令> [选项]%b\n" "${C_GRAY}" "$0" "${C_RESET}"
+  printf "%b说明：不指定任何命令时默认展示本帮助；安装需显式使用 install 命令。%b\n\n" "${C_YELLOW}" "${C_RESET}"
+  printf "%b可用命令：%b\n" "${C_BOLD}" "${C_RESET}"
+  printf "  %-30s %b\n" "install, -i, --install" "执行首次安装或全量配置向导（若平台已在运行会自动提示是否仅升级镜像）"
+  printf "  %-30s %b\n" "upgrade, -u, --upgrade [TAG]" "快速更新镜像模式（滚动升级；可带目标 Tag）"
+  printf "  %-30s %b\n" "images, --images [关键字]" "只读列出节点容器运行时（ctr -n k8s.io）已导入的镜像，可带关键字过滤"
+  printf "  %-30s %b\n" "import, --import <镜像tar> [tar...]" "将本地镜像 tar 导入容器运行时（ctr -n k8s.io images import）"
+  printf "\n"
+  printf "%b常用选项：%b\n" "${C_BOLD}" "${C_RESET}"
+  printf "  %-30s %b\n" "-d, --dry-run, --try" "模拟演练模式（仅生成/更新本地配置并做语法预检，不下发真实变更）"
+  printf "  %-30s %b\n" "-y, --yes" "自动确认模式（配合 install/upgrade 快速下发）"
+  printf "  %-30s %b\n" "-h, --help" "显示此帮助信息并退出"
   printf "\n"
   printf "%b使用示例：%b\n" "${C_BOLD}" "${C_RESET}"
-  printf "  %s                           # 首次安装或全量配置向导（若已运行会自动提示是否仅升级镜像）\n" "$0"
-  printf "  %s --upgrade                 # 快速交互式升级镜像（自动探测 containerd 中新导入的 Tag）\n" "$0"
-  printf "  %s --upgrade 1.0.15.0        # 一键升级到指定镜像版本并平滑滚动发布\n" "$0"
-  printf "  %s --images                  # 查看节点容器运行时中已导入的全部镜像\n" "$0"
-  printf "  %s --images nanzi-ai-agent   # 只查看 NanZi 相关镜像（手动检查本地是否已导入）\n" "$0"
-  printf "  %s --import ./nanzi.tar      # 导入本地镜像 tar 到 containerd（非 K3s 集群用 ctr -n k8s.io）\n" "$0"
-  printf "  %s --try                     # 模拟演练模式：输入配置并验证语法，不创建实际集群资源\n" "$0"
-  printf "  %s -y                        # 快速应用当前已配置好的 YAML\n" "$0"
+  printf "  %-30s # 执行首次安装或全量配置向导\n" "$0 install"
+  printf "  %-30s # 自动确认安装（使用默认值/现有配置快速下发）\n" "$0 install -y"
+  printf "  %-30s # 模拟演练安装：仅做本地配置与语法预检\n" "$0 install --try"
+  printf "  %-30s # 快速交互式升级镜像（自动探测 containerd 中新导入的 Tag）\n" "$0 upgrade"
+  printf "  %-30s # 一键升级到指定镜像版本并平滑滚动发布\n" "$0 upgrade 1.0.15.0"
+  printf "  %-30s # 查看节点容器运行时中已导入的全部镜像\n" "$0 images"
+  printf "  %-30s # 只查看 NanZi 相关镜像（手动检查本地是否已导入）\n" "$0 images nanzi-ai-agent"
+  printf "  %-30s # 导入本地镜像 tar 到 containerd（非 K3s 集群用 ctr -n k8s.io）\n" "$0 import ./nanzi.tar"
+  printf "  %-30s # 查看完整帮助\n" "$0 help"
   printf "\n"
   exit 0
 }
 
 while [ $# -gt 0 ]; do
   case "$1" in
-    -h|--help)
+    -h|--help|help)
       show_help
+      ;;
+    install|-i|--install)
+      INSTALL_MODE=true
+      shift
       ;;
     -u|--upgrade)
       UPGRADE_MODE=true
@@ -123,8 +133,9 @@ while [ $# -gt 0 ]; do
       fi
       ;;
     *)
-      printf "%b⚠ 未知参数: %s (可使用 -h 查看帮助)%b\n" "${C_YELLOW}" "$1" "${C_RESET}"
-      shift
+      printf "%b✖ 未知命令或参数: %s%b\n" "${C_RED}" "$1" "${C_RESET}"
+      printf "%b执行 %s help 查看可用命令。%b\n" "${C_GRAY}" "$0" "${C_RESET}"
+      exit 1
       ;;
   esac
 done
@@ -537,6 +548,16 @@ if [ "$IMAGE_LIST_MODE" = "true" ]; then
 fi
 if [ "$IMAGE_IMPORT_MODE" = "true" ]; then
   run_import_images
+fi
+
+# 安全门：未指定任何显式命令时只展示帮助，绝不误入安装向导
+if [ "$INSTALL_MODE" != "true" ] \
+  && [ "$UPGRADE_MODE" != "true" ] \
+  && [ "$AUTO_CONFIRM" != "true" ] \
+  && [ "$DRY_RUN" != "true" ]; then
+  printf "\n%bℹ  未指定操作命令。执行安装请显式使用：%b %b%s install%b\n" \
+    "${C_CYAN}" "${C_RESET}" "${C_BOLD}" "$0" "${C_RESET}"
+  show_help
 fi
 
 # ==============================================================================
