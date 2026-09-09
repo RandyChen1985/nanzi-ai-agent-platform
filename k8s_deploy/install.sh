@@ -482,12 +482,24 @@ if [ "$DRY_RUN" != "true" ] && [ "$AUTO_CONFIRM" != "true" ]; then
     printf "  %b1) 🚀 仅更新应用镜像%b（平滑滚动升级，跳过中间件向导，日常推荐）\n" "${C_BOLD}${C_GREEN}" "${C_RESET}"
     printf "  %b2) ⚙️  完整重新配置%b（重新核对 ConfigMap、Secret、PVC 等全量资源）\n" "${C_BOLD}${C_CYAN}" "${C_RESET}"
     echo
-    prompt_input "请选择操作序号 [1/2]" "1" user_mode_choice
-    if [ "$user_mode_choice" = "1" ]; then
-      run_upgrade_flow ""
-    else
-      log_info "继续执行全量组件核对与更新向导..."
-    fi
+    prompt_input "请选择操作序号 [1/2]（输入 q 退出）" "1" user_mode_choice
+    user_mode_lc="$(printf '%s' "$user_mode_choice" | tr '[:upper:]' '[:lower:]')"
+    case "$user_mode_lc" in
+      1)
+        run_upgrade_flow ""
+        ;;
+      2)
+        log_info "继续执行全量组件核对与更新向导..."
+        ;;
+      q|quit|exit|cancel|no|n)
+        echo
+        log_info "已取消本次操作，未对集群做任何变更。"
+        exit 0
+        ;;
+      *)
+        log_warn "未识别输入 [${user_mode_choice}]，默认继续执行全量组件核对与更新向导..."
+        ;;
+    esac
   fi
 fi
 
