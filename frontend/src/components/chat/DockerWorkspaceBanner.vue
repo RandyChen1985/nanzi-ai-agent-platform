@@ -7,6 +7,8 @@ const props = defineProps<{
   workspaceStatus: DockerWorkspaceStatus;
   workspaceError?: string;
   containerId?: string | null;
+  /** 沙箱后端术语维度：docker（默认）| k8s */
+  backend?: "docker" | "k8s";
 }>();
 
 const emit = defineEmits<{
@@ -85,47 +87,85 @@ onUnmounted(() => {
   clearCountdown();
 });
 
+const statusTexts = computed(() => {
+  if (props.backend === "k8s") {
+    return {
+      startingTitle: "Kubernetes 沙箱 Pod 创建中",
+      startingHint: "正在创建或复用当前用户的沙箱 Pod",
+      stoppingTitle: "Kubernetes 沙箱 Pod 停止中",
+      stoppingHint: "正在停止并清理当前用户的沙箱 Pod",
+      runningTitle: "Kubernetes 沙箱 Pod 已运行",
+      runningHint: props.containerId
+        ? `当前用户 Pod：${props.containerId}`
+        : "Bash 将绑定到当前用户的沙箱 Pod",
+      errorTitle: "Kubernetes 沙箱 Pod 启动失败",
+      errorHint: props.workspaceError || "请检查集群网络、RBAC 与镜像拉取状态",
+      idleTitle: "Kubernetes 沙箱 Pod 未启动",
+      idleHint: "启动后，Bash 命令将绑定到当前用户的沙箱 Pod",
+      startLabel: "启动我的沙箱 Pod",
+      retryLabel: "重试启动",
+      closeLabel: "关闭沙箱提示",
+    };
+  }
+  return {
+    startingTitle: "Docker 沙箱容器启动中",
+    startingHint: "正在创建或复用当前用户的 Docker 容器",
+    stoppingTitle: "Docker 沙箱容器停止中",
+    stoppingHint: "正在停止并清理当前用户的 Docker 容器",
+    runningTitle: "Docker 沙箱容器已运行",
+    runningHint: props.containerId
+      ? `当前用户容器：${props.containerId}`
+      : "Bash 将绑定到当前用户的 Docker 容器",
+    errorTitle: "Docker 沙箱容器启动失败",
+    errorHint: props.workspaceError || "请检查 Docker daemon、镜像和权限",
+    idleTitle: "Docker 沙箱容器未启动",
+    idleHint: "启动后，Bash 命令将绑定到当前用户的 Docker 容器",
+    startLabel: "启动我的 Docker 沙箱",
+    retryLabel: "重试启动",
+    closeLabel: "关闭 Docker 沙箱提示",
+  };
+});
+
 const statusCopy = computed(() => {
+  const t = statusTexts.value;
   switch (props.workspaceStatus) {
     case "starting":
       return {
         icon: "🟡",
-        title: "Docker 沙箱容器启动中",
-        hint: "正在创建或复用当前用户的 Docker 容器",
+        title: t.startingTitle,
+        hint: t.startingHint,
         box: "border-sky-200 bg-sky-50/90 text-sky-900 dark:border-sky-500/30 dark:bg-sky-950/40 dark:text-sky-100",
         hintTone: "text-sky-700/80 dark:text-sky-200/70",
       };
     case "stopping":
       return {
         icon: "🟡",
-        title: "Docker 沙箱容器停止中",
-        hint: "正在停止并清理当前用户的 Docker 容器",
+        title: t.stoppingTitle,
+        hint: t.stoppingHint,
         box: "border-amber-200 bg-amber-50/90 text-amber-900 dark:border-amber-500/30 dark:bg-amber-950/40 dark:text-amber-100",
         hintTone: "text-amber-700/80 dark:text-amber-200/70",
       };
     case "running":
       return {
         icon: "🟢",
-        title: "Docker 沙箱容器已运行",
-        hint: props.containerId
-          ? `当前用户容器：${props.containerId}`
-          : "Bash 将绑定到当前用户的 Docker 容器",
+        title: t.runningTitle,
+        hint: t.runningHint,
         box: "border-emerald-200 bg-emerald-50/90 text-emerald-900 dark:border-emerald-500/30 dark:bg-emerald-950/40 dark:text-emerald-100",
         hintTone: "text-emerald-700/80 dark:text-emerald-200/70",
       };
     case "error":
       return {
         icon: "🔴",
-        title: "Docker 沙箱容器启动失败",
-        hint: props.workspaceError || "请检查 Docker daemon、镜像和权限",
+        title: t.errorTitle,
+        hint: t.errorHint,
         box: "border-rose-200 bg-rose-50/90 text-rose-900 dark:border-rose-500/30 dark:bg-rose-950/40 dark:text-rose-100",
         hintTone: "text-rose-700/80 dark:text-rose-200/70",
       };
     default:
       return {
         icon: "⚪",
-        title: "Docker 沙箱容器未启动",
-        hint: "启动后，Bash 命令将绑定到当前用户的 Docker 容器",
+        title: t.idleTitle,
+        hint: t.idleHint,
         box: "border-indigo-200 bg-indigo-50/90 text-indigo-900 dark:border-indigo-500/30 dark:bg-indigo-950/40 dark:text-indigo-100",
         hintTone: "text-indigo-700/80 dark:text-indigo-200/70",
       };
@@ -148,16 +188,16 @@ const statusCopy = computed(() => {
         v-if="workspaceStatus === 'idle' || workspaceStatus === 'error'"
         type="button"
         class="rounded-lg border border-indigo-200 bg-white/70 px-2.5 py-1 font-medium text-indigo-700 hover:bg-indigo-100 disabled:cursor-not-allowed disabled:opacity-60 dark:border-indigo-500/40 dark:bg-indigo-950/30 dark:text-indigo-200 dark:hover:bg-indigo-900/50"
-        :aria-label="workspaceStatus === 'error' ? '重试启动 Docker 沙箱' : '启动我的 Docker 沙箱'"
+        :aria-label="workspaceStatus === 'error' ? statusTexts.value.retryLabel : statusTexts.value.startLabel"
         @click="handleStart"
       >
-        {{ workspaceStatus === "error" ? "重试启动" : "启动我的 Docker 沙箱" }}
+        {{ workspaceStatus === "error" ? statusTexts.value.retryLabel : statusTexts.value.startLabel }}
       </button>
       <button
         v-else-if="workspaceStatus === 'running'"
         type="button"
         class="rounded-lg px-2 py-1 text-emerald-700/80 hover:bg-emerald-100/80 dark:text-emerald-200/80 dark:hover:bg-emerald-900/60"
-        aria-label="刷新 Docker 沙箱状态"
+        aria-label="刷新沙箱状态"
         @click="emit('refresh')"
       >
         刷新状态
@@ -168,8 +208,8 @@ const statusCopy = computed(() => {
       <button
         type="button"
         class="rounded-lg px-2 py-1 text-gray-500/80 hover:bg-black/5 hover:text-gray-700 dark:text-gray-300/80 dark:hover:bg-white/10 dark:hover:text-gray-100 inline-flex items-center gap-1"
-        aria-label="关闭 Docker 沙箱提示"
-        :title="workspaceStatus === 'idle' ? `${remainingSeconds}秒后自动关闭` : '关闭提示'"
+        :aria-label="statusTexts.value.closeLabel"
+        :title="workspaceStatus === 'idle' ? `${remainingSeconds}秒后自动关闭` : statusTexts.value.closeLabel"
         @click="emit('close')"
       >
         <span>×</span>

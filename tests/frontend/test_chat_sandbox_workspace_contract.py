@@ -161,3 +161,11 @@ def test_docker_terminal_opens_maximized_by_default():
 
     assert "const isMaximized = ref(true);" in source
     assert "isMaximized ? 'h-full max-h-full max-w-full rounded-none' : 'max-w-4xl h-[85vh] max-h-[760px]'" in source
+
+
+def test_docker_workspace_banner_supports_k8s_backend_copy():
+    source = BANNER.read_text(encoding="utf-8")
+    assert 'backend?: "docker" | "k8s"' in source
+    assert "Kubernetes 沙箱 Pod" in source
+    assert "启动我的沙箱 Pod" in source
+    assert "关闭沙箱提示" in source
