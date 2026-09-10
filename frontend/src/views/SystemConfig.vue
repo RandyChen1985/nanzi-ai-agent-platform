@@ -17,6 +17,7 @@ import {
   CircleStackIcon,
   CheckCircleIcon,
   XCircleIcon,
+  XMarkIcon,
   CommandLineIcon,
   MagnifyingGlassIcon,
   Cog6ToothIcon,
@@ -745,19 +746,7 @@ const orderedCategories = computed(() => {
     return a.localeCompare(b)
   })
 })
-
-const isConfigGroupCollapsed = (category: string) =>
-  collapsedConfigGroups.value.has(category)
-
-const toggleConfigGroup = (category: string) => {
-  const next = new Set(collapsedConfigGroups.value)
-  if (next.has(category)) {
-    next.delete(category)
-  } else {
-    next.add(category)
-  }
-  collapsedConfigGroups.value = next
-}
+// 单面板右侧已去掉折叠按钮，内容始终展开；collapsedConfigGroups + selectConfigCategory 的自动展开逻辑保留作防御
 
 // 参数配置左侧 Tab 栏：当前聚焦的配置分组
 const activeConfigCategory = ref<string>('')
@@ -778,6 +767,82 @@ const changedConfigCountFor = (cat: string) => {
   const items = configGroups.value[cat]
   if (!items || !originalConfigs.value) return 0
   return items.filter(it => it.value !== originalConfigs.value[it.key]).length
+}
+
+const totalConfigCountFor = (cat: string) => {
+  return configGroups.value[cat]?.length ?? 0
+}
+
+const isConfigItemModified = (key: string) => {
+  if (!originalConfigs.value || !(key in originalConfigs.value)) return false
+  const group = Object.values(configGroups.value).flat().find(i => i.key === key)
+  return group ? group.value !== originalConfigs.value[key] : false
+}
+
+const getGroupSubtitle = (cat: string) => {
+  const map: Record<string, string> = {
+    'general': '平台基础行为与展示',
+    'agent_context': '会话上下文与工具调用参数',
+    'agent': '大模型、工具与执行行为',
+    'metadata': '元数据、向量与 RAG 检索',
+    'data_api': '智能报表 (ChatBI) 数据服务',
+    'knowledge': '知识库连接与检索',
+    'sandbox': 'Docker / K8s 沙箱执行环境',
+    'other': '其余系统参数',
+  }
+  return map[cat] || '系统参数集合'
+}
+
+// 参数全局搜索
+const configSearchQuery = ref('')
+const configSearchResults = computed(() => {
+  const q = configSearchQuery.value.trim().toLowerCase()
+  if (!q) return []
+  const results: Array<{ item: ConfigItem; category: string }> = []
+  for (const [cat, items] of Object.entries(configGroups.value)) {
+    for (const item of items) {
+      const match =
+        item.key.toLowerCase().includes(q) ||
+        (item.description || '').toLowerCase().includes(q) ||
+        (configShortDescriptions[item.key] || '').toLowerCase().includes(q)
+      if (match) results.push({ item, category: cat })
+    }
+  }
+  return results
+})
+
+// 搜索交互状态
+const configSearchOpen = ref(false)
+const configSearchInputRef = ref<HTMLInputElement | null>(null)
+const highlightedConfigKey = ref('')
+
+const selectConfigSearchResult = (result: { item: ConfigItem; category: string }) => {
+  configSearchQuery.value = ''
+  configSearchOpen.value = false
+  selectConfigCategory(result.category)
+  // 等切换到目标分组并渲染后，滚动定位并短暂高亮该参数
+  requestAnimationFrame(() => {
+    const el = document.getElementById(`config-item-${result.item.key}`)
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      highlightedConfigKey.value = result.item.key
+      window.setTimeout(() => { if (highlightedConfigKey.value === result.item.key) highlightedConfigKey.value = '' }, 2200)
+    }
+  })
+}
+
+const focusConfigSearch = () => {
+  configSearchInputRef.value?.focus()
+}
+
+// 恢复单个参数为原值
+const resetSingleConfigItem = (key: string) => {
+  if (!originalConfigs.value || !(key in originalConfigs.value)) return
+  const group = Object.values(configGroups.value).flat().find(i => i.key === key)
+  if (group) {
+    group.value = originalConfigs.value[key] ?? ''
+    showToast(`已恢复参数 ${key} 为原值`, 'info')
+  }
 }
 
 const metadataProvider = computed(() => {
@@ -1199,38 +1264,58 @@ const handleGlobalKeydown = (e: KeyboardEvent) => {
       saveConfigs()
     }
   }
+  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+    if (activeTab.value === 'configs') {
+      e.preventDefault()
+      focusConfigSearch()
+    }
+  }
+  // 参数搜索聚焦：输入框内 / 或独立按键 '/'（在非输入控件时触发）
+  if (e.key === '/' && activeTab.value === 'configs') {
+    const tag = (e.target as HTMLElement | null)?.tagName
+    if (tag !== 'INPUT' && tag !== 'TEXTAREA' && tag !== 'SELECT') {
+      e.preventDefault()
+      focusConfigSearch()
+    }
+  }
 }
 
 const toggleSecret = (key: string) => {
   showSecrets.value[key] = !showSecrets.value[key]
 }
 
-const getCategoryLabel = (cat: string) => {
-  const map: Record<string, string> = {
-    'agent_context': '上下文管理 (Context Management)',
-    'data_api': '智能报表 (ChatBI)',
-    'metadata': '元数据与 RAG 设置 (Metadata & RAG)',
-    'knowledge': '知识库设置 (Knowledge Base)',
-    'agent': '智能体设置 (AI Agent)',
-    'general': '常规设置 (General Settings)',
-    'sandbox': '安全沙箱 (Sandbox)',
-    'other': '其他参数 (Other Parameters)'
+const getCategoryLabel = (cat: string, short = true) => {
+  const map: Record<string, { short: string; full: string }> = {
+    'agent_context': { short: '上下文管理', full: '上下文管理 (Context Management)' },
+    'data_api':      { short: '智能报表',   full: '智能报表 (ChatBI)' },
+    'metadata':      { short: '元数据 & RAG', full: '元数据与 RAG 设置 (Metadata & RAG)' },
+    'knowledge':     { short: '知识库',      full: '知识库设置 (Knowledge Base)' },
+    'agent':         { short: '智能体',      full: '智能体设置 (AI Agent)' },
+    'general':       { short: '常规设置',    full: '常规设置 (General Settings)' },
+    'sandbox':       { short: '安全沙箱',    full: '安全沙箱 (Sandbox)' },
+    'other':         { short: '其他参数',    full: '其他参数 (Other Parameters)' },
   }
-  return map[cat] || cat.toUpperCase()
+  const entry = map[cat]
+  if (!entry) return cat.toUpperCase()
+  return short ? entry.short : entry.full
 }
 
-const getCategoryIcon = (cat: string) => {
-  const map: Record<string, any> = {
-    'data_api': CircleStackIcon,
-    'agent_context': ArrowPathIcon,
-    'agent': CpuChipIcon,
-    'metadata': SparklesIcon,
-    'knowledge': ServerStackIcon,
-    'sandbox': CommandLineIcon,
-    'general': AdjustmentsHorizontalIcon
+const getCategoryIconInfo = (cat: string): { icon: any; color: string; bg: string } => {
+  const map: Record<string, { icon: any; color: string; bg: string }> = {
+    'general':       { icon: AdjustmentsHorizontalIcon, color: 'text-slate-600',  bg: 'bg-slate-100' },
+    'agent':         { icon: CpuChipIcon,                color: 'text-violet-600', bg: 'bg-violet-100' },
+    'agent_context': { icon: ArrowPathIcon,              color: 'text-sky-600',    bg: 'bg-sky-100' },
+    'metadata':      { icon: SparklesIcon,               color: 'text-amber-600',  bg: 'bg-amber-100' },
+    'data_api':      { icon: CircleStackIcon,            color: 'text-emerald-600',bg: 'bg-emerald-100' },
+    'knowledge':     { icon: ServerStackIcon,            color: 'text-blue-600',   bg: 'bg-blue-100' },
+    'sandbox':       { icon: CommandLineIcon,            color: 'text-orange-600', bg: 'bg-orange-100' },
+    'other':         { icon: WrenchScrewdriverIcon,      color: 'text-gray-500',   bg: 'bg-gray-100' },
   }
-  return map[cat] || AdjustmentsHorizontalIcon
+  return map[cat] || { icon: AdjustmentsHorizontalIcon, color: 'text-gray-500', bg: 'bg-gray-100' }
 }
+
+/** 向后兼容旧调用：只返回 icon component */
+const getCategoryIcon = (cat: string) => getCategoryIconInfo(cat).icon
 
 const isLongText = (item: ConfigItem) => {
   if (item.key === 'sandbox_docker_base_image') return false
@@ -2865,60 +2950,110 @@ onUnmounted(() => {
          </div>
          <div v-else-if="!orderedCategories.length" class="py-10 text-center text-sm text-gray-400">暂无可用配置项</div>
          <div v-else class="md:grid md:grid-cols-[220px_minmax(0,1fr)] md:gap-6">
-             <!-- 移动端：横向可滚动组选择条 -->
+             <!-- 移动端：横向可滚动组选择条（含搜索入口） -->
              <div class="flex items-center gap-2 overflow-x-auto pb-3 -mx-1 px-1 custom-scrollbar md:hidden">
                 <button
-                  v-for="cat in orderedCategories"
-                  :key="cat"
-                  type="button"
-                  @click="selectConfigCategory(String(cat))"
-                  class="inline-flex shrink-0 items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-medium transition-colors cursor-pointer"
-                  :class="cat === realizedActiveCategory
-                    ? 'border-primary bg-primary text-white shadow-md shadow-primary/20'
-                    : 'border-gray-200 bg-white text-gray-600 hover:border-primary/30 hover:text-primary'"
+                   v-for="cat in orderedCategories"
+                   :key="cat"
+                   type="button"
+                   @click="selectConfigCategory(String(cat))"
+                   class="inline-flex shrink-0 items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-medium transition-colors cursor-pointer"
+                   :class="cat === realizedActiveCategory
+                     ? 'border-primary bg-primary text-white shadow-md shadow-primary/20'
+                     : 'border-gray-200 bg-white text-gray-600 hover:border-primary/30 hover:text-primary'"
                 >
                    <component :is="getCategoryIcon(String(cat))" class="h-3.5 w-3.5" />
                    {{ getCategoryLabel(String(cat)) }}
-                   <span v-if="changedConfigCountFor(String(cat)) > 0" class="rounded-full bg-white px-1.5 py-0.5 text-[10px] font-bold text-primary leading-none">{{ changedConfigCountFor(String(cat)) }}</span>
+                   <span
+                      v-if="changedConfigCountFor(String(cat)) > 0 || totalConfigCountFor(String(cat)) > 0"
+                      class="rounded-full px-1.5 py-0.5 text-[10px] font-bold leading-none"
+                      :class="cat === realizedActiveCategory ? 'bg-white text-primary' : 'bg-white text-gray-500 shadow-sm'"
+                      :title="`${changedConfigCountFor(String(cat))} 项未保存 / 共 ${totalConfigCountFor(String(cat))} 项`"
+                   >{{ changedConfigCountFor(String(cat)) > 0 ? changedConfigCountFor(String(cat)) : totalConfigCountFor(String(cat)) }}</span>
                 </button>
              </div>
              <!-- 桌面端：左侧组导航栏 -->
              <aside class="hidden md:block">
-                <nav class="sticky top-0 space-y-1 rounded-xl border border-gray-100 bg-gray-50/70 p-3 shadow-sm">
-                   <div class="mb-2 flex items-center gap-2 px-2 pt-1 pb-2 text-xs font-bold uppercase tracking-wide text-gray-400">
-                     配置分组
+                <nav class="sticky top-0 space-y-2 rounded-xl border border-gray-100 bg-gray-50/70 p-3 shadow-sm">
+                   <div class="relative">
+                      <div class="flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 shadow-sm focus-within:border-primary focus-within:ring-2 focus-within:ring-primary/20">
+                         <MagnifyingGlassIcon class="h-4 w-4 shrink-0 text-gray-400" />
+                         <input
+                           ref="configSearchInputRef"
+                           v-model="configSearchQuery"
+                           type="text"
+                           placeholder="搜索参数…（⌘K）"
+                           class="w-full bg-transparent text-sm text-gray-700 placeholder:text-gray-400 focus:outline-none"
+                           @focus="configSearchOpen = true"
+                           @blur="setTimeout(() => (configSearchOpen = false), 150)"
+                           @click="configSearchOpen = true"
+                         />
+                         <button
+                           v-if="configSearchQuery"
+                           type="button"
+                           @click="configSearchQuery = ''"
+                           class="shrink-0 text-gray-400 hover:text-gray-600 transition-colors"
+                           title="清空搜索"
+                         >
+                           <XMarkIcon class="h-4 w-4" />
+                         </button>
+                      </div>
+                      <div
+                        v-if="configSearchOpen && configSearchQuery"
+                        class="absolute left-0 right-0 z-30 mt-1 max-h-64 overflow-y-auto rounded-lg border border-gray-200 bg-white shadow-xl custom-scrollbar"
+                      >
+                         <template v-if="configSearchResults.length">
+                            <div
+                              v-for="res in configSearchResults"
+                              :key="res.item.key"
+                              class="flex cursor-pointer items-center justify-between gap-2 px-3 py-2 text-sm hover:bg-primary/5 transition-colors"
+                              @mousedown.prevent="selectConfigSearchResult(res)"
+                            >
+                               <span class="min-w-0">
+                                  <span class="block truncate font-medium text-gray-800">{{ res.item.key }}</span>
+                                  <span class="block truncate text-[11px] text-gray-500">{{ configShortDescriptions[res.item.key] || res.item.description }}</span>
+                               </span>
+                               <span class="shrink-0 rounded bg-gray-100 px-1.5 py-0.5 text-[10px] font-medium text-gray-500">{{ getCategoryLabel(res.category) }}</span>
+                            </div>
+                         </template>
+                         <div v-else class="px-3 py-3 text-center text-xs text-gray-400">未找到匹配的参数</div>
+                      </div>
+                   </div>
+                   <div class="flex items-center justify-between gap-2 px-2 pt-1 pb-1 text-xs font-bold uppercase tracking-wide text-gray-400">
+                      <span>配置分组</span>
+                      <span class="font-normal normal-case text-gray-300">{{ orderedCategories.length }} 组</span>
                    </div>
                    <button
-                     v-for="cat in orderedCategories"
-                     :key="cat"
-                     type="button"
-                     @click="selectConfigCategory(String(cat))"
-                     class="flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-left text-sm transition-all cursor-pointer"
-                     :class="cat === realizedActiveCategory
-                       ? 'bg-primary font-semibold text-white shadow-md shadow-primary/20'
-                       : 'text-gray-600 hover:bg-white hover:text-gray-900 hover:shadow-sm'"
+                      v-for="cat in orderedCategories"
+                      :key="cat"
+                      type="button"
+                      @click="selectConfigCategory(String(cat))"
+                      class="flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-left text-sm transition-all cursor-pointer"
+                      :class="cat === realizedActiveCategory
+                        ? 'bg-primary font-semibold text-white shadow-md shadow-primary/20'
+                        : 'text-gray-600 hover:bg-white hover:text-gray-900 hover:shadow-sm'"
                    >
-                      <span
-                        class="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border transition-colors"
-                        :class="cat === realizedActiveCategory
-                          ? 'border-white/20 bg-white/15 text-white'
-                          : 'border-gray-100 bg-white text-gray-500 shadow-sm'"
-                      >
-                         <component :is="getCategoryIcon(String(cat))" class="h-4 w-4" />
-                      </span>
-                      <span class="flex-1 truncate">{{ getCategoryLabel(String(cat)) }}</span>
-                      <span
-                        v-if="changedConfigCountFor(String(cat)) > 0"
-                        class="shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-bold leading-none"
-                        :class="cat === realizedActiveCategory ? 'bg-white text-primary' : 'bg-amber-500 text-white'"
-                        :title="`${changedConfigCountFor(String(cat))} 项未保存`"
-                      >{{ changedConfigCountFor(String(cat)) }}</span>
+                         <span
+                           class="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border transition-colors"
+                           :class="cat === realizedActiveCategory
+                             ? 'border-white/20 bg-white/15 text-white'
+                             : 'border-gray-100 shadow-sm ' + (getCategoryIconInfo(String(cat)).bg + ' ' + getCategoryIconInfo(String(cat)).color)"
+                         >
+                            <component :is="getCategoryIcon(String(cat))" class="h-4 w-4" />
+                         </span>
+                         <span class="flex-1 truncate" :title="getCategoryLabel(String(cat), false)">{{ getCategoryLabel(String(cat)) }}</span>
+                         <span
+                           v-if="changedConfigCountFor(String(cat)) > 0 || totalConfigCountFor(String(cat)) > 0"
+                           class="shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-bold leading-none"
+                           :class="cat === realizedActiveCategory ? 'bg-white text-primary' : 'bg-amber-500 text-white'"
+                           :title="`${changedConfigCountFor(String(cat))} 项未保存 / 共 ${totalConfigCountFor(String(cat))} 项`"
+                         >{{ changedConfigCountFor(String(cat)) > 0 ? changedConfigCountFor(String(cat)) : totalConfigCountFor(String(cat)) }}</span>
                    </button>
                 </nav>
              </aside>
              <!-- 右侧：当前组内容 -->
              <div class="min-w-0">
-             <div class="flex flex-wrap items-center justify-between gap-3">
+             <div class="sticky top-0 z-10 flex flex-wrap items-center justify-between gap-3 rounded-lg bg-white/95 px-1 py-2 backdrop-blur-sm">
                <!-- 左侧：未保存状态指示 -->
                <div class="flex items-center gap-2">
                  <div
@@ -2965,28 +3100,20 @@ onUnmounted(() => {
                </div>
              </div>
              <div v-for="category in [realizedActiveCategory]" :key="category" class="bg-white shadow rounded-lg">
-                <button
-                  type="button"
-                  class="w-full bg-gray-50 px-6 py-3 border-b border-gray-200 rounded-t-lg flex items-center text-left transition-colors hover:bg-gray-100"
-                  :aria-expanded="!isConfigGroupCollapsed(String(category))"
-                  :aria-controls="`config-group-${category}`"
-                  @click="toggleConfigGroup(String(category))"
-                >
-                   <div class="p-1.5 bg-white rounded-md shadow-sm border border-gray-100 mr-3">
-                       <component :is="getCategoryIcon(String(category))" class="h-5 w-5 text-primary" />
-                   </div>
-                   <h3 class="text-md font-medium text-gray-800">{{ getCategoryLabel(String(category)) }}</h3>
-                   <span class="ml-auto flex items-center gap-1.5 text-xs font-medium text-gray-500">
-                     {{ isConfigGroupCollapsed(String(category)) ? '展开' : '收起' }}
-                     <span aria-hidden="true" class="text-base leading-none">
-                       {{ isConfigGroupCollapsed(String(category)) ? '▸' : '▾' }}
-                     </span>
-                   </span>
-                </button>
+                 <div class="flex items-center bg-gray-50 px-6 py-3 border-b border-gray-200 rounded-t-lg">
+                     <div class="p-1.5 mr-3 rounded-md shadow-sm border border-gray-100"
+                        :class="getCategoryIconInfo(String(category)).bg + ' ' + getCategoryIconInfo(String(category)).color">
+                        <component :is="getCategoryIcon(String(category))" class="h-5 w-5" />
+                     </div>
+                     <div class="min-w-0">
+                        <h3 class="text-md font-medium text-gray-800" :title="getCategoryLabel(String(category), false)">{{ getCategoryLabel(String(category)) }}</h3>
+                        <p class="text-[11px] text-gray-500 truncate max-w-md">{{ getGroupSubtitle(String(category)) }}</p>
+                     </div>
+                     <span class="ml-auto shrink-0 rounded-full bg-gray-100 px-2 py-0.5 text-[11px] font-semibold text-gray-500" :title="`共 ${totalConfigCountFor(String(category))} 项配置`">{{ totalConfigCountFor(String(category)) }} 项</span>
+                 </div>
                  <div
-                   v-if="!isConfigGroupCollapsed(String(category))"
-                   :id="`config-group-${category}`"
-                   class="p-6 space-y-5"
+                     id="config-group-body"
+                     class="p-6 space-y-5"
                  >
                     <div v-if="category === 'agent'" class="bg-amber-50 border-l-4 border-amber-400 p-4 rounded-md text-sm text-amber-900 flex items-start space-x-2 mb-4">
                        <span class="text-amber-500 font-bold shrink-0">⚠️ 提示：</span>
@@ -3008,7 +3135,8 @@ onUnmounted(() => {
                       item.key === 'ragflow_api_key' ? 'ragflow-config-group rounded-b-xl border-x border-b border-sky-200/80 bg-sky-50/70 px-4 pb-4 -mx-4 !mt-0' : '',
                       item.key === 'external_sql_api_url' && sqlExecutionMode === 'remote' ? 'remote-sql-config-group rounded-t-xl border-x border-t border-emerald-200/80 bg-emerald-50/60 px-4 pt-4 -mx-4' : '',
                       item.key === 'external_sql_api_key' && sqlExecutionMode === 'remote' ? 'remote-sql-config-group border-x border-emerald-200/80 bg-emerald-50/60 px-4 -mx-4 !mt-0' : '',
-                      item.key === 'external_sql_data_source' && sqlExecutionMode === 'remote' ? 'remote-sql-config-group rounded-b-xl border-x border-b border-emerald-200/80 bg-emerald-50/60 px-4 pb-4 -mx-4 !mt-0' : ''
+                      item.key === 'external_sql_data_source' && sqlExecutionMode === 'remote' ? 'remote-sql-config-group rounded-b-xl border-x border-b border-emerald-200/80 bg-emerald-50/60 px-4 pb-4 -mx-4 !mt-0' : '',
+                      highlightedConfigKey === item.key ? 'ring-2 ring-primary/60 rounded-xl shadow-lg bg-primary/5 scroll-mt-24 -mx-1 px-1' : ''
                     ]">
                       <div v-if="item.key === 'ragflow_api_url'" class="md:col-span-3 -mb-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm font-semibold text-sky-800">
                         <ServerIcon class="h-4 w-4 shrink-0 text-sky-600" />
@@ -3038,25 +3166,44 @@ onUnmounted(() => {
                           服务地址示例：<code class="font-mono">http://your-server:8000/api/v1/chatbi/sql/execute</code>；测试会执行安全的 <code class="font-mono">SELECT 1</code>。
                         </div>
                       </div>
-                      <div class="md:col-span-1 pt-2">
-                         <label class="block text-sm font-medium text-gray-700 flex items-center gap-1.5">
-                            <span>{{ item.key }}</span>
-                            <button
-                              type="button"
-                              @click="showExplanation(item)"
-                              class="text-gray-400 hover:text-primary transition-colors focus:outline-none"
-                              title="查看参数说明"
-                            >
-                              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-4 h-4 inline-block">
-                                <path stroke-linecap="round" stroke-linejoin="round" d="M9.879 7.519c1.171-1.025 3.071-1.025 4.242 0 1.172 1.025 1.172 2.687 0 3.712-.203.179-.43.326-.67.442-.745.361-1.45.999-1.45 1.827v.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9 5.25h.008v.008H12v-.008Z" />
-                              </svg>
-                            </button>
-                         </label>
-                         <p class="text-xs text-gray-500 mt-1">
-                           {{ item.key === 'sandbox_policy' ? sandboxPolicyShortDesc : (configShortDescriptions[item.key] || item.description) }}
-                         </p>
-                      </div>
-                       <div class="md:col-span-2 relative">
+                       <div class="md:col-span-1 pt-2"
+                          :class="isConfigItemModified(item.key) ? 'rounded-lg bg-amber-50/70 pl-2.5 pr-1 py-2 -mx-1 border-l-4 border-amber-400' : ''"
+                          :id="`config-key-${item.key}`"
+                       >
+                          <label class="block text-sm font-medium text-gray-700 flex items-center gap-1.5">
+                             <span :class="isConfigItemModified(item.key) ? 'text-amber-800' : ''">{{ item.key }}</span>
+                             <button
+                                type="button"
+                                @click="showExplanation(item)"
+                                class="text-gray-400 hover:text-primary transition-colors focus:outline-none"
+                                title="查看参数说明"
+                             >
+                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-4 h-4 inline-block">
+                                   <path stroke-linecap="round" stroke-linejoin="round" d="M9.879 7.519c1.171-1.025 3.071-1.025 4.242 0 1.172 1.025 1.172 2.687 0 3.712-.203.179-.43.326-.67.442-.745.361-1.45.999-1.45 1.827v.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9 5.25h.008v.008H12v-.008Z" />
+                                </svg>
+                             </button>
+                             <span v-if="isConfigItemModified(item.key)" class="inline-flex items-center gap-1 rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold text-amber-700 leading-none">
+                                <span class="h-1.5 w-1.5 rounded-full bg-amber-500"></span>
+                                已修改
+                             </span>
+                          </label>
+                          <button
+                             v-if="isConfigItemModified(item.key)"
+                             type="button"
+                             @click="resetSingleConfigItem(item.key)"
+                             class="mt-1 inline-flex items-center gap-0.5 rounded border border-amber-200 bg-white px-1.5 py-0.5 text-[10px] font-medium text-amber-600 hover:bg-amber-50 transition-colors cursor-pointer"
+                             title="恢复此参数为原值"
+                          >
+                             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-3 h-3">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" />
+                             </svg>
+                             恢复原值
+                          </button>
+                          <p class="text-xs text-gray-500 mt-1">
+                            {{ item.key === 'sandbox_policy' ? sandboxPolicyShortDesc : (configShortDescriptions[item.key] || item.description) }}
+                          </p>
+                       </div>
+                        <div class="md:col-span-2 relative">
                           <div v-if="item.key === 'agent_prompt_layout_mode'">
                               <select v-model="item.value" :disabled="isConfigItemDisabled(String(category), item)" class="shadow-sm focus:ring-primary focus:border-primary block w-full sm:text-sm border-gray-300 rounded-md bg-gray-100 p-2 disabled:opacity-70 disabled:cursor-not-allowed">
                                  <option value="legacy">legacy (传统布局：动态内容前置，按原逻辑拼装)</option>
