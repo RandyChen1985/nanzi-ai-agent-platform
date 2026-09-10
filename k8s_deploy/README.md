@@ -28,6 +28,7 @@
 - [升级和回滚](#升级和回滚)
 - [多副本前置条件](#多副本前置条件)
 - [本地静态验证](#本地静态验证)
+- [部署与运维截图](#部署与运维截图)
 
 本目录提供基于普通 Kubernetes YAML 和 Kustomize 的部署基线，不包含 Helm Chart。
 默认目标是：使用现有 Docker 镜像、集群外部 MySQL/PostgreSQL 和 Redis Stack，运行一
@@ -93,7 +94,7 @@
 | `sandbox-image/` | 网关预置镜像构建上下文：内含 `_mcp_gateway_app.py`（AgentScope gateway 脚本模板副本），供 `build-k8s-sandbox-image.sh` 使用，可用其 `--sync-template` 按 agentscope 版本刷新 |
 | `upgrade.md` | 镜像更新与滚动发布操作说明（Tag 变化/不变场景、K3s/非 K3s 镜像导入、沙箱网关预置镜像详解） |
 | `README.md` | 本目录部署说明（本文档） |
-| `images/` | 文档/运维截图素材 |
+| `images/` | 文档/运维截图素材（`README.md` 末尾「部署与运维截图」章节引用） |
 
 ## 手动构建 sandbox 镜像，加速 Pod 启动
 
@@ -1244,3 +1245,44 @@ Secret、Ingress 示例未被默认引用、没有 Helm 模板、没有 Docker S
 
 本目录不代表已经完成真实集群验收；镜像拉取、PVC 绑定、数据库/Redis 连通性、Ingress
 TLS、浏览器运行时和长连接行为仍需在目标集群由部署人员验证。
+
+## 部署与运维截图
+
+> 以下截图取自 `images/` 目录，供部署与运维时对照预期界面。若你的集群版本、镜像或
+> 安装脚本有更新，界面细节可能略有差异，以实际输出为准。
+
+### install.sh 向导
+
+`install.sh --help` 帮助信息（真实输出）：
+
+![install.sh 帮助](./images/k8s_install_help.png)
+
+`install.sh --dry-run` 演练输出：仅预览将要执行的操作，不真正改动集群：
+
+![install.sh dry-run 演练](./images/k8s_install_dry_run.png)
+
+`install.sh upgrade` 升级流程输出：
+
+![install.sh 升级](./images/k8s_install_upgrade.png)
+
+### nanzi-k8s.sh 快捷运维
+
+`nanzi-k8s.sh` 帮助信息（无参数运行，真实输出）：
+
+![nanzi-k8s.sh 帮助](./images/nanzi_help.png)
+
+`nanzi-k8s.sh status` 集群与平台状态总览：
+
+![nanzi-k8s.sh status 状态](./images/nanzi_status.png)
+
+`nanzi-k8s.sh sandboxes` 沙箱 Pod 与 PVC 监控：
+
+![nanzi-k8s.sh sandboxes 沙箱监控](./images/nanzi_sandboxes.png)
+
+`nanzi-k8s.sh restart-pod` 等重启类命令的 y/N 二次确认界面：
+
+![nanzi-k8s.sh restart 二次确认](./images/nanzi_restart.png)
+
+`nanzi-k8s.sh events` 主平台与沙箱的 Kubernetes 调度事件：
+
+![nanzi-k8s.sh events 事件](./images/nanzi_events.png)
