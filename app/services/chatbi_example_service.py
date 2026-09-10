@@ -540,9 +540,15 @@ class ExampleService:
             logger.warning(f"[ExampleSync] Cleanup failed: {e}")
 
     @staticmethod
-    async def search_examples(query: str, dataset_id: int = None, top_k: int = None, history: List[Any] = None, stats_dump: Dict = None, provider_override: str = None, threshold_override: float = None, vector_weight_override: float = None) -> List[Dict[str, Any]]:
+    async def search_examples(query: str, dataset_id: int = None, top_k: int = None, history: List[Any] = None, stats_dump: Dict = None, provider_override: str = None, threshold_override: float = None, vector_weight_override: float = None, require_sql: bool = True) -> List[Dict[str, Any]]:
         """
         从经验库中检索相似案例。支持意图改写（De-contextualization）。
+
+        `require_sql`（默认 True）控制是否仅返回带 SQL 的案例：
+        - True：沿用历史行为，丢弃无 SQL 的案例（适用于 ChatBI SQL 生成，避免无 SQL
+          问答混入 few-shot prompt）；
+        - False：不强制要求 SQL，无 SQL 的纯问答/知识库案例也会被保留并带出
+          `ai_answer` / `context_summary`，供通用智能体或知识库问答参考历史优质回答。
 
         `stats_dump`（可选）为调用方传入的 dict 引用：若提供，函数会把本次检索的过程统计
         （模式、top_k、相似度阈值、召回数 / 阈值过滤数、MySQL 兜底命中数等）写入其中，
@@ -599,15 +605,21 @@ class ExampleService:
                     )
                     _apply_stats({"vector_recalled": len(examples)})
                     
-                    # 关联读取并应用相似度阈值过滤，且丢弃 sql 为空的案例，防止无 SQL 问答混入 SQL 生成 Prompt 中
+                    # 关联读取并应用相似度阈值过滤；require_sql=True 时额外丢弃 sql 为空的案例，
+                    # 防止无 SQL 问答混入 SQL 生成 Prompt 中；require_sql=False 时保留无 SQL 通用问答。
+                    def _passes_sql_filter(ex) -> bool:
+                        if not require_sql:
+                            return True
+                        return bool(ex.get("sql") and str(ex.get("sql")).strip())
+
                     filtered_examples = [
                         ex for ex in examples 
-                        if ex.get("similarity", 0.0) >= similarity_threshold 
-                        and ex.get("sql") and str(ex.get("sql")).strip()
+                        if ex.get("similarity", 0.0) >= similarity_threshold
+                        and _passes_sql_filter(ex)
                     ]
                     _apply_stats({"valid_sql_after_filter": len(filtered_examples)})
                     
-                    logger.info(f"[ExampleSearch] Local Redis search returned {len(examples)} examples, filtered to {len(filtered_examples)} valid SQL examples above threshold ({similarity_threshold}).")
+                    logger.info(f"[ExampleSearch] Local Redis search returned {len(examples)} examples, filtered to {len(filtered_examples)} valid examples above threshold ({similarity_threshold}) (require_sql={require_sql}).")
                     if filtered_examples:
                         return filtered_examples
                     
@@ -675,15 +687,16 @@ class ExampleService:
                     try:
                         data = json.loads(json_match.group(1))
                         sql_val = data.get("sql")
-                        # 如果没有 sql 或 sql 为空，丢弃此条记录
-                        if not sql_val or not str(sql_val).strip():
+                        # 默认丢弃无 sql 的案例（require_sql=True）；工具类通用调用可关闭该过滤
+                        if require_sql and (not sql_val or not str(sql_val).strip()):
                             logger.info(f"[ExampleSearch] Discarding example #{data.get('id')} because sql is empty.")
                             continue
 
                         examples.append({
                             "id": data.get("id"),
                             "question": data.get("question") or data.get("raw_query"),
-                            "sql": sql_val.strip(),
+                            "sql": sql_val.strip() if sql_val else "",
+                            "ai_answer": data.get("ai_answer") or "",
                             "context_summary": data.get("context_summary"),
                             "dataset_name": data.get("dataset_name"),
                             "trace_id": data.get("metadata", {}).get("trace_id"),
@@ -697,15 +710,15 @@ class ExampleService:
                 # 兜底方案：正则匹配
                 q_match = re.search(r"## (?:🎯 )?核心意图.*?\n+(.*?)\n+##", content, re.DOTALL | re.IGNORECASE)
                 sql_match = re.search(r"```sql\n(.*?)\n```", content, re.DOTALL | re.IGNORECASE)
+                extracted_sql = sql_match.group(1).strip() if sql_match else ""
                 
-                if sql_match and q_match:
-                    extracted_sql = sql_match.group(1).strip()
-                    if extracted_sql:
-                        examples.append({
-                            "question": q_match.group(1).strip(),
-                            "sql": extracted_sql,
-                            "similarity": similarity
-                        })
+                if q_match and (extracted_sql or not require_sql):
+                    examples.append({
+                        "question": q_match.group(1).strip(),
+                        "sql": extracted_sql,
+                        "ai_answer": "",
+                        "similarity": similarity
+                    })
             
             logger.info(f"[ExampleSearch] Final Matched Examples: {len(examples)} (After parsing)")
             _apply_stats({"valid_sql_after_filter": len(examples)})
@@ -753,17 +766,19 @@ class ExampleService:
                         
                 result_list = []
                 for ex in examples:
-                    if ex.sql_text and ex.sql_text.strip():
-                        result_list.append({
-                            "id": ex.id,
-                            "question": ex.refined_query or ex.user_query,
-                            "sql": ex.sql_text.strip(),
-                            "context_summary": ex.context_summary or "",
-                            "dataset_name": dataset_name_map.get(ex.dataset_id) or "通用数据集",
-                            "trace_id": ex.trace_id or "",
-                            "sql_metadata": ex.sql_metadata,
-                            "similarity": 0.35
-                        })
+                    if require_sql and (not ex.sql_text or not ex.sql_text.strip()):
+                        continue
+                    result_list.append({
+                        "id": ex.id,
+                        "question": ex.refined_query or ex.user_query,
+                        "sql": ex.sql_text.strip() if ex.sql_text else "",
+                        "ai_answer": ex.ai_answer or "",
+                        "context_summary": ex.context_summary or "",
+                        "dataset_name": dataset_name_map.get(ex.dataset_id) or "通用数据集",
+                        "trace_id": ex.trace_id or "",
+                        "sql_metadata": ex.sql_metadata,
+                        "similarity": 0.35
+                    })
                 logger.info(f"[ExampleSearch] MySQL Fallback retrieved {len(result_list)} examples.")
                 return result_list
             except Exception as db_err:

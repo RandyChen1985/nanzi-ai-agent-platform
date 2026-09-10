@@ -116,6 +116,8 @@ def is_v1_api_whitelisted(path: str) -> bool:
         return True
     if "/sandbox/docker/workspace" in path:
         return True
+    if "/sandbox/k8s/workspace" in path:
+        return True
     return False
 
 

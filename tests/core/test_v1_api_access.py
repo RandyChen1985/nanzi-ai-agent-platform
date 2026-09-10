@@ -47,6 +47,10 @@ def test_is_v1_api_whitelisted():
     assert is_v1_api_whitelisted("/api/v1/embed/tickets/exchange") is True
     assert is_v1_api_whitelisted("/api/v1/sandbox/docker/workspace/ensure") is True
     assert is_v1_api_whitelisted("/api/v1/sandbox/docker/workspace/status") is True
+    assert is_v1_api_whitelisted("/api/v1/sandbox/k8s/workspace/ensure") is True
+    assert is_v1_api_whitelisted("/api/v1/sandbox/k8s/workspace/status") is True
+    assert is_v1_api_whitelisted("/api/v1/sandbox/k8s/workspace/stop") is True
+    assert is_v1_api_whitelisted("/api/v1/sandbox/k8s/workspace/restart") is True
     assert is_v1_api_whitelisted("/api/v1/admin/sandbox/docker/prebuild") is False
     assert is_v1_api_whitelisted("/api/v1/users/profile") is False
 
