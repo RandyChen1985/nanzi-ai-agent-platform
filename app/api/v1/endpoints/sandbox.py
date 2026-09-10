@@ -64,6 +64,42 @@ def _require_admin(user_info: Dict[str, Any]) -> None:
         raise HTTPException(status_code=403, detail="仅管理员可执行沙箱管理操作")
 
 
+async def _resolve_sandbox_auto_warm_enabled() -> bool:
+    """读取系统配置 sandbox_auto_warm（默认开）。"""
+    from app.services.config_service import (
+        ConfigService,
+        SANDBOX_AUTO_WARM_DEFAULT,
+        SANDBOX_AUTO_WARM_KEY,
+    )
+
+    try:
+        raw = await ConfigService.get(SANDBOX_AUTO_WARM_KEY, SANDBOX_AUTO_WARM_DEFAULT)
+    except Exception:
+        raw = SANDBOX_AUTO_WARM_DEFAULT
+    return str(raw).strip().lower() in ("true", "1", "yes", "on")
+
+
+async def _auto_warm_request_skipped(body: Any) -> bool:
+    """仅在“自动预热”请求且 sandbox_auto_warm 关闭时跳过创建；手动启动不受影响。"""
+    if not getattr(body, "auto_warm", False):
+        return False
+    return not await _resolve_sandbox_auto_warm_enabled()
+
+
+def _auto_warm_skipped_response(backend: str) -> dict[str, Any]:
+    """自动预热被关闭时的占位响应，避免前端误以为创建失败而轮询。"""
+    return {
+        "status": "skipped",
+        "auto_warm_disabled": True,
+        "execution_backend": backend,
+        "workspace_id": None,
+        "pod_name": None,
+        "container_id": None,
+        "started_at": None,
+        "uptime_seconds": None,
+    }
+
+
 def _sse_event(name: str, data: dict[str, Any]) -> str:
     return f"event: {name}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
@@ -213,6 +249,9 @@ class DockerWorkspaceEnsureRequest(BaseModel):
     """当前用户手动启动 Docker 工作区所需的会话标识。"""
 
     conversation_id: str
+    #: 仅用于 embed 打开/新建会话时的静默自动预热调用；
+    #: 关闭 sandbox_auto_warm 时，携带此标记的 ensure 将跳过创建（手动启动不带此标记）。
+    auto_warm: bool = False
 
 
 class DockerWorkspaceExecRequest(BaseModel):
@@ -236,6 +275,16 @@ async def ensure_docker_workspace_endpoint(
     conversation_id = body.conversation_id.strip()
     if not conversation_id:
         raise HTTPException(status_code=400, detail="conversation_id 不能为空")
+
+    if await _auto_warm_request_skipped(body):
+        logger.info(
+            "sandbox_auto_warm=false, skip docker auto-warm ensure (conversation=%s)",
+            conversation_id,
+        )
+        return StandardResponse(
+            data=_auto_warm_skipped_response("docker"),
+            message="自动预热已关闭（sandbox_auto_warm=false），未启动沙箱，可手动启动。",
+        )
 
     try:
         workspace = await ensure_docker_workspace_runtime(
@@ -427,6 +476,16 @@ async def ensure_k8s_workspace_endpoint(
     conversation_id = body.conversation_id.strip()
     if not conversation_id:
         raise HTTPException(status_code=400, detail="conversation_id 不能为空")
+
+    if await _auto_warm_request_skipped(body):
+        logger.info(
+            "sandbox_auto_warm=false, skip k8s auto-warm ensure (conversation=%s)",
+            conversation_id,
+        )
+        return StandardResponse(
+            data=_auto_warm_skipped_response("k8s"),
+            message="自动预热已关闭（sandbox_auto_warm=false），未启动沙箱，可手动启动。",
+        )
 
     try:
         result = await ensure_k8s_workspace_runtime(

@@ -25,6 +25,7 @@ export interface ContextUsage {
   context_breakdown?: ContextBreakdown | null;
   sandbox_policy?: string | null;
   sandbox_runtime_env?: string | null;
+  sandbox_auto_warm?: boolean | null;
 }
 
 export interface RefreshContextUsageOptions {
