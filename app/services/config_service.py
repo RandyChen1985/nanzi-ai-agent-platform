@@ -34,6 +34,12 @@ SANDBOX_POLICY_KEY = "sandbox_policy"
 SANDBOX_POLICY_DOCKER = "docker"
 SANDBOX_POLICY_K8S = "k8s"
 
+#: 沙箱通用配置（docker/k8s 均生效）
+SANDBOX_AUTO_WARM_KEY = "sandbox_auto_warm"          # 布尔开关，默认开：打开/新建会话时自动预热
+SANDBOX_IDLE_TIME_KEY = "sandbox_idle_time"          # 分钟，默认 30：沙箱空闲回收时长
+SANDBOX_AUTO_WARM_DEFAULT = "true"
+SANDBOX_IDLE_TIME_DEFAULT = "30"
+
 
 def resolve_effective_sandbox_policy(
     value: Optional[str],
@@ -60,6 +66,17 @@ def validate_config_update(key: str, value: str) -> None:
     elif key == AGENTSCOPE_MAX_CONCURRENT_TOOLS_KEY:
         limit = validate_agentscope_max_concurrent_tools(value)
         set_max_concurrency_limit(limit)
+    elif key == SANDBOX_AUTO_WARM_KEY:
+        normalized = str(value or "").strip().lower()
+        if normalized not in ("true", "false", "1", "0", "yes", "no", "on", "off"):
+            raise ValueError("sandbox_auto_warm 仅允许 true/false")
+    elif key == SANDBOX_IDLE_TIME_KEY:
+        try:
+            minutes = float(str(value or "").strip())
+        except (TypeError, ValueError) as exc:
+            raise ValueError("sandbox_idle_time 必须为正数（分钟）") from exc
+        if minutes <= 0:
+            raise ValueError("sandbox_idle_time 必须大于 0（分钟）")
 
 _SYSTEM_CONFIGS_TABLE = Table(
     "system_configs",

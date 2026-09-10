@@ -4285,6 +4285,8 @@ const maybeAutoWarmSandbox = async () => {
   if (!isSandboxWorkspacePolicy.value || !conversationId.value) return;
   if (isProcessing.value || remoteRunActive.value) return;
   if (!sandboxWorkspaceStatusLoaded.value) return;
+  // 快路径：#config 已加载且显式关闭自动预热，直接跳过（后端 /ensure 仍会二次兜底）。
+  if (contextUsage.value?.sandbox_auto_warm === false) return;
   const status = sandboxWorkspaceStatus.value;
   if (status === "running" || status === "starting" || status === "error") return;
   const key = `${conversationId.value}::${sandboxBackend.value}`;
@@ -4293,10 +4295,15 @@ const maybeAutoWarmSandbox = async () => {
   try {
     const response = await axios.post(
       `${sandboxWorkspaceBaseEndpoint.value}/ensure`,
-      { conversation_id: conversationId.value },
+      { conversation_id: conversationId.value, auto_warm: true },
       { headers: embedAuthHeaders() },
     );
     const data = response.data?.data ?? response.data;
+    if (data?.auto_warm_disabled) {
+      // 后端已因 sandbox_auto_warm=false 跳过创建；不置 starting、不轮询，静默返回。
+      sandboxWorkspaceStatus.value = "idle";
+      return;
+    }
     const mapped = mapSandboxStatus(String(data?.status || "idle"));
     sandboxWorkspaceStatus.value = mapped;
     sandboxWorkspaceInstanceId.value = instanceIdFromData(data);

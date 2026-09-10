@@ -2036,8 +2036,10 @@ const getVisibleItems = (items: ConfigItem[] | undefined, category: string) => {
       local: []
     }
     const visibleForPolicy = policyKeySets[policy] || []
-    const order = ['sandbox_policy', ...visibleForPolicy]
-    list = list.filter(x => x.key === 'sandbox_policy' || visibleForPolicy.includes(x.key))
+    // 跨策略通用键：无论当前沙箱策略为何，均需展示
+    const alwaysVisibleKeys = ['sandbox_auto_warm', 'sandbox_idle_time']
+    const order = ['sandbox_policy', ...alwaysVisibleKeys, ...visibleForPolicy]
+    list = list.filter(x => x.key === 'sandbox_policy' || visibleForPolicy.includes(x.key) || alwaysVisibleKeys.includes(x.key))
     if (policy === 'ssh') {
       list = list.filter(item => {
         if (item.key === 'sandbox_ssh_password') return sandboxSshAuthType.value !== 'key'
@@ -3661,7 +3663,64 @@ onUnmounted(() => {
                                class="mt-1.5 text-[11px] text-gray-500 leading-relaxed"
                              >{{ item.description }}</p>
                           </div>
-                          <div v-else-if="['embedchat_watermark_enabled', 'yovole_sso_enabled', 'knowledge_base_enabled', 'agentscope_inject_runtime_state'].includes(item.key)">
+                          <div v-else-if="item.key === 'sandbox_auto_warm'">
+                              <div class="flex items-center">
+                                <button
+                                  type="button"
+                                  :disabled="isConfigItemDisabled(String(category), item)"
+                                  @click="item.value = item.value === 'true' ? 'false' : 'true'"
+                                  class="relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed shadow-inner"
+                                  :class="item.value === 'true' ? 'bg-primary' : 'bg-gray-200'"
+                                  aria-label="自动预热沙箱开关"
+                                >
+                                  <span
+                                    aria-hidden="true"
+                                    class="pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out"
+                                    :class="item.value === 'true' ? 'translate-x-5' : 'translate-x-0'"
+                                  ></span>
+                                </button>
+                                <span class="ml-3 text-xs font-medium" :class="item.value === 'true' ? 'text-primary font-semibold' : 'text-gray-500'">
+                                  {{ item.value === 'true' ? '已开启（沙箱空闲时自动预热）' : '已关闭（禁用自动预热）' }}
+                                </span>
+                              </div>
+                              <p
+                                v-if="item.description"
+                                class="mt-1.5 text-[11px] text-gray-500 leading-relaxed"
+                              >{{ item.description }}</p>
+                           </div>
+                           <div v-else-if="item.key === 'sandbox_idle_time'">
+                              <div class="flex items-center gap-2 max-w-xs">
+                                <input
+                                  type="number"
+                                  inputmode="decimal"
+                                  min="1"
+                                  step="1"
+                                  :value="item.value"
+                                  :disabled="isConfigItemDisabled(String(category), item)"
+                                  @keypress="!/[0-9]/.test(($event as KeyboardEvent).key) && ($event as KeyboardEvent).preventDefault()"
+                                  @input="(e) => {
+                                    const raw = (e.target as HTMLInputElement).value.replace(/\D/g, '')
+                                    item.value = raw
+                                    ;(e.target as HTMLInputElement).value = raw
+                                  }"
+                                  @blur="() => {
+                                    const n = Number(item.value)
+                                    if (!Number.isFinite(n) || item.value === '' || n < 1) {
+                                      item.value = '30'
+                                    }
+                                  }"
+                                  class="w-28 px-3 py-1.5 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none transition-all disabled:bg-gray-100 disabled:cursor-not-allowed"
+                                  placeholder="30"
+                                />
+                                <span class="text-xs font-semibold text-gray-500">分钟</span>
+                                <span class="text-[11px] text-gray-400">（默认 30 分钟）</span>
+                              </div>
+                              <p
+                                v-if="item.description"
+                                class="mt-1.5 text-[11px] text-gray-500 leading-relaxed"
+                              >{{ item.description }}</p>
+                           </div>
+                           <div v-else-if="['embedchat_watermark_enabled', 'yovole_sso_enabled', 'knowledge_base_enabled', 'agentscope_inject_runtime_state'].includes(item.key)">
                              <div class="flex items-center">
                              <button
                                type="button"

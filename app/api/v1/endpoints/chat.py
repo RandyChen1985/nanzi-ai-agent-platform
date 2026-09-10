@@ -1113,11 +1113,18 @@ async def get_conversation_context_usage(
     except Exception as exc:
         logger.warning("读取 sandbox_policy 失败: %s", exc)
         sandbox_policy = None
+    try:
+        raw_auto_warm = await ConfigService.get("sandbox_auto_warm", "true")
+        sandbox_auto_warm = str(raw_auto_warm).strip().lower() in ("true", "1", "yes", "on")
+    except Exception as exc:
+        logger.warning("读取 sandbox_auto_warm 失败: %s", exc)
+        sandbox_auto_warm = True
     return StandardResponse(
         data={
             **usage,
             "sandbox_policy": sandbox_policy,
             "sandbox_runtime_env": get_env(),
+            "sandbox_auto_warm": sandbox_auto_warm,
         }
     )
 

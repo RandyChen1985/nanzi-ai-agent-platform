@@ -53,6 +53,27 @@ DOCKER_WORKSPACE_INIT_RETRY_DELAY_SECONDS = 0.5
 K8S_WORKSPACE_IDLE_SECONDS = 1800.0
 K8S_WORKSPACE_REAPER_INTERVAL_SECONDS = 60.0
 
+#: 沙箱空闲回收可配置：分钟（docker/k8s 共用）。默认 30 分钟，对应上方 1800s。
+SANDBOX_IDLE_TIME_KEY = "sandbox_idle_time"
+SANDBOX_IDLE_TIME_DEFAULT_MINUTES = 30
+
+
+async def _effective_sandbox_idle_seconds(*, default_seconds: float) -> float:
+    """读取 ``sandbox_idle_time``（分钟）并换算为秒；非法/未配置时回退到默认秒。"""
+    from app.services.config_service import ConfigService
+
+    try:
+        raw = await ConfigService.get(
+            SANDBOX_IDLE_TIME_KEY,
+            str(SANDBOX_IDLE_TIME_DEFAULT_MINUTES),
+        )
+        minutes = float(str(raw or "0").strip())
+        if minutes > 0:
+            return minutes * 60.0
+    except (TypeError, ValueError):
+        pass
+    return float(default_seconds)
+
 
 class DockerSandboxUnavailableError(RuntimeError):
     """Docker 沙箱未能初始化，调用方不得回退到宿主 Bash。"""
@@ -1127,7 +1148,11 @@ async def _docker_workspace_reaper_loop(
     while True:
         await asyncio.sleep(interval_seconds)
         try:
-            await reap_idle_docker_workspaces(idle_seconds=idle_seconds)
+            # 空闲时长每次迭代实时读取配置（分钟），无需重启即对 docker 生效
+            effective_idle = await _effective_sandbox_idle_seconds(
+                default_seconds=idle_seconds
+            )
+            await reap_idle_docker_workspaces(idle_seconds=effective_idle)
         except asyncio.CancelledError:
             raise
         except Exception:  # noqa: BLE001
@@ -1181,7 +1206,11 @@ async def _k8s_workspace_reaper_loop(
     while True:
         await asyncio.sleep(interval_seconds)
         try:
-            await reap_idle_k8s_workspaces(idle_seconds=idle_seconds)
+            # 空闲时长每次迭代实时读取配置（分钟），无需重启即对 k8s 生效
+            effective_idle = await _effective_sandbox_idle_seconds(
+                default_seconds=idle_seconds
+            )
+            await reap_idle_k8s_workspaces(idle_seconds=effective_idle)
         except asyncio.CancelledError:
             raise
         except Exception:  # noqa: BLE001
