@@ -96,6 +96,37 @@ def _ensure_local_subpath_dirs(
             )
 
 
+def ensure_k8s_public_data_subdirs() -> str:
+    """K8s 策略专用:确保后端数据根下的公共目录存在。
+
+    只在 K8s 沙箱策略分支(``_policy_k8s_workspace``)调用,刻意不放在
+    ``app.utils.fs_paths.get_data_base_dir`` 全局路径里——那会让 Docker
+    策略的 ``_resolve_docker_public_docs_source`` 把"空 docs 目录"误判为
+    "已挂载公共文档"(Docker 以 ``isdir(data_root/docs)`` 作存在性判断)。
+
+    这里补建的是后端容器 ``/app/data``(K8s 下为 PVC 挂载点)下的 ``docs``:
+    - 后端文件工具(Grep/Glob/Read)直接访问 ``<data_root>/docs``;
+    - 共享 PVC 模式下沙箱 ``subPath: docs`` 也指向同一目录。
+    空 PVC 从未初始化时该目录可能不存在,导致 Grep 抛
+    ``Directory not found: /app/data/docs``、或沙箱 MountVolume 失败。
+    只补建目录骨架,内容(公共手册)由 k8s_deploy/data-init-job 一次性同步。
+    """
+    from app.utils.fs_paths import get_data_base_dir
+
+    data_root = get_data_base_dir()
+    for sub_name in ("docs",):
+        try:
+            os.makedirs(os.path.join(data_root, sub_name), exist_ok=True)
+        except OSError as exc:  # noqa: BLE001 - 只读/无权限时静默,由上层守卫提示
+            logger.warning(
+                "[k8s_workspace] Failed to ensure public subdir %s under %s: %s",
+                sub_name,
+                data_root,
+                exc,
+            )
+    return data_root
+
+
 def build_k8s_workspace_with_nanzi_adapter(
     base_workspace_class: type[Any],
     *,

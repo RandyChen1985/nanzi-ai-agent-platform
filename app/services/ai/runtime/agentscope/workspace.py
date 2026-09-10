@@ -1394,12 +1394,19 @@ async def _policy_k8s_workspace(
     from agentscope.workspace import K8sWorkspace
     from app.services.ai.runtime.agentscope.k8s_workspace import (
         build_k8s_workspace_with_nanzi_adapter,
+        ensure_k8s_public_data_subdirs,
     )
     from app.services.ai.runtime.agentscope.workspace_container_mcp import (
         K8S_GATEWAY_EXTRA_PIP,
         K8S_GATEWAY_VENV_PYTHON,
         build_container_tool_mcp,
     )
+
+    # K8s 专用:Ensure 后端数据根(private PVC)公共目录存在,避免空 PVC 下
+    # 沙箱 subPath docs mount 失败、且后端 Grep/Glob 访问
+    # /app/data/docs 报 "Directory not found"。刻意仅在本策略分支执行,
+    # 不影响 Docker 策略以 isdir(data_root/docs) 作公共文档挂载判断。
+    ensure_k8s_public_data_subdirs()
 
     namespace = (
         await _sandbox_config_value(
