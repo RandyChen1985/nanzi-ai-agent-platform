@@ -11,6 +11,7 @@ spec:
   replicas: 1
   revisionHistoryLimit: 3
   # RWO PVC 与单副本数据目录配套；升级时先停旧 Pod，再挂载新 Pod。
+  # 多节点/多副本：需 PVC 改为 RWX（见 pvc.yaml），并把本策略改为 RollingUpdate。
   strategy:
     type: Recreate
   selector:

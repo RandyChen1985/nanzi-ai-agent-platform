@@ -39,6 +39,9 @@ class Settings(BaseSettings):
     REDIS_DB: int = 0
     REDIS_PASSWORD: Optional[str] = None  # 改为 Optional 且默认为 None
     REDIS_ENABLE: bool = True
+    # 审计日志走 Redis 共享队列（多节点一致、崩溃不丢、落库失败可重试）。
+    # 关闭时回退进程内队列（单机可用）；Redis 连接不可用时也自动回退，不丢审计。
+    AUDIT_USE_REDIS_QUEUE: bool = True
     MCP_RATE_LIMIT_CLIENT_PER_MINUTE: int = 120
     MCP_RATE_LIMIT_USER_PER_MINUTE: int = 60
 

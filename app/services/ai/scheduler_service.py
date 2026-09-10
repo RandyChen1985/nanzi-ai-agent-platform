@@ -823,6 +823,23 @@ async def _system_audit_log_maintenance_job():
     System-level background job to auto-expand partitions and prune expired logs.
     """
     logger.info("⏰ Starting system audit log partition maintenance job...")
+
+    # 分布式锁（分钟级 key + nx=True + TTL）：避免多副本同时触发重复执行分区扩容/清理。
+    # 与 _system_memory_consolidation_job / _system_knowledge_metrics_sync_job 保持一致写法。
+    lock_key = (
+        f"lock:system_audit_log_maintenance:"
+        f"{datetime.now().strftime('%Y%m%d%H%M')}"
+    )
+    try:
+        if not await redis.redis_client.set(lock_key, "locked", ex=3600, nx=True):
+            logger.warning(
+                "⏩ System audit log maintenance skipped: lock already acquired by another node."
+            )
+            return
+    except Exception as lock_err:
+        logger.warning(f"Failed to acquire redis lock: {lock_err}")
+        return
+
     try:
         from app.services.partition_service import PartitionService
         from app.services.config_service import ConfigService

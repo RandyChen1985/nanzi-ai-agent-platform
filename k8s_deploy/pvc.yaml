@@ -8,7 +8,10 @@ metadata:
     app.kubernetes.io/component: storage
 spec:
   # 默认 Deployment 为单副本，因此使用更普遍的 RWO。
-  # 多副本必须改为集群可用的 RWX 共享存储，并同步调整部署策略。
+  # 多节点/多副本必须改为集群可用的 RWX 共享存储并同步调整部署策略：
+  #   1. 改用支持 ReadWriteMany 的 StorageClass（如 NFS / Longhorn RWX / 云厂商共享盘）；
+  #   2. 若集群默认 StorageClass 不支持 RWX，请在此显式指定 storageClassName；
+  #   3. 改 deployment.yaml 副本数，并同步把 Recreate 策略改为 RollingUpdate。
   accessModes:
     - ReadWriteOnce
   resources:
