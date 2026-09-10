@@ -188,13 +188,14 @@ const statusCopy = computed(() => {
 </script>
 
 <template>
-  <!-- 折叠浮标模式：idle 状态倒计时结束后显示，靠右对齐 -->
-  <Transition name="sandbox-chip-fade">
-    <div v-if="collapsed && workspaceStatus === 'idle'" class="mb-2 flex justify-end">
+  <!-- 折叠浮标模式：fixed 定位，右上角悬浮 -->
+  <Teleport to="body">
+    <Transition name="sandbox-chip-fade">
       <button
+        v-if="collapsed && workspaceStatus === 'idle'"
         type="button"
         data-testid="docker-workspace-banner-chip"
-        class="inline-flex items-center gap-1.5 rounded-full border border-gray-200/70 bg-gray-100/50 px-2.5 py-1 text-xs text-gray-400 transition-all hover:border-gray-300 hover:bg-gray-100 hover:text-gray-600 dark:border-white/10 dark:bg-white/5 dark:text-gray-500 dark:hover:border-white/20 dark:hover:bg-white/10 dark:hover:text-gray-400"
+        class="fixed right-4 top-14 z-40 inline-flex items-center gap-1.5 rounded-full border border-gray-200/70 bg-white/80 px-2.5 py-1 text-xs text-gray-400 backdrop-blur-sm transition-all hover:border-gray-300 hover:bg-white hover:text-gray-600 dark:border-white/10 dark:bg-gray-900/70 dark:text-gray-500 dark:hover:border-white/20 dark:hover:bg-gray-800/80 dark:hover:text-gray-400"
         :title="statusTexts.collapsedLabel"
         @click="expandBanner"
       >
@@ -202,8 +203,8 @@ const statusCopy = computed(() => {
         <span>沙箱未启动</span>
         <span class="opacity-60">点击展开</span>
       </button>
-    </div>
-  </Transition>
+    </Transition>
+  </Teleport>
 
   <!-- 完整 banner 模式 -->
   <Transition name="sandbox-banner-expand">
