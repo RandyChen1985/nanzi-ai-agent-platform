@@ -19,6 +19,8 @@ const emit = defineEmits<{
 
 const AUTO_DISMISS_SECONDS = 3;
 const remainingSeconds = ref(AUTO_DISMISS_SECONDS);
+/** 倒计时结束后折叠为浮标模式（不完全关闭） */
+const collapsed = ref(false);
 let countdownTimer: ReturnType<typeof setInterval> | null = null;
 
 const clearCountdown = () => {
@@ -37,7 +39,8 @@ const startCountdown = () => {
       remainingSeconds.value -= 1;
     } else {
       clearCountdown();
-      emit("close");
+      // 倒计时结束：折叠为浮标，而非完全关闭
+      collapsed.value = true;
     }
   }, 1000);
 };
@@ -47,14 +50,14 @@ const handleMouseEnter = () => {
 };
 
 const handleMouseLeave = () => {
-  if (props.workspaceStatus === "idle") {
+  if (props.workspaceStatus === "idle" && !collapsed.value) {
     clearCountdown();
     countdownTimer = setInterval(() => {
       if (remainingSeconds.value > 1) {
         remainingSeconds.value -= 1;
       } else {
         clearCountdown();
-        emit("close");
+        collapsed.value = true;
       }
     }, 1000);
   }
@@ -62,19 +65,28 @@ const handleMouseLeave = () => {
 
 const handleStart = () => {
   clearCountdown();
+  collapsed.value = false;
   emit("start");
+};
+
+const expandBanner = () => {
+  collapsed.value = false;
+  clearCountdown();
 };
 
 watch(
   () => props.workspaceStatus,
   (status) => {
-    if (status === "idle") {
-      startCountdown();
-    } else {
+    // 状态非 idle 时（如 starting / error），强制展开 banner
+    if (status !== "idle") {
+      collapsed.value = false;
       clearCountdown();
+    } else {
+      // 重新进入 idle（如停止后），重置折叠状态并重新开始倒计时
+      collapsed.value = false;
+      startCountdown();
     }
   },
-  { immediate: true },
 );
 
 onMounted(() => {
@@ -105,6 +117,7 @@ const statusTexts = computed(() => {
       startLabel: "启动我的沙箱 Pod",
       retryLabel: "重试启动",
       closeLabel: "关闭沙箱提示",
+      collapsedLabel: "K8s 沙箱未启动，点击查看",
     };
   }
   return {
@@ -123,6 +136,7 @@ const statusTexts = computed(() => {
     startLabel: "启动我的 Docker 沙箱",
     retryLabel: "重试启动",
     closeLabel: "关闭 Docker 沙箱提示",
+    collapsedLabel: "Docker 沙箱未启动，点击查看",
   };
 });
 
@@ -174,47 +188,91 @@ const statusCopy = computed(() => {
 </script>
 
 <template>
-  <div
-    role="status"
-    data-testid="docker-workspace-banner"
-    :class="`mb-2 flex flex-wrap items-center gap-2 rounded-xl border px-3 py-2 text-xs shadow-sm ${statusCopy.box} transition-opacity duration-300`"
-    @mouseenter="handleMouseEnter"
-    @mouseleave="handleMouseLeave"
-  >
-    <span class="font-semibold">{{ statusCopy.icon }} {{ statusCopy.title }}</span>
-    <span :class="statusCopy.hintTone">{{ statusCopy.hint }}</span>
-    <div class="ml-auto flex items-center gap-2">
-      <button
-        v-if="workspaceStatus === 'idle' || workspaceStatus === 'error'"
-        type="button"
-        class="rounded-lg border border-indigo-200 bg-white/70 px-2.5 py-1 font-medium text-indigo-700 hover:bg-indigo-100 disabled:cursor-not-allowed disabled:opacity-60 dark:border-indigo-500/40 dark:bg-indigo-950/30 dark:text-indigo-200 dark:hover:bg-indigo-900/50"
-        :aria-label="workspaceStatus === 'error' ? statusTexts.value.retryLabel : statusTexts.value.startLabel"
-        @click="handleStart"
-      >
-        {{ workspaceStatus === "error" ? statusTexts.value.retryLabel : statusTexts.value.startLabel }}
-      </button>
-      <button
-        v-else-if="workspaceStatus === 'running'"
-        type="button"
-        class="rounded-lg px-2 py-1 text-emerald-700/80 hover:bg-emerald-100/80 dark:text-emerald-200/80 dark:hover:bg-emerald-900/60"
-        aria-label="刷新沙箱状态"
-        @click="emit('refresh')"
-      >
-        刷新状态
-      </button>
-      <span v-else class="rounded-lg px-2 py-1 text-sky-700/70 dark:text-sky-200/70">
-        启动中...
-      </span>
+  <!-- 折叠浮标模式：idle 状态倒计时结束后显示，靠右对齐 -->
+  <Transition name="sandbox-chip-fade">
+    <div v-if="collapsed && workspaceStatus === 'idle'" class="mb-2 flex justify-end">
       <button
         type="button"
-        class="rounded-lg px-2 py-1 text-gray-500/80 hover:bg-black/5 hover:text-gray-700 dark:text-gray-300/80 dark:hover:bg-white/10 dark:hover:text-gray-100 inline-flex items-center gap-1"
-        :aria-label="statusTexts.value.closeLabel"
-        :title="workspaceStatus === 'idle' ? `${remainingSeconds}秒后自动关闭` : statusTexts.value.closeLabel"
-        @click="emit('close')"
+        data-testid="docker-workspace-banner-chip"
+        class="inline-flex items-center gap-1.5 rounded-full border border-gray-200/70 bg-gray-100/50 px-2.5 py-1 text-xs text-gray-400 transition-all hover:border-gray-300 hover:bg-gray-100 hover:text-gray-600 dark:border-white/10 dark:bg-white/5 dark:text-gray-500 dark:hover:border-white/20 dark:hover:bg-white/10 dark:hover:text-gray-400"
+        :title="statusTexts.collapsedLabel"
+        @click="expandBanner"
       >
-        <span>×</span>
-        <span v-if="workspaceStatus === 'idle'" class="text-[10px] opacity-70 font-mono">({{ remainingSeconds }}s)</span>
+        <span class="h-1.5 w-1.5 rounded-full bg-gray-300 dark:bg-gray-600" />
+        <span>沙箱未启动</span>
+        <span class="opacity-60">点击展开</span>
       </button>
     </div>
-  </div>
+  </Transition>
+
+  <!-- 完整 banner 模式 -->
+  <Transition name="sandbox-banner-expand">
+    <div
+      v-if="!collapsed"
+      role="status"
+      data-testid="docker-workspace-banner"
+      :class="`mb-2 flex flex-wrap items-center gap-2 rounded-xl border px-3 py-2 text-xs shadow-sm ${statusCopy.box} transition-opacity duration-300`"
+      @mouseenter="handleMouseEnter"
+      @mouseleave="handleMouseLeave"
+    >
+      <span class="font-semibold">{{ statusCopy.icon }} {{ statusCopy.title }}</span>
+      <span :class="statusCopy.hintTone">{{ statusCopy.hint }}</span>
+      <div class="ml-auto flex items-center gap-2">
+        <button
+          v-if="workspaceStatus === 'idle' || workspaceStatus === 'error'"
+          type="button"
+          class="rounded-lg border border-indigo-200 bg-white/70 px-2.5 py-1 font-medium text-indigo-700 hover:bg-indigo-100 disabled:cursor-not-allowed disabled:opacity-60 dark:border-indigo-500/40 dark:bg-indigo-950/30 dark:text-indigo-200 dark:hover:bg-indigo-900/50"
+          :aria-label="workspaceStatus === 'error' ? statusTexts.retryLabel : statusTexts.startLabel"
+          @click="handleStart"
+        >
+          {{ workspaceStatus === "error" ? statusTexts.retryLabel : statusTexts.startLabel }}
+        </button>
+        <button
+          v-else-if="workspaceStatus === 'running'"
+          type="button"
+          class="rounded-lg px-2 py-1 text-emerald-700/80 hover:bg-emerald-100/80 dark:text-emerald-200/80 dark:hover:bg-emerald-900/60"
+          aria-label="刷新沙箱状态"
+          @click="emit('refresh')"
+        >
+          刷新状态
+        </button>
+        <span v-else class="rounded-lg px-2 py-1 text-sky-700/70 dark:text-sky-200/70">
+          启动中...
+        </span>
+        <button
+          type="button"
+          class="rounded-lg px-2 py-1 text-gray-500/80 hover:bg-black/5 hover:text-gray-700 dark:text-gray-300/80 dark:hover:bg-white/10 dark:hover:text-gray-100 inline-flex items-center gap-1"
+          :aria-label="statusTexts.closeLabel"
+          :title="workspaceStatus === 'idle' ? `${remainingSeconds}秒后折叠` : statusTexts.closeLabel"
+          @click="emit('close')"
+        >
+          <span>×</span>
+          <span v-if="workspaceStatus === 'idle'" class="text-[10px] opacity-70 font-mono">({{ remainingSeconds }}s)</span>
+        </button>
+      </div>
+    </div>
+  </Transition>
 </template>
+
+<style scoped>
+.sandbox-chip-fade-enter-active,
+.sandbox-chip-fade-leave-active {
+  transition: opacity 0.25s ease, transform 0.25s ease;
+}
+.sandbox-chip-fade-enter-from,
+.sandbox-chip-fade-leave-to {
+  opacity: 0;
+  transform: scale(0.85);
+}
+
+.sandbox-banner-expand-enter-active,
+.sandbox-banner-expand-leave-active {
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+.sandbox-banner-expand-enter-from,
+.sandbox-banner-expand-leave-to {
+  opacity: 0;
+  transform: scaleY(0.9);
+  transform-origin: top;
+}
+</style>
