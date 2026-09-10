@@ -11,6 +11,8 @@ logger = logging.getLogger(__name__)
 
 MAX_LOCAL_SQL_ROWS = 1000
 MAX_LOCAL_RESULT_BYTES = 2 * 1024 * 1024
+# 明细导出专用行数上限：远大于 AI 分析抽样上限，但仍设硬顶防全表爆炸。
+MAX_EXPORT_SQL_ROWS = 100000
 
 import sqlglot
 from sqlglot.errors import ParseError
@@ -165,6 +167,7 @@ async def call_external_sql_api(
     data_source: Optional[str] = None,
     cache_scope: Optional[str] = None,
     include_total: bool = False,
+    for_export: bool = False,
 ) -> str:
     """
     执行物理 SQL 查询的统一入口：支持本地 Adapter 直连与远程 API 调用的双层分流控制。
@@ -173,6 +176,10 @@ async def call_external_sql_api(
     否则不同用户在行级权限场景下可能复用到彼此的缓存结果，造成跨用户数据泄露。
     include_total: 是否额外执行不带 LIMIT 的 COUNT 查询并返回精确总数。
         ChatBI 主链路开启；沙箱预检和其他只需要样例行的调用保持关闭。
+    for_export: 是否为「完整明细导出」通道（AI 分析口径为 False）。
+        开启后行数上限放宽到 MAX_EXPORT_SQL_ROWS（10 万行），并跳过 2MB 返回体
+        硬限制（导出大明细可能超过该值）；结果不写入 AI 分析缓存作用域，防止污染
+        AI 查数缓存。仅由直链导出端点（chatbi_export）调用，AI 工具链路保持 False。
     """
     # Dynamic Config
     from app.services.config_service import ConfigService
@@ -218,6 +225,8 @@ async def call_external_sql_api(
     # Cache Key 必须包含执行模式（避免 local/remote 切换复用）与用户作用域（避免跨用户复用行级结果）。
     scope = str(cache_scope) if cache_scope is not None and str(cache_scope).strip() else "anon"
     cache_variant = "with_total" if include_total else "rows_only"
+    if for_export:
+        cache_variant = "export_full"
     cache_digest = hashlib.md5(
         (cache_variant + "|" + scope + "|" + sql + "|" + (data_source or "")).encode()
     ).hexdigest()
@@ -247,10 +256,13 @@ async def call_external_sql_api(
         except Exception as e:
             return f"[TOOL_ERROR] 安全策略违规：{str(e)}\n\n[Executed SQL]:\n{sql}"
 
-        # 强制行数限制（最大不超过 1000 行），根据数据库类型转换方言
+        # 强制行数限制：AI 分析口径 1000 行；完整导出口径放宽到 10 万行。
+        # 根据数据库类型转换方言。
         from app.services.ai.sql_dialect_limit import apply_dialect_row_limit
         from app.services.data_adapter.oracle import OracleAdapter
         from app.services.data_adapter.sqlserver import SQLServerAdapter
+
+        row_limit = MAX_EXPORT_SQL_ROWS if for_export else MAX_LOCAL_SQL_ROWS
 
         if isinstance(adapter, OracleAdapter):
             clean_sql = sql.strip().rstrip(";")
@@ -261,25 +273,25 @@ async def call_external_sql_api(
 
             if rownum_match:
                 limit_val = int(rownum_match.group(2))
-                if limit_val > MAX_LOCAL_SQL_ROWS:
-                    sql_limited = clean_sql[:rownum_match.start(2)] + str(MAX_LOCAL_SQL_ROWS) + clean_sql[rownum_match.end(2):]
+                if limit_val > row_limit:
+                    sql_limited = clean_sql[:rownum_match.start(2)] + str(row_limit) + clean_sql[rownum_match.end(2):]
                 else:
                     sql_limited = clean_sql
             elif fetch_match:
                 limit_val = int(fetch_match.group(1))
-                if limit_val > MAX_LOCAL_SQL_ROWS:
-                    sql_limited = clean_sql[:fetch_match.start(1)] + str(MAX_LOCAL_SQL_ROWS) + clean_sql[fetch_match.end(1):]
+                if limit_val > row_limit:
+                    sql_limited = clean_sql[:fetch_match.start(1)] + str(row_limit) + clean_sql[fetch_match.end(1):]
                 else:
                     sql_limited = clean_sql
             else:
-                sql_limited = f"SELECT * FROM ({clean_sql}) WHERE ROWNUM <= {MAX_LOCAL_SQL_ROWS}"
+                sql_limited = f"SELECT * FROM ({clean_sql}) WHERE ROWNUM <= {row_limit}"
         elif isinstance(adapter, SQLServerAdapter):
             clean_sql = sql.strip().rstrip(";")
             sql_limited = apply_dialect_row_limit(
                 clean_sql,
                 dialect="tsql",
-                limit=MAX_LOCAL_SQL_ROWS,
-                max_limit=MAX_LOCAL_SQL_ROWS,
+                limit=row_limit,
+                max_limit=row_limit,
             )
         else:
             # MySQL / ClickHouse 使用 LIMIT
@@ -288,12 +300,12 @@ async def call_external_sql_api(
             limit_match = re.search(r"\bLIMIT\s+(\d+)", sql, re.IGNORECASE)
             if limit_match:
                 limit_val = int(limit_match.group(1))
-                if limit_val > MAX_LOCAL_SQL_ROWS:
-                    sql_limited = sql[:limit_match.start(1)] + str(MAX_LOCAL_SQL_ROWS) + sql[limit_match.end(1):]
+                if limit_val > row_limit:
+                    sql_limited = sql[:limit_match.start(1)] + str(row_limit) + sql[limit_match.end(1):]
                 else:
                     sql_limited = sql
             else:
-                sql_limited = f"SELECT * FROM ({clean_sql}) AS _sub LIMIT {MAX_LOCAL_SQL_ROWS}"
+                sql_limited = f"SELECT * FROM ({clean_sql}) AS _sub LIMIT {row_limit}"
 
         count_sql: Optional[str] = None
         count_status = "not_requested"
@@ -338,7 +350,7 @@ async def call_external_sql_api(
                     count_error=count_error,
                 )
             result_json = json.dumps(res_data, ensure_ascii=False)
-            if len(result_json.encode("utf-8")) > MAX_LOCAL_RESULT_BYTES:
+            if not for_export and len(result_json.encode("utf-8")) > MAX_LOCAL_RESULT_BYTES:
                 return f"[TOOL_ERROR] 本地执行结果超过最大返回体限制 ({MAX_LOCAL_RESULT_BYTES} bytes)，请缩小查询字段或过滤条件。\n\n[Executed SQL]:\n{sql}"
 
             # 设置缓存
@@ -407,7 +419,23 @@ async def call_external_sql_api(
                 count_status = "unknown"
                 count_error = _count_error_category(error)
 
-        detail_payload = {**payload, "sql": sql}
+        # 远程模式：完整导出口径下本端同样收紧行数上限（远程服务端也可能不默认限制）。
+        detail_sql = sql
+        if for_export:
+            try:
+                from app.services.ai.sql_dialect_limit import apply_dialect_row_limit
+
+                detail_sql = apply_dialect_row_limit(
+                    sql.strip().rstrip(";"),
+                    dialect=dialect_from_data_source(data_source),
+                    limit=MAX_EXPORT_SQL_ROWS,
+                    max_limit=MAX_EXPORT_SQL_ROWS,
+                )
+            except Exception as limit_err:
+                logger.warning(
+                    "[Agent Remote] 导出行数限制应用失败，沿用原 SQL: %s", limit_err
+                )
+        detail_payload = {**payload, "sql": detail_sql}
         response = await client.post(api_url, headers=headers, json=detail_payload, timeout=timeout)
 
         if response.is_error:
