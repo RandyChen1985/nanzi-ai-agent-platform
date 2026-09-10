@@ -759,12 +759,25 @@ const toggleConfigGroup = (category: string) => {
   collapsedConfigGroups.value = next
 }
 
-const expandAllConfigGroups = () => {
-  collapsedConfigGroups.value = new Set()
+// 参数配置左侧 Tab 栏：当前聚焦的配置分组
+const activeConfigCategory = ref<string>('')
+const realizedActiveCategory = computed(() => {
+  const cats = orderedCategories.value
+  if (!cats.length) return ''
+  if (cats.includes(activeConfigCategory.value)) return activeConfigCategory.value
+  return cats[0]
+})
+const selectConfigCategory = (cat: string) => {
+  activeConfigCategory.value = cat
+  // 聚焦即展开该组，避免切换后看到空收起卡片
+  const next = new Set(collapsedConfigGroups.value)
+  next.delete(cat)
+  collapsedConfigGroups.value = next
 }
-
-const collapseAllConfigGroups = () => {
-  collapsedConfigGroups.value = new Set(orderedCategories.value)
+const changedConfigCountFor = (cat: string) => {
+  const items = configGroups.value[cat]
+  if (!items || !originalConfigs.value) return 0
+  return items.filter(it => it.value !== originalConfigs.value[it.key]).length
 }
 
 const metadataProvider = computed(() => {
@@ -2036,8 +2049,9 @@ const getVisibleItems = (items: ConfigItem[] | undefined, category: string) => {
       local: []
     }
     const visibleForPolicy = policyKeySets[policy] || []
-    // 跨策略通用键：无论当前沙箱策略为何，均需展示
-    const alwaysVisibleKeys = ['sandbox_auto_warm', 'sandbox_idle_time']
+    // 通用容器沙箱键（docker/k8s 共用）：仅在 docker/k8s 策略下展示，local/e2b/ssh 不显示
+    const containerCommonKeys = ['sandbox_auto_warm', 'sandbox_idle_time']
+    const alwaysVisibleKeys = (policy === 'docker' || policy === 'k8s') ? containerCommonKeys : []
     const order = ['sandbox_policy', ...alwaysVisibleKeys, ...visibleForPolicy]
     list = list.filter(x => x.key === 'sandbox_policy' || visibleForPolicy.includes(x.key) || alwaysVisibleKeys.includes(x.key))
     if (policy === 'ssh') {
@@ -2849,8 +2863,62 @@ onUnmounted(() => {
          <div v-if="configLoading" class="flex justify-center py-20">
              <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
          </div>
-         <div v-else class="space-y-8 max-w-4xl">
-             <div v-if="orderedCategories.length" class="flex flex-wrap items-center justify-between gap-3 -mb-4">
+         <div v-else-if="!orderedCategories.length" class="py-10 text-center text-sm text-gray-400">暂无可用配置项</div>
+         <div v-else class="md:grid md:grid-cols-[220px_minmax(0,1fr)] md:gap-6">
+             <!-- 移动端：横向可滚动组选择条 -->
+             <div class="flex items-center gap-2 overflow-x-auto pb-3 -mx-1 px-1 custom-scrollbar md:hidden">
+                <button
+                  v-for="cat in orderedCategories"
+                  :key="cat"
+                  type="button"
+                  @click="selectConfigCategory(String(cat))"
+                  class="inline-flex shrink-0 items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-medium transition-colors cursor-pointer"
+                  :class="cat === realizedActiveCategory
+                    ? 'border-primary bg-primary text-white shadow-md shadow-primary/20'
+                    : 'border-gray-200 bg-white text-gray-600 hover:border-primary/30 hover:text-primary'"
+                >
+                   <component :is="getCategoryIcon(String(cat))" class="h-3.5 w-3.5" />
+                   {{ getCategoryLabel(String(cat)) }}
+                   <span v-if="changedConfigCountFor(String(cat)) > 0" class="rounded-full bg-white px-1.5 py-0.5 text-[10px] font-bold text-primary leading-none">{{ changedConfigCountFor(String(cat)) }}</span>
+                </button>
+             </div>
+             <!-- 桌面端：左侧组导航栏 -->
+             <aside class="hidden md:block">
+                <nav class="sticky top-0 space-y-1 rounded-xl border border-gray-100 bg-gray-50/70 p-3 shadow-sm">
+                   <div class="mb-2 flex items-center gap-2 px-2 pt-1 pb-2 text-xs font-bold uppercase tracking-wide text-gray-400">
+                     配置分组
+                   </div>
+                   <button
+                     v-for="cat in orderedCategories"
+                     :key="cat"
+                     type="button"
+                     @click="selectConfigCategory(String(cat))"
+                     class="flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-left text-sm transition-all cursor-pointer"
+                     :class="cat === realizedActiveCategory
+                       ? 'bg-primary font-semibold text-white shadow-md shadow-primary/20'
+                       : 'text-gray-600 hover:bg-white hover:text-gray-900 hover:shadow-sm'"
+                   >
+                      <span
+                        class="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border transition-colors"
+                        :class="cat === realizedActiveCategory
+                          ? 'border-white/20 bg-white/15 text-white'
+                          : 'border-gray-100 bg-white text-gray-500 shadow-sm'"
+                      >
+                         <component :is="getCategoryIcon(String(cat))" class="h-4 w-4" />
+                      </span>
+                      <span class="flex-1 truncate">{{ getCategoryLabel(String(cat)) }}</span>
+                      <span
+                        v-if="changedConfigCountFor(String(cat)) > 0"
+                        class="shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-bold leading-none"
+                        :class="cat === realizedActiveCategory ? 'bg-white text-primary' : 'bg-amber-500 text-white'"
+                        :title="`${changedConfigCountFor(String(cat))} 项未保存`"
+                      >{{ changedConfigCountFor(String(cat)) }}</span>
+                   </button>
+                </nav>
+             </aside>
+             <!-- 右侧：当前组内容 -->
+             <div class="min-w-0">
+             <div class="flex flex-wrap items-center justify-between gap-3">
                <!-- 左侧：未保存状态指示 -->
                <div class="flex items-center gap-2">
                  <div
@@ -2865,25 +2933,8 @@ onUnmounted(() => {
                  </div>
                </div>
 
-               <!-- 右侧：展开/折叠与顶部常驻操作 -->
+               <!-- 右侧：顶部常驻操作 -->
                <div class="flex items-center gap-2">
-                 <button
-                   type="button"
-                   @click="expandAllConfigGroups"
-                   class="inline-flex items-center gap-1 rounded-md border border-gray-200 bg-white px-2.5 py-1.5 text-xs font-medium text-gray-600 shadow-sm transition-colors hover:border-primary/30 hover:bg-primary/5 hover:text-primary cursor-pointer"
-                 >
-                   <span aria-hidden="true">▾</span>
-                   全部展开
-                 </button>
-                 <button
-                   type="button"
-                   @click="collapseAllConfigGroups"
-                   class="inline-flex items-center gap-1 rounded-md border border-gray-200 bg-white px-2.5 py-1.5 text-xs font-medium text-gray-600 shadow-sm transition-colors hover:border-primary/30 hover:bg-primary/5 hover:text-primary cursor-pointer"
-                 >
-                   <span aria-hidden="true">▸</span>
-                   全部折叠
-                 </button>
-
                  <template v-if="canSave">
                    <button
                      v-if="hasUnsavedConfigChanges"
@@ -2913,7 +2964,7 @@ onUnmounted(() => {
                  </template>
                </div>
              </div>
-             <div v-for="category in orderedCategories" :key="category" class="bg-white shadow rounded-lg">
+             <div v-for="category in [realizedActiveCategory]" :key="category" class="bg-white shadow rounded-lg">
                 <button
                   type="button"
                   class="w-full bg-gray-50 px-6 py-3 border-b border-gray-200 rounded-t-lg flex items-center text-left transition-colors hover:bg-gray-100"
@@ -4253,6 +4304,7 @@ onUnmounted(() => {
                    <span>{{ saving ? '保存中...' : '保存变更 (⌘S)' }}</span>
                  </button>
               </div>
+            </div><!-- /当前组内容 -->
           </div>
        </div>
 
