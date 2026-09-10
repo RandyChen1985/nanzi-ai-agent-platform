@@ -326,7 +326,7 @@ async def list_files(
         is_root=is_root,
         scope=scope,
         items=_list_directory_entries(target_path, user_info),
-        writable=is_path_writable(target_path, user_info) and not _is_trash_path(target_path, user_info),
+        writable=is_path_writable(target_path, user_info) and not _is_trash_path(target_path, user_info) and not (is_fs_admin(user_info) and target_path == get_base_dir()),
         user_workspace_root=_user_workspace_root_for_response(user_info),
         is_virtual_root=False,
     ))
@@ -616,7 +616,10 @@ async def create_fs_entry(
     user_info: Dict[str, Any] = Depends(require_api_key),
 ):
     parent_path = assert_path_allowed(body.parent_path, user_info)
-    parent_writable = assert_path_writable(parent_path, user_info)
+    if is_fs_admin(user_info):
+        parent_writable = parent_path
+    else:
+        parent_writable = assert_path_writable(parent_path, user_info)
     if not os.path.isdir(parent_writable):
         raise HTTPException(status_code=400, detail="目标路径不是目录。")
 
@@ -625,7 +628,9 @@ async def create_fs_entry(
     # Validate the final resolved target as well as the parent. This blocks a
     # dangling or existing symlink inside the workspace from redirecting a
     # create/write operation outside the user's private workspace.
-    assert_path_writable(os.path.realpath(target), user_info)
+    # Admin 跳过私有目录的限制，但仍需确保在 data 根目录内。
+    if not is_fs_admin(user_info):
+        assert_path_writable(os.path.realpath(target), user_info)
     if os.path.lexists(target):
         raise HTTPException(status_code=409, detail="同名文件或目录已存在。")
 
@@ -665,7 +670,10 @@ FORBIDDEN_UPLOAD_EXTENSIONS = {".exe", ".bat", ".sh", ".cmd", ".com", ".msi", ".
 
 
 def _resolve_writable_entry_path(path: str, user_info: Dict[str, Any]) -> str:
+    """解析可写路径。admin 可操作全部授权目录，普通用户仅限私有目录。"""
     safe_path = assert_path_allowed(path, user_info)
+    if is_fs_admin(user_info):
+        return safe_path
     return assert_path_writable(safe_path, user_info)
 
 
@@ -797,6 +805,20 @@ async def delete_fs_entry(
     source = _resolve_writable_entry_path(body.path, user_info)
     if not os.path.exists(source):
         raise HTTPException(status_code=404, detail="文件或目录不存在。")
+
+    # admin 删除公共目录内容时直接永久删除（公共目录不属于任何人的回收站）
+    if is_fs_admin(user_info) and is_public_fs_path(source):
+        try:
+            if os.path.isdir(source):
+                shutil.rmtree(source)
+            else:
+                os.remove(source)
+        except OSError as exc:
+            raise HTTPException(status_code=500, detail=f"删除失败: {exc}") from exc
+        return StandardResponse(
+            data=FileDeleteResponse(path=source, trashed_path="")
+        )
+
     basename = os.path.basename(source)
     trash_dir = _trash_dir_for(user_info)
     trashed_name = f"{int(time.time())}_{uuid.uuid4().hex[:8]}_{basename}"

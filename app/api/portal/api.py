@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends
 from app.core.dependencies import require_admin, require_api_key
-from app.api.portal.endpoints import auth, audit, management, keys, dashboard, system, chat, metadata, agents, prompts, slash_commands, health, models, tools, ragflow, roles, mcp, mcp_service, changelog, chat_feedback, examples, chatbi_briefs, chatbi_monitors, skills, personal_skills, memory, saved_reports, portal_prefs, quota, notifications, inbox, data_portal, scenario_templates, workbench
+from app.api.portal.endpoints import auth, audit, management, keys, dashboard, system, chat, metadata, agents, prompts, slash_commands, health, models, tools, ragflow, roles, mcp, mcp_service, changelog, chat_feedback, examples, chatbi_briefs, chatbi_monitors, chatbi_export, skills, personal_skills, memory, saved_reports, portal_prefs, quota, notifications, inbox, data_portal, scenario_templates, workbench
 
 portal_router = APIRouter()
 
@@ -22,6 +22,7 @@ portal_router.include_router(chat_feedback.router, prefix="/chat", tags=["反馈
 portal_router.include_router(examples.router, prefix="/examples", tags=["问答经验库"], dependencies=[Depends(require_api_key)])
 portal_router.include_router(chatbi_briefs.router, prefix="/chatbi-briefs", tags=["ChatBI业务简报"], dependencies=[Depends(require_api_key)])
 portal_router.include_router(chatbi_monitors.router, prefix="/chatbi-monitors", tags=["ChatBI指标监控"], dependencies=[Depends(require_api_key)])
+portal_router.include_router(chatbi_export.router, prefix="/chatbi-export", tags=["ChatBI明细导出"], dependencies=[Depends(require_api_key)])
 
 # 5. 审计日志 (Audit)
 portal_router.include_router(audit.router, prefix="/audit", tags=["审计日志"], dependencies=[Depends(require_api_key)])

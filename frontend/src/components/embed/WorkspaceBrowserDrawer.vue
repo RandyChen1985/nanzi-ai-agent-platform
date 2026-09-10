@@ -55,6 +55,7 @@ const parentPath = ref<string | null>(null)
 const isRoot = ref<boolean>(true)
 const isVirtualRoot = ref(false)
 const scope = ref<'admin_all' | 'user_scoped'>('user_scoped')
+const isAdminScope = computed(() => scope.value === 'admin_all')
 const items = ref<any[]>([])
 const loading = ref<boolean>(false)
 const baseDir = ref<string>('')
@@ -65,7 +66,7 @@ const contextMenu = ref<{ x: number; y: number; parentPath: string; item?: { pat
 const createDialog = ref<{ kind: 'file' | 'dir'; parentPath: string; name: string } | null>(null)
 const createSubmitting = ref(false)
 const renameDialog = ref<{ path: string; name: string; isDir: boolean } | null>(null)
-const deleteTarget = ref<{ path: string; name: string; isDir: boolean } | null>(null)
+const deleteTarget = ref<{ path: string; name: string; isDir: boolean; isPublic?: boolean } | null>(null)
 const purgeTarget = ref<{ path: string; name: string; isDir: boolean } | null>(null)
 const emptyTrashConfirm = ref(false)
 const emptyTrashSubmitting = ref(false)
@@ -720,7 +721,10 @@ const isPublicItem = (item?: { path?: string; is_public?: boolean; is_user_works
   return !isPathInUserWorkspace(item.path)
 }
 
-const canCreateInPath = (parentPath: string) => isPathInUserWorkspace(parentPath) && !isTrashPath(parentPath)
+const canCreateInPath = (parentPath: string) => {
+  if (isAdminScope.value && currentPathWritable.value && !isTrashPath(parentPath)) return true
+  return isPathInUserWorkspace(parentPath) && !isTrashPath(parentPath)
+}
 
 const canUseCreateMenu = computed(
   () => !isRecursiveListingActive.value && !loading.value && !searchLoading.value,
@@ -1253,8 +1257,8 @@ const submitRename = async () => {
   }
 }
 
-const confirmDeleteEntry = (item: { path: string; name: string; is_dir: boolean }) => {
-  deleteTarget.value = { path: item.path, name: item.name, isDir: item.is_dir }
+const confirmDeleteEntry = (item: { path: string; name: string; is_dir: boolean; is_public?: boolean }) => {
+  deleteTarget.value = { path: item.path, name: item.name, isDir: item.is_dir, isPublic: isAdminScope.value && !!item.is_public }
   closeContextMenu()
 }
 
@@ -1262,7 +1266,7 @@ const submitDelete = async () => {
   if (!deleteTarget.value) return
   try {
     await deleteWorkspaceEntry(deleteTarget.value.path)
-    showToast('已移入回收站', 'success')
+    showToast(deleteTarget.value.isPublic ? '已永久删除' : '已移入回收站', 'success')
     deleteTarget.value = null
     await fetchDirectory(currentPath.value, { preserveSearch: true })
   } catch (error: any) {
@@ -1327,7 +1331,10 @@ const openTrashFolder = async (item: { path: string }) => {
   await fetchDirectory(item.path)
 }
 
-const canManageItem = (item: { path: string }) => isPathInUserWorkspace(item.path) && !isTrashPath(item.path)
+const canManageItem = (item: { path: string }) => {
+  if (isAdminScope.value && !isTrashPath(item.path)) return true
+  return isPathInUserWorkspace(item.path) && !isTrashPath(item.path)
+}
 
 const handleTouchStart = (event: TouchEvent, item: { path: string; name: string; is_dir: boolean }) => {
   if (!isMobile.value) return
@@ -1943,10 +1950,10 @@ onUnmounted(() => {
                               <span
                                 v-else-if="isPublicItem(item)"
                                 class="inline-flex items-center gap-1 mt-1 px-1.5 py-0.5 rounded-md text-[9px] font-bold bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-300 ring-1 ring-amber-200/60 dark:ring-amber-500/20"
-                                title="公共只读目录或资源，禁止修改或删除"
+                                :title="isAdminScope ? '公共目录（管理员可编辑）' : '公共只读目录或资源，禁止修改或删除'"
                               >
                                 <span>公共目录</span>
-                                <span class="text-[8px] opacity-75 font-normal">· 只读</span>
+                                <span v-if="!isAdminScope" class="text-[8px] opacity-75 font-normal">· 只读</span>
                               </span>
                               <span
                                 v-if="isSessionDirItem(item)"
@@ -2317,9 +2324,11 @@ onUnmounted(() => {
         <button type="button" class="w-full px-3 py-2 text-left hover:bg-red-50 dark:hover:bg-red-900/20 text-red-600 transition-colors focus:outline-none" @click="confirmDeleteEntry(contextMenu.item!)">🗑️ 删除</button>
       </template>
       <template v-else-if="contextMenu.item && isPublicItem(contextMenu.item)">
-        <div class="px-3 py-1.5 text-[10px] text-amber-600 dark:text-amber-400 font-bold border-b border-gray-100 dark:border-gray-800 flex items-center gap-1 select-none">
-          <span>🔒</span>
-          <span>公共只读资源</span>
+        <div class="px-3 py-1.5 text-[10px] font-bold border-b border-gray-100 dark:border-gray-800 flex items-center gap-1 select-none"
+          :class="isAdminScope ? 'text-primary/80 dark:text-primary/70' : 'text-amber-600 dark:text-amber-400'"
+        >
+          <span>{{ isAdminScope ? '🗂️' : '🔒' }}</span>
+          <span>{{ isAdminScope ? '公共目录（管理员）' : '公共只读资源' }}</span>
         </div>
         <button
           v-if="contextMenu.item.is_dir"
@@ -2359,6 +2368,12 @@ onUnmounted(() => {
         >
           📋 复制路径
         </button>
+        <!-- 管理员可对公共目录执行重命名和删除 -->
+        <template v-if="isAdminScope">
+          <div class="mx-3 my-1 border-t border-gray-100 dark:border-gray-800" />
+          <button type="button" class="w-full px-3 py-2 text-left hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors focus:outline-none" @click="startRenameEntry(contextMenu.item!)">✏️ 重命名</button>
+          <button type="button" class="w-full px-3 py-2 text-left hover:bg-red-50 dark:hover:bg-red-900/20 text-red-600 transition-colors focus:outline-none" @click="confirmDeleteEntry(contextMenu.item!)">🗑️ 永久删除</button>
+        </template>
       </template>
       <template v-if="contextMenu.item && isTrashListItem(contextMenu.item)">
         <button type="button" class="w-full px-3 py-2 text-left hover:bg-emerald-50 dark:hover:bg-emerald-900/20 text-emerald-600 transition-colors focus:outline-none" @click="restoreTrashItem(contextMenu.item!); closeContextMenu()">♻️ 恢复</button>
@@ -2429,11 +2444,13 @@ onUnmounted(() => {
   <Teleport to="body">
     <div v-if="deleteTarget" class="fixed inset-0 z-[131] flex items-center justify-center p-4 bg-black/30" @click.self="deleteTarget = null">
       <div class="w-full max-w-sm rounded-2xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 shadow-2xl p-4" @click.stop>
-        <h3 class="text-sm font-bold mb-2">移入回收站？</h3>
-        <p class="text-xs text-gray-500 mb-4">{{ deleteTarget.name }}</p>
+        <h3 class="text-sm font-bold mb-2" :class="deleteTarget.isPublic ? 'text-red-600' : ''">{{ deleteTarget.isPublic ? '永久删除？' : '移入回收站？' }}</h3>
+        <p class="text-xs text-gray-500 mb-1">{{ deleteTarget.name }}</p>
+        <p v-if="deleteTarget.isPublic" class="text-xs text-red-500 mb-4">⚠️ 该文件属于公共目录，将被<strong>永久删除</strong>，不可恢复。</p>
+        <p v-else class="text-xs text-gray-400 mb-4">将被移入回收站，可在回收站中恢复。</p>
         <div class="flex justify-end gap-2">
           <button type="button" class="px-3 py-1.5 text-xs font-bold text-gray-500" @click="deleteTarget = null">取消</button>
-          <button type="button" class="px-3 py-1.5 text-xs font-bold text-white bg-red-500 rounded-lg" @click="submitDelete">删除</button>
+          <button type="button" class="px-3 py-1.5 text-xs font-bold text-white bg-red-500 rounded-lg" @click="submitDelete">{{ deleteTarget.isPublic ? '永久删除' : '删除' }}</button>
         </div>
       </div>
     </div>

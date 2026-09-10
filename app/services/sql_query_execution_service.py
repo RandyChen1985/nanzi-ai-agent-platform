@@ -373,6 +373,7 @@ async def execute_sql_query_core(
     sql_query_binding: Any | None = None,
     permission_notice: Optional[Dict[str, Any]] = None,
     include_total: bool = True,
+    for_export: bool = False,
 ) -> str:
     """
     在给定 DB 会话下完成权限重写与执行；调用方负责会话生命周期。
@@ -391,6 +392,8 @@ async def execute_sql_query_core(
                  不包含具体过滤条件表达式。
         include_total: 是否执行不带行数限制的 COUNT 查询并在结果中附加精确总数；
                        ChatBI 业务查询默认开启，诊断/样例探查可关闭。
+        for_export: 是否为完整明细导出通道；为 True 时透传给 call_external_sql_api，
+                    放宽行数上限（10 万行）并跳过 2MB 返回体硬限制，且不写入 AI 分析缓存。
     """
     from app.services.ai.chatbi_sql_query_binding import (
         build_data_perm_table_metadata,
@@ -621,4 +624,5 @@ async def execute_sql_query_core(
         data_source=data_source,
         cache_scope=str(user_id_eff) if user_id_eff is not None else None,
         include_total=include_total,
+        for_export=for_export,
     )

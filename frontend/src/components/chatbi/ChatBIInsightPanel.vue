@@ -31,7 +31,7 @@
             v-for="tab in tabs"
             :key="tab.id"
             type="button"
-            class="group/tab inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider transition-colors"
+            class="group/tab relative inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider transition-colors"
             :class="
               activeTab === tab.id
                 ? 'text-gray-600 dark:text-gray-200'
@@ -40,6 +40,43 @@
             @click="toggleTab(tab.id)"
           >
             {{ tab.label }}
+            <!-- 首次使用引导气泡：挂在「明细」页签上，提示用户这里可以看/导明细 -->
+            <transition
+              enter-active-class="transition-all duration-300 ease-out"
+              enter-from-class="opacity-0 -translate-y-2 scale-95"
+              enter-to-class="opacity-100 translate-y-0 scale-100"
+              leave-active-class="transition-all duration-200 ease-in"
+              leave-from-class="opacity-100 translate-y-0 scale-100"
+              leave-to-class="opacity-0 -translate-y-1 scale-95"
+            >
+              <div
+                v-if="showExportHint && tab.id === 'table'"
+                class="absolute left-1/2 top-full z-[5] mt-2 whitespace-nowrap rounded-xl border border-primary/20 bg-primary/95 px-3 py-2 text-[12px] text-white shadow-2xl backdrop-blur-md dark:border-slate-700/60 dark:bg-slate-900/95"
+                style="transform: translateX(-50%)"
+                role="status"
+              >
+                <div class="absolute -top-1.5 left-1/2 h-3 w-3 -translate-x-1/2 rotate-45 border-l border-t border-primary/20 bg-primary/95 dark:border-slate-700/60 dark:bg-slate-900/95" />
+                <div class="flex items-center gap-2.5">
+                  <svg class="h-4 w-4 shrink-0 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                  </svg>
+                  <div class="flex flex-col text-left">
+                    <span class="font-bold leading-tight">查看并导出完整明细</span>
+                    <span class="mt-0.5 text-[11px] leading-tight text-white/85 dark:text-slate-300">这里可看数据，也能一次导最多 10 万行</span>
+                  </div>
+                  <button
+                    type="button"
+                    @click.stop="dismissExportHint"
+                    class="ml-1 rounded-md p-1 text-white/70 transition-colors hover:bg-white/20 hover:text-white dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-white"
+                    title="知道了"
+                  >
+                    <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
+                </div>
+              </div>
+            </transition>
           </button>
         </div>
         <span
@@ -105,18 +142,69 @@
       <p v-if="sampleNotice" class="mb-1.5 text-[10px] leading-relaxed text-gray-400 dark:text-gray-500">
         {{ sampleNotice }}
       </p>
+      <p
+        v-if="federatedNotice"
+        class="mb-1.5 text-[10px] leading-relaxed text-amber-600/90 dark:text-amber-400/90"
+      >
+        {{ federatedNotice }}
+      </p>
       <div class="mb-1 flex items-center justify-between gap-2 text-[10px] text-gray-400">
-        <button
-          type="button"
-          class="inline-flex items-center gap-1 text-gray-400 transition-colors hover:text-primary"
-          title="导出全部嵌入行的 Markdown 表格"
-          @click="exportMarkdown"
-        >
-          <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-          </svg>
-          <span>导出 Markdown</span>
-        </button>
+        <div class="flex items-center gap-2.5">
+          <div ref="exportMenuRef" class="relative inline-flex">
+          <button
+            type="button"
+            class="inline-flex items-center gap-1 font-semibold text-primary/80 transition-colors hover:text-primary disabled:cursor-not-allowed disabled:opacity-50"
+            :title="exportDisabledReason || '数据库完整明细直链导出（不受 AI 分析样例上限限制），不占用模型上下文'"
+            :disabled="exportingDetail || !canExportFull"
+            @click="openExportMenu"
+          >
+            <svg v-if="!exportingDetail" class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+            </svg>
+            <svg v-else class="h-3 w-3 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+            </svg>
+            <span>{{ exportingDetail ? "导出中…" : "导出完整明细" }}</span>
+          </button>
+
+          <!-- 格式选择：紧贴按钮的下拉浮层（带向上小尖角） -->
+          <transition
+            enter-active-class="transition-all duration-200 ease-out"
+            enter-from-class="opacity-0 translate-y-1 scale-95"
+            enter-to-class="opacity-100 translate-y-0 scale-100"
+            leave-active-class="transition-all duration-150 ease-in"
+            leave-from-class="opacity-100 translate-y-0 scale-100"
+            leave-to-class="opacity-0 translate-y-1 scale-95"
+          >
+            <div
+              v-if="exportMenuOpen"
+              class="absolute left-0 top-full z-[20] mt-2 w-80 origin-top-left rounded-xl border border-gray-200 bg-white py-1 shadow-2xl dark:border-gray-700 dark:bg-gray-800"
+              role="menu"
+              aria-label="选择导出格式"
+            >
+              <div class="absolute -top-1.5 left-6 h-3 w-3 rotate-45 border-l border-t border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-800" />
+              <p class="px-3.5 pb-1.5 pt-1 text-[10px] leading-relaxed text-gray-400 dark:text-gray-500">
+                直链重跑当前查询，单次最多 {{ exportLimitLabel }} 行，不占用模型上下文。
+              </p>
+              <button
+                v-for="opt in exportFormatOptions"
+                :key="opt.value"
+                type="button"
+                role="menuitem"
+                class="flex w-full items-center gap-3 px-3.5 py-2 text-left transition-colors hover:bg-gray-50 dark:hover:bg-gray-700/60"
+                :disabled="exportingDetail"
+                @click="pickExportFormat(opt.value)"
+              >
+                <span class="text-sm font-bold text-gray-700 dark:text-gray-200">{{ opt.label }}</span>
+                <span class="text-[11px] text-gray-400 dark:text-gray-500">{{ opt.desc }}</span>
+              </button>
+              <div class="mt-1 border-t border-gray-100 px-3.5 pt-1.5 pb-0.5 dark:border-gray-700">
+                <span class="text-[10px] text-gray-300 dark:text-gray-600">点击格式后立即导出，最多 {{ exportLimitLabel }} 行</span>
+              </div>
+            </div>
+          </transition>
+        </div>
+        </div>
         <div v-if="pageCount > 1" class="flex items-center gap-2">
           <button
             type="button"
@@ -203,12 +291,18 @@
       </div>
     </div>
   </div>
+
+
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from "vue";
+import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import type { ChatBIInsightMeta } from "@/types/chatbiInsight";
-import { exportChatBIResultMarkdown } from "@/utils/chatbiResultExport";
+import axios from "@/utils/axios";
+import { resolveGeneratedFileHref } from "@/utils/generatedFileUrl";
+import { useToast } from "@/composables/useToast";
+
+const { showToast } = useToast();
 
 const props = defineProps<{
   meta?: ChatBIInsightMeta | null;
@@ -224,6 +318,21 @@ type TabId = "citations" | "table" | "evidence" | null;
 const activeTab = ref<TabId>(null);
 const page = ref(1);
 const showSql = ref(false);
+const exportingDetail = ref(false);
+
+/* ── 完整明细导出：格式选择下拉 + 首次使用引导气泡 ── */
+const EXPORT_HINT_STORAGE_KEY = "chatbi_full_export_hint_seen";
+const exportMenuOpen = ref(false);
+const exportMenuRef = ref<HTMLElement | null>(null);
+type ExportFormat = "xlsx" | "csv" | "md";
+const exportFormatOptions: Array<{ value: ExportFormat; label: string; desc: string }> = [
+  { value: "xlsx", label: "Excel (.xlsx)", desc: "多工作表，适合二次分析" },
+  { value: "csv", label: "CSV (.csv)", desc: "轻量通用，Excel 打开不乱码" },
+  { value: "md", label: "Markdown (.md)", desc: "表格文本，便于贴进文档" },
+];
+const exportLimitLabel = ref<string>("10 万");
+const showExportHint = ref(false);
+let exportHintTimer: ReturnType<typeof setTimeout> | null = null;
 
 const citations = computed(() => (Array.isArray(props.citations) ? props.citations : []));
 const hasCitations = computed(() => citations.value.length > 0);
@@ -348,16 +457,153 @@ function toggleTab(tabId: Exclude<TabId, null>) {
   activeTab.value = activeTab.value === tabId ? null : tabId;
 }
 
-function exportMarkdown() {
-  if (!props.meta?.table?.columns?.length) return;
-  exportChatBIResultMarkdown({
-    columns: props.meta.table.columns,
-    rows: embeddedRows.value,
-    totalRowCount: Number(props.meta.table.total_row_count || embeddedRows.value.length),
-    resultId: props.meta.result_id,
-    sampleNotice: sampleNotice.value || undefined,
-  });
+/** 完整明细导出所需的最小字段。 */
+const exportDataSource = computed(() => props.meta?.sources?.[0]?.data_source || "");
+const canExportFull = computed(() => {
+  const m = props.meta;
+  if (!m) return false;
+  if (m.execution?.mode === "federated") return false;
+  if (!m.final_sql || !m.final_sql.trim()) return false;
+  return Boolean(exportDataSource.value);
+});
+
+/** 按钮禁用时的悬停说明：让用户知道为什么不能导出 */
+const exportDisabledReason = computed<string>(() => {
+  const m = props.meta;
+  if (exportingDetail.value) return "";
+  if (!m) return "当前没有查询结果明细，无法导出";
+  if (m.execution?.mode === "federated") return "联邦查询暂不支持完整明细导出";
+  if (!m.final_sql || !m.final_sql.trim()) return "缺少可执行的查询 SQL，无法导出完整明细";
+  if (!exportDataSource.value) return "缺少数据源标识，无法导出完整明细";
+  return "";
+});
+
+/** 联邦查询在明细页签顶部的一行说明文案 */
+const federatedNotice = computed<string>(() => {
+  const m = props.meta;
+  if (!m || m.execution?.mode !== "federated") return "";
+  return "当前为跨数据集联邦查询，暂不支持完整明细导出；如需导出明细，请改为对单个数据集查询后操作。";
+});
+
+function openExportMenu() {
+  const m = props.meta;
+  if (!m?.final_sql || exportingDetail.value) return;
+  if (!exportDataSource.value) {
+    showToast("缺少数据源标识，无法导出完整明细", "warning");
+    return;
+  }
+  if (m.execution?.mode === "federated") {
+    showToast("联邦查询暂不支持完整明细导出", "warning");
+    return;
+  }
+  exportMenuOpen.value = !exportMenuOpen.value;
 }
+
+function closeExportMenu() {
+  exportMenuOpen.value = false;
+}
+
+async function pickExportFormat(fmt: ExportFormat) {
+  const m = props.meta;
+  if (!m?.final_sql || exportingDetail.value) return;
+  exportMenuOpen.value = false;
+  exportingDetail.value = true;
+  try {
+    const response = await axios.post("/api/portal/chatbi-export/result", {
+      sql: m.final_sql,
+      data_source: exportDataSource.value,
+      dataset_name: m.sources?.[0]?.dataset_name || null,
+      format: fmt,
+      execution_mode: m.execution?.mode || "direct",
+      result_id: m.result_id || null,
+    });
+    const data = response.data?.data;
+    const downloadUrl: string = data?.download_url;
+    if (!downloadUrl) throw new Error("missing download_url");
+    const filename: string =
+      data?.filename || `chatbi_export_${(m.result_id || "result").slice(0, 8)}.${fmt}`;
+    const href = resolveGeneratedFileHref(downloadUrl);
+    const link = document.createElement("a");
+    link.href = href;
+    link.setAttribute("download", filename);
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    const rowCount = data?.row_count;
+    showToast(
+      rowCount ? `已导出 ${Number(rowCount).toLocaleString("zh-CN")} 行明细数据` : "完整明细导出成功",
+      "success",
+    );
+  } catch (e: any) {
+    console.error("ChatBI 完整明细导出失败", e);
+    const detail = e?.response?.data?.detail || e?.message || "导出失败";
+    showToast(`导出失败：${detail}`, "error");
+  } finally {
+    exportingDetail.value = false;
+  }
+}
+
+function onDocumentMouseDown(event: MouseEvent) {
+  if (!exportMenuOpen.value) return;
+  const target = event.target as Node | null;
+  if (exportMenuRef.value && exportMenuRef.value.contains(target)) return;
+  exportMenuOpen.value = false;
+}
+
+onMounted(() => {
+  document.addEventListener("mousedown", onDocumentMouseDown);
+});
+
+onUnmounted(() => {
+  document.removeEventListener("mousedown", onDocumentMouseDown);
+  if (exportHintTimer) {
+    clearTimeout(exportHintTimer);
+    exportHintTimer = null;
+  }
+});
+
+function dismissExportHint() {
+  showExportHint.value = false;
+  if (exportHintTimer) {
+    clearTimeout(exportHintTimer);
+    exportHintTimer = null;
+  }
+  try {
+    localStorage.setItem(EXPORT_HINT_STORAGE_KEY, "1");
+  } catch {
+    /* ignore */
+  }
+}
+
+function triggerExportHint() {
+  let seen = false;
+  try {
+    seen = localStorage.getItem(EXPORT_HINT_STORAGE_KEY) === "1";
+  } catch {
+    /* ignore */
+  }
+  if (seen) return;
+  dismissExportHint();
+  showExportHint.value = true;
+  if (exportHintTimer) {
+    clearTimeout(exportHintTimer);
+    exportHintTimer = null;
+  }
+  exportHintTimer = setTimeout(() => {
+    showExportHint.value = false;
+    exportHintTimer = null;
+  }, 4500);
+}
+
+watch(
+  () => [props.meta?.result_id, hasTable.value, activeTab.value, canExportFull.value] as const,
+  () => {
+    // 气泡挂在「明细」页签上：有明细且可导完整明细时，提示用户点这里查看/导出
+    if (hasTable.value && canExportFull.value) {
+      triggerExportHint();
+    }
+  },
+);
 
 function emitOpenCitation(citation: any, event: MouseEvent) {
   emit("open-citation", { citation, event });

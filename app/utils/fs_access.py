@@ -374,10 +374,17 @@ def assert_path_allowed(path: str, user_info: dict[str, Any] | None) -> str:
 
 
 def is_path_writable(path: str, user_info: dict[str, Any] | None) -> bool:
-    """仅允许写入当前用户的 agent_workspaces 私有目录（不含公共目录）。"""
+    """判断路径是否可写。
+
+    - admin：路径在 data 根下（含公共目录）均可写。
+    - 普通用户：仅允许写入本人 agent_workspaces 私有目录。
+    """
     normalized = normalize_fs_path(path)
     if not normalized:
         return False
+    if is_fs_admin(user_info):
+        data_base = os.path.normpath(get_data_base_dir())
+        return normalized == data_base or normalized.startswith(data_base + os.sep)
     private_root = get_user_private_workspace_root(user_info)
     if not private_root:
         return False
