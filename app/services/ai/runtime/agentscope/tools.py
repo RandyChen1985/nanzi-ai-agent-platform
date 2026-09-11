@@ -101,6 +101,7 @@ READ_ONLY_TOOL_NAMES = {
     "resolve_relative_dates",
     "get_dataset_schema",
     "search_knowledge_base",
+    "search_qa_examples",
     "memory_search",
     "fetch_user_long_term_memory",
     "get_myinfo",
