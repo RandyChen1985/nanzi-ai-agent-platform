@@ -118,6 +118,19 @@ class DataRunState:
     schema_refreshed_after_sql_error: bool = False
     preflight_fail_signatures: dict[str, int] = field(default_factory=dict)
     platform_auto_sql_attempts: int = 0
+    # ---- 方案 A：数据库报错驱动的 Schema 过时纠正（内存态，仅当轮）----
+    # 已识别为「真实过时」并被剔除的列（list[dict]，含 field_name/table_key）。
+    stale_columns_dropped: list[dict[str, str]] = field(default_factory=list)
+    # 剔除失效列后重建的当轮可见 Schema 文本。
+    corrected_schema_output: str = ""
+    # 剔除后各表剩余可用列（normalized table_key -> [column_name]）。
+    corrected_table_columns: dict[str, list[str]] = field(default_factory=dict)
+    # 是否已对当轮做过一次纠正（配合失败签名计数做熔断，防死循环）。
+    stale_correction_applied: bool = False
+    # 已预生成的修复提示文案（注入下一轮 ReAct，告知模型已剔除的失效列与剩余可用列）。
+    stale_repair_hint: str = ""
+    # 熔断：方案 A 的纠正修复同一轮只触发一次，surfaced 后置 True，防止反复剔除/死循环。
+    stale_repair_consumed: bool = False
 
     @property
     def successful_sql_after_visible_content(self) -> bool:

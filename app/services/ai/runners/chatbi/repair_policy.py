@@ -31,6 +31,13 @@ from app.services.ai.time_anchor import build_data_query_time_anchor_block
 def current_repair_kind(state: DataRunState) -> str:
     if is_schema_fatal(state):
         return ""
+    # 方案 A：数据库确认过时列已剔除，等待向模型广播纠正后的列并重写 SQL（一次性）。
+    if (
+        state.stale_correction_applied
+        and state.corrected_schema_output
+        and not state.stale_repair_consumed
+    ):
+        return "stale_column_corrected"
     if state.deferred_continue_query:
         return "deferred_continue_query"
     if state.schema_ambiguous:
@@ -115,6 +122,15 @@ def build_repair_message(
 ) -> str:
     if is_schema_fatal(state):
         return ""
+    if (
+        state.stale_correction_applied
+        and state.corrected_schema_output
+        and not state.stale_repair_consumed
+    ):
+        return state.stale_repair_hint or (
+            "【以数据库为准，剔除过时字段】数据库报出部分字段已不存在，"
+            "平台已从当前 Schema 剔除失效列。请基于剩余有效字段重写并重新执行 SQL。"
+        )
     if state.requires_fresh_data and state.sql_before_schema and not state.schema_completed:
         return (
             "【Schema 顺序要求】本轮新数据查询必须先调用 get_dataset_schema 获取数据集定义，"
@@ -424,9 +440,18 @@ def reset_state_for_repair(state: DataRunState) -> None:
         state.tool_loop_fuse_reason = ""
     state.deferred_continue_query = False
     state.platform_auto_retry_ready = False
+    # 熔断：方案 A 纠正修复只广播一次，进入修复即 consumed，后续真实失败走正常修复/兜底。
+    if repair_kind == "stale_column_corrected":
+        state.stale_repair_consumed = True
 
 
 def build_repair_title(state: DataRunState) -> str:
+    if (
+        state.stale_correction_applied
+        and state.corrected_schema_output
+        and not state.stale_repair_consumed
+    ):
+        return "以数据库为准，剔除过时字段后重查"
     if state.requires_fresh_data and state.sql_before_schema and not state.schema_completed:
         return "必须先检索数据集定义"
     if state.schema_miss and not state.no_authorized_schema:
@@ -502,6 +527,13 @@ def resolve_initial_tool_choice(state: DataRunState) -> Any | None:
 
 def resolve_repair_tool_choice(state: DataRunState) -> Any | None:
     from agentscope.tool import ToolChoice
+
+    if (
+        state.stale_correction_applied
+        and state.corrected_schema_output
+        and not state.stale_repair_consumed
+    ):
+        return ToolChoice(mode="execute_sql_query")
 
     if state.requires_fresh_data and state.sql_before_schema and not state.schema_completed:
         return ToolChoice(mode="get_dataset_schema")
