@@ -248,6 +248,24 @@ async def test_search_knowledge_base_drops_missing_dataset_ids_before_retrieve()
 
 
 @pytest.mark.asyncio
+async def test_search_qa_examples_is_read_only_no_runtime_confirm():
+    """search_qa_examples 是只读查询工具，运行时不得进入「工具确认」弹框。"""
+    from app.services.ai.runtime.agentscope.tools import (
+        READ_ONLY_TOOL_NAMES,
+        infer_runtime_permission_scope,
+    )
+    from app.services.ai.tools.registry import ToolRegistry
+
+    assert "search_qa_examples" in READ_ONLY_TOOL_NAMES
+    assert infer_runtime_permission_scope("search_qa_examples", "system") == "read"
+    assert infer_runtime_permission_scope("search_qa_examples", "static") == "read"
+
+    spec = await ToolRegistry.get_runtime_tool("search_qa_examples")
+    assert spec is not None
+    assert spec.permission_scope == "read"
+
+
+@pytest.mark.asyncio
 async def test_search_knowledge_base_disabled_when_feature_off():
     with patch("app.services.ai.ragflow_client.RagFlowClient.retrieve", new_callable=AsyncMock) as mock_retrieve, \
          patch("app.services.config_service.ConfigService.get", new_callable=AsyncMock) as mock_config:

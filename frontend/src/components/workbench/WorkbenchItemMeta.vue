@@ -15,9 +15,9 @@
     >{{ severityLabel }}</span>
     <span
       v-if="statusLabel"
-      class="rounded border border-gray-200 bg-white px-1.5 py-0.5 text-[10px] font-medium text-gray-600"
+      class="rounded border border-gray-200 bg-white px-1.5 py-0.5 text-[10px] font-medium text-gray-600 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300"
     >{{ statusLabel }}</span>
-    <span v-if="relativeTime" class="text-[11px] text-gray-400">{{ relativeTime }}</span>
+    <span v-if="relativeTime" class="text-[11px] text-gray-400 dark:text-gray-500">{{ relativeTime }}</span>
   </div>
 </template>
 

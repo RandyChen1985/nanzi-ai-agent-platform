@@ -141,7 +141,7 @@
                     <component v-else :is="timelineIconFor(child)" class="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
                     <span class="min-w-0 flex-1 truncate" :title="displayTimelineTitle(child)">
                       <span
-                        v-if="child.subagent && !child.children?.length"
+                        v-if="child.subagent && !child.children?.length && !displayTimelineTitle(child).includes('委派智能体') && !displayTimelineTitle(child).includes('子代理')"
                         :title="formatSubagentTraceSummary(child.subagent)"
                       >子代理 · </span>
                       <span>{{ displayTimelineTitle(child) }}</span>

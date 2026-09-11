@@ -14,10 +14,10 @@
 
     <header>
       <div class="flex items-center justify-between gap-3">
-        <h1 class="min-w-0 text-2xl font-bold tracking-normal text-gray-900">我的工作台</h1>
+        <h1 class="min-w-0 text-2xl font-bold tracking-normal text-gray-900 dark:text-gray-100">我的工作台</h1>
         <button
           type="button"
-          class="workbench-refresh-btn inline-flex shrink-0 items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-sm font-medium text-gray-500 transition-colors hover:bg-blue-50 hover:text-blue-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-200 disabled:cursor-not-allowed disabled:opacity-50"
+          class="workbench-refresh-btn inline-flex shrink-0 items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-sm font-medium text-gray-500 transition-colors hover:bg-blue-50 hover:text-blue-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-200 disabled:cursor-not-allowed disabled:opacity-50 dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-blue-400"
           :disabled="loading"
           :aria-busy="refreshing || loading"
           :aria-label="refreshing || loading ? '刷新中' : '刷新工作台'"
@@ -41,7 +41,7 @@
           <span>{{ refreshing || loading ? '刷新中' : '刷新' }}</span>
         </button>
       </div>
-      <p class="mt-0.5 truncate text-sm text-gray-500">
+      <p class="mt-0.5 truncate text-sm text-gray-500 dark:text-gray-400">
         先处理今天值得关注的事情，再继续最近的工作。
       </p>
     </header>
@@ -51,14 +51,15 @@
       class="flex flex-wrap items-center gap-2"
     >
       <span
-        class="inline-flex items-center rounded-lg border px-2.5 py-1 text-xs font-medium"
+        class="inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs font-medium"
         :class="summaryToneClass"
       >
+        <span class="h-1.5 w-1.5 rounded-full" :class="activeMode ? 'bg-amber-500 animate-pulse' : quietMode ? 'bg-emerald-500' : 'bg-blue-500'" />
         {{ summaryPrimary }}
       </span>
       <span
         v-if="summarySecondary"
-        class="inline-flex items-center rounded-lg border border-gray-200 bg-white px-2.5 py-1 text-xs text-gray-600 shadow-sm"
+        class="inline-flex items-center rounded-lg border border-gray-200 bg-white px-2.5 py-1 text-xs text-gray-600 shadow-xs dark:border-gray-700 dark:bg-gray-800/80 dark:text-gray-300"
       >
         {{ summarySecondary }}
       </span>
@@ -66,7 +67,7 @@
 
     <div
       v-if="bannerMessage"
-      class="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-700"
+      class="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-700 dark:border-amber-700/60 dark:bg-amber-950/30 dark:text-amber-300"
     >
       {{ bannerMessage }}
     </div>
@@ -78,7 +79,7 @@
     />
 
     <div v-if="loading && !payload" class="space-y-3">
-      <div v-for="index in 3" :key="index" class="h-28 animate-pulse rounded-2xl bg-gray-100" />
+      <div v-for="index in 3" :key="index" class="h-28 animate-pulse rounded-2xl bg-gray-100 dark:bg-gray-800/50" />
     </div>
 
     <template v-else-if="payload">
@@ -122,9 +123,9 @@
       </template>
 
       <template v-else-if="quietMode">
-        <div class="rounded-2xl border border-emerald-100 bg-emerald-50/60 px-4 py-3.5">
-          <p class="text-sm font-medium text-emerald-800">{{ quietPrimary }}</p>
-          <p class="mt-0.5 text-xs text-emerald-700/80">
+        <div class="rounded-2xl border border-emerald-100 bg-emerald-50/60 px-4 py-3.5 dark:border-emerald-800/50 dark:bg-emerald-950/30">
+          <p class="text-sm font-medium text-emerald-800 dark:text-emerald-300">{{ quietPrimary }}</p>
+          <p class="mt-0.5 text-xs text-emerald-700/80 dark:text-emerald-400/80">
             暂无失败任务和待确认事项。{{ quietDescription }}{{ summarySecondary }}，可以从下方继续。
           </p>
         </div>
@@ -162,16 +163,16 @@
       </template>
 
       <template v-else-if="newUserMode">
-        <section class="rounded-2xl border border-gray-100 bg-white p-5 shadow-sm sm:p-6">
-          <p class="text-xs font-medium text-blue-600">开始使用</p>
-          <h2 class="mt-1.5 text-lg font-bold text-gray-900">
+        <section class="rounded-2xl border border-gray-100 bg-white p-5 shadow-sm sm:p-6 dark:border-gray-800 dark:bg-gray-800/80">
+          <p class="text-xs font-medium text-blue-600 dark:text-blue-400">开始使用</p>
+          <h2 class="mt-1.5 text-lg font-bold text-gray-900 dark:text-gray-100">
             {{
               failedSources.length
                 ? "工作台部分数据暂时不可用"
                 : `欢迎使用 ${branding.product_name || "NanZi·智能体平台"}`
             }}
           </h2>
-          <p class="mt-1.5 max-w-2xl text-sm text-gray-500">
+          <p class="mt-1.5 max-w-2xl text-sm text-gray-500 dark:text-gray-400">
             {{
               failedSources.length
                 ? "你仍可从当前可用的业务助手继续工作。"
@@ -181,14 +182,14 @@
           <div class="mt-4 flex flex-wrap gap-2">
             <button
               type="button"
-              class="rounded-lg bg-blue-600 px-3.5 py-2 text-sm font-medium text-white hover:bg-blue-700"
+              class="rounded-lg bg-blue-600 px-3.5 py-2 text-sm font-medium text-white shadow-xs hover:bg-blue-700 active:scale-95"
               @click="openScenarios"
             >
               浏览场景包
             </button>
             <button
               type="button"
-              class="rounded-lg border border-gray-300 bg-white px-3.5 py-2 text-sm font-medium text-gray-700 shadow-sm hover:bg-gray-50"
+              class="rounded-lg border border-gray-300 bg-white px-3.5 py-2 text-sm font-medium text-gray-700 shadow-xs hover:bg-gray-50 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700 active:scale-95"
               @click="openChat"
             >
               打开智能助手
@@ -223,6 +224,7 @@ import WorkbenchScenarios from "@/components/workbench/WorkbenchScenarios.vue"
 import WorkbenchNextScheduled from "@/components/workbench/WorkbenchNextScheduled.vue"
 import WorkbenchRunning from "@/components/workbench/WorkbenchRunning.vue"
 import WorkbenchPersonalResources from "@/components/workbench/WorkbenchPersonalResources.vue"
+
 import { useWorkbenchHome } from "@/composables/useWorkbenchHome"
 import { useBranding } from "@/composables/useBranding"
 import {

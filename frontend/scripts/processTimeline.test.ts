@@ -4,6 +4,7 @@ import {
   timelineHasPending,
   upsertTimelineTodo,
   upsertTimelineLog,
+  formatTimelineTitle,
   type ProcessTimelineTarget,
 } from "../src/utils/processTimeline.ts";
 
@@ -274,7 +275,77 @@ function testHydrateHistoryReorganization() {
   console.log("testHydrateHistoryReorganization passed successfully!");
 }
 
+function testSubagentToolAndLifecycleDeduplication() {
+  const target: ProcessTimelineTarget = {
+    processTimeline: [
+      {
+        kind: "text",
+        id: "narration_1",
+        textKind: "narration",
+        content: "好的，我来帮您识别数据中的高价值客户。",
+        pending: false,
+        children: [],
+        childrenExpanded: true,
+      },
+    ],
+  };
+
+  // 1. Tool sub_agent_call arrived first
+  upsertTimelineLog(target, {
+    id: "call_subagent_1",
+    title: "委派智能体",
+    tool_name: "sub_agent_call",
+    category: "tool",
+    status: "pending",
+  });
+
+  // 2. Lifecycle log arrived with display_name
+  upsertTimelineLog(target, {
+    id: "subagent_run123",
+    title: "调用子代理: 数据智能助手",
+    category: "agent",
+    status: "pending",
+    subagent: {
+      run_id: "run123",
+      agent_name: "chat-bi",
+      display_name: "数据智能助手",
+    },
+  });
+
+  const narration = target.processTimeline![0];
+  // Must be merged into exactly 1 child tool container!
+  assert.equal(narration.children?.length, 1);
+  const container = narration.children![0];
+  assert.equal(formatTimelineTitle(container.title), "委派智能体 · 数据智能助手");
+
+  // 3. Inner steps including a noise heartbeat step
+  upsertTimelineLog(target, {
+    id: "log_schema",
+    title: "[数据智能助手] 工具完成: get_dataset_schema",
+    status: "success",
+    subagent: { run_id: "run123" },
+  });
+
+  upsertTimelineLog(target, {
+    id: "log_heartbeat",
+    title: "[数据智能助手] ✨ 开始生成回复",
+    status: "success",
+    subagent: { run_id: "run123" },
+  });
+
+  // After reorganization or hydration, noise heartbeat must be filtered
+  const hydrated = hydrateHistoryProcessTimeline(target.processTimeline);
+  const hydratedNarration = hydrated[0];
+  assert.equal(hydratedNarration.children?.length, 1);
+  const hydratedContainer = hydratedNarration.children![0];
+  assert.equal(hydratedContainer.children?.length, 1);
+  assert.equal(hydratedContainer.children![0].title, "[数据智能助手] 工具完成: get_dataset_schema");
+
+  console.log("testSubagentToolAndLifecycleDeduplication passed successfully!");
+}
+
 testSubagentNesting();
 testHydrateHistoryReorganization();
+testSubagentToolAndLifecycleDeduplication();
 testTodoTimelineSiblingAndReplacement();
 testTodoHistoryRemainsIndependent();
