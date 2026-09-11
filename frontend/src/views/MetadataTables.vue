@@ -13,6 +13,7 @@ import SmartMetricModal from '../components/metadata/SmartMetricModal.vue'
 import SchemaGraph from '../components/metadata/SchemaGraph.vue'
 import ChangelogList from '../components/metadata/ChangelogList.vue'
 import ConfirmModal from '../components/ConfirmModal.vue'
+import MetadataDriftAlertsDrawer from '../components/metadata/MetadataDriftAlertsDrawer.vue'
 import { useUser } from '../composables/useUser'
 import { useToast } from '../composables/useToast'
 import { copyToClipboard } from '../utils/clipboard'
@@ -28,6 +29,25 @@ const datasetId = Number(route.params.id)
 const dataset = ref<Dataset | null>(null)
 const tables = ref<Table[]>([])
 const loading = ref(false)
+
+// Schema 巡检与漂移告警状态
+const driftCount = ref<number>(0)
+const showDriftDrawer = ref(false)
+
+const fetchDatasetDriftCount = async () => {
+  if (!datasetId) return
+  try {
+    const summary = await metadataApi.getDriftSummary()
+    driftCount.value = summary.data?.datasets?.[datasetId] || 0
+  } catch (e) {
+    console.error('Failed to fetch dataset drift count', e)
+  }
+}
+
+const handleDriftResolved = () => {
+  fetchDatasetDriftCount()
+  fetchDatasetInfo()
+}
 const showImportModal = ref(false)
 const showFullDescription = ref(false)
 const showMetricModal = ref(false)
@@ -527,6 +547,7 @@ onUnmounted(() => syncLogAbortController?.abort())
 onMounted(async () => {
   await fetchRagFlowConfig()
   fetchDatasetInfo()
+  fetchDatasetDriftCount()
 })
 
 // 头部卡片折叠状态（默认从 localStorage 读取，初始默认 false 即展开）
@@ -673,6 +694,15 @@ defineExpose({ fetchMetrics })
           </div>
           <div class="flex items-center gap-2.5 min-w-0">
             <h1 class="text-lg font-bold text-gray-900 leading-tight truncate">{{ dataset?.display_name || '加载中...' }}</h1>
+            <span 
+              v-if="driftCount > 0"
+              @click.stop="showDriftDrawer = true"
+              class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-semibold bg-amber-50 text-amber-600 border border-amber-200 hover:bg-amber-100 cursor-pointer shadow-2xs shrink-0"
+              title="存在待处理的 Schema 漂移异常，点击查看"
+            >
+              <svg class="w-3 h-3 text-amber-500 animate-pulse" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
+              {{ driftCount }} 处异常
+            </span>
             <span class="px-2 py-0.5 bg-gray-100 text-gray-500 text-xs font-mono rounded select-all shrink-0">#{{ dataset?.name }}</span>
             <span class="hidden sm:inline-flex items-center gap-1 bg-gray-50 px-2 py-0.5 rounded border border-gray-100 text-xs text-gray-400 font-mono">
               <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2H6c-1.1 0-2 .9-2 2zm0 5h16"/></svg>
@@ -682,6 +712,16 @@ defineExpose({ fetchMetrics })
         </div>
 
         <div class="flex items-center gap-2.5 shrink-0">
+          <button 
+            type="button"
+            @click="showDriftDrawer = true"
+            class="bg-white hover:bg-amber-50 text-gray-700 hover:text-amber-700 border border-gray-200 hover:border-amber-200 px-3 py-1.5 rounded-lg transition-all flex items-center gap-1.5 text-xs font-medium h-8 whitespace-nowrap shadow-2xs relative cursor-pointer"
+            :title="dataset?.status === 1 ? 'Schema 巡检与差异治理' : 'Schema 巡检与差异治理 (数据集已禁用)'"
+          >
+            <svg class="w-3.5 h-3.5 text-amber-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+            <span>巡检与治理</span>
+            <span v-if="driftCount > 0" class="absolute -top-1 -right-1 w-2 h-2 rounded-full bg-amber-500 ring-2 ring-white"></span>
+          </button>
           <button 
             v-if="hasPermission('element:metadata:edit')"
             @click="openAiEnhanceConfirm"
@@ -732,6 +772,15 @@ defineExpose({ fetchMetrics })
           <div class="max-w-2xl min-w-0 flex-1">
             <div class="flex items-center gap-3">
               <h1 class="text-xl font-bold text-gray-900 leading-tight truncate">{{ dataset?.display_name || '加载中...' }}</h1>
+              <span 
+                v-if="driftCount > 0"
+                @click.stop="showDriftDrawer = true"
+                class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-amber-50 text-amber-600 border border-amber-200 hover:bg-amber-100 cursor-pointer shadow-2xs shrink-0"
+                title="存在待处理的 Schema 漂移异常，点击查看"
+              >
+                <svg class="w-3.5 h-3.5 text-amber-500 animate-pulse" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
+                {{ driftCount }} 处异常待处理
+              </span>
               <span class="px-2 py-0.5 bg-gray-100 text-gray-500 text-xs font-mono rounded select-all shrink-0">#{{ dataset?.name }}</span>
             </div>
             
@@ -806,6 +855,16 @@ defineExpose({ fetchMetrics })
         </div>
         
         <div class="flex items-center gap-2.5 shrink-0 self-start lg:self-auto">
+          <button 
+            type="button"
+            @click="showDriftDrawer = true"
+            class="bg-white hover:bg-amber-50 text-gray-700 hover:text-amber-700 border border-gray-200 hover:border-amber-200 px-3.5 py-1.5 rounded-lg transition-all flex items-center gap-1.5 text-xs font-medium h-9 whitespace-nowrap shadow-xs relative cursor-pointer"
+            :title="dataset?.status === 1 ? 'Schema 巡检与差异治理' : 'Schema 巡检与差异治理 (数据集已禁用)'"
+          >
+            <svg class="w-4 h-4 text-amber-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+            <span>巡检与治理</span>
+            <span v-if="driftCount > 0" class="absolute -top-1 -right-1 w-2 h-2 rounded-full bg-amber-500 ring-2 ring-white"></span>
+          </button>
           <button 
             v-has-perm="'element:metadata:view_yaml'"
             @click="fetchYaml"
@@ -1798,6 +1857,15 @@ defineExpose({ fetchMetrics })
         </div>
       </aside>
     </Transition>
+
+    <!-- Schema 漂移异常待处理抽屉 -->
+    <MetadataDriftAlertsDrawer
+      :show="showDriftDrawer"
+      :visible="showDriftDrawer"
+      :dataset="dataset"
+      @close="showDriftDrawer = false"
+      @resolved="handleDriftResolved"
+    />
   </div>
 </template>
 

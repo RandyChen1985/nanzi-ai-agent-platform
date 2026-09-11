@@ -9,8 +9,8 @@ export interface AgentTask {
   user_id: number
   creator_name?: string
   agent_name?: string
-  source: 'web' | 'agent' | 'saved_report'
-  task_type?: 'agent' | 'saved_report'
+  source: 'web' | 'agent' | 'saved_report' | 'system' | string
+  task_type?: 'agent' | 'saved_report' | 'metadata_inspection' | string
   subscription_id?: number
   report_id?: string
   cron_expr: string

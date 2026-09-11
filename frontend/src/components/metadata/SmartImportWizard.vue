@@ -22,6 +22,7 @@ const step = ref(1) // 1: Input, 2: Preview
 const ddlText = ref('')
 const analyzing = ref(false)
 const saving = ref(false)
+const analyzeAbortController = ref<AbortController | null>(null)
 
 // Dataset Name State
 const datasetName = ref('')
@@ -140,6 +141,10 @@ const stopFakeProgress = () => {
 }
 
 onUnmounted(() => {
+  if (analyzeAbortController.value) {
+    analyzeAbortController.value.abort()
+    analyzeAbortController.value = null
+  }
   stopFakeProgress()
 })
 
@@ -258,18 +263,39 @@ const applyImportPreview = (data: any) => {
   step.value = 2
 }
 
+const handleCancelAnalyze = () => {
+  console.info('⏹️ [元数据智能导入] 用户点击【取消识别】，正在中止 AI 分析请求...')
+  if (analyzeAbortController.value) {
+    analyzeAbortController.value.abort()
+    analyzeAbortController.value = null
+  }
+  stopFakeProgress()
+  analyzing.value = false
+  showToast('已取消智能识别', 'info')
+}
+
 const handleAnalyze = async () => {
-  if (!ddlText.value.trim()) return
+  if (!ddlText.value.trim() || analyzing.value) return
   
+  console.info('🚀 [元数据智能导入] 开始发起 DDL 智能识别请求...')
   analyzing.value = true
   currentTraceId.value = '' // Reset trace ID
   startFakeProgress()
   
+  const controller = new AbortController()
+  analyzeAbortController.value = controller
+  
   try {
     // 分析阶段即传递目标数据源，避免 PostgreSQL 导入指标先按 ClickHouse 生成。
     const analysisDataSource = props.datasetDataSource || importDataSourceName.value || defaultDataSource.value
-    const res = await metadataApi.analyzeDDL(ddlText.value, analysisDataSource || undefined)
+    const res = await metadataApi.analyzeDDL(
+      ddlText.value, 
+      analysisDataSource || undefined,
+      controller.signal
+    )
     
+    if (controller.signal.aborted) return
+
     // Capture Trace ID on success (if available)
     if (res.data?.data?._trace_id) {
        currentTraceId.value = res.data.data._trace_id
@@ -281,6 +307,7 @@ const handleAnalyze = async () => {
     
     // Slight delay to let user see 100%
     setTimeout(() => {
+      if (controller.signal.aborted) return
       applyImportPreview(res.data.data)
       stopFakeProgress()
       analyzing.value = false
@@ -288,6 +315,17 @@ const handleAnalyze = async () => {
     }, 500)
 
   } catch (e: any) {
+    if (
+      controller.signal.aborted ||
+      (axios as any).isCancel?.(e) ||
+      e?.code === 'ERR_CANCELED' ||
+      e?.name === 'CanceledError' ||
+      e?.name === 'AbortError'
+    ) {
+      console.info('⏹️ [元数据智能导入] AI 分析请求已被成功中止/取消。')
+      return
+    }
+
     stopFakeProgress()
     analyzing.value = false
     console.error('Analysis failed', e)
@@ -303,6 +341,10 @@ const handleAnalyze = async () => {
        showToast('分析超时，请尝试减少输入内容或稍后重试', 'error', 5000)
     } else {
        showToast('智能分析失败，请检查输入内容或重试', 'error')
+    }
+  } finally {
+    if (analyzeAbortController.value === controller) {
+      analyzeAbortController.value = null
     }
   }
 }
@@ -366,7 +408,13 @@ const handleSave = async () => {
     }
     
     emit('saved')
-    showToast(props.datasetId ? '追加元数据成功' : '保存成功', 'success')
+    showToast(
+      props.datasetId
+        ? '追加元数据成功'
+        : '数据集已创建，默认为禁用状态，请在列表中审核后手动启用',
+      'success',
+      5000
+    )
     handleClose()
     
   } catch (e: any) {
@@ -382,13 +430,18 @@ const handleSave = async () => {
 }
 
 const handleClose = () => {
-  if (analyzing.value) return // Prevent closing while analyzing
+  if (analyzing.value && analyzeAbortController.value) {
+    console.info('⏹️ [元数据智能导入] 用户关闭向导弹窗，正在中止进行中的分析请求...')
+    analyzeAbortController.value.abort()
+    analyzeAbortController.value = null
+  }
   step.value = 1
   ddlText.value = ''
   previewData.value = { tables: [], metrics: [], relationships: [] }
   expandedPreviewTables.value = {}
   importDataSourceName.value = ''
   stopFakeProgress()
+  analyzing.value = false
   emit('close')
 }
 
@@ -549,22 +602,32 @@ const normalizeType = (rawType: string): string => {
            </button>
            <div v-else></div>
 
-           <button
-              @click="handleAnalyze"
-              :disabled="analyzing || !ddlText"
-              class="px-5 py-1.5 text-sm bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-bold shadow-sm transition-all flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed relative overflow-hidden min-w-[140px] justify-center"
-            >
-              <div 
-                v-if="analyzing" 
-                class="absolute left-0 top-0 bottom-0 bg-blue-800/50 transition-all duration-300 ease-linear"
-                :style="{ width: `${progress}%` }"
-              ></div>
-              <div class="relative flex items-center gap-2 z-10">
-                 <svg v-if="analyzing" class="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
-                 <span v-if="analyzing" class="text-sm font-light tracking-wide">{{ progressStatus }} ({{ analysisSeconds }}s)</span>
-                 <span v-else>开始智能识别</span>
-              </div>
-            </button>
+           <div class="flex items-center gap-2">
+             <button
+               type="button"
+               @click="analyzing ? handleCancelAnalyze() : handleClose()"
+               class="px-4 py-1.5 text-sm border border-gray-300 rounded-lg text-gray-700 font-medium hover:bg-gray-50 active:bg-gray-100 transition-colors cursor-pointer"
+             >
+               {{ analyzing ? '取消识别' : '取消' }}
+             </button>
+
+             <button
+                @click="handleAnalyze"
+                :disabled="analyzing || !ddlText"
+                class="px-5 py-1.5 text-sm bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-bold shadow-sm transition-all flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed relative overflow-hidden min-w-[140px] justify-center"
+              >
+                <div 
+                  v-if="analyzing" 
+                  class="absolute left-0 top-0 bottom-0 bg-blue-800/50 transition-all duration-300 ease-linear"
+                  :style="{ width: `${progress}%` }"
+                ></div>
+                <div class="relative flex items-center gap-2 z-10">
+                   <svg v-if="analyzing" class="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                   <span v-if="analyzing" class="text-sm font-light tracking-wide">{{ progressStatus }} ({{ analysisSeconds }}s)</span>
+                   <span v-else>开始智能识别</span>
+                </div>
+              </button>
+           </div>
         </div>
       </div>
 

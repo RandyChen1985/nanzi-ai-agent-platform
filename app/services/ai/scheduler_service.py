@@ -1,6 +1,7 @@
 import logging
 import uuid
 import asyncio
+import time
 from datetime import datetime
 from typing import List, Dict, Any, Optional
 
@@ -639,6 +640,254 @@ async def _scheduled_task_wrapper(task_id: int, is_manual: bool = False, retry_a
             # 标记「已开始」并提交（_mark_task_attempt_started 内部会 commit），
             # 随后离开本 with 块立即释放连接，让长 LLM 调用不再占用连接池连接。
             await _mark_task_attempt_started(session, phase1_task)
+
+        # ── 特殊系统任务分支：元数据物理一致性巡检（无需调用 LLM 与外部 Agent）──
+        if task_config.get("task_type") == "metadata_inspection":
+            logger.info(
+                f"⚡ [元数据定时巡检] 🚀 巡检任务启动 | 任务ID: {task_id_snapshot} | 任务名称: '{task_name}' | "
+                f"执行用户: {task_user_id} | 巡检范围: 仅扫描开启状态数据集 (active_only=True)"
+            )
+            inspection_error: Optional[str] = None
+            inspection_summary = ""
+            start_time = time.time()
+            run_conversation_id = _new_task_run_conversation_id(task_conversation_id)
+            trace_id = str(uuid.uuid4())
+            ds_cnt = tbl_cnt = stale_cnt = new_cnt = mismatch_cnt = drift_cnt = failed_cnt = 0
+            try:
+                from app.services.metadata_inspection_service import MetadataInspectionService
+                from app.services.metadata_sync_log_service import metadata_sync_log_service
+                sync_task = await metadata_sync_log_service.create_task(0)
+                inspection_task_id = sync_task.task_id
+                logger.info(f"⚡ [元数据定时巡检] 正在直连物理数据库比对各数据集表结构与字段定义...")
+                async with AsyncSessionLocal() as insp_session:
+                    res = await MetadataInspectionService.inspect_all_datasets(
+                        insp_session, task_id=inspection_task_id, active_only=True
+                    )
+                    ds_cnt = res.get("datasets_scanned", 0)
+                    tbl_cnt = res.get("tables_scanned", 0)
+                    stale_cnt = res.get("stale_count", 0)
+                    new_cnt = res.get("new_count", 0)
+                    mismatch_cnt = res.get("mismatch_count", 0)
+                    drift_cnt = res.get("drift_datasets_count", 0)
+                    failed_cnt = res.get("failed_datasets_count", 0)
+                    if stale_cnt == 0 and new_cnt == 0 and mismatch_cnt == 0 and failed_cnt == 0:
+                        inspection_summary = f"元数据巡检完成：共扫描 {ds_cnt} 个开启状态数据集、{tbl_cnt} 张表，物理结构完全一致，无漂移差异。"
+                    else:
+                        diff_parts = []
+                        if stale_cnt > 0:
+                            diff_parts.append(f"{stale_cnt} 处缺失")
+                        if new_cnt > 0:
+                            diff_parts.append(f"{new_cnt} 处新增")
+                        if mismatch_cnt > 0:
+                            diff_parts.append(f"{mismatch_cnt} 处类型不一致")
+                        inspection_summary = f"元数据巡检完成：扫描 {ds_cnt} 个开启状态数据集、{tbl_cnt} 张表；在 {drift_cnt} 个数据集中检出 {'、'.join(diff_parts)}"
+                        if failed_cnt > 0:
+                            inspection_summary += f"（{failed_cnt} 个数据集连接异常）"
+            except Exception as e:
+                inspection_error = str(e)
+                logger.error(f"❌ [元数据定时巡检] 巡检执行异常中断: {e}", exc_info=True)
+
+            execution_time_ms = (time.time() - start_time) * 1000
+            logger.info(
+                f"📊 [元数据定时巡检] 物理比对结束 | 耗时: {execution_time_ms:.1f}ms | 开启数据集: {ds_cnt} 个 | "
+                f"表: {tbl_cnt} 张 | 差异项: 缺失 {stale_cnt}, 新增 {new_cnt}, 类型不匹配 {mismatch_cnt}, 连接失败 {failed_cnt}"
+            )
+            logger.info(f"📋 [元数据定时巡检] 结论汇报: {inspection_summary or inspection_error}")
+
+            # 写入审计轨迹与历史记录到 agent_execution_history / trace，使任务中心「执行历史回溯」可查询
+            try:
+                from app.services.ai.audit import AuditManager
+                from app.schemas.agent import AgentExecutionStep
+
+                trace_steps = [
+                    AgentExecutionStep(
+                        step_number=1,
+                        event_type="tool_call",
+                        agent_name="系统巡检引擎",
+                        tool_name="metadata_inspect_all",
+                        tool_input={"active_only": True},
+                        tool_output={"content": inspection_summary or inspection_error},
+                        execution_time_ms=execution_time_ms,
+                        status="success" if not inspection_error else "error",
+                        error_message=inspection_error,
+                    )
+                ]
+                await AuditManager.save_trace_logs(trace_id, trace_steps)
+
+                await AuditManager.save_history(
+                    trace_id=trace_id,
+                    agent_id=task_agent_id or "system_metadata_inspection",
+                    user_info=user_info,
+                    query=task_name or "全量元数据物理结构巡检",
+                    summary=inspection_summary or inspection_error or "全量元数据物理结构巡检完成",
+                    status="success" if not inspection_error else "error",
+                    execution_time_ms=execution_time_ms,
+                    conversation_id=run_conversation_id,
+                    agent_version="system",
+                    prompt_tokens=0,
+                    completion_tokens=0,
+                    total_tokens=0,
+                    process_timeline=[
+                        {
+                            "event_type": "tool_call",
+                            "tool_name": "metadata_inspect_all",
+                            "execution_time_ms": execution_time_ms,
+                            "tool_input": {"active_only": True},
+                            "tool_output": {"content": inspection_summary or inspection_error},
+                        }
+                    ],
+                )
+                logger.info(f"💾 [元数据定时巡检] 审计历史与链路已保存 | TraceID: {trace_id} | 会话ID: {run_conversation_id}")
+            except Exception as audit_err:
+                logger.warning(f"⚠️ [元数据定时巡检] 记录审计历史失败: {audit_err}", exc_info=True)
+
+            async with AsyncSessionLocal() as session:
+                fresh_task = (
+                    await session.execute(select(AgentScheduledTask).where(AgentScheduledTask.id == task_id_snapshot))
+                ).scalar_one_or_none()
+                if fresh_task is not None:
+                    if inspection_error:
+                        await _handle_task_execution_failure(
+                            session,
+                            fresh_task,
+                            trace_id=trace_id,
+                            error=inspection_error,
+                            is_manual=is_manual,
+                            retry_attempt=retry_attempt,
+                            task_config=task_config,
+                        )
+                    else:
+                        await session.execute(
+                            update(AgentScheduledTask)
+                            .where(AgentScheduledTask.id == task_id_snapshot)
+                            .values(
+                                last_run_id=trace_id,
+                                last_run_at=datetime.now(),
+                                run_count=AgentScheduledTask.run_count + 1,
+                            )
+                        )
+                        await session.commit()
+                        await _mark_task_success(
+                            session,
+                            fresh_task,
+                            trace_id=trace_id,
+                            message=inspection_summary,
+                        )
+
+            # ── 触发告警通知：仅当检出漂移差异或执行错误时，向勾选渠道投递（站内信必选）──
+            has_drift_alert = bool(
+                inspection_error
+                or stale_cnt > 0
+                or new_cnt > 0
+                or mismatch_cnt > 0
+                or failed_cnt > 0
+            )
+
+            configured_channels = list(task_config.get("notification_channels") or ["portal"])
+            if "portal" not in configured_channels:
+                configured_channels.insert(0, "portal")
+
+            if has_drift_alert:
+                alert_channels = configured_channels
+                alert_title = "⚠️ 元数据定时巡检检出 Schema 漂移差异"
+                if inspection_error:
+                    alert_title = "❌ 元数据定时巡检执行异常告警"
+
+                body_lines = [
+                    f"### {alert_title}",
+                    f"- **任务名称**：{task_name}",
+                    f"- **巡检时间**：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+                    f"- **巡检结论**：{inspection_summary or inspection_error}",
+                ]
+                if not inspection_error:
+                    body_lines.append(
+                        "\n> 💡 **治理建议**：物理库表结构发生变动，请前往【元数据管理 ➔ 全局巡检】大盘查看详细差异并进行人机协同处置。"
+                    )
+                alert_body = "\n".join(body_lines)
+
+                logger.warning(
+                    f"📢 [元数据定时巡检] 检出结构漂移或执行异常！准备向用户 {task_user_id} 派发告警通知 | 目标渠道: {alert_channels}"
+                )
+
+                try:
+                    from app.services.portal_notification_service import PortalNotificationService
+                    from app.services.notification_service import NotificationService
+
+                    async with AsyncSessionLocal() as notify_session:
+                        # 1. 站内信（始终投递并 commit 事务，确保通知持久化且对管理员可见）
+                        if "portal" in alert_channels:
+                            try:
+                                target_uids = {int(task_user_id)}
+                                try:
+                                    # 若任务创建者不是主管理员 admin，则额外抄送主管理员
+                                    main_admin_id = (
+                                        await notify_session.execute(
+                                            select(User.id).where(User.user_name == "admin")
+                                        )
+                                    ).scalar_one_or_none()
+                                    if main_admin_id:
+                                        target_uids.add(int(main_admin_id))
+                                except Exception as ue:
+                                    logger.debug(f"Query main admin user id fallback: {ue}")
+
+                                for uid in target_uids:
+                                    await PortalNotificationService.create(
+                                        notify_session,
+                                        user_id=uid,
+                                        title=alert_title,
+                                        content=alert_body,
+                                        level="warning" if not inspection_error else "error",
+                                        category="task_center",
+                                        resource_type="scheduled_task",
+                                        resource_id=str(task_id_snapshot),
+                                        metadata={
+                                            "source": "metadata_cron_inspection",
+                                            "task_id": task_id_snapshot,
+                                            "task_name": task_name,
+                                        },
+                                    )
+                                await notify_session.commit()
+                                logger.info(f"  ✉️ [站内信] 告警通知已成功持久化落库 | 接收用户IDs: {list(target_uids)}")
+                            except Exception as pe:
+                                await notify_session.rollback()
+                                logger.warning(f"  ❌ [站内信] 投递落库失败: {pe}", exc_info=True)
+
+                        # 2. 外部机器人 / 邮件通知（钉钉/企微/飞书/邮件）
+                        ext_map = {
+                            "dingtalk": ("钉钉群机器人", NotificationService.send_dingtalk),
+                            "wechat_work": ("企业微信群机器人", NotificationService.send_wechat_work),
+                            "feishu": ("飞书群机器人", NotificationService.send_feishu),
+                            "email": ("邮件通知", NotificationService.send_email),
+                        }
+                        for ch in alert_channels:
+                            if ch == "portal":
+                                continue
+                            item = ext_map.get(ch)
+                            if item:
+                                ch_name, sender = item
+                                try:
+                                    success, err_msg = await sender(
+                                        notify_session,
+                                        user_id=task_user_id,
+                                        title=alert_title,
+                                        content=alert_body,
+                                    )
+                                    if success:
+                                        logger.info(f"  🚀 [{ch_name}] 通知已成功派发至 {ch}")
+                                    else:
+                                        logger.warning(f"  ⚠️ [{ch_name}] 派发失败: {err_msg}")
+                                except Exception as ee:
+                                    logger.warning(f"  ❌ [{ch_name}] 派发异常: {ee}")
+                except Exception as ne:
+                    logger.error(f"❌ [元数据定时巡检] 通知调度失败: {ne}", exc_info=True)
+            else:
+                logger.info(
+                    f"ℹ️ [元数据定时巡检] 物理结构与元数据完全一致（0 缺失、0 新增、0 类型不一致、0 连接异常）。"
+                    f"根据规则「仅当发现漂移/异常时通知」，本次巡检跳过通知派发（已配置渠道: {configured_channels}）。"
+                )
+
+            logger.info(f"🏁 [元数据定时巡检] 任务全流程执行结束 | 任务ID: {task_id_snapshot} | 总耗时: {execution_time_ms:.1f}ms")
+            return
 
         # ── 阶段 2：长 LLM 调用。此时不持有任何数据库连接 ──
         from app.services.task_notification_channels import channels_from_task_config

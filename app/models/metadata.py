@@ -29,6 +29,7 @@ class MetaDataset(Base):
 
     tables = relationship("MetaTable", back_populates="dataset", cascade="all, delete-orphan")
     metrics = relationship("MetaMetric", back_populates="dataset", cascade="all, delete-orphan")
+    drift_alerts = relationship("MetaSchemaDriftAlert", back_populates="dataset", cascade="all, delete-orphan")
 
 
 class MetaTable(Base):
@@ -102,3 +103,28 @@ class MetaRelationship(Base):
 
     source_table = relationship("MetaTable", foreign_keys=[source_table_id])
     target_table = relationship("MetaTable", foreign_keys=[target_table_id])
+
+
+class MetaSchemaDriftAlert(Base):
+    """元数据 Schema 漂移异常告警与人机协同处置模型。
+
+    记录来自运行时物理报错反哺与手动/自动巡检发现的字段级差异。
+    """
+    __tablename__ = "meta_schema_drift_alerts"
+
+    id = Column(Integer, primary_key=True, index=True)
+    dataset_id = Column(Integer, ForeignKey("meta_datasets.id", ondelete="CASCADE"), nullable=False, index=True)
+    table_id = Column(Integer, nullable=True)
+    table_name = Column(String(255), nullable=False)
+    column_name = Column(String(255), nullable=False)
+    drift_type = Column(String(32), default="missing_in_db", comment="missing_in_db, new_in_db, type_mismatch")
+    source = Column(String(32), default="runtime", comment="runtime, manual_inspection, cron_inspection")
+    error_sample = Column(Text, nullable=True)
+    hit_count = Column(Integer, default=1)
+    status = Column(Integer, default=0, comment="0: pending, 1: resolved, 2: ignored")
+
+    created_at = Column(DateTime, default=datetime.now)
+    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
+
+    dataset = relationship("MetaDataset", back_populates="drift_alerts")
+

@@ -383,11 +383,11 @@ export const metadataApi = {
     axios.get<AllTablesDataset[]>(`${API_BASE}/all-tables`),
 
   // AI Assistant / Import (Mock for Phase 4)
-  analyzeDDL: (ddl: string, dataSource?: string) =>
+  analyzeDDL: (ddl: string, dataSource?: string, signal?: AbortSignal) =>
     axios.post(
       `${API_BASE}/tables/import`,
       { ddl, ...(dataSource ? { data_source: dataSource } : {}) },
-      { timeout: 300000 }
+      { timeout: 300000, signal }
     ),
   
   recommendMetrics: (datasetId: number, params?: { table_names?: string[]; user_prompt?: string }, signal?: AbortSignal) =>
@@ -516,4 +516,86 @@ export const metadataApi = {
     ),
   toggleDbTableProfileIgnore: (configId: number, tableName: string, isIgnored: number) =>
     axios.put<any>(`${API_BASE}/db/connection-configs/${configId}/table-profiles/ignore`, { table_name: tableName, is_ignored: isIgnored }),
+
+  // Schema Drift Alerts & Inspection
+  getDriftSummary: () =>
+    axios.get<DriftSummaryResponse>(`${API_BASE}/datasets/drift-summary`),
+  getDatasetDriftAlerts: (datasetId: number, status?: number) =>
+    axios.get<MetaDriftAlert[]>(`${API_BASE}/datasets/${datasetId}/drift-alerts`, {
+      params: status !== undefined ? { status } : undefined,
+    }),
+  getAllDriftAlerts: (params?: { dataset_id?: number; status?: number }) =>
+    axios.get<MetaDriftAlert[]>(`${API_BASE}/drift-alerts`, { params }),
+  resolveDriftAlert: (alertId: number, action: 'drop_column' | 'add_column' | 'ignore') =>
+    axios.post<any>(`${API_BASE}/drift-alerts/${alertId}/resolve`, { action }),
+  batchResolveDriftAlerts: (
+    datasetId: number,
+    data: {
+      action: 'drop_column' | 'add_column' | 'ignore';
+      drift_type?: string;
+      alert_ids?: number[];
+    }
+  ) => axios.post<any>(`${API_BASE}/datasets/${datasetId}/drift-alerts/batch-resolve`, data),
+  batchResolveAllDriftAlerts: (
+    data: {
+      action: 'drop_column' | 'add_column' | 'ignore';
+      drift_type?: string;
+      alert_ids?: number[];
+    }
+  ) => axios.post<any>(`${API_BASE}/drift-alerts/batch-resolve`, data),
+  triggerInspection: (datasetId: number) =>
+    axios.post<{ task_id: string; dataset_id: number; message: string }>(
+      `${API_BASE}/datasets/${datasetId}/inspect-schema`
+    ),
+  triggerAllDatasetsInspection: () =>
+    axios.post<{ task_id: string; dataset_id: number; message: string }>(
+      `${API_BASE}/inspect-all`
+    ),
+  // Cron Inspection
+  getCronInspectionConfig: () =>
+    axios.get<CronInspectionConfig>(`${API_BASE}/cron-inspection`),
+  updateCronInspectionConfig: (data: { enabled: boolean; cron_expr: string; notification_channels?: string[] }) =>
+    axios.post<CronInspectionConfig>(`${API_BASE}/cron-inspection`, data),
+  triggerCronInspectionImmediately: () =>
+    axios.post<{ code: number; message: string; data: { task_id: number } }>(
+      `${API_BASE}/cron-inspection/run`
+    ),
 };
+
+export interface CronInspectionConfig {
+  enabled: boolean;
+  cron_expr: string;
+  task_id?: number | null;
+  next_run_at?: string | null;
+  last_run_at?: string | null;
+  run_count: number;
+  health_status: 'healthy' | 'warning' | 'error' | 'skipped' | 'unknown' | string;
+  last_status?: string | null;
+  last_message?: string | null;
+  last_error?: string | null;
+  notification_channels?: string[];
+}
+
+export interface MetaDriftAlert {
+  id: number;
+  dataset_id: number;
+  dataset_name?: string;
+  table_id?: number | null;
+  table_name: string;
+  column_name: string;
+  drift_type: 'missing_in_db' | 'new_in_db' | 'type_mismatch' | string;
+  source: 'runtime' | 'manual_inspection' | 'cron_inspection' | string;
+  error_sample?: string | null;
+  hit_count: number;
+  status: number; // 0: pending, 1: resolved, 2: ignored
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface DriftSummaryResponse {
+  total_pending: number;
+  datasets: Record<number, number>;
+}
+
+
+

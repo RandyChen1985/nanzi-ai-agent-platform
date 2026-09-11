@@ -13,6 +13,7 @@ import {
   PauseCircleIcon
 } from '@heroicons/vue/24/outline'
 import { useRoute, useRouter } from 'vue-router'
+import MetadataCronInspectionModal from '../components/metadata/MetadataCronInspectionModal.vue'
 import { formatInPlatformTimezoneCompact } from '@/utils/platformTimezone'
 import TaskFlowGuideBanner from '@/components/task/TaskFlowGuideBanner.vue'
 import TaskPromptComposer, {
@@ -146,11 +147,12 @@ const mainViewTab = ref<'tasks' | 'history'>('tasks')
 const viewMode = ref<'grid' | 'list'>((localStorage.getItem('task_center_view_mode') as 'grid' | 'list') || 'grid')
 const searchQuery = ref('')
 const statusFilter = ref<'all' | 'running' | 'stopped'>('all')
-const taskTypeFilter = ref<'all' | 'agent' | 'saved_report'>('all')
+const taskTypeFilter = ref<'all' | 'agent' | 'saved_report' | 'metadata_inspection'>('all')
 const taskTypeTabs = [
   { value: 'all' as const, label: '全部任务' },
   { value: 'agent' as const, label: '智能体任务' },
   { value: 'saved_report' as const, label: '报表订阅' },
+  { value: 'metadata_inspection' as const, label: '元数据巡检' },
 ]
 
 // 执行记录（管理员看全部，普通用户仅看自己的）
@@ -166,8 +168,10 @@ const historyEndAt = ref('')
 const historyExpandedIds = ref<Set<number>>(new Set())
 const historyHasMore = computed(() => historyItems.value.length < historyTotal.value)
 const agentTasksForFilter = computed(() =>
-  tasks.value.filter((task) => task.task_type !== 'saved_report' && task.source !== 'saved_report'),
+  tasks.value.filter((task) => task.task_type !== 'saved_report' && task.source !== 'saved_report' && task.task_type !== 'metadata_inspection'),
 )
+
+const showCronInspectionModal = ref(false)
 
 let historyFilterTimer: number | undefined
 const toApiDateTime = (value: string, endOfDay = false) => {
@@ -700,16 +704,19 @@ const scopedTasks = computed(() => {
 
 const taskTypeCounts = computed(() => ({
   all: scopedTasks.value.length,
-  agent: scopedTasks.value.filter(task => task.task_type !== 'saved_report').length,
+  agent: scopedTasks.value.filter(task => task.task_type !== 'saved_report' && task.task_type !== 'metadata_inspection').length,
   saved_report: scopedTasks.value.filter(task => task.task_type === 'saved_report').length,
+  metadata_inspection: scopedTasks.value.filter(task => task.task_type === 'metadata_inspection').length,
 }))
 
 const filteredTasks = computed(() => {
   let result = [...scopedTasks.value]
   if (taskTypeFilter.value === 'agent') {
-    result = result.filter(task => task.task_type !== 'saved_report')
+    result = result.filter(task => task.task_type !== 'saved_report' && task.task_type !== 'metadata_inspection')
   } else if (taskTypeFilter.value === 'saved_report') {
     result = result.filter(task => task.task_type === 'saved_report')
+  } else if (taskTypeFilter.value === 'metadata_inspection') {
+    result = result.filter(task => task.task_type === 'metadata_inspection')
   }
   if (searchQuery.value) {
     const q = searchQuery.value.toLowerCase()
@@ -766,6 +773,10 @@ const openCreateModal = async () => {
 }
 
 const openEditModal = async (task: AgentTask) => {
+  if (task.task_type === 'metadata_inspection') {
+    showToast('元数据巡检为系统级内置任务，请前往【元数据管理】配置执行周期', 'info')
+    return
+  }
   if (task.task_type === 'saved_report') {
     openSavedReportSubscriptionSettings(task)
     return
@@ -886,6 +897,10 @@ const toggleStatus = (task: AgentTask) => {
 }
 
 const deleteTask = (task: AgentTask) => {
+  if (task.task_type === 'metadata_inspection') {
+    showToast('元数据巡检为系统内置任务，不支持删除；如需停用请关闭任务开关', 'warning')
+    return
+  }
   confirmState.value = {
     show: true,
     title: '确认删除',
@@ -1512,15 +1527,16 @@ onMounted(async () => {
                 <!-- Source Badge -->
                 <div 
                   class="absolute -top-1 -right-1 w-5 h-5 rounded-full flex items-center justify-center border-2 border-white shadow-sm text-[10px]"
-                  :class="task.task_type === 'saved_report' ? 'bg-emerald-500 text-white' : task.source === 'agent' ? 'bg-indigo-500 text-white' : 'bg-amber-500 text-white'"
-                  :title="task.task_type === 'saved_report' ? '报表订阅' : task.source === 'agent' ? '智能体创建' : '手动创建'"
+                  :class="task.task_type === 'metadata_inspection' ? 'bg-purple-600 text-white' : task.task_type === 'saved_report' ? 'bg-emerald-500 text-white' : task.source === 'agent' ? 'bg-indigo-500 text-white' : 'bg-amber-500 text-white'"
+                  :title="task.task_type === 'metadata_inspection' ? '元数据巡检' : task.task_type === 'saved_report' ? '报表订阅' : task.source === 'agent' ? '智能体创建' : '手动创建'"
                 >
-                  {{ task.task_type === 'saved_report' ? '📊' : task.source === 'agent' ? '🤖' : '👤' }}
+                  {{ task.task_type === 'metadata_inspection' ? '⚡' : task.task_type === 'saved_report' ? '📊' : task.source === 'agent' ? '🤖' : '👤' }}
                 </div>
               </div>
               <div class="min-w-0">
                 <div class="flex items-center space-x-2">
                   <h3 class="font-bold text-gray-900 truncate">{{ task.name }}</h3>
+                  <span v-if="task.task_type === 'metadata_inspection'" class="px-2 py-0.5 bg-purple-50 text-purple-700 text-[9px] font-black rounded-full border border-purple-200">系统 · 元数据巡检</span>
                   <span v-if="task.task_type === 'saved_report'" class="px-2 py-0.5 bg-emerald-50 text-emerald-700 text-[9px] font-black rounded-full border border-emerald-100">报表订阅</span>
                   <span v-if="String(task.user_id) === String(userInfo?.user_id)" class="px-2 py-0.5 bg-amber-100 text-amber-700 text-[9px] font-black rounded-full border border-amber-200 flex-shrink-0">
                     我创建的
@@ -1619,14 +1635,25 @@ onMounted(async () => {
             <button @click="openLogs(task)" class="p-1.5 text-gray-400 hover:text-primary hover:bg-white rounded-md transition-all shadow-sm border border-transparent hover:border-gray-100" title="执行历史">
               <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
             </button>
-            <button v-if="canManageTask(task)" @click="openEditModal(task)" class="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-white rounded-md transition-all shadow-sm border border-transparent hover:border-gray-100" :title="task.task_type === 'saved_report' ? '订阅设置' : '编辑'">
+            <button
+              v-if="task.task_type === 'metadata_inspection' && userInfo?.role === 'admin'"
+              @click="showCronInspectionModal = true"
+              class="p-1.5 text-gray-400 hover:text-purple-600 hover:bg-white rounded-md transition-all shadow-sm border border-transparent hover:border-gray-100 cursor-pointer"
+              title="巡检配置与监控"
+            >
+              <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+              </svg>
+            </button>
+            <button v-if="canManageTask(task) && task.task_type !== 'metadata_inspection'" @click="openEditModal(task)" class="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-white rounded-md transition-all shadow-sm border border-transparent hover:border-gray-100" :title="task.task_type === 'saved_report' ? '订阅设置' : '编辑'">
               <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>
             </button>
             <button v-if="canManageTask(task)" @click="toggleStatus(task)" class="p-1.5 text-gray-400 hover:bg-white rounded-md transition-all shadow-sm border border-transparent hover:border-gray-100" :class="task.status === 1 ? 'hover:text-orange-600' : 'hover:text-green-600'" :title="task.status === 1 ? '停止' : '激活'">
               <PauseCircleIcon v-if="task.status === 1" class="w-4 h-4" />
               <PlayCircleIcon v-else class="w-4 h-4" />
             </button>
-            <button v-if="canManageTask(task)" @click="deleteTask(task)" class="p-1.5 text-gray-400 hover:text-red-600 hover:bg-white rounded-md transition-all shadow-sm border border-transparent hover:border-gray-100" title="删除">
+            <button v-if="canManageTask(task) && task.task_type !== 'metadata_inspection'" @click="deleteTask(task)" class="p-1.5 text-gray-400 hover:text-red-600 hover:bg-white rounded-md transition-all shadow-sm border border-transparent hover:border-gray-100" title="删除">
               <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
             </button>
           </div>
@@ -1663,14 +1690,15 @@ onMounted(async () => {
               <div class="flex items-start space-x-3">
                 <span 
                   class="w-6 h-6 rounded-lg flex items-center justify-center text-xs shadow-inner"
-                  :class="task.task_type === 'saved_report' ? 'bg-emerald-50 text-emerald-600' : task.source === 'agent' ? 'bg-indigo-50 text-indigo-600' : 'bg-amber-50 text-amber-600'"
-                  :title="task.task_type === 'saved_report' ? '报表订阅' : task.source === 'agent' ? '智能体创建' : '手动创建'"
+                  :class="task.task_type === 'metadata_inspection' ? 'bg-purple-50 text-purple-600' : task.task_type === 'saved_report' ? 'bg-emerald-50 text-emerald-600' : task.source === 'agent' ? 'bg-indigo-50 text-indigo-600' : 'bg-amber-50 text-amber-600'"
+                  :title="task.task_type === 'metadata_inspection' ? '元数据巡检' : task.task_type === 'saved_report' ? '报表订阅' : task.source === 'agent' ? '智能体创建' : '手动创建'"
                 >
-                  {{ task.task_type === 'saved_report' ? '📊' : task.source === 'agent' ? '🤖' : '👤' }}
+                  {{ task.task_type === 'metadata_inspection' ? '⚡' : task.task_type === 'saved_report' ? '📊' : task.source === 'agent' ? '🤖' : '👤' }}
                 </span>
                 <div class="min-w-0 flex-1">
                   <p class="text-sm font-bold leading-5 text-gray-900 group-hover:text-primary line-clamp-2" :title="task.name">{{ task.name }}</p>
                   <div class="mt-1.5 flex flex-wrap items-center gap-1.5">
+                    <span v-if="task.task_type === 'metadata_inspection'" class="whitespace-nowrap px-2 py-0.5 bg-purple-50 text-purple-700 text-[8px] font-black rounded-full border border-purple-200">系统 · 元数据巡检</span>
                     <span v-if="task.task_type === 'saved_report'" class="whitespace-nowrap px-2 py-0.5 bg-emerald-50 text-emerald-700 text-[8px] font-black rounded-full border border-emerald-100">报表订阅</span>
                     <span v-if="String(task.user_id) === String(userInfo?.user_id)" class="px-2 py-0.5 bg-amber-100 text-amber-700 text-[8px] font-black rounded-full border border-amber-200">
                       我创建的
@@ -1737,14 +1765,25 @@ onMounted(async () => {
                 <button @click="openLogs(task)" class="p-1.5 text-gray-400 hover:text-primary hover:bg-white rounded shadow-sm border border-transparent hover:border-gray-100" title="历史">
                   <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
                 </button>
-                <button v-if="canManageTask(task)" @click="openEditModal(task)" class="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-white rounded shadow-sm border border-transparent hover:border-gray-100" :title="getTaskEditTitle(task)">
+                <button
+                  v-if="task.task_type === 'metadata_inspection' && userInfo?.role === 'admin'"
+                  @click="showCronInspectionModal = true"
+                  class="p-1.5 text-gray-400 hover:text-purple-600 hover:bg-white rounded shadow-sm border border-transparent hover:border-gray-100 cursor-pointer"
+                  title="巡检配置与监控"
+                >
+                  <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                  </svg>
+                </button>
+                <button v-if="canManageTask(task) && task.task_type !== 'metadata_inspection'" @click="openEditModal(task)" class="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-white rounded shadow-sm border border-transparent hover:border-gray-100" :title="getTaskEditTitle(task)">
                   <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>
                 </button>
                 <button v-if="canManageTask(task)" @click="toggleStatus(task)" class="p-1.5 text-gray-400 hover:bg-white rounded shadow-sm border border-transparent hover:border-gray-100" :class="task.status === 1 ? 'hover:text-orange-600' : 'hover:text-green-600'" :title="task.status === 1 ? '停止' : '激活'">
                   <PauseCircleIcon v-if="task.status === 1" class="w-4 h-4" />
                   <PlayCircleIcon v-else class="w-4 h-4" />
                 </button>
-                <button v-if="canManageTask(task)" @click="deleteTask(task)" class="p-1.5 text-gray-400 hover:text-red-600 hover:bg-white rounded shadow-sm border border-transparent hover:border-gray-100" title="删除">
+                <button v-if="canManageTask(task) && task.task_type !== 'metadata_inspection'" @click="deleteTask(task)" class="p-1.5 text-gray-400 hover:text-red-600 hover:bg-white rounded shadow-sm border border-transparent hover:border-gray-100" title="删除">
                   <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
                 </button>
               </div>
@@ -2632,6 +2671,14 @@ onMounted(async () => {
 
     <Toast v-if="toastState.show" :message="toastState.message" :type="toastState.type" @close="toastState.show = false" />
     <ConfirmModal v-if="confirmState.show" :title="confirmState.title" :message="confirmState.message" :type="confirmState.type" @confirm="confirmState.onConfirm" @cancel="confirmState.show = false" />
+
+    <!-- 元数据定时巡检专属配置与监控弹窗（仅 Admin 可用） -->
+    <MetadataCronInspectionModal
+      v-if="userInfo?.role === 'admin'"
+      :show="showCronInspectionModal"
+      @close="showCronInspectionModal = false"
+      @updated="fetchTasks(true)"
+    />
   </div>
 </template>
 

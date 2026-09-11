@@ -12,13 +12,15 @@ MAX_DATA_REPAIR_ROUNDS = 2
 # 平台在工具回调内自动执行的 SQL 重试上限（empty_filter / WHERE 探查），不计入 LLM repair 轮次。
 MAX_PLATFORM_AUTO_SQL_RETRIES = 5
 DATA_REPAIR_BUDGETS = {
+    # 方案 A：数据库确认过时列剔除后的一次性纠正重查（配合 stale_repair_consumed 熔断）。
+    "stale_column_corrected": 1,
     "sql_before_schema": 1,
-    "schema_miss": 1,
-    "schema_refinement": 1,
+    "schema_miss": 2,
+    "schema_refinement": 2,
     "schema_ambiguous": 1,
     "sql_plan_missing": 1,
     "sql_static_risk": 1,
-    "time_range_anomaly": 1,
+    "time_range_anomaly": 2,
     "sql_sandbox_blocked": 2,
     "sql_error": 8,
     "failed_sql_repeat": 1,

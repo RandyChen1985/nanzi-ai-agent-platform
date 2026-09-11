@@ -1,7 +1,7 @@
 import asyncio
 import json
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Body, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Body, Request, BackgroundTasks
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import AsyncGenerator, Awaitable, Callable, List, Any, Dict, Optional
@@ -17,14 +17,23 @@ from app.schemas.metadata import (
     TableCreate, TableResponse,
     MetricSchema, MetricResponse, MetricRecommendRequest,
     RelationshipSchema, RelationshipResponse, RelationshipRecommendRequest,
-    BatchDeleteTablesRequest, BatchDeleteMetricsRequest, BatchDeleteRelationshipsRequest
+    BatchDeleteTablesRequest, BatchDeleteMetricsRequest, BatchDeleteRelationshipsRequest,
+    MetaDriftAlertResponse, ResolveDriftAlertRequest, BatchResolveDriftAlertsRequest, DriftSummaryResponse, InspectionStartResponse,
+    CronInspectionConfigResponse, CronInspectionConfigRequest,
 )
 from app.models.user import User
 from app.models.permission import Role
+from app.models.task import AgentScheduledTask
 from app.core.dependencies import require_admin, get_current_user, require_permission
 from app.core.errors import ErrorCode
 from app.services.permission_service import PermissionService
 from app.services.metadata_sync_log_service import metadata_sync_log_service
+from app.services.metadata_drift_service import MetadataDriftService
+from app.services.metadata_inspection_service import MetadataInspectionService
+from app.services.ai.scheduler_service import scheduler_service
+from apscheduler.triggers.cron import CronTrigger
+from sqlalchemy import select
+from datetime import datetime
 
 router = APIRouter()
 
@@ -290,6 +299,18 @@ async def create_dataset(
         user_name=user.get("user_name"),
         reason="创建数据集"
     )
+
+
+@router.get(
+    "/datasets/drift-summary",
+    response_model=DriftSummaryResponse,
+    dependencies=[Depends(require_permission("menu", "menu:metadata"))],
+)
+async def get_drift_summary(conn: AsyncSession = Depends(get_db_session)):
+    """获取所有数据集的未处理 Schema 漂移告警统计概览。"""
+    total, dataset_counts = await MetadataDriftService.get_drift_summary(conn)
+    return DriftSummaryResponse(total_pending=total, datasets=dataset_counts)
+
 
 @router.get("/datasets/{dataset_id}", response_model=DatasetDetailResponse)
 async def get_dataset(
@@ -631,6 +652,452 @@ async def metadata_sync_events(dataset_id: int, task_id: str):
             "X-Accel-Buffering": "no",
         },
     )
+
+
+# --- Schema Drift & Physical Inspection APIs ---
+
+@router.get(
+    "/drift-alerts",
+    response_model=List[MetaDriftAlertResponse],
+    dependencies=[Depends(require_permission("menu", "menu:metadata"))],
+)
+async def get_all_drift_alerts(
+    dataset_id: Optional[int] = Query(None, description="数据集过滤"),
+    status: Optional[int] = Query(None, description="状态过滤: 0-待处理, 1-已处理, 2-已忽略"),
+    conn: AsyncSession = Depends(get_db_session),
+):
+    """获取全库或指定数据集的 Schema 漂移告警清单（大盘模式）。"""
+    alerts = await MetadataDriftService.get_all_drift_alerts(conn, status=status, dataset_id=dataset_id)
+    return alerts
+
+
+@router.get(
+    "/datasets/{dataset_id}/drift-alerts",
+    response_model=List[MetaDriftAlertResponse],
+    dependencies=[Depends(require_permission("menu", "menu:metadata"))],
+)
+async def get_dataset_drift_alerts(
+    dataset_id: int,
+    status: Optional[int] = Query(None, description="状态过滤: 0-待处理, 1-已处理, 2-已忽略"),
+    conn: AsyncSession = Depends(get_db_session),
+):
+    """获取指定数据集下的 Schema 漂移告警清单。"""
+    alerts = await MetadataDriftService.get_dataset_drift_alerts(conn, dataset_id, status=status)
+    return alerts
+
+
+@router.post(
+    "/drift-alerts/{alert_id}/resolve",
+    dependencies=[Depends(require_permission("element", "element:metadata:edit"))],
+)
+async def resolve_drift_alert(
+    alert_id: int,
+    payload: ResolveDriftAlertRequest,
+    conn: AsyncSession = Depends(get_db_session),
+):
+    """管理员对漂移告警进行人机协同处置（下线字段 / 忽略）。"""
+    try:
+        res = await MetadataDriftService.resolve_alert(conn, alert_id, payload.action)
+        return {"code": 200, "data": res, "message": res.get("message")}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.exception("处置漂移告警失败")
+        raise HTTPException(status_code=500, detail=f"处置失败: {str(e)}")
+
+
+@router.post(
+    "/drift-alerts/batch-resolve",
+    dependencies=[Depends(require_permission("element", "element:metadata:edit"))],
+)
+async def batch_resolve_all_drift_alerts(
+    payload: BatchResolveDriftAlertsRequest,
+    conn: AsyncSession = Depends(get_db_session),
+):
+    """全局跨数据集批量处置漂移告警。"""
+    try:
+        res = await MetadataDriftService.batch_resolve_alerts_global(
+            conn,
+            action=payload.action,
+            drift_type=payload.drift_type,
+            alert_ids=payload.alert_ids,
+        )
+        return {"code": 200, "data": res, "message": res.get("message")}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.exception("全局批量处置漂移告警失败")
+        raise HTTPException(status_code=500, detail=f"批量处置失败: {str(e)}")
+
+
+@router.post(
+    "/datasets/{dataset_id}/drift-alerts/batch-resolve",
+    dependencies=[Depends(require_permission("element", "element:metadata:edit"))],
+)
+async def batch_resolve_drift_alerts(
+    dataset_id: int,
+    payload: BatchResolveDriftAlertsRequest,
+    conn: AsyncSession = Depends(get_db_session),
+):
+    """管理员对漂移告警进行批量人机协同处置（批量下线 / 批量录入元数据 / 批量忽略）。"""
+    try:
+        res = await MetadataDriftService.batch_resolve_alerts(
+            conn,
+            dataset_id=dataset_id,
+            action=payload.action,
+            drift_type=payload.drift_type,
+            alert_ids=payload.alert_ids,
+        )
+        return {"code": 200, "data": res, "message": res.get("message")}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.exception("批量处置漂移告警失败")
+        raise HTTPException(status_code=500, detail=f"批量处置失败: {str(e)}")
+
+
+@router.post(
+    "/inspect-all",
+    response_model=InspectionStartResponse,
+    dependencies=[Depends(require_permission("menu", "menu:metadata"))],
+)
+async def trigger_all_datasets_inspection(
+    background_tasks: BackgroundTasks,
+    conn: AsyncSession = Depends(get_db_session),
+):
+    """手动触发全库所有数据集的批量物理结构巡检任务。"""
+    from app.core.orm import AsyncSessionLocal
+
+    task = await metadata_sync_log_service.create_task(0)
+    await metadata_sync_log_service.publish(
+        task.task_id,
+        event="started",
+        stage="queued",
+        message="全量数据集批量物理结构巡检任务已启动，正在初始化...",
+        progress=0,
+    )
+
+    async def run_inspection():
+        async with AsyncSessionLocal() as session:
+            await MetadataInspectionService.inspect_all_datasets(session, task_id=task.task_id)
+
+    background_tasks.add_task(run_inspection)
+
+    return InspectionStartResponse(
+        task_id=task.task_id,
+        dataset_id=0,
+        message="全量巡检任务已启动",
+    )
+
+
+@router.post(
+    "/datasets/{dataset_id}/inspect-schema",
+    response_model=InspectionStartResponse,
+    dependencies=[Depends(require_permission("menu", "menu:metadata"))],
+)
+async def trigger_dataset_inspection(
+    dataset_id: int,
+    background_tasks: BackgroundTasks,
+    conn: AsyncSession = Depends(get_db_session),
+):
+    """手动触发单数据集物理结构一致性巡检，创建流式任务。"""
+    ds = await MetadataService.get_dataset_by_id(conn, dataset_id)
+    if not ds:
+        raise HTTPException(status_code=404, detail="数据集不存在")
+
+    from app.core.orm import AsyncSessionLocal
+
+    task = await metadata_sync_log_service.create_task(dataset_id)
+    await metadata_sync_log_service.publish(
+        task.task_id,
+        event="started",
+        stage="queued",
+        message=f"数据集【{ds.name}】物理结构巡检已加入队列...",
+        progress=0,
+    )
+
+    async def run_inspection():
+        async with AsyncSessionLocal() as session:
+            await MetadataInspectionService.inspect_dataset(session, dataset_id, task_id=task.task_id)
+
+    background_tasks.add_task(run_inspection)
+
+    return InspectionStartResponse(
+        task_id=task.task_id,
+        dataset_id=dataset_id,
+        message="巡检任务已启动",
+    )
+
+
+@router.get(
+    "/inspect/{task_id}/events",
+    dependencies=[Depends(require_permission("menu", "menu:metadata"))],
+)
+async def global_metadata_inspection_events(task_id: str):
+    """订阅全局或任意巡检任务的实时流式日志与进度。"""
+    task = await metadata_sync_log_service.get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="巡检任务不存在")
+
+    async def event_stream():
+        last_id = "0-0"
+        try:
+            while True:
+                events = await metadata_sync_log_service.read_events(task_id, after_id=last_id)
+                if not events:
+                    events = await metadata_sync_log_service.read_new_events(
+                        task_id, after_id=last_id, block_ms=1000
+                    )
+                for item in events:
+                    event_id = item.pop("id", None)
+                    if event_id:
+                        last_id = event_id
+                    event_name = item.get("event", "progress")
+                    yield f"id: {last_id}\nevent: {event_name}\ndata: {json.dumps(item, ensure_ascii=False)}\n\n"
+                    if event_name in metadata_sync_log_service.TERMINAL_EVENTS:
+                        return
+                await asyncio.sleep(0)
+        except asyncio.CancelledError:
+            raise
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+@router.get(
+    "/datasets/{dataset_id}/inspect/{task_id}/events",
+    dependencies=[Depends(require_permission("menu", "menu:metadata"))],
+)
+async def metadata_inspection_events(dataset_id: int, task_id: str):
+    """订阅指定巡检任务的实时流式日志与进度。"""
+    if not await metadata_sync_log_service.belongs_to_dataset(task_id, dataset_id):
+        raise HTTPException(status_code=404, detail="巡检任务不存在")
+
+    async def event_stream():
+        last_id = "0-0"
+        try:
+            while True:
+                events = await metadata_sync_log_service.read_events(task_id, after_id=last_id)
+                if not events:
+                    events = await metadata_sync_log_service.read_new_events(
+                        task_id, after_id=last_id, block_ms=1000
+                    )
+                for item in events:
+                    event_id = item.pop("id", None)
+                    if event_id:
+                        last_id = event_id
+                    event_name = item.get("event", "progress")
+                    yield f"id: {last_id}\nevent: {event_name}\ndata: {json.dumps(item, ensure_ascii=False)}\n\n"
+                    if event_name in metadata_sync_log_service.TERMINAL_EVENTS:
+                        return
+                await asyncio.sleep(0)
+        except asyncio.CancelledError:
+            raise
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+# --- Cron Inspection (Scheduled Metadata Consistency Inspection) ---
+
+@router.get(
+    "/cron-inspection",
+    response_model=CronInspectionConfigResponse,
+    dependencies=[Depends(require_admin)],
+)
+async def get_cron_inspection_config(conn: AsyncSession = Depends(get_db_session)):
+    """获取元数据定时巡检配置与最新运行状态（仅管理员）。"""
+    stmt = (
+        select(AgentScheduledTask)
+        .where(AgentScheduledTask.name == "全量元数据物理结构巡检")
+        .limit(1)
+    )
+    res = await conn.execute(stmt)
+    task = res.scalar_one_or_none()
+
+    if not task:
+        return CronInspectionConfigResponse(
+            enabled=False,
+            cron_expr="0 2 * * *",
+            task_id=None,
+            next_run_at=None,
+            last_run_at=None,
+            run_count=0,
+            health_status="unknown",
+            last_status=None,
+            last_message=None,
+            last_error=None,
+        )
+
+    next_run = scheduler_service.get_next_run_time(task.id)
+    task_cfg = task.config if isinstance(task.config, dict) else {}
+    metrics = task_cfg.get("metrics", {})
+    channels = list(task_cfg.get("notification_channels") or ["portal"])
+    if "portal" not in channels:
+        channels.insert(0, "portal")
+
+    return CronInspectionConfigResponse(
+        enabled=(task.status == 1),
+        cron_expr=task.cron_expr or "0 2 * * *",
+        task_id=task.id,
+        next_run_at=next_run or task.next_run_at,
+        last_run_at=task.last_run_at,
+        run_count=task.run_count or 0,
+        health_status=metrics.get("health_status", "unknown"),
+        last_status=metrics.get("last_status"),
+        last_message=metrics.get("last_message"),
+        last_error=metrics.get("last_error"),
+        notification_channels=channels,
+    )
+
+
+@router.post(
+    "/cron-inspection",
+    response_model=CronInspectionConfigResponse,
+    dependencies=[Depends(require_admin)],
+)
+async def update_cron_inspection_config(
+    payload: CronInspectionConfigRequest,
+    conn: AsyncSession = Depends(get_db_session),
+    user: dict = Depends(get_current_user),
+):
+    """开启/关闭或更新元数据全量定时巡检配置。"""
+    cron_parts = (payload.cron_expr or "").strip().split()
+    if len(cron_parts) not in (5, 6):
+        raise HTTPException(status_code=400, detail="Cron 表达式格式不正确，需为 5 位或 6 位空格分隔格式")
+    try:
+        if len(cron_parts) == 6:
+            CronTrigger.from_crontab(" ".join(cron_parts[:5]))
+        else:
+            CronTrigger.from_crontab(payload.cron_expr.strip())
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"非法的 Cron 表达式: {str(e)}")
+
+    user_id = int(user.get("user_id") or 1)
+
+    stmt = (
+        select(AgentScheduledTask)
+        .where(AgentScheduledTask.name == "全量元数据物理结构巡检")
+        .limit(1)
+    )
+    res = await conn.execute(stmt)
+    task = res.scalar_one_or_none()
+
+    # 规范化通知渠道：站内信 portal 强制必选
+    channels = list(payload.notification_channels or ["portal"])
+    if "portal" not in channels:
+        channels.insert(0, "portal")
+
+    task_config = {
+        "task_type": "metadata_inspection",
+        "is_system": True,
+        "notification_channels": channels,
+    }
+
+    if task:
+        existing_metrics = (task.config or {}).get("metrics", {}) if isinstance(task.config, dict) else {}
+        task_config["metrics"] = existing_metrics
+        task.cron_expr = payload.cron_expr.strip()
+        task.status = 1 if payload.enabled else 0
+        task.config = task_config
+        task.updated_at = datetime.now()
+        await conn.commit()
+        await conn.refresh(task)
+    else:
+        task = AgentScheduledTask(
+            name="全量元数据物理结构巡检",
+            user_id=user_id,
+            agent_id="system_inspection",
+            conversation_id="system_metadata_inspection",
+            cron_expr=payload.cron_expr.strip(),
+            prompt="执行全量元数据物理结构一致性巡检",
+            source="system",
+            status=1 if payload.enabled else 0,
+            config=task_config,
+        )
+        conn.add(task)
+        await conn.commit()
+        await conn.refresh(task)
+
+    await scheduler_service.upsert_task(task)
+
+    next_run = scheduler_service.get_next_run_time(task.id)
+    metrics = (task.config or {}).get("metrics", {}) if isinstance(task.config, dict) else {}
+
+    return CronInspectionConfigResponse(
+        enabled=(task.status == 1),
+        cron_expr=task.cron_expr,
+        task_id=task.id,
+        next_run_at=next_run or task.next_run_at,
+        last_run_at=task.last_run_at,
+        run_count=task.run_count or 0,
+        health_status=metrics.get("health_status", "unknown"),
+        last_status=metrics.get("last_status"),
+        last_message=metrics.get("last_message"),
+        last_error=metrics.get("last_error"),
+        notification_channels=channels,
+    )
+
+
+@router.post(
+    "/cron-inspection/run",
+    dependencies=[Depends(require_admin)],
+)
+async def trigger_cron_inspection_immediately(
+    background_tasks: BackgroundTasks,
+    conn: AsyncSession = Depends(get_db_session),
+    user: dict = Depends(get_current_user),
+):
+    """立即手动触发一次定时巡检任务执行。"""
+    stmt = (
+        select(AgentScheduledTask)
+        .where(AgentScheduledTask.name == "全量元数据物理结构巡检")
+        .limit(1)
+    )
+    res = await conn.execute(stmt)
+    task = res.scalar_one_or_none()
+    if not task:
+        user_id = int(user.get("user_id") or 1)
+        task = AgentScheduledTask(
+            name="全量元数据物理结构巡检",
+            user_id=user_id,
+            agent_id="system_inspection",
+            conversation_id="system_metadata_inspection",
+            cron_expr="0 2 * * *",
+            prompt="执行全量元数据物理结构一致性巡检",
+            source="system",
+            status=0,
+            config={
+                "task_type": "metadata_inspection",
+                "is_system": True,
+                "notification_channels": ["portal"],
+            },
+        )
+        conn.add(task)
+        await conn.commit()
+        await conn.refresh(task)
+
+    task_id = task.id
+    background_tasks.add_task(scheduler_service.run_task, task_id, is_manual=True)
+
+    return {
+        "code": 200,
+        "message": "定时巡检任务已触发立即执行",
+        "data": {"task_id": task_id},
+    }
+
 
 # --- Metric APIs ---
 
@@ -1116,16 +1583,25 @@ async def import_ddl(ddl: dict): # Expects {"ddl": "..."}
     if not content:
         raise HTTPException(status_code=400, detail="DDL content cannot be empty")
         
-    # 将导入向导选定的数据源传给生成器，确保指标 SQL 使用目标数据库方言。
-    result = await MetadataGeneratorService.generate_from_ddl(
-        content,
-        data_source=ddl.get("data_source"),
-    )
-    return {
-        "code": 200,
-        "message": "success",
-        "data": result
-    }
+    logger.info(f"🚀 [元数据智能导入] 收到 DDL 分析请求 | 长度: {len(content)} 字符 | 数据源: {ddl.get('data_source') or 'default'}")
+    try:
+        # 将导入向导选定的数据源传给生成器，确保指标 SQL 使用目标数据库方言。
+        result = await MetadataGeneratorService.generate_from_ddl(
+            content,
+            data_source=ddl.get("data_source"),
+        )
+        logger.info("✅ [元数据智能导入] DDL 智能分析推导完成")
+        return {
+            "code": 200,
+            "message": "success",
+            "data": result
+        }
+    except asyncio.CancelledError:
+        logger.warning("⏹️ [元数据智能导入] 客户端主动断开连接 / 用户取消了智能导入识别")
+        raise
+    except Exception as e:
+        logger.error(f"❌ [元数据智能导入] 分析失败: {e}", exc_info=True)
+        raise
 
 from app.services.db_import_service import DBImportService
 from app.schemas.metadata import DBConnectionConfig, DDLRequest

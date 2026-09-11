@@ -14,6 +14,11 @@ from app.services.ai.runners.chatbi.constants import (
     _SQL_TOOL_RESULT_DELIMITER,
 )
 from app.services.ai.runners.chatbi.run_state import DataRunState
+from app.services.ai.runners.chatbi.schema_stale_correction import (
+    build_stale_correction,
+    build_stale_repair_hint,
+    is_stale_driver_error,
+)
 from app.services.ai.time_anchor import TIME_RANGE_GATE_PREFIX
 
 
@@ -410,8 +415,61 @@ def apply_sql_tool_result(
             runner._is_schema_reference_sql_error(state.sql_error_message)
             and not runner._is_sql_schema_preflight_error(output)
         ):
-            state.schema_refresh_required = True
-            state.schema_refreshed_after_sql_error = False
+            # 方案 A：数据库报错确认某 schema 已声明列不存在 → 以数据库为准剔除过时列，
+            # 让下一轮基于纠正后的 Schema 重写 SQL（database wins）。
+            if not state.stale_correction_applied and not state.corrected_schema_output:
+                stale = build_stale_correction(
+                    state.sql_error_message,
+                    table_bindings=state.table_bindings,
+                    schema_table_columns=state.schema_table_columns,
+                )
+                if stale.usable:
+                    state.stale_columns_dropped = [
+                        {"field_name": c.field_name, "table_key": c.table_key}
+                        for c in stale.stale_columns
+                        if c.safe_to_drop
+                    ]
+                    state.corrected_schema_output = stale.corrected_schema_output
+                    state.corrected_table_columns = stale.remaining_table_columns
+                    # 同步更新内存态有效列，使本地 Preflight 网关与 where 探针在当轮即可拦截已剔除失效列
+                    state.schema_table_columns = stale.remaining_table_columns
+                    state.stale_correction_applied = True
+                    state.stale_repair_hint = build_stale_repair_hint(stale)
+                    # 不再空转等待可能依旧过时的 get_dataset_schema 重查，直接进入纠正修复。
+                    state.schema_refresh_required = False
+                    state.schema_refreshed_after_sql_error = False
+
+                    # 闭环反哺元数据：异步静默记录 Schema 漂移告警（零阻塞会话主流程）
+                    for c in stale.stale_columns:
+                        if c.safe_to_drop and c.table_key:
+                            binding = (state.table_bindings or {}).get(c.table_key)
+                            ds_name = str(getattr(binding, "dataset_name", "") or "")
+                            try:
+                                import asyncio
+                                from app.services.metadata_drift_service import MetadataDriftService
+
+                                loop = asyncio.get_running_loop()
+                                task = loop.create_task(
+                                    MetadataDriftService.record_runtime_stale_alert(
+                                        dataset_name=ds_name,
+                                        table_name=c.table_key,
+                                        column_name=c.field_name,
+                                        error_sample=state.sql_error_message,
+                                    )
+                                )
+                                if hasattr(state, "_drift_tasks"):
+                                    state._drift_tasks.append(task)
+                                else:
+                                    setattr(state, "_drift_tasks", [task])
+                            except (RuntimeError, Exception):
+                                pass
+                else:
+                    # 判为模型编造/未知列（schema 未声明）：走既有重查 + invalid-identifier 纠错。
+                    state.schema_refresh_required = True
+                    state.schema_refreshed_after_sql_error = False
+            else:
+                state.schema_refresh_required = True
+                state.schema_refreshed_after_sql_error = False
         return parsed_output, False
 
     if empty_reason:

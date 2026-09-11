@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, computed, watch } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRouter, useRoute } from 'vue-router'
 import { metadataApi } from '../api/metadata'
 import type { Dataset } from '../api/metadata'
 import { portalApi, type User, type Role } from '../api/portal'
@@ -9,6 +9,8 @@ import SmartImportWizard from '../components/metadata/SmartImportWizard.vue'
 import RowFilterOptionSelect from '../components/metadata/RowFilterOptionSelect.vue'
 import PermissionVariableMenu from '../components/metadata/PermissionVariableMenu.vue'
 import MetadataFlowGuideBanner from '../components/metadata/MetadataFlowGuideBanner.vue'
+import MetadataDriftAlertsDrawer from '../components/metadata/MetadataDriftAlertsDrawer.vue'
+import MetadataCronInspectionModal from '../components/metadata/MetadataCronInspectionModal.vue'
 import { useUser } from '../composables/useUser'
 import { useToast } from '../composables/useToast'
 import { copyToClipboard } from '../utils/clipboard'
@@ -25,6 +27,7 @@ import {
 } from '@heroicons/vue/24/outline'
 
 const { isAdmin, hasPermission } = useUser()
+const route = useRoute()
 
 const router = useRouter()
 const datasets = ref<Dataset[]>([])
@@ -40,6 +43,54 @@ const showEditDatasetModal = ref(false)
 const showPermConfigModal = ref(false)
 const showPermHelpModal = ref(false)
 const showUserSelectorModal = ref(false)
+
+// Schema 巡检与漂移告警状态
+const driftSummary = ref<Record<number, number>>({})
+const driftAlertsDataset = ref<Dataset | null>(null)
+const showDriftDrawer = ref(false)
+const showCronInspectionModal = ref(false)
+
+const fetchDriftSummary = async () => {
+  try {
+    const res = await metadataApi.getDriftSummary()
+    driftSummary.value = res.data?.datasets || {}
+  } catch (e) {
+    console.error('Failed to fetch drift summary', e)
+  }
+}
+
+const isGlobalDriftDrawer = ref(false)
+
+const openDriftAlerts = (ds: Dataset) => {
+  isGlobalDriftDrawer.value = false
+  driftAlertsDataset.value = ds
+  showDriftDrawer.value = true
+}
+
+const openGlobalDriftDrawer = () => {
+  driftAlertsDataset.value = null
+  isGlobalDriftDrawer.value = true
+  showDriftDrawer.value = true
+}
+
+const handleDriftResolved = () => {
+  fetchDriftSummary()
+}
+
+// 全局 Schema 漂移待办状态与快捷入口
+const showDriftBanner = ref(true)
+
+const totalPendingDriftCount = computed(() => {
+  return Object.values(driftSummary.value).reduce((acc, cur) => acc + (cur || 0), 0)
+})
+
+const driftDatasetCount = computed(() => {
+  return Object.keys(driftSummary.value).filter(id => (driftSummary.value[Number(id)] || 0) > 0).length
+})
+
+const openFirstDriftDataset = () => {
+  openGlobalDriftDrawer()
+}
 
 // 流程引导横幅控制
 const FLOW_GUIDE_STORAGE_KEY = 'nanzi_metadata_flow_guide_dismissed'
@@ -791,6 +842,7 @@ const handleCreate = async () => {
     }
     await metadataApi.createDataset(newDataset.value)
     showCreateModal.value = false
+    showToast('数据集已创建，默认为禁用状态，请在列表中审核后手动启用', 'success', 5000)
     newDataset.value = { name: '', display_name: '', description: '', data_source: '', enable_data_perm: false, row_filter_config: null, tags: [] }
     rowFilterConfigStr.value = ''
     fetchDatasets()
@@ -1116,11 +1168,15 @@ onMounted(async () => {
     fetchSystemConfig()
     fetchDatasets()
     fetchDbConnections()
+    fetchDriftSummary()
     await fetchRagFlowConfig()
     if (!isLocalMode.value) {
         checkRagFlowConnectivity()
     } else {
         engineStatus.value = 'connected'
+    }
+    if ((route.query.open_cron_inspection === '1' || route.query.open_cron_inspection === 'true') && isAdmin.value) {
+        showCronInspectionModal.value = true
     }
 })
 </script>
@@ -1295,7 +1351,7 @@ onMounted(async () => {
               v-if="hasPermission('element:metadata:edit') && hasPermission('element:metadata:import')"
               type="button"
               class="border-l border-blue-500 bg-blue-600 px-2 text-white transition-colors hover:bg-blue-700"
-              title="更多创建方式"
+              title="更多操作与创建方式"
               @click="showCreateMenu = !showCreateMenu"
             >
               <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1305,12 +1361,12 @@ onMounted(async () => {
           </div>
           <div
             v-if="showCreateMenu"
-            class="absolute right-0 z-20 mt-1.5 w-48 rounded-xl border border-gray-200 bg-white py-1 shadow-lg"
+            class="absolute right-0 z-20 mt-1.5 w-48 rounded-xl border border-gray-200 bg-white py-1 shadow-lg dark:border-gray-700 dark:bg-gray-800"
           >
             <button
               v-if="hasPermission('element:metadata:edit')"
               type="button"
-              class="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50"
+              class="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50 dark:text-gray-200 dark:hover:bg-gray-700"
               @click="showCreateMenu = false; showCreateModal = true"
             >
               <svg class="h-4 w-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1321,13 +1377,39 @@ onMounted(async () => {
             <button
               v-has-perm="'element:metadata:import'"
               type="button"
-              class="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50"
+              class="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50 dark:text-gray-200 dark:hover:bg-gray-700"
               @click="showCreateMenu = false; showImportModal = true"
             >
               <svg class="h-4 w-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
               </svg>
               智能导入 (DDL)
+            </button>
+            <div class="my-1 border-t border-gray-100 dark:border-gray-700"></div>
+            <button
+              type="button"
+              class="flex w-full items-center justify-between px-3 py-2 text-left text-sm text-amber-700 dark:text-amber-300 hover:bg-amber-50 dark:hover:bg-amber-950/30 transition-colors cursor-pointer"
+              @click="showCreateMenu = false; openGlobalDriftDrawer()"
+            >
+              <span class="flex items-center gap-2">
+                <span class="text-base leading-none">⚡</span>
+                <span>全局巡检</span>
+              </span>
+              <span
+                v-if="totalPendingDriftCount > 0"
+                class="px-1.5 py-0.5 text-[10px] font-bold rounded-full bg-rose-500 text-white"
+              >
+                {{ totalPendingDriftCount }}
+              </span>
+            </button>
+            <button
+              v-if="isAdmin"
+              type="button"
+              class="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-colors cursor-pointer"
+              @click="showCreateMenu = false; showCronInspectionModal = true"
+            >
+              <span class="text-base leading-none">⏱️</span>
+              <span>定时巡检</span>
             </button>
           </div>
         </div>
@@ -1341,6 +1423,47 @@ onMounted(async () => {
         @dismiss="handleFlowGuideDismiss"
         @action="handleFlowGuideAction"
       />
+    </div>
+
+    <!-- 全局 Schema 漂移待办与运行时物理报错反哺提醒横幅 -->
+    <div
+      v-if="showDriftBanner && totalPendingDriftCount > 0"
+      class="relative rounded-2xl border border-amber-300/90 bg-gradient-to-r from-amber-50 via-orange-50/40 to-amber-50 dark:from-amber-950/40 dark:via-orange-950/20 dark:to-amber-950/30 p-3.5 sm:p-4 text-xs sm:text-sm text-amber-900 dark:text-amber-200 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+    >
+      <div class="flex items-start gap-3">
+        <div class="w-8 h-8 rounded-xl bg-amber-200/70 dark:bg-amber-900/60 flex items-center justify-center shrink-0 text-base shadow-2xs">
+          ⚠️
+        </div>
+        <div>
+          <div class="font-bold text-amber-950 dark:text-amber-100 flex items-center gap-2 flex-wrap">
+            <span>Schema 结构漂移待办提醒</span>
+            <span class="px-2 py-0.5 rounded-full text-[11px] font-bold bg-amber-200 text-amber-900 dark:bg-amber-900 dark:text-amber-200 border border-amber-300 dark:border-amber-700">
+              {{ driftDatasetCount }} 个数据集 · 共 {{ totalPendingDriftCount }} 项待治理
+            </span>
+          </div>
+          <p class="mt-1 text-amber-800/90 dark:text-amber-300/80 text-xs leading-relaxed">
+            系统检出底层物理表结构与元数据存在差异（含 <span class="font-semibold text-amber-950 dark:text-amber-200 underline decoration-amber-400 underline-offset-2">AI 运行时物理报错自动反哺</span> 与 <span class="font-semibold text-amber-950 dark:text-amber-200 underline decoration-amber-400 underline-offset-2">结构巡检发现</span> 的失效或新增字段）。
+          </p>
+        </div>
+      </div>
+
+      <div class="shrink-0 flex items-center gap-2 self-end sm:self-auto">
+        <button
+          type="button"
+          class="px-3.5 py-1.5 bg-amber-600 hover:bg-amber-700 active:bg-amber-800 text-white rounded-lg font-semibold text-xs transition-colors shadow-2xs cursor-pointer flex items-center gap-1.5"
+          @click="openFirstDriftDataset"
+        >
+          <span>📋</span> 查看待处置详情
+        </button>
+        <button
+          type="button"
+          class="p-1.5 text-amber-600 hover:text-amber-800 dark:text-amber-400 dark:hover:text-amber-200 rounded-lg transition-colors cursor-pointer"
+          title="暂时隐藏"
+          @click="showDriftBanner = false"
+        >
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" /></svg>
+        </button>
+      </div>
     </div>
 
     <!-- Error Banner -->
@@ -1414,9 +1537,20 @@ onMounted(async () => {
               <component :is="getDatasetIcon(ds.name)" class="w-5 h-5 text-blue-600" />
             </div>
             <div class="flex-1 min-w-0">
-              <h3 class="text-sm font-bold text-gray-900 group-hover:text-blue-600 transition-colors truncate">
-                {{ ds.display_name }}
-              </h3>
+              <div class="flex items-center gap-1.5 min-w-0">
+                <h3 class="text-sm font-bold text-gray-900 group-hover:text-blue-600 transition-colors truncate">
+                  {{ ds.display_name }}
+                </h3>
+                <span 
+                  v-if="driftSummary[ds.id]"
+                  @click.stop="openDriftAlerts(ds)"
+                  class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-semibold bg-amber-50 text-amber-600 border border-amber-200 hover:bg-amber-100 cursor-pointer shadow-2xs shrink-0"
+                  title="存在待处理的 Schema 漂移异常，点击查看"
+                >
+                  <svg class="w-3 h-3 text-amber-500 animate-pulse" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
+                  {{ driftSummary[ds.id] }}
+                </span>
+              </div>
               <div class="mt-1 flex items-center gap-1.5 min-w-0 flex-wrap">
                 <span class="text-[11px] font-mono text-gray-400 truncate">#{{ ds.name }}</span>
                 <span
@@ -1491,6 +1625,16 @@ onMounted(async () => {
             </span>
           </div>
           <div class="flex items-center gap-0.5" @click.stop>
+            <button 
+              type="button"
+              @click.stop="openDriftAlerts(ds)"
+              class="transition-colors p-1.5 rounded-md text-gray-400 hover:text-amber-600 hover:bg-white relative cursor-pointer"
+              :class="{ 'text-amber-500': driftSummary[ds.id] }"
+              :title="ds.status === 1 ? 'Schema 巡检与差异治理' : 'Schema 巡检与差异治理 (数据集已禁用)'"
+            >
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+              <span v-if="driftSummary[ds.id]" class="absolute top-1 right-1 w-1.5 h-1.5 rounded-full bg-amber-500 ring-2 ring-white"></span>
+            </button>
             <button 
               v-if="hasPermission('element:metadata:sync')"
               @click.stop="isEngineReady && ds.status === 1 && !isLocalMode && openSyncModal(ds)" 
@@ -1594,6 +1738,15 @@ onMounted(async () => {
                 <div class="min-w-0">
                    <div class="flex items-center gap-2">
                       <h3 class="text-sm font-bold text-gray-900 group-hover:text-primary transition-colors truncate">{{ ds.display_name }}</h3>
+                      <span 
+                        v-if="driftSummary[ds.id]"
+                        @click.stop="openDriftAlerts(ds)"
+                        class="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[10px] font-semibold bg-amber-50 text-amber-600 border border-amber-200 hover:bg-amber-100 cursor-pointer shadow-2xs shrink-0"
+                        title="存在待处理的 Schema 漂移异常"
+                      >
+                        <svg class="w-2.5 h-2.5 text-amber-500 animate-pulse" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
+                        {{ driftSummary[ds.id] }}
+                      </span>
                    </div>
                    <div class="flex items-center gap-2 mt-0.5">
                       <span class="text-xs font-mono text-gray-400">#{{ ds.name }}</span>
@@ -1660,6 +1813,16 @@ onMounted(async () => {
              <!-- Actions -->
              <div class="col-span-2 flex justify-end items-center gap-1.5">
                 <!-- Action Buttons: Admin or specific permission -->
+                 <button 
+                    type="button"
+                    @click.stop="openDriftAlerts(ds)" 
+                    class="p-1.5 text-gray-400 hover:text-amber-600 hover:bg-amber-50 rounded transition-colors relative cursor-pointer"
+                    :class="{ 'text-amber-500': driftSummary[ds.id] }"
+                    :title="ds.status === 1 ? 'Schema 巡检与差异治理' : 'Schema 巡检与差异治理 (数据集已禁用)'"
+                 >
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+                    <span v-if="driftSummary[ds.id]" class="absolute top-1 right-1 w-1.5 h-1.5 rounded-full bg-amber-500 ring-2 ring-white"></span>
+                 </button>
                  <button 
                     v-if="hasPermission('element:metadata:sync')"
                     @click.stop="isEngineReady && ds.status === 1 && !isLocalMode && openSyncModal(ds)" 
@@ -3348,6 +3511,25 @@ relationships:
         <div class="px-5 py-3 border-t border-gray-100 text-[11px] text-gray-400">关闭窗口不会取消后台同步任务</div>
       </aside>
     </Transition>
+
+    <!-- Schema 漂移异常待处理抽屉（支持单库模式与全量大盘模式） -->
+    <MetadataDriftAlertsDrawer
+      :show="showDriftDrawer"
+      :visible="showDriftDrawer"
+      :is-global="isGlobalDriftDrawer"
+      :datasets="datasets"
+      :dataset="driftAlertsDataset"
+      @close="showDriftDrawer = false"
+      @resolved="handleDriftResolved"
+    />
+
+    <!-- 全量元数据定时一致性巡检配置与监控弹窗（仅 Admin 可用） -->
+    <MetadataCronInspectionModal
+      v-if="isAdmin"
+      :show="showCronInspectionModal"
+      @close="showCronInspectionModal = false"
+      @updated="fetchDatasets"
+    />
   </div>
 </template>
 

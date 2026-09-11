@@ -1,4 +1,4 @@
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 from typing import List, Optional, Dict, Any, Literal
 from datetime import datetime
 
@@ -151,3 +151,69 @@ class BatchDeleteMetricsRequest(BaseModel):
 
 class BatchDeleteRelationshipsRequest(BaseModel):
     relationship_ids: List[int]
+
+
+# --- Schema Drift Alerts & Inspection Schemas ---
+
+class MetaDriftAlertResponse(BaseModel):
+    id: int
+    dataset_id: int
+    table_id: Optional[int] = None
+    table_name: str
+    column_name: str
+    drift_type: str  # missing_in_db, new_in_db, type_mismatch
+    source: str  # runtime, manual_inspection, cron_inspection
+    error_sample: Optional[str] = None
+    hit_count: int = 1
+    status: int = 0  # 0: pending, 1: resolved, 2: ignored
+    dataset_name: Optional[str] = None
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+DriftResolutionAction = Literal["drop_column", "add_column", "ignore"]
+
+
+class ResolveDriftAlertRequest(BaseModel):
+    action: DriftResolutionAction
+
+
+class BatchResolveDriftAlertsRequest(BaseModel):
+    action: DriftResolutionAction
+    drift_type: Optional[str] = None  # missing_in_db, new_in_db
+    alert_ids: Optional[List[int]] = None
+
+
+class DriftSummaryResponse(BaseModel):
+    total_pending: int
+    datasets: Dict[int, int]  # dataset_id -> pending alert count
+
+
+class InspectionStartResponse(BaseModel):
+    task_id: str
+    dataset_id: int
+    message: str = "巡检任务已启动"
+
+
+class CronInspectionConfigResponse(BaseModel):
+    enabled: bool = False
+    cron_expr: str = "0 2 * * *"
+    task_id: Optional[int] = None
+    next_run_at: Optional[datetime] = None
+    last_run_at: Optional[datetime] = None
+    run_count: int = 0
+    health_status: str = "unknown"
+    last_status: Optional[str] = None
+    last_message: Optional[str] = None
+    last_error: Optional[str] = None
+    notification_channels: List[str] = Field(default_factory=lambda: ["portal"])
+
+
+class CronInspectionConfigRequest(BaseModel):
+    enabled: bool
+    cron_expr: str = "0 2 * * *"
+    notification_channels: Optional[List[str]] = Field(default_factory=lambda: ["portal"])
+
+
