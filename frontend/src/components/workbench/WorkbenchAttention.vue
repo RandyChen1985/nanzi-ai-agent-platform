@@ -1,7 +1,7 @@
 <template>
   <section
     v-if="items.length"
-    class="rounded-2xl border border-gray-100 bg-white p-4 shadow-sm sm:p-5"
+    class="rounded-2xl border border-gray-100 bg-white p-4 shadow-sm sm:p-5 dark:border-gray-800 dark:bg-gray-800/80"
   >
     <WorkbenchSectionHeader
       eyebrow="待处理"
@@ -10,7 +10,7 @@
       view-all-label="查看全部任务"
       @view-all="$emit('view-all')"
     />
-    <p class="-mt-1 mb-3 text-xs text-gray-400">
+    <p class="-mt-1 mb-3 text-xs text-gray-400 dark:text-gray-500">
       来源：未读站内通知 + 失败定时任务
     </p>
     <div class="space-y-2">
@@ -18,13 +18,13 @@
         v-for="item in sortedItems"
         :key="item.id"
         type="button"
-        class="flex w-full items-center justify-between rounded-xl border border-gray-100 bg-gray-50/50 px-3 py-3 text-left transition hover:border-amber-200 hover:bg-amber-50/40"
-        :class="item.severity === 'critical' ? 'border-l-4 border-l-red-500' : ''"
+        class="flex w-full items-center justify-between rounded-xl border border-gray-100 bg-gray-50/50 px-3 py-3 text-left transition hover:-translate-y-0.5 hover:border-amber-200 hover:bg-amber-50/40 hover:shadow-xs dark:border-gray-700/60 dark:bg-gray-800/50 dark:hover:border-amber-600/50 dark:hover:bg-amber-950/20"
+        :class="item.severity === 'critical' ? 'border-l-4 border-l-red-500 dark:border-l-red-500' : ''"
         @click="$emit('open-item', item)"
       >
         <span class="min-w-0">
-          <span class="block text-sm font-medium text-gray-900">{{ item.title }}</span>
-          <span class="mt-0.5 block text-xs text-gray-500">{{ item.subtitle }}</span>
+          <span class="block text-sm font-medium text-gray-900 dark:text-gray-100">{{ item.title }}</span>
+          <span class="mt-0.5 block text-xs text-gray-500 dark:text-gray-400">{{ item.subtitle }}</span>
           <WorkbenchItemMeta
             :occurred-at="item.occurred_at"
             :severity="item.severity"
@@ -33,7 +33,7 @@
             :action="item.action"
           />
         </span>
-        <span class="ml-3 shrink-0 text-xs font-medium text-amber-700">{{ actionLabel(item) }}</span>
+        <span class="ml-3 shrink-0 text-xs font-medium text-amber-700 dark:text-amber-400">{{ actionLabel(item) }}</span>
       </button>
     </div>
     <WorkbenchMobileViewAll label="查看全部任务" @view-all="$emit('view-all')" />

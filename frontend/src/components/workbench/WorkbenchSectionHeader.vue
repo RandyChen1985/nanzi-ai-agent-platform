@@ -6,13 +6,13 @@
           <span class="h-1.5 w-1.5 shrink-0 rounded-full" :class="dotClass" />
           <p class="text-xs font-medium" :class="toneClass">{{ eyebrow }}</p>
         </div>
-        <h2 class="mt-1 text-sm font-bold text-gray-900">{{ title }}</h2>
-        <p v-if="description" class="mt-0.5 text-xs text-gray-500">{{ description }}</p>
+        <h2 class="mt-1 text-sm font-bold text-gray-900 dark:text-gray-100">{{ title }}</h2>
+        <p v-if="description" class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">{{ description }}</p>
       </div>
       <button
         v-if="viewAllLabel"
         type="button"
-        class="hidden shrink-0 text-xs font-medium text-blue-600 hover:text-blue-700 md:inline"
+        class="hidden shrink-0 text-xs font-medium text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300 md:inline"
         @click="$emit('view-all')"
       >
         {{ viewAllLabel }}
@@ -38,10 +38,10 @@ const props = withDefaults(
 defineEmits<{ (event: "view-all"): void }>()
 
 const toneClass = computed(() => {
-  if (props.tone === "violet") return "text-violet-600"
-  if (props.tone === "emerald") return "text-emerald-600"
-  if (props.tone === "amber") return "text-amber-700"
-  return "text-blue-600"
+  if (props.tone === "violet") return "text-violet-600 dark:text-violet-400"
+  if (props.tone === "emerald") return "text-emerald-600 dark:text-emerald-400"
+  if (props.tone === "amber") return "text-amber-700 dark:text-amber-400"
+  return "text-blue-600 dark:text-blue-400"
 })
 
 const dotClass = computed(() => {
