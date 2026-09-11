@@ -126,6 +126,8 @@ export function formatTimelineTitle(title: unknown): string {
   if (value === "智能体配置变更：历史会话状态已重置") return "会话状态已更新";
   if (value.startsWith("模型调用: ")) return `模型调用 · ${value.slice("模型调用: ".length)}`;
   if (value.startsWith("工具完成: ")) return `工具完成 · ${value.slice("工具完成: ".length)}`;
+  if (value.startsWith("调用子代理: ")) return `委派智能体 · ${value.slice("调用子代理: ".length)}`;
+  if (value.startsWith("调用子代理：")) return `委派智能体 · ${value.slice("调用子代理：".length)}`;
   if (value.startsWith("调用工具: ")) {
     const toolName = value.slice("调用工具: ".length).trim();
     if (toolName === "sub_agent_call") return "委派智能体";
@@ -380,9 +382,16 @@ function findSubagentContainerLog(
 
   const matchContainer = (log: ProcessTimelineLogItem): boolean => {
     if (targetRunId && log.id === `subagent_${targetRunId}`) return true;
-    if (targetRunId && log.subagent?.run_id === targetRunId && String(log.id).startsWith("subagent_")) return true;
-    if (targetChildTraceId && log.subagent?.child_trace_id === targetChildTraceId && String(log.id).startsWith("subagent_")) return true;
-    if (log.title.includes("sub_agent_call") && (!log.subagent || log.subagent.run_id === targetRunId)) return true;
+    if (targetRunId && log.subagent?.run_id === targetRunId) return true;
+    if (targetChildTraceId && log.subagent?.child_trace_id === targetChildTraceId) return true;
+    if (
+      (log.title.includes("sub_agent_call") ||
+        log.title.includes("委派智能体") ||
+        log.title.includes("调用子代理") ||
+        log.tool_name === "sub_agent_call" ||
+        log.tool_name === "sub_agent_batch_call") &&
+      (!log.subagent || !targetRunId || log.subagent.run_id === targetRunId)
+    ) return true;
     return false;
   };
 
@@ -555,6 +564,11 @@ export function upsertTimelineLog(
     subagent?: SubagentTraceMeta;
   },
 ): void {
+  // 过滤内部纯技术心跳（例如开始生成回复），避免占用步骤与视觉干扰
+  if (data.title && /(?:\[.*?\]\s*)?[✨\s]*开始生成回复\s*$/.test(data.title)) {
+    return;
+  }
+
   if (!target.processTimeline) target.processTimeline = [];
   const existing = findTimelineLog(target.processTimeline, data.id);
   if (existing) {
@@ -573,12 +587,31 @@ export function upsertTimelineLog(
     return;
   }
 
-  // Deduplicate sub_agent_call tool completion into existing subagent container if already present
-  if (data.title && data.title.includes("sub_agent_call")) {
+  // Deduplicate / merge sub_agent_call tool and subagent lifecycle container into a single container
+  const isIncomingSubagentLifecycle =
+    String(data.id).startsWith("subagent_") ||
+    (Boolean(data.subagent) && (data.category === "agent" || Boolean(data.title && data.title.includes("调用子代理"))));
+
+  const isIncomingSubagentTool =
+    data.tool_name === "sub_agent_call" ||
+    data.tool_name === "sub_agent_batch_call" ||
+    Boolean(data.title && (data.title.includes("sub_agent_call") || data.title.includes("委派智能体")));
+
+  if (isIncomingSubagentLifecycle) {
+    const targetRunId = data.subagent?.run_id;
     const existingContainer = [...target.processTimeline].reverse().find((item) => {
-      if (item.kind === "log" && String(item.id).startsWith("subagent_")) return true;
+      if (item.kind === "log") {
+        if (targetRunId && item.subagent?.run_id === targetRunId) return true;
+        if (item.tool_name === "sub_agent_call" || item.title.includes("委派智能体") || item.title.includes("sub_agent_call")) return true;
+        return false;
+      }
       if (item.kind === "text") {
-        return (item.children || []).some((c) => String(c.id).startsWith("subagent_"));
+        return (item.children || []).some((c) =>
+          (targetRunId && c.subagent?.run_id === targetRunId) ||
+          c.tool_name === "sub_agent_call" ||
+          c.title.includes("委派智能体") ||
+          c.title.includes("sub_agent_call")
+        );
       }
       return false;
     });
@@ -587,13 +620,51 @@ export function upsertTimelineLog(
       if (existingContainer.kind === "log") {
         containerLog = existingContainer;
       } else if (existingContainer.kind === "text") {
-        containerLog = (existingContainer.children || [])
-          .find((c: ProcessTimelineLogItem) => String(c.id).startsWith("subagent_"));
+        containerLog = (existingContainer.children || []).find((c: ProcessTimelineLogItem) =>
+          (targetRunId && c.subagent?.run_id === targetRunId) ||
+          c.tool_name === "sub_agent_call" ||
+          c.title.includes("委派智能体") ||
+          c.title.includes("sub_agent_call")
+        );
       }
       if (containerLog) {
         if (data.execution_time_ms !== undefined) containerLog.execution_time_ms = data.execution_time_ms;
         if (data.status !== undefined) containerLog.status = data.status;
         if (data.details) containerLog.details = data.details;
+        if (data.subagent) containerLog.subagent = data.subagent;
+        const displayName = data.subagent?.display_name || (data.title ? data.title.replace(/^调用子代理[:：]\s*/, "") : "");
+        if (displayName && !containerLog.title.includes(displayName)) {
+          containerLog.title = `委派智能体 · ${displayName}`;
+        }
+        return;
+      }
+    }
+  }
+
+  if (isIncomingSubagentTool) {
+    const existingContainer = [...target.processTimeline].reverse().find((item) => {
+      if (item.kind === "log" && (String(item.id).startsWith("subagent_") || item.title.includes("调用子代理") || item.title.includes("委派智能体"))) return true;
+      if (item.kind === "text") {
+        return (item.children || []).some((c) =>
+          String(c.id).startsWith("subagent_") || c.title.includes("调用子代理") || c.title.includes("委派智能体")
+        );
+      }
+      return false;
+    });
+    if (existingContainer) {
+      let containerLog: ProcessTimelineLogItem | undefined;
+      if (existingContainer.kind === "log") {
+        containerLog = existingContainer;
+      } else if (existingContainer.kind === "text") {
+        containerLog = (existingContainer.children || []).find((c: ProcessTimelineLogItem) =>
+          String(c.id).startsWith("subagent_") || c.title.includes("调用子代理") || c.title.includes("委派智能体")
+        );
+      }
+      if (containerLog) {
+        if (data.execution_time_ms !== undefined) containerLog.execution_time_ms = data.execution_time_ms;
+        if (data.status !== undefined) containerLog.status = data.status;
+        if (data.details) containerLog.details = data.details;
+        if (data.tool_name) containerLog.tool_name = data.tool_name;
         return;
       }
     }
@@ -630,7 +701,11 @@ export function upsertTimelineLog(
   }
 
   // If this is an inner step of a subagent (subagent metadata present, but not the subagent container itself)
-  const isSubagentContainer = String(data.id).startsWith("subagent_") || (data.title && data.title.includes("sub_agent_call"));
+  const isSubagentContainer =
+    String(data.id).startsWith("subagent_") ||
+    Boolean(data.title && (data.title.includes("sub_agent_call") || data.title.includes("委派智能体") || data.title.includes("调用子代理"))) ||
+    data.tool_name === "sub_agent_call" ||
+    data.tool_name === "sub_agent_batch_call";
   if (data.subagent && !isSubagentContainer) {
     const subagentContainer = findSubagentContainerLog(target.processTimeline, data.subagent);
     if (subagentContainer) {
@@ -863,7 +938,13 @@ function reorganizeSubagentItems(items: ProcessTimelineItem[]): ProcessTimelineI
   const isContainer = (log: ProcessTimelineLogItem): boolean =>
     String(log.id).startsWith("subagent_") ||
     log.title.includes("调用子代理") ||
-    log.title.includes("sub_agent_call");
+    log.title.includes("委派智能体") ||
+    log.title.includes("sub_agent_call") ||
+    log.tool_name === "sub_agent_call" ||
+    log.tool_name === "sub_agent_batch_call";
+
+  const isNoiseHeartbeatStep = (log: ProcessTimelineLogItem): boolean =>
+    /(?:\[.*?\]\s*)?[✨\s]*开始生成回复\s*$/.test(log.title);
 
   const isInnerSubagentStep = (log: ProcessTimelineLogItem): boolean =>
     !isContainer(log) && (Boolean(log.subagent) || log.title.startsWith("["));
@@ -884,23 +965,30 @@ function reorganizeSubagentItems(items: ProcessTimelineItem[]): ProcessTimelineI
               subContainer.execution_time_ms = child.execution_time_ms || subContainer.execution_time_ms;
               subContainer.status = child.status || subContainer.status;
               if (child.details) subContainer.details = child.details;
-              if (child.title.includes("调用子代理") || child.subagent) subContainer.title = child.title;
               if (child.subagent) subContainer.subagent = child.subagent;
-              for (const inner of child.children || []) innerSteps.push(inner);
+              if (child.title.includes("调用子代理") || child.title.includes("委派智能体") || child.title.includes("sub_agent_call")) {
+                subContainer.title = child.title;
+              }
+              for (const inner of child.children || []) {
+                if (!isNoiseHeartbeatStep(inner)) innerSteps.push(inner);
+              }
             } else {
               subContainer = child;
-              subContainer.children ||= [];
-              for (const inner of child.children || []) innerSteps.push(inner);
+              const prev = subContainer.children || [];
+              subContainer.children = [];
+              for (const inner of prev) {
+                if (!isNoiseHeartbeatStep(inner)) innerSteps.push(inner);
+              }
             }
           } else if (isInnerSubagentStep(child)) {
-            innerSteps.push(child);
+            if (!isNoiseHeartbeatStep(child)) innerSteps.push(child);
           } else {
             newChildren.push(child);
           }
         }
 
         if (subContainer) {
-          subContainer.children = [...(subContainer.children || []), ...innerSteps];
+          subContainer.children = innerSteps;
           subContainer.childrenExpanded = true;
           newChildren.push(subContainer);
           activeContainer = subContainer;
@@ -920,9 +1008,13 @@ function reorganizeSubagentItems(items: ProcessTimelineItem[]): ProcessTimelineI
         activeContainer.execution_time_ms = item.execution_time_ms || activeContainer.execution_time_ms;
         activeContainer.status = item.status || activeContainer.status;
         if (item.details) activeContainer.details = item.details;
-        if (item.title.includes("调用子代理") || item.subagent) activeContainer.title = item.title;
         if (item.subagent) activeContainer.subagent = item.subagent;
-        for (const inner of item.children || []) activeContainer.children?.push(inner);
+        if (item.title.includes("调用子代理") || item.title.includes("委派智能体")) {
+          activeContainer.title = item.title;
+        }
+        for (const inner of item.children || []) {
+          if (!isNoiseHeartbeatStep(inner)) activeContainer.children?.push(inner);
+        }
       } else if (activeNarration) {
         item.children ||= [];
         activeNarration.children ||= [];
@@ -937,6 +1029,7 @@ function reorganizeSubagentItems(items: ProcessTimelineItem[]): ProcessTimelineI
     }
 
     if (item.kind === "log" && isInnerSubagentStep(item)) {
+      if (isNoiseHeartbeatStep(item)) continue;
       if (activeContainer) {
         activeContainer.children ||= [];
         activeContainer.children.push(item);
