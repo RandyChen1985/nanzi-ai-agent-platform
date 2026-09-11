@@ -65,7 +65,7 @@ def test_preparation_parent_uses_auth_context_title_and_shield_icon():
     assert 'return "🛡️"' in timeline
 
 
-def test_preparation_children_are_collapsed_by_default_but_can_be_reopened():
+def test_preparation_children_expand_by_default_but_can_be_reopened():
     timeline = _read("frontend/src/components/chat/ChatExecutionTimeline.vue")
     header = _read("frontend/src/components/chat/ChatThinkingHeader.vue")
     timeline_utils = _read("frontend/src/utils/processTimeline.ts")
@@ -80,7 +80,12 @@ def test_preparation_children_are_collapsed_by_default_but_can_be_reopened():
     assert "defaultChildrenExpandedForLog" in timeline_utils
     assert "defaultChildrenExpandedForLog(data.id)" in timeline_utils
     assert "defaultChildrenExpandedForLog(log.id)" in timeline_utils
-    assert "childrenExpanded = false" not in timeline
+    # 进行中默认展开由 utils 兜底；执行完成后仅在「鉴权及上下文与能力准备」父级 guard
+    # 分支内折叠其子树（childrenExpanded = false），不波及 route 等其它父级。
+    collapse_guard = "isPreparationParent(item) && item.children?.length"
+    assert collapse_guard in timeline
+    assert timeline.index("item.childrenExpanded = false") > timeline.index(collapse_guard)
+    assert "childrenExpanded = false" in timeline
     assert "主专家开始处理" in timeline_utils
     assert "工具可用性检查" in timeline_utils
     assert "模型调用 ·" in timeline_utils
@@ -188,3 +193,12 @@ def test_both_chat_surfaces_use_the_shared_tool_permission_card():
         assert "<ToolPermissionCard" in source
         assert "@submit=\"(confirmed) => confirmPendingPermission(msg, confirmed)\"" in source
         assert "<!-- Tool Permission Confirmation -->" not in source
+
+
+def test_execution_timeline_keeps_error_reason_alongside_prewarm_progress():
+    timeline = _read("frontend/src/components/chat/ChatExecutionTimeline.vue")
+    # A 档在子行插入沙箱预热进度提示时，不能挤占原有"错误原因"展示（回归保护）。
+    assert 'v-if="child.error_reason"' in timeline
+    assert "错误原因：{{ child.error_reason }}" in timeline
+    assert "isWorkspacePrewarmPending(child)" in timeline
+    assert "fileMetadataSummary(child.file_metadata)" in timeline

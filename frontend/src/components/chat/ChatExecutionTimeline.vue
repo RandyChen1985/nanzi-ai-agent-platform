@@ -159,6 +159,17 @@
                       <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m19 9-7 7-7-7" />
                     </svg>
                   </button>
+                  <!-- 沙箱工作区预热"推进中"提示：静态"创建中"容易让人以为卡死，
+                       这里随 clock 用已等待秒 + 阶段文案 + 不确定进度条表示仍在推进。 -->
+                  <div
+                    v-if="isWorkspacePrewarmPending(child)"
+                    class="ml-5 mt-0.5 flex items-center gap-2 text-[10px] leading-4 text-sky-600/80 dark:text-sky-400/80"
+                    aria-live="polite"
+                    aria-busy="true"
+                  >
+                    <span class="workspace-prewarm-bar" aria-hidden="true"></span>
+                    <span>已等待 {{ prewarmElapsedSeconds }}s · {{ prewarmStageLabel }}</span>
+                  </div>
                   <div v-if="child.error_reason" class="ml-5 mt-0.5 rounded bg-red-100/70 px-1.5 py-0.5 text-[10px] leading-4 text-red-700 dark:bg-red-950/30 dark:text-red-300">
                     错误原因：{{ child.error_reason }}
                   </div>
@@ -430,7 +441,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from "vue";
+import { computed, onBeforeUnmount, ref, watch } from "vue";
 import ChatThinkingHeader from "@/components/chat/ChatThinkingHeader.vue";
 import {
   BookOpenIcon,
@@ -467,6 +478,9 @@ import {
   resolveTimelineCurrentStep,
   timelineHasPending,
   PREPARATION_TIMELINE_PARENT_ID,
+  isWorkspacePrewarmPending,
+  workspacePrewarmStageLabel,
+  workspacePrewarmElapsedSeconds,
   type FileToolMetadata,
   type ProcessTimelineItem,
   type ProcessTimelineLogItem,
@@ -582,6 +596,81 @@ watch(hasPending, (pending) => {
 watch(() => props.hasAnswer, (answer) => {
   if (answer && !hasPending.value) expanded.value = false;
 }, { immediate: true });
+
+// 执行完成后自动折叠「鉴权及上下文与能力准备」子树，仅保留一行标题，让界面干净。
+// 进行中（存在 pending 子步骤）仍保持展开以观察每步推进；一旦达成有答案且无 pending，
+// 即把该准备父级子树收起。仅针对此父级，其它父级（路由等）不受影响。
+watch(
+  () => !hasPending.value && props.hasAnswer,
+  (done) => {
+    if (!done) return;
+    for (const item of timelineItems.value) {
+      if (item.kind === "log" && isPreparationParent(item) && item.children?.length) {
+        item.childrenExpanded = false;
+      }
+    }
+  },
+  { immediate: true },
+);
+
+// —— 沙箱工作区预热的"推进中"感知 ——
+// 占位日志是静态"创建中"文案，沙箱初始化（拉镜像/k8s bootstrap/wait_for 锁）可能
+// 持续数秒~数十秒。这里用一个 500ms 的 tick 驱动"已等待 Ns + 阶段文案 + 不确定进度条"，
+// 让用户看到数值在走、阶段在变，避免"傻等"感。
+function findWorkspacePrewarmPending(items: ProcessTimelineItem[]): boolean {
+  for (const item of items) {
+    if (item.kind === "log") {
+      if (isWorkspacePrewarmPending(item)) return true;
+      for (const child of item.children || []) {
+        if (isWorkspacePrewarmPending(child)) return true;
+        if ((child.children || []).some((step) => isWorkspacePrewarmPending(step))) return true;
+      }
+    } else if (item.kind === "text") {
+      if ((item.children || []).some((child) => isWorkspacePrewarmPending(child))) return true;
+    }
+  }
+  return false;
+}
+
+const tickNow = ref(0);
+const prewarmStartedAtMs = ref<number | null>(null);
+let tickTimer: ReturnType<typeof setInterval> | null = null;
+const isWorkspacePrewarming = computed(() => {
+  // 引用 tickNow 使阶段文案/已等待在 tick 时重新计算。
+  void tickNow.value;
+  return findWorkspacePrewarmPending(items.value);
+});
+
+watch(
+  () => isWorkspacePrewarming.value,
+  (prewarming) => {
+    if (prewarming) {
+      if (prewarmStartedAtMs.value === null) prewarmStartedAtMs.value = Date.now();
+      if (!tickTimer) {
+        tickTimer = setInterval(() => { tickNow.value += 1; }, 500);
+      }
+    } else if (tickTimer) {
+      clearInterval(tickTimer);
+      tickTimer = null;
+      prewarmStartedAtMs.value = null;
+    }
+  },
+  { immediate: true },
+);
+
+onBeforeUnmount(() => {
+  if (tickTimer) {
+    clearInterval(tickTimer);
+    tickTimer = null;
+  }
+});
+
+const prewarmElapsedMs = computed(() => {
+  if (!isWorkspacePrewarming.value || prewarmStartedAtMs.value === null) return 0;
+  return Math.max(0, Date.now() - prewarmStartedAtMs.value);
+});
+const prewarmElapsedSeconds = computed(() => workspacePrewarmElapsedSeconds(prewarmElapsedMs.value));
+const prewarmStageLabel = computed(() => workspacePrewarmStageLabel(prewarmElapsedMs.value));
 
 function isReasoningBodyOpen(item: ProcessTimelineTextItem): boolean {
   return isReasoningContentExpanded(item);
@@ -810,9 +899,40 @@ async function handleCopy(key: string, text?: string | null) {
   50% { opacity: 1; transform: scale(1.15); box-shadow: 0 0 0 0.28rem rgba(14, 165, 233, 0.08); }
 }
 
+/* 沙箱工作区预热的不确定进度条：滑块往复扫动，示意仍在推进。 */
+.workspace-prewarm-bar {
+  position: relative;
+  overflow: hidden;
+  width: 3.5rem;
+  height: 0.25rem;
+  border-radius: 9999px;
+  background: rgba(14, 165, 233, 0.15);
+}
+.workspace-prewarm-bar::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -40%;
+  width: 40%;
+  border-radius: 9999px;
+  background: rgba(14, 165, 233, 0.75);
+  animation: workspace-prewarm-slide 1.2s ease-in-out infinite;
+}
+@keyframes workspace-prewarm-slide {
+  0% { left: -40%; }
+  100% { left: 100%; }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .thought-status-dot {
     animation: none;
+  }
+  .workspace-prewarm-bar::after {
+    animation: none;
+    left: 0;
+    width: 100%;
+    opacity: 0.5;
   }
 }
 </style>

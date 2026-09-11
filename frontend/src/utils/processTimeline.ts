@@ -78,8 +78,43 @@ export type ProcessTimelineItem = ProcessTimelineTextItem | ProcessTimelineLogIt
 
 export const PREPARATION_TIMELINE_PARENT_ID = "preparation:auth_context_capability";
 
+/** 「沙箱工作区准备」日志的固定 id（占位/就绪/失败共用，前端按 id 覆盖更新）。 */
+export const WORKSPACE_PREWARM_LOG_ID = "workspace:sandbox";
+
+/** 沙箱预热各阶段的安抚文案，按耗时增长切换，让用户感知任务仍在推进而非卡死。 */
+const PREWARM_STAGE_LABELS: Array<{ afterMs: number; label: string }> = [
+  { afterMs: 0, label: "正在申请隔离资源配置…" },
+  { afterMs: 4000, label: "正在初始化沙箱工作区（拉取镜像 / Pod）…" },
+  { afterMs: 10000, label: "创建工作区耗时较长，请稍候（最长约 60 秒）…" },
+];
+
 export function defaultChildrenExpandedForLog(id: string | number | undefined): boolean {
-  return String(id) !== PREPARATION_TIMELINE_PARENT_ID;
+  // 「鉴权及上下文与能力准备」父节点默认展开，便于直接查看鉴权、上下文、
+  // 专家配置、模型与能力准备等子步骤明细。
+  return true;
+}
+
+/** 判定某条时间线项是否仍处于等待中的「沙箱工作区准备」行。 */
+export function isWorkspacePrewarmPending(
+  item: { id?: string | number; status?: string } | undefined,
+): boolean {
+  return Boolean(
+    item && String(item.id) === WORKSPACE_PREWARM_LOG_ID && item.status === "pending",
+  );
+}
+
+/** 依据已等待毫秒返回"推进中的"阶段安抚文案。 */
+export function workspacePrewarmStageLabel(elapsedMs: number): string {
+  let label = PREWARM_STAGE_LABELS[0].label;
+  for (const stage of PREWARM_STAGE_LABELS) {
+    if (elapsedMs >= stage.afterMs) label = stage.label;
+  }
+  return label;
+}
+
+/** 已等待秒数（向下取整，负值按 0 处理），用于「已等待 Ns」展示。 */
+export function workspacePrewarmElapsedSeconds(elapsedMs: number): number {
+  return Math.max(0, Math.floor(elapsedMs / 1000));
 }
 
 /** 将底层事件名转换为思考卡片中的用户语言，原始详情仍保留在展开内容中。 */

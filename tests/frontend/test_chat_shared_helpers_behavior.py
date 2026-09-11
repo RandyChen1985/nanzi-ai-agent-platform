@@ -1412,3 +1412,74 @@ def test_chat_execution_timeline_watch_and_meta_guard_premature_fold():
 
     # AgentDebug: 包含 pending 守卫
     assert "!timelineHasPending(agentMsg.value.processTimeline)" in debug_code
+
+
+def test_preparation_parent_children_expand_by_default():
+    result = _run_typescript(
+        "frontend/src/utils/processTimeline.ts",
+        """
+const root = api.PREPARATION_TIMELINE_PARENT_ID;
+return {
+  preparationExpanded: api.defaultChildrenExpandedForLog(root),
+  ordinaryExpanded: api.defaultChildrenExpandedForLog('route:target_config'),
+  root,
+};
+""",
+    )
+
+    assert result["root"] == "preparation:auth_context_capability"
+    assert result["preparationExpanded"] is True
+    assert result["ordinaryExpanded"] is True
+
+
+def test_workspace_prewarm_pending_and_stage_progression():
+    result = _run_typescript(
+        "frontend/src/utils/processTimeline.ts",
+        """
+const pending = { id: 'workspace:sandbox', status: 'pending' };
+const done = { id: 'workspace:sandbox', status: 'success' };
+const other = { id: 'preparation:auth_context_capability', status: 'pending' };
+return {
+  id: api.WORKSPACE_PREWARM_LOG_ID,
+  pendingIsPrewarming: api.isWorkspacePrewarmPending(pending),
+  doneIsPrewarming: api.isWorkspacePrewarmPending(done),
+  otherIsPrewarming: api.isWorkspacePrewarmPending(other),
+  emptyIsPrewarming: api.isWorkspacePrewarmPending(undefined),
+  stageEarly: api.workspacePrewarmStageLabel(0),
+  stageMid: api.workspacePrewarmStageLabel(6000),
+  stageLong: api.workspacePrewarmStageLabel(20000),
+  stageNegative: api.workspacePrewarmStageLabel(-100),
+  secs0: api.workspacePrewarmElapsedSeconds(0),
+  secsNeg: api.workspacePrewarmElapsedSeconds(-300),
+  secs3: api.workspacePrewarmElapsedSeconds(3500),
+};
+""",
+    )
+
+    assert result["id"] == "workspace:sandbox"
+    assert result["pendingIsPrewarming"] is True
+    assert result["doneIsPrewarming"] is False
+    assert result["otherIsPrewarming"] is False
+    assert result["emptyIsPrewarming"] is False
+    assert "申请" in result["stageEarly"]
+    assert "初始化沙箱工作区" in result["stageMid"]
+    assert "60 秒" in result["stageLong"]
+    assert result["stageNegative"] == "正在申请隔离资源配置…"
+    assert result["secs0"] == 0
+    assert result["secsNeg"] == 0
+    assert result["secs3"] == 3
+
+
+def test_execution_timeline_renders_workspace_prewarm_progress():
+    timeline = (ROOT / "frontend/src/components/chat/ChatExecutionTimeline.vue").read_text(encoding="utf-8")
+
+    assert "isWorkspacePrewarmPending(child)" in timeline
+    assert "prewarmStageLabel" in timeline
+    assert "prewarmElapsedSeconds" in timeline
+    assert "已等待 {{ prewarmElapsedSeconds }}s" in timeline
+    assert "workspace-prewarm-bar" in timeline
+    assert "aria-busy=\"true\"" in timeline
+
+    process = (ROOT / "frontend/src/utils/processTimeline.ts").read_text(encoding="utf-8")
+    assert "WORKSPACE_PREWARM_LOG_ID" in process
+    assert "workspace:sandbox" in process
