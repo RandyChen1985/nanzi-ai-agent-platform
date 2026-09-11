@@ -54,6 +54,7 @@ class TaskResponse(TaskBase):
             return v
 
     cron_valid: bool = True  # 历史非法 cron 时为 False，供前端显示警告
+    task_type: Optional[str] = "agent"
 
     @model_validator(mode="after")
     def _set_cron_valid(self) -> "TaskResponse":
@@ -62,6 +63,8 @@ class TaskResponse(TaskBase):
             self.cron_valid = True
         except ValueError:
             self.cron_valid = False
+        if isinstance(self.config, dict) and self.config.get("task_type"):
+            self.task_type = str(self.config.get("task_type"))
         return self
 
     id: int

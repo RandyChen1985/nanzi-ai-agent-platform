@@ -620,8 +620,18 @@ class DataAgentRunner(BaseExecutor):
     async def execute(self, history: List[Dict[str, str]]) -> AsyncGenerator[Dict[str, Any], None]:
         from app.services.ai.runtime.agentscope.trace_context import TraceSpanContext
         async with TraceSpanContext(trace_buffer=self.trace_buffer, event_type='agent_execution', span_name='DataAgentRunner'):
-            async for chunk in self._execute_raw(history):
-                yield chunk
+            try:
+                async for chunk in self._execute_raw(history):
+                    yield chunk
+            finally:
+                state = getattr(self, "_last_run_state", None)
+                drift_tasks = getattr(state, "_drift_tasks", None) if state else None
+                if drift_tasks:
+                    try:
+                        import asyncio
+                        await asyncio.gather(*drift_tasks, return_exceptions=True)
+                    except Exception as e:
+                        logger.warning("[DataAgentRunner] Await drift tasks failed: %s", e)
 
     async def _execute_raw(self, history: List[Dict[str, str]]) -> AsyncGenerator[Dict[str, Any], None]:
         from app.services.ai.reusable_result import (

@@ -438,6 +438,31 @@ def apply_sql_tool_result(
                     # 不再空转等待可能依旧过时的 get_dataset_schema 重查，直接进入纠正修复。
                     state.schema_refresh_required = False
                     state.schema_refreshed_after_sql_error = False
+
+                    # 闭环反哺元数据：异步静默记录 Schema 漂移告警（零阻塞会话主流程）
+                    for c in stale.stale_columns:
+                        if c.safe_to_drop and c.table_key:
+                            binding = (state.table_bindings or {}).get(c.table_key)
+                            ds_name = str(getattr(binding, "dataset_name", "") or "")
+                            try:
+                                import asyncio
+                                from app.services.metadata_drift_service import MetadataDriftService
+
+                                loop = asyncio.get_running_loop()
+                                task = loop.create_task(
+                                    MetadataDriftService.record_runtime_stale_alert(
+                                        dataset_name=ds_name,
+                                        table_name=c.table_key,
+                                        column_name=c.field_name,
+                                        error_sample=state.sql_error_message,
+                                    )
+                                )
+                                if hasattr(state, "_drift_tasks"):
+                                    state._drift_tasks.append(task)
+                                else:
+                                    setattr(state, "_drift_tasks", [task])
+                            except (RuntimeError, Exception):
+                                pass
                 else:
                     # 判为模型编造/未知列（schema 未声明）：走既有重查 + invalid-identifier 纠错。
                     state.schema_refresh_required = True
