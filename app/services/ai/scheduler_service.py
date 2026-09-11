@@ -652,7 +652,7 @@ async def _scheduled_task_wrapper(task_id: int, is_manual: bool = False, retry_a
             start_time = time.time()
             run_conversation_id = _new_task_run_conversation_id(task_conversation_id)
             trace_id = str(uuid.uuid4())
-            ds_cnt = tbl_cnt = stale_cnt = new_cnt = mismatch_cnt = drift_cnt = failed_cnt = 0
+            ds_cnt = tbl_cnt = missing_tbl_cnt = stale_cnt = new_cnt = mismatch_cnt = drift_cnt = failed_cnt = 0
             try:
                 from app.services.metadata_inspection_service import MetadataInspectionService
                 from app.services.metadata_sync_log_service import metadata_sync_log_service
@@ -665,19 +665,22 @@ async def _scheduled_task_wrapper(task_id: int, is_manual: bool = False, retry_a
                     )
                     ds_cnt = res.get("datasets_scanned", 0)
                     tbl_cnt = res.get("tables_scanned", 0)
+                    missing_tbl_cnt = res.get("missing_tables_count", 0)
                     stale_cnt = res.get("stale_count", 0)
                     new_cnt = res.get("new_count", 0)
                     mismatch_cnt = res.get("mismatch_count", 0)
                     drift_cnt = res.get("drift_datasets_count", 0)
                     failed_cnt = res.get("failed_datasets_count", 0)
-                    if stale_cnt == 0 and new_cnt == 0 and mismatch_cnt == 0 and failed_cnt == 0:
+                    if missing_tbl_cnt == 0 and stale_cnt == 0 and new_cnt == 0 and mismatch_cnt == 0 and failed_cnt == 0:
                         inspection_summary = f"元数据巡检完成：共扫描 {ds_cnt} 个开启状态数据集、{tbl_cnt} 张表，物理结构完全一致，无漂移差异。"
                     else:
                         diff_parts = []
+                        if missing_tbl_cnt > 0:
+                            diff_parts.append(f"{missing_tbl_cnt} 张表物理缺失")
                         if stale_cnt > 0:
-                            diff_parts.append(f"{stale_cnt} 处缺失")
+                            diff_parts.append(f"{stale_cnt} 处字段物理缺失")
                         if new_cnt > 0:
-                            diff_parts.append(f"{new_cnt} 处新增")
+                            diff_parts.append(f"{new_cnt} 处物理新增")
                         if mismatch_cnt > 0:
                             diff_parts.append(f"{mismatch_cnt} 处类型不一致")
                         inspection_summary = f"元数据巡检完成：扫描 {ds_cnt} 个开启状态数据集、{tbl_cnt} 张表；在 {drift_cnt} 个数据集中检出 {'、'.join(diff_parts)}"
@@ -690,7 +693,7 @@ async def _scheduled_task_wrapper(task_id: int, is_manual: bool = False, retry_a
             execution_time_ms = (time.time() - start_time) * 1000
             logger.info(
                 f"📊 [元数据定时巡检] 物理比对结束 | 耗时: {execution_time_ms:.1f}ms | 开启数据集: {ds_cnt} 个 | "
-                f"表: {tbl_cnt} 张 | 差异项: 缺失 {stale_cnt}, 新增 {new_cnt}, 类型不匹配 {mismatch_cnt}, 连接失败 {failed_cnt}"
+                f"表: {tbl_cnt} 张 | 差异项: 表缺失 {missing_tbl_cnt}, 字段缺失 {stale_cnt}, 新增 {new_cnt}, 类型不匹配 {mismatch_cnt}, 连接失败 {failed_cnt}"
             )
             logger.info(f"📋 [元数据定时巡检] 结论汇报: {inspection_summary or inspection_error}")
 
@@ -777,6 +780,7 @@ async def _scheduled_task_wrapper(task_id: int, is_manual: bool = False, retry_a
             # ── 触发告警通知：仅当检出漂移差异或执行错误时，向勾选渠道投递（站内信必选）──
             has_drift_alert = bool(
                 inspection_error
+                or missing_tbl_cnt > 0
                 or stale_cnt > 0
                 or new_cnt > 0
                 or mismatch_cnt > 0
@@ -881,7 +885,7 @@ async def _scheduled_task_wrapper(task_id: int, is_manual: bool = False, retry_a
                     logger.error(f"❌ [元数据定时巡检] 通知调度失败: {ne}", exc_info=True)
             else:
                 logger.info(
-                    f"ℹ️ [元数据定时巡检] 物理结构与元数据完全一致（0 缺失、0 新增、0 类型不一致、0 连接异常）。"
+                    f"ℹ️ [元数据定时巡检] 物理结构与元数据完全一致（0 表缺失、0 字段缺失、0 新增、0 类型不一致、0 连接异常）。"
                     f"根据规则「仅当发现漂移/异常时通知」，本次巡检跳过通知派发（已配置渠道: {configured_channels}）。"
                 )
 

@@ -165,3 +165,75 @@ async def test_metadata_inspection_audit_history_format():
     assert step.tool_name == "metadata_inspect_all"
     assert step.status == "success"
 
+
+@pytest.mark.asyncio
+async def test_scheduled_metadata_inspection_triggers_alert_on_missing_tables():
+    """验证定时巡检在探测到物理表缺失（missing_tables_count > 0）时，能够生成正确的结论文案并触发告警派发。"""
+    from app.services.ai.scheduler_service import _scheduled_task_wrapper
+    from app.models.task import AgentScheduledTask
+
+    mock_task = AgentScheduledTask(
+        id=888,
+        name="全量元数据物理结构巡检",
+        cron_expr="0 2 * * *",
+        prompt="执行全量元数据物理结构一致性巡检",
+        user_id=1,
+        agent_id="system_inspection",
+        conversation_id="system_metadata_inspection",
+        status=1,
+        config={
+            "task_type": "metadata_inspection",
+            "is_system": True,
+            "notification_channels": ["portal", "dingtalk"],
+        },
+    )
+
+    mock_inspect_res = {
+        "success": True,
+        "datasets_scanned": 3,
+        "tables_scanned": 31,
+        "columns_scanned": 190,
+        "missing_tables_count": 1,
+        "stale_count": 0,
+        "new_count": 0,
+        "mismatch_count": 0,
+        "drift_datasets_count": 1,
+        "failed_datasets_count": 0,
+    }
+
+    mock_db = AsyncMock()
+    mock_scalar = MagicMock()
+    mock_scalar.scalar_one_or_none.return_value = mock_task
+    mock_db.execute = AsyncMock(return_value=mock_scalar)
+    mock_db.commit = AsyncMock()
+    mock_db.rollback = AsyncMock()
+
+    mock_session_ctx = MagicMock()
+    mock_session_ctx.__aenter__ = AsyncMock(return_value=mock_db)
+    mock_session_ctx.__aexit__ = AsyncMock(return_value=None)
+
+    with patch("app.services.ai.scheduler_service.AsyncSessionLocal", return_value=mock_session_ctx), \
+         patch("app.services.ai.scheduler_service._mark_task_attempt_started", AsyncMock()), \
+         patch("app.services.ai.scheduler_service._mark_task_success", AsyncMock()) as mock_mark_success, \
+         patch("app.services.metadata_inspection_service.MetadataInspectionService.inspect_all_datasets", AsyncMock(return_value=mock_inspect_res)), \
+         patch("app.services.portal_notification_service.PortalNotificationService.create", AsyncMock()) as mock_portal_notify, \
+         patch("app.services.notification_service.NotificationService.send_dingtalk", AsyncMock(return_value=(True, None))) as mock_dingtalk_notify, \
+         patch("app.services.ai.audit.AuditManager.save_trace_logs", AsyncMock()), \
+         patch("app.services.ai.audit.AuditManager.save_history", AsyncMock()):
+
+        await _scheduled_task_wrapper(888)
+
+        # 1. 验证成功标记并包含表缺失信息
+        mock_mark_success.assert_awaited_once()
+        success_msg = mock_mark_success.await_args.kwargs.get("message") or ""
+        assert "1 张表物理缺失" in success_msg
+
+        # 2. 验证触发了告警通知派发（站内信与钉钉均被调用）
+        mock_portal_notify.assert_awaited()
+        assert "Schema 漂移差异" in mock_portal_notify.await_args.kwargs.get("title", "")
+        assert "1 张表物理缺失" in mock_portal_notify.await_args.kwargs.get("content", "")
+
+        mock_dingtalk_notify.assert_awaited()
+        assert "1 张表物理缺失" in mock_dingtalk_notify.await_args.kwargs.get("content", "")
+
+
