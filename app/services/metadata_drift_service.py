@@ -12,6 +12,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
 from sqlalchemy import func, select, update
+from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.metadata import MetaColumn, MetaDataset, MetaSchemaDriftAlert, MetaTable
@@ -63,6 +64,7 @@ class MetadataDriftService:
         *,
         dataset_id: Optional[int] = None,
         dataset_name: Optional[str] = None,
+        table_id: Optional[int] = None,
         table_name: str,
         column_name: str,
         drift_type: str = "missing_in_db",
@@ -114,12 +116,13 @@ class MetadataDriftService:
                 existing.table_id = (await db.execute(t_stmt)).scalar()
             return existing
 
-        # 查询匹配的 table_id
-        t_stmt = select(MetaTable.id).where(
-            MetaTable.dataset_id == resolved_dataset_id,
-            func.lower(MetaTable.physical_name) == table_name.lower().strip(),
-        )
-        matched_table_id = (await db.execute(t_stmt)).scalar()
+        matched_table_id = table_id
+        if not matched_table_id:
+            t_stmt = select(MetaTable.id).where(
+                MetaTable.dataset_id == resolved_dataset_id,
+                func.lower(MetaTable.physical_name) == table_name.lower().strip(),
+            )
+            matched_table_id = (await db.execute(t_stmt)).scalar()
 
         alert = MetaSchemaDriftAlert(
             dataset_id=resolved_dataset_id,
@@ -178,13 +181,78 @@ class MetadataDriftService:
         db: AsyncSession,
         alert: MetaSchemaDriftAlert,
         action: str,
+        user_id: Optional[int] = None,
+        user_name: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """核心单项告警处置逻辑，不执行 db.commit()。"""
+        """核心单项告警处置逻辑，记录变更日志，不执行 db.commit()。"""
         column_dropped = False
+        table_dropped = False
         column_added = False
         message = ""
 
-        if action == "drop_column":
+        if action == "drop_table" or (action == "drop_column" and (alert.drift_type == "table_missing_in_db" or alert.column_name == "*")):
+            # 下线整张表及其所有字段
+            t_stmt = (
+                select(MetaTable)
+                .options(selectinload(MetaTable.columns))
+                .where(
+                    MetaTable.dataset_id == alert.dataset_id,
+                    func.lower(MetaTable.physical_name) == alert.table_name.lower(),
+                )
+            )
+            table = (await db.execute(t_stmt)).scalars().first()
+            if table:
+                old_data = {
+                    "physical_name": table.physical_name,
+                    "term": table.term,
+                    "description": table.description,
+                    "synonyms": table.synonyms,
+                    "columns": [
+                        {"physical_name": col.physical_name, "term": col.term, "type": col.type}
+                        for col in (table.columns or [])
+                    ],
+                }
+                table_id_str = f"{alert.dataset_id}:{table.physical_name}"
+                await db.delete(table)
+                table_dropped = True
+
+                try:
+                    from app.services.changelog_service import ChangelogService
+                    from app.services.metadata_service import MetadataService
+
+                    await ChangelogService.log_change(
+                        db=db,
+                        resource_type="table",
+                        resource_id=table_id_str,
+                        operation="delete",
+                        user_id=user_id,
+                        user_name=user_name,
+                        old_data=old_data,
+                        new_data=None,
+                        reason=f"元数据巡检：下线物理缺失表 {table.physical_name}",
+                    )
+                    await MetadataService._mark_dataset_as_modified(db, alert.dataset_id)
+                except Exception as ex:
+                    logger.warning(f"[MetadataDrift] 记录下线整表变更日志失败: {ex}")
+
+            # 将该表下所有其它待处理告警一并标记为已解决（因为表已经彻底下线）
+            other_alerts_stmt = select(MetaSchemaDriftAlert).where(
+                MetaSchemaDriftAlert.dataset_id == alert.dataset_id,
+                func.lower(MetaSchemaDriftAlert.table_name) == alert.table_name.lower(),
+                MetaSchemaDriftAlert.status == 0,
+            )
+            other_alerts = (await db.execute(other_alerts_stmt)).scalars().all()
+            for oa in other_alerts:
+                oa.status = 1
+                oa.updated_at = datetime.now()
+
+            alert.status = 1  # resolved
+            alert.updated_at = datetime.now()
+            message = f"已成功从元数据中下线整表 {alert.table_name}"
+            if table_dropped:
+                message += "（已自动同步向量知识库）"
+
+        elif action == "drop_column":
             t_stmt = select(MetaTable).where(
                 MetaTable.dataset_id == alert.dataset_id,
                 func.lower(MetaTable.physical_name) == alert.table_name.lower(),
@@ -197,14 +265,43 @@ class MetadataDriftService:
                 )
                 col = (await db.execute(c_stmt)).scalars().first()
                 if col:
+                    old_data = {
+                        "physical_name": table.physical_name,
+                        "columns": [{"physical_name": col.physical_name, "term": col.term, "type": col.type}],
+                    }
+                    new_data = {
+                        "physical_name": table.physical_name,
+                        "columns": [],
+                    }
+                    table_id_str = f"{alert.dataset_id}:{table.physical_name}"
+
                     await db.delete(col)
                     column_dropped = True
+
+                    try:
+                        from app.services.changelog_service import ChangelogService
+                        from app.services.metadata_service import MetadataService
+
+                        await ChangelogService.log_change(
+                            db=db,
+                            resource_type="table",
+                            resource_id=table_id_str,
+                            operation="update",
+                            user_id=user_id,
+                            user_name=user_name,
+                            old_data=old_data,
+                            new_data=new_data,
+                            reason=f"元数据巡检：下线物理缺失字段 {table.physical_name}.{alert.column_name}",
+                        )
+                        await MetadataService._mark_dataset_as_modified(db, alert.dataset_id)
+                    except Exception as ex:
+                        logger.warning(f"[MetadataDrift] 记录下线字段变更日志失败: {ex}")
 
             alert.status = 1  # resolved
             alert.updated_at = datetime.now()
             message = f"已成功从元数据中下线字段 {alert.table_name}.{alert.column_name}"
             if column_dropped:
-                message += "，建议随后点击「同步到 RAGFlow」更新向量知识库"
+                message += "（已自动同步向量知识库）"
 
         elif action == "add_column":
             t_stmt = select(MetaTable).where(
@@ -250,11 +347,40 @@ class MetadataDriftService:
                 db.add(new_col)
                 column_added = True
 
+                old_data = {
+                    "physical_name": table.physical_name,
+                    "columns": [],
+                }
+                new_data = {
+                    "physical_name": table.physical_name,
+                    "columns": [{"physical_name": new_col.physical_name, "term": new_col.term, "type": new_col.type}],
+                }
+                table_id_str = f"{alert.dataset_id}:{table.physical_name}"
+
+                try:
+                    from app.services.changelog_service import ChangelogService
+                    from app.services.metadata_service import MetadataService
+
+                    await ChangelogService.log_change(
+                        db=db,
+                        resource_type="table",
+                        resource_id=table_id_str,
+                        operation="update",
+                        user_id=user_id,
+                        user_name=user_name,
+                        old_data=old_data,
+                        new_data=new_data,
+                        reason=f"元数据巡检：录入物理新增字段 {table.physical_name}.{alert.column_name}",
+                    )
+                    await MetadataService._mark_dataset_as_modified(db, alert.dataset_id)
+                except Exception as ex:
+                    logger.warning(f"[MetadataDrift] 记录录入字段变更日志失败: {ex}")
+
             alert.status = 1  # resolved
             alert.updated_at = datetime.now()
             message = f"已成功将字段 {alert.table_name}.{alert.column_name} 录入元数据表"
             if column_added:
-                message += "，建议随后点击「同步到 RAGFlow」更新向量知识库"
+                message += "（已自动同步向量知识库）"
 
         elif action == "sync_type":
             t_stmt = select(MetaTable).where(
@@ -304,9 +430,38 @@ class MetadataDriftService:
             old_type = col.type
             col.type = str(phys_type)[:50]
 
+            old_data = {
+                "physical_name": table.physical_name,
+                "columns": [{"physical_name": col.physical_name, "term": col.term, "type": old_type}],
+            }
+            new_data = {
+                "physical_name": table.physical_name,
+                "columns": [{"physical_name": col.physical_name, "term": col.term, "type": col.type}],
+            }
+            table_id_str = f"{alert.dataset_id}:{table.physical_name}"
+
+            try:
+                from app.services.changelog_service import ChangelogService
+                from app.services.metadata_service import MetadataService
+
+                await ChangelogService.log_change(
+                    db=db,
+                    resource_type="table",
+                    resource_id=table_id_str,
+                    operation="update",
+                    user_id=user_id,
+                    user_name=user_name,
+                    old_data=old_data,
+                    new_data=new_data,
+                    reason=f"元数据巡检：同步字段类型 {table.physical_name}.{alert.column_name} ({old_type} -> {col.type})",
+                )
+                await MetadataService._mark_dataset_as_modified(db, alert.dataset_id)
+            except Exception as ex:
+                logger.warning(f"[MetadataDrift] 记录同步类型变更日志失败: {ex}")
+
             alert.status = 1  # resolved
             alert.updated_at = datetime.now()
-            message = f"已成功将字段 {alert.table_name}.{alert.column_name} 类型从 {old_type} 同步为物理库实际类型 {col.type}，建议随后点击「同步到 RAGFlow」更新向量知识库"
+            message = f"已成功将字段 {alert.table_name}.{alert.column_name} 类型从 {old_type} 同步为物理库实际类型 {col.type}（已自动同步向量知识库）"
 
         elif action == "ignore":
             alert.status = 2  # ignored
@@ -314,12 +469,13 @@ class MetadataDriftService:
             message = f"已忽略字段 {alert.table_name}.{alert.column_name} 的漂移提醒"
 
         else:
-            raise ValueError(f"不支持的处置动作: {action}，仅支持 drop_column, add_column, sync_type 或 ignore")
+            raise ValueError(f"不支持的处置动作: {action}，仅支持 drop_column, drop_table, add_column, sync_type 或 ignore")
 
         return {
             "alert_id": alert.id,
             "status": alert.status,
             "column_dropped": column_dropped,
+            "table_dropped": table_dropped,
             "column_added": column_added,
             "column_updated": action == "sync_type",
             "message": message,
@@ -330,6 +486,8 @@ class MetadataDriftService:
         db: AsyncSession,
         alert_id: int,
         action: str,
+        user_id: Optional[int] = None,
+        user_name: Optional[str] = None,
     ) -> Dict[str, Any]:
         """管理员对单条告警进行人机协同处置（下线字段 / 录入元数据 / 忽略）。"""
         stmt = select(MetaSchemaDriftAlert).where(MetaSchemaDriftAlert.id == alert_id)
@@ -337,9 +495,11 @@ class MetadataDriftService:
         if not alert:
             raise ValueError(f"告警不存在: ID {alert_id}")
 
-        res = await MetadataDriftService._resolve_single_alert_core(db, alert, action)
+        res = await MetadataDriftService._resolve_single_alert_core(
+            db, alert, action, user_id=user_id, user_name=user_name
+        )
         await db.commit()
-        if res.get("column_dropped") or res.get("column_added") or res.get("column_updated"):
+        if res.get("column_dropped") or res.get("table_dropped") or res.get("column_added") or res.get("column_updated"):
             await MetadataDriftService._try_sync_local_vector({alert.dataset_id})
         return res
 
@@ -350,6 +510,8 @@ class MetadataDriftService:
         action: str,
         drift_type: Optional[str] = None,
         alert_ids: Optional[List[int]] = None,
+        user_id: Optional[int] = None,
+        user_name: Optional[str] = None,
     ) -> Dict[str, Any]:
         """批量处置告警：可指定 alert_ids，或按 dataset_id + drift_type 批量处置。"""
         stmt = select(MetaSchemaDriftAlert).where(
@@ -369,19 +531,21 @@ class MetadataDriftService:
         failed_count = 0
         for alert in alerts:
             try:
-                await MetadataDriftService._resolve_single_alert_core(db, alert, action)
+                await MetadataDriftService._resolve_single_alert_core(
+                    db, alert, action, user_id=user_id, user_name=user_name
+                )
                 processed_count += 1
             except Exception as e:
                 logger.warning(f"[MetadataDrift] 批量处理单项失败: alert_id={alert.id}, err={e}")
                 failed_count += 1
 
         await db.commit()
-        if action in ("drop_column", "add_column", "sync_type") and processed_count > 0:
+        if action in ("drop_column", "drop_table", "add_column", "sync_type") and processed_count > 0:
             await MetadataDriftService._try_sync_local_vector({dataset_id})
         if failed_count:
             message = f"成功批量处置 {processed_count} 项告警，{failed_count} 项处置失败"
         else:
-            message = f"成功批量处置 {processed_count} 项告警"
+            message = f"成功批量处置 {processed_count} 项告警（已自动同步向量知识库）"
         return {
             "processed_count": processed_count,
             "failed_count": failed_count,
@@ -437,6 +601,8 @@ class MetadataDriftService:
         action: str,
         drift_type: Optional[str] = None,
         alert_ids: Optional[List[int]] = None,
+        user_id: Optional[int] = None,
+        user_name: Optional[str] = None,
     ) -> Dict[str, Any]:
         """跨数据集全局批量处置告警。"""
         stmt = select(MetaSchemaDriftAlert).where(MetaSchemaDriftAlert.status == 0)
@@ -453,20 +619,22 @@ class MetadataDriftService:
         failed_count = 0
         for alert in alerts:
             try:
-                await MetadataDriftService._resolve_single_alert_core(db, alert, action)
+                await MetadataDriftService._resolve_single_alert_core(
+                    db, alert, action, user_id=user_id, user_name=user_name
+                )
                 processed_count += 1
             except Exception as e:
                 logger.warning(f"[MetadataDrift] 全局批量处理单项失败: alert_id={alert.id}, err={e}")
                 failed_count += 1
 
         await db.commit()
-        if action in ("drop_column", "add_column", "sync_type") and processed_count > 0:
+        if action in ("drop_column", "drop_table", "add_column", "sync_type") and processed_count > 0:
             ds_ids = {a.dataset_id for a in alerts if a.dataset_id}
             await MetadataDriftService._try_sync_local_vector(ds_ids)
         if failed_count:
             message = f"成功批量处置 {processed_count} 项告警，{failed_count} 项处置失败"
         else:
-            message = f"成功批量处置 {processed_count} 项告警"
+            message = f"成功批量处置 {processed_count} 项告警（已自动同步向量知识库）"
         return {
             "processed_count": processed_count,
             "failed_count": failed_count,

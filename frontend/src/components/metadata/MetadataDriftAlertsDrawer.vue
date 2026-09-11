@@ -264,6 +264,13 @@ const handleConfirmModalConfirm = async () => {
   }
 }
 
+const selectedTypeFilter = ref<'all' | 'table_missing_in_db' | 'missing_in_db' | 'type_mismatch' | 'new_in_db'>('all')
+const searchKeyword = ref<string>('')
+
+const pendingMissingTableCount = computed(() => {
+  return alerts.value.filter(a => a.status === 0 && a.drift_type === 'table_missing_in_db').length
+})
+
 const pendingNewCount = computed(() => {
   return alerts.value.filter(a => a.status === 0 && a.drift_type === 'new_in_db').length
 })
@@ -275,6 +282,47 @@ const pendingMissingCount = computed(() => {
 const pendingMismatchCount = computed(() => {
   return alerts.value.filter(a => a.status === 0 && a.drift_type === 'type_mismatch').length
 })
+
+const typeCounts = computed(() => {
+  return {
+    missing_table: alerts.value.filter(a => a.drift_type === 'table_missing_in_db').length,
+    missing_column: alerts.value.filter(a => a.drift_type === 'missing_in_db').length,
+    type_mismatch: alerts.value.filter(a => a.drift_type === 'type_mismatch').length,
+    new_column: alerts.value.filter(a => a.drift_type === 'new_in_db').length,
+  }
+})
+
+const filteredAlerts = computed(() => {
+  let list = alerts.value
+  if (selectedTypeFilter.value !== 'all') {
+    list = list.filter(a => a.drift_type === selectedTypeFilter.value)
+  }
+  if (searchKeyword.value.trim()) {
+    const kw = searchKeyword.value.trim().toLowerCase()
+    list = list.filter(a => {
+      const matchTable = (a.table_name || '').toLowerCase().includes(kw)
+      const matchCol = (a.column_name || '').toLowerCase().includes(kw)
+      const matchDs = (a.dataset_name || '').toLowerCase().includes(kw)
+      return matchTable || matchCol || matchDs
+    })
+  }
+  return list
+})
+
+const resetFilters = () => {
+  selectedTypeFilter.value = 'all'
+  searchKeyword.value = ''
+}
+
+const getFilterTypeName = (type: string) => {
+  switch (type) {
+    case 'table_missing_in_db': return '物理表缺失'
+    case 'missing_in_db': return '字段物理缺失'
+    case 'type_mismatch': return '物理类型不匹配'
+    case 'new_in_db': return '物理新增字段'
+    default: return '全部'
+  }
+}
 
 const fetchAlerts = async () => {
   loading.value = true
@@ -304,7 +352,7 @@ const toggleSample = (id: number) => {
   expandedSamples.value[id] = !expandedSamples.value[id]
 }
 
-const handleResolve = (alert: MetaDriftAlert, action: 'drop_column' | 'add_column' | 'sync_type' | 'ignore') => {
+const handleResolve = (alert: MetaDriftAlert, action: 'drop_column' | 'add_column' | 'sync_type' | 'drop_table' | 'ignore') => {
   if (!canEdit.value) {
     showToast('需具备数据集编辑权限方可执行处置操作', 'warning')
     return
@@ -317,7 +365,12 @@ const handleResolve = (alert: MetaDriftAlert, action: 'drop_column' | 'add_colum
 
   const datasetLabel = alert.dataset_name ? `【${alert.dataset_name}】` : ''
 
-  if (action === 'drop_column') {
+  if (action === 'drop_table') {
+    title = '确认下线缺失表'
+    message = `确认从元数据${datasetLabel}中彻底下线整张数据表【${alert.table_name}】？\n下线后，AI 编排和查询将不再检索与使用该表及其下属字段。`
+    confirmText = '确认下线整表'
+    type = 'danger'
+  } else if (action === 'drop_column') {
     title = '确认下线字段'
     message = `确认从元数据${datasetLabel}中下线字段【${alert.table_name}.${alert.column_name}】？\n下线后，AI 编排和查询将不再使用该字段。`
     confirmText = '确认下线'
@@ -358,19 +411,21 @@ const handleResolve = (alert: MetaDriftAlert, action: 'drop_column' | 'add_colum
   })
 }
 
-const handleBatchResolve = (action: 'drop_column' | 'add_column' | 'sync_type' | 'ignore', driftType?: string) => {
+const handleBatchResolve = (action: 'drop_column' | 'add_column' | 'sync_type' | 'drop_table' | 'ignore', driftType?: string) => {
   if (!canEdit.value) {
     showToast('需具备数据集编辑权限方可执行批量处置操作', 'warning')
     return
   }
 
-  const count = driftType === 'new_in_db'
-    ? pendingNewCount.value
-    : driftType === 'missing_in_db'
-      ? pendingMissingCount.value
-      : driftType === 'type_mismatch'
-        ? pendingMismatchCount.value
-        : alerts.value.length
+  const count = driftType === 'table_missing_in_db'
+    ? pendingMissingTableCount.value
+    : driftType === 'new_in_db'
+      ? pendingNewCount.value
+      : driftType === 'missing_in_db'
+        ? pendingMissingCount.value
+        : driftType === 'type_mismatch'
+          ? pendingMismatchCount.value
+          : alerts.value.length
   if (count === 0) return
 
   let title = '批量操作'
@@ -378,7 +433,12 @@ const handleBatchResolve = (action: 'drop_column' | 'add_column' | 'sync_type' |
   let confirmText = '确认批量操作'
   let type: 'danger' | 'primary' | 'warning' = 'primary'
 
-  if (action === 'add_column') {
+  if (action === 'drop_table') {
+    title = '批量下线缺失表'
+    message = `确认将当前视图中全部 ${count} 张物理库已不存在的数据表，一键从元数据中彻底下线？`
+    confirmText = `一键下线整表 (${count})`
+    type = 'danger'
+  } else if (action === 'add_column') {
     title = '批量收录新增字段'
     message = `确认将当前视图中全部 ${count} 个物理新增字段一键录入到元数据中？`
     confirmText = `一键收录 (${count})`
@@ -631,9 +691,114 @@ watch(
         </div>
       </div>
 
+      <!-- 差异类型 Pills 过滤与即时搜索栏 -->
+      <div
+        v-if="alerts.length > 0"
+        class="flex flex-wrap items-center justify-between gap-2.5 p-2 bg-slate-50/80 dark:bg-slate-800/40 rounded-xl border border-slate-200/80 dark:border-slate-700/60 text-xs"
+      >
+        <!-- 左侧：分类 Pills 胶囊标签 -->
+        <div class="flex items-center gap-1.5 flex-wrap">
+          <button
+            type="button"
+            class="px-2.5 py-1 rounded-lg text-xs font-medium transition-all flex items-center gap-1 cursor-pointer border"
+            :class="selectedTypeFilter === 'all'
+              ? 'bg-slate-900 text-white border-slate-900 dark:bg-slate-100 dark:text-slate-900 dark:border-slate-100 shadow-2xs font-semibold'
+              : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700/60'"
+            @click="selectedTypeFilter = 'all'"
+          >
+            <span>全部</span>
+            <span
+              class="px-1.5 py-0.5 rounded-full text-[10px] font-mono leading-none"
+              :class="selectedTypeFilter === 'all' ? 'bg-white/20 text-white dark:bg-slate-900/20 dark:text-slate-900' : 'bg-slate-100 dark:bg-slate-700 text-slate-500'"
+            >
+              {{ alerts.length }}
+            </span>
+          </button>
+
+          <button
+            v-if="typeCounts.missing_table > 0 || selectedTypeFilter === 'table_missing_in_db'"
+            type="button"
+            class="px-2.5 py-1 rounded-lg text-xs font-medium transition-all flex items-center gap-1 cursor-pointer border"
+            :class="selectedTypeFilter === 'table_missing_in_db'
+              ? 'bg-rose-600 text-white border-rose-600 shadow-2xs font-semibold'
+              : 'bg-rose-50/70 dark:bg-rose-950/30 text-rose-700 dark:text-rose-300 border-rose-200 dark:border-rose-800 hover:bg-rose-100/80'"
+            @click="selectedTypeFilter = selectedTypeFilter === 'table_missing_in_db' ? 'all' : 'table_missing_in_db'"
+          >
+            <span>🏢 物理表缺失</span>
+            <span class="px-1.5 py-0.5 rounded-full text-[10px] font-mono leading-none bg-rose-200/80 text-rose-800 dark:bg-rose-900 dark:text-rose-200">
+              {{ typeCounts.missing_table }}
+            </span>
+          </button>
+
+          <button
+            v-if="typeCounts.missing_column > 0 || selectedTypeFilter === 'missing_in_db'"
+            type="button"
+            class="px-2.5 py-1 rounded-lg text-xs font-medium transition-all flex items-center gap-1 cursor-pointer border"
+            :class="selectedTypeFilter === 'missing_in_db'
+              ? 'bg-amber-600 text-white border-amber-600 shadow-2xs font-semibold'
+              : 'bg-amber-50/70 dark:bg-amber-950/30 text-amber-800 dark:text-amber-200 border-amber-200 dark:border-amber-800 hover:bg-amber-100/80'"
+            @click="selectedTypeFilter = selectedTypeFilter === 'missing_in_db' ? 'all' : 'missing_in_db'"
+          >
+            <span>🗑️ 字段缺失</span>
+            <span class="px-1.5 py-0.5 rounded-full text-[10px] font-mono leading-none bg-amber-200/80 text-amber-800 dark:bg-amber-900 dark:text-amber-200">
+              {{ typeCounts.missing_column }}
+            </span>
+          </button>
+
+          <button
+            v-if="typeCounts.type_mismatch > 0 || selectedTypeFilter === 'type_mismatch'"
+            type="button"
+            class="px-2.5 py-1 rounded-lg text-xs font-medium transition-all flex items-center gap-1 cursor-pointer border"
+            :class="selectedTypeFilter === 'type_mismatch'
+              ? 'bg-indigo-600 text-white border-indigo-600 shadow-2xs font-semibold'
+              : 'bg-indigo-50/70 dark:bg-indigo-950/30 text-indigo-700 dark:text-indigo-300 border-indigo-200 dark:border-indigo-800 hover:bg-indigo-100/80'"
+            @click="selectedTypeFilter = selectedTypeFilter === 'type_mismatch' ? 'all' : 'type_mismatch'"
+          >
+            <span>🔄 类型不匹配</span>
+            <span class="px-1.5 py-0.5 rounded-full text-[10px] font-mono leading-none bg-indigo-200/80 text-indigo-800 dark:bg-indigo-900 dark:text-indigo-200">
+              {{ typeCounts.type_mismatch }}
+            </span>
+          </button>
+
+          <button
+            v-if="typeCounts.new_column > 0 || selectedTypeFilter === 'new_in_db'"
+            type="button"
+            class="px-2.5 py-1 rounded-lg text-xs font-medium transition-all flex items-center gap-1 cursor-pointer border"
+            :class="selectedTypeFilter === 'new_in_db'
+              ? 'bg-sky-600 text-white border-sky-600 shadow-2xs font-semibold'
+              : 'bg-sky-50/70 dark:bg-sky-950/30 text-sky-700 dark:text-sky-300 border-sky-200 dark:border-sky-800 hover:bg-sky-100/80'"
+            @click="selectedTypeFilter = selectedTypeFilter === 'new_in_db' ? 'all' : 'new_in_db'"
+          >
+            <span>📥 物理新增字段</span>
+            <span class="px-1.5 py-0.5 rounded-full text-[10px] font-mono leading-none bg-sky-200/80 text-sky-800 dark:bg-sky-900 dark:text-sky-200">
+              {{ typeCounts.new_column }}
+            </span>
+          </button>
+        </div>
+
+        <!-- 右侧：即时搜索框 -->
+        <div class="relative flex items-center">
+          <input
+            v-model="searchKeyword"
+            type="text"
+            placeholder="搜索表名、字段名..."
+            class="text-xs pl-7 pr-6 py-1 w-44 sm:w-56 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-amber-500 transition-all placeholder:text-slate-400"
+          />
+          <span class="absolute left-2 text-slate-400 text-xs pointer-events-none">🔍</span>
+          <button
+            v-if="searchKeyword"
+            type="button"
+            class="absolute right-2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 text-xs cursor-pointer"
+            @click="searchKeyword = ''"
+          >
+            ✕
+          </button>
+        </div>
+      </div>
+
       <!-- 批量快捷操作栏（仅待处理 Tab 且存在待处理项时展示） -->
       <div
-        v-if="activeTab === 'pending' && alerts.length > 0 && (pendingNewCount > 0 || pendingMissingCount > 0 || pendingMismatchCount > 0)"
+        v-if="activeTab === 'pending' && alerts.length > 0 && (pendingMissingTableCount > 0 || pendingNewCount > 0 || pendingMissingCount > 0 || pendingMismatchCount > 0)"
         class="flex flex-wrap items-center justify-between gap-2 p-2.5 bg-slate-50 dark:bg-slate-800/60 rounded-xl border border-slate-200 dark:border-slate-700/80 text-xs"
       >
         <span class="text-slate-600 dark:text-slate-300 font-medium">
@@ -641,7 +806,17 @@ watch(
         </span>
         <div class="flex items-center gap-2 flex-wrap">
           <button
-            v-if="pendingMismatchCount > 0"
+            v-if="pendingMissingTableCount > 0 && (selectedTypeFilter === 'all' || selectedTypeFilter === 'table_missing_in_db')"
+            type="button"
+            :disabled="!canEdit || isBatchProcessing"
+            :title="!canEdit ? '需具备数据集编辑权限方可操作' : undefined"
+            class="px-2.5 py-1 font-semibold rounded-lg bg-rose-700 hover:bg-rose-800 text-white shadow-2xs transition-colors flex items-center gap-1 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer text-xs"
+            @click="handleBatchResolve('drop_table', 'table_missing_in_db')"
+          >
+            <span>🏢</span> 一键下线全部缺失表 ({{ pendingMissingTableCount }})
+          </button>
+          <button
+            v-if="pendingMismatchCount > 0 && (selectedTypeFilter === 'all' || selectedTypeFilter === 'type_mismatch')"
             type="button"
             :disabled="!canEdit || isBatchProcessing"
             :title="!canEdit ? '需具备数据集编辑权限方可操作' : undefined"
@@ -651,7 +826,7 @@ watch(
             <span>🔄</span> 一键同步全部类型差异 ({{ pendingMismatchCount }})
           </button>
           <button
-            v-if="pendingNewCount > 0"
+            v-if="pendingNewCount > 0 && (selectedTypeFilter === 'all' || selectedTypeFilter === 'new_in_db')"
             type="button"
             :disabled="!canEdit || isBatchProcessing"
             :title="!canEdit ? '需具备数据集编辑权限方可操作' : undefined"
@@ -661,7 +836,7 @@ watch(
             <span>📥</span> 一键收录全部新增字段 ({{ pendingNewCount }})
           </button>
           <button
-            v-if="pendingMissingCount > 0"
+            v-if="pendingMissingCount > 0 && (selectedTypeFilter === 'all' || selectedTypeFilter === 'missing_in_db')"
             type="button"
             :disabled="!canEdit || isBatchProcessing"
             :title="!canEdit ? '需具备数据集编辑权限方可操作' : undefined"
@@ -688,12 +863,30 @@ watch(
         </div>
       </div>
 
+      <div v-else-if="filteredAlerts.length === 0" class="py-12 text-center space-y-2">
+        <div class="text-2xl">🔍</div>
+        <div class="text-sm font-medium text-slate-700 dark:text-slate-300">
+          未找到符合当前筛选条件的差异项
+        </div>
+        <div class="text-xs text-slate-400 max-w-sm mx-auto">
+          当前分类【{{ getFilterTypeName(selectedTypeFilter) }}】下未匹配到包含「{{ searchKeyword }}」的表或字段。
+        </div>
+        <button
+          type="button"
+          class="mt-2 px-3 py-1 text-xs text-amber-600 dark:text-amber-400 hover:underline cursor-pointer"
+          @click="resetFilters"
+        >
+          重置筛选条件
+        </button>
+      </div>
+
       <div v-else class="space-y-3 max-h-[55vh] overflow-y-auto pr-1 custom-scrollbar">
         <div
-          v-for="alert in alerts"
+          v-for="alert in filteredAlerts"
           :key="alert.id"
           class="p-3.5 rounded-xl border transition-all"
           :class="{
+            'bg-rose-50/70 dark:bg-rose-950/30 border-rose-300 dark:border-rose-800/80': alert.status === 0 && alert.drift_type === 'table_missing_in_db',
             'bg-amber-50/60 dark:bg-amber-950/20 border-amber-200 dark:border-amber-800/60': alert.status === 0 && alert.drift_type === 'missing_in_db',
             'bg-sky-50/60 dark:bg-sky-950/20 border-sky-200 dark:border-sky-800/60': alert.status === 0 && alert.drift_type === 'new_in_db',
             'bg-indigo-50/60 dark:bg-indigo-950/20 border-indigo-200 dark:border-indigo-800/60': alert.status === 0 && alert.drift_type === 'type_mismatch',
@@ -715,11 +908,23 @@ watch(
                 </button>
 
                 <span class="font-mono font-semibold text-sm text-slate-900 dark:text-slate-100">
-                  {{ alert.table_name }}.<span class="text-amber-600 dark:text-amber-400 underline decoration-amber-400/50 underline-offset-2">{{ alert.column_name }}</span>
+                  <template v-if="alert.drift_type === 'table_missing_in_db'">
+                    <span class="text-rose-600 dark:text-rose-400 underline decoration-rose-400/50 underline-offset-2">{{ alert.table_name }}</span>
+                    <span class="text-xs text-rose-500 font-medium ml-1.5">[整表物理缺失]</span>
+                  </template>
+                  <template v-else>
+                    {{ alert.table_name }}.<span class="text-amber-600 dark:text-amber-400 underline decoration-amber-400/50 underline-offset-2">{{ alert.column_name }}</span>
+                  </template>
                 </span>
 
                 <span
-                  v-if="alert.drift_type === 'missing_in_db'"
+                  v-if="alert.drift_type === 'table_missing_in_db'"
+                  class="px-2 py-0.5 text-[11px] font-semibold rounded bg-rose-200/80 text-rose-800 dark:bg-rose-950/80 dark:text-rose-200 border border-rose-300 dark:border-rose-700"
+                >
+                  ⚠️ 物理表已不存在
+                </span>
+                <span
+                  v-else-if="alert.drift_type === 'missing_in_db'"
                   class="px-2 py-0.5 text-[11px] font-semibold rounded bg-rose-100 text-rose-700 dark:bg-rose-900/40 dark:text-rose-300 border border-rose-200 dark:border-rose-800"
                 >
                   物理库已缺失
@@ -775,7 +980,17 @@ watch(
             <div class="flex items-center gap-1.5 shrink-0 pt-0.5">
               <template v-if="alert.status === 0">
                 <button
-                  v-if="alert.drift_type === 'missing_in_db'"
+                  v-if="alert.drift_type === 'table_missing_in_db'"
+                  type="button"
+                  :disabled="!canEdit || processingId === alert.id || isBatchProcessing"
+                  :title="!canEdit ? '需具备数据集编辑权限方可操作' : undefined"
+                  class="px-2.5 py-1 text-xs font-semibold rounded-lg bg-rose-600 hover:bg-rose-700 text-white shadow-2xs transition-colors disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                  @click="handleResolve(alert, 'drop_table')"
+                >
+                  下线整表
+                </button>
+                <button
+                  v-else-if="alert.drift_type === 'missing_in_db'"
                   type="button"
                   :disabled="!canEdit || processingId === alert.id || isBatchProcessing"
                   :title="!canEdit ? '需具备数据集编辑权限方可操作' : undefined"

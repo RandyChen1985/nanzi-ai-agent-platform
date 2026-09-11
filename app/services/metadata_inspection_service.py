@@ -82,6 +82,21 @@ def _normalize_col_type(t: str) -> str:
     return "other"
 
 
+def _is_string_date_type_mismatch(meta_t: str, phys_t: str) -> bool:
+    """判断两侧列类型是否构成「字符串 ↔ 日期」类的类型不一致。
+
+    说人话：只有 string 大类与 date/datetime 大类之间发生跨越才记为 type_mismatch，
+    其余跨大类（integer↔numeric、integer↔string、boolean↔integer、binary↔string 等）
+    与同族写法差异（Int64 vs int、varchar vs text、NUMBER vs decimal、date vs datetime）
+    一律不算。原因：string ↔ date 是导致 SQL 生成/执行出错最强的两类（varchar 存日期 vs
+    真实 date 列，字面量与写法完全不同），而其他跨大类差异对生成 SQL 影响很小，反而会因
+    两侧写法不对称产生大量干扰告警。
+    """
+    a = _normalize_col_type(meta_t)
+    b = _normalize_col_type(phys_t)
+    return (a, b) in (("string", "datetime"), ("datetime", "string"))
+
+
 class MetadataInspectionService:
     """物理结构巡检执行引擎。"""
 
@@ -108,10 +123,24 @@ class MetadataInspectionService:
 
         total_tables = len(tables)
         total_columns_scanned = 0
+        total_missing_tables = 0
         total_stale = 0
         total_new = 0
         total_mismatch = 0
         diff_summary: List[Dict[str, Any]] = []
+
+        # 优先批量获取物理库现存表集合，实现表级缺失快速探测
+        phys_tables_set: Optional[Set[str]] = None
+        try:
+            raw_tables = await adapter.get_tables()
+            if isinstance(raw_tables, (list, tuple, set)):
+                phys_tables_set = {
+                    str(t.get("name") or "").lower().strip()
+                    for t in raw_tables
+                    if isinstance(t, dict) and t.get("name")
+                }
+        except Exception as ex:
+            logger.warning(f"[Schema Inspection] 获取物理库表列表失败，降级为逐表探测: {ex}")
 
         for idx, table in enumerate(tables, start=1):
             phys_name = table.physical_name or ""
@@ -120,6 +149,34 @@ class MetadataInspectionService:
             total_columns_scanned += len(meta_cols)
 
             pct = progress_base + int((idx / total_tables) * progress_range)
+
+            # 1. 检查物理表是否在物理库中已不存在（整表缺失）
+            if phys_tables_set is not None and phys_name.lower().strip() not in phys_tables_set:
+                total_missing_tables += 1
+                await emit(
+                    progress=pct,
+                    stage="scanning",
+                    message=f"{prefix}[表 {idx}/{total_tables}] ⚠️ 发现物理表已不存在: {phys_name}（物理数据库中已删除此表）",
+                )
+                await MetadataDriftService.record_drift_alert_core(
+                    db,
+                    dataset_id=dataset.id,
+                    table_id=table.id,
+                    table_name=phys_name,
+                    column_name="*",
+                    drift_type="table_missing_in_db",
+                    source="manual_inspection",
+                    error_sample=f"巡检发现：物理数据库中已无此数据表 {phys_name}（整表缺失）",
+                )
+                diff_summary.append({
+                    "table_name": phys_name,
+                    "table_missing": True,
+                    "stale_columns": [],
+                    "new_columns": [],
+                    "type_mismatches": [],
+                })
+                continue
+
             await emit(
                 progress=pct,
                 stage="scanning",
@@ -129,6 +186,34 @@ class MetadataInspectionService:
             try:
                 physical_columns = await adapter.get_columns(table_name=phys_name)
             except Exception as ex:
+                err_str = str(ex).lower()
+                # 兼容降级模式下的表不存在报错识别
+                if any(kw in err_str for kw in ["doesn't exist", "does not exist", "not found", "unknown table", "no such table"]):
+                    total_missing_tables += 1
+                    await emit(
+                        progress=pct,
+                        stage="scanning",
+                        message=f"{prefix}[表 {idx}/{total_tables}] ⚠️ 发现物理表已不存在: {phys_name}（物理数据库中已删除此表）",
+                    )
+                    await MetadataDriftService.record_drift_alert_core(
+                        db,
+                        dataset_id=dataset.id,
+                        table_id=table.id,
+                        table_name=phys_name,
+                        column_name="*",
+                        drift_type="table_missing_in_db",
+                        source="manual_inspection",
+                        error_sample=f"巡检发现：读取物理列报错，表不存在: {str(ex)[:150]}",
+                    )
+                    diff_summary.append({
+                        "table_name": phys_name,
+                        "table_missing": True,
+                        "stale_columns": [],
+                        "new_columns": [],
+                        "type_mismatches": [],
+                    })
+                    continue
+
                 logger.warning(f"[Schema Inspection] 表 {phys_name} 读取物理列失败: {ex}")
                 await emit(
                     progress=pct,
@@ -156,7 +241,7 @@ class MetadataInspectionService:
                 phys_c = phys_col_map.get(col, {})
                 meta_t = str(getattr(meta_c, "type", "") or "").strip()
                 phys_t = str(phys_c.get("type") or "").strip()
-                if meta_t and phys_t and _normalize_col_type(meta_t) != _normalize_col_type(phys_t):
+                if meta_t and phys_t and _is_string_date_type_mismatch(meta_t, phys_t):
                     mismatch_cols.append(col)
 
             if not stale_cols and not new_cols and not mismatch_cols:
@@ -237,6 +322,7 @@ class MetadataInspectionService:
         return {
             "tables_scanned": total_tables,
             "columns_scanned": total_columns_scanned,
+            "missing_tables_count": total_missing_tables,
             "stale_count": total_stale,
             "new_count": total_new,
             "mismatch_count": total_mismatch,
@@ -325,6 +411,7 @@ class MetadataInspectionService:
         await db.commit()
 
         # 5. 巡检完成报告
+        total_missing_tables = scan_res.get("missing_tables_count", 0)
         total_tables = scan_res["tables_scanned"]
         total_columns_scanned = scan_res["columns_scanned"]
         total_stale = scan_res["stale_count"]
@@ -334,12 +421,14 @@ class MetadataInspectionService:
         summary_msg = (
             f"巡检完成！共扫描 {total_tables} 张表、{total_columns_scanned} 个元数据列。"
         )
-        if total_stale == 0 and total_new == 0 and total_mismatch == 0:
+        if total_missing_tables == 0 and total_stale == 0 and total_new == 0 and total_mismatch == 0:
             summary_msg += " 物理库结构完全一致，未发现任何漂移。"
         else:
             diff_parts = []
+            if total_missing_tables > 0:
+                diff_parts.append(f"{total_missing_tables} 张表物理缺失")
             if total_stale > 0:
-                diff_parts.append(f"{total_stale} 处物理缺失")
+                diff_parts.append(f"{total_stale} 处字段物理缺失")
             if total_new > 0:
                 diff_parts.append(f"{total_new} 处物理新增")
             if total_mismatch > 0:
@@ -357,6 +446,7 @@ class MetadataInspectionService:
             "success": True,
             "tables_scanned": total_tables,
             "columns_scanned": total_columns_scanned,
+            "missing_tables_count": total_missing_tables,
             "stale_count": total_stale,
             "new_count": total_new,
             "mismatch_count": total_mismatch,
@@ -426,6 +516,7 @@ class MetadataInspectionService:
 
         total_tables_all = 0
         total_columns_all = 0
+        total_missing_tables_all = 0
         total_stale_all = 0
         total_new_all = 0
         total_mismatch_all = 0
@@ -485,21 +576,25 @@ class MetadataInspectionService:
 
             t_scanned = scan_res["tables_scanned"]
             c_scanned = scan_res["columns_scanned"]
+            missing_tables = scan_res.get("missing_tables_count", 0)
             stale = scan_res["stale_count"]
             new = scan_res["new_count"]
             mismatch = scan_res.get("mismatch_count", 0)
 
             total_tables_all += t_scanned
             total_columns_all += c_scanned
+            total_missing_tables_all += missing_tables
             total_stale_all += stale
             total_new_all += new
             total_mismatch_all += mismatch
 
-            if stale > 0 or new > 0 or mismatch > 0:
+            if missing_tables > 0 or stale > 0 or new > 0 or mismatch > 0:
                 drift_datasets_count += 1
                 diff_desc = []
+                if missing_tables > 0:
+                    diff_desc.append(f"{missing_tables} 张表缺失")
                 if stale > 0:
-                    diff_desc.append(f"{stale} 处缺失")
+                    diff_desc.append(f"{stale} 处字段缺失")
                 if new > 0:
                     diff_desc.append(f"{new} 处新增")
                 if mismatch > 0:
@@ -527,19 +622,21 @@ class MetadataInspectionService:
 
         logger.info(
             f"🏁 [元数据全库巡检] 批量比对结束: 共扫描 {total_ds} 个数据集、{total_tables_all} 张物理表、{total_columns_all} 个字段 | "
-            f"缺失: {total_stale_all} | 新增: {total_new_all} | 类型不匹配: {total_mismatch_all} | 数据源连接失败: {failed_datasets_count}"
+            f"表缺失: {total_missing_tables_all} | 字段缺失: {total_stale_all} | 新增: {total_new_all} | 类型不匹配: {total_mismatch_all} | 数据源连接失败: {failed_datasets_count}"
         )
 
         # 汇总全库巡检报告
         summary_msg = (
             f"全库批量巡检完成！共扫描 {total_ds} 个数据集、{total_tables_all} 张物理表、{total_columns_all} 个元数据列。"
         )
-        if total_stale_all == 0 and total_new_all == 0 and total_mismatch_all == 0 and failed_datasets_count == 0:
+        if total_missing_tables_all == 0 and total_stale_all == 0 and total_new_all == 0 and total_mismatch_all == 0 and failed_datasets_count == 0:
             summary_msg += " 恭喜！全库物理表结构完全一致，未发现任何漂移差异。"
         else:
             diff_parts = []
+            if total_missing_tables_all > 0:
+                diff_parts.append(f"{total_missing_tables_all} 张表物理缺失")
             if total_stale_all > 0:
-                diff_parts.append(f"{total_stale_all} 处物理缺失")
+                diff_parts.append(f"{total_stale_all} 处字段物理缺失")
             if total_new_all > 0:
                 diff_parts.append(f"{total_new_all} 处物理新增")
             if total_mismatch_all > 0:
@@ -564,6 +661,7 @@ class MetadataInspectionService:
             "datasets_scanned": total_ds,
             "tables_scanned": total_tables_all,
             "columns_scanned": total_columns_all,
+            "missing_tables_count": total_missing_tables_all,
             "stale_count": total_stale_all,
             "new_count": total_new_all,
             "mismatch_count": total_mismatch_all,

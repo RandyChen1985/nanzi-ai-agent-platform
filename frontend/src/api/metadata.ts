@@ -526,19 +526,19 @@ export const metadataApi = {
     }),
   getAllDriftAlerts: (params?: { dataset_id?: number; status?: number }) =>
     axios.get<MetaDriftAlert[]>(`${API_BASE}/drift-alerts`, { params }),
-  resolveDriftAlert: (alertId: number, action: 'drop_column' | 'add_column' | 'sync_type' | 'ignore') =>
+  resolveDriftAlert: (alertId: number, action: 'drop_column' | 'add_column' | 'sync_type' | 'ignore' | 'drop_table') =>
     axios.post<any>(`${API_BASE}/drift-alerts/${alertId}/resolve`, { action }),
   batchResolveDriftAlerts: (
     datasetId: number,
     data: {
-      action: 'drop_column' | 'add_column' | 'sync_type' | 'ignore';
+      action: 'drop_column' | 'add_column' | 'sync_type' | 'ignore' | 'drop_table';
       drift_type?: string;
       alert_ids?: number[];
     }
   ) => axios.post<any>(`${API_BASE}/datasets/${datasetId}/drift-alerts/batch-resolve`, data),
   batchResolveAllDriftAlerts: (
     data: {
-      action: 'drop_column' | 'add_column' | 'sync_type' | 'ignore';
+      action: 'drop_column' | 'add_column' | 'sync_type' | 'ignore' | 'drop_table';
       drift_type?: string;
       alert_ids?: number[];
     }

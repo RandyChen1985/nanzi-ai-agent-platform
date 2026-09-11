@@ -173,7 +173,7 @@ class MetaDriftAlertResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
-DriftResolutionAction = Literal["drop_column", "add_column", "sync_type", "ignore"]
+DriftResolutionAction = Literal["drop_column", "add_column", "sync_type", "ignore", "drop_table"]
 
 
 class ResolveDriftAlertRequest(BaseModel):
@@ -182,7 +182,7 @@ class ResolveDriftAlertRequest(BaseModel):
 
 class BatchResolveDriftAlertsRequest(BaseModel):
     action: DriftResolutionAction
-    drift_type: Optional[str] = None  # missing_in_db, new_in_db, type_mismatch
+    drift_type: Optional[str] = None  # missing_in_db, new_in_db, type_mismatch, table_missing_in_db
     alert_ids: Optional[List[int]] = None
 
 

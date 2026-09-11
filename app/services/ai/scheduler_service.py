@@ -794,7 +794,6 @@ async def _scheduled_task_wrapper(task_id: int, is_manual: bool = False, retry_a
                     alert_title = "❌ 元数据定时巡检执行异常告警"
 
                 body_lines = [
-                    f"### {alert_title}",
                     f"- **任务名称**：{task_name}",
                     f"- **巡检时间**：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
                     f"- **巡检结论**：{inspection_summary or inspection_error}",

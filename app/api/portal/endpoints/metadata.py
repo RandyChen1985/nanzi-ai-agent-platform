@@ -694,10 +694,15 @@ async def resolve_drift_alert(
     alert_id: int,
     payload: ResolveDriftAlertRequest,
     conn: AsyncSession = Depends(get_db_session),
+    user: dict = Depends(get_current_user),
 ):
-    """管理员对漂移告警进行人机协同处置（下线字段 / 忽略）。"""
+    """管理员对漂移告警进行人机协同处置（下线字段 / 录入元数据 / 忽略）。"""
     try:
-        res = await MetadataDriftService.resolve_alert(conn, alert_id, payload.action)
+        user_id = int(user.get("user_id") or 0) if user else None
+        user_name = user.get("user_name") if user else None
+        res = await MetadataDriftService.resolve_alert(
+            conn, alert_id, payload.action, user_id=user_id, user_name=user_name
+        )
         return {"code": 200, "data": res, "message": res.get("message")}
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -713,14 +718,19 @@ async def resolve_drift_alert(
 async def batch_resolve_all_drift_alerts(
     payload: BatchResolveDriftAlertsRequest,
     conn: AsyncSession = Depends(get_db_session),
+    user: dict = Depends(get_current_user),
 ):
     """全局跨数据集批量处置漂移告警。"""
     try:
+        user_id = int(user.get("user_id") or 0) if user else None
+        user_name = user.get("user_name") if user else None
         res = await MetadataDriftService.batch_resolve_alerts_global(
             conn,
             action=payload.action,
             drift_type=payload.drift_type,
             alert_ids=payload.alert_ids,
+            user_id=user_id,
+            user_name=user_name,
         )
         return {"code": 200, "data": res, "message": res.get("message")}
     except ValueError as e:
@@ -738,15 +748,20 @@ async def batch_resolve_drift_alerts(
     dataset_id: int,
     payload: BatchResolveDriftAlertsRequest,
     conn: AsyncSession = Depends(get_db_session),
+    user: dict = Depends(get_current_user),
 ):
     """管理员对漂移告警进行批量人机协同处置（批量下线 / 批量录入元数据 / 批量忽略）。"""
     try:
+        user_id = int(user.get("user_id") or 0) if user else None
+        user_name = user.get("user_name") if user else None
         res = await MetadataDriftService.batch_resolve_alerts(
             conn,
             dataset_id=dataset_id,
             action=payload.action,
             drift_type=payload.drift_type,
             alert_ids=payload.alert_ids,
+            user_id=user_id,
+            user_name=user_name,
         )
         return {"code": 200, "data": res, "message": res.get("message")}
     except ValueError as e:

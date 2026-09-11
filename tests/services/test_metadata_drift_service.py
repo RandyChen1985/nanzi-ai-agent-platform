@@ -312,10 +312,10 @@ async def test_batch_resolve_partial_failure_counts_failed():
 
     real_core = MetadataDriftService._resolve_single_alert_core
 
-    async def flaky_core(db, alert, action):
+    async def flaky_core(db, alert, action, **kwargs):
         if alert.id == 2:
             raise ValueError(f"表 {alert.table_name} 未找到")
-        return await real_core(db, alert, action)
+        return await real_core(db, alert, action, **kwargs)
 
     with patch.object(
         MetadataDriftService, "_resolve_single_alert_core", side_effect=flaky_core
@@ -346,7 +346,7 @@ async def test_resolve_alert_sync_type():
         error_sample="巡检发现类型不匹配：元数据声明为 String，物理库实际为 tinyint",
     )
     mock_table = MetaTable(id=10, dataset_id=1, physical_name="staff_list")
-    mock_col = MetaColumn(id=101, table_id=10, physical_name="sid", type="String")
+    mock_col = MetaColumn(id=50, table_id=10, physical_name="sid", type="String", term="员工编号")
 
     mock_alert_res = MagicMock()
     mock_alert_res.scalars.return_value.first.return_value = alert
@@ -357,19 +357,106 @@ async def test_resolve_alert_sync_type():
     mock_c_res = MagicMock()
     mock_c_res.scalars.return_value.first.return_value = mock_col
 
-    mock_ds_res = MagicMock()
-    mock_ds_res.scalars.return_value.first.return_value = None  # 回退从 error_sample 解析
-
-    mock_db.execute.side_effect = [mock_alert_res, mock_t_res, mock_c_res, mock_ds_res]
+    mock_db.execute.side_effect = [mock_alert_res, mock_t_res, mock_c_res]
 
     with patch.object(MetadataDriftService, "_try_sync_local_vector", new_callable=AsyncMock) as mock_sync_vec:
         res = await MetadataDriftService.resolve_alert(mock_db, alert_id=99, action="sync_type")
 
     assert res["column_updated"] is True
-    assert alert.status == 1  # 已解决
     assert mock_col.type == "tinyint"
+    assert alert.status == 1
     assert "已成功将字段 staff_list.sid 类型从 String 同步为物理库实际类型 tinyint" in res["message"]
     mock_db.commit.assert_called_once()
     mock_sync_vec.assert_called_once_with({1})
 
 
+@pytest.mark.asyncio
+async def test_resolve_alert_records_changelog():
+    """测试巡检处置操作成功记录数据集变更日志 (Changelog) 并记录操作人。"""
+    mock_db = AsyncMock()
+    alert = MetaSchemaDriftAlert(
+        id=77,
+        dataset_id=3,
+        table_name="t_test",
+        column_name="old_col",
+        drift_type="missing_in_db",
+        status=0,
+    )
+    mock_table = MetaTable(id=15, dataset_id=3, physical_name="t_test")
+    mock_col = MetaColumn(id=99, table_id=15, physical_name="old_col", type="int", term="测试字段")
+
+    mock_alert_res = MagicMock()
+    mock_alert_res.scalars.return_value.first.return_value = alert
+    mock_t_res = MagicMock()
+    mock_t_res.scalars.return_value.first.return_value = mock_table
+    mock_c_res = MagicMock()
+    mock_c_res.scalars.return_value.first.return_value = mock_col
+
+    mock_db.execute.side_effect = [mock_alert_res, mock_t_res, mock_c_res]
+
+    with patch("app.services.changelog_service.ChangelogService.log_change", new_callable=AsyncMock) as mock_log:
+        with patch.object(MetadataDriftService, "_try_sync_local_vector", new_callable=AsyncMock):
+            res = await MetadataDriftService.resolve_alert(
+                mock_db,
+                alert_id=77,
+                action="drop_column",
+                user_id=1,
+                user_name="admin",
+            )
+
+    assert res["column_dropped"] is True
+    mock_log.assert_called_once()
+    call_kwargs = mock_log.call_args.kwargs
+    assert call_kwargs["resource_type"] == "table"
+    assert call_kwargs["resource_id"] == "3:t_test"
+    assert call_kwargs["operation"] == "update"
+    assert call_kwargs["user_id"] == 1
+    assert call_kwargs["user_name"] == "admin"
+    assert "元数据巡检：下线物理缺失字段 t_test.old_col" in call_kwargs["reason"]
+
+
+@pytest.mark.asyncio
+async def test_resolve_alert_drop_table():
+    """测试处置物理表缺失告警：从元数据中彻底下线整张表，关闭该表全部关联待处理告警并同步向量。"""
+    mock_db = AsyncMock()
+    alert = MetaSchemaDriftAlert(
+        id=88,
+        dataset_id=1,
+        table_name="dropped_orders",
+        column_name="*",
+        drift_type="table_missing_in_db",
+        status=0,
+        error_sample="巡检发现：物理数据库中已无此数据表 dropped_orders（整表缺失）",
+    )
+    mock_table = MetaTable(id=20, dataset_id=1, physical_name="dropped_orders")
+
+    other_alert = MetaSchemaDriftAlert(
+        id=89,
+        dataset_id=1,
+        table_name="dropped_orders",
+        column_name="order_id",
+        drift_type="missing_in_db",
+        status=0,
+    )
+
+    mock_alert_res = MagicMock()
+    mock_alert_res.scalars.return_value.first.return_value = alert
+
+    mock_t_res = MagicMock()
+    mock_t_res.scalars.return_value.first.return_value = mock_table
+
+    mock_other_alerts_res = MagicMock()
+    mock_other_alerts_res.scalars.return_value.all.return_value = [other_alert]
+
+    mock_db.execute.side_effect = [mock_alert_res, mock_t_res, mock_other_alerts_res]
+
+    with patch.object(MetadataDriftService, "_try_sync_local_vector", new_callable=AsyncMock) as mock_sync_vec:
+        res = await MetadataDriftService.resolve_alert(mock_db, alert_id=88, action="drop_table")
+
+    assert res["table_dropped"] is True
+    assert alert.status == 1
+    assert other_alert.status == 1  # 关联字段级告警也被标记为已处置
+    assert "已成功从元数据中下线整表 dropped_orders" in res["message"]
+    mock_db.delete.assert_called_once_with(mock_table)
+    mock_db.commit.assert_called_once()
+    mock_sync_vec.assert_called_once_with({1})

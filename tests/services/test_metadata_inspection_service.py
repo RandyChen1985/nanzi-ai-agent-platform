@@ -132,17 +132,17 @@ async def test_inspect_dataset_adapter_error():
 
 @pytest.mark.asyncio
 async def test_inspect_dataset_type_mismatch():
-    """测试巡检发现字段类型不一致时，记录 type_mismatch 告警并正确统计。"""
+    """测试巡检仅在「字符串 ↔ 日期」大类跨越时报 type_mismatch，并正确统计。"""
     mock_db = AsyncMock()
     col1 = MetaColumn(physical_name="id", type="bigint")
-    col2 = MetaColumn(physical_name="status", type="int")
+    col2 = MetaColumn(physical_name="created_on", type="varchar(20)")  # string
     table = MetaTable(physical_name="orders", columns=[col1, col2])
     dataset = MetaDataset(id=4, name="order_dataset", data_source="mysql_main", tables=[table])
 
     mock_adapter = AsyncMock()
     mock_adapter.get_columns.return_value = [
         {"name": "id", "type": "bigint(20)"},          # 归一化为 integer，匹配
-        {"name": "status", "type": "varchar(20)"},     # 归一化为 string，与 int 不匹配！
+        {"name": "created_on", "type": "datetime"},    # date 大类，与声明 string 跨越 → type_mismatch
     ]
 
     with patch("app.services.metadata_service.MetadataService.get_dataset_by_id", new_callable=AsyncMock) as mock_get_ds, \
@@ -162,9 +162,49 @@ async def test_inspect_dataset_type_mismatch():
 
         mock_record_drift.assert_called_once()
         call_kwargs = mock_record_drift.call_args.kwargs
-        assert call_kwargs["column_name"] == "status"
+        assert call_kwargs["column_name"] == "created_on"
         assert call_kwargs["drift_type"] == "type_mismatch"
-        assert "元数据声明为 int，物理库实际为 varchar(20)" in call_kwargs["error_sample"]
+        assert "元数据声明为 varchar(20)，物理库实际为 datetime" in call_kwargs["error_sample"]
+
+
+@pytest.mark.asyncio
+async def test_inspect_dataset_non_string_date_mismatch_ignored():
+    """测试除「字符串 ↔ 日期」外的跨大类差异（如 string↔int、numeric↔string）不再记为 type_mismatch。"""
+    mock_db = AsyncMock()
+    col1 = MetaColumn(physical_name="id", type="int")
+    col2 = MetaColumn(physical_name="status", type="int")       # string vs int
+    col3 = MetaColumn(physical_name="price", type="decimal")    # numeric vs string
+    table = MetaTable(physical_name="orders", columns=[col1, col2, col3])
+    dataset = MetaDataset(id=6, name="order_dataset2", data_source="mysql_main", tables=[table])
+
+    mock_adapter = AsyncMock()
+    mock_adapter.get_columns.return_value = [
+        {"name": "id", "type": "int"},
+        {"name": "status", "type": "varchar(20)"},   # int(声明) vs varchar → 不再报
+        {"name": "price", "type": "varchar(50)"},    # decimal(声明) vs varchar → 不再报
+    ]
+
+    with patch("app.services.metadata_service.MetadataService.get_dataset_by_id", new_callable=AsyncMock) as mock_get_ds, \
+         patch("app.services.metadata_inspection_service.get_adapter", new_callable=AsyncMock) as mock_get_adapter, \
+         patch("app.services.metadata_drift_service.MetadataDriftService.record_drift_alert_core", new_callable=AsyncMock) as mock_record_drift, \
+         patch("app.services.metadata_sync_log_service.metadata_sync_log_service.publish", new_callable=AsyncMock) as mock_publish:
+
+        mock_get_ds.return_value = dataset
+        mock_get_adapter.return_value = mock_adapter
+
+        res = await MetadataInspectionService.inspect_dataset(mock_db, dataset_id=6, task_id="task_test_no_mismatch")
+
+        assert res["success"] is True
+        assert res["stale_count"] == 0
+        assert res["new_count"] == 0
+        assert res["mismatch_count"] == 0
+
+        # 不会产生任何 type_mismatch 告警
+        mismatch_calls = [
+            c for c in mock_record_drift.call_args_list
+            if c.kwargs.get("drift_type") == "type_mismatch"
+        ]
+        assert mismatch_calls == []
 
 
 @pytest.mark.asyncio
@@ -173,7 +213,7 @@ async def test_inspect_all_datasets_full_flow():
     mock_db = AsyncMock()
 
     col1 = MetaColumn(physical_name="id", type="bigint")
-    col2 = MetaColumn(physical_name="price", type="decimal")
+    col2 = MetaColumn(physical_name="created_on", type="varchar(20)")  # string
     table = MetaTable(physical_name="products", columns=[col1, col2])
     dataset = MetaDataset(id=5, name="product_dataset", data_source="pg_main", tables=[table], status=1)
 
@@ -185,8 +225,8 @@ async def test_inspect_all_datasets_full_flow():
     mock_adapter = AsyncMock()
     mock_adapter.get_columns.return_value = [
         {"name": "id", "type": "bigint"},
-        {"name": "price", "type": "varchar(50)"},  # mismatch!
-        {"name": "extra_col", "type": "text"},     # new_in_db!
+        {"name": "created_on", "type": "timestamp"},  # date 大类，与声明 string 跨越 → mismatch!
+        {"name": "extra_col", "type": "text"},        # new_in_db!
     ]
 
     with patch("app.services.metadata_inspection_service.get_adapter", new_callable=AsyncMock) as mock_get_adapter, \
@@ -248,6 +288,51 @@ async def test_inspect_all_datasets_skips_disabled_datasets():
         executed_stmt = mock_db.execute.call_args[0][0]
         # 提取 where 条件
         assert "status = :status_1" in str(executed_stmt) or "status" in str(executed_stmt)
+
+
+@pytest.mark.asyncio
+async def test_inspect_dataset_detects_missing_table():
+    """测试巡检引擎精准探测物理库中已不存在的表（整表缺失），记录 table_missing_in_db 告警并跳过后续列扫描。"""
+    mock_db = AsyncMock()
+
+    t1 = MetaTable(id=1, physical_name="users", columns=[MetaColumn(physical_name="id", type="int")])
+    t2 = MetaTable(id=2, physical_name="dropped_logs", columns=[MetaColumn(physical_name="id", type="int")])
+    dataset = MetaDataset(id=5, name="audit_ds", data_source="mysql_audit", tables=[t1, t2])
+
+    mock_adapter = AsyncMock()
+    # 物理库只剩下 users 表，dropped_logs 表已被 DROP
+    mock_adapter.get_tables.return_value = [{"name": "users"}]
+    mock_adapter.get_columns.return_value = [{"name": "id", "type": "int"}]
+
+    with patch("app.services.metadata_service.MetadataService.get_dataset_by_id", new_callable=AsyncMock) as mock_get_ds, \
+         patch("app.services.metadata_inspection_service.get_adapter", new_callable=AsyncMock) as mock_get_adapter, \
+         patch("app.services.metadata_sync_log_service.metadata_sync_log_service.publish", new_callable=AsyncMock) as mock_publish, \
+         patch("app.services.metadata_drift_service.MetadataDriftService.record_drift_alert_core", new_callable=AsyncMock) as mock_record_alert:
+
+        mock_get_ds.return_value = dataset
+        mock_get_adapter.return_value = mock_adapter
+
+        res = await MetadataInspectionService.inspect_dataset(mock_db, dataset_id=5, task_id="task_test_table_missing")
+
+        assert res["success"] is True
+        assert res["tables_scanned"] == 2
+        assert res["missing_tables_count"] == 1
+
+        # 检查是否记录了 table_missing_in_db 告警
+        mock_record_alert.assert_called_once_with(
+            mock_db,
+            dataset_id=5,
+            table_id=2,
+            table_name="dropped_logs",
+            column_name="*",
+            drift_type="table_missing_in_db",
+            source="manual_inspection",
+            error_sample="巡检发现：物理数据库中已无此数据表 dropped_logs（整表缺失）",
+        )
+        # 确认终端摘要包含 1 张表物理缺失
+        completed_calls = [c for c in mock_publish.call_args_list if c.kwargs.get("event") == "completed"]
+        assert "1 张表物理缺失" in completed_calls[0].kwargs["message"]
+
 
 
 
