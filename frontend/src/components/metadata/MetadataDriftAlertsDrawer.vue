@@ -272,6 +272,10 @@ const pendingMissingCount = computed(() => {
   return alerts.value.filter(a => a.status === 0 && a.drift_type === 'missing_in_db').length
 })
 
+const pendingMismatchCount = computed(() => {
+  return alerts.value.filter(a => a.status === 0 && a.drift_type === 'type_mismatch').length
+})
+
 const fetchAlerts = async () => {
   loading.value = true
   try {
@@ -300,7 +304,7 @@ const toggleSample = (id: number) => {
   expandedSamples.value[id] = !expandedSamples.value[id]
 }
 
-const handleResolve = (alert: MetaDriftAlert, action: 'drop_column' | 'add_column' | 'ignore') => {
+const handleResolve = (alert: MetaDriftAlert, action: 'drop_column' | 'add_column' | 'sync_type' | 'ignore') => {
   if (!canEdit.value) {
     showToast('需具备数据集编辑权限方可执行处置操作', 'warning')
     return
@@ -322,6 +326,11 @@ const handleResolve = (alert: MetaDriftAlert, action: 'drop_column' | 'add_colum
     title = '确认收录字段'
     message = `确认将物理库新增字段【${alert.table_name}.${alert.column_name}】录入元数据${datasetLabel}？\n收录后，该字段将立即向 AI 语义检索与查询开放。`
     confirmText = '确认收录'
+    type = 'primary'
+  } else if (action === 'sync_type') {
+    title = '确认同步物理类型'
+    message = `确认将字段【${alert.table_name}.${alert.column_name}】的元数据声明类型，自动校准为物理库实际类型？\n${alert.error_sample || ''}`
+    confirmText = '确认同步'
     type = 'primary'
   } else {
     title = '确认忽略漂移'
@@ -349,13 +358,19 @@ const handleResolve = (alert: MetaDriftAlert, action: 'drop_column' | 'add_colum
   })
 }
 
-const handleBatchResolve = (action: 'drop_column' | 'add_column' | 'ignore', driftType?: string) => {
+const handleBatchResolve = (action: 'drop_column' | 'add_column' | 'sync_type' | 'ignore', driftType?: string) => {
   if (!canEdit.value) {
     showToast('需具备数据集编辑权限方可执行批量处置操作', 'warning')
     return
   }
 
-  const count = driftType === 'new_in_db' ? pendingNewCount.value : driftType === 'missing_in_db' ? pendingMissingCount.value : alerts.value.length
+  const count = driftType === 'new_in_db'
+    ? pendingNewCount.value
+    : driftType === 'missing_in_db'
+      ? pendingMissingCount.value
+      : driftType === 'type_mismatch'
+        ? pendingMismatchCount.value
+        : alerts.value.length
   if (count === 0) return
 
   let title = '批量操作'
@@ -373,6 +388,11 @@ const handleBatchResolve = (action: 'drop_column' | 'add_column' | 'ignore', dri
     message = `确认将当前视图中全部 ${count} 个物理库已缺失的字段一键从元数据中下线？`
     confirmText = `一键下线 (${count})`
     type = 'danger'
+  } else if (action === 'sync_type') {
+    title = '批量同步物理类型'
+    message = `确认将当前视图中全部 ${count} 个类型不一致的元数据字段，一键校准为物理库实际类型？`
+    confirmText = `一键同步 (${count})`
+    type = 'primary'
   } else {
     title = '批量忽略告警'
     message = `确认批量忽略当前视图中 ${count} 项漂移告警？`
@@ -613,13 +633,23 @@ watch(
 
       <!-- 批量快捷操作栏（仅待处理 Tab 且存在待处理项时展示） -->
       <div
-        v-if="activeTab === 'pending' && alerts.length > 0 && (pendingNewCount > 0 || pendingMissingCount > 0)"
+        v-if="activeTab === 'pending' && alerts.length > 0 && (pendingNewCount > 0 || pendingMissingCount > 0 || pendingMismatchCount > 0)"
         class="flex flex-wrap items-center justify-between gap-2 p-2.5 bg-slate-50 dark:bg-slate-800/60 rounded-xl border border-slate-200 dark:border-slate-700/80 text-xs"
       >
         <span class="text-slate-600 dark:text-slate-300 font-medium">
           批量操作:
         </span>
         <div class="flex items-center gap-2 flex-wrap">
+          <button
+            v-if="pendingMismatchCount > 0"
+            type="button"
+            :disabled="!canEdit || isBatchProcessing"
+            :title="!canEdit ? '需具备数据集编辑权限方可操作' : undefined"
+            class="px-2.5 py-1 font-semibold rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white shadow-2xs transition-colors flex items-center gap-1 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer text-xs"
+            @click="handleBatchResolve('sync_type', 'type_mismatch')"
+          >
+            <span>🔄</span> 一键同步全部类型差异 ({{ pendingMismatchCount }})
+          </button>
           <button
             v-if="pendingNewCount > 0"
             type="button"
@@ -666,6 +696,7 @@ watch(
           :class="{
             'bg-amber-50/60 dark:bg-amber-950/20 border-amber-200 dark:border-amber-800/60': alert.status === 0 && alert.drift_type === 'missing_in_db',
             'bg-sky-50/60 dark:bg-sky-950/20 border-sky-200 dark:border-sky-800/60': alert.status === 0 && alert.drift_type === 'new_in_db',
+            'bg-indigo-50/60 dark:bg-indigo-950/20 border-indigo-200 dark:border-indigo-800/60': alert.status === 0 && alert.drift_type === 'type_mismatch',
             'bg-slate-50 dark:bg-slate-800/40 border-slate-200 dark:border-slate-700 opacity-70': alert.status !== 0,
           }"
         >
@@ -698,6 +729,12 @@ watch(
                   class="px-2 py-0.5 text-[11px] font-semibold rounded bg-sky-100 text-sky-700 dark:bg-sky-900/40 dark:text-sky-300 border border-sky-200 dark:border-sky-800"
                 >
                   物理库新增字段
+                </span>
+                <span
+                  v-else-if="alert.drift_type === 'type_mismatch'"
+                  class="px-2 py-0.5 text-[11px] font-semibold rounded bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800"
+                >
+                  物理类型不匹配
                 </span>
 
                 <span class="px-1.5 py-0.5 text-[10px] rounded bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400">
@@ -756,6 +793,16 @@ watch(
                   @click="handleResolve(alert, 'add_column')"
                 >
                   添加到数据集
+                </button>
+                <button
+                  v-else-if="alert.drift_type === 'type_mismatch'"
+                  type="button"
+                  :disabled="!canEdit || processingId === alert.id || isBatchProcessing"
+                  :title="!canEdit ? '需具备数据集编辑权限方可操作' : undefined"
+                  class="px-2.5 py-1 text-xs font-semibold rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white shadow-2xs transition-colors disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                  @click="handleResolve(alert, 'sync_type')"
+                >
+                  同步物理类型
                 </button>
                 <button
                   type="button"

@@ -332,3 +332,44 @@ async def test_batch_resolve_partial_failure_counts_failed():
     mock_db.commit.assert_called_once()
 
 
+@pytest.mark.asyncio
+async def test_resolve_alert_sync_type():
+    """测试处置类型不匹配告警：将元数据字段类型校准为物理库实际类型。"""
+    mock_db = AsyncMock()
+    alert = MetaSchemaDriftAlert(
+        id=99,
+        dataset_id=1,
+        table_name="staff_list",
+        column_name="sid",
+        drift_type="type_mismatch",
+        status=0,
+        error_sample="巡检发现类型不匹配：元数据声明为 String，物理库实际为 tinyint",
+    )
+    mock_table = MetaTable(id=10, dataset_id=1, physical_name="staff_list")
+    mock_col = MetaColumn(id=101, table_id=10, physical_name="sid", type="String")
+
+    mock_alert_res = MagicMock()
+    mock_alert_res.scalars.return_value.first.return_value = alert
+
+    mock_t_res = MagicMock()
+    mock_t_res.scalars.return_value.first.return_value = mock_table
+
+    mock_c_res = MagicMock()
+    mock_c_res.scalars.return_value.first.return_value = mock_col
+
+    mock_ds_res = MagicMock()
+    mock_ds_res.scalars.return_value.first.return_value = None  # 回退从 error_sample 解析
+
+    mock_db.execute.side_effect = [mock_alert_res, mock_t_res, mock_c_res, mock_ds_res]
+
+    with patch.object(MetadataDriftService, "_try_sync_local_vector", new_callable=AsyncMock) as mock_sync_vec:
+        res = await MetadataDriftService.resolve_alert(mock_db, alert_id=99, action="sync_type")
+
+    assert res["column_updated"] is True
+    assert alert.status == 1  # 已解决
+    assert mock_col.type == "tinyint"
+    assert "已成功将字段 staff_list.sid 类型从 String 同步为物理库实际类型 tinyint" in res["message"]
+    mock_db.commit.assert_called_once()
+    mock_sync_vec.assert_called_once_with({1})
+
+

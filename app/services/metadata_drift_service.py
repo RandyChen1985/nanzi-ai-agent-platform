@@ -256,19 +256,72 @@ class MetadataDriftService:
             if column_added:
                 message += "，建议随后点击「同步到 RAGFlow」更新向量知识库"
 
+        elif action == "sync_type":
+            t_stmt = select(MetaTable).where(
+                MetaTable.dataset_id == alert.dataset_id,
+                func.lower(MetaTable.physical_name) == alert.table_name.lower(),
+            )
+            table = (await db.execute(t_stmt)).scalars().first()
+            if not table:
+                raise ValueError(f"元数据中未找到表 {alert.table_name}，无法同步字段类型")
+
+            c_stmt = select(MetaColumn).where(
+                MetaColumn.table_id == table.id,
+                func.lower(MetaColumn.physical_name) == alert.column_name.lower(),
+            )
+            col = (await db.execute(c_stmt)).scalars().first()
+            if not col:
+                raise ValueError(f"元数据表 {alert.table_name} 中未找到字段 {alert.column_name}")
+
+            # 优先直连物理库获取最新列类型
+            phys_type = None
+            try:
+                ds_stmt = select(MetaDataset).where(MetaDataset.id == alert.dataset_id)
+                ds = (await db.execute(ds_stmt)).scalars().first()
+                if ds and ds.data_source:
+                    from app.services.data_adapter.factory import get_adapter
+
+                    adapter = await get_adapter(ds.data_source)
+                    phys_cols = await adapter.get_columns(table_name=alert.table_name)
+                    for pc in phys_cols:
+                        if str(pc.get("name") or "").lower().strip() == alert.column_name.lower().strip():
+                            phys_type = pc.get("type")
+                            break
+            except Exception as ex:
+                logger.warning(f"[MetadataDrift] 尝试从物理库获取列类型失败，尝试从巡检记录解析: {ex}")
+
+            # 若无法连通外部库，从 error_sample 解析实际物理类型
+            if not phys_type and alert.error_sample:
+                import re
+
+                m = re.search(r"物理库实际为\s*([a-zA-Z0-9_()]+)", alert.error_sample)
+                if m:
+                    phys_type = m.group(1).strip()
+
+            if not phys_type:
+                phys_type = "String"
+
+            old_type = col.type
+            col.type = str(phys_type)[:50]
+
+            alert.status = 1  # resolved
+            alert.updated_at = datetime.now()
+            message = f"已成功将字段 {alert.table_name}.{alert.column_name} 类型从 {old_type} 同步为物理库实际类型 {col.type}，建议随后点击「同步到 RAGFlow」更新向量知识库"
+
         elif action == "ignore":
             alert.status = 2  # ignored
             alert.updated_at = datetime.now()
             message = f"已忽略字段 {alert.table_name}.{alert.column_name} 的漂移提醒"
 
         else:
-            raise ValueError(f"不支持的处置动作: {action}，仅支持 drop_column, add_column 或 ignore")
+            raise ValueError(f"不支持的处置动作: {action}，仅支持 drop_column, add_column, sync_type 或 ignore")
 
         return {
             "alert_id": alert.id,
             "status": alert.status,
             "column_dropped": column_dropped,
             "column_added": column_added,
+            "column_updated": action == "sync_type",
             "message": message,
         }
 
@@ -286,7 +339,7 @@ class MetadataDriftService:
 
         res = await MetadataDriftService._resolve_single_alert_core(db, alert, action)
         await db.commit()
-        if res.get("column_dropped") or res.get("column_added"):
+        if res.get("column_dropped") or res.get("column_added") or res.get("column_updated"):
             await MetadataDriftService._try_sync_local_vector({alert.dataset_id})
         return res
 
@@ -323,7 +376,7 @@ class MetadataDriftService:
                 failed_count += 1
 
         await db.commit()
-        if action in ("drop_column", "add_column") and processed_count > 0:
+        if action in ("drop_column", "add_column", "sync_type") and processed_count > 0:
             await MetadataDriftService._try_sync_local_vector({dataset_id})
         if failed_count:
             message = f"成功批量处置 {processed_count} 项告警，{failed_count} 项处置失败"
@@ -407,7 +460,7 @@ class MetadataDriftService:
                 failed_count += 1
 
         await db.commit()
-        if action in ("drop_column", "add_column") and processed_count > 0:
+        if action in ("drop_column", "add_column", "sync_type") and processed_count > 0:
             ds_ids = {a.dataset_id for a in alerts if a.dataset_id}
             await MetadataDriftService._try_sync_local_vector(ds_ids)
         if failed_count:
