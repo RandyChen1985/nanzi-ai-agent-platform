@@ -249,3 +249,164 @@ async def test_ensure_endpoints_always_eager(tmp_path, monkeypatch):
     assert not isinstance(sandbox_ws, LazySandboxWorkspaceProxy)
     assert sandbox_ws == fake_real_ws
     acquire_mock.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_lazy_sandbox_bash_check_permissions_never_returns_none():
+    """验证 LazySandboxBashNativeTool 和外层适配器在沙箱未拉起时 check_permissions 决不返回 None。"""
+    from agentscope.permission import PermissionBehavior
+    from app.services.ai.runtime.agentscope.tools import AgentScopeNativeApprovalTool
+
+    lazy_bash = LazySandboxBashNativeTool(
+        proxy=MagicMock(),
+        local_ws=MagicMock(),
+        name="Bash",
+    )
+    # 1. 原始 lazy bash 工具权限检查
+    decision = await lazy_bash.check_permissions({}, None)
+    assert decision is not None
+    assert hasattr(decision, "behavior")
+    assert decision.behavior == PermissionBehavior.ALLOW
+
+    # 2. 外层 AgentScopeNativeApprovalTool 包装后权限检查
+    adapter = AgentScopeNativeApprovalTool(
+        lazy_bash,
+    )
+    adapter_decision = await adapter.check_permissions({}, None)
+    assert adapter_decision is not None
+    assert hasattr(adapter_decision, "behavior")
+    assert adapter_decision.behavior == PermissionBehavior.ALLOW
+
+
+@pytest.mark.asyncio
+async def test_bash_lazy_tool_forwards_bash_node_parent_to_ensure_ready(tmp_path):
+    """Bash 触发拉起时，把 Bash 卡片节点 id 透传给 ensure_ready 作为 parent_id，并用独立 log_id。"""
+    from app.services.ai.runtime.agentscope.workspace import (
+        current_bash_tool_parent_id,
+    )
+
+    captured = {}
+
+    async def _fake_ensure_ready(**kwargs):
+        captured.update(kwargs)
+        empty = MagicMock()
+
+        async def _fake_acquire():
+            return empty, "k"
+
+        empty._acquire_impl = None
+        # 复用现有 mcp 解析路径：模拟真实 WS + Bash MCP
+        mock_bash = AsyncMock(return_value="res")
+        mock_bash.name = "Bash"
+        fake_mcp = MagicMock()
+        fake_mcp.name = "sandbox"
+        fake_mcp.is_connected = True
+        fake_mcp.get_tool.return_value = mock_bash
+        empty.is_alive = True
+        empty._platform_sandbox_policy = SANDBOX_POLICY_DOCKER
+        empty.list_mcps.return_value = [fake_mcp]
+        return empty
+
+    fake_proxy = MagicMock()
+    fake_proxy.ensure_ready = _fake_ensure_ready
+
+    lazy_bash = LazySandboxBashNativeTool(
+        proxy=fake_proxy,
+        local_ws=MagicMock(),
+        name="Bash",
+    )
+
+    bash_id = "toolcall_bash_001"
+    reset = current_bash_tool_parent_id.set(bash_id)
+    try:
+        res = await lazy_bash(command="echo hi")
+        assert str(res) == "res"
+    finally:
+        current_bash_tool_parent_id.reset(reset)
+
+    # 调用方转发：parent_id 用 Bash 卡片 id；log_id 独立（区别于 prep 占位符 workspace:sandbox）
+    assert captured.get("parent_id") == bash_id
+    assert captured.get("log_id") == f"workspace:sandbox:{bash_id}"
+
+
+@pytest.mark.asyncio
+async def test_bash_lazy_tool_falls_back_to_preparation_without_contextvar():
+    """未 seed Bash 节点 id（文件工具 / 预检等）时，ensure_ready 保持 preparation 默认。"""
+    captured = {}
+
+    async def _fake_ensure_ready(**kwargs):
+        captured.update(kwargs)
+        empty = MagicMock()
+        mock_bash = AsyncMock(return_value="fallback")
+        mock_bash.name = "Bash"
+        fake_mcp = MagicMock()
+        fake_mcp.name = "sandbox"
+        fake_mcp.is_connected = True
+        fake_mcp.get_tool.return_value = mock_bash
+        empty.is_alive = True
+        empty._platform_sandbox_policy = SANDBOX_POLICY_DOCKER
+        empty.list_mcps.return_value = [fake_mcp]
+        return empty
+
+    fake_proxy = MagicMock()
+    fake_proxy.ensure_ready = _fake_ensure_ready
+
+    lazy_bash = LazySandboxBashNativeTool(
+        proxy=fake_proxy,
+        local_ws=MagicMock(),
+        name="Bash",
+    )
+    res = await lazy_bash(command="echo x")
+    assert str(res) == "fallback"
+
+    # parent_id 缺省传给 None，log_id 缺省为 None —— ensure_ready 内部回退 preparation
+    assert captured.get("parent_id") is None
+    assert captured.get("log_id") is None
+
+
+@pytest.mark.asyncio
+async def test_bash_sandbox_parent_link_middleware_seeds_only_bash():
+    """BashSandboxParentLinkMiddleware 只对 Bash 工具 seed 节点 id，非 Bash 保持不写入。"""
+    from app.services.ai.runtime.agentscope.middleware import (
+        BashSandboxParentLinkMiddleware,
+    )
+    from app.services.ai.runtime.agentscope.workspace import (
+        current_bash_tool_parent_id,
+    )
+
+    def _tool(name: str):
+        t = MagicMock()
+        t.name = name
+        return t
+
+    def _make_tool_call(node_id: str, name: str):
+        return {"id": node_id, "name": name}
+
+    entered = []
+
+    async def _next_handler(**kwargs):
+        entered.append(kwargs)
+        return "decision"
+
+    mw = BashSandboxParentLinkMiddleware()
+    # 重置 ContextVar 到确定状态
+    reset = current_bash_tool_parent_id.set("")
+    try:
+        # 非 Bash 工具：不写入
+        await mw.on_check_permission(
+            agent=None,
+            input_kwargs={"tool": _tool("Read"), "tool_call": _make_tool_call("foo", "Read")},
+            next_handler=_next_handler,
+        )
+        assert current_bash_tool_parent_id.get() == ""
+
+        # Bash 工具：写入 tool_call.id
+        await mw.on_check_permission(
+            agent=None,
+            input_kwargs={"tool": _tool("Bash"), "tool_call": _make_tool_call("toolcall_bash_002", "Bash")},
+            next_handler=_next_handler,
+        )
+        assert current_bash_tool_parent_id.get() == "toolcall_bash_002"
+    finally:
+        current_bash_tool_parent_id.reset(reset)
+

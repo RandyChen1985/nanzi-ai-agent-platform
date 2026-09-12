@@ -21,6 +21,22 @@ def test_embed_chat_configures_sandbox_workspace_state_and_endpoints():
     assert "DockerWorkspaceBanner" not in source
 
 
+def test_embed_chat_sandbox_progress_toast_covers_prep_and_bash_ids():
+    """沙箱拉起进度 toast 需同时覆盖 prep 占位 id 与 Bash 触发的独立 id，
+    否则 Bash 动态拉起（workspace:sandbox:<tool_call_id>）会丢失 toast。"""
+    source = EMBED.read_text(encoding="utf-8")
+    # 统一判定 helper：两类 id 都命中
+    assert "isSandboxPrewarmLogId" in source
+    assert 'logId === "workspace:sandbox"' in source
+    assert 'logId.startsWith("workspace:sandbox:")' in source
+    # toast 分支使用该 helper（而非只精确匹配 prep id）
+    assert "isSandboxPrewarmLogId(logId)" in source
+    # 三态 toast 文案保留
+    assert "正在拉起沙箱运行环境…" in source
+    assert "沙箱环境已就绪，正在执行命令…" in source
+    assert "沙箱环境启动失败" in source
+
+
 
 def test_chat_input_context_modal_renders_docker_workspace_status_and_actions():
     chat_input_source = CHAT_INPUT.read_text(encoding="utf-8")

@@ -61,6 +61,7 @@ def build_runtime_middlewares(
 ) -> list[Any]:
     """Assemble Agent middlewares: forbidden-tool DENY + audit + model-call stats."""
     from app.services.ai.runtime.agentscope.middleware import (
+        BashSandboxParentLinkMiddleware,
         ModelCallStatsMiddleware,
         ToolPermissionMiddleware,
     )
@@ -93,7 +94,8 @@ def build_runtime_middlewares(
             conversation_id=conversation_id,
             agent_name=agent_name,
             deny_override=_forbidden_tools_deny_override,
-        )
+        ),
+        BashSandboxParentLinkMiddleware(),
     ]
     if conversation_id:
         middlewares.append(

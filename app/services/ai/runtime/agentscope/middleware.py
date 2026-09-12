@@ -697,3 +697,60 @@ class ToolPermissionMiddleware(MiddlewareBase):
             getattr(override_behavior, "value", override_behavior),
         )
         return decision
+
+
+class BashSandboxParentLinkMiddleware(MiddlewareBase):
+    """把「本次 Bash 触发」绑定到 Bash 卡片节点 id 的切面。
+
+    AgentScope ``on_check_permission`` 在工具真正执行（``_acting``）之前触发，
+    且与工具执行处于同一条 ``_execute_tool_call`` 协程链上，此处写入的 ContextVar
+    能可靠传播到稍后原生 Bash 工具调 ``ensure_ready`` 的位置。
+
+    仅当目标是惰性沙箱 Bash 工具（工具名 "Bash"）时写入节点 id，其余工具保持透传；读取方（
+    ``LazySandboxBashNativeTool``）也只在该 Bash 路径上消费，因此文件工具、agent
+    构建预检等触发 ensure_ready 的路径不受影响。
+    """
+
+    @staticmethod
+    def _attr(obj: Any, key: str) -> Any:
+        if obj is None:
+            return None
+        if isinstance(obj, dict):
+            return obj.get(key)
+        return getattr(obj, key, None)
+
+    def _is_bash_tool(self, tool: Any, tool_call: Any) -> bool:
+        # 工具封装（AgentScopeNativeApprovalTool）name 为 "Bash"；原生代理可依附例识别。
+        name = self._attr(tool, "name") or self._attr(tool_call, "name")
+        if str(name) == "Bash":
+            return True
+        try:
+            from app.services.ai.runtime.agentscope.workspace import (
+                LazySandboxBashNativeTool,
+            )
+
+            return isinstance(tool, LazySandboxBashNativeTool)
+        except Exception:
+            return False
+
+    async def on_check_permission(
+        self,
+        agent: Any,
+        input_kwargs: dict,
+        next_handler: Callable[..., Awaitable[Any]],
+    ) -> Any:
+        tool = input_kwargs.get("tool")
+        tool_call = input_kwargs.get("tool_call")
+        is_bash = self._is_bash_tool(tool, tool_call)
+        if is_bash:
+            node_id = str(self._attr(tool_call, "id") or "")
+            if node_id:
+                from app.services.ai.runtime.agentscope.workspace import (
+                    current_bash_tool_parent_id,
+                )
+
+                # 注意：工具真正执行（_acting / ensure_ready）发生在 on_check_permission
+                # 返回之后，因此此处**不能**在 next_handler 之后 reset（会过早清空）。
+                # 读取方仅限 Bash 路径且每次进入前都会重新 set，残留值不会污染其他路径。
+                current_bash_tool_parent_id.set(node_id)
+        return await next_handler(**input_kwargs)

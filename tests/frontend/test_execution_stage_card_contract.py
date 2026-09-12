@@ -200,5 +200,5 @@ def test_execution_timeline_keeps_error_reason_alongside_prewarm_progress():
     # A 档在子行插入沙箱预热进度提示时，不能挤占原有"错误原因"展示（回归保护）。
     assert 'v-if="child.error_reason"' in timeline
     assert "错误原因：{{ child.error_reason }}" in timeline
-    assert "isWorkspacePrewarmPending(child)" in timeline
+    assert "if (walk(child)) return true;" in timeline
     assert "fileMetadataSummary(child.file_metadata)" in timeline

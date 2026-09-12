@@ -962,11 +962,20 @@ class AgentScopeNativeApprovalTool:
         if native_check:
             result = native_check(tool_input, context)
             if inspect.isawaitable(result):
-                return await result
-            return result
+                result = await result
+            if result is not None:
+                return result
         return PermissionDecision(
-            behavior=PermissionBehavior.ASK,
-            message=f"Tool '{self.name}' requires user confirmation before execution.",
+            behavior=(
+                PermissionBehavior.ALLOW
+                if self.permission_scope == "read"
+                else PermissionBehavior.ASK
+            ),
+            message=(
+                f"Tool '{self.name}' is read-only and can run automatically."
+                if self.permission_scope == "read"
+                else f"Tool '{self.name}' requires user confirmation before execution."
+            ),
             decision_reason=f"runtime tool scope: {self.permission_scope}",
         )
 

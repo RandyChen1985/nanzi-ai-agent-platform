@@ -88,9 +88,11 @@ const PREWARM_STAGE_LABELS: Array<{ afterMs: number; label: string }> = [
   { afterMs: 10000, label: "创建工作区耗时较长，请稍候（最长约 60 秒）…" },
 ];
 
-export function defaultChildrenExpandedForLog(_id: string | number | undefined): boolean {
-  // 「鉴权及上下文与能力准备」父节点默认展开，便于直接查看鉴权、上下文、
-  // 专家配置、模型与能力准备等子步骤明细。
+export function defaultChildrenExpandedForLog(id: string | number | undefined): boolean {
+  // 「鉴权及上下文与能力准备」父节点默认折叠，保持执行时间线清爽紧凑；用户可按需点击展开查看明细
+  if (String(id) === PREPARATION_TIMELINE_PARENT_ID) {
+    return false;
+  }
   return true;
 }
 
@@ -98,9 +100,9 @@ export function defaultChildrenExpandedForLog(_id: string | number | undefined):
 export function isWorkspacePrewarmPending(
   item: { id?: string | number; status?: string } | undefined,
 ): boolean {
-  return Boolean(
-    item && String(item.id) === WORKSPACE_PREWARM_LOG_ID && item.status === "pending",
-  );
+  if (!item || item.status !== "pending") return false;
+  const id = String(item.id || "");
+  return id === WORKSPACE_PREWARM_LOG_ID || id.startsWith("workspace:sandbox:");
 }
 
 /** 依据已等待毫秒返回"推进中的"阶段安抚文案。 */

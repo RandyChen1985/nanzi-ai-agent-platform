@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import fnmatch
 import hashlib
 import inspect
@@ -1600,6 +1601,16 @@ async def build_sandbox_workspace_for_test(
     raise ValueError("仅支持 k8s、e2b 或 ssh 沙箱连接测试")
 
 
+#: 当前正在执行的 Bash 工具在事件流/时间线中的节点 id（即模型侧 tool_call_id）。
+#: 由 ``BashSandboxParentLinkMiddleware`` 在 Bash 工具调用进入 AgentScope 执行链时写入，
+#: 供 ``LazySandboxBashNativeTool`` 把沙箱拉起进度挂到该 Bash 卡片下方。
+#: 仅 Bash 路径消耗；其余触发 ensure_ready 的路径（文件工具、agent 构建预检等）不读取，
+#: 天然回退到 preparation 节点。
+current_bash_tool_parent_id: contextvars.ContextVar[str] = contextvars.ContextVar(
+    "current_bash_tool_parent_id",
+)
+
+
 class LazySandboxWorkspaceProxy:
     """惰性沙箱代理：在未真正执行 Bash 前延迟拉起沙箱容器/Pod。"""
 
@@ -1631,8 +1642,20 @@ class LazySandboxWorkspaceProxy:
             return bool(getattr(self._real_sandbox_ws, "is_alive", True))
         return False
 
-    async def ensure_ready(self, event_queue: Any | None = None) -> Any:
-        """确保沙箱拉起并就绪，带 SSE 日志推流。"""
+    async def ensure_ready(
+        self,
+        event_queue: Any | None = None,
+        *,
+        parent_id: str | None = None,
+        log_id: str | None = None,
+    ) -> Any:
+        """确保沙箱拉起并就绪，带 SSE 日志推流。
+
+        ``parent_id`` / ``log_id`` 为可选覆盖：由 Bash 路径（
+        ``LazySandboxBashNativeTool``）传入 Bash 卡片节点 id，把拉起进度挂到
+        该 Bash 卡片下方；缺省时维持 preparation 节点（文件工具、agent 构建预检等
+        非 Bash 触发的保持原行为）。
+        """
         if self._real_sandbox_ws is not None and getattr(self._real_sandbox_ws, "is_alive", True):
             return self._real_sandbox_ws
 
@@ -1651,14 +1674,14 @@ class LazySandboxWorkspaceProxy:
                 except Exception:
                     queue = None
 
-            log_id = "workspace:sandbox"
-            parent_id = "preparation:auth_context_capability"
+            log_id = log_id or "workspace:sandbox"
+            target_parent_id = parent_id or "preparation:auth_context_capability"
             if queue is not None:
                 try:
                     await queue.put({
                         "type": "log",
                         "id": log_id,
-                        "parent_id": parent_id,
+                        "parent_id": target_parent_id,
                         "title": "沙箱工作区准备",
                         "details": "沙箱工作区创建中（正在拉起隔离容器/Pod），请稍候…",
                         "status": "pending",
@@ -1714,7 +1737,7 @@ class LazySandboxWorkspaceProxy:
                         await queue.put({
                             "type": "log",
                             "id": log_id,
-                            "parent_id": parent_id,
+                            "parent_id": target_parent_id,
                             "title": "沙箱工作区准备",
                             "details": f"沙箱工作区准备就绪（{int(elapsed)}ms）",
                             "status": "success",
@@ -1732,7 +1755,7 @@ class LazySandboxWorkspaceProxy:
                         await queue.put({
                             "type": "log",
                             "id": log_id,
-                            "parent_id": parent_id,
+                            "parent_id": target_parent_id,
                             "title": "沙箱工作区准备",
                             "details": f"沙箱工作区准备失败（{exc}）",
                             "status": "error",
@@ -4037,12 +4060,21 @@ class _WorkspaceFileAccessNativeTool:
                 bypass_immune=True,
             )
         checker = getattr(self._native_tool, "check_permissions", None)
-        if checker is None:
+        if checker is not None:
+            result = checker(mapped_input, context)
+            if inspect.isawaitable(result):
+                result = await result
+            if result is not None:
+                return result
+        try:
+            from agentscope.permission import PermissionBehavior, PermissionDecision
+        except Exception:
             return None
-        result = checker(mapped_input, context)
-        if inspect.isawaitable(result):
-            return await result
-        return result
+        return PermissionDecision(
+            behavior=PermissionBehavior.ALLOW,
+            message=f"Workspace tool '{self.name}' access granted.",
+            decision_reason="workspace_tool_auto_allow",
+        )
 
     async def check_read_only(self, tool_input: dict[str, Any]) -> bool:
         try:
@@ -4170,7 +4202,13 @@ class LazySandboxBashNativeTool:
             if self._real_tool is not None:
                 return self._real_tool
 
-            real_ws = await self.proxy.ensure_ready()
+            # 本次 Bash 触发的拉起，把进度挂到该 Bash 卡片（模型侧 tool_call_id）下方；
+            # 非 Bash 触发（文件工具 / 构建预检）不读取该 ContextVar，保持 preparation 节点。
+            bash_node_id = current_bash_tool_parent_id.get(None)
+            real_ws = await self.proxy.ensure_ready(
+                parent_id=bash_node_id or None,
+                log_id=(f"workspace:sandbox:{bash_node_id}" if bash_node_id else None),
+            )
             list_mcps = getattr(real_ws, "list_mcps", None)
             sandbox_bash = await _sandbox_bash_tool_from_mcps(
                 list_mcps() if callable(list_mcps) else None
@@ -4233,8 +4271,20 @@ class LazySandboxBashNativeTool:
 
     async def check_permissions(self, tool_input: dict[str, Any], context: Any) -> Any:
         if self._real_tool is not None and hasattr(self._real_tool, "check_permissions"):
-            return await self._real_tool.check_permissions(tool_input, context)
-        return None
+            res = self._real_tool.check_permissions(tool_input, context)
+            if inspect.isawaitable(res):
+                res = await res
+            if res is not None:
+                return res
+        try:
+            from agentscope.permission import PermissionBehavior, PermissionDecision
+        except Exception:
+            return None
+        return PermissionDecision(
+            behavior=PermissionBehavior.ALLOW,
+            message="Sandbox bash execution is allowed in isolated environment.",
+            decision_reason="sandbox_bash_auto_allow",
+        )
 
     async def check_read_only(self, tool_input: dict[str, Any]) -> bool:
         if self._real_tool is not None and hasattr(self._real_tool, "check_read_only"):

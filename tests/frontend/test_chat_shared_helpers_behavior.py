@@ -1428,7 +1428,7 @@ return {
     )
 
     assert result["root"] == "preparation:auth_context_capability"
-    assert result["preparationExpanded"] is True
+    assert result["preparationExpanded"] is False
     assert result["ordinaryExpanded"] is True
 
 
@@ -1438,11 +1438,15 @@ def test_workspace_prewarm_pending_and_stage_progression():
         """
 const pending = { id: 'workspace:sandbox', status: 'pending' };
 const done = { id: 'workspace:sandbox', status: 'success' };
+const bashPending = { id: 'workspace:sandbox:tool_call_bash_001', status: 'pending' };
+const bashDone = { id: 'workspace:sandbox:tool_call_bash_001', status: 'success' };
 const other = { id: 'preparation:auth_context_capability', status: 'pending' };
 return {
   id: api.WORKSPACE_PREWARM_LOG_ID,
   pendingIsPrewarming: api.isWorkspacePrewarmPending(pending),
   doneIsPrewarming: api.isWorkspacePrewarmPending(done),
+  bashPendingIsPrewarming: api.isWorkspacePrewarmPending(bashPending),
+  bashDoneIsPrewarming: api.isWorkspacePrewarmPending(bashDone),
   otherIsPrewarming: api.isWorkspacePrewarmPending(other),
   emptyIsPrewarming: api.isWorkspacePrewarmPending(undefined),
   stageEarly: api.workspacePrewarmStageLabel(0),
@@ -1459,6 +1463,8 @@ return {
     assert result["id"] == "workspace:sandbox"
     assert result["pendingIsPrewarming"] is True
     assert result["doneIsPrewarming"] is False
+    assert result["bashPendingIsPrewarming"] is True
+    assert result["bashDoneIsPrewarming"] is False
     assert result["otherIsPrewarming"] is False
     assert result["emptyIsPrewarming"] is False
     assert "申请" in result["stageEarly"]
@@ -1473,8 +1479,10 @@ return {
 def test_execution_timeline_renders_workspace_prewarm_progress():
     timeline = (ROOT / "frontend/src/components/chat/ChatExecutionTimeline.vue").read_text(encoding="utf-8")
 
-    assert "isWorkspacePrewarmPending(child)" in timeline
-    assert "isWorkspacePrewarmPending(subStep)" in timeline
+    # prewarm 感知对时间线树做泛型递归：Bash 卡片挂在 narration(text) 下时，
+    # prewarm 占位日志是其三层的子项，必须能被递归命中，否则进度条/倒计时不显示。
+    assert "const walk = (node: ProcessTimelineItem): boolean => {" in timeline
+    assert "if (walk(child)) return true;" in timeline
     assert "prewarmStageLabel" in timeline
     assert "prewarmElapsedSeconds" in timeline
     assert "已等待 {{ prewarmElapsedSeconds }}s" in timeline

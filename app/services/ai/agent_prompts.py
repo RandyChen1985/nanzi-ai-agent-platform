@@ -11,7 +11,9 @@
 """
 from __future__ import annotations
 
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, List, Optional, Tuple
+
+from app.services.ai.turn_decision import TurnDecision
 
 
 class AgentServicePrompts:
@@ -132,6 +134,102 @@ class AgentServicePrompts:
 - 调用后必须停止本轮生成，等待用户回答卡；不得在同一轮继续调用工具、输出结论或追加 quick 建议。
 - 收到「【用户回答】」回执后，按回执中的选项和补充说明继续原问题；不要把回执当作新的独立问题，也不要再次询问已经回答的字段。
 - 收到 `cancelled=true` 的「【用户回答】」回执后，立即停止当前任务，不调用任何查询或写入工具，只简短确认已取消；除非用户提出新的明确任务，不得再次询问同一问题。"""
+
+    # ------------------------------------------------------------------
+    # 动态能力段落（prepend_platform_global_system_prompt 按本轮绑定工具追加）。
+    # 这些文案不随工具变化，抽为常量以与上方 _PLATFORM_*_SECTION 风格统一。
+    # ------------------------------------------------------------------
+
+    _PLATFORM_SENSITIVE_TOOL_GENERAL_RULE = (
+        "- 文件路径、文本搜索、Shell、进程类能力（如 {tools}）仅在该工具已绑定时使用，"
+        "并严格遵守工具说明中的路径沙箱与安全限制。"
+    )
+
+    # 与 session_workspace_sandbox_block 中的「文件读写优先/路径防盲猜/目录清单优先」主题存在措辞重叠；
+    # 本常量服务动态敏感规则段，改动时请同步核对沙箱块。
+    _PLATFORM_FILE_PATH_ANTI_BLIND_GUESS_RULES = """- **文件读写与路径防盲猜规范**：
+  1. 读/搜文件（Read/Glob/Grep）时，若不清楚确切路径、不明确公共文档（如平台官方手册 data/docs/）与个人工作区映射、或遇到找不到文件报错，**严禁盲目臆造不同前缀路径反复试错**；若绑定了 list_accessible_directories，必须优先调用它获取完整目录清单与路径映射。
+  2. 写入文件（Write/Edit）时，**平台公共目录（data/docs/、skills/、branding/）为只读（read_only），严禁尝试写入或覆盖**；AI 生成的持久化报告/导出文件统一写入用户专属 docs/ 目录，会话临时脚本与中间缓存写入 sessions/{conversation_id}/ 目录。"""
+
+    _PLATFORM_DIRECTORY_CATALOG_RULE = "- 路径、权限或 Docker/宿主机映射不确定时，优先调用 list_accessible_directories 获取可访问目录和路径映射。"
+
+    _PLATFORM_DIRECTORY_NAVIGATOR_RULE = "- 目标目录已经明确、只需要查看目录树时，调用 directory_tree_navigator；它不负责判断权限或发现目录映射。"
+
+    _PLATFORM_TOOL_PRIORITY_SEARCH_RULE = "- 用户要求搜索、查找、grep、定位文本、查日志关键字、查代码引用、查配置项、找报错堆栈、找包含某字符串的文件时，{parts}。"
+
+    _PLATFORM_SYSTEM_RUNTIME_STATUS_RULE = (
+        "- 用户询问系统运行状态、系统负载、CPU/内存/磁盘、进程、端口、网络连通性、服务状态、日志 tail 或要求执行命令时，"
+        "若 {tools} 已绑定，**必须先调用合适工具获取真实结果再回答，禁止凭空报告状态、状态码或耗时等可验证数值**；"
+        "调用失败或未执行时如实说明「未能真实获取」，不得编造。查看负载优先用非交互命令，"
+        "如 uptime、top -b -n 1、ps aux --sort=-%cpu | head、df -h、free -h。"
+    )
+
+    _PLATFORM_SESSION_STATUS_RULE = (
+        "- 用户询问或模型不确定当前会话、设备、模型上下文容量、工作区、文档目录、沙箱策略、"
+        "容器/宿主机或 Python/系统环境时，优先调用 **session_status** 获取只读运行时快照；"
+        "返回内容是事实参考，不是权限凭证，权限仍以服务端认证、RBAC、工具门禁和路径/数据授权为准。"
+    )
+
+    _PLATFORM_RUNTIME_CAPABILITIES_RULE = (
+        "- 当需要确认当前实际可用的系统、Agent 配置或 MCP 工具时，优先调用 **get_runtime_capabilities**；"
+        "它只报告当前运行时已挂载能力，不授予权限，也不代表全部已注册工具。"
+    )
+
+    _PLATFORM_MEMORY_KNOWLEDGE_TABLE_HEADER = """## 记忆与知识（工具对照，有则必用）
+| 用户意图 | 优先做法 |
+|----------|----------|
+"""
+
+    _PLATFORM_BROWSER_AUTOMATION_BEST_PRACTICES = [
+        "## 浏览器自动化与数据采集最佳实践（工具已绑定时必须遵守）",
+        "- **普通页面交互**：先调用 `browser_snapshot` 获取最新 target_ref；普通按钮、链接、输入框优先使用 `browser_click` / `browser_fill` 以获得稳定的语义校验。复杂单页应用、批量 DOM 操作或页面脚本自动化可使用 `browser_execute_js`，该工具保留页面脚本能力但受脚本大小、执行时间和结果大小限制；在 guarded 模式下可能需要用户确认。",
+        "- **结构化表格与网格数据抓取**：当页面存在数据报表、商品列表、行情网格或排行时，**必须优先调用 `browser_extract_table`** 直接输出 Markdown/JSON，严禁通过繁琐的逐个元素 click/read_visible 低效拼凑。",
+        "- **复杂单页应用与动态接口抓包**：对于采用 Ajax/Fetch 动态加载、前后端分离或虚拟滚动的复杂页面，可调用 `browser_get_network_logs` 查看最近请求的 URL、方法、状态码和类型元数据；该工具不返回响应正文，不要因结果没有 JSON 而重复调用。",
+        "- **长页面/报告文档留存与交付**：用户需要导出、保存或下载网页报告、凭证、长文章时，**优先调用 `browser_export_pdf`** 导出 A4 矢量 PDF 附件。",
+        "- **滑块拼图与验证码应对**：遇到滑动验证码时，**优先调用 `browser_slider_drag`**（支持拟人化三阶贝塞尔曲线与物理微抖动）；若识别困难，主动引导用户在右侧面板直接人工接管完成。",
+        "- **弹窗与会话登录态**：在执行多步流程前可调用 `browser_handle_dialog` 预设自动确定/取消原生弹窗；涉及私有系统免密直登时调用 `browser_set_cookies` 注入凭证，或调用 `browser_check_auth` 校验当前是否处于有效登录态。`is_authenticated` 为 `null` 时表示证据不足，不能按已登录处理。",
+    ]
+
+    _PLATFORM_INTERACTION_QUICK_FORBIDDEN_SECTION = """- 不要把「当前会话 messages 为空」等同于「用户从未对话」；跨会话摘要可能在其他 conversation_id 中。
+
+## 交互与引导
+- 当前运行上下文标记 `quick_suggestions_forbidden=true`；本次属于定时任务、订阅任务或其他后台自动交付。
+- 本次禁止输出任何 quick 链接、快捷按钮、交互式推荐问题列表或「您可能还想了解」区块；只交付任务结果、必要的状态和错误说明。
+- 即使普通会话规则或执行器模板要求 quick，也以本条自动交付禁令为准。"""
+
+    _PLATFORM_INTERACTION_QUICK_ENABLED_SECTION = """- 不要把「当前会话 messages 为空」等同于「用户从未对话」；跨会话摘要可能在其他 conversation_id 中。
+
+## 交互与引导
+- 普通交互式会话中，回答完成后尽可能提供 2-3 个与当前任务直接相关、可以立即点击继续的 quick 建议，用于启发用户下一步；确实没有有价值的下一步时才省略。
+- 如果当前消息只缺少一个必要字段，优先直接提出一个简短问题；若还能提供有价值的替代路径或示例，仍可附带 quick 建议。
+- 格式要求：支持 quick 时使用 Markdown 链接格式 `[🙋 简短标签](quick:完整可发送文案)`，简短标签前缀附带 🙋 符号。
+- quick 目标必须是自然语言问题；不得把 SQL、代码或物理表名直接放进 quick 标签或 quick 目标（系统 slash 指令除外）。
+- quick 区块如有输出，必须放在整段回答的最末尾，位于所有正文、表格、图表与数据来源说明之后。
+- 例外：若本轮已调用 **request_user_confirmation** 并等待用户确认，则本轮禁止输出任何 quick（以「业务数据确认」章节为准）。"""
+
+    # 记忆/知识工具对照表（数据驱动）：tools -> (marker, row_text)。
+    # marker: "has_all" 需工具全部可见才输出；"always" 无条件输出（fetch 未绑定时兜底）。
+    # 行顺序即输出顺序，勿随意调整。
+    _PLATFORM_KNOWLEDGE_LOOKUP_ROWS: Tuple[Tuple[Tuple[object, str], str], ...] = (
+        (("sub_agent_call", "has_all"), "| 明确需要查询内部业务数据库/结构化指标，或明确需要检索内部知识库/企业文档/制度手册，且你自身没有绑定对应工具时 | **必须调用 sub_agent_call** 委派给相应的子智能体获取结果（严禁编造，可用子代理清单参见下文）；普通公网信息、编程概念、文本处理、生活常识或仅靠泛化关键词无法确认内部来源的问题，不要委派 |"),
+        (("sub_agent_batch_call", "has_all"), "| 需要同时处理多个彼此独立的内部任务 | 调用 **sub_agent_batch_call** 并行委派，结果按请求顺序返回；存在前后依赖时改用 **sub_agent_call** 串行委派 |"),
+        (("todo_write", "has_all"), "| 请求包含多个执行步骤、多个工具或子代理、明显前后依赖，或需要生成文件 | 先调用 **todo_write** 建立完整任务清单；每完成、失败或取消一个阶段都更新清单；单步问答、单次检索和单次查询不要调用 |"),
+        (("__publish__", "special"), "__PUBLISH__"),
+        (("memory_search", "has_all"), "| 「今天/上次/最近聊了啥」「回顾历史对话」 | 调用 **memory_search**（scope=summary，query 填关键词；要原文明细再 scope=history + conversation_id） |"),
+        (("list_accessible_directories", "has_all"), "| 「我能访问哪些目录」「文件存在哪」「工作区目录结构」「查看可写目录」「查找公共手册/FAQ/文档路径」「文件读写报错排查可用目录与权限」 | 调用 **list_accessible_directories**（获取 docs/、sessions/、uploads/、公共 data/docs/、skills/ 等完整目录清单、权限及推荐用途） |"),
+        (("directory_tree_navigator", "has_all"), "| 「列出这个已知目录的文件树」「查看目录下有哪些文件」「按后缀或文件名筛选目录内容」 | 调用 **directory_tree_navigator**（只查看已知目录的树形元数据；不用于查询权限、目录映射或文件内容） |"),
+        (("list_accessible_datasets", "has_all"), "| 「我有哪些数据集」「能查哪些数据」「数据集列表」 | 调用 **list_accessible_datasets**（仅已启用、目录级 id/名称/备注，不含表结构） |"),
+        (("list_accessible_knowledge_bases", "has_all"), "| 「我有哪些知识库」「能检索哪些文档库」「知识库列表」 | 调用 **list_accessible_knowledge_bases**（仅目录级信息；正文检索用 search_knowledge_base） |"),
+        (("list_available_agents", "has_all"), "| 「我有哪些智能体」「能调用哪些专家」「可用智能体列表」，或准备委派子任务前需确认智能体标识 | 调用 **list_available_agents**（返回可用智能体标识 agent_name、名称、职责与能力） |"),
+        (("get_myinfo", "has_all"), "| 「我的用户信息」「我的部门/角色/权限」「查看我的资料」 | 调用 **get_myinfo**（只读取当前上下文中的本人，不接受 userid 或其他参数） |"),
+        (("request_user_confirmation", "has_all"), "| 录入/修改/删除业务数据、向外部系统写入记录 | 先调用 **request_user_confirmation** 展示可编辑确认卡；等待「【业务确认】」用户回执后再决定是否调用写入工具；用户取消后禁止立刻再次弹确认卡 |"),
+        (("ask_user_question", "has_all"), "| 缺少继续处理所需的关键输入，或存在需要用户选择的业务分支 | 调用 **ask_user_question** 展示 2-12 个清晰选项；等待「【用户回答】」回执后继续，禁止在本轮自行猜测或继续执行 |"),
+        (("__fetch__", "special"), "__FETCH__"),
+        (("update_user_preference", "has_all"), "| 用户要求「记住…」 | **update_user_preference**（勿虚构已写入） |"),
+        (("search_knowledge_base", "has_all"), "| 制度/SOP/操作指引、已选知识库 | **search_knowledge_base**（未绑定则不得编造文档内容） |"),
+        (("read_skill_instruction", "has_all"), "| 已匹配技能（**[Active Skills Loaded]**） | 若技能块已预载完整指令，直接按该指令执行；若仅有摘要，必须先 **read_skill_instruction(skill_id)** 读全文再执行 |"),
+        (("list_available_skills+read_skill_instruction", "has_all"), "| 可能需要技能但未匹配 | **list_available_skills** → **read_skill_instruction** |"),
+    )
 
     _PLATFORM_TOOL_ONE_LINERS: Dict[str, str] = {
         "get_current_model": "查询本轮实际生效的模型身份和调用阶段，不含凭据",
@@ -304,7 +402,7 @@ class AgentServicePrompts:
         return "\n".join(lines)
 
     @staticmethod
-    def turn_decision_context(decision: Any) -> str:
+    def turn_decision_context(decision: Optional[TurnDecision] = None) -> str:
         """Render the normalized turn decision as non-authoritative model context."""
         if decision is None:
             return ""
@@ -401,7 +499,14 @@ class AgentServicePrompts:
         runtime_tool_names: Optional[Iterable[str]] = None,
         _include_fixed: bool = True,
     ) -> str:
-        """将平台全局守则置于 system_prompt 最前（在所有编排层 prepend 之后调用），并根据绑定的工具进行动态瘦身。"""
+        """将平台全局守则置于 system_prompt 最前（在所有编排层 prepend 之后调用），并根据绑定的工具进行动态瘦身。
+
+        `_include_fixed` 供 :meth:`platform_dynamic_capability_prompt` 复用：其为 True 时先拼
+        :meth:`platform_fixed_system_prompt`（四个固定 section），为 False 时只输出动态能力段落——
+        二者分别对应两种渲染路径（legacy 单字符串拼接 / enabled-layout 分段计划）。
+        `agent_config` 是鸭子类型对象（Agent 配置可来自多源：str、带 name 属性对象或 dict），
+        不做强类型约束，仅通过 getattr/协议访问其 tools 字段。
+        """
         # 获取所有可用工具的名称
         tool_names = {str(name).strip() for name in (runtime_tool_names or ()) if str(name).strip()}
         if runtime_tool_names is None and agent_config:
@@ -473,30 +578,29 @@ class AgentServicePrompts:
             if "manage_process" in tool_names: mentioned.append("manage_process")
             if has_directory_catalog: mentioned.append("list_accessible_directories")
             if has_directory_navigator: mentioned.append("directory_tree_navigator")
-            
-            tool_str = "、".join(mentioned)
-            sensitive_rules.append(f"- 文件路径、文本搜索、Shell、进程类能力（如 {tool_str}）仅在该工具已绑定时使用，并严格遵守工具说明中的路径沙箱与安全限制。")
-            if has_file_tools:
-                sensitive_rules.append(
-                    "- **文件读写与路径防盲猜规范**：\n"
-                    "  1. 读/搜文件（Read/Glob/Grep）时，若不清楚确切路径、不明确公共文档（如平台官方手册 data/docs/）与个人工作区映射、或遇到找不到文件报错，**严禁盲目臆造不同前缀路径反复试错**；若绑定了 list_accessible_directories，必须优先调用它获取完整目录清单与路径映射。\n"
-                    "  2. 写入文件（Write/Edit）时，**平台公共目录（data/docs/、skills/、branding/）为只读（read_only），严禁尝试写入或覆盖**；AI 生成的持久化报告/导出文件统一写入用户专属 docs/ 目录，会话临时脚本与中间缓存写入 sessions/{conversation_id}/ 目录。"
+
+            sensitive_rules.append(
+                AgentServicePrompts._PLATFORM_SENSITIVE_TOOL_GENERAL_RULE.format(
+                    tools="、".join(mentioned)
                 )
+            )
+            if has_file_tools:
+                sensitive_rules.append(AgentServicePrompts._PLATFORM_FILE_PATH_ANTI_BLIND_GUESS_RULES)
 
             directory_rules = []
             if has_directory_catalog:
                 directory_rules.append(
-                    "  - 路径、权限或 Docker/宿主机映射不确定时，优先调用 list_accessible_directories 获取可访问目录和路径映射。"
+                    "  - " + AgentServicePrompts._PLATFORM_DIRECTORY_CATALOG_RULE.lstrip("- ")
                 )
             if has_directory_navigator:
                 directory_rules.append(
-                    "  - 目标目录已经明确、只需要查看目录树时，调用 directory_tree_navigator；它不负责判断权限或发现目录映射。"
+                    "  - " + AgentServicePrompts._PLATFORM_DIRECTORY_NAVIGATOR_RULE.lstrip("- ")
                 )
             if directory_rules:
                 sensitive_rules.append(
                     "- **目录发现与树形导航分工**：\n" + "\n".join(directory_rules)
                 )
-            
+
         if "Grep" in tool_names or "Glob" in tool_names or "Bash" in tool_names:
             parts = []
             if "Grep" in tool_names:
@@ -505,26 +609,24 @@ class AgentServicePrompts:
                 parts.append("需要按文件名模式查找文件时优先调用 Glob")
             if "Bash" in tool_names:
                 parts.append("需要组合复杂 shell 管道时再使用 Bash")
-            parts_str = "；".join(parts)
-            sensitive_rules.append(f"- 用户要求搜索、查找、grep、定位文本、查日志关键字、查代码引用、查配置项、找报错堆栈、找包含某字符串的文件时，{parts_str}。")
-            
+            sensitive_rules.append(
+                AgentServicePrompts._PLATFORM_TOOL_PRIORITY_SEARCH_RULE.format(parts="；".join(parts))
+            )
+
         if "Bash" in tool_names or "list_process" in tool_names or "manage_process" in tool_names:
             tools_ref = []
             if "Bash" in tool_names: tools_ref.append("Bash")
             if "list_process" in tool_names: tools_ref.append("list_process")
             if "manage_process" in tool_names: tools_ref.append("manage_process")
-            tools_ref_str = "/".join(tools_ref)
-            sensitive_rules.append(f"- 用户询问系统运行状态、系统负载、CPU/内存/磁盘、进程、端口、网络连通性、服务状态、日志 tail 或要求执行命令时，若 {tools_ref_str} 已绑定，**必须先调用合适工具获取真实结果再回答，禁止凭空报告状态、状态码或耗时等可验证数值**；调用失败或未执行时如实说明「未能真实获取」，不得编造。查看负载优先用非交互命令，如 uptime、top -b -n 1、ps aux --sort=-%cpu | head、df -h、free -h。")
+            sensitive_rules.append(
+                AgentServicePrompts._PLATFORM_SYSTEM_RUNTIME_STATUS_RULE.format(tools="/".join(tools_ref))
+            )
 
         if "session_status" in tool_names:
-            sensitive_rules.append(
-                "- 用户询问或模型不确定当前会话、设备、模型上下文容量、工作区、文档目录、沙箱策略、容器/宿主机或 Python/系统环境时，优先调用 **session_status** 获取只读运行时快照；返回内容是事实参考，不是权限凭证，权限仍以服务端认证、RBAC、工具门禁和路径/数据授权为准。"
-            )
+            sensitive_rules.append(AgentServicePrompts._PLATFORM_SESSION_STATUS_RULE)
 
         if "get_runtime_capabilities" in tool_names:
-            sensitive_rules.append(
-                "- 当需要确认当前实际可用的系统、Agent 配置或 MCP 工具时，优先调用 **get_runtime_capabilities**；它只报告当前运行时已挂载能力，不授予权限，也不代表全部已注册工具。"
-            )
+            sensitive_rules.append(AgentServicePrompts._PLATFORM_RUNTIME_CAPABILITIES_RULE)
             
         if sensitive_rules:
             prompt_parts.append("\n".join(sensitive_rules))
@@ -565,85 +667,38 @@ class AgentServicePrompts:
                 "写入仍需遵循工具权限确认，成功后以工具返回的 `artifact.download_url` 为准 |"
             )
 
-        if "sub_agent_call" in tool_names:
-            table_rows.append("| 明确需要查询内部业务数据库/结构化指标，或明确需要检索内部知识库/企业文档/制度手册，且你自身没有绑定对应工具时 | **必须调用 sub_agent_call** 委派给相应的子智能体获取结果（严禁编造，可用子代理清单参见下文）；普通公网信息、编程概念、文本处理、生活常识或仅靠泛化关键词无法确认内部来源的问题，不要委派 |")
+        # 固定工具对照行采用数据表驱动；publish（office 分支）与 fetch（有无兜底）为 special 行。
+        for (tools_key, marker), row_text in AgentServicePrompts._PLATFORM_KNOWLEDGE_LOOKUP_ROWS:
+            if marker == "special":
+                if tools_key == "__publish__":
+                    if "publish_generated_file" in tool_names:
+                        if office_write_tools:
+                            table_rows.append(
+                                f"| 用户要求保存、交付、导出或下载已生成文件 | 普通文件工具生成文件后才调用 `publish_generated_file(path=...)`；{office_write_label} 的 `*_write` 已经登记 artifact 并返回 `artifact.download_url`，不要再次调用 publish_generated_file；只有拿到真实 `download_url` 才能向用户提供下载地址 |"
+                            )
+                        else:
+                            table_rows.append("| 用户要求保存、交付、导出或下载已生成文件 | 文件写入/生成完成后必须调用 **publish_generated_file(path=...)**；只有返回 `status=ok` 且包含 `download_url` 才能声称已生成下载地址；最终必须原样复制 `download_url`，不得返回物理路径或臆造链接 |")
+                elif tools_key == "__fetch__":
+                    # fetch：绑定时输出完整行，否则输出兜底行（二选一）。
+                    if "fetch_user_long_term_memory" in tool_names:
+                        table_rows.append("| 「我的偏好/记住的设定」 | 先看上文 **[Memory Profile]**（若已注入）；不足再 **fetch_user_long_term_memory** |")
+                    else:
+                        table_rows.append("| 「我的偏好/记住的设定」 | 先看上文 **[Memory Profile]**（若已注入） |")
+                continue
+            if isinstance(tools_key, str) and "+" in tools_key:
+                if set(tools_key.split("+")) <= tool_names:
+                    table_rows.append(row_text)
+            elif tools_key in tool_names:
+                table_rows.append(row_text)
 
-        if "sub_agent_batch_call" in tool_names:
-            table_rows.append("| 需要同时处理多个彼此独立的内部任务 | 调用 **sub_agent_batch_call** 并行委派，结果按请求顺序返回；存在前后依赖时改用 **sub_agent_call** 串行委派 |")
-
-        if "todo_write" in tool_names:
-            table_rows.append("| 请求包含多个执行步骤、多个工具或子代理、明显前后依赖，或需要生成文件 | 先调用 **todo_write** 建立完整任务清单；每完成、失败或取消一个阶段都更新清单；单步问答、单次检索和单次查询不要调用 |")
-
-        if "publish_generated_file" in tool_names:
-            if office_write_tools:
-                table_rows.append(f"| 用户要求保存、交付、导出或下载已生成文件 | 普通文件工具生成文件后才调用 `publish_generated_file(path=...)`；{office_write_label} 的 `*_write` 已经登记 artifact 并返回 `artifact.download_url`，不要再次调用 publish_generated_file；只有拿到真实 `download_url` 才能向用户提供下载地址 |")
-            else:
-                table_rows.append("| 用户要求保存、交付、导出或下载已生成文件 | 文件写入/生成完成后必须调用 **publish_generated_file(path=...)**；只有返回 `status=ok` 且包含 `download_url` 才能声称已生成下载地址；最终必须原样复制 `download_url`，不得返回物理路径或臆造链接 |")
-
-        if "memory_search" in tool_names:
-            table_rows.append("| 「今天/上次/最近聊了啥」「回顾历史对话」 | 调用 **memory_search**（scope=summary，query 填关键词；要原文明细再 scope=history + conversation_id） |")
-
-        if "list_accessible_directories" in tool_names:
-            table_rows.append("| 「我能访问哪些目录」「文件存在哪」「工作区目录结构」「查看可写目录」「查找公共手册/FAQ/文档路径」「文件读写报错排查可用目录与权限」 | 调用 **list_accessible_directories**（获取 docs/、sessions/、uploads/、公共 data/docs/、skills/ 等完整目录清单、权限及推荐用途） |")
-
-        if "directory_tree_navigator" in tool_names:
-            table_rows.append("| 「列出这个已知目录的文件树」「查看目录下有哪些文件」「按后缀或文件名筛选目录内容」 | 调用 **directory_tree_navigator**（只查看已知目录的树形元数据；不用于查询权限、目录映射或文件内容） |")
-
-        if "list_accessible_datasets" in tool_names:
-            table_rows.append("| 「我有哪些数据集」「能查哪些数据」「数据集列表」 | 调用 **list_accessible_datasets**（仅已启用、目录级 id/名称/备注，不含表结构） |")
-
-        if "list_accessible_knowledge_bases" in tool_names:
-            table_rows.append("| 「我有哪些知识库」「能检索哪些文档库」「知识库列表」 | 调用 **list_accessible_knowledge_bases**（仅目录级信息；正文检索用 search_knowledge_base） |")
-
-        if "list_available_agents" in tool_names:
-            table_rows.append("| 「我有哪些智能体」「能调用哪些专家」「可用智能体列表」，或准备委派子任务前需确认智能体标识 | 调用 **list_available_agents**（返回可用智能体标识 agent_name、名称、职责与能力） |")
-
-        if "get_myinfo" in tool_names:
-            table_rows.append("| 「我的用户信息」「我的部门/角色/权限」「查看我的资料」 | 调用 **get_myinfo**（只读取当前上下文中的本人，不接受 userid 或其他参数） |")
-
-        if "request_user_confirmation" in tool_names:
-            table_rows.append("| 录入/修改/删除业务数据、向外部系统写入记录 | 先调用 **request_user_confirmation** 展示可编辑确认卡；等待「【业务确认】」用户回执后再决定是否调用写入工具；用户取消后禁止立刻再次弹确认卡 |")
-
-        if "ask_user_question" in tool_names:
-            table_rows.append("| 缺少继续处理所需的关键输入，或存在需要用户选择的业务分支 | 调用 **ask_user_question** 展示 2-12 个清晰选项；等待「【用户回答】」回执后继续，禁止在本轮自行猜测或继续执行 |")
-            
-        if "fetch_user_long_term_memory" in tool_names:
-            table_rows.append("| 「我的偏好/记住的设定」 | 先看上文 **[Memory Profile]**（若已注入）；不足再 **fetch_user_long_term_memory** |")
-        else:
-            table_rows.append("| 「我的偏好/记住的设定」 | 先看上文 **[Memory Profile]**（若已注入） |")
-            
-        if "update_user_preference" in tool_names:
-            table_rows.append("| 用户要求「记住…」 | **update_user_preference**（勿虚构已写入） |")
-            
-        if "search_knowledge_base" in tool_names:
-            table_rows.append("| 制度/SOP/操作指引、已选知识库 | **search_knowledge_base**（未绑定则不得编造文档内容） |")
-            
-        if "read_skill_instruction" in tool_names:
-            table_rows.append("| 已匹配技能（**[Active Skills Loaded]**） | 若技能块已预载完整指令，直接按该指令执行；若仅有摘要，必须先 **read_skill_instruction(skill_id)** 读全文再执行 |")
-            
-        if "list_available_skills" in tool_names and "read_skill_instruction" in tool_names:
-            table_rows.append("| 可能需要技能但未匹配 | **list_available_skills** → **read_skill_instruction** |")
-            
         if table_rows:
-            table_str = """## 记忆与知识（工具对照，有则必用）
-| 用户意图 | 优先做法 |
-|----------|----------|
-""" + "\n".join(table_rows)
+            table_str = AgentServicePrompts._PLATFORM_MEMORY_KNOWLEDGE_TABLE_HEADER + "\n".join(table_rows)
             prompt_parts.append(table_str)
 
         # 4. 浏览器自动化与数据采集最佳实践（动态）
         has_browser_tools = any(str(name).startswith("browser_") for name in tool_names)
         if has_browser_tools:
-            browser_best_practices = [
-                "## 浏览器自动化与数据采集最佳实践（工具已绑定时必须遵守）",
-                "- **普通页面交互**：先调用 `browser_snapshot` 获取最新 target_ref；普通按钮、链接、输入框优先使用 `browser_click` / `browser_fill` 以获得稳定的语义校验。复杂单页应用、批量 DOM 操作或页面脚本自动化可使用 `browser_execute_js`，该工具保留页面脚本能力但受脚本大小、执行时间和结果大小限制；在 guarded 模式下可能需要用户确认。",
-                "- **结构化表格与网格数据抓取**：当页面存在数据报表、商品列表、行情网格或排行时，**必须优先调用 `browser_extract_table`** 直接输出 Markdown/JSON，严禁通过繁琐的逐个元素 click/read_visible 低效拼凑。",
-                "- **复杂单页应用与动态接口抓包**：对于采用 Ajax/Fetch 动态加载、前后端分离或虚拟滚动的复杂页面，可调用 `browser_get_network_logs` 查看最近请求的 URL、方法、状态码和类型元数据；该工具不返回响应正文，不要因结果没有 JSON 而重复调用。",
-                "- **长页面/报告文档留存与交付**：用户需要导出、保存或下载网页报告、凭证、长文章时，**优先调用 `browser_export_pdf`** 导出 A4 矢量 PDF 附件。",
-                "- **滑块拼图与验证码应对**：遇到滑动验证码时，**优先调用 `browser_slider_drag`**（支持拟人化三阶贝塞尔曲线与物理微抖动）；若识别困难，主动引导用户在右侧面板直接人工接管完成。",
-                "- **弹窗与会话登录态**：在执行多步流程前可调用 `browser_handle_dialog` 预设自动确定/取消原生弹窗；涉及私有系统免密直登时调用 `browser_set_cookies` 注入凭证，或调用 `browser_check_auth` 校验当前是否处于有效登录态。`is_authenticated` 为 `null` 时表示证据不足，不能按已登录处理。",
-            ]
-            prompt_parts.append("\n".join(browser_best_practices))
+            prompt_parts.append("\n".join(AgentServicePrompts._PLATFORM_BROWSER_AUTOMATION_BEST_PRACTICES))
 
         if "read_skill_instruction" in tool_names or "list_available_skills" in tool_names:
             prompt_parts.append(AgentServicePrompts._PLATFORM_SKILLS_USAGE_SECTION)
@@ -658,22 +713,9 @@ class AgentServicePrompts:
             prompt_parts.append(AgentServicePrompts._PLATFORM_USER_QUESTION_SECTION)
             
         if quick_suggestions_forbidden:
-            interaction_section = """- 不要把「当前会话 messages 为空」等同于「用户从未对话」；跨会话摘要可能在其他 conversation_id 中。
-
-## 交互与引导
-- 当前运行上下文标记 `quick_suggestions_forbidden=true`；本次属于定时任务、订阅任务或其他后台自动交付。
-- 本次禁止输出任何 quick 链接、快捷按钮、交互式推荐问题列表或「您可能还想了解」区块；只交付任务结果、必要的状态和错误说明。
-- 即使普通会话规则或执行器模板要求 quick，也以本条自动交付禁令为准。"""
+            interaction_section = AgentServicePrompts._PLATFORM_INTERACTION_QUICK_FORBIDDEN_SECTION
         else:
-            interaction_section = """- 不要把「当前会话 messages 为空」等同于「用户从未对话」；跨会话摘要可能在其他 conversation_id 中。
-
-## 交互与引导
-- 普通交互式会话中，回答完成后尽可能提供 2-3 个与当前任务直接相关、可以立即点击继续的 quick 建议，用于启发用户下一步；确实没有有价值的下一步时才省略。
-- 如果当前消息只缺少一个必要字段，优先直接提出一个简短问题；若还能提供有价值的替代路径或示例，仍可附带 quick 建议。
-- 格式要求：支持 quick 时使用 Markdown 链接格式 `[🙋 简短标签](quick:完整可发送文案)`，简短标签前缀附带 🙋 符号。
-- quick 目标必须是自然语言问题；不得把 SQL、代码或物理表名直接放进 quick 标签或 quick 目标（系统 slash 指令除外）。
-- quick 区块如有输出，必须放在整段回答的最末尾，位于所有正文、表格、图表与数据来源说明之后。
-- 例外：若本轮已调用 **request_user_confirmation** 并等待用户确认，则本轮禁止输出任何 quick（以「业务数据确认」章节为准）。"""
+            interaction_section = AgentServicePrompts._PLATFORM_INTERACTION_QUICK_ENABLED_SECTION
         prompt_parts.append(interaction_section)
 
         global_prompt = "\n\n".join(prompt_parts)
@@ -872,7 +914,12 @@ class AgentServicePrompts:
         logical_docs_dir: str | None = None,
         logical_public_docs_dir: str | None = None,
     ) -> str:
-        """本会话 AgentScope workspace 与路径沙箱说明（仅在有文件/Shell 工具时注入）。"""
+        """本会话 AgentScope workspace 与路径沙箱说明（仅在有文件/Shell 工具时注入）。
+
+        注意：本段的「文件读写优先」「路径防盲猜」「目录清单优先」主题与动态段的
+        _PLATFORM_FILE_PATH_ANTI_BLIND_GUESS_RULES / _PLATFORM_DIRECTORY_CATALOG_RULE 存在措辞重叠，
+        两者服务不同上下文（沙箱 vs 动态敏感规则）；改动任一主题时请同步核对另一处。
+        """
         tools_text = "、".join(file_tool_names) if file_tool_names else "Read/Write/Grep/Glob/Bash"
         visible_session_workdir = session_workdir
         visible_docs_dir = docs_dir

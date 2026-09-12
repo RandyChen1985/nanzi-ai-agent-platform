@@ -7514,6 +7514,16 @@ const handleSaveReportFromMessage = (msg: Message) => {
   if (sql) openSaveReportModal(sql, msg);
 };
 
+/**
+ * 判断 SSE 日志是否属于「沙箱工作区准备」进度。
+ * prep 占位/最终行共用固定 id `workspace:sandbox`；Bash 触发以
+ * `workspace:sandbox:<tool_call_id>` 独立 id 挂到对应 Bash 卡片下方。
+ * 两类都要进同一套「拉起中/就绪/失败」toast 与状态刷新。
+ */
+function isSandboxPrewarmLogId(logId: string): boolean {
+  return logId === "workspace:sandbox" || logId.startsWith("workspace:sandbox:");
+}
+
 const addEmbedLogFromStream = (msg: Message, data: any) => {
   if (!msg.logs) msg.logs = [];
   const logId = data.id || Date.now() + Math.random();
@@ -7581,13 +7591,13 @@ const addEmbedLogFromStream = (msg: Message, data: any) => {
       execution_time_ms: execution_time_ms ?? currentLog.execution_time_ms,
       started_at: currentLog.started_at ?? data.started_at,
     });
-    if (logId === "workspace:sandbox" && currentLog.status !== "pending" && nextStatus === "pending") {
+    if (isSandboxPrewarmLogId(logId) && currentLog.status !== "pending" && nextStatus === "pending") {
       showToast("正在拉起沙箱运行环境…", "info");
       void refreshSandboxWorkspaceStatus();
-    } else if (logId === "workspace:sandbox" && currentLog.status === "pending" && nextStatus === "success") {
+    } else if (isSandboxPrewarmLogId(logId) && currentLog.status === "pending" && nextStatus === "success") {
       showToast("沙箱环境已就绪，正在执行命令…", "success");
       void refreshSandboxWorkspaceStatus();
-    } else if (logId === "workspace:sandbox" && currentLog.status === "pending" && nextStatus === "error") {
+    } else if (isSandboxPrewarmLogId(logId) && currentLog.status === "pending" && nextStatus === "error") {
       showToast(data.error_reason || "沙箱环境启动失败", "error");
       void refreshSandboxWorkspaceStatus();
     }
@@ -7612,7 +7622,7 @@ const addEmbedLogFromStream = (msg: Message, data: any) => {
     rowFilterApplied: data.row_filter_applied === true,
   });
   syncProcessTimelineLog(msg, { ...data, id: logId, category }, category);
-  if (logId === "workspace:sandbox" && data.status === "pending") {
+  if (isSandboxPrewarmLogId(logId) && data.status === "pending") {
     showToast("正在拉起沙箱运行环境…", "info");
     void refreshSandboxWorkspaceStatus();
   }

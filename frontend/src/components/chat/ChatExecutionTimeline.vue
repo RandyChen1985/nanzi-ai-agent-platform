@@ -646,18 +646,17 @@ watch(
 // 持续数秒~数十秒。这里用一个 500ms 的 tick 驱动"已等待 Ns + 阶段文案 + 不确定进度条"，
 // 让用户看到数值在走、阶段在变，避免"傻等"感。
 function findWorkspacePrewarmPending(items: ProcessTimelineItem[]): boolean {
-  for (const item of items) {
-    if (item.kind === "log") {
-      if (isWorkspacePrewarmPending(item)) return true;
-      for (const child of item.children || []) {
-        if (isWorkspacePrewarmPending(child)) return true;
-        if ((child.children || []).some((step) => isWorkspacePrewarmPending(step))) return true;
-      }
-    } else if (item.kind === "text") {
-      if ((item.children || []).some((child) => isWorkspacePrewarmPending(child))) return true;
+  // 统一递归遍历整棵时间线树：沙箱 prewarm 占位日志可能被挂在任意层级下
+  // （prep 占位符顶层、Bash 卡片挂在 narration(text) 下→其三层的 prewarm 子项等），
+  // 因此不能只检查前两层，需递归检查每个 text/log 节点及其所有后代。
+  const walk = (node: ProcessTimelineItem): boolean => {
+    if (isWorkspacePrewarmPending(node)) return true;
+    for (const child of node.children || []) {
+      if (walk(child)) return true;
     }
-  }
-  return false;
+    return false;
+  };
+  return items.some(walk);
 }
 
 const tickNow = ref(0);
