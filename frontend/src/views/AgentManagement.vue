@@ -1541,6 +1541,11 @@ const saveAgent = async (exitAfterSave = false) => {
     return;
   }
 
+  // 主助手强制保持系统智能体状态
+  if (selectedAgent.value && isMainAgent(selectedAgent.value)) {
+    agentForm.value.is_system = true;
+  }
+
   if (!agentForm.value.name || !agentForm.value.display_name) {
     showToast("请完善智能体标识和名称", "warning");
     return;
@@ -3401,27 +3406,6 @@ const formatSkillCountLabel = (agent: AIAgent) => {
       size="max-w-4xl"
       @close="showAgentModal = false"
     >
-      <template #header-extra>
-        <label
-          v-if="userInfo?.role === 'admin'"
-          class="flex cursor-pointer items-center gap-2"
-          title="标记为系统预置智能体，防止误删并加入主专家委派目录"
-        >
-          <span class="rounded border border-amber-200 bg-amber-50 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700">Admin Only</span>
-          <span
-            class="inline-flex items-center gap-1 rounded-full border px-2 py-1 text-xs font-semibold transition-colors"
-            :class="agentForm.is_system ? 'border-blue-200 bg-blue-50 text-blue-700' : 'border-gray-200 bg-gray-50 text-gray-500'"
-          >
-            <span aria-hidden="true">🛡️</span>
-            系统智能体
-          </span>
-          <span class="relative inline-flex h-5 w-9 items-center rounded-full transition-colors" :class="agentForm.is_system ? 'bg-primary' : 'bg-gray-300'">
-            <input v-model="agentForm.is_system" type="checkbox" class="sr-only" />
-            <span class="h-4 w-4 rounded-full bg-white shadow-sm transition-transform" :class="agentForm.is_system ? 'translate-x-4' : 'translate-x-0.5'"></span>
-          </span>
-        </label>
-      </template>
-
       <template #footer>
         <div class="flex items-center justify-end gap-3">
           <button @click="showAgentModal = false" class="px-4 py-2 text-sm font-medium text-gray-500 hover:text-gray-700">取消</button>
@@ -3445,6 +3429,86 @@ const formatSkillCountLabel = (agent: AIAgent) => {
         </div>
 
         <div v-if="!isOnboardingFlow || onboardingStep === 'BASIC'" class="space-y-4">
+          <!-- 系统智能体独立设置行 (仅管理员可见) -->
+          <div
+            v-if="userInfo?.role === 'admin'"
+            class="flex items-start justify-between gap-4 rounded-xl border p-4 transition-all"
+            :class="agentForm.is_system
+              ? 'border-blue-200 bg-blue-50/50 shadow-sm ring-1 ring-blue-500/10'
+              : 'border-gray-200 bg-gray-50/70'"
+          >
+            <div class="flex items-start gap-3">
+              <div
+                class="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border transition-colors"
+                :class="agentForm.is_system
+                  ? 'border-blue-200 bg-white text-blue-600 shadow-sm'
+                  : 'border-gray-200 bg-white text-gray-400'"
+              >
+                <svg class="h-4.5 w-4.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+                </svg>
+              </div>
+              <div class="space-y-1.5">
+                <div class="flex items-center gap-2 flex-wrap">
+                  <span class="text-sm font-bold text-gray-800">设为系统智能体</span>
+                  <span class="rounded border border-amber-200 bg-amber-50 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700">Admin Only</span>
+                  <span
+                    v-if="selectedAgent && isMainAgent(selectedAgent)"
+                    class="inline-flex items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[10px] font-bold text-amber-800"
+                  >
+                    <svg class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+                    </svg>
+                    主专家固定锁定
+                  </span>
+                  <span
+                    v-else
+                    class="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold transition-colors"
+                    :class="agentForm.is_system ? 'bg-blue-100 text-blue-700' : 'bg-gray-200 text-gray-600'"
+                  >
+                    {{ agentForm.is_system ? '已加入智能委派候选列表' : '普通自定义智能体（不参与委派）' }}
+                  </span>
+                </div>
+                <p class="text-xs leading-relaxed text-gray-500">
+                  <template v-if="selectedAgent && isMainAgent(selectedAgent)">
+                    <span class="font-bold text-amber-800">系统核心约束：</span>
+                    <strong class="text-blue-600">主助手 (Main) 是平台默认兜底主专家</strong>，<strong class="text-amber-700">强制锁定为系统智能体，不可修改或取消</strong>。
+                  </template>
+                  <template v-else>
+                    <span class="font-semibold text-gray-700">用途说明：</span>
+                    开启后作为平台官方内置智能体，<strong class="text-blue-600">只有系统智能体才能被自动委派</strong>，作为主助手智能委派的候选专家列表；普通智能体仅供用户手动选择对话，<span class="text-gray-600 font-medium">不会被系统自动委派</span>。如果只是自己用，也不必设置为系统智能体。
+                  </template>
+                </p>
+              </div>
+            </div>
+
+            <!-- Switch 开关 -->
+            <label
+              class="relative inline-flex items-center shrink-0 mt-0.5"
+              :class="selectedAgent && isMainAgent(selectedAgent) ? 'cursor-not-allowed opacity-80' : 'cursor-pointer'"
+              :title="selectedAgent && isMainAgent(selectedAgent) ? '主助手(Main)为系统默认兜底专家，必须保持系统智能体状态，不可修改或取消' : '点击切换系统智能体状态'"
+            >
+              <input
+                v-model="agentForm.is_system"
+                type="checkbox"
+                class="sr-only"
+                :disabled="Boolean(selectedAgent && isMainAgent(selectedAgent))"
+              />
+              <span
+                class="h-6 w-11 rounded-full transition-colors flex items-center p-0.5"
+                :class="agentForm.is_system ? (selectedAgent && isMainAgent(selectedAgent) ? 'bg-blue-400' : 'bg-primary') : 'bg-gray-300'"
+              >
+                <span
+                  class="h-5 w-5 rounded-full bg-white shadow-sm transition-transform flex items-center justify-center text-[9px] text-gray-400"
+                  :class="agentForm.is_system ? 'translate-x-5' : 'translate-x-0'"
+                >
+                  <svg v-if="selectedAgent && isMainAgent(selectedAgent)" class="h-2.5 w-2.5 text-blue-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+                  </svg>
+                </span>
+              </span>
+            </label>
+          </div>
         <div class="grid grid-cols-1 gap-4 md:grid-cols-[1fr_1fr_8rem]">
         <div>
           <label class="block text-sm font-medium text-gray-700 mb-1"

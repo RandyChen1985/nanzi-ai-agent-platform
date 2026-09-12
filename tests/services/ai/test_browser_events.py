@@ -543,3 +543,57 @@ def test_browser_open_result_falls_back_to_agent_context(monkeypatch):
     assert event is not None
     assert event["session_id"] == "bs-context-456"
 
+
+def test_browser_open_result_falls_back_to_explicit_context():
+    context = SimpleNamespace(browser_session_id="bs-explicit-789")
+    # 无论 output 是损坏格式还是完全丢失 session_id，均优先从 context 兜底恢复
+    event = build_browser_session_event("browser_open", "bad json output", context=context)
+    assert event is not None
+    assert event["session_id"] == "bs-explicit-789"
+
+
+def test_browser_refresh_result_falls_back_to_context():
+    context = SimpleNamespace(browser_session_id="bs-explicit-refresh-101")
+    event = build_browser_refresh_event("browser_click", "corrupted text", context=context)
+    assert event is not None
+    assert event == {
+        "type": "browser_refresh",
+        "session_id": "bs-explicit-refresh-101",
+    }
+
+
+@pytest.mark.asyncio
+async def test_subagent_stream_bubbles_browser_events():
+    import asyncio
+    from app.services.ai.tools.agent_delegate_tool import _consume_sub_agent_stream
+
+    event_queue = asyncio.Queue()
+    main_ctx = SimpleNamespace(
+        event_queue=event_queue,
+        browser_session_id=None,
+    )
+
+    async def fake_sub_stream():
+        yield {"type": "browser_session", "session_id": "bs-sub-999", "url": "https://example.com"}
+        yield {"type": "browser_refresh", "session_id": "bs-sub-999"}
+        yield {"text": "已在子智能体中完成网页操作"}
+
+    full_output, interrupt = await _consume_sub_agent_stream(
+        fake_sub_stream(),
+        main_ctx=main_ctx,
+        sub_display_name="BrowserSubAgent",
+    )
+
+    assert full_output == "已在子智能体中完成网页操作"
+    assert interrupt is None
+    assert main_ctx.browser_session_id == "bs-sub-999"
+
+    bubbled_1 = await event_queue.get()
+    assert bubbled_1["type"] == "browser_session"
+    assert bubbled_1["session_id"] == "bs-sub-999"
+
+    bubbled_2 = await event_queue.get()
+    assert bubbled_2["type"] == "browser_refresh"
+    assert bubbled_2["session_id"] == "bs-sub-999"
+
+

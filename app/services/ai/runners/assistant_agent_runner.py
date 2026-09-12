@@ -2447,15 +2447,19 @@ class AssistantAgentRunner(BaseExecutor):
 
                 tool_args = redact_browser_arguments({**tool_args, "sensitive": True})
             output = tool_outputs.get(tool_id, "")
+            from app.core.context import get_current_agent_context
             from app.services.ai.runtime.agentscope.browser_events import (
                 build_browser_refresh_event,
                 build_browser_session_event,
             )
 
-            browser_event = build_browser_session_event(tool_name, output)
+            agent_ctx = get_current_agent_context()
+            browser_event = build_browser_session_event(tool_name, output, context=agent_ctx)
             if browser_event:
+                if agent_ctx and browser_event.get("session_id"):
+                    agent_ctx.browser_session_id = str(browser_event["session_id"])
                 yield browser_event
-            browser_refresh_event = build_browser_refresh_event(tool_name, output)
+            browser_refresh_event = build_browser_refresh_event(tool_name, output, context=agent_ctx)
             if browser_refresh_event:
                 yield browser_refresh_event
             if tool_data.get(tool_id):

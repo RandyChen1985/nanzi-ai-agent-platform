@@ -571,6 +571,11 @@ async def _consume_sub_agent_stream(
             if subagent_metadata is not None:
                 chunk["subagent"] = dict(subagent_metadata)
             await main_ctx.event_queue.put(chunk)
+        elif chunk_type in {"browser_session", "browser_refresh"} and main_ctx.event_queue:
+            sub_session_id = chunk.get("session_id")
+            if sub_session_id:
+                main_ctx.browser_session_id = str(sub_session_id)
+            await main_ctx.event_queue.put(chunk)
 
     return full_output, interrupt_type
 

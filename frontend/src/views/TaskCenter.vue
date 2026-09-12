@@ -2080,8 +2080,10 @@ onMounted(async () => {
                     "
                     @click.stop="switchAgentTab('system')"
                   >
-                    <span class="h-1.5 w-1.5 rounded-full" :class="agentTab === 'system' ? 'bg-blue-600' : 'bg-gray-400'"></span>
-                    系统智能体
+                    <svg class="h-3.5 w-3.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+                    </svg>
+                    <span>系统智能体</span>
                     <span
                       class="rounded px-1 text-[9px] font-normal"
                       :class="agentTab === 'system' ? 'bg-blue-50 text-blue-600' : 'bg-gray-200/70 text-gray-500'"
@@ -2098,8 +2100,10 @@ onMounted(async () => {
                     "
                     @click.stop="switchAgentTab('custom')"
                   >
-                    <span class="h-1.5 w-1.5 rounded-full" :class="agentTab === 'custom' ? 'bg-emerald-600' : 'bg-gray-400'"></span>
-                    自定义智能体
+                    <svg class="h-3.5 w-3.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                    </svg>
+                    <span>自定义智能体</span>
                     <span
                       class="rounded px-1 text-[9px] font-normal"
                       :class="agentTab === 'custom' ? 'bg-emerald-50 text-emerald-600' : 'bg-gray-200/70 text-gray-500'"

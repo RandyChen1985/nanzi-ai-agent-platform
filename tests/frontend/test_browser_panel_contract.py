@@ -189,6 +189,13 @@ def test_browser_panel_refreshes_after_ai_browser_action_without_short_polling()
     assert "data.type === \"browser_refresh\"" in embed
 
 
+def test_browser_refresh_event_auto_opens_panel_if_closed():
+    embed = (ROOT / "frontend/src/views/EmbedChat.vue").read_text(encoding="utf-8")
+    assert "data.type === \"browser_refresh\"" in embed
+    assert "!browserPanelVisible.value || browserSessionId.value !== targetSessionId" in embed
+    assert "attachBrowserSession(" in embed
+
+
 def test_browser_panel_normalizes_protocol_less_navigation_addresses():
     source = (ROOT / "frontend/src/components/embed/BrowserPanel.vue").read_text(encoding="utf-8")
 

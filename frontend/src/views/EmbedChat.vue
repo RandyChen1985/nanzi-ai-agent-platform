@@ -8327,15 +8327,29 @@ const sendMessageInternal = async (snapshot: ChatSendSnapshot) => {
               (agentMsg.value as any).status = "success";
             }
           } else if (data.type === "browser_session") {
-            const openingGeneration = browserOpenGeneration;
-            void attachBrowserSession(
-              String(data.session_id || ""),
-              data.approval_mode,
-              openingGeneration,
-            );
+            const targetSessionId = String(data.session_id || "").trim();
+            if (targetSessionId) {
+              const openingGeneration = browserOpenGeneration;
+              void attachBrowserSession(
+                targetSessionId,
+                data.approval_mode,
+                openingGeneration,
+              );
+            }
           } else if (data.type === "browser_refresh") {
-            if (String(data.session_id || "") === String(browserSessionId.value || "")) {
-              browserRefreshSignal.value += 1;
+            const targetSessionId = String(data.session_id || "").trim();
+            if (targetSessionId) {
+              if (!browserPanelVisible.value || browserSessionId.value !== targetSessionId) {
+                // 兜底自动唤醒：若收到浏览器操作信号但面板未开或会话未附着，自动唤起并附着面板
+                void attachBrowserSession(
+                  targetSessionId,
+                  undefined,
+                  browserOpenGeneration,
+                );
+              }
+              if (targetSessionId === String(browserSessionId.value || "")) {
+                browserRefreshSignal.value += 1;
+              }
             }
           } else if (applyReusableResultStatusEvent(agentMsg.value, data)) {
             // 结果保存/复用状态只更新消息元数据，不改变回答正文。

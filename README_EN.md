@@ -196,20 +196,50 @@ See [CHAT_FLOW.md](architech/design/chat/CHAT_FLOW.md) · [Intelligent delegatio
 
 ```text
 .
-├── app/                  # Backend core code (FastAPI)
-│   ├── api/              # API router layer (Portal admin & Client V1 APIs)
-│   ├── services/         # Business service layer (Auth, RAG knowledge, MCP plugin services)
-│   │   └── ai/           # 🤖 AI Orchestration Center (AgentScope Runners, OpenClaw execution & intent dispatch)
-│   └── models/           # SQLAlchemy ORM models
-├── frontend/             # Admin console and embedded Chat SDK project (Vue 3 + Tailwind)
-├── .agent/               # Agent-specific dev skills & workflow configs (opsx, etc.)
-├── architech/            # High-level architecture specs & System Prompt management
-├── db-prod/              # Database migrations & SQL upgrade scripts (V0-VNN)
-├── docker/               # Containerization & one-click Docker-compose deployment solutions
-├── scripts/              # Devops auxiliary scripts (one-click run, data sync, redeployment)
-├── tests/                # Automated test suites & verification checklists (CHECKLIST.md)
-└── openspec/             # OpenSpec API specifications & protocol trace files
+├── app/                  # Backend core code (FastAPI async architecture)
+│   ├── api/              # API router layer (Portal admin & Client V1 REST/SSE APIs)
+│   ├── core/             # Core infrastructure (Config, DB engine, security, lifecycle)
+│   ├── models/           # SQLAlchemy 2.x ORM data models
+│   ├── schemas/          # Pydantic schemas & DTO validation models
+│   ├── services/         # Business services (Auth, Models, ChatBI, RAG, MCP dispatch)
+│   │   └── ai/           # 🤖 AI Orchestration (AgentScope Runners, OpenClaw executor & dispatch)
+│   └── utils/            # General utilities (Crypto, vector operators, helpers)
+├── frontend/             # Frontend project (Vue 3 + Vite + TypeScript + Tailwind CSS)
+│   └── src/
+│       ├── api/          # Frontend API requests & backend contract mappings
+│       ├── views/        # Page views (Dashboard, Agent Studio, ChatBI, KB, Skill Center)
+│       ├── components/   # Shared UI components & streaming chat cards
+│       ├── composables/  # Vue composable hooks (SSE stream sessions, auth)
+│       └── router/       # Dynamic routing & permission control
+├── .agent/               # Agent-specific dev skills & workflow configs (opsx, dev-skills)
+├── architech/            # High-level architecture specs, schemas & System Prompts
+├── data/                 # Platform persistent data (Workspaces, sandbox, skills, uploads)
+├── db-prod/              # MySQL migrations & SQL upgrade scripts (V0-VNN)
+├── db-prod-pg/           # PostgreSQL baseline & idempotent migrations (V0-VNN)
+├── docker/               # Containerization & one-click Docker-compose deployment
+├── docs/                 # Project documentation, Release Notes & brand design guidelines
+├── html/                 # Standalone product landing page
+├── k8s_deploy/           # Cloud-native Kubernetes manifests & sandbox cluster ops suite
+├── openspec/             # OpenSpec API specifications & change tracking
+├── scripts/              # Devops auxiliary scripts (one-click run, data sync, redeploy)
+├── tests/                # Automated test suites (Pytest) & checklists (CHECKLIST.md)
+├── dev.sh                # 🛠️ Local one-click dev bootstrap, live reload & service manager
+├── prebuild-sandbox.sh   # 🐳 Docker security code-sandbox image prebuild script
+├── env.example           # ⚙️ Baseline global environment & sensitive configuration template
+├── requirements.txt      # 📦 Backend Python runtime dependency list (Python 3.11)
+└── pytest.ini            # 🧪 Automated test suite runner & assertion configuration
 ```
+
+#### 📌 Root Scripts & Core Configuration Files
+
+| File | Type | Description |
+| :--- | :--- | :--- |
+| [`dev.sh`](dev.sh) | Shell Script | **Local Dev & Ops Manager**: Supports concurrent backend/frontend startup, hot reload, foreground/daemon modes, environment detection, and graceful process management. |
+| [`prebuild-sandbox.sh`](prebuild-sandbox.sh) | Shell Script | **Docker Sandbox Prebuild**: Pulls and builds the isolated Python 3.11 security code-execution sandbox image in advance to accelerate Agent tool executions. |
+| [`env.example`](env.example) | Config Template | **Global Environment Template**: Covers MySQL/PostgreSQL, Redis Stack, JWT/encryption keys, LLM API keys, and platform ports. |
+| [`requirements.txt`](requirements.txt) | Dependencies | **Backend Python Dependencies**: Core runtime packages for Python 3.11 (FastAPI, AgentScope, SQLAlchemy, Redis, etc.). |
+| [`pytest.ini`](pytest.ini) | Test Config | **Pytest Test Configuration**: Rules for test discovery, async test markers, logging, and test execution behavior. |
+
 
 ---
 
@@ -311,6 +341,19 @@ If you have any questions, feature suggestions, or need further technical update
 </table>
 
 Scan the group QR code to get a free platform trial account and access URL.
+
+---
+
+## 💖 Sponsor & Support
+
+NanZi AI Agent Platform is fully open-source and continuously evolving. If this project helps you in your learning, work, or production deployment, feel free to buy the author a cup of coffee ☕!
+
+Your generous support is the greatest encouragement to keep improving architecture, releasing new capabilities, and maintaining the open-source community. Thank you for supporting open source!
+
+<div align="center">
+  <img src="docs/images/donate.png" alt="Sponsor QR Code" width="220" /><br/>
+  <sub>WeChat Sponsor (Randy Chen)</sub>
+</div>
 
 ---
 

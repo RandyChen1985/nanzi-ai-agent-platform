@@ -883,7 +883,10 @@ class AgentManagerService:
         agent.sort_order = data.sort_order if data.sort_order is not None else agent.sort_order
         
         if is_admin and data.is_system is not None:
-            agent.is_system = data.is_system
+            if _is_main_general_agent_record(agent):
+                agent.is_system = True
+            else:
+                agent.is_system = data.is_system
             
         if data.is_enabled is not None:
             agent.is_enabled = data.is_enabled
