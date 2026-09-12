@@ -191,7 +191,7 @@
 
       <!-- Main Chat Area -->
       <div
-        class="flex-1 overflow-y-auto overflow-x-hidden p-3 sm:p-4 space-y-4 sm:space-y-6 w-full max-w-full min-w-0"
+        class="flex-1 overflow-y-auto overflow-x-hidden px-3 sm:px-4 pt-3 sm:pt-4 pb-1 sm:pb-1.5 space-y-4 sm:space-y-6 w-full max-w-full min-w-0"
         ref="messagesContainer"
         @scroll="handleScroll"
       >
@@ -1135,65 +1135,66 @@
         @open-grounding-settings="showSettings = true"
       >
         <template #banner>
-          <div class="mx-3 mt-2">
-            <div
-              v-if="selectedReusableResultId"
-              class="mb-2 flex items-center justify-between gap-2 rounded-lg border border-primary/20 bg-primary/5 px-3 py-2 text-xs text-primary dark:bg-primary/10"
+          <div
+            v-if="selectedReusableResultId"
+            class="mx-3 mt-2 mb-2 flex items-center justify-between gap-2 rounded-lg border border-primary/20 bg-primary/5 px-3 py-2 text-xs text-primary dark:bg-primary/10"
+          >
+            <span class="truncate">已选择可复用结果，发送后将优先使用上一轮数据</span>
+            <button
+              type="button"
+              class="shrink-0 font-semibold hover:underline"
+              @click="selectedReusableResultId = null"
             >
-              <span class="truncate">已选择可复用结果，发送后将优先使用上一轮数据</span>
-              <button
-                type="button"
-                class="shrink-0 font-semibold hover:underline"
-                @click="selectedReusableResultId = null"
+              取消
+            </button>
+          </div>
+          <div v-if="activeTodoTimeline" class="mx-3 mt-2">
+            <ChatTodoCard :timeline="activeTodoTimeline" />
+          </div>
+          <div
+            v-if="sandboxDegradedMessage || showSandboxWorkspaceControl || showBashBanner"
+            class="mx-3 mt-2"
+          >
+            <Transition name="bash-banner-fade">
+              <div
+                v-if="sandboxDegradedMessage"
+                role="status"
+                class="mb-2 flex items-start justify-between gap-2 rounded-xl border border-amber-200 bg-amber-50/90 px-3 py-2 text-xs text-amber-900 dark:border-amber-500/30 dark:bg-amber-950/40 dark:text-amber-100"
               >
-                取消
-              </button>
-            </div>
-            <div v-if="activeTodoTimeline">
-              <ChatTodoCard :timeline="activeTodoTimeline" />
-            </div>
-            <div class="mt-2">
-              <Transition name="bash-banner-fade">
-                <div
-                  v-if="sandboxDegradedMessage"
-                  role="status"
-                  class="mb-2 flex items-start justify-between gap-2 rounded-xl border border-amber-200 bg-amber-50/90 px-3 py-2 text-xs text-amber-900 dark:border-amber-500/30 dark:bg-amber-950/40 dark:text-amber-100"
-                >
-                  <div class="flex items-start gap-2 min-w-0">
-                    <span class="font-semibold shrink-0">⚠ 沙箱降级</span>
-                    <span class="text-amber-800/90 dark:text-amber-200/80 break-words">{{ sandboxDegradedMessage }}</span>
-                  </div>
-                  <button
-                    type="button"
-                    class="shrink-0 rounded px-1 text-amber-600/90 hover:text-amber-700 dark:text-amber-300/80 dark:hover:text-amber-200"
-                    title="隐藏提示"
-                    @click="dismissSandboxDegraded"
-                  >
-                    ×
-                  </button>
+                <div class="flex items-start gap-2 min-w-0">
+                  <span class="font-semibold shrink-0">⚠ 沙箱降级</span>
+                  <span class="text-amber-800/90 dark:text-amber-200/80 break-words">{{ sandboxDegradedMessage }}</span>
                 </div>
-              </Transition>
-              <Transition name="bash-banner-fade">
-                <DockerWorkspaceBanner
-                  v-if="showSandboxWorkspaceControl"
-                  :workspace-status="sandboxWorkspaceStatus"
-                  :workspace-error="sandboxWorkspaceError"
-                  :container-id="sandboxWorkspaceInstanceId"
-                  :backend="sandboxBackend"
-                  @start="ensureSandboxWorkspace"
-                  @refresh="refreshSandboxWorkspaceStatus"
-                  @close="dismissSandboxWorkspaceBanner"
-                />
-              </Transition>
-              <Transition name="bash-banner-fade">
-                <BashEnvBanner
-                  v-if="showBashBanner"
-                  :env="bashBannerEnv!"
-                  @dismiss="bashBannerDismissed = true"
-                  @ignore="handleIgnoreBashBanner"
-                />
-              </Transition>
-            </div>
+                <button
+                  type="button"
+                  class="shrink-0 rounded px-1 text-amber-600/90 hover:text-amber-700 dark:text-amber-300/80 dark:hover:text-amber-200"
+                  title="隐藏提示"
+                  @click="dismissSandboxDegraded"
+                >
+                  ×
+                </button>
+              </div>
+            </Transition>
+            <Transition name="bash-banner-fade">
+              <DockerWorkspaceBanner
+                v-if="showSandboxWorkspaceControl"
+                :workspace-status="sandboxWorkspaceStatus"
+                :workspace-error="sandboxWorkspaceError"
+                :container-id="sandboxWorkspaceInstanceId"
+                :backend="sandboxBackend"
+                @start="ensureSandboxWorkspace"
+                @refresh="refreshSandboxWorkspaceStatus"
+                @close="dismissSandboxWorkspaceBanner"
+              />
+            </Transition>
+            <Transition name="bash-banner-fade">
+              <BashEnvBanner
+                v-if="showBashBanner"
+                :env="bashBannerEnv!"
+                @dismiss="bashBannerDismissed = true"
+                @ignore="handleIgnoreBashBanner"
+              />
+            </Transition>
           </div>
         </template>
       </ChatInput>
@@ -8983,8 +8984,18 @@ onUnmounted(() => {
 :deep(.markdown-body p) {
   margin-bottom: 1em;
 }
-:deep(.markdown-body p:last-child) {
-  margin-bottom: 0;
+:deep(.markdown-body p:last-child),
+:deep(.markdown-body > :last-child),
+:deep(.markdown-body ul:last-child),
+:deep(.markdown-body ol:last-child),
+:deep(.markdown-body blockquote:last-child),
+:deep(.markdown-body pre:last-child),
+:deep(.markdown-body .markdown-table-scroll:last-child) {
+  margin-bottom: 0 !important;
+}
+:deep(.markdown-body ul:last-child > li:last-child),
+:deep(.markdown-body ol:last-child > li:last-child) {
+  margin-bottom: 0 !important;
 }
 :deep(.markdown-body h1, .markdown-body h2, .markdown-body h3) {
   font-weight: 600;
@@ -9239,6 +9250,7 @@ onUnmounted(() => {
   border-color: transparent !important;
   border-left-color: transparent !important;
   padding-left: 0.75rem !important;
+  padding-bottom: 0.125rem !important;
   box-shadow: none !important;
 }
 :deep(.markdown-body .markdown-table-scroll) {
@@ -9249,7 +9261,12 @@ onUnmounted(() => {
   border-radius: 10px;
   margin: 1em 0;
   background: #ffffff;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
   -webkit-overflow-scrolling: touch;
+}
+:deep(.markdown-body .markdown-table-scroll:last-child),
+:deep(.markdown-body > .markdown-table-scroll:last-child) {
+  margin-bottom: 0 !important;
 }
 :deep(.markdown-body table) {
   display: table;
