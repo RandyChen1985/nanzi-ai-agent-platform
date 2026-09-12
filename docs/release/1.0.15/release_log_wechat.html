@@ -1,0 +1,372 @@
+<!--
+  微信公众号排版 HTML — NanZi AI 智能体平台 v1.0.15.0
+  风格：深蓝渐变科技风 / 现代化精编版（卡片式阴影、微渐变、导读浅析）
+  使用说明：
+  1. 复制下方 <section> 内全部内容，粘贴到微信公众平台编辑器「HTML」模式（或 135/秀米 等排版工具）
+  2. 封面图可在微信公众号后台直接使用 docs/release/1.0.15/release-cover-info.md 中的素材生成
+  3. 全部采用内联 style 样式，兼容微信图文防洗稿规范
+-->
+
+<section style="box-sizing:border-box;max-width:760px;margin:0 auto;padding:0 2px;font-size:16px;color:#3f3f3f;line-height:1.8;letter-spacing:0.5px;text-align:justify;font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue','PingFang SC','Hiragino Sans GB','Microsoft YaHei',Arial,sans-serif;word-break:break-word;overflow-wrap:break-word;">
+
+  <!-- 标题区：科技感深蓝微渐变 -->
+  <section style="margin:0 0 28px 0;padding:28px 18px 24px 18px;background:linear-gradient(135deg,#060c1f 0%,#0a1628 48%,#0d2040 100%);box-shadow:0 4px 24px rgba(56,189,248,0.15);border-radius:4px;text-align:left;">
+    <p style="margin:0 0 6px 0;font-size:12px;font-weight:normal;color:#93c5fd;line-height:1.4;letter-spacing:2px;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">NANZI · RELEASE NOTES</p>
+    <p style="margin:0 0 10px 0;font-size:22px;font-weight:bold;color:#fafaf9;line-height:1.45;letter-spacing:0.5px;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">NanZi 开源智能体平台 v1.0.15.0</p>
+    <p style="margin:0;font-size:14px;font-weight:normal;color:#cbd5e1;line-height:1.7;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">Kubernetes 安全沙箱 · 按需惰性拉起 · 稳定前缀 KV Cache · 元数据物理巡检与整表下线 · 2FA 双因素认证</p>
+  </section>
+
+  <!-- 项目声明 -->
+  <section style="margin:0 0 22px 0;padding:0 0 18px 0;border-bottom:1px solid #e2e8f0;">
+    <p style="margin:0 0 10px 0;font-size:13px;font-weight:bold;color:#0f172a;line-height:1.5;letter-spacing:1px;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">项目声明</p>
+    <p style="margin:0 0 8px 0;font-size:14px;color:#475569;line-height:1.85;text-align:justify;">
+      本项目为<strong style="color:#0f172a;">个人开源</strong>，供自由学习交流，遵循 MIT 开源协议，可自由分发与商用。
+    </p>
+    <p style="margin:0;font-size:14px;color:#475569;line-height:1.85;text-align:justify;">
+      「NanZi」取自我常用的网名「南孜」，寓「孜孜不倦」——持续学习、持续打磨生产级 AI 智能体技术栈。
+    </p>
+  </section>
+
+  <!-- 仓库链接 -->
+  <section style="margin:0 0 22px 0;padding:12px 0 12px 14px;border-left:3px solid #0284c7;background:#f0f9ff;border-radius:0 4px 4px 0;">
+    <p style="margin:0;font-size:14px;color:#0369a1;line-height:1.7;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+      <strong style="color:#0c4a6e;">GitHub：</strong>
+      <a href="https://github.com/RandyChen1985/nanzi-ai-agent-platform" style="color:#0284c7;text-decoration:underline;word-break:break-all;">RandyChen1985/nanzi-ai-agent-platform</a>
+    </p>
+  </section>
+
+  <!-- 导语 -->
+  <section style="margin:0 0 28px 0;">
+    <p style="margin:0 0 14px 0;font-size:15px;color:#1e293b;line-height:1.9;">
+      NanZi 开源智能体平台正式发布 <strong style="color:#0f172a;">v1.0.15.0</strong> 版本！作为一次极具工业级分量的核心架构演进，本版本聚焦于<strong>生产级沙箱隔离、零冗余容器调度、提示词认知防线加固、数据治理闭环与企业级安全合规</strong>。
+    </p>
+    <p style="margin:0 0 14px 0;font-size:15px;color:#1e293b;line-height:1.9;">
+      我们重磅带来了四大里程碑式突破：正式支持<strong>Kubernetes 原生 Pod 安全沙箱策略与 Web 终端</strong>；彻底重构 Docker / K8s 沙箱为<strong>按需惰性拉起机制（Lazy Sandbox）</strong>，未调 Bash 绝不启动容器，配合执行时间线 500ms 动态跳秒实现丝滑体感；全面升级<strong>Prompt Cache 稳定前缀架构与真实结果优先防编造专节</strong>；全面落地<strong>元数据物理结构巡检、缺失表一键下线与全链路 Changelog 审计 Diff</strong>；并全量接入了<strong>等保三级密码合规、2FA 双因素认证、飞书 Schema 2.0 卡片通知与 10 万行级 ChatBI 数据明细导出</strong>！
+    </p>
+    <p style="margin:0;font-size:14px;color:#64748b;line-height:1.75;">
+      本次变更自 <code style="font-size:12px;background:#f1f5f9;padding:2px 6px;border-radius:3px;color:#334155;">4f004dff</code> 至 <code style="font-size:12px;background:#f1f5f9;padding:2px 6px;border-radius:3px;color:#334155;">40098a61</code>，共 <strong>118 个提交</strong>（105 个非 Merge 提交），变更 <strong>268 个文件</strong>，<strong>34,004 行新增</strong>。
+    </p>
+  </section>
+
+  <!-- 章节一：核心更新亮点 -->
+  <section style="margin:0 0 32px 0;">
+    <p style="margin:0 0 16px 0;padding:0 0 7px 12px;border-left:4px solid #0284c7;border-bottom:1px solid #e0f2fe;font-size:18px;font-weight:bold;color:#0f172a;line-height:1.4;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+      🚀 核心更新亮点 (Key Features)
+    </p>
+
+    <!-- 1. Kubernetes 原生 Pod 安全沙箱策略与自动化运维体系 -->
+    <section style="margin:0 0 20px 0;padding:18px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:4px;">
+      <p style="margin:0 0 10px 0;font-size:16px;font-weight:bold;color:#0f172a;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        1. ☸️ Kubernetes 原生 Pod 安全沙箱策略与企业级自动化运维体系
+      </p>
+      <ul style="margin:0 0 12px 0;padding-left:20px;font-size:14px;color:#334155;line-height:1.8;">
+        <li><strong style="color:#0f172a;">Kubernetes 原生安全 Pod 运行时</strong>：智能体执行 Bash 命令行任务时，在 Kubernetes 专用命名空间内动态拉起独立 Pod，实现进程、网络、存储及计算资源的强物理边界隔离。</li>
+        <li><strong style="color:#0f172a;">平台 ServiceAccount 绑定最小 RBAC 权限</strong>：Kustomize 原生纳管与自动化部署，严格限制 Pod 操作权限，完美适配企业多租户隔离与资源配额（Quota）管控。</li>
+        <li><strong style="color:#0f172a;">对等 kubectl exec 的「进入 Pod」Web 终端</strong>：输入框浮标内集成双协议 Web 终端，直连 Kubernetes CoreV1 API 的 WebSocket SPDY 子协议，开发者可一键进入 Pod 内部排查依赖与命令执行。</li>
+        <li><strong style="color:#0f172a;">全流程运维脚本与镜像构建体系</strong>：新增 <code style="font-size:12px;background:#e2e8f0;padding:2px 4px;border-radius:2px;">k8s_deploy/nanzi-k8s.sh health</code> 一键体检、重启二次确认与强制杀死命令；<code style="font-size:12px;background:#e2e8f0;padding:2px 4px;border-radius:2px;">k8s_deploy/install.sh</code> 交互意图选择支持 <code style="font-size:12px;background:#e2e8f0;padding:2px 4px;border-radius:2px;">q</code> 安全退出并修复 ANSI 彩色乱码；系统配置页提供预置沙箱镜像一键构建引导弹窗（containerd 与 K3s 双环境一键切换）。</li>
+      </ul>
+      <p style="margin:0 0 8px 0;padding:10px 12px;background:#eff6ff;border-left:3px solid #3b82f6;color:#1e40af;font-size:13px;line-height:1.8;">
+        <strong>简单说</strong>：平台不仅能在宿主机 Docker 跑沙箱，现在还可以直接接入公司的 Kubernetes 集群！智能体每次跑命令都会在 K8s 里面拉起独立 Pod，自带安全 RBAC 和 Web 网页终端，运维还有一键体检脚本，生产部署稳如磐石。
+      </p>
+      <section style="margin:8px 0 0 0;padding:16px;background:#ffffff;border:1px dashed #cbd5e1;border-radius:4px;text-align:center;color:#64748b;font-size:13px;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        <p style="margin:0 0 4px 0;font-size:18px;">📷</p>
+        <p style="margin:0;">【示例截图占位】：Kubernetes 沙箱 Pod 状态浮标与「进入 Pod」Web 终端交互</p>
+      </section>
+    </section>
+
+    <!-- 2. 沙箱架构革新：按需惰性拉起（Lazy Sandbox）与全层级跳秒动效 -->
+    <section style="margin:0 0 20px 0;padding:18px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:4px;">
+      <p style="margin:0 0 10px 0;font-size:16px;font-weight:bold;color:#0f172a;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        2. ⚡ 沙箱架构革新：按需惰性拉起（Lazy Sandbox）与后台自动预热加载体系
+      </p>
+      <ul style="margin:0 0 12px 0;padding-left:20px;font-size:14px;color:#334155;line-height:1.8;">
+        <li><strong style="color:#0f172a;">按需惰性沙箱代理机制（Lazy Sandbox）</strong>：彻底颠覆打开会话无条件创建沙箱容器的高消耗模式。普通闲聊、知识库检索、查数或使用宿主文件工具（Read/Glob/Grep）时，<strong>沙箱绝不拉起，零容器开销</strong>；仅在真正调用 Bash 命令行工具时毫秒级按需拉起。</li>
+        <li><strong style="color:#0f172a;">会话打开静默自动预热加载与空闲回收（Auto-Warm & Idle Reclaim）</strong>：系统配置新增 <code style="font-size:12px;background:#e2e8f0;padding:2px 4px;border-radius:2px;">sandbox_auto_warm</code>（自动预热开关）与 <code style="font-size:12px;background:#e2e8f0;padding:2px 4px;border-radius:2px;">sandbox_idle_time</code>（空闲回收周期，<code style="font-size:12px;background:#e2e8f0;padding:2px 4px;border-radius:2px;">V153 / V54</code>，Docker 与 K8s 通用）。会话打开或新建后，后台自动发起一次静默预热加载；用户构思打字时容器 / Pod 已经在后台悄然就绪，后续调用 Bash 时<strong>直接秒级热态命中，零冷启动等待</strong>；超时无人使用时自动销毁回收，兼顾极速体感与算力节约。</li>
+        <li><strong style="color:#0f172a;">Bash 卡片节点动态挂载与进度推流</strong>：沙箱拉起进度（pending / success / error）通过独立 ID <code style="font-size:12px;background:#e2e8f0;padding:2px 4px;border-radius:2px;">workspace:sandbox:&lt;bash_id&gt;</code> 精准挂载至当前 Bash 卡片下方，避免进度漂移；拉起时推送 Info Toast，就绪后推送 Success Toast 并即时刷新状态。</li>
+      </ul>
+      <p style="margin:0 0 8px 0;padding:10px 12px;background:#eff6ff;border-left:3px solid #3b82f6;color:#1e40af;font-size:13px;line-height:1.8;">
+        <strong>简单说</strong>：不想让服务器白白开着一堆空容器，但又不想等命令执行时冷启动？NanZi 既支持“不调用 Bash 就绝不拉起沙箱”的惰性节约模式，又支持“进会话后台静默预热加载”——你在打字时沙箱就在后台悄悄准备好了，发出去直接秒执行，长时间不用还会自动回收！
+      </p>
+      <section style="margin:8px 0 0 0;padding:16px;background:#ffffff;border:1px dashed #cbd5e1;border-radius:4px;text-align:center;color:#64748b;font-size:13px;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        <p style="margin:0 0 4px 0;font-size:18px;">📷</p>
+        <p style="margin:0;">【示例截图占位】：执行时间线卡片内沙箱按需拉起进度与状态指示</p>
+      </section>
+    </section>
+
+    <!-- 3. 提示词缓存与防编造体系：响应秒级直出、成本暴降与杜绝瞎编 -->
+    <section style="margin:0 0 20px 0;padding:18px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:4px;">
+      <p style="margin:0 0 10px 0;font-size:16px;font-weight:bold;color:#0f172a;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        3. 🧠 提示词缓存与防编造升级：首字秒级直出、成本狂降 80%~90%、杜绝凭空瞎编
+      </p>
+      <ul style="margin:0 0 12px 0;padding-left:20px;font-size:14px;color:#334155;line-height:1.8;">
+        <li>
+          ⚡ <strong style="color:#0f172a;">首字毫秒级直出，告别漫长转圈等待</strong>：
+          以往多轮对话或复杂智能体任务中，大模型每次都要重复阅读成千上万字的通用规则与工具说明，等待时间较长。新版引入前缀缓存（Prompt Cache）技术，将固定的基础规则提前预热复用，<strong>首字响应时间（TTFT）缩短 70% 以上</strong>，提问秒响应！
+        </li>
+        <li>
+          💰 <strong style="color:#0f172a;">Token 成本暴降 80%~90%，企业调用越聊越省</strong>：
+          全面接入主流大模型（DeepSeek、Claude、GPT-4o 等）的上下文缓存计费优惠。命中缓存的前缀内容计费直降至常规费用的 <strong>10%~20%</strong>，无论是长任务执行还是企业多人高频使用，累计消耗成本断崖式下降。
+        </li>
+        <li>
+          🎯 <strong style="color:#0f172a;">真实结果优先铁律，彻底杜绝张嘴瞎编</strong>：
+          强化系统防编造准则。当询问网址连通性、HTTP 状态码、响应耗时或服务器状态等客观指标时，<strong>AI 必须真正调用工具获取真实结果后才能作答</strong>；严禁凭空编造“假装成功”的虚假数据，查不到就如实说明，回答真实可信。
+        </li>
+      </ul>
+      <p style="margin:0 0 8px 0;padding:10px 12px;background:#eff6ff;border-left:3px solid #3b82f6;color:#1e40af;font-size:13px;line-height:1.8;">
+        <strong>简单说</strong>：就像去餐厅点餐，大厨把常用的底汤高汤提前熬好备用，不仅<strong>上菜快如闪电</strong>、<strong>账单直接打两折</strong>，而且立下了新规矩：<strong>绝不缺斤少两、绝不胡说八道</strong>，查到的才是真的！
+      </p>
+    </section>
+
+    <!-- 4. 元数据管理智能体检与自动同步：删表一键下线、改动红绿留痕、查数自动纠错 -->
+    <section style="margin:0 0 20px 0;padding:18px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:4px;">
+      <p style="margin:0 0 10px 0;font-size:16px;font-weight:bold;color:#0f172a;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        4. 🏢 元数据管理智能体检与自动同步：删表一键下线、改动红绿留痕、查数自动纠错
+      </p>
+      <ul style="margin:0 0 12px 0;padding-left:20px;font-size:14px;color:#334155;line-height:1.8;">
+        <li>
+          🔍 <strong style="color:#0f172a;">数据库定时自动“体检”，删表精准识别与一键下线</strong>：
+          业务数据库常有调整，一旦某张表在后台被删除，AI 查数就会频频报错。新版支持系统后台自动定时体检，精准捕捉“已被删除的失效表”，管理员只需在界面上<strong>一键安全下线</strong>，同时自动清理关联历史告警，再也不留任何冗余隐患。
+        </li>
+        <li>
+          🔄 <strong style="color:#0f172a;">字段类型变动一键智能同步，告别手工重新配置</strong>：
+          数据库字段改了格式或增减了列？系统自动扫描出所有不一致的地方，支持点击【一键同步全部差异】，平台元数据与底层向量知识库自动联动刷新，省去大量人工对表改配置的繁琐工作。
+        </li>
+        <li>
+          📋 <strong style="color:#0f172a;">改动全链路红绿对比留痕，操作审计一目了然</strong>：
+          谁在什么时间下线了哪张表、改动了哪个字段、因为什么原因修改，系统均自动生成清晰的<strong>红绿色对比记录</strong>（就像合同改动标注一样直观），权责清晰，满足企业级审计与安全合规要求。
+        </li>
+        <li>
+          🛡️ <strong style="color:#0f172a;">智能查数更聪明，遇字段过时自动剔除重查</strong>：
+          在 ChatBI 智能取数分析时，若恰好遇到数据库刚刚下线或改名的过时字段，AI 不再直接弹出红色报错让用户不知所措，而是<strong>自动识别并剔除失效字段，无感自动重试查出正确结果</strong>。
+        </li>
+      </ul>
+      <p style="margin:0 0 8px 0;padding:10px 12px;background:#eff6ff;border-left:3px solid #3b82f6;color:#1e40af;font-size:13px;line-height:1.8;">
+        <strong>简单说</strong>：后台数据库变动了，平台以前“蒙在鼓里”导致查数报错；现在不仅能<strong>天天自动体检发现失效表并一键下线</strong>，改了字段点一下就能自动同步，查数据遇到废弃字段还能<strong>自动纠错把正确答案查出来</strong>！
+      </p>
+      <section style="margin:8px 0 0 0;padding:16px;background:#ffffff;border:1px dashed #cbd5e1;border-radius:4px;text-align:center;color:#64748b;font-size:13px;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        <p style="margin:0 0 4px 0;font-size:18px;">📷</p>
+        <p style="margin:0;">【示例截图占位】：元数据 Schema 差异治理抽屉与物理缺失表一键下线</p>
+      </section>
+    </section>
+
+    <!-- 5. 企业级身份安全与合规防护：等保三级密码合规与 2FA 双因素认证 -->
+    <section style="margin:0 0 20px 0;padding:18px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:4px;">
+      <p style="margin:0 0 10px 0;font-size:16px;font-weight:bold;color:#0f172a;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        5. 🔐 企业级身份安全与合规防护：等保三级密码合规与 2FA 双因素认证
+      </p>
+      <ul style="margin:0 0 12px 0;padding-left:20px;font-size:14px;color:#334155;line-height:1.8;">
+        <li><strong style="color:#0f172a;">等保三级密码复杂度校验</strong>：强制密码必须包含大小写字母、数字与特殊字符，长度不低于 8 位；支持配置密码修改周期（如 90 天）及多触点到期提醒。</li>
+        <li><strong style="color:#0f172a;">2FA 双因素身份验证全链路接入（TOTP）</strong>：支持 Google Authenticator / 微软验证器等移动应用；个人中心提供二维码绑定向导；登录支持动态口令挑战；用户列表外显 2FA 锁徽标，支持管理员应急解绑。</li>
+        <li><strong style="color:#0f172a;">API Key 重置与登录时间精确记录</strong>：支持用户自主重置 API Key；记录并展示用户上次登录的精确时间与 IP 来源。</li>
+      </ul>
+      <p style="margin:0 0 8px 0;padding:10px 12px;background:#eff6ff;border-left:3px solid #3b82f6;color:#1e40af;font-size:13px;line-height:1.8;">
+        <strong>简单说</strong>：全面对齐企业等保三级安全合规标准，手机验证器动态码扫码即用，密码定期到期提醒，账号安全等级直上一个大台阶。
+      </p>
+      <section style="margin:8px 0 0 0;padding:16px;background:#ffffff;border:1px dashed #cbd5e1;border-radius:4px;text-align:center;color:#64748b;font-size:13px;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        <p style="margin:0 0 4px 0;font-size:18px;">📷</p>
+        <p style="margin:0;">【示例截图占位】：个人中心 2FA 动态口令绑定向导与等保三级密码策略交互</p>
+      </section>
+    </section>
+
+    <!-- 6. 飞书群机器人 Schema 2.0 接入与多渠道通知体系 -->
+    <section style="margin:0 0 20px 0;padding:18px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:4px;">
+      <p style="margin:0 0 10px 0;font-size:16px;font-weight:bold;color:#0f172a;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        6. 📢 消息通知全域互通：飞书群机器人 Schema 2.0 升级与多渠道通知体系
+      </p>
+      <ul style="margin:0 0 12px 0;padding-left:20px;font-size:14px;color:#334155;line-height:1.8;">
+        <li>
+          🐦 <strong style="color:#0f172a;">飞书群自定义机器人接入，升级 Schema 2.0 交互式卡片</strong>：
+          告别单调纯文本，全面拥抱飞书官方最新 <strong>Schema 2.0 交互式卡片协议</strong>！智能体推送的消息自带商务蓝专属标题栏、优雅 Markdown 富文本排版与代码高亮，同时支持 HMAC-SHA256 签名密钥加密校验，杜绝恶意伪造与消息重放，手机端与电脑端阅读体验极佳。
+        </li>
+        <li>
+          🌐 <strong style="color:#0f172a;">NanZi 平台现已支持的 5 大主流通知渠道一览</strong>：
+          平台打造了完整的企业触达矩阵，定时任务执行完毕、数据巡检发现异常或长任务需要汇报时，AI 可自主选择最合适的渠道秒级触达：
+          <ul style="margin:6px 0 6px 0;padding-left:18px;color:#475569;">
+            <li><strong>① 飞书群机器人</strong>：支持 Webhook + 秘钥安全加签，Schema 2.0 交互式卡片排版。</li>
+            <li><strong>② 钉钉群机器人</strong>：支持 Webhook + 签名秘钥加签校验，支持 Markdown 消息推送。</li>
+            <li><strong>③ 企业微信群机器人</strong>：支持 Webhook 机器人，一键推送到企业微信项目群。</li>
+            <li><strong>④ 电子邮箱（Email）</strong>：支持标准 SMTP/SSL 安全协议，关键报告图文直达工作邮箱。</li>
+            <li><strong>⑤ 平台内置站内信</strong>：系统右上角消息铃铛通知中心，支持多级告警提示与已读管理。</li>
+          </ul>
+        </li>
+        <li>
+          🔒 <strong style="color:#0f172a;">凭证统一托管与静默分发，AI 绝不索要私密 Webhook</strong>：
+          用户仅需在【个人中心 → 消息通知】一次性配置各渠道凭证，敏感秘钥脱敏加密保护。智能体执行“把结果通知我”时，底层自动静默装配分发，无需每次在聊天框重复索要或泄漏私密地址。
+        </li>
+      </ul>
+      <p style="margin:0 0 8px 0;padding:10px 12px;background:#eff6ff;border-left:3px solid #3b82f6;color:#1e40af;font-size:13px;line-height:1.8;">
+        <strong>简单说</strong>：无论贵司日常办公使用<strong>飞书、钉钉、企微还是邮件</strong>，NanZi 都能第一时间把智能体的运行结果准确报送！特别是飞书群消息，升级成了大厂同款的高颜值卡片，排版美观、安全防伪，手机一瞥便知结果。
+      </p>
+      <section style="margin:8px 0 0 0;padding:16px;background:#ffffff;border:1px dashed #cbd5e1;border-radius:4px;text-align:center;color:#64748b;font-size:13px;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        <p style="margin:0 0 4px 0;font-size:18px;">📷</p>
+        <p style="margin:0;">【示例截图占位】：飞书群机器人 Schema 2.0 交互式卡片在群内的实际渲染效果</p>
+      </section>
+    </section>
+
+    <!-- 7. 更多综合特性集锦 -->
+    <section style="margin:0 0 20px 0;padding:18px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:4px;">
+      <p style="margin:0 0 10px 0;font-size:16px;font-weight:bold;color:#0f172a;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        7. 🌟 更多企业级硬核特性与综合体验打磨
+      </p>
+      <ul style="margin:0 0 12px 0;padding-left:20px;font-size:14px;color:#334155;line-height:1.8;">
+        <li><strong style="color:#0f172a;">ChatBI 完整明细导出通道</strong>：新增专属直连导出端点，绕过大模型 Token 层直取全量数据，支持 Excel / CSV / Markdown 三格式，上限高达 10 万行，生成限时签名下载直链。</li>
+        <li><strong style="color:#0f172a;">Main 兜底主专家双端锁定与委派合体</strong>：主专家锁定系统状态防篡改；时间线委派智能体二合一合并，过滤心跳日志，步骤更清晰。</li>
+        <li><strong style="color:#0f172a;">我的工作台全新改版</strong>：支持常用智能体置顶 Pin 收藏、个人资产专属立体微图标与深色模式（Dark Mode）全量适配。</li>
+        <li><strong style="color:#0f172a;">分布式系统加固</strong>：高频审计日志迁移 Redis 共享异步队列落库；系统定时任务补齐分布式锁防多节点重复触发；数据库迁移脚本重载 Warning 消除虚假报错堆栈。</li>
+      </ul>
+      <section style="margin:8px 0 0 0;padding:16px;background:#ffffff;border:1px dashed #cbd5e1;border-radius:4px;text-align:center;color:#64748b;font-size:13px;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        <p style="margin:0 0 4px 0;font-size:18px;">📷</p>
+        <p style="margin:0;">【示例截图占位】：ChatBI 10 万行明细下载与工作台常用智能体置顶 Pin 交互展示</p>
+      </section>
+    </section>
+
+  </section>
+
+  <!-- 章节二：数据库升级说明 -->
+  <section style="margin:0 0 32px 0;">
+    <p style="margin:0 0 16px 0;padding:0 0 7px 12px;border-left:4px solid #0284c7;border-bottom:1px solid #e0f2fe;font-size:18px;font-weight:bold;color:#0f172a;line-height:1.4;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+      🗄️ 数据库表结构变更说明 (Database Migrations)
+    </p>
+    <p style="margin:0 0 14px 0;font-size:14px;color:#475569;line-height:1.8;">
+      本版本共包含 <strong style="color:#0f172a;">9 组双数据库同步迁移脚本</strong>（MySQL <code style="font-size:12px;background:#f1f5f9;padding:2px 4px;border-radius:2px;">V146 ~ V154</code> / PostgreSQL <code style="font-size:12px;background:#f1f5f9;padding:2px 4px;border-radius:2px;">V47 ~ V55</code>），所有脚本均支持幂等安全执行：
+    </p>
+
+    <p style="margin:0 0 8px 0;font-size:12px;color:#64748b;">
+      📱 <em>注：移动端支持左右手势滑动查看完整表格</em>
+    </p>
+
+    <div style="overflow-x:auto;-webkit-overflow-scrolling:touch;margin:0 0 14px 0;border:1px solid #e2e8f0;border-radius:6px;box-shadow:0 1px 2px rgba(0,0,0,0.03);background:#ffffff;">
+      <table style="min-width:540px;width:100%;border-collapse:collapse;font-size:13px;color:#334155;">
+        <thead>
+          <tr style="background:#f1f5f9;border-bottom:1px solid #cbd5e1;text-align:left;">
+            <th style="padding:10px 14px;font-weight:bold;color:#0f172a;white-space:nowrap;">版本序号 (MySQL / PG)</th>
+            <th style="padding:10px 14px;font-weight:bold;color:#0f172a;min-width:180px;">主要变更内容</th>
+            <th style="padding:10px 14px;font-weight:bold;color:#0f172a;white-space:nowrap;">涉及表 / 配置项</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr style="border-bottom:1px solid #e2e8f0;">
+            <td style="padding:9px 14px;font-family:monospace;color:#0284c7;white-space:nowrap;">V146 / V47</td>
+            <td style="padding:9px 14px;">新增用户 2FA 双因素身份验证支持</td>
+            <td style="padding:9px 14px;font-family:monospace;font-size:12px;white-space:nowrap;">sys_users.two_factor_*</td>
+          </tr>
+          <tr style="border-bottom:1px solid #e2e8f0;background:#f8fafc;">
+            <td style="padding:9px 14px;font-family:monospace;color:#0284c7;white-space:nowrap;">V147 / V48</td>
+            <td style="padding:9px 14px;">新增隐藏登录 API Key 配置项</td>
+            <td style="padding:9px 14px;font-family:monospace;font-size:12px;white-space:nowrap;">hide_login_apikey</td>
+          </tr>
+          <tr style="border-bottom:1px solid #e2e8f0;">
+            <td style="padding:9px 14px;font-family:monospace;color:#0284c7;white-space:nowrap;">V148 / V49</td>
+            <td style="padding:9px 14px;">新增密码修改时间与密码周期策略</td>
+            <td style="padding:9px 14px;font-family:monospace;font-size:12px;white-space:nowrap;">sys_users.password_updated_at</td>
+          </tr>
+          <tr style="border-bottom:1px solid #e2e8f0;background:#f8fafc;">
+            <td style="padding:9px 14px;font-family:monospace;color:#0284c7;white-space:nowrap;">V149 / V50</td>
+            <td style="padding:9px 14px;">新增用户最后登录精确时间记录</td>
+            <td style="padding:9px 14px;font-family:monospace;font-size:12px;white-space:nowrap;">sys_users.last_login_at</td>
+          </tr>
+          <tr style="border-bottom:1px solid #e2e8f0;">
+            <td style="padding:9px 14px;font-family:monospace;color:#0284c7;white-space:nowrap;">V150 / V51</td>
+            <td style="padding:9px 14px;">系统工具集注册飞书群自定义机器人通知</td>
+            <td style="padding:9px 14px;font-family:monospace;font-size:12px;white-space:nowrap;">feishu_group_notification</td>
+          </tr>
+          <tr style="border-bottom:1px solid #e2e8f0;background:#f8fafc;">
+            <td style="padding:9px 14px;font-family:monospace;color:#0284c7;white-space:nowrap;">V151 / V52</td>
+            <td style="padding:9px 14px;">新增提示词缓存布局与观测配置项</td>
+            <td style="padding:9px 14px;font-family:monospace;font-size:12px;white-space:nowrap;">prompt_cache_layout / mode</td>
+          </tr>
+          <tr style="border-bottom:1px solid #e2e8f0;">
+            <td style="padding:9px 14px;font-family:monospace;color:#0284c7;white-space:nowrap;">V152 / V53</td>
+            <td style="padding:9px 14px;">新增 Kubernetes 沙箱镜像与命名空间配置</td>
+            <td style="padding:9px 14px;font-family:monospace;font-size:12px;white-space:nowrap;">sandbox_k8s_image / ns</td>
+          </tr>
+          <tr style="border-bottom:1px solid #e2e8f0;background:#f8fafc;">
+            <td style="padding:9px 14px;font-family:monospace;color:#0284c7;white-space:nowrap;">V153 / V54</td>
+            <td style="padding:9px 14px;">新增沙箱自动预热与空闲回收配置项</td>
+            <td style="padding:9px 14px;font-family:monospace;font-size:12px;white-space:nowrap;">sandbox_auto_warm / idle_time</td>
+          </tr>
+          <tr>
+            <td style="padding:9px 14px;font-family:monospace;color:#0284c7;white-space:nowrap;">V154 / V55</td>
+            <td style="padding:9px 14px;">新建元数据 Schema 漂移异常告警持久化表</td>
+            <td style="padding:9px 14px;font-family:monospace;font-size:12px;white-space:nowrap;">meta_schema_drift_alerts</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p style="margin:0;font-size:13px;color:#64748b;line-height:1.7;">
+      💡 升级提示：MySQL 执行 <code style="font-size:12px;background:#f1f5f9;padding:2px 4px;border-radius:2px;">bash db-prod/apply-sql.sh</code>，PostgreSQL 执行 <code style="font-size:12px;background:#f1f5f9;padding:2px 4px;border-radius:2px;">bash db-prod-pg/apply-sql.sh</code> 即可平滑完成所有表结构与初始参数初始化。
+    </p>
+  </section>
+
+  <!-- 章节三：平滑升级指南 -->
+  <section style="margin:0 0 32px 0;">
+    <p style="margin:0 0 16px 0;padding:0 0 7px 12px;border-left:4px solid #0284c7;border-bottom:1px solid #e0f2fe;font-size:18px;font-weight:bold;color:#0f172a;line-height:1.4;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+      📖 平滑升级指南 (Upgrade Guide)
+    </p>
+    <p style="margin:0 0 10px 0;font-size:14px;color:#334155;line-height:1.8;">
+      遵循以下标准步骤即可平滑无缝升级至 <strong style="color:#0f172a;">v1.0.15.0</strong>：
+    </p>
+    <!-- 方式一：源码拉取升级 -->
+    <section style="margin:0 0 18px 0;padding:16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:4px;">
+      <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#0f172a;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        方式一：源码拉取升级（开发与虚机部署）
+      </p>
+      <section style="margin:0;padding:12px;background:#0f172a;border-radius:4px;color:#e2e8f0;font-family:Consolas,Monaco,monospace;font-size:12px;line-height:1.7;overflow-x:auto;-webkit-overflow-scrolling:touch;">
+        <p style="margin:0 0 4px 0;color:#94a3b8;"># 1. 同步拉取主分支最新代码</p>
+        <p style="margin:0 0 8px 0;color:#38bdf8;">git checkout main &amp;&amp; git pull origin main</p>
+        <p style="margin:0 0 4px 0;color:#94a3b8;"># 2. 执行数据库结构平滑迁移 (MySQL / PG)</p>
+        <p style="margin:0 0 8px 0;color:#38bdf8;">bash db-prod/apply-sql.sh  # PG 执行: bash db-prod-pg/apply-sql.sh</p>
+        <p style="margin:0 0 4px 0;color:#94a3b8;"># 3. 启动开发与编译环境</p>
+        <p style="margin:0;color:#38bdf8;">./dev.sh</p>
+      </section>
+    </section>
+
+    <!-- 方式二：Docker 容器化升级 -->
+    <section style="margin:0 0 18px 0;padding:16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:4px;">
+      <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#0f172a;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        方式二：Docker 容器化升级（生产环境推荐）
+      </p>
+      <section style="margin:0;padding:12px;background:#0f172a;border-radius:4px;color:#e2e8f0;font-family:Consolas,Monaco,monospace;font-size:12px;line-height:1.7;overflow-x:auto;-webkit-overflow-scrolling:touch;">
+        <p style="margin:0 0 4px 0;color:#94a3b8;"># 1. 执行数据库增量升级 (宿主或临时容器)</p>
+        <p style="margin:0 0 8px 0;color:#38bdf8;">bash db-prod/apply-sql.sh  # PG: bash db-prod-pg/apply-sql.sh</p>
+        <p style="margin:0 0 4px 0;color:#94a3b8;"># 2. 导入官方 Release 镜像归档（以 x86_64 为例）</p>
+        <p style="margin:0 0 8px 0;color:#38bdf8;">docker load -i nanzi-ai-agent_1.0.15.0_linux-amd64_*.tar</p>
+        <p style="margin:0 0 4px 0;color:#94a3b8;"># （或在本地自主构建镜像：cd docker &amp;&amp; ./build_linux_x86.sh 1.0.15.0）</p>
+        <p style="margin:0 0 8px 0;color:#94a3b8;"># 3. 重启容器服务</p>
+        <p style="margin:0;color:#38bdf8;">cd docker &amp;&amp; ./start-nanzi-ai-agent.sh</p>
+      </section>
+    </section>
+
+    <!-- 可选：Kubernetes 沙箱巡检 -->
+    <section style="margin:0 0 12px 0;padding:12px 14px;background:#f0f9ff;border-left:3px solid #0284c7;border-radius:0 4px 4px 0;">
+      <p style="margin:0 0 4px 0;font-size:13px;font-weight:bold;color:#0369a1;">
+        ☸️ 若启用 Kubernetes 原生 Pod 沙箱策略：
+      </p>
+      <p style="margin:0;font-size:12px;color:#0c4a6e;line-height:1.7;">
+        执行 <code style="font-size:12px;background:#e0f2fe;padding:2px 4px;border-radius:2px;">bash k8s_deploy/nanzi-k8s.sh health</code> 可一键体检 K8s 沙箱集群与命名空间权限，确保 Pod 调度网络与 Web 终端就绪。
+      </p>
+    </section>
+  </section>
+
+  <!-- 尾部寄语 -->
+  <section style="margin:0 0 28px 0;padding:20px;background:#f8fafc;border-left:4px solid #0284c7;border-radius:0 4px 4px 0;">
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#0f172a;line-height:1.6;">
+      筑牢企业智能体基座，拥抱自主智能体未来
+    </p>
+    <p style="margin:0;font-size:14px;color:#475569;line-height:1.85;">
+      从 Kubernetes 原生沙箱的生产落地，到按需惰性调度的零开销革命，NanZi 平台始终坚持工程落地的扎实严谨与前沿体验的极致追求。诚邀各位开发者星标 Star 支持我们，一同构建更强大的自主智能体生态！
+    </p>
+  </section>
+
+  <!-- 二维码 / 链接区 -->
+  <section style="margin:0 0 12px 0;text-align:center;">
+    <p style="margin:0 0 6px 0;font-size:13px;color:#64748b;">
+      欢迎访问 GitHub 仓库获取完整源码与文档：
+    </p>
+    <p style="margin:0;font-size:14px;font-weight:bold;">
+      <a href="https://github.com/RandyChen1985/nanzi-ai-agent-platform" style="color:#0284c7;text-decoration:none;">github.com/RandyChen1985/nanzi-ai-agent-platform</a>
+    </p>
+  </section>
+
+</section>
