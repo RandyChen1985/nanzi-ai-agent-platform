@@ -53,6 +53,23 @@ def test_workspace_prompt_distinguishes_tool_paths_from_user_delivery_paths():
     assert "最终展示给用户" in prompt
 
 
+def test_workspace_prompt_enforces_host_file_tools_and_docs_rules():
+    from app.services.ai.agent_prompts import AgentServicePrompts
+
+    prompt = AgentServicePrompts.session_workspace_sandbox_block(
+        session_workdir="/tmp/workspaces/u1/sessions/conv-1",
+        docs_dir="/tmp/workspaces/u1/docs",
+        file_tool_names=["Read", "Write", "Bash", "Grep"],
+    )
+
+    assert "文件读写与搜索工具优先原则" in prompt
+    assert "文件读写与搜索一律走宿主侧文件工具（Read/Write/Edit/Glob/Grep），不要用 Bash 访问文件" in prompt
+    assert "平台公共文档（如 `data/docs/` 手册、FAQ.md）仅宿主侧可读，沙箱 Bash 不可见；请用 Read/Glob/Grep 直接读取" in prompt
+    assert "沙箱内 Bash 文件操作边界" in prompt
+    assert "只有在触发沙箱内的运行环境操作" in prompt
+
+
+
 @pytest.mark.asyncio
 async def test_append_workspace_prompt_when_file_tools_and_conversation(monkeypatch):
     async def _root():

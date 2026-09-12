@@ -2299,6 +2299,7 @@ class AssistantAgentRunner(BaseExecutor):
                     conversation_id=self.conversation_id,
                     skills_custom=bool(getattr(self.config, "skills_custom", False)),
                     allowed_global_skills=list(getattr(self.config, "skills", None) or []),
+                    lazy_sandbox=True,
                 ),
                 timeout=90.0,
             )

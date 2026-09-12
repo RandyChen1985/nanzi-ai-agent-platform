@@ -56,6 +56,7 @@ async def build_native_agent(
         conversation_id=runner.conversation_id,
         skills_custom=bool(getattr(runner.config, "skills_custom", False)),
         allowed_global_skills=list(getattr(runner.config, "skills", None) or []),
+        lazy_sandbox=True,
     )
     from app.services.ai.runtime.agentscope.workspace import (
         bind_configured_tools_to_workspace,

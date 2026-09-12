@@ -185,39 +185,17 @@ class AssembleStep(BasePipelineStep):
                 route_details = shared_state.get("route_details")
                 if not turn_decision and route_details:
                     turn_decision = getattr(route_details, "turn_decision", None)
-                # 占位先行：沙箱策略且预热会真实创建 Pod/容器时，先让准备卡片显示
-                # “沙箱工作区创建中…”，预热完成后由同 id 的最终日志覆盖更新为就绪/失败。
-                placeholder_sent = (
-                    bool(context.conversation_id)
-                    and await _effective_policy_is_sandbox()
+                preflight_ctx = await self.agent_service._gather_turn_preflight_context(
+                    agent_config=agent_config,
+                    user_info=user_info,
+                    user_query=str(context.user_query or shared_state.get("user_query") or ""),
+                    turn_decision=turn_decision,
+                    messages=context.messages,
+                    debug_options=debug_options,
+                    conversation_id=context.conversation_id,
+                    request_observability=context.request_observability,
+                    performance_tracker=context.performance_tracker,
                 )
-                if placeholder_sent:
-                    yield _build_workspace_placeholder_log()
-                try:
-                    preflight_ctx = await self.agent_service._gather_turn_preflight_context(
-                        agent_config=agent_config,
-                        user_info=user_info,
-                        user_query=str(context.user_query or shared_state.get("user_query") or ""),
-                        turn_decision=turn_decision,
-                        messages=context.messages,
-                        debug_options=debug_options,
-                        conversation_id=context.conversation_id,
-                        request_observability=context.request_observability,
-                        performance_tracker=context.performance_tracker,
-                    )
-                except Exception as exc:
-                    # 兜底：异常时把占位更新为失败，避免一直停在“创建中”。
-                    if placeholder_sent:
-                        yield {
-                            "type": "log",
-                            "id": _WORKSPACE_LOG_ID,
-                            "parent_id": _WORKSPACE_PARENT_ID,
-                            "title": "沙箱工作区准备",
-                            "details": f"沙箱工作区准备失败（{exc}）",
-                            "status": "error",
-                            "category": "system",
-                        }
-                    raise
                 shared_state["preflight_ctx"] = preflight_ctx
                 if context.performance_tracker is not None:
                     context.performance_tracker.mark("preflight_concurrency_load")

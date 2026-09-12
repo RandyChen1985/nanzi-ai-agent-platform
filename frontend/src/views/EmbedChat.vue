@@ -1152,7 +1152,7 @@
             <ChatTodoCard :timeline="activeTodoTimeline" />
           </div>
           <div
-            v-if="sandboxDegradedMessage || showSandboxWorkspaceControl || showBashBanner"
+            v-if="sandboxDegradedMessage || showBashBanner"
             class="mx-3 mt-2"
           >
             <Transition name="bash-banner-fade">
@@ -1174,18 +1174,6 @@
                   ×
                 </button>
               </div>
-            </Transition>
-            <Transition name="bash-banner-fade">
-              <DockerWorkspaceBanner
-                v-if="showSandboxWorkspaceControl"
-                :workspace-status="sandboxWorkspaceStatus"
-                :workspace-error="sandboxWorkspaceError"
-                :container-id="sandboxWorkspaceInstanceId"
-                :backend="sandboxBackend"
-                @start="ensureSandboxWorkspace"
-                @refresh="refreshSandboxWorkspaceStatus"
-                @close="dismissSandboxWorkspaceBanner"
-              />
             </Transition>
             <Transition name="bash-banner-fade">
               <BashEnvBanner
@@ -2139,7 +2127,6 @@ import ChatCanvas from "@/components/embed/ChatCanvas.vue";
 import ChatExecutionTimeline from "@/components/chat/ChatExecutionTimeline.vue";
 import ChatTodoCard from "@/components/chat/ChatTodoCard.vue";
 import BashEnvBanner from "@/components/chat/BashEnvBanner.vue";
-import DockerWorkspaceBanner from "@/components/chat/DockerWorkspaceBanner.vue";
 import DockerTerminalModal from "@/components/chat/DockerTerminalModal.vue";
 import K8sTerminalModal from "@/components/chat/K8sTerminalModal.vue";
 import ChatInput from "@/components/embed/ChatInput.vue";
@@ -4105,17 +4092,6 @@ watch(conversationId, () => {
   void refreshCurrentRunStatus();
 }, { immediate: true });
 
-const DOCKER_WORKSPACE_BANNER_DISMISSED_KEY = "nanzi_dismissed_docker_workspace_banner";
-const SANDBOX_WORKSPACE_BANNER_DISMISSED_KEY = "nanzi_dismissed_sandbox_workspace_banner";
-
-const readSandboxWorkspaceBannerDismissed = (): boolean => {
-  // 不做持久化防打扰，刷新页面或切换会话后始终重新展示；并清理遗留的旧 localStorage 标记
-  try {
-    localStorage.removeItem(DOCKER_WORKSPACE_BANNER_DISMISSED_KEY);
-  } catch {}
-  return false;
-};
-
 const { contextUsage, refreshContextUsage } = useContextUsage();
 type SandboxWorkspaceStatus = "idle" | "starting" | "stopping" | "running" | "error";
 const sandboxWorkspaceStatus = ref<SandboxWorkspaceStatus>("idle");
@@ -4124,7 +4100,6 @@ const sandboxWorkspaceError = ref("");
 const sandboxWorkspaceInstanceId = ref<string | null>(null);
 const sandboxWorkspaceStartedAt = ref<string | null>(null);
 const sandboxWorkspaceUptimeSeconds = ref<number | null>(null);
-const sandboxWorkspaceBannerDismissed = ref(readSandboxWorkspaceBannerDismissed());
 const effectiveSandboxPolicy = computed(() => (
   String(contextUsage.value?.sandbox_policy || "").trim().toLowerCase()
 ));
@@ -4151,25 +4126,6 @@ const mapSandboxStatus = (raw: string): SandboxWorkspaceStatus => {
   if (raw === "error") return "error";
   return "idle"; // stopped / idle -> idle
 };
-const showSandboxWorkspaceControl = computed(() => {
-  if (!isSandboxWorkspacePolicy.value || !conversationId.value) {
-    return false;
-  }
-  // 首次状态查询完成前静默，彻底消除页面刷新时的横条闪烁
-  if (!sandboxWorkspaceStatusLoaded.value) {
-    return false;
-  }
-  // 正常运行态自动隐藏（状态收拢至输入框浮标）
-  if (sandboxWorkspaceStatus.value === "running") {
-    return false;
-  }
-  // 异常态强制显示，方便用户排查
-  if (sandboxWorkspaceStatus.value === "error") {
-    return true;
-  }
-  // 未运行状态在未手动点击叉号时始终提示，不作持久化防打扰
-  return isSandboxWorkspacePolicy.value && !sandboxWorkspaceBannerDismissed.value;
-});
 
 const resetSandboxWorkspaceState = () => {
   sandboxWorkspaceStatus.value = "idle";
@@ -4178,12 +4134,6 @@ const resetSandboxWorkspaceState = () => {
   sandboxWorkspaceInstanceId.value = null;
   sandboxWorkspaceStartedAt.value = null;
   sandboxWorkspaceUptimeSeconds.value = null;
-  sandboxWorkspaceBannerDismissed.value = readSandboxWorkspaceBannerDismissed();
-};
-
-const dismissSandboxWorkspaceBanner = () => {
-  // 仅在当前视图临时收起，不写入 localStorage，避免下次刷新再也不显示
-  sandboxWorkspaceBannerDismissed.value = true;
 };
 
 /** 沙箱状态查询防重入（starting 状态下也允许手动刷新，仅拦并发请求）。 */
@@ -4239,13 +4189,12 @@ const refreshSandboxWorkspaceStatus = async (showFeedback = false) => {
   }
 };
 
-/** 启动后自动轮询 status（每 2s，最长 ~60s），直到 Pod 就绪，避免一直停在“创建中”。 */
-/** 启动后自动轮询 status（每 2s，最长 ~60s），直到 Pod 就绪；readyToast=false 时为静默预热。 */
+/** 启动后自动轮询 status（每 2s，最长 ~60s），直到 Pod 就绪；支持自定义 readyMessage 与 readyToast 开关。 */
 const pollSandboxWorkspaceUntilRunning = async (
   cid: string,
-  opts: { readyToast?: boolean } = {},
+  opts: { readyToast?: boolean; readyMessage?: string } = {},
 ) => {
-  const { readyToast = true } = opts;
+  const { readyToast = true, readyMessage = "沙箱已就绪" } = opts;
   const MAX_ATTEMPTS = 30; // 60s
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt += 1) {
     await new Promise((resolve) => setTimeout(resolve, 2000));
@@ -4265,8 +4214,12 @@ const pollSandboxWorkspaceUntilRunning = async (
         : null;
       if (mapped === "running") {
         if (readyToast) {
-          showToast("沙箱已就绪", "success");
+          showToast(readyMessage, "success");
         }
+        return;
+      }
+      if (mapped === "error") {
+        // 沙箱明确报错时立即终止轮询，避免继续空轮询
         return;
       }
     } catch {
@@ -4275,11 +4228,13 @@ const pollSandboxWorkspaceUntilRunning = async (
   }
   // 超时仍未就绪：停留在当前状态并提示可手动刷新
   if (conversationId.value === cid && sandboxWorkspaceStatus.value !== "running") {
-    showToast("Pod 仍在创建中（可能镜像拉取较慢），可稍后点「刷新」查看", "info");
+    if (readyToast) {
+      showToast("Pod 仍在创建中（可能镜像拉取较慢），可稍后点「刷新」查看", "info");
+    }
   }
 };
 
-/** 会话打开/新建后自动预热一次（每个会话仅一次、静默；仅当查询确认未运行且当前无任务）。 */
+/** 会话打开/新建后自动预热一次（每个会话仅一次；仅当查询确认未运行且当前无任务）。 */
 let autoWarmedConversationKey = "";
 
 const maybeAutoWarmSandbox = async () => {
@@ -4312,8 +4267,14 @@ const maybeAutoWarmSandbox = async () => {
     sandboxWorkspaceUptimeSeconds.value = typeof data?.uptime_seconds === "number"
       ? data.uptime_seconds
       : null;
-    if (mapped !== "running") {
-      void pollSandboxWorkspaceUntilRunning(String(conversationId.value), { readyToast: false });
+    if (mapped === "running") {
+      showToast("沙箱环境已预热就绪", "success");
+    } else {
+      showToast("正在预热沙箱运行环境…", "info");
+      void pollSandboxWorkspaceUntilRunning(String(conversationId.value), {
+        readyToast: true,
+        readyMessage: "沙箱环境已预热就绪",
+      });
     }
   } catch {
     // 自动预热失败静默：用户可手动「启动」，或发送消息时按既有降级逻辑处理
@@ -7620,6 +7581,16 @@ const addEmbedLogFromStream = (msg: Message, data: any) => {
       execution_time_ms: execution_time_ms ?? currentLog.execution_time_ms,
       started_at: currentLog.started_at ?? data.started_at,
     });
+    if (logId === "workspace:sandbox" && currentLog.status !== "pending" && nextStatus === "pending") {
+      showToast("正在拉起沙箱运行环境…", "info");
+      void refreshSandboxWorkspaceStatus();
+    } else if (logId === "workspace:sandbox" && currentLog.status === "pending" && nextStatus === "success") {
+      showToast("沙箱环境已就绪，正在执行命令…", "success");
+      void refreshSandboxWorkspaceStatus();
+    } else if (logId === "workspace:sandbox" && currentLog.status === "pending" && nextStatus === "error") {
+      showToast(data.error_reason || "沙箱环境启动失败", "error");
+      void refreshSandboxWorkspaceStatus();
+    }
     return;
   }
   msg.logs.push({
@@ -7641,6 +7612,10 @@ const addEmbedLogFromStream = (msg: Message, data: any) => {
     rowFilterApplied: data.row_filter_applied === true,
   });
   syncProcessTimelineLog(msg, { ...data, id: logId, category }, category);
+  if (logId === "workspace:sandbox" && data.status === "pending") {
+    showToast("正在拉起沙箱运行环境…", "info");
+    void refreshSandboxWorkspaceStatus();
+  }
 };
 
 const applyReusableResultStatusEvent = (msg: Message, data: any): boolean => {

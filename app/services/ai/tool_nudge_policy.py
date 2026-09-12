@@ -637,9 +637,8 @@ def _resolve_platform_docs_nudge(tools: List[Any]) -> Optional[ToolNudge]:
         score=0.95,
         message=(
             "【平台公共文档优先】本轮问题涉及智能体平台自身的功能、配置或开关说明。"
-            "请优先通过宿主侧文件工具检索公共 docs/*.md（先用 Grep/Glob 定位，"
-            "再用 Read 读取命中文档）后回答；Docker 沙箱 Bash 不挂载公共 docs，"
-            "禁止通过 Bash 访问或臆造 /workspace/docs、/app/data/docs 路径。"
+            "平台公共文档 data/docs/ 仅宿主侧可读，沙箱 Bash 不可见；请优先通过宿主侧文件工具检索公共 docs/*.md（先用 Grep/Glob 定位，"
+            "再用 Read 读取命中文档）后回答；严禁通过 Bash 访问或臆造 /workspace/docs、/app/data/docs 等路径。"
             "公共 docs 没有命中时，再按目录清单使用宿主工具读取服务根目录一级 /app/*.md（本地开发为项目根 *.md）帮助文档；"
             "禁止递归扫描 /app 或改为调用 sub_agent_call 搜索企业知识库。"
         ),

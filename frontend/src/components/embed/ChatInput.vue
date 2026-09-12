@@ -345,6 +345,7 @@ const isDockerSandboxPolicy = computed(() => {
   const policy = String(props.contextUsage?.sandbox_policy || "").trim().toLowerCase();
   return policy === "docker";
 });
+void isDockerSandboxPolicy;
 
 const isSandboxBackendPolicy = computed(() => {
   const policy = String(props.contextUsage?.sandbox_policy || "").trim().toLowerCase();
