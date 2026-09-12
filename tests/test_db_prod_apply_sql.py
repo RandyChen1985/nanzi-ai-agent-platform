@@ -346,7 +346,7 @@ def test_mysql_python_wrapper_rejects_non_utf8mb4_before_migration(tmp_path):
     output = result.stdout + result.stderr
     assert result.returncode != 0
     assert "可能出现乱码" in output
-    calls = capture.read_text(encoding="utf-8").splitlines()
+    calls = [c for c in capture.read_text(encoding="utf-8").splitlines() if "apply_sql.py" in c]
     assert len(calls) == 1
     assert "--check-charset" in calls[0]
 
@@ -391,7 +391,7 @@ def test_mysql_python_wrapper_continues_after_explicit_yes_for_non_utf8mb4(tmp_p
     )
 
     assert result.returncode == 0, result.stdout + result.stderr
-    calls = capture.read_text(encoding="utf-8").splitlines()
+    calls = [c for c in capture.read_text(encoding="utf-8").splitlines() if "apply_sql.py" in c]
     assert len(calls) == 2
     assert "--check-charset" in calls[0]
     assert "--check-charset" not in calls[1]
@@ -589,3 +589,24 @@ def test_mysql_native_wrapper_keeps_prepare_execute_in_one_session(tmp_path):
     assert "EXECUTE stmt" in prepared_invocation
     assert "DEALLOCATE PREPARE stmt" in prepared_invocation
     assert "PREPARE stmt FROM @sql;\nEXECUTE stmt;\nDEALLOCATE PREPARE stmt" in prepared_invocation
+
+
+def test_warning_formatting_renders_clean_cli_messages(capsys):
+    module = load_apply_sql_module()
+
+    # 测试 formatwarning
+    formatted_exist = module._format_warning("Table 'system_config_history' already exists", Warning, "test.py", 10)
+    assert "ℹ️  [跳过已存在] Table 'system_config_history' already exists" in formatted_exist
+    assert "test.py" not in formatted_exist
+
+    formatted_other = module._format_warning("Data truncated for column 'status'", Warning, "test.py", 20)
+    assert "⚠️  [MySQL 提示] Data truncated for column 'status'" in formatted_other
+    assert "test.py" not in formatted_other
+
+    # 测试 showwarning 输出到标准输出且格式优雅
+    module._showwarning("Can't create database 'aiagent'; database exists", Warning, "cursors.py", 239)
+    captured = capsys.readouterr().out
+    assert "ℹ️  [跳过已存在] Can't create database 'aiagent'; database exists" in captured
+    assert "cursors.py" not in captured
+    assert "await" not in captured
+

@@ -18,11 +18,44 @@ ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 CALLER_DIR="$PWD"
 cd "$ROOT_DIR"
 
-PYTHON_BIN="python3"
-if [[ -x "$ROOT_DIR/.venv/bin/python" ]]; then
+PYTHON_BIN=""
+if [[ -f "$ROOT_DIR/.venv/bin/activate" ]]; then
+    source "$ROOT_DIR/.venv/bin/activate"
+    PYTHON_BIN="$ROOT_DIR/.venv/bin/python"
+elif [[ -f "$ROOT_DIR/venv/bin/activate" ]]; then
+    source "$ROOT_DIR/venv/bin/activate"
+    PYTHON_BIN="$ROOT_DIR/venv/bin/python"
+elif [[ -x "$ROOT_DIR/.venv/bin/python" ]]; then
     PYTHON_BIN="$ROOT_DIR/.venv/bin/python"
 elif [[ -x "$ROOT_DIR/venv/bin/python" ]]; then
     PYTHON_BIN="$ROOT_DIR/venv/bin/python"
+elif command -v python3 >/dev/null 2>&1; then
+    PYTHON_BIN="python3"
+elif command -v python >/dev/null 2>&1; then
+    PYTHON_BIN="python"
+fi
+
+if [[ -z "$PYTHON_BIN" ]] || ! command -v "$PYTHON_BIN" >/dev/null 2>&1; then
+    echo "❌ 未检测到 Python 运行环境！" >&2
+    echo "💡 请先安装 Python 3.11 并配置 PATH，或初始化项目虚拟环境：" >&2
+    echo "   python3 -m venv .venv" >&2
+    echo "   source .venv/bin/activate" >&2
+    echo "   pip install -r requirements.txt" >&2
+    exit 1
+fi
+
+# 前置依赖检查：在提示输入数据库连接信息前检测必要依赖
+if ! "$PYTHON_BIN" -c "import psycopg" >/dev/null 2>&1; then
+    CURRENT_PY=$("$PYTHON_BIN" -c "import sys; print(sys.executable)" 2>/dev/null || echo "$PYTHON_BIN")
+    echo "❌ Python 环境依赖检查失败：未检测到 'psycopg' 模块。" >&2
+    echo "🔍 当前使用的 Python 解释器: $CURRENT_PY" >&2
+    echo "💡 请按以下步骤解决：" >&2
+    echo "   1. 激活已安装依赖的项目虚拟环境（推荐）：" >&2
+    echo "      source .venv/bin/activate   # 或 source venv/bin/activate" >&2
+    echo "      pip install -r requirements.txt" >&2
+    echo "   2. 或者在当前 Python 环境中单独安装：" >&2
+    echo "      $PYTHON_BIN -m pip install 'psycopg[pool,binary]>=3.2,<4'" >&2
+    exit 1
 fi
 
 SQL_FILES=()

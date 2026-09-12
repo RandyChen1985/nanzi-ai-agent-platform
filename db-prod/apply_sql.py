@@ -4,10 +4,34 @@ import getpass
 import os
 import re
 import sys
+import warnings
 from dataclasses import dataclass
 
 import aiomysql
 from pymysql.constants import CLIENT
+
+
+def _format_warning(message, category, filename, lineno, line=None):
+    """格式化 MySQL/aiomysql 产生的警告信息，避免输出底层代码行号与堆栈式文本。"""
+    msg_str = str(message).strip()
+    if "already exists" in msg_str.lower() or "database exists" in msg_str.lower():
+        return f"   ℹ️  [跳过已存在] {msg_str}\n"
+    return f"   ⚠️  [MySQL 提示] {msg_str}\n"
+
+
+def _showwarning(message, category, filename, lineno, file=None, line=None):
+    """优雅展示 MySQL/aiomysql 产生的提示与警告，统一输出到控制台。"""
+    msg_str = str(message).strip()
+    target_file = file or sys.stdout
+    if "already exists" in msg_str.lower() or "database exists" in msg_str.lower():
+        print(f"   ℹ️  [跳过已存在] {msg_str}", file=target_file)
+    else:
+        print(f"   ⚠️  [MySQL 提示] {msg_str}", file=target_file)
+
+
+warnings.formatwarning = _format_warning
+warnings.showwarning = _showwarning
+
 
 
 DATABASE_SWITCH_RE = re.compile(r"^\s*(CREATE\s+DATABASE\b|USE\b)", re.IGNORECASE)
@@ -247,8 +271,15 @@ async def apply_sql(file_path, config):
             autocommit=True,
         )
         async with temp_conn.cursor() as cur:
-            create_db_sql = f"CREATE DATABASE IF NOT EXISTS `{config.database}` CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci;"
-            await cur.execute(create_db_sql)
+            await cur.execute(
+                "SELECT SCHEMA_NAME FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = %s",
+                (config.database,),
+            )
+            exists = await cur.fetchone()
+            if not exists:
+                create_db_sql = f"CREATE DATABASE `{config.database}` CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci;"
+                await cur.execute(create_db_sql)
+                print(f"   ℹ️  数据库 '{config.database}' 不存在，已自动创建。")
         temp_conn.close()
         await temp_conn.ensure_closed()
     except Exception as e:

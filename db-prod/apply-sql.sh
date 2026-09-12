@@ -17,8 +17,45 @@ CALLER_DIR="$PWD"
 cd "$ROOT_DIR"
 
 
-if [ -f "venv/bin/activate" ]; then
-    source venv/bin/activate
+# 自动优先探测并激活虚拟环境，寻找 Python 解释器
+PYTHON_BIN=""
+if [ -f "$ROOT_DIR/.venv/bin/activate" ]; then
+    source "$ROOT_DIR/.venv/bin/activate"
+    PYTHON_BIN="$ROOT_DIR/.venv/bin/python"
+elif [ -f "$ROOT_DIR/venv/bin/activate" ]; then
+    source "$ROOT_DIR/venv/bin/activate"
+    PYTHON_BIN="$ROOT_DIR/venv/bin/python"
+elif [ -x "$ROOT_DIR/.venv/bin/python" ]; then
+    PYTHON_BIN="$ROOT_DIR/.venv/bin/python"
+elif [ -x "$ROOT_DIR/venv/bin/python" ]; then
+    PYTHON_BIN="$ROOT_DIR/venv/bin/python"
+elif command -v python3 >/dev/null 2>&1; then
+    PYTHON_BIN="python3"
+elif command -v python >/dev/null 2>&1; then
+    PYTHON_BIN="python"
+fi
+
+if [ -z "$PYTHON_BIN" ] || ! command -v "$PYTHON_BIN" >/dev/null 2>&1; then
+    echo "❌ 未检测到 Python 运行环境！"
+    echo "💡 请先安装 Python 3.11 并配置 PATH，或初始化项目虚拟环境："
+    echo "   python3 -m venv .venv"
+    echo "   source .venv/bin/activate"
+    echo "   pip install -r requirements.txt"
+    exit 1
+fi
+
+# 前置依赖检查：在提示输入数据库连接信息前检测必要依赖
+if ! "$PYTHON_BIN" -c "import aiomysql" >/dev/null 2>&1; then
+    CURRENT_PY=$("$PYTHON_BIN" -c "import sys; print(sys.executable)" 2>/dev/null || echo "$PYTHON_BIN")
+    echo "❌ Python 环境依赖检查失败：未检测到 'aiomysql' 模块。"
+    echo "🔍 当前使用的 Python 解释器: $CURRENT_PY"
+    echo "💡 请按以下步骤解决："
+    echo "   1. 激活已安装依赖的项目虚拟环境（推荐）："
+    echo "      source .venv/bin/activate   # 或 source venv/bin/activate"
+    echo "      pip install -r requirements.txt"
+    echo "   2. 或者在当前 Python 环境中单独安装："
+    echo "      $PYTHON_BIN -m pip install aiomysql"
+    exit 1
 fi
 
 SQL_FILES=()
@@ -64,7 +101,7 @@ COMMON_ARGS=(
 )
 
 echo "🔍 正在检查目标数据库字符集..."
-CHARSET_CHECK_OUTPUT=$(python3 db-prod/apply_sql.py \
+CHARSET_CHECK_OUTPUT=$("$PYTHON_BIN" db-prod/apply_sql.py \
     --check-charset \
     --host "$MYSQL_HOST_INPUT" \
     --port "$MYSQL_PORT_INPUT" \
@@ -121,7 +158,7 @@ if [ $# -eq 0 ]; then
     for f in $FILES; do
         echo "---------------------------------------------------"
         echo "🚀 Applying $f..."
-        python3 db-prod/apply_sql.py "$f" "${COMMON_ARGS[@]}"
+        "$PYTHON_BIN" db-prod/apply_sql.py "$f" "${COMMON_ARGS[@]}"
         if [ $? -ne 0 ]; then
              echo "❌ Failed to apply $f"
              exit 1
@@ -138,7 +175,7 @@ if [ $# -eq 0 ]; then
         if [ -f "$ADMIN_SQL" ]; then
             echo "---------------------------------------------------"
             echo "🚀 正在导入默认管理员账号数据 ($ADMIN_SQL)..."
-            python3 db-prod/apply_sql.py "$ADMIN_SQL" "${COMMON_ARGS[@]}"
+            "$PYTHON_BIN" db-prod/apply_sql.py "$ADMIN_SQL" "${COMMON_ARGS[@]}"
             if [ $? -ne 0 ]; then
                  echo "❌ 默认管理员账号数据导入失败。"
                  exit 1
@@ -160,7 +197,7 @@ if [ $# -eq 0 ]; then
         echo "💡 已跳过默认管理员账号数据的导入。"
     fi
 else
-    python3 db-prod/apply_sql.py "${SQL_FILES[@]}" "${COMMON_ARGS[@]}"
+    "$PYTHON_BIN" db-prod/apply_sql.py "${SQL_FILES[@]}" "${COMMON_ARGS[@]}"
     for f in "${SQL_FILES[@]}"; do
         if [[ "$f" =~ INIT-USER-ADMIN.sql$ ]]; then
             echo -e "\033[1;32m===================================================\033[0m"
