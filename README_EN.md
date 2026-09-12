@@ -163,13 +163,22 @@ The platform revolves around the following core capability matrix:
 
 ## 🔄 Execution Flow
 
-The system follows **Entry Resolution → Delegation/Dispatch → Execution → Synthesis**:
+The system is powered by a **6-stage asynchronous pipeline (PipelineRunner)**, following the **Entry Resolution → Delegation/Dispatch → Execution → Delivery/Synthesis** flow:
 
-1.  **Entry resolution**: Without `agent_id`, the request directly loads the default `Main`; with `agent_id`, `agent_name`, `version_id`, or `@mention`, it directly loads the selected expert.
-2.  **Intelligent delegation**: Main or the selected parent expert answers directly or invokes `sub_agent_call` / `sub_agent_batch_call` when a vertical capability is needed.
-3.  **Dispatcher**: Routes to **Knowledge** / **ChatBI (DataQuery)** / **Assistant** / RAGFlow / OpenClaw; ChatBI classifies new query vs reuse vs context action internally.
-4.  **ReAct execution**: AgentScope reasoning-action loop with per-executor guards (SQL gates, tool preflight, permissions).
-5.  **Synthesis**: Multi-agent answers aggregated by Synthesizer; single-agent streams SSE content, logs, and citations.
+1.  **Entry Resolution (Route)**:
+    *   **Explicit Selection**: When `agent_id`, `agent_name`, `version_id`, `@mention`, or Expert Mode is specified, it directly loads the targeted expert;
+    *   **Quick Follow-up**: Clicking quick-action capsules on ChatBI result cards automatically routes to the DataQuery expert;
+    *   **Default Fallback**: Without explicit targets, it directly loads the default `Main` assistant (eliminating outer semantic router overhead).
+2.  **Intelligent Delegation**:
+    *   Only **enabled system agents (`is_system=True`)** are eligible for the delegation candidate pool (custom agents do not participate in automated delegation);
+    *   Main evaluates the request to answer directly or delegate subtasks via `sub_agent_call` (serial) / `sub_agent_batch_call` (parallel), guarded by self-delegation, recursion depth, and permission policies.
+3.  **Dispatcher**:
+    *   Accurately routes to **Knowledge** / **ChatBI (DataQuery)** / **Assistant** / **RAGFlow** / **OpenClaw** executors based on engine type and capabilities;
+    *   ChatBI handles new data query, result reuse, contextual actions, metadata inspection, and clarification triage internally.
+4.  **ReAct Execution**:
+    *   AgentScope "Think-Act-Observe" reasoning loop natively integrated with SQL syntax safety guards, HITL human-in-the-loop approvals, user question card interruptions, and browser session panel live events.
+5.  **Delivery & Synthesis**:
+    *   Dynamic delegation is consolidated and output by the parent assistant; multi-agent parallel collaboration is aggregated via a dedicated Synthesizer model; full SSE streaming delivers content, reasoning traces, logs, and citations.
 
 See [CHAT_FLOW.md](architech/design/chat/CHAT_FLOW.md) · [Intelligent delegation and expert selection](architech/design/AGENT_ROUTING_DESIGN.md)
 

@@ -1693,7 +1693,7 @@ defineExpose({
       <div
         :class="isMobileViewport
           ? 'px-3 pt-1 pb-[calc(env(safe-area-inset-bottom,0px)+0.625rem)]'
-          : 'p-3 pb-2'"
+          : 'px-3 pt-1 pb-2'"
       >
         <!-- Shortcut Bar (desktop only) -->
         <div

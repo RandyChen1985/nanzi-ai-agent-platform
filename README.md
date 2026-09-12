@@ -177,13 +177,22 @@
 
 ## 🔄 智能体工作流 (Execution Flow)
 
-系统遵循 **「确定入口 → 委派/分发 → 执行 → 聚合」** 链路：
+系统底层基于 **6 阶段异步流水线 (PipelineRunner)** 驱动，遵循 **「确定入口 → 委派/分发 → 执行 → 交付」** 链路：
 
-1. **入口解析**：未传 `agent_id` 时直接加载默认 `Main`；传入 `agent_id`、`agent_name`、`version_id` 或使用 `@` / 专家模式时，直接加载指定专家。
-2. **智能委派**：Main（或当前指定的父专家）结合自身 Prompt、能力目录、工具与权限门禁，决定直接回答，或调用 `sub_agent_call` / `sub_agent_batch_call` 委派子任务。
-3. **执行分发 (Dispatcher)**：按最终智能体的引擎与能力选择 **Knowledge** / **ChatBI (DataQuery)** / **Assistant** / RAGFlow / OpenClaw 执行器；ChatBI 内部分诊新查数、结果分析/呈现/动作、元数据、非查数委派或澄清等。
-4. **动态执行 (ReAct)**：AgentScope「思考-行动-观察」循环，工具权限挂起、SQL 护栏、工具预检等按执行器生效。
-5. **结果合成 (Synthesis)**：多 Agent 场景由 Synthesizer 聚合；单 Agent 流式 SSE 返回正文、日志与引用。
+1. **入口解析 (Route)**：
+   - 显式指定：传入 `agent_id` / `agent_name` / `version_id`，或正文含 `@` 提及、进入专家模式时，直达目标专家；
+   - 快捷下钻：点击查数结果操作胶囊时，自动直通 ChatBI 数据查询专家；
+   - 默认兜底：未指定时直接加载默认主助手 `Main`（免去外层重度语义路由开销）。
+2. **智能委派 (Delegation)**：
+   - 仅限**已启用的平台系统智能体 (`is_system=True`)** 进入委派候选池（普通自定义智能体不参与自动委派）；
+   - 主助手结合任务诉求，可直接作答，或调用 `sub_agent_call`（串行）/ `sub_agent_batch_call`（并行）委派子专家；内置防自委派、递归深度与权限安全门禁。
+3. **执行分发 (Dispatcher)**：
+   - 按引擎与能力精准路由至 **Knowledge** / **ChatBI (DataQuery)** / **Assistant** / **RAGFlow** / **OpenClaw** 执行器；
+   - ChatBI 内部自主完成新查数、结果复用、上下文动作、元数据与澄清分诊。
+4. **动态执行 (ReAct)**：
+   - 基于 AgentScope「思考-行动-观察」循环，原生集成 SQL 语法护栏、HITL 人机协同审批确认、问答卡中断及浏览器会话面板联动。
+5. **结果交付与合成 (Synthesis)**：
+   - 动态委派由父级助手统一汇总输出；并行协同场景由独立的 Synthesizer 模型完成多专家答案聚合；全链路 SSE 流式下发正文、思考日志与引用溯源。
 
 详见 [architech/design/chat/CHAT_FLOW.md](architech/design/chat/CHAT_FLOW.md) · [智能委派与专家直选设计](architech/design/AGENT_ROUTING_DESIGN.md)
 
