@@ -6,58 +6,19 @@ import pytest
 pytestmark = pytest.mark.no_infrastructure
 ROOT = Path(__file__).resolve().parents[2]
 EMBED = ROOT / "frontend/src/views/EmbedChat.vue"
-BANNER = ROOT / "frontend/src/components/chat/DockerWorkspaceBanner.vue"
+CHAT_INPUT = ROOT / "frontend/src/components/embed/ChatInput.vue"
 
 
-def test_docker_workspace_banner_has_start_running_and_retry_states():
-    source = BANNER.read_text(encoding="utf-8")
-    assert "启动我的 Docker 沙箱" in source
-    assert "重试启动" in source
-    assert "Docker 沙箱容器已运行" in source
-    assert "Docker 沙箱容器启动中" in source
-    assert "workspaceStatus" in source
-    assert "defineEmits" in source
-    assert "关闭 Docker 沙箱提示" in source
-    assert '(event: "close")' in source
-    assert "AUTO_DISMISS_SECONDS = 3" in source
-    assert "handleMouseEnter" in source
-    assert "handleMouseLeave" in source
-
-
-def test_embed_chat_places_workspace_action_in_banner_and_calls_ensure_api():
+def test_embed_chat_configures_sandbox_workspace_state_and_endpoints():
     source = EMBED.read_text(encoding="utf-8")
-    assert 'import DockerWorkspaceBanner from "@/components/chat/DockerWorkspaceBanner.vue"' in source
     # docker 端点语义保留（base 端点按 docker|k8s 路由）
     assert "/api/v1/sandbox/docker/workspace" in source
     assert "effectiveSandboxPolicy" in source
     assert "isSandboxWorkspacePolicy" in source
-    assert "<DockerWorkspaceBanner" in source
-    assert "#banner" in source
     assert "conversation_id" in source
     assert "sandboxWorkspaceStatus" in source
-    assert '@close="dismissSandboxWorkspaceBanner"' in source
-
-
-def test_embed_chat_does_not_render_workspace_action_for_non_docker_policy():
-    source = EMBED.read_text(encoding="utf-8")
-    control_pos = source.find("<DockerWorkspaceBanner")
-    assert control_pos != -1
-    control_block = source[control_pos : control_pos + 700]
-    assert "showSandboxWorkspaceControl" in control_block
-    assert "isSandboxWorkspacePolicy" in source
-
-
-CHAT_INPUT = ROOT / "frontend/src/components/embed/ChatInput.vue"
-
-
-def test_embed_chat_persists_banner_dismiss_and_auto_hides_when_running():
-    source = EMBED.read_text(encoding="utf-8")
-    assert "nanzi_dismissed_docker_workspace_banner" in source
-    assert "readSandboxWorkspaceBannerDismissed" in source
-    assert "sandboxWorkspaceStatusLoaded" in source
-    assert 'sandboxWorkspaceStatus.value === "running"' in source
-    assert 'sandboxWorkspaceStatus.value === "error"' in source
-    assert 'name="bash-banner-fade"' in source
+    # DockerWorkspaceBanner 已彻底移除，不再通过横条提示用户
+    assert "DockerWorkspaceBanner" not in source
 
 
 
@@ -146,13 +107,6 @@ def test_docker_terminal_opens_maximized_by_default():
     assert "const isMaximized = ref(true);" in source
     assert "isMaximized ? 'h-full max-h-full max-w-full rounded-none' : 'max-w-4xl h-[85vh] max-h-[760px]'" in source
 
-
-def test_docker_workspace_banner_supports_k8s_backend_copy():
-    source = BANNER.read_text(encoding="utf-8")
-    assert 'backend?: "docker" | "k8s"' in source
-    assert "Kubernetes 沙箱 Pod" in source
-    assert "启动我的沙箱 Pod" in source
-    assert "关闭沙箱提示" in source
 
 
 def test_chat_input_context_modal_generalizes_sandbox_workspace_controls():

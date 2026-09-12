@@ -1600,6 +1600,190 @@ async def build_sandbox_workspace_for_test(
     raise ValueError("仅支持 k8s、e2b 或 ssh 沙箱连接测试")
 
 
+class LazySandboxWorkspaceProxy:
+    """惰性沙箱代理：在未真正执行 Bash 前延迟拉起沙箱容器/Pod。"""
+
+    def __init__(
+        self,
+        *,
+        policy: str,
+        root: str,
+        user_key: str,
+        skill_paths: list[str] | None,
+        local_ws: Any | None = None,
+        cache_key: str | None = None,
+    ) -> None:
+        self.policy = policy
+        self.root = root
+        self.user_key = user_key
+        self.skill_paths = skill_paths
+        self.local_ws = local_ws
+        self.cache_key = cache_key
+        self._real_sandbox_ws: Any | None = None
+        self._sandbox_cache_key: str | None = None
+        self._lock = asyncio.Lock()
+        self._platform_sandbox_policy = policy
+        self._platform_execution_backend = policy
+
+    @property
+    def is_alive(self) -> bool:
+        if self._real_sandbox_ws is not None:
+            return bool(getattr(self._real_sandbox_ws, "is_alive", True))
+        return False
+
+    async def ensure_ready(self, event_queue: Any | None = None) -> Any:
+        """确保沙箱拉起并就绪，带 SSE 日志推流。"""
+        if self._real_sandbox_ws is not None and getattr(self._real_sandbox_ws, "is_alive", True):
+            return self._real_sandbox_ws
+
+        async with self._lock:
+            if self._real_sandbox_ws is not None and getattr(self._real_sandbox_ws, "is_alive", True):
+                return self._real_sandbox_ws
+
+            # 解析用于 SSE 推流的 event_queue
+            queue = event_queue
+            if queue is None:
+                try:
+                    from app.core.context import get_current_agent_context
+
+                    ctx = get_current_agent_context()
+                    queue = getattr(ctx, "event_queue", None)
+                except Exception:
+                    queue = None
+
+            log_id = "workspace:sandbox"
+            parent_id = "preparation:auth_context_capability"
+            if queue is not None:
+                try:
+                    await queue.put({
+                        "type": "log",
+                        "id": log_id,
+                        "parent_id": parent_id,
+                        "title": "沙箱工作区准备",
+                        "details": "沙箱工作区创建中（正在拉起隔离容器/Pod），请稍候…",
+                        "status": "pending",
+                        "category": "system",
+                        "timestamp": time.time(),
+                    })
+                except Exception as put_err:
+                    logger.debug("[LazySandbox] Failed to put pending log: %s", put_err)
+
+            start_t = time.monotonic()
+            try:
+                if self.policy == SANDBOX_POLICY_DOCKER:
+                    ws, s_key = await _acquire_docker_workspace(
+                        root=self.root,
+                        user_key=self.user_key,
+                        skill_paths=self.skill_paths,
+                    )
+                elif self.policy == SANDBOX_POLICY_K8S:
+                    ws, s_key = await _acquire_k8s_workspace(
+                        root=self.root,
+                        user_key=self.user_key,
+                        skill_paths=self.skill_paths,
+                    )
+                else:
+                    raise RuntimeError(f"Unsupported lazy sandbox policy: {self.policy}")
+
+                self._real_sandbox_ws = ws
+                self._sandbox_cache_key = s_key
+
+                # 挂载配置
+                if self.policy == SANDBOX_POLICY_DOCKER and self.local_ws is not None:
+                    user_root = getattr(self.local_ws, "workspace_user_root", None)
+                    if user_root:
+                        ws._platform_docker_file_tool_mount_mappings = (
+                            _build_docker_file_tool_mount_mappings(
+                                user_root,
+                                public_docs_mounted=bool(
+                                    getattr(ws, "_platform_docker_public_docs_mounted", False)
+                                ),
+                            )
+                        )
+                ws._platform_sandbox_policy = self.policy
+                ws._platform_execution_backend = self.policy
+
+                # 如果有工作区 cache_key，更新登记
+                if self.cache_key:
+                    _workspace_cache[self.cache_key] = (ws, self.local_ws)
+                    _workspace_sandbox_refs[self.cache_key] = s_key
+
+                elapsed = (time.monotonic() - start_t) * 1000.0
+                if queue is not None:
+                    try:
+                        await queue.put({
+                            "type": "log",
+                            "id": log_id,
+                            "parent_id": parent_id,
+                            "title": "沙箱工作区准备",
+                            "details": f"沙箱工作区准备就绪（{int(elapsed)}ms）",
+                            "status": "success",
+                            "category": "system",
+                            "timestamp": time.time(),
+                        })
+                    except Exception as put_err:
+                        logger.debug("[LazySandbox] Failed to put success log: %s", put_err)
+
+                return ws
+            except Exception as exc:
+                logger.warning("[LazySandbox] Failed to acquire sandbox: %s", exc)
+                if queue is not None:
+                    try:
+                        await queue.put({
+                            "type": "log",
+                            "id": log_id,
+                            "parent_id": parent_id,
+                            "title": "沙箱工作区准备",
+                            "details": f"沙箱工作区准备失败（{exc}）",
+                            "status": "error",
+                            "category": "system",
+                            "timestamp": time.time(),
+                        })
+                    except Exception as put_err:
+                        logger.debug("[LazySandbox] Failed to put error log: %s", put_err)
+
+                if self.policy == SANDBOX_POLICY_DOCKER:
+                    if isinstance(exc, DockerSandboxUnavailableError):
+                        raise
+                    raise DockerSandboxUnavailableError(
+                        str(exc),
+                        reason_code=_docker_init_reason_code(exc),
+                    ) from exc
+                if self.policy == SANDBOX_POLICY_K8S:
+                    from app.services.ai.runtime.agentscope.k8s_workspace import K8sSandboxUnavailableError
+
+                    if isinstance(exc, K8sSandboxUnavailableError):
+                        raise
+                    raise K8sSandboxUnavailableError(
+                        str(exc),
+                        reason_code="k8s_workspace_start_failed",
+                    ) from exc
+                raise
+
+    async def close(self) -> None:
+        if self._real_sandbox_ws is not None:
+            if self._sandbox_cache_key is not None:
+                await _release_sandbox_workspace(
+                    self._sandbox_cache_key,
+                    reason="LazySandboxWorkspaceProxy close",
+                )
+            else:
+                await _close_workspace_safely(
+                    self._real_sandbox_ws,
+                    reason="LazySandboxWorkspaceProxy close",
+                )
+            self._real_sandbox_ws = None
+
+    def __getattr__(self, name: str) -> Any:
+        """代理属性访问。沙箱未拉起前对常规属性安全返回 None，并在 debug 日志中记录。"""
+        if self._real_sandbox_ws is not None:
+            return getattr(self._real_sandbox_ws, name)
+        if name.startswith("__") and name.endswith("__"):
+            raise AttributeError(f"'{type(self).__name__}' object has no attribute '{name}'")
+        logger.debug("[LazySandboxWorkspaceProxy] Accessing uninitialized attribute %r -> None", name)
+        return None
+
+
 async def get_local_workspace(
     *,
     user_id: str | int | None,
@@ -1608,6 +1792,7 @@ async def get_local_workspace(
     user_info: dict[str, Any] | None = None,
     skills_custom: bool = False,
     allowed_global_skills: list[str] | None = None,
+    lazy_sandbox: bool = False,
 ) -> tuple[Any, Any] | None:
     """Return ``(sandbox_ws, local_ws)`` for the conversation.
 
@@ -1680,6 +1865,9 @@ async def get_local_workspace(
     cache_key = f"{workdir}::{skills_fp}::{policy}"
     cached = _workspace_cache.get(cache_key)
     if cached is not None:
+        sandbox_ws_cached, _ = _normalize_workspace_pair(cached)
+        if isinstance(sandbox_ws_cached, LazySandboxWorkspaceProxy) and not lazy_sandbox:
+            await sandbox_ws_cached.ensure_ready()
         sandbox_cache_key = _workspace_sandbox_refs.get(cache_key)
         if sandbox_cache_key is not None:
             _touch_sandbox_workspace(sandbox_cache_key)
@@ -1704,7 +1892,7 @@ async def get_local_workspace(
     sandbox_user_key: str | None = None
     try:
         if is_sandbox:
-            if policy == SANDBOX_POLICY_DOCKER:
+            if policy in (SANDBOX_POLICY_DOCKER, SANDBOX_POLICY_K8S):
                 sandbox_user_key = _resolve_sandbox_user_key(
                     user_id=user_id,
                     user_name=user_name,
@@ -1712,28 +1900,42 @@ async def get_local_workspace(
                 )
                 if not sandbox_user_key:
                     raise RuntimeError(
-                        "Docker sandbox requires an authenticated user identity"
+                        f"{policy.upper()} sandbox requires an authenticated user identity"
                     )
-                sandbox_ws, sandbox_cache_key = await _acquire_docker_workspace(
-                    root=root,
-                    user_key=sandbox_user_key,
-                    skill_paths=skill_paths,
-                )
-            elif policy == SANDBOX_POLICY_K8S:
-                sandbox_user_key = _resolve_sandbox_user_key(
-                    user_id=user_id,
-                    user_name=user_name,
-                    user_info=user_info,
-                )
-                if not sandbox_user_key:
-                    raise RuntimeError(
-                        "K8s sandbox requires an authenticated user identity"
+
+                is_already_alive = False
+                if policy == SANDBOX_POLICY_DOCKER:
+                    d_key = f"{os.path.abspath(root)}::{sandbox_user_key}::{SANDBOX_POLICY_DOCKER}"
+                    existing_dk = _docker_workspace_cache.get(d_key)
+                    if existing_dk is not None and getattr(existing_dk, "is_alive", True) is not False:
+                        is_already_alive = True
+                elif policy == SANDBOX_POLICY_K8S:
+                    k_key = f"{os.path.abspath(root)}::{sandbox_user_key}::{SANDBOX_POLICY_K8S}"
+                    existing_k8s = _k8s_workspace_cache.get(k_key)
+                    if existing_k8s is not None and getattr(existing_k8s, "is_alive", True) is not False:
+                        is_already_alive = True
+
+                if lazy_sandbox and not is_already_alive:
+                    sandbox_ws = LazySandboxWorkspaceProxy(
+                        policy=policy,
+                        root=root,
+                        user_key=sandbox_user_key,
+                        skill_paths=skill_paths,
+                        cache_key=cache_key,
                     )
-                sandbox_ws, sandbox_cache_key = await _acquire_k8s_workspace(
-                    root=root,
-                    user_key=sandbox_user_key,
-                    skill_paths=skill_paths,
-                )
+                else:
+                    if policy == SANDBOX_POLICY_DOCKER:
+                        sandbox_ws, sandbox_cache_key = await _acquire_docker_workspace(
+                            root=root,
+                            user_key=sandbox_user_key,
+                            skill_paths=skill_paths,
+                        )
+                    else:
+                        sandbox_ws, sandbox_cache_key = await _acquire_k8s_workspace(
+                            root=root,
+                            user_key=sandbox_user_key,
+                            skill_paths=skill_paths,
+                        )
             elif policy == SANDBOX_POLICY_E2B:
                 sandbox_ws = await _policy_e2b_workspace(skill_paths)
             else:
@@ -1756,7 +1958,7 @@ async def get_local_workspace(
         )
         if policy == SANDBOX_POLICY_DOCKER and sandbox_user_key:
             local_ws.workspace_user_root = os.path.join(root, sandbox_user_key)
-            if sandbox_ws is not None:
+            if sandbox_ws is not None and not isinstance(sandbox_ws, LazySandboxWorkspaceProxy):
                 sandbox_ws._platform_docker_file_tool_mount_mappings = (
                     _build_docker_file_tool_mount_mappings(
                         local_ws.workspace_user_root,
@@ -1771,8 +1973,11 @@ async def get_local_workspace(
                 )
         await local_ws.initialize()
         if sandbox_ws is not None:
-            sandbox_ws._platform_sandbox_policy = policy
-            sandbox_ws._platform_execution_backend = policy
+            if isinstance(sandbox_ws, LazySandboxWorkspaceProxy):
+                sandbox_ws.local_ws = local_ws
+            else:
+                sandbox_ws._platform_sandbox_policy = policy
+                sandbox_ws._platform_execution_backend = policy
     except Exception as exc:
         if sandbox_cache_key is not None:
             await _release_sandbox_workspace(
@@ -1862,8 +2067,11 @@ async def ensure_docker_workspace(
         conversation_id=str(conversation_id).strip(),
         user_name=user_name,
         user_info=user_info,
+        lazy_sandbox=False,
     )
     sandbox_ws, _local_ws = _normalize_workspace_pair(workspace_pair)
+    if isinstance(sandbox_ws, LazySandboxWorkspaceProxy):
+        sandbox_ws = await sandbox_ws.ensure_ready()
     if (
         sandbox_ws is None
         or getattr(sandbox_ws, "_platform_sandbox_policy", None)
@@ -2676,8 +2884,11 @@ async def ensure_k8s_workspace(
         conversation_id=str(conversation_id).strip(),
         user_name=user_name,
         user_info=user_info,
+        lazy_sandbox=False,
     )
     sandbox_ws, _local_ws = _normalize_workspace_pair(workspace_pair)
+    if isinstance(sandbox_ws, LazySandboxWorkspaceProxy):
+        sandbox_ws = await sandbox_ws.ensure_ready()
     if (
         sandbox_ws is None
         or getattr(sandbox_ws, "_platform_sandbox_policy", None)
@@ -3910,6 +4121,134 @@ class _CanonicalWorkspaceNativeTool:
         return self._native_tool(**kwargs)
 
 
+DEFAULT_BASH_INPUT_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "command": {
+            "type": "string",
+            "description": "The command to run in the terminal",
+        },
+    },
+    "required": ["command"],
+}
+
+
+class LazySandboxBashNativeTool:
+    """按需拉起沙箱的 Bash 原生工具代理。"""
+
+    is_external_tool: bool = False
+    is_state_injected: bool = False
+    is_mcp: bool = False
+    mcp_name: str | None = None
+    is_read_only: bool = False
+    is_concurrency_safe: bool = False
+    evidence_types: frozenset = frozenset()
+    evidence_policy: str = "non_empty"
+    evidence_inference_disabled: bool = False
+
+    def __init__(
+        self,
+        proxy: LazySandboxWorkspaceProxy,
+        local_ws: Any | None = None,
+        *,
+        name: str = "Bash",
+        description: str = "",
+        input_schema: dict[str, Any] | None = None,
+    ) -> None:
+        self.proxy = proxy
+        self.local_ws = local_ws
+        self.name = name
+        self.description = description or "Execute a bash command in the sandbox environment."
+        self.input_schema = input_schema or DEFAULT_BASH_INPUT_SCHEMA
+        self._real_tool: Any | None = None
+        self._lock = asyncio.Lock()
+
+    async def _resolve_real_tool(self) -> Any:
+        if self._real_tool is not None:
+            return self._real_tool
+        async with self._lock:
+            if self._real_tool is not None:
+                return self._real_tool
+
+            real_ws = await self.proxy.ensure_ready()
+            list_mcps = getattr(real_ws, "list_mcps", None)
+            sandbox_bash = await _sandbox_bash_tool_from_mcps(
+                list_mcps() if callable(list_mcps) else None
+            )
+            if sandbox_bash is None:
+                if (
+                    getattr(real_ws, "_platform_sandbox_policy", None)
+                    == SANDBOX_POLICY_K8S
+                ):
+                    from app.services.ai.runtime.agentscope.k8s_workspace import (
+                        K8sSandboxUnavailableError,
+                    )
+
+                    raise K8sSandboxUnavailableError(
+                        "Kubernetes sandbox Bash MCP is unavailable",
+                        reason_code="k8s_sandbox_mcp_unavailable",
+                        user_message=(
+                            "Kubernetes 沙箱中的 Bash 工具不可用，Bash 未执行。"
+                            "请检查沙箱网关与 Bash MCP 注册状态（K8s 沙箱的 Bash MCP "
+                            "子进程需使用网关虚拟环境解释器）。"
+                        ),
+                    )
+                raise DockerSandboxUnavailableError(
+                    "Docker sandbox Bash MCP is unavailable",
+                    reason_code="docker_workspace_start_failed",
+                    user_message=(
+                        "Docker 沙箱中的 Bash 工具不可用，Bash 未执行。"
+                        "请检查容器网关和 MCP 配置。"
+                    ),
+                )
+
+            docker_host_root = (
+                getattr(self.local_ws, "workspace_user_root", None)
+                if self.local_ws is not None
+                else None
+            )
+            if (
+                docker_host_root
+                and getattr(real_ws, "_platform_sandbox_policy", None)
+                == SANDBOX_POLICY_DOCKER
+                and self.local_ws is not None
+                and getattr(self.local_ws, "workdir", None)
+            ):
+                sandbox_bash = _DockerSessionBashNativeTool(
+                    sandbox_bash,
+                    docker_host_root,
+                    self.local_ws.workdir,
+                )
+            if getattr(sandbox_bash, "name", None) != self.name:
+                sandbox_bash = _CanonicalWorkspaceNativeTool(sandbox_bash, self.name)
+            self._real_tool = sandbox_bash
+            return self._real_tool
+
+    def __getattr__(self, item: str) -> Any:
+        if self._real_tool is not None:
+            return getattr(self._real_tool, item)
+        if item.startswith("__") and item.endswith("__"):
+            raise AttributeError(f"'{type(self).__name__}' object has no attribute '{item}'")
+        return None
+
+    async def check_permissions(self, tool_input: dict[str, Any], context: Any) -> Any:
+        if self._real_tool is not None and hasattr(self._real_tool, "check_permissions"):
+            return await self._real_tool.check_permissions(tool_input, context)
+        return None
+
+    async def check_read_only(self, tool_input: dict[str, Any]) -> bool:
+        if self._real_tool is not None and hasattr(self._real_tool, "check_read_only"):
+            return await self._real_tool.check_read_only(tool_input)
+        return False
+
+    async def __call__(self, **kwargs: Any) -> Any:
+        real_tool = await self._resolve_real_tool()
+        result = real_tool(**kwargs)
+        if inspect.isawaitable(result):
+            result = await result
+        return result
+
+
 async def bind_configured_tools_to_workspace(
     workspace: Any,
     tool_specs: list[Any] | None,
@@ -3942,6 +4281,7 @@ async def bind_configured_tools_to_workspace(
         return specs
 
     sandbox_ws, local_ws = _normalize_workspace_pair(workspace)
+    is_lazy = isinstance(sandbox_ws, LazySandboxWorkspaceProxy)
     docker_host_root = None
     if (
         sandbox_ws is not None
@@ -3973,43 +4313,53 @@ async def bind_configured_tools_to_workspace(
     # Collect bash from the sandbox (docker/e2b/ssh) via its MCP bash tool.
     sandbox_bash: Any | None = None
     if sandbox_ws is not None:
-        list_mcps = getattr(sandbox_ws, "list_mcps", None)
-        sandbox_bash = await _sandbox_bash_tool_from_mcps(
-            list_mcps() if callable(list_mcps) else None
-        )
-
-        if sandbox_bash is None and any(
-            _workspace_native_name_for_spec(spec) == "Bash" for spec in specs
-        ):
-            if (
-                getattr(sandbox_ws, "_platform_sandbox_policy", None)
-                == SANDBOX_POLICY_K8S
-            ):
-                # Kubernetes 沙箱：Pod/RBAC 正常但网关未能提供 Bash MCP 工具时，
-                # 应报 Kubernetes 专属诊断而非遗留的 Docker 文案。常见根因是沙箱内
-                # 的 Bash MCP 子进程使用了未安装 mcp 包的系统 Python（应使用网关
-                # 虚拟环境 /root/.agentscope/.venv/bin/python）。
-                from app.services.ai.runtime.agentscope.k8s_workspace import (
-                    K8sSandboxUnavailableError,
+        if is_lazy:
+            bash_spec = next(
+                (spec for spec in specs if _workspace_native_name_for_spec(spec) == "Bash"),
+                None,
+            )
+            if bash_spec is not None:
+                sandbox_bash = LazySandboxBashNativeTool(
+                    proxy=sandbox_ws,
+                    local_ws=local_ws,
+                    name="Bash",
+                    description=getattr(bash_spec, "description", ""),
+                    input_schema=getattr(bash_spec, "parameters_schema", None),
                 )
+        else:
+            list_mcps = getattr(sandbox_ws, "list_mcps", None)
+            sandbox_bash = await _sandbox_bash_tool_from_mcps(
+                list_mcps() if callable(list_mcps) else None
+            )
 
-                raise K8sSandboxUnavailableError(
-                    "Kubernetes sandbox Bash MCP is unavailable",
-                    reason_code="k8s_sandbox_mcp_unavailable",
+            if sandbox_bash is None and any(
+                _workspace_native_name_for_spec(spec) == "Bash" for spec in specs
+            ):
+                if (
+                    getattr(sandbox_ws, "_platform_sandbox_policy", None)
+                    == SANDBOX_POLICY_K8S
+                ):
+                    from app.services.ai.runtime.agentscope.k8s_workspace import (
+                        K8sSandboxUnavailableError,
+                    )
+
+                    raise K8sSandboxUnavailableError(
+                        "Kubernetes sandbox Bash MCP is unavailable",
+                        reason_code="k8s_sandbox_mcp_unavailable",
+                        user_message=(
+                            "Kubernetes 沙箱中的 Bash 工具不可用，Bash 未执行。"
+                            "请检查沙箱网关与 Bash MCP 注册状态（K8s 沙箱的 Bash MCP "
+                            "子进程需使用网关虚拟环境解释器）。"
+                        ),
+                    )
+                raise DockerSandboxUnavailableError(
+                    "Docker sandbox Bash MCP is unavailable",
+                    reason_code="docker_workspace_start_failed",
                     user_message=(
-                        "Kubernetes 沙箱中的 Bash 工具不可用，Bash 未执行。"
-                        "请检查沙箱网关与 Bash MCP 注册状态（K8s 沙箱的 Bash MCP "
-                        "子进程需使用网关虚拟环境解释器）。"
+                        "Docker 沙箱中的 Bash 工具不可用，Bash 未执行。"
+                        "请检查容器网关和 MCP 配置。"
                     ),
                 )
-            raise DockerSandboxUnavailableError(
-                "Docker sandbox Bash MCP is unavailable",
-                reason_code="docker_workspace_start_failed",
-                user_message=(
-                    "Docker 沙箱中的 Bash 工具不可用，Bash 未执行。"
-                    "请检查容器网关和 MCP 配置。"
-                ),
-            )
 
     from app.services.ai.runtime.agentscope.tools import (
         runtime_tool_spec_from_native_agentscope_tool,
@@ -4066,6 +4416,7 @@ async def bind_configured_tools_to_workspace(
         if (
             docker_host_root
             and native_name == "Bash"
+            and not is_lazy
             and local_ws is not None
             and getattr(local_ws, "workdir", None)
         ):
@@ -4074,7 +4425,11 @@ async def bind_configured_tools_to_workspace(
                 docker_host_root,
                 local_ws.workdir,
             )
-        if native_name == "Bash" and getattr(workspace_tool, "name", None) != "Bash":
+        if (
+            native_name == "Bash"
+            and not is_lazy
+            and getattr(workspace_tool, "name", None) != "Bash"
+        ):
             workspace_tool = _CanonicalWorkspaceNativeTool(workspace_tool, "Bash")
         rebound = runtime_tool_spec_from_native_agentscope_tool(
             workspace_tool,

@@ -2074,6 +2074,7 @@ class AgentService:
                     SANDBOX_POLICY_E2B,
                     SANDBOX_POLICY_SSH,
                     _docker_workspace_cache,
+                    _k8s_workspace_cache,
                     _workspace_cache,
                     resolve_workspace_root,
                     resolve_session_workdir,
@@ -2102,16 +2103,17 @@ class AgentService:
                 was_cached = False
                 try:
                     root = await resolve_workspace_root()
-                    if policy == SANDBOX_POLICY_DOCKER:
+                    if policy in (SANDBOX_POLICY_DOCKER, SANDBOX_POLICY_K8S):
                         sandbox_user_key = _resolve_sandbox_user_key(
                             user_id=runtime_user_id,
                             user_name=runtime_user_name,
                             user_info=user_info,
                         )
                         if sandbox_user_key:
-                            docker_cache_key = f"{os.path.abspath(root)}::{sandbox_user_key}::{SANDBOX_POLICY_DOCKER}"
-                            cached_dk = _docker_workspace_cache.get(docker_cache_key)
-                            if cached_dk is not None and getattr(cached_dk, "is_alive", True):
+                            cache_dict = _docker_workspace_cache if policy == SANDBOX_POLICY_DOCKER else _k8s_workspace_cache
+                            sandbox_cache_key = f"{os.path.abspath(root)}::{sandbox_user_key}::{policy}"
+                            cached_ws = cache_dict.get(sandbox_cache_key)
+                            if cached_ws is not None and getattr(cached_ws, "is_alive", True):
                                 was_cached = True
                     else:
                         workdir = resolve_session_workdir(
@@ -2134,10 +2136,14 @@ class AgentService:
                 except Exception:
                     pass
 
+                # 按需拉起策略：若为 Docker/K8s 且沙箱尚未存活，本轮不再提前拉起沙箱，
+                # 静默跳过并等待后续具体调用 Bash 工具时按需拉起并推流。
+                if policy in (SANDBOX_POLICY_DOCKER, SANDBOX_POLICY_K8S) and not was_cached:
+                    return None
+
+                # E2B/SSH 远程云沙箱需保留更长建连超时，Docker/K8s/Local 10s 即可
+                prewarm_timeout = 60.0 if policy in (SANDBOX_POLICY_E2B, SANDBOX_POLICY_SSH) else 10.0
                 with _measure("workspace_prewarm"):
-                    # 预热只是“抢跑”，绝不允许它拖死整轮：沙箱初始化（拉镜像/k8s
-                    # bootstrap/等待锁）可能长时间挂起，这里强制上限，超时按失败返回
-                    # error log，由主流程继续（不在此 await 上无限等待）。
                     await asyncio.wait_for(
                         get_local_workspace(
                             user_id=runtime_user_id,
@@ -2146,8 +2152,9 @@ class AgentService:
                             user_info=user_info,
                             skills_custom=bool(getattr(agent_config, "skills_custom", False)),
                             allowed_global_skills=list(getattr(agent_config, "skills", None) or []),
+                            lazy_sandbox=True,
                         ),
-                        timeout=60.0,
+                        timeout=prewarm_timeout,
                     )
                 elapsed_ms = (time.monotonic() - start_time) * 1000.0
                 return _build_workspace_sandbox_log(
