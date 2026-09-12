@@ -146,6 +146,19 @@
                       >子代理 · </span>
                       <span>{{ displayTimelineTitle(child) }}</span>
                     </span>
+                    <!-- 沙箱工作区预热进行中文案与动效条（同行右侧对齐） -->
+                    <div
+                      v-if="isWorkspacePrewarmPending(child)"
+                      class="shrink-0 flex items-center gap-1.5 text-[10px] text-sky-600 dark:text-sky-400"
+                      aria-live="polite"
+                      aria-busy="true"
+                    >
+                      <span class="workspace-prewarm-bar shrink-0" aria-hidden="true"></span>
+                      <span
+                        class="truncate max-w-[140px] sm:max-w-[320px] md:max-w-none"
+                        :title="'已等待 ' + prewarmElapsedSeconds + 's · ' + prewarmStageLabel"
+                      >已等待 {{ prewarmElapsedSeconds }}s · {{ prewarmStageLabel }}</span>
+                    </div>
                     <span
                       v-if="child.subagent && subagentStatusLabel(child.status)"
                       class="shrink-0 text-[10px]"
@@ -159,17 +172,6 @@
                       <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m19 9-7 7-7-7" />
                     </svg>
                   </button>
-                  <!-- 沙箱工作区预热"推进中"提示：静态"创建中"容易让人以为卡死，
-                       这里随 clock 用已等待秒 + 阶段文案 + 不确定进度条表示仍在推进。 -->
-                  <div
-                    v-if="isWorkspacePrewarmPending(child)"
-                    class="ml-5 mt-0.5 flex items-center gap-2 text-[10px] leading-4 text-sky-600/80 dark:text-sky-400/80"
-                    aria-live="polite"
-                    aria-busy="true"
-                  >
-                    <span class="workspace-prewarm-bar" aria-hidden="true"></span>
-                    <span>已等待 {{ prewarmElapsedSeconds }}s · {{ prewarmStageLabel }}</span>
-                  </div>
                   <div v-if="child.error_reason" class="ml-5 mt-0.5 rounded bg-red-100/70 px-1.5 py-0.5 text-[10px] leading-4 text-red-700 dark:bg-red-950/30 dark:text-red-300">
                     错误原因：{{ child.error_reason }}
                   </div>
@@ -282,6 +284,19 @@
                 >子代理 · </span>
                 <span>{{ displayTimelineTitle(item) }}</span>
               </span>
+              <!-- 沙箱工作区预热进行中文案与动效条（顶层项） -->
+              <div
+                v-if="isWorkspacePrewarmPending(item)"
+                class="shrink-0 flex items-center gap-1.5 text-[10px] text-sky-600 dark:text-sky-400"
+                aria-live="polite"
+                aria-busy="true"
+              >
+                <span class="workspace-prewarm-bar shrink-0" aria-hidden="true"></span>
+                <span
+                  class="truncate max-w-[140px] sm:max-w-[320px] md:max-w-none"
+                  :title="'已等待 ' + prewarmElapsedSeconds + 's · ' + prewarmStageLabel"
+                >已等待 {{ prewarmElapsedSeconds }}s · {{ prewarmStageLabel }}</span>
+              </div>
               <span
                 v-if="isPreparationParent(item)"
                 class="shrink-0 text-[10px] font-medium"
@@ -367,6 +382,19 @@
                   />
                   <component v-else :is="timelineIconFor(subStep)" class="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
                   <span class="min-w-0 flex-1 truncate" :title="displayTimelineTitle(subStep)">{{ displayTimelineTitle(subStep) }}</span>
+                  <!-- 沙箱工作区预热进行中文案与动效条（同行右侧对齐） -->
+                  <div
+                    v-if="isWorkspacePrewarmPending(subStep)"
+                    class="shrink-0 flex items-center gap-1.5 text-[10px] text-sky-600 dark:text-sky-400"
+                    aria-live="polite"
+                    aria-busy="true"
+                  >
+                    <span class="workspace-prewarm-bar shrink-0" aria-hidden="true"></span>
+                    <span
+                      class="truncate max-w-[140px] sm:max-w-[320px] md:max-w-none"
+                      :title="'已等待 ' + prewarmElapsedSeconds + 's · ' + prewarmStageLabel"
+                    >已等待 {{ prewarmElapsedSeconds }}s · {{ prewarmStageLabel }}</span>
+                  </div>
                   <span v-if="subStep.status === 'error'" class="shrink-0 text-[10px] text-red-600">失败</span>
                   <span v-if="formatTimelineDuration(subStep)" class="shrink-0 font-mono text-[10px] text-gray-400" :title="timelineDurationTitle(subStep)">{{ formatTimelineDuration(subStep) }}</span>
                   <svg v-if="hasVisibleTimelineText(subStep.details) || subStep.children?.length" class="h-3 w-3 shrink-0 text-gray-400 transition-transform" :class="{ 'rotate-180': subStep.children?.length ? (subStep.childrenExpanded !== false) : subStep.isExpanded }" fill="none" stroke="currentColor" viewBox="0 0 24 24">

@@ -1474,6 +1474,7 @@ def test_execution_timeline_renders_workspace_prewarm_progress():
     timeline = (ROOT / "frontend/src/components/chat/ChatExecutionTimeline.vue").read_text(encoding="utf-8")
 
     assert "isWorkspacePrewarmPending(child)" in timeline
+    assert "isWorkspacePrewarmPending(subStep)" in timeline
     assert "prewarmStageLabel" in timeline
     assert "prewarmElapsedSeconds" in timeline
     assert "已等待 {{ prewarmElapsedSeconds }}s" in timeline
