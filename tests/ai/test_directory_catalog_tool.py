@@ -284,7 +284,7 @@ def test_agent_prompts_file_anti_guessing_guidelines():
     assert "平台公共目录（data/docs/、skills/、branding/）为只读（read_only）" in prompt
     assert "查找公共手册/FAQ/文档路径" in prompt
     assert "目录发现与树形导航分工" in prompt
-    assert "路径、权限或 Docker/宿主机映射不确定时，优先调用 list_accessible_directories" in prompt
+    assert "路径、权限或 Docker/宿主机映射不确定时，**调用 list_accessible_directories**" in prompt
     assert "目标目录已经明确、只需要查看目录树时，调用 directory_tree_navigator" in prompt
 
 
@@ -296,10 +296,11 @@ def test_agent_prompts_route_platform_docs_through_host_file_tools():
         runtime_tool_names=["Read", "Glob", "Grep", "Bash"],
     )
 
-    assert "公共文档目录下的 `data/docs/*.md`" in prompt
+    assert "检索平台公共文档" in prompt
+    assert "公共文档须用宿主侧绝对路径读取" in prompt
     assert "优先通过宿主侧" in prompt
     assert "Grep`/`Glob`/`Read`" in prompt
-    assert "Docker 沙箱内也可通过只读路径 `/workspace/public/docs`" in prompt
+    assert "公共文档仅宿主侧可读" in prompt
     assert "不要因为“是什么意思”等词语改走企业知识库" in prompt
     assert "platform_help_files" in prompt
     assert "不得递归扫描 `/app`" in prompt
@@ -314,4 +315,4 @@ def test_agent_prompts_directory_navigator_does_not_require_unbound_catalog_tool
     )
 
     assert "目标目录已经明确、只需要查看目录树时，调用 directory_tree_navigator" in prompt
-    assert "优先调用 list_accessible_directories" not in prompt
+    assert "list_accessible_directories" not in prompt
