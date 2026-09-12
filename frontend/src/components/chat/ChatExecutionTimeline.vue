@@ -663,11 +663,7 @@ function findWorkspacePrewarmPending(items: ProcessTimelineItem[]): boolean {
 const tickNow = ref(0);
 const prewarmStartedAtMs = ref<number | null>(null);
 let tickTimer: ReturnType<typeof setInterval> | null = null;
-const isWorkspacePrewarming = computed(() => {
-  // 引用 tickNow 使阶段文案/已等待在 tick 时重新计算。
-  void tickNow.value;
-  return findWorkspacePrewarmPending(items.value);
-});
+const isWorkspacePrewarming = computed(() => findWorkspacePrewarmPending(items.value));
 
 watch(
   () => isWorkspacePrewarming.value,
@@ -694,6 +690,8 @@ onBeforeUnmount(() => {
 });
 
 const prewarmElapsedMs = computed(() => {
+  // 依赖 tickNow 使已等待耗时与阶段安抚文案每 500ms 动态推进更新
+  void tickNow.value;
   if (!isWorkspacePrewarming.value || prewarmStartedAtMs.value === null) return 0;
   return Math.max(0, Date.now() - prewarmStartedAtMs.value);
 });

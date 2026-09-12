@@ -1480,6 +1480,7 @@ def test_execution_timeline_renders_workspace_prewarm_progress():
     assert "已等待 {{ prewarmElapsedSeconds }}s" in timeline
     assert "workspace-prewarm-bar" in timeline
     assert "aria-busy=\"true\"" in timeline
+    assert "void tickNow.value" in timeline
 
     process = (ROOT / "frontend/src/utils/processTimeline.ts").read_text(encoding="utf-8")
     assert "WORKSPACE_PREWARM_LOG_ID" in process
