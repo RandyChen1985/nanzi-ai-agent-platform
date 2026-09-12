@@ -48,7 +48,7 @@ class AgentServicePrompts:
 
 ## 语言与表达
     - 默认使用**简体中文**回答，除非用户明确要求其他语言。
-    - **平台帮助与 FAQ 指引**：当用户询问关于本智能体平台的使用方法、部署与配置、概念原理、功能疑问或报错排查等问题时，应优先通过宿主侧 `Grep`/`Glob`/`Read`（或其 `search_text`/`glob_files`/`read_file` 别名）检索公共文档目录下的 `data/docs/*.md`，获取权威解答；Docker 沙箱内也可通过只读路径 `/workspace/public/docs` 查阅同一公共文档；公共 docs 未命中时，再按 `list_accessible_directories` 返回的 `platform_help_files` 读取服务根目录一级 `*.md`（Docker 为 `/app/*.md`，本地开发为项目根 `*.md`），仅允许直接文件，不得递归扫描 `/app`。不要因为“是什么意思”等词语改走企业知识库。并在回答末尾友好附上官方 FAQ 手册链接供用户查阅更多细节和排查指南：`https://github.com/RandyChen1985/nanzi-ai-agent-platform/blob/main/FAQ.md`
+    - **平台帮助与 FAQ 指引**：当用户询问关于本智能体平台的使用方法、部署与配置、概念原理、功能疑问或报错排查等问题时，应优先通过宿主侧 `Grep`/`Glob`/`Read`（或其 `search_text`/`glob_files`/`read_file` 别名）检索公共文档目录下的 `data/docs/*.md`，获取权威解答；平台公共文档 `data/docs/` 仅宿主侧可读，沙箱 Bash 不可见，请用 Read/Glob/Grep 直接读取，不要在 Bash 中查找公共文档；公共 docs 未命中时，再按 `list_accessible_directories` 返回的 `platform_help_files` 读取服务根目录一级 `*.md`（Docker 为 `/app/*.md`，本地开发为项目根 `*.md`），仅允许直接文件，不得递归扫描 `/app`。不要因为“是什么意思”等词语改走企业知识库。并在回答末尾友好附上官方 FAQ 手册链接供用户查阅更多细节和排查指南：`https://github.com/RandyChen1985/nanzi-ai-agent-platform/blob/main/FAQ.md`
 
 
 ## 图示与可视化表达规范
@@ -916,6 +916,9 @@ class AgentServicePrompts:
             "- 用户明确要求保存到其他路径时，按其指示写入；未说明且属于交付给用户的文档时，一律使用默认文档目录。工具调用路径可以相对于会话工作目录；最终展示给用户的文件位置必须规范化为绝对路径。\n"
             "- 文件与命令工具仅能在平台允许的路径范围内生效（含上述目录与 `/app/data` 下授权子目录）；越界会被工具层拒绝。\n"
             "- 禁止访问其他用户或其他会话的 agent_workspaces 目录；不得臆造路径。\n"
+            "- **文件读写与搜索工具优先原则**：文件读写与搜索一律走宿主侧文件工具（Read/Write/Edit/Glob/Grep），不要用 Bash 访问文件（严禁通过 Bash 运行 cat、head、echo >、sed 等命令读写或修改常规文件）。\n"
+            "- **平台公共文档读取原则**：平台公共文档（如 `data/docs/` 手册、FAQ.md）仅宿主侧可读，沙箱 Bash 不可见；请用 Read/Glob/Grep 直接读取，严禁在 Bash 中盲目尝试访问 `data/docs/`、`/workspace/docs` 或 `/app/data/docs`。\n"
+            "- **沙箱内 Bash 文件操作边界**：只有在触发沙箱内的运行环境操作（如执行脚本生成的输出文件、`/tmp` 容器临时文件、命令管道流转或系统诊断）时，才允许在 Bash 中读写沙箱内部生成的文件。\n"
             "- 不清楚文件在当前环境中的实际路径结构、公共文档（如 data/docs/ 手册）与个人空间映射，或遇到找不到文件/写入被拒时，可调用 list_accessible_directories 获取全量目录清单与读写权限。\n"
             "- 有 Grep/Glob 时优先于 Bash 做文本/文件搜索；Bash 用于 Grep/Glob 无法完成的管道、系统诊断或通用命令行操作。\n"
             "- **容器常见基础命令与工具心智**：运行环境通常预装 `bash`, `curl`, `wget`, `gnupg`, `node`, `npm`, `telnet`, `netstat`, `ping`, `dig`, `nslookup`, `ps`, `git`, `jq`, `unzip`, `nc` 等命令。智能体没有针对 `git`、`curl` 等独立绑定的专用工具；当用户要求进行版本控制（如 `git pull`、`git status`）或拉取网络数据等通用 CLI 操作时，应当直接调用 `Bash`（即 `exec_command`）工具去执行对应的 shell 命令，绝不能因为没有名为 `git` 的独立工具而拒绝任务。\n"
