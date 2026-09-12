@@ -1467,10 +1467,13 @@ return {
     assert result["bashDoneIsPrewarming"] is False
     assert result["otherIsPrewarming"] is False
     assert result["emptyIsPrewarming"] is False
+    assert "首次创建沙箱" in result["stageEarly"]
     assert "申请" in result["stageEarly"]
     assert "初始化沙箱工作区" in result["stageMid"]
+    assert "Pod" not in result["stageMid"]
+    assert "启动运行环境" in result["stageMid"]
     assert "60 秒" in result["stageLong"]
-    assert result["stageNegative"] == "正在申请隔离资源配置…"
+    assert result["stageNegative"] == "首次创建沙箱，正在申请隔离资源配置…"
     assert result["secs0"] == 0
     assert result["secsNeg"] == 0
     assert result["secs3"] == 3

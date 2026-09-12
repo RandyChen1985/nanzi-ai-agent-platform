@@ -83,8 +83,8 @@ export const WORKSPACE_PREWARM_LOG_ID = "workspace:sandbox";
 
 /** 沙箱预热各阶段的安抚文案，按耗时增长切换，让用户感知任务仍在推进而非卡死。 */
 const PREWARM_STAGE_LABELS: Array<{ afterMs: number; label: string }> = [
-  { afterMs: 0, label: "正在申请隔离资源配置…" },
-  { afterMs: 4000, label: "正在初始化沙箱工作区（拉取镜像 / Pod）…" },
+  { afterMs: 0, label: "首次创建沙箱，正在申请隔离资源配置…" },
+  { afterMs: 4000, label: "正在初始化沙箱工作区（拉取镜像与启动运行环境）…" },
   { afterMs: 10000, label: "创建工作区耗时较长，请稍候（最长约 60 秒）…" },
 ];
 
@@ -107,7 +107,7 @@ export function isWorkspacePrewarmPending(
 
 /** 依据已等待毫秒返回"推进中的"阶段安抚文案。 */
 export function workspacePrewarmStageLabel(elapsedMs: number): string {
-  let label = PREWARM_STAGE_LABELS[0]?.label || "正在申请隔离资源配置…";
+  let label = PREWARM_STAGE_LABELS[0]?.label || "首次创建沙箱，正在申请隔离资源配置…";
   for (const stage of PREWARM_STAGE_LABELS) {
     if (elapsedMs >= stage.afterMs) label = stage.label;
   }
