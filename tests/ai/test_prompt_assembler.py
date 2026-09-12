@@ -394,6 +394,26 @@ def test_platform_prompt_degrades_without_execution_capability():
     assert "注册正式工具或 MCP" in prompt
 
 
+def test_platform_prompt_requires_real_result_over_fabricating_verifiable_values():
+    prompt = AgentServicePrompts.prepend_platform_global_system_prompt(
+        None,
+        agent_config=SimpleNamespace(tools=["Bash"]),
+    )
+
+    # 泛化：可验证的真实外部/运行时事实必须先调用工具，禁止凭空输出可验证数值
+    assert "真实结果优先" in prompt
+    assert "必须先真正调用工具获取结果再回答" in prompt
+    assert "URL/网站的连通性与 HTTP 状态码" in prompt
+    assert "请求/连接/DNS 耗时" in prompt
+    assert "只有真实执行才能得到" in prompt
+    assert "HTTP 200" in prompt
+    assert "不得编造任何状态码、耗时、大小、版本或在线/离线结论" in prompt
+    assert "未能真实获取" in prompt
+    assert "一切以工具真实返回为准" in prompt
+    # 动态强化：Bash 绑定时的连通性/系统状态也必须先真实执行
+    assert "必须先调用合适工具获取真实结果再回答，禁止凭空报告状态、状态码或耗时等可验证数值" in prompt
+
+
 def test_platform_prompt_keeps_existing_sensitive_tool_confirmation():
     prompt = AgentServicePrompts.prepend_platform_global_system_prompt(
         None,
