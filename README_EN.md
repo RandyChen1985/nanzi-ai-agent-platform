@@ -21,14 +21,14 @@
 
 The platform revolves around the following core capability matrix:
 *   💬 **Deep Interactive Dialogue**: High-performance streaming chat with **intelligent delegation through the default Main agent**, **expert mode / @mention direct selection**, and multi-agent synthesis. **Tool preflight** nudges the model to call tools; integrated `ask_user_question` smart cards (single/multi-choice, text input), **Todo task lists** with step-by-step progress tracking, and skill auto-scan with permission suspend/resume.
-*   🛡️ **Multi-Policy Sandbox & Isolation**: Native support for **Local** (host process), **Docker** (isolated private container), **E2B** (cloud sandbox), and **SSH** (remote secure channel) policies. Docker containers mount user workspaces at **identical absolute paths** for seamless canvas preview and edit persistence; idle auto-reaper (30m timeout), graceful shutdown cleanup, and chat popover control with **live second-by-second uptime tracking**.
+*   🛡️ **Multi-Policy Sandbox & Isolation**: Native support for **Local** (host process), **Docker** (isolated private container), **K8s** (Kubernetes native Pod sandbox, recommended for enterprise cloud-native environments without Docker Socket), **E2B** (cloud sandbox), and **SSH** (remote secure channel) policies. Docker and K8s modes support user workspace **same-path/subPath mounting** for seamless canvas preview and edit persistence; idle auto-reaper (30m timeout), graceful shutdown cleanup, and chat popover control with **live second-by-second uptime tracking**.
 *   🌐 **Persistent Browser & Live Takeover**: Server-side persistent browser sessions with complete automation toolsets (navigation, click, fill, human-like trajectory slider dragging, scroll, keys, snapshot, file upload, multi-tabs); frontend right-side **live Web interactive drawer** with stream rendering and human-in-the-loop takeover.
-*   📊 **Native Enterprise ChatBI & Self-Healing**: Data sources, metadata sync, case-library Few-Shot, SQL self-healing, and optional **sql_plan** structured plans; **My Data Portal** via `/dataset_portal`; direct physical SQL and golden report stash.
+*   📊 **Native Enterprise ChatBI & Self-Healing**: Data sources and metadata management, **metadata consistency inspection & schema drift governance**, case-library Few-Shot, SQL self-healing, and optional **sql_plan** structured plans; **My Data Portal** via `/dataset_portal`; direct physical SQL and golden report stash.
 *   🧠 **Long-Term & Cross-Session Memory**: LTM preference injection plus on-demand **`memory_search`** over session/daily summaries; Memory Management Console for vector ops and governance; full-lifecycle Redis memory and compaction logs **TTL extended to 30 days**.
 *   📊 **Context Breakdown & Overflow Compaction**: Fine-grained Token breakdown across System Prompt, Tools Schema, Memory/History, and Current Turn; smart two-stage structured overflow compaction (`_structured_tool_block` with multimodal tag preservation).
 *   🧩 **Code Canvas & Workspace Execution**: Stream, stop, and inspect Python / Shell runs inside a private user workspace; `publish_generated_file` for downloadable artifacts.
 *   📚 **Knowledge Base Center (RAG & Knowledge Hub)**: Tree document management, recall testing, semantic merge; **Knowledge executor** auto-retrieves before ReAct with citation cards.
-*   🔌 **Open Plugin Ecosystem (MCP Integration)**: Fully compliant with Anthropic's Model Context Protocol to connect Jira, Email, GitLab, etc.
+*   🔌 **Bi-Directional Enterprise MCP Ecosystem (Platform & Client MCP)**: Automatically forwards authenticated user context when calling outbound external MCP tools to guarantee multi-tenancy and data permission isolation; natively provides **NanZi Platform MCP** resource server (OAuth2 auth & Service Desk) allowing external clients like Cursor and Claude Desktop to invoke NanZi agents, chats, and metadata directly.
 *   🔌 **Flexible Embedded Integration**: Embed Chat SDK for enterprise portals with existing auth, tenant isolation, granular RBAC, and watermark compliance.
 *   ⏰ **Task Scheduler & Multi-Channel Notifications**: APScheduler with Redis execution locks and an environment-controlled scheduler node for Cron/periodic/one-off tasks under agent identities; multi-channel alerts (**WeCom, DingTalk, Feishu, Email, Webhook, and In-App Inbox**); auto-cleans thinking streams for clean deliveries with overflow protection and ChatBI golden report threshold alerts.
 *   🛠️ **Debug & Trace**: Decision chains, tool calls, SQL plan cards; CSV/Excel export for structured query results.
@@ -115,10 +115,11 @@ The platform revolves around the following core capability matrix:
 *   **OpenClaw🦞 gateway**: Passes `AUTH_CONTEXT` (identity, channel, accessible datasets) for tenant isolation.
 
 ### 2. 🛡️ Multi-Policy Sandbox & Execution Isolation
-*   **Four sandbox policies**: Native support for `Local` (host process), `Docker` (private container), `E2B` (cloud sandbox), and `SSH` (remote secure host).
-*   **Docker same-path workspace mounting**: User workspaces are mounted to identical absolute paths inside the container, mapping `/workspace/...` logical paths back to host files with real-time canvas preview and editing.
-*   **Automated lifecycle management**: 30-minute idle reaper, graceful shutdown container cleanup, and prebuild enhancements.
-*   **Chat input popover console**: Live status badge (🟢Running/🟡Starting/🔴Error/⚪Stopped), assigned container ID, **second-by-second live runtime counter**, and manual start/refresh controls.
+*   **Five sandbox policies**: Native support for `Local` (host process), `Docker` (private container), `K8s` (Kubernetes native Pod sandbox), `E2B` (cloud sandbox), and `SSH` (remote secure host).
+*   **Cloud-native K8s Pod sandbox**: Eliminates the need to mount host Docker Sockets (`/var/run/docker.sock`) in Kubernetes production clusters. Dynamically launches isolated Pods via K8s API with shared PVC `subPath` workspace mounting, meeting enterprise and financial security compliance.
+*   **Same-path / subPath workspace mounting**: User workspaces are mounted seamlessly inside Docker containers or K8s Pods with real-time canvas preview and editing.
+*   **Automated lifecycle management**: 30-minute idle reaper, graceful shutdown cleanup, and concurrency ref-count sharing.
+*   **Chat input popover console**: Live status badge (🟢Running/🟡Starting/⚪Idle), assigned Pod/container ID, **second-by-second live runtime counter**, and manual restart/shutdown controls with confirmation dialogs.
 
 ### 3. 🌐 Persistent Browser & Live Takeover
 *   **Comprehensive automation toolkit**: Navigation, element click, text input, human-like trajectory slider dragging, smart wait, keypress, full-page scroll, file upload, screenshots, and multi-tab management.
@@ -136,10 +137,12 @@ The platform revolves around the following core capability matrix:
 *   **Self-healing & sql_plan**: SQL error repair rounds; optional `enable_sql_plan` for high-risk queries with structured `<sql_plan>` cards in the UI.
 *   **Clarification short-circuit**: Non-data chit-chat clarified at classification without forcing SQL.
 *   **Data sources**: Visual Oracle / ClickHouse / MySQL management, DDL sync, golden report stash, and direct physical SQL execution.
+*   **Metadata inspection & schema drift governance**: Physical warehouse consistency health-checks (zero Token cost) and runtime error self-healing feedback; detects table/column drops and type mismatches with one-click human-in-the-loop calibration, Changelog diff audit, and multi-channel scheduled alerts.
 
-### 6. 🔌 Open Plugin Ecosystem (MCP Integration)
-*   **Native MCP Support**: Fully compliant with Anthropic's Model Context Protocol.
-*   **Infinite Extensibility**: Seamlessly connect to external productivity tools like Jira, Email, GitLab, etc. via MCP servers without modifying core code.
+### 6. 🔌 Bi-Directional Open Plugin Ecosystem (MCP Integration)
+*   **Outbound calls with user context forwarding**: When agents invoke external MCP tools, the protocol layer **automatically passes through the authenticated user context** (identity, role, tenant, and data scopes) to enforce downstream data permissions and operational audit trails.
+*   **NanZi Platform MCP inbound service**: Serves as a native MCP resource server with standard OAuth2 authentication and an administrative "MCP Service Desk", enabling external clients like Cursor, Claude Desktop, and third-party agents to discover and invoke NanZi-governed agents, conversations, and warehouse metadata directly.
+*   **Infinite ecosystem connectivity**: Connect enterprise productivity tools and multi-agent ecosystems seamlessly without modifying platform core code.
 
 ### 7. 📚 Deep Knowledge Enhancement & Integration (RAG & Knowledge Hub)
 *   **Knowledge workbench**: Tree document management, slice preview, recall testing, semantic merge, lifecycle audit.

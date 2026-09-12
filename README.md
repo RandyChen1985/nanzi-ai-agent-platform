@@ -25,12 +25,12 @@
 *   💬 **深度交互式对话 (Dialogue & Co-Agent)**：极速流式响应，支持 **智能委派（默认进入 Main）** 与 **专家模式 / @提及直选**、多专家协同。内置 **工具预检** 促发模型主动调用工具；支持 `ask_user_question` 智能提问卡（单选/多选/输入）、**Todo 任务清单** 分步执行与常驻跟踪；主助手支持 **Skill 自动扫描** 与权限挂起恢复。
 *   🛡️ **多策略安全沙箱与隔离执行 (Multi-Policy Sandbox)**：原生支持 **Local**（本机进程）、**Docker**（私有容器隔离）、**K8s**（Kubernetes 原生 Pod 沙箱，云原生免 Docker Socket 安全推荐）、**E2B**（云端安全沙箱）、**SSH**（远端安全通道）五大执行策略；Docker 与 K8s 模式支持用户工作区**同路径/subPath 挂载**，支持在代码画布中直接打开预览并保存回物理文件；支持镜像预构建、空闲 30 分钟自动回收（Idle Reaper）、优雅停机清理及输入框浮标面板一键探测与**秒级运行时长监控**。
 *   🌐 **持久化浏览器会话与实时接管面板 (Persistent Browser & Live Takeover)**：服务端持久化浏览器会话与全套自动化工具（网页访问、点击、输入、拟人滑块轨迹拖拽、按键、滚动、截图与多标签）；前端右侧提供**实时 Web 交互面板**，支持快照串流渲染与无缝人机协同交互接管。
-*   📊 **原生企业级 ChatBI 与自愈分析 (ChatBI & Self-Healing)**：数据源与元数据管理、案例集 Few-Shot、SQL 自愈与 **sql_plan 结构化计划**；**我的数据门户**（`/dataset_portal`）个性化导航；支持直连物理 SQL 与黄金报表暂存订阅。
+*   📊 **原生企业级 ChatBI 与自愈分析 (ChatBI & Self-Healing)**：数据源与元数据管理、**元数据一致性巡检与 Schema 漂移治理**、案例集 Few-Shot、SQL 自愈与 **sql_plan 结构化计划**；**我的数据门户**（`/dataset_portal`）个性化导航；支持直连物理 SQL 与黄金报表暂存订阅。
 *   🧠 **长期记忆与跨会话回顾 (Memory & LTM)**：LTM 偏好注入 + 内置 `memory_search` 按需检索会话/每日摘要；记忆管理中心提供向量检索运维与数据治理；全链路 Redis 会话记忆与压缩日志 **TTL 全面升级为 30 天**。
 *   📊 **上下文分项拆解观测与溢出智能压缩 (Context Observability & Compaction)**：精准实时拆解 System Prompt、Tools Schema、Memory/History 与 Current Turn 四大项 Token 占比；支持自动水位线告警与两阶段结构化压缩（`_structured_tool_block` 精准提炼、保留多模态附件标记）。
 *   🧩 **代码画布与工作区执行 (Code Canvas & Workspace)**：支持 Python / Shell 代码的流式运行、停止、输出回传与私有工作区文件预览；支持 `publish_generated_file` 智能工件发布与有效期管理。
 *   📚 **可视化知识库管理中心 (RAG & Knowledge Hub)**：非结构化文档树形管理、召回测试、语义合并；**Knowledge 执行器**在 ReAct 前自动检索并注入引用。
-*   🔌 **开放插件生态 (MCP Integration)**：遵循 Anthropic Model Context Protocol 标准，无缝连接 Jira、Email、GitLab 等外部生产力系统。
+*   🔌 **双向企业级 MCP 生态 (Platform & Client MCP)**：出站调用外部 MCP 工具时**自动透传用户身份上下文**保障多租户与权限隔离；同时原生对外提供 **NanZi Platform MCP** 服务（OAuth2 鉴权与服务台），支持 Cursor、Claude Desktop 等外部客户端免改造调用 NanZi 智能体、会话与元数据。
 *   🔌 **灵活的嵌入式 (Embed) 集成**：通过嵌入式 Chat SDK 快速集成至企业业务系统，对接现有鉴权体系，实现租户隔离、RBAC 权限与水印安全合规。
 *   ⏰ **自动化任务中心与多通道推送 (Task Scheduler & Notifications)**：APScheduler + Redis 执行期锁，支持通过环境变量指定唯一调度节点，模拟智能体身份自主执行周期（Cron）、定时与间隔任务；支持 **多通道智能触达**（企业微信、钉钉、飞书、邮件、自定义 Webhook 及站内信通知中心）；内置自动剥离思考过程（纯净业务摘要推送）、超长截断保护与黄金报表异常阈值告警。
 *   🛠️ **全链路 Debug 与 Trace**：决策链、工具调用、SQL 计划卡片可视化；结构化查数结果 CSV/Excel 导出。
@@ -147,10 +147,12 @@
 *   **元数据业务导航**：字段与口径回答基于授权 Schema 生成指标、维度和可执行问题；澄清候选不使用模型臆造字段。
 *   **分析交付闭环**：查询结果可一键生成证据化 Markdown/Word 业务简报，或转为黄金报表订阅，配置阈值、变化率、连续命中和无数据告警。
 *   **数据源管理**：可视化管理 Oracle / ClickHouse / MySQL 等连接，支持 DDL 抓取与连接别名唯一校验；支持黄金报表暂存与直连物理 SQL 执行。
+*   **元数据巡检与 Schema 漂移治理**：直连物理数仓定期体检（零 Token 消耗）与运行时报错自动反哺；精准识别表/字段缺失与类型不匹配，支持一键人机协同校准、变更日志 Diff 审计与多通道告警推送。
 
-### 6. 🔌 开放插件生态 (MCP Integration)
-*   **原生支持 MCP**：遵循 Anthropic 的 Model Context Protocol。
-*   **无限扩展**：无需修改核心代码，即可通过 MCP 服务器连接 Jira、Email、GitLab 等外部生产力工具。
+### 6. 🔌 双向开放插件生态 (MCP Integration)
+*   **出站连接与用户上下文透传**：智能体调用外部 MCP 工具时，在协议层**自动透传当前登录用户身份上下文**（用户、角色、租户与数据范围），确保下游外部系统实施精准的多租户隔离与操作审计。
+*   **NanZi Platform MCP 对外服务**：平台原生作为 MCP 资源服务端，支持标准 OAuth2 鉴权与「MCP 服务台」管理；使 Cursor、Claude Desktop 等外部客户端可直接检索与调用 NanZi 纳管的智能体、会话与数仓元数据。
+*   **无限生态连接**：无需修改平台核心代码，即可双向对接生产力系统与多 Agent 协作生态。
 
 ### 7. 📚 深度知识增强与集成 (RAG & Knowledge Hub)
 *   **一站式知识库管理**：树形文档管理、切片预览、召回测试、语义合并与生命周期审计。
