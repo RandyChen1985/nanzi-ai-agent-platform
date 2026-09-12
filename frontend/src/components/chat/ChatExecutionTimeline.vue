@@ -222,6 +222,19 @@
                         />
                         <component v-else :is="timelineIconFor(subStep)" class="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
                         <span class="min-w-0 flex-1 truncate" :title="displayTimelineTitle(subStep)">{{ displayTimelineTitle(subStep) }}</span>
+                        <!-- 沙箱工作区预热进行中文案与动效条（同行右侧对齐） -->
+                        <div
+                          v-if="isWorkspacePrewarmPending(subStep)"
+                          class="shrink-0 flex items-center gap-1.5 text-[10px] text-sky-600 dark:text-sky-400"
+                          aria-live="polite"
+                          aria-busy="true"
+                        >
+                          <span class="workspace-prewarm-bar shrink-0" aria-hidden="true"></span>
+                          <span
+                            class="truncate max-w-[140px] sm:max-w-[320px] md:max-w-none"
+                            :title="'已等待 ' + prewarmElapsedSeconds + 's · ' + prewarmStageLabel"
+                          >已等待 {{ prewarmElapsedSeconds }}s · {{ prewarmStageLabel }}</span>
+                        </div>
                         <span v-if="subStep.status === 'error'" class="shrink-0 text-[10px] text-red-600">失败</span>
                         <span v-if="formatTimelineDuration(subStep)" class="shrink-0 font-mono text-[10px] text-gray-400" :title="timelineDurationTitle(subStep)">{{ formatTimelineDuration(subStep) }}</span>
                         <svg v-if="hasVisibleTimelineText(subStep.details)" class="h-3 w-3 shrink-0 text-gray-400 transition-transform" :class="{ 'rotate-180': subStep.isExpanded }" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -443,6 +456,19 @@
                       />
                       <component v-else :is="timelineIconFor(nestedStep)" class="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
                       <span class="min-w-0 flex-1 truncate" :title="displayTimelineTitle(nestedStep)">{{ displayTimelineTitle(nestedStep) }}</span>
+                      <!-- 沙箱工作区预热进行中文案与动效条（同行右侧对齐） -->
+                      <div
+                        v-if="isWorkspacePrewarmPending(nestedStep)"
+                        class="shrink-0 flex items-center gap-1.5 text-[10px] text-sky-600 dark:text-sky-400"
+                        aria-live="polite"
+                        aria-busy="true"
+                      >
+                        <span class="workspace-prewarm-bar shrink-0" aria-hidden="true"></span>
+                        <span
+                          class="truncate max-w-[140px] sm:max-w-[320px] md:max-w-none"
+                          :title="'已等待 ' + prewarmElapsedSeconds + 's · ' + prewarmStageLabel"
+                        >已等待 {{ prewarmElapsedSeconds }}s · {{ prewarmStageLabel }}</span>
+                      </div>
                       <span v-if="nestedStep.status === 'error'" class="shrink-0 text-[10px] text-red-600">失败</span>
                       <span v-if="formatTimelineDuration(nestedStep)" class="shrink-0 font-mono text-[10px] text-gray-400" :title="timelineDurationTitle(nestedStep)">{{ formatTimelineDuration(nestedStep) }}</span>
                       <svg v-if="hasVisibleTimelineText(nestedStep.details)" class="h-3 w-3 shrink-0 text-gray-400 transition-transform" :class="{ 'rotate-180': nestedStep.isExpanded }" fill="none" stroke="currentColor" viewBox="0 0 24 24">
