@@ -4756,8 +4756,8 @@ onUnmounted(() => {
 
               <!-- Agent Message Bubble (Unified Card Style) -->
               <div
-                v-if="(!msg.isGreeting && (msg.logs && msg.logs.length > 0)) || (msg.processTimeline && msg.processTimeline.length > 0) || msg.content || msg.reasoningContent || msg.processNarration || msg.processNarrationPending || msg.isThinking || (msg.citations && msg.citations.length > 0)"
-                :class="msg.content || (msg.citations && msg.citations.length) || msg.chatbiInsight
+                v-if="(!msg.isGreeting && (msg.logs && msg.logs.length > 0)) || (msg.processTimeline && msg.processTimeline.length > 0) || msg.content || msg.reasoningContent || msg.processNarration || msg.processNarrationPending || msg.isThinking || (msg.citations && msg.citations.length > 0) || msg.businessConfirmation || msg.userQuestion"
+                :class="msg.content || (msg.citations && msg.citations.length) || msg.chatbiInsight || msg.businessConfirmation || msg.userQuestion
                   ? 'bg-gradient-to-br from-slate-50/80 to-white dark:from-slate-900/20 dark:to-gray-800 rounded-2xl rounded-tl-none border border-gray-200 dark:border-gray-700 border-l-4 border-l-primary/60 dark:border-l-primary/40 shadow-sm p-4 overflow-hidden'
                   : 'overflow-visible bg-transparent'"
               >
@@ -4959,6 +4959,20 @@ onUnmounted(() => {
 	                  @execute-saved-report="handleExecuteSavedReport"
 	                  @edit-saved-report="openEditReportModal"
 	                />
+                <BusinessConfirmationCard
+                  v-if="msg.businessConfirmation"
+                  :payload="msg.businessConfirmation"
+                  :disabled="isProcessing"
+                  @submit="(payload) => submitBusinessConfirmation(msg, payload)"
+                />
+
+                <UserQuestionCard
+                  v-if="msg.userQuestion"
+                  :payload="msg.userQuestion"
+                  :disabled="isProcessing"
+                  @submit="(payload) => submitUserQuestion(msg, payload)"
+                />
+
                 <!-- 复制 / 导出 / 点赞踩（托管 RAGFlow、OpenClaw 不展示点赞踩） -->
                 <div
                   v-if="msg.role === 'agent' && !msg.isThinking && !(isProcessing && messages.indexOf(msg) === messages.length - 1) && (msg.content || msg.trace_id || canSaveGoldenReportFromMessage(msg) || !hideDebugLikeDislikeForHostedAgent)"
@@ -5036,20 +5050,6 @@ onUnmounted(() => {
                   class="typing-cursor"
                 ></span>
               </div>
-
-              <BusinessConfirmationCard
-                v-if="msg.businessConfirmation"
-                :payload="msg.businessConfirmation"
-                :disabled="isProcessing"
-                @submit="(payload) => submitBusinessConfirmation(msg, payload)"
-              />
-
-              <UserQuestionCard
-                v-if="msg.userQuestion"
-                :payload="msg.userQuestion"
-                :disabled="isProcessing"
-                @submit="(payload) => submitUserQuestion(msg, payload)"
-              />
 
               <style scoped>
               .typing-cursor::after {

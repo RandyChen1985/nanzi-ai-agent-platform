@@ -91,3 +91,8 @@ nohup.out
 
 # Superpowers local brainstorm / session artifacts
 .superpowers/
+
+# Database Migration State (DO NOT COMMIT)
+.last_applied_sql
+db-prod/.last_applied_sql
+db-prod-pg/.last_applied_sql

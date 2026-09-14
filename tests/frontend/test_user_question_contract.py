@@ -88,6 +88,36 @@ def test_user_question_frontend_wiring_is_independent_from_business_confirmation
     assert "BusinessConfirmationCard" not in card
 
 
+def test_user_question_card_submit_reentrancy_guard():
+    """提交/取消防重入守卫：isSubmitting 应纳入按钮禁用与 emit 前置判断。"""
+    card = (ROOT / "frontend/src/components/UserQuestionCard.vue").read_text(encoding="utf-8")
+
+    # 防重入标志存在，并进入 submit/cancel 的前置判断
+    assert "const isSubmitting = ref(false)" in card
+    assert "isSubmitting.value = true" in card
+    assert "isSubmitting.value) return" in card
+    # 提交/取消按钮在提交期间禁用
+    assert 'disabled="locked || isSubmitting' in card
+    # 通过 status 回写复位，避免父组件未同步时卡死
+    assert "props.payload.status === \"pending\"" in card
+    assert 'if (nextStatus !== "pending") {' in card
+
+
+def test_user_question_card_expanded_state_is_source_driven():
+    """展开态由单一职责 watch 驱动：question_id 负责整体重置，status 单独驱动折叠。"""
+    card = (ROOT / "frontend/src/components/UserQuestionCard.vue").read_text(encoding="utf-8")
+
+    # 不再使用 immediate 初始化强制重置（避免初始化阶段与 status watch 重复写 expanded）
+    assert "const expanded = ref(props.payload.status === \"pending\")" in card
+    # question_id watch 负责换问题时整体重置（无 immediate）
+    assert '() => props.payload.question_id' in card
+    # status watch 单独驱动展开/折叠
+    assert "nextStatus !== \"pending\" && prevStatus === \"pending\"" in card
+    # 不允许在 question_id watch 上使用 immediate:true
+    assert "question_id,\n  () => {\n    // 同一实例换到新问题" in card
+    assert "immediate: true" not in card
+
+
 def test_cards_collapsible_and_toggle_contract():
     card = (ROOT / "frontend/src/components/UserQuestionCard.vue").read_text(encoding="utf-8")
     biz_card = (ROOT / "frontend/src/components/BusinessConfirmationCard.vue").read_text(encoding="utf-8")
