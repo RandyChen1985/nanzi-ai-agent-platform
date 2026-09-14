@@ -1037,3 +1037,46 @@ def test_quote_identifier_blocks_injection_but_allows_unicode():
     assert build_sample_sql("oracle", "id", "t") == 'SELECT "id" FROM "t" WHERE ROWNUM <= 3'
     assert build_sample_sql("tsql", "id", "t") == 'SELECT TOP 3 "id" FROM "t"'
     assert build_sample_sql("mysql", 'bad"name', "t") is None
+
+
+@pytest.mark.asyncio
+async def test_batch_resolve_uses_savepoint_per_alert():
+    """批量处置每条告警都在 SAVEPOINT 内并 flush，避免单条数据库错误拖垮整批。"""
+    mock_db = _make_async_db_mock()
+    alert = MetaSchemaDriftAlert(
+        id=950, dataset_id=1, table_name="device", column_name="billing_phone",
+        drift_type="new_in_db", status=0,
+    )
+    mock_alerts_res = MagicMock()
+    mock_alerts_res.scalars.return_value.all.return_value = [alert]
+
+    table = MetaTable(id=101, dataset_id=1, physical_name="device")
+    mock_table_res = MagicMock()
+    mock_table_res.scalars.return_value.first.return_value = table
+
+    mock_col_res = MagicMock()
+    mock_col_res.scalars.return_value.first.return_value = None
+
+    seq = {"n": 0}
+
+    def _fake_execute(_stmt):
+        seq["n"] += 1
+        if seq["n"] == 1:
+            return mock_alerts_res
+        if seq["n"] == 2:
+            return mock_table_res
+        return mock_col_res
+
+    mock_db.execute.side_effect = _fake_execute
+
+    with patch.object(MetadataDriftService, "_prepare_add_column_ai_metadata", new_callable=AsyncMock) as prep, \
+         patch.object(MetadataDriftService, "_try_sync_local_vector", new_callable=AsyncMock):
+        prep.return_value = {}
+        res = await MetadataDriftService.batch_resolve_alerts(
+            mock_db, dataset_id=1, action="add_column"
+        )
+
+    assert res["processed_count"] == 1
+    # 至少一次来自本服务的 savepoint（ChangelogService 自身也会开启嵌套事务）
+    assert mock_db.begin_nested.call_count >= 1
+    mock_db.flush.assert_awaited()

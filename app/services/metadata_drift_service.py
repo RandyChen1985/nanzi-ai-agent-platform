@@ -696,6 +696,24 @@ class MetadataDriftService:
         }
 
     @staticmethod
+    async def _resolve_one_atomically(
+        db: AsyncSession,
+        alert: MetaSchemaDriftAlert,
+        action: str,
+        **kwargs: Any,
+    ) -> None:
+        """在 SAVEPOINT 内处置单条告警并 flush。
+
+        批量处置原先在循环外只 commit 一次且 autoflush=False，单条出现数据库级错误
+        （如唯一约束冲突）会让整批在最终 commit 时一起失败，既与 failed_count 的
+        「单条失败仍继续」语义矛盾，也会丢弃已成功的处置。用 savepoint + flush 把
+        数据库错误就地限制在该条并回滚，其余条目不受影响。
+        """
+        async with db.begin_nested():
+            await MetadataDriftService._resolve_single_alert_core(db, alert, action, **kwargs)
+            await db.flush()
+
+    @staticmethod
     async def _resolve_single_alert_core(
         db: AsyncSession,
         alert: MetaSchemaDriftAlert,
@@ -1371,7 +1389,7 @@ class MetadataDriftService:
                     skipped_count += 1
                     continue
                 try:
-                    await MetadataDriftService._resolve_single_alert_core(
+                    await MetadataDriftService._resolve_one_atomically(
                         db, alert, action,
                         user_id=user_id, user_name=user_name,
                         column_description=phys_desc,
@@ -1392,7 +1410,7 @@ class MetadataDriftService:
                 col_syns = meta_info.get("synonyms")
 
             try:
-                await MetadataDriftService._resolve_single_alert_core(
+                await MetadataDriftService._resolve_one_atomically(
                     db,
                     alert,
                     action,
@@ -1536,7 +1554,7 @@ class MetadataDriftService:
                     skipped_count += 1
                     continue
                 try:
-                    await MetadataDriftService._resolve_single_alert_core(
+                    await MetadataDriftService._resolve_one_atomically(
                         db, alert, action,
                         user_id=user_id, user_name=user_name,
                         column_description=phys_desc,
@@ -1557,7 +1575,7 @@ class MetadataDriftService:
                 col_syns = meta_info.get("synonyms")
 
             try:
-                await MetadataDriftService._resolve_single_alert_core(
+                await MetadataDriftService._resolve_one_atomically(
                     db,
                     alert,
                     action,
