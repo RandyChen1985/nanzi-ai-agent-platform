@@ -10,6 +10,7 @@ from app.services.ai.tool_nudge_policy import (
     is_automatic_delivery_context,
     is_tool_meta_query,
     looks_like_explicit_user_question_request,
+    looks_like_decision_request,
     resolve_tool_nudge,
     resolve_evidence_tool_fallback_nudge,
     resolve_tool_nudge_plan,
@@ -515,6 +516,77 @@ def test_automatic_delivery_flags_disable_explicit_question_nudge():
 
 def test_explicit_interactive_request_does_not_nudge_without_question_tool():
     assert resolve_tool_nudge("随便问我几个问题", [_tool("Bash", "执行命令")]) is None
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "有两家供应商，你帮我选一家",
+        "这几个方案我听你的",
+        "你推荐哪个，我拿不定主意",
+        "A 和 B 都行，你定吧",
+        "选择困难，帮我拿个主意",
+        "without在多个选项里纠结，帮我选",
+        "you decide between these two",
+    ],
+)
+def test_decision_request_is_detected(query):
+    assert looks_like_decision_request(query) is True
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "",
+        "随便问问天气怎么样",
+        "随便聊聊今天怎么样",
+        "【用户回答】\ninteraction_type: question\nquestion_id: uq_1",
+        "直接回答我，不用选",
+        "列出几个方案就行，不用决定",
+        "我不用你定，我自己来",
+    ],
+)
+def test_non_decision_requests_are_not_detected(query):
+    assert looks_like_decision_request(query) is False
+
+
+def test_decision_request_produces_weak_nudge_when_tool_available():
+    nudge = resolve_tool_nudge(
+        "有两家供应商，你帮我选一家",
+        [_tool("ask_user_question", "向用户展示选项提问并等待回答")],
+    )
+    assert nudge is not None
+    assert nudge.tool_name == "ask_user_question"
+    # 半显式决策请求只作弱提示，不强 force，避免把“你帮我选”激进的提升为必须弹卡
+    assert nudge.should_force_first_call is False
+    assert "决策收集" in nudge.message
+
+
+def test_decision_request_does_not_nudge_without_question_tool():
+    assert resolve_tool_nudge("你帮我选一家", [_tool("Bash", "执行命令")]) is None
+
+
+def test_decision_request_respects_disabled_explicit_question_context():
+    assert (
+        resolve_tool_nudge(
+            "你帮我选一家",
+            [_tool("ask_user_question", "向用户展示选项提问并等待回答")],
+            exclude_tools={"ask_user_question"},
+        )
+        is None
+    )
+
+
+def test_decision_request_does_not_fire_on_plain_chat_or_meta():
+    # 普通闲聊/能力询问不应触发决策 nudge
+    assert resolve_tool_nudge("帮我润色这段话", [_tool("ask_user_question", "向用户展示选项提问并等待回答")]) is None
+    assert (
+        resolve_tool_nudge(
+            "支持哪些筛选条件",
+            [_tool("ask_user_question", "向用户展示选项提问并等待回答")],
+        )
+        is None
+    )
 
 
 def test_sub_agent_call_nudge_for_data_query():

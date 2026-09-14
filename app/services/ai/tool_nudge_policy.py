@@ -158,6 +158,60 @@ _NON_INTERACTIVE_CONTEXT_MARKERS = (
     "taskcenter自动任务",
 )
 
+# 用户表达「需要做决定 / 在多个选项间犹豫 / 把选择权交给 AI」的半显式决策请求。
+# 与 _EXPLICIT_USER_QUESTION_REQUEST_TERMS 不同，这类请求没有直接点名「提问」，
+# 但明确存在多个同等合理的分支需要用户抉择（对应系统提示的「决策收集模式」）。
+# 触发后仅注入一条弱提示（不强 force），让模型结合上下文自主决定是否调用 ask_user_question。
+_DECISION_REQUEST_TERMS = (
+    "你帮我选",
+    "帮我选一个",
+    "你推荐哪个",
+    "你推荐一下",
+    "你推荐一个",
+    "有推荐吗",
+    "听你的",
+    "你看着办",
+    "你决定吧",
+    "你来决定",
+    "你来定",
+    "你定吧",
+    "你定就行",
+    "你帮我拿",
+    "帮我拿个主意",
+    "帮我拿主意",
+    "哪个都行",
+    "都可以你定",
+    "随便你定",
+    "纠结",
+    "选哪个好",
+    "我该选",
+    "选择困难",
+    "不好决定",
+    "youdecide",
+    "youpick",
+    "yourrecommendation",
+    "whichoneshouldi",
+    "cantdecide",
+)
+# 出现「选择/决定」相关但本质是否定或无需问答的排除词。
+_DECISION_REQUEST_NEGATIONS = (
+    "不用选",
+    "别选",
+    "不用决定",
+    "不用你定",
+    "不需要你决定",
+    "不要问我",
+    "不用问我",
+    "别问我",
+    "不要提问",
+    "不用提问",
+    "无需提问",
+    "不需要提问",
+    "直接回答",
+    "随便聊聊",
+    "随便看看",
+)
+
 # 计算相关度时剔除的高频泛化片段（出现在问题里但无区分度）。
 _STOP_FRAGMENTS = frozenset({
     "帮我", "帮忙", "一下", "一个", "请问", "可以", "怎么", "如何", "什么", "哪些",
@@ -233,6 +287,62 @@ def looks_like_explicit_user_question_request(user_query: str) -> bool:
         "提问" in query
         and _contains_any(query, ("我", "用户"))
         and _contains_any(query, ("先", "逐个", "一步", "引导", "通过"))
+    )
+
+
+def looks_like_decision_request(user_query: str) -> bool:
+    """识别用户表达「需要做决定 / 在多个分支间犹豫 / 把选择权交给 AI」的半显式请求。
+
+    它不点名「提问」，但明确存在多个同等合理的分支需要用户抉择，对应系统提示的
+    「决策收集模式」。因子集较精确，仅用于产生一条弱提示（不强 force），
+    由模型结合上下文自主决定是否调用 ask_user_question。
+    """
+    query = _normalize(user_query)
+    if not query or "【用户回答】" in query:
+        return False
+    if _contains_any(query, _NON_INTERACTIVE_CONTEXT_MARKERS):
+        return False
+    if _contains_any(query, _DECISION_REQUEST_NEGATIONS):
+        return False
+    return _contains_any(query, _DECISION_REQUEST_TERMS)
+
+
+def _resolve_decision_request_nudge(
+    query: str,
+    tools: List[Any],
+    exclude_tools: Optional[Set[str]] = None,
+) -> Optional[ToolNudge]:
+    """为用户明确表达「需要帮忙做决定」的半显式请求生成一条弱提示。
+
+    仅在 ask_user_question 已绑定、且用户确实展示出抉择需求时返回；返回的 nudge
+    不设 force_first_call，避免把“你帮我选”这类尚可由模型直接给建议的场景
+    强行提升为必须弹卡。真正要用户做抉择时，模型会依据系统提示的「决策收集模式」
+    调用 ask_user_question。
+    """
+    if not looks_like_decision_request(query):
+        return None
+    if exclude_tools and "ask_user_question" in {str(name) for name in exclude_tools}:
+        return None
+    question_tool = next(
+        (
+            tool
+            for tool in (tools or [])
+            if str(getattr(tool, "name", "") or "").strip() == "ask_user_question"
+        ),
+        None,
+    )
+    if question_tool is None:
+        return None
+    return ToolNudge(
+        tool_name="ask_user_question",
+        score=0.25,
+        message=(
+            "【决策收集】用户明确表达了需要做选择/在多分支间犹豫的需求。"
+            "若确实存在多个同等合理的业务分支，可调用 ask_user_question 让用户抉择；"
+            "若你能依据上下文给出明确推荐，也可直接回答。不要把选项作为普通文字罗列而不给结论。"
+        ),
+        force_first_call=False,
+        metadata=resolve_tool_metadata(question_tool),
     )
 
 
@@ -1012,6 +1122,13 @@ def resolve_tool_nudge(
 
     if not should_consider_tool_nudge(query):
         return None
+
+    # 决策收集：用户在多个同等合理的分支间需要抉择。放在元问题/问候门禁之后，
+    # 仅在真实的办事诉求上生效；优先于具体工具 nudge，让模型先确认分支再执行。
+    if allow_explicit_question:
+        decision_nudge = _resolve_decision_request_nudge(query, tools, exclude_tools=exclude_tools)
+        if decision_nudge is not None:
+            return decision_nudge
 
     if request_decision is None and turn_decision is not None:
         request_decision = turn_decision.to_request_decision()

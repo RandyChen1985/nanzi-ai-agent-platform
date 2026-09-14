@@ -808,7 +808,9 @@ async def test_preflight_failure_keeps_current_turn_evidence_gate_fail_closed():
         AsyncMock(return_value=(set(), {})),
     ), patch(
         "app.services.config_service.ConfigService.get",
-        AsyncMock(side_effect=["5", "soft"]),
+        AsyncMock(
+            side_effect=lambda key, default=None: default,
+        ),
     ), patch(
         "app.services.ai.tool_nudge_policy.resolve_tool_nudge",
         side_effect=RuntimeError("preflight resolver failed"),

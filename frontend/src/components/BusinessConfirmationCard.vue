@@ -88,15 +88,15 @@ function submit(confirmed: boolean) {
 
 <template>
   <section
-    class="mt-3 rounded-lg border border-sky-200 bg-sky-50/80 p-3 text-xs text-sky-950 shadow-sm dark:border-sky-900/50 dark:bg-sky-900/20 dark:text-sky-100 transition-all"
+    class="mt-2.5 w-full min-w-0 max-w-[42rem] lg:max-w-[48rem] 2xl:max-w-[52rem] rounded-xl border border-sky-200/90 bg-sky-50/60 p-2.5 sm:p-3 text-xs text-sky-950 shadow-sm dark:border-sky-900/40 dark:bg-sky-950/20 dark:text-sky-100 transition-all"
     role="group"
     :aria-label="payload.title || '业务数据确认'"
   >
-    <div class="flex items-start gap-2">
+    <div class="flex items-start gap-2 sm:gap-2.5">
       <div
-        class="mt-0.5 flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-md bg-sky-100 text-sky-700 dark:bg-sky-900/40 dark:text-sky-300"
+        class="mt-0.5 flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-md bg-sky-100 text-sky-700 dark:bg-sky-900/50 dark:text-sky-300"
       >
-        <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+        <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
         </svg>
       </div>
