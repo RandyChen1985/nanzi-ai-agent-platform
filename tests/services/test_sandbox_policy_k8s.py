@@ -307,6 +307,75 @@ async def test_k8s_workspace_lifecycle_refcounts():
         mock_ws.close.assert_awaited_once()
 
 
+def test_resolve_sandbox_namespace_follows_platform_by_default(monkeypatch):
+    """空值 / 历史默认值都应跟随平台命名空间；显式自定义值被尊重。"""
+    from app.services.ai.runtime.agentscope.k8s_workspace import (
+        DEFAULT_PLATFORM_NAMESPACE,
+        resolve_sandbox_namespace,
+    )
+
+    monkeypatch.delenv("NANZI_PLATFORM_NAMESPACE", raising=False)
+    monkeypatch.delenv("POD_NAMESPACE", raising=False)
+    monkeypatch.delenv("K8S_NAMESPACE", raising=False)
+
+    assert resolve_sandbox_namespace(None) == DEFAULT_PLATFORM_NAMESPACE
+    assert resolve_sandbox_namespace("") == DEFAULT_PLATFORM_NAMESPACE
+    # 历史默认值 agent-sandboxes 视为“未配置”，跟随平台命名空间（共享 PVC 的前提）
+    assert resolve_sandbox_namespace("agent-sandboxes") == DEFAULT_PLATFORM_NAMESPACE
+    # 显式自定义命名空间保持原样（强隔离变体）
+    assert resolve_sandbox_namespace("my-sandbox-ns") == "my-sandbox-ns"
+
+
+def test_resolve_platform_namespace_prefers_env_override(monkeypatch):
+    from app.services.ai.runtime.agentscope.k8s_workspace import (
+        resolve_platform_namespace,
+    )
+
+    monkeypatch.setenv("NANZI_PLATFORM_NAMESPACE", "custom-platform-ns")
+    assert resolve_platform_namespace() == "custom-platform-ns"
+
+
+def test_evaluate_k8s_workspace_mount_config_warnings(monkeypatch):
+    """仅两种会破坏「沙箱可见用户工作区」的配置产生告警。"""
+    from app.services.ai.runtime.agentscope.k8s_workspace import (
+        evaluate_k8s_workspace_mount_config,
+    )
+
+    monkeypatch.delenv("NANZI_PLATFORM_NAMESPACE", raising=False)
+    monkeypatch.delenv("POD_NAMESPACE", raising=False)
+    monkeypatch.delenv("K8S_NAMESPACE", raising=False)
+
+    # 1. 未配置共享 PVC：沙箱使用独立空卷，看不到用户工作区
+    warnings = evaluate_k8s_workspace_mount_config(
+        namespace="nanzi-ai-agent", existing_pvc=""
+    )
+    assert len(warnings) == 1
+    assert "sandbox_k8s_existing_pvc" in warnings[0]
+
+    # 2. 显式独立命名空间 + 共享 PVC：PVC 为命名空间级，跨命名空间引用不到
+    warnings = evaluate_k8s_workspace_mount_config(
+        namespace="my-sandbox-ns", existing_pvc="nanzi-ai-agent-data"
+    )
+    assert len(warnings) == 1
+    assert "命名空间" in warnings[0]
+
+    # 3. 历史默认值等价于跟随平台命名空间，不算不匹配
+    assert (
+        evaluate_k8s_workspace_mount_config(
+            namespace="agent-sandboxes", existing_pvc="nanzi-ai-agent-data"
+        )
+        == []
+    )
+
+    # 4. 正确配置（同命名空间 + 共享平台 PVC）：无告警
+    assert (
+        evaluate_k8s_workspace_mount_config(
+            namespace="nanzi-ai-agent", existing_pvc="nanzi-ai-agent-data"
+        )
+        == []
+    )
+
+
 @pytest.mark.asyncio
 async def test_check_k8s_rbac_status_no_sdk():
     from app.services.ai.runtime.agentscope.k8s_workspace import check_k8s_rbac_status
@@ -315,6 +384,7 @@ async def test_check_k8s_rbac_status_no_sdk():
         result = await check_k8s_rbac_status(namespace="test-sandboxes")
         assert result["ok"] is False
         assert "未安装 kubernetes-asyncio" in result["message"]
+        assert "warnings" in result
 
 
 @pytest.mark.asyncio

@@ -79,6 +79,9 @@ def test_k8s_docs_cover_wizard_install_script_and_ops_tools():
     assert "install.sh" in text
     assert "./install.sh --try" in text
     assert "nanzi-k8s.sh" in text
+    # 沙箱命名空间：默认与平台同命名空间，同时保留独立命名空间（强隔离）说明
+    assert "sandbox_k8s_namespace" in text
+    assert "nanzi-ai-agent" in text
     assert "agent-sandboxes" in text
     assert "upgrade.md" in text
     assert (K8S_DIR / "install.sh").is_file()

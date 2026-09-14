@@ -2,6 +2,29 @@
 
 不建议手动删除 Pod。更新镜像后，应该通过 Deployment 做滚动更新。
 
+> [!IMPORTANT]
+> **行为变更：K8s 沙箱默认改为与平台同命名空间（V156 / V57 迁移）**
+>
+> 此前 `sandbox_k8s_namespace` 的默认值是 `agent-sandboxes`。但 Kubernetes 的 PVC 是
+> **命名空间级资源**，Pod 只能引用自身命名空间内的 PVC —— 只要沙箱不在平台命名空间，
+> `sandbox_k8s_existing_pvc` 指向的平台主 PVC 就无法被引用，沙箱内 `/workspace` 也就
+> 看不到用户工作区（与 Docker 沙箱行为不一致）。
+>
+> 本版本起：
+> 1. `sandbox_k8s_namespace` **留空或仍为历史默认值 `agent-sandboxes` 时自动跟随平台命名空间**（`nanzi-ai-agent`）；
+> 2. 数据库迁移 `V156`（MySQL）/ `V57`（PG）会把仍为历史默认值的配置对齐为 `nanzi-ai-agent`；
+> 3. 沙箱 Pod 迁入平台命名空间后，**必须在该命名空间重新应用一次 RBAC**：
+>
+> ```bash
+> kubectl apply -f k8s_deploy/sandbox-rbac.example.yaml
+> ```
+>
+> 4. 若你希望保持强隔离（沙箱不共享用户工作区），请显式把 `sandbox_k8s_namespace` 设为独立命名空间
+>    （例如 `agent-sandboxes`），并把 `sandbox-rbac.example.yaml` 中 Role/RoleBinding 的 `namespace` 一并改过去，
+>    同时**留空** `sandbox_k8s_existing_pvc`（此时沙箱使用每工作区独立创建的空 PVC）。
+>
+> 自定义命名空间部署（非 `nanzi-ai-agent`）请把 `sandbox_k8s_namespace` 改为平台实际命名空间，或留空以自动跟随。
+
 > [!TIP]
 > **可选加速：K8s 沙箱网关预置镜像** —— AgentScope 沙箱网关环境位于 Pod 内
 > `/root/.agentscope`（临时写层），每次新 Pod 冷启动都要跑 bootstrap（apt + uv + venv +

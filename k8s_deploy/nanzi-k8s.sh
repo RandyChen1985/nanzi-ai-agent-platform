@@ -12,7 +12,9 @@ fi
 set -eu
 
 NAMESPACE="nanzi-ai-agent"
-SANDBOX_NAMESPACE="agent-sandboxes"
+# 沙箱 Pod 默认与平台同命名空间：Kubernetes PVC 为命名空间级资源，
+# 只有同命名空间才能共享平台主 PVC 的用户工作区（与 Docker 沙箱对齐）。
+SANDBOX_NAMESPACE="nanzi-ai-agent"
 DEPLOYMENT="nanzi-ai-agent"
 SERVICE="nanzi-ai-agent"
 
@@ -483,7 +485,7 @@ case "${1:-}" in
     printf "%b用法: %s <子命令>%b\n\n" "${C_GRAY}" "$0" "${C_RESET}"
     printf "%b常用运维指令：%b\n" "${C_BOLD}" "${C_RESET}"
     printf "  %b%-13s%b %b\n" "${C_GREEN}" "status" "${C_RESET}" "查看集群节点、NanZi 资源与沙箱 Pod/PVC 状态（K3s 节点另含本机服务状态）"
-    printf "  %b%-13s%b %b\n" "${C_GREEN}" "sandboxes" "${C_RESET}" "专门监控 agent-sandboxes 命名空间下的沙箱 Pod 与 PVC"
+    printf "  %b%-13s%b %b\n" "${C_GREEN}" "sandboxes" "${C_RESET}" "专门监控沙箱命名空间（默认与平台同命名空间）下的沙箱 Pod 与 PVC"
     printf "  %b%-18s%b %b\n" "${C_GREEN}" "restart-pod" "${C_RESET}" "通过 Deployment 平滑滚动重启 NanZi 业务 Pod"
     printf "  %b%-18s%b %b\n" "${C_GREEN}" "restart-pod-force" "${C_RESET}" "强制滚动重启，使新 Pod 换到节点容器运行时中最新导入的同名镜像并等待就绪"
     printf "  %b%-18s%b %b\n" "${C_GREEN}" "restart-k3s" "${C_RESET}" "重启底层 K3s 服务并等待 API Server 自动恢复（仅 K3s 环境）"

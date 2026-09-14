@@ -1425,6 +1425,8 @@ async def _policy_k8s_workspace(
     from app.services.ai.runtime.agentscope.k8s_workspace import (
         build_k8s_workspace_with_nanzi_adapter,
         ensure_k8s_public_data_subdirs,
+        evaluate_k8s_workspace_mount_config,
+        resolve_sandbox_namespace,
     )
     from app.services.ai.runtime.agentscope.workspace_container_mcp import (
         K8S_GATEWAY_EXTRA_PIP,
@@ -1438,11 +1440,12 @@ async def _policy_k8s_workspace(
     # 不影响 Docker 策略以 isdir(data_root/docs) 作公共文档挂载判断。
     ensure_k8s_public_data_subdirs()
 
-    namespace = (
-        await _sandbox_config_value(
-            "sandbox_k8s_namespace", "agent-sandboxes", config_overrides
-        )
-    ).strip() or "agent-sandboxes"
+    # 命名空间：留空或仍是历史默认值(agent-sandboxes)时自动跟随平台自身命名空间。
+    # Kubernetes PVC 是命名空间级的，只有与平台同命名空间才能共享平台数据卷，
+    # 从而让沙箱内 /workspace 看到用户工作区（与 Docker 沙箱对齐）。
+    namespace = resolve_sandbox_namespace(
+        await _sandbox_config_value("sandbox_k8s_namespace", "", config_overrides)
+    )
     image = (
         await _sandbox_config_value(
             "sandbox_k8s_image", "python:3.11-slim", config_overrides
@@ -1453,6 +1456,11 @@ async def _policy_k8s_workspace(
             "sandbox_k8s_existing_pvc", "", config_overrides
         )
     ).strip() or None
+    for _mount_warning in evaluate_k8s_workspace_mount_config(
+        namespace=namespace,
+        existing_pvc=existing_pvc,
+    ):
+        logger.warning("[workspace] K8s 沙箱工作区挂载配置：%s", _mount_warning)
     storage_class = (
         await _sandbox_config_value(
             "sandbox_k8s_storage_class", "", config_overrides
@@ -2625,10 +2633,13 @@ async def _evict_all_k8s_workspaces_for_user(sandbox_user_key: str, *, reason: s
 async def _k8s_workspace_pod_identity(workspace: Any) -> tuple[str | None, str | None]:
     """Return (namespace, pod_name) best-effort for a live k8s workspace."""
     from app.services.config_service import ConfigService
+    from app.services.ai.runtime.agentscope.k8s_workspace import (
+        resolve_sandbox_namespace,
+    )
 
-    namespace = getattr(workspace, "_namespace", None) or (
-        await ConfigService.get("sandbox_k8s_namespace", "agent-sandboxes")
-    ).strip() or "agent-sandboxes"
+    namespace = getattr(workspace, "_namespace", None) or resolve_sandbox_namespace(
+        await ConfigService.get("sandbox_k8s_namespace", "")
+    )
     pod_name = getattr(workspace, "_pod_name", None) or getattr(workspace, "pod_name", None)
     return namespace, pod_name
 
@@ -2738,7 +2749,7 @@ async def k8s_workspace_status(
             )
 
             pod_info = await read_k8s_sandbox_pod(
-                namespace=namespace or "agent-sandboxes",
+                namespace=namespace,
                 pod_name=pod_name,
             )
         except Exception as exc:  # noqa: BLE001
@@ -2823,12 +2834,15 @@ async def _k8s_probe_workspace_pod(user_key: str) -> dict[str, Any] | None:
     dict when the Pod is found, or ``None`` when absent / probe unavailable
     (callers fall back to ``idle``).
     """
-    from app.services.ai.runtime.agentscope.k8s_workspace import read_k8s_sandbox_pod
+    from app.services.ai.runtime.agentscope.k8s_workspace import (
+        read_k8s_sandbox_pod,
+        resolve_sandbox_namespace,
+    )
     from app.services.config_service import ConfigService
 
-    namespace = (
-        await ConfigService.get("sandbox_k8s_namespace", "agent-sandboxes")
-    ).strip() or "agent-sandboxes"
+    namespace = resolve_sandbox_namespace(
+        await ConfigService.get("sandbox_k8s_namespace", "")
+    )
     pod_name = f"as-ws-{str(user_key).replace('_', '-')}"
     try:
         info = await read_k8s_sandbox_pod(namespace=namespace, pod_name=pod_name)
@@ -4630,10 +4644,13 @@ async def build_workspace_toolkit(
 async def _k8s_named_pod_identity(user_key: str) -> tuple[str, str]:
     """Return (namespace, pod_name) derived from config + the user key."""
     from app.services.config_service import ConfigService
+    from app.services.ai.runtime.agentscope.k8s_workspace import (
+        resolve_sandbox_namespace,
+    )
 
-    namespace = (
-        await ConfigService.get("sandbox_k8s_namespace", "agent-sandboxes")
-    ).strip() or "agent-sandboxes"
+    namespace = resolve_sandbox_namespace(
+        await ConfigService.get("sandbox_k8s_namespace", "")
+    )
     pod_name = f"as-ws-{str(user_key).replace('_', '-')}"
     return namespace, pod_name
 

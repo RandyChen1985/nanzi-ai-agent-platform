@@ -1,17 +1,22 @@
 # NanZi AI Agent Platform - Kubernetes 沙箱 Pod 生命周期管理 RBAC 权限配置样例
 #
 # 架构说明：
-# 平台主服务运行在 `nanzi-ai-agent` 命名空间，动态创建的沙箱 Pod 隔离运行在 `agent-sandboxes` 命名空间。
-# 本配置遵循最小特权原则（Principle of Least Privilege），只授予操作沙箱命名空间内 Pod 与 PVC 的权限，绝不授予集群级特权。
-
----
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: agent-sandboxes
-  labels:
-    app.kubernetes.io/part-of: nanzi-ai-agent-platform
-    app.kubernetes.io/component: sandbox
+# 平台主服务运行在 `nanzi-ai-agent` 命名空间，动态创建的沙箱 Pod 默认运行在
+# **同一命名空间**（`nanzi-ai-agent`）。
+#
+# 为什么必须同命名空间？
+#   Kubernetes 的 PersistentVolumeClaim 是命名空间级资源，Pod 只能引用自身命名空间
+#   内的 PVC。要让沙箱内 `/workspace` 挂载用户工作区（与 Docker 沙箱行为对齐），
+#   沙箱 Pod 必须与平台主 PVC（`nanzi-ai-agent-data`，位于 `nanzi-ai-agent`）处于
+#   同一命名空间，因此本样例把沙箱 Role/RoleBinding 授予 `nanzi-ai-agent`。
+#
+# 本配置遵循最小特权原则（Principle of Least Privilege），只授予管理沙箱 Pod 与 PVC
+# 所需的权限，绝不授予集群级特权。
+#
+# 若希望保持强隔离（沙箱不共享用户工作区），可显式设置 `sandbox_k8s_namespace` 为
+# 独立命名空间（例如历史默认值 `agent-sandboxes`），并把下方 Role/RoleBinding 的
+# namespace 改为该命名空间；此时须同时留空 `sandbox_k8s_existing_pvc`，沙箱将改用
+# 每工作区独立创建的空 PVC。
 
 ---
 # 平台后端 Pod 使用的 ServiceAccount
@@ -22,12 +27,12 @@ metadata:
   namespace: nanzi-ai-agent
 
 ---
-# 授予管理沙箱资源专用的 Role（限定在 agent-sandboxes 命名空间）
+# 授予管理沙箱资源专用的 Role（限定在 nanzi-ai-agent 命名空间，与平台同命名空间）
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
   name: nanzi-sandbox-manager-role
-  namespace: agent-sandboxes
+  namespace: nanzi-ai-agent
 rules:
   # Pod 生命周期管理
   - apiGroups: [""]
@@ -43,12 +48,12 @@ rules:
     verbs: ["create", "get", "list", "watch", "update", "delete"]
 
 ---
-# 跨命名空间角色绑定：将 nanzi-ai-agent 命名空间的 ServiceAccount 绑定到 agent-sandboxes 的 Role
+# 角色绑定：将 nanzi-ai-agent 命名空间的 ServiceAccount 绑定到同命名空间的沙箱管理 Role
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
   name: nanzi-sandbox-manager-binding
-  namespace: agent-sandboxes
+  namespace: nanzi-ai-agent
 subjects:
   - kind: ServiceAccount
     name: nanzi-ai-agent-sa

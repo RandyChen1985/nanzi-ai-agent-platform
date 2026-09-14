@@ -24,6 +24,90 @@ logger = logging.getLogger(__name__)
 DEFAULT_K8S_CPU_REQUEST = "100m"
 DEFAULT_K8S_MEMORY_REQUEST = "128Mi"
 
+#: Namespace the platform itself is deployed in (matches ``k8s_deploy/namespace.yaml``).
+#: Kubernetes PVCs are namespace-scoped, so sharing the platform data volume with
+#: sandbox Pods REQUIRES the sandbox namespace to equal this one.
+DEFAULT_PLATFORM_NAMESPACE = "nanzi-ai-agent"
+
+#: Legacy seeded default for ``sandbox_k8s_namespace``. It predates the shared-PVC
+#: alignment and is treated as "unset" so existing installs follow the platform
+#: namespace instead of silently mounting an isolated empty volume.
+LEGACY_DEFAULT_K8S_NAMESPACE = "agent-sandboxes"
+
+#: Env overrides, in priority order, for the platform's own namespace.
+_PLATFORM_NAMESPACE_ENV_KEYS = ("NANZI_PLATFORM_NAMESPACE", "POD_NAMESPACE", "K8S_NAMESPACE")
+
+#: In-cluster file every Pod gets; the authoritative way to know our namespace.
+_SERVICEACCOUNT_NAMESPACE_FILE = "/var/run/secrets/kubernetes.io/serviceaccount/namespace"
+
+
+def resolve_platform_namespace() -> str:
+    """Return the Kubernetes namespace the platform itself runs in.
+
+    Resolution order: explicit env override -> in-cluster ServiceAccount
+    namespace file -> :data:`DEFAULT_PLATFORM_NAMESPACE`.
+    """
+    for key in _PLATFORM_NAMESPACE_ENV_KEYS:
+        value = (os.environ.get(key) or "").strip()
+        if value:
+            return value
+    try:
+        with open(_SERVICEACCOUNT_NAMESPACE_FILE, "r", encoding="utf-8") as fh:
+            value = fh.read().strip()
+            if value:
+                return value
+    except OSError:
+        pass
+    return DEFAULT_PLATFORM_NAMESPACE
+
+
+def resolve_sandbox_namespace(configured: str | None) -> str:
+    """Normalise ``sandbox_k8s_namespace`` into the effective sandbox namespace.
+
+    An empty value *or* the legacy seeded default (``agent-sandboxes``) means
+    "follow the platform namespace", which is what makes the shared-PVC workspace
+    mount work out of the box (matching Docker sandbox behaviour). Any other value
+    is treated as an explicit admin override.
+    """
+    value = (configured or "").strip()
+    if not value or value == LEGACY_DEFAULT_K8S_NAMESPACE:
+        return resolve_platform_namespace()
+    return value
+
+
+def evaluate_k8s_workspace_mount_config(
+    *,
+    namespace: str | None,
+    existing_pvc: str | None,
+    platform_namespace: str | None = None,
+) -> list[str]:
+    """Return admin-facing warnings about the K8s sandbox workspace mount config.
+
+    These describe configurations that silently break the "sandbox sees the user
+    workspace, like Docker" contract, so they are surfaced both in logs and in the
+    RBAC self-check API response.
+    """
+    warnings: list[str] = []
+    platform_ns = (platform_namespace or resolve_platform_namespace()).strip()
+    effective_ns = resolve_sandbox_namespace(namespace)
+    pvc = (existing_pvc or "").strip()
+
+    if not pvc:
+        warnings.append(
+            "sandbox_k8s_existing_pvc 未配置：K8s 沙箱将使用每个工作区独立创建的空 PVC，"
+            "沙箱内 /workspace 看不到用户工作区（与 Docker 沙箱行为不一致）。"
+            "如需对齐 Docker，请将其设为平台主 PVC 名称，并保持 sandbox_k8s_namespace "
+            f"与平台命名空间（{platform_ns}）一致。"
+        )
+    elif effective_ns != platform_ns:
+        warnings.append(
+            f"sandbox_k8s_namespace（{effective_ns}）与平台命名空间（{platform_ns}）不一致，"
+            "但已配置 sandbox_k8s_existing_pvc。Kubernetes PVC 是命名空间级的，"
+            "沙箱 Pod 无法引用其他命名空间的 PVC，Pod 会因找不到该 PVC 而一直 Pending。"
+            f"请将 sandbox_k8s_namespace 设为 {platform_ns}，或留空以自动跟随平台命名空间。"
+        )
+    return warnings
+
 
 class K8sSandboxUnavailableError(RuntimeError):
     """Normalized K8s sandbox unavailability error with user-friendly diagnosis."""
@@ -373,17 +457,8 @@ def build_k8s_workspace_with_nanzi_adapter(
     )
 
 
-async def check_k8s_rbac_status(
-    namespace: str | None = None,
-) -> dict[str, Any]:
-    """Check Kubernetes cluster connectivity and RBAC permissions for the sandbox namespace."""
-    from app.services.config_service import ConfigService
-
-    target_namespace = (
-        namespace
-        or (await ConfigService.get("sandbox_k8s_namespace", "agent-sandboxes"))
-    ).strip() or "agent-sandboxes"
-
+async def _probe_k8s_rbac_status(target_namespace: str) -> dict[str, Any]:
+    """Probe cluster connectivity and RBAC permissions for ``target_namespace``."""
     try:
         from kubernetes_asyncio import client as k8s_client, config as k8s_async_config
     except ImportError:
@@ -469,6 +544,48 @@ async def check_k8s_rbac_status(
             "message": f"连接 Kubernetes API Server 发生异常：{exc}",
             "remedy": "请检查集群网络连通性、API Server 地址及网络策略（NetworkPolicy）。",
         }
+
+
+async def check_k8s_rbac_status(
+    namespace: str | None = None,
+) -> dict[str, Any]:
+    """Check cluster connectivity, RBAC permissions and workspace mount config.
+
+    Besides the RBAC probe, the response carries a ``warnings`` list describing
+    configurations that break the shared-workspace contract (e.g. an unset
+    ``sandbox_k8s_existing_pvc``, or a sandbox namespace that cannot reach the
+    platform PVC because PVCs are namespace-scoped).
+    """
+    from app.services.config_service import ConfigService
+
+    configured_namespace = ""
+    explicit_namespace = (namespace or "").strip()
+    if not explicit_namespace:
+        try:
+            configured_namespace = (
+                await ConfigService.get("sandbox_k8s_namespace", "")
+            ) or ""
+        except Exception as exc:  # noqa: BLE001 - config read must never break the probe
+            logger.warning("[k8s_workspace] Failed to read sandbox_k8s_namespace: %s", exc)
+
+    target_namespace = explicit_namespace or resolve_sandbox_namespace(configured_namespace)
+
+    existing_pvc = ""
+    try:
+        existing_pvc = await ConfigService.get("sandbox_k8s_existing_pvc", "") or ""
+    except Exception as exc:  # noqa: BLE001 - config read must never break the probe
+        logger.warning("[k8s_workspace] Failed to read sandbox_k8s_existing_pvc: %s", exc)
+
+    warnings = evaluate_k8s_workspace_mount_config(
+        namespace=configured_namespace or target_namespace,
+        existing_pvc=existing_pvc,
+    )
+
+    result = await _probe_k8s_rbac_status(target_namespace)
+    result["warnings"] = warnings
+    for warning in warnings:
+        logger.warning("[k8s_workspace] K8s sandbox mount config: %s", warning)
+    return result
 
 
 async def read_k8s_sandbox_pod(

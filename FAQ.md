@@ -2760,13 +2760,14 @@ sequenceDiagram
 很多运维人员关心：*智能体在 Pod 沙箱中生成的数据分析图表与文件，平台和用户如何实时获取？*
 - **推荐方案（复用共享 PVC）**：
   - 在【系统配置】中配置 `sandbox_k8s_existing_pvc` 指向 NanZi 平台挂载的数据卷（如 `nanzi-ai-agent-data`）；
+  - **前提：沙箱命名空间必须与平台同命名空间**。Kubernetes 的 PVC 是命名空间级资源，Pod 只能引用自身命名空间内的 PVC，因此 `sandbox_k8s_namespace` 默认已与平台对齐为 `nanzi-ai-agent`（留空表示自动跟随平台命名空间）；若指定为其它命名空间，沙箱 Pod 会因找不到该 PVC 而长期 `Pending`；
   - 平台通过 Kubernetes `subPath` 机制，自动将用户工作区根目录 `agent_workspaces/{user_key}` 挂载至沙箱 Pod 内的 `/workspace`（与 Docker 沙箱一致，可在沙箱内直接查看并操作用户完整工作区），同时以只读方式挂载 `docs` 文档目录；
   - 智能体在沙箱内写入的文件在宿主机及平台主容器中毫秒级可见并提供下载链接，体验与 Docker 挂载 100% 对齐；
   - **防误删保护**：NanZi 定制生命周期适配器在沙箱 Pod 结束或超时清理时，绝对不会误删任何共享持久卷；
-- **动态独立 PVC 方案**：若留空 `sandbox_k8s_existing_pvc`，平台将为每个用户动态申请专属独立 PVC（通过 `sandbox_k8s_storage_class` 与 `sandbox_k8s_storage_size` 控制），并可通过 `sandbox_k8s_delete_pvc_on_close` 开关配置沙箱关闭时是否连带销毁 PVC。
+- **动态独立 PVC 方案**：若留空 `sandbox_k8s_existing_pvc`，平台将为每个用户动态申请专属独立 PVC（通过 `sandbox_k8s_storage_class` 与 `sandbox_k8s_storage_size` 控制），并可通过 `sandbox_k8s_delete_pvc_on_close` 开关配置沙箱关闭时是否连带销毁 PVC。**此模式下沙箱内 `/workspace` 是一块全新空卷，看不到用户工作区**（平台会在日志与 RBAC 自检结果中给出提醒）。
 
 ##### 3. 所需权限与 RBAC 配置
-NanZi 平台 Pod 仅需在沙箱命名空间拥有管理 Pod 与 PVC 的最小权限：
+NanZi 平台 Pod 仅需在沙箱命名空间（默认与平台同命名空间 `nanzi-ai-agent`）拥有管理 Pod 与 PVC 的最小权限：
 ```bash
 # 应用最小权限 RBAC 模板
 kubectl apply -f k8s_deploy/sandbox-rbac.example.yaml

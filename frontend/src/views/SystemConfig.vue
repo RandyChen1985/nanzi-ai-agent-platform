@@ -1559,20 +1559,21 @@ local（适用于同一平台可直连数据库）：平台使用本地已配置
 
 【留空（默认处理）时的行为】
 * 模式：动态独立临时卷模式。
-* 行为：平台会自动通过 K8s API 在命名空间中为当前用户会话申请一块全新的独立专属 PVC（命名如 as-pvc-{workspace_id}，容量由 sandbox_k8s_storage_size 决定）。
+* 行为：平台会自动通过 K8s API 在命名空间中为当前用户会话申请一块全新的独立专属 PVC（命名同沙箱 Pod，如 as-ws-{workspace_id}，容量由 sandbox_k8s_storage_size 决定）。
 * 销毁回收：沙箱会话到期并超时关闭后，该独立 PVC 随 Pod 一同被物理删除（由 sandbox_k8s_delete_pvc_on_close 控制）。
 * 适用：各用户、各会话之间磁盘 100% 物理绝对隔离，阅后即焚、不留痕迹。
 
 【不留空时，填什么格式？】
-* 格式要求：填写 Kubernetes 集群目标命名空间（默认 agent-sandboxes）中【已存在的 PVC 资源名称】。
-* 填写示例：nanzi-app-data 或 agent-shared-pvc。
+* 格式要求：填写 Kubernetes 集群目标命名空间（默认与平台同命名空间 nanzi-ai-agent）中【已存在的 PVC 资源名称】。
+* 填写示例：nanzi-ai-agent-data（平台主 PVC，推荐）或 my-shared-pvc。
 * ⚠️ 注意：仅填写标准的 K8s 资源名（纯字母、数字、短横线），不要写成路径（例如不要加 / 或 /app/data）。
+* ⚠️ 注意：PVC 是命名空间级资源，沙箱命名空间必须与平台同命名空间才能引用该 PVC；否则沙箱 Pod 会因找不到 PVC 而长期 Pending。
 
 【最终会生成和挂载什么路径？】
 1. 沙箱容器内路径：固定挂载为沙箱 Pod 内部的 /workspace。
-2. 底层 PVC 物理子路径：平台通过 Kubernetes 原生 subPath 机制，自动将卷内的相对路径 agent_workspaces/{sandbox_user_key}/sandbox 映射挂入沙箱。
+2. 底层 PVC 物理子路径：平台通过 Kubernetes 原生 subPath 机制，自动将卷内的相对路径 agent_workspaces/{sandbox_user_key} 映射挂入沙箱，使沙箱内 /workspace 即为该用户完整工作区（与 Docker 沙箱一致）。
 3. 安全隔离防越权：沙箱只能读写该用户自己的专属子目录，绝不会访问整块共享 PVC 的根目录或其他用户的数据；若为未认证/匿名用户，平台会前置拦截禁止挂载共享卷。
-4. 公共文档只读共享：若平台配置了公共知识库文档，底层卷内的 docs 目录会自动以只读模式（readOnly: true）挂载至沙箱内的 /workspace/docs。`,
+4. 公共文档只读共享：若平台配置了公共知识库文档，底层卷内的 docs 目录会自动以只读模式（readOnly: true）挂载至沙箱内的 /workspace/public/docs。`,
     'sandbox_k8s_storage_class': `【参数作用】
 指定动态创建独立专属 PVC 时所使用的 Kubernetes 存储类（StorageClass）。
 
@@ -1976,9 +1977,9 @@ const configShortDescriptions: Record<string, string> = {
   agent_context_llm_summary_enabled: '是否用当前会话模型对历史做语义摘要，失败或超时会自动降级为确定性摘录。',
   sandbox_policy: '安全沙箱执行策略。local 表示在宿主机扩展进程内直接执行（当前默认）；docker 表示在自动构建的 Docker 容器内执行；e2b 表示在 E2B 云端沙箱内执行；ssh 表示在 SSH 远程主机上执行。',
   sandbox_docker_base_image: 'docker 策略使用的容器基础镜像（留空默认使用官方标准镜像 python:3.11-slim）。',
-  sandbox_k8s_namespace: 'k8s 策略沙箱 Pod 运行的命名空间（默认 agent-sandboxes）。',
+  sandbox_k8s_namespace: 'k8s 策略沙箱 Pod 运行的命名空间（默认与平台同命名空间 nanzi-ai-agent；留空表示自动跟随平台命名空间）。注意：只有与平台同命名空间，沙箱才能通过 sandbox_k8s_existing_pvc 共享用户工作区（PVC 为命名空间级资源）。',
   sandbox_k8s_image: 'k8s 策略沙箱容器运行的基础镜像（默认 python:3.11-slim）。可填自动构建的“网关预置镜像” nanzi-sandbox-k8s:<版本> 加速冷启动（构建方式见下方提示）。',
-  sandbox_k8s_existing_pvc: 'k8s 策略可选已存在的共享 PVC 名称（留空表示动态独立临时卷；填写如 nanzi-app-data，通过 subPath 挂载到 /workspace）。',
+  sandbox_k8s_existing_pvc: 'k8s 策略可选已存在的共享 PVC 名称（留空表示动态独立临时卷，此时沙箱内 /workspace 看不到用户工作区；填写如 nanzi-ai-agent-data 则通过 subPath 把用户工作区挂载到 /workspace，与 Docker 沙箱一致）。注意须与平台同命名空间。',
   sandbox_k8s_storage_class: 'k8s 策略动态创建独立 PVC 时的存储类名称（StorageClass，留空表示使用集群默认 StorageClass）。',
   sandbox_k8s_storage_size: 'k8s 策略动态创建独立 PVC 时的申请容量（默认 1Gi）。',
   sandbox_k8s_cpu_request: 'k8s 策略沙箱 Pod CPU 请求保障（requests.cpu，默认 100m），留空表示不设 requests。',
@@ -3365,7 +3366,7 @@ onUnmounted(() => {
                                      <span>Kubernetes 集群沙箱配置与 RBAC 权限指引</span>
                                    </div>
                                    <p class="text-sky-700 text-[11px] leading-relaxed">
-                                     在 Kubernetes 生产集群中，平台需通过 API Server 在目标命名空间（默认 <code class="font-mono text-sky-800 bg-sky-100/80 px-1 py-0.5 rounded">agent-sandboxes</code>）动态创建和管理独立的沙箱 Pod / PVC。
+                                     在 Kubernetes 生产集群中，平台需通过 API Server 在目标命名空间（默认与平台同命名空间 <code class="font-mono text-sky-800 bg-sky-100/80 px-1 py-0.5 rounded">nanzi-ai-agent</code>）动态创建和管理独立的沙箱 Pod / PVC。同命名空间是共享用户工作区 PVC 的前置条件。
                                    </p>
                                  </div>
 

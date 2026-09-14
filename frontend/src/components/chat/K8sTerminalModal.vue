@@ -61,7 +61,7 @@ const shortPodName = computed(() => props.podName || "nanzi-pod");
 
 const createWelcomeRecord = (): CommandRecord => {
   const workdir = currentWorkdir.value || "/workspace";
-  const output = `Kubernetes 沙箱终端\n已连接 Pod：${props.podName || "default"}\n命名空间：${props.namespace || "agent-sandboxes"}\n工作目录：${workdir}`;
+  const output = `Kubernetes 沙箱终端\n已连接 Pod：${props.podName || "default"}\n命名空间：${props.namespace || "nanzi-ai-agent"}\n工作目录：${workdir}`;
   return {
     id: `welcome_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
     kind: "welcome",
@@ -347,7 +347,7 @@ onUnmounted(() => {
             </div>
             <div class="grid gap-1 sm:grid-cols-2">
               <div><span class="text-emerald-300">● 已进入</span><span class="text-slate-400"> Pod：</span><span class="text-slate-100">{{ props.podName || '—' }}</span></div>
-              <div><span class="text-sky-300">命名空间</span><span class="text-slate-400">：</span><span class="text-sky-200">{{ props.namespace || 'agent-sandboxes' }}</span></div>
+              <div><span class="text-sky-300">命名空间</span><span class="text-slate-400">：</span><span class="text-sky-200">{{ props.namespace || 'nanzi-ai-agent' }}</span></div>
               <div><span class="text-sky-300">工作目录</span><span class="text-slate-400">：</span><span class="text-sky-200">{{ rec.workdir || '/workspace' }}</span></div>
             </div>
             <div class="mt-3 rounded-md border border-rose-500/30 bg-rose-950/20 p-2 text-rose-200">
