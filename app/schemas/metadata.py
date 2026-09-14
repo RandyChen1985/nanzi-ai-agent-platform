@@ -166,7 +166,7 @@ class MetaDriftAlertResponse(BaseModel):
     table_id: Optional[int] = None
     table_name: str
     column_name: str
-    drift_type: str  # missing_in_db, new_in_db, type_mismatch
+    drift_type: str  # missing_in_db, new_in_db, type_mismatch, table_missing_in_db, missing_comment
     source: str  # runtime, manual_inspection, cron_inspection
     error_sample: Optional[str] = None
     hit_count: int = 1

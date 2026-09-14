@@ -122,7 +122,7 @@ class MetaSchemaDriftAlert(Base):
     table_id = Column(Integer, nullable=True)
     table_name = Column(String(255), nullable=False)
     column_name = Column(String(255), nullable=False)
-    drift_type = Column(String(32), default="missing_in_db", comment="missing_in_db, new_in_db, type_mismatch")
+    drift_type = Column(String(32), default="missing_in_db", comment="missing_in_db, new_in_db, type_mismatch, table_missing_in_db, missing_comment")
     source = Column(String(32), default="runtime", comment="runtime, manual_inspection, cron_inspection")
     error_sample = Column(Text, nullable=True)
     hit_count = Column(Integer, default=1)
