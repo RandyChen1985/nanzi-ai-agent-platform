@@ -2,6 +2,9 @@
 
 Adapts AgentScope's K8sWorkspace to support:
 1. Shared cluster PVC with subPath (matching Docker's user workspace & public docs behavior).
+   The sandbox workdir ``/workspace`` binds the whole per-user workspace
+   ``agent_workspaces/{user_key}`` via subPath, so Bash inside the sandbox sees
+   and operates the exact same files as the host file tools (Docker-aligned).
 2. Local pre-creation of subPath directories to prevent Kubernetes MountVolume failures.
 3. Identity guard: Prohibit unauthenticated users from mounting shared PVC root.
 4. Non-privileged namespace creation graceful fallback (handling 403 Forbidden).
@@ -78,10 +81,10 @@ def _ensure_local_subpath_dirs(
             if not os.path.isdir(abs_cand):
                 continue
             if user_key:
-                user_sandbox_dir = os.path.join(
-                    abs_cand, "agent_workspaces", user_key, "sandbox"
+                user_workdir = os.path.join(
+                    abs_cand, "agent_workspaces", user_key
                 )
-                os.makedirs(user_sandbox_dir, exist_ok=True)
+                os.makedirs(user_workdir, exist_ok=True)
             docs_dir = os.path.join(abs_cand, "docs")
             os.makedirs(docs_dir, exist_ok=True)
             logger.debug(
@@ -247,7 +250,11 @@ def build_k8s_workspace_with_nanzi_adapter(
                 for k, v in merged_env.items()
             ] if merged_env else None
 
-            user_subpath = f"agent_workspaces/{self._nanzi_sandbox_user_key}/sandbox"
+            # 挂载整个用户工作区根（agent_workspaces/{user_key}），与 Docker 沙箱
+            # bind 用户工作区的行为对齐：沙箱 Bash/read/write 能直接看到并操作
+            # 用户在平台上工作区的全部内容（sessions/docs/历史落盘文件等），
+            # 而非之前只挂工作区下的 sandbox 子目录。
+            user_subpath = f"agent_workspaces/{self._nanzi_sandbox_user_key}"
 
             volume_mounts = [
                 k8s_client.V1VolumeMount(

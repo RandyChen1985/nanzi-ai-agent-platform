@@ -1,4 +1,5 @@
 import asyncio
+import os
 
 import pytest
 from unittest.mock import AsyncMock, patch, MagicMock
@@ -205,15 +206,21 @@ async def test_nanzi_k8s_adapter_create_pod_spec_structure(tmp_path):
     assert len(spec.containers) == 1
     container = spec.containers[0]
 
-    # 校验 subPath 挂载
+    # 校验 subPath 挂载整个用户工作区（与 Docker 对齐），而非 sandbox 子目录
     mounts = container.volume_mounts
     assert len(mounts) == 2
     user_mount = next(m for m in mounts if m.mount_path == "/workspace")
-    assert user_mount.sub_path == "agent_workspaces/u_test_123/sandbox"
+    assert user_mount.sub_path == "agent_workspaces/u_test_123"
 
     docs_mount = next(m for m in mounts if m.sub_path == "docs")
     assert docs_mount.mount_path == "/workspace/public/docs"
     assert docs_mount.read_only is True
+
+    # 校验 subPath 物理目录预建的是整个用户工作区根（而非其下的 sandbox 子目录）
+    precreated_user_workdir = os.path.join(
+        str(tmp_path), "agent_workspaces", "u_test_123"
+    )
+    assert os.path.isdir(precreated_user_workdir)
 
     # 校验 resources 自动补齐 requests
     assert container.resources is not None

@@ -1024,7 +1024,7 @@ NanZi 平台提供了**云原生 Pod 安全沙箱策略（`sandbox_policy = "k8s
 - **MCP 协议通信**：Pod 内部以后台子进程运行 FastMCP Gateway 服务，上层智能体通过标准 MCP 协议调用 `sandbox::bash`、`sandbox::read` 等工具；
 - **共享持久卷 subPath 挂载（体验与 Docker 100% 对齐）**：
   - 配置 `sandbox_k8s_existing_pvc` 指向平台的主 PVC（如 `nanzi-ai-agent-data`）；
-  - 自动通过 `subPath: agent_workspaces/{user_key}/sandbox` 挂载用户隔离私有目录，并以只读方式挂载 `docs` 文档库；
+  - 自动通过 `subPath: agent_workspaces/{user_key}` 挂载用户隔离的私有工作区（与 Docker 沙箱一致，沙箱内 `/workspace` 可见并可操作该用户完整工作区），并以只读方式挂载 `docs` 文档库；
   - 智能体在沙箱内生成的图表、CSV 数据和文件工件，平台主服务毫秒级直读并生成下载链接；
 - **生命周期保护**：
   - 会话结束或 30 分钟无交互超时后，自动销毁沙箱 Pod，释放集群 CPU / 内存资源；

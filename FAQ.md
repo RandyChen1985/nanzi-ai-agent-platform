@@ -2760,7 +2760,7 @@ sequenceDiagram
 很多运维人员关心：*智能体在 Pod 沙箱中生成的数据分析图表与文件，平台和用户如何实时获取？*
 - **推荐方案（复用共享 PVC）**：
   - 在【系统配置】中配置 `sandbox_k8s_existing_pvc` 指向 NanZi 平台挂载的数据卷（如 `nanzi-ai-agent-data`）；
-  - 平台通过 Kubernetes `subPath` 机制，自动将用户工作区目录 `agent_workspaces/{user_key}/sandbox` 挂载至沙箱 Pod 内的 `/workspace`，同时以只读方式挂载 `docs` 文档目录；
+  - 平台通过 Kubernetes `subPath` 机制，自动将用户工作区根目录 `agent_workspaces/{user_key}` 挂载至沙箱 Pod 内的 `/workspace`（与 Docker 沙箱一致，可在沙箱内直接查看并操作用户完整工作区），同时以只读方式挂载 `docs` 文档目录；
   - 智能体在沙箱内写入的文件在宿主机及平台主容器中毫秒级可见并提供下载链接，体验与 Docker 挂载 100% 对齐；
   - **防误删保护**：NanZi 定制生命周期适配器在沙箱 Pod 结束或超时清理时，绝对不会误删任何共享持久卷；
 - **动态独立 PVC 方案**：若留空 `sandbox_k8s_existing_pvc`，平台将为每个用户动态申请专属独立 PVC（通过 `sandbox_k8s_storage_class` 与 `sandbox_k8s_storage_size` 控制），并可通过 `sandbox_k8s_delete_pvc_on_close` 开关配置沙箱关闭时是否连带销毁 PVC。
