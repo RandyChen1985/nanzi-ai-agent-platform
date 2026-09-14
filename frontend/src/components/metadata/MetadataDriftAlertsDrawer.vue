@@ -1001,16 +1001,6 @@ watch(
             <span>📥</span> 一键收录全部新增字段 ({{ pendingNewCount }})
           </button>
           <button
-            v-if="pendingMissingCommentCount > 0 && (selectedTypeFilter === 'all' || selectedTypeFilter === 'missing_comment')"
-            type="button"
-            :disabled="!canEdit || isBatchProcessing"
-            :title="!canEdit ? '需具备数据集编辑权限方可操作' : undefined"
-            class="px-2.5 py-1 font-semibold rounded-lg bg-teal-600 hover:bg-teal-700 text-white shadow-2xs transition-colors flex items-center gap-1 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer text-xs"
-            @click="handleBatchResolve('update_comment', 'missing_comment')"
-          >
-            <span>📝</span> 一键补充全部字段备注 ({{ pendingMissingCommentCount }})
-          </button>
-          <button
             v-if="pendingMissingCount > 0 && (selectedTypeFilter === 'all' || selectedTypeFilter === 'missing_in_db')"
             type="button"
             :disabled="!canEdit || isBatchProcessing"

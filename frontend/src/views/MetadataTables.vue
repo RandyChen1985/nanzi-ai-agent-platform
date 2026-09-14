@@ -1956,162 +1956,165 @@ defineExpose({ fetchMetrics })
       @resolved="handleDriftResolved"
     />
 
-    <!-- AI 字段语义推荐模态框 -->
-    <div
-      v-if="showColumnAiModal"
-      class="fixed inset-0 z-60 flex items-center justify-center bg-black/50 backdrop-blur-xs p-4 animate-fade-in"
-      @click.self="closeColumnAiModal"
-    >
-      <div class="bg-white rounded-2xl shadow-2xl w-full max-w-xl overflow-hidden flex flex-col max-h-[90vh] border border-gray-100 animate-fade-in-up">
-        <!-- Header -->
-        <div class="p-5 border-b border-gray-100 flex justify-between items-center bg-gradient-to-r from-indigo-50/80 to-purple-50/80">
-          <div class="flex items-center gap-3">
-            <div class="w-9 h-9 rounded-xl bg-indigo-100 text-indigo-600 flex items-center justify-center shadow-xs">
-              <SparklesIcon class="w-5 h-5" />
-            </div>
-            <div>
-              <h3 class="text-base font-bold text-gray-900 flex items-center gap-2">
-                AI 字段语义推荐
-                <span v-if="columnAiTargetCol?.physical_name" class="font-mono text-xs font-semibold px-2 py-0.5 rounded bg-indigo-50 text-indigo-700 border border-indigo-200">
-                  {{ columnAiTargetCol.physical_name }}
-                </span>
-              </h3>
-              <p class="text-xs text-gray-500">基于物理源表结构、原生注释与数据采样智能推断业务语义</p>
-            </div>
-          </div>
-          <button @click="closeColumnAiModal" class="text-gray-400 hover:text-gray-600 transition-colors p-1 rounded-lg hover:bg-white/50 cursor-pointer">
-            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
-          </button>
-        </div>
-
-        <!-- Content -->
-        <div class="p-6 space-y-4 overflow-y-auto">
-          <!-- 正在分析状态 -->
-          <div v-if="columnAiLoading" class="py-12 text-center space-y-3">
-            <div class="text-4xl animate-pulse">🧠</div>
-            <div class="text-sm font-bold text-gray-800">正在分析源表并采样数据...</div>
-            <div class="text-xs text-gray-400 max-w-xs mx-auto leading-relaxed">
-              正在直连数据源获取字段原生注释、提取前 3 条真实采样数据，并结合同表上下文推断业务语义
-            </div>
-          </div>
-
-          <!-- 物理字段不存在或失败 -->
-          <div v-else-if="columnAiResult && !columnAiResult.physical_exists" class="py-4 space-y-3">
-            <div class="p-4 rounded-xl bg-amber-50 border border-amber-200 text-amber-800 text-sm flex items-start gap-3">
-              <span class="text-xl shrink-0">⚠️</span>
-              <div class="space-y-1">
-                <div class="font-bold">源表中不存在此字段，无法推荐语义</div>
-                <div class="text-xs text-amber-700 leading-relaxed">
-                  {{ columnAiResult.error_message || '物理数据库源表中未检测到该表或该字段。请核实物理表名与物理字段名拼写是否正确。' }}
-                </div>
+    <!-- AI 字段语义推荐模态框 (Teleport 到 body 并设置最高 z-index，保证绝对置顶于编辑表弹窗之上) -->
+    <Teleport to="body">
+      <div
+        v-if="showColumnAiModal"
+        class="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-fade-in"
+        style="z-index: 9999;"
+        @click.self="closeColumnAiModal"
+      >
+        <div class="bg-white rounded-2xl shadow-2xl w-full max-w-xl overflow-hidden flex flex-col max-h-[90vh] border border-gray-100 animate-fade-in-up">
+          <!-- Header -->
+          <div class="p-5 border-b border-gray-100 flex justify-between items-center bg-gradient-to-r from-indigo-50/80 to-purple-50/80">
+            <div class="flex items-center gap-3">
+              <div class="w-9 h-9 rounded-xl bg-indigo-100 text-indigo-600 flex items-center justify-center shadow-xs">
+                <SparklesIcon class="w-5 h-5" />
               </div>
-            </div>
-            <div class="p-3.5 rounded-xl bg-gray-50 border border-gray-100 text-xs text-gray-500 space-y-1">
-              <div>• 提示：AI 语义推荐需要直连真实物理数据源进行数据采样与注释读取。</div>
-              <div>• 如果这是您计划后续在数据库中新增的字段，可直接在表单中手动输入业务名称与描述。</div>
-            </div>
-          </div>
-
-          <!-- 分析成功且物理字段存在 -->
-          <div v-else-if="columnAiResult && columnAiResult.physical_exists" class="space-y-4">
-            <!-- 物理源定义与采样卡片 -->
-            <div class="p-3.5 rounded-xl bg-slate-50 border border-slate-200 text-xs space-y-2">
-              <div class="flex flex-wrap items-center gap-x-4 gap-y-1 text-slate-600">
-                <span>📦 数据集: <strong class="text-slate-800">{{ columnAiResult.dataset_name || dataset?.name || '-' }}</strong></span>
-                <span>📋 源表: <strong class="text-slate-800 font-mono">{{ columnAiResult.table_name }}</strong></span>
-                <span>🔤 物理类型: <strong class="text-slate-800 font-mono">{{ columnAiResult.physical_type || '-' }}</strong></span>
-              </div>
-              <div v-if="columnAiResult.comment" class="text-slate-600 flex items-start gap-1">
-                <span class="shrink-0">🗒️ 物理库注释:</span>
-                <span class="text-slate-800 font-medium">{{ columnAiResult.comment }}</span>
-              </div>
-              <div v-if="columnAiResult.sample_values && columnAiResult.sample_values.length > 0" class="text-slate-600">
-                <div class="flex items-center gap-1 mb-1">
-                  <span>真实数据采样 (前 3 条):</span>
-                  <span class="text-slate-400">（辅助理解业务口径）</span>
-                </div>
-                <div class="flex flex-wrap gap-1.5">
-                  <span
-                    v-for="(val, vIdx) in columnAiResult.sample_values.slice(0, 3)"
-                    :key="vIdx"
-                    class="px-2 py-0.5 rounded bg-white border border-slate-200 font-mono text-slate-700 text-[11px] shadow-2xs"
-                  >
-                    {{ String(val) }}
+              <div>
+                <h3 class="text-base font-bold text-gray-900 flex items-center gap-2">
+                  AI 字段语义推荐
+                  <span v-if="columnAiTargetCol?.physical_name" class="font-mono text-xs font-semibold px-2 py-0.5 rounded bg-indigo-50 text-indigo-700 border border-indigo-200">
+                    {{ columnAiTargetCol.physical_name }}
                   </span>
+                </h3>
+                <p class="text-xs text-gray-500">基于物理源表结构、原生注释与数据采样智能推断业务语义</p>
+              </div>
+            </div>
+            <button @click="closeColumnAiModal" class="text-gray-400 hover:text-gray-600 transition-colors p-1 rounded-lg hover:bg-white/50 cursor-pointer">
+              <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+            </button>
+          </div>
+
+          <!-- Content -->
+          <div class="p-6 space-y-4 overflow-y-auto">
+            <!-- 正在分析状态 -->
+            <div v-if="columnAiLoading" class="py-12 text-center space-y-3">
+              <div class="text-4xl animate-pulse">🧠</div>
+              <div class="text-sm font-bold text-gray-800">正在分析源表并采样数据...</div>
+              <div class="text-xs text-gray-400 max-w-xs mx-auto leading-relaxed">
+                正在直连数据源获取字段原生注释、提取前 3 条真实采样数据，并结合同表上下文推断业务语义
+              </div>
+            </div>
+
+            <!-- 物理字段不存在或失败 -->
+            <div v-else-if="columnAiResult && !columnAiResult.physical_exists" class="py-4 space-y-3">
+              <div class="p-4 rounded-xl bg-amber-50 border border-amber-200 text-amber-800 text-sm flex items-start gap-3">
+                <span class="text-xl shrink-0">⚠️</span>
+                <div class="space-y-1">
+                  <div class="font-bold">源表中不存在此字段，无法推荐语义</div>
+                  <div class="text-xs text-amber-700 leading-relaxed">
+                    {{ columnAiResult.error_message || '物理数据库源表中未检测到该表或该字段。请核实物理表名与物理字段名拼写是否正确。' }}
+                  </div>
                 </div>
               </div>
-              <div v-if="columnAiResult.sibling_terms && columnAiResult.sibling_terms.length > 0" class="text-slate-600">
-                <span>🧬 同表兄弟字段参考:</span>
-                <span class="text-slate-800 ml-1">{{ columnAiResult.sibling_terms.slice(0, 5).join('、') }}</span>
+              <div class="p-3.5 rounded-xl bg-gray-50 border border-gray-100 text-xs text-gray-500 space-y-1">
+                <div>• 提示：AI 语义推荐需要直连真实物理数据源进行数据采样与注释读取。</div>
+                <div>• 如果这是您计划后续在数据库中新增的字段，可直接在表单中手动输入业务名称与描述。</div>
               </div>
             </div>
 
-            <!-- 可编辑推荐结果表单 -->
-            <div class="space-y-3">
-              <div>
-                <label class="block text-xs font-bold text-gray-700 mb-1">
-                  建议业务名称 (Term) <span class="text-rose-500">*</span>
-                </label>
-                <input
-                  v-model="columnAiTerm"
-                  type="text"
-                  class="w-full bg-white border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 outline-none"
-                  placeholder="例如：员工年龄"
-                />
+            <!-- 分析成功且物理字段存在 -->
+            <div v-else-if="columnAiResult && columnAiResult.physical_exists" class="space-y-4">
+              <!-- 物理源定义与采样卡片 -->
+              <div class="p-3.5 rounded-xl bg-slate-50 border border-slate-200 text-xs space-y-2">
+                <div class="flex flex-wrap items-center gap-x-4 gap-y-1 text-slate-600">
+                  <span>📦 数据集: <strong class="text-slate-800">{{ columnAiResult.dataset_name || dataset?.name || '-' }}</strong></span>
+                  <span>📋 源表: <strong class="text-slate-800 font-mono">{{ columnAiResult.table_name }}</strong></span>
+                  <span>🔤 物理类型: <strong class="text-slate-800 font-mono">{{ columnAiResult.physical_type || '-' }}</strong></span>
+                </div>
+                <div v-if="columnAiResult.comment" class="text-slate-600 flex items-start gap-1">
+                  <span class="shrink-0">🗒️ 物理库注释:</span>
+                  <span class="text-slate-800 font-medium">{{ columnAiResult.comment }}</span>
+                </div>
+                <div v-if="columnAiResult.sample_values && columnAiResult.sample_values.length > 0" class="text-slate-600">
+                  <div class="flex items-center gap-1 mb-1">
+                    <span>真实数据采样 (前 3 条):</span>
+                    <span class="text-slate-400">（辅助理解业务口径）</span>
+                  </div>
+                  <div class="flex flex-wrap gap-1.5">
+                    <span
+                      v-for="(val, vIdx) in columnAiResult.sample_values.slice(0, 3)"
+                      :key="vIdx"
+                      class="px-2 py-0.5 rounded bg-white border border-slate-200 font-mono text-slate-700 text-[11px] shadow-2xs"
+                    >
+                      {{ String(val) }}
+                    </span>
+                  </div>
+                </div>
+                <div v-if="columnAiResult.sibling_terms && columnAiResult.sibling_terms.length > 0" class="text-slate-600">
+                  <span>🧬 同表兄弟字段参考:</span>
+                  <span class="text-slate-800 ml-1">{{ columnAiResult.sibling_terms.slice(0, 5).join('、') }}</span>
+                </div>
               </div>
-              <div>
-                <label class="block text-xs font-bold text-gray-700 mb-1">
-                  建议业务描述 (Description) <span class="text-rose-500">*</span>
-                </label>
-                <textarea
-                  v-model="columnAiDesc"
-                  rows="3"
-                  class="w-full bg-white border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 outline-none leading-relaxed"
-                  placeholder="说明该字段存储什么、代表什么业务含义、口径..."
-                ></textarea>
-              </div>
-              <div>
-                <label class="block text-xs font-medium text-gray-600 mb-1">
-                  同义词 / 别名（可选，便于检索，逗号分隔）
-                </label>
-                <input
-                  v-model="columnAiSynonymsInput"
-                  type="text"
-                  class="w-full bg-white border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 outline-none"
-                  placeholder="如：age, 周岁, 实际年龄"
-                />
+
+              <!-- 可编辑推荐结果表单 -->
+              <div class="space-y-3">
+                <div>
+                  <label class="block text-xs font-bold text-gray-700 mb-1">
+                    建议业务名称 (Term) <span class="text-rose-500">*</span>
+                  </label>
+                  <input
+                    v-model="columnAiTerm"
+                    type="text"
+                    class="w-full bg-white border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 outline-none"
+                    placeholder="例如：员工年龄"
+                  />
+                </div>
+                <div>
+                  <label class="block text-xs font-bold text-gray-700 mb-1">
+                    建议业务描述 (Description) <span class="text-rose-500">*</span>
+                  </label>
+                  <textarea
+                    v-model="columnAiDesc"
+                    rows="3"
+                    class="w-full bg-white border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 outline-none leading-relaxed"
+                    placeholder="说明该字段存储什么、代表什么业务含义、口径..."
+                  ></textarea>
+                </div>
+                <div>
+                  <label class="block text-xs font-medium text-gray-600 mb-1">
+                    同义词 / 别名（可选，便于检索，逗号分隔）
+                  </label>
+                  <input
+                    v-model="columnAiSynonymsInput"
+                    type="text"
+                    class="w-full bg-white border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 outline-none"
+                    placeholder="如：age, 周岁, 实际年龄"
+                  />
+                </div>
               </div>
             </div>
           </div>
-        </div>
 
-        <!-- Footer -->
-        <div class="p-4 border-t border-gray-100 bg-gray-50 flex items-center justify-between">
-          <div class="text-xs text-gray-400">
-            <span v-if="columnAiResult?.physical_exists && columnAiResult.llm_succeeded" class="text-emerald-600 font-medium">
-              ✓ AI 语义分析完成，支持微调后回填
-            </span>
-          </div>
-          <div class="flex items-center gap-2">
-            <button
-              @click="closeColumnAiModal"
-              class="px-4 py-2 bg-white border border-gray-200 rounded-xl text-xs font-medium text-gray-700 hover:bg-gray-100 transition-colors cursor-pointer"
-            >
-              {{ columnAiResult && !columnAiResult.physical_exists ? '关闭' : '取消' }}
-            </button>
-            <button
-              v-if="columnAiResult?.physical_exists"
-              :disabled="!columnAiTerm.trim()"
-              @click="applyColumnAiRecommendation"
-              class="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold shadow-md shadow-indigo-500/20 transition-all flex items-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
-            >
-              <SparklesIcon class="w-3.5 h-3.5" />
-              应用到表单
-            </button>
+          <!-- Footer -->
+          <div class="p-4 border-t border-gray-100 bg-gray-50 flex items-center justify-between">
+            <div class="text-xs text-gray-400">
+              <span v-if="columnAiResult?.physical_exists && columnAiResult.llm_succeeded" class="text-emerald-600 font-medium">
+                ✓ AI 语义分析完成，支持微调后回填
+              </span>
+            </div>
+            <div class="flex items-center gap-2">
+              <button
+                @click="closeColumnAiModal"
+                class="px-4 py-2 bg-white border border-gray-200 rounded-xl text-xs font-medium text-gray-700 hover:bg-gray-100 transition-colors cursor-pointer"
+              >
+                {{ columnAiResult && !columnAiResult.physical_exists ? '关闭' : '取消' }}
+              </button>
+              <button
+                v-if="columnAiResult?.physical_exists"
+                :disabled="!columnAiTerm.trim()"
+                @click="applyColumnAiRecommendation"
+                class="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold shadow-md shadow-indigo-500/20 transition-all flex items-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+              >
+                <SparklesIcon class="w-3.5 h-3.5" />
+                应用到表单
+              </button>
+            </div>
           </div>
         </div>
       </div>
-    </div>
+    </Teleport>
   </div>
 </template>
 
