@@ -18,6 +18,11 @@ class MetaDataset(Base):
     enable_data_perm = Column(Boolean, default=False, comment='是否启用精细化数据权限校验')
     row_filter_config = Column(JSON, nullable=True, comment='行级权限配置策略')
     
+    # 资产质量治理分（巡检结算时写入，0-100）
+    quality_score = Column(Integer, nullable=True, comment='数据资产质量治理分 0-100')
+    quality_breakdown = Column(JSON, nullable=True, comment='质量分维度明细')
+    quality_scored_at = Column(DateTime, nullable=True, comment='最近一次质量评分时间')
+    
     # RAGFlow Integration Fields
     rag_dataset_id = Column(String(64), nullable=True, comment='RAGFlow 侧对应的 Dataset ID')
     rag_synced_at = Column(DateTime, nullable=True, comment='最后同步到 RAGFlow 的时间')
@@ -117,7 +122,7 @@ class MetaSchemaDriftAlert(Base):
     table_id = Column(Integer, nullable=True)
     table_name = Column(String(255), nullable=False)
     column_name = Column(String(255), nullable=False)
-    drift_type = Column(String(32), default="missing_in_db", comment="missing_in_db, new_in_db, type_mismatch")
+    drift_type = Column(String(32), default="missing_in_db", comment="missing_in_db, new_in_db, type_mismatch, table_missing_in_db, missing_comment")
     source = Column(String(32), default="runtime", comment="runtime, manual_inspection, cron_inspection")
     error_sample = Column(Text, nullable=True)
     hit_count = Column(Integer, default=1)

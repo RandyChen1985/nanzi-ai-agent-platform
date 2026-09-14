@@ -3,7 +3,7 @@ import { ref, onMounted, onUnmounted, computed } from 'vue'
 import { useRoute } from 'vue-router'
 import axios from 'axios'
 import { metadataApi } from '../api/metadata'
-import type { Dataset, Table } from '../api/metadata'
+import type { Dataset, Table, RecommendColumnSemanticResult } from '../api/metadata'
 import type { RagFlowConfigSummary } from '../api/ragflow'
 
 import MetricList from '../components/metadata/MetricList.vue'
@@ -18,7 +18,7 @@ import { useUser } from '../composables/useUser'
 import { useToast } from '../composables/useToast'
 import { copyToClipboard } from '../utils/clipboard'
 import { createSseLineParser } from '../utils/chartRenderer'
-import { CircleStackIcon, KeyIcon, MagnifyingGlassIcon, UserIcon } from '@heroicons/vue/24/outline'
+import { CircleStackIcon, KeyIcon, MagnifyingGlassIcon, SparklesIcon, UserIcon } from '@heroicons/vue/24/outline'
 
 const { isAdmin: _isAdmin, hasPermission } = useUser()
 const { showToast } = useToast()
@@ -53,9 +53,80 @@ const showFullDescription = ref(false)
 const showMetricModal = ref(false)
 const metricModalInitialTables = ref<string[]>([])
 const showYamlModal = ref(false)
-const showEditModal = ref(false) 
+const showEditModal = ref(false)
 const showCreateTableModal = ref(false)
 const yamlContent = ref('')
+
+// AI 字段语义推荐
+const showColumnAiModal = ref(false)
+const columnAiLoading = ref(false)
+const columnAiTargetCol = ref<any>(null)
+const columnAiTargetTable = ref<any>(null)
+const columnAiResult = ref<RecommendColumnSemanticResult | null>(null)
+const columnAiTerm = ref('')
+const columnAiDesc = ref('')
+const columnAiSynonymsInput = ref('')
+
+const openColumnAiRecommendation = async (col: any, tableObj: any) => {
+  if (!col.physical_name || !col.physical_name.trim()) {
+    showToast('请先输入物理字段名', 'warning')
+    return
+  }
+  const dsId = dataset.value?.id || datasetId
+  if (!dsId) return
+
+  columnAiTargetCol.value = col
+  columnAiTargetTable.value = tableObj
+  showColumnAiModal.value = true
+  columnAiLoading.value = true
+  columnAiResult.value = null
+  columnAiTerm.value = col.term || ''
+  columnAiDesc.value = col.description || ''
+  columnAiSynonymsInput.value = ''
+
+  try {
+    const res = await metadataApi.recommendColumnSemantic(dsId, {
+      table_name: tableObj?.physical_name || '',
+      column_name: col.physical_name.trim(),
+      physical_type: col.type || null,
+      current_term: col.term || null,
+      current_description: col.description || null,
+      with_samples: true,
+    })
+    const data = res.data
+    columnAiResult.value = data
+    if (data.physical_exists) {
+      if (data.term) columnAiTerm.value = data.term
+      if (data.description) columnAiDesc.value = data.description
+      if (data.synonyms && data.synonyms.length > 0) {
+        columnAiSynonymsInput.value = data.synonyms.join(', ')
+      }
+    }
+  } catch (err: any) {
+    showToast(err.response?.data?.detail || '获取语义推荐失败', 'error')
+  } finally {
+    columnAiLoading.value = false
+  }
+}
+
+const applyColumnAiRecommendation = () => {
+  if (!columnAiTargetCol.value) return
+  if (columnAiTerm.value.trim()) {
+    columnAiTargetCol.value.term = columnAiTerm.value.trim()
+  }
+  if (columnAiDesc.value.trim()) {
+    columnAiTargetCol.value.description = columnAiDesc.value.trim()
+  }
+  showColumnAiModal.value = false
+  showToast(`已应用语义到字段 [${columnAiTargetCol.value.physical_name}]，请记得点击右下角「保存修改」以提交生效`, 'success')
+}
+
+const closeColumnAiModal = () => {
+  showColumnAiModal.value = false
+  columnAiTargetCol.value = null
+  columnAiTargetTable.value = null
+  columnAiResult.value = null
+}
 
 const openSmartMetricModalForTable = (tableName: string) => {
   metricModalInitialTables.value = [tableName]
@@ -718,7 +789,7 @@ defineExpose({ fetchMetrics })
             class="bg-white hover:bg-amber-50 text-gray-700 hover:text-amber-700 border border-gray-200 hover:border-amber-200 px-3 py-1.5 rounded-lg transition-all flex items-center gap-1.5 text-xs font-medium h-8 whitespace-nowrap shadow-2xs relative cursor-pointer"
             :title="dataset?.status === 1 ? 'Schema 巡检与差异治理' : 'Schema 巡检与差异治理 (数据集已禁用)'"
           >
-            <svg class="w-3.5 h-3.5 text-amber-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+            <svg class="w-3.5 h-3.5 text-amber-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12h4l3-6 4 12 3-6h4"/></svg>
             <span>巡检与治理</span>
             <span v-if="driftCount > 0" class="absolute -top-1 -right-1 w-2 h-2 rounded-full bg-amber-500 ring-2 ring-white"></span>
           </button>
@@ -730,7 +801,7 @@ defineExpose({ fetchMetrics })
             title="基于现有表结构智能生成/润色数据集业务描述和标签"
           >
             <svg v-if="enhancingDataset" class="animate-spin h-3.5 w-3.5" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
-            <svg v-else class="w-3.5 h-3.5 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+            <SparklesIcon v-else class="w-3.5 h-3.5 text-indigo-600" />
             <span>{{ enhancingDataset ? '生成中...' : 'AI 补全描述' }}</span>
           </button>
           <button 
@@ -806,7 +877,7 @@ defineExpose({ fetchMetrics })
                 title="基于现有表结构智能生成/润色数据集业务描述和标签"
               >
                 <svg v-if="enhancingDataset" class="animate-spin h-3 w-3" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
-                <svg v-else class="w-3 h-3 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+                <SparklesIcon v-else class="w-3 h-3 text-indigo-600" />
                 <span>{{ enhancingDataset ? 'AI 生成中...' : 'AI 补全描述' }}</span>
               </button>
             </div>
@@ -861,7 +932,7 @@ defineExpose({ fetchMetrics })
             class="bg-white hover:bg-amber-50 text-gray-700 hover:text-amber-700 border border-gray-200 hover:border-amber-200 px-3.5 py-1.5 rounded-lg transition-all flex items-center gap-1.5 text-xs font-medium h-9 whitespace-nowrap shadow-xs relative cursor-pointer"
             :title="dataset?.status === 1 ? 'Schema 巡检与差异治理' : 'Schema 巡检与差异治理 (数据集已禁用)'"
           >
-            <svg class="w-4 h-4 text-amber-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+            <svg class="w-4 h-4 text-amber-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12h4l3-6 4 12 3-6h4"/></svg>
             <span>巡检与治理</span>
             <span v-if="driftCount > 0" class="absolute -top-1 -right-1 w-2 h-2 rounded-full bg-amber-500 ring-2 ring-white"></span>
           </button>
@@ -1047,7 +1118,7 @@ defineExpose({ fetchMetrics })
                   >
                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M9 5l7 7-7 7"/></svg>
                   </button>
-                  <div class="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity" v-if="hasPermission('element:metadata:edit_table')">
+                  <div class="flex items-center gap-1" v-if="hasPermission('element:metadata:edit_table')">
                     <button 
                       @click.stop="openEditModal(table)"
                       class="text-gray-400 hover:text-primary transition-colors p-1.5 hover:bg-gray-100 rounded-md"
@@ -1068,7 +1139,7 @@ defineExpose({ fetchMetrics })
                       class="text-gray-400 hover:text-indigo-600 transition-colors p-1.5 hover:bg-indigo-50 rounded-md"
                       title="为此表智能发现推荐指标"
                     >
-                       <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+                       <SparklesIcon class="w-4 h-4" />
                     </button>
                   </div>
                 </div>
@@ -1466,8 +1537,17 @@ defineExpose({ fetchMetrics })
                     <div class="col-span-3">
                        <input v-model="col.description" class="w-full bg-transparent border-b border-gray-300 focus:border-indigo-500 outline-none text-xs text-gray-500 px-1 py-0.5" placeholder="描述...">
                     </div>
-                    <div class="col-span-1 flex justify-end">
-                       <button @click="removeColumn(index)" class="text-gray-300 hover:text-red-500 transition-colors">
+                    <div class="col-span-1 flex justify-end items-center gap-1.5">
+                       <button
+                         type="button"
+                         :disabled="!col.physical_name || !col.physical_name.trim()"
+                         @click="openColumnAiRecommendation(col, editingTable)"
+                         class="p-1 text-indigo-500 hover:text-indigo-700 hover:bg-indigo-50 rounded transition-colors disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer"
+                         :title="!col.physical_name || !col.physical_name.trim() ? '请先填写物理字段名' : 'AI 智能推荐语义（基于源表与数据采样）'"
+                       >
+                          <SparklesIcon class="w-4 h-4" />
+                       </button>
+                       <button @click="removeColumn(index)" class="p-1 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded transition-colors cursor-pointer" title="删除此字段">
                           <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
                        </button>
                     </div>
@@ -1567,8 +1647,17 @@ defineExpose({ fetchMetrics })
                     <div class="col-span-3">
                        <input v-model="col.description" class="w-full bg-transparent border-b border-gray-300 focus:border-blue-500 outline-none text-xs text-gray-500 px-1 py-0.5" placeholder="描述...">
                     </div>
-                    <div class="col-span-1 flex justify-end">
-                       <button @click="newTable.columns.splice(index, 1)" class="text-gray-300 hover:text-red-500 transition-colors">
+                    <div class="col-span-1 flex justify-end items-center gap-1.5">
+                       <button
+                         type="button"
+                         :disabled="!col.physical_name || !col.physical_name.trim()"
+                         @click="openColumnAiRecommendation(col, newTable)"
+                         class="p-1 text-blue-500 hover:text-blue-700 hover:bg-blue-50 rounded transition-colors disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer"
+                         :title="!col.physical_name || !col.physical_name.trim() ? '请先填写物理字段名' : 'AI 智能推荐语义（基于源表与数据采样）'"
+                       >
+                          <SparklesIcon class="w-4 h-4" />
+                       </button>
+                       <button @click="newTable.columns.splice(index, 1)" class="p-1 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded transition-colors cursor-pointer" title="删除此字段">
                           <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
                        </button>
                     </div>
@@ -1718,7 +1807,7 @@ defineExpose({ fetchMetrics })
         <div class="px-6 py-4 border-b border-gray-100 flex justify-between items-center bg-gradient-to-r from-indigo-50/80 to-purple-50/80">
           <h3 class="text-base font-bold text-gray-900 flex items-center gap-2">
             <span class="p-1.5 bg-indigo-100 text-indigo-700 rounded-lg">
-              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+              <SparklesIcon class="w-4 h-4" />
             </span>
             AI 智能生成数据集描述与标签
           </h3>
@@ -1866,6 +1955,166 @@ defineExpose({ fetchMetrics })
       @close="showDriftDrawer = false"
       @resolved="handleDriftResolved"
     />
+
+    <!-- AI 字段语义推荐模态框 (Teleport 到 body 并设置最高 z-index，保证绝对置顶于编辑表弹窗之上) -->
+    <Teleport to="body">
+      <div
+        v-if="showColumnAiModal"
+        class="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-fade-in"
+        style="z-index: 9999;"
+        @click.self="closeColumnAiModal"
+      >
+        <div class="bg-white rounded-2xl shadow-2xl w-full max-w-xl overflow-hidden flex flex-col max-h-[90vh] border border-gray-100 animate-fade-in-up">
+          <!-- Header -->
+          <div class="p-5 border-b border-gray-100 flex justify-between items-center bg-gradient-to-r from-indigo-50/80 to-purple-50/80">
+            <div class="flex items-center gap-3">
+              <div class="w-9 h-9 rounded-xl bg-indigo-100 text-indigo-600 flex items-center justify-center shadow-xs">
+                <SparklesIcon class="w-5 h-5" />
+              </div>
+              <div>
+                <h3 class="text-base font-bold text-gray-900 flex items-center gap-2">
+                  AI 字段语义推荐
+                  <span v-if="columnAiTargetCol?.physical_name" class="font-mono text-xs font-semibold px-2 py-0.5 rounded bg-indigo-50 text-indigo-700 border border-indigo-200">
+                    {{ columnAiTargetCol.physical_name }}
+                  </span>
+                </h3>
+                <p class="text-xs text-gray-500">基于物理源表结构、原生注释与数据采样智能推断业务语义</p>
+              </div>
+            </div>
+            <button @click="closeColumnAiModal" class="text-gray-400 hover:text-gray-600 transition-colors p-1 rounded-lg hover:bg-white/50 cursor-pointer">
+              <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+            </button>
+          </div>
+
+          <!-- Content -->
+          <div class="p-6 space-y-4 overflow-y-auto">
+            <!-- 正在分析状态 -->
+            <div v-if="columnAiLoading" class="py-12 text-center space-y-3">
+              <div class="text-4xl animate-pulse">🧠</div>
+              <div class="text-sm font-bold text-gray-800">正在分析源表并采样数据...</div>
+              <div class="text-xs text-gray-400 max-w-xs mx-auto leading-relaxed">
+                正在直连数据源获取字段原生注释、提取前 3 条真实采样数据，并结合同表上下文推断业务语义
+              </div>
+            </div>
+
+            <!-- 物理字段不存在或失败 -->
+            <div v-else-if="columnAiResult && !columnAiResult.physical_exists" class="py-4 space-y-3">
+              <div class="p-4 rounded-xl bg-amber-50 border border-amber-200 text-amber-800 text-sm flex items-start gap-3">
+                <span class="text-xl shrink-0">⚠️</span>
+                <div class="space-y-1">
+                  <div class="font-bold">源表中不存在此字段，无法推荐语义</div>
+                  <div class="text-xs text-amber-700 leading-relaxed">
+                    {{ columnAiResult.error_message || '物理数据库源表中未检测到该表或该字段。请核实物理表名与物理字段名拼写是否正确。' }}
+                  </div>
+                </div>
+              </div>
+              <div class="p-3.5 rounded-xl bg-gray-50 border border-gray-100 text-xs text-gray-500 space-y-1">
+                <div>• 提示：AI 语义推荐需要直连真实物理数据源进行数据采样与注释读取。</div>
+                <div>• 如果这是您计划后续在数据库中新增的字段，可直接在表单中手动输入业务名称与描述。</div>
+              </div>
+            </div>
+
+            <!-- 分析成功且物理字段存在 -->
+            <div v-else-if="columnAiResult && columnAiResult.physical_exists" class="space-y-4">
+              <!-- 物理源定义与采样卡片 -->
+              <div class="p-3.5 rounded-xl bg-slate-50 border border-slate-200 text-xs space-y-2">
+                <div class="flex flex-wrap items-center gap-x-4 gap-y-1 text-slate-600">
+                  <span>📦 数据集: <strong class="text-slate-800">{{ columnAiResult.dataset_name || dataset?.name || '-' }}</strong></span>
+                  <span>📋 源表: <strong class="text-slate-800 font-mono">{{ columnAiResult.table_name }}</strong></span>
+                  <span>🔤 物理类型: <strong class="text-slate-800 font-mono">{{ columnAiResult.physical_type || '-' }}</strong></span>
+                </div>
+                <div v-if="columnAiResult.comment" class="text-slate-600 flex items-start gap-1">
+                  <span class="shrink-0">🗒️ 物理库注释:</span>
+                  <span class="text-slate-800 font-medium">{{ columnAiResult.comment }}</span>
+                </div>
+                <div v-if="columnAiResult.sample_values && columnAiResult.sample_values.length > 0" class="text-slate-600">
+                  <div class="flex items-center gap-1 mb-1">
+                    <span>真实数据采样 (前 3 条):</span>
+                    <span class="text-slate-400">（辅助理解业务口径）</span>
+                  </div>
+                  <div class="flex flex-wrap gap-1.5">
+                    <span
+                      v-for="(val, vIdx) in columnAiResult.sample_values.slice(0, 3)"
+                      :key="vIdx"
+                      class="px-2 py-0.5 rounded bg-white border border-slate-200 font-mono text-slate-700 text-[11px] shadow-2xs"
+                    >
+                      {{ String(val) }}
+                    </span>
+                  </div>
+                </div>
+                <div v-if="columnAiResult.sibling_terms && columnAiResult.sibling_terms.length > 0" class="text-slate-600">
+                  <span>🧬 同表兄弟字段参考:</span>
+                  <span class="text-slate-800 ml-1">{{ columnAiResult.sibling_terms.slice(0, 5).join('、') }}</span>
+                </div>
+              </div>
+
+              <!-- 可编辑推荐结果表单 -->
+              <div class="space-y-3">
+                <div>
+                  <label class="block text-xs font-bold text-gray-700 mb-1">
+                    建议业务名称 (Term) <span class="text-rose-500">*</span>
+                  </label>
+                  <input
+                    v-model="columnAiTerm"
+                    type="text"
+                    class="w-full bg-white border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 outline-none"
+                    placeholder="例如：员工年龄"
+                  />
+                </div>
+                <div>
+                  <label class="block text-xs font-bold text-gray-700 mb-1">
+                    建议业务描述 (Description) <span class="text-rose-500">*</span>
+                  </label>
+                  <textarea
+                    v-model="columnAiDesc"
+                    rows="3"
+                    class="w-full bg-white border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 outline-none leading-relaxed"
+                    placeholder="说明该字段存储什么、代表什么业务含义、口径..."
+                  ></textarea>
+                </div>
+                <div>
+                  <label class="block text-xs font-medium text-gray-600 mb-1">
+                    同义词 / 别名（可选，便于检索，逗号分隔）
+                  </label>
+                  <input
+                    v-model="columnAiSynonymsInput"
+                    type="text"
+                    class="w-full bg-white border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 outline-none"
+                    placeholder="如：age, 周岁, 实际年龄"
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Footer -->
+          <div class="p-4 border-t border-gray-100 bg-gray-50 flex items-center justify-between">
+            <div class="text-xs text-gray-400">
+              <span v-if="columnAiResult?.physical_exists && columnAiResult.llm_succeeded" class="text-emerald-600 font-medium">
+                ✓ AI 语义分析完成，支持微调后回填
+              </span>
+            </div>
+            <div class="flex items-center gap-2">
+              <button
+                @click="closeColumnAiModal"
+                class="px-4 py-2 bg-white border border-gray-200 rounded-xl text-xs font-medium text-gray-700 hover:bg-gray-100 transition-colors cursor-pointer"
+              >
+                {{ columnAiResult && !columnAiResult.physical_exists ? '关闭' : '取消' }}
+              </button>
+              <button
+                v-if="columnAiResult?.physical_exists"
+                :disabled="!columnAiTerm.trim()"
+                @click="applyColumnAiRecommendation"
+                class="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold shadow-md shadow-indigo-500/20 transition-all flex items-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+              >
+                <SparklesIcon class="w-3.5 h-3.5" />
+                应用到表单
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </Teleport>
   </div>
 </template>
 

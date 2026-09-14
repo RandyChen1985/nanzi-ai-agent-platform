@@ -20,6 +20,8 @@ from app.schemas.metadata import (
     BatchDeleteTablesRequest, BatchDeleteMetricsRequest, BatchDeleteRelationshipsRequest,
     MetaDriftAlertResponse, ResolveDriftAlertRequest, BatchResolveDriftAlertsRequest, DriftSummaryResponse, InspectionStartResponse,
     CronInspectionConfigResponse, CronInspectionConfigRequest,
+    AnalyzeColumnRequest, AnalyzeColumnResponse, AnalyzeUpdateCommentResponse,
+    RecommendColumnSemanticRequest, RecommendColumnSemanticResponse,
 )
 from app.models.user import User
 from app.models.permission import Role
@@ -701,7 +703,14 @@ async def resolve_drift_alert(
         user_id = int(user.get("user_id") or 0) if user else None
         user_name = user.get("user_name") if user else None
         res = await MetadataDriftService.resolve_alert(
-            conn, alert_id, payload.action, user_id=user_id, user_name=user_name
+            conn,
+            alert_id,
+            payload.action,
+            user_id=user_id,
+            user_name=user_name,
+            column_term=(payload.term or "").strip() if payload.term else None,
+            column_description=(payload.description or "").strip() if payload.description else None,
+            column_synonyms=payload.synonyms if payload.synonyms else None,
         )
         return {"code": 200, "data": res, "message": res.get("message")}
     except ValueError as e:
@@ -709,6 +718,92 @@ async def resolve_drift_alert(
     except Exception as e:
         logger.exception("处置漂移告警失败")
         raise HTTPException(status_code=500, detail=f"处置失败: {str(e)}")
+
+
+@router.post(
+    "/drift-alerts/{alert_id}/analyze-new-column",
+    response_model=AnalyzeColumnResponse,
+    dependencies=[Depends(require_permission("element", "element:metadata:edit"))],
+)
+async def analyze_new_column(
+    alert_id: int,
+    payload: AnalyzeColumnRequest,
+    conn: AsyncSession = Depends(get_db_session),
+):
+    """对物理新增字段（new_in_db 告警）发起 LLM 语义分析，返回建议的中文业务术语供管理员确认/修改。
+
+    分析结果仅作展示，不落库；管理员确认后通过 resolve({action: add_column, ...}) 才真正写入元数据。
+    """
+    try:
+        result = await MetadataDriftService.analyze_new_column_ai(
+            conn, alert_id, with_samples=payload.with_samples
+        )
+        return AnalyzeColumnResponse(**result)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.exception("分析新增字段语义失败")
+        raise HTTPException(status_code=500, detail=f"语义分析失败: {str(e)}")
+
+
+@router.post(
+    "/drift-alerts/{alert_id}/analyze-update-comment",
+    response_model=AnalyzeUpdateCommentResponse,
+    dependencies=[Depends(require_permission("element", "element:metadata:edit"))],
+)
+async def analyze_update_comment(
+    alert_id: int,
+    payload: AnalyzeColumnRequest,
+    conn: AsyncSession = Depends(get_db_session),
+):
+    """对备注缺失字段（missing_comment 告警）发起补充分析，返回建议的中文业务描述供管理员确认/修改。
+
+    策略：优先采用物理库已有非空备注（免 LLM）；物理库无有效备注时调用 LLM 推断。
+    分析结果仅作展示，不落库；管理员确认后通过 resolve({action: update_comment, description}) 才真正写入元数据。
+    """
+    try:
+        result = await MetadataDriftService.analyze_update_comment_ai(
+            conn, alert_id, with_samples=payload.with_samples
+        )
+        return AnalyzeUpdateCommentResponse(**result)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.exception("分析备注缺失字段失败")
+        raise HTTPException(status_code=500, detail=f"备注补充分析失败: {str(e)}")
+
+
+@router.post(
+    "/datasets/{dataset_id}/recommend-column-semantic",
+    response_model=RecommendColumnSemanticResponse,
+    dependencies=[Depends(require_permission("element", "element:metadata:edit"))],
+)
+async def recommend_column_semantic(
+    dataset_id: int,
+    payload: RecommendColumnSemanticRequest,
+    conn: AsyncSession = Depends(get_db_session),
+):
+    """为数据集某张表中的单个字段提供 AI 语义推荐（Term、Description、Synonyms）。
+
+    若物理表或物理字段在源表中不存在，返回 physical_exists=False 与友好提示，不进行虚假推荐。
+    """
+    try:
+        result = await MetadataService.recommend_column_semantic(
+            conn,
+            dataset_id=dataset_id,
+            table_name=payload.table_name,
+            column_name=payload.column_name,
+            physical_type=payload.physical_type,
+            current_term=payload.current_term,
+            current_description=payload.current_description,
+            with_samples=payload.with_samples,
+        )
+        return RecommendColumnSemanticResponse(**result)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.exception("推荐字段语义失败")
+        raise HTTPException(status_code=500, detail=f"推荐字段语义失败: {str(e)}")
 
 
 @router.post(
@@ -731,6 +826,7 @@ async def batch_resolve_all_drift_alerts(
             alert_ids=payload.alert_ids,
             user_id=user_id,
             user_name=user_name,
+            auto_ai_complete=payload.auto_ai,
         )
         return {"code": 200, "data": res, "message": res.get("message")}
     except ValueError as e:
@@ -762,6 +858,7 @@ async def batch_resolve_drift_alerts(
             alert_ids=payload.alert_ids,
             user_id=user_id,
             user_name=user_name,
+            auto_ai_complete=payload.auto_ai,
         )
         return {"code": 200, "data": res, "message": res.get("message")}
     except ValueError as e:

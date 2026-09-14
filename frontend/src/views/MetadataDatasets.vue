@@ -23,6 +23,7 @@ import {
   InformationCircleIcon,
   LockOpenIcon,
   MagnifyingGlassIcon,
+  SparklesIcon,
   UserIcon,
 } from '@heroicons/vue/24/outline'
 
@@ -652,7 +653,7 @@ watch(viewMode, (newMode) => {
 // Search and Filter
 const searchQuery = ref('')
 type StatusFilter = 'all' | 'active' | 'inactive'
-type DatasetSortField = 'display_name' | 'status' | 'table_count' | 'rag_sync_status' | 'updated_at'
+type DatasetSortField = 'display_name' | 'status' | 'table_count' | 'quality_score' | 'rag_sync_status' | 'updated_at'
 type SortDirection = 'asc' | 'desc'
 
 const statusFilter = ref<StatusFilter>('all')
@@ -690,6 +691,9 @@ const compareDatasets = (a: Dataset, b: Dataset): number => {
       if (tableDiff !== 0) return tableDiff * dir
       return ((a.metric_count || 0) - (b.metric_count || 0)) * dir
     }
+    case 'quality_score':
+      // 未评分（null）排最后：升序时 -1 在前，降序时 -1 在后
+      return ((a.quality_score ?? -1) - (b.quality_score ?? -1)) * dir
     case 'rag_sync_status':
       return ((a.rag_sync_status ?? -99) - (b.rag_sync_status ?? -99)) * dir
     case 'updated_at': {
@@ -700,6 +704,29 @@ const compareDatasets = (a: Dataset, b: Dataset): number => {
     default:
       return 0
   }
+}
+
+const qualityBadgeClass = (score?: number | null): string => {
+  if (score === undefined || score === null) return 'bg-gray-50 text-gray-400 border-gray-200'
+  if (score >= 90) return 'bg-emerald-50 text-emerald-600 border-emerald-200'
+  if (score >= 75) return 'bg-blue-50 text-blue-600 border-blue-200'
+  if (score >= 60) return 'bg-amber-50 text-amber-600 border-amber-200'
+  return 'bg-rose-50 text-rose-600 border-rose-200'
+}
+
+const qualityTooltip = (ds: Dataset): string => {
+  const b = ds.quality_breakdown
+  if (!b || !b.dimensions?.length) return '暂无质量评分，执行一次 Schema 巡检后生成'
+  const lines: string[] = []
+  if (b.degraded) {
+    lines.push(`⚠️ ${b.degraded_reason || '本次巡检未完整比对，分数仅供参考'}`)
+  }
+  lines.push(`质量治理分 ${b.score}（${b.level_label}）`)
+  lines.push(...b.dimensions.map((d) => `${d.label} ${d.score} 分（问题 ${d.problem_count} 处）`))
+  if (ds.quality_scored_at) {
+    lines.push(`评分时间：${new Date(ds.quality_scored_at).toLocaleString()}`)
+  }
+  return lines.join('\n')
 }
 
 const displayDatasets = computed(() => {
@@ -1388,16 +1415,18 @@ onMounted(async () => {
             <div class="my-1 border-t border-gray-100 dark:border-gray-700"></div>
             <button
               type="button"
-              class="flex w-full items-center justify-between px-3 py-2 text-left text-sm text-amber-700 dark:text-amber-300 hover:bg-amber-50 dark:hover:bg-amber-950/30 transition-colors cursor-pointer"
+              class="flex w-full items-center justify-between px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50 dark:text-gray-200 dark:hover:bg-gray-700 transition-colors cursor-pointer"
               @click="showCreateMenu = false; openGlobalDriftDrawer()"
             >
-              <span class="flex items-center gap-2">
-                <span class="text-base leading-none">⚡</span>
+              <div class="flex items-center gap-2">
+                <svg class="h-4 w-4 text-amber-500 dark:text-amber-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12h4l3-6 4 12 3-6h4" />
+                </svg>
                 <span>全局巡检</span>
-              </span>
+              </div>
               <span
                 v-if="totalPendingDriftCount > 0"
-                class="px-1.5 py-0.5 text-[10px] font-bold rounded-full bg-rose-500 text-white"
+                class="px-1.5 py-0.5 text-[10px] font-bold rounded-full bg-rose-500 text-white leading-none"
               >
                 {{ totalPendingDriftCount }}
               </span>
@@ -1405,10 +1434,12 @@ onMounted(async () => {
             <button
               v-if="isAdmin"
               type="button"
-              class="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-colors cursor-pointer"
+              class="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50 dark:text-gray-200 dark:hover:bg-gray-700 transition-colors cursor-pointer"
               @click="showCreateMenu = false; showCronInspectionModal = true"
             >
-              <span class="text-base leading-none">⏱️</span>
+              <svg class="h-4 w-4 text-gray-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
               <span>定时巡检</span>
             </button>
           </div>
@@ -1575,6 +1606,14 @@ onMounted(async () => {
             <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-purple-50 text-purple-700 border border-purple-100 font-medium">
               关系 <b>{{ ds.relationship_count || 0 }}</b>
             </span>
+            <span
+              class="inline-flex items-center gap-1 px-2 py-0.5 rounded-md border font-medium"
+              :class="qualityBadgeClass(ds.quality_score)"
+              :title="qualityTooltip(ds)"
+            >
+              质量分 <b>{{ ds.quality_score ?? '—' }}</b>
+              <span v-if="ds.quality_breakdown?.degraded" class="text-amber-500" title="本次巡检未完整比对，分数仅供参考">⚠</span>
+            </span>
           </div>
 
           <p class="mt-2.5 text-xs text-gray-500 line-clamp-2 leading-relaxed min-h-[2.5rem]">
@@ -1632,7 +1671,7 @@ onMounted(async () => {
               :class="{ 'text-amber-500': driftSummary[ds.id] }"
               :title="ds.status === 1 ? 'Schema 巡检与差异治理' : 'Schema 巡检与差异治理 (数据集已禁用)'"
             >
-              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12h4l3-6 4 12 3-6h4" /></svg>
               <span v-if="driftSummary[ds.id]" class="absolute top-1 right-1 w-1.5 h-1.5 rounded-full bg-amber-500 ring-2 ring-white"></span>
             </button>
             <button 
@@ -1707,8 +1746,15 @@ onMounted(async () => {
               <path v-else stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
             </svg>
           </button>
-          <button type="button" class="col-span-2 inline-flex items-center gap-1 text-left hover:text-gray-700 transition-colors" @click="toggleSort('rag_sync_status')">
-            <span>RAG 状态</span>
+          <button type="button" class="col-span-1 inline-flex items-center gap-1 text-left hover:text-gray-700 transition-colors" @click="toggleSort('quality_score')">
+            <span>质量分</span>
+            <svg v-if="sortField === 'quality_score'" class="w-3.5 h-3.5 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path v-if="sortDirection === 'asc'" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 15l7-7 7 7" />
+              <path v-else stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+            </svg>
+          </button>
+          <button type="button" class="col-span-1 inline-flex items-center gap-1 text-left hover:text-gray-700 transition-colors" @click="toggleSort('rag_sync_status')">
+            <span>RAG</span>
             <svg v-if="sortField === 'rag_sync_status'" class="w-3.5 h-3.5 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path v-if="sortDirection === 'asc'" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 15l7-7 7 7" />
               <path v-else stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
@@ -1788,8 +1834,20 @@ onMounted(async () => {
                 </div>
              </div>
 
+             <!-- Quality Score -->
+             <div class="col-span-1">
+                <span
+                   class="inline-flex items-center px-1.5 py-0.5 rounded border text-[10px] font-bold"
+                   :class="qualityBadgeClass(ds.quality_score)"
+                   :title="qualityTooltip(ds)"
+                >
+                   {{ ds.quality_score ?? '—' }}
+                   <span v-if="ds.quality_breakdown?.degraded" class="text-amber-500 ml-0.5">⚠</span>
+                </span>
+             </div>
+
              <!-- RAG Status -->
-             <div class="col-span-2">
+             <div class="col-span-1">
                 <span 
                    v-if="!isLocalMode && ds.rag_sync_status !== undefined && ds.rag_sync_status !== 0"
                    class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider border"
@@ -1820,7 +1878,7 @@ onMounted(async () => {
                     :class="{ 'text-amber-500': driftSummary[ds.id] }"
                     :title="ds.status === 1 ? 'Schema 巡检与差异治理' : 'Schema 巡检与差异治理 (数据集已禁用)'"
                  >
-                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12h4l3-6 4 12 3-6h4" /></svg>
                     <span v-if="driftSummary[ds.id]" class="absolute top-1 right-1 w-1.5 h-1.5 rounded-full bg-amber-500 ring-2 ring-white"></span>
                  </button>
                  <button 
@@ -2595,7 +2653,7 @@ relationships:
                 class="text-[10px] bg-indigo-50 text-indigo-600 hover:bg-indigo-100 px-2 py-0.5 rounded border border-indigo-100 flex items-center gap-1 font-bold transition-all disabled:opacity-50"
               >
                 <svg v-if="enhancing" class="animate-spin h-3 w-3" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
-                <svg v-else class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+                <SparklesIcon v-else class="w-3 h-3" />
                 AI 辅助生成 (基于表信息)
               </button>
             </div>

@@ -36,6 +36,25 @@ export interface Dataset {
   table_count?: number;
   metric_count?: number;
   relationship_count?: number;
+  quality_score?: number | null;
+  quality_breakdown?: {
+    score: number;
+    level: string;
+    level_label: string;
+    // 本次巡检存在物理列读取失败的表，分数基于不完整比对时由后端置为 true
+    degraded?: boolean;
+    degraded_reason?: string;
+    dimensions: {
+      key: string;
+      label: string;
+      weight: number;
+      score: number;
+      problem_count: number;
+      total: number;
+      detail: string;
+    }[];
+  } | null;
+  quality_scored_at?: string | null;
   tables?: Table[];
 }
 
@@ -526,23 +545,57 @@ export const metadataApi = {
     }),
   getAllDriftAlerts: (params?: { dataset_id?: number; status?: number }) =>
     axios.get<MetaDriftAlert[]>(`${API_BASE}/drift-alerts`, { params }),
-  resolveDriftAlert: (alertId: number, action: 'drop_column' | 'add_column' | 'sync_type' | 'ignore' | 'drop_table') =>
-    axios.post<any>(`${API_BASE}/drift-alerts/${alertId}/resolve`, { action }),
+  resolveDriftAlert: (
+    alertId: number,
+    action: 'drop_column' | 'add_column' | 'sync_type' | 'ignore' | 'drop_table' | 'update_comment',
+    metadata?: { term?: string; description?: string; synonyms?: string[] }
+  ) =>
+    axios.post<any>(`${API_BASE}/drift-alerts/${alertId}/resolve`, {
+      action,
+      ...(metadata?.term ? { term: metadata.term } : {}),
+      ...(metadata?.description ? { description: metadata.description } : {}),
+      ...(metadata?.synonyms?.length ? { synonyms: metadata.synonyms } : {}),
+    }),
   batchResolveDriftAlerts: (
     datasetId: number,
     data: {
-      action: 'drop_column' | 'add_column' | 'sync_type' | 'ignore' | 'drop_table';
+      action: 'drop_column' | 'add_column' | 'sync_type' | 'ignore' | 'drop_table' | 'update_comment';
       drift_type?: string;
       alert_ids?: number[];
+      auto_ai?: boolean;
     }
   ) => axios.post<any>(`${API_BASE}/datasets/${datasetId}/drift-alerts/batch-resolve`, data),
   batchResolveAllDriftAlerts: (
     data: {
-      action: 'drop_column' | 'add_column' | 'sync_type' | 'ignore' | 'drop_table';
+      action: 'drop_column' | 'add_column' | 'sync_type' | 'ignore' | 'drop_table' | 'update_comment';
       drift_type?: string;
       alert_ids?: number[];
+      auto_ai?: boolean;
     }
   ) => axios.post<any>(`${API_BASE}/drift-alerts/batch-resolve`, data),
+  analyzeNewColumn: (alertId: number, withSamples = true) =>
+    axios.post<AnalyzeColumnResult>(`${API_BASE}/drift-alerts/${alertId}/analyze-new-column`, {
+      with_samples: withSamples,
+    }),
+  analyzeUpdateComment: (alertId: number, withSamples = true) =>
+    axios.post<AnalyzeUpdateCommentResult>(`${API_BASE}/drift-alerts/${alertId}/analyze-update-comment`, {
+      with_samples: withSamples,
+    }),
+  recommendColumnSemantic: (
+    datasetId: number,
+    data: {
+      table_name: string;
+      column_name: string;
+      physical_type?: string | null;
+      current_term?: string | null;
+      current_description?: string | null;
+      with_samples?: boolean;
+    }
+  ) =>
+    axios.post<RecommendColumnSemanticResult>(
+      `${API_BASE}/datasets/${datasetId}/recommend-column-semantic`,
+      data
+    ),
   triggerInspection: (datasetId: number) =>
     axios.post<{ task_id: string; dataset_id: number; message: string }>(
       `${API_BASE}/datasets/${datasetId}/inspect-schema`
@@ -583,7 +636,7 @@ export interface MetaDriftAlert {
   table_id?: number | null;
   table_name: string;
   column_name: string;
-  drift_type: 'missing_in_db' | 'new_in_db' | 'type_mismatch' | string;
+  drift_type: 'table_missing_in_db' | 'missing_in_db' | 'new_in_db' | 'type_mismatch' | 'missing_comment' | (string & {});
   source: 'runtime' | 'manual_inspection' | 'cron_inspection' | string;
   error_sample?: string | null;
   hit_count: number;
@@ -597,5 +650,61 @@ export interface DriftSummaryResponse {
   datasets: Record<number, number>;
 }
 
+export interface AnalyzeColumnResult {
+  alert_id: number;
+  dataset_id: number;
+  dataset_name?: string | null;
+  table_name: string;
+  column_name: string;
+  physical_type?: string | null;
+  comment?: string | null;
+  sample_values?: any[];
+  term?: string | null;
+  description?: string | null;
+  synonyms?: string[];
+  llm_succeeded: boolean;
+  ai_error?: string | null;
+  sibling_terms?: string[];
+}
 
+export interface AnalyzeUpdateCommentResult {
+  alert_id: number;
+  dataset_id: number;
+  dataset_name?: string | null;
+  table_name: string;
+  column_name: string;
+  physical_type?: string | null;
+  comment?: string | null;
+  sample_values?: any[];
+  // 该字段现有的业务术语（保留，不在此流程改动）
+  current_term?: string | null;
+  // 该字段当前备注
+  current_description?: string | null;
+  // 建议的中文业务描述
+  description?: string | null;
+  synonyms?: string[];
+  // 结果来源：physical=物理库注释优先, ai=LLM 推断, none=均无有效结果
+  from_source?: 'physical' | 'ai' | 'none' | string;
+  llm_succeeded: boolean;
+  ai_error?: string | null;
+  sibling_terms?: string[];
+}
 
+export interface RecommendColumnSemanticResult {
+  dataset_id: number;
+  dataset_name?: string | null;
+  table_name: string;
+  column_name: string;
+  physical_exists: boolean;
+  physical_type?: string | null;
+  comment?: string | null;
+  sample_values?: any[];
+  current_term?: string | null;
+  current_description?: string | null;
+  term?: string | null;
+  description?: string | null;
+  synonyms?: string[];
+  llm_succeeded: boolean;
+  error_message?: string | null;
+  sibling_terms?: string[];
+}

@@ -38,8 +38,8 @@ async def test_inspect_dataset_detects_missing_and_new_columns():
     mock_db = AsyncMock()
 
     # 构造数据集：纳管 1 张表 device_pue，元数据中声明了 3 列 (id, region, cpu_power_old)
-    col1 = MetaColumn(physical_name="id")
-    col2 = MetaColumn(physical_name="region")
+    col1 = MetaColumn(physical_name="id", description="自增主键")
+    col2 = MetaColumn(physical_name="region", description="区域编码")
     col3 = MetaColumn(physical_name="cpu_power_old")
     table = MetaTable(physical_name="device_pue", columns=[col1, col2, col3])
     dataset = MetaDataset(id=1, name="pue_dataset", data_source="mysql_pue", tables=[table])
@@ -82,8 +82,8 @@ async def test_inspect_dataset_detects_missing_and_new_columns():
 async def test_inspect_dataset_all_matching():
     """测试物理结构完全一致时，0 差异并推送成功报告。"""
     mock_db = AsyncMock()
-    col1 = MetaColumn(physical_name="id")
-    col2 = MetaColumn(physical_name="name")
+    col1 = MetaColumn(physical_name="id", description="用户主键")
+    col2 = MetaColumn(physical_name="name", description="用户姓名")
     table = MetaTable(physical_name="users", columns=[col1, col2])
     dataset = MetaDataset(id=2, name="user_dataset", data_source="mysql_main", tables=[table])
 
@@ -134,8 +134,8 @@ async def test_inspect_dataset_adapter_error():
 async def test_inspect_dataset_type_mismatch():
     """测试巡检仅在「字符串 ↔ 日期」大类跨越时报 type_mismatch，并正确统计。"""
     mock_db = AsyncMock()
-    col1 = MetaColumn(physical_name="id", type="bigint")
-    col2 = MetaColumn(physical_name="created_on", type="varchar(20)")  # string
+    col1 = MetaColumn(physical_name="id", type="bigint", description="订单主键")
+    col2 = MetaColumn(physical_name="created_on", type="varchar(20)", description="创建时间")  # string
     table = MetaTable(physical_name="orders", columns=[col1, col2])
     dataset = MetaDataset(id=4, name="order_dataset", data_source="mysql_main", tables=[table])
 
@@ -295,7 +295,7 @@ async def test_inspect_dataset_detects_missing_table():
     """测试巡检引擎精准探测物理库中已不存在的表（整表缺失），记录 table_missing_in_db 告警并跳过后续列扫描。"""
     mock_db = AsyncMock()
 
-    t1 = MetaTable(id=1, physical_name="users", columns=[MetaColumn(physical_name="id", type="int")])
+    t1 = MetaTable(id=1, physical_name="users", columns=[MetaColumn(physical_name="id", type="int", description="用户主键")])
     t2 = MetaTable(id=2, physical_name="dropped_logs", columns=[MetaColumn(physical_name="id", type="int")])
     dataset = MetaDataset(id=5, name="audit_ds", data_source="mysql_audit", tables=[t1, t2])
 
@@ -336,3 +336,81 @@ async def test_inspect_dataset_detects_missing_table():
 
 
 
+
+
+@pytest.mark.asyncio
+async def test_inspect_dataset_writes_quality_score():
+    """质量分集成：巡检完成后必须把分数写回数据集对象并提交。"""
+    mock_db = AsyncMock()
+    col1 = MetaColumn(physical_name="id", description="用户主键")
+    col2 = MetaColumn(physical_name="name", description="用户姓名")
+    table = MetaTable(physical_name="users", columns=[col1, col2])
+    dataset = MetaDataset(id=7, name="user_dataset", data_source="mysql_main", tables=[table])
+
+    mock_adapter = AsyncMock()
+    mock_adapter.get_columns.return_value = [
+        {"name": "id", "type": "int"},
+        {"name": "name", "type": "varchar"},
+    ]
+
+    with patch("app.services.metadata_service.MetadataService.get_dataset_by_id", new_callable=AsyncMock) as mock_get_ds, \
+         patch("app.services.metadata_inspection_service.get_adapter", new_callable=AsyncMock) as mock_get_adapter, \
+         patch("app.services.metadata_sync_log_service.metadata_sync_log_service.publish", new_callable=AsyncMock):
+
+        mock_get_ds.return_value = dataset
+        mock_get_adapter.return_value = mock_adapter
+
+        res = await MetadataInspectionService.inspect_dataset(mock_db, dataset_id=7, task_id="t")
+
+    assert res["success"] is True
+    assert dataset.quality_score == 100
+    assert dataset.quality_breakdown["score"] == 100
+    assert dataset.quality_breakdown.get("degraded") is not True
+    assert dataset.quality_scored_at is not None
+    assert res["quality_score"] == 100
+
+
+@pytest.mark.asyncio
+async def test_inspect_dataset_marks_degraded_when_columns_unreadable():
+    """物理列读取失败（如权限异常）不得被当成结构一致，须标记 degraded 供前端提示。"""
+    mock_db = AsyncMock()
+    col1 = MetaColumn(physical_name="id", description="主键")
+    table = MetaTable(physical_name="users", columns=[col1])
+    dataset = MetaDataset(id=9, name="ds_unreadable", data_source="mysql_main", tables=[table])
+
+    mock_adapter = AsyncMock()
+    mock_adapter.get_columns.side_effect = RuntimeError("Access denied for user 'ro'@'%'")
+
+    with patch("app.services.metadata_service.MetadataService.get_dataset_by_id", new_callable=AsyncMock) as mock_get_ds, \
+         patch("app.services.metadata_inspection_service.get_adapter", new_callable=AsyncMock) as mock_get_adapter, \
+         patch("app.services.metadata_sync_log_service.metadata_sync_log_service.publish", new_callable=AsyncMock):
+
+        mock_get_ds.return_value = dataset
+        mock_get_adapter.return_value = mock_adapter
+
+        await MetadataInspectionService.inspect_dataset(mock_db, dataset_id=9, task_id="t")
+
+    assert dataset.quality_breakdown.get("degraded") is True
+    assert "读取失败" in dataset.quality_breakdown["degraded_reason"]
+
+
+@pytest.mark.asyncio
+async def test_inspect_dataset_empty_tables_writes_quality_score():
+    """空数据集（0 张纳管表）在单数据集巡检下也应写入质量分，与全库巡检保持一致。"""
+    mock_db = AsyncMock()
+    dataset = MetaDataset(id=8, name="empty_ds", data_source="mysql_main", tables=[])
+    mock_adapter = AsyncMock()
+
+    with patch("app.services.metadata_service.MetadataService.get_dataset_by_id", new_callable=AsyncMock) as mock_get_ds, \
+         patch("app.services.metadata_inspection_service.get_adapter", new_callable=AsyncMock) as mock_get_adapter, \
+         patch("app.services.metadata_sync_log_service.metadata_sync_log_service.publish", new_callable=AsyncMock):
+
+        mock_get_ds.return_value = dataset
+        mock_get_adapter.return_value = mock_adapter
+
+        res = await MetadataInspectionService.inspect_dataset(mock_db, dataset_id=8, task_id="t")
+
+    assert res["success"] is True
+    assert dataset.quality_score == 100
+    assert res["quality_score"] == 100
+    mock_db.commit.assert_called_once()
