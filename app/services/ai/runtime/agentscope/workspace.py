@@ -1426,7 +1426,9 @@ async def _policy_k8s_workspace(
         build_k8s_workspace_with_nanzi_adapter,
         ensure_k8s_public_data_subdirs,
         evaluate_k8s_workspace_mount_config,
+        parse_existing_pvc_config,
         resolve_sandbox_namespace,
+        resolve_shared_pvc,
     )
     from app.services.ai.runtime.agentscope.workspace_container_mcp import (
         K8S_GATEWAY_EXTRA_PIP,
@@ -1451,14 +1453,37 @@ async def _policy_k8s_workspace(
             "sandbox_k8s_image", "python:3.11-slim", config_overrides
         )
     ).strip() or "python:3.11-slim"
-    existing_pvc = (
+    raw_existing_pvc = (
         await _sandbox_config_value(
             "sandbox_k8s_existing_pvc", "", config_overrides
         )
-    ).strip() or None
+    ).strip()
+    # 共享数据卷解析优先级：显式指定 > 自动探测平台自身数据卷（零配置，推荐）> 独立空卷。
+    # 自动探测而非硬编码 PVC 名，是为了兼容自定义 PVC 名/自定义部署。
+    explicit_pvc, _isolation_requested = parse_existing_pvc_config(raw_existing_pvc)
+    if explicit_pvc and not sandbox_user_key:
+        raise ValueError(
+            "K8S 共享 PVC 沙箱策略要求必须具备已认证的用户身份（sandbox_user_key 不能为空），"
+            "以防止未授权访问或越权挂载持久卷根目录。"
+        )
+    if sandbox_user_key:
+        pvc_resolution = await resolve_shared_pvc(raw_existing_pvc)
+    else:
+        # 无用户身份（例如管理员连通性测试）：不挂载共享卷，退回独立空 PVC。
+        pvc_resolution = {
+            "pvc": None,
+            "source": "isolated" if _isolation_requested else "unavailable",
+        }
+    existing_pvc = pvc_resolution["pvc"]
+    if pvc_resolution["source"] == "auto":
+        logger.info(
+            "[workspace] K8s 沙箱自动共享平台数据卷（subPath 挂载用户工作区）：%s",
+            existing_pvc,
+        )
     for _mount_warning in evaluate_k8s_workspace_mount_config(
         namespace=namespace,
-        existing_pvc=existing_pvc,
+        pvc=existing_pvc,
+        pvc_source=pvc_resolution["source"],
     ):
         logger.warning("[workspace] K8s 沙箱工作区挂载配置：%s", _mount_warning)
     storage_class = (
@@ -1497,13 +1522,6 @@ async def _policy_k8s_workspace(
         )
     ).strip().lower()
     delete_pvc_on_close = delete_pvc_raw in ("1", "true", "yes", "on")
-
-    # 安全守卫：共享 PVC 模式严禁在未认证/空 user_key 状态下使用
-    if existing_pvc and not sandbox_user_key:
-        raise ValueError(
-            "K8S 共享 PVC 沙箱策略要求必须具备已认证的用户身份（sandbox_user_key 不能为空），"
-            "以防止未授权访问或越权挂载持久卷根目录。"
-        )
 
     # 资源保障 (requests) 与上限 (limits) 规范组装
     resources: dict[str, Any] = {}

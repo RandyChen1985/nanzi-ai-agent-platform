@@ -67,6 +67,66 @@ async def test_policy_k8s_workspace_build_and_initialize(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_policy_k8s_workspace_auto_detects_platform_pvc(monkeypatch):
+    """sandbox_k8s_existing_pvc 留空时零配置自动共享平台数据卷（无需硬编码 PVC 名）。"""
+    from app.services.ai.runtime.agentscope.workspace import _policy_k8s_workspace
+
+    async def fake_get(key, default=None):
+        return default
+
+    monkeypatch.setattr("app.services.config_service.ConfigService.get", fake_get)
+    monkeypatch.setattr(
+        "app.services.ai.runtime.agentscope.k8s_workspace.detect_platform_data_pvc",
+        AsyncMock(return_value="platform-detected-pvc"),
+    )
+
+    mock_ws = MagicMock()
+    mock_ws.initialize = AsyncMock()
+
+    with patch(
+        "app.services.ai.runtime.agentscope.k8s_workspace.build_k8s_workspace_with_nanzi_adapter",
+        return_value=mock_ws,
+    ) as mock_builder:
+        await _policy_k8s_workspace(
+            skill_paths=[],
+            config_overrides={"sandbox_k8s_existing_pvc": ""},
+            sandbox_user_key="u__1",
+        )
+
+    assert mock_builder.call_args.kwargs["existing_pvc"] == "platform-detected-pvc"
+
+
+@pytest.mark.asyncio
+async def test_policy_k8s_workspace_isolated_sentinel_skips_detection(monkeypatch):
+    """sandbox_k8s_existing_pvc=none 显式要求独立空卷，且不触发自动探测。"""
+    from app.services.ai.runtime.agentscope.workspace import _policy_k8s_workspace
+    from app.services.ai.runtime.agentscope import k8s_workspace as kw
+
+    async def fake_get(key, default=None):
+        return default
+
+    monkeypatch.setattr("app.services.config_service.ConfigService.get", fake_get)
+    detect = AsyncMock(return_value="platform-detected-pvc")
+    monkeypatch.setattr(kw, "detect_platform_data_pvc", detect)
+
+    mock_ws = MagicMock()
+    mock_ws.initialize = AsyncMock()
+
+    with patch(
+        "app.services.ai.runtime.agentscope.k8s_workspace.build_k8s_workspace_with_nanzi_adapter",
+        return_value=mock_ws,
+    ) as mock_builder:
+        await _policy_k8s_workspace(
+            skill_paths=[],
+            config_overrides={"sandbox_k8s_existing_pvc": "none"},
+            sandbox_user_key="u__1",
+        )
+
+    assert mock_builder.call_args.kwargs["existing_pvc"] is None
+    detect.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_policy_k8s_workspace_prohibits_unauthenticated_shared_pvc():
     from app.services.ai.runtime.agentscope.workspace import _policy_k8s_workspace
 
@@ -335,8 +395,109 @@ def test_resolve_platform_namespace_prefers_env_override(monkeypatch):
     assert resolve_platform_namespace() == "custom-platform-ns"
 
 
+def test_parse_existing_pvc_config_semantics():
+    """留空=自动探测、哨兵值=强制隔离、其它值=显式共享 PVC。"""
+    from app.services.ai.runtime.agentscope.k8s_workspace import (
+        parse_existing_pvc_config,
+    )
+
+    assert parse_existing_pvc_config(None) == (None, False)
+    assert parse_existing_pvc_config("") == (None, False)
+    assert parse_existing_pvc_config("   ") == (None, False)
+    for sentinel in ("none", "NONE", "disabled", "off", "false", "-"):
+        assert parse_existing_pvc_config(sentinel) == (None, True)
+    assert parse_existing_pvc_config(" my-shared-pvc ") == ("my-shared-pvc", False)
+
+
+def test_claim_name_for_data_mount_extracts_backing_pvc():
+    """从 Pod spec 中解析平台数据目录背后的 PVC（纯函数，best-effort 不抛异常）。"""
+    from app.services.ai.runtime.agentscope.k8s_workspace import (
+        _claim_name_for_data_mount,
+    )
+
+    class _Mount:
+        def __init__(self, name, mount_path):
+            self.name = name
+            self.mount_path = mount_path
+
+    class _Claim:
+        def __init__(self, claim_name):
+            self.claim_name = claim_name
+
+    class _Volume:
+        def __init__(self, name, claim_name=None):
+            self.name = name
+            self.persistent_volume_claim = _Claim(claim_name) if claim_name else None
+
+    class _Container:
+        def __init__(self, mounts):
+            self.volume_mounts = mounts
+
+    class _Spec:
+        def __init__(self, containers, volumes):
+            self.containers = containers
+            self.volumes = volumes
+
+    class _Pod:
+        def __init__(self, spec):
+            self.spec = spec
+
+    pod = _Pod(
+        _Spec(
+            [_Container([_Mount("app-data", "/app/data")])],
+            [_Volume("app-data", "nanzi-ai-agent-data")],
+        )
+    )
+    assert _claim_name_for_data_mount(pod, "/app/data") == "nanzi-ai-agent-data"
+    # 尾斜杠写法同样命中
+    assert _claim_name_for_data_mount(pod, "/app/data/") == "nanzi-ai-agent-data"
+
+    # 数据目录不是 PVC（emptyDir/hostPath）：返回 None
+    pod_no_pvc = _Pod(
+        _Spec([_Container([_Mount("app-data", "/app/data")])], [_Volume("app-data")])
+    )
+    assert _claim_name_for_data_mount(pod_no_pvc, "/app/data") is None
+
+    # 没有挂到数据目录：返回 None
+    pod_other_mount = _Pod(
+        _Spec([_Container([_Mount("other", "/tmp")])], [_Volume("other", "x")])
+    )
+    assert _claim_name_for_data_mount(pod_other_mount, "/app/data") is None
+
+    # 畸形输入不得抛异常（best-effort 契约，避免拖垮沙箱启动）
+    assert _claim_name_for_data_mount(MagicMock(), "/app/data") is None
+    assert _claim_name_for_data_mount(_Pod(None), "/app/data") is None
+
+
+@pytest.mark.asyncio
+async def test_resolve_shared_pvc_sources(monkeypatch):
+    """四种来源：configured / isolated / auto / unavailable。"""
+    from unittest.mock import AsyncMock
+
+    from app.services.ai.runtime.agentscope import k8s_workspace as kw
+
+    # 显式指定或强制隔离时不触发自动探测
+    detect = AsyncMock(return_value="should-not-be-used")
+    monkeypatch.setattr(kw, "detect_platform_data_pvc", detect)
+
+    assert await kw.resolve_shared_pvc("my-pvc") == {
+        "pvc": "my-pvc",
+        "source": "configured",
+    }
+    assert await kw.resolve_shared_pvc("none") == {"pvc": None, "source": "isolated"}
+    detect.assert_not_awaited()
+
+    # 留空 + 自动探测成功
+    monkeypatch.setattr(kw, "detect_platform_data_pvc", AsyncMock(return_value="platform-pvc"))
+    assert await kw.resolve_shared_pvc("") == {"pvc": "platform-pvc", "source": "auto"}
+
+    # 留空 + 自动探测失败（非 K8s / 数据目录非 PVC）：安全回退独立空卷
+    monkeypatch.setattr(kw, "detect_platform_data_pvc", AsyncMock(return_value=None))
+    assert await kw.resolve_shared_pvc("") == {"pvc": None, "source": "unavailable"}
+
+
 def test_evaluate_k8s_workspace_mount_config_warnings(monkeypatch):
-    """仅两种会破坏「沙箱可见用户工作区」的配置产生告警。"""
+    """仅「共享工作区静默失效」的配置产生告警；显式隔离不告警。"""
     from app.services.ai.runtime.agentscope.k8s_workspace import (
         evaluate_k8s_workspace_mount_config,
     )
@@ -345,32 +506,52 @@ def test_evaluate_k8s_workspace_mount_config_warnings(monkeypatch):
     monkeypatch.delenv("POD_NAMESPACE", raising=False)
     monkeypatch.delenv("K8S_NAMESPACE", raising=False)
 
-    # 1. 未配置共享 PVC：沙箱使用独立空卷，看不到用户工作区
+    # 1. 未能确定共享卷（自动探测失败）：沙箱看不到用户工作区
     warnings = evaluate_k8s_workspace_mount_config(
-        namespace="nanzi-ai-agent", existing_pvc=""
+        namespace="nanzi-ai-agent", pvc=None, pvc_source="unavailable"
     )
     assert len(warnings) == 1
     assert "sandbox_k8s_existing_pvc" in warnings[0]
 
-    # 2. 显式独立命名空间 + 共享 PVC：PVC 为命名空间级，跨命名空间引用不到
-    warnings = evaluate_k8s_workspace_mount_config(
-        namespace="my-sandbox-ns", existing_pvc="nanzi-ai-agent-data"
-    )
-    assert len(warnings) == 1
-    assert "命名空间" in warnings[0]
-
-    # 3. 历史默认值等价于跟随平台命名空间，不算不匹配
+    # 2. 管理员显式要求独立空卷：有意选择，不告警
     assert (
         evaluate_k8s_workspace_mount_config(
-            namespace="agent-sandboxes", existing_pvc="nanzi-ai-agent-data"
+            namespace="nanzi-ai-agent", pvc=None, pvc_source="isolated"
         )
         == []
     )
 
-    # 4. 正确配置（同命名空间 + 共享平台 PVC）：无告警
+    # 3. 自动探测成功（零配置）：同命名空间，无告警
     assert (
         evaluate_k8s_workspace_mount_config(
-            namespace="nanzi-ai-agent", existing_pvc="nanzi-ai-agent-data"
+            namespace="nanzi-ai-agent", pvc="platform-pvc", pvc_source="auto"
+        )
+        == []
+    )
+
+    # 4. 显式独立命名空间 + 共享 PVC：PVC 为命名空间级，跨命名空间引用不到
+    warnings = evaluate_k8s_workspace_mount_config(
+        namespace="my-sandbox-ns", pvc="nanzi-ai-agent-data", pvc_source="configured"
+    )
+    assert len(warnings) == 1
+    assert "命名空间" in warnings[0]
+
+    # 5. 历史默认值等价于跟随平台命名空间，不算不匹配
+    assert (
+        evaluate_k8s_workspace_mount_config(
+            namespace="agent-sandboxes",
+            pvc="nanzi-ai-agent-data",
+            pvc_source="configured",
+        )
+        == []
+    )
+
+    # 6. 正确配置（同命名空间 + 共享平台 PVC）：无告警
+    assert (
+        evaluate_k8s_workspace_mount_config(
+            namespace="nanzi-ai-agent",
+            pvc="nanzi-ai-agent-data",
+            pvc_source="configured",
         )
         == []
     )

@@ -1552,20 +1552,22 @@ local（适用于同一平台可直连数据库）：平台使用本地已配置
 * ssh：在 SSH 远程主机上执行。平台所在主机通过 ssh 连接下方指定的远程主机，把远程目录作为沙箱工作区；支持密码（依赖 sshpass）与私钥两种认证。
 注意：不同策略有各自的配置项，仅在切换到对应策略时生效。`,
     'sandbox_k8s_existing_pvc': `【参数作用】
-用于决定 Kubernetes 沙箱 Pod 的工作目录是「复用已有的共享持久卷（Shared PVC）」还是「为每次会话动态申请全新独立临时卷（Dynamic PVC）」。
+用于决定 Kubernetes 沙箱 Pod 的 /workspace 是「共享平台数据卷中的用户工作区（推荐，与 Docker 沙箱一致）」还是「为每个工作区动态申请全新独立临时卷（相互隔离，但沙箱内看不到用户工作区）」。
 
 【可以为空吗？】
-可以为空（默认留空，也是推荐用法）。
+可以为空，且**留空是推荐用法**。
 
 【留空（默认处理）时的行为】
-* 模式：动态独立临时卷模式。
-* 行为：平台会自动通过 K8s API 在命名空间中为当前用户会话申请一块全新的独立专属 PVC（命名同沙箱 Pod，如 as-ws-{workspace_id}，容量由 sandbox_k8s_storage_size 决定）。
-* 销毁回收：沙箱会话到期并超时关闭后，该独立 PVC 随 Pod 一同被物理删除（由 sandbox_k8s_delete_pvc_on_close 控制）。
-* 适用：各用户、各会话之间磁盘 100% 物理绝对隔离，阅后即焚、不留痕迹。
+* 模式：自动探测共享模式。
+* 行为：平台自动读取自身 Pod 的存储配置，探测出自身数据目录（/app/data）背后的 PVC，并共享该卷中的用户工作区，因此**无需手工填写任何 PVC 名称**，也兼容自定义 PVC 名的部署。
+* 探测失败时（例如平台未运行在 Kubernetes 中、数据目录不是 PVC）：安全回退为动态独立临时卷，并在日志与「校验 K8s 集群与 RBAC 权限」结果中给出提醒。
 
-【不留空时，填什么格式？】
+【想强制使用独立临时卷（强隔离）？】
+* 填写 none（也支持 disabled/off/false/-）：平台为每个工作区动态申请独立 PVC，会话结束按 sandbox_k8s_delete_pvc_on_close 回收；此模式下沙箱内 /workspace 看不到用户工作区。
+
+【要显式指定某个共享 PVC？】
 * 格式要求：填写 Kubernetes 集群目标命名空间（默认与平台同命名空间 nanzi-ai-agent）中【已存在的 PVC 资源名称】。
-* 填写示例：nanzi-ai-agent-data（平台主 PVC，推荐）或 my-shared-pvc。
+* 填写示例：nanzi-ai-agent-data（平台主 PVC）或 my-shared-pvc。
 * ⚠️ 注意：仅填写标准的 K8s 资源名（纯字母、数字、短横线），不要写成路径（例如不要加 / 或 /app/data）。
 * ⚠️ 注意：PVC 是命名空间级资源，沙箱命名空间必须与平台同命名空间才能引用该 PVC；否则沙箱 Pod 会因找不到 PVC 而长期 Pending。
 
@@ -1979,7 +1981,7 @@ const configShortDescriptions: Record<string, string> = {
   sandbox_docker_base_image: 'docker 策略使用的容器基础镜像（留空默认使用官方标准镜像 python:3.11-slim）。',
   sandbox_k8s_namespace: 'k8s 策略沙箱 Pod 运行的命名空间（默认与平台同命名空间 nanzi-ai-agent；留空表示自动跟随平台命名空间）。注意：只有与平台同命名空间，沙箱才能通过 sandbox_k8s_existing_pvc 共享用户工作区（PVC 为命名空间级资源）。',
   sandbox_k8s_image: 'k8s 策略沙箱容器运行的基础镜像（默认 python:3.11-slim）。可填自动构建的“网关预置镜像” nanzi-sandbox-k8s:<版本> 加速冷启动（构建方式见下方提示）。',
-  sandbox_k8s_existing_pvc: 'k8s 策略可选已存在的共享 PVC 名称（留空表示动态独立临时卷，此时沙箱内 /workspace 看不到用户工作区；填写如 nanzi-ai-agent-data 则通过 subPath 把用户工作区挂载到 /workspace，与 Docker 沙箱一致）。注意须与平台同命名空间。',
+  sandbox_k8s_existing_pvc: 'k8s 策略的共享数据卷：留空则自动探测平台自身数据卷并共享用户工作区（推荐，零配置，与 Docker 沙箱一致）；填 none 强制使用每工作区独立空卷（沙箱内看不到用户工作区）；填具体 PVC 名则显式指向该共享卷（须与平台同命名空间）。',
   sandbox_k8s_storage_class: 'k8s 策略动态创建独立 PVC 时的存储类名称（StorageClass，留空表示使用集群默认 StorageClass）。',
   sandbox_k8s_storage_size: 'k8s 策略动态创建独立 PVC 时的申请容量（默认 1Gi）。',
   sandbox_k8s_cpu_request: 'k8s 策略沙箱 Pod CPU 请求保障（requests.cpu，默认 100m），留空表示不设 requests。',

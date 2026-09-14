@@ -1022,16 +1022,18 @@ NanZi 平台提供了**云原生 Pod 安全沙箱策略（`sandbox_policy = "k8s
 ### 1. 核心架构与原理
 - **免 Docker Socket**：智能体执行环境完全解耦宿主机 Docker daemon，原生适配 containerd、CRI-O 等所有标准 Kubernetes 运行时与多节点集群调度；
 - **MCP 协议通信**：Pod 内部以后台子进程运行 FastMCP Gateway 服务，上层智能体通过标准 MCP 协议调用 `sandbox::bash`、`sandbox::read` 等工具；
-- **共享持久卷 subPath 挂载（体验与 Docker 100% 对齐）**：
-  - 配置 `sandbox_k8s_existing_pvc` 指向平台的主 PVC（如 `nanzi-ai-agent-data`）；
+- **共享持久卷 subPath 挂载（体验与 Docker 100% 对齐，零配置）**：
+  - `sandbox_k8s_existing_pvc` **留空即可**：平台自动读取自身 Pod 的存储配置，探测出自身数据目录（`/app/data`）背后的 PVC 并共享之，无需手工填写 PVC 名称，也兼容自定义 PVC 名的部署；
+  - 也可显式指定共享 PVC（填具体 PVC 名），或填 `none` 强制使用每工作区独立空卷（强隔离，沙箱内看不到用户工作区）；
   - 自动通过 `subPath: agent_workspaces/{user_key}` 挂载用户隔离的私有工作区（与 Docker 沙箱一致，沙箱内 `/workspace` 可见并可操作该用户完整工作区），并以只读方式挂载 `docs` 文档库；
   - 智能体在沙箱内生成的图表、CSV 数据和文件工件，平台主服务毫秒级直读并生成下载链接；
+  - 自动探测失败时（平台未运行在 K8s、数据目录非 PVC 等）安全回退为独立空卷，并在日志与 RBAC 自检结果中给出提醒；
 - **生命周期保护**：
   - 会话结束或 30 分钟无交互超时后，自动销毁沙箱 Pod，释放集群 CPU / 内存资源；
-  - 平台定制适配器（NanZiK8sAdapter）保证在 Pod 销毁时**绝不误删共享 PVC**；若未指定已有 PVC 采用独立动态 PVC，可通过配置控制是否随 Pod 连带清理。
-- **命名空间与隔离方式（二选一）**：
-  - **同命名空间（默认，推荐）**：`sandbox_k8s_namespace` 留空或设为平台命名空间（`nanzi-ai-agent`），即可通过 `sandbox_k8s_existing_pvc` 共享平台主 PVC，沙箱内 `/workspace` 与 Docker 沙箱一致；
-  - **独立命名空间（强隔离，不共享工作区）**：显式把 `sandbox_k8s_namespace` 设为独立命名空间（如历史默认值 `agent-sandboxes`），并把 `sandbox-rbac.example.yaml` 中 Role/RoleBinding 的 `namespace` 改过去；此时**必须留空** `sandbox_k8s_existing_pvc`（沙箱使用每工作区独立空 PVC，内看不到用户工作区）。
+  - 平台定制适配器（NanZiK8sAdapter）保证在 Pod 销毁时**绝不误删共享 PVC**；独立动态 PVC 可通过配置控制是否随 Pod 连带清理。
+- **命名空间与隔离方式**：
+  - **同命名空间（默认，推荐）**：`sandbox_k8s_namespace` 留空或设为平台命名空间（`nanzi-ai-agent`），沙箱即可共享平台数据卷，沙箱内 `/workspace` 与 Docker 沙箱一致；
+  - **独立命名空间（强隔离，不共享工作区）**：显式把 `sandbox_k8s_namespace` 设为独立命名空间（如历史默认值 `agent-sandboxes`），并把 `sandbox-rbac.example.yaml` 中 Role/RoleBinding 的 `namespace` 改过去；同时把 `sandbox_k8s_existing_pvc` 设为 `none`（或任意独立命名空间下的卷名），沙箱使用每工作区独立空卷、内看不到用户工作区。
 
 ### 2. 配置与开启步骤
 
@@ -1057,7 +1059,7 @@ spec:
 3. 根据集群环境调整参数：
    - `sandbox_k8s_namespace`：沙箱 Pod 运行的命名空间（默认与平台同命名空间 `nanzi-ai-agent`；留空表示自动跟随平台命名空间）。⚠️ Kubernetes 的 PVC 是命名空间级资源，**只有与平台同命名空间**才能共享平台主 PVC 的用户工作区；填成其它命名空间会导致沙箱 Pod 因找不到 PVC 而长期 `Pending`；
    - `sandbox_k8s_image`：沙箱基础镜像（默认 `python:3.11-slim`，或企业已安装数据科学包的镜像）；
-   - `sandbox_k8s_existing_pvc`：推荐填写平台主 PVC 名称（例如 `nanzi-ai-agent-data`）。填了它，沙箱内 `/workspace` 即为该用户完整工作区（与 Docker 沙箱对齐）；**留空则每个工作区使用独立空 PVC，沙箱内看不到用户工作区**（平台会在日志与 RBAC 自检结果中提醒）；
+   - `sandbox_k8s_existing_pvc`：共享数据卷。**留空即推荐用法**——平台自动探测自身数据目录背后的 PVC 并共享用户工作区（零配置、兼容自定义 PVC 名）；填 `none` 表示强制使用每工作区独立空卷（强隔离，沙箱内看不到用户工作区）；填具体 PVC 名则显式指向该共享卷（须与平台同命名空间）；
    - `sandbox_k8s_cpu_limit` / `sandbox_k8s_memory_limit`：单 Pod 资源配额限制（如 `1` / `1Gi`）；
    - `sandbox_k8s_delete_pvc_on_close`：关闭沙箱时是否清理独立 PVC（使用已有 PVC 时不受此影响）；
 4. 保存配置即可生效，无需重启 NanZi 主服务。

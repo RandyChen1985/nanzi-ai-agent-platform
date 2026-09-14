@@ -3,27 +3,33 @@
 不建议手动删除 Pod。更新镜像后，应该通过 Deployment 做滚动更新。
 
 > [!IMPORTANT]
-> **行为变更：K8s 沙箱默认改为与平台同命名空间（V156 / V57 迁移）**
+> **行为变更：K8s 沙箱默认与平台同命名空间，并自动共享平台数据卷（V156/V157、V57/V58 迁移）**
 >
-> 此前 `sandbox_k8s_namespace` 的默认值是 `agent-sandboxes`。但 Kubernetes 的 PVC 是
-> **命名空间级资源**，Pod 只能引用自身命名空间内的 PVC —— 只要沙箱不在平台命名空间，
-> `sandbox_k8s_existing_pvc` 指向的平台主 PVC 就无法被引用，沙箱内 `/workspace` 也就
-> 看不到用户工作区（与 Docker 沙箱行为不一致）。
+> 此前 `sandbox_k8s_namespace` 的默认值是 `agent-sandboxes`，且 `sandbox_k8s_existing_pvc`
+> 留空时会退化为「每工作区独立空 PVC」。但 Kubernetes 的 PVC 是**命名空间级资源**，
+> Pod 只能引用自身命名空间内的 PVC —— 只要沙箱不在平台命名空间，平台主 PVC 就无法被
+> 引用，沙箱内 `/workspace` 也就看不到用户工作区（与 Docker 沙箱行为不一致）。
 >
 > 本版本起：
 > 1. `sandbox_k8s_namespace` **留空或仍为历史默认值 `agent-sandboxes` 时自动跟随平台命名空间**（`nanzi-ai-agent`）；
-> 2. 数据库迁移 `V156`（MySQL）/ `V57`（PG）会把仍为历史默认值的配置对齐为 `nanzi-ai-agent`；
-> 3. 沙箱 Pod 迁入平台命名空间后，**必须在该命名空间重新应用一次 RBAC**：
+> 2. **`sandbox_k8s_existing_pvc` 留空即自动探测并共享平台数据卷**：平台读取自身 Pod 的存储配置，
+>    探测出自身数据目录（`/app/data`）背后的 PVC（不硬编码卷名，兼容自定义 PVC 名的部署），
+>    无需再手工填写任何 PVC 名称；
+> 3. 数据库迁移 `V156`（MySQL）/ `V57`（PG）会把仍为历史默认值的命名空间配置对齐为 `nanzi-ai-agent`；
+>    `V157`（MySQL）/ `V58`（PG）仅更新 `sandbox_k8s_existing_pvc` 的说明文案；
+> 4. 沙箱 Pod 迁入平台命名空间后，**必须在该命名空间重新应用一次 RBAC**：
 >
 > ```bash
 > kubectl apply -f k8s_deploy/sandbox-rbac.example.yaml
 > ```
 >
-> 4. 若你希望保持强隔离（沙箱不共享用户工作区），请显式把 `sandbox_k8s_namespace` 设为独立命名空间
+> 5. 若你希望保持强隔离（沙箱不共享用户工作区），请显式把 `sandbox_k8s_namespace` 设为独立命名空间
 >    （例如 `agent-sandboxes`），并把 `sandbox-rbac.example.yaml` 中 Role/RoleBinding 的 `namespace` 一并改过去，
->    同时**留空** `sandbox_k8s_existing_pvc`（此时沙箱使用每工作区独立创建的空 PVC）。
+>    同时把 `sandbox_k8s_existing_pvc` 设为 `none`（强制使用每工作区独立创建的空 PVC）。
 >
 > 自定义命名空间部署（非 `nanzi-ai-agent`）请把 `sandbox_k8s_namespace` 改为平台实际命名空间，或留空以自动跟随。
+> 自动探测失败（平台未运行在 K8s、数据目录非 PVC 等）会安全回退为独立空卷，并在日志与
+> 「校验 K8s 集群与 RBAC 权限」结果中给出提醒。
 
 > [!TIP]
 > **可选加速：K8s 沙箱网关预置镜像** —— AgentScope 沙箱网关环境位于 Pod 内
