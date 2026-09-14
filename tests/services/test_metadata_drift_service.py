@@ -363,11 +363,40 @@ async def test_resolve_alert_sync_type():
         res = await MetadataDriftService.resolve_alert(mock_db, alert_id=99, action="sync_type")
 
     assert res["column_updated"] is True
-    assert mock_col.type == "tinyint"
+    assert mock_col.type == "Int64"
     assert alert.status == 1
-    assert "已成功将字段 staff_list.sid 类型从 String 同步为物理库实际类型 tinyint" in res["message"]
+    assert "已成功将字段 staff_list.sid 类型从 String 同步为物理库实际类型 Int64" in res["message"]
     mock_db.commit.assert_called_once()
     mock_sync_vec.assert_called_once_with({1})
+
+
+def test_normalize_column_type_mapping():
+    """测试将物理库各类细分数据类型统一归一化为平台 6 大通用标准类型。"""
+    from app.services.metadata_drift_service import normalize_column_type
+
+    # 1. String (包含容易被误判为整型的 longtext/longblob 及几何类型 point)
+    for raw in ["varchar", "VARCHAR(255)", "varchar2", "text", "TINYTEXT", "longtext", "longblob", "point", "multipoint", "char(10)", "nvarchar(50)", "clob", "Nullable(String)", "unknown_type", ""]:
+        assert normalize_column_type(raw) == "String", f"Failed on {raw}"
+
+    # 2. Int64
+    for raw in ["int", "INT(11) unsigned", "bigint", "TINYINT(1)", "smallint", "mediumint", "integer", "int4", "int8", "serial", "Nullable(Int64)", "number"]:
+        assert normalize_column_type(raw) == "Int64", f"Failed on {raw}"
+
+    # 3. Float64
+    for raw in ["float", "double", "decimal(18,2)", "numeric(10,4)", "real", "binary_double", "number(10,2)", "Nullable(Float64)"]:
+        assert normalize_column_type(raw) == "Float64", f"Failed on {raw}"
+
+    # 4. DateTime
+    for raw in ["date", "datetime", "timestamp", "timestamptz", "time", "Nullable(DateTime)"]:
+        assert normalize_column_type(raw) == "DateTime", f"Failed on {raw}"
+
+    # 5. Boolean
+    for raw in ["bool", "boolean", "bit", "bit(1)"]:
+        assert normalize_column_type(raw) == "Boolean", f"Failed on {raw}"
+
+    # 6. JSON
+    for raw in ["json", "jsonb", "object", "map", "array", "struct", "nested(a Int, b String)"]:
+        assert normalize_column_type(raw) == "JSON", f"Failed on {raw}"
 
 
 @pytest.mark.asyncio
@@ -460,3 +489,417 @@ async def test_resolve_alert_drop_table():
     mock_db.delete.assert_called_once_with(mock_table)
     mock_db.commit.assert_called_once()
     mock_sync_vec.assert_called_once_with({1})
+
+
+# --- AI 语义分析（新增字段可编辑收录）---
+
+class _FakeLLMResponse:
+    def __init__(self, raw: str):
+        self.content = raw
+
+
+@pytest.mark.asyncio
+@patch(
+    "app.services.ai.config.AgentConfigProvider.get_configured_llm",
+    new_callable=AsyncMock,
+)
+async def test_analyze_new_column_ai_llm_success(mock_get_llm):
+    """测试对新增字段发起 LLM 语义分析：成功返回建议的中文业务术语。"""
+    mock_db = AsyncMock()
+    alert = MetaSchemaDriftAlert(
+        id=50, dataset_id=3, table_name="device", column_name="billing_phone", status=0
+    )
+    mock_alert_res = MagicMock()
+    mock_alert_res.scalars.return_value.first.return_value = alert
+
+    ds = MetaDataset(id=3, name="设备域", data_source="")  # 空数据源：跳过物理/样例读取
+    mock_ds_res = MagicMock()
+    mock_ds_res.scalars.return_value.first.return_value = ds
+
+    mock_db.execute.side_effect = [mock_alert_res, mock_ds_res]
+
+    mock_llm = AsyncMock()
+    mock_llm.ainvoke.return_value = _FakeLLMResponse(
+        '```json\n{"term": "结算手机号", "description": "设备绑定的用于结算的手机号", "synonyms": ["billing_phone", "电话"]}\n```'
+    )
+    mock_get_llm.return_value = mock_llm
+
+    result = await MetadataDriftService.analyze_new_column_ai(mock_db, 50)
+
+    assert result["column_name"] == "billing_phone"
+    assert result["llm_succeeded"] is True
+    assert result["term"] == "结算手机号"
+    assert "结算的手机号" in result["description"]
+    assert result["synonyms"] == ["billing_phone", "电话"]
+
+
+@pytest.mark.asyncio
+@patch(
+    "app.services.ai.config.AgentConfigProvider.get_configured_llm",
+    new_callable=AsyncMock,
+)
+async def test_analyze_new_column_ai_llm_failure_falls_back(mock_get_llm):
+    """测试 LLM 语义分析失败时不影响流程：返回 llm_succeeded=False 且带错误信息。"""
+    mock_db = AsyncMock()
+    alert = MetaSchemaDriftAlert(
+        id=51, dataset_id=3, table_name="device", column_name="billing_phone", status=0
+    )
+    mock_alert_res = MagicMock()
+    mock_alert_res.scalars.return_value.first.return_value = alert
+
+    ds = MetaDataset(id=3, name="设备域", data_source="")
+    mock_ds_res = MagicMock()
+    mock_ds_res.scalars.return_value.first.return_value = ds
+
+    mock_db.execute.side_effect = [mock_alert_res, mock_ds_res]
+
+    mock_llm = AsyncMock()
+    mock_llm.ainvoke.side_effect = RuntimeError("LLM 超时")
+    mock_get_llm.return_value = mock_llm
+
+    result = await MetadataDriftService.analyze_new_column_ai(mock_db, 51)
+
+    assert result["llm_succeeded"] is False
+    assert result["term"] == ""
+    assert "LLM 超时" in result["ai_error"]
+
+
+@pytest.mark.asyncio
+async def test_analyze_new_column_ai_alert_not_found():
+    """测试分析一个不存在的告警时抛出 ValueError。"""
+    mock_db = AsyncMock()
+    mock_alert_res = MagicMock()
+    mock_alert_res.scalars.return_value.first.return_value = None
+    mock_db.execute.return_value = mock_alert_res
+
+    with pytest.raises(ValueError):
+        await MetadataDriftService.analyze_new_column_ai(mock_db, 9999)
+
+
+@pytest.mark.asyncio
+async def test_resolve_alert_add_column_with_confirmed_term():
+    """测试 add_column 时传管理员确认的中文术语，优先级高于物理注释/英文兜底。"""
+    mock_db = AsyncMock()
+    mock_db.add = MagicMock()
+
+    alert = MetaSchemaDriftAlert(
+        id=60,
+        dataset_id=10,
+        table_name="device_pue",
+        column_name="pue_ratio_v2",
+        status=0,
+    )
+    mock_alert_res = MagicMock()
+    mock_alert_res.scalars.return_value.first.return_value = alert
+
+    table = MetaTable(id=101, dataset_id=10, physical_name="device_pue")
+    mock_table_res = MagicMock()
+    mock_table_res.scalars.return_value.first.return_value = table
+
+    # 查 column 不存在
+    mock_col_res = MagicMock()
+    mock_col_res.scalars.return_value.first.return_value = None
+
+    # 查 dataset 关联（无数据源，跳过物理读取）
+    mock_ds_res = MagicMock()
+    mock_ds_res.scalars.return_value.first.return_value = None
+
+    mock_db.execute.side_effect = [mock_alert_res, mock_table_res, mock_col_res, mock_ds_res]
+
+    res = await MetadataDriftService.resolve_alert(
+        mock_db,
+        alert_id=60,
+        action="add_column",
+        column_term="PUE 能效比",
+        column_description="机房 PUE 能效比指标",
+        column_synonyms=["pue", "能效比"],
+    )
+
+    assert res["status"] == 1
+    assert res["column_added"] is True
+    added_col = mock_db.add.call_args[0][0]
+    assert isinstance(added_col, MetaColumn)
+    assert added_col.term == "PUE 能效比"
+    assert added_col.description == "机房 PUE 能效比指标"
+    assert added_col.synonyms == ["pue", "能效比"]
+    mock_db.commit.assert_called_once()
+
+
+# --- 备注缺失字段（missing_comment）AI 补充分析 + update_comment 处置 ---
+
+@pytest.mark.asyncio
+async def test_analyze_update_comment_ai_physical_comment_preferred():
+    """物理库已有有效注释时，直接采用且不调用 LLM（from_source='physical'）。"""
+    mock_db = AsyncMock()
+    alert = MetaSchemaDriftAlert(
+        id=70, dataset_id=3, table_name="device", column_name="billing_phone", status=0
+    )
+    mock_alert_res = MagicMock()
+    mock_alert_res.scalars.return_value.first.return_value = alert
+
+    ds = MetaDataset(id=3, name="设备域", data_source="mysql")
+    mock_ds_res = MagicMock()
+    mock_ds_res.scalars.return_value.first.return_value = ds
+
+    table = MetaTable(id=7, dataset_id=3, physical_name="device")
+    mock_table_res = MagicMock()
+    mock_table_res.scalars.return_value.first.return_value = table
+
+    mock_db.execute.side_effect = [mock_alert_res, mock_ds_res, mock_table_res]
+
+    mock_adapter = AsyncMock()
+    mock_adapter.get_columns.return_value = [
+        {"name": "billing_phone", "type": "varchar", "comment": "结算手机号"},
+        {"name": "device_no", "type": "varchar", "comment": "设备编号"},
+    ]
+    with patch("app.services.data_adapter.factory.get_adapter", new_callable=AsyncMock) as mock_get_adapter:
+        mock_get_adapter.return_value = mock_adapter
+        mock_llm = AsyncMock()
+        result = await MetadataDriftService.analyze_update_comment_ai(mock_db, 70)
+        # 物理注释优先，不调用 LLM
+        mock_llm.assert_not_called()
+
+    assert result["from_source"] == "physical"
+    assert result["description"] == "结算手机号"
+    assert result["llm_succeeded"] is False
+    assert result["current_term"] is None
+
+
+@pytest.mark.asyncio
+@patch(
+    "app.services.ai.config.AgentConfigProvider.get_configured_llm",
+    new_callable=AsyncMock,
+)
+async def test_analyze_update_comment_ai_llm_success(mock_get_llm):
+    """物理库无有效注释时，LLM 用语生成中文业务描述并保留现有 term。"""
+    mock_db = AsyncMock()
+    alert = MetaSchemaDriftAlert(
+        id=71, dataset_id=3, table_name="device", column_name="billing_phone", status=0
+    )
+    mock_alert_res = MagicMock()
+    mock_alert_res.scalars.return_value.first.return_value = alert
+
+    ds = MetaDataset(id=3, name="设备域", data_source="")  # 空数据源：跳过物理/样例读取
+    mock_ds_res = MagicMock()
+    mock_ds_res.scalars.return_value.first.return_value = ds
+
+    col = MetaColumn(
+        id=500, table_id=7, physical_name="billing_phone",
+        term="结算手机号", description="", type="varchar",
+    )
+    table = MetaTable(id=7, dataset_id=3, physical_name="device", columns=[col])
+    mock_table_res = MagicMock()
+    mock_table_res.scalars.return_value.first.return_value = table
+
+    mock_db.execute.side_effect = [mock_alert_res, mock_ds_res, mock_table_res]
+
+    mock_llm = AsyncMock()
+    mock_llm.ainvoke.return_value = _FakeLLMResponse(
+        '{"description": "设备绑定的用于账务结算的手机号码", "synonyms": ["billing_phone", "电话"]}'
+    )
+    mock_get_llm.return_value = mock_llm
+
+    result = await MetadataDriftService.analyze_update_comment_ai(mock_db, 71)
+
+    assert result["from_source"] == "ai"
+    assert result["llm_succeeded"] is True
+    assert result["description"] == "设备绑定的用于账务结算的手机号码"
+    assert result["synonyms"] == ["billing_phone", "电话"]
+    assert result["current_term"] == "结算手机号"
+
+
+@pytest.mark.asyncio
+async def test_analyze_update_comment_ai_alert_not_found():
+    """分析一个不存在的告警时抛出 ValueError。"""
+    mock_db = AsyncMock()
+    mock_alert_res = MagicMock()
+    mock_alert_res.scalars.return_value.first.return_value = None
+    mock_db.execute.return_value = mock_alert_res
+
+    with pytest.raises(ValueError):
+        await MetadataDriftService.analyze_update_comment_ai(mock_db, 9999)
+
+
+@pytest.mark.asyncio
+async def test_resolve_alert_update_comment_with_confirmed_desc():
+    """update_comment 处置：用管理员确认的描述更新字段备注，且保留现有业务术语。"""
+    mock_db = AsyncMock()
+
+    alert = MetaSchemaDriftAlert(
+        id=72, dataset_id=10, table_name="device_pue", column_name="pue_ratio", status=0
+    )
+    mock_alert_res = MagicMock()
+    mock_alert_res.scalars.return_value.first.return_value = alert
+
+    table = MetaTable(id=101, dataset_id=10, physical_name="device_pue")
+    mock_table_res = MagicMock()
+    mock_table_res.scalars.return_value.first.return_value = table
+
+    col = MetaColumn(
+        id=300, table_id=101, physical_name="pue_ratio",
+        term="PUE 能效比", description="", type="decimal",
+    )
+    mock_col_res = MagicMock()
+    mock_col_res.scalars.return_value.first.return_value = col
+
+    mock_db.execute.side_effect = [mock_alert_res, mock_table_res, mock_col_res]
+
+    res = await MetadataDriftService.resolve_alert(
+        mock_db,
+        alert_id=72,
+        action="update_comment",
+        column_description="机房 PUE 能效比指标",
+        column_synonyms=["pue", "能效比"],
+    )
+
+    assert res["status"] == 1
+    assert res["column_updated"] is True
+    assert col.term == "PUE 能效比"  # 保留现有业务术语
+    assert col.description == "机房 PUE 能效比指标"
+    assert col.synonyms == ["pue", "能效比"]
+    mock_db.commit.assert_called_once()
+
+
+@pytest.mark.asyncio
+@patch(
+    "app.services.ai.config.AgentConfigProvider.get_configured_llm",
+    new_callable=AsyncMock,
+)
+async def test_batch_resolve_alerts_add_column_auto_ai(mock_get_llm):
+    """测试批量录入新增字段时，物理注释优先采纳，无注释字段自动并发调用 LLM 补全。"""
+    mock_db = AsyncMock()
+
+    alert1 = MetaSchemaDriftAlert(
+        id=801, dataset_id=1, table_name="sys_log", column_name="created_at", status=0
+    )
+    alert2 = MetaSchemaDriftAlert(
+        id=802, dataset_id=1, table_name="sys_log", column_name="operator_id", status=0
+    )
+
+    ds = MetaDataset(id=1, name="系统日志域", data_source="")
+    col_existing = MetaColumn(physical_name="id", term="主键编号", description="自增编号")
+    table = MetaTable(id=10, dataset_id=1, physical_name="sys_log", columns=[col_existing])
+
+    # 模拟数据库查询分流，杜绝脆弱的固定顺序列表导致的错位崩溃 (C3)
+    async def fake_execute(stmt, *args, **kwargs):
+        s_str = str(stmt).lower()
+        res = MagicMock()
+        if "meta_schema_drift_alerts" in s_str:
+            res.scalars.return_value.all.return_value = [alert1, alert2]
+            res.scalars.return_value.first.return_value = alert1
+        elif "meta_tables" in s_str:
+            res.scalars.return_value.first.return_value = table
+            res.scalars.return_value.all.return_value = [table]
+        elif "meta_columns" in s_str:
+            res.scalars.return_value.first.return_value = None
+            res.scalars.return_value.all.return_value = []
+        elif "meta_datasets" in s_str:
+            res.scalars.return_value.first.return_value = ds
+            res.scalars.return_value.all.return_value = [ds]
+        else:
+            res.scalars.return_value.first.return_value = None
+            res.scalars.return_value.all.return_value = []
+        return res
+
+    mock_db.execute.side_effect = fake_execute
+
+    # mock 物理列注释：alert1 有注释，alert2 无注释
+    async def fake_fetch_comment(db, ds_id, tbl, col):
+        if col == "created_at":
+            return "创建时间"
+        return ""
+
+    mock_llm = AsyncMock()
+    mock_llm.ainvoke.return_value = _FakeLLMResponse(
+        '{"term": "操作人账号", "description": "执行该操作的管理人员账号", "synonyms": ["operator"]}'
+    )
+    mock_get_llm.return_value = mock_llm
+
+    with patch.object(MetadataDriftService, "_fetch_physical_comment", side_effect=fake_fetch_comment):
+        with patch("app.services.changelog_service.ChangelogService.log_change", new_callable=AsyncMock):
+            with patch("app.services.metadata_service.MetadataService._mark_dataset_as_modified", new_callable=AsyncMock):
+                with patch.object(MetadataDriftService, "_try_sync_local_vector", new_callable=AsyncMock):
+                    res = await MetadataDriftService.batch_resolve_alerts(
+                        mock_db,
+                        dataset_id=1,
+                        action="add_column",
+                        alert_ids=[801, 802],
+                        auto_ai_complete=True,
+                    )
+
+    assert res["processed_count"] == 2
+    assert res["failed_count"] == 0
+    assert res["ai_completed_count"] == 1
+    assert res["physical_completed_count"] == 1
+    assert "1 项由 AI 自动生成中文名与描述" in res["message"]
+    assert "1 项采用物理库注释" in res["message"]
+
+
+@pytest.mark.asyncio
+async def test_record_drift_alert_core_dedup_distinguishes_drift_type():
+    """测试 record_drift_alert_core 在去重时区分 drift_type (I1)。
+
+    同一表同字段若分别触发 type_mismatch 与 missing_comment，应分别生成告警，不可互相吞没。
+    """
+    mock_db = AsyncMock()
+    # 模拟第一次检查不存在，添加 alert
+    mock_res_empty = MagicMock()
+    mock_res_empty.scalars.return_value.first.return_value = None
+
+    mock_db.execute.return_value = mock_res_empty
+
+    alert = await MetadataDriftService.record_drift_alert_core(
+        mock_db,
+        dataset_id=1,
+        table_name="orders",
+        column_name="status",
+        drift_type="missing_comment",
+        source="manual_inspection",
+    )
+
+    assert alert is not None
+    assert alert.drift_type == "missing_comment"
+    assert alert.status == 0
+
+
+@pytest.mark.asyncio
+async def test_resolve_alert_update_comment_skips_when_no_change():
+    """测试 update_comment 在物理库无注释且未填写新备注时跳过处置，不产生虚假已解决 (I3)。"""
+    mock_db = AsyncMock()
+
+    alert = MetaSchemaDriftAlert(
+        id=73, dataset_id=10, table_name="device_pue", column_name="pue_ratio", status=0
+    )
+    mock_alert_res = MagicMock()
+    mock_alert_res.scalars.return_value.first.return_value = alert
+
+    table = MetaTable(id=101, dataset_id=10, physical_name="device_pue")
+    mock_table_res = MagicMock()
+    mock_table_res.scalars.return_value.first.return_value = table
+
+    col = MetaColumn(
+        id=300, table_id=101, physical_name="pue_ratio",
+        term="PUE 能效比", description="", type="decimal", synonyms=None,
+    )
+    mock_col_res = MagicMock()
+    mock_col_res.scalars.return_value.first.return_value = col
+
+    mock_db.execute.side_effect = [mock_alert_res, mock_table_res, mock_col_res]
+
+    # 模拟物理库也无有效注释
+    with patch.object(MetadataDriftService, "_fetch_physical_comment", return_value=""):
+        with patch.object(MetadataDriftService, "_try_sync_local_vector", new_callable=AsyncMock) as mock_sync_vec:
+            res = await MetadataDriftService.resolve_alert(
+                mock_db,
+                alert_id=73,
+                action="update_comment",
+                column_description="",  # 管理员也未提供新描述
+                column_synonyms=None,
+            )
+
+    assert res["column_updated"] is False
+    assert alert.status == 0  # 依然保持未解决状态
+    assert "跳过处置" in res["message"]
+    mock_sync_vec.assert_not_called()  # 杜绝白跑向量重同步
+
+

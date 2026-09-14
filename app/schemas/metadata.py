@@ -178,17 +178,81 @@ class MetaDriftAlertResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
-DriftResolutionAction = Literal["drop_column", "add_column", "sync_type", "ignore", "drop_table"]
+DriftResolutionAction = Literal["drop_column", "add_column", "sync_type", "ignore", "drop_table", "update_comment"]
 
 
 class ResolveDriftAlertRequest(BaseModel):
     action: DriftResolutionAction
+    # add_column 场景下，管理员确认（或修改）后的字段业务信息；
+    # 缺省时沿用当前后端默认逻辑（物理注释 → 英文物理名兜底）。
+    term: Optional[str] = None
+    description: Optional[str] = None
+    synonyms: Optional[List[str]] = None
 
 
 class BatchResolveDriftAlertsRequest(BaseModel):
     action: DriftResolutionAction
-    drift_type: Optional[str] = None  # missing_in_db, new_in_db, type_mismatch, table_missing_in_db
+    drift_type: Optional[str] = None  # missing_in_db, new_in_db, type_mismatch, table_missing_in_db, missing_comment
     alert_ids: Optional[List[int]] = None
+    # 批量录入（add_column）时，是否自动为物理库无注释的字段调用 AI 补全中文名与描述（缺省 True）
+    auto_ai: bool = True
+
+
+class AnalyzeColumnRequest(BaseModel):
+    """对单个物理新增字段发起 LLM 语义分析的请求体。"""
+
+    # 可选：是否附带样例值辅助理解；缺省 True（读空表/失败时自动降级为仅名+类型）
+    with_samples: bool = True
+
+
+class AnalyzeColumnResponse(BaseModel):
+    """单个物理新增字段的 AI 语义分析预览结果，供管理员确认/修改后再落库。"""
+
+    alert_id: int
+    dataset_id: int
+    dataset_name: Optional[str] = None
+    table_name: str
+    column_name: str
+    physical_type: Optional[str] = None
+    comment: Optional[str] = None
+    sample_values: List[Any] = Field(default_factory=list)
+    term: Optional[str] = None
+    description: Optional[str] = None
+    synonyms: List[str] = Field(default_factory=list)
+    llm_succeeded: bool = False
+    ai_error: Optional[str] = None
+    # 上下文（同表其它字段的中文术语），供前端展示提示，也可用于拼装提示词
+    sibling_terms: List[str] = Field(default_factory=list)
+
+
+class AnalyzeUpdateCommentResponse(BaseModel):
+    """备注缺失字段（missing_comment 告警）的补充分析预览结果，供管理员确认/修改后再落库。
+
+    策略：物理库已有有效备注时直接采用（from_source='physical'）；否则由 LLM 依据现有
+    业务术语、类型与样例值推断中文业务描述（from_source='ai'）；均无效时为 'none'。
+    """
+
+    alert_id: int
+    dataset_id: int
+    dataset_name: Optional[str] = None
+    table_name: str
+    column_name: str
+    physical_type: Optional[str] = None
+    comment: Optional[str] = None
+    sample_values: List[Any] = Field(default_factory=list)
+    # 该字段现有的业务术语（保留，不在此流程改动）
+    current_term: Optional[str] = None
+    # 该字段当前备注
+    current_description: Optional[str] = None
+    # 建议的中文业务描述
+    description: Optional[str] = None
+    synonyms: List[str] = Field(default_factory=list)
+    # 结果来源：physical=物理库注释优先, ai=LLM 推断, none=均无有效结果
+    from_source: Literal["physical", "ai", "none"] = "none"
+    llm_succeeded: bool = False
+    ai_error: Optional[str] = None
+    # 上下文（同表其它字段的中文术语）
+    sibling_terms: List[str] = Field(default_factory=list)
 
 
 class DriftSummaryResponse(BaseModel):
@@ -220,5 +284,37 @@ class CronInspectionConfigRequest(BaseModel):
     enabled: bool
     cron_expr: str = "0 2 * * *"
     notification_channels: Optional[List[str]] = Field(default_factory=lambda: ["portal"])
+
+
+class RecommendColumnSemanticRequest(BaseModel):
+    """为表中的某个字段推荐语义的请求体。"""
+
+    table_name: str
+    column_name: str
+    physical_type: Optional[str] = None
+    current_term: Optional[str] = None
+    current_description: Optional[str] = None
+    with_samples: bool = True
+
+
+class RecommendColumnSemanticResponse(BaseModel):
+    """字段语义推荐结果响应体。"""
+
+    dataset_id: int
+    dataset_name: Optional[str] = None
+    table_name: str
+    column_name: str
+    physical_exists: bool = False
+    physical_type: Optional[str] = None
+    comment: Optional[str] = None
+    sample_values: List[Any] = Field(default_factory=list)
+    current_term: Optional[str] = None
+    current_description: Optional[str] = None
+    term: Optional[str] = None
+    description: Optional[str] = None
+    synonyms: List[str] = Field(default_factory=list)
+    llm_succeeded: bool = False
+    error_message: Optional[str] = None
+    sibling_terms: List[str] = Field(default_factory=list)
 
 

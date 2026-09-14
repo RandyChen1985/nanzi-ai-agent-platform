@@ -23,6 +23,7 @@ import {
   InformationCircleIcon,
   LockOpenIcon,
   MagnifyingGlassIcon,
+  SparklesIcon,
   UserIcon,
 } from '@heroicons/vue/24/outline'
 
@@ -1408,16 +1409,18 @@ onMounted(async () => {
             <div class="my-1 border-t border-gray-100 dark:border-gray-700"></div>
             <button
               type="button"
-              class="flex w-full items-center justify-between px-3 py-2 text-left text-sm text-amber-700 dark:text-amber-300 hover:bg-amber-50 dark:hover:bg-amber-950/30 transition-colors cursor-pointer"
+              class="flex w-full items-center justify-between px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50 dark:text-gray-200 dark:hover:bg-gray-700 transition-colors cursor-pointer"
               @click="showCreateMenu = false; openGlobalDriftDrawer()"
             >
-              <span class="flex items-center gap-2">
-                <span class="text-base leading-none">⚡</span>
+              <div class="flex items-center gap-2">
+                <svg class="h-4 w-4 text-amber-500 dark:text-amber-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12h4l3-6 4 12 3-6h4" />
+                </svg>
                 <span>全局巡检</span>
-              </span>
+              </div>
               <span
                 v-if="totalPendingDriftCount > 0"
-                class="px-1.5 py-0.5 text-[10px] font-bold rounded-full bg-rose-500 text-white"
+                class="px-1.5 py-0.5 text-[10px] font-bold rounded-full bg-rose-500 text-white leading-none"
               >
                 {{ totalPendingDriftCount }}
               </span>
@@ -1425,10 +1428,12 @@ onMounted(async () => {
             <button
               v-if="isAdmin"
               type="button"
-              class="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-colors cursor-pointer"
+              class="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50 dark:text-gray-200 dark:hover:bg-gray-700 transition-colors cursor-pointer"
               @click="showCreateMenu = false; showCronInspectionModal = true"
             >
-              <span class="text-base leading-none">⏱️</span>
+              <svg class="h-4 w-4 text-gray-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
               <span>定时巡检</span>
             </button>
           </div>
@@ -1659,7 +1664,7 @@ onMounted(async () => {
               :class="{ 'text-amber-500': driftSummary[ds.id] }"
               :title="ds.status === 1 ? 'Schema 巡检与差异治理' : 'Schema 巡检与差异治理 (数据集已禁用)'"
             >
-              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12h4l3-6 4 12 3-6h4" /></svg>
               <span v-if="driftSummary[ds.id]" class="absolute top-1 right-1 w-1.5 h-1.5 rounded-full bg-amber-500 ring-2 ring-white"></span>
             </button>
             <button 
@@ -1865,7 +1870,7 @@ onMounted(async () => {
                     :class="{ 'text-amber-500': driftSummary[ds.id] }"
                     :title="ds.status === 1 ? 'Schema 巡检与差异治理' : 'Schema 巡检与差异治理 (数据集已禁用)'"
                  >
-                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12h4l3-6 4 12 3-6h4" /></svg>
                     <span v-if="driftSummary[ds.id]" class="absolute top-1 right-1 w-1.5 h-1.5 rounded-full bg-amber-500 ring-2 ring-white"></span>
                  </button>
                  <button 
@@ -2640,7 +2645,7 @@ relationships:
                 class="text-[10px] bg-indigo-50 text-indigo-600 hover:bg-indigo-100 px-2 py-0.5 rounded border border-indigo-100 flex items-center gap-1 font-bold transition-all disabled:opacity-50"
               >
                 <svg v-if="enhancing" class="animate-spin h-3 w-3" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
-                <svg v-else class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+                <SparklesIcon v-else class="w-3 h-3" />
                 AI 辅助生成 (基于表信息)
               </button>
             </div>

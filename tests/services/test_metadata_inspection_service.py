@@ -38,8 +38,8 @@ async def test_inspect_dataset_detects_missing_and_new_columns():
     mock_db = AsyncMock()
 
     # 构造数据集：纳管 1 张表 device_pue，元数据中声明了 3 列 (id, region, cpu_power_old)
-    col1 = MetaColumn(physical_name="id")
-    col2 = MetaColumn(physical_name="region")
+    col1 = MetaColumn(physical_name="id", description="自增主键")
+    col2 = MetaColumn(physical_name="region", description="区域编码")
     col3 = MetaColumn(physical_name="cpu_power_old")
     table = MetaTable(physical_name="device_pue", columns=[col1, col2, col3])
     dataset = MetaDataset(id=1, name="pue_dataset", data_source="mysql_pue", tables=[table])
@@ -82,8 +82,8 @@ async def test_inspect_dataset_detects_missing_and_new_columns():
 async def test_inspect_dataset_all_matching():
     """测试物理结构完全一致时，0 差异并推送成功报告。"""
     mock_db = AsyncMock()
-    col1 = MetaColumn(physical_name="id")
-    col2 = MetaColumn(physical_name="name")
+    col1 = MetaColumn(physical_name="id", description="用户主键")
+    col2 = MetaColumn(physical_name="name", description="用户姓名")
     table = MetaTable(physical_name="users", columns=[col1, col2])
     dataset = MetaDataset(id=2, name="user_dataset", data_source="mysql_main", tables=[table])
 
@@ -134,8 +134,8 @@ async def test_inspect_dataset_adapter_error():
 async def test_inspect_dataset_type_mismatch():
     """测试巡检仅在「字符串 ↔ 日期」大类跨越时报 type_mismatch，并正确统计。"""
     mock_db = AsyncMock()
-    col1 = MetaColumn(physical_name="id", type="bigint")
-    col2 = MetaColumn(physical_name="created_on", type="varchar(20)")  # string
+    col1 = MetaColumn(physical_name="id", type="bigint", description="订单主键")
+    col2 = MetaColumn(physical_name="created_on", type="varchar(20)", description="创建时间")  # string
     table = MetaTable(physical_name="orders", columns=[col1, col2])
     dataset = MetaDataset(id=4, name="order_dataset", data_source="mysql_main", tables=[table])
 
@@ -295,7 +295,7 @@ async def test_inspect_dataset_detects_missing_table():
     """测试巡检引擎精准探测物理库中已不存在的表（整表缺失），记录 table_missing_in_db 告警并跳过后续列扫描。"""
     mock_db = AsyncMock()
 
-    t1 = MetaTable(id=1, physical_name="users", columns=[MetaColumn(physical_name="id", type="int")])
+    t1 = MetaTable(id=1, physical_name="users", columns=[MetaColumn(physical_name="id", type="int", description="用户主键")])
     t2 = MetaTable(id=2, physical_name="dropped_logs", columns=[MetaColumn(physical_name="id", type="int")])
     dataset = MetaDataset(id=5, name="audit_ds", data_source="mysql_audit", tables=[t1, t2])
 

@@ -1390,3 +1390,205 @@ class MetadataService:
             if piece:
                 formatted.append(piece)
         return "\n\n".join(formatted)
+
+    @staticmethod
+    async def recommend_column_semantic(
+        db: AsyncSession,
+        dataset_id: int,
+        table_name: str,
+        column_name: str,
+        physical_type: Optional[str] = None,
+        current_term: Optional[str] = None,
+        current_description: Optional[str] = None,
+        with_samples: bool = True,
+    ) -> Dict[str, Any]:
+        """为数据集指定表中的某个字段推荐中文语义信息（Term、Description、Synonyms）。
+
+        规则：
+        1. 若物理数据源未配置、表在物理库不存在或字段在源表中不存在，返回 physical_exists=False 与明确提示。
+        2. 若字段存在，获取物理原生类型、原生注释、3 条真实采样数据与同表其他字段中文术语。
+        3. 调用大模型进行语义推断，返回建议结果供管理员确认与回填。
+        """
+        table_name = (table_name or "").strip()
+        column_name = (column_name or "").strip()
+
+        stmt = select(MetaDataset).where(MetaDataset.id == dataset_id)
+        dataset = (await db.execute(stmt)).scalars().first()
+        if not dataset:
+            raise ValueError(f"数据集不存在: ID {dataset_id}")
+
+        data_source = dataset.data_source or ""
+        dataset_name = dataset.name
+
+        # ── 1. 探测物理库存在性、原生类型与注释 ──
+        if not data_source:
+            return {
+                "dataset_id": dataset_id,
+                "dataset_name": dataset_name,
+                "table_name": table_name,
+                "column_name": column_name,
+                "physical_exists": False,
+                "physical_type": None,
+                "comment": None,
+                "sample_values": [],
+                "current_term": current_term,
+                "current_description": current_description,
+                "term": None,
+                "description": None,
+                "synonyms": [],
+                "llm_succeeded": False,
+                "error_message": "该数据集未绑定物理数据源，无法基于源表数据推荐语义",
+                "sibling_terms": [],
+            }
+
+        from app.services.data_adapter.factory import get_adapter
+        from app.services.metadata_drift_service import normalize_column_type
+
+        try:
+            adapter = await get_adapter(data_source)
+            phys_cols = await adapter.get_columns(table_name=table_name)
+        except Exception as ex:
+            logger.warning(f"[MetadataService] 读取物理表 {table_name} 失败: {ex}")
+            return {
+                "dataset_id": dataset_id,
+                "dataset_name": dataset_name,
+                "table_name": table_name,
+                "column_name": column_name,
+                "physical_exists": False,
+                "physical_type": None,
+                "comment": None,
+                "sample_values": [],
+                "current_term": current_term,
+                "current_description": current_description,
+                "term": None,
+                "description": None,
+                "synonyms": [],
+                "llm_succeeded": False,
+                "error_message": f"物理数据源中未找到数据表 '{table_name}' 或连接失败: {str(ex)}",
+                "sibling_terms": [],
+            }
+
+        matched_col = None
+        col_name_lower = column_name.lower()
+        for pc in (phys_cols or []):
+            if str(pc.get("name") or "").lower().strip() == col_name_lower:
+                matched_col = pc
+                break
+
+        if not matched_col:
+            return {
+                "dataset_id": dataset_id,
+                "dataset_name": dataset_name,
+                "table_name": table_name,
+                "column_name": column_name,
+                "physical_exists": False,
+                "physical_type": None,
+                "comment": None,
+                "sample_values": [],
+                "current_term": current_term,
+                "current_description": current_description,
+                "term": None,
+                "description": None,
+                "synonyms": [],
+                "llm_succeeded": False,
+                "error_message": f"物理数据表 '{table_name}' 中不存在字段 '{column_name}'，无法基于源表推荐语义",
+                "sibling_terms": [],
+            }
+
+        # 匹配到物理列
+        raw_type = matched_col.get("type")
+        norm_type = normalize_column_type(raw_type or physical_type)
+        comment = str(matched_col.get("comment") or "").strip()
+
+        # ── 2. 收集同表已有字段的中文术语（上下文） ──
+        sibling_terms: List[str] = []
+        meta_table_stmt = (
+            select(MetaTable)
+            .options(selectinload(MetaTable.columns))
+            .where(
+                MetaTable.dataset_id == dataset_id,
+                func.lower(MetaTable.physical_name) == table_name.lower(),
+            )
+        )
+        meta_table = (await db.execute(meta_table_stmt)).scalars().first()
+        if meta_table and meta_table.columns:
+            for c in meta_table.columns:
+                if c.physical_name and c.physical_name.lower() != col_name_lower:
+                    if c.term and c.term != c.physical_name:
+                        sibling_terms.append(f"{c.physical_name}={c.term}")
+
+        # ── 3. 读取该字段采样数据（至多 3 条） ──
+        sample_values: List[Any] = []
+        if with_samples and adapter:
+            try:
+                from app.services.sql_query_execution_service import dialect_from_data_source
+
+                sql_dialect = dialect_from_data_source(data_source)
+                if sql_dialect == "oracle":
+                    sample_sql = 'SELECT "{col}" FROM "{tbl}" WHERE ROWNUM <= 3'
+                elif sql_dialect == "tsql":
+                    sample_sql = "SELECT TOP 3 \"{col}\" FROM \"{tbl}\""
+                else:
+                    sample_sql = 'SELECT "{col}" FROM "{tbl}" LIMIT 3'
+                res = await adapter.execute_sql(
+                    sample_sql.replace("{col}", column_name).replace("{tbl}", table_name), {}
+                )
+                items = res.get("items") or []
+                for row in items[:3]:
+                    if row and len(row) > 0 and row[0] is not None:
+                        sample_values.append(row[0])
+            except Exception as ex:
+                logger.debug(f"[MetadataService] 字段语义推荐采样失败，降级为无采样: {ex}")
+
+        # ── 4. 调用 LLM 推断高质量语义 ──
+        term = ""
+        description = ""
+        synonyms: List[str] = []
+        llm_succeeded = False
+        error_msg = None
+
+        try:
+            from app.services.metadata_drift_service import MetadataDriftService
+
+            llm = await AgentConfigProvider.get_configured_llm(streaming=False)
+            term, description, synonyms, llm_succeeded, error_msg = (
+                await MetadataDriftService._call_llm_for_new_column_semantic(
+                    llm=llm,
+                    dataset_name=dataset_name,
+                    data_source=data_source,
+                    table_name=table_name,
+                    column_name=column_name,
+                    physical_type=norm_type,
+                    comment=comment or None,
+                    sibling_terms=sibling_terms,
+                    sample_values=sample_values,
+                )
+            )
+        except Exception as ex:
+            error_msg = str(ex)[:300]
+            logger.warning(f"[MetadataService] 推荐字段语义调用 LLM 失败: {ex}", exc_info=True)
+
+        # 兜底：如果 LLM 失败，但物理库有注释，优先采用物理注释
+        if not term and comment and comment.lower() != col_name_lower:
+            term = comment
+            description = comment
+            llm_succeeded = True
+
+        return {
+            "dataset_id": dataset_id,
+            "dataset_name": dataset_name,
+            "table_name": table_name,
+            "column_name": column_name,
+            "physical_exists": True,
+            "physical_type": norm_type,
+            "comment": comment or None,
+            "sample_values": sample_values,
+            "current_term": current_term,
+            "current_description": current_description,
+            "term": term or None,
+            "description": description or None,
+            "synonyms": synonyms,
+            "llm_succeeded": llm_succeeded,
+            "error_message": error_msg,
+            "sibling_terms": sibling_terms,
+        }

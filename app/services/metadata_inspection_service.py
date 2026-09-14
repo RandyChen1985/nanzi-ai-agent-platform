@@ -129,6 +129,7 @@ class MetadataInspectionService:
         total_stale = 0
         total_new = 0
         total_mismatch = 0
+        total_missing_comments = 0
         diff_summary: List[Dict[str, Any]] = []
 
         # 优先批量获取物理库现存表集合，实现表级缺失快速探测
@@ -238,6 +239,7 @@ class MetadataInspectionService:
             }
 
             mismatch_cols: List[str] = []
+            missing_comment_cols: List[str] = []
             for col in common_cols:
                 meta_c = meta_col_objs.get(col)
                 phys_c = phys_col_map.get(col, {})
@@ -245,8 +247,12 @@ class MetadataInspectionService:
                 phys_t = str(phys_c.get("type") or "").strip()
                 if meta_t and phys_t and _is_string_date_type_mismatch(meta_t, phys_t):
                     mismatch_cols.append(col)
+                # 字段备注缺失：元数据描述为空，或描述等于物理字段名（占位未认真填写）
+                meta_desc = str(getattr(meta_c, "description", "") or "").strip()
+                if not meta_desc or meta_desc.lower() == col:
+                    missing_comment_cols.append(col)
 
-            if not stale_cols and not new_cols and not mismatch_cols:
+            if not stale_cols and not new_cols and not mismatch_cols and not missing_comment_cols:
                 await emit(
                     progress=pct,
                     stage="scanning",
@@ -258,6 +264,7 @@ class MetadataInspectionService:
                     "stale_columns": stale_cols,
                     "new_columns": new_cols,
                     "type_mismatches": mismatch_cols,
+                    "missing_comments": missing_comment_cols,
                 }
                 diff_summary.append(table_diff)
 
@@ -321,6 +328,25 @@ class MetadataInspectionService:
                             error_sample=f"巡检发现类型不匹配：元数据声明为 {meta_t}，物理库实际为 {phys_t}",
                         )
 
+                if missing_comment_cols:
+                    total_missing_comments += len(missing_comment_cols)
+                    for col in missing_comment_cols:
+                        await emit(
+                            progress=pct,
+                            stage="scanning",
+                            message=f"{prefix}[表 {idx}/{total_tables}] ⚠️ 发现字段备注缺失: {phys_name}.{col}（元数据字段备注未填写）",
+                        )
+                        await MetadataDriftService.record_drift_alert_core(
+                            db,
+                            dataset_id=dataset.id,
+                            table_id=table.id,
+                            table_name=phys_name,
+                            column_name=col,
+                            drift_type="missing_comment",
+                            source="manual_inspection",
+                            error_sample=f"巡检发现：字段 {phys_name}.{col} 的元数据备注为空或未认真填写（备注等于字段名），需要补充业务描述",
+                        )
+
         return {
             "tables_scanned": total_tables,
             "columns_scanned": total_columns_scanned,
@@ -328,6 +354,7 @@ class MetadataInspectionService:
             "stale_count": total_stale,
             "new_count": total_new,
             "mismatch_count": total_mismatch,
+            "missing_comment_count": total_missing_comments,
             "diff_summary": diff_summary,
         }
 
