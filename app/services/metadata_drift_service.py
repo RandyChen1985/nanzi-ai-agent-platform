@@ -43,6 +43,42 @@ def _is_action_allowed(drift_type: Optional[str], action: str) -> bool:
     return action in allowed
 
 
+def quote_identifier(name: Optional[str]) -> Optional[str]:
+    """安全引用 SQL 标识符（表名 / 列名）；不安全时返回 None，调用方应跳过采样。
+
+    只做最小必要防护：拒绝包含双引号、反引号、分号、空字节或换行的名称（可被用于突破
+    标识符边界）。中文、含 `$`、含空格等在多数方言中合法的标识符照常放行，避免像早期
+    `^[A-Za-z0-9_]+$` 那样把中文列名等合法名称误判为不安全而静默丢失采样。
+    """
+    if not name:
+        return None
+    cleaned = str(name).strip()
+    if not cleaned:
+        return None
+    if any(ch in cleaned for ch in ('"', "`", ";", "\x00", "\n", "\r")):
+        return None
+    return f'"{cleaned}"'
+
+
+def build_sample_sql(
+    dialect: str,
+    column_name: Optional[str],
+    table_name: Optional[str],
+    limit: int = 3,
+) -> Optional[str]:
+    """按方言安全拼装采样 SQL；标识符不可安全引用时返回 None（调用方降级为无采样）。"""
+    col = quote_identifier(column_name)
+    tbl = quote_identifier(table_name)
+    if not col or not tbl:
+        return None
+    safe_limit = max(1, min(int(limit), 100))
+    if dialect == "oracle":
+        return f"SELECT {col} FROM {tbl} WHERE ROWNUM <= {safe_limit}"
+    if dialect == "tsql":
+        return f"SELECT TOP {safe_limit} {col} FROM {tbl}"
+    return f"SELECT {col} FROM {tbl} LIMIT {safe_limit}"
+
+
 def _parse_llm_json_response(raw_text: str) -> Dict[str, Any]:
     """剥离 LLM 输出的 Markdown 代码块围栏并解析为 JSON 字典。"""
     text = (raw_text or "").strip()
@@ -404,16 +440,9 @@ class MetadataDriftService:
                 from app.services.sql_query_execution_service import dialect_from_data_source
 
                 sql_dialect = dialect_from_data_source(data_source)
-                # 跨方言取样例：仅取 3 行以控制体积，避免泄露无关数据
-                if sql_dialect == "oracle":
-                    sample_sql = 'SELECT "{col}" FROM "{tbl}" WHERE ROWNUM <= 3'
-                elif sql_dialect == "tsql":
-                    sample_sql = "SELECT TOP 3 \"{col}\" FROM \"{tbl}\""
-                else:
-                    sample_sql = 'SELECT "{col}" FROM "{tbl}" LIMIT 3'
-                res = await adapter.execute_sql(
-                    sample_sql.replace("{col}", column_name).replace("{tbl}", table_name), {}
-                )
+                # 跨方言取样例：仅取 3 行以控制体积，避免泄露无关数据；标识符统一安全引用
+                sample_sql = build_sample_sql(sql_dialect, column_name, table_name)
+                res = await adapter.execute_sql(sample_sql, {}) if sample_sql else {"items": []}
                 items = res.get("items") or []
                 for row in items[:3]:
                     if row and len(row) > 0:
@@ -590,15 +619,8 @@ class MetadataDriftService:
                 from app.services.sql_query_execution_service import dialect_from_data_source
 
                 sql_dialect = dialect_from_data_source(data_source)
-                if sql_dialect == "oracle":
-                    sample_sql = 'SELECT "{col}" FROM "{tbl}" WHERE ROWNUM <= 3'
-                elif sql_dialect == "tsql":
-                    sample_sql = "SELECT TOP 3 \"{col}\" FROM \"{tbl}\""
-                else:
-                    sample_sql = 'SELECT "{col}" FROM "{tbl}" LIMIT 3'
-                res = await adapter.execute_sql(
-                    sample_sql.replace("{col}", column_name).replace("{tbl}", table_name), {}
-                )
+                sample_sql = build_sample_sql(sql_dialect, column_name, table_name)
+                res = await adapter.execute_sql(sample_sql, {}) if sample_sql else {"items": []}
                 items = res.get("items") or []
                 for row in items[:3]:
                     if row and len(row) > 0 and row[0] is not None:
@@ -1224,19 +1246,15 @@ class MetadataDriftService:
                                     col_type = normalize_column_type(pc.get("type"))
                                     break
 
-                            col_clean = alert_item.column_name.strip()
-                            tbl_clean = alert_item.table_name.strip()
-                            # 校验表名与列名合法性，防止 SQL 注入风险 (M5)
-                            if re.match(r"^[A-Za-z0-9_]+$", col_clean) and re.match(r"^[A-Za-z0-9_]+$", tbl_clean):
-                                from app.services.sql_query_execution_service import dialect_from_data_source
+                            # 安全引用标识符后采样，防止 SQL 注入（同时不再误拒中文等合法名称）
+                            from app.services.sql_query_execution_service import dialect_from_data_source
 
-                                sql_dialect = dialect_from_data_source(ds_src)
-                                if sql_dialect == "oracle":
-                                    s_sql = f'SELECT "{col_clean}" FROM "{tbl_clean}" WHERE ROWNUM <= 3'
-                                elif sql_dialect == "tsql":
-                                    s_sql = f'SELECT TOP 3 "{col_clean}" FROM "{tbl_clean}"'
-                                else:
-                                    s_sql = f'SELECT "{col_clean}" FROM "{tbl_clean}" LIMIT 3'
+                            s_sql = build_sample_sql(
+                                dialect_from_data_source(ds_src),
+                                alert_item.column_name,
+                                alert_item.table_name,
+                            )
+                            if s_sql:
                                 s_res = await adp.execute_sql(s_sql, {})
                                 for row in (s_res.get("items") or [])[:3]:
                                     if row and len(row) > 0 and row[0] is not None:

@@ -1522,17 +1522,12 @@ class MetadataService:
         if with_samples and adapter:
             try:
                 from app.services.sql_query_execution_service import dialect_from_data_source
+                from app.services.metadata_drift_service import build_sample_sql
 
                 sql_dialect = dialect_from_data_source(data_source)
-                if sql_dialect == "oracle":
-                    sample_sql = 'SELECT "{col}" FROM "{tbl}" WHERE ROWNUM <= 3'
-                elif sql_dialect == "tsql":
-                    sample_sql = "SELECT TOP 3 \"{col}\" FROM \"{tbl}\""
-                else:
-                    sample_sql = 'SELECT "{col}" FROM "{tbl}" LIMIT 3'
-                res = await adapter.execute_sql(
-                    sample_sql.replace("{col}", column_name).replace("{tbl}", table_name), {}
-                )
+                # 标识符统一安全引用，避免字符串拼接注入
+                sample_sql = build_sample_sql(sql_dialect, column_name, table_name)
+                res = await adapter.execute_sql(sample_sql, {}) if sample_sql else {"items": []}
                 items = res.get("items") or []
                 for row in items[:3]:
                     if row and len(row) > 0 and row[0] is not None:

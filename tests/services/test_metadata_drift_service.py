@@ -669,12 +669,12 @@ async def test_analyze_update_comment_ai_physical_comment_preferred():
         {"name": "billing_phone", "type": "varchar", "comment": "结算手机号"},
         {"name": "device_no", "type": "varchar", "comment": "设备编号"},
     ]
-    with patch("app.services.data_adapter.factory.get_adapter", new_callable=AsyncMock) as mock_get_adapter:
+    with patch("app.services.data_adapter.factory.get_adapter", new_callable=AsyncMock) as mock_get_adapter, \
+         patch("app.services.ai.config.AgentConfigProvider.get_configured_llm", new_callable=AsyncMock) as mock_get_llm:
         mock_get_adapter.return_value = mock_adapter
-        mock_llm = AsyncMock()
         result = await MetadataDriftService.analyze_update_comment_ai(mock_db, 70)
-        # 物理注释优先，不调用 LLM
-        mock_llm.assert_not_called()
+        # 物理注释优先：直接返回，连 LLM 都不需要初始化
+        mock_get_llm.assert_not_called()
 
     assert result["from_source"] == "physical"
     assert result["description"] == "结算手机号"
@@ -878,6 +878,13 @@ async def test_record_drift_alert_core_dedup_distinguishes_drift_type():
     assert alert.drift_type == "missing_comment"
     assert alert.status == 0
 
+    # 关键：去重查询必须把 drift_type 纳入 WHERE，否则 type_mismatch 会吞没 missing_comment。
+    # 仅断言返回对象的 drift_type 无法证明这一点，必须检查实际下发的查询语句。
+    dedup_stmt = mock_db.execute.call_args_list[0].args[0]
+    compiled = str(dedup_stmt)
+    assert "drift_type" in compiled
+    assert "meta_schema_drift_alerts" in compiled
+
 
 @pytest.mark.asyncio
 async def test_resolve_alert_update_comment_skips_when_no_change():
@@ -1010,3 +1017,23 @@ async def test_batch_resolve_skips_alerts_with_mismatched_action():
     assert missing_alert.status == 0
     # 预计算 AI 元数据时也应只传入可处置的告警
     assert [a.id for a in mock_prep.call_args[0][1]] == [901]
+
+
+def test_quote_identifier_blocks_injection_but_allows_unicode():
+    """采样 SQL 标识符安全引用：拦截可突破引号边界的名称，放行中文等合法名称。"""
+    from app.services.metadata_drift_service import build_sample_sql, quote_identifier
+
+    assert quote_identifier("device_pue") == '"device_pue"'
+    assert quote_identifier("订单号") == '"订单号"'
+    assert quote_identifier("AMT$") == '"AMT$"'
+    # 注入 payload 与空值一律拒绝（调用方降级为无采样）
+    assert quote_identifier('a" FROM "users" --') is None
+    assert quote_identifier("a;DROP TABLE t") is None
+    assert quote_identifier("a`b") is None
+    assert quote_identifier("") is None
+    assert quote_identifier(None) is None
+
+    assert build_sample_sql("mysql", "订单号", "device_pue") == 'SELECT "订单号" FROM "device_pue" LIMIT 3'
+    assert build_sample_sql("oracle", "id", "t") == 'SELECT "id" FROM "t" WHERE ROWNUM <= 3'
+    assert build_sample_sql("tsql", "id", "t") == 'SELECT TOP 3 "id" FROM "t"'
+    assert build_sample_sql("mysql", 'bad"name', "t") is None
