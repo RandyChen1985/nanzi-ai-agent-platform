@@ -920,3 +920,93 @@ async def test_resolve_alert_update_comment_skips_when_no_change():
     mock_sync_vec.assert_not_called()  # 杜绝白跑向量重同步
 
 
+
+
+def test_action_drift_type_map_guards_cross_type_actions():
+    """C1: 处置动作必须与漂移类型匹配；未知/空类型放行以兼容历史数据。"""
+    from app.services.metadata_drift_service import _is_action_allowed
+
+    assert _is_action_allowed("table_missing_in_db", "drop_table") is True
+    assert _is_action_allowed("table_missing_in_db", "add_column") is False
+    assert _is_action_allowed("missing_in_db", "drop_column") is True
+    assert _is_action_allowed("missing_in_db", "add_column") is False
+    assert _is_action_allowed("new_in_db", "add_column") is True
+    assert _is_action_allowed("type_mismatch", "sync_type") is True
+    assert _is_action_allowed("missing_comment", "update_comment") is True
+    # ignore 永远允许
+    assert _is_action_allowed("table_missing_in_db", "ignore") is True
+    # 未知/空漂移类型向后兼容放行
+    assert _is_action_allowed(None, "add_column") is True
+    assert _is_action_allowed("legacy_type", "add_column") is True
+
+
+@pytest.mark.asyncio
+async def test_resolve_alert_rejects_add_column_on_table_missing_alert():
+    """C1: 对整表缺失告警执行 add_column 必须被拒绝，不得写入 physical_name='*' 的垃圾字段。"""
+    mock_db = _make_async_db_mock()
+    alert = MetaSchemaDriftAlert(
+        id=900, dataset_id=1, table_name="gone_table", column_name="*",
+        drift_type="table_missing_in_db", status=0,
+    )
+    mock_alert_res = MagicMock()
+    mock_alert_res.scalars.return_value.first.return_value = alert
+    mock_db.execute.side_effect = [mock_alert_res]
+
+    with pytest.raises(ValueError, match="不支持处置动作"):
+        await MetadataDriftService.resolve_alert(mock_db, 900, action="add_column")
+
+    assert alert.status == 0  # 未被误标记为已解决
+    mock_db.add.assert_not_called()  # 未写入任何 MetaColumn
+    mock_db.commit.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_batch_resolve_skips_alerts_with_mismatched_action():
+    """C1: 批量 add_column 遇到非 new_in_db 告警应跳过（计入 skipped_count），不误处置。"""
+    mock_db = _make_async_db_mock()
+
+    new_alert = MetaSchemaDriftAlert(
+        id=901, dataset_id=1, table_name="device", column_name="billing_phone",
+        drift_type="new_in_db", status=0,
+    )
+    missing_alert = MetaSchemaDriftAlert(
+        id=902, dataset_id=1, table_name="gone_table", column_name="*",
+        drift_type="table_missing_in_db", status=0,
+    )
+
+    mock_alerts_res = MagicMock()
+    mock_alerts_res.scalars.return_value.all.return_value = [new_alert, missing_alert]
+
+    table = MetaTable(id=101, dataset_id=1, physical_name="device")
+    mock_table_res = MagicMock()
+    mock_table_res.scalars.return_value.first.return_value = table
+
+    mock_col_res = MagicMock()
+    mock_col_res.scalars.return_value.first.return_value = None
+
+    # 第 1 次为告警列表查询，第 2 次为元数据表查询，其后（列查询等）均返回「列不存在」
+    _call_seq = {"n": 0}
+
+    def _fake_execute(_stmt):
+        _call_seq["n"] += 1
+        if _call_seq["n"] == 1:
+            return mock_alerts_res
+        if _call_seq["n"] == 2:
+            return mock_table_res
+        return mock_col_res
+
+    mock_db.execute.side_effect = _fake_execute
+
+    with patch.object(MetadataDriftService, "_prepare_add_column_ai_metadata", new_callable=AsyncMock) as mock_prep, \
+         patch.object(MetadataDriftService, "_try_sync_local_vector", new_callable=AsyncMock):
+        mock_prep.return_value = {}
+        res = await MetadataDriftService.batch_resolve_alerts(
+            mock_db, dataset_id=1, action="add_column"
+        )
+
+    # 仅 new_in_db 告警被处置，整表缺失告警被跳过
+    assert res["skipped_count"] == 1
+    assert res["processed_count"] == 1
+    assert missing_alert.status == 0
+    # 预计算 AI 元数据时也应只传入可处置的告警
+    assert [a.id for a in mock_prep.call_args[0][1]] == [901]

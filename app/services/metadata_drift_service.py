@@ -21,6 +21,27 @@ from app.models.metadata import MetaColumn, MetaDataset, MetaSchemaDriftAlert, M
 
 logger = logging.getLogger(__name__)
 
+# 处置动作与漂移类型的合法组合白名单。
+# 防止跨类型误处置，例如把「整表物理缺失」告警当作「新增字段」录入，
+# 从而向元数据写入 physical_name='*' 之类的垃圾字段并掩盖真实漂移。
+ACTION_DRIFT_TYPE_MAP: Dict[str, set] = {
+    "table_missing_in_db": {"drop_table", "ignore"},
+    "missing_in_db": {"drop_column", "ignore"},
+    "new_in_db": {"add_column", "ignore"},
+    "type_mismatch": {"sync_type", "ignore"},
+    "missing_comment": {"update_comment", "ignore"},
+}
+
+
+def _is_action_allowed(drift_type: Optional[str], action: str) -> bool:
+    """校验处置动作是否适用于该漂移类型；未知类型（历史数据）放行以保持向后兼容。"""
+    if action == "ignore":
+        return True
+    allowed = ACTION_DRIFT_TYPE_MAP.get(drift_type or "")
+    if allowed is None:
+        return True
+    return action in allowed
+
 
 def _parse_llm_json_response(raw_text: str) -> Dict[str, Any]:
     """剥离 LLM 输出的 Markdown 代码块围栏并解析为 JSON 字典。"""
@@ -674,6 +695,13 @@ class MetadataDriftService:
         column_updated = False
         message = ""
 
+        # 处置动作必须与漂移类型匹配，否则拒绝（避免跨类型误处置造成元数据污染）
+        if not _is_action_allowed(alert.drift_type, action):
+            allowed = "、".join(sorted(ACTION_DRIFT_TYPE_MAP.get(alert.drift_type or "", set())))
+            raise ValueError(
+                f"告警类型 {alert.drift_type} 不支持处置动作 {action}（允许：{allowed}）"
+            )
+
         if action == "drop_table" or (action == "drop_column" and (alert.drift_type == "table_missing_in_db" or alert.column_name == "*")):
             # 下线整张表及其所有字段
             t_stmt = (
@@ -1299,7 +1327,9 @@ class MetadataDriftService:
         add_col_meta_map: Dict[int, Dict[str, Any]] = {}
         if action == "add_column":
             add_col_meta_map = await MetadataDriftService._prepare_add_column_ai_metadata(
-                db, alerts, auto_ai_complete=auto_ai_complete
+                db,
+                [a for a in alerts if _is_action_allowed(a.drift_type, action)],
+                auto_ai_complete=auto_ai_complete,
             )
 
         processed_count = 0
@@ -1309,6 +1339,11 @@ class MetadataDriftService:
         physical_completed_count = 0
 
         for alert in alerts:
+            # 动作与告警类型不匹配则跳过（不误处置、不计失败）
+            if not _is_action_allowed(alert.drift_type, action):
+                skipped_count += 1
+                continue
+
             # 批量补备注：仅回填物理库已有有效备注的字段，无备注（或无法连通物理库）则跳过，不标记处置
             if action == "update_comment":
                 phys_desc = await MetadataDriftService._fetch_physical_comment(
@@ -1457,7 +1492,9 @@ class MetadataDriftService:
         add_col_meta_map: Dict[int, Dict[str, Any]] = {}
         if action == "add_column":
             add_col_meta_map = await MetadataDriftService._prepare_add_column_ai_metadata(
-                db, alerts, auto_ai_complete=auto_ai_complete
+                db,
+                [a for a in alerts if _is_action_allowed(a.drift_type, action)],
+                auto_ai_complete=auto_ai_complete,
             )
 
         processed_count = 0
@@ -1467,6 +1504,11 @@ class MetadataDriftService:
         physical_completed_count = 0
 
         for alert in alerts:
+            # 动作与告警类型不匹配则跳过（不误处置、不计失败）
+            if not _is_action_allowed(alert.drift_type, action):
+                skipped_count += 1
+                continue
+
             # 批量补备注：仅回填物理库已有有效备注的字段，无备注则跳过，不标记处置
             if action == "update_comment":
                 phys_desc = await MetadataDriftService._fetch_physical_comment(
