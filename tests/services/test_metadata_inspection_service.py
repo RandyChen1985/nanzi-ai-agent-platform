@@ -336,3 +336,81 @@ async def test_inspect_dataset_detects_missing_table():
 
 
 
+
+
+@pytest.mark.asyncio
+async def test_inspect_dataset_writes_quality_score():
+    """质量分集成：巡检完成后必须把分数写回数据集对象并提交。"""
+    mock_db = AsyncMock()
+    col1 = MetaColumn(physical_name="id", description="用户主键")
+    col2 = MetaColumn(physical_name="name", description="用户姓名")
+    table = MetaTable(physical_name="users", columns=[col1, col2])
+    dataset = MetaDataset(id=7, name="user_dataset", data_source="mysql_main", tables=[table])
+
+    mock_adapter = AsyncMock()
+    mock_adapter.get_columns.return_value = [
+        {"name": "id", "type": "int"},
+        {"name": "name", "type": "varchar"},
+    ]
+
+    with patch("app.services.metadata_service.MetadataService.get_dataset_by_id", new_callable=AsyncMock) as mock_get_ds, \
+         patch("app.services.metadata_inspection_service.get_adapter", new_callable=AsyncMock) as mock_get_adapter, \
+         patch("app.services.metadata_sync_log_service.metadata_sync_log_service.publish", new_callable=AsyncMock):
+
+        mock_get_ds.return_value = dataset
+        mock_get_adapter.return_value = mock_adapter
+
+        res = await MetadataInspectionService.inspect_dataset(mock_db, dataset_id=7, task_id="t")
+
+    assert res["success"] is True
+    assert dataset.quality_score == 100
+    assert dataset.quality_breakdown["score"] == 100
+    assert dataset.quality_breakdown.get("degraded") is not True
+    assert dataset.quality_scored_at is not None
+    assert res["quality_score"] == 100
+
+
+@pytest.mark.asyncio
+async def test_inspect_dataset_marks_degraded_when_columns_unreadable():
+    """物理列读取失败（如权限异常）不得被当成结构一致，须标记 degraded 供前端提示。"""
+    mock_db = AsyncMock()
+    col1 = MetaColumn(physical_name="id", description="主键")
+    table = MetaTable(physical_name="users", columns=[col1])
+    dataset = MetaDataset(id=9, name="ds_unreadable", data_source="mysql_main", tables=[table])
+
+    mock_adapter = AsyncMock()
+    mock_adapter.get_columns.side_effect = RuntimeError("Access denied for user 'ro'@'%'")
+
+    with patch("app.services.metadata_service.MetadataService.get_dataset_by_id", new_callable=AsyncMock) as mock_get_ds, \
+         patch("app.services.metadata_inspection_service.get_adapter", new_callable=AsyncMock) as mock_get_adapter, \
+         patch("app.services.metadata_sync_log_service.metadata_sync_log_service.publish", new_callable=AsyncMock):
+
+        mock_get_ds.return_value = dataset
+        mock_get_adapter.return_value = mock_adapter
+
+        await MetadataInspectionService.inspect_dataset(mock_db, dataset_id=9, task_id="t")
+
+    assert dataset.quality_breakdown.get("degraded") is True
+    assert "读取失败" in dataset.quality_breakdown["degraded_reason"]
+
+
+@pytest.mark.asyncio
+async def test_inspect_dataset_empty_tables_writes_quality_score():
+    """空数据集（0 张纳管表）在单数据集巡检下也应写入质量分，与全库巡检保持一致。"""
+    mock_db = AsyncMock()
+    dataset = MetaDataset(id=8, name="empty_ds", data_source="mysql_main", tables=[])
+    mock_adapter = AsyncMock()
+
+    with patch("app.services.metadata_service.MetadataService.get_dataset_by_id", new_callable=AsyncMock) as mock_get_ds, \
+         patch("app.services.metadata_inspection_service.get_adapter", new_callable=AsyncMock) as mock_get_adapter, \
+         patch("app.services.metadata_sync_log_service.metadata_sync_log_service.publish", new_callable=AsyncMock):
+
+        mock_get_ds.return_value = dataset
+        mock_get_adapter.return_value = mock_adapter
+
+        res = await MetadataInspectionService.inspect_dataset(mock_db, dataset_id=8, task_id="t")
+
+    assert res["success"] is True
+    assert dataset.quality_score == 100
+    assert res["quality_score"] == 100
+    mock_db.commit.assert_called_once()

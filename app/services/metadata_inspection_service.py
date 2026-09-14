@@ -121,7 +121,14 @@ class MetadataInspectionService:
                 message=f"{prefix}数据集【{dataset.name}】下暂无纳管的表，跳过扫描。",
                 progress=progress_base + progress_range,
             )
-            return {"tables_scanned": 0, "columns_scanned": 0, "stale_count": 0, "new_count": 0, "diff_summary": []}
+            return {
+                "tables_scanned": 0,
+                "columns_scanned": 0,
+                "stale_count": 0,
+                "new_count": 0,
+                "unreadable_tables_count": 0,
+                "diff_summary": [],
+            }
 
         total_tables = len(tables)
         total_columns_scanned = 0
@@ -130,6 +137,7 @@ class MetadataInspectionService:
         total_new = 0
         total_mismatch = 0
         total_missing_comments = 0
+        unreadable_tables_count = 0
         diff_summary: List[Dict[str, Any]] = []
 
         # 优先批量获取物理库现存表集合，实现表级缺失快速探测
@@ -217,6 +225,8 @@ class MetadataInspectionService:
                     })
                     continue
 
+                # 物理列读取失败：该表无法参与比对，必须计数以免被当成「结构一致」而给出满分
+                unreadable_tables_count += 1
                 logger.warning(f"[Schema Inspection] 表 {phys_name} 读取物理列失败: {ex}")
                 await emit(
                     progress=pct,
@@ -355,8 +365,36 @@ class MetadataInspectionService:
             "new_count": total_new,
             "mismatch_count": total_mismatch,
             "missing_comment_count": total_missing_comments,
+            "unreadable_tables_count": unreadable_tables_count,
             "diff_summary": diff_summary,
         }
+
+    @staticmethod
+    def _apply_quality_score(dataset: Any, scan_res: Dict[str, Any]) -> Dict[str, Any]:
+        """把扫描结果结算为数据集质量治理分并写回数据集对象（由调用方统一 commit）。
+
+        若存在物理列读取失败的表，分数基于不完整比对，额外标记 degraded 供前端提示，
+        避免把「读不到」当成「结构一致」而给出满分误导治理判断。
+        """
+        quality = compute_quality_score(
+            tables_scanned=scan_res.get("tables_scanned", 0),
+            columns_scanned=scan_res.get("columns_scanned", 0),
+            missing_tables_count=scan_res.get("missing_tables_count", 0),
+            stale_count=scan_res.get("stale_count", 0),
+            new_count=scan_res.get("new_count", 0),
+            mismatch_count=scan_res.get("mismatch_count", 0),
+            missing_comment_count=scan_res.get("missing_comment_count", 0),
+        )
+        unreadable = scan_res.get("unreadable_tables_count", 0) or 0
+        if unreadable > 0:
+            quality["degraded"] = True
+            quality["degraded_reason"] = (
+                f"{unreadable} 张表的物理列读取失败，未参与比对，评分基于不完整结果，仅供参考"
+            )
+        dataset.quality_score = quality["score"]
+        dataset.quality_breakdown = quality
+        dataset.quality_scored_at = datetime.now()
+        return quality
 
     @classmethod
     async def inspect_dataset(
@@ -424,7 +462,19 @@ class MetadataInspectionService:
                 message="当前数据集下暂无纳管的表，巡检完成（0 张表）。",
                 progress=100,
             )
-            return {"success": True, "tables_scanned": 0, "stale_count": 0, "new_count": 0}
+            # 与全库巡检保持一致：空数据集同样结算质量分（0 表 0 列，无问题即满分）
+            cls._apply_quality_score(
+                dataset,
+                {"tables_scanned": 0, "columns_scanned": 0, "unreadable_tables_count": 0},
+            )
+            await db.commit()
+            return {
+                "success": True,
+                "tables_scanned": 0,
+                "stale_count": 0,
+                "new_count": 0,
+                "quality_score": dataset.quality_score,
+            }
 
         await emit(
             progress=30,
@@ -437,18 +487,7 @@ class MetadataInspectionService:
         )
 
         # 4. 结算数据资产质量治理分（供列表展示与治理优先级排序）
-        quality = compute_quality_score(
-            tables_scanned=scan_res["tables_scanned"],
-            columns_scanned=scan_res["columns_scanned"],
-            missing_tables_count=scan_res.get("missing_tables_count", 0),
-            stale_count=scan_res.get("stale_count", 0),
-            new_count=scan_res.get("new_count", 0),
-            mismatch_count=scan_res.get("mismatch_count", 0),
-            missing_comment_count=scan_res.get("missing_comment_count", 0),
-        )
-        dataset.quality_score = quality["score"]
-        dataset.quality_breakdown = quality
-        dataset.quality_scored_at = datetime.now()
+        quality = cls._apply_quality_score(dataset, scan_res)
 
         # 5. 提交告警变更与质量分
         await db.commit()
@@ -608,29 +647,29 @@ class MetadataInspectionService:
             if not full_ds:
                 continue
 
-            scan_res = await cls._scan_dataset_tables(
-                db,
-                full_ds,
-                adapter,
-                emit,
-                progress_base=ds_base_pct,
-                progress_range=ds_range_pct,
-                prefix=ds_prefix,
-            )
+            try:
+                scan_res = await cls._scan_dataset_tables(
+                    db,
+                    full_ds,
+                    adapter,
+                    emit,
+                    progress_base=ds_base_pct,
+                    progress_range=ds_range_pct,
+                    prefix=ds_prefix,
+                )
+            except Exception as ex:
+                # 单个数据集异常不应中断整轮全库巡检，也不应让最终 commit 被跳过
+                failed_datasets_count += 1
+                logger.exception(f"[Schema Inspection] 数据集 '{ds_name}' 巡检异常，跳过继续")
+                await emit(
+                    progress=ds_base_pct + ds_range_pct,
+                    stage="scanning",
+                    message=f"{ds_prefix}❌ 巡检异常已跳过: {str(ex)[:150]}",
+                )
+                continue
 
             # 结算该数据集的质量治理分（与全库告警提交一并持久化）
-            quality = compute_quality_score(
-                tables_scanned=scan_res["tables_scanned"],
-                columns_scanned=scan_res["columns_scanned"],
-                missing_tables_count=scan_res.get("missing_tables_count", 0),
-                stale_count=scan_res.get("stale_count", 0),
-                new_count=scan_res.get("new_count", 0),
-                mismatch_count=scan_res.get("mismatch_count", 0),
-                missing_comment_count=scan_res.get("missing_comment_count", 0),
-            )
-            full_ds.quality_score = quality["score"]
-            full_ds.quality_breakdown = quality
-            full_ds.quality_scored_at = datetime.now()
+            cls._apply_quality_score(full_ds, scan_res)
 
             t_scanned = scan_res["tables_scanned"]
             c_scanned = scan_res["columns_scanned"]
