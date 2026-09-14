@@ -104,6 +104,11 @@ class DatasetResponse(DatasetBase):
     metric_count: int = 0
     relationship_count: int = 0
 
+    # 资产质量治理分（巡检结算时写入；未巡检过则为 None）
+    quality_score: Optional[int] = None
+    quality_breakdown: Optional[Dict[str, Any]] = None
+    quality_scored_at: Optional[datetime] = None
+
     model_config = ConfigDict(from_attributes=True)
 
 
