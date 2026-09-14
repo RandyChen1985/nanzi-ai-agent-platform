@@ -9,12 +9,14 @@ from __future__ import annotations
 
 import logging
 import re
+from datetime import datetime
 from typing import Any, Dict, List, Optional, Set
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services.data_adapter.factory import get_adapter
 from app.services.metadata_drift_service import MetadataDriftService
+from app.services.metadata_quality_score_service import compute_quality_score
 from app.services.metadata_service import MetadataService
 from app.services.metadata_sync_log_service import metadata_sync_log_service
 
@@ -407,7 +409,21 @@ class MetadataInspectionService:
             db, dataset, adapter, emit, progress_base=30, progress_range=60
         )
 
-        # 4. 提交告警变更
+        # 4. 结算数据资产质量治理分（供列表展示与治理优先级排序）
+        quality = compute_quality_score(
+            tables_scanned=scan_res["tables_scanned"],
+            columns_scanned=scan_res["columns_scanned"],
+            missing_tables_count=scan_res.get("missing_tables_count", 0),
+            stale_count=scan_res.get("stale_count", 0),
+            new_count=scan_res.get("new_count", 0),
+            mismatch_count=scan_res.get("mismatch_count", 0),
+            missing_comment_count=scan_res.get("missing_comment_count", 0),
+        )
+        dataset.quality_score = quality["score"]
+        dataset.quality_breakdown = quality
+        dataset.quality_scored_at = datetime.now()
+
+        # 5. 提交告警变更与质量分
         await db.commit()
 
         # 5. 巡检完成报告
@@ -450,6 +466,7 @@ class MetadataInspectionService:
             "stale_count": total_stale,
             "new_count": total_new,
             "mismatch_count": total_mismatch,
+            "quality_score": dataset.quality_score,
             "diff_summary": scan_res["diff_summary"],
         }
 
