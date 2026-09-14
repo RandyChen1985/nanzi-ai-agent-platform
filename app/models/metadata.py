@@ -18,6 +18,11 @@ class MetaDataset(Base):
     enable_data_perm = Column(Boolean, default=False, comment='是否启用精细化数据权限校验')
     row_filter_config = Column(JSON, nullable=True, comment='行级权限配置策略')
     
+    # 资产质量治理分（巡检结算时写入，0-100）
+    quality_score = Column(Integer, nullable=True, comment='数据资产质量治理分 0-100')
+    quality_breakdown = Column(JSON, nullable=True, comment='质量分维度明细')
+    quality_scored_at = Column(DateTime, nullable=True, comment='最近一次质量评分时间')
+    
     # RAGFlow Integration Fields
     rag_dataset_id = Column(String(64), nullable=True, comment='RAGFlow 侧对应的 Dataset ID')
     rag_synced_at = Column(DateTime, nullable=True, comment='最后同步到 RAGFlow 的时间')
