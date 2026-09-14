@@ -36,6 +36,22 @@ export interface Dataset {
   table_count?: number;
   metric_count?: number;
   relationship_count?: number;
+  quality_score?: number | null;
+  quality_breakdown?: {
+    score: number;
+    level: string;
+    level_label: string;
+    dimensions: {
+      key: string;
+      label: string;
+      weight: number;
+      score: number;
+      problem_count: number;
+      total: number;
+      detail: string;
+    }[];
+  } | null;
+  quality_scored_at?: string | null;
   tables?: Table[];
 }
 

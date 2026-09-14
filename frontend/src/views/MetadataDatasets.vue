@@ -652,7 +652,7 @@ watch(viewMode, (newMode) => {
 // Search and Filter
 const searchQuery = ref('')
 type StatusFilter = 'all' | 'active' | 'inactive'
-type DatasetSortField = 'display_name' | 'status' | 'table_count' | 'rag_sync_status' | 'updated_at'
+type DatasetSortField = 'display_name' | 'status' | 'table_count' | 'quality_score' | 'rag_sync_status' | 'updated_at'
 type SortDirection = 'asc' | 'desc'
 
 const statusFilter = ref<StatusFilter>('all')
@@ -690,6 +690,9 @@ const compareDatasets = (a: Dataset, b: Dataset): number => {
       if (tableDiff !== 0) return tableDiff * dir
       return ((a.metric_count || 0) - (b.metric_count || 0)) * dir
     }
+    case 'quality_score':
+      // 未评分（null）排最后：升序时 -1 在前，降序时 -1 在后
+      return ((a.quality_score ?? -1) - (b.quality_score ?? -1)) * dir
     case 'rag_sync_status':
       return ((a.rag_sync_status ?? -99) - (b.rag_sync_status ?? -99)) * dir
     case 'updated_at': {
@@ -700,6 +703,23 @@ const compareDatasets = (a: Dataset, b: Dataset): number => {
     default:
       return 0
   }
+}
+
+const qualityBadgeClass = (score?: number | null): string => {
+  if (score === undefined || score === null) return 'bg-gray-50 text-gray-400 border-gray-200'
+  if (score >= 90) return 'bg-emerald-50 text-emerald-600 border-emerald-200'
+  if (score >= 75) return 'bg-blue-50 text-blue-600 border-blue-200'
+  if (score >= 60) return 'bg-amber-50 text-amber-600 border-amber-200'
+  return 'bg-rose-50 text-rose-600 border-rose-200'
+}
+
+const qualityTooltip = (ds: Dataset): string => {
+  const b = ds.quality_breakdown
+  if (!b || !b.dimensions?.length) return '暂无质量评分，执行一次 Schema 巡检后生成'
+  const parts = b.dimensions.map(
+    (d) => `${d.label} ${d.score} 分（问题 ${d.problem_count}/${d.total}）`
+  )
+  return `质量治理分 ${b.score}（${b.level_label}）\n${parts.join('\n')}`
 }
 
 const displayDatasets = computed(() => {
@@ -1575,6 +1595,13 @@ onMounted(async () => {
             <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-purple-50 text-purple-700 border border-purple-100 font-medium">
               关系 <b>{{ ds.relationship_count || 0 }}</b>
             </span>
+            <span
+              class="inline-flex items-center gap-1 px-2 py-0.5 rounded-md border font-medium"
+              :class="qualityBadgeClass(ds.quality_score)"
+              :title="qualityTooltip(ds)"
+            >
+              质量分 <b>{{ ds.quality_score ?? '—' }}</b>
+            </span>
           </div>
 
           <p class="mt-2.5 text-xs text-gray-500 line-clamp-2 leading-relaxed min-h-[2.5rem]">
@@ -1707,8 +1734,15 @@ onMounted(async () => {
               <path v-else stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
             </svg>
           </button>
-          <button type="button" class="col-span-2 inline-flex items-center gap-1 text-left hover:text-gray-700 transition-colors" @click="toggleSort('rag_sync_status')">
-            <span>RAG 状态</span>
+          <button type="button" class="col-span-1 inline-flex items-center gap-1 text-left hover:text-gray-700 transition-colors" @click="toggleSort('quality_score')">
+            <span>质量分</span>
+            <svg v-if="sortField === 'quality_score'" class="w-3.5 h-3.5 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path v-if="sortDirection === 'asc'" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 15l7-7 7 7" />
+              <path v-else stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+            </svg>
+          </button>
+          <button type="button" class="col-span-1 inline-flex items-center gap-1 text-left hover:text-gray-700 transition-colors" @click="toggleSort('rag_sync_status')">
+            <span>RAG</span>
             <svg v-if="sortField === 'rag_sync_status'" class="w-3.5 h-3.5 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path v-if="sortDirection === 'asc'" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 15l7-7 7 7" />
               <path v-else stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
@@ -1788,8 +1822,19 @@ onMounted(async () => {
                 </div>
              </div>
 
+             <!-- Quality Score -->
+             <div class="col-span-1">
+                <span
+                   class="inline-flex items-center px-1.5 py-0.5 rounded border text-[10px] font-bold"
+                   :class="qualityBadgeClass(ds.quality_score)"
+                   :title="qualityTooltip(ds)"
+                >
+                   {{ ds.quality_score ?? '—' }}
+                </span>
+             </div>
+
              <!-- RAG Status -->
-             <div class="col-span-2">
+             <div class="col-span-1">
                 <span 
                    v-if="!isLocalMode && ds.rag_sync_status !== undefined && ds.rag_sync_status !== 0"
                    class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider border"
