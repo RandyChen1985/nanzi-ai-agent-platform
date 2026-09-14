@@ -71,9 +71,14 @@ def parse_args(argv=None):
         action="store_true",
         help="Check the target database default charset and exit without executing SQL",
     )
+    parser.add_argument(
+        "--list-tables",
+        action="store_true",
+        help="List existing base tables in the target database as JSON and exit",
+    )
     args = parser.parse_args(argv)
 
-    if not args.check_charset and not args.file_path:
+    if not args.check_charset and not args.list_tables and not args.file_path:
         parser.error("the following arguments are required: file_path")
 
     missing = [name for name in ("host", "user", "database") if not getattr(args, name)]
@@ -342,11 +347,40 @@ async def apply_sql(file_path, config):
         await pool.wait_closed()
 
 
+async def list_database_tables(config):
+    """Print the list of base tables in the target database as a JSON array."""
+    import json
+    try:
+        conn = await aiomysql.connect(
+            host=config.host,
+            port=config.port,
+            user=config.user,
+            password=config.password,
+            db=config.database,
+            autocommit=True,
+        )
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "SELECT TABLE_NAME FROM information_schema.TABLES WHERE TABLE_SCHEMA = %s AND TABLE_TYPE = 'BASE TABLE' ORDER BY TABLE_NAME",
+                (config.database,),
+            )
+            rows = await cur.fetchall()
+            print(json.dumps([r[0] for r in rows]))
+        conn.close()
+        await conn.ensure_closed()
+        return 0
+    except Exception:
+        print(json.dumps([]))
+        return 0
+
+
 def main(argv=None):
     args = parse_args(argv)
     config = build_config(args)
     if args.check_charset:
         raise SystemExit(asyncio.run(check_database_charset(config)))
+    if args.list_tables:
+        raise SystemExit(asyncio.run(list_database_tables(config)))
     if not args.yes:
         confirm_execution(config, args.file_path)
     asyncio.run(apply_sql(args.file_path, config))

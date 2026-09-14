@@ -48,6 +48,27 @@ def test_parse_args_accepts_charset_preflight_without_sql_file():
     assert args.file_path is None
 
 
+def test_parse_args_accepts_list_tables_without_sql_file():
+    module = load_apply_sql_module()
+
+    args = module.parse_args(
+        [
+            "--list-tables",
+            "--host",
+            "127.0.0.1",
+            "--user",
+            "root",
+            "--password",
+            "secret",
+            "--database",
+            "nanzi_demo",
+        ]
+    )
+
+    assert args.list_tables is True
+    assert args.file_path is None
+
+
 def test_split_sql_skips_database_switching_statements():
     module = load_apply_sql_module()
 
@@ -392,9 +413,11 @@ def test_mysql_python_wrapper_continues_after_explicit_yes_for_non_utf8mb4(tmp_p
 
     assert result.returncode == 0, result.stdout + result.stderr
     calls = [c for c in capture.read_text(encoding="utf-8").splitlines() if "apply_sql.py" in c]
-    assert len(calls) == 2
+    assert len(calls) == 4
     assert "--check-charset" in calls[0]
-    assert "--check-charset" not in calls[1]
+    assert "--list-tables" in calls[1]
+    assert "V0-test.sql" in calls[2]
+    assert "--list-tables" in calls[3]
 
 
 def test_mysql_native_wrapper_rejects_non_utf8mb4_before_migration(tmp_path):
@@ -488,10 +511,12 @@ def test_mysql_native_wrapper_continues_after_explicit_yes_for_non_utf8mb4(tmp_p
     )
 
     assert result.returncode == 0, result.stdout + result.stderr
-    calls = capture.read_text(encoding="utf-8").split("\n--- invocation ---\n")
-    assert len(calls) == 3
+    calls = [c for c in capture.read_text(encoding="utf-8").split("\n--- invocation ---\n") if c.strip()]
+    assert len(calls) == 4
     assert "information_schema.SCHEMATA" in calls[0]
     assert "CREATE DATABASE" in calls[1]
+    assert "information_schema.TABLES" in calls[2]
+    assert "information_schema.TABLES" in calls[3]
 
 
 def test_mysql_native_wrapper_resolves_relative_sql_from_db_prod_directory(tmp_path):
@@ -609,4 +634,207 @@ def test_warning_formatting_renders_clean_cli_messages(capsys):
     assert "ℹ️  [跳过已存在] Can't create database 'aiagent'; database exists" in captured
     assert "cursors.py" not in captured
     assert "await" not in captured
+
+
+def test_apply_sql_sh_help():
+    script_path = Path(__file__).resolve().parents[1] / "db-prod" / "apply-sql.sh"
+    res = subprocess.run([str(script_path), "--help"], capture_output=True, text=True)
+    assert res.returncode == 0
+    assert "--spec" in res.stdout
+    assert "--all" in res.stdout
+    assert "--last" in res.stdout
+    assert "v1-v31" in res.stdout
+
+    res_short = subprocess.run([str(script_path), "-h"], capture_output=True, text=True)
+    assert res_short.returncode == 0
+    assert "--last" in res_short.stdout
+
+
+def test_apply_sql_sh_spec_range_matching():
+    script_path = Path(__file__).resolve().parents[1] / "db-prod" / "apply-sql.sh"
+    # 通过管道喂入空行中断在 MySQL host 输入阶段，以捕获脚本清单展示
+    res = subprocess.run(
+        [str(script_path), "--spec", "v154-v155"],
+        input="\n\n\n\n\n",
+        capture_output=True,
+        text=True,
+    )
+    assert "本次选中的 SQL 迁移脚本 (共 2 个):" in res.stdout
+    assert "V154-create_meta_schema_drift_alerts.sql" in res.stdout
+    assert "V155-add_metadata_quality_score.sql" in res.stdout
+
+
+def test_apply_sql_sh_interactive_quit():
+    script_path = Path(__file__).resolve().parents[1] / "db-prod" / "apply-sql.sh"
+    res = subprocess.run(
+        [str(script_path)],
+        input="q\n",
+        capture_output=True,
+        text=True,
+    )
+    assert res.returncode == 0
+    assert "检测到未传入参数" in res.stdout
+    assert "已取消执行" in res.stdout
+
+
+def test_apply_sql_sh_invalid_option():
+    script_path = Path(__file__).resolve().parents[1] / "db-prod" / "apply-sql.sh"
+    res = subprocess.run(
+        [str(script_path), "--unknown-flag"],
+        capture_output=True,
+        text=True,
+    )
+    assert res.returncode != 0
+    assert "未知选项: --unknown-flag" in res.stdout or "未知选项: --unknown-flag" in res.stderr
+
+
+def test_apply_sql_sh_last_option_without_record(tmp_path, monkeypatch):
+    script_path = Path(__file__).resolve().parents[1] / "db-prod" / "apply-sql.sh"
+    record_file = Path(__file__).resolve().parents[1] / "db-prod" / ".last_applied_sql"
+    
+    # 备份现有记录文件（若存在）
+    backup_file = None
+    if record_file.exists():
+        backup_file = tmp_path / ".last_applied_sql.bak"
+        shutil.move(str(record_file), str(backup_file))
+
+    try:
+        res = subprocess.run(
+            [str(script_path), "--last"],
+            capture_output=True,
+            text=True,
+        )
+        assert res.returncode != 0
+        assert "未检测到上次执行记录文件" in res.stdout or "未检测到上次执行记录文件" in res.stderr
+    finally:
+        if backup_file and backup_file.exists():
+            shutil.move(str(backup_file), str(record_file))
+
+
+def test_apply_sql_sh_last_option_with_record(tmp_path):
+    script_path = Path(__file__).resolve().parents[1] / "db-prod" / "apply-sql.sh"
+    record_file = Path(__file__).resolve().parents[1] / "db-prod" / ".last_applied_sql"
+    
+    backup_file = None
+    if record_file.exists():
+        backup_file = tmp_path / ".last_applied_sql.bak"
+        shutil.move(str(record_file), str(backup_file))
+
+    try:
+        record_file.write_text("V155-add_metadata_quality_score.sql\n", encoding="utf-8")
+        res = subprocess.run(
+            [str(script_path), "--last"],
+            input="\n\n\n\n\n",
+            capture_output=True,
+            text=True,
+        )
+        assert "检测到上次记录的 SQL 脚本为: V155-add_metadata_quality_score.sql" in res.stdout
+        assert "V155-add_metadata_quality_score.sql" in res.stdout
+    finally:
+        if record_file.exists():
+            record_file.unlink()
+        if backup_file and backup_file.exists():
+            shutil.move(str(backup_file), str(record_file))
+
+
+def test_apply_sql_native_sh_help():
+    script_path = Path(__file__).resolve().parents[1] / "db-prod" / "apply-sql-native.sh"
+    res = subprocess.run([str(script_path), "--help"], capture_output=True, text=True)
+    assert res.returncode == 0
+    assert "--spec" in res.stdout
+    assert "--all" in res.stdout
+    assert "--last" in res.stdout
+    assert "apply-sql-native.sh" in res.stdout
+    assert "v1-v31" in res.stdout
+
+    res_short = subprocess.run([str(script_path), "-h"], capture_output=True, text=True)
+    assert res_short.returncode == 0
+    assert "--last" in res_short.stdout
+
+
+def test_apply_sql_native_sh_spec_range_matching():
+    script_path = Path(__file__).resolve().parents[1] / "db-prod" / "apply-sql-native.sh"
+    res = subprocess.run(
+        [str(script_path), "--spec", "v154-v155"],
+        input="\n\n\n\n\n",
+        capture_output=True,
+        text=True,
+    )
+    assert "本次选中的 SQL 迁移脚本 (共 2 个):" in res.stdout
+    assert "V154-create_meta_schema_drift_alerts.sql" in res.stdout
+    assert "V155-add_metadata_quality_score.sql" in res.stdout
+
+
+def test_apply_sql_native_sh_interactive_quit():
+    script_path = Path(__file__).resolve().parents[1] / "db-prod" / "apply-sql-native.sh"
+    res = subprocess.run(
+        [str(script_path)],
+        input="q\n",
+        capture_output=True,
+        text=True,
+    )
+    assert res.returncode == 0
+    assert "检测到未传入参数" in res.stdout
+    assert "已取消执行" in res.stdout
+
+
+def test_apply_sql_native_sh_invalid_option():
+    script_path = Path(__file__).resolve().parents[1] / "db-prod" / "apply-sql-native.sh"
+    res = subprocess.run(
+        [str(script_path), "--unknown-native-flag"],
+        capture_output=True,
+        text=True,
+    )
+    assert res.returncode != 0
+    assert "未知选项: --unknown-native-flag" in res.stdout or "未知选项: --unknown-native-flag" in res.stderr
+
+
+def test_apply_sql_native_sh_last_option_without_record(tmp_path):
+    script_path = Path(__file__).resolve().parents[1] / "db-prod" / "apply-sql-native.sh"
+    record_file = Path(__file__).resolve().parents[1] / "db-prod" / ".last_applied_sql"
+    
+    backup_file = None
+    if record_file.exists():
+        backup_file = tmp_path / ".last_applied_sql.bak"
+        shutil.move(str(record_file), str(backup_file))
+
+    try:
+        res = subprocess.run(
+            [str(script_path), "--last"],
+            capture_output=True,
+            text=True,
+        )
+        assert res.returncode != 0
+        assert "未检测到上次执行记录文件" in res.stdout or "未检测到上次执行记录文件" in res.stderr
+    finally:
+        if backup_file and backup_file.exists():
+            shutil.move(str(backup_file), str(record_file))
+
+
+def test_apply_sql_native_sh_last_option_with_record(tmp_path):
+    script_path = Path(__file__).resolve().parents[1] / "db-prod" / "apply-sql-native.sh"
+    record_file = Path(__file__).resolve().parents[1] / "db-prod" / ".last_applied_sql"
+    
+    backup_file = None
+    if record_file.exists():
+        backup_file = tmp_path / ".last_applied_sql.bak"
+        shutil.move(str(record_file), str(backup_file))
+
+    try:
+        record_file.write_text("V155-add_metadata_quality_score.sql\n", encoding="utf-8")
+        res = subprocess.run(
+            [str(script_path), "--last"],
+            input="\n\n\n\n\n",
+            capture_output=True,
+            text=True,
+        )
+        assert "检测到上次记录的 SQL 脚本为: V155-add_metadata_quality_score.sql" in res.stdout
+        assert "V155-add_metadata_quality_score.sql" in res.stdout
+    finally:
+        if record_file.exists():
+            record_file.unlink()
+        if backup_file and backup_file.exists():
+            shutil.move(str(backup_file), str(record_file))
+
+
 

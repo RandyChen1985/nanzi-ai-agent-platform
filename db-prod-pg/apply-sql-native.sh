@@ -1,17 +1,17 @@
-#!/usr/bin/env bash
+#!/bin/bash
+# 免 Python 依赖的 PostgreSQL SQL 导入工具。
+# 依靠系统已安装的 psql 命令行客户端。
+# 支持 --help, --all, --spec, --last 等多模式执行，并在执行后输出迁移统计看板。
 
-# 允许用户沿用标准的调用方式：sh apply-sql.sh。
-# 后续逻辑使用 Bash 数组、[[ ]] 等语法，因此被 sh 解释时必须尽早切回 Bash。
+# 确保脚本在非 bash 环境下（如使用 sh 执行时）能够自动重新唤起并用 bash 执行
 if [ -z "$BASH_VERSION" ]; then
     if command -v bash >/dev/null 2>&1; then
         exec bash "$0" "$@"
     else
-        echo "❌ 本脚本需要 bash 支持，但系统未找到 bash。" >&2
+        echo "❌ 本脚本需要 bash 支持，但系统未找到 bash。"
         exit 1
     fi
 fi
-
-set -eo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -53,81 +53,26 @@ else
     C_BG_RED=""
 fi
 
-PYTHON_BIN=""
-if [[ -f "$ROOT_DIR/.venv/bin/activate" ]]; then
-    source "$ROOT_DIR/.venv/bin/activate"
-    PYTHON_BIN="$ROOT_DIR/.venv/bin/python"
-elif [[ -f "$ROOT_DIR/venv/bin/activate" ]]; then
-    source "$ROOT_DIR/venv/bin/activate"
-    PYTHON_BIN="$ROOT_DIR/venv/bin/python"
-elif [[ -x "$ROOT_DIR/.venv/bin/python" ]]; then
-    PYTHON_BIN="$ROOT_DIR/.venv/bin/python"
-elif [[ -x "$ROOT_DIR/venv/bin/python" ]]; then
-    PYTHON_BIN="$ROOT_DIR/venv/bin/python"
-elif command -v python3 >/dev/null 2>&1; then
-    PYTHON_BIN="python3"
-elif command -v python >/dev/null 2>&1; then
-    PYTHON_BIN="python"
-fi
-
-if [[ -z "$PYTHON_BIN" ]] || ! command -v "$PYTHON_BIN" >/dev/null 2>&1; then
-    echo -e "${C_RED}❌ 未检测到 Python 运行环境！${C_RESET}" >&2
-    echo -e "${C_YELLOW}💡 请先安装 Python 3.11 并配置 PATH，或初始化项目虚拟环境：${C_RESET}" >&2
-    echo "   python3 -m venv .venv" >&2
-    echo "   source .venv/bin/activate" >&2
-    echo "   pip install -r requirements.txt" >&2
-    if [ -t 0 ] && [ -t 1 ] && command -v python3 >/dev/null 2>&1; then
-        read -r -p "💡 检测到系统存在 python3，是否自动创建 .venv 并安装依赖？[y/N]: " auto_init
-        if [[ "$auto_init" =~ ^[Yy]$ ]]; then
-            echo "⚙️ 正在创建虚拟环境 $ROOT_DIR/.venv ..."
-            python3 -m venv "$ROOT_DIR/.venv"
-            source "$ROOT_DIR/.venv/bin/activate"
-            PYTHON_BIN="$ROOT_DIR/.venv/bin/python"
-            echo "📦 正在安装依赖..."
-            "$PYTHON_BIN" -m pip install -r "$ROOT_DIR/requirements.txt"
-        else
-            exit 1
-        fi
-    else
-        exit 1
+# 检查是否有 psql 客户端
+if ! command -v psql >/dev/null 2>&1; then
+    echo -e "${C_RED}❌ 错误: 未在系统 PATH 中找到 'psql' 命令行客户端。${C_RESET}"
+    echo -e "${C_YELLOW}💡 请先安装 PostgreSQL 客户端工具：${C_RESET}"
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+        echo "   macOS (Homebrew): brew install libpq && brew link --force libpq"
+    elif command -v apt-get >/dev/null 2>&1; then
+        echo "   Ubuntu / Debian : sudo apt-get update && sudo apt-get install -y postgresql-client"
+    elif command -v yum >/dev/null 2>&1; then
+        echo "   CentOS / RHEL   : sudo yum install -y postgresql"
     fi
+    echo -e "${C_CYAN}💡 提示：您也可以直接改用 Python 驱动脚本: ./db-prod-pg/apply-sql.sh${C_RESET}"
+    exit 1
 fi
 
-# 前置依赖检查：在提示输入数据库连接信息前检测必要依赖
-if ! "$PYTHON_BIN" -c "import psycopg" >/dev/null 2>&1; then
-    CURRENT_PY=$("$PYTHON_BIN" -c "import sys; print(sys.executable)" 2>/dev/null || echo "$PYTHON_BIN")
-    echo -e "${C_RED}❌ Python 环境依赖检查失败：未检测到 'psycopg' 模块。${C_RESET}" >&2
-    echo -e "🔍 当前使用的 Python 解释器: ${C_CYAN}$CURRENT_PY${C_RESET}" >&2
-    echo -e "${C_YELLOW}💡 请按以下步骤解决：${C_RESET}" >&2
-    echo "   1. 激活已安装依赖的项目虚拟环境（推荐）：" >&2
-    echo "      source .venv/bin/activate   # 或 source venv/bin/activate" >&2
-    echo "      pip install -r requirements.txt" >&2
-    echo "   2. 或者在当前 Python 环境中单独安装：" >&2
-    echo "      $PYTHON_BIN -m pip install 'psycopg[pool,binary]>=3.2,<4'" >&2
-    if [ -t 0 ] && [ -t 1 ]; then
-        read -r -p "💡 是否立即自动为您安装 'psycopg[pool,binary]'？[y/N]: " auto_install
-        if [[ "$auto_install" =~ ^[Yy]$ ]]; then
-            echo "📦 正在执行: $PYTHON_BIN -m pip install 'psycopg[pool,binary]>=3.2,<4' ..."
-            if "$PYTHON_BIN" -m pip install 'psycopg[pool,binary]>=3.2,<4'; then
-                echo -e "${C_GREEN}✓ 'psycopg' 依赖安装成功！${C_RESET}"
-            else
-                echo -e "${C_RED}❌ 安装失败，请检查网络或权限后手动安装。${C_RESET}" >&2
-                exit 1
-            fi
-        else
-            exit 1
-        fi
-    else
-        exit 1
-    fi
-fi
-
-CURRENT_PY=$("$PYTHON_BIN" -c "import sys; print(sys.executable)" < /dev/null 2>/dev/null || echo "$PYTHON_BIN")
-PY_VER=$("$PYTHON_BIN" -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}')" < /dev/null 2>/dev/null || echo "3.x")
+PSQL_PATH=$(command -v psql)
 
 # 环境校验通过提示 (若直接传 -h/--help 则不输出环境信息以保持帮助文档纯净)
 if [[ "$*" != *"--help"* ]] && [[ "$*" != *"-h"* ]]; then
-    echo -e "${C_GREEN}✓ 运行环境校验通过${C_RESET}: Python ${C_BOLD}${PY_VER}${C_RESET} (${C_GRAY}${CURRENT_PY}${C_RESET}) | 依赖库: ${C_CYAN}psycopg${C_RESET} ${C_GREEN}[已就绪]${C_RESET}"
+    echo -e "${C_GREEN}✓ 运行环境校验通过${C_RESET}: 原生客户端 ${C_CYAN}psql${C_RESET} [${C_GRAY}${PSQL_PATH}${C_RESET}] ${C_GREEN}[已就绪]${C_RESET} | 免 Python 驱动模式"
 fi
 
 DB_DIR="db-prod-pg"
@@ -140,11 +85,12 @@ fi
 show_help() {
     cat << EOF
 ${C_CYAN}╭──────────────────────────────────────────────────────────────────────╮${C_RESET}
-${C_CYAN}│${C_RESET}  ${C_BOLD}${C_WHITE}NanZi AI Agent Platform - PostgreSQL 数据库迁移工具 (apply-sql.sh)${C_RESET}    ${C_CYAN}│${C_RESET}
+${C_CYAN}│${C_RESET}  ${C_BOLD}${C_WHITE}NanZi AI Agent Platform - PostgreSQL 原生迁移执行工具 (apply-sql-native.sh)${C_RESET}${C_CYAN}│${C_RESET}
+${C_CYAN}│${C_RESET}  ${C_GRAY}(免 Python 依赖，直接通过系统已安装的 psql 命令行客户端执行)${C_RESET}       ${C_CYAN}│${C_RESET}
 ${C_CYAN}╰──────────────────────────────────────────────────────────────────────╯${C_RESET}
 
 ${C_BOLD}${C_YELLOW}用法:${C_RESET}
-  ./db-prod-pg/apply-sql.sh [选项] [SQL文件...]
+  ./db-prod-pg/apply-sql-native.sh [选项] [SQL文件...]
 
 ${C_BOLD}${C_YELLOW}选项说明:${C_RESET}
   ${C_GREEN}-h, --help${C_RESET}               显示本帮助信息并退出
@@ -153,7 +99,7 @@ ${C_BOLD}${C_YELLOW}选项说明:${C_RESET}
                            (${C_GRAY}读取 db-prod-pg/.last_applied_sql 记录${C_RESET})
   ${C_GREEN}-s, --spec <范围或名称>${C_RESET}  指定脚本执行范围或名称
                            - ${C_BOLD}版本范围${C_RESET} (格式 vX-vY, VX-VY, X-Y):
-                             示例: ${C_CYAN}--spec v0-v56${C_RESET} 或 ${C_CYAN}--spec 1-56${C_RESET}
+                             示例: ${C_CYAN}--spec v0-v56${C_RESET} 或 ${C_CYAN}--spec 0-56${C_RESET}
                            - ${C_BOLD}单个版本${C_RESET} (格式 vX, VX, X):
                              示例: ${C_CYAN}--spec v56${C_RESET} 或 ${C_CYAN}--spec 56${C_RESET}
                            - ${C_BOLD}具体文件名${C_RESET}:
@@ -161,7 +107,7 @@ ${C_BOLD}${C_YELLOW}选项说明:${C_RESET}
                            - ${C_BOLD}逗号组合${C_RESET}:
                              示例: ${C_CYAN}--spec v0-v5,v10-v15,v56${C_RESET}
   ${C_GREEN}[SQL文件...]${C_RESET}             直接传入一个或多个具体的 .sql 文件路径
-                           示例: ${C_CYAN}./db-prod-pg/apply-sql.sh db-prod-pg/V56-add_metadata_quality_score.sql${C_RESET}
+                           示例: ${C_CYAN}./db-prod-pg/apply-sql-native.sh db-prod-pg/V56-add_metadata_quality_score.sql${C_RESET}
 
 ${C_BOLD}${C_YELLOW}交互模式:${C_RESET}
   若未指定任何参数直接运行，将默认先打印此帮助说明，并引导您选择：
@@ -181,7 +127,7 @@ resolve_spec() {
     for part in "${PARTS[@]}"; do
         part=$(echo "$part" | tr -d " ")
         [ -z "$part" ] && continue
-        # 范围格式：如 v0-v56, V1-V31, 1-31, v1~v31
+        # 范围格式：如 v0-v56, V1-V31, 0-56, v1~v31, v1..v31
         if [[ "$part" =~ ^[vV]?([0-9]+)[-~.]+[vV]?([0-9]+)$ ]]; then
             local start_ver=${BASH_REMATCH[1]}
             local end_ver=${BASH_REMATCH[2]}
@@ -474,132 +420,132 @@ if [ "$CONFIRM_UPPER" != "YES" ]; then
     exit 1
 fi
 
-COMMON_ARGS=(
-    --host "$PG_HOST"
-    --port "$PG_PORT"
-    --user "$PG_USER"
-    --password "$PG_PASSWORD"
-    --database "$PG_DATABASE"
-    --yes
-)
+# 检查并确保目标数据库存在
+echo -e "🔌 ${C_GRAY}正在连接 PostgreSQL 并确保目标数据库已存在...${C_RESET}"
+DB_CHECK_CMD="SELECT 1 FROM pg_database WHERE datname = '$PG_DATABASE';"
+DB_EXISTS=$(PGPASSWORD="$PG_PASSWORD" psql -h "$PG_HOST" -p "$PG_PORT" -U "$PG_USER" -d postgres -t -A -c "$DB_CHECK_CMD" 2>/dev/null || true)
 
-# 获取迁移执行前数据库中的数据表列表
-BEFORE_TABLES_JSON=$("$PYTHON_BIN" "$SCRIPT_DIR/apply_sql.py" --list-tables "${COMMON_ARGS[@]}" 2>/dev/null || echo "[]")
-
-# 统计所选脚本中涉及的 ALTER TABLE 表名
-ALTERED_TABLES_LIST=()
-for sql_f in "${FINAL_SQL_FILES[@]}"; do
-    if [ -f "$sql_f" ]; then
-        while IFS= read -r line; do
-            if [[ "$line" =~ ^[[:space:]]*ALTER[[:space:]]+TABLE[[:space:]]+[\"]?([a-zA-Z0-9_]+)[\"]? ]]; then
-                ALTERED_TABLES_LIST+=("${BASH_REMATCH[1]}")
-            fi
-        done < "$sql_f"
-    fi
-done
-
-echo -e "🚀 ${C_BOLD}${C_CYAN}开始执行 SQL 迁移脚本...${C_RESET}"
-CURRENT_INDEX=0
-for sql_file in "${FINAL_SQL_FILES[@]}"; do
-    CURRENT_INDEX=$((CURRENT_INDEX + 1))
-    echo -e "${C_GRAY}────────────────────────────────────────────────────────────────────${C_RESET}"
-    echo -e "${C_BG_BLUE}${C_WHITE} [$CURRENT_INDEX/$TOTAL_COUNT] ${C_RESET} 🚀 ${C_BOLD}正在导入${C_RESET} ${C_CYAN}$(basename "$sql_file")${C_RESET}..."
-    if ! "$PYTHON_BIN" "$SCRIPT_DIR/apply_sql.py" "$sql_file" "${COMMON_ARGS[@]}"; then
-        echo -e "${C_RED}❌ 导入失败：$(basename "$sql_file")${C_RESET}" >&2
-        exit 1
-    fi
-    # 记录最后一次成功应用的 SQL 脚本
-    echo "$(basename "$sql_file")" > "$LAST_RECORD_FILE"
-done
-
-# 获取迁移执行后数据库中的数据表列表
-AFTER_TABLES_JSON=$("$PYTHON_BIN" "$SCRIPT_DIR/apply_sql.py" --list-tables "${COMMON_ARGS[@]}" 2>/dev/null || echo "[]")
-
-echo -e "${C_GRAY}────────────────────────────────────────────────────────────────────${C_RESET}"
-echo -e "${C_BOLD}${C_GREEN}✅ 本次选中的 $TOTAL_COUNT 个 PostgreSQL 迁移 SQL 文件全部执行成功！${C_RESET}"
-echo ""
-
-# 调用 Python 生成结构化统计汇总
-"$PYTHON_BIN" - << EOF
-import json, sys
-
-is_tty = sys.stdout.isatty() or '${FORCE_COLOR:-}' != ''
-C_RESET = "\033[0m" if is_tty else ""
-C_BOLD = "\033[1m" if is_tty else ""
-C_GREEN = "\033[38;5;46m" if is_tty else ""
-C_YELLOW = "\033[38;5;220m" if is_tty else ""
-C_CYAN = "\033[38;5;51m" if is_tty else ""
-C_WHITE = "\033[1;37m" if is_tty else ""
-C_GRAY = "\033[38;5;245m" if is_tty else ""
-
-try:
-    before = set(json.loads('''$BEFORE_TABLES_JSON'''))
-except Exception:
-    before = set()
-
-try:
-    after = set(json.loads('''$AFTER_TABLES_JSON'''))
-except Exception:
-    after = set()
-
-new_tables = sorted(list(after - before))
-after_tables = sorted(list(after))
-altered_tables = sorted(list(set('''${ALTERED_TABLES_LIST[*]}'''.split())))
-
-print(f"{C_CYAN}╭──────────────────────────────────────────────────╮{C_RESET}")
-print(f"{C_CYAN}│{C_RESET} {C_BOLD}${C_GREEN}📊 数据库迁移执行结果统计 (Migration Summary)${C_RESET}    {C_CYAN}│{C_RESET}")
-print(f"{C_CYAN}╰──────────────────────────────────────────────────╯{C_RESET}")
-print(f"  🎯 {C_GRAY}目标数据库    :{C_RESET} {C_BOLD}{C_YELLOW}$PG_DATABASE{C_RESET}")
-print(f"  📁 {C_GRAY}迁移脚本总数  :{C_RESET} {C_BOLD}${C_GREEN}$TOTAL_COUNT 个 (全部成功){C_RESET}")
-print(f"  ✨ {C_GRAY}真实新增数据表:{C_RESET} {C_BOLD}${C_GREEN}{len(new_tables)} 个{C_RESET}")
-if new_tables:
-    if len(new_tables) <= 10:
-        for t in new_tables:
-            print(f"     {C_GREEN}+{C_RESET} {C_WHITE}{t}{C_RESET}")
-    else:
-        for t in new_tables[:5]:
-            print(f"     {C_GREEN}+{C_RESET} {C_WHITE}{t}{C_RESET}")
-        print(f"     {C_GRAY}... (省略 {len(new_tables) - 8} 个表) ...{C_RESET}")
-        for t in new_tables[-3:]:
-            print(f"     {C_GREEN}+{C_RESET} {C_WHITE}{t}{C_RESET}")
-
-print(f"  🔨 {C_GRAY}结构变更数据表:{C_RESET} {C_BOLD}{C_YELLOW}{len(altered_tables)} 个{C_RESET}")
-if altered_tables:
-    if len(altered_tables) <= 10:
-        for t in altered_tables:
-            print(f"     {C_YELLOW}*{C_RESET} {C_WHITE}{t}{C_RESET}")
-    else:
-        for t in altered_tables[:5]:
-            print(f"     {C_YELLOW}*{C_RESET} {C_WHITE}{t}{C_RESET}")
-        print(f"     {C_GRAY}... (省略 {len(altered_tables) - 8} 个表) ...{C_RESET}")
-        for t in altered_tables[-3:]:
-            print(f"     {C_YELLOW}*{C_RESET} {C_WHITE}{t}{C_RESET}")
-
-print(f"  📦 {C_GRAY}当前目标库表数:{C_RESET} {C_BOLD}{C_CYAN}{len(after_tables)} 个{C_RESET}")
-print(f"{C_CYAN}──────────────────────────────────────────────────{C_RESET}")
-EOF
-
-# 如果包含 baseline 或者是 ALL 模式，引导用户创建默认管理员
-if [[ "$BASELINE_INCLUDED" == "true" ]] || [ "$MODE" = "ALL" ]; then
-    echo -e "${C_GRAY}────────────────────────────────────────────────────────────────────${C_RESET}"
-    read -r -p "$(echo -e "${C_BOLD}${C_YELLOW}是否需要顺带创建默认管理员 admin 并生成新的 API Key？ (推荐首次部署时创建) [Y/N]: ${C_RESET}")" RUN_INIT_ADMIN
-    RUN_INIT_ADMIN_UPPER=$(echo "$RUN_INIT_ADMIN" | tr '[:lower:]' '[:upper:]')
-    if [ "$RUN_INIT_ADMIN_UPPER" == "Y" ] || [ "$RUN_INIT_ADMIN_UPPER" == "YES" ]; then
-        echo -e "🚀 ${C_BOLD}${C_CYAN}正在创建默认管理员账号...${C_RESET}"
-        if DATABASE_TYPE=postgresql \
-            POSTGRES_HOST="$PG_HOST" \
-            POSTGRES_PORT="$PG_PORT" \
-            POSTGRES_USER="$PG_USER" \
-            POSTGRES_PASSWORD="$PG_PASSWORD" \
-            POSTGRES_DB="$PG_DATABASE" \
-            "$PYTHON_BIN" "$ROOT_DIR/scripts/create_admin_user.py"; then
-            echo -e "${C_BOLD}${C_GREEN}✅ 默认管理员账号创建完成。${C_RESET}"
-            echo -e "   ${C_CYAN}如需重新生成 API Key：${C_WHITE}./db-prod-pg/create-admin-key.sh${C_RESET}"
-            echo -e "   ${C_CYAN}如需设置登录密码：${C_WHITE}./db-prod-pg/reset-admin-password.sh${C_RESET}"
-        else
-            echo -e "${C_RED}❌ 默认管理员账号创建失败。${C_RESET}" >&2
+if [ "$DB_EXISTS" != "1" ]; then
+    CREATE_DB_CMD="CREATE DATABASE \"$PG_DATABASE\" WITH ENCODING 'UTF8';"
+    if ! PGPASSWORD="$PG_PASSWORD" psql -h "$PG_HOST" -p "$PG_PORT" -U "$PG_USER" -d postgres -c "$CREATE_DB_CMD" >/dev/null 2>&1; then
+        if ! PGPASSWORD="$PG_PASSWORD" psql -h "$PG_HOST" -p "$PG_PORT" -U "$PG_USER" -d "$PG_DATABASE" -c "SELECT 1;" >/dev/null 2>&1; then
+            echo -e "${C_RED}❌ 数据库连接或创建失败，请检查连接参数（如 Host、User、Password）或目标数据库权限。${C_RESET}" >&2
+            exit 1
         fi
-    else
-        echo -e "${C_GRAY}💡 已跳过管理员创建，可稍后运行 ./db-prod-pg/create-admin-user.sh。${C_RESET}"
     fi
 fi
+
+# 获取迁移执行前数据库中的数据表列表
+BEFORE_TABLES=()
+BEFORE_TABLES_RAW=$(PGPASSWORD="$PG_PASSWORD" psql -h "$PG_HOST" -p "$PG_PORT" -U "$PG_USER" -d "$PG_DATABASE" -t -A -c "SELECT tablename FROM pg_tables WHERE schemaname = 'public' ORDER BY tablename;" 2>/dev/null || true)
+while IFS= read -r tbl; do
+    [ -n "$tbl" ] && BEFORE_TABLES+=("$tbl")
+done <<< "$BEFORE_TABLES_RAW"
+
+TOTAL_EXEC_STMTS=0
+ALTERED_TABLES_LIST=()
+
+# 逐个执行 SQL 文件
+CURRENT_INDEX=0
+echo -e "🚀 ${C_BOLD}${C_CYAN}开始执行 PostgreSQL 迁移脚本...${C_RESET}"
+for f in "${FINAL_SQL_FILES[@]}"; do
+    CURRENT_INDEX=$((CURRENT_INDEX + 1))
+    echo -e "${C_GRAY}────────────────────────────────────────────────────────────────────${C_RESET}"
+    echo -e "${C_BG_BLUE}${C_WHITE} [$CURRENT_INDEX/$TOTAL_COUNT] ${C_RESET} 🚀 ${C_BOLD}Applying${C_RESET} ${C_CYAN}$f${C_RESET}..."
+
+    # 从 SQL 文件中提取结构变更数据表 (ALTER TABLE)
+    while IFS= read -r line; do
+        if [[ "$line" =~ ^[[:space:]]*ALTER[[:space:]]+TABLE[[:space:]]+(ONLY[[:space:]]+)?(\"?[a-zA-Z0-9_]+\"?\.)?\"?([a-zA-Z0-9_]+)\"? ]]; then
+            ALTERED_TABLES_LIST+=("${BASH_REMATCH[3]}")
+        fi
+    done < "$f"
+
+    # 执行文件
+    EXEC_ERR=$(mktemp)
+    if ! PGPASSWORD="$PG_PASSWORD" psql -h "$PG_HOST" -p "$PG_PORT" -U "$PG_USER" -d "$PG_DATABASE" -v ON_ERROR_STOP=1 -f "$f" >/dev/null 2>"$EXEC_ERR"; then
+        echo -e "${C_RED}❌ Failed to apply $f${C_RESET}" >&2
+        if [ -s "$EXEC_ERR" ]; then
+            echo -e "${C_YELLOW}—— PostgreSQL 原始错误 ——${C_RESET}" >&2
+            cat "$EXEC_ERR" >&2
+        fi
+        rm -f "$EXEC_ERR"
+        exit 1
+    fi
+    rm -f "$EXEC_ERR"
+
+    # 记录最后一次成功应用的 SQL 脚本
+    echo "$(basename "$f")" > "$LAST_RECORD_FILE"
+done
+
+# 迁移结果统计
+AFTER_TABLES=()
+AFTER_TABLES_RAW=$(PGPASSWORD="$PG_PASSWORD" psql -h "$PG_HOST" -p "$PG_PORT" -U "$PG_USER" -d "$PG_DATABASE" -t -A -c "SELECT tablename FROM pg_tables WHERE schemaname = 'public' ORDER BY tablename;" 2>/dev/null || true)
+while IFS= read -r tbl; do
+    [ -n "$tbl" ] && AFTER_TABLES+=("$tbl")
+done <<< "$AFTER_TABLES_RAW"
+
+# 计算真实新增的表
+NEW_TABLES=()
+for atbl in "${AFTER_TABLES[@]}"; do
+    local_found=false
+    for btbl in "${BEFORE_TABLES[@]}"; do
+        if [ "$atbl" = "$btbl" ]; then
+            local_found=true
+            break
+        fi
+    done
+    if [ "$local_found" = false ]; then
+        NEW_TABLES+=("$atbl")
+    fi
+done
+
+# 计算去重后的变更表
+UNIQUE_ALTERED_TABLES=()
+if [ ${#ALTERED_TABLES_LIST[@]} -gt 0 ]; then
+    while IFS= read -r tbl; do
+        [ -n "$tbl" ] && UNIQUE_ALTERED_TABLES+=("$tbl")
+    done < <(printf "%s\n" "${ALTERED_TABLES_LIST[@]}" | awk '!seen[$0]++')
+fi
+
+echo -e "${C_GRAY}────────────────────────────────────────────────────────────────────${C_RESET}"
+echo -e "${C_BOLD}${C_GREEN}✅ 本次选中的 $TOTAL_COUNT 个数据库迁移 SQL 文件全部执行成功！${C_RESET}"
+echo ""
+echo -e "${C_CYAN}╭──────────────────────────────────────────────────╮${C_RESET}"
+echo -e "${C_CYAN}│${C_RESET} ${C_BOLD}${C_GREEN}📊 数据库迁移执行结果统计 (Migration Summary)${C_RESET}    ${C_CYAN}│${C_RESET}"
+echo -e "${C_CYAN}╰──────────────────────────────────────────────────╯${C_RESET}"
+echo -e "  🎯 ${C_GRAY}目标数据库    :${C_RESET} ${C_BOLD}${C_YELLOW}$PG_DATABASE${C_RESET}"
+echo -e "  📁 ${C_GRAY}迁移脚本总数  :${C_RESET} ${C_BOLD}${C_GREEN}$TOTAL_COUNT 个 (全部成功)${C_RESET}"
+echo -e "  ✨ ${C_GRAY}真实新增数据表:${C_RESET} ${C_BOLD}${C_GREEN}${#NEW_TABLES[@]} 个${C_RESET}"
+if [ ${#NEW_TABLES[@]} -gt 0 ]; then
+    if [ ${#NEW_TABLES[@]} -le 10 ]; then
+        for tbl in "${NEW_TABLES[@]}"; do
+            echo -e "     ${C_GREEN}+${C_RESET} ${C_WHITE}$tbl${C_RESET}"
+        done
+    else
+        for ((i=0; i<5; i++)); do
+            echo -e "     ${C_GREEN}+${C_RESET} ${C_WHITE}${NEW_TABLES[i]}${C_RESET}"
+        done
+        echo -e "     ${C_GRAY}... (省略 $(( ${#NEW_TABLES[@]} - 8 )) 个表) ...${C_RESET}"
+        for ((i=${#NEW_TABLES[@]}-3; i<${#NEW_TABLES[@]}; i++)); do
+            echo -e "     ${C_GREEN}+${C_RESET} ${C_WHITE}${NEW_TABLES[i]}${C_RESET}"
+        done
+    fi
+fi
+echo -e "  🔨 ${C_GRAY}结构变更数据表:${C_RESET} ${C_BOLD}${C_YELLOW}${#UNIQUE_ALTERED_TABLES[@]} 个${C_RESET}"
+if [ ${#UNIQUE_ALTERED_TABLES[@]} -gt 0 ]; then
+    if [ ${#UNIQUE_ALTERED_TABLES[@]} -le 10 ]; then
+        for tbl in "${UNIQUE_ALTERED_TABLES[@]}"; do
+            echo -e "     ${C_YELLOW}*${C_RESET} ${C_WHITE}$tbl${C_RESET}"
+        done
+    else
+        for ((i=0; i<5; i++)); do
+            echo -e "     ${C_YELLOW}*${C_RESET} ${C_WHITE}${UNIQUE_ALTERED_TABLES[i]}${C_RESET}"
+        done
+        echo -e "     ${C_GRAY}... (省略 $(( ${#UNIQUE_ALTERED_TABLES[@]} - 8 )) 个表) ...${C_RESET}"
+        for ((i=${#UNIQUE_ALTERED_TABLES[@]}-3; i<${#UNIQUE_ALTERED_TABLES[@]}; i++)); do
+            echo -e "     ${C_YELLOW}*${C_RESET} ${C_WHITE}${UNIQUE_ALTERED_TABLES[i]}${C_RESET}"
+        done
+    fi
+fi
+echo -e "  📦 ${C_GRAY}当前目标库表数:${C_RESET} ${C_BOLD}${C_CYAN}${#AFTER_TABLES[@]} 个${C_RESET}"
+echo -e "${C_CYAN}──────────────────────────────────────────────────${C_RESET}"

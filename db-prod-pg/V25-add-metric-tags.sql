@@ -3,4 +3,4 @@
 -- 用途：为业务指标增加标签列表，辅助检索分类，与 meta_datasets.tags 保持一致
 -- -----------------------------------------------------------------------------
 ALTER TABLE "meta_metrics"
-    ADD COLUMN "tags" JSON;
+    ADD COLUMN IF NOT EXISTS "tags" JSON;

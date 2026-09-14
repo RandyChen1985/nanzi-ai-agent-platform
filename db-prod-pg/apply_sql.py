@@ -17,7 +17,7 @@ from psycopg import sql
 
 
 DATABASE_SWITCH_RE = re.compile(
-    r"^\s*(?:CREATE\s+DATABASE\b|DROP\s+DATABASE\b|ALTER\s+DATABASE\b|\\connect\b)",
+    r"^\s*(?:CREATE\s+DATABASE\b|DROP\s+DATABASE\b|ALTER\s+DATABASE\b|\\connect\b|\\c\b)",
     re.IGNORECASE,
 )
 DATABASE_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
@@ -50,7 +50,7 @@ def parse_args(argv=None):
     parser = argparse.ArgumentParser(
         description="Apply a SQL migration to an explicitly selected PostgreSQL database."
     )
-    parser.add_argument("file_path", help="SQL file to execute")
+    parser.add_argument("file_path", nargs="?", help="SQL file to execute")
     parser.add_argument("--host", help="PostgreSQL host")
     parser.add_argument("--port", type=int, default=5432, help="PostgreSQL port")
     parser.add_argument("--user", help="PostgreSQL user")
@@ -69,7 +69,15 @@ def parse_args(argv=None):
         action="store_true",
         help="Skip the per-file confirmation. Use only after an outer wrapper confirmed.",
     )
+    parser.add_argument(
+        "--list-tables",
+        action="store_true",
+        help="List existing base tables in public schema as JSON and exit",
+    )
     args = parser.parse_args(argv)
+
+    if not args.list_tables and not args.file_path:
+        parser.error("the following arguments are required: file_path")
 
     missing = [name for name in ("host", "user", "database") if not getattr(args, name)]
     if missing and not args.interactive:
@@ -324,10 +332,32 @@ def apply_sql(file_path: str, config: DbConfig) -> None:
     print("✅ SQL applied successfully.")
 
 
+def list_database_tables(config: DbConfig) -> int:
+    """Print the list of base tables in the target database as a JSON array."""
+    import json
+    try:
+        with psycopg.connect(**_connection_kwargs(config, config.database)) as connection:
+            rows = connection.execute(
+                """
+                SELECT tablename
+                FROM pg_tables
+                WHERE schemaname = 'public'
+                ORDER BY tablename;
+                """
+            ).fetchall()
+            print(json.dumps([r[0] for r in rows]))
+        return 0
+    except Exception:
+        print(json.dumps([]))
+        return 0
+
+
 def main(argv=None):
     args = parse_args(argv)
     try:
         config = build_config(args)
+        if args.list_tables:
+            return list_database_tables(config)
         if not args.yes:
             confirm_execution(config, args.file_path)
         apply_sql(args.file_path, config)
