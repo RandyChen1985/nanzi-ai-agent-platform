@@ -1580,7 +1580,7 @@ local（适用于同一平台可直连数据库）：平台使用本地已配置
 指定动态创建独立专属 PVC 时所使用的 Kubernetes 存储类（StorageClass）。
 
 【生效前提】
-⚠️ 仅在上方 sandbox_k8s_existing_pvc 留空时生效。如果已指定了已有共享 PVC，此配置项会被自动忽略。
+⚠️ 仅在沙箱回退为「动态独立卷」模式时生效：即上方 sandbox_k8s_existing_pvc 填了 none（强制独立临时卷），或留空但平台数据卷自动探测失败。若已共享平台/已有 PVC，则此配置项会被自动忽略。
 
 【可以为空吗？】
 可以为空（默认留空）。
@@ -1988,7 +1988,7 @@ const configShortDescriptions: Record<string, string> = {
   sandbox_k8s_cpu_limit: 'k8s 策略沙箱 Pod CPU 限制上限（limits.cpu，例如 1000m、2），留空表示不限。',
   sandbox_k8s_memory_request: 'k8s 策略沙箱 Pod 内存请求保障（requests.memory，默认 128Mi），留空表示不设 requests。',
   sandbox_k8s_memory_limit: 'k8s 策略沙箱 Pod 内存限制上限（limits.memory，例如 512Mi、1Gi），留空表示不限。',
-  sandbox_k8s_delete_pvc_on_close: 'k8s 策略沙箱到期关闭时是否同步删除动态创建的独立专属 PVC（默认 true）。',
+  sandbox_k8s_delete_pvc_on_close: 'k8s 策略沙箱到期关闭时是否同步删除动态创建的独立专属 PVC（默认 true）。仅对动态独立卷模式生效；共享的平台/已有 PVC 受保护，绝不删除。',
   sandbox_e2b_api_key: 'e2b 策略使用的 E2B API Key，留空则读取 E2B_API_KEY 环境变量。',
   sandbox_e2b_template: 'e2b 策略使用的沙箱模板名，留空使用默认模板 base。',
   sandbox_e2b_timeout_seconds: 'e2b 策略沙箱超时时间（秒），默认 300。',
@@ -3659,7 +3659,7 @@ onUnmounted(() => {
                                 type="text"
                                 v-model="item.value"
                                 :disabled="isConfigItemDisabled(String(category), item)"
-                                :placeholder="item.key === 'sandbox_k8s_existing_pvc' ? '例如 nanzi-app-data（可选，留空为独立临时卷）' : (item.key === 'sandbox_k8s_storage_class' ? '例如 local-path、gp3（可选，留空使用默认存储类）' : '')"
+                                :placeholder="item.key === 'sandbox_k8s_existing_pvc' ? '留空自动共享平台数据卷；填 none 强制独立临时卷；也可填具体 PVC 名' : (item.key === 'sandbox_k8s_storage_class' ? '例如 local-path、gp3（可选，留空使用默认存储类）' : '')"
                                 class="shadow-sm focus:ring-primary focus:border-primary block w-full sm:text-sm border-gray-300 rounded-md bg-gray-100 disabled:opacity-70 disabled:cursor-not-allowed"
                               />
                                    <button
@@ -4429,13 +4429,14 @@ onUnmounted(() => {
                                </p>
                              </div>
                               <div v-else-if="item.key === 'sandbox_k8s_existing_pvc'" class="mt-2 text-xs text-sky-800 bg-sky-50/70 p-3 rounded-xl border border-sky-100/80 leading-relaxed space-y-1.5">
-                                <div>💡 <strong>参数作用与是否必填：</strong>可选参数（<strong>建议留空</strong>）。用于决定沙箱 Pod 是共享已有 PVC 还是每次会话创建全新独立卷。</div>
-                                <div>📂 <strong>留空（默认处理）：</strong>走<strong>独立临时 PVC 模式</strong>。平台会自动在集群中申请一张独立的专属 PVC（按下方 storage_size 大小），会话结束且超时后随 Pod 自动删除，用户/会话间数据物理隔离。</div>
-                                <div>🔗 <strong>填写的格式：</strong>填写 Kubernetes 集群当前命名空间中<strong>已存在的 PVC 资源名称</strong>（例如 <code class="font-mono text-sky-900 bg-white/80 px-1 py-0.5 rounded border border-sky-200">nanzi-app-data</code> 或 <code class="font-mono text-sky-900 bg-white/80 px-1 py-0.5 rounded border border-sky-200">agent-shared-pvc</code>，纯名称，不带路径）。</div>
-                                <div>🎯 <strong>最终映射路径：</strong>挂载至沙箱容器内部的 <code class="font-mono text-sky-900 bg-white/80 px-1 py-0.5 rounded border border-sky-200">/workspace</code>。底层通过 <code class="font-mono text-sky-900 bg-white/80 px-1 py-0.5 rounded border border-sky-200">subPath: agent_workspaces/{user_key}/sandbox</code> 精准隔离，沙箱内只能读写该用户自身目录，无法越权访问整卷根目录；若平台挂载了公共文档，则自动只读挂载至 <code class="font-mono text-sky-900 bg-white/80 px-1 py-0.5 rounded border border-sky-200">/workspace/docs</code>。</div>
+                                <div>💡 <strong>参数作用与是否必填：</strong>可选参数（<strong>建议留空</strong>）。用于决定沙箱 Pod 的 <code class="font-mono text-sky-900 bg-white/80 px-1 py-0.5 rounded border border-sky-200">/workspace</code> 是「共享平台数据卷中的用户工作区（与 Docker 沙箱一致）」还是「每个工作区独立的全新临时卷（强隔离）」。<strong>留空即可满足绝大多数场景，无需手工填写卷名。</strong></div>
+                                <div>📂 <strong>留空（默认处理）：</strong>走<strong>自动探测共享模式</strong>。平台自动读取自身 Pod 的存储配置，探测出自身数据目录（<code class="font-mono text-sky-900 bg-white/80 px-1 py-0.5 rounded border border-sky-200">/app/data</code>）背后的 PVC 并共享之，因此兼容自定义 PVC 名的部署；若探测失败（平台未运行在 Kubernetes 中、数据目录不是 PVC 等），则安全回退为独立临时卷，并在日志与「⚡ 校验 K8s 集群与 RBAC 权限」结果中给出提醒。</div>
+                                <div>🧱 <strong>想强制独立临时卷（强隔离）：</strong>填写 <code class="font-mono text-sky-900 bg-white/80 px-1 py-0.5 rounded border border-sky-200">none</code>（也支持 <code class="font-mono text-sky-900 bg-white/80 px-1 py-0.5 rounded border border-sky-200">disabled</code> / <code class="font-mono text-sky-900 bg-white/80 px-1 py-0.5 rounded border border-sky-200">off</code> / <code class="font-mono text-sky-900 bg-white/80 px-1 py-0.5 rounded border border-sky-200">false</code> / <code class="font-mono text-sky-900 bg-white/80 px-1 py-0.5 rounded border border-sky-200">-</code>）。平台为每个工作区动态申请独立 PVC（按下方 storage_size 大小），会话结束且超时后随 Pod 自动删除，用户/会话间数据物理隔离——此模式下沙箱内看不到用户工作区（属有意选择，平台不再告警）。</div>
+                                <div>🔗 <strong>要显式指定某个共享 PVC 时：</strong>填写当前命名空间中<strong>已存在的 PVC 资源名称</strong>（例如 <code class="font-mono text-sky-900 bg-white/80 px-1 py-0.5 rounded border border-sky-200">nanzi-ai-agent-data</code>（平台主 PVC）或 <code class="font-mono text-sky-900 bg-white/80 px-1 py-0.5 rounded border border-sky-200">my-shared-pvc</code>，纯名称，不带路径）。⚠️ PVC 为命名空间级资源，沙箱命名空间必须与平台同命名空间才能引用该 PVC，否则沙箱 Pod 会因找不到 PVC 而长期 Pending。</div>
+                                <div>🎯 <strong>最终映射路径：</strong>共享模式下挂载至沙箱容器内部的 <code class="font-mono text-sky-900 bg-white/80 px-1 py-0.5 rounded border border-sky-200">/workspace</code>。底层通过 <code class="font-mono text-sky-900 bg-white/80 px-1 py-0.5 rounded border border-sky-200">subPath: agent_workspaces/{user_key}</code> 挂载该用户<strong>完整工作区</strong>（与 Docker 沙箱一致，可读写其 sessions/docs 等全部内容），且无法访问整卷根目录或其他用户数据；若平台挂载了公共文档，则自动只读挂载至 <code class="font-mono text-sky-900 bg-white/80 px-1 py-0.5 rounded border border-sky-200">/workspace/public/docs</code>。</div>
                               </div>
                               <div v-else-if="item.key === 'sandbox_k8s_storage_class'" class="mt-2 text-xs text-sky-800 bg-sky-50/70 p-3 rounded-xl border border-sky-100/80 leading-relaxed space-y-1.5">
-                                <div>💡 <strong>参数作用与生效前提：</strong>可选参数（<strong>默认留空</strong>）。<strong>仅在上方 sandbox_k8s_existing_pvc 留空（即动态创建独立卷模式）时生效</strong>；若指定了已有 PVC，则此配置项自动被忽略。</div>
+                                <div>💡 <strong>参数作用与生效前提：</strong>可选参数（<strong>默认留空</strong>）。<strong>仅在沙箱回退为动态独立卷模式时生效</strong>（即上方 <code class="font-mono text-sky-900 bg-white/80 px-1 py-0.5 rounded border border-sky-200">sandbox_k8s_existing_pvc</code> 填了 <code class="font-mono text-sky-900 bg-white/80 px-1 py-0.5 rounded border border-sky-200">none</code>，或留空但平台数据卷自动探测失败）；若已共享平台/已有 PVC，则此配置项自动被忽略。</div>
                                 <div>⚙️ <strong>留空（默认处理）：</strong>创建 PVC 时不指定 StorageClass，Kubernetes 会自动使用集群管理员标记为 <code class="font-mono text-sky-900 bg-white/80 px-1 py-0.5 rounded border border-sky-200">(default)</code> 的默认存储类进行自动分配。</div>
                                 <div>📝 <strong>填写的格式：</strong>填写集群支持的存储类标识名称（可通过运维终端命令 <code class="font-mono text-sky-900 bg-white/80 px-1 py-0.5 rounded border border-sky-200">kubectl get sc</code> 查询，例如 <code class="font-mono text-sky-900 bg-white/80 px-1 py-0.5 rounded border border-sky-200">local-path</code>、<code class="font-mono text-sky-900 bg-white/80 px-1 py-0.5 rounded border border-sky-200">nfs-client</code> 或云厂商提供的 <code class="font-mono text-sky-900 bg-white/80 px-1 py-0.5 rounded border border-sky-200">gp3</code>、<code class="font-mono text-sky-900 bg-white/80 px-1 py-0.5 rounded border border-sky-200">alicloud-disk-topology</code>）。</div>
                               </div>
