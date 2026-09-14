@@ -11,11 +11,28 @@ from app.services.metadata_drift_service import MetadataDriftService
 pytestmark = pytest.mark.no_infrastructure
 
 
+def _make_async_db_mock() -> AsyncMock:
+    """构造与 SQLAlchemy ``AsyncSession`` 语义对齐的 mock。
+
+    ``AsyncMock`` 会把所有属性都变成协程，但 ``AsyncSession.add()`` 是同步方法，
+    ``begin_nested()`` 也是同步方法并返回异步上下文管理器。若不显式修正，被测代码中的
+    ``db.add(...)`` 与 ``async with db.begin_nested():`` 会创建从未被 await 的协程，
+    触发 ``RuntimeWarning: coroutine ... was never awaited``（进而表现为
+    ``PytestUnraisableExceptionWarning``，并可能被错误归因到其它测试）。
+    """
+    db = AsyncMock()
+    db.add = MagicMock()
+    nested_ctx = MagicMock()
+    nested_ctx.__aenter__ = AsyncMock(return_value=None)
+    nested_ctx.__aexit__ = AsyncMock(return_value=False)
+    db.begin_nested = MagicMock(return_value=nested_ctx)
+    return db
+
+
 @pytest.mark.asyncio
 async def test_record_drift_alert_creates_new_alert():
     """测试首次检出 Schema 漂移时，新增一条 pending 状态告警。"""
-    mock_db = AsyncMock()
-    mock_db.add = MagicMock()
+    mock_db = _make_async_db_mock()
     # 第一次查询已存在告警返回 None，查询 table_id 返回 101
     mock_scalars = MagicMock()
     mock_scalars.first.return_value = None
@@ -52,8 +69,7 @@ async def test_record_drift_alert_creates_new_alert():
 @pytest.mark.asyncio
 async def test_record_drift_alert_with_dataset_name_resolution():
     """测试仅传入 dataset_name 时，通过数据库反查成功获取 dataset_id 并写入告警，避免 None 导致 1048 报错。"""
-    mock_db = AsyncMock()
-    mock_db.add = MagicMock()
+    mock_db = _make_async_db_mock()
 
     # 1. 反查 dataset_id 返回 55
     mock_ds_res = MagicMock()
@@ -91,7 +107,7 @@ async def test_record_drift_alert_with_dataset_name_resolution():
 @pytest.mark.asyncio
 async def test_record_drift_alert_increments_hit_count_when_exists():
     """测试同表同列已有待处理告警时，自动累加 hit_count 并更新时间。"""
-    mock_db = AsyncMock()
+    mock_db = _make_async_db_mock()
     existing_alert = MetaSchemaDriftAlert(
         id=1,
         dataset_id=1,
@@ -124,7 +140,7 @@ async def test_record_drift_alert_increments_hit_count_when_exists():
 @pytest.mark.asyncio
 async def test_resolve_alert_drop_column():
     """测试人机协同处置：选择下线字段时，删除对应 MetaColumn 并将告警标记为 resolved。"""
-    mock_db = AsyncMock()
+    mock_db = _make_async_db_mock()
     alert = MetaSchemaDriftAlert(
         id=1,
         dataset_id=10,
@@ -159,7 +175,7 @@ async def test_resolve_alert_drop_column():
 @pytest.mark.asyncio
 async def test_resolve_alert_ignore():
     """测试人机协同处置：选择忽略告警时，保留元数据列，告警状态置为 ignored。"""
-    mock_db = AsyncMock()
+    mock_db = _make_async_db_mock()
     alert = MetaSchemaDriftAlert(
         id=1,
         dataset_id=10,
@@ -183,8 +199,7 @@ async def test_resolve_alert_ignore():
 @pytest.mark.asyncio
 async def test_resolve_alert_add_column():
     """测试人机协同处置：选择将物理新增字段录入元数据时，创建 MetaColumn 并标记告警为已解决。"""
-    mock_db = AsyncMock()
-    mock_db.add = MagicMock()
+    mock_db = _make_async_db_mock()
 
     alert = MetaSchemaDriftAlert(
         id=2,
@@ -215,9 +230,10 @@ async def test_resolve_alert_add_column():
     assert res["status"] == 1
     assert res["column_added"] is True
     assert alert.status == 1
-    mock_db.add.assert_called_once()
-    added_col = mock_db.add.call_args[0][0]
-    assert isinstance(added_col, MetaColumn)
+    # db.add 还会被 ChangelogService 用于写入变更日志，这里只断言恰好录入了一个 MetaColumn
+    added_cols = [c.args[0] for c in mock_db.add.call_args_list if isinstance(c.args[0], MetaColumn)]
+    assert len(added_cols) == 1
+    added_col = added_cols[0]
     assert added_col.physical_name == "pue_ratio_v2"
     assert added_col.table_id == 101
     mock_db.commit.assert_called_once()
@@ -226,7 +242,7 @@ async def test_resolve_alert_add_column():
 @pytest.mark.asyncio
 async def test_batch_resolve_alerts():
     """测试批量处置告警。"""
-    mock_db = AsyncMock()
+    mock_db = _make_async_db_mock()
     alert1 = MetaSchemaDriftAlert(id=1, dataset_id=10, table_name="t1", column_name="c1", status=0)
     alert2 = MetaSchemaDriftAlert(id=2, dataset_id=10, table_name="t1", column_name="c2", status=0)
 
@@ -247,7 +263,7 @@ async def test_batch_resolve_alerts():
 @pytest.mark.asyncio
 async def test_get_drift_summary():
     """测试查询全局待处理告警总数与数据集分布映射。"""
-    mock_db = AsyncMock()
+    mock_db = _make_async_db_mock()
     mock_res = MagicMock()
     mock_res.all.return_value = [(1, 3), (2, 1)]
     mock_db.execute.return_value = mock_res
@@ -261,7 +277,7 @@ async def test_get_drift_summary():
 @pytest.mark.asyncio
 async def test_get_all_drift_alerts():
     """测试查询跨数据集全局漂移告警列表，并附带 dataset_name。"""
-    mock_db = AsyncMock()
+    mock_db = _make_async_db_mock()
     alert1 = MetaSchemaDriftAlert(id=1, dataset_id=10, table_name="t1", column_name="c1", status=0)
     alert2 = MetaSchemaDriftAlert(id=2, dataset_id=20, table_name="t2", column_name="c2", status=0)
 
@@ -280,7 +296,7 @@ async def test_get_all_drift_alerts():
 @pytest.mark.asyncio
 async def test_batch_resolve_alerts_global():
     """测试跨数据集全局批量处置。"""
-    mock_db = AsyncMock()
+    mock_db = _make_async_db_mock()
     alert1 = MetaSchemaDriftAlert(id=1, dataset_id=10, table_name="t1", column_name="c1", status=0)
     alert2 = MetaSchemaDriftAlert(id=2, dataset_id=20, table_name="t2", column_name="c2", status=0)
 
@@ -302,7 +318,7 @@ async def test_batch_resolve_alerts_global():
 @pytest.mark.asyncio
 async def test_batch_resolve_partial_failure_counts_failed():
     """测试批量处置部分失败时，failed_count 正确统计，processed_count 保持严格成功数。"""
-    mock_db = AsyncMock()
+    mock_db = _make_async_db_mock()
     alert1 = MetaSchemaDriftAlert(id=1, dataset_id=10, table_name="t1", column_name="c1", status=0)
     alert2 = MetaSchemaDriftAlert(id=2, dataset_id=10, table_name="t1", column_name="c2", status=0)
 
@@ -335,7 +351,7 @@ async def test_batch_resolve_partial_failure_counts_failed():
 @pytest.mark.asyncio
 async def test_resolve_alert_sync_type():
     """测试处置类型不匹配告警：将元数据字段类型校准为物理库实际类型。"""
-    mock_db = AsyncMock()
+    mock_db = _make_async_db_mock()
     alert = MetaSchemaDriftAlert(
         id=99,
         dataset_id=1,
@@ -402,7 +418,7 @@ def test_normalize_column_type_mapping():
 @pytest.mark.asyncio
 async def test_resolve_alert_records_changelog():
     """测试巡检处置操作成功记录数据集变更日志 (Changelog) 并记录操作人。"""
-    mock_db = AsyncMock()
+    mock_db = _make_async_db_mock()
     alert = MetaSchemaDriftAlert(
         id=77,
         dataset_id=3,
@@ -447,7 +463,7 @@ async def test_resolve_alert_records_changelog():
 @pytest.mark.asyncio
 async def test_resolve_alert_drop_table():
     """测试处置物理表缺失告警：从元数据中彻底下线整张表，关闭该表全部关联待处理告警并同步向量。"""
-    mock_db = AsyncMock()
+    mock_db = _make_async_db_mock()
     alert = MetaSchemaDriftAlert(
         id=88,
         dataset_id=1,
@@ -505,7 +521,7 @@ class _FakeLLMResponse:
 )
 async def test_analyze_new_column_ai_llm_success(mock_get_llm):
     """测试对新增字段发起 LLM 语义分析：成功返回建议的中文业务术语。"""
-    mock_db = AsyncMock()
+    mock_db = _make_async_db_mock()
     alert = MetaSchemaDriftAlert(
         id=50, dataset_id=3, table_name="device", column_name="billing_phone", status=0
     )
@@ -540,7 +556,7 @@ async def test_analyze_new_column_ai_llm_success(mock_get_llm):
 )
 async def test_analyze_new_column_ai_llm_failure_falls_back(mock_get_llm):
     """测试 LLM 语义分析失败时不影响流程：返回 llm_succeeded=False 且带错误信息。"""
-    mock_db = AsyncMock()
+    mock_db = _make_async_db_mock()
     alert = MetaSchemaDriftAlert(
         id=51, dataset_id=3, table_name="device", column_name="billing_phone", status=0
     )
@@ -567,7 +583,7 @@ async def test_analyze_new_column_ai_llm_failure_falls_back(mock_get_llm):
 @pytest.mark.asyncio
 async def test_analyze_new_column_ai_alert_not_found():
     """测试分析一个不存在的告警时抛出 ValueError。"""
-    mock_db = AsyncMock()
+    mock_db = _make_async_db_mock()
     mock_alert_res = MagicMock()
     mock_alert_res.scalars.return_value.first.return_value = None
     mock_db.execute.return_value = mock_alert_res
@@ -579,8 +595,7 @@ async def test_analyze_new_column_ai_alert_not_found():
 @pytest.mark.asyncio
 async def test_resolve_alert_add_column_with_confirmed_term():
     """测试 add_column 时传管理员确认的中文术语，优先级高于物理注释/英文兜底。"""
-    mock_db = AsyncMock()
-    mock_db.add = MagicMock()
+    mock_db = _make_async_db_mock()
 
     alert = MetaSchemaDriftAlert(
         id=60,
@@ -617,8 +632,10 @@ async def test_resolve_alert_add_column_with_confirmed_term():
 
     assert res["status"] == 1
     assert res["column_added"] is True
-    added_col = mock_db.add.call_args[0][0]
-    assert isinstance(added_col, MetaColumn)
+    # 只取 MetaColumn（db.add 还会被 ChangelogService 用于写入变更日志）
+    added_cols = [c.args[0] for c in mock_db.add.call_args_list if isinstance(c.args[0], MetaColumn)]
+    assert len(added_cols) == 1
+    added_col = added_cols[0]
     assert added_col.term == "PUE 能效比"
     assert added_col.description == "机房 PUE 能效比指标"
     assert added_col.synonyms == ["pue", "能效比"]
@@ -630,7 +647,7 @@ async def test_resolve_alert_add_column_with_confirmed_term():
 @pytest.mark.asyncio
 async def test_analyze_update_comment_ai_physical_comment_preferred():
     """物理库已有有效注释时，直接采用且不调用 LLM（from_source='physical'）。"""
-    mock_db = AsyncMock()
+    mock_db = _make_async_db_mock()
     alert = MetaSchemaDriftAlert(
         id=70, dataset_id=3, table_name="device", column_name="billing_phone", status=0
     )
@@ -672,7 +689,7 @@ async def test_analyze_update_comment_ai_physical_comment_preferred():
 )
 async def test_analyze_update_comment_ai_llm_success(mock_get_llm):
     """物理库无有效注释时，LLM 用语生成中文业务描述并保留现有 term。"""
-    mock_db = AsyncMock()
+    mock_db = _make_async_db_mock()
     alert = MetaSchemaDriftAlert(
         id=71, dataset_id=3, table_name="device", column_name="billing_phone", status=0
     )
@@ -711,7 +728,7 @@ async def test_analyze_update_comment_ai_llm_success(mock_get_llm):
 @pytest.mark.asyncio
 async def test_analyze_update_comment_ai_alert_not_found():
     """分析一个不存在的告警时抛出 ValueError。"""
-    mock_db = AsyncMock()
+    mock_db = _make_async_db_mock()
     mock_alert_res = MagicMock()
     mock_alert_res.scalars.return_value.first.return_value = None
     mock_db.execute.return_value = mock_alert_res
@@ -723,7 +740,7 @@ async def test_analyze_update_comment_ai_alert_not_found():
 @pytest.mark.asyncio
 async def test_resolve_alert_update_comment_with_confirmed_desc():
     """update_comment 处置：用管理员确认的描述更新字段备注，且保留现有业务术语。"""
-    mock_db = AsyncMock()
+    mock_db = _make_async_db_mock()
 
     alert = MetaSchemaDriftAlert(
         id=72, dataset_id=10, table_name="device_pue", column_name="pue_ratio", status=0
@@ -767,7 +784,7 @@ async def test_resolve_alert_update_comment_with_confirmed_desc():
 )
 async def test_batch_resolve_alerts_add_column_auto_ai(mock_get_llm):
     """测试批量录入新增字段时，物理注释优先采纳，无注释字段自动并发调用 LLM 补全。"""
-    mock_db = AsyncMock()
+    mock_db = _make_async_db_mock()
 
     alert1 = MetaSchemaDriftAlert(
         id=801, dataset_id=1, table_name="sys_log", column_name="created_at", status=0
@@ -841,7 +858,7 @@ async def test_record_drift_alert_core_dedup_distinguishes_drift_type():
 
     同一表同字段若分别触发 type_mismatch 与 missing_comment，应分别生成告警，不可互相吞没。
     """
-    mock_db = AsyncMock()
+    mock_db = _make_async_db_mock()
     # 模拟第一次检查不存在，添加 alert
     mock_res_empty = MagicMock()
     mock_res_empty.scalars.return_value.first.return_value = None
@@ -865,7 +882,7 @@ async def test_record_drift_alert_core_dedup_distinguishes_drift_type():
 @pytest.mark.asyncio
 async def test_resolve_alert_update_comment_skips_when_no_change():
     """测试 update_comment 在物理库无注释且未填写新备注时跳过处置，不产生虚假已解决 (I3)。"""
-    mock_db = AsyncMock()
+    mock_db = _make_async_db_mock()
 
     alert = MetaSchemaDriftAlert(
         id=73, dataset_id=10, table_name="device_pue", column_name="pue_ratio", status=0
