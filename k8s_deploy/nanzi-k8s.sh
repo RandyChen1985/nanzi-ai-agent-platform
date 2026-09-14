@@ -21,6 +21,9 @@ SANDBOX_NAMESPACE="nanzi-ai-agent"
 SANDBOX_LABEL="app.kubernetes.io/managed-by=agentscope"
 DEPLOYMENT="nanzi-ai-agent"
 SERVICE="nanzi-ai-agent"
+# 平台自身 Deployment Pod 的标签（deployment.yaml 的 app.kubernetes.io/name），
+# 用于定位平台 Pod，从而读出它挂载的共享数据卷（沙箱通过 subPath 复用的那块盘）。
+PLATFORM_APP_LABEL="app.kubernetes.io/name=${DEPLOYMENT}"
 
 # ==============================================================================
 # 终端颜色与样式配置 (POSIX 规范，兼容交互与管道重定向)
@@ -82,6 +85,32 @@ log_warn() {
 
 log_error() {
   printf "%b✖%b  %s\n" "${C_RED}" "${C_RESET}" "$*"
+}
+
+# 打印沙箱复用的平台共享数据卷（平台 Pod 挂载在 /app/data 的那块 PVC），
+# 供 status 与 sandboxes 复用。识别不到时给出说明或退化为列出非沙箱 PVC，
+# 绝不因探测失败而中断脚本。
+print_shared_workspace_volume() {
+  shared_claim=$(kubectl get pod -n "$SANDBOX_NAMESPACE" -l "$PLATFORM_APP_LABEL" \
+    -o jsonpath='{range .items[*]}{range .spec.volumes[*]}{.persistentVolumeClaim.claimName}{"\n"}{end}{end}' 2>/dev/null \
+    | grep -v '^[[:space:]]*$' | head -n 1 || true)
+
+  if [ -n "${shared_claim:-}" ]; then
+    printf "%b共享数据卷：%b" "${C_GRAY}" "${C_RESET}"
+    if ! kubectl get pvc "$shared_claim" -n "$SANDBOX_NAMESPACE" --no-headers -o wide 2>/dev/null; then
+      printf "%s（PVC 不存在或当前账号无权查看）\n" "$shared_claim"
+    fi
+    printf "%b（平台 Pod 挂载于 /app/data；沙箱通过 subPath: agent_workspaces/{user_key} 复用该卷，故共享模式下没有沙箱独立 PVC）%b\n" "${C_GRAY}" "${C_RESET}"
+    return 0
+  fi
+
+  platform_pvcs=$(kubectl get pvc -n "$SANDBOX_NAMESPACE" -l "$PLATFORM_APP_LABEL" --no-headers 2>/dev/null || true)
+  if [ -n "${platform_pvcs:-}" ]; then
+    printf "%b（未能从平台 Pod 识别共享数据卷，下面列出命名空间内非沙箱 PVC 供参考）%b\n" "${C_GRAY}" "${C_RESET}"
+    kubectl get pvc -n "$SANDBOX_NAMESPACE" -l "$PLATFORM_APP_LABEL" -o wide
+  else
+    printf "%b（未识别到平台共享数据卷：平台可能未以 PVC 方式提供数据目录，或为非默认部署）%b\n" "${C_GRAY}" "${C_RESET}"
+  fi
 }
 
 # 危险操作二次确认：默认 N（回车取消），仅输入 y/yes 才放行
@@ -164,8 +193,8 @@ case "${1:-}" in
     print_section "🖥" "2. 集群节点列表 (Nodes)"
     kubectl get nodes -o wide
 
-    print_section "🚀" "3. NanZi 平台应用资源 (Namespace: ${NAMESPACE})"
-    kubectl get pod,svc,ingress -n "$NAMESPACE" -o wide
+    print_section "🚀" "3. NanZi 平台应用资源 (Namespace: ${NAMESPACE}, 不含沙箱)"
+    kubectl get pod,svc,ingress -n "$NAMESPACE" -l "$PLATFORM_APP_LABEL" -o wide
 
     print_section "📦" "4. 沙箱工作区资源 (Namespace: ${SANDBOX_NAMESPACE}, 仅 AgentScope 托管资源)"
     if kubectl get namespace "$SANDBOX_NAMESPACE" >/dev/null 2>&1; then
@@ -178,6 +207,7 @@ case "${1:-}" in
     else
       printf "%b（命名空间 %s 尚未创建，启动首个沙箱会话时将自动拉起）%b\n" "${C_GRAY}" "${SANDBOX_NAMESPACE}" "${C_RESET}"
     fi
+    print_shared_workspace_volume
 
     printf "\n"
     printf "%b✔ 状态检查完毕%b\n" "${C_GREEN}" "${C_RESET}"
@@ -196,7 +226,10 @@ case "${1:-}" in
       else
         printf "%b（无沙箱独立 PVC：共享模式下沙箱通过 subPath 复用平台数据卷，属正常）%b\n" "${C_GRAY}" "${C_RESET}"
       fi
-      printf "%b提示：沙箱命名空间默认与平台同命名空间，此处仅列出 AgentScope 托管的沙箱资源（标签 %s）；平台自身 Pod/PVC（如 Deployment Pod、平台数据卷）不在此列，可用 kubectl 直接查看。%b\n" "${C_GRAY}" "${SANDBOX_LABEL}" "${C_RESET}"
+
+      print_section "🗄" "平台共享数据卷（沙箱通过 subPath 复用）"
+      print_shared_workspace_volume
+      printf "%b提示：沙箱命名空间默认与平台同命名空间，此处 Pod/PVC 仅列出 AgentScope 托管资源（标签 %s）；平台 Deployment Pod 不在此列，沙箱复用的平台数据卷见上方「平台共享数据卷」。%b\n" "${C_GRAY}" "${SANDBOX_LABEL}" "${C_RESET}"
     else
       log_warn "命名空间 ${SANDBOX_NAMESPACE} 暂未创建，平台在首次调度 K8S 原生沙箱时会自动创建。"
     fi
@@ -214,7 +247,7 @@ case "${1:-}" in
     kubectl rollout status deployment/"$DEPLOYMENT" -n "$NAMESPACE" --timeout=180s
 
     print_section "✨" "最新 Pod 运行状态"
-    kubectl get pods -n "$NAMESPACE" -o wide
+    kubectl get pods -n "$NAMESPACE" -l "$PLATFORM_APP_LABEL" -o wide
     log_success "NanZi Pod 滚动重启完成！"
     ;;
 
@@ -268,7 +301,7 @@ case "${1:-}" in
     kubectl rollout status deployment/"$DEPLOYMENT" -n "$NAMESPACE" --timeout=180s
 
     print_section "✨" "最新 Pod 运行状态"
-    kubectl get pods -n "$NAMESPACE" -o wide
+    kubectl get pods -n "$NAMESPACE" -l "$PLATFORM_APP_LABEL" -o wide
     printf "\n"
     log_success "强制重启完成！核对新 Pod 是否吃到最新镜像："
     log_info "  kubectl -n ${NAMESPACE} describe pod <新 Pod 名> | grep -A2 'Image:'"
@@ -320,7 +353,7 @@ case "${1:-}" in
     kubectl rollout status deployment/"$DEPLOYMENT" -n "$NAMESPACE" --timeout=180s
 
     print_section "✨" "更新后的 Pod 列表"
-    kubectl get pods -n "$NAMESPACE" -o wide
+    kubectl get pods -n "$NAMESPACE" -l "$PLATFORM_APP_LABEL" -o wide
     log_success "K3s 与 NanZi 整体重启流程顺利完成！"
     ;;
 
@@ -338,12 +371,19 @@ case "${1:-}" in
 
   events)
     print_header "最近集群事件倒序汇总"
-    print_section "🚀" "NanZi 平台事件 (${NAMESPACE})"
-    kubectl get events -n "$NAMESPACE" --sort-by='.lastTimestamp'
+    if [ "$SANDBOX_NAMESPACE" = "$NAMESPACE" ]; then
+      # 沙箱与平台同命名空间时两者事件是同一份（事件不支持按标签过滤），
+      # 合并为一个视图，避免同一列表被打印两次。
+      print_section "🚀" "命名空间事件 (${NAMESPACE}：平台 + 沙箱)"
+      kubectl get events -n "$NAMESPACE" --sort-by='.lastTimestamp'
+    else
+      print_section "🚀" "NanZi 平台事件 (${NAMESPACE})"
+      kubectl get events -n "$NAMESPACE" --sort-by='.lastTimestamp'
 
-    if kubectl get namespace "$SANDBOX_NAMESPACE" >/dev/null 2>&1; then
-      print_section "📦" "沙箱执行事件 (${SANDBOX_NAMESPACE})"
-      kubectl get events -n "$SANDBOX_NAMESPACE" --sort-by='.lastTimestamp'
+      if kubectl get namespace "$SANDBOX_NAMESPACE" >/dev/null 2>&1; then
+        print_section "📦" "沙箱执行事件 (${SANDBOX_NAMESPACE})"
+        kubectl get events -n "$SANDBOX_NAMESPACE" --sort-by='.lastTimestamp'
+      fi
     fi
     ;;
 
@@ -422,15 +462,15 @@ case "${1:-}" in
       health_emit fail "Deployment 存在" "Deployment/${DEPLOYMENT} 在 ${NAMESPACE} 未找到"
     fi
 
-    print_section "📦" "3. NanZi Pod 状态"
-    pod_issues=$(health_get get pods -n "$NAMESPACE" --no-headers 2>/dev/null | awk '$3 != "Running" && $1 != "NAME" && $1 != "" {print $1 ":" $3 ":" $4}')
-    pod_running=$(health_get get pods -n "$NAMESPACE" --no-headers 2>/dev/null | awk '$3 == "Running" {n++} END {print n+0}')
-    if kubectl get pods -n "$NAMESPACE" -o jsonpath='{range .items[*]}{.metadata.name}{" "}{.status.containerStatuses[0].state}{"\n"}{end}' 2>/dev/null | grep -qi "CrashLoopBackOff\|ImagePullBackOff"; then
+    print_section "📦" "3. NanZi Pod 状态 (不含沙箱)"
+    pod_issues=$(health_get get pods -n "$NAMESPACE" -l "$PLATFORM_APP_LABEL" --no-headers 2>/dev/null | awk '$3 != "Running" && $1 != "NAME" && $1 != "" {print $1 ":" $3 ":" $4}')
+    pod_running=$(health_get get pods -n "$NAMESPACE" -l "$PLATFORM_APP_LABEL" --no-headers 2>/dev/null | awk '$3 == "Running" {n++} END {print n+0}')
+    if kubectl get pods -n "$NAMESPACE" -l "$PLATFORM_APP_LABEL" -o jsonpath='{range .items[*]}{.metadata.name}{" "}{.status.containerStatuses[0].state}{"\n"}{end}' 2>/dev/null | grep -qi "CrashLoopBackOff\|ImagePullBackOff"; then
       health_emit fail "Pod 运行" "存在 CrashLoopBackOff / ImagePullBackOff 容器（注意排查）"
     elif [ -n "$pod_issues" ]; then
-      health_emit warn "Pod 运行" "部分 Pod 未 Running（$pod_issues）"
+      health_emit warn "Pod 运行" "部分平台 Pod 未 Running（$pod_issues）"
     else
-      health_emit pass "Pod 运行" "全部 ${pod_running} 个 Pod 均 Running"
+      health_emit pass "Pod 运行" "全部 ${pod_running} 个平台 Pod 均 Running（沙箱 Pod 见第 5 节）"
     fi
 
     print_section "🌐" "4. Service Endpoint 与 HTTP"
@@ -495,7 +535,7 @@ case "${1:-}" in
     printf "%b用法: %s <子命令>%b\n\n" "${C_GRAY}" "$0" "${C_RESET}"
     printf "%b常用运维指令：%b\n" "${C_BOLD}" "${C_RESET}"
     printf "  %b%-13s%b %b\n" "${C_GREEN}" "status" "${C_RESET}" "查看集群节点、NanZi 资源与沙箱 Pod/PVC 状态（K3s 节点另含本机服务状态）"
-    printf "  %b%-13s%b %b\n" "${C_GREEN}" "sandboxes" "${C_RESET}" "监控沙箱 Pod 与沙箱独立 PVC（仅 AgentScope 托管资源，不混入平台自身 Pod/PVC）"
+    printf "  %b%-13s%b %b\n" "${C_GREEN}" "sandboxes" "${C_RESET}" "监控沙箱 Pod、沙箱独立 PVC 与共享的平台数据卷（不混入平台自身 Deployment Pod）"
     printf "  %b%-18s%b %b\n" "${C_GREEN}" "restart-pod" "${C_RESET}" "通过 Deployment 平滑滚动重启 NanZi 业务 Pod"
     printf "  %b%-18s%b %b\n" "${C_GREEN}" "restart-pod-force" "${C_RESET}" "强制滚动重启，使新 Pod 换到节点容器运行时中最新导入的同名镜像并等待就绪"
     printf "  %b%-18s%b %b\n" "${C_GREEN}" "restart-k3s" "${C_RESET}" "重启底层 K3s 服务并等待 API Server 自动恢复（仅 K3s 环境）"

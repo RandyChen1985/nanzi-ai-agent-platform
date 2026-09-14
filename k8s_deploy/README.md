@@ -388,7 +388,7 @@ cd k8s_deploy
 
 日常运维管理可配合使用 [nanzi-k8s.sh](./nanzi-k8s.sh)：
 * `./nanzi-k8s.sh status`：一览本机 K3s 服务（K3s 节点）、集群节点、主平台及沙箱命名空间（默认与平台同命名空间）的沙箱 Pod 与 PVC 状态；
-* `./nanzi-k8s.sh sandboxes`：专门监控沙箱命名空间下的活跃 Pod 与动态持久卷；
+* `./nanzi-k8s.sh sandboxes`：监控沙箱 Pod、沙箱独立 PVC，以及沙箱通过 subPath 复用的平台共享数据卷（平台 Deployment Pod 不会混入）；
 * `./nanzi-k8s.sh restart-pod`：平滑滚动重启 NanZi Pod 并等待就绪；
 * `./nanzi-k8s.sh restart-pod-force`：**强制滚动重启以加载节点上最新同名镜像**（适合“先手动 build + 导入覆盖 `nanzi-ai-agent:latest`，再让 Pod 换到新镜像”的场景）；重启前会探测本机容器运行时确认镜像已导入，未导入会告警并可中止；
 * `./nanzi-k8s.sh restart-k3s`：重启 K3s 服务并等待 API Server 自动恢复（**仅 K3s 环境**）；
@@ -1095,7 +1095,7 @@ NanZi AI Agent Platform - K8s / K3s 快捷运维工具
 
 常用运维指令：
   status        查看集群节点、NanZi 资源与沙箱 Pod/PVC 状态（K3s 节点另含本机服务状态）
-  sandboxes     监控沙箱 Pod 与沙箱独立 PVC（仅 AgentScope 托管资源，不混入平台自身 Pod/PVC）
+  sandboxes     监控沙箱 Pod、沙箱独立 PVC 与共享的平台数据卷（不混入平台自身 Deployment Pod）
   restart-pod   通过 Deployment 平滑滚动重启 NanZi 业务 Pod
   restart-pod-force  强制滚动重启，使新 Pod 换到节点容器运行时中最新导入的同名镜像并等待就绪
   restart-k3s   重启底层 K3s 服务并等待 API Server 自动恢复（仅 K3s 环境）
@@ -1128,7 +1128,7 @@ root@yunshu-test2:/app/k8s/k8s_deploy# sh nanzi-k8s.sh status
 NAME           STATUS   ROLES   AGE   VERSION        INTERNAL-IP   EXTERNAL-IP   OS-IMAGE ...
 yunshu-test2   Ready    control-plane   13h   v1.36.4+k3s1   10.90.10.64   <none>   Ubuntu 20.04.1 LTS ...
 
-🚀 3. NanZi 平台应用资源 (Namespace: nanzi-ai-agent)
+🚀 3. NanZi 平台应用资源 (Namespace: nanzi-ai-agent, 不含沙箱)
 ────────────────────────────────────────────────────────────────────
 pod/nanzi-ai-agent-5788bb4549-z9stx   1/1   Running   0   6m3s   10.42.0.139   yunshu-test2   ...
 service/nanzi-ai-agent   ClusterIP   10.43.67.129   <none>   80/TCP   12h   ...
@@ -1137,12 +1137,23 @@ ingress.networking.k8s.io/nanzi-ai-agent   traefik   *   10.90.10.64   80   11h
 📦 4. 沙箱工作区资源 (Namespace: nanzi-ai-agent, 仅 AgentScope 托管资源)
 ────────────────────────────────────────────────────────────────────
 （当前无运行中的沙箱 Pod 或沙箱独立 PVC；共享模式下沙箱通过 subPath 复用平台数据卷，故无沙箱独立 PVC 属正常）
+共享数据卷：nanzi-ai-agent-data   Bound   pvc-16cbf742-...   20Gi   RWO   local-path   4d23h
+（平台 Pod 挂载于 /app/data；沙箱通过 subPath: agent_workspaces/{user_key} 复用该卷，故共享模式下没有沙箱独立 PVC）
 
 ✔ 状态检查完毕
 ```
 
 > 提示：`restart-pod` / `restart-k3s` / `restart-all` 会先弹 y/N 二次确认；沙箱与平台滚动
 > 重启、镜像滚动发布等详细操作见 `upgrade.md`。
+
+> 说明（沙箱与平台同命名空间时的输出划分）：沙箱默认与平台同命名空间（共享平台 PVC 的前提），
+> 因此运维输出已按标签区分两侧视角，互不混淆：
+> - **平台视角**（`status` 第 3 节、`health` 第 3 节、`restart-*` 后的 Pod 列表）用正向标签
+>   `app.kubernetes.io/name=nanzi-ai-agent` 只列平台自身的 Pod/Service/Ingress，天然排除沙箱 Pod；
+> - **沙箱视角**（`status` 第 4 节、`sandboxes`、`health` 第 5 节）用
+>   `app.kubernetes.io/managed-by=agentscope` 只列 AgentScope 托管资源，并额外展示沙箱复用的
+>   平台共享数据卷（共享模式下沙箱没有独立 PVC，属正常）；
+> - `events` 在同命名空间下合并为「命名空间事件」一个视图（事件不支持按标签过滤）。
 
 不要执行 `kubectl delete pvc nanzi-ai-agent-data` 作为普通排障操作；删除 PVC 可能导致
 上传文件、用户工作区和生成文件丢失。

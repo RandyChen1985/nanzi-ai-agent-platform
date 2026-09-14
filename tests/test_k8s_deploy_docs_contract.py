@@ -111,6 +111,58 @@ def test_k8s_ops_script_filters_sandbox_listing_by_agentscope_label():
     assert 'health_get get pvc -n "$SANDBOX_NAMESPACE" --no-headers' not in script
 
 
+def test_k8s_ops_script_excludes_sandbox_pods_from_platform_views():
+    """平台视角（第 3 节、重启后 Pod 列表、health 平台 Pod 状态）不得混入沙箱 Pod。
+
+    同命名空间下若不加过滤，`status` 第 3 节「NanZi 平台应用资源」会同时列出
+    平台 Deployment Pod 与沙箱 Pod（如 as-ws-admin--1），误导运维判断。
+    过滤一律采用正向标签 `app.kubernetes.io/name=<Deployment>`（平台 Pod、Service、
+    Ingress、平台 PVC 均带此标签），不依赖 `key!=value` 对"无该标签对象"的匹配语义。
+    """
+    script = (K8S_DIR / "nanzi-k8s.sh").read_text(encoding="utf-8")
+
+    assert 'PLATFORM_APP_LABEL="app.kubernetes.io/name=${DEPLOYMENT}"' in script
+    # status 第 3 节、restart-pod / restart-pod-force / restart-all 后的 Pod 列表
+    assert 'kubectl get pod,svc,ingress -n "$NAMESPACE" -l "$PLATFORM_APP_LABEL" -o wide' in script
+    assert script.count('kubectl get pods -n "$NAMESPACE" -l "$PLATFORM_APP_LABEL" -o wide') >= 3
+    # health 的平台 Pod 状态三项检查
+    assert script.count('get pods -n "$NAMESPACE" -l "$PLATFORM_APP_LABEL"') >= 3
+
+    # 不得存在不带过滤的平台侧 Pod 列举
+    assert 'kubectl get pod,svc,ingress -n "$NAMESPACE" -o wide' not in script
+    assert 'kubectl get pods -n "$NAMESPACE" -o wide' not in script
+    assert 'health_get get pods -n "$NAMESPACE" --no-headers' not in script
+
+
+def test_k8s_ops_script_merges_events_when_namespace_shared():
+    """沙箱与平台同命名空间时事件是同一份，不应重复打印两个小节。"""
+    script = (K8S_DIR / "nanzi-k8s.sh").read_text(encoding="utf-8")
+
+    assert '[ "$SANDBOX_NAMESPACE" = "$NAMESPACE" ]' in script
+    assert "命名空间事件" in script
+    # 合并分支存在的前提下，两次相同的 events 列举仍保留给"不同命名空间"场景
+    assert script.count("kubectl get events -n") >= 2
+
+
+def test_k8s_ops_script_surfaces_shared_platform_data_volume():
+    """过滤后仍须能看到沙箱复用的平台共享数据卷（否则无从确认沙箱用的是哪块盘）。"""
+    script = (K8S_DIR / "nanzi-k8s.sh").read_text(encoding="utf-8")
+
+    # 通过平台 Pod 标签识别其挂载的 PVC
+    assert 'PLATFORM_APP_LABEL="app.kubernetes.io/name=${DEPLOYMENT}"' in script
+    # 标签常量必须在 DEPLOYMENT 之后定义（set -u 下先引用会直接中断脚本）
+    assert script.index('DEPLOYMENT="nanzi-ai-agent"') < script.index('PLATFORM_APP_LABEL=')
+
+    # 复用型 helper：定义 + 在 status 与 sandboxes 两处调用
+    assert "print_shared_workspace_volume() {" in script
+    assert script.count("print_shared_workspace_volume") >= 3
+    # 探测失败时的退化路径：按同一平台标签列出平台 PVC
+    assert 'kubectl get pvc -n "$SANDBOX_NAMESPACE" -l "$PLATFORM_APP_LABEL" --no-headers' in script
+    # 沙箱工作区小节与共享卷小节均需出现在展示中
+    assert "共享数据卷" in script
+    assert "平台共享数据卷（沙箱通过 subPath 复用）" in script
+
+
 def test_k8s_build_sandbox_image_script_and_docs_contract():
     """网关预置镜像构建脚本与文档指引契约。"""
     build_script = K8S_DIR / "build-k8s-sandbox-image.sh"
