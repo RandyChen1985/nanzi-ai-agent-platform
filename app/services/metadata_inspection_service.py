@@ -591,6 +591,20 @@ class MetadataInspectionService:
                 prefix=ds_prefix,
             )
 
+            # 结算该数据集的质量治理分（与全库告警提交一并持久化）
+            quality = compute_quality_score(
+                tables_scanned=scan_res["tables_scanned"],
+                columns_scanned=scan_res["columns_scanned"],
+                missing_tables_count=scan_res.get("missing_tables_count", 0),
+                stale_count=scan_res.get("stale_count", 0),
+                new_count=scan_res.get("new_count", 0),
+                mismatch_count=scan_res.get("mismatch_count", 0),
+                missing_comment_count=scan_res.get("missing_comment_count", 0),
+            )
+            full_ds.quality_score = quality["score"]
+            full_ds.quality_breakdown = quality
+            full_ds.quality_scored_at = datetime.now()
+
             t_scanned = scan_res["tables_scanned"]
             c_scanned = scan_res["columns_scanned"]
             missing_tables = scan_res.get("missing_tables_count", 0)
