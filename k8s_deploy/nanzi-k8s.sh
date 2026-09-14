@@ -15,6 +15,10 @@ NAMESPACE="nanzi-ai-agent"
 # 沙箱 Pod 默认与平台同命名空间：Kubernetes PVC 为命名空间级资源，
 # 只有同命名空间才能共享平台主 PVC 的用户工作区（与 Docker 沙箱对齐）。
 SANDBOX_NAMESPACE="nanzi-ai-agent"
+# AgentScope 托管的沙箱 Pod 与沙箱独立 PVC 的统一标签。沙箱命名空间默认与平台
+# 同命名空间，因此列出沙箱资源时必须按此标签过滤，否则会把平台自身的 Deployment
+# Pod 与平台数据卷一并列出（如 nanzi-ai-agent-xxxx-yyyy），造成"这是不是沙箱"的误判。
+SANDBOX_LABEL="app.kubernetes.io/managed-by=agentscope"
 DEPLOYMENT="nanzi-ai-agent"
 SERVICE="nanzi-ai-agent"
 
@@ -163,13 +167,13 @@ case "${1:-}" in
     print_section "🚀" "3. NanZi 平台应用资源 (Namespace: ${NAMESPACE})"
     kubectl get pod,svc,ingress -n "$NAMESPACE" -o wide
 
-    print_section "📦" "4. 沙箱工作区资源 (Namespace: ${SANDBOX_NAMESPACE})"
+    print_section "📦" "4. 沙箱工作区资源 (Namespace: ${SANDBOX_NAMESPACE}, 仅 AgentScope 托管资源)"
     if kubectl get namespace "$SANDBOX_NAMESPACE" >/dev/null 2>&1; then
-      local_sandboxes=$(kubectl get pod,pvc -n "$SANDBOX_NAMESPACE" --no-headers 2>/dev/null || true)
+      local_sandboxes=$(kubectl get pod,pvc -n "$SANDBOX_NAMESPACE" -l "$SANDBOX_LABEL" --no-headers 2>/dev/null || true)
       if [ -n "$local_sandboxes" ]; then
-        kubectl get pod,pvc -n "$SANDBOX_NAMESPACE" -o wide
+        kubectl get pod,pvc -n "$SANDBOX_NAMESPACE" -l "$SANDBOX_LABEL" -o wide
       else
-        printf "%b（当前无运行中的沙箱 Pod 或活跃 PVC）%b\n" "${C_GRAY}" "${C_RESET}"
+        printf "%b（当前无运行中的沙箱 Pod 或沙箱独立 PVC；共享模式下沙箱通过 subPath 复用平台数据卷，故无沙箱独立 PVC 属正常）%b\n" "${C_GRAY}" "${C_RESET}"
       fi
     else
       printf "%b（命名空间 %s 尚未创建，启动首个沙箱会话时将自动拉起）%b\n" "${C_GRAY}" "${SANDBOX_NAMESPACE}" "${C_RESET}"
@@ -183,10 +187,16 @@ case "${1:-}" in
     print_header "沙箱专区监控 (Namespace: ${SANDBOX_NAMESPACE})"
     if kubectl get namespace "$SANDBOX_NAMESPACE" >/dev/null 2>&1; then
       print_section "📦" "活跃沙箱 Pod"
-      kubectl get pod -n "$SANDBOX_NAMESPACE" -o wide || true
+      kubectl get pod -n "$SANDBOX_NAMESPACE" -l "$SANDBOX_LABEL" -o wide || true
 
-      print_section "💾" "沙箱持久卷申领 (PVC)"
-      kubectl get pvc -n "$SANDBOX_NAMESPACE" -o wide || true
+      print_section "💾" "沙箱独立持久卷申领 (PVC)"
+      sb_pvcs=$(kubectl get pvc -n "$SANDBOX_NAMESPACE" -l "$SANDBOX_LABEL" --no-headers 2>/dev/null || true)
+      if [ -n "$sb_pvcs" ]; then
+        kubectl get pvc -n "$SANDBOX_NAMESPACE" -l "$SANDBOX_LABEL" -o wide
+      else
+        printf "%b（无沙箱独立 PVC：共享模式下沙箱通过 subPath 复用平台数据卷，属正常）%b\n" "${C_GRAY}" "${C_RESET}"
+      fi
+      printf "%b提示：沙箱命名空间默认与平台同命名空间，此处仅列出 AgentScope 托管的沙箱资源（标签 %s）；平台自身 Pod/PVC（如 Deployment Pod、平台数据卷）不在此列，可用 kubectl 直接查看。%b\n" "${C_GRAY}" "${SANDBOX_LABEL}" "${C_RESET}"
     else
       log_warn "命名空间 ${SANDBOX_NAMESPACE} 暂未创建，平台在首次调度 K8S 原生沙箱时会自动创建。"
     fi
@@ -441,10 +451,10 @@ case "${1:-}" in
       health_emit fail "Service 存在" "Service/${SERVICE} 在 ${NAMESPACE} 未找到"
     fi
 
-    print_section "📦" "5. 沙箱命名空间 (${SANDBOX_NAMESPACE})"
+    print_section "📦" "5. 沙箱资源 (Namespace: ${SANDBOX_NAMESPACE}, 仅 AgentScope 托管资源)"
     if health_check_exists get namespace "$SANDBOX_NAMESPACE"; then
-      sb_pods=$(health_get get pods -n "$SANDBOX_NAMESPACE" --no-headers 2>/dev/null | wc -l | tr -d ' ')
-      sb_bad=$(health_get get pods -n "$SANDBOX_NAMESPACE" --no-headers 2>/dev/null | awk '$3 != "Running" {print $1 ":" $3}')
+      sb_pods=$(health_get get pods -n "$SANDBOX_NAMESPACE" -l "$SANDBOX_LABEL" --no-headers 2>/dev/null | wc -l | tr -d ' ')
+      sb_bad=$(health_get get pods -n "$SANDBOX_NAMESPACE" -l "$SANDBOX_LABEL" --no-headers 2>/dev/null | awk '$3 != "Running" {print $1 ":" $3}')
       if [ "${sb_pods:-0}" -eq 0 ]; then
         health_emit pass "沙箱 Pod" "当前无沙箱 Pod（无运行需求）"
       elif [ -n "$sb_bad" ]; then
@@ -452,11 +462,11 @@ case "${1:-}" in
       else
         health_emit pass "沙箱 Pod" "全部沙箱 Pod Running"
       fi
-      sb_pvc_phase=$(health_get get pvc -n "$SANDBOX_NAMESPACE" --no-headers 2>/dev/null | awk '$2 != "Bound" && $1 != "NAME" {print $1 ":" $2}')
+      sb_pvc_phase=$(health_get get pvc -n "$SANDBOX_NAMESPACE" -l "$SANDBOX_LABEL" --no-headers 2>/dev/null | awk '$2 != "Bound" && $1 != "NAME" {print $1 ":" $2}')
       if [ -n "$sb_pvc_phase" ]; then
-        health_emit warn "沙箱 PVC" "存在未 Bound 的 PVC：$sb_pvc_phase"
+        health_emit warn "沙箱 PVC" "存在未 Bound 的沙箱独立 PVC：$sb_pvc_phase"
       else
-        health_emit pass "沙箱 PVC" "PVC 状态正常"
+        health_emit pass "沙箱 PVC" "沙箱独立 PVC 状态正常（共享平台数据卷模式下属正常无独立 PVC）"
       fi
     else
       health_emit warn "沙箱命名空间" "${SANDBOX_NAMESPACE} 尚未创建（首个沙箱会话时自动拉起，属正常）"
@@ -485,7 +495,7 @@ case "${1:-}" in
     printf "%b用法: %s <子命令>%b\n\n" "${C_GRAY}" "$0" "${C_RESET}"
     printf "%b常用运维指令：%b\n" "${C_BOLD}" "${C_RESET}"
     printf "  %b%-13s%b %b\n" "${C_GREEN}" "status" "${C_RESET}" "查看集群节点、NanZi 资源与沙箱 Pod/PVC 状态（K3s 节点另含本机服务状态）"
-    printf "  %b%-13s%b %b\n" "${C_GREEN}" "sandboxes" "${C_RESET}" "专门监控沙箱命名空间（默认与平台同命名空间）下的沙箱 Pod 与 PVC"
+    printf "  %b%-13s%b %b\n" "${C_GREEN}" "sandboxes" "${C_RESET}" "监控沙箱 Pod 与沙箱独立 PVC（仅 AgentScope 托管资源，不混入平台自身 Pod/PVC）"
     printf "  %b%-18s%b %b\n" "${C_GREEN}" "restart-pod" "${C_RESET}" "通过 Deployment 平滑滚动重启 NanZi 业务 Pod"
     printf "  %b%-18s%b %b\n" "${C_GREEN}" "restart-pod-force" "${C_RESET}" "强制滚动重启，使新 Pod 换到节点容器运行时中最新导入的同名镜像并等待就绪"
     printf "  %b%-18s%b %b\n" "${C_GREEN}" "restart-k3s" "${C_RESET}" "重启底层 K3s 服务并等待 API Server 自动恢复（仅 K3s 环境）"

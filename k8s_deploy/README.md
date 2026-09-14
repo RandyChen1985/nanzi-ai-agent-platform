@@ -1095,7 +1095,7 @@ NanZi AI Agent Platform - K8s / K3s 快捷运维工具
 
 常用运维指令：
   status        查看集群节点、NanZi 资源与沙箱 Pod/PVC 状态（K3s 节点另含本机服务状态）
-  sandboxes     专门监控沙箱命名空间（默认与平台同命名空间）下的沙箱 Pod 与 PVC
+  sandboxes     监控沙箱 Pod 与沙箱独立 PVC（仅 AgentScope 托管资源，不混入平台自身 Pod/PVC）
   restart-pod   通过 Deployment 平滑滚动重启 NanZi 业务 Pod
   restart-pod-force  强制滚动重启，使新 Pod 换到节点容器运行时中最新导入的同名镜像并等待就绪
   restart-k3s   重启底层 K3s 服务并等待 API Server 自动恢复（仅 K3s 环境）
@@ -1134,9 +1134,9 @@ pod/nanzi-ai-agent-5788bb4549-z9stx   1/1   Running   0   6m3s   10.42.0.139   y
 service/nanzi-ai-agent   ClusterIP   10.43.67.129   <none>   80/TCP   12h   ...
 ingress.networking.k8s.io/nanzi-ai-agent   traefik   *   10.90.10.64   80   11h
 
-📦 4. 沙箱工作区资源 (Namespace: nanzi-ai-agent)
+📦 4. 沙箱工作区资源 (Namespace: nanzi-ai-agent, 仅 AgentScope 托管资源)
 ────────────────────────────────────────────────────────────────────
-（当前无运行中的沙箱 Pod 或活跃 PVC）
+（当前无运行中的沙箱 Pod 或沙箱独立 PVC；共享模式下沙箱通过 subPath 复用平台数据卷，故无沙箱独立 PVC 属正常）
 
 ✔ 状态检查完毕
 ```

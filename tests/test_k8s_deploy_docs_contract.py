@@ -89,6 +89,28 @@ def test_k8s_docs_cover_wizard_install_script_and_ops_tools():
     assert (K8S_DIR / "upgrade.md").is_file()
 
 
+def test_k8s_ops_script_filters_sandbox_listing_by_agentscope_label():
+    """沙箱命名空间默认与平台同命名空间，脚本列举沙箱资源时必须按标签过滤。
+
+    否则 `nanzi-k8s.sh sandboxes` / `status` / `health` 会把平台自身的
+    Deployment Pod（如 nanzi-ai-agent-xxxx-yyyy）与平台数据卷一并列出，
+    被误认成"多出来的沙箱"。
+    """
+    script = (K8S_DIR / "nanzi-k8s.sh").read_text(encoding="utf-8")
+
+    assert 'SANDBOX_LABEL="app.kubernetes.io/managed-by=agentscope"' in script
+    # status / sandboxes / health 三处列举都必须带上标签过滤
+    assert script.count('"$SANDBOX_LABEL"') >= 8
+
+    # 不得存在不带过滤的裸列举
+    assert 'kubectl get pod -n "$SANDBOX_NAMESPACE" -o wide' not in script
+    assert 'kubectl get pvc -n "$SANDBOX_NAMESPACE" -o wide' not in script
+    assert 'kubectl get pod,pvc -n "$SANDBOX_NAMESPACE" --no-headers' not in script
+    assert 'kubectl get pod,pvc -n "$SANDBOX_NAMESPACE" -o wide' not in script
+    assert 'health_get get pods -n "$SANDBOX_NAMESPACE" --no-headers' not in script
+    assert 'health_get get pvc -n "$SANDBOX_NAMESPACE" --no-headers' not in script
+
+
 def test_k8s_build_sandbox_image_script_and_docs_contract():
     """网关预置镜像构建脚本与文档指引契约。"""
     build_script = K8S_DIR / "build-k8s-sandbox-image.sh"
