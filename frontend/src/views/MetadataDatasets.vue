@@ -717,10 +717,16 @@ const qualityBadgeClass = (score?: number | null): string => {
 const qualityTooltip = (ds: Dataset): string => {
   const b = ds.quality_breakdown
   if (!b || !b.dimensions?.length) return '暂无质量评分，执行一次 Schema 巡检后生成'
-  const parts = b.dimensions.map(
-    (d) => `${d.label} ${d.score} 分（问题 ${d.problem_count}/${d.total}）`
-  )
-  return `质量治理分 ${b.score}（${b.level_label}）\n${parts.join('\n')}`
+  const lines: string[] = []
+  if (b.degraded) {
+    lines.push(`⚠️ ${b.degraded_reason || '本次巡检未完整比对，分数仅供参考'}`)
+  }
+  lines.push(`质量治理分 ${b.score}（${b.level_label}）`)
+  lines.push(...b.dimensions.map((d) => `${d.label} ${d.score} 分（问题 ${d.problem_count} 处）`))
+  if (ds.quality_scored_at) {
+    lines.push(`评分时间：${new Date(ds.quality_scored_at).toLocaleString()}`)
+  }
+  return lines.join('\n')
 }
 
 const displayDatasets = computed(() => {
@@ -1606,6 +1612,7 @@ onMounted(async () => {
               :title="qualityTooltip(ds)"
             >
               质量分 <b>{{ ds.quality_score ?? '—' }}</b>
+              <span v-if="ds.quality_breakdown?.degraded" class="text-amber-500" title="本次巡检未完整比对，分数仅供参考">⚠</span>
             </span>
           </div>
 
@@ -1835,6 +1842,7 @@ onMounted(async () => {
                    :title="qualityTooltip(ds)"
                 >
                    {{ ds.quality_score ?? '—' }}
+                   <span v-if="ds.quality_breakdown?.degraded" class="text-amber-500 ml-0.5">⚠</span>
                 </span>
              </div>
 

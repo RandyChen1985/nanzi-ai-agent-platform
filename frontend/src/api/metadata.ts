@@ -41,6 +41,9 @@ export interface Dataset {
     score: number;
     level: string;
     level_label: string;
+    // 本次巡检存在物理列读取失败的表，分数基于不完整比对时由后端置为 true
+    degraded?: boolean;
+    degraded_reason?: string;
     dimensions: {
       key: string;
       label: string;
