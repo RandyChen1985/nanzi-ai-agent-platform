@@ -714,3 +714,14 @@ def test_prompt_includes_accessible_resources_as_a_separate_dynamic_section():
         "agent_system_prompt"
     )
     assert assembled.section_char_counts["accessible_resources"] > 0
+
+
+def test_platform_prompt_enforces_html_interactive_app_output():
+    from app.services.ai.agent_prompts import AgentServicePrompts
+
+    prompt = AgentServicePrompts.prepend_platform_global_system_prompt(None)
+    assert "HTML 交互应用" in prompt
+    assert "必须直接在回答正文中输出包含完整结构的 ```html 代码块" in prompt
+    assert "严禁" in prompt
+    assert "除非用户明确表达“保存为文件”、“下载”或“导出”" in prompt
+

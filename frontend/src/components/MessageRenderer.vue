@@ -331,13 +331,15 @@ const handleContentClick = (event: MouseEvent) => {
         return;
       } else {
         const lowerHref = ((href.toLowerCase().split('?')[0] ?? '').split('#')[0] ?? '');
-        const isPdf = lowerHref.endsWith('.pdf');
-        const isCsv = lowerHref.endsWith('.csv');
+        const linkText = linkEl.textContent?.trim().toLowerCase() || '';
+        const isPdf = lowerHref.endsWith('.pdf') || linkText.endsWith('.pdf');
+        const isCsv = lowerHref.endsWith('.csv') || linkText.endsWith('.csv');
+        const isHtml = lowerHref.endsWith('.html') || lowerHref.endsWith('.htm') || linkText.endsWith('.html') || linkText.endsWith('.htm');
         const isImage = lowerHref.endsWith('.jpg') || lowerHref.endsWith('.jpeg') || lowerHref.endsWith('.png') || lowerHref.endsWith('.gif') || lowerHref.endsWith('.webp');
         const isCompare = href.startsWith('canvas://compare');
         const isCanvasFile = href.startsWith('canvas://file');
 
-        if (isPdf || isCsv || isImage || isCompare || isCanvasFile) {
+        if (isPdf || isCsv || isHtml || isImage || isCompare || isCanvasFile) {
           let type: 'html' | 'code' | 'mermaid' | 'pdf' | 'csv' | 'image' | 'compare' = 'code';
           let filename = '预览';
 
@@ -359,6 +361,9 @@ const handleContentClick = (event: MouseEvent) => {
             } catch {
               type = 'code';
             }
+          } else if (isHtml) {
+            type = 'html';
+            filename = linkEl.textContent?.trim() || 'HTML 交互应用';
           } else {
             type = isPdf ? 'pdf' : (isCsv ? 'csv' : 'image');
             filename = linkEl.textContent?.trim() || (isPdf ? 'PDF 文档' : isCsv ? 'CSV 数据表' : '图片预览');

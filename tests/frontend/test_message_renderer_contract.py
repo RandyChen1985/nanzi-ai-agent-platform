@@ -327,3 +327,22 @@ def test_markdown_code_block_renders_clear_foreground_and_fence_structure():
     assert "ui-monospace" in renderer_source
     assert "ui-monospace" in embed_source
 
+
+def test_message_renderer_html_link_opens_canvas_contract():
+    renderer_source = _source("frontend/src/components/MessageRenderer.vue")
+    canvas_composable_source = _source("frontend/src/composables/chat/useWorkspaceCanvas.ts")
+    embed_source = _source("frontend/src/views/EmbedChat.vue")
+
+    # 1. MessageRenderer.vue 识别 .html / .htm 链接并拦截
+    assert "isHtml = lowerHref.endsWith('.html') || lowerHref.endsWith('.htm')" in renderer_source
+    assert "type = 'html'" in renderer_source
+    assert "HTML 交互应用" in renderer_source
+
+    # 2. useWorkspaceCanvas.ts 支持拉取 HTTP/API URL 的 HTML 内容并以 html 模式渲染
+    assert "payload.type === \"html\"" in canvas_composable_source
+    assert "options.resolveFileUrl(payload.content)" in canvas_composable_source
+
+    # 3. EmbedChat.vue canPreviewFile 支持 html
+    assert "ext === 'html' || ext === 'htm'" in embed_source
+
+

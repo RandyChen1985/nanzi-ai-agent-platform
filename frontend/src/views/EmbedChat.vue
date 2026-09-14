@@ -5228,13 +5228,18 @@ const disableGroundingWithToast = () => {
 
 const canPreviewFile = (file: any) => {
   const ext = (file.ext || '').toLowerCase();
-  return ext === 'pdf' || ext === 'csv' || ext === 'jpg' || ext === 'jpeg' || ext === 'png' || ext === 'webp' || ext === 'gif';
+  return ext === 'html' || ext === 'htm' || ext === 'pdf' || ext === 'csv' || ext === 'jpg' || ext === 'jpeg' || ext === 'png' || ext === 'webp' || ext === 'gif';
 };
 
 const handlePreviewFile = (file: any) => {
   const ext = (file.ext || '').toLowerCase();
+  let type: 'html' | 'pdf' | 'csv' | 'image' = 'image';
+  if (ext === 'html' || ext === 'htm') type = 'html';
+  else if (ext === 'pdf') type = 'pdf';
+  else if (ext === 'csv') type = 'csv';
+
   handleOpenCanvas({
-    type: ext === 'pdf' ? 'pdf' : (ext === 'csv' ? 'csv' : 'image'),
+    type,
     title: file.filename,
     content: file.url
   });

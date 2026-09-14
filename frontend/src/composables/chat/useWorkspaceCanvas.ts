@@ -179,6 +179,29 @@ export function useWorkspaceCanvas(options: UseWorkspaceCanvasOptions) {
       return;
     }
 
+    if (
+      payload.type === "html" &&
+      (payload.content.startsWith("http://") ||
+        payload.content.startsWith("https://") ||
+        payload.content.startsWith("/api/"))
+    ) {
+      try {
+        const resolvedUrl = options.resolveFileUrl(payload.content);
+        const response = await axios.get(resolvedUrl, { responseType: "text" });
+        const htmlContent = typeof response.data === "string" ? response.data : String(response.data || "");
+        canvasData.value = {
+          type: "html",
+          title: payload.title || "HTML 交互应用",
+          content: htmlContent,
+        };
+        showCanvas();
+      } catch (error: any) {
+        console.error("加载 HTML 文件失败:", error);
+        options.showToast("加载 HTML 在线预览失败", "error");
+      }
+      return;
+    }
+
     canvasData.value = options.normalizeDirectPayloadTitle
       ? {
           type: payload.type,
