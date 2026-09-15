@@ -4391,7 +4391,7 @@ onUnmounted(() => {
                                 <span class="block">脚本会自动 docker build → save → 导入节点 containerd（ctr -n k8s.io / k3s ctr）；也支持无参数交互引导或免交互默认构建 <code class="font-mono">./build-k8s-sandbox-image.sh -y</code>。</span>
                               </div>
                               <div>本项填写格式：<span class="font-mono">nanzi-sandbox-k8s:&lt;版本&gt;</span>（可选用上方预置列表或“自定义镜像地址”）。填入后请点击页面右上角<b>【保存变更 (⌘S)】</b>保存生效。未使用预置镜像时留空/保持默认 <span class="font-mono">python:3.11-slim</span> 即可。</div>
-                              <div>想先确认节点已导入该镜像（含版本号核对）：<span class="font-mono">./install.sh check-sandbox-image nanzi-sandbox-k8s:&lt;版本&gt;</span> 或 <span class="font-mono">./install.sh images nanzi-sandbox-k8s</span></div>
+                              <div>想先确认节点已导入该镜像（含版本号核对）：<span class="font-mono">./build-k8s-sandbox-image.sh --list</span> 或 <span class="font-mono">./install.sh check-sandbox-image nanzi-sandbox-k8s:&lt;版本&gt;</span></div>
                             </div>
                           </div>
                           <div v-else>

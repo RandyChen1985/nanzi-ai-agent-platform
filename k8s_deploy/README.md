@@ -154,6 +154,9 @@ K8s 沙箱（`sandbox_policy = k8s`）的网关环境放在 Pod 内的 `/root/.a
 ```bash
 cd k8s_deploy
 
+# 0) 探测本地 Docker 与 K8s 节点是否已有沙箱镜像
+./build-k8s-sandbox-image.sh --list
+
 # 1) （可选）先预览将要执行的 Dockerfile 与命令，不实际构建（演练模式）
 ./build-k8s-sandbox-image.sh --dry-run
 
@@ -205,7 +208,7 @@ cd k8s_deploy
 > ────────────────────────────────────────────────────────────────────
 > ```
 
-常用参数：`-y`/`--yes` 免确认、`--base-image python:3.11-slim`、`--image-name nanzi-sandbox-k8s`、
+常用参数：`-l`/`--list` 查验已有镜像、`-y`/`--yes` 免确认、`--base-image python:3.11-slim`、`--image-name nanzi-sandbox-k8s`、
 `--version <标签>`、`--proxy http://<代理>`、`--agentscope-version <版本>`（默认跟随平台
 venv 的 agentscope 版本，建议保持平台一致）、`--dry-run` 演练、`--no-import`。
 

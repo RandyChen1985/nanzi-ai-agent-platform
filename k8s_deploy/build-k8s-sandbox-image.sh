@@ -65,6 +65,93 @@ DRY_RUN=false
 SYNC_TEMPLATE=false
 AGENTSCOPE_VERSION=""
 AUTO_CONFIRM=false
+LIST_MODE=false
+
+# ---- 探测节点容器运行时命令（支持 K3s / 标准 containerd / crictl）----
+resolve_node_container_tool() {
+  local sudo_cmd=""
+  if [ "$(id -u)" -ne 0 ] && command -v sudo >/dev/null 2>&1; then
+    sudo_cmd="sudo"
+  fi
+
+  NODE_CTR_CMD=""
+  NODE_RUNTIME_TYPE=""
+
+  if command -v k3s >/dev/null 2>&1; then
+    NODE_CTR_CMD="${sudo_cmd:+$sudo_cmd }k3s ctr"
+    NODE_RUNTIME_TYPE="K3s containerd"
+  elif [ -S "/run/k3s/containerd/containerd.sock" ]; then
+    NODE_CTR_CMD="${sudo_cmd:+$sudo_cmd }ctr -a /run/k3s/containerd/containerd.sock -n k8s.io"
+    NODE_RUNTIME_TYPE="K3s containerd (socket)"
+  elif command -v ctr >/dev/null 2>&1; then
+    NODE_CTR_CMD="${sudo_cmd:+$sudo_cmd }ctr -n k8s.io"
+    NODE_RUNTIME_TYPE="标准 containerd (k8s.io)"
+  elif command -v crictl >/dev/null 2>&1; then
+    NODE_CTR_CMD="${sudo_cmd:+$sudo_cmd }crictl"
+    NODE_RUNTIME_TYPE="CRI (crictl)"
+  fi
+}
+
+run_list_sandbox_images() {
+  printf "\n"
+  log_info "🔍 正在检索本地 Docker 与 K8s 节点的沙箱镜像..."
+  printf "\n"
+
+  local found_any=false
+
+  # 1. 检查本地 Docker daemon
+  if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
+    printf "%b[1/2] 本地 Docker 镜像库 (docker images):%b\n" "${C_BOLD}" "${C_RESET}"
+    local docker_matches
+    docker_matches="$(docker images --filter "reference=*${IMAGE_NAME}*" --format "table {{.Repository}}:{{.Tag}}\t{{.ID}}\t{{.CreatedAt}}\t{{.Size}}" 2>/dev/null || true)"
+    if [ -n "$docker_matches" ] && [ "$(printf "%s\n" "$docker_matches" | wc -l)" -gt 1 ]; then
+      printf "%s\n\n" "$docker_matches"
+      found_any=true
+    else
+      printf "  %b未在本地 Docker 中检索到包含 %s 的镜像%b\n\n" "${C_YELLOW}" "$IMAGE_NAME" "${C_RESET}"
+    fi
+  else
+    printf "%b[1/2] 本地 Docker 镜像库:%b %b未检测到可用的 Docker daemon%b\n\n" "${C_BOLD}" "${C_RESET}" "${C_YELLOW}" "${C_RESET}"
+  fi
+
+  # 2. 检查 K8s 节点容器运行时（containerd / K3s / crictl）
+  resolve_node_container_tool
+  if [ -n "$NODE_CTR_CMD" ]; then
+    printf "%b[2/2] K8s 节点容器运行时 (%s):%b\n" "${C_BOLD}" "$NODE_RUNTIME_TYPE" "${C_RESET}"
+    local node_matches=""
+    if [[ "$NODE_CTR_CMD" == *"crictl"* ]]; then
+      node_matches="$($NODE_CTR_CMD images 2>/dev/null | grep -E "${IMAGE_NAME}" || true)"
+    else
+      node_matches="$($NODE_CTR_CMD images list 2>/dev/null | grep -E "${IMAGE_NAME}" || true)"
+    fi
+
+    if [ -n "$node_matches" ]; then
+      printf "  %b✔ 节点已就绪沙箱镜像列表：%b\n" "${C_GREEN}" "${C_RESET}"
+      printf "%s\n\n" "$node_matches" | sed 's/^/  /'
+      found_any=true
+    else
+      printf "  %b⚠ 节点运行时中暂无包含 %s 的就绪镜像%b\n\n" "${C_YELLOW}" "$IMAGE_NAME" "${C_RESET}"
+    fi
+  else
+    printf "%b[2/2] K8s 节点容器运行时:%b %b当前主机未检测到 ctr / k3s / crictl 节点工具（若此机仅为构建机，可将 tar 拷贝至节点导入）%b\n\n" "${C_BOLD}" "${C_RESET}" "${C_YELLOW}" "${C_RESET}"
+  fi
+
+  # 3. 汇总指引
+  printf "────────────────────────────────────────────────────────────────────\n"
+  if [ "$found_any" = "true" ]; then
+    log_success "沙箱镜像检索完成。"
+    printf "👉 如需使用上述镜像加速沙箱冷启动，请前往平台 Web 端：\n"
+    printf "   【系统设置】→【参数配置】→【沙箱配置】\n"
+    printf "   找到 %bsandbox_k8s_image%b 项，填入镜像名并点击右上角【保存变更 (⌘S)】\n" "${C_BOLD}" "${C_RESET}"
+  else
+    log_info "未检索到已就绪的沙箱镜像。"
+    printf "👉 如需构建并加速沙箱冷启动，请执行：\n"
+    printf "   %b./build-k8s-sandbox-image.sh%b          # 交互式构建\n" "${C_CYAN}" "${C_RESET}"
+    printf "   %b./build-k8s-sandbox-image.sh -y%b       # 免交互直接构建\n" "${C_CYAN}" "${C_RESET}"
+  fi
+  printf "────────────────────────────────────────────────────────────────────\n\n"
+  exit 0
+}
 
 usage() {
   cat <<'EOF'
@@ -74,6 +161,7 @@ usage() {
 构建完成后，在平台 Web 端【系统设置】→【参数配置】→【沙箱配置】中配置给 sandbox_k8s_image 项生效。
 
 选项:
+  -l, --list              探测本地 Docker 与 K8s/K3s 节点已存在的沙箱镜像
   -y, --yes               免确认直接按当前配置开始构建
   --build                 显式触发构建流程
   --base-image <img>      基础镜像，默认 python:3.11-slim
@@ -87,6 +175,7 @@ usage() {
   -h, --help              帮助
 
 常用示例:
+  ./build-k8s-sandbox-image.sh --list             # 查看本地与 K8s 节点是否已有沙箱镜像
   ./build-k8s-sandbox-image.sh --dry-run          # 仅预览 Dockerfile 与执行命令（演练模式）
   ./build-k8s-sandbox-image.sh -y                 # 免交互直接按默认配置开始构建
   ./build-k8s-sandbox-image.sh --version 1.0.0    # 构建指定版本镜像并导入节点
@@ -97,6 +186,7 @@ ORIGINAL_ARGC=$#
 
 while [ $# -gt 0 ]; do
   case "$1" in
+    -l|--list|list|--check) LIST_MODE=true; shift ;;
     -y|--yes)     AUTO_CONFIRM=true; shift ;;
     build|--build) shift ;;
     --base-image) BASE_IMAGE="$2"; shift 2 ;;
@@ -111,6 +201,10 @@ while [ $# -gt 0 ]; do
     *) log_error "未知参数: $1（-h 查看帮助）"; exit 1 ;;
   esac
 done
+
+if [ "$LIST_MODE" = "true" ]; then
+  run_list_sandbox_images
+fi
 
 # 无参数直接执行时的安全引导与交互式确认
 if [ "$ORIGINAL_ARGC" -eq 0 ] && [ "$AUTO_CONFIRM" != "true" ]; then
@@ -267,22 +361,10 @@ log_success "已导出：$TAR_FILE"
 
 if [ "$DO_IMPORT" = "true" ]; then
   IMPORTED=false
-  # 运行时选择：K3s（命令或 socket）优先——K3s 自带 containerd 是 kubelet 读取的那套；
-  # 没有 K3s 时用系统 containerd（普通 K8s 节点）。
-  if command -v k3s >/dev/null 2>&1; then
-    log_info "正在导入 K3s containerd（k3s ctr）..."
-    if sudo -n k3s ctr images import "$TAR_FILE" 2>/dev/null || k3s ctr images import "$TAR_FILE" 2>/dev/null; then
-      IMPORTED=true
-    fi
-  elif [ -S "/run/k3s/containerd/containerd.sock" ]; then
-    log_info "正在导入 K3s containerd（ctr -a socket）..."
-    if sudo -n ctr -a /run/k3s/containerd/containerd.sock -n k8s.io images import "$TAR_FILE" 2>/dev/null \
-      || ctr -a /run/k3s/containerd/containerd.sock -n k8s.io images import "$TAR_FILE" 2>/dev/null; then
-      IMPORTED=true
-    fi
-  elif command -v ctr >/dev/null 2>&1; then
-    log_info "正在导入节点 containerd（ctr -n k8s.io）..."
-    if sudo -n ctr -n k8s.io images import "$TAR_FILE" 2>/dev/null || ctr -n k8s.io images import "$TAR_FILE" 2>/dev/null; then
+  resolve_node_container_tool
+  if [ -n "$NODE_CTR_CMD" ] && [[ "$NODE_CTR_CMD" != *"crictl"* ]]; then
+    log_info "正在导入节点容器运行时（$NODE_CTR_CMD images import）..."
+    if $NODE_CTR_CMD images import "$TAR_FILE" 2>/dev/null; then
       IMPORTED=true
     fi
   fi
