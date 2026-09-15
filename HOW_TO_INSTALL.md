@@ -71,36 +71,88 @@ NanZi 开源智能体平台是企业级的多智能体编排与数据智能洞�
     ```
     MySQL 建议使用 **v8.0+**，字符集以 `utf8mb4` 为准。
 
-2.  **执行结构自动初始化（提供以下两种途径）**：
+2.  **执行结构自动初始化（支持多种执行模式与两种脚本途径）**：
 
-    *   **途径一：使用 Python 工具导入（推荐）**
+    平台提供了两个功能完全对齐的数据库迁移工具：
+    *   **途径一：使用 Python 工具导入（推荐）**：`db-prod/apply-sql.sh`（依赖虚拟环境中的 `aiomysql`，具备环境自动探测）。
+    *   **途径二：免 Python 依赖的纯 Shell 脚本导入**：`db-prod/apply-sql-native.sh`（仅依赖系统的 `mysql` 命令行客户端）。
+
+    两款脚本均具备严格的幂等性过滤机制（自动跳过重复表、重复字段等），且**完整支持以下多种执行方式**：
+
+    *   **模式 1：交互引导模式（直接运行，无需记参数）**
+        直接运行脚本而不带任何参数，脚本会自动打印帮助说明，并引导您进行数字选择：
         ```bash
-        # 推荐：在项目根目录执行
-        chmod +x db-prod/apply-sql.sh
-        ./db-prod/apply-sql.sh
+        # Python 版
+        chmod +x db-prod/apply-sql.sh && ./db-prod/apply-sql.sh
 
-        # 也可进入目录后执行
-        cd db-prod
-        ./apply-sql.sh
+        # 或原生 Shell 版
+        chmod +x db-prod/apply-sql-native.sh && ./db-prod/apply-sql-native.sh
         ```
-        脚本会依次询问 Host、Port、User、Password 和目标数据库，并要求输入 `YES` 确认。  
-        无参数时会执行 `db-prod/V*.sql` 全部版本文件。
+        终端会弹出模式选择：
+        - `[1] all`  : 执行 / 重跑所有迁移脚本（`db-prod/V*.sql`，默认选项，适合新环境首次部署）
+        - `[2] spec` : 指定版本范围或脚本名称（例如输入 `v1-v31`、`v155` 或指定文件名）
+        - `[3] last` : **断点续传**（自动读取 `db-prod/.last_applied_sql` 记录，从上次执行到的位置继续向下执行）
+        - `[q] exit` : 取消并退出
 
-    *   **途径二：免 Python 依赖的纯 Shell 脚本导入**
-        仅依赖系统已安装的 `mysql` 命令行客户端。具备与 Python 脚本等价的幂等性过滤机制（自动跳过重复建表、重复列等容错）：
+    *   **模式 2：全量执行 / 首次部署 (`-a` / `--all`)**
+        直接通过参数指定全量顺序执行 `db-prod/V*.sql`：
         ```bash
-        chmod +x db-prod/apply-sql-native.sh
-        ./db-prod/apply-sql-native.sh
+        ./db-prod/apply-sql.sh -a
+        # 或原生版：./db-prod/apply-sql-native.sh --all
         ```
-        *注：根据提示输入 Host、Port、User、Password 及数据库名，输入 `YES` 即可。目标库同样会在不存在时自动创建。*
+
+    *   **模式 3：指定版本范围或脚本名称 (`-s` / `--spec`)**
+        适用于增量升级、跳段执行或精确定向部署：
+        ```bash
+        # 版本范围（支持 vX-vY、VX-VY、X-Y）
+        ./db-prod/apply-sql.sh --spec v1-v31
+        # 单个版本（支持 vX、VX、X）
+        ./db-prod/apply-sql.sh -s v155
+        # 具体脚本文件名
+        ./db-prod/apply-sql.sh --spec V155-add_metadata_quality_score.sql
+        # 逗号组合多个范围与版本
+        ./db-prod/apply-sql.sh --spec v1-v5,v10-v15,v155
+        ```
+
+    *   **模式 4：断点续传 (`-l` / `--last`)**
+        如果上一次执行因为网络中断、参数调整等原因中断，或发布了新迁移想直接续接：
+        ```bash
+        ./db-prod/apply-sql.sh -l
+        # 或：./db-prod/apply-sql.sh --last
+        ```
+        *脚本会自动读取 `db-prod/.last_applied_sql` 中记录的最新成功脚本，并自动向后继续执行尚未应用的后续迁移文件。*
+
+    *   **模式 5：直接指定 SQL 文件路径**
+        直接传入一个或多个具体的 `.sql` 文件按序执行：
+        ```bash
+        ./db-prod/apply-sql.sh db-prod/V155-add_metadata_quality_score.sql
+        ```
 
 3.  **交互导入示例**（首次部署，目标库可不预先创建）：
 
-    以下示例将数据导入到本地库 `test222`（若不存在会自动创建）：
+    以下示例演示直接无参运行 `./db-prod/apply-sql.sh`，选择 `all` 模式导入到本地库 `test222`（若不存在会自动按 `utf8mb4` 创建）：
 
     ```text
-    $ cd db-prod
-    $ ./apply-sql.sh
+    $ ./db-prod/apply-sql.sh
+    ✓ 运行环境校验通过: Python 3.11.11 | 依赖库: aiomysql [已就绪]
+    ╭──────────────────────────────────────────────────────────────────────╮
+    │  NanZi AI Agent Platform - MySQL 数据库迁移执行工具 (apply-sql.sh)    │
+    ╰──────────────────────────────────────────────────────────────────────╯
+    用法: ./db-prod/apply-sql.sh [选项] [SQL文件...]
+    选项说明:
+      -h, --help               显示本帮助信息并退出
+      -a, --all                重跑/执行所有迁移脚本 (db-prod/V*.sql)
+      -l, --last               从上次执行记录的脚本位置开始继续执行
+      -s, --spec <范围或名称>  指定脚本执行范围或名称 (如 v1-v31, v155 等)
+      [SQL文件...]             直接传入一个或多个具体的 .sql 文件路径
+
+    ╭── 💡 检测到未传入参数，请选择要执行的迁移模式 ────────────────────────────╮
+    │  [1] all   - 执行/重跑所有迁移脚本 (db-prod/V*.sql)
+    │  [2] spec  - 指定脚本范围或名称 (例如: v1-v31, V155, 或具体文件名)
+    │  [3] last  - 从上次记录断点继续 (若存在历史记录)
+    │  [q] exit  - 取消并退出
+    ╰────────────────────────────────────────────────────────────────────╯
+    请选择模式 [1/2/3/q] (默认 1): 1
     MySQL host [localhost]:                 # 回车使用默认 localhost
     MySQL port [3306]:                      # 回车使用默认 3306
     MySQL user: root
@@ -114,8 +166,7 @@ NanZi 开源智能体平台是企业级的多智能体编排与数据智能洞�
       Database : test222
       Password : ******
       SQL files: db-prod/V*.sql
-    确认无误请输入 YES 继续执行：yes
-    No arguments provided. Running all SQL files from db-prod/...
+    确认无误请输入 YES 继续执行：YES
     ---------------------------------------------------
     🚀 Applying db-prod/V0-init_yunshu_ai_agent_metadata.sql...
     🔌 Connecting to MySQL server to ensure database 'test222' exists...
@@ -123,21 +174,27 @@ NanZi 开源智能体平台是企业级的多智能体编排与数据智能洞�
     ✅ SQL applied successfully.
     ---------------------------------------------------
     🚀 Applying db-prod/V1-create_system_configs.sql...
-    🔌 Connecting to MySQL server to ensure database 'test222' exists...
-    ...（后续 V2、V3 … 直至最新版本依次执行）
+    ...（后续版本依次按序执行）
     ✅ SQL applied successfully.
+    ---------------------------------------------------
+    ✅ 所有 SQL 迁移文件执行完成！
+    ---------------------------------------------------
+    是否需要导入默认管理员账号与预置 API Key (INIT-USER-ADMIN.sql)？[Y/n]: y
+    🚀 Applying db-prod/INIT-USER-ADMIN.sql...
+    ✅ 管理员账号与默认凭证导入成功！
     ```
 
     *说明：*
     *   生产环境请将 `Target database` 换成正式库名（如 `nanzi_ai_agent_platform`），并与 `.env` 中的 `MYSQL_DB` / `MYSQL_DATABASE` 保持一致。
-    *   若库已存在，后续版本执行时可能出现 `Can't create database '...'; database exists` 的 Warning，属于幂等确保逻辑，可忽略。
+    *   脚本在执行前会自动校验目标数据库默认字符集是否为 `utf8mb4`，避免中文乱码。
+    *   若库已存在，后续版本执行时可能出现 `Can't create database '...'; database exists` 或 `幂等跳过（可忽略）` 的提示，属于正常幂等逻辑，无需担心。
     *   可选：仍可事先手工建库（字符集须为 `utf8mb4`），例如：
         ```sql
         CREATE DATABASE IF NOT EXISTS `nanzi_ai_agent_platform` CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci;
         ```
 
 4.  **导入默认管理员账号与预置 API Key（可选）**：
-    若是首次部署，建议导入管理员数据以建立系统初始连接。
+    若是首次部署，需要建立系统初始连接管理员凭证。
     *提示：在第 2 步执行结构初始化时，导入脚本在执行完毕后会**自动弹出询问一键级联导入该数据**，若您当时已选择导入，此步骤可跳过。若当时选择了跳过，也可通过以下命令随时**手动单独导入**：*
     *   **使用 Python 工具**：
         ```bash
@@ -187,27 +244,39 @@ NanZi 开源智能体平台是企业级的多智能体编排与数据智能洞�
     ```
     PostgreSQL 目标实例建议使用 **v14+**。
 
-2.  **执行 PostgreSQL 初始化（导入结构与种子数据）**：
-    ```bash
-    # 推荐：在项目根目录执行
-    chmod +x db-prod-pg/apply-sql.sh
-    ./db-prod-pg/apply-sql.sh
+2.  **执行 PostgreSQL 初始化（支持多种执行模式）**：
+    PostgreSQL 迁移脚本 `db-prod-pg/apply-sql.sh` 与 MySQL 版具备完全对称的操作模式：
+    *   **交互引导模式（直接运行）**：
+        ```bash
+        chmod +x db-prod-pg/apply-sql.sh
+        ./db-prod-pg/apply-sql.sh
+        # 或 cd db-prod-pg && sh apply-sql.sh
+        ```
+        无参数时，脚本会展示帮助说明并弹出交互选择菜单：`[1] all`（全量执行全部版本）、`[2] spec`（指定版本范围或脚本名，如 `--spec v0-v56`）、`[3] last`（断点续传）。
+    *   **命令行参数模式**：
+        ```bash
+        # 1. 全量执行 / 重跑
+        ./db-prod-pg/apply-sql.sh -a
 
-    # 也可进入目录后执行（兼容 sh）
-    cd db-prod-pg
-    sh apply-sql.sh
-    ```
-    无参数时，脚本会按版本号排序，依次执行当前目录下全部 `V*.sql`（当前为 `V0` ~ `V14`）。版本目录是实际迁移状态的唯一来源；新增版本后无需修改本段文字。
+        # 2. 指定范围或版本
+        ./db-prod-pg/apply-sql.sh --spec v0-v56
+        ./db-prod-pg/apply-sql.sh -s v56
+
+        # 3. 断点续传 (读取 db-prod-pg/.last_applied_sql)
+        ./db-prod-pg/apply-sql.sh -l
+
+        # 4. 指定单个或多个 SQL 文件
+        ./db-prod-pg/apply-sql.sh db-prod-pg/V9-add_ai_model_token_limits.sql
+        ```
     脚本会依次询问 Host、Port、User、Password 和目标数据库，并要求输入 `YES` 确认。  
-    全部 SQL 成功后，会询问是否顺带创建默认管理员 `admin` 并生成 API Key。
+    全部 SQL 成功后，会自动提示询问是否顺带创建默认管理员 `admin` 并生成 API Key。
 
 3.  **交互导入示例**（首次部署，目标库可不预先创建）：
 
     以下示例将数据导入到本地库 `test111`（若不存在会自动创建），并完成管理员初始化：
 
     ```text
-    $ cd db-prod-pg
-    $ sh apply-sql.sh
+    $ ./db-prod-pg/apply-sql.sh
     PostgreSQL host [localhost]:            # 回车使用默认 localhost
     PostgreSQL port [5432]:                 # 回车使用默认 5432
     PostgreSQL user: postgres
@@ -222,20 +291,13 @@ NanZi 开源智能体平台是企业级的多智能体编排与数据智能洞�
       SQL files:
         - .../db-prod-pg/V0-baseline.sql
         - .../db-prod-pg/V1-align_system_config_seeds.sql
-        - .../db-prod-pg/V2-update_memory_embedding_default_config.sql
-        - .../db-prod-pg/V3-add_mcp_scope_and_user_id.sql
-        - .../db-prod-pg/V4-add_category_to_chatbi_examples.sql
-        - .../db-prod-pg/V5-register_example_search_tool.sql
-        - .../db-prod-pg/V6-enforce_mcp_server_name_uniqueness.sql
-        - .../db-prod-pg/V7-add_mcp_tool_availability.sql
-        - .../db-prod-pg/V8-enforce_ai_model_id_uniqueness.sql
-        - .../db-prod-pg/V9-add_ai_model_token_limits.sql
+        - ...（后续版本）
       Password : ******
-    确认无误请输入 YES 继续执行：yes
+    确认无误请输入 YES 继续执行：YES
     ---------------------------------------------------
     🚀 Applying .../V0-baseline.sql ...
     ✅ SQL applied successfully.
-    ...（V1 ~ V9 依次执行，全部 ✅）
+    ...（后续版本依次执行，全部 ✅）
     ---------------------------------------------------
     ✅ 所有 PostgreSQL 版本 SQL 文件执行成功。
     ---------------------------------------------------
