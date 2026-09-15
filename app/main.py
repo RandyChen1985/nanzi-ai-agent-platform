@@ -429,8 +429,11 @@ uploads_dir = os.path.join(base_dir, "data", "uploads")
 os.makedirs(uploads_dir, exist_ok=True)
 app.mount("/static/uploads", StaticFiles(directory=uploads_dir), name="uploads")
 
+# 确保三个公共只读目录（docs、skills、branding）在首次部署时自动创建
+for _public_dir in ("docs", "skills", "branding"):
+    os.makedirs(os.path.join(base_dir, "data", _public_dir), exist_ok=True)
+
 branding_dir = os.path.join(base_dir, "data", "branding")
-os.makedirs(branding_dir, exist_ok=True)
 app.mount("/branding", StaticFiles(directory=branding_dir), name="branding")
 
 
