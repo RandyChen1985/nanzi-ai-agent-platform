@@ -46,7 +46,16 @@ from app.services.ai.runtime.agentscope.docker_template_patch import (
     apply_agentscope_docker_patches,
 )
 
-apply_agentscope_docker_patches()
+if not apply_agentscope_docker_patches():
+    print(
+        "\n❌ 构建前置条件不满足：agentscope 未安装，无法生成正确的 Dockerfile。\n"
+        "   请先激活项目虚拟环境后重试：\n"
+        "     source sandbox/docker/activate-env.sh\n"
+        "     ./sandbox/docker/build-docker-sandbox-image.sh\n",
+        file=sys.stderr,
+    )
+    sys.exit(1)
+
 
 class Colors:
     """终端 ANSI 色彩令牌与高亮工具类，自适应检测 TTY 与 NO_COLOR。"""
