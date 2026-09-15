@@ -70,3 +70,23 @@ async def test_active_conversation_sync(db_session):
         assert resp.status_code == 200
         data = resp.json()
         assert data["data"]["conversation_id"] == conv_2
+
+
+@pytest.mark.asyncio
+async def test_get_conversation_history_route_contract(db_session):
+    """测试获取会话历史接口正确匹配路由并返回 200（避免装饰器错位导致 400 Bad Request）"""
+    uid = str(uuid.uuid4())[:8]
+    user_key = await AuthService.generate_api_key(f"test_history_user_{uid}", role="user", db=db_session)
+    headers = {"X-API-Key": user_key}
+    conv_id = f"conv-{uuid.uuid4()}"
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.get(
+            f"/api/v1/chat/conversation/{conv_id}",
+            headers=headers
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["code"] == 200
+        assert data["data"]["conversation_id"] == conv_id
+        assert isinstance(data["data"]["messages"], list)

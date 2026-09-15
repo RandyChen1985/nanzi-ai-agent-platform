@@ -913,11 +913,6 @@ async def get_conversation_run_status(
         status["sandbox_degraded_message"] = None
     return StandardResponse(data=ConversationRunStatusResponse(**status))
 
-@router.get("/conversation/{conversation_id}",
-    response_model=StandardResponse[ConversationHistoryResponse],
-    summary="获取会话历史",
-    description="从服务端内存 (Redis) 获取指定会话的历史记录，若缓存失效则自动从数据库持久化记录中回退恢复。"
-)
 def _merge_latest_audit_assistant(
     history: list[dict[str, Any]],
     audit_messages: list[dict[str, Any]],
@@ -943,6 +938,11 @@ def _merge_latest_audit_assistant(
     return history
 
 
+@router.get("/conversation/{conversation_id}",
+    response_model=StandardResponse[ConversationHistoryResponse],
+    summary="获取会话历史",
+    description="从服务端内存 (Redis) 获取指定会话的历史记录，若缓存失效则自动从数据库持久化记录中回退恢复。"
+)
 async def get_conversation_history(
     conversation_id: str,
     limit: Optional[int] = 50,
