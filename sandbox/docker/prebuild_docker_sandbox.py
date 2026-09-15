@@ -6,21 +6,21 @@
 
 使用方式:
   1. 默认交互式构建（无参数或带 -y）:
-     ./sandbox/docker/prebuild-sandbox.sh
-     ./sandbox/docker/prebuild-sandbox.sh -y
+     ./sandbox/docker/build-docker-sandbox-image.sh
+     ./sandbox/docker/build-docker-sandbox-image.sh -y
 
   2. 演练模式（仅生成 Dockerfile 与上下文，不触发构建）:
-     ./sandbox/docker/prebuild-sandbox.sh --dry-run
+     ./sandbox/docker/build-docker-sandbox-image.sh --dry-run
 
   3. 探测本地所有已构建的沙箱镜像:
-     ./sandbox/docker/prebuild-sandbox.sh --list
+     ./sandbox/docker/build-docker-sandbox-image.sh --list
 
   4. 检查当前基础镜像的预构建状态与 Tag:
-     ./sandbox/docker/prebuild-sandbox.sh --status
+     ./sandbox/docker/build-docker-sandbox-image.sh --status
 
   5. 带代理构建 / 强制重新构建:
-     ./sandbox/docker/prebuild-sandbox.sh --proxy http://127.0.0.1:7890
-     ./sandbox/docker/prebuild-sandbox.sh --force --base-image python:3.11-slim
+     ./sandbox/docker/build-docker-sandbox-image.sh --proxy http://127.0.0.1:7890
+     ./sandbox/docker/build-docker-sandbox-image.sh --force --base-image python:3.11-slim
 """
 
 from __future__ import annotations
@@ -140,7 +140,7 @@ async def list_sandbox_images_cli(base_image: str | None = None) -> None:
 
         if not sandbox_images:
             print("⏳ 本地暂无任何 agentscope-workspace 沙箱镜像。")
-            print("👉 您可以运行: ./sandbox/docker/prebuild-sandbox.sh 立即开始构建。\n")
+            print("👉 您可以运行: ./sandbox/docker/build-docker-sandbox-image.sh 立即开始构建。\n")
             return
 
         header = f"{'REPOSITORY':<22} {'TAG':<16} {'IMAGE ID':<14} {'SIZE':<10} {'状态'}"
@@ -194,7 +194,7 @@ async def dry_run_cli(base_image: str | None) -> None:
 
         print("=" * 70)
         print("💡 Dry-Run 演练完成！未向 Docker Daemon 发起任何构建任务。")
-        print("👉 若需正式执行构建，请运行: ./sandbox/docker/prebuild-sandbox.sh\n")
+        print("👉 若需正式执行构建，请运行: ./sandbox/docker/build-docker-sandbox-image.sh\n")
     finally:
         if ctx_dir:
             shutil.rmtree(ctx_dir, ignore_errors=True)
@@ -205,8 +205,13 @@ async def prebuild_direct(
     force: bool = False,
     proxy: str | None = None,
 ) -> None:
-    """在当前环境直接使用 aiodocker / Docker API 执行构建并输出实时日志。"""
-    import aiodocker
+    try:
+        import aiodocker
+    except ImportError:
+        print("❌ 当前 Python 环境未安装 aiodocker 依赖！")
+        print("👉 请先激活平台虚拟环境（source .venv/bin/activate）或执行: pip install aiodocker")
+        sys.exit(1)
+
     from app.services.ai.runtime.agentscope.docker_prebuild import (
         DEFAULT_DOCKER_BASE_IMAGE,
         _image_exists,
@@ -470,9 +475,9 @@ def main() -> None:
             print(f"💡 未指定参数，当前默认基础镜像: [{args.base_image}]")
             print(f"   已内置排障工具: {', '.join(EXTRA_SANDBOX_APT_PACKAGES)}")
             print("   常用操作:")
-            print("     - 查看参数帮助:       ./sandbox/docker/prebuild-sandbox.sh --help")
-            print("     - 演练预览 Dockerfile: ./sandbox/docker/prebuild-sandbox.sh --dry-run")
-            print("     - 查看本地已有镜像:   ./sandbox/docker/prebuild-sandbox.sh --list")
+            print("     - 查看参数帮助:       ./sandbox/docker/build-docker-sandbox-image.sh --help")
+            print("     - 演练预览 Dockerfile: ./sandbox/docker/build-docker-sandbox-image.sh --dry-run")
+            print("     - 查看本地已有镜像:   ./sandbox/docker/build-docker-sandbox-image.sh --list")
             print("----------------------------------------------------------------------")
             try:
                 confirm = input("是否以默认配置立即开始构建？[y/N]: ").strip().lower()

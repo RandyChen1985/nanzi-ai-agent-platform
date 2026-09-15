@@ -34,7 +34,7 @@ def test_script_reorganization_and_forwarding_compatibility():
     repo_root = Path(__file__).resolve().parent.parent.parent.parent
     docker_dir = repo_root / "sandbox" / "docker"
     root_script = repo_root / "prebuild-sandbox.sh"
-    new_sh = docker_dir / "prebuild-sandbox.sh"
+    new_sh = docker_dir / "build-docker-sandbox-image.sh"
     new_py = docker_dir / "prebuild_docker_sandbox.py"
     compat_py = repo_root / "scripts" / "prebuild_docker_sandbox.py"
     readme = docker_dir / "README.md"
@@ -43,7 +43,7 @@ def test_script_reorganization_and_forwarding_compatibility():
     k8s_sh = k8s_dir / "build-k8s-sandbox-image.sh"
     k8s_readme = k8s_dir / "README.md"
 
-    assert new_sh.exists(), "sandbox/docker/ 下 shell 脚本应当存在"
+    assert new_sh.exists(), "sandbox/docker/ 下 shell 脚本应当存在 (build-docker-sandbox-image.sh)"
     assert new_py.exists(), "sandbox/docker/ 下 python 脚本应当存在"
     assert readme.exists(), "README 说明文档应当存在"
     assert k8s_sh.exists(), "sandbox/k8s/ 下快捷构建脚本应当存在"

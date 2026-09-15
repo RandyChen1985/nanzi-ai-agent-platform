@@ -344,16 +344,16 @@ async def _mark_prebuilt(base_image: str | None = None) -> None:
     from app.services.config_service import ConfigService
 
     try:
-        await ConfigService.set(
-            PREBUILD_CONFIG_KEY,
-            "1",
+        await ConfigService.set_config(
+            key=PREBUILD_CONFIG_KEY,
+            value="1",
             category="sandbox",
             description="Docker 沙箱镜像预构建状态标记（内部使用，非空表示已预构建）",
         )
         if base_image and base_image.strip():
-            await ConfigService.set(
-                "sandbox_docker_base_image",
-                base_image.strip(),
+            await ConfigService.set_config(
+                key="sandbox_docker_base_image",
+                value=base_image.strip(),
                 category="sandbox",
                 description="docker 策略使用的容器基础镜像（留空默认使用阿里云加速源）",
             )

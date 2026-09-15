@@ -92,6 +92,113 @@ resolve_node_container_tool() {
   fi
 }
 
+# ---- Docker 运行环境前置预检与场景化引导 ----
+check_docker_environment_k8s() {
+  # 若处于演练模式、查看帮助/列表或仅同步模板，无需依赖本地 Docker
+  if [ "$DRY_RUN" = "true" ] || [ "$LIST_MODE" = "true" ] || [ "$SYNC_TEMPLATE" = "true" ]; then
+    return 0
+  fi
+
+  # 1. 检查是否在容器内部或 K8s Pod 内部误执行
+  if [ -f "/.dockerenv" ] || [ -n "${KUBERNETES_SERVICE_HOST:-}" ]; then
+    printf "\n"
+    log_error "检测到当前环境可能是容器 / K8s Pod 内部（存在 /.dockerenv 或 KUBERNETES_SERVICE_HOST）！"
+    log_warn "本脚本需要在【能访问 Docker 引擎的宿主机/构建机】执行，不能在 NanZi 平台 Pod 内构建。"
+    printf "────────────────────────────────────────────────────────────────────\n"
+    printf "%b👉 解决方案：%b\n" "${C_BOLD}" "${C_RESET}"
+    printf "  请在任意拥有 Docker 的外部宿主机/开发机上执行本脚本得到 tar 包，再拷贝至 K8s 节点导入。\n"
+    printf "────────────────────────────────────────────────────────────────────\n\n"
+    exit 1
+  fi
+
+  # 2. 检查 docker CLI 是否已安装
+  if ! command -v docker >/dev/null 2>&1; then
+    printf "\n"
+    log_error "未检测到 Docker 命令行工具 (docker: command not found)"
+    log_warn "K8s 沙箱网关镜像构建 (docker build) 与导出 (docker save) 依赖本地 Docker 引擎。"
+    printf "────────────────────────────────────────────────────────────────────\n"
+    printf "%b👉 操作与排障方案建议：%b\n" "${C_BOLD}" "${C_RESET}"
+    printf "  %b【方案 A：当前机器作为构建机】%b 安装并启动 Docker：\n" "${C_YELLOW}" "${C_RESET}"
+    printf "    • Linux 一键安装:   %bcurl -fsSL https://get.docker.com | bash%b\n" "${C_CYAN}" "${C_RESET}"
+    printf "    • Ubuntu/Debian:    %bsudo apt-get update && sudo apt-get install -y docker.io%b\n" "${C_CYAN}" "${C_RESET}"
+    printf "    • CentOS/RHEL:      %bsudo yum install -y docker && sudo systemctl enable --now docker%b\n" "${C_CYAN}" "${C_RESET}"
+    printf "    • macOS / Windows:  请前往官网安装 Docker Desktop: https://www.docker.com/products/docker-desktop\n"
+    printf "\n"
+    printf "  %b【方案 B：当前机器是纯 containerd 的 K8s 生产节点（无需在本机装 Docker）】%b\n" "${C_YELLOW}" "${C_RESET}"
+    printf "    1. 在任意有 Docker 的开发机/CI 构建机上运行本脚本打包（带 --no-import 参数）：\n"
+    printf "       %b./build-k8s-sandbox-image.sh --no-import%b\n" "${C_CYAN}" "${C_RESET}"
+    printf "    2. 将生成的产物包 %bnanzi-sandbox-k8s_%s.tar%b 拷贝至本 K8s 节点。\n" "${C_BOLD}" "$IMAGE_TAG" "${C_RESET}"
+    printf "    3. 在本节点直接执行导入（仅需 containerd/K3s，无需 Docker）：\n"
+    printf "       %bk3s ctr images import nanzi-sandbox-k8s_%s.tar%b           # K3s 集群\n" "${C_CYAN}" "$IMAGE_TAG" "${C_RESET}"
+    printf "       %bctr -n k8s.io images import nanzi-sandbox-k8s_%s.tar%b    # 标准 containerd\n" "${C_CYAN}" "$IMAGE_TAG" "${C_RESET}"
+    printf "\n"
+    printf "  %b【演练模式】%b 仅预览 Dockerfile 与执行命令清单（无需 Docker 环境）：\n" "${C_YELLOW}" "${C_RESET}"
+    printf "    %b./build-k8s-sandbox-image.sh --dry-run%b\n" "${C_CYAN}" "${C_RESET}"
+    printf "────────────────────────────────────────────────────────────────────\n\n"
+    exit 1
+  fi
+
+  # 提取 Docker Client 基础信息
+  local cli_ver docker_ctx docker_endpoint
+  cli_ver="$(docker version --format '{{.Client.Version}}' 2>/dev/null || echo "未知版本")"
+  docker_ctx="$(docker context show 2>/dev/null || echo "default")"
+  docker_endpoint="$(docker context inspect --format '{{.Endpoints.docker.Host}}' 2>/dev/null || echo "${DOCKER_HOST:-/var/run/docker.sock}")"
+
+  # 3. 检查 Docker Daemon 守护进程是否处于运行状态与当前用户权限
+  local docker_info_raw
+  if ! docker_info_raw="$(docker info --format '{{.ServerVersion}}|{{.OperatingSystem}}|{{.Architecture}}|{{.NCPU}}|{{.MemTotal}}|{{.ContainersRunning}}|{{.Images}}' 2>&1)"; then
+    printf "\n"
+    log_error "本地 Docker Daemon 守护进程未启动或当前用户权限不足！"
+    printf "======================================================================\n"
+    printf "%b🐳 Docker 客户端环境检测信息：%b\n" "${C_CYAN}" "${C_RESET}"
+    printf "   • 客户端版本 (CLI):     %b%s%b\n" "${C_BOLD}" "$cli_ver" "${C_RESET}"
+    printf "   • 当前上下文 (Context): %b%s%b\n" "${C_BOLD}" "$docker_ctx" "${C_RESET}"
+    printf "   • 目标端点 (Endpoint):  %b%s%b\n" "${C_BOLD}" "$docker_endpoint" "${C_RESET}"
+    printf "   • 服务端状态 (Server):  %b🔴 未运行 / 无法连接%b\n" "${C_RED}" "${C_RESET}"
+    printf "======================================================================\n"
+    printf "%b👉 排障与解决引导：%b\n" "${C_BOLD}" "${C_RESET}"
+    if [[ "$docker_info_raw" =~ [Pp]ermission\ denied ]]; then
+      printf "  %b【原因：权限不足】%b 当前用户没有访问 Docker Socket 的权限：\n" "${C_YELLOW}" "${C_RESET}"
+      printf "    1. 将当前用户加入 docker 组: %bsudo usermod -aG docker \$USER%b\n" "${C_CYAN}" "${C_RESET}"
+      printf "    2. 刷新当前 Shell 组或重新登录:  %bnewgrp docker%b\n" "${C_CYAN}" "${C_RESET}"
+      printf "    3. 或临时使用 sudo 运行此脚本:    %bsudo ./build-k8s-sandbox-image.sh [选项]%b\n" "${C_CYAN}" "${C_RESET}"
+    elif [[ "$docker_ctx" == "colima" ]] || [[ "$docker_endpoint" =~ colima ]]; then
+      printf "  %b【原因：Colima 虚拟机未启动】%b 检测到当前 Docker Context 使用的是 Colima：\n" "${C_YELLOW}" "${C_RESET}"
+      printf "    👉 请在终端执行以下命令启动 Colima 虚拟机：\n"
+      printf "       %bcolima start%b\n" "${C_CYAN}" "${C_RESET}"
+    elif [[ "$docker_ctx" =~ (desktop|desktop-linux) ]] || [[ "$docker_endpoint" =~ docker\.desktop ]]; then
+      printf "  %b【原因：Docker Desktop 未启动】%b 检测到当前使用的是 Docker Desktop：\n" "${C_YELLOW}" "${C_RESET}"
+      printf "    👉 请启动 Docker Desktop 应用程序并等待就绪（状态图标变为绿色）。\n"
+    else
+      printf "  %b【原因：服务未运行】%b Docker 守护进程未启动：\n" "${C_YELLOW}" "${C_RESET}"
+      printf "    • Linux 系统启动服务:      %bsudo systemctl start docker && sudo systemctl enable docker%b\n" "${C_CYAN}" "${C_RESET}"
+      printf "    • macOS / Windows 系统:   请启动 Docker 运行时（Docker Desktop 或 Colima）。\n"
+    fi
+    printf "  • 演练预览生成的 Dockerfile（无需 Docker 环境）：\n"
+    printf "    %b./build-k8s-sandbox-image.sh --dry-run%b\n" "${C_CYAN}" "${C_RESET}"
+    printf "────────────────────────────────────────────────────────────────────\n\n"
+    exit 1
+  fi
+
+  # 4. 格式化解析并打印 Docker 运行环境明细
+  local server_ver server_os server_arch server_ncpu server_mem server_running server_images
+  IFS='|' read -r server_ver server_os server_arch server_ncpu server_mem server_running server_images <<< "$docker_info_raw"
+  local mem_formatted="未知"
+  if [ -n "$server_mem" ] && [ "$server_mem" -gt 0 ] 2>/dev/null; then
+    mem_formatted="$(awk "BEGIN {printf \"%.2f GiB\", $server_mem/1024/1024/1024}" 2>/dev/null || echo "$((server_mem / 1073741824)) GiB")"
+  fi
+
+  printf "\n======================================================================\n"
+  printf "%b🐳 [Docker 运行环境预检通过] 检测到可用 Docker 引擎：%b\n" "${C_GREEN}" "${C_RESET}"
+  printf "   • 客户端版本 (CLI):     %b%s%b\n" "${C_BOLD}" "$cli_ver" "${C_RESET}"
+  printf "   • 服务端版本 (Server):  %b%s%b (%s, %s)\n" "${C_BOLD}" "$server_ver" "${C_RESET}" "$server_os" "$server_arch"
+  printf "   • 当前上下文 (Context): %b%s%b\n" "${C_BOLD}" "$docker_ctx" "${C_RESET}"
+  printf "   • 守护进程端点 (Host):   %b%s%b\n" "${C_BOLD}" "$docker_endpoint" "${C_RESET}"
+  printf "   • 宿主分配规格 (Specs):  %b%s 核 CPU / %s 内存%b\n" "${C_BOLD}" "$server_ncpu" "$mem_formatted" "${C_RESET}"
+  printf "   • 容器/镜像状态:        运行中容器: %s / 本地镜像数: %s\n" "$server_running" "$server_images"
+  printf "======================================================================\n\n"
+}
+
 run_list_sandbox_images() {
   printf "\n"
   log_info "🔍 正在检索本地 Docker 与 K8s 节点的沙箱镜像..."
@@ -205,6 +312,9 @@ done
 if [ "$LIST_MODE" = "true" ]; then
   run_list_sandbox_images
 fi
+
+# 前置检查 Docker 运行环境（在用户交互确认与构建前提前发现问题并引导）
+check_docker_environment_k8s
 
 # 无参数直接执行时的安全引导与交互式确认
 if [ "$ORIGINAL_ARGC" -eq 0 ] && [ "$AUTO_CONFIRM" != "true" ]; then

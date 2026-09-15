@@ -263,7 +263,7 @@
 | 文件                                          | 类型       | 核心职责说明                                                                                                                    |
 | :-------------------------------------------- | :--------- | :------------------------------------------------------------------------------------------------------------------------------ |
 | [`dev.sh`](dev.sh)                           | Shell 脚本 | **本地一键开发运维总控**：支持前后端并行启动、热编译重载、前台/后台运行模式切换、环境探测与进程优雅启停。                 |
-| [`sandbox/docker/prebuild-sandbox.sh`](sandbox/docker/prebuild-sandbox.sh) | Shell 脚本 | **Docker 代码安全沙箱预构建**：提前拉取并构建带安全隔离的 Python 3.11 沙箱镜像，大幅加速 Agent 动态执行代码时的启动速度。 |
+| [`sandbox/docker/build-docker-sandbox-image.sh`](sandbox/docker/build-docker-sandbox-image.sh) | Shell 脚本 | **Docker 代码安全沙箱预构建**：提前拉取并构建带安全隔离的 Python 3.11 沙箱镜像，大幅加速 Agent 动态执行代码时的启动速度。 |
 | [`env.example`](env.example)                 | 配置模板   | **全局环境变量基准模板**：包含 MySQL/PostgreSQL、Redis Stack、JWT/加密私钥、模型 API 端点等核心运行参数。                 |
 | [`requirements.txt`](requirements.txt)       | 依赖配置   | **后端运行时依赖包清单**：基于 Python 3.11 的核心第三方库依赖定义（FastAPI、AgentScope、SQLAlchemy、Redis 等）。          |
 | [`pytest.ini`](pytest.ini)                   | 测试配置   | **自动化测试套件配置**：定义 Pytest 用例过滤规则、异步标记、控制台日志输出与测试运行行为。                                |

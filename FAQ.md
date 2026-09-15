@@ -2646,26 +2646,26 @@ curl -X POST "http://127.0.0.1:8001/api/v1/admin/sandbox/docker/prebuild?force=t
 
 ```bash
 # 1. 演练模式（仅生成 Dockerfile 与上下文，不触发构建）
-./sandbox/docker/prebuild-sandbox.sh --dry-run
+./sandbox/docker/build-docker-sandbox-image.sh --dry-run
 
 # 2. 探测本地所有已构建的沙箱镜像清单
-./sandbox/docker/prebuild-sandbox.sh --list
+./sandbox/docker/build-docker-sandbox-image.sh --list
 
 # 3. 带 HTTP/HTTPS 代理执行预构建（实时流式查看 Docker build 进度）
-./sandbox/docker/prebuild-sandbox.sh --proxy http://10.0.0.1:7890
+./sandbox/docker/build-docker-sandbox-image.sh --proxy http://10.0.0.1:7890
 
 # 4. 或在环境中预设代理环境变量后直接运行（自动识别，支持 -y 免交互）
 export HTTP_PROXY=http://10.0.0.1:7890 HTTPS_PROXY=http://10.0.0.1:7890
-./sandbox/docker/prebuild-sandbox.sh -y
+./sandbox/docker/build-docker-sandbox-image.sh -y
 
 # 5. 仅检查预构建状态与确定性 Tag
-./sandbox/docker/prebuild-sandbox.sh --status
+./sandbox/docker/build-docker-sandbox-image.sh --status
 
 # 6. 指定特定基础镜像或强制重建
-./sandbox/docker/prebuild-sandbox.sh --base-image python:3.11-slim --force --proxy http://10.0.0.1:7890
+./sandbox/docker/build-docker-sandbox-image.sh --base-image python:3.11-slim --force --proxy http://10.0.0.1:7890
 ```
 
-> 💡 **提示**：通过 `./sandbox/docker/prebuild-sandbox.sh` 直接构建属于服务器本地/容器内部运维操作，**无需传递 API Key**。构建成功后会自动将预构建完成标记写入数据库与 Redis，回到前端管理页面刷新即可看到已就绪状态。
+> 💡 **提示**：通过 `./sandbox/docker/build-docker-sandbox-image.sh` 直接构建属于服务器本地/容器内部运维操作，**无需传递 API Key**。构建成功后会自动将预构建完成标记写入数据库与 Redis，回到前端管理页面刷新即可看到已就绪状态。
 
 ---
 
@@ -2736,7 +2736,7 @@ sequenceDiagram
 - **原因**：部分公有云加速地址（如阿里云未登录状态）会拦截匿名拉取报 access denied，或直接访问 Docker Hub / PyPI 发生网络阻塞。
 - **解决方案**：
   1. 在【系统配置】->【安全沙箱】中确保选用官方标准 **`python:3.11-slim`**，并在本地 Docker daemon 配置合法镜像加速器/代理；或选择「自定义镜像地址…」填入企业私有 Harbor 镜像地址后点击预构建；
-  2. 若当前机器需要 HTTP/HTTPS 代理才能访问外部网络，可直接在宿主机或进入容器终端运行 `./sandbox/docker/prebuild-sandbox.sh --proxy http://<代理IP>:<端口>` 进行构建，可实时流式观察下载与编译日志并自动落库。
+  2. 若当前机器需要 HTTP/HTTPS 代理才能访问外部网络，可直接在宿主机或进入容器终端运行 `./sandbox/docker/build-docker-sandbox-image.sh --proxy http://<代理IP>:<端口>` 进行构建，可实时流式观察下载与编译日志并自动落库。
 
 ##### Q4: 普通用户提示 `403 Forbidden` 无法启动沙箱
 

@@ -39,7 +39,7 @@ Docker 沙箱的构建与平台后台配置管理深度打通，支持 **Web 界
 graph LR
     subgraph 两种构建方式
         A["方式一：前端【预构建镜像】按钮"] -->|SSE 日志推流| C["Docker Daemon 构建镜像"]
-        B["方式二：命令行 ./prebuild-sandbox.sh"] -->|直连 Socket 构建| C
+        B["方式二：命令行 ./build-docker-sandbox-image.sh"] -->|直连 Socket 构建| C
     end
     C -->|打标 Tag agentscope-workspace:xxx| D["自动写入主库 system_configs 与 Redis 缓存"]
     D --> E["前端【沙箱配置】显示：✅ 镜像已就绪 (秒级拉起)"]
@@ -53,7 +53,7 @@ graph LR
 * `sandbox_docker_prebuild_done`：预构建完成状态标记（系统自动维护，无需手动更改）。
 
 ### 3.2 自动状态回填与核验
-* 无论是在 Web 控制台点击【预构建镜像】，还是在服务器执行 `./prebuild-sandbox.sh`，构建完成后程序均会自动调用平台 API / 数据库服务，将 `sandbox_docker_prebuild_done` 标记写入数据库与 Redis。
+* 无论是在 Web 控制台点击【预构建镜像】，还是在服务器执行 `./build-docker-sandbox-image.sh`，构建完成后程序均会自动调用平台 API / 数据库服务，将 `sandbox_docker_prebuild_done` 标记写入数据库与 Redis。
 * 刷新前端后台页面，即可看到沙箱状态显示为绿色的 **【✅ 镜像已就绪 (秒级拉起)】**。
 
 ---
@@ -66,25 +66,25 @@ graph LR
 
 ```bash
 # 1. 演练模式 (Dry-Run)：预览将生成的 Dockerfile 完整内容与排障工具链，不触发实际构建
-./sandbox/docker/prebuild-sandbox.sh --dry-run
+./sandbox/docker/build-docker-sandbox-image.sh --dry-run
 
 # 2. 探测本地沙箱镜像：扫描 Docker daemon 中现存的所有 agentscope-workspace 镜像及配置匹配状态
-./sandbox/docker/prebuild-sandbox.sh --list
+./sandbox/docker/build-docker-sandbox-image.sh --list
 
 # 3. 交互式安全构建：无参数执行，先输出配置概览与预装工具链，提示 [y/N] 防误触确认
-./sandbox/docker/prebuild-sandbox.sh
+./sandbox/docker/build-docker-sandbox-image.sh
 
 # 4. 免交互自动化构建：适合 CI/CD 流水线或自动化部署脚本
-./sandbox/docker/prebuild-sandbox.sh -y
+./sandbox/docker/build-docker-sandbox-image.sh -y
 
 # 5. 检查当前预构建状态与确定性 Tag
-./sandbox/docker/prebuild-sandbox.sh --status
+./sandbox/docker/build-docker-sandbox-image.sh --status
 
 # 6. 带网络代理构建（解决受限网络环境下无法访问 Astral uv 脚本或外网源的问题）
-./sandbox/docker/prebuild-sandbox.sh --proxy http://127.0.0.1:7890
+./sandbox/docker/build-docker-sandbox-image.sh --proxy http://127.0.0.1:7890
 
 # 7. 强制重建（忽略本地缓存，全量重新下载并构建）
-./sandbox/docker/prebuild-sandbox.sh --force --base-image python:3.11-slim
+./sandbox/docker/build-docker-sandbox-image.sh --force --base-image python:3.11-slim
 ```
 
 ### 4.2 参数说明
