@@ -48,10 +48,62 @@ from app.services.ai.runtime.agentscope.docker_template_patch import (
 
 apply_agentscope_docker_patches()
 
-BANNER = """\
-\033[1;36m======================================================================\033[0m
-\033[1;36m       NanZi AI · Docker 安全代码沙箱镜像预构建与运维工具              \033[0m
-\033[1;36m======================================================================\033[0m\
+class Colors:
+    """终端 ANSI 色彩令牌与高亮工具类，自适应检测 TTY 与 NO_COLOR。"""
+
+    _ENABLED = sys.stdout.isatty() and not os.environ.get("NO_COLOR")
+
+    RESET = "\033[0m" if _ENABLED else ""
+    BOLD = "\033[1m" if _ENABLED else ""
+    DIM = "\033[2m" if _ENABLED else ""
+    UNDERLINE = "\033[4m" if _ENABLED else ""
+
+    # 前景色
+    BLACK = "\033[30m" if _ENABLED else ""
+    RED = "\033[31m" if _ENABLED else ""
+    GREEN = "\033[32m" if _ENABLED else ""
+    YELLOW = "\033[33m" if _ENABLED else ""
+    BLUE = "\033[34m" if _ENABLED else ""
+    MAGENTA = "\033[35m" if _ENABLED else ""
+    CYAN = "\033[36m" if _ENABLED else ""
+    WHITE = "\033[37m" if _ENABLED else ""
+
+    # 亮色
+    BRIGHT_RED = "\033[91m" if _ENABLED else ""
+    BRIGHT_GREEN = "\033[92m" if _ENABLED else ""
+    BRIGHT_YELLOW = "\033[93m" if _ENABLED else ""
+    BRIGHT_BLUE = "\033[94m" if _ENABLED else ""
+    BRIGHT_MAGENTA = "\033[95m" if _ENABLED else ""
+    BRIGHT_CYAN = "\033[96m" if _ENABLED else ""
+    BRIGHT_WHITE = "\033[97m" if _ENABLED else ""
+
+    @classmethod
+    def c(cls, text: Any, *styles: str) -> str:
+        """带样式包装文本，非 TTY 环境自动回退无损纯文本。"""
+        if not cls._ENABLED or not styles:
+            return str(text)
+        return "".join(styles) + str(text) + cls.RESET
+
+    @classmethod
+    def highlight_dockerfile(cls, line: str) -> str:
+        """为 Dockerfile 代码行提供轻量语法高亮。"""
+        if not cls._ENABLED:
+            return line
+        trimmed = line.strip()
+        if trimmed.startswith("#"):
+            return cls.c(line, cls.DIM, cls.WHITE)
+        keywords = ["FROM", "RUN", "ENV", "COPY", "WORKDIR", "EXPOSE", "USER", "ENTRYPOINT", "CMD"]
+        for kw in keywords:
+            if trimmed.startswith(kw + " "):
+                parts = line.split(kw, 1)
+                return parts[0] + cls.c(kw, cls.BOLD, cls.BRIGHT_MAGENTA) + cls.c(parts[1], cls.BRIGHT_CYAN)
+        return line
+
+
+BANNER = f"""\
+{Colors.c('╔════════════════════════════════════════════════════════════════════════════╗', Colors.BRIGHT_CYAN)}
+{Colors.c('║', Colors.BRIGHT_CYAN)}  {Colors.c('NanZi AI · Docker 安全代码沙箱镜像预构建与运维工具', Colors.BOLD, Colors.BRIGHT_WHITE):<72} {Colors.c('║', Colors.BRIGHT_CYAN)}
+{Colors.c('╚════════════════════════════════════════════════════════════════════════════╝', Colors.BRIGHT_CYAN)}\
 """
 
 
@@ -74,21 +126,20 @@ async def check_status_cli(base_image: str | None) -> None:
     )
 
     effective_base = base_image or DEFAULT_DOCKER_BASE_IMAGE
-    print("\n🔍 正在检查 Docker 沙箱镜像状态...")
+    print("\n" + Colors.c("🔍 正在检查 Docker 沙箱镜像状态...", Colors.BOLD, Colors.BRIGHT_CYAN))
     status = await docker_workspace_prebuild_status(base_image=effective_base)
 
-    print("=" * 65)
-    print(f"  基础镜像 (Base Image):     {effective_base}")
-    print(f"  计算 Tag:                  {status.get('tag') or '无法计算'}")
-    print(f"  内置排障工具链:            {', '.join(EXTRA_SANDBOX_APT_PACKAGES)}")
-    print(
-        f"  Docker Daemon 状态:        {'🟢 可连接' if status.get('docker_available') else '🔴 不可达'}"
-    )
-    print(
-        f"  镜像预构建就绪 (Prebuilt): {'✅ 已就绪 (秒级拉起)' if status.get('prebuilt') else '⏳ 尚未预构建'}"
-    )
-    print(f"  状态说明:                  {status.get('message')}")
-    print("=" * 65)
+    print(Colors.c("─" * 70, Colors.DIM))
+    print(f"  {Colors.c('• 基础镜像 (Base Image):', Colors.BOLD):<30} {Colors.c(effective_base, Colors.BRIGHT_CYAN)}")
+    tag = status.get('tag') or '无法计算'
+    print(f"  {Colors.c('• 计算 Tag:', Colors.BOLD):<30} {Colors.c(tag, Colors.BOLD, Colors.BRIGHT_WHITE)}")
+    print(f"  {Colors.c('• 内置排障工具链:', Colors.BOLD):<30} {Colors.c(', '.join(EXTRA_SANDBOX_APT_PACKAGES), Colors.DIM)}")
+    docker_status = Colors.c('🟢 可连接', Colors.BOLD, Colors.BRIGHT_GREEN) if status.get('docker_available') else Colors.c('🔴 不可达', Colors.BOLD, Colors.BRIGHT_RED)
+    print(f"  {Colors.c('• Docker Daemon 状态:', Colors.BOLD):<30} {docker_status}")
+    prebuilt_status = Colors.c('✅ 已就绪 (秒级拉起)', Colors.BOLD, Colors.BRIGHT_GREEN) if status.get('prebuilt') else Colors.c('⏳ 尚未预构建', Colors.BOLD, Colors.BRIGHT_YELLOW)
+    print(f"  {Colors.c('• 镜像预构建就绪 (Prebuilt):', Colors.BOLD):<30} {prebuilt_status}")
+    print(f"  {Colors.c('• 状态说明:', Colors.BOLD):<30} {status.get('message')}")
+    print(Colors.c("─" * 70, Colors.DIM) + "\n")
 
 
 async def list_sandbox_images_cli(base_image: str | None = None) -> None:
@@ -133,27 +184,28 @@ async def list_sandbox_images_cli(base_image: str | None = None) -> None:
                         }
                     )
 
-        print("\n" + "=" * 80)
-        print("📋 本地 Docker 沙箱镜像清单 (agentscope-workspace)")
-        print(f"   当前配置期望 Tag: {current_tag or '计算中...'}")
-        print("=" * 80)
+        print("\n" + Colors.c("─" * 80, Colors.BRIGHT_CYAN))
+        print(Colors.c("📋 本地 Docker 沙箱镜像清单 (agentscope-workspace)", Colors.BOLD, Colors.BRIGHT_WHITE))
+        print(f"   当前配置期望 Tag: {Colors.c(current_tag or '计算中...', Colors.BOLD, Colors.BRIGHT_CYAN)}")
+        print(Colors.c("─" * 80, Colors.BRIGHT_CYAN))
 
         if not sandbox_images:
-            print("⏳ 本地暂无任何 agentscope-workspace 沙箱镜像。")
-            print("👉 您可以运行: ./sandbox/docker/build-docker-sandbox-image.sh 立即开始构建。\n")
+            print(Colors.c("⏳ 本地暂无任何 agentscope-workspace 沙箱镜像。", Colors.YELLOW))
+            print(f"👉 您可以运行: {Colors.c('./sandbox/docker/build-docker-sandbox-image.sh', Colors.CYAN)} 立即开始构建。\n")
             return
 
-        header = f"{'REPOSITORY':<22} {'TAG':<16} {'IMAGE ID':<14} {'SIZE':<10} {'状态'}"
+        header = f"{Colors.c('REPOSITORY', Colors.BOLD):<30} {Colors.c('TAG', Colors.BOLD):<24} {Colors.c('IMAGE ID', Colors.BOLD):<22} {Colors.c('SIZE', Colors.BOLD):<18} {Colors.c('状态', Colors.BOLD)}"
         print(header)
-        print("-" * 80)
+        print(Colors.c("─" * 80, Colors.DIM))
         for item in sandbox_images:
             repo = "agentscope-workspace"
-            tag_display = item["tag"][:14]
-            img_id = item["id"]
-            size_str = _format_size(item["size"])
-            status_str = "✅ 匹配当前配置 (已就绪)" if item["is_current"] else "⏳ 历史/其他版本"
-            print(f"{repo:<22} {tag_display:<16} {img_id:<14} {size_str:<10} {status_str}")
-        print("=" * 80 + "\n")
+            tag_val = item["tag"]
+            tag_display = Colors.c(f"{tag_val:<14}", Colors.BOLD, Colors.BRIGHT_GREEN) if item["is_current"] else Colors.c(f"{tag_val:<14}", Colors.WHITE)
+            img_id = Colors.c(f"{item['id']:<12}", Colors.DIM)
+            size_str = Colors.c(f"{_format_size(item['size']):<8}", Colors.DIM)
+            status_str = Colors.c("✅ 匹配当前配置 (已就绪)", Colors.BOLD, Colors.BRIGHT_GREEN) if item["is_current"] else Colors.c("⏳ 历史/其他版本", Colors.DIM)
+            print(f"{repo:<20}  {tag_display}  {img_id}  {size_str}  {status_str}")
+        print(Colors.c("─" * 80, Colors.DIM) + "\n")
 
     finally:
         await docker.close()
@@ -167,34 +219,34 @@ async def dry_run_cli(base_image: str | None) -> None:
     )
 
     effective_base = (base_image or DEFAULT_DOCKER_BASE_IMAGE).strip()
-    print("\n" + "=" * 70)
-    print("🔍 [Dry-Run 演练模式] 生成 Docker 构建上下文 (不触发实际构建)")
-    print("=" * 70)
+    print("\n" + Colors.c("═" * 70, Colors.BRIGHT_CYAN))
+    print(Colors.c("🔍 [Dry-Run 演练模式] 生成 Docker 构建上下文 (不触发实际构建)", Colors.BOLD, Colors.BRIGHT_WHITE))
+    print(Colors.c("═" * 70, Colors.BRIGHT_CYAN))
 
     ctx_dir = None
     try:
         ctx_dir, tag = await _prepare_context(effective_base)
-        print(f"  🎯 计算出的镜像 Tag:      {tag}")
-        print(f"  📦 基础镜像 (Base Image): {effective_base}")
-        print(f"  🛠️ 注入排障工具链:       {', '.join(EXTRA_SANDBOX_APT_PACKAGES)}")
-        print(f"  📂 临时上下文目录:        {ctx_dir}")
-        print("-" * 70)
+        print(f"  {Colors.c('🎯 计算出的镜像 Tag:', Colors.BOLD)}      {Colors.c(tag, Colors.BOLD, Colors.BRIGHT_GREEN)}")
+        print(f"  {Colors.c('📦 基础镜像 (Base Image):', Colors.BOLD)} {Colors.c(effective_base, Colors.BRIGHT_CYAN)}")
+        print(f"  {Colors.c('🛠️ 注入排障工具链:', Colors.BOLD)}       {Colors.c(', '.join(EXTRA_SANDBOX_APT_PACKAGES), Colors.BRIGHT_YELLOW)}")
+        print(f"  {Colors.c('📂 临时上下文目录:', Colors.BOLD)}        {Colors.c(ctx_dir, Colors.DIM)}")
+        print(Colors.c("─" * 70, Colors.DIM))
 
         dockerfile_path = Path(ctx_dir) / "Dockerfile"
         if dockerfile_path.exists():
-            print("📄 生成的 Dockerfile 完整内容:\n")
+            print(Colors.c("📄 生成的 Dockerfile 完整内容 (含语法高亮):\n", Colors.BOLD, Colors.BRIGHT_CYAN))
             for line in dockerfile_path.read_text(encoding="utf-8").splitlines():
-                print(f"  │ {line}")
-            print("-" * 70)
+                print(f"  {Colors.c('│', Colors.DIM)} {Colors.highlight_dockerfile(line)}")
+            print(Colors.c("─" * 70, Colors.DIM))
 
-        print("📁 构建上下文包含的文件清单:")
+        print(Colors.c("📁 构建上下文包含的文件清单:", Colors.BOLD, Colors.BRIGHT_CYAN))
         for item in Path(ctx_dir).iterdir():
             size_str = _format_size(item.stat().st_size)
-            print(f"  - {item.name:<25} ({size_str})")
+            print(f"  • {Colors.c(item.name, Colors.WHITE):<30} {Colors.c(f'({size_str})', Colors.DIM)}")
 
-        print("=" * 70)
-        print("💡 Dry-Run 演练完成！未向 Docker Daemon 发起任何构建任务。")
-        print("👉 若需正式执行构建，请运行: ./sandbox/docker/build-docker-sandbox-image.sh\n")
+        print(Colors.c("═" * 70, Colors.BRIGHT_CYAN))
+        print(Colors.c("💡 Dry-Run 演练完成！未向 Docker Daemon 发起任何构建任务。", Colors.BOLD, Colors.BRIGHT_GREEN))
+        print(f"👉 若需正式执行构建，请运行: {Colors.c('./sandbox/docker/build-docker-sandbox-image.sh', Colors.BOLD, Colors.CYAN)}\n")
     finally:
         if ctx_dir:
             shutil.rmtree(ctx_dir, ignore_errors=True)
@@ -221,11 +273,12 @@ async def prebuild_direct(
     )
 
     effective_base = (base_image or DEFAULT_DOCKER_BASE_IMAGE).strip()
-    print("\n" + "=" * 70)
-    print("🚀 开始执行 Docker 沙箱镜像预构建")
-    print(f"   - 基础镜像:     {effective_base}")
-    print(f"   - 预装排障工具: {', '.join(EXTRA_SANDBOX_APT_PACKAGES)}")
-    print(f"   - 强制重建:     {'是 (忽略缓存)' if force else '否 (命中缓存则秒级复用)'}")
+    print("\n" + Colors.c("═" * 70, Colors.BRIGHT_CYAN))
+    print(Colors.c("🚀 开始执行 Docker 沙箱镜像预构建", Colors.BOLD, Colors.BRIGHT_WHITE))
+    print(f"   • {Colors.c('基础镜像:', Colors.BOLD)}     {Colors.c(effective_base, Colors.BRIGHT_CYAN)}")
+    print(f"   • {Colors.c('预装排障工具:', Colors.BOLD)} {Colors.c(', '.join(EXTRA_SANDBOX_APT_PACKAGES), Colors.BRIGHT_YELLOW)}")
+    force_str = Colors.c('是 (忽略缓存)', Colors.BOLD, Colors.YELLOW) if force else Colors.c('否 (命中缓存则秒级复用)', Colors.DIM)
+    print(f"   • {Colors.c('强制重建:', Colors.BOLD)}     {force_str}")
 
     # 代理处理
     build_args: dict[str, str] = {}
@@ -236,44 +289,46 @@ async def prebuild_direct(
     if http_proxy:
         build_args["HTTP_PROXY"] = http_proxy
         build_args["http_proxy"] = http_proxy
-        print(f"   - HTTP 代理:    {http_proxy}")
+        print(f"   • {Colors.c('HTTP 代理:', Colors.BOLD)}    {Colors.c(http_proxy, Colors.CYAN)}")
     if https_proxy:
         build_args["HTTPS_PROXY"] = https_proxy
         build_args["https_proxy"] = https_proxy
-        print(f"   - HTTPS 代理:   {https_proxy}")
+        print(f"   • {Colors.c('HTTPS 代理:', Colors.BOLD)}   {Colors.c(https_proxy, Colors.CYAN)}")
     if no_proxy:
         build_args["NO_PROXY"] = no_proxy
         build_args["no_proxy"] = no_proxy
-        print(f"   - NO_PROXY:     {no_proxy}")
-    print("=" * 70 + "\n")
+        print(f"   • {Colors.c('NO_PROXY:', Colors.BOLD)}     {Colors.c(no_proxy, Colors.DIM)}")
+    print(Colors.c("═" * 70, Colors.BRIGHT_CYAN) + "\n")
 
     # 1. 检查 Docker daemon
     daemon_status = await check_docker_daemon(aiodocker)
     if not daemon_status["available"]:
-        print(f"❌ 无法连接 Docker Daemon: {daemon_status.get('message')}")
+        print(Colors.c(f"❌ 无法连接 Docker Daemon: {daemon_status.get('message')}", Colors.BOLD, Colors.BRIGHT_RED))
         if daemon_status.get("error"):
             print(f"   详细错误: {daemon_status['error']}")
         sys.exit(1)
 
-    print("🟢 Docker Daemon 连接正常")
+    print(Colors.c("🟢 Docker Daemon 连接正常", Colors.BOLD, Colors.BRIGHT_GREEN))
 
     # 2. 生成构建上下文
     ctx_dir: str | None = None
     client: Any | None = None
     try:
-        print("📦 正在生成 AgentScope Docker 构建上下文 (含排障工具链)...")
+        print(Colors.c("📦 正在生成 AgentScope Docker 构建上下文 (含排障工具链)...", Colors.CYAN))
         ctx_dir, tag = await _prepare_context(effective_base)
-        print(f"🎯 目标构建 Tag: {tag}")
-        print(f"📂 临时上下文目录: {ctx_dir}")
+        print(f"🎯 {Colors.c('目标构建 Tag:', Colors.BOLD)} {Colors.c(tag, Colors.BOLD, Colors.BRIGHT_GREEN)}")
+        print(f"📂 {Colors.c('临时上下文目录:', Colors.BOLD)} {Colors.c(ctx_dir, Colors.DIM)}")
 
         client = aiodocker.Docker()
 
         # 3. 检查缓存
         if not force and await _image_exists(client, tag):
-            print(f"\n✨ 镜像缓存命中！镜像 [{tag}] 已存在于本地 Docker 中，无需重新构建。")
+            print("\n" + Colors.c("─" * 70, Colors.BRIGHT_GREEN))
+            print(f"{Colors.c('✨ 镜像缓存命中！', Colors.BOLD, Colors.BRIGHT_GREEN)} 镜像 [{Colors.c(tag, Colors.BOLD, Colors.BRIGHT_WHITE)}] 已存在于本地 Docker 中，无需重复构建。")
             await _mark_prebuilt(effective_base)
-            print("✅ 已同步将预构建完成状态写入系统配置表。")
-            print("👉 前端【系统设置】→【参数配置】→【沙箱配置】已自动就绪。\n")
+            print(Colors.c("✅ 已同步将预构建完成状态写入系统配置表与 Redis 缓存！", Colors.BOLD, Colors.BRIGHT_GREEN))
+            print(f"👉 前端【{Colors.c('系统设置', Colors.CYAN)}】→【{Colors.c('参数配置', Colors.CYAN)}】→【{Colors.c('沙箱配置', Colors.CYAN)}】已自动就绪，智能体会话将秒级拉起沙箱容器。")
+            print(Colors.c("─" * 70, Colors.BRIGHT_GREEN) + "\n")
             return
 
         # 4. 打包构建上下文
@@ -472,21 +527,22 @@ def main() -> None:
         # 无参且处于交互式终端时，进行安全防误触提示
         is_interactive = sys.stdin.isatty()
         if is_interactive and not args.yes and len(sys.argv) <= 1:
-            print(f"💡 未指定参数，当前默认基础镜像: [{args.base_image}]")
-            print(f"   已内置排障工具: {', '.join(EXTRA_SANDBOX_APT_PACKAGES)}")
-            print("   常用操作:")
-            print("     - 查看参数帮助:       ./sandbox/docker/build-docker-sandbox-image.sh --help")
-            print("     - 演练预览 Dockerfile: ./sandbox/docker/build-docker-sandbox-image.sh --dry-run")
-            print("     - 查看本地已有镜像:   ./sandbox/docker/build-docker-sandbox-image.sh --list")
-            print("----------------------------------------------------------------------")
+            print(Colors.c(f"💡 未指定参数，当前默认基础镜像: [{args.base_image}]", Colors.BOLD, Colors.BRIGHT_CYAN))
+            print(Colors.c(f"   已内置排障工具: {', '.join(EXTRA_SANDBOX_APT_PACKAGES)}", Colors.DIM))
+            print(Colors.c("   常用操作速查:", Colors.BOLD, Colors.WHITE))
+            print(f"     • 查看参数帮助:        {Colors.c('./sandbox/docker/build-docker-sandbox-image.sh --help', Colors.CYAN)}")
+            print(f"     • 演练预览 Dockerfile:  {Colors.c('./sandbox/docker/build-docker-sandbox-image.sh --dry-run', Colors.CYAN)}")
+            print(f"     • 查看本地已有镜像:    {Colors.c('./sandbox/docker/build-docker-sandbox-image.sh --list', Colors.CYAN)}")
+            print(Colors.c("─" * 70, Colors.DIM))
             try:
-                confirm = input("是否以默认配置立即开始构建？[y/N]: ").strip().lower()
+                prompt_str = Colors.c("👉 是否以默认配置立即开始构建？", Colors.BOLD, Colors.BRIGHT_YELLOW) + Colors.c("[y/N]", Colors.BOLD, Colors.BRIGHT_WHITE) + ": "
+                confirm = input(prompt_str).strip().lower()
             except (KeyboardInterrupt, EOFError):
-                print("\n\n已安全取消。")
+                print(Colors.c("\n\n已安全取消。", Colors.YELLOW))
                 sys.exit(0)
 
             if confirm not in ("y", "yes"):
-                print("已安全取消。若需免交互直接构建，可添加 -y 参数。")
+                print(Colors.c("已安全取消。若需免交互直接构建，可添加 -y 参数。\n", Colors.DIM))
                 sys.exit(0)
 
         asyncio.run(

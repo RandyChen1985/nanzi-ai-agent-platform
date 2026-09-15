@@ -261,32 +261,29 @@ run_list_sandbox_images() {
 }
 
 usage() {
-  cat <<'EOF'
-用法: ./build-k8s-sandbox-image.sh [选项]
+  printf "\n%b用法:%b %b./build-k8s-sandbox-image.sh%b %b[选项]%b\n\n" "${C_BOLD}" "${C_RESET}" "${C_CYAN}" "${C_RESET}" "${C_YELLOW}" "${C_RESET}"
+  printf "构建 K8s 沙箱“网关预置”镜像（把网关 venv 和 gateway 脚本预置到镜像内，跳过 AgentScope Pod bootstrap 冷启动）。\n"
+  printf "构建完成后，在平台 Web 端【%b系统设置%b】→【%b参数配置%b】→【%b沙箱配置%b】中配置给 %bsandbox_k8s_image%b 项生效。\n\n" "${C_CYAN}" "${C_RESET}" "${C_CYAN}" "${C_RESET}" "${C_CYAN}" "${C_RESET}" "${C_BOLD}" "${C_RESET}"
 
-构建 K8s 沙箱“网关预置”镜像（把网关 venv 和 gateway 脚本预置到镜像内，跳过 AgentScope Pod bootstrap 冷启动）。
-构建完成后，在平台 Web 端【系统设置】→【参数配置】→【沙箱配置】中配置给 sandbox_k8s_image 项生效。
+  printf "%b选项列表:%b\n" "${C_BOLD}" "${C_RESET}"
+  printf "  %b-l, --list%b              探测本地 Docker 与 K8s/K3s 节点已存在的沙箱镜像\n" "${C_CYAN}" "${C_RESET}"
+  printf "  %b-y, --yes%b               免确认直接按当前配置开始构建\n" "${C_CYAN}" "${C_RESET}"
+  printf "  %b--build%b                 显式触发构建流程\n" "${C_CYAN}" "${C_RESET}"
+  printf "  %b--base-image%b %b<img>%b      基础镜像，默认 %bpython:3.11-slim%b\n" "${C_CYAN}" "${C_RESET}" "${C_YELLOW}" "${C_RESET}" "${C_BOLD}" "${C_RESET}"
+  printf "  %b--image-name%b %b<name>%b     产物镜像名，默认 %bnanzi-sandbox-k8s%b\n" "${C_CYAN}" "${C_RESET}" "${C_YELLOW}" "${C_RESET}" "${C_BOLD}" "${C_RESET}"
+  printf "  %b--version%b %b<ver>%b         产物 Tag，默认 %blatest%b\n" "${C_CYAN}" "${C_RESET}" "${C_YELLOW}" "${C_RESET}" "${C_BOLD}" "${C_RESET}"
+  printf "  %b--proxy%b %b<url>%b           构建网络代理，如 %bhttp://127.0.0.1:7890%b\n" "${C_CYAN}" "${C_RESET}" "${C_YELLOW}" "${C_RESET}" "${C_CYAN}" "${C_RESET}"
+  printf "  %b--agentscope-version%b    覆盖安装的 agentscope 版本（默认跟随本机平台版本，无则最新）\n" "${C_CYAN}" "${C_RESET}"
+  printf "  %b--no-import%b             构建+save 后不自动导入节点（导出 tar 包供手工拷贝）\n" "${C_CYAN}" "${C_RESET}"
+  printf "  %b--dry-run%b               演练模式：仅生成 Dockerfile 与命令清单，不实际构建/导入\n" "${C_CYAN}" "${C_RESET}"
+  printf "  %b--sync-template%b         从本机 agentscope 刷新 sandbox-image/_mcp_gateway_app.py 模板\n" "${C_CYAN}" "${C_RESET}"
+  printf "  %b-h, --help%b              显示此帮助信息\n\n" "${C_CYAN}" "${C_RESET}"
 
-选项:
-  -l, --list              探测本地 Docker 与 K8s/K3s 节点已存在的沙箱镜像
-  -y, --yes               免确认直接按当前配置开始构建
-  --build                 显式触发构建流程
-  --base-image <img>      基础镜像，默认 python:3.11-slim
-  --image-name <name>     产物镜像名，默认 nanzi-sandbox-k8s
-  --version <ver>         产物 Tag，默认 latest
-  --proxy <url>           构建网络代理，如 http://127.0.0.1:7890
-  --agentscope-version    覆盖安装的 agentscope 版本（默认跟随本机平台 agentscope，无则最新）
-  --no-import             构建+save 后不自动导入节点（打印导入命令）
-  --dry-run               只生成 Dockerfile 与命令清单，不实际构建/导入
-  --sync-template         从本机 agentscope 刷新 sandbox-image/_mcp_gateway_app.py
-  -h, --help              帮助
-
-常用示例:
-  ./build-k8s-sandbox-image.sh --list             # 查看本地与 K8s 节点是否已有沙箱镜像
-  ./build-k8s-sandbox-image.sh --dry-run          # 仅预览 Dockerfile 与执行命令（演练模式）
-  ./build-k8s-sandbox-image.sh -y                 # 免交互直接按默认配置开始构建
-  ./build-k8s-sandbox-image.sh --version 1.0.0    # 构建指定版本镜像并导入节点
-EOF
+  printf "%b常用操作速查示例:%b\n" "${C_BOLD}" "${C_RESET}"
+  printf "  • 探测本地/节点沙箱镜像:   %b./build-k8s-sandbox-image.sh --list%b\n" "${C_CYAN}" "${C_RESET}"
+  printf "  • 演练预览构建命令与文件: %b./build-k8s-sandbox-image.sh --dry-run%b\n" "${C_CYAN}" "${C_RESET}"
+  printf "  • 免交互直接按默认配置构建: %b./build-k8s-sandbox-image.sh -y%b\n" "${C_CYAN}" "${C_RESET}"
+  printf "  • 构建指定版本并导入节点: %b./build-k8s-sandbox-image.sh --version 1.0.0%b\n\n" "${C_CYAN}" "${C_RESET}"
 }
 
 ORIGINAL_ARGC=$#
@@ -491,24 +488,21 @@ else
   printf "  %bk3s ctr images import %s          # K3s%b\n" "${C_CYAN}" "$TAR_FILE" "${C_RESET}"
 fi
 
-cat <<EOF
+printf "\n%b══════════════════════════════════════════════════════════════════════%b\n" "${C_GREEN}" "${C_RESET}"
+printf "%b✅ 镜像构建与导入完成！请前往 NanZi 平台 Web 端配置生效：%b\n\n" "${C_BOLD}${C_GREEN}" "${C_RESET}"
 
-────────────────────────────────────────────────────────────────────
-✅ 镜像构建与导入完成！请前往 NanZi 平台 Web 端配置生效：
+printf "%b1. 确认节点容器运行时已就绪该镜像：%b\n" "${C_BOLD}${C_CYAN}" "${C_RESET}"
+printf "   %b./install.sh check-sandbox-image %s%b\n" "${C_CYAN}" "$FULL_IMAGE" "${C_RESET}"
+printf "   （或执行: %b./install.sh images %s%b）\n\n" "${C_CYAN}" "$IMAGE_NAME" "${C_RESET}"
 
-1. 确认节点容器运行时已导入该镜像：
-   ./install.sh check-sandbox-image $FULL_IMAGE
-   （或执行: ./install.sh images $IMAGE_NAME）
+printf "%b2. 登录平台 Web 控制台配置生效：%b\n" "${C_BOLD}${C_CYAN}" "${C_RESET}"
+printf "   👉 打开页面：【%b系统设置%b】→【%b参数配置%b】\n" "${C_CYAN}" "${C_RESET}" "${C_CYAN}" "${C_RESET}"
+printf "   👉 展开分组：【%b沙箱配置%b】\n" "${C_CYAN}" "${C_RESET}"
+printf "   👉 找到配置项：%bsandbox_k8s_image%b（k8s 策略沙箱容器运行的基础镜像）\n" "${C_BOLD}${C_YELLOW}" "${C_RESET}"
+printf "   👉 填写镜像名：%b%s%b\n" "${C_BOLD}${C_GREEN}" "$FULL_IMAGE" "${C_RESET}"
+printf "   👉 点击右上角：【%b保存变更 (⌘S)%b】保存生效\n\n" "${C_BOLD}${C_YELLOW}" "${C_RESET}"
 
-2. 登录平台 Web 控制台配置生效：
-   👉 打开页面：【系统设置】→【参数配置】
-   👉 展开分组：【沙箱配置】
-   👉 找到配置项：sandbox_k8s_image（k8s 策略沙箱容器运行的基础镜像）
-   👉 填写镜像名：$FULL_IMAGE
-   👉 点击右上角：【保存变更 (⌘S)】保存生效
-
-3. 生效说明：
-   配置保存后，之后所有新建或重启的沙箱 Pod 将直接复用预置网关与排障环境，
-   彻底跳过 Pod 冷启动下载安装依赖的过程，冷启动从数十秒降至秒级！
-────────────────────────────────────────────────────────────────────
-EOF
+printf "%b3. 秒级拉起生效机制说明：%b\n" "${C_BOLD}${C_CYAN}" "${C_RESET}"
+printf "   配置保存后，之后所有新建或重启的沙箱 Pod 将直接复用预置网关与排障环境，\n"
+printf "   彻底跳过 Pod 冷启动下载安装依赖的过程，%b冷启动从数十秒降至秒级！%b\n" "${C_BOLD}${C_GREEN}" "${C_RESET}"
+printf "%b══════════════════════════════════════════════════════════════════════%b\n\n" "${C_GREEN}" "${C_RESET}"
