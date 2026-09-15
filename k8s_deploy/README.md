@@ -139,9 +139,9 @@ K8s 沙箱（`sandbox_policy = k8s`）的网关环境放在 Pod 内的 `/root/.a
 
 ![build_sand_box](./images/build_sand_box.png)
 
-可以通过**手动构建一次“网关预置镜像”**，把网关 venv 与 gateway 脚本直接打进镜像；
+可以通过**手动构建一次“网关预置镜像”**，把网关 venv、gateway 脚本以及常用排障与开发工具（`tree`、`telnet`、`netstat`/`net-tools`、`ping`、`dig`、`ps`、`git`、`jq` 等）直接打进镜像；
 配置 `sandbox_k8s_image` 指向它之后，新 Pod 起来**直接跳过整个 bootstrap**，冷启动从数十秒
-降到秒级。
+降到秒级，且在沙箱内可直接执行丰富的网络连通性与目录诊断命令。
 
 ### 一、前置条件
 
@@ -154,13 +154,16 @@ K8s 沙箱（`sandbox_policy = k8s`）的网关环境放在 Pod 内的 `/root/.a
 ```bash
 cd k8s_deploy
 
-# 1) （可选）先预览将要执行的 Dockerfile 与命令，不实际构建
+# 1) （可选）先预览将要执行的 Dockerfile 与命令，不实际构建（演练模式）
 ./build-k8s-sandbox-image.sh --dry-run
 
-# 2) 正式构建：docker build → save 出 tar → 自动导入节点 containerd（ctr -n k8s.io / k3s ctr）
+# 2) 正式构建（推荐指定版本）：docker build → save 出 tar → 自动导入节点 containerd（ctr -n k8s.io / k3s ctr）
 ./build-k8s-sandbox-image.sh --version 1.0.0
 
-# 3) 若脚本未自动导入成功（例如在非节点机器上构建），把 tar 拷到节点后导入：
+# 3) 快速默认构建（无参数时会展示帮助并交互询问 [y/N]；免交互可加 -y）：
+./build-k8s-sandbox-image.sh -y
+
+# 4) 若脚本未自动导入成功（例如在非节点机器上构建），把 tar 拷到节点后导入：
 #    ./install.sh import nanzi-sandbox-k8s_1.0.0.tar
 ```
 
@@ -172,7 +175,7 @@ cd k8s_deploy
 > [+] Building 84.9s (7/9)                                                                    docker:default
 >  => [internal] load metadata for docker.io/library/python:3.11-slim                              0.0s
 >  => CACHED [1/5] FROM docker.io/library/python:3.11-slim                                         0.0s
->  => [2/5] RUN apt-get update -qq && apt-get install -y curl ca-certificates ripgrep ...         54.7s
+>  => [2/5] RUN apt-get update -qq && apt-get install -y curl ca-certificates ripgrep tree telnet net-tools ... 54.7s
 >  => [3/5] RUN curl -LsSf https://astral.sh/uv/install.sh | ... uv ...                            8.3s
 >  => [4/5] RUN uv venv /root/.agentscope/.venv && uv pip install ... "mcp<2.0.0" ...             20.7s
 >  => naming to docker.io/library/nanzi-sandbox-k8s:1.0.0                                          0.2s
@@ -183,11 +186,26 @@ cd k8s_deploy
 > unpacking docker.io/library/nanzi-sandbox-k8s:1.0.0 (sha256:...)...done
 > ✔  已导入节点容器运行时：nanzi-sandbox-k8s:1.0.0
 >
-> ✅ 构建完成。将系统配置 sandbox_k8s_image 设为 nanzi-sandbox-k8s:1.0.0，
->    之后新建/重启的沙箱 Pod 将直接使用预置网关环境。
+> ────────────────────────────────────────────────────────────────────
+> ✅ 镜像构建与导入完成！请前往 NanZi 平台 Web 端配置生效：
+> 
+> 1. 确认节点容器运行时已导入该镜像：
+>    ./install.sh check-sandbox-image nanzi-sandbox-k8s:1.0.0
+> 
+> 2. 登录平台 Web 控制台配置生效：
+>    👉 打开页面：【系统设置】→【参数配置】
+>    👉 展开分组：【沙箱配置】
+>    👉 找到配置项：sandbox_k8s_image（k8s 策略沙箱容器运行的基础镜像）
+>    👉 填写镜像名：nanzi-sandbox-k8s:1.0.0
+>    👉 点击右上角：【保存变更 (⌘S)】保存生效
+> 
+> 3. 生效说明：
+>    配置保存后，之后所有新建或重启的沙箱 Pod 将直接复用预置网关与排障环境，
+>    彻底跳过 Pod 冷启动下载安装依赖的过程，冷启动从数十秒降至秒级！
+> ────────────────────────────────────────────────────────────────────
 > ```
 
-常用参数：`--base-image python:3.11-slim`、`--image-name nanzi-sandbox-k8s`、
+常用参数：`-y`/`--yes` 免确认、`--base-image python:3.11-slim`、`--image-name nanzi-sandbox-k8s`、
 `--version <标签>`、`--proxy http://<代理>`、`--agentscope-version <版本>`（默认跟随平台
 venv 的 agentscope 版本，建议保持平台一致）、`--dry-run` 演练、`--no-import`。
 
@@ -195,14 +213,15 @@ venv 的 agentscope 版本，建议保持平台一致）、`--dry-run` 演练、
 
 ```bash
 ./install.sh check-sandbox-image nanzi-sandbox-k8s:1.0.0     # 或
-crictl images | grep nanzi-sandbox-k8s
+./install.sh images nanzi-sandbox-k8s                        # 或 crictl images | grep nanzi-sandbox-k8s
 ```
 
 ### 四、让沙箱使用该镜像
 
-1. 打开平台「系统配置 → 沙箱 → `sandbox_k8s_image`」，填 `nanzi-sandbox-k8s:1.0.0`
-   （页面该项下方有操作提示卡片）；
-2. 之后**新建/重启**的沙箱 Pod 将使用预置网关环境，冷启动显著加速（已运行 Pod 需重建才生效）。
+1. 打开平台 Web 端 **「系统设置」→「参数配置」→ 展开「沙箱配置」**；
+2. 找到 **`sandbox_k8s_image`**（k8s 策略沙箱容器运行的基础镜像），填入 `nanzi-sandbox-k8s:1.0.0`（页面该项下方有提示卡片与快捷填入按钮）；
+3. 点击页面右上角 **【保存变更 (⌘S)】** 确认保存；
+4. 之后**新建/重启**的沙箱 Pod 将直接使用预置网关与排障环境，冷启动显著加速（已运行 Pod 需重建才生效）。
 
 ### 五、注意事项
 
@@ -398,18 +417,19 @@ cd k8s_deploy
 
 #### K8s 沙箱“网关预置镜像”（可选加速）
 
-K8s 沙箱（`sandbox_policy = k8s`）每次冷启动都会初始化 AgentScope 网关环境（在 Pod 内装 venv/依赖），较慢。可选用 [build-k8s-sandbox-image.sh](./build-k8s-sandbox-image.sh) 手动构建一个“网关预置镜像”（把网关环境与 gateway 脚本打进镜像），构建/导入后把系统配置 `sandbox_k8s_image` 填为 `nanzi-sandbox-k8s:<版本>`，新沙箱 Pod 冷启动将直接复用、从数十秒降到秒级。
+K8s 沙箱（`sandbox_policy = k8s`）每次冷启动都会初始化 AgentScope 网关环境（在 Pod 内装 venv/依赖），较慢。可选用 [build-k8s-sandbox-image.sh](./build-k8s-sandbox-image.sh) 构建一个内置网关环境与常用排障工具（`tree`/`telnet`/`netstat` 等）的“网关预置镜像”。构建/导入后在平台「系统设置 → 参数配置 → 沙箱配置」把 `sandbox_k8s_image` 填为 `nanzi-sandbox-k8s:<版本>` 并保存，新沙箱 Pod 冷启动将直接复用、从数十秒降到秒级。
 
 ```bash
 # 在可访问 Docker 的构建机（本目录）执行：构建 + 导出 + 自动导入节点 containerd
-./build-k8s-sandbox-image.sh --version 1.0.0
+./build-k8s-sandbox-image.sh --version 1.0.0      # 指定版本构建
+./build-k8s-sandbox-image.sh -y                   # 免交互默认构建
 ./build-k8s-sandbox-image.sh --dry-run            # 只预览 Dockerfile 与命令
 # 复核节点是否已导入：
 ./install.sh check-sandbox-image nanzi-sandbox-k8s:1.0.0
 ```
 
 * 不构建预置镜像也能正常使用：默认 `python:3.11-slim` 由集群直接拉取，AgentScope 会在 Pod 内自动初始化网关环境。
-* 详细说明（构建内容/依赖版本/升级后重建时机）见 [upgrade.md](./upgrade.md) 顶部“可选加速”章节；系统配置页 `sandbox_k8s_image` 下方也有操作提示。
+* 详细说明（构建内容/排障工具/依赖版本/升级后重建时机）见上方「可选加速：K8s 沙箱网关预置镜像」章节；系统配置页 `sandbox_k8s_image` 下方也有操作提示。
 
 ---
 

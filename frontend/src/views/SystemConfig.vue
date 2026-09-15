@@ -4374,7 +4374,7 @@ onUnmounted(() => {
                                   title="沙箱镜像需先在节点构建并导入；点击查看构建/导入/查看指引"
                                   @click="showK8sImageGuide = true"
                                 >
-                                  构建镜像
+                                  如何构建镜像？
                                 </button>
                               </div>
                               <p class="mt-1 text-[11px] text-gray-500">
@@ -4385,12 +4385,12 @@ onUnmounted(() => {
                             <!-- 可选加速：K8s 沙箱网关预置镜像构建提示 -->
                             <div class="mt-2 space-y-1.5 rounded-xl border border-sky-200 bg-sky-50/70 p-3 text-[11px] leading-relaxed text-sky-900 dark:border-sky-500/30 dark:bg-sky-950/40 dark:text-sky-100">
                               <div class="font-semibold text-sky-800 dark:text-sky-100">🚀 可选加速：K8s 沙箱“网关预置镜像”</div>
-                              <div>沙箱每次冷启动都会初始化 AgentScope 网关环境（装 venv/依赖），较慢。可先手动构建一个预置镜像（把网关环境直接打进镜像），把本项填为该镜像后，新沙箱 Pod 冷启动会直接复用、从几十秒降到秒级。</div>
+                              <div>沙箱每次冷启动都会初始化 AgentScope 网关环境（装 venv/依赖），较慢。可先手动构建一个预置镜像（把网关环境与常用排障工具 <span class="font-mono">tree</span>、<span class="font-mono">telnet</span>、<span class="font-mono">netstat</span> 等直接打进镜像），把本项填为该镜像后，新沙箱 Pod 冷启动会直接复用、从数十秒降到秒级。</div>
                               <div>在可访问 Docker 的构建机（k8s_deploy 目录）执行构建与导入：
                                 <code class="mt-1 block rounded bg-white/70 px-1.5 py-0.5 font-mono text-sky-800 dark:bg-gray-900/60 dark:text-sky-100">./build-k8s-sandbox-image.sh --version 1.0.0</code>
-                                <span class="block">脚本会自动 docker build → save → 导入节点 containerd（ctr -n k8s.io / k3s ctr）。</span>
+                                <span class="block">脚本会自动 docker build → save → 导入节点 containerd（ctr -n k8s.io / k3s ctr）；也支持无参数交互引导或免交互默认构建 <code class="font-mono">./build-k8s-sandbox-image.sh -y</code>。</span>
                               </div>
-                              <div>本项填写格式：<span class="font-mono">nanzi-sandbox-k8s:&lt;版本&gt;</span>（可选用上方预置列表或“自定义镜像地址”）。未使用预置镜像时留空/保持默认 <span class="font-mono">python:3.11-slim</span>，由集群直接拉取即可，无需预置。</div>
+                              <div>本项填写格式：<span class="font-mono">nanzi-sandbox-k8s:&lt;版本&gt;</span>（可选用上方预置列表或“自定义镜像地址”）。填入后请点击页面右上角<b>【保存变更 (⌘S)】</b>保存生效。未使用预置镜像时留空/保持默认 <span class="font-mono">python:3.11-slim</span> 即可。</div>
                               <div>想先确认节点已导入该镜像（含版本号核对）：<span class="font-mono">./install.sh check-sandbox-image nanzi-sandbox-k8s:&lt;版本&gt;</span> 或 <span class="font-mono">./install.sh images nanzi-sandbox-k8s</span></div>
                             </div>
                           </div>
@@ -4539,7 +4539,7 @@ onUnmounted(() => {
       <div class="bg-white dark:bg-gray-800 rounded-2xl shadow-2xl max-w-2xl w-full overflow-hidden border border-gray-100 dark:border-gray-700 flex flex-col text-[13px]">
         <div class="px-5 py-3.5 border-b border-gray-100 dark:border-gray-700 flex justify-between items-center bg-sky-50/50 dark:bg-sky-950/30">
           <div>
-            <h3 class="text-md font-bold text-gray-900 dark:text-gray-100">构建 / 导入 K8s 沙箱镜像</h3>
+            <h3 class="text-md font-bold text-gray-900 dark:text-gray-100">如何构建与导入 K8s 沙箱镜像</h3>
             <p class="text-[11px] text-gray-500 dark:text-gray-400 mt-0.5">平台（Pod 内）无法直接读取节点镜像列表，请按以下指引在<b>节点/构建机</b>完成构建与导入</p>
           </div>
           <button type="button" class="rounded-lg p-1.5 text-gray-400 hover:bg-gray-200/60 hover:text-gray-600 dark:hover:bg-gray-700" aria-label="关闭" @click="showK8sImageGuide = false">
@@ -4595,7 +4595,7 @@ onUnmounted(() => {
           <div class="border-t border-gray-100 dark:border-gray-700 pt-3 space-y-2">
             <div class="font-medium text-gray-700 dark:text-gray-200">③ 构建网关预置镜像（在可访问 Docker 的构建机，k8s_deploy 目录）：</div>
             <code class="block rounded-lg bg-gray-900 text-emerald-300 px-3 py-2 text-xs font-mono select-all">cd k8s_deploy &amp;&amp; ./build-k8s-sandbox-image.sh --version 1.0.0</code>
-            <p class="text-[11px] text-gray-500 dark:text-gray-400">脚本自动 docker build → save 出 tar → 导入节点运行时；先看一遍可加 <code class="font-mono">--dry-run</code>。</p>
+            <p class="text-[11px] text-gray-500 dark:text-gray-400">预置网关与常用排障工具（tree、telnet、netstat 等）；免交互默认构建可加 <code class="font-mono">-y</code>，仅预览可加 <code class="font-mono">--dry-run</code>。</p>
           </div>
 
           <div class="border-t border-gray-100 dark:border-gray-700 pt-3 space-y-2">
@@ -4605,8 +4605,8 @@ onUnmounted(() => {
           </div>
 
           <div class="border-t border-gray-100 dark:border-gray-700 pt-3">
-            <div class="font-medium text-gray-700 dark:text-gray-200">⑤ 填回本配置：</div>
-            <p class="text-[11px] text-gray-500 dark:text-gray-400 mt-1">把本项填为 <code class="font-mono">nanzi-sandbox-k8s:1.0.0</code>（或 registry 完整路径），保存后新建/重启沙箱 Pod 生效。</p>
+            <div class="font-medium text-gray-700 dark:text-gray-200">⑤ 填回本配置并保存：</div>
+            <p class="text-[11px] text-gray-500 dark:text-gray-400 mt-1">把本项填为 <code class="font-mono">nanzi-sandbox-k8s:1.0.0</code>（或 registry 完整路径），并点击页面右上角<b>【保存变更 (⌘S)】</b>保存生效。新建/重启沙箱 Pod 即可秒级启动。</p>
           </div>
         </div>
 
