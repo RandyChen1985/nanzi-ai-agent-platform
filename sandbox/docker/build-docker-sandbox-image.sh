@@ -130,10 +130,21 @@ elif [ -f "$ROOT_DIR/venv/bin/python" ]; then
     PYTHON_BIN="$ROOT_DIR/venv/bin/python"
 elif command -v python3 &>/dev/null; then
     PYTHON_BIN="python3"
+    echo -e "${YELLOW}⚠️  未检测到项目虚拟环境（.venv），将使用系统 Python：$(command -v python3)${NC}"
+    echo -e "${YELLOW}   若构建时出现「No module named xxx」或「未安装 aiodocker」等缺包错误，${NC}"
+    echo -e "${YELLOW}   请先在项目根目录执行 ./dev.sh 初始化环境，再激活后重试：${NC}"
+    echo -e "${CYAN}     source sandbox/docker/activate-env.sh${NC}"
+    echo -e "${CYAN}     ./sandbox/docker/build-docker-sandbox-image.sh [选项]${NC}\n"
 elif command -v python &>/dev/null; then
     PYTHON_BIN="python"
+    echo -e "${YELLOW}⚠️  未检测到项目虚拟环境（.venv），将使用系统 Python：$(command -v python)${NC}"
+    echo -e "${YELLOW}   若构建时出现「No module named xxx」或「未安装 aiodocker」等缺包错误，${NC}"
+    echo -e "${YELLOW}   请先在项目根目录执行 ./dev.sh 初始化环境，再激活后重试：${NC}"
+    echo -e "${CYAN}     source sandbox/docker/activate-env.sh${NC}"
+    echo -e "${CYAN}     ./sandbox/docker/build-docker-sandbox-image.sh [选项]${NC}\n"
 else
     echo -e "${RED}❌ 未找到可用的 Python 解释器，请先安装 Python 3.11+ 或配置虚拟环境！${NC}"
+    echo -e "${YELLOW}💡 提示：先在项目根目录执行 ./dev.sh 初始化环境后，再运行此脚本。${NC}"
     exit 1
 fi
 
