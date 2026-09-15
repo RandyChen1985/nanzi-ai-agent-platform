@@ -21,4 +21,4 @@ fi
 # shellcheck source=/dev/null
 source "${VENV_ACTIVATE}"
 echo "✅ 已激活虚拟环境：${VIRTUAL_ENV}"
-echo "   Python: $(python --version)"
+echo "   Python: $(python3 --version 2>/dev/null || python --version 2>/dev/null || echo '未知')"
