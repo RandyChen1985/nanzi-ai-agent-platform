@@ -136,14 +136,47 @@
               :key="idx"
               class="border border-gray-100 dark:border-gray-800 rounded-lg overflow-hidden"
             >
-              <div class="px-3 py-1.5 bg-gray-50 dark:bg-gray-800/50 border-b border-gray-100 dark:border-gray-800 flex items-center gap-2">
-                <span class="text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded" :class="roleBadgeClass(pm.role)">
-                  {{ roleLabel(pm.role) }}
+              <div class="flex items-center gap-1 px-3 py-1.5 bg-gray-50 dark:bg-gray-800/50 border-b border-gray-100 dark:border-gray-800">
+                <button
+                  type="button"
+                  class="flex flex-1 items-center gap-2 min-w-0 text-left rounded hover:opacity-80 transition-opacity"
+                  @click="togglePrompt(idx)"
+                  :title="isPromptExpanded(idx) ? '点击收起' : '点击展开'"
+                >
+                  <svg
+                    class="w-3.5 h-3.5 text-gray-400 transition-transform shrink-0"
+                    :class="isPromptExpanded(idx) ? 'rotate-90' : ''"
+                    fill="none" stroke="currentColor" viewBox="0 0 24 24"
+                  >
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
+                  </svg>
+                  <span class="text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded shrink-0" :class="roleBadgeClass(pm.role)">
+                    {{ roleLabel(pm.role) }}
+                  </span>
+                  <span v-if="pm._isFullSystemPrev" class="text-[9px] font-bold px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300 shrink-0">全量系统提示词</span>
+                </button>
+                <span class="text-[10px] text-gray-400 font-mono shrink-0">#{{ idx }}</span>
+                <span
+                  class="text-[10px] text-gray-400 font-mono shrink-0"
+                  :title="'此条消息估算 ' + promptTokens(pm).toLocaleString() + ' token（中文字符 ×0.8 + 其余字符 ×0.25）'"
+                >
+                  ≈{{ promptTokens(pm).toLocaleString() }} tok
                 </span>
-                <span v-if="pm._isFullSystemPrev" class="text-[9px] font-bold px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300">全量系统提示词</span>
-                <span class="text-[10px] text-gray-400 font-mono ml-auto">#{{ idx }}</span>
+                <button
+                  type="button"
+                  class="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium text-gray-400 hover:text-gray-600 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors shrink-0"
+                  :title="copyLabel(pm)"
+                  @click.stop="copyPromptMsg(pm)"
+                >
+                  <svg v-if="!copiedIdx.has(idx)" class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7H6a2 2 0 00-2 2v10a2 2 0 002 2h9a2 2 0 002-2v-1m-2-4h3a2 2 0 002-2V6a2 2 0 00-2-2h-3a2 2 0 00-2 2v3m0 0a2 2 0 01-2 2H9a2 2 0 01-2-2"/></svg>
+                  <svg v-else class="w-3 h-3 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+                  <span>{{ copiedIdx.has(idx) ? "已复制" : "复制" }}</span>
+                </button>
               </div>
-              <pre class="text-[11px] font-mono text-gray-700 dark:text-gray-200 whitespace-pre-wrap break-all p-3 max-h-80 overflow-auto">{{ formatPromptContent(pm) }}</pre>
+              <pre v-if="isPromptExpanded(idx)" class="text-[11px] font-mono text-gray-700 dark:text-gray-200 whitespace-pre-wrap break-all p-3 max-h-80 overflow-auto">{{ formatPromptContent(pm) }}</pre>
+              <div v-else @click="togglePrompt(idx)" class="px-3 py-2 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800/40 transition-colors" title="点击展开">
+                <p class="text-[11px] font-mono text-gray-400 dark:text-gray-500 truncate">{{ promptPreview(pm) }}</p>
+              </div>
             </div>
           </template>
           <div v-else class="py-6 text-center text-xs text-gray-400 italic">该轮未捕获组装 Prompt（可开启「返回原始 Prompt」后重新提问）</div>
@@ -263,6 +296,12 @@ watch(
     if (!visible) {
       activeTab.value = "steps";
     }
+    if (visible && promptMessages.value.length > 0) {
+      // 每次打开抽屉，默认展开首条组装 Prompt（通常即全量系统提示词）
+      expandedPrompt.value = new Set([0]);
+    } else if (!visible) {
+      expandedPrompt.value = new Set();
+    }
   },
   { immediate: true },
 );
@@ -316,6 +355,51 @@ const copyText = async (p: unknown) => {
     /* noop */
   }
 };
+
+const copiedIdx = ref<Set<number>>(new Set());
+let copyTimer: ReturnType<typeof setTimeout> | null = null;
+const copyPromptMsg = async (pm: any) => {
+  const txt = formatPromptContent(pm);
+  try {
+    await navigator.clipboard.writeText(txt);
+  } catch {
+    /* noop */
+  }
+  const key = promptMessages.value.indexOf(pm);
+  if (key > -1) {
+    copiedIdx.value = new Set([...copiedIdx.value, key]);
+    if (copyTimer) clearTimeout(copyTimer);
+    copyTimer = setTimeout(() => {
+      copiedIdx.value = new Set();
+    }, 1500);
+  }
+};
+const copyLabel = (pm: any): string => {
+  return copiedIdx.value.has(promptMessages.value.indexOf(pm)) ? "已复制到剪贴板" : "复制此条内容";
+};
+
+const promptPreview = (pm: any): string => {
+  const raw = formatPromptContent(pm);
+  const lines = raw.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  return lines[0] || raw.slice(0, 60) || "(空内容)";
+};
+
+// 与 PromptStudio 保持一致的估算：中文字符 ~0.8 token，其余 ~0.25 token
+const promptTokens = (pm: any): number => {
+  const text = formatPromptContent(pm);
+  const cnChars = (text.match(/[\u4e00-\u9fa5]/g) || []).length;
+  const enChars = text.length - cnChars;
+  return Math.ceil(cnChars * 0.8 + enChars * 0.25);
+};
+
+const expandedPrompt = ref<Set<number>>(new Set());
+const togglePrompt = (idx: number) => {
+  const next = new Set(expandedPrompt.value);
+  if (next.has(idx)) next.delete(idx);
+  else next.add(idx);
+  expandedPrompt.value = next;
+};
+const isPromptExpanded = (idx: number): boolean => expandedPrompt.value.has(idx);
 
 const eventBadgeClass = (ev?: string): string => {
   switch (ev) {
