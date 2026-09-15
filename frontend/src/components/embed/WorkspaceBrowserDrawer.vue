@@ -1331,7 +1331,27 @@ const openTrashFolder = async (item: { path: string }) => {
   await fetchDirectory(item.path)
 }
 
-const canManageItem = (item: { path: string }) => {
+/**
+ * 系统级保护目录：data 根下的顶层固定目录，任何人（含管理员）不可删除。
+ * 包括三个公共只读目录（docs/skills/branding）和用户工作区容器（agent_workspaces）。
+ */
+const isSystemProtectedDir = (item: { path: string; is_dir?: boolean }) => {
+  if (!item.is_dir && !item.path) return false
+  const base = baseDir.value
+  if (!base) return false
+  const PROTECTED_NAMES = new Set(['docs', 'skills', 'branding', 'agent_workspaces'])
+  const normBase = normalizeFsPathForCompare(base)
+  const normPath = normalizeFsPathForCompare(item.path)
+  // 必须是 data 根的直接子目录
+  if (!normPath.startsWith(`${normBase}/`)) return false
+  const relative = normPath.slice(normBase.length + 1)
+  // 没有再深一层斜杠，说明是直接子目录
+  if (relative.includes('/')) return false
+  return PROTECTED_NAMES.has(relative)
+}
+
+const canManageItem = (item: { path: string; is_dir?: boolean }) => {
+  if (isSystemProtectedDir(item)) return false
   if (isAdminScope.value && !isTrashPath(item.path)) return true
   return isPathInUserWorkspace(item.path) && !isTrashPath(item.path)
 }
@@ -2368,8 +2388,8 @@ onUnmounted(() => {
         >
           📋 复制路径
         </button>
-        <!-- 管理员可对公共目录执行重命名和删除 -->
-        <template v-if="isAdminScope">
+        <!-- 管理员可对普通公共目录执行重命名和删除，系统保护目录（docs/skills/branding/agent_workspaces）除外 -->
+        <template v-if="isAdminScope && !isSystemProtectedDir(contextMenu.item!)">
           <div class="mx-3 my-1 border-t border-gray-100 dark:border-gray-800" />
           <button type="button" class="w-full px-3 py-2 text-left hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors focus:outline-none" @click="startRenameEntry(contextMenu.item!)">✏️ 重命名</button>
           <button type="button" class="w-full px-3 py-2 text-left hover:bg-red-50 dark:hover:bg-red-900/20 text-red-600 transition-colors focus:outline-none" @click="confirmDeleteEntry(contextMenu.item!)">🗑️ 永久删除</button>
