@@ -1352,6 +1352,11 @@ const isSystemProtectedDir = (item: { path: string; is_dir?: boolean }) => {
 
 const canManageItem = (item: { path: string; is_dir?: boolean }) => {
   if (isSystemProtectedDir(item)) return false
+  // 用户主目录本身不允许重命名或删除
+  if (
+    userWorkspaceRoot.value &&
+    normalizeFsPathForCompare(item.path) === normalizeFsPathForCompare(userWorkspaceRoot.value)
+  ) return false
   if (isAdminScope.value && !isTrashPath(item.path)) return true
   return isPathInUserWorkspace(item.path) && !isTrashPath(item.path)
 }
