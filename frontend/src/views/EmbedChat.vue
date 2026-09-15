@@ -2043,6 +2043,7 @@ import { useToast } from "../composables/useToast";
 import { useTokenQuota } from "../composables/useTokenQuota";
 import { useContextUsage } from "@/composables/useContextUsage";
 import { useContextCompactions } from "@/composables/useContextCompactions";
+import { useSandboxWorkspace } from "@/composables/chat/useSandboxWorkspace";
 import { buildQuotaStatusMarkdown } from "@/utils/quotaDisplay";
 import { useDatasetPortal } from "@/composables/useDatasetPortal";
 import { useDatasetMount } from "@/composables/useDatasetMount";
@@ -4093,350 +4094,37 @@ watch(conversationId, () => {
 }, { immediate: true });
 
 const { contextUsage, refreshContextUsage } = useContextUsage();
-type SandboxWorkspaceStatus = "idle" | "starting" | "stopping" | "running" | "error";
-const sandboxWorkspaceStatus = ref<SandboxWorkspaceStatus>("idle");
-const sandboxWorkspaceStatusLoaded = ref(false);
-const sandboxWorkspaceError = ref("");
-const sandboxWorkspaceInstanceId = ref<string | null>(null);
-const sandboxWorkspaceStartedAt = ref<string | null>(null);
-const sandboxWorkspaceUptimeSeconds = ref<number | null>(null);
-const effectiveSandboxPolicy = computed(() => (
-  String(contextUsage.value?.sandbox_policy || "").trim().toLowerCase()
-));
-const sandboxBackend = computed<"docker" | "k8s">(() => effectiveSandboxPolicy.value === "k8s" ? "k8s" : "docker");
-const showSandboxStopConfirm = ref(false);
-const isSandboxWorkspacePolicy = computed(() => {
-  const policy = effectiveSandboxPolicy.value;
-  return policy === "docker" || policy === "k8s";
+const {
+  sandboxWorkspaceStatus,
+  sandboxWorkspaceStatusLoaded,
+  sandboxWorkspaceError,
+  sandboxWorkspaceInstanceId,
+  sandboxWorkspaceStartedAt,
+  sandboxWorkspaceUptimeSeconds,
+  effectiveSandboxPolicy,
+  sandboxBackend,
+  isSandboxWorkspacePolicy,
+  showSandboxStopConfirm,
+  showDockerTerminal,
+  showK8sTerminal,
+  resetSandboxWorkspaceState,
+  refreshSandboxWorkspaceStatus,
+  pollSandboxWorkspaceUntilRunning,
+  maybeAutoWarmSandbox,
+  ensureSandboxWorkspace,
+  openDockerTerminal,
+  handleStopSandboxWorkspaceRequest,
+  confirmStopSandboxWorkspace,
+  stopSandboxWorkspace,
+  restartSandboxWorkspace,
+} = useSandboxWorkspace({
+  conversationId,
+  contextUsage,
+  authHeaders: embedAuthHeaders,
+  isProcessing,
+  remoteRunActive,
+  showToast,
 });
-const sandboxWorkspaceBaseEndpoint = computed(() => sandboxBackend.value === "k8s"
-  ? "/api/v1/sandbox/k8s/workspace"
-  : "/api/v1/sandbox/docker/workspace");
-
-const instanceIdFromData = (data: any): string | null => (
-  sandboxBackend.value === "k8s"
-    ? (data?.pod_name ?? null)
-    : (data?.container_id ?? null)
-);
-
-const mapSandboxStatus = (raw: string): SandboxWorkspaceStatus => {
-  if (raw === "running") return "running";
-  if (raw === "starting") return "starting";
-  if (raw === "stopping") return "stopping";
-  if (raw === "error") return "error";
-  return "idle"; // stopped / idle -> idle
-};
-
-const resetSandboxWorkspaceState = () => {
-  sandboxWorkspaceStatus.value = "idle";
-  sandboxWorkspaceStatusLoaded.value = false;
-  sandboxWorkspaceError.value = "";
-  sandboxWorkspaceInstanceId.value = null;
-  sandboxWorkspaceStartedAt.value = null;
-  sandboxWorkspaceUptimeSeconds.value = null;
-};
-
-/** 沙箱状态查询防重入（starting 状态下也允许手动刷新，仅拦并发请求）。 */
-let sandboxStatusRefreshInFlight = false;
-
-const refreshSandboxWorkspaceStatus = async (showFeedback = false) => {
-  if (!isSandboxWorkspacePolicy.value || !conversationId.value) return;
-  if (sandboxStatusRefreshInFlight) return;
-  sandboxStatusRefreshInFlight = true;
-  const requestedConversationId = conversationId.value;
-  try {
-    const response = await axios.get(
-      `${sandboxWorkspaceBaseEndpoint.value}/status`,
-      {
-        params: { conversation_id: requestedConversationId },
-        headers: embedAuthHeaders(),
-      },
-    );
-    if (conversationId.value !== requestedConversationId) return;
-    const data = response.data?.data ?? response.data;
-    sandboxWorkspaceInstanceId.value = instanceIdFromData(data);
-    sandboxWorkspaceStartedAt.value = data?.started_at || null;
-    sandboxWorkspaceUptimeSeconds.value = typeof data?.uptime_seconds === "number" ? data.uptime_seconds : null;
-    sandboxWorkspaceStatus.value = mapSandboxStatus(String(data?.status || "idle"));
-    sandboxWorkspaceError.value = "";
-    if (showFeedback) {
-      if (sandboxWorkspaceStatus.value === "running") {
-        const shortId = (sandboxWorkspaceInstanceId.value || "").slice(0, 12);
-        showToast(shortId ? `沙箱运行中 (${shortId})` : "沙箱运行中", "success");
-      } else if (sandboxWorkspaceStatus.value === "starting") {
-        showToast("沙箱启动中，请稍候...", "info");
-      } else {
-        showToast("沙箱状态已刷新：尚未启动", "info");
-      }
-    }
-  } catch (error: any) {
-    if (conversationId.value !== requestedConversationId) return;
-    const detail = error?.response?.data?.detail;
-    sandboxWorkspaceError.value = typeof detail === "string"
-      ? detail
-      : String(detail?.message || error?.message || "沙箱状态查询失败");
-    sandboxWorkspaceStatus.value = "error";
-    sandboxWorkspaceStartedAt.value = null;
-    sandboxWorkspaceUptimeSeconds.value = null;
-    if (showFeedback) {
-      showToast(sandboxWorkspaceError.value, "error");
-    }
-  } finally {
-    if (conversationId.value === requestedConversationId) {
-      sandboxWorkspaceStatusLoaded.value = true;
-    }
-    sandboxStatusRefreshInFlight = false;
-  }
-};
-
-/** 启动后自动轮询 status（每 2s，最长 ~60s），直到 Pod 就绪；支持自定义 readyMessage 与 readyToast 开关。 */
-const pollSandboxWorkspaceUntilRunning = async (
-  cid: string,
-  opts: { readyToast?: boolean; readyMessage?: string } = {},
-) => {
-  const { readyToast = true, readyMessage = "沙箱已就绪" } = opts;
-  const MAX_ATTEMPTS = 30; // 60s
-  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt += 1) {
-    await new Promise((resolve) => setTimeout(resolve, 2000));
-    if (conversationId.value !== cid) return;
-    try {
-      const response = await axios.get(
-        `${sandboxWorkspaceBaseEndpoint.value}/status`,
-        { params: { conversation_id: cid }, headers: embedAuthHeaders() },
-      );
-      const data = response.data?.data ?? response.data;
-      const mapped = mapSandboxStatus(String(data?.status || "idle"));
-      sandboxWorkspaceStatus.value = mapped;
-      sandboxWorkspaceInstanceId.value = instanceIdFromData(data);
-      sandboxWorkspaceStartedAt.value = data?.started_at || null;
-      sandboxWorkspaceUptimeSeconds.value = typeof data?.uptime_seconds === "number"
-        ? data.uptime_seconds
-        : null;
-      if (mapped === "running") {
-        if (readyToast) {
-          showToast(readyMessage, "success");
-        }
-        return;
-      }
-      if (mapped === "error") {
-        // 沙箱明确报错时立即终止轮询，避免继续空轮询
-        return;
-      }
-    } catch {
-      // 单次查询失败不中断轮询，继续尝试
-    }
-  }
-  // 超时仍未就绪：停留在当前状态并提示可手动刷新
-  if (conversationId.value === cid && sandboxWorkspaceStatus.value !== "running") {
-    if (readyToast) {
-      showToast("Pod 仍在创建中（可能镜像拉取较慢），可稍后点「刷新」查看", "info");
-    }
-  }
-};
-
-/** 会话打开/新建后自动预热一次（每个会话仅一次；仅当查询确认未运行且当前无任务）。 */
-let autoWarmedConversationKey = "";
-
-const maybeAutoWarmSandbox = async () => {
-  if (!isSandboxWorkspacePolicy.value || !conversationId.value) return;
-  if (isProcessing.value || remoteRunActive.value) return;
-  if (!sandboxWorkspaceStatusLoaded.value) return;
-  // 快路径：#config 已加载且显式关闭自动预热，直接跳过（后端 /ensure 仍会二次兜底）。
-  if (contextUsage.value?.sandbox_auto_warm === false) return;
-  const status = sandboxWorkspaceStatus.value;
-  if (status === "running" || status === "starting" || status === "error") return;
-  const key = `${conversationId.value}::${sandboxBackend.value}`;
-  if (autoWarmedConversationKey === key) return;
-  autoWarmedConversationKey = key;
-  try {
-    const response = await axios.post(
-      `${sandboxWorkspaceBaseEndpoint.value}/ensure`,
-      { conversation_id: conversationId.value, auto_warm: true },
-      { headers: embedAuthHeaders() },
-    );
-    const data = response.data?.data ?? response.data;
-    if (data?.auto_warm_disabled) {
-      // 后端已因 sandbox_auto_warm=false 跳过创建；不置 starting、不轮询，静默返回。
-      sandboxWorkspaceStatus.value = "idle";
-      return;
-    }
-    const mapped = mapSandboxStatus(String(data?.status || "idle"));
-    sandboxWorkspaceStatus.value = mapped;
-    sandboxWorkspaceInstanceId.value = instanceIdFromData(data);
-    sandboxWorkspaceStartedAt.value = data?.started_at || null;
-    sandboxWorkspaceUptimeSeconds.value = typeof data?.uptime_seconds === "number"
-      ? data.uptime_seconds
-      : null;
-    if (mapped === "running") {
-      showToast("沙箱环境已预热就绪", "success");
-    } else {
-      showToast("正在预热沙箱运行环境…", "info");
-      void pollSandboxWorkspaceUntilRunning(String(conversationId.value), {
-        readyToast: true,
-        readyMessage: "沙箱环境已预热就绪",
-      });
-    }
-  } catch {
-    // 自动预热失败静默：用户可手动「启动」，或发送消息时按既有降级逻辑处理
-  }
-};
-
-const ensureSandboxWorkspace = async () => {
-  if (!isSandboxWorkspacePolicy.value || !conversationId.value) return;
-  if (sandboxWorkspaceStatus.value === "starting") return;
-  const requestedConversationId = conversationId.value;
-  sandboxWorkspaceStatus.value = "starting";
-  sandboxWorkspaceError.value = "";
-  try {
-    const response = await axios.post(
-      `${sandboxWorkspaceBaseEndpoint.value}/ensure`,
-      { conversation_id: requestedConversationId },
-      { headers: embedAuthHeaders() },
-    );
-    if (conversationId.value !== requestedConversationId) return;
-    const data = response.data?.data ?? response.data;
-    const mapped = mapSandboxStatus(String(data?.status || "idle"));
-    if (mapped === "error") {
-      throw new Error("沙箱未返回运行中状态");
-    }
-    sandboxWorkspaceInstanceId.value = instanceIdFromData(data);
-    sandboxWorkspaceStartedAt.value = data?.started_at || null;
-    sandboxWorkspaceUptimeSeconds.value = typeof data?.uptime_seconds === "number" ? data.uptime_seconds : 0;
-    sandboxWorkspaceStatus.value = mapped;
-    showToast(mapped === "starting" ? "沙箱启动中..." : "沙箱已启动", mapped === "starting" ? "info" : "success");
-    // 非 running（如刚创建、Pending）时自动轮询直到就绪，无需用户手动刷新。
-    if (mapped !== "running") {
-      void pollSandboxWorkspaceUntilRunning(requestedConversationId);
-    }
-  } catch (error: any) {
-    if (conversationId.value !== requestedConversationId) return;
-    const detail = error?.response?.data?.detail;
-    sandboxWorkspaceError.value = typeof detail === "string"
-      ? detail
-      : String(detail?.message || error?.message || "沙箱启动失败");
-    sandboxWorkspaceStatus.value = "error";
-    showToast(sandboxWorkspaceError.value, "error");
-  }
-};
-
-const showDockerTerminal = ref(false);
-const showK8sTerminal = ref(false);
-
-const openDockerTerminal = () => {
-  if (sandboxWorkspaceStatus.value !== "running") {
-    showToast("沙箱未在运行中，请先启动", "warning");
-    return;
-  }
-  if (sandboxBackend.value === "k8s") {
-    showK8sTerminal.value = true;
-    return;
-  }
-  if (sandboxBackend.value === "docker") {
-    showDockerTerminal.value = true;
-    return;
-  }
-  showToast("当前沙箱不支持终端", "warning");
-};
-
-const confirmStopSandboxWorkspace = async () => {
-  showSandboxStopConfirm.value = false;
-  await stopSandboxWorkspace();
-};
-
-const handleStopSandboxWorkspaceRequest = () => {
-  if (sandboxBackend.value === "k8s") {
-    showSandboxStopConfirm.value = true;
-  } else {
-    void stopSandboxWorkspace();
-  }
-};
-
-const stopSandboxWorkspace = async () => {
-  if (!isSandboxWorkspacePolicy.value || !conversationId.value) return;
-  if (sandboxWorkspaceStatus.value === "stopping" || sandboxWorkspaceStatus.value === "starting") return;
-  const requestedConversationId = conversationId.value;
-  sandboxWorkspaceStatus.value = "stopping";
-  sandboxWorkspaceError.value = "";
-  try {
-    await axios.post(
-      `${sandboxWorkspaceBaseEndpoint.value}/stop`,
-      { conversation_id: requestedConversationId },
-      { headers: embedAuthHeaders() },
-    );
-    if (conversationId.value !== requestedConversationId) return;
-    sandboxWorkspaceStatus.value = "idle";
-    sandboxWorkspaceInstanceId.value = null;
-    sandboxWorkspaceStartedAt.value = null;
-    sandboxWorkspaceUptimeSeconds.value = null;
-    sandboxWorkspaceError.value = "";
-    showToast(sandboxBackend.value === "k8s" ? "Kubernetes 沙箱 Pod 已停止" : "Docker 沙箱容器已关机停止", "info");
-  } catch (error: any) {
-    if (conversationId.value !== requestedConversationId) return;
-    const detail = error?.response?.data?.detail;
-    const msg = typeof detail === "string"
-      ? detail
-      : String(detail?.message || error?.message || "停止沙箱失败");
-    sandboxWorkspaceStatus.value = "running";
-    showToast(msg, "error");
-  }
-};
-
-const restartSandboxWorkspace = async () => {
-  if (!isSandboxWorkspacePolicy.value || !conversationId.value) return;
-  if (sandboxWorkspaceStatus.value === "starting") return;
-  const requestedConversationId = conversationId.value;
-  sandboxWorkspaceStatus.value = "starting";
-  sandboxWorkspaceError.value = "";
-  try {
-    const response = await axios.post(
-      `${sandboxWorkspaceBaseEndpoint.value}/restart`,
-      { conversation_id: requestedConversationId },
-      { headers: embedAuthHeaders() },
-    );
-    if (conversationId.value !== requestedConversationId) return;
-    const data = response.data?.data ?? response.data;
-    const mapped = mapSandboxStatus(String(data?.status || "idle"));
-    sandboxWorkspaceInstanceId.value = instanceIdFromData(data);
-    sandboxWorkspaceStartedAt.value = data?.started_at || null;
-    sandboxWorkspaceUptimeSeconds.value = typeof data?.uptime_seconds === "number" ? data.uptime_seconds : 0;
-    sandboxWorkspaceStatus.value = mapped;
-    const shortId = (sandboxWorkspaceInstanceId.value || "").slice(0, 12);
-    const restartMsg = sandboxBackend.value === "k8s"
-      ? (shortId ? `Kubernetes 沙箱 Pod 已重启 (${shortId})` : "Kubernetes 沙箱 Pod 已重启")
-      : (shortId ? `Docker 沙箱已重启 (${shortId})` : "Docker 沙箱已重启");
-    showToast(restartMsg, "success");
-  } catch (error: any) {
-    if (conversationId.value !== requestedConversationId) return;
-    const detail = error?.response?.data?.detail;
-    sandboxWorkspaceError.value = typeof detail === "string"
-      ? detail
-      : String(detail?.message || error?.message || "沙箱重启失败");
-    sandboxWorkspaceStatus.value = "error";
-    showToast(sandboxWorkspaceError.value, "error");
-  }
-};
-
-watch(
-  [conversationId, effectiveSandboxPolicy],
-  async ([conversation, policy], previous) => {
-    const previousConversation = String(previous?.[0] || "");
-    const previousPolicy = String(previous?.[1] || "");
-    if (
-      !isSandboxWorkspacePolicy.value
-      || !conversation
-      || conversation !== previousConversation
-      || policy !== previousPolicy
-    ) {
-      resetSandboxWorkspaceState();
-      if (isSandboxWorkspacePolicy.value && conversation) {
-        await refreshSandboxWorkspaceStatus();
-        // 打开/新建会话后自动预热沙箱（默认开启，每个会话一次、静默）
-        void maybeAutoWarmSandbox();
-      }
-    }
-  },
-  { immediate: true },
-);
 const {
   contextCompactions,
   contextCompactionCount,
