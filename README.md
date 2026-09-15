@@ -214,6 +214,8 @@
 | [mcp_user_context_integration_guide.md](docs/md/mcp_user_context_integration_guide.md)                                                      | 自有 MCP UserContext 接入、JWKS 验签及 Python / Java 示例      |
 | [mcp_echo_test_server.md](docs/md/mcp_echo_test_server.md)                                                                                  | 平台级 MCP Echo 测试服务创建、智能体挂载与认证诊断             |
 | [code_canvas_and_workspace_guide.md](docs/md/code_canvas_and_workspace_guide.md)                                                            | 代码画布、工作区文件与执行 API                                 |
+| [sandbox/docker/README.md](sandbox/docker/README.md)                                                                                        | Docker 安全沙箱预构建与运维指南（含排障工具链、`--dry-run` 与 `--list`） |
+| [sandbox/k8s/README.md](sandbox/k8s/README.md)                                                                                              | K8s 沙箱预置镜像构建与运维指南（冷启动加速、`k8s_deploy` 运维与监控） |
 | [ai_agent_gating_contract.md](docs/md/ai_agent_gating_contract.md)                                                                          | Agent 门控契约                                                 |
 | [tests/CHECKLIST.md](tests/CHECKLIST.md)                                                                                                    | 自动化测试验收清单                                             |
 
@@ -247,11 +249,10 @@
 ├── docs/                 # 项目架构文档、发布记录 (Release Notes) 与品牌设计规范
 ├── html/                 # 平台单页产品落地宣传页 (Landing Page)
 ├── k8s_deploy/           # 云原生生产级 Kubernetes 编排清单与沙箱隔离集群运维套件
-├── openspec/             # 接口规范演进与变更追踪 (OpenSpec 规范)
+├── sandbox/              # 📦 运行时代码沙箱运维目录 (docker/k8s)
 ├── scripts/              # 运维/开发辅助脚本 (一键开发启动、数据同步、重部署工具)
 ├── tests/                # 自动化测试套件 (Pytest) 与测试验收清单 (CHECKLIST.md)
 ├── dev.sh                # 🛠️ 本地一键开发启动、热编译与前后端进程启停运维脚本
-├── prebuild-sandbox.sh   # 🐳 Docker 安全代码沙箱镜像一键预构建/预热脚本
 ├── env.example           # ⚙️ 全局环境变量与系统核心敏感配置示例模板
 ├── requirements.txt      # 📦 后端 Python 核心运行时依赖清单 (Python 3.11)
 └── pytest.ini            # 🧪 自动化测试套件运行与断言配置
@@ -262,7 +263,7 @@
 | 文件                                          | 类型       | 核心职责说明                                                                                                                    |
 | :-------------------------------------------- | :--------- | :------------------------------------------------------------------------------------------------------------------------------ |
 | [`dev.sh`](dev.sh)                           | Shell 脚本 | **本地一键开发运维总控**：支持前后端并行启动、热编译重载、前台/后台运行模式切换、环境探测与进程优雅启停。                 |
-| [`prebuild-sandbox.sh`](prebuild-sandbox.sh) | Shell 脚本 | **Docker 代码安全沙箱预构建**：提前拉取并构建带安全隔离的 Python 3.11 沙箱镜像，大幅加速 Agent 动态执行代码时的启动速度。 |
+| [`sandbox/docker/prebuild-sandbox.sh`](sandbox/docker/prebuild-sandbox.sh) | Shell 脚本 | **Docker 代码安全沙箱预构建**：提前拉取并构建带安全隔离的 Python 3.11 沙箱镜像，大幅加速 Agent 动态执行代码时的启动速度。 |
 | [`env.example`](env.example)                 | 配置模板   | **全局环境变量基准模板**：包含 MySQL/PostgreSQL、Redis Stack、JWT/加密私钥、模型 API 端点等核心运行参数。                 |
 | [`requirements.txt`](requirements.txt)       | 依赖配置   | **后端运行时依赖包清单**：基于 Python 3.11 的核心第三方库依赖定义（FastAPI、AgentScope、SQLAlchemy、Redis 等）。          |
 | [`pytest.ini`](pytest.ini)                   | 测试配置   | **自动化测试套件配置**：定义 Pytest 用例过滤规则、异步标记、控制台日志输出与测试运行行为。                                |

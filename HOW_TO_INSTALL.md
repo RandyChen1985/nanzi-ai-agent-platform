@@ -497,6 +497,12 @@ INFO:     Uvicorn running on http://0.0.0.0:8001 (Press CTRL+C to quit)
 *   若需使用 ChatBI 智能数据问答与图表可视化，请在【数据源管理】中添加您的业务数据库连接（支持 MySQL、ClickHouse、Oracle 等）。
 *   输入连接信息后点击“连通性测试”确保连接无误，智能体将基于此数据源结构进行 SQL 生成与业务指标诊断。
 
+### 5.4 代码安全沙箱配置与镜像预构建 (Code Sandbox & Prebuild)
+智能体在运行 Python 绘图、数据统计计算或自动化 Shell 命令时，均在严格受限的代码安全沙箱环境中运行。为了防止首位使用智能体的用户遭遇长达数分钟的现场冷启动拉取，部署完成后**强烈建议提前完成沙箱镜像构建**：
+*   **沙箱策略选择**：前往管理后台 **【系统设置】→【参数配置】→【沙箱配置】**，根据运行环境将 `sandbox_policy` 设为 `docker`（单机容器环境）或 `k8s`（Kubernetes 集群环境）。
+*   **Docker 沙箱预构建**：在管理后台页面直接点击**【预构建镜像】**，或在宿主机运行 `./sandbox/docker/prebuild-sandbox.sh`。内置完整排障工具链与秒级拉起保障，详细指南请参考：[**`sandbox/docker/README.md`**](sandbox/docker/README.md)。
+*   **K8s 沙箱预置镜像构建**：在集群节点或构建机运行 `./sandbox/k8s/build-k8s-sandbox-image.sh` 打包并导入节点 containerd，并在后台配置 `sandbox_k8s_image` 保存生效，实现冷启动从 40 秒锐减至 1 秒。详细指南请参考：[**`sandbox/k8s/README.md`**](sandbox/k8s/README.md)。
+
 ---
 
 ## 6. FAQ (常见问题解答)
