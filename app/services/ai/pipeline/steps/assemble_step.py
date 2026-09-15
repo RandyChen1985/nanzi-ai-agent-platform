@@ -444,4 +444,7 @@ class AssembleStep(BasePipelineStep):
                 "type": "debug",
                 "subtype": "raw_prompt",
                 "data": list(context.messages),
+                # 组装完成时的全量系统级提示词（平台全局守则 + Agent 基础指令 +
+                # 技能/能力/安全边界 + 历史边界），供调试前端预览真实 system prompt。
+                "system_prompt": bounded_prompt or final_system_prompt or "",
             }

@@ -16,6 +16,7 @@ import ChatBIInsightPanel from "@/components/chatbi/ChatBIInsightPanel.vue";
 import ChatBIContinueAnalysis from "@/components/chatbi/ChatBIContinueAnalysis.vue";
 import MessageContinueAnalysis from "@/components/chat/MessageContinueAnalysis.vue";
 import ErrorDetailCard from "@/components/chat/ErrorDetailCard.vue";
+import ExecutionDebugDrawer from "@/components/chat/ExecutionDebugDrawer.vue";
 import ChatBIMonitorDialog from "@/components/chatbi/ChatBIMonitorDialog.vue";
 import ChatBIMetadataGuide from "@/components/chatbi/ChatBIMetadataGuide.vue";
 import AgentHandoffNotice from "@/components/chat/AgentHandoffNotice.vue";
@@ -1380,6 +1381,7 @@ interface Message {
   timestamp?: string;
   intent?: string;
   rawPrompt?: any; // Store raw prompt data
+  rawPromptSystem?: string; // 组装完成的完整系统级提示词
   trace_id?: string; // Associated Trace ID for full logs
   citations?: any[]; // Knowledge base references
   isCitationsExpanded?: boolean; // Collapsible toggle
@@ -1559,6 +1561,10 @@ const showRawPromptModal = ref(false);
 const showFullLogViewer = ref(false);
 const selectedRawPrompt = ref<any>(null);
 const activeTraceId = ref("");
+const showExecutionDrawer = ref(false);
+const executionDrawerTraceId = ref("");
+const executionDrawerRawPrompt = ref<any>(null);
+const executionDrawerRawPromptSystem = ref("");
 
 // --- Agent Context State ---
 const agentContext = ref<Record<string, any>>({});
@@ -1582,6 +1588,14 @@ const openRawPrompt = (msg: Message) => {
     selectedRawPrompt.value = msg.rawPrompt;
     showRawPromptModal.value = true;
   }
+};
+
+const openExecutionDetail = (msg: Message) => {
+  if (!msg.trace_id) return;
+  executionDrawerTraceId.value = msg.trace_id;
+  executionDrawerRawPrompt.value = msg.rawPrompt ?? null;
+  executionDrawerRawPromptSystem.value = msg.rawPromptSystem ?? "";
+  showExecutionDrawer.value = true;
 };
 
 const showCommandManager = ref(false);
@@ -3419,6 +3433,7 @@ const sendMessageInternal = async (snapshot: ChatSendSnapshot) => {
             else if (data.type === "debug") {
               if (data.subtype === "raw_prompt") {
                 agentMsg.value.rawPrompt = data.data;
+                agentMsg.value.rawPromptSystem = data.system_prompt ?? "";
                 addRealLog(agentMsg.value, {
                   title: "Debug: Raw Prompt Captured",
                   details: 'Click "Raw Prompt" button to view.',
@@ -3778,6 +3793,7 @@ const applyPermissionStreamEvent = (msg: Message, data: any) => {
       });
     } else if (data.type === "debug" && data.subtype === "raw_prompt") {
       msg.rawPrompt = data.data;
+      msg.rawPromptSystem = data.system_prompt ?? "";
       addRealLog(msg, {
         title: "Debug: Raw Prompt Captured",
         details: 'Click "Raw Prompt" button to view.',
@@ -3972,6 +3988,15 @@ onUnmounted(() => {
       :visible="showFullLogViewer"
       :trace-id="activeTraceId"
       @close="showFullLogViewer = false"
+    />
+
+    <!-- Execution Debug Drawer: 执行步骤 / 组装 Prompt / 运行时上下文 -->
+    <ExecutionDebugDrawer
+      v-model:visible="showExecutionDrawer"
+      :trace-id="executionDrawerTraceId"
+      :raw-prompt="executionDrawerRawPrompt"
+      :raw-prompt-system="executionDrawerRawPromptSystem"
+      :agent-context="agentContext"
     />
 
     <!-- Session Preview Modal (New Feature) -->
@@ -4487,11 +4512,12 @@ onUnmounted(() => {
                   <span>{{ getAgentDisplayName(msg) ? `${getAgentDisplayName(msg)} · ${String(msg.agentName || '').startsWith('sys_') ? '系统指令' : '为您服务'}` : (msg.agentName || '智能调度中...') }}</span>
                 </div>
 
-                <!-- Full Logs -->
+                <!-- 执行详情 (Debug Drawer) -->
                 <button
                   v-if="msg.trace_id && !msg.isThinking"
-                  @click="openFullLogs(msg.trace_id)"
-                  class="flex items-center space-x-1 px-2 py-1 text-xs font-medium text-indigo-600 bg-indigo-50 hover:bg-indigo-100 border border-indigo-100 rounded-md transition-colors"
+                  @click="openExecutionDetail(msg)"
+                  class="flex items-center space-x-1 px-2 py-1 text-xs font-bold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded-md transition-colors"
+                  title="查看执行步骤 / 组装 Prompt / 运行时上下文"
                 >
                   <svg
                     class="w-3 h-3"
@@ -4503,34 +4529,12 @@ onUnmounted(() => {
                       stroke-linecap="round"
                       stroke-linejoin="round"
                       stroke-width="2"
-                      d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01"
+                      d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4"
                     />
                   </svg>
-                  <span>完整日志</span>
+                  <span>执行详情</span>
                 </button>
 
-                <!-- Prompt -->
-                <button
-                  v-if="msg.rawPrompt"
-                  @click="openRawPrompt(msg)"
-                  class="flex items-center space-x-1 px-2 py-1 text-xs font-medium text-purple-600 bg-purple-50 hover:bg-purple-100 border border-purple-100 rounded-md transition-colors"
-                  title="View Raw Prompt"
-                >
-                  <svg
-                    class="w-3 h-3"
-                    fill="none"
-                    stroke="currentColor"
-                    viewBox="0 0 24 24"
-                  >
-                    <path
-                      stroke-linecap="round"
-                      stroke-linejoin="round"
-                      stroke-width="2"
-                      d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"
-                    />
-                  </svg>
-                  <span>Prompt</span>
-                </button>
 
                 <!-- Regenerate Button -->
                 <button
