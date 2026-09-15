@@ -5,6 +5,7 @@ CHAT_INPUT = Path(__file__).parents[2] / "frontend/src/components/embed/ChatInpu
 EMBED_CHAT = Path(__file__).parents[2] / "frontend/src/views/EmbedChat.vue"
 AGENT_MANAGEMENT = Path(__file__).parents[2] / "frontend/src/views/AgentManagement.vue"
 STATS_CARD = Path(__file__).parents[2] / "frontend/src/components/dashboard/StatsCard.vue"
+AGENT_DEBUG = Path(__file__).parents[2] / "frontend/src/views/AgentDebug.vue"
 WELCOME_DASHBOARD = Path(__file__).parents[2] / "frontend/src/components/embed/WelcomeDashboard.vue"
 EXECUTION_TIMELINE = Path(__file__).parents[2] / "frontend/src/components/chat/ChatExecutionTimeline.vue"
 MESSAGE_ACTION_MENUS = Path(__file__).parents[2] / "frontend/src/components/chat/MessageActionMenus.vue"
@@ -43,13 +44,16 @@ def test_smart_delegation_uses_group_icon() -> None:
 def test_system_shortcuts_render_icons_separately_from_labels() -> None:
     chat_input = CHAT_INPUT.read_text(encoding="utf-8")
     embed_chat = EMBED_CHAT.read_text(encoding="utf-8")
+    agent_debug = AGENT_DEBUG.read_text(encoding="utf-8")
     system_commands = embed_chat.split("const SYSTEM_SLASH_COMMANDS = [", 1)[1].split("];", 1)[0]
+    agent_debug_commands = agent_debug.split("const SYSTEM_SLASH_COMMANDS = [", 1)[1].split("];", 1)[0]
 
     assert "const getSystemCommandIcon" in chat_input
     assert "<component :is=\"getSystemCommandIcon(cmd)\"" in chat_input
 
     for emoji in ("📊", "📚", "💻", "📁", "📄", "🕒", "🧹", "⚙️", "💬"):
         assert emoji not in system_commands
+        assert emoji not in agent_debug_commands
 
 
 def test_collapsed_shortcuts_hint_uses_svg_lightning_icon() -> None:

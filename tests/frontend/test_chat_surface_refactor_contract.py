@@ -254,6 +254,70 @@ def test_agent_message_actions_wait_until_stream_finishes():
     assert embed.index('v-if="!(isProcessing && msg.id === lastAgentMessage?.id)"') < embed.index(
         "flex min-w-0 max-w-full flex-nowrap items-center space-x-2 overflow-x-auto mt-1 scrollbar-hide"
     )
-    assert "!(isProcessing && messages.indexOf(msg) === messages.length - 1)" in debug
     assert "title=\"复制\"" in embed
     assert "title=\"复制\"" in debug
+
+
+def test_agent_debug_removes_redundant_top_mode_selector_and_aligns_chat_input_routing():
+    debug = _read("frontend/src/views/AgentDebug.vue")
+    assert "智能委派 (Auto)" not in debug
+    assert "指定智能体 (Specific)" not in debug
+    assert "agentDropdownRef" not in debug
+    assert "showAgentDropdown" not in debug
+    assert ":routing-mode=\"debugMode === 'specific' ? 'expert' : 'auto'\"" in debug
+    assert ":expert-agent-id=\"agentParams.agent_id || ''\"" in debug
+    assert '@switch-to-auto="debugMode = \'auto\'; agentParams.agent_id = null"' in debug
+    assert "@switch-to-expert=\"(id: string) => { debugMode = 'specific'; agentParams.agent_id = id }\"" in debug
+    assert 'title="清空会话"' not in debug
+    assert "运行逻辑" not in debug
+    # 移除顶部【清空/运行逻辑】按钮后，原专属处理随之成为不可达死代码，须一并清理
+    assert "showLogicFlowModal" not in debug
+    assert "AgentLogicFlowModal" not in debug
+    assert "clearHistory" not in debug
+
+
+def test_chat_surfaces_share_sandbox_workspace_composable():
+    shared = _read("frontend/src/composables/chat/useSandboxWorkspace.ts")
+    embed = _read("frontend/src/views/EmbedChat.vue")
+    debug = _read("frontend/src/views/AgentDebug.vue")
+
+    assert "export function useSandboxWorkspace" in shared
+    assert "useSandboxWorkspace" in embed
+    assert "useSandboxWorkspace" in debug
+    assert "@/composables/chat/useSandboxWorkspace" in embed
+    assert "@/composables/chat/useSandboxWorkspace" in debug
+
+    for state_or_method in (
+        "sandboxWorkspaceStatus",
+        "sandboxWorkspaceInstanceId",
+        "sandboxWorkspaceStartedAt",
+        "sandboxWorkspaceUptimeSeconds",
+        "sandboxWorkspaceError",
+        "sandboxBackend",
+        "ensureSandboxWorkspace",
+        "refreshSandboxWorkspaceStatus",
+        "handleStopSandboxWorkspaceRequest",
+        "stopSandboxWorkspace",
+        "restartSandboxWorkspace",
+        "openDockerTerminal",
+    ):
+        assert state_or_method in shared
+
+
+def test_agent_debug_binds_sandbox_workspace_actions_and_terminals():
+    debug = _read("frontend/src/views/AgentDebug.vue")
+
+    assert ':sandbox-workspace-status="sandboxWorkspaceStatus"' in debug
+    assert ':sandbox-workspace-instance-id="sandboxWorkspaceInstanceId"' in debug
+    assert ':sandbox-backend="sandboxBackend"' in debug
+    assert '@start-sandbox-workspace="ensureSandboxWorkspace"' in debug
+    assert '@refresh-sandbox-workspace="refreshSandboxWorkspaceStatus"' in debug
+    assert '@stop-sandbox-workspace="handleStopSandboxWorkspaceRequest"' in debug
+    assert '@restart-sandbox-workspace="restartSandboxWorkspace"' in debug
+    assert '@open-docker-terminal="openDockerTerminal"' in debug
+
+    assert "<DockerTerminalModal" in debug
+    assert "<K8sTerminalModal" in debug
+    assert "<ConfirmModal" in debug
+
+

@@ -4,7 +4,6 @@ import { ref, nextTick, watch, onUnmounted, reactive, onMounted, computed } from
 import { useRoute, useRouter } from "vue-router";
 import TraceLogViewer from "@/components/TraceLogViewer.vue";
 import DebugConfigPanel from "@/components/DebugConfigPanel.vue";
-import AgentLogicFlowModal from "@/components/debug/AgentLogicFlowModal.vue";
 import ChatHistorySidebar from "@/components/ChatHistorySidebar.vue";
 import MessageRenderer from "@/components/MessageRenderer.vue";
 import ToolPermissionCard from "@/components/chat/ToolPermissionCard.vue";
@@ -17,6 +16,7 @@ import ChatBIInsightPanel from "@/components/chatbi/ChatBIInsightPanel.vue";
 import ChatBIContinueAnalysis from "@/components/chatbi/ChatBIContinueAnalysis.vue";
 import MessageContinueAnalysis from "@/components/chat/MessageContinueAnalysis.vue";
 import ErrorDetailCard from "@/components/chat/ErrorDetailCard.vue";
+import ExecutionDebugDrawer from "@/components/chat/ExecutionDebugDrawer.vue";
 import ChatBIMonitorDialog from "@/components/chatbi/ChatBIMonitorDialog.vue";
 import ChatBIMetadataGuide from "@/components/chatbi/ChatBIMetadataGuide.vue";
 import AgentHandoffNotice from "@/components/chat/AgentHandoffNotice.vue";
@@ -88,6 +88,9 @@ import {
 } from "@/utils/skillFlowBadges";
 
 import ChatInput from "@/components/embed/ChatInput.vue";
+import DockerTerminalModal from "@/components/chat/DockerTerminalModal.vue";
+import K8sTerminalModal from "@/components/chat/K8sTerminalModal.vue";
+import { useSandboxWorkspace } from "@/composables/chat/useSandboxWorkspace";
 import SkillCreatedBanner from "@/components/chat/SkillCreatedBanner.vue";
 import { parseSkillCreatedMarker, type SkillCreatedInfo } from "@/utils/skillCreated";
 import WorkspaceBrowserDrawer from "@/components/embed/WorkspaceBrowserDrawer.vue";
@@ -378,27 +381,15 @@ const visibleStreamBody = (msg: Message): string => {
     : (msg.content || "");
 };
 
-const showAgentDropdown = ref(false);
-const agentDropdownRef = ref<HTMLElement | null>(null);
-
-const selectedAgent = computed(() => {
-  return agents.value.find((a: any) => a.id === agentParams.agent_id);
-});
-
-const handleDocumentClick = (e: MouseEvent) => {
-  if (agentDropdownRef.value && !agentDropdownRef.value.contains(e.target as Node)) {
-    showAgentDropdown.value = false;
-  }
-};
 const SYSTEM_SLASH_COMMANDS = [
-  { id: "sys_clear", command: "/new", label: "💬 新会话", sort_order: -40 },
-  { id: "sys_history", command: "/history", label: "🕒 历史", sort_order: -39 },
-  { id: DATASET_PORTAL_SYSTEM_COMMAND_ID, command: DATASET_PORTAL_SLASH_COMMAND, label: "📊 数据门户", sort_order: -35 },
-  { id: KNOWLEDGE_PORTAL_SYSTEM_COMMAND_ID, command: KNOWLEDGE_PORTAL_SLASH_COMMAND, label: "📚 知识库中心", sort_order: -34.5 },
-  { id: WORKSPACE_SYSTEM_COMMAND_ID, command: WORKSPACE_SLASH_COMMAND, label: "💻 工作空间", sort_order: -34 },
-  { id: "sys_quota", command: "/quota", label: "📊 我的额度", sort_order: -18 },
-  { id: "sys_compact", command: "/compact", label: "🧹 压缩上下文", sort_order: -17 },
-  { id: "sys_settings", command: "/settings", label: "⚙️ 设置", sort_order: -15 },
+  { id: "sys_clear", command: "/new", label: "新会话", sort_order: -40 },
+  { id: "sys_history", command: "/history", label: "历史", sort_order: -39 },
+  { id: DATASET_PORTAL_SYSTEM_COMMAND_ID, command: DATASET_PORTAL_SLASH_COMMAND, label: "数据门户", sort_order: -35 },
+  { id: KNOWLEDGE_PORTAL_SYSTEM_COMMAND_ID, command: KNOWLEDGE_PORTAL_SLASH_COMMAND, label: "知识库中心", sort_order: -34.5 },
+  { id: WORKSPACE_SYSTEM_COMMAND_ID, command: WORKSPACE_SLASH_COMMAND, label: "工作空间", sort_order: -34 },
+  { id: "sys_quota", command: "/quota", label: "我的额度", sort_order: -18 },
+  { id: "sys_compact", command: "/compact", label: "压缩上下文", sort_order: -17 },
+  { id: "sys_settings", command: "/settings", label: "设置", sort_order: -15 },
 ];
 const isKnowledgeEnabled = ref(true);
 const slashCommands = ref<any[]>([...SYSTEM_SLASH_COMMANDS]);
@@ -560,6 +551,46 @@ watch(conversationId, () => {
 
 const finalizeConversationInBackground = (cid: string) => {
   void finalizeConversation(cid, debugAuthHeaders());
+};
+
+const resetDebugThinkingOverrides = () => {
+  debugConfig.thinkingEnableOverride = null;
+  debugConfig.reasoningEffortOverride = null;
+};
+
+const loadGreeting = async () => {
+  try {
+    // Show a temporary placeholder while loading
+    messages.value = [
+      {
+        id: Date.now(),
+        role: "agent",
+        content: "", // Show empty content with thinking indicator instead of text
+        isThinking: true,
+      },
+    ];
+
+    const res = await axios.get("/api/v1/chat/greeting");
+    if (res.data?.data && res.data.data.greeting) {
+      messages.value = [
+        {
+          id: Date.now(),
+          role: "agent",
+          content: res.data.data.greeting,
+          isGreeting: true,
+        },
+      ];
+    }
+  } catch (e) {
+    messages.value = [
+      {
+        id: Date.now(),
+        role: "agent",
+        content: "您好！我是你的智能体助手，期待为您服务。",
+        isGreeting: true,
+      },
+    ];
+  }
 };
 
 const generateNewConversation = (isManual = false) => {
@@ -1350,6 +1381,7 @@ interface Message {
   timestamp?: string;
   intent?: string;
   rawPrompt?: any; // Store raw prompt data
+  rawPromptSystem?: string; // 组装完成的完整系统级提示词
   trace_id?: string; // Associated Trace ID for full logs
   citations?: any[]; // Knowledge base references
   isCitationsExpanded?: boolean; // Collapsible toggle
@@ -1393,7 +1425,6 @@ const isChatContextMessage = (message: Message): boolean => (
 // --- Debug Config State ---
 const showHistorySidebar = ref(false);
 const showConfigPanel = ref(true);
-const showLogicFlowModal = ref(false);
 const isConfigPanelFloating = ref(false);
 const debugConfig = reactive({
   model: "", // Empty means default
@@ -1456,6 +1487,35 @@ const manualCompactDebugContext = async (retainRatio: 0.25 | 0.5 | 0.75 = 0.5, m
   }
 };
 
+// useSandboxWorkspace 内部 watch(..., { immediate: true }) 会立即读取 isProcessing，
+// 因此 isProcessing 必须在沙箱组合式函数调用之前完成声明，否则触发 TDZ 运行时崩溃。
+const isProcessing = ref(false);
+
+const {
+  sandboxWorkspaceStatus,
+  sandboxWorkspaceInstanceId,
+  sandboxWorkspaceStartedAt,
+  sandboxWorkspaceUptimeSeconds,
+  sandboxWorkspaceError,
+  sandboxBackend,
+  showSandboxStopConfirm,
+  showDockerTerminal,
+  showK8sTerminal,
+  refreshSandboxWorkspaceStatus,
+  ensureSandboxWorkspace,
+  handleStopSandboxWorkspaceRequest,
+  confirmStopSandboxWorkspace,
+  restartSandboxWorkspace,
+  openDockerTerminal,
+} = useSandboxWorkspace({
+  conversationId,
+  contextUsage,
+  authHeaders: debugAuthHeaders,
+  isProcessing,
+  remoteRunActive,
+  showToast,
+});
+
 watch(
   [conversationId, () => debugConfig.model],
   () => void refreshDebugContextUsage(),
@@ -1467,12 +1527,6 @@ watch(
   () => void refreshDebugContextCompactions(true),
   { immediate: true },
 );
-
-const resetDebugThinkingOverrides = () => {
-  debugConfig.thinkingEnableOverride = null;
-  debugConfig.reasoningEffortOverride = null;
-};
-
 
 
 const loadingConfig = ref(false);
@@ -1507,6 +1561,10 @@ const showRawPromptModal = ref(false);
 const showFullLogViewer = ref(false);
 const selectedRawPrompt = ref<any>(null);
 const activeTraceId = ref("");
+const showExecutionDrawer = ref(false);
+const executionDrawerTraceId = ref("");
+const executionDrawerRawPrompt = ref<any>(null);
+const executionDrawerRawPromptSystem = ref("");
 
 // --- Agent Context State ---
 const agentContext = ref<Record<string, any>>({});
@@ -1520,49 +1578,6 @@ const clearContext = (key?: string) => {
   }
 };
 
-const loadGreeting = async () => {
-  try {
-    // Show a temporary placeholder while loading
-    messages.value = [
-      {
-        id: Date.now(),
-        role: "agent",
-        content: "", // Show empty content with thinking indicator instead of text
-        isThinking: true,
-      },
-    ];
-
-    const res = await axios.get("/api/v1/chat/greeting");
-    if (res.data?.data && res.data.data.greeting) {
-      messages.value = [
-        {
-          id: Date.now(),
-          role: "agent",
-          content: res.data.data.greeting,
-          isGreeting: true,
-        },
-      ];
-    }
-  } catch (e) {
-    messages.value = [
-      {
-        id: Date.now(),
-        role: "agent",
-        content: "您好！我是你的智能体助手，期待为您服务。",
-        isGreeting: true,
-      },
-    ];
-  }
-};
-
-const clearHistory = () => {
-  generateNewConversation(true);
-  agentContext.value = {};
-  ragRetrievalMeta.value = null;
-  activeTraceId.value = "";
-  showFullLogViewer.value = false;
-};
-
 const openFullLogs = (traceId: string) => {
   activeTraceId.value = traceId;
   showFullLogViewer.value = true;
@@ -1573,6 +1588,14 @@ const openRawPrompt = (msg: Message) => {
     selectedRawPrompt.value = msg.rawPrompt;
     showRawPromptModal.value = true;
   }
+};
+
+const openExecutionDetail = (msg: Message) => {
+  if (!msg.trace_id) return;
+  executionDrawerTraceId.value = msg.trace_id;
+  executionDrawerRawPrompt.value = msg.rawPrompt ?? null;
+  executionDrawerRawPromptSystem.value = msg.rawPromptSystem ?? "";
+  showExecutionDrawer.value = true;
 };
 
 const showCommandManager = ref(false);
@@ -1646,7 +1669,6 @@ const saveCommand = async () => {
 const closeModals = () => {
   // Do not close config panel
   showCommandManager.value = false;
-  showLogicFlowModal.value = false;
   showRawPromptModal.value = false;
   selectedRawPrompt.value = null;
 };
@@ -2288,7 +2310,6 @@ const enterFullScreenFromTip = () => {
 };
 
 const userInput = ref("");
-const isProcessing = ref(false);
 const { locked: sendLocked, runExclusive: runSendExclusive } = createChatSendGate();
 const focusChatInputWhenReady = () => {
   if (isMobile.value || isProcessing.value || remoteRunActive.value || sendLocked.value) return;
@@ -2862,13 +2883,11 @@ const handleRunStatusVisibilityChange = () => {
 
 onMounted(() => {
   window.addEventListener("keydown", handleEscKey);
-  document.addEventListener("click", handleDocumentClick);
   document.addEventListener("visibilitychange", handleRunStatusVisibilityChange);
 });
 
 onUnmounted(() => {
   window.removeEventListener("keydown", handleEscKey);
-  document.removeEventListener("click", handleDocumentClick);
   document.removeEventListener("visibilitychange", handleRunStatusVisibilityChange);
   disposePortalTimers();
 });
@@ -3414,6 +3433,7 @@ const sendMessageInternal = async (snapshot: ChatSendSnapshot) => {
             else if (data.type === "debug") {
               if (data.subtype === "raw_prompt") {
                 agentMsg.value.rawPrompt = data.data;
+                agentMsg.value.rawPromptSystem = data.system_prompt ?? "";
                 addRealLog(agentMsg.value, {
                   title: "Debug: Raw Prompt Captured",
                   details: 'Click "Raw Prompt" button to view.',
@@ -3773,6 +3793,7 @@ const applyPermissionStreamEvent = (msg: Message, data: any) => {
       });
     } else if (data.type === "debug" && data.subtype === "raw_prompt") {
       msg.rawPrompt = data.data;
+      msg.rawPromptSystem = data.system_prompt ?? "";
       addRealLog(msg, {
         title: "Debug: Raw Prompt Captured",
         details: 'Click "Raw Prompt" button to view.',
@@ -3967,6 +3988,15 @@ onUnmounted(() => {
       :visible="showFullLogViewer"
       :trace-id="activeTraceId"
       @close="showFullLogViewer = false"
+    />
+
+    <!-- Execution Debug Drawer: 执行步骤 / 组装 Prompt / 运行时上下文 -->
+    <ExecutionDebugDrawer
+      v-model:visible="showExecutionDrawer"
+      :trace-id="executionDrawerTraceId"
+      :raw-prompt="executionDrawerRawPrompt"
+      :raw-prompt-system="executionDrawerRawPromptSystem"
+      :agent-context="agentContext"
     />
 
     <!-- Session Preview Modal (New Feature) -->
@@ -4214,59 +4244,6 @@ onUnmounted(() => {
 
           <div class="h-4 w-px bg-gray-200"></div>
 
-          <!-- 2. 清空 -->
-          <button
-            @click="clearHistory"
-            class="text-gray-500 hover:text-red-600 transition-colors flex items-center space-x-1"
-            title="清空会话"
-          >
-            <svg
-              class="w-5 h-5"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-            >
-              <path
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                stroke-width="2"
-                d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
-              />
-            </svg>
-          </button>
-
-          <div class="h-4 w-px bg-gray-200"></div>
-
-          <!-- 3. 运行逻辑 -->
-          <button
-            @click="showLogicFlowModal = true"
-            class="text-gray-500 hover:text-blue-600 transition-colors flex items-center space-x-1"
-            title="查看运行逻辑图"
-          >
-            <svg
-              class="w-5 h-5"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-            >
-              <path
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                stroke-width="2"
-                d="M9 20l-5.447-2.724A2 2 0 013 15.492V4.508a2 2 0 011.553-1.944L9 2l6 2.724a2 2 0 011 1.732v10.984a2 2 0 01-1.553 1.944L9 20z"
-              />
-              <path
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                stroke-width="2"
-                d="M9 2v18M15 4v18"
-              />
-            </svg>
-            <span class="text-xs font-medium">运行逻辑</span>
-          </button>
-
-          <div class="h-4 w-px bg-gray-200"></div>
-
           <!-- 4. 导出 Markdown -->
           <button
             @click="exportChat"
@@ -4311,148 +4288,6 @@ onUnmounted(() => {
               />
             </svg>
           </button>
-        </div>
-      </div>
-
-      <!-- Mode Selector Bar -->
-      <div
-        class="px-6 py-2 bg-gray-50 border-b border-gray-200 flex items-center space-x-4 flex-shrink-0"
-      >
-        <!-- Mode Toggle -->
-        <div class="flex bg-gray-200 p-1 rounded-lg">
-          <button
-            @click="
-              debugMode = 'auto';
-              agentParams.agent_id = null;
-            "
-            class="px-3 py-1.5 text-xs font-medium rounded-md transition-all"
-            :class="
-              debugMode === 'auto'
-                ? 'bg-white text-primary shadow-sm'
-                : 'text-gray-600 hover:text-gray-900'
-            "
-          >
-            🤖 智能委派 (Auto)
-          </button>
-          <button
-            @click="
-              debugMode = 'specific';
-              if (agents.length) agentParams.agent_id = agents[0].id;
-            "
-            class="px-3 py-1.5 text-xs font-medium rounded-md transition-all"
-            :class="
-              debugMode === 'specific'
-                ? 'bg-white text-primary shadow-sm'
-                : 'text-gray-600 hover:text-gray-900'
-            "
-          >
-            🎯 指定智能体 (Specific)
-          </button>
-        </div>
-
-        <!-- Custom Dropdown (Visible only in Specific Mode) -->
-        <div v-if="debugMode === 'specific'" ref="agentDropdownRef" class="relative z-30">
-          <!-- Dropdown Trigger Button -->
-          <button
-            @click="showAgentDropdown = !showAgentDropdown"
-            class="flex items-center justify-between w-64 px-3 py-1.5 text-xs bg-white border border-gray-300 rounded-lg shadow-sm hover:border-gray-400 focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary transition-all text-left"
-          >
-            <div class="flex items-center space-x-2 min-w-0 flex-1">
-              <!-- Selected Agent Avatar -->
-              <div class="flex-shrink-0 w-5 h-5 rounded bg-gray-50 flex items-center justify-center border border-gray-100 overflow-hidden text-xs">
-                <img
-                  v-if="selectedAgent?.avatar_url && (selectedAgent.avatar_url.startsWith('http') || selectedAgent.avatar_url.startsWith('/') || selectedAgent.avatar_url.startsWith('data:'))"
-                  :src="selectedAgent.avatar_url"
-                  class="w-full h-full object-cover"
-                />
-                <span v-else-if="selectedAgent?.avatar_url" class="text-xs">{{ selectedAgent.avatar_url }}</span>
-                <span v-else class="text-xs">{{ selectedAgent?.is_system ? '🔒' : '👤' }}</span>
-              </div>
-              <span class="font-medium text-gray-700 truncate">
-                {{ selectedAgent?.display_name || '选择智能体' }}
-              </span>
-            </div>
-            <!-- Arrow -->
-            <svg
-              class="w-4 h-4 text-gray-400 ml-1 transform transition-transform duration-200"
-              :class="{ 'rotate-180': showAgentDropdown }"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-            >
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
-            </svg>
-          </button>
-
-          <!-- Dropdown Card Menu -->
-          <transition name="slide-up">
-            <div
-              v-show="showAgentDropdown"
-              class="absolute mt-1 left-0 z-30 w-[360px] max-h-80 overflow-y-auto bg-white border border-gray-200 rounded-xl shadow-xl py-1 px-1 custom-scrollbar origin-top-left"
-            >
-              <div
-                v-for="agent in agents"
-                :key="agent.id"
-                @click="
-                  agentParams.agent_id = agent.id;
-                  showAgentDropdown = false;
-                "
-                class="my-1 p-2 rounded-lg border transition-all cursor-pointer flex items-start space-x-2.5"
-                :class="
-                  agentParams.agent_id === agent.id
-                    ? 'border-primary/40 bg-primary/5 ring-1 ring-primary/5'
-                    : 'border-transparent hover:bg-gray-50'
-                "
-              >
-                <!-- Avatar -->
-                <div
-                  class="flex-shrink-0 w-7 h-7 rounded bg-gray-50 flex items-center justify-center text-sm border border-gray-100 overflow-hidden"
-                  :class="agentParams.agent_id === agent.id ? 'bg-primary/10 border-primary/20' : ''"
-                >
-                  <img
-                    v-if="agent.avatar_url && (agent.avatar_url.startsWith('http') || agent.avatar_url.startsWith('/') || agent.avatar_url.startsWith('data:'))"
-                    :src="agent.avatar_url"
-                    class="w-full h-full object-cover"
-                  />
-                  <span v-else-if="agent.avatar_url" class="text-sm">{{ agent.avatar_url }}</span>
-                  <span v-else class="text-sm">{{ agent.is_system ? '🔒' : '👤' }}</span>
-                </div>
-                <!-- Info -->
-                <div class="flex-1 min-w-0">
-                  <div class="flex items-center justify-between">
-                    <span
-                      class="text-xs font-bold text-gray-800 truncate"
-                      :class="agentParams.agent_id === agent.id ? 'text-primary' : ''"
-                    >
-                      {{ agent.display_name }}
-                    </span>
-                    <span
-                      v-if="agent.is_system"
-                      class="text-[8px] text-gray-400 font-mono scale-90 origin-right border border-gray-200 px-1 rounded bg-gray-50"
-                      >SYSTEM</span
-                    >
-                  </div>
-                  <div class="text-[9px] text-gray-400 font-mono truncate mt-0.5">
-                    {{ agent.name }}
-                  </div>
-                  <div
-                    class="text-[10px] text-gray-500 line-clamp-2 mt-1 leading-relaxed break-words"
-                    :title="agent.description"
-                  >
-                    {{ agent.description || '暂无备注说明信息' }}
-                  </div>
-                </div>
-              </div>
-            </div>
-          </transition>
-        </div>
-
-        <div class="text-xs text-gray-400 border-l pl-3 ml-2">
-          {{
-            debugMode === "auto"
-              ? "系统将根据您的问题自动选择最合适的 Agent"
-              : "强制请求发送给当前选中的 Agent"
-          }}
         </div>
       </div>
 
@@ -4677,11 +4512,12 @@ onUnmounted(() => {
                   <span>{{ getAgentDisplayName(msg) ? `${getAgentDisplayName(msg)} · ${String(msg.agentName || '').startsWith('sys_') ? '系统指令' : '为您服务'}` : (msg.agentName || '智能调度中...') }}</span>
                 </div>
 
-                <!-- Full Logs -->
+                <!-- 执行详情 (Debug Drawer) -->
                 <button
                   v-if="msg.trace_id && !msg.isThinking"
-                  @click="openFullLogs(msg.trace_id)"
-                  class="flex items-center space-x-1 px-2 py-1 text-xs font-medium text-indigo-600 bg-indigo-50 hover:bg-indigo-100 border border-indigo-100 rounded-md transition-colors"
+                  @click="openExecutionDetail(msg)"
+                  class="flex items-center space-x-1 px-2 py-1 text-xs font-bold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded-md transition-colors"
+                  title="查看执行步骤 / 组装 Prompt / 运行时上下文"
                 >
                   <svg
                     class="w-3 h-3"
@@ -4693,34 +4529,12 @@ onUnmounted(() => {
                       stroke-linecap="round"
                       stroke-linejoin="round"
                       stroke-width="2"
-                      d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01"
+                      d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4"
                     />
                   </svg>
-                  <span>完整日志</span>
+                  <span>执行详情</span>
                 </button>
 
-                <!-- Prompt -->
-                <button
-                  v-if="msg.rawPrompt"
-                  @click="openRawPrompt(msg)"
-                  class="flex items-center space-x-1 px-2 py-1 text-xs font-medium text-purple-600 bg-purple-50 hover:bg-purple-100 border border-purple-100 rounded-md transition-colors"
-                  title="View Raw Prompt"
-                >
-                  <svg
-                    class="w-3 h-3"
-                    fill="none"
-                    stroke="currentColor"
-                    viewBox="0 0 24 24"
-                  >
-                    <path
-                      stroke-linecap="round"
-                      stroke-linejoin="round"
-                      stroke-width="2"
-                      d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"
-                    />
-                  </svg>
-                  <span>Prompt</span>
-                </button>
 
                 <!-- Regenerate Button -->
                 <button
@@ -5103,6 +4917,20 @@ onUnmounted(() => {
           :context-compaction-action-loading="contextCompactionActionLoading"
           :thinking-enable-override="debugConfig.thinkingEnableOverride"
           :reasoning-effort-override="debugConfig.reasoningEffortOverride"
+          :agent-id="agentParams.agent_id"
+          :routing-mode="debugMode === 'specific' ? 'expert' : 'auto'"
+          :expert-agent-id="agentParams.agent_id || ''"
+          :sandbox-workspace-status="sandboxWorkspaceStatus"
+          :sandbox-workspace-instance-id="sandboxWorkspaceInstanceId"
+          :sandbox-workspace-started-at="sandboxWorkspaceStartedAt"
+          :sandbox-workspace-uptime-seconds="sandboxWorkspaceUptimeSeconds"
+          :sandbox-workspace-error="sandboxWorkspaceError"
+          :sandbox-backend="sandboxBackend"
+          @start-sandbox-workspace="ensureSandboxWorkspace"
+          @refresh-sandbox-workspace="refreshSandboxWorkspaceStatus"
+          @stop-sandbox-workspace="handleStopSandboxWorkspaceRequest"
+          @restart-sandbox-workspace="restartSandboxWorkspace"
+          @open-docker-terminal="openDockerTerminal"
           @update:approval-mode="debugConfig.approvalMode = $event"
           @update:selected-model="handleDebugModelSelection"
           @update:thinking-enable-override="debugConfig.thinkingEnableOverride = $event"
@@ -5117,8 +4945,9 @@ onUnmounted(() => {
           @edit-command="editCommand"
           @delete-command="confirmDeleteCommand"
           @switch-mode="handleSwitchMode"
+          @switch-to-auto="debugMode = 'auto'; agentParams.agent_id = null"
+          @switch-to-expert="(id: string) => { debugMode = 'specific'; agentParams.agent_id = id }"
           @reorder-commands="handleReorderCommands"
-          :agent-id="agentParams.agent_id"
           @select-knowledge-base="openKnowledgePortal"
           @select-local-fs="openWorkspaceDrawer"
           @select-memory="openMemorySelector"
@@ -5405,7 +5234,6 @@ onUnmounted(() => {
     :is-office-document="isOfficeDocument"
   />
 
-  <!-- Confirm Modal -->
   <ConfirmModal
     v-if="showDeleteConfirm"
     title="确认删除"
@@ -5416,7 +5244,32 @@ onUnmounted(() => {
     @cancel="showDeleteConfirm = false"
   />
 
-  <AgentLogicFlowModal :visible="showLogicFlowModal" @close="showLogicFlowModal = false" />
+  <!-- Docker 终端弹窗 -->
+  <DockerTerminalModal
+    :show="showDockerTerminal"
+    :container-id="sandboxWorkspaceInstanceId"
+    :conversation-id="conversationId"
+    @close="showDockerTerminal = false"
+  />
+
+  <!-- K8s 终端弹窗 -->
+  <K8sTerminalModal
+    :show="showK8sTerminal"
+    :pod-name="sandboxWorkspaceInstanceId"
+    :conversation-id="conversationId"
+    @close="showK8sTerminal = false"
+  />
+
+  <!-- K8s 沙箱停止二次确认 -->
+  <ConfirmModal
+    v-if="showSandboxStopConfirm"
+    title="停止 Kubernetes 沙箱"
+    :message="`确定要停止当前沙箱 Pod 吗？\n将销毁沙箱 Pod；若为动态独立卷且已开启 delete_pvc_on_close，工作区数据将随 PVC 一并删除。停止后可重新启动，Pod 重建需等待镜像拉取与调度。`"
+    type="danger"
+    @confirm="confirmStopSandboxWorkspace"
+    @cancel="showSandboxStopConfirm = false"
+  />
+
   <KnowledgePortalDrawer
     v-model="showKnowledgePortal"
     v-model:pinned="knowledgePinned"
