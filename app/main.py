@@ -93,7 +93,11 @@ async def lifespan(app: FastAPI):
         start_docker_workspace_reaper,
         start_k8s_workspace_reaper,
     )
+    from app.services.ai.runtime.agentscope.docker_template_patch import (
+        apply_agentscope_docker_patches,
+    )
 
+    apply_agentscope_docker_patches()
     start_docker_workspace_reaper()
     start_k8s_workspace_reaper()
     asyncio.create_task(maybe_rebuild_local_vectors_on_startup())

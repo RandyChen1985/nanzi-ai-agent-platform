@@ -196,6 +196,8 @@ See [CHAT_FLOW.md](architech/design/chat/CHAT_FLOW.md) · [Intelligent delegatio
 | [AGENT_ROUTING_DESIGN.md](architech/design/AGENT_ROUTING_DESIGN.md) | Intelligent delegation and expert selection |
 | [api_integration_guide.md](docs/md/api_integration_guide.md) | Embed / V1 API integration |
 | [code_canvas_and_workspace_guide.md](docs/md/code_canvas_and_workspace_guide.md) | Code Canvas, workspace files, and execution API |
+| [sandbox/docker/README.md](sandbox/docker/README.md) | Docker sandbox prebuild & ops guide (troubleshooting toolchain, `--dry-run`, `--list`) |
+| [sandbox/k8s/README.md](sandbox/k8s/README.md) | K8s sandbox prebuilt image guide (cold-start speedup, `k8s_deploy` ops & monitoring) |
 | [ai_agent_gating_contract.md](docs/md/ai_agent_gating_contract.md) | Agent gating contract |
 | [tests/CHECKLIST.md](tests/CHECKLIST.md) | Test checklist |
 
@@ -229,11 +231,10 @@ See [CHAT_FLOW.md](architech/design/chat/CHAT_FLOW.md) · [Intelligent delegatio
 ├── docs/                 # Project documentation, Release Notes & brand design guidelines
 ├── html/                 # Standalone product landing page
 ├── k8s_deploy/           # Cloud-native Kubernetes manifests & sandbox cluster ops suite
-├── openspec/             # OpenSpec API specifications & change tracking
+├── sandbox/              # 📦 Runtime code sandbox ops directory (docker/k8s)
 ├── scripts/              # Devops auxiliary scripts (one-click run, data sync, redeploy)
 ├── tests/                # Automated test suites (Pytest) & checklists (CHECKLIST.md)
 ├── dev.sh                # 🛠️ Local one-click dev bootstrap, live reload & service manager
-├── prebuild-sandbox.sh   # 🐳 Docker security code-sandbox image prebuild script
 ├── env.example           # ⚙️ Baseline global environment & sensitive configuration template
 ├── requirements.txt      # 📦 Backend Python runtime dependency list (Python 3.11)
 └── pytest.ini            # 🧪 Automated test suite runner & assertion configuration
@@ -244,7 +245,7 @@ See [CHAT_FLOW.md](architech/design/chat/CHAT_FLOW.md) · [Intelligent delegatio
 | File | Type | Description |
 | :--- | :--- | :--- |
 | [`dev.sh`](dev.sh) | Shell Script | **Local Dev & Ops Manager**: Supports concurrent backend/frontend startup, hot reload, foreground/daemon modes, environment detection, and graceful process management. |
-| [`prebuild-sandbox.sh`](prebuild-sandbox.sh) | Shell Script | **Docker Sandbox Prebuild**: Pulls and builds the isolated Python 3.11 security code-execution sandbox image in advance to accelerate Agent tool executions. |
+| [`sandbox/docker/prebuild-sandbox.sh`](sandbox/docker/prebuild-sandbox.sh) | Shell Script | **Docker Sandbox Prebuild**: Pulls and builds the isolated Python 3.11 security code-execution sandbox image in advance to accelerate Agent tool executions. |
 | [`env.example`](env.example) | Config Template | **Global Environment Template**: Covers MySQL/PostgreSQL, Redis Stack, JWT/encryption keys, LLM API keys, and platform ports. |
 | [`requirements.txt`](requirements.txt) | Dependencies | **Backend Python Dependencies**: Core runtime packages for Python 3.11 (FastAPI, AgentScope, SQLAlchemy, Redis, etc.). |
 | [`pytest.ini`](pytest.ini) | Test Config | **Pytest Test Configuration**: Rules for test discovery, async test markers, logging, and test execution behavior. |

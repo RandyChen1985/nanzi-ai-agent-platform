@@ -8,6 +8,13 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.services.ai.runtime.agentscope.docker_template_patch import (
+    apply_agentscope_docker_patches,
+)
+
+# 确保运行时环境下的 Dockerfile 模板补丁已应用
+apply_agentscope_docker_patches()
+
 
 def build_docker_workspace_with_extra_binds(
     base_workspace_class: type[Any],

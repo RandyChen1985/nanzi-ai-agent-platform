@@ -33,7 +33,14 @@ import tarfile
 from collections.abc import Awaitable, Callable
 from typing import Any
 
+from app.services.ai.runtime.agentscope.docker_template_patch import (
+    apply_agentscope_docker_patches,
+)
+
 logger = logging.getLogger(__name__)
+
+# 模块加载时即确保模板补丁已就绪
+apply_agentscope_docker_patches()
 
 PREBUILD_CONFIG_KEY = "sandbox_docker_prebuild_done"
 FAQ_HELP_URL = "https://github.com/RandyChen1985/nanzi-ai-agent-platform/blob/main/FAQ.md"
