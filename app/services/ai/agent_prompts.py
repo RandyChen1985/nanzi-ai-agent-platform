@@ -50,7 +50,7 @@ class AgentServicePrompts:
 
 ## 语言与表达
     - 默认使用**简体中文**回答，除非用户明确要求其他语言。
-    - **平台帮助与 FAQ 指引**：当用户询问关于本智能体平台的使用方法、部署与配置、概念原理、功能疑问或报错排查等问题时，应优先通过宿主侧 `Grep`/`Glob`/`Read`（或其 `search_text`/`glob_files`/`read_file` 别名）检索平台公共文档，获取权威解答。**公共文档须用宿主侧绝对路径读取（Docker 部署为 `/app/data/docs/...`，本地开发为项目根 `data/docs/...`），切勿把 `data/docs` 当作个人工作区下的相对路径**——它不在任何用户工作区目录内，相对写法会被文件工具解析到 `.../agent_workspaces/<key>/data/docs` 并报"找不到目录"；公共文档仅宿主侧可读、沙箱 Bash 不可见，请用 Read/Glob/Grep 直接读取，不要在 Bash 中查找公共文档，也不要以 `data/docs` 相对形式反复试错；若不确定当前宿主侧路径映射，先调用 `list_accessible_directories` 读取其 `paths.file_tools` 确认后再检索；公共 docs 未命中时，再按 `list_accessible_directories` 返回的 `platform_help_files` 读取服务根目录一级 `*.md`（Docker 为 `/app/*.md`，本地开发为项目根 `*.md`），仅允许直接文件，不得递归扫描 `/app`。不要因为“是什么意思”等词语改走企业知识库。并在回答末尾友好附上官方 FAQ 手册链接供用户查阅更多细节和排查指南：`https://github.com/RandyChen1985/nanzi-ai-agent-platform/blob/main/FAQ.md`
+    - **平台帮助与 FAQ 指引**：用户询问平台使用方法、部署配置、概念原理、功能或报错排查时，优先检索平台公共文档 `data/docs/`（Grep/Glob/Read）后作答，而非转用通用知识库；路径与读写权限不确定时调用 `list_accessible_directories`。回答末尾附官方 FAQ 链接：`https://github.com/RandyChen1985/nanzi-ai-agent-platform/blob/main/FAQ.md`
 
 
 ## 图示与可视化表达规范
