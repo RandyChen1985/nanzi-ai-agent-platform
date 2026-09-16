@@ -85,6 +85,43 @@ _OFFICE_EXPLANATION_TERMS = (
     "功能", "作用", "说明", "介绍", "怎么用",
 )
 
+# read_image 是「必须指认图片实体」的证据型视觉工具：它需要真实的图片
+# path 才能执行，不像 read_file/search_text/web_search_x 那样可由问题字面
+# 直接派生输入。因此它不能用「问题与描述字面重叠」的通用相关度去陈拓触发，
+# 否则普通文字问题（如“感觉模型速度很快啊”）会因描述里的“查看/分析/图片”
+# 等泛化词被误判为相关并被强制首调用，随后幻觉不存在的路径。
+# 这里仅当问题明确提到图片实体（图片/截图/图表/照片/视觉/OCR 等）且带读取
+# 动作时，才确定性触发 read_image；其余一律不触发，交由模型自主判断。
+_IMAGE_TOOL_NAME = "read_image"
+_IMAGE_CHINESE_ENTITY_TERMS = (
+    "图片", "图像", "截图", "截屏", "照片", "图表",
+    "柱状图", "折线图", "饼图", "散点图", "热力图", "流程图", "示意图", "架构图",
+    "图纸", "缩略图", "动图", "配图",
+)
+_IMAGE_ASCII_ENTITY_TERMS = (
+    "png", "jpg", "jpeg", "webp", "gif", "bmp", "chart", "ocr",
+)
+_IMAGE_ENTITY_TERMS = _IMAGE_CHINESE_ENTITY_TERMS + _IMAGE_ASCII_ENTITY_TERMS
+_IMAGE_READ_TERMS = (
+    "读取", "查看", "看看", "打开", "解析", "识别", "分析", "检查",
+    "提取", "描述", "看下", "看图", "看一下", "读一下", "识别文字",
+    "ocr", "读图", "看图说话",
+)
+_IMAGE_EXPLANATION_TERMS = (
+    "是什么", "什么工具", "有什么区别", "区别", "支持", "能做什么",
+    "功能", "作用", "说明", "介绍", "怎么用", "怎么使用", "如何使用",
+    "怎么调用", "如何调用", "怎么操作", "如何操作",
+)
+# 用户明确否定时，即便问题提到图片也不触发，避免反向喊停还被推进。
+# 否定标记比 Office 的“xx调用”更宽：图片意图的否定常是“不用看”“别解析”等。
+_IMAGE_NEGATION_TERMS = (
+    "不要调用", "别调用", "不用调用", "不调用", "无需调用", "请勿调用",
+    "不必调用", "不需要调用", "禁止调用",
+    "不用看", "别解析", "请勿解析", "不要解析", "无需解析", "不用解析",
+    "不要使用", "请勿使用", "不必使用", "不需要使用", "无需使用",
+    "不用识图", "别识图",
+)
+
 # 用户明确要求进入“你问我答/逐步引导”流程时，不应再等待模型自行判断
 # 当前任务是否已经阻塞。该信号只负责提升 ask_user_question，否定表达优先排除。
 _EXPLICIT_USER_QUESTION_REQUEST_TERMS = (
@@ -591,6 +628,82 @@ def _has_office_reference(normalized_query: str) -> bool:
         any(name in normalized_query for name in _OFFICE_EXPLICIT_TOOL_NAMES)
         or _contains_office_type(normalized_query, _OFFICE_WORD_TERMS)
         or _contains_office_type(normalized_query, _OFFICE_EXCEL_TERMS)
+    )
+
+
+def _contains_image_entity(normalized_query: str) -> bool:
+    for term in _IMAGE_CHINESE_ENTITY_TERMS:
+        if term in normalized_query:
+            return True
+    for term in _IMAGE_ASCII_ENTITY_TERMS:
+        if re.search(rf"(?<![a-z0-9]){re.escape(term)}(?![a-z0-9])", normalized_query):
+            return True
+    return False
+
+
+def _resolve_image_tool_nudge(
+    query: str,
+    tools: List[Any],
+    *,
+    metadata_by_name: Optional[Mapping[str, ToolMetadata]] = None,
+) -> Optional[ToolNudge]:
+    """确定性解析「明确指认图片实体」的读取意图，触发 read_image。
+
+    与 Office 专用解析器同理：read_image 必须依赖一个真实存在的图片文件
+    才能执行，无法像 read_file/web_search 那样从问题字面直接派生输入。因此
+    这里仅当问题同时满足「出现图片实体词」和「带查看/解析动作」时才触发，
+    避免通用相关度用描述里的“查看/分析/图片”等泛化词陈拓普通文字问题。
+    命中后锁定具体工具并强制首调用（证据型只读取证）。
+    """
+    normalized = _normalize(query)
+    if not normalized:
+        return None
+    tool = next(
+        (
+            t
+            for t in tools or []
+            if str(getattr(t, "name", "") or "").strip() == _IMAGE_TOOL_NAME
+        ),
+        None,
+    )
+    if tool is None:
+        return None
+    if _contains_any(normalized, _IMAGE_NEGATION_TERMS):
+        return None
+    if _contains_any(normalized, _IMAGE_EXPLANATION_TERMS):
+        return None
+    # 显式点名 read_image 且带调用意图，视为明确要求。
+    if _IMAGE_TOOL_NAME in normalized and _contains_any(
+        normalized,
+        ("调用", "使用", "执行", "运行", "触发"),
+    ):
+        return _build_image_tool_nudge(tool, normalized, score=1.0, metadata_by_name=metadata_by_name)
+    has_entity = _contains_image_entity(normalized)
+    has_read = _contains_any(normalized, _IMAGE_READ_TERMS)
+    if not has_entity or not has_read:
+        return None
+    return _build_image_tool_nudge(tool, normalized, score=1.0, metadata_by_name=metadata_by_name)
+
+
+def _build_image_tool_nudge(
+    tool: Any,
+    _normalized_query: str,
+    *,
+    score: float,
+    metadata_by_name: Optional[Mapping[str, ToolMetadata]] = None,
+) -> ToolNudge:
+    metadata = resolve_tool_metadata(tool, metadata_by_name=metadata_by_name)
+    return ToolNudge(
+        tool_name=_IMAGE_TOOL_NAME,
+        score=score,
+        message=(
+            f"【图片解析】本轮问题明确涉及图片/截图/图表等视觉实体。"
+            f"必须优先调用已绑定工具「{_IMAGE_TOOL_NAME}」读取该图片并做视觉解析或 OCR；"
+            f"若问题里没有给出图片文件，先结合实际工作区/上传产物找对应的图片路径，"
+            f"找不到时如实说明，不要编造图片路径或凭记忆描述图片内容。"
+        ),
+        force_first_call=True,
+        metadata=metadata,
     )
 
 
@@ -1355,6 +1468,12 @@ def resolve_tool_nudge(
     if catalog_nudge is not None:
         return _attach_tool_metadata(catalog_nudge, tools, tool_metadata)
 
+    # read_image 专用确定性解析器：仅在问题明确指认图片实体时触发，
+    # 先于通用相关度，避免描述里的泛化词陈拓普通文字问题。
+    image_nudge = _resolve_image_tool_nudge(query, tools, metadata_by_name=tool_metadata)
+    if image_nudge is not None:
+        return image_nudge
+
     office_nudge = _resolve_office_tool_nudge(
         query,
         tools,
@@ -1371,6 +1490,9 @@ def resolve_tool_nudge(
     excluded = set(_NUDGE_EXCLUDED_TOOLS)
     excluded.add("sub_agent_call")
     excluded.add("sub_agent_batch_call")
+    # read_image 只在明确图片语境下由专用解析器触发，不参与通用字面相关度，
+    # 否则“查看/分析/图片”等泛化命中的短问题会被陈拓并强制首调用。
+    excluded.add(_IMAGE_TOOL_NAME)
     if exclude_tools:
         excluded |= {str(name) for name in exclude_tools}
 
@@ -1441,6 +1563,7 @@ def resolve_evidence_tool_fallback_nudge(
             not name
             or name in _NUDGE_EXCLUDED_TOOLS
             or name in {"sub_agent_call", "sub_agent_batch_call"}
+            or name == _IMAGE_TOOL_NAME  # read_image 经由专用解析器触发
             or permission_scope != "read"
             or not evidence_types
         ):
