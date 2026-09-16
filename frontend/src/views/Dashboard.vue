@@ -769,13 +769,13 @@ const filteredMenuGroups = computed(() => {
     <div class="flex-1 flex flex-col overflow-hidden min-w-0">
       <!-- Top Header -->
       <header
-        class="bg-white shadow-sm h-16 flex justify-between items-center px-4 sm:px-6 lg:px-8 z-10 border-b border-gray-200 flex-shrink-0"
+        class="bg-white shadow-sm h-16 flex justify-between items-center px-4 z-10 border-b border-gray-200 flex-shrink-0"
       >
         <div class="flex items-center">
           <!-- Sidebar Toggle Button -->
           <button
             @click="toggleSidebar"
-            class="mr-4 text-gray-500 hover:text-gray-700 focus:outline-none focus:ring-2 focus:ring-primary rounded-md p-1"
+            class="-ml-1 mr-3 text-gray-500 hover:text-gray-700 hover:bg-gray-100 dark:hover:bg-gray-800 focus:outline-none focus:ring-2 focus:ring-primary rounded-lg p-1.5 transition-colors"
             title="Toggle Sidebar"
           >
             <svg

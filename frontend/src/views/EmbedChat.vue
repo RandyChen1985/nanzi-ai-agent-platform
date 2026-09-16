@@ -10,13 +10,15 @@
       :loading-more="loadingMoreHistory"
       :has-more="historyHasMore"
       :history-list="groupedHistoryList"
-      active-trace-id=""
+      :active-conversation-id="conversationId"
       @fetch-history="fetchHistory()"
       @load-more="fetchHistory(true)"
       @load-chat="handleHistoryClick"
       @open-full-logs="openTraceLogs"
-      @delete-history="handleDeleteHistory"
+      @delete-history="handleDeleteSingleHistory"
       @delete-group="handleDeleteGroup"
+      @new-chat="handleNewChatFromSidebar"
+      @export-chat="handleExportChatFromSidebar"
       class="border-r border-gray-200 dark:border-gray-800"
     />
 
@@ -41,8 +43,28 @@
       <div
         class="h-12 border-b border-gray-100 dark:border-gray-800 bg-white/80 dark:bg-gray-900/80 backdrop-blur-md px-4 flex items-center justify-between z-30 flex-shrink-0"
       >
-        <div class="flex items-center space-x-3 overflow-hidden">
-            <div class="flex flex-col min-w-0">
+        <div class="flex items-center space-x-2 min-w-0">
+          <div class="relative group inline-flex items-center flex-shrink-0">
+            <button
+              type="button"
+              @click="showHistorySidebar = !showHistorySidebar"
+              class="p-1.5 -ml-1 text-gray-500 dark:text-gray-400 hover:text-primary hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-colors flex-shrink-0"
+              :class="{ 'text-primary bg-primary/10': showHistorySidebar }"
+              aria-label="历史会话"
+            >
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <rect x="3" y="3" width="18" height="18" rx="3" stroke-width="1.8" />
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M9 3v18" />
+              </svg>
+            </button>
+            <div class="pointer-events-none absolute top-full left-0 mt-1.5 opacity-0 group-hover:opacity-100 transition-all duration-150 flex flex-col items-start z-50 transform -translate-y-0.5 group-hover:translate-y-0">
+              <div class="w-1.5 h-1.5 bg-gray-900/90 dark:bg-gray-800/95 rotate-45 ml-2.5 -mb-0.5"></div>
+              <div class="rounded-md bg-gray-900/90 dark:bg-gray-800/95 px-2 py-0.5 text-[10px] font-medium text-white shadow-lg backdrop-blur-sm whitespace-nowrap">
+                {{ showHistorySidebar ? '收起会话历史 (⌘H)' : '展开会话历史 (⌘H)' }}
+              </div>
+            </div>
+          </div>
+          <div class="flex flex-col min-w-0 overflow-hidden">
                 <div class="flex items-center space-x-2">
                     <span class="text-sm font-black text-gray-800 dark:text-gray-100 truncate">
                         <template v-if="isProcessing">
@@ -90,29 +112,44 @@
 
         <div class="flex items-center space-x-2">
             <!-- Fullscreen Button (desktop only) -->
-            <button
-                v-if="!isMobile"
+            <div v-if="!isMobile" class="relative group inline-flex items-center">
+              <button
                 @click="toggleFullScreen"
                 class="p-2 text-gray-400 hover:text-primary hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-all"
-                :title="isFullScreen ? '退出全屏' : '全屏模式'"
-            >
+                :aria-label="isFullScreen ? '退出全屏' : '全屏模式'"
+              >
                 <svg v-if="!isFullScreen" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" />
                 </svg>
                 <svg v-else class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 14h6v6m0-6l-6 6m16-6h-6v6m0-6l6 6M4 10h6V4m0 6L4 4m16 6h-6V4m0 6l6-6" />
                 </svg>
-	            </button>
-            <div class="relative">
-              <button
-                  v-if="isMobile || !config.showShortcuts"
-                  @click="handleHeaderShortcutsClick"
-                  class="p-2 text-gray-400 hover:text-primary hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-all"
-                  :class="{ 'text-primary bg-primary/10': showShortcutsHint }"
-                  :title="isMobile ? '快捷指令' : '显示快捷指令'"
-              >
-                  <CommandLineIcon class="h-4 w-4" aria-hidden="true" />
               </button>
+              <div class="pointer-events-none absolute top-full left-1/2 -translate-x-1/2 mt-1.5 opacity-0 group-hover:opacity-100 transition-all duration-150 flex flex-col items-center z-50 transform -translate-y-0.5 group-hover:translate-y-0">
+                <div class="w-1.5 h-1.5 bg-gray-900/90 dark:bg-gray-800/95 rotate-45 -mb-0.5"></div>
+                <div class="rounded-md bg-gray-900/90 dark:bg-gray-800/95 px-2 py-0.5 text-[10px] font-medium text-white shadow-lg backdrop-blur-sm whitespace-nowrap">
+                  {{ isFullScreen ? '退出全屏' : '全屏模式' }}
+                </div>
+              </div>
+            </div>
+
+            <!-- Shortcuts Button -->
+            <div class="relative group inline-flex items-center">
+              <button
+                v-if="isMobile || !config.showShortcuts"
+                @click="handleHeaderShortcutsClick"
+                class="p-2 text-gray-400 hover:text-primary hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-all"
+                :class="{ 'text-primary bg-primary/10': showShortcutsHint }"
+                :aria-label="isMobile ? '快捷指令' : '显示快捷指令'"
+              >
+                <CommandLineIcon class="h-4 w-4" aria-hidden="true" />
+              </button>
+              <div v-if="!showShortcutsHint && (isMobile || !config.showShortcuts)" class="pointer-events-none absolute top-full left-1/2 -translate-x-1/2 mt-1.5 opacity-0 group-hover:opacity-100 transition-all duration-150 flex flex-col items-center z-50 transform -translate-y-0.5 group-hover:translate-y-0">
+                <div class="w-1.5 h-1.5 bg-gray-900/90 dark:bg-gray-800/95 rotate-45 -mb-0.5"></div>
+                <div class="rounded-md bg-gray-900/90 dark:bg-gray-800/95 px-2 py-0.5 text-[10px] font-medium text-white shadow-lg backdrop-blur-sm whitespace-nowrap">
+                  {{ isMobile ? '快捷指令' : '显示快捷指令' }}
+                </div>
+              </div>
 
               <!-- 折叠快捷指令后的右上角气泡引导提示 -->
               <transition
@@ -148,33 +185,63 @@
                 </div>
               </transition>
             </div>
-            <button
+
+            <!-- Help Button -->
+            <div class="relative group inline-flex items-center">
+              <button
                 @click="showHelpModal = true"
                 class="p-2 text-gray-400 hover:text-primary hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-all"
-                title="查看帮助"
-            >
+                aria-label="查看帮助"
+              >
                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                 </svg>
-            </button>
-            <button
+              </button>
+              <div class="pointer-events-none absolute top-full left-1/2 -translate-x-1/2 mt-1.5 opacity-0 group-hover:opacity-100 transition-all duration-150 flex flex-col items-center z-50 transform -translate-y-0.5 group-hover:translate-y-0">
+                <div class="w-1.5 h-1.5 bg-gray-900/90 dark:bg-gray-800/95 rotate-45 -mb-0.5"></div>
+                <div class="rounded-md bg-gray-900/90 dark:bg-gray-800/95 px-2 py-0.5 text-[10px] font-medium text-white shadow-lg backdrop-blur-sm whitespace-nowrap">
+                  查看帮助
+                </div>
+              </div>
+            </div>
+
+            <!-- Settings Button -->
+            <div class="relative group inline-flex items-center">
+              <button
                 @click="showSettings = true"
                 class="relative p-2 text-gray-400 hover:text-primary hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-all"
                 :class="config.enableGrounding ? 'text-emerald-600 dark:text-emerald-400 bg-emerald-50/50 dark:bg-emerald-950/20' : ''"
-                :title="config.enableGrounding ? '对话设置 (反幻觉校验已开启)' : '对话设置'"
-            >
+                :aria-label="config.enableGrounding ? '对话设置 (反幻觉校验已开启)' : '对话设置'"
+              >
                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" /><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
                 <span v-if="config.enableGrounding" class="absolute right-1 top-1 h-1.5 w-1.5 rounded-full bg-emerald-500 ring-2 ring-white dark:ring-gray-800" />
-            </button>
-            <button
+              </button>
+              <div class="pointer-events-none absolute top-full left-1/2 -translate-x-1/2 mt-1.5 opacity-0 group-hover:opacity-100 transition-all duration-150 flex flex-col items-center z-50 transform -translate-y-0.5 group-hover:translate-y-0">
+                <div class="w-1.5 h-1.5 bg-gray-900/90 dark:bg-gray-800/95 rotate-45 -mb-0.5"></div>
+                <div class="rounded-md bg-gray-900/90 dark:bg-gray-800/95 px-2 py-0.5 text-[10px] font-medium text-white shadow-lg backdrop-blur-sm whitespace-nowrap">
+                  {{ config.enableGrounding ? '对话设置 (反幻觉校验已开启)' : '对话设置' }}
+                </div>
+              </div>
+            </div>
+
+            <!-- Server Browser Button -->
+            <div class="relative group inline-flex items-center">
+              <button
                 @click="toggleBrowserPanel"
                 class="relative p-2 text-gray-400 hover:text-primary hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-all"
                 :class="browserPanelVisible ? 'text-primary bg-primary/10' : ''"
-                title="打开服务端浏览器"
-            >
+                aria-label="打开服务端浏览器"
+              >
                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2" stroke-width="1.8"/><path stroke-linecap="round" stroke-width="1.8" d="M3 8h18M7 6h.01M10 6h.01"/></svg>
                 <span v-if="browserPanelVisible" class="absolute right-1 top-1 h-1.5 w-1.5 rounded-full bg-emerald-500" />
-            </button>
+              </button>
+              <div class="pointer-events-none absolute top-full right-0 mt-1.5 opacity-0 group-hover:opacity-100 transition-all duration-150 flex flex-col items-end z-50 transform -translate-y-0.5 group-hover:translate-y-0">
+                <div class="w-1.5 h-1.5 bg-gray-900/90 dark:bg-gray-800/95 rotate-45 mr-3 -mb-0.5"></div>
+                <div class="rounded-md bg-gray-900/90 dark:bg-gray-800/95 px-2 py-0.5 text-[10px] font-medium text-white shadow-lg backdrop-blur-sm whitespace-nowrap">
+                  打开服务端浏览器
+                </div>
+              </div>
+            </div>
         </div>
       </div>
 
@@ -2166,6 +2233,7 @@ import {
 } from "@/utils/streamErrorPresentation";
 import RagPreviewDrawer from "@/components/RagPreviewDrawer.vue";
 import ChatHistorySidebar from "@/components/ChatHistorySidebar.vue";
+import { downloadMarkdownFile } from "@/utils/chatSessionExport";
 import ConfirmModal from "@/components/ConfirmModal.vue";
 import ChatSettings from "@/components/embed/ChatSettings.vue";
 import ChatCanvas from "@/components/embed/ChatCanvas.vue";
@@ -4835,6 +4903,86 @@ const confirmDeleteGroup = async () => {
     groupToDelete.value = null;
   }
 };
+
+const handleNewChatFromSidebar = () => {
+  resetSession();
+  if (isMobile.value) {
+    showHistorySidebar.value = false;
+  }
+};
+
+const handleDeleteSingleHistory = async (item: any) => {
+  const targetConvId = item.conversation_id;
+  if (!targetConvId) {
+    if (item.trace_id) {
+      await handleDeleteHistory(item.trace_id);
+    }
+    return;
+  }
+  try {
+    const headers: any = {};
+    if (config.token) {
+      headers["Authorization"] = `Bearer ${config.token}`;
+      headers["X-API-Key"] = config.token;
+    }
+    await axios.post(
+      "/api/v1/chat/history/batch-delete",
+      { conversation_ids: [targetConvId] },
+      { headers }
+    );
+    historyList.value = historyList.value.filter(
+      (h) => h.conversation_id !== targetConvId
+    );
+    showToast("会话已删除", "success");
+    if (conversationId.value === targetConvId) {
+      resetSession();
+    }
+  } catch (e) {
+    console.error("Failed to delete conversation", e);
+    showToast("删除会话失败", "error");
+  }
+};
+
+const handleExportChatFromSidebar = async (item: any) => {
+  const targetConvId = item.conversation_id;
+  if (!targetConvId) return;
+  try {
+    showToast("正在导出对话记录...", "info");
+    const headers: any = {};
+    if (config.token) {
+      headers["Authorization"] = `Bearer ${config.token}`;
+      headers["X-API-Key"] = config.token;
+    }
+    const res = await axios.get(`/api/v1/chat/conversation/${targetConvId}/history`, { headers });
+    const historyMsgs = res.data?.data?.messages || [];
+    let md = `# 会话导出记录\n\n- **会话 ID**: \`${targetConvId}\`\n- **导出时间**: ${new Date().toLocaleString()}\n\n---\n\n`;
+    if (historyMsgs.length === 0 && targetConvId === conversationId.value && messages.value.length > 0) {
+      messages.value.forEach((m: any) => {
+        const role = m.role === "user" ? "👤 **用户**" : "🤖 **AI 助手**";
+        md += `### ${role}\n\n${m.content || ""}\n\n---\n\n`;
+      });
+    } else {
+      historyMsgs.forEach((msg: any) => {
+        const role = msg.role === "user" ? "👤 **用户**" : "🤖 **AI 助手**";
+        md += `### ${role}\n\n${msg.content || ""}\n\n---\n\n`;
+      });
+    }
+    const filename = `chat_session_${targetConvId.slice(0, 8)}_${Date.now()}.md`;
+    downloadMarkdownFile(filename, md);
+    showToast("导出成功", "success");
+  } catch (e) {
+    console.error("Export conversation failed", e);
+    showToast("导出对话失败", "error");
+  }
+};
+
+const handleGlobalKeydown = (e: KeyboardEvent) => {
+  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "h") {
+    e.preventDefault();
+    showHistorySidebar.value = !showHistorySidebar.value;
+  }
+};
+
 // Delete Confirmation
 const showDeleteModal = ref(false);
 const traceToDelete = ref<string | null>(null);
@@ -8344,6 +8492,7 @@ onMounted(() => {
   window.addEventListener("online", onOnline);
   window.addEventListener("offline", onOffline);
   window.addEventListener("fullscreenchange", updateFullScreenStatus);
+  window.addEventListener("keydown", handleGlobalKeydown);
   // Load Routing Settings
   const savedMulti = localStorage.getItem("yovole_enable_multi_agent");
   if (savedMulti !== null) config.enableMultiAgent = savedMulti === "1";
@@ -8541,6 +8690,7 @@ onUnmounted(() => {
   cancelPendingUrlTokenInitialization();
   window.removeEventListener("resize", updateWidth);
   window.removeEventListener("fullscreenchange", updateFullScreenStatus);
+  window.removeEventListener("keydown", handleGlobalKeydown);
   const handlers = (onUnmountHandlers as any).value;
   if (handlers?.onMessage) window.removeEventListener("message", handlers.onMessage);
   if (handlers?.onOnline) window.removeEventListener("online", handlers.onOnline);
