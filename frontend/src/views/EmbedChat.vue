@@ -65,8 +65,8 @@
             </div>
           </div>
           <div class="flex flex-col min-w-0 overflow-hidden">
-                <div class="flex items-center space-x-2">
-                    <span class="text-sm font-black text-gray-800 dark:text-gray-100 truncate">
+                <div class="flex items-center space-x-1.5 leading-tight">
+                    <span class="text-[13px] font-semibold text-gray-800 dark:text-gray-100 truncate">
                         <template v-if="isProcessing">
                             {{ lastAgentMessage?.agentDisplayName || lastAgentMessage?.agentName || '智能体' }}
                         </template>
@@ -83,28 +83,28 @@
                     </span>
                     <span
                         v-else-if="headerExpertLabel"
-                        class="inline-flex items-center px-1.5 py-0.5 rounded-full bg-primary/10 text-primary text-[9px] font-black uppercase tracking-wider shrink-0"
+                        class="inline-flex items-center px-1.5 py-0.2 rounded-full bg-primary/10 text-primary text-[9px] font-semibold uppercase tracking-wider shrink-0"
                     >
                         锁定
                     </span>
                 </div>
-                <div class="text-[10px] font-bold uppercase tracking-widest truncate flex items-center gap-1.5 min-w-0">
+                <div class="text-[11px] text-gray-400 dark:text-gray-500 truncate flex items-center gap-1.5 min-w-0 leading-tight mt-0.5">
                     <template v-if="isProcessing">
-                        <span class="text-gray-400">正在处理您的请求...</span>
+                        <span>正在处理您的请求...</span>
                     </template>
                     <template v-else-if="headerExpertLabel">
-                        <span class="text-gray-400 normal-case tracking-normal">准备就绪</span>
+                        <span class="normal-case tracking-normal">准备就绪</span>
                         <button
                             v-if="!isRoutingSettingsLocked"
                             type="button"
                             @click.stop="switchToAuto"
-                            class="text-gray-400 hover:text-red-500 normal-case tracking-normal font-bold transition-colors shrink-0"
+                            class="text-gray-400 hover:text-red-500 normal-case tracking-normal font-medium transition-colors shrink-0"
                         >
                             退出
                         </button>
                     </template>
                     <template v-else>
-                        <span class="text-gray-400">准备就绪</span>
+                        <span>准备就绪</span>
                     </template>
                 </div>
             </div>
@@ -647,11 +647,11 @@
             <!-- Agent Name (Smart Status Capsule) -->
             <div class="mb-1 ml-1 flex items-center">
               <div
-                class="flex items-center space-x-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-medium transition-all duration-500 ease-out border"
+                class="flex items-center space-x-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-medium transition-all duration-300 ease-out border"
                 :class="msg.agentName || msg.agentDisplayName
-                  ? 'bg-blue-50/80 border-blue-100 text-blue-700 dark:bg-blue-900/20 dark:border-blue-800 dark:text-blue-300 opacity-100 translate-y-0'
+                  ? 'bg-gray-50/90 dark:bg-gray-800/80 border-gray-200/70 dark:border-gray-700/70 text-gray-700 dark:text-gray-300 shadow-[0_1px_2px_rgba(0,0,0,0.02)] opacity-100 translate-y-0'
                   : msg.isThinking
-                    ? 'bg-gray-50 border-gray-200 text-gray-500 dark:bg-gray-800/70 dark:border-gray-700 dark:text-gray-400 opacity-100 translate-y-0'
+                    ? 'bg-gray-50/70 border-gray-200/50 text-gray-400 dark:bg-gray-800/50 dark:border-gray-700/50 dark:text-gray-500 opacity-100 translate-y-0'
                   : 'opacity-0 translate-y-1 bg-transparent border-transparent'"
               >
                 <!-- Text：调度占位（三点跳动）→ 智能体名（淡入轻微上滑） -->
@@ -661,10 +661,12 @@
                     :key="`agent-${msg.agentDisplayName || msg.agentName}`"
                     class="inline-flex items-center space-x-1.5"
                   >
-                    <span>{{ msg.agentDisplayName || msg.agentName }}</span>
-                    <span v-if="msg.agentName" class="opacity-70 font-normal">{{ String(msg.agentName || '').startsWith('sys_') ? '· 系统指令' : '· 为您服务' }}</span>
+                    <span class="w-1.5 h-1.5 rounded-full bg-primary/70 shrink-0"></span>
+                    <span class="text-gray-800 dark:text-gray-200 font-medium">{{ msg.agentDisplayName || msg.agentName }}</span>
+                    <span v-if="msg.agentName" class="text-gray-400 dark:text-gray-500 font-normal">{{ String(msg.agentName || '').startsWith('sys_') ? '· 系统指令' : '· 为您服务' }}</span>
                   </span>
-                  <span v-else key="dispatch-placeholder" class="inline-flex items-center">
+                  <span v-else key="dispatch-placeholder" class="inline-flex items-center text-gray-400 dark:text-gray-500">
+                    <span class="w-1.5 h-1.5 rounded-full bg-gray-300 dark:bg-gray-600 animate-pulse shrink-0 mr-1.5"></span>
                     智能体正在分配调度中
                     <span class="inline-flex ml-0.5" aria-hidden="true">
                       <span class="animate-bounce-dot font-bold" style="animation-delay: 0s">.</span>
