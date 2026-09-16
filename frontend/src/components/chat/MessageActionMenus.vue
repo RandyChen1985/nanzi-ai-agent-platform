@@ -164,16 +164,24 @@ onUnmounted(() => {
     </div>
 
     <template v-if="mode === 'regenerate' || mode === 'both'">
-      <button
-        v-if="canRegenerate"
-        type="button"
-        class="flex min-h-8 shrink-0 items-center gap-1 rounded-md px-2 py-1 text-[11px] text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-700 dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-gray-200"
-        title="重新生成"
-        @click="run(() => emit('regenerate'))"
-      >
-        <span aria-hidden="true">↻</span>
-        <span class="hidden sm:inline">重新生成</span>
-      </button>
+      <div v-if="canRegenerate" class="group relative inline-flex items-center justify-center">
+        <button
+          type="button"
+          class="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-gray-400 hover:text-primary transition-colors hover:bg-gray-100 dark:hover:bg-gray-800 dark:text-gray-400 dark:hover:text-primary-active"
+          aria-label="重新生成"
+          @click="run(() => emit('regenerate'))"
+        >
+          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="1.75" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+          </svg>
+        </button>
+        <div class="pointer-events-none absolute top-full left-1/2 -translate-x-1/2 mt-1.5 opacity-0 group-hover:opacity-100 transition-all duration-150 flex flex-col items-center z-50 transform -translate-y-0.5 group-hover:translate-y-0">
+          <div class="w-1.5 h-1.5 bg-gray-900/90 dark:bg-gray-800/95 rotate-45 -mb-0.5"></div>
+          <div class="rounded-md bg-gray-900/90 dark:bg-gray-800/95 px-2 py-0.5 text-[10px] font-medium text-white shadow-lg backdrop-blur-sm whitespace-nowrap">
+            重新生成
+          </div>
+        </div>
+      </div>
     </template>
     <template v-if="mode === 'more' || mode === 'both'">
       <div v-if="hasMore" class="relative" :class="{ 'sm:hidden': showDataOnMobile && !hasDesktopMore }">
