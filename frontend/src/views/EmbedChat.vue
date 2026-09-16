@@ -519,7 +519,7 @@
                 <span class="hidden sm:inline">复制</span>
               </button>
               <!-- Time -->
-              <span v-if="msg.timestamp" class="text-[10px] text-gray-400 dark:text-gray-500 select-none ml-1">{{ formatBubbleTime(msg.timestamp) }}</span>
+              <span v-if="msg.timestamp" class="text-[10px] text-gray-400 dark:text-gray-500 select-none ml-1 whitespace-nowrap shrink-0">{{ formatBubbleTime(msg.timestamp) }}</span>
               </div>
             </div>
           </div>
@@ -844,33 +844,122 @@
               class="flex min-w-0 max-w-full flex-nowrap items-center space-x-2 overflow-x-auto sm:overflow-x-visible mt-1 scrollbar-hide"
             >
               <!-- Time -->
-              <span v-if="msg.timestamp" class="text-[10px] text-gray-400 dark:text-gray-500 select-none mr-1">{{ formatBubbleTime(msg.timestamp) }}</span>
-              <button
-                @click="copyMessage(visibleStreamBody(msg))"
-                class="flex min-h-8 shrink-0 items-center space-x-1 text-[11px] text-gray-500 hover:text-primary transition-colors rounded px-2 py-1 hover:bg-gray-100 dark:hover:bg-gray-800"
-                :class="windowWidth < 640 ? 'p-2.5' : 'px-2 py-1'"
-                title="复制"
-              >
-                <svg
-                  class="w-3.5 h-3.5"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
+              <span v-if="msg.timestamp" class="text-[10px] text-gray-400 dark:text-gray-500 select-none mr-1 whitespace-nowrap shrink-0">{{ formatBubbleTime(msg.timestamp) }}</span>
+              <!-- 复制 (纯图标 + 自定义 Tooltip) -->
+              <div class="group relative inline-flex items-center justify-center">
+                <button
+                  @click="copyMessage(visibleStreamBody(msg))"
+                  class="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-gray-400 hover:text-primary transition-colors hover:bg-gray-100 dark:hover:bg-gray-800 dark:text-gray-400 dark:hover:text-primary-active"
+                  aria-label="复制"
                 >
-                  <path
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                    stroke-width="2"
-                    d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"
-                  />
-                </svg>
-                <span class="hidden sm:inline">复制</span>
-              </button>
-              <MessageActionMenus
-                mode="regenerate"
-                :can-regenerate="msg === lastAgentMessage && !isProcessing"
-                @regenerate="regenerate"
-              />
+                  <svg
+                    class="w-3.5 h-3.5"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="1.75"
+                    viewBox="0 0 24 24"
+                  >
+                    <path
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"
+                    />
+                  </svg>
+                </button>
+                <div class="pointer-events-none absolute top-full left-1/2 -translate-x-1/2 mt-1.5 opacity-0 group-hover:opacity-100 transition-all duration-150 flex flex-col items-center z-50 transform -translate-y-0.5 group-hover:translate-y-0">
+                  <div class="w-1.5 h-1.5 bg-gray-900/90 dark:bg-gray-800/95 rotate-45 -mb-0.5"></div>
+                  <div class="rounded-md bg-gray-900/90 dark:bg-gray-800/95 px-2 py-0.5 text-[10px] font-medium text-white shadow-lg backdrop-blur-sm whitespace-nowrap">
+                    复制
+                  </div>
+                </div>
+              </div>
+
+              <!-- 重新生成 (纯图标 + 自定义 Tooltip) -->
+              <div
+                v-if="msg === lastAgentMessage && !isProcessing"
+                class="group relative inline-flex items-center justify-center"
+              >
+                <button
+                  @click="regenerate"
+                  class="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-gray-400 hover:text-primary transition-colors hover:bg-gray-100 dark:hover:bg-gray-800 dark:text-gray-400 dark:hover:text-primary-active"
+                  aria-label="重新生成"
+                >
+                  <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="1.75" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                  </svg>
+                </button>
+                <div class="pointer-events-none absolute top-full left-1/2 -translate-x-1/2 mt-1.5 opacity-0 group-hover:opacity-100 transition-all duration-150 flex flex-col items-center z-50 transform -translate-y-0.5 group-hover:translate-y-0">
+                  <div class="w-1.5 h-1.5 bg-gray-900/90 dark:bg-gray-800/95 rotate-45 -mb-0.5"></div>
+                  <div class="rounded-md bg-gray-900/90 dark:bg-gray-800/95 px-2 py-0.5 text-[10px] font-medium text-white shadow-lg backdrop-blur-sm whitespace-nowrap">
+                    重新生成
+                  </div>
+                </div>
+              </div>
+
+              <!-- 点赞点踩移到重新生成后面 (纯图标 + 自定义 Tooltip) -->
+              <template v-if="!hideEmbedLikeDislike">
+                <!-- 点赞 -->
+                <div class="group relative inline-flex items-center justify-center">
+                  <button
+                    @click="handleFeedback(msg, 'up')"
+                    class="flex h-7 w-7 shrink-0 items-center justify-center rounded-md transition-colors hover:bg-green-50 dark:hover:bg-green-900/20 text-gray-400 hover:text-green-500"
+                    :class="msg.feedback === 'up' ? 'text-green-500 bg-green-50 dark:bg-green-900/20' : ''"
+                    aria-label="很有帮助"
+                  >
+                    <svg
+                      class="w-3.5 h-3.5"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="1.75"
+                      viewBox="0 0 24 24"
+                    >
+                      <path
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        d="M14 10h4.708C19.712 10 20.5 10.743 20.5 11.658c0 .354-.05.7-.145 1.03l-1.921 6.641C18.232 20.141 17.514 21 16.5 21H8.5c-1.105 0-2-.895-2-2v-8c0-.55.224-1.05.586-1.414l5-5c.381-.381 1-.381 1.381 0L14 5v5z"
+                      />
+                    </svg>
+                  </button>
+                  <div class="pointer-events-none absolute top-full left-1/2 -translate-x-1/2 mt-1.5 opacity-0 group-hover:opacity-100 transition-all duration-150 flex flex-col items-center z-50 transform -translate-y-0.5 group-hover:translate-y-0">
+                    <div class="w-1.5 h-1.5 bg-gray-900/90 dark:bg-gray-800/95 rotate-45 -mb-0.5"></div>
+                    <div class="rounded-md bg-gray-900/90 dark:bg-gray-800/95 px-2 py-0.5 text-[10px] font-medium text-white shadow-lg backdrop-blur-sm whitespace-nowrap">
+                      很有帮助
+                    </div>
+                  </div>
+                </div>
+
+                <!-- 点踩 -->
+                <div class="group relative inline-flex items-center justify-center">
+                  <button
+                    @click="handleFeedback(msg, 'down')"
+                    class="flex h-7 w-7 shrink-0 items-center justify-center rounded-md transition-colors hover:bg-red-50 dark:hover:bg-red-900/20 text-gray-400 hover:text-red-500"
+                    :class="msg.feedback === 'down' ? 'text-red-500 bg-red-50 dark:bg-red-900/20' : ''"
+                    aria-label="回答不准确"
+                  >
+                    <svg
+                      class="w-3.5 h-3.5"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="1.75"
+                      viewBox="0 0 24 24"
+                    >
+                      <path
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        d="M10 14H5.292C4.288 14 3.5 13.257 3.5 12.342c0-.354.05-.7.145-1.03l1.921-6.641C5.768 3.859 6.486 3 7.5 3h8c1.105 0 2 .895 2 2v8c0 .55-.224 1.05-.586 1.414l-5 5c-.381.381-1 .381-1.381 0L10 19v-5z"
+                      />
+                    </svg>
+                  </button>
+                  <div class="pointer-events-none absolute top-full left-1/2 -translate-x-1/2 mt-1.5 opacity-0 group-hover:opacity-100 transition-all duration-150 flex flex-col items-center z-50 transform -translate-y-0.5 group-hover:translate-y-0">
+                    <div class="w-1.5 h-1.5 bg-gray-900/90 dark:bg-gray-800/95 rotate-45 -mb-0.5"></div>
+                    <div class="rounded-md bg-gray-900/90 dark:bg-gray-800/95 px-2 py-0.5 text-[10px] font-medium text-white shadow-lg backdrop-blur-sm whitespace-nowrap">
+                      回答不准确
+                    </div>
+                  </div>
+                </div>
+              </template>
+
+              <!-- 数据 / 文件 -->
               <div class="hidden sm:block shrink-0">
                 <MessageActionMenus
                   mode="data"
@@ -886,83 +975,34 @@
                   @open-artifacts="openMessageArtifacts(msg.trace_id)"
                 />
               </div>
-              <!-- Token 消耗：移动端仅 icon，桌面端展示 in/out 明细 -->
+              <!-- Token 消耗：移动端展示图标，桌面端展示 数据库图标 + 用量 12.4K tok -->
               <button
-                v-if="msg.prompt_tokens !== undefined || msg.completion_tokens !== undefined"
+                v-if="msg.prompt_tokens !== undefined || msg.completion_tokens !== undefined || msg.total_tokens !== undefined"
                 @click="openModelCallStats(msg)"
                 class="flex sm:hidden shrink-0 items-center justify-center text-gray-400 hover:text-primary transition-colors rounded hover:bg-gray-100 dark:hover:bg-gray-800 p-2.5"
-                title="查看 Token 消耗详情"
+                :title="getMessageTokenTooltip(msg)"
               >
-                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 8h10M7 12h10M7 16h6M5 6a2 2 0 012-2h10a2 2 0 012 2v12a2 2 0 01-2 2H7a2 2 0 01-2-2V6z" />
+                <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+                  <ellipse cx="12" cy="5" rx="9" ry="3" />
+                  <path d="M3 5v14a9 3 0 0 0 18 0V5" />
+                  <path d="M3 12a9 3 0 0 0 18 0" />
                 </svg>
               </button>
               <button
-                v-if="msg.prompt_tokens !== undefined || msg.completion_tokens !== undefined"
+                v-if="msg.prompt_tokens !== undefined || msg.completion_tokens !== undefined || msg.total_tokens !== undefined"
                 @click="openModelCallStats(msg)"
-                class="hidden sm:flex shrink-0 items-center space-x-1.5 text-[10px] text-gray-400 dark:text-gray-500 bg-gray-50 dark:bg-gray-800/40 hover:bg-gray-100 dark:hover:bg-gray-800 hover:text-primary dark:hover:text-primary-active border border-gray-100/50 dark:border-gray-800/20 rounded px-1.5 py-0.5 select-none font-mono transition-all duration-200 cursor-pointer active:scale-95 ml-1"
-                title="点击查看详细的大模型调用统计指标（如单步耗时、工具调用明细、Token消耗详情等）"
+                class="hidden sm:flex shrink-0 items-center space-x-1 text-[11px] text-gray-500 dark:text-gray-400 hover:text-primary dark:hover:text-primary-active hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors rounded px-1.5 py-1 select-none cursor-pointer"
+                :title="getMessageTokenTooltip(msg)"
               >
-                <span class="flex items-center space-x-0.5">
-                  <span class="scale-90 text-[9px] text-gray-400/80">in:</span>
-                  <span class="font-medium text-gray-500 dark:text-gray-400">{{ msg.prompt_tokens || 0 }}</span>
-                </span>
-                <span class="text-gray-300 dark:text-gray-700">/</span>
-                <span class="flex items-center space-x-0.5">
-                  <span class="scale-90 text-[9px] text-gray-400/80">out:</span>
-                  <span class="font-medium text-gray-500 dark:text-gray-400">{{ msg.completion_tokens || 0 }}</span>
-                </span>
+                <svg class="w-3.5 h-3.5 shrink-0 text-gray-400 dark:text-gray-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+                  <ellipse cx="12" cy="5" rx="9" ry="3" />
+                  <path d="M3 5v14a9 3 0 0 0 18 0V5" />
+                  <path d="M3 12a9 3 0 0 0 18 0" />
+                </svg>
+                <span>用量 {{ getMessageTokenAmount(msg) }}</span>
               </button>
-              <!-- 反馈与 ChatBI 扩展操作（保持完整宽度，随操作栏滚动） -->
+              <!-- 业务扩展与更多操作（保持完整宽度，随操作栏滚动） -->
               <div class="flex shrink-0 items-center space-x-1">
-                <template v-if="!hideEmbedLikeDislike">
-                <button
-                  @click="handleFeedback(msg, 'up')"
-                  class="rounded transition-colors hover:bg-green-50 dark:hover:bg-green-900/20 text-gray-400 hover:text-green-500"
-                  :class="[
-                    msg.feedback === 'up' ? 'text-green-500 bg-green-50 dark:bg-green-900/20' : '',
-                    windowWidth < 640 ? 'p-2.5' : 'p-2'
-                  ]"
-                  title="很有帮助"
-                >
-                  <svg
-                    class="w-4 h-4"
-                    fill="none"
-                    stroke="currentColor"
-                    viewBox="0 0 24 24"
-                  >
-                    <path
-                      stroke-linecap="round"
-                      stroke-linejoin="round"
-                      stroke-width="2"
-                      d="M14 10h4.708C19.712 10 20.5 10.743 20.5 11.658c0 .354-.05.7-.145 1.03l-1.921 6.641C18.232 20.141 17.514 21 16.5 21H8.5c-1.105 0-2-.895-2-2v-8c0-.55.224-1.05.586-1.414l5-5c.381-.381 1-.381 1.381 0L14 5v5z"
-                    />
-                  </svg>
-                </button>
-                <button
-                  @click="handleFeedback(msg, 'down')"
-                  class="rounded transition-colors hover:bg-red-50 dark:hover:bg-red-900/20 text-gray-400 hover:text-red-500"
-                  :class="[
-                    msg.feedback === 'down' ? 'text-red-500 bg-red-50 dark:bg-red-900/20' : '',
-                    windowWidth < 640 ? 'p-2.5' : 'p-2'
-                  ]"
-                  title="回答不准确"
-                >
-                  <svg
-                    class="w-4 h-4"
-                    fill="none"
-                    stroke="currentColor"
-                    viewBox="0 0 24 24"
-                  >
-                    <path
-                      stroke-linecap="round"
-                      stroke-linejoin="round"
-                      stroke-width="2"
-                      d="M10 14H5.292C4.288 14 3.5 13.257 3.5 12.342c0-.354.05-.7.145-1.03l1.921-6.641C5.768 3.859 6.486 3 7.5 3h8c1.105 0 2 .895 2 2v8c0 .55-.224 1.05-.586 1.414l-5 5c-.381.381-1 .381-1.381 0L10 19v-5z"
-                    />
-                  </svg>
-                </button>
-                </template>
                 <ChatBIContinueAnalysis
                   v-if="msg.chatbiInsight?.actions?.length && checkRole(msg, 'agent') && !msg.isThinking"
                   :actions="msg.chatbiInsight.actions"
@@ -2117,6 +2157,10 @@ import { useKnowledgePortal } from "@/composables/useKnowledgePortal";
 import CitationPopover from "@/components/CitationPopover.vue";
 import { copyToClipboard as copyTextSecure } from "@/utils/clipboard";
 import {
+  formatTokenUsageAmount,
+  formatTokenUsageTooltip,
+} from "@/utils/tokenFormat";
+import {
   applyStreamErrorMessage,
   type StreamErrorDetail,
 } from "@/utils/streamErrorPresentation";
@@ -2493,6 +2537,15 @@ const formatBubbleTime = (isoStr: string): string => {
     const day = String(date.getDate()).padStart(2, '0');
     return `${month}-${day} ${hours}:${minutes}`;
   } catch(e) { return ""; }
+};
+
+const getMessageTokenAmount = (msg: any): string => {
+  const total = msg?.total_tokens ?? ((msg?.prompt_tokens || 0) + (msg?.completion_tokens || 0));
+  return formatTokenUsageAmount(total);
+};
+
+const getMessageTokenTooltip = (msg: any): string => {
+  return formatTokenUsageTooltip(msg?.prompt_tokens, msg?.completion_tokens, msg?.total_tokens);
 };
 // --- State ---
 const messages = ref<Message[]>([]);

@@ -52,6 +52,10 @@ import { createConversationId } from "@/utils/conversationId";
 import { createSseLineParser } from "@/utils/chartRenderer";
 import { normalizeAgentSwitchCommand } from "@/utils/agentSwitchCommands";
 import {
+  formatTokenUsageAmount,
+  formatTokenUsageTooltip,
+} from "@/utils/tokenFormat";
+import {
   applyStreamTraceId,
   appendAssistantBodyDelta,
   dispatchAgentscopeStreamEvent,
@@ -1409,6 +1413,7 @@ interface Message {
   userQuestion?: UserQuestionState;
   prompt_tokens?: number;
   completion_tokens?: number;
+  total_tokens?: number;
 }
 
 const isAgentTimelineMessage = (msg: Message): boolean => {
@@ -1832,6 +1837,15 @@ const openModelCallStats = async (msg: any) => {
   } finally {
     loadingStats.value = false;
   }
+};
+
+const getMessageTokenAmount = (msg: any): string => {
+  const total = msg?.total_tokens ?? ((msg?.prompt_tokens || 0) + (msg?.completion_tokens || 0));
+  return formatTokenUsageAmount(total);
+};
+
+const getMessageTokenTooltip = (msg: any): string => {
+  return formatTokenUsageTooltip(msg?.prompt_tokens, msg?.completion_tokens, msg?.total_tokens);
 };
 
 const chatInputRef = ref<any>(null);
@@ -4537,34 +4551,40 @@ onUnmounted(() => {
 
 
                 <!-- Regenerate Button -->
-                <button
+                <div
                   v-if="messages.indexOf(msg) === messages.length - 1 && !isProcessing && !msg.isThinking"
-                  @click="regenerate(msg)"
-                  class="flex items-center space-x-1 px-2 py-1 text-xs font-medium text-gray-500 bg-gray-50 hover:bg-gray-100 border border-gray-200 rounded-md transition-colors"
-                  title="重新生成"
+                  class="group relative inline-flex items-center justify-center"
                 >
-                  <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                  </svg>
-                  <span>重新生成</span>
-                </button>
+                  <button
+                    @click="regenerate(msg)"
+                    class="flex min-h-8 shrink-0 items-center justify-center rounded-md p-1.5 text-gray-400 hover:text-primary transition-colors hover:bg-gray-100 dark:hover:bg-gray-800 dark:text-gray-400 dark:hover:text-primary-active border border-gray-200/60 dark:border-gray-700/60"
+                    aria-label="重新生成"
+                  >
+                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                    </svg>
+                  </button>
+                  <div class="pointer-events-none absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 opacity-0 group-hover:opacity-100 transition-all duration-150 flex flex-col items-center z-50 transform translate-y-0.5 group-hover:translate-y-0">
+                    <div class="rounded-md bg-gray-900/90 dark:bg-gray-800/95 px-2 py-0.5 text-[10px] font-medium text-white shadow-lg backdrop-blur-sm whitespace-nowrap">
+                      重新生成
+                    </div>
+                    <div class="w-1.5 h-1.5 bg-gray-900/90 dark:bg-gray-800/95 rotate-45 -mt-0.5"></div>
+                  </div>
+                </div>
 
                 <!-- Token Usage -->
                 <button
-                  v-if="msg.prompt_tokens !== undefined || msg.completion_tokens !== undefined"
+                  v-if="msg.prompt_tokens !== undefined || msg.completion_tokens !== undefined || msg.total_tokens !== undefined"
                   @click="openModelCallStats(msg)"
-                  class="flex items-center space-x-1.5 px-2 py-1 text-[10px] font-mono text-gray-500 bg-gray-50 hover:bg-gray-100 border border-gray-200 rounded-md transition-all duration-200 cursor-pointer active:scale-95"
-                  title="点击查看详细的大模型调用统计指标"
+                  class="flex items-center space-x-1 text-[11px] text-gray-500 dark:text-gray-400 hover:text-primary dark:hover:text-primary-active hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors rounded px-1.5 py-1 select-none cursor-pointer"
+                  :title="getMessageTokenTooltip(msg)"
                 >
-                  <span class="flex items-center space-x-0.5">
-                    <span class="scale-90 text-[9px] text-gray-400/80">in:</span>
-                    <span class="font-medium text-gray-500 dark:text-gray-400">{{ msg.prompt_tokens || 0 }}</span>
-                  </span>
-                  <span class="text-gray-300 dark:text-gray-700">/</span>
-                  <span class="flex items-center space-x-0.5">
-                    <span class="scale-90 text-[9px] text-gray-400/80">out:</span>
-                    <span class="font-medium text-gray-500 dark:text-gray-400">{{ msg.completion_tokens || 0 }}</span>
-                  </span>
+                  <svg class="w-3.5 h-3.5 shrink-0 text-gray-400 dark:text-gray-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+                    <ellipse cx="12" cy="5" rx="9" ry="3" />
+                    <path d="M3 5v14a9 3 0 0 0 18 0V5" />
+                    <path d="M3 12a9 3 0 0 0 18 0" />
+                  </svg>
+                  <span>用量 {{ getMessageTokenAmount(msg) }}</span>
                 </button>
               </div>
 
@@ -4794,18 +4814,25 @@ onUnmounted(() => {
                   :class="{'!opacity-100': msg.feedback && !hideDebugLikeDislikeForHostedAgent}"
                 >
                   <!-- Copy Content -->
-                  <button
-                    v-if="msg.content"
-                    type="button"
-                    @click.stop="copyContent(visibleStreamBody(msg), $event)"
-                    class="flex items-center space-x-1 p-1 rounded hover:bg-blue-50 text-gray-400 hover:text-primary transition-colors"
-                    title="复制"
-                  >
-                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
-                    </svg>
-                    <span class="text-[10px] font-bold">复制</span>
-                  </button>
+                  <div class="group relative inline-flex items-center justify-center">
+                    <button
+                      v-if="msg.content"
+                      type="button"
+                      @click.stop="copyContent(visibleStreamBody(msg), $event)"
+                      class="flex h-7 w-7 shrink-0 items-center justify-center rounded hover:bg-blue-50 text-gray-400 hover:text-primary transition-colors"
+                      aria-label="复制"
+                    >
+                      <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="1.75" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                      </svg>
+                    </button>
+                    <div class="pointer-events-none absolute top-full left-1/2 -translate-x-1/2 mt-1.5 opacity-0 group-hover:opacity-100 transition-all duration-150 flex flex-col items-center z-50 transform -translate-y-0.5 group-hover:translate-y-0">
+                      <div class="w-1.5 h-1.5 bg-gray-900/90 dark:bg-gray-800/95 rotate-45 -mb-0.5"></div>
+                      <div class="rounded-md bg-gray-900/90 dark:bg-gray-800/95 px-2 py-0.5 text-[10px] font-medium text-white shadow-lg backdrop-blur-sm whitespace-nowrap">
+                        复制
+                      </div>
+                    </div>
+                  </div>
                   <div v-if="msg.content && (canSaveGoldenReportFromMessage(msg) || msg.trace_id || !hideDebugLikeDislikeForHostedAgent)" class="w-px h-3 bg-gray-200 mx-1"></div>
                   <!-- Save Golden Report -->
                   <button
@@ -4834,29 +4861,44 @@ onUnmounted(() => {
                     <span class="text-[10px] font-bold">导出</span>
                   </button>
                   <div v-if="msg.trace_id && !hideDebugLikeDislikeForHostedAgent" class="w-px h-3 bg-gray-200 mx-1"></div>
-                  <button
-                    v-if="!hideDebugLikeDislikeForHostedAgent"
-                    @click="handleFeedback(msg, 'up')"
-
-                    class="p-1 rounded hover:bg-green-50 text-gray-400 hover:text-green-500 transition-colors"
-                    :class="{ 'text-green-500 bg-green-50': msg.feedback === 'up' }"
-                    title="很有帮助"
-                  >
-                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14 10h4.708C19.712 10 20.5 10.743 20.5 11.658c0 .354-.05.7-.145 1.03l-1.921 6.641C18.232 20.141 17.514 21 16.5 21H8.5c-1.105 0-2-.895-2-2v-8c0-.55.224-1.05.586-1.414l5-5c.381-.381 1-.381 1.381 0L14 5v5z" />
-                    </svg>
-                  </button>
-                  <button
-                    v-if="!hideDebugLikeDislikeForHostedAgent"
-                    @click="handleFeedback(msg, 'down')"
-                    class="p-1 rounded hover:bg-red-50 text-gray-400 hover:text-red-500 transition-colors"
-                    :class="{ 'text-red-500 bg-red-50': msg.feedback === 'down' }"
-                    title="回答不准确"
-                  >
-                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 14H5.292C4.288 14 3.5 13.257 3.5 12.342c0-.354.05-.7.145-1.03l1.921-6.641C6.768 3.859 7.486 3 8.5 3H16.5c1.105 0 2 .895 2 2v8c0 .55-.224 1.05-.586 1.414l-5 5c-.381.381-1 .381-1.381 0L10 19v-5z" />
-                    </svg>
-                  </button>
+                  <!-- 点赞 (纯图标 + 自定义 Tooltip) -->
+                  <div v-if="!hideDebugLikeDislikeForHostedAgent" class="group relative inline-flex items-center justify-center">
+                    <button
+                      @click="handleFeedback(msg, 'up')"
+                      class="flex h-7 w-7 shrink-0 items-center justify-center rounded hover:bg-green-50 text-gray-400 hover:text-green-500 transition-colors"
+                      :class="{ 'text-green-500 bg-green-50': msg.feedback === 'up' }"
+                      aria-label="很有帮助"
+                    >
+                      <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="1.75" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M14 10h4.708C19.712 10 20.5 10.743 20.5 11.658c0 .354-.05.7-.145 1.03l-1.921 6.641C18.232 20.141 17.514 21 16.5 21H8.5c-1.105 0-2-.895-2-2v-8c0-.55.224-1.05.586-1.414l5-5c.381-.381 1-.381 1.381 0L14 5v5z" />
+                      </svg>
+                    </button>
+                    <div class="pointer-events-none absolute top-full left-1/2 -translate-x-1/2 mt-1.5 opacity-0 group-hover:opacity-100 transition-all duration-150 flex flex-col items-center z-50 transform -translate-y-0.5 group-hover:translate-y-0">
+                      <div class="w-1.5 h-1.5 bg-gray-900/90 dark:bg-gray-800/95 rotate-45 -mb-0.5"></div>
+                      <div class="rounded-md bg-gray-900/90 dark:bg-gray-800/95 px-2 py-0.5 text-[10px] font-medium text-white shadow-lg backdrop-blur-sm whitespace-nowrap">
+                        很有帮助
+                      </div>
+                    </div>
+                  </div>
+                  <!-- 点踩 (纯图标 + 自定义 Tooltip) -->
+                  <div v-if="!hideDebugLikeDislikeForHostedAgent" class="group relative inline-flex items-center justify-center">
+                    <button
+                      @click="handleFeedback(msg, 'down')"
+                      class="flex h-7 w-7 shrink-0 items-center justify-center rounded hover:bg-red-50 text-gray-400 hover:text-red-500 transition-colors"
+                      :class="{ 'text-red-500 bg-red-50': msg.feedback === 'down' }"
+                      aria-label="回答不准确"
+                    >
+                      <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="1.75" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M10 14H5.292C4.288 14 3.5 13.257 3.5 12.342c0-.354.05-.7.145-1.03l1.921-6.641C6.768 3.859 7.486 3 8.5 3H16.5c1.105 0 2 .895 2 2v8c0 .55-.224 1.05-.586 1.414l-5 5c-.381.381-1 .381-1.381 0L10 19v-5z" />
+                      </svg>
+                    </button>
+                    <div class="pointer-events-none absolute top-full left-1/2 -translate-x-1/2 mt-1.5 opacity-0 group-hover:opacity-100 transition-all duration-150 flex flex-col items-center z-50 transform -translate-y-0.5 group-hover:translate-y-0">
+                      <div class="w-1.5 h-1.5 bg-gray-900/90 dark:bg-gray-800/95 rotate-45 -mb-0.5"></div>
+                      <div class="rounded-md bg-gray-900/90 dark:bg-gray-800/95 px-2 py-0.5 text-[10px] font-medium text-white shadow-lg backdrop-blur-sm whitespace-nowrap">
+                        回答不准确
+                      </div>
+                    </div>
+                  </div>
                 </div>
                 <!-- Typewriter Cursor -->
                 <span

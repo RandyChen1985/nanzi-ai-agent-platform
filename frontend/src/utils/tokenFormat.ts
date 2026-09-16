@@ -59,3 +59,35 @@ export function formatTokenInputHint(value: number | null | undefined): string {
   }
   return `共 ${formatTokenFull(num)} Token`
 }
+
+/**
+ * 消息底部用量展示，如 "12.4K tok"、"82.1K tok"、"520 tok"
+ */
+export function formatTokenUsageAmount(value: number | null | undefined): string {
+  const num = normalizeTokenCount(value)
+  if (num >= 1_000_000_000) {
+    return `${trimDecimals(num / 1_000_000_000, 1)}B tok`
+  }
+  if (num >= 1_000_000) {
+    return `${trimDecimals(num / 1_000_000, 1)}M tok`
+  }
+  if (num >= 1_000) {
+    return `${trimDecimals(num / 1_000, 1)}K tok`
+  }
+  return `${num} tok`
+}
+
+/**
+ * 消息底部用量悬浮提示（包含详细的输入、输出明细及总用量）
+ */
+export function formatTokenUsageTooltip(
+  promptTokens?: number | null,
+  completionTokens?: number | null,
+  totalTokens?: number | null,
+): string {
+  const inTok = normalizeTokenCount(promptTokens)
+  const outTok = normalizeTokenCount(completionTokens)
+  const total = normalizeTokenCount(totalTokens ?? (inTok + outTok))
+  return `Token 用量：${formatTokenFull(total)} tok（输入: ${formatTokenFull(inTok)} / 输出: ${formatTokenFull(outTok)}）\n点击查看详细统计指标`
+}
+
