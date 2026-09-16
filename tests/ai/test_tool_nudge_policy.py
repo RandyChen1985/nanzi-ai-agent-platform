@@ -220,6 +220,91 @@ def test_existing_file_download_request_does_not_force_office_write():
     ) is None
 
 
+def _image_tool():
+    return SimpleNamespace(
+        name="read_image",
+        description=(
+            "read_image 读取并解析本地安全沙箱或工作区中的图片文件"
+            "（PNG/JPEG/WEBP/GIF/BMP 等）。当用户或智能体需要查看、检查、"
+            "识别本地图片、提取图中文字/表格、分析图表曲线、查看代码生成的"
+            "图片产物或进行视觉问答时，应触发本工具。"
+        ),
+        permission_scope="read",
+        source_type="generic_api",
+        evidence_types=frozenset({EvidenceType.USER_FILE}),
+    )
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        # 非图片普通文字问题：不得因描述里的“查看/分析/图片”等泛化词被陈拓。
+        "感觉模型速度很快啊",
+        "你觉得模型速度怎么样",
+        "这个模型速度很快吧",
+        "帮我看一下系统负载",
+        "请帮我润色一下这段话",
+        # 英文子串防误触：不得将 gift/charter 等非图片单词误判为 gif/chart 实体。
+        "帮我分析一下这个 gift 卡的使用规则",
+        "帮我查看一下 charter 计划的内容",
+        # 抽象概念防误触：避免视觉、图谱等抽象技术/数据概念被误推 read_image。
+        "帮我分析一下计算机视觉的技术路线",
+        "帮我查看一下知识图谱的关系",
+        # 工具用法解释与问答防误触：询问使用说明时不应强制首调用。
+        "请问怎么使用 read_image 工具？",
+        "read_image 是什么工具，能做什么",
+        "read_image 工具如何调用",
+    ],
+)
+def test_read_image_is_not_nudged_by_generic_text_questions(query):
+    assert resolve_tool_nudge(query, [_image_tool()]) is None
+    assert resolve_evidence_tool_fallback_nudge(query, [_image_tool()]) is None
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "帮我分析一下这个图表",
+        "看看这个折线图有什么问题",
+        "识别这个截图里的文字",
+        "读取图片文件并做 OCR",
+        "读取并分析 data/uploads/chart.png",
+        "请调用 read_image 解析这张图片",
+        "请帮我查看一下这个 gif 动图",
+        "读取并分析 reports/data_chart.jpg",
+    ],
+)
+def test_read_image_is_nudged_when_query_points_to_an_image_entity(query):
+    nudge = resolve_tool_nudge(query, [_image_tool()])
+    assert nudge is not None
+    assert nudge.tool_name == "read_image"
+    assert nudge.should_force_first_call is True
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "不要调用 read_image",
+        "不用看这个图片",
+        "请勿解析任何图片",
+    ],
+)
+def test_negated_image_request_does_not_force_read_image(query):
+    assert resolve_tool_nudge(query, [_image_tool()]) is None
+
+
+def test_read_image_not_selected_when_unrelated_tool_matches_and_no_image_entity():
+    # 无图片实体；即使有其他泛工具命中，read_image 也不该被通用相关度推出。
+    tools = [
+        _image_tool(),
+        _tool("exec_command", "在服务器上执行 shell 命令，查看系统负载、CPU 和内存占用"),
+    ]
+    nudge = resolve_tool_nudge("帮我看一下系统负载", tools)
+    assert nudge is not None
+    assert nudge.tool_name == "exec_command"
+    assert nudge.tool_name != "read_image"
+
+
 def test_office_type_ambiguity_does_not_force_a_tool():
     assert resolve_tool_nudge(
         "请把这份文档保存并提供下载地址",
