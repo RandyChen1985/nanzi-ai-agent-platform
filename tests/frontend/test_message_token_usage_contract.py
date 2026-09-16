@@ -112,3 +112,16 @@ def test_embed_chat_actions_order_and_custom_tooltips():
     # 5. 时间戳防折行：必须带 whitespace-nowrap shrink-0 避免移动端折行
     assert 'formatBubbleTime(msg.timestamp)' in action_bar_section
     assert 'whitespace-nowrap shrink-0' in action_bar_section
+
+
+def test_continue_analysis_responsive_icon_contract():
+    content_msg = _read("frontend/src/components/chat/MessageContinueAnalysis.vue")
+    content_bi = _read("frontend/src/components/chatbi/ChatBIContinueAnalysis.vue")
+
+    for content in (content_msg, content_bi):
+        # 具有 Sparkles 矢量图标
+        assert "M9.813 15.904L9 18.75l-.813-2.846" in content
+        # 移动端隐藏文字仅保留图标，桌面端展示文字
+        assert '<span class="hidden sm:inline whitespace-nowrap">继续分析</span>' in content
+        # 按钮尺寸与其它按钮规范对齐
+        assert "h-7 shrink-0" in content
