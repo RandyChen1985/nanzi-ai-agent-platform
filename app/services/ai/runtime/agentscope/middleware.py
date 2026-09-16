@@ -236,30 +236,39 @@ def _extract_usage_details(usage_obj: Any) -> tuple[int, int, int, str]:
     """从 AgentScope/OpenAI/Anthropic usage 提取 token 与归一化缓存命中。"""
     if usage_obj is None:
         return 0, 0, 0, "unavailable"
-    in_tokens = int(
-        _safe_getattr(usage_obj, "input_tokens", 0)
-        or _safe_getattr(usage_obj, "prompt_tokens", 0)
-        or 0
-    )
-    out_tokens = int(
-        _safe_getattr(usage_obj, "output_tokens", 0)
-        or _safe_getattr(usage_obj, "completion_tokens", 0)
-        or 0
-    )
+
+    def _resolve(name: str, default: Any = None) -> Any:
+        # 兼容 object 属性与 dict 顶层 key；AgentScope 的 DictMixin 两种形态都可能出现。
+        if isinstance(usage_obj, dict):
+            return usage_obj.get(name, default)
+        return _safe_getattr(usage_obj, name, default)
+
+    in_tokens = int(_resolve("input_tokens", 0) or _resolve("prompt_tokens", 0) or 0)
+    out_tokens = int(_resolve("output_tokens", 0) or _resolve("completion_tokens", 0) or 0)
     cache_tokens = 0
     source = "agentscope_usage"
 
-    cached = _safe_getattr(usage_obj, "cache_input_tokens", None)
+    cached = _resolve("cache_input_tokens", None)
     if cached is not None:
         cache_tokens = int(cached)
     else:
-        p_details = _safe_getattr(usage_obj, "prompt_tokens_details", None)
+        p_details = _resolve("prompt_tokens_details", None)
         if isinstance(p_details, dict) and "cached_tokens" in p_details:
             cache_tokens = int(p_details.get("cached_tokens") or 0)
             source = "openai_prompt_tokens_details"
-        elif _safe_getattr(usage_obj, "cache_read_input_tokens", None) is not None:
-            cache_tokens = int(_safe_getattr(usage_obj, "cache_read_input_tokens") or 0)
+        elif _resolve("cache_read_input_tokens", None) is not None:
+            cache_tokens = int(_resolve("cache_read_input_tokens") or 0)
             source = "cache_read_input_tokens"
+        else:
+            # Anthropic 风格：input_token_details.cache_read
+            it_details = _resolve("input_token_details", None)
+            if isinstance(it_details, dict) and "cache_read" in it_details:
+                cache_tokens = int(it_details.get("cache_read") or 0)
+                source = "input_token_details.cache_read"
+            # 部分 OpenAI 兼容网关：顶层 cached_tokens
+            elif _resolve("cached_tokens", None) is not None:
+                cache_tokens = int(_resolve("cached_tokens") or 0)
+                source = "cached_tokens"
     return in_tokens, out_tokens, cache_tokens, source
 
 
@@ -342,6 +351,7 @@ async def _stream_with_stats(
         "input_tokens": in_tokens,
         "output_tokens": out_tokens,
         "cache_input_tokens": cache_tokens,
+        "uncached_input_tokens": max(0, in_tokens - cache_tokens),
         "total_tokens": in_tokens + out_tokens,
         "usage_source": usage_source,
         "has_tool_calls": has_tool_calls,
@@ -588,6 +598,7 @@ class ModelCallStatsMiddleware(MiddlewareBase):
             "input_tokens": input_tokens,
             "output_tokens": output_tokens,
             "cache_input_tokens": cache_input_tokens,
+            "uncached_input_tokens": max(0, input_tokens - cache_input_tokens),
             "total_tokens": input_tokens + output_tokens,
             "usage_source": usage_source,
             "has_tool_calls": has_tool_calls,

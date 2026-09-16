@@ -1209,9 +1209,13 @@ class ModelCallStatDetail(BaseModel):
     model_name: str = Field(..., description="使用的模型名称")
     input_message_count: int = Field(..., description="输入消息轮数")
     has_tools_bound: bool = Field(..., description="是否绑定了工具")
-    input_tokens: int = Field(..., description="输入 Token 数")
+    input_tokens: int = Field(..., description="输入 Token 数（含缓存命中的总输入)")
     output_tokens: int = Field(..., description="输出 Token 数")
     cache_input_tokens: int = Field(..., description="缓存命中输入 Token")
+    uncached_input_tokens: Optional[int] = Field(
+        None,
+        description="未缓存输入 Token（= input_tokens - cache_input_tokens；无缓存记录时为 None）",
+    )
     total_tokens: int = Field(..., description="总 Token")
     has_tool_calls: bool = Field(..., description="是否触发了工具调用")
     tool_names: List[str] = Field(..., description="调用的工具名称列表")

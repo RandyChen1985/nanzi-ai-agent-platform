@@ -73,6 +73,15 @@ const formatTokens = (n: number): string => {
   return String(n);
 };
 
+// 单条调用的未缓存输入：优先取后端 uncached_input_tokens，旧数据缺失时用总输入减缓存兜底。
+const uncachedTokens = (stat: any): number => {
+  const cache = Number(stat.cache_input_tokens || 0);
+  const gross = Number(stat.input_tokens || 0);
+  const explicit = Number(stat.uncached_input_tokens);
+  if (stat.uncached_input_tokens != null && Number.isFinite(explicit)) return Math.max(0, explicit);
+  return Math.max(0, gross - cache);
+};
+
 const contextBreakdownItems = (stat: any) => [
   {
     label: "系统提示词",
@@ -96,13 +105,21 @@ const statsSummary = computed(() => {
   const totalIn = props.stats.reduce((acc: number, cur: any) => acc + (cur.input_tokens || 0), 0);
   const totalOut = props.stats.reduce((acc: number, cur: any) => acc + (cur.output_tokens || 0), 0);
   const totalCacheIn = props.stats.reduce((acc: number, cur: any) => acc + (cur.cache_input_tokens || 0), 0);
-  const hitRate = totalIn > 0 && totalCacheIn > 0 ? Math.round((totalCacheIn / totalIn) * 100) : 0;
+  // 未缓存输入：优先取后端记录，缺失时（旧数据）用总输入减缓存兜底。
+  const totalUncached = props.stats.reduce(
+    (acc: number, cur: any) =>
+      acc + (cur.uncached_input_tokens != null ? Number(cur.uncached_input_tokens) : Math.max(0, (cur.input_tokens || 0) - (cur.cache_input_tokens || 0))),
+    0
+  );
+  const hitDenominator = totalUncached + totalCacheIn;
+  const hitRate = hitDenominator > 0 && totalCacheIn > 0 ? Math.round((totalCacheIn / hitDenominator) * 100) : 0;
   return {
     totalCalls: props.stats.length,
     totalDuration: (totalDuration / 1000).toFixed(2),
     totalIn,
     totalOut,
     totalCacheIn,
+    totalUncached,
     hitRate,
     hasCacheHit: totalCacheIn > 0,
   };
@@ -180,7 +197,30 @@ const statsSummary = computed(() => {
           >
             <div class="text-[10px]" :class="statsSummary.hasCacheHit ? 'text-emerald-600 dark:text-emerald-400 font-medium' : 'text-gray-400 dark:text-gray-500'">缓存命中</div>
             <div class="text-xs font-bold mt-0.5">
-              {{ statsSummary.totalCacheIn }}
+              {{ formatTokens(statsSummary.totalCacheIn) }}
+              <span v-if="statsSummary.hasCacheHit" class="text-[10px] font-normal">({{ statsSummary.hitRate }}%)</span>
+            </div>
+            <div class="text-[9px] text-gray-400 dark:text-gray-500 mt-0.5 font-sans">
+              未缓存 {{ formatTokens(statsSummary.totalUncached) }}
+            </div>
+          </div>
+        </div>
+
+        <!-- 输入构成两栏：未缓存输入 / 缓存读取 -->
+        <div class="grid grid-cols-2 gap-1.5 sm:gap-2">
+          <div class="bg-gray-50 dark:bg-gray-900/40 p-2 rounded-lg border border-gray-100/50 dark:border-gray-700/30">
+            <div class="text-[10px] text-gray-400 dark:text-gray-500">未缓存输入</div>
+            <div class="text-xs font-bold text-gray-700 dark:text-gray-200 mt-0.5 font-mono">{{ formatTokens(statsSummary.totalUncached) }}</div>
+          </div>
+          <div
+            class="p-2 rounded-lg border transition-colors"
+            :class="statsSummary.hasCacheHit
+              ? 'bg-emerald-50/60 dark:bg-emerald-950/30 border-emerald-200/80 dark:border-emerald-800/40 text-emerald-600 dark:text-emerald-400'
+              : 'bg-gray-50 dark:bg-gray-900/40 border-gray-100/50 dark:border-gray-700/30 text-gray-700 dark:text-gray-200'"
+          >
+            <div class="text-[10px]" :class="statsSummary.hasCacheHit ? 'text-emerald-600 dark:text-emerald-400 font-medium' : 'text-gray-400 dark:text-gray-500'">缓存读取</div>
+            <div class="text-xs font-bold mt-0.5 font-mono">
+              {{ formatTokens(statsSummary.totalCacheIn) }}
               <span v-if="statsSummary.hasCacheHit" class="text-[10px] font-normal">({{ statsSummary.hitRate }}%)</span>
             </div>
           </div>
@@ -229,15 +269,22 @@ const statsSummary = computed(() => {
               </div>
               <div class="flex justify-between items-center border-b border-gray-100/50 dark:border-gray-700/20 pb-1">
                 <span class="text-gray-400">输入 Token:</span>
-                <span class="font-medium text-gray-700 dark:text-gray-300 font-mono flex items-center">
+                <span class="font-medium text-gray-700 dark:text-gray-300 font-mono flex items-center flex-wrap justify-end gap-1">
                   {{ stat.input_tokens }}
-                  <span
-                    v-if="stat.cache_input_tokens > 0"
-                    class="inline-flex items-center px-1.5 py-0.2 rounded text-[10px] font-sans font-medium bg-emerald-50 text-emerald-600 dark:bg-emerald-950/40 dark:text-emerald-400 border border-emerald-200/60 dark:border-emerald-800/40 ml-1.5"
-                    :title="'命中上下文缓存 Token: ' + stat.cache_input_tokens"
-                  >
-                    命中: {{ stat.cache_input_tokens }} ({{ Math.round((stat.cache_input_tokens / stat.input_tokens) * 100) }}%)
-                  </span>
+                  <template v-if="stat.cache_input_tokens > 0">
+                    <span
+                      class="inline-flex items-center px-1.5 py-0.2 rounded text-[10px] font-sans font-medium bg-emerald-50 text-emerald-600 dark:bg-emerald-950/40 dark:text-emerald-400 border border-emerald-200/60 dark:border-emerald-800/40"
+                      :title="'命中上下文缓存 Token: ' + stat.cache_input_tokens"
+                    >
+                      缓存 {{ stat.cache_input_tokens }}
+                    </span>
+                    <span
+                      class="inline-flex items-center px-1.5 py-0.2 rounded text-[10px] font-sans font-medium bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-300 border border-gray-200/60 dark:border-gray-700/40"
+                      :title="'未缓存输入 Token: ' + uncachedTokens(stat)"
+                    >
+                      未缓存 {{ uncachedTokens(stat) }}
+                    </span>
+                  </template>
                 </span>
               </div>
               <div class="flex justify-between border-b border-gray-100/50 dark:border-gray-700/20 pb-1">
