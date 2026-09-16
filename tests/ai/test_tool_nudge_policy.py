@@ -1421,3 +1421,30 @@ def test_todo_and_task_list_does_not_nudge_data_sub_agent():
         )
 
         assert nudge is None
+
+
+def test_explicit_platform_docs_query_nudges_grep():
+    """明确询问平台使用手册/部署/报错排查时，强推 Grep 公共文档。"""
+    tools = [
+        _tool("Grep", "按关键词搜索文本"),
+        _tool("Read", "读取文件内容"),
+    ]
+    for q in ("请问平台使用手册在哪里", "平台怎么部署", "服务启动报错排查指南"):
+        nudge = resolve_tool_nudge(q, tools)
+        assert nudge is not None
+        assert nudge.tool_name == "Grep"
+        assert nudge.should_force_first_call is True
+
+
+def test_runtime_model_and_chit_chat_do_not_nudge_platform_docs():
+    """运行时状态询问、模型身份与普通闲聊绝不触发公共文档强推。"""
+    tools = [
+        _tool("Grep", "按关键词搜索文本"),
+        _tool("Read", "读取文件内容"),
+        _tool("get_current_model", "查询当前模型"),
+    ]
+    for q in ("现在是什么模型", "当前是什么模型", "测试你现在的这个模型速度呢", "你好", "会话状态"):
+        nudge = resolve_tool_nudge(q, tools)
+        if nudge is not None:
+            assert nudge.tool_name not in ("Grep", "Read")
+

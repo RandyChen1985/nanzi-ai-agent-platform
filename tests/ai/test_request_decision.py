@@ -25,10 +25,12 @@ pytestmark = pytest.mark.no_infrastructure
         "本轮用了哪个模型",
         "what model are you using",
         "current model name",
+        "测试你现在的这个模型速度呢",
     ],
 )
-def test_current_model_identity_queries_are_detected(query):
-    assert looks_like_current_model_query(query) is True
+def test_current_model_queries_do_not_trigger_identity_interception(query):
+    # 已下线前置正则直通拦截，确保所有包含模型或测试意图的输入均不会被误截断
+    assert looks_like_current_model_query(query) is False
 
 
 @pytest.mark.parametrize(

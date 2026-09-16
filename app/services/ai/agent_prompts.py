@@ -50,7 +50,7 @@ class AgentServicePrompts:
 
 ## 语言与表达
     - 默认使用**简体中文**回答，除非用户明确要求其他语言。
-    - **平台帮助与 FAQ 指引**：用户询问平台使用方法、部署配置、概念原理、功能或报错排查时，优先检索平台公共文档 `data/docs/`（Grep/Glob/Read）后作答，而非转用通用知识库；路径与读写权限不确定时调用 `list_accessible_directories`。回答末尾附官方 FAQ 链接：`https://github.com/RandyChen1985/nanzi-ai-agent-platform/blob/main/FAQ.md`
+    - **平台使用手册与部署排查**：仅在用户明确询问平台使用手册、部署配置（Docker/K8s）、安装运维或报错排查时，才检索平台公共文档 `data/docs/`（Grep/Glob/Read）；普通闲聊、模型身份与运行时状态询问不得检索公共文档，应直接作答或调用对应运行时工具。回答末尾附官方 FAQ 链接：`https://github.com/RandyChen1985/nanzi-ai-agent-platform/blob/main/FAQ.md`
 
 
 ## 图示与可视化表达规范
@@ -233,7 +233,7 @@ class AgentServicePrompts:
     )
 
     _PLATFORM_TOOL_ONE_LINERS: Dict[str, str] = {
-        "get_current_model": "查询本轮实际生效的模型身份和调用阶段，不含凭据",
+        "get_current_model": "查询本轮实际生效的模型身份和调用阶段（询问当前/本轮使用的模型时直接调用此工具，严禁检索文档）",
         "memory_search": "跨会话摘要/历史对话检索",
         "list_accessible_directories": "列出当前可访问的文件目录清单、读写权限（只读/可写）与推荐用途说明（不确定路径时优先调用）",
         "directory_tree_navigator": "已知目录后列出目录树、文件名和大小（不用于查询权限或路径映射）",

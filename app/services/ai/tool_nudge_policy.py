@@ -736,6 +736,53 @@ def _find_platform_doc_tool(tools: List[Any]) -> Any:
     return None
 
 
+_EXPLICIT_DOCS_QUERY_BLOCKERS = (
+    "现在是什么模型", "当前是什么模型", "用的是什么模型", "当前模型", "本轮模型",
+    "现在的模型", "这个模型", "使用的模型", "哪个模型", "模型速度", "模型名称", "模型id",
+    "系统状态", "运行状态", "会话状态", "会话信息", "上下文容量", "系统负载",
+    "cpu", "内存", "磁盘", "进程", "端口",
+    "我的信息", "个人信息", "当前用户", "我的角色", "我的权限", "用户信息",
+    "你好", "您好", "在吗", "早安", "晚安", "测试一下", "写一段", "帮我写",
+)
+
+_EXPLICIT_PLATFORM_DOCS_STRONG_KEYWORDS = (
+    # 手册/文档
+    "平台使用手册", "平台手册", "用户手册", "使用手册", "操作手册", "开发手册",
+    "运维手册", "使用说明书", "平台文档", "系统文档", "官方手册", "官方文档",
+    "部署文档", "部署手册", "部署指南", "安装指南", "安装手册", "安装教程",
+    "faq.md", "readme.md",
+    # 部署/安装运维
+    "怎么部署", "如何部署", "平台部署", "docker部署", "k8s部署", "kubernetes部署",
+    "怎么安装平台", "如何安装平台", "平台安装", "部署步骤", "部署流程",
+    # 报错排查/故障排查
+    "报错排查", "故障排查", "异常排查", "错误排查", "启动失败排查", "排查指南",
+    "服务启动失败", "部署报错",
+)
+
+
+def looks_like_explicit_platform_docs_query(user_question: str) -> bool:
+    """仅在用户明确询问“平台使用手册/怎么部署/报错排查”等文档或运维部署问题时返回 True。
+
+    普通闲聊、模型身份与运行时状态询问绝不触发公共文档检索。
+    """
+    q = (user_question or "").strip().lower()
+    if not q:
+        return False
+    if any(blocker in q for blocker in _EXPLICIT_DOCS_QUERY_BLOCKERS):
+        return False
+    if any(keyword in q for keyword in _EXPLICIT_PLATFORM_DOCS_STRONG_KEYWORDS):
+        return True
+    has_subject = any(s in q for s in ("平台", "系统", "nanzi"))
+    has_action = any(
+        a in q
+        for a in (
+            "使用手册", "操作手册", "说明文档", "开发文档",
+            "怎么部署", "如何部署", "部署步骤", "报错排查", "故障排查", "faq", "readme",
+        )
+    )
+    return has_subject and has_action
+
+
 def _resolve_platform_docs_nudge(tools: List[Any]) -> Optional[ToolNudge]:
     tool = _find_platform_doc_tool(tools)
     if tool is None:
@@ -746,7 +793,7 @@ def _resolve_platform_docs_nudge(tools: List[Any]) -> Optional[ToolNudge]:
         tool_name=tool_name,
         score=0.95,
         message=(
-            "【平台公共文档优先】本轮问题涉及智能体平台自身的功能、配置或开关说明。"
+            "【平台使用手册与部署排查优先】本轮问题明确涉及平台使用手册、部署安装配置或报错排查说明。"
             "平台公共文档 data/docs/ 仅宿主侧可读，沙箱 Bash 不可见；请优先通过宿主侧文件工具检索公共 docs/*.md（先用 Grep/Glob 定位，"
             "再用 Read 读取命中文档）后回答；严禁通过 Bash 访问或臆造 /workspace/docs、/app/data/docs 等路径。"
             "公共 docs 没有命中时，再按目录清单使用宿主工具读取服务根目录一级 /app/*.md（本地开发为项目根 *.md）帮助文档；"
@@ -1192,11 +1239,9 @@ def resolve_tool_nudge(
     if current_user_profile_nudge is not None:
         return _attach_tool_metadata(current_user_profile_nudge, tools, tool_metadata)
 
-    from app.services.ai.intent_service import looks_like_current_model_query
-
     if (
         request_decision.source == RequestSource.PLATFORM_SELF_HELP
-        and not looks_like_current_model_query(query)
+        and looks_like_explicit_platform_docs_query(query)
     ):
         platform_docs_nudge = _resolve_platform_docs_nudge(tools)
         if platform_docs_nudge is not None:

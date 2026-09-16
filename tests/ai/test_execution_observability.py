@@ -289,9 +289,23 @@ async def test_agent_service_publishes_execution_performance_snapshot(monkeypatc
         "_resolve_runtime_model_info_safe",
         AsyncMock(return_value=runtime_info),
     )
+    async def _mock_exec_run_1(ctx):
+        ctx.full_response_content = "测试回复"
+        if ctx.performance_tracker is not None:
+            ctx.performance_tracker.observe_chunk({"content": "测试回复"})
+        yield {
+            "type": "meta",
+            "agent_name": "main",
+            "agent_display_name": "main",
+            "agent_type": "general",
+            "model": runtime_info.effective_model_id,
+            "runtime_model_info": runtime_info.public_dict(),
+        }
+        yield {"content": "测试回复", "status": "success"}
+
     monkeypatch.setattr(
-        "app.services.ai.agent_service.looks_like_current_model_query",
-        lambda _query: True,
+        "app.services.ai.pipeline.steps.execution_step.ExecutionStep.run",
+        lambda self, ctx: _mock_exec_run_1(ctx),
     )
     audit = AsyncMock()
     monkeypatch.setattr(
@@ -406,9 +420,23 @@ async def test_default_main_decision_does_not_emit_router_log(monkeypatch):
         "_resolve_runtime_model_info_safe",
         AsyncMock(return_value=runtime_info),
     )
+    async def _mock_exec_run_2(ctx):
+        ctx.full_response_content = "测试回复"
+        if ctx.performance_tracker is not None:
+            ctx.performance_tracker.observe_chunk({"content": "测试回复"})
+        yield {
+            "type": "meta",
+            "agent_name": "main",
+            "agent_display_name": "main",
+            "agent_type": "general",
+            "model": runtime_info.effective_model_id,
+            "runtime_model_info": runtime_info.public_dict(),
+        }
+        yield {"content": "测试回复", "status": "success"}
+
     monkeypatch.setattr(
-        "app.services.ai.agent_service.looks_like_current_model_query",
-        lambda _query: True,
+        "app.services.ai.pipeline.steps.execution_step.ExecutionStep.run",
+        lambda self, ctx: _mock_exec_run_2(ctx),
     )
     monkeypatch.setattr(
         "app.services.ai.agent_service.AuditManager.log_transaction",

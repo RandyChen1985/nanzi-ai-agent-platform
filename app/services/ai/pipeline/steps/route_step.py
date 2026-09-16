@@ -14,8 +14,6 @@ from app.services.ai.agent_service import (
     _build_model_config_log,
     _build_preparation_parent_log,
     _public_agent_type,
-    looks_like_current_model_query,
-    build_current_model_answer,
 )
 from app.services.ai.quick_result_context import normalize_quick_result_context
 from app.services.ai.session_mcp_tools import apply_session_mcp_tools_to_agent_config
@@ -317,35 +315,12 @@ class RouteStep(BasePipelineStep):
                     phase="synthesis",
                 )
 
-        import app.services.ai.agent_service as agent_service_module
-
         if runtime_model_info:
             shared_state["runtime_model_info"] = runtime_model_info
             shared_state["synthesis_runtime_model_info"] = synthesis_runtime_model_info
             yield _build_model_config_log(runtime_model_info, synthesis_runtime_model_info)
             if context.performance_tracker is not None:
                 context.performance_tracker.mark("runtime_model_metadata")
-
-            # 直通模型问答
-            checker = getattr(agent_service_module, "looks_like_current_model_query", looks_like_current_model_query)
-            if checker(user_query):
-                response = build_current_model_answer(runtime_model_info)
-                agent_config.model_name = runtime_model_info.configured_model
-                context.full_response_content = response
-                if context.performance_tracker is not None:
-                    context.performance_tracker.observe_chunk({"content": response})
-                yield {
-                    "type": "meta",
-                    "agent_name": agent_config.agent_name,
-                    "agent_display_name": agent_config.agent_display_name or agent_config.agent_name,
-                    "agent_type": _public_agent_type(agent_config),
-                    "model": runtime_model_info.effective_model_id,
-                    "runtime_model_info": runtime_model_info.public_dict(),
-                }
-                yield {"content": response, "status": "success"}
-                context.execution_status = "answered_directly"
-                shared_state["execution_status"] = "answered_directly"
-                return
 
         if self.agent_service and hasattr(self.agent_service, "_rebuild_context_for_resolved_model"):
             messages = await self.agent_service._rebuild_context_for_resolved_model(
