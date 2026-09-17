@@ -39,8 +39,7 @@ export const MENU_TREE = [
         children: [
             { id: 'element:agent:create', label: '创建智能体' },
             { id: 'element:agent:edit', label: '编辑配置' },
-            { id: 'element:agent:delete', label: '删除智能体' },
-            { id: 'element:agent:embed_ticket_issue', label: '代他人签发嵌入凭证' }
+            { id: 'element:agent:delete', label: '删除智能体' }
         ]
     },
     {

@@ -60,7 +60,7 @@
                         <label class="block text-[11px] text-gray-500 mb-1">指定用户名 (可选，默认当前用户)</label>
                         <input type="text" v-model="config.targetUsername" class="w-full text-xs border-gray-200 rounded-md bg-white" placeholder="留空代表当前登录账号">
                         <p class="text-[10px] text-amber-700/90 mt-1">
-                            💡 普通用户仅可代表自己签发（留空或填写自己账号）；代他人签发需管理员或「代他人签发嵌入凭证」权限。
+                            💡 普通用户仅可代表自己签发（留空或填写自己账号）；代他人签发需管理员或在「API 权限」中授予「代他人签发嵌入凭证」权限。
                         </p>
                     </div>
                 </div>

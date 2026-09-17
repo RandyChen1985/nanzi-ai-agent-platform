@@ -3,7 +3,7 @@
 约定：
 - 登录响应体**不得**回传真实 API Key。凭据只经 HttpOnly Cookie 下发；一旦回传，
   任何能调用登录接口的人都能取得长期密钥，并可能在日志、代理或抓包中被留存。
-- `GET /api/v1/users/profile`（获取用户画像）**需要**返回真实 Key —— 这是业务依赖，
+- `GET /api/v1/users/profile`（获取用户信息）**需要**返回真实 Key —— 这是业务依赖，
   不得被顺手删掉。
 - `POST /api/portal/auth/api-key/reset`（重置）需回传新 Key，否则用户无法取回。
 - `GET /api/portal/auth/me` 不得回传凭据（本就逐字段构造，且调用方手上已有凭据）。
@@ -49,7 +49,7 @@ def test_me_endpoint_does_not_return_credential():
 
 
 def test_profile_endpoint_still_returns_real_credential():
-    """获取用户画像需要真实 Key —— 业务依赖，不得被误删。"""
+    """获取用户信息需要真实 Key —— 业务依赖，不得被误删。"""
     source = USERS_PY.read_text(encoding="utf-8")
 
     assert "AuthService.get_decrypted_api_key(user.id, db)" in source

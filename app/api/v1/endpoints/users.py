@@ -24,7 +24,7 @@ class UserProfile(BaseModel):
 @router.get("/profile", 
     response_model=StandardResponse[UserProfile],
     dependencies=[Depends(verify_v1_api_access)],
-    summary="获取用户画像",
+    summary="获取用户信息",
     description="获取当前或指定用户的详细信息（包括角色和权限）。展示 API Key。",
     responses={
         404: {"description": "用户未找到"},

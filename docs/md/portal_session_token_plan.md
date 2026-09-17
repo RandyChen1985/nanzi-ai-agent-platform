@@ -1,6 +1,6 @@
 # B 层改造方案：浏览器不再持有长期 API Key
 
-> 状态：**P0 / P1 / P2 / P3 均已完成**（`PORTAL_SESSION_TOKEN_ENABLED` 默认 true，浏览器不再持有真实 API Key，前端凭据通道已收敛至 HttpOnly Cookie，登录响应体已不再回传凭据；「获取用户画像」接口按业务需要保留返回真实 Key，详见 §11）
+> 状态：**P0 / P1 / P2 / P3 均已完成**（`PORTAL_SESSION_TOKEN_ENABLED` 默认 true，浏览器不再持有真实 API Key，前端凭据通道已收敛至 HttpOnly Cookie，登录响应体已不再回传凭据；「获取用户信息」接口按业务需要保留返回真实 Key，详见 §11）
 > 目标读者：后端 + 前端负责人
 > 前置：A 层加固已落地（Cookie Secure、user_info 去 api_key、安全响应头、登录锁定、CORS 告警）
 > 实际实现与本文最初设计的差异见文末「P0 实现记录」
@@ -251,14 +251,15 @@ cookie-only 兜底分支（`/api/portal/auth/user_apikey` + `credentials:'includ
 ## 11. P3 实施记录：登录响应体移除 `api_key`
 
 **已实施。** 此前一度记录为「按需求取消」，实为对需求的领会偏差：需要返回真实 Key 的是
-**「获取用户画像」接口**，而不是登录响应体。两者已分别处理。
+**「获取用户信息」接口**，而不是登录响应体。两者已分别处理。
 
 ### 变更内容
 
 - **移除**：`POST /auth/login`、`POST /auth/sso/login`、`POST /auth/login/2fa` 三处登录
   响应体不再回传 `api_key`，凭据只经 HttpOnly Cookie 下发。
-- **保留**：`GET /api/v1/users/profile`（获取用户画像）**仍返回真实 Key** —— 业务依赖，
-  `embed_service.py` 的 Ticket 代签权限判定即引用该接口；用户亦明确要求保留。
+- **保留**：`GET /api/v1/users/profile`（获取用户信息）**仍返回真实 Key** —— 业务依赖，用户亦明确要求保留。
+  （注：Ticket 代签权限判定早期曾引用该接口作为凭证，现已改用专用 API 权限码
+  `POST:/api/v1/embed/tickets`，该接口回归「获取用户信息」本义。）
 - **保留**：`POST /auth/api-key/reset` 回传新 Key（重置是显式低频操作，用户需据此配置
   外部集成）；`GET /management/api-key/{user_id}` 同理，由管理侧自助接口提供。
 

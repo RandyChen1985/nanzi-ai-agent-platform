@@ -125,12 +125,14 @@ async def test_embed_ticket_impersonation_permissions(client: AsyncClient, db_se
     1. 普通用户为自身签发 Ticket -> 200 成功
     2. 普通用户不传参数签发 Ticket (默认自身) -> 200 成功
     3. 普通用户尝试为他人签发 (无权限) -> 403 拒绝
-    4. 普通用户仅持旧权限 GET:/api/v1/users/profile -> 仍 403
-       （该权限已回归「获取用户画像」本义，不再兼作代客签发凭证）
-    5. 普通用户获得 element:agent:embed_ticket_issue 权限后代他人签发 -> 200 成功
+    4. 普通用户仅持旧的 GET:/api/v1/users/profile 权限 -> 仍 403
+       （该权限已回归「获取用户信息」本义，不再兼作代客签发凭证）
+    5. 普通用户获得 POST:/api/v1/embed/tickets 权限后代他人签发 -> 200 成功
 
-    代客签发使用独立的功能权限码 element:agent:embed_ticket_issue，可在后台
-    按角色分配；平台内智能体预览走「代表自己」分支，不经过本权限检查。
+    代客签发使用独立的 API 权限码 POST:/api/v1/embed/tickets，可在后台「API 权限」
+    中按角色分配。注意该权限码的实际语义是「可代表他人调用签发接口」：/embed/*
+    本身在 V1 接口白名单内不做拦截，而自己为自己签发也不需要本权限，
+    平台内智能体预览走「代表自己」分支，同样不经过本权限检查。
     """
     from app.services.permission_service import PermissionService
     from app.schemas.permission import PermissionUpdate
@@ -176,7 +178,7 @@ async def test_embed_ticket_impersonation_permissions(client: AsyncClient, db_se
         headers={"X-API-Key": user_a_key},
     )
     assert impersonate_resp.status_code == 403
-    assert "permission denied" in impersonate_resp.text.lower() or "embed_ticket_issue" in impersonate_resp.text
+    assert "permission denied" in impersonate_resp.text.lower() or "embed/tickets" in impersonate_resp.text
 
     # 4. 仅授予 user_a 旧的 'GET:/api/v1/users/profile' API 权限 -> 仍应 403
     #    该权限已回归本义，不再作为代客签发凭证；此断言锁定「只认新权限码」的策略。
@@ -192,10 +194,11 @@ async def test_embed_ticket_impersonation_permissions(client: AsyncClient, db_se
     )
     assert legacy_only_resp.status_code == 403
 
-    # 5. 授予 user_a 代客签发功能权限 -> 应该 200 成功
+    # 5. 授予 user_a 代客签发 API 权限 -> 应该 200 成功
+    #    （update_user_permissions 为覆盖式，上一步的旧权限会被清掉）
     await perm_service.update_user_permissions(
         user_id=user_a_id,
-        updates=PermissionUpdate(elements=["element:agent:embed_ticket_issue"]),
+        updates=PermissionUpdate(apis=["POST:/api/v1/embed/tickets"]),
     )
 
     # 6. user_a 再次为 user_b 代客签发 -> 应该 200 成功

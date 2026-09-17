@@ -533,8 +533,8 @@ frame.contentWindow.postMessage({
 ### Q2: 宿主后端调用 `/api/v1/embed/tickets` 报 `403 Forbidden`？
 
 - **解答**：若在请求体中指定了其他用户的 `username` 或 `user_id` 进行代客签发（Impersonation），调用方必须具备代客权限。
-- **解决方案**：请确保调用该接口的服务账号具备管理员权限（`admin`），或在【角色管理 → 智能体中心】中为其分配 `element:agent:embed_ticket_issue`（代他人签发嵌入凭证）功能权限。普通用户若未获授权只能为自身签发 Ticket。
-  > 早期版本该能力借用的是 `GET:/api/v1/users/profile`（获取用户画像）API 权限，现已改用上述独立功能权限码；若此前依赖旧权限，请重新分配。
+- **解决方案**：请确保调用该接口的服务账号具备管理员权限（`admin`），或在【角色管理 → API 权限】中为其分配 `POST:/api/v1/embed/tickets`（代他人签发嵌入凭证）权限。普通用户若未获授权只能为自身签发 Ticket。
+  > 早期版本该能力借用的是 `GET:/api/v1/users/profile`（获取用户信息）权限，现已改用上述专用权限码；若此前依赖旧权限，请重新分配。
 
 ### Q3: 报错 `404 Target user not found`？
 

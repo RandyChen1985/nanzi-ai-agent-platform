@@ -10,8 +10,8 @@ V1_API_PREFIX = "/api/v1"
 ASSIGNABLE_V1_API_RESOURCES: list[dict[str, str]] = [
     {
         "id": "GET:/api/v1/users/profile",
-        "name": "获取用户画像",
-        "description": "获取当前或指定用户的详细信息（包括角色和权限），并允许代表他人签发嵌入式 Ticket。",
+        "name": "获取用户信息",
+        "description": "获取当前或指定用户的详细信息（包括角色和权限）。",
         "group": "V1 用户服务",
         "method": "GET",
         "path": "/api/v1/users/profile",
@@ -31,6 +31,14 @@ ASSIGNABLE_V1_API_RESOURCES: list[dict[str, str]] = [
         "group": "V1 ChatBI",
         "method": "POST",
         "path": "/api/v1/chatbi/sql/execute",
+    },
+    {
+        "id": "POST:/api/v1/embed/tickets",
+        "name": "代他人签发嵌入凭证",
+        "description": "代表其他用户签发嵌入式 Ticket（Impersonation）。仅为自身签发无需此权限。",
+        "group": "V1 嵌入服务",
+        "method": "POST",
+        "path": "/api/v1/embed/tickets",
     },
 ]
 

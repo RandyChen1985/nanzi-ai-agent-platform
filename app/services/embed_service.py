@@ -69,10 +69,12 @@ class EmbedService:
         if target_user.status != 1:
             raise PermissionError("目标用户账号已被禁用，无法签发嵌入凭证")
 
-        # 代客身份安全拦截：若指定他人，必须是 admin 或具备「代他人签发嵌入凭证」功能权限
-        # （element:agent:embed_ticket_issue，可在后台按角色分配）。
-        # 历史上此处借用的是 GET:/api/v1/users/profile API 权限，已改为独立权限码——
-        # 该 API 权限回归「获取用户画像」本义，不再兼作签发凭证。
+        # 代客身份安全拦截：若指定他人，必须是 admin 或具备「代他人签发嵌入凭证」权限
+        # （API 权限码 POST:/api/v1/embed/tickets，可在后台「API 权限」中按角色分配）。
+        # 该权限码的实际语义是「可代表他人调用签发接口」：/embed/* 在 V1 接口白名单内
+        # 不做拦截，自己为自己签发也不需要本权限。
+        # 历史上此处借用的是 GET:/api/v1/users/profile API 权限，已改为专用权限码——
+        # 该 API 权限回归「获取用户信息」本义，不再兼作签发凭证。
         if is_specifying_other:
             if operator_user.get("role") != "admin":
                 from app.services.permission_service import PermissionService
@@ -80,13 +82,13 @@ class EmbedService:
                 op_uid = int(operator_user.get("user_id", 0))
                 has_perm = await perm_service.check_permission(
                     op_uid,
-                    "element",
-                    "element:agent:embed_ticket_issue",
+                    "api",
+                    "POST:/api/v1/embed/tickets",
                 )
                 if not has_perm:
                     raise PermissionError(
                         "无权代他人签发 Ticket：需要「代他人签发嵌入凭证」权限"
-                        "（element:agent:embed_ticket_issue），或由管理员操作。"
+                        "（POST:/api/v1/embed/tickets），或由管理员操作。"
                         "普通用户请留空或填写自己。"
                     )
 

@@ -526,10 +526,19 @@
                                     <div class="flex items-center gap-1.5 mb-0.5 min-w-0">
                                         <span class="font-bold text-gray-900 block truncate text-xs leading-tight">{{ res.platform_name || res.display_name || res.name }}</span>
                                         <span
+                                          v-if="res.method"
+                                          class="flex-shrink-0 text-[9px] px-1 py-0.5 rounded font-mono font-bold leading-none"
+                                          :class="methodBadgeClass(res.method)"
+                                        >{{ res.method }}</span>
+                                        <span
                                           v-if="isMissingKnowledgeBase(res)"
                                           class="flex-shrink-0 text-[9px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 font-semibold leading-none"
                                         >失联</span>
                                     </div>
+                                    <span
+                                      v-if="res.path"
+                                      class="text-gray-500 text-[9px] block truncate font-mono leading-tight"
+                                    >{{ res.path }}</span>
                                     <span class="text-gray-400 text-[9px] block truncate font-mono">{{ res.description || res.id }}</span>
                                 </div>
                             </label>
@@ -977,6 +986,22 @@ const fetchAllSystemTools = async () => {
 const isMissingKnowledgeBase = (res: any) => {
     if (activeResTab.value !== 'datasets') return false
     return Boolean(res?.is_missing_in_ragflow || res?.status === 'missing')
+}
+
+/**
+ * 请求方法徽章配色。
+ *
+ * 仅「外部API」资源带 method 字段，其余 tab 不会渲染该徽章。
+ */
+const methodBadgeClass = (method: string) => {
+    switch (String(method || '').toUpperCase()) {
+        case 'GET': return 'bg-emerald-50 text-emerald-600'
+        case 'POST': return 'bg-blue-50 text-blue-600'
+        case 'PUT':
+        case 'PATCH': return 'bg-amber-50 text-amber-600'
+        case 'DELETE': return 'bg-rose-50 text-rose-600'
+        default: return 'bg-gray-100 text-gray-500'
+    }
 }
 
 const resCardActiveClass = (resId: string) => {
