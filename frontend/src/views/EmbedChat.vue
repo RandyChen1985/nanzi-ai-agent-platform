@@ -6299,11 +6299,16 @@ const hasPermission = ref(true); // Default to true, strictly controlled by vali
 /** 调试台 strict_token 模式：仅校验 INIT_CONFIG 传入的 token，不走 localStorage / Cookie 兜底。 */
 const strictTokenValidation = ref(false);
 
-/** 仅在服务端校验通过后写入，避免 URL 里陈旧的 ?token= 覆盖刚登录写入的 api_key（父页 Chat.vue postMessage 会读 localStorage）。 */
+/** 仅在服务端校验通过后同步到内存，避免 URL 里陈旧的 ?token= 覆盖有效凭据。
+ *
+ * 凭据只保留在内存（config.token + axios 默认头）与同源 HttpOnly Cookie 中，**不再写入
+ * 任何本地存储**：localStorage 里的副本任何一次 XSS 都能带走，且会长期驻留。
+ * 这里顺带清理旧版本遗留的本地副本。
+ */
 const syncValidatedCredentials = (apiKey: string) => {
   config.token = apiKey;
-  localStorage.setItem("yovole_token", apiKey);
-  localStorage.setItem("api_key", apiKey);
+  localStorage.removeItem("api_key");
+  localStorage.removeItem("yovole_token");
   axios.defaults.headers.common["Authorization"] = `Bearer ${apiKey}`;
   axios.defaults.headers.common["X-API-Key"] = apiKey;
 };
@@ -6315,10 +6320,14 @@ const validateToken = async (options?: { strict?: boolean }): Promise<boolean> =
     currentUser.value = data as typeof currentUser.value;
   };
 
+  // 后端在收到长期 API Key 时会换发短期 embed 会话令牌；有则优先使用，让真实 Key 用后即弃。
+  let issuedSessionToken = "";
+
   const tryOnce = async (headers: Record<string, string>) => {
     const response = await axios.get("/api/portal/auth/user_apikey", { headers });
     if (response.status === 200 && response.data?.status === "success") {
       attachUser(response.data.data);
+      issuedSessionToken = String(response.data.data?.session_token || "");
       return true;
     }
     return false;
@@ -6335,9 +6344,8 @@ const validateToken = async (options?: { strict?: boolean }): Promise<boolean> =
     try {
       const ok = await tryOnce(authHeaders(token));
       if (ok) {
-        config.token = token;
-        axios.defaults.headers.common["Authorization"] = `Bearer ${token}`;
-        axios.defaults.headers.common["X-API-Key"] = token;
+        // 优先使用后端换发的短期会话令牌，真实 Key 用后即弃
+        syncValidatedCredentials(issuedSessionToken || token);
         console.log("[Auth] Strict validation success:", accountInfo.value?.user_name);
         return true;
       }
@@ -6353,9 +6361,8 @@ const validateToken = async (options?: { strict?: boolean }): Promise<boolean> =
     const s = t?.trim();
     if (s && !candidates.includes(s)) candidates.push(s);
   };
+  // 凭据不再从本地存储兜底读取；仅用内存中的 token，否则回落到下方的 Cookie 校验分支。
   add(config.token);
-  add(localStorage.getItem("api_key"));
-  add(localStorage.getItem("yovole_token"));
 
   console.log("[Auth] Starting validation, candidates:", candidates.length);
 
@@ -6363,7 +6370,8 @@ const validateToken = async (options?: { strict?: boolean }): Promise<boolean> =
     try {
       const ok = await tryOnce(authHeaders(key));
       if (ok) {
-        syncValidatedCredentials(key);
+        // 优先使用后端换发的短期会话令牌，真实 Key 用后即弃
+        syncValidatedCredentials(issuedSessionToken || key);
         console.log("[Auth] Validation success:", accountInfo.value?.user_name);
         return true;
       }

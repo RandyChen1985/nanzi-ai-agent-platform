@@ -483,8 +483,24 @@ const contextPayload = ref('{\n  "business_context": {\n    "ticket_id": "INC-10
         if (key.length <= 12) return key;
         return `${key.slice(0, 6)}...${key.slice(-4)}`;
     };
-    const resolveStoredApiKey = () => {
-        return localStorage.getItem('api_key') || localStorage.getItem('yovole_token') || '';
+    /**
+     * 取用于第三方接入代码的凭据。
+     *
+     * 这里必须用长期有效的真实 API Key，不能用浏览器会话令牌——会话令牌会随用户登出
+     * 而失效，写进给第三方的接入代码后会让集成随时中断。凭据按需向后端索取，
+     * 前端不再从 localStorage 读取（那里只有会话令牌）。
+     */
+    const resolveStoredApiKey = async (): Promise<string> => {
+        try {
+            const raw = localStorage.getItem('user_info');
+            const userId = raw ? JSON.parse(raw)?.user_id : null;
+            if (!userId) return '';
+            const res = await axios.get(`/api/portal/management/api-key/${userId}`);
+            return res.data?.api_key || '';
+        } catch (e) {
+            console.warn('[WidgetDebugger] 获取 API Key 失败，接入代码将使用占位值', e);
+            return '';
+        }
     };
 
     const escapeJsString = (value: string) => value.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
@@ -883,10 +899,9 @@ const isExpanded = ref(true);
         }
     };
 
-    const openIntegrationGuide = () => {
-        const storedKey = resolveStoredApiKey();
-        if (storedKey && !config.token) {
-            config.token = storedKey;
+    const openIntegrationGuide = async () => {
+        if (!config.token) {
+            config.token = await resolveStoredApiKey();
         }
         showIntegrationGuide.value = true;
         void fetchIntegrationAgents();
@@ -1056,12 +1071,11 @@ const handleMessage = (event: MessageEvent) => {
     }
 };
 
-onMounted(() => {
+onMounted(async () => {
     window.addEventListener('message', handleMessage);
-    // Auto-load token from current user session
-    const storedKey = resolveStoredApiKey();
-    if (storedKey) {
-        config.token = storedKey;
+    // 接入代码需要长期有效的真实 API Key（会话令牌登出即失效），改为按需向后端获取
+    if (!config.token) {
+        config.token = await resolveStoredApiKey();
     }
     void fetchIntegrationAgents();
     connect();

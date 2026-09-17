@@ -54,7 +54,8 @@ export interface DatasetPortalPayload {
 type ToastFn = (message: string, type?: "success" | "error" | "info") => void;
 
 export interface UseDatasetPortalOptions {
-  getAuthHeaders: () => Record<string, string>;
+  /** 凭据渲染回调；门户认证已由同源 HttpOnly Cookie 承载，调用方可不再提供 */
+  getAuthHeaders?: () => Record<string, string>;
   showToast: ToastFn;
   onQuickQuestion: (query: string, action?: "send" | "fill") => void | Promise<void>;
   /** 是否存在可查数智能体（用于静默预加载，不要求唯一） */
@@ -134,7 +135,7 @@ export function useDatasetPortal(options: UseDatasetPortalOptions) {
 
   const fetchDatasetMenuNavigationPayload = async (refresh = false) => {
     const res = await axios.get("/api/v1/chat/dataset-menu", {
-      headers: options.getAuthHeaders(),
+      headers: options.getAuthHeaders?.(),
       params: refresh ? { refresh: true } : undefined,
     });
     return (res.data?.data || {}) as DatasetPortalPayload;
@@ -156,7 +157,7 @@ export function useDatasetPortal(options: UseDatasetPortalOptions) {
           label: payload.label,
           group_id: payload.group_id,
         },
-        { headers: options.getAuthHeaders() },
+        { headers: options.getAuthHeaders?.() },
       );
     } catch (error) {
       console.warn("Failed to record dataset menu question click", error);
@@ -192,7 +193,7 @@ export function useDatasetPortal(options: UseDatasetPortalOptions) {
           dataset_menu_hash: datasetMenuHash,
           query,
         },
-        { headers: options.getAuthHeaders() },
+        { headers: options.getAuthHeaders?.() },
       );
       clearNavigationQuestionClickStats(navigation, query);
       if (navigation === portalNavigationPayload.value && portalNavigationPayload.value) {

@@ -6,22 +6,10 @@ import router from '@/router'
 
 import axios from 'axios'
 
-// 管理后台页面（含各类抽屉/弹窗组件）会直接使用全局 axios 实例。
-// 这里统一补上 X-API-Key，避免这些请求只依赖 admin_token Cookie 而在会话边界返回 401。
-// 嵌入页面的凭据由 EmbedChat 自行注入，此处不介入。
-axios.interceptors.request.use((config) => {
-  if (!config.headers) {
-    config.headers = {} as any
-  }
-  const hasAuth = config.headers['X-API-Key'] || config.headers['Authorization']
-  if (!hasAuth && !window.location.pathname.startsWith('/embed/')) {
-    const apiKey = localStorage.getItem('api_key')
-    if (apiKey) {
-      config.headers['X-API-Key'] = apiKey
-    }
-  }
-  return config
-})
+// 门户认证统一依赖同源 HttpOnly Cookie（admin_token），不再从 localStorage 注入 X-API-Key：
+// 凭据不进 JS 可读的存储，即使发生 XSS 也无法带走会话凭据。
+// 显式传入 X-API-Key / Authorization 的调用方不受影响（本文件不做任何覆盖）。
+// 嵌入场景的凭据由 EmbedChat 自行注入。
 
 // Global Axios Interceptor for 401 Unauthorized
 axios.interceptors.response.use(

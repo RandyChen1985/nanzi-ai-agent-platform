@@ -23,23 +23,9 @@ instance.interceptors.request.use(
       delete config.headers['Content-Type']
     }
 
-    // 只有当请求头中不存在 API 凭据相关字段时，才自动从 localStorage 添加
-    const hasAuth = config.headers['X-API-Key'] || config.headers['Authorization'];
-    
-    if (!hasAuth) {
-      // 1. 尝试读取 API Key (用于管理后台)
-      const apiKey = localStorage.getItem('api_key')
-      if (apiKey && config.headers) {
-        config.headers['X-API-Key'] = apiKey
-      }
-      
-      // 2. 尝试读取 JWT Token (用于 EmbedChat 集成模式)
-      const token = localStorage.getItem('yovole_token') || localStorage.getItem('admin_token')
-      if (token && config.headers && !config.headers['X-API-Key']) {
-        config.headers['Authorization'] = `Bearer ${token}`
-      }
-    }
-    
+    // 门户认证统一依赖同源 HttpOnly Cookie（admin_token），不再从 localStorage 注入任何凭据：
+    // 凭据不进 JS 可读的存储，即使发生 XSS 也无法带走会话凭据。
+    // 嵌入场景的显式 Bearer 令牌由其自身按需注入（EmbedChat / BrowserPanel）。
     return config
   },
   (error: AxiosError) => {

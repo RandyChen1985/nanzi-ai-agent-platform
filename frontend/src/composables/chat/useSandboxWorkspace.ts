@@ -6,7 +6,8 @@ export type SandboxWorkspaceStatus = "idle" | "starting" | "stopping" | "running
 export interface UseSandboxWorkspaceOptions {
   conversationId: Ref<string | null | undefined>;
   contextUsage: Ref<{ sandbox_policy?: string; sandbox_auto_warm?: boolean } | null | undefined>;
-  authHeaders: () => Record<string, string> | undefined;
+  /** 凭据渲染回调；门户认证已由同源 HttpOnly Cookie 承载，调用方可不再提供 */
+  authHeaders?: () => Record<string, string> | undefined;
   isProcessing?: Ref<boolean>;
   remoteRunActive?: Ref<boolean>;
   showToast: (msg: string, type?: "success" | "error" | "info" | "warning") => void;
@@ -85,7 +86,7 @@ export function useSandboxWorkspace(options: UseSandboxWorkspaceOptions) {
         `${sandboxWorkspaceBaseEndpoint.value}/status`,
         {
           params: { conversation_id: requestedConversationId },
-          headers: authHeaders(),
+          headers: authHeaders?.(),
         },
       );
       if (conversationId.value !== requestedConversationId) return;
@@ -142,7 +143,7 @@ export function useSandboxWorkspace(options: UseSandboxWorkspaceOptions) {
         try {
           const response = await axios.get(
             `${sandboxWorkspaceBaseEndpoint.value}/status`,
-            { params: { conversation_id: cid }, headers: authHeaders() },
+            { params: { conversation_id: cid }, headers: authHeaders?.() },
           );
           const data = response.data?.data ?? response.data;
           const mapped = mapSandboxStatus(String(data?.status || "idle"));
@@ -191,7 +192,7 @@ export function useSandboxWorkspace(options: UseSandboxWorkspaceOptions) {
       const response = await axios.post(
         `${sandboxWorkspaceBaseEndpoint.value}/ensure`,
         { conversation_id: conversationId.value, auto_warm: true },
-        { headers: authHeaders() },
+        { headers: authHeaders?.() },
       );
       const data = response.data?.data ?? response.data;
       if (data?.auto_warm_disabled) {
@@ -229,7 +230,7 @@ export function useSandboxWorkspace(options: UseSandboxWorkspaceOptions) {
       const response = await axios.post(
         `${sandboxWorkspaceBaseEndpoint.value}/ensure`,
         { conversation_id: requestedConversationId },
-        { headers: authHeaders() },
+        { headers: authHeaders?.() },
       );
       if (conversationId.value !== requestedConversationId) return;
       const data = response.data?.data ?? response.data;
@@ -282,7 +283,7 @@ export function useSandboxWorkspace(options: UseSandboxWorkspaceOptions) {
       await axios.post(
         `${sandboxWorkspaceBaseEndpoint.value}/stop`,
         { conversation_id: requestedConversationId },
-        { headers: authHeaders() },
+        { headers: authHeaders?.() },
       );
       if (conversationId.value !== requestedConversationId) return;
       sandboxWorkspaceStatus.value = "idle";
@@ -325,7 +326,7 @@ export function useSandboxWorkspace(options: UseSandboxWorkspaceOptions) {
       const response = await axios.post(
         `${sandboxWorkspaceBaseEndpoint.value}/restart`,
         { conversation_id: requestedConversationId },
-        { headers: authHeaders() },
+        { headers: authHeaders?.() },
       );
       if (conversationId.value !== requestedConversationId) return;
       const data = response.data?.data ?? response.data;

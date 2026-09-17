@@ -73,11 +73,7 @@ const refresh = async () => {
   refreshing.value = true;
   errorMessage.value = '';
   try {
-    const apiKey = localStorage.getItem('api_key');
-    if (!apiKey) {
-      logout();
-      return;
-    }
+    // 登录态以后端 /auth/me 为准：凭据已收敛为 HttpOnly Cookie，前端无法读取。
     const response = await axios.get('/api/portal/auth/me');
     if (response.data?.status === 'success' && response.data.data) {
       const userData = response.data.data;

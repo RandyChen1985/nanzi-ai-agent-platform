@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, status, Response, Header,
 from typing import Optional
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
+from app.core.config import settings
 from app.core.dependencies import require_api_key
 from app.core.orm import get_db_session
 from app.services.auth_service import AuthService
@@ -21,6 +22,42 @@ def _is_secure_request(request: Request) -> bool:
     if forwarded:
         return forwarded.split(",")[0].strip().lower() == "https"
     return request.url.scheme == "https"
+
+
+async def _issue_admin_token_cookie(
+    http_request: Request,
+    response: Response,
+    user_id: int,
+    user: dict,
+    db: AsyncSession,
+    credential: str,
+    *,
+    prewarm_cache: bool = True,
+) -> str:
+    """下发 admin_token cookie，并返回实际下发的凭据。
+
+    PORTAL_SESSION_TOKEN_ENABLED 开启时改用不透明会话令牌，浏览器不再持有真实
+    API Key；开关关闭或 Redis 不可用时自动回退到真实 API Key，保证登录始终可用。
+    """
+    session_token = None
+    if settings.PORTAL_SESSION_TOKEN_ENABLED:
+        session_token = await AuthService.create_portal_session(int(user_id), db=db)
+
+    issued = session_token or credential
+    response.set_cookie(
+        key="admin_token",
+        value=issued,
+        httponly=True,
+        max_age=86400,
+        samesite="lax",
+        secure=_is_secure_request(http_request),
+    )
+
+    # 会话令牌已在 create_portal_session 内写入认证缓存；真实 API Key 才需要预热
+    if not session_token and prewarm_cache:
+        await AuthService.register_online_state(credential, user)
+
+    return issued
 
 class LoginRequest(BaseModel):
     api_key: Optional[str] = Field(None, description="API 密钥", json_schema_extra={"example": "S63B_..."})
@@ -58,20 +95,13 @@ async def sso_login(
         if not api_key:
              raise HTTPException(500, "User has no valid API Key for session")
 
-        response.set_cookie(
-            key="admin_token",
-            value=api_key,
-            httponly=True,
-            max_age=86400,
-            samesite="lax",
-            secure=_is_secure_request(http_request)
+        # 下发会话凭据（开关开启时为不透明会话令牌）
+        api_key = await _issue_admin_token_cookie(
+            http_request, response, user_id, user, db, api_key
         )
-
-        # 注册在线状态到 Redis
-        await AuthService.register_online_state(api_key, user)
         # 记录用户登录时间
         await AuthService.record_user_login(user_id, db=db)
-        
+
         # 聚合权限信息返回给前端
         from app.services.permission_service import PermissionService
         perm_service = PermissionService(db)
@@ -113,14 +143,15 @@ async def login(
                 detail="无效的 API Key"
             )
         api_key = request.api_key
-        # Set cookie for API Key login
-        response.set_cookie(
-            key="admin_token",
-            value=request.api_key,
-            httponly=True,
-            max_age=86400,
-            samesite="lax",
-            secure=_is_secure_request(http_request)
+        # 下发会话凭据（开关开启时为不透明会话令牌）；verify_api_key 已预热过缓存
+        api_key = await _issue_admin_token_cookie(
+            http_request,
+            response,
+            int(user["user_id"]),
+            user,
+            db,
+            request.api_key,
+            prewarm_cache=False,
         )
         await AuthService.record_user_login(int(user["user_id"]), db=db)
 
@@ -170,16 +201,10 @@ async def login(
             if not api_key:
                  raise HTTPException(500, "User has no valid API Key for session")
 
-            response.set_cookie(
-                key="admin_token",
-                value=api_key,
-                httponly=True,
-                max_age=86400,
-                samesite="lax",
-                secure=_is_secure_request(http_request)
+            # 下发会话凭据（开关开启时为不透明会话令牌）
+            api_key = await _issue_admin_token_cookie(
+                http_request, response, user_id, user, db, api_key
             )
-            # 注册在线状态到 Redis
-            await AuthService.register_online_state(api_key, user)
             # 记录用户登录时间
             await AuthService.record_user_login(user_id, db=db)
         elif result["status"] == "error_no_password":
@@ -243,16 +268,10 @@ async def two_factor_login(
     if not api_key:
         raise HTTPException(500, "User has no valid API Key for session")
 
-    response.set_cookie(
-        key="admin_token",
-        value=api_key,
-        httponly=True,
-        max_age=86400,
-        samesite="lax",
-        secure=_is_secure_request(http_request)
+    # 下发会话凭据（开关开启时为不透明会话令牌）
+    api_key = await _issue_admin_token_cookie(
+        http_request, response, user_id, user, db, api_key
     )
-    # 注册在线状态到 Redis
-    await AuthService.register_online_state(api_key, user)
     # 记录用户登录时间
     await AuthService.record_user_login(user_id, db=db)
 
@@ -306,14 +325,22 @@ async def change_password(
 
 @router.post("/logout", summary="退出登录")
 async def logout(
+    http_request: Request,
     response: Response,
     api_key: Optional[str] = Header(None, alias="X-API-Key")
 ):
     """
     退出登录并清除 Cookie 和 Redis 缓存
     """
-    if api_key:
-        await AuthService.expire_api_key(api_key)
+    # 凭据优先取请求头，其次取 admin_token cookie：否则浏览器仅凭 cookie 认证时
+    # 服务端会话不会被吊销，登出就只是本地删了个 cookie。
+    credential = api_key or http_request.cookies.get("admin_token")
+
+    if credential:
+        if credential.startswith(AuthService.PORTAL_SESSION_PREFIX):
+            await AuthService.revoke_portal_session(credential)
+        else:
+            await AuthService.expire_api_key(credential)
         
     response.delete_cookie(key="admin_token")
     return {"status": "success", "message": "Logged out successfully"}
@@ -551,26 +578,42 @@ async def validate_user_apikey(
     用于 EmbedChat 或其他组件验证传入的 API Key 是否有效。
     通过 Authorization 头传递 Key。
     如果有效，返回 200 和基础用户信息。
+
+    若传入的是**长期 API Key**，响应会额外带上一次 embed 会话令牌（session_token）与
+    有效期；调用方应改用该令牌进行后续请求，让真实 Key 用后即弃。传入的已经是会话令牌时
+    不重复签发。Redis 不可用时该字段省略（Fail-Open），鉴权结果不受影响。
     """
     from app.services.config_service import ConfigService
+    from app.services.embed_service import EmbedService
+
     watermark_enabled = await ConfigService.get("embedchat_watermark_enabled") == "true"
     watermark_style = await ConfigService.get("embedchat_watermark_style") or "user_time"
     watermark_text = await ConfigService.get("embedchat_watermark_text") or "南孜系统"
 
+    data = {
+        "valid": True,
+        "user_id": user.get("user_id"),
+        "user_name": user.get("user_name"),
+        "real_name": user.get("real_name") or user.get("user_name"),
+        "role": user.get("role"),
+        "watermark": {
+            "enabled": watermark_enabled,
+            "style": watermark_style,
+            "text": watermark_text
+        }
+    }
+
+    # 已是会话令牌则无需再换发，避免每次校验都新写入一条 Redis 会话
+    credential = str(user.get("api_key") or "")
+    if not credential.startswith(("sess_", "emb_ses_")):
+        issued = await EmbedService.issue_session_from_user(user)
+        if issued:
+            data["session_token"] = issued["session_token"]
+            data["expires_in"] = issued["expires_in"]
+
     return {
         "status": "success",
-        "data": {
-            "valid": True,
-            "user_id": user.get("user_id"),
-            "user_name": user.get("user_name"),
-            "real_name": user.get("real_name") or user.get("user_name"),
-            "role": user.get("role"),
-            "watermark": {
-                "enabled": watermark_enabled,
-                "style": watermark_style,
-                "text": watermark_text
-            }
-        }
+        "data": data
     }
 
 
@@ -644,16 +687,12 @@ async def reset_my_api_key(
     if not new_api_key:
         raise HTTPException(status_code=500, detail="重置 API Key 失败")
 
-    # 同步更新当前会话 Cookie 与在线状态
-    response.set_cookie(
-        key="admin_token",
-        value=new_api_key,
-        httponly=True,
-        max_age=86400,
-        samesite="lax",
-        secure=_is_secure_request(http_request)
+    # 同步更新当前会话 Cookie（开关开启时为不透明会话令牌）。
+    # 响应体仍返回真实新 Key：重置是显式的低频操作，用户需要它去配置外部集成；
+    # 重置 API Key 不等同于登出，因此不退出现有会话。
+    await _issue_admin_token_cookie(
+        http_request, response, user_id, user, db, new_api_key
     )
-    await AuthService.register_online_state(new_api_key, user)
 
     return {
         "status": "success",

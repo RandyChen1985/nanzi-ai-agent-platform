@@ -81,6 +81,92 @@ class AuthService:
             if is_local:
                 await session.close()
 
+    # --- 门户会话令牌 ---
+    # 浏览器只持有这类不透明随机令牌，真实 API Key 不再下发到前端。
+    # 令牌写入 auth:api_key:{sha256(token)} —— 与真实 API Key 共用键空间，
+    # 因此 verify_api_key 无需任何分支即可校验，下游 ctx.api_key 也自动继续可用。
+    PORTAL_SESSION_PREFIX = "sess_"
+    # 与 admin_token cookie 的 max_age 一致。滑动续期复用 verify_api_key 中的会话分支，
+    # 该分支同样服务于 embed（其 TTL 亦为 86400）；若要调整，需同步确认两者。
+    PORTAL_SESSION_TTL_SECONDS = 86400
+    PORTAL_SESSION_TYPE = "portal"
+
+    @staticmethod
+    def _session_cache_key(token: str) -> str:
+        return f"auth:api_key:{get_api_key_manager().hash_api_key(token)}"
+
+    @staticmethod
+    def _user_model_to_data(user) -> Dict:
+        """User ORM -> 认证缓存 / 会话的统一数据结构（单一来源，避免字段漂移）。"""
+        return {
+            "user_id": str(user.id),
+            "user_name": user.user_name,
+            "real_name": user.real_name or user.user_name,
+            "role": user.role,
+            "dept_code": user.dept_code or "",
+            "org_path": user.org_path or "",
+            "extra_data": user.extra_data or "",
+            "created_at": user.created_at.strftime("%Y-%m-%d %H:%M:%S") if user.created_at else None,
+            "remark": user.remark or "",
+            "status": str(user.status),
+        }
+
+    @staticmethod
+    async def create_portal_session(user_id: int, db: Optional[AsyncSession] = None) -> Optional[str]:
+        """按 user_id 签发不透明会话令牌。
+
+        Redis 不可用时返回 None，调用方回退到真实 API Key —— 登录不能被缓存层拖垮。
+        """
+        redis = await get_redis()
+        if not redis:
+            logger.warning("Redis 不可用，无法签发会话令牌，本次回退到真实 API Key")
+            return None
+
+        session, is_local = await AuthService._get_session(db)
+        try:
+            result = await session.execute(select(User).where(User.id == int(user_id)))
+            user = result.scalar_one_or_none()
+            if not user or user.status != 1:
+                return None
+            user_data = AuthService._user_model_to_data(user)
+        finally:
+            if is_local:
+                await session.close()
+
+        token = f"{AuthService.PORTAL_SESSION_PREFIX}{secrets.token_urlsafe(32)}"
+        payload = {**user_data, "session_type": AuthService.PORTAL_SESSION_TYPE}
+        try:
+            await redis.hset(AuthService._session_cache_key(token), mapping=payload)
+            await redis.expire(
+                AuthService._session_cache_key(token),
+                AuthService.PORTAL_SESSION_TTL_SECONDS,
+            )
+        except Exception as exc:
+            logger.warning("写入会话令牌失败，本次回退到真实 API Key: %s", exc)
+            return None
+
+        return token
+
+    @staticmethod
+    async def revoke_portal_session(token: str) -> bool:
+        """吊销会话令牌（登出即生效）。
+
+        仅对会话令牌生效，避免误删真实 API Key 的认证缓存。
+        """
+        if not token or not token.startswith(AuthService.PORTAL_SESSION_PREFIX):
+            return False
+
+        redis = await get_redis()
+        if not redis:
+            return False
+
+        try:
+            await redis.delete(AuthService._session_cache_key(token))
+            return True
+        except Exception as exc:
+            logger.warning("吊销会话令牌失败: %s", exc)
+            return False
+
     # --- 登录失败锁定 ---
     # 密码登录是在线暴力破解的目标；按用户名计数，达到阈值后在窗口内拒绝继续尝试。
     LOGIN_FAILURE_LIMIT = 5
@@ -181,7 +267,7 @@ class AuthService:
                      pass # Fall through to DB
                  else:
                      # 自动滑动续期：若是 embed session token，只要活跃调用就延长 24 小时有效时间
-                     if cached_user.get("session_type") == "embed":
+                     if cached_user.get("session_type") in ("embed", "portal"):
                          try:
                              from app.services.embed_service import SESSION_TOKEN_TTL_SECONDS
                              await redis.expire(cache_key, SESSION_TOKEN_TTL_SECONDS)
@@ -199,18 +285,7 @@ class AuthService:
             
             user_data = None
             if user and user.status == 1:
-                user_data = {
-                    "user_id": str(user.id),
-                    "user_name": user.user_name,
-                    "real_name": user.real_name or user.user_name,
-                    "role": user.role,
-                    "dept_code": user.dept_code or "",
-                    "org_path": user.org_path or "",
-                    "extra_data": user.extra_data or "",
-                    "created_at": user.created_at.strftime("%Y-%m-%d %H:%M:%S") if user.created_at else None,
-                    "remark": user.remark or "",
-                    "status": str(user.status) # Add status to cache
-                }
+                user_data = AuthService._user_model_to_data(user)
             
             # 3. Cache to Redis
             if user_data and redis:

@@ -525,11 +525,6 @@ const conversationId = ref("");
 const metadataMountableDatasets = ref<Array<{ id: string; name?: string; description?: string; dataset_name?: string }>>([]);
 const sessionMountedMetadataDatasetIds = ref<string[]>([]);
 
-const debugAuthHeaders = (): Record<string, string> | undefined => {
-  const key = localStorage.getItem("api_key");
-  return key ? { "X-API-Key": key } : undefined;
-};
-
 const {
   remoteRunActive,
   refresh: refreshRemoteRunStatus,
@@ -538,7 +533,6 @@ const {
 } = useConversationRunStatus(async (cid) => {
   const response = await axios.get(
     `/api/v1/chat/conversation/${encodeURIComponent(cid)}/run-status`,
-    { headers: debugAuthHeaders() },
   );
   return response.data?.data || {};
 });
@@ -554,7 +548,7 @@ watch(conversationId, () => {
 }, { immediate: true });
 
 const finalizeConversationInBackground = (cid: string) => {
-  void finalizeConversation(cid, debugAuthHeaders());
+  void finalizeConversation(cid);
 };
 
 const resetDebugThinkingOverrides = () => {
@@ -614,9 +608,7 @@ const generateNewConversation = (isManual = false) => {
 
 const loadSessionHistory = async (id: string) => {
   try {
-    const res = await axios.get(`/api/v1/chat/conversation/${id}`, {
-      headers: { 'X-API-Key': localStorage.getItem('api_key') }
-    });
+    const res = await axios.get(`/api/v1/chat/conversation/${id}`);
     if (res.data?.data && Array.isArray(res.data.data.messages)) {
       // Deduplicate: Filter out consecutive messages with same role and content
       const rawMessages = res.data.data.messages;
@@ -1476,16 +1468,14 @@ const {
 const refreshDebugContextUsage = () => refreshContextUsage({
   conversationId: conversationId.value,
   modelId: debugConfig.model || undefined,
-  headers: debugAuthHeaders(),
 });
 const refreshDebugContextCompactions = (force = false) => refreshContextCompactions({
   conversationId: conversationId.value,
-  headers: debugAuthHeaders(),
 }, force);
 const manualCompactDebugContext = async (retainRatio: 0.25 | 0.5 | 0.75 = 0.5, mode: "fast" | "smart" = "fast") => {
   try {
-    const result = await manuallyCompactContext({ conversationId: conversationId.value, headers: debugAuthHeaders(), retainRatio, mode });
-    await refreshContextUsage({ conversationId: conversationId.value, modelId: debugConfig.model || undefined, headers: debugAuthHeaders() });
+    const result = await manuallyCompactContext({ conversationId: conversationId.value, retainRatio, mode });
+    await refreshContextUsage({ conversationId: conversationId.value, modelId: debugConfig.model || undefined });
     showToast(result?.compacted ? `上下文已压缩，预计节省 ${Number(result.saved_percent || 0)}%` : "当前没有可压缩的历史内容", result?.compacted ? "success" : "info");
   } catch {
     showToast("上下文压缩失败，请稍后重试", "error");
@@ -1515,7 +1505,7 @@ const {
 } = useSandboxWorkspace({
   conversationId,
   contextUsage,
-  authHeaders: debugAuthHeaders,
+  // 认证依赖同源 HttpOnly Cookie，无需再提供 authHeaders
   isProcessing,
   remoteRunActive,
   showToast,
@@ -1761,7 +1751,6 @@ const truncateServerHistory = async (keepCount: number): Promise<boolean> => {
     const response = await axios.post(
       "/api/v1/chat/history/truncate",
       { conversation_id: conversationId.value, keep_count: keepCount },
-      { headers: debugAuthHeaders() },
     );
     return response.data?.data?.success !== false;
   } catch (e) {
@@ -2575,7 +2564,7 @@ const {
   fetchDatasetMenuNavigationPayload,
   disposePortalTimers,
 } = useDatasetPortal({
-  getAuthHeaders: () => debugAuthHeaders() || {},
+  // 认证依赖同源 HttpOnly Cookie，无需再提供 getAuthHeaders
   showToast,
   onQuickQuestion: handleQuickQuestion,
   hasDataQueryAgent,
@@ -2592,7 +2581,7 @@ const {
 const loadMetadataMountableDatasets = async () => {
   if (metadataMountableDatasets.value.length) return;
   try {
-    const res = await axios.get("/api/portal/metadata/datasets/accessible", { headers: debugAuthHeaders() });
+    const res = await axios.get("/api/portal/metadata/datasets/accessible");
     const raw = res.data?.data || res.data?.datasets || res.data || [];
     metadataMountableDatasets.value = (Array.isArray(raw) ? raw : [])
       .filter((item: any) => item.status === undefined || item.status === 1 || item.status === "1" || item.status === "active")
@@ -2613,7 +2602,6 @@ const loadMetadataDatasetSessionScope = async () => {
   try {
     const res = await axios.get(
       `/api/v1/chat/conversation/${encodeURIComponent(conversationId.value)}/resource-scope`,
-      { headers: debugAuthHeaders() },
     );
     sessionMountedMetadataDatasetIds.value = (res.data?.data?.datasets || [])
       .map((item: any) => String(item.id || "").trim())
@@ -2646,7 +2634,6 @@ const mountMcpToolToSession = async (
   try {
     const res = await axios.get(
       `/api/v1/chat/conversation/${encodeURIComponent(conversationId.value)}/resource-scope`,
-      { headers: debugAuthHeaders() },
     );
     const scope = res.data?.data || { project_name: "", datasets: [], knowledge_bases: [], skills: [], mcp_tools: [] };
     const existing = scope.mcp_tools || [];
@@ -2663,7 +2650,6 @@ const mountMcpToolToSession = async (
         ...scope,
         mcp_tools: [...existing, ...toAdd],
       },
-      { headers: debugAuthHeaders() },
     );
     showToast(
       toAdd.length === 1 ? `已挂载 MCP 工具：${toAdd[0]?.name || ''}` : `已挂载 ${toAdd.length} 个 MCP 工具`,
@@ -2685,7 +2671,6 @@ const pinMetadataDatasetToSession = async (datasetId: string) => {
   try {
     const res = await axios.get(
       `/api/v1/chat/conversation/${encodeURIComponent(conversationId.value)}/resource-scope`,
-      { headers: debugAuthHeaders() },
     );
     const scope = res.data?.data || { project_name: "", datasets: [], knowledge_bases: [], skills: [], mcp_tools: [] };
     if ((scope.datasets || []).some((item: any) => String(item.id || "").trim() === id)) {
@@ -2701,7 +2686,6 @@ const pinMetadataDatasetToSession = async (datasetId: string) => {
     const saved = await axios.put(
       `/api/v1/chat/conversation/${encodeURIComponent(conversationId.value)}/resource-scope`,
       { ...scope, datasets: [...(scope.datasets || []), selected] },
-      { headers: debugAuthHeaders() },
     );
     sessionMountedMetadataDatasetIds.value = (saved.data?.data?.datasets || [...(scope.datasets || []), selected])
       .map((item: any) => String(item.id || "").trim())
@@ -2724,14 +2708,12 @@ const unpinMetadataDatasetFromSession = async (datasetId: string) => {
   try {
     const res = await axios.get(
       `/api/v1/chat/conversation/${encodeURIComponent(conversationId.value)}/resource-scope`,
-      { headers: debugAuthHeaders() },
     );
     const scope = res.data?.data || { project_name: "", datasets: [], knowledge_bases: [], skills: [], mcp_tools: [] };
     const nextDatasets = (scope.datasets || []).filter((item: any) => String(item.id || "").trim() !== id);
     const saved = await axios.put(
       `/api/v1/chat/conversation/${encodeURIComponent(conversationId.value)}/resource-scope`,
       { ...scope, datasets: nextDatasets },
-      { headers: debugAuthHeaders() },
     );
     sessionMountedMetadataDatasetIds.value = (saved.data?.data?.datasets || nextDatasets)
       .map((item: any) => String(item.id || "").trim())
@@ -3355,7 +3337,6 @@ const sendMessageInternal = async (snapshot: ChatSendSnapshot) => {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "X-API-Key": localStorage.getItem("api_key") || "",
       },
       body: JSON.stringify(requestBody),
       signal: abortController.signal,
@@ -3682,9 +3663,6 @@ const submitPendingExternalExecution = async (msg: Message) => {
       requestId: pending.external_execution_request_id,
       toolCall: pending.tool_call,
       output: pending.outputDraft || "(empty external result)",
-      headers: {
-        "X-API-Key": localStorage.getItem("api_key") || "",
-      },
       onEvent: (data) => applyPermissionStreamEvent(msg, data),
     });
   } catch (error: any) {
@@ -3943,7 +3921,6 @@ const confirmPendingPermission = async (msg: Message, confirmed: boolean) => {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "X-API-Key": localStorage.getItem("api_key") || "",
       },
       body: JSON.stringify({ confirmed }),
     });

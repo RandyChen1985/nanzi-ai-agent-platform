@@ -84,11 +84,8 @@ const isAuthFailure = (error: any) => {
 
 const fetchUserInfo = async () => {
   try {
-    const apiKey = localStorage.getItem("api_key");
-    if (!apiKey) {
-      router.push("/login");
-      return;
-    }
+    // 登录态一律以后端 /auth/me 的响应为准：门户会话凭据已收敛为 HttpOnly Cookie，
+    // 前端不再（也无法）通过读取 localStorage 判断是否登录。
 
     // First try to get from localStorage
     const cachedUserInfo = localStorage.getItem("user_info");

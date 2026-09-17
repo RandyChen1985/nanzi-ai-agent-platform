@@ -1225,9 +1225,8 @@ const installBrowserEnvironment = async () => {
   browserInstallStatus.value = 'running';
   installLogs.value = [];
   try {
-    const token = props.authToken || (typeof localStorage !== 'undefined'
-      ? localStorage.getItem('yovole_token') || localStorage.getItem('admin_token') || localStorage.getItem('token')
-      : '');
+    // 凭据由父级传入（EmbedChat 的 config.token）；同源场景由 HttpOnly Cookie 自动携带
+    const token = props.authToken;
     const response = await fetch('/api/v1/chat/browser/environment/install/stream', {
       method: 'POST',
       headers: {
@@ -1310,9 +1309,8 @@ const envLoading = ref(false);
 const fetchEnvironmentInfo = async (manual = false) => {
   envLoading.value = true;
   try {
-    const token = props.authToken || (typeof localStorage !== 'undefined'
-      ? localStorage.getItem('yovole_token') || localStorage.getItem('admin_token') || localStorage.getItem('token')
-      : '');
+    // 凭据由父级传入（EmbedChat 的 config.token）；同源场景由 HttpOnly Cookie 自动携带
+    const token = props.authToken;
     const res = await fetch('/api/v1/chat/browser/environment', {
       headers: token ? { Authorization: `Bearer ${token}` } : {},
     });

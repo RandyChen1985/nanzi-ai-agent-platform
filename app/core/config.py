@@ -48,6 +48,11 @@ class Settings(BaseSettings):
     # 仅建议在一个节点开启，避免多节点部署重复启动 APScheduler。
     TASK_SCHEDULER_ENABLED: bool = True
 
+    # 门户会话令牌：浏览器只持有不透明随机令牌（sess_...），真实 API Key 不再下发到前端。
+    # 令牌写入 auth:api_key 缓存键，现有校验链无需分支即可接受；滑动续期 24h。
+    # 置 false 可在 Redis 异常等场景快速回退到"cookie 直存真实 API Key"的旧行为。
+    PORTAL_SESSION_TOKEN_ENABLED: bool = True
+
     # Main database type: mysql (default) / postgresql
     DATABASE_TYPE: str = "mysql"
 

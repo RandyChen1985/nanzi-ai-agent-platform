@@ -36,7 +36,7 @@ def test_dashboard_does_not_clear_session_before_auth_failure_is_confirmed():
 
 
 def test_admin_console_views_share_the_authenticated_axios_instance():
-    """管理后台页面必须复用 utils/axios，才能自动携带 X-API-Key，而不是只靠 cookie。"""
+    """管理后台页面必须复用 utils/axios，以统一携带同源会话 Cookie 与 401 处理。"""
     for name in ("Users.vue", "Roles.vue", "KnowledgeMetrics.vue", "MetadataTables.vue"):
         source = _read(f"frontend/src/views/{name}")
 
@@ -67,15 +67,27 @@ def test_user_info_snapshot_never_persists_api_key():
         assert 'setItem("user_info"' not in source, path
 
 
-def test_global_axios_injects_api_key_for_admin_requests():
-    """全局 axios 也要补 X-API-Key，否则抽屉/弹窗组件只依赖 cookie，容易 401。"""
+def test_global_axios_does_not_inject_credentials_from_local_storage():
+    """门户凭据只走同源 HttpOnly Cookie，全局拦截器不得从 localStorage 注入凭据。
+
+    凭据不进入 JS 可读的存储，XSS 就无法带走会话；因此也不再需要按 /embed/ 路径区分。
+    """
     source = _read("frontend/src/main.ts")
 
-    assert "axios.interceptors.request.use" in source
-    assert "config.headers['X-API-Key']" in source
-    assert "localStorage.getItem('api_key')" in source
-    # 嵌入页面的凭据由 EmbedChat 自行注入，全局兜底不能介入
-    assert "!window.location.pathname.startsWith('/embed/')" in source
+    assert "config.headers['X-API-Key']" not in source
+    assert "localStorage.getItem('api_key')" not in source
+    assert "axios.interceptors.request" not in source
+
+
+def test_authenticated_axios_instance_does_not_inject_api_key():
+    """utils/axios 同样不再注入 X-API-Key；嵌入场景所需的 Bearer 令牌保留。"""
+    source = _read("frontend/src/utils/axios.ts")
+
+    # 不注入（赋值）X-API-Key；读取并尊重调用方已设置的头部是允许的
+    assert "config.headers['X-API-Key'] =" not in source
+    assert "localStorage.getItem('api_key')" not in source
+    # 同源 Cookie 要能自动携带，这是去掉显式凭据注入的前提
+    assert "withCredentials: true" in source
 
 
 def test_both_axios_401_interceptors_clear_the_same_credentials():
@@ -85,3 +97,22 @@ def test_both_axios_401_interceptors_clear_the_same_credentials():
 
         for key in ("api_key", "user_info", "admin_token", "yovole_token"):
             assert f"localStorage.removeItem('{key}')" in source, (path, key)
+
+
+def test_persist_user_info_purges_legacy_credential_copies():
+    """写入会话快照时应顺手清除旧版本残留在本地的凭据副本。
+
+    改造前登录/嵌入流程会把凭据写入 localStorage，已登录的老用户浏览器里可能仍有存量。
+    这些键如今已无任何写入方（前端也不再读取），因此统一在写入快照时清掉，避免长期滞留。
+    清理放在 persistUserInfo 而非单个页面：它是会话落盘的统一入口，覆盖全部调用方。
+    """
+    source = _read("frontend/src/utils/userSession.ts")
+    persist_section = source.split("export function persistUserInfo", 1)[1].split(
+        "export function", 1
+    )[0]
+
+    for key in ("api_key", "admin_token", "yovole_token"):
+        assert f"localStorage.removeItem('{key}')" in persist_section, key
+
+    # 登录阶段绝不能清除 admin_token Cookie——它现在是有效的会话凭据，由后端下发
+    assert "document.cookie" not in persist_section

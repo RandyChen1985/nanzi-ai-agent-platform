@@ -646,11 +646,8 @@ const executeDockerPrebuild = async () => {
     const baseImage = getTargetDockerBaseImage() || DEFAULT_DOCKER_BASE_IMAGE
     const params = new URLSearchParams()
     if (baseImage) params.set('base_image', baseImage)
-    const apiKey = localStorage.getItem('api_key')
-    const token = localStorage.getItem('yovole_token') || localStorage.getItem('admin_token')
+    // 凭据由同源 HttpOnly Cookie 自动携带（fetch 默认 same-origin）
     const headers: Record<string, string> = { Accept: 'text/event-stream' }
-    if (apiKey) headers['X-API-Key'] = apiKey
-    if (token) headers.Authorization = `Bearer ${token}`
     const response = await fetch(
       `/api/v1/admin/sandbox/docker/prebuild/stream?${params.toString()}`,
       {

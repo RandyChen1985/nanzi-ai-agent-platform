@@ -210,3 +210,60 @@ class EmbedService:
             },
             "agent_id": ticket_data.get("agent_id") or None,
         }
+
+    @staticmethod
+    async def issue_session_from_user(
+        user: Dict[str, Any],
+        agent_id: str = "",
+    ) -> Optional[Dict[str, Any]]:
+        """由**已完成鉴权**的用户信息签发 embed 会话令牌。
+
+        用于「真实 API Key 校验通过后换发短期令牌」的路径：调用方拿到 session_token 后
+        即可丢弃原凭据，避免长期 Key 在客户端或内存中长期驻留。
+
+        令牌写入既有的 auth 鉴权缓存，因此 `verify_api_key` 无需任何前缀分支即可校验；
+        `session_type="embed"` 会让它参与滑动续期（TTL 24 小时）。
+
+        Redis 不可用时返回 None（Fail-Open）：调用方据此回退为继续使用原凭据，
+        鉴权本身不受影响，不会因为缓存故障阻断嵌入场景。
+        """
+        redis = await get_redis()
+        if not redis:
+            logger.warning("[Embed] Redis unavailable, skip session token issuance")
+            return None
+
+        session_token = f"emb_ses_{secrets.token_urlsafe(32)}"
+        manager = get_api_key_manager()
+        hashed_token = manager.hash_api_key(session_token)
+        cache_key = f"auth:api_key:{hashed_token}"
+
+        # 只搬运鉴权必需字段；刻意不透传 user["api_key"]，避免真实凭据被写进会话缓存
+        user_session_data = {
+            "user_id": str(user.get("user_id", "")),
+            "user_name": user.get("user_name", ""),
+            "real_name": user.get("real_name") or user.get("user_name", ""),
+            "role": user.get("role", "user"),
+            "dept_code": user.get("dept_code") or "",
+            "org_path": user.get("org_path") or "",
+            "extra_data": user.get("extra_data") or "",
+            "remark": "Embed Session",
+            "status": "1",
+            "session_type": "embed",
+            "agent_id": agent_id or "",
+            "created_by_user_id": str(user.get("user_id", "")),
+        }
+
+        await redis.hset(cache_key, mapping=user_session_data)
+        await redis.expire(cache_key, SESSION_TOKEN_TTL_SECONDS)
+
+        logger.info(
+            "Embed session issued from authenticated user: user=%s session_token_prefix=%s ttl=%ds",
+            user.get("user_name"),
+            session_token[:12],
+            SESSION_TOKEN_TTL_SECONDS,
+        )
+
+        return {
+            "session_token": session_token,
+            "expires_in": SESSION_TOKEN_TTL_SECONDS,
+        }

@@ -230,18 +230,11 @@ interface MetadataAiStreamEvent<T> {
   data: MetadataAiProgress & { result?: T };
 }
 
-const metadataStreamAuthHeaders = (): Record<string, string> => {
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-    Accept: "text/event-stream",
-  };
-  const apiKey = localStorage.getItem("api_key");
-  const token = localStorage.getItem("yovole_token") || localStorage.getItem("admin_token");
-  if (apiKey) headers["X-API-Key"] = apiKey;
-  // 与 Axios 拦截器保持一致：API Key 优先，只有缺少 API Key 时才使用 JWT。
-  if (!apiKey && token) headers.Authorization = `Bearer ${token}`;
-  return headers;
-};
+// 凭据由同源 HttpOnly Cookie 自动携带（fetch 默认 same-origin），无需再手工注入。
+const metadataStreamAuthHeaders = (): Record<string, string> => ({
+  "Content-Type": "application/json",
+  Accept: "text/event-stream",
+});
 
 const parseMetadataSseBlock = <T>(block: string): MetadataAiStreamEvent<T> | null => {
   let event = "message";

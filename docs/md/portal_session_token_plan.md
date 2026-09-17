@@ -1,8 +1,9 @@
 # B 层改造方案：浏览器不再持有长期 API Key
 
-> 状态：**待评审，尚未动代码**
+> 状态：**P0 / P1 / P2 已完成**（`PORTAL_SESSION_TOKEN_ENABLED` 默认 true，浏览器不再持有真实 API Key，前端凭据通道已收敛至 HttpOnly Cookie）；**P3 已按需求取消**——登录响应体保留 `api_key` 属有意设计，理由见 §11
 > 目标读者：后端 + 前端负责人
 > 前置：A 层加固已落地（Cookie Secure、user_info 去 api_key、安全响应头、登录锁定、CORS 告警）
+> 实际实现与本文最初设计的差异见文末「P0 实现记录」
 
 ## 1. 目标与非目标
 
@@ -150,3 +151,122 @@ P1 与 P2 之间必须留观察窗口：这是唯一会出现"新旧凭据形态
 ## 8. 建议的下一步
 
 先只做 **P0 + 后端单测**（可独立评审、行为零变化、随时可弃），确认 Redis 持久化现状后再决定是否推进 P1。前端改造只有在前端负责人确认 20+ 处读取点的盘点结果后才开始。
+
+---
+
+## 9. P0 实现记录（已完成）
+
+### 9.1 实现比原设计更简单
+
+原设计打算新建 `portal:session:*` 键空间，并在 `verify_api_key` 里加 `sess_` 前缀分支。实际实现发现：**复用现有的 `auth:api_key:{sha256(token)}` 键空间即可，`verify_api_key` 无需任何分支**。
+
+原因：`register_online_state()` 本来就是"认证缓存预热"，写入的正是 `verify_api_key` 读取的键。因此签发时把令牌写进同一个键，现有校验链自动接受它——`dependencies.py` 与 AI 运行时下游**一处未改**。
+
+`verify_api_key` 仅有的一处改动：把滑动续期条件从 `session_type == "embed"` 扩展为 `in ("embed", "portal")`（两者 TTL 均为 86400）。
+
+### 9.2 顺带修掉的一个原有盲点
+
+`logout` 原来**只从 `X-API-Key` 请求头取凭据**：
+
+```python
+api_key: Optional[str] = Header(None, alias="X-API-Key")
+if api_key:
+    await AuthService.expire_api_key(api_key)
+```
+
+浏览器实际是凭 cookie 认证、并不发送该请求头，所以**登出从未真正吊销过服务端会话**，只是本地删掉了 cookie。P0 一并修正为"优先取请求头，其次取 `admin_token` cookie"，并区分会话令牌（`revoke_portal_session`）与真实 Key（`expire_api_key`）。
+
+### 9.3 两个设计决策
+
+- **重置 API Key 不吊销会话**：`reset_my_api_key` 的响应体仍返回真实新 Key（用户需要它去配置外部集成），但 cookie 换成会话令牌。重置不等同于登出；泄露的 Key 已立即失效，而浏览器本地令牌并未泄露，保留当前会话是合理体验。
+- **5 处下发放统一走 `_issue_admin_token_cookie`**：避免遗漏任何一条登录路径，并有契约测试锁定该数量。
+
+### 9.4 测试抓到的一个真实缺陷
+
+新增的"开关关闭时行为不变"测试首次真正执行了 helper，立刻暴露出 `register_online_state(resolved, user)` 的 `NameError`（重命名 `resolved` → `credential` 时漏改一处）。此前 11 个测试全绿，是因为没有任何用例走到那一行——这也印证了"开关关闭路径"必须被显式覆盖。
+
+### 9.5 文件清单（P0）
+
+| 文件 | 改动 |
+|---|---|
+| `app/services/auth_service.py` | 会话常量、`_session_cache_key`、`_user_model_to_data`、`create_portal_session`、`revoke_portal_session`、滑动续期分支 |
+| `app/api/portal/endpoints/auth.py` | `_issue_admin_token_cookie` 统一入口 + 5 处接入 + logout 吊销 |
+| `app/core/config.py` | `PORTAL_SESSION_TOKEN_ENABLED`（默认 true） |
+| `tests/services/test_portal_session_token.py` | 13 项测试（签发/校验/吊销/滑动/兼容真 key/开关行为/logout 契约） |
+
+### 9.6 Redis 依赖（P1 已按默认开启推进）
+
+`PORTAL_SESSION_TOKEN_ENABLED` 现已**默认开启**。这使 Redis 从"缓存"变为会话的**硬依赖**：
+数据丢失不再是缓存失效，而是全员掉线。
+
+仓库内没有 docker-compose 定义，k8s 配置指向外部 `redis.example.internal`，即 Redis 由运维侧
+独立提供，其 AOF/RDB 配置无法在本地核实。**请运维确认 Redis 已开启持久化**；若出现异常，
+将 `PORTAL_SESSION_TOKEN_ENABLED=false` 即可立即回退到旧行为（cookie 直存真实 API Key），
+已签发的令牌也随之失效，用户需重新登录。
+
+---
+
+## 10. P2 进展记录（凭据通道收敛）
+
+### 10.1 目标
+
+把浏览器里的凭据从"JS 可读的 localStorage"收敛到"JS 不可读的 HttpOnly Cookie"，
+使 XSS 无法窃取会话凭据。P1 已保证**浏览器里不再有真实 API Key**，P2 进一步消除
+"令牌副本可被脚本读取"这一残余面。
+
+### 10.2 改造顺序：先移除读取，再停止写入
+
+这个顺序把风险降到最低——在读取点全部移除前，`localStorage.api_key` 仍照常写入，
+任何一步都可独立回滚。
+
+1. **移除全局注入** ✓：`main.ts`、`utils/axios.ts` 不再从 localStorage 取 api_key 注入 `X-API-Key`
+2. **移除页面内手动注入**（27 处 / 19 个文件）：同源 Cookie 已承担该职责
+3. **停止写入** `localStorage.api_key`（`Login.vue`）：此时已无读取方，可以安全移除
+4. **解除登录态对 localStorage 的依赖** ✓：`Dashboard.vue` / `NoPermission.vue` / `Playground.vue`
+   不再以"本地有没有凭据"判断是否登录，改以后端 `/api/me` 响应为准
+
+### 10.3 保留显式凭据传递的三处（Cookie 无法替代）
+
+| 位置 | 为什么不能改用 Cookie | 处理方式 |
+|---|---|---|
+| `WidgetDebugger.vue` | 生成给**第三方宿主**的接入代码，凭据必须显式交付 | 改为向后端索取**真实 API Key** |
+| `Chat.vue` | `postMessage` 向同源 iframe 传初始化配置 | 初始化配置照常下发；token 仅在本地仍有值时附带，嵌入页有 cookie-only 兜底 |
+| `Playground.vue` | Scalar 外部 SDK 自行发起请求，不受本项目拦截器控制 | token 置空，依赖同源 Cookie |
+
+### 10.4 P1 引出的一个功能回归（已修）
+
+`WidgetDebugger` 原先用 `localStorage.api_key` 作为接入代码里的凭据。P1 之后那里是
+24 小时会话令牌，写进第三方接入代码会导致**用户一登出，集成立即失效**。
+
+已改为调用 `GET /api/portal/management/api-key/{user_id}` 取真实 API Key。该接口
+在读取自己的 Key 时不需要额外权限（`management.py` 中 `user_id == current_user_id`
+时跳过 `element:user:view_key` 校验），因此普通用户可用。
+
+### 10.5 嵌入场景保持独立
+
+`EmbedChat.vue` 继续管理自己的凭据，门户侧改造不介入该路径。它本身已有完整的
+cookie-only 兜底分支（`/api/portal/auth/user_apikey` + `credentials:'include'`），
+并在校验成功后主动清理 `localStorage.api_key` / `yovole_token`。
+
+## 11. P3 决策记录：登录响应体保留 `api_key`（按需求取消）
+
+原计划在 P3 移除 `POST /auth/login`、`/auth/sso/login`、`/auth/login/2fa` 响应体里的
+`api_key` 字段。**已确认取消**：返回凭据供调用方做鉴权判断是业务需要的行为，不属于缺陷，
+故保留不动。`POST /auth/api-key/reset` 返回真实新 Key 的设计同样保留（重置是显式的低频
+操作，用户需要它去配置外部集成）。
+
+排查过程中确认的事实，供后续改动参考：
+
+- `require_api_key`（`app/core/dependencies.py`）会把**本次请求使用的凭据**写入
+  `user_info["api_key"]`，供下游（SQL 执行服务、AI 运行时等）内部使用。因此
+  **凡是用 `**user` 整包展开的响应，都会把调用方凭据原样回显**。
+- 全仓 `**user` 展开共 4 处：`auth.py` 的 3 处（SSO 登录 / 登录 / 2FA，即上述有意保留的
+  三处）与 `management.py:73`。后者是 `for user in sso_users` 的循环变量，**不是**依赖注入
+  的字典，无凭据回显问题。
+- `GET /auth/me` 的入参虽同为 `Depends(require_api_key)`，但返回体是**逐字段显式取值**
+  （`user.get("user_id")` 等），未整包展开，因此不携带凭据。**这个安全性来自写法而非结构**：
+  若将来把它改成 `**user`，凭据会随之泄露，改动时需留意。
+
+前端侧维持现状：不写入、不读取 `localStorage.api_key`，认证依赖同源 HttpOnly Cookie。
+后端照常返回该字段，两者不冲突。
+

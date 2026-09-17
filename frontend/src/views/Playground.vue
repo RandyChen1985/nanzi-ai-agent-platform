@@ -3,16 +3,13 @@ import { ApiReference } from '@scalar/api-reference'
 import '@scalar/api-reference/style.css'
 import { computed, ref, onMounted } from 'vue'
 
-const apiKey = ref(localStorage.getItem('api_key') || '')
+// 门户凭据由同源 HttpOnly Cookie 承载，前端不再从 localStorage 读取。
+// token 为空时，Scalar 的 Try-it 请求仍会携带同源 Cookie。
+const apiKey = ref('')
 const specContent = ref<any>(null)
 const authError = ref(false)
 
 onMounted(async () => {
-  if (!apiKey.value) {
-    authError.value = true
-    return
-  }
-
   try {
     const response = await fetch('/openapi.json')
     if (!response.ok) throw new Error('Failed to fetch openapi.json')

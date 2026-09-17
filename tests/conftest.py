@@ -2,12 +2,14 @@ import pytest
 import asyncio
 import logging
 import os
+import time
 from httpx import AsyncClient, ASGITransport
 from app.main import app
 from app.core import database, redis
 from sqlalchemy import delete
 from app.models.user import User
 from app.core.orm import AsyncSessionLocal
+from app.services.audit_service import AuditService
 from app.utils.encryption import get_api_key_manager
 from unittest.mock import AsyncMock, patch
 
@@ -175,3 +177,42 @@ def valid_api_key() -> str:
 @pytest.fixture
 def admin_api_key() -> str:
     return "TestAdmin_4wMogHLKDhTDmdwaYFs2ubNDVLXq6Fp4egn0uQ"
+
+
+@pytest.fixture
+def wait_for_access_log():
+    """等待审计日志落库，返回该 trace_id 的记录（超时返回 None）。
+
+    审计日志由中间件挂在响应的 `BackgroundTask` 上，**在响应返回之后**才入队；
+    而 `AuditService.flush()` 只排空进程内队列。若 background 尚未执行，flush 就是
+    空转，随后立刻查库会读到"还没写入"——这正是既有测试随机失败的原因（非功能缺陷）。
+
+    这里改为轮询等待；超时仍返回 None，因此调用方的 `assert row is not None`
+    强度不变，真正写不进去时依旧会失败。
+    """
+    async def _wait(trace_id: str, timeout: float = 5.0):
+        from sqlalchemy import text
+
+        deadline = time.monotonic() + timeout
+        while True:
+            await AuditService.flush()
+            async with AsyncSessionLocal() as session:
+                result = await session.execute(
+                    text(
+                        "SELECT request_params, user_name, status_code "
+                        "FROM ai_agent_access_logs WHERE trace_id = :trace_id"
+                    ),
+                    {"trace_id": trace_id},
+                )
+                row = result.fetchone()
+            if row is not None:
+                return {
+                    "request_params": row[0],
+                    "user_name": row[1],
+                    "status_code": row[2],
+                }
+            if time.monotonic() >= deadline:
+                return None
+            await asyncio.sleep(0.05)
+
+    return _wait

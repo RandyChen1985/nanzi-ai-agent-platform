@@ -19,14 +19,11 @@ type CodeExecutionEvent = {
   data: Record<string, any>;
 };
 
-const getAuthHeaders = (): Record<string, string> => {
-  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-  const apiKey = localStorage.getItem('api_key');
-  const token = localStorage.getItem('yovole_token') || localStorage.getItem('admin_token');
-  if (apiKey) headers['X-API-Key'] = apiKey;
-  if (token) headers.Authorization = `Bearer ${token}`;
-  return headers;
-};
+// 凭据由同源 HttpOnly Cookie 自动携带（fetch 默认 same-origin），无需再手工注入。
+// 旧版本会从 localStorage 兜底读取，但全站已无写入方，该回退恒为空值。
+const getAuthHeaders = (): Record<string, string> => ({
+  'Content-Type': 'application/json',
+});
 
 const parseSseBlock = (block: string): CodeExecutionEvent | null => {
   let event = 'message';
