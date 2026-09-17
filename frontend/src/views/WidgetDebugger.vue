@@ -60,7 +60,7 @@
                         <label class="block text-[11px] text-gray-500 mb-1">指定用户名 (可选，默认当前用户)</label>
                         <input type="text" v-model="config.targetUsername" class="w-full text-xs border-gray-200 rounded-md bg-white" placeholder="留空代表当前登录账号">
                         <p class="text-[10px] text-amber-700/90 mt-1">
-                            💡 普通用户仅可代表自己签发（留空或填写自己账号）；代他人签发需管理员或「获取用户画像」权限。
+                            💡 普通用户仅可代表自己签发（留空或填写自己账号）；代他人签发需管理员或「代他人签发嵌入凭证」权限。
                         </p>
                     </div>
                 </div>
@@ -201,7 +201,7 @@
               </svg>
               <div class="leading-relaxed">
                 <span class="font-bold text-rose-800">安全规范提示：</span>
-                旧版直接在前端传递长期 API Key 的方式仅作为存量系统向后兼容，存在凭证外泄风险，<strong>不推荐在生产环境中使用</strong>。新系统集成强烈推荐使用 <strong>⭐ 临时 Ticket 模式</strong>（由宿主后端内网申请 5 分钟一次性门票，前端免密兑换并支持滑动续期）。
+                旧版直接在前端传递长期 API Key 的方式仅作为存量系统向后兼容，存在凭证外泄风险，<strong>不推荐在生产环境中使用</strong>。新系统集成强烈推荐使用 <strong>⭐ 临时 Ticket 模式</strong>（由宿主后端内网申请 5 分钟一次性票据，前端免密兑换并支持滑动续期）。
               </div>
             </div>
 

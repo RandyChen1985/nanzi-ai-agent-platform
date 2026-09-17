@@ -124,8 +124,13 @@ async def test_embed_ticket_impersonation_permissions(client: AsyncClient, db_se
     测试代客签发 (Impersonation) 权限边界：
     1. 普通用户为自身签发 Ticket -> 200 成功
     2. 普通用户不传参数签发 Ticket (默认自身) -> 200 成功
-    3. 普通用户尝试为他人签发 (无 GET:/api/v1/users/profile 权限) -> 403 拒绝
-    4. 普通用户获得 GET:/api/v1/users/profile 权限后代他人签发 -> 200 成功
+    3. 普通用户尝试为他人签发 (无权限) -> 403 拒绝
+    4. 普通用户仅持旧权限 GET:/api/v1/users/profile -> 仍 403
+       （该权限已回归「获取用户画像」本义，不再兼作代客签发凭证）
+    5. 普通用户获得 element:agent:embed_ticket_issue 权限后代他人签发 -> 200 成功
+
+    代客签发使用独立的功能权限码 element:agent:embed_ticket_issue，可在后台
+    按角色分配；平台内智能体预览走「代表自己」分支，不经过本权限检查。
     """
     from app.services.permission_service import PermissionService
     from app.schemas.permission import PermissionUpdate
@@ -164,23 +169,36 @@ async def test_embed_ticket_impersonation_permissions(client: AsyncClient, db_se
     assert self_resp2.status_code == 200
     assert self_resp2.json()["data"]["target_user"]["user_name"] == user_a_name
 
-    # 3. user_a 试图为 user_b 代客签发（此时 user_a 无 GET:/api/v1/users/profile 权限）-> 应该 403 拒绝
+    # 3. user_a 试图为 user_b 代客签发（此时无任何相关权限）-> 应该 403 拒绝
     impersonate_resp = await client.post(
         "/api/v1/embed/tickets",
         json={"username": user_b_name},
         headers={"X-API-Key": user_a_key},
     )
     assert impersonate_resp.status_code == 403
-    assert "permission denied" in impersonate_resp.text.lower() or "GET:/api/v1/users/profile" in impersonate_resp.text
+    assert "permission denied" in impersonate_resp.text.lower() or "embed_ticket_issue" in impersonate_resp.text
 
-    # 4. 授予 user_a 'GET:/api/v1/users/profile' API 权限
+    # 4. 仅授予 user_a 旧的 'GET:/api/v1/users/profile' API 权限 -> 仍应 403
+    #    该权限已回归本义，不再作为代客签发凭证；此断言锁定「只认新权限码」的策略。
     perm_service = PermissionService(db_session)
     await perm_service.update_user_permissions(
         user_id=user_a_id,
-        permissions=PermissionUpdate(apis=["GET:/api/v1/users/profile"]),
+        updates=PermissionUpdate(apis=["GET:/api/v1/users/profile"]),
+    )
+    legacy_only_resp = await client.post(
+        "/api/v1/embed/tickets",
+        json={"username": user_b_name},
+        headers={"X-API-Key": user_a_key},
+    )
+    assert legacy_only_resp.status_code == 403
+
+    # 5. 授予 user_a 代客签发功能权限 -> 应该 200 成功
+    await perm_service.update_user_permissions(
+        user_id=user_a_id,
+        updates=PermissionUpdate(elements=["element:agent:embed_ticket_issue"]),
     )
 
-    # 5. user_a 再次为 user_b 代客签发 -> 应该 200 成功
+    # 6. user_a 再次为 user_b 代客签发 -> 应该 200 成功
     authorized_impersonate_resp = await client.post(
         "/api/v1/embed/tickets",
         json={"username": user_b_name},

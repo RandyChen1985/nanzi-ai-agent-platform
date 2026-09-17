@@ -69,7 +69,10 @@ class EmbedService:
         if target_user.status != 1:
             raise PermissionError("目标用户账号已被禁用，无法签发嵌入凭证")
 
-        # 代客身份安全拦截：若指定他人，必须是 admin 或具备 GET:/api/v1/users/profile API 权限
+        # 代客身份安全拦截：若指定他人，必须是 admin 或具备「代他人签发嵌入凭证」功能权限
+        # （element:agent:embed_ticket_issue，可在后台按角色分配）。
+        # 历史上此处借用的是 GET:/api/v1/users/profile API 权限，已改为独立权限码——
+        # 该 API 权限回归「获取用户画像」本义，不再兼作签发凭证。
         if is_specifying_other:
             if operator_user.get("role") != "admin":
                 from app.services.permission_service import PermissionService
@@ -77,12 +80,14 @@ class EmbedService:
                 op_uid = int(operator_user.get("user_id", 0))
                 has_perm = await perm_service.check_permission(
                     op_uid,
-                    "api",
-                    "GET:/api/v1/users/profile",
+                    "element",
+                    "element:agent:embed_ticket_issue",
                 )
                 if not has_perm:
                     raise PermissionError(
-                        "无权代他人签发 Ticket：仅管理员或具备「GET:/api/v1/users/profile（获取用户画像）」权限的账号允许代表其他用户签发凭证。普通用户请留空或填写自己。"
+                        "无权代他人签发 Ticket：需要「代他人签发嵌入凭证」权限"
+                        "（element:agent:embed_ticket_issue），或由管理员操作。"
+                        "普通用户请留空或填写自己。"
                     )
 
         # 2. 生成高熵 Ticket 字符串
