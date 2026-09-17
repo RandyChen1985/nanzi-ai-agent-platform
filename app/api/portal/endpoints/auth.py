@@ -111,7 +111,6 @@ async def sso_login(
             "status": "success",
             "data": {
                 **user,
-                "api_key": api_key,
                 "permissions": perms_response.permissions.model_dump()
             }
         }
@@ -233,7 +232,6 @@ async def login(
         "status": "success",
         "data": {
             **user,
-            "api_key": api_key,  # Include API Key for frontend storage
             "permissions": perms_response.permissions.model_dump()
         }
     }
@@ -284,7 +282,6 @@ async def two_factor_login(
         "status": "success",
         "data": {
             **user,
-            "api_key": api_key,
             "permissions": perms_response.permissions.model_dump()
         }
     }

@@ -1,6 +1,6 @@
 # B 层改造方案：浏览器不再持有长期 API Key
 
-> 状态：**P0 / P1 / P2 已完成**（`PORTAL_SESSION_TOKEN_ENABLED` 默认 true，浏览器不再持有真实 API Key，前端凭据通道已收敛至 HttpOnly Cookie）；**P3 已按需求取消**——登录响应体保留 `api_key` 属有意设计，理由见 §11
+> 状态：**P0 / P1 / P2 / P3 均已完成**（`PORTAL_SESSION_TOKEN_ENABLED` 默认 true，浏览器不再持有真实 API Key，前端凭据通道已收敛至 HttpOnly Cookie，登录响应体已不再回传凭据；「获取用户画像」接口按业务需要保留返回真实 Key，详见 §11）
 > 目标读者：后端 + 前端负责人
 > 前置：A 层加固已落地（Cookie Secure、user_info 去 api_key、安全响应头、登录锁定、CORS 告警）
 > 实际实现与本文最初设计的差异见文末「P0 实现记录」
@@ -92,10 +92,10 @@ if api_key.startswith("sess_"):
 
 | 阶段 | 内容 | 影响面 |
 |---|---|---|
-| P0 | 实现 + 配置开关 `PORTAL_SESSION_TOKEN_ENABLED`（默认 **false**）→ 部署 | 行为零变化 |
+| P0 | 实现 + 配置开关 `PORTAL_SESSION_TOKEN_ENABLED`（现默认 **true**）→ 部署 | 行为零变化 |
 | P1 | 打开开关，只影响**新登录**的会话 | 老用户无感 |
 | P2 | 前端移除 `X-API-Key` 注入（靠 cookie 自动携带） | 老会话 cookie 里仍是真 key，仍工作 |
-| P3 | 前端停止写 `localStorage.api_key`；响应体移除 `api_key` 字段 | 用户**下次登录**后浏览器中彻底无真 key |
+| P3 | 前端停止写 `localStorage.api_key`；登录响应体移除 `api_key` 字段 | 登录响应与浏览器中均无真 key |
 
 P1 与 P2 之间必须留观察窗口：这是唯一会出现"新旧凭据形态混合"的时期。
 
@@ -248,25 +248,41 @@ if api_key:
 cookie-only 兜底分支（`/api/portal/auth/user_apikey` + `credentials:'include'`），
 并在校验成功后主动清理 `localStorage.api_key` / `yovole_token`。
 
-## 11. P3 决策记录：登录响应体保留 `api_key`（按需求取消）
+## 11. P3 实施记录：登录响应体移除 `api_key`
 
-原计划在 P3 移除 `POST /auth/login`、`/auth/sso/login`、`/auth/login/2fa` 响应体里的
-`api_key` 字段。**已确认取消**：返回凭据供调用方做鉴权判断是业务需要的行为，不属于缺陷，
-故保留不动。`POST /auth/api-key/reset` 返回真实新 Key 的设计同样保留（重置是显式的低频
-操作，用户需要它去配置外部集成）。
+**已实施。** 此前一度记录为「按需求取消」，实为对需求的领会偏差：需要返回真实 Key 的是
+**「获取用户画像」接口**，而不是登录响应体。两者已分别处理。
 
-排查过程中确认的事实，供后续改动参考：
+### 变更内容
 
-- `require_api_key`（`app/core/dependencies.py`）会把**本次请求使用的凭据**写入
-  `user_info["api_key"]`，供下游（SQL 执行服务、AI 运行时等）内部使用。因此
-  **凡是用 `**user` 整包展开的响应，都会把调用方凭据原样回显**。
-- 全仓 `**user` 展开共 4 处：`auth.py` 的 3 处（SSO 登录 / 登录 / 2FA，即上述有意保留的
-  三处）与 `management.py:73`。后者是 `for user in sso_users` 的循环变量，**不是**依赖注入
-  的字典，无凭据回显问题。
-- `GET /auth/me` 的入参虽同为 `Depends(require_api_key)`，但返回体是**逐字段显式取值**
-  （`user.get("user_id")` 等），未整包展开，因此不携带凭据。**这个安全性来自写法而非结构**：
-  若将来把它改成 `**user`，凭据会随之泄露，改动时需留意。
+- **移除**：`POST /auth/login`、`POST /auth/sso/login`、`POST /auth/login/2fa` 三处登录
+  响应体不再回传 `api_key`，凭据只经 HttpOnly Cookie 下发。
+- **保留**：`GET /api/v1/users/profile`（获取用户画像）**仍返回真实 Key** —— 业务依赖，
+  `embed_service.py` 的 Ticket 代签权限判定即引用该接口；用户亦明确要求保留。
+- **保留**：`POST /auth/api-key/reset` 回传新 Key（重置是显式低频操作，用户需据此配置
+  外部集成）；`GET /management/api-key/{user_id}` 同理，由管理侧自助接口提供。
+
+### 影响面核对
+
+三处登录响应体原为 `{**user, "api_key": api_key, "permissions": ...}`。已确认
+`authenticate_sso_user` / `verify_user_password` 构造的 `user` 字典**本身不含**
+`api_key`（字段固定为 user_id / user_name / real_name / role / dept_code / org_path /
+extra_data / created_at / remark / two_factor_enabled），故删除该行即可，无需额外 pop。
+
+前端无一处依赖登录响应体的 `api_key`：`Login.vue` 只是**提交** `api_key`（API Key 登录
+表单的输入项）；`Dashboard.vue` / `PersonalCenter.vue` / `Users.vue` / `WidgetDebugger.vue`
+的 Key 展示均取自已保留的自助/管理接口。
+
+### 保留的已知暴露面（供后续改动参考）
+
+- `require_api_key`（`app/core/dependencies.py`）仍把**本次请求凭据**写入
+  `user_info["api_key"]`，供下游（SQL 执行服务、AI 运行时）内部调用平台自身接口使用，
+  属必要流转，不可去除。
+- **凡是用 `**user` 整包展开的响应，都会把调用方凭据原样回显**。全仓 `**user` 展开共 4 处，
+  现已全部核查：`management.py:73` 是 `for user in sso_users` 的循环变量（不是依赖注入
+  字典，无问题），三处登录已改为显式字段构造。
+- `GET /auth/me` 入参同为 `Depends(require_api_key)`，但返回体是**逐字段显式取值**，
+  不携带凭据。**这个安全性来自写法而非结构**：若将来改成 `**user`，凭据会随之泄露。
 
 前端侧维持现状：不写入、不读取 `localStorage.api_key`，认证依赖同源 HttpOnly Cookie。
-后端照常返回该字段，两者不冲突。
 
