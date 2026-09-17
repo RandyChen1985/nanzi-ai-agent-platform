@@ -39,6 +39,42 @@
       class="flex-1 flex flex-col h-full relative z-10 min-w-0 transition-[margin] duration-300 overflow-hidden w-full max-w-full"
       :style="pinnedDrawerMarginStyle"
     >
+      <!-- 兼容模式提示：宿主通过 URL 直传 API Key（?token=），引导迁移到 Ticket 模式 -->
+      <Transition name="bash-banner-fade">
+        <div
+          v-if="showLegacyTokenHint"
+          class="flex-shrink-0 flex items-start justify-between gap-2 border-b border-amber-200 bg-amber-50/95 px-3 py-2 text-xs text-amber-900 dark:border-amber-500/30 dark:bg-amber-950/40 dark:text-amber-100"
+        >
+          <div class="flex items-start gap-2 min-w-0">
+            <span class="font-semibold shrink-0">⚠ 兼容模式</span>
+            <span class="text-amber-800/90 dark:text-amber-200/80 break-words">
+              检测到通过 URL 直传 API Key（<code class="font-mono">?token=</code>），密钥会出现在浏览器地址栏与访问日志中。
+              建议宿主服务端改用 <strong>Ticket 模式</strong>：调用
+              <code class="font-mono">POST /api/v1/embed/tickets</code> 领取一次性票据后，
+              以 <code class="font-mono">?ticket=emt_xxx</code> 嵌入，长期密钥将不再进入浏览器。
+            </span>
+          </div>
+          <div class="flex items-center gap-1 shrink-0">
+            <button
+              type="button"
+              class="rounded px-1.5 py-0.5 text-amber-700/90 hover:text-amber-900 hover:bg-amber-100 dark:text-amber-300/80 dark:hover:bg-amber-900/40"
+              title="本次隐藏，刷新后仍会提示"
+              @click="dismissLegacyTokenHint"
+            >
+              关闭
+            </button>
+            <button
+              type="button"
+              class="rounded px-1.5 py-0.5 font-medium text-amber-700/90 hover:text-amber-900 hover:bg-amber-100 dark:text-amber-300/80 dark:hover:bg-amber-900/40"
+              title="该嵌入实例不再提示"
+              @click="ignoreLegacyTokenHint"
+            >
+              不再提示
+            </button>
+          </div>
+        </div>
+      </Transition>
+
       <!-- Dynamic Header Status (New) -->
       <div
         class="h-12 border-b border-gray-100 dark:border-gray-800 bg-white/80 dark:bg-gray-900/80 backdrop-blur-md px-4 flex items-center justify-between z-30 flex-shrink-0"
@@ -2983,6 +3019,62 @@ const isProcessing = ref(false);
 const { locked: sendLocked, runExclusive: runSendExclusive } = createChatSendGate();
 const bashBannerEnv = ref<"host" | "docker" | "e2b" | "ssh" | "k8s" | null>(null);
 const bashBannerDismissed = ref(false);
+/**
+ * URL 直传 API Key（兼容模式）提示。
+ *
+ * 存量宿主仍在使用 `/embed/chat?token=<API Key>`，长期密钥会出现在浏览器地址栏、
+ * 历史记录、Referer 与访问日志中。这里在 embed 页顶部提示宿主迁移到 Ticket 模式。
+ * 提示只针对「接入方式」，与凭据是否有效无关，因此标记发生在校验之前。
+ */
+const usesLegacyUrlToken = ref(false);
+/** 本次会话已关闭（仅内存，刷新后重现）。 */
+const legacyTokenHintDismissed = ref(false);
+/** 已忽略（localStorage 持久化，按嵌入实例隔离）。 */
+const legacyTokenHintIgnored = ref(false);
+/** 当前生效的忽略标记存储键。 */
+const legacyTokenHintStorageKey = ref("");
+const showLegacyTokenHint = computed(
+  () =>
+    usesLegacyUrlToken.value &&
+    !legacyTokenHintDismissed.value &&
+    !legacyTokenHintIgnored.value
+);
+const LEGACY_TOKEN_HINT_IGNORED_KEY = "yovole_embed_legacy_token_hint_ignored";
+/** 解析忽略标记的存储键：instance_id → agent_id → 全局，逐级回退。 */
+const resolveLegacyTokenHintStorageKey = (): string => {
+  const instanceId = normalizeEmbedInstanceId(config.instanceId);
+  if (instanceId) return `${LEGACY_TOKEN_HINT_IGNORED_KEY}:${instanceId}`;
+  const agentId = String(urlPinnedAgentKey.value || "").trim();
+  if (agentId) return `${LEGACY_TOKEN_HINT_IGNORED_KEY}:${agentId}`;
+  return LEGACY_TOKEN_HINT_IGNORED_KEY;
+};
+/** 读取当前嵌入实例的忽略标记（localStorage 不可用时按未忽略处理）。 */
+const loadLegacyTokenHintIgnored = () => {
+  const key = resolveLegacyTokenHintStorageKey();
+  legacyTokenHintStorageKey.value = key;
+  try {
+    legacyTokenHintIgnored.value = localStorage.getItem(key) === "1";
+  } catch {
+    legacyTokenHintIgnored.value = false;
+  }
+};
+/** 关闭：仅本次会话隐藏，刷新后重现。 */
+const dismissLegacyTokenHint = () => {
+  legacyTokenHintDismissed.value = true;
+};
+/** 不再提示：对该嵌入实例永久隐藏。 */
+const ignoreLegacyTokenHint = () => {
+  legacyTokenHintDismissed.value = true;
+  legacyTokenHintIgnored.value = true;
+  try {
+    localStorage.setItem(
+      legacyTokenHintStorageKey.value || resolveLegacyTokenHintStorageKey(),
+      "1",
+    );
+  } catch {
+    // localStorage 不可用（隐私模式/跨域限制）时降级为仅本次隐藏
+  }
+};
 const showBashBanner = computed(
   () => bashBannerEnv.value !== null && !bashBannerDismissed.value && config.showBashBanner
 );
@@ -8579,6 +8671,8 @@ onMounted(() => {
     const token = query.get("token")!;
     // 仅设置内存中的 config.token 参与校验；校验通过后再 syncValidatedCredentials，避免脏 URL 覆盖 localStorage
     config.token = token;
+    // 标记本次为 URL 直传兼容模式：提示「接入方式」而非校验结果，故不放在校验分支内
+    usesLegacyUrlToken.value = true;
     console.log("[LifeCycle] Token found in URL (persist to storage only after validation).");
   }
   if (query.get("agent_id")) {
@@ -8588,6 +8682,8 @@ onMounted(() => {
     // 正式锁定在 initChat -> resolveUrlPinnedAgent 成功后完成
   }
   if (query.get("theme")) applyTheme(query.get("theme")!);
+  // 忽略键在 instance_id 与 agent_id 都解析完成后才能确定（agent_id 晚于 token 分支赋值）
+  loadLegacyTokenHintIgnored();
   postMessageToHost({ type: "NANZI_WIDGET_READY" });
   if (config.token && !ticketFromUrl) {
     console.log("[LifeCycle] Initializing chat from existing token...");

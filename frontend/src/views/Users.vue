@@ -1394,7 +1394,7 @@
       @click.self="closeRegenerateDialog"
     >
       <div
-        class="bg-white rounded-lg p-6 w-full max-w-md shadow-xl text-center"
+        class="bg-white rounded-lg p-6 w-full max-w-lg shadow-xl text-center"
       >
         <h2 class="text-xl font-bold mb-4 text-amber-600">重置 API Key</h2>
         <div v-if="!regeneratedApiKey" class="space-y-4">
