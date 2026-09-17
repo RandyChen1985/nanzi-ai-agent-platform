@@ -83,14 +83,23 @@ watch(
   () => [props.visible, props.keyword, rows.value.length] as const,
   () => {
     selectedIndex.value = 0;
+    nextTick(() => {
+      if (listContainer.value) {
+        listContainer.value.scrollTop = 0;
+      }
+    });
   },
 );
 
 watch(selectedIndex, () => {
   nextTick(() => {
     if (!listContainer.value) return;
-    const activeItem = listContainer.value.children[selectedIndex.value] as HTMLElement | undefined;
-    if (activeItem) activeItem.scrollIntoView({ block: 'nearest' });
+    const activeItem = listContainer.value.querySelector(
+      `[data-mention-index="${selectedIndex.value}"]`,
+    ) as HTMLElement | null;
+    if (activeItem && typeof activeItem.scrollIntoView === 'function') {
+      activeItem.scrollIntoView({ block: 'nearest' });
+    }
   });
 });
 
@@ -158,18 +167,24 @@ defineExpose({ handleKeydown });
     </div>
 
     <div ref="listContainer" class="flex-1 overflow-y-auto custom-scrollbar min-h-0 p-1.5 space-y-0.5 bg-white dark:bg-gray-800">
-      <template v-for="(row, index) in rows" :key="row.kind === 'auto' ? 'auto' : row.agent.id">
+      <template v-for="(row, index) in rows" :key="row.kind === 'auto' ? 'auto' : `${row.agent.id}_${index}`">
         <!-- 智能委派 -->
         <button
           v-if="row.kind === 'auto'"
           type="button"
-          class="w-full flex items-start gap-2.5 px-2 py-2 rounded-lg cursor-pointer transition-colors border border-transparent text-left"
+          :data-mention-index="index"
+          class="w-full flex items-start gap-2.5 px-2.5 py-2 rounded-lg cursor-pointer transition-all border text-left"
           :class="index === selectedIndex
-            ? 'bg-primary/10 border-primary/15'
-            : 'hover:bg-gray-50 dark:hover:bg-gray-700/60'"
+            ? 'bg-primary/10 border-primary/30 ring-1 ring-primary/20 shadow-sm dark:bg-primary/20 dark:border-primary/40 dark:ring-primary/30'
+            : 'border-transparent hover:bg-gray-50 dark:hover:bg-gray-700/60'"
           @click="handleSelectRow(row)"
         >
-          <div class="w-8 h-8 mt-0.5 rounded-full bg-primary/10 flex items-center justify-center text-primary border border-primary/15 shrink-0">
+          <div
+            class="w-8 h-8 mt-0.5 rounded-full flex items-center justify-center border shrink-0 transition-colors"
+            :class="index === selectedIndex
+              ? 'bg-primary/15 border-primary/40 text-primary dark:bg-primary/25 dark:border-primary/50'
+              : 'bg-primary/10 border-primary/15 text-primary'"
+          >
             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M13 10V3L4 14h7v7l9-11h-7z" />
             </svg>
@@ -180,14 +195,22 @@ defineExpose({ handleKeydown });
                 class="text-[13px] font-semibold truncate"
                 :class="index === selectedIndex || !isExpertMode ? 'text-primary' : 'text-gray-900 dark:text-gray-100'"
               >智能委派</span>
-              <svg
-                v-if="!isExpertMode"
-                class="w-3.5 h-3.5 text-primary shrink-0"
-                fill="currentColor"
-                viewBox="0 0 20 20"
-              >
-                <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd" />
-              </svg>
+              <div class="flex items-center gap-1.5 shrink-0">
+                <span
+                  v-if="index === selectedIndex"
+                  class="rounded bg-primary/20 px-1 py-0.5 text-[9px] font-bold text-primary dark:bg-primary/30 leading-none"
+                >
+                  ↵
+                </span>
+                <svg
+                  v-if="!isExpertMode"
+                  class="w-3.5 h-3.5 text-primary shrink-0"
+                  fill="currentColor"
+                  viewBox="0 0 20 20"
+                >
+                  <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd" />
+                </svg>
+              </div>
             </div>
             <p class="text-[10px] text-gray-500 dark:text-gray-400 mt-0.5 leading-snug line-clamp-2">由主助手直接处理，或按任务需要自动委派其他专家</p>
           </div>
@@ -202,16 +225,22 @@ defineExpose({ handleKeydown });
         <button
           v-else-if="row.kind === 'agent'"
           type="button"
-          class="w-full flex items-start gap-2.5 px-2 py-2 rounded-lg cursor-pointer transition-colors border border-transparent text-left"
+          :data-mention-index="index"
+          class="w-full flex items-start gap-2.5 px-2.5 py-2 rounded-lg cursor-pointer transition-all border text-left"
           :class="index === selectedIndex
-            ? 'bg-primary/10 border-primary/15'
-            : 'hover:bg-gray-50 dark:hover:bg-gray-700/60'"
+            ? 'bg-primary/10 border-primary/30 ring-1 ring-primary/20 shadow-sm dark:bg-primary/20 dark:border-primary/40 dark:ring-primary/30'
+            : 'border-transparent hover:bg-gray-50 dark:hover:bg-gray-700/60'"
           :title="row.agent.description || row.agent.display_name"
           @click="handleSelectRow(row)"
         >
-          <div class="w-8 h-8 mt-0.5 rounded-full bg-gray-100 dark:bg-gray-700 flex items-center justify-center overflow-hidden border border-gray-200 dark:border-gray-600 shrink-0">
+          <div
+            class="w-8 h-8 mt-0.5 rounded-full flex items-center justify-center overflow-hidden border shrink-0 transition-colors"
+            :class="index === selectedIndex
+              ? 'bg-primary/15 border-primary/40 text-primary dark:bg-primary/25 dark:border-primary/50'
+              : 'bg-gray-100 dark:bg-gray-700 border-gray-200 dark:border-gray-600 text-gray-500 dark:text-gray-300'"
+          >
             <img v-if="row.agent.avatar_url" :src="row.agent.avatar_url" class="w-full h-full object-cover" />
-            <span v-else class="text-[11px] font-bold text-gray-500 dark:text-gray-300">{{ Array.from(row.agent.display_name || 'E')[0] }}</span>
+            <span v-else class="text-[11px] font-bold">{{ Array.from(row.agent.display_name || 'E')[0] }}</span>
           </div>
           <div class="flex-1 min-w-0">
             <div class="flex items-center justify-between gap-2">
@@ -227,14 +256,22 @@ defineExpose({ handleKeydown });
                   class="shrink-0 px-1 py-px text-[8px] font-semibold rounded bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-300 uppercase"
                 >SYS</span>
               </div>
-              <svg
-                v-if="isExpertMode && expertAgentId === row.agent.id"
-                class="w-3.5 h-3.5 text-primary shrink-0"
-                fill="currentColor"
-                viewBox="0 0 20 20"
-              >
-                <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd" />
-              </svg>
+              <div class="flex items-center gap-1.5 shrink-0">
+                <span
+                  v-if="index === selectedIndex"
+                  class="rounded bg-primary/20 px-1 py-0.5 text-[9px] font-bold text-primary dark:bg-primary/30 leading-none"
+                >
+                  ↵
+                </span>
+                <svg
+                  v-if="isExpertMode && expertAgentId === row.agent.id"
+                  class="w-3.5 h-3.5 text-primary shrink-0"
+                  fill="currentColor"
+                  viewBox="0 0 20 20"
+                >
+                  <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd" />
+                </svg>
+              </div>
             </div>
             <p
               class="text-[10px] text-gray-500 dark:text-gray-400 mt-0.5 leading-snug line-clamp-2"

@@ -85,3 +85,16 @@ def test_web_preview_panel_supports_scaled_page_preview():
     assert "transformOrigin: 'top left'" in source
     assert "v-model=\"previewZoom\"" in source
     assert "缩放" in source
+
+
+def test_web_preview_panel_restricted_embed_handling():
+    source = _source()
+    assert "KNOWN_RESTRICTED_DOMAINS" in source
+    assert "pypi.org" in source
+    assert "github.com" in source
+    assert "isLikelyRestricted" in source
+    assert "shouldShowRestrictedCard" in source
+    assert "该站点通常禁止内嵌预览" in source
+    assert "仍尝试在内嵌框架中加载" in source
+    assert "在新标签页打开网页" in source
+

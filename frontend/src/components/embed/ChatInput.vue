@@ -511,6 +511,32 @@ const updateNewConversationMenuPosition = () => {
   newConversationMenuPosition.left = Math.round(Math.max(gutter, left));
 };
 const activeCommandIndex = ref(0);
+const commandListContainerRef = ref<HTMLElement | null>(null);
+
+const scrollActiveCommandIntoView = () => {
+  nextTick(() => {
+    const container = commandListContainerRef.value;
+    if (!container) return;
+    const activeItem = container.children[activeCommandIndex.value] as HTMLElement | undefined;
+    if (activeItem && typeof activeItem.scrollIntoView === 'function') {
+      activeItem.scrollIntoView({ block: 'nearest' });
+    }
+  });
+};
+
+watch(activeCommandIndex, () => {
+  scrollActiveCommandIntoView();
+});
+
+watch(
+  () => [showCommandMenu.value, filteredCommands.value.length] as const,
+  ([visible]) => {
+    if (visible) {
+      scrollActiveCommandIntoView();
+    }
+  },
+);
+
 const mentionListRef = ref<any>(null);
 const isDrawerExpanded = ref(false);
 const shortcutBarRef = ref<HTMLElement | null>(null);
@@ -1852,13 +1878,14 @@ defineExpose({
                   <span class="text-[10px] font-black uppercase tracking-widest text-gray-400">快捷指令库</span>
                   <span class="rounded-md bg-primary/10 px-1.5 py-0.5 text-[9px] font-bold text-primary">{{ filteredCommands.length }} 匹配</span>
                 </div>
+                <span class="text-[9px] text-gray-400 hidden sm:inline shrink-0">Enter 选择 · Esc 关闭</span>
               </div>
-              <div class="overflow-y-auto p-1 custom-scrollbar">
+              <div ref="commandListContainerRef" class="overflow-y-auto p-1 custom-scrollbar">
                 <div
                   v-for="(cmd, index) in filteredCommands"
                   :key="cmd.id"
                   @click="cmd.disabled ? null : selectCommand(cmd)"
-                  class="flex cursor-pointer items-center space-x-3 rounded-lg px-3 py-2 transition-all"
+                  class="flex cursor-pointer items-center justify-between gap-2 rounded-lg px-3 py-2 transition-all"
                   :class="[
                     cmd.disabled ? 'opacity-40 cursor-not-allowed' : '',
                     index === activeCommandIndex ? 'bg-primary/10 ring-1 ring-primary/20 dark:bg-primary/20' : 'hover:bg-gray-50 dark:hover:bg-gray-700'
@@ -1876,6 +1903,14 @@ defineExpose({
                     <div class="truncate font-mono text-[10px] text-gray-400 opacity-70">
                       {{ cmd.command }}
                     </div>
+                  </div>
+                  <div class="flex items-center shrink-0">
+                    <span
+                      v-if="index === activeCommandIndex && !cmd.disabled"
+                      class="rounded bg-primary/20 px-1 py-0.5 text-[9px] font-bold text-primary dark:bg-primary/30 leading-none"
+                    >
+                      ↵
+                    </span>
                   </div>
                 </div>
               </div>
