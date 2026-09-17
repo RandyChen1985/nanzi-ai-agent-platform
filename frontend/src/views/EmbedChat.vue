@@ -48,10 +48,7 @@
           <div class="flex items-start gap-2 min-w-0">
             <span class="font-semibold shrink-0">⚠ 兼容模式</span>
             <span class="text-amber-800/90 dark:text-amber-200/80 break-words">
-              检测到通过 URL 直传 API Key（<code class="font-mono">?token=</code>），密钥会出现在浏览器地址栏与访问日志中。
-              建议宿主服务端改用 <strong>Ticket 模式</strong>：调用
-              <code class="font-mono">POST /api/v1/embed/tickets</code> 领取一次性票据后，
-              以 <code class="font-mono">?ticket=emt_xxx</code> 嵌入，长期密钥将不再进入浏览器。
+              检测到兼容模式接入，密钥存在泄露风险。请联系开发人员升级为 <strong>Ticket 模式</strong>。
             </span>
           </div>
           <div class="flex items-center gap-1 shrink-0">

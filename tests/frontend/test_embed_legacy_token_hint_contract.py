@@ -144,18 +144,54 @@ def test_banner_visibility_requires_all_three_conditions():
 
 
 def test_banner_copy_points_to_ticket_mode():
-    """提示必须明确迁移目标：Ticket 模式及其签发接口。"""
+    """提示必须明确迁移目标：Ticket 模式。"""
     source = _source()
     banner_start = source.index("showLegacyTokenHint")
     banner_section = source[banner_start : banner_start + 3000]
 
-    assert "/api/v1/embed/tickets" in banner_section
-    assert "ticket" in banner_section.lower()
+    assert "Ticket" in banner_section
 
 
-def test_banner_copy_mentions_api_key_in_url():
-    """提示需要说明当前用的是「URL 直传 API Key」，否则用户不知道在说什么。"""
+def test_banner_copy_tells_user_to_contact_developer():
+    """嵌入页访客是宿主系统的终端用户，改不了接入方式，必须给出可执行的动作。
+
+    只有「联系开发人员」是终端用户真正能做的事；技术细节（接口地址、参数名）
+    对他无意义，反而会拉长横幅、挤占嵌入页高度。
+    """
     source = _source()
     banner_start = source.index("showLegacyTokenHint")
+    banner_section = source[banner_start : banner_start + 3000]
 
-    assert "API Key" in source[banner_start : banner_start + 3000]
+    assert "联系开发人员" in banner_section
+
+
+def test_banner_copy_stays_concise():
+    """文案必须简短——嵌入页高度有限，窄 iframe 里长文本会占三四行。
+
+    这里限定横幅正文的整体长度，防止后续改文案时又加回技术细节。
+    """
+    source = _source()
+    banner_start = source.index("showLegacyTokenHint")
+    banner_section = source[banner_start : banner_start + 3000]
+
+    # 取 <span> 正文所在片段，粗略衡量可见文案长度
+    visible = banner_section.split("检测到", 1)
+    assert len(visible) == 2, "横幅正文应包含提示语句"
+
+    copy_region = visible[1].split("</span>", 1)[0]
+    # 去掉标签与空白后统计正文字符数
+    import re
+
+    text = re.sub(r"<[^>]+>", "", copy_region)
+    text = re.sub(r"\s+", "", text)
+
+    assert len(text) <= 60, f"横幅正文过长（{len(text)} 字）: {text}"
+
+
+def test_banner_copy_does_not_leak_technical_endpoint_details():
+    """终端用户向的提示不应包含接口地址等实现细节。"""
+    source = _source()
+    banner_start = source.index("showLegacyTokenHint")
+    banner_section = source[banner_start : banner_start + 3000]
+
+    assert "/api/v1/embed/tickets" not in banner_section
