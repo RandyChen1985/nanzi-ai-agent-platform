@@ -6089,11 +6089,20 @@ const handleInitConfig = async (data: Record<string, any>) => {
   // 2. 兼容传统的 API Key 模式
   const incomingToken = data.token || data.api_key || data.apikey;
   if (!incomingToken) {
-    console.warn("INIT_CONFIG received but no token/api_key/ticket found in payload!");
     if (strict) {
+      // 调试台的 strict_token 模式要求显式传入 token，不允许回落到 Cookie
+      console.warn("INIT_CONFIG received in strict mode but no token/api_key/ticket found!");
       hasPermission.value = false;
       postMessageToHost({ type: "INIT_FAILURE", reason: "missing_token" });
+      return;
     }
+    // 门户内嵌场景（Chat.vue 的同源 iframe）不再向子页下发凭据：会话凭据位于 HttpOnly
+    // Cookie，JS 既读不到也无法经 postMessage 传递。这里照常下发初始化配置，认证交由
+    // validateToken 的同源 Cookie 分支完成——否则子页会因 return 而永远停在骨架屏。
+    console.log("[Auth] INIT_CONFIG without token; falling back to same-origin session cookie.");
+    applyInitConfigPayload(data);
+    postInitSuccess();
+    await initChat();
     return;
   }
   config.token = incomingToken;

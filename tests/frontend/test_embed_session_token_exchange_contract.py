@@ -45,3 +45,32 @@ def test_issued_session_does_not_carry_the_real_credential():
     issue_section = source.split("async def issue_session_from_user", 1)[1]
 
     assert '"api_key": user.get("api_key")' not in issue_section
+
+
+def test_init_config_without_token_falls_back_to_cookie_auth():
+    """无凭据的 INIT_CONFIG 必须回落到同源 Cookie 校验，而不是直接 return。
+
+    父页（Chat.vue）不再向 iframe 下发凭据——会话凭据在 HttpOnly Cookie 里，JS 读不到。
+    若此处直接 return，子页不会执行 initChat，会永远停在骨架屏。
+    """
+    source = (ROOT / "frontend/src/views/EmbedChat.vue").read_text(encoding="utf-8")
+    handler = source.split("const handleInitConfig", 1)[1].split("const handlePostMessage", 1)[0]
+    missing_branch = handler.split("if (!incomingToken) {", 1)[1].split(
+        "config.token = incomingToken;", 1
+    )[0]
+
+    # 非 strict 分支必须继续初始化（走 Cookie 校验）
+    assert "await initChat();" in missing_branch
+    # strict 调试模式仍必须显式失败，不得静默回落到 Cookie
+    assert "if (strict) {" in missing_branch
+    assert 'reason: "missing_token"' in missing_branch
+
+
+def test_parent_page_does_not_forward_credentials_to_iframe():
+    """父页不得再经 postMessage 传递凭据——它已无法读到 HttpOnly Cookie。"""
+    source = (ROOT / "frontend/src/views/Chat.vue").read_text(encoding="utf-8")
+    init_config = source.split("const sendInitConfig", 1)[1].split("const retryInit", 1)[0]
+
+    assert "localStorage.getItem('api_key')" not in init_config
+    assert "token: apiKey" not in init_config
+
