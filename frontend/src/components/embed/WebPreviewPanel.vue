@@ -84,9 +84,14 @@
                 :href="safeUrl"
                 target="_blank"
                 rel="noopener noreferrer"
-                class="rounded-md px-2 py-1.5 text-xs font-semibold text-blue-600 hover:bg-blue-50 dark:text-blue-300 dark:hover:bg-blue-950/40"
+                class="inline-flex items-center gap-1 rounded-md px-2 py-1.5 text-xs font-semibold text-blue-600 hover:bg-blue-50 dark:text-blue-300 dark:hover:bg-blue-950/40"
               >
-                在新窗口打开
+                <span>在新窗口打开</span>
+                <svg class="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M15 3h6v6" />
+                  <path d="M10 14 21 3" />
+                  <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+                </svg>
               </a>
               <button
                 v-if="!isMobile && !pinned"
@@ -162,16 +167,77 @@
           </div>
 
           <div v-if="safeUrl" class="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-gray-100 dark:bg-gray-950">
-            <div class="relative min-h-0 min-w-0 flex-1 overflow-hidden bg-white dark:bg-gray-900">
-              <iframe
-                :key="frameKey"
-                :src="safeUrl"
-                class="absolute inset-0 border-0 bg-white dark:bg-gray-900"
-                :style="frameScaleStyle"
-                title="网页预览内容"
-                sandbox="allow-forms allow-modals allow-popups allow-presentation allow-scripts"
-                referrerpolicy="no-referrer"
-              />
+            <!-- 常见安全防内嵌受限站点提示卡片 -->
+            <div
+              v-if="shouldShowRestrictedCard"
+              class="flex flex-1 flex-col items-center justify-center p-6 text-center"
+            >
+              <div class="mx-auto flex max-w-sm flex-col items-center rounded-2xl border border-gray-200/80 bg-white p-6 shadow-sm dark:border-gray-800 dark:bg-gray-900">
+                <div class="mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-amber-50 text-amber-500 ring-8 ring-amber-50/50 dark:bg-amber-950/40 dark:text-amber-400 dark:ring-amber-950/20">
+                  <svg class="h-6 w-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <rect width="18" height="18" x="3" y="3" rx="2" />
+                    <path d="M9 3v18" />
+                    <path d="m14 9 3 3-3 3" />
+                  </svg>
+                </div>
+                <div v-if="targetHostname" class="mb-2 inline-flex items-center gap-1 rounded-full bg-gray-100 px-2.5 py-0.5 font-mono text-[11px] font-medium text-gray-600 dark:bg-gray-800 dark:text-gray-300">
+                  <span>{{ targetHostname }}</span>
+                </div>
+                <h3 class="text-base font-bold text-gray-900 dark:text-gray-100">
+                  该站点通常禁止内嵌预览
+                </h3>
+                <p class="mt-2 text-xs leading-relaxed text-gray-500 dark:text-gray-400">
+                  目标网站声明了安全防嵌套策略（如 X-Frame-Options 或 CSP），现代浏览器会主动拦截在此区域的内嵌展示，推荐直接在新标签页中访问。
+                </p>
+                <div class="mt-6 flex w-full flex-col gap-2.5">
+                  <a
+                    :href="safeUrl"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    class="inline-flex w-full items-center justify-center gap-1.5 rounded-lg bg-blue-600 px-4 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-blue-500 active:scale-[0.99] dark:bg-blue-500 dark:hover:bg-blue-400"
+                  >
+                    <span>在新标签页打开网页</span>
+                    <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      <path d="M15 3h6v6" />
+                      <path d="M10 14 21 3" />
+                      <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+                    </svg>
+                  </a>
+                  <button
+                    type="button"
+                    class="text-xs text-gray-400 transition hover:text-gray-600 dark:hover:text-gray-300"
+                    @click="forceShowIframe = true"
+                  >
+                    仍尝试在内嵌框架中加载
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <!-- iframe 正常展示区及底部友好提示 -->
+            <div v-else class="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-white dark:bg-gray-900">
+              <div class="relative min-h-0 min-w-0 flex-1 overflow-hidden">
+                <iframe
+                  :key="frameKey"
+                  :src="safeUrl"
+                  class="absolute inset-0 border-0 bg-white dark:bg-gray-900"
+                  :style="frameScaleStyle"
+                  title="网页预览内容"
+                  sandbox="allow-forms allow-modals allow-popups allow-presentation allow-scripts"
+                  referrerpolicy="no-referrer"
+                />
+              </div>
+              <div class="flex shrink-0 items-center justify-between border-t border-gray-100 bg-gray-50/80 px-3 py-1.5 text-[11px] text-gray-500 dark:border-gray-800 dark:bg-gray-900/60 dark:text-gray-400">
+                <span class="truncate">💡 若页面显示空白或拒绝连接，说明目标网站限制了内嵌</span>
+                <a
+                  :href="safeUrl"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  class="shrink-0 font-medium text-blue-600 hover:underline dark:text-blue-400"
+                >
+                  在新窗口打开 ↗
+                </a>
+              </div>
             </div>
           </div>
           <div v-else class="flex flex-1 items-center justify-center p-6 text-center text-sm text-gray-500 dark:text-gray-400">
@@ -218,9 +284,52 @@ const WEB_PREVIEW_ZOOM_STORAGE_KEY = 'nanzi_web_preview_zoom_v2';
 const viewportWidth = ref(typeof window !== 'undefined' ? window.innerWidth : 1024);
 let panelResizeObserver: ResizeObserver | null = null;
 
+const KNOWN_RESTRICTED_DOMAINS = [
+  'pypi.org',
+  'github.com',
+  'gitlab.com',
+  'google.com',
+  'baidu.com',
+  'zhihu.com',
+  'bilibili.com',
+  'x.com',
+  'twitter.com',
+  'weibo.com',
+  'stackoverflow.com',
+  'reddit.com',
+  'taobao.com',
+  'jd.com',
+  'qq.com',
+  'weixin.qq.com',
+  'medium.com',
+  'linkedin.com',
+  'notion.so',
+];
+
+const forceShowIframe = ref(false);
+
 const safeUrl = computed(() => {
   const value = props.url?.trim() || '';
   return isBrowserOpenableUrl(value) ? value : '';
+});
+
+const targetHostname = computed(() => {
+  if (!safeUrl.value) return '';
+  try {
+    return new URL(safeUrl.value).hostname.toLowerCase();
+  } catch {
+    return '';
+  }
+});
+
+const isLikelyRestricted = computed(() => {
+  const host = targetHostname.value;
+  if (!host) return false;
+  return KNOWN_RESTRICTED_DOMAINS.some((domain) => host === domain || host.endsWith(`.${domain}`));
+});
+
+const shouldShowRestrictedCard = computed(() => {
+  return isLikelyRestricted.value && !forceShowIframe.value;
 });
 
 const frameScaleStyle = computed(() => {
@@ -385,6 +494,7 @@ watch(() => props.visible, (visible) => {
 });
 
 watch(() => props.url, () => {
+  forceShowIframe.value = false;
   frameKey.value += 1;
 });
 

@@ -511,6 +511,32 @@ const updateNewConversationMenuPosition = () => {
   newConversationMenuPosition.left = Math.round(Math.max(gutter, left));
 };
 const activeCommandIndex = ref(0);
+const commandListContainerRef = ref<HTMLElement | null>(null);
+
+const scrollActiveCommandIntoView = () => {
+  nextTick(() => {
+    const container = commandListContainerRef.value;
+    if (!container) return;
+    const activeItem = container.children[activeCommandIndex.value] as HTMLElement | undefined;
+    if (activeItem && typeof activeItem.scrollIntoView === 'function') {
+      activeItem.scrollIntoView({ block: 'nearest' });
+    }
+  });
+};
+
+watch(activeCommandIndex, () => {
+  scrollActiveCommandIntoView();
+});
+
+watch(
+  () => [showCommandMenu.value, filteredCommands.value.length] as const,
+  ([visible]) => {
+    if (visible) {
+      scrollActiveCommandIntoView();
+    }
+  },
+);
+
 const mentionListRef = ref<any>(null);
 const isDrawerExpanded = ref(false);
 const shortcutBarRef = ref<HTMLElement | null>(null);
@@ -888,6 +914,7 @@ const closeModelMenu = () => {
   showThinkingPanel.value = false;
   showModelDropdown.value = false;
   modelSearchQuery.value = "";
+  activeModelIndex.value = 0;
 };
 
 const backFromThinkingPanel = () => {
@@ -1015,11 +1042,36 @@ const showModelDropdown = ref(false);
 const modelDropdownRef = ref<HTMLElement | null>(null);
 const modelDropdownTriggerRef = ref<HTMLButtonElement | null>(null);
 const modelListScrollRef = ref<HTMLElement | null>(null);
+const modelSearchInputRef = ref<HTMLInputElement | null>(null);
+const activeModelIndex = ref(0);
+
 const modelDropdownPosition = reactive({
   bottom: 12,
   left: 12,
   width: 0,
 });
+
+const initActiveModelIndex = () => {
+  if (!props.selectedModel) {
+    activeModelIndex.value = 0;
+  } else {
+    const idx = filteredAvailableModels.value.findIndex(
+      (m) => m.model_id === props.selectedModel
+    );
+    activeModelIndex.value = idx >= 0 ? idx + 1 : 0;
+  }
+};
+
+const scrollActiveModelIntoView = () => {
+  nextTick(() => {
+    const list = modelListScrollRef.value;
+    if (!list) return;
+    const activeEl = list.querySelector(`[data-model-index="${activeModelIndex.value}"]`) as HTMLElement | null;
+    if (activeEl) {
+      activeEl.scrollIntoView({ block: 'nearest' });
+    }
+  });
+};
 
 const scrollSelectedModelIntoView = () => {
   const list = modelListScrollRef.value;
@@ -1030,6 +1082,40 @@ const scrollSelectedModelIntoView = () => {
   const itemRect = selected.getBoundingClientRect();
   list.scrollTop += itemRect.top - listRect.top - (list.clientHeight - itemRect.height) / 2;
 };
+
+const navigateModelList = (direction: 1 | -1) => {
+  const total = 1 + filteredAvailableModels.value.length;
+  if (total <= 0) return;
+  let next = activeModelIndex.value + direction;
+  if (next < 0) {
+    next = total - 1;
+  } else if (next >= total) {
+    next = 0;
+  }
+  activeModelIndex.value = next;
+  scrollActiveModelIntoView();
+};
+
+const selectActiveModel = () => {
+  if (!showModelDropdown.value) return;
+  if (activeModelIndex.value === 0) {
+    resetModelSelection();
+    closeModelMenu();
+  } else {
+    const model = filteredAvailableModels.value[activeModelIndex.value - 1];
+    if (model) {
+      selectModel(model);
+    }
+  }
+};
+
+watch(modelSearchQuery, () => {
+  const total = 1 + filteredAvailableModels.value.length;
+  if (activeModelIndex.value >= total) {
+    activeModelIndex.value = 0;
+  }
+  scrollActiveModelIntoView();
+});
 
 const updateModelDropdownPosition = () => {
   const el = modelDropdownTriggerRef.value;
@@ -1048,16 +1134,22 @@ const toggleModelDropdown = () => {
     // 每次打开先回模型列表；桌面不自动展开思考侧栏
     showThinkingPanel.value = false;
     modelSearchQuery.value = "";
+    initActiveModelIndex();
     updateModelDropdownPosition();
   } else {
     showThinkingPanel.value = false;
     modelSearchQuery.value = "";
+    activeModelIndex.value = 0;
   }
   showModelDropdown.value = willOpen;
   if (willOpen) {
     nextTick(() => {
       if (isMobileViewport.value) updateModelDropdownPosition();
       scrollSelectedModelIntoView();
+      scrollActiveModelIntoView();
+      if (showModelSearch.value) {
+        modelSearchInputRef.value?.focus();
+      }
     });
   }
 };
@@ -1282,6 +1374,26 @@ const handleGlobalClick = (event: MouseEvent) => {
 };
 
 const handleGlobalKeydown = (event: KeyboardEvent) => {
+  if (showModelDropdown.value && !showThinkingPanel.value) {
+    if (event.key === 'ArrowDown') {
+      event.preventDefault();
+      navigateModelList(1);
+      return;
+    }
+    if (event.key === 'ArrowUp') {
+      event.preventDefault();
+      navigateModelList(-1);
+      return;
+    }
+    if (event.key === 'Enter') {
+      const target = event.target as HTMLElement | null;
+      if (target?.tagName !== 'BUTTON' || target === modelDropdownTriggerRef.value) {
+        event.preventDefault();
+        selectActiveModel();
+        return;
+      }
+    }
+  }
   if (event.key === 'Escape') {
     if (showContextUsageDetails.value) {
       closeContextUsageDetails();
@@ -1852,13 +1964,14 @@ defineExpose({
                   <span class="text-[10px] font-black uppercase tracking-widest text-gray-400">快捷指令库</span>
                   <span class="rounded-md bg-primary/10 px-1.5 py-0.5 text-[9px] font-bold text-primary">{{ filteredCommands.length }} 匹配</span>
                 </div>
+                <span class="text-[9px] text-gray-400 hidden sm:inline shrink-0">Enter 选择 · Esc 关闭</span>
               </div>
-              <div class="overflow-y-auto p-1 custom-scrollbar">
+              <div ref="commandListContainerRef" class="overflow-y-auto p-1 custom-scrollbar">
                 <div
                   v-for="(cmd, index) in filteredCommands"
                   :key="cmd.id"
                   @click="cmd.disabled ? null : selectCommand(cmd)"
-                  class="flex cursor-pointer items-center space-x-3 rounded-lg px-3 py-2 transition-all"
+                  class="flex cursor-pointer items-center justify-between gap-2 rounded-lg px-3 py-2 transition-all"
                   :class="[
                     cmd.disabled ? 'opacity-40 cursor-not-allowed' : '',
                     index === activeCommandIndex ? 'bg-primary/10 ring-1 ring-primary/20 dark:bg-primary/20' : 'hover:bg-gray-50 dark:hover:bg-gray-700'
@@ -1876,6 +1989,14 @@ defineExpose({
                     <div class="truncate font-mono text-[10px] text-gray-400 opacity-70">
                       {{ cmd.command }}
                     </div>
+                  </div>
+                  <div class="flex items-center shrink-0">
+                    <span
+                      v-if="index === activeCommandIndex && !cmd.disabled"
+                      class="rounded bg-primary/20 px-1 py-0.5 text-[9px] font-bold text-primary dark:bg-primary/30 leading-none"
+                    >
+                      ↵
+                    </span>
                   </div>
                 </div>
               </div>
@@ -2966,11 +3087,18 @@ defineExpose({
                       ref="modelDropdownTriggerRef"
                       :disabled="isInteractionLocked"
                       @click="toggleModelDropdown"
-                      class="relative flex h-7 items-center gap-0.5 sm:gap-1 rounded-full px-1.5 sm:px-2.5 text-[11px] sm:text-xs font-semibold leading-none text-gray-600 transition-colors hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-700/70 disabled:opacity-50 disabled:cursor-not-allowed select-none max-w-[min(48vw,12rem)] sm:max-w-[320px]"
+                      class="relative flex h-7 items-center gap-1 rounded-full px-2 sm:px-2.5 text-[11px] sm:text-xs font-semibold leading-none text-gray-600 transition-colors hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-700/70 disabled:opacity-50 disabled:cursor-not-allowed select-none max-w-[min(48vw,13rem)] sm:max-w-[320px]"
                       :title="modelTriggerTooltip"
                     >
-                        <PhotoIcon v-if="isSelectedModelMultimodal" class="pointer-events-none hidden h-3.5 w-3.5 shrink-0 text-purple-500 sm:inline" aria-hidden="true" />
                         <span class="pointer-events-none truncate flex-1 min-w-0 text-left">{{ modelLabel }}</span>
+                        <span
+                          v-if="isSelectedModelMultimodal"
+                          class="pointer-events-none hidden shrink-0 rounded-full bg-purple-50 px-1.5 py-0.5 text-[8px] sm:text-[9px] font-semibold text-purple-600 dark:bg-purple-950/50 dark:text-purple-300 sm:inline-flex items-center gap-0.5"
+                          title="支持多模态视觉理解"
+                        >
+                          <PhotoIcon class="h-2.5 w-2.5" aria-hidden="true" />
+                          <span>视觉</span>
+                        </span>
                         <span v-if="thinkingSummaryLabel" class="pointer-events-none flex-shrink-0 rounded-full bg-violet-50 px-1 py-0.5 text-[8px] sm:px-1.5 sm:text-[9px] font-semibold text-violet-600 dark:bg-violet-950/50 dark:text-violet-300">{{ thinkingSummaryLabel }}</span>
                         <span
                           v-if="temperatureSummaryLabel"
@@ -2994,8 +3122,8 @@ defineExpose({
                           :class="isMobileViewport
                             ? 'fixed max-h-[min(70vh,420px)]'
                             : (showThinkingPanel && selectedModelConfig
-                              ? 'absolute bottom-full mb-2 right-0 w-[min(560px,calc(100vw-24px))] max-h-[min(448px,calc(100vh-96px))] origin-bottom-right'
-                              : 'absolute bottom-full mb-2 right-0 w-[min(300px,calc(100vw-24px))] max-h-[min(448px,calc(100vh-96px))] origin-bottom-right')"
+                              ? 'absolute bottom-full mb-2 right-0 w-[min(580px,calc(100vw-24px))] max-h-[min(448px,calc(100vh-96px))] origin-bottom-right'
+                              : 'absolute bottom-full mb-2 right-0 w-[min(330px,calc(100vw-24px))] max-h-[min(448px,calc(100vh-96px))] origin-bottom-right')"
                           :style="isMobileViewport ? {
                             bottom: `${modelDropdownPosition.bottom}px`,
                             left: `${modelDropdownPosition.left}px`,
@@ -3013,47 +3141,106 @@ defineExpose({
                               >
                                 <div v-if="showModelSearch" class="shrink-0 border-b border-gray-100 p-1.5 dark:border-gray-700">
                                   <input
+                                    ref="modelSearchInputRef"
                                     v-model="modelSearchQuery"
                                     type="search"
                                     placeholder="搜索模型…"
                                     class="w-full rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 text-xs text-gray-700 outline-none focus:border-primary/40 dark:border-gray-600 dark:bg-gray-900 dark:text-gray-200"
                                     @click.stop
+                                    @keydown.down.stop.prevent="navigateModelList(1)"
+                                    @keydown.up.stop.prevent="navigateModelList(-1)"
+                                    @keydown.enter.stop.prevent="selectActiveModel"
+                                    @keydown.esc.stop.prevent="closeModelMenu"
                                   />
+                                  <div class="mt-1 flex items-center justify-between px-1 text-[10px] text-gray-400 dark:text-gray-500 select-none">
+                                    <span>↑↓ 切换 · ↵ 选择</span>
+                                    <span>Esc 关闭</span>
+                                  </div>
                                 </div>
-                                <div ref="modelListScrollRef" class="min-h-0 flex-1 overflow-y-auto overscroll-contain p-1.5 custom-scrollbar touch-pan-y">
+                                <div ref="modelListScrollRef" class="min-h-0 flex-1 overflow-y-auto overscroll-contain p-1.5 custom-scrollbar touch-pan-y space-y-1">
                                 <button
                                   @click="resetModelSelection"
+                                  @mouseenter="activeModelIndex = 0"
+                                  type="button"
                                   class="w-full text-left px-2.5 py-2 rounded-lg text-xs transition-all flex items-center justify-between"
+                                  data-model-index="0"
                                   :data-model-current="!selectedModel ? 'true' : undefined"
-                                  :class="
+                                  :data-model-active="activeModelIndex === 0 ? 'true' : undefined"
+                                  :class="[
                                     !selectedModel
-                                      ? 'bg-primary/5 text-primary font-bold'
-                                      : 'text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700/50'
-                                  "
+                                      ? (activeModelIndex === 0
+                                        ? 'bg-primary/15 ring-2 ring-primary/40 dark:bg-primary/25'
+                                        : 'bg-primary/10 ring-1 ring-primary/20 dark:bg-primary/20')
+                                      : (activeModelIndex === 0
+                                        ? 'bg-gray-100 dark:bg-gray-800 ring-1 ring-gray-300 dark:ring-gray-600 text-gray-800 dark:text-gray-200'
+                                        : 'text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700/50')
+                                  ]"
                                 >
-                                    <span class="truncate">使用默认模型</span>
-                                    <span v-if="!selectedModel" class="text-[10px]">✓</span>
+                                    <div class="min-w-0 flex-1 pr-2">
+                                      <div class="flex items-center gap-1.5 min-w-0">
+                                        <span class="truncate text-xs font-semibold" :class="!selectedModel ? 'text-primary' : 'text-gray-800 dark:text-gray-100'">使用默认模型</span>
+                                        <span v-if="!selectedModel" class="text-primary text-[11px] font-bold shrink-0">✓</span>
+                                      </div>
+                                      <div class="mt-0.5 text-[10px] text-gray-400 dark:text-gray-500 truncate">
+                                        按平台全局策略智能调度
+                                      </div>
+                                    </div>
+                                    <div class="ml-1 flex flex-shrink-0 items-center gap-1">
+                                      <span
+                                        v-if="activeModelIndex === 0"
+                                        class="text-[10px] text-primary font-mono px-1 py-0.5 rounded bg-primary/10 dark:bg-primary/20 font-bold shrink-0"
+                                        title="按 Enter 选择"
+                                      >↵</span>
+                                    </div>
                                 </button>
 
                                 <button
-                                  v-for="model in filteredAvailableModels"
+                                  v-for="(model, index) in filteredAvailableModels"
                                   :key="model.id || model.model_id"
                                   type="button"
-                                  class="w-full text-left px-2.5 py-2 rounded-lg text-xs transition-all flex items-center justify-between mt-0.5"
+                                  class="w-full text-left px-2.5 py-2 rounded-lg text-xs transition-all flex items-center justify-between"
+                                  :data-model-index="index + 1"
                                   :data-model-current="selectedModel === model.model_id ? 'true' : undefined"
-                                  :class="
+                                  :data-model-active="activeModelIndex === index + 1 ? 'true' : undefined"
+                                  :class="[
                                     selectedModel === model.model_id
-                                      ? 'bg-primary/5 text-primary font-bold'
-                                      : 'text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700/50'
-                                  "
+                                      ? (activeModelIndex === index + 1
+                                        ? 'bg-primary/15 ring-2 ring-primary/40 dark:bg-primary/25'
+                                        : 'bg-primary/10 ring-1 ring-primary/20 dark:bg-primary/20')
+                                      : (activeModelIndex === index + 1
+                                        ? 'bg-gray-100 dark:bg-gray-800 ring-1 ring-gray-300 dark:ring-gray-600 text-gray-800 dark:text-gray-200'
+                                        : 'hover:bg-gray-50 dark:hover:bg-gray-700/50')
+                                  ]"
                                   @click="selectModel(model)"
+                                  @mouseenter="activeModelIndex = index + 1"
                                 >
-                                    <div class="flex items-center space-x-1.5 min-w-0 flex-1">
-                                        <PhotoIcon v-if="model.type === 'multimodal'" class="h-3.5 w-3.5 shrink-0 text-purple-500" title="多模态" aria-hidden="true" />
-                                        <span class="truncate">{{ model.name || model.model_id }}</span>
+                                    <div class="min-w-0 flex-1 pr-2">
+                                      <div class="flex items-center gap-1.5 min-w-0">
+                                        <span
+                                          class="truncate text-xs font-semibold"
+                                          :class="selectedModel === model.model_id ? 'text-primary' : 'text-gray-800 dark:text-gray-100'"
+                                        >
+                                          {{ model.name || model.model_id }}
+                                        </span>
+                                        <span v-if="selectedModel === model.model_id" class="text-primary text-[11px] font-bold shrink-0">✓</span>
+                                      </div>
+                                      <div class="mt-0.5 flex items-center gap-1.5 text-[10px] text-gray-400 dark:text-gray-500">
+                                        <span v-if="model.type === 'multimodal'" class="inline-flex items-center gap-0.5 font-medium text-purple-600 dark:text-purple-400">
+                                          <PhotoIcon class="h-3 w-3 shrink-0" aria-hidden="true" />
+                                          <span>多模态</span>
+                                        </span>
+                                        <span v-else class="text-gray-400 dark:text-gray-500">文本</span>
+
+                                        <span v-if="model.thinking_enable" class="text-gray-300 dark:text-gray-600">·</span>
+                                        <span v-if="model.thinking_enable" class="text-violet-500 dark:text-violet-400 font-medium">深度思考</span>
+                                      </div>
                                     </div>
                                     <div class="ml-1 flex flex-shrink-0 items-center gap-1">
-                                      <span v-if="selectedModel === model.model_id" class="text-[10px]">✓</span>
+                                      <span
+                                        v-if="activeModelIndex === index + 1"
+                                        class="text-[10px] text-primary font-mono px-1 py-0.5 rounded bg-primary/10 dark:bg-primary/20 font-bold shrink-0"
+                                        title="按 Enter 选择"
+                                      >↵</span>
                                       <button
                                         v-if="model.thinking_enable"
                                         type="button"
