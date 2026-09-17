@@ -66,6 +66,11 @@ sequenceDiagram
 > **用后即弃**，不再写入浏览器任何持久化存储（含 `localStorage`），只在单次校验请求中出现。
 > 同时，门户内嵌场景（平台自身 `Chat.vue` 的同源 iframe）已不再下发任何凭据，认证完全走
 > HttpOnly Cookie。详见 [`portal_session_token_plan.md`](./portal_session_token_plan.md)。
+>
+> **凭据前缀一览**（便于在日志与抓包中区分）：主 API Key 为 `nzi_` + 43 字符随机体（共 47 字符）；
+> Ticket 为 `emt_`；兑换或换发得到的嵌入会话令牌为 `emb_ses_`；门户会话令牌为 `sess_`。
+> 主 API Key 的 `nzi_` 前缀是后加的，**此前签发的无前缀 Key 继续有效**——校验只做 SHA256 查库、
+> 不解析格式，无需重新申请。
 
 ---
 
