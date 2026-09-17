@@ -346,8 +346,29 @@ def structurize_user_content(content: str) -> str:
     )
 
 
-def _compress_markdown_tables(text: str) -> str:
-    """压缩文本中包含的历史 Markdown 数据表格，防止多轮时表格数据撑爆上下文。"""
+# 历史 Assistant 表格压缩配置：
+# 1. 深度保护最近一轮（Last Assistant）：上限放宽至 100 行（约 1.5k~3k Token），完整覆盖绝大部分业务全量表格，追问与计算绝不丢数据
+# 2. 更早轮次历史表格：默认最多保留 30 行数据明细（足以覆盖日常对比表、排行榜、清单等业务表格）
+# 3. 超出部分至少达到 10 行才做截断，避免仅超出少量行数产生“负收益截断”
+DEFAULT_LAST_ASSISTANT_TABLE_MAX_DATA_ROWS = 100
+DEFAULT_LAST_ASSISTANT_TABLE_MIN_OMIT_ROWS = 10
+
+DEFAULT_TABLE_MAX_DATA_ROWS = 30
+DEFAULT_TABLE_MIN_OMIT_ROWS = 10
+
+
+def _compress_markdown_tables(
+    text: str,
+    max_data_rows: int = DEFAULT_TABLE_MAX_DATA_ROWS,
+    min_omit_rows: int = DEFAULT_TABLE_MIN_OMIT_ROWS,
+) -> str:
+    """压缩文本中包含的历史 Markdown 数据表格，防止多轮历史过长撑爆上下文。
+    
+    优化设计：
+    1. 提高数据行容纳门槛（默认保留前 15 行），常见中短表格全量保留不截断；
+    2. 只有当省略行数达到 min_omit_rows（默认 5 行）时才截断，彻底避免“省略 1~4 行”的无效截断；
+    3. 折叠提示使用外挂引用块标记，不再伪装成 Markdown 表格单元格，防止模型在后续轮次将其当做表格数据回显复述。
+    """
     if not text or "|" not in text:
         return text
     lines = text.splitlines()
@@ -356,17 +377,22 @@ def _compress_markdown_tables(text: str) -> str:
     table_lines = []
 
     def do_compress(tbl: List[str]) -> List[str]:
-        if len(tbl) <= 5:
+        # Markdown 表格至少需要 1 行表头 + 1 行分隔线
+        if len(tbl) <= 2:
             return tbl
         header = tbl[:2]
-        data = tbl[2:5]
-        omitted = len(tbl) - 5
-        cols = tbl[0].count("|") - 1
-        if cols > 2:
-            placeholder = "|" + "|".join(["..."] * (cols - 1)) + f" [此处省略历史表格明细 {omitted} 行] |"
-        else:
-            placeholder = f"| ... | [此处省略历史表格明细 {omitted} 行] |"
-        return header + data + [placeholder]
+        data_rows = tbl[2:]
+        if len(data_rows) <= max_data_rows:
+            return tbl
+        omitted = len(data_rows) - max_data_rows
+        # 若超出行数不足 min_omit_rows，节省 token 收益极低却损害数据完整性，故全量保留
+        if omitted < min_omit_rows:
+            return tbl
+
+        kept_data = data_rows[:max_data_rows]
+        # 使用独立的系统说明引用行，不作为表格行伪造单元格，避免 LLM 将其识别为表格数据在追问中回显
+        notice = f"> [系统说明：更早历史表格数据较长，此处已折叠后续 {omitted} 行明细]"
+        return header + kept_data + [notice]
 
     for line in lines:
         stripped = line.strip()
@@ -384,7 +410,13 @@ def _compress_markdown_tables(text: str) -> str:
     return "\n".join(output_lines)
 
 
-def _clean_assistant_text(content: str, strip_thought: bool = False) -> str:
+def _clean_assistant_text(
+    content: str,
+    strip_thought: bool = False,
+    compress_tables: bool = True,
+    max_data_rows: int = DEFAULT_TABLE_MAX_DATA_ROWS,
+    min_omit_rows: int = DEFAULT_TABLE_MIN_OMIT_ROWS,
+) -> str:
     """清洗 Assistant 历史回复内容，剥离高消耗低价值的 XML 调用、思维链和图表配置。"""
     if not content:
         return ""
@@ -400,8 +432,13 @@ def _clean_assistant_text(content: str, strip_thought: bool = False) -> str:
         content = re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL | re.IGNORECASE)
         content = re.sub(r"<think>.*", "", content, flags=re.DOTALL | re.IGNORECASE)
 
-    # 3. 压缩 Markdown 表格 (最多保留 3 行数据)
-    content = _compress_markdown_tables(content)
+    # 3. 压缩 Markdown 表格 (仅非最近一轮历史的大表格压缩)
+    if compress_tables:
+        content = _compress_markdown_tables(
+            content,
+            max_data_rows=max_data_rows,
+            min_omit_rows=min_omit_rows,
+        )
 
     # 4. 剥离 ```chart JSON 块
     content = re.sub(r"```chart\s*\{.*?\}(.*?)\n```", "", content, flags=re.DOTALL | re.IGNORECASE)
@@ -415,9 +452,13 @@ def convert_history_to_messages(history: List[Dict[str, str]], strip_thought: bo
     """将平台 messages 转为 runtime BaseMessage 列表（含附件/多模态），并执行历史消息裁剪。"""
     messages: List[BaseMessage] = []
     last_user_idx: Optional[int] = None
+    last_assistant_idx: Optional[int] = None
     for idx in range(len(history) - 1, -1, -1):
-        if history[idx].get("role") == "user":
+        if last_user_idx is None and history[idx].get("role") == "user":
             last_user_idx = idx
+        if last_assistant_idx is None and history[idx].get("role") == "assistant":
+            last_assistant_idx = idx
+        if last_user_idx is not None and last_assistant_idx is not None:
             break
 
     for idx, m in enumerate(history):
@@ -481,7 +522,25 @@ def convert_history_to_messages(history: List[Dict[str, str]], strip_thought: bo
             else:
                 messages.append(HumanMessage(content=final_text))
         elif role == "assistant":
-            cleaned_content = _clean_assistant_text(content, strip_thought=strip_thought)
+            is_last_assistant = (idx == last_assistant_idx)
+            # 保护最近一轮助手回复：放宽至 100 行数据（避免极端巨型表格击穿上下文），确保紧随上一轮提问、计算或修改时数据完整；
+            # 针对更早轮次，使用标准阈值（保留前 30 行，超出 >= 10 行才折叠）
+            if is_last_assistant:
+                cleaned_content = _clean_assistant_text(
+                    content,
+                    strip_thought=strip_thought,
+                    compress_tables=True,
+                    max_data_rows=DEFAULT_LAST_ASSISTANT_TABLE_MAX_DATA_ROWS,
+                    min_omit_rows=DEFAULT_LAST_ASSISTANT_TABLE_MIN_OMIT_ROWS,
+                )
+            else:
+                cleaned_content = _clean_assistant_text(
+                    content,
+                    strip_thought=strip_thought,
+                    compress_tables=True,
+                    max_data_rows=DEFAULT_TABLE_MAX_DATA_ROWS,
+                    min_omit_rows=DEFAULT_TABLE_MIN_OMIT_ROWS,
+                )
             # F 项：窗口内保留 agent 元数据——将上一轮处理智能体的展示名导入 LLM 上下文，
             # 让后续轮模型知道自己处于哪个智能体的处理链路上（用于追问/指代/风格延续）。
             agent_display = (m.get("agent_display_name") or "").strip()
