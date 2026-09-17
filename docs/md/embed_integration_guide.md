@@ -61,6 +61,12 @@ sequenceDiagram
 | **会话续期**      | **活跃滑动续期 (Sliding TTL)**。持续交互自动维持 24 小时有效时间，闲置自动释放。           | 永久有效（除非手动重置 Key）。                                               |
 | **适用场景**      | 企业内网/外网生产系统、多租户门户、移动端 H5 嵌入。                                              | 本地 MVP 原型验证、内网快速临时调试。                                        |
 
+> **补充：API Key 直传模式的现状**。直传模式仍完整支持，但 `?token=` 校验通过后，服务端会自动
+> **换发一枚可过期的会话令牌**（`emb_ses_*`，24 小时滑动续期）并优先使用它——传入的长期 API Key
+> **用后即弃**，不再写入浏览器任何持久化存储（含 `localStorage`），只在单次校验请求中出现。
+> 同时，门户内嵌场景（平台自身 `Chat.vue` 的同源 iframe）已不再下发任何凭据，认证完全走
+> HttpOnly Cookie。详见 [`portal_session_token_plan.md`](./portal_session_token_plan.md)。
+
 ---
 
 ## 三、服务端 Ticket 签发接口规范
