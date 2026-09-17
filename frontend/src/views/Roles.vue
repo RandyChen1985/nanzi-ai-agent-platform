@@ -782,7 +782,7 @@
 
 <script setup lang="ts">
 import { ref, onMounted, computed, onUnmounted } from 'vue'
-import axios from 'axios'
+import axios from '../utils/axios'
 import { useToast } from '../composables/useToast'
 import { MENU_TREE, getMenuDescendantIds } from '../constants/permissions'
 import QuotaPolicyPanel from '../components/admin/QuotaPolicyPanel.vue'

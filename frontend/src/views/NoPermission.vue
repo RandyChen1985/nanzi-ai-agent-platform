@@ -48,6 +48,7 @@
 import { ref } from 'vue';
 import { useRouter } from 'vue-router';
 import axios from '../utils/axios';
+import { persistUserInfo } from '../utils/userSession';
 
 const router = useRouter();
 const refreshing = ref(false);
@@ -80,7 +81,7 @@ const refresh = async () => {
     const response = await axios.get('/api/portal/auth/me');
     if (response.data?.status === 'success' && response.data.data) {
       const userData = response.data.data;
-      localStorage.setItem('user_info', JSON.stringify(userData));
+      persistUserInfo(userData);
       const home = resolveHomeRoute(userData);
       if (home) {
         await router.replace(home);

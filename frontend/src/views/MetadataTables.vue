@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, computed } from 'vue'
 import { useRoute } from 'vue-router'
-import axios from 'axios'
+import axios from '../utils/axios'
 import { metadataApi } from '../api/metadata'
 import type { Dataset, Table, RecommendColumnSemanticResult } from '../api/metadata'
 import type { RagFlowConfigSummary } from '../api/ragflow'

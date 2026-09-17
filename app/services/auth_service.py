@@ -81,6 +81,86 @@ class AuthService:
             if is_local:
                 await session.close()
 
+    # --- 登录失败锁定 ---
+    # 密码登录是在线暴力破解的目标；按用户名计数，达到阈值后在窗口内拒绝继续尝试。
+    LOGIN_FAILURE_LIMIT = 5
+    LOGIN_FAILURE_WINDOW_SECONDS = 900  # 15 分钟
+
+    @staticmethod
+    def _login_failure_key(username: str) -> str:
+        return f"auth:login_fail:{(username or '').strip().lower()}"
+
+    @staticmethod
+    async def _login_guard_redis():
+        """获取 Redis 连接；不可用时返回 None。
+
+        登录限流必须是 fail-open：Redis 抖动或未配置时如果抛错，
+        会把整个平台变成谁都登不进来。
+        """
+        try:
+            return await get_redis()
+        except Exception as exc:
+            logger.warning("登录失败计数暂不可用，本次跳过限流: %s", exc)
+            return None
+
+    @staticmethod
+    async def get_login_failure_count(username: str) -> int:
+        redis = await AuthService._login_guard_redis()
+        if not redis:
+            return 0
+        try:
+            value = await redis.get(AuthService._login_failure_key(username))
+        except Exception as exc:
+            logger.warning("读取登录失败次数失败: %s", exc)
+            return 0
+        if value is None:
+            return 0
+        text = value.decode("utf-8") if isinstance(value, bytes) else str(value)
+        try:
+            return int(text)
+        except (TypeError, ValueError):
+            return 0
+
+    @staticmethod
+    async def is_login_locked(username: str) -> bool:
+        """该用户名是否已因失败次数过多被临时锁定。"""
+        count = await AuthService.get_login_failure_count(username)
+        return count >= AuthService.LOGIN_FAILURE_LIMIT
+
+    @staticmethod
+    async def record_login_failure(username: str) -> int:
+        """记录一次登录失败，返回累计次数（Redis 不可用时返回 0）。"""
+        redis = await AuthService._login_guard_redis()
+        if not redis:
+            return 0
+        key = AuthService._login_failure_key(username)
+        try:
+            count = int(await redis.incr(key))
+            if count == 1:
+                await redis.expire(key, AuthService.LOGIN_FAILURE_WINDOW_SECONDS)
+            elif hasattr(redis, "ttl"):
+                try:
+                    ttl = await redis.ttl(key)
+                    if ttl == -1:
+                        await redis.expire(key, AuthService.LOGIN_FAILURE_WINDOW_SECONDS)
+                except Exception:
+                    pass
+            return count
+        except Exception as exc:
+            logger.warning("记录登录失败次数失败: %s", exc)
+            return 0
+
+    @staticmethod
+    async def clear_login_failures(username: str) -> None:
+        """登录成功后清零失败计数。"""
+        redis = await AuthService._login_guard_redis()
+        if not redis:
+            return
+        try:
+            await redis.delete(AuthService._login_failure_key(username))
+        except Exception as exc:
+            logger.warning("清除登录失败次数失败: %s", exc)
+
     @staticmethod
     async def verify_api_key(api_key: str, db: Optional[AsyncSession] = None) -> Optional[Dict]:
         """

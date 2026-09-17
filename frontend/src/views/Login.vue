@@ -3,6 +3,7 @@ import { ref, reactive, onMounted, onUnmounted, watch, computed } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import axios from 'axios'
 import { useBranding } from '../composables/useBranding'
+import { persistApiKey, persistUserInfo } from '../utils/userSession'
 
 const router = useRouter()
 const route = useRoute()
@@ -166,8 +167,8 @@ const twoFactorUsername = ref('')
 const twoFactorCode = ref('')
 
 const handleLoginSuccess = (userData: any) => {
-    localStorage.setItem('user_info', JSON.stringify(userData))
-    localStorage.setItem('api_key', userData.api_key)
+    persistUserInfo(userData)
+    persistApiKey(userData?.api_key)
     
     // 普通业务用户进入个人工作台；管理员保留平台概览入口。
     const returnPath = typeof route.query.next === 'string'

@@ -19,9 +19,9 @@ from contextlib import asynccontextmanager
 from typing import Optional
 from app.api.portal.api import portal_router
 from app.api.v1.api import v1_router
-from app.core.config import settings
+from app.core.config import resolve_cors_origins, settings
 from app.core import database, redis
-from app.core.middleware import AccessLogMiddleware
+from app.core.middleware import AccessLogMiddleware, SecurityHeadersMiddleware
 from app.core.logging_filters import install_cancellation_log_filters
 from app.services.audit_service import AuditService
 from app.services.auth_service import AuthService
@@ -343,12 +343,15 @@ app.add_middleware(GZipMiddleware, minimum_size=1000)
 app.add_middleware(AccessLogMiddleware)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.ALLOWED_ORIGINS if settings.ALLOWED_ORIGINS else ["*"],
+    allow_origins=resolve_cors_origins(settings.ALLOWED_ORIGINS),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["Content-Type", "Authorization", "X-API-Key", "Accept", "Origin", "User-Agent", "DNT", "Cache-Control", "X-Requested-With"],
     expose_headers=["Content-Type", "Authorization", "X-API-Key"],
 )
+
+# 安全响应头放在最外层：保证所有响应（含 CORS 预检、异常响应与静态文件）都带上。
+app.add_middleware(SecurityHeadersMiddleware)
 
 # 内置平台 Echo MCP：创建配置后供所有智能体挂载，用于验证实际出站请求。
 app.mount("/mcp/echo", echo_mcp.streamable_http_app())

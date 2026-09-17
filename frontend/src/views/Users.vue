@@ -1761,7 +1761,8 @@
 
 <script setup lang="ts">
 import { ref, onMounted, computed, onUnmounted } from "vue";
-import axios from "axios";
+import axios from "../utils/axios";
+import { persistUserInfo } from "../utils/userSession";
 import { useToast } from "../composables/useToast";
 import { useBranding } from "../composables/useBranding";
 import { useUser } from "../composables/useUser";
@@ -2423,7 +2424,7 @@ const saveUser = async () => {
               ...userInfo,
               ...updatePayload
             };
-            localStorage.setItem('user_info', JSON.stringify(updatedUserInfo));
+            persistUserInfo(updatedUserInfo);
             console.log('User Session Sync Success:', updatedUserInfo);
           } else {
             console.log('Not current user, skipping sync. Current:', currentId, 'Edited:', editingUserId.value);

@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status, Response, Header
+from fastapi import APIRouter, Depends, HTTPException, status, Response, Header, Request
 from typing import Optional
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -7,6 +7,20 @@ from app.core.orm import get_db_session
 from app.services.auth_service import AuthService
 
 router = APIRouter()
+
+
+def _is_secure_request(request: Request) -> bool:
+    """判断当前请求是否应下发 Secure Cookie。
+
+    TLS 可能终止在反向代理（k8s ingress / nginx），此时后端看到的是 http，
+    因此优先信任代理写入的 X-Forwarded-Proto。客户端伪造该头只会让自己的
+    Cookie 收不到，不构成安全绕过；纯 HTTP 部署下返回 False，
+    保持现有行为可登录。
+    """
+    forwarded = request.headers.get("x-forwarded-proto")
+    if forwarded:
+        return forwarded.split(",")[0].strip().lower() == "https"
+    return request.url.scheme == "https"
 
 class LoginRequest(BaseModel):
     api_key: Optional[str] = Field(None, description="API 密钥", json_schema_extra={"example": "S63B_..."})
@@ -19,6 +33,7 @@ class SSOLoginRequest(BaseModel):
 
 @router.post("/sso/login", summary="SSO 用户登录")
 async def sso_login(
+    http_request: Request,
     request: SSOLoginRequest, 
     response: Response,
     db: AsyncSession = Depends(get_db_session)
@@ -49,7 +64,7 @@ async def sso_login(
             httponly=True,
             max_age=86400,
             samesite="lax",
-            secure=False
+            secure=_is_secure_request(http_request)
         )
 
         # 注册在线状态到 Redis
@@ -79,6 +94,7 @@ async def sso_login(
 
 @router.post("/login", summary="用户登录")
 async def login(
+    http_request: Request,
     request: LoginRequest, 
     response: Response,
     db: AsyncSession = Depends(get_db_session)
@@ -104,12 +120,22 @@ async def login(
             httponly=True,
             max_age=86400,
             samesite="lax",
-            secure=False
+            secure=_is_secure_request(http_request)
         )
         await AuthService.record_user_login(int(user["user_id"]), db=db)
 
     # 2. Password Login
     elif request.username and request.password:
+        # 在线暴力破解防护：失败次数达到阈值后在本窗口内直接拒绝
+        if await AuthService.is_login_locked(request.username):
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail=(
+                    "登录失败次数过多，请在 "
+                    f"{AuthService.LOGIN_FAILURE_WINDOW_SECONDS // 60} 分钟后重试"
+                ),
+            )
+
         # 检查密码长度，bcrypt 限制密码长度为 72 字节
         password_bytes = request.password.encode('utf-8')
         if len(password_bytes) > 72:
@@ -119,7 +145,10 @@ async def login(
             password = request.password
         
         result = await AuthService.verify_user_password(request.username, password, db=db)
+        if result["status"] == "fail":
+            await AuthService.record_login_failure(request.username)
         if result["status"] == "success":
+            await AuthService.clear_login_failures(request.username)
             user = result["user"]
             user_id = int(user["user_id"])
 
@@ -147,7 +176,7 @@ async def login(
                 httponly=True,
                 max_age=86400,
                 samesite="lax",
-                secure=False
+                secure=_is_secure_request(http_request)
             )
             # 注册在线状态到 Redis
             await AuthService.register_online_state(api_key, user)
@@ -190,6 +219,7 @@ class TwoFactorLoginRequest(BaseModel):
 
 @router.post("/login/2fa", summary="两步验证二次登录")
 async def two_factor_login(
+    http_request: Request,
     request: TwoFactorLoginRequest,
     response: Response,
     db: AsyncSession = Depends(get_db_session)
@@ -219,7 +249,7 @@ async def two_factor_login(
         httponly=True,
         max_age=86400,
         samesite="lax",
-        secure=False
+        secure=_is_secure_request(http_request)
     )
     # 注册在线状态到 Redis
     await AuthService.register_online_state(api_key, user)
@@ -550,6 +580,7 @@ class ResetMyApiKeyRequest(BaseModel):
 
 @router.post("/api-key/reset", summary="重置当前用户 API Key")
 async def reset_my_api_key(
+    http_request: Request,
     request: ResetMyApiKeyRequest,
     response: Response,
     user: dict = Depends(require_api_key),
@@ -620,7 +651,7 @@ async def reset_my_api_key(
         httponly=True,
         max_age=86400,
         samesite="lax",
-        secure=False
+        secure=_is_secure_request(http_request)
     )
     await AuthService.register_online_state(new_api_key, user)
 

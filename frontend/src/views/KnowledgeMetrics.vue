@@ -161,7 +161,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, nextTick } from "vue";
-import axios from "axios";
+import axios from "../utils/axios";
 import { useToast } from "@/composables/useToast";
 import VChart from "vue-echarts";
 import { use } from "echarts/core";

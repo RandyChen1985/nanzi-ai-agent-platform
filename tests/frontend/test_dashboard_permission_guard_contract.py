@@ -42,7 +42,8 @@ def test_no_permission_page_refetches_me_before_giving_up():
     source = Path("frontend/src/views/NoPermission.vue").read_text()
 
     assert "/api/portal/auth/me" in source
-    assert "localStorage.setItem('user_info'" in source
+    # 统一走 userSession 入口写回权限快照，保证 user_info 不携带 API Key
+    assert "persistUserInfo(userData)" in source
     assert "PersonalWorkbench" in source
     assert "window.location.reload()" not in source
 
