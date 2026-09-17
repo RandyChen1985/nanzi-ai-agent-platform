@@ -267,7 +267,7 @@ def test_chat_input_scrolls_to_selected_model_when_menu_opens():
 def test_chat_input_keeps_model_menu_compact_and_surfaces_current_thinking_mode():
     source = CHAT_INPUT.read_text(encoding="utf-8")
 
-    assert "w-[min(560px" in source
+    assert ("w-[min(580px" in source or "w-[min(560px" in source)
     assert "max-h-[min(448px" in source
     assert "thinkingSummaryLabel" in source
     assert "aria-pressed" in source

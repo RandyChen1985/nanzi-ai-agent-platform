@@ -3093,13 +3093,13 @@ defineExpose({
                         <span class="pointer-events-none truncate flex-1 min-w-0 text-left">{{ modelLabel }}</span>
                         <span
                           v-if="isSelectedModelMultimodal"
-                          class="pointer-events-none hidden shrink-0 rounded-full bg-purple-50 px-1.5 py-0.5 text-[8px] sm:text-[9px] font-semibold text-purple-600 dark:bg-purple-950/50 dark:text-purple-300 sm:inline-flex items-center gap-0.5"
+                          class="pointer-events-none hidden shrink-0 rounded-full bg-gray-100 px-1.5 py-0.5 text-[8px] sm:text-[9px] font-semibold text-gray-600 dark:bg-gray-700/60 dark:text-gray-300 sm:inline-flex items-center gap-0.5"
                           title="支持多模态视觉理解"
                         >
-                          <PhotoIcon class="h-2.5 w-2.5" aria-hidden="true" />
+                          <PhotoIcon class="h-2.5 w-2.5 text-gray-500 dark:text-gray-400" aria-hidden="true" />
                           <span>视觉</span>
                         </span>
-                        <span v-if="thinkingSummaryLabel" class="pointer-events-none flex-shrink-0 rounded-full bg-violet-50 px-1 py-0.5 text-[8px] sm:px-1.5 sm:text-[9px] font-semibold text-violet-600 dark:bg-violet-950/50 dark:text-violet-300">{{ thinkingSummaryLabel }}</span>
+                        <span v-if="thinkingSummaryLabel" class="pointer-events-none flex-shrink-0 rounded-full bg-primary/10 px-1 py-0.5 text-[8px] sm:px-1.5 sm:text-[9px] font-semibold text-primary dark:bg-primary/20 dark:text-primary-hover">{{ thinkingSummaryLabel }}</span>
                         <span
                           v-if="temperatureSummaryLabel"
                           class="pointer-events-none flex-shrink-0 rounded-full px-1 py-0.5 text-[8px] sm:px-1.5 sm:text-[9px] font-semibold transition-colors"
@@ -3225,14 +3225,14 @@ defineExpose({
                                         <span v-if="selectedModel === model.model_id" class="text-primary text-[11px] font-bold shrink-0">✓</span>
                                       </div>
                                       <div class="mt-0.5 flex items-center gap-1.5 text-[10px] text-gray-400 dark:text-gray-500">
-                                        <span v-if="model.type === 'multimodal'" class="inline-flex items-center gap-0.5 font-medium text-purple-600 dark:text-purple-400">
-                                          <PhotoIcon class="h-3 w-3 shrink-0" aria-hidden="true" />
+                                        <span v-if="model.type === 'multimodal'" class="inline-flex items-center gap-0.5 text-gray-400 dark:text-gray-500">
+                                          <PhotoIcon class="h-3 w-3 shrink-0 text-gray-400 dark:text-gray-500" aria-hidden="true" />
                                           <span>多模态</span>
                                         </span>
                                         <span v-else class="text-gray-400 dark:text-gray-500">文本</span>
 
                                         <span v-if="model.thinking_enable" class="text-gray-300 dark:text-gray-600">·</span>
-                                        <span v-if="model.thinking_enable" class="text-violet-500 dark:text-violet-400 font-medium">深度思考</span>
+                                        <span v-if="model.thinking_enable" class="text-gray-400 dark:text-gray-500">深度思考</span>
                                       </div>
                                     </div>
                                     <div class="ml-1 flex flex-shrink-0 items-center gap-1">
@@ -3244,7 +3244,10 @@ defineExpose({
                                       <button
                                         v-if="model.thinking_enable"
                                         type="button"
-                                        class="inline-flex items-center gap-0.5 rounded-full bg-violet-50 px-1.5 py-0.5 text-[9px] font-medium text-violet-600 hover:bg-violet-100 dark:bg-violet-950/50 dark:text-violet-300 dark:hover:bg-violet-900/50"
+                                        class="inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[9px] font-medium transition-colors"
+                                        :class="selectedModel === model.model_id
+                                          ? 'bg-primary/15 text-primary hover:bg-primary/25 dark:bg-primary/25 dark:text-primary-hover'
+                                          : 'bg-gray-100 text-gray-500 hover:bg-gray-200 dark:bg-gray-700/60 dark:text-gray-300 dark:hover:bg-gray-700'"
                                         :title="isMobileViewport ? '思考与参数设置' : '调整本次会话思考与温度'"
                                         @click="openThinkingSettings(model, $event)"
                                       >
@@ -3254,7 +3257,10 @@ defineExpose({
                                       <button
                                         v-else
                                         type="button"
-                                        class="inline-flex items-center gap-0.5 rounded-full bg-gray-100 px-1.5 py-0.5 text-[9px] font-medium text-gray-500 hover:bg-gray-200 dark:bg-gray-700/60 dark:text-gray-300 dark:hover:bg-gray-700"
+                                        class="inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[9px] font-medium transition-colors"
+                                        :class="selectedModel === model.model_id && !isFollowingDefaultTemperature
+                                          ? 'bg-primary/15 text-primary hover:bg-primary/25 dark:bg-primary/25 dark:text-primary-hover'
+                                          : 'bg-gray-100 text-gray-500 hover:bg-gray-200 dark:bg-gray-700/60 dark:text-gray-300 dark:hover:bg-gray-700'"
                                         :title="isMobileViewport ? '模型参数设置' : '调整模型参数与温度'"
                                         @click="openThinkingSettings(model, $event)"
                                       >
@@ -3321,7 +3327,7 @@ defineExpose({
                                     >
                                       <span class="absolute left-0.5 top-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform" :class="thinkingEnabledForSession ? 'translate-x-5' : 'translate-x-0.5'"></span>
                                     </button>
-                                    <span v-else class="rounded-full bg-violet-100 px-2 py-1 text-[10px] font-semibold text-violet-700 dark:bg-violet-950/60 dark:text-violet-300">
+                                    <span v-else class="rounded-full bg-primary/10 px-2 py-1 text-[10px] font-semibold text-primary dark:bg-primary/20 dark:text-primary-hover">
                                       已开启
                                     </span>
                                   </template>
@@ -3343,7 +3349,7 @@ defineExpose({
                                     >
                                       <span class="absolute left-0.5 top-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform" :class="thinkingEnabledForSession ? 'translate-x-5' : 'translate-x-0.5'"></span>
                                     </button>
-                                    <span v-else class="rounded-full bg-violet-100 px-2 py-1 text-[10px] font-semibold text-violet-700 dark:bg-violet-950/60 dark:text-violet-300">
+                                    <span v-else class="rounded-full bg-primary/10 px-2 py-1 text-[10px] font-semibold text-primary dark:bg-primary/20 dark:text-primary-hover">
                                       已开启
                                     </span>
                                   </div>
