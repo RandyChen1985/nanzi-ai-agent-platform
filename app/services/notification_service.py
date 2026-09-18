@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
 from app.models.user_notification_config import UserNotificationConfig
+from app.services.platform_timezone import platform_now
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +27,54 @@ _TRUNCATED_NOTE = "\n\n…（内容超出渠道长度限制，已截断）"
 _WECHAT_WORK_MAX_BYTES = 4000
 _DINGTALK_MAX_BYTES = 18000
 _FEISHU_MAX_BYTES = 20000
+
+# 连通性测试文案：单一来源，四个渠道共用，避免各处硬编码导致措辞漂移。
+TEST_MESSAGE_TITLE = "消息通知连通性测试"
+TEST_MESSAGE_BODY_TEMPLATE = "您的 AI 智能体平台个人中心{channel}通知渠道已配置成功，测试消息发送正常。"
+TEST_CHANNEL_LABELS = {
+    "dingtalk": "钉钉",
+    "wechat_work": "企业微信",
+    "feishu": "飞书",
+    "email": "邮件",
+}
+
+
+def _test_actor_display(actor: Optional[Dict[str, Any]]) -> str:
+    """触发人展示名：姓名（登录名）。二者相同或缺失时退化为单一标识。"""
+    if not actor:
+        return ""
+    real_name = str(actor.get("real_name") or "").strip()
+    user_name = str(actor.get("user_name") or "").strip()
+    if real_name and user_name and real_name != user_name:
+        return f"{real_name}（{user_name}）"
+    return real_name or user_name
+
+
+def _test_message_fields(channel_type: str, actor: Optional[Dict[str, Any]] = None) -> List[Tuple[str, str]]:
+    """测试消息的标识字段：谁在什么时候、通过哪个渠道触发了这次测试。"""
+    fields: List[Tuple[str, str]] = []
+    display = _test_actor_display(actor)
+    if display:
+        fields.append(("触发用户", display))
+    fields.append(("触发时间", platform_now().strftime("%Y-%m-%d %H:%M:%S")))
+    fields.append(("通知渠道", TEST_CHANNEL_LABELS.get(channel_type, channel_type)))
+    return fields
+
+
+def build_test_message(channel_type: str, actor: Optional[Dict[str, Any]] = None) -> str:
+    """Markdown 版测试消息（钉钉 / 企业微信 / 飞书）。"""
+    lines = [f"### {TEST_MESSAGE_TITLE}", ""]
+    lines.extend(f"**{label}**：{value}" for label, value in _test_message_fields(channel_type, actor))
+    lines.extend(["", TEST_MESSAGE_BODY_TEMPLATE.format(channel=TEST_CHANNEL_LABELS.get(channel_type, channel_type))])
+    return "\n".join(lines)
+
+
+def build_test_message_plain(channel_type: str, actor: Optional[Dict[str, Any]] = None) -> str:
+    """纯文本版测试消息（邮件正文，不使用 Markdown 记号）。"""
+    lines = [TEST_MESSAGE_TITLE, ""]
+    lines.extend(f"{label}：{value}" for label, value in _test_message_fields(channel_type, actor))
+    lines.extend(["", TEST_MESSAGE_BODY_TEMPLATE.format(channel=TEST_CHANNEL_LABELS.get(channel_type, channel_type))])
+    return "\n".join(lines)
 
 
 def _truncate_utf8(text: str, max_bytes: int) -> str:
@@ -176,20 +225,28 @@ class NotificationService:
         return resolved
 
     @classmethod
-    async def test_connection(cls, channel_type: str, config_data: Dict[str, Any]) -> Tuple[bool, str]:
-        """Test notification channel connectivity using actual config data"""
+    async def test_connection(
+        cls,
+        channel_type: str,
+        config_data: Dict[str, Any],
+        actor: Optional[Dict[str, Any]] = None,
+    ) -> Tuple[bool, str]:
+        """Test notification channel connectivity using actual config data.
+
+        actor 为触发人信息（user_name / real_name），仅用于让测试消息带上可识别的用户标识。
+        """
         if channel_type == "dingtalk":
-            return await cls._test_dingtalk(config_data)
+            return await cls._test_dingtalk(config_data, actor)
         elif channel_type == "wechat_work":
-            return await cls._test_wechat_work(config_data)
+            return await cls._test_wechat_work(config_data, actor)
         elif channel_type == "feishu":
-            return await cls._test_feishu(config_data)
+            return await cls._test_feishu(config_data, actor)
         elif channel_type == "email":
-            return await cls._test_email(config_data)
+            return await cls._test_email(config_data, actor)
         return False, f"Unsupported channel type: {channel_type}"
 
     @classmethod
-    async def _test_dingtalk(cls, config: Dict[str, Any]) -> Tuple[bool, str]:
+    async def _test_dingtalk(cls, config: Dict[str, Any], actor: Optional[Dict[str, Any]] = None) -> Tuple[bool, str]:
         webhook_url = config.get("webhook_url")
         secret = config.get("secret")
         if not webhook_url:
@@ -207,8 +264,8 @@ class NotificationService:
             payload = {
                 "msgtype": "markdown",
                 "markdown": {
-                    "title": "消息通知连通性测试",
-                    "text": "### 消息通知连通性测试\n\n您的AI 智能体平台个人中心钉钉通知渠道已配置成功，测试消息发送正常。"
+                    "title": TEST_MESSAGE_TITLE,
+                    "text": build_test_message("dingtalk", actor)
                 }
             }
 
@@ -223,7 +280,7 @@ class NotificationService:
             return False, str(e)
 
     @classmethod
-    async def _test_wechat_work(cls, config: Dict[str, Any]) -> Tuple[bool, str]:
+    async def _test_wechat_work(cls, config: Dict[str, Any], actor: Optional[Dict[str, Any]] = None) -> Tuple[bool, str]:
         webhook_url = config.get("webhook_url")
         if not webhook_url:
             return False, "Webhook 地址不能为空"
@@ -232,7 +289,7 @@ class NotificationService:
             payload = {
                 "msgtype": "markdown",
                 "markdown": {
-                    "content": "### 消息通知连通性测试\n\n您的AI 智能体平台个人中心企业微信通知渠道已配置成功，测试消息发送正常。"
+                    "content": build_test_message("wechat_work", actor)
                 }
             }
             async with httpx.AsyncClient(timeout=10.0) as client:
@@ -246,7 +303,7 @@ class NotificationService:
             return False, str(e)
 
     @classmethod
-    async def _test_feishu(cls, config: Dict[str, Any]) -> Tuple[bool, str]:
+    async def _test_feishu(cls, config: Dict[str, Any], actor: Optional[Dict[str, Any]] = None) -> Tuple[bool, str]:
         webhook_url = config.get("webhook_url")
         secret = config.get("secret")
         if not webhook_url:
@@ -261,7 +318,7 @@ class NotificationService:
                     "header": {
                         "title": {
                             "tag": "plain_text",
-                            "content": "消息通知连通性测试"
+                            "content": TEST_MESSAGE_TITLE
                         },
                         "template": "blue"
                     },
@@ -269,7 +326,7 @@ class NotificationService:
                         "elements": [
                             {
                                 "tag": "markdown",
-                                "content": "您的 AI 智能体平台个人中心飞书通知渠道已配置成功，测试消息发送正常。"
+                                "content": build_test_message("feishu", actor)
                             }
                         ]
                     }
@@ -297,7 +354,7 @@ class NotificationService:
             return False, str(e)
 
     @classmethod
-    async def _test_email(cls, config: Dict[str, Any]) -> Tuple[bool, str]:
+    async def _test_email(cls, config: Dict[str, Any], actor: Optional[Dict[str, Any]] = None) -> Tuple[bool, str]:
         smtp_host = config.get("smtp_host")
         smtp_port = config.get("smtp_port") or 465
         smtp_user = config.get("smtp_user")
@@ -319,7 +376,7 @@ class NotificationService:
                 msg['To'] = smtp_user
                 msg['Subject'] = "AI 智能体平台 - 邮件通知连通性测试"
                 
-                content = "这是一封来自AI 智能体平台的测试邮件，表明您的邮件通知通道配置已测试成功。"
+                content = build_test_message_plain("email", actor)
                 msg.attach(MIMEText(content, 'plain', 'utf-8'))
 
                 if smtp_port == 465:

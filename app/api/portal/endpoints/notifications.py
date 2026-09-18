@@ -64,7 +64,14 @@ async def test_notifications_config(
         resolved = await NotificationService.resolve_masked_config(
             db, user_id, req.channel_type, req.config_data
         )
-        success, err_msg = await NotificationService.test_connection(req.channel_type, resolved)
+        # 仅透传展示所需的身份字段，避免把 user_info 中的 api_key 带进消息链路
+        actor = {
+            "user_name": user_info.get("user_name", ""),
+            "real_name": user_info.get("real_name", ""),
+        }
+        success, err_msg = await NotificationService.test_connection(
+            req.channel_type, resolved, actor
+        )
         if success:
             return {"status": "success", "message": "测试连通成功"}
         else:
