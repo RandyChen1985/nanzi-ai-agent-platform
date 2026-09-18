@@ -3033,7 +3033,7 @@ const bashBannerDismissed = ref(false);
 const usesLegacyUrlToken = ref(false);
 
 /**
- * 嵌入会话的**本 tab** 持久化（sessionStorage）。
+ * 嵌入会话的**本 tab + 本实例**持久化（sessionStorage）。
  *
  * 为什么需要它：先前只把换发来的 `emb_ses_` 放在内存 + axios header，刷新后内存清空，
  * 只能回头依赖 `embed_session` Cookie。而该 Cookie 是 `SameSite=lax`，**在跨站第三方
@@ -3041,18 +3041,39 @@ const usesLegacyUrlToken = ref(false);
  * 于是「清掉 URL 里的凭据 → 刷新即失效」；同时 Cookie 是整浏览器一个槽，多个嵌入实例
  * 会互相覆盖，刷新后可能变成另一个用户。
  *
- * sessionStorage 恰好补上这两点：按 tab（iframe 各自独立，互不覆盖）、刷新后仍在、
- * 关闭标签即清除。它确实是 JS 可读的，因此这里权衡后**只放短期、可吊销的会话令牌**，
- * 绝不放长期 API Key——真实 Key 用后即弃，URL 里的凭据也才敢清。长期 Key 依然不落
- * 任何 localStorage。
+ * ⚠️ 隔离粒度必须说准：sessionStorage 的边界是 **tab + origin**，不是 iframe。
+ * 同一 tab 里的多个**同源** iframe 共享同一个 sessionStorage。平台明确支持一页多实例
+ * （`instance_id` 正是为此而生：会话 ID、消息归属都按它分桶），因此存储键也必须带
+ * `instance_id`——否则同页两个实例会互相覆盖，A 刷新后读到 B 的令牌，照样串号。
+ * 相比 Cookie（整浏览器共享）它至少把范围缩到了单个 tab，多标签页不再互相干扰。
+ *
+ * 它确实是 JS 可读的，因此这里权衡后**只放短期、可吊销的会话令牌**，绝不放长期
+ * API Key——真实 Key 用后即弃，URL 里的凭据也才敢清。长期 Key 依然不落任何 localStorage。
  */
-const EMBED_SESSION_STORAGE_KEY = "nzi_embed_session_token";
+const EMBED_SESSION_STORAGE_PREFIX = "nzi_embed_session_token";
 
-/** 把会话令牌持久化到本 tab；失败（隐私模式/存储被禁）返回 false，调用方据此决定是否清 URL。 */
+/** 无 instance_id 时的历史键名（旧版本写入，无法区分实例，只清理、不再读写）。 */
+const EMBED_SESSION_STORAGE_LEGACY_KEY = EMBED_SESSION_STORAGE_PREFIX;
+
+/** 当前实例的存储键：按 instance_id 分桶，与 conversationStorageKey 的隔离口径一致。 */
+const embedSessionStorageKey = (): string => {
+  const instanceId = normalizeEmbedInstanceId(config.instanceId);
+  return instanceId
+    ? `${EMBED_SESSION_STORAGE_PREFIX}:${encodeURIComponent(instanceId)}`
+    : EMBED_SESSION_STORAGE_PREFIX;
+};
+
+/** 把会话令牌持久化到本 tab 的本实例；失败（隐私模式/存储被禁）返回 false，
+ * 调用方据此决定是否清 URL。 */
 const persistEmbedSession = (token: string): boolean => {
   if (!token) return false;
   try {
-    sessionStorage.setItem(EMBED_SESSION_STORAGE_KEY, token);
+    const key = embedSessionStorageKey();
+    sessionStorage.setItem(key, token);
+    // 顺手清掉无实例维度的旧键：它无法区分实例，留着只会被下一次读取误用。
+    if (key !== EMBED_SESSION_STORAGE_LEGACY_KEY) {
+      sessionStorage.removeItem(EMBED_SESSION_STORAGE_LEGACY_KEY);
+    }
     return true;
   } catch (e) {
     console.warn("[Auth] Failed to persist embed session to sessionStorage:", e);
@@ -3060,19 +3081,22 @@ const persistEmbedSession = (token: string): boolean => {
   }
 };
 
-/** 读取本 tab 的嵌入会话令牌；无则返回空串。 */
+/** 读取本实例的嵌入会话令牌；无则返回空串。
+ *
+ * 刻意**不回退**读取无实例维度的旧键：那正是多实例串号的来源，宁可当作无凭据。 */
 const readEmbedSession = (): string => {
   try {
-    return (sessionStorage.getItem(EMBED_SESSION_STORAGE_KEY) || "").trim();
+    return (sessionStorage.getItem(embedSessionStorageKey()) || "").trim();
   } catch {
     return "";
   }
 };
 
-/** 清除本 tab 的嵌入会话令牌（会话失效或登出时调用）。 */
+/** 清除本实例的嵌入会话令牌（会话失效或登出时调用）。 */
 const clearEmbedSession = (): void => {
   try {
-    sessionStorage.removeItem(EMBED_SESSION_STORAGE_KEY);
+    sessionStorage.removeItem(embedSessionStorageKey());
+    sessionStorage.removeItem(EMBED_SESSION_STORAGE_LEGACY_KEY);
   } catch {
     /* 存储不可用时无需处理 */
   }
