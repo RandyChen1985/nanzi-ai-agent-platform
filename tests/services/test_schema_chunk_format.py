@@ -136,6 +136,28 @@ def test_format_schema_hit_summary_returns_none_without_hits():
     assert format_schema_hit_summary("No relevant schema info found.") is None
 
 
+def test_estimate_text_tokens_uses_runtime_utf8_byte_budget():
+    """估算口径必须与 AgentScope `count_tokens`（UTF-8 字节数 ÷ 4）一致。
+
+    这是上下文裁剪水位线、占用展示与运行时判定能否对齐的前提。历史上按
+    `cjk * 1.5 + other / 4` 加权，对中文高估约 2 倍，会让中文会话在模型窗口只用掉
+    约三分之一时就被判定超预算并压缩；对英文反而低估（0.25 < 实际约 0.3）可能超窗。
+    """
+    for text in ("上" * 100, "a" * 100, "上" * 50 + "a" * 50, "帮我查一下上个月的销售数据"):
+        expected = max(1, int(len(text.encode("utf-8")) / 4 + 0.5))
+        assert estimate_text_tokens(text) == expected, text
+
+
+def test_estimate_text_tokens_does_not_overestimate_chinese():
+    """中文不得再被高估：100 个汉字应按字节口径算 75，而非加权口径的 150。"""
+    assert estimate_text_tokens("上" * 100) == 75
+
+
+def test_estimate_text_tokens_empty_is_zero():
+    assert estimate_text_tokens("") == 0
+    assert estimate_text_tokens(None) == 0
+
+
 def test_detect_schema_ambiguity_legacy_format():
     text = (
         "[置信度: 0.88]\n--- Source: access_log.md ---\n数据集: 访问日志\n"

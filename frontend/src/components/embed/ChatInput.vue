@@ -11,6 +11,7 @@ import type { ReasoningEffort } from "@/api/model";
 import type { ContextCompactionRecord } from "@/api/agent";
 import ContextCompactionTimeline from "@/components/chat/ContextCompactionTimeline.vue";
 import { formatContextTokens, type ContextUsage } from "@/composables/useContextUsage";
+import { isUserVisibleContextCompaction } from "@/composables/useContextCompactions";
 import { isImageAttachment } from "@/utils/attachmentImages";
 import { DATASET_PORTAL_SYSTEM_COMMAND_ID } from "@/constants/datasetPortalCommand";
 import { getTemperatureGuidance } from "@/utils/temperatureGuidance";
@@ -285,7 +286,7 @@ const sessionContextBreakdownItems = computed(() => {
 
 const latestContextCompaction = computed(() => {
   return [...(props.contextCompactionRecords || [])]
-    .filter((record) => record.event_type === "context_summarized" || record.event_type === "context_compression")
+    .filter(isUserVisibleContextCompaction)
     .sort((left, right) => String(right.occurred_at).localeCompare(String(left.occurred_at)))[0] || null;
 });
 

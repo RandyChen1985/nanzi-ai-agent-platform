@@ -339,6 +339,10 @@ class RouteStep(BasePipelineStep):
                 "context_final_compaction_event", None
             )
             if final_context_event:
+                # 标记阶段：resolved_model 是"最终"压缩——它按目标模型的真实窗口重算，
+                # 是 executor 实际所见的那一份，因此只有它计入用户的"压缩次数"并渲染卡片。
+                final_context_event = dict(final_context_event)
+                final_context_event["stage"] = "resolved_model"
                 if hasattr(self.agent_service, "_persist_context_compaction_event"):
                     await self.agent_service._persist_context_compaction_event(
                         final_context_event,

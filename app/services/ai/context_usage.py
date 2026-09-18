@@ -14,6 +14,21 @@ from app.services.ai.runtime.agentscope.tool_result_context import is_trusted_to
 
 logger = logging.getLogger(__name__)
 
+# 历史消息之外必须预留的物理窗口 Token（系统提示、工具 schema、技能提示、路由注入
+# 内容、本轮用户消息）。
+#
+# 为什么是常量而不是系统配置项：这个值取决于「当前 Agent 绑定了多少工具、系统提示多长」，
+# 管理员在自己的环境里**无法凭经验估出正确值**，把它做成配置只会制造一个"填错反而更糟"
+# 的旋钮（填小了不压缩、填大了过度压缩，两种都难归因）。因此这里固定一个保守默认值，
+# 由开发者按实际场景调整。
+#
+# 何时该调整：绑定了大量 MCP 工具、或系统提示显著变长时，真实开销会明显超过 8192，
+# 此时历史预算会被算得过宽、最终请求可能超出模型窗口。症状是
+# `ModelCallStatsMiddleware` 打出 "Input exceeds model context window" 告警。
+# 真的需要按环境覆盖时，走 `runtime_model_info["prompt_overhead_reservation_tokens"]`
+# （由 `_runtime_context_metadata` 产出），而不是新增一个全局配置项。
+CONTEXT_OVERHEAD_RESERVATION_TOKENS = 8192
+
 
 def _empty_context_breakdown() -> dict[str, Any]:
     return {
@@ -176,13 +191,7 @@ async def estimate_context_usage(
         except (TypeError, ValueError):
             overhead = 0
         if overhead <= 0:
-            try:
-                overhead_raw = await ConfigService.get(
-                    "agent_context_overhead_headroom_tokens", "8192"
-                )
-                overhead = max(0, int(overhead_raw))
-            except (TypeError, ValueError):
-                overhead = 8192
+            overhead = CONTEXT_OVERHEAD_RESERVATION_TOKENS
 
         try:
             completion_reserve = max(

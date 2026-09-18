@@ -12,12 +12,14 @@ from app.services.ai.audit import AuditManager
 from app.services.ai.config import AgentConfigProvider, RuntimeModelInfo, resolve_runtime_model_info
 from app.services.ai.context_manager import AgentContextManager
 from app.services.ai.route_progress import RouteProgressCallback, emit_route_stage
+from app.services.ai.context_usage import CONTEXT_OVERHEAD_RESERVATION_TOKENS
 from app.services.ai.dispatcher import AgentDispatcher
 from app.services.ai.memory_service import memory_service
 from app.services.ai.skills import SkillInjector
 from app.services.ai.context import (
     ContextCompactor,
     apply_context_snapshot as _apply_context_snapshot,
+    drop_unfinished_turns,
     window_for_context as _window_for_context,
 )
 from app.services.ai.agent_prompts import AgentServicePrompts
@@ -59,7 +61,6 @@ from app.services.ai.turn_decision import (
 from app.services.ai.intent_service import looks_like_current_model_query
 from app.services.ai.business_context import sanitize_injected_context
 from app.services.ai.conversation_identity import require_user_id
-from app.services.schema_chunk_format import estimate_text_tokens
 
 logger = logging.getLogger(__name__)
 
@@ -336,9 +337,11 @@ def _restore_published_download_urls_from_pending(pending: Any) -> List[str]:
 def history_messages_for_llm(history: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """仅把模型需要的消息字段放回上下文，历史展示元数据不参与模型请求。
 
-    ⚠️ 注意：此函数（进模型用，做 allowed_keys 字段过滤 + cancelled/interrupted 双阶段清理）
-    与 context/compactor.py 中的 history_messages_for_token_budget（Token 预算用，字段原样保留）
-    语义不同，请勿合并，否则会导致字段泄漏或断轮清理失效。
+    ⚠️ 注意：此函数（进模型用，做 allowed_keys 字段过滤）与 context/compactor.py 中的
+    history_messages_for_token_budget（Token 预算用，字段原样保留）语义不同，请勿合并后
+    丢弃 allowed_keys 字段过滤，否则会导致字段泄漏。二者**共用**
+    ``drop_unfinished_turns``，因此在「剔除断轮」上真正保持一致（此前两边各写一份、
+    口径并不相同）。
     注意：agent_name 必须保留，供 context_manager 倒序扫描提取 last_agent_name，
     用于路由的会话粘性判断。该字段不会传给 LLM（convert_history_to_messages 在
     assistant 分支只提取 content 字段构建 AIMessage）。
@@ -355,21 +358,7 @@ def history_messages_for_llm(history: List[Dict[str, Any]]) -> List[Dict[str, An
         "tool_run_text_version",
         "seq",
     )
-    context_messages: List[Dict[str, Any]] = []
-    for message in history:
-        if not isinstance(message, dict):
-            continue
-        if (
-            message.get("role") == "assistant"
-            and str(message.get("status") or "").lower() in {"cancelled", "interrupted"}
-        ):
-            # 终止轮的 user/assistant 对仍保留在展示历史中，但不能让模型把半截
-            # assistant 回复当成正常上下文继续完成。
-            if context_messages and context_messages[-1].get("role") == "user":
-                context_messages.pop()
-            continue
-        context_messages.append({key: message[key] for key in allowed_keys if key in message})
-    return context_messages
+    return drop_unfinished_turns(history, filter_fields=allowed_keys)
 
 
 def _client_prefix_history_len(messages: List[Dict[str, Any]]) -> int:
@@ -1207,82 +1196,17 @@ class AgentService:
             }
             return
 
-    async def _resolve_runtime_context_budget(
-        self,
-        *,
-        debug_options: Optional[Dict[str, Any]],
-        agent_id: Optional[str],
-        agent_name: Optional[str],
-        version_id: Optional[str],
-    ) -> int:
-        """动态解析截断上下文水位线（token）。
-
-        优先级（与用户需求一致）：
-        1. 显式指定的当前模型 context_size（debug_options.model，即输入框切换所选模型），
-           经 debug 通道解析。
-        2. 发布版本模型的 context_size（按 agent_id / agent_name / version_id 轻量定位
-           ChatConfig.model_name 后再解析）。
-        3. 兜底：ConfigService.agent_context_max_tokens（默认 65536）。
-
-        仅当模型来源为显式指定（runtime_override / debug_override / agent_config，
-        而非 system_default 回落）且注册表解析出有效 context_size 时才采纳模型窗口，
-        否则一律回落配置兜底值，避免水位线与模型窗口脱钩导致提前 compat。
-        任何 DB / 注册表异常均吞掉并回落兜底，不影响主流程。
-        """
-        fallback_tokens = await self._resolve_pre_route_context_budget()
-
-        chat_config = None
-        try:
-            from app.services.ai.agent_manager import AgentManagerService
-
-            session = AsyncSessionLocal()
-            try:
-                if version_id:
-                    chat_config = await AgentManagerService.get_version_config(
-                        session, version_id
-                    )
-                else:
-                    chat_config = await AgentManagerService.get_active_agent_config(
-                        session,
-                        agent_id=agent_id,
-                        agent_name=agent_name,
-                    )
-            finally:
-                await session.close()
-        except Exception:
-            logger.warning(
-                "Failed to resolve published model config for runtime context budget; "
-                "falling back to agent_context_max_tokens"
-            )
-            chat_config = None
-
-        info = None
-        try:
-            info = await resolve_runtime_model_info(
-                config=chat_config,
-                debug_options=debug_options,
-            )
-        except Exception:
-            logger.warning(
-                "Failed to resolve runtime model info for context budget; "
-                "falling back to agent_context_max_tokens"
-            )
-            return fallback_tokens
-        if info is not None and info.source in {
-            "runtime_override",
-            "debug_override",
-            "agent_config",
-        }:
-            try:
-                resolved = int(info.context_size) if info.context_size else 0
-            except (TypeError, ValueError):
-                resolved = 0
-            if resolved > 0:
-                return resolved
-        return fallback_tokens
-
     async def _resolve_pre_route_context_budget(self) -> int:
-        """读取路由前可安全使用的全局上下文预算，不解析任何 agent。"""
+        """【阶段①：路由前】读取可安全使用的全局上下文预算，不解析任何 agent。
+
+        这里**只能**用配置值 ``agent_context_max_tokens``（默认 65536），不能读模型窗口：
+        此时路由尚未完成，最终会用哪个模型（路由可能切换到别的 agent、或用户临时切模型）
+        还是未知的。用某个候选模型的窗口当水位线，一旦路由结果与它不符，水位线就与实际
+        模型脱钩。
+
+        路由完成后由 :meth:`_history_budget_for_runtime_model_info` 承接【阶段②】，
+        按最终模型重算并抬高水位线。两个阶段合起来构成完整的上下文预算契约。
+        """
         from app.services.config_service import ConfigService
 
         cfg = await ConfigService.get("agent_context_max_tokens", "65536")
@@ -1340,17 +1264,13 @@ class AgentService:
             )
 
     async def _resolve_context_overhead_tokens(self) -> int:
-        """读取系统提示、工具 schema 等非历史内容的预留预算。"""
-        from app.services.config_service import ConfigService
+        """系统提示、工具 schema 等非历史内容的预留预算。
 
-        try:
-            overhead_raw = await ConfigService.get(
-                "agent_context_overhead_headroom_tokens", "8192"
-            )
-            overhead = int(overhead_raw)
-        except (TypeError, ValueError):
-            overhead = 8192
-        return max(0, overhead)
+        与 `app/services/ai/context_usage.py` 共用同一个常量，避免「预算计算」与
+        「用量展示」两处各持一份、漂移出不同的水位线。保留为方法只是为了让调用点
+        不必关心它是常量还是将来的动态值。
+        """
+        return CONTEXT_OVERHEAD_RESERVATION_TOKENS
 
     async def _resolve_history_context_budget(
         self,
@@ -1390,7 +1310,19 @@ class AgentService:
         self,
         runtime_model_info: RuntimeModelInfo,
     ) -> int:
-        """把最终模型信息转换成实际可用于历史的 token 预算。"""
+        """【阶段②：路由后】把**最终**模型信息转换成实际可用于历史的 token 预算。
+
+        与阶段①（:meth:`_resolve_pre_route_context_budget`）的区别，也是本方法的重点：
+
+        - 只有模型来源是**显式指定**（``runtime_override`` / ``debug_override`` /
+          ``agent_config``）时，才采纳它的 ``context_size`` 作为水位线；
+        - 若只是 ``system_default``（回落到系统默认模型），**即使注册表里有
+          ``context_size`` 也不采纳**，仍用 ``agent_context_max_tokens``。
+
+        这条约束是为了避免「水位线与模型窗口脱钩导致提前 compact」：系统默认模型往往
+        是平台兜底选择，并非智能体有意配置，按它的窗口放大水位线会让本该压缩的会话
+        继续增长，最终在另一侧超窗。
+        """
         runtime_max_tokens = await self._resolve_pre_route_context_budget()
         if runtime_model_info.source in {
             "runtime_override",

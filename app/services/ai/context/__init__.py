@@ -2,6 +2,7 @@
 from app.services.ai.context.compactor import (
     ContextCompactor,
     apply_context_snapshot,
+    drop_unfinished_turns,
     history_messages_for_token_budget,
     trusted_tool_run_text,
     window_for_context,
@@ -10,6 +11,7 @@ from app.services.ai.context.compactor import (
 __all__ = [
     "ContextCompactor",
     "apply_context_snapshot",
+    "drop_unfinished_turns",
     "history_messages_for_token_budget",
     "trusted_tool_run_text",
     "window_for_context",

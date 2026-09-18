@@ -153,6 +153,20 @@ class MemoryService:
         return f"{self.KEY_PREFIX}:{uid}:{conversation_id}:{self.CONTEXT_SNAPSHOT_SUFFIX}"
 
     async def get_context_snapshot(self, user_id: str, conversation_id: str) -> Optional[Dict[str, Any]]:
+        """读取手动压缩快照；快照属于已放弃的分支时返回 None。
+
+        **分支校验（防御性，且是读路径上唯一的一道）**：快照可能在被放弃的分支上创建，
+        例如「编辑重发」把旧分支截断、或「清空会话」删掉历史。这两条路径都会调
+        ``reset_context_state`` 删除快照，但只依赖删除不够稳妥（删除失败、旧版本残留、
+        并发写入都会漏网），因此这里再校验一次 ``revision``：
+
+        - 快照带 ``revision`` 且与当前分支不一致 → 弃用（记日志）；
+        - 快照**没有** ``revision`` 字段（本改动之前写入的历史快照）→ 无法证明它属于
+          当前分支，一律弃用。压缩快照是纯派生态、可重新生成，宁可让它自然失效。
+
+        否则残留快照会被 ``merge_context_snapshot`` 前拼到新历史上，让模型基于已放弃的
+        分支作答；「清空会话」场景下更会让用户以为已删除的内容继续每轮进入模型上下文。
+        """
         try:
             redis = await get_redis()
             if not redis:
@@ -161,7 +175,32 @@ class MemoryService:
             if isinstance(raw, bytes):
                 raw = raw.decode("utf-8")
             value = json.loads(raw) if raw else None
-            return value if isinstance(value, dict) else None
+            if not isinstance(value, dict):
+                return None
+
+            snapshot_revision = value.get("revision")
+            if snapshot_revision is None:
+                logger.info(
+                    "[MemoryService] Discarding legacy context snapshot without revision for %s:%s",
+                    user_id,
+                    conversation_id,
+                )
+                return None
+            try:
+                current_revision = await self.get_context_revision(user_id, conversation_id)
+                if int(snapshot_revision) != int(current_revision):
+                    logger.info(
+                        "[MemoryService] Discarding stale context snapshot for %s:%s "
+                        "(snapshot revision=%s, current=%s)",
+                        user_id,
+                        conversation_id,
+                        snapshot_revision,
+                        current_revision,
+                    )
+                    return None
+            except (TypeError, ValueError):
+                return None
+            return value
         except Exception as exc:
             logger.warning("[MemoryService] Failed to get context snapshot: %s", exc)
             return None
@@ -172,13 +211,21 @@ class MemoryService:
         conversation_id: str,
         snapshot: Dict[str, Any],
     ) -> bool:
+        """写入手动压缩快照，并自动盖上当前分支 ``revision`` 供读路径校验。"""
         redis = await get_redis()
         if not redis or not isinstance(snapshot, dict):
             return False
         try:
+            payload = dict(snapshot)
+            # 调用方不必（也不该）自己关心 revision：由这里统一盖章，避免遗漏。
+            try:
+                payload["revision"] = await self.get_context_revision(user_id, conversation_id)
+            except Exception as exc:
+                logger.warning("[MemoryService] Failed to resolve revision for snapshot: %s", exc)
+                payload.pop("revision", None)
             await redis.set(
                 self._get_context_snapshot_key(user_id, conversation_id),
-                json.dumps(snapshot, ensure_ascii=False),
+                json.dumps(payload, ensure_ascii=False),
                 ex=self.ttl,
             )
             return True
@@ -332,24 +379,10 @@ class MemoryService:
             )
             return 0
 
-    async def set_digest(self, user_id: str, conversation_id: str, content: str) -> None:
-        """写入跨轮溢出摘录（digest）文本，沿用会话 TTL（默认 30 天）。"""
-        redis = await get_redis()
-        if not redis:
-            return
-        key = self._get_digest_key(user_id, conversation_id)
-        meta_keys = [
-            self._get_digest_meta_key(user_id, conversation_id, field)
-            for field in ("seq", "revision", "quality")
-        ]
-        try:
-            if not content:
-                await redis.delete(key, *meta_keys)
-            else:
-                await redis.set(key, content, ex=self.ttl)
-                await redis.delete(*meta_keys)
-        except Exception as e:
-            logger.error("[MemoryService] Failed to set digest key %s: %s", key, e)
+    # 注：这里曾有一个无条件的 ``set_digest``，全仓（含测试）零调用，且它的实现是
+    # 「写正文 + 删掉 seq/revision/quality 元键」——一旦被误用，``stored_seq``/
+    # ``stored_quality`` 会回落成 -1，之后任何 ``set_digest_if_current`` 都能通过，
+    # 防覆盖护栏直接失效。摘录写入请一律走 ``set_digest_if_current``，由它统一维护元键。
 
     async def set_digest_if_current(
         self,
@@ -497,17 +530,28 @@ class MemoryService:
         if redis:
             try:
                 revision_key = self._get_context_revision_key(user_id, conversation_id)
+                seq_counter_key = self._get_seq_counter_key(user_id, conversation_id)
                 # seq counter is intentionally preserved, while the revision changes
                 # on every branch reset so an already-running digest task cannot
                 # repopulate the old branch after truncation/clear.
                 await redis.incr(revision_key)
                 await redis.expire(revision_key, self.ttl)
+                # seq counter 保留单调性，但必须**同步续期**：它原先只在 add_message
+                # 里续期，一旦「截断/清空后长期静默 → counter 先于 history 过期」，
+                # INCR 会从 1 重来，低于历史里保留下来的旧 seq；此时快照合并会把新
+                # 产生的消息当作"快照之前"的旧消息而丢弃，模型看不到本轮提问。
+                await redis.expire(seq_counter_key, self.ttl)
                 await redis.delete(self._get_digest_key(user_id, conversation_id))
                 await redis.delete(
                     self._get_digest_meta_key(user_id, conversation_id, "seq"),
                     self._get_digest_meta_key(user_id, conversation_id, "revision"),
                     self._get_digest_meta_key(user_id, conversation_id, "quality"),
                 )
+                # 手动压缩快照是这里最"重"的一份派生态（含整段压缩正文），必须与 digest
+                # 同生共死。此前漏删过：编辑重发/清空会话后，旧分支的快照仍被
+                # merge_context_snapshot 前拼到新历史上，模型会基于已放弃的分支作答；
+                # 清空会话场景下更会让用户以为删掉的内容继续每轮进入模型上下文。
+                await redis.delete(self._get_context_snapshot_key(user_id, conversation_id))
                 await redis.delete(f"memory:debounce:{user_id}:{conversation_id}")
             except Exception as e:
                 logger.warning(
@@ -609,9 +653,18 @@ class MemoryService:
             source_seq = 0
         if source_seq <= 0:
             return history
+
+        def _seq_of(message: Any) -> int:
+            # 与 source_seq 一样做防御：历史里可能混入 seq 非数字（旧数据/脏值），
+            # 直接 int() 会抛 ValueError 并打断整个请求，而这里只该"按 0 处理"。
+            try:
+                return int(message.get("seq") or 0)
+            except (TypeError, ValueError, AttributeError):
+                return 0
+
         newer = [
             message for message in history
-            if isinstance(message, dict) and int(message.get("seq") or 0) > source_seq
+            if isinstance(message, dict) and _seq_of(message) > source_seq
         ]
         return [*compacted, *newer]
 

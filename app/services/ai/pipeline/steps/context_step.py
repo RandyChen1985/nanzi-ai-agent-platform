@@ -144,6 +144,12 @@ class ContextStep(BasePipelineStep):
                     context_compaction_applied = True
                     ctx_event = dict(ctx_event)
                     ctx_event["type"] = "context_summarized"
+                    # 标记阶段：pre-route 的压缩只是"为了让路由拿到一个不超窗的上下文"
+                    # 而产生的中间态，其窗口随后会被路由后的阶段②按目标模型预算重算
+                    # （窗口按"从最新往回取"，阶段②的窗口必然 ⊇ 阶段①的窗口），因此它
+                    # 永远不会是最终状态。前端据此不把它计入"压缩次数"、也不渲染卡片，
+                    # 否则同一轮会多出一张会被立刻修正的卡、计数翻倍。
+                    ctx_event["stage"] = "pre_route"
                     if self.agent_service and hasattr(
                         self.agent_service, "_persist_context_compaction_event"
                     ):
@@ -196,6 +202,12 @@ class ContextStep(BasePipelineStep):
                     context_compaction_applied = True
                     ctx_event = dict(ctx_event)
                     ctx_event["type"] = "context_summarized"
+                    # 标记阶段：pre-route 的压缩只是"为了让路由拿到一个不超窗的上下文"
+                    # 而产生的中间态，其窗口随后会被路由后的阶段②按目标模型预算重算
+                    # （窗口按"从最新往回取"，阶段②的窗口必然 ⊇ 阶段①的窗口），因此它
+                    # 永远不会是最终状态。前端据此不把它计入"压缩次数"、也不渲染卡片，
+                    # 否则同一轮会多出一张会被立刻修正的卡、计数翻倍。
+                    ctx_event["stage"] = "pre_route"
                     if self.agent_service and hasattr(
                         self.agent_service, "_persist_context_compaction_event"
                     ):

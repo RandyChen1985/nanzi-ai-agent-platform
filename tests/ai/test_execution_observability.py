@@ -6,7 +6,16 @@ from unittest.mock import AsyncMock
 import pytest
 
 
-pytestmark = pytest.mark.no_infrastructure
+# 刻意**不**打 `no_infrastructure` 标记。
+#
+# `tests/conftest.py::init_infrastructure` 会先 `close_db()` 再 `init_db()`，作用是把
+# SQLAlchemy 全局引擎的连接池重新绑定到当前测试的事件循环。打了该标记就会整段跳过，
+# 于是任何仍然走真实 DB 的用例会拿到**上一个事件循环遗留的连接**，报
+# "Future attached to a different loop" —— 表现为随测试顺序/时序波动的假失败。
+#
+# 本文件中 `test_agent_service_publishes_execution_performance_snapshot` 会跑真实
+# pipeline（AssembleStep → AgentContextManager.setup_context → 真实 SQL 查询），
+# 属于确实需要基础设施的用例，因此这里不能整文件跳过。
 
 
 @pytest.mark.asyncio
