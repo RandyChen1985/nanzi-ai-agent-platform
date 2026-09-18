@@ -6240,7 +6240,28 @@ const applyInitConfigPayload = (data: Record<string, any>) => {
   }
 };
 
+/** ticket 兑换失败的具体原因，供失败界面区分文案。
+ *
+ * - `origin_not_allowed`：403，来源不被该票的 `allowed_origins` 允许。这是**可修复**的
+ *   接入配置问题（调整白名单或换用受信来源重试），票据在后端已不再被消耗。
+ * - `ticket_invalid`：400/网络异常，票不存在、已过期或已被使用，需要重新签发。
+ *
+ * 两者此前共用同一句「该凭证为一次性使用…」，把「域名白名单不匹配」误报成「票被用过了」，
+ * 直接把排查方向带偏。
+ */
+const ticketExchangeFailureReason = ref<"" | "origin_not_allowed" | "ticket_invalid">("");
+
+/** 把 ticket 兑换的失败原因映射为界面/宿主可区分的失败原因。
+ *
+ * 403（来源不匹配）与 400（票已失效）是完全不同的故障：前者改配置就能好，后者必须重签。
+ */
+const resolveTicketFailureReason = (): AuthFailureReason =>
+  ticketExchangeFailureReason.value === "origin_not_allowed"
+    ? "origin_not_allowed"
+    : "invalid_ticket";
+
 const exchangeTicketAndApply = async (ticket: string): Promise<boolean> => {
+  ticketExchangeFailureReason.value = "";
   try {
     const res = await axios.post("/api/v1/embed/tickets/exchange", { ticket: ticket.trim() });
     if (res.data && res.data.code === 200 && res.data.data?.session_token) {
@@ -6261,8 +6282,13 @@ const exchangeTicketAndApply = async (ticket: string): Promise<boolean> => {
       lastSessionCookieIssued.value = true;
       return true;
     }
+    // 2xx 但业务码非 200：按「票不可用」处理
+    ticketExchangeFailureReason.value = "ticket_invalid";
     return false;
   } catch (err) {
+    // 403 = 来源不被 allowed_origins 允许；其余（400 等）= 票已失效/已被使用
+    const status = (err as { response?: { status?: number } })?.response?.status;
+    ticketExchangeFailureReason.value = status === 403 ? "origin_not_allowed" : "ticket_invalid";
     console.error("[EmbedTicket] Failed to exchange ticket:", err);
     return false;
   }
@@ -6334,9 +6360,9 @@ const handleInitConfig = async (data: Record<string, any>) => {
   if (data.ticket) {
     const ticketOk = await exchangeTicketOnce(String(data.ticket));
     if (!ticketOk) {
-      authFailureReason.value = "invalid_ticket";
+      authFailureReason.value = resolveTicketFailureReason();
       hasPermission.value = false;
-      postMessageToHost({ type: "INIT_FAILURE", reason: "invalid_ticket" });
+      postMessageToHost({ type: "INIT_FAILURE", reason: authFailureReason.value });
       return;
     }
     hasPermission.value = true;
@@ -6464,9 +6490,9 @@ const resetSession = async (newToken?: string, ticket?: string) => {
   if (ticket) {
     const ticketOk = await exchangeTicketOnce(ticket);
     if (!ticketOk) {
-      authFailureReason.value = "invalid_ticket";
+      authFailureReason.value = resolveTicketFailureReason();
       hasPermission.value = false;
-      postMessageToHost({ type: "INIT_FAILURE", reason: "invalid_ticket" });
+      postMessageToHost({ type: "INIT_FAILURE", reason: authFailureReason.value });
       return;
     }
     hasPermission.value = true;
@@ -6580,6 +6606,7 @@ const hasPermission = ref(true); // Default to true, strictly controlled by vali
  */
 type AuthFailureReason =
   | "invalid_ticket"
+  | "origin_not_allowed"
   | "missing_token"
   | "invalid_token"
   | "no_session"
@@ -6595,6 +6622,14 @@ const authFailureView = computed<{ title: string; message: string }>(() => {
         title: "接入凭证已失效",
         message:
           "该凭证为一次性使用，页面刷新或重复打开后即失效。请返回原系统重新进入。",
+      };
+    case "origin_not_allowed":
+      // 与「票已失效」彻底区分开：来源不匹配是**可修复**的接入配置问题，
+      // 此前两者共用同一句文案，会把「域名白名单没配对」误导成「票被别人用过了」。
+      return {
+        title: "当前来源未被允许",
+        message:
+          "本次签发的凭证限定了可嵌入的宿主域名，当前页面来源不在白名单内。请联系原系统核对 allowed_origins 与访问地址是否一致（需包含协议与端口）。",
       };
     case "missing_token":
       return {
@@ -8922,9 +8957,9 @@ onMounted(() => {
         fetchAllowedAgents();
         fetchSlashCommands();
       } else {
-        authFailureReason.value = "invalid_ticket";
+        authFailureReason.value = resolveTicketFailureReason();
         hasPermission.value = false;
-        postMessageToHost({ type: "INIT_FAILURE", reason: "invalid_ticket" });
+        postMessageToHost({ type: "INIT_FAILURE", reason: authFailureReason.value });
       }
     })();
   } else if (query.get("token")) {

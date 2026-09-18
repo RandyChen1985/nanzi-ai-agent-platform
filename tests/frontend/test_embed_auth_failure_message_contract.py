@@ -61,12 +61,16 @@ def test_invalid_ticket_message_is_actionable_and_not_permission_blame():
 
 
 def test_every_init_failure_reports_a_reason():
-    """每个 INIT_FAILURE 上报点都必须设置 authFailureReason。"""
+    """每个 INIT_FAILURE 上报点都必须设置 authFailureReason。
+
+    锚定 `type: "INIT_FAILURE"` 而不是 `reason: "`：后者在 reason 改用变量
+    （`reason: authFailureReason.value`）后就匹配不到了，会让本测试悄悄失去覆盖力。
+    """
     source = _source()
     missing = []
     idx = 0
     while True:
-        idx = source.find('reason: "', idx)
+        idx = source.find('type: "INIT_FAILURE"', idx)
         if idx == -1:
             break
         # 取该上报点前 400 字符，检查是否设置了原因
@@ -95,3 +99,60 @@ def test_template_uses_mapping_instead_of_hardcoded_permission_text():
         "模板仍硬编码误导性的权限文案，应改由 authFailureView 提供"
     )
     assert "authFailureView" in template, "模板未使用 authFailureView 渲染失败提示"
+
+
+def test_origin_mismatch_is_distinguished_from_consumed_ticket():
+    """403（来源不被允许）必须与 400（票已失效/已用）分成两种提示。
+
+    ## 背景
+
+    这两者在界面上原本共用「该凭证为一次性使用，页面刷新或重复打开后即失效」。
+    但 403 的真实原因是**域名白名单没配对**——改配置就能好，票也不该被消耗；
+    而 400 才是真的需要重新签发。把它们混为一谈会把排查方向直接带偏：
+    实测有人看到该文案后，以为「票被别人用掉了」，实际只是 `allowed_origins`
+    填的是线上域名、而当时访问的是 `http://localhost:8001`。
+    """
+    source = _source()
+
+    assert "origin_not_allowed" in source, "缺少「来源不被允许」这一独立失败原因"
+
+    view_start = source.index("const authFailureView")
+    view_block = source[view_start : view_start + 3000]
+    assert 'case "origin_not_allowed"' in view_block, "展示映射缺少 origin_not_allowed 分支"
+
+    # 精确截取该分支：到下一个 case 为止
+    origin_branch = view_block[view_block.index('case "origin_not_allowed"') :]
+    origin_branch = origin_branch[: origin_branch.index('case "missing_token"')]
+
+    # 不得复用「一次性失效」那套说法，必须指向域名白名单/来源这一真实原因
+    assert "一次性" not in origin_branch, (
+        "origin_not_allowed 不应提示「一次性失效」，那是 400 的原因，会误导排查"
+    )
+    assert "域名" in origin_branch or "来源" in origin_branch, (
+        "origin_not_allowed 文案应指向「来源/域名白名单」这一真实原因"
+    )
+
+
+def test_exchange_failure_status_is_classified_by_http_code():
+    """兑换失败必须按 HTTP 状态码分类：403 -> 来源问题，其余 -> 票不可用。"""
+    source = _source()
+    start = source.index("const exchangeTicketAndApply")
+    end = source.index("const exchangeTicketOnce", start)
+    body = source[start:end]
+
+    assert "403" in body, "未按 403 识别「来源不被允许」"
+    assert "origin_not_allowed" in body, "未把 403 映射为 origin_not_allowed"
+    assert "ticket_invalid" in body, "未把其它失败映射为 ticket_invalid"
+
+
+def test_ticket_failure_reason_is_used_at_every_reporting_site():
+    """每个上报 ticket 失败的地方都要用映射后的原因，不能写死 invalid_ticket。"""
+    source = _source()
+
+    assert "const resolveTicketFailureReason" in source, "缺少失败原因映射函数"
+    assert 'authFailureReason.value = "invalid_ticket"' not in source, (
+        "仍有地方把 ticket 失败写死为 invalid_ticket，403 会被误报成「票已失效」"
+    )
+    assert source.count("authFailureReason.value = resolveTicketFailureReason()") == 3, (
+        "三处 ticket 失败上报点（INIT_CONFIG / resetSession / URL ticket）都应使用映射后的原因"
+    )

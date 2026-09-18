@@ -210,3 +210,62 @@ async def test_embed_ticket_impersonation_permissions(client: AsyncClient, db_se
     assert authorized_impersonate_resp.status_code == 200
     assert authorized_impersonate_resp.json()["data"]["target_user"]["user_name"] == user_b_name
 
+
+@pytest.mark.asyncio
+async def test_origin_mismatch_does_not_consume_ticket(client: AsyncClient, db_session):
+    """来源校验失败**不得**消耗票据——这是可修复错误，换对来源应当仍能兑换。
+
+    回归背景：exchange 原先「先 GETDEL 核销、再校验 allowed_origins」，一次来源不匹配
+    就把票白白吃掉，用户重试只能拿到 400 "already used"，界面上也只显示「凭证为一次性
+    使用、已失效」，真实原因（域名白名单不匹配）被彻底掩盖——实测有人据此误判为
+    「票被别人用过了」。
+
+    同时锁定两点不变式：校验通过后依旧是**一次性**（防重放不能被削弱）。
+    """
+    suffix = uuid.uuid4().hex[:8]
+    admin_key = await AuthService.generate_api_key(
+        user_name=f"ticket_origin_adm_{suffix}", role="admin", db=db_session
+    )
+    target_name = f"ticket_origin_user_{suffix}"
+    await AuthService.generate_api_key(
+        user_name=target_name, role="user", db=db_session
+    )
+
+    resp = await client.post(
+        "/api/v1/embed/tickets",
+        json={
+            "username": target_name,
+            "allowed_origins": ["https://crm.example.com"],
+            "expires_in": 300,
+        },
+        headers={"X-API-Key": admin_key},
+    )
+    assert resp.status_code == 200
+    ticket = resp.json()["data"]["ticket"]
+
+    # 1. 来自未授权来源 -> 403
+    bad = await client.post(
+        "/api/v1/embed/tickets/exchange",
+        json={"ticket": ticket},
+        headers={"Origin": "http://localhost:8001"},
+    )
+    assert bad.status_code == 403
+    assert "not allowed" in bad.text.lower()
+
+    # 2. 同一张票换用受信来源 -> 仍可正常兑换（票没有被上一次失败消耗）
+    good = await client.post(
+        "/api/v1/embed/tickets/exchange",
+        json={"ticket": ticket},
+        headers={"Origin": "https://crm.example.com"},
+    )
+    assert good.status_code == 200
+    assert good.json()["data"]["session_token"].startswith("emb_ses_")
+
+    # 3. 兑换成功后仍然是一次性的：再次兑换失败（防重放不被削弱）
+    replay = await client.post(
+        "/api/v1/embed/tickets/exchange",
+        json={"ticket": ticket},
+        headers={"Origin": "https://crm.example.com"},
+    )
+    assert replay.status_code == 400
+

@@ -140,8 +140,8 @@ class EmbedService:
     ) -> Dict[str, Any]:
         """
         原子核销 Ticket 并生成短期会话 Token (session_token)。
-        - 只能成功核销一次 (One-Time Use)；
-        - 核销后立即从 Redis 移除 Ticket，杜绝重放攻击；
+        - 先只读校验来源，**通过后**才原子核销：来源不匹配是可修复错误，不应消耗票据；
+        - 只能成功核销一次 (One-Time Use)，核销后立即从 Redis 移除，杜绝重放攻击；
         - 生成的 session_token 写入 auth 鉴权缓存，天然与现存所有 API Key 鉴权体系无缝兼容。
         """
         if not ticket or not isinstance(ticket, str) or not ticket.startswith("emt_"):
@@ -153,8 +153,13 @@ class EmbedService:
 
         ticket_key = f"embed:ticket:{ticket.strip()}"
 
-        # 1. 原子获取并删除 (GETDEL) 防止并发重放
-        raw_ticket_data = await redis.getdel(ticket_key)
+        # 1. 先**只读**取票，不要一上来就核销。
+        #
+        # 来源校验（第 2 步）失败属于「可修复」错误——换个正确来源重试即可；若先 GETDEL
+        # 再校验，一次来源不匹配就把票白白吃掉：用户重试只能拿到 "already used"，前端也只能
+        # 显示「凭证已失效/一次性」，真实原因（域名白名单不匹配）被彻底掩盖。曾因此让人
+        # 误判为「票被别人用过了」。
+        raw_ticket_data = await redis.get(ticket_key)
         if not raw_ticket_data:
             raise ValueError("Ticket not found, expired, or already used")
 
@@ -163,7 +168,7 @@ class EmbedService:
 
         ticket_data = json.loads(raw_ticket_data)
 
-        # 2. 检查来源 Origin (若有配置限制)
+        # 2. 检查来源 Origin (若有配置限制)——此时票仍在，校验失败可直接重试
         allowed_origins_raw = ticket_data.get("allowed_origins")
         if allowed_origins_raw:
             try:
@@ -174,7 +179,20 @@ class EmbedService:
             except json.JSONDecodeError:
                 pass
 
-        # 3. 生成短期 Session Token
+        # 3. 校验通过，原子核销 (GETDEL) 防止并发重放，并核对核销到的内容与刚校验的一致。
+        #
+        # GET 与 GETDEL 之间有一个并发窗口：两个请求可能都通过了第 2 步校验，此时靠 GETDEL
+        # 的原子性保证只有一个能取到值（另一个拿到 None）；再比对内容，兜住「同一 key 被
+        # 换进另一张票」的极端情形，确保「校验的那张」就是「核销的那张」。
+        consumed = await redis.getdel(ticket_key)
+        if consumed is None:
+            raise ValueError("Ticket not found, expired, or already used")
+        if isinstance(consumed, bytes):
+            consumed = consumed.decode("utf-8")
+        if consumed != raw_ticket_data:
+            raise ValueError("Ticket not found, expired, or already used")
+
+        # 4. 生成短期 Session Token
         session_token = f"emb_ses_{secrets.token_urlsafe(32)}"
         manager = get_api_key_manager()
         hashed_token = manager.hash_api_key(session_token)
@@ -196,7 +214,7 @@ class EmbedService:
             "verified_at": str(int(time.time())),
         }
 
-        # 4. 写入鉴权缓存，设置 24 小时 TTL (请求时会自动滑动续期)
+        # 5. 写入鉴权缓存，设置 24 小时 TTL (请求时会自动滑动续期)
         await EmbedService._persist_session(redis, cache_key, user_session_data)
 
         logger.info(
