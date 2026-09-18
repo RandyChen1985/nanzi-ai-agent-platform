@@ -295,9 +295,45 @@
         ref="messagesContainer"
         @scroll="handleScroll"
       >
+      <!-- Awaiting host INIT_CONFIG (strict/debug mode) -->
+      <div
+        v-if="isAwaitingHostInitConfig"
+        class="absolute inset-0 z-50 flex flex-col items-center justify-center bg-white dark:bg-gray-900 p-6 text-center"
+        data-testid="embed-awaiting-init"
+      >
+        <div class="p-4 bg-blue-50 dark:bg-blue-900/10 rounded-full mb-4">
+          <svg
+            class="w-12 h-12 text-blue-500 animate-spin"
+            fill="none"
+            viewBox="0 0 24 24"
+          >
+            <circle
+              class="opacity-25"
+              cx="12"
+              cy="12"
+              r="10"
+              stroke="currentColor"
+              stroke-width="3"
+            />
+            <path
+              class="opacity-75"
+              fill="currentColor"
+              d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
+            />
+          </svg>
+        </div>
+        <h3 class="text-lg font-bold text-gray-800 dark:text-gray-100 mb-2">
+          等待宿主下发凭据
+        </h3>
+        <p
+          class="text-sm text-gray-500 dark:text-gray-400 max-w-xs leading-relaxed"
+        >
+          尚未收到宿主通过 INIT_CONFIG 下发的 Ticket 或 API Key。请在宿主页面完成初始化，收到后将自动进入对话。
+        </p>
+      </div>
       <!-- No Permission Overlay -->
       <div
-        v-if="!hasPermission"
+        v-else-if="!hasPermission"
         class="absolute inset-0 z-50 flex flex-col items-center justify-center bg-white dark:bg-gray-900 p-6 text-center"
       >
         <div class="p-4 bg-red-50 dark:bg-red-900/10 rounded-full mb-4">
@@ -4333,7 +4369,8 @@ const saveResourceScope = async () => {
 
 let requestedConversationId = "";
 let resourceScopeLoadSequence = 0;
-let initConfigReceived = false;
+// 需为 ref：`isAwaitingHostInitConfig` 要据此判断宿主是否已下发凭据，普通 let 不会被 computed 追踪。
+const initConfigReceived = ref(false);
 let pendingUrlTokenInitTimer: number | null = null;
 let conversationInitializationGeneration = 0;
 const LEGACY_CONVERSATION_STORAGE_KEY = "yovole_embed_conv_id";
@@ -4367,7 +4404,7 @@ const cancelPendingUrlTokenInitialization = () => {
 };
 
 const scheduleUrlTokenInitialization = () => {
-  if (!config.token || initConfigReceived) return;
+  if (!config.token || initConfigReceived.value) return;
   cancelPendingUrlTokenInitialization();
   if (config.instanceId) {
     void initChat();
@@ -4376,7 +4413,7 @@ const scheduleUrlTokenInitialization = () => {
   // 给父页面一个握手窗口，让 INIT_CONFIG 中的 instance_id 先于 URL token 初始化生效。
   pendingUrlTokenInitTimer = window.setTimeout(() => {
     pendingUrlTokenInitTimer = null;
-    if (!initConfigReceived && config.token) void initChat();
+    if (!initConfigReceived.value && config.token) void initChat();
   }, 250);
 };
 
@@ -4388,7 +4425,7 @@ const scheduleUrlTokenInitialization = () => {
  * 这里给出同样带握手窗口的兜底：让 INIT_CONFIG 先到，逾期则用 Cookie 认证。
  */
 const scheduleCookieOnlyInitialization = () => {
-  if (initConfigReceived || config.token) return;
+  if (initConfigReceived.value || config.token) return;
   cancelPendingUrlTokenInitialization();
   if (config.instanceId) {
     void initChat();
@@ -4397,7 +4434,7 @@ const scheduleCookieOnlyInitialization = () => {
   // 与 token 路径一致，保留握手窗口，避免抢在父页面 INIT_CONFIG 之前认证
   pendingUrlTokenInitTimer = window.setTimeout(() => {
     pendingUrlTokenInitTimer = null;
-    if (!initConfigReceived && !config.token) void initChat();
+    if (!initConfigReceived.value && !config.token) void initChat();
   }, 250);
 };
 
@@ -6335,7 +6372,20 @@ const postInitSuccess = () => {
 };
 
 const handleInitConfig = async (data: Record<string, any>) => {
-  initConfigReceived = true;
+  // 立刻置位：用于取消 URL / Cookie 初始化的待发计时器，避免它们与本次 INIT_CONFIG 抢着认证。
+  initConfigReceived.value = true;
+  // 但**等待态不能随之关闭**：凭据此刻尚未核销/校验完成，而 hasPermission 仍是初始化前
+  // 那次必然失败的校验留下的 false。若在此关闭等待态，换票的网络往返期间就会闪出一帧红色
+  // 「登录状态已失效」——即"点发送 INIT_CONFIG 后瞬间闪红"的成因。
+  hostInitInFlight.value = true;
+  try {
+    await applyHostInitConfig(data);
+  } finally {
+    hostInitInFlight.value = false;
+  }
+};
+
+const applyHostInitConfig = async (data: Record<string, any>) => {
   conversationInitializationGeneration += 1;
   cancelPendingUrlTokenInitialization();
   const logData = { ...data };
@@ -6657,6 +6707,28 @@ const authFailureView = computed<{ title: string; message: string }>(() => {
 });
 /** 调试台 strict_token 模式：仅校验 INIT_CONFIG 传入的 token，不走 localStorage / Cookie 兜底。 */
 const strictTokenValidation = ref(false);
+
+/** 宿主 INIT_CONFIG 触发的凭据核销/校验是否仍在途。
+ *
+ * 收到 INIT_CONFIG 时会立刻置 `initConfigReceived`（用于取消 URL/Cookie 的待发计时器），
+ * 但**此刻凭据尚未落定**，而 `hasPermission` 还是初始化前那次必然失败的校验留下的 false。
+ * 若等待态只依据 `initConfigReceived`，换票的网络往返期间就会闪出红色失效遮罩。
+ */
+const hostInitInFlight = ref(false);
+
+/** 严格模式下，宿主尚未下发凭据（或凭据仍在核销中）的过渡态。
+ *
+ * 为什么需要单独一个状态：调试台用 `?strict_token=1` 载入 iframe 且**不带任何凭据**，
+ * 组件会在 250ms 握手窗口后立即发起校验，而 strict 模式恰好禁掉了 Cookie 兜底，因此
+ * 首次校验**必然失败**。若把"还没收到宿主凭据"直接渲染成红色的「登录状态已失效」，
+ * 用户会在没做任何操作前就以为凭据已失效/被他人使用——这两件事语义完全不同，必须区分：
+ * 「尚未下发 / 正在核销」（等待中，中性）vs「下发后被拒」（真失败，报错）。
+ */
+const isAwaitingHostInitConfig = computed(
+  () =>
+    strictTokenValidation.value &&
+    (!initConfigReceived.value || hostInitInFlight.value)
+);
 
 /** 仅在服务端校验通过后同步到内存，避免 URL 里陈旧的 ?token= 覆盖有效凭据。
  *
