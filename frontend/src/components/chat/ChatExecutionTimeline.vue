@@ -498,6 +498,7 @@
 import { computed, onBeforeUnmount, ref, watch } from "vue";
 import ChatThinkingHeader from "@/components/chat/ChatThinkingHeader.vue";
 import {
+  ArrowsPointingInIcon,
   BookOpenIcon,
   ChatBubbleLeftRightIcon,
   ClipboardDocumentListIcon,
@@ -742,7 +743,8 @@ function preparationStatusLabel(item: ProcessTimelineLogItem): string {
 }
 
 function displayTimelineTitle(item: ProcessTimelineLogItem): string {
-  const baseTitle = formatTimelineTitle(item.title || item.tool_name || "执行步骤").replace(/^✨\s*/, "");
+  const baseTitle = formatTimelineTitle(item.title || item.tool_name || "执行步骤")
+    .replace(/^[\p{Extended_Pictographic}✨📝]\s*/u, "");
   const metadata = item.file_metadata;
   if (!metadata) return baseTitle;
   if (metadata.document_type) {
@@ -818,7 +820,7 @@ function iconFor(item: ProcessTimelineLogItem): string {
   if (item.title.includes("校验入口专家权限") || item.title.includes("校验目标专家权限")) return "🔒";
   if (item.title.includes("判断并匹配目标专家") || item.title.includes("匹配目标专家")) return "🧠";
   if (item.title.includes("等待上一次会话") || item.title.includes("排队")) return "⏳";
-  if (item.category === "context_summarized" || item.title.includes("平台摘录")) return "📋";
+  if (item.category === "context_summarized" || item.title.includes("平台摘录") || item.title.includes("上下文已压缩")) return "📦";
   if (item.subagent || item.category === "agent") return "🤖";
   if (item.category === "tool" || item.category === "sql" || item.title.includes("工具")) return "🔧";
   if (item.category === "model" || item.title.includes("模型")) return "✦";
@@ -840,7 +842,8 @@ function timelineIconFor(item: ProcessTimelineLogItem): any {
   if (item.title.includes("知识库和专家清单加载") || item.title.includes("获取可用专家")) return BookOpenIcon;
   if (item.title.includes("沙箱") || item.title.includes("工作区")) return CubeIcon;
   if (item.title.includes("Prompt 组装")) return PuzzlePieceIcon;
-  if (item.title.includes("准备知识资源范围") || item.category === "context_summarized" || item.title.includes("平台摘录")) return ClipboardDocumentListIcon;
+  if (item.category === "context_summarized" || item.title.includes("平台摘录") || item.title.includes("上下文已压缩")) return ArrowsPointingInIcon;
+  if (item.title.includes("准备知识资源范围")) return ClipboardDocumentListIcon;
   if (item.title.includes("加载入口专家配置") || item.title.includes("加载目标专家配置")) return Cog6ToothIcon;
   if (item.title.includes("校验入口专家权限") || item.title.includes("校验目标专家权限")) return LockClosedIcon;
   if (item.title.includes("判断并匹配目标专家") || item.title.includes("匹配目标专家") || item.category === "router" || item.category === "intent") return CpuChipIcon;

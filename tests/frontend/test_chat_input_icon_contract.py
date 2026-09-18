@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 
 
@@ -109,10 +110,34 @@ def test_thinking_card_uses_only_exported_heroicons() -> None:
     assert "CompassIcon" not in source
 
 
-def test_thinking_card_strips_legacy_leading_sparkle_from_timeline_titles() -> None:
-    source = EXECUTION_TIMELINE.read_text(encoding="utf-8")
+def test_thinking_card_strips_leading_emoji_from_timeline_titles() -> None:
+    """标题开头的 emoji 必须被剥掉，避免与卡片图标重复。
 
-    assert 'formatTimelineTitle(item.title || item.tool_name || "执行步骤").replace(/^✨\\s*/, "")' in source
+    断言前先做空白归一化：该实现是链式调用，重新格式化/换行属正常演进，
+    逐字符比对会让契约退化成"排版快照"，一改格式就假失败（此前的实现即如此）。
+    """
+    source = EXECUTION_TIMELINE.read_text(encoding="utf-8")
+    normalized = re.sub(r"\s+", " ", source)
+
+    assert 'formatTimelineTitle(item.title || item.tool_name || "执行步骤")' in normalized
+    # 曾经只剥历史遗留的 ✨，现已泛化为任意图形字符类
+    assert r'.replace(/^[\p{Extended_Pictographic}✨📝]\s*/u, "")' in normalized
+
+
+def test_thinking_card_maps_compaction_items_to_the_fold_icon() -> None:
+    """上下文压缩类条目要用统一的"折叠"图标，并保留知识资源范围的图标。"""
+    source = EXECUTION_TIMELINE.read_text(encoding="utf-8")
+    normalized = re.sub(r"\s+", " ", source)
+
+    assert "ArrowsPointingInIcon," in normalized
+
+    # 压缩条目（三种识别方式任一命中）→ 折叠图标
+    assert (
+        'if (item.category === "context_summarized" || item.title.includes("平台摘录") '
+        '|| item.title.includes("上下文已压缩")) return ArrowsPointingInIcon;'
+    ) in normalized
+    # 「准备知识资源范围」已从压缩条目中拆出，必须仍保留原图标
+    assert 'if (item.title.includes("准备知识资源范围")) return ClipboardDocumentListIcon;' in normalized
 
 
 def test_multimodal_model_badges_use_svg_icons() -> None:

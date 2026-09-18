@@ -448,7 +448,7 @@ async def stream_agentscope_events(
             yield {
                 "type": "log",
                 "id": f"gen_data_{uuid.uuid4().hex[:8]}",
-                "title": "✨ 开始生成回复",
+                "title": "开始生成回复",
                 "status": "success",
             }
         state.full_content += delta
