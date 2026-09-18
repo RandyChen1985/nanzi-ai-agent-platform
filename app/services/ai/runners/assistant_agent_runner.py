@@ -1608,7 +1608,7 @@ class AssistantAgentRunner(BaseExecutor):
             runtime_messages = normalize_messages_for_llm(runtime_messages)
 
             start_synthesis = time.time()
-            yield {"type": "log", "id": f"syn_s_{uuid.uuid4().hex[:8]}", "title": "📝 准备回答", "details": "正在生成回答...", "status": "success"}
+            yield {"type": "log", "id": f"syn_s_{uuid.uuid4().hex[:8]}", "title": "准备回答", "details": "正在生成回答...", "status": "success"}
 
             # Use Synthesizer for simple mode
             llm = await AgentConfigProvider.get_synthesis_llm(streaming=True, config=self.config)
@@ -1627,7 +1627,7 @@ class AssistantAgentRunner(BaseExecutor):
                             accumulated_msg += chunk
                         if chunk.content:
                             if not content_emitted:
-                                yield {"type": "log", "id": f"gen_s_{uuid.uuid4().hex[:8]}", "title": "✨ 开始生成回复", "status": "success"}
+                                yield {"type": "log", "id": f"gen_s_{uuid.uuid4().hex[:8]}", "title": "开始生成回复", "status": "success"}
                             content_emitted = True
                             full_content += chunk.content
                             yield {
@@ -2592,7 +2592,7 @@ class AssistantAgentRunner(BaseExecutor):
                 yield {
                     "type": "log",
                     "id": f"synthesis_native_{uuid.uuid4().hex[:8]}",
-                    "title": "📝 汇总工具结果",
+                    "title": "汇总工具结果",
                     "details": "已获取所需数据，正在组织语言...",
                     "status": "success",
                 }
@@ -2601,7 +2601,7 @@ class AssistantAgentRunner(BaseExecutor):
                 yield {
                     "type": "log",
                     "id": f"gen_start_{uuid.uuid4().hex[:8]}",
-                    "title": "✨ 开始生成回复",
+                    "title": "开始生成回复",
                     "status": "success",
                 }
         if chunk.get("type") == "process_narration_promote" and str(chunk.get("content") or "").strip():
@@ -2610,7 +2610,7 @@ class AssistantAgentRunner(BaseExecutor):
                 yield {
                     "type": "log",
                     "id": f"synthesis_native_{uuid.uuid4().hex[:8]}",
-                    "title": "📝 汇总工具结果",
+                    "title": "汇总工具结果",
                     "details": "已获取所需数据，正在组织语言...",
                     "status": "success",
                 }
@@ -2620,7 +2620,7 @@ class AssistantAgentRunner(BaseExecutor):
                 yield {
                     "type": "log",
                     "id": f"gen_start_{uuid.uuid4().hex[:8]}",
-                    "title": "✨ 开始生成回复",
+                    "title": "开始生成回复",
                     "status": "success",
                 }
         yield chunk
@@ -2635,7 +2635,7 @@ class AssistantAgentRunner(BaseExecutor):
             yield {
                 "type": "log",
                 "id": f"synthesis_native_{uuid.uuid4().hex[:8]}",
-                "title": "📝 汇总工具结果",
+                "title": "汇总工具结果",
                 "details": "已获取所需数据，正在组织语言...",
                 "status": "success",
             }
@@ -2647,7 +2647,7 @@ class AssistantAgentRunner(BaseExecutor):
             yield {
                 "type": "log",
                 "id": f"gen_start_{uuid.uuid4().hex[:8]}",
-                "title": "✨ 开始生成回复",
+                "title": "开始生成回复",
                 "status": "success",
             }
         state["full_content"] = (state.get("full_content") or "") + text
@@ -2778,7 +2778,7 @@ class AssistantAgentRunner(BaseExecutor):
             yield {
                 "type": "log",
                 "id": f"synthesis_fb_{uuid.uuid4().hex[:8]}",
-                "title": "📝 汇总已有信息",
+                "title": "汇总已有信息",
                 "details": "正在基于已有信息生成最终回答...",
                 "status": "success",
             }
@@ -2802,7 +2802,7 @@ class AssistantAgentRunner(BaseExecutor):
                     yield {
                         "type": "log",
                         "id": f"gen_start_{uuid.uuid4().hex[:8]}",
-                        "title": "✨ 开始生成回复",
+                        "title": "开始生成回复",
                         "status": "success",
                     }
                 state["full_content"] = (state.get("full_content") or "") + content
@@ -2865,7 +2865,7 @@ class AssistantAgentRunner(BaseExecutor):
             yield {
                 "type": "log",
                 "id": f"synthesis_fb_{uuid.uuid4().hex[:8]}",
-                "title": "📝 汇总工具结果",
+                "title": "汇总工具结果",
                 "details": "正在基于工具结果生成最终回答...",
                 "status": "success",
             }
@@ -2891,7 +2891,7 @@ class AssistantAgentRunner(BaseExecutor):
                     yield {
                         "type": "log",
                         "id": f"gen_fb_{uuid.uuid4().hex[:8]}",
-                        "title": "✨ 开始生成回复",
+                        "title": "开始生成回复",
                         "status": "success",
                     }
                 state["full_content"] = (state.get("full_content") or "") + content

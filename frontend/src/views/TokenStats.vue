@@ -271,7 +271,6 @@ use([
 ]);
 
 const API_BASE = "";
-const apiKey = ref(localStorage.getItem("api_key") || "");
 const userInfo = ref<any>(null);
 const loading = ref(false);
 const period = ref("week");
@@ -345,14 +344,12 @@ const refreshAll = async () => {
 
     // 1. 获取折线趋势
     const trendRes = await axios.get(`${API_BASE}/api/portal/dashboard/token-stats/trends`, {
-      headers: { "X-API-Key": apiKey.value },
       params: { days: daysVal }
     });
     trendData.value = trendRes.data;
 
     // 2. 获取智能体分布占比
     const agentRes = await axios.get(`${API_BASE}/api/portal/dashboard/token-stats/agents`, {
-      headers: { "X-API-Key": apiKey.value },
       params: { period: period.value }
     });
     agentData.value = agentRes.data;
@@ -360,7 +357,6 @@ const refreshAll = async () => {
     // 3. 获取用户排行榜
     if (userInfo.value?.role === "admin") {
       const userRes = await axios.get(`${API_BASE}/api/portal/dashboard/token-stats/users`, {
-        headers: { "X-API-Key": apiKey.value },
         params: { period: period.value }
       });
       userData.value = userRes.data;

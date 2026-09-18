@@ -147,7 +147,10 @@ def test_browser_panel_keeps_open_and_exposes_environment_retry_after_open_failu
     assert "管理员一键安装" in panel
     assert "authToken?: string" in panel
     assert ':auth-token="config.token"' in embed
-    assert "props.authToken || (typeof localStorage" in panel
+    # 凭据改由父级 authToken（EmbedChat 的 config.token）或同源 HttpOnly Cookie 承载，
+    # 不再从 localStorage 兜底读取。
+    assert "const token = props.authToken;" in panel
+    assert "localStorage.getItem('yovole_token')" not in panel
     assert "browserEnvironmentError" in embed
     assert ":environment-error=\"browserEnvironmentError\"" in embed
     assert '@retry="openBrowserPanel"' in embed

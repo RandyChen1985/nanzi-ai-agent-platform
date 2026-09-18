@@ -60,7 +60,7 @@
                         <label class="block text-[11px] text-gray-500 mb-1">指定用户名 (可选，默认当前用户)</label>
                         <input type="text" v-model="config.targetUsername" class="w-full text-xs border-gray-200 rounded-md bg-white" placeholder="留空代表当前登录账号">
                         <p class="text-[10px] text-amber-700/90 mt-1">
-                            💡 普通用户仅可代表自己签发（留空或填写自己账号）；代他人签发需管理员或「获取用户画像」权限。
+                            💡 普通用户仅可代表自己签发（留空或填写自己账号）；代他人签发需管理员或在「API 权限」中授予「代他人签发嵌入凭证」权限。
                         </p>
                     </div>
                 </div>
@@ -201,7 +201,7 @@
               </svg>
               <div class="leading-relaxed">
                 <span class="font-bold text-rose-800">安全规范提示：</span>
-                旧版直接在前端传递长期 API Key 的方式仅作为存量系统向后兼容，存在凭证外泄风险，<strong>不推荐在生产环境中使用</strong>。新系统集成强烈推荐使用 <strong>⭐ 临时 Ticket 模式</strong>（由宿主后端内网申请 5 分钟一次性门票，前端免密兑换并支持滑动续期）。
+                旧版直接在前端传递长期 API Key 的方式仅作为存量系统向后兼容，存在凭证外泄风险，<strong>不推荐在生产环境中使用</strong>。新系统集成强烈推荐使用 <strong>⭐ 临时 Ticket 模式</strong>（由宿主后端内网申请 5 分钟一次性票据，前端免密兑换并支持滑动续期）。
               </div>
             </div>
 
@@ -483,8 +483,24 @@ const contextPayload = ref('{\n  "business_context": {\n    "ticket_id": "INC-10
         if (key.length <= 12) return key;
         return `${key.slice(0, 6)}...${key.slice(-4)}`;
     };
-    const resolveStoredApiKey = () => {
-        return localStorage.getItem('api_key') || localStorage.getItem('yovole_token') || '';
+    /**
+     * 取用于第三方接入代码的凭据。
+     *
+     * 这里必须用长期有效的真实 API Key，不能用浏览器会话令牌——会话令牌会随用户登出
+     * 而失效，写进给第三方的接入代码后会让集成随时中断。凭据按需向后端索取，
+     * 前端不再从 localStorage 读取（那里只有会话令牌）。
+     */
+    const resolveStoredApiKey = async (): Promise<string> => {
+        try {
+            const raw = localStorage.getItem('user_info');
+            const userId = raw ? JSON.parse(raw)?.user_id : null;
+            if (!userId) return '';
+            const res = await axios.get(`/api/portal/management/api-key/${userId}`);
+            return res.data?.api_key || '';
+        } catch (e) {
+            console.warn('[WidgetDebugger] 获取 API Key 失败，接入代码将使用占位值', e);
+            return '';
+        }
     };
 
     const escapeJsString = (value: string) => value.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
@@ -883,10 +899,9 @@ const isExpanded = ref(true);
         }
     };
 
-    const openIntegrationGuide = () => {
-        const storedKey = resolveStoredApiKey();
-        if (storedKey && !config.token) {
-            config.token = storedKey;
+    const openIntegrationGuide = async () => {
+        if (!config.token) {
+            config.token = await resolveStoredApiKey();
         }
         showIntegrationGuide.value = true;
         void fetchIntegrationAgents();
@@ -1056,12 +1071,11 @@ const handleMessage = (event: MessageEvent) => {
     }
 };
 
-onMounted(() => {
+onMounted(async () => {
     window.addEventListener('message', handleMessage);
-    // Auto-load token from current user session
-    const storedKey = resolveStoredApiKey();
-    if (storedKey) {
-        config.token = storedKey;
+    // 接入代码需要长期有效的真实 API Key（会话令牌登出即失效），改为按需向后端获取
+    if (!config.token) {
+        config.token = await resolveStoredApiKey();
     }
     void fetchIntegrationAgents();
     connect();

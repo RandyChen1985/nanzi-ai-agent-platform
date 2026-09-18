@@ -566,6 +566,13 @@ export function handleContextSummarized<T extends AgentStreamMessage>(
   data: Record<string, unknown>,
   addLog: AddStreamLogFn<T>,
 ) {
+  // pre-route 的压缩是中间态：它只为让路由阶段拿到不超窗的上下文，窗口随后会被
+  // resolved_model 阶段按目标模型的真实窗口重算（后者必然包含前者的窗口），因此
+  // 它永远不会是最终状态。渲染它会让同一轮多出一张立刻被修正的卡，且与"压缩次数"
+  // 对不上。记录仍在后端保留用于排障，这里只是不为它出卡。
+  if (String(data.stage || "") === "pre_route") {
+    return;
+  }
   const origin = String(data.origin || "");
   const originLabel =
     origin === "llm" ? "（模型语义摘要）" : origin === "deterministic" ? "（规则拼装摘要）" : "";

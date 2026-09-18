@@ -279,11 +279,15 @@ def test_session_status_context_usage_adopts_explicit_model_window(
         for msg in history
     )
     assert usage["physical_window"] == 131072
-    # 测试桩对所有配置项返回 4096，因此 overhead 也是 4096。
-    assert usage["history_budget"] == 126976
-    assert usage["token_budget"] == 126976
-    assert usage["estimated_remaining_tokens"] == max(0, 126976 - expected_total)
-    assert usage["usage_percentage"] == round(expected_total / 126976 * 100, 1)
+    # overhead 现在是模块常量（不再是系统配置项），因此不能假设它等于桩里的 budget；
+    # 期望值直接由同一个常量推导，避免测试与实现各持一份魔数。
+    from app.services.ai.context_usage import CONTEXT_OVERHEAD_RESERVATION_TOKENS
+
+    expected_budget = 131072 - CONTEXT_OVERHEAD_RESERVATION_TOKENS
+    assert usage["history_budget"] == expected_budget
+    assert usage["token_budget"] == expected_budget
+    assert usage["estimated_remaining_tokens"] == max(0, expected_budget - expected_total)
+    assert usage["usage_percentage"] == round(expected_total / expected_budget * 100, 1)
 
 
 def test_session_status_context_usage_ignores_system_default_window(

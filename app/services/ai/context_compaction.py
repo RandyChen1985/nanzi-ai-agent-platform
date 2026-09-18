@@ -196,6 +196,11 @@ def build_overflow_digest(
         role = (msg.get("role") or "").strip()
         if role not in _ROLE_LABELS:
             continue
+        # 上一版摘录自己也可能落在 dropped 里（跨轮注入的 system 摘录头）。它的正文会被
+        # ``prev_digest`` 完整注入一次，这里若再抄一遍，每轮摘录就多出一条自我指涉的
+        # 噪声行、白占 max_chars 配额——所以按标记跳过。
+        if role == "system" and COMPACTION_MARKER in str(msg.get("content") or ""):
+            continue
         text = _condense(_flatten_content(msg.get("content")), per_message_chars)
         # 最终工具结果（tool_run_text）同样会随 content 一起注入模型上下文（见
         # convert_history_to_messages），摘录也应收纳，否则工具返回的结论在压缩
@@ -266,8 +271,14 @@ def apply_context_compaction(
     ``full_history``：完整历史；``window``：截断后保留的窗口（不含本轮新消息）。
     若没有溢出（full_history 未超过 window）则原样返回 window。
 
-    ``prev_digest``：上一轮持久化的摘录文本（B 项跨轮累积）。即使本轮无新溢出，
-    也会把旧摘录作为锚点注入，保证早期历史不随窗口滑动而消失。
+    ``prev_digest``：上一轮持久化的摘录文本（B 项跨轮累积）。
+
+    ⚠️ 注意：下面「无溢出时也把旧摘录作为锚点注入」这一分支在生产链路上**不可达**。
+    唯一的生产调用方 ``ContextCompactor.maybe_compact_overflow`` 在
+    ``len(full_history) <= len(window)`` 时已经提前 return，根本走不到这里；只有
+    直接调用本函数（例如单测）才会命中。保留该分支是为了函数单独调用时行为自洽，
+    但**不要**据此认为"旧摘录会被当作锚点常驻注入"——真正跨轮保留早期历史的是
+    Redis 里的 digest（由 ``MemoryService.set_digest_if_current`` 维护）。
     """
     if not full_history or len(full_history) <= len(window):
         if prev_digest:

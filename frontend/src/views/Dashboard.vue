@@ -6,6 +6,7 @@ import Toast from "../components/Toast.vue";
 import { useBranding } from "../composables/useBranding";
 import { useAppTheme } from "../composables/useAppTheme";
 import { copyToClipboard } from "../utils/clipboard";
+import { persistUserInfo, clearUserSession } from "../utils/userSession";
 import PortalNotificationBell from "../components/PortalNotificationBell.vue";
 
 const router = useRouter();
@@ -69,26 +70,44 @@ const userInfo = ref({
 });
 const homeRoute = computed(() => userInfo.value.role === 'admin' ? '/dashboard' : '/dashboard/workbench');
 
+// 刷新时的会话校验策略：服务重启窗口期（超时/5xx/断网）保留本地会话并退避重试，
+// 只有确认是认证类失败（401/403）才清理凭据并回到登录页。
+const AUTH_CHECK_RETRY_DELAYS = [1500, 3000];
+let authCheckRetryTimer: ReturnType<typeof setTimeout> | null = null;
+let authCheckRetryCount = 0;
+
+/** 仅认证类失败才代表登录态失效；网络抖动、上游 5xx、超时都不是登出理由。 */
+const isAuthFailure = (error: any) => {
+  const status = error?.response?.status;
+  return status === 401 || status === 403;
+};
+
 const fetchUserInfo = async () => {
   try {
-    const apiKey = localStorage.getItem("api_key");
-    if (!apiKey) {
-      router.push("/login");
-      return;
-    }
+    // 登录态一律以后端 /auth/me 的响应为准：门户会话凭据已收敛为 HttpOnly Cookie，
+    // 前端不再（也无法）通过读取 localStorage 判断是否登录。
 
     // First try to get from localStorage
     const cachedUserInfo = localStorage.getItem("user_info");
     if (cachedUserInfo) {
-      userInfo.value = JSON.parse(cachedUserInfo);
+      try {
+        userInfo.value = JSON.parse(cachedUserInfo);
+      } catch {
+        localStorage.removeItem("user_info");
+      }
     }
 
     // Refresh user info from server
     // 无需手动添加 header，拦截器会自动添加
     const response = await axios.get("/api/portal/auth/me");
     if (response.data && response.data.status === "success") {
+      authCheckRetryCount = 0;
+      if (authCheckRetryTimer) {
+        clearTimeout(authCheckRetryTimer);
+        authCheckRetryTimer = null;
+      }
       userInfo.value = response.data.data;
-      localStorage.setItem("user_info", JSON.stringify(response.data.data));
+      persistUserInfo(response.data.data);
       // 触发登录后密码到期检测（方式 1: 轻量 Toast 提醒）
       triggerLoginPasswordNoticeToast(response.data.data);
       // 检查当前会话是否临时关闭过 Banner
@@ -101,12 +120,41 @@ const fetchUserInfo = async () => {
     }
   } catch (e) {
     console.error("Auth check failed", e);
-    // 拦截器已处理跳转，这里只需清理本地存储
-    localStorage.removeItem("api_key");
-    localStorage.removeItem("user_info");
-    router.push("/login");
+    if (isAuthFailure(e)) {
+      // 拦截器已处理跳转，这里彻底清理本地与 Cookie 凭据
+      clearUserSession();
+      localStorage.removeItem("api_key");
+      localStorage.removeItem("user_info");
+      router.push("/login");
+      return;
+    }
+    // 服务重启/网络抖动/上游 5xx：保留本地会话，退避重试，避免被误踢到登录页
+    console.warn("[Auth] 会话校验遇到非认证类失败，保留本地会话并重试");
+    scheduleAuthCheckRetry();
   }
 };
+
+const scheduleAuthCheckRetry = () => {
+  if (authCheckRetryCount >= AUTH_CHECK_RETRY_DELAYS.length) {
+    return;
+  }
+  const delay = AUTH_CHECK_RETRY_DELAYS[authCheckRetryCount];
+  authCheckRetryCount += 1;
+  if (authCheckRetryTimer) {
+    clearTimeout(authCheckRetryTimer);
+  }
+  authCheckRetryTimer = setTimeout(() => {
+    authCheckRetryTimer = null;
+    void fetchUserInfo();
+  }, delay);
+};
+
+onUnmounted(() => {
+  if (authCheckRetryTimer) {
+    clearTimeout(authCheckRetryTimer);
+    authCheckRetryTimer = null;
+  }
+});
 
 // 密码到期提醒状态管理 (方式 1: 登录即时 Toast + 方式 2: 全局常驻 Top Banner)
 const isPasswordExpireBannerDismissed = ref(false);

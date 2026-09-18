@@ -1,24 +1,98 @@
-from fastapi import APIRouter, Depends, HTTPException, status, Response, Header
+from fastapi import APIRouter, Depends, HTTPException, status, Response, Header, Request
 from typing import Optional
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.core.dependencies import require_api_key
+from app.core.config import settings
+from app.core.dependencies import require_api_key, is_secure_request as _is_secure_request
 from app.core.orm import get_db_session
 from app.services.auth_service import AuthService
 
 router = APIRouter()
 
+# `_is_secure_request` 的实现已上移至 app/core/dependencies.py：`require_api_key` 在
+# 续期会话 Cookie 时同样需要它，集中一处以免两边的 Cookie 属性判断发生漂移。
+
+
+# 门户登录态 Cookie。名字刻意不叫 admin_token：它服务的是「门户前端」的登录态，
+# 普通 user 角色同样使用，叫 admin_token 会让读者误以为是管理员专属。
+PORTAL_SESSION_COOKIE_NAME = "portal_session"
+
+
+async def _issue_portal_session_cookie(
+    http_request: Request,
+    response: Response,
+    user_id: int,
+    user: dict,
+    db: AsyncSession,
+    credential: str,
+    *,
+    prewarm_cache: bool = True,
+) -> str:
+    """下发门户登录态 cookie，并返回实际下发的凭据。
+
+    PORTAL_SESSION_TOKEN_ENABLED 开启时改用不透明会话令牌，浏览器不再持有真实
+    API Key；开关关闭或 Redis 不可用时自动回退到真实 API Key，保证登录始终可用。
+    """
+    session_token = None
+    if settings.PORTAL_SESSION_TOKEN_ENABLED:
+        session_token = await AuthService.create_portal_session(int(user_id), db=db)
+
+    issued = session_token or credential
+    response.set_cookie(
+        key=PORTAL_SESSION_COOKIE_NAME,
+        value=issued,
+        httponly=True,
+        max_age=86400,
+        samesite="lax",
+        secure=_is_secure_request(http_request),
+    )
+
+    # 会话令牌已在 create_portal_session 内写入认证缓存；真实 API Key 才需要预热
+    if not session_token and prewarm_cache:
+        await AuthService.register_online_state(credential, user)
+
+    return issued
+
+
+# 嵌入会话 Cookie：独立于 portal_session，避免顶掉用户自己的门户登录态。
+EMBED_SESSION_COOKIE_NAME = "embed_session"
+EMBED_SESSION_COOKIE_MAX_AGE = 86400
+
+
+def _set_embed_session_cookie(
+    http_request: Request,
+    response: Response,
+    session_token: str,
+) -> None:
+    """下发 embed_session（HttpOnly），使嵌入页刷新后无需再依赖 URL 里的长期 Key。
+
+    独立于 portal_session：两者 path 均为 `/`，共用同名 Cookie 会互相覆盖，导致打开
+    嵌入页时顶掉用户自己的门户登录态。
+
+    SameSite 取 lax：同源嵌入（平台内 iframe）可正常携带；跨站第三方 iframe 需改为
+    SameSite=None 且必须 HTTPS，属后续阶段。
+    """
+    response.set_cookie(
+        key=EMBED_SESSION_COOKIE_NAME,
+        value=session_token,
+        httponly=True,
+        max_age=EMBED_SESSION_COOKIE_MAX_AGE,
+        samesite="lax",
+        secure=_is_secure_request(http_request),
+    )
+
+
 class LoginRequest(BaseModel):
     api_key: Optional[str] = Field(None, description="API 密钥", json_schema_extra={"example": "S63B_..."})
     username: Optional[str] = Field(None, description="用户名")
     password: Optional[str] = Field(None, description="密码")
-
 class SSOLoginRequest(BaseModel):
     username: str = Field(..., description="SSO 用户名")
     password: str = Field(..., description="SSO 密码")
 
 @router.post("/sso/login", summary="SSO 用户登录")
 async def sso_login(
+    http_request: Request,
     request: SSOLoginRequest, 
     response: Response,
     db: AsyncSession = Depends(get_db_session)
@@ -43,20 +117,13 @@ async def sso_login(
         if not api_key:
              raise HTTPException(500, "User has no valid API Key for session")
 
-        response.set_cookie(
-            key="admin_token",
-            value=api_key,
-            httponly=True,
-            max_age=86400,
-            samesite="lax",
-            secure=False
+        # 下发会话凭据（开关开启时为不透明会话令牌）
+        api_key = await _issue_portal_session_cookie(
+            http_request, response, user_id, user, db, api_key
         )
-
-        # 注册在线状态到 Redis
-        await AuthService.register_online_state(api_key, user)
         # 记录用户登录时间
         await AuthService.record_user_login(user_id, db=db)
-        
+
         # 聚合权限信息返回给前端
         from app.services.permission_service import PermissionService
         perm_service = PermissionService(db)
@@ -66,7 +133,6 @@ async def sso_login(
             "status": "success",
             "data": {
                 **user,
-                "api_key": api_key,
                 "permissions": perms_response.permissions.model_dump()
             }
         }
@@ -79,6 +145,7 @@ async def sso_login(
 
 @router.post("/login", summary="用户登录")
 async def login(
+    http_request: Request,
     request: LoginRequest, 
     response: Response,
     db: AsyncSession = Depends(get_db_session)
@@ -97,19 +164,30 @@ async def login(
                 detail="无效的 API Key"
             )
         api_key = request.api_key
-        # Set cookie for API Key login
-        response.set_cookie(
-            key="admin_token",
-            value=request.api_key,
-            httponly=True,
-            max_age=86400,
-            samesite="lax",
-            secure=False
+        # 下发会话凭据（开关开启时为不透明会话令牌）；verify_api_key 已预热过缓存
+        api_key = await _issue_portal_session_cookie(
+            http_request,
+            response,
+            int(user["user_id"]),
+            user,
+            db,
+            request.api_key,
+            prewarm_cache=False,
         )
         await AuthService.record_user_login(int(user["user_id"]), db=db)
 
     # 2. Password Login
     elif request.username and request.password:
+        # 在线暴力破解防护：失败次数达到阈值后在本窗口内直接拒绝
+        if await AuthService.is_login_locked(request.username):
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail=(
+                    "登录失败次数过多，请在 "
+                    f"{AuthService.LOGIN_FAILURE_WINDOW_SECONDS // 60} 分钟后重试"
+                ),
+            )
+
         # 检查密码长度，bcrypt 限制密码长度为 72 字节
         password_bytes = request.password.encode('utf-8')
         if len(password_bytes) > 72:
@@ -119,7 +197,10 @@ async def login(
             password = request.password
         
         result = await AuthService.verify_user_password(request.username, password, db=db)
+        if result["status"] == "fail":
+            await AuthService.record_login_failure(request.username)
         if result["status"] == "success":
+            await AuthService.clear_login_failures(request.username)
             user = result["user"]
             user_id = int(user["user_id"])
 
@@ -141,16 +222,10 @@ async def login(
             if not api_key:
                  raise HTTPException(500, "User has no valid API Key for session")
 
-            response.set_cookie(
-                key="admin_token",
-                value=api_key,
-                httponly=True,
-                max_age=86400,
-                samesite="lax",
-                secure=False
+            # 下发会话凭据（开关开启时为不透明会话令牌）
+            api_key = await _issue_portal_session_cookie(
+                http_request, response, user_id, user, db, api_key
             )
-            # 注册在线状态到 Redis
-            await AuthService.register_online_state(api_key, user)
             # 记录用户登录时间
             await AuthService.record_user_login(user_id, db=db)
         elif result["status"] == "error_no_password":
@@ -179,7 +254,6 @@ async def login(
         "status": "success",
         "data": {
             **user,
-            "api_key": api_key,  # Include API Key for frontend storage
             "permissions": perms_response.permissions.model_dump()
         }
     }
@@ -190,6 +264,7 @@ class TwoFactorLoginRequest(BaseModel):
 
 @router.post("/login/2fa", summary="两步验证二次登录")
 async def two_factor_login(
+    http_request: Request,
     request: TwoFactorLoginRequest,
     response: Response,
     db: AsyncSession = Depends(get_db_session)
@@ -213,16 +288,10 @@ async def two_factor_login(
     if not api_key:
         raise HTTPException(500, "User has no valid API Key for session")
 
-    response.set_cookie(
-        key="admin_token",
-        value=api_key,
-        httponly=True,
-        max_age=86400,
-        samesite="lax",
-        secure=False
+    # 下发会话凭据（开关开启时为不透明会话令牌）
+    api_key = await _issue_portal_session_cookie(
+        http_request, response, user_id, user, db, api_key
     )
-    # 注册在线状态到 Redis
-    await AuthService.register_online_state(api_key, user)
     # 记录用户登录时间
     await AuthService.record_user_login(user_id, db=db)
 
@@ -235,7 +304,6 @@ async def two_factor_login(
         "status": "success",
         "data": {
             **user,
-            "api_key": api_key,
             "permissions": perms_response.permissions.model_dump()
         }
     }
@@ -276,16 +344,36 @@ async def change_password(
 
 @router.post("/logout", summary="退出登录")
 async def logout(
+    http_request: Request,
     response: Response,
     api_key: Optional[str] = Header(None, alias="X-API-Key")
 ):
     """
     退出登录并清除 Cookie 和 Redis 缓存
     """
-    if api_key:
-        await AuthService.expire_api_key(api_key)
-        
-    response.delete_cookie(key="admin_token")
+    # 凭据优先取请求头，其次取 Cookie：否则浏览器仅凭 cookie 认证时服务端会话不会
+    # 被吊销，登出就只是本地删了个 cookie。两个 Cookie 都要看——嵌入页刷新后只带
+    # embed_session，此前会被漏掉，导致「登出后会话仍在」。
+    credential = (
+        api_key
+        or http_request.cookies.get(PORTAL_SESSION_COOKIE_NAME)
+        or http_request.cookies.get(EMBED_SESSION_COOKIE_NAME)
+    )
+
+    if credential:
+        if credential.startswith(
+            (AuthService.PORTAL_SESSION_PREFIX, AuthService.EMBED_SESSION_PREFIX)
+        ):
+            # sess_ 门户会话 / emb_ses_ 嵌入会话：按令牌吊销
+            await AuthService.revoke_portal_session(credential)
+        else:
+            # 真实长期 Key（PORTAL_SESSION_TOKEN_ENABLED=false 的回退形态）
+            await AuthService.expire_api_key(credential)
+
+    # 两个会话 Cookie 都要清：只删 portal_session 会让 embed_session 残留，
+    # 门户登出后请求会回落到嵌入身份，造成身份串号。
+    response.delete_cookie(key=PORTAL_SESSION_COOKIE_NAME)
+    response.delete_cookie(key=EMBED_SESSION_COOKIE_NAME)
     return {"status": "success", "message": "Logged out successfully"}
 
 
@@ -514,6 +602,8 @@ async def get_my_permissions(
 
 @router.get("/user_apikey", summary="验证 API Key 有效性")
 async def validate_user_apikey(
+    http_request: Request,
+    response: Response,
     user: dict = Depends(require_api_key)
 ):
     """
@@ -521,26 +611,58 @@ async def validate_user_apikey(
     用于 EmbedChat 或其他组件验证传入的 API Key 是否有效。
     通过 Authorization 头传递 Key。
     如果有效，返回 200 和基础用户信息。
+
+    若传入的是**长期 API Key**，响应会额外带上一次 embed 会话令牌（session_token）与
+    有效期；调用方应改用该令牌进行后续请求，让真实 Key 用后即弃。传入的已经是会话令牌时
+    不重复签发。Redis 不可用时该字段省略（Fail-Open），鉴权结果不受影响。
     """
     from app.services.config_service import ConfigService
+    from app.services.embed_service import EmbedService
+
     watermark_enabled = await ConfigService.get("embedchat_watermark_enabled") == "true"
     watermark_style = await ConfigService.get("embedchat_watermark_style") or "user_time"
     watermark_text = await ConfigService.get("embedchat_watermark_text") or "南孜系统"
 
+    data = {
+        "valid": True,
+        "user_id": user.get("user_id"),
+        "user_name": user.get("user_name"),
+        "real_name": user.get("real_name") or user.get("user_name"),
+        "role": user.get("role"),
+        "watermark": {
+            "enabled": watermark_enabled,
+            "style": watermark_style,
+            "text": watermark_text
+        }
+    }
+
+    # 已是会话令牌则无需再换发，避免每次校验都新写入一条 Redis 会话
+    credential = str(user.get("api_key") or "")
+    if not credential.startswith(("sess_", "emb_ses_")):
+        issued = await EmbedService.issue_session_from_user(user)
+        if issued:
+            data["session_token"] = issued["session_token"]
+            data["expires_in"] = issued["expires_in"]
+
+            # 仅当凭据经 header 显式传入时才下发 embed_session：凭据若来自 Cookie，
+            # 说明浏览器已有会话（门户或既有嵌入会话），再下发会在门户登录态之外
+            # 凭空多挂一个身份，共享设备上还可能造成身份串号。
+            #
+            # 这里按**来源**判断而非比较凭据值：值比较在「门户 Cookie 里恰好就是同一个
+            # 真实 Key」时会误判为同一来源（相等 → 不下发），使该路径静默失去会话。
+            credential_source = getattr(
+                http_request.state, "credential_source", "header"
+            )
+            if credential_source == "header":
+                _set_embed_session_cookie(
+                    http_request, response, issued["session_token"]
+                )
+                # 供前端确认「会话已建立」，据此才可安全清除 URL 里的长期 Key
+                data["session_cookie_issued"] = True
+
     return {
         "status": "success",
-        "data": {
-            "valid": True,
-            "user_id": user.get("user_id"),
-            "user_name": user.get("user_name"),
-            "real_name": user.get("real_name") or user.get("user_name"),
-            "role": user.get("role"),
-            "watermark": {
-                "enabled": watermark_enabled,
-                "style": watermark_style,
-                "text": watermark_text
-            }
-        }
+        "data": data
     }
 
 
@@ -550,6 +672,7 @@ class ResetMyApiKeyRequest(BaseModel):
 
 @router.post("/api-key/reset", summary="重置当前用户 API Key")
 async def reset_my_api_key(
+    http_request: Request,
     request: ResetMyApiKeyRequest,
     response: Response,
     user: dict = Depends(require_api_key),
@@ -613,16 +736,12 @@ async def reset_my_api_key(
     if not new_api_key:
         raise HTTPException(status_code=500, detail="重置 API Key 失败")
 
-    # 同步更新当前会话 Cookie 与在线状态
-    response.set_cookie(
-        key="admin_token",
-        value=new_api_key,
-        httponly=True,
-        max_age=86400,
-        samesite="lax",
-        secure=False
+    # 同步更新当前会话 Cookie（开关开启时为不透明会话令牌）。
+    # 响应体仍返回真实新 Key：重置是显式的低频操作，用户需要它去配置外部集成；
+    # 重置 API Key 不等同于登出，因此不退出现有会话。
+    await _issue_portal_session_cookie(
+        http_request, response, user_id, user, db, new_api_key
     )
-    await AuthService.register_online_state(new_api_key, user)
 
     return {
         "status": "success",

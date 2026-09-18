@@ -1,7 +1,7 @@
 """认证成功后更新在线 Presence 的测试。"""
 
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -29,9 +29,11 @@ async def test_require_api_key_touches_presence_without_changing_auth_result(mon
         raising=False,
     )
     request = SimpleNamespace(cookies={}, state=SimpleNamespace())
+    response = MagicMock()
 
     result = await dependencies.require_api_key(
         request,
+        response,
         api_key_header="api-key",
         authorization=None,
         db=None,
@@ -40,6 +42,8 @@ async def test_require_api_key_touches_presence_without_changing_auth_result(mon
     assert result["user_id"] == "7"
     assert result["api_key"] == "api-key"
     touch.assert_awaited_once_with(result)
+    # header 凭据不得被写进浏览器 Cookie——那等于凭空替调用方建立会话
+    response.set_cookie.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -60,6 +64,7 @@ async def test_presence_failure_does_not_break_authentication(monkeypatch):
 
     result = await dependencies.require_api_key(
         request,
+        MagicMock(),
         api_key_header="api-key",
         authorization=None,
         db=None,

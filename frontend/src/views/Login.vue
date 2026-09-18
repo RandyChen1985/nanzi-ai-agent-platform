@@ -3,6 +3,7 @@ import { ref, reactive, onMounted, onUnmounted, watch, computed } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import axios from 'axios'
 import { useBranding } from '../composables/useBranding'
+import { persistUserInfo } from '../utils/userSession'
 
 const router = useRouter()
 const route = useRoute()
@@ -166,8 +167,9 @@ const twoFactorUsername = ref('')
 const twoFactorCode = ref('')
 
 const handleLoginSuccess = (userData: any) => {
-    localStorage.setItem('user_info', JSON.stringify(userData))
-    localStorage.setItem('api_key', userData.api_key)
+    persistUserInfo(userData)
+    // 凭据由后端下发的 HttpOnly Cookie 承载，不再写入 localStorage：
+    // 落在 localStorage 的只是 JS 可读的副本，任何一次 XSS 都能带走它。
     
     // 普通业务用户进入个人工作台；管理员保留平台概览入口。
     const returnPath = typeof route.query.next === 'string'

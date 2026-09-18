@@ -176,7 +176,6 @@ interface Statistics { total_requests: number; success_count: number; error_coun
 interface Filters { start_time: string; end_time: string; method: string; min_status: number | null; max_status: number | null; user_name: string; endpoint: string; client_ip: string; feature_name: string; only_errors: boolean; }
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || "";
-const apiKey = ref(localStorage.getItem("api_key") || "");
 const userInfo = ref<any>(null);
 const logs = ref<AuditLog[]>([]);
 const availableFeatures = ref<string[]>([]);
@@ -195,7 +194,7 @@ const exporting = ref(false);
 
 const fetchFeatures = async () => {
   try {
-    const res = await axios.get(`${API_BASE}/api/portal/audit/features`, { headers: { "X-API-Key": apiKey.value } });
+    const res = await axios.get(`${API_BASE}/api/portal/audit/features`);
     availableFeatures.value = res.data;
   } catch (e) { console.error("Fetch features failed", e); }
 };
@@ -220,7 +219,7 @@ const fetchLogs = async () => {
         if (filters.max_status) params.max_status = filters.max_status;
     }
 
-    const response = await axios.get(`${API_BASE}/api/portal/audit/logs`, { headers: { "X-API-Key": apiKey.value }, params });
+    const response = await axios.get(`${API_BASE}/api/portal/audit/logs`, { params });
     logs.value = response.data.items || [];
     total.value = response.data.total || 0;
     statistics.value = response.data.statistics || null;
@@ -236,7 +235,6 @@ const viewLogDetail = async (logId: number, createdAt: string) => {
   showDetailDialog.value = true; logDetail.value = null;
   try {
     const res = await axios.get(`${API_BASE}/api/portal/audit/logs/${logId}`, { 
-      headers: { "X-API-Key": apiKey.value },
       params: { created_at: createdAt }
     });
     logDetail.value = res.data;
@@ -258,7 +256,7 @@ const exportLogs = async () => {
     if (filters.only_errors) params.min_status = 400;
     else if (filters.min_status) params.min_status = filters.min_status;
 
-    const res = await axios.get(`${API_BASE}/api/portal/audit/logs/export`, { headers: { "X-API-Key": apiKey.value }, params, responseType: "blob" });
+    const res = await axios.get(`${API_BASE}/api/portal/audit/logs/export`, { params, responseType: "blob" });
     const url = window.URL.createObjectURL(new Blob([res.data]));
     const link = document.createElement("a"); link.href = url;
     link.setAttribute("download", `audit_logs_${new Date().getTime()}.${exportFormat.value}`);

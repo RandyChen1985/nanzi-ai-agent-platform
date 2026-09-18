@@ -129,11 +129,8 @@ const startInspection = async () => {
       streamUrl = `/api/portal/metadata/datasets/${dId}/inspect/${taskId}/events`
     }
 
+    // 凭据由同源 HttpOnly Cookie 自动携带（fetch 默认 same-origin）
     const headers: Record<string, string> = { Accept: 'text/event-stream' }
-    const apiKey = localStorage.getItem('api_key')
-    const token = localStorage.getItem('yovole_token') || localStorage.getItem('admin_token')
-    if (apiKey) headers['X-API-Key'] = apiKey
-    else if (token) headers.Authorization = `Bearer ${token}`
 
     const response = await fetch(streamUrl, {
       headers,

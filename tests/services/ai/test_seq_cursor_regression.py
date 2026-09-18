@@ -9,9 +9,10 @@ Covers the two P1 fixes:
    instead of a positional `len(history)` cursor, so new messages keep entering
    the summary even when the list length stays capped.
 
-2. `_resolve_runtime_context_budget` swallows `ModelRegistryError` (and any
-   other exception) from `resolve_runtime_model_info` and falls back to
-   `agent_context_max_tokens` instead of blocking the chat turn.
+2. `_resolve_runtime_model_info_safe` swallows `ModelRegistryError` (and any
+   other exception) from `resolve_runtime_model_info` and yields a usable
+   `RuntimeModelInfo` instead of blocking the chat turn; downstream, the
+   post-route history budget falls back to `agent_context_max_tokens`.
 """
 import json
 from types import SimpleNamespace
@@ -279,59 +280,88 @@ class TestSeqCursor:
 
 
 @pytest.mark.no_infrastructure
-class TestContextBudgetFallback:
-    async def _budget(self):
-        svc = AgentService()
-        return await svc._resolve_runtime_context_budget(
-            debug_options=None,
-            agent_id=None,
-            agent_name=None,
-            version_id=None,
+class TestPostRouteModelWindowAdoption:
+    """路由后是否采纳「模型自身 context_size」作为历史水位线。
+
+    这是上下文预算契约里最容易被误解的一环，因此单独锁定两个方向：显式指定的模型
+    才采纳其窗口，系统默认回落一律不采纳。
+
+    背景：生产上真正生效的是 ``_resolve_pre_route_context_budget``（阶段①，路由前，
+    只用 ``agent_context_max_tokens``）+ ``_history_budget_for_runtime_model_info``
+    （阶段②，路由后，按最终模型抬高水位线）。曾有一个 ``_resolve_runtime_context_budget``
+    把两者合在一起并写了完整的「优先级 1/2/3」说明，但**生产代码从未调用过它**
+    （只被本文件的旧测试直接调用），极易让排查者误以为它才是主路径。该冗余方法已删除，
+    现将测试改锚到真正生效的方法上。
+    """
+
+    async def _history_budget(self, source: str, context_size: int, *, cfg: str = "65536"):
+        service = AgentService()
+        runtime_info = RuntimeModelInfo(
+            configured_model="some-model",
+            effective_model_id="some-model",
+            source=source,
+            context_size=context_size,
         )
 
-    def test_model_registry_error_falls_back_to_config(self):
-        """A ModelRegistryError raised by resolve_runtime_model_info must NOT
-        propagate the chat-turn caller; _resolve_runtime_context_budget should
-        swallow it and return agent_context_max_tokens."""
-        import asyncio
-
-        class _RegistryError(Exception):
-            pass
+        async def config_get(key, default=None):
+            return {
+                "agent_context_max_tokens": cfg,
+            }.get(key, default)
 
         with patch(
             "app.services.config_service.ConfigService.get",
-            new_callable=AsyncMock,
-            return_value="43210",
+            new=AsyncMock(side_effect=config_get),
         ), patch(
-            "app.services.ai.agent_service.resolve_runtime_model_info",
-            new_callable=AsyncMock,
-            side_effect=_RegistryError("unknown model"),
+            # overhead 已是模块常量，这里置 0 让期望值就是 window - output。
+            "app.services.ai.agent_service.CONTEXT_OVERHEAD_RESERVATION_TOKENS",
+            0,
         ):
-            result = asyncio.run(self._budget())
+            return await service._history_budget_for_runtime_model_info(runtime_info)
 
-        assert result == 43210  # fell back to the config value, no raise
+    def test_explicit_agent_config_model_window_is_adopted(self):
+        """显式配置的模型（agent_config）：采纳其更大的 context_size 抬高水位线。
 
-    def test_model_registry_system_default_falls_back_to_config(self):
-        """When the resolved info source is system_default (or context_size is
-        unusable), fall back to config; never adopt an unbounded model window."""
+        水位线不抬高会导致「模型明明能装 200k，平台却在 64k 就压缩」——即提前 compact。
+        """
         import asyncio
 
-        class _Info:
-            source = "system_default"
-            context_size = 0
+        result = asyncio.run(
+            self._history_budget("agent_config", 200000, cfg="65536")
+        )
 
-        with patch(
-            "app.services.config_service.ConfigService.get",
-            new_callable=AsyncMock,
-            return_value="65536",
-        ), patch(
-            "app.services.ai.agent_service.resolve_runtime_model_info",
-            new_callable=AsyncMock,
-            return_value=_Info(),
-        ):
-            result = asyncio.run(self._budget())
+        assert result == 200000, "agent_config 指定的模型窗口应被采纳"
 
-        assert result == 65536
+    def test_system_default_model_window_is_not_adopted(self):
+        """system_default 回落：**即使注册表给出大窗口也不采纳**，仍用配置水位线。
+
+        系统默认模型是平台兜底选择而非智能体有意配置，按它的窗口放大水位线会让本该
+        压缩的会话继续增长，最终在另一侧超窗。
+        """
+        import asyncio
+
+        result = asyncio.run(
+            self._history_budget("system_default", 200000, cfg="65536")
+        )
+
+        assert result == 65536, "system_default 不得采纳模型窗口，应回落 agent_context_max_tokens"
+
+    def test_zero_context_size_falls_back_to_config(self):
+        """context_size 缺失/为 0 时回落配置值，不得把水位线压成 0。"""
+        import asyncio
+
+        result = asyncio.run(self._history_budget("agent_config", 0, cfg="43210"))
+
+        assert result == 43210
+
+    def test_debug_override_model_window_is_adopted(self):
+        """用户在输入框手动切换的模型（debug_override）同样应采纳其窗口。"""
+        import asyncio
+
+        result = asyncio.run(
+            self._history_budget("debug_override", 128000, cfg="65536")
+        )
+
+        assert result == 128000
 
 
 @pytest.mark.no_infrastructure

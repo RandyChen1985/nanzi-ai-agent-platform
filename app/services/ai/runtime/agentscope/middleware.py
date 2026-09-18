@@ -106,6 +106,9 @@ def mark_model_fallback(agent: Any, current_model: Any) -> dict[str, str] | None
     return info
 
 
+_MIN_COMPLETION_TOKENS = 128
+
+
 async def _clamp_completion_to_context(
     current_model: Any,
     messages: list,
@@ -146,7 +149,36 @@ async def _clamp_completion_to_context(
             return parameters, None, None
 
     available = context_size - input_tokens
-    if available <= 0 or requested <= available:
+    if available <= 0:
+        # 输入本身已经吃掉整个窗口。这里钳不动任何东西（钳到 ≤0 反而会触发供应商对
+        # 负 max_tokens 的报错），请求必然被供应商按上下文长度拒绝——但要留下**显式
+        # 告警**，否则线上只会看到供应商 400，查不出是平台的历史预算算大了。
+        logger.error(
+            "[ModelCallStatsMiddleware] Input exceeds model context window: model=%s "
+            "input=%d context=%d requested_output=%d. Upstream will reject this call; "
+            "the history budget for this turn was too large.",
+            _safe_getattr(current_model, "model", "unknown"),
+            input_tokens,
+            context_size,
+            requested,
+        )
+        return parameters, None, None
+    if requested <= available:
+        return parameters, None, None
+    if available < _MIN_COMPLETION_TOKENS:
+        # 剩余空间小到钳完只能吐几个 token：那会表现为"空回复/半截话"，比直接让供应商
+        # 拒绝更难排查。这里选择不钳、留显式告警，把问题暴露出来而不是制造坏输出。
+        logger.error(
+            "[ModelCallStatsMiddleware] Remaining context too small to produce a usable "
+            "reply, skipping completion clamp: model=%s input=%d context=%d "
+            "requested_output=%d available=%d floor=%d",
+            _safe_getattr(current_model, "model", "unknown"),
+            input_tokens,
+            context_size,
+            requested,
+            available,
+            _MIN_COMPLETION_TOKENS,
+        )
         return parameters, None, None
     try:
         parameters.max_tokens = available
@@ -195,8 +227,18 @@ def _contains_compaction(messages: list) -> bool:
     try:
         for msg in messages:
             content = _safe_getattr(msg, "content", None)
+            # content 可能是 str（纯文本消息），也可能是一组 TextBlock/dict。此前只按
+            # block 处理，str 走 _safe_getattr(str, "text") 永远取不到值 → 漏检。
+            if isinstance(content, str):
+                if content and COMPACTION_MARKER in content:
+                    return True
+                continue
             blocks = content if isinstance(content, list) else [content]
             for block in blocks:
+                if isinstance(block, str):
+                    if block and COMPACTION_MARKER in block:
+                        return True
+                    continue
                 text = (
                     block.get("text", "") if isinstance(block, dict)
                     else _safe_getattr(block, "text", "")
@@ -470,7 +512,7 @@ class ModelCallStatsMiddleware(MiddlewareBase):
         # 平台侧历史截断水位线。默认读 agent_context_max_tokens（64k）兜底；
         # 当模型显式配置了更大的物理窗口（current_model.context_size 由构造注入，
         # 仅显式配置时才存在），则同步抬高水位线，避免提前 compact——与
-        # agent_service._resolve_runtime_context_budget 的截断逻辑保持一致。
+        # agent_service._history_budget_for_runtime_model_info 的截断逻辑保持一致。
         context_budget: int | None = self._history_budget
         if not context_budget or context_budget <= 0:
             context_budget = await self._resolve_context_budget()

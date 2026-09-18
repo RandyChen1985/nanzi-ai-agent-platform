@@ -1,6 +1,6 @@
 import logging
 
-from fastapi import Header, HTTPException, status, Request, Depends
+from fastapi import Header, HTTPException, status, Request, Response, Depends
 from typing import Optional, Dict
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.services.auth_service import AuthService
@@ -11,8 +11,45 @@ import datetime
 
 logger = logging.getLogger(__name__)
 
+# 会话 Cookie 的有效期（秒）。服务端会话会随活跃调用滑动续期，而 Cookie 的 max_age
+# 自下发起固定计算，二者必须保持同值，并在每个经 Cookie 认证的请求上重新下发。
+SESSION_COOKIE_MAX_AGE = 86400
+
+
+def is_secure_request(request: Request) -> bool:
+    """判断当前请求是否应下发 Secure Cookie。
+
+    TLS 可能终止在反向代理（k8s ingress / nginx），此时后端看到的是 http，
+    因此优先信任代理写入的 X-Forwarded-Proto。客户端伪造该头只会让自己的
+    Cookie 收不到，不构成安全绕过；纯 HTTP 部署下返回 False，保持现有行为可登录。
+    """
+    forwarded = request.headers.get("x-forwarded-proto")
+    if forwarded:
+        return forwarded.split(",")[0].strip().lower() == "https"
+    return request.url.scheme == "https"
+
+
+def _renew_session_cookie(
+    request: Request, response: Response, name: str, value: str
+) -> None:
+    """重新下发会话 Cookie，令其 max_age 从当前时刻起算。
+
+    服务端会话在活跃调用时会滑动续期，Cookie 的 max_age 却是固定的，二者必然脱节：
+    连续使用满 24 小时后服务端会话仍有效，浏览器却已丢弃 Cookie，刷新会无故要求
+    重新登录。每个经 Cookie 认证的请求都重发一次，即可让两者同步顺延。
+    """
+    response.set_cookie(
+        key=name,
+        value=value,
+        httponly=True,
+        max_age=SESSION_COOKIE_MAX_AGE,
+        samesite="lax",
+        secure=is_secure_request(request),
+    )
+
 async def require_api_key(
     request: Request,
+    response: Response,
     api_key_header: Optional[str] = Header(default=None, alias="X-API-Key"),
     authorization: Optional[str] = Header(default=None, alias="Authorization"),
     db: AsyncSession = Depends(get_db_session)
@@ -26,9 +63,27 @@ async def require_api_key(
         else:
             api_key = authorization
 
-    # Support Cookie (admin_token)
+    # Support Cookie：portal_session（门户登录态）优先于 embed_session，否则平台内嵌
+    # iframe 场景会被降级或串号。
+    session_cookie_name: Optional[str] = None
+    # 凭据来源。调用方（如 user_apikey 判断是否该下发 embed_session）应按「来源」决策，
+    # 而不是拿凭据值互相比较——值相等不代表来源相同（如门户 Cookie 里恰好就是同一个
+    # 真实 Key），值比较会在那种情形下漏判。
+    credential_source = "header"
     if not api_key:
-        api_key = request.cookies.get("admin_token")
+        api_key = request.cookies.get("portal_session")
+        if api_key:
+            session_cookie_name = "portal_session"
+            credential_source = "cookie:portal_session"
+
+    # 嵌入会话：由 /api/portal/auth/user_apikey 在「显式凭据校验通过」后下发，
+    # 使嵌入页刷新时无需再依赖 URL 里的长期 API Key。独立于 portal_session，
+    # 因此打开嵌入页不会顶掉用户自己的门户登录态。
+    if not api_key:
+        api_key = request.cookies.get("embed_session")
+        if api_key:
+            session_cookie_name = "embed_session"
+            credential_source = "cookie:embed_session"
 
     if not api_key:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing API Key or Token")
@@ -44,12 +99,19 @@ async def require_api_key(
         pass
 
     request.state.user = user_info
+    request.state.credential_source = credential_source
 
     # 在线状态是展示性数据；Redis 写入失败不能影响正常认证和业务请求。
     try:
         await OnlinePresenceService.touch(user_info)
     except Exception as exc:
         logger.warning("更新在线用户状态失败，不影响本次认证: %s", exc)
+
+    # 会话 Cookie 的 max_age 自下发起固定，而服务端会话会随活跃滑动续期，二者会脱节
+    # （浏览器先失效，刷新时无故要求重新登录）。仅在凭据确实来自 Cookie 时重发；
+    # header 传来的凭据不得被写进 Cookie，否则等于凭空建立浏览器会话。
+    if session_cookie_name:
+        _renew_session_cookie(request, response, session_cookie_name, api_key)
 
     return user_info
 

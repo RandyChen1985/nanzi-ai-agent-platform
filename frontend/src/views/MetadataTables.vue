@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, computed } from 'vue'
 import { useRoute } from 'vue-router'
-import axios from 'axios'
+import axios from '../utils/axios'
 import { metadataApi } from '../api/metadata'
 import type { Dataset, Table, RecommendColumnSemanticResult } from '../api/metadata'
 import type { RagFlowConfigSummary } from '../api/ragflow'
@@ -528,11 +528,8 @@ const readSyncLog = async (taskId: string) => {
   const controller = new AbortController()
   syncLogAbortController = controller
   try {
+    // 凭据由同源 HttpOnly Cookie 自动携带（fetch 默认 same-origin）
     const headers: Record<string, string> = { Accept: 'text/event-stream' }
-    const apiKey = localStorage.getItem('api_key')
-    const token = localStorage.getItem('yovole_token') || localStorage.getItem('admin_token')
-    if (apiKey) headers['X-API-Key'] = apiKey
-    else if (token) headers.Authorization = `Bearer ${token}`
 
     const response = await fetch(`/api/portal/metadata/datasets/${datasetId}/rag/sync/${taskId}/events`, {
       headers,

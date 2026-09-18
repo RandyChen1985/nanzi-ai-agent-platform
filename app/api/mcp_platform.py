@@ -168,7 +168,7 @@ async def authorize_get(
     code_challenge: str = "",
     code_challenge_method: str = "",
     resource: str | None = None,
-    admin_token: str | None = Cookie(default=None),
+    portal_session: str | None = Cookie(default=None),
     db: AsyncSession = Depends(get_db_session),
 ):
     if response_type != "code" or not client_id or not redirect_uri:
@@ -197,7 +197,7 @@ async def authorize_get(
         await _record_oauth_failure(db, error_code="invalid_target", client_id=client_id)
         return _oauth_error("invalid_target", str(exc))
 
-    user = await AuthService.verify_api_key(admin_token, db) if admin_token else None
+    user = await AuthService.verify_api_key(portal_session, db) if portal_session else None
     if user is None:
         next_url = request.url.path
         if request.url.query:
@@ -238,7 +238,7 @@ async def authorize_get(
 @router.post("/oauth/authorize", include_in_schema=False)
 async def authorize_post(
     request: Request,
-    admin_token: str | None = Cookie(default=None),
+    portal_session: str | None = Cookie(default=None),
     db: AsyncSession = Depends(get_db_session),
 ):
     form = await _read_form(request)
@@ -246,7 +246,7 @@ async def authorize_post(
     if any(not form.get(key) for key in required):
         return _oauth_error("invalid_request", "授权确认参数不完整")
     client = await PlatformMcpOAuthService.get_client(db, form["client_id"])
-    user = await AuthService.verify_api_key(admin_token, db) if admin_token else None
+    user = await AuthService.verify_api_key(portal_session, db) if portal_session else None
     if client is None or client.status != "active" or user is None:
         return _oauth_error("access_denied", "当前登录状态无效", 403)
     if "authorization_code" not in normalize_scopes(client.allowed_grant_types):

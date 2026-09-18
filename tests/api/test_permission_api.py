@@ -4,7 +4,9 @@ from app.main import app
 from app.services.auth_service import AuthService
 
 @pytest.fixture
-async def admin_token(db_session):
+async def admin_api_key(db_session):
+    # 注意：此 fixture 与门户会话 Cookie（portal_session，旧名 admin_token）无关，
+    # 名字曾同为 admin_token 容易混淆，故改名为 admin_api_key。
     # Ensure admin exists
     await AuthService.generate_api_key("test_api_admin", role="admin", db=db_session)
     # Re-fetch to get key (in real test, we might mock or return from generate)

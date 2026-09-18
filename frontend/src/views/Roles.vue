@@ -526,10 +526,19 @@
                                     <div class="flex items-center gap-1.5 mb-0.5 min-w-0">
                                         <span class="font-bold text-gray-900 block truncate text-xs leading-tight">{{ res.platform_name || res.display_name || res.name }}</span>
                                         <span
+                                          v-if="res.method"
+                                          class="flex-shrink-0 text-[9px] px-1 py-0.5 rounded font-mono font-bold leading-none"
+                                          :class="methodBadgeClass(res.method)"
+                                        >{{ res.method }}</span>
+                                        <span
                                           v-if="isMissingKnowledgeBase(res)"
                                           class="flex-shrink-0 text-[9px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 font-semibold leading-none"
                                         >失联</span>
                                     </div>
+                                    <span
+                                      v-if="res.path"
+                                      class="text-gray-500 text-[9px] block truncate font-mono leading-tight"
+                                    >{{ res.path }}</span>
                                     <span class="text-gray-400 text-[9px] block truncate font-mono">{{ res.description || res.id }}</span>
                                 </div>
                             </label>
@@ -782,7 +791,7 @@
 
 <script setup lang="ts">
 import { ref, onMounted, computed, onUnmounted } from 'vue'
-import axios from 'axios'
+import axios from '../utils/axios'
 import { useToast } from '../composables/useToast'
 import { MENU_TREE, getMenuDescendantIds } from '../constants/permissions'
 import QuotaPolicyPanel from '../components/admin/QuotaPolicyPanel.vue'
@@ -979,6 +988,22 @@ const isMissingKnowledgeBase = (res: any) => {
     return Boolean(res?.is_missing_in_ragflow || res?.status === 'missing')
 }
 
+/**
+ * 请求方法徽章配色。
+ *
+ * 仅「外部API」资源带 method 字段，其余 tab 不会渲染该徽章。
+ */
+const methodBadgeClass = (method: string) => {
+    switch (String(method || '').toUpperCase()) {
+        case 'GET': return 'bg-emerald-50 text-emerald-600'
+        case 'POST': return 'bg-blue-50 text-blue-600'
+        case 'PUT':
+        case 'PATCH': return 'bg-amber-50 text-amber-600'
+        case 'DELETE': return 'bg-rose-50 text-rose-600'
+        default: return 'bg-gray-100 text-gray-500'
+    }
+}
+
 const resCardActiveClass = (resId: string) => {
     const type = activeResTab.value
     const selected = (permissionData.value as any)[type]?.includes(resId)
@@ -1093,10 +1118,8 @@ const fetchAllUsers = async () => {
     if (users.value.length > 0) return
     loadingUsers.value = true
     try {
-        const apiKey = localStorage.getItem('api_key')
         // Get all users (setting a large size to get most users for selection)
         const response = await axios.get('/api/portal/management/users', {
-            headers: { 'X-API-Key': apiKey },
             params: { page: 1, size: 1000 }
         })
         users.value = response.data.items || []
@@ -1110,10 +1133,7 @@ const fetchAllUsers = async () => {
 
 const fetchRoleUsers = async (roleId: number) => {
     try {
-        const apiKey = localStorage.getItem('api_key')
-        const response = await axios.get(`/api/portal/roles/${roleId}/users`, {
-            headers: { 'X-API-Key': apiKey }
-        })
+        const response = await axios.get(`/api/portal/roles/${roleId}/users`)
         assignedUserIds.value = response.data.user_ids || []
     } catch (e) {
         console.error('Fetch Role Users Failed', e)
@@ -1124,11 +1144,9 @@ const saveUserAssignments = async () => {
     if (!currentRole.value) return
     submittingUserAssignment.value = true
     try {
-        const apiKey = localStorage.getItem('api_key')
         await axios.post(
             `/api/portal/roles/${currentRole.value.id}/users`,
-            { user_ids: assignedUserIds.value },
-            { headers: { 'X-API-Key': apiKey } }
+            { user_ids: assignedUserIds.value }
         )
         showToast('用户分配保存成功', 'success')
         closeUserAssignmentDialog()
@@ -1168,12 +1186,10 @@ const isAllSelected = computed(() => {
 const fetchRoles = async () => {
     loading.value = true
     try {
-        const apiKey = localStorage.getItem('api_key')
         const params: any = { page: page.value, size: size.value }
         if (searchQuery.value) params.search = searchQuery.value
 
         const response = await axios.get('/api/portal/roles', {
-            headers: { 'X-API-Key': apiKey },
             params
         })
         roles.value = response.data.items
@@ -1226,12 +1242,11 @@ const saveRole = async () => {
     error.value = ''
 
     try {
-        const apiKey = localStorage.getItem('api_key')
         if (showEditDialog.value && editingRoleId.value) {
-            await axios.put(`/api/portal/roles/${editingRoleId.value}`, formData.value, { headers: { 'X-API-Key': apiKey } })
+            await axios.put(`/api/portal/roles/${editingRoleId.value}`, formData.value)
             showToast('更新成功', 'success')
         } else {
-            await axios.post('/api/portal/roles', formData.value, { headers: { 'X-API-Key': apiKey } })
+            await axios.post('/api/portal/roles', formData.value)
             showToast('创建成功', 'success')
         }
         closeDialogs()
@@ -1251,8 +1266,7 @@ const confirmDelete = (role: any) => {
 const deleteRole = async () => {
     if (!roleToDelete.value) return
     try {
-        const apiKey = localStorage.getItem('api_key')
-        await axios.delete(`/api/portal/roles/${roleToDelete.value.id}`, { headers: { 'X-API-Key': apiKey } })
+        await axios.delete(`/api/portal/roles/${roleToDelete.value.id}`)
         showToast('删除成功', 'success')
         showDeleteDialog.value = false
         fetchRoles()
@@ -1275,10 +1289,9 @@ const fetchResources = async () => {
     if (loadingResources.value) return
     loadingResources.value = true
     try {
-        const apiKey = localStorage.getItem('api_key')
         const results = await Promise.allSettled([
-            axios.get('/api/portal/ragflow/datasets', { headers: { 'X-API-Key': apiKey }, params: { page_size: 100 } }),
-            axios.get('/api/portal/management/resources/available', { headers: { 'X-API-Key': apiKey } })
+            axios.get('/api/portal/ragflow/datasets', { params: { page_size: 100 } }),
+            axios.get('/api/portal/management/resources/available')
         ])
 
          const handleResult = (result: PromiseSettledResult<any>) => result.status === 'fulfilled' ? result.value.data : null
@@ -1314,8 +1327,7 @@ const fetchResources = async () => {
 
 const fetchRolePermissions = async (roleId: number) => {
      try {
-        const apiKey = localStorage.getItem('api_key')
-        const response = await axios.get(`/api/portal/roles/${roleId}/permissions`, { headers: { 'X-API-Key': apiKey } })
+        const response = await axios.get(`/api/portal/roles/${roleId}/permissions`)
         const perms = response.data.permissions
         const missingIds = new Set(
             (allResources.value.datasets || [])
@@ -1353,7 +1365,6 @@ const savePermissions = async () => {
     if (!currentRole.value) return
     submittingPerms.value = true
     try {
-        const apiKey = localStorage.getItem('api_key')
         const missingIds = new Set(
             (allResources.value.datasets || [])
                 .filter((d: any) => d?.is_missing_in_ragflow || d?.status === 'missing')
@@ -1370,8 +1381,7 @@ const savePermissions = async () => {
         }
         await axios.put(
             `/api/portal/roles/${currentRole.value.id}/permissions`,
-            payload,
-            { headers: { 'X-API-Key': apiKey } }
+            payload
         )
         showToast('权限保存成功', 'success')
         closePermissionDialog()

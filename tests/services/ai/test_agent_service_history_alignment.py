@@ -50,6 +50,71 @@ def test_context_excludes_interrupted_turn_but_keeps_completed_history():
     ]
 
 
+@pytest.mark.parametrize(
+    "history,label",
+    [
+        (
+            [
+                {"role": "user", "content": "A", "status": "cancelled"},
+                {"role": "assistant", "content": "B", "status": "cancelled"},
+                {"role": "user", "content": "C"},
+            ],
+            "配对的 cancelled user+assistant",
+        ),
+        (
+            [
+                {"role": "user", "content": "A", "status": "cancelled"},
+                {"role": "user", "content": "C"},
+            ],
+            "孤儿 cancelled user（assistant 缺失）",
+        ),
+        (
+            [
+                {"role": "user", "content": "A", "status": "cancelled"},
+                {"role": "assistant", "content": "B"},
+            ],
+            "cancelled user 后跟正常 assistant",
+        ),
+        (
+            [
+                {"role": "system", "content": "S", "status": "cancelled"},
+                {"role": "user", "content": "C"},
+            ],
+            "cancelled system",
+        ),
+        (
+            [{"role": "user", "content": "A"}, {"role": "assistant", "content": "B"}],
+            "正常历史",
+        ),
+    ],
+)
+def test_budget_and_llm_paths_share_the_same_unfinished_turn_rule(history, label):
+    """「Token 预算」与「进模型」两条路径必须剔除同一批消息。
+
+    这两处此前各写了一份断轮清理规则且**并不一致**（预算侧按 status 无条件丢弃任意
+    角色，进模型侧只丢弃 assistant 并回退配对的 user），上表每个用例都是当时会分叉的
+    场景之一。分叉会让压缩卡片上的丢弃/保留条数与模型实际所见对不上。
+    """
+    from app.services.ai.context.compactor import history_messages_for_token_budget
+
+    llm_view = [m.get("content") for m in agent_service.history_messages_for_llm(history)]
+    budget_view = [m.get("content") for m in history_messages_for_token_budget(history)]
+
+    assert llm_view == budget_view, label
+
+
+def test_budget_path_keeps_metadata_while_llm_path_strips_it():
+    """两条路径共用断轮规则，但字段处理仍必须不同：预算侧保留元数据、进模型侧过滤。"""
+    from app.services.ai.context.compactor import history_messages_for_token_budget
+
+    history = [{"role": "user", "content": "A", "status": "success", "seq": 1}]
+
+    assert history_messages_for_token_budget(history)[0] == history[0]
+    llm_message = agent_service.history_messages_for_llm(history)[0]
+    assert "status" not in llm_message
+    assert llm_message["seq"] == 1
+
+
 def test_chat_history_boundary_prompt_marks_only_latest_user_as_current():
     prompt = agent_service.build_chat_history_boundary_prompt("原有系统提示")
 

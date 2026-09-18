@@ -18,7 +18,6 @@ async def test_context_usage_service_returns_budget_for_an_empty_conversation(mo
     async def fake_config_get(key, default=None):
         return {
             "agent_context_max_tokens": "65536",
-            "agent_context_overhead_headroom_tokens": "8192",
         }.get(key, default)
 
     monkeypatch.setattr(
@@ -61,8 +60,12 @@ async def test_context_usage_aggregates_session_breakdown_without_repeating_runt
     async def fake_config_get(key, default=None):
         return {
             "agent_context_max_tokens": "100",
-            "agent_context_overhead_headroom_tokens": "20",
         }.get(key, default)
+
+    # overhead 现在是模块常量（不是系统配置项）：这里按需覆盖它，让预算算术确定。
+    monkeypatch.setattr(
+        "app.services.ai.context_usage.CONTEXT_OVERHEAD_RESERVATION_TOKENS", 20
+    )
 
     class FakeRedis:
         async def lrange(self, key, start, end):
@@ -140,8 +143,12 @@ async def test_context_usage_reads_effective_history_after_manual_compaction(mon
     async def fake_config_get(key, default=None):
         return {
             "agent_context_max_tokens": "100",
-            "agent_context_overhead_headroom_tokens": "20",
         }.get(key, default)
+
+    # overhead 现在是模块常量（不是系统配置项）：这里按需覆盖它，让预算算术确定。
+    monkeypatch.setattr(
+        "app.services.ai.context_usage.CONTEXT_OVERHEAD_RESERVATION_TOKENS", 20
+    )
 
     monkeypatch.setattr(
         "app.services.ai.context_usage.memory_service.get_history",

@@ -6,6 +6,11 @@ import router from '@/router'
 
 import axios from 'axios'
 
+// 门户认证统一依赖同源 HttpOnly Cookie（portal_session），不再从 localStorage 注入 X-API-Key：
+// 凭据不进 JS 可读的存储，即使发生 XSS 也无法带走会话凭据。
+// 显式传入 X-API-Key / Authorization 的调用方不受影响（本文件不做任何覆盖）。
+// 嵌入场景的凭据由 EmbedChat 自行注入。
+
 // Global Axios Interceptor for 401 Unauthorized
 axios.interceptors.response.use(
   response => response,
@@ -22,9 +27,21 @@ axios.interceptors.response.use(
         return Promise.reject(error);
       }
 
-      // Clear local storage and redirect to login
+      // 清除客户端存储并跳转登录。
+      //
+      // 这些 localStorage 键是历史遗留（现版本凭据只走 HttpOnly Cookie，不再写入本地
+      // 存储），清掉即可——但注意这只影响前端缓存快照，**不构成登出**。
+      //
+      // 此处刻意不再尝试用 document.cookie 删门户会话 Cookie：后端自项目初始化起即以
+      // httponly=True 下发，JS 既读不到也写不了，那种赋值纯属空操作（曾是误导性的死代码）。
+      // 会话真正失效只有两条路：后端 POST /api/portal/auth/logout（吊销 Redis 会话 +
+      // delete_cookie），或会话自然过期。
       localStorage.removeItem('api_key')
       localStorage.removeItem('user_info')
+      // 'admin_token' 是**历史遗留的 localStorage 键名**，与现在的 Cookie 名无关，
+      // 保留原样才能清掉老版本留下的垃圾；Cookie 本身由后端删。
+      localStorage.removeItem('admin_token')
+      localStorage.removeItem('yovole_token')
       if (window.location.pathname !== '/login') {
         window.location.href = '/login'
       }

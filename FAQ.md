@@ -2483,10 +2483,21 @@ graph TD
 #### 7.1.2 API Key 的安全生成与使用
 
 - 每个平台用户在创建时会自动生成唯一的 `api_key`（亦可在用户中心随时重新生成）。
+- **格式**：`nzi_` 前缀 + 43 字符随机体，共 47 字符，例如 `nzi_FniF4mAUYBxh2vfUvHbhdywTJ2cJeCCJYafAllwB79E`。随机体来自 `secrets.token_urlsafe(32)`（256 bit 熵），前缀仅用于辨识、不承载语义。
+- **存量 Key 兼容**：`nzi_` 前缀是后加的，此前签发的无前缀 Key **继续有效**，无需重新生成；校验只做 SHA256 查库、不解析格式，因此新旧两种形态并存。若希望统一成新格式，到【个人中心】重置即可。
+- 平台各凭据前缀一览，便于在日志与抓包中区分：
+  | 凭据 | 前缀 | 说明 |
+  |------|------|------|
+  | API Key | `nzi_` | 长期凭据，供外部系统集成 |
+  | 门户会话令牌 | `sess_` | 登录后经 Cookie 下发，24 小时滑动续期 |
+  | 嵌入会话令牌 | `emb_ses_` | Ticket/`?token=` 校验后换发 |
+  | 嵌入票据 | `emt_` | 一次性，兑换后即失效 |
 - API Key 具有与该用户完全相同的权限上下文，外部系统调用平台 API 时，需在 HTTP 请求头中携带：
   ```http
   Authorization: Bearer <YOUR_API_KEY>
   ```
+- **浏览器侧不再持有长期 API Key**：门户登录后服务端下发的 `portal_session` Cookie，内容是**可吊销的不透明会话令牌**（`sess_<random>`，24 小时滑动续期），**不是**长期 Key；登录响应体也不再回传 `api_key`。前端不写入、不读取 `localStorage.api_key`，凭据只经 HttpOnly Cookie 传递。
+- **需要真实 Key 的场景**（配置外部集成）请到【个人中心】或【用户管理】查看与重置；相关接口（`GET /management/api-key/{user_id}`、`POST /auth/api-key/reset`、`GET /api/v1/users/profile`）仍按原有约定返回真实 Key。
 
 #### 7.1.3 外部 V1 API 访问控制与白名单机制
 

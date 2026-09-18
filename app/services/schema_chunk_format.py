@@ -140,13 +140,27 @@ def count_schema_hits(text: Any) -> int:
 
 
 def estimate_text_tokens(text: Any) -> int:
-    """粗略估算文本 token 数（用于日志展示，非计费精度）。"""
+    """粗略估算文本 token 数（用于日志展示与上下文预算判定）。
+
+    ⚠️ **口径必须与运行时一致**：这里刻意采用与 AgentScope ``count_tokens`` 相同的
+    「UTF-8 字节数 ÷ 4」口径，而不是按字符类型加权。原因如下。
+
+    平台的历史裁剪水位线（``window_for_context``）、上下文占用展示、以及 AgentScope
+    内部自带的上下文压缩，**判定的是同一件事**——"这段上下文还能不能装下"。三者若用
+    不同度量，就会出现互相打架的判定，且展示值与真实用量不可比。
+
+    旧实现是 ``cjk * 1.5 + other / 4``，对中文高估约 2 倍（1 个汉字估算 1.5 token，
+    实际约 0.6；而字节口径为 3/4 = 0.75）。后果是中文为主的会话在模型窗口**只用到约
+    三分之一**时就被判定超预算并触发压缩——用户感受即"明明还有空间就压了"；反过来
+    对英文是低估（0.25 < 实际约 0.3），又可能超窗。
+
+    换成字节口径后，中文估算 0.75 token/字（较实际保守约 25%，偏安全），英文约
+    0.25 token/字符（准确），且与运行时判定统一。
+    """
     raw = str(text or "")
     if not raw:
         return 0
-    cjk = len(re.findall(r"[\u4e00-\u9fff]", raw))
-    other = len(raw) - cjk
-    return max(1, int(cjk * 1.5 + other / 4))
+    return max(1, int(len(raw.encode("utf-8")) / 4 + 0.5))
 
 
 def format_schema_hit_summary(text: Any) -> Optional[str]:

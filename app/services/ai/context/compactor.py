@@ -20,6 +20,16 @@ logger = logging.getLogger(__name__)
 
 _LLM_DIGEST_TASKS: Set[asyncio.Task] = set()
 
+# LLM 语义摘要请求中「被丢弃历史」的字符上限（下限 2000，单条上限为其 1/8）。
+#
+# 为什么是常量而不是系统配置项：这是给摘要请求自身兜底的**内部护栏**——它要保证的是
+# "摘要请求不会因为输入太长而超窗"，而不是一个业务可调参数。管理员无法判断自己该填多少，
+# 做成配置只会多一个填错的旋钮。24000 字符在最坏情况（全中文，3 字节/字）约合
+# 18000 token，即使 32k 窗口的模型也能连同系统提示一起装下。
+#
+# 何时该调整：如果摘要模型的窗口明显小于 32k，或摘要系统提示显著变长，需要调小。
+LLM_DIGEST_TRANSCRIPT_MAX_CHARS = 24000
+
 
 def trusted_tool_run_text(message: Dict[str, Any]) -> str:
     """只为上下文预算统计读取已标记版本的最终工具结果。"""
@@ -28,26 +38,57 @@ def trusted_tool_run_text(message: Dict[str, Any]) -> str:
     return str(message.get("tool_run_text") or "")
 
 
+def drop_unfinished_turns(
+    history: List[Dict[str, Any]],
+    *,
+    filter_fields: Optional[tuple] = None,
+) -> List[Dict[str, Any]]:
+    """统一「剔除被打断/被取消的未完成轮次」的唯一实现。
+
+    一个被取消的轮次是 ``(user, assistant[status=cancelled])`` 这一对：丢弃这条半截
+    assistant 回复的同时，必须把它前面配对的 user 也丢弃——否则模型会看到一条没有任何
+    回复的提问，并把它当成待完成的任务继续作答。
+
+    ⚠️ 这条规则此前在两个函数里各写了一份，且**两份并不一致**：
+    ``history_messages_for_token_budget`` 按 status 无条件丢弃任意角色，
+    ``history_messages_for_llm`` 只丢弃 assistant 并回退配对的 user。实测三种情况下
+    结果不同——「孤儿 cancelled user（assistant 缺失）」「cancelled user 后跟正常
+    assistant」「cancelled system」。后果是同一会话在「Token 预算」与「实际进模型」
+    两条路径上剔除的消息集合不同，压缩卡片上的丢弃/保留条数也会对不上。两处现在共用
+    本函数，且统一到「进模型」的口径（预算本来就是为预测模型输入体积服务的）。
+
+    ``filter_fields`` 非空时只保留这些字段（进模型路径用），为空时原样返回消息
+    （Token 预算路径需要保留 ``seq``/``status`` 等元数据）。
+    """
+    result: List[Dict[str, Any]] = []
+    for message in history or []:
+        if not isinstance(message, dict):
+            continue
+        status = str(message.get("status") or "").strip().lower()
+        if message.get("role") == "assistant" and status in ("cancelled", "interrupted"):
+            # 终止轮的 user/assistant 对仍保留在展示历史中，但不能让模型把半截
+            # assistant 回复当成正常上下文继续完成。
+            if result and result[-1].get("role") == "user":
+                result.pop()
+            continue
+        if filter_fields:
+            result.append({key: message[key] for key in filter_fields if key in message})
+        else:
+            result.append(message)
+    return result
+
+
 def history_messages_for_token_budget(
     history: List[Dict[str, Any]],
 ) -> List[Dict[str, Any]]:
     """剔除被打断/被取消的未完成轮次，保留正常完成的历史记录。
 
     ⚠️ 注意：此函数（Token 预算用，字段原样保留）与 agent_service.py 中的
-    history_messages_for_llm（进模型用，做 allowed_keys 字段过滤 + cancelled/interrupted
-    双阶段清理）语义不同，请勿合并后丢弃 allowed_keys 字段过滤，否则会导致字段泄漏。
-    二者在「剔除断轮（interrupted/cancelled）」上保持一致：cancelled 半截轮绝不进入
-    token 预算窗口或最终发给 executor 的上下文。
+    history_messages_for_llm（进模型用，做 allowed_keys 字段过滤）语义不同，请勿合并后
+    丢弃 allowed_keys 字段过滤，否则会导致字段泄漏。二者**共用**
+    ``drop_unfinished_turns``，因此在「剔除断轮」上真正保持一致。
     """
-    cleaned: List[Dict[str, Any]] = []
-    for msg in history or []:
-        if not isinstance(msg, dict):
-            continue
-        status = str(msg.get("status") or "").strip().lower()
-        if status in ("interrupted", "cancelled"):
-            continue
-        cleaned.append(msg)
-    return cleaned
+    return drop_unfinished_turns(history)
 
 
 def window_for_context(
@@ -747,7 +788,20 @@ class ContextCompactor:
                 "assistant": "助手",
                 "system": "系统",
             }
-            for msg in dropped or []:
+
+            # transcript 必须**有界**：把整段被丢弃的历史原样塞进摘要请求，会让这个
+            # "用来解决超窗"的请求自己超窗（长会话下 dropped 可达数百条，还可能含大段
+            # 工具结果），而失败只会静默退回确定性摘录，用户和运维都无感。
+            # 因此按字符预算裁剪，并且**优先保留离当前最近的那部分**——对"接续对话"
+            # 而言，越靠近当前的上下文越重要；被舍弃的更早内容仍由 prev_digest 兜底。
+            transcript_budget = LLM_DIGEST_TRANSCRIPT_MAX_CHARS
+            # 单条预算：防止一条巨型工具结果独占整个 transcript。
+            per_message_budget = max(200, transcript_budget // 8)
+
+            picked: List[str] = []
+            used = 0
+            truncated = False
+            for msg in reversed(dropped or []):
                 role = (msg.get("role") or "").strip()
                 text = _flatten_content(msg.get("content"))
                 tool_text = _flatten_content(trusted_tool_run_text(msg))
@@ -755,8 +809,20 @@ class ContextCompactor:
                     text = f"{text} · 工具结果：{tool_text}".strip(" ·") if text else tool_text
                 if not text:
                     continue
-                transcript_parts.append(
-                    f"{role_label.get(role, role or '未知')}：{text}"
+                if len(text) > per_message_budget:
+                    text = text[:per_message_budget] + "…（已截断）"
+                line = f"{role_label.get(role, role or '未知')}：{text}"
+                if used + len(line) > transcript_budget:
+                    truncated = True
+                    break
+                picked.append(line)
+                used += len(line)
+            picked.reverse()
+            transcript_parts.extend(picked)
+            if truncated:
+                transcript_parts.insert(
+                    0,
+                    "〔说明〕更早的部分轮次因篇幅已省略，以下为距离当前较近的对话内容。",
                 )
             if not transcript_parts:
                 return None

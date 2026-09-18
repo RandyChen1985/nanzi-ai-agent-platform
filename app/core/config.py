@@ -1,8 +1,43 @@
+import logging
 import os
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from functools import lru_cache
 from typing import List, Optional
 from sqlalchemy.engine.url import URL
+
+logger = logging.getLogger(__name__)
+
+
+def resolve_cors_origins(configured: Optional[List[str]]) -> List[str]:
+    """解析 CORS 白名单，并把危险配置显式暴露出来。
+
+    服务端启用了 allow_credentials=True，而浏览器不接受
+    `Access-Control-Allow-Origin: *` 与凭据共存，因此通配符配置在跨域场景下
+    会让带凭据的请求被直接拒绝。这里不擅自收紧（避免打断既有部署），
+    只保留原行为并记录告警，便于按真实域名收敛。
+    """
+    origins = [
+        origin.strip()
+        for origin in (configured or [])
+        if isinstance(origin, str) and origin.strip()
+    ]
+
+    if not origins:
+        logger.warning(
+            "ALLOWED_ORIGINS 未配置，已回退为通配符 '*'。由于服务端启用了 "
+            "allow_credentials，跨域携带凭据的请求会被浏览器拒绝，"
+            "请在 .env 中配置实际访问域名。"
+        )
+        return ["*"]
+
+    if "*" in origins:
+        logger.warning(
+            "ALLOWED_ORIGINS 包含通配符 '*'，与 allow_credentials=True 冲突："
+            "跨域携带凭据的请求会被浏览器拒绝。请收敛为实际访问域名。"
+        )
+
+    return origins
+
 
 class Settings(BaseSettings):
     API_SERVICE_ENV: str = "dev"
@@ -12,6 +47,11 @@ class Settings(BaseSettings):
     APP_PUBLIC_URL: Optional[str] = None
     # 仅建议在一个节点开启，避免多节点部署重复启动 APScheduler。
     TASK_SCHEDULER_ENABLED: bool = True
+
+    # 门户会话令牌：浏览器只持有不透明随机令牌（sess_...），真实 API Key 不再下发到前端。
+    # 令牌写入 auth:api_key 缓存键，现有校验链无需分支即可接受；滑动续期 24h。
+    # 置 false 可在 Redis 异常等场景快速回退到"cookie 直存真实 API Key"的旧行为。
+    PORTAL_SESSION_TOKEN_ENABLED: bool = True
 
     # Main database type: mysql (default) / postgresql
     DATABASE_TYPE: str = "mysql"

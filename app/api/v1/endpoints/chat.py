@@ -1122,12 +1122,36 @@ async def get_conversation_context_usage(
         )
         model = result.scalar_one_or_none()
         if model is not None:
-            runtime_model_info = {
-                "source": "runtime_override",
-                "effective_model_id": model.model_id,
-                "context_size": model.context_size,
-                "max_output_tokens": model.max_output_tokens,
-            }
+            # 复用 post-route 的预算契约（`_runtime_context_metadata`），**不要**在这里
+            # 手搓 runtime_model_info：手搓必然漏字段，而 `estimate_context_usage` 是按
+            # 契约键名读取的。此前就漏了 `completion_reserve_tokens`，导致这里走"不扣输出
+            # 预留"的兜底公式，输入框水位线（自动压缩触发线 / 请求输入上限）比真实值各
+            # 偏大一个 max_output_tokens，并与同一会话的调用统计弹框自相矛盾。
+            try:
+                from app.services.ai.agent_service import AgentService
+                from app.services.ai.config import RuntimeModelInfo
+
+                runtime_model_info = await AgentService()._runtime_context_metadata(
+                    RuntimeModelInfo(
+                        configured_model=model.model_id,
+                        effective_model_id=model.model_id,
+                        # 与阶段②采纳模型窗口的判据一致：显式选中的模型才用它的窗口。
+                        source="runtime_override",
+                        context_size=model.context_size,
+                        max_output_tokens=model.max_output_tokens,
+                    )
+                )
+            except Exception as exc:
+                # 预算契约不可用时**不要**退回手搓的字段字典：那份字典正是本接口此前
+                # 出错的原因（键名与消费方不一致，水位线会静默偏大）。退化为"运行时模型
+                # 未知"，由 `estimate_context_usage` 按 agent_context_max_tokens 配置兜底，
+                # 这是该函数为未知模型定义的既有语义。
+                logger.warning(
+                    "Failed to build runtime context metadata for context-usage; "
+                    "falling back to config-based budget: %s",
+                    exc,
+                )
+                runtime_model_info = {}
 
     usage = await estimate_context_usage(
         user_id=user_id,

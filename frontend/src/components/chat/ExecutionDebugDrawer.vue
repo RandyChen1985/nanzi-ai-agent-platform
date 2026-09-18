@@ -265,10 +265,7 @@ const fetchSteps = async () => {
   loading.value = true;
   error.value = "";
   try {
-    const key = localStorage.getItem("api_key");
-    const res = await axios.get(`/api/v1/chat/logs/${encodeURIComponent(props.traceId)}`, {
-      headers: key ? { "X-API-Key": key } : undefined,
-    });
+    const res = await axios.get(`/api/v1/chat/logs/${encodeURIComponent(props.traceId)}`);
     const data = res.data?.data ?? res.data;
     if (data && Array.isArray(data.steps)) {
       steps.value = data.steps;

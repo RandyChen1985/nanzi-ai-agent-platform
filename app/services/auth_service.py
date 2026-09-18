@@ -2,6 +2,7 @@ import hashlib
 import logging
 import re
 import secrets
+import time
 import httpx
 from datetime import datetime
 from typing import Optional, Dict
@@ -81,6 +82,265 @@ class AuthService:
             if is_local:
                 await session.close()
 
+    # --- 门户会话令牌 ---
+    # 浏览器只持有这类不透明随机令牌，真实 API Key 不再下发到前端。
+    # 令牌写入 auth:api_key:{sha256(token)} —— 与真实 API Key 共用键空间，
+    # 因此 verify_api_key 无需任何分支即可校验，下游 ctx.api_key 也自动继续可用。
+    PORTAL_SESSION_PREFIX = "sess_"
+    # 嵌入会话令牌前缀（由 EmbedService 签发）。登记到同一套索引，改用户状态时一并吊销。
+    EMBED_SESSION_PREFIX = "emb_ses_"
+    # 与 portal_session cookie 的 max_age 一致。滑动续期复用 verify_api_key 中的会话分支，
+    # 该分支同样服务于 embed（其 TTL 亦为 86400）；若要调整，需同步确认两者。
+    PORTAL_SESSION_TTL_SECONDS = 86400
+    PORTAL_SESSION_TYPE = "portal"
+
+    # --- 会话按用户吊销索引 ---
+    # 会话缓存键是 auth:api_key:{sha256(token)}，单向哈希无法从 user_id 反查，
+    # 所以签发时额外把缓存键登记进 auth:user_sessions:{user_id} 集合。
+    # 禁用/删除用户、改角色、重置 Key 时据此成批吊销，否则这些会话会一直有效
+    # （verify_api_key 缓存命中不查库，且会话还参与 24h 滑动续期）。
+    SESSION_INDEX_PREFIX = "auth:user_sessions:"
+    # 索引比单个会话活得久即可：会话滑动续期时会同步续期索引，多删不存在的键无害。
+    SESSION_INDEX_TTL_SECONDS = 86400 * 7
+
+    @staticmethod
+    def _session_cache_key(token: str) -> str:
+        return f"auth:api_key:{get_api_key_manager().hash_api_key(token)}"
+
+    @staticmethod
+    def _session_index_key(user_id) -> str:
+        return f"{AuthService.SESSION_INDEX_PREFIX}{user_id}"
+
+    @staticmethod
+    async def _index_session(redis, user_id, cache_key: str) -> None:
+        """把会话缓存键登记到该用户的索引集合（尽力而为，失败不影响签发）。"""
+        if redis is None or not user_id:
+            return
+        try:
+            index_key = AuthService._session_index_key(user_id)
+            await redis.sadd(index_key, cache_key)
+            await redis.expire(index_key, AuthService.SESSION_INDEX_TTL_SECONDS)
+        except Exception as exc:
+            logger.warning("登记会话索引失败（不影响本次签发）: %s", exc)
+
+    @staticmethod
+    def _as_text(value) -> str:
+        """统一处理 Redis decode_responses 开关下的 bytes / str。"""
+        if isinstance(value, bytes):
+            return value.decode("utf-8", errors="replace")
+        return "" if value is None else str(value)
+
+    @staticmethod
+    async def revoke_sessions_for_user(user_id, redis=None) -> int:
+        """吊销某用户的全部会话令牌，返回删除的键数。
+
+        只删会话（sess_/emb_ses_ 写入的 auth:api_key 键），不碰真实 API Key 的
+        认证缓存——后者由 invalidate_user_auth_cache 单独处理。
+        """
+        if not user_id:
+            return 0
+        redis = redis or await get_redis()
+        if not redis:
+            return 0
+        index_key = AuthService._session_index_key(user_id)
+        removed = 0
+        try:
+            cache_keys = await redis.smembers(index_key)
+            keys = [
+                k.decode("utf-8", errors="replace") if isinstance(k, bytes) else str(k)
+                for k in (cache_keys or [])
+            ]
+            if keys:
+                removed = int(await redis.delete(*keys) or 0)
+            await redis.delete(index_key)
+        except Exception as exc:
+            logger.warning("按用户吊销会话失败: %s", exc)
+        return removed
+
+    @staticmethod
+    def _user_model_to_data(user) -> Dict:
+        """User ORM -> 认证缓存 / 会话的统一数据结构（单一来源，避免字段漂移）。"""
+        return {
+            "user_id": str(user.id),
+            "user_name": user.user_name,
+            "real_name": user.real_name or user.user_name,
+            "role": user.role,
+            "dept_code": user.dept_code or "",
+            "org_path": user.org_path or "",
+            "extra_data": user.extra_data or "",
+            "created_at": user.created_at.strftime("%Y-%m-%d %H:%M:%S") if user.created_at else None,
+            "remark": user.remark or "",
+            "status": str(user.status),
+        }
+
+    @staticmethod
+    async def create_portal_session(user_id: int, db: Optional[AsyncSession] = None) -> Optional[str]:
+        """按 user_id 签发不透明会话令牌。
+
+        Redis 不可用时返回 None，调用方回退到真实 API Key —— 登录不能被缓存层拖垮。
+        """
+        redis = await get_redis()
+        if not redis:
+            logger.warning("Redis 不可用，无法签发会话令牌，本次回退到真实 API Key")
+            return None
+
+        session, is_local = await AuthService._get_session(db)
+        try:
+            result = await session.execute(select(User).where(User.id == int(user_id)))
+            user = result.scalar_one_or_none()
+            if not user or user.status != 1:
+                return None
+            user_data = AuthService._user_model_to_data(user)
+        finally:
+            if is_local:
+                await session.close()
+
+        token = f"{AuthService.PORTAL_SESSION_PREFIX}{secrets.token_urlsafe(32)}"
+        payload = {
+            **user_data,
+            "session_type": AuthService.PORTAL_SESSION_TYPE,
+            # 签发即视为刚复核过，避免登录后第一次请求就回源查库
+            "verified_at": str(int(time.time())),
+        }
+        cache_key = AuthService._session_cache_key(token)
+        try:
+            await redis.hset(cache_key, mapping=payload)
+            await redis.expire(
+                cache_key,
+                AuthService.PORTAL_SESSION_TTL_SECONDS,
+            )
+        except Exception as exc:
+            logger.warning("写入会话令牌失败，本次回退到真实 API Key: %s", exc)
+            return None
+
+        # 登记进用户索引，供禁用/删号/降权/重置 Key 时成批吊销
+        await AuthService._index_session(redis, user_data.get("user_id"), cache_key)
+
+        return token
+
+    @staticmethod
+    async def revoke_portal_session(token: str) -> bool:
+        """吊销单个会话令牌（登出即生效）。
+
+        仅对会话令牌（sess_ 门户 / emb_ses_ 嵌入）生效，避免误删真实 API Key
+        的认证缓存。
+        """
+        if not token or not token.startswith(
+            (AuthService.PORTAL_SESSION_PREFIX, AuthService.EMBED_SESSION_PREFIX)
+        ):
+            return False
+
+        redis = await get_redis()
+        if not redis:
+            return False
+
+        cache_key = AuthService._session_cache_key(token)
+        try:
+            # 先取所属用户，便于把索引里的死键一并摘掉
+            owner_id = None
+            try:
+                cached = await redis.hgetall(cache_key)
+                if cached:
+                    raw_uid = cached.get("user_id")
+                    owner_id = (
+                        raw_uid.decode("utf-8", errors="replace")
+                        if isinstance(raw_uid, bytes)
+                        else raw_uid
+                    )
+            except Exception:
+                owner_id = None
+
+            await redis.delete(cache_key)
+            if owner_id:
+                try:
+                    await redis.srem(AuthService._session_index_key(owner_id), cache_key)
+                except Exception:
+                    pass
+            return True
+        except Exception as exc:
+            logger.warning("吊销会话令牌失败: %s", exc)
+            return False
+
+    # --- 登录失败锁定 ---
+    # 密码登录是在线暴力破解的目标；按用户名计数，达到阈值后在窗口内拒绝继续尝试。
+    LOGIN_FAILURE_LIMIT = 5
+    LOGIN_FAILURE_WINDOW_SECONDS = 900  # 15 分钟
+
+    @staticmethod
+    def _login_failure_key(username: str) -> str:
+        return f"auth:login_fail:{(username or '').strip().lower()}"
+
+    @staticmethod
+    async def _login_guard_redis():
+        """获取 Redis 连接；不可用时返回 None。
+
+        登录限流必须是 fail-open：Redis 抖动或未配置时如果抛错，
+        会把整个平台变成谁都登不进来。
+        """
+        try:
+            return await get_redis()
+        except Exception as exc:
+            logger.warning("登录失败计数暂不可用，本次跳过限流: %s", exc)
+            return None
+
+    @staticmethod
+    async def get_login_failure_count(username: str) -> int:
+        redis = await AuthService._login_guard_redis()
+        if not redis:
+            return 0
+        try:
+            value = await redis.get(AuthService._login_failure_key(username))
+        except Exception as exc:
+            logger.warning("读取登录失败次数失败: %s", exc)
+            return 0
+        if value is None:
+            return 0
+        text = value.decode("utf-8") if isinstance(value, bytes) else str(value)
+        try:
+            return int(text)
+        except (TypeError, ValueError):
+            return 0
+
+    @staticmethod
+    async def is_login_locked(username: str) -> bool:
+        """该用户名是否已因失败次数过多被临时锁定。"""
+        count = await AuthService.get_login_failure_count(username)
+        return count >= AuthService.LOGIN_FAILURE_LIMIT
+
+    @staticmethod
+    async def record_login_failure(username: str) -> int:
+        """记录一次登录失败，返回累计次数（Redis 不可用时返回 0）。"""
+        redis = await AuthService._login_guard_redis()
+        if not redis:
+            return 0
+        key = AuthService._login_failure_key(username)
+        try:
+            count = int(await redis.incr(key))
+            if count == 1:
+                await redis.expire(key, AuthService.LOGIN_FAILURE_WINDOW_SECONDS)
+            elif hasattr(redis, "ttl"):
+                try:
+                    ttl = await redis.ttl(key)
+                    if ttl == -1:
+                        await redis.expire(key, AuthService.LOGIN_FAILURE_WINDOW_SECONDS)
+                except Exception:
+                    pass
+            return count
+        except Exception as exc:
+            logger.warning("记录登录失败次数失败: %s", exc)
+            return 0
+
+    @staticmethod
+    async def clear_login_failures(username: str) -> None:
+        """登录成功后清零失败计数。"""
+        redis = await AuthService._login_guard_redis()
+        if not redis:
+            return
+        try:
+            await redis.delete(AuthService._login_failure_key(username))
+        except Exception as exc:
+            logger.warning("清除登录失败次数失败: %s", exc)
+
     @staticmethod
     async def verify_api_key(api_key: str, db: Optional[AsyncSession] = None) -> Optional[Dict]:
         """
@@ -100,11 +360,47 @@ class AuthService:
                  if cached_user.get("status") != "1":
                      pass # Fall through to DB
                  else:
-                     # 自动滑动续期：若是 embed session token，只要活跃调用就延长 24 小时有效时间
-                     if cached_user.get("session_type") == "embed":
+                     if cached_user.get("session_type") in ("embed", "portal"):
+                         # 会话令牌：低频回源复核 status/role。
+                         # 吊销索引已覆盖全部管理路径，这里是兜底——万一有入口直接改了库，
+                         # 最迟 SESSION_REVERIFY_SECONDS 后也会失效，而不是拖到 24h。
+                         now_ts = int(time.time())
+                         last_verified = 0
+                         try:
+                             last_verified = int(
+                                 AuthService._as_text(cached_user.get("verified_at")) or 0
+                             )
+                         except (TypeError, ValueError):
+                             last_verified = 0
+
+                         if now_ts - last_verified > AuthService.SESSION_REVERIFY_SECONDS:
+                             refreshed = await AuthService._reverify_session(
+                                 redis, cache_key, cached_user, db
+                             )
+                             if refreshed is None:
+                                 return None
+                             refreshed["verified_at"] = str(now_ts)
+                             cached_user = refreshed
+                             try:
+                                 await redis.hset(
+                                     cache_key,
+                                     mapping={
+                                         k: AuthService._as_text(v)
+                                         for k, v in cached_user.items()
+                                         if v is not None
+                                     },
+                                 )
+                             except Exception as exc:
+                                 logger.warning("刷新会话缓存失败，本次仍按复核结果放行: %s", exc)
+
+                         # 活跃即滑动续期（会话 TTL 与索引 TTL 同步顺延）
                          try:
                              from app.services.embed_service import SESSION_TOKEN_TTL_SECONDS
                              await redis.expire(cache_key, SESSION_TOKEN_TTL_SECONDS)
+                             await redis.expire(
+                                 AuthService._session_index_key(cached_user.get("user_id")),
+                                 AuthService.SESSION_INDEX_TTL_SECONDS,
+                             )
                          except Exception:
                              pass
                      return cached_user
@@ -119,18 +415,7 @@ class AuthService:
             
             user_data = None
             if user and user.status == 1:
-                user_data = {
-                    "user_id": str(user.id),
-                    "user_name": user.user_name,
-                    "real_name": user.real_name or user.user_name,
-                    "role": user.role,
-                    "dept_code": user.dept_code or "",
-                    "org_path": user.org_path or "",
-                    "extra_data": user.extra_data or "",
-                    "created_at": user.created_at.strftime("%Y-%m-%d %H:%M:%S") if user.created_at else None,
-                    "remark": user.remark or "",
-                    "status": str(user.status) # Add status to cache
-                }
+                user_data = AuthService._user_model_to_data(user)
             
             # 3. Cache to Redis
             if user_data and redis:
@@ -141,6 +426,55 @@ class AuthService:
         finally:
             if is_local:
                 await session.close()
+
+    # 会话令牌回源复核间隔（秒）。取值要权衡：越短越能及时反映禁用/降权，
+    # 越长则 DB 压力越小。60s 对活跃会话意味着每用户每分钟一次单行查询。
+    SESSION_REVERIFY_SECONDS = 60
+
+    @staticmethod
+    async def _reverify_session(
+        redis,
+        cache_key: str,
+        cached_user: Dict,
+        db: Optional[AsyncSession] = None,
+    ) -> Optional[Dict]:
+        """按 user_id 回源复核会话用户的 status/role，返回刷新后的会话数据。
+
+        用户已被删除或禁用时，就地吊销该会话并返回 None —— 会话缓存命中路径
+        默认不查库，没有这一步，禁用/降权会因为缓存而迟迟不生效。
+        """
+        user_id_text = AuthService._as_text(cached_user.get("user_id")).strip()
+        if not user_id_text.isdigit():
+            # 缓存里没有可用 user_id（老数据）时按原样放行，交由吊销索引处理
+            return cached_user
+
+        session, is_local = await AuthService._get_session(db)
+        try:
+            user = await session.get(User, int(user_id_text))
+        except Exception as exc:
+            # 复核失败不应把在线用户全踢下线（fail-open），沿用缓存
+            logger.warning("会话回源复核失败，本次沿用缓存: %s", exc)
+            return cached_user
+        finally:
+            if is_local:
+                await session.close()
+
+        if not user or user.status != 1:
+            try:
+                await redis.delete(cache_key)
+                await redis.srem(AuthService._session_index_key(user_id_text), cache_key)
+            except Exception as exc:
+                logger.warning("吊销失效会话失败: %s", exc)
+            logger.info("会话所属用户已被删除或禁用，已吊销其会话: user_id=%s", user_id_text)
+            return None
+
+        # 用库里的最新身份字段覆盖缓存，保留会话自有字段
+        refreshed = AuthService._user_model_to_data(user)
+        for key in ("session_type", "agent_id", "created_by_user_id"):
+            value = cached_user.get(key)
+            if value is not None:
+                refreshed[key] = AuthService._as_text(value)
+        return refreshed
 
     @staticmethod
     async def resolve_user_by_username(username: str, db: AsyncSession) -> Optional[Dict]:
@@ -275,10 +609,15 @@ class AuthService:
         api_key_hash: Optional[str] = None,
     ) -> None:
         """
-        按用户清除 auth:api_key 缓存。
+        按用户清除认证缓存（真实 API Key 的缓存 + 该用户的全部会话令牌）。
 
         系统角色 / 启用状态变更后必须调用，否则 require_permission 会在最长 1 小时内
         继续读到旧的 role/status。
+
+        会话令牌（sess_ / emb_ses_）的缓存键是「令牌哈希」而非「用户 api_key_hash」，
+        只删后者不会让已有会话失效——必须再按 user_id 索引成批吊销。这一步在
+        禁用 / 删除用户 / 重置 Key / 改角色时都不可或缺，否则旧会话既不会失效，
+        还会随活跃调用持续滑动续期。
         """
         hashed = (api_key_hash or "").strip()
         if not hashed:
@@ -289,19 +628,23 @@ class AuthService:
             finally:
                 if is_local:
                     await session.close()
-        if not hashed:
-            return
+
         redis = await get_redis()
         if not redis:
             return
-        try:
-            await redis.delete(f"auth:api_key:{hashed}")
-        except Exception as e:
-            logger.warning(
-                "Failed to invalidate auth api_key cache for user %s: %s",
-                user_id,
-                e,
-            )
+
+        if hashed:
+            try:
+                await redis.delete(f"auth:api_key:{hashed}")
+            except Exception as e:
+                logger.warning(
+                    "Failed to invalidate auth api_key cache for user %s: %s",
+                    user_id,
+                    e,
+                )
+
+        # 与 hashed 是否存在无关：删除用户时可能拿不到旧 hash，但会话仍须吊销
+        await AuthService.revoke_sessions_for_user(user_id, redis)
 
     @staticmethod
     def verify_password_hash(plain_password: str, hashed_password: str) -> bool:

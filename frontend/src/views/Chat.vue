@@ -77,12 +77,11 @@ const initChat = () => {
 };
 
 const sendInitConfig = () => {
-    const apiKey = localStorage.getItem('api_key');
-    
-    if (apiKey && chatFrame.value?.contentWindow) {
+    if (chatFrame.value?.contentWindow) {
         chatFrame.value.contentWindow.postMessage({
             type: 'INIT_CONFIG',
-            token: apiKey,
+            // 凭据由同源 HttpOnly Cookie 承载（iframe 指向同源 /embed/chat），
+            // 不再从本地存储读取令牌；初始化配置必须照常下发，否则会话/报告等参数会一起丢失。
             conversation_id: route.query.conversation_id ? String(route.query.conversation_id) : null,
             agent_id: route.query.agent_id ? String(route.query.agent_id) : null,
             open_saved_report: route.query.report_id ? {

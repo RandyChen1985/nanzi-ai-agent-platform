@@ -204,13 +204,21 @@ digest 用独立 key，`get_conversation_history` 的展示路径读取的是 hi
 | 配置项 | 默认 | 作用 |
 | --- | --- | --- |
 | `agent_context_max_tokens` | `65536` | **上下文 Token 预算兜底上限（默认 64k）**。作为动态水位线（§1.3）的回退值：当显式模型未注册有效 `context_size` 或来源为 `system_default` 时使用。从历史尾部倒序累计估算 token，直到预算或条数上限任一达限即截断最早历史。 |
-| `agent_context_overhead_headroom_tokens` | `8192`（代码默认） | 为系统提示、工具 schema、本轮用户消息等非历史内容预留的物理窗口空间；`history_budget = physical_window - overhead`，最低保留物理窗口的 1/3。 |
+| `agent_context_overhead_headroom_tokens` | `8192`（**代码常量**，非系统配置项） | 为系统提示、工具 schema、技能提示、路由注入内容及本轮用户消息预留的物理窗口空间。**有输出预留时** `history_budget = physical_window - max_output_tokens - overhead`；**无输出预留时** `history_budget = max(physical_window - overhead, physical_window // 3)`。 |
 | `agent_max_context_messages` | `60` | 窗口条数绝对兜底上限（token 预算优先，条数仅在极端情况防无限膨胀时触发）。 |
 | `agent_context_compaction_enabled` | `true` | 是否启用溢出压缩。关闭则溢出旧消息直接丢弃。 |
 | `agent_context_compaction_max_chars` | `1200` | 摘录最大字符数（下限 `200`）。 |
 | `agent_context_llm_summary_enabled` | `true` | 是否启用语义摘要（E 项，**后台异步**生成、下一轮生效）。关闭则只用确定性压缩。 |
 
-> `agent_context_max_tokens` 默认值由代码兜底（`ConfigService.get(..., "65536")`），配置表无种子或缺失时回落为 64k；当显式模型解析出有效窗口时，它仅作为**兜底（fallback）**而不参与最终水位线（§1.3）。同时版本迁移 `V126`（MySQL）/`V26`（PG）会把上下文配置种子写入并归入 `agent_context` 分组。
+> **不作为系统配置项的两个内部常量**（刻意不做成可配置项：管理员无法据经验估出合理值，做成开关只会多一个填错的旋钮；需要按环境覆盖时改代码常量或其上游字段）：
+> - `CONTEXT_OVERHEAD_RESERVATION_TOKENS = 8192`（`app/services/ai/context_usage.py`）——历史之外需预留的物理窗口空间。预算计算与用量展示**共用同一个常量**，避免两处漂移出不同水位线。绑定了大量 MCP 工具时真实开销会超过它，症状是 `ModelCallStatsMiddleware` 打出 `Input exceeds model context window` 告警。
+> - `LLM_DIGEST_TRANSCRIPT_MAX_CHARS = 24000`（`app/services/ai/context/compactor.py`）——LLM 语义摘要请求中「被丢弃历史」的字符上限（下限 `2000`，单条上限为其 1/8）。超出时优先保留离当前最近的部分并插入省略说明，更早内容由上一版摘录兜底；不设上限会让这个「用来解决超窗」的请求自己超窗并静默降级为确定性摘录。
+
+> `agent_context_max_tokens` 默认值由代码兜底（`ConfigService.get(..., "65536")`），配置表无种子或缺失时回落为 64k；当显式模型解析出有效窗口时，它仅作为**兜底（fallback）**而不参与最终水位线（§1.3）。版本迁移 `V126`（MySQL）/`V26`（PG）把上下文配置写入并归入 `agent_context` 分组。
+
+> **Token 估算口径**：平台侧的裁剪水位线、上下文占用展示、以及 AgentScope 运行时的内部判定，**必须使用同一口径**，即 `estimate_text_tokens` 采用的「UTF-8 字节数 ÷ 4」（与 AgentScope `count_tokens` 一致）。历史上曾按 `cjk * 1.5 + other / 4` 加权，对中文高估约 2 倍，导致中文会话在模型窗口只用到约三分之一时就被判定超预算并压缩（并对英文低估、可能超窗）。**请勿改回按字符类型加权的写法。**
+
+> **第三道水位线（AgentScope 自带压缩）**：除平台的两阶段水位线外，AgentScope 运行时会按 `ContextConfig(trigger_ratio=0.8, reserve_ratio=0.1)`（配置项 `agentscope_context_trigger_ratio` / `agentscope_context_reserve_ratio`）自行压缩其内部 context——64k 模型上约在 51.2k 触发。它使用自己的 `count_tokens` 判定，因此可能出现「没到平台水位线却已被压缩」，且**不会**产生平台的 `context_summarized` 记录（只有 `context_compression` 观测）。排障时需把这条线一并纳入判断。
 
 对应 Boolean 能力项（A–F）：
 - **A** 工具结果纳入历史（`full_history` 含 tool 相关角色，见 §2 白名单）。

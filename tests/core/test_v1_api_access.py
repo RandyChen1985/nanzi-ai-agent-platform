@@ -55,15 +55,16 @@ def test_is_v1_api_whitelisted():
     assert is_v1_api_whitelisted("/api/v1/users/profile") is False
 
 
-def test_assignable_v1_api_resources_constant_has_three_entries():
+def test_assignable_v1_api_resources_constant_has_expected_entries():
     from app.core.v1_api_access import ASSIGNABLE_V1_API_RESOURCES
 
-    assert len(ASSIGNABLE_V1_API_RESOURCES) == 3
+    assert len(ASSIGNABLE_V1_API_RESOURCES) == 4
     ids = {item["id"] for item in ASSIGNABLE_V1_API_RESOURCES}
     assert ids == {
         "GET:/api/v1/users/profile",
         "POST:/api/v1/schema",
         "POST:/api/v1/chatbi/sql/execute",
+        "POST:/api/v1/embed/tickets",
     }
 
 
@@ -72,10 +73,11 @@ def test_get_assignable_v1_api_resources_returns_static_list():
 
     apis = get_assignable_v1_api_resources()
 
-    assert len(apis) == 3
+    assert len(apis) == 4
     assert {api["id"] for api in apis} == {
         "GET:/api/v1/users/profile",
         "POST:/api/v1/schema",
         "POST:/api/v1/chatbi/sql/execute",
+        "POST:/api/v1/embed/tickets",
     }
     assert apis[0] is not get_assignable_v1_api_resources()[0]

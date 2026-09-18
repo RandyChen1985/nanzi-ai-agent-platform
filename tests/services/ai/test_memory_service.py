@@ -302,6 +302,128 @@ async def test_memory_service_reset_context_state_clears_summary_layers_but_keep
 
 
 @pytest.mark.asyncio
+async def test_memory_service_reset_context_state_also_drops_context_snapshot(mock_redis):
+    """分支重置/清空必须一并作废手动压缩快照。
+
+    快照是最"重"的一份派生态（含整段压缩正文）。此前 digest 被清掉了、快照却没有
+    任何删除点，于是「编辑重发」会把旧分支的摘录重新合入新历史，「清空会话」后旧内容
+    仍会每轮注入模型上下文（用户在历史里看不到，却在模型的上下文里）。
+    """
+    service = MemoryService()
+
+    with patch("app.services.ai.memory_service.get_redis", new_callable=AsyncMock) as mock_get_redis, \
+         patch(
+             "app.services.ai.memory_index_service.MemoryIndexService.delete_summary",
+             new_callable=AsyncMock,
+         ):
+        mock_get_redis.return_value = mock_redis
+
+        await service.reset_context_state("u1", "c1")
+
+    deleted_keys = {call.args[0] for call in mock_redis.delete.await_args_list}
+    assert "conversation:u1:c1:context_snapshot_v1" in deleted_keys
+
+
+@pytest.mark.asyncio
+async def test_memory_service_reset_context_state_renews_seq_counter_ttl(mock_redis):
+    """seq counter 必须与 history 同步续期。
+
+    它原先只在 add_message 里续期。一旦「截断/清空后长期静默」让它先于 history 过期，
+    INCR 会从 1 重来、低于历史里保留的旧 seq，快照合并就会把新消息当成"快照之前的旧
+    消息"而丢弃，模型看不到本轮提问。
+    """
+    service = MemoryService()
+
+    with patch("app.services.ai.memory_service.get_redis", new_callable=AsyncMock) as mock_get_redis, \
+         patch(
+             "app.services.ai.memory_index_service.MemoryIndexService.delete_summary",
+             new_callable=AsyncMock,
+         ):
+        mock_get_redis.return_value = mock_redis
+
+        await service.reset_context_state("u1", "c1")
+
+    expired_keys = {call.args[0] for call in mock_redis.expire.await_args_list}
+    assert "conversation:u1:c1:seq_counter" in expired_keys
+    assert "conversation:u1:c1:context_revision" in expired_keys
+
+
+@pytest.mark.asyncio
+async def test_context_snapshot_from_other_branch_is_discarded(mock_redis):
+    """读路径的分支校验：revision 不匹配的快照必须弃用。"""
+    import json
+
+    service = MemoryService()
+    snapshot = {"schema_version": 1, "source_seq": 10, "messages": [{"role": "system", "content": "旧分支摘要"}]}
+
+    mock_redis.get.return_value = json.dumps({**snapshot, "revision": 3})
+
+    with patch("app.services.ai.memory_service.get_redis", new_callable=AsyncMock) as mock_get_redis, \
+         patch.object(MemoryService, "get_context_revision", new_callable=AsyncMock) as get_revision:
+        mock_get_redis.return_value = mock_redis
+        get_revision.return_value = 4  # 当前分支已经前进
+
+        result = await service.get_context_snapshot("u1", "c1")
+
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_legacy_context_snapshot_without_revision_is_discarded(mock_redis):
+    """没有 revision 字段的历史快照无法证明归属，必须弃用而非回灌。"""
+    import json
+
+    service = MemoryService()
+    mock_redis.get.return_value = json.dumps(
+        {"schema_version": 1, "source_seq": 10, "messages": [{"role": "system", "content": "旧摘要"}]}
+    )
+
+    with patch("app.services.ai.memory_service.get_redis", new_callable=AsyncMock) as mock_get_redis:
+        mock_get_redis.return_value = mock_redis
+
+        result = await service.get_context_snapshot("u1", "c1")
+
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_context_snapshot_on_current_branch_is_returned(mock_redis):
+    """revision 匹配时快照照常可用（不要把正常路径一起挡掉）。"""
+    import json
+
+    service = MemoryService()
+    snapshot = {"schema_version": 1, "source_seq": 10, "messages": [{"role": "system", "content": "摘要"}], "revision": 2}
+    mock_redis.get.return_value = json.dumps(snapshot)
+
+    with patch("app.services.ai.memory_service.get_redis", new_callable=AsyncMock) as mock_get_redis, \
+         patch.object(MemoryService, "get_context_revision", new_callable=AsyncMock) as get_revision:
+        mock_get_redis.return_value = mock_redis
+        get_revision.return_value = 2
+
+        result = await service.get_context_snapshot("u1", "c1")
+
+    assert result == snapshot
+
+
+@pytest.mark.asyncio
+async def test_set_context_snapshot_stamps_current_revision(mock_redis):
+    """写入时自动盖章 revision，避免调用方遗漏导致快照立刻被读路径判为无效。"""
+    service = MemoryService()
+
+    with patch("app.services.ai.memory_service.get_redis", new_callable=AsyncMock) as mock_get_redis, \
+         patch.object(MemoryService, "get_context_revision", new_callable=AsyncMock) as get_revision:
+        mock_get_redis.return_value = mock_redis
+        get_revision.return_value = 7
+
+        ok = await service.set_context_snapshot("u1", "c1", {"schema_version": 1, "source_seq": 3, "messages": []})
+
+    assert ok is True
+    payload = json.loads(mock_redis.set.await_args.args[1])
+    assert payload["revision"] == 7
+    assert payload["source_seq"] == 3
+
+
+@pytest.mark.asyncio
 async def test_memory_service_set_digest_if_current_writes_when_seq_is_current():
     service = MemoryService()
 

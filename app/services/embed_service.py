@@ -1,6 +1,7 @@
 import json
 import logging
 import secrets
+import time
 from typing import Optional, Dict, Any
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -69,7 +70,12 @@ class EmbedService:
         if target_user.status != 1:
             raise PermissionError("目标用户账号已被禁用，无法签发嵌入凭证")
 
-        # 代客身份安全拦截：若指定他人，必须是 admin 或具备 GET:/api/v1/users/profile API 权限
+        # 代客身份安全拦截：若指定他人，必须是 admin 或具备「代他人签发嵌入凭证」权限
+        # （API 权限码 POST:/api/v1/embed/tickets，可在后台「API 权限」中按角色分配）。
+        # 该权限码的实际语义是「可代表他人调用签发接口」：/embed/* 在 V1 接口白名单内
+        # 不做拦截，自己为自己签发也不需要本权限。
+        # 历史上此处借用的是 GET:/api/v1/users/profile API 权限，已改为专用权限码——
+        # 该 API 权限回归「获取用户信息」本义，不再兼作签发凭证。
         if is_specifying_other:
             if operator_user.get("role") != "admin":
                 from app.services.permission_service import PermissionService
@@ -78,11 +84,13 @@ class EmbedService:
                 has_perm = await perm_service.check_permission(
                     op_uid,
                     "api",
-                    "GET:/api/v1/users/profile",
+                    "POST:/api/v1/embed/tickets",
                 )
                 if not has_perm:
                     raise PermissionError(
-                        "无权代他人签发 Ticket：仅管理员或具备「GET:/api/v1/users/profile（获取用户画像）」权限的账号允许代表其他用户签发凭证。普通用户请留空或填写自己。"
+                        "无权代他人签发 Ticket：需要「代他人签发嵌入凭证」权限"
+                        "（POST:/api/v1/embed/tickets），或由管理员操作。"
+                        "普通用户请留空或填写自己。"
                     )
 
         # 2. 生成高熵 Ticket 字符串
@@ -132,8 +140,8 @@ class EmbedService:
     ) -> Dict[str, Any]:
         """
         原子核销 Ticket 并生成短期会话 Token (session_token)。
-        - 只能成功核销一次 (One-Time Use)；
-        - 核销后立即从 Redis 移除 Ticket，杜绝重放攻击；
+        - 先只读校验来源，**通过后**才原子核销：来源不匹配是可修复错误，不应消耗票据；
+        - 只能成功核销一次 (One-Time Use)，核销后立即从 Redis 移除，杜绝重放攻击；
         - 生成的 session_token 写入 auth 鉴权缓存，天然与现存所有 API Key 鉴权体系无缝兼容。
         """
         if not ticket or not isinstance(ticket, str) or not ticket.startswith("emt_"):
@@ -145,8 +153,13 @@ class EmbedService:
 
         ticket_key = f"embed:ticket:{ticket.strip()}"
 
-        # 1. 原子获取并删除 (GETDEL) 防止并发重放
-        raw_ticket_data = await redis.getdel(ticket_key)
+        # 1. 先**只读**取票，不要一上来就核销。
+        #
+        # 来源校验（第 2 步）失败属于「可修复」错误——换个正确来源重试即可；若先 GETDEL
+        # 再校验，一次来源不匹配就把票白白吃掉：用户重试只能拿到 "already used"，前端也只能
+        # 显示「凭证已失效/一次性」，真实原因（域名白名单不匹配）被彻底掩盖。曾因此让人
+        # 误判为「票被别人用过了」。
+        raw_ticket_data = await redis.get(ticket_key)
         if not raw_ticket_data:
             raise ValueError("Ticket not found, expired, or already used")
 
@@ -155,7 +168,7 @@ class EmbedService:
 
         ticket_data = json.loads(raw_ticket_data)
 
-        # 2. 检查来源 Origin (若有配置限制)
+        # 2. 检查来源 Origin (若有配置限制)——此时票仍在，校验失败可直接重试
         allowed_origins_raw = ticket_data.get("allowed_origins")
         if allowed_origins_raw:
             try:
@@ -166,7 +179,20 @@ class EmbedService:
             except json.JSONDecodeError:
                 pass
 
-        # 3. 生成短期 Session Token
+        # 3. 校验通过，原子核销 (GETDEL) 防止并发重放，并核对核销到的内容与刚校验的一致。
+        #
+        # GET 与 GETDEL 之间有一个并发窗口：两个请求可能都通过了第 2 步校验，此时靠 GETDEL
+        # 的原子性保证只有一个能取到值（另一个拿到 None）；再比对内容，兜住「同一 key 被
+        # 换进另一张票」的极端情形，确保「校验的那张」就是「核销的那张」。
+        consumed = await redis.getdel(ticket_key)
+        if consumed is None:
+            raise ValueError("Ticket not found, expired, or already used")
+        if isinstance(consumed, bytes):
+            consumed = consumed.decode("utf-8")
+        if consumed != raw_ticket_data:
+            raise ValueError("Ticket not found, expired, or already used")
+
+        # 4. 生成短期 Session Token
         session_token = f"emb_ses_{secrets.token_urlsafe(32)}"
         manager = get_api_key_manager()
         hashed_token = manager.hash_api_key(session_token)
@@ -185,11 +211,11 @@ class EmbedService:
             "session_type": "embed",
             "agent_id": ticket_data.get("agent_id", ""),
             "created_by_user_id": ticket_data.get("created_by_user_id", ""),
+            "verified_at": str(int(time.time())),
         }
 
-        # 4. 写入鉴权缓存，设置 24 小时 TTL (请求时会自动滑动续期)
-        await redis.hset(cache_key, mapping=user_session_data)
-        await redis.expire(cache_key, SESSION_TOKEN_TTL_SECONDS)
+        # 5. 写入鉴权缓存，设置 24 小时 TTL (请求时会自动滑动续期)
+        await EmbedService._persist_session(redis, cache_key, user_session_data)
 
         logger.info(
             "Embed ticket exchanged successfully: ticket=%s user=%s session_token_prefix=%s ttl=%ds",
@@ -209,4 +235,73 @@ class EmbedService:
                 "role": ticket_data.get("role", "user"),
             },
             "agent_id": ticket_data.get("agent_id") or None,
+        }
+
+    @staticmethod
+    async def _persist_session(redis, cache_key: str, user_session_data: Dict[str, Any]) -> None:
+        """写入嵌入会话缓存，并登记到用户索引（便于禁用/删号时成批吊销）。"""
+        await redis.hset(cache_key, mapping=user_session_data)
+        await redis.expire(cache_key, SESSION_TOKEN_TTL_SECONDS)
+        # 延迟导入：auth_service 只在函数内引用 embed_service，顶层互引会绕成环
+        from app.services.auth_service import AuthService
+
+        await AuthService._index_session(
+            redis, user_session_data.get("user_id"), cache_key
+        )
+
+    @staticmethod
+    async def issue_session_from_user(
+        user: Dict[str, Any],
+        agent_id: str = "",
+    ) -> Optional[Dict[str, Any]]:
+        """由**已完成鉴权**的用户信息签发 embed 会话令牌。
+
+        用于「真实 API Key 校验通过后换发短期令牌」的路径：调用方拿到 session_token 后
+        即可丢弃原凭据，避免长期 Key 在客户端或内存中长期驻留。
+
+        令牌写入既有的 auth 鉴权缓存，因此 `verify_api_key` 无需任何前缀分支即可校验；
+        `session_type="embed"` 会让它参与滑动续期（TTL 24 小时）。
+
+        Redis 不可用时返回 None（Fail-Open）：调用方据此回退为继续使用原凭据，
+        鉴权本身不受影响，不会因为缓存故障阻断嵌入场景。
+        """
+        redis = await get_redis()
+        if not redis:
+            logger.warning("[Embed] Redis unavailable, skip session token issuance")
+            return None
+
+        session_token = f"emb_ses_{secrets.token_urlsafe(32)}"
+        manager = get_api_key_manager()
+        hashed_token = manager.hash_api_key(session_token)
+        cache_key = f"auth:api_key:{hashed_token}"
+
+        # 只搬运鉴权必需字段；刻意不透传 user["api_key"]，避免真实凭据被写进会话缓存
+        user_session_data = {
+            "user_id": str(user.get("user_id", "")),
+            "user_name": user.get("user_name", ""),
+            "real_name": user.get("real_name") or user.get("user_name", ""),
+            "role": user.get("role", "user"),
+            "dept_code": user.get("dept_code") or "",
+            "org_path": user.get("org_path") or "",
+            "extra_data": user.get("extra_data") or "",
+            "remark": "Embed Session",
+            "status": "1",
+            "session_type": "embed",
+            "agent_id": agent_id or "",
+            "created_by_user_id": str(user.get("user_id", "")),
+            "verified_at": str(int(time.time())),
+        }
+
+        await EmbedService._persist_session(redis, cache_key, user_session_data)
+
+        logger.info(
+            "Embed session issued from authenticated user: user=%s session_token_prefix=%s ttl=%ds",
+            user.get("user_name"),
+            session_token[:12],
+            SESSION_TOKEN_TTL_SECONDS,
+        )
+
+        return {
+            "session_token": session_token,
+            "expires_in": SESSION_TOKEN_TTL_SECONDS,
         }

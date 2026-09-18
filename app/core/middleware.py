@@ -5,6 +5,7 @@ import asyncio
 import gzip
 from fastapi import Request, Response
 from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.datastructures import Headers, MutableHeaders
 from app.core import database
 from typing import Optional
 
@@ -132,3 +133,77 @@ class AccessLogMiddleware(BaseHTTPMiddleware):
         response.background = BackgroundTask(perform_logging)
             
         return response
+
+
+# --- 安全响应头 ---
+
+# 管理控制台等常规页面：只允许同源框架嵌入，并禁用 <object>/<embed> 与外部 <base>。
+# 未收紧 script-src / style-src：前端存在动态内联样式与模板，直接收紧需要先收集
+# 一轮违规报告，否则有整站白屏风险。当前这几条指令不依赖内联资源，可安全启用。
+CSP_RESTRICTED = "base-uri 'self'; object-src 'none'; frame-ancestors 'self'"
+
+# 嵌入对话必须保持可被第三方站点 iframe，否则组件交付能力直接失效。
+CSP_EMBEDDABLE = "base-uri 'self'; object-src 'none'; frame-ancestors *"
+
+# 嵌入路由前缀：这些页面是被第三方 iframe 引用的，不能加框架限制。
+EMBEDDABLE_PATH_PREFIX = "/embed/"
+
+
+def _scope_requests_https(scope: dict) -> bool:
+    """判断请求是否经由 HTTPS（含反向代理终止 TLS 的情况）。
+
+    与 app/api/portal/endpoints/auth.py 的 Cookie Secure 判断保持同一策略：
+    TLS 常终止在 k8s ingress / nginx，此时后端看到的是 http，需优先信任
+    X-Forwarded-Proto。
+    """
+    forwarded = Headers(scope=scope).get("x-forwarded-proto")
+    if forwarded:
+        return forwarded.split(",")[0].strip().lower() == "https"
+    return scope.get("scheme") == "https"
+
+
+class SecurityHeadersMiddleware:
+    """为响应补充安全响应头。
+
+    采用纯 ASGI 中间件而非 BaseHTTPMiddleware：只在 http.response.start
+    消息上追加 header，既不包装也不缓冲响应体，因此对 SSE 流式输出零影响。
+    """
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope.get("type") != "http":
+            await self.app(scope, receive, send)
+            return
+
+        path = scope.get("path", "")
+        is_embeddable_route = path.startswith(EMBEDDABLE_PATH_PREFIX)
+
+        async def send_with_security_headers(message):
+            if message["type"] == "http.response.start":
+                headers = MutableHeaders(scope=message)
+
+                headers.setdefault("X-Content-Type-Options", "nosniff")
+                headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+
+                if _scope_requests_https(scope):
+                    # 30 天且不含 includeSubDomains：该域下可能存在仅 HTTP 的子服务，
+                    # 而 HSTS 一旦下发就无法在用户端绕过，故取保守窗口便于纠错。
+                    headers.setdefault(
+                        "Strict-Transport-Security",
+                        "max-age=2592000",
+                    )
+
+                # 框架与 CSP 只对文档生效，API/静态资源不需要也没有意义。
+                content_type = headers.get("content-type", "")
+                if content_type.startswith("text/html"):
+                    if is_embeddable_route:
+                        headers.setdefault("Content-Security-Policy", CSP_EMBEDDABLE)
+                    else:
+                        headers.setdefault("Content-Security-Policy", CSP_RESTRICTED)
+                        headers.setdefault("X-Frame-Options", "SAMEORIGIN")
+
+            await send(message)
+
+        await self.app(scope, receive, send_with_security_headers)

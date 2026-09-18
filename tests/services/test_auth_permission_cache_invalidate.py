@@ -20,7 +20,10 @@ async def test_invalidate_user_auth_cache_deletes_api_key_hash():
     ):
         await AuthService.invalidate_user_auth_cache(7)
 
-    redis.delete.assert_awaited_once_with("auth:api_key:abc123hash")
+    redis.delete.assert_any_await("auth:api_key:abc123hash")
+    # 同时必须按用户吊销会话令牌：会话缓存键是「令牌哈希」，删 api_key_hash 覆盖不到，
+    # 少了这一步，被禁用/降权的用户会带着旧会话继续访问。
+    redis.delete.assert_any_await("auth:user_sessions:7")
 
 
 @pytest.mark.asyncio
@@ -30,7 +33,8 @@ async def test_invalidate_user_auth_cache_accepts_explicit_hash():
     with patch("app.services.auth_service.get_redis", AsyncMock(return_value=redis)):
         await AuthService.invalidate_user_auth_cache(7, api_key_hash="explicit-hash")
 
-    redis.delete.assert_awaited_once_with("auth:api_key:explicit-hash")
+    redis.delete.assert_any_await("auth:api_key:explicit-hash")
+    redis.delete.assert_any_await("auth:user_sessions:7")
 
 
 @pytest.mark.asyncio

@@ -1035,7 +1035,7 @@
                         :disabled="isMissingKnowledgeBase(res)"
                         class="mt-1 h-4 w-4 rounded text-blue-600 focus:ring-blue-500 disabled:cursor-not-allowed disabled:opacity-50"
                       />
-                      <div class="ml-2 min-w-0">
+                      <div class="ml-2 min-w-0 flex-1">
                         <div class="flex items-center gap-1.5 min-w-0">
                           <p
                             class="text-xs sm:text-sm font-bold text-gray-900 truncate"
@@ -1043,11 +1043,23 @@
                             {{ res.platform_name || res.display_name || res.name }}
                           </p>
                           <span
+                            v-if="res.method"
+                            class="flex-shrink-0 text-[9px] px-1 py-0.5 rounded font-mono font-bold leading-none"
+                            :class="methodBadgeClass(res.method)"
+                            >{{ res.method }}</span
+                          >
+                          <span
                             v-if="isMissingKnowledgeBase(res)"
                             class="flex-shrink-0 text-[9px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 font-semibold leading-none"
                             >失联</span
                           >
                         </div>
+                        <p
+                          v-if="res.path"
+                          class="text-[9px] text-gray-500 truncate font-mono leading-tight"
+                        >
+                          {{ res.path }}
+                        </p>
                         <p class="text-[9px] text-gray-400 truncate font-mono">
                           {{ res.description || res.id }}
                         </p>
@@ -1394,7 +1406,7 @@
       @click.self="closeRegenerateDialog"
     >
       <div
-        class="bg-white rounded-lg p-6 w-full max-w-md shadow-xl text-center"
+        class="bg-white rounded-lg p-6 w-full max-w-lg shadow-xl text-center"
       >
         <h2 class="text-xl font-bold mb-4 text-amber-600">重置 API Key</h2>
         <div v-if="!regeneratedApiKey" class="space-y-4">
@@ -1761,7 +1773,8 @@
 
 <script setup lang="ts">
 import { ref, onMounted, computed, onUnmounted } from "vue";
-import axios from "axios";
+import axios from "../utils/axios";
+import { persistUserInfo } from "../utils/userSession";
 import { useToast } from "../composables/useToast";
 import { useBranding } from "../composables/useBranding";
 import { useUser } from "../composables/useUser";
@@ -2237,6 +2250,27 @@ const isMissingKnowledgeBase = (res: any) => {
   return Boolean(res?.is_missing_in_ragflow || res?.status === "missing");
 };
 
+/**
+ * 请求方法徽章配色。
+ *
+ * 仅「外部API」资源带 method 字段，其余 tab 不会渲染该徽章。
+ */
+const methodBadgeClass = (method: string) => {
+  switch (String(method || "").toUpperCase()) {
+    case "GET":
+      return "bg-emerald-50 text-emerald-600";
+    case "POST":
+      return "bg-blue-50 text-blue-600";
+    case "PUT":
+    case "PATCH":
+      return "bg-amber-50 text-amber-600";
+    case "DELETE":
+      return "bg-rose-50 text-rose-600";
+    default:
+      return "bg-gray-100 text-gray-500";
+  }
+};
+
 const selectableResources = computed(() =>
   currentResources.value.filter((r: any) => !isMissingKnowledgeBase(r)),
 );
@@ -2423,7 +2457,7 @@ const saveUser = async () => {
               ...userInfo,
               ...updatePayload
             };
-            localStorage.setItem('user_info', JSON.stringify(updatedUserInfo));
+            persistUserInfo(updatedUserInfo);
             console.log('User Session Sync Success:', updatedUserInfo);
           } else {
             console.log('Not current user, skipping sync. Current:', currentId, 'Edited:', editingUserId.value);

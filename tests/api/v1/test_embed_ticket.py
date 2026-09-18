@@ -124,8 +124,15 @@ async def test_embed_ticket_impersonation_permissions(client: AsyncClient, db_se
     测试代客签发 (Impersonation) 权限边界：
     1. 普通用户为自身签发 Ticket -> 200 成功
     2. 普通用户不传参数签发 Ticket (默认自身) -> 200 成功
-    3. 普通用户尝试为他人签发 (无 GET:/api/v1/users/profile 权限) -> 403 拒绝
-    4. 普通用户获得 GET:/api/v1/users/profile 权限后代他人签发 -> 200 成功
+    3. 普通用户尝试为他人签发 (无权限) -> 403 拒绝
+    4. 普通用户仅持旧的 GET:/api/v1/users/profile 权限 -> 仍 403
+       （该权限已回归「获取用户信息」本义，不再兼作代客签发凭证）
+    5. 普通用户获得 POST:/api/v1/embed/tickets 权限后代他人签发 -> 200 成功
+
+    代客签发使用独立的 API 权限码 POST:/api/v1/embed/tickets，可在后台「API 权限」
+    中按角色分配。注意该权限码的实际语义是「可代表他人调用签发接口」：/embed/*
+    本身在 V1 接口白名单内不做拦截，而自己为自己签发也不需要本权限，
+    平台内智能体预览走「代表自己」分支，同样不经过本权限检查。
     """
     from app.services.permission_service import PermissionService
     from app.schemas.permission import PermissionUpdate
@@ -164,23 +171,37 @@ async def test_embed_ticket_impersonation_permissions(client: AsyncClient, db_se
     assert self_resp2.status_code == 200
     assert self_resp2.json()["data"]["target_user"]["user_name"] == user_a_name
 
-    # 3. user_a 试图为 user_b 代客签发（此时 user_a 无 GET:/api/v1/users/profile 权限）-> 应该 403 拒绝
+    # 3. user_a 试图为 user_b 代客签发（此时无任何相关权限）-> 应该 403 拒绝
     impersonate_resp = await client.post(
         "/api/v1/embed/tickets",
         json={"username": user_b_name},
         headers={"X-API-Key": user_a_key},
     )
     assert impersonate_resp.status_code == 403
-    assert "permission denied" in impersonate_resp.text.lower() or "GET:/api/v1/users/profile" in impersonate_resp.text
+    assert "permission denied" in impersonate_resp.text.lower() or "embed/tickets" in impersonate_resp.text
 
-    # 4. 授予 user_a 'GET:/api/v1/users/profile' API 权限
+    # 4. 仅授予 user_a 旧的 'GET:/api/v1/users/profile' API 权限 -> 仍应 403
+    #    该权限已回归本义，不再作为代客签发凭证；此断言锁定「只认新权限码」的策略。
     perm_service = PermissionService(db_session)
     await perm_service.update_user_permissions(
         user_id=user_a_id,
-        permissions=PermissionUpdate(apis=["GET:/api/v1/users/profile"]),
+        updates=PermissionUpdate(apis=["GET:/api/v1/users/profile"]),
+    )
+    legacy_only_resp = await client.post(
+        "/api/v1/embed/tickets",
+        json={"username": user_b_name},
+        headers={"X-API-Key": user_a_key},
+    )
+    assert legacy_only_resp.status_code == 403
+
+    # 5. 授予 user_a 代客签发 API 权限 -> 应该 200 成功
+    #    （update_user_permissions 为覆盖式，上一步的旧权限会被清掉）
+    await perm_service.update_user_permissions(
+        user_id=user_a_id,
+        updates=PermissionUpdate(apis=["POST:/api/v1/embed/tickets"]),
     )
 
-    # 5. user_a 再次为 user_b 代客签发 -> 应该 200 成功
+    # 6. user_a 再次为 user_b 代客签发 -> 应该 200 成功
     authorized_impersonate_resp = await client.post(
         "/api/v1/embed/tickets",
         json={"username": user_b_name},
@@ -188,4 +209,63 @@ async def test_embed_ticket_impersonation_permissions(client: AsyncClient, db_se
     )
     assert authorized_impersonate_resp.status_code == 200
     assert authorized_impersonate_resp.json()["data"]["target_user"]["user_name"] == user_b_name
+
+
+@pytest.mark.asyncio
+async def test_origin_mismatch_does_not_consume_ticket(client: AsyncClient, db_session):
+    """来源校验失败**不得**消耗票据——这是可修复错误，换对来源应当仍能兑换。
+
+    回归背景：exchange 原先「先 GETDEL 核销、再校验 allowed_origins」，一次来源不匹配
+    就把票白白吃掉，用户重试只能拿到 400 "already used"，界面上也只显示「凭证为一次性
+    使用、已失效」，真实原因（域名白名单不匹配）被彻底掩盖——实测有人据此误判为
+    「票被别人用过了」。
+
+    同时锁定两点不变式：校验通过后依旧是**一次性**（防重放不能被削弱）。
+    """
+    suffix = uuid.uuid4().hex[:8]
+    admin_key = await AuthService.generate_api_key(
+        user_name=f"ticket_origin_adm_{suffix}", role="admin", db=db_session
+    )
+    target_name = f"ticket_origin_user_{suffix}"
+    await AuthService.generate_api_key(
+        user_name=target_name, role="user", db=db_session
+    )
+
+    resp = await client.post(
+        "/api/v1/embed/tickets",
+        json={
+            "username": target_name,
+            "allowed_origins": ["https://crm.example.com"],
+            "expires_in": 300,
+        },
+        headers={"X-API-Key": admin_key},
+    )
+    assert resp.status_code == 200
+    ticket = resp.json()["data"]["ticket"]
+
+    # 1. 来自未授权来源 -> 403
+    bad = await client.post(
+        "/api/v1/embed/tickets/exchange",
+        json={"ticket": ticket},
+        headers={"Origin": "http://localhost:8001"},
+    )
+    assert bad.status_code == 403
+    assert "not allowed" in bad.text.lower()
+
+    # 2. 同一张票换用受信来源 -> 仍可正常兑换（票没有被上一次失败消耗）
+    good = await client.post(
+        "/api/v1/embed/tickets/exchange",
+        json={"ticket": ticket},
+        headers={"Origin": "https://crm.example.com"},
+    )
+    assert good.status_code == 200
+    assert good.json()["data"]["session_token"].startswith("emb_ses_")
+
+    # 3. 兑换成功后仍然是一次性的：再次兑换失败（防重放不被削弱）
+    replay = await client.post(
+        "/api/v1/embed/tickets/exchange",
+        json={"ticket": ticket},
+        headers={"Origin": "https://crm.example.com"},
+    )
+    assert replay.status_code == 400
 

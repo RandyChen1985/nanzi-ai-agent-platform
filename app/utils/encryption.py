@@ -12,7 +12,15 @@ from app.core.config import settings
 
 class APIKeyManager:
     """API Key 加密管理器"""
-    
+
+    #: 新签发 API Key 的固定前缀，便于在日志与抓包中与其它凭据一眼区分
+    #: （sess_ 门户会话 / emb_ses_ 嵌入会话 / emt_ 嵌入票据）。
+    #:
+    #: 注意：该前缀**不参与校验判断**——verify_api_key 只对传入串做 SHA256 再查库，
+    #: 不解析格式。因此历史上已发放的无前缀 Key 继续有效，加前缀不会破坏既有集成，
+    #: 也刻意不引入「前缀不符即拒绝」的前置校验。
+    API_KEY_PREFIX = "nzi_"
+
     def __init__(self):
         """初始化加密管理器，从环境变量读取密钥"""
         encryption_key = settings.ENCRYPTION_KEY
@@ -39,8 +47,9 @@ class APIKeyManager:
             - encrypted_key: 加密后的 API Key（存储到数据库 api_key_encrypted 字段）
             - hashed_key: SHA256 哈希值（存储到数据库 api_key_hash 字段，用于快速验证）
         """
-        # 1. 生成 32 字节的随机 API Key
-        api_key = secrets.token_urlsafe(32)
+        # 1. 生成 32 字节随机体的 API Key，并叠加可辨识前缀
+        #    前缀只是叠加，随机部分保持 token_urlsafe(32)（43 字符 / 256 bit），不减熵。
+        api_key = f"{self.API_KEY_PREFIX}{secrets.token_urlsafe(32)}"
         
         # 2. 加密存储（可解密）
         encrypted = self.cipher.encrypt(api_key.encode())

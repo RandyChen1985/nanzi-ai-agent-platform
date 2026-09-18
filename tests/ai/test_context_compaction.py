@@ -398,3 +398,133 @@ async def test_maybe_compact_persists_deterministic_digest_conditionally():
     assert set_digest.await_args.kwargs["source_revision"] == 4
     assert set_digest.await_args.kwargs["quality"] == 0
     assert set_digest.await_args.kwargs["allow_newer_seq"] is True
+
+
+# ---------------------------------------------------------------------------
+# LLM 语义摘要的 transcript 必须有界
+# ---------------------------------------------------------------------------
+
+
+def _long_dropped_history(count: int, chars_per_message: int):
+    history = []
+    for i in range(count):
+        history.append(
+            {"role": "user" if i % 2 == 0 else "assistant", "content": f"第{i}条：" + "上" * chars_per_message}
+        )
+    return history
+
+
+@pytest.mark.asyncio
+async def test_llm_digest_transcript_is_bounded_by_config():
+    """被丢弃历史很长时，摘要请求的 transcript 必须按预算裁剪。
+
+    此前是把 `dropped` 原样全部拼接，长会话下这个「用来解决超窗」的请求会自己超窗，
+    然后静默退回确定性摘录——用户和运维都不会知道语义摘要一直没生效。
+    """
+    from app.services.ai.context.compactor import ContextCompactor
+
+    dropped = _long_dropped_history(60, 3000)
+    window = dropped[-5:]
+    captured: dict = {}
+
+    class _FakeSummarizer:
+        @staticmethod
+        async def _generate_with_retry(chat_client, llm_messages, max_retries=2):
+            del chat_client, max_retries
+            # 第 2 条是 user 消息，其 text 就是 transcript
+            captured["transcript"] = llm_messages[1].content[0].text
+            return "摘要正文"
+
+    async def _fake_config_get(key, default=None):
+        if key == "agent_context_llm_summary_enabled":
+            return "true"
+        return default
+
+    with patch(
+        "app.services.config_service.ConfigService.get", side_effect=_fake_config_get
+    ), patch(
+        # transcript 上限是模块常量，这里调小以便在少量消息上就能观察到裁剪。
+        "app.services.ai.context.compactor.LLM_DIGEST_TRANSCRIPT_MAX_CHARS",
+        6000,
+    ), patch(
+        "app.services.ai.config.AgentConfigProvider.get_fallback_llm",
+        new_callable=AsyncMock,
+        return_value=MagicMock(),
+    ), patch(
+        "app.services.ai.conversation_summarizer.ConversationSummarizer._generate_with_retry",
+        side_effect=_FakeSummarizer._generate_with_retry,
+    ), patch(
+        "app.services.ai.runtime.agentscope.chat.chat_client_from_handle",
+        return_value=MagicMock(),
+    ):
+        result = await ContextCompactor.try_llm_overflow_digest(
+            dropped, window, max_chars=1200
+        )
+
+    transcript = captured.get("transcript") or ""
+    assert transcript, "应当真的构造了 transcript"
+    # 预算 6000 字符，额外允许省略说明与拼接开销
+    assert len(transcript) < 7000, f"transcript 未被裁剪：{len(transcript)} 字符"
+    # 最近被丢弃的那条（dropped 去掉窗口后的最后一条）必须被保留
+    last_dropped_index = len(dropped) - len(window) - 1
+    assert f"第{last_dropped_index}条" in transcript
+    # 最早的消息应已被舍弃
+    assert "第0条：" not in transcript
+    assert result is not None
+
+
+@pytest.mark.asyncio
+async def test_llm_digest_transcript_marks_truncation():
+    """裁剪发生时必须显式告知模型"更早部分已省略"，避免它当成完整历史来总结。"""
+    from app.services.ai.context.compactor import ContextCompactor
+
+    dropped = _long_dropped_history(40, 2000)
+    captured: dict = {}
+
+    class _FakeSummarizer:
+        @staticmethod
+        async def _generate_with_retry(chat_client, llm_messages, max_retries=2):
+            del chat_client, max_retries
+            captured["transcript"] = llm_messages[1].content[0].text
+            return "摘要正文"
+
+    async def _fake_config_get(key, default=None):
+        if key == "agent_context_llm_summary_enabled":
+            return "true"
+        return default
+
+    with patch(
+        "app.services.config_service.ConfigService.get", side_effect=_fake_config_get
+    ), patch(
+        "app.services.ai.context.compactor.LLM_DIGEST_TRANSCRIPT_MAX_CHARS",
+        3000,
+    ), patch(
+        "app.services.ai.config.AgentConfigProvider.get_fallback_llm",
+        new_callable=AsyncMock,
+        return_value=MagicMock(),
+    ), patch(
+        "app.services.ai.conversation_summarizer.ConversationSummarizer._generate_with_retry",
+        side_effect=_FakeSummarizer._generate_with_retry,
+    ), patch(
+        "app.services.ai.runtime.agentscope.chat.chat_client_from_handle",
+        return_value=MagicMock(),
+    ):
+        await ContextCompactor.try_llm_overflow_digest(dropped, dropped[-3:], max_chars=1200)
+
+    assert "省略" in (captured.get("transcript") or "")
+
+
+def test_build_overflow_digest_skips_previous_digest_message():
+    """上一版摘录自己落在 dropped 里时不得再抄一遍（正文会由 prev_digest 注入）。"""
+    dropped = [
+        {"role": "system", "content": f"{COMPACTION_MARKER}\n上一版摘录正文：机房列表共 12 条"},
+        {"role": "user", "content": "继续看第二个机房"},
+    ]
+    digest = build_overflow_digest(dropped, prev_digest=f"{COMPACTION_MARKER}\n上一版摘录正文：机房列表共 12 条")
+
+    assert digest is not None
+    body = digest["content"]
+    # 自我抄写会产生形如「系统：[早前对话摘录]…」的噪声行
+    assert "系统：" not in body
+    # 正常的用户消息仍要保留
+    assert "继续看第二个机房" in body
