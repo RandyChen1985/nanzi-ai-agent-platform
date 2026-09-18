@@ -57,14 +57,7 @@ logs/
 htmlcov/
 
 # Project Specific Runtime Data & Cache (DO NOT COMMIT)
-data/agent_workspaces/
-data/uploads/
-data/browser-profiles/
-data/branding/
-data/generated/
-data/generated_files/
-data/office_preview_cache/
-data/sandbox/
+data/
 # db-prod/ # Un-comment if you want to ignore exported SQL dumps
 
 # Docker 构建产物（保留 release 目录本身）
