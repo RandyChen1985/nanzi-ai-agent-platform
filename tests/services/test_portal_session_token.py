@@ -253,13 +253,16 @@ async def test_logout_endpoint_revokes_session_from_cookie():
     """登出必须能从 cookie 取到凭据并真正吊销服务端会话。
 
     否则浏览器仅凭 cookie 认证时（不传 X-API-Key），登出只是本地删了 cookie，
-    服务端会话依旧有效 —— 这正是本次改造要消除的问题。
+    服务端会话依旧有效 —— 这正是本次改造要消除的问题。两个会话 Cookie 都要读：
+    嵌入页刷新后只带 embed_session，漏了它同样会留下可用的会话。
     """
     from pathlib import Path
 
     source = Path("app/api/portal/endpoints/auth.py").read_text(encoding="utf-8")
 
-    assert 'cookies.get("admin_token")' in source
+    # 用常量读取，改名后不会因字面量不同而失效
+    assert "cookies.get(PORTAL_SESSION_COOKIE_NAME)" in source
+    assert "cookies.get(EMBED_SESSION_COOKIE_NAME)" in source
     assert "AuthService.revoke_portal_session" in source
 
 
@@ -273,7 +276,7 @@ async def test_cookie_issuance_is_gated_by_the_feature_flag():
     assert "settings.PORTAL_SESSION_TOKEN_ENABLED" in source
     # 所有 cookie 下发放都必须走统一入口，避免遗漏某条登录路径。
     # 用 >= 而非 ==：新增登录路径不应因为「数量对不上」而误报，漏走统一入口才是问题。
-    assert source.count("_issue_admin_token_cookie(") >= 6  # 1 处定义 + 5 处调用
+    assert source.count("_issue_portal_session_cookie(") >= 6  # 1 处定义 + 5 处调用
 
 
 def _fake_response():
@@ -294,7 +297,7 @@ async def test_flag_off_issues_real_api_key_and_prewarms_cache():
     ), patch.object(
         auth_module.AuthService, "register_online_state", AsyncMock()
     ) as prewarm:
-        issued = await auth_module._issue_admin_token_cookie(
+        issued = await auth_module._issue_portal_session_cookie(
             MagicMock(), response, 7, {"user_id": "7"}, None, "real-api-key"
         )
 
@@ -319,7 +322,7 @@ async def test_flag_on_issues_opaque_token_instead_of_real_key():
     ), patch.object(
         auth_module.AuthService, "register_online_state", AsyncMock()
     ) as prewarm:
-        issued = await auth_module._issue_admin_token_cookie(
+        issued = await auth_module._issue_portal_session_cookie(
             MagicMock(), response, 7, {"user_id": "7"}, None, "real-api-key"
         )
 

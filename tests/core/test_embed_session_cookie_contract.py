@@ -11,14 +11,14 @@
 - 且每次刷新都重新签发一个 24 小时会话令牌（本机实测三次调用得到三个不同
   `emb_ses_`），Redis 中旧令牌不被吊销、持续累积。
 
-参照「密码登录 → 下发 `admin_token`」的对称做法，校验通过后应下发**独立**的
+参照「密码登录 → 下发 `portal_session`」的对称做法，校验通过后应下发**独立**的
 `embed_session` Cookie：长期 Key 仅首次出现，之后由该会话支撑刷新。
 
 ## 本测试锁定的安全约束
 
-1. **必须独立于 `admin_token`**：共用同名 Cookie 会顶掉用户的门户登录态
+1. **必须独立于 `portal_session`**：共用同名 Cookie 会顶掉用户的门户登录态
    （浏览器同名 Cookie 相互覆盖，path 均为 `/`）。
-2. **`admin_token` 优先级必须高于 `embed_session`**：门户登录态优先于嵌入会话，
+2. **`portal_session` 优先级必须高于 `embed_session`**：门户登录态优先于嵌入会话，
    否则平台内嵌 iframe 场景会被降级或串号。
 3. **仅当凭据经 header 显式传入时下发**：凭据来自 Cookie 说明浏览器已有会话，
    此时再下发会在门户登录态之外凭空多挂一个身份。
@@ -32,36 +32,36 @@ AUTH_PY = ROOT / "app/api/portal/endpoints/auth.py"
 EMBED_PY = ROOT / "app/api/v1/endpoints/embed.py"
 
 EMBED_COOKIE = "embed_session"
-ADMIN_COOKIE = "admin_token"
+PORTAL_COOKIE = "portal_session"
 
 
-def test_require_api_key_reads_embed_session_after_admin_token():
-    """admin_token 必须优先于 embed_session（门户登录态不得被嵌入会话覆盖）。"""
+def test_require_api_key_reads_embed_session_after_portal_session():
+    """portal_session 必须优先于 embed_session（门户登录态不得被嵌入会话覆盖）。"""
     source = DEPENDENCIES.read_text(encoding="utf-8")
     body = source[source.index("async def require_api_key") :]
     body = body[: body.index("async def ", 10)] if "async def " in body[10:] else body
 
     assert f'cookies.get("{EMBED_COOKIE}")' in body, "require_api_key 未支持 embed_session"
-    assert f'cookies.get("{ADMIN_COOKIE}")' in body, "require_api_key 不应移除 admin_token"
+    assert f'cookies.get("{PORTAL_COOKIE}")' in body, "require_api_key 不应移除 portal_session"
 
-    admin_pos = body.index(f'cookies.get("{ADMIN_COOKIE}")')
+    admin_pos = body.index(f'cookies.get("{PORTAL_COOKIE}")')
     embed_pos = body.index(f'cookies.get("{EMBED_COOKIE}")')
     assert admin_pos < embed_pos, (
-        "读取顺序错误：admin_token 必须先于 embed_session，否则门户登录态会被嵌入会话抢占"
+        "读取顺序错误：portal_session 必须先于 embed_session，否则门户登录态会被嵌入会话抢占"
     )
 
 
 def test_embed_session_cookie_is_distinct_named_and_httponly():
-    """embed_session 必须是与 admin_token 不同的 Cookie 名，且 HttpOnly。"""
+    """embed_session 必须是与 portal_session 不同的 Cookie 名，且 HttpOnly。"""
     source = AUTH_PY.read_text(encoding="utf-8")
 
     # 断言常量赋值本身。不能靠 index("embed_session") 定位后截取片段——解释性注释里
-    # 必然同时提到 embed_session 与 admin_token，会被自己的文档绊倒（已踩过一次）。
+    # 必然同时提到 embed_session 与 portal_session，会被自己的文档绊倒（已踩过一次）。
     const_pos = source.index("EMBED_SESSION_COOKIE_NAME = ")
     const_line = source[const_pos : source.index("\n", const_pos)]
     assert '"embed_session"' in const_line, "常量名与 Cookie 名不一致"
-    assert ADMIN_COOKIE not in const_line, (
-        "embed_session 不得复用 admin_token 名称（会顶掉门户登录态）"
+    assert PORTAL_COOKIE not in const_line, (
+        "embed_session 不得复用 portal_session 名称（会顶掉门户登录态）"
     )
 
     # 定位实际下发调用：set_cookie( 与 key= 分处相邻两行，不能按同一行查找
@@ -121,7 +121,7 @@ def test_require_api_key_exposes_credential_source():
     assert "state.credential_source" in body, (
         "require_api_key 未暴露凭据来源，调用方只能退回去做不可靠的值比较"
     )
-    for marker in ('"header"', '"cookie:admin_token"', '"cookie:embed_session"'):
+    for marker in ('"header"', '"cookie:portal_session"', '"cookie:embed_session"'):
         assert marker in body, f"凭据来源未区分 {marker}"
 
 
@@ -176,7 +176,7 @@ def test_session_cookie_is_renewed_on_cookie_authenticated_requests():
 def test_logout_revokes_and_clears_embed_session_cookie():
     """登出必须同时处理 embed_session。
 
-    嵌入页刷新后只带 `embed_session`（没有 `admin_token`）。若登出只认 `admin_token`
+    嵌入页刷新后只带 `embed_session`（没有 `portal_session`）。若登出只认 `portal_session`
     且只清它：服务端嵌入会话不会被吊销、Cookie 也不会被删；而 `require_api_key` 又会
     回落到这个 Cookie，于是门户登出后请求仍以嵌入用户身份通过 —— 身份串号。
     """

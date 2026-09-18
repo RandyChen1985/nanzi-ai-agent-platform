@@ -68,7 +68,7 @@ notification.send
 
 | 已落地内容 | 当前行为 |
 |---|---|
-| OAuth2 发现与授权端点 | 提供 OAuth2 Authorization Code + PKCE、Refresh Token、Revoke 和 RFC 发现端点；本期不发布 OIDC Discovery、UserInfo、ID Token 或 JWKS，用户授权复用当前 `admin_token` 登录会话 |
+| OAuth2 发现与授权端点 | 提供 OAuth2 Authorization Code + PKCE、Refresh Token、Revoke 和 RFC 发现端点；本期不发布 OIDC Discovery、UserInfo、ID Token 或 JWKS，用户授权复用当前 `portal_session` 登录会话 |
 | Access Token | 使用高熵 opaque Bearer Token，数据库只保存 SHA-256 摘要并支持过期、撤销和 Client 停用；后续可在不改变 MCP 调用协议的情况下切换为独立 JWT + JWKS |
 | Platform MCP 入站入口 | `POST /mcp/platform`，通过 FastMCP Resource Server 校验 OAuth Bearer Token |
 | 已注册方法 | 9 个方法均已注册并可按总开关、能力组开关和 OAuth Client Scope 发布；默认配置仍为关闭 |
@@ -388,11 +388,11 @@ GET /oauth/authorize?
 授权页面优先使用 NanZi 当前登录会话识别用户。
 
 ```text
-浏览器已有 NanZi admin_token Cookie
+浏览器已有 NanZi portal_session Cookie
     ↓
 NanZi 授权页通过现有登录依赖识别用户
     ↓
-不需要把 admin_token 交给 CRM
+不需要把 portal_session 交给 CRM
 ```
 
 如果用户没有登录：

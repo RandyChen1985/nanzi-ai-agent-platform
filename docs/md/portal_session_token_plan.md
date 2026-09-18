@@ -25,14 +25,16 @@
 
 | # | 事实 | 位置 |
 |---|---|---|
-| 1 | `require_api_key` 按 `X-API-Key` → `Authorization: Bearer` → cookie `admin_token` 三路取凭据，并把凭据原文写进 `user_info["api_key"]` | `app/core/dependencies.py:14-54`（第 42 行） |
+> **命名变更（2026-09）**：门户会话 Cookie 由 `admin_token` 更名为 `portal_session`，统一入口 `_issue_admin_token_cookie` 相应更名为 `_issue_portal_session_cookie`。更名理由是原名易被误解为「管理员专属」，实际普通 user 角色同样使用；本文档其余处已同步为新名，但其中的**行号引用**为当时快照，后续代码演进后可能偏移。
+
+| 1 | `require_api_key` 按 `X-API-Key` → `Authorization: Bearer` → cookie `portal_session` 三路取凭据，并把凭据原文写进 `user_info["api_key"]` | `app/core/dependencies.py:14-54`（第 42 行） |
 | 2 | `verify_api_key` 先查 Redis hash `auth:api_key:{sha256}`，未命中再查 DB | `app/services/auth_service.py:158-216` |
 | 3 | **`verify_api_key` 已内建 session 概念**：对 `session_type == "embed"` 做 24h 滑动续期 | `app/services/auth_service.py:177-182` |
 | 4 | 下游消费 `user_info["api_key"]` 共 6 处，最终都汇入 `AgentContext.api_key` | `context_manager.py:224,332`、`executors/base.py:131,171`、`resume.py:530` |
 | 5 | **下游用途是"代表用户回调平台自身"**：`sql_query_execution_service` 直接把该值交给 `AuthService.verify_api_key()` | `app/services/sql_query_execution_service.py:409-411` |
 | 6 | `workspace.py:1295` 的 `api_key` 来自系统配置 `sandbox_e2b_api_key`，**与用户凭据无关**（易误判，特此澄清） | `app/services/ai/runtime/agentscope/workspace.py:1273` |
 | 7 | 前端从 localStorage 注入 `X-API-Key`；`withCredentials: true` 已开启；已有 `Authorization: Bearer` 分支 | `frontend/src/utils/axios.ts:15,27-41`、`frontend/src/main.ts:15` |
-| 8 | cookie `admin_token` 下发 5 处，均为 `HttpOnly + SameSite=Lax + max_age=86400` | `app/api/portal/endpoints/auth.py:62,118,174,247` 等 |
+| 8 | cookie `portal_session` 下发 5 处，均为 `HttpOnly + SameSite=Lax + max_age=86400` | `app/api/portal/endpoints/auth.py:62,118,174,247` 等 |
 | 9 | 前端 20+ 处读取 `localStorage.api_key` | `utils/axios.ts`、`main.ts`、`api/metadata.ts`、`Roles.vue`（9 处）、`Playground.vue` 等 |
 
 **结论**：第 3 条和第 5 条决定了本方案的可行性——embed 已经趟通了"把短令牌当作一种特殊 api_key 走同一条校验链"这条路，而下游拿到凭据后调用的又是平台自己的 `verify_api_key`。因此**新令牌天然被现有链路接受，不需要改动下游任何一处**。
@@ -174,12 +176,12 @@ if api_key:
     await AuthService.expire_api_key(api_key)
 ```
 
-浏览器实际是凭 cookie 认证、并不发送该请求头，所以**登出从未真正吊销过服务端会话**，只是本地删掉了 cookie。P0 一并修正为"优先取请求头，其次取 `admin_token` cookie"，并区分会话令牌（`revoke_portal_session`）与真实 Key（`expire_api_key`）。
+浏览器实际是凭 cookie 认证、并不发送该请求头，所以**登出从未真正吊销过服务端会话**，只是本地删掉了 cookie。P0 一并修正为"优先取请求头，其次取 `portal_session` cookie"，并区分会话令牌（`revoke_portal_session`）与真实 Key（`expire_api_key`）。
 
 ### 9.3 两个设计决策
 
 - **重置 API Key 不吊销会话**：`reset_my_api_key` 的响应体仍返回真实新 Key（用户需要它去配置外部集成），但 cookie 换成会话令牌。重置不等同于登出；泄露的 Key 已立即失效，而浏览器本地令牌并未泄露，保留当前会话是合理体验。
-- **5 处下发放统一走 `_issue_admin_token_cookie`**：避免遗漏任何一条登录路径，并有契约测试锁定该数量。
+- **5 处下发放统一走 `_issue_portal_session_cookie`**：避免遗漏任何一条登录路径，并有契约测试锁定该数量。
 
 ### 9.4 测试抓到的一个真实缺陷
 
@@ -190,7 +192,7 @@ if api_key:
 | 文件 | 改动 |
 |---|---|
 | `app/services/auth_service.py` | 会话常量、`_session_cache_key`、`_user_model_to_data`、`create_portal_session`、`revoke_portal_session`、滑动续期分支 |
-| `app/api/portal/endpoints/auth.py` | `_issue_admin_token_cookie` 统一入口 + 5 处接入 + logout 吊销 |
+| `app/api/portal/endpoints/auth.py` | `_issue_portal_session_cookie` 统一入口 + 5 处接入 + logout 吊销 |
 | `app/core/config.py` | `PORTAL_SESSION_TOKEN_ENABLED`（默认 true） |
 | `tests/services/test_portal_session_token.py` | 13 项测试（签发/校验/吊销/滑动/兼容真 key/开关行为/logout 契约） |
 

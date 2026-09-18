@@ -39,7 +39,7 @@ async def test_require_api_key_logic():
     # Mock request with cookie
     mock_request = MagicMock(spec=Request)
     mock_request.headers = {}
-    mock_request.cookies = {"admin_token": "valid_cookie_token"}
+    mock_request.cookies = {"portal_session": "valid_cookie_token"}
     mock_request.state = MagicMock()
 
     # Mock DB

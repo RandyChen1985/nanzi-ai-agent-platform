@@ -89,7 +89,7 @@ class AuthService:
     PORTAL_SESSION_PREFIX = "sess_"
     # 嵌入会话令牌前缀（由 EmbedService 签发）。登记到同一套索引，改用户状态时一并吊销。
     EMBED_SESSION_PREFIX = "emb_ses_"
-    # 与 admin_token cookie 的 max_age 一致。滑动续期复用 verify_api_key 中的会话分支，
+    # 与 portal_session cookie 的 max_age 一致。滑动续期复用 verify_api_key 中的会话分支，
     # 该分支同样服务于 embed（其 TTL 亦为 86400）；若要调整，需同步确认两者。
     PORTAL_SESSION_TTL_SECONDS = 86400
     PORTAL_SESSION_TYPE = "portal"

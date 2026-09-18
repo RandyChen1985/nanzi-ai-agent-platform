@@ -23,7 +23,7 @@ instance.interceptors.request.use(
       delete config.headers['Content-Type']
     }
 
-    // 门户认证统一依赖同源 HttpOnly Cookie（admin_token），不再从 localStorage 注入任何凭据：
+    // 门户认证统一依赖同源 HttpOnly Cookie（portal_session），不再从 localStorage 注入任何凭据：
     // 凭据不进 JS 可读的存储，即使发生 XSS 也无法带走会话凭据。
     // 嵌入场景的显式 Bearer 令牌由其自身按需注入（EmbedChat / BrowserPanel）。
     return config
@@ -60,10 +60,11 @@ instance.interceptors.response.use(
           // 未授权，清除本地存储并跳转登录。
           //
           // 与 main.ts 的 401 拦截器同理：localStorage 清理只针对前端历史遗留副本，
-          // 不构成登出；admin_token 是 HttpOnly，document.cookie 无法增删，故不在此处
+          // 不构成登出；门户会话 Cookie 是 HttpOnly，document.cookie 无法增删，故不在此处
           // 尝试删 Cookie（会话失效只能由后端 logout 完成）。
           localStorage.removeItem('api_key')
           localStorage.removeItem('user_info')
+          // 'admin_token' 是历史遗留的 localStorage 键名（非当前 Cookie 名），保留原样
           localStorage.removeItem('admin_token')
           localStorage.removeItem('yovole_token')
           window.location.href = '/login'

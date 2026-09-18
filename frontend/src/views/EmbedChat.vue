@@ -3023,11 +3023,12 @@ const bashBannerDismissed = ref(false);
  * 历史记录、Referer 与访问日志中。这里在 embed 页顶部提示宿主迁移到 Ticket 模式。
  * 提示只针对「接入方式」，与凭据是否有效无关，因此标记发生在校验之前。
  *
- * 注：清除地址栏**必须以会话已建立为前提**。两条链路都会下发独立的 `embed_session`
- * Cookie（不影响 `admin_token`）：`user_apikey` 在凭据经 header 传入时下发并置
- * `session_cookie_issued`，ticket 兑换成功时同样下发。前端据此才调用
- * `stripUrlCredentials`；若在会话建立之前就清除，URL 里的凭据是唯一来源，刷新会
- * 立即失效（曾踩过一次）。
+ * 注：清除地址栏**必须以「刷新有凭据可依」为前提**，统一入口是
+ * `maybeStripUrlAfterSessionReady()`——判定本 tab 已把短期会话令牌落到 sessionStorage，
+ * 或本次响应确实下发了 `embed_session` Cookie。两条链路（`user_apikey` 经 header 传入
+ * 凭据、ticket 兑换成功）都会建立会话并下发该 Cookie。若在凭据落地之前就清除，URL 里
+ * 的凭据是唯一来源，刷新会立即失效（曾踩过一次）。注意跨站 iframe 下 `embed_session`
+ * 是 SameSite=lax、根本不会被发送，因此 sessionStorage 才是主要依据。
  */
 const usesLegacyUrlToken = ref(false);
 
@@ -6715,7 +6716,7 @@ const validateToken = async (options?: { strict?: boolean }): Promise<boolean> =
   // 带着进门，代客场景下还会把身份静默换成门户登录用户。
   // 仅当「完全没有嵌入凭据」（平台内 iframe 访问，子页拿不到 HttpOnly Cookie）时才回落。
   if (!config.token && !storedSessionCredential) {
-    // 仅携带 Cookie（httponly admin_token），且不走 axios 拦截器以免带上失效的 localStorage
+    // 仅携带 Cookie（httponly portal_session），且不走 axios 拦截器以免带上失效的 localStorage
     try {
       const res = await fetch("/api/portal/auth/user_apikey", { credentials: "include" });
       if (res.ok) {

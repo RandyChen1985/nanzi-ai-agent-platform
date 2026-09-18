@@ -9,7 +9,9 @@ SENSITIVE_KEYS_FULL = {
     # 会话 / 票据类凭据：签发接口会把它们放在**响应体**里
     # （user_apikey 与 ticket 兑换都返回 session_token），漏了就明文落进审计表。
     # `ticket` 只做精确匹配——`ticket_id` 之类业务字段不是凭据，不应被误伤。
-    "session_token", "admin_token", "embed_session", "ticket",
+    "session_token", "portal_session", "embed_session", "ticket",
+    # 旧名保留：历史日志里已存在该键，重新脱敏时不应对它视而不见。
+    "admin_token",
 }
 
 # 子串匹配的敏感词（只要键名包含这些词就脱敏）
@@ -18,10 +20,12 @@ SENSITIVE_KEYS_SUB = {
     "access_token", "refresh_token",
     "api_key", "apikey",
     "client_secret", "app_secret",
-    # 覆盖 session_token / sessionToken(camel) / admin_token / embed_session 及其变体
+    # 覆盖 session_token / sessionToken(camel) / portal_session / embed_session 及其变体
     "session_token", "sessiontoken",
-    "admin_token", "admintoken",
+    "portal_session", "portalsession",
     "embed_session", "embedsession",
+    # 旧名保留，理由同上
+    "admin_token", "admintoken",
 }
 
 # 凭据值的可辨识前缀（见 app/utils/encryption.py 与各签发服务）：

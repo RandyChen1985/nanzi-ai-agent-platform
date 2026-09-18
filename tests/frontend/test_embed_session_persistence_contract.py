@@ -6,7 +6,7 @@
    不会随请求发送（`/embed/` 以 `frame-ancestors *` 支持跨站嵌入）。而前端只要看到
    `session_cookie_issued` 就清除 URL 里的凭据，于是跨站 `?token=` 场景刷新后既无 URL
    凭据、Cookie 又不发送 —— 比不清除时更差（此前 URL 里的 Key 还能撑住刷新）。
-2. **身份串号**：Cookie 是「整浏览器一个槽」，`require_api_key` 又让 `admin_token` 优先于
+2. **身份串号**：Cookie 是「整浏览器一个槽」，`require_api_key` 又让 `portal_session` 优先于
    `embed_session`。多个嵌入实例（不同 target user）会互相覆盖，或刷新后静默切换成门户
    登录用户的身份 —— 会话历史按认证 user_id 过滤，即读到他人的会话与消息。
 

@@ -25,7 +25,17 @@ pytestmark = pytest.mark.no_infrastructure
 
 @pytest.mark.parametrize(
     "key",
-    ["session_token", "sessionToken", "admin_token", "embed_session", "ticket", "api_key"],
+    [
+        "session_token",
+        "sessionToken",
+        "portal_session",
+        "portalSession",
+        "embed_session",
+        "ticket",
+        "api_key",
+        # 旧名：历史日志里已存在该键，重新脱敏时仍需覆盖
+        "admin_token",
+    ],
 )
 def test_credential_keys_are_masked(key):
     """已知的凭据字段名一律脱敏（含 camelCase 变体）。"""

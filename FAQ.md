@@ -2496,7 +2496,7 @@ graph TD
   ```http
   Authorization: Bearer <YOUR_API_KEY>
   ```
-- **浏览器侧不再持有长期 API Key**：门户登录后服务端下发的 `admin_token` Cookie，内容是**可吊销的不透明会话令牌**（`sess_<random>`，24 小时滑动续期），**不是**长期 Key；登录响应体也不再回传 `api_key`。前端不写入、不读取 `localStorage.api_key`，凭据只经 HttpOnly Cookie 传递。
+- **浏览器侧不再持有长期 API Key**：门户登录后服务端下发的 `portal_session` Cookie，内容是**可吊销的不透明会话令牌**（`sess_<random>`，24 小时滑动续期），**不是**长期 Key；登录响应体也不再回传 `api_key`。前端不写入、不读取 `localStorage.api_key`，凭据只经 HttpOnly Cookie 传递。
 - **需要真实 Key 的场景**（配置外部集成）请到【个人中心】或【用户管理】查看与重置；相关接口（`GET /management/api-key/{user_id}`、`POST /auth/api-key/reset`、`GET /api/v1/users/profile`）仍按原有约定返回真实 Key。
 
 #### 7.1.3 外部 V1 API 访问控制与白名单机制

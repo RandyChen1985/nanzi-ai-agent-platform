@@ -375,15 +375,15 @@ async def health_check():
 # --- Documentation Security ---
 
 async def get_current_user_from_cookie(
-    admin_token: Optional[str] = Cookie(None),
+    portal_session: Optional[str] = Cookie(None),
     db: AsyncSession = Depends(get_db_session)
 ):
     """Dependency to verify user access via Cookie for Docs (supports both admin and regular users)"""
-    if not admin_token:
+    if not portal_session:
         # Redirect to login page if no token
         return None
     
-    user = await AuthService.verify_api_key(admin_token, db)
+    user = await AuthService.verify_api_key(portal_session, db)
     if not user:
         return None
         

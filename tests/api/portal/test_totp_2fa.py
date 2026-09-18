@@ -137,7 +137,7 @@ async def test_2fa_login_two_step():
 
         # Cookie 里放的是不透明会话令牌，而非真实 API Key
         cookie_kwargs = mock_response.set_cookie.call_args.kwargs
-        assert cookie_kwargs["key"] == "admin_token"
+        assert cookie_kwargs["key"] == "portal_session"
         assert cookie_kwargs["value"] == "sess_test-token"
         assert cookie_kwargs["httponly"] is True
         # 响应体不得回显真实凭据（此前会把 api_key 明文返回）

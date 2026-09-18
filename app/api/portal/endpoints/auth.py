@@ -13,7 +13,12 @@ router = APIRouter()
 # 续期会话 Cookie 时同样需要它，集中一处以免两边的 Cookie 属性判断发生漂移。
 
 
-async def _issue_admin_token_cookie(
+# 门户登录态 Cookie。名字刻意不叫 admin_token：它服务的是「门户前端」的登录态，
+# 普通 user 角色同样使用，叫 admin_token 会让读者误以为是管理员专属。
+PORTAL_SESSION_COOKIE_NAME = "portal_session"
+
+
+async def _issue_portal_session_cookie(
     http_request: Request,
     response: Response,
     user_id: int,
@@ -23,7 +28,7 @@ async def _issue_admin_token_cookie(
     *,
     prewarm_cache: bool = True,
 ) -> str:
-    """下发 admin_token cookie，并返回实际下发的凭据。
+    """下发门户登录态 cookie，并返回实际下发的凭据。
 
     PORTAL_SESSION_TOKEN_ENABLED 开启时改用不透明会话令牌，浏览器不再持有真实
     API Key；开关关闭或 Redis 不可用时自动回退到真实 API Key，保证登录始终可用。
@@ -34,7 +39,7 @@ async def _issue_admin_token_cookie(
 
     issued = session_token or credential
     response.set_cookie(
-        key="admin_token",
+        key=PORTAL_SESSION_COOKIE_NAME,
         value=issued,
         httponly=True,
         max_age=86400,
@@ -49,7 +54,7 @@ async def _issue_admin_token_cookie(
     return issued
 
 
-# 嵌入会话 Cookie：独立于 admin_token，避免顶掉用户自己的门户登录态。
+# 嵌入会话 Cookie：独立于 portal_session，避免顶掉用户自己的门户登录态。
 EMBED_SESSION_COOKIE_NAME = "embed_session"
 EMBED_SESSION_COOKIE_MAX_AGE = 86400
 
@@ -61,7 +66,7 @@ def _set_embed_session_cookie(
 ) -> None:
     """下发 embed_session（HttpOnly），使嵌入页刷新后无需再依赖 URL 里的长期 Key。
 
-    独立于 admin_token：两者 path 均为 `/`，共用同名 Cookie 会互相覆盖，导致打开
+    独立于 portal_session：两者 path 均为 `/`，共用同名 Cookie 会互相覆盖，导致打开
     嵌入页时顶掉用户自己的门户登录态。
 
     SameSite 取 lax：同源嵌入（平台内 iframe）可正常携带；跨站第三方 iframe 需改为
@@ -113,7 +118,7 @@ async def sso_login(
              raise HTTPException(500, "User has no valid API Key for session")
 
         # 下发会话凭据（开关开启时为不透明会话令牌）
-        api_key = await _issue_admin_token_cookie(
+        api_key = await _issue_portal_session_cookie(
             http_request, response, user_id, user, db, api_key
         )
         # 记录用户登录时间
@@ -160,7 +165,7 @@ async def login(
             )
         api_key = request.api_key
         # 下发会话凭据（开关开启时为不透明会话令牌）；verify_api_key 已预热过缓存
-        api_key = await _issue_admin_token_cookie(
+        api_key = await _issue_portal_session_cookie(
             http_request,
             response,
             int(user["user_id"]),
@@ -218,7 +223,7 @@ async def login(
                  raise HTTPException(500, "User has no valid API Key for session")
 
             # 下发会话凭据（开关开启时为不透明会话令牌）
-            api_key = await _issue_admin_token_cookie(
+            api_key = await _issue_portal_session_cookie(
                 http_request, response, user_id, user, db, api_key
             )
             # 记录用户登录时间
@@ -284,7 +289,7 @@ async def two_factor_login(
         raise HTTPException(500, "User has no valid API Key for session")
 
     # 下发会话凭据（开关开启时为不透明会话令牌）
-    api_key = await _issue_admin_token_cookie(
+    api_key = await _issue_portal_session_cookie(
         http_request, response, user_id, user, db, api_key
     )
     # 记录用户登录时间
@@ -351,7 +356,7 @@ async def logout(
     # embed_session，此前会被漏掉，导致「登出后会话仍在」。
     credential = (
         api_key
-        or http_request.cookies.get("admin_token")
+        or http_request.cookies.get(PORTAL_SESSION_COOKIE_NAME)
         or http_request.cookies.get(EMBED_SESSION_COOKIE_NAME)
     )
 
@@ -365,9 +370,9 @@ async def logout(
             # 真实长期 Key（PORTAL_SESSION_TOKEN_ENABLED=false 的回退形态）
             await AuthService.expire_api_key(credential)
 
-    # 两个会话 Cookie 都要清：只删 admin_token 会让 embed_session 残留，
+    # 两个会话 Cookie 都要清：只删 portal_session 会让 embed_session 残留，
     # 门户登出后请求会回落到嵌入身份，造成身份串号。
-    response.delete_cookie(key="admin_token")
+    response.delete_cookie(key=PORTAL_SESSION_COOKIE_NAME)
     response.delete_cookie(key=EMBED_SESSION_COOKIE_NAME)
     return {"status": "success", "message": "Logged out successfully"}
 
@@ -734,7 +739,7 @@ async def reset_my_api_key(
     # 同步更新当前会话 Cookie（开关开启时为不透明会话令牌）。
     # 响应体仍返回真实新 Key：重置是显式的低频操作，用户需要它去配置外部集成；
     # 重置 API Key 不等同于登出，因此不退出现有会话。
-    await _issue_admin_token_cookie(
+    await _issue_portal_session_cookie(
         http_request, response, user_id, user, db, new_api_key
     )
 

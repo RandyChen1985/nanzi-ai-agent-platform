@@ -25,7 +25,8 @@ export function persistUserInfo(userInfo: UserInfoLike | null | undefined): User
   // 顺手抹除旧版本残留在本地的凭据副本：这些键在改造前由登录/嵌入流程写入，
   // 如今已无任何写入方，但已登录的老用户浏览器里可能仍有存量。放在会话落盘的
   // 统一入口清理，可一次覆盖全部调用方（Login / Dashboard / Users / NoPermission）。
-  // 注意：此处不动 admin_token Cookie——它是当前有效的会话凭据，由后端下发。
+  // 注意：此处不动门户会话 Cookie（portal_session）——它是当前有效的凭据，由后端下发。
+  // 下面 'admin_token' 是历史遗留的 **localStorage 键名**，与 Cookie 名无关。
   localStorage.removeItem('api_key')
   localStorage.removeItem('admin_token')
   localStorage.removeItem('yovole_token')
@@ -36,14 +37,15 @@ export function persistUserInfo(userInfo: UserInfoLike | null | undefined): User
 
 /** 清空前端可清的本地会话副本（localStorage），重置为「本地无痕」状态。
  *
- * 注意：**这不等同于登出**。admin_token 是 HttpOnly Cookie，JS 既读不到也写不了，
- * 本函数无法清除它；调用后浏览器在服务端仍是登录态。真正的会话失效须由后端
+ * 注意：**这不等同于登出**。门户会话 Cookie（portal_session）是 HttpOnly，JS 既读不到
+ * 也写不了，本函数无法清除它；调用后浏览器在服务端仍是登录态。真正的会话失效须由后端
  * `POST /api/portal/auth/logout` 完成（吊销 Redis 会话 + delete_cookie）。
  * 这里也不再写 `document.cookie` 删它——那种赋值是空操作，只会误导排查者。
  */
 export function clearUserSession(): void {
   localStorage.removeItem('api_key')
   localStorage.removeItem('user_info')
+  // 'admin_token' 是历史遗留的 localStorage 键名，保留原样以清理老版本残留
   localStorage.removeItem('admin_token')
   localStorage.removeItem('yovole_token')
 }

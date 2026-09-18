@@ -7,7 +7,7 @@
 1. **显式凭据**：URL `?token=<API Key>`，或宿主经 `INIT_CONFIG` 下发
    `token` / `api_key` / `apikey`。此时 `config.token` 非空。
 2. **同源 Cookie 回落**：平台内 iframe（`Chat.vue`）不再向子页下发凭据，
-   会话位于 HttpOnly `admin_token` Cookie，由 `validateToken` 的 Cookie 分支认证。
+   会话位于 HttpOnly `portal_session` Cookie，由 `validateToken` 的 Cookie 分支认证。
    此时 `config.token` 为空。
 
 问题在于 `validateToken` 的 Cookie 回落分支原先**无条件执行**：宿主显式传了无效

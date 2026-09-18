@@ -63,7 +63,7 @@ async def require_api_key(
         else:
             api_key = authorization
 
-    # Support Cookie：admin_token 优先——门户登录态优先于嵌入会话，否则平台内嵌
+    # Support Cookie：portal_session（门户登录态）优先于 embed_session，否则平台内嵌
     # iframe 场景会被降级或串号。
     session_cookie_name: Optional[str] = None
     # 凭据来源。调用方（如 user_apikey 判断是否该下发 embed_session）应按「来源」决策，
@@ -71,13 +71,13 @@ async def require_api_key(
     # 真实 Key），值比较会在那种情形下漏判。
     credential_source = "header"
     if not api_key:
-        api_key = request.cookies.get("admin_token")
+        api_key = request.cookies.get("portal_session")
         if api_key:
-            session_cookie_name = "admin_token"
-            credential_source = "cookie:admin_token"
+            session_cookie_name = "portal_session"
+            credential_source = "cookie:portal_session"
 
     # 嵌入会话：由 /api/portal/auth/user_apikey 在「显式凭据校验通过」后下发，
-    # 使嵌入页刷新时无需再依赖 URL 里的长期 API Key。独立于 admin_token，
+    # 使嵌入页刷新时无需再依赖 URL 里的长期 API Key。独立于 portal_session，
     # 因此打开嵌入页不会顶掉用户自己的门户登录态。
     if not api_key:
         api_key = request.cookies.get("embed_session")

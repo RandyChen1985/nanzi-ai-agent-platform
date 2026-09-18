@@ -12,10 +12,10 @@
 
 - **Header `X-API-Key`**（推荐）
 - **Header `Authorization`**：`Bearer <token>` 或直接 `<token>`
-- **Cookie `admin_token`**（浏览器会话专用）
+- **Cookie `portal_session`**（浏览器会话专用）
 
 > **凭据形态说明**：前两种由外部系统集成传入，是**长期 API Key**，格式为 `nzi_` + 43 字符随机体
-> （共 47 字符，如 `nzi_FniF4mAUYBxh2vfUvHbhdywTJ2cJeCCJYafAllwB79E`）；Cookie `admin_token` 由门户登录
+> （共 47 字符，如 `nzi_FniF4mAUYBxh2vfUvHbhdywTJ2cJeCCJYafAllwB79E`）；Cookie `portal_session` 由门户登录
 > 下发，内容是**可吊销的不透明会话令牌**（`sess_<random>`，24 小时滑动续期），**不是**长期 Key，
 > 也不写入任何 JS 可读的浏览器存储。两者最终都经 `require_api_key` 校验，对下游完全等价。
 >
@@ -132,7 +132,7 @@ curl -sS -X POST 'http://<host>:<port>/api/v1/chatbi/sql/execute' \
 
 ## 3）校验 SQL 权限（不执行）
 
-**不要求** `X-API-Key` / `Authorization` / `admin_token`。在 Body 中传 `username`（平台登录名），服务端从库表解析用户身份后，与「执行只读 SQL」走同一套校验链：数据集存在性、物理表权限、行级权限 SQL 重写、`sqlglot` 只读语法校验；**不会**调用外部 SQL 执行服务。
+**不要求** `X-API-Key` / `Authorization` / `portal_session`。在 Body 中传 `username`（平台登录名），服务端从库表解析用户身份后，与「执行只读 SQL」走同一套校验链：数据集存在性、物理表权限、行级权限 SQL 重写、`sqlglot` 只读语法校验；**不会**调用外部 SQL 执行服务。
 
 ### 路径
 
@@ -201,7 +201,7 @@ OpenClaw 通路的 system prompt 中会生成 `<AUTH_CONTEXT>` JSON（见 `app/s
 |------|------|
 | `X-API-Key` | 请求头携带 API Key（常用，外部系统集成） |
 | `Authorization` | `Bearer <token>` 或直接 `<token>` |
-| Cookie | `admin_token`，内容为登录下发的**不透明会话令牌**（`sess_*`），非长期 Key |
+| Cookie | `portal_session`，内容为登录下发的**不透明会话令牌**（`sess_*`），非长期 Key |
 
 用户信息由 Key 解析得到，**无需**在 Body / Query 里传用户名。
 
