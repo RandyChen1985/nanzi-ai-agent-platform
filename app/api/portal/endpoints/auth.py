@@ -3,25 +3,14 @@ from typing import Optional
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
-from app.core.dependencies import require_api_key
+from app.core.dependencies import require_api_key, is_secure_request as _is_secure_request
 from app.core.orm import get_db_session
 from app.services.auth_service import AuthService
 
 router = APIRouter()
 
-
-def _is_secure_request(request: Request) -> bool:
-    """判断当前请求是否应下发 Secure Cookie。
-
-    TLS 可能终止在反向代理（k8s ingress / nginx），此时后端看到的是 http，
-    因此优先信任代理写入的 X-Forwarded-Proto。客户端伪造该头只会让自己的
-    Cookie 收不到，不构成安全绕过；纯 HTTP 部署下返回 False，
-    保持现有行为可登录。
-    """
-    forwarded = request.headers.get("x-forwarded-proto")
-    if forwarded:
-        return forwarded.split(",")[0].strip().lower() == "https"
-    return request.url.scheme == "https"
+# `_is_secure_request` 的实现已上移至 app/core/dependencies.py：`require_api_key` 在
+# 续期会话 Cookie 时同样需要它，集中一处以免两边的 Cookie 属性判断发生漂移。
 
 
 async def _issue_admin_token_cookie(
@@ -59,11 +48,39 @@ async def _issue_admin_token_cookie(
 
     return issued
 
+
+# 嵌入会话 Cookie：独立于 admin_token，避免顶掉用户自己的门户登录态。
+EMBED_SESSION_COOKIE_NAME = "embed_session"
+EMBED_SESSION_COOKIE_MAX_AGE = 86400
+
+
+def _set_embed_session_cookie(
+    http_request: Request,
+    response: Response,
+    session_token: str,
+) -> None:
+    """下发 embed_session（HttpOnly），使嵌入页刷新后无需再依赖 URL 里的长期 Key。
+
+    独立于 admin_token：两者 path 均为 `/`，共用同名 Cookie 会互相覆盖，导致打开
+    嵌入页时顶掉用户自己的门户登录态。
+
+    SameSite 取 lax：同源嵌入（平台内 iframe）可正常携带；跨站第三方 iframe 需改为
+    SameSite=None 且必须 HTTPS，属后续阶段。
+    """
+    response.set_cookie(
+        key=EMBED_SESSION_COOKIE_NAME,
+        value=session_token,
+        httponly=True,
+        max_age=EMBED_SESSION_COOKIE_MAX_AGE,
+        samesite="lax",
+        secure=_is_secure_request(http_request),
+    )
+
+
 class LoginRequest(BaseModel):
     api_key: Optional[str] = Field(None, description="API 密钥", json_schema_extra={"example": "S63B_..."})
     username: Optional[str] = Field(None, description="用户名")
     password: Optional[str] = Field(None, description="密码")
-
 class SSOLoginRequest(BaseModel):
     username: str = Field(..., description="SSO 用户名")
     password: str = Field(..., description="SSO 密码")
@@ -329,17 +346,29 @@ async def logout(
     """
     退出登录并清除 Cookie 和 Redis 缓存
     """
-    # 凭据优先取请求头，其次取 admin_token cookie：否则浏览器仅凭 cookie 认证时
-    # 服务端会话不会被吊销，登出就只是本地删了个 cookie。
-    credential = api_key or http_request.cookies.get("admin_token")
+    # 凭据优先取请求头，其次取 Cookie：否则浏览器仅凭 cookie 认证时服务端会话不会
+    # 被吊销，登出就只是本地删了个 cookie。两个 Cookie 都要看——嵌入页刷新后只带
+    # embed_session，此前会被漏掉，导致「登出后会话仍在」。
+    credential = (
+        api_key
+        or http_request.cookies.get("admin_token")
+        or http_request.cookies.get(EMBED_SESSION_COOKIE_NAME)
+    )
 
     if credential:
-        if credential.startswith(AuthService.PORTAL_SESSION_PREFIX):
+        if credential.startswith(
+            (AuthService.PORTAL_SESSION_PREFIX, AuthService.EMBED_SESSION_PREFIX)
+        ):
+            # sess_ 门户会话 / emb_ses_ 嵌入会话：按令牌吊销
             await AuthService.revoke_portal_session(credential)
         else:
+            # 真实长期 Key（PORTAL_SESSION_TOKEN_ENABLED=false 的回退形态）
             await AuthService.expire_api_key(credential)
-        
+
+    # 两个会话 Cookie 都要清：只删 admin_token 会让 embed_session 残留，
+    # 门户登出后请求会回落到嵌入身份，造成身份串号。
     response.delete_cookie(key="admin_token")
+    response.delete_cookie(key=EMBED_SESSION_COOKIE_NAME)
     return {"status": "success", "message": "Logged out successfully"}
 
 
@@ -568,6 +597,8 @@ async def get_my_permissions(
 
 @router.get("/user_apikey", summary="验证 API Key 有效性")
 async def validate_user_apikey(
+    http_request: Request,
+    response: Response,
     user: dict = Depends(require_api_key)
 ):
     """
@@ -607,6 +638,22 @@ async def validate_user_apikey(
         if issued:
             data["session_token"] = issued["session_token"]
             data["expires_in"] = issued["expires_in"]
+
+            # 仅当凭据经 header 显式传入时才下发 embed_session：凭据若来自 Cookie，
+            # 说明浏览器已有会话（门户或既有嵌入会话），再下发会在门户登录态之外
+            # 凭空多挂一个身份，共享设备上还可能造成身份串号。
+            #
+            # 这里按**来源**判断而非比较凭据值：值比较在「门户 Cookie 里恰好就是同一个
+            # 真实 Key」时会误判为同一来源（相等 → 不下发），使该路径静默失去会话。
+            credential_source = getattr(
+                http_request.state, "credential_source", "header"
+            )
+            if credential_source == "header":
+                _set_embed_session_cookie(
+                    http_request, response, issued["session_token"]
+                )
+                # 供前端确认「会话已建立」，据此才可安全清除 URL 里的长期 Key
+                data["session_cookie_issued"] = True
 
     return {
         "status": "success",

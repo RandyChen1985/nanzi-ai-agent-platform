@@ -1,6 +1,6 @@
 import logging
 from typing import Optional, List
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.dependencies import require_api_key, get_db_session
@@ -59,6 +59,10 @@ class SessionTokenResponseData(BaseModel):
     expires_in: int = Field(..., description="Session 有效期（秒），活跃调用会自动滑动延长")
     user_info: dict = Field(..., description="用户基本信息")
     agent_id: Optional[str] = Field(None, description="绑定的智能体 ID")
+    session_cookie_issued: Optional[bool] = Field(
+        None,
+        description="是否已同时下发 embed_session Cookie，供前端确认「刷新可免 URL 凭据」",
+    )
 
 
 @router.post(
@@ -106,6 +110,7 @@ async def create_embed_ticket(
 )
 async def exchange_embed_ticket(
     request: Request,
+    response: Response,
     payload: ExchangeTicketRequest,
 ):
     origin = request.headers.get("Origin") or request.headers.get("Referer")
@@ -114,6 +119,14 @@ async def exchange_embed_ticket(
             ticket=payload.ticket,
             origin=origin,
         )
+        # 与 /api/portal/auth/user_apikey 对称：把兑换来的**会话**写入 HttpOnly Cookie，
+        # 让 iframe 内刷新无需再依赖 URL 里的 ticket——ticket 是一次性的（已 GETDEL
+        # 核销）且默认仅 5 分钟，放哪都撑不过一次刷新，能撑住刷新的只有 emb_ses_。
+        # 延迟导入以避免 api.v1 与 api.portal 之间的循环依赖。
+        from app.api.portal.endpoints.auth import _set_embed_session_cookie
+
+        _set_embed_session_cookie(request, response, data["session_token"])
+        data["session_cookie_issued"] = True
         return StandardResponse(data=data)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))

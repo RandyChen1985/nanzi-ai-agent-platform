@@ -1389,7 +1389,9 @@ const panelCacheSizeDisplay = computed(() => {
 const fetchPanelCacheSize = async () => {
   panelCacheLoading.value = true;
   try {
-    const token = typeof localStorage !== 'undefined' ? localStorage.getItem('token') : '';
+    // 凭据由父级传入（EmbedChat 的 config.token）；同源场景由 HttpOnly Cookie 自动携带。
+    // 此前读 localStorage['token'] 是死代码——该键没有任何写入方，Authorization 恒为空。
+    const token = props.authToken;
     const res = await fetch('/api/v1/chat/browser/profiles', {
       headers: token ? { Authorization: `Bearer ${token}` } : {},
     });
@@ -1412,7 +1414,8 @@ const clearPanelCache = async () => {
   panelClearConfirm.value = false;
   panelClearing.value = true;
   try {
-    const token = typeof localStorage !== 'undefined' ? localStorage.getItem('token') : '';
+    // 同 fetchPanelCacheSize：改用父级传入的 authToken，而非无人写入的 localStorage
+    const token = props.authToken;
     const res = await fetch('/api/v1/chat/browser/profiles/clear', {
       method: 'DELETE',
       headers: token ? { Authorization: `Bearer ${token}` } : {},

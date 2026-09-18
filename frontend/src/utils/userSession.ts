@@ -34,12 +34,17 @@ export function persistUserInfo(userInfo: UserInfoLike | null | undefined): User
   return snapshot
 }
 
-/** 清空所有本地会话凭据与 Cookie，彻底重置为未登录态。 */
+/** 清空前端可清的本地会话副本（localStorage），重置为「本地无痕」状态。
+ *
+ * 注意：**这不等同于登出**。admin_token 是 HttpOnly Cookie，JS 既读不到也写不了，
+ * 本函数无法清除它；调用后浏览器在服务端仍是登录态。真正的会话失效须由后端
+ * `POST /api/portal/auth/logout` 完成（吊销 Redis 会话 + delete_cookie）。
+ * 这里也不再写 `document.cookie` 删它——那种赋值是空操作，只会误导排查者。
+ */
 export function clearUserSession(): void {
   localStorage.removeItem('api_key')
   localStorage.removeItem('user_info')
   localStorage.removeItem('admin_token')
   localStorage.removeItem('yovole_token')
-  document.cookie = 'admin_token=; path=/; max-age=0; samesite=lax'
 }
 

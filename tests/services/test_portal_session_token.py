@@ -18,11 +18,12 @@ pytestmark = pytest.mark.no_infrastructure
 
 
 class _FakeRedis:
-    """只实现会话链路用到的 hash / expire / delete 语义。"""
+    """只实现会话链路用到的 hash / set / expire / delete 语义。"""
 
     def __init__(self):
         self.hashes = {}
         self.ttls = {}
+        self.sets = {}
 
     async def hset(self, key, mapping=None):
         bucket = self.hashes.setdefault(key, {})
@@ -37,10 +38,37 @@ class _FakeRedis:
         self.ttls[key] = ttl
         return True
 
-    async def delete(self, key):
-        self.hashes.pop(key, None)
-        self.ttls.pop(key, None)
-        return 1
+    async def delete(self, *keys):
+        # 与真实 Redis 一致：按「键」计数，同一键的多个存储视作一个键
+        removed = 0
+        for key in keys:
+            if any(key in store for store in (self.hashes, self.ttls, self.sets)):
+                removed += 1
+            self.hashes.pop(key, None)
+            self.ttls.pop(key, None)
+            self.sets.pop(key, None)
+        return removed
+
+    async def sadd(self, key, *values):
+        bucket = self.sets.setdefault(key, set())
+        added = 0
+        for value in values:
+            if value not in bucket:
+                bucket.add(value)
+                added += 1
+        return added
+
+    async def smembers(self, key):
+        return set(self.sets.get(key, set()))
+
+    async def srem(self, key, *values):
+        bucket = self.sets.get(key, set())
+        removed = 0
+        for value in values:
+            if value in bucket:
+                bucket.discard(value)
+                removed += 1
+        return removed
 
 
 def _fake_user(**overrides):
@@ -243,8 +271,9 @@ async def test_cookie_issuance_is_gated_by_the_feature_flag():
     source = Path("app/api/portal/endpoints/auth.py").read_text(encoding="utf-8")
 
     assert "settings.PORTAL_SESSION_TOKEN_ENABLED" in source
-    # 所有 cookie 下发放都必须走统一入口，避免遗漏某条登录路径
-    assert source.count("_issue_admin_token_cookie(") == 6  # 1 处定义 + 5 处调用
+    # 所有 cookie 下发放都必须走统一入口，避免遗漏某条登录路径。
+    # 用 >= 而非 ==：新增登录路径不应因为「数量对不上」而误报，漏走统一入口才是问题。
+    assert source.count("_issue_admin_token_cookie(") >= 6  # 1 处定义 + 5 处调用
 
 
 def _fake_response():
@@ -310,3 +339,176 @@ def test_portal_session_token_is_enabled_by_default():
 
     field = Settings.model_fields["PORTAL_SESSION_TOKEN_ENABLED"]
     assert field.default is True
+
+
+# --- 按用户吊销索引 与 低频回源复核 ---
+#
+# 修复背景：会话缓存键是 auth:api_key:{sha256(token)}，无法从 user_id 反查，
+# 因此 invalidate_user_auth_cache（禁用/删除用户、改角色、重置 Key 都走它）只删了
+# 真实 Key 的缓存键，对会话完全无效；又因为 verify_api_key 缓存命中不查库、会话还
+# 参与 24h 滑动续期，被禁用/降权的用户会带着旧身份一直用下去。下面锁定两组保护：
+#   1. 签发即登记 auth:user_sessions:{user_id}，吊销时按索引成批删除；
+#   2. 命中缓存也会按间隔回源复核 status/role，作为吊销遗漏路径的兜底。
+
+
+def _patch_session_get(user):
+    """patch `_get_session`，使回源复核用的 `session.get(User, id)` 返回给定用户。"""
+    session = AsyncMock()
+    session.get = AsyncMock(return_value=user)
+    session.execute = AsyncMock()
+    return patch(
+        "app.services.auth_service.AuthService._get_session",
+        AsyncMock(return_value=(session, False)),
+    )
+
+
+def _index_key(user_id) -> str:
+    return f"{AuthService.SESSION_INDEX_PREFIX}{user_id}"
+
+
+@pytest.mark.asyncio
+async def test_issued_sessions_are_indexed_by_user():
+    """签发时必须登记索引，否则禁用/删号时根本找不到这些会话键。"""
+    redis = _FakeRedis()
+
+    with _patch_redis(redis), _patch_session(_fake_user()):
+        token = await AuthService.create_portal_session(7)
+
+    assert _session_key(token) in redis.sets[_index_key(7)]
+
+
+@pytest.mark.asyncio
+async def test_revoke_sessions_for_user_kills_all_its_sessions():
+    """按用户成批吊销：禁用 / 删除 / 降权 / 重置 Key 全部依赖这条路径。"""
+    redis = _FakeRedis()
+
+    with _patch_redis(redis), _patch_session(_fake_user()):
+        first = await AuthService.create_portal_session(7)
+        second = await AuthService.create_portal_session(7)
+
+    with _patch_redis(redis):
+        removed = await AuthService.revoke_sessions_for_user(7)
+
+    assert removed == 2
+    assert _session_key(first) not in redis.hashes
+    assert _session_key(second) not in redis.hashes
+    assert _index_key(7) not in redis.sets
+
+
+@pytest.mark.asyncio
+async def test_invalidate_user_auth_cache_also_revokes_sessions():
+    """核心修复：清认证缓存必须连带吊销会话，否则禁用后旧会话仍然长期有效。"""
+    redis = _FakeRedis()
+
+    with _patch_redis(redis), _patch_session(_fake_user()):
+        token = await AuthService.create_portal_session(7)
+
+    with _patch_redis(redis), _patch_session_get(_fake_user()):
+        await AuthService.invalidate_user_auth_cache(7, api_key_hash="real-hash")
+
+    assert _session_key(token) not in redis.hashes
+
+
+@pytest.mark.asyncio
+async def test_invalidate_revokes_sessions_even_without_api_key_hash():
+    """删除用户时可能拿不到旧 hash，但会话仍必须被吊销（不能因此提前 return）。"""
+    redis = _FakeRedis()
+
+    with _patch_redis(redis), _patch_session(_fake_user()):
+        token = await AuthService.create_portal_session(7)
+
+    with _patch_redis(redis), _patch_session_get(None):
+        await AuthService.invalidate_user_auth_cache(7)
+
+    assert _session_key(token) not in redis.hashes
+
+
+@pytest.mark.asyncio
+async def test_disabled_user_session_is_revoked_on_reverify():
+    """兜底：即使某条变更路径漏调吊销，回源复核也会在间隔后让会话失效。"""
+    redis = _FakeRedis()
+
+    with _patch_redis(redis), _patch_session(_fake_user()):
+        token = await AuthService.create_portal_session(7)
+
+    key = _session_key(token)
+    redis.hashes[key]["verified_at"] = "1"  # 迫使下次校验回源
+
+    with _patch_redis(redis), _patch_session_get(_fake_user(status=0)):
+        assert await AuthService.verify_api_key(token) is None
+
+    assert key not in redis.hashes
+
+
+@pytest.mark.asyncio
+async def test_reverify_refreshes_role_from_db():
+    """降权后角色必须及时生效，不能一直沿用缓存里的旧 role。"""
+    redis = _FakeRedis()
+
+    with _patch_redis(redis), _patch_session(_fake_user()):
+        token = await AuthService.create_portal_session(7)
+
+    assert redis.hashes[_session_key(token)]["role"] == "admin"
+    redis.hashes[_session_key(token)]["verified_at"] = "1"
+
+    with _patch_redis(redis), _patch_session_get(_fake_user(role="user")):
+        user_info = await AuthService.verify_api_key(token)
+
+    assert user_info is not None
+    assert user_info["role"] == "user"
+
+
+@pytest.mark.asyncio
+async def test_reverify_is_skipped_within_interval():
+    """间隔内不得回源查库：热路径不能被每次请求的 DB 查询拖累。"""
+    redis = _FakeRedis()
+
+    with _patch_redis(redis), _patch_session(_fake_user()):
+        token = await AuthService.create_portal_session(7)
+
+    session = AsyncMock()
+    session.get = AsyncMock(return_value=_fake_user())
+    with _patch_redis(redis), patch(
+        "app.services.auth_service.AuthService._get_session",
+        AsyncMock(return_value=(session, False)),
+    ):
+        assert await AuthService.verify_api_key(token) is not None
+
+    session.get.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_reverify_failure_does_not_kick_users_offline():
+    """复核查库异常时必须 fail-open（沿用缓存），不能把在线用户整批踢下线。"""
+    redis = _FakeRedis()
+
+    with _patch_redis(redis), _patch_session(_fake_user()):
+        token = await AuthService.create_portal_session(7)
+
+    redis.hashes[_session_key(token)]["verified_at"] = "1"
+
+    session = AsyncMock()
+    session.get = AsyncMock(side_effect=RuntimeError("db down"))
+    with _patch_redis(redis), patch(
+        "app.services.auth_service.AuthService._get_session",
+        AsyncMock(return_value=(session, False)),
+    ):
+        user_info = await AuthService.verify_api_key(token)
+
+    assert user_info is not None
+    assert user_info["user_id"] == "7"
+
+
+@pytest.mark.asyncio
+async def test_revoke_portal_session_accepts_embed_sessions():
+    """登出时凭据也可能是 emb_ses_（嵌入页刷新后只带它），必须一并可吊销。"""
+    redis = _FakeRedis()
+    token = "emb_ses_abcdefghijklmnop"
+    redis.hashes[_session_key(token)] = {"user_id": "7", "status": "1", "session_type": "embed"}
+    redis.sets[_index_key(7)] = {_session_key(token)}
+
+    with _patch_redis(redis):
+        assert await AuthService.revoke_portal_session(token) is True
+
+    assert _session_key(token) not in redis.hashes
+    assert _session_key(token) not in redis.sets.get(_index_key(7), set())

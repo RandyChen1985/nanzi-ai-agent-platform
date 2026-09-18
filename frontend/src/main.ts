@@ -27,12 +27,19 @@ axios.interceptors.response.use(
         return Promise.reject(error);
       }
 
-      // Clear local storage and redirect to login
+      // 清除客户端存储并跳转登录。
+      //
+      // 这些 localStorage 键是历史遗留（现版本凭据只走 HttpOnly Cookie，不再写入本地
+      // 存储），清掉即可——但注意这只影响前端缓存快照，**不构成登出**。
+      //
+      // 此处刻意不再尝试用 document.cookie 删 admin_token：后端自项目初始化起即以
+      // httponly=True 下发，JS 既读不到也写不了，那种赋值纯属空操作（曾是误导性的死代码）。
+      // 会话真正失效只有两条路：后端 POST /api/portal/auth/logout（吊销 Redis 会话 +
+      // delete_cookie），或会话自然过期。
       localStorage.removeItem('api_key')
       localStorage.removeItem('user_info')
       localStorage.removeItem('admin_token')
       localStorage.removeItem('yovole_token')
-      document.cookie = 'admin_token=; path=/; max-age=0; samesite=lax'
       if (window.location.pathname !== '/login') {
         window.location.href = '/login'
       }

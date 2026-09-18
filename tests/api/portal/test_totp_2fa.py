@@ -117,7 +117,8 @@ async def test_2fa_login_two_step():
     # 模拟动态码验证成功
     with patch("app.services.auth_service.AuthService.verify_and_consume_2fa_pending_token", new_callable=AsyncMock, return_value=user_info), \
          patch("app.services.auth_service.AuthService.get_decrypted_api_key", new_callable=AsyncMock, return_value="ak_test_123"), \
-         patch("app.services.auth_service.AuthService.register_online_state", new_callable=AsyncMock), \
+         patch("app.services.auth_service.AuthService.create_portal_session", new_callable=AsyncMock, return_value="sess_test-token"), \
+         patch("app.services.auth_service.AuthService.record_user_login", new_callable=AsyncMock), \
          patch("app.services.permission_service.PermissionService.get_user_permissions", new_callable=AsyncMock) as mock_perm:
         
         mock_perm_res = MagicMock()
@@ -125,11 +126,22 @@ async def test_2fa_login_two_step():
         mock_perm.return_value = mock_perm_res
 
         req = TwoFactorLoginRequest(two_factor_token="pending_token_xyz", code="123456")
-        res = await two_factor_login(request=req, response=mock_response, db=mock_db)
+        # http_request 用于判断是否下发 Secure Cookie（信任 X-Forwarded-Proto）；
+        # MagicMock 下 headers.get 返回非字符串，落到 `== "https"` 为 False，即非安全请求。
+        res = await two_factor_login(
+            http_request=MagicMock(), request=req, response=mock_response, db=mock_db
+        )
         
         assert res["status"] == "success"
-        assert res["data"]["api_key"] == "ak_test_123"
-        mock_response.set_cookie.assert_called_once()
+        assert res["data"]["permissions"] == {"menus": ["all"]}
+
+        # Cookie 里放的是不透明会话令牌，而非真实 API Key
+        cookie_kwargs = mock_response.set_cookie.call_args.kwargs
+        assert cookie_kwargs["key"] == "admin_token"
+        assert cookie_kwargs["value"] == "sess_test-token"
+        assert cookie_kwargs["httponly"] is True
+        # 响应体不得回显真实凭据（此前会把 api_key 明文返回）
+        assert "ak_test_123" not in str(res)
 
 @pytest.mark.asyncio
 async def test_register_online_state_with_bool_values():

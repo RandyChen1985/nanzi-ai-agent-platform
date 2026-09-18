@@ -57,12 +57,15 @@ instance.interceptors.response.use(
             console.warn("[Auth] 401 unauthorized suppressed for embed or probe request.");
             break;
           }
-          // 未授权，清除本地存储并跳转登录
+          // 未授权，清除本地存储并跳转登录。
+          //
+          // 与 main.ts 的 401 拦截器同理：localStorage 清理只针对前端历史遗留副本，
+          // 不构成登出；admin_token 是 HttpOnly，document.cookie 无法增删，故不在此处
+          // 尝试删 Cookie（会话失效只能由后端 logout 完成）。
           localStorage.removeItem('api_key')
           localStorage.removeItem('user_info')
           localStorage.removeItem('admin_token')
           localStorage.removeItem('yovole_token')
-          document.cookie = 'admin_token=; path=/; max-age=0; samesite=lax'
           window.location.href = '/login'
           break;
           

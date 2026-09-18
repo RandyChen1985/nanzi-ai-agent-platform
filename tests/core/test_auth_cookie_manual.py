@@ -44,15 +44,18 @@ async def test_require_api_key_logic():
 
     # Mock DB
     mock_db = MagicMock()
+    mock_response = MagicMock()
 
     # Mock AuthService
     with patch("app.services.auth_service.AuthService.verify_api_key", return_value={"user_id": 1}) as mock_verify:
         # Call dependency
-        user = await require_api_key(mock_request, api_key_header=None, authorization=None, db=mock_db)
+        user = await require_api_key(mock_request, mock_response, api_key_header=None, authorization=None, db=mock_db)
         
         # Assertions
         assert user.get("user_id") == 1
         mock_verify.assert_called_with("valid_cookie_token", mock_db)
+        # 凭据来自 Cookie，应重新下发以顺延 max_age（与会话滑动续期对齐）
+        assert mock_response.set_cookie.called, "经 Cookie 认证时应续期会话 Cookie"
         
     # Mock request without cookie or header
     mock_request_empty = MagicMock(spec=Request)
@@ -60,7 +63,7 @@ async def test_require_api_key_logic():
     mock_request_empty.cookies = {}
     
     try:
-        await require_api_key(mock_request_empty, api_key_header=None, authorization=None, db=mock_db)
+        await require_api_key(mock_request_empty, MagicMock(), api_key_header=None, authorization=None, db=mock_db)
         assert False, "Should have raised HTTPException"
     except HTTPException as e:
         assert e.status_code == 401

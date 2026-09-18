@@ -78,3 +78,36 @@ async def test_user_apikey_does_not_reissue_for_existing_session(client: AsyncCl
 
     assert second.status_code == 200
     assert "session_token" not in second.json()["data"]
+
+
+async def test_issued_embed_session_is_indexed_for_revocation():
+    """嵌入会话必须登记到用户索引，否则禁用/删号时吊销不到它。
+
+    会话缓存键是令牌哈希，无法从 user_id 反查；没有索引，管理后台的禁用/降权
+    对这个会话完全无效（且它会随活跃调用持续滑动续期）。
+    """
+    from unittest.mock import AsyncMock, patch
+
+    redis = AsyncMock()
+    user = {"user_id": "42", "user_name": "bob", "role": "user"}
+
+    with patch("app.services.embed_service.get_redis", AsyncMock(return_value=redis)):
+        issued = await EmbedService.issue_session_from_user(user)
+
+    assert issued is not None
+    redis.sadd.assert_awaited()
+    assert redis.sadd.await_args.args[0] == f"{AuthService.SESSION_INDEX_PREFIX}42"
+
+
+async def test_issued_embed_session_records_verified_at():
+    """签发时写入 verified_at，避免登录后第一次请求就触发回源复核。"""
+    from unittest.mock import AsyncMock, patch
+
+    redis = AsyncMock()
+    user = {"user_id": "42", "user_name": "bob", "role": "user"}
+
+    with patch("app.services.embed_service.get_redis", AsyncMock(return_value=redis)):
+        await EmbedService.issue_session_from_user(user)
+
+    mapping = redis.hset.await_args.kwargs["mapping"]
+    assert mapping.get("verified_at"), "缺少 verified_at，回源复核间隔无法生效"

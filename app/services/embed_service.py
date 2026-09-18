@@ -1,6 +1,7 @@
 import json
 import logging
 import secrets
+import time
 from typing import Optional, Dict, Any
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -192,11 +193,11 @@ class EmbedService:
             "session_type": "embed",
             "agent_id": ticket_data.get("agent_id", ""),
             "created_by_user_id": ticket_data.get("created_by_user_id", ""),
+            "verified_at": str(int(time.time())),
         }
 
         # 4. 写入鉴权缓存，设置 24 小时 TTL (请求时会自动滑动续期)
-        await redis.hset(cache_key, mapping=user_session_data)
-        await redis.expire(cache_key, SESSION_TOKEN_TTL_SECONDS)
+        await EmbedService._persist_session(redis, cache_key, user_session_data)
 
         logger.info(
             "Embed ticket exchanged successfully: ticket=%s user=%s session_token_prefix=%s ttl=%ds",
@@ -217,6 +218,18 @@ class EmbedService:
             },
             "agent_id": ticket_data.get("agent_id") or None,
         }
+
+    @staticmethod
+    async def _persist_session(redis, cache_key: str, user_session_data: Dict[str, Any]) -> None:
+        """写入嵌入会话缓存，并登记到用户索引（便于禁用/删号时成批吊销）。"""
+        await redis.hset(cache_key, mapping=user_session_data)
+        await redis.expire(cache_key, SESSION_TOKEN_TTL_SECONDS)
+        # 延迟导入：auth_service 只在函数内引用 embed_service，顶层互引会绕成环
+        from app.services.auth_service import AuthService
+
+        await AuthService._index_session(
+            redis, user_session_data.get("user_id"), cache_key
+        )
 
     @staticmethod
     async def issue_session_from_user(
@@ -258,10 +271,10 @@ class EmbedService:
             "session_type": "embed",
             "agent_id": agent_id or "",
             "created_by_user_id": str(user.get("user_id", "")),
+            "verified_at": str(int(time.time())),
         }
 
-        await redis.hset(cache_key, mapping=user_session_data)
-        await redis.expire(cache_key, SESSION_TOKEN_TTL_SECONDS)
+        await EmbedService._persist_session(redis, cache_key, user_session_data)
 
         logger.info(
             "Embed session issued from authenticated user: user=%s session_token_prefix=%s ttl=%ds",

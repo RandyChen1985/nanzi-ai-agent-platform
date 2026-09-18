@@ -114,5 +114,14 @@ def test_persist_user_info_purges_legacy_credential_copies():
     for key in ("api_key", "admin_token", "yovole_token"):
         assert f"localStorage.removeItem('{key}')" in persist_section, key
 
-    # 登录阶段绝不能清除 admin_token Cookie——它现在是有效的会话凭据，由后端下发
-    assert "document.cookie" not in persist_section
+    # 登录阶段绝不能清除 admin_token Cookie——它现在是有效的会话凭据，由后端下发。
+    #
+    # 只检查**代码行**：`persist_section` 会一路截到下个 `export function` 之前，
+    # 因而包含紧随其后的 clearUserSession 的 JSDoc；而说明「此处不应操作
+    # document.cookie」的注释本身必然含有该字面量，直接做子串匹配会被自己的文档误伤。
+    code_text = "\n".join(
+        line
+        for line in persist_section.splitlines()
+        if not line.lstrip().startswith(("//", "*", "/*"))
+    )
+    assert "document.cookie" not in code_text

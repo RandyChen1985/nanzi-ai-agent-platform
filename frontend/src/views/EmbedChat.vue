@@ -316,12 +316,12 @@
           </svg>
         </div>
         <h3 class="text-lg font-bold text-gray-800 dark:text-gray-100 mb-2">
-          无访问权限
+          {{ authFailureView.title }}
         </h3>
         <p
           class="text-sm text-gray-500 dark:text-gray-400 max-w-xs leading-relaxed"
         >
-          认证失败，请检查您的账号是否有权限访问！
+          {{ authFailureView.message }}
         </p>
       </div>
       <!-- URL agent_id deep-link error -->
@@ -3022,8 +3022,103 @@ const bashBannerDismissed = ref(false);
  * 存量宿主仍在使用 `/embed/chat?token=<API Key>`，长期密钥会出现在浏览器地址栏、
  * 历史记录、Referer 与访问日志中。这里在 embed 页顶部提示宿主迁移到 Ticket 模式。
  * 提示只针对「接入方式」，与凭据是否有效无关，因此标记发生在校验之前。
+ *
+ * 注：清除地址栏**必须以会话已建立为前提**。两条链路都会下发独立的 `embed_session`
+ * Cookie（不影响 `admin_token`）：`user_apikey` 在凭据经 header 传入时下发并置
+ * `session_cookie_issued`，ticket 兑换成功时同样下发。前端据此才调用
+ * `stripUrlCredentials`；若在会话建立之前就清除，URL 里的凭据是唯一来源，刷新会
+ * 立即失效（曾踩过一次）。
  */
 const usesLegacyUrlToken = ref(false);
+
+/**
+ * 嵌入会话的**本 tab** 持久化（sessionStorage）。
+ *
+ * 为什么需要它：先前只把换发来的 `emb_ses_` 放在内存 + axios header，刷新后内存清空，
+ * 只能回头依赖 `embed_session` Cookie。而该 Cookie 是 `SameSite=lax`，**在跨站第三方
+ * iframe 里不会随请求发送**（`/embed/` 恰恰以 `frame-ancestors *` 支持跨站嵌入），
+ * 于是「清掉 URL 里的凭据 → 刷新即失效」；同时 Cookie 是整浏览器一个槽，多个嵌入实例
+ * 会互相覆盖，刷新后可能变成另一个用户。
+ *
+ * sessionStorage 恰好补上这两点：按 tab（iframe 各自独立，互不覆盖）、刷新后仍在、
+ * 关闭标签即清除。它确实是 JS 可读的，因此这里权衡后**只放短期、可吊销的会话令牌**，
+ * 绝不放长期 API Key——真实 Key 用后即弃，URL 里的凭据也才敢清。长期 Key 依然不落
+ * 任何 localStorage。
+ */
+const EMBED_SESSION_STORAGE_KEY = "nzi_embed_session_token";
+
+/** 把会话令牌持久化到本 tab；失败（隐私模式/存储被禁）返回 false，调用方据此决定是否清 URL。 */
+const persistEmbedSession = (token: string): boolean => {
+  if (!token) return false;
+  try {
+    sessionStorage.setItem(EMBED_SESSION_STORAGE_KEY, token);
+    return true;
+  } catch (e) {
+    console.warn("[Auth] Failed to persist embed session to sessionStorage:", e);
+    return false;
+  }
+};
+
+/** 读取本 tab 的嵌入会话令牌；无则返回空串。 */
+const readEmbedSession = (): string => {
+  try {
+    return (sessionStorage.getItem(EMBED_SESSION_STORAGE_KEY) || "").trim();
+  } catch {
+    return "";
+  }
+};
+
+/** 清除本 tab 的嵌入会话令牌（会话失效或登出时调用）。 */
+const clearEmbedSession = (): void => {
+  try {
+    sessionStorage.removeItem(EMBED_SESSION_STORAGE_KEY);
+  } catch {
+    /* 存储不可用时无需处理 */
+  }
+};
+
+/** 从地址栏移除凭据（长期 Key 或一次性 Ticket），避免其残留在浏览器历史、录屏与
+ * 分享链接中。
+ *
+ * ⚠️ **只能在确认「刷新有凭据可依」后调用**，即满足以下任一条：
+ *   - 本 tab 已把会话令牌写入 sessionStorage（`persistEmbedSession` 返回真）——
+ *     跨站 iframe 同样成立，这是主要的判定依据；
+ *   - 后端确认已下发 `embed_session` Cookie（`session_cookie_issued`）——同站场景。
+ * 判定的统一入口是 `maybeStripUrlAfterSessionReady()`，不要直接调用本函数。
+ * 若在凭据落地之前就清除，URL 里的凭据是唯一来源，刷新会立即失效（曾踩过一次）。
+ *
+ * 只删 token 与 ticket：agent_id / theme / instance_id 等非敏感参数必须原样保留，
+ * 否则会破坏智能体锁定、主题与多实例隔离。
+ *
+ * 局限：仅消除「地址栏与历史」的暴露；服务器访问日志与首次加载的 Referer 在页面
+ * 加载时就已产生，前端无法回收。
+ */
+const stripUrlCredentials = () => {
+  try {
+    const url = new URL(window.location.href);
+    if (!url.searchParams.has("token") && !url.searchParams.has("ticket")) return;
+    url.searchParams.delete("token");
+    url.searchParams.delete("ticket");
+    // 只替换 path + query + hash，不触及 origin
+    window.history.replaceState(window.history.state, "", url.pathname + url.search + url.hash);
+  } catch (e) {
+    console.warn("[LifeCycle] Failed to strip credentials from URL:", e);
+  }
+};
+
+/**
+ * 会话就绪后清除 URL 里的凭据；判定「刷新是否有凭据可依」。
+ *
+ * 注意后端返回的 `session_cookie_issued` 只说明「服务端写了 Set-Cookie」，
+ * **不等于浏览器会存、更不等于后续请求会带上**（跨站 iframe 下 Lax Cookie 不会发送）。
+ * 因此优先看本 tab 的 sessionStorage 是否真的拿到了会话令牌；Cookie 只作为同站补充。
+ */
+const lastSessionCookieIssued = ref(false);
+const maybeStripUrlAfterSessionReady = () => {
+  if (readEmbedSession() || lastSessionCookieIssued.value) {
+    stripUrlCredentials();
+  }
+};
 /** 本次会话已关闭（仅内存，刷新后重现）。 */
 const legacyTokenHintDismissed = ref(false);
 /** 已忽略（localStorage 持久化，按嵌入实例隔离）。 */
@@ -4257,6 +4352,27 @@ const scheduleUrlTokenInitialization = () => {
   pendingUrlTokenInitTimer = window.setTimeout(() => {
     pendingUrlTokenInitTimer = null;
     if (!initConfigReceived && config.token) void initChat();
+  }, 250);
+};
+
+/** 无显式凭据时的引导：靠 embed_session Cookie 完成认证。
+ *
+ * 清除地址栏里的长期 Key 之后 URL 不再提供凭据，`config.token` 为空，
+ * `scheduleUrlTokenInitialization` 会直接 return；此时若又收不到 INIT_CONFIG，
+ * 就**没有任何代码发起认证**，刷新后页面会停在失败态（已实测到的故障）。
+ * 这里给出同样带握手窗口的兜底：让 INIT_CONFIG 先到，逾期则用 Cookie 认证。
+ */
+const scheduleCookieOnlyInitialization = () => {
+  if (initConfigReceived || config.token) return;
+  cancelPendingUrlTokenInitialization();
+  if (config.instanceId) {
+    void initChat();
+    return;
+  }
+  // 与 token 路径一致，保留握手窗口，避免抢在父页面 INIT_CONFIG 之前认证
+  pendingUrlTokenInitTimer = window.setTimeout(() => {
+    pendingUrlTokenInitTimer = null;
+    if (!initConfigReceived && !config.token) void initChat();
   }, 250);
 };
 
@@ -6104,9 +6220,9 @@ const exchangeTicketAndApply = async (ticket: string): Promise<boolean> => {
     const res = await axios.post("/api/v1/embed/tickets/exchange", { ticket: ticket.trim() });
     if (res.data && res.data.code === 200 && res.data.data?.session_token) {
       const sessionData = res.data.data;
-      config.token = sessionData.session_token;
-      axios.defaults.headers.common["Authorization"] = `Bearer ${sessionData.session_token}`;
-      axios.defaults.headers.common["X-API-Key"] = sessionData.session_token;
+      // 走统一入口：既设置内存中的 config.token 与 axios 默认头，也把会话令牌持久化到
+      // 本 tab 的 sessionStorage——ticket 是一次性的，能撑住刷新的只有这个会话令牌。
+      syncValidatedCredentials(sessionData.session_token);
       if (sessionData.user_info) {
         currentUser.value = {
           ...currentUser.value,
@@ -6117,6 +6233,7 @@ const exchangeTicketAndApply = async (ticket: string): Promise<boolean> => {
         urlPinnedAgentKey.value = sessionData.agent_id;
         applyIntegrationAgentLock(sessionData.agent_id);
       }
+      lastSessionCookieIssued.value = true;
       return true;
     }
     return false;
@@ -6124,6 +6241,34 @@ const exchangeTicketAndApply = async (ticket: string): Promise<boolean> => {
     console.error("[EmbedTicket] Failed to exchange ticket:", err);
     return false;
   }
+};
+
+/** 同一张 ticket 的并发/重复兑换去重。
+ *
+ * URL `?ticket=` 与宿主经 postMessage 下发的 ticket 可能**同时**到达（宿主通常会在收到
+ * NANZI_WIDGET_READY 后回传 ticket），而 ticket 是一次性的（后端 GETDEL 原子核销），
+ * 并发兑换必然有一方失败，失败方还会无条件上报 INIT_FAILURE，表现为随机弹「凭证已失效」。
+ * 这里让同一 ticket 复用同一次兑换结果：飞行中共享 Promise，已成功的直接返回成功。
+ */
+const inflightTicketExchanges = new Map<string, Promise<boolean>>();
+const consumedTicketValues = new Set<string>();
+const exchangeTicketOnce = (ticket: string): Promise<boolean> => {
+  const key = (ticket || "").trim();
+  if (!key) return Promise.resolve(false);
+  if (consumedTicketValues.has(key)) return Promise.resolve(true);
+  const existing = inflightTicketExchanges.get(key);
+  if (existing) return existing;
+
+  const pending = exchangeTicketAndApply(key)
+    .then((ok) => {
+      if (ok) consumedTicketValues.add(key);
+      return ok;
+    })
+    .finally(() => {
+      inflightTicketExchanges.delete(key);
+    });
+  inflightTicketExchanges.set(key, pending);
+  return pending;
 };
 
 const postInitSuccess = () => {
@@ -6162,13 +6307,16 @@ const handleInitConfig = async (data: Record<string, any>) => {
 
   // 1. 优先使用临时 Ticket 换票
   if (data.ticket) {
-    const ticketOk = await exchangeTicketAndApply(String(data.ticket));
+    const ticketOk = await exchangeTicketOnce(String(data.ticket));
     if (!ticketOk) {
+      authFailureReason.value = "invalid_ticket";
       hasPermission.value = false;
       postMessageToHost({ type: "INIT_FAILURE", reason: "invalid_ticket" });
       return;
     }
     hasPermission.value = true;
+    // 会话令牌已随兑换落地到本 tab，URL 里的 ticket 已核销且不再需要，可安全清除
+    maybeStripUrlAfterSessionReady();
     applyInitConfigPayload(data);
     postInitSuccess();
     await initChat({ skipAuth: true });
@@ -6181,6 +6329,7 @@ const handleInitConfig = async (data: Record<string, any>) => {
     if (strict) {
       // 调试台的 strict_token 模式要求显式传入 token，不允许回落到 Cookie
       console.warn("INIT_CONFIG received in strict mode but no token/api_key/ticket found!");
+      authFailureReason.value = "missing_token";
       hasPermission.value = false;
       postMessageToHost({ type: "INIT_FAILURE", reason: "missing_token" });
       return;
@@ -6201,6 +6350,7 @@ const handleInitConfig = async (data: Record<string, any>) => {
   if (strict) {
     const isValid = await validateToken({ strict: true });
     if (!isValid) {
+      authFailureReason.value = "invalid_token";
       hasPermission.value = false;
       postMessageToHost({ type: "INIT_FAILURE", reason: "invalid_token" });
       return;
@@ -6287,17 +6437,18 @@ const resetSession = async (newToken?: string, ticket?: string) => {
   config.enableGrounding = false; // 新会话恢复默认关闭
   generateNewConversation();
   if (ticket) {
-    const ticketOk = await exchangeTicketAndApply(ticket);
+    const ticketOk = await exchangeTicketOnce(ticket);
     if (!ticketOk) {
+      authFailureReason.value = "invalid_ticket";
       hasPermission.value = false;
       postMessageToHost({ type: "INIT_FAILURE", reason: "invalid_ticket" });
       return;
     }
     hasPermission.value = true;
+    maybeStripUrlAfterSessionReady();
   } else if (newToken) {
-    config.token = newToken;
-    axios.defaults.headers.common["Authorization"] = `Bearer ${newToken}`;
-    axios.defaults.headers.common["X-API-Key"] = newToken;
+    // 走统一入口，顺带把新凭据持久化到本 tab（与 ticket 路径行为一致）
+    syncValidatedCredentials(newToken);
   }
   initChat();
   // 通知门户父页去掉 URL 中的 conversation_id，避免再次 INIT 或刷新又钉回旧会话
@@ -6394,6 +6545,56 @@ const fetchAccountInfo = async () => {
 };
 // State
 const hasPermission = ref(true); // Default to true, strictly controlled by validateToken
+
+/** 认证失败原因，决定「无访问权限」遮罩展示哪种提示。
+ *
+ * 原先该遮罩只有一句硬编码的「认证失败，请检查您的账号是否有权限访问！」，无论失败
+ * 原因是什么都显示它。对最常见的 Ticket 一次性核销场景（用户只是按了 F5）这是**误导**：
+ * ticket 已被 `GETDEL` 原子核销，用户去检查账号权限、改角色配置都**不可能解决**，
+ * 真正该做的是回到宿主系统重新进入。这里按真实原因分派文案，每条都给出下一步动作。
+ */
+type AuthFailureReason =
+  | "invalid_ticket"
+  | "missing_token"
+  | "invalid_token"
+  | "no_session"
+  | "";
+
+const authFailureReason = ref<AuthFailureReason>("");
+
+/** 失败提示的展示映射；空原因回落到通用文案，避免未覆盖路径没有提示。 */
+const authFailureView = computed<{ title: string; message: string }>(() => {
+  switch (authFailureReason.value) {
+    case "invalid_ticket":
+      return {
+        title: "接入凭证已失效",
+        message:
+          "该凭证为一次性使用，页面刷新或重复打开后即失效。请返回原系统重新进入。",
+      };
+    case "missing_token":
+      return {
+        title: "缺少访问凭证",
+        message: "未收到访问凭证，请通过原系统提供的入口打开本页面。",
+      };
+    case "invalid_token":
+      return {
+        title: "访问凭证无效",
+        message: "密钥无效或已过期，请联系管理员确认接入配置。",
+      };
+    case "no_session":
+      return {
+        title: "登录状态已失效",
+        // 嵌入场景用户没有平台登录入口，不能只说「请重新登录」；给出刷新与回宿主的动作。
+        // 跨站 iframe 中 Cookie 不发送时也会落到这里，回宿主重进才是有效路径。
+        message: "当前会话已失效或无法在本页生效，请刷新重试；仍无法进入请联系原系统重新打开。",
+      };
+    default:
+      return {
+        title: "无访问权限",
+        message: "认证失败，请检查您的账号是否有权限访问！",
+      };
+  }
+});
 /** 调试台 strict_token 模式：仅校验 INIT_CONFIG 传入的 token，不走 localStorage / Cookie 兜底。 */
 const strictTokenValidation = ref(false);
 
@@ -6409,6 +6610,9 @@ const syncValidatedCredentials = (apiKey: string) => {
   localStorage.removeItem("yovole_token");
   axios.defaults.headers.common["Authorization"] = `Bearer ${apiKey}`;
   axios.defaults.headers.common["X-API-Key"] = apiKey;
+  // 同时持久化到本 tab 的 sessionStorage：刷新后内存已空，靠它（而不是靠可能不发送的
+  // 跨站 Cookie）重建请求头，既能撑住 F5，也不会与其它 tab / 实例互相覆盖。
+  persistEmbedSession(apiKey);
 };
 
 const validateToken = async (options?: { strict?: boolean }): Promise<boolean> => {
@@ -6426,6 +6630,10 @@ const validateToken = async (options?: { strict?: boolean }): Promise<boolean> =
     if (response.status === 200 && response.data?.status === "success") {
       attachUser(response.data.data);
       issuedSessionToken = String(response.data.data?.session_token || "");
+      // 只「记录」后端是否下发了 Cookie，不在这里清 URL：是否清除由调用方在会话令牌
+      // 真正落地（sessionStorage）之后统一判定——session_cookie_issued 只说明服务端
+      // 写了 Set-Cookie，跨站 iframe 里浏览器未必会存、更未必会回传。
+      lastSessionCookieIssued.value = Boolean(response.data.data?.session_cookie_issued);
       return true;
     }
     return false;
@@ -6444,6 +6652,8 @@ const validateToken = async (options?: { strict?: boolean }): Promise<boolean> =
       if (ok) {
         // 优先使用后端换发的短期会话令牌，真实 Key 用后即弃
         syncValidatedCredentials(issuedSessionToken || token);
+        // 令牌已落到本 tab，刷新有据可依，可以清 URL 里的长期 Key 了
+        maybeStripUrlAfterSessionReady();
         console.log("[Auth] Strict validation success:", accountInfo.value?.user_name);
         return true;
       }
@@ -6459,17 +6669,25 @@ const validateToken = async (options?: { strict?: boolean }): Promise<boolean> =
     const s = t?.trim();
     if (s && !candidates.includes(s)) candidates.push(s);
   };
-  // 凭据不再从本地存储兜底读取；仅用内存中的 token，否则回落到下方的 Cookie 校验分支。
+  // 显式凭据（URL ?token= / INIT_CONFIG）优先；其次才是本 tab 持久化的嵌入会话——
+  // 刷新后前者为空、后者非空，正好接上，且不依赖在跨站 iframe 里可能不发送的 Cookie。
+  // 先留存一份清理前的快照：下面若判定会话已失效会清掉它，但「是否回落 Cookie」得按
+  // 本次是否真的带了嵌入凭据来定，不能被清理动作改写。
+  const storedSessionCredential = readEmbedSession();
   add(config.token);
+  add(storedSessionCredential);
 
   console.log("[Auth] Starting validation, candidates:", candidates.length);
 
+  let rejectedCredential = false;
   for (const key of candidates) {
     try {
       const ok = await tryOnce(authHeaders(key));
       if (ok) {
         // 优先使用后端换发的短期会话令牌，真实 Key 用后即弃
         syncValidatedCredentials(issuedSessionToken || key);
+        // 令牌已落到本 tab，刷新有据可依，可以清 URL 里的长期 Key 了
+        maybeStripUrlAfterSessionReady();
         console.log("[Auth] Validation success:", accountInfo.value?.user_name);
         return true;
       }
@@ -6477,6 +6695,7 @@ const validateToken = async (options?: { strict?: boolean }): Promise<boolean> =
       const status = error.response?.status;
       if (status === 401 || status === 403) {
         console.warn("[Auth] Key candidate rejected (" + status + "), trying next...");
+        rejectedCredential = true;
         continue;
       }
       console.warn("[Auth] Validation error (network/server):", error.message);
@@ -6484,24 +6703,37 @@ const validateToken = async (options?: { strict?: boolean }): Promise<boolean> =
     }
   }
 
-  // 无有效 Header 凭据时尝试仅携带 Cookie（httponly admin_token），且不走 axios 拦截器以免带上失效的 localStorage
-  try {
-    const res = await fetch("/api/portal/auth/user_apikey", { credentials: "include" });
-    if (res.ok) {
-      const body = await res.json();
-      if (body?.status === "success" && body.data) {
-        attachUser(body.data);
-        localStorage.removeItem("api_key");
-        localStorage.removeItem("yovole_token");
-        delete axios.defaults.headers.common["Authorization"];
-        delete axios.defaults.headers.common["X-API-Key"];
-        config.token = "";
-        console.log("[Auth] Validation success via session cookie:", accountInfo.value?.user_name);
-        return true;
+  if (rejectedCredential) {
+    // 本 tab 持久化的会话已被服务端拒绝（过期/被吊销）——清掉，避免每次刷新都白试一次
+    clearEmbedSession();
+    lastSessionCookieIssued.value = false;
+  }
+
+  // 显式提供了凭据（URL ?token= 或 INIT_CONFIG 的 token/api_key）或本 tab 持有嵌入会话
+  // 时，凭据无效即失败，不再回落到同源 Cookie：否则宿主传了无效 token（或本 tab 的嵌入
+  // 会话已失效）却以浏览器里残留的 portal 会话「成功」进入，共享设备上会被上一位用户
+  // 带着进门，代客场景下还会把身份静默换成门户登录用户。
+  // 仅当「完全没有嵌入凭据」（平台内 iframe 访问，子页拿不到 HttpOnly Cookie）时才回落。
+  if (!config.token && !storedSessionCredential) {
+    // 仅携带 Cookie（httponly admin_token），且不走 axios 拦截器以免带上失效的 localStorage
+    try {
+      const res = await fetch("/api/portal/auth/user_apikey", { credentials: "include" });
+      if (res.ok) {
+        const body = await res.json();
+        if (body?.status === "success" && body.data) {
+          attachUser(body.data);
+          localStorage.removeItem("api_key");
+          localStorage.removeItem("yovole_token");
+          delete axios.defaults.headers.common["Authorization"];
+          delete axios.defaults.headers.common["X-API-Key"];
+          config.token = "";
+          console.log("[Auth] Validation success via session cookie:", accountInfo.value?.user_name);
+          return true;
+        }
       }
+    } catch (e: any) {
+      console.warn("[Auth] Cookie-only validation failed:", e.message);
     }
-  } catch (e: any) {
-    console.warn("[Auth] Cookie-only validation failed:", e.message);
   }
 
   return false;
@@ -6515,6 +6747,8 @@ const initChat = async (options?: { skipAuth?: boolean }) => {
       const isValid = await validateToken();
       if (initGeneration !== conversationInitializationGeneration) return;
       if (!isValid) {
+        // 有 token 说明是凭据本身被拒；无 token 则说明同源 Cookie 会话回落也失败
+        authFailureReason.value = config.token ? "invalid_token" : "no_session";
         hasPermission.value = false;
         isInitialLoading.value = false;
         return;
@@ -8651,15 +8885,19 @@ onMounted(() => {
   if (ticketFromUrl) {
     console.log("[LifeCycle] Ticket found in URL. Exchanging for session token...");
     void (async () => {
-      const ok = await exchangeTicketAndApply(ticketFromUrl);
+      const ok = await exchangeTicketOnce(ticketFromUrl);
       if (ok) {
         hasPermission.value = true;
         postInitSuccess();
+        // 兑换成功后会话令牌已落到本 tab 的 sessionStorage（跨站 iframe 也有效），
+        // 刷新不再依赖 URL 里的 ticket（它是一次性的，此刻已核销），可以安全清除。
+        maybeStripUrlAfterSessionReady();
         scheduleUrlTokenInitialization();
         fetchUserInfo();
         fetchAllowedAgents();
         fetchSlashCommands();
       } else {
+        authFailureReason.value = "invalid_ticket";
         hasPermission.value = false;
         postMessageToHost({ type: "INIT_FAILURE", reason: "invalid_ticket" });
       }
@@ -8688,6 +8926,12 @@ onMounted(() => {
     fetchUserInfo(); // Add explicit user fetch
     fetchAllowedAgents();
     fetchSlashCommands();
+  } else if (!ticketFromUrl) {
+    // 无 token 也无 ticket：可能是「清除 URL 凭据后的刷新」。凭据现在有两个可能来源——
+    // 本 tab 的 sessionStorage（首次认证时落地）或同源 Cookie。若在此不触发，页面永远
+    // 不会发起认证——清 URL 会连带抽掉原先由 token 撑起的触发条件。
+    console.log("[LifeCycle] No URL credential; bootstrapping via persisted session...");
+    scheduleCookieOnlyInitialization();
   }
 
   // 切回前台（切回 App 或多标签页）时自动探测并拉取最新会话历史，支持退避轮询直到后台持久化完成
