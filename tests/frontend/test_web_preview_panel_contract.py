@@ -1,5 +1,6 @@
 """轻量网页预览面板的安全 iframe 和交互契约测试。"""
 
+import re
 from pathlib import Path
 
 import pytest
@@ -97,4 +98,30 @@ def test_web_preview_panel_restricted_embed_handling():
     assert "该站点通常禁止内嵌预览" in source
     assert "仍尝试在内嵌框架中加载" in source
     assert "在新标签页打开网页" in source
+
+
+def test_every_new_tab_link_closes_the_panel():
+    """三处「新窗口 / 新标签页打开」入口都必须一并关闭面板。
+
+    逐条检查 `<a>` 开标签，而不是只断言关键词存在：日后新增外链入口却忘记绑定时
+    该用例会直接失败，而「只查字符串」的写法会漏检。
+    """
+    source = _source()
+    anchors = re.findall(r"<a\b[^>]*>", source, flags=re.DOTALL)
+    new_tab_anchors = [anchor for anchor in anchors if 'target="_blank"' in anchor]
+
+    assert len(new_tab_anchors) >= 3, "预期至少三处外链入口：头部 / 受限卡片主按钮 / 底部提示栏"
+    for index, anchor in enumerate(new_tab_anchors):
+        assert "handleOpenInNewTab" in anchor, (
+            f"第 {index + 1} 处 target=_blank 外链未绑定关闭面板：{anchor[:120]}"
+        )
+
+
+def test_open_in_new_tab_handler_actually_closes_the_panel():
+    """handler 必须真的 emit close，而不是只被模板绑定。"""
+    source = _source()
+    match = re.search(r"const handleOpenInNewTab = \(\) => \{(.*?)\n\};", source, flags=re.DOTALL)
+
+    assert match, "未找到 handleOpenInNewTab 定义"
+    assert "emit('close')" in match.group(1)
 

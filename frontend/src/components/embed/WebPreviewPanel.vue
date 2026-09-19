@@ -85,6 +85,7 @@
                 target="_blank"
                 rel="noopener noreferrer"
                 class="inline-flex items-center gap-1 rounded-md px-2 py-1.5 text-xs font-semibold text-blue-600 hover:bg-blue-50 dark:text-blue-300 dark:hover:bg-blue-950/40"
+                @click="handleOpenInNewTab"
               >
                 <span>在新窗口打开</span>
                 <svg class="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -195,6 +196,7 @@
                     target="_blank"
                     rel="noopener noreferrer"
                     class="inline-flex w-full items-center justify-center gap-1.5 rounded-lg bg-blue-600 px-4 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-blue-500 active:scale-[0.99] dark:bg-blue-500 dark:hover:bg-blue-400"
+                    @click="handleOpenInNewTab"
                   >
                     <span>在新标签页打开网页</span>
                     <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -234,6 +236,7 @@
                   target="_blank"
                   rel="noopener noreferrer"
                   class="shrink-0 font-medium text-blue-600 hover:underline dark:text-blue-400"
+                  @click="handleOpenInNewTab"
                 >
                   在新窗口打开 ↗
                 </a>
@@ -262,6 +265,15 @@ const props = defineProps<{
 const emit = defineEmits<{
   (event: 'close'): void;
 }>();
+
+/** 页面已转交新标签页/新窗口，预览面板留着只会继续占位，点击外链后一并关闭。
+ *
+ * 这里不重置 `pinned`：钉住表达的是「下次仍以常驻侧栏打开」的偏好，
+ * 属于跨次会话的用户选择，不该被一次外部跳转清掉。
+ */
+const handleOpenInNewTab = () => {
+  emit('close');
+};
 
 const pinned = defineModel<boolean>('pinned', { default: false });
 const panelWidth = defineModel<number>('panelWidth', { default: 448 });
