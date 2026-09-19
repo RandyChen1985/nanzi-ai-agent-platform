@@ -1656,10 +1656,20 @@ const selectedEmbedModelId = ref('')
 const embeddingModelsForConfig = computed(() =>
   models.value.filter((m) => m.type === 'embedding' && m.is_active)
 )
+/** 多模态类型标识：各供应商登记方式不一（multimodal / vision / image2text），统一在此维护。 */
+const MULTIMODAL_MODEL_TYPES = ['multimodal', 'vision', 'image2text']
+const isMultimodalModel = (m: { type?: string }) =>
+  MULTIMODAL_MODEL_TYPES.includes(String(m.type || '').toLowerCase())
 const multimodalModelsForConfig = computed(() =>
-  models.value.filter(
-    (m) => ['multimodal', 'vision', 'image2text'].includes(String(m.type || '').toLowerCase()) && m.is_active
-  )
+  models.value.filter((m) => isMultimodalModel(m) && m.is_active)
+)
+/** 默认大模型候选：除 `llm` 外一并放行多模态模型。
+ *
+ * GPT-4o、Qwen-VL 这类多模态模型本身具备文本对话能力，常被直接用作平台默认底座；
+ * 此前只列 `type === 'llm'`，导致它们在「默认大模型」下拉里根本选不到。
+ */
+const llmModelsForConfig = computed(() =>
+  models.value.filter((m) => m.is_active && (m.type === 'llm' || isMultimodalModel(m)))
 )
 
 const findConfigItemByKey = (key: string): ConfigItem | null => {
@@ -3247,8 +3257,8 @@ onUnmounted(() => {
                           <div v-else-if="item.key === 'llm_model_name'">
                               <select v-model="item.value" :disabled="isConfigItemDisabled(String(category), item)" class="shadow-sm focus:ring-primary focus:border-primary block w-full sm:text-sm border-gray-300 rounded-md bg-gray-100 p-2 disabled:opacity-70 disabled:cursor-not-allowed">
                                  <option value="" disabled>选择默认模型...</option>
-                                 <option v-for="m in models.filter(x => x.type === 'llm' && x.is_active)" :key="m.id" :value="m.model_id">
-                                    {{ m.name }} ({{ m.model_id }})
+                                 <option v-for="m in llmModelsForConfig" :key="m.id" :value="m.model_id">
+                                    {{ m.name }} ({{ m.model_id }})<template v-if="isMultimodalModel(m)"> · 多模态</template>
                                  </option>
                                  <option v-if="item.value && !models.find(m => m.model_id === item.value)" :value="item.value">
                                      {{ item.value }} (未知/环境变量)
