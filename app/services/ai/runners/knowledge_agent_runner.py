@@ -1012,50 +1012,38 @@ class KnowledgeAgentRunner(AssistantAgentRunner):
             else:
                 break
 
+        # 引用量统计与「回答是否通过事实一致性网关」解耦。
+        #
+        # 检索量由知识库工具在检索时记录，本就不受网关门控；若引用量只在 passed_guard
+        # 为真时才记，被判定幻觉、重写后仍未通过的回答就会出现「有检索、零引用」，引用率
+        # 被系统性压低甚至恒为 0。网关判的是「有没有无依据表述」，不是「有没有引用」——
+        # 模型是否写下 [ID:n] 是回答文本里的客观事实，两者必须分开统计。
+        if prefetched_citations_raw and full_text:
+            try:
+                import re
+                from app.core.context import get_current_agent_context
+                from app.services.knowledge_metrics_service import KnowledgeMetricsService
+
+                citation_ids = set(re.findall(r"\[ID:\s*(\d+)\]", full_text))
+                # 引用量优先按台账的整轮全局编号统计（可覆盖本轮全部检索，含 ReAct
+                # 中的二次检索）；台账缺失时退回按预取列表的位置编号，仅覆盖本次预取。
+                ctx = get_current_agent_context()
+                ledger = getattr(ctx, "knowledge_citation_ledger", None) if ctx else None
+                entries = getattr(ledger, "entries", None)
+                if entries:
+                    await KnowledgeMetricsService.record_citation_hits_for_refs(
+                        entries,
+                        citation_ids,
+                    )
+                else:
+                    await KnowledgeMetricsService.record_citation_hits(
+                        prefetched_citations_raw,
+                        citation_ids,
+                    )
+            except Exception as metric_err:
+                logger.warning(f"[KnowledgeAgentRunner] Redis metrics recording failed: {metric_err}")
+
         if passed_guard:
-            # 异步记录 Redis 引用行为数据埋点 (特性 4)
-            if prefetched_citations_raw:
-                try:
-                    import re
-                    from app.core.redis import get_redis
-                    redis = await get_redis()
-                    if redis:
-                        citation_ids = set(re.findall(r"\[ID:\s*(\d+)\]", full_text))
-                        current_date = time.strftime("%Y-%m-%d")
-                        key_prefix = f"kb:citation:stats:{current_date}"
-
-                        dataset_ids = list({
-                            c.get("dataset_id")
-                            for c in prefetched_citations_raw
-                            if c.get("source_type", "knowledge") == "knowledge" and c.get("dataset_id")
-                        })
-                        if dataset_ids:
-                            from app.services.knowledge_metrics_service import KnowledgeMetricsService
-                            await KnowledgeMetricsService.resolve_dataset_names(dataset_ids)
-
-                        for idx, c in enumerate(prefetched_citations_raw, 1):
-                            ref_id = str(idx)
-                            source_type = c.get("source_type", "knowledge")
-                            is_cited = ref_id in citation_ids
-
-                            # 1. 统计知识库维度
-                            if source_type == "knowledge":
-                                ds_id = c.get("dataset_id") or "default"
-                                await redis.hincrby(f"{key_prefix}:dataset:search", ds_id, 1)
-                                if is_cited:
-                                    await redis.hincrby(f"{key_prefix}:dataset:citation", ds_id, 1)
-
-                                # 2. 统计文档维度
-                                doc_id = c.get("doc_id")
-                                doc_name = c.get("doc_name") or "Unknown Document"
-                                if doc_id:
-                                    await redis.hset("kb:citation:doc_names", doc_id, doc_name)
-                                    await redis.hincrby(f"{key_prefix}:document:search", doc_id, 1)
-                                    if is_cited:
-                                        await redis.hincrby(f"{key_prefix}:document:citation", doc_id, 1)
-                except Exception as metric_err:
-                    logger.warning(f"[KnowledgeAgentRunner] Redis metrics recording failed: {metric_err}")
-
             for chunk in chunks_buffer:
                 yield chunk
         else:

@@ -57,6 +57,10 @@ class AgentContext(BaseModel):
         default=None,
         description="本轮事实取证账本；委派子智能体共享同一实例",
     )
+    knowledge_citation_ledger: Optional[Any] = Field(
+        default=None,
+        description="本轮知识库引用编号台账（[ID:n] 整轮全局递增）；委派子智能体共享同一实例",
+    )
     
     # Execution details for tracing (displayed in frontend)
     trace_id: Optional[str] = None

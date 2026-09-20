@@ -1,13 +1,14 @@
 <script setup lang="ts">
 import { useRouter, useRoute } from "vue-router";
-import { computed, ref, onMounted, onUnmounted, watch } from "vue";
+import { computed, ref, onMounted, onUnmounted, watch, nextTick } from "vue";
 import axios from "../utils/axios";
 import Toast from "../components/Toast.vue";
 import { useBranding } from "../composables/useBranding";
 import { useAppTheme } from "../composables/useAppTheme";
-import { copyToClipboard } from "../utils/clipboard";
 import { persistUserInfo, clearUserSession } from "../utils/userSession";
+import { resolvePasswordExpiryNotice, passwordExpiryToastType, type PasswordInfo } from "../utils/passwordExpiry";
 import PortalNotificationBell from "../components/PortalNotificationBell.vue";
+import ConfirmModal from "../components/ConfirmModal.vue";
 
 const router = useRouter();
 const route = useRoute();
@@ -16,9 +17,15 @@ const { theme, toggleTheme } = useAppTheme();
 const repoUrl = computed(() => resolveRepoUrl());
 const isCollapsed = ref(false);
 const showMobileSidebar = ref(false);
+// 移动端抽屉打开时锁定背景滚动，避免背景跟随滑动
+watch(showMobileSidebar, (open) => {
+  document.body.style.overflow = open ? "hidden" : "";
+});
 const dashboardContentRef = ref<HTMLElement | null>(null);
-const windowWidth = ref(window.innerWidth);
-const isMobile = computed(() => windowWidth.value < 1024);
+// 断点用 matchMedia 跟踪：只在跨越 1024px 时更新一次，
+// 避免拖动窗口时每个 resize 事件都触发侧边栏（20+ 菜单项）重渲染
+const desktopMediaQuery = window.matchMedia("(min-width: 1024px)");
+const isMobile = ref(!desktopMediaQuery.matches);
 const appVersion = import.meta.env.VITE_APP_VERSION || "Dev Build";
 const dashboardContentSpacing = computed(() => {
   if (route.name === "AIChat") return "p-0";
@@ -28,12 +35,23 @@ const dashboardContentSpacing = computed(() => {
 });
 
 const showLogoutDialog = ref(false);
-const showUserInfoDialog = ref(false);
 const showOnlineUsersDialog = ref(false);
-const userApiKey = ref("");
-const loadingApiKey = ref(false);
+/** 退出请求进行中：禁用确认按钮，避免连点重复提交 */
+const loggingOut = ref(false);
 const onlineUserCount = ref(0);
-const onlineUsers = ref<any[]>([]);
+
+/** 在线用户条目（/api/portal/dashboard/online-users 返回） */
+interface OnlineUser {
+  user_id: number;
+  user_name: string;
+  real_name?: string;
+  role?: string;
+  last_active?: string | number;
+}
+
+const onlineUsers = ref<OnlineUser[]>([]);
+const onlineUsersLoading = ref(false);
+const onlineUsersError = ref(false);
 let onlineUsersRefreshTimer: ReturnType<typeof setInterval> | null = null;
 
 // Toast State
@@ -82,7 +100,11 @@ const isAuthFailure = (error: any) => {
   return status === 401 || status === 403;
 };
 
+/** 请求序号：并发触发时丢弃过期响应，避免旧数据覆盖新数据 */
+let userInfoSeq = 0;
+
 const fetchUserInfo = async () => {
+  const seq = ++userInfoSeq;
   try {
     // 登录态一律以后端 /auth/me 的响应为准：门户会话凭据已收敛为 HttpOnly Cookie，
     // 前端不再（也无法）通过读取 localStorage 判断是否登录。
@@ -100,6 +122,7 @@ const fetchUserInfo = async () => {
     // Refresh user info from server
     // 无需手动添加 header，拦截器会自动添加
     const response = await axios.get("/api/portal/auth/me");
+    if (seq !== userInfoSeq) return; // 已被更新的请求取代，丢弃本次响应
     if (response.data && response.data.status === "success") {
       authCheckRetryCount = 0;
       if (authCheckRetryTimer) {
@@ -119,6 +142,7 @@ const fetchUserInfo = async () => {
       }
     }
   } catch (e) {
+    if (seq !== userInfoSeq) return; // 过期请求的失败不应影响当前状态
     console.error("Auth check failed", e);
     if (isAuthFailure(e)) {
       // 拦截器已处理跳转，这里彻底清理本地与 Cookie 凭据
@@ -159,46 +183,9 @@ onUnmounted(() => {
 // 密码到期提醒状态管理 (方式 1: 登录即时 Toast + 方式 2: 全局常驻 Top Banner)
 const isPasswordExpireBannerDismissed = ref(false);
 
-const passwordExpireNoticeData = computed(() => {
-  const pwdInfo = (userInfo.value as any)?.password_info;
-  if (!pwdInfo || !pwdInfo.has_password) return null;
-
-  const isExpired = !!pwdInfo.is_expired || (typeof pwdInfo.days_until_next_change === 'number' && pwdInfo.days_until_next_change <= 0);
-  const daysUntil = typeof pwdInfo.days_until_next_change === 'number' ? pwdInfo.days_until_next_change : 999;
-  const daysSince = pwdInfo.days_since_last_change ?? 0;
-  const expireDays = pwdInfo.password_expire_days ?? 30;
-
-  // 触发条件：已过期 或 剩余天数 <= 7 天（覆盖 7天、3天、1天及过期）
-  if (!isExpired && daysUntil > 7) {
-    return null;
-  }
-
-  let level: 'expired' | 'urgent' | 'warning' | 'notice' = 'notice';
-  let message = '';
-
-  if (isExpired) {
-    level = 'expired';
-    message = `安全警示：您的登录密码已超过有效周期（已过 ${daysSince} 天），为了账号安全请尽快修改密码！`;
-  } else if (daysUntil <= 1) {
-    level = 'urgent';
-    message = `安全预警：您的登录密码还有最后 1 天即将过期，请尽快修改密码！`;
-  } else if (daysUntil <= 3) {
-    level = 'warning';
-    message = `安全提醒：您的登录密码还有 ${daysUntil} 天即将过期，建议及时前往修改。`;
-  } else {
-    level = 'notice';
-    message = `安全提醒：您的登录密码将在 ${daysUntil} 天后到期（有效周期 ${expireDays} 天），建议提前修改。`;
-  }
-
-  return {
-    level,
-    message,
-    isExpired,
-    daysUntil,
-    daysSince,
-    expireDays,
-  };
-});
+const passwordExpireNoticeData = computed(() =>
+  resolvePasswordExpiryNotice((userInfo.value as any)?.password_info as PasswordInfo | undefined),
+);
 
 const showPasswordExpireBanner = computed(() => {
   if (!passwordExpireNoticeData.value) return false;
@@ -255,32 +242,17 @@ const goToChangePassword = () => {
   });
 };
 
+/** 登录后一次性密码到期提醒（同一会话、同一等级只提示一次） */
 const triggerLoginPasswordNoticeToast = (info: any) => {
-  const pwdInfo = info?.password_info;
-  if (!pwdInfo || !pwdInfo.has_password) return;
+  const notice = resolvePasswordExpiryNotice(info?.password_info as PasswordInfo | undefined);
+  if (!notice) return;
 
-  const isExpired = !!pwdInfo.is_expired || (typeof pwdInfo.days_until_next_change === 'number' && pwdInfo.days_until_next_change <= 0);
-  const daysUntil = typeof pwdInfo.days_until_next_change === 'number' ? pwdInfo.days_until_next_change : 999;
-  const daysSince = pwdInfo.days_since_last_change ?? 0;
-  const expireDays = pwdInfo.password_expire_days ?? 30;
-
-  if (!isExpired && daysUntil > 7) return;
-
-  const uid = info.id || info.user_id || 'current';
-  const sessionToastKey = `pwd_toast_notified_${uid}_${isExpired ? 'expired' : daysUntil}`;
+  const uid = info?.id || info?.user_id || 'current';
+  const sessionToastKey = `pwd_toast_notified_${uid}_${notice.isExpired ? 'expired' : notice.daysUntil}`;
   if (sessionStorage.getItem(sessionToastKey)) return;
-
   sessionStorage.setItem(sessionToastKey, '1');
 
-  if (isExpired) {
-    showToast(`安全警示：您的登录密码已超过有效周期（已过 ${daysSince} 天），请尽快修改密码！`, 'error');
-  } else if (daysUntil <= 1) {
-    showToast(`安全预警：您的登录密码还有最后 1 天即将过期，请尽快修改！`, 'warning');
-  } else if (daysUntil <= 3) {
-    showToast(`安全提醒：您的登录密码还有 ${daysUntil} 天即将过期，建议及时修改。`, 'warning');
-  } else {
-    showToast(`安全提醒：您的登录密码将在 ${daysUntil} 天后到期（修改周期 ${expireDays} 天），请注意及时修改。`, 'info');
-  }
+  showToast(notice.toastMessage, passwordExpiryToastType(notice));
 };
 
 const handleUserInfoUpdated = async () => {
@@ -299,25 +271,39 @@ onMounted(async () => {
   }
 });
 
+/** 请求序号：轮询与手动刷新并发时，只采用最新一次结果 */
+let onlineUsersSeq = 0;
+
 const fetchOnlineUsers = async () => {
+  const seq = ++onlineUsersSeq;
+  onlineUsersLoading.value = true;
+  onlineUsersError.value = false;
   try {
     const response = await axios.get("/api/portal/dashboard/online-users");
+    if (seq !== onlineUsersSeq) return;
     if (response.data) {
       onlineUserCount.value = response.data.count;
       onlineUsers.value = response.data.users || [];
     }
   } catch (e) {
+    if (seq !== onlineUsersSeq) return;
     console.error("Failed to fetch online users", e);
+    onlineUsersError.value = true;
+  } finally {
+    if (seq === onlineUsersSeq) onlineUsersLoading.value = false;
   }
 };
 
+/** 在线人数轮询间隔 */
+const ONLINE_USERS_REFRESH_INTERVAL_MS = 60_000;
+
 const startOnlineUsersRefresh = () => {
-  if (onlineUsersRefreshTimer) {
-    clearInterval(onlineUsersRefreshTimer);
-  }
+  stopOnlineUsersRefresh();
   onlineUsersRefreshTimer = setInterval(() => {
+    // 标签页不可见时跳过本轮，避免无意义的后台请求
+    if (document.visibilityState === "hidden") return;
     void fetchOnlineUsers();
-  }, 60_000);
+  }, ONLINE_USERS_REFRESH_INTERVAL_MS);
 };
 
 const stopOnlineUsersRefresh = () => {
@@ -367,16 +353,24 @@ const logout = () => {
 };
 
 const confirmLogout = async () => {
+  if (loggingOut.value) return;
+  loggingOut.value = true;
   try {
     await axios.post("/api/portal/auth/logout");
   } catch (e) {
+    // 服务端会话未能吊销时不要静默假装成功：HttpOnly 门户会话 Cookie 仍在，
+    // 此时跳转登录页会让用户误以为已安全退出，因此保留弹窗并允许重试。
     console.error("Logout API failed", e);
-  } finally {
-    localStorage.removeItem("api_key");
-    localStorage.removeItem("user_info");
-    showLogoutDialog.value = false;
-    router.push("/login");
+    loggingOut.value = false;
+    showToast("退出失败：服务端会话未能注销，请重试", "error");
+    return;
   }
+  // 服务端已吊销会话，统一清理本地凭据（clearUserSession 含历史遗留键）
+  clearUserSession();
+  stopOnlineUsersRefresh();
+  showLogoutDialog.value = false;
+  loggingOut.value = false;
+  router.push("/login");
 };
 
 const cancelLogout = () => {
@@ -387,48 +381,15 @@ const openUserInfo = () => {
   router.push("/dashboard/personal");
 };
 
-const closeUserInfo = () => {
-  showUserInfoDialog.value = false;
-};
-
-const fetchApiKey = async () => {
-  if (!userInfo.value.id) return;
-
-  loadingApiKey.value = true;
-  try {
-    const response = await axios.get(
-      `/api/portal/management/api-key/${userInfo.value.id}`
-    );
-    userApiKey.value = response.data.api_key;
-  } catch (error: any) {
-    console.error("Failed to fetch API key:", error);
-    showToast(error.response?.data?.detail || "获取 API Key 失败", "error");
-  } finally {
-    loadingApiKey.value = false;
-  }
-};
-
-const copyApiKey = async () => {
-  if (!userApiKey.value) {
-    showToast("API Key 未加载", "warning");
-    return;
-  }
-
-  const success = await copyToClipboard(userApiKey.value);
-  if (success) {
-    showToast("API Key 已复制到剪贴板", "success");
-  } else {
-    showToast("复制失败，请手动复制", "error");
-  }
-};
-
 const handleEscape = (e: KeyboardEvent) => {
-  if (e.key === "Escape") {
-    if (showUserInfoDialog.value) {
-      closeUserInfo();
-    } else if (showLogoutDialog.value) {
-      cancelLogout();
-    }
+  if (e.key !== "Escape") return;
+  if (showLogoutDialog.value) {
+    cancelLogout();
+  } else if (showOnlineUsersDialog.value) {
+    showOnlineUsersDialog.value = false;
+  } else if (showMobileSidebar.value) {
+    // 移动端抽屉此前无法用 Esc 关闭
+    showMobileSidebar.value = false;
   }
 };
 
@@ -443,7 +404,8 @@ onUnmounted(() => {
 });
 
 // 监听路由变化，移动端下自动收起侧边栏
-watch(() => route.path, () => {
+watch(() => route.path, async () => {
+  await nextTick();
   if (dashboardContentRef.value) {
     dashboardContentRef.value.scrollTop = 0;
   }
@@ -479,19 +441,22 @@ const toggleSidebar = () => {
   }
 };
 
-const handleResize = () => {
-  windowWidth.value = window.innerWidth;
+/** 跨越断点时同步移动端标记；切回桌面态顺带收起抽屉 */
+const handleBreakpointChange = (event: MediaQueryListEvent) => {
+  isMobile.value = !event.matches;
   if (!isMobile.value) {
     showMobileSidebar.value = false;
   }
 };
 
 onMounted(() => {
-  window.addEventListener('resize', handleResize);
+  desktopMediaQuery.addEventListener?.('change', handleBreakpointChange);
 });
 
 onUnmounted(() => {
-  window.removeEventListener('resize', handleResize);
+  desktopMediaQuery.removeEventListener?.('change', handleBreakpointChange);
+  // 兜底恢复，避免组件卸载后残留 body 滚动锁
+  document.body.style.overflow = "";
 });
 
 // 权限辅助函数
@@ -530,7 +495,7 @@ const menuGroups: MenuGroup[] = [
     title: '智能助手',
     items: [
       { name: '我的工作台', to: '/dashboard/workbench', icon: 'dashboard', activeNames: ['PersonalWorkbench'] },
-      { name: '智能助手', to: '/dashboard/chat', icon: 'chat', perm: 'menu:ai_chat' }
+      { name: '智能助手', to: '/dashboard/chat', icon: 'chat', perm: 'menu:ai_chat', activeNames: ['AIChat'] }
     ]
   },
   {
@@ -629,6 +594,7 @@ const filteredMenuGroups = computed(() => {
 
     <!-- Sidebar -->
     <aside
+      aria-label="主导航"
       class="bg-sidebar text-white shadow-xl flex flex-col z-30 transition-all duration-300 ease-in-out flex-shrink-0"
       :class="[
         theme === 'light' ? '!bg-white !text-gray-700 border-r border-gray-200' : '',
@@ -697,6 +663,7 @@ const filteredMenuGroups = computed(() => {
               theme === 'light' ? 'hover:text-gray-900' : 'hover:text-gray-300',
             ]"
             :aria-expanded="!isGroupCollapsed(group)"
+            :aria-controls="`menu-group-${group.title}`"
             @click.stop="toggleMenuGroup(group)"
           >
             <span class="truncate">{{ group.title }}</span>
@@ -718,7 +685,11 @@ const filteredMenuGroups = computed(() => {
 
           <!-- Group Items -->
           <transition name="menu-group">
-            <div v-show="!isGroupCollapsed(group)" class="space-y-1">
+            <div
+              :id="`menu-group-${group.title}`"
+              v-show="!isGroupCollapsed(group)"
+              class="space-y-1"
+            >
               <router-link
                 v-for="item in group.items"
                 :key="item.to"
@@ -822,15 +793,19 @@ const filteredMenuGroups = computed(() => {
         <div class="flex items-center">
           <!-- Sidebar Toggle Button -->
           <button
+            type="button"
+            :aria-label="isCollapsed ? '展开侧边栏' : '收起侧边栏'"
+            :aria-expanded="!isCollapsed"
             @click="toggleSidebar"
             class="-ml-1 mr-3 text-gray-500 hover:text-gray-700 hover:bg-gray-100 dark:hover:bg-gray-800 focus:outline-none focus:ring-2 focus:ring-primary rounded-lg p-1.5 transition-colors"
-            title="Toggle Sidebar"
+            title="切换侧边栏"
           >
             <svg
               class="h-6 w-6"
               fill="none"
               stroke="currentColor"
               viewBox="0 0 24 24"
+              aria-hidden="true"
             >
               <path
                 v-if="!isCollapsed"
@@ -886,6 +861,7 @@ const filteredMenuGroups = computed(() => {
                 </svg>
                 <span
                   class="ml-2 text-sm font-medium text-gray-500 hover:text-gray-700 capitalize"
+                  :aria-current="index === breadcrumbs.length - 1 ? 'page' : undefined"
                   >{{ crumb }}</span
                 >
               </li>
@@ -908,19 +884,21 @@ const filteredMenuGroups = computed(() => {
         <div class="flex items-center space-x-2 sm:space-x-4 flex-shrink-0 flex-nowrap">
           <!-- Online Users Widget：仅管理员可见 -->
           <template v-if="userInfo.role === 'admin'">
-            <div
-              class="online-users-widget flex items-center px-2 sm:px-3 py-1 bg-green-50 border border-green-100/50 rounded-full transition-all shadow-sm flex-shrink-0 whitespace-nowrap cursor-pointer hover:bg-green-100/80 active:scale-95"
+            <button
+              type="button"
+              aria-label="查看在线用户列表"
+              class="online-users-widget flex items-center px-2 sm:px-3 py-1 bg-green-50 border border-green-100/50 rounded-full transition-all shadow-sm flex-shrink-0 whitespace-nowrap cursor-pointer hover:bg-green-100/80 active:scale-95 focus:outline-none focus-visible:ring-2 focus-visible:ring-green-400"
               title="点击查看在线用户列表"
               @click="openOnlineUsers"
             >
-              <span class="relative flex h-2 w-2 mr-1 sm:mr-2 flex-shrink-0">
+              <span class="relative flex h-2 w-2 mr-1 sm:mr-2 flex-shrink-0" aria-hidden="true">
                 <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
                 <span class="relative inline-flex rounded-full h-2 w-2 bg-green-500"></span>
               </span>
               <span class="text-[10px] sm:text-xs font-bold text-green-700 tracking-tight tabular-nums">
                 {{ onlineUserCount }} <span class="font-medium opacity-80 ml-0.5">在线</span>
               </span>
-            </div>
+            </button>
             <div class="online-users-divider h-6 w-px bg-gray-200 mx-1 sm:mx-2 flex-shrink-0" aria-hidden="true"></div>
           </template>
           <PortalNotificationBell />
@@ -941,6 +919,8 @@ const filteredMenuGroups = computed(() => {
             </svg>
           </button>
           <button
+            type="button"
+            aria-label="退出登录"
             @click="logout"
             class="flex items-center px-2 sm:px-3 py-1.5 text-xs sm:text-sm font-medium text-red-600 bg-red-50 hover:bg-red-100 rounded-lg transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 group flex-shrink-0 whitespace-nowrap"
           >
@@ -949,6 +929,7 @@ const filteredMenuGroups = computed(() => {
               fill="none"
               stroke="currentColor"
               viewBox="0 0 24 24"
+              aria-hidden="true"
             >
               <path
                 stroke-linecap="round"
@@ -1055,202 +1036,17 @@ const filteredMenuGroups = computed(() => {
       />
     </teleport>
 
-    <!-- Logout Confirmation Dialog -->
-    <teleport to="body">
-      <transition name="dialog">
-        <div
-          v-if="showLogoutDialog"
-          class="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50"
-          @click.self="cancelLogout"
-        >
-          <div class="bg-white rounded-lg shadow-xl max-w-md w-full mx-4 p-6">
-            <div class="flex items-start">
-              <div class="flex-shrink-0">
-                <svg
-                  class="h-6 w-6 text-yellow-600"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
-                >
-                  <path
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                    stroke-width="2"
-                    d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
-                  />
-                </svg>
-              </div>
-              <div class="ml-3 flex-1">
-                <h3 class="text-lg font-medium text-gray-900">确认退出</h3>
-                <p class="mt-2 text-sm text-gray-500">您确定要退出登录吗？</p>
-              </div>
-            </div>
-            <div class="mt-6 flex justify-end space-x-3">
-              <button
-                @click="cancelLogout"
-                class="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary"
-              >
-                取消
-              </button>
-              <button
-                @click="confirmLogout"
-                class="px-4 py-2 text-sm font-medium text-white bg-red-600 rounded-md hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500"
-              >
-                退出登录
-              </button>
-            </div>
-          </div>
-        </div>
-      </transition>
-    </teleport>
-
-    <!-- User Info Dialog -->
-    <teleport to="body">
-      <transition name="dialog">
-        <div
-          v-if="showUserInfoDialog"
-          class="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50 p-4"
-          @click.self="closeUserInfo"
-        >
-          <div class="bg-white rounded-lg shadow-xl max-w-lg w-full p-6">
-            <!-- Header -->
-            <div class="flex items-center justify-between mb-4">
-              <h3 class="text-xl font-semibold text-gray-900">个人信息</h3>
-              <button
-                @click="closeUserInfo"
-                class="text-gray-400 hover:text-gray-600 focus:outline-none focus:ring-2 focus:ring-primary rounded-md p-1"
-              >
-                <svg
-                  class="h-6 w-6"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
-                >
-                  <path
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                    stroke-width="2"
-                    d="M6 18L18 6M6 6l12 12"
-                  />
-                </svg>
-              </button>
-            </div>
-
-            <!-- User Avatar -->
-            <div class="flex items-center mb-6">
-              <div
-                class="h-16 w-16 rounded-full bg-primary flex items-center justify-center text-2xl font-bold text-white uppercase"
-              >
-                {{
-                  userInfo.user_name ? userInfo.user_name.substring(0, 2) : "U"
-                }}
-              </div>
-              <div class="ml-4">
-                <h4 class="text-lg font-medium text-gray-900">
-                  {{ userInfo.user_name }}
-                </h4>
-                <p class="text-sm text-gray-500">
-                  <span
-                    class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium"
-                    :class="
-                      userInfo.role === 'admin'
-                        ? 'bg-purple-100 text-purple-800'
-                        : 'bg-blue-100 text-blue-800'
-                    "
-                  >
-                    {{ userInfo.role === "admin" ? "管理员" : "普通用户" }}
-                  </span>
-                </p>
-              </div>
-            </div>
-
-            <!-- User Details -->
-            <div class="space-y-4">
-              <div>
-                <label class="block text-sm font-medium text-gray-700"
-                  >用户名</label
-                >
-                <p class="mt-1 text-sm text-gray-900">
-                  {{ userInfo.user_name }}
-                </p>
-              </div>
-
-              <div v-if="userInfo.remark">
-                <label class="block text-sm font-medium text-gray-700"
-                  >备注</label
-                >
-                <p class="mt-1 text-sm text-gray-900">{{ userInfo.remark }}</p>
-              </div>
-
-              <div>
-                <label class="block text-sm font-medium text-gray-700"
-                  >创建时间</label
-                >
-                <p class="mt-1 text-sm text-gray-900">
-                  {{ userInfo.created_at || "-" }}
-                </p>
-              </div>
-
-              <!-- API Key Section -->
-              <div>
-                <label class="block text-sm font-medium text-gray-700 mb-2"
-                  >API Key</label
-                >
-                <div class="flex items-center space-x-2">
-                  <input
-                    type="text"
-                    :value="userApiKey || '点击“查看”加载 API Key'"
-                    readonly
-                    class="flex-1 px-3 py-2 border border-gray-300 rounded-md bg-gray-50 text-sm font-mono"
-                  />
-                  <button
-                    v-if="!userApiKey"
-                    @click="fetchApiKey"
-                    :disabled="loadingApiKey"
-                    class="px-4 py-2 bg-primary text-white text-sm font-medium rounded-md hover:bg-primary-dark focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary disabled:opacity-50"
-                  >
-                    {{ loadingApiKey ? "加载中..." : "查看" }}
-                  </button>
-                  <button
-                    v-else
-                    @click="copyApiKey"
-                    class="px-4 py-2 bg-green-600 text-white text-sm font-medium rounded-md hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500"
-                    title="复制 API Key"
-                  >
-                    <svg
-                      class="h-5 w-5"
-                      fill="none"
-                      stroke="currentColor"
-                      viewBox="0 0 24 24"
-                    >
-                      <path
-                        stroke-linecap="round"
-                        stroke-linejoin="round"
-                        stroke-width="2"
-                        d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"
-                      />
-                    </svg>
-                  </button>
-                </div>
-                <p class="mt-1 text-xs text-gray-500">
-                  ⚠️ API Key 支持重复查看和复制
-                </p>
-              </div>
-            </div>
-
-            <!-- Footer -->
-            <div class="mt-6 flex justify-end">
-              <button
-                @click="closeUserInfo"
-                class="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary"
-              >
-                关闭
-              </button>
-            </div>
-          </div>
-        </div>
-      </transition>
-    </teleport>
+    <!-- Logout Confirmation Dialog：复用 ConfirmModal（自带 Teleport、焦点管理、Esc/Enter 与 loading 态） -->
+    <ConfirmModal
+      v-if="showLogoutDialog"
+      title="确认退出"
+      message="您确定要退出登录吗？"
+      confirm-text="退出登录"
+      type="danger"
+      :loading="loggingOut"
+      @confirm="confirmLogout"
+      @cancel="cancelLogout"
+    />
 
     <!-- Online Users Dialog -->
     <teleport to="body">
@@ -1260,21 +1056,44 @@ const filteredMenuGroups = computed(() => {
           class="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4"
           @click.self="showOnlineUsersDialog = false"
         >
-          <div class="bg-white dark:bg-gray-800 rounded-2xl shadow-2xl max-w-md w-full overflow-hidden flex flex-col border border-gray-200 dark:border-gray-700 animate-slide-up">
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="online-users-dialog-title"
+            class="bg-white dark:bg-gray-800 rounded-2xl shadow-2xl max-w-md w-full overflow-hidden flex flex-col border border-gray-200 dark:border-gray-700 animate-slide-up"
+          >
             <!-- Header -->
             <div class="px-6 py-4 border-b border-gray-100 dark:border-gray-700 flex justify-between items-center bg-green-50/30 dark:bg-green-900/10">
               <div class="flex items-center gap-2">
-                <div class="w-2 h-2 rounded-full bg-green-500 animate-pulse"></div>
-                <h3 class="text-lg font-black text-gray-800 dark:text-gray-100 uppercase tracking-widest">在线用户列表</h3>
+                <div class="w-2 h-2 rounded-full bg-green-500 animate-pulse" aria-hidden="true"></div>
+                <h3 id="online-users-dialog-title" class="text-lg font-black text-gray-800 dark:text-gray-100 uppercase tracking-widest">在线用户列表</h3>
               </div>
-              <button @click="showOnlineUsersDialog = false" class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200">
-                <svg class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" /></svg>
+              <button
+                type="button"
+                aria-label="关闭在线用户列表"
+                @click="showOnlineUsersDialog = false"
+                class="rounded text-gray-400 hover:text-gray-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-gray-300 dark:hover:text-gray-200"
+              >
+                <svg class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" /></svg>
               </button>
             </div>
 
             <!-- List -->
             <div class="flex-1 overflow-y-auto max-h-[60vh] p-4 custom-scrollbar">
-              <div v-if="onlineUsers.length === 0" class="text-center py-10 text-gray-400 text-xs font-bold uppercase tracking-widest">
+              <div v-if="onlineUsersLoading" class="text-center py-10 text-gray-400 text-xs font-bold uppercase tracking-widest">
+                正在加载在线用户…
+              </div>
+              <div v-else-if="onlineUsersError" class="text-center py-10">
+                <p class="text-xs font-bold uppercase tracking-widest text-red-500">在线用户加载失败</p>
+                <button
+                  type="button"
+                  class="mt-3 rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-gray-300 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700"
+                  @click="fetchOnlineUsers"
+                >
+                  重试
+                </button>
+              </div>
+              <div v-else-if="onlineUsers.length === 0" class="text-center py-10 text-gray-400 text-xs font-bold uppercase tracking-widest">
                 暂无在线用户信息
               </div>
               <div v-else class="space-y-3">
@@ -1414,61 +1233,4 @@ const filteredMenuGroups = computed(() => {
   scrollbar-color: rgba(156, 163, 175, 0.3) transparent;
 }
 
-/* Custom Tooltip Styles */
-.custom-tooltip {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-}
-
-.custom-tooltip::after {
-  content: attr(data-tooltip);
-  position: absolute;
-  top: 150%;
-  right: 0;
-  transform: none;
-  background-color: rgba(31, 41, 55, 0.95);
-  color: white;
-  padding: 8px 12px;
-  border-radius: 8px;
-  font-size: 13px;
-  line-height: 1.5;
-  white-space: pre-wrap;
-  width: max-content;
-  max-width: 300px;
-  opacity: 0;
-  visibility: hidden;
-  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
-  z-index: 9999;
-  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1),
-    0 4px 6px -2px rgba(0, 0, 0, 0.05);
-  pointer-events: none;
-  font-weight: normal;
-}
-
-.custom-tooltip::before {
-  content: "";
-  position: absolute;
-  top: 120%;
-  right: 20px;
-  border-width: 6px;
-  border-style: solid;
-  border-color: transparent transparent rgba(31, 41, 55, 0.95) transparent;
-  opacity: 0;
-  visibility: hidden;
-  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
-  z-index: 9999;
-}
-
-.custom-tooltip:hover::after {
-  opacity: 1;
-  visibility: visible;
-  top: 160%;
-}
-
-.custom-tooltip:hover::before {
-  opacity: 1;
-  visibility: visible;
-  top: 130%;
-}
 </style>

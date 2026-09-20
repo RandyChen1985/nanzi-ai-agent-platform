@@ -179,7 +179,7 @@ const handleDismiss = () => {
       <div class="flex items-center gap-1.5 sm:gap-2">
         <button
           type="button"
-          class="inline-flex items-center gap-1 rounded-lg border border-gray-200 bg-white/80 px-2.5 py-1 text-xs font-medium text-gray-600 shadow-2xs hover:bg-white hover:text-gray-900 transition-colors cursor-pointer"
+          class="inline-flex items-center gap-1 rounded-lg border border-gray-200 bg-white/80 px-2.5 py-1 text-xs font-medium text-gray-600 shadow-sm hover:bg-white hover:text-gray-900 transition-colors cursor-pointer"
           @click="isCollapsed = !isCollapsed"
         >
           <span>{{ isCollapsed ? '展开流程' : '收起' }}</span>
@@ -196,7 +196,7 @@ const handleDismiss = () => {
 
         <button
           type="button"
-          class="inline-flex items-center gap-1 rounded-lg border border-gray-200 bg-white/80 px-2.5 py-1 text-xs font-medium text-gray-500 shadow-2xs hover:bg-white hover:text-amber-600 transition-colors cursor-pointer"
+          class="inline-flex items-center gap-1 rounded-lg border border-gray-200 bg-white/80 px-2.5 py-1 text-xs font-medium text-gray-500 shadow-sm hover:bg-white hover:text-amber-600 transition-colors cursor-pointer"
           title="下次进入不再主动弹出此引导"
           @click="handleDismiss"
         >
@@ -227,7 +227,7 @@ const handleDismiss = () => {
       <div
         v-for="(item, idx) in steps"
         :key="item.step"
-        class="group relative flex flex-col justify-between rounded-xl border border-white/80 bg-white/85 p-3 shadow-2xs backdrop-blur-xs transition-all duration-200 hover:-translate-y-0.5 hover:border-emerald-200 hover:bg-white hover:shadow-md"
+        class="group relative flex flex-col justify-between rounded-xl border border-white/80 bg-white/85 p-3 shadow-sm backdrop-blur-sm transition-all duration-200 hover:-translate-y-0.5 hover:border-emerald-200 hover:bg-white hover:shadow-md"
       >
         <!-- 连接箭头（仅在桌面端第 1~4 步显示） -->
         <div
@@ -244,7 +244,7 @@ const handleDismiss = () => {
           <div class="flex items-start justify-between gap-1.5">
             <div class="flex items-center gap-1.5 min-w-0">
               <span
-                class="flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[11px] font-bold shadow-2xs"
+                class="flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[11px] font-bold shadow-sm"
                 :class="item.iconBg"
               >
                 {{ item.step }}

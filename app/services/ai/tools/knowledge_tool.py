@@ -18,6 +18,9 @@ from app.services.ai.knowledge_utils import (
     KNOWLEDGE_BASE_DISABLED_TOOL_ERROR,
 )
 from app.services.permission_service import PermissionService
+from app.services.ai.knowledge_citation_ledger import (
+    get_or_create_knowledge_citation_ledger,
+)
 
 
 @tool
@@ -136,15 +139,39 @@ async def search_knowledge_base(query: str, dataset_ids: Optional[str | list[str
                 "citations": [],
             }
             return json.dumps(empty_payload, ensure_ascii=False)
-            
+
+        # 运营指标埋点（检索量）：工具型检索此前完全不计数，导致运营分析里
+        # 这类对话永远为 0。埋点属于旁路统计，失败绝不能影响检索结果，故整体兜底。
+        try:
+            from app.services.knowledge_metrics_service import KnowledgeMetricsService
+
+            # RAGFlow 个别版本不回传 dataset_id；只命中单一知识库时可安全回填，
+            # 让运营分析能正确归属到知识库维度。
+            for chunk in chunks:
+                if not chunk.get("dataset_id") and len(target_datasets) == 1:
+                    chunk["dataset_id"] = target_datasets[0]
+            await KnowledgeMetricsService.record_search_hits(chunks)
+        except Exception as metric_err:
+            logger.warning(f"[KnowledgeTool] Redis metrics recording failed: {metric_err}")
+
         # --- [NEW: Process for Inline Citations] ---
-        # 1. Assign sequential IDs to chunks for easier LLM referencing
+        # 1. Assign IDs to chunks for easier LLM referencing
         # 2. Format a clear prompt instruction for the LLM
+        #
+        # 编号必须整轮全局唯一：若每次工具调用都从 1 重新编号，一轮内的多次检索会让模型
+        # 看到重复的 [ID:n]，回答里的引用无法反查属于哪一批切片，引用量会错配到错误文档。
+        # 台账负责发放全局编号并登记切片，供回答收尾时统计真实引用。
+        citation_ledger = get_or_create_knowledge_citation_ledger()
+
         formatted_context = "I found the following information in the knowledge base. Please provide a detailed answer based ON THESE DOCUMENTS ONLY. \n"
         formatted_context += "CRITICAL: For every statement you make based on a document, append its reference as [ID:n] at the end of the sentence.\n\n"
         
         for i, chunk in enumerate(chunks):
-            ref_id = str(i + 1)
+            ref_id = (
+                citation_ledger.register(chunk)
+                if citation_ledger is not None
+                else str(i + 1)
+            )
             # Inject the simple ID into the chunk object so frontend can match it later
             chunk["id"] = ref_id
             
