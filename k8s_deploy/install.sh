@@ -80,7 +80,7 @@ show_help() {
   printf "  %-30s # 执行首次安装或全量配置向导\n" "$0 install"
   printf "  %-30s # 自动确认安装（使用默认值/现有配置快速下发）\n" "$0 install -y"
   printf "  %-30s # 模拟演练安装：仅做本地配置与语法预检\n" "$0 install --try"
-  printf "  %-30s # 快速交互式升级镜像（自动探测 containerd 中新导入的 Tag）\n" "$0 upgrade"
+  printf "  %-30s # 快速交互式升级镜像（按版本号比较，自动推荐高于当前运行版本的最高 Tag）\n" "$0 upgrade"
   printf "  %-30s # 一键升级到指定镜像版本并平滑滚动发布\n" "$0 upgrade 1.0.15.0"
   printf "  %-30s # 查看节点容器运行时中已导入的全部镜像\n" "$0 images"
   printf "  %-30s # 只查看 NanZi 相关镜像（手动检查本地是否已导入）\n" "$0 images nanzi-ai-agent"
@@ -195,6 +195,82 @@ log_warn() {
 
 log_error() {
   printf "%b✖%b  %b\n" "${C_RED}" "${C_RESET}" "$*"
+}
+
+# ==============================================================================
+# 镜像引用解析：把 image ref 拆成「仓库」与「Tag」两段
+#   支持 registry 带端口（registry:5000/nanzi-ai-agent:1.0.16.0）与 digest 后缀
+#   （nanzi-ai-agent@sha256:...），避免用 awk -F: 粗暴切片切错。
+# ==============================================================================
+parse_image_ref() {
+  _ref="$1"
+  case "$_ref" in
+    *@*) _ref="${_ref%%@*}" ;;
+  esac
+  case "$_ref" in
+    *:*) IMAGE_REF_REPO="${_ref%:*}"; IMAGE_REF_TAG="${_ref##*:}" ;;
+    *)   IMAGE_REF_REPO="$_ref";        IMAGE_REF_TAG="latest" ;;
+  esac
+}
+
+# ==============================================================================
+# 版本比较（数字段逐段数值比较，非数字段回退字符串比较）
+#   用法：version_gt A B        → A 是否严格新于 B（数字版本与非数字 Tag 之间恒为「否」）
+#         sort_versions_asc     → stdin 的 Tag 列表按版本升序输出到 stdout
+#   说明：不用 sort -V，因为这里只需「新/旧」判定，且必须兼容 BusyBox sort。
+# ==============================================================================
+version_gt() {
+  _vgt_result=$(awk -v a="$1" -v b="$2" '
+    function cmp(x, y,   i, n, nx, ny, sx, sy, ux, uy) {
+      nx = split(x, sx, ".")
+      ny = split(y, sy, ".")
+      # 仅当两侧对应段同为数字时才做数值比较；一侧为数字另一侧为 latest/main 等别名时不可比较
+      n = (nx < ny) ? nx : ny
+      for (i = 1; i <= n; i++) {
+        ux = (sx[i] ~ /^[0-9]+$/)
+        uy = (sy[i] ~ /^[0-9]+$/)
+        if (ux != uy) return 0
+        if (ux && uy) { if (sx[i] + 0 > sy[i] + 0) return 1; if (sx[i] + 0 < sy[i] + 0) return -1 }
+        else          { if (sx[i] "" > sy[i] "") return 1; if (sx[i] "" < sy[i] "") return -1 }
+      }
+      if (nx == ny) return 0
+      # 剩余段同为数字才可比长度：1.0.16.0 > 1.0.16，而 1.0.16.0 与 1.0.16-rc1 不可比较
+      if (nx > ny) { rest_x = sx[ny + 1]; rest_y = sy[ny] }
+      else         { rest_x = sx[nx];     rest_y = sy[nx + 1] }
+      if (rest_x ~ /^[0-9]+$/ && rest_y ~ /^[0-9]+$/) return (nx > ny) ? 1 : -1
+      return 0
+    }
+    BEGIN { print (cmp(a, b) > 0) ? "0" : "1" }
+  ')
+  [ "$_vgt_result" = "0" ]
+}
+
+sort_versions_asc() {
+  awk '
+    function cmp(x, y,   i, n, nx, ny, sx, sy, ux, uy) {
+      nx = split(x, sx, ".")
+      ny = split(y, sy, ".")
+      n = (nx < ny) ? nx : ny
+      for (i = 1; i <= n; i++) {
+        ux = (sx[i] ~ /^[0-9]+$/)
+        uy = (sy[i] ~ /^[0-9]+$/)
+        if (ux != uy) return 0
+        if (ux && uy) { if (sx[i] + 0 > sy[i] + 0) return 1; if (sx[i] + 0 < sy[i] + 0) return -1 }
+        else          { if (sx[i] "" > sy[i] "") return 1; if (sx[i] "" < sy[i] "") return -1 }
+      }
+      if (nx == ny) return 0
+      if (nx > ny) { rest_x = sx[ny + 1]; rest_y = sy[ny] }
+      else         { rest_x = sx[nx];     rest_y = sy[nx + 1] }
+      if (rest_x ~ /^[0-9]+$/ && rest_y ~ /^[0-9]+$/) return (nx > ny) ? 1 : -1
+      return 0
+    }
+    { v[NR] = $0 }
+    END {
+      for (i = 1; i <= NR; i++) { best = i; for (j = i + 1; j <= NR; j++) if (cmp(v[j], v[best]) < 0) best = j
+        t = v[i]; v[i] = v[best]; v[best] = t }
+      for (i = 1; i <= NR; i++) print v[i]
+    }
+  '
 }
 
 # 统一的资源下发/演练函数
@@ -335,41 +411,25 @@ run_upgrade_flow() {
 
   if [ -n "$current_running_image" ]; then
     log_info "当前集群运行镜像: ${C_BOLD}${current_running_image}${C_RESET}"
-    running_repo=$(echo "$current_running_image" | awk -F: '{print $1}')
-    running_tag=$(echo "$current_running_image" | awk -F: '{print $2}')
+    parse_image_ref "$current_running_image"
+    running_repo="$IMAGE_REF_REPO"
+    running_tag="$IMAGE_REF_TAG"
   else
     log_warn "未探测到运行中的 Deployment，将使用本地 kustomization.yaml 作为基准。"
     running_repo=$(grep -E '^\s*newName:' kustomization.yaml | awk '{print $2}' || echo "nanzi-ai-agent")
     running_tag=$(grep -E '^\s*newTag:' kustomization.yaml | awk '{print $2}' || echo "latest")
   fi
 
-  # 探测宿主机节点容器运行时中已载入的镜像
+  # 探测宿主机节点容器运行时中已载入的镜像，并按版本号给出候选升级版本
   log_info "正在探测当前节点容器运行时中已导入的镜像 (K3s containerd / crictl)..."
-  detected_nanzi_tags=""
-  if command -v k3s >/dev/null 2>&1; then
-    ctr_output=$(k3s ctr images list 2>/dev/null || true)
-    if [ -n "$ctr_output" ]; then
-      detected_nanzi_tags=$(echo "$ctr_output" | grep -E 'nanzi-ai-agent' | awk '{print $1}' | awk -F: '{print $NF}' | sort -u || true)
-    fi
-  fi
-  if [ -z "$detected_nanzi_tags" ] && command -v crictl >/dev/null 2>&1; then
-    crictl_output=$(crictl images 2>/dev/null || true)
-    if [ -n "$crictl_output" ]; then
-      detected_nanzi_tags=$(echo "$crictl_output" | grep -E 'nanzi-ai-agent' | awk '{print $2}' | sort -u || true)
-    fi
-  fi
-
-  recommended_tag="$running_tag"
-  if [ -n "$detected_nanzi_tags" ]; then
-    log_success "在当前节点容器运行时中发现 NanZi 镜像版本："
-    for t in $detected_nanzi_tags; do
-      if [ "$t" = "$running_tag" ]; then
-        printf "    • %bnanzi-ai-agent:%s%b %b(当前运行中)%b\n" "${C_GREEN}" "$t" "${C_RESET}" "${C_GRAY}" "${C_RESET}"
-      else
-        printf "    • %bnanzi-ai-agent:%s%b %b(候选新版本)%b\n" "${C_CYAN}" "$t" "${C_RESET}" "${C_YELLOW}" "${C_RESET}"
-        recommended_tag="$t"
-      fi
-    done
+  if probe_nanzi_images; then
+    [ -n "$running_repo" ] || running_repo="$DETECTED_NANZI_REPO"
+    recommend_upgrade_tag "$running_tag" || true
+    recommended_tag="$RECOMMENDED_TAG"
+    [ -n "$recommended_tag" ] || recommended_tag="$running_tag"
+  else
+    log_warn "未在当前节点容器运行时中探测到 nanzi-ai-agent 镜像。"
+    recommended_tag="$running_tag"
   fi
 
   if [ -n "$tag_override" ]; then
@@ -383,13 +443,24 @@ run_upgrade_flow() {
 
   # 校验目标 Tag 是否已在容器运行时中导入（本地部署关键前置条件）
   tag_found_in_runtime=false
-  if [ -n "$detected_nanzi_tags" ]; then
-    for _t in $detected_nanzi_tags; do
+  if [ "${DETECTED_NANZI_COUNT:-0}" -gt 0 ]; then
+    for _t in $DETECTED_NANZI_TAGS; do
       if [ "$_t" = "$UPGRADE_TAG" ]; then
         tag_found_in_runtime=true
         break
       fi
     done
+  fi
+
+  # 显式降级提醒：所选 Tag 低于集群当前运行版本
+  if is_downgrade_tag "$UPGRADE_TAG" "$running_tag"; then
+    printf "\n"
+    log_warn "注意：所选 ${UPGRADE_IMAGE}:${UPGRADE_TAG} 低于当前运行版本 ${running_tag}（版本回退）。"
+    prompt_confirm "确认要执行版本回退吗？" "N" confirm_downgrade
+    if [ "$confirm_downgrade" != "true" ]; then
+      log_info "已取消升级，当前集群未做任何变更。"
+      exit 0
+    fi
   fi
 
   if [ "$tag_found_in_runtime" = "false" ] && [ "$DRY_RUN" != "true" ]; then
@@ -478,6 +549,142 @@ EOF
     log_success "🎉 模拟演练完成 (DRY-RUN 模式：未向集群下发真实更新)"
   fi
   exit 0
+}
+
+# ==============================================================================
+# 节点容器运行时 NanZi 镜像统一探测（升级流程与安装向导共用同一套识别逻辑）
+#   成功时设置（每次调用前先清零，避免陈旧值残留）：
+#     DETECTED_NANZI_COUNT    探测到的去重 Tag 个数
+#     DETECTED_NANZI_TAGS     去重后的 Tag 列表（按版本升序，空格分隔）
+#     DETECTED_NANZI_REPO     首个命中的镜像仓库名（用于回填目标仓库默认值）
+#     PROBED_CONTAINER_IMAGES 本次 list 的原始输出（供基础镜像等附加检查复用，避免重复调用）
+#   ctr / crictl 两种来源统一取 list 输出的第一列（完整 image ref），不再按列号取值，
+#   因此对 registry 带端口、digest 等形态都能正确剥离出 Tag。
+# ==============================================================================
+probe_nanzi_images() {
+  DETECTED_NANZI_COUNT=0
+  DETECTED_NANZI_TAGS=""
+  DETECTED_NANZI_REPO=""
+  PROBED_CONTAINER_IMAGES=""
+
+  _raw_refs=""
+  if command -v k3s >/dev/null 2>&1; then
+    PROBED_CONTAINER_IMAGES=$(k3s ctr images list 2>/dev/null || true)
+    _raw_refs=$(printf '%s\n' "$PROBED_CONTAINER_IMAGES" | grep -E 'nanzi-ai-agent' | awk '{print $1}' || true)
+  fi
+  if [ -z "$_raw_refs" ] && command -v crictl >/dev/null 2>&1; then
+    PROBED_CONTAINER_IMAGES=$(crictl images 2>/dev/null || true)
+    _raw_refs=$(printf '%s\n' "$PROBED_CONTAINER_IMAGES" | grep -E 'nanzi-ai-agent' | awk '{print $1}' || true)
+  fi
+  if [ -z "$_raw_refs" ] && command -v ctr >/dev/null 2>&1; then
+    PROBED_CONTAINER_IMAGES=$(ctr -n k8s.io images list 2>/dev/null || true)
+    _raw_refs=$(printf '%s\n' "$PROBED_CONTAINER_IMAGES" | grep -E 'nanzi-ai-agent' | awk '{print $1}' || true)
+  fi
+  [ -n "$_raw_refs" ] || return 1
+
+  # 逐条解析并去重；同一 Tag 保留「后出现」的引用（ctr 先列同名 :latest 别名，后列带 Tag 的实体）
+  _map=$'\n'
+  for _ref in $_raw_refs; do
+    parse_image_ref "$_ref"
+    [ -n "$DETECTED_NANZI_REPO" ] || DETECTED_NANZI_REPO="$IMAGE_REF_REPO"
+    _map="${_map}${IMAGE_REF_TAG} ${_ref}"$'\n'
+  done
+
+  _tags=$(printf '%s\n' "$_map" | awk '/^$/ {next} {tag=$1; ref=$2; m[tag]=ref} END {for (t in m) print t}')
+  DETECTED_NANZI_TAGS=$(printf '%s\n' "$_tags" | sort_versions_asc | tr '\n' ' ')
+  DETECTED_NANZI_TAGS="${DETECTED_NANZI_TAGS% }"
+  DETECTED_NANZI_COUNT=0
+  for _t in $DETECTED_NANZI_TAGS; do
+    DETECTED_NANZI_COUNT=$((DETECTED_NANZI_COUNT + 1))
+  done
+  [ "$DETECTED_NANZI_COUNT" -gt 0 ] || return 1
+  return 0
+}
+
+# 取版本升序 Tag 列表中的最高「数字版本」Tag（纯别名如 latest 不参与），stdin → stdout
+highest_numeric_tag() {
+  awk '{ for (i = 1; i <= NF; i++) if ($i ~ /[0-9]/) { print $i; break } }'
+}
+
+# 探测 NanZi 镜像的候选升级版本，并打印统一报告
+#   成功时设置：RECOMMENDED_TAG / RECOMMENDED_FALLBACK / HAS_NEWER_CANDIDATE
+#   参数：$1 = 当前运行 Tag（可为空，代表集群中无运行实例，此时取最高版本）
+recommend_upgrade_tag() {
+  _running_tag="${1:-}"
+  RECOMMENDED_TAG=""
+  RECOMMENDED_FALLBACK=""
+  HAS_NEWER_CANDIDATE=false
+  TAG_FOUND_IN_RUNTIME=false
+
+  if [ "$DETECTED_NANZI_COUNT" -eq 0 ]; then
+    return 1
+  fi
+
+  # 默认候选：严格高于当前运行版本的最高版本；非数字 Tag（latest/main 等别名）不参与比较，
+  # 因此不会被自动推荐，避免把「不可比较」误判成「更新」。
+  _best=""
+  for _t in $DETECTED_NANZI_TAGS; do
+    case "$_t" in
+      *[0-9]*) ;;
+      *) continue ;;   # 纯别名 Tag 不参与自动推荐
+    esac
+    if [ -n "$_running_tag" ]; then
+      version_gt "$_t" "$_running_tag" || continue
+    fi
+    _best="$_t"
+  done
+  RECOMMENDED_TAG="$_best"
+  if [ -z "$_best" ]; then
+    # 运行中版本不低于本地全部镜像：回填当前运行 Tag，交由用户决定是否降级/继续
+    RECOMMENDED_TAG="$_running_tag"
+    RECOMMENDED_FALLBACK="$_running_tag"
+  else
+    HAS_NEWER_CANDIDATE=true
+  fi
+
+  log_success "在当前节点容器运行时中发现 NanZi 镜像（共 ${DETECTED_NANZI_COUNT} 个 Tag，已按版本升序排列）："
+  for _t in $DETECTED_NANZI_TAGS; do
+    if [ -z "$_running_tag" ]; then
+      if [ "$_t" = "$_best" ]; then
+        printf "    • %bnanzi-ai-agent:%s%b %b(候选新版本：节点上最高版本)%b\n" "${C_CYAN}" "$_t" "${C_RESET}" "${C_YELLOW}" "${C_RESET}"
+      elif version_gt "$_best" "$_t"; then
+        printf "    • %bnanzi-ai-agent:%s%b %b(集群中无运行实例，可选)%b\n" "${C_GRAY}" "$_t" "${C_RESET}" "${C_GRAY}" "${C_RESET}"
+      else
+        printf "    • %bnanzi-ai-agent:%s%b %b(非数字 Tag，需人工确认)%b\n" "${C_GRAY}" "$_t" "${C_RESET}" "${C_GRAY}" "${C_RESET}"
+      fi
+    elif [ "$_t" = "$_running_tag" ]; then
+      printf "    • %bnanzi-ai-agent:%s%b %b(当前运行中)%b\n" "${C_GREEN}" "$_t" "${C_RESET}" "${C_GRAY}" "${C_RESET}"
+      TAG_FOUND_IN_RUNTIME=true
+    elif [ "$_t" = "$_best" ]; then
+      printf "    • %bnanzi-ai-agent:%s%b %b(候选新版本：高于当前运行版本)%b\n" "${C_CYAN}" "$_t" "${C_RESET}" "${C_YELLOW}" "${C_RESET}"
+    elif version_gt "$_running_tag" "$_t"; then
+      printf "    • %bnanzi-ai-agent:%s%b %b(旧版本，不建议回退)%b\n" "${C_GRAY}" "$_t" "${C_RESET}" "${C_GRAY}" "${C_RESET}"
+    else
+      case "$_t" in
+        *[0-9]*) printf "    • %bnanzi-ai-agent:%s%b %b(与当前运行 Tag 不可比较，需人工确认)%b\n" "${C_GRAY}" "$_t" "${C_RESET}" "${C_GRAY}" "${C_RESET}" ;;
+        *)       printf "    • %bnanzi-ai-agent:%s%b %b(纯别名 Tag，不参与版本比较)%b\n" "${C_GRAY}" "$_t" "${C_RESET}" "${C_GRAY}" "${C_RESET}" ;;
+      esac
+    fi
+  done
+
+  if [ -n "$_running_tag" ] && [ "$TAG_FOUND_IN_RUNTIME" != "true" ]; then
+    log_warn "当前运行 Tag ${_running_tag} 未出现在节点运行时列表中（可能由外部镜像仓库提供）。"
+  fi
+  [ -n "$RECOMMENDED_TAG" ] && log_info "推荐目标版本：${C_BOLD}nanzi-ai-agent:${RECOMMENDED_TAG}${C_RESET}（按版本号比较得出，已排除更低版本）"
+  if [ "$HAS_NEWER_CANDIDATE" != "true" ] && [ -n "$RECOMMENDED_FALLBACK" ]; then
+    log_warn "提示：当前运行版本已是节点上最高版本；如需升级请先导入更新的镜像 tar 后重跑，或在此手工输入新 Tag。"
+  fi
+  return 0
+}
+
+# 目标 Tag 是否属于低于当前运行版本的「降级」操作
+is_downgrade_tag() {
+  _candidate="${1:-}"
+  _running="${2:-}"
+  [ -n "$_candidate" ] && [ -n "$_running" ] || return 1
+  [ "$_candidate" = "$_running" ] && return 1
+  version_gt "$_running" "$_candidate" && return 0
+  return 1
 }
 
 # ==============================================================================
@@ -940,60 +1147,34 @@ print_step "5/6" "本地容器运行时镜像检测与应用发布"
 current_tag=$(grep -E '^\s*newTag:' kustomization.yaml | awk '{print $2}' || echo "latest")
 current_image=$(grep -E '^\s*newName:' kustomization.yaml | awk '{print $2}' || echo "nanzi-ai-agent")
 
+# 向导可能由「平台已在运行」的二次执行进入：以集群实际运行镜像作为版本比较基准
+running_image=""
+if command -v kubectl >/dev/null 2>&1; then
+  running_image=$(kubectl -n nanzi-ai-agent get deployment nanzi-ai-agent -o jsonpath='{.spec.template.spec.containers[?(@.name=="api")].image}' 2>/dev/null || true)
+  if [ -z "$running_image" ]; then
+    running_image=$(kubectl -n nanzi-ai-agent get deployment nanzi-ai-agent -o jsonpath='{.spec.template.spec.containers[0].image}' 2>/dev/null || true)
+  fi
+fi
+running_tag=""
+if [ -n "$running_image" ]; then
+  parse_image_ref "$running_image"
+  running_tag="$IMAGE_REF_TAG"
+  log_info "当前集群运行镜像: ${C_BOLD}${running_image}${C_RESET}"
+fi
+
 log_info "正在探测当前节点已导入的镜像 (K3s containerd / crictl)..."
 
-detected_nanzi_tags=""
 detected_python_base=false
-
-# 1. 优先探测 k3s ctr
-if command -v k3s >/dev/null 2>&1; then
-  ctr_output=$(k3s ctr images list 2>/dev/null || true)
-  if [ -n "$ctr_output" ]; then
-    detected_nanzi_tags=$(echo "$ctr_output" | grep -E 'nanzi-ai-agent' | awk '{print $1}' | awk -F: '{print $NF}' | sort -u || true)
-    if echo "$ctr_output" | grep -qE 'python:3\.11-slim'; then
-      detected_python_base=true
-    fi
+if probe_nanzi_images; then
+  [ -n "$current_image" ] || current_image="$DETECTED_NANZI_REPO"
+  # 已有运行实例时按「严格高于运行版本」推荐；全新安装时取节点上最高版本
+  recommend_upgrade_tag "$running_tag" || true
+  if [ -n "$RECOMMENDED_TAG" ]; then
+    current_tag="$RECOMMENDED_TAG"
+  else
+    current_tag=$(printf '%s\n' $DETECTED_NANZI_TAGS | highest_numeric_tag)
+    [ -n "$current_tag" ] || current_tag=$(printf '%s\n' $DETECTED_NANZI_TAGS | tail -n 1)
   fi
-fi
-
-# 2. 次选探测 crictl
-if [ -z "$detected_nanzi_tags" ] && command -v crictl >/dev/null 2>&1; then
-  crictl_output=$(crictl images 2>/dev/null || true)
-  if [ -n "$crictl_output" ]; then
-    detected_nanzi_tags=$(echo "$crictl_output" | grep -E 'nanzi-ai-agent' | awk '{print $2}' | sort -u || true)
-    if echo "$crictl_output" | grep -qE 'python.*3\.11-slim'; then
-      detected_python_base=true
-    fi
-  fi
-fi
-
-# 3. 检查是否有 docker 中的镜像但未导入 K3s containerd
-if [ -z "$detected_nanzi_tags" ] && command -v docker >/dev/null 2>&1; then
-  docker_output=$(docker images 2>/dev/null || true)
-  if [ -n "$docker_output" ]; then
-    docker_nanzi=$(echo "$docker_output" | grep -E 'nanzi-ai-agent' | awk '{print $2}' | sort -u || true)
-    if [ -n "$docker_nanzi" ]; then
-      log_warn "检测到宿主机 Docker daemon 中存在镜像，但尚未导入 K3s containerd："
-      for dt in $docker_nanzi; do
-        printf "      • %bnanzi-ai-agent:%s%b\n" "${C_YELLOW}" "$dt" "${C_RESET}"
-      done
-      latest_dt=$(echo "$docker_nanzi" | tail -n 1)
-      printf "      %b提示：镜像需导入节点容器运行时后 Pod 才能读取。可执行（文件式，勿用管道）：%b\n" "${C_GRAY}" "${C_RESET}"
-      printf "      %bdocker save -o nanzi-ai-agent_%s.tar nanzi-ai-agent:%s%b\n" "${C_CYAN}" "$latest_dt" "$latest_dt" "${C_RESET}"
-      printf "      %bk3s ctr images import nanzi-ai-agent_%s.tar        # K3s%b\n" "${C_CYAN}" "$latest_dt" "${C_RESET}"
-      printf "      %bctr -n k8s.io images import nanzi-ai-agent_%s.tar   # 非 K3s%b\n\n" "${C_CYAN}" "$latest_dt" "${C_RESET}"
-    fi
-  fi
-fi
-
-# 结果反馈与默认值智能联动
-if [ -n "$detected_nanzi_tags" ]; then
-  latest_detected_tag=$(echo "$detected_nanzi_tags" | tail -n 1)
-  log_success "在当前节点容器运行时中发现已导入的 NanZi 镜像版本："
-  for t in $detected_nanzi_tags; do
-    printf "    • %bnanzi-ai-agent:%s%b\n" "${C_GREEN}" "$t" "${C_RESET}"
-  done
-  current_tag="$latest_detected_tag"
 else
   log_warn "未在当前节点的 containerd (k3s ctr) 中探测到 nanzi-ai-agent 镜像。"
   printf "\n"
@@ -1010,6 +1191,29 @@ else
   printf "    %b（若您打算使用外部镜像仓库如 registry.example.com，可忽略此提示并在下一步填写完整镜像仓库地址）%b\n\n" "${C_GRAY}" "${C_RESET}"
 fi
 
+if printf '%s\n' "${PROBED_CONTAINER_IMAGES:-}" | grep -qE 'python.*3\.11-slim'; then
+  detected_python_base=true
+fi
+
+# 3. 检查是否有 docker 中的镜像但未导入容器运行时
+if [ "${DETECTED_NANZI_COUNT:-0}" -eq 0 ] && command -v docker >/dev/null 2>&1; then
+  docker_output=$(docker images 2>/dev/null || true)
+  if [ -n "$docker_output" ]; then
+    docker_nanzi=$(printf '%s\n' "$docker_output" | grep -E 'nanzi-ai-agent' | awk '{print $2}' | sort_versions_asc || true)
+    if [ -n "$docker_nanzi" ]; then
+      log_warn "检测到宿主机 Docker daemon 中存在镜像，但尚未导入节点容器运行时："
+      for dt in $docker_nanzi; do
+        printf "      • %bnanzi-ai-agent:%s%b\n" "${C_YELLOW}" "$dt" "${C_RESET}"
+      done
+      latest_dt=$(printf '%s\n' $docker_nanzi | tail -n 1)
+      printf "      %b提示：镜像需导入节点容器运行时后 Pod 才能读取。可执行（文件式，勿用管道）：%b\n" "${C_GRAY}" "${C_RESET}"
+      printf "      %bdocker save -o nanzi-ai-agent_%s.tar nanzi-ai-agent:%s%b\n" "${C_CYAN}" "$latest_dt" "$latest_dt" "${C_RESET}"
+      printf "      %bk3s ctr images import nanzi-ai-agent_%s.tar        # K3s%b\n" "${C_CYAN}" "$latest_dt" "${C_RESET}"
+      printf "      %bctr -n k8s.io images import nanzi-ai-agent_%s.tar   # 非 K3s%b\n\n" "${C_CYAN}" "$latest_dt" "${C_RESET}"
+    fi
+  fi
+fi
+
 if [ "$detected_python_base" = "true" ]; then
   log_success "沙箱与数据初始化依赖的基础镜像 python:3.11-slim 已就绪"
 else
@@ -1019,6 +1223,16 @@ echo
 
 prompt_input "NanZi 应用镜像名称/仓库" "$current_image" TARGET_IMAGE_NAME
 prompt_input "应用版本标签 Tag" "$current_tag" TARGET_IMAGE_TAG
+
+# 回到向导第 5 步时集群可能仍在运行更版本：显式提示回退风险
+if is_downgrade_tag "$TARGET_IMAGE_TAG" "$running_tag"; then
+  log_warn "注意：所选 Tag ${TARGET_IMAGE_TAG} 低于集群当前运行版本 ${running_tag}（版本回退）。"
+  prompt_confirm "确认要执行版本回退吗？" "N" confirm_downgrade
+  if [ "$confirm_downgrade" != "true" ]; then
+    log_info "已取消本次发布，当前集群未做任何变更。"
+    exit 0
+  fi
+fi
 
 cat <<EOF > kustomization.yaml
 apiVersion: kustomize.config.k8s.io/v1beta1

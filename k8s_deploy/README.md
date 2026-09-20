@@ -405,7 +405,7 @@ cd k8s_deploy
 
 向导具备以下特性：
 * **环境自检与智能分流**：检测 `kubectl` 连通性；若检测到 NanZi 已在集群平稳运行，直接运行 `./install.sh` 会主动提示您是否仅升级镜像；
-* **本地镜像检测**：自动探测当前节点容器运行时（K3s containerd / crictl / docker）中的 `nanzi-ai-agent` 镜像 Tag 并自动推荐为默认版本；若未导入则提供单行导入命令；
+* **本地镜像检测**：自动探测当前节点容器运行时（K3s containerd / crictl / ctr）中的 `nanzi-ai-agent` 镜像 Tag，按**版本号逐段数值比较**推荐「严格高于当前运行版本的最高数字版本」，较低版本与 `latest` 等纯别名 Tag 不会被误判为升级目标；若未导入则提供单行导入命令；
 * **幂等执行**：支持随时中断并安全重入，已存在的 PVC 和 Secret 会受到安全保护。
 
 日常运维管理可配合使用 [nanzi-k8s.sh](./nanzi-k8s.sh)：
@@ -1233,9 +1233,12 @@ ingress.networking.k8s.io/nanzi-ai-agent   traefik   *   10.90.10.64   80   11h
 ### 推荐：用封装好的 `install.sh upgrade`
 
 镜像升级优先使用目录自带的 [install.sh](./install.sh) `upgrade` 命令，它会自动完成：
-集群/镜像自检 → 探测节点已导入的镜像 Tag → 判断 Tag 是否变化 → Tag 变化走
+集群/镜像自检 → 探测节点已导入的镜像 Tag 并按版本号比较出候选新版本 → 判断 Tag 是否变化 → Tag 变化走
 `kubectl set image`、同 Tag 走 `rollout restart` → 自动等待滚动就绪 → 同步
 `kustomization.yaml`。无需手工敲 kubectl：
+
+提示：候选版本 = 节点上**严格高于当前运行版本的最高数字版本**；更低版本会被标注「不建议回退」，
+显式回退时会要求二次确认；`latest` 等纯别名 Tag 不参与自动推荐。
 
 ```bash
 cd k8s_deploy
