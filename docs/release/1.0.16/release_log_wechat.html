@@ -1,0 +1,384 @@
+<!--
+  微信公众号排版 HTML — NanZi AI 智能体平台 v1.0.16.0
+  风格：深蓝渐变科技风 / 现代化精编版（卡片式阴影、微渐变、导读浅析）
+  使用说明：
+  1. 复制下方 <section> 内全部内容，粘贴到微信公众平台编辑器「HTML」模式（或 135/秀米 等排版工具）
+  2. 封面图可在微信公众号后台直接使用 docs/release/1.0.16/release-cover-info.md 中的素材生成
+  3. 全部采用内联 style 样式，兼容微信图文防洗稿规范
+-->
+
+<section style="box-sizing:border-box;max-width:760px;margin:0 auto;padding:0 2px;font-size:16px;color:#3f3f3f;line-height:1.8;letter-spacing:0.5px;text-align:justify;font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue','PingFang SC','Hiragino Sans GB','Microsoft YaHei',Arial,sans-serif;word-break:break-word;overflow-wrap:break-word;">
+
+  <!-- 标题区：科技感深蓝微渐变 -->
+  <section style="margin:0 0 28px 0;padding:28px 18px 24px 18px;background:linear-gradient(135deg,#060c1f 0%,#0a1628 48%,#0d2040 100%);box-shadow:0 4px 24px rgba(56,189,248,0.15);border-radius:4px;text-align:left;">
+    <p style="margin:0 0 6px 0;font-size:12px;font-weight:normal;color:#93c5fd;line-height:1.4;letter-spacing:2px;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">NANZI · RELEASE NOTES</p>
+    <p style="margin:0 0 10px 0;font-size:22px;font-weight:bold;color:#fafaf9;line-height:1.45;letter-spacing:0.5px;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">NanZi 开源智能体平台 v1.0.16.0</p>
+    <p style="margin:0;font-size:14px;font-weight:normal;color:#cbd5e1;line-height:1.7;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">门户会话令牌化 · 浏览器零长期密钥 · 会话可吊销与审计脱敏 · 数据集质量治理分 · K8s 沙箱零配置共享工作区</p>
+  </section>
+
+  <!-- 项目声明 -->
+  <section style="margin:0 0 22px 0;padding:0 0 18px 0;border-bottom:1px solid #e2e8f0;">
+    <p style="margin:0 0 10px 0;font-size:13px;font-weight:bold;color:#0f172a;line-height:1.5;letter-spacing:1px;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">项目声明</p>
+    <p style="margin:0 0 8px 0;font-size:14px;color:#475569;line-height:1.85;text-align:justify;">
+      本项目为<strong style="color:#0f172a;">个人开源</strong>，供自由学习交流，遵循 MIT 开源协议，可自由分发与商用。
+    </p>
+    <p style="margin:0;font-size:14px;color:#475569;line-height:1.85;text-align:justify;">
+      「NanZi」取自我常用的网名「南孜」，寓「孜孜不倦」——持续学习、持续打磨生产级 AI 智能体技术栈。
+    </p>
+  </section>
+
+  <!-- 仓库链接 -->
+  <section style="margin:0 0 22px 0;padding:12px 0 12px 14px;border-left:3px solid #0284c7;background:#f0f9ff;border-radius:0 4px 4px 0;">
+    <p style="margin:0;font-size:14px;color:#0369a1;line-height:1.7;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+      <strong style="color:#0c4a6e;">GitHub：</strong>
+      <a href="https://github.com/RandyChen1985/nanzi-ai-agent-platform" style="color:#0284c7;text-decoration:underline;word-break:break-all;">RandyChen1985/nanzi-ai-agent-platform</a>
+    </p>
+  </section>
+
+  <!-- 导语 -->
+  <section style="margin:0 0 24px 0;">
+    <p style="margin:0 0 14px 0;font-size:15px;color:#1e293b;line-height:1.9;">
+      NanZi 开源智能体平台正式发布 <strong style="color:#0f172a;">v1.0.16.0</strong> 版本！这是一次以<strong>身份凭据体系重构、会话可吊销与审计脱敏、嵌入凭据实例级隔离、数据集质量治理与元数据漂移 AI 语义治理、K8s 沙箱零配置共享工作区</strong>为核心驱动，并全面推进<strong>登录防暴破锁定、安全响应头、上下文 token 口径统一与 Prompt Cache 指标归一化</strong>的重量级安全与治理版本。
+    </p>
+    <p style="margin:0 0 14px 0;font-size:15px;color:#1e293b;line-height:1.9;">
+      平台完成了自建库以来最彻底的一次<strong>身份凭据体系重构</strong>：登录后浏览器只持有不可猜测、可即时吊销的不透明会话令牌 <code style="font-size:12px;background:#f1f5f9;padding:2px 6px;border-radius:3px;color:#334155;">sess_&lt;random&gt;</code>，真实 API Key 不再出现在任何一种响应体、<code style="font-size:12px;background:#f1f5f9;padding:2px 6px;border-radius:3px;color:#334155;">localStorage</code> 或前端注入代码中；同时为 API Key 引入 <code style="font-size:12px;background:#f1f5f9;padding:2px 6px;border-radius:3px;color:#334155;">nzi_</code> 可辨识前缀，让凭据在日志与抓包中一眼可辨。
+    </p>
+    <p style="margin:0 0 14px 0;font-size:15px;color:#1e293b;line-height:1.9;">
+      在数据治理领域，推出<strong>数据集质量治理分</strong>（类型一致性 30 + 结构覆盖 25 + 备注完备度 25 + 表完整性 20）与<strong>元数据漂移 AI 语义治理</strong>闭环；在沙箱与运维侧，Kubernetes 沙箱实现<strong>零配置自动探测并共享平台数据卷</strong>，双库迁移脚本升级为带交互式确认、断点续跑与原生客户端模式的工程化工具链。
+    </p>
+    <p style="margin:0;font-size:14px;color:#64748b;line-height:1.75;">
+      本次变更自 <code style="font-size:12px;background:#f1f5f9;padding:2px 6px;border-radius:3px;color:#334155;">f9a65171</code> 至 <code style="font-size:12px;background:#f1f5f9;padding:2px 6px;border-radius:3px;color:#334155;">6ead4017</code>，共 <strong>94 个提交</strong>（85 个非 Merge 提交），变更 <strong>219 个文件</strong>，<strong>21,591 行新增</strong>、<strong>3,299 行删除</strong>。
+    </p>
+  </section>
+
+  <!-- 破坏性变更提示 -->
+  <section style="margin:0 0 28px 0;padding:14px 16px;background:#fffbeb;border-left:4px solid #f59e0b;border-radius:0 4px 4px 0;">
+    <p style="margin:0 0 10px 0;font-size:14px;font-weight:bold;color:#92400e;line-height:1.6;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+      ⚠️ 破坏性变更提示 (Breaking Changes)
+    </p>
+    <p style="margin:0 0 8px 0;font-size:13px;color:#78350f;line-height:1.8;">
+      · <strong style="color:#92400e;">门户会话 Cookie 更名，需重新登录一次</strong>：Cookie 由 <code style="font-size:12px;background:#fef3c7;padding:2px 4px;border-radius:2px;color:#92400e;">admin_token</code> 正式更名为 <code style="font-size:12px;background:#fef3c7;padding:2px 4px;border-radius:2px;color:#92400e;">portal_session</code>，遵循「只认新名、不加兼容分支」的既定迁移风格——<strong>升级后所有已登录用户需重新登录一次</strong>。
+    </p>
+    <p style="margin:0;font-size:13px;color:#78350f;line-height:1.8;">
+      · <strong style="color:#92400e;">代客签发嵌入凭证权限码变更，需管理员重新授权</strong>：「代他人签发嵌入凭证」由借用「获取用户画像」API 权限，改为独立的 API 权限码 <code style="font-size:12px;background:#fef3c7;padding:2px 4px;border-radius:2px;color:#92400e;">POST:/api/v1/embed/tickets</code>，此前依赖旧权限的角色需管理员在后台【角色管理 → 智能体中心】重新分配。
+    </p>
+  </section>
+
+  <!-- 章节一：核心更新亮点 -->
+  <section style="margin:0 0 32px 0;">
+    <p style="margin:0 0 16px 0;padding:0 0 7px 12px;border-left:4px solid #0284c7;border-bottom:1px solid #e0f2fe;font-size:18px;font-weight:bold;color:#0f172a;line-height:1.4;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+      🚀 核心更新亮点 (Key Features)
+    </p>
+
+    <!-- 1. 门户会话令牌化与凭据全域收敛（已合并原 2 会话生命周期治理、原 3 认证韧性加固） -->
+    <section style="margin:0 0 20px 0;padding:18px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:4px;">
+      <p style="margin:0 0 10px 0;font-size:16px;font-weight:bold;color:#0f172a;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        1. 🔐 门户会话令牌化与凭据全域收敛：浏览器彻底告别长期 API Key
+      </p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">不透明会话令牌 <code style="font-size:12px;background:#e2e8f0;padding:2px 4px;border-radius:2px;">sess_&lt;random&gt;</code> 全链路落地</strong>：登录成功后由服务端签发可吊销的随机令牌，写入既有 <code style="font-size:12px;background:#e2e8f0;padding:2px 4px;border-radius:2px;">auth:api_key:{sha256(token)}</code> 键空间，令牌落 Redis 哈希（含 <code style="font-size:12px;background:#e2e8f0;padding:2px 4px;border-radius:2px;">user_id</code> / <code style="font-size:12px;background:#e2e8f0;padding:2px 4px;border-radius:2px;">role</code> / <code style="font-size:12px;background:#e2e8f0;padding:2px 4px;border-radius:2px;">status</code> / <code style="font-size:12px;background:#e2e8f0;padding:2px 4px;border-radius:2px;">session_type</code> / <code style="font-size:12px;background:#e2e8f0;padding:2px 4px;border-radius:2px;">verified_at</code>）并设 24 小时 TTL，活跃请求自动滑动续期。</p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;"><code style="font-size:12px;background:#e2e8f0;padding:2px 4px;border-radius:2px;">PORTAL_SESSION_TOKEN_ENABLED</code> 开关（默认开启）</strong>：置 <code style="font-size:12px;background:#e2e8f0;padding:2px 4px;border-radius:2px;">false</code> 即恢复旧行为（Cookie 直存真实 Key），仅在 Redis 不可用等异常场景需要；登录下发点统一收敛为 <code style="font-size:12px;background:#e2e8f0;padding:2px 4px;border-radius:2px;">_issue_portal_session_cookie</code> 并以契约测试锁定调用点数量，Redis 不可用时 Fail-Open 回退原凭据。</p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">登录响应体不再回传真实 API Key</strong>：<code style="font-size:12px;background:#e2e8f0;padding:2px 4px;border-radius:2px;">/auth/login</code>、<code style="font-size:12px;background:#e2e8f0;padding:2px 4px;border-radius:2px;">/auth/sso/login</code>、<code style="font-size:12px;background:#e2e8f0;padding:2px 4px;border-radius:2px;">/auth/login/2fa</code> 三处移除 <code style="font-size:12px;background:#e2e8f0;padding:2px 4px;border-radius:2px;">api_key</code> 字段，凭据只经 HttpOnly Cookie 下发；保留三处按业务必需的显式取 Key 通道并以 6 项源码级契约测试锁定边界。</p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">API Key 引入 <code style="font-size:12px;background:#e2e8f0;padding:2px 4px;border-radius:2px;">nzi_</code> 可辨识前缀</strong>：随机体仍为 43 字符 / 256 bit，<strong>不减熵</strong>（总长 43→47）；<code style="font-size:12px;background:#e2e8f0;padding:2px 4px;border-radius:2px;">verify_api_key</code> 不解析格式、只做 SHA256 查库，历史无前缀 Key 继续有效。</p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">前端凭据去本地化</strong>：移除全局与 19 个文件共 27 处页面内凭据注入，停止写入 <code style="font-size:12px;background:#e2e8f0;padding:2px 4px;border-radius:2px;">localStorage.api_key</code>，新增 <code style="font-size:12px;background:#e2e8f0;padding:2px 4px;border-radius:2px;">userSession.ts</code> 收敛会话清理路径；嵌入场景改由已鉴权用户签发 <code style="font-size:12px;background:#e2e8f0;padding:2px 4px;border-radius:2px;">emb_ses_</code> 短期令牌，长期 Key 用后即弃。</p>
+      <p style="margin:0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">对外文档全量同步</strong>：ChatBI HTTP API、嵌入集成指南、FAQ 等活文档统一对齐「Cookie 不承载真实 API Key、登录不回传凭据、外部集成仍走 X-API-Key / Authorization」的凭据形态说明。</p>
+<p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">会话生命周期治理</strong>：会话令牌支持按用户成批吊销（<code style="font-size:12px;background:#e2e8f0;padding:2px 4px;border-radius:2px;">auth:user_sessions</code> 索引与 60 秒回源复核双保险），审计日志凭据全链路脱敏，嵌入凭据按实例隔离消除身份串号，票据改为「只读校验通过后再原子核销」。</p>
+<p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">认证韧性加固</strong>：登录防暴破 5 次 / 15 分钟锁定、nosniff / CSP / 30 天 HSTS 安全响应头、反向代理自适应 Cookie Secure，代客签发归位专用 API 权限码 <code style="font-size:12px;background:#e2e8f0;padding:2px 4px;border-radius:2px;">POST:/api/v1/embed/tickets</code>。</p>
+      <p style="margin:10px 0 0 0;padding:10px 12px;background:#eff6ff;border-left:3px solid #3b82f6;color:#1e40af;font-size:13px;line-height:1.8;">
+        <strong>简单说</strong>：以前登录后浏览器里躺着一把「永久钥匙」，现在只发一张 24 小时有效、随时能作废的「门禁卡」——哪怕门禁卡丢了，管理员在后台一按就能成批吊销，真实密钥再也不会出现在前端、日志和抓包里。
+      </p>
+    </section>
+
+    <!-- 2. 数据集质量治理分与元数据漂移 AI 语义治理 -->
+    <section style="margin:0 0 20px 0;padding:18px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:4px;">
+      <p style="margin:0 0 10px 0;font-size:16px;font-weight:bold;color:#0f172a;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        2. 🏢 数据集质量治理分体系与元数据漂移 AI 语义治理
+      </p>
+<p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">给每个数据集打「体检分」（0-100）</strong>：从字段类型、结构覆盖、备注齐全度、表完整性四维算分，扣分原因可见；列表与卡片展示分数、支持排序，并显示评分时间。</p>
+<p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">不再「读不到就给满分」</strong>：以前结构读不出来时问题数为 0，反被判 100 分「优秀」；现在标注「分数基于不完整比对」并挂 <strong>⚠</strong> 提示。</p>
+<p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">新增字段自动补中文名与描述</strong>：有注释用注释，没有让 AI 结合真实数据推断，可人工改后一键收录；还能揪出「字段没写备注」并批量补齐。</p>
+<p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">字段类型统一 6 大类，治理动作更「防呆」</strong>：类型收敛为字符串 / 整数 / 小数 / 时间 / 布尔 / JSON；不能用「新增字段」处理「整张表已丢失」，批量处置某条出错不连累其他条。</p>
+      <section style="margin:10px 0 0 0;padding:16px;background:#ffffff;border:1px dashed #cbd5e1;border-radius:4px;text-align:center;color:#64748b;font-size:13px;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        <p style="margin:0 0 4px 0;font-size:18px;">📷</p>
+        <p style="margin:0;">【示例截图占位】：数据集质量治理分徽标、维度明细与 AI 语义漂移治理抽屉</p>
+      </section>
+    </section>
+
+    <!-- 3. 沙箱零配置共享工作区与构建运维一体化（已合并原 4 沙箱构建与运维 CLI 工程化） -->
+    <section style="margin:0 0 20px 0;padding:18px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:4px;">
+      <p style="margin:0 0 10px 0;font-size:16px;font-weight:bold;color:#0f172a;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        3. ☸️ 沙箱零配置共享工作区与构建运维一体化
+      </p>
+<p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">沙箱里终于能看到完整工作区</strong>：以前 K8s 沙箱只看得到一个 sandbox 子目录，看不到会话记录、文档和历史文件；现在改为挂载整个用户工作区，和 Docker 沙箱行为一致。</p>
+<p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">共享工作区改成「零配置」</strong>：以前要手工指定命名空间和共享卷，配错不报错、只表现为沙箱里空空的；现在默认自动探测平台数据卷并共享，留空即用，填 <code style="font-size:12px;background:#e2e8f0;padding:2px 4px;border-radius:2px;">none</code> 才强制隔离。存在配错风险时直接告警，不再无声失效。</p>
+<p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">运维脚本不再把平台和沙箱混在一起</strong>：沙箱与平台同命名空间后，两边资源会互相混显；现在按标签分开统计，并能直接看到沙箱复用了哪个平台数据卷，排障更快。</p>
+<p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">沙箱构建工具链开箱即用</strong>：Docker 与 K8s 构建脚本统一收进 sandbox/ 目录、命名与用法对齐；构建前自动检查环境（没装 CLI、服务没起、权限不足分别给指引），预置镜像内置 git、ping、netstat、dig 等排障工具，构建终端改为彩色分区排版。</p>
+<p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">构建与部署更稳</strong>：补丁失败会直接中断构建，避免产出残缺镜像；平台启动时自动创建 docs / skills / branding 三个公共只读目录，避免空存储首次挂载时报「目录不存在」，工作区浏览器也禁止误删这些系统目录。</p>
+      <section style="margin:10px 0 0 0;padding:16px;background:#ffffff;border:1px dashed #cbd5e1;border-radius:4px;text-align:center;color:#64748b;font-size:13px;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        <p style="margin:0 0 4px 0;font-size:18px;">📷</p>
+        <p style="margin:0;">【示例截图占位】：共享工作区配置三态说明与沙箱构建终端彩色排版</p>
+      </section>
+    </section>
+
+    <!-- 4. 双数据库迁移脚本工具化 -->
+    <section style="margin:0 0 20px 0;padding:18px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:4px;">
+      <p style="margin:0 0 10px 0;font-size:16px;font-weight:bold;color:#0f172a;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        4. 🗄️ 双数据库迁移脚本工具化：升级更省心、可随时重跑
+<p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">升级脚本会「说话」了</strong>：MySQL 与 PostgreSQL 的迁移脚本统一支持查看帮助、指定范围升级、从上次中断处继续；运行时彩色分区打印进度与统计，执行前必须输入 YES 确认防手滑，环境缺依赖时会直接提示怎么装。</p>
+<p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">PostgreSQL 多了一条免依赖路径</strong>：新增免 Python 的直接执行脚本，用系统自带的 psql 就能升级，适合精简容器与受限环境。</p>
+<p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">可以反复重跑，不怕升级到一半出错</strong>：修复了 PostgreSQL 脚本的两处历史问题——一个布尔开关被写成了数字、两处字段添加缺少「已存在就跳过」判断，导致重复执行直接报错；现在随时重跑都安全，并补齐了双库自动化单测。</p>
+      <section style="margin:10px 0 0 0;padding:16px;background:#ffffff;border:1px dashed #cbd5e1;border-radius:4px;text-align:center;color:#64748b;font-size:13px;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        <p style="margin:0 0 4px 0;font-size:18px;">📷</p>
+        <p style="margin:0;">【示例截图占位】：迁移脚本彩色终端进度与执行前 YES 确认交互</p>
+      </section>
+    </section>
+
+    <!-- 5. 体验精修（已合并原 6 Agent Debug、原 7 前端交互、原 8 指标与提示词、原 9 通知与公共目录） -->
+    <section style="margin:0 0 20px 0;padding:18px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:4px;">
+      <p style="margin:0 0 10px 0;font-size:16px;font-weight:bold;color:#0f172a;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        5. ✨ 对话质量、调试工具与前端体验全面精修
+      </p>
+<p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">中文对话不再被过早压缩</strong>：以前中文的 token 估算偏高约一倍，实测纯中文会话在 64k 模型上只用到 35% 就被判超窗、被迫做压缩总结；现在口径与实际对齐，并修掉了「编辑重发后旧的压缩摘要被拼回新对话」「长期不用后计数器重来导致消息被丢」等问题。</p>
+<p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">调试时能看清每一步怎么跑的</strong>：新增「执行详情」抽屉，把执行步骤（含完整的工具入参出参）、组装后的完整 Prompt、运行时上下文收在一处；Prompt 支持一键复制、折叠与 token 估算，不用再翻日志。调试页还能直接启停沙箱、打开终端，页面偶发空白的问题一并修掉。</p>
+<p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">界面操作更顺手</strong>：内嵌对话顶栏统一改用自定义提示气泡（不再用滞后的原生提示），会话历史侧边栏支持当前会话高亮、搜索防抖、Markdown 导出、按日期分组折叠；模型选择、@ 提及、快捷指令都支持键盘上下选择并自动滚动跟随；AI 回复底部按钮尺寸统一；网页预览在新窗口打开后会自动关闭面板。</p>
+<p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">模型调用统计更准，AI 更少答非所问</strong>：补齐了不同厂商（OpenAI / Anthropic / 聚合网关）缓存用量的解析差异，调用明细里能看清「缓存读取」与「未缓存输入」各占多少；同时修掉几处误判——问「你是什么模型」不再被截断，提到 gift、charter 这类日常词不再误触发图片识别，闲聊也不再被强推去检索平台文档，历史表格也不会再被截断丢数据。</p>
+<p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">通知与平台细节更省心</strong>：渠道连通性测试消息现在会带上触发人与时间（按平台时区），一眼能认出是谁测的、对不对得上刚点的操作，并且不会把密钥带进消息里；平台还补齐了 FAQ 入口、部署实践技术文与安装文档说明。</p>
+      <section style="margin:10px 0 0 0;padding:16px;background:#ffffff;border:1px dashed #cbd5e1;border-radius:4px;text-align:center;color:#64748b;font-size:13px;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        <p style="margin:0 0 4px 0;font-size:18px;">📷</p>
+        <p style="margin:0;">【示例截图占位】：执行详情抽屉、会话历史侧边栏与模型调用统计拆分</p>
+      </section>
+    </section>
+
+  </section>
+
+  <!-- 章节二：Bug Fixes -->
+  <section style="margin:0 0 32px 0;">
+    <p style="margin:0 0 16px 0;padding:0 0 7px 12px;border-left:4px solid #0284c7;border-bottom:1px solid #e0f2fe;font-size:18px;font-weight:bold;color:#0f172a;line-height:1.4;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+      🐛 缺陷修复 (Bug Fixes)
+    </p>
+
+    <section style="margin:0 0 18px 0;padding:16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:4px;">
+      <p style="margin:0 0 10px 0;font-size:15px;font-weight:bold;color:#0f172a;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        🔐 认证 / 会话 / 凭据安全
+      </p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">会话令牌无法吊销（高危）</strong>：会话令牌以单向哈希存储、无法由用户反查，禁用 / 删号 / 改角色 / 重置密钥后旧会话仍长期可用；现已补上用户维度的会话索引、成批吊销与 60 秒回源复核兜底。</p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">审计日志明文落库（高危）</strong>：审计脱敏名单漏了会话令牌字段，令牌随响应体明文入库且详情接口原样回显；现已补键名与内容双重脱敏。</p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">跨站 iframe 刷新失效（高危回归）</strong>：嵌入会话 Cookie 采用 lax 策略，在跨站第三方 iframe 中不会被发送，原先「一旦服务端下发了 Cookie 就清掉地址栏凭据」的做法使刷新后既无地址栏凭据、Cookie 也不发；现改用本标签页的短期令牌作为刷新依据。</p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">登出未清理嵌入会话</strong>：门户登出后请求会回落到嵌入身份造成身份串号；现在两个 Cookie 都读、都删，并按会话类型走服务端吊销。</p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">登录响应体泄露长期密钥 / 内嵌页永久卡加载 / 调试台闪红</strong>：三处登录接口不再回传真实密钥；无凭据初始化时非严格模式照常回落同源 Cookie 校验；并区分「等待宿主下发凭据」与「凭据失效」，消除一帧红色遮罩。</p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">票据被来源校验白白消耗 / 嵌入令牌并发兑换误报</strong>：改为「只读校验通过后再原子核销」，域名白名单没配对方不再白白消耗票据；前端增加并发去重。</p>
+      <p style="margin:0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">多实例身份串号 / 用户信息接口名称不符</strong>：嵌入凭据的本地存储按实例维度隔离且不回退旧键；「获取用户画像」更正为「获取用户信息」（仅显示名变化，权限不变）。</p>
+    </section>
+    <section style="margin:0 0 18px 0;padding:16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:4px;">
+      <p style="margin:0 0 10px 0;font-size:15px;font-weight:bold;color:#0f172a;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        🏢 元数据 / 巡检 / 数据治理
+      </p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">巡检降级误判满分</strong>：物理结构读取失败时各类问题数都是 0，反而被判成 100 分「优秀」；现在会标记不可读的表数量与降级状态，并在前端以 ⚠ 提示。</p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">质量分入口不一致 / 全库巡检单数据集异常拖垮整轮</strong>：单数据集与全库两条路径统一结算；全库巡检对每个数据集独立隔离，异常只计入失败数、不再回滚整轮结果。</p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">跨类型误处置 / 批量处置语义矛盾</strong>：引入「处置动作与问题类型」的白名单校验；批量处置按条隔离，不再出现「计数已算成功但整批回滚」。</p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">采样 SQL 注入面与误杀</strong>：4 处采样中 3 处为字符串拼接直通请求体，而唯一的安全校验又过严、会静默跳过中文列名采样；现已统一走安全引用。</p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">告警去重吞没 / 物理类型误判</strong>：去重条件补上问题类型，避免「类型不匹配」告警吞没「备注缺失」告警；字段类型统一归一化为 6 大类并改用更稳的匹配方式。</p>
+      <p style="margin:0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">AI 推荐语义弹窗被遮挡 / 数据表卡片按钮藏得过深</strong>：弹窗改为挂载到页面根节点并置顶显示；操作按钮移除「悬停才现身」的样式，改为默认常显。</p>
+    </section>
+    <section style="margin:0 0 18px 0;padding:16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:4px;">
+      <p style="margin:0 0 10px 0;font-size:15px;font-weight:bold;color:#0f172a;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        🧠 上下文管理 / 提示词 / AI 工具
+      </p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">中文上下文被高估约 2 倍</strong>：token 估算口径改为按字节折算，与运行时口径对齐，避免中文会话在 64k 模型上仅用到 35% 就被压缩。</p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">手动压缩快照未失效 / 计数器静默后重置</strong>：补上快照失效点与版本校验；计数器随状态重置一并续期，不再丢弃新消息。</p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">输出预留恒为 0 / 压缩卡片重复与计数翻倍 / 摘要请求自身超窗</strong>：统一上下文元数据口径；压缩事件补阶段标记，中间态不再重复发卡；摘要请求加上限并优先保留最近内容。</p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">空回复 / 半截话难以排查 / 断轮清理口径不一致</strong>：输出上限补 128 的下限并留下显式告警；两套断轮清理逻辑统一为一套。</p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">摘录自我抄写</strong>：生成压缩摘录时跳过携带压缩标记的系统消息，并修复其识别逻辑取不到值导致漏检的问题。</p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">图片识别词边界误伤 / 模型身份询问被误判截断 / 上一轮表格数据丢失</strong>：日常词汇不再误触发图片识别；移除当前模型的前置拦截；最近一轮回复的表格保护到 100 行，折叠提示改为外部引用块。</p>
+      <p style="margin:0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">执行观测测试偶发失败 / 会话历史路由错位</strong>：修正测试基础设施标记误用导致的连接池事件循环错配；会话历史接口的路由装饰器从误挂位置移回，修复 400 错误。</p>
+    </section>
+    <section style="margin:0 0 18px 0;padding:16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:4px;">
+      <p style="margin:0 0 10px 0;font-size:15px;font-weight:bold;color:#0f172a;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        ☸️ 沙箱 / K8s 运维 / 构建脚本
+      </p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">K8s 沙箱看不到用户工作区</strong>：挂载路径由子目录改为整个用户工作区根，与 Docker 行为对齐。</p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">共享存储静默失效</strong>：共享卷是命名空间级资源，沙箱与平台分属不同命名空间时挂载无法生效；现已对齐默认命名空间并新增配置告警。</p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">沙箱运维脚本资源混显</strong>：平台视角混入沙箱 Pod、事件重复打印、看不到沙箱实际复用的平台数据卷；现按标签划分并补显共享数据卷。</p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">预构建标记写库失败 / 构建脚本缺包无提示</strong>：修复预构建标记写入失败；新增环境激活脚本，并在补丁失败时直接拦截构建流程。</p>
+      <p style="margin:0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">空存储缺公共目录 / 系统保护目录可被误删</strong>：启动时自动初始化三个公共只读目录；前端禁止对保护目录与用户主目录执行重命名 / 删除。</p>
+    </section>
+    <section style="margin:0;padding:16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:4px;">
+      <p style="margin:0 0 10px 0;font-size:15px;font-weight:bold;color:#0f172a;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        💻 前端交互 / 视觉 / 预览
+      </p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">网页预览面板跳转后残留</strong>：在新窗口 / 新标签页打开后自动关闭面板（三处入口统一绑定）。</p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">快捷指令标签多余 Emoji</strong>：调试页面标签清理冗余 emoji；时间线标题剥离任意图形字符类前缀。</p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">图标测试退化为排版快照</strong>：断言改为先做空白归一化再匹配，只约束行为、不约束缩进与换行。</p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">默认大模型下拉不含多模态模型</strong>：下拉改为同时放行文本与多模态两类，并把多模态的类型判定收敛为单一来源，避免日后两处各自漂移。</p>
+      <p style="margin:0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">兼容模式提示文案指向不清</strong>：压至 38 字并给出终端用户唯一可执行的动作「联系开发人员」，同时以测试禁止正文再变长或泄露接口细节。</p>
+    </section>
+  </section>
+
+  <!-- 章节三：数据库迁移 -->
+  <section style="margin:0 0 32px 0;">
+    <p style="margin:0 0 16px 0;padding:0 0 7px 12px;border-left:4px solid #0284c7;border-bottom:1px solid #e0f2fe;font-size:18px;font-weight:bold;color:#0f172a;line-height:1.4;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+      🗄️ 数据库表结构变更说明 (Database Migrations)
+    </p>
+    <p style="margin:0 0 10px 0;font-size:14px;color:#475569;line-height:1.8;">
+      本版本包含 <strong style="color:#0f172a;">3 组双数据库（MySQL / PostgreSQL）同步迁移脚本</strong>，另含 PostgreSQL 侧 4 处历史脚本的幂等与类型兼容修复，所有脚本均支持幂等安全执行：
+    </p>
+    <p style="margin:0 0 10px 0;font-size:12px;color:#94a3b8;line-height:1.6;">📱 下方两张表格较宽，移动端可<b>左右滑动</b>查看完整内容</p>
+
+    <!-- 迁移清单表：外层容器 overflow-x:auto，移动端可横向滑动 -->
+    <section style="margin:0 0 18px 0;overflow-x:auto;-webkit-overflow-scrolling:touch;">
+      <table style="width:100%;min-width:680px;border-collapse:collapse;font-size:13px;line-height:1.7;color:#334155;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        <thead>
+          <tr style="background:#f1f5f9;">
+            <th style="padding:8px 10px;border:1px solid #e2e8f0;text-align:left;font-weight:bold;color:#0f172a;white-space:nowrap;width:118px;">版本号 (MySQL / PG)</th>
+            <th style="padding:8px 10px;border:1px solid #e2e8f0;text-align:left;font-weight:bold;color:#0f172a;">变更说明</th>
+            <th style="padding:8px 10px;border:1px solid #e2e8f0;text-align:left;font-weight:bold;color:#0f172a;">涉及数据表 / 配置项</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td style="padding:8px 10px;border:1px solid #e2e8f0;white-space:nowrap;font-family:Consolas,Monaco,monospace;font-weight:bold;color:#0284c7;">V155 / V56</td>
+            <td style="padding:8px 10px;border:1px solid #e2e8f0;">数据集质量治理分（巡检结算时写入，<strong style="color:#0f172a;">仅新增列，不改动既有数据</strong>）</td>
+            <td style="padding:8px 10px;border:1px solid #e2e8f0;"><code style="font-size:12px;background:#e2e8f0;padding:1px 4px;border-radius:2px;">meta_datasets.quality_score</code>、<code style="font-size:12px;background:#e2e8f0;padding:1px 4px;border-radius:2px;">meta_datasets.quality_breakdown</code>、<code style="font-size:12px;background:#e2e8f0;padding:1px 4px;border-radius:2px;">meta_datasets.quality_scored_at</code></td>
+          </tr>
+          <tr style="background:#fbfdff;">
+            <td style="padding:8px 10px;border:1px solid #e2e8f0;white-space:nowrap;font-family:Consolas,Monaco,monospace;font-weight:bold;color:#0284c7;">V156 / V57</td>
+            <td style="padding:8px 10px;border:1px solid #e2e8f0;">K8s 沙箱命名空间默认值对齐平台命名空间（共享用户工作区 PVC 的前置条件；<strong style="color:#0f172a;">仅当仍为历史默认值 <code style="font-size:12px;background:#e2e8f0;padding:1px 4px;border-radius:2px;">agent-sandboxes</code> 或为空时对齐，绝不覆盖自定义值</strong>）</td>
+            <td style="padding:8px 10px;border:1px solid #e2e8f0;"><code style="font-size:12px;background:#e2e8f0;padding:1px 4px;border-radius:2px;">system_configs</code> 更新 <code style="font-size:12px;background:#e2e8f0;padding:1px 4px;border-radius:2px;">sandbox_k8s_namespace</code></td>
+          </tr>
+          <tr>
+            <td style="padding:8px 10px;border:1px solid #e2e8f0;white-space:nowrap;font-family:Consolas,Monaco,monospace;font-weight:bold;color:#0284c7;">V157 / V58</td>
+            <td style="padding:8px 10px;border:1px solid #e2e8f0;">更新共享 PVC 配置说明文案（留空即自动探测共享、<code style="font-size:12px;background:#e2e8f0;padding:1px 4px;border-radius:2px;">none</code> 为强隔离；<strong style="color:#0f172a;">仅更新 <code style="font-size:12px;background:#e2e8f0;padding:1px 4px;border-radius:2px;">description</code>，不改动 <code style="font-size:12px;background:#e2e8f0;padding:1px 4px;border-radius:2px;">value</code></strong>）</td>
+            <td style="padding:8px 10px;border:1px solid #e2e8f0;"><code style="font-size:12px;background:#e2e8f0;padding:1px 4px;border-radius:2px;">system_configs</code> 更新 <code style="font-size:12px;background:#e2e8f0;padding:1px 4px;border-radius:2px;">sandbox_k8s_existing_pvc</code> 说明</td>
+          </tr>
+          <tr style="background:#fbfdff;">
+            <td style="padding:8px 10px;border:1px solid #e2e8f0;white-space:nowrap;font-family:Consolas,Monaco,monospace;font-weight:bold;color:#0284c7;">V25 / V33</td>
+            <td style="padding:8px 10px;border:1px solid #e2e8f0;"><strong style="color:#0369a1;">PostgreSQL 侧历史脚本修复（非新增版本）</strong>：补齐 <code style="font-size:12px;background:#e2e8f0;padding:1px 4px;border-radius:2px;">IF NOT EXISTS</code>，修复 <code style="font-size:12px;background:#e2e8f0;padding:1px 4px;border-radius:2px;">tags</code>、<code style="font-size:12px;background:#e2e8f0;padding:1px 4px;border-radius:2px;">toolcall_timeout_seconds</code> 字段的无损重跑幂等性</td>
+            <td style="padding:8px 10px;border:1px solid #e2e8f0;"><code style="font-size:12px;background:#e2e8f0;padding:1px 4px;border-radius:2px;">tags</code>、<code style="font-size:12px;background:#e2e8f0;padding:1px 4px;border-radius:2px;">toolcall_timeout_seconds</code></td>
+          </tr>
+          <tr>
+            <td style="padding:8px 10px;border:1px solid #e2e8f0;white-space:nowrap;font-family:Consolas,Monaco,monospace;font-weight:bold;color:#0284c7;">V48 / V52</td>
+            <td style="padding:8px 10px;border:1px solid #e2e8f0;"><strong style="color:#0369a1;">PostgreSQL 侧历史脚本修复（非新增版本）</strong>：修正 <code style="font-size:12px;background:#e2e8f0;padding:1px 4px;border-radius:2px;">system_configs.is_secret</code> 由整型 <code style="font-size:12px;background:#e2e8f0;padding:1px 4px;border-radius:2px;">0</code> 误写为布尔 <code style="font-size:12px;background:#e2e8f0;padding:1px 4px;border-radius:2px;">FALSE</code></td>
+            <td style="padding:8px 10px;border:1px solid #e2e8f0;"><code style="font-size:12px;background:#e2e8f0;padding:1px 4px;border-radius:2px;">system_configs.is_secret</code></td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <p style="margin:0 0 8px 0;font-size:14px;font-weight:bold;color:#0f172a;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">🆕 新增环境变量（<code style="font-size:12px;background:#e2e8f0;padding:1px 4px;border-radius:2px;">env.example</code>）</p>
+
+    <!-- 环境变量表：同样支持移动端横向滑动 -->
+    <section style="margin:0 0 16px 0;overflow-x:auto;-webkit-overflow-scrolling:touch;">
+      <table style="width:100%;min-width:560px;border-collapse:collapse;font-size:13px;line-height:1.7;color:#334155;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        <thead>
+          <tr style="background:#f1f5f9;">
+            <th style="padding:8px 10px;border:1px solid #e2e8f0;text-align:left;font-weight:bold;color:#0f172a;white-space:nowrap;">变量名</th>
+            <th style="padding:8px 10px;border:1px solid #e2e8f0;text-align:left;font-weight:bold;color:#0f172a;white-space:nowrap;">默认值</th>
+            <th style="padding:8px 10px;border:1px solid #e2e8f0;text-align:left;font-weight:bold;color:#0f172a;">说明</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td style="padding:8px 10px;border:1px solid #e2e8f0;white-space:nowrap;font-family:Consolas,Monaco,monospace;font-weight:bold;color:#0284c7;">PORTAL_SESSION_TOKEN_ENABLED</td>
+            <td style="padding:8px 10px;border:1px solid #e2e8f0;white-space:nowrap;"><code style="font-size:12px;background:#e2e8f0;padding:1px 4px;border-radius:2px;">true</code></td>
+            <td style="padding:8px 10px;border:1px solid #e2e8f0;">开启后浏览器只持有不透明随机会话令牌（<code style="font-size:12px;background:#e2e8f0;padding:1px 4px;border-radius:2px;">sess_...</code>），真实 API Key 不再下发前端；仅在 Redis 不可用等异常场景才需临时置 <code style="font-size:12px;background:#e2e8f0;padding:1px 4px;border-radius:2px;">false</code> 回退旧行为</td>
+          </tr>
+          <tr style="background:#fbfdff;">
+            <td style="padding:8px 10px;border:1px solid #e2e8f0;white-space:nowrap;font-family:Consolas,Monaco,monospace;font-weight:bold;color:#0284c7;">ALLOWED_ORIGINS</td>
+            <td style="padding:8px 10px;border:1px solid #e2e8f0;white-space:nowrap;"><code style="font-size:12px;background:#e2e8f0;padding:1px 4px;border-radius:2px;">["*"]</code></td>
+            <td style="padding:8px 10px;border:1px solid #e2e8f0;">CORS 允许来源。服务端启用 <code style="font-size:12px;background:#e2e8f0;padding:1px 4px;border-radius:2px;">allow_credentials</code>，浏览器不接受通配符与凭据共存，跨域部署请填写实际访问域名；未配置时回退 <code style="font-size:12px;background:#e2e8f0;padding:1px 4px;border-radius:2px;">["*"]</code> 并在启动日志告警</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <p style="margin:0;font-size:13px;color:#64748b;line-height:1.7;">
+      💡 升级提示：MySQL 执行 <code style="font-size:12px;background:#f1f5f9;padding:2px 4px;border-radius:2px;">bash db-prod/apply-sql.sh</code>，PostgreSQL 执行 <code style="font-size:12px;background:#f1f5f9;padding:2px 4px;border-radius:2px;">bash db-prod-pg/apply-sql.sh</code>（或免 Python 依赖的 <code style="font-size:12px;background:#f1f5f9;padding:2px 4px;border-radius:2px;">bash db-prod-pg/apply-sql-native.sh</code>），脚本具备完整的幂等性检查、断点续跑与优雅日志格式化。
+    </p>
+  </section>
+
+  <!-- 章节四：平滑升级指南 -->
+  <section style="margin:0 0 32px 0;">
+    <p style="margin:0 0 16px 0;padding:0 0 7px 12px;border-left:4px solid #0284c7;border-bottom:1px solid #e0f2fe;font-size:18px;font-weight:bold;color:#0f172a;line-height:1.4;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+      📖 平滑升级指南 (Upgrade Guide)
+    </p>
+    <p style="margin:0 0 14px 0;font-size:14px;color:#334155;line-height:1.8;">
+      遵循以下标准步骤即可平滑无缝升级至 <strong style="color:#0f172a;">v1.0.16.0</strong>。升级前请务必确认两条<strong>破坏性变更</strong>（重新登录一次、重新授权嵌入签发权限码），并确保 Redis 已开启持久化。
+    </p>
+
+    <!-- 方式一：源码拉取升级 -->
+    <section style="margin:0 0 18px 0;padding:16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:4px;">
+      <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#0f172a;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        方式一：源码拉取升级（开发与虚机部署）
+      </p>
+      <section style="margin:0;padding:12px;background:#0f172a;border-radius:4px;color:#e2e8f0;font-family:Consolas,Monaco,monospace;font-size:12px;line-height:1.7;overflow-x:auto;-webkit-overflow-scrolling:touch;">
+        <p style="margin:0 0 4px 0;color:#94a3b8;"># 1. 同步拉取主分支最新代码</p>
+        <p style="margin:0 0 8px 0;color:#38bdf8;">git fetch origin &amp;&amp; git checkout main &amp;&amp; git pull origin main</p>
+        <p style="margin:0 0 4px 0;color:#94a3b8;"># 2. 执行数据库结构平滑迁移 (MySQL / PG)</p>
+        <p style="margin:0 0 8px 0;color:#38bdf8;">bash db-prod/apply-sql.sh  # PG: bash db-prod-pg/apply-sql.sh</p>
+        <p style="margin:0 0 4px 0;color:#94a3b8;"># 3. 前端构建与启动本地服务（本版本 requirements.txt 无新增依赖）</p>
+        <p style="margin:0;color:#38bdf8;">poetry install --no-root &amp;&amp; ./dev.sh</p>
+      </section>
+      <p style="margin:10px 0 0 0;font-size:13px;color:#64748b;line-height:1.75;">
+        📌 环境变量检查：确认 <code style="font-size:12px;background:#f1f5f9;padding:2px 4px;border-radius:2px;">.env</code> 中的 <code style="font-size:12px;background:#f1f5f9;padding:2px 4px;border-radius:2px;">PORTAL_SESSION_TOKEN_ENABLED</code>（建议保持 <code style="font-size:12px;background:#f1f5f9;padding:2px 4px;border-radius:2px;">true</code>）与 <code style="font-size:12px;background:#f1f5f9;padding:2px 4px;border-radius:2px;">ALLOWED_ORIGINS</code>（跨域部署需填实际域名）。
+      </p>
+    </section>
+
+    <!-- 方式二：Docker 容器化升级 -->
+    <section style="margin:0 0 18px 0;padding:16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:4px;">
+      <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#0f172a;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        方式二：Docker 容器化升级（生产环境推荐）
+      </p>
+      <section style="margin:0;padding:12px;background:#0f172a;border-radius:4px;color:#e2e8f0;font-family:Consolas,Monaco,monospace;font-size:12px;line-height:1.7;overflow-x:auto;-webkit-overflow-scrolling:touch;">
+        <p style="margin:0 0 4px 0;color:#94a3b8;"># 1. 执行数据库增量升级 (宿主或临时容器)</p>
+        <p style="margin:0 0 8px 0;color:#38bdf8;">bash db-prod/apply-sql.sh  # PG: bash db-prod-pg/apply-sql.sh</p>
+        <p style="margin:0 0 4px 0;color:#94a3b8;"># 2. 导入官方 Release 镜像归档（x86_64 / ARM64 按架构选择）</p>
+        <p style="margin:0 0 8px 0;color:#38bdf8;">docker load -i nanzi-ai-agent_1.0.16.0_linux-amd64_*.tar</p>
+        <p style="margin:0 0 8px 0;color:#38bdf8;">docker load -i nanzi-ai-agent_1.0.16.0_linux-arm64_*.tar</p>
+        <p style="margin:0 0 4px 0;color:#94a3b8;"># （或在本地自主构建：cd docker &amp;&amp; ./build_linux_x86.sh 1.0.16.0）</p>
+        <p style="margin:0 0 4px 0;color:#94a3b8;"># 3. 重启容器服务</p>
+        <p style="margin:0;color:#38bdf8;">cd docker &amp;&amp; ./start-nanzi-ai-agent.sh</p>
+      </section>
+    </section>
+
+    <!-- 方式三：沙箱构建与运维 CLI -->
+    <section style="margin:0 0 12px 0;padding:16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:4px;">
+      <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#0f172a;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        方式三：沙箱构建与运维 CLI（若启用 Docker / K8s 沙箱策略）
+      </p>
+      <section style="margin:0;padding:12px;background:#0f172a;border-radius:4px;color:#e2e8f0;font-family:Consolas,Monaco,monospace;font-size:12px;line-height:1.7;overflow-x:auto;-webkit-overflow-scrolling:touch;">
+        <p style="margin:0 0 4px 0;color:#94a3b8;"># Docker 沙箱：环境预检 + 预置镜像构建（含排障工具链）</p>
+        <p style="margin:0 0 8px 0;color:#38bdf8;">bash sandbox/docker/build-docker-sandbox-image.sh</p>
+        <p style="margin:0 0 4px 0;color:#94a3b8;"># K8s 沙箱：集群就绪与 RBAC 权限体检</p>
+        <p style="margin:0 0 8px 0;color:#38bdf8;">bash k8s_deploy/nanzi-k8s.sh health</p>
+        <p style="margin:0 0 4px 0;color:#94a3b8;"># K8s 沙箱：构建并核验沙箱网关镜像（--list 双层探测本地与节点运行时）</p>
+        <p style="margin:0;color:#38bdf8;">bash k8s_deploy/build-k8s-sandbox-image.sh --list</p>
+      </section>
+      <p style="margin:10px 0 0 0;font-size:13px;color:#64748b;line-height:1.75;">
+        ☸️ 共享工作区配置建议：<code style="font-size:12px;background:#f1f5f9;padding:2px 4px;border-radius:2px;">sandbox_k8s_existing_pvc</code> 留空即自动探测并共享平台数据卷（推荐零配置）；需要强隔离时填 <code style="font-size:12px;background:#f1f5f9;padding:2px 4px;border-radius:2px;">none</code>，沙箱将使用每工作区独立创建的空 PVC。若沙箱 Pod 随迁移进入平台命名空间，需在该命名空间重新应用 <code style="font-size:12px;background:#f1f5f9;padding:2px 4px;border-radius:2px;">k8s_deploy/sandbox-rbac.example.yaml</code> 授予 Pod / PVC 管理权限。
+      </p>
+    </section>
+  </section>
+
+  <!-- 尾部寄语 -->
+  <section style="margin:0 0 28px 0;padding:20px;background:#f8fafc;border-left:4px solid #0284c7;border-radius:0 4px 4px 0;">
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#0f172a;line-height:1.6;">
+      凭据不外泄、会话可吊销、治理有依据、沙箱零配置
+    </p>
+    <p style="margin:0 0 10px 0;font-size:14px;color:#475569;line-height:1.85;">
+      本次版本围绕上述四条主线完成了一次纵深式的安全与治理加固。本项目为<strong style="color:#0f172a;">个人开源</strong>，遵循 MIT 开源协议，可自由分发与商用；「NanZi」取自我常用的网名「南孜」，寓「孜孜不倦」——持续学习、持续打磨生产级 AI 智能体技术栈。
+    </p>
+    <p style="margin:0;font-size:14px;color:#475569;line-height:1.85;">
+      特别鸣谢所有参与本版本需求讨论、代码贡献、架构演进及线上验证的团队成员与社区开发者！平台将持续践行极客、稳定、高性能的架构演进，助力企业打造最值得信赖的自主智能体生产力中枢。诚邀各位开发者星标 Star 支持我们，一同构建更强大的自主智能体生态！
+    </p>
+  </section>
+
+  <!-- 二维码 / 链接区 -->
+  <section style="margin:0 0 12px 0;text-align:center;">
+    <p style="margin:0 0 6px 0;font-size:13px;color:#64748b;">
+      欢迎访问 GitHub 仓库获取完整源码与文档：
+    </p>
+    <p style="margin:0;font-size:14px;font-weight:bold;">
+      <a href="https://github.com/RandyChen1985/nanzi-ai-agent-platform" style="color:#0284c7;text-decoration:none;">github.com/RandyChen1985/nanzi-ai-agent-platform</a>
+    </p>
+  </section>
+
+</section>
