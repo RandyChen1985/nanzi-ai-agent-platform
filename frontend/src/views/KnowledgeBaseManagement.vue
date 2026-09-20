@@ -25,6 +25,8 @@ type KnowledgeBase = {
   doc_count?: number
   document_count?: number
   chunk_count?: number
+  chunk_method?: string
+  embedding_model?: string
   update_time?: string
   updated_at?: string
   status?: string
@@ -65,6 +67,8 @@ const { hasPermission, isAdmin } = useUser()
 
 const loading = ref(false)
 const syncing = ref(false)
+const creatingDataset = ref(false)
+const savingMetadata = ref(false)
 const engineStatus = ref<'checking' | 'connected' | 'disconnected'>('checking')
 const showErrorBanner = ref(true)
 const datasets = ref<KnowledgeBase[]>([])
@@ -81,6 +85,7 @@ const selectedDocument = ref<KnowledgeDocument | null>(null)
 const expandedDatasetIds = ref<Record<string, boolean>>({})
 const documentsMap = ref<Record<string, KnowledgeDocument[]>>({})
 const documentsLoadingMap = ref<Record<string, boolean>>({})
+const documentsErrorMap = ref<Record<string, boolean>>({})
 
 // 检索过滤
 const searchQuery = ref('')
@@ -91,7 +96,7 @@ const aiAnalyzing = ref(false)
 const customQuestions = ref<{ label: string, query: string }[]>([])
 const deletingDataset = ref<KnowledgeBase | null>(null)
 const deletingDocument = ref<KnowledgeDocument | null>(null)
-const pendingPermissionRemoval = ref<{ type: string; id: number } | null>(null)
+const pendingPermissionRemoval = ref<{ type: string; id: number; name: string } | null>(null)
 const pendingFolderRemoval = ref<{ dataset: KnowledgeBase; folderName: string } | null>(null)
 
 const form = ref({
@@ -234,7 +239,30 @@ const openEdit = (dataset: KnowledgeBase) => {
   showEditModal.value = true
 }
 
+const aiOverwritePending = ref(false)
+
 const analyzeMetadataByAI = async () => {
+  if (!selectedDataset.value) return
+  const datasetId = selectedDataset.value.ragflow_dataset_id || selectedDataset.value.id
+  if (!datasetId) return
+
+  // AI 结果会直接写回表单，已填内容会被静默冲掉，先征得确认
+  const hasContent = Boolean(
+    form.value.description?.trim() || form.value.tagsText?.trim() || form.value.notes?.trim()
+  )
+  if (hasContent) {
+    aiOverwritePending.value = true
+    return
+  }
+  await runAiAnalyze()
+}
+
+const confirmAiOverwrite = async () => {
+  aiOverwritePending.value = false
+  await runAiAnalyze()
+}
+
+const runAiAnalyze = async () => {
   if (!selectedDataset.value) return
   const datasetId = selectedDataset.value.ragflow_dataset_id || selectedDataset.value.id
   if (!datasetId) return
@@ -257,6 +285,12 @@ const analyzeMetadataByAI = async () => {
 }
 
 // 获取知识库列表
+const retryAfterError = async () => {
+  showErrorBanner.value = false
+  errorMessage.value = ''
+  await fetchDatasets()
+}
+
 const fetchDatasets = async () => {
   if (!isKnowledgeEnabled.value) {
     datasets.value = []
@@ -308,12 +342,22 @@ const toggleDatasetExpand = async (dataset: KnowledgeBase, forceExpand = false) 
 }
 
 // 获取某个知识库下的文档
+// 同一知识库可能被轮询、手动刷新、上传后刷新同时触发，用序号只认最后一次请求
+const documentsReqSeq: Record<string, number> = {}
+
 const fetchDocumentsForDataset = async (dsId: string) => {
+  const seq = (documentsReqSeq[dsId] = (documentsReqSeq[dsId] || 0) + 1)
   documentsLoadingMap.value[dsId] = true
   try {
-    const response = await axios.get(`/api/portal/ragflow/datasets/${dsId}/documents`)
+    // 后端默认 page_size=100，且客户端仅在 page_size>100 时才自动翻页，
+    // 不显式放大时文档超过 100 个会被静默截断，列表与文档数都会少算
+    const response = await axios.get(`/api/portal/ragflow/datasets/${dsId}/documents`, {
+      params: { page_size: 200 }
+    })
+    if (seq !== documentsReqSeq[dsId]) return
     const docs = apiData(response)
     documentsMap.value[dsId] = docs
+    documentsErrorMap.value[dsId] = false
 
     // 更新对应知识库的文档数量计数
     const dataset = datasets.value.find(d => (d.ragflow_dataset_id || d.id) === dsId)
@@ -338,23 +382,31 @@ const fetchDocumentsForDataset = async (dsId: string) => {
     // 自动触发或检查是否需要轮询
     checkAndStartDatasetPolling(dsId)
   } catch (err) {
+    if (seq !== documentsReqSeq[dsId]) return
+    // 显式区分「加载失败」与「确实没有文档」，否则树里会显示成「暂无文档」
+    documentsErrorMap.value[dsId] = true
     showToast(extractError(err), 'error')
     documentsMap.value[dsId] = []
   } finally {
-    documentsLoadingMap.value[dsId] = false
+    // 只有最后一次请求才有权关掉 loading，否则早返回的请求会让 spinner 提前消失
+    if (seq === documentsReqSeq[dsId]) documentsLoadingMap.value[dsId] = false
   }
 }
 
 const datasetPermissions = ref<{ users: any[], roles: any[] }>({ users: [], roles: [] })
 const loadingPermissions = ref(false)
+const permissionsError = ref(false)
 
 const fetchDatasetPermissions = async (datasetId: string) => {
   loadingPermissions.value = true
+  permissionsError.value = false
   datasetPermissions.value = { users: [], roles: [] }
   try {
     const response = await axios.get(`/api/portal/ragflow/datasets/${datasetId}/permissions`)
     datasetPermissions.value = response.data?.data || { users: [], roles: [] }
   } catch (err) {
+    // 必须显式区分失败：静默时界面会显示「未分配权限」，让管理员误判为无人有权限
+    permissionsError.value = true
     console.error('获取知识库权限分配失败:', err)
   } finally {
     loadingPermissions.value = false
@@ -439,14 +491,16 @@ const submitPermissions = async () => {
   }
 }
 
-const removePermission = async (type: string, id: number) => {
+const removePermission = async (type: string, id: number, name: string) => {
   if (!selectedDatasetId.value) return
-  pendingPermissionRemoval.value = { type, id }
+  pendingPermissionRemoval.value = { type, id, name }
 }
 
+const removingPermission = ref(false)
 const confirmRemovePermission = async () => {
   const pending = pendingPermissionRemoval.value
-  if (!pending || !selectedDatasetId.value) return
+  if (!pending || !selectedDatasetId.value || removingPermission.value) return
+  removingPermission.value = true
   try {
     await axios.delete(`/api/portal/ragflow/datasets/${selectedDatasetId.value}/permissions`, {
       data: {
@@ -459,6 +513,7 @@ const confirmRemovePermission = async () => {
   } catch (err) {
     showToast('取消授权失败', 'error')
   } finally {
+    removingPermission.value = false
     pendingPermissionRemoval.value = null
   }
 }
@@ -493,6 +548,10 @@ const selectDocumentNode = (doc: KnowledgeDocument, dataset: KnowledgeBase) => {
 }
 
 // 计算过滤后的知识库树
+const isSearchEmpty = computed(
+  () => searchQuery.value.trim().length > 0 && filteredDatasets.value.length === 0
+)
+
 const filteredDatasets = computed(() => {
   const query = searchQuery.value.trim().toLowerCase()
   if (!query) return datasets.value
@@ -528,6 +587,8 @@ const syncFromRagFlow = async () => {
     await fetchDatasets()
   } catch (err) {
     errorMessage.value = extractError(err)
+    // 用户可能已关闭过横幅，失败时必须重新展开，否则只剩 3 秒 toast
+    showErrorBanner.value = true
     showToast('从 RAGFlow 同步失败', 'error')
   } finally {
     syncing.value = false
@@ -552,6 +613,8 @@ const createDataset = async () => {
     showToast('请输入知识库名称', 'warning')
     return
   }
+  if (creatingDataset.value) return
+  creatingDataset.value = true
   try {
     const res = await axios.post('/api/portal/ragflow/datasets', {
       name: form.value.name.trim(),
@@ -575,6 +638,8 @@ const createDataset = async () => {
     }
   } catch (err) {
     showToast(extractError(err), 'error')
+  } finally {
+    creatingDataset.value = false
   }
 }
 
@@ -584,6 +649,13 @@ const updateMetadata = async () => {
     return
   }
   if (!selectedDatasetId.value) return
+  // 名称是必填展示字段，此前允许清空后保存
+  if (!form.value.name.trim()) {
+    showToast('请输入知识库名称', 'warning')
+    return
+  }
+  if (savingMetadata.value) return
+  savingMetadata.value = true
   try {
     const extraConfig = parseExtraConfig()
     extraConfig.custom_questions = customQuestions.value.filter(q => q.label.trim() && q.query.trim())
@@ -602,6 +674,8 @@ const updateMetadata = async () => {
     await fetchDatasets()
   } catch (err) {
     showToast(extractError(err), 'error')
+  } finally {
+    savingMetadata.value = false
   }
 }
 
@@ -715,9 +789,11 @@ const removeFolder = async (dataset: KnowledgeBase, folderName: string) => {
   pendingFolderRemoval.value = { dataset, folderName }
 }
 
+const removingFolder = ref(false)
 const confirmRemoveFolder = async () => {
   const pending = pendingFolderRemoval.value
-  if (!pending) return
+  if (!pending || removingFolder.value) return
+  removingFolder.value = true
   const { dataset, folderName } = pending
   const localMetadata = dataset.local_metadata || {}
   const extraConfig = { ...(localMetadata.extra_config || {}) }
@@ -732,6 +808,7 @@ const confirmRemoveFolder = async () => {
   } catch (err) {
     showToast('删除文件夹失败: ' + extractError(err), 'error')
   } finally {
+    removingFolder.value = false
     pendingFolderRemoval.value = null
   }
 }
@@ -802,16 +879,23 @@ const deleteDatasetMessage = computed(() => {
   
   // 检查当前拉取出来的 datasetPermissions 中是否有授权角色或用户
   const hasPerms = datasetPermissions.value.users?.length > 0 || datasetPermissions.value.roles?.length > 0
+  // 权限没读到时不能当作「没有授权」，否则会静默丢掉这条风险警告
+  const permsUnknown = permissionsError.value
+  const permWarning = permsUnknown
+    ? '（⚠️ 授权信息读取失败，无法确认该知识库是否存在授权关系）'
+    : '（⚠️ 该知识库当前已授权的角色/用户访问权限关系也将被同步清除）'
   
   if (deletingDataset.value.is_missing_in_ragflow) {
     let baseMsg = '检测到该知识库已在 RAGFlow 端不存在或已被物理删除，确定清理南孜平台本地残留的相关配置和元数据信息吗？'
-    if (hasPerms) {
-      baseMsg += '（⚠️ 该知识库当前已授权的角色/用户访问权限关系也将被同步清除）'
+    if (hasPerms || permsUnknown) {
+      baseMsg += permWarning
     }
     return baseMsg
   } else {
     let baseMsg = `确定真实删除知识库「${name}」吗？RAGFlow 侧相应集群数据也将同步卸载，此操作不可逆。`
-    if (hasPerms) {
+    if (permsUnknown) {
+      baseMsg += permWarning
+    } else if (hasPerms) {
       baseMsg += '（⚠️ 注意：该知识库当前已授权给角色/用户，删除后系统关联的全部授权记录将被同步擦除清理）'
     }
     return baseMsg
@@ -869,11 +953,15 @@ const uploadDocument = async () => {
     showToast('请先选择要上传的文件', 'warning')
     return
   }
+  // 上传期间左侧知识库树仍可点击，必须固定目标库，
+  // 否则中途切换会把剩余文件传到另一个知识库、刷新也会落到错误的库
+  const targetDatasetId = selectedDatasetId.value
   uploading.value = true
   
   const total = uploadFiles.value.length
   let successCount = 0
   let failCount = 0
+  let parseFailCount = 0
   
   for (let i = 0; i < total; i++) {
     const file = uploadFiles.value[i]
@@ -884,17 +972,19 @@ const uploadDocument = async () => {
     payload.append('file', file)
     
     try {
-      const response = await axios.post(`/api/portal/ragflow/datasets/${selectedDatasetId.value}/documents/upload`, payload)
+      const response = await axios.post(`/api/portal/ragflow/datasets/${targetDatasetId}/documents/upload`, payload)
       const resData = response.data?.data || {}
       const docId = resData.id
       
       if (docId) {
         parsingDocIds.value = { ...parsingDocIds.value, [docId]: true }
         try {
-          await axios.post(`/api/portal/ragflow/datasets/${selectedDatasetId.value}/documents/parse`, {
+          await axios.post(`/api/portal/ragflow/datasets/${targetDatasetId}/documents/parse`, {
             ids: [docId]
           })
         } catch (parseErr) {
+          // 上传成功但解析未触发：单独计数，不再混入「上传成功」
+          parseFailCount++
           const nextParsing = { ...parsingDocIds.value }
           delete nextParsing[docId]
           parsingDocIds.value = nextParsing
@@ -908,16 +998,18 @@ const uploadDocument = async () => {
     }
   }
   
-  if (failCount === 0) {
-    showToast(`成功批量上传并触发解析了 ${successCount} 个文档`, 'success')
-  } else if (successCount > 0) {
+  if (failCount === total) {
+    showToast('全部文档上传失败，请检查网络或知识库配置', 'error')
+  } else if (parseFailCount > 0) {
+    showToast(`上传成功 ${successCount} 个，其中 ${parseFailCount} 个自动解析未触发，请在列表中手动触发解析`, 'warning')
+  } else if (failCount > 0) {
     showToast(`批量上传完成：成功 ${successCount} 个，失败 ${failCount} 个`, 'warning')
   } else {
-    showToast('全部文档上传失败，请检查网络或知识库配置', 'error')
+    showToast(`成功批量上传并触发解析了 ${successCount} 个文档`, 'success')
   }
   
   clearAllUploadFiles()
-  await fetchDocumentsForDataset(selectedDatasetId.value)
+  await fetchDocumentsForDataset(targetDatasetId)
   uploading.value = false
   uploadProgressText.value = ''
 }
@@ -957,6 +1049,7 @@ const confirmDeleteDocument = async () => {
 const parsingDocIds = ref<Record<string, boolean>>({})
 
 // 基于知识库维度的自适应渐进退避轮询机制
+let isUnmounted = false
 const datasetPollTimers = new Map<string, ReturnType<typeof setTimeout>>()
 const datasetPollCounts = new Map<string, number>()
 
@@ -991,6 +1084,7 @@ const startDatasetStatusPolling = (dsId: string) => {
     
     try {
       await fetchDocumentsForDataset(dsId)
+      if (isUnmounted) return
       
       // 同步当前选中的文档详情信息
       const currentDocument = selectedDocument.value
@@ -1027,6 +1121,7 @@ const startDatasetStatusPolling = (dsId: string) => {
       const timer = setTimeout(poll, interval)
       datasetPollTimers.set(dsId, timer)
     } catch {
+      if (isUnmounted) return
       const maxPolls = 60
       if (count >= maxPolls) {
         stopDatasetPolling(dsId)
@@ -1154,6 +1249,7 @@ const chunksList = ref<any[]>([])
 const chunksTotal = ref(0)
 const chunksPage = ref(1)
 const loadingChunks = ref(false)
+const chunksError = ref(false)
 
 const openChunksModal = async (doc: any) => {
   viewingDocument.value = doc
@@ -1171,28 +1267,56 @@ const closeChunksModal = () => {
   chunksTotal.value = 0
 }
 
+const showDocPreview = ref(false)
+const previewDocUrl = computed(() => {
+  if (!selectedDatasetId.value || !selectedDocument.value) return ''
+  const dsId = encodeURIComponent(selectedDatasetId.value)
+  const docId = encodeURIComponent(selectedDocument.value.id)
+  return `/api/portal/ragflow/datasets/${dsId}/documents/${docId}/file`
+})
+const openDocPreview = () => {
+  if (!previewDocUrl.value) return
+  showDocPreview.value = true
+}
+const closeDocPreview = () => {
+  showDocPreview.value = false
+}
+
+const CHUNKS_PAGE_SIZE = 30
+const chunksTotalPages = computed(() => Math.max(1, Math.ceil(chunksTotal.value / CHUNKS_PAGE_SIZE)))
+let chunksReqSeq = 0
+
 const loadChunksPage = async (page: number) => {
+  const prevPage = chunksPage.value
   chunksPage.value = page
   await fetchChunks()
+  // 失败时回滚页码，避免「页码前进了但内容还是上一页」
+  if (chunksError.value) chunksPage.value = prevPage
 }
 
 const fetchChunks = async () => {
   if (!viewingDocument.value) return
+  const seq = ++chunksReqSeq
   loadingChunks.value = true
+  chunksError.value = false
   try {
     const res = await axios.get(`/api/portal/ragflow/datasets/${selectedDatasetId.value}/documents/${viewingDocument.value.id}/chunks`, {
       params: {
         page: chunksPage.value,
-        page_size: 30
+        page_size: CHUNKS_PAGE_SIZE
       }
     })
+    // 快速切文档时旧响应可能后到，丢弃非最新请求的结果
+    if (seq !== chunksReqSeq) return
     const resData = res.data?.data || {}
     chunksList.value = resData.chunks || []
     chunksTotal.value = resData.total || resData.chunks?.length || 0
   } catch (err) {
+    if (seq !== chunksReqSeq) return
+    chunksError.value = true
     showToast(extractError(err), 'error')
   } finally {
-    loadingChunks.value = false
+    if (seq === chunksReqSeq) loadingChunks.value = false
   }
 }
 const uploading = ref(false)
@@ -1299,6 +1423,8 @@ const handleReparseDocument = async (doc: any) => {
 }
 
 onUnmounted(() => {
+  // 置位后，正在 await 中的 poll 不会再把自己重新挂回定时器
+  isUnmounted = true
   for (const dsId of datasetPollTimers.keys()) {
     stopDatasetPolling(dsId)
   }
@@ -1370,7 +1496,7 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
           <button
             v-if="!showKnowledgeFlowGuide"
             type="button"
-            class="inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50/80 px-2.5 py-1 text-xs font-medium text-emerald-700 shadow-2xs transition-colors hover:bg-emerald-100 cursor-pointer"
+            class="inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50/80 px-2.5 py-1 text-xs font-medium text-emerald-700 shadow-sm transition-colors hover:bg-emerald-100 cursor-pointer"
             title="重新展开知识库全流程指引"
             @click="restoreKnowledgeFlowGuide"
           >
@@ -1457,12 +1583,21 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
           <div class="mt-0.5">错误日志: {{ errorMessage }}</div>
         </div>
       </div>
-      <!-- 右上角关闭按钮 -->
-      <button @click="showErrorBanner = false" class="absolute top-4 right-4 text-amber-500 hover:text-amber-700 transition-colors" title="关闭">
-        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
-        </svg>
-      </button>
+      <!-- 右上角操作区 -->
+      <div class="absolute top-3.5 right-3.5 flex items-center gap-1">
+        <button
+          @click="retryAfterError"
+          class="rounded-lg border border-amber-300 bg-white/70 px-2.5 py-1 text-xs font-semibold text-amber-700 hover:bg-amber-100 transition-colors"
+          title="重新加载知识库列表"
+        >
+          重试
+        </button>
+        <button @click="showErrorBanner = false" class="p-1 text-amber-500 hover:text-amber-700 transition-colors" title="关闭">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+          </svg>
+        </button>
+      </div>
     </div>
 
     <!-- Main Workspace Layout -->
@@ -1495,8 +1630,20 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
             <span class="w-6 h-6 border-2 border-primary border-t-transparent rounded-full animate-spin"></span>
             <span>加载数据中...</span>
           </div>
-          <div v-else-if="filteredDatasets.length === 0" class="text-center text-gray-400 py-12 text-sm italic">
-            暂无匹配的知识库
+          <div v-else-if="isSearchEmpty" class="text-center text-gray-400 py-12 text-sm italic flex flex-col items-center gap-3">
+            <span>没有匹配「{{ searchQuery }}」的知识库</span>
+            <button type="button" class="text-xs font-semibold text-primary hover:underline" @click="searchQuery = ''">清除搜索条件</button>
+          </div>
+          <div v-else-if="filteredDatasets.length === 0" class="text-center text-gray-400 py-12 text-sm italic flex flex-col items-center gap-3">
+            <span>还没有可访问的知识库</span>
+            <button
+              v-if="canCreate"
+              type="button"
+              class="px-3 py-1.5 rounded-lg bg-primary text-white text-xs font-semibold hover:bg-primary/90 transition-all"
+              @click="openCreate"
+            >
+              新建知识库
+            </button>
           </div>
           <div v-else class="space-y-1">
             <div v-for="dataset in filteredDatasets" :key="dataset.ragflow_dataset_id || dataset.id" class="space-y-1">
@@ -1550,7 +1697,7 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
                   </span>
 
                   <!-- Hover Action Buttons -->
-                  <div class="hidden group-hover:flex items-center gap-1 bg-inherit pl-2 absolute right-3 top-1/2 -translate-y-1/2">
+                  <div class="flex opacity-100 md:opacity-0 md:group-hover:opacity-100 md:focus-within:opacity-100 items-center gap-1 bg-inherit pl-2 absolute right-3 top-1/2 -translate-y-1/2">
                     <button
                       v-if="canEdit && !isReadOnlyDataset(dataset)"
                       class="p-1 rounded hover:bg-gray-200/60 text-gray-500 hover:text-primary transition-all bg-inherit"
@@ -1589,7 +1736,7 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
               <transition name="slide-down">
                 <div
                   v-show="expandedDatasetIds[dataset.ragflow_dataset_id || dataset.id]"
-                  class="pl-4 ml-4.5 border-l border-gray-150 space-y-0.5 overflow-hidden"
+                  class="pl-4 ml-4 border-l border-gray-200 space-y-0.5 overflow-hidden"
                 >
                   <!-- Loader for docs -->
                   <div v-if="documentsLoadingMap[dataset.ragflow_dataset_id || dataset.id]" class="py-2 pl-3 text-xs text-gray-400 flex items-center gap-1.5">
@@ -1597,6 +1744,16 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
                     <span>加载文档...</span>
                   </div>
                   <!-- Empty hint -->
+                  <div v-else-if="documentsErrorMap[dataset.ragflow_dataset_id || dataset.id]" class="py-2 pl-3 text-xs text-amber-600 flex items-center gap-2">
+                    <span>文档列表加载失败</span>
+                    <button
+                      type="button"
+                      class="font-semibold hover:underline"
+                      @click.stop="fetchDocumentsForDataset(dataset.ragflow_dataset_id || dataset.id)"
+                    >
+                      重试
+                    </button>
+                  </div>
                   <div v-else-if="!(documentsMap[dataset.ragflow_dataset_id || dataset.id]?.length)" class="py-2 pl-3 text-xs text-gray-400 italic">
                     暂无文档
                   </div>
@@ -1685,8 +1842,8 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
 
                           <!-- 文件夹重命名/删除按钮 -->
                           <div 
-                            v-if="!isReadOnlyDataset(dataset)"
-                            class="hidden group-hover/folder:flex items-center gap-1 bg-inherit pl-2 z-30"
+                            v-if="canEdit && !isReadOnlyDataset(dataset)"
+                            class="flex opacity-100 md:opacity-0 md:group-hover/folder:opacity-100 md:focus-within:opacity-100 items-center gap-1 bg-inherit pl-2 z-30"
                             @click.stop
                           >
                             <button 
@@ -1714,7 +1871,7 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
                         <transition name="slide-down">
                           <div 
                             v-show="!isFolderCollapsed(dataset.ragflow_dataset_id || dataset.id, fName)"
-                            class="pl-4 ml-4.5 border-l border-gray-100/80 space-y-0.5"
+                            class="pl-4 ml-4 border-l border-gray-100/80 space-y-0.5"
                           >
                             <div 
                               v-for="doc in (documentsMap[dataset.ragflow_dataset_id || dataset.id] || []).filter(d => dataset.local_metadata?.extra_config?.folder_structure?.[fName]?.includes(d.id))"
@@ -1746,9 +1903,9 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
                                   }"
                                 ></span>
                                 
-                                <div class="hidden group-hover/doc:flex items-center bg-inherit pl-2 gap-1 z-30">
+                                <div class="flex opacity-100 md:opacity-0 md:group-hover/doc:opacity-100 md:focus-within:opacity-100 items-center bg-inherit pl-2 gap-1 z-30">
                                   <!-- 移动到文件夹按钮 -->
-                                  <div class="relative">
+                                  <div v-if="canEdit && !isReadOnlyDataset(dataset)" class="relative">
                                     <button 
                                       class="p-0.5 rounded hover:bg-gray-100 text-gray-400 hover:text-primary transition-all bg-inherit cursor-pointer"
                                       title="移动到文件夹"
@@ -1762,7 +1919,7 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
                                     <!-- 下拉定位菜单 -->
                                     <div 
                                       v-if="activeFileMoveMenuDocId === doc.id"
-                                      class="absolute right-0 mt-1 w-36 bg-white border border-gray-150 rounded-lg shadow-lg z-50 py-1 divide-y divide-gray-50 text-xs"
+                                      class="absolute right-0 mt-1 w-36 bg-white border border-gray-200 rounded-lg shadow-lg z-50 py-1 divide-y divide-gray-50 text-xs"
                                     >
                                       <div class="px-2 py-1 text-[10px] text-gray-400 font-semibold select-none">移动至文件夹:</div>
                                       <button 
@@ -1837,10 +1994,10 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
                           }"
                         ></span>
 
-                        <div class="hidden group-hover/doc:flex items-center bg-inherit pl-2 gap-1 z-30">
+                        <div class="flex opacity-100 md:opacity-0 md:group-hover/doc:opacity-100 md:focus-within:opacity-100 items-center bg-inherit pl-2 gap-1 z-30">
                           <!-- 移动至文件夹按钮 -->
                           <div 
-                            v-if="dataset.local_metadata?.extra_config?.folder_structure && Object.keys(dataset.local_metadata.extra_config.folder_structure).length"
+                            v-if="canEdit && !isReadOnlyDataset(dataset) && dataset.local_metadata?.extra_config?.folder_structure && Object.keys(dataset.local_metadata.extra_config.folder_structure).length"
                             class="relative"
                           >
                             <button 
@@ -1856,7 +2013,7 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
                             <!-- 下拉定位菜单 -->
                             <div 
                               v-if="activeFileMoveMenuDocId === doc.id"
-                              class="absolute right-0 mt-1 w-36 bg-white border border-gray-150 rounded-lg shadow-lg z-50 py-1 divide-y divide-gray-50 text-xs"
+                              class="absolute right-0 mt-1 w-36 bg-white border border-gray-200 rounded-lg shadow-lg z-50 py-1 divide-y divide-gray-50 text-xs"
                             >
                               <div class="px-2 py-1 text-[10px] text-gray-400 font-semibold select-none">移动至文件夹:</div>
                               <button 
@@ -1903,7 +2060,7 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
                 <h2 class="text-xl font-bold text-gray-900">{{ selectedDataset.platform_name || selectedDataset.name }}</h2>
                 <span v-if="selectedDataset.is_missing_in_ragflow" class="px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 text-xs font-semibold">RAGFlow 侧已失联</span>
               </div>
-              <div v-if="selectedDataset.platform_description || selectedDataset.description" class="mt-3 pl-3.5 border-l-3 border-primary bg-gray-50/80 py-2.5 pr-4 rounded-r-xl max-w-3xl">
+              <div v-if="selectedDataset.platform_description || selectedDataset.description" class="mt-3 pl-3.5 border-l-[3px] border-primary bg-gray-50/80 py-2.5 pr-4 rounded-r-xl max-w-3xl">
                 <p class="text-sm text-gray-600 leading-relaxed italic">
                   "{{ selectedDataset.platform_description || selectedDataset.description }}"
                 </p>
@@ -1964,6 +2121,14 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
               <span class="text-sm font-medium text-gray-800 mt-1">{{ selectedDataset.owner || '未指派' }}</span>
             </div>
             <div class="bg-gray-50/50 p-4 rounded-xl border border-gray-200/50 flex flex-col">
+              <span class="text-xs text-gray-400 font-medium">切片方法 (Chunk Method)</span>
+              <span class="text-sm font-medium text-gray-800 mt-1">{{ selectedDataset.chunk_method || '未设置' }}</span>
+            </div>
+            <div class="bg-gray-50/50 p-4 rounded-xl border border-gray-200/50 flex flex-col">
+              <span class="text-xs text-gray-400 font-medium">切片总数 (Chunks)</span>
+              <span class="text-sm font-medium text-gray-800 mt-1">{{ selectedDataset.chunk_count ?? '—' }}</span>
+            </div>
+            <div class="bg-gray-50/50 p-4 rounded-xl border border-gray-200/50 flex flex-col">
               <span class="text-xs text-gray-400 font-medium">公开属性 (Visibility)</span>
               <span class="text-sm font-medium text-gray-800 mt-1 capitalize">{{ selectedDataset.visibility || 'Private' }}</span>
             </div>
@@ -2008,7 +2173,7 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
           </div>
 
           <!-- 权限分配说明卡片 -->
-          <div class="space-y-2 bg-gray-50/20 p-4 rounded-xl border border-gray-150">
+          <div class="space-y-2 bg-gray-50/20 p-4 rounded-xl border border-gray-200">
             <div class="flex items-center justify-between">
               <h3 class="text-xs font-semibold text-gray-400 uppercase tracking-wider select-none">系统授权分配详情</h3>
               <div class="flex items-center gap-2">
@@ -2019,7 +2184,7 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
                 <button
                   v-if="canManagePermissions && !loadingPermissions"
                   type="button"
-                  class="px-2 py-0.5 rounded bg-emerald-600 hover:bg-emerald-700 text-white text-[10px] font-bold shadow-xs transition-all flex items-center gap-0.5 cursor-pointer"
+                  class="px-2 py-0.5 rounded bg-emerald-600 hover:bg-emerald-700 text-white text-[10px] font-bold shadow-sm transition-all flex items-center gap-0.5 cursor-pointer"
                   @click="openAddPermissionModal"
                 >
                   <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -2059,7 +2224,7 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
                         type="button"
                         class="text-blue-400 hover:text-red-500 font-bold ml-1.5 focus:outline-none cursor-pointer text-xs"
                         title="取消授权"
-                        @click.stop="removePermission('role', r.id)"
+                        @click.stop="removePermission('role', r.id, r.name)"
                       >
                         ×
                       </button>
@@ -2084,7 +2249,7 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
                         type="button"
                         class="text-emerald-400 hover:text-red-500 font-bold ml-1.5 focus:outline-none cursor-pointer text-xs"
                         title="取消授权"
-                        @click.stop="removePermission('user', u.id)"
+                        @click.stop="removePermission('user', u.id, u.real_name || u.user_name)"
                       >
                         ×
                       </button>
@@ -2093,8 +2258,18 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
                 </div>
               </div>
               
+              <div v-else-if="permissionsError" class="pt-2 border-t border-gray-100 select-none flex items-center justify-between gap-3">
+                <span class="text-amber-600 text-xs">授权信息读取失败，当前无法确认谁有访问权限</span>
+                <button
+                  type="button"
+                  class="text-xs font-semibold text-primary hover:underline shrink-0"
+                  @click="fetchDatasetPermissions(selectedDatasetId)"
+                >
+                  重试
+                </button>
+              </div>
               <div v-else-if="!loadingPermissions" class="text-gray-400 italic pt-2 border-t border-gray-100 select-none">
-                未分配额外的用户或角色角色访问权限。
+                未分配额外的用户或角色访问权限。
               </div>
             </div>
           </div>
@@ -2164,7 +2339,7 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
                   <div 
                     v-for="(f, fIdx) in uploadFiles" 
                     :key="fIdx"
-                    class="flex items-center gap-3 p-2.5 bg-white rounded-xl border border-gray-150 shadow-sm relative group/card"
+                    class="flex items-center gap-3 p-2.5 bg-white rounded-xl border border-gray-200 shadow-sm relative group/card"
                   >
                     <!-- 文件后缀高亮块 -->
                     <div 
@@ -2298,22 +2473,32 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
 
           <!-- Document specifications grid -->
           <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
-            <div class="bg-gray-50/50 p-4 rounded-xl border border-gray-150">
+            <div class="bg-gray-50/50 p-4 rounded-xl border border-gray-200">
               <span class="text-xs text-gray-400 font-semibold uppercase tracking-wider block">物理特征 / 文件大小</span>
               <span class="text-lg font-bold text-gray-800 mt-2 block">{{ formatSize(selectedDocument.size) }}</span>
             </div>
-            <div class="bg-gray-50/50 p-4 rounded-xl border border-gray-150 flex flex-col justify-between">
+            <div class="bg-gray-50/50 p-4 rounded-xl border border-gray-200 flex flex-col justify-between">
               <div>
                 <span class="text-xs text-gray-400 font-semibold uppercase tracking-wider block">已分切片段数 (Chunks)</span>
                 <span class="text-lg font-bold text-gray-800 mt-2 block">{{ selectedDocument.chunk_count ?? 0 }} 个分块</span>
               </div>
-              <button
-                v-if="getDocStatus(selectedDocument) === 'parsed' && canViewChunks(selectedDataset)"
-                class="text-xs text-primary hover:underline mt-2 flex items-center gap-1 font-semibold self-start"
-                @click="openChunksModal(selectedDocument)"
-              >
-                <span>🔍 查看分块详情</span>
-              </button>
+              <div class="flex items-center gap-4 mt-2">
+                <button
+                  v-if="getDocStatus(selectedDocument) === 'parsed' && canViewChunks(selectedDataset)"
+                  class="text-xs text-primary hover:underline flex items-center gap-1 font-semibold self-start"
+                  @click="openChunksModal(selectedDocument)"
+                >
+                  <span>🔍 查看分块详情</span>
+                </button>
+                <!-- 对照原文核对分块，此前只能去对话页看引文 -->
+                <button
+                  v-if="canViewChunks(selectedDataset)"
+                  class="text-xs text-primary hover:underline flex items-center gap-1 font-semibold self-start"
+                  @click="openDocPreview"
+                >
+                  <span>📄 预览原文件</span>
+                </button>
+              </div>
               <span
                 v-else-if="getDocStatus(selectedDocument) === 'parsed' && !canViewChunks(selectedDataset)"
                 class="text-xs text-gray-400 mt-2 block"
@@ -2321,7 +2506,7 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
                 无权限查看分块明细（仅创建人或管理员可查看）
               </span>
             </div>
-            <div class="bg-gray-50/50 p-4 rounded-xl border border-gray-150">
+            <div class="bg-gray-50/50 p-4 rounded-xl border border-gray-200">
               <span class="text-xs text-gray-400 font-semibold uppercase tracking-wider block">上传及最后更新时间</span>
               <span class="text-sm font-bold text-gray-800 mt-2.5 block truncate">{{ formatTime(selectedDocument.update_time || selectedDocument.created_at) }}</span>
             </div>
@@ -2335,7 +2520,7 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
               'bg-blue-50/20 border-blue-100': getDocStatus(selectedDocument) === 'parsing',
               'bg-red-50/20 border-red-100': getDocStatus(selectedDocument) === 'failed',
               'bg-emerald-50/20 border-emerald-100': getDocStatus(selectedDocument) === 'parsed',
-              'bg-gray-50/30 border-gray-150': getDocStatus(selectedDocument) === 'unparsed'
+              'bg-gray-50/30 border-gray-200': getDocStatus(selectedDocument) === 'unparsed'
             }"
           >
             <div class="flex items-start justify-between gap-4">
@@ -2397,7 +2582,7 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
               </div>
 
               <!-- 右侧独立控制：失败时的一键重新解析 -->
-              <div v-if="getDocStatus(selectedDocument) === 'failed' && !isReadOnlyDataset(selectedDataset)" class="shrink-0 self-center">
+              <div v-if="getDocStatus(selectedDocument) === 'failed' && canParse && !isReadOnlyDataset(selectedDataset)" class="shrink-0 self-center">
                 <button
                   class="px-3 py-1.5 rounded-lg border border-red-200 hover:border-red-300 bg-white hover:bg-red-50 text-red-600 hover:text-red-700 text-xs font-semibold shadow-sm transition-all flex items-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed"
                   :disabled="reparsingDocId === selectedDocument.id || !isEngineReady"
@@ -2419,7 +2604,7 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
           </div>
 
           <!-- Parsing logs/info block -->
-          <div class="space-y-3 bg-gray-50/30 border border-gray-150 rounded-2xl p-5 flex-1 flex flex-col justify-between">
+          <div class="space-y-3 bg-gray-50/30 border border-gray-200 rounded-2xl p-5 flex-1 flex flex-col justify-between">
             <div class="space-y-2">
               <h3 class="text-sm font-semibold text-gray-800">文档解析生命周期说明</h3>
               <p class="text-xs text-gray-500 leading-relaxed">
@@ -2428,7 +2613,7 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
               </p>
             </div>
             
-            <div class="border-t border-gray-150 pt-4 flex items-center justify-between text-xs text-gray-400">
+            <div class="border-t border-gray-200 pt-4 flex items-center justify-between text-xs text-gray-400">
               <span>文档 ID: <span class="font-mono">{{ selectedDocument.id }}</span></span>
               <button class="text-primary hover:underline" @click="copyToClipboard(selectedDocument.id)">复制 ID</button>
             </div>
@@ -2443,7 +2628,7 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
             </svg>
           </div>
           <div>
-            <h3 class="text-md font-bold text-gray-900">请选择节点</h3>
+            <h3 class="text-base font-bold text-gray-900">请选择节点</h3>
             <p class="text-sm text-gray-500 mt-1 max-w-xs">在左侧树形导航中选中知识库或者具体文档，可在右侧显示详情并进行业务操作。</p>
           </div>
         </div>
@@ -2500,7 +2685,7 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
         </div>
         <div class="flex justify-end gap-3 pt-2">
           <button class="px-4 py-2 rounded-xl border text-sm font-semibold hover:bg-gray-50 transition-all" @click="showCreateModal = false">取消</button>
-          <button class="px-4 py-2 rounded-xl bg-primary text-white text-sm font-semibold disabled:opacity-50" :disabled="!isEngineReady" @click="createDataset">确定创建</button>
+          <button class="px-4 py-2 rounded-xl bg-primary text-white text-sm font-semibold disabled:opacity-50" :disabled="!isEngineReady || creatingDataset" @click="createDataset">{{ creatingDataset ? '创建中…' : '确定创建' }}</button>
         </div>
       </div>
     </Modal>
@@ -2612,7 +2797,7 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
         </div>
         <div class="flex justify-end gap-3 pt-2">
           <button class="px-4 py-2 rounded-xl border text-sm font-semibold hover:bg-gray-50 transition-all" @click="showEditModal = false">取消</button>
-          <button class="px-4 py-2 rounded-xl bg-primary text-white text-sm font-semibold disabled:opacity-50" :disabled="!isEngineReady" @click="updateMetadata">保存保存</button>
+          <button class="px-4 py-2 rounded-xl bg-primary text-white text-sm font-semibold disabled:opacity-50" :disabled="!isEngineReady || savingMetadata" @click="updateMetadata">{{ savingMetadata ? '保存中…' : '保存' }}</button>
         </div>
       </div>
     </Modal>
@@ -2639,7 +2824,8 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
     <ConfirmModal
       v-if="pendingPermissionRemoval"
       title="确认移除知识库授权"
-      :message="`确定要移除该${pendingPermissionRemoval.type === 'role' ? '角色' : '用户'}的知识库访问授权吗？`"
+      :loading="removingPermission"
+      :message="`确定要移除${pendingPermissionRemoval.type === 'role' ? '角色' : '用户'}「${pendingPermissionRemoval.name}」对此知识库的访问授权吗？该对象将立即失去访问权限。`"
       confirm-text="确认移除"
       @confirm="confirmRemovePermission"
       @cancel="pendingPermissionRemoval = null"
@@ -2647,11 +2833,37 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
     <ConfirmModal
       v-if="pendingFolderRemoval"
       title="确认删除文件夹"
+      :loading="removingFolder"
       :message="`确定要删除文件夹「${pendingFolderRemoval.folderName}」吗？其中的所有文档将自动移入未分类根目录（不会删除物理文档）。`"
       confirm-text="确认删除"
       @confirm="confirmRemoveFolder"
       @cancel="pendingFolderRemoval = null"
     />
+    <ConfirmModal
+      v-if="aiOverwritePending"
+      title="覆盖已填写的元数据"
+      message="AI 智能分析的结果会直接覆盖当前已填写的「描述说明 / 标签 / 备注」，且无法撤销。确定继续吗？"
+      confirm-text="继续覆盖"
+      @confirm="confirmAiOverwrite"
+      @cancel="aiOverwritePending = false"
+    />
+
+    <!-- Document original file preview -->
+    <Modal
+      :show="showDocPreview"
+      :title="`原文件预览：${selectedDocument?.name || ''}`"
+      size="max-w-5xl"
+      @close="closeDocPreview"
+    >
+      <div class="h-[70vh] w-full">
+        <iframe
+          v-if="showDocPreview && previewDocUrl"
+          :src="previewDocUrl"
+          class="w-full h-full rounded-xl border border-gray-200 bg-white"
+          title="文档原文件预览"
+        ></iframe>
+      </div>
+    </Modal>
 
     <!-- View chunks modal -->
     <Modal :show="showChunksModal" title="文档切片内容查看" size="max-w-4xl" @close="closeChunksModal">
@@ -2669,10 +2881,10 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
             >
               上一页
             </button>
-            <span class="text-xs text-gray-600 font-medium font-mono">{{ chunksPage }} / {{ Math.ceil(chunksTotal / 30) || 1 }}</span>
+            <span class="text-xs text-gray-600 font-medium font-mono">{{ chunksPage }} / {{ chunksTotalPages }}</span>
             <button
               class="px-2.5 py-1.5 border rounded-lg text-xs font-semibold hover:bg-gray-50 disabled:opacity-40"
-              :disabled="chunksPage >= Math.ceil(chunksTotal / 30) || loadingChunks"
+              :disabled="chunksPage >= chunksTotalPages || loadingChunks"
               @click="loadChunksPage(chunksPage + 1)"
             >
               下一页
@@ -2684,6 +2896,10 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
           <span class="w-6 h-6 border-2 border-primary border-t-transparent rounded-full animate-spin"></span>
           <span>加载切片数据中...</span>
         </div>
+        <div v-else-if="chunksError" class="py-12 text-center text-sm flex flex-col items-center gap-2">
+          <span class="text-amber-600">切片数据加载失败</span>
+          <button type="button" class="text-xs font-semibold text-primary hover:underline" @click="fetchChunks">重试</button>
+        </div>
         <div v-else-if="chunksList.length === 0" class="py-12 text-center text-gray-400 text-sm italic">
           暂无切片数据，可能文档尚未解析成功
         </div>
@@ -2691,12 +2907,12 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
           <div
             v-for="(chunk, idx) in chunksList"
             :key="chunk.id || idx"
-            class="bg-gray-50 p-4 rounded-xl border border-gray-150 hover:border-gray-200 transition-all flex flex-col gap-2"
+            class="bg-gray-50 p-4 rounded-xl border border-gray-200 hover:border-gray-200 transition-all flex flex-col gap-2"
           >
             <div class="flex items-center justify-between">
               <span class="text-xs font-bold text-gray-400 font-mono">#{{ (chunksPage - 1) * 30 + idx + 1 }} (ID: {{ chunk.id || '-' }})</span>
             </div>
-            <p class="text-sm text-gray-700 leading-relaxed font-mono whitespace-pre-wrap select-text bg-white p-3 rounded-lg border border-gray-150/50 shadow-inner">{{ chunk.content_with_weight || chunk.content || '-' }}</p>
+            <p class="text-sm text-gray-700 leading-relaxed font-mono whitespace-pre-wrap select-text bg-white p-3 rounded-lg border border-gray-200/50 shadow-inner">{{ chunk.content_with_weight || chunk.content || '-' }}</p>
           </div>
         </div>
 
@@ -2712,7 +2928,7 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
         <!-- 切换类型 -->
         <div>
           <label class="block text-xs font-semibold text-gray-400 mb-1.5 select-none">成员授权类型</label>
-          <div class="grid grid-cols-2 gap-2 bg-gray-50 p-1 rounded-xl border border-gray-150">
+          <div class="grid grid-cols-2 gap-2 bg-gray-50 p-1 rounded-xl border border-gray-200">
             <button 
               type="button"
               @click="assignType = 'role'; selectedCandidateIds = []"
@@ -2735,7 +2951,7 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
         <!-- 搜索输入框 -->
         <div class="relative">
           <span class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-gray-400">
-             <svg class="h-4.5 w-4.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+             <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
              </svg>
           </span>
@@ -2752,7 +2968,7 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
           <label class="block text-xs font-semibold text-gray-400 select-none">
             选择要添加的{{ assignType === 'role' ? '角色' : '用户' }} (可多选)
           </label>
-          <div class="border border-gray-150 rounded-xl max-h-[30vh] overflow-y-auto divide-y divide-gray-100 bg-white">
+          <div class="border border-gray-200 rounded-xl max-h-[30vh] overflow-y-auto divide-y divide-gray-100 bg-white">
             <!-- 候选角色 -->
             <template v-if="assignType === 'role'">
               <div 
@@ -2864,7 +3080,7 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
         <div class="flex-1 overflow-y-auto p-6 sm:p-8 bg-gray-50/50">
            <!-- Tab 1: Workflow Flow -->
            <div v-if="activeHelpTab === 'flow'" class="space-y-6 max-w-4xl mx-auto">
-              <div class="bg-gradient-to-r from-emerald-50 to-teal-50 border-l-4 border-emerald-600 p-4 rounded-r-xl shadow-2xs">
+              <div class="bg-gradient-to-r from-emerald-50 to-teal-50 border-l-4 border-emerald-600 p-4 rounded-r-xl shadow-sm">
                  <h3 class="font-bold text-emerald-900 mb-1">知识库 5 步全生命周期构建体系</h3>
                  <p class="text-xs text-emerald-700 leading-relaxed">
                     以 RAGFlow 为核心引擎。前置需确保系统配置连通；解析后建议先在召回测试台验证 Top-K 命中率；通过角色管理分配访问权限后挂载至智能体。
@@ -2994,7 +3210,7 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
 
            <!-- Tab 2: Chunking Methods -->
            <div v-else-if="activeHelpTab === 'chunking'" class="space-y-4 max-w-4xl mx-auto">
-              <div class="bg-white p-6 rounded-2xl border border-gray-200 shadow-sm space-y-4 text-sm text-gray-650 leading-relaxed">
+              <div class="bg-white p-6 rounded-2xl border border-gray-200 shadow-sm space-y-4 text-sm text-gray-600 leading-relaxed">
                  <h4 class="font-bold text-gray-900 text-base">RAGFlow 切分策略选型推荐</h4>
                  <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
                     <div class="p-3.5 bg-blue-50/60 rounded-xl border border-blue-100 space-y-1">
@@ -3019,7 +3235,7 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
 
            <!-- Tab 3: Retrieval & Rerank -->
            <div v-else-if="activeHelpTab === 'retrieval'" class="space-y-4 max-w-4xl mx-auto">
-              <div class="bg-white p-6 rounded-2xl border border-gray-200 shadow-sm space-y-4 text-sm text-gray-650 leading-relaxed">
+              <div class="bg-white p-6 rounded-2xl border border-gray-200 shadow-sm space-y-4 text-sm text-gray-600 leading-relaxed">
                  <h4 class="font-bold text-gray-900 text-base">RAG 混合检索与重排（Rerank）调优最佳实践</h4>
                  <div class="space-y-3 text-xs">
                     <div class="p-3.5 bg-gray-50 rounded-xl border border-gray-100 space-y-1">
