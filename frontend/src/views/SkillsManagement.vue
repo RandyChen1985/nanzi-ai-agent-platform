@@ -128,6 +128,17 @@ const initialWorkspaceTab = props.personalOnly || !canManagePlatformSkills.value
 const activeScope = ref<'global' | 'personal'>(initialWorkspaceTab)
 const activeWorkspaceTab = ref<'global' | 'personal' | 'review'>(initialWorkspaceTab)
 const loading = ref(false)
+
+/** 列表类请求的并发计数：并发加载时避免先完成的一方提前结束 loading */
+let listLoadingCount = 0
+const beginListLoading = () => {
+  listLoadingCount += 1
+  loading.value = true
+}
+const endListLoading = () => {
+  listLoadingCount = Math.max(0, listLoadingCount - 1)
+  if (listLoadingCount === 0) loading.value = false
+}
 const searchQuery = ref('')
 const viewMode = ref<'card' | 'list'>('card')
 const skillSortBy = ref<'name' | 'time'>('time')
@@ -309,6 +320,13 @@ const originalContent = ref('')
 const saving = ref(false)
 const fetchingDetail = ref(false)
 
+/**
+ * 详情/文件读取令牌：技能切换或文件切换都会让在途请求失效。
+ * 缺少它时，慢响应会覆盖当前正在查看的内容，进而造成「显示 A 的内容却保存到 B」。
+ */
+let detailToken = 0
+const invalidateDetailRequests = () => ++detailToken
+
 watch(showDrawer, (open) => {
   if (!open) {
     disposeSkillDrawerChart()
@@ -359,7 +377,7 @@ const publicationReviewComment = ref('')
 
 // 获取平台技能列表
 const fetchSkills = async () => {
-  loading.value = true
+  beginListLoading()
   try {
     const response = await axios.get('/api/portal/skills')
     if (response.data && response.data.status === 'success') {
@@ -368,12 +386,14 @@ const fetchSkills = async () => {
   } catch (e: any) {
     showToast(e.response?.data?.detail || '获取平台技能列表失败', 'error')
   } finally {
-    loading.value = false
+    endListLoading()
   }
 }
 
 // 获取个人技能列表
 const fetchPersonalSkills = async () => {
+  // 个人页首屏此前不参与 loading，会先闪一次「还没有个人技能」空状态
+  beginListLoading()
   try {
     const response = await axios.get('/api/portal/skills/personal')
     if (response.data && response.data.status === 'success') {
@@ -390,6 +410,8 @@ const fetchPersonalSkills = async () => {
   } catch (e: any) {
     console.warn('获取个人技能失败', e)
     showToast(e.response?.data?.detail || '获取个人技能列表失败', 'error')
+  } finally {
+    endListLoading()
   }
 }
 
@@ -712,7 +734,8 @@ const openSkillDetail = async (skillId: string) => {
 }
 
 // 获取详情 (包含加载选中的文件内容)
-const fetchSkillDetail = async (skillId: string) => {
+const fetchSkillDetail = async (skillId: string, options: { preserveEditing?: boolean } = {}) => {
+  const token = invalidateDetailRequests()
   fetchingDetail.value = true
   try {
     // 根据当前技能的 scope 决定 API 路径
@@ -721,14 +744,17 @@ const fetchSkillDetail = async (skillId: string) => {
     activeSkillScope.value = isPersonal ? 'personal' : 'global'
     const apiPrefix = resolveSkillApiPrefix(skillId, activeSkillScope.value)
     const response = await axios.get(`${apiPrefix}/${skillId}`)
+    if (token !== detailToken) return // 已切换到其它技能/文件，丢弃过期响应
     if (response.data && response.data.status === 'success') {
       const data = response.data.data
       activeSkillName.value = data.name
       activeSkillDesc.value = data.description
       fileTree.value = data.file_tree || []
-      
-      // 默认加载 SKILL.md
-      if (selectedFilePath.value === 'SKILL.md') {
+
+      if (options.preserveEditing) {
+        // 仅刷新文件树与元信息：新建资产 / 上传后不应清掉用户正在编辑的内容
+      } else if (selectedFilePath.value === 'SKILL.md') {
+        // 默认加载 SKILL.md
         editingContent.value = data.skill_md_content || ''
         originalContent.value = data.skill_md_content || ''
       } else {
@@ -737,37 +763,44 @@ const fetchSkillDetail = async (skillId: string) => {
       }
     }
   } catch (e: any) {
+    if (token !== detailToken) return
     showToast(e.response?.data?.detail || '获取技能详情失败', 'error')
     showDrawer.value = false
   } finally {
-    fetchingDetail.value = false
+    if (token === detailToken) fetchingDetail.value = false
   }
 }
 
 // 在线读取特定资产文件内容
 const loadFileContent = async (skillId: string, filePath: string) => {
+  const token = invalidateDetailRequests()
   fetchingDetail.value = true
   try {
     const apiPrefix = resolveSkillApiPrefix(skillId)
     const response = await axios.get(`${apiPrefix}/${skillId}/files`, {
       params: { path: filePath }
     })
+    if (token !== detailToken) return
     if (response.data && response.data.status === 'success') {
       editingContent.value = response.data.content || ''
       originalContent.value = response.data.content || ''
     }
   } catch (e: any) {
+    if (token !== detailToken) return
     showToast(e.response?.data?.detail || `读取文件 ${filePath} 失败`, 'error')
     // 降级回 SKILL.md
     selectedFilePath.value = 'SKILL.md'
     await fetchSkillDetail(skillId)
   } finally {
-    fetchingDetail.value = false
+    if (token === detailToken) fetchingDetail.value = false
   }
 }
 
 // 选中某个文件进行编辑
 const selectFileForEdit = async (path: string) => {
+  // 已经是当前文件：无需切换，避免误弹「切换将丢失修改」并真的重载丢弃编辑
+  if (path === selectedFilePath.value) return
+
   const doSelect = async () => {
     selectedFilePath.value = path
     editorMode.value = path.toLowerCase().endsWith('.md') ? 'preview' : 'edit'
@@ -798,9 +831,22 @@ const selectDirectory = (path: string) => {
   selectedDirectoryPath.value = path
 }
 
+/** 抽屉内常显入口：右键菜单对键盘与触屏不可达，这里提供等价按钮 */
+const createAssetFromDrawer = () => {
+  openCreateAssetModal('file')
+}
+
+const uploadFromDrawer = () => {
+  if (uploading.value) return
+  uploadFolder.value = selectedDirectoryPath.value
+  uploadType.value = 'normal'
+  triggerFileInput()
+}
+
 const openCreateAssetModal = (type: 'file' | 'folder') => {
-  if (type === 'file' && hasUnsavedChanges.value) {
-    showToast('请先保存当前文件的修改，再新建文件', 'warning')
+  // 新建成功后都会重载详情并覆盖编辑器内容，因此 file / folder 都要先拦未保存修改
+  if (hasUnsavedChanges.value) {
+    showToast(`请先保存当前文件的修改，再新建${type === 'file' ? '文件' : '文件夹'}`, 'warning')
     return
   }
   createAssetType.value = type
@@ -966,10 +1012,10 @@ const deleteSkillFile = (filePath: string) => {
         })
         if (response.data && response.data.status === 'success') {
           showToast('资产已成功物理删除', 'success')
-          if (
+          const selectedWasRemoved =
             selectedFilePath.value === filePath ||
             selectedFilePath.value.startsWith(`${filePath}/`)
-          ) {
+          if (selectedWasRemoved) {
             selectedFilePath.value = 'SKILL.md'
           }
           if (
@@ -978,7 +1024,8 @@ const deleteSkillFile = (filePath: string) => {
           ) {
             selectedDirectoryPath.value = ''
           }
-          await fetchSkillDetail(activeSkillId.value)
+          // 只有当前正在编辑的文件被删除时才重载内容，否则保留未保存的编辑
+          await fetchSkillDetail(activeSkillId.value, { preserveEditing: !selectedWasRemoved })
         }
       } catch (e: any) {
         showToast(e.response?.data?.detail || '删除资产失败', 'error')
@@ -1000,38 +1047,50 @@ const handleFileUpload = async (event: Event) => {
 // 物理上传执行 (单文件限 10MB / 压缩包限 20MB)
 const uploadFiles = async (files: FileList) => {
   uploading.value = true
+  const failed: string[] = []
+  let succeeded = 0
   try {
     for (const file of Array.from(files)) {
       const isArchive = uploadType.value === 'archive'
       const limit = isArchive ? 20 * 1024 * 1024 : 10 * 1024 * 1024
       if (file.size > limit) {
-        showToast(`文件 ${file.name} 超过限制大小 (${isArchive ? '20MB' : '10MB'})，已拦截上传`, 'warning')
+        failed.push(`${file.name}（超过 ${isArchive ? '20MB' : '10MB'} 限制）`)
         continue
       }
 
-      const formData = new FormData()
-      formData.append('file', file)
-      if (uploadFolder.value.trim()) {
-        formData.append('folder', uploadFolder.value.trim())
-      }
+      try {
+        const formData = new FormData()
+        formData.append('file', file)
+        if (uploadFolder.value.trim()) {
+          formData.append('folder', uploadFolder.value.trim())
+        }
 
-      const apiPrefix = resolveSkillApiPrefix(activeSkillId.value)
-      if (isArchive) {
-        await axios.post(`${apiPrefix}/${activeSkillId.value}/upload-archive`, formData)
-        showToast(`压缩包 ${file.name} 上传解压成功！`, 'success')
-      } else {
-        await axios.post(`${apiPrefix}/${activeSkillId.value}/upload`, formData)
-        showToast(`文件 ${file.name} 上传成功！`, 'success')
+        const apiPrefix = resolveSkillApiPrefix(activeSkillId.value)
+        if (isArchive) {
+          await axios.post(`${apiPrefix}/${activeSkillId.value}/upload-archive`, formData)
+        } else {
+          await axios.post(`${apiPrefix}/${activeSkillId.value}/upload`, formData)
+        }
+        succeeded += 1
+      } catch (e: any) {
+        // 单个文件失败不应中断整批，记录后继续处理剩余文件
+        failed.push(`${file.name}（${e.response?.data?.detail || '上传失败'}）`)
       }
     }
-    // 重置上传目录与状态并重新获取详情更新文件树
+  } finally {
+    // 成功或失败都要重置上传上下文，避免下次上传误用上一次的目录
     uploadFolder.value = ''
     uploadType.value = 'normal'
-    await fetchSkillDetail(activeSkillId.value)
-  } catch (e: any) {
-    showToast(e.response?.data?.detail || '文件上传遇到错误', 'error')
-  } finally {
     uploading.value = false
+  }
+
+  // 上传不应清空用户正在编辑的内容，只刷新文件树
+  if (succeeded > 0) {
+    await fetchSkillDetail(activeSkillId.value, { preserveEditing: true })
+    showToast(`${succeeded} 个文件上传成功`, 'success')
+  }
+  if (failed.length > 0) {
+    showToast(`以下文件上传失败：${failed.join('；')}`, 'error')
   }
 }
 
@@ -1402,7 +1461,7 @@ onUnmounted(() => {
         <button
           v-if="!showSkillFlowGuide"
           type="button"
-          class="hidden sm:inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50/80 px-2.5 py-1 text-xs font-medium text-emerald-700 shadow-2xs transition-colors hover:bg-emerald-100 cursor-pointer"
+          class="hidden sm:inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50/80 px-2.5 py-1 text-xs font-medium text-emerald-700 shadow-sm transition-colors hover:bg-emerald-100 cursor-pointer"
           title="重新在页面顶部显示流程引导"
           @click="restoreSkillFlowGuide"
         >
@@ -1433,7 +1492,7 @@ onUnmounted(() => {
             <button
               type="button"
               class="rounded-md px-2.5 py-1.5 text-xs font-medium transition-all"
-              :class="skillSortBy === 'name' ? 'border border-gray-200 bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:bg-gray-150 hover:text-gray-800'"
+              :class="skillSortBy === 'name' ? 'border border-gray-200 bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:bg-gray-200 hover:text-gray-800'"
               title="按名称排序"
               @click="skillSortBy = 'name'"
             >
@@ -1442,7 +1501,7 @@ onUnmounted(() => {
             <button
               type="button"
               class="rounded-md px-2.5 py-1.5 text-xs font-medium transition-all"
-              :class="skillSortBy === 'time' ? 'border border-gray-200 bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:bg-gray-150 hover:text-gray-800'"
+              :class="skillSortBy === 'time' ? 'border border-gray-200 bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:bg-gray-200 hover:text-gray-800'"
               title="按更新时间排序"
               @click="skillSortBy = 'time'"
             >
@@ -1450,7 +1509,7 @@ onUnmounted(() => {
             </button>
             <button
               type="button"
-              class="rounded-md p-1.5 text-gray-500 transition-all hover:bg-gray-150 hover:text-gray-800"
+              class="rounded-md p-1.5 text-gray-500 transition-all hover:bg-gray-200 hover:text-gray-800"
               :title="skillSortOrder === 'asc' ? '当前升序，点击切换降序' : '当前降序，点击切换升序'"
               @click="toggleSkillSortOrder"
             >
@@ -1464,7 +1523,7 @@ onUnmounted(() => {
             <button
               type="button"
               class="flex items-center justify-center rounded-md p-1.5 transition-all duration-200"
-              :class="viewMode === 'card' ? 'border border-gray-200 bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:bg-gray-150 hover:text-gray-800'"
+              :class="viewMode === 'card' ? 'border border-gray-200 bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:bg-gray-200 hover:text-gray-800'"
               title="卡片视图"
               @click="viewMode = 'card'"
             >
@@ -1475,7 +1534,7 @@ onUnmounted(() => {
             <button
               type="button"
               class="flex items-center justify-center rounded-md p-1.5 transition-all duration-200"
-              :class="viewMode === 'list' ? 'border border-gray-200 bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:bg-gray-150 hover:text-gray-800'"
+              :class="viewMode === 'list' ? 'border border-gray-200 bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:bg-gray-200 hover:text-gray-800'"
               title="列表视图"
               @click="viewMode = 'list'"
             >
@@ -1730,11 +1789,17 @@ onUnmounted(() => {
       <div 
         v-for="skill in sortedSkills" 
         :key="skill.id"
+        role="button"
+        tabindex="0"
+        :aria-label="`配置技能 ${skill.name || skill.id}`"
+        @keydown.enter.prevent="openSkillDetail(skill.id)"
+        @keydown.space.prevent="openSkillDetail(skill.id)"
         @click="openSkillDetail(skill.id)"
         class="group relative flex flex-col cursor-pointer rounded-xl border border-gray-200 bg-white transition-all duration-200 hover:-translate-y-0.5 hover:border-blue-400 hover:shadow-lg"
         :class="[
           personalOnly ? 'p-6' : 'rounded-lg p-5',
           skill.enabled === 'false' ? 'opacity-65 saturate-50 bg-gray-50/50' : '',
+          'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 focus-visible:ring-offset-2',
         ]"
       >
         <!-- 卡片顶部 -->
@@ -1789,7 +1854,7 @@ onUnmounted(() => {
                 @change="toggleSkillStatus(skill)"
                 class="peer sr-only"
               >
-              <div class="peer h-4 w-7 rounded-full bg-gray-250 after:absolute after:left-[2px] after:top-[2px] after:h-3 after:w-3 after:rounded-full after:border after:border-gray-300 after:bg-white after:transition-all after:content-[''] peer-checked:bg-blue-600 peer-checked:after:translate-x-full peer-checked:after:border-white peer-focus:outline-none dark:bg-gray-700"></div>
+              <div class="peer h-4 w-7 rounded-full bg-gray-200 after:absolute after:left-[2px] after:top-[2px] after:h-3 after:w-3 after:rounded-full after:border after:border-gray-300 after:bg-white after:transition-all after:content-[''] peer-checked:bg-blue-600 peer-checked:after:translate-x-full peer-checked:after:border-white peer-focus:outline-none dark:bg-gray-700"></div>
             </label>
 
             <!-- 删除：仅 hover 显示，降低误触 -->
@@ -1947,7 +2012,7 @@ onUnmounted(() => {
                       @change="toggleSkillStatus(skill)"
                       class="sr-only peer"
                     >
-                    <div class="w-7 h-4 bg-gray-250 dark:bg-gray-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:bg-blue-600"></div>
+                    <div class="w-7 h-4 bg-gray-200 dark:bg-gray-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:bg-blue-600"></div>
                   </label>
                   <span
                     class="text-[10px] font-medium"
@@ -1992,7 +2057,12 @@ onUnmounted(() => {
 
     <!-- 技能工作台设计规范与全流程指引 Modal -->
     <div v-if="showHelpModal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" @click.self="showHelpModal = false">
-      <div class="bg-white rounded-2xl shadow-2xl w-full max-w-5xl h-[85vh] flex flex-col overflow-hidden border border-gray-100 animate-fade-in-up">
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="skill-help-title"
+        class="bg-white rounded-2xl shadow-2xl w-full max-w-5xl h-[85vh] flex flex-col overflow-hidden border border-gray-100 animate-fade-in-up"
+      >
         <!-- Header -->
         <div class="p-6 border-b border-gray-100 flex justify-between items-center bg-emerald-50/30">
           <div class="flex items-center gap-3">
@@ -2000,7 +2070,7 @@ onUnmounted(() => {
                 <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"/></svg>
              </div>
              <div>
-               <h2 class="text-xl font-bold text-gray-900">技能工作台研发规范与全流程指引</h2>
+               <h2 id="skill-help-title" class="text-xl font-bold text-gray-900">技能工作台研发规范与全流程指引</h2>
                <p class="text-xs text-gray-500 font-medium mt-0.5">从 SKILL.md 规范定义、代码脚本沉淀，到发布审批、平台多版本隔离与智能体动态装配激活。</p>
              </div>
           </div>
@@ -2038,7 +2108,7 @@ onUnmounted(() => {
         <div class="flex-1 overflow-y-auto p-6 sm:p-8 bg-gray-50/50">
            <!-- Tab 1: Workflow Flow -->
            <div v-if="activeHelpTab === 'flow'" class="space-y-6 max-w-4xl mx-auto">
-              <div class="bg-gradient-to-r from-emerald-50 to-teal-50 border-l-4 border-emerald-600 p-4 rounded-r-xl shadow-2xs">
+              <div class="bg-gradient-to-r from-emerald-50 to-teal-50 border-l-4 border-emerald-600 p-4 rounded-r-xl shadow-sm">
                  <h3 class="font-bold text-emerald-900 mb-1">技能工作台 5 步全生命周期标准体系</h3>
                  <p class="text-xs text-emerald-700 leading-relaxed">
                     Skills 是面向 AI 智能体的一套高阶执行规范与指令约束。通过 SKILL.md 定义与脚本编写，使智能体具备复杂的工具链执行能力。
@@ -2154,7 +2224,7 @@ onUnmounted(() => {
 
            <!-- Tab 2: Schema & Install -->
            <div v-else-if="activeHelpTab === 'schema'" class="space-y-4 max-w-4xl mx-auto">
-              <div class="bg-white p-6 rounded-2xl border border-gray-200 shadow-sm space-y-4 text-sm text-gray-650 leading-relaxed">
+              <div class="bg-white p-6 rounded-2xl border border-gray-200 shadow-sm space-y-4 text-sm text-gray-600 leading-relaxed">
                  <h4 class="font-bold text-gray-900 text-base">SKILL.md 规范与三种安装方式</h4>
                  
                  <!-- SKILL.md 结构 -->
@@ -2274,18 +2344,18 @@ description: 专门审查 Markdown 与技术文档的格式与结构守则。当
 
            <!-- Tab 3: Audit & Versioning -->
            <div v-else-if="activeHelpTab === 'audit'" class="space-y-4 max-w-4xl mx-auto">
-              <div class="bg-white p-6 rounded-2xl border border-gray-200 shadow-sm space-y-4 text-sm text-gray-650 leading-relaxed">
+              <div class="bg-white p-6 rounded-2xl border border-gray-200 shadow-sm space-y-4 text-sm text-gray-600 leading-relaxed">
                  <h4 class="font-bold text-gray-900 text-base">发布审批流程与生产版本隔离机制</h4>
                  <div class="space-y-3 text-xs">
-                    <div class="p-3.5 bg-gray-50 rounded-xl border border-gray-150 space-y-1">
+                    <div class="p-3.5 bg-gray-50 rounded-xl border border-gray-200 space-y-1">
                        <span class="font-bold text-gray-900">1. 个人开发沙箱（我的技能）</span>
                        <p class="text-gray-600 leading-relaxed">每个用户的技能相互隔离在独立存储空间中，开发与调试过程完全不影响平台公共技能和其他用户。</p>
                     </div>
-                    <div class="p-3.5 bg-gray-50 rounded-xl border border-gray-150 space-y-1">
+                    <div class="p-3.5 bg-gray-50 rounded-xl border border-gray-200 space-y-1">
                        <span class="font-bold text-gray-900">2. 提审发布与 Diff 对比</span>
                        <p class="text-gray-600 leading-relaxed">点击「申请发布至平台」生成发布工单；平台管理员在「待审核」中对文件树变动、代码执行风险与 YAML 描述进行严格核验。</p>
                     </div>
-                    <div class="p-3.5 bg-gray-50 rounded-xl border border-gray-150 space-y-1">
+                    <div class="p-3.5 bg-gray-50 rounded-xl border border-gray-200 space-y-1">
                        <span class="font-bold text-gray-900">3. 生产发布与热更新</span>
                        <p class="text-gray-600 leading-relaxed">审核通过后，技能自动复制并归档至平台全局目录，版本号自增；绑定的智能体即刻生效，无需重启服务。</p>
                     </div>
@@ -2302,8 +2372,13 @@ description: 专门审查 Markdown 与技术文档的格式与结构守则。当
       class="fixed inset-0 bg-black/50 backdrop-blur-sm z-[9990] flex items-center justify-center p-4 animate-fade-in"
       @click.self="showCreateModal = false"
     >
-      <div class="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6 border border-gray-150">
-        <h2 class="text-xl font-bold text-gray-800 mb-1 flex items-center gap-2">
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="skill-create-title"
+        class="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6 border border-gray-200"
+      >
+        <h2 id="skill-create-title" class="text-xl font-bold text-gray-800 mb-1 flex items-center gap-2">
           <svg class="w-5 h-5" :class="activeScope === 'personal' ? 'text-emerald-500' : 'text-blue-500'" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5S19.832 5.477 21 6.253v13C19.832 18.477 18.246 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
           </svg>
@@ -2321,7 +2396,7 @@ description: 专门审查 Markdown 与技术文档的格式与结构守则。当
               v-model="newSkill.id"
               type="text" 
               placeholder="例如: search-helper" 
-              class="w-full px-3 py-2 border border-gray-350 rounded-xl focus:ring-2 focus:outline-none text-sm transition-all"
+              class="w-full px-3 py-2 border border-gray-300 rounded-xl focus:ring-2 focus:outline-none text-sm transition-all"
               :class="activeScope === 'personal' ? 'focus:ring-emerald-500' : 'focus:ring-blue-500'"
             />
             <span class="text-[10px] text-gray-400 mt-1 block">物理目录名，创建后不可修改</span>
@@ -2335,7 +2410,7 @@ description: 专门审查 Markdown 与技术文档的格式与结构守则。当
               v-model="newSkill.name"
               type="text" 
               placeholder="例如: 全局网页搜索辅助" 
-              class="w-full px-3 py-2 border border-gray-350 rounded-xl focus:ring-2 focus:outline-none text-sm transition-all"
+              class="w-full px-3 py-2 border border-gray-300 rounded-xl focus:ring-2 focus:outline-none text-sm transition-all"
               :class="activeScope === 'personal' ? 'focus:ring-emerald-500' : 'focus:ring-blue-500'"
             />
           </div>
@@ -2348,7 +2423,7 @@ description: 专门审查 Markdown 与技术文档的格式与结构守则。当
               v-model="newSkill.description"
               rows="3"
               placeholder="描述此技能的核心能力或针对的典型任务约束..." 
-              class="w-full px-3 py-2 border border-gray-350 rounded-xl focus:ring-2 focus:outline-none text-sm transition-all"
+              class="w-full px-3 py-2 border border-gray-300 rounded-xl focus:ring-2 focus:outline-none text-sm transition-all"
               :class="activeScope === 'personal' ? 'focus:ring-emerald-500' : 'focus:ring-blue-500'"
             ></textarea>
           </div>
@@ -2386,7 +2461,12 @@ description: 专门审查 Markdown 与技术文档的格式与结构守则。当
 
       <!-- 抽屉主体 -->
       <div class="absolute inset-y-0 right-0 pl-10 max-w-full flex">
-        <div class="w-screen max-w-6xl bg-white shadow-2xl flex flex-col h-full border-l border-gray-150 animate-slide-in">
+        <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="skill-drawer-title"
+        class="w-screen max-w-6xl bg-white shadow-2xl flex flex-col h-full border-l border-gray-200 animate-slide-in"
+      >
           <!-- 抽屉头部 -->
           <div class="px-6 py-4 bg-gray-50 border-b border-gray-200 flex items-center justify-between">
             <div class="flex items-center space-x-3 min-w-0">
@@ -2396,7 +2476,7 @@ description: 专门审查 Markdown 与技术文档的格式与结构守则。当
                 </svg>
               </div>
               <div class="min-w-0">
-                <h2 class="text-lg font-bold text-gray-800 truncate">{{ activeSkillName }}</h2>
+                <h2 id="skill-drawer-title" class="text-lg font-bold text-gray-800 truncate">{{ activeSkillName }}</h2>
                 <p class="text-xs text-gray-500 font-mono truncate">ID: {{ activeSkillId }}</p>
               </div>
             </div>
@@ -2414,7 +2494,7 @@ description: 专门审查 Markdown 与技术文档的格式与结构守则。当
           <!-- 抽屉主要内容，左右分栏 -->
           <div class="flex-1 flex flex-col lg:flex-row overflow-y-auto lg:overflow-hidden min-h-0 bg-slate-50 dark:bg-gray-900">
             <!-- 左侧：在线编辑器 -->
-            <div class="flex-[1.8] h-[60vh] lg:h-auto flex flex-col border-b lg:border-b-0 lg:border-r border-gray-150 p-3 sm:p-5 bg-white dark:bg-gray-800 overflow-hidden min-h-0">
+            <div class="flex-[1.8] h-[60vh] lg:h-auto flex flex-col border-b lg:border-b-0 lg:border-r border-gray-200 p-3 sm:p-5 bg-white dark:bg-gray-800 overflow-hidden min-h-0">
               <div v-if="fetchingDetail" class="flex-1 flex flex-col items-center justify-center py-20">
                 <div class="w-8 h-8 border-4 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
                 <p class="text-xs text-gray-400 mt-3 font-medium">载入文件内容...</p>
@@ -2538,41 +2618,50 @@ description: 专门审查 Markdown 与技术文档的格式与结构守则。当
                 class="hidden"
               />
 
-              <div class="flex items-center justify-between gap-3 mb-3 select-none shrink-0">
-                <h3 class="text-xs font-bold text-gray-400 uppercase tracking-wider">技能资产物理树</h3>
-                <div class="flex items-center gap-2">
-                  <div class="flex items-center bg-white border border-slate-200 rounded-lg p-0.5">
+              <div class="mb-3 flex flex-wrap items-center justify-between gap-x-3 gap-y-2 select-none shrink-0">
+                <h3 class="shrink-0 whitespace-nowrap text-xs font-bold text-gray-400 tracking-wider" title="技能资产物理树：文件与空白区域均支持右键菜单操作">技能资产物理树</h3>
+                <div class="flex shrink-0 items-center gap-1.5">
+                  <div class="flex shrink-0 items-center rounded-lg border border-slate-200 bg-white p-0.5">
                     <button
+                      type="button"
                       @click="fileTreeSortBy = 'name'"
-                      class="px-2 py-1 rounded-md text-[10px] font-medium transition-all"
+                      class="whitespace-nowrap rounded-md px-1.5 py-1 text-[10px] font-medium transition-all"
                       :class="fileTreeSortBy === 'name' ? 'bg-slate-100 text-slate-700' : 'text-slate-400 hover:text-slate-600'"
                     >
                       名称
                     </button>
                     <button
+                      type="button"
                       @click="fileTreeSortBy = 'time'"
-                      class="px-2 py-1 rounded-md text-[10px] font-medium transition-all"
+                      class="whitespace-nowrap rounded-md px-1.5 py-1 text-[10px] font-medium transition-all"
                       :class="fileTreeSortBy === 'time' ? 'bg-slate-100 text-slate-700' : 'text-slate-400 hover:text-slate-600'"
                     >
                       时间
                     </button>
                     <button
+                      type="button"
                       @click="toggleFileTreeSortOrder"
-                      class="p-1 rounded-md text-slate-400 hover:text-slate-600 transition-all"
+                      class="shrink-0 rounded-md p-1 text-slate-400 transition-all hover:text-slate-600"
                       :title="fileTreeSortOrder === 'asc' ? '升序' : '降序'"
                     >
-                      <svg class="w-3.5 h-3.5 transition-transform" :class="fileTreeSortOrder === 'desc' ? 'rotate-180' : ''" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <svg class="h-3.5 w-3.5 transition-transform" :class="fileTreeSortOrder === 'desc' ? 'rotate-180' : ''" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 4h13M3 8h9m-9 4h6m4 0v4m0 0l-3-3m3 3l3-3" />
                       </svg>
                     </button>
                   </div>
-                  <span class="flex items-center gap-1.5 text-[10px] text-slate-500 bg-white border border-slate-200 px-2 py-0.5 rounded-full font-medium shadow-sm transition-all hover:border-slate-350" title="鼠标右键点击文件或空白区域可进行新建或上传">
-                  <span class="relative flex h-1.5 w-1.5">
-                    <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                    <span class="relative inline-flex rounded-full h-1.5 w-1.5 bg-emerald-500"></span>
-                  </span>
-                  右键菜单操作
-                </span>
+                  <button
+                    type="button"
+                    @click="createAssetFromDrawer"
+                    class="shrink-0 whitespace-nowrap rounded-lg border border-slate-200 bg-white px-2 py-1 text-[10px] font-semibold text-slate-600 shadow-sm transition-colors hover:border-slate-300 hover:text-slate-800"
+                    title="在当前定位目录下新建文件"
+                  >新建文件</button>
+                  <button
+                    type="button"
+                    :disabled="uploading"
+                    @click="uploadFromDrawer"
+                    class="shrink-0 whitespace-nowrap rounded-lg border border-blue-200 bg-white px-2 py-1 text-[10px] font-semibold text-blue-600 shadow-sm transition-colors hover:border-blue-300 hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-60"
+                    :title="uploading ? '正在上传…' : '上传脚本文件到当前定位目录'"
+                  >{{ uploading ? '上传中…' : '上传脚本' }}</button>
                 </div>
               </div>
 
@@ -2659,9 +2748,14 @@ description: 专门审查 Markdown 与技术文档的格式与结构守则。当
     class="fixed inset-0 bg-black/45 backdrop-blur-sm z-[9995] flex items-center justify-center p-4 animate-fade-in"
     @click.self="showCreateAssetModal = false"
   >
-    <div class="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-5 border border-gray-150">
+    <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="skill-asset-title"
+        class="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-5 border border-gray-200"
+      >
       <div class="flex items-center justify-between mb-4">
-        <h2 class="text-base font-bold text-gray-800">
+        <h2 id="skill-asset-title" class="text-base font-bold text-gray-800">
           新建{{ createAssetType === 'file' ? '文件' : '文件夹' }}
         </h2>
         <button
@@ -2716,9 +2810,14 @@ description: 专门审查 Markdown 与技术文档的格式与结构守则。当
     class="fixed inset-0 bg-black/45 backdrop-blur-sm z-[9995] flex items-center justify-center p-4 animate-fade-in"
     @click.self="showImportModal = false"
   >
-    <div class="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 border border-gray-150 relative">
+    <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="skill-import-title"
+        class="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 border border-gray-200 relative"
+      >
       <div class="flex items-center justify-between mb-2">
-        <h2 class="text-base font-bold text-gray-800 flex items-center gap-1.5">
+        <h2 id="skill-import-title" class="text-base font-bold text-gray-800 flex items-center gap-1.5">
           <svg class="w-5 h-5 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
           </svg>
@@ -2826,10 +2925,15 @@ description: 专门审查 Markdown 与技术文档的格式与结构守则。当
     class="fixed inset-0 z-[9990] flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm animate-fade-in"
     @click.self="closeBindingsModal"
   >
-    <div class="flex max-h-[80vh] w-full max-w-md flex-col rounded-2xl border border-gray-150 bg-white p-5 shadow-2xl">
+    <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="skill-bindings-title"
+        class="flex max-h-[80vh] w-full max-w-md flex-col rounded-2xl border border-gray-200 bg-white p-5 shadow-2xl"
+      >
       <div class="mb-4 flex shrink-0 items-start justify-between gap-3 border-b border-gray-100 pb-3">
         <div class="min-w-0">
-          <h2 class="truncate text-lg font-bold text-gray-800">显式绑定智能体</h2>
+          <h2 id="skill-bindings-title" class="truncate text-lg font-bold text-gray-800">显式绑定智能体</h2>
           <p class="mt-0.5 truncate text-xs text-gray-500">
             {{ bindingsModalSkill.name }}
             <span class="font-mono text-gray-400">· {{ bindingsModalSkill.id }}</span>
@@ -2888,9 +2992,14 @@ description: 专门审查 Markdown 与技术文档的格式与结构守则。当
     class="fixed inset-0 bg-black/50 backdrop-blur-sm z-[9990] flex items-center justify-center p-4 animate-fade-in"
     @click.self="closeStatsModal"
   >
-    <div class="bg-white rounded-2xl shadow-2xl max-w-4xl w-full p-6 border border-gray-150 flex flex-col max-h-[90vh]">
+    <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="skill-stats-title"
+        class="bg-white rounded-2xl shadow-2xl max-w-4xl w-full p-6 border border-gray-200 flex flex-col max-h-[90vh]"
+      >
       <div class="flex items-center justify-between border-b border-gray-100 pb-4 mb-4 select-none shrink-0">
-        <h2 class="text-xl font-bold text-gray-800 flex items-center gap-2">
+        <h2 id="skill-stats-title" class="text-xl font-bold text-gray-800 flex items-center gap-2">
           <svg class="w-5 h-5 text-indigo-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
           </svg>
@@ -2935,7 +3044,7 @@ description: 专门审查 Markdown 与技术文档的格式与结构守则。当
 
         <div class="flex-1 overflow-y-auto pr-1 py-1 custom-scrollbar">
           <!-- 分布图 -->
-          <div v-show="activeTab === 'distribution'" class="border border-gray-150 rounded-xl p-4 bg-gray-50/50 flex flex-col min-h-[380px]">
+          <div v-show="activeTab === 'distribution'" class="border border-gray-200 rounded-xl p-4 bg-gray-50/50 flex flex-col min-h-[380px]">
             <h3 class="text-sm font-bold text-gray-700 mb-3 flex items-center gap-1.5 shrink-0 select-none">
               <span class="w-2 h-2 bg-blue-500 rounded-full"></span>
               技能总调用占比与分布
@@ -2943,7 +3052,7 @@ description: 专门审查 Markdown 与技术文档的格式与结构守则。当
             <div ref="distributionChartRef" class="w-full flex-1 min-h-[320px]"></div>
           </div>
           <!-- 趋势图 -->
-          <div v-show="activeTab === 'trend'" class="border border-gray-150 rounded-xl p-4 bg-gray-50/50 flex flex-col min-h-[380px]">
+          <div v-show="activeTab === 'trend'" class="border border-gray-200 rounded-xl p-4 bg-gray-50/50 flex flex-col min-h-[380px]">
             <h3 class="text-sm font-bold text-gray-700 mb-3 flex items-center gap-1.5 shrink-0 select-none">
               <span class="w-2 h-2 bg-indigo-500 rounded-full"></span>
               近30天激活趋势变化
@@ -3093,8 +3202,8 @@ description: 专门审查 Markdown 与技术文档的格式与结构守则。当
   background: #94a3b8;
 }
 
-/* Hide focus ring */
-textarea:focus {
+/* 仅编辑器内部隐藏焦点环；此前是全局 textarea:focus，会压掉其它输入框的 focus:ring */
+.skill-editor-textarea:focus {
   outline: none;
   box-shadow: none;
 }
