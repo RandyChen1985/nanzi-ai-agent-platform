@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import axios from '../utils/axios'
 import Modal from '../components/Modal.vue'
 import ConfirmModal from '../components/ConfirmModal.vue'
@@ -10,6 +10,7 @@ import { useUser } from '../composables/useUser'
 import { copyToClipboard as copyText } from '../utils/clipboard'
 
 const router = useRouter()
+const route = useRoute()
 
 type KnowledgeBase = {
   id: string
@@ -1430,9 +1431,20 @@ onUnmounted(() => {
   }
 })
 
+// 运营分析页下钻：?dataset=<id> 直接定位到对应知识库
+const applyDeepLinkFromQuery = () => {
+  const targetDatasetId = String(route.query.dataset || '').trim()
+  if (!targetDatasetId) return
+  const dataset = datasets.value.find(
+    (item) => (item.ragflow_dataset_id || item.id) === targetDatasetId
+  )
+  if (dataset) selectDatasetNode(dataset)
+}
+
 onMounted(async () => {
   await fetchRagFlowConfig()
   await fetchDatasets()
+  applyDeepLinkFromQuery()
 })
 
 // 知识库 5 步全流程指引状态管理

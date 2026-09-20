@@ -1,6 +1,7 @@
 import json
 import time
 import uuid
+import datetime
 import httpx
 from fastapi import APIRouter, Body, Depends, File, HTTPException, Query, Request, UploadFile
 from pydantic import BaseModel, Field
@@ -722,20 +723,44 @@ async def get_dataset_permissions(
     }
 
 
-@router.get("/metrics/summary")
+@router.get("/metrics/summary", dependencies=[Depends(require_admin)])
 async def get_ragflow_metrics_summary(
     start_date: str,
     end_date: str,
-    user: dict = Depends(get_current_user)
+    order_by: str = Query("citation", pattern="^(citation|search)$"),
 ):
     """
     获取指定日期范围内知识库与文档的统计指标汇总。
-    查询前先触发一次 Redis → DB 归并同步，确保当日实时数据已落库；
-    同步操作由分钟级 Redis 锁保护，重复调用不会造成数据重复写入。
+
+    安全：运营分析属于平台级运营视图，仅对管理员开放——此前只校验登录即可读取
+    全平台知识库名、文件名与调用量。
+    时效：查询前**先归并、再查询**，保证本次响应即包含最新数据。归并必须发生在查询之前：
+    若改为 BackgroundTasks（响应发出后才执行），本次响应会读到归并前的旧值，用户需要
+    连刷两次才能看到最新数据。归并本身由分钟级 Redis 锁串行化，重复调用不会重复累加。
     """
-    from app.services.knowledge_metrics_service import KnowledgeMetricsService
+    from app.services.knowledge_metrics_service import (
+        KnowledgeMetricsService,
+        MAX_RANGE_DAYS,
+    )
+
+    try:
+        start_dt = datetime.datetime.strptime(start_date, "%Y-%m-%d").date()
+        end_dt = datetime.datetime.strptime(end_date, "%Y-%m-%d").date()
+    except ValueError:
+        raise HTTPException(status_code=400, detail="start_date/end_date 必须为 YYYY-MM-DD 格式")
+
+    if start_dt > end_dt:
+        raise HTTPException(status_code=400, detail="start_date 不能晚于 end_date")
+    if (end_dt - start_dt).days + 1 > MAX_RANGE_DAYS:
+        raise HTTPException(status_code=400, detail=f"查询区间不能超过 {MAX_RANGE_DAYS} 天")
+
     await KnowledgeMetricsService.sync_redis_metrics_to_db()
-    data = await KnowledgeMetricsService.get_metrics_summary(start_date, end_date)
+
+    data = await KnowledgeMetricsService.get_metrics_summary(
+        start_date,
+        end_date,
+        order_by=order_by,
+    )
     return {"code": 0, "data": data}
 
 

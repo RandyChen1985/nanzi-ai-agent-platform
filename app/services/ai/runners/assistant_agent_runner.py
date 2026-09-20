@@ -34,6 +34,7 @@ from app.services.ai.grounding.policy import (
     resolve_fact_requirement,
 )
 from app.services.ai.grounding.service import GroundingService
+from app.services.ai.knowledge_citation_ledger import new_turn_knowledge_citation_ledger
 from app.services.ai.intent_service import (
     IntentType,
     looks_like_dynamic_public_fact_query,
@@ -1164,6 +1165,9 @@ class AssistantAgentRunner(BaseExecutor):
             conversation_id=self.conversation_id,
         )
         ctx.grounding_evidence_ledger = self._evidence_ledger
+        # 本轮知识库引用编号台账：工具用它发放整轮全局唯一的 [ID:n]，回答收尾时
+        # 才能把正文里的引用反查回正确的切片，避免多次检索导致引用错配。
+        new_turn_knowledge_citation_ledger(ctx)
         grounding_requirement = (
             self._resolve_turn_grounding_requirement(user_query, ctx)
             if grounding_enabled
@@ -1482,6 +1486,39 @@ class AssistantAgentRunner(BaseExecutor):
         else:
             for chunk in chunks_buffer:
                 yield chunk
+
+        # 回答已完整产出，此刻才能判定模型真正引用了哪些知识库切片（工具路径引用量）。
+        await self._record_knowledge_citation_metrics(full_text, ctx)
+
+    async def _record_knowledge_citation_metrics(self, full_text: str, ctx: Any) -> None:
+        """统计本轮回答里真正被引用的知识库切片。
+
+        引用量只能靠扫回答正文的 `[ID:n]` 得到，因此必须等回答生成完毕；编号由知识库
+        工具经引用台账在整轮内全局发放，所以可以直接反查回切片元数据。埋点属旁路统计，
+        失败绝不影响回答产出。
+        """
+        try:
+            ledger = (
+                getattr(ctx, "knowledge_citation_ledger", None) if ctx is not None else None
+            )
+            entries = getattr(ledger, "entries", None)
+            if not entries or not full_text:
+                return
+
+            import re
+
+            cited_ref_ids = set(re.findall(r"\[ID:\s*(\d+)\]", full_text))
+            if not cited_ref_ids:
+                return
+
+            from app.services.knowledge_metrics_service import KnowledgeMetricsService
+
+            await KnowledgeMetricsService.record_citation_hits_for_refs(entries, cited_ref_ids)
+        except Exception as metric_err:
+            logger.warning(
+                "[AssistantAgentRunner] Knowledge citation metrics recording failed: %s",
+                metric_err,
+            )
 
     async def _execute_core(
         self,
