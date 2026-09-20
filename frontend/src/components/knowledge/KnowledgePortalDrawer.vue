@@ -25,7 +25,7 @@
         <div
           v-show="modelValue"
           :class="[
-            'bg-gray-500/30 backdrop-blur-xs transition-opacity',
+            'bg-gray-500/30 backdrop-blur-sm transition-opacity',
             isMobile ? 'flex-1 min-h-0 w-full' : 'absolute inset-0',
           ]"
           @click="closeDrawer"
@@ -94,7 +94,7 @@
 
             <!-- Header -->
             <div
-              class="shrink-0 px-4 py-3 sm:py-4 border-b border-gray-150 dark:border-gray-800 bg-gray-50/50 dark:bg-gray-800/20 flex items-center justify-between gap-2"
+              class="shrink-0 px-4 py-3 sm:py-4 border-b border-gray-200 dark:border-gray-800 bg-gray-50/50 dark:bg-gray-800/20 flex items-center justify-between gap-2"
             >
               <span class="text-sm font-bold text-gray-900 dark:text-gray-100 flex items-center gap-1.5 select-none min-w-0">
                 <svg class="w-4 h-4 text-green-500 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -122,7 +122,7 @@
                 </label>
                 <button
                   type="button"
-                  class="hidden sm:inline-flex text-gray-400 hover:text-green-600 dark:hover:text-green-400 p-1 rounded-md hover:bg-gray-150 dark:hover:bg-gray-800 transition-colors"
+                  class="hidden sm:inline-flex text-gray-400 hover:text-green-600 dark:hover:text-green-400 p-1 rounded-md hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
                   :class="{ 'text-green-600 dark:text-green-400 bg-green-50 dark:bg-green-500/10': pinned }"
                   :title="pinned ? '取消钉住' : '钉住侧栏'"
                   @click="pinned = !pinned"
@@ -133,7 +133,7 @@
                 </button>
                 <button
                   type="button"
-                  class="text-gray-400 hover:text-gray-500 dark:hover:text-gray-300 p-1.5 rounded-md hover:bg-gray-150 dark:hover:bg-gray-800 transition-colors"
+                  class="text-gray-400 hover:text-gray-500 dark:hover:text-gray-300 p-1.5 rounded-md hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
                   title="关闭 (Esc)"
                   @click="closeDrawer"
                 >
@@ -177,8 +177,8 @@
                     type="button"
                     class="w-7 h-7 flex items-center justify-center rounded-lg border border-transparent transition-all cursor-pointer active:scale-90"
                     :class="showSearchBar
-                      ? 'bg-green-50 text-green-600 dark:bg-green-955/40 dark:text-green-400 font-bold'
-                      : 'bg-gray-50 text-gray-500 dark:bg-gray-800 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-750'"
+                      ? 'bg-green-50 text-green-600 dark:bg-green-950/40 dark:text-green-400 font-bold'
+                      : 'bg-gray-50 text-gray-500 dark:bg-gray-800 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700'"
                     title="展开/折叠搜索与标签过滤"
                     @click="showSearchBar = !showSearchBar"
                   >
@@ -189,7 +189,7 @@
 
                   <button
                     type="button"
-                    class="w-7 h-7 flex items-center justify-center rounded-lg border border-transparent bg-gray-50 text-gray-500 hover:bg-gray-100 hover:text-gray-750 dark:bg-gray-800 dark:text-gray-400 dark:hover:bg-gray-750 dark:hover:text-gray-200 transition-all cursor-pointer active:scale-90"
+                    class="w-7 h-7 flex items-center justify-center rounded-lg border border-transparent bg-gray-50 text-gray-500 hover:bg-gray-100 hover:text-gray-700 dark:bg-gray-800 dark:text-gray-400 dark:hover:bg-gray-700 dark:hover:text-gray-200 transition-all cursor-pointer active:scale-90"
                     title="刷新知识库列表"
                     :disabled="loading"
                     @click="emit('refresh')"
@@ -225,7 +225,7 @@
                       v-model="searchQuery"
                       type="search"
                       placeholder="搜索分类标签、名称或描述..."
-                      class="w-full pl-9 pr-8 py-1.5 text-[11px] rounded-xl border border-gray-150 dark:border-gray-800 bg-white dark:bg-gray-900/30 text-gray-850 dark:text-gray-200 placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:border-green-500 focus:ring-1 focus:ring-green-500 transition-all shadow-xs"
+                      class="w-full pl-9 pr-8 py-1.5 text-[11px] rounded-xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900/30 text-gray-800 dark:text-gray-200 placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:border-green-500 focus:ring-1 focus:ring-green-500 transition-all shadow-xs"
                     />
                     <button
                       v-if="searchQuery"
@@ -246,7 +246,7 @@
                         class="px-2.5 py-1 text-[9px] font-bold rounded-lg border transition-all whitespace-nowrap cursor-pointer active:scale-95 select-none"
                         :class="selectedTag === 'All'
                           ? 'bg-green-600 border-transparent text-white shadow-xs'
-                          : 'bg-gray-50 dark:bg-gray-800/40 border-gray-150 dark:border-gray-800 text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800'"
+                          : 'bg-gray-50 dark:bg-gray-800/40 border-gray-200 dark:border-gray-800 text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800'"
                         @click="selectedTag = 'All'"
                       >
                         全部
@@ -258,7 +258,7 @@
                         class="px-2.5 py-1 text-[9px] font-bold rounded-lg border transition-all whitespace-nowrap cursor-pointer active:scale-95 select-none"
                         :class="selectedTag === tag
                           ? 'bg-green-600 border-transparent text-white shadow-xs'
-                          : 'bg-gray-50 dark:bg-gray-800/40 border-gray-150 dark:border-gray-800 text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800'"
+                          : 'bg-gray-50 dark:bg-gray-800/40 border-gray-200 dark:border-gray-800 text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800'"
                         @click="selectedTag = tag"
                       >
                         {{ tag }}
@@ -296,9 +296,9 @@
                 >
                   <div v-show="showAdvancedConfig" class="space-y-3 pt-1 select-none">
                     <!-- 反幻觉检测胶囊开关 -->
-                    <div class="flex items-center justify-between bg-white dark:bg-gray-800 p-2.5 rounded-lg border border-gray-150 dark:border-gray-700/60 shadow-xxs">
+                    <div class="flex items-center justify-between bg-white dark:bg-gray-800 p-2.5 rounded-lg border border-gray-200 dark:border-gray-700/60 shadow-xxs">
                       <div class="flex flex-col min-w-0">
-                        <span class="text-[11px] font-bold text-gray-850 dark:text-gray-200 flex items-center gap-1.5">
+                        <span class="text-[11px] font-bold text-gray-800 dark:text-gray-200 flex items-center gap-1.5">
                           启用反幻觉检测
                           <button type="button" @click.stop="toggleTooltip('hallucination')" class="inline-flex items-center justify-center w-3.5 h-3.5 rounded-full border border-gray-300 dark:border-gray-600 text-gray-400 dark:text-gray-500 hover:border-green-500 hover:text-green-500 text-[9px] font-bold transition-all focus:outline-none select-none">?</button>
                         </span>
@@ -309,7 +309,7 @@
                       
                       <button
                         type="button"
-                        class="relative inline-flex h-4.5 w-8 shrink-0 cursor-pointer rounded-full border border-transparent transition-colors duration-200 ease-in-out focus:outline-none"
+                        class="relative inline-flex h-4 w-8 shrink-0 cursor-pointer rounded-full border border-transparent transition-colors duration-200 ease-in-out focus:outline-none"
                         :class="[hallucinationCheck ? 'bg-green-500' : 'bg-gray-200 dark:bg-gray-700']"
                         @click="hallucinationCheck = !hallucinationCheck"
                       >
@@ -328,14 +328,14 @@
                       leave-from-class="opacity-100 max-h-[80px]"
                       leave-to-class="opacity-0 max-h-0"
                     >
-                      <div v-if="activeTooltip === 'hallucination'" class="p-2 bg-gray-150 dark:bg-gray-800/80 rounded text-[9px] text-gray-500 dark:text-gray-400 leading-relaxed border border-gray-200/50 dark:border-gray-750">
+                      <div v-if="activeTooltip === 'hallucination'" class="p-2 bg-gray-100 dark:bg-gray-800/80 rounded text-[9px] text-gray-500 dark:text-gray-400 leading-relaxed border border-gray-200/50 dark:border-gray-700">
                         开启后，系统将使用反幻觉大模型二次审视生成的回答是否完全忠实于事实文献，如存在偏差将自动重写。关闭可显著提升问答的响应速度。
                       </div>
                     </transition>
 
                     <!-- Similarity Threshold -->
-                    <div class="space-y-1.5 p-2.5 rounded-lg bg-white dark:bg-gray-800 border border-gray-150 dark:border-gray-700/60 shadow-xxs">
-                      <div class="flex items-center justify-between text-[11px] font-bold text-gray-850 dark:text-gray-200">
+                    <div class="space-y-1.5 p-2.5 rounded-lg bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700/60 shadow-xxs">
+                      <div class="flex items-center justify-between text-[11px] font-bold text-gray-800 dark:text-gray-200">
                         <span class="flex items-center gap-1.5">
                           相似度阈值
                           <button type="button" @click.stop="toggleTooltip('threshold')" class="inline-flex items-center justify-center w-3.5 h-3.5 rounded-full border border-gray-300 dark:border-gray-600 text-gray-400 dark:text-gray-500 hover:border-green-500 hover:text-green-500 text-[9px] font-bold transition-all focus:outline-none select-none">?</button>
@@ -351,7 +351,7 @@
                         leave-from-class="opacity-100 max-h-[80px]"
                         leave-to-class="opacity-0 max-h-0"
                       >
-                        <div v-if="activeTooltip === 'threshold'" class="p-2 bg-gray-150 dark:bg-gray-800/80 rounded text-[9px] text-gray-500 dark:text-gray-400 leading-relaxed border border-gray-200/50 dark:border-gray-750">
+                        <div v-if="activeTooltip === 'threshold'" class="p-2 bg-gray-100 dark:bg-gray-800/80 rounded text-[9px] text-gray-500 dark:text-gray-400 leading-relaxed border border-gray-200/50 dark:border-gray-700">
                           常规知识库检索时的相似度阈值（0.0 至 1.0）。低于此设定值的检索结果将被过滤，以防混入无关文档，推荐配置为 0.20。
                         </div>
                       </transition>
@@ -363,10 +363,10 @@
                           min="0.0"
                           max="1.0"
                           step="0.05"
-                          class="flex-1 accent-green-600 h-1 bg-gray-200 dark:bg-gray-750 rounded-lg appearance-none cursor-pointer"
+                          class="flex-1 accent-green-600 h-1 bg-gray-200 dark:bg-gray-700 rounded-lg appearance-none cursor-pointer"
                         />
                       </div>
-                      <div class="flex items-center justify-between text-[8px] text-gray-450 dark:text-gray-500 font-mono select-none">
+                      <div class="flex items-center justify-between text-[8px] text-gray-400 dark:text-gray-500 font-mono select-none">
                         <span>0.0 (无门槛)</span>
                         <span>0.5</span>
                         <span>1.0 (极严格)</span>
@@ -374,8 +374,8 @@
                     </div>
 
                     <!-- Vector Weight -->
-                    <div class="space-y-1.5 p-2.5 rounded-lg bg-white dark:bg-gray-800 border border-gray-150 dark:border-gray-700/60 shadow-xxs">
-                      <div class="flex items-center justify-between text-[11px] font-bold text-gray-850 dark:text-gray-200">
+                    <div class="space-y-1.5 p-2.5 rounded-lg bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700/60 shadow-xxs">
+                      <div class="flex items-center justify-between text-[11px] font-bold text-gray-800 dark:text-gray-200">
                         <span class="flex items-center gap-1.5">
                           语义权重占比
                           <button type="button" @click.stop="toggleTooltip('weight')" class="inline-flex items-center justify-center w-3.5 h-3.5 rounded-full border border-gray-300 dark:border-gray-600 text-gray-400 dark:text-gray-500 hover:border-green-500 hover:text-green-500 text-[9px] font-bold transition-all focus:outline-none select-none">?</button>
@@ -391,7 +391,7 @@
                         leave-from-class="opacity-100 max-h-[80px]"
                         leave-to-class="opacity-0 max-h-0"
                       >
-                        <div v-if="activeTooltip === 'weight'" class="p-2 bg-gray-150 dark:bg-gray-800/80 rounded text-[9px] text-gray-500 dark:text-gray-400 leading-relaxed border border-gray-200/50 dark:border-gray-750">
+                        <div v-if="activeTooltip === 'weight'" class="p-2 bg-gray-100 dark:bg-gray-800/80 rounded text-[9px] text-gray-500 dark:text-gray-400 leading-relaxed border border-gray-200/50 dark:border-gray-700">
                           常规知识库检索时向量相似度权重的占比（0.0 至 1.0），其余权重为全文关键词匹配。推荐配置为 0.30。
                         </div>
                       </transition>
@@ -403,10 +403,10 @@
                           min="0.0"
                           max="1.0"
                           step="0.05"
-                          class="flex-1 accent-green-600 h-1 bg-gray-200 dark:bg-gray-750 rounded-lg appearance-none cursor-pointer"
+                          class="flex-1 accent-green-600 h-1 bg-gray-200 dark:bg-gray-700 rounded-lg appearance-none cursor-pointer"
                         />
                       </div>
-                      <div class="flex items-center justify-between text-[8px] text-gray-450 dark:text-gray-500 font-mono select-none">
+                      <div class="flex items-center justify-between text-[8px] text-gray-400 dark:text-gray-500 font-mono select-none">
                         <span>0.0 (纯关键词)</span>
                         <span>0.5</span>
                         <span>1.0 (纯向量)</span>
@@ -414,8 +414,8 @@
                     </div>
 
                     <!-- Metadata Top_K -->
-                    <div class="space-y-1.5 p-2.5 rounded-lg bg-white dark:bg-gray-800 border border-gray-150 dark:border-gray-700/60 shadow-xxs">
-                      <div class="flex items-center justify-between text-[11px] font-bold text-gray-850 dark:text-gray-200">
+                    <div class="space-y-1.5 p-2.5 rounded-lg bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700/60 shadow-xxs">
+                      <div class="flex items-center justify-between text-[11px] font-bold text-gray-800 dark:text-gray-200">
                         <span class="flex items-center gap-1.5">
                           最大召回分块数
                           <button type="button" @click.stop="toggleTooltip('top_k')" class="inline-flex items-center justify-center w-3.5 h-3.5 rounded-full border border-gray-300 dark:border-gray-600 text-gray-400 dark:text-gray-500 hover:border-green-500 hover:text-green-500 text-[9px] font-bold transition-all focus:outline-none select-none">?</button>
@@ -431,7 +431,7 @@
                         leave-from-class="opacity-100 max-h-[80px]"
                         leave-to-class="opacity-0 max-h-0"
                       >
-                        <div v-if="activeTooltip === 'top_k'" class="p-2 bg-gray-150 dark:bg-gray-800/80 rounded text-[9px] text-gray-500 dark:text-gray-400 leading-relaxed border border-gray-200/50 dark:border-gray-750">
+                        <div v-if="activeTooltip === 'top_k'" class="p-2 bg-gray-100 dark:bg-gray-800/80 rounded text-[9px] text-gray-500 dark:text-gray-400 leading-relaxed border border-gray-200/50 dark:border-gray-700">
                           最大检索召回的文档切片数量。数量越多，AI 可参考的事实越丰富，但也会增加生成时的上下文 Token 消耗。推荐范围：5 ~ 10。
                         </div>
                       </transition>
@@ -442,7 +442,7 @@
                           v-model.number="metadataTopK"
                           min="1"
                           max="50"
-                          class="w-full px-2 py-1 text-xs rounded border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900 text-gray-850 dark:text-gray-100 focus:outline-none focus:border-green-500 font-mono"
+                          class="w-full px-2 py-1 text-xs rounded border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900 text-gray-800 dark:text-gray-100 focus:outline-none focus:border-green-500 font-mono"
                         />
                       </div>
                     </div>
@@ -593,7 +593,7 @@
                       <button
                         v-if="ds.tags.length > 2"
                         type="button"
-                        class="inline-flex items-center justify-center rounded border px-1.5 py-0.5 text-[9px] font-medium leading-tight bg-gray-50 hover:bg-gray-100 border-gray-200 text-gray-500 dark:bg-gray-800 dark:hover:bg-gray-750 dark:border-gray-700 dark:text-gray-300 transition-colors cursor-pointer"
+                        class="inline-flex items-center justify-center rounded border px-1.5 py-0.5 text-[9px] font-medium leading-tight bg-gray-50 hover:bg-gray-100 border-gray-200 text-gray-500 dark:bg-gray-800 dark:hover:bg-gray-700 dark:border-gray-700 dark:text-gray-300 transition-colors cursor-pointer"
                         @click.stop="openAllTagsModal(ds.platform_name || ds.name, ds.tags)"
                         title="查看全部标签"
                       >
@@ -665,7 +665,7 @@
                     >
                       <div 
                         v-show="expandedDocId === ds.id" 
-                        class="mt-1.5 border border-gray-150 dark:border-gray-800/80 bg-white dark:bg-gray-900 rounded-lg overflow-y-auto max-h-[250px] p-2 space-y-1.5 scrollbar-thin"
+                        class="mt-1.5 border border-gray-200 dark:border-gray-800/80 bg-white dark:bg-gray-900 rounded-lg overflow-y-auto max-h-[250px] p-2 space-y-1.5 scrollbar-thin"
                         @click.stop
                       >
                         <div v-if="datasetDocuments[ds.id]?.loading" class="space-y-2 py-2">
@@ -720,7 +720,7 @@
                             >
                               <div
                                 v-if="expandedDocRecsId === doc.id"
-                                class="mt-2 pl-4 pr-1 border-t border-dashed border-gray-150 dark:border-gray-800 pt-2 flex flex-col gap-1.5 overflow-hidden"
+                                class="mt-2 pl-4 pr-1 border-t border-dashed border-gray-200 dark:border-gray-800 pt-2 flex flex-col gap-1.5 overflow-hidden"
                               >
                                 <div class="text-[9px] text-gray-400 dark:text-gray-500 flex items-center gap-1 select-none">
                                   针对该文件的提问：
@@ -746,7 +746,7 @@
                                   <div
                                     v-for="(q, idx) in (documentRecommendations[doc.id]?.questions || [])"
                                     :key="idx"
-                                    class="flex items-stretch rounded border border-gray-150 dark:border-gray-800 bg-white dark:bg-gray-900 overflow-hidden hover:border-green-500/50 dark:hover:border-green-500/30 transition-colors"
+                                    class="flex items-stretch rounded border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 overflow-hidden hover:border-green-500/50 dark:hover:border-green-500/30 transition-colors"
                                   >
                                     <button
                                       class="flex-1 text-left px-2 py-1.5 text-[10px] leading-snug text-gray-700 dark:text-gray-300 line-clamp-2 hover:text-green-600 dark:hover:text-green-400 hover:bg-green-50/30 dark:hover:bg-green-950/10 transition-colors"
@@ -755,7 +755,7 @@
                                     >
                                       {{ q.label }}
                                     </button>
-                                    <div class="w-[1px] bg-gray-150 dark:bg-gray-800" />
+                                    <div class="w-[1px] bg-gray-100 dark:bg-gray-800" />
                                     <button
                                       class="px-2 flex items-center justify-center hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-400 hover:text-green-500 transition-colors"
                                       title="填入输入框进行修改"
@@ -947,11 +947,11 @@
     >
       <div 
         v-if="showAllTagsModal" 
-        class="fixed inset-0 z-[150] flex items-center justify-center p-4 bg-gray-500/40 backdrop-blur-xs"
+        class="fixed inset-0 z-[150] flex items-center justify-center p-4 bg-gray-500/40 backdrop-blur-sm"
         @click="showAllTagsModal = false"
       >
         <div 
-          class="bg-white dark:bg-gray-800 rounded-xl border border-gray-150 dark:border-gray-700 max-w-sm w-full p-4 shadow-xl transform transition-all space-y-4"
+          class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 max-w-sm w-full p-4 shadow-xl transform transition-all space-y-4"
           @click.stop
         >
           <div class="flex items-center justify-between">
@@ -960,7 +960,7 @@
             </h4>
             <button
               type="button"
-              class="text-gray-400 hover:text-gray-550 dark:hover:text-gray-250 cursor-pointer p-0.5 rounded-lg transition-colors"
+              class="text-gray-400 hover:text-gray-500 dark:hover:text-gray-300 cursor-pointer p-0.5 rounded-lg transition-colors"
               @click="showAllTagsModal = false"
             >
               <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -980,7 +980,7 @@
           <div class="flex justify-end pt-1">
             <button
               type="button"
-              class="px-3.5 py-1.5 text-[10px] font-bold rounded-lg border border-gray-200 dark:border-gray-750 bg-gray-50 dark:bg-gray-800 text-gray-750 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors cursor-pointer select-none"
+              class="px-3.5 py-1.5 text-[10px] font-bold rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors cursor-pointer select-none"
               @click="showAllTagsModal = false"
             >
               关闭
