@@ -7,7 +7,14 @@
       </h2>
     </div>
     <div class="p-5">
-      <div class="h-72 sm:h-80 w-full">
+      <!-- 空状态：此前无数据时会渲染出一片空白坐标系，与同级图表组件的处理不一致 -->
+      <div
+        v-if="!trends || trends.length === 0"
+        class="flex h-72 w-full items-center justify-center text-sm text-gray-400 sm:h-80"
+      >
+        暂无请求数据
+      </div>
+      <div v-else class="h-72 sm:h-80 w-full">
         <v-chart class="h-full w-full" :option="chartOption" autoresize />
       </div>
     </div>
@@ -41,7 +48,7 @@ const props = defineProps<{
 }>();
 
 const chartOption = computed(() => {
-  if (!props.trends) return {};
+  if (!props.trends?.length) return {};
   
   return {
     tooltip: {

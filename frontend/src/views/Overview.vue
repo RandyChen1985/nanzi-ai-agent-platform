@@ -3,11 +3,11 @@
     <!-- Toast Notifications -->
     <Toast
       v-for="(toast, index) in toasts"
-      :key="index"
+      :key="toast.id"
       :message="toast.message"
       :type="toast.type"
       :duration="toast.duration"
-      @close="removeToast(index)"
+      @close="removeToast(toast.id)"
       :style="{ top: `${4 + index * 5}rem` }"
     />
 
@@ -110,7 +110,7 @@
           title="活跃用户"
           :value="stats?.active_users || 0"
           type="success"
-          subtext="最近7天"
+          subtext="近 7 天（固定口径，不随统计周期变化）"
         >
           <template #icon>
             <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -152,7 +152,7 @@
         <StatsCard
           title="成功率"
           :value="stats?.success_rate || 0"
-          :type="(stats?.success_rate || 0) >= 90 ? 'success' : 'danger'"
+          :type="successRateType"
           unit="%"
         >
           <template #icon>
@@ -189,10 +189,12 @@
         :errors="agentStats?.recent_errors"
         @view-trace="goToAgentDebug"
       />
+
+      <RequestTrendChart :trends="trends24h" />
     </template>
 
     <!-- User View -->
-    <template v-else>
+    <template v-else-if="userInfo">
       <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-3 sm:gap-4">
         <StatsCard
           title="API Key"
@@ -253,7 +255,7 @@
           title="成功率"
           :value="stats?.success_rate || 0"
           unit="%"
-          :type="(stats?.success_rate || 0) >= 90 ? 'success' : 'danger'"
+          :type="successRateType"
         >
           <template #icon>
             <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -338,11 +340,17 @@
 
       <RequestTrendChart :trends="trends24h" />
     </template>
+
+    <!-- 身份未知（例如本地缓存缺失）：不降级渲染成普通用户视图，否则管理员会看到错误界面 -->
+    <div v-else class="rounded-2xl border border-amber-100 bg-amber-50/60 p-6 text-center">
+      <p class="text-sm font-semibold text-amber-800">未能识别当前用户身份</p>
+      <p class="mt-1 text-xs text-amber-700">请刷新页面重试；若仍然如此，请重新登录。</p>
+    </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from "vue";
+import { ref, computed, onMounted } from "vue";
 import { useRouter } from "vue-router";
 import axios from "../utils/axios";
 import Toast from "../components/Toast.vue";
@@ -370,8 +378,23 @@ const activities = ref<any>(null);
 const trends24h = ref<any[]>([]);
 const agentTokens = ref<any[]>([]);
 
+/** 请求序号：周期切换或并发刷新时丢弃过期响应，避免数据与所选周期不一致 */
+let dataSeq = 0;
+
+/**
+ * 区段级失败收集：概览由多个独立接口拼装，任何一段失败都不应静默，
+ * 但逐条弹 Toast 会刷屏，因此汇总成一条提示。
+ */
+const sectionErrors = ref<string[]>([]);
+const reportSectionError = (section: string) => {
+  if (!sectionErrors.value.includes(section)) sectionErrors.value.push(section);
+};
+
+let toastSeq = 0;
+
 const toasts = ref<
   Array<{
+    id: number;
     message: string;
     type: "success" | "error" | "warning" | "info";
     duration?: number;
@@ -383,14 +406,34 @@ const addToast = (
   type: "success" | "error" | "warning" | "info" = "info",
   duration = 3000
 ) => {
-  toasts.value.push({ message, type, duration });
+  toasts.value.push({ id: ++toastSeq, message, type, duration });
 };
 
-const removeToast = (index: number) => {
-  toasts.value.splice(index, 1);
+/** 按唯一 id 移除：用数组下标在中间项被移除后会导致后续项错位 */
+const removeToast = (id: number) => {
+  const index = toasts.value.findIndex((toast) => toast.id === id);
+  if (index !== -1) toasts.value.splice(index, 1);
 };
+
+/** 汇总本次刷新的区段失败，避免失败被当成"没有数据" */
+const flushSectionErrors = () => {
+  if (sectionErrors.value.length === 0) return;
+  addToast(
+    `以下数据加载失败：${sectionErrors.value.join("、")}，可点击刷新重试`,
+    "error"
+  );
+  sectionErrors.value = [];
+};
+
+/** 无调用时不显示告警红，避免把"该周期没有数据"误读成"成功率异常" */
+const successRateType = computed<"success" | "danger" | "info">(() => {
+  const total = stats.value?.api_calls?.total ?? 0;
+  if (total === 0) return "info";
+  return (stats.value?.success_rate || 0) >= 90 ? "success" : "danger";
+});
 
 const fetchAgentStats = async () => {
+  const seq = dataSeq;
   try {
     const response = await axios.get(
       `${API_BASE}/api/portal/dashboard/agent-stats`,
@@ -398,25 +441,32 @@ const fetchAgentStats = async () => {
         params: { period: period.value },
       }
     );
+    if (seq !== dataSeq) return; // 已有更新的请求，丢弃过期响应
     agentStats.value = response.data;
   } catch (error) {
+    if (seq !== dataSeq) return;
     console.error("Failed to fetch agent stats:", error);
+    reportSectionError("智能体统计");
   }
 };
 
 const fetchTrends24h = async () => {
+  const seq = dataSeq;
   try {
     const response = await axios.get(
       `${API_BASE}/api/portal/dashboard/api-trends-24h`
     );
+    if (seq !== dataSeq) return;
     trends24h.value = response.data;
   } catch (error: any) {
+    if (seq !== dataSeq) return;
     console.error("Failed to fetch 24h trends:", error);
+    reportSectionError("请求趋势");
   }
 };
 
 const fetchAdminStats = async () => {
-  loading.value = true;
+  const seq = dataSeq;
   try {
     const response = await axios.get(
       `${API_BASE}/api/portal/dashboard/admin-stats`,
@@ -424,17 +474,17 @@ const fetchAdminStats = async () => {
         params: { period: period.value },
       }
     );
+    if (seq !== dataSeq) return;
     stats.value = response.data;
   } catch (error: any) {
-    addToast(error.response?.data?.detail || "加载统计数据失败", "error");
+    if (seq !== dataSeq) return;
     console.error("Failed to fetch admin stats:", error);
-  } finally {
-    loading.value = false;
+    addToast(error.response?.data?.detail || "加载统计数据失败", "error");
   }
 };
 
 const fetchUserStats = async () => {
-  loading.value = true;
+  const seq = dataSeq;
   try {
     const response = await axios.get(
       `${API_BASE}/api/portal/dashboard/user-stats`,
@@ -442,16 +492,17 @@ const fetchUserStats = async () => {
         params: { period: period.value },
       }
     );
+    if (seq !== dataSeq) return;
     stats.value = response.data;
   } catch (error: any) {
-    addToast(error.response?.data?.detail || "加载统计数据失败", "error");
+    if (seq !== dataSeq) return;
     console.error("Failed to fetch user stats:", error);
-  } finally {
-    loading.value = false;
+    addToast(error.response?.data?.detail || "加载统计数据失败", "error");
   }
 };
 
 const fetchRecentActivities = async () => {
+  const seq = dataSeq;
   try {
     const response = await axios.get(
       `${API_BASE}/api/portal/dashboard/recent-activities`,
@@ -459,13 +510,17 @@ const fetchRecentActivities = async () => {
         params: { limit: 10 },
       }
     );
+    if (seq !== dataSeq) return;
     activities.value = response.data;
   } catch (error: any) {
+    if (seq !== dataSeq) return;
     console.error("Failed to fetch recent activities:", error);
+    reportSectionError("最近活动");
   }
 };
 
 const fetchAgentTokens = async () => {
+  const seq = dataSeq;
   try {
     const response = await axios.get(
       `${API_BASE}/api/portal/dashboard/token-stats/agents`,
@@ -473,13 +528,18 @@ const fetchAgentTokens = async () => {
         params: { period: period.value },
       }
     );
+    if (seq !== dataSeq) return;
     agentTokens.value = response.data;
   } catch (error) {
+    if (seq !== dataSeq) return;
     console.error("Failed to fetch agent token distribution:", error);
+    reportSectionError("Token 分布");
   }
 };
 
+/** 周期相关数据：周期切换与整体刷新共用 */
 const refreshPeriodBoundData = async () => {
+  dataSeq += 1;
   if (userInfo.value?.role === "admin") {
     await fetchAdminStats();
   } else {
@@ -489,12 +549,26 @@ const refreshPeriodBoundData = async () => {
 };
 
 const onPeriodChange = async () => {
-  await refreshPeriodBoundData();
+  sectionErrors.value = [];
+  loading.value = true;
+  try {
+    await refreshPeriodBoundData();
+  } finally {
+    loading.value = false;
+  }
+  flushSectionErrors();
 };
 
 const refreshData = async () => {
-  await refreshPeriodBoundData();
-  await Promise.all([fetchRecentActivities(), fetchTrends24h()]);
+  sectionErrors.value = [];
+  loading.value = true;
+  try {
+    await refreshPeriodBoundData();
+    await Promise.all([fetchRecentActivities(), fetchTrends24h()]);
+  } finally {
+    loading.value = false;
+  }
+  flushSectionErrors();
 };
 
 const goToAgentDebug = (traceId: string) => {
@@ -506,8 +580,13 @@ const goToAgentDebug = (traceId: string) => {
 
 const loadUserInfo = () => {
   const stored = localStorage.getItem("user_info");
-  if (stored) {
+  if (!stored) return;
+  try {
     userInfo.value = JSON.parse(stored);
+  } catch (error) {
+    // 损坏的缓存不应中断整个页面初始化（此前会直接抛出，导致后续数据全部不再加载）
+    console.error("解析本地用户信息失败，已清理损坏缓存", error);
+    localStorage.removeItem("user_info");
   }
 };
 
