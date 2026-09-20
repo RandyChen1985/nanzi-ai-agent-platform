@@ -2498,13 +2498,13 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
                 >
                   <span>📄 预览原文件</span>
                 </button>
+                <span
+                  v-if="getDocStatus(selectedDocument) === 'parsed' && !canViewChunks(selectedDataset)"
+                  class="text-xs text-gray-400"
+                >
+                  无权限查看分块明细（仅创建人或管理员可查看）
+                </span>
               </div>
-              <span
-                v-else-if="getDocStatus(selectedDocument) === 'parsed' && !canViewChunks(selectedDataset)"
-                class="text-xs text-gray-400 mt-2 block"
-              >
-                无权限查看分块明细（仅创建人或管理员可查看）
-              </span>
             </div>
             <div class="bg-gray-50/50 p-4 rounded-xl border border-gray-200">
               <span class="text-xs text-gray-400 font-semibold uppercase tracking-wider block">上传及最后更新时间</span>
