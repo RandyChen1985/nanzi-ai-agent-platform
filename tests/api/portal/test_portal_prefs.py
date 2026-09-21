@@ -38,6 +38,22 @@ class FakeRedis:
             self.saved = None
 
 
+class DualKeyRedis:
+    """支持「全局键 + 用户偏好键」同时读写的假 Redis（不覆盖无关键）。"""
+
+    def __init__(self, initial_store=None):
+        self.store = dict(initial_store or {})
+
+    async def get(self, key):
+        return self.store.get(key)
+
+    async def set(self, key, value):
+        self.store[key] = value
+
+    async def delete(self, key):
+        self.store.pop(key, None)
+
+
 def user_info(user_id=7, role="user"):
     return {"user_id": user_id, "role": role}
 
@@ -212,23 +228,11 @@ async def test_update_expert_routing_rejects_forbidden_agent(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_update_agent_avatar_prefs_admin_success(monkeypatch):
-    class DualKeyRedis:
-        def __init__(self):
-            self.store = {"agent:portal_prefs:7": json.dumps({"markdown_theme": "apple"})}
-
-        async def get(self, key):
-            return self.store.get(key)
-
-        async def set(self, key, value):
-            self.store[key] = value
-
-        async def delete(self, key):
-            self.store.pop(key, None)
-
-    redis = DualKeyRedis()
+    user_key = portal_prefs._redis_key(7)
+    redis = DualKeyRedis(initial_store={user_key: json.dumps({"markdown_theme": "apple"})})
     monkeypatch.setattr(portal_prefs, "get_redis", lambda: _resolved(redis))
 
-    # 管理员更新成功
+    # 管理员更新成功（未携带 base_avatar 的旧客户端仍可写入）
     result = await portal_prefs.update_agent_avatar(
         portal_prefs.AgentAvatarUpdate(avatar="/branding/avatars/agent_avatar.png"),
         user_info=user_info(role="admin"),
@@ -238,10 +242,69 @@ async def test_update_agent_avatar_prefs_admin_success(monkeypatch):
     assert result["data"]["agent_avatar"] == "/branding/avatars/agent_avatar.png"
     assert redis.store[portal_prefs.GLOBAL_AGENT_AVATAR_KEY] == "/branding/avatars/agent_avatar.png"
 
+    # 全局键是唯一权威源：不再向调用者的个人偏好键写入头像副本（避免埋下倒灌隐患）
+    saved_user_prefs = json.loads(redis.store[user_key])
+    assert saved_user_prefs.get("agent_avatar", "") == ""
+    assert saved_user_prefs["markdown_theme"] == "apple"
+
     # 普通用户获取时自动拿到管理员设置的全局头像
     user_res = await portal_prefs.get_portal_prefs(user_info(user_id=99, role="user"))
     assert user_res["code"] == 0
     assert user_res["data"]["agent_avatar"] == "/branding/avatars/agent_avatar.png"
+
+
+@pytest.mark.asyncio
+async def test_update_agent_avatar_accepts_matching_base_avatar(monkeypatch):
+    redis = DualKeyRedis(
+        initial_store={portal_prefs.GLOBAL_AGENT_AVATAR_KEY: "avatar_v1.png"}
+    )
+    monkeypatch.setattr(portal_prefs, "get_redis", lambda: _resolved(redis))
+
+    result = await portal_prefs.update_agent_avatar(
+        portal_prefs.AgentAvatarUpdate(avatar="avatar_v2.png", base_avatar="avatar_v1.png"),
+        user_info=user_info(role="admin"),
+    )
+
+    assert result["code"] == 0
+    assert redis.store[portal_prefs.GLOBAL_AGENT_AVATAR_KEY] == "avatar_v2.png"
+
+
+@pytest.mark.asyncio
+async def test_update_agent_avatar_rejects_stale_base_avatar(monkeypatch):
+    """停留在旧页面的管理员不能把陈旧头像倒灌回全局键。"""
+    redis = DualKeyRedis(
+        initial_store={portal_prefs.GLOBAL_AGENT_AVATAR_KEY: "avatar_new.png"}
+    )
+    monkeypatch.setattr(portal_prefs, "get_redis", lambda: _resolved(redis))
+
+    with pytest.raises(HTTPException) as exc_info:
+        await portal_prefs.update_agent_avatar(
+            portal_prefs.AgentAvatarUpdate(avatar="avatar_old.png", base_avatar="avatar_old.png"),
+            user_info=user_info(role="admin"),
+        )
+
+    assert exc_info.value.status_code == 409
+    # 全局头像保持其他管理员刚设置的新值，冲突详情回传服务端当前值供前端同步
+    assert redis.store[portal_prefs.GLOBAL_AGENT_AVATAR_KEY] == "avatar_new.png"
+    assert exc_info.value.detail["agent_avatar"] == "avatar_new.png"
+
+
+@pytest.mark.asyncio
+async def test_update_agent_avatar_rejects_stale_empty_base_avatar(monkeypatch):
+    """旧页面输入框为空时提交空值，不能删除其他管理员刚设置的全局头像。"""
+    redis = DualKeyRedis(
+        initial_store={portal_prefs.GLOBAL_AGENT_AVATAR_KEY: "avatar_new.png"}
+    )
+    monkeypatch.setattr(portal_prefs, "get_redis", lambda: _resolved(redis))
+
+    with pytest.raises(HTTPException) as exc_info:
+        await portal_prefs.update_agent_avatar(
+            portal_prefs.AgentAvatarUpdate(avatar="", base_avatar=""),
+            user_info=user_info(role="admin"),
+        )
+
+    assert exc_info.value.status_code == 409
+    assert redis.store[portal_prefs.GLOBAL_AGENT_AVATAR_KEY] == "avatar_new.png"
 
 
 @pytest.mark.asyncio
@@ -266,22 +329,31 @@ async def test_get_portal_prefs_global_avatar_overrides_personal_stale_prefs(mon
 
 
 @pytest.mark.asyncio
-async def test_full_update_portal_prefs_cannot_override_agent_avatar_for_normal_user(monkeypatch):
-    redis = FakeRedis(json.dumps({"markdown_theme": "default"}))
-    monkeypatch.setattr(portal_prefs, "get_redis", lambda: _resolved(redis))
+async def test_full_update_portal_prefs_never_accepts_agent_avatar(monkeypatch):
+    """全量偏好入口已彻底拔除头像字段：管理员与普通用户都无法借此回写头像。"""
+    stale_avatar = "stale_old_avatar.png"
 
-    # 普通用户调用 update_portal_prefs 试图传入 agent_avatar
-    await portal_prefs.update_portal_prefs(
-        portal_prefs.PortalPrefsUpdate(
-            agent_avatar="hacked_avatar.png",
-            markdown_theme="minimal",
-        ),
-        user_info(user_id=99, role="user"),
-    )
+    for role in ("user", "admin"):
+        user_key = portal_prefs._redis_key(99)
+        redis = FakeRedis(
+            initial_store={
+                user_key: json.dumps({"markdown_theme": "default", "agent_avatar": stale_avatar}),
+                portal_prefs.GLOBAL_AGENT_AVATAR_KEY: "new_global_avatar.png",
+            }
+        )
+        monkeypatch.setattr(portal_prefs, "get_redis", lambda: _resolved(redis))
 
-    saved = json.loads(redis.saved)
-    assert saved.get("agent_avatar", "") == ""
-    assert saved["markdown_theme"] == "minimal"
+        # 旧客户端仍可能把整个偏好（含 agent_avatar）原样回传，必须被忽略
+        body = portal_prefs.PortalPrefsUpdate.model_validate(
+            {"markdown_theme": "minimal", "agent_avatar": "hacked_avatar.png"}
+        )
+        await portal_prefs.update_portal_prefs(body, user_info(user_id=99, role=role))
+
+        saved = json.loads(redis.store[user_key])
+        assert saved.get("agent_avatar", "") == "", f"{role} 不得写入个人头像副本"
+        assert saved["markdown_theme"] == "minimal"
+        # 全局权威值不受全量偏好写入影响
+        assert redis.store[portal_prefs.GLOBAL_AGENT_AVATAR_KEY] == "new_global_avatar.png"
 
 
 @pytest.mark.asyncio

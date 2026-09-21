@@ -46,6 +46,13 @@ def _redis_key(user_id: int) -> str:
     return f"agent:portal_prefs:{user_id}"
 
 
+def _decode_redis_text(raw: Any) -> str:
+    """Redis 文本值统一解码（None 归一为空串）。"""
+    if raw is None:
+        return ""
+    return raw.decode("utf-8") if isinstance(raw, bytes) else str(raw)
+
+
 class PortalPrefs(BaseModel):
     pinned_group_ids: List[str] = Field(default_factory=list, description="已置顶的数据门户卡片 ID 列表，保持插入顺序")
     card_order: List[str] = Field(default_factory=list, description="拖拽自定义排序的卡片 ID 全量列表")
@@ -53,7 +60,7 @@ class PortalPrefs(BaseModel):
     question_clicks: Dict[str, int] = Field(default_factory=dict, description="本地问题点击次数备份（query → count），用于跨 session 保留常问数据")
     pinned_kb_dataset_ids: List[str] = Field(default_factory=list, description="已置顶的知识库数据集 ID 列表")
     markdown_theme: str = Field(default="", description="用户自定义的 AI 消息排版样式偏好")
-    agent_avatar: str = Field(default="", description="用户自定义的 Embed AI 助手头像 (公共静态 URL 或网络 URL)")
+    agent_avatar: str = Field(default="", description="[历史保留] 旧版个人头像偏好；读取时一律以全局键 agent:branding:default_agent_avatar 为准，写入时恒为空")
     routing_mode: Literal["auto", "expert"] = Field(default="auto", description="Embed 路由模式")
     expert_agent_id: str = Field(default="", description="Embed 默认智能体 ID")
     routing_configured: bool = Field(default=False, description="用户是否明确设置过 Embed 路由模式")
@@ -66,7 +73,9 @@ class PortalPrefsUpdate(BaseModel):
     question_clicks: Dict[str, int] = Field(default_factory=dict)
     pinned_kb_dataset_ids: List[str] = Field(default_factory=list)
     markdown_theme: Optional[str] = None
-    agent_avatar: Optional[str] = None
+    # 注意：agent_avatar 已从全量偏好入口移除。AI 助手头像是全局权威资产，
+    # 只允许通过专用的 PUT /agent-avatar 端点写入全局键；全量偏好 PUT 曾经
+    # 会被旧页面的陈旧副本携带回写，是"旧头像倒灌覆盖"的入口之一，故彻底拔除。
 
 
 class RoutingPreferenceUpdate(BaseModel):
@@ -117,16 +126,9 @@ async def get_portal_prefs(
 
     data = prefs.model_dump()
     try:
-        global_raw = await redis.get(GLOBAL_AGENT_AVATAR_KEY)
-        if global_raw is not None:
-            data["agent_avatar"] = (
-                global_raw.decode("utf-8")
-                if isinstance(global_raw, bytes)
-                else str(global_raw)
-            )
-        else:
-            # 全局未配置时强制置空为默认形象，杜绝用户历史个人偏好中的陈旧头像倒灌
-            data["agent_avatar"] = ""
+        # 全局键是 AI 头像的唯一权威源：命中则以它为准，未配置则强制置空为默认形象，
+        # 杜绝用户个人偏好里的历史头像（或旧页面写回的陈旧副本）倒灌。
+        data["agent_avatar"] = _decode_redis_text(await redis.get(GLOBAL_AGENT_AVATAR_KEY))
     except Exception as e:
         logger.warning("Failed to get global agent avatar from Redis: %s", e)
         data["agent_avatar"] = ""
@@ -214,9 +216,9 @@ async def update_portal_prefs(
             else existing.markdown_theme
         ),
         agent_avatar=(
-            body.agent_avatar.strip()
-            if (body.agent_avatar is not None and user_info.get("role") == "admin")
-            else existing.agent_avatar
+            # 全量偏好不再接受头像字段；个人偏好中的历史残留一并清空，
+            # 避免它在全局键被重置后死灰复燃（读取时也始终以全局键为准）。
+            ""
         ),
         # 路由偏好只允许通过 /routing 更新，并在该接口完成智能体权限校验。
         routing_mode=existing.routing_mode,
@@ -370,6 +372,15 @@ async def update_markdown_theme(
 
 class AgentAvatarUpdate(BaseModel):
     avatar: str = Field(default="", max_length=2048, description="AI 助手头像 URL 或相对路径（为空表示重置）")
+    base_avatar: Optional[str] = Field(
+        default=None,
+        max_length=2048,
+        description=(
+            "提交方认为的当前全局头像（乐观并发基线）。与全局键不一致时拒绝写入，"
+            "防止停留在旧页面/旧偏好上的客户端用陈旧值覆盖其他管理员刚设置的形象；"
+            "传 None 表示跳过并发校验（仅用于兼容旧客户端与脚本）。"
+        ),
+    )
 
 
 @router.put(
@@ -394,34 +405,38 @@ async def update_agent_avatar(
             detail="Redis 服务不可用",
         )
 
-    user_id = int(user_info["user_id"])
-    key = _redis_key(user_id)
-
-    prefs = PortalPrefs()
-    try:
-        raw = await redis.get(key)
-        if raw:
-            prefs = _parse_portal_prefs(raw)
-    except Exception as e:
-        logger.warning("Failed to read exist portal prefs: %s", e)
-
     avatar_val = body.avatar.strip()
-    prefs.agent_avatar = avatar_val
+
+    # --- 乐观并发校验：全局头像是全员共享资产，任何"基于陈旧值"的写入都必须被拒绝 ---
+    current_avatar = ""
+    try:
+        current_avatar = _decode_redis_text(await redis.get(GLOBAL_AGENT_AVATAR_KEY))
+    except Exception as e:
+        logger.warning("Failed to read global agent avatar before update: %s", e)
+
+    if body.base_avatar is not None and body.base_avatar.strip() != current_avatar:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "message": "AI 助手头像已被其他管理员更新，请刷新后再试",
+                "agent_avatar": current_avatar,
+            },
+        )
 
     try:
         if avatar_val:
             await redis.set(GLOBAL_AGENT_AVATAR_KEY, avatar_val)
         else:
             await redis.delete(GLOBAL_AGENT_AVATAR_KEY)
-        await redis.set(key, prefs.model_dump_json())
     except Exception as e:
-        logger.error("Failed to save portal prefs to Redis: %s", e)
+        logger.error("Failed to save global agent avatar to Redis: %s", e)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="保存 AI 头像偏好失败",
-        )
+        ) from e
 
-    return {"code": 0, "data": {"agent_avatar": prefs.agent_avatar}, "message": "AI 头像偏好已保存"}
+    # 不再把头像写回用户个人偏好键：全局键是唯一权威源，个人副本只会成为倒灌隐患。
+    return {"code": 0, "data": {"agent_avatar": avatar_val}, "message": "AI 头像偏好已保存"}
 
 
 @router.post(

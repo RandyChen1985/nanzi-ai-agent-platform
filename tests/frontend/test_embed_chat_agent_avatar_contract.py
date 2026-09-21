@@ -46,3 +46,31 @@ def test_embed_chat_agent_messages_use_the_nanzi_agent_avatar_asset():
     assert "<AvatarCropperModal" in settings_source
 
 
+def test_chat_settings_avatar_write_is_explicit_and_conflict_guarded():
+    """陈旧页面不得隐式回写 AI 头像：只有显式编辑才提交，且必须带乐观并发基线。"""
+    settings_source = (ROOT / "frontend/src/components/embed/ChatSettings.vue").read_text(encoding="utf-8")
+
+    # ① 显式编辑标记：失焦只在用户确实改过输入框时才提交
+    assert "isAvatarInputDirty" in settings_source
+    assert "const handleAvatarInputBlur" in settings_source
+    assert "if (isAvatarInputDirty.value) {" in settings_source
+    # 输入框不再直接绑定无条件的 blur 回写
+    assert '@blur="handleCustomAvatarBlur"' not in settings_source
+    assert '@blur="handleAvatarInputBlur"' in settings_source
+    assert '@input="markAvatarInputDirty"' in settings_source
+
+    # ② 服务端权威值驱动 UI：config.agentAvatar 更新时不抢占用户正在编辑的输入
+    assert "syncAgentAvatarFromServer" in settings_source
+    assert "watch(() => props.config.agentAvatar" in settings_source
+
+    # ③ 乐观并发：提交时携带 base_avatar，服务端 409 时以服务端为准并提示
+    assert "base_avatar" in settings_source
+    assert "base_avatar: baseAvatar" in settings_source
+    assert "status === 409" in settings_source
+    assert "已被其他管理员更新" in settings_source
+
+    # ④ 保存失败必须回滚本地显示，避免"本地新头像、服务端旧值"
+    assert "serverAgentAvatar" in settings_source
+    assert "previousAvatar" in settings_source
+
+

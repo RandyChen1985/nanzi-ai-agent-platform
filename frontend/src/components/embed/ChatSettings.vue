@@ -35,6 +35,18 @@ type RoutingMode = 'auto' | 'expert';
 const routingMode = ref<RoutingMode>(props.config.routingMode === 'expert' ? 'expert' : 'auto');
 const activeColor = ref("#1677ff");
 const customAvatarInput = ref(props.config.agentAvatar || "");
+/**
+ * AI 头像的「显式编辑」标记。
+ *
+ * 只有用户主动改过输入框（输入/回车/点预设/上传）才允许回写服务端；单纯失焦
+ * 绝不提交，否则旧页面会在 config.agentAvatar 被服务端刷新后，用输入框里的陈旧
+ * 值把全局头像倒灌覆盖回去。
+ */
+const isAvatarInputDirty = ref(false);
+let avatarInputFocused = false;
+/** 服务端权威头像（Redis 全局键值），作为乐观并发的 base_avatar 基线 */
+const serverAgentAvatar = ref(props.config.agentAvatar || "");
+const avatarSyncing = ref(false);
 const avatarUploading = ref(false);
 const fileInputRef = ref<HTMLInputElement | null>(null);
 const presetColors = [
@@ -54,31 +66,118 @@ const close = () => emit('update:visible', false);
 watch(() => props.visible, (visible) => {
   if (visible) {
     routingMode.value = props.config.routingMode === 'expert' ? 'expert' : 'auto';
-    customAvatarInput.value = props.config.agentAvatar || "";
+    isAvatarInputDirty.value = false;
+    avatarInputFocused = false;
+    syncAgentAvatarFromServer(props.config.agentAvatar || "");
   }
 });
 
-const handleSetAgentAvatar = (avatar: string, toastMessage = "AI 助手头像已更新") => {
-  props.config.agentAvatar = avatar;
-  customAvatarInput.value = avatar;
-  localStorage.removeItem("yovole_embed_agent_avatar");
-  showToast(toastMessage, "success");
-  saveSettings();
+/** 服务端权威值变化时同步 UI；用户正在编辑（聚焦/已改动）时不抢占输入内容。 */
+function syncAgentAvatarFromServer(value: string) {
+  serverAgentAvatar.value = value || "";
+  if (avatarInputFocused || isAvatarInputDirty.value) return;
+  customAvatarInput.value = serverAgentAvatar.value;
+}
 
-  // 异步同步到后端 Redis 持久化
-  void axios.put("/api/portal/portal-prefs/agent-avatar", { avatar }).catch((err) => {
-    console.error("Failed to sync agent avatar preference to Redis", err);
-  });
+watch(() => props.config.agentAvatar, (value) => {
+  syncAgentAvatarFromServer(typeof value === "string" ? value : "");
+});
+
+const markAvatarInputDirty = () => {
+  isAvatarInputDirty.value = true;
+};
+
+const handleAvatarInputFocus = () => {
+  avatarInputFocused = true;
+};
+
+const handleAvatarInputBlur = () => {
+  avatarInputFocused = false;
+  // 仅在用户确实编辑过时提交，避免"切走焦点"把陈旧值回写服务端。
+  if (isAvatarInputDirty.value) {
+    handleCustomAvatarBlur();
+  }
+};
+
+const handleSetAgentAvatar = async (avatar: string, toastMessage = "AI 助手头像已更新"): Promise<boolean> => {
+  if (avatarSyncing.value) return false;
+  const target = String(avatar || "").trim();
+  const baseAvatar = serverAgentAvatar.value;
+  const previousAvatar = props.config.agentAvatar || "";
+
+  isAvatarInputDirty.value = false;
+  if (target === baseAvatar) {
+    // 与服务端一致：只收敛本地显示，不做无意义回写。
+    props.config.agentAvatar = target;
+    customAvatarInput.value = target;
+    showToast(toastMessage, "success");
+    saveSettings();
+    return true;
+  }
+
+  props.config.agentAvatar = target;
+  customAvatarInput.value = target;
+  localStorage.removeItem("yovole_embed_agent_avatar");
+  avatarSyncing.value = true;
+
+  try {
+    // 携带 base_avatar 做乐观并发：服务端若发现全局值已被其他管理员更新，会拒绝写入。
+    const res = await axios.put("/api/portal/portal-prefs/agent-avatar", {
+      avatar: target,
+      base_avatar: baseAvatar,
+    });
+    const saved = String(res.data?.data?.agent_avatar ?? target);
+    serverAgentAvatar.value = saved;
+    props.config.agentAvatar = saved;
+    customAvatarInput.value = saved;
+    showToast(toastMessage, "success");
+    saveSettings();
+    return true;
+  } catch (err: any) {
+    const status = err?.response?.status;
+    if (status === 409) {
+      // 其它管理员已改过全局头像：以服务端为准，绝不覆盖。
+      const detail = err?.response?.data?.detail;
+      const current = String(
+        (detail && typeof detail === "object" ? detail.agent_avatar : "") ?? baseAvatar,
+      );
+      serverAgentAvatar.value = current;
+      props.config.agentAvatar = current;
+      customAvatarInput.value = current;
+      showToast(
+        (detail && typeof detail === "object" && detail.message) ||
+          "AI 助手头像已被其他管理员更新，已同步为最新形象，请确认后重试",
+        "warning",
+      );
+      return false;
+    } else {
+      // 保存失败（无权限/网络异常）必须回滚，避免"本地显示新头像、服务端仍是旧值"。
+      serverAgentAvatar.value = baseAvatar;
+      props.config.agentAvatar = previousAvatar;
+      customAvatarInput.value = previousAvatar;
+      const failureDetail = err?.response?.data?.detail;
+      showToast(
+        typeof failureDetail === "string" && failureDetail
+          ? failureDetail
+          : "AI 助手头像保存失败，请稍后重试",
+        "error",
+      );
+      return false;
+    }
+  } finally {
+    avatarSyncing.value = false;
+  }
 };
 
 const handleResetAgentAvatar = () => {
-  handleSetAgentAvatar("", "已恢复官方默认 AI 助手头像");
+  void handleSetAgentAvatar("", "已恢复官方默认 AI 助手头像");
 };
 
 const handleCustomAvatarBlur = () => {
   const trimmed = customAvatarInput.value.trim();
+  isAvatarInputDirty.value = false;
   if (trimmed !== (props.config.agentAvatar || "")) {
-    handleSetAgentAvatar(trimmed);
+    void handleSetAgentAvatar(trimmed);
   }
 };
 
@@ -99,8 +198,12 @@ const uploadAvatarFileDirectly = async (file: File) => {
     });
     const avatarUrl = res.data?.data?.avatar_url;
     if (avatarUrl) {
-      handleSetAgentAvatar(avatarUrl, "AI 助手头像设置成功");
-      showAvatarCropper.value = false;
+      // 上传成功后由 handleSetAgentAvatar 负责带 base_avatar 提交全局设置，
+      // 并在 409/失败时回滚显示，因此这里不再乐观关闭裁剪弹窗。
+      const applied = await handleSetAgentAvatar(avatarUrl, "AI 助手头像设置成功");
+      if (applied) {
+        showAvatarCropper.value = false;
+      }
     } else {
       showToast("上传头像失败，返回数据异常", "error");
     }
@@ -516,10 +619,13 @@ const handleLogout = () => {
                   <div class="flex-1 relative">
                     <input
                       v-model="customAvatarInput"
-                      @blur="handleCustomAvatarBlur"
+                      @input="markAvatarInputDirty"
+                      @focus="handleAvatarInputFocus"
+                      @blur="handleAvatarInputBlur"
                       @keyup.enter="handleCustomAvatarBlur"
+                      :disabled="avatarSyncing"
                       placeholder="或粘贴网络图片 URL"
-                      class="w-full text-[11px] px-2.5 py-1.5 rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-200 placeholder-gray-400 outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-100 dark:focus:ring-blue-900/40 transition-all"
+                      class="w-full text-[11px] px-2.5 py-1.5 rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-200 placeholder-gray-400 outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-100 dark:focus:ring-blue-900/40 transition-all disabled:opacity-60"
                     />
                   </div>
                 </div>

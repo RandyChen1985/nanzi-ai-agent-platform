@@ -254,8 +254,12 @@ export function useKnowledgePortal(options: UseKnowledgePortalOptions) {
         expanded_group_ids: [],
         question_clicks: {},
       };
+      // AI 头像已改为全局权威键唯一管理，全量偏好回传时显式剔除，
+      // 避免陈旧副本被带到服务端（后端已忽略，这里也不再发送）。
+      const prefsWithoutAvatar: Record<string, any> = { ...(currentPrefs as Record<string, any>) };
+      delete prefsWithoutAvatar.agent_avatar;
       await axios.put("/api/portal/portal-prefs", {
-        ...currentPrefs,
+        ...prefsWithoutAvatar,
         pinned_kb_dataset_ids: pinnedDatasetIds.value
       });
       if (!rawPrefs.value) {
