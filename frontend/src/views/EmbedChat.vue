@@ -3296,7 +3296,7 @@ const config = reactive({
   approvalMode: "ask" as "ask" | "allow" | "deny",
   overrideAgentId: "", // To override agent via @mention
   userAvatar: "", // Custom user avatar URL
-  agentAvatar: localStorage.getItem("yovole_embed_agent_avatar") || "", // Custom AI agent avatar URL
+  agentAvatar: "", // Custom AI agent avatar URL (由后端 Redis 全局统一控制，不使用 localStorage 避免脏数据倒灌)
   routingMode: "auto", // 'auto' | 'expert'
   expertAgentId: "",
   enableMultiAgent: true,
@@ -3694,7 +3694,6 @@ const saveRoutingSettings = () => {
     localStorage.setItem("yovole_grounding_block_mode", config.groundingBlockMode || "strict_buffer");
     localStorage.setItem("yovole_markdown_theme", config.markdownTheme || "default");
     localStorage.setItem("yovole_hide_message_border", config.hideMessageBorder ? "1" : "0");
-    localStorage.setItem("yovole_embed_agent_avatar", config.agentAvatar || "");
 };
 const saveRoutingPreference = async (mode: "auto" | "expert", agentId = "") => {
     if (isRoutingSettingsLocked.value) return;
@@ -4634,11 +4633,10 @@ const fetchUserPortalPreferences = async () => {
         }
         if (prefs.agent_avatar) {
             config.agentAvatar = prefs.agent_avatar;
-            localStorage.setItem("yovole_embed_agent_avatar", prefs.agent_avatar);
-        } else if (prefs.agent_avatar === "") {
+        } else {
             config.agentAvatar = "";
-            localStorage.removeItem("yovole_embed_agent_avatar");
         }
+        localStorage.removeItem("yovole_embed_agent_avatar");
         const routingMode: RoutingMode = prefs.routing_mode === "expert" ? "expert" : "auto";
         savedRoutingPreference.value = {
         routing_mode: routingMode,
@@ -9025,10 +9023,9 @@ onMounted(() => {
   if (savedHideMessageBorder !== null) {
     config.hideMessageBorder = savedHideMessageBorder === "1";
   }
-  const savedAgentAvatar = localStorage.getItem("yovole_embed_agent_avatar");
-  if (savedAgentAvatar) {
-    config.agentAvatar = savedAgentAvatar;
-  }
+  // 清理可能残留的陈旧本地头像缓存，AI 头像始终以服务端 Redis 全局配置为准
+  localStorage.removeItem("yovole_embed_agent_avatar");
+  void fetchUserPortalPreferences();
   const query = new URLSearchParams(window.location.search);
   const queryInstanceId = normalizeEmbedInstanceId(query.get("instance_id"));
   if (queryInstanceId) config.instanceId = queryInstanceId;

@@ -48,5 +48,6 @@ export function clearUserSession(): void {
   // 'admin_token' 是历史遗留的 localStorage 键名，保留原样以清理老版本残留
   localStorage.removeItem('admin_token')
   localStorage.removeItem('yovole_token')
+  localStorage.removeItem('yovole_embed_agent_avatar')
 }
 

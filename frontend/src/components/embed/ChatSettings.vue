@@ -61,7 +61,7 @@ watch(() => props.visible, (visible) => {
 const handleSetAgentAvatar = (avatar: string, toastMessage = "AI 助手头像已更新") => {
   props.config.agentAvatar = avatar;
   customAvatarInput.value = avatar;
-  localStorage.setItem("yovole_embed_agent_avatar", avatar);
+  localStorage.removeItem("yovole_embed_agent_avatar");
   showToast(toastMessage, "success");
   saveSettings();
 
@@ -330,6 +330,7 @@ const handleLogout = () => {
     localStorage.removeItem('user_info');
     localStorage.removeItem('token');
     localStorage.removeItem('yovole_embed_token');
+    localStorage.removeItem('yovole_embed_agent_avatar');
     router.push('/login');
 };
 </script>

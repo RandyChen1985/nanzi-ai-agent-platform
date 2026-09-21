@@ -14,16 +14,28 @@ pytestmark = pytest.mark.no_infrastructure
 
 
 class FakeRedis:
-    def __init__(self, value=None):
+    def __init__(self, value=None, initial_store=None):
         self.value = value
+        self.store = dict(initial_store or {})
         self.saved = None
 
-    async def get(self, _key):
-        return self.value
+    async def get(self, key):
+        if key in self.store:
+            return self.store[key]
+        # 如果未传入字典，兼容单值测试
+        if not self.store and self.value is not None:
+            return self.value
+        return None
 
-    async def set(self, _key, value):
+    async def set(self, key, value):
         self.saved = value
+        self.store[key] = value
         self.value = value
+
+    async def delete(self, key):
+        self.store.pop(key, None)
+        if self.saved == key:
+            self.saved = None
 
 
 def user_info(user_id=7, role="user"):
@@ -233,6 +245,46 @@ async def test_update_agent_avatar_prefs_admin_success(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_get_portal_prefs_global_avatar_overrides_personal_stale_prefs(monkeypatch):
+    user_key = portal_prefs._redis_key(99)
+    redis = FakeRedis(
+        initial_store={
+            user_key: json.dumps({"agent_avatar": "stale_old_avatar.png"}),
+            portal_prefs.GLOBAL_AGENT_AVATAR_KEY: "new_global_avatar.png",
+        }
+    )
+    monkeypatch.setattr(portal_prefs, "get_redis", lambda: _resolved(redis))
+
+    user_res = await portal_prefs.get_portal_prefs(user_info(user_id=99, role="user"))
+    assert user_res["code"] == 0
+    assert user_res["data"]["agent_avatar"] == "new_global_avatar.png"
+
+    # 当全局重置为空时，个人偏好中的旧头像绝不能倒灌
+    redis.store.pop(portal_prefs.GLOBAL_AGENT_AVATAR_KEY, None)
+    user_res_reset = await portal_prefs.get_portal_prefs(user_info(user_id=99, role="user"))
+    assert user_res_reset["data"]["agent_avatar"] == ""
+
+
+@pytest.mark.asyncio
+async def test_full_update_portal_prefs_cannot_override_agent_avatar_for_normal_user(monkeypatch):
+    redis = FakeRedis(json.dumps({"markdown_theme": "default"}))
+    monkeypatch.setattr(portal_prefs, "get_redis", lambda: _resolved(redis))
+
+    # 普通用户调用 update_portal_prefs 试图传入 agent_avatar
+    await portal_prefs.update_portal_prefs(
+        portal_prefs.PortalPrefsUpdate(
+            agent_avatar="hacked_avatar.png",
+            markdown_theme="minimal",
+        ),
+        user_info(user_id=99, role="user"),
+    )
+
+    saved = json.loads(redis.saved)
+    assert saved.get("agent_avatar", "") == ""
+    assert saved["markdown_theme"] == "minimal"
+
+
+@pytest.mark.asyncio
 async def test_update_agent_avatar_prefs_forbidden_for_normal_user():
     with pytest.raises(HTTPException) as exc_info:
         await portal_prefs.update_agent_avatar(
@@ -282,10 +334,11 @@ async def test_upload_agent_avatar_admin_saves_to_branding_dir(monkeypatch, tmp_
     )
 
     assert result["code"] == 0
-    assert "/branding/avatars/agent_avatar.png?t=" in result["data"]["avatar_url"]
-    saved_file = test_branding_dir / "agent_avatar.png"
-    assert saved_file.is_file()
-    assert saved_file.read_bytes() == b"\x89PNG\r\n\x1a\nfake-image-content"
+    assert result["data"]["avatar_url"].startswith("/branding/avatars/agent_avatar_")
+    assert result["data"]["avatar_url"].endswith(".png")
+    saved_files = list(test_branding_dir.glob("agent_avatar_*.png"))
+    assert len(saved_files) == 1
+    assert saved_files[0].read_bytes() == b"\x89PNG\r\n\x1a\nfake-image-content"
 
 
 

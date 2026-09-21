@@ -5,6 +5,7 @@
 Key: agent:portal_prefs:{user_id}
 Value: JSON 字符串，结构为 { "pinned_group_ids": ["id1", "id2"] }
 """
+import glob
 import json
 import logging
 import os
@@ -123,8 +124,12 @@ async def get_portal_prefs(
                 if isinstance(global_raw, bytes)
                 else str(global_raw)
             )
+        else:
+            # 全局未配置时强制置空为默认形象，杜绝用户历史个人偏好中的陈旧头像倒灌
+            data["agent_avatar"] = ""
     except Exception as e:
         logger.warning("Failed to get global agent avatar from Redis: %s", e)
+        data["agent_avatar"] = ""
 
     return {"code": 0, "data": data}
 
@@ -210,7 +215,7 @@ async def update_portal_prefs(
         ),
         agent_avatar=(
             body.agent_avatar.strip()
-            if body.agent_avatar is not None
+            if (body.agent_avatar is not None and user_info.get("role") == "admin")
             else existing.agent_avatar
         ),
         # 路由偏好只允许通过 /routing 更新，并在该接口完成智能体权限校验。
@@ -456,13 +461,22 @@ async def upload_agent_avatar(
         )
 
     os.makedirs(BRANDING_AVATARS_DIR, exist_ok=True)
-    filename = f"agent_avatar{ext}"
+    # 清理历史旧头像文件，防止文件冗余
+    for old_file in glob.glob(os.path.join(BRANDING_AVATARS_DIR, "agent_avatar*")):
+        try:
+            if os.path.isfile(old_file):
+                os.remove(old_file)
+        except Exception:
+            pass
+
+    # 使用带时间戳的独立文件名，确保 URL 绝对唯一，彻底根除浏览器 HTTP 静态缓存问题
+    timestamp = int(time.time())
+    filename = f"agent_avatar_{timestamp}{ext}"
     save_path = os.path.join(BRANDING_AVATARS_DIR, filename)
     with open(save_path, "wb") as f:
         f.write(data)
 
-    timestamp = int(time.time())
-    avatar_url = f"/branding/avatars/{filename}?t={timestamp}"
+    avatar_url = f"/branding/avatars/{filename}"
     return {
         "code": 0,
         "data": {"avatar_url": avatar_url},
