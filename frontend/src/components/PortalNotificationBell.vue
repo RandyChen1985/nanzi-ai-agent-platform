@@ -302,7 +302,7 @@ defineExpose({ open: openFromExternal, toggle });
 </script>
 
 <template>
-  <div :class="isModalVariant ? 'contents' : 'relative'">
+  <div :class="[isModalVariant ? 'contents' : 'relative', open && !isModalVariant ? 'z-50' : '']">
     <button
       v-if="!isModalVariant"
       type="button"
