@@ -105,7 +105,7 @@ def test_login_execution_slide_uses_a_dark_tech_palette():
     assert "bg: 'bg-[#eff6ff]'" not in source
 
 
-def test_login_mouse_follow_effect_is_limited_to_a_smooth_background_light():
+def test_login_mouse_follow_effect_is_a_background_light_plus_a_non_moving_lens():
     source = login_source()
 
     assert "const mouseLightX = ref(50)" in source
@@ -117,3 +117,8 @@ def test_login_mouse_follow_effect_is_limited_to_a_smooth_background_light():
     assert "pointer-events-none" in source
     assert ':style="{ left: `${mouseLightX}%`, top: `${mouseLightY}%`' in source
     assert "radial-gradient(circle, rgba(96, 165, 250, 0.24)" in source
+
+    # 鼠标跟随效果只有两个：背景光晕，以及标题上"原始文字静止"的放大镜镜片。
+    # 放大镜的契约由 test_login_visual_magnifier_contract.py 锁定。
+    assert "<MagnifierTitle" in source
+    assert "translate(${mouseX}px, ${mouseY}px)" not in source

@@ -4,6 +4,7 @@ import { useRouter, useRoute } from 'vue-router'
 import axios from 'axios'
 import { useBranding } from '../composables/useBranding'
 import { persistUserInfo } from '../utils/userSession'
+import MagnifierTitle from '../components/login/MagnifierTitle.vue'
 
 const router = useRouter()
 const route = useRoute()
@@ -369,9 +370,11 @@ const handleLogin = async () => {
                 :aria-hidden="currentSlide !== index"
             >
                 <div class="relative z-10 max-w-4xl xl:max-w-[1100px]">
-                    <h1 class="text-5xl xl:text-7xl font-bold tracking-tighter mb-4 drop-shadow-2xl" :class="slide.light ? 'text-slate-900' : 'text-white'">
-                        {{ slide.title }}
-                    </h1>
+                    <MagnifierTitle
+                        :text="slide.title"
+                        :tone="slide.light ? 'light' : 'dark'"
+                        class="mb-4"
+                    />
                     <p class="text-xl xl:text-2xl font-light tracking-[0.05em] mb-4" :class="slide.light ? 'text-slate-600' : 'text-slate-300'">
                         {{ slide.subtitle }}
                     </p>
