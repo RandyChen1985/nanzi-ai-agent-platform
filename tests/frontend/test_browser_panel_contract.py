@@ -177,7 +177,8 @@ def test_browser_panel_ignores_stale_socket_events_and_token_attachment_respects
     assert "openingGeneration?: number" in embed
     assert "openingGeneration !== undefined && openingGeneration !== browserOpenGeneration" in embed
     assert "const openingGeneration = browserOpenGeneration;" in embed
-    assert "String(data.session_id || \"\")," in embed
+    # session_id 现在在传入 attachBrowserSession 前先 trim 归一化。
+    assert "String(data.session_id || \"\").trim()" in embed
     assert "data.approval_mode," in embed
     assert "openingGeneration," in embed
 

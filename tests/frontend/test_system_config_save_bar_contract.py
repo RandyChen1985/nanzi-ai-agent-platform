@@ -28,6 +28,7 @@ def test_system_config_save_bar_contract():
     assert "保存变更 (⌘S)" in content
 
     # 4. 验证底部浮动吸底保存提示条 (Sticky Save Bar)
+    # 只锁定“吸底浮动”这一行为特征；具体偏移量（bottom-6 / bottom-8 …）属视觉微调，不应让契约失效
     assert "hasUnsavedConfigChanges && canSave" in content
     assert "放弃修改" in content
-    assert "fixed bottom-6" in content
+    assert "fixed bottom-" in content

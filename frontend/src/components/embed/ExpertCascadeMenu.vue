@@ -230,7 +230,7 @@ const handleSelectExpert = (agentId: string) => {
         </svg>
         <input
           v-model="expertSearchQuery"
-          type="text"
+          type="search"
           placeholder="搜索专家名称、标识或说明..."
           class="w-full rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700/60 py-1.5 pl-8 pr-7 text-xs text-gray-700 dark:text-gray-200 placeholder-gray-400 outline-none transition-all focus:border-primary/50 focus:ring-2 focus:ring-primary/20"
           @click.stop

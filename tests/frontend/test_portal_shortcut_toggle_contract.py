@@ -16,7 +16,11 @@ def _assert_portal_toggle(source: str):
     assert "closePortalDrawer()" in source
     assert "if (showKnowledgePortal.value)" in source
     assert "closeKnowledgePortal()" in source
-    assert "showWorkspaceDrawer.value = !showWorkspaceDrawer.value" in source
+    # 工作空间胶囊改由 toggleWorkspaceDrawer 统一开合（已打开则关闭，否则打开）
+    assert "toggleWorkspaceDrawer();" in source
+    workspace_toggle = source.split("const toggleWorkspaceDrawer = () =>", 1)[1].split("};", 1)[0]
+    assert "showWorkspaceDrawer.value = false" in workspace_toggle
+    assert "openWorkspaceDrawer()" in workspace_toggle
 
 
 def test_embed_chat_portal_shortcuts_toggle():

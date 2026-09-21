@@ -234,7 +234,7 @@ const confirmDelete = (item: any) => {
           <input
             v-model="keyword"
             @input="handleSearchInput"
-            type="text"
+            type="search"
             placeholder="搜索历史记录..."
             class="w-full pl-8 pr-7 py-1.5 text-xs bg-gray-50/80 dark:bg-gray-800/80 border border-gray-200/80 dark:border-gray-700/80 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all placeholder-gray-400 text-gray-700 dark:text-gray-200"
           />

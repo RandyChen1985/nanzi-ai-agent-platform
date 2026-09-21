@@ -26,7 +26,13 @@ def test_smart_import_passes_selected_data_source_to_metric_generation():
     wizard_source = (ROOT / "frontend/src/components/metadata/SmartImportWizard.vue").read_text()
     modal_source = (ROOT / "frontend/src/components/metadata/DatabaseImportModal.vue").read_text()
 
-    assert "analyzeDDL: (ddl: string, dataSource?: string)" in api_source
+    # analyzeDDL 现额外接受 AbortSignal（取消分析），数据源仍为第二入参
+    assert "analyzeDDL: (ddl: string, dataSource?: string" in api_source
     assert "data_source: dataSource" in api_source
-    assert "metadataApi.analyzeDDL(ddlText.value, analysisDataSource || undefined)" in wizard_source
+    # 调用改为多行以传入 AbortSignal，数据源实参保持不变
+    assert (
+        "const analysisDataSource = props.datasetDataSource || importDataSourceName.value || defaultDataSource.value"
+        in wizard_source
+    )
+    assert "analysisDataSource || undefined" in wizard_source
     assert "{ id: 'postgresql', name: 'PostgreSQL'" in modal_source

@@ -47,4 +47,7 @@ def test_chat_input_does_not_treat_submission_lock_as_a_cancelable_generation():
     assert 'type="button"' in source
     assert "isProcessing ? emit('stop') : isSubmitting ? null : emit('send')" in source
     assert ':disabled="!isProcessing && (isSubmitting || !canSend)"' in source
-    assert "isProcessing ? 'AI 正在生成回复…' : isSubmitting ? '准备发送…'" in source
+    # 生成中与提交中的提示必须分属不同状态分支（生成分支新增了 grounding 严格核验文案）。
+    assert "'AI 正在生成回复…'" in source
+    assert "isProcessing ? (enableGrounding ?" in source
+    assert ") : isSubmitting ? '准备发送…'" in source

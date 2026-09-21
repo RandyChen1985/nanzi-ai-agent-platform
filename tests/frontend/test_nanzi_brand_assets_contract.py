@@ -1,6 +1,11 @@
 from pathlib import Path
 
-from PIL import Image
+import pytest
+
+# 品牌资产契约需要用 Pillow 读取图片尺寸。Pillow 不是项目运行时依赖，
+# 未安装时优雅跳过整个模块，避免以「收集错误」的形式让整套 tests/frontend 跑不干净。
+# 需要启用该契约时安装：pip install pillow
+Image = pytest.importorskip("PIL.Image", reason="缺少 Pillow，跳过品牌资产契约测试")
 
 
 ROOT = Path(__file__).resolve().parents[2]

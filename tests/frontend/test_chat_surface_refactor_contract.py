@@ -29,8 +29,11 @@ def test_both_chat_surfaces_use_shared_saved_report_workflow():
         "extractSavedReportExecuteErrorMessage",
     ):
         assert f"export const {name}" in shared
-        if name == "renderSavedReportDataToMarkdown":
-            # 表格渲染由 compose 内部复用，页面入口改为 composeSavedReportExecuteMarkdown
+        if name in ("renderSavedReportDataToMarkdown", "parseSavedReportTags"):
+            # 表格渲染/标签解析仅在组合式内部或行为测试中复用，页面入口改为
+            # composeSavedReportExecuteMarkdown；这里继续禁止在视图内重复定义。
+            assert f"const {name} =" not in embed
+            assert f"const {name} =" not in debug
             continue
         assert name in embed
         assert name in debug
@@ -75,11 +78,18 @@ def test_chat_surfaces_keep_permission_and_external_execution_panels():
         assert timeline_at >= 0
         assert permission_at > timeline_at
         assert external_at > permission_at
-        assert '@click="confirmPendingPermission(msg, true)"' in source
-        assert '@click="confirmPendingPermission(msg, false)"' in source
+        # 权限卡已抽成 ToolPermissionCard，允许/拒绝通过 submit(true/false) 回传。
+        assert '<ToolPermissionCard' in source
+        assert source.find("<ToolPermissionCard") < permission_at
+        assert '@submit="(confirmed) => confirmPendingPermission(msg, confirmed)"' in source
         assert '@click="submitPendingExternalExecution(msg)"' in source
-        assert "允许" in source[permission_at:external_at]
-        assert "拒绝" in source[permission_at:external_at]
+
+    # 允许/拒绝按钮文案与提交语义保留在共享权限卡组件内。
+    permission_card = _read("frontend/src/components/chat/ToolPermissionCard.vue")
+    assert '@click="submit(true)"' in permission_card
+    assert '@click="submit(false)"' in permission_card
+    assert "允许" in permission_card
+    assert "拒绝" in permission_card
 
 
 def test_external_execution_resume_consumes_shared_sse_parser_payloads_directly():
@@ -191,8 +201,10 @@ def test_both_chat_surfaces_use_shared_thinking_header_component():
     assert "resolveTimelineCurrentStep" in timeline
     assert "timelineHasPending" in timeline
     assert ':is-thinking="!hasAnswer && (isThinking || hasPending)"' in timeline
-    assert 'if (pending && !props.hasAnswer)' in timeline
-    assert 'if (answer) expanded.value = false' in timeline
+    # hasPending 变化时：仍 pending 则展开；pending 结束且有答案则自动折叠。
+    assert 'watch(hasPending, (pending) => {' in timeline
+    assert '} else if (props.hasAnswer) {' in timeline
+    assert 'if (answer && !hasPending.value) expanded.value = false;' in timeline
     assert "过程消息" not in timeline
     assert "reasoning" in timeline
     assert "tool" in timeline
@@ -228,7 +240,7 @@ def test_embed_chat_uses_shared_sse_parser_for_process_events():
 
 def test_embed_chat_keeps_ltm_state_outside_workspace_canvas_extraction():
     embed = _read("frontend/src/views/EmbedChat.vue")
-    send_message_index = embed.index("const sendMessage = async () =>")
+    send_message_index = embed.index("const sendMessage = async (overrides: ChatSendOverrides = {})")
 
     for declaration in (
         "const activeLtmPreference = ref<any>(null)",
@@ -250,12 +262,15 @@ def test_agent_message_actions_wait_until_stream_finishes():
     debug = _read("frontend/src/views/AgentDebug.vue")
 
     assert 'v-if="!(isProcessing && msg.id === lastAgentMessage?.id)"' in embed
-    assert "flex min-w-0 max-w-full flex-nowrap items-center space-x-2 overflow-x-auto mt-1 scrollbar-hide" in embed
+    # 操作栏容器新增 sm:overflow-x-visible（桌面端不再滚动），用稳定前缀匹配。
+    actions_row_class = "flex min-w-0 max-w-full flex-nowrap items-center space-x-2 overflow-x-auto"
+    assert actions_row_class in embed
     assert embed.index('v-if="!(isProcessing && msg.id === lastAgentMessage?.id)"') < embed.index(
-        "flex min-w-0 max-w-full flex-nowrap items-center space-x-2 overflow-x-auto mt-1 scrollbar-hide"
+        actions_row_class
     )
-    assert "title=\"复制\"" in embed
-    assert "title=\"复制\"" in debug
+    # 原生 title 已按 c790b226 全量移除，改用 aria-label + 自定义 Tooltip。
+    assert 'aria-label="复制"' in embed
+    assert 'aria-label="复制"' in debug
 
 
 def test_agent_debug_removes_redundant_top_mode_selector_and_aligns_chat_input_routing():

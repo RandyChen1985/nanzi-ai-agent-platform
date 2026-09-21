@@ -125,7 +125,8 @@ def test_business_confirmation_frontend_wiring_contract():
     assert "buildBusinessConfirmationUserMessage" in embed
     assert "BusinessConfirmationCard" in debug
     assert "submitBusinessConfirmation" in debug
-    assert "dispatchAgentscopeStreamEvent(agentMsg.value, data, addEmbedLogFromStream, messages.value)" in embed
+    # EmbedChat 的派发器新增了 bash 环境横幅事件处理回调作为第五个参数。
+    assert "dispatchAgentscopeStreamEvent(agentMsg.value, data, addEmbedLogFromStream, messages.value, handleBashEnvEvent)" in embed
     assert "dispatchAgentscopeStreamEvent(agentMsg.value, data, addRealLog, messages.value)" in debug
     assert 'hide-quick-buttons="!!msg.businessConfirmation || !!msg.userQuestion"' in embed
     assert 'hide-quick-buttons="!!msg.businessConfirmation || !!msg.userQuestion"' in debug

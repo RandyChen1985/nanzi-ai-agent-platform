@@ -23,7 +23,9 @@ def test_chat_input_exposes_context_usage_indicator_and_both_chat_surfaces_refre
     assert 'data-testid="context-usage-indicator"' in chat_input
     assert 'data-testid="context-usage-details"' in chat_input
     assert 'data-testid="context-usage-bar"' not in input_box
-    assert "'pr-24'" in input_box
+    # 输入框为右侧浮标动态预留内边距：textarea 绑定 textareaPaddingRightClass（pr-28 / pr-48）。
+    assert "textareaPaddingRightClass" in input_box
+    assert '"pr-28"' in chat_input
     assert "contextUsageDetailsPlacement" in chat_input
     assert "bottom-[calc(100%+0.5rem)]" in chat_input
     assert "top-[calc(100%+0.5rem)]" in chat_input

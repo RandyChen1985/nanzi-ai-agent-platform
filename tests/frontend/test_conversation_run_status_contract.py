@@ -103,7 +103,13 @@ def test_agent_debug_focuses_desktop_input_only_after_all_busy_states_clear():
     assert "watch([isProcessing, remoteRunActive, sendLocked], focusChatInputWhenReady);" in source
     assert "nextTick(() => chatInputRef.value?.focus());" in source
 
-    completion_block = source[source.index("isProcessing.value = false;", source.index("const sendMessageInternal")):source.index("const addRealLog")]
+    # 收尾不再直接置 false，而是在 finally 中按待处理权限/外部执行状态收敛 isProcessing；
+    # 焦点仍只由上面的 watch 统一处理，收尾路径不得直接 focus。
+    completion_start = source.index(
+        "isProcessing.value = agentMsg.value.pendingPermission",
+        source.index("const sendMessageInternal"),
+    )
+    completion_block = source[completion_start:source.index("const addRealLog")]
     assert "chatInputRef.value?.focus()" not in completion_block
 
 

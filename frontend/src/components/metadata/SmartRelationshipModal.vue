@@ -901,7 +901,7 @@ const handleBackToConfig = () => {
                 <div class="relative flex-1 max-w-sm">
                   <input
                     v-model="tableSearchQuery"
-                    type="text"
+                    type="search"
                     placeholder="搜索物理表名、术语或描述..."
                     class="w-full text-xs pl-8 pr-3 py-1.5 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
                   />

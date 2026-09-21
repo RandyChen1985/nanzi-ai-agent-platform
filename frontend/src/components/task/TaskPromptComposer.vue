@@ -918,7 +918,7 @@ watch(
             </svg>
             <input
               v-model="modelSearchQuery"
-              type="text"
+              type="search"
               placeholder="搜索模型名称或标识..."
               class="w-full rounded-lg border border-gray-200 bg-gray-50/70 py-1.5 pl-8 pr-7 text-xs text-gray-700 placeholder-gray-400 outline-none transition-all focus:border-primary/50 focus:bg-white focus:ring-2 focus:ring-primary/20"
               @click.stop

@@ -25,7 +25,9 @@ def test_embed_chat_message_level_golden_report_button():
 
     assert "canSaveGoldenReportFromMessage(msg)" in source
     assert "handleSaveReportFromMessage(msg)" in source
-    assert "添加黄金报表" in source
+    # 按钮文案与 saveReport 事件入口已抽到 MessageActionMenus 子组件（见 c1d5f563）
+    assert '@save-report="handleSaveReportFromMessage(msg)"' in source
+    assert "添加固化报表" in _source("frontend/src/components/chat/MessageActionMenus.vue")
     assert "resolveSavableSqlFromMessage(msg)" in source
     assert "parseRequirementAnalysisFromMessage(agentMessage)" in source
 

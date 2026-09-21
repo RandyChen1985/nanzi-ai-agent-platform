@@ -302,7 +302,8 @@ def test_embed_shows_agent_dispatch_placeholder_before_agent_metadata_arrives():
     assert "animate-bounce-dot" in source
     assert 'name="slide-fade"' in source
     assert "msg.isThinking" in source
-    assert "bg-gray-50 border-gray-200" in source
+    # 调度占位胶囊的灰底灰边仍保留，色值现带透明度后缀（bg-gray-50/70、border-gray-200/50）。
+    assert "bg-gray-50/70 border-gray-200/50 text-gray-400" in source
     assert "v-if=\"msg.agentName\"" in source
 
 

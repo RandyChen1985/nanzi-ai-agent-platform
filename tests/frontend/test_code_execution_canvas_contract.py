@@ -98,9 +98,10 @@ def test_output_analysis_is_sent_after_prefilling_existing_chat_input():
             source,
         )
         assert handler, "missing code-output analysis handler"
-        assert "userInput.value = question" in handler.group(1)
-        assert "await nextTick()" in handler.group(1)
-        assert "sendMessage();" in handler.group(1)
+        # 发送方式改为把问题作为 content 直接交给 sendMessage（不再预填输入框后触发）。
+        body = handler.group(1)
+        assert "canvasVisible.value = false;" in body
+        assert "await sendMessage({ content: question });" in body
 
 
 def test_workspace_canvas_preserves_script_metadata_when_normalizing_payload():

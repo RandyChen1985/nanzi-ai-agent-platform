@@ -43,7 +43,10 @@ def test_widget_debugger_documents_business_context_protocol():
 def test_backend_sanitizes_client_injected_context_before_prompt_use():
     endpoint = _source("app/api/v1/endpoints/chat.py")
     agent_service = _source("app/services/ai/agent_service.py")
+    # 管道化重构后，把业务上下文拼进 Prompt 的逻辑迁到 AssembleStep
+    assemble_step = _source("app/services/ai/pipeline/steps/assemble_step.py")
 
     assert "sanitize_injected_context" in endpoint
     assert "sanitize_injected_context" in agent_service
-    assert "business_context." in agent_service
+    assert "sanitize_injected_context" in assemble_step
+    assert "business_context." in assemble_step

@@ -31,7 +31,8 @@ def _assert_embed_portal_contract(source: str) -> None:
     assert "refreshDatasetMenuNavigation" in source
     assert "recordDatasetMenuQuestionClick" in source
     assert "dataset_menu_hash" in source
-    assert "📊 数据门户" in source
+    # 数据门户快捷指令标签已按 d1fd032d 去除多余 Emoji，改为纯文本「数据门户」
+    assert 'command: DATASET_PORTAL_SLASH_COMMAND, label: "数据门户"' in source
     assert "embed_portal_keep_open" in source
     assert "onPortalLoadingChange" in source
     assert "applyPortalViewportLayout" in _source("frontend/src/composables/useDatasetPortal.ts")
@@ -219,7 +220,9 @@ def test_saved_report_parameterized_execution_contract():
     assert "/preview" in source
     assert "reportRunPreview" in source
     assert "实际执行 SQL" in run_modal
-    assert "沉淀为固化报表" in source
+    # 消息底部「添加固化报表」入口已抽到 MessageActionMenus 子组件（见 c1d5f563），
+    # EmbedChat 侧保留 save-report 事件接线作为行为锚点。
+    assert '@save-report="handleSaveReportFromMessage(msg)"' in source
     assert "savedReportNeedsRunOptions" in source
     assert "scheduleSavedReportPreview" in source
     assert "请等待运行预览完成后再执行" in source

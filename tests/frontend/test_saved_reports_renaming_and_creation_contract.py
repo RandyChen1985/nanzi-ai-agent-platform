@@ -48,7 +48,11 @@ def test_saved_reports_full_frontend_renaming_contract():
 
     # 验证全部不再包含「黄金报表」且已切换为「固化报表」
     assert "黄金报表" not in embed_chat
-    assert "添加固化报表" in embed_chat
+    # EmbedChat 的消息操作入口已抽到 MessageActionMenus 子组件（见 c1d5f563），
+    # 入口文案在子组件，EmbedChat 侧以 save-report 事件接线作为行为锚点。
+    message_actions = _source("frontend/src/components/chat/MessageActionMenus.vue")
+    assert "添加固化报表" in message_actions
+    assert '@save-report="handleSaveReportFromMessage(msg)"' in embed_chat
 
     assert "黄金报表" not in agent_debug
     assert "添加固化报表" in agent_debug

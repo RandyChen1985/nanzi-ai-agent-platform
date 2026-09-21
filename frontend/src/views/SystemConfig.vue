@@ -3048,7 +3048,7 @@ onUnmounted(() => {
                          <input
                            ref="configSearchInputRef"
                            v-model="configSearchQuery"
-                           type="text"
+                           type="search"
                            placeholder="搜索参数…（⌘K）"
                            class="w-full bg-transparent text-sm text-gray-700 placeholder:text-gray-400 focus:outline-none"
                            @focus="configSearchOpen = true"

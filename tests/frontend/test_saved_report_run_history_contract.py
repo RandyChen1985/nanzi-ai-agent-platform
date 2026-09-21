@@ -13,7 +13,8 @@ COMPONENT = ROOT / "frontend/src/components/chatbi/DatasetCapabilityMenu.vue"
 def test_saved_report_detail_has_run_history_tab_and_lazy_endpoints():
     source = COMPONENT.read_text(encoding="utf-8")
 
-    assert "报表信息" in source
+    # 详情页签文案由「报表信息」调整为「报表概览」
+    assert "报表概览" in source
     assert "运行历史" in source
     assert "savedReportDetailTab" in source
     assert "fetchSavedReportRuns" in source

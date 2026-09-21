@@ -46,8 +46,12 @@ def test_agent_creation_reuses_version_drawer_with_agent_step():
     assert "bot-123" in drawer_source
     assert "系统智能体" in drawer_source
     assert "Admin Only" in drawer_source
-    assert "agentForm.is_system ? 'border-blue-200 bg-blue-50 text-blue-700'" in drawer_source
-    assert "系统预置智能体，防止误删并提高路由权重" in drawer_source
+    # 系统智能体开关改为独立配置栏，激活态仍为蓝色高亮
+    assert ':class="agentForm.is_system' in drawer_source
+    assert "'border-blue-200 bg-blue-50" in drawer_source
+    # 旧提示“系统预置智能体，防止误删并提高路由权重”改写为内置与委派说明
+    assert "平台官方内置智能体" in drawer_source
+    assert "只有系统智能体才能被自动委派" in drawer_source
     assert "扩展能力标签" in drawer_source
     assert "系统内置标签" in drawer_source
     assert "lockedPrimaryCapability" in drawer_source
@@ -93,7 +97,12 @@ def test_agent_action_labels_describe_editing_and_publishing():
     assert "配置与发布" in management
     assert "配置与发布" in versions_drawer
     assert "配置元数据" not in management
-    assert "版本管理" not in management
+    # “版本管理”只允许出现在指引说明里，卡片主操作标签必须是“配置与发布”
+    action_label_fn = management[
+        management.index("const getPrimaryCardActionLabel"):management.index("const runPrimaryCardAction")
+    ]
+    assert "版本管理" not in action_label_fn
+    assert "配置与发布" in action_label_fn
     assert "版本管理" not in versions_drawer
 
 
@@ -127,8 +136,8 @@ def test_agent_center_card_ux_hierarchy_and_primary_cta():
     assert "formatSkillCountLabel" in management
     assert 'return "全部"' not in management
     assert "使用全部公共技能（${agent.skill_count ?? 0} 个，另含个人技能）" in management
-    assert "showAgentCenterGuide" in management
-    assert "dismissAgentCenterGuide" in management
+    assert "showAgentFlowGuide" in management
+    assert "dismissAgentFlowGuide" in management
     assert "batchMode" in management
     assert "batchSetEnabled" in management
     assert "toggleAgentSelection" in management
@@ -217,10 +226,11 @@ def test_agent_edit_dialog_is_compact_and_locks_engine_type_only():
     edit_dialog = management[management.index('v-if="showAgentModal && isEditingAgent"'):]
 
     assert 'size="max-w-4xl"' in edit_dialog[:300]
-    assert '<template #header-extra>' in management
+    # 系统智能体标记从 Modal 的 header-extra 槽位移入弹窗主体配置栏
+    assert "设为系统智能体" in management
     assert '<template #footer>' in management
     assert "系统智能体" in management
-    assert "系统预置" in management
+    assert "平台官方内置智能体" in management
     assert "排序权重 (Sort Order)" not in edit_dialog[:5000]
     assert 'title="仅影响聊天页面的智能体选择列表顺序，值越大越靠前"' in management
     assert "执行引擎不可修改" in management

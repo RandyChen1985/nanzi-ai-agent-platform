@@ -942,7 +942,7 @@ watch(
         <div class="relative flex items-center">
           <input
             v-model="searchKeyword"
-            type="text"
+            type="search"
             placeholder="搜索表名、字段名..."
             class="text-xs pl-7 pr-6 py-1 w-44 sm:w-56 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-amber-500 transition-all placeholder:text-slate-400"
           />

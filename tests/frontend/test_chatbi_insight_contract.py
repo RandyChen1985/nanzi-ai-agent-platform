@@ -39,7 +39,11 @@ def test_shared_chatbi_insight_contract_is_wired_to_both_chat_surfaces():
     assert "总数未统计" in panel
     assert "总数未统计" in result_table
     assert "totalCountLabel" in result_table
-    assert "rounded-xl border border-gray-200" not in panel
+    # 面板本体是极简页签式（根容器仅保留顶部分隔线），不应被包成圆角边框卡片；
+    # 明细页的导出格式下拉浮层是局部弹层，不改变面板本体的无边框设计。
+    panel_root = panel.split("<template>", 1)[1].split(">", 1)[0]
+    assert "border-t border-gray-100" in panel_root
+    assert "rounded-xl border border-gray-200" not in panel_root
     for source in (embed, debug):
         assert "ChatBIInsightPanel" in source
         assert "ChatBIContinueAnalysis" in source
@@ -103,4 +107,7 @@ def test_insight_panel_is_minimal_tabbed_and_borderless():
     assert "tracking-wider" in panel
     assert "citation-chip" in panel
     assert "mb-3" in panel
-    assert "rounded-xl border border-gray-200" not in panel
+    # 面板根容器只保留顶部分隔线，而非整体圆角边框卡片（导出下拉浮层局部有边框，属正常）
+    panel_root = panel.split("<template>", 1)[1].split(">", 1)[0]
+    assert "border-t border-gray-100" in panel_root
+    assert "rounded-xl border border-gray-200" not in panel_root

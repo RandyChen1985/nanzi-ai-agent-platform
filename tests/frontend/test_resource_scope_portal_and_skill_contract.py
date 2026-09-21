@@ -22,7 +22,10 @@ def test_skill_scope_is_used_for_keys_and_removal():
     source = EMBED.read_text(encoding="utf-8")
     assert "resourceScopeEntryKey" in source
     assert "resourceScopeEntriesMatch" in source
-    assert "resourceScopeEntryKey('skills'" in source or 'resourceScopeEntryKey("skills"' in source
+    # 入口 key 改为按分组类型统一生成，且在 scope 存在时把 scope 拼进 key，
+    # 保证同名个人技能/公共技能不会互相覆盖。
+    assert "resourceScopeEntryKey(type, item, index)" in source
+    assert "scope ? `${type}:${scope}:${id}`" in source
     assert "resourceScopeEntriesMatch(entry, item)" in source
-    assert "...(item.scope ? { scope: item.scope } : {})" in source
-    assert "scope }" in source or "scope: item.scope" in source
+    assert "...(option.scope ? { scope: option.scope } : {})" in source
+    assert "scope }" in source or "scope: option.scope" in source

@@ -15,7 +15,8 @@ def test_embed_message_actions_scroll_without_compressing_items() -> None:
     assert 'class="flex min-w-0 max-w-full flex-nowrap items-center space-x-2 overflow-x-auto' in source
     assert 'class="flex shrink-0 items-center space-x-1"' in source
     assert '<div class="hidden sm:block shrink-0">' in source
-    assert 'class="hidden sm:flex shrink-0 items-center space-x-1.5' in source
+    # 间距值由 space-x-1.5 回调为 space-x-1，仅锚定「桌面端专属操作组」这一稳定特征。
+    assert 'class="hidden sm:flex shrink-0 items-center' in source
     assert 'space-x-1 ml-auto' not in source
 
 

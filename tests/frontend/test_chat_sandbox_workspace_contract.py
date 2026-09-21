@@ -7,12 +7,17 @@ pytestmark = pytest.mark.no_infrastructure
 ROOT = Path(__file__).resolve().parents[2]
 EMBED = ROOT / "frontend/src/views/EmbedChat.vue"
 CHAT_INPUT = ROOT / "frontend/src/components/embed/ChatInput.vue"
+SANDBOX_WORKSPACE = ROOT / "frontend/src/composables/chat/useSandboxWorkspace.ts"
 
 
 def test_embed_chat_configures_sandbox_workspace_state_and_endpoints():
     source = EMBED.read_text(encoding="utf-8")
+    workspace = SANDBOX_WORKSPACE.read_text(encoding="utf-8")
+    # 端点与状态机已抽到 useSandboxWorkspace composable，EmbedChat 负责接线消费。
+    assert "useSandboxWorkspace" in source
     # docker 端点语义保留（base 端点按 docker|k8s 路由）
-    assert "/api/v1/sandbox/docker/workspace" in source
+    assert "/api/v1/sandbox/docker/workspace" in workspace
+    assert "sandboxWorkspaceBaseEndpoint" in workspace
     assert "effectiveSandboxPolicy" in source
     assert "isSandboxWorkspacePolicy" in source
     assert "conversation_id" in source
@@ -147,11 +152,13 @@ def test_chat_input_context_modal_generalizes_sandbox_workspace_controls():
 
 def test_embed_chat_routes_k8s_workspace_endpoints_and_stop_confirm():
     source = EMBED.read_text(encoding="utf-8")
-    # k8s / docker workspace 端点按 backend 路由到各自 base
-    assert "/api/v1/sandbox/k8s/workspace" in source
-    assert "/api/v1/sandbox/docker/workspace" in source
+    workspace = SANDBOX_WORKSPACE.read_text(encoding="utf-8")
+    # k8s / docker workspace 端点按 backend 路由到各自 base（实现在 composable 中）
+    assert "/api/v1/sandbox/k8s/workspace" in workspace
+    assert "/api/v1/sandbox/docker/workspace" in workspace
     # 4 个动作（status/ensure/stop/restart）均通过 base 拼接调用
-    assert source.count("sandboxWorkspaceBaseEndpoint.value}/") >= 4
+    assert workspace.count("sandboxWorkspaceBaseEndpoint.value}/") >= 4
+    assert "useSandboxWorkspace" in source
     # k8s 停止前二次确认
     assert "showSandboxStopConfirm" in source
     assert "<ConfirmModal" in source

@@ -44,8 +44,11 @@ def test_embed_auto_mode_hints_use_smart_delegation_copy():
 
 def test_agent_debug_auto_mode_uses_smart_delegation_copy():
     agent_debug = _read("frontend/src/views/AgentDebug.vue")
+    # Auto 模式的标签文案已收敛到共享 ChatInput（routingMode=auto 时显示“智能委派”）
+    chat_input = _read("frontend/src/components/embed/ChatInput.vue")
 
-    assert "🤖 智能委派 (Auto)" in agent_debug
+    assert ":routing-mode=\"debugMode === 'specific' ? 'expert' : 'auto'\"" in agent_debug
     assert "已切换为智能委派模式" in agent_debug
+    assert 'return "智能委派";' in chat_input
     assert "🤖 自动路由 (Auto)" not in agent_debug
     assert "已切换为自动路由模式" not in agent_debug

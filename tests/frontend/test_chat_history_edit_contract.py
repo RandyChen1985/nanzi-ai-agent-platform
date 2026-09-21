@@ -35,7 +35,8 @@ def test_edit_resend_stops_when_server_history_cannot_be_truncated(relative_path
     source = (ROOT / relative_path).read_text(encoding="utf-8")
 
     assert "const truncateServerHistory = async" in source
-    assert "if (!(await truncateServerHistory(keepCount))) return;" in source
+    # saveAndResend 现封装在返回 payload 的回调中，失败时以 return null 终止重发。
+    assert "if (!(await truncateServerHistory(keepCount))) return null;" in source
 
 
 @pytest.mark.no_infrastructure

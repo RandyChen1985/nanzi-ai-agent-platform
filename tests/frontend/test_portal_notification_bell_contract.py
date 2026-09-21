@@ -29,7 +29,9 @@ def test_manual_saved_report_runs_follow_notification_policy():
     scheduler = (ROOT / "app/services/ai/scheduler_service.py").read_text(encoding="utf-8")
     endpoint = (ROOT / "app/api/portal/endpoints/saved_reports.py").read_text(encoding="utf-8")
     assert 'trigger_label = "手动触发" if is_manual else "定时触发"' in scheduler
-    assert "if subscription.notify_on_success:" in scheduler
+    # 成功通知仍由 notify_on_success 开关控制（无论手动/定时触发）；
+    # 现与告警条件命中叠加判定：if subscription.notify_on_success and alert_evaluation.hit:
+    assert "if subscription.notify_on_success" in scheduler
     assert "if not is_manual and subscription.notify_on_success" not in scheduler
     assert "_saved_report_subscription_wrapper(row.id, is_manual=True)" in endpoint
 
@@ -120,7 +122,7 @@ def test_ordinary_notification_opens_markdown_detail_while_saved_report_jumps():
     assert "notification-detail-body" in bell
     assert '<CanvasMarkdownRenderer' in bell
     assert ":content=\"detailContent\"" in bell
-    assert "⭐ 黄金报表" in bell
+    assert "⭐ 固化报表" in bell
     assert "openNotification" in bell
     assert "detailItem.value = item" in bell
     assert "if (!isSavedReportNotification(item)) {\n    closeNotifications();\n  }" in bell

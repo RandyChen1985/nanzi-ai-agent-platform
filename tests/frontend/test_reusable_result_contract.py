@@ -89,7 +89,12 @@ def test_message_action_menus_group_data_file_and_low_frequency_actions():
     assert "本次回答引用了上一轮数据" not in source
     assert source.count("emit('regenerate')") == 1
     assert source.index('v-if="canRegenerate"') < source.index('v-if="openMenu === \'more\'"')
-    assert 'class="flex items-center gap-1 rounded-md px-2 py-1 text-[10px] font-medium text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-700 dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-gray-200"' in source
+    # 「更多」按钮是中性无边框样式（font-medium + hover 灰底），不是描边按钮
+    more_title_pos = source.index('title="更多操作"')
+    more_button_class = source[source.rindex(' class="', 0, more_title_pos):more_title_pos]
+    assert "font-medium" in more_button_class
+    assert "hover:bg-gray-100" in more_button_class
+    assert "border" not in more_button_class
     assert 'class="rounded-md border border-gray-200 px-2 py-1 text-[10px]' not in source
     assert source.index('openMenu === \'more\'') < source.index("导出数据（Excel）")
     assert "props.canExport" in source
@@ -198,10 +203,10 @@ def test_embed_chat_wires_status_event_selection_and_one_shot_request_id():
     assert "reusable_result_id" in source
     assert "reusable_result_status" in source
     assert "conversationReusableResultCount" in source
-    assert '<div class="hidden sm:block">' in source
+    assert '<div class="hidden sm:block' in source
     action_source = source[source.index("<!-- Agent Message Actions"):]
     more_pos = action_source.index('mode="more"')
-    regenerate_pos = action_source.index('mode="regenerate"')
+    regenerate_pos = action_source.index('@click="regenerate"')
     data_pos = action_source.index('mode="data"')
     copy_pos = action_source.index('@click="copyMessage')
     assert copy_pos < regenerate_pos < data_pos

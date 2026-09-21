@@ -31,7 +31,7 @@ def test_saved_report_subscription_configures_mobile_ai_digest():
 def test_saved_report_card_body_opens_detail_and_has_explicit_run_button():
     assert "@click=\"emit('detail', report)\"" in CARD
     assert "@click.stop=\"emit('execute', report)\"" in CARD
-    assert "运行黄金报表" in CARD
+    assert "运行固化报表" in CARD
     assert "打开报表详情" in CARD or "点击打开详情" in CARD
     assert 'title="报表详情"' in CARD
 
@@ -49,7 +49,7 @@ def test_saved_report_lists_offer_subscribed_smart_filter_and_switch_to_my_scope
 def test_subscription_run_has_progress_feedback_and_delete_requires_confirmation():
     for text in (
         "savedReportSubscriptionRunning", "执行中...", "animate-spin",
-        "showDeleteSubscriptionConfirm", "确认删除订阅", "不会删除黄金报表和运行历史",
+        "showDeleteSubscriptionConfirm", "确认删除订阅", "不会删除固化报表和运行历史",
         "savedReportSubscriptionDeleting",
     ):
         assert text in SOURCE

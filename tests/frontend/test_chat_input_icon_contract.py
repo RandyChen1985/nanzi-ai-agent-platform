@@ -156,7 +156,8 @@ def test_ai_message_actions_have_larger_desktop_hit_areas() -> None:
     assert "min-h-8" in source
     assert "text-[11px]" in source
     assert "class=\"w-3.5 h-3.5\"" in embed_chat
-    assert "'p-2'" in embed_chat
+    # AI 操作按钮已抽到 MessageActionMenus，命中区从 p-2 改为统一的 28x28（h-7 w-7）图标按钮。
+    assert "flex h-7 w-7 shrink-0 items-center justify-center rounded-md" in source
 
 
 def test_timeline_permission_filter_preserves_union_item_type() -> None:

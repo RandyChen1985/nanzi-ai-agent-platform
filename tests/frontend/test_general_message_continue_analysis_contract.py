@@ -11,6 +11,7 @@ DEBUG = ROOT / "frontend/src/views/AgentDebug.vue"
 AGENT_SCHEMA = ROOT / "app/schemas/agent.py"
 AGENT_MANAGER = ROOT / "app/services/ai/agent_manager.py"
 AGENT_SERVICE = ROOT / "app/services/ai/agent_service.py"
+EXECUTION_STEP = ROOT / "app/services/ai/pipeline/steps/execution_step.py"
 CHAT_ENDPOINT = ROOT / "app/api/v1/endpoints/chat.py"
 
 
@@ -76,12 +77,15 @@ def test_agent_type_is_carried_from_resolved_config_to_sse_meta():
     schema = AGENT_SCHEMA.read_text(encoding="utf-8")
     manager = AGENT_MANAGER.read_text(encoding="utf-8")
     service = AGENT_SERVICE.read_text(encoding="utf-8")
+    execution_step = EXECUTION_STEP.read_text(encoding="utf-8")
 
     assert "agent_type: AgentType = AgentType.GENERAL" in schema
     assert "agent_type=resolve_agent_type(agent)" in manager
     assert "agent_type=resolve_agent_type(version.agent)" in manager
     assert "def _public_agent_type(agent_config: Any) -> str:" in service
-    assert '"agent_type": _public_agent_type(agent_config)' in service
+    # meta 事件组装已搬入 pipeline execution_step，SSE meta 仍携带公开 agent_type。
+    assert '"type": "meta"' in execution_step
+    assert '"agent_type": _public_agent_type(agent_config)' in execution_step
 
 
 def test_conversation_history_preserves_agent_type_for_generic_actions():

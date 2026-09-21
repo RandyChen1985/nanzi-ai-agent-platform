@@ -18,7 +18,10 @@ def test_agent_debug_uses_extracted_logic_flow_modal_without_losing_diagram_cont
     assert modal_path.exists()
     modal = modal_path.read_text(encoding="utf-8")
 
-    assert "<AgentLogicFlowModal" in debug
+    # 236d53a1 移除 AgentDebug 顶部「运行逻辑」入口后，该弹窗不再被挂载
+    # （见 test_chat_surface_refactor_contract.test_agent_debug_removes_redundant_top_mode_selector_...）；
+    # 组件文件仍保留完整流程图内容，继续保护其信息不被清空。
+    assert "AgentLogicFlowModal" not in debug
     assert "<!-- Modal: Logic Flow SVG -->" not in debug
     assert "visible: boolean" in modal
     assert '"close"' in modal

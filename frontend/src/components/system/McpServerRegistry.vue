@@ -1238,7 +1238,7 @@ onMounted(fetchServers)
             <MagnifyingGlassIcon class="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-gray-400" />
             <input
               v-model="searchQuery"
-              type="text"
+              type="search"
               placeholder="搜索服务或工具..."
               class="h-7 w-full rounded-md border border-gray-200 bg-white pl-7 pr-6 text-[11px] leading-none text-gray-700 shadow-sm transition-all placeholder:text-gray-400 focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200"
             />
