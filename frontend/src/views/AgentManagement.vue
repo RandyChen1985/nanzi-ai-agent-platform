@@ -368,8 +368,45 @@ const statusFilter = ref<"all" | "enabled" | "disabled">("all"); // New
 const typeFilter = ref<"all" | "system" | "custom" | AgentType>("all"); // New
 const userInfo = ref<any>({});
 
+type SegmentTabKey = 'all' | 'ready' | 'unready' | 'GENERAL' | 'CHATBI' | 'KNOWLEDGE_BASE' | 'custom'
+const segmentedFilter = ref<SegmentTabKey>('all')
+
+const segmentTabs = [
+  { key: 'all', label: '全部', countKey: 'all' },
+  { key: 'ready', label: '🚀 已就绪', countKey: 'ready' },
+  { key: 'unready', label: '🛠️ 待完善', countKey: 'unready' },
+  { key: 'GENERAL', label: '🤖 通用助手', countKey: 'general' },
+  { key: 'CHATBI', label: '📊 ChatBI', countKey: 'chatbi' },
+  { key: 'KNOWLEDGE_BASE', label: '📚 知识库', countKey: 'kb' },
+  { key: 'custom', label: '🧩 自定义', countKey: 'custom' },
+] as const
+
+const segmentCounts = computed(() => {
+  const all = agents.value.length
+  const ready = agents.value.filter(a => a.readiness_ready).length
+  const unready = agents.value.filter(a => !a.readiness_ready).length
+  const general = agents.value.filter(a => (a.agent_type || 'GENERAL') === 'GENERAL').length
+  const chatbi = agents.value.filter(a => a.agent_type === 'CHATBI').length
+  const kb = agents.value.filter(a => a.agent_type === 'KNOWLEDGE_BASE').length
+  const custom = agents.value.filter(a => !a.is_system).length
+  return { all, ready, unready, general, chatbi, kb, custom }
+})
+
 const filteredAgents = computed(() => {
   let result = [...agents.value];
+
+  // 0. Filter by Segmented Tab
+  if (segmentedFilter.value !== 'all') {
+    if (segmentedFilter.value === 'ready') {
+      result = result.filter(a => a.readiness_ready);
+    } else if (segmentedFilter.value === 'unready') {
+      result = result.filter(a => !a.readiness_ready);
+    } else if (segmentedFilter.value === 'custom') {
+      result = result.filter(a => !a.is_system);
+    } else {
+      result = result.filter(a => (a.agent_type || 'GENERAL') === segmentedFilter.value);
+    }
+  }
 
   // 1. Filter by keyword
   if (searchKeyword.value) {
@@ -423,7 +460,8 @@ const hasActiveAgentFilters = computed(
   () =>
     !!searchKeyword.value ||
     statusFilter.value !== "all" ||
-    typeFilter.value !== "all",
+    typeFilter.value !== "all" ||
+    segmentedFilter.value !== "all",
 );
 
 const canDragAgents = computed(
@@ -2625,10 +2663,23 @@ const batchSetEnabled = async (enabled: boolean) => {
 const openCardMenuId = ref<string | null>(null)
 const toggleCardMenu = (agentId: string, e?: Event) => {
   e?.stopPropagation()
+  closeReadinessPopover()
   openCardMenuId.value = openCardMenuId.value === agentId ? null : agentId
 }
+
+const activeReadinessPopoverAgentId = ref<string | null>(null)
+const toggleReadinessPopover = (agentId: string, e?: Event) => {
+  e?.stopPropagation()
+  openCardMenuId.value = null
+  activeReadinessPopoverAgentId.value = activeReadinessPopoverAgentId.value === agentId ? null : agentId
+}
+const closeReadinessPopover = () => {
+  activeReadinessPopoverAgentId.value = null
+}
+
 const closeCardMenus = () => {
   openCardMenuId.value = null
+  activeReadinessPopoverAgentId.value = null
   showCreateAgentMenu.value = false
 }
 
@@ -2842,6 +2893,30 @@ const formatSkillCountLabel = (agent: AIAgent) => {
       </div>
     </div>
 
+    <!-- 分段快捷筛选 Tab 栏 (Segmented Filter Tabs) -->
+    <div class="flex items-center gap-1.5 overflow-x-auto pb-1 text-xs scrollbar-none" role="tablist" aria-label="智能体分类筛选">
+      <button
+        v-for="tab in segmentTabs"
+        :key="tab.key"
+        type="button"
+        role="tab"
+        :aria-selected="segmentedFilter === tab.key"
+        @click="segmentedFilter = tab.key"
+        class="shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-medium transition-all cursor-pointer border"
+        :class="segmentedFilter === tab.key
+          ? 'bg-primary text-white border-primary shadow-xs'
+          : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50 hover:text-gray-900'"
+      >
+        <span>{{ tab.label }}</span>
+        <span
+          class="px-1.5 py-0.5 rounded-full text-[10px] tabular-nums font-mono font-normal"
+          :class="segmentedFilter === tab.key ? 'bg-white/20 text-white' : 'bg-gray-100 text-gray-500'"
+        >
+          {{ segmentCounts[tab.countKey] ?? 0 }}
+        </span>
+      </button>
+    </div>
+
     <!-- 智能体 5 步全流程指引横幅 -->
     <AgentFlowGuideBanner
       v-if="showAgentFlowGuide"
@@ -2976,9 +3051,9 @@ const formatSkillCountLabel = (agent: AIAgent) => {
               <img
                 v-if="agent.avatar_url"
                 :src="agent.avatar_url"
-                class="w-full h-full object-cover"
+                class="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
               />
-              <component v-else :is="getAgentIcon(agent)" class="h-6 w-6" :class="getAgentColorTheme(agent).text" aria-hidden="true" />
+              <component v-else :is="getAgentIcon(agent)" class="h-6 w-6 transition-transform duration-300 group-hover:scale-105" :class="getAgentColorTheme(agent).text" aria-hidden="true" />
             </div>
             <div class="min-w-0">
               <div class="flex items-center gap-1.5 min-w-0">
@@ -2998,26 +3073,31 @@ const formatSkillCountLabel = (agent: AIAgent) => {
                   </svg>
                 </span>
               </div>
-              <div class="mt-1.5 flex items-center flex-wrap gap-1.5 text-[11px] text-gray-500">
+              <div class="mt-1.5 flex items-center flex-wrap gap-1 text-[11px] text-gray-500">
                 <span
-                  class="shrink-0 rounded-md border px-2 py-0.5 text-[11px] font-semibold tracking-wide"
+                  class="shrink-0 rounded-md border px-1.5 py-0.5 text-[11px] font-semibold tracking-wide"
                   :class="getAgentTypeBadgeClass(agent)"
                 >{{ getAgentTypeLabel(agent) }}</span>
                 <span
-                  class="shrink-0 px-1.5 py-0.5 rounded text-[10px] font-medium border border-transparent bg-gray-50 text-gray-500"
+                  class="shrink-0 px-1 py-0.5 rounded text-[10px] font-medium border border-transparent bg-gray-50 text-gray-500"
                   :title="`执行引擎：${getEngineShortLabel(agent)}`"
                 >{{ getEngineShortLabel(agent) }}</span>
+                
+                <!-- 就绪度徽章 -->
                 <button
                   type="button"
-                  class="shrink-0 px-1.5 py-0.5 rounded font-medium border text-left"
+                  class="shrink-0 px-1.5 py-0.5 rounded font-medium border text-left flex items-center gap-1 transition-colors"
                   :class="agent.readiness_ready
                     ? 'bg-emerald-50 text-emerald-700 border-emerald-100 cursor-default'
-                    : 'bg-amber-50 text-amber-700 border-amber-100 hover:bg-amber-100'"
+                    : 'bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-100 cursor-pointer shadow-2xs'"
                   :title="agent.readiness_ready
                     ? '已满足运行和委派条件'
-                    : `缺少：${formatReadinessMissing(agent).join('、') || '待完善'}`"
-                  @click.stop="followReadinessGap(agent)"
-                >{{ agent.readiness_ready ? '已就绪' : '尚未就绪' }}</button>
+                    : '点击查看就绪度诊断与检查项'"
+                  @click.stop="agent.readiness_ready ? null : toggleReadinessPopover(agent.id, $event)"
+                >
+                  <span class="w-1.5 h-1.5 rounded-full" :class="agent.readiness_ready ? 'bg-emerald-500' : 'bg-amber-500 animate-pulse'"></span>
+                  <span>{{ agent.readiness_ready ? '已就绪' : '尚未就绪' }}</span>
+                </button>
                 <span
                   v-if="!agent.is_enabled"
                   class="shrink-0 px-1.5 py-0.5 rounded font-medium bg-gray-200/80 text-gray-500 border border-gray-300"
@@ -3055,9 +3135,76 @@ const formatSkillCountLabel = (agent: AIAgent) => {
                 class="w-1.5 h-1.5 rounded-full"
                 :class="agent.is_enabled ? 'bg-green-500' : 'bg-gray-400'"
               ></span>
-              <span>{{ isMainAgent(agent) ? '主助手 · 固定启用' : (agent.is_enabled ? '已启用' : '已禁用') }}</span>
+              <span>{{ isMainAgent(agent) ? '固定启用' : (agent.is_enabled ? '已启用' : '已禁用') }}</span>
             </span>
           </div>
+        </div>
+
+        <!-- 诊断 Checklist Popover (卡片内自适应定位，居中贴合，绝不溢出卡片边界) -->
+        <div
+          v-if="!agent.readiness_ready && activeReadinessPopoverAgentId === agent.id"
+          class="absolute left-3 right-3 top-[80px] rounded-xl border border-amber-200 bg-white/95 backdrop-blur-xs p-3.5 shadow-xl z-30 text-left transition-all"
+          @click.stop
+        >
+          <div class="flex items-center justify-between pb-2 border-b border-amber-100">
+            <div class="flex items-center gap-1.5 text-xs font-bold text-gray-800">
+              <span class="text-amber-500">⚡</span>
+              <span>配置就绪检查</span>
+            </div>
+            <button
+              type="button"
+              class="text-gray-400 hover:text-gray-600 text-xs cursor-pointer p-0.5 rounded hover:bg-gray-100 transition-colors"
+              @click="closeReadinessPopover"
+              title="关闭"
+            >✕</button>
+          </div>
+
+          <div class="py-2.5 space-y-2 text-[11px]">
+            <div class="flex items-center justify-between gap-2 text-gray-700">
+              <div class="flex items-center gap-1.5">
+                <span :class="agent.readiness_missing?.includes('model_missing') ? 'text-amber-500 font-bold' : 'text-emerald-500 font-bold'">
+                  {{ agent.readiness_missing?.includes('model_missing') ? '⚠️' : '✓' }}
+                </span>
+                <span class="font-medium text-gray-900">大模型绑定</span>
+              </div>
+              <span :class="agent.readiness_missing?.includes('model_missing') ? 'text-amber-700 font-medium' : 'text-emerald-600'">
+                {{ agent.readiness_missing?.includes('model_missing') ? '缺少模型配置' : '已就绪' }}
+              </span>
+            </div>
+
+            <div v-if="agent.agent_type === 'KNOWLEDGE_BASE'" class="flex items-center justify-between gap-2 text-gray-700">
+              <div class="flex items-center gap-1.5">
+                <span :class="agent.readiness_missing?.includes('knowledge_base_binding') ? 'text-amber-500 font-bold' : 'text-emerald-500 font-bold'">
+                  {{ agent.readiness_missing?.includes('knowledge_base_binding') ? '⚠️' : '✓' }}
+                </span>
+                <span class="font-medium text-gray-900">知识库挂载</span>
+              </div>
+              <span :class="agent.readiness_missing?.includes('knowledge_base_binding') ? 'text-amber-700 font-medium' : 'text-emerald-600'">
+                {{ agent.readiness_missing?.includes('knowledge_base_binding') ? '未绑定知识库' : '已就绪' }}
+              </span>
+            </div>
+
+            <div class="flex items-center justify-between gap-2 text-gray-700">
+              <div class="flex items-center gap-1.5">
+                <span :class="agent.readiness_missing?.includes('published_version_missing') ? 'text-amber-500 font-bold' : 'text-emerald-500 font-bold'">
+                  {{ agent.readiness_missing?.includes('published_version_missing') ? '⚠️' : '✓' }}
+                </span>
+                <span class="font-medium text-gray-900">版本发布状态</span>
+              </div>
+              <span :class="agent.readiness_missing?.includes('published_version_missing') ? 'text-amber-700 font-medium' : 'text-emerald-600'">
+                {{ agent.readiness_missing?.includes('published_version_missing') ? '尚未发布版本' : '已发布激活' }}
+              </span>
+            </div>
+          </div>
+
+          <button
+            type="button"
+            class="mt-1 w-full flex items-center justify-center gap-1 py-1.5 bg-amber-500 hover:bg-amber-600 active:bg-amber-700 text-white rounded-lg text-xs font-medium transition-colors shadow-xs cursor-pointer"
+            @click="closeReadinessPopover(); followReadinessGap(agent)"
+          >
+            <span>立即去完善配置</span>
+            <span>&rarr;</span>
+          </button>
         </div>
 
         <!-- Description -->
@@ -3141,67 +3288,80 @@ const formatSkillCountLabel = (agent: AIAgent) => {
 
         <!-- Actions Footer -->
         <div
-          class="bg-gray-50 px-4 py-3 border-t border-gray-100 flex items-center justify-end gap-2 group-hover:bg-blue-50/30 transition-colors"
+          class="bg-gray-50 px-4 py-3 border-t border-gray-100 flex items-center justify-between gap-2 group-hover:bg-blue-50/30 transition-colors"
           @click.stop
         >
-          <div class="relative">
-            <button
-              @click="toggleCardMenu(agent.id, $event)"
-              class="p-1.5 rounded-lg text-gray-400 hover:text-gray-700 hover:bg-white border border-transparent hover:border-gray-200 transition-colors"
-              title="更多操作"
-            >
-              <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
-                <path d="M6 10a2 2 0 11-4 0 2 2 0 014 0zm6 0a2 2 0 11-4 0 2 2 0 014 0zm6 0a2 2 0 11-4 0 2 2 0 014 0z" />
-              </svg>
-            </button>
-            <div
-              v-if="openCardMenuId === agent.id"
-              class="absolute right-0 bottom-full mb-1 w-40 bg-white border border-gray-200 rounded-xl shadow-lg py-1 z-30"
-            >
-              <button
-                @click="closeCardMenus(); openPreview(agent)"
-                class="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-50"
-              >
-                预览对话
-              </button>
-              <button
-                v-if="agent.is_editable !== false"
-                v-has-perm="'element:agent:edit'"
-                @click="closeCardMenus(); openAgentModal(agent)"
-                class="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-50"
-              >
-                编辑智能体
-              </button>
-              <button
-                v-if="!isMobile"
-                @click="closeCardMenus(); openHistoryModal(agent)"
-                class="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-50"
-              >
-                历史记录
-              </button>
-              <button
-                v-if="!agent.is_system && !isMainAgent(agent) && agent.is_editable !== false"
-                v-has-perm="'element:agent:delete'"
-                @click="closeCardMenus(); handleDeleteAgent(agent)"
-                class="w-full text-left px-3 py-2 text-sm text-red-600 hover:bg-red-50"
-              >
-                删除
-              </button>
-            </div>
-          </div>
-
+          <!-- 外置快捷预览对话按钮 -->
           <button
             type="button"
-            @click.stop="runPrimaryCardAction(agent)"
-            class="px-3 py-1.5 text-white text-xs font-medium rounded-lg shadow-sm transition-colors flex items-center"
-            :class="{
-              'bg-amber-500 hover:bg-amber-600': getPrimaryCardAction(agent) === 'continue' || (getPrimaryCardAction(agent) === 'configure' && !agent.readiness_ready),
-              'bg-emerald-500 hover:bg-emerald-600': getPrimaryCardAction(agent) === 'enable',
-              'bg-primary hover:bg-primary-dark': getPrimaryCardAction(agent) === 'edit' || (getPrimaryCardAction(agent) === 'configure' && agent.readiness_ready),
-            }"
+            @click.stop="openPreview(agent)"
+            class="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded-lg border border-gray-200 bg-white text-gray-700 shadow-2xs hover:bg-blue-50 hover:text-primary hover:border-blue-200 transition-all cursor-pointer active:scale-95"
+            title="快速预览对话"
           >
-            {{ getPrimaryCardActionLabel(agent) }}
+            <ChatBubbleLeftRightIcon class="w-3.5 h-3.5 text-primary" />
+            <span>预览对话</span>
           </button>
+
+          <div class="flex items-center gap-2">
+            <div class="relative">
+              <button
+                @click="toggleCardMenu(agent.id, $event)"
+                class="p-1.5 rounded-lg text-gray-400 hover:text-gray-700 hover:bg-white border border-transparent hover:border-gray-200 transition-colors cursor-pointer"
+                title="更多操作"
+              >
+                <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                  <path d="M6 10a2 2 0 11-4 0 2 2 0 014 0zm6 0a2 2 0 11-4 0 2 2 0 014 0zm6 0a2 2 0 11-4 0 2 2 0 014 0z" />
+                </svg>
+              </button>
+              <div
+                v-if="openCardMenuId === agent.id"
+                class="absolute right-0 bottom-full mb-1 w-40 bg-white border border-gray-200 rounded-xl shadow-lg py-1 z-30"
+              >
+                <button
+                  @click="closeCardMenus(); openPreview(agent)"
+                  class="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 cursor-pointer"
+                >
+                  预览对话
+                </button>
+                <button
+                  v-if="agent.is_editable !== false"
+                  v-has-perm="'element:agent:edit'"
+                  @click="closeCardMenus(); openAgentModal(agent)"
+                  class="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 cursor-pointer"
+                >
+                  编辑智能体
+                </button>
+                <button
+                  v-if="!isMobile"
+                  @click="closeCardMenus(); openHistoryModal(agent)"
+                  class="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 cursor-pointer"
+                >
+                  历史记录
+                </button>
+                <button
+                  v-if="!agent.is_system && !isMainAgent(agent) && agent.is_editable !== false"
+                  v-has-perm="'element:agent:delete'"
+                  @click="closeCardMenus(); handleDeleteAgent(agent)"
+                  class="w-full text-left px-3 py-2 text-sm text-red-600 hover:bg-red-50 cursor-pointer"
+                >
+                  删除
+                </button>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              @click.stop="runPrimaryCardAction(agent)"
+              class="px-3 py-1.5 text-white text-xs font-medium rounded-lg shadow-sm transition-colors flex items-center cursor-pointer"
+              :class="{
+                'bg-amber-500 hover:bg-amber-600': getPrimaryCardAction(agent) === 'continue' || (getPrimaryCardAction(agent) === 'configure' && !agent.readiness_ready),
+                'bg-emerald-500 hover:bg-emerald-600': getPrimaryCardAction(agent) === 'enable',
+                'bg-primary hover:bg-primary-dark': getPrimaryCardAction(agent) === 'edit' || (getPrimaryCardAction(agent) === 'configure' && agent.readiness_ready),
+              }"
+            >
+              {{ getPrimaryCardActionLabel(agent) }}
+            </button>
+          </div>
         </div>
         </div>
       </template>
@@ -3352,11 +3512,14 @@ const formatSkillCountLabel = (agent: AIAgent) => {
                     >
                       {{ getPrimaryCardActionLabel(agent) }}
                     </button>
-                    <button @click.stop="openPreview(agent)" class="p-1.5 text-gray-400 hover:text-indigo-600 hover:bg-white rounded-md transition-all shadow-sm border border-transparent hover:border-gray-100" title="预览">
-                      <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
-                      </svg>
+                    <button
+                      type="button"
+                      @click.stop="openPreview(agent)"
+                      class="inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded-full px-2.5 py-1 text-xs font-medium text-primary bg-blue-50/80 border border-blue-200 hover:bg-blue-100 transition-colors shadow-2xs cursor-pointer"
+                      title="快速预览对话"
+                    >
+                      <ChatBubbleLeftRightIcon class="w-3.5 h-3.5 text-primary" />
+                      <span>预览</span>
                     </button>
                     <button v-has-perm="'element:agent:edit'" v-if="agent.is_editable !== false" @click.stop="openAgentModal(agent)" class="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-white rounded-md transition-all shadow-sm border border-transparent hover:border-gray-100" title="编辑智能体">
                       <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
