@@ -15,6 +15,8 @@ import ConfirmModal from "../components/ConfirmModal.vue";
 import Toast from "../components/Toast.vue";
 import AgentVersionsDrawer from "../components/agent/AgentVersionsDrawer.vue"; // New Component
 import AgentVersionEditorDrawer from "../components/agent/AgentVersionEditorDrawer.vue";
+import AgentAvatarField from "../components/agent/AgentAvatarField.vue";
+import AgentNameField from "../components/agent/AgentNameField.vue";
 import AgentHistoryModal from "../components/agent/AgentHistoryModal.vue";
 import RagFlowResourceSelector from "../components/RagFlowResourceSelector.vue";
 import ToolRuntimeConfigModal from "../components/agent/ToolRuntimeConfigModal.vue";
@@ -25,13 +27,10 @@ import WeChatWorkConfigModal from "../components/agent/WeChatWorkConfigModal.vue
 import FeishuConfigModal from "../components/agent/FeishuConfigModal.vue";
 import AgentFlowGuideBanner from "../components/agent/AgentFlowGuideBanner.vue";
 import MessageRenderer from "../components/MessageRenderer.vue";
-import AvatarCropperModal from "../components/common/AvatarCropperModal.vue";
-import { AGENT_AVATAR_URL_MAX_LENGTH } from "@/utils/agentAvatar";
-import { PRESET_AGENT_AVATARS } from "@/utils/presetAgentAvatars";
-import { useAgentAvatarUpload } from "@/composables/useAgentAvatarUpload";
 import type { MarkdownTheme } from "@/types/markdownTheme";
 import axios from "@/utils/axios";
 import { createUuid } from "../utils/conversationId";
+import { useAgentNameAvailability } from "@/composables/useAgentNameAvailability";
 import { copyToClipboard } from "../utils/clipboard";
 import { getTemperatureGuidance } from "../utils/temperatureGuidance";
 import {
@@ -203,25 +202,32 @@ const showToast = (
   }, 3000);
 };
 
-// 智能体头像：URL 直填 / 预设快选 / 上传裁剪。上传只回填 agentForm.avatar_url，
-// 由 saveAgent 统一 PUT 持久化（本弹窗是编辑已有智能体元数据的主要入口）。
-const agentAvatarPreview = computed(() => String(agentForm.value.avatar_url || "").trim());
-const agentAvatarFileInput = ref<HTMLInputElement | null>(null);
-const {
-  uploading: agentAvatarUploading,
-  showCropper: showAgentAvatarCropper,
-  cropperSrc: agentAvatarCropperSrc,
-  pickFile: pickAgentAvatarFile,
-  handleFileChange: handleAgentAvatarFileChange,
-  handleCropped: handleAgentAvatarCropped,
-} = useAgentAvatarUpload({
-  getAgentId: () => selectedAgent.value?.id,
-  onUploaded: (url) => {
-    agentForm.value.avatar_url = url;
-  },
-  notify: showToast,
-});
 
+// 物理标识符全局唯一：失焦预检 + 提交前兜底，避免只在提交后才拿到 400
+const {
+  checking: agentNameChecking,
+  message: agentNameMessage,
+  check: checkAgentNameAvailability,
+  ensureAvailable: ensureAgentNameAvailable,
+  reset: resetAgentNameCheckState,
+} = useAgentNameAvailability();
+
+const handleAgentNameCheck = (name: string) => {
+  // 编辑时标识符不可改，无需预检
+  if (isEditingAgent.value) return;
+  void checkAgentNameAvailability(name, { excludeAgentId: selectedAgent.value?.id });
+};
+
+const handleAgentNameReset = () => {
+  resetAgentNameCheckState();
+};
+
+/** 提交前兜底：明确撞名则拦截；无法判定（接口异常）时放行，交由后端权威裁决。 */
+const ensureAgentNameUsable = async (): Promise<string | null> => {
+  if (isEditingAgent.value) return null;
+  const { ok, message } = await ensureAgentNameAvailable(agentForm.value.name);
+  return ok ? null : message || "物理标识符已被占用，请换一个";
+};
 
 const isEditingAgent = ref(false);
 const showCapabilityHelp = ref(false);
@@ -1491,9 +1497,12 @@ const startAgentCreation = () => {
   toolSearchQuery.value = "";
   versionConfigStep.value = "agent";
   showVersionModal.value = true;
+  resetAgentNameCheckState();
 };
 
 const openAgentModal = (agent?: AIAgent) => {
+  // 每次打开都清空上一次的重名结论，避免残留提示误伤当前智能体
+  resetAgentNameCheckState();
   if (agent) {
     isOnboardingFlow.value = false;
     showCapabilityHelp.value = false;
@@ -1610,6 +1619,12 @@ const saveAgent = async (exitAfterSave = false) => {
 
   if (!agentForm.value.name || !agentForm.value.display_name) {
     showToast("请完善智能体标识和名称", "warning");
+    return;
+  }
+
+  const nameConflict = await ensureAgentNameUsable();
+  if (nameConflict) {
+    showToast(nameConflict, "warning");
     return;
   }
   if (agentForm.value.engine_type === 'RAGFLOW' || agentForm.value.engine_type === 'OPENCLAW') {
@@ -1807,6 +1822,7 @@ const continueAgentOnboarding = async (agent: AIAgent) => {
       ? agent.engine_config.dataset_ids.join(",")
       : "";
     onboardingStep.value = agent.onboarding_step === "VERSION" ? "VERSION" : "RESOURCE";
+    resetAgentNameCheckState();
     fetchTools();
     toolSearchQuery.value = "";
     versionConfigStep.value = "model";
@@ -2004,6 +2020,12 @@ const persistNewAgentDraft = async (closeAfterSave: boolean) => {
       versionConfigStep.value = 'agent';
       showToast("请完善智能体标识和显示名称", "warning");
     }
+    return false;
+  }
+  const draftNameConflict = await ensureAgentNameUsable();
+  if (draftNameConflict) {
+    versionConfigStep.value = 'agent';
+    showToast(draftNameConflict, "warning");
     return false;
   }
   if (agentForm.value.engine_type === 'RAGFLOW' && !agentForm.value.engine_config?.app_id) {
@@ -3697,17 +3719,16 @@ const formatSkillCountLabel = (agent: AIAgent) => {
             </label>
           </div>
         <div class="grid grid-cols-1 gap-4 md:grid-cols-[1fr_1fr_8rem]">
-        <div>
-          <label class="block text-sm font-medium text-gray-700 mb-1"
-            >物理标识符 (ID/Name)</label
-          >
-          <input
-            v-model="agentForm.name"
-            :disabled="isEditingAgent"
-            placeholder="e.g. metadata-specialist"
-            class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent outline-none disabled:bg-gray-50 disabled:text-gray-400"
-          />
-        </div>
+        <AgentNameField
+          v-model="agentForm.name"
+          required
+          :disabled="isEditingAgent"
+          :checking="agentNameChecking"
+          :error-message="agentNameMessage"
+          hint="标识符全局唯一，用于路由与日志；保存后不可修改，建议小写英文与连字符。"
+          @check="handleAgentNameCheck"
+          @reset="handleAgentNameReset"
+        />
         <div>
           <label class="block text-sm font-medium text-gray-700 mb-1"
             >显示名称</label
@@ -3735,89 +3756,8 @@ const formatSkillCountLabel = (agent: AIAgent) => {
         </div>
         </div>
 
-        <!-- Agent Avatar：智能体专属头像；未设置则继承全局 AI 形象 -->
-        <div class="rounded-xl border border-gray-200 bg-gray-50/70 p-3">
-          <div class="flex items-center justify-between gap-2">
-            <label class="mb-0 flex items-center gap-1 text-sm font-medium text-gray-700">
-              <span>智能体头像</span>
-              <span
-                class="inline-flex h-4 w-4 cursor-help items-center justify-center rounded-full border border-gray-300 text-[10px] font-semibold text-gray-400"
-                title="仅影响该智能体在对话气泡、智能体列表中的形象；留空则继承管理员配置的全局 AI 形象"
-              >?</span>
-            </label>
-            <button
-              v-if="agentForm.avatar_url"
-              type="button"
-              class="text-[11px] text-blue-500 hover:text-blue-600 hover:underline"
-              @click="agentForm.avatar_url = ''"
-            >
-              继承全局形象
-            </button>
-          </div>
-
-          <div class="mt-3 flex items-center gap-3">
-            <img
-              v-if="agentAvatarPreview"
-              :src="agentAvatarPreview"
-              class="h-12 w-12 shrink-0 rounded-full border border-gray-200 object-cover"
-              alt="智能体头像预览"
-            />
-            <div
-              v-else
-              class="flex h-12 w-12 shrink-0 items-center justify-center rounded-full border border-dashed border-gray-300 text-[10px] text-gray-400"
-            >
-              未设置
-            </div>
-            <div class="min-w-0 flex-1">
-              <div class="flex items-center gap-2">
-                <input
-                  v-model="agentForm.avatar_url"
-                  :maxlength="AGENT_AVATAR_URL_MAX_LENGTH"
-                  placeholder="可选：填写图片 URL，或点右侧上传"
-                  class="w-full min-w-0 rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/30"
-                />
-                <button
-                  type="button"
-                  class="shrink-0 rounded-lg border border-gray-300 bg-white px-3 py-2 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60"
-                  :disabled="agentAvatarUploading"
-                  @click="pickAgentAvatarFile(agentAvatarFileInput)"
-                >
-                  {{ agentAvatarUploading ? '上传中…' : '上传' }}
-                </button>
-              </div>
-              <p class="mt-1 text-[11px] text-gray-400">
-                上传图片会裁剪为 256×256 圆形头像；地址上限 {{ AGENT_AVATAR_URL_MAX_LENGTH }} 字符。
-              </p>
-            </div>
-          </div>
-
-          <!-- 预设快选：与全局头像同一套资源，点一下填入短路径 -->
-          <div class="mt-3 flex flex-wrap items-center gap-2">
-            <button
-              v-for="preset in PRESET_AGENT_AVATARS"
-              :key="preset.id"
-              type="button"
-              :title="preset.isDefault ? '继承全局形象（清空本智能体头像）' : preset.name"
-              class="h-8 w-8 overflow-hidden rounded-full border-2 transition-all hover:scale-110 active:scale-95"
-              :class="
-                (preset.isDefault && !agentForm.avatar_url) || agentForm.avatar_url === preset.url
-                  ? 'border-blue-500 ring-2 ring-blue-500/30'
-                  : 'border-transparent hover:border-gray-300'
-              "
-              @click="agentForm.avatar_url = preset.isDefault ? '' : preset.url"
-            >
-              <img :src="preset.url" class="h-full w-full object-cover" :alt="preset.name" />
-            </button>
-          </div>
-
-          <input
-            ref="agentAvatarFileInput"
-            type="file"
-            accept="image/png,image/jpeg,image/webp,image/gif,image/svg+xml"
-            class="hidden"
-            @change="handleAgentAvatarFileChange"
-          />
-        </div>
+        <!-- Agent Avatar：与新建流程共用同一控件，保证两处外观与能力完全一致 -->
+        <AgentAvatarField v-model="agentForm.avatar_url" :agent-id="selectedAgent?.id" />
 
         <!-- Engine Selection -->
         <div class="rounded-xl border border-gray-200 bg-gray-50/70 p-3">
@@ -4398,6 +4338,8 @@ const formatSkillCountLabel = (agent: AIAgent) => {
 
     <AgentVersionEditorDrawer
       :show="showVersionModal"
+      :agent-name-checking="agentNameChecking"
+      :agent-name-message="agentNameMessage"
       :is-creating-agent="isCreatingAgent"
       :is-onboarding-flow="isOnboardingFlow"
       :agent-form="agentForm"
@@ -4444,6 +4386,8 @@ const formatSkillCountLabel = (agent: AIAgent) => {
       :version-config-incomplete-hint="versionConfigIncompleteHint"
       :knowledge-base-tools-step-issues="knowledgeBaseToolsStepIssues"
       @close="handleVersionEditorClose"
+      @check-agent-name="handleAgentNameCheck"
+      @reset-agent-name-check="handleAgentNameReset"
       @save="saveVersion"
       @publish="publishVersionFromEditor"
       @update:tool-tab="toolTab = $event"
@@ -4623,16 +4567,6 @@ const formatSkillCountLabel = (agent: AIAgent) => {
       :message="toastState.message"
       :type="toastState.type"
       @close="toastState.show = false"
-    />
-
-    <!-- 智能体头像裁剪（与全局头像同一套裁剪组件，仅标题不同） -->
-    <AvatarCropperModal
-      :visible="showAgentAvatarCropper"
-      :image-src="agentAvatarCropperSrc"
-      :loading="agentAvatarUploading"
-      title="裁剪智能体头像"
-      @close="showAgentAvatarCropper = false"
-      @confirm="handleAgentAvatarCropped"
     />
 
     <RagFlowResourceSelector

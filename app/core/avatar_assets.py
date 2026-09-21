@@ -9,6 +9,11 @@
 - `data/branding/avatars/`       全局 AI 头像；上传成功时会清空该目录下的 `agent_avatar*`
 - `data/branding/agent-avatars/` 智能体头像；清理时**只允许**删自己 `{key}_*` 前缀的文件
 
+智能体头像文件分两类前缀，同样不可混用：
+
+- `{agent_id}_*` 已存在智能体的正式头像
+- `pending_*`    新建流程中「尚未产生 agent_id」时先落盘的头像（见 `purge_stale_pending_avatars`）
+
 历史坑：全局头像上传用 `agent_avatar*` 通配清理旧文件。若智能体头像落在同一目录
 或使用同前缀，上传任意一个智能体头像都会连带删除全局头像和其它智能体头像，
 因此这里用独立子目录 + 独立前缀强制隔离。
@@ -38,6 +43,12 @@ BRANDING_AVATARS_URL = "/branding/avatars"
 # 智能体头像目录：必须与全局头像目录分离，见模块头部的历史坑说明。
 AGENT_AVATAR_DIR = os.path.join(BRANDING_ROOT_DIR, "agent-avatars")
 AGENT_AVATAR_URL = "/branding/agent-avatars"
+
+# 「待绑定」头像前缀：新建智能体流程中还没有 agent_id，先以该前缀落盘，
+# 保存成功后 URL 直接写进 avatar_url，无需再搬动文件。
+PENDING_AVATAR_PREFIX = "pending"
+# 待绑定头像的存活时长：新建表单中途放弃会留下孤儿文件，超过该时长即回收。
+PENDING_AVATAR_TTL_SECONDS = 24 * 60 * 60
 
 _UNSAFE_FILENAME_CHARS = re.compile(r"[^A-Za-z0-9_-]")
 
@@ -93,3 +104,69 @@ def save_avatar_file(
         handle.write(data)
 
     return f"{public_prefix.rstrip('/')}/{filename}"
+
+
+def purge_stale_pending_avatars(
+    directory: Optional[str] = None,
+    ttl_seconds: Optional[int] = None,
+) -> int:
+    """回收超期未绑定的「待绑定」头像，返回删除数量。
+
+    只匹配 `pending_*`：**不得**触碰 `{agent_id}_*` 的正式头像，否则会把已保存
+    智能体的头像误删。因此正式保存智能体时必须先调用 `adopt_pending_avatar`
+    把待绑定文件转正，否则这里会把一个正在使用的头像回收掉。
+
+    默认值在**运行时**解析（而非写成默认参数），这样测试或部署侧改动能即时生效。
+    """
+    directory = directory or AGENT_AVATAR_DIR
+    ttl_seconds = PENDING_AVATAR_TTL_SECONDS if ttl_seconds is None else ttl_seconds
+    cutoff = time.time() - ttl_seconds
+    removed = 0
+    for path in glob.glob(os.path.join(directory, f"{PENDING_AVATAR_PREFIX}_*")):
+        try:
+            if os.path.isfile(path) and os.path.getmtime(path) < cutoff:
+                os.remove(path)
+                removed += 1
+        except OSError:
+            pass
+    return removed
+
+
+def adopt_pending_avatar(
+    avatar_url: Optional[str],
+    agent_id: str,
+    directory: Optional[str] = None,
+) -> Optional[str]:
+    """把「待绑定」头像转正为 `{agent_id}_{ts}{ext}`，返回新的 URL。
+
+    新建流程先传头像再建智能体，文件名是 `pending_*`，而 `pending_*` 会被
+    `purge_stale_pending_avatars` 按 TTL 回收。一旦该 URL 被写进
+    `ai_agents.avatar_url`，它就已经是正式引用，必须立刻改名到该智能体自己的
+    前缀下，否则 24 小时后的清理会删掉一个正在使用的头像。
+
+    非待绑定 URL（外部链接、已有正式头像、空值）与源文件缺失时原样返回。
+    """
+    directory = directory or AGENT_AVATAR_DIR
+    url = str(avatar_url or "").strip()
+    if not url:
+        # 保持 None / 空串的「未设置」语义，不要凭空造值。
+        return avatar_url
+
+    public_prefix = f"{AGENT_AVATAR_URL}/"
+    if not url.startswith(public_prefix):
+        return avatar_url
+
+    filename = url[len(public_prefix):]
+    if "/" in filename or not filename.startswith(f"{PENDING_AVATAR_PREFIX}_"):
+        return avatar_url
+
+    source = os.path.join(directory, filename)
+    if not os.path.isfile(source):
+        return avatar_url
+
+    target_name = f"{sanitize_asset_key(agent_id)}_{int(time.time())}{os.path.splitext(filename)[1]}"
+    try:
+        os.replace(source, os.path.join(directory, target_name))
+    except OSError:
+        return avatar_url
+    return f"{AGENT_AVATAR_URL}/{target_name}"

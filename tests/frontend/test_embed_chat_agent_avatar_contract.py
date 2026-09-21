@@ -182,71 +182,144 @@ def test_agent_selection_lists_share_the_same_avatar_resolver():
         assert "agent.avatar_url" not in source and "row.agent.avatar_url" not in source
 
 
-def test_agent_editor_supports_avatar_upload_without_implicit_save():
-    """编辑器可上传并裁剪智能体头像，但只回填表单字段，绝不代替用户保存。"""
-    editor = (ROOT / "frontend/src/components/agent/AgentVersionEditorDrawer.vue").read_text(encoding="utf-8")
+def test_agent_avatar_field_is_shared_by_create_and_edit_flows():
+    """新建与编辑必须共用同一个头像控件：外观与能力完全一致。
 
-    # ① 上传入口 + 复用全局头像同一套裁剪组件
-    assert "pickAgentAvatarFile" in editor
-    assert "AvatarCropperModal" in editor
-    assert 'title="裁剪智能体头像"' in editor
-
-    # ② 只能上传已存在的智能体（新建时还没有 id）
-    assert "!isCreatingAgent && selectedAgent?.id" in editor
-
-    # ③ 上传只回填表单，由既有保存流程持久化；不得在此处直接 PUT 智能体
-    assert "props.agentForm.avatar_url = url" in editor
-    assert "axios.put(" not in editor
-
-    # ④ 输入框受 DB 字段上限保护，避免 MySQL 1406
-    assert ':maxlength="AGENT_AVATAR_URL_MAX_LENGTH"' in editor
-    assert "AGENT_AVATAR_URL_MAX_LENGTH" in editor
-
-
-def test_agent_avatar_is_configurable_from_the_reachable_edit_modal():
-    """头像入口必须落在用户真正能打开的「编辑智能体」弹窗里。
-
-    回归背景：最初只把上传入口加在 `AgentVersionEditorDrawer` 的「智能体信息」步骤，
-    而该步骤仅在新建时出现（`versionConfigSteps` 只在 isCreatingAgent 时带 agent 步骤），
-    编辑已有智能体时根本看不到，用户反馈「没看到地方设置」。
+    回归背景：新建流程「智能体信息」步骤最初只有一个 URL 输入框（无上传、无预设），
+    而编辑弹窗有完整控件，用户反馈「新建的时候怎么只有一个输入框」。
     """
+    field = (ROOT / "frontend/src/components/agent/AgentAvatarField.vue").read_text(encoding="utf-8")
+
+    # ① 控件内含完整能力：预览 / URL 输入 / 上传 / 继承全局形象
+    assert "智能体头像" in field
+    assert "agentAvatarPreview" not in field  # 预览已内联为 computed
+    assert "未设置" in field
+    assert 'placeholder="可选：填写图片 URL，或点右侧上传"' in field
+    assert "继承全局形象" in field
+
+    # ② 预设快选：点「官方默认」= 清空（继承全局），与全局头像同一套资源
+    assert "PRESET_AGENT_AVATARS" in field
+    assert "avatarUrl = preset.isDefault ? '' : preset.url" in field
+
+    # ③ 输入框对齐 DB 字段上限，避免 MySQL 1406
+    assert ':maxlength="AGENT_AVATAR_URL_MAX_LENGTH"' in field
+
+    # ④ 上传/裁剪只回填 v-model，绝不代替用户保存
+    assert "onUploaded: (url) => {" in field
+    assert "avatarUrl.value = url;" in field
+    assert "axios.put(" not in field
+    assert 'title="裁剪智能体头像"' in field
+
+    # ⑤ 两处调用方都使用该组件，且上传按钮**不再**按 isCreatingAgent 条件隐藏
     mgmt = (ROOT / "frontend/src/views/AgentManagement.vue").read_text(encoding="utf-8")
+    drawer = (ROOT / "frontend/src/components/agent/AgentVersionEditorDrawer.vue").read_text(encoding="utf-8")
+    for source in (mgmt, drawer):
+        assert "<AgentAvatarField" in source
+        assert "v-model=\"agentForm.avatar_url\"" in source
+        assert ":agent-id=\"selectedAgent?.id\"" in source
+        # 上传细节只应存在于控件/组合式里
+        assert "v-if=\"!isCreatingAgent && selectedAgent?.id\"" not in source
+        assert "/avatar/upload" not in source
 
-    # ① 弹窗里有完整的头像控件：预览 / URL 输入 / 上传 / 继承全局
-    assert "智能体头像" in mgmt
-    assert 'v-model="agentForm.avatar_url"' in mgmt
-    assert "agentAvatarPreview" in mgmt
-    assert "继承全局形象" in mgmt
-    assert "pickAgentAvatarFile(agentAvatarFileInput)" in mgmt
 
-    # ② 预设快选复用同一套资源，点「官方默认」等于清空（继承全局）
-    assert "PRESET_AGENT_AVATARS" in mgmt
-    assert "agentForm.avatar_url = preset.isDefault ? '' : preset.url" in mgmt
+def test_create_agent_info_step_matches_the_edit_modal_layout():
+    """新建步骤的排版与编辑弹窗一致：标识符/显示名称/排序权重 同行，头像独占一行。"""
+    drawer = (ROOT / "frontend/src/components/agent/AgentVersionEditorDrawer.vue").read_text(encoding="utf-8")
+    mgmt = (ROOT / "frontend/src/views/AgentManagement.vue").read_text(encoding="utf-8")
+    field = (ROOT / "frontend/src/components/agent/AgentAvatarField.vue").read_text(encoding="utf-8")
 
-    # ③ 长度受 DB 字段限制；裁剪弹窗已挂载
-    assert ':maxlength="AGENT_AVATAR_URL_MAX_LENGTH"' in mgmt
-    assert "AvatarCropperModal" in mgmt
+    # ① 排序权重与标识符/显示名称同处一行（编辑弹窗的三列栅格）
+    assert "md:grid-cols-[1fr_1fr_8rem]" in mgmt
+    assert "md:grid-cols-[1fr_1fr_8rem]" in drawer
+    assert 'v-model.number="agentForm.sort_order"' in drawer
+    assert "排序权重" in drawer
+    # 排序权重带用途说明（仅影响选择列表顺序）
+    assert "仅影响聊天页面的智能体选择列表顺序，值越大越靠前" in drawer
 
-    # ④ 「智能体信息」步骤确实只在新建时出现（这正是当初入口不可达的原因）
+    # ② 头像不再是半行，而是独占一行的独立区块
+    assert drawer.index("<AgentAvatarField") > drawer.index("排序权重")
+    assert "grid grid-cols-1 gap-4 sm:grid-cols-2" in drawer  # 仍保留其它成对字段的行
+    assert "rounded-xl border border-gray-200 bg-gray-50/70 p-3" in field
+
+    # ③ 「智能体信息」步骤确实只在新建时出现（这正是当初入口不可达的原因）
     assert "isCreatingAgent.value ? [{ id: 'agent' as const" in mgmt
 
 
-def test_agent_avatar_upload_flow_is_shared_not_copied():
-    """上传/裁剪流程收敛在组合式里：三处调用方不得各自复制一份上传实现。"""
+def test_new_agent_avatar_uploads_before_the_agent_exists():
+    """新建流程尚无 agent_id，上传必须走待绑定接口，而不是要求先保存。"""
     composable = (ROOT / "frontend/src/composables/useAgentAvatarUpload.ts").read_text(encoding="utf-8")
 
+    # ① 有 id 走按智能体隔离的上传；无 id 走待绑定上传
+    assert "const endpoint = agentId" in composable
+    assert "`/api/portal/agents/${encodeURIComponent(agentId)}/avatar/upload`" in composable
+    assert '"/api/portal/agents/avatar/upload"' in composable
+    # ② 不得再以「请先保存」为由拒绝上传
+    assert "请先保存智能体" not in composable
+
+
+def test_agent_avatar_upload_flow_is_shared_not_copied():
+    """上传/裁剪流程只允许存在于「组合式 + 控件」里，页面不得各自复制一份。"""
+    composable = (ROOT / "frontend/src/composables/useAgentAvatarUpload.ts").read_text(encoding="utf-8")
+    field = (ROOT / "frontend/src/components/agent/AgentAvatarField.vue").read_text(encoding="utf-8")
+
+    # ① 组合式承载上传本身
     assert "export function useAgentAvatarUpload" in composable
     assert "/avatar/upload" in composable
     assert "showCropper" in composable
     assert "MAX_SELECT_BYTES" in composable
 
+    # ② 控件承载 UI 并复用组合式
+    assert "useAgentAvatarUpload" in field
+    assert "AvatarCropperModal" in field
+
+    # ③ 两个页面只引控件，不再各自持有上传实现
     for rel in (
         "frontend/src/views/AgentManagement.vue",
         "frontend/src/components/agent/AgentVersionEditorDrawer.vue",
     ):
         source = (ROOT / rel).read_text(encoding="utf-8")
-        assert "useAgentAvatarUpload" in source, rel
-        # 上传细节只应存在于组合式里，调用方不得再自己发这个请求
+        assert "AgentAvatarField" in source, rel
+        assert "useAgentAvatarUpload" not in source, rel
         assert "/avatar/upload" not in source, rel
+        assert "AvatarCropperModal" not in source, rel
 
 
+def test_agent_name_is_prechecked_for_duplicates_before_submit():
+    """物理标识符必须在输入期就检查重名，而不是提交后只拿到一条 400。
+
+    回归背景：用户在「新建智能体」时撞名，只看到后端返回的 400（原文还是英文
+    `Agent with ID/Name 'x' already exists.`），在填写阶段毫无提示。
+    """
+    composable = (ROOT / "frontend/src/composables/useAgentNameAvailability.ts").read_text(encoding="utf-8")
+    field = (ROOT / "frontend/src/components/agent/AgentNameField.vue").read_text(encoding="utf-8")
+    mgmt = (ROOT / "frontend/src/views/AgentManagement.vue").read_text(encoding="utf-8")
+    drawer = (ROOT / "frontend/src/components/agent/AgentVersionEditorDrawer.vue").read_text(encoding="utf-8")
+
+    # ① 预检走服务端统一判定，不在前端自行臆断
+    assert 'export function useAgentNameAvailability' in composable
+    assert '"/api/portal/agents/name-availability"' in composable
+    assert "exclude_agent_id" in composable
+    # 乱序响应保护：旧请求不得覆盖新结论
+    assert "requestSeq" in composable
+    # 预检接口异常时不阻塞提交，交由后端权威裁决
+    assert "available.value = null" in composable
+
+    # ② 字段承载内联反馈（红框 + 原因 + 检查中状态）
+    assert "物理标识符" in field
+    assert "errorMessage" in field
+    assert "正在检查标识符是否可用" in field
+    assert "@blur=\"onBlur\"" in field
+    assert "emit('check'" in field
+
+    # ③ 两个创建界面都用同一控件
+    for source in (mgmt, drawer):
+        assert "AgentNameField" in source
+        assert "<AgentNameField" in source
+
+    # ④ 提交前兜底：两条创建路径都要拦截（弹窗 saveAgent + 抽屉/引导 persistNewAgentDraft）
+    assert "ensureAgentNameUsable" in mgmt
+    assert mgmt.count("await ensureAgentNameUsable()") == 2
+    assert "physicalName" not in mgmt  # 防止误用未定义变量
+
+    # ⑤ 打开界面时清空上一次结论，避免残留红字
+    assert mgmt.count("resetAgentNameCheckState();") >= 3

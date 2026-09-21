@@ -7,6 +7,9 @@
  *
  * 注意：上传成功只把 URL 交给调用方回填表单，**不直接写库**——智能体编辑是
  * 「表单 + 保存」语义，上传即写库会让「不保存也生效」。
+ *
+ * 两种落点：已有智能体走 `POST /agents/{id}/avatar/upload`（只清自己的旧文件）；
+ * 新建流程尚无 id，走 `POST /agents/avatar/upload` 以待绑定前缀落盘。
  */
 import { ref } from "vue";
 import axios from "@/utils/axios";
@@ -18,8 +21,11 @@ const CROPPABLE_TYPES = ["image/png", "image/jpeg", "image/jpg", "image/webp", "
 type Notify = (message: string, type?: "success" | "error" | "warning" | "info") => void;
 
 export interface UseAgentAvatarUploadOptions {
-  /** 当前智能体 ID；为空（尚未保存）时拒绝上传。 */
-  getAgentId: () => string | undefined;
+  /**
+   * 当前智能体 ID；返回空表示「新建流程尚未保存」，此时走待绑定上传接口
+   * （`POST /avatar/upload`，文件以 `pending_` 前缀落盘，保存时 URL 直接写库）。
+   */
+  getAgentId?: () => string | undefined;
   /** 上传成功后的回调：把短路径写回表单字段即可。 */
   onUploaded: (avatarUrl: string) => void;
   /** 提示函数；默认走全局 useToast。 */
@@ -42,28 +48,22 @@ export function useAgentAvatarUpload(options: UseAgentAvatarUploadOptions) {
    * 中使用该变量，这里就以参数形式接收。
    */
   const pickFile = (input?: HTMLInputElement | null) => {
-    if (!options.getAgentId()) {
-      notify("请先保存智能体，再上传头像", "warning");
-      return;
-    }
     input?.click();
   };
 
   const uploadBlob = async (blob: Blob, filename = "agent-avatar.png") => {
-    const agentId = options.getAgentId();
-    if (!agentId) {
-      notify("请先保存智能体，再上传头像", "warning");
-      return;
-    }
+    const agentId = options.getAgentId?.();
+    // 新建流程还没有 agent_id：走待绑定上传，保存时 URL 直接写进 avatar_url。
+    const endpoint = agentId
+      ? `/api/portal/agents/${encodeURIComponent(agentId)}/avatar/upload`
+      : "/api/portal/agents/avatar/upload";
     uploading.value = true;
     try {
       const formData = new FormData();
       formData.append("file", new File([blob], filename, { type: blob.type || "image/png" }));
-      const res = await axios.post(
-        `/api/portal/agents/${encodeURIComponent(agentId)}/avatar/upload`,
-        formData,
-        { headers: { "Content-Type": "multipart/form-data" } },
-      );
+      const res = await axios.post(endpoint, formData, {
+        headers: { "Content-Type": "multipart/form-data" },
+      });
       const uploadedUrl = res.data?.data?.avatar_url;
       if (!uploadedUrl) {
         notify("上传头像失败，返回数据异常", "error");

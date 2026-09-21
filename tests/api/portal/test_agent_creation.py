@@ -37,4 +37,6 @@ async def test_create_duplicate_agent(client: AsyncClient, admin_api_key: str):
     assert response_dup.status_code == 400
     data = response_dup.json()
     assert "message" in data
-    assert "already exists" in data["message"]
+    # 文案已改为中文并指明字段：撞名发生在「物理标识符」上，英文原文对用户不可操作
+    assert "物理标识符" in data["message"]
+    assert unique_name in data["message"]

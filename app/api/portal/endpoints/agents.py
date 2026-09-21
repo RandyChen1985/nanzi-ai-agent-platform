@@ -1,10 +1,12 @@
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
-from typing import List
+from typing import List, Optional
 from app.core.avatar_assets import (
     AGENT_AVATAR_DIR,
     AGENT_AVATAR_URL,
     MAX_AVATAR_BYTES,
+    PENDING_AVATAR_PREFIX,
+    purge_stale_pending_avatars,
     resolve_avatar_extension,
     sanitize_asset_key,
     save_avatar_file,
@@ -96,6 +98,70 @@ async def get_agent_toolcall_timeout(
     return {"seconds": int(timeout_seconds)}
 
 
+# 与 `ai_agents.name` 的 String(100) 对齐：预检就拦住超长名称，避免落库报错
+AGENT_NAME_MAX_LENGTH = 100
+
+
+def _name_availability_payload(
+    name: str, available: bool, reason: Optional[str], message: Optional[str]
+) -> Dict[str, Any]:
+    return {
+        "code": 0,
+        "data": {
+            "name": name,
+            "available": available,
+            "reason": reason,
+            "message": message,
+        },
+    }
+
+
+@router.get(
+    "/name-availability",
+    dependencies=[Depends(require_permission("menu", "menu:agent_management"))],
+    summary="预检智能体物理标识符是否可用（创建/改名前调用）",
+)
+async def check_agent_name_availability(
+    name: str = "",
+    exclude_agent_id: Optional[str] = None,
+    session: AsyncSession = Depends(get_db_session),
+    user: Dict[str, Any] = Depends(get_current_user),
+):
+    """物理标识符在 `ai_agents.name` 上全局唯一，撞名时创建接口返回 400。
+
+    这里提供轻量预检，让前端在输入时就能提示「已被占用」，而不是提交后才失败。
+    判定与创建路径共用 `find_agent_name_conflict`，不会出现两套口径。
+
+    权限用页面级 `menu:agent_management`（而非创建的 element 权限）：这是只读检查，
+    可见信息不多于 `GET /agents` 列表，且改自己名字的用户同样需要它。
+    """
+    normalized = AgentManagerService.normalize_agent_name(name)
+    if not normalized:
+        return _name_availability_payload(normalized, False, "empty", "物理标识符不能为空")
+    if len(normalized) > AGENT_NAME_MAX_LENGTH:
+        return _name_availability_payload(
+            normalized,
+            False,
+            "too_long",
+            f"物理标识符最多 {AGENT_NAME_MAX_LENGTH} 个字符",
+        )
+
+    conflict = await AgentManagerService.find_agent_name_conflict(
+        session, normalized, exclude_agent_id=exclude_agent_id
+    )
+    if conflict:
+        is_admin, username = AgentManagerService._resolve_actor(user)
+        owned = bool(username) and conflict.created_by == username
+        detail = (
+            "该标识符已被你自己创建的智能体占用，可在列表中直接继续配置"
+            if owned
+            else "该标识符已被占用（全局唯一，可能由其他成员创建），请换一个"
+        )
+        return _name_availability_payload(normalized, False, "taken", detail)
+
+    return _name_availability_payload(normalized, True, None, None)
+
+
 @router.post("/reorder")
 async def reorder_agents(
     data: AIAgentReorderRequest,
@@ -155,6 +221,45 @@ async def update_agent(
     if not agent:
         raise HTTPException(status_code=403, detail="Forbidden: You can only edit your own agents")
     return agent
+
+
+@router.post(
+    "/avatar/upload",
+    dependencies=[Depends(require_permission("element", "element:agent:create"))],
+    summary="上传待绑定智能体头像（新建流程尚无 agent_id 时使用）",
+)
+async def upload_pending_agent_avatar(file: UploadFile = File(...)):
+    """新建智能体时先上传头像：此时还没有 agent_id，无法走按智能体隔离的清理。
+
+    文件以 `pending_` 前缀落盘，保存时 URL 直接写进 `avatar_url`，因此不需要搬动文件。
+    放弃创建会留下孤儿文件，故每次上传顺带回收超过 24h 的 `pending_*`。
+    """
+    ext = resolve_avatar_extension(file.content_type, file.filename)
+    if not ext:
+        raise HTTPException(
+            status_code=400, detail="仅支持 PNG、JPEG、WebP、SVG、GIF 格式图片"
+        )
+
+    data = await file.read()
+    if len(data) > MAX_AVATAR_BYTES:
+        raise HTTPException(status_code=400, detail="头像图片不能超过 2MB")
+
+    purge_stale_pending_avatars(AGENT_AVATAR_DIR)
+    avatar_url = save_avatar_file(
+        data,
+        ext,
+        directory=AGENT_AVATAR_DIR,
+        public_prefix=AGENT_AVATAR_URL,
+        prefix=PENDING_AVATAR_PREFIX,
+        # 刻意不做通配清理：pending 文件彼此无主，删不掉「自己上一张」，
+        # 只能靠 TTL 回收，绝不能碰 {agent_id}_* 的正式头像。
+        cleanup_glob=None,
+    )
+    return {
+        "code": 0,
+        "data": {"avatar_url": avatar_url},
+        "message": "智能体头像上传成功",
+    }
 
 
 @router.post(

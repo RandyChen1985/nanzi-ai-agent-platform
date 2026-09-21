@@ -234,3 +234,147 @@ def test_can_edit_agent_meta_matches_endpoint_permission_rules():
         AgentManagerService.can_edit_agent_meta(_agent(is_system=True), {"user_name": "root", "role": "admin"})
         is True
     )
+
+
+# ---------------------------------------------------------------------------
+# 新建流程的「待绑定」上传：此时还没有 agent_id
+# ---------------------------------------------------------------------------
+@pytest.mark.asyncio
+async def test_pending_upload_uses_pending_prefix_and_public_url():
+    """新建智能体时先上传：以 pending_ 前缀落盘，URL 仍指向 /branding/agent-avatars。"""
+    result = await agents_endpoint.upload_pending_agent_avatar(file=_upload())
+
+    avatar_url = result["data"]["avatar_url"]
+    assert avatar_url.startswith(f"{avatar_assets.AGENT_AVATAR_URL}/")
+    filename = avatar_url.rsplit("/", 1)[-1]
+    assert filename.startswith(f"{avatar_assets.PENDING_AVATAR_PREFIX}_")
+    assert filename.endswith(".png")
+
+
+@pytest.mark.asyncio
+async def test_pending_upload_never_touches_existing_agent_avatars(_isolated_branding_dirs):
+    """待绑定上传不得删除任何正式头像（pending 文件彼此无主，只能靠 TTL 回收）。"""
+    agent_dir = _isolated_branding_dirs
+    agent_dir.mkdir(parents=True, exist_ok=True)
+    official = agent_dir / "agent-1_1700000000.png"
+    other_pending = agent_dir / "pending_1700000000.png"
+    official.write_bytes(b"official")
+    other_pending.write_bytes(b"pending")
+
+    await agents_endpoint.upload_pending_agent_avatar(file=_upload())
+
+    assert official.read_bytes() == b"official"
+    assert other_pending.read_bytes() == b"pending"
+
+
+@pytest.mark.asyncio
+async def test_pending_upload_rejects_unsupported_type_and_oversize():
+    with pytest.raises(HTTPException) as type_error:
+        await agents_endpoint.upload_pending_agent_avatar(
+            file=_upload(filename="a.txt", content_type="text/plain")
+        )
+    assert type_error.value.status_code == 400
+
+    with pytest.raises(HTTPException) as size_error:
+        await agents_endpoint.upload_pending_agent_avatar(
+            file=_upload(content=b"x" * (avatar_assets.MAX_AVATAR_BYTES + 1))
+        )
+    assert size_error.value.status_code == 400
+
+
+def test_purge_stale_pending_avatars_only_removes_expired_pending_files(_isolated_branding_dirs):
+    """TTL 回收只碰过期的 pending_*：正式头像与新鲜待绑定文件都必须留下。"""
+    import os
+    import time
+
+    agent_dir = _isolated_branding_dirs
+    agent_dir.mkdir(parents=True, exist_ok=True)
+    stale_pending = agent_dir / "pending_stale.png"
+    fresh_pending = agent_dir / "pending_fresh.png"
+    official = agent_dir / "agent-9_1700000000.png"
+    for path in (stale_pending, fresh_pending, official):
+        path.write_bytes(b"x")
+
+    old = time.time() - avatar_assets.PENDING_AVATAR_TTL_SECONDS - 60
+    os.utime(stale_pending, (old, old))
+    os.utime(official, (old, old))
+
+    removed = avatar_assets.purge_stale_pending_avatars(str(agent_dir))
+
+    assert removed == 1
+    assert not stale_pending.exists()
+    assert fresh_pending.exists()
+    assert official.exists()
+
+
+# ---------------------------------------------------------------------------
+# 保存智能体时的「待绑定 → 正式」转正
+# ---------------------------------------------------------------------------
+@pytest.fixture
+def _isolated_avatar_assets_dir(monkeypatch, tmp_path):
+    """转正逻辑走 avatar_assets 的默认目录，这里同样隔离到临时目录。"""
+    agent_dir = tmp_path / "assets_agent_avatars"
+    agent_dir.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(avatar_assets, "AGENT_AVATAR_DIR", str(agent_dir))
+    return agent_dir
+
+
+def test_adopt_pending_avatar_renames_to_agent_prefix(_isolated_avatar_assets_dir):
+    agent_dir = _isolated_avatar_assets_dir
+    pending = agent_dir / "pending_1700000000.png"
+    pending.write_bytes(b"image")
+
+    url = avatar_assets.adopt_pending_avatar(
+        f"{avatar_assets.AGENT_AVATAR_URL}/{pending.name}", "agent-42"
+    )
+
+    assert url is not None
+    filename = url.rsplit("/", 1)[-1]
+    # 前缀与按 id 上传共用 sanitize_asset_key，因此后续按 id 上传仍能清理掉它
+    assert filename.startswith(f"{avatar_assets.sanitize_asset_key('agent-42')}_")
+    assert filename.endswith(".png")
+    assert (agent_dir / filename).read_bytes() == b"image"
+    assert not pending.exists()
+
+
+def test_adopt_pending_avatar_keeps_referenced_file_safe_from_ttl_purge(_isolated_avatar_assets_dir):
+    """转正后的头像即使 mtime 很旧，也不得被 TTL 回收（本轮修掉的真实缺陷）。"""
+    import os
+    import time
+
+    agent_dir = _isolated_avatar_assets_dir
+    pending = agent_dir / "pending_1700000000.png"
+    pending.write_bytes(b"image")
+    old = time.time() - avatar_assets.PENDING_AVATAR_TTL_SECONDS - 60
+    os.utime(pending, (old, old))
+
+    url = avatar_assets.adopt_pending_avatar(
+        f"{avatar_assets.AGENT_AVATAR_URL}/{pending.name}", "agent-7"
+    )
+
+    assert avatar_assets.purge_stale_pending_avatars(str(agent_dir)) == 0
+    assert (agent_dir / url.rsplit("/", 1)[-1]).exists()
+
+
+def test_adopt_pending_avatar_leaves_other_urls_untouched(_isolated_avatar_assets_dir):
+    agent_dir = _isolated_avatar_assets_dir
+    formal = agent_dir / "agent-1_1700000000.png"
+    formal.write_bytes(b"formal")
+
+    # 已是正式头像：不动
+    assert (
+        avatar_assets.adopt_pending_avatar(f"/branding/agent-avatars/{formal.name}", "agent-1")
+        == f"/branding/agent-avatars/{formal.name}"
+    )
+    # 外部链接：不动
+    assert (
+        avatar_assets.adopt_pending_avatar("https://cdn.example.com/a.png", "agent-1")
+        == "https://cdn.example.com/a.png"
+    )
+    # 空值语义保持（更新接口用 None/空串表示清空头像）
+    assert avatar_assets.adopt_pending_avatar(None, "agent-1") is None
+    assert avatar_assets.adopt_pending_avatar("", "agent-1") == ""
+    # 待绑定文件已不存在：原样返回，不抛异常
+    missing = f"{avatar_assets.AGENT_AVATAR_URL}/pending_missing.png"
+    assert avatar_assets.adopt_pending_avatar(missing, "agent-1") == missing
+    assert formal.exists()
