@@ -698,9 +698,10 @@
               title="点击配置主题"
             >
               <img
-                :src="agentAvatarUrl"
+                :src="config.agentAvatar || agentAvatarUrl"
                 class="w-full h-full object-cover"
                 alt="NanZi AI agent"
+                @error="handleAgentAvatarError"
               />
             </div>
             <!-- Tiny indicator dot to pulse when NOT hovered -->
@@ -1738,6 +1739,7 @@
       :config="config"
       :allowed-agents="allowedAgents"
       :routing-locked="isRoutingSettingsLocked"
+      :is-admin="currentUser?.role === 'admin'"
       @set-theme="setTheme"
       @set-color="setColor"
       @mode-change="onModeChange"
@@ -2246,6 +2248,13 @@ import {
 
 import { useBranding } from "@/composables/useBranding";
 import agentAvatarUrl from "@/assets/nanzi-agent-avatar.svg";
+
+const handleAgentAvatarError = (event: Event) => {
+  const target = event.target as HTMLImageElement | null;
+  if (target && target.src !== agentAvatarUrl) {
+    target.src = agentAvatarUrl;
+  }
+};
 
 const toast = useToast();
 const router = useRouter();
@@ -3287,6 +3296,7 @@ const config = reactive({
   approvalMode: "ask" as "ask" | "allow" | "deny",
   overrideAgentId: "", // To override agent via @mention
   userAvatar: "", // Custom user avatar URL
+  agentAvatar: localStorage.getItem("yovole_embed_agent_avatar") || "", // Custom AI agent avatar URL
   routingMode: "auto", // 'auto' | 'expert'
   expertAgentId: "",
   enableMultiAgent: true,
@@ -3684,6 +3694,7 @@ const saveRoutingSettings = () => {
     localStorage.setItem("yovole_grounding_block_mode", config.groundingBlockMode || "strict_buffer");
     localStorage.setItem("yovole_markdown_theme", config.markdownTheme || "default");
     localStorage.setItem("yovole_hide_message_border", config.hideMessageBorder ? "1" : "0");
+    localStorage.setItem("yovole_embed_agent_avatar", config.agentAvatar || "");
 };
 const saveRoutingPreference = async (mode: "auto" | "expert", agentId = "") => {
     if (isRoutingSettingsLocked.value) return;
@@ -4620,6 +4631,13 @@ const fetchUserPortalPreferences = async () => {
             localStorage.setItem("user_has_custom_theme", "true");
         } else {
             localStorage.removeItem("user_has_custom_theme");
+        }
+        if (prefs.agent_avatar) {
+            config.agentAvatar = prefs.agent_avatar;
+            localStorage.setItem("yovole_embed_agent_avatar", prefs.agent_avatar);
+        } else if (prefs.agent_avatar === "") {
+            config.agentAvatar = "";
+            localStorage.removeItem("yovole_embed_agent_avatar");
         }
         const routingMode: RoutingMode = prefs.routing_mode === "expert" ? "expert" : "auto";
         savedRoutingPreference.value = {
@@ -6260,6 +6278,7 @@ const applyInitConfigPayload = (data: Record<string, any>) => {
   if (data.theme) applyTheme(data.theme, data.styleVars);
   if (data.welcome_message_override) config.welcomeMessage = data.welcome_message_override;
   if (data.user_avatar) config.userAvatar = data.user_avatar;
+  if (data.agent_avatar) config.agentAvatar = data.agent_avatar;
   if (data.business_context) mergeBusinessContext(data.business_context);
   if (data.page_info) {
     mergeBusinessContext(data.page_info);
@@ -9005,6 +9024,10 @@ onMounted(() => {
   const savedHideMessageBorder = localStorage.getItem("yovole_hide_message_border");
   if (savedHideMessageBorder !== null) {
     config.hideMessageBorder = savedHideMessageBorder === "1";
+  }
+  const savedAgentAvatar = localStorage.getItem("yovole_embed_agent_avatar");
+  if (savedAgentAvatar) {
+    config.agentAvatar = savedAgentAvatar;
   }
   const query = new URLSearchParams(window.location.search);
   const queryInstanceId = normalizeEmbedInstanceId(query.get("instance_id"));

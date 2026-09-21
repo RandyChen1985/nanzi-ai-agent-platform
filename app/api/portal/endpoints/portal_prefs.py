@@ -7,9 +7,11 @@ Value: JSON 字符串，结构为 { "pinned_group_ids": ["id1", "id2"] }
 """
 import json
 import logging
+import os
+import time
 from typing import Any, Dict, List, Literal, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from pydantic import BaseModel, Field
 
@@ -25,6 +27,18 @@ router = APIRouter()
 MAX_PINNED_GROUPS = 50  # 最多允许置顶的卡片数，防止滥用
 MAX_CARD_ORDER = 200   # 最多记录排序的卡片数
 MAX_QUESTION_CLICKS = 500  # 最多记录的问题点击 key 数
+MAX_AVATAR_BYTES = 2 * 1024 * 1024  # AI 头像上传限制 2MB
+BRANDING_AVATARS_DIR = "data/branding/avatars"
+GLOBAL_AGENT_AVATAR_KEY = "agent:branding:default_agent_avatar"
+
+ALLOWED_AVATAR_TYPES = {
+    "image/png": ".png",
+    "image/jpeg": ".jpg",
+    "image/jpg": ".jpg",
+    "image/webp": ".webp",
+    "image/svg+xml": ".svg",
+    "image/gif": ".gif",
+}
 
 
 def _redis_key(user_id: int) -> str:
@@ -38,6 +52,7 @@ class PortalPrefs(BaseModel):
     question_clicks: Dict[str, int] = Field(default_factory=dict, description="本地问题点击次数备份（query → count），用于跨 session 保留常问数据")
     pinned_kb_dataset_ids: List[str] = Field(default_factory=list, description="已置顶的知识库数据集 ID 列表")
     markdown_theme: str = Field(default="", description="用户自定义的 AI 消息排版样式偏好")
+    agent_avatar: str = Field(default="", description="用户自定义的 Embed AI 助手头像 (公共静态 URL 或网络 URL)")
     routing_mode: Literal["auto", "expert"] = Field(default="auto", description="Embed 路由模式")
     expert_agent_id: str = Field(default="", description="Embed 默认智能体 ID")
     routing_configured: bool = Field(default=False, description="用户是否明确设置过 Embed 路由模式")
@@ -50,6 +65,7 @@ class PortalPrefsUpdate(BaseModel):
     question_clicks: Dict[str, int] = Field(default_factory=dict)
     pinned_kb_dataset_ids: List[str] = Field(default_factory=list)
     markdown_theme: Optional[str] = None
+    agent_avatar: Optional[str] = None
 
 
 class RoutingPreferenceUpdate(BaseModel):
@@ -90,17 +106,27 @@ async def get_portal_prefs(
         logger.error("Failed to get portal prefs from Redis: %s", e)
         return {"code": 0, "data": PortalPrefs().model_dump()}
 
-    if not raw:
-        return {"code": 0, "data": PortalPrefs().model_dump()}
+    prefs = PortalPrefs()
+    if raw:
+        try:
+            decoded = raw.decode("utf-8") if isinstance(raw, bytes) else str(raw)
+            prefs = _parse_portal_prefs(decoded)
+        except Exception as e:
+            logger.warning("Failed to parse portal prefs JSON: %s", e)
 
+    data = prefs.model_dump()
     try:
-        decoded = raw.decode("utf-8") if isinstance(raw, bytes) else str(raw)
-        prefs = _parse_portal_prefs(decoded)
+        global_raw = await redis.get(GLOBAL_AGENT_AVATAR_KEY)
+        if global_raw is not None:
+            data["agent_avatar"] = (
+                global_raw.decode("utf-8")
+                if isinstance(global_raw, bytes)
+                else str(global_raw)
+            )
     except Exception as e:
-        logger.warning("Failed to parse portal prefs JSON: %s", e)
-        prefs = PortalPrefs()
+        logger.warning("Failed to get global agent avatar from Redis: %s", e)
 
-    return {"code": 0, "data": prefs.model_dump()}
+    return {"code": 0, "data": data}
 
 
 @router.put(
@@ -181,6 +207,11 @@ async def update_portal_prefs(
             body.markdown_theme.strip()
             if body.markdown_theme is not None
             else existing.markdown_theme
+        ),
+        agent_avatar=(
+            body.agent_avatar.strip()
+            if body.agent_avatar is not None
+            else existing.agent_avatar
         ),
         # 路由偏好只允许通过 /routing 更新，并在该接口完成智能体权限校验。
         routing_mode=existing.routing_mode,
@@ -330,3 +361,112 @@ async def update_markdown_theme(
         )
 
     return {"code": 0, "data": {"markdown_theme": prefs.markdown_theme}, "message": "样式偏好已保存"}
+
+
+class AgentAvatarUpdate(BaseModel):
+    avatar: str = Field(default="", max_length=2048, description="AI 助手头像 URL 或相对路径（为空表示重置）")
+
+
+@router.put(
+    "/agent-avatar",
+    response_model=Dict[str, Any],
+    summary="更新 AI 助手头像偏好（仅管理员可用）",
+)
+async def update_agent_avatar(
+    body: AgentAvatarUpdate,
+    user_info: Dict[str, Any] = Depends(require_api_key),
+):
+    if user_info.get("role") != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="只有管理员才能设置 AI 助手头像",
+        )
+
+    redis = await get_redis()
+    if not redis:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Redis 服务不可用",
+        )
+
+    user_id = int(user_info["user_id"])
+    key = _redis_key(user_id)
+
+    prefs = PortalPrefs()
+    try:
+        raw = await redis.get(key)
+        if raw:
+            prefs = _parse_portal_prefs(raw)
+    except Exception as e:
+        logger.warning("Failed to read exist portal prefs: %s", e)
+
+    avatar_val = body.avatar.strip()
+    prefs.agent_avatar = avatar_val
+
+    try:
+        if avatar_val:
+            await redis.set(GLOBAL_AGENT_AVATAR_KEY, avatar_val)
+        else:
+            await redis.delete(GLOBAL_AGENT_AVATAR_KEY)
+        await redis.set(key, prefs.model_dump_json())
+    except Exception as e:
+        logger.error("Failed to save portal prefs to Redis: %s", e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="保存 AI 头像偏好失败",
+        )
+
+    return {"code": 0, "data": {"agent_avatar": prefs.agent_avatar}, "message": "AI 头像偏好已保存"}
+
+
+@router.post(
+    "/agent-avatar/upload",
+    response_model=Dict[str, Any],
+    summary="上传自定义 AI 助手头像图片到公共 branding 目录（仅管理员可用）",
+)
+async def upload_agent_avatar(
+    file: UploadFile = File(...),
+    user_info: Dict[str, Any] = Depends(require_api_key),
+):
+    if user_info.get("role") != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="只有管理员才能上传 AI 助手头像",
+        )
+
+    content_type = (file.content_type or "").lower()
+    ext = ALLOWED_AVATAR_TYPES.get(content_type)
+    if not ext:
+        filename_lower = (file.filename or "").lower()
+        for ctype, e in ALLOWED_AVATAR_TYPES.items():
+            if filename_lower.endswith(e):
+                ext = e
+                break
+    if not ext:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="仅支持 PNG、JPEG、WebP、SVG、GIF 格式图片",
+        )
+
+    data = await file.read()
+    if len(data) > MAX_AVATAR_BYTES:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="头像图片不能超过 2MB",
+        )
+
+    os.makedirs(BRANDING_AVATARS_DIR, exist_ok=True)
+    filename = f"agent_avatar{ext}"
+    save_path = os.path.join(BRANDING_AVATARS_DIR, filename)
+    with open(save_path, "wb") as f:
+        f.write(data)
+
+    timestamp = int(time.time())
+    avatar_url = f"/branding/avatars/{filename}?t={timestamp}"
+    return {
+        "code": 0,
+        "data": {"avatar_url": avatar_url},
+        "message": "AI 头像上传成功",
+    }
+
+
