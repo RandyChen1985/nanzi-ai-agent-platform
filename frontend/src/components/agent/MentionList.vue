@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, watch, nextTick, onMounted, onUnmounted } from 'vue';
+import { agentOwnAvatarUrl } from '@/utils/agentAvatar';
 
 interface AgentOption {
   id: string;
@@ -239,7 +240,7 @@ defineExpose({ handleKeydown });
               ? 'bg-primary/15 border-primary/40 text-primary dark:bg-primary/25 dark:border-primary/50'
               : 'bg-gray-100 dark:bg-gray-700 border-gray-200 dark:border-gray-600 text-gray-500 dark:text-gray-300'"
           >
-            <img v-if="row.agent.avatar_url" :src="row.agent.avatar_url" class="w-full h-full object-cover" />
+            <img v-if="agentOwnAvatarUrl(row.agent)" :src="agentOwnAvatarUrl(row.agent)" class="w-full h-full object-cover" />
             <span v-else class="text-[11px] font-bold">{{ Array.from(row.agent.display_name || 'E')[0] }}</span>
           </div>
           <div class="flex-1 min-w-0">

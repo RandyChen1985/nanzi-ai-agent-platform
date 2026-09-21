@@ -582,10 +582,16 @@ const handleLogout = () => {
                 </button>
               </div>
 
+              <!-- 继承说明：智能体可在「智能体中心」单独设置头像，未设置的才用这里的全局形象 -->
+              <div v-if="isAdmin" class="mb-2 text-[9.5px] leading-relaxed text-gray-400 dark:text-gray-500">
+                <p>这是全局默认形象。</p>
+                <p>单个智能体可在「智能体中心」单独设置头像，未单独设置的继承此处配置。</p>
+              </div>
+
               <!-- Admin Controls -->
               <template v-if="isAdmin">
-                <!-- Presets Row -->
-                <div class="flex items-center gap-2 mb-2.5">
+                <!-- Presets Row：8 款预设，窄屏（90vw 弹窗）自动折行避免横向溢出 -->
+                <div class="flex flex-wrap items-center gap-2 mb-2.5">
                   <button
                     v-for="preset in PRESET_AGENT_AVATARS"
                     :key="preset.id"

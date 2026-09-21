@@ -5,6 +5,8 @@ import type { AIModel } from '../../api/model';
 import MarkdownEditor from '../MarkdownEditor.vue';
 import Modal from '../Modal.vue';
 import MessageRenderer from '../MessageRenderer.vue';
+import AgentAvatarField from './AgentAvatarField.vue';
+import AgentNameField from './AgentNameField.vue';
 import { normalizeMarkdownTheme, type MarkdownTheme } from '@/types/markdownTheme';
 import { mcpToolDisplayName } from '../../utils/mcpToolDisplayName';
 import { getTemperatureGuidance } from '../../utils/temperatureGuidance';
@@ -17,6 +19,10 @@ const props = defineProps<{
   show: boolean;
   isCreatingAgent: boolean;
   isOnboardingFlow: boolean;
+  /** 物理标识符预检进行中 */
+  agentNameChecking: boolean;
+  /** 物理标识符预检结论（不可用原因） */
+  agentNameMessage: string;
   agentForm: Partial<AIAgentBase>;
   canConfigureSystemAgent: boolean;
   versionForm: Partial<AIAgentVersion>;
@@ -93,6 +99,8 @@ const emit = defineEmits<{
   nextStep: [];
   prevStep: [];
   toast: [message: string, type?: 'success' | 'error' | 'info' | 'warning'];
+  checkAgentName: [name: string];
+  resetAgentNameCheck: [];
 }>();
 
 const isMainAgent = computed(() => {
@@ -614,27 +622,34 @@ const externalCreationMissingFields = computed(() => {
                 </button>
               </div>
             </div>
-            <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
-              <div>
-                <label class="block text-sm font-medium text-gray-700 mb-1">物理标识符 <span class="text-red-500">*</span></label>
-                <input v-model="agentForm.name" placeholder="例如 sales-data-agent" class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/30" />
-                <p class="mt-1 text-[10px] text-gray-400">保存后不可修改，建议使用小写英文与连字符。</p>
-              </div>
+            <!-- 与「编辑智能体」弹窗同一布局：标识符 / 显示名称 / 排序权重 同行 -->
+            <div class="grid grid-cols-1 gap-4 md:grid-cols-[1fr_1fr_8rem]">
+              <AgentNameField
+                v-model="agentForm.name"
+                required
+                :checking="agentNameChecking"
+                :error-message="agentNameMessage"
+                hint="保存后不可修改，建议使用小写英文与连字符。"
+                @check="emit('checkAgentName', $event)"
+                @reset="emit('resetAgentNameCheck')"
+              />
               <div>
                 <label class="block text-sm font-medium text-gray-700 mb-1">显示名称 <span class="text-red-500">*</span></label>
                 <input v-model="agentForm.display_name" placeholder="例如 销售数据助手" class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/30" />
               </div>
-            </div>
-            <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <div>
-                <label class="block text-sm font-medium text-gray-700 mb-1">头像地址</label>
-                <input v-model="agentForm.avatar_url" placeholder="可选，填写图片 URL" class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/30" />
-              </div>
-              <div>
-                <label class="block text-sm font-medium text-gray-700 mb-1">排序权重</label>
+                <label class="mb-1 flex items-center gap-1 text-sm font-medium text-gray-700">
+                  <span>排序权重</span>
+                  <span
+                    class="inline-flex h-4 w-4 cursor-help items-center justify-center rounded-full border border-gray-300 text-[10px] font-semibold text-gray-400"
+                    title="仅影响聊天页面的智能体选择列表顺序，值越大越靠前"
+                  >?</span>
+                </label>
                 <input v-model.number="agentForm.sort_order" type="number" placeholder="值越大越靠前" class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/30" />
               </div>
             </div>
+            <!-- 头像独占一行，与编辑弹窗完全一致 -->
+            <AgentAvatarField v-model="agentForm.avatar_url" :agent-id="selectedAgent?.id" />
             <div v-if="agentForm.engine_type === 'LOCAL'">
               <div class="mb-2 flex items-center gap-1.5">
                 <label class="text-sm font-medium text-gray-700">智能体类型 <span class="text-red-500">*</span></label>

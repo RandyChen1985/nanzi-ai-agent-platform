@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, delete, update, or_, case
 from sqlalchemy.orm import selectinload
 from sqlalchemy.exc import IntegrityError, OperationalError
+from app.core.avatar_assets import adopt_pending_avatar
 from app.models.agent import AIAgent, AIAgentVersion
 from app.schemas.agent import ChatConfig, AIAgentBase, AIAgentVersionBase
 from app.services.ai.agent_types import resolve_agent_type
@@ -39,6 +40,31 @@ class AgentOnboardingResult:
     agent: AIAgent
     version: AIAgentVersion
     template_fallback: bool
+
+def build_agent_identity_map(agents: Any) -> Dict[str, tuple]:
+    """构建「智能体 ID → (slug 标识名, 显示名, 头像)」映射。
+
+    历史消息只落库 `agent_id`，展示所需的身份信息要靠这张表回填。头像必须一起带上：
+    `/agents/allowed` 会过滤 `is_enabled=True`，已停用智能体的历史消息前端索引不到，
+    只有这里能补出来。
+    """
+    identity_map: Dict[str, tuple] = {}
+    for agent in agents or []:
+        agent_id = getattr(agent, "id", None)
+        if agent_id is None:
+            continue
+        identity_map[str(agent_id)] = (
+            getattr(agent, "name", None),
+            getattr(agent, "display_name", None),
+            getattr(agent, "avatar_url", None),
+        )
+    return identity_map
+
+
+def _agent_name_conflict_detail(name: Any) -> str:
+    """物理标识符冲突的用户可读提示（中文、可操作、指明是哪个字段）。"""
+    return f"物理标识符 '{AgentManagerService.normalize_agent_name(name)}' 已被占用（智能体标识符全局唯一），请换一个"
+
 
 class AgentManagerService:
     _ONBOARDING_TEMPLATE_AGENT_NAMES = {
@@ -145,11 +171,11 @@ class AgentManagerService:
                     template_fallback=False,
                 )
 
-        duplicate_name = await session.execute(select(AIAgent.id).where(AIAgent.name == data.name))
-        if duplicate_name.scalar_one_or_none():
+        conflict = await AgentManagerService.find_agent_name_conflict(session, data.name)
+        if conflict:
             from fastapi import HTTPException
 
-            raise HTTPException(status_code=400, detail=f"Agent with ID/Name '{data.name}' already exists.")
+            raise HTTPException(status_code=400, detail=_agent_name_conflict_detail(data.name))
 
         template = await AgentManagerService._resolve_onboarding_template(session, data.agent_type)
         from app.services.ai.agent_types import (
@@ -158,12 +184,14 @@ class AgentManagerService:
         )
 
         resolved_agent_type = resolve_agent_type_for_engine(data.engine_type, data.agent_type)
+        new_agent_id = str(uuid.uuid4())
         agent = AIAgent(
-            id=str(uuid.uuid4()),
+            id=new_agent_id,
             name=data.name,
             display_name=data.display_name,
             description=data.description,
-            avatar_url=data.avatar_url,
+            # 新建流程先传头像再建智能体，这里把待绑定文件转正，避免被 TTL 回收
+            avatar_url=adopt_pending_avatar(data.avatar_url, new_agent_id),
             capabilities=normalize_agent_capabilities_for_agent(
                 engine_type=data.engine_type,
                 agent_type=resolved_agent_type,
@@ -754,12 +782,12 @@ class AgentManagerService:
 
         AgentManagerService._validate_engine_config(data.engine_type, data.engine_config)
         
-        # Check if agent with the same name already exists
-        existing_query = select(AIAgent).where(AIAgent.name == data.name)
-        result = await session.execute(existing_query)
-        if result.scalar_one_or_none():
+        # 物理标识符在 ai_agents.name 上全局唯一，命中时给出中文可操作提示
+        conflict = await AgentManagerService.find_agent_name_conflict(session, data.name)
+        if conflict:
             from fastapi import HTTPException
-            raise HTTPException(status_code=400, detail=f"Agent with ID/Name '{data.name}' already exists.")
+
+            raise HTTPException(status_code=400, detail=_agent_name_conflict_detail(data.name))
 
         from app.services.ai.agent_types import (
             normalize_agent_capabilities_for_agent,
@@ -767,12 +795,14 @@ class AgentManagerService:
         )
 
         resolved_agent_type = resolve_agent_type_for_engine(data.engine_type, data.agent_type)
+        new_agent_id = str(uuid.uuid4())
         agent = AIAgent(
-            id=str(uuid.uuid4()),
+            id=new_agent_id,
             name=data.name,
             display_name=data.display_name,
             description=data.description,
-            avatar_url=data.avatar_url,
+            # 新建流程先传头像再建智能体，这里把待绑定文件转正，避免被 TTL 回收
+            avatar_url=adopt_pending_avatar(data.avatar_url, new_agent_id),
             capabilities=normalize_agent_capabilities_for_agent(
                 engine_type=data.engine_type,
                 agent_type=resolved_agent_type,
@@ -831,26 +861,83 @@ class AgentManagerService:
         return True
 
     @staticmethod
+    def normalize_agent_name(raw: Any) -> str:
+        """物理标识符归一化：仅去首尾空白。
+
+        标识符是路由与展示用的 slug，带首尾空白没有意义，且 `ai_agents.name`
+        是 `String(100)` 唯一索引——预检与创建必须使用同一套归一化口径，
+        否则会出现「预检说可用、创建却撞名」。
+        """
+        return str(raw or "").strip()
+
+    @classmethod
+    async def find_agent_name_conflict(
+        cls,
+        session: AsyncSession,
+        name: Any,
+        *,
+        exclude_agent_id: Optional[str] = None,
+    ) -> Optional[AIAgent]:
+        """返回占用了该物理标识符的智能体，没有冲突则返回 None。
+
+        创建前预检（`GET /agents/name-availability`）与创建时的兜底校验共用这里，
+        保证两条路径判定完全一致。`exclude_agent_id` 用于「改自己名字」的场景。
+        """
+        normalized = cls.normalize_agent_name(name)
+        if not normalized:
+            return None
+        query = select(AIAgent).where(AIAgent.name == normalized)
+        if exclude_agent_id:
+            query = query.where(AIAgent.id != exclude_agent_id)
+        result = await session.execute(query)
+        return result.scalars().first()
+
+    @staticmethod
+    def _resolve_actor(user: Any) -> tuple[bool, str]:
+        """统一解析调用者身份：返回 (是否管理员, 用户名)。"""
+        if isinstance(user, dict):
+            return user.get("role", "") == "admin", user.get("user_name", "") or ""
+        if not user:
+            return False, ""
+        return getattr(user, "role", "") == "admin", getattr(user, "user_name", "") or ""
+
+    @staticmethod
+    def can_edit_agent_meta(agent: AIAgent, user: Any) -> bool:
+        """智能体元数据（名称/描述/头像等）是否可编辑。
+
+        规则：管理员全量可编辑；其余人只能编辑**自己创建的、且非系统内置**的智能体。
+        该判定必须与 `PUT /api/portal/agents/{id}` 完全一致，否则会出现
+        「能改智能体名称却不能换头像」这类权限漂移。
+        """
+        is_admin, username = AgentManagerService._resolve_actor(user)
+        if is_admin:
+            return True
+        if agent.created_by and agent.created_by != username:
+            return False
+        if agent.is_system:
+            return False
+        return True
+
+    @staticmethod
+    async def get_agent_for_edit(session: AsyncSession, agent_id: str, user: Any = None) -> Optional[AIAgent]:
+        """取出可编辑的智能体；不存在或无权编辑时返回 None。"""
+        agent = await session.get(AIAgent, agent_id)
+        if not agent or not AgentManagerService.can_edit_agent_meta(agent, user):
+            return None
+        return agent
+
+    @staticmethod
     async def update_agent(session: AsyncSession, agent_id: str, data: AIAgentBase, user: Any = None) -> Optional[AIAgent]:
         """Update existing agent metadata"""
         agent = await session.get(AIAgent, agent_id)
         if not agent:
             return None
-            
-        # Permission Check
-        if isinstance(user, dict):
-            is_admin = user.get('role', '') == 'admin'
-            username = user.get('user_name', '')
-        else:
-            is_admin = user and getattr(user, 'role', '') == 'admin'
-            username = user and getattr(user, 'user_name', '')
-            
-        if not is_admin and agent.created_by and agent.created_by != username:
+
+        # Permission Check（与头像上传端点共用同一判定，避免权限漂移）
+        if not AgentManagerService.can_edit_agent_meta(agent, user):
             return None # Or raise Forbidden in Endpoint
-        
-        # System Agent Check
-        if agent.is_system and not is_admin:
-            return None
+
+        is_admin, _actor_username = AgentManagerService._resolve_actor(user)
 
         if _is_main_general_agent_record(agent) and data.is_enabled is False:
             raise ValueError("主助手不可禁用")
@@ -861,10 +948,20 @@ class AgentManagerService:
             if requested_engine_type != original_engine_type:
                 raise ValueError("执行引擎创建后不可修改；请新建智能体以使用其他引擎")
 
+        # 改名前先校验唯一性（排除自己），否则唯一索引会抛 IntegrityError 变成 500
+        if AgentManagerService.normalize_agent_name(data.name) != AgentManagerService.normalize_agent_name(agent.name):
+            conflict = await AgentManagerService.find_agent_name_conflict(
+                session, data.name, exclude_agent_id=agent.id
+            )
+            if conflict:
+                from fastapi import HTTPException
+
+                raise HTTPException(status_code=400, detail=_agent_name_conflict_detail(data.name))
+
         agent.name = data.name
         agent.display_name = data.display_name
         agent.description = data.description
-        agent.avatar_url = data.avatar_url
+        agent.avatar_url = adopt_pending_avatar(data.avatar_url, agent.id)
         from app.services.ai.agent_types import (
             normalize_agent_capabilities_for_agent,
             resolve_agent_type_for_engine,
@@ -913,13 +1010,8 @@ class AgentManagerService:
             return False
 
         # Permission Check
-        if isinstance(user, dict):
-            is_admin = user.get('role', '') == 'admin'
-            username = user.get('user_name', '')
-        else:
-            is_admin = user and getattr(user, 'role', '') == 'admin'
-            username = user and getattr(user, 'user_name', '')
-            
+        is_admin, username = AgentManagerService._resolve_actor(user)
+
         if not is_admin and agent.created_by and agent.created_by != username:
             return False
 

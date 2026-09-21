@@ -193,6 +193,8 @@ class AgentExecutionHistoryResponse(BaseModel):
     created_at: datetime
     agent_name: Optional[str] = None
     agent_display_name: Optional[str] = None
+    # 智能体专属头像（短路径）；为空表示该智能体未单独设置，前端继承全局 AI 形象
+    agent_avatar_url: Optional[str] = None
 
     model_config = ConfigDict(from_attributes=True)
 

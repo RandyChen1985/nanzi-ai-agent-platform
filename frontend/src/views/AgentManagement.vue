@@ -15,6 +15,8 @@ import ConfirmModal from "../components/ConfirmModal.vue";
 import Toast from "../components/Toast.vue";
 import AgentVersionsDrawer from "../components/agent/AgentVersionsDrawer.vue"; // New Component
 import AgentVersionEditorDrawer from "../components/agent/AgentVersionEditorDrawer.vue";
+import AgentAvatarField from "../components/agent/AgentAvatarField.vue";
+import AgentNameField from "../components/agent/AgentNameField.vue";
 import AgentHistoryModal from "../components/agent/AgentHistoryModal.vue";
 import RagFlowResourceSelector from "../components/RagFlowResourceSelector.vue";
 import ToolRuntimeConfigModal from "../components/agent/ToolRuntimeConfigModal.vue";
@@ -28,6 +30,7 @@ import MessageRenderer from "../components/MessageRenderer.vue";
 import type { MarkdownTheme } from "@/types/markdownTheme";
 import axios from "@/utils/axios";
 import { createUuid } from "../utils/conversationId";
+import { useAgentNameAvailability } from "@/composables/useAgentNameAvailability";
 import { copyToClipboard } from "../utils/clipboard";
 import { getTemperatureGuidance } from "../utils/temperatureGuidance";
 import {
@@ -197,6 +200,33 @@ const showToast = (
   setTimeout(() => {
     toastState.value.show = false;
   }, 3000);
+};
+
+
+// 物理标识符全局唯一：失焦预检 + 提交前兜底，避免只在提交后才拿到 400
+const {
+  checking: agentNameChecking,
+  message: agentNameMessage,
+  check: checkAgentNameAvailability,
+  ensureAvailable: ensureAgentNameAvailable,
+  reset: resetAgentNameCheckState,
+} = useAgentNameAvailability();
+
+const handleAgentNameCheck = (name: string) => {
+  // 编辑时标识符不可改，无需预检
+  if (isEditingAgent.value) return;
+  void checkAgentNameAvailability(name, { excludeAgentId: selectedAgent.value?.id });
+};
+
+const handleAgentNameReset = () => {
+  resetAgentNameCheckState();
+};
+
+/** 提交前兜底：明确撞名则拦截；无法判定（接口异常）时放行，交由后端权威裁决。 */
+const ensureAgentNameUsable = async (): Promise<string | null> => {
+  if (isEditingAgent.value) return null;
+  const { ok, message } = await ensureAgentNameAvailable(agentForm.value.name);
+  return ok ? null : message || "物理标识符已被占用，请换一个";
 };
 
 const isEditingAgent = ref(false);
@@ -1467,9 +1497,12 @@ const startAgentCreation = () => {
   toolSearchQuery.value = "";
   versionConfigStep.value = "agent";
   showVersionModal.value = true;
+  resetAgentNameCheckState();
 };
 
 const openAgentModal = (agent?: AIAgent) => {
+  // 每次打开都清空上一次的重名结论，避免残留提示误伤当前智能体
+  resetAgentNameCheckState();
   if (agent) {
     isOnboardingFlow.value = false;
     showCapabilityHelp.value = false;
@@ -1586,6 +1619,12 @@ const saveAgent = async (exitAfterSave = false) => {
 
   if (!agentForm.value.name || !agentForm.value.display_name) {
     showToast("请完善智能体标识和名称", "warning");
+    return;
+  }
+
+  const nameConflict = await ensureAgentNameUsable();
+  if (nameConflict) {
+    showToast(nameConflict, "warning");
     return;
   }
   if (agentForm.value.engine_type === 'RAGFLOW' || agentForm.value.engine_type === 'OPENCLAW') {
@@ -1783,6 +1822,7 @@ const continueAgentOnboarding = async (agent: AIAgent) => {
       ? agent.engine_config.dataset_ids.join(",")
       : "";
     onboardingStep.value = agent.onboarding_step === "VERSION" ? "VERSION" : "RESOURCE";
+    resetAgentNameCheckState();
     fetchTools();
     toolSearchQuery.value = "";
     versionConfigStep.value = "model";
@@ -1980,6 +2020,12 @@ const persistNewAgentDraft = async (closeAfterSave: boolean) => {
       versionConfigStep.value = 'agent';
       showToast("请完善智能体标识和显示名称", "warning");
     }
+    return false;
+  }
+  const draftNameConflict = await ensureAgentNameUsable();
+  if (draftNameConflict) {
+    versionConfigStep.value = 'agent';
+    showToast(draftNameConflict, "warning");
     return false;
   }
   if (agentForm.value.engine_type === 'RAGFLOW' && !agentForm.value.engine_config?.app_id) {
@@ -3673,17 +3719,16 @@ const formatSkillCountLabel = (agent: AIAgent) => {
             </label>
           </div>
         <div class="grid grid-cols-1 gap-4 md:grid-cols-[1fr_1fr_8rem]">
-        <div>
-          <label class="block text-sm font-medium text-gray-700 mb-1"
-            >物理标识符 (ID/Name)</label
-          >
-          <input
-            v-model="agentForm.name"
-            :disabled="isEditingAgent"
-            placeholder="e.g. metadata-specialist"
-            class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent outline-none disabled:bg-gray-50 disabled:text-gray-400"
-          />
-        </div>
+        <AgentNameField
+          v-model="agentForm.name"
+          required
+          :disabled="isEditingAgent"
+          :checking="agentNameChecking"
+          :error-message="agentNameMessage"
+          hint="标识符全局唯一，用于路由与日志；保存后不可修改，建议小写英文与连字符。"
+          @check="handleAgentNameCheck"
+          @reset="handleAgentNameReset"
+        />
         <div>
           <label class="block text-sm font-medium text-gray-700 mb-1"
             >显示名称</label
@@ -3710,6 +3755,9 @@ const formatSkillCountLabel = (agent: AIAgent) => {
           />
         </div>
         </div>
+
+        <!-- Agent Avatar：与新建流程共用同一控件，保证两处外观与能力完全一致 -->
+        <AgentAvatarField v-model="agentForm.avatar_url" :agent-id="selectedAgent?.id" />
 
         <!-- Engine Selection -->
         <div class="rounded-xl border border-gray-200 bg-gray-50/70 p-3">
@@ -4290,6 +4338,8 @@ const formatSkillCountLabel = (agent: AIAgent) => {
 
     <AgentVersionEditorDrawer
       :show="showVersionModal"
+      :agent-name-checking="agentNameChecking"
+      :agent-name-message="agentNameMessage"
       :is-creating-agent="isCreatingAgent"
       :is-onboarding-flow="isOnboardingFlow"
       :agent-form="agentForm"
@@ -4336,6 +4386,8 @@ const formatSkillCountLabel = (agent: AIAgent) => {
       :version-config-incomplete-hint="versionConfigIncompleteHint"
       :knowledge-base-tools-step-issues="knowledgeBaseToolsStepIssues"
       @close="handleVersionEditorClose"
+      @check-agent-name="handleAgentNameCheck"
+      @reset-agent-name-check="handleAgentNameReset"
       @save="saveVersion"
       @publish="publishVersionFromEditor"
       @update:tool-tab="toolTab = $event"

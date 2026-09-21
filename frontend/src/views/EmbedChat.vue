@@ -698,7 +698,7 @@
               title="点击配置主题"
             >
               <img
-                :src="config.agentAvatar || agentAvatarUrl"
+                :src="msgAvatarSrc(msg) || agentAvatarUrl"
                 class="w-full h-full object-cover"
                 alt="NanZi AI agent"
                 @error="handleAgentAvatarError"
@@ -2247,12 +2247,26 @@ import {
 } from "@/constants/artifactsCommand";
 
 import { useBranding } from "@/composables/useBranding";
+import {
+  buildAgentAvatarIndex,
+  resolveChatAgentAvatar,
+} from "@/utils/agentAvatar";
 import agentAvatarUrl from "@/assets/nanzi-agent-avatar.svg";
+
+// 已加载失败的候选头像地址，避免「全局形象也坏了」时在两层兜底之间来回触发 error 死循环。
+const failedAvatarSrcs = new Set<string>();
 
 const handleAgentAvatarError = (event: Event) => {
   const target = event.target as HTMLImageElement | null;
-  if (target && target.src !== agentAvatarUrl) {
-    target.src = agentAvatarUrl;
+  if (!target) return;
+  failedAvatarSrcs.add(target.getAttribute("src") || target.src);
+  // 单个智能体头像失效时先回落到全局官方形象，再退到内置默认。
+  const candidates = [String(config.agentAvatar || "").trim(), agentAvatarUrl].filter(Boolean);
+  for (const candidate of candidates) {
+    if (!failedAvatarSrcs.has(candidate)) {
+      target.src = candidate;
+      return;
+    }
   }
 };
 
@@ -2570,6 +2584,8 @@ interface Message {
   agentName?: string;
   agentDisplayName?: string;
   agentType?: string;
+  /** 智能体专属头像（历史接口下发）；为空则继承全局官方形象 */
+  agentAvatarUrl?: string;
   isSavedReportResult?: boolean;
   turnType?: TurnType | string;
   hasDataOutput?: boolean;
@@ -4657,6 +4673,18 @@ const hasCustomMessageBorderPreference = () =>
     localStorage.getItem("user_has_custom_border_preference") === "true";
 
 const allowedAgents = ref<any[]>([]);
+// 智能体头像索引：吐出的候选只有「配了头像的智能体」，查不到就回落全局官方形象。
+const agentAvatarIndex = computed(() => buildAgentAvatarIndex(allowedAgents.value));
+/**
+ * 气泡头像三层继承：消息自带头像（历史接口下发）→ 智能体索引 → 全局官方形象。
+ * 空串由模板侧兜底为内置默认资源。
+ */
+const msgAvatarSrc = (msg: Message): string =>
+  resolveChatAgentAvatar(
+    { agentName: msg.agentName, agentAvatarUrl: msg.agentAvatarUrl },
+    agentAvatarIndex.value,
+    config.agentAvatar,
+  );
 const isGeneralAgentMessage = (msg: Message): boolean => {
   if (msg.agentType) return msg.agentType === "GENERAL";
   const agent = allowedAgents.value.find(
@@ -7071,6 +7099,7 @@ const fetchConversationHistory = async (
                   agentName: item.agent_name ?? undefined,
                   agentDisplayName: item.agent_display_name || (String(item.agent_name || '').startsWith('sys_') ? '系统助手' : undefined),
                   agentType: item.agent_type ?? undefined,
+                  agentAvatarUrl: item.agent_avatar_url ?? undefined,
                   prompt_tokens: item.prompt_tokens ?? undefined,
                   completion_tokens: item.completion_tokens ?? undefined,
                   total_tokens: item.total_tokens ?? undefined,
@@ -9144,6 +9173,7 @@ onMounted(() => {
                 agentName: latestServerItem.agent_name ?? undefined,
                 agentDisplayName: latestServerItem.agent_display_name || (String(latestServerItem.agent_name || '').startsWith('sys_') ? '系统助手' : undefined),
                 agentType: latestServerItem.agent_type ?? undefined,
+                agentAvatarUrl: latestServerItem.agent_avatar_url ?? undefined,
                 prompt_tokens: latestServerItem.prompt_tokens ?? undefined,
                 completion_tokens: latestServerItem.completion_tokens ?? undefined,
                 total_tokens: latestServerItem.total_tokens ?? undefined,
