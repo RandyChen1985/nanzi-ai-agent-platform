@@ -97,6 +97,9 @@ def test_preset_agent_avatars_use_bundled_assets_instead_of_inline_data_uris():
         "nanzi-agent-avatar-spark.svg",
         "nanzi-agent-avatar-cyber.svg",
         "nanzi-agent-avatar-scholar.svg",
+        "nanzi-agent-avatar-service.svg",
+        "nanzi-agent-avatar-analytics.svg",
+        "nanzi-agent-avatar-shield.svg",
     )
     for asset_name in preset_assets:
         assert f'"/agent-avatars/{asset_name}"' in presets_source, asset_name
@@ -108,16 +111,19 @@ def test_preset_agent_avatars_use_bundled_assets_instead_of_inline_data_uris():
         # public 资源按原样提供：文件体积远小于 Vite 4KB 内联阈值，路径也不会被内联
         assert asset_path.stat().st_size < 4096, asset_name
 
-    # 5 组预设（默认 + 4 组风格化）全部走静态资源
+    # 8 组预设（官方默认 + 7 款风格化）全部走静态资源
     assert presets_source.count("\n    url: ") == len(preset_assets) + 1
 
     # 所有内联字面量 URL 都必须在服务端长度上限内
-    for literal in re.findall(r'url: "([^"]+)"', presets_source):
+    literal_urls = re.findall(r'url: "([^"]+)"', presets_source)
+    assert len(literal_urls) == len(preset_assets)
+    for literal in literal_urls:
         assert len(literal) <= 2048, literal
 
-    # 前端长度护栏接入设置面板
+    # 前端长度护栏接入设置面板；8 款预设行需自动折行，避免窄屏横向溢出
     settings_source = (ROOT / "frontend/src/components/embed/ChatSettings.vue").read_text(encoding="utf-8")
     assert "isAgentAvatarUrlTooLong(target)" in settings_source
     assert "MAX_AGENT_AVATAR_URL_LENGTH" in settings_source
+    assert 'class="flex flex-wrap items-center gap-2 mb-2.5"' in settings_source
 
 

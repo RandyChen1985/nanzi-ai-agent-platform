@@ -584,8 +584,8 @@ const handleLogout = () => {
 
               <!-- Admin Controls -->
               <template v-if="isAdmin">
-                <!-- Presets Row -->
-                <div class="flex items-center gap-2 mb-2.5">
+                <!-- Presets Row：8 款预设，窄屏（90vw 弹窗）自动折行避免横向溢出 -->
+                <div class="flex flex-wrap items-center gap-2 mb-2.5">
                   <button
                     v-for="preset in PRESET_AGENT_AVATARS"
                     :key="preset.id"

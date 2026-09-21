@@ -55,6 +55,21 @@ export const PRESET_AGENT_AVATARS: PresetAgentAvatar[] = [
     name: "博识专家",
     url: "/agent-avatars/nanzi-agent-avatar-scholar.svg",
   },
+  {
+    id: "service",
+    name: "智能客服",
+    url: "/agent-avatars/nanzi-agent-avatar-service.svg",
+  },
+  {
+    id: "analytics",
+    name: "数据分析",
+    url: "/agent-avatars/nanzi-agent-avatar-analytics.svg",
+  },
+  {
+    id: "shield",
+    name: "安全守护",
+    url: "/agent-avatars/nanzi-agent-avatar-shield.svg",
+  },
 ];
 
 /** 头像 URL 是否超出服务端可接受长度（粘贴超长外链/内联 data URI 时提前拦截）。 */
