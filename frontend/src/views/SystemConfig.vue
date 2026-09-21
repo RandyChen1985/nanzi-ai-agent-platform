@@ -3022,14 +3022,21 @@ onUnmounted(() => {
                 >
                    <component :is="getCategoryIcon(String(cat))" class="h-3.5 w-3.5" />
                    {{ getCategoryLabel(String(cat)) }}
-                   <span
+                   <div
                       v-if="changedConfigCountFor(String(cat)) > 0 || totalConfigCountFor(String(cat)) > 0"
-                      class="rounded-full px-1.5 py-0.5 text-[10px] font-bold leading-none tabular-nums"
-                      :class="changedConfigCountFor(String(cat)) > 0
-                        ? (cat === realizedActiveCategory ? 'bg-white text-amber-600' : 'bg-amber-100 text-amber-700')
-                        : (cat === realizedActiveCategory ? 'bg-white text-primary' : 'bg-gray-100 text-gray-500')"
-                      :title="`${changedConfigCountFor(String(cat))} 项未保存 / 共 ${totalConfigCountFor(String(cat))} 项`"
-                   >{{ changedConfigCountFor(String(cat)) > 0 ? changedConfigCountFor(String(cat)) : totalConfigCountFor(String(cat)) }}</span>
+                      class="inline-flex items-center gap-1"
+                   >
+                      <span
+                         v-if="changedConfigCountFor(String(cat)) > 0"
+                         class="h-1.5 w-1.5 rounded-full bg-amber-400 ring-1 ring-white/80 animate-pulse"
+                         :title="`${changedConfigCountFor(String(cat))} 项未保存`"
+                      ></span>
+                      <span
+                         class="rounded-full px-1.5 py-0.5 text-[10px] font-bold leading-none tabular-nums"
+                         :class="cat === realizedActiveCategory ? 'bg-white/20 text-white' : 'bg-gray-100 text-gray-500'"
+                         :title="`共 ${totalConfigCountFor(String(cat))} 项`"
+                      >{{ totalConfigCountFor(String(cat)) }}</span>
+                   </div>
                 </button>
              </div>
              <!-- 桌面端：左侧组导航栏（独立滚动；nav 不再 sticky，否则超长列表的底部永远滚不到） -->
@@ -3102,19 +3109,26 @@ onUnmounted(() => {
                             <component :is="getCategoryIcon(String(cat))" class="h-4 w-4" />
                          </span>
                          <span class="flex-1 truncate" :title="getCategoryLabel(String(cat), false)">{{ getCategoryLabel(String(cat)) }}</span>
-                         <span
+                         <div
                            v-if="changedConfigCountFor(String(cat)) > 0 || totalConfigCountFor(String(cat)) > 0"
-                           class="shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-bold leading-none tabular-nums"
-                           :class="changedConfigCountFor(String(cat)) > 0
-                             ? (cat === realizedActiveCategory ? 'bg-white text-amber-600' : 'bg-amber-100 text-amber-700')
-                             : (cat === realizedActiveCategory ? 'bg-white text-primary' : 'bg-gray-100 text-gray-500')"
-                           :title="`${changedConfigCountFor(String(cat))} 项未保存 / 共 ${totalConfigCountFor(String(cat))} 项`"
-                         >{{ changedConfigCountFor(String(cat)) > 0 ? changedConfigCountFor(String(cat)) : totalConfigCountFor(String(cat)) }}</span>
+                           class="flex items-center gap-1.5 shrink-0"
+                         >
+                            <span
+                              v-if="changedConfigCountFor(String(cat)) > 0"
+                              class="h-2 w-2 rounded-full bg-amber-400 ring-2 ring-white/80 animate-pulse"
+                              :title="`${changedConfigCountFor(String(cat))} 项未保存`"
+                            ></span>
+                            <span
+                              class="rounded-full px-1.5 py-0.5 text-[10px] font-bold leading-none tabular-nums"
+                              :class="cat === realizedActiveCategory ? 'bg-white/20 text-white' : 'bg-gray-100 text-gray-500'"
+                              :title="`共 ${totalConfigCountFor(String(cat))} 项`"
+                            >{{ totalConfigCountFor(String(cat)) }}</span>
+                         </div>
                    </button>
                 </nav>
              </aside>
              <!-- 右侧：当前组内容（独立滚动容器 + 自己的 sticky 工具条） -->
-             <div class="min-w-0 pb-6 md:h-full md:min-h-0 md:overflow-y-auto custom-scrollbar">
+             <div class="min-w-0 pb-28 md:h-full md:min-h-0 md:overflow-y-auto custom-scrollbar">
              <div data-config-toolbar class="sticky top-0 z-10 flex flex-wrap items-center justify-between gap-3 rounded-lg bg-white/95 px-1 py-2 backdrop-blur-sm">
                <!-- 左侧：未保存状态指示 -->
                <div class="flex items-center gap-2">
@@ -3174,7 +3188,7 @@ onUnmounted(() => {
                  </div>
                  <div
                      id="config-group-body"
-                     class="p-6 space-y-5"
+                     class="p-6 divide-y divide-gray-100"
                  >
                     <div v-if="category === 'agent'" class="bg-amber-50 border-l-4 border-amber-400 p-4 rounded-md text-sm text-amber-900 flex items-start space-x-2 mb-4">
                        <span class="text-amber-500 font-bold shrink-0">⚠️ 提示：</span>
@@ -3188,7 +3202,8 @@ onUnmounted(() => {
                           知识库功能已<strong>关闭</strong>。开启「knowledge_base_enabled」后将显示 RAGFlow 连接与检索参数，并启用知识库管理、检索测试与智能体知识库检索工具。
                        </div>
                     </div>
-                    <div v-for="item in getVisibleItems(configGroups[category], String(category))" :key="item.key" class="grid grid-cols-1 md:grid-cols-3 gap-4" :class="[
+                    <div v-for="item in getVisibleItems(configGroups[category], String(category))" :key="item.key" class="grid grid-cols-1 md:grid-cols-3 gap-6 py-5 first:pt-0 last:pb-2 transition-all duration-150" :class="[
+                      isConfigItemModified(item.key) ? 'bg-amber-50/40 rounded-xl px-4 -mx-4 border-l-4 border-amber-400 shadow-2xs' : '',
                       item.key === 'embed_api_url' ? 'embed-config-group rounded-t-xl border-x border-t border-indigo-100/70 bg-indigo-50/30 px-4 pt-4 pb-3 -mx-4' : '',
                       ['embed_api_key', 'embed_model_name'].includes(item.key) ? 'embed-config-group border-x border-indigo-100/70 bg-indigo-50/30 px-4 py-3 -mx-4 !mt-0' : '',
                       ['embed_dimensions'].includes(item.key) ? 'embed-config-group rounded-b-xl border-x border-b border-indigo-100/70 bg-indigo-50/30 px-4 pt-3 pb-4 -mx-4 !mt-0' : '',
@@ -3227,23 +3242,22 @@ onUnmounted(() => {
                           服务地址示例：<code class="font-mono">http://your-server:8000/api/v1/chatbi/sql/execute</code>；测试会执行安全的 <code class="font-mono">SELECT 1</code>。
                         </div>
                       </div>
-                       <div class="md:col-span-1 pt-2"
-                          :class="isConfigItemModified(item.key) ? 'rounded-lg bg-amber-50/70 pl-2.5 pr-1 py-2 -mx-1 border-l-4 border-amber-400' : ''"
+                       <div class="md:col-span-1 pt-1"
                           :id="`config-key-${item.key}`"
                        >
-                          <label class="block text-sm font-medium text-gray-700 flex items-center gap-1.5">
-                             <span :class="isConfigItemModified(item.key) ? 'text-amber-800' : ''">{{ item.key }}</span>
+                          <label class="block text-sm font-medium text-gray-700 flex flex-wrap items-center gap-1.5">
+                             <span :class="isConfigItemModified(item.key) ? 'text-amber-800 font-semibold' : ''">{{ item.key }}</span>
                              <button
                                 type="button"
                                 @click="showExplanation(item)"
-                                class="text-gray-400 hover:text-primary transition-colors focus:outline-none"
+                                class="text-gray-400 hover:text-primary transition-colors focus:outline-none shrink-0"
                                 title="查看参数说明"
                              >
                                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-4 h-4 inline-block">
                                    <path stroke-linecap="round" stroke-linejoin="round" d="M9.879 7.519c1.171-1.025 3.071-1.025 4.242 0 1.172 1.025 1.172 2.687 0 3.712-.203.179-.43.326-.67.442-.745.361-1.45.999-1.45 1.827v.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9 5.25h.008v.008H12v-.008Z" />
                                 </svg>
                              </button>
-                             <span v-if="isConfigItemModified(item.key)" class="inline-flex items-center gap-1 rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold text-amber-700 leading-none">
+                             <span v-if="isConfigItemModified(item.key)" class="inline-flex shrink-0 whitespace-nowrap items-center gap-1 rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold text-amber-700 leading-none">
                                 <span class="h-1.5 w-1.5 rounded-full bg-amber-500"></span>
                                 已修改
                              </span>
@@ -4518,51 +4532,64 @@ onUnmounted(() => {
        </div>
 
        <!-- 底部浮动吸底保存提示条 (Sticky Save Bar) -->
-       <transition
-         enter-active-class="transition duration-300 ease-out"
-         enter-from-class="transform translate-y-12 opacity-0"
-         enter-to-class="transform translate-y-0 opacity-100"
-         leave-active-class="transition duration-200 ease-in"
-         leave-from-class="transform translate-y-0 opacity-100"
-         leave-to-class="transform translate-y-12 opacity-0"
-       >
-         <div
-           v-if="activeTab === 'configs' && hasUnsavedConfigChanges && canSave"
-           class="fixed bottom-6 left-1/2 z-40 flex -translate-x-1/2 items-center gap-4 rounded-2xl border border-amber-200/90 bg-white/95 px-5 py-3 shadow-2xl backdrop-blur-md"
+       <teleport to="body">
+         <transition
+           enter-active-class="transition-all duration-300 ease-out"
+           enter-from-class="transform translate-y-16 opacity-0 scale-95"
+           enter-to-class="transform translate-y-0 opacity-100 scale-100"
+           leave-active-class="transition-all duration-200 ease-in"
+           leave-from-class="transform translate-y-0 opacity-100 scale-100"
+           leave-to-class="transform translate-y-16 opacity-0 scale-95"
          >
-           <div class="flex items-center gap-2.5">
-             <span class="relative flex h-3 w-3">
-               <span class="absolute inline-flex h-full w-full animate-ping rounded-full bg-amber-400 opacity-75"></span>
-               <span class="relative inline-flex h-3 w-3 rounded-full bg-amber-500"></span>
-             </span>
-             <div class="text-xs font-semibold text-gray-800">
-               您有 <span class="font-bold text-amber-600">{{ unsavedConfigCount }}</span> 项未保存的配置修改
+           <div
+             v-if="activeTab === 'configs' && hasUnsavedConfigChanges && canSave"
+             class="fixed bottom-8 left-1/2 z-[70] flex -translate-x-1/2 flex-wrap items-center gap-3 sm:gap-4 rounded-2xl border border-amber-200/90 bg-white/95 px-5 py-3 shadow-2xl shadow-amber-900/10 backdrop-blur-md"
+           >
+             <div class="flex items-center gap-2.5">
+               <span class="relative flex h-3 w-3 shrink-0">
+                 <span class="absolute inline-flex h-full w-full animate-ping rounded-full bg-amber-400 opacity-75"></span>
+                 <span class="relative inline-flex h-3 w-3 rounded-full bg-amber-500"></span>
+               </span>
+               <div class="text-xs font-semibold text-gray-800 flex items-center gap-1.5 flex-wrap">
+                 <span>您有 <strong class="text-amber-600 font-bold tabular-nums">{{ unsavedConfigCount }}</strong> 项未保存的配置修改</span>
+                 <div class="hidden md:flex items-center gap-1 max-w-xs overflow-hidden text-ellipsis whitespace-nowrap">
+                   <span
+                     v-for="cfg in changedConfigsList.slice(0, 2)"
+                     :key="cfg.key"
+                     class="inline-block font-mono text-[10px] bg-amber-50 text-amber-800 border border-amber-200/70 rounded px-1.5 py-0.5 truncate max-w-[120px]"
+                     :title="cfg.key"
+                   >{{ cfg.key }}</span>
+                   <span v-if="changedConfigsList.length > 2" class="text-[10px] text-amber-700/80 font-mono">
+                     +{{ changedConfigsList.length - 2 }}
+                   </span>
+                 </div>
+               </div>
+             </div>
+
+             <div class="flex items-center gap-2 border-l border-gray-200/80 pl-3 sm:pl-4">
+               <button
+                 type="button"
+                 class="rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-600 shadow-2xs hover:bg-gray-50 hover:text-gray-900 transition-colors cursor-pointer active:scale-95"
+                 @click="resetUnsavedConfigs"
+               >
+                 放弃修改
+               </button>
+               <button
+                 type="button"
+                 :disabled="saving"
+                 class="inline-flex items-center gap-1.5 rounded-lg bg-primary px-4 py-1.5 text-xs font-bold text-white shadow-md shadow-primary/25 hover:bg-primary/90 transition-all disabled:opacity-50 cursor-pointer active:scale-95"
+                 @click="saveConfigs"
+               >
+                 <svg v-if="saving" class="h-3.5 w-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
+                   <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                   <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                 </svg>
+                 <span>{{ saving ? '保存中...' : '保存变更 (⌘S)' }}</span>
+               </button>
              </div>
            </div>
-
-           <div class="flex items-center gap-2 border-l border-gray-200 pl-4">
-             <button
-               type="button"
-               class="rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-600 shadow-2xs hover:bg-gray-50 hover:text-gray-900 transition-colors cursor-pointer"
-               @click="resetUnsavedConfigs"
-             >
-               放弃修改
-             </button>
-             <button
-               type="button"
-               :disabled="saving"
-               class="inline-flex items-center gap-1.5 rounded-lg bg-primary px-4 py-1.5 text-xs font-bold text-white shadow-md shadow-primary/20 hover:bg-primary/90 transition-all disabled:opacity-50 cursor-pointer"
-               @click="saveConfigs"
-             >
-               <svg v-if="saving" class="h-3.5 w-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
-                 <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                 <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-               </svg>
-               <span>{{ saving ? '保存中...' : '保存变更 (⌘S)' }}</span>
-             </button>
-           </div>
-         </div>
-       </transition>
+         </transition>
+       </teleport>
     </div>
 
     <RagFlowResourceSelector
