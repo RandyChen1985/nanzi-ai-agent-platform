@@ -10,6 +10,16 @@ body,
   overflow-x: hidden;
 }
 
+/* 原生清空按钮会占用输入框内部右侧空间（width 18px + margin-left 8px）。
+   仅在「有内容」（按钮真正出现）时为它兜底预留空间，空态视觉零变化；
+   特异性高于 Tailwind 的 pr-* 工具类，因此可为全项目搜索框统一兜底。
+   用 @supports 限定，仅对真会渲染该按钮的 WebKit/Chromium 生效。 */
+@supports selector(input::-webkit-search-cancel-button) {
+  input[type="search"]:not(:placeholder-shown) {
+    padding-right: 1.75rem;
+  }
+}
+
 /* Keep search/filter inputs consistently clearable without changing their layout. */
 input[type="search"]::-webkit-search-cancel-button {
   width: 18px;

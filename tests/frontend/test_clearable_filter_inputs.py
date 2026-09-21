@@ -40,3 +40,21 @@ def test_search_cancel_button_has_shared_visual_style():
 
     assert 'input[type="search"]::-webkit-search-cancel-button' in stylesheet
     assert "cursor: pointer" in stylesheet
+
+
+def test_search_cancel_button_space_is_reserved_globally():
+    """原生清空按钮（18px + 8px 间距）需要有右侧留白，否则有内容时会与文字拥挤。
+
+    该留白由 style.css 全局兜底：仅在输入框有内容（按钮真正出现）时生效，
+    空态不变；全项目搜索框的 padding-right 参差不齐（8～32px），逐个补齐既
+    易漏又会随新代码回归，因此这里锁定全局兜底规则本身。
+    """
+    stylesheet = Path("frontend/src/style.css").read_text()
+
+    assert "input::-webkit-search-cancel-button" in stylesheet, (
+        "@supports 需限定在会渲染原生清空按钮的浏览器上"
+    )
+    assert 'input[type="search"]:not(:placeholder-shown)' in stylesheet, (
+        "兜底留白必须只在有内容时生效，避免改变空态视觉"
+    )
+    assert "padding-right: 1.75rem" in stylesheet, "清空按钮需要约 28px 右侧空间"
