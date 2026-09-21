@@ -2656,7 +2656,27 @@ const confirmDelete = (user: any) => {
 };
 
 // Helpers
-const openCreateDialog = () => {
+// 新增用户时自动勾选的默认业务角色（按名称或编码匹配，忽略大小写）
+const AUTO_CHECKED_ROLE_KEYS = ["default"];
+
+const findAutoCheckedRoleIds = (): number[] => {
+  return businessRoles.value
+    .filter((role: any) => {
+      const code = String(role?.code ?? "").trim().toLowerCase();
+      const name = String(role?.name ?? "").trim().toLowerCase();
+      return (
+        AUTO_CHECKED_ROLE_KEYS.includes(code) ||
+        AUTO_CHECKED_ROLE_KEYS.includes(name)
+      );
+    })
+    .map((role: any) => role.id);
+};
+
+const openCreateDialog = async () => {
+  // 首次进入页面时角色列表可能尚未返回，这里补齐后再做默认勾选
+  if (businessRoles.value.length === 0) {
+    await fetchBusinessRoles();
+  }
   showCreateDialog.value = true;
   formData.value = {
     user_name: "",
@@ -2665,7 +2685,7 @@ const openCreateDialog = () => {
     dept_code: "",
     org_path: "",
     extra_data: "",
-    role_ids: [],
+    role_ids: findAutoCheckedRoleIds(),
     remark: "",
   };
   extraDataPairs.value = [];
