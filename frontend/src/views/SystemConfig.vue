@@ -753,12 +753,48 @@ const realizedActiveCategory = computed(() => {
   if (cats.includes(activeConfigCategory.value)) return activeConfigCategory.value
   return cats[0]
 })
-const selectConfigCategory = (cat: string) => {
+/**
+ * 把当前分组卡片滚到它所在滚动容器的顶部。
+ *
+ * 切换分组只替换卡片内容，容器 scrollTop 不变——从长分组切到另一个分组时，
+ * 看到的是新分组的中间部分，卡片头部被滚出视口，于是「点了标签却没跳到那组开头」。
+ *
+ * 容器不写死：桌面端左右两栏各自 `overflow-y-auto`，卡片在右栏里滚动；
+ * 移动端左栏是横向选择条，只有最外层面板滚动。这里从卡片向上找第一个真正能滚的祖先。
+ *
+ * 容器顶部还有一条 `sticky top-0` 工具条（未保存提示 / 保存按钮）会盖住卡片头部，
+ * 所以要减去它的实际高度——该高度会随「已修改 N 项」徽章出现而变高，因此动态测量而非写死。
+ */
+const scrollConfigGroupToTop = () => {
+  const card = document.querySelector<HTMLElement>('[data-config-group-card]')
+  if (!card) return
+
+  let container: HTMLElement | null = card.parentElement
+  while (container && container !== document.body) {
+    const { overflowY } = window.getComputedStyle(container)
+    if (/(auto|scroll)/.test(overflowY) && container.scrollHeight > container.clientHeight) break
+    container = container.parentElement
+  }
+  if (!container || container === document.body) return  // 内容没超出，无需滚动
+
+  const toolbar = document.querySelector<HTMLElement>('[data-config-toolbar]')
+  const stickyOffset = toolbar?.offsetHeight ?? 0
+  const top =
+    card.getBoundingClientRect().top -
+    container.getBoundingClientRect().top +
+    container.scrollTop
+  container.scrollTo({ top: Math.max(top - stickyOffset - 8, 0), behavior: 'smooth' })
+}
+
+const selectConfigCategory = (cat: string, scrollToTop = true) => {
   activeConfigCategory.value = cat
   // 聚焦即展开该组，避免切换后看到空收起卡片
   const next = new Set(collapsedConfigGroups.value)
   next.delete(cat)
   collapsedConfigGroups.value = next
+  if (!scrollToTop) return
+  // 等新分组渲染完成后再测量位置
+  nextTick(() => requestAnimationFrame(scrollConfigGroupToTop))
 }
 const changedConfigCountFor = (cat: string) => {
   const items = configGroups.value[cat]
@@ -816,7 +852,8 @@ const highlightedConfigKey = ref('')
 const selectConfigSearchResult = (result: { item: ConfigItem; category: string }) => {
   configSearchQuery.value = ''
   configSearchOpen.value = false
-  selectConfigCategory(result.category)
+  // 搜索场景由下面的 scrollIntoView 精确落到目标参数，跳过「滚到分组顶部」
+  selectConfigCategory(result.category, false)
   // 等切换到目标分组并渲染后，滚动定位并短暂高亮该参数
   requestAnimationFrame(() => {
     const el = document.getElementById(`config-item-${result.item.key}`)
@@ -1297,22 +1334,28 @@ const getCategoryLabel = (cat: string, short = true) => {
   return short ? entry.short : entry.full
 }
 
-const getCategoryIconInfo = (cat: string): { icon: any; color: string; bg: string } => {
-  const map: Record<string, { icon: any; color: string; bg: string }> = {
-    'general':       { icon: AdjustmentsHorizontalIcon, color: 'text-slate-600',  bg: 'bg-slate-100' },
-    'agent':         { icon: CpuChipIcon,                color: 'text-violet-600', bg: 'bg-violet-100' },
-    'agent_context': { icon: ArrowPathIcon,              color: 'text-sky-600',    bg: 'bg-sky-100' },
-    'metadata':      { icon: SparklesIcon,               color: 'text-amber-600',  bg: 'bg-amber-100' },
-    'data_api':      { icon: CircleStackIcon,            color: 'text-emerald-600',bg: 'bg-emerald-100' },
-    'knowledge':     { icon: ServerStackIcon,            color: 'text-blue-600',   bg: 'bg-blue-100' },
-    'sandbox':       { icon: CommandLineIcon,            color: 'text-orange-600', bg: 'bg-orange-100' },
-    'other':         { icon: WrenchScrewdriverIcon,      color: 'text-gray-500',   bg: 'bg-gray-100' },
-  }
-  return map[cat] || { icon: AdjustmentsHorizontalIcon, color: 'text-gray-500', bg: 'bg-gray-100' }
+/**
+ * 分组图标只负责「形状识别」，不再按分组分配色相。
+ *
+ * 早期实现给 8 个分组各配了一种颜色（violet / sky / amber / emerald / blue / orange…），
+ * 在 220px 宽的窄侧栏里排成一道彩虹，既不承载任何语义，也和界面的主色蓝 + 中性灰语言冲突；
+ * 计数徽章又统一用实心 amber，在蓝色选中态旁边格外跳。
+ *
+ * 现在：图标容器一律中性（未选中白底灰图标，选中态主色反白，悬浮转主色），
+ * 颜色只用来表达状态——主蓝 = 当前位置，浅琥珀 = 有未保存改动。
+ */
+const CATEGORY_ICONS: Record<string, any> = {
+  'general':       AdjustmentsHorizontalIcon,
+  'agent':         CpuChipIcon,
+  'agent_context': ArrowPathIcon,
+  'metadata':      SparklesIcon,
+  'data_api':      CircleStackIcon,
+  'knowledge':     ServerStackIcon,
+  'sandbox':       CommandLineIcon,
+  'other':         WrenchScrewdriverIcon,
 }
 
-/** 向后兼容旧调用：只返回 icon component */
-const getCategoryIcon = (cat: string) => getCategoryIconInfo(cat).icon
+const getCategoryIcon = (cat: string) => CATEGORY_ICONS[cat] || CATEGORY_ICONS['general']
 
 const isLongText = (item: ConfigItem) => {
   if (item.key === 'sandbox_docker_base_image') return false
@@ -2584,8 +2627,8 @@ onUnmounted(() => {
           <div class="bg-white shadow rounded-lg p-6">
             <div class="flex items-center justify-between mb-4">
               <div class="flex items-center space-x-3">
-                <div class="p-2 bg-red-100 rounded-lg">
-                  <CircleStackIcon class="h-6 w-6 text-red-600" />
+                <div class="p-2 rounded-lg border border-primary/15 bg-primary/10">
+                  <CircleStackIcon class="h-6 w-6 text-primary" />
                 </div>
                 <div>
                   <h3 class="text-lg font-medium text-gray-900">Redis</h3>
@@ -2598,7 +2641,7 @@ onUnmounted(() => {
               </div>
             </div>
             <div class="border-t border-gray-100 pt-4 mt-2 flex flex-col gap-2">
-              <button @click="testConnection('redis')" :disabled="loading.redis || !canSave" class="w-full inline-flex justify-center items-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-red-600 hover:bg-red-700 focus:outline-none disabled:opacity-50 whitespace-nowrap">
+              <button @click="testConnection('redis')" :disabled="loading.redis || !canSave" class="w-full inline-flex justify-center items-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-primary hover:bg-primary/90 focus:outline-none disabled:opacity-50 whitespace-nowrap">
                 <PlayIcon v-if="!loading.redis" class="h-4 w-4 mr-2 shrink-0" />
                 <span v-else class="animate-spin h-4 w-4 mr-2 border-2 border-white border-t-transparent rounded-full shrink-0"></span>
                 {{ loading.redis ? '测试中...' : '测试连接' }}
@@ -2618,8 +2661,8 @@ onUnmounted(() => {
           <div class="bg-white shadow rounded-lg p-6">
             <div class="flex items-start justify-between mb-4">
               <div class="flex items-center space-x-3">
-                <div class="p-2 bg-emerald-100 rounded-lg">
-                  <CpuChipIcon class="h-6 w-6 text-emerald-600" />
+                <div class="p-2 rounded-lg border border-primary/15 bg-primary/10">
+                  <CpuChipIcon class="h-6 w-6 text-primary" />
                 </div>
                 <div>
                   <h3 class="text-lg font-medium text-gray-900">Redis 向量搜索</h3>
@@ -2665,24 +2708,26 @@ onUnmounted(() => {
               </div>
             </div>
 
-            <button
-              @click="testRedisVectorSearch(true)"
-              :disabled="loading.redis_vector || !canSave"
-              class="inline-flex justify-center items-center py-2 px-4 border border-emerald-200 rounded-md shadow-sm text-sm font-medium text-emerald-700 bg-emerald-50 hover:bg-emerald-100 disabled:opacity-50"
-            >
-              <PlayIcon v-if="!loading.redis_vector" class="h-4 w-4 mr-2" />
-              <span v-else class="animate-spin h-4 w-4 mr-2 border-2 border-emerald-400 border-t-transparent rounded-full"></span>
-              {{ loading.redis_vector ? '检测中...' : '重新检测' }}
-            </button>
-            <button
-              @click="openRebuildConfirm"
-              :disabled="loading.rebuild_vector || !canSave"
-              class="inline-flex justify-center items-center py-2 px-4 border border-rose-200 rounded-md shadow-sm text-sm font-medium text-rose-700 bg-rose-50 hover:bg-rose-100 disabled:opacity-50 ml-3"
-            >
-              <ArrowPathIcon v-if="!loading.rebuild_vector" class="h-4 w-4 mr-2" />
-              <span v-else class="animate-spin h-4 w-4 mr-2 border-2 border-rose-400 border-t-transparent rounded-full"></span>
-              {{ loading.rebuild_vector ? '重构中...' : '重构本地向量数据' }}
-            </button>
+            <div class="flex flex-wrap gap-3">
+              <button
+                @click="testRedisVectorSearch(true)"
+                :disabled="loading.redis_vector || !canSave"
+                class="inline-flex justify-center items-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-primary hover:bg-primary/90 disabled:opacity-50"
+              >
+                <PlayIcon v-if="!loading.redis_vector" class="h-4 w-4 mr-2" />
+                <span v-else class="animate-spin h-4 w-4 mr-2 border-2 border-white border-t-transparent rounded-full"></span>
+                {{ loading.redis_vector ? '检测中...' : '重新检测' }}
+              </button>
+              <button
+                @click="openRebuildConfirm"
+                :disabled="loading.rebuild_vector || !canSave"
+                class="inline-flex justify-center items-center py-2 px-4 border border-red-300 rounded-md shadow-sm text-sm font-medium text-red-700 bg-red-50 hover:bg-red-100 disabled:opacity-50"
+              >
+                <ArrowPathIcon v-if="!loading.rebuild_vector" class="h-4 w-4 mr-2" />
+                <span v-else class="animate-spin h-4 w-4 mr-2 border-2 border-red-400 border-t-transparent rounded-full"></span>
+                {{ loading.rebuild_vector ? '重构中...' : '重构本地向量数据' }}
+              </button>
+            </div>
           </div>
         </div>
         <!-- Right Column: Console Output / Redis Browser -->
@@ -2711,7 +2756,7 @@ onUnmounted(() => {
           
           <!-- Tab: Console -->
           <div v-if="diagSubTab === 'console'" class="flex-1 bg-gray-950 p-4 overflow-y-auto font-mono text-sm space-y-1 custom-scrollbar text-green-400">
-            <div v-if="logs.length === 0" class="text-gray-500 italic">等待执行测试...</div>
+            <div v-if="logs.length === 0" class="text-gray-400 italic">等待执行测试...</div>
             <div v-else v-for="(log, index) in logs" :key="index" class="text-green-400 break-all">
               <span class="text-gray-500 mr-2">></span>{{ log }}
             </div>
@@ -2732,7 +2777,7 @@ onUnmounted(() => {
                 <button
                   @click="fetchRedisKeys"
                   :disabled="redisKeysLoading"
-                  class="inline-flex items-center px-3 py-2 border border-transparent text-sm leading-4 font-medium rounded-md text-white bg-primary hover:bg-indigo-700 disabled:opacity-50"
+                  class="inline-flex items-center px-3 py-2 border border-transparent text-sm leading-4 font-medium rounded-md text-white bg-primary hover:bg-primary/90 disabled:opacity-50"
                 >
                   <span v-if="redisKeysLoading" class="animate-spin h-4 w-4 border-2 border-white border-t-transparent rounded-full mr-1"></span>
                   搜索
@@ -2953,13 +2998,16 @@ onUnmounted(() => {
         </div>
       </div>
 
-      <!-- CONFIGS TAB -->
-      <div v-else-if="activeTab === 'configs'" class="h-full overflow-y-auto pb-6 custom-scrollbar">
+      <!-- CONFIGS TAB
+           移动端：整体一个滚动容器（左栏此时是横向选择条）。
+           桌面端：左右两栏各自独立滚动，互不干扰——
+           左侧分组列表再长也能自己滚到底，右侧切组定位也不会牵动左栏。 -->
+      <div v-else-if="activeTab === 'configs'" class="h-full overflow-y-auto custom-scrollbar md:overflow-hidden">
          <div v-if="configLoading" class="flex justify-center py-20">
              <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
          </div>
          <div v-else-if="!orderedCategories.length" class="py-10 text-center text-sm text-gray-400">暂无可用配置项</div>
-         <div v-else class="md:grid md:grid-cols-[220px_minmax(0,1fr)] md:gap-6">
+         <div v-else class="md:grid md:h-full md:min-h-0 md:grid-cols-[220px_minmax(0,1fr)] md:gap-6">
              <!-- 移动端：横向可滚动组选择条（含搜索入口） -->
              <div class="flex items-center gap-2 overflow-x-auto pb-3 -mx-1 px-1 custom-scrollbar md:hidden">
                 <button
@@ -2976,15 +3024,17 @@ onUnmounted(() => {
                    {{ getCategoryLabel(String(cat)) }}
                    <span
                       v-if="changedConfigCountFor(String(cat)) > 0 || totalConfigCountFor(String(cat)) > 0"
-                      class="rounded-full px-1.5 py-0.5 text-[10px] font-bold leading-none"
-                      :class="cat === realizedActiveCategory ? 'bg-white text-primary' : 'bg-white text-gray-500 shadow-sm'"
+                      class="rounded-full px-1.5 py-0.5 text-[10px] font-bold leading-none tabular-nums"
+                      :class="changedConfigCountFor(String(cat)) > 0
+                        ? (cat === realizedActiveCategory ? 'bg-white text-amber-600' : 'bg-amber-100 text-amber-700')
+                        : (cat === realizedActiveCategory ? 'bg-white text-primary' : 'bg-gray-100 text-gray-500')"
                       :title="`${changedConfigCountFor(String(cat))} 项未保存 / 共 ${totalConfigCountFor(String(cat))} 项`"
                    >{{ changedConfigCountFor(String(cat)) > 0 ? changedConfigCountFor(String(cat)) : totalConfigCountFor(String(cat)) }}</span>
                 </button>
              </div>
-             <!-- 桌面端：左侧组导航栏 -->
-             <aside class="hidden md:block">
-                <nav class="sticky top-0 space-y-2 rounded-xl border border-gray-100 bg-gray-50/70 p-3 shadow-sm">
+             <!-- 桌面端：左侧组导航栏（独立滚动；nav 不再 sticky，否则超长列表的底部永远滚不到） -->
+             <aside class="hidden md:block md:h-full md:min-h-0 md:overflow-y-auto custom-scrollbar">
+                <nav class="space-y-2 rounded-xl border border-gray-100 bg-gray-50/70 p-3 shadow-sm">
                    <div class="relative">
                       <div class="flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 shadow-sm focus-within:border-primary focus-within:ring-2 focus-within:ring-primary/20">
                          <MagnifyingGlassIcon class="h-4 w-4 shrink-0 text-gray-400" />
@@ -3038,7 +3088,7 @@ onUnmounted(() => {
                       :key="cat"
                       type="button"
                       @click="selectConfigCategory(String(cat))"
-                      class="flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-left text-sm transition-all cursor-pointer"
+                      class="group flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-left text-sm transition-all cursor-pointer"
                       :class="cat === realizedActiveCategory
                         ? 'bg-primary font-semibold text-white shadow-md shadow-primary/20'
                         : 'text-gray-600 hover:bg-white hover:text-gray-900 hover:shadow-sm'"
@@ -3047,23 +3097,25 @@ onUnmounted(() => {
                            class="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border transition-colors"
                            :class="cat === realizedActiveCategory
                              ? 'border-white/20 bg-white/15 text-white'
-                             : 'border-gray-100 shadow-sm ' + (getCategoryIconInfo(String(cat)).bg + ' ' + getCategoryIconInfo(String(cat)).color)"
+                             : 'border-gray-200/70 bg-white text-gray-500 group-hover:border-primary/20 group-hover:text-primary'"
                          >
                             <component :is="getCategoryIcon(String(cat))" class="h-4 w-4" />
                          </span>
                          <span class="flex-1 truncate" :title="getCategoryLabel(String(cat), false)">{{ getCategoryLabel(String(cat)) }}</span>
                          <span
                            v-if="changedConfigCountFor(String(cat)) > 0 || totalConfigCountFor(String(cat)) > 0"
-                           class="shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-bold leading-none"
-                           :class="cat === realizedActiveCategory ? 'bg-white text-primary' : 'bg-amber-500 text-white'"
+                           class="shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-bold leading-none tabular-nums"
+                           :class="changedConfigCountFor(String(cat)) > 0
+                             ? (cat === realizedActiveCategory ? 'bg-white text-amber-600' : 'bg-amber-100 text-amber-700')
+                             : (cat === realizedActiveCategory ? 'bg-white text-primary' : 'bg-gray-100 text-gray-500')"
                            :title="`${changedConfigCountFor(String(cat))} 项未保存 / 共 ${totalConfigCountFor(String(cat))} 项`"
                          >{{ changedConfigCountFor(String(cat)) > 0 ? changedConfigCountFor(String(cat)) : totalConfigCountFor(String(cat)) }}</span>
                    </button>
                 </nav>
              </aside>
-             <!-- 右侧：当前组内容 -->
-             <div class="min-w-0">
-             <div class="sticky top-0 z-10 flex flex-wrap items-center justify-between gap-3 rounded-lg bg-white/95 px-1 py-2 backdrop-blur-sm">
+             <!-- 右侧：当前组内容（独立滚动容器 + 自己的 sticky 工具条） -->
+             <div class="min-w-0 pb-6 md:h-full md:min-h-0 md:overflow-y-auto custom-scrollbar">
+             <div data-config-toolbar class="sticky top-0 z-10 flex flex-wrap items-center justify-between gap-3 rounded-lg bg-white/95 px-1 py-2 backdrop-blur-sm">
                <!-- 左侧：未保存状态指示 -->
                <div class="flex items-center gap-2">
                  <div
@@ -3109,10 +3161,9 @@ onUnmounted(() => {
                  </template>
                </div>
              </div>
-             <div v-for="category in [realizedActiveCategory]" :key="category" class="bg-white shadow rounded-lg">
+             <div v-for="category in [realizedActiveCategory]" :key="category" data-config-group-card class="bg-white shadow rounded-lg">
                  <div class="flex items-center bg-gray-50 px-6 py-3 border-b border-gray-200 rounded-t-lg">
-                     <div class="p-1.5 mr-3 rounded-md shadow-sm border border-gray-100"
-                        :class="getCategoryIconInfo(String(category)).bg + ' ' + getCategoryIconInfo(String(category)).color">
+                     <div class="p-1.5 mr-3 rounded-md border border-primary/15 bg-primary/10 text-primary">
                         <component :is="getCategoryIcon(String(category))" class="h-5 w-5" />
                      </div>
                      <div class="min-w-0">
