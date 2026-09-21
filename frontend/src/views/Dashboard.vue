@@ -588,14 +588,14 @@ const filteredMenuGroups = computed(() => {
     <!-- Mobile Overlay -->
     <div 
       v-if="isMobile && showMobileSidebar" 
-      class="fixed inset-0 bg-black/50 z-20 transition-opacity backdrop-blur-sm"
+      class="fixed inset-0 bg-black/50 z-40 transition-opacity backdrop-blur-sm"
       @click="showMobileSidebar = false"
     ></div>
 
     <!-- Sidebar -->
     <aside
       aria-label="主导航"
-      class="bg-sidebar text-white shadow-xl flex flex-col z-30 transition-all duration-300 ease-in-out flex-shrink-0"
+      class="bg-sidebar text-white shadow-xl flex flex-col z-50 transition-all duration-300 ease-in-out flex-shrink-0"
       :class="[
         theme === 'light' ? '!bg-white !text-gray-700 border-r border-gray-200' : '',
         isMobile ? 'fixed inset-y-0 left-0 h-full' : 'relative',
@@ -788,7 +788,7 @@ const filteredMenuGroups = computed(() => {
     <div class="flex-1 flex flex-col overflow-hidden min-w-0">
       <!-- Top Header -->
       <header
-        class="bg-white shadow-sm h-16 flex justify-between items-center px-4 z-10 border-b border-gray-200 flex-shrink-0"
+        class="relative bg-white shadow-sm h-16 flex justify-between items-center px-4 z-30 border-b border-gray-200 flex-shrink-0"
       >
         <div class="flex items-center">
           <!-- Sidebar Toggle Button -->
@@ -954,7 +954,7 @@ const filteredMenuGroups = computed(() => {
       >
         <div
           v-if="showPasswordExpireBanner && passwordExpireNoticeData"
-          class="flex-shrink-0 px-4 py-2 sm:py-2.5 text-xs sm:text-sm font-medium border-b flex items-center justify-between gap-3 shadow-xs z-10 overflow-hidden"
+          class="flex-shrink-0 px-4 py-2 sm:py-2.5 text-xs sm:text-sm font-medium border-b flex items-center justify-between gap-3 shadow-xs z-20 overflow-hidden"
           :class="passwordExpireBannerStyle.wrapper"
         >
           <div class="flex items-center gap-2.5 min-w-0">
@@ -1053,7 +1053,7 @@ const filteredMenuGroups = computed(() => {
       <transition name="dialog">
         <div
           v-if="showOnlineUsersDialog"
-          class="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4"
+          class="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 backdrop-blur-sm p-4"
           @click.self="showOnlineUsersDialog = false"
         >
           <div
