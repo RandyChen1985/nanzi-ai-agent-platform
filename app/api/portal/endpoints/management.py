@@ -339,6 +339,11 @@ async def list_users(
     search: Optional[str] = None,
     role: Optional[str] = None,
     status_filter: Optional[int] = Query(None, alias="status"),
+    exclude_role_id: Optional[int] = Query(
+        None,
+        ge=1,
+        description="排除已属于该角色的用户，用于角色「分配用户」弹窗的候选列表",
+    ),
     admin: dict = Depends(require_permission("menu", "menu:system:users")),
     db: AsyncSession = Depends(get_db_session)
 ):
@@ -354,6 +359,11 @@ async def list_users(
         stmt = stmt.where(User.role == role)
     if status_filter is not None:
         stmt = stmt.where(User.status == status_filter)
+    if exclude_role_id is not None:
+        member_ids = select(UserRoleRelation.user_id).where(
+            UserRoleRelation.role_id == exclude_role_id
+        )
+        stmt = stmt.where(~User.id.in_(member_ids))
         
     # Count
     count_stmt = select(func.count()).select_from(stmt.subquery())

@@ -2,9 +2,10 @@ from fastapi import APIRouter, Depends, Query, HTTPException, status, Request
 from pydantic import BaseModel
 from typing import Optional, List
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, update, delete, desc, func
+from sqlalchemy import select, update, delete, desc, func, or_
 from app.core.dependencies import require_admin, require_permission
 from app.core.orm import get_db_session
+from app.models.user import User
 from app.models.permission import Role, ResourcePermission, UserRoleRelation
 from app.schemas.permission import PermissionUpdate
 from app.services.permission_service import PermissionService
@@ -186,21 +187,64 @@ async def delete_role(
 @router.get("/{role_id}/users")
 async def get_role_users(
     role_id: int,
+    page: int = Query(1, ge=1),
+    size: int = Query(50, ge=1, le=1000),
+    search: Optional[str] = None,
     admin: dict = Depends(require_permission("element", "element:role:edit")),
     db: AsyncSession = Depends(get_db_session)
 ):
     """
     Get users assigned to this role.
+
+    注意两点，改接口前务必先读：
+
+    1. `user_ids` 是该角色的**全量**成员 ID，**不受 search / page 影响**。
+       前端保存走的是“整集替换”语义（提交完整 ID 列表），一旦这里返回过滤或分页后的
+       子集，未出现在响应里的成员会在保存时被静默移除。
+    2. `items` 是给弹窗展示用的成员详情，支持搜索与分页，与 `user_ids` 范围可以不同。
     """
     role = await db.get(Role, role_id)
     if not role:
         raise HTTPException(status_code=404, detail="Role not found")
-        
-    stmt = select(UserRoleRelation.user_id).where(UserRoleRelation.role_id == role_id)
-    result = await db.execute(stmt)
-    user_ids = result.scalars().all()
-    
-    return {"user_ids": user_ids}
+
+    id_stmt = select(UserRoleRelation.user_id).where(UserRoleRelation.role_id == role_id)
+    user_ids = list((await db.execute(id_stmt)).scalars().all())
+
+    stmt = (
+        select(User)
+        .join(UserRoleRelation, UserRoleRelation.user_id == User.id)
+        .where(UserRoleRelation.role_id == role_id)
+    )
+    if search:
+        like = f"%{search}%"
+        stmt = stmt.where(
+            or_(User.user_name.like(like), User.real_name.like(like))
+        )
+
+    count_stmt = select(func.count()).select_from(stmt.subquery())
+    total = (await db.execute(count_stmt)).scalar()
+
+    stmt = stmt.order_by(desc(User.created_at)).offset((page - 1) * size).limit(size)
+    rows = (await db.execute(stmt)).scalars().all()
+
+    items = [
+        {
+            "id": row.id,
+            "user_name": row.user_name,
+            "real_name": row.real_name,
+            "status": row.status,
+            "created_at": row.created_at.isoformat() if row.created_at else None,
+        }
+        for row in rows
+    ]
+
+    return {
+        "user_ids": user_ids,
+        "total": total,
+        "page": page,
+        "size": size,
+        "items": items,
+    }
 
 @router.post("/{role_id}/users")
 async def bulk_assign_role_users(
