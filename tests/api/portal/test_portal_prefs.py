@@ -198,6 +198,98 @@ async def test_update_expert_routing_rejects_forbidden_agent(monkeypatch):
     assert redis.saved is None
 
 
+@pytest.mark.asyncio
+async def test_update_agent_avatar_prefs_admin_success(monkeypatch):
+    class DualKeyRedis:
+        def __init__(self):
+            self.store = {"agent:portal_prefs:7": json.dumps({"markdown_theme": "apple"})}
+
+        async def get(self, key):
+            return self.store.get(key)
+
+        async def set(self, key, value):
+            self.store[key] = value
+
+        async def delete(self, key):
+            self.store.pop(key, None)
+
+    redis = DualKeyRedis()
+    monkeypatch.setattr(portal_prefs, "get_redis", lambda: _resolved(redis))
+
+    # 管理员更新成功
+    result = await portal_prefs.update_agent_avatar(
+        portal_prefs.AgentAvatarUpdate(avatar="/branding/avatars/agent_avatar.png"),
+        user_info=user_info(role="admin"),
+    )
+
+    assert result["code"] == 0
+    assert result["data"]["agent_avatar"] == "/branding/avatars/agent_avatar.png"
+    assert redis.store[portal_prefs.GLOBAL_AGENT_AVATAR_KEY] == "/branding/avatars/agent_avatar.png"
+
+    # 普通用户获取时自动拿到管理员设置的全局头像
+    user_res = await portal_prefs.get_portal_prefs(user_info(user_id=99, role="user"))
+    assert user_res["code"] == 0
+    assert user_res["data"]["agent_avatar"] == "/branding/avatars/agent_avatar.png"
+
+
+@pytest.mark.asyncio
+async def test_update_agent_avatar_prefs_forbidden_for_normal_user():
+    with pytest.raises(HTTPException) as exc_info:
+        await portal_prefs.update_agent_avatar(
+            portal_prefs.AgentAvatarUpdate(avatar="/branding/avatars/agent_avatar.png"),
+            user_info=user_info(role="user"),
+        )
+    assert exc_info.value.status_code == 403
+    assert "只有管理员才能设置" in exc_info.value.detail
+
+
+@pytest.mark.asyncio
+async def test_upload_agent_avatar_forbidden_for_normal_user():
+    from io import BytesIO
+    from starlette.datastructures import UploadFile as StarletteUploadFile
+
+    fake_file = StarletteUploadFile(
+        filename="robot.png",
+        file=BytesIO(b"\x89PNG\r\n\x1a\nfake-image-content"),
+        headers={"content-type": "image/png"},
+    )
+    with pytest.raises(HTTPException) as exc_info:
+        await portal_prefs.upload_agent_avatar(
+            file=fake_file,
+            user_info=user_info(role="user"),
+        )
+    assert exc_info.value.status_code == 403
+    assert "只有管理员才能上传" in exc_info.value.detail
+
+
+@pytest.mark.asyncio
+async def test_upload_agent_avatar_admin_saves_to_branding_dir(monkeypatch, tmp_path):
+    from io import BytesIO
+    from starlette.datastructures import UploadFile as StarletteUploadFile
+
+    test_branding_dir = tmp_path / "branding_avatars"
+    monkeypatch.setattr(portal_prefs, "BRANDING_AVATARS_DIR", str(test_branding_dir))
+
+    fake_file = StarletteUploadFile(
+        filename="robot.png",
+        file=BytesIO(b"\x89PNG\r\n\x1a\nfake-image-content"),
+        headers={"content-type": "image/png"},
+    )
+
+    result = await portal_prefs.upload_agent_avatar(
+        file=fake_file,
+        user_info=user_info(user_id=1, role="admin"),
+    )
+
+    assert result["code"] == 0
+    assert "/branding/avatars/agent_avatar.png?t=" in result["data"]["avatar_url"]
+    saved_file = test_branding_dir / "agent_avatar.png"
+    assert saved_file.is_file()
+    assert saved_file.read_bytes() == b"\x89PNG\r\n\x1a\nfake-image-content"
+
+
+
+
 async def _resolved(value):
     return value
 

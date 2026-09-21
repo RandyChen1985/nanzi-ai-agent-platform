@@ -5,12 +5,16 @@ import GroundingHelpPopover from '@/components/GroundingHelpPopover.vue';
 import Switch from '@/components/Switch.vue';
 import { useToast } from '@/composables/useToast';
 import axios from '@/utils/axios';
+import defaultAgentAvatarUrl from '@/assets/nanzi-agent-avatar.svg';
+import { PRESET_AGENT_AVATARS } from '@/utils/presetAgentAvatars';
+import AvatarCropperModal from '@/components/common/AvatarCropperModal.vue';
 
 const props = defineProps<{
   visible: boolean;
   config: any;
   allowedAgents: any[];
   routingLocked?: boolean;
+  isAdmin?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -30,6 +34,9 @@ const { showToast } = useToast();
 type RoutingMode = 'auto' | 'expert';
 const routingMode = ref<RoutingMode>(props.config.routingMode === 'expert' ? 'expert' : 'auto');
 const activeColor = ref("#1677ff");
+const customAvatarInput = ref(props.config.agentAvatar || "");
+const avatarUploading = ref(false);
+const fileInputRef = ref<HTMLInputElement | null>(null);
 const presetColors = [
   "#1677ff",
   "#f97316",
@@ -47,8 +54,103 @@ const close = () => emit('update:visible', false);
 watch(() => props.visible, (visible) => {
   if (visible) {
     routingMode.value = props.config.routingMode === 'expert' ? 'expert' : 'auto';
+    customAvatarInput.value = props.config.agentAvatar || "";
   }
 });
+
+const handleSetAgentAvatar = (avatar: string, toastMessage = "AI 助手头像已更新") => {
+  props.config.agentAvatar = avatar;
+  customAvatarInput.value = avatar;
+  localStorage.setItem("yovole_embed_agent_avatar", avatar);
+  showToast(toastMessage, "success");
+  saveSettings();
+
+  // 异步同步到后端 Redis 持久化
+  void axios.put("/api/portal/portal-prefs/agent-avatar", { avatar }).catch((err) => {
+    console.error("Failed to sync agent avatar preference to Redis", err);
+  });
+};
+
+const handleResetAgentAvatar = () => {
+  handleSetAgentAvatar("", "已恢复官方默认 AI 助手头像");
+};
+
+const handleCustomAvatarBlur = () => {
+  const trimmed = customAvatarInput.value.trim();
+  if (trimmed !== (props.config.agentAvatar || "")) {
+    handleSetAgentAvatar(trimmed);
+  }
+};
+
+const showAvatarCropper = ref(false);
+const cropperImageSrc = ref("");
+
+const triggerAvatarUpload = () => {
+  fileInputRef.value?.click();
+};
+
+const uploadAvatarFileDirectly = async (file: File) => {
+  avatarUploading.value = true;
+  try {
+    const formData = new FormData();
+    formData.append("file", file);
+    const res = await axios.post("/api/portal/portal-prefs/agent-avatar/upload", formData, {
+      headers: { "Content-Type": "multipart/form-data" },
+    });
+    const avatarUrl = res.data?.data?.avatar_url;
+    if (avatarUrl) {
+      handleSetAgentAvatar(avatarUrl, "AI 助手头像设置成功");
+      showAvatarCropper.value = false;
+    } else {
+      showToast("上传头像失败，返回数据异常", "error");
+    }
+  } catch (error: any) {
+    const msg = error.response?.data?.detail || "上传头像失败，请稍后重试";
+    showToast(msg, "error");
+  } finally {
+    avatarUploading.value = false;
+  }
+};
+
+const handleAvatarFileUpload = async (event: Event) => {
+  const target = event.target as HTMLInputElement;
+  const file = target.files?.[0];
+  if (!file) return;
+
+  // 允许选择大图（最大 30MB），位图将经由 Canvas 进行高清裁剪并轻量化输出
+  if (file.size > 30 * 1024 * 1024) {
+    showToast("图片过大，请选择 30MB 以内的图片", "warning");
+    target.value = "";
+    return;
+  }
+
+  // 矢量图无需裁剪，直接上传
+  if (file.type === "image/svg+xml") {
+    await uploadAvatarFileDirectly(file);
+    target.value = "";
+    return;
+  }
+
+  const supported = ["image/png", "image/jpeg", "image/jpg", "image/webp", "image/gif"];
+  if (!supported.includes(file.type)) {
+    showToast("仅支持 PNG、JPEG、WebP、GIF、SVG 格式图片", "error");
+    target.value = "";
+    return;
+  }
+
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    cropperImageSrc.value = (e.target?.result as string) || "";
+    showAvatarCropper.value = true;
+  };
+  reader.readAsDataURL(file);
+  target.value = "";
+};
+
+const handleAvatarCropped = async (blob: Blob) => {
+  const file = new File([blob], "agent_avatar.png", { type: "image/png" });
+  await uploadAvatarFileDirectly(file);
+};
 
 const saveSettings = () => {
   emit('save-settings');
@@ -337,6 +439,99 @@ const handleLogout = () => {
                   />
                   <!-- Custom color indicator icon -->
                   <svg class="w-3.5 h-3.5 text-white filter drop-shadow-sm pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M12 4v16m8-8H4" /></svg>
+                </div>
+              </div>
+            </div>
+
+            <!-- AI Agent Avatar Settings (Admin Configurable) -->
+            <div>
+              <div class="flex items-center justify-between mb-2">
+                <label class="text-[10px] font-black text-gray-500 dark:text-gray-400 uppercase tracking-wider flex items-center gap-1">
+                  <span>AI 助手头像</span>
+                  <span class="text-[9px] font-normal text-gray-400">（聊天消息气泡旁展示）</span>
+                </label>
+                <span v-if="!isAdmin" class="text-[9.5px] text-gray-400 dark:text-gray-500 bg-gray-100 dark:bg-gray-800 px-1.5 py-0.5 rounded">
+                  管理员统一配置
+                </span>
+                <button
+                  v-else-if="config.agentAvatar"
+                  @click="handleResetAgentAvatar"
+                  type="button"
+                  class="text-[10px] text-blue-500 hover:text-blue-600 dark:hover:text-blue-400 hover:underline flex items-center gap-0.5"
+                >
+                  <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
+                  恢复默认
+                </button>
+              </div>
+
+              <!-- Admin Controls -->
+              <template v-if="isAdmin">
+                <!-- Presets Row -->
+                <div class="flex items-center gap-2 mb-2.5">
+                  <button
+                    v-for="preset in PRESET_AGENT_AVATARS"
+                    :key="preset.id"
+                    type="button"
+                    @click="handleSetAgentAvatar(preset.isDefault ? '' : preset.url, `已切换为「${preset.name}」`)"
+                    :title="preset.name"
+                    class="relative w-8 h-8 rounded-full overflow-hidden border-2 transition-all duration-200 hover:scale-110 active:scale-95 flex items-center justify-center bg-gray-100 dark:bg-gray-700"
+                    :class="
+                      (preset.isDefault && !config.agentAvatar) || config.agentAvatar === preset.url
+                        ? 'border-blue-500 ring-2 ring-blue-500/30 scale-105 shadow-sm'
+                        : 'border-transparent hover:border-gray-300 dark:hover:border-gray-600'
+                    "
+                  >
+                    <img :src="preset.url" :alt="preset.name" class="w-full h-full object-cover" />
+                    <span
+                      v-if="(preset.isDefault && !config.agentAvatar) || config.agentAvatar === preset.url"
+                      class="absolute inset-0 bg-blue-600/20 flex items-center justify-center"
+                    >
+                      <svg class="w-3 h-3 text-white filter drop-shadow" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7" /></svg>
+                    </span>
+                  </button>
+                </div>
+
+                <!-- Custom Avatar: Upload & Link Input -->
+                <div class="flex items-center gap-1.5">
+                  <input
+                    type="file"
+                    ref="fileInputRef"
+                    accept="image/png,image/jpeg,image/webp,image/svg+xml,image/gif"
+                    class="hidden"
+                    @change="handleAvatarFileUpload"
+                  />
+                  <button
+                    type="button"
+                    @click="triggerAvatarUpload"
+                    :disabled="avatarUploading"
+                    class="shrink-0 px-2.5 py-1.5 text-[11px] rounded-lg border border-dashed border-gray-300 dark:border-gray-600 hover:border-blue-500 dark:hover:border-blue-400 bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-300 hover:text-blue-600 dark:hover:text-blue-400 flex items-center gap-1 transition-all disabled:opacity-50"
+                    title="上传本地图片作为 AI 头像"
+                  >
+                    <svg v-if="avatarUploading" class="w-3.5 h-3.5 animate-spin text-blue-500" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"/></svg>
+                    <svg v-else class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" /></svg>
+                    <span>{{ avatarUploading ? '上传中...' : '上传图片' }}</span>
+                  </button>
+
+                  <div class="flex-1 relative">
+                    <input
+                      v-model="customAvatarInput"
+                      @blur="handleCustomAvatarBlur"
+                      @keyup.enter="handleCustomAvatarBlur"
+                      placeholder="或粘贴网络图片 URL"
+                      class="w-full text-[11px] px-2.5 py-1.5 rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-200 placeholder-gray-400 outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-100 dark:focus:ring-blue-900/40 transition-all"
+                    />
+                  </div>
+                </div>
+              </template>
+
+              <!-- Readonly View for Non-Admin -->
+              <div v-else class="flex items-center gap-2.5 p-2 rounded-lg bg-gray-100/60 dark:bg-gray-800/40 border border-gray-200/50 dark:border-gray-700/50">
+                <div class="w-8 h-8 rounded-full overflow-hidden border border-gray-200 dark:border-gray-600 flex-shrink-0">
+                  <img :src="config.agentAvatar || defaultAgentAvatarUrl" class="w-full h-full object-cover" alt="AI Avatar" />
+                </div>
+                <div class="text-[10px] text-gray-500 dark:text-gray-400 leading-tight">
+                  <p class="font-medium text-gray-700 dark:text-gray-300">系统官方 AI 助手形象</p>
+                  <p class="text-[9px] text-gray-400 mt-0.5">普通用户仅供浏览，需管理员权限方可定制变更</p>
                 </div>
               </div>
             </div>
@@ -661,6 +856,15 @@ const handleLogout = () => {
             </div>
         </div>
     </div>
+
+    <!-- Avatar Cropper Modal -->
+    <AvatarCropperModal
+      :visible="showAvatarCropper"
+      :image-src="cropperImageSrc"
+      :loading="avatarUploading"
+      @close="showAvatarCropper = false"
+      @confirm="handleAvatarCropped"
+    />
 </template>
 
 <style scoped>
