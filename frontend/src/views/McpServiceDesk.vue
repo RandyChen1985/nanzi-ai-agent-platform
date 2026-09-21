@@ -2155,7 +2155,7 @@ onUnmounted(() => {
           </div>
         </div>
         <div v-if="showClientFilters" class="mb-5 flex flex-wrap items-center gap-3 rounded-xl bg-slate-50 p-3">
-          <input type="search" v-model="clientSearch" class="min-w-[220px] flex-1 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm" placeholder="搜索 Client 名称、ID 或所属用户" @keyup.enter="applyClientFilters" />
+          <input type="search" v-model="clientSearch" class="min-w-[220px] flex-1 rounded-lg border border-slate-200 bg-white pl-3 pr-7 py-2 text-sm" placeholder="搜索 Client 名称、ID 或所属用户" @keyup.enter="applyClientFilters" />
           <select v-model="clientStatus" class="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm"><option value="">全部状态</option><option value="active">启用</option><option value="disabled">停用</option></select>
           <button type="button" class="rounded-lg bg-indigo-600 px-4 py-2 text-xs font-bold text-white" @click="applyClientFilters">查询</button>
           <span class="text-xs text-slate-500">共 {{ clientTotal }} 个</span>
@@ -2964,7 +2964,7 @@ onUnmounted(() => {
                   </label>
                 </div>
                 <div class="flex flex-wrap items-center gap-2">
-                  <input type="search" v-model="resourceWhitelistModal.search" class="min-w-0 flex-1 rounded-lg border border-slate-200 px-3 py-2 text-sm" placeholder="搜索资源名称或 ID" @keyup.enter="loadResourceOptions()" />
+                  <input type="search" v-model="resourceWhitelistModal.search" class="min-w-0 flex-1 rounded-lg border border-slate-200 pl-3 pr-7 py-2 text-sm" placeholder="搜索资源名称或 ID" @keyup.enter="loadResourceOptions()" />
                   <button type="button" class="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-600 hover:bg-slate-50" @click="loadResourceOptions()">查询</button>
                   <button type="button" class="rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-2 text-xs font-bold text-indigo-700 hover:bg-indigo-100 disabled:opacity-50" :disabled="resourceWhitelistModal.unrestricted" @click="selectAllCurrentResourceOptions">勾选当前搜索结果</button>
                   <button type="button" class="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-bold text-amber-700 hover:bg-amber-100" @click="restoreAllAccessibleResources">取消限制，跟随用户权限</button>
