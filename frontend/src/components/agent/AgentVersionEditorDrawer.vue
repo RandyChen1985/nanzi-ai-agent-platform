@@ -5,6 +5,10 @@ import type { AIModel } from '../../api/model';
 import MarkdownEditor from '../MarkdownEditor.vue';
 import Modal from '../Modal.vue';
 import MessageRenderer from '../MessageRenderer.vue';
+import AvatarCropperModal from '../common/AvatarCropperModal.vue';
+import { AGENT_AVATAR_URL_MAX_LENGTH } from '@/utils/agentAvatar';
+import { useToast } from '@/composables/useToast';
+import { useAgentAvatarUpload } from '@/composables/useAgentAvatarUpload';
 import { normalizeMarkdownTheme, type MarkdownTheme } from '@/types/markdownTheme';
 import { mcpToolDisplayName } from '../../utils/mcpToolDisplayName';
 import { getTemperatureGuidance } from '../../utils/temperatureGuidance';
@@ -172,6 +176,28 @@ const showKnowledgeBaseToolsGuidance = computed(
     && (props.knowledgeBaseToolsStepIssues.missingTool || props.knowledgeBaseToolsStepIssues.missingBinding),
 );
 const goStep = (step: VersionConfigStep) => emit('update:versionConfigStep', step);
+
+const { showToast } = useToast();
+
+// 智能体头像：URL 直填 + 裁剪上传。上传只落盘不改库，拿到 URL 后回填
+// agentForm.avatar_url，由父组件的保存流程统一持久化（不代替用户保存）。
+const agentAvatarPreview = computed(() => String(props.agentForm.avatar_url || '').trim());
+const agentAvatarFileInput = ref<HTMLInputElement | null>(null);
+const {
+  uploading: agentAvatarUploading,
+  showCropper: showAgentAvatarCropper,
+  cropperSrc: agentAvatarCropperSrc,
+  pickFile: pickAgentAvatarFile,
+  handleFileChange: handleAgentAvatarFileChange,
+  handleCropped: handleAgentAvatarCropped,
+} = useAgentAvatarUpload({
+  getAgentId: () => props.selectedAgent?.id,
+  onUploaded: (url) => {
+    props.agentForm.avatar_url = url;
+  },
+  notify: showToast,
+});
+
 const canPublishLocalVersion = computed(() =>
   props.agentForm.engine_type === 'LOCAL'
   && props.canEditVersion
@@ -628,7 +654,39 @@ const externalCreationMissingFields = computed(() => {
             <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <div>
                 <label class="block text-sm font-medium text-gray-700 mb-1">头像地址</label>
-                <input v-model="agentForm.avatar_url" placeholder="可选，填写图片 URL" class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/30" />
+                <div class="flex items-center gap-2">
+                  <img
+                    v-if="agentAvatarPreview"
+                    :src="agentAvatarPreview"
+                    class="h-9 w-9 shrink-0 rounded-full border border-gray-200 object-cover"
+                    alt="智能体头像预览"
+                  />
+                  <input
+                    v-model="agentForm.avatar_url"
+                    :maxlength="AGENT_AVATAR_URL_MAX_LENGTH"
+                    placeholder="可选，填写图片 URL 或点右侧上传"
+                    class="w-full min-w-0 rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/30"
+                  />
+                  <button
+                    v-if="!isCreatingAgent && selectedAgent?.id"
+                    type="button"
+                    class="shrink-0 rounded-lg border border-gray-300 bg-white px-3 py-2 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60"
+                    :disabled="agentAvatarUploading"
+                    @click="pickAgentAvatarFile(agentAvatarFileInput)"
+                  >
+                    {{ agentAvatarUploading ? '上传中…' : '上传' }}
+                  </button>
+                </div>
+                <p class="mt-1 text-[11px] text-gray-400">
+                  未设置头像时，会话中将继承管理员的全局 AI 形象；地址上限 {{ AGENT_AVATAR_URL_MAX_LENGTH }} 字符（数据库字段限制）。
+                </p>
+                <input
+                  ref="agentAvatarFileInput"
+                  type="file"
+                  accept="image/png,image/jpeg,image/webp,image/gif,image/svg+xml"
+                  class="hidden"
+                  @change="handleAgentAvatarFileChange"
+                />
               </div>
               <div>
                 <label class="block text-sm font-medium text-gray-700 mb-1">排序权重</label>
@@ -1703,6 +1761,16 @@ const externalCreationMissingFields = computed(() => {
       </div>
     </template>
   </Modal>
+
+  <!-- 智能体头像裁剪（复用全局头像同一套裁剪组件，仅标题与落盘目录不同） -->
+  <AvatarCropperModal
+    :visible="showAgentAvatarCropper"
+    :image-src="agentAvatarCropperSrc"
+    :loading="agentAvatarUploading"
+    title="裁剪智能体头像"
+    @close="showAgentAvatarCropper = false"
+    @confirm="handleAgentAvatarCropped"
+  />
 </template>
 
 <style scoped>

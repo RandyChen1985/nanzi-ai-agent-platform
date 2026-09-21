@@ -5,17 +5,22 @@
 Key: agent:portal_prefs:{user_id}
 Value: JSON 字符串，结构为 { "pinned_group_ids": ["id1", "id2"] }
 """
-import glob
 import json
 import logging
-import os
-import time
 from typing import Any, Dict, List, Literal, Optional
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from pydantic import BaseModel, Field
 
+from app.core.avatar_assets import (
+    ALLOWED_AVATAR_TYPES,
+    BRANDING_AVATARS_DIR,
+    BRANDING_AVATARS_URL,
+    MAX_AVATAR_BYTES,
+    resolve_avatar_extension,
+    save_avatar_file,
+)
 from app.core.dependencies import require_api_key
 from app.core.orm import get_db_session
 from app.core.redis import get_redis
@@ -28,18 +33,7 @@ router = APIRouter()
 MAX_PINNED_GROUPS = 50  # 最多允许置顶的卡片数，防止滥用
 MAX_CARD_ORDER = 200   # 最多记录排序的卡片数
 MAX_QUESTION_CLICKS = 500  # 最多记录的问题点击 key 数
-MAX_AVATAR_BYTES = 2 * 1024 * 1024  # AI 头像上传限制 2MB
-BRANDING_AVATARS_DIR = "data/branding/avatars"
 GLOBAL_AGENT_AVATAR_KEY = "agent:branding:default_agent_avatar"
-
-ALLOWED_AVATAR_TYPES = {
-    "image/png": ".png",
-    "image/jpeg": ".jpg",
-    "image/jpg": ".jpg",
-    "image/webp": ".webp",
-    "image/svg+xml": ".svg",
-    "image/gif": ".gif",
-}
 
 
 def _redis_key(user_id: int) -> str:
@@ -455,13 +449,7 @@ async def upload_agent_avatar(
         )
 
     content_type = (file.content_type or "").lower()
-    ext = ALLOWED_AVATAR_TYPES.get(content_type)
-    if not ext:
-        filename_lower = (file.filename or "").lower()
-        for ctype, e in ALLOWED_AVATAR_TYPES.items():
-            if filename_lower.endswith(e):
-                ext = e
-                break
+    ext = resolve_avatar_extension(content_type, file.filename)
     if not ext:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -475,23 +463,16 @@ async def upload_agent_avatar(
             detail="头像图片不能超过 2MB",
         )
 
-    os.makedirs(BRANDING_AVATARS_DIR, exist_ok=True)
-    # 清理历史旧头像文件，防止文件冗余
-    for old_file in glob.glob(os.path.join(BRANDING_AVATARS_DIR, "agent_avatar*")):
-        try:
-            if os.path.isfile(old_file):
-                os.remove(old_file)
-        except Exception:
-            pass
-
-    # 使用带时间戳的独立文件名，确保 URL 绝对唯一，彻底根除浏览器 HTTP 静态缓存问题
-    timestamp = int(time.time())
-    filename = f"agent_avatar_{timestamp}{ext}"
-    save_path = os.path.join(BRANDING_AVATARS_DIR, filename)
-    with open(save_path, "wb") as f:
-        f.write(data)
-
-    avatar_url = f"/branding/avatars/{filename}"
+    # 全局头像只有一个主体，因此按 `agent_avatar*` 清理历史旧文件即可（该通配仅作用于
+    # avatars/ 目录；智能体头像在独立子目录、独立前缀，不会被这里误删）。
+    avatar_url = save_avatar_file(
+        data,
+        ext,
+        directory=BRANDING_AVATARS_DIR,
+        public_prefix=BRANDING_AVATARS_URL,
+        prefix="agent_avatar",
+        cleanup_glob="agent_avatar*",
+    )
     return {
         "code": 0,
         "data": {"avatar_url": avatar_url},

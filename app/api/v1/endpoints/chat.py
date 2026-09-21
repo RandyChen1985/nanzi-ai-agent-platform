@@ -841,6 +841,33 @@ class ProcessTimelineItem(BaseModel):
     counts: Optional[Dict[str, Any]] = None
 
 
+def _agent_identity_fields(agent_id: Any, agent_map: Dict[str, tuple]) -> Dict[str, Any]:
+    """取历史条目的智能体身份字段（dict 形态）。
+
+    与 `_apply_agent_identity` 同源：元组顺序只在这里解包一次，避免多处下标各写各的。
+    """
+    identity = agent_map.get(str(agent_id)) if agent_id is not None else None
+    if not identity:
+        return {"agent_name": None, "agent_display_name": None, "agent_avatar_url": None}
+    return {
+        "agent_name": identity[0],
+        "agent_display_name": identity[1],
+        "agent_avatar_url": identity[2] if len(identity) > 2 else None,
+    }
+
+
+def _apply_agent_identity(item: Any, agent_map: Dict[str, tuple]) -> None:
+    """把 agent_map 中的身份信息回填到历史条目。
+
+    历史表只落 `agent_id`，展示信息全靠这里补齐；头像缺失（智能体未单独设置）时保持
+    None，由前端继承全局 AI 形象。
+    """
+    fields = _agent_identity_fields(getattr(item, "agent_id", None), agent_map)
+    item.agent_name = fields["agent_name"]
+    item.agent_display_name = fields["agent_display_name"]
+    item.agent_avatar_url = fields["agent_avatar_url"]
+
+
 class ConversationMessage(BaseModel):
     """结构化收敛的会话消息体。涵盖 user/assistant 各类已知字段，
     同时 `extra="allow"` 容忍历史遗留的未声明字段，避免解析失败。"""
@@ -861,6 +888,8 @@ class ConversationMessage(BaseModel):
     agent_name: Optional[str] = None
     agent_type: Optional[str] = None
     agent_display_name: Optional[str] = None
+    # 智能体专属头像（短路径）；为空表示该智能体未单独设置，前端继承全局 AI 形象
+    agent_avatar_url: Optional[str] = None
     reasoning_content: Optional[str] = None
     process_timeline: Optional[List[ProcessTimelineItem]] = None
     feedback: Optional[Any] = None
@@ -1044,9 +1073,9 @@ async def get_conversation_history(
         agent_map = {}
         agent_type_by_id = {}
         try:
-            from app.services.ai.agent_manager import AgentManagerService
+            from app.services.ai.agent_manager import AgentManagerService, build_agent_identity_map
             all_agents = await AgentManagerService.list_agents(db, user=user_info)
-            agent_map = {str(a.id): (a.name, a.display_name) for a in all_agents}
+            agent_map = build_agent_identity_map(all_agents)
             for a in all_agents:
                 agent_type = getattr(a, "agent_type", None) or "GENERAL"
                 agent_type = getattr(agent_type, "value", agent_type)
@@ -1056,11 +1085,10 @@ async def get_conversation_history(
             
         fallback_history = []
         for r in records:
-            agent_name = None
-            agent_display_name = None
-            if r.agent_id in agent_map:
-                agent_name = agent_map[r.agent_id][0]
-                agent_display_name = agent_map[r.agent_id][1]
+            agent_identity = _agent_identity_fields(r.agent_id, agent_map)
+            agent_name = agent_identity["agent_name"]
+            agent_display_name = agent_identity["agent_display_name"]
+            agent_avatar_url = agent_identity["agent_avatar_url"]
                 
             # Each record has a query (user message) and a summary (assistant reply)
             if r.query:
@@ -1078,6 +1106,7 @@ async def get_conversation_history(
                     "timestamp": r.created_at.isoformat() if r.created_at else None,
                     "agent_name": agent_name,
                     "agent_display_name": agent_display_name,
+                    "agent_avatar_url": agent_avatar_url,
                     "agent_type": agent_type_by_id.get(str(r.agent_id)) or "GENERAL",
                     "trace_id": r.trace_id,
                     "feedback": r.feedback,
@@ -2031,11 +2060,13 @@ async def get_history(
 
     result = await db.execute(query)
     
-    # 动态获取智能体 ID 到 (Slug 标识名, 显示名) 的映射，用以丰富前端历史列表展现
+    # 动态获取智能体 ID 到 (Slug 标识名, 显示名, 头像) 的映射，用以丰富前端历史列表展现。
+    # 头像必须由后端下发：`/agents/allowed` 过滤了 is_enabled=True，已停用智能体的历史
+    # 消息前端索引不到，只能靠这里的映射补上。
     try:
-        from app.services.ai.agent_manager import AgentManagerService
+        from app.services.ai.agent_manager import AgentManagerService, build_agent_identity_map
         all_agents = await AgentManagerService.list_agents(db, user=user_info)
-        agent_map = {str(a.id): (a.name, a.display_name) for a in all_agents}
+        agent_map = build_agent_identity_map(all_agents)
     except Exception as e:
         logger.warning(f"[History API] Failed to fetch active agents mapping: {e}")
         agent_map = {}
@@ -2090,9 +2121,7 @@ async def get_history(
             item = AgentExecutionHistoryResponse.from_orm(row_obj)
             item = item.model_copy(update=reusable_metadata_by_trace.get(str(item.trace_id), {}))
             item.turn_count = turn_count
-            if item.agent_id in agent_map:
-                item.agent_name = agent_map[item.agent_id][0]
-                item.agent_display_name = agent_map[item.agent_id][1]
+            _apply_agent_identity(item, agent_map)
             if item.conversation_id:
                 scope = scopes.get(scope_key(row_obj), {})
                 item.project_name = scope.get("project_name") or None
@@ -2117,9 +2146,7 @@ async def get_history(
         for row in rows:
             item = AgentExecutionHistoryResponse.from_orm(row)
             item = item.model_copy(update=reusable_metadata_by_trace.get(str(item.trace_id), {}))
-            if item.agent_id in agent_map:
-                item.agent_name = agent_map[item.agent_id][0]
-                item.agent_display_name = agent_map[item.agent_id][1]
+            _apply_agent_identity(item, agent_map)
             if item.conversation_id:
                 scope = scopes.get(scope_key(row), {})
                 item.project_name = scope.get("project_name") or None

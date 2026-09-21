@@ -14,7 +14,8 @@ def test_embed_chat_agent_messages_use_the_nanzi_agent_avatar_asset():
 
     assert 'import agentAvatarUrl from "@/assets/nanzi-agent-avatar.svg";' in source
     assert "'/branding/nanzi-agent-avatar.svg'" not in source
-    assert ':src="config.agentAvatar || agentAvatarUrl"' in source
+    # 气泡头像不再直接用全局形象：改为三层继承解析（智能体头像 → 全局 → 内置默认）
+    assert ':src="msgAvatarSrc(msg) || agentAvatarUrl"' in source
     assert '@error="handleAgentAvatarError"' in source
     assert 'alt="NanZi AI agent"' in source
     assert bundled_avatar.is_file()
@@ -125,5 +126,127 @@ def test_preset_agent_avatars_use_bundled_assets_instead_of_inline_data_uris():
     assert "isAgentAvatarUrlTooLong(target)" in settings_source
     assert "MAX_AGENT_AVATAR_URL_LENGTH" in settings_source
     assert 'class="flex flex-wrap items-center gap-2 mb-2.5"' in settings_source
+
+
+def test_agent_avatar_resolution_is_agent_then_global_then_bundled():
+    """头像继承顺序必须收敛在单一 util，且顺序为：智能体 → 全局 → 内置默认。"""
+    util_source = (ROOT / "frontend/src/utils/agentAvatar.ts").read_text(encoding="utf-8")
+
+    assert "export function agentOwnAvatarUrl" in util_source
+    assert "export function buildAgentAvatarIndex" in util_source
+    assert "export function resolveChatAgentAvatar" in util_source
+    # 智能体头像地址受 DB 字段限制（String(255)），与全局头像的 2048 是两个上限
+    assert "export const AGENT_AVATAR_URL_MAX_LENGTH = 255" in util_source
+
+    # 未配置头像的智能体不入索引，查表落空才能干净回退到全局形象
+    assert "if (!url) continue;" in util_source
+
+    # 优先级：消息自带 → 按 id → 按 name → 全局（下标顺序即优先级顺序）
+    order = [
+        util_source.index("if (direct) return direct;"),
+        util_source.index("if (byId) return byId;"),
+        util_source.index("if (byName) return byName;"),
+        util_source.index("return String(globalAvatar || \"\").trim();"),
+    ]
+    assert order == sorted(order), "三层继承的判定顺序被改动了"
+
+
+def test_embed_chat_bubble_uses_per_agent_avatar_with_global_fallback():
+    source = (ROOT / "frontend/src/views/EmbedChat.vue").read_text(encoding="utf-8")
+
+    # ① 气泡走三层继承解析，且以内置默认资源兜底
+    assert ':src="msgAvatarSrc(msg) || agentAvatarUrl"' in source
+    assert "resolveChatAgentAvatar(" in source
+    assert "buildAgentAvatarIndex(allowedAgents.value)" in source
+    assert "agentAvatarUrl?: string" in source  # Message 接口字段
+
+    # ② 历史接口下发的气头像必须被消费（已停用智能体的历史消息只能靠它）
+    assert "agentAvatarUrl: item.agent_avatar_url ?? undefined" in source
+    assert "agentAvatarUrl: latestServerItem.agent_avatar_url ?? undefined" in source
+
+    # ③ 单个智能体头像 404 时先回落全局形象，再退内置默认；不得出现 error 死循环
+    assert "failedAvatarSrcs" in source
+    error_handler = source[source.index("const handleAgentAvatarError"):]
+    error_handler = error_handler[: error_handler.index("\n};") + 3]
+    assert "String(config.agentAvatar || \"\").trim()" in error_handler
+    assert "if (!failedAvatarSrcs.has(candidate))" in error_handler
+
+
+def test_agent_selection_lists_share_the_same_avatar_resolver():
+    """选择列表兜底仍是首字母，但判定口径必须与气泡同源（不得各自读 avatar_url）。"""
+    cascade = (ROOT / "frontend/src/components/embed/ExpertCascadeMenu.vue").read_text(encoding="utf-8")
+    mention = (ROOT / "frontend/src/components/agent/MentionList.vue").read_text(encoding="utf-8")
+
+    for source in (cascade, mention):
+        assert "agentOwnAvatarUrl" in source
+        assert "agent.avatar_url" not in source and "row.agent.avatar_url" not in source
+
+
+def test_agent_editor_supports_avatar_upload_without_implicit_save():
+    """编辑器可上传并裁剪智能体头像，但只回填表单字段，绝不代替用户保存。"""
+    editor = (ROOT / "frontend/src/components/agent/AgentVersionEditorDrawer.vue").read_text(encoding="utf-8")
+
+    # ① 上传入口 + 复用全局头像同一套裁剪组件
+    assert "pickAgentAvatarFile" in editor
+    assert "AvatarCropperModal" in editor
+    assert 'title="裁剪智能体头像"' in editor
+
+    # ② 只能上传已存在的智能体（新建时还没有 id）
+    assert "!isCreatingAgent && selectedAgent?.id" in editor
+
+    # ③ 上传只回填表单，由既有保存流程持久化；不得在此处直接 PUT 智能体
+    assert "props.agentForm.avatar_url = url" in editor
+    assert "axios.put(" not in editor
+
+    # ④ 输入框受 DB 字段上限保护，避免 MySQL 1406
+    assert ':maxlength="AGENT_AVATAR_URL_MAX_LENGTH"' in editor
+    assert "AGENT_AVATAR_URL_MAX_LENGTH" in editor
+
+
+def test_agent_avatar_is_configurable_from_the_reachable_edit_modal():
+    """头像入口必须落在用户真正能打开的「编辑智能体」弹窗里。
+
+    回归背景：最初只把上传入口加在 `AgentVersionEditorDrawer` 的「智能体信息」步骤，
+    而该步骤仅在新建时出现（`versionConfigSteps` 只在 isCreatingAgent 时带 agent 步骤），
+    编辑已有智能体时根本看不到，用户反馈「没看到地方设置」。
+    """
+    mgmt = (ROOT / "frontend/src/views/AgentManagement.vue").read_text(encoding="utf-8")
+
+    # ① 弹窗里有完整的头像控件：预览 / URL 输入 / 上传 / 继承全局
+    assert "智能体头像" in mgmt
+    assert 'v-model="agentForm.avatar_url"' in mgmt
+    assert "agentAvatarPreview" in mgmt
+    assert "继承全局形象" in mgmt
+    assert "pickAgentAvatarFile(agentAvatarFileInput)" in mgmt
+
+    # ② 预设快选复用同一套资源，点「官方默认」等于清空（继承全局）
+    assert "PRESET_AGENT_AVATARS" in mgmt
+    assert "agentForm.avatar_url = preset.isDefault ? '' : preset.url" in mgmt
+
+    # ③ 长度受 DB 字段限制；裁剪弹窗已挂载
+    assert ':maxlength="AGENT_AVATAR_URL_MAX_LENGTH"' in mgmt
+    assert "AvatarCropperModal" in mgmt
+
+    # ④ 「智能体信息」步骤确实只在新建时出现（这正是当初入口不可达的原因）
+    assert "isCreatingAgent.value ? [{ id: 'agent' as const" in mgmt
+
+
+def test_agent_avatar_upload_flow_is_shared_not_copied():
+    """上传/裁剪流程收敛在组合式里：三处调用方不得各自复制一份上传实现。"""
+    composable = (ROOT / "frontend/src/composables/useAgentAvatarUpload.ts").read_text(encoding="utf-8")
+
+    assert "export function useAgentAvatarUpload" in composable
+    assert "/avatar/upload" in composable
+    assert "showCropper" in composable
+    assert "MAX_SELECT_BYTES" in composable
+
+    for rel in (
+        "frontend/src/views/AgentManagement.vue",
+        "frontend/src/components/agent/AgentVersionEditorDrawer.vue",
+    ):
+        source = (ROOT / rel).read_text(encoding="utf-8")
+        assert "useAgentAvatarUpload" in source, rel
+        # 上传细节只应存在于组合式里，调用方不得再自己发这个请求
+        assert "/avatar/upload" not in source, rel
 
 

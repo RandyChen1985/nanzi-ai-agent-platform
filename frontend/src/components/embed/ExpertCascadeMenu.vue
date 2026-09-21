@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue'
+import { agentOwnAvatarUrl } from '@/utils/agentAvatar'
 
 const props = withDefaults(
   defineProps<{
@@ -310,7 +311,7 @@ const handleSelectExpert = (agentId: string) => {
           @click.stop="handleSelectExpert(agent.id)"
         >
           <div class="w-9 h-9 mt-0.5 rounded-full bg-gray-100 dark:bg-gray-700 flex items-center justify-center overflow-hidden border border-gray-200 dark:border-gray-600 shrink-0">
-            <img v-if="agent.avatar_url" :src="agent.avatar_url" class="w-full h-full object-cover" />
+            <img v-if="agentOwnAvatarUrl(agent)" :src="agentOwnAvatarUrl(agent)" class="w-full h-full object-cover" />
             <span v-else class="text-xs font-bold text-gray-500 dark:text-gray-300">{{ Array.from(agent.display_name || 'E')[0] }}</span>
           </div>
           <div class="flex-1 min-w-0">
@@ -375,7 +376,7 @@ const handleSelectExpert = (agentId: string) => {
           @click.stop="handleSelectExpert(agent.id)"
         >
           <div class="w-9 h-9 mt-0.5 rounded-full bg-gray-100 dark:bg-gray-700 flex items-center justify-center overflow-hidden border border-gray-200 dark:border-gray-600 shrink-0">
-            <img v-if="agent.avatar_url" :src="agent.avatar_url" class="w-full h-full object-cover" />
+            <img v-if="agentOwnAvatarUrl(agent)" :src="agentOwnAvatarUrl(agent)" class="w-full h-full object-cover" />
             <span v-else class="text-xs font-bold text-gray-500 dark:text-gray-300">{{ Array.from(agent.display_name || 'E')[0] }}</span>
           </div>
           <div class="flex-1 min-w-0">

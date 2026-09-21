@@ -40,6 +40,26 @@ class AgentOnboardingResult:
     version: AIAgentVersion
     template_fallback: bool
 
+def build_agent_identity_map(agents: Any) -> Dict[str, tuple]:
+    """构建「智能体 ID → (slug 标识名, 显示名, 头像)」映射。
+
+    历史消息只落库 `agent_id`，展示所需的身份信息要靠这张表回填。头像必须一起带上：
+    `/agents/allowed` 会过滤 `is_enabled=True`，已停用智能体的历史消息前端索引不到，
+    只有这里能补出来。
+    """
+    identity_map: Dict[str, tuple] = {}
+    for agent in agents or []:
+        agent_id = getattr(agent, "id", None)
+        if agent_id is None:
+            continue
+        identity_map[str(agent_id)] = (
+            getattr(agent, "name", None),
+            getattr(agent, "display_name", None),
+            getattr(agent, "avatar_url", None),
+        )
+    return identity_map
+
+
 class AgentManagerService:
     _ONBOARDING_TEMPLATE_AGENT_NAMES = {
         "GENERAL": "main",
@@ -831,26 +851,51 @@ class AgentManagerService:
         return True
 
     @staticmethod
+    def _resolve_actor(user: Any) -> tuple[bool, str]:
+        """统一解析调用者身份：返回 (是否管理员, 用户名)。"""
+        if isinstance(user, dict):
+            return user.get("role", "") == "admin", user.get("user_name", "") or ""
+        if not user:
+            return False, ""
+        return getattr(user, "role", "") == "admin", getattr(user, "user_name", "") or ""
+
+    @staticmethod
+    def can_edit_agent_meta(agent: AIAgent, user: Any) -> bool:
+        """智能体元数据（名称/描述/头像等）是否可编辑。
+
+        规则：管理员全量可编辑；其余人只能编辑**自己创建的、且非系统内置**的智能体。
+        该判定必须与 `PUT /api/portal/agents/{id}` 完全一致，否则会出现
+        「能改智能体名称却不能换头像」这类权限漂移。
+        """
+        is_admin, username = AgentManagerService._resolve_actor(user)
+        if is_admin:
+            return True
+        if agent.created_by and agent.created_by != username:
+            return False
+        if agent.is_system:
+            return False
+        return True
+
+    @staticmethod
+    async def get_agent_for_edit(session: AsyncSession, agent_id: str, user: Any = None) -> Optional[AIAgent]:
+        """取出可编辑的智能体；不存在或无权编辑时返回 None。"""
+        agent = await session.get(AIAgent, agent_id)
+        if not agent or not AgentManagerService.can_edit_agent_meta(agent, user):
+            return None
+        return agent
+
+    @staticmethod
     async def update_agent(session: AsyncSession, agent_id: str, data: AIAgentBase, user: Any = None) -> Optional[AIAgent]:
         """Update existing agent metadata"""
         agent = await session.get(AIAgent, agent_id)
         if not agent:
             return None
-            
-        # Permission Check
-        if isinstance(user, dict):
-            is_admin = user.get('role', '') == 'admin'
-            username = user.get('user_name', '')
-        else:
-            is_admin = user and getattr(user, 'role', '') == 'admin'
-            username = user and getattr(user, 'user_name', '')
-            
-        if not is_admin and agent.created_by and agent.created_by != username:
+
+        # Permission Check（与头像上传端点共用同一判定，避免权限漂移）
+        if not AgentManagerService.can_edit_agent_meta(agent, user):
             return None # Or raise Forbidden in Endpoint
-        
-        # System Agent Check
-        if agent.is_system and not is_admin:
-            return None
+
+        is_admin, _actor_username = AgentManagerService._resolve_actor(user)
 
         if _is_main_general_agent_record(agent) and data.is_enabled is False:
             raise ValueError("主助手不可禁用")
@@ -913,13 +958,8 @@ class AgentManagerService:
             return False
 
         # Permission Check
-        if isinstance(user, dict):
-            is_admin = user.get('role', '') == 'admin'
-            username = user.get('user_name', '')
-        else:
-            is_admin = user and getattr(user, 'role', '') == 'admin'
-            username = user and getattr(user, 'user_name', '')
-            
+        is_admin, username = AgentManagerService._resolve_actor(user)
+
         if not is_admin and agent.created_by and agent.created_by != username:
             return False
 

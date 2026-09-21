@@ -25,6 +25,10 @@ import WeChatWorkConfigModal from "../components/agent/WeChatWorkConfigModal.vue
 import FeishuConfigModal from "../components/agent/FeishuConfigModal.vue";
 import AgentFlowGuideBanner from "../components/agent/AgentFlowGuideBanner.vue";
 import MessageRenderer from "../components/MessageRenderer.vue";
+import AvatarCropperModal from "../components/common/AvatarCropperModal.vue";
+import { AGENT_AVATAR_URL_MAX_LENGTH } from "@/utils/agentAvatar";
+import { PRESET_AGENT_AVATARS } from "@/utils/presetAgentAvatars";
+import { useAgentAvatarUpload } from "@/composables/useAgentAvatarUpload";
 import type { MarkdownTheme } from "@/types/markdownTheme";
 import axios from "@/utils/axios";
 import { createUuid } from "../utils/conversationId";
@@ -198,6 +202,26 @@ const showToast = (
     toastState.value.show = false;
   }, 3000);
 };
+
+// 智能体头像：URL 直填 / 预设快选 / 上传裁剪。上传只回填 agentForm.avatar_url，
+// 由 saveAgent 统一 PUT 持久化（本弹窗是编辑已有智能体元数据的主要入口）。
+const agentAvatarPreview = computed(() => String(agentForm.value.avatar_url || "").trim());
+const agentAvatarFileInput = ref<HTMLInputElement | null>(null);
+const {
+  uploading: agentAvatarUploading,
+  showCropper: showAgentAvatarCropper,
+  cropperSrc: agentAvatarCropperSrc,
+  pickFile: pickAgentAvatarFile,
+  handleFileChange: handleAgentAvatarFileChange,
+  handleCropped: handleAgentAvatarCropped,
+} = useAgentAvatarUpload({
+  getAgentId: () => selectedAgent.value?.id,
+  onUploaded: (url) => {
+    agentForm.value.avatar_url = url;
+  },
+  notify: showToast,
+});
+
 
 const isEditingAgent = ref(false);
 const showCapabilityHelp = ref(false);
@@ -3711,6 +3735,90 @@ const formatSkillCountLabel = (agent: AIAgent) => {
         </div>
         </div>
 
+        <!-- Agent Avatar：智能体专属头像；未设置则继承全局 AI 形象 -->
+        <div class="rounded-xl border border-gray-200 bg-gray-50/70 p-3">
+          <div class="flex items-center justify-between gap-2">
+            <label class="mb-0 flex items-center gap-1 text-sm font-medium text-gray-700">
+              <span>智能体头像</span>
+              <span
+                class="inline-flex h-4 w-4 cursor-help items-center justify-center rounded-full border border-gray-300 text-[10px] font-semibold text-gray-400"
+                title="仅影响该智能体在对话气泡、智能体列表中的形象；留空则继承管理员配置的全局 AI 形象"
+              >?</span>
+            </label>
+            <button
+              v-if="agentForm.avatar_url"
+              type="button"
+              class="text-[11px] text-blue-500 hover:text-blue-600 hover:underline"
+              @click="agentForm.avatar_url = ''"
+            >
+              继承全局形象
+            </button>
+          </div>
+
+          <div class="mt-3 flex items-center gap-3">
+            <img
+              v-if="agentAvatarPreview"
+              :src="agentAvatarPreview"
+              class="h-12 w-12 shrink-0 rounded-full border border-gray-200 object-cover"
+              alt="智能体头像预览"
+            />
+            <div
+              v-else
+              class="flex h-12 w-12 shrink-0 items-center justify-center rounded-full border border-dashed border-gray-300 text-[10px] text-gray-400"
+            >
+              未设置
+            </div>
+            <div class="min-w-0 flex-1">
+              <div class="flex items-center gap-2">
+                <input
+                  v-model="agentForm.avatar_url"
+                  :maxlength="AGENT_AVATAR_URL_MAX_LENGTH"
+                  placeholder="可选：填写图片 URL，或点右侧上传"
+                  class="w-full min-w-0 rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/30"
+                />
+                <button
+                  type="button"
+                  class="shrink-0 rounded-lg border border-gray-300 bg-white px-3 py-2 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60"
+                  :disabled="agentAvatarUploading"
+                  @click="pickAgentAvatarFile(agentAvatarFileInput)"
+                >
+                  {{ agentAvatarUploading ? '上传中…' : '上传' }}
+                </button>
+              </div>
+              <p class="mt-1 text-[11px] text-gray-400">
+                上传图片会裁剪为 256×256 圆形头像；地址上限 {{ AGENT_AVATAR_URL_MAX_LENGTH }} 字符。
+              </p>
+            </div>
+          </div>
+
+          <!-- 预设快选：与全局头像同一套资源，点一下填入短路径 -->
+          <div class="mt-3 flex flex-wrap items-center gap-2">
+            <button
+              v-for="preset in PRESET_AGENT_AVATARS"
+              :key="preset.id"
+              type="button"
+              :title="preset.isDefault ? '继承全局形象（清空本智能体头像）' : preset.name"
+              class="h-8 w-8 overflow-hidden rounded-full border-2 transition-all hover:scale-110 active:scale-95"
+              :class="
+                (preset.isDefault && !agentForm.avatar_url) || agentForm.avatar_url === preset.url
+                  ? 'border-blue-500 ring-2 ring-blue-500/30'
+                  : 'border-transparent hover:border-gray-300'
+              "
+              @click="agentForm.avatar_url = preset.isDefault ? '' : preset.url"
+            >
+              <img :src="preset.url" class="h-full w-full object-cover" :alt="preset.name" />
+            </button>
+          </div>
+
+          <input
+            ref="agentAvatarFileInput"
+            type="file"
+            accept="image/png,image/jpeg,image/webp,image/gif,image/svg+xml"
+            class="hidden"
+            @change="handleAgentAvatarFileChange"
+          />
+        </div>
+
         <!-- Engine Selection -->
         <div class="rounded-xl border border-gray-200 bg-gray-50/70 p-3">
           <div class="flex items-center gap-1.5">
@@ -4515,6 +4623,16 @@ const formatSkillCountLabel = (agent: AIAgent) => {
       :message="toastState.message"
       :type="toastState.type"
       @close="toastState.show = false"
+    />
+
+    <!-- 智能体头像裁剪（与全局头像同一套裁剪组件，仅标题不同） -->
+    <AvatarCropperModal
+      :visible="showAgentAvatarCropper"
+      :image-src="agentAvatarCropperSrc"
+      :loading="agentAvatarUploading"
+      title="裁剪智能体头像"
+      @close="showAgentAvatarCropper = false"
+      @confirm="handleAgentAvatarCropped"
     />
 
     <RagFlowResourceSelector

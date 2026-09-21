@@ -1,6 +1,14 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import List
+from app.core.avatar_assets import (
+    AGENT_AVATAR_DIR,
+    AGENT_AVATAR_URL,
+    MAX_AVATAR_BYTES,
+    resolve_avatar_extension,
+    sanitize_asset_key,
+    save_avatar_file,
+)
 from app.core.orm import get_db_session
 from app.core.dependencies import require_admin, get_current_user, require_permission
 from typing import Dict, Any
@@ -147,6 +155,57 @@ async def update_agent(
     if not agent:
         raise HTTPException(status_code=403, detail="Forbidden: You can only edit your own agents")
     return agent
+
+
+@router.post(
+    "/{agent_id}/avatar/upload",
+    dependencies=[Depends(require_permission("element", "element:agent:edit"))],
+    summary="上传智能体头像图片（落盘并返回短路径 URL，不直接写库）",
+)
+async def upload_agent_avatar(
+    agent_id: str,
+    file: UploadFile = File(...),
+    session: AsyncSession = Depends(get_db_session),
+    user: Dict[str, Any] = Depends(get_current_user),
+):
+    """上传智能体专属头像。
+
+    只负责落盘并返回 URL，`ai_agents.avatar_url` 仍由 `PUT /{agent_id}` 统一持久化：
+    智能体编辑是「表单 + 保存」语义，上传即写库会让「不保存也生效」，破坏撤销预期。
+    权限判定与 `PUT /{agent_id}` 共用 `can_edit_agent_meta`，避免权限漂移。
+    """
+    agent = await AgentManagerService.get_agent_for_edit(session, agent_id, user)
+    if not agent:
+        raise HTTPException(status_code=403, detail="Forbidden: You can only edit your own agents")
+
+    ext = resolve_avatar_extension(file.content_type, file.filename)
+    if not ext:
+        raise HTTPException(
+            status_code=400, detail="仅支持 PNG、JPEG、WebP、SVG、GIF 格式图片"
+        )
+
+    data = await file.read()
+    if len(data) > MAX_AVATAR_BYTES:
+        raise HTTPException(status_code=400, detail="头像图片不能超过 2MB")
+
+    asset_key = sanitize_asset_key(agent.id)
+    avatar_url = save_avatar_file(
+        data,
+        ext,
+        directory=AGENT_AVATAR_DIR,
+        public_prefix=AGENT_AVATAR_URL,
+        prefix=asset_key,
+        # 只清理该智能体自己的历史头像。这里**绝不能**用跨智能体的通配：
+        # 全局头像上传会清空 data/branding/avatars/，智能体头像在独立子目录，
+        # 双方各自只删自己的，才不会互相误删。
+        cleanup_glob=f"{asset_key}_*",
+    )
+    return {
+        "code": 0,
+        "data": {"avatar_url": avatar_url},
+        "message": "智能体头像上传成功",
+    }
+
 
 @router.delete("/{agent_id}", dependencies=[Depends(require_permission("element", "element:agent:delete"))])
 async def delete_agent(
