@@ -6,7 +6,11 @@ import Switch from '@/components/Switch.vue';
 import { useToast } from '@/composables/useToast';
 import axios from '@/utils/axios';
 import defaultAgentAvatarUrl from '@/assets/nanzi-agent-avatar.svg';
-import { PRESET_AGENT_AVATARS } from '@/utils/presetAgentAvatars';
+import {
+  PRESET_AGENT_AVATARS,
+  MAX_AGENT_AVATAR_URL_LENGTH,
+  isAgentAvatarUrlTooLong,
+} from '@/utils/presetAgentAvatars';
 import AvatarCropperModal from '@/components/common/AvatarCropperModal.vue';
 
 const props = defineProps<{
@@ -113,6 +117,16 @@ const handleSetAgentAvatar = async (avatar: string, toastMessage = "AI 助手头
     showToast(toastMessage, "success");
     saveSettings();
     return true;
+  }
+
+  // 提前拦截超长头像地址（如粘贴内联 data URI），避免只呈现一条后端 422 校验错误。
+  if (isAgentAvatarUrlTooLong(target)) {
+    customAvatarInput.value = previousAvatar;
+    showToast(
+      `头像地址过长（上限 ${MAX_AGENT_AVATAR_URL_LENGTH} 字符），请改用图片链接或直接上传图片`,
+      "error",
+    );
+    return false;
   }
 
   props.config.agentAvatar = target;

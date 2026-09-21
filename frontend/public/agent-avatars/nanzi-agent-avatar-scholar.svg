@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
+  <defs>
+    <linearGradient id="scholar-bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#1e1b4b" />
+      <stop offset="100%" stop-color="#312e81" />
+    </linearGradient>
+  </defs>
+  <circle cx="64" cy="64" r="58" fill="url(#scholar-bg)" />
+  <path d="M64 54 C54 44 40 44 32 46 L32 86 C40 84 54 84 64 92 C74 84 88 84 96 86 L96 46 C88 44 74 44 64 54 Z" fill="#ffffff" fill-opacity="0.9" />
+  <line x1="64" y1="54" x2="64" y2="92" stroke="#4f46e5" stroke-width="2.5" />
+  <path d="M64 28 L67 36 L75 39 L67 42 L64 50 L61 42 L53 39 L61 36 Z" fill="#fbbf24" />
+</svg>

@@ -357,6 +357,29 @@ async def test_full_update_portal_prefs_never_accepts_agent_avatar(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_update_agent_avatar_rejects_over_long_url(monkeypatch):
+    """头像地址长度上限与前端 MAX_AGENT_AVATAR_URL_LENGTH 对齐。
+
+    历史缺陷：两个预设头像使用内联 data URI（2197 / 2196 字符），超过 2048 上限，
+    点击后直接 422。这里锁定该边界，避免再次出现"某些预设点了报错"的回归。
+    """
+    redis = DualKeyRedis()
+    monkeypatch.setattr(portal_prefs, "get_redis", lambda: _resolved(redis))
+
+    # 正好达到上限仍可写入
+    boundary = "x" * 2048
+    result = await portal_prefs.update_agent_avatar(
+        portal_prefs.AgentAvatarUpdate(avatar=boundary),
+        user_info=user_info(role="admin"),
+    )
+    assert result["data"]["agent_avatar"] == boundary
+
+    # 超出一个字符即在请求模型层被拒绝
+    with pytest.raises(ValidationError):
+        portal_prefs.AgentAvatarUpdate(avatar="x" * 2049)
+
+
+@pytest.mark.asyncio
 async def test_update_agent_avatar_prefs_forbidden_for_normal_user():
     with pytest.raises(HTTPException) as exc_info:
         await portal_prefs.update_agent_avatar(

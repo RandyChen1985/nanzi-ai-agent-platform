@@ -1,3 +1,5 @@
+import re
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 
@@ -72,5 +74,50 @@ def test_chat_settings_avatar_write_is_explicit_and_conflict_guarded():
     # ④ 保存失败必须回滚本地显示，避免"本地新头像、服务端旧值"
     assert "serverAgentAvatar" in settings_source
     assert "previousAvatar" in settings_source
+
+
+def test_preset_agent_avatars_use_bundled_assets_instead_of_inline_data_uris():
+    """预设头像必须是短的静态资源路径。
+
+    历史上「智能小机」「赛博科技」两个预设使用内联 `data:` URI（URL 编码的 SVG），
+    长度分别为 2197 / 2196 字符，超过后端 `AgentAvatarUpdate.avatar` 的
+    `max_length=2048`，点击后被 422 拒绝。预设值会被写入 Redis 全局键供全员使用，
+    因此统一改为 `public/agent-avatars/` 下的静态资源（不会被 Vite 内联成 base64）。
+    """
+    presets_source = (ROOT / "frontend/src/utils/presetAgentAvatars.ts").read_text(encoding="utf-8")
+
+    assert "data:image" not in presets_source
+    assert "encodeURIComponent" not in presets_source
+    assert "MAX_AGENT_AVATAR_URL_LENGTH = 2048" in presets_source
+    assert "isAgentAvatarUrlTooLong" in presets_source
+    assert 'PRESET_AGENT_AVATAR_DIR = "/agent-avatars"' in presets_source
+
+    preset_assets = (
+        "nanzi-agent-avatar-robot.svg",
+        "nanzi-agent-avatar-spark.svg",
+        "nanzi-agent-avatar-cyber.svg",
+        "nanzi-agent-avatar-scholar.svg",
+    )
+    for asset_name in preset_assets:
+        assert f'"/agent-avatars/{asset_name}"' in presets_source, asset_name
+        asset_path = ROOT / "frontend/public/agent-avatars" / asset_name
+        assert asset_path.is_file(), asset_name
+        # 资源必须是可解析的 SVG 矢量图
+        root = ET.fromstring(asset_path.read_text(encoding="utf-8"))
+        assert root.tag.endswith("svg"), asset_name
+        # public 资源按原样提供：文件体积远小于 Vite 4KB 内联阈值，路径也不会被内联
+        assert asset_path.stat().st_size < 4096, asset_name
+
+    # 5 组预设（默认 + 4 组风格化）全部走静态资源
+    assert presets_source.count("\n    url: ") == len(preset_assets) + 1
+
+    # 所有内联字面量 URL 都必须在服务端长度上限内
+    for literal in re.findall(r'url: "([^"]+)"', presets_source):
+        assert len(literal) <= 2048, literal
+
+    # 前端长度护栏接入设置面板
+    settings_source = (ROOT / "frontend/src/components/embed/ChatSettings.vue").read_text(encoding="utf-8")
+    assert "isAgentAvatarUrlTooLong(target)" in settings_source
+    assert "MAX_AGENT_AVATAR_URL_LENGTH" in settings_source
 
 

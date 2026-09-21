@@ -1,8 +1,25 @@
 /**
  * 预设 AI 智能体头像列表
  * 提供不同设计风格的现代化矢量头像（机器人、智慧光芒、极客科技、睿智学者等）
+ *
+ * 注意：所有预设必须使用**短的静态资源路径**，禁止使用内联 `data:` URI
+ * （把 SVG 源码 URL 编码后塞进链接）那种超长串。预设值会被写入 Redis 全局键并在
+ * 全员会话中作为 `<img src>` 使用，而服务端对头像字段有长度上限
+ * （见下方 MAX_AGENT_AVATAR_URL_LENGTH）：历史上有两个预设的内联数据链接超过
+ * 2048 字符，点击后直接被后端 422 拒绝。
+ *
+ * 资源放在 `public/agent-avatars/` 而非 `src/assets/`：Vite 默认会把小于
+ * `assetsInlineLimit`(4KB) 的资源内联成 base64 data URI，那样等于把问题换个形式
+ * 带回来；public 目录下的文件按原样拷贝，URL 短且稳定。
  */
 import defaultAgentAvatarUrl from "@/assets/nanzi-agent-avatar.svg";
+
+/**
+ * 头像 URL 长度上限，必须与后端 `AgentAvatarUpdate.avatar` 的 `max_length` 保持一致
+ * （`app/api/portal/endpoints/portal_prefs.py`）。超长时在前端直接拦截并给出明确提示，
+ * 避免用户只看到一条 422 校验错误。
+ */
+export const MAX_AGENT_AVATAR_URL_LENGTH = 2048;
 
 export interface PresetAgentAvatar {
   id: string;
@@ -10,89 +27,6 @@ export interface PresetAgentAvatar {
   url: string;
   isDefault?: boolean;
 }
-
-const robotSvg = `data:image/svg+xml;utf8,${encodeURIComponent(`
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
-  <defs>
-    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#0284c7" />
-      <stop offset="100%" stop-color="#2563eb" />
-    </linearGradient>
-    <linearGradient id="face" x1="0%" y1="0%" x2="0%" y2="100%">
-      <stop offset="0%" stop-color="#ffffff" />
-      <stop offset="100%" stop-color="#e2e8f0" />
-    </linearGradient>
-  </defs>
-  <circle cx="64" cy="64" r="58" fill="url(#bg)" />
-  <line x1="64" y1="28" x2="64" y2="38" stroke="#ffffff" stroke-width="4" stroke-linecap="round" />
-  <circle cx="64" cy="24" r="5" fill="#38bdf8" />
-  <rect x="36" y="38" width="56" height="46" rx="14" fill="url(#face)" />
-  <rect x="42" y="46" width="44" height="24" rx="8" fill="#0f172a" />
-  <circle cx="53" cy="58" r="4.5" fill="#38bdf8" />
-  <circle cx="75" cy="58" r="4.5" fill="#38bdf8" />
-  <path d="M56 74 Q64 79 72 74" stroke="#64748b" stroke-width="3" stroke-linecap="round" fill="none" />
-  <rect x="30" y="52" width="6" height="16" rx="3" fill="#38bdf8" />
-  <rect x="92" y="52" width="6" height="16" rx="3" fill="#38bdf8" />
-</svg>
-`)}`;
-
-const sparkSvg = `data:image/svg+xml;utf8,${encodeURIComponent(`
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
-  <defs>
-    <linearGradient id="spark-bg" x1="0%" y1="100%" x2="100%" y2="0%">
-      <stop offset="0%" stop-color="#7c3aed" />
-      <stop offset="50%" stop-color="#c026d3" />
-      <stop offset="100%" stop-color="#f59e0b" />
-    </linearGradient>
-  </defs>
-  <circle cx="64" cy="64" r="58" fill="url(#spark-bg)" />
-  <path d="M64 26 C64 47 70 54 90 64 C70 74 64 81 64 102 C64 81 58 74 38 64 C58 54 64 47 64 26 Z" fill="#ffffff" />
-  <circle cx="88" cy="40" r="3.5" fill="#fef08a" />
-  <circle cx="40" cy="88" r="3.5" fill="#fef08a" />
-  <circle cx="44" cy="42" r="2" fill="#ffffff" />
-  <circle cx="86" cy="84" r="2" fill="#ffffff" />
-</svg>
-`)}`;
-
-const cyberSvg = `data:image/svg+xml;utf8,${encodeURIComponent(`
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
-  <defs>
-    <linearGradient id="cyber-bg" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#0f172a" />
-      <stop offset="100%" stop-color="#1e293b" />
-    </linearGradient>
-    <linearGradient id="cyber-glow" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#10b981" />
-      <stop offset="100%" stop-color="#06b6d4" />
-    </linearGradient>
-  </defs>
-  <circle cx="64" cy="64" r="58" fill="url(#cyber-bg)" stroke="#10b981" stroke-width="2" />
-  <circle cx="64" cy="64" r="34" fill="none" stroke="#334155" stroke-width="2" stroke-dasharray="6 4" />
-  <polygon points="64,36 88,50 88,78 64,92 40,78 40,50" fill="none" stroke="url(#cyber-glow)" stroke-width="3.5" stroke-linejoin="round" />
-  <circle cx="64" cy="64" r="10" fill="url(#cyber-glow)" />
-  <circle cx="64" cy="36" r="3.5" fill="#34d399" />
-  <circle cx="88" cy="50" r="3.5" fill="#38bdf8" />
-  <circle cx="88" cy="78" r="3.5" fill="#38bdf8" />
-  <circle cx="64" cy="92" r="3.5" fill="#34d399" />
-  <circle cx="40" cy="78" r="3.5" fill="#34d399" />
-  <circle cx="40" cy="50" r="3.5" fill="#34d399" />
-</svg>
-`)}`;
-
-const scholarSvg = `data:image/svg+xml;utf8,${encodeURIComponent(`
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
-  <defs>
-    <linearGradient id="scholar-bg" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#1e1b4b" />
-      <stop offset="100%" stop-color="#312e81" />
-    </linearGradient>
-  </defs>
-  <circle cx="64" cy="64" r="58" fill="url(#scholar-bg)" />
-  <path d="M64 54 C54 44 40 44 32 46 L32 86 C40 84 54 84 64 92 C74 84 88 84 96 86 L96 46 C88 44 74 44 64 54 Z" fill="#ffffff" fill-opacity="0.9" />
-  <line x1="64" y1="54" x2="64" y2="92" stroke="#4f46e5" stroke-width="2.5" />
-  <path d="M64 28 L67 36 L75 39 L67 42 L64 50 L61 42 L53 39 L61 36 Z" fill="#fbbf24" />
-</svg>
-`)}`;
 
 export const PRESET_AGENT_AVATARS: PresetAgentAvatar[] = [
   {
@@ -104,21 +38,29 @@ export const PRESET_AGENT_AVATARS: PresetAgentAvatar[] = [
   {
     id: "robot",
     name: "智能小机",
-    url: robotSvg,
+    url: "/agent-avatars/nanzi-agent-avatar-robot.svg",
   },
   {
     id: "spark",
     name: "智慧星火",
-    url: sparkSvg,
+    url: "/agent-avatars/nanzi-agent-avatar-spark.svg",
   },
   {
     id: "cyber",
     name: "赛博科技",
-    url: cyberSvg,
+    url: "/agent-avatars/nanzi-agent-avatar-cyber.svg",
   },
   {
     id: "scholar",
     name: "博识专家",
-    url: scholarSvg,
+    url: "/agent-avatars/nanzi-agent-avatar-scholar.svg",
   },
 ];
+
+/** 头像 URL 是否超出服务端可接受长度（粘贴超长外链/内联 data URI 时提前拦截）。 */
+export function isAgentAvatarUrlTooLong(url: string): boolean {
+  return String(url || "").trim().length > MAX_AGENT_AVATAR_URL_LENGTH;
+}
+
+/** 预设头像资源所在的公共目录（供测试与文档引用，避免路径漂移）。 */
+export const PRESET_AGENT_AVATAR_DIR = "/agent-avatars";

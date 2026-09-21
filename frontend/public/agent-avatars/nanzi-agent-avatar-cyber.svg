@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
+  <defs>
+    <linearGradient id="cyber-bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0f172a" />
+      <stop offset="100%" stop-color="#1e293b" />
+    </linearGradient>
+    <linearGradient id="cyber-glow" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#10b981" />
+      <stop offset="100%" stop-color="#06b6d4" />
+    </linearGradient>
+  </defs>
+  <circle cx="64" cy="64" r="58" fill="url(#cyber-bg)" stroke="#10b981" stroke-width="2" />
+  <circle cx="64" cy="64" r="34" fill="none" stroke="#334155" stroke-width="2" stroke-dasharray="6 4" />
+  <polygon points="64,36 88,50 88,78 64,92 40,78 40,50" fill="none" stroke="url(#cyber-glow)" stroke-width="3.5" stroke-linejoin="round" />
+  <circle cx="64" cy="64" r="10" fill="url(#cyber-glow)" />
+  <circle cx="64" cy="36" r="3.5" fill="#34d399" />
+  <circle cx="88" cy="50" r="3.5" fill="#38bdf8" />
+  <circle cx="88" cy="78" r="3.5" fill="#38bdf8" />
+  <circle cx="64" cy="92" r="3.5" fill="#34d399" />
+  <circle cx="40" cy="78" r="3.5" fill="#34d399" />
+  <circle cx="40" cy="50" r="3.5" fill="#34d399" />
+</svg>

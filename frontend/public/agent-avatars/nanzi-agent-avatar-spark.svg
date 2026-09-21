@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
+  <defs>
+    <linearGradient id="spark-bg" x1="0%" y1="100%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#7c3aed" />
+      <stop offset="50%" stop-color="#c026d3" />
+      <stop offset="100%" stop-color="#f59e0b" />
+    </linearGradient>
+  </defs>
+  <circle cx="64" cy="64" r="58" fill="url(#spark-bg)" />
+  <path d="M64 26 C64 47 70 54 90 64 C70 74 64 81 64 102 C64 81 58 74 38 64 C58 54 64 47 64 26 Z" fill="#ffffff" />
+  <circle cx="88" cy="40" r="3.5" fill="#fef08a" />
+  <circle cx="40" cy="88" r="3.5" fill="#fef08a" />
+  <circle cx="44" cy="42" r="2" fill="#ffffff" />
+  <circle cx="86" cy="84" r="2" fill="#ffffff" />
+</svg>
