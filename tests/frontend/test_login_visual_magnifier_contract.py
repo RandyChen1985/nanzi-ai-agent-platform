@@ -39,9 +39,9 @@ def test_magnifier_lens_only_activates_on_the_title_text_box():
 
     # 触发区紧贴字形框（inline-block），而不是整行或整个面板
     assert "relative inline-block" in source
-    assert '@mouseenter="lensActive = true"' in source
+    assert '@mouseenter="handleMouseEnter"' in source
     assert '@mousemove="handleMouseMove"' in source
-    assert '@mouseleave="resetLens"' in source
+    assert '@mouseleave="handleMouseLeave"' in source
 
 
 def test_magnifier_keeps_the_original_title_still():
@@ -106,3 +106,27 @@ def test_magnifier_radius_adapts_to_the_large_desktop_title_size():
 
     assert "--lens-r" in source
     assert "media (min-width: 1280px)" in source
+
+
+def test_login_passes_active_state_to_magnifier():
+    source = login_source()
+
+    assert ':active="currentSlide === index"' in source
+
+
+def test_magnifier_supports_auto_scan_on_activation():
+    source = magnifier_source()
+
+    assert "active?: boolean" in source or "active:" in source
+    assert "startAutoScan" in source or "triggerScan" in source
+    assert "requestAnimationFrame" in source
+    assert "cancelAnimationFrame" in source
+
+
+def test_magnifier_cancels_auto_scan_on_mouse_enter():
+    source = magnifier_source()
+
+    assert "cancelAutoScan" in source or "stopScan" in source
+    # 鼠标进入时必须终止扫描并把控制权切给指针
+    assert "@mouseenter" in source
+

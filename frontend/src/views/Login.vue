@@ -67,7 +67,7 @@ const slides = [
     },
     {
         key: 'a',
-        title: '让智能体成为组织的第二操作系统',
+        title: '智能体，第二操作系统',
         subtitle: 'The second operating system for your organization',
         desc: '开放连接模型、知识与工具，让每一次对话都能落到真实业务。',
         features: ['开放', '智能', '可控'],
@@ -373,6 +373,7 @@ const handleLogin = async () => {
                     <MagnifierTitle
                         :text="slide.title"
                         :tone="slide.light ? 'light' : 'dark'"
+                        :active="currentSlide === index"
                         class="mb-4"
                     />
                     <p class="text-xl xl:text-2xl font-light tracking-[0.05em] mb-4" :class="slide.light ? 'text-slate-600' : 'text-slate-300'">

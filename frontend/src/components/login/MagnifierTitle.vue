@@ -1,7 +1,9 @@
 <script setup lang="ts">
 /**
- * 放大镜标题：鼠标在标题文字上移动时，用一个圆形镜片放大所指的字形，
- * 形成"探索"的手感。
+ * 放大镜标题：
+ * 1. 鼠标在标题文字上移动时，用一个圆形镜片放大所指的字形，形成"探索"手感。
+ * 2. 轮播卡片切换激活时（active 变为 true），自动触发一次从左至右的扫视动画，
+ *    提示用户该区域具有放大探索效果；鼠标一旦进入则立即中断扫描交由指针控制。
  *
  * 实现要点：镜片内展示的是同一标题的副本，副本按 `zoom` 缩放，
  * 且 `transform-origin` 与 `clip-path` 圆心共用同一组镜片坐标，
@@ -14,15 +16,25 @@ const props = withDefaults(defineProps<{
     text: string
     tone?: 'dark' | 'light'
     zoom?: number
+    active?: boolean
+    autoScan?: boolean
+    scanDuration?: number
 }>(), {
     tone: 'dark',
     zoom: 1.6,
+    active: false,
+    autoScan: true,
+    scanDuration: 2400,
 })
 
 const wrapRef = ref<HTMLElement | null>(null)
 const lensActive = ref(false)
 const reducedMotion = ref(false)
 let motionMediaQuery: MediaQueryList | null = null
+
+let scanRafId: number | null = null
+let scanDelayTimer: ReturnType<typeof setTimeout> | null = null
+let isHovered = false
 
 const titleClass = computed(() => [
     'text-5xl xl:text-7xl font-bold tracking-tighter drop-shadow-2xl',
@@ -41,6 +53,80 @@ const ringClass = computed(() => (props.tone === 'light'
     : 'border-white/45 shadow-[0_0_28px_rgba(96,165,250,0.42),inset_0_0_22px_rgba(255,255,255,0.16)]'))
 
 const highlightClass = computed(() => (props.tone === 'light' ? 'bg-white/70' : 'bg-white/25'))
+
+const cancelAutoScan = () => {
+    if (scanDelayTimer !== null) {
+        clearTimeout(scanDelayTimer)
+        scanDelayTimer = null
+    }
+    if (scanRafId !== null) {
+        cancelAnimationFrame(scanRafId)
+        scanRafId = null
+    }
+}
+
+const startAutoScan = () => {
+    cancelAutoScan()
+    if (!props.autoScan || reducedMotion.value || isHovered) return
+
+    // 延迟 350ms 等待轮播卡片位移与淡入稳定就绪，呈现从容自然的扫视感
+    scanDelayTimer = setTimeout(() => {
+        scanDelayTimer = null
+        if (!props.active || isHovered || reducedMotion.value) return
+
+        const wrap = wrapRef.value
+        if (!wrap) return
+        const rect = wrap.getBoundingClientRect()
+        if (!rect.width || !rect.height) return
+
+        const startX = 0
+        const endX = rect.width
+        const y = rect.height / 2
+        const duration = props.scanDuration // 毫秒，默认 2400ms 带来从容可读的视觉体验
+        let startTime: number | null = null
+
+        wrap.style.setProperty('--lens-x', `${startX}px`)
+        wrap.style.setProperty('--lens-y', `${y}px`)
+        lensActive.value = true
+
+        const step = (timestamp: number) => {
+            if (startTime === null) startTime = timestamp
+            const elapsed = timestamp - startTime
+            const progress = Math.min(1, elapsed / duration)
+
+            // 平滑缓动 (cubic-in-out)
+            const ease = progress < 0.5
+                ? 4 * progress * progress * progress
+                : 1 - Math.pow(-2 * progress + 2, 3) / 2
+
+            const currentX = startX + (endX - startX) * ease
+            wrap.style.setProperty('--lens-x', `${currentX}px`)
+            wrap.style.setProperty('--lens-y', `${y}px`)
+
+            // 接近终点时让镜片平滑淡出
+            if (progress >= 0.90 && lensActive.value && !isHovered) {
+                lensActive.value = false
+            }
+
+            if (progress < 1 && !isHovered) {
+                scanRafId = requestAnimationFrame(step)
+            } else {
+                scanRafId = null
+                if (!isHovered) {
+                    resetLens()
+                }
+            }
+        }
+
+        scanRafId = requestAnimationFrame(step)
+    }, 350)
+}
+
+const handleMouseEnter = () => {
+    isHovered = true
+    cancelAutoScan()
+    lensActive.value = true
+}
 
 // 指针坐标直接写进 CSS 变量：不经过 Vue 响应式，避免每帧重渲染轮播子树
 const handleMouseMove = (event: MouseEvent) => {
@@ -63,21 +149,49 @@ const resetLens = () => {
     wrap.style.setProperty('--lens-y', '50%')
 }
 
-// 轮播切帧后标题内容会变，避免残留上一帧的镜片状态
-watch(() => props.text, resetLens)
+const handleMouseLeave = () => {
+    isHovered = false
+    resetLens()
+}
+
+// 轮播卡片激活时触发扫描，离开时重置
+watch(() => props.active, (active) => {
+    if (active) {
+        startAutoScan()
+    } else {
+        cancelAutoScan()
+        resetLens()
+    }
+})
+
+// 标题文字变更时重置并重新触发扫描
+watch(() => props.text, () => {
+    cancelAutoScan()
+    resetLens()
+    if (props.active) {
+        startAutoScan()
+    }
+})
 
 const handleMotionPreferenceChange = (event: MediaQueryListEvent) => {
     reducedMotion.value = event.matches
-    if (event.matches) resetLens()
+    if (event.matches) {
+        cancelAutoScan()
+        resetLens()
+    }
 }
 
 onMounted(() => {
     motionMediaQuery = window.matchMedia('(prefers-reduced-motion: reduce)')
     reducedMotion.value = motionMediaQuery.matches
     motionMediaQuery.addEventListener?.('change', handleMotionPreferenceChange)
+    if (props.active) {
+        startAutoScan()
+    }
 })
 
 onUnmounted(() => {
+    cancelAutoScan()
     motionMediaQuery?.removeEventListener?.('change', handleMotionPreferenceChange)
 })
 </script>
@@ -86,9 +200,9 @@ onUnmounted(() => {
     <div
         ref="wrapRef"
         class="magnifier-title relative inline-block align-top"
-        @mouseenter="lensActive = true"
+        @mouseenter="handleMouseEnter"
         @mousemove="handleMouseMove"
-        @mouseleave="resetLens"
+        @mouseleave="handleMouseLeave"
     >
         <!-- 原始标题：全程静止，只作为镜片外的正常文字 -->
         <h1 :class="titleClass">{{ text }}</h1>
