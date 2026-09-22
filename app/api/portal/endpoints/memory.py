@@ -1,8 +1,11 @@
 """记忆管理中心 API"""
+import asyncio
+import json
 import logging
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from app.core.dependencies import require_api_key, require_permission
@@ -18,6 +21,45 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 MENU = ("menu", "menu:memory_management")
+
+
+async def _memory_task_event_stream(task_id: str) -> StreamingResponse:
+    """把任务日志 Stream 转成 SSE：先回放历史事件，再阻塞推送新事件。"""
+    from app.services.task_log_service import task_log_service
+
+    task = await task_log_service.get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="任务不存在或已过期")
+
+    async def event_stream():
+        last_id = "0-0"
+        try:
+            while True:
+                events = await task_log_service.read_events(task_id, after_id=last_id)
+                if not events:
+                    events = await task_log_service.read_new_events(
+                        task_id, after_id=last_id, block_ms=1000
+                    )
+                for item in events:
+                    event_id = item.pop("id", None)
+                    if event_id:
+                        last_id = event_id
+                    event_name = item.get("event", "progress")
+                    yield (
+                        f"id: {last_id}\nevent: {event_name}\n"
+                        f"data: {json.dumps(item, ensure_ascii=False)}\n\n"
+                    )
+                    if task_log_service.is_terminal(event_name):
+                        return
+                await asyncio.sleep(0)
+        except asyncio.CancelledError:
+            raise
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 def _current_uid(user: Dict) -> int:
@@ -259,8 +301,71 @@ async def rebuild_index(
     user: Dict = Depends(require_permission("element", "element:memory:config_index")),
     _health: Dict = Depends(require_memory_vector_ready),
 ):
+    """检查/创建索引：维度不一致时重建。
+
+    同时把过程记成一个任务（``task_id``），前端抽屉可通过
+    ``GET /index/rebuild/{task_id}/events`` 回放完整日志。响应体保留既有字段。
+    """
+    from app.services.ai.memory_vector_rebuild import run_memory_index_check
+
     RedisVectorHealthService.invalidate_cache()
-    return {"status": "success", "data": await MemoryIndexService.rebuild_index()}
+    data = await run_memory_index_check()
+    return {"status": "success" if data.get("ok") else "error", "data": data}
+
+
+@router.get("/index/rebuild/{task_id}/events")
+async def rebuild_index_events(
+    task_id: str,
+    user: Dict = Depends(require_permission("element", "element:memory:config_index")),
+):
+    """订阅「索引检查/创建」任务的实时日志（先回放历史事件）。"""
+    return await _memory_task_event_stream(task_id)
+
+
+@router.post("/vectors/rebuild")
+async def rebuild_memory_vectors(
+    user: Dict = Depends(require_permission("element", "element:memory:config_index")),
+):
+    """启动一次任务化的记忆向量重构（索引检查/重建 + 全量重新向量化）。
+
+    立即返回 ``task_id``，进度通过 ``GET /vectors/rebuild/{task_id}/events`` 订阅。
+    刻意不依赖向量环境健康预检：环境异常时正是需要它来修复的场景。
+    """
+    from app.services.ai.memory_vector_rebuild import (
+        get_active_memory_rebuild_task_id,
+        start_memory_vector_rebuild,
+    )
+    from app.services.task_lock import describe_lock_owner
+
+    try:
+        task_id = await start_memory_vector_rebuild(trigger="manual")
+    except RuntimeError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    if not task_id:
+        running = await get_active_memory_rebuild_task_id()
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"已有记忆向量重构任务正在执行（{describe_lock_owner(running)}）。"
+                "该锁带 30 分钟 TTL，会自动释放；若确认没有任务在跑，可稍后重试。"
+            ),
+        )
+    return {
+        "status": "success",
+        "data": {
+            "task_id": task_id,
+            "message": "记忆向量重构任务已启动，正在后台执行，可在进度抽屉中查看实时日志",
+        },
+    }
+
+
+@router.get("/vectors/rebuild/{task_id}/events")
+async def rebuild_memory_vectors_events(
+    task_id: str,
+    user: Dict = Depends(require_permission("element", "element:memory:config_index")),
+):
+    """订阅记忆向量重构任务的实时进度与日志。"""
+    return await _memory_task_event_stream(task_id)
 
 
 @router.get("/summaries")
