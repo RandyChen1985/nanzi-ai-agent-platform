@@ -2,14 +2,52 @@
 import logging
 import struct
 import json
-from typing import Any, Dict, List, Optional
+import time
+from typing import Any, Awaitable, Callable, Dict, List, Optional
 from app.core.redis import get_redis, get_redis_binary
 from app.services.ai.embedding_client import EmbeddingClient
+from app.services.ai.redis_index_utils import ensure_vector_index
 
 logger = logging.getLogger(__name__)
 
 EXAMPLE_INDEX_NAME = "nanzi:idx:example:local"
 EXAMPLE_KEY_PREFIX = "nanzi:example:"
+
+
+def _example_schema(dim: int) -> List[Any]:
+    return [
+        "id",
+        "TAG",
+        "dataset_id",
+        "TAG",
+        "dataset_name",
+        "TEXT",
+        "question",
+        "TEXT",
+        "raw_query",
+        "TEXT",
+        "context_summary",
+        "TEXT",
+        "sql",
+        "TEXT",
+        "trace_id",
+        "TAG",
+        "agent_id",
+        "TAG",
+        "sql_metadata",
+        "TEXT",
+        "embedding",
+        "VECTOR",
+        "HNSW",
+        "6",
+        "TYPE",
+        "FLOAT32",
+        "DIM",
+        str(dim),
+        "DISTANCE_METRIC",
+        "COSINE",
+    ]
+
 
 def _vector_to_bytes(vec: List[float]) -> bytes:
     return struct.pack(f"{len(vec)}f", *vec)
@@ -53,64 +91,29 @@ class ExampleIndexService:
         return EXAMPLE_INDEX_NAME
 
     @staticmethod
-    async def ensure_index() -> bool:
+    async def ensure_index(force: bool = False) -> bool:
+        """确保索引存在且向量维度与全局 ``embed_dimensions`` 一致。
+
+        维度不一致时重建（``FT.DROPINDEX`` 不带 ``DD``，保留 HASH 文档）。
+        使用无缓存模式：调用方（如「一键重构」）会先 ``FT.DROPINDEX``，若命中
+        进程内缓存就会跳过 FT.CREATE，反而把索引丢在半路。
+        """
         redis = await get_redis()
         if not redis:
             return False
         idx = await ExampleIndexService.index_name()
         dim = await EmbeddingClient.get_dimensions(use_global=True)
-        try:
-            info = await redis.execute_command("FT.INFO", idx)
-            if info:
-                return True
-        except Exception:
-            pass
-        try:
-            await redis.execute_command(
-                "FT.CREATE",
-                idx,
-                "ON",
-                "HASH",
-                "PREFIX",
-                "1",
-                EXAMPLE_KEY_PREFIX,
-                "SCHEMA",
-                "id",
-                "TAG",
-                "dataset_id",
-                "TAG",
-                "dataset_name",
-                "TEXT",
-                "question",
-                "TEXT",
-                "raw_query",
-                "TEXT",
-                "context_summary",
-                "TEXT",
-                "sql",
-                "TEXT",
-                "trace_id",
-                "TAG",
-                "agent_id",
-                "TAG",
-                "sql_metadata",
-                "TEXT",
-                "embedding",
-                "VECTOR",
-                "HNSW",
-                "6",
-                "TYPE",
-                "FLOAT32",
-                "DIM",
-                str(dim),
-                "DISTANCE_METRIC",
-                "COSINE",
-            )
-            logger.info("[ExampleIndex] Created index %s dim=%s", idx, dim)
-            return True
-        except Exception as e:
-            logger.warning("[ExampleIndex] FT.CREATE failed: %s", e)
-            return False
+        result = await ensure_vector_index(
+            redis,
+            index_name=idx,
+            prefix=EXAMPLE_KEY_PREFIX,
+            schema=_example_schema,
+            dim=dim,
+            log_tag="ExampleIndex",
+            cache=None,
+            force=force,
+        )
+        return bool(result.get("ok"))
 
     @staticmethod
     async def upsert_vector(
@@ -171,9 +174,16 @@ class ExampleIndexService:
         logger.info("[ExampleIndex] Deleted local Redis example vector for key %s", key)
 
     @staticmethod
-    async def sync_all_examples() -> None:
-        """
-        Synchronize all approved ChatBI examples to local Redis.
+    async def sync_all_examples(
+        *,
+        progress_cb: Optional[Callable[[Dict[str, Any]], Awaitable[None]]] = None,
+        wait: bool = False,
+    ) -> Dict[str, int]:
+        """Synchronize all approved ChatBI examples to local Redis.
+
+        ``wait=False``（默认）沿用历史行为：甩到后台任务后立即返回。
+        ``wait=True`` await 完成并返回 ``{total, success, failed, skipped}``，
+        ``progress_cb`` 每条案例回调一次。
         """
         from app.core.orm import AsyncSessionLocal
         from app.models.chatbi_example import ChatBIExample
@@ -181,19 +191,39 @@ class ExampleIndexService:
         from sqlalchemy import select
         import asyncio
 
-        async def _run_sync():
+        async def _notify(payload: Dict[str, Any]) -> None:
+            if progress_cb is None:
+                return
+            try:
+                await progress_cb(payload)
+            except Exception as cb_err:
+                logger.warning("[ExampleIndex Sync] progress callback failed: %s", cb_err)
+
+        async def _run_sync() -> Dict[str, int]:
+            stats = {"total": 0, "success": 0, "failed": 0, "skipped": 0}
             try:
                 async with AsyncSessionLocal() as db:
                     # 1. 查询所有 approved 状态的案例
                     stmt = select(ChatBIExample).where(ChatBIExample.status == "approved")
                     res = await db.execute(stmt)
                     examples = res.scalars().all()
-                    
+
                     logger.info("[ExampleIndex Sync] Found %d approved examples for local sync", len(examples))
-                    
+                    stats["total"] = len(examples)
+
                     if not examples:
-                        return
-                        
+                        await _notify(
+                            {
+                                "phase": "examples_done",
+                                "total": 0,
+                                "success": 0,
+                                "failed": 0,
+                                "skipped": 0,
+                                "elapsed_ms": 0,
+                            }
+                        )
+                        return stats
+
                     await ExampleIndexService.ensure_index()
 
                     # 2. 批量查出对应的数据集名称，减少循环中的数据库查询
@@ -206,16 +236,28 @@ class ExampleIndexService:
                             dataset_name_map[row[0]] = row[1]
 
                     # 3. 同步到 Redis
-                    for ex in examples:
+                    for index, ex in enumerate(examples, start=1):
+                        started = time.monotonic()
+                        ds_name = dataset_name_map.get(ex.dataset_id) or "通用数据集"
                         try:
                             # 如果没有增强的问题，退回到原问题进行向量化
                             text_to_embed = ex.refined_query or ex.user_query
                             if not text_to_embed:
+                                stats["skipped"] += 1
+                                await _notify(
+                                    {
+                                        "phase": "example_skipped",
+                                        "example_id": ex.id,
+                                        "dataset_name": ds_name,
+                                        "done": index,
+                                        "total": stats["total"],
+                                        "reason": "无可用问题文本",
+                                    }
+                                )
                                 continue
-                            
+
                             embedding = await EmbeddingClient.embed_text(text_to_embed, use_global=True)
-                            ds_name = dataset_name_map.get(ex.dataset_id) or "通用数据集"
-                            
+
                             await ExampleIndexService.upsert_vector(
                                 example_id=ex.id,
                                 dataset_id=ex.dataset_id or 0,
@@ -229,17 +271,47 @@ class ExampleIndexService:
                                 sql_metadata=ex.sql_metadata,
                                 embedding=embedding
                             )
+                            stats["success"] += 1
+                            await _notify(
+                                {
+                                    "phase": "example_done",
+                                    "example_id": ex.id,
+                                    "dataset_name": ds_name,
+                                    "question": (text_to_embed or "")[:60],
+                                    "done": index,
+                                    "total": stats["total"],
+                                    "elapsed_ms": int((time.monotonic() - started) * 1000),
+                                }
+                            )
                         except Exception as ex_err:
+                            stats["failed"] += 1
                             logger.error("[ExampleIndex Sync] Sync failed for example %d: %s", ex.id, ex_err)
-                            
+                            await _notify(
+                                {
+                                    "phase": "example_failed",
+                                    "example_id": ex.id,
+                                    "dataset_name": ds_name,
+                                    "done": index,
+                                    "total": stats["total"],
+                                    "elapsed_ms": int((time.monotonic() - started) * 1000),
+                                    "error": str(ex_err),
+                                }
+                            )
+
                     logger.info("[ExampleIndex Sync] Local Redis example vectors sync complete.")
             except Exception as e:
                 logger.error("[ExampleIndex Sync] Sync background task failed: %s", e, exc_info=True)
+                stats["failed"] += 1
+            return stats
+
+        if wait:
+            return await _run_sync()
 
         try:
             asyncio.create_task(_run_sync())
         except Exception as e:
             logger.warning("[ExampleIndex Sync] Failed to trigger background sync: %s", e)
+        return {"total": 0, "success": 0, "failed": 0, "skipped": 0}
 
     @staticmethod
     async def search_knn(

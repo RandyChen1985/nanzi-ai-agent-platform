@@ -7,6 +7,12 @@ from typing import Any, Dict, List, Optional
 
 from app.core.redis import get_redis, get_redis_binary
 from app.services.ai.embedding_client import EmbeddingClient
+from app.services.ai.redis_index_utils import (
+    ENSURE_CACHE_TTL,
+    ensure_vector_index,
+    index_vector_dim,
+    last_ensure_result,
+)
 from app.services.memory_config_service import MemoryConfigService
 
 logger = logging.getLogger(__name__)
@@ -16,9 +22,39 @@ SUMMARY_KEY_PREFIX = "memory:summary:"
 MEMORY_REDIS_INDEX_NAME = "nanzi:idx:memory:session_summary"
 
 # 进程内 ensure_index 缓存：避免每次 upsert 前都打一次 FT.INFO/FT.CREATE。
-# 仅缓存“已确认存在”的成功结果约 300s；失败不缓存，下次调用仍会重试。
-_ENSURE_INDEX_CACHE_TTL = 300.0
-_ensure_index_cache: Dict[str, tuple] = {}  # idx -> (ok_expires_monotonic, ok_bool)
+# 键为 "<index>|<dim>"，仅缓存「已确认存在且维度一致」的成功结果约 300s；
+# 失败不缓存，下次调用仍会重试。维度入键后，embed_dimensions 变更在下一次
+# 调用（含非 force 的 upsert 路径）即被发现，不会继续复用旧维度结论。
+_ENSURE_INDEX_CACHE_TTL = ENSURE_CACHE_TTL
+_ensure_index_cache: Dict[str, float] = {}  # "<index>|<dim>" -> ok_expires_monotonic
+
+
+def _memory_schema(dim: int) -> List[Any]:
+    return [
+        "user_id",
+        "TAG",
+        "conversation_id",
+        "TAG",
+        "title",
+        "TEXT",
+        "summary",
+        "TEXT",
+        "last_active",
+        "NUMERIC",
+        "SORTABLE",
+        "turn_count",
+        "NUMERIC",
+        "embedding",
+        "VECTOR",
+        "HNSW",
+        "6",
+        "TYPE",
+        "FLOAT32",
+        "DIM",
+        str(dim),
+        "DISTANCE_METRIC",
+        "COSINE",
+    ]
 
 
 def _doc_key(user_id: str, conversation_id: str) -> str:
@@ -100,71 +136,30 @@ class MemoryIndexService:
 
     @staticmethod
     async def ensure_index(force: bool = False) -> bool:
-        """Ensure the RediSearch index exists. Cached in-process (≈300s) on
-        success only, so per-upsert calls avoid redundant FT.INFO round-trips.
-        Startup/manual callers pass `force=True` to always round-trip and create
-        when missing."""
-        idx = await MemoryIndexService.index_name()
-        now = time.monotonic()
-        if not force:
-            hit = _ensure_index_cache.get(idx)
-            if hit:
-                expires, ok = hit
-                if now < expires:
-                    return ok
-                _ensure_index_cache.pop(idx, None)
+        """确保 RediSearch 索引存在且向量维度与全局 ``embed_dimensions`` 一致。
 
+        成功结果按 ``<index>|<dim>`` 在进程内缓存约 300s，避免每次 upsert 前都打
+        一次 FT.INFO/FT.CREATE；失败不缓存，下次调用仍会重试。
+
+        维度不一致时重建索引（``FT.DROPINDEX`` 不带 ``DD``，保留记忆 HASH 文档）。
+        ``force=True``（启动、手动「检查/创建索引」）绕过缓存，总是回源探测。
+        """
         redis = await get_redis()
         if not redis:
             return False
+        idx = await MemoryIndexService.index_name()
         dim = await EmbeddingClient.get_dimensions()
-        try:
-            info = await redis.execute_command("FT.INFO", idx)
-            if info:
-                _ensure_index_cache[idx] = (now + _ENSURE_INDEX_CACHE_TTL, True)
-                return True
-        except Exception:
-            pass
-        try:
-            await redis.execute_command(
-                "FT.CREATE",
-                idx,
-                "ON",
-                "HASH",
-                "PREFIX",
-                "1",
-                SUMMARY_KEY_PREFIX,
-                "SCHEMA",
-                "user_id",
-                "TAG",
-                "conversation_id",
-                "TAG",
-                "title",
-                "TEXT",
-                "summary",
-                "TEXT",
-                "last_active",
-                "NUMERIC",
-                "SORTABLE",
-                "turn_count",
-                "NUMERIC",
-                "embedding",
-                "VECTOR",
-                "HNSW",
-                "6",
-                "TYPE",
-                "FLOAT32",
-                "DIM",
-                str(dim),
-                "DISTANCE_METRIC",
-                "COSINE",
-            )
-            logger.info("[MemoryIndex] Created index %s dim=%s", idx, dim)
-            _ensure_index_cache[idx] = (time.monotonic() + _ENSURE_INDEX_CACHE_TTL, True)
-            return True
-        except Exception as e:
-            logger.warning("[MemoryIndex] FT.CREATE failed: %s", e)
-            return False
+        result = await ensure_vector_index(
+            redis,
+            index_name=idx,
+            prefix=SUMMARY_KEY_PREFIX,
+            schema=_memory_schema,
+            dim=dim,
+            log_tag="MemoryIndex",
+            cache=_ensure_index_cache,
+            force=force,
+        )
+        return bool(result.get("ok"))
 
     @staticmethod
     async def upsert_summary(
@@ -254,6 +249,176 @@ class MemoryIndexService:
             await redis.expire(key, ttl)
         await MemoryIndexService.ensure_index()
         return True
+
+    # --- 全量重新向量化 ---
+
+    _META_LIST_FIELDS = ("key_facts", "decisions", "open_items", "entities", "topics")
+
+    @staticmethod
+    def meta_from_hash(data: Dict[Any, Any]) -> Dict[str, Any]:
+        """把 HASH 字段还原成写入时的 meta 结构（JSON 数组字段解析回列表）。
+
+        用于复用与写入时**完全一致**的 embedding 文本口径。
+        """
+        meta: Dict[str, Any] = {}
+        for key, value in data.items():
+            name = MemoryIndexService._hash_field_name(key)
+            if name == "embedding":
+                continue
+            meta[name] = MemoryIndexService._hash_text_value(value)
+        for field in MemoryIndexService._META_LIST_FIELDS:
+            raw = meta.get(field)
+            if isinstance(raw, str):
+                try:
+                    parsed = json.loads(raw)
+                except Exception:
+                    parsed = None
+                if isinstance(parsed, list):
+                    meta[field] = parsed
+                else:
+                    meta[field] = [raw] if raw else []
+        return meta
+
+    @staticmethod
+    def embedding_text_for(meta: Dict[str, Any]) -> str:
+        """按 summary_type 复用创建时的文本口径，避免重算与写入不一致。
+
+        - ``session``：``SessionSummaryService._embedding_text``（标题 + 摘要 + 事实/决策/待办/实体 + 类型）
+        - ``daily``：``DailySummaryService._daily_embedding_text``
+        - ``consolidated``：合并记忆当初直接对合并后的摘要做 embedding，此处保持一致
+        """
+        summary_type = str(meta.get("summary_type") or "session").strip().lower()
+        if summary_type == "daily":
+            from app.services.ai.daily_summary_service import DailySummaryService
+
+            return DailySummaryService._daily_embedding_text(meta)
+        if summary_type == "consolidated":
+            return str(meta.get("summary") or "")
+        from app.services.ai.session_summary_service import SessionSummaryService
+
+        return SessionSummaryService._embedding_text(meta)
+
+    @staticmethod
+    async def reembed_all(
+        progress_cb: Optional[Any] = None,
+    ) -> Dict[str, int]:
+        """把全部 ``memory:summary:*`` 记录用当前全局 Embedding 重新向量化。
+
+        维度或模型变更后，旧向量无法被正确检索；本方法按创建时的文本口径重算并
+        写回 ``embedding``（``embedding_missing=0``），其它字段与 TTL 不变。
+        无可用文本的记录计入 ``skipped``，单条失败记录错误后继续。
+        """
+        redis_text = await get_redis()
+        redis_binary = await get_redis_binary()
+        stats = {"total": 0, "success": 0, "failed": 0, "skipped": 0}
+        if not redis_text or not redis_binary:
+            return stats
+
+        keys: List[str] = []
+        async for key in redis_text.scan_iter(match=f"{SUMMARY_KEY_PREFIX}*", count=200):
+            keys.append(key.decode("utf-8", errors="replace") if isinstance(key, (bytes, bytearray)) else str(key))
+        stats["total"] = len(keys)
+
+        async def _notify(payload: Dict[str, Any]) -> None:
+            if progress_cb is None:
+                return
+            try:
+                await progress_cb(payload)
+            except Exception as cb_err:
+                logger.warning("[MemoryIndex] progress callback failed: %s", cb_err)
+
+        await _notify({"phase": "scan", "total": stats["total"]})
+
+        for index, key in enumerate(keys, start=1):
+            started = time.monotonic()
+            try:
+                raw = await redis_binary.hgetall(key)
+            except Exception as e:
+                stats["failed"] += 1
+                await _notify(
+                    {
+                        "phase": "item_failed",
+                        "key": key,
+                        "done": index,
+                        "total": stats["total"],
+                        "error": str(e),
+                    }
+                )
+                continue
+
+            if not raw:
+                stats["skipped"] += 1
+                await _notify(
+                    {
+                        "phase": "item_skipped",
+                        "key": key,
+                        "done": index,
+                        "total": stats["total"],
+                        "reason": "记录不存在或已过期",
+                    }
+                )
+                continue
+
+            meta = MemoryIndexService.meta_from_hash(raw)
+            summary_type = str(meta.get("summary_type") or "session")
+            conversation_id = str(meta.get("conversation_id") or "") or _conversation_id_from_doc_key(
+                key, str(meta.get("user_id") or "")
+            )
+            text_to_embed = MemoryIndexService.embedding_text_for(meta).strip()
+            if not text_to_embed:
+                stats["skipped"] += 1
+                await _notify(
+                    {
+                        "phase": "item_skipped",
+                        "key": key,
+                        "summary_type": summary_type,
+                        "conversation_id": conversation_id,
+                        "done": index,
+                        "total": stats["total"],
+                        "reason": "无可用文本",
+                    }
+                )
+                continue
+
+            try:
+                vector = await EmbeddingClient.embed_text(text_to_embed)
+                await redis_text.hset(
+                    key,
+                    mapping={
+                        "embedding": _vector_to_bytes(vector),
+                        "embedding_missing": "0",
+                    },
+                )
+                stats["success"] += 1
+                await _notify(
+                    {
+                        "phase": "item_done",
+                        "key": key,
+                        "summary_type": summary_type,
+                        "conversation_id": conversation_id,
+                        "dim": len(vector),
+                        "done": index,
+                        "total": stats["total"],
+                        "elapsed_ms": int((time.monotonic() - started) * 1000),
+                    }
+                )
+            except Exception as e:
+                stats["failed"] += 1
+                logger.warning("[MemoryIndex] reembed failed for %s: %s", key, e)
+                await _notify(
+                    {
+                        "phase": "item_failed",
+                        "key": key,
+                        "summary_type": summary_type,
+                        "conversation_id": conversation_id,
+                        "done": index,
+                        "total": stats["total"],
+                        "elapsed_ms": int((time.monotonic() - started) * 1000),
+                        "error": str(e),
+                    }
+                )
+
+        return stats
 
     @staticmethod
     def _hash_field_name(key: Any) -> str:
@@ -804,11 +969,23 @@ class MemoryIndexService:
     async def index_status() -> Dict[str, Any]:
         redis = await get_redis()
         idx = await MemoryIndexService.index_name()
+        try:
+            configured_dim: Optional[int] = await EmbeddingClient.get_dimensions()
+        except Exception as e:
+            logger.warning("[MemoryIndex] 读取 embed_dimensions 失败: %s", e)
+            configured_dim = None
         if not redis:
-            return {"available": False, "index_name": idx, "message": "Redis 不可用"}
+            return {
+                "available": False,
+                "index_name": idx,
+                "message": "Redis 不可用",
+                "configured_dim": configured_dim,
+                "index_dim": None,
+                "dim_mismatch": False,
+            }
         try:
             info = await redis.execute_command("FT.INFO", idx)
-            
+
             # 清理嵌套结构中可能存在的非标准浮点数（如 NaN, Infinity），以防止 JSON 序列化失败
             import math
             def _sanitize(obj: Any) -> Any:
@@ -822,14 +999,76 @@ class MemoryIndexService:
                     return [_sanitize(x) for x in obj]
                 return obj
 
-            return {"available": True, "index_name": idx, "info": _sanitize(info)}
+            index_dim = index_vector_dim(info)
+            dim_mismatch = (
+                index_dim is not None
+                and configured_dim is not None
+                and int(index_dim) != int(configured_dim)
+            )
+            payload: Dict[str, Any] = {
+                "available": True,
+                "index_name": idx,
+                "info": _sanitize(info),
+                "configured_dim": configured_dim,
+                "index_dim": index_dim,
+                "dim_mismatch": dim_mismatch,
+            }
+            if dim_mismatch:
+                payload["message"] = (
+                    f"索引向量维度为 {index_dim}，当前 embed_dimensions 为 "
+                    f"{configured_dim}，需重建索引"
+                )
+            return payload
         except Exception as e:
-            return {"available": False, "index_name": idx, "message": str(e)}
+            return {
+                "available": False,
+                "index_name": idx,
+                "message": str(e),
+                "configured_dim": configured_dim,
+                "index_dim": None,
+                "dim_mismatch": False,
+            }
+
+    @staticmethod
+    @staticmethod
+    def ensure_message(result: Dict[str, Any]) -> str:
+        """把 ensure_index 的结构化结果转成一句人话（响应体与进度事件共用）。"""
+        idx = result.get("index_name")
+        action = result.get("action")
+        index_dim = result.get("index_dim")
+        configured_dim = result.get("configured_dim")
+        if not result.get("ok"):
+            return result.get("message") or f"索引 {idx} 检查/创建失败"
+        if action == "created":
+            return f"已创建索引 {idx}，向量维度 {configured_dim}。"
+        if action == "recreated":
+            old = index_dim if index_dim is not None else "未知"
+            return (
+                f"检测到向量维度变更（{old} → {configured_dim}），已重建索引 {idx}。"
+                "旧维度向量不会被检索，需要执行「重构记忆向量」按新维度重新生成。"
+            )
+        return f"索引 {idx} 已就绪（向量维度 {configured_dim}），无需重建。"
 
     @staticmethod
     async def rebuild_index() -> Dict[str, Any]:
+        """检查/创建索引：维度不一致时重建，并回报真实动作。"""
         await MemoryIndexService.ensure_index(force=True)
-        return {"status": "success", "message": "索引已检查/创建（已有 HASH 文档会自动纳入 PREFIX 索引）"}
+        idx = await MemoryIndexService.index_name()
+        result = last_ensure_result(idx) or {}
+        ok = bool(result.get("ok"))
+        detail = {
+            "ok": ok,
+            "action": result.get("action"),
+            "index_name": idx,
+            "index_dim": result.get("index_dim"),
+            "configured_dim": result.get("configured_dim"),
+            "message": result.get("message"),
+        }
+        return {
+            "status": "success" if ok else "error",
+            **detail,
+            "message": MemoryIndexService.ensure_message(detail),
+        }
 
 
 async def maybe_ensure_memory_index_on_startup() -> None:

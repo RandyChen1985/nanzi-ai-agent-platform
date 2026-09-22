@@ -3,6 +3,7 @@ import { computed, onMounted, ref } from 'vue'
 import axios from '../utils/axios'
 import ConfirmModal from '../components/ConfirmModal.vue'
 import Modal from '../components/Modal.vue'
+import TaskProgressDrawer from '../components/common/TaskProgressDrawer.vue'
 import { useToast } from '../composables/useToast'
 import { useUser } from '../composables/useUser'
 import { copyToClipboard as copyText } from '../utils/clipboard'
@@ -162,6 +163,12 @@ const CONFIG_GROUPS: {
 ]
 
 const showRebuildConfirm = ref(false)
+const showRebuildVectorsConfirm = ref(false)
+// 索引/向量后台任务实时进度抽屉（索引检查创建 与 记忆向量重构 共用）
+const taskDrawerOpen = ref(false)
+const taskDrawerTitle = ref('')
+const taskDrawerSubtitle = ref('')
+const taskDrawerStreamUrl = ref('')
 const showDeleteConfirm = ref(false)
 const rowToDelete = ref<SummaryRow | null>(null)
 
@@ -268,9 +275,30 @@ const setConfigNumber = (key: string, raw: number | string) => {
   item.value = Number.isNaN(n) ? '0' : String(Math.max(0, n))
 }
 
+// 索引维度与全局 embed_dimensions 不一致时，索引存在但向量检索实际失效，
+// 必须视为「需重建」，不能显示成「索引正常」。
+const indexDimMismatch = computed(() => !!indexStatus.value?.dim_mismatch)
+const indexReady = computed(
+  () => !!indexStatus.value?.available && !indexDimMismatch.value,
+)
+const indexStatusBadgeText = computed(() => {
+  if (!indexStatus.value) return ''
+  if (indexDimMismatch.value) return '维度不匹配'
+  return indexStatus.value.available ? '索引正常' : '索引未就绪'
+})
+const indexStatusBadgeClass = computed(() =>
+  indexReady.value ? 'bg-green-100 text-green-800' : 'bg-amber-100 text-amber-800',
+)
 const indexStatusLabel = computed(() => {
   if (!indexStatus.value) return null
-  if (indexStatus.value.available) return '索引已就绪'
+  if (indexDimMismatch.value) {
+    return `索引向量维度 ${indexStatus.value.index_dim}，当前 embed_dimensions 为 ${indexStatus.value.configured_dim}，需重建索引`
+  }
+  if (indexStatus.value.available) {
+    return indexStatus.value.configured_dim
+      ? `索引已就绪（向量维度 ${indexStatus.value.configured_dim}）`
+      : '索引已就绪'
+  }
   return indexStatus.value.message || '索引未创建'
 })
 
@@ -378,11 +406,64 @@ const confirmRebuildIndex = async () => {
   showRebuildConfirm.value = false
   try {
     const res = await axios.post('/api/portal/memory/index/rebuild')
-    showToast(res.data?.data?.message || '完成', 'success')
+    const data = res.data?.data
+    const taskId = data?.task_id
+    if (taskId) {
+      // 后台任务已启动：打开实时进度抽屉，由 SSE 推送进度与日志
+      taskDrawerTitle.value = '索引检查/创建'
+      taskDrawerSubtitle.value = '检查 RediSearch 会话摘要向量索引；若索引维度与系统配置不一致则重建索引（保留已有记忆数据）。'
+      taskDrawerStreamUrl.value = `/api/portal/memory/index/rebuild/${taskId}/events`
+      taskDrawerOpen.value = true
+      return
+    }
+    // 兼容旧后端：未返回 task_id 时沿用原有 toast 行为
+    if (data && data.ok === false) {
+      showToast(data.message || '索引检查/创建失败', 'error')
+    } else {
+      showToast(data?.message || '完成', 'success')
+    }
     await loadIndexStatus()
   } catch (e: any) {
+    if (e.response?.status === 409) {
+      showToast(e.response?.data?.detail || '已有索引任务正在运行，请稍后再试', 'warning')
+      return
+    }
     showToast(e.response?.data?.detail || '操作失败', 'error')
   }
+}
+
+const requestRebuildVectors = () => {
+  if (!memoryFeaturesEnabled.value || !canIndex.value || !summaryEnabled.value) return
+  showRebuildVectorsConfirm.value = true
+}
+
+const confirmRebuildVectors = async () => {
+  showRebuildVectorsConfirm.value = false
+  try {
+    const res = await axios.post('/api/portal/memory/vectors/rebuild')
+    const data = res.data?.data ?? res.data
+    const taskId = data?.task_id
+    if (taskId) {
+      taskDrawerTitle.value = '重构记忆向量'
+      taskDrawerSubtitle.value = '遍历全部记忆记录并重新调用 Embedding 写入 Redis 向量索引，耗时较长且会消耗额度。'
+      taskDrawerStreamUrl.value = `/api/portal/memory/vectors/rebuild/${taskId}/events`
+      taskDrawerOpen.value = true
+      return
+    }
+    showToast(data?.message || '重构任务已启动', 'success')
+  } catch (e: any) {
+    if (e.response?.status === 409) {
+      showToast(e.response?.data?.detail || '已有重构任务正在运行，请稍后再试', 'warning')
+      return
+    }
+    showToast(e.response?.data?.detail || '启动重构失败', 'error')
+  }
+}
+
+const handleTaskDrawerFinished = async (payload: { ok: boolean; message: string }) => {
+  showToast(payload.message || (payload.ok ? '任务完成' : '任务失败'), payload.ok ? 'success' : 'error')
+  // 任务结束后刷新索引状态徽标
+  await loadIndexStatus()
 }
 
 const fetchSummaries = async () => {
@@ -783,6 +864,15 @@ onMounted(async () => {
           >
             检查/创建索引
           </button>
+          <button
+            v-if="canIndex && summaryEnabled"
+            type="button"
+            class="rounded-lg border border-amber-300 bg-amber-50 px-2 py-2 text-center text-xs text-amber-900 shadow-sm hover:bg-amber-100 sm:px-3 sm:text-sm"
+            title="重构记忆向量"
+            @click="requestRebuildVectors"
+          >
+            重构记忆向量
+          </button>
         </div>
       </div>
 
@@ -792,13 +882,17 @@ onMounted(async () => {
       >
         <span
           class="inline-flex self-start items-center px-2.5 py-0.5 rounded-full text-xs font-medium"
-          :class="indexStatus.available ? 'bg-green-100 text-green-800' : 'bg-amber-100 text-amber-800'"
+          :class="indexStatusBadgeClass"
         >
-          {{ indexStatus.available ? '索引正常' : '索引未就绪' }}
+          {{ indexStatusBadgeText }}
         </span>
         <span class="text-gray-600 text-xs sm:text-sm">{{ indexStatusLabel }}</span>
         <span
-          v-if="!indexStatus.available"
+          v-if="indexDimMismatch"
+          class="text-[11px] text-amber-700/80"
+        >索引 DIM 与全局 embed_dimensions 不一致时，新写入的向量不会被 RediSearch 索引，向量检索会静默返回空结果。点右侧按钮重建（保留已有记忆数据）。</span>
+        <span
+          v-else-if="!indexStatus.available"
           class="text-[11px] text-amber-700/80"
         >常见原因：Redis 重启后索引丢失（文档 TTL 不会删索引）。启动会自动尝试重建，也可点右侧按钮。</span>
         <span
@@ -807,7 +901,7 @@ onMounted(async () => {
           :title="indexStatus.index_name"
         >{{ indexStatus.index_name }}</span>
         <button
-          v-if="canIndex && !indexStatus.available"
+          v-if="canIndex && !indexReady"
           type="button"
           class="inline-flex items-center justify-center rounded-lg border border-amber-300 bg-amber-50 px-3 py-1.5 text-xs font-medium text-amber-900 shadow-sm hover:bg-amber-100 sm:ml-auto"
           title="检查/创建索引"
@@ -1461,11 +1555,30 @@ onMounted(async () => {
     <ConfirmModal
       v-if="showRebuildConfirm"
       title="检查/创建索引"
-      message="将检查或创建 RediSearch 会话摘要向量索引。若已修改向量维度，请确认后执行并必要时重建已有数据。"
+      message="将检查 RediSearch 会话摘要向量索引；若索引向量维度与系统配置 embed_dimensions 不一致，会重建索引（保留已有记忆数据）。"
       confirm-text="确定执行"
       type="warning"
       @confirm="confirmRebuildIndex"
       @cancel="showRebuildConfirm = false"
+    />
+    <ConfirmModal
+      v-if="showRebuildVectorsConfirm"
+      title="重构记忆向量？"
+      message="此操作会遍历全部记忆记录并重新调用 Embedding，耗时较长且消耗额度。执行期间记忆向量检索可能返回不完整结果，确定执行吗？"
+      confirm-text="确认重构"
+      type="warning"
+      @confirm="confirmRebuildVectors"
+      @cancel="showRebuildVectorsConfirm = false"
+    />
+
+    <!-- 索引检查/创建 与 记忆向量重构 的后台任务实时进度 -->
+    <TaskProgressDrawer
+      :open="taskDrawerOpen"
+      :title="taskDrawerTitle"
+      :subtitle="taskDrawerSubtitle"
+      :stream-url="taskDrawerStreamUrl"
+      @close="taskDrawerOpen = false"
+      @finished="handleTaskDrawerFinished"
     />
     <ConfirmModal
       v-if="showDeleteConfirm && rowToDelete"

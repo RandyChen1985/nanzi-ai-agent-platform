@@ -193,24 +193,70 @@ async def test_global_embed_connection_allows_empty_api_key():
 
 @pytest.mark.asyncio
 async def test_rebuild_vector_indexes_api():
+    """端点现在只负责启动任务并返回 task_id，进度改由 SSE 推送。"""
     from app.api.portal.endpoints.system import rebuild_vector_indexes
-    
-    mock_redis = AsyncMock()
-    mock_redis.execute_command = AsyncMock()
-    
-    with patch("app.services.ai.local_vector_rebuild.redis.get_redis", return_value=mock_redis), \
-         patch("app.services.ai.local_vector_rebuild.settings.REDIS_ENABLE", True), \
-         patch("app.services.ai.metadata_index_service.MetadataIndexService.ensure_index", return_value=True), \
-         patch("app.services.ai.example_index_service.ExampleIndexService.ensure_index", return_value=True), \
-         patch("app.services.ai.metadata_index_service.MetadataIndexService.sync_all_datasets", return_value=None), \
-         patch("app.services.ai.example_index_service.ExampleIndexService.sync_all_examples", return_value=None), \
+
+    with patch(
+        "app.services.ai.local_vector_rebuild.start_local_vector_rebuild",
+        new_callable=AsyncMock,
+        return_value="task_abc",
+    ) as mock_start, \
          patch("app.api.portal.endpoints.system.require_permission", return_value=lambda x: None):
-         
+
         res = await rebuild_vector_indexes(user={"username": "admin"})
         assert res["status"] == "success"
-        assert "已成功重构本地向量索引。" in res["message"]
-        mock_redis.execute_command.assert_any_call("FT.DROPINDEX", "nanzi:idx:metadata:dataset", "DD")
-        mock_redis.execute_command.assert_any_call("FT.DROPINDEX", "nanzi:idx:example:local", "DD")
+        assert res["task_id"] == "task_abc"
+        assert "已启动" in res["message"]
+        mock_start.assert_awaited_once_with(trigger="manual")
+
+
+@pytest.mark.asyncio
+async def test_rebuild_vector_indexes_api_conflicts_when_task_running():
+    """已有重构任务在跑时必须返回 409，并带上正在运行的任务 ID。"""
+    from fastapi import HTTPException
+    from app.api.portal.endpoints.system import rebuild_vector_indexes
+
+    with patch(
+        "app.services.ai.local_vector_rebuild.start_local_vector_rebuild",
+        new_callable=AsyncMock,
+        return_value=None,
+    ), patch(
+        "app.services.ai.local_vector_rebuild.get_active_rebuild_task_id",
+        new_callable=AsyncMock,
+        return_value="task_running",
+    ), patch(
+        "app.api.portal.endpoints.system.require_permission", return_value=lambda x: None
+    ):
+        with pytest.raises(HTTPException) as exc:
+            await rebuild_vector_indexes(user={"username": "admin"})
+        assert exc.value.status_code == 409
+        assert "task_running" in exc.value.detail
+        # 锁带 TTL，提示里要说清会自动释放，避免用户以为被永久锁死
+        assert "TTL" in exc.value.detail
+
+
+@pytest.mark.asyncio
+async def test_rebuild_vector_indexes_conflict_message_does_not_fake_a_task():
+    """残留锁的持有者不是 task_id 时，不能提示成一个可以在抽屉里看的任务。"""
+    from fastapi import HTTPException
+    from app.api.portal.endpoints.system import rebuild_vector_indexes
+
+    with patch(
+        "app.services.ai.local_vector_rebuild.start_local_vector_rebuild",
+        new_callable=AsyncMock,
+        return_value=None,
+    ), patch(
+        "app.services.ai.local_vector_rebuild.get_active_rebuild_task_id",
+        new_callable=AsyncMock,
+        return_value="startup",
+    ), patch(
+        "app.api.portal.endpoints.system.require_permission", return_value=lambda x: None
+    ):
+        with pytest.raises(HTTPException) as exc:
+            await rebuild_vector_indexes(user={"username": "admin"})
+        assert exc.value.status_code == 409
+        assert "task_id=startup" not in exc.value.detail
+        assert "非任务持有者" in exc.value.detail
 
 @pytest.mark.asyncio
 async def test_search_examples_top_k_resolution():

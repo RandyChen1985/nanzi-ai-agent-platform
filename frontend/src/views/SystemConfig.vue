@@ -9,6 +9,7 @@ import ModelRegistry from '../components/system/ModelRegistry.vue'
 import ToolRegistry from '../components/system/ToolRegistry.vue'
 import RagFlowResourceSelector from '../components/RagFlowResourceSelector.vue'
 import ConfirmModal from '../components/ConfirmModal.vue'
+import TaskProgressDrawer from '../components/common/TaskProgressDrawer.vue'
 import RedisKeyCleanupModal from '../components/system/RedisKeyCleanupModal.vue'
 import Switch from '../components/Switch.vue'
 import { copyToClipboard } from '../utils/clipboard'
@@ -97,6 +98,12 @@ const redisVectorHealth = ref<VectorHealth | null>(null)
 const { showToast } = useToast()
 const showRedisCleanupModal = ref(false)
 const showRebuildConfirm = ref(false)
+// 本地向量重构：后台任务实时进度抽屉
+const rebuildTaskOpen = ref(false)
+const rebuildTaskId = ref('')
+const rebuildTaskStreamUrl = computed(() =>
+  rebuildTaskId.value ? `/api/portal/system/redis/rebuild-vectors/${rebuildTaskId.value}/events` : '',
+)
 const showUserSyncDetail = ref(false)
 
 const appendLog = (msg: string) => {
@@ -238,24 +245,46 @@ const executeRebuildVectors = async () => {
 
   try {
      const response = await axios.post('/api/portal/system/redis/rebuild-vectors')
-     const { message, logs: serverLogs } = response.data
+     const { task_id: taskId, message, logs: serverLogs } = response.data
      if (serverLogs && Array.isArray(serverLogs)) {
        serverLogs.forEach((logStr: string) => {
          appendLog(`>>> ${logStr}`)
        })
      }
-     appendLog(`>>> ✅ ${message}`)
-     showToast('本地向量数据重构成功，后台同步中', 'success')
-     
-     // 自动重新检测
-     testRedisVectorSearch(true)
+     appendLog(`>>> ✅ ${message || '重构任务已启动'}`)
+     if (taskId) {
+       // 后台任务已启动：打开实时进度抽屉，由 SSE 推送进度与日志
+       rebuildTaskId.value = taskId
+       rebuildTaskOpen.value = true
+       showToast('本地向量重构任务已启动', 'success')
+     } else {
+       // 兼容旧后端：同步返回结果，直接刷新检测
+       showToast(message || '本地向量数据重构成功，后台同步中', 'success')
+       testRedisVectorSearch(true)
+     }
   } catch (e: any) {
-    const msg = e.response?.data?.detail || e.message
-    appendLog(`>>> ❌ 重构失败: ${msg}`)
-    showToast('重构失败', 'error')
+    if (e.response?.status === 409) {
+      showToast(e.response?.data?.detail || '已有重构任务正在运行，请稍后再试', 'warning')
+    } else {
+      const msg = e.response?.data?.detail || e.message
+      appendLog(`>>> ❌ 重构失败: ${msg}`)
+      showToast('重构失败', 'error')
+    }
   } finally {
     loading.value['rebuild_vector'] = false
   }
+}
+
+const handleRebuildTaskFinished = async (payload: { ok: boolean; message: string }) => {
+  if (payload.ok) {
+    appendLog(`>>> ✅ ${payload.message || '本地向量重构完成'}`)
+    showToast(payload.message || '本地向量重构完成', 'success')
+  } else {
+    appendLog(`>>> ❌ 本地向量重构失败: ${payload.message || '未知错误'}`)
+    showToast(payload.message || '本地向量重构失败', 'error')
+  }
+  // 收到终态后照旧重新检测 Redis 向量搜索能力
+  await testRedisVectorSearch(true)
 }
 
 const clearLogs = () => {
@@ -5648,6 +5677,16 @@ onUnmounted(() => {
       type="danger"
       @confirm="executeRebuildVectors"
       @cancel="showRebuildConfirm = false"
+    />
+
+    <!-- 本地向量重构实时进度（元数据 + 经验案例） -->
+    <TaskProgressDrawer
+      :open="rebuildTaskOpen"
+      title="本地向量重构"
+      subtitle="本次重构包含元数据与经验案例：删除并重建向量索引定义、清理已存向量，随后触发全量数据重新向量化。"
+      :stream-url="rebuildTaskStreamUrl"
+      @close="rebuildTaskOpen = false"
+      @finished="handleRebuildTaskFinished"
     />
 
     <!-- K8s 沙箱镜像：构建 / 导入 / 查看指引 Modal -->
