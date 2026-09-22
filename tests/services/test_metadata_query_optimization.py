@@ -1,6 +1,10 @@
 from types import SimpleNamespace
 
+import pytest
+
 from app.services.metadata_rag_service import MetadataRagService
+
+pytestmark = pytest.mark.no_infrastructure
 
 
 def test_table_schema_includes_query_optimization_metadata():

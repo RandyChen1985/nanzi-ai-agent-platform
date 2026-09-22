@@ -96,6 +96,45 @@ class DatasetEnhanceResult(BaseModel):
     description: str = Field(description="数据集的业务背景描述，100字以内")
     tags: List[str] = Field(description="数据集的标签列表，如 ['财务', '生产', '核心数据']")
 
+# 元数据智能导入实际生效的系统提示词。
+#
+# 为什么不直接用 DB 里 metadata-specialist 智能体的提示词：该智能体在两个库的种子里都被
+# 显式禁用（db-prod/V20-add_agent_enabled_status.sql 置 is_enabled=0，
+# db-prod-pg/V0-baseline.sql 置 FALSE），此后没有任何迁移再启用它；而
+# AgentManagerService.get_active_agent_config() 在 is_enabled 为假时直接返回 None，
+# 于是 generate_from_ddl() 会稳定落到本模板。
+#
+# 也就是说，按发行种子的状态，下面这段就是线上真正使用的元数据解析提示词，而不是一层
+# "以防万一"的占位符——它必须承载完整的解析要求，否则 enums/synonyms/metrics/relationships
+# 这些能力会静默退化。修改时请同步：
+#   architech/prompts/meta/metadata_generator.md
+#   architech/prompts/system_agents/metadata/metadata_specialist.md
+# 字段清单以 ImportResult 的 JSON Schema 为准，此处的 {format_instructions} 占位符
+# 由 _invoke_json() 注入，不要删除。
+DEFAULT_METADATA_SYSTEM_PROMPT = (
+    "你是一个资深的业务分析师和数据库建模专家。\n"
+    "用户将提供关于数据库表结构的描述信息，其格式可能是：\n"
+    "1. SQL DDL 语句 (如 CREATE TABLE...)\n"
+    "2. Markdown 表格 (包含字段、类型、描述等)\n"
+    "3. 业务口径描述或自然语言定义的表结构\n"
+    "\n"
+    "你的任务是将用户提供的 DDL 或表格描述转化为标准化的元数据 JSON。\n"
+    "特别要求：\n"
+    "- 提取业务术语（term）：提供最准确的中文业务名称。如果输入缺失备注/注释，请根据物理名（Physical Name）进行智能推断。\n"
+    "- 识别描述（description）：提供详细的业务含义描述。如果原始信息缺失且字段名具有代表性，请结合行业知识生成建议的业务解释。\n"
+    "- 识别物理名（physical_name）：如果是 DDL 请严格保留；如果是自然语言请按下划线命名法推断（如 '机房ID' -> 'room_id'）。\n"
+    "- 识别枚举值（enums）：从描述文本中提取可能的取值范围。\n"
+    "- 生成同义词（synonyms）：为表和核心字段提供 2-3 个业务同义词，帮助 AI 检索。\n"
+    "- 提取指标（metrics）：如果输入包含计算逻辑或统计需求，提取为指标。\n"
+    "- 提取关系（relationships）：从 JOIN 语句或外键约束中提取表关联。\n"
+    "- 支持多表：如果输入包含多个 CREATE TABLE 语句，请在 tables 数组中返回所有表，不要只返回第一张。\n"
+    "- 识别查询优化字段：partition_fields 是分区字段物理名列表，从 DDL 的 PARTITION 定义提取；"
+    "index_fields 是索引字段物理名列表，从 PRIMARY KEY、UNIQUE/KEY/INDEX 定义提取并去重。"
+    "两者都必须填写真实存在的物理字段名，不得编造；没有则返回空数组。\n"
+    "\n"
+    "{format_instructions}"
+)
+
 class MetadataGeneratorService:
     @staticmethod
     async def _emit_progress(
@@ -374,13 +413,10 @@ class MetadataGeneratorService:
             llm = await AgentConfigProvider.get_configured_llm(streaming=False, config=chat_config)
 
             # 4. Resolve System Prompt
+            # metadata-specialist 智能体默认处于禁用状态（见 DEFAULT_METADATA_SYSTEM_PROMPT
+            # 的说明），因此这里的兜底分支是常态路径而非异常兜底，模板必须保持完整。
             if not agent_config or not agent_config.system_prompt:
-                system_prompt_template = (
-                    "你是一个资深的业务分析师和数据库建模专家。\n"
-                    "请分析用户提供的数据库 DDL、Markdown 表格或自然语言描述，提取出精确的元数据结构。\n"
-                    "确保推断出合理的业务术语(term)和详细的字段描述。\n"
-                    "{format_instructions}"
-                )
+                system_prompt_template = DEFAULT_METADATA_SYSTEM_PROMPT
             else:
                 system_prompt_template = agent_config.system_prompt
                 # Ensure format_instructions is present if not already in DB prompt

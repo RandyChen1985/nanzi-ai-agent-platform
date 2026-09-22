@@ -658,7 +658,6 @@ const handleConfirm = async () => {
     emit('confirm', {
       ddl: res.data.data,
       dataSourceName: selectedConfigName.value,
-        dataSourceType: config.value.type,
     })
     handleClose()
   } catch (e: any) {

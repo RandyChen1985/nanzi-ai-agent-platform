@@ -4,6 +4,10 @@ from datetime import datetime
 
 # --- Table/Column Schemas (Defined first for nesting) ---
 
+# 维度角色枚举：与前端下拉、db-prod/V159 的列注释、build_table_schema_dict 的判定保持一致。
+# 用 Literal 收敛取值，避免任意字符串落库后把语义带进 ChatBI 的 Schema/prompt。
+DimensionRole = Literal["none", "time", "geo", "category", "identifier"]
+
 class ColumnSchema(BaseModel):
     physical_name: str
     term: Optional[str] = None
@@ -12,8 +16,10 @@ class ColumnSchema(BaseModel):
     enums: Optional[List[Dict[str, Any]]] = None # [{"value": 1, "label": "Active"}]
     synonyms: Optional[List[str]] = []
     is_primary: Optional[bool] = False # Added field for UI
-    dimension_role: Optional[str] = "none"  # none/time/geo/category/identifier
-    hierarchy_group: Optional[str] = None  # 同组字段构成下钻链
+    dimension_role: Optional[DimensionRole] = "none"  # none/time/geo/category/identifier
+    # max_length 必须与 DB 列宽度一致（meta_columns.hierarchy_group VARCHAR(100)），
+    # 否则超长值会绕到数据库层才报错，表现为整张表保存 500。
+    hierarchy_group: Optional[str] = Field(default=None, max_length=100)  # 同组字段构成下钻链
     hierarchy_order: Optional[int] = None  # 组内层级序号，从小到大=从粗到细
 
 class TableCreate(BaseModel):
