@@ -12,12 +12,17 @@ class ColumnSchema(BaseModel):
     enums: Optional[List[Dict[str, Any]]] = None # [{"value": 1, "label": "Active"}]
     synonyms: Optional[List[str]] = []
     is_primary: Optional[bool] = False # Added field for UI
+    dimension_role: Optional[str] = "none"  # none/time/geo/category/identifier
+    hierarchy_group: Optional[str] = None  # 同组字段构成下钻链
+    hierarchy_order: Optional[int] = None  # 组内层级序号，从小到大=从粗到细
 
 class TableCreate(BaseModel):
     physical_name: str
     term: Optional[str] = None
     description: Optional[str] = None
     synonyms: Optional[List[str]] = []
+    partition_fields: Optional[List[str]] = []
+    index_fields: Optional[List[str]] = []
     columns: List[ColumnSchema] = []
 
 class TableResponse(TableCreate):
@@ -132,7 +137,7 @@ class DatasetDetailResponse(DatasetResponse):
 # --- DB Import Schemas ---
 
 class DBConnectionConfig(BaseModel):
-    type: str # 'mysql', 'clickhouse', 'oracle', 'sqlserver', 'postgresql'
+    type: str # 'mysql', 'doris', 'clickhouse', 'oracle', 'sqlserver', 'postgresql'
     host: str
     port: int
     user: str

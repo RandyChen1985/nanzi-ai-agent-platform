@@ -31,7 +31,8 @@ async def get_adapter(data_source_name: str) -> DataSourceAdapter:
     
     if db_type_lower == "clickhouse":
         return ClickHouseAdapter(db_config.id)
-    elif db_type_lower == "mysql":
+    elif db_type_lower in ("mysql", "doris"):
+        # Doris 兼容 MySQL 协议，复用 MySQLAdapter（information_schema 查询方式相同）
         return MySQLAdapter(db_config.id)
     elif db_type_lower == "oracle":
         return OracleAdapter(db_config.id)

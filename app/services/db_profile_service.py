@@ -113,7 +113,8 @@ class DbProfileService:
         }
 
         db_type = config.db_type.strip().lower()
-        if db_type == "mysql":
+        if db_type in ("mysql", "doris"):
+            # Doris 兼容 MySQL 协议，复用 MySQL 表列表获取逻辑
             tables_info = await DBImportService.get_mysql_tables(db_config)
         elif db_type == "clickhouse":
             tables_info = await DBImportService.get_clickhouse_tables(db_config)
@@ -924,7 +925,7 @@ class DbProfileService:
 
     @staticmethod
     async def _fetch_sample_data(adapter, db_type: str, table_name: str) -> str:
-        quote = "`" if db_type in ("mysql", "clickhouse") else '"'
+        quote = "`" if db_type in ("mysql", "doris", "clickhouse") else '"'
         if db_type == "oracle":
             query_sql = f'SELECT * FROM {quote}{table_name}{quote} WHERE ROWNUM <= 3'
         elif db_type in ("sqlserver", "mssql") or db_type in DBImportService._sqlserver_type_aliases():

@@ -1722,7 +1722,7 @@ from app.schemas.metadata import DBConnectionConfig, DDLRequest
 async def test_db_connection(config: DBConnectionConfig):
     """测试外部数据库连接"""
     try:
-        if config.type == "mysql":
+        if config.type in ("mysql", "doris"):
             await DBImportService.test_mysql_connection(config.model_dump())
         elif config.type == "clickhouse":
             await DBImportService.test_clickhouse_connection(config.model_dump())
@@ -1742,7 +1742,7 @@ async def test_db_connection(config: DBConnectionConfig):
 async def list_db_tables(config: DBConnectionConfig):
     """获取外部数据库表列表"""
     try:
-        if config.type == "mysql":
+        if config.type in ("mysql", "doris"):
             tables = await DBImportService.get_mysql_tables(config.model_dump())
         elif config.type == "clickhouse":
             tables = await DBImportService.get_clickhouse_tables(config.model_dump())
@@ -1763,7 +1763,7 @@ async def get_db_ddl(request: DDLRequest):
     """获取指定表的 DDL"""
     try:
         config = request.config
-        if config.type == "mysql":
+        if config.type in ("mysql", "doris"):
             ddl = await DBImportService.get_mysql_ddl(config.model_dump(), request.tables)
         elif config.type == "clickhouse":
             ddl = await DBImportService.get_clickhouse_ddl(config.model_dump(), request.tables)
