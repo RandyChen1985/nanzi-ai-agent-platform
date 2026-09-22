@@ -507,11 +507,21 @@ class MetadataService:
         incoming_col_names = [col['physical_name'] for col in table_data.get('columns', [])]
         
         # Delete columns that are NOT in the incoming list
-        delete_stmt = delete(MetaColumn).where(
-            MetaColumn.table_id == existing_table.id,
-            MetaColumn.physical_name.not_in(incoming_col_names)
-        )
-        await db.execute(delete_stmt)
+        # 注意：SQLAlchemy 会把 not_in([]) 渲染成 `physical_name NOT IN (NULL) OR (1 = 1)`，
+        # 该条件恒真，会让"空字段列表"变成"删光这张表的所有字段"。因此只有入参确实
+        # 提供了非空字段清单时才做清理；空列表一律跳过删除以保护既有字段。
+        if incoming_col_names:
+            delete_stmt = delete(MetaColumn).where(
+                MetaColumn.table_id == existing_table.id,
+                MetaColumn.physical_name.not_in(incoming_col_names)
+            )
+            await db.execute(delete_stmt)
+        else:
+            logger.warning(
+                "save_table_metadata 收到空字段列表，已跳过清理以保护既有字段: dataset_id=%s, table=%s",
+                dataset_id,
+                table_data.get('physical_name'),
+            )
 
         current_cols = table_data.get('columns', [])
         for col_data in current_cols:
@@ -526,6 +536,9 @@ class MetadataService:
              if existing_col:
                  # Update
                  existing_col.term = col_data.get('term', existing_col.term)
+                 # type 必须一并更新：元数据编辑表单里字段类型是可改的下拉，
+                 # 此前漏写导致改类型保存后不生效（静默回退）。
+                 existing_col.type = col_data.get('type', existing_col.type)
                  existing_col.description = col_data.get('description', existing_col.description)
                  existing_col.enums = col_data.get('enums', existing_col.enums)
                  existing_col.synonyms = col_data.get('synonyms', existing_col.synonyms)

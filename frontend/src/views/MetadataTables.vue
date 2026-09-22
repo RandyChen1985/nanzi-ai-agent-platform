@@ -1601,7 +1601,7 @@ defineExpose({ fetchMetrics })
                        </div>
                        <div class="col-span-5 flex items-center gap-1.5" v-if="col.dimension_role && col.dimension_role !== 'none'">
                           <span class="text-[10px] text-gray-400 shrink-0">层级组</span>
-                          <input v-model="col.hierarchy_group" class="w-full bg-transparent border-b border-gray-200 focus:border-indigo-500 outline-none text-[10px] text-gray-600 px-1 py-0.5" placeholder="同组字段构成下钻链，如 region">
+                          <input v-model="col.hierarchy_group" maxlength="100" class="w-full bg-transparent border-b border-gray-200 focus:border-indigo-500 outline-none text-[10px] text-gray-600 px-1 py-0.5" placeholder="同组字段构成下钻链，如 region">
                        </div>
                        <div class="col-span-2 flex items-center gap-1.5" v-if="col.dimension_role && col.dimension_role !== 'none' && col.hierarchy_group">
                           <span class="text-[10px] text-gray-400 shrink-0">序号</span>
