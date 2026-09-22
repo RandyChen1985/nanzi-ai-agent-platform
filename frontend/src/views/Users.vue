@@ -131,6 +131,42 @@
       </div>
     </div>
 
+    <!-- 批量启用 / 禁用操作条 -->
+    <div
+      v-if="canEditUser && selectedUserIds.length > 0"
+      class="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg border border-indigo-200 bg-indigo-50/70 px-4 py-2.5"
+    >
+      <span class="text-sm font-medium text-indigo-900">
+        已选 <span class="font-bold">{{ selectedUserIds.length }}</span> 个用户
+      </span>
+      <div class="ml-auto flex items-center gap-2">
+        <button
+          type="button"
+          class="rounded-lg border border-emerald-300 bg-white px-3 py-1.5 text-sm font-medium text-emerald-700 shadow-sm transition-colors hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-50"
+          :disabled="batchSubmitting"
+          @click="openBatchStatusDialog(1)"
+        >
+          批量启用
+        </button>
+        <button
+          type="button"
+          class="rounded-lg border border-red-300 bg-white px-3 py-1.5 text-sm font-medium text-red-600 shadow-sm transition-colors hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"
+          :disabled="batchSubmitting"
+          @click="openBatchStatusDialog(0)"
+        >
+          批量禁用
+        </button>
+        <button
+          type="button"
+          class="rounded-lg px-3 py-1.5 text-sm text-gray-500 transition-colors hover:bg-white hover:text-gray-700 disabled:cursor-not-allowed disabled:opacity-50"
+          :disabled="batchSubmitting"
+          @click="clearSelection"
+        >
+          取消选择
+        </button>
+      </div>
+    </div>
+
     <!-- Loading -->
     <div v-if="loading" class="flex flex-col items-center justify-center py-16">
       <div class="w-10 h-10 border-4 border-primary border-t-transparent rounded-full animate-spin"></div>
@@ -178,6 +214,18 @@
           <table class="min-w-full divide-y divide-gray-200">
             <thead class="bg-gray-50">
               <tr>
+                <th v-if="canEditUser" class="w-10 px-3 py-3">
+                  <input
+                    type="checkbox"
+                    class="h-4 w-4 cursor-pointer rounded border-gray-300 text-primary focus:ring-2 focus:ring-primary/30"
+                    :checked="isAllPageSelected"
+                    :indeterminate.prop="isPagePartiallySelected"
+                    :disabled="users.length === 0"
+                    title="全选当前页"
+                    aria-label="全选当前页用户"
+                    @change="toggleSelectAllPage"
+                  />
+                </th>
                 <th class="px-5 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">用户</th>
                 <th class="px-5 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">身份 / 角色</th>
                 <th class="px-5 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">备注</th>
@@ -187,7 +235,21 @@
               </tr>
             </thead>
             <tbody class="bg-white divide-y divide-gray-200">
-              <tr v-for="user in users" :key="user.id" class="group hover:bg-gray-50/80 transition-colors">
+              <tr
+                v-for="user in users"
+                :key="user.id"
+                class="group hover:bg-gray-50/80 transition-colors"
+                :class="{ 'bg-indigo-50/40': selectedUserIds.includes(user.id) }"
+              >
+                <td v-if="canEditUser" class="w-10 px-3 py-4">
+                  <input
+                    type="checkbox"
+                    class="h-4 w-4 cursor-pointer rounded border-gray-300 text-primary focus:ring-2 focus:ring-primary/30"
+                    :checked="selectedUserIds.includes(user.id)"
+                    :aria-label="`选择用户 ${user.user_name}`"
+                    @change="toggleSelectUser(user.id)"
+                  />
+                </td>
                 <td class="px-5 py-4 whitespace-nowrap">
                   <div class="min-w-0">
                     <div class="flex items-center gap-1.5 min-w-0">
@@ -320,9 +382,23 @@
         <div
           v-for="user in users"
           :key="user.id"
-          class="bg-white border border-gray-200 rounded-lg p-4 shadow-sm"
+          class="bg-white border rounded-lg p-4 shadow-sm"
+          :class="
+            selectedUserIds.includes(user.id)
+              ? 'border-indigo-300 ring-1 ring-indigo-200'
+              : 'border-gray-200'
+          "
         >
           <div class="flex justify-between items-start gap-3">
+            <div v-if="canEditUser" class="pt-0.5 shrink-0">
+              <input
+                type="checkbox"
+                class="h-4 w-4 cursor-pointer rounded border-gray-300 text-primary focus:ring-2 focus:ring-primary/30"
+                :checked="selectedUserIds.includes(user.id)"
+                :aria-label="`选择用户 ${user.user_name}`"
+                @change="toggleSelectUser(user.id)"
+              />
+            </div>
             <div class="min-w-0 flex-1">
               <div class="flex items-center gap-1.5 min-w-0">
                 <h3 class="text-base font-semibold text-gray-900 truncate">
@@ -1250,6 +1326,85 @@
       </div>
     </div>
 
+    <!-- Batch Status Confirmation -->
+    <div
+      v-if="showBatchStatusDialog"
+      class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[9990]"
+      @click.self="closeBatchStatusDialog"
+    >
+      <div class="bg-white rounded-lg p-6 w-full max-w-md shadow-xl text-center">
+        <div
+          class="p-3 rounded-full inline-block mb-4"
+          :class="
+            batchStatusTarget === 0
+              ? 'bg-red-100 text-red-600'
+              : 'bg-emerald-100 text-emerald-600'
+          "
+        >
+          <svg
+            v-if="batchStatusTarget === 0"
+            class="w-8 h-8"
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+          >
+            <path
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              stroke-width="2"
+              d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636"
+            />
+          </svg>
+          <svg v-else class="w-8 h-8" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              stroke-width="2"
+              d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+            />
+          </svg>
+        </div>
+        <h2 class="text-xl font-bold mb-2 text-gray-900">
+          {{ batchStatusTarget === 0 ? "确认批量禁用" : "确认批量启用" }}
+        </h2>
+        <p class="text-gray-500 mb-2">
+          将对
+          <strong class="text-gray-900">{{ selectedUserIds.length }}</strong>
+          个用户执行「{{ batchStatusTarget === 0 ? "禁用" : "启用" }}」。
+        </p>
+        <p
+          v-if="batchStatusTarget === 0"
+          class="text-xs text-red-500 bg-red-50 border border-red-100 rounded-lg px-3 py-2 mb-6 text-left"
+        >
+          禁用后这些用户将<strong>无法登录系统</strong>，已登录的会话会被立即踢出。请确认无误后再继续。
+        </p>
+        <p v-else class="text-xs text-gray-400 mb-6">
+          启用后这些用户可正常登录系统，权限按原有配置恢复。
+        </p>
+        <div class="flex justify-center gap-3">
+          <button
+            :disabled="batchSubmitting"
+            class="px-6 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 font-medium disabled:opacity-50"
+            @click="closeBatchStatusDialog"
+          >
+            取消
+          </button>
+          <button
+            :disabled="batchSubmitting"
+            class="px-6 py-2 text-white rounded-lg font-medium disabled:opacity-50"
+            :class="
+              batchStatusTarget === 0
+                ? 'bg-red-600 hover:bg-red-700'
+                : 'bg-emerald-600 hover:bg-emerald-700'
+            "
+            @click="submitBatchStatus"
+          >
+            {{ batchSubmitting ? "处理中..." : batchStatusTarget === 0 ? "确认禁用" : "确认启用" }}
+          </button>
+        </div>
+      </div>
+    </div>
+
     <!-- Delete Confirmation -->
     <div
       v-if="showDeleteDialog"
@@ -1906,6 +2061,24 @@ const toggleRowMenu = (user: any, event?: MouseEvent) => {
   openRowMenuUser.value = user;
 };
 
+// 批量启用 / 禁用：选择态仅对当前页有效，翻页或刷新后清空
+const selectedUserIds = ref<number[]>([]);
+const showBatchStatusDialog = ref(false);
+const batchStatusTarget = ref<0 | 1>(0);
+const batchSubmitting = ref(false);
+const BATCH_STATUS_MAX_USERS = 200;
+
+const isAllPageSelected = computed(
+  () =>
+    users.value.length > 0 &&
+    users.value.every((u) => selectedUserIds.value.includes(u.id)),
+);
+const isPagePartiallySelected = computed(
+  () =>
+    users.value.some((u) => selectedUserIds.value.includes(u.id)) &&
+    !isAllPageSelected.value,
+);
+
 // Dialogs
 const showCreateDialog = ref(false);
 const showEditDialog = ref(false);
@@ -2309,6 +2482,8 @@ const fetchUsers = async () => {
     users.value = response.data.items;
     total.value = response.data.total;
     totalPages.value = Math.ceil(total.value / size.value);
+    // 列表数据变化后清空选择，避免"看到 3 个却操作了 50 个"
+    clearSelection();
   } catch (e: any) {
     showToast("获取列表失败", "error");
   } finally {
@@ -2534,6 +2709,76 @@ const toggleStatus = async (user: any) => {
     fetchUsers();
   } catch (e) {
     showToast("更新失败", "error");
+  }
+};
+
+const clearSelection = () => {
+  selectedUserIds.value = [];
+};
+
+const toggleSelectUser = (userId: number) => {
+  if (selectedUserIds.value.includes(userId)) {
+    selectedUserIds.value = selectedUserIds.value.filter((id) => id !== userId);
+    return;
+  }
+  if (selectedUserIds.value.length >= BATCH_STATUS_MAX_USERS) {
+    showToast(`单次最多操作 ${BATCH_STATUS_MAX_USERS} 个用户，请分批处理`, "warning");
+    return;
+  }
+  selectedUserIds.value = [...selectedUserIds.value, userId];
+};
+
+const toggleSelectAllPage = () => {
+  if (isAllPageSelected.value) {
+    clearSelection();
+    return;
+  }
+  if (users.value.length > BATCH_STATUS_MAX_USERS) {
+    showToast(`单次最多操作 ${BATCH_STATUS_MAX_USERS} 个用户，请分批处理`, "warning");
+    return;
+  }
+  selectedUserIds.value = users.value.map((u) => u.id);
+};
+
+const openBatchStatusDialog = (targetStatus: 0 | 1) => {
+  if (selectedUserIds.value.length === 0) return;
+  batchStatusTarget.value = targetStatus;
+  showBatchStatusDialog.value = true;
+};
+
+const closeBatchStatusDialog = () => {
+  if (batchSubmitting.value) return;
+  showBatchStatusDialog.value = false;
+};
+
+const submitBatchStatus = async () => {
+  if (selectedUserIds.value.length === 0) {
+    showBatchStatusDialog.value = false;
+    return;
+  }
+  const targetStatus = batchStatusTarget.value;
+  const ids = [...selectedUserIds.value];
+  batchSubmitting.value = true;
+  try {
+    const res = await axios.patch("/api/portal/management/users/batch-status", {
+      user_ids: ids,
+      status: targetStatus,
+    });
+    const data = res.data || {};
+    const updated = Number(data.updated ?? 0);
+    const messages = [
+      `已${targetStatus === 0 ? "禁用" : "启用"} ${updated} 个用户`,
+    ];
+    if (data.skipped_self) messages.push("已跳过当前登录账号");
+    if (data.not_found) messages.push(`${data.not_found} 个用户不存在`);
+    showToast(messages.join("，"), updated > 0 ? "success" : "warning");
+    showBatchStatusDialog.value = false;
+    clearSelection();
+    await fetchUsers();
+  } catch (e: any) {
+    showToast(e.response?.data?.detail || "批量操作失败", "error");
+  } finally {
+    batchSubmitting.value = false;
   }
 };
 

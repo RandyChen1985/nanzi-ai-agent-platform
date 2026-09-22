@@ -285,6 +285,13 @@ class UpdateUserRequest(BaseModel):
 class UpdateStatusRequest(BaseModel):
     status: int  # 1=enabled, 0=disabled
 
+class BatchUpdateStatusRequest(BaseModel):
+    user_ids: List[int] = Field(..., description="目标用户 ID 列表")
+    status: int = Field(..., description="状态 (1=启用, 0=禁用)")
+
+# 单次批量操作的用户数上限，防止误操作与超长事务
+BATCH_STATUS_MAX_USERS = 200
+
 @router.get("/users/{user_id}/permissions", response_model=UserPermissionsResponse)
 async def get_user_permissions(
     user_id: int,
@@ -595,6 +602,107 @@ async def update_user_status(
         logger.error(f"Failed to clear user cache: {e}")
     
     return {"message": "User status updated successfully"}
+
+
+@router.patch("/users/batch-status")
+async def batch_update_user_status(
+    request: BatchUpdateStatusRequest,
+    admin: dict = Depends(require_permission("element", "element:user:edit")),
+    db: AsyncSession = Depends(get_db_session)
+):
+    """
+    批量启用 / 禁用用户。
+
+    约定：
+    - 批量禁用时自动跳过当前登录账号，计入 skipped_self（其余目标照常执行）；
+    - 不存在的用户 ID 计入 not_found；
+    - 状态落库后清除认证与权限缓存，禁用立即生效（已登录会话被踢下线）。
+    """
+    if request.status not in (0, 1):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="status must be 0 (disabled) or 1 (enabled)"
+        )
+
+    # 去重并保持顺序，避免重复 ID 造成计数错乱
+    target_ids = list(dict.fromkeys(request.user_ids or []))
+    if not target_ids:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="user_ids cannot be empty"
+        )
+    if len(target_ids) > BATCH_STATUS_MAX_USERS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Too many users in one request (max {BATCH_STATUS_MAX_USERS})"
+        )
+
+    current_user_id = admin.get("user_id")
+    try:
+        current_user_id = int(current_user_id) if current_user_id else None
+    except (ValueError, TypeError):
+        logger.warning(f"Failed to convert current_user_id to int: {current_user_id}")
+        current_user_id = None
+
+    # 安全规则：禁止批量禁用自己，但不因此中断整批操作
+    skipped_self = 0
+    if request.status == 0 and current_user_id is not None and current_user_id in target_ids:
+        target_ids = [uid for uid in target_ids if uid != current_user_id]
+        skipped_self = 1
+
+    if not target_ids:
+        return {"updated": 0, "skipped_self": skipped_self, "not_found": 0, "updated_ids": []}
+
+    result = await db.execute(select(User).where(User.id.in_(target_ids)))
+    users = result.scalars().all()
+    found_ids = {u.id for u in users}
+    not_found = sum(1 for uid in target_ids if uid not in found_ids)
+
+    if not users:
+        return {
+            "updated": 0,
+            "skipped_self": skipped_self,
+            "not_found": not_found,
+            "updated_ids": []
+        }
+
+    # 提交前快照 id / api_key_hash，清缓存阶段不再依赖 ORM 提交后状态
+    targets = [(user.id, user.api_key_hash) for user in users]
+
+    for user in users:
+        user.status = request.status
+    await db.commit()
+
+    updated_ids = [uid for uid, _ in targets]
+
+    # Security: Clear Redis cache to force re-authentication
+    try:
+        from app.services.auth_service import AuthService
+        from app.services.permission_service import PermissionService
+
+        for uid, api_key_hash in targets:
+            await AuthService.invalidate_user_auth_cache(
+                uid, db=db, api_key_hash=api_key_hash
+            )
+        await PermissionService(db).invalidate_cached_permissions_for_users(updated_ids)
+    except Exception as e:
+        logger.error(f"Failed to clear user cache in batch: {e}")
+
+    logger.info(
+        "Batch user status updated to %s by %s: updated=%s, skipped_self=%s, not_found=%s",
+        request.status,
+        admin.get("user_name"),
+        len(updated_ids),
+        skipped_self,
+        not_found,
+    )
+
+    return {
+        "updated": len(updated_ids),
+        "skipped_self": skipped_self,
+        "not_found": not_found,
+        "updated_ids": updated_ids
+    }
 
 @router.get("/api-key/{user_id}")
 async def get_user_api_key(
