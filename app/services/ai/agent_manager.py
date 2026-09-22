@@ -625,6 +625,11 @@ class AgentManagerService:
         from app.services.ai.skill_resolver import count_enabled_global_skills
 
         enabled_global_skill_count = count_enabled_global_skills()
+        from app.services.ai.knowledge_utils import load_system_default_dataset_ids
+
+        # 系统级默认知识库数据集：KNOWLEDGE_BASE 智能体未显式绑定时的运行时兜底，
+        # 就绪角标必须与 runtime/委派判定同口径（整表只读一次配置）。
+        default_dataset_ids = await load_system_default_dataset_ids()
         for agent in visible_agents:
             engine_config = agent.engine_config if isinstance(agent.engine_config, dict) else None
             published_version = published_by_agent.get(agent.id)
@@ -658,6 +663,7 @@ class AgentManagerService:
                     published_version is not None
                     or (agent.engine_type or "LOCAL") != "LOCAL"
                 ),
+                default_dataset_ids=default_dataset_ids,
             )
             agent.readiness_ready = readiness.ready
             agent.readiness_missing = list(readiness.missing)
@@ -1337,6 +1343,7 @@ class AgentManagerService:
             return False
 
         from app.services.ai.agent_readiness import evaluate_agent_readiness
+        from app.services.ai.knowledge_utils import load_system_default_dataset_ids
 
         readiness = evaluate_agent_readiness(
             agent_type=agent.agent_type or "GENERAL",
@@ -1345,6 +1352,9 @@ class AgentManagerService:
             tools=version.tools,
             # The target version becomes the published version in this transaction.
             has_published_version=True,
+            # 内置知识库助手不绑定 per-agent 数据集，运行时回退系统级默认数据集；
+            # 发布校验必须认同一口径，否则它永远无法重新发布。
+            default_dataset_ids=await load_system_default_dataset_ids(),
         )
         if not readiness.ready:
             raise AgentNotReadyError(readiness.missing)

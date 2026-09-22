@@ -76,7 +76,19 @@ def evaluate_agent_readiness(
     engine_config: Mapping[str, Any] | None,
     tools: Iterable[Any] | None,
     has_published_version: bool,
+    default_dataset_ids: Iterable[str] | None = None,
 ) -> AgentReadiness:
+    """Evaluate whether an agent can actually run (publish / delegation gate).
+
+    ``capabilities``/``engine_config`` live on the agent row (``ai_agents``) and
+    are absent from ``ai_agent_versions``; only ``tools`` is version-scoped.
+    Callers must not mix the two sources up.
+
+    ``default_dataset_ids`` is the system-level fallback
+    (``knowledge_ragflow_dataset_ids``).  A KNOWLEDGE_BASE agent without its own
+    binding still resolves that fallback at query time, so it counts as bound
+    here as well — otherwise the built-in 知识库助手 answers but is never ready.
+    """
     normalized_type = AgentType(agent_type)
     # Creation/update paths already normalize capabilities, but legacy rows
     # can still be missing their type's locked capability. Do not mutate the
@@ -98,7 +110,10 @@ def evaluate_agent_readiness(
         if not (tool_names & DATA_QUERY_TOOLS):
             missing.append("data_query_tool")
     elif normalized_type is AgentType.KNOWLEDGE_BASE:
-        if not dataset_ids:
+        effective_dataset_ids = dataset_ids or [
+            value for value in (default_dataset_ids or []) if value
+        ]
+        if not effective_dataset_ids:
             missing.append("knowledge_base_binding")
         if KNOWLEDGE_BASE_TOOL not in tool_names:
             missing.append("knowledge_base_tool")
