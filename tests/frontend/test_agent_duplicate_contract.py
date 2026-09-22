@@ -133,3 +133,72 @@ def test_source_version_picker_prefers_published():
 
     assert 'AIAgentVersion.status == "PUBLISHED"' in picker
     assert "version_number.desc()" in picker
+
+
+# ── 复制弹窗的标识符重名预检 ──────────────────────────────────────
+# 物理标识符全局唯一：撞名必须当场可见并挡住「确认复制」，而不是提交后才拿到 400。
+
+
+def _duplicate_submit_block(view: str) -> str:
+    return view.split("const submitDuplicate = async () => {", 1)[1].split(
+        "const startAgentCreation", 1
+    )[0]
+
+
+def test_duplicate_name_field_reuses_shared_availability_check():
+    view = _source(VIEW_PATH)
+    tpl = _template(view)
+
+    # 复用统一的预检控件与 composable，不自行臆断判定口径
+    assert "AgentNameField" in tpl
+    assert "useAgentNameAvailability()" in view
+    assert "duplicateNameChecking" in view
+    assert "checkDuplicateNameAvailability" in view
+    assert ":checking=\"duplicateNameChecking\"" in tpl
+    assert ":error-message=\"duplicateNameMessage\"" in tpl
+
+
+def test_duplicate_name_is_checked_while_typing_not_only_on_blur():
+    view = _source(VIEW_PATH)
+
+    # 用户填完直接点按钮时不会触发 blur，因此输入期就要延迟预检
+    assert "scheduleDuplicateNameCheck" in view
+    assert "setTimeout" in view
+    assert "clearTimeout" in view
+
+    open_block = view.split("const openDuplicateModal = (agent: AIAgent) => {", 1)[1].split(
+        "const submitDuplicate", 1
+    )[0]
+    # 预填的 `-copy` 本身也可能已被占用，打开即查一次
+    assert "checkDuplicateNameAvailability" in open_block
+
+    close_block = view.split("const closeDuplicateModal = () => {", 1)[1].split(
+        "const openDuplicateModal", 1
+    )[0]
+    # 关闭时要清掉在飞的 debounce，避免弹窗已关还在请求
+    assert "clearDuplicateNameTimer" in close_block
+
+
+def test_duplicate_confirm_disabled_when_name_taken():
+    view = _source(VIEW_PATH)
+    tpl = _template(view)
+
+    # 服务端明确判定不可用（available === false）才禁用；
+    # 未判定（null）时保持可点，交给后端权威兜底
+    assert "duplicateNameBlocked" in view
+    assert "duplicateNameAvailable.value === false" in view
+
+    button_tag = _button_tag_before(tpl, "确认复制")
+    assert ":disabled=" in button_tag
+    assert "duplicateNameBlocked" in button_tag
+
+
+def test_duplicate_submit_rechecks_name_before_request():
+    block = _duplicate_submit_block(_source(VIEW_PATH))
+
+    # 提交前兜底预检必须发生在真正发请求之前
+    assert "ensureDuplicateNameAvailable" in block
+    assert block.index("ensureDuplicateNameAvailable") < block.index("duplicateAgent")
+    # 兜底失败时不再发请求
+    assert "return" in block.split("ensureDuplicateNameAvailable", 1)[1]
+

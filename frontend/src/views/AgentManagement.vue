@@ -1458,20 +1458,67 @@ const duplicateForm = ref({ name: "", display_name: "" });
 const duplicating = ref(false);
 const duplicateError = ref("");
 
+// 物理标识符全局唯一：复制弹窗使用独立的一套预检状态（不复用新建/编辑表单那份，
+// 避免两个弹窗互相覆盖结论），判定口径仍由后端 name-availability 统一给出。
+const {
+  checking: duplicateNameChecking,
+  available: duplicateNameAvailable,
+  message: duplicateNameMessage,
+  check: checkDuplicateNameAvailability,
+  ensureAvailable: ensureDuplicateNameAvailable,
+  reset: resetDuplicateNameCheckState,
+} = useAgentNameAvailability();
+
+/** 服务端明确判定标识符不可用时禁止确认复制；未判定（null）时放行，由后端权威兜底。 */
+const duplicateNameBlocked = computed(() => duplicateNameAvailable.value === false);
+
+let duplicateNameTimer: ReturnType<typeof setTimeout> | null = null;
+
+const clearDuplicateNameTimer = () => {
+  if (duplicateNameTimer !== null) {
+    clearTimeout(duplicateNameTimer);
+    duplicateNameTimer = null;
+  }
+};
+
+/** 输入期延迟预检：用户填完直接点按钮不会触发失焦，因此不能只靠 blur 那一次。 */
+const scheduleDuplicateNameCheck = (name: string) => {
+  clearDuplicateNameTimer();
+  duplicateNameTimer = setTimeout(() => {
+    duplicateNameTimer = null;
+    void checkDuplicateNameAvailability(name);
+  }, 400);
+};
+
+const handleDuplicateNameInput = (name: string) => {
+  duplicateForm.value.name = name;
+  scheduleDuplicateNameCheck(name);
+};
+
+const handleDuplicateNameCheck = (name: string) => {
+  clearDuplicateNameTimer();
+  void checkDuplicateNameAvailability(name);
+};
+
 const closeDuplicateModal = () => {
   if (duplicating.value) return;
+  clearDuplicateNameTimer();
+  resetDuplicateNameCheckState();
   showDuplicateModal.value = false;
   duplicateError.value = "";
 };
 
 const openDuplicateModal = (agent: AIAgent) => {
   closeCardMenus();
+  clearDuplicateNameTimer();
   duplicateSource.value = agent;
   duplicateError.value = "";
   duplicateForm.value = {
     name: `${agent.name}-copy`,
     display_name: `${agent.display_name}-副本`,
   };
+  // 预填的 `-copy` 本身也可能已被占用（例如连续复制两次），打开就先查一次
+  void checkDuplicateNameAvailability(duplicateForm.value.name);
   showDuplicateModal.value = true;
 };
 
@@ -1489,11 +1536,19 @@ const submitDuplicate = async () => {
   duplicating.value = true;
   duplicateError.value = "";
   try {
+    // 提交前兜底：明确撞名则不发请求；接口异常时放行交由后端权威裁决
+    const { ok, message } = await ensureDuplicateNameAvailable(name);
+    if (!ok) {
+      duplicateError.value = message || "物理标识符已被占用，请换一个";
+      return;
+    }
+
     const res = await agentApi.duplicateAgent(source.id, {
       name,
       display_name: displayName,
     });
     showToast(`已复制为「${res.data.display_name}」`, "success");
+    clearDuplicateNameTimer();
     showDuplicateModal.value = false;
     fetchAgents();
   } catch (error: any) {
@@ -2808,6 +2863,7 @@ onMounted(() => {
 onUnmounted(() => {
   window.removeEventListener('resize', handleResize);
   document.removeEventListener('click', closeCardMenus);
+  clearDuplicateNameTimer();
 });
 
 const formatDate = (dateStr: string) => {
@@ -3695,7 +3751,7 @@ const formatSkillCountLabel = (agent: AIAgent) => {
           </button>
           <button
             type="button"
-            :disabled="duplicating"
+            :disabled="duplicating || duplicateNameBlocked"
             class="rounded-lg bg-primary px-6 py-2 text-sm font-medium text-white transition-colors hover:bg-primary-dark disabled:cursor-not-allowed disabled:opacity-50"
             @click="submitDuplicate"
           >
@@ -3712,20 +3768,17 @@ const formatSkillCountLabel = (agent: AIAgent) => {
           副本创建后<strong>立即可用</strong>，源智能体不受任何影响。
         </div>
 
-        <div>
-          <label class="mb-1 block text-sm font-medium text-gray-700">
-            物理标识符 <span class="text-red-500">*</span>
-          </label>
-          <input
-            v-model="duplicateForm.name"
-            type="text"
-            :disabled="duplicating"
-            placeholder="例如 chat-bi-copy"
-            class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
-            @keyup.enter="submitDuplicate"
-          />
-          <p class="mt-1 text-xs text-gray-400">全局唯一，用于路由与集成引用。</p>
-        </div>
+        <AgentNameField
+          :model-value="duplicateForm.name"
+          required
+          :disabled="duplicating"
+          :checking="duplicateNameChecking"
+          :error-message="duplicateNameMessage"
+          hint="全局唯一，用于路由与集成引用。"
+          @update:model-value="handleDuplicateNameInput"
+          @check="handleDuplicateNameCheck"
+          @reset="resetDuplicateNameCheckState"
+        />
 
         <div>
           <label class="mb-1 block text-sm font-medium text-gray-700">
