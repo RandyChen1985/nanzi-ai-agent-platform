@@ -132,7 +132,7 @@ def to_sqlglot_dialect(dialect: str) -> str:
 def dialect_from_data_source(data_source: Optional[str]) -> str:
     dialect = "clickhouse"
     ds_lower = data_source.lower() if data_source else ""
-    if "mysql" in ds_lower:
+    if "mysql" in ds_lower or "doris" in ds_lower:
         dialect = "mysql"
     elif "oracle" in ds_lower:
         dialect = "oracle"

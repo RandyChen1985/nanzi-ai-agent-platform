@@ -157,6 +157,13 @@ const openCreateTableModal = () => {
   showCreateTableModal.value = true
 }
 
+const setOptimizationFields = (table: Table, key: 'partition_fields' | 'index_fields', event: Event) => {
+  const value = (event.target as HTMLInputElement).value
+  table[key] = value.split(',').map(item => item.trim()).filter(Boolean)
+}
+
+const optimizationFieldsText = (fields?: string[]) => (fields || []).join(', ')
+
 const handleCreateTable = async () => {
   if (!newTable.value.physical_name || !newTable.value.term) {
     showToast('请填写表物理名和业务名', 'warning')
@@ -421,7 +428,10 @@ const addColumn = () => {
     type: 'String',
     description: '',
     enums: [],
-    synonyms: []
+    synonyms: [],
+    dimension_role: 'none',
+    hierarchy_group: '',
+    hierarchy_order: undefined
   })
 }
 
@@ -1488,6 +1498,19 @@ defineExpose({ fetchMetrics })
               </div>
            </div>
 
+              <div class="grid grid-cols-2 gap-6">
+                <div class="space-y-2">
+                  <label class="text-sm font-bold text-gray-700">分区字段</label>
+                  <input :value="optimizationFieldsText(editingTable.partition_fields)" @input="setOptimizationFields(editingTable, 'partition_fields', $event)" class="w-full bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono focus:ring-2 focus:ring-indigo-500 outline-none" placeholder="例如：event_date, tenant_id">
+                  <p class="text-xs text-gray-400">涉及时间或范围查询时，智能体会优先使用这些字段裁剪分区。</p>
+                </div>
+                <div class="space-y-2">
+                  <label class="text-sm font-bold text-gray-700">索引字段</label>
+                  <input :value="optimizationFieldsText(editingTable.index_fields)" @input="setOptimizationFields(editingTable, 'index_fields', $event)" class="w-full bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono focus:ring-2 focus:ring-indigo-500 outline-none" placeholder="例如：tenant_id, user_id">
+                  <p class="text-xs text-gray-400">等值过滤、范围过滤和 JOIN 会优先参考这些字段。</p>
+                </div>
+              </div>
+
            <div class="border-t border-gray-100 pt-6">
               <div class="flex justify-between items-center mb-4">
                 <h3 class="text-sm font-bold text-gray-900 flex items-center gap-2">
@@ -1514,39 +1537,62 @@ defineExpose({ fetchMetrics })
                  </div>
 
                  <!-- Rows -->
-                 <div v-for="(col, index) in editingTable.columns" :key="index" class="grid grid-cols-12 gap-4 items-center p-2 bg-gray-50 rounded-lg border border-transparent hover:border-indigo-100 hover:bg-white hover:shadow-sm transition-all">
-                    <div class="col-span-3">
-                       <input v-model="col.physical_name" class="w-full bg-transparent border-b border-gray-200 focus:border-indigo-500 outline-none text-xs font-mono px-1 py-0.5" placeholder="物理名">
+                 <div v-for="(col, index) in editingTable.columns" :key="index" class="p-2 bg-gray-50 rounded-lg border border-transparent hover:border-indigo-100 hover:bg-white hover:shadow-sm transition-all space-y-1">
+                    <div class="grid grid-cols-12 gap-4 items-center">
+                       <div class="col-span-3">
+                          <input v-model="col.physical_name" class="w-full bg-transparent border-b border-gray-200 focus:border-indigo-500 outline-none text-xs font-mono px-1 py-0.5" placeholder="物理名">
+                       </div>
+                       <div class="col-span-2">
+                          <select v-model="col.type" class="w-full bg-transparent border-none text-[10px] text-gray-500 focus:ring-0 outline-none p-0">
+                             <option value="String">String</option>
+                             <option value="Int64">Int64</option>
+                             <option value="Float64">Float64</option>
+                             <option value="DateTime">DateTime</option>
+                             <option value="Boolean">Boolean</option>
+                             <option value="JSON">JSON</option>
+                          </select>
+                       </div>
+                       <div class="col-span-3">
+                          <input v-model="col.term" class="w-full bg-transparent border-b border-gray-300 focus:border-indigo-500 outline-none text-sm px-1 py-0.5" placeholder="字段业务名">
+                       </div>
+                       <div class="col-span-3">
+                          <input v-model="col.description" class="w-full bg-transparent border-b border-gray-300 focus:border-indigo-500 outline-none text-xs text-gray-500 px-1 py-0.5" placeholder="描述...">
+                       </div>
+                       <div class="col-span-1 flex justify-end items-center gap-1.5">
+                          <button
+                            type="button"
+                            :disabled="!col.physical_name || !col.physical_name.trim()"
+                            @click="openColumnAiRecommendation(col, editingTable)"
+                            class="p-1 text-indigo-500 hover:text-indigo-700 hover:bg-indigo-50 rounded transition-colors disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer"
+                            :title="!col.physical_name || !col.physical_name.trim() ? '请先填写物理字段名' : 'AI 智能推荐语义（基于源表与数据采样）'"
+                          >
+                             <SparklesIcon class="w-4 h-4" />
+                          </button>
+                          <button @click="removeColumn(index)" class="p-1 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded transition-colors cursor-pointer" title="删除此字段">
+                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+                          </button>
+                       </div>
                     </div>
-                    <div class="col-span-2">
-                       <select v-model="col.type" class="w-full bg-transparent border-none text-[10px] text-gray-500 focus:ring-0 outline-none p-0">
-                          <option value="String">String</option>
-                          <option value="Int64">Int64</option>
-                          <option value="Float64">Float64</option>
-                          <option value="DateTime">DateTime</option>
-                          <option value="Boolean">Boolean</option>
-                          <option value="JSON">JSON</option>
-                       </select>
-                    </div>
-                    <div class="col-span-3">
-                       <input v-model="col.term" class="w-full bg-transparent border-b border-gray-300 focus:border-indigo-500 outline-none text-sm px-1 py-0.5" placeholder="字段业务名">
-                    </div>
-                    <div class="col-span-3">
-                       <input v-model="col.description" class="w-full bg-transparent border-b border-gray-300 focus:border-indigo-500 outline-none text-xs text-gray-500 px-1 py-0.5" placeholder="描述...">
-                    </div>
-                    <div class="col-span-1 flex justify-end items-center gap-1.5">
-                       <button
-                         type="button"
-                         :disabled="!col.physical_name || !col.physical_name.trim()"
-                         @click="openColumnAiRecommendation(col, editingTable)"
-                         class="p-1 text-indigo-500 hover:text-indigo-700 hover:bg-indigo-50 rounded transition-colors disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer"
-                         :title="!col.physical_name || !col.physical_name.trim() ? '请先填写物理字段名' : 'AI 智能推荐语义（基于源表与数据采样）'"
-                       >
-                          <SparklesIcon class="w-4 h-4" />
-                       </button>
-                       <button @click="removeColumn(index)" class="p-1 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded transition-colors cursor-pointer" title="删除此字段">
-                          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
-                       </button>
+                    <!-- 维度角色与层级组（第二行） -->
+                    <div class="grid grid-cols-12 gap-4 items-center pl-1">
+                       <div class="col-span-3 flex items-center gap-1.5">
+                          <span class="text-[10px] text-gray-400 shrink-0">维度</span>
+                          <select v-model="col.dimension_role" class="bg-transparent border-none text-[10px] text-gray-600 focus:ring-0 outline-none p-0">
+                             <option value="none">无</option>
+                             <option value="time">时间</option>
+                             <option value="geo">地理</option>
+                             <option value="category">类目</option>
+                             <option value="identifier">标识符</option>
+                          </select>
+                       </div>
+                       <div class="col-span-5 flex items-center gap-1.5" v-if="col.dimension_role && col.dimension_role !== 'none'">
+                          <span class="text-[10px] text-gray-400 shrink-0">层级组</span>
+                          <input v-model="col.hierarchy_group" class="w-full bg-transparent border-b border-gray-200 focus:border-indigo-500 outline-none text-[10px] text-gray-600 px-1 py-0.5" placeholder="同组字段构成下钻链，如 region">
+                       </div>
+                       <div class="col-span-2 flex items-center gap-1.5" v-if="col.dimension_role && col.dimension_role !== 'none' && col.hierarchy_group">
+                          <span class="text-[10px] text-gray-400 shrink-0">序号</span>
+                          <input v-model.number="col.hierarchy_order" type="number" min="1" class="w-12 bg-transparent border-b border-gray-200 focus:border-indigo-500 outline-none text-[10px] text-gray-600 px-1 py-0.5" placeholder="1">
+                       </div>
                     </div>
                  </div>
               </div>
@@ -1599,6 +1645,19 @@ defineExpose({ fetchMetrics })
               <label class="text-sm font-bold text-gray-700">描述 (Description)</label>
               <input v-model="newTable.description" class="w-full bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none disabled:bg-gray-100" placeholder="简要描述该表的作用...">
            </div>
+
+            <div class="grid grid-cols-2 gap-6">
+              <div class="space-y-2">
+                <label class="text-sm font-bold text-gray-700">分区字段</label>
+                <input :value="optimizationFieldsText(newTable.partition_fields)" @input="setOptimizationFields(newTable, 'partition_fields', $event)" class="w-full bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono focus:ring-2 focus:ring-blue-500 outline-none" placeholder="例如：event_date, tenant_id">
+                <p class="text-xs text-gray-400">多个字段用逗号分隔。</p>
+              </div>
+              <div class="space-y-2">
+                <label class="text-sm font-bold text-gray-700">索引字段</label>
+                <input :value="optimizationFieldsText(newTable.index_fields)" @input="setOptimizationFields(newTable, 'index_fields', $event)" class="w-full bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono focus:ring-2 focus:ring-blue-500 outline-none" placeholder="例如：tenant_id, user_id">
+                <p class="text-xs text-gray-400">多个字段用逗号分隔。</p>
+              </div>
+            </div>
 
            <div class="border-t border-gray-100 pt-6">
               <div class="flex justify-between items-center mb-4">

@@ -31,6 +31,8 @@ class TableMetadata(BaseModel):
     term: str = Field(description="业务术语，如 '资产配置表'")
     description: str = Field(description="该表存储的数据内容概要")
     synonyms: List[str] = Field(default=[], description="表的同义词")
+    partition_fields: List[str] = Field(default=[], description="数据库分区字段物理名列表；必须从 DDL 的 PARTITION 定义提取")
+    index_fields: List[str] = Field(default=[], description="数据库索引字段物理名列表；从 PRIMARY KEY、UNIQUE/KEY/INDEX 定义提取并去重")
     columns: List[ColumnMetadata] = Field(description="字段列表")
 
 class MetricMetadata(BaseModel):

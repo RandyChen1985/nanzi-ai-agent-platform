@@ -638,7 +638,8 @@ class DbDdlSession:
         self._use_oracle_thick = os.environ.get("USE_ORACLE_THICK_MODE") == "1"
 
     async def __aenter__(self) -> "DbDdlSession":
-        if self.db_type == "mysql":
+        if self.db_type in ("mysql", "doris"):
+            # Doris 兼容 MySQL 协议，复用 aiomysql 连接
             self._conn = await aiomysql.connect(
                 host=self.config.get("host"),
                 port=int(self.config.get("port", 3306)),
@@ -698,7 +699,7 @@ class DbDdlSession:
         if not self._conn:
             return
         try:
-            if self.db_type == "mysql":
+            if self.db_type in ("mysql", "doris"):
                 self._conn.close()
             elif self.db_type == "clickhouse":
                 await self._conn.close()
@@ -717,7 +718,7 @@ class DbDdlSession:
             self._conn = None
 
     async def get_table_ddl(self, table_name: str, table_type: str = "table") -> str:
-        if self.db_type == "mysql":
+        if self.db_type in ("mysql", "doris"):
             async with self._conn.cursor() as cur:
                 await cur.execute(f"SHOW CREATE TABLE `{table_name}`")
                 res = await cur.fetchone()

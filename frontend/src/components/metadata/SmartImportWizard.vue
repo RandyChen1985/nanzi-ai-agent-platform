@@ -28,6 +28,7 @@ const analyzeAbortController = ref<AbortController | null>(null)
 const datasetName = ref('')
 const datasetDisplayName = ref('')
 const importDataSourceName = ref('')
+const importDataSourceType = ref('')
 const defaultDataSource = ref('')
 
 // Toast
@@ -287,7 +288,7 @@ const handleAnalyze = async () => {
   
   try {
     // 分析阶段即传递目标数据源，避免 PostgreSQL 导入指标先按 ClickHouse 生成。
-    const analysisDataSource = props.datasetDataSource || importDataSourceName.value || defaultDataSource.value
+    const analysisDataSource = importDataSourceType.value || props.datasetDataSource || importDataSourceName.value || defaultDataSource.value
     const res = await metadataApi.analyzeDDL(
       ddlText.value, 
       analysisDataSource || undefined,
@@ -440,14 +441,18 @@ const handleClose = () => {
   previewData.value = { tables: [], metrics: [], relationships: [] }
   expandedPreviewTables.value = {}
   importDataSourceName.value = ''
+  importDataSourceType.value = ''
   stopFakeProgress()
   analyzing.value = false
   emit('close')
 }
 
-const handleDbDdlConfirm = (payload: { ddl: string; dataSourceName?: string }) => {
+const handleDbDdlConfirm = (payload: { ddl: string; dataSourceName?: string; dataSourceType?: string }) => {
   if (payload.dataSourceName) {
     importDataSourceName.value = payload.dataSourceName
+  }
+  if (payload.dataSourceType) {
+    importDataSourceType.value = payload.dataSourceType
   }
   if (ddlText.value.trim()) {
     ddlText.value += '\n\n' + payload.ddl

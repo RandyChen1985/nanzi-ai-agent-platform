@@ -127,7 +127,8 @@ class DataSourcePoolManager:
             db_type = db_config.db_type.strip().lower()
             if db_type == "clickhouse":
                 pool = await cls._create_clickhouse_pool(db_config)
-            elif db_type == "mysql":
+            elif db_type in ("mysql", "doris"):
+                # Doris 兼容 MySQL 协议，复用 aiomysql 连接池
                 pool = await cls._create_mysql_pool(db_config)
             elif db_type == "oracle":
                 pool = await cls._create_oracle_pool(db_config)

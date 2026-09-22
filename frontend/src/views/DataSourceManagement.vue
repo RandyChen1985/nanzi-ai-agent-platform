@@ -9,6 +9,7 @@ const { showToast } = useToast()
 
 const dbTypes = [
   { id: 'mysql', name: 'MySQL', icon: '🐬', defaultPort: 3306 },
+  { id: 'doris', name: 'Doris', icon: '🦆', defaultPort: 9030 },
   { id: 'clickhouse', name: 'ClickHouse', icon: '🧊', defaultPort: 9000 },
   { id: 'oracle', name: 'Oracle', icon: '🔴', defaultPort: 1521 },
   { id: 'sqlserver', name: 'SQL Server', icon: '🟦', defaultPort: 1433 },
@@ -86,6 +87,7 @@ const setDbType = (type: string) => {
 
 const dbTypeColor = (type: string) => {
   if (type === 'mysql') return 'bg-blue-100 text-blue-700 border-blue-200'
+  if (type === 'doris') return 'bg-amber-100 text-amber-700 border-amber-200'
   if (type === 'clickhouse') return 'bg-cyan-100 text-cyan-700 border-cyan-200'
   if (type === 'oracle') return 'bg-red-100 text-red-700 border-red-200'
   if (type === 'sqlserver' || type === 'mssql') return 'bg-indigo-100 text-indigo-700 border-indigo-200'

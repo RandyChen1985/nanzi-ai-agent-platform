@@ -464,6 +464,8 @@ class MetadataService:
                 "term": old_table_with_cols.term,
                 "description": old_table_with_cols.description,
                 "synonyms": old_table_with_cols.synonyms,
+                "partition_fields": old_table_with_cols.partition_fields or [],
+                "index_fields": old_table_with_cols.index_fields or [],
                 "columns": [
                     {
                         "physical_name": col.physical_name,
@@ -471,7 +473,10 @@ class MetadataService:
                         "type": col.type,
                         "description": col.description,
                         "enums": col.enums,
-                        "synonyms": col.synonyms
+                        "synonyms": col.synonyms,
+                        "dimension_role": col.dimension_role,
+                        "hierarchy_group": col.hierarchy_group,
+                        "hierarchy_order": col.hierarchy_order
                     }
                     for col in old_table_with_cols.columns
                 ]
@@ -482,6 +487,8 @@ class MetadataService:
             existing_table.term = table_data.get('term', existing_table.term)
             existing_table.description = table_data.get('description', existing_table.description)
             existing_table.synonyms = table_data.get('synonyms', existing_table.synonyms)
+            existing_table.partition_fields = table_data.get('partition_fields', existing_table.partition_fields or [])
+            existing_table.index_fields = table_data.get('index_fields', existing_table.index_fields or [])
         else:
             # Create Table
             existing_table = MetaTable(
@@ -489,7 +496,9 @@ class MetadataService:
                 physical_name=table_data['physical_name'],
                 term=table_data.get('term', table_data['physical_name']),
                 description=table_data.get('description', ''),
-                synonyms=table_data.get('synonyms', [])
+                synonyms=table_data.get('synonyms', []),
+                partition_fields=table_data.get('partition_fields', []),
+                index_fields=table_data.get('index_fields', []),
             )
             db.add(existing_table)
             await db.flush() # flush to get ID
@@ -520,6 +529,9 @@ class MetadataService:
                  existing_col.description = col_data.get('description', existing_col.description)
                  existing_col.enums = col_data.get('enums', existing_col.enums)
                  existing_col.synonyms = col_data.get('synonyms', existing_col.synonyms)
+                 existing_col.dimension_role = col_data.get('dimension_role', existing_col.dimension_role or 'none')
+                 existing_col.hierarchy_group = col_data.get('hierarchy_group', existing_col.hierarchy_group)
+                 existing_col.hierarchy_order = col_data.get('hierarchy_order', existing_col.hierarchy_order)
              else:
                  # Create
                  new_col = MetaColumn(
@@ -529,7 +541,10 @@ class MetadataService:
                      type=col_data.get('type', 'String'),
                      description=col_data.get('description', ''),
                      enums=col_data.get('enums', []),
-                     synonyms=col_data.get('synonyms', [])
+                     synonyms=col_data.get('synonyms', []),
+                     dimension_role=col_data.get('dimension_role', 'none'),
+                     hierarchy_group=col_data.get('hierarchy_group'),
+                     hierarchy_order=col_data.get('hierarchy_order'),
                  )
                  db.add(new_col)
         
@@ -541,6 +556,8 @@ class MetadataService:
             "term": existing_table.term,
             "description": existing_table.description,
             "synonyms": existing_table.synonyms,
+            "partition_fields": existing_table.partition_fields or [],
+            "index_fields": existing_table.index_fields or [],
             "columns": table_data.get('columns', [])
         }
         
