@@ -111,6 +111,10 @@ export const agentApi = {
   
   // Delete agent
   deleteAgent: (id: string) => axios.delete<void>(`/api/portal/agents/${id}`),
+
+  // Duplicate agent (metadata + published version → an immediately usable copy)
+  duplicateAgent: (id: string, data: { name: string; display_name: string }) =>
+    axios.post<AIAgent>(`/api/portal/agents/${id}/duplicate`, data),
   
   // List versions
   listVersions: (agentId: string) => axios.get<AIAgentVersion[]>(`/api/portal/agents/${agentId}/versions`),
