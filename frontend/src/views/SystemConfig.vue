@@ -35,7 +35,11 @@ import {
   ServerIcon,
   PlayIcon,
   ArrowPathIcon,
-  PaintBrushIcon
+  PaintBrushIcon,
+  ChevronDownIcon,
+  ChevronUpIcon,
+  BoltIcon,
+  InformationCircleIcon
 } from '@heroicons/vue/24/outline'
 
 const router = useRouter()
@@ -47,6 +51,15 @@ const activeTab = ref<'diagnostics' | 'configs' | 'models' | 'tools' | 'logs' | 
 const diagSubTab = ref<'console' | 'redis'>('console')
 // 「Redis 向量搜索」的检测详情默认收起，避免顶部操作区占用过多高度
 const vectorHealthExpanded = ref(false)
+// 顶部诊断概览整体折叠状态（默认折叠，并记忆用户偏好）
+const storedDiagCollapsed = localStorage.getItem('system_diag_overview_collapsed')
+const diagnosticsOverviewCollapsed = ref(storedDiagCollapsed === null ? true : storedDiagCollapsed === 'true')
+const toggleDiagnosticsOverview = () => {
+  diagnosticsOverviewCollapsed.value = !diagnosticsOverviewCollapsed.value
+  try {
+    localStorage.setItem('system_diag_overview_collapsed', String(diagnosticsOverviewCollapsed.value))
+  } catch {}
+}
 
 // --- Diagnostics Logic ---
 const logs = ref<string[]>([])
@@ -2537,6 +2550,55 @@ const executeDeleteKey = async () => {
   }
 }
 
+// --- 业务分组批量删除 ---
+const showDeleteGroupConfirm = ref(false)
+const pendingDeleteGroup = ref<RedisKeyGroup | null>(null)
+const deletingGroupLoading = ref(false)
+
+const confirmDeleteGroup = (group: RedisKeyGroup) => {
+  pendingDeleteGroup.value = group
+  showDeleteGroupConfirm.value = true
+}
+
+const executeDeleteGroup = async () => {
+  if (!pendingDeleteGroup.value || !pendingDeleteGroup.value.keys.length) {
+    showDeleteGroupConfirm.value = false
+    return
+  }
+
+  const group = pendingDeleteGroup.value
+  const allKeys = group.keys.map((k) => k.name)
+  showDeleteGroupConfirm.value = false
+  deletingGroupLoading.value = true
+
+  try {
+    let totalDeleted = 0
+    const chunkSize = 2000
+    for (let i = 0; i < allKeys.length; i += chunkSize) {
+      const chunk = allKeys.slice(i, i + chunkSize)
+      const res = await axios.post('/api/portal/system/redis/delete-keys', { keys: chunk })
+      totalDeleted += res.data?.deleted_count ?? chunk.length
+    }
+
+    showToast(`已清空分组「${group.id}」，共删除 ${totalDeleted} 个 Key`, 'success')
+    appendLog(`>>> ✅ 已清空分组「${group.id}」，批量删除 ${totalDeleted} 个 Redis Key`)
+
+    if (selectedRedisKey.value && allKeys.includes(selectedRedisKey.value)) {
+      selectedRedisKey.value = null
+      redisKeyDetail.value = null
+    }
+
+    await fetchRedisKeys()
+  } catch (e: any) {
+    const msg = e.response?.data?.detail || e.message
+    showToast(`清空分组失败: ${msg}`, 'error')
+    appendLog(`>>> ❌ 清空分组「${group.id}」失败: ${msg}`)
+  } finally {
+    deletingGroupLoading.value = false
+    pendingDeleteGroup.value = null
+  }
+}
+
 onMounted(async () => {
   window.addEventListener('keydown', handleGlobalKeydown)
   if (route.query.tab === 'mcp') {
@@ -2755,114 +2817,296 @@ onUnmounted(() => {
 
         <!-- DIAGNOSTICS TAB -->
         <div v-else-if="activeTab === 'diagnostics'" class="flex flex-col gap-4 h-full min-h-0 pb-6 overflow-y-auto custom-scrollbar">
-          <!-- 顶部：连接与能力检查（操作区置顶、横向排布，不再左右分栏） -->
-          <div class="grid grid-cols-1 xl:grid-cols-2 gap-4 flex-shrink-0">
-            <!-- Redis 连接 -->
-            <div class="bg-white shadow rounded-lg p-4">
-              <div class="flex items-center gap-3">
-                <div class="p-2 rounded-lg border border-primary/15 bg-primary/10 flex-shrink-0">
-                  <CircleStackIcon class="h-5 w-5 text-primary" />
+          <!-- 顶部：连接与能力检查区域（支持智能 Mini 摘要条折叠/展开） -->
+          <div class="flex-shrink-0 transition-all duration-200">
+            <!-- 状态 1：折叠态 Mini 状态胶囊栏 -->
+            <div
+              v-if="diagnosticsOverviewCollapsed"
+              class="rounded-xl border border-gray-200/80 bg-white shadow-xs px-4 py-2.5 flex items-center justify-between gap-3 flex-wrap transition-all duration-200"
+            >
+              <!-- 左侧：标题与服务状态胶囊 -->
+              <div class="flex items-center gap-3.5 flex-wrap min-w-0">
+                <div class="flex items-center gap-2 text-xs font-semibold text-gray-800">
+                  <div class="h-6 w-6 rounded-lg bg-primary/10 border border-primary/20 flex items-center justify-center text-primary shadow-xs">
+                    <BoltIcon class="h-3.5 w-3.5" />
+                  </div>
+                  <span>服务概览</span>
                 </div>
-                <div class="min-w-0">
-                  <h3 class="text-base font-medium text-gray-900">Redis</h3>
-                  <p class="text-xs text-gray-500">缓存与会话管理</p>
+
+                <div class="h-3.5 w-[1px] bg-gray-200 hidden sm:block"></div>
+
+                <!-- Redis 状态胶囊 -->
+                <div class="flex items-center gap-1.5 text-xs">
+                  <span class="text-gray-500 font-medium">Redis:</span>
+                  <span v-if="results.redis === 'success'" class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium bg-emerald-50 text-emerald-700 border border-emerald-200/80">
+                    <span class="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                    正常
+                  </span>
+                  <span v-else-if="results.redis === 'failed'" class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium bg-rose-50 text-rose-700 border border-rose-200/80">
+                    <span class="h-1.5 w-1.5 rounded-full bg-rose-500"></span>
+                    失败
+                  </span>
+                  <span v-else class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium bg-gray-50 text-gray-500 border border-gray-200/80">
+                    <span class="h-1.5 w-1.5 rounded-full bg-gray-400"></span>
+                    待检测
+                  </span>
                 </div>
-                <div v-if="results.redis" class="ml-auto flex-shrink-0">
-                  <CheckCircleIcon v-if="results.redis === 'success'" class="h-5 w-5 text-green-500" />
-                  <XCircleIcon v-else class="h-5 w-5 text-red-500" />
+
+                <!-- 向量搜索状态胶囊 -->
+                <div class="flex items-center gap-1.5 text-xs">
+                  <span class="text-gray-500 font-medium">向量引擎:</span>
+                  <span v-if="results.redis_vector === 'success' || redisVectorHealth?.ok" class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium bg-emerald-50 text-emerald-700 border border-emerald-200/80">
+                    <span class="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                    就绪
+                  </span>
+                  <span v-else-if="results.redis_vector === 'failed' || (redisVectorHealth && !redisVectorHealth.ok)" class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium bg-rose-50 text-rose-700 border border-rose-200/80">
+                    <span class="h-1.5 w-1.5 rounded-full bg-rose-500"></span>
+                    异常
+                  </span>
+                  <span v-else class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium bg-gray-50 text-gray-500 border border-gray-200/80">
+                    <span class="h-1.5 w-1.5 rounded-full bg-gray-400"></span>
+                    待检测
+                  </span>
                 </div>
               </div>
-              <div class="border-t border-gray-100 pt-3 mt-3 flex flex-wrap gap-2">
-                <button @click="testConnection('redis')" :disabled="loading.redis || !canSave" class="inline-flex items-center py-1.5 px-3 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-primary hover:bg-primary/90 focus:outline-none disabled:opacity-50 whitespace-nowrap">
-                  <PlayIcon v-if="!loading.redis" class="h-4 w-4 mr-1.5 flex-shrink-0" />
-                  <span v-else class="animate-spin h-4 w-4 mr-1.5 border-2 border-white border-t-transparent rounded-full flex-shrink-0"></span>
+
+              <!-- 右侧：快捷检测 + 展开按钮 -->
+              <div class="flex items-center gap-2 ml-auto">
+                <button
+                  @click="testConnection('redis')"
+                  :disabled="loading.redis || !canSave"
+                  class="inline-flex items-center py-1 px-2.5 rounded-lg text-xs font-medium text-white bg-primary hover:bg-primary/90 disabled:opacity-50 transition-all cursor-pointer shadow-xs"
+                  title="快速测试 Redis 连接"
+                >
+                  <PlayIcon v-if="!loading.redis" class="h-3 w-3 mr-1" />
+                  <span v-else class="animate-spin h-3 w-3 mr-1 border-2 border-white border-t-transparent rounded-full"></span>
                   {{ loading.redis ? '测试中...' : '测试连接' }}
                 </button>
-                <button @click="scanRedisKeys" :disabled="loading.redis_scan || !canSave" class="inline-flex items-center py-1.5 px-3 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 disabled:opacity-50 whitespace-nowrap">
-                  <MagnifyingGlassIcon v-if="!loading.redis_scan" class="h-4 w-4 mr-1.5 flex-shrink-0" />
-                  <span v-else class="animate-spin h-4 w-4 mr-1.5 border-2 border-gray-400 border-t-transparent rounded-full flex-shrink-0"></span>
-                  {{ loading.redis_scan ? '扫描中...' : '扫描 Keys' }}
+
+                <button
+                  @click="toggleDiagnosticsOverview"
+                  type="button"
+                  class="inline-flex items-center gap-1 py-1 px-2 rounded-lg text-xs font-medium text-gray-600 hover:text-primary hover:bg-gray-100 transition-colors cursor-pointer"
+                >
+                  <span>展开卡片</span>
+                  <ChevronDownIcon class="h-3.5 w-3.5" />
                 </button>
-                <button @click="openClearConfirm" :disabled="!canSave" class="inline-flex items-center py-1.5 px-3 border border-red-300 rounded-md shadow-sm text-sm font-medium text-red-700 bg-red-50 hover:bg-red-100 disabled:opacity-50 whitespace-nowrap">
-                  <TrashIcon class="h-4 w-4 mr-1.5 flex-shrink-0" />
+              </div>
+            </div>
+
+            <!-- 状态 2：展开态完整双卡片 -->
+            <div v-else class="space-y-2">
+              <!-- 卡片上方轻量操作栏（放收起按钮） -->
+              <div class="flex items-center justify-between px-1 text-xs text-gray-500">
+                <span class="font-medium text-gray-600 flex items-center gap-1.5">
+                  <span class="h-1.5 w-1.5 rounded-full bg-primary/80"></span>
+                  服务连接与组件能力概览
+                </span>
+                <button
+                  @click="toggleDiagnosticsOverview"
+                  type="button"
+                  class="inline-flex items-center gap-1 py-1 px-2 rounded-lg text-xs font-medium text-gray-500 hover:text-primary hover:bg-gray-100 transition-colors cursor-pointer"
+                >
+                  <span>收起概览</span>
+                  <ChevronUpIcon class="h-3.5 w-3.5" />
+                </button>
+              </div>
+
+              <!-- 双卡片 Grid -->
+              <div class="grid grid-cols-1 xl:grid-cols-2 gap-4">
+            <!-- Redis 连接卡片 -->
+            <div class="rounded-xl border border-gray-200/80 bg-white shadow-sm hover:shadow-md transition-all duration-200 p-4 sm:p-5 flex flex-col justify-between">
+              <div>
+                <!-- 卡片头部与状态徽章 -->
+                <div class="flex items-start justify-between gap-3">
+                  <div class="flex items-center gap-3 min-w-0">
+                    <div class="h-10 w-10 rounded-xl bg-primary/10 border border-primary/20 flex items-center justify-center flex-shrink-0 text-primary shadow-xs">
+                      <CircleStackIcon class="h-5 w-5" />
+                    </div>
+                    <div class="min-w-0">
+                      <div class="flex items-center gap-2">
+                        <h3 class="text-base font-semibold text-gray-900 tracking-tight">Redis 服务</h3>
+                        <span class="text-[10px] font-mono text-gray-500 bg-gray-100/90 border border-gray-200/60 px-1.5 py-0.5 rounded">Core Cache</span>
+                      </div>
+                      <p class="text-xs text-gray-500 mt-0.5 truncate">缓存加速、会话维持与限流队列</p>
+                    </div>
+                  </div>
+
+                  <!-- 状态徽章 Badge -->
+                  <div class="flex-shrink-0">
+                    <span v-if="results.redis === 'success'" class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-emerald-50 text-emerald-700 border border-emerald-200/80">
+                      <span class="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                      连接正常
+                    </span>
+                    <span v-else-if="results.redis === 'failed'" class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-rose-50 text-rose-700 border border-rose-200/80">
+                      <span class="h-1.5 w-1.5 rounded-full bg-rose-500"></span>
+                      连接失败
+                    </span>
+                    <span v-else class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-gray-50 text-gray-500 border border-gray-200/80">
+                      <span class="h-1.5 w-1.5 rounded-full bg-gray-400"></span>
+                      待检测
+                    </span>
+                  </div>
+                </div>
+
+                <!-- 架构信息条 -->
+                <div class="mt-3.5 mb-3 py-1.5 px-3 rounded-lg bg-gray-50/80 border border-gray-100 text-xs text-gray-500 flex items-center justify-between">
+                  <span class="flex items-center gap-1.5 text-gray-600">
+                    <InformationCircleIcon class="h-3.5 w-3.5 text-gray-400 flex-shrink-0" />
+                    <span>核心组件：分布式缓存与热点数据读写</span>
+                  </span>
+                  <span class="text-[10px] text-gray-400 font-mono">STANDALONE</span>
+                </div>
+              </div>
+
+              <!-- 底部操作按钮组 -->
+              <div class="border-t border-gray-100 pt-3 flex items-center justify-between flex-wrap gap-2">
+                <div class="flex items-center gap-2">
+                  <!-- 主按钮：测试连接 -->
+                  <button
+                    @click="testConnection('redis')"
+                    :disabled="loading.redis || !canSave"
+                    class="inline-flex items-center py-1.5 px-3.5 rounded-lg text-xs font-medium text-white bg-primary hover:bg-primary/90 active:scale-[0.98] transition-all shadow-xs disabled:opacity-50 whitespace-nowrap cursor-pointer"
+                  >
+                    <PlayIcon v-if="!loading.redis" class="h-3.5 w-3.5 mr-1.5 flex-shrink-0" />
+                    <span v-else class="animate-spin h-3.5 w-3.5 mr-1.5 border-2 border-white border-t-transparent rounded-full flex-shrink-0"></span>
+                    {{ loading.redis ? '测试中...' : '测试连接' }}
+                  </button>
+
+                  <!-- 辅助按钮：扫描 Keys -->
+                  <button
+                    @click="scanRedisKeys"
+                    :disabled="loading.redis_scan || !canSave"
+                    class="inline-flex items-center py-1.5 px-3 rounded-lg text-xs font-medium text-gray-700 bg-gray-100/80 hover:bg-gray-200/70 active:scale-[0.98] transition-all disabled:opacity-50 whitespace-nowrap cursor-pointer"
+                  >
+                    <MagnifyingGlassIcon v-if="!loading.redis_scan" class="h-3.5 w-3.5 mr-1.5 text-gray-500 flex-shrink-0" />
+                    <span v-else class="animate-spin h-3.5 w-3.5 mr-1.5 border-2 border-gray-400 border-t-transparent rounded-full flex-shrink-0"></span>
+                    {{ loading.redis_scan ? '扫描中...' : '扫描 Keys' }}
+                  </button>
+                </div>
+
+                <!-- 风险维护操作：清理 Keys -->
+                <button
+                  @click="openClearConfirm"
+                  :disabled="!canSave"
+                  class="inline-flex items-center py-1.5 px-2.5 rounded-lg text-xs font-medium text-rose-600 hover:text-rose-700 hover:bg-rose-50 border border-transparent hover:border-rose-200/60 active:scale-[0.98] transition-all disabled:opacity-50 whitespace-nowrap cursor-pointer ml-auto"
+                  title="按业务分组或全局清理缓存 Key"
+                >
+                  <TrashIcon class="h-3.5 w-3.5 mr-1 text-rose-500 flex-shrink-0" />
                   清理 Keys
                 </button>
               </div>
             </div>
 
-            <!-- Redis 向量搜索 -->
-            <div class="bg-white shadow rounded-lg p-4">
-              <div class="flex items-center gap-3">
-                <div class="p-2 rounded-lg border border-primary/15 bg-primary/10 flex-shrink-0">
-                  <CpuChipIcon class="h-5 w-5 text-primary" />
+            <!-- Redis 向量搜索卡片 -->
+            <div class="rounded-xl border border-gray-200/80 bg-white shadow-sm hover:shadow-md transition-all duration-200 p-4 sm:p-5 flex flex-col justify-between">
+              <div>
+                <!-- 卡片头部与状态徽章 -->
+                <div class="flex items-start justify-between gap-3">
+                  <div class="flex items-center gap-3 min-w-0">
+                    <div class="h-10 w-10 rounded-xl bg-primary/10 border border-primary/20 flex items-center justify-center flex-shrink-0 text-primary shadow-xs">
+                      <CpuChipIcon class="h-5 w-5" />
+                    </div>
+                    <div class="min-w-0">
+                      <div class="flex items-center gap-2">
+                        <h3 class="text-base font-semibold text-gray-900 tracking-tight">Redis 向量搜索</h3>
+                        <span class="text-[10px] font-mono text-gray-500 bg-gray-100/90 border border-gray-200/60 px-1.5 py-0.5 rounded">RediSearch</span>
+                      </div>
+                      <p class="text-xs text-gray-500 mt-0.5 truncate">检测会话摘要、长期记忆与本地向量引擎能力</p>
+                    </div>
+                  </div>
+
+                  <!-- 状态徽章与详情切换 -->
+                  <div class="flex items-center gap-2 flex-shrink-0">
+                    <span v-if="results.redis_vector === 'success' || redisVectorHealth?.ok" class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-emerald-50 text-emerald-700 border border-emerald-200/80">
+                      <span class="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                      引擎就绪
+                    </span>
+                    <span v-else-if="results.redis_vector === 'failed' || (redisVectorHealth && !redisVectorHealth.ok)" class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-rose-50 text-rose-700 border border-rose-200/80">
+                      <span class="h-1.5 w-1.5 rounded-full bg-rose-500"></span>
+                      异常 / 未就绪
+                    </span>
+                    <span v-else class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-gray-50 text-gray-500 border border-gray-200/80">
+                      <span class="h-1.5 w-1.5 rounded-full bg-gray-400"></span>
+                      待检测
+                    </span>
+
+                    <button
+                      v-if="redisVectorHealth"
+                      @click="vectorHealthExpanded = !vectorHealthExpanded"
+                      class="inline-flex items-center text-xs font-medium text-gray-500 hover:text-primary transition-colors py-1 px-2 rounded-lg hover:bg-gray-100 whitespace-nowrap cursor-pointer"
+                    >
+                      {{ vectorHealthExpanded ? '收起详情' : '查看详情' }}
+                      <ChevronDownIcon class="h-3.5 w-3.5 ml-0.5 transition-transform duration-200" :class="vectorHealthExpanded ? 'rotate-180' : ''" />
+                    </button>
+                  </div>
                 </div>
-                <div class="min-w-0">
-                  <h3 class="text-base font-medium text-gray-900">Redis 向量搜索</h3>
-                  <p class="text-xs text-gray-500">检测 RediSearch 与会话摘要向量索引能力</p>
-                </div>
-                <div class="ml-auto flex items-center gap-2 flex-shrink-0">
-                  <CheckCircleIcon v-if="results.redis_vector === 'success'" class="h-5 w-5 text-green-500" />
-                  <XCircleIcon v-else-if="results.redis_vector" class="h-5 w-5 text-red-500" />
-                  <button
-                    v-if="redisVectorHealth"
-                    @click="vectorHealthExpanded = !vectorHealthExpanded"
-                    class="inline-flex items-center text-xs font-medium text-gray-500 hover:text-gray-800 whitespace-nowrap"
-                  >
-                    {{ vectorHealthExpanded ? '收起详情' : '查看详情' }}
-                    <ChevronDownIcon class="h-3.5 w-3.5 ml-0.5 transition-transform" :class="vectorHealthExpanded ? 'rotate-180' : ''" />
-                  </button>
+
+                <!-- 架构信息条 -->
+                <div class="mt-3.5 mb-3 py-1.5 px-3 rounded-lg bg-gray-50/80 border border-gray-100 text-xs text-gray-500 flex items-center justify-between">
+                  <span class="flex items-center gap-1.5 text-gray-600">
+                    <InformationCircleIcon class="h-3.5 w-3.5 text-gray-400 flex-shrink-0" />
+                    <span>检索算法：HNSW 向量近似邻近索引</span>
+                  </span>
+                  <span class="text-[10px] text-gray-400 font-mono">VECTOR EXTENSION</span>
                 </div>
               </div>
 
-              <div class="border-t border-gray-100 pt-3 mt-3 flex flex-wrap gap-2">
-                <button
-                  @click="testRedisVectorSearch(true)"
-                  :disabled="loading.redis_vector || !canSave"
-                  class="inline-flex items-center py-1.5 px-3 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-primary hover:bg-primary/90 disabled:opacity-50 whitespace-nowrap"
-                >
-                  <PlayIcon v-if="!loading.redis_vector" class="h-4 w-4 mr-1.5 flex-shrink-0" />
-                  <span v-else class="animate-spin h-4 w-4 mr-1.5 border-2 border-white border-t-transparent rounded-full flex-shrink-0"></span>
-                  {{ loading.redis_vector ? '检测中...' : '重新检测' }}
-                </button>
+              <!-- 底部操作按钮组 -->
+              <div class="border-t border-gray-100 pt-3 flex items-center justify-between flex-wrap gap-2">
+                <div class="flex items-center gap-2">
+                  <!-- 主按钮：重新检测 -->
+                  <button
+                    @click="testRedisVectorSearch(true)"
+                    :disabled="loading.redis_vector || !canSave"
+                    class="inline-flex items-center py-1.5 px-3.5 rounded-lg text-xs font-medium text-white bg-primary hover:bg-primary/90 active:scale-[0.98] transition-all shadow-xs disabled:opacity-50 whitespace-nowrap cursor-pointer"
+                  >
+                    <PlayIcon v-if="!loading.redis_vector" class="h-3.5 w-3.5 mr-1.5 flex-shrink-0" />
+                    <span v-else class="animate-spin h-3.5 w-3.5 mr-1.5 border-2 border-white border-t-transparent rounded-full flex-shrink-0"></span>
+                    {{ loading.redis_vector ? '检测中...' : '重新检测' }}
+                  </button>
+                </div>
+
+                <!-- 维护操作：重构本地向量数据 -->
                 <button
                   @click="openRebuildConfirm"
                   :disabled="loading.rebuild_vector || !canSave"
-                  class="inline-flex items-center py-1.5 px-3 border border-red-300 rounded-md shadow-sm text-sm font-medium text-red-700 bg-red-50 hover:bg-red-100 disabled:opacity-50 whitespace-nowrap"
+                  class="inline-flex items-center py-1.5 px-3 rounded-lg text-xs font-medium text-amber-700 bg-amber-50 hover:bg-amber-100/80 border border-amber-200/70 active:scale-[0.98] transition-all disabled:opacity-50 whitespace-nowrap cursor-pointer ml-auto"
                 >
-                  <ArrowPathIcon v-if="!loading.rebuild_vector" class="h-4 w-4 mr-1.5 flex-shrink-0" />
-                  <span v-else class="animate-spin h-4 w-4 mr-1.5 border-2 border-red-400 border-t-transparent rounded-full flex-shrink-0"></span>
+                  <ArrowPathIcon v-if="!loading.rebuild_vector" class="h-3.5 w-3.5 mr-1.5 text-amber-600 flex-shrink-0" />
+                  <span v-else class="animate-spin h-3.5 w-3.5 mr-1.5 border-2 border-amber-500 border-t-transparent rounded-full flex-shrink-0"></span>
                   {{ loading.rebuild_vector ? '重构中...' : '重构本地向量数据' }}
                 </button>
               </div>
 
               <!-- 检测详情（默认收起，点击右上「查看详情」展开） -->
-              <div v-if="vectorHealthExpanded && redisVectorHealth" class="mt-3 space-y-3">
+              <div v-if="vectorHealthExpanded && redisVectorHealth" class="mt-3.5 space-y-2.5 pt-3 border-t border-gray-100">
                 <div
-                  class="rounded-md border p-3 text-sm"
-                  :class="redisVectorHealth.ok ? 'bg-green-50 border-green-200 text-green-800' : 'bg-amber-50 border-amber-200 text-amber-900'"
+                  class="rounded-lg border p-3 text-xs"
+                  :class="redisVectorHealth.ok ? 'bg-emerald-50/80 border-emerald-200/70 text-emerald-900' : 'bg-amber-50/80 border-amber-200/70 text-amber-900'"
                 >
-                  <div class="font-medium">{{ redisVectorHealth.message }}</div>
-                  <div v-if="redisVectorHealth.redis_host" class="mt-1 text-xs opacity-80">
+                  <div class="font-semibold">{{ redisVectorHealth.message }}</div>
+                  <div v-if="redisVectorHealth.redis_host" class="mt-1 text-[11px] opacity-85">
                     当前连接：{{ redisVectorHealth.redis_host }}:{{ redisVectorHealth.redis_port }} / db {{ redisVectorHealth.redis_db }}
                   </div>
-                  <ul v-if="!redisVectorHealth.ok && redisVectorHealth.hints?.length" class="list-disc pl-5 mt-2 space-y-1 text-xs">
+                  <ul v-if="!redisVectorHealth.ok && redisVectorHealth.hints?.length" class="list-disc pl-4 mt-2 space-y-1 text-[11px]">
                     <li v-for="(hint, i) in redisVectorHealth.hints" :key="i">{{ hint }}</li>
                   </ul>
                 </div>
 
-                <div v-if="redisVectorHealth?.checks?.length" class="border border-gray-100 rounded-md overflow-hidden">
+                <div v-if="redisVectorHealth?.checks?.length" class="border border-gray-100 rounded-lg overflow-hidden divide-y divide-gray-100">
                   <div
                     v-for="check in redisVectorHealth.checks"
                     :key="check.name"
-                    class="flex items-start justify-between gap-3 px-3 py-2 border-b border-gray-100 last:border-b-0 text-sm"
+                    class="flex items-start justify-between gap-3 px-3 py-2 bg-gray-50/40 text-xs"
                   >
                     <div>
                       <div class="font-medium text-gray-800">{{ check.name }}</div>
-                      <div class="text-xs text-gray-500 mt-0.5">{{ check.message }}</div>
+                      <div class="text-[11px] text-gray-500 mt-0.5">{{ check.message }}</div>
                     </div>
                     <span
-                      class="flex-shrink-0 px-2 py-0.5 rounded-full text-xs font-medium"
-                      :class="check.passed ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'"
+                      class="flex-shrink-0 px-2 py-0.5 rounded-full text-[10px] font-semibold"
+                      :class="check.passed ? 'bg-emerald-100 text-emerald-700' : 'bg-rose-100 text-rose-700'"
                     >
                       {{ check.passed ? '通过' : '失败' }}
                     </span>
@@ -2871,96 +3115,130 @@ onUnmounted(() => {
               </div>
             </div>
           </div>
+        </div>
+      </div>
 
-          <!-- 下方：诊断控制台 / Redis 浏览器（全宽展示） -->
-          <div class="flex-1 min-h-[520px] bg-white rounded-lg shadow flex flex-col border border-gray-100 overflow-hidden">
-            <div class="bg-gray-50 px-4 py-2.5 flex justify-between items-center border-b border-gray-200 flex-shrink-0">
-              <div class="flex space-x-2">
+          <!-- 下方：诊断控制台 / Redis 浏览器（全宽一体化面板） -->
+          <div class="flex-1 min-h-[520px] bg-white rounded-xl shadow-sm border border-gray-200/80 flex flex-col overflow-hidden">
+            <div class="px-4 py-2.5 flex justify-between items-center border-b border-gray-100 bg-white/95 flex-shrink-0">
+              <!-- 分段控制器 Tab -->
+              <div class="inline-flex p-0.5 bg-gray-100/90 rounded-lg border border-gray-200/40">
                 <button
                   @click="diagSubTab = 'console'"
-                  class="px-3 py-1.5 rounded-md text-xs font-semibold transition-all flex items-center"
-                  :class="diagSubTab === 'console' ? 'bg-white shadow text-primary border border-gray-100' : 'text-gray-500 hover:text-gray-700'"
+                  type="button"
+                  class="px-3.5 py-1.5 rounded-md text-xs transition-all duration-150 flex items-center cursor-pointer"
+                  :class="diagSubTab === 'console' ? 'bg-white text-gray-900 shadow-xs font-semibold' : 'text-gray-500 hover:text-gray-900 font-medium'"
                 >
-                  <CommandLineIcon class="w-3.5 h-3.5 mr-1.5" />
+                  <CommandLineIcon class="w-3.5 h-3.5 mr-1.5" :class="diagSubTab === 'console' ? 'text-primary' : 'text-gray-400'" />
                   诊断控制台
                 </button>
                 <button
                   @click="diagSubTab = 'redis'"
-                  class="px-3 py-1.5 rounded-md text-xs font-semibold transition-all flex items-center"
-                  :class="diagSubTab === 'redis' ? 'bg-white shadow text-primary border border-gray-100' : 'text-gray-500 hover:text-gray-700'"
+                  type="button"
+                  class="px-3.5 py-1.5 rounded-md text-xs transition-all duration-150 flex items-center cursor-pointer"
+                  :class="diagSubTab === 'redis' ? 'bg-white text-gray-900 shadow-xs font-semibold' : 'text-gray-500 hover:text-gray-900 font-medium'"
                 >
-                  <CircleStackIcon class="w-3.5 h-3.5 mr-1.5" />
-                  Redis浏览器
+                  <CircleStackIcon class="w-3.5 h-3.5 mr-1.5" :class="diagSubTab === 'redis' ? 'text-primary' : 'text-gray-400'" />
+                  Redis 浏览器
                 </button>
               </div>
-              <button v-if="diagSubTab === 'console'" @click="clearLogs" class="text-xs text-gray-400 hover:text-gray-600">清空</button>
+
+              <!-- 右侧控制项 -->
+              <div class="flex items-center gap-2">
+                <button
+                  v-if="diagSubTab === 'console'"
+                  @click="clearLogs"
+                  type="button"
+                  class="inline-flex items-center text-xs text-gray-400 hover:text-gray-600 px-2 py-1 rounded hover:bg-gray-100 transition-colors cursor-pointer"
+                  title="清空控制台输出"
+                >
+                  <TrashIcon class="w-3 h-3 mr-1 text-gray-400" />
+                  清空日志
+                </button>
+              </div>
             </div>
 
             <!-- Tab: Console -->
             <div v-if="diagSubTab === 'console'" class="flex-1 bg-gray-950 p-4 overflow-y-auto font-mono text-sm space-y-1 custom-scrollbar text-green-400">
-              <div v-if="logs.length === 0" class="text-gray-400 italic">等待执行测试...</div>
-              <div v-else v-for="(log, index) in logs" :key="index" class="text-green-400 break-all">
-                <span class="text-gray-500 mr-2">></span>{{ log }}
+              <div v-if="logs.length === 0" class="text-gray-500 italic text-xs">等待执行测试... 点击上方「测试连接」或「重新检测」开始输出诊断日志。</div>
+              <div v-else v-for="(log, index) in logs" :key="index" class="text-green-400 break-all text-xs leading-relaxed">
+                <span class="text-gray-600 mr-2 select-none">></span>{{ log }}
               </div>
             </div>
 
             <!-- Tab: Redis Browser -->
-            <div v-else-if="diagSubTab === 'redis'" class="flex-1 flex space-x-4 overflow-hidden p-4 bg-gray-50">
+            <div v-else-if="diagSubTab === 'redis'" class="flex-1 flex space-x-4 overflow-hidden p-4 bg-gray-50/60">
               <!-- Left Column: Keys list -->
-              <div class="w-2/5 bg-white border border-gray-200 rounded-lg p-3 flex flex-col h-full overflow-hidden">
-                <div class="mb-3 flex items-center space-x-2 flex-shrink-0">
+              <div class="w-2/5 bg-white border border-gray-200/80 rounded-xl p-3 flex flex-col h-full overflow-hidden shadow-xs">
+                <!-- 一体化搜索栏 -->
+                <div class="mb-3 relative flex items-center flex-shrink-0">
+                  <div class="pointer-events-none absolute inset-y-0 left-0 pl-3 flex items-center">
+                    <MagnifyingGlassIcon class="h-4 w-4 text-gray-400" />
+                  </div>
                   <input
                     type="search"
                     v-model="redisPattern"
-                    placeholder="匹配模式 (例如 * 或 nanzi:*)"
+                    placeholder="匹配模式 (例如 * 或 nanzi:*)..."
                     @keyup.enter="fetchRedisKeys"
-                    class="flex-1 min-w-0 shadow-sm focus:ring-primary focus:border-primary block w-full sm:text-sm border-gray-300 rounded-md bg-gray-50 p-2 border"
+                    class="block w-full pl-9 pr-18 py-1.5 border border-gray-200 rounded-lg text-xs bg-gray-50/70 placeholder-gray-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all"
                   />
-                  <button
-                    @click="fetchRedisKeys"
-                    :disabled="redisKeysLoading"
-                    class="inline-flex items-center px-3 py-2 border border-transparent text-sm leading-4 font-medium rounded-md text-white bg-primary hover:bg-primary/90 disabled:opacity-50"
-                  >
-                    <span v-if="redisKeysLoading" class="animate-spin h-4 w-4 border-2 border-white border-t-transparent rounded-full mr-1"></span>
-                    搜索
-                  </button>
+                  <div class="absolute inset-y-0 right-1 flex items-center pr-0.5">
+                    <button
+                      @click="fetchRedisKeys"
+                      :disabled="redisKeysLoading"
+                      type="button"
+                      class="inline-flex items-center px-2.5 py-1 rounded-md text-xs font-medium text-white bg-primary hover:bg-primary/90 active:scale-95 disabled:opacity-50 transition-all cursor-pointer shadow-xs"
+                    >
+                      <span v-if="redisKeysLoading" class="animate-spin h-3 w-3 border-2 border-white border-t-transparent rounded-full mr-1"></span>
+                      搜索
+                    </button>
+                  </div>
                 </div>
 
-                <div class="flex-1 overflow-y-auto min-h-0 custom-scrollbar border border-gray-100 rounded-md">
-                  <div v-if="redisKeys.length === 0 && !redisKeysLoading" class="p-6 text-center text-gray-400 italic text-sm">
+                <div class="flex-1 overflow-y-auto min-h-0 custom-scrollbar border border-gray-100 rounded-lg">
+                  <div v-if="redisKeys.length === 0 && !redisKeysLoading" class="p-8 text-center text-gray-400 italic text-xs">
                     无匹配的 Redis Keys
                   </div>
                   <div v-else-if="redisKeysLoading" class="p-12 text-center text-gray-400 flex flex-col items-center">
-                    <span class="animate-spin h-8 w-8 border-2 border-primary border-t-transparent rounded-full mb-2"></span>
-                    正在扫描键名...
+                    <span class="animate-spin h-7 w-7 border-2 border-primary border-t-transparent rounded-full mb-2"></span>
+                    <span class="text-xs">正在扫描键名...</span>
                   </div>
                   <div v-else class="divide-y divide-gray-100">
                     <!-- 分组工具条：分组数 > 1 时提供一键展开/收起 -->
                     <div
                       v-if="redisKeyGroups.length > 1"
-                      class="flex items-center justify-between px-2.5 py-1.5 bg-gray-50/80 text-[10px] text-gray-500 sticky top-0 z-10"
+                      class="flex items-center justify-between px-3 py-1.5 bg-gray-50/90 backdrop-blur text-xs text-gray-500 sticky top-0 z-10 border-b border-gray-100"
                     >
-                      <span>{{ redisKeyGroups.length }} 个业务分组 · 共 {{ redisKeys.length }} 个 Key</span>
-                      <button @click="toggleAllRedisGroups" class="text-primary hover:underline font-medium">
+                      <span class="font-medium text-gray-600 text-[11px]">
+                        <span class="text-gray-900 font-semibold">{{ redisKeyGroups.length }}</span> 个业务分组 · 共 <span class="text-primary font-semibold">{{ redisKeys.length }}</span> 个 Key
+                      </span>
+                      <button @click="toggleAllRedisGroups" class="text-[11px] text-primary hover:underline font-medium cursor-pointer">
                         {{ allRedisGroupsExpanded ? '全部收起' : '全部展开' }}
                       </button>
                     </div>
 
                     <div v-for="group in redisKeyGroups" :key="group.id">
-                      <!-- 组头：点击折叠/展开，右侧是该组的类型汇总 -->
-                      <button
-                        @click="toggleRedisGroup(group.id)"
-                        class="w-full flex items-center gap-1.5 px-2.5 py-2 text-left transition-colors"
-                        :class="redisKeyGroups.length > 1 ? 'hover:bg-gray-50 cursor-pointer' : 'cursor-default'"
+                      <!-- 组头：左侧折叠展开，右侧类型汇总与删除该组全部 key -->
+                      <div
+                        class="w-full flex items-center justify-between gap-1.5 px-2.5 py-1.5 transition-colors group hover:bg-gray-50/80"
+                        :class="redisKeyGroups.length > 1 ? 'cursor-pointer' : 'cursor-default'"
                         :title="group.desc"
                       >
-                        <ChevronDownIcon
-                          class="h-3 w-3 flex-shrink-0 text-gray-400 transition-transform"
-                          :class="isRedisGroupExpanded(group.id) ? '' : '-rotate-90'"
-                        />
-                        <span class="text-xs font-semibold text-gray-800 flex-shrink-0">{{ group.id }}</span>
-                        <span class="text-[10px] text-gray-400 flex-shrink-0">{{ group.keys.length }}</span>
-                        <span class="ml-auto flex items-center justify-end gap-1 flex-wrap">
+                        <!-- 折叠/展开触发区 -->
+                        <div
+                          @click="toggleRedisGroup(group.id)"
+                          class="flex items-center gap-1.5 min-w-0 flex-1 py-0.5 select-none"
+                        >
+                          <ChevronDownIcon
+                            class="h-3 w-3 flex-shrink-0 text-gray-400 transition-transform"
+                            :class="isRedisGroupExpanded(group.id) ? '' : '-rotate-90'"
+                          />
+                          <span class="text-xs font-semibold text-gray-800 truncate">{{ group.id }}</span>
+                          <span class="text-[10px] text-gray-400 flex-shrink-0 font-mono">{{ group.keys.length }}</span>
+                        </div>
+
+                        <!-- 右侧：类型汇总徽章 + 删除分组全部 Key 按钮 -->
+                        <div class="ml-auto flex items-center justify-end gap-1.5 flex-shrink-0">
                           <span
                             v-for="item in group.typeSummary"
                             :key="item.type"
@@ -2969,8 +3247,20 @@ onUnmounted(() => {
                           >
                             {{ item.type }}×{{ item.count }}
                           </span>
-                        </span>
-                      </button>
+
+                          <!-- 删除此分组全部 Key -->
+                          <button
+                            v-if="canSave && group.keys.length > 0"
+                            @click.stop="confirmDeleteGroup(group)"
+                            :disabled="deletingGroupLoading"
+                            type="button"
+                            class="p-1 rounded-md text-gray-400 hover:text-rose-600 hover:bg-rose-50 border border-transparent hover:border-rose-200/60 transition-all opacity-0 group-hover:opacity-100 focus:opacity-100 cursor-pointer"
+                            :title="`清空「${group.id}」分组下的全部 ${group.keys.length} 个 Key`"
+                          >
+                            <TrashIcon class="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      </div>
 
                       <!-- 组内 Key -->
                       <div v-if="isRedisGroupExpanded(group.id)" class="border-t border-gray-100">
@@ -5129,6 +5419,16 @@ onUnmounted(() => {
       type="danger"
       @confirm="executeDeleteKey"
       @cancel="showDeleteKeyConfirm = false"
+    />
+    <ConfirmModal
+      v-if="showDeleteGroupConfirm"
+      :title="`确认清空分组「${pendingDeleteGroup?.id}」？`"
+      :message="`即将物理删除业务分组「${pendingDeleteGroup?.id}」下的全部 ${pendingDeleteGroup?.keys.length || 0} 个 Redis Key，此操作不可撤销并可能重置相关模块缓存或状态，是否确定继续清空？`"
+      confirm-text="确认清空分组"
+      cancel-text="取消"
+      type="danger"
+      @confirm="executeDeleteGroup"
+      @cancel="showDeleteGroupConfirm = false"
     />
 
     <!-- Image Cropper Modal -->
