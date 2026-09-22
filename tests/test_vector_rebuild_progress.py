@@ -20,12 +20,35 @@ pytestmark = pytest.mark.no_infrastructure
 # --------------------------------------------------------------------------
 
 
+class _FakePipeline:
+    """记录命令、execute 时统一执行；用于断言「hset + expire 是原子提交的」。"""
+
+    def __init__(self, redis):
+        self._redis = redis
+        self._ops = []
+
+    def hset(self, *args, **kwargs):
+        self._ops.append(("hset", args, kwargs))
+        return self
+
+    def expire(self, *args, **kwargs):
+        self._ops.append(("expire", args, kwargs))
+        return self
+
+    async def execute(self):
+        out = []
+        for name, args, kwargs in self._ops:
+            out.append(await getattr(self._redis, name)(*args, **kwargs))
+        return out
+
+
 class FakeRedis:
     def __init__(self):
         self.hashes = {}
         self.streams = {}
         self.values = {}
         self.expires = []
+        self.pipeline_calls = 0
 
     async def hset(self, key, mapping=None, **kwargs):
         self.hashes.setdefault(key, {}).update(mapping or {})
@@ -51,6 +74,10 @@ class FakeRedis:
     async def xread(self, streams, block=None, count=None):
         # 测试中不阻塞等待：直接返回空批次。
         return []
+
+    def pipeline(self, transaction=True):
+        self.pipeline_calls += 1
+        return _FakePipeline(self)
 
     async def set(self, key, value, nx=False, ex=None):
         if nx and key in self.values:
@@ -252,6 +279,23 @@ async def test_task_lock_hold_releases_even_when_body_raises():
             raise RuntimeError("重构中途炸了")
 
     assert await lock.owner() is None
+
+
+@pytest.mark.asyncio
+async def test_create_task_sets_ttl_atomically_so_records_never_leak():
+    """hset 与 expire 必须在同一个 pipeline 里提交。
+
+    否则进程在两者之间被杀（开发环境 --reload 常见）会留下一个**永久无 TTL**
+    的任务 Hash，在 Redis 里再也清理不掉——现场就抓到过一个 TTL=-1 的残留。
+    """
+    redis = FakeRedis()
+    service = TaskLogService(redis_client=redis)
+    record = await service.create_task("unit_scope")
+
+    assert redis.pipeline_calls == 1
+    task_key = service.task_key(record.task_id)
+    assert task_key in redis.hashes
+    assert (task_key, service.TASK_TTL_SECONDS) in redis.expires
 
 
 @pytest.mark.asyncio

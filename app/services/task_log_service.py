@@ -103,8 +103,13 @@ class TaskLogService:
         }
         for key, value in (meta or {}).items():
             mapping[str(key)] = "" if value is None else str(value)
-        await redis.hset(self.task_key(task_id), mapping=mapping)
-        await redis.expire(self.task_key(task_id), self.TASK_TTL_SECONDS)
+        task_key = self.task_key(task_id)
+        # hset 与 expire 必须**原子提交**：两者之间若进程被杀（开发环境 --reload 很常见），
+        # 任务 Hash 会永久没有 TTL，在 Redis 里泄漏且再也不会被清理。
+        pipe = redis.pipeline()
+        pipe.hset(task_key, mapping=mapping)
+        pipe.expire(task_key, self.TASK_TTL_SECONDS)
+        await pipe.execute()
         return TaskRecord(task_id=task_id, scope=str(scope), status="running")
 
     async def get_task(self, task_id: str) -> Optional[Dict[str, Any]]:

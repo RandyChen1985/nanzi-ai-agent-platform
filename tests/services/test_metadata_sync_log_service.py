@@ -5,11 +5,36 @@ from app.services.metadata_sync_log_service import MetadataSyncLogService
 pytestmark = pytest.mark.no_infrastructure
 
 
+class _FakePipeline:
+    """create_task 用 pipeline 原子提交 hset + expire，这里只负责顺序执行。"""
+
+    def __init__(self, redis):
+        self._redis = redis
+        self._ops = []
+
+    def hset(self, *args, **kwargs):
+        self._ops.append(("hset", args, kwargs))
+        return self
+
+    def expire(self, *args, **kwargs):
+        self._ops.append(("expire", args, kwargs))
+        return self
+
+    async def execute(self):
+        return [
+            await getattr(self._redis, name)(*args, **kwargs)
+            for name, args, kwargs in self._ops
+        ]
+
+
 class FakeRedis:
     def __init__(self):
         self.hashes = {}
         self.streams = {}
         self.expirations = {}
+
+    def pipeline(self, transaction=True):
+        return _FakePipeline(self)
 
     async def hset(self, key, mapping):
         self.hashes.setdefault(key, {}).update(mapping)
