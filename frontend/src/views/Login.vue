@@ -5,6 +5,9 @@ import axios from 'axios'
 import { useBranding } from '../composables/useBranding'
 import { persistUserInfo } from '../utils/userSession'
 import MagnifierTitle from '../components/login/MagnifierTitle.vue'
+import BrowserUpgradeModal from '../components/login/BrowserUpgradeModal.vue'
+import { detectBrowser, isBrowserUpgradeDismissed, dismissBrowserUpgrade } from '../utils/browserDetect'
+import type { BrowserDetectResult } from '../utils/browserDetect'
 
 const router = useRouter()
 const route = useRoute()
@@ -248,12 +251,41 @@ const fetchPublicConfig = async () => {
     }
 }
 
+const showBrowserUpgradeModal = ref(false)
+const browserDetectResult = ref<BrowserDetectResult>({
+    name: '',
+    version: '',
+    majorVersion: 0,
+    isSupported: true,
+    isLowVersion: false,
+    recommendation: '',
+    downloadUrl: ''
+})
+
+const checkBrowserVersion = () => {
+    const result = detectBrowser()
+    browserDetectResult.value = result
+    if (result.isLowVersion && !isBrowserUpgradeDismissed()) {
+        showBrowserUpgradeModal.value = true
+    }
+}
+
+const handleDismissBrowserUpgrade = () => {
+    dismissBrowserUpgrade()
+    showBrowserUpgradeModal.value = false
+}
+
+const handleCloseBrowserUpgrade = () => {
+    showBrowserUpgradeModal.value = false
+}
+
 onMounted(async () => { 
     currentSlide.value = getInitialSlide()
     motionMediaQuery = window.matchMedia('(prefers-reduced-motion: reduce)')
     reducedMotion.value = motionMediaQuery.matches
     motionMediaQuery.addEventListener?.('change', handleMotionPreferenceChange)
     restartSlideTimer()
+    checkBrowserVersion()
     await loadBranding()
     if (branding.value.hide_login_sso && activeTab.value === 'sso') {
         activeTab.value = 'password'
@@ -593,6 +625,14 @@ const handleLogin = async () => {
             © 2026 NanZi Network // CLOUD_PIVOT_AGENT
         </div>
     </div>
+
+    <!-- 浏览器低版本/不兼容升级引导弹窗 -->
+    <BrowserUpgradeModal
+        :show="showBrowserUpgradeModal"
+        :detect-result="browserDetectResult"
+        @dismiss="handleDismissBrowserUpgrade"
+        @close="handleCloseBrowserUpgrade"
+    />
   </div>
 </template>
 
