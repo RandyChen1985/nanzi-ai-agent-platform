@@ -56,6 +56,24 @@ from app.services.ai.runtime.agentscope.workspace import (
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
+#: Upper bound for the sanitized error text written to the sandbox test log.
+_SANDBOX_TEST_LOG_DETAIL_LIMIT = 500
+
+
+def _safe_test_detail(text: Any) -> str:
+    """脱敏并截断异常文本，供连接测试日志记录使用。
+
+    连接测试的日志刻意不落请求体（避免 API Key/密码/私钥进日志），但异常文本
+    本身正是排障依据（例如 ``sshpass`` 缺失、host key 校验失败、认证被拒），
+    因此这里在写入日志前统一做凭据脱敏与长度截断。
+    """
+    from app.utils.masking import mask_sensitive_data
+
+    masked = " ".join(str(mask_sensitive_data(str(text)) or "").split())
+    if len(masked) > _SANDBOX_TEST_LOG_DETAIL_LIMIT:
+        masked = masked[:_SANDBOX_TEST_LOG_DETAIL_LIMIT] + "…"
+    return masked
+
 
 def _require_admin(user_info: Dict[str, Any]) -> None:
     """普通 API 用户无权执行沙箱管理操作。"""
@@ -702,13 +720,15 @@ async def test_sandbox_connection(
             message=f"{policy.upper()} 沙箱连接测试成功",
         )
     except Exception as exc:
-        # 不记录请求体，避免 API Key、密码或私钥进入日志；异常文本仅用于向管理员
-        # 说明远端返回的可诊断错误。
+        # 不记录请求体，避免 API Key、密码或私钥进入日志；异常文本经脱敏截断后
+        # 作为 detail 记录，供管理员直接定位（sshpass 缺失 / host key 校验失败 /
+        # 认证被拒 等），否则日志里只剩 error_type=RuntimeError 无法排障。
         detail = str(exc).strip() or "远端返回未知错误"
         logger.warning(
-            "沙箱连接测试失败 policy=%s error_type=%s",
+            "沙箱连接测试失败 policy=%s error_type=%s detail=%s",
             policy,
             type(exc).__name__,
+            _safe_test_detail(detail) or "未知错误",
         )
         raise HTTPException(
             status_code=502,

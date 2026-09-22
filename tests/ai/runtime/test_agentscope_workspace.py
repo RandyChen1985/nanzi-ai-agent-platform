@@ -1768,8 +1768,479 @@ async def test_ssh_connect_test_executes_remote_probe_in_worker_thread(monkeypat
 
     monkeypatch.setattr(workspace, "_run_remote_sync", fake_run)
 
-    assert await workspace._connect_test() is True
+    assert await workspace._connect_test() == (True, "")
     assert calls == [((["echo", "dsh-ssh-ok"]), 45)]
+
+
+@pytest.mark.asyncio
+async def test_ssh_connect_test_reports_stderr_without_leaking_secrets(monkeypatch):
+    """排查依据（host key / 认证被拒）必须回传，但凭据不得泄露。"""
+    from subprocess import CompletedProcess
+
+    from app.services.ai.runtime.agentscope.workspace_ssh import SshWorkspace
+
+    workspace = SshWorkspace(host="remote.example.com", auth_type="key")
+
+    def fake_run(remote_args, *, timeout):
+        return CompletedProcess(
+            ["ssh"],
+            255,
+            b"",
+            b"Host key verification failed.\npassword=SuperSecret123",
+        )
+
+    monkeypatch.setattr(workspace, "_run_remote_sync", fake_run)
+
+    reachable, reason = await workspace._connect_test()
+
+    assert reachable is False
+    assert "Host key verification failed" in reason
+    assert "SuperSecret123" not in reason
+
+
+@pytest.mark.asyncio
+async def test_ssh_connect_test_reports_missing_cli(monkeypatch):
+    """平台主机缺少 ssh/sshpass 时，必须指明缺的是哪个二进制而不是笼统报错。"""
+    from app.services.ai.runtime.agentscope.workspace_ssh import SshWorkspace
+
+    workspace = SshWorkspace(host="remote.example.com", auth_type="password")
+
+    def fake_run(remote_args, *, timeout):
+        raise FileNotFoundError(2, "No such file or directory", "sshpass")
+
+    monkeypatch.setattr(workspace, "_run_remote_sync", fake_run)
+
+    reachable, reason = await workspace._connect_test()
+
+    assert reachable is False
+    assert "sshpass" in reason
+    assert "not available on the platform host" in reason
+
+
+@pytest.mark.asyncio
+async def test_ssh_initialize_error_carries_connect_failure_reason(monkeypatch):
+    """initialize 的 RuntimeError 必须带上 ssh 的真实失败原因。"""
+    from subprocess import CompletedProcess
+
+    from app.services.ai.runtime.agentscope.workspace_ssh import SshWorkspace
+
+    workspace = SshWorkspace(host="remote.example.com", auth_type="key")
+
+    def fake_run(remote_args, *, timeout):
+        return CompletedProcess(["ssh"], 255, b"", b"Permission denied (publickey).")
+
+    monkeypatch.setattr(workspace, "_run_remote_sync", fake_run)
+
+    with pytest.raises(RuntimeError) as excinfo:
+        await workspace.initialize()
+
+    message = str(excinfo.value)
+    assert "cannot reach remote.example.com:22" in message
+    assert "Permission denied (publickey)" in message
+
+
+def test_ssh_remote_command_survives_a_real_shell_round_trip(tmp_path):
+    """把引号化后的命令串交给真实 shell（等价远端 login shell）执行，载荷必须完整。
+
+    回归锁：未经引号化时 ``ssh host python3 -c <多行程序>`` 会被远端 shell 按空白
+    重新切分，python 只拿到 ``import`` 一个词，于是 ``SyntaxError: invalid syntax``
+    （2026-09-22 线上 seed skills 全量失败即此因）。
+    """
+    import base64
+    import subprocess as _subprocess
+
+    from app.services.ai.runtime.agentscope.workspace_ssh import build_remote_command
+
+    target = tmp_path / "sub dir" / "SKILL.md"
+    py = (
+        "import base64,sys,os;\n"
+        f"p={str(target)!r};\n"
+        "os.makedirs(os.path.dirname(p), exist_ok=True);\n"
+        "open(p,'wb').write(base64.b64decode(sys.stdin.read()))\n"
+    )
+    payload = "# 技能\n含中文与 '引号' 和\n换行\n".encode()
+
+    proc = _subprocess.run(
+        ["bash", "-c", build_remote_command(["python3", "-c", py])],
+        input=base64.b64encode(payload),
+        capture_output=True,
+    )
+
+    assert proc.returncode == 0, proc.stderr
+    assert target.read_bytes() == payload
+
+
+def test_ssh_login_shell_snippet_keeps_working_directory(tmp_path):
+    """``bash -lc`` 片段必须整体送达，``cd`` 才真正生效。
+
+    回归锁：未经引号化时远端只把 ``cd`` 当作 ``-c`` 的实参，用户命令实际在远端
+    HOME 目录执行（而不是 remote_workdir）。
+    """
+    import subprocess as _subprocess
+
+    from app.services.ai.runtime.agentscope.workspace_ssh import build_remote_command
+
+    snippet = f"cd {tmp_path} && pwd && echo 'a b'"
+    proc = _subprocess.run(
+        ["bash", "-c", build_remote_command(["bash", "-lc", snippet])],
+        capture_output=True,
+        text=True,
+    )
+
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout.splitlines() == [str(tmp_path), "a b"]
+
+
+@pytest.mark.asyncio
+async def test_ssh_write_uses_one_connection_and_preserves_payload(monkeypatch):
+    """``_write`` 只需一次 ssh 往返，且多行 python 程序必须作为单个参数送达。"""
+    import base64
+    import shlex as _shlex
+    from subprocess import CompletedProcess
+
+    from app.services.ai.runtime.agentscope.workspace_ssh import SshWorkspace
+
+    workspace = SshWorkspace(host="remote.example.com", auth_type="key")
+    calls = []
+
+    def fake_run(remote_args, *, input_data=None, timeout=600):
+        calls.append((remote_args, input_data))
+        return CompletedProcess(["ssh"], 0, b"", b"")
+
+    monkeypatch.setattr(workspace, "_run_remote_sync", fake_run)
+
+    payload = "# 技能\n含中文与 '引号'\n".encode()
+    await workspace._write("/workspace/skills/demo/SKILL.md", payload)
+
+    assert len(calls) == 1, "不应再有额外的 mkdir 往返"
+    remote_args, input_data = calls[0]
+    assert remote_args[0] == "python3" and remote_args[1] == "-c"
+    assert "os.makedirs" in remote_args[2] and "\n" in remote_args[2]
+    # 远端 shell 拆分后仍是同一个参数（换行、引号不被破坏）
+    assert _shlex.split(workspace._build_ssh_command(remote_args)[-1])[2] == remote_args[2]
+    assert base64.b64decode(input_data.decode()).decode() == payload.decode()
+
+
+@pytest.mark.asyncio
+async def test_ssh_seed_skills_batches_all_skills_into_one_write(monkeypatch, tmp_path):
+    """技能播种必须批量写入：每个技能一次 ssh 往返会击穿 60s prewarm 预算。"""
+    import base64
+    import json
+
+    from subprocess import CompletedProcess
+
+    from app.services.ai.runtime.agentscope.workspace_ssh import SshWorkspace
+
+    skills = []
+    for name in ("alpha", "beta"):
+        directory = tmp_path / name
+        directory.mkdir()
+        (directory / "SKILL.md").write_text(f"# {name}\n", encoding="utf-8")
+        skills.append(str(directory))
+
+    workspace = SshWorkspace(host="remote.example.com", auth_type="key", skill_paths=skills)
+    calls = []
+
+    def fake_run(remote_args, *, input_data=None, timeout=600):
+        calls.append((remote_args, input_data))
+        if remote_args[0] == "bash":
+            return CompletedProcess(["ssh"], 0, b"", b"")
+        return CompletedProcess(["ssh"], 0, b'{"written": 2, "errors": {}}', b"")
+
+    monkeypatch.setattr(workspace, "_run_remote_sync", fake_run)
+
+    await workspace._seed_skills()
+
+    assert len(calls) == 2, "应为 1 次目录探测 + 1 次批量写入"
+    batch_args, batch_input = calls[1]
+    assert batch_args[:2] == ["python3", "-c"]
+    manifest = json.loads(batch_input.decode())
+    assert sorted(manifest) == [
+        "/workspace/skills/alpha/SKILL.md",
+        "/workspace/skills/beta/SKILL.md",
+    ]
+    assert (
+        base64.b64decode(manifest["/workspace/skills/alpha/SKILL.md"]).decode()
+        == "# alpha\n"
+    )
+
+
+def _load_ssh_inline_server(monkeypatch, **env):
+    """Exec 内联 MCP 服务源码（打桩 FastMCP），返回其全局命名空间。"""
+    import mcp.server.fastmcp as fastmcp_module
+
+    from app.services.ai.runtime.agentscope import workspace_ssh as ssh_module
+
+    class _FakeFastMCP:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def tool(self):
+            return lambda fn: fn
+
+        def run(self, transport=None):
+            pass
+
+    monkeypatch.setattr(fastmcp_module, "FastMCP", _FakeFastMCP)
+    for key, value in env.items():
+        monkeypatch.setenv(key, value)
+    namespace: dict = {}
+    exec(
+        compile(ssh_module._SSH_INLINE_SERVER, "<ssh-inline-server>", "exec"),
+        namespace,
+    )
+    return namespace
+
+
+def test_ssh_inline_mcp_server_quotes_remote_argv(monkeypatch):
+    """内联 MCP 子进程（模型实际调用的 bash/read/write/glob）同样必须引号化。"""
+    import shlex as _shlex
+    import subprocess as _subprocess
+    import types
+
+    namespace = _load_ssh_inline_server(
+        monkeypatch,
+        SSH_HOST="remote.example.com",
+        SSH_USER="test",
+        SSH_PORT="3333",
+        SSH_AUTH_TYPE="key",
+        SSH_KEY_PATH="/tmp/id.pem",
+    )
+
+    captured = {}
+
+    class _FakePopen:
+        returncode = 0
+
+        def __init__(self, cmd, **kwargs):
+            captured["cmd"] = cmd
+
+        def communicate(self, input=None, timeout=None):
+            return ("", "")
+
+    namespace["subprocess"] = types.SimpleNamespace(
+        Popen=_FakePopen,
+        TimeoutExpired=_subprocess.TimeoutExpired,
+        CompletedProcess=_subprocess.CompletedProcess,
+        DEVNULL=_subprocess.DEVNULL,
+        PIPE=_subprocess.PIPE,
+    )
+
+    namespace["_call"](["bash", "-lc", "cd /workspace && ls -la"])
+
+    cmd = captured["cmd"]
+    assert cmd[-2] == "test@remote.example.com"
+    assert _shlex.split(cmd[-1]) == ["bash", "-lc", "cd /workspace && ls -la"]
+
+
+def _generate_ssh_key(tmp_path, *, passphrase: str = "", name: str = "id_ed25519") -> str:
+    """生成一把真实私钥（测试结束即随 tmp_path 丢弃），返回私钥文本。"""
+    import shutil as _shutil
+    import subprocess as _subprocess
+
+    if _shutil.which("ssh-keygen") is None:
+        pytest.skip("ssh-keygen 不可用，跳过私钥探针测试")
+    key_path = tmp_path / name
+    _subprocess.run(
+        [
+            "ssh-keygen", "-t", "ed25519", "-N", passphrase, "-C", name,
+            "-f", str(key_path), "-q",
+        ],
+        stdin=_subprocess.DEVNULL,
+        capture_output=True,
+        check=True,
+    )
+    return key_path.read_text(encoding="utf-8")
+
+
+def test_ssh_private_key_probe_separates_encrypted_from_unauthorized(tmp_path):
+    """``ssh`` 对「带 passphrase」和「未授权」报同一句话，必须靠本地探针区分。"""
+    import subprocess as _subprocess
+
+    from app.services.ai.runtime.agentscope.workspace_ssh import probe_private_key
+
+    plain = _generate_ssh_key(tmp_path, name="plain")
+    encrypted = _generate_ssh_key(tmp_path, passphrase="secret123", name="enc")
+    (tmp_path / "plain").write_text(plain, encoding="utf-8")
+    (tmp_path / "enc").write_text(encrypted, encoding="utf-8")
+
+    ok = probe_private_key(str(tmp_path / "plain"))
+    expected = _subprocess.run(
+        ["ssh-keygen", "-l", "-f", str(tmp_path / "plain")],
+        capture_output=True, text=True, check=True,
+    ).stdout.split()[1]
+
+    assert ok.status == "ok"
+    assert ok.fingerprint == expected
+
+    unusable = probe_private_key(str(tmp_path / "enc"))
+    assert unusable.status == "encrypted"
+    assert unusable.fingerprint == ""
+
+
+@pytest.mark.asyncio
+async def test_ssh_materialize_key_rejects_passphrase_protected_key(tmp_path):
+    """带 passphrase 的私钥在 BatchMode=yes 下永远不可能成功，必须直接报错。"""
+    from app.services.ai.runtime.agentscope.workspace_ssh import SshWorkspace
+
+    private_key = _generate_ssh_key(tmp_path, passphrase="secret123", name="enc")
+    workspace = SshWorkspace(host="remote.example.com", auth_type="key", private_key=private_key)
+
+    with pytest.raises(RuntimeError) as excinfo:
+        workspace._materialize_key()
+
+    message = str(excinfo.value)
+    assert "passphrase" in message
+    assert "BatchMode" in message
+
+
+@pytest.mark.asyncio
+async def test_ssh_rejected_key_is_removed_from_disk(monkeypatch, tmp_path):
+    """被判定不可用的私钥不能留在临时目录里（它可能带 passphrase）。"""
+    from app.services.ai.runtime.agentscope import workspace_ssh as ssh_module
+    from app.services.ai.runtime.agentscope.workspace_ssh import SshWorkspace
+
+    private_key = _generate_ssh_key(tmp_path, passphrase="secret123", name="enc")
+    created: list[str] = []
+    real_mkstemp = ssh_module.tempfile.mkstemp
+
+    def recording_mkstemp(*args, **kwargs):
+        fd, path = real_mkstemp(*args, **kwargs)
+        created.append(path)
+        return fd, path
+
+    monkeypatch.setattr(ssh_module.tempfile, "mkstemp", recording_mkstemp)
+
+    workspace = SshWorkspace(host="remote.example.com", auth_type="key", private_key=private_key)
+    with pytest.raises(RuntimeError):
+        workspace._materialize_key()
+
+    assert created, "应创建过临时私钥文件"
+    assert not any(os.path.exists(path) for path in created)
+    assert workspace._local_key_path is None
+
+
+@pytest.mark.asyncio
+async def test_ssh_connect_failure_reports_key_fingerprint(tmp_path):
+    """密钥认证失败时，错误里必须带上指纹，否则无法与远端 authorized_keys 比对。"""
+    import subprocess as _subprocess
+    from subprocess import CompletedProcess
+
+    from app.services.ai.runtime.agentscope.workspace_ssh import SshWorkspace
+
+    private_key = _generate_ssh_key(tmp_path, name="plain")
+    (tmp_path / "plain").write_text(private_key, encoding="utf-8")
+    fingerprint = _subprocess.run(
+        ["ssh-keygen", "-l", "-f", str(tmp_path / "plain")],
+        capture_output=True, text=True, check=True,
+    ).stdout.split()[1]
+
+    workspace = SshWorkspace(host="remote.example.com", auth_type="key", private_key=private_key)
+    workspace._run_remote_sync = lambda remote_args, **kwargs: CompletedProcess(
+        ["ssh"], 255, b"", b"test@remote.example.com: Permission denied (publickey,password)."
+    )
+
+    with pytest.raises(RuntimeError) as excinfo:
+        await workspace.initialize()
+
+    message = str(excinfo.value)
+    assert "Permission denied (publickey,password)" in message
+    assert fingerprint in message
+    assert "authorized_keys" in message
+
+
+@pytest.mark.asyncio
+async def test_ssh_connect_failure_hints_missing_private_key(tmp_path):
+    """auth_type=key 但没填私钥时会静默回退默认身份，必须在错误里点明。"""
+    from subprocess import CompletedProcess
+
+    from app.services.ai.runtime.agentscope.workspace_ssh import SshWorkspace
+
+    workspace = SshWorkspace(host="remote.example.com", auth_type="key")
+    workspace._run_remote_sync = lambda remote_args, **kwargs: CompletedProcess(
+        ["ssh"], 255, b"", b"test@remote.example.com: Permission denied (publickey,password)."
+    )
+
+    with pytest.raises(RuntimeError) as excinfo:
+        await workspace.initialize()
+
+    assert "未提供私钥内容" in str(excinfo.value)
+
+
+@pytest.mark.asyncio
+async def test_ssh_policy_warns_when_key_auth_has_no_private_key(monkeypatch, caplog):
+    """策略构建期就要提醒「未配置私钥 → 回退平台主机身份」。"""
+    import logging
+
+    from app.services.ai.runtime.agentscope import workspace as workspace_module
+    from app.services.ai.runtime.agentscope import workspace_ssh as ssh_module
+
+    class _FakeSshWorkspace:
+        def __init__(self, **kwargs):
+            self.host = kwargs.get("host")
+            self.port = kwargs.get("port")
+            self.user = kwargs.get("user", "")
+            self.auth_type = kwargs.get("auth_type")
+            self.remote_workdir = kwargs.get("remote_workdir")
+            self.default_mcps = []
+            self._local_key_path = None
+            self._local_password_path = None
+
+        def _materialize_key(self):
+            pass
+
+        def _materialize_password(self):
+            pass
+
+        async def initialize(self):
+            self.is_alive = True
+
+    class _FakeMcp:
+        def __init__(self, **kwargs):
+            pass
+
+    monkeypatch.setattr(ssh_module, "SshWorkspace", _FakeSshWorkspace)
+    monkeypatch.setattr(ssh_module, "build_ssh_tool_mcp", lambda **kwargs: _FakeMcp())
+
+    overrides = {
+        "sandbox_ssh_host": "remote.example.com",
+        "sandbox_ssh_port": "22",
+        "sandbox_ssh_user": "test",
+        "sandbox_ssh_auth_type": "key",
+        "sandbox_ssh_private_key": "",  # 关键：key 认证但没填私钥
+        "sandbox_ssh_remote_workdir": "/workspace",
+    }
+    with caplog.at_level(logging.WARNING):
+        await workspace_module._policy_ssh_workspace([], overrides)
+
+    assert any(
+        "sandbox_ssh_private_key is empty" in record.getMessage()
+        for record in caplog.records
+    )
+
+
+def test_ssh_inline_mcp_python_argv_has_no_dashdash(monkeypatch):
+    """``--`` 会被 CPython 当作普通参数，使 ``sys.argv[1]`` 变成 ``--``（路径错位）。"""
+    import shlex as _shlex
+
+    namespace = _load_ssh_inline_server(
+        monkeypatch,
+        SSH_HOST="remote.example.com",
+        SSH_AUTH_TYPE="key",
+        SSH_KEY_PATH="/tmp/id.pem",
+    )
+
+    command = namespace["_remote_python_command"](
+        "import sys\nprint(sys.argv)",
+        "/workspace/a b.txt",
+    )
+
+    assert _shlex.split(command) == [
+        "python3",
+        "-c",
+        "import sys\nprint(sys.argv)",
+        "/workspace/a b.txt",
+    ]
 
 
 def test_ssh_mcp_config_passes_password_file_path_not_secret(monkeypatch, tmp_path):

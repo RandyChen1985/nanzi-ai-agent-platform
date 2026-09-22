@@ -1,3 +1,5 @@
+import logging
+
 import pytest
 
 
@@ -45,6 +47,44 @@ async def test_sandbox_connection_endpoint_closes_initialized_workspace(monkeypa
     assert captured["policy"] == "e2b"
     assert captured["config_overrides"]["sandbox_e2b_api_key"] == "e2b-test-key"
     assert workspace.closed is True
+
+
+@pytest.mark.asyncio
+async def test_sandbox_connection_failure_logs_sanitized_reason(monkeypatch, caplog):
+    """失败日志必须带上真实原因（否则只剩 error_type 无法排障）且不含凭据。"""
+    from fastapi import HTTPException
+
+    from app.api.v1.endpoints.sandbox import (
+        SandboxConnectionTestRequest,
+        test_sandbox_connection,
+    )
+
+    async def fake_build(policy, config_overrides):
+        raise RuntimeError(
+            "SshWorkspace: cannot reach test@10.0.0.9:3333 over ssh "
+            "(auth_type=password): password=SuperSecret123 rejected"
+        )
+
+    monkeypatch.setattr(
+        "app.api.v1.endpoints.sandbox.build_sandbox_workspace_for_test",
+        fake_build,
+    )
+
+    with caplog.at_level(logging.WARNING, logger="app.api.v1.endpoints.sandbox"):
+        with pytest.raises(HTTPException) as exc_info:
+            await test_sandbox_connection(
+                policy="ssh",
+                body=SandboxConnectionTestRequest(sandbox_ssh_host="10.0.0.9"),
+                user_info={"role": "admin"},
+            )
+
+    assert exc_info.value.status_code == 502
+    assert "cannot reach test@10.0.0.9:3333" in exc_info.value.detail
+
+    log_text = caplog.text
+    assert "cannot reach test@10.0.0.9:3333" in log_text
+    assert "SuperSecret123" not in log_text
+    assert "password=******" in log_text
 
 
 @pytest.mark.asyncio

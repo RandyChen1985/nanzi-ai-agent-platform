@@ -1355,6 +1355,15 @@ async def _policy_ssh_workspace(
             "sandbox_policy=ssh with password auth requires the 'sshpass' "
             "CLI on the platform host (or use a private key instead)"
         )
+    if auth_type == "key" and not private_key:
+        # Not fatal: ssh may still authenticate with the platform host's own
+        # default identity or ssh-agent.  Warn loudly anyway — the resulting
+        # "Permission denied (publickey,password)" is otherwise baffling, since
+        # the operator believes the configured key is being used.
+        logger.warning(
+            "[SshPolicy] auth_type=key but sandbox_ssh_private_key is empty: "
+            "falling back to the platform host's default identities/ssh-agent"
+        )
 
     kwargs: dict[str, Any] = {
         "host": (await _sandbox_config_value(

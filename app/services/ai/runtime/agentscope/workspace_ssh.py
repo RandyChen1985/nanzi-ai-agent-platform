@@ -47,13 +47,14 @@ import logging
 import mimetypes
 import os
 import posixpath
+import re
 import shlex
 import shutil
 import subprocess
 import sys
 import tempfile
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Mapping, Sequence
 
 from agentscope.mcp import MCPClient  # type: ignore[attr-defined]
 from agentscope.mcp import StdioMCPConfig  # type: ignore[attr-defined]
@@ -101,6 +102,194 @@ class _ExecResult:
 def _have_sshpass() -> bool:
     """True when the ``sshpass`` CLI is on the platform host's PATH."""
     return shutil.which("sshpass") is not None
+
+
+#: Upper bound for the ssh diagnostics embedded in errors/logs.
+_SSH_DIAGNOSTIC_LIMIT = 400
+
+#: Install hints surfaced when the platform host lacks the ssh/sshpass CLI.
+_SSH_CLI_INSTALL_HINT = (
+    "install the OpenSSH client and the 'sshpass' CLI on the platform host "
+    "(Debian/Ubuntu: apt-get install -y openssh-client sshpass; "
+    "macOS: brew install sshpass)"
+)
+
+
+def _missing_ssh_cli_reason(exc: FileNotFoundError) -> str:
+    """Explain a missing ``ssh``/``sshpass`` binary on the platform host.
+
+    ``subprocess`` raises :class:`FileNotFoundError` when the executable is not
+    on ``PATH``; without this hint the caller only sees a generic
+    "cannot reach host" message even though nothing was ever dialed.
+    """
+    binary = os.path.basename(str(exc.filename or "").strip()) or "ssh"
+    return f"the '{binary}' CLI is not available on the platform host: {_SSH_CLI_INSTALL_HINT}"
+
+
+#: ``ssh-keygen``-derived classification of a materialized private key.
+_KEY_PROBE_OK = "ok"
+_KEY_PROBE_ENCRYPTED = "encrypted"
+_KEY_PROBE_INVALID = "invalid"
+_KEY_PROBE_UNAVAILABLE = "unavailable"
+
+
+@dataclass(frozen=True)
+class _PrivateKeyProbe:
+    """Outcome of inspecting a configured private key on the platform host."""
+
+    status: str
+    fingerprint: str = ""
+    detail: str = ""
+
+
+def _public_key_fingerprint(public_key_line: str) -> str:
+    """``SHA256:...`` fingerprint of an OpenSSH public-key line (ssh-keygen format)."""
+    parts = str(public_key_line or "").split()
+    if len(parts) < 2:
+        return ""
+    try:
+        blob = base64.b64decode(parts[1], validate=True)
+    except Exception:  # noqa: BLE001
+        return ""
+    digest = base64.b64encode(hashlib.sha256(blob).digest()).decode()
+    return f"SHA256:{digest.rstrip('=')}"
+
+
+def probe_private_key(key_path: str) -> _PrivateKeyProbe:
+    """Classify a materialized private key before ``ssh`` ever dials out.
+
+    ``ssh`` reports a **passphrase-protected** key and an **unauthorized** key
+    with the exact same ``Permission denied (publickey,password)`` line (both
+    verified against a live sshd), so that message alone cannot tell an operator
+    which side to fix.  ``ssh-keygen -y`` separates the cases: it decrypts the
+    key locally (stdin is closed on purpose, so it can never prompt) and either
+    prints the public half — giving us the fingerprint to compare with the
+    remote ``authorized_keys`` — or fails with ``incorrect passphrase``.
+    """
+    try:
+        proc = subprocess.run(
+            ["ssh-keygen", "-y", "-P", "", "-f", key_path],
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            timeout=15,
+        )
+    except FileNotFoundError:
+        return _PrivateKeyProbe(
+            _KEY_PROBE_UNAVAILABLE,
+            detail=(
+                "the 'ssh-keygen' CLI is not available on the platform host: "
+                f"{_SSH_CLI_INSTALL_HINT}"
+            ),
+        )
+    except subprocess.TimeoutExpired:
+        return _PrivateKeyProbe(_KEY_PROBE_UNAVAILABLE, detail="'ssh-keygen' timed out")
+    except (OSError, subprocess.SubprocessError) as exc:  # noqa: BLE001
+        return _PrivateKeyProbe(
+            _KEY_PROBE_INVALID,
+            detail=_summarize_ssh_diagnostics(f"{type(exc).__name__}: {exc}"),
+        )
+
+    if proc.returncode == 0:
+        fingerprint = _public_key_fingerprint(proc.stdout.decode("utf-8", "replace"))
+        return _PrivateKeyProbe(_KEY_PROBE_OK, fingerprint=fingerprint)
+
+    raw = proc.stderr or proc.stdout
+    detail = _summarize_ssh_diagnostics(raw) or "ssh-keygen rejected the private key"
+    lowered = detail.lower()
+    if "incorrect passphrase" in lowered or "enter passphrase" in lowered:
+        return _PrivateKeyProbe(_KEY_PROBE_ENCRYPTED, detail=detail)
+    return _PrivateKeyProbe(_KEY_PROBE_INVALID, detail=detail)
+
+
+def build_remote_command(remote_args: Sequence[str]) -> str:
+    """Join a remote argv into one shell-quoted command string for ``ssh``.
+
+    ``ssh`` does not forward an argv: it joins every argument after the
+    destination with spaces and hands the result to the **remote login shell**,
+    which re-parses it.  Unquoted elements are therefore split at every space
+    and newline — a multi-line ``python3 -c`` payload reaches the remote as
+    ``python3 -c import`` (SyntaxError) and a ``bash -lc`` snippet silently
+    loses its ``cd`` because only the first word becomes the ``-c`` argument.
+    Quoting each element keeps the remote argv byte-identical.
+    """
+    return " ".join(shlex.quote(str(arg)) for arg in remote_args)
+
+
+def _summarize_ssh_diagnostics(raw: bytes | str, *, limit: int = _SSH_DIAGNOSTIC_LIMIT) -> str:
+    """Collapse raw ssh output into one short, credential-free diagnostic line.
+
+    ssh writes its actionable failures to stderr ("Host key verification
+    failed", "Permission denied (publickey,password)", "Connection refused").
+    The text is masked before it reaches an error message or a log line, so a
+    password echoed by a wrapper can never leak.
+    """
+    if isinstance(raw, bytes):
+        text = raw.decode("utf-8", "replace")
+    else:
+        text = str(raw or "")
+    text = " ".join(text.split())
+    if not text:
+        return ""
+
+    from app.utils.masking import mask_sensitive_data
+
+    masked = str(mask_sensitive_data(text) or "")
+    if len(masked) > limit:
+        masked = masked[:limit] + "…"
+    return masked
+
+
+def _normalize_private_key(raw_key: str) -> str:
+    """Normalize private key text into a valid multi-line PEM/OpenSSH format.
+
+    Handles:
+    - Escaped newlines ('\\n' or '\\r\\n' -> '\n')
+    - CRLF to LF ('\r\n' -> '\n')
+    - Surrounding string quotes if pasted literally
+    - Keys flattened into a single line with space separators
+    - Ensuring trailing newline required by OpenSSH
+    """
+    if not raw_key:
+        return ""
+    text = raw_key.strip()
+    if (text.startswith('"') and text.endswith('"')) or (text.startswith("'") and text.endswith("'")):
+        text = text[1:-1].strip()
+
+    if "\\n" in text:
+        text = text.replace("\\r\\n", "\n").replace("\\n", "\n")
+    else:
+        text = text.replace("\r\n", "\n").replace("\r", "\n")
+
+    # If the key was flattened into a single line (newlines replaced by spaces)
+    if "\n" not in text:
+        m = re.search(
+            r"(-----BEGIN [A-Z0-9 ]+?PRIVATE KEY-----)(.+?)(-----END [A-Z0-9 ]+?PRIVATE KEY-----)",
+            text,
+        )
+        if m:
+            header = m.group(1).strip()
+            body = m.group(2).strip()
+            footer = m.group(3).strip()
+            parts = [p for p in body.split() if p]
+            lines: list[str] = []
+            for p in parts:
+                if len(p) > 64:
+                    for i in range(0, len(p), 64):
+                        lines.append(p[i : i + 64])
+                else:
+                    lines.append(p)
+            text = "\n".join([header, *lines, footer])
+
+    lines = [line.strip() for line in text.split("\n")]
+    while lines and not lines[0]:
+        lines.pop(0)
+    while lines and not lines[-1]:
+        lines.pop()
+
+    clean_text = "\n".join(lines)
+    if clean_text and not clean_text.endswith("\n"):
+        clean_text += "\n"
+    return clean_text
 
 
 class SshWorkspace(WorkspaceBase):
@@ -169,6 +358,8 @@ class SshWorkspace(WorkspaceBase):
         self._skill_lock = asyncio.Lock()
         # Materialized private key temp file, cleaned in close().
         self._local_key_path: str | None = None
+        # SHA256 fingerprint of the configured key (from the local probe).
+        self._key_fingerprint = ""
         # Password file used only by the local inline MCP child. Keeping the
         # secret out of that child's environment and argv avoids disclosure
         # through process inspection.
@@ -199,8 +390,17 @@ class SshWorkspace(WorkspaceBase):
         *,
         password_fd: int | None = None,
     ) -> list[str]:
-        """Build an SSH argv without ever placing the password in argv."""
-        command = self._ssh_args() + [self._target(), *remote_args]
+        """Build an SSH argv without ever placing the password in argv.
+
+        The remote command is shell-quoted into a **single** argv element: ssh
+        forwards it as one string to the remote login shell, which re-parses
+        it.  Passing the elements separately would split every multi-line
+        ``python3 -c`` payload and every ``bash -lc`` snippet at whitespace.
+        """
+        command = self._ssh_args() + [
+            self._target(),
+            build_remote_command(remote_args),
+        ]
         if self.auth_type == "password":
             if password_fd is None:
                 raise ValueError("password SSH commands require a password fd")
@@ -269,18 +469,62 @@ class SshWorkspace(WorkspaceBase):
         return self.host
 
     def _materialize_key(self) -> None:
-        """Write ``self.private_key`` contents to a temp file once."""
+        """Write ``self.private_key`` contents to a temp file once.
+
+        The key is also *classified* here: a passphrase-protected or corrupted
+        key is rejected with an explicit message instead of being handed to
+        ``ssh``, whose ``Permission denied (publickey,password)`` output cannot
+        distinguish those cases from a merely unauthorized key.
+        """
         if not self.private_key or self._local_key_path:
             return
+        clean_key = _normalize_private_key(self.private_key)
         fd, path = tempfile.mkstemp(prefix="dsh-ssh-key-", suffix=".pem")
         try:
-            with os.fdopen(fd, "w") as fh:
-                fh.write(self.private_key)
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                fh.write(clean_key)
             os.chmod(path, 0o600)
         except Exception:
             os.unlink(path)
             raise
         self._local_key_path = path
+
+        probe = probe_private_key(path)
+        self._key_fingerprint = probe.fingerprint
+        if probe.status in (_KEY_PROBE_ENCRYPTED, _KEY_PROBE_INVALID):
+            # Never leave an unusable (possibly passphrase-protected) key on disk.
+            self._discard_local_key()
+            if probe.status == _KEY_PROBE_ENCRYPTED:
+                raise RuntimeError(
+                    "SshWorkspace: the configured private key is passphrase-protected "
+                    "but the platform connects with BatchMode=yes and cannot prompt for "
+                    "a passphrase — use a key without a passphrase, or switch "
+                    f"auth_type to password. ssh-keygen said: {probe.detail}"
+                )
+            raise RuntimeError(
+                "SshWorkspace: the configured private key is not a usable private "
+                f"key: {probe.detail}"
+            )
+        if probe.status == _KEY_PROBE_OK:
+            logger.debug(
+                "SshWorkspace: private key loaded (%s, %s)",
+                probe.fingerprint or "fingerprint unavailable",
+                path,
+            )
+        else:
+            # No ssh-keygen on the platform host: keep going, the key still
+            # works for ssh itself.
+            logger.debug("SshWorkspace: skipped private key probe: %s", probe.detail)
+
+    def _discard_local_key(self) -> None:
+        """Remove the materialized private key temp file (best effort)."""
+        if self._local_key_path:
+            try:
+                os.unlink(self._local_key_path)
+            except OSError:
+                pass
+        self._local_key_path = None
+        self._key_fingerprint = ""
 
     def _materialize_password(self) -> None:
         """Write the MCP child's password to a mode-600 temp file once."""
@@ -336,20 +580,70 @@ class SshWorkspace(WorkspaceBase):
         except asyncio.TimeoutError:
             return _ExecResult(exit_code=-1, stdout=b"", stderr=b"timed out")
 
-    async def _connect_test(self) -> bool:
-        """Run a trivial remote command; False when unreachable."""
+    def _key_auth_hint(self, reason: str) -> str:
+        """Append the guidance ``ssh`` itself cannot give for a key-auth failure.
 
-        def _run() -> bool:
+        The remote prints one identical "Permission denied (publickey,password)"
+        line whether the key is unauthorized or unusable, so the fingerprint is
+        surfaced to make the two cases distinguishable from the UI alone.
+        """
+        if self.auth_type != "key":
+            return ""
+        lowered = str(reason or "").lower()
+        if not any(
+            marker in lowered
+            for marker in ("permission denied", "publickey", "authentication", "passphrase")
+        ):
+            return ""
+        if self._local_key_path and self._key_fingerprint:
+            return (
+                f" | 已提供私钥 {self._key_fingerprint}（SHA256 指纹）：该报错无法区分"
+                "「对应公钥未加入远端 authorized_keys」与「私钥受 passphrase 保护」，"
+                "请确认远端 ~/.ssh/authorized_keys 含此指纹对应的公钥，且 ~/.ssh 为 700、"
+                "authorized_keys 为 600"
+            )
+        if not self._local_key_path:
+            return (
+                " | 当前未提供私钥内容，ssh 只能回退平台主机的默认身份或 ssh-agent；"
+                "若需使用指定私钥，请在「SSH 私钥内容」中填写"
+            )
+        return ""
+
+    async def _connect_test(self) -> tuple[bool, str]:
+        """Run a trivial remote command.
+
+        Returns ``(reachable, reason)``: ``reason`` is empty on success and a
+        short, credential-free explanation on failure, so the caller can report
+        a missing ``ssh``/``sshpass`` CLI, "Host key verification failed" or
+        "Permission denied" instead of a bare "cannot reach".
+        """
+
+        def _run() -> tuple[bool, str]:
             try:
                 proc = self._run_remote_sync(
                     ["echo", "dsh-ssh-ok"],
                     timeout=45,
                 )
-                return proc.returncode == 0 and b"dsh-ssh-ok" in proc.stdout
-            except Exception:  # noqa: BLE001
-                return False
+            except FileNotFoundError as exc:
+                # The platform host has no ssh/sshpass binary at all.
+                return False, _missing_ssh_cli_reason(exc)
+            except Exception as exc:  # noqa: BLE001
+                return False, _summarize_ssh_diagnostics(
+                    f"{type(exc).__name__}: {exc}"
+                )
+            if proc.returncode == 0 and b"dsh-ssh-ok" in proc.stdout:
+                return True, ""
+            return (
+                False,
+                _summarize_ssh_diagnostics(proc.stderr or proc.stdout)
+                or f"ssh probe exited with code {proc.returncode}",
+            )
 
         return await asyncio.to_thread(_run)
+
+    def _remote_abspath(self, path: str) -> str:
+        """Resolve a remote path (absolute kept, relative to ``remote_workdir``)."""
+        return path if path.startswith("/") else posixpath.join(self.remote_workdir, path)
 
     async def _read(self, path: str) -> bytes:
         """Fetch a remote file as raw bytes via base64 over stdin.
@@ -358,7 +652,7 @@ class SshWorkspace(WorkspaceBase):
         file so the bytes cross the ssh channel verbatim (no termios/CRLF
         rewriting) regardless of content.
         """
-        abs_path = path if path.startswith("/") else posixpath.join(self.remote_workdir, path)
+        abs_path = self._remote_abspath(path)
         py = (
             "import base64,sys;"
             f"p={abs_path!r};"
@@ -391,9 +685,13 @@ class SshWorkspace(WorkspaceBase):
         return base64.b64decode(out)
 
     async def _write(self, path: str, content: bytes) -> None:
-        """Write raw bytes to a remote file via a python3 stdin sink."""
-        abs_path = path if path.startswith("/") else posixpath.join(self.remote_workdir, path)
-        dirname = posixpath.dirname(abs_path)
+        """Write raw bytes to a remote file via a python3 stdin sink.
+
+        Parent directories are created by the embedded python program itself,
+        so a single ssh round-trip is enough — seeding N skills therefore costs
+        N connections instead of 2N, which matters on a high-latency link.
+        """
+        abs_path = self._remote_abspath(path)
         py = (
             "import base64,sys,os;\n"
             f"p={abs_path!r};\n"
@@ -403,11 +701,6 @@ class SshWorkspace(WorkspaceBase):
         b64 = base64.b64encode(content).decode()
 
         def _run() -> _ExecResult:
-            # ensure remote parent dir first
-            self._run_remote_sync(
-                ["bash", "-lc", f"mkdir -p {shlex.quote(dirname)}"],
-                timeout=120,
-            )
             try:
                 proc = self._run_remote_sync(
                     ["python3", "-c", py],
@@ -421,7 +714,72 @@ class SshWorkspace(WorkspaceBase):
         res = await asyncio.to_thread(_run)
         if res.exit_code != 0:
             raise OSError(
-                f"remote write failed: {res.stderr.decode(errors='replace')}"
+                "remote write failed: "
+                + (
+                    _summarize_ssh_diagnostics(res.stderr)
+                    or f"exit code {res.exit_code}"
+                )
+            )
+
+    async def _write_many(self, files: Mapping[str, bytes]) -> None:
+        """Write several remote files over a **single** ssh connection.
+
+        Seeding one skill per connection costs an ssh handshake (multi-second on
+        a high-latency link) per file, which is what blew the 60s prewarm
+        budget.  The remote program creates parent directories itself and
+        reports per-file failures on stdout, so one bad path cannot abort the
+        whole batch.
+        """
+        resolved = {self._remote_abspath(p): c for p, c in files.items()}
+        if not resolved:
+            return
+        payload = json.dumps(
+            {p: base64.b64encode(c).decode("utf-8") for p, c in resolved.items()}
+        )
+        py = (
+            "import base64,json,os,sys;\n"
+            "d=json.loads(sys.stdin.read());\n"
+            "errors={};\n"
+            "for p,c in d.items():\n"
+            "    try:\n"
+            "        os.makedirs(os.path.dirname(p),exist_ok=True)\n"
+            "        open(p,'wb').write(base64.b64decode(c))\n"
+            "    except Exception as e:\n"
+            "        errors[p]=repr(e)\n"
+            "print(json.dumps({'written':len(d)-len(errors),'errors':errors}))\n"
+        )
+
+        def _run() -> _ExecResult:
+            try:
+                proc = self._run_remote_sync(
+                    ["python3", "-c", py],
+                    input_data=payload.encode("utf-8"),
+                    timeout=180,
+                )
+                return _ExecResult(proc.returncode, proc.stdout, proc.stderr)
+            except subprocess.TimeoutExpired:
+                return _ExecResult(-1, b"", b"timed out")
+
+        res = await asyncio.to_thread(_run)
+        if res.exit_code != 0:
+            raise OSError(
+                "remote batch write failed: "
+                + (
+                    _summarize_ssh_diagnostics(res.stderr)
+                    or f"exit code {res.exit_code}"
+                )
+            )
+        try:
+            report = json.loads(res.stdout.decode("utf-8", "replace").strip() or "{}")
+        except ValueError:
+            return
+        failed = report.get("errors") or {}
+        if failed:
+            logger.warning(
+                "SshWorkspace: %d of %d seeded file(s) failed: %s",
+                len(failed),
+                len(resolved),
+                _summarize_ssh_diagnostics(json.dumps(failed, ensure_ascii=False)),
             )
 
     # ── lifecycle ───────────────────────────────────────────────
@@ -443,10 +801,13 @@ class SshWorkspace(WorkspaceBase):
         if self.auth_type == "key" and self.private_key:
             self._materialize_key()
 
-        if not await self._connect_test():
+        reachable, reason = await self._connect_test()
+        if not reachable:
             raise RuntimeError(
                 f"SshWorkspace: cannot reach {self._target()}:{self.port} "
-                f"over ssh (auth_type={self.auth_type})"
+                f"over ssh (auth_type={self.auth_type}): "
+                f"{reason or 'ssh probe failed'}"
+                f"{self._key_auth_hint(reason)}"
             )
 
         # Prepare the remote sandbox layout.
@@ -460,7 +821,10 @@ class SshWorkspace(WorkspaceBase):
         if mkdir_res.exit_code != 0:
             raise RuntimeError(
                 "SshWorkspace: failed to prepare remote workdir: "
-                + mkdir_res.stderr.decode(errors="replace")
+                + (
+                    _summarize_ssh_diagnostics(mkdir_res.stderr)
+                    or f"exit code {mkdir_res.exit_code}"
+                )
             )
 
         await self._seed_skills()
@@ -480,17 +844,16 @@ class SshWorkspace(WorkspaceBase):
                 if inspect.isawaitable(result):
                     await result
             except Exception as exc:  # noqa: BLE001
-                logger.warning(
-                    "SshWorkspace: failed to close MCP %s: %s",
-                    type(mcp).__name__,
-                    exc,
-                )
+                if "not connected" in str(exc).lower():
+                    logger.debug("SshWorkspace: MCP %s not connected at teardown", type(mcp).__name__)
+                else:
+                    logger.warning(
+                        "SshWorkspace: failed to close MCP %s: %s",
+                        type(mcp).__name__,
+                        exc,
+                    )
         if self._local_key_path:
-            try:
-                os.unlink(self._local_key_path)
-            except OSError:
-                pass
-            self._local_key_path = None
+            self._discard_local_key()
         if self._local_password_path:
             try:
                 os.unlink(self._local_password_path)
@@ -559,15 +922,25 @@ class SshWorkspace(WorkspaceBase):
             )
         return skills
 
-    async def add_skill(self, dirname: str) -> None:
-        """Copy a local skill ``SKILL.md`` dir into remote ``skills/``."""
+    def _skill_targets(self, dirname: str) -> tuple[str, bytes]:
+        """Local skill ``SKILL.md`` → (remote target path, payload bytes)."""
         skill_path = os.path.join(dirname, "SKILL.md")
         if not os.path.isfile(skill_path):
             raise FileNotFoundError(dirname)
         with open(skill_path, encoding="utf-8") as fh:
             content = fh.read()
-        remote_dir = posixpath.join(self.remote_workdir, _REMOTE_SKILLS_DIR, os.path.basename(dirname))
-        await self._write(posixpath.join(remote_dir, "SKILL.md"), content.encode("utf-8"))
+        target = posixpath.join(
+            self.remote_workdir,
+            _REMOTE_SKILLS_DIR,
+            os.path.basename(dirname),
+            "SKILL.md",
+        )
+        return target, content.encode("utf-8")
+
+    async def add_skill(self, dirname: str) -> None:
+        """Copy a local skill ``SKILL.md`` dir into remote ``skills/``."""
+        target, payload = self._skill_targets(dirname)
+        await self._write(target, payload)
 
     async def remove_skill(self, dirname: str) -> None:
         """Remove a remote skill directory (KeyError when missing)."""
@@ -619,7 +992,12 @@ class SshWorkspace(WorkspaceBase):
             logger.warning("SshWorkspace: failed to save remote .mcp: %s", e)
 
     async def _seed_skills(self) -> None:
-        """Seed local ``skill_paths`` into remote ``skills/`` once."""
+        """Seed local ``skill_paths`` into remote ``skills/`` once.
+
+        All skills travel in one batched write: a per-skill ssh round-trip
+        (16 skills here) easily exceeds the 60s workspace prewarm budget of the
+        chat pipeline on a high-latency remote host.
+        """
         if not self.skill_paths:
             return
         try:
@@ -628,11 +1006,23 @@ class SshWorkspace(WorkspaceBase):
                 return  # already populated — respect user state
         except Exception:  # noqa: BLE001
             return
+
+        pending: dict[str, bytes] = {}
         for path in self.skill_paths:
             try:
-                await self.add_skill(path)
+                target, payload = self._skill_targets(path)
             except Exception as e:  # noqa: BLE001
                 logger.warning("SshWorkspace: skip skill %r: %s", path, e)
+                continue
+            pending[target] = payload
+        if not pending:
+            return
+        try:
+            await self._write_many(pending)
+        except Exception as e:  # noqa: BLE001
+            logger.warning(
+                "SshWorkspace: failed to seed %d skill(s): %s", len(pending), e
+            )
 
     # ── offload ─────────────────────────────────────────────────
 
@@ -735,6 +1125,7 @@ def _parse_frontmatter(doc: str) -> tuple[dict[str, str], str]:
 # gateway spawns ``python -c <script>`` locally.
 _SSH_INLINE_SERVER = """\
 import json
+import hashlib
 import os
 import shlex as _sh
 import subprocess
@@ -781,8 +1172,19 @@ def _read_password():
         return ""
 
 
+def _remote_command(argv):
+    return " ".join(_sh.quote(str(arg)) for arg in argv)
+
+
 def _call(argv, input_text=None, timeout=600):
-    cmd = list(_ssh_args()) + list(argv)
+    \"\"\"Run a remote command; ``argv`` excludes the ssh destination.
+
+    ssh joins everything after the destination and lets the remote login shell
+    re-parse it, so the argv is shell-quoted into a single command string.
+    Passing the elements through unquoted would split ``bash -lc <snippet>``
+    (only the first word reaches ``-c``) and multi-line ``python3 -c`` payloads.
+    \"\"\"
+    cmd = list(_ssh_args()) + [_target(), _remote_command(argv)]
     password_read_fd = None
     password_write_fd = None
     process = None
@@ -829,9 +1231,11 @@ def _call(argv, input_text=None, timeout=600):
 
 
 def _remote_python_command(source, *args):
+    # No "--" separator: after "-c" CPython treats "--" as a regular argument,
+    # which would shift sys.argv and make sys.argv[1] resolve to "--".
     command = "python3 -c " + _sh.quote(source)
     if args:
-        command += " -- " + " ".join(_sh.quote(str(arg)) for arg in args)
+        command += " " + " ".join(_sh.quote(str(arg)) for arg in args)
     return command
 
 
@@ -853,7 +1257,7 @@ def bash(command: str, cwd: str = ".") -> str:
     workdir = _ROOT if cwd in ("", ".") else _abspath(cwd)
     import shlex as _sh
     remote = f"cd {_sh.quote(workdir)} && {command}"
-    proc = _call([_target(), "bash", "-lc", remote])
+    proc = _call(["bash", "-lc", remote])
     if proc is None:
         return json.dumps({"ok": False, "error": "ssh unavailable or timed out"})
     return json.dumps({
@@ -890,7 +1294,7 @@ def read(path: str, offset: int = 0, limit: int = 2000) -> str:
         "sys.stdout.write(json.dumps({'lines': lines}))\\n"
     )
     proc = _call(
-        [_target(), "bash", "-lc", _remote_python_command(py, p)],
+        ["bash", "-lc", _remote_python_command(py, p)],
         timeout=120,
     )
     if proc is None:
@@ -935,7 +1339,7 @@ def write(path: str, content: str) -> str:
         "print('ok')\\n"
     )
     proc = _call(
-        [_target(), "bash", "-lc", _remote_python_command(py, p)],
+        ["bash", "-lc", _remote_python_command(py, p)],
         input_text=content,
         timeout=120,
     )
@@ -969,7 +1373,7 @@ def glob(pattern: str, cwd: str = ".") -> str:
         " print('__DOSH_ERR__'+repr(e)); sys.exit(0)\\n"
     )
     proc = _call(
-        [_target(), "bash", "-lc", _remote_python_command(py, pattern, base)],
+        ["bash", "-lc", _remote_python_command(py, pattern, base)],
         timeout=120,
     )
     if proc is None:

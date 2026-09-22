@@ -31,6 +31,9 @@ ENV TZ=Asia/Shanghai
 ENV PLATFORM_TIMEZONE=Asia/Shanghai
 
 # 系统依赖：Oracle(libaio)、SQL Server(unixODBC + msodbcsql18)、时区数据
+# openssh-client + sshpass：ssh 沙箱策略（sandbox_policy=ssh）依托平台主机的
+# ssh CLI 连接远端沙箱主机；私钥认证只需 openssh-client，密码认证还需 sshpass。
+# python:3.11-slim 基础镜像两者都不自带，缺失时会直接导致 ssh 策略连接测试失败。
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     ca-certificates \
@@ -47,6 +50,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     unzip \
     tzdata \
     netcat-openbsd \
+    openssh-client \
+    sshpass \
     && ln -snf /usr/share/zoneinfo/$TZ /etc/localtime \
     && echo $TZ > /etc/timezone \
     && (apt-get install -y --no-install-recommends libaio1 \

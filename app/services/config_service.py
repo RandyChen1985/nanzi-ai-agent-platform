@@ -432,14 +432,20 @@ class ConfigService:
         old_value = None # Initialize old_value outside the session block
         async with AsyncSessionLocal() as session:
             try:
-                # 1. Fetch old value
+                # 1. Fetch old value and secret flag
                 result = await session.execute(
-                    select(_SYSTEM_CONFIGS_TABLE.c.value).where(
+                    select(_SYSTEM_CONFIGS_TABLE.c.value, _SYSTEM_CONFIGS_TABLE.c.is_secret).where(
                         _SYSTEM_CONFIGS_TABLE.c.key == key
                     )
                 )
                 row = result.fetchone()
                 old_value = row[0] if row else None
+                is_secret = bool(row[1]) if row and row[1] is not None else False
+
+                # 避免前端回显的脱敏掩码（如包含 ****）覆盖已存在的敏感配置
+                if is_secret and "****" in value:
+                    logger.info("配置项 %s 为敏感配置且包含脱敏掩码，跳过覆盖以保留原始有效密钥", key)
+                    return False
                 
                 if old_value is None:
                     # Key doesn't exist, we must use set_config but since we are in async context manager here,

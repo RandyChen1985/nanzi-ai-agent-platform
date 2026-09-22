@@ -115,10 +115,11 @@
     - [7.3.4 Docker 沙箱核心运行全流程与架构](#734-docker-沙箱核心运行全流程与架构)
     - [7.3.5 常见 Docker 沙箱排查与报错解决](#735-常见-docker-沙箱排查与报错解决)
     - [7.3.6 Kubernetes 原生 Pod 安全沙箱（k8s 策略详解）](#736-kubernetes-原生-pod-安全沙箱k8s-策略详解)
-    - [7.3.7 智能体上下文预算管控与两阶段溢出压缩](#737-智能体上下文预算管控与两阶段溢出压缩)
-    - [7.3.8 生成文件与工件发布配置 (File Download Prefix)](#738-生成文件与工件发布配置-file-download-prefix)
-    - [7.3.9 AgentScope 运行时状态注入与时间感知](#739-agentscope-运行时状态注入与时间感知)
-    - [7.3.10 系统参数修改后的生效机制 (Save &amp; Hot Reloading)](#7310-系统参数修改后的生效机制-save--hot-reloading)
+    - [7.3.7 SSH 沙箱运行前提条件与连接排查](#737-ssh-沙箱运行前提条件与连接排查)
+    - [7.3.8 智能体上下文预算管控与两阶段溢出压缩](#738-智能体上下文预算管控与两阶段溢出压缩)
+    - [7.3.9 生成文件与工件发布配置 (File Download Prefix)](#739-生成文件与工件发布配置-file-download-prefix)
+    - [7.3.10 AgentScope 运行时状态注入与时间感知](#7310-agentscope-运行时状态注入与时间感知)
+    - [7.3.11 系统参数修改后的生效机制 (Save &amp; Hot Reloading)](#7311-系统参数修改后的生效机制-save--hot-reloading)
   - [7.4 通知通道与外部集成 (Notifications &amp; Webhooks)](#74-通知通道与外部集成)
     - [7.4.1 多通道通知配置指引 (企微 / 钉钉 / 飞书 / 邮件 / Webhook)](#741-多通道通知配置指引-企微--钉钉--飞书--邮件--webhook)
     - [7.4.2 自动化任务调度中心的通知与告警绑定](#742-自动化任务调度中心的通知与告警绑定)
@@ -2805,7 +2806,111 @@ kubectl apply -f k8s_deploy/sandbox-rbac.example.yaml
 
 ---
 
-#### 7.3.7 智能体上下文预算管控与两阶段溢出压缩
+#### 7.3.7 SSH 沙箱运行前提条件与连接排查
+
+`sandbox_policy=ssh` 时，平台后端进程是**通过平台主机自身的 `ssh` 命令行**连接远端沙箱主机的（不是内置 Python SSH 库），并在远端 `sandbox_ssh_remote_workdir`（默认 `/workspace`）下自动创建 `data/`、`skills/`、`sessions/` 三个子目录。因此该策略能否跑通，完全取决于**平台主机（或平台容器）是否具备 ssh 工具链与已校验的主机密钥**。
+
+##### 1. 平台主机前置依赖（必查）
+
+| 依赖项 | 用途 | 缺失时的表现 |
+| :--- | :--- | :--- |
+| `ssh`（OpenSSH client） | 所有 ssh 策略调用 | 连接测试 502，提示 `the 'ssh' CLI is not available on the platform host` |
+| `sshpass` | 仅 `sandbox_ssh_auth_type=password` 时需要 | 连接测试 502，提示 `requires the 'sshpass' CLI on the platform host` |
+| `known_hosts` 中已有远端主机条目 | 平台固定使用 `StrictHostKeyChecking=yes` | 报 `Host key verification failed` |
+
+安装命令：
+
+```bash
+# Debian / Ubuntu（平台直接部署在宿主机时）
+apt-get install -y openssh-client sshpass
+
+# macOS（平台后端跑在本机时）
+brew install sshpass
+```
+
+> 💡 容器化部署（`docker/Dockerfile`）已内置 `openssh-client` 与 `sshpass`，无需手工安装；但**主机密钥仍需按下节录入**。
+
+##### 2. 主机密钥（known_hosts）必须预先校验
+
+远程代码沙箱不接受 TOFU（首次自动信任）也不跳过校验，平台固定使用 `StrictHostKeyChecking=yes`，且**不会自动写入 known_hosts**、界面上也没有录入入口。首次使用前必须在平台主机（容器化部署则在平台容器内）手工录入：
+
+```bash
+# 非默认端口同样适用；条目会以 [host]:port 的形式写入
+ssh-keyscan -p <端口> <主机> >> ~/.ssh/known_hosts
+```
+
+> ⚠️ **容器化部署注意**：平台容器的 `~/.ssh` 默认不在任何挂载卷内，容器重建后已录入的 known_hosts 会丢失，需要重新录入；如需持久化，请自行把 known_hosts 所在目录挂载进平台容器。
+
+##### 3. 配置项填写清单
+
+在【系统管理 -> 系统配置 -> 参数配置 -> 安全沙箱】中配置：
+
+| 配置项 | 说明 |
+| :--- | :--- |
+| `sandbox_ssh_host` / `sandbox_ssh_port` | 远端主机与 SSH 端口（默认 `22`），必填 |
+| `sandbox_ssh_user` | 登录用户名，留空表示使用远端默认用户 |
+| `sandbox_ssh_auth_type` | `password`（需 `sshpass`）或 `key`（私钥认证，无额外依赖，推荐） |
+| `sandbox_ssh_password` / `sandbox_ssh_private_key` | 与认证方式对应，敏感字段 |
+| `sandbox_ssh_remote_workdir` | 远端工作目录（默认 `/workspace`），远端用户需有写权限 |
+
+##### 4. 连接测试与常见报错对照
+
+在【系统配置 -> 参数配置 -> 安全沙箱】中点击 SSH 沙箱的 **「测试连接」**：该接口会用**页面当前填写的配置**真实初始化一次远端沙箱，完成后立即释放资源。失败时接口返回 502，响应体 `detail` 与后端日志（`沙箱连接测试失败 policy=ssh ... detail=...`，文本已脱敏）都会带上 ssh 的真实 stderr 摘要，可直接按下表对照：
+
+| 报错关键字 | 根因 | 处理方式 |
+| :--- | :--- | :--- |
+| `the 'sshpass' CLI is not available on the platform host` | 平台主机缺少 `sshpass` | 安装 `sshpass`，或把认证方式改为 `key` |
+| `requires the 'sshpass' CLI on the platform host` | 同上（策略构建期的前置校验，先于网络连接触发） | 同上 |
+| `the 'ssh' CLI is not available on the platform host` | 平台主机/容器缺少 OpenSSH client | 安装 `openssh-client` |
+| `requires a non-empty password` | `auth_type=password` 但密码为空 | 补填密码并保存后再测试 |
+| `Host key verification failed` | known_hosts 中没有该主机（或远端主机密钥已变更） | 按第 2 节用 `ssh-keyscan` 录入 |
+| `Permission denied (publickey,password)` | 账号/密码/私钥错误，或远端 sshd 禁用了该认证方式 | 核对凭据与远端 `sshd_config`；**密钥方式下这句话无法区分两种原因，见下一节** |
+| `Connection refused` / `Connection timed out` | 网络不通、端口填错或被防火墙拦截 | 用 `telnet <host> <port>` 验证连通性 |
+| `failed to prepare remote workdir` | 远端用户对 `remote_workdir` 无写权限 | 更换为可写目录或授权 |
+
+> ⚠️ **密钥认证下 `Permission denied (publickey,password)` 有歧义**：实测（同一台真实 sshd 对照）
+> 「私钥带 passphrase」与「对应公钥未加入远端 `authorized_keys`」输出的 stderr **逐字相同**，
+> 都是 PQ 警告 + 这一行，不会出现 `Load key ... invalid format`。
+> 为消除歧义，平台在做密钥认证前会用 `ssh-keygen -y` 在本地判别私钥：
+>
+> | 判别结果 | 平台行为 |
+> | :--- | :--- |
+> | 私钥无 passphrase 且格式合法 | 继续连接；失败时在错误里附上 **私钥 SHA256 指纹**，便于与远端 `authorized_keys` 比对 |
+> | 私钥带 passphrase | **直接报错**：`the configured private key is passphrase-protected but the platform connects with BatchMode=yes`（自动化场景无法输入口令，请改用无口令私钥或密码认证） |
+> | 私钥损坏/被截断 | 直接报错：`the configured private key is not a usable private key: ...` |
+> | 未填私钥（`auth_type=key` 但私钥为空） | 打印告警 `auth_type=key but sandbox_ssh_private_key is empty`，并在失败信息里提示「ssh 只能回退平台主机的默认身份或 ssh-agent」 |
+>
+> 手工复核命令（在平台主机上执行，`-v` 会打印实际尝试的身份文件）：
+>
+> ```bash
+> ssh-keygen -l -f /path/to/private_key        # 取得 SHA256 指纹
+> ssh -v -i /path/to/private_key -p <port> <user>@<host> echo ok
+> ```
+>
+> 远端需要同时满足：`~/.ssh/authorized_keys` 含该指纹对应的公钥、`~/.ssh` 权限 `700`、
+> `~/.ssh/authorized_keys` 权限 `600`、家目录不可被组/其他用户写（否则 sshd 会**静默忽略**该密钥）。
+
+##### 5. 为什么「测试连接」通过了，聊天时却报「沙箱工作区准备 失败」？
+
+两者**检测范围不同**，需要注意：
+
+- **「测试连接」按钮用的是页面上的当前值（包含尚未保存的修改）**，而**聊天与实际运行只读已保存的配置**。所以在配置页「预览/未保存」状态下点测试，即使测试通过也不代表聊天会生效；反过来，测试失败也可能是页面里临时填的值有问题而非已保存配置有问题。**建议先「保存」再测试**，避免两者结论不一致。
+- **「测试连接」按钮**只做一次 `initialize()`：探测连通性 → 在远端建 `data/`、`skills/`、`sessions/` → 播种技能（失败仅告警），因此它**不覆盖模型真正调用的 bash/read/write 工具链**。
+- **聊天时的「沙箱工作区准备」**由 `agent_service.py` 的 prewarm 逻辑驱动，对 `e2b`/`ssh` 策略有 **60 秒预算**（`prewarm_timeout = 60.0`）。超时会打印 `[Preflight] Workspace prewarm skipped`，并在对话里显示「状态：异常（初始化失败）」。注意这是**软失败**：该轮对话仍会继续，但沙箱卡片显示异常。
+
+常见的三类具体表现：
+
+| 日志关键字 | 根因 | 处理方式 |
+| :--- | :--- | :--- |
+| `SshWorkspace: skip skill ... remote write failed: ... SyntaxError: invalid syntax`，并伴随 `bash: -c: line N: syntax error near unexpected token` | 远端命令未做 shell 引号化：`ssh` 会把参数拼成一行交给远端 login shell 重新解析，多行 `python3 -c` 程序被按空白切碎，python 只收到 `import`；同理 `bash -lc` 片段只把首个词当作 `-c` 实参，命令实际在远端 HOME 而不是 `remote_workdir` 执行 | 升级到含 `build_remote_command` 引号化修复的版本（技能播种同时改为单连接批量写入） |
+| `[Preflight] Workspace prewarm skipped for conversation=...` + 对话里「沙箱工作区准备 失败（60.0s）」 | prewarm 超过 60s 预算：远端链路 RTT 高、握手慢，或技能逐个播种放大连接数（旧实现每个技能 2 次 ssh 往返） | 优先升级（批量播种后连接数从 2N 降到 2）；若仍超时，再排查到远端主机的网络质量与 `sshd` 负载 |
+| `Connection timed out during banner exchange` / `Connection to <host> port <port> timed out` | 远端 `sshd` 未在 `ConnectTimeout=30` 内完成 banner 交互（网络抖动、被限速，或 `MaxStartups` 限流） | 从平台主机多跑几次 `ssh -p <port> <user>@<host> echo ok` 复测；持续出现需排查链路与 `sshd` 配置 |
+
+> 💡 排查顺序建议：先用「测试连接」确认**凭据与主机密钥**没问题，再从平台主机手工执行一次 `ssh` 与 `python3 -c 'print(1)'` 确认**远端 python3 可用**，最后看后端日志里的 `detail` / `skip skill` 行，定位是**引号化**问题还是**网络超时**问题。
+
+---
+
+#### 7.3.8 智能体上下文预算管控与两阶段溢出压缩
 
 - **`agent_context_max_tokens`**：会话上下文 Token 预算上限（默认 `64000`）；
 - **`Completion Reserve` 动态预留与安全水位线对齐**：
@@ -2816,15 +2921,15 @@ kubectl apply -f k8s_deploy/sandbox-rbac.example.yaml
   1. **确定性结构化摘录**：提取早期轮次的提问、工具调用结论及核心工件；
   2. **LLM 语义摘要降级**：可选利用后台小模型生成语义摘要，失败自动降级为确定性摘录，确保关键上下文永不丢失。
 
-#### 7.3.8 生成文件与工件发布配置 (File Download Prefix)
+#### 7.3.9 生成文件与工件发布配置 (File Download Prefix)
 
 - **`file_download_url_prefix`**：智能体通过 `publish_generated_file` 工具发布图表、报告等生成文件时，拼接公网绝对下载链接的地址前缀（例如 `https://agent.yourdomain.com`）。若留空，则默认生成以 `/api/v1/chat/artifacts/download/...` 开头的相对路径。
 
-#### 7.3.9 AgentScope 运行时状态注入与时间感知
+#### 7.3.10 AgentScope 运行时状态注入与时间感知
 
 - **`agentscope_inject_runtime_state`**：开启后，系统在每轮对话开始前向 Agent 注入当前精确北京时间、当前活跃任务数及上下文用量指标，使 Agent 具备准确的现实时间感知（如正确判断“今天星期几”、“上周五的数据”等）。
 
-#### 7.3.10 系统参数修改后的生效机制 (Save & Hot Reloading)
+#### 7.3.11 系统参数修改后的生效机制 (Save & Hot Reloading)
 
 很多管理员在配置系统时常见疑问：“*为什么我在【系统设置 -> 参数设置】中修改了模型名称、温度系数或 RAGFlow 地址后，在智能助手或后端请求中似乎没有立即产生效果？*”
 
