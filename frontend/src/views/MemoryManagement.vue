@@ -268,9 +268,30 @@ const setConfigNumber = (key: string, raw: number | string) => {
   item.value = Number.isNaN(n) ? '0' : String(Math.max(0, n))
 }
 
+// 索引维度与全局 embed_dimensions 不一致时，索引存在但向量检索实际失效，
+// 必须视为「需重建」，不能显示成「索引正常」。
+const indexDimMismatch = computed(() => !!indexStatus.value?.dim_mismatch)
+const indexReady = computed(
+  () => !!indexStatus.value?.available && !indexDimMismatch.value,
+)
+const indexStatusBadgeText = computed(() => {
+  if (!indexStatus.value) return ''
+  if (indexDimMismatch.value) return '维度不匹配'
+  return indexStatus.value.available ? '索引正常' : '索引未就绪'
+})
+const indexStatusBadgeClass = computed(() =>
+  indexReady.value ? 'bg-green-100 text-green-800' : 'bg-amber-100 text-amber-800',
+)
 const indexStatusLabel = computed(() => {
   if (!indexStatus.value) return null
-  if (indexStatus.value.available) return '索引已就绪'
+  if (indexDimMismatch.value) {
+    return `索引向量维度 ${indexStatus.value.index_dim}，当前 embed_dimensions 为 ${indexStatus.value.configured_dim}，需重建索引`
+  }
+  if (indexStatus.value.available) {
+    return indexStatus.value.configured_dim
+      ? `索引已就绪（向量维度 ${indexStatus.value.configured_dim}）`
+      : '索引已就绪'
+  }
   return indexStatus.value.message || '索引未创建'
 })
 
@@ -378,7 +399,12 @@ const confirmRebuildIndex = async () => {
   showRebuildConfirm.value = false
   try {
     const res = await axios.post('/api/portal/memory/index/rebuild')
-    showToast(res.data?.data?.message || '完成', 'success')
+    const data = res.data?.data
+    if (data && data.ok === false) {
+      showToast(data.message || '索引检查/创建失败', 'error')
+    } else {
+      showToast(data?.message || '完成', 'success')
+    }
     await loadIndexStatus()
   } catch (e: any) {
     showToast(e.response?.data?.detail || '操作失败', 'error')
@@ -792,13 +818,17 @@ onMounted(async () => {
       >
         <span
           class="inline-flex self-start items-center px-2.5 py-0.5 rounded-full text-xs font-medium"
-          :class="indexStatus.available ? 'bg-green-100 text-green-800' : 'bg-amber-100 text-amber-800'"
+          :class="indexStatusBadgeClass"
         >
-          {{ indexStatus.available ? '索引正常' : '索引未就绪' }}
+          {{ indexStatusBadgeText }}
         </span>
         <span class="text-gray-600 text-xs sm:text-sm">{{ indexStatusLabel }}</span>
         <span
-          v-if="!indexStatus.available"
+          v-if="indexDimMismatch"
+          class="text-[11px] text-amber-700/80"
+        >索引 DIM 与全局 embed_dimensions 不一致时，新写入的向量不会被 RediSearch 索引，向量检索会静默返回空结果。点右侧按钮重建（保留已有记忆数据）。</span>
+        <span
+          v-else-if="!indexStatus.available"
           class="text-[11px] text-amber-700/80"
         >常见原因：Redis 重启后索引丢失（文档 TTL 不会删索引）。启动会自动尝试重建，也可点右侧按钮。</span>
         <span
@@ -807,7 +837,7 @@ onMounted(async () => {
           :title="indexStatus.index_name"
         >{{ indexStatus.index_name }}</span>
         <button
-          v-if="canIndex && !indexStatus.available"
+          v-if="canIndex && !indexReady"
           type="button"
           class="inline-flex items-center justify-center rounded-lg border border-amber-300 bg-amber-50 px-3 py-1.5 text-xs font-medium text-amber-900 shadow-sm hover:bg-amber-100 sm:ml-auto"
           title="检查/创建索引"
@@ -1461,7 +1491,7 @@ onMounted(async () => {
     <ConfirmModal
       v-if="showRebuildConfirm"
       title="检查/创建索引"
-      message="将检查或创建 RediSearch 会话摘要向量索引。若已修改向量维度，请确认后执行并必要时重建已有数据。"
+      message="将检查 RediSearch 会话摘要向量索引；若索引向量维度与系统配置 embed_dimensions 不一致，会重建索引（保留已有记忆数据）。"
       confirm-text="确定执行"
       type="warning"
       @confirm="confirmRebuildIndex"

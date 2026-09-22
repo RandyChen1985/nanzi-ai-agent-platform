@@ -7,6 +7,12 @@ from typing import Any, Dict, List, Optional
 
 from app.core.redis import get_redis, get_redis_binary
 from app.services.ai.embedding_client import EmbeddingClient
+from app.services.ai.redis_index_utils import (
+    ENSURE_CACHE_TTL,
+    ensure_vector_index,
+    index_vector_dim,
+    last_ensure_result,
+)
 from app.services.memory_config_service import MemoryConfigService
 
 logger = logging.getLogger(__name__)
@@ -16,9 +22,39 @@ SUMMARY_KEY_PREFIX = "memory:summary:"
 MEMORY_REDIS_INDEX_NAME = "nanzi:idx:memory:session_summary"
 
 # 进程内 ensure_index 缓存：避免每次 upsert 前都打一次 FT.INFO/FT.CREATE。
-# 仅缓存“已确认存在”的成功结果约 300s；失败不缓存，下次调用仍会重试。
-_ENSURE_INDEX_CACHE_TTL = 300.0
-_ensure_index_cache: Dict[str, tuple] = {}  # idx -> (ok_expires_monotonic, ok_bool)
+# 键为 "<index>|<dim>"，仅缓存「已确认存在且维度一致」的成功结果约 300s；
+# 失败不缓存，下次调用仍会重试。维度入键后，embed_dimensions 变更在下一次
+# 调用（含非 force 的 upsert 路径）即被发现，不会继续复用旧维度结论。
+_ENSURE_INDEX_CACHE_TTL = ENSURE_CACHE_TTL
+_ensure_index_cache: Dict[str, float] = {}  # "<index>|<dim>" -> ok_expires_monotonic
+
+
+def _memory_schema(dim: int) -> List[Any]:
+    return [
+        "user_id",
+        "TAG",
+        "conversation_id",
+        "TAG",
+        "title",
+        "TEXT",
+        "summary",
+        "TEXT",
+        "last_active",
+        "NUMERIC",
+        "SORTABLE",
+        "turn_count",
+        "NUMERIC",
+        "embedding",
+        "VECTOR",
+        "HNSW",
+        "6",
+        "TYPE",
+        "FLOAT32",
+        "DIM",
+        str(dim),
+        "DISTANCE_METRIC",
+        "COSINE",
+    ]
 
 
 def _doc_key(user_id: str, conversation_id: str) -> str:
@@ -100,71 +136,30 @@ class MemoryIndexService:
 
     @staticmethod
     async def ensure_index(force: bool = False) -> bool:
-        """Ensure the RediSearch index exists. Cached in-process (≈300s) on
-        success only, so per-upsert calls avoid redundant FT.INFO round-trips.
-        Startup/manual callers pass `force=True` to always round-trip and create
-        when missing."""
-        idx = await MemoryIndexService.index_name()
-        now = time.monotonic()
-        if not force:
-            hit = _ensure_index_cache.get(idx)
-            if hit:
-                expires, ok = hit
-                if now < expires:
-                    return ok
-                _ensure_index_cache.pop(idx, None)
+        """确保 RediSearch 索引存在且向量维度与全局 ``embed_dimensions`` 一致。
 
+        成功结果按 ``<index>|<dim>`` 在进程内缓存约 300s，避免每次 upsert 前都打
+        一次 FT.INFO/FT.CREATE；失败不缓存，下次调用仍会重试。
+
+        维度不一致时重建索引（``FT.DROPINDEX`` 不带 ``DD``，保留记忆 HASH 文档）。
+        ``force=True``（启动、手动「检查/创建索引」）绕过缓存，总是回源探测。
+        """
         redis = await get_redis()
         if not redis:
             return False
+        idx = await MemoryIndexService.index_name()
         dim = await EmbeddingClient.get_dimensions()
-        try:
-            info = await redis.execute_command("FT.INFO", idx)
-            if info:
-                _ensure_index_cache[idx] = (now + _ENSURE_INDEX_CACHE_TTL, True)
-                return True
-        except Exception:
-            pass
-        try:
-            await redis.execute_command(
-                "FT.CREATE",
-                idx,
-                "ON",
-                "HASH",
-                "PREFIX",
-                "1",
-                SUMMARY_KEY_PREFIX,
-                "SCHEMA",
-                "user_id",
-                "TAG",
-                "conversation_id",
-                "TAG",
-                "title",
-                "TEXT",
-                "summary",
-                "TEXT",
-                "last_active",
-                "NUMERIC",
-                "SORTABLE",
-                "turn_count",
-                "NUMERIC",
-                "embedding",
-                "VECTOR",
-                "HNSW",
-                "6",
-                "TYPE",
-                "FLOAT32",
-                "DIM",
-                str(dim),
-                "DISTANCE_METRIC",
-                "COSINE",
-            )
-            logger.info("[MemoryIndex] Created index %s dim=%s", idx, dim)
-            _ensure_index_cache[idx] = (time.monotonic() + _ENSURE_INDEX_CACHE_TTL, True)
-            return True
-        except Exception as e:
-            logger.warning("[MemoryIndex] FT.CREATE failed: %s", e)
-            return False
+        result = await ensure_vector_index(
+            redis,
+            index_name=idx,
+            prefix=SUMMARY_KEY_PREFIX,
+            schema=_memory_schema,
+            dim=dim,
+            log_tag="MemoryIndex",
+            cache=_ensure_index_cache,
+            force=force,
+        )
+        return bool(result.get("ok"))
 
     @staticmethod
     async def upsert_summary(
@@ -804,11 +799,23 @@ class MemoryIndexService:
     async def index_status() -> Dict[str, Any]:
         redis = await get_redis()
         idx = await MemoryIndexService.index_name()
+        try:
+            configured_dim: Optional[int] = await EmbeddingClient.get_dimensions()
+        except Exception as e:
+            logger.warning("[MemoryIndex] 读取 embed_dimensions 失败: %s", e)
+            configured_dim = None
         if not redis:
-            return {"available": False, "index_name": idx, "message": "Redis 不可用"}
+            return {
+                "available": False,
+                "index_name": idx,
+                "message": "Redis 不可用",
+                "configured_dim": configured_dim,
+                "index_dim": None,
+                "dim_mismatch": False,
+            }
         try:
             info = await redis.execute_command("FT.INFO", idx)
-            
+
             # 清理嵌套结构中可能存在的非标准浮点数（如 NaN, Infinity），以防止 JSON 序列化失败
             import math
             def _sanitize(obj: Any) -> Any:
@@ -822,14 +829,69 @@ class MemoryIndexService:
                     return [_sanitize(x) for x in obj]
                 return obj
 
-            return {"available": True, "index_name": idx, "info": _sanitize(info)}
+            index_dim = index_vector_dim(info)
+            dim_mismatch = (
+                index_dim is not None
+                and configured_dim is not None
+                and int(index_dim) != int(configured_dim)
+            )
+            payload: Dict[str, Any] = {
+                "available": True,
+                "index_name": idx,
+                "info": _sanitize(info),
+                "configured_dim": configured_dim,
+                "index_dim": index_dim,
+                "dim_mismatch": dim_mismatch,
+            }
+            if dim_mismatch:
+                payload["message"] = (
+                    f"索引向量维度为 {index_dim}，当前 embed_dimensions 为 "
+                    f"{configured_dim}，需重建索引"
+                )
+            return payload
         except Exception as e:
-            return {"available": False, "index_name": idx, "message": str(e)}
+            return {
+                "available": False,
+                "index_name": idx,
+                "message": str(e),
+                "configured_dim": configured_dim,
+                "index_dim": None,
+                "dim_mismatch": False,
+            }
 
     @staticmethod
     async def rebuild_index() -> Dict[str, Any]:
+        """检查/创建索引：维度不一致时重建，并回报真实动作。"""
         await MemoryIndexService.ensure_index(force=True)
-        return {"status": "success", "message": "索引已检查/创建（已有 HASH 文档会自动纳入 PREFIX 索引）"}
+        idx = await MemoryIndexService.index_name()
+        result = last_ensure_result(idx) or {}
+        ok = bool(result.get("ok"))
+        action = result.get("action")
+        index_dim = result.get("index_dim")
+        configured_dim = result.get("configured_dim")
+
+        if not ok:
+            message = result.get("message") or f"索引 {idx} 检查/创建失败"
+        elif action == "created":
+            message = f"已创建索引 {idx}，向量维度 {configured_dim}。"
+        elif action == "recreated":
+            old = index_dim if index_dim is not None else "未知"
+            message = (
+                f"检测到向量维度变更（{old} → {configured_dim}），已重建索引 {idx}。"
+                "旧维度向量不会被检索，相关记忆会在下次写入时按新维度重新生成。"
+            )
+        else:
+            message = f"索引 {idx} 已就绪（向量维度 {configured_dim}），无需重建。"
+
+        return {
+            "status": "success" if ok else "error",
+            "ok": ok,
+            "action": action,
+            "index_name": idx,
+            "index_dim": index_dim,
+            "configured_dim": configured_dim,
+            "message": message,
+        }
 
 
 async def maybe_ensure_memory_index_on_startup() -> None:

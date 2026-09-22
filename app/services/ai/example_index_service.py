@@ -5,11 +5,48 @@ import json
 from typing import Any, Dict, List, Optional
 from app.core.redis import get_redis, get_redis_binary
 from app.services.ai.embedding_client import EmbeddingClient
+from app.services.ai.redis_index_utils import ensure_vector_index
 
 logger = logging.getLogger(__name__)
 
 EXAMPLE_INDEX_NAME = "nanzi:idx:example:local"
 EXAMPLE_KEY_PREFIX = "nanzi:example:"
+
+
+def _example_schema(dim: int) -> List[Any]:
+    return [
+        "id",
+        "TAG",
+        "dataset_id",
+        "TAG",
+        "dataset_name",
+        "TEXT",
+        "question",
+        "TEXT",
+        "raw_query",
+        "TEXT",
+        "context_summary",
+        "TEXT",
+        "sql",
+        "TEXT",
+        "trace_id",
+        "TAG",
+        "agent_id",
+        "TAG",
+        "sql_metadata",
+        "TEXT",
+        "embedding",
+        "VECTOR",
+        "HNSW",
+        "6",
+        "TYPE",
+        "FLOAT32",
+        "DIM",
+        str(dim),
+        "DISTANCE_METRIC",
+        "COSINE",
+    ]
+
 
 def _vector_to_bytes(vec: List[float]) -> bytes:
     return struct.pack(f"{len(vec)}f", *vec)
@@ -53,64 +90,29 @@ class ExampleIndexService:
         return EXAMPLE_INDEX_NAME
 
     @staticmethod
-    async def ensure_index() -> bool:
+    async def ensure_index(force: bool = False) -> bool:
+        """确保索引存在且向量维度与全局 ``embed_dimensions`` 一致。
+
+        维度不一致时重建（``FT.DROPINDEX`` 不带 ``DD``，保留 HASH 文档）。
+        使用无缓存模式：调用方（如「一键重构」）会先 ``FT.DROPINDEX``，若命中
+        进程内缓存就会跳过 FT.CREATE，反而把索引丢在半路。
+        """
         redis = await get_redis()
         if not redis:
             return False
         idx = await ExampleIndexService.index_name()
         dim = await EmbeddingClient.get_dimensions(use_global=True)
-        try:
-            info = await redis.execute_command("FT.INFO", idx)
-            if info:
-                return True
-        except Exception:
-            pass
-        try:
-            await redis.execute_command(
-                "FT.CREATE",
-                idx,
-                "ON",
-                "HASH",
-                "PREFIX",
-                "1",
-                EXAMPLE_KEY_PREFIX,
-                "SCHEMA",
-                "id",
-                "TAG",
-                "dataset_id",
-                "TAG",
-                "dataset_name",
-                "TEXT",
-                "question",
-                "TEXT",
-                "raw_query",
-                "TEXT",
-                "context_summary",
-                "TEXT",
-                "sql",
-                "TEXT",
-                "trace_id",
-                "TAG",
-                "agent_id",
-                "TAG",
-                "sql_metadata",
-                "TEXT",
-                "embedding",
-                "VECTOR",
-                "HNSW",
-                "6",
-                "TYPE",
-                "FLOAT32",
-                "DIM",
-                str(dim),
-                "DISTANCE_METRIC",
-                "COSINE",
-            )
-            logger.info("[ExampleIndex] Created index %s dim=%s", idx, dim)
-            return True
-        except Exception as e:
-            logger.warning("[ExampleIndex] FT.CREATE failed: %s", e)
-            return False
+        result = await ensure_vector_index(
+            redis,
+            index_name=idx,
+            prefix=EXAMPLE_KEY_PREFIX,
+            schema=_example_schema,
+            dim=dim,
+            log_tag="ExampleIndex",
+            cache=None,
+            force=force,
+        )
+        return bool(result.get("ok"))
 
     @staticmethod
     async def upsert_vector(

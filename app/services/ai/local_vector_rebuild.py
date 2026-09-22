@@ -76,11 +76,11 @@ async def rebuild_local_vector_indexes(
             except Exception as e:
                 logs.append(f"Example index drop skipped or failed: {str(e)}")
 
-        await MetadataIndexService.ensure_index()
+        await MetadataIndexService.ensure_index(force=True)
         logs.append(
             "Recreated metadata index schema" if drop_indexes else "Ensured metadata index schema"
         )
-        await ExampleIndexService.ensure_index()
+        await ExampleIndexService.ensure_index(force=True)
         logs.append(
             "Recreated example index schema" if drop_indexes else "Ensured example index schema"
         )
