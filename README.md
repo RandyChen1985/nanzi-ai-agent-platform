@@ -124,6 +124,7 @@
 ### 2. 🛡️ 多策略安全沙箱与隔离执行 (Multi-Policy Sandbox & Isolation)
 
 * **五大沙箱策略**：原生支持 `Local`（本机安全隔离）、`Docker`（私有容器隔离）、`K8s`（Kubernetes 原生 Pod 沙箱隔离）、`E2B`（云端安全沙箱）、`SSH`（远程服务器安全通道）。
+* **SSH 远程沙箱前提条件**：`ssh` 策略由平台主机自身的 `ssh` CLI 连接远端主机，平台主机（或平台容器）需具备 `openssh-client`；密码认证额外需要 `sshpass`（私钥认证无需），且因固定启用 `StrictHostKeyChecking=yes`，远端主机密钥必须预先录入 `known_hosts`。完整依赖清单与报错对照见 [FAQ 7.3.7 SSH 沙箱运行前提条件与连接排查](FAQ.md#737-ssh-沙箱运行前提条件与连接排查)。
 * **云原生 K8s Pod 沙箱**：Kubernetes 集群生产部署免挂载宿主机 Docker Socket（`/var/run/docker.sock`），通过 K8s API 动态拉起隔离 Pod，借助平台 PVC 的 `subPath` 挂载用户工作区，保障金融/政企级安全合规。
 * **工作区物理同径 / subPath 挂载**：用户工作区直接挂载进容器/Pod，自动将逻辑工作区路径转义映射至宿主机/PVC 物理文件，支持右侧代码画布直接打开、预览并保存回物理磁盘。
 * **沙箱生命周期自动化**：支持后台 30 分钟空闲自动销毁（Idle Reaper）、服务重启优雅停机清理，定制生命周期适配器保护共享存储绝不误删。
@@ -218,6 +219,7 @@
 | [code_canvas_and_workspace_guide.md](docs/md/code_canvas_and_workspace_guide.md)                                                            | 代码画布、工作区文件与执行 API                                 |
 | [sandbox/docker/README.md](sandbox/docker/README.md)                                                                                        | Docker 安全沙箱预构建与运维指南（含排障工具链、`--dry-run` 与 `--list`） |
 | [sandbox/k8s/README.md](sandbox/k8s/README.md)                                                                                              | K8s 沙箱预置镜像构建与运维指南（冷启动加速、`k8s_deploy` 运维与监控） |
+| [FAQ 7.3.7 SSH 沙箱运行前提条件与连接排查](FAQ.md#737-ssh-沙箱运行前提条件与连接排查)                                                        | SSH 沙箱（`ssh` 策略）sshpass / openssh-client / known_hosts 前置依赖与报错对照 |
 | [ai_agent_gating_contract.md](docs/md/ai_agent_gating_contract.md)                                                                          | Agent 门控契约                                                 |
 | [tests/CHECKLIST.md](tests/CHECKLIST.md)                                                                                                    | 自动化测试验收清单                                             |
 

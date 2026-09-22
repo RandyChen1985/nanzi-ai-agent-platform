@@ -35,7 +35,13 @@ import {
   ServerIcon,
   PlayIcon,
   ArrowPathIcon,
-  PaintBrushIcon
+  PaintBrushIcon,
+  ChevronDownIcon,
+  ChevronUpIcon,
+  BoltIcon,
+  InformationCircleIcon,
+  ExclamationTriangleIcon,
+  DocumentDuplicateIcon
 } from '@heroicons/vue/24/outline'
 
 const router = useRouter()
@@ -45,6 +51,17 @@ const canSave = hasPermission('element:system:config_save')
 
 const activeTab = ref<'diagnostics' | 'configs' | 'models' | 'tools' | 'logs' | 'branding'>('configs')
 const diagSubTab = ref<'console' | 'redis'>('console')
+// 「Redis 向量搜索」的检测详情默认收起，避免顶部操作区占用过多高度
+const vectorHealthExpanded = ref(false)
+// 顶部诊断概览整体折叠状态（默认折叠，并记忆用户偏好）
+const storedDiagCollapsed = localStorage.getItem('system_diag_overview_collapsed')
+const diagnosticsOverviewCollapsed = ref(storedDiagCollapsed === null ? true : storedDiagCollapsed === 'true')
+const toggleDiagnosticsOverview = () => {
+  diagnosticsOverviewCollapsed.value = !diagnosticsOverviewCollapsed.value
+  try {
+    localStorage.setItem('system_diag_overview_collapsed', String(diagnosticsOverviewCollapsed.value))
+  } catch {}
+}
 
 // --- Diagnostics Logic ---
 const logs = ref<string[]>([])
@@ -729,6 +746,12 @@ const collapsedConfigGroups = ref<Set<string>>(new Set())
 const sandboxSshAuthType = computed(() => {
   const configured = configGroups.value?.sandbox?.find(item => item.key === 'sandbox_ssh_auth_type')?.value
   return configured === 'key' || configured === 'private_key' ? 'key' : 'password'
+})
+const sandboxSshHasSshpass = computed(() => {
+  return configGroups.value?.sandbox?.find(item => item.key === 'sandbox_ssh_has_sshpass')?.value === 'true'
+})
+const sandboxSshHasSshCli = computed(() => {
+  return configGroups.value?.sandbox?.find(item => item.key === 'sandbox_ssh_has_ssh_cli')?.value === 'true'
 })
 const orderedCategories = computed(() => {
   if (!configGroups.value) return []
@@ -1635,10 +1658,66 @@ local（适用于同一平台可直连数据库）：平台使用本地已配置
   - AWS EKS：gp3、gp2
   - 阿里云 ACK：alicloud-disk-topology、alicloud-disk-ssd
   - 腾讯云 TKE：cbs
-* 适用场景：集群中没有配置默认 StorageClass，或者希望沙箱使用特定高性能 SSD 磁盘池时填写。`
+* 适用场景：集群中没有配置默认 StorageClass，或者希望沙箱使用特定高性能 SSD 磁盘池时填写。`,
+    'sandbox_ssh_private_key': `【SSH 私钥认证核心原理】
+平台作为 SSH 客户端，通过密钥（ssh -i 临时受限文件）免密登录目标 Linux 服务器，在远端沙箱工作区（默认 /workspace）下执行 Agent 的各类 Bash、代码运行及排障工具。
+
+【步骤一：在本地或运维终端生成免密私钥对（推荐 Ed25519）】
+⚠️ 核心要求：沙箱连接由后台自动化批处理非交互运行，私钥必须为【无密码保护（No Passphrase）】！
+在终端执行以下命令生成专属密钥对（-N "" 即代表无密码）：
+ssh-keygen -t ed25519 -N "" -f ~/.ssh/nanzi_sandbox_key
+
+执行后将在 ~/.ssh 目录下生成两个文件：
+1. nanzi_sandbox_key（私钥，需保密，配置到本平台）
+2. nanzi_sandbox_key.pub（公钥，需信任，追加到远端主机）
+
+【步骤二：配置远程目标主机（信任公钥）】
+将公钥追加到目标服务器对应用户的 ~/.ssh/authorized_keys 中（一行命令完成）：
+cat ~/.ssh/nanzi_sandbox_key.pub | ssh -p <端口> <用户名>@<主机IP> "mkdir -p ~/.ssh && chmod 700 ~/.ssh && cat >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys"
+
+【步骤三：将私钥内容配置到本平台】
+1. 在本地终端查看私钥全文（必须包含 BEGIN 和 END 首尾标记）：
+   cat ~/.ssh/nanzi_sandbox_key
+2. 将输出的完整文本（形如 -----BEGIN OPENSSH PRIVATE KEY----- ... -----END OPENSSH PRIVATE KEY-----）复制并粘贴到下方的输入框中；
+3. 点击输入框右上角的【规范换行】按钮，平台会自动展开转义字符并规整换行；
+4. 点击该分组底部的【测试连接】按钮验证连通性。
+
+【常见错误与排障提示】
+1. Load key invalid format：
+   - 常见原因 A：误把公钥（以 ssh-ed25519 或 ssh-rsa 开头）当作私钥粘贴；
+   - 常见原因 B：私钥设置了 Passphrase（密码保护），请重新生成无密码的私钥；
+   - 常见原因 C：复制时丢失了末尾换行符或缺少首尾 BEGIN/END 标识。
+2. Permission denied (publickey)：
+   - 检查远端主机对应用户的 ~/.ssh 权限是否为 700，authorized_keys 权限是否为 600；
+   - 检查远端 /etc/ssh/sshd_config 中的 PubkeyAuthentication 是否设置为 yes。`
   }
   if (key === 'sandbox_policy') return sandboxPolicyTip.value
   return tips[key] || ''
+}
+
+const sshPrivateKeySetupCommand = computed(() => {
+  const host = findConfigItemByKey('sandbox_ssh_host')?.value || '103.79.25.80'
+  const port = findConfigItemByKey('sandbox_ssh_port')?.value || '22'
+  const user = findConfigItemByKey('sandbox_ssh_user')?.value || 'root'
+  return `cat ~/.ssh/nanzi_sandbox_key.pub | ssh -p ${port} ${user}@${host} "mkdir -p ~/.ssh && chmod 700 ~/.ssh && cat >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys"`
+})
+
+const copySshSetupCommand = async () => {
+  try {
+    await copyToClipboard(sshPrivateKeySetupCommand.value)
+    showToast('已复制远程公钥配置命令到剪贴板', 'success')
+  } catch {
+    showToast('复制失败，请手动选中复制', 'error')
+  }
+}
+
+const copySshKeygenCommand = async () => {
+  try {
+    await copyToClipboard('ssh-keygen -t ed25519 -N "" -f ~/.ssh/nanzi_sandbox_key')
+    showToast('已复制密钥生成命令到剪贴板', 'success')
+  } catch {
+    showToast('复制失败，请手动选中复制', 'error')
+  }
 }
 
 const openDatasetSelector = (item: ConfigItem) => {
@@ -1865,6 +1944,178 @@ const sandboxConnectionConfigKeys: Record<'e2b' | 'ssh', string[]> = {
   ],
 }
 
+// --- SSH 沙箱私钥文本域与格式校验逻辑 ---
+interface SshKeyValidationResult {
+  status: 'empty' | 'valid' | 'invalid' | 'public_key' | 'masked'
+  message: string
+  keyType?: string
+  lineCount: number
+}
+
+const sshPrivateKeyExampleExpanded = ref(false)
+const sshPrivateKeyCopied = ref(false)
+const sshPrivateKeyFocused = ref(false)
+
+const validateSshPrivateKey = (keyContent: string | undefined): SshKeyValidationResult => {
+  if (!keyContent || !keyContent.trim()) {
+    return {
+      status: 'empty',
+      message: '尚未填写私钥内容（当认证方式为「私钥认证」时必填）',
+      lineCount: 0,
+    }
+  }
+
+  const trimmed = keyContent.trim()
+  const lines = trimmed.split(/\r?\n/).map((l) => l.trim()).filter(Boolean)
+
+  // 0. 检查是否为服务端保存后脱敏回显的掩码值（如包含 ****）
+  if (trimmed.includes('****')) {
+    return {
+      status: 'masked',
+      message: '私钥已在服务端安全保存，当前展示脱敏掩码',
+      lineCount: lines.length,
+    }
+  }
+
+  // 1. 检查是否误填为 SSH 公钥 (例如: ssh-rsa AAAAB3NzaC1yc2EA..., ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAA..., ecdsa-sha2-nistp256 AAAAE2VjZHNh...)
+  const publicKeyPrefixes = [
+    'ssh-rsa',
+    'ssh-ed25519',
+    'ssh-dss',
+    'ecdsa-sha2-nistp256',
+    'ecdsa-sha2-nistp384',
+    'ecdsa-sha2-nistp521',
+    'sk-ssh-ed25519@openssh.com',
+    'sk-ecdsa-sha2-nistp256@openssh.com',
+  ]
+  if (publicKeyPrefixes.some((prefix) => trimmed.startsWith(prefix))) {
+    return {
+      status: 'public_key',
+      message: '检测到当前填入的是公钥（Public Key）！此处必须填入用于登录的私钥（Private Key）。',
+      lineCount: lines.length,
+    }
+  }
+
+  // 2. 检查标准私钥标识
+  const beginMatch = trimmed.match(/-----BEGIN ([A-Z0-9 ]+ )?PRIVATE KEY-----/)
+  const endMatch = trimmed.match(/-----END ([A-Z0-9 ]+ )?PRIVATE KEY-----/)
+
+  if (!beginMatch && !endMatch) {
+    return {
+      status: 'invalid',
+      message: '缺少标准私钥首尾标记（需以 -----BEGIN ... PRIVATE KEY----- 开头，以 -----END ... PRIVATE KEY----- 结尾）',
+      lineCount: lines.length,
+    }
+  }
+
+  if (!beginMatch) {
+    return {
+      status: 'invalid',
+      message: '缺少私钥起始标记（如 -----BEGIN OPENSSH PRIVATE KEY-----）',
+      lineCount: lines.length,
+    }
+  }
+
+  if (!endMatch) {
+    return {
+      status: 'invalid',
+      message: '缺少私钥结束标记（如 -----END OPENSSH PRIVATE KEY-----），请确保完整复制且未被截断',
+      lineCount: lines.length,
+    }
+  }
+
+  const keyType = beginMatch[1]?.trim() || 'OPENSSH/PEM'
+
+  if (lines.length < 3) {
+    return {
+      status: 'invalid',
+      message: '私钥行数不足，请确保完整复制且未丢失内部换行符',
+      keyType,
+      lineCount: lines.length,
+    }
+  }
+
+  if (keyType.includes('ENCRYPTED')) {
+    return {
+      status: 'valid',
+      keyType,
+      message: `检测到带密码保护的私钥（${keyType}）。注意：平台目前仅支持无密码保护（无 Passphrase）的私钥用于自动化登录。`,
+      lineCount: lines.length,
+    }
+  }
+
+  return {
+    status: 'valid',
+    keyType,
+    message: `私钥格式正确（${keyType} 格式，共 ${lines.length} 行）`,
+    lineCount: lines.length,
+  }
+}
+
+const sshPrivateKeyExampleTemplate = `-----BEGIN OPENSSH PRIVATE KEY-----
+b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAAAMwAAAAtzc2gtZW
+QyNTUxOQAAACD6xQ...（此处替换为您的真实私钥 Base64 编码内容）...
+-----END OPENSSH PRIVATE KEY-----`
+
+const copySshPrivateKeyExample = async () => {
+  try {
+    await copyToClipboard(sshPrivateKeyExampleTemplate)
+    sshPrivateKeyCopied.value = true
+    showToast('已复制 OpenSSH 标准私钥示例到剪贴板', 'success')
+    setTimeout(() => {
+      sshPrivateKeyCopied.value = false
+    }, 2500)
+  } catch {
+    showToast('复制失败，请手动选择复制', 'error')
+  }
+}
+
+const normalizeSshKeyString = (val: string | undefined): string => {
+  if (!val) return ''
+  let text = val.trim()
+  if ((text.startsWith('"') && text.endsWith('"')) || (text.startsWith("'") && text.endsWith("'"))) {
+    text = text.slice(1, -1).trim()
+  }
+  // 替换字面量 \\n
+  if (text.includes('\\n')) {
+    text = text.replace(/\\r\\n/g, '\n').replace(/\\n/g, '\n')
+  } else {
+    text = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n')
+  }
+
+  // 如果包含 BEGIN 和 END 但都在单行（换行被替换成了空格），尝试重新切行
+  if (!text.includes('\n')) {
+    const match = text.match(/(-----BEGIN [A-Z0-9 ]+?PRIVATE KEY-----)(.+?)(-----END [A-Z0-9 ]+?PRIVATE KEY-----)/)
+    if (match && match[1] && match[2] && match[3]) {
+      const header = match[1].trim()
+      const body = match[2].trim()
+      const footer = match[3].trim()
+      const parts = body.split(/\s+/).filter(Boolean)
+      const lines: string[] = []
+      for (const p of parts) {
+        if (p.length > 64) {
+          for (let i = 0; i < p.length; i += 64) {
+            lines.push(p.slice(i, i + 64))
+          }
+        } else {
+          lines.push(p)
+        }
+      }
+      text = [header, ...lines, footer].join('\n')
+    }
+  }
+
+  const lines = text.split('\n').map((l) => l.trim()).filter(Boolean)
+  return lines.join('\n') + (lines.length ? '\n' : '')
+}
+
+const normalizeSshPrivateKey = (item: ConfigItem) => {
+  if (!item.value) return
+  const normalized = normalizeSshKeyString(item.value)
+  item.value = normalized.trim()
+  showToast('已完成私钥首尾空行与换行规整', 'success')
+}
+
 const testSandboxConnection = async (policy: 'e2b' | 'ssh') => {
   if (sandboxConnectionTesting.value) return
 
@@ -1874,6 +2125,42 @@ const testSandboxConnection = async (policy: 'e2b' | 'ssh') => {
       findConfigItemByKey(key)?.value ?? '',
     ])
   )
+
+  if (policy === 'ssh') {
+    const authType = values.sandbox_ssh_auth_type || 'password'
+    if (authType === 'password') {
+      if (!sandboxSshHasSshpass.value) {
+        showToast('无法发起测试：平台后端环境未安装 sshpass 工具，密码认证不可用。请在服务端安装或改用私钥认证。', 'error')
+        return
+      }
+      if (!values.sandbox_ssh_password || !values.sandbox_ssh_password.trim()) {
+        showToast('无法发起测试：当前为密码认证方式，但尚未填写 SSH 密码', 'error')
+        return
+      }
+    } else if (authType === 'key' || authType === 'private_key') {
+      const rawKey = values.sandbox_ssh_private_key
+      const normalizedKey = normalizeSshKeyString(rawKey)
+      values.sandbox_ssh_private_key = normalizedKey
+      const keyItem = findConfigItemByKey('sandbox_ssh_private_key')
+      if (keyItem && normalizedKey.trim() && keyItem.value !== normalizedKey.trim()) {
+        keyItem.value = normalizedKey.trim()
+      }
+      const validation = validateSshPrivateKey(normalizedKey)
+      if (validation.status === 'empty') {
+        showToast('无法发起测试：当前为私钥认证方式，但尚未填写私钥内容', 'error')
+        return
+      }
+      if (validation.status === 'public_key') {
+        showToast('无法发起测试：检测到填入的是公钥而非私钥，请更换为私钥内容', 'error')
+        return
+      }
+      if (validation.status === 'invalid') {
+        showToast(`无法发起测试：${validation.message}`, 'error')
+        return
+      }
+    }
+  }
+
   sandboxConnectionTesting.value = policy
   try {
     await axios.post(`/api/v1/admin/sandbox/${policy}/test-connection`, values)
@@ -2166,8 +2453,8 @@ const getVisibleItems = (items: ConfigItem[] | undefined, category: string) => {
     })
   }
   if (category === 'sandbox') {
-    // 内部键不对用户展示：预构建标记 + 平台运行环境 + K8s in-cluster / Docker daemon 可用性探测标记（后者仅用于对应策略可用性判断）
-    list = list.filter(x => x.key !== 'sandbox_docker_prebuild_done' && x.key !== 'sandbox_runtime_env' && x.key !== 'sandbox_runtime_in_k8s' && x.key !== 'sandbox_docker_available')
+    // 内部键不对用户展示：预构建标记 + 平台运行环境 + K8s in-cluster / Docker daemon 可用性探测标记 + sshpass/ssh CLI 可用性标记（后者仅用于对应策略可用性判断）
+    list = list.filter(x => x.key !== 'sandbox_docker_prebuild_done' && x.key !== 'sandbox_runtime_env' && x.key !== 'sandbox_runtime_in_k8s' && x.key !== 'sandbox_docker_available' && x.key !== 'sandbox_ssh_has_sshpass' && x.key !== 'sandbox_ssh_has_ssh_cli')
     // 按当前 sandbox 策略动态过滤：仅展示与该策略相关的配置项
     const policy = targetSandboxPolicy()
     const policyKeySets: Record<string, string[]> = {
@@ -2336,6 +2623,136 @@ const redisDetailLoading = ref(false)
 const showDeleteKeyConfirm = ref(false)
 const pendingDeleteKey = ref<string | null>(null)
 
+// --- Redis Key 业务分组 ---
+// 规则按前缀长度降序排列并顺序匹配（长前缀优先），避免 `nanzi:` 抢走 `nanzi:agent:ltm:`。
+// label 面向运维阅读，用业务名而非原始前缀；chip 是完整的 Tailwind 类名（不可动态拼接）。
+const REDIS_KEY_GROUP_RULES: { prefix: string; label: string; desc: string; chip: string }[] = [
+  { prefix: 'agent:dataset_navigation_recent_questions:', label: '工作台偏好与菜单缓存', desc: '工作区最近文件、门户偏好、数据集导航与欢迎卡', chip: 'bg-cyan-50 text-cyan-700 border-cyan-200' },
+  { prefix: 'agent:dataset_navigation:cache_generation', label: '工作台偏好与菜单缓存', desc: '工作区最近文件、门户偏好、数据集导航与欢迎卡', chip: 'bg-cyan-50 text-cyan-700 border-cyan-200' },
+  { prefix: 'sys:meta:has_cross_dataset_relationship:', label: '元数据与向量索引', desc: '数据表/字段向量索引、推荐与跨集关系缓存', chip: 'bg-indigo-50 text-indigo-700 border-indigo-200' },
+  { prefix: 'agent:dataset_navigation_click_meta:', label: '工作台偏好与菜单缓存', desc: '工作区最近文件、门户偏好、数据集导航与欢迎卡', chip: 'bg-cyan-50 text-cyan-700 border-cyan-200' },
+  { prefix: 'agent:dataset_navigation_click_rank:', label: '工作台偏好与菜单缓存', desc: '工作区最近文件、门户偏好、数据集导航与欢迎卡', chip: 'bg-cyan-50 text-cyan-700 border-cyan-200' },
+  { prefix: 'agent:branding:default_agent_avatar', label: '工作台偏好与菜单缓存', desc: '工作区最近文件、门户偏好、数据集导航与欢迎卡', chip: 'bg-cyan-50 text-cyan-700 border-cyan-200' },
+  { prefix: 'knowledge:ragflow:alive_dataset_ids', label: '知识库检索与引用', desc: '知识库引用统计与 RAGFlow 推荐缓存', chip: 'bg-teal-50 text-teal-700 border-teal-200' },
+  { prefix: 'nanzi:lock:rebuild_local_vectors', label: '并发控制与后台任务', desc: '请求幂等、会话运行锁、任务互斥与限流', chip: 'bg-amber-50 text-amber-700 border-amber-200' },
+  { prefix: 'nanzi:chat_request_idempotency:', label: '并发控制与后台任务', desc: '请求幂等、会话运行锁、任务互斥与限流', chip: 'bg-amber-50 text-amber-700 border-amber-200' },
+  { prefix: 'agent:workspace_browser_prefs:', label: '工作台偏好与菜单缓存', desc: '工作区最近文件、门户偏好、数据集导航与欢迎卡', chip: 'bg-cyan-50 text-cyan-700 border-cyan-200' },
+  { prefix: 'agent:workspace_recent_files:', label: '工作台偏好与菜单缓存', desc: '工作区最近文件、门户偏好、数据集导航与欢迎卡', chip: 'bg-cyan-50 text-cyan-700 border-cyan-200' },
+  { prefix: 'sys:auth:permissions:v2:user:', label: '认证与会话令牌', desc: '登录会话、API Key、登录失败与 2FA 状态', chip: 'bg-rose-50 text-rose-700 border-rose-200' },
+  { prefix: 'sys:auth:permissions:v3:user:', label: '认证与会话令牌', desc: '登录会话、API Key、登录失败与 2FA 状态', chip: 'bg-rose-50 text-rose-700 border-rose-200' },
+  { prefix: 'memory:_vector_health_probe:', label: '长期记忆与摘要', desc: '长期记忆条目、会话/每日摘要与防抖标记', chip: 'bg-violet-50 text-violet-700 border-violet-200' },
+  { prefix: 'ragflow:doc_recommendations:', label: '知识库检索与引用', desc: '知识库引用统计与 RAGFlow 推荐缓存', chip: 'bg-teal-50 text-teal-700 border-teal-200' },
+  { prefix: 'metadata:metric_rec:recent:', label: '元数据与向量索引', desc: '数据表/字段向量索引、推荐与跨集关系缓存', chip: 'bg-indigo-50 text-indigo-700 border-indigo-200' },
+  { prefix: 'agent:dataset_navigation:', label: '工作台偏好与菜单缓存', desc: '工作区最近文件、门户偏好、数据集导航与欢迎卡', chip: 'bg-cyan-50 text-cyan-700 border-cyan-200' },
+  { prefix: 'nanzi:skills:stats:daily:', label: 'AI 交互态与工具缓存', desc: '问答暂存、SQL 结果、嵌入票据与技能统计', chip: 'bg-sky-50 text-sky-700 border-sky-200' },
+  { prefix: 'metadata:rel_rec:recent:', label: '元数据与向量索引', desc: '数据表/字段向量索引、推荐与跨集关系缓存', chip: 'bg-indigo-50 text-indigo-700 border-indigo-200' },
+  { prefix: 'nanzi:skills:stats:total', label: 'AI 交互态与工具缓存', desc: '问答暂存、SQL 结果、嵌入票据与技能统计', chip: 'bg-sky-50 text-sky-700 border-sky-200' },
+  { prefix: 'agent:welcome_cards:v1:', label: '工作台偏好与菜单缓存', desc: '工作区最近文件、门户偏好、数据集导航与欢迎卡', chip: 'bg-cyan-50 text-cyan-700 border-cyan-200' },
+  { prefix: 'memory:summary:daily:', label: '长期记忆与摘要', desc: '长期记忆条目、会话/每日摘要与防抖标记', chip: 'bg-violet-50 text-violet-700 border-violet-200' },
+  { prefix: 'metadata_sync:events:', label: '审计与元数据同步', desc: '审计日志队列与元数据同步任务/事件', chip: 'bg-zinc-50 text-zinc-600 border-zinc-200' },
+  { prefix: 'agent:portal_prefs:', label: '工作台偏好与菜单缓存', desc: '工作区最近文件、门户偏好、数据集导航与欢迎卡', chip: 'bg-cyan-50 text-cyan-700 border-cyan-200' },
+  { prefix: 'auth:user_sessions:', label: '认证与会话令牌', desc: '登录会话、API Key、登录失败与 2FA 状态', chip: 'bg-rose-50 text-rose-700 border-rose-200' },
+  { prefix: 'metadata_sync:task:', label: '审计与元数据同步', desc: '审计日志队列与元数据同步任务/事件', chip: 'bg-zinc-50 text-zinc-600 border-zinc-200' },
+  { prefix: 'agent:dataset_menu', label: '工作台偏好与菜单缓存', desc: '工作区最近文件、门户偏好、数据集导航与欢迎卡', chip: 'bg-cyan-50 text-cyan-700 border-cyan-200' },
+  { prefix: 'ai:user-question:', label: 'AI 交互态与工具缓存', desc: '问答暂存、SQL 结果、嵌入票据与技能统计', chip: 'bg-sky-50 text-sky-700 border-sky-200' },
+  { prefix: 'auth:2fa_pending:', label: '认证与会话令牌', desc: '登录会话、API Key、登录失败与 2FA 状态', chip: 'bg-rose-50 text-rose-700 border-rose-200' },
+  { prefix: 'metadata:dataset:', label: '元数据与向量索引', desc: '数据表/字段向量索引、推荐与跨集关系缓存', chip: 'bg-indigo-50 text-indigo-700 border-indigo-200' },
+  { prefix: 'sandbox:degraded:', label: '并发控制与后台任务', desc: '请求幂等、会话运行锁、任务互斥与限流', chip: 'bg-amber-50 text-amber-700 border-amber-200' },
+  { prefix: 'auth:login_fail:', label: '认证与会话令牌', desc: '登录会话、API Key、登录失败与 2FA 状态', chip: 'bg-rose-50 text-rose-700 border-rose-200' },
+  { prefix: 'memory:debounce:', label: '长期记忆与摘要', desc: '长期记忆条目、会话/每日摘要与防抖标记', chip: 'bg-violet-50 text-violet-700 border-violet-200' },
+  { prefix: 'nanzi:agent:ltm:', label: '长期记忆与摘要', desc: '长期记忆条目、会话/每日摘要与防抖标记', chip: 'bg-violet-50 text-violet-700 border-violet-200' },
+  { prefix: 'audit:log_queue', label: '审计与元数据同步', desc: '审计日志队列与元数据同步任务/事件', chip: 'bg-zinc-50 text-zinc-600 border-zinc-200' },
+  { prefix: 'auth:2fa_setup:', label: '认证与会话令牌', desc: '登录会话、API Key、登录失败与 2FA 状态', chip: 'bg-rose-50 text-rose-700 border-rose-200' },
+  { prefix: 'lock:task_exec:', label: '并发控制与后台任务', desc: '请求幂等、会话运行锁、任务互斥与限流', chip: 'bg-amber-50 text-amber-700 border-amber-200' },
+  { prefix: 'mcp_rate_limit:', label: '并发控制与后台任务', desc: '请求幂等、会话运行锁、任务互斥与限流', chip: 'bg-amber-50 text-amber-700 border-amber-200' },
+  { prefix: 'memory:summary:', label: '长期记忆与摘要', desc: '长期记忆条目、会话/每日摘要与防抖标记', chip: 'bg-violet-50 text-violet-700 border-violet-200' },
+  { prefix: 'nanzi:conv_run:', label: '并发控制与后台任务', desc: '请求幂等、会话运行锁、任务互斥与限流', chip: 'bg-amber-50 text-amber-700 border-amber-200' },
+  { prefix: 'presence:touch:', label: '在线状态', desc: '用户在线心跳与在线集合', chip: 'bg-emerald-50 text-emerald-700 border-emerald-200' },
+  { prefix: 'memory_config:', label: '配置缓存', desc: '平台与记忆相关配置项缓存', chip: 'bg-slate-50 text-slate-600 border-slate-200' },
+  { prefix: 'nanzi:example:', label: 'ChatBI 样例库', desc: '经验案例向量索引', chip: 'bg-orange-50 text-orange-700 border-orange-200' },
+  { prefix: 'presence:user:', label: '在线状态', desc: '用户在线心跳与在线集合', chip: 'bg-emerald-50 text-emerald-700 border-emerald-200' },
+  { prefix: 'presence:users', label: '在线状态', desc: '用户在线心跳与在线集合', chip: 'bg-emerald-50 text-emerald-700 border-emerald-200' },
+  { prefix: 'sql_result:v2:', label: 'AI 交互态与工具缓存', desc: '问答暂存、SQL 结果、嵌入票据与技能统计', chip: 'bg-sky-50 text-sky-700 border-sky-200' },
+  { prefix: 'auth:api_key:', label: '认证与会话令牌', desc: '登录会话、API Key、登录失败与 2FA 状态', chip: 'bg-rose-50 text-rose-700 border-rose-200' },
+  { prefix: 'conversation:', label: '会话记忆与上下文', desc: '会话历史、上下文快照、结果栈与调用统计', chip: 'bg-blue-50 text-blue-700 border-blue-200' },
+  { prefix: 'embed:ticket:', label: 'AI 交互态与工具缓存', desc: '问答暂存、SQL 结果、嵌入票据与技能统计', chip: 'bg-sky-50 text-sky-700 border-sky-200' },
+  { prefix: 'kb:citation:', label: '知识库检索与引用', desc: '知识库引用统计与 RAGFlow 推荐缓存', chip: 'bg-teal-50 text-teal-700 border-teal-200' },
+  { prefix: 'rate_limit:', label: '并发控制与后台任务', desc: '请求幂等、会话运行锁、任务互斥与限流', chip: 'bg-amber-50 text-amber-700 border-amber-200' },
+  { prefix: 'sys_config:', label: '配置缓存', desc: '平台与记忆相关配置项缓存', chip: 'bg-slate-50 text-slate-600 border-slate-200' },
+]
+
+interface RedisKeyGroup {
+  id: string
+  desc: string
+  chip: string
+  keys: { name: string; type: string }[]
+  typeSummary: { type: string; count: number }[]
+}
+
+const expandedRedisGroupIds = ref<string[]>([])
+
+const redisKeyGroups = computed<RedisKeyGroup[]>(() => {
+  const groups: RedisKeyGroup[] = []
+  const index = new Map<string, RedisKeyGroup>()
+
+  for (const key of redisKeys.value) {
+    const rule = REDIS_KEY_GROUP_RULES.find((item) => key.name.startsWith(item.prefix))
+    const id = rule ? rule.label : '其它 Key'
+    let group = index.get(id)
+    if (!group) {
+      group = {
+        id,
+        desc: rule ? rule.desc : '未归入已知业务命名空间',
+        chip: rule ? rule.chip : 'bg-gray-50 text-gray-600 border-gray-200',
+        keys: [],
+        typeSummary: [],
+      }
+      index.set(id, group)
+      groups.push(group)
+    }
+    group.keys.push(key)
+  }
+
+  for (const group of groups) {
+    const counter = new Map<string, number>()
+    for (const key of group.keys) counter.set(key.type, (counter.get(key.type) || 0) + 1)
+    group.typeSummary = Array.from(counter.entries())
+      .map(([type, count]) => ({ type, count }))
+      .sort((a, b) => b.count - a.count)
+  }
+
+  // 规则表顺序即业务优先级，「其它 Key」恒排最后
+  const order = REDIS_KEY_GROUP_RULES.map((item) => item.label)
+  return groups.sort((a, b) => {
+    const ai = order.indexOf(a.id)
+    const bi = order.indexOf(b.id)
+    return (ai === -1 ? Number.MAX_SAFE_INTEGER : ai) - (bi === -1 ? Number.MAX_SAFE_INTEGER : bi)
+  })
+})
+
+// 分组数 ≤ 1 时无需折叠，直接展示（避免「搜到一条还要再点一下」）
+const isRedisGroupExpanded = (id: string): boolean =>
+  expandedRedisGroupIds.value.includes(id) || redisKeyGroups.value.length <= 1
+
+const allRedisGroupsExpanded = computed(
+  () =>
+    redisKeyGroups.value.length > 1 &&
+    redisKeyGroups.value.every((group) => expandedRedisGroupIds.value.includes(group.id))
+)
+
+const toggleRedisGroup = (id: string) => {
+  if (redisKeyGroups.value.length <= 1) return
+  expandedRedisGroupIds.value = expandedRedisGroupIds.value.includes(id)
+    ? expandedRedisGroupIds.value.filter((item) => item !== id)
+    : [...expandedRedisGroupIds.value, id]
+}
+
+const toggleAllRedisGroups = () => {
+  expandedRedisGroupIds.value = allRedisGroupsExpanded.value
+    ? []
+    : redisKeyGroups.value.map((group) => group.id)
+}
+
 const fetchRedisKeys = async () => {
   redisKeysLoading.value = true
   redisKeys.value = []
@@ -2346,6 +2763,7 @@ const fetchRedisKeys = async () => {
       params: { pattern: redisPattern.value || '*' }
     })
     redisKeys.value = res.data.keys || []
+    expandedRedisGroupIds.value = []
   } catch (e: any) {
     showToast(`获取 Redis Keys 失败: ${e.response?.data?.detail || e.message}`, 'error')
   } finally {
@@ -2401,6 +2819,55 @@ const executeDeleteKey = async () => {
     showToast(`删除失败: ${e.response?.data?.detail || e.message}`, 'error')
   } finally {
     pendingDeleteKey.value = null
+  }
+}
+
+// --- 业务分组批量删除 ---
+const showDeleteGroupConfirm = ref(false)
+const pendingDeleteGroup = ref<RedisKeyGroup | null>(null)
+const deletingGroupLoading = ref(false)
+
+const confirmDeleteGroup = (group: RedisKeyGroup) => {
+  pendingDeleteGroup.value = group
+  showDeleteGroupConfirm.value = true
+}
+
+const executeDeleteGroup = async () => {
+  if (!pendingDeleteGroup.value || !pendingDeleteGroup.value.keys.length) {
+    showDeleteGroupConfirm.value = false
+    return
+  }
+
+  const group = pendingDeleteGroup.value
+  const allKeys = group.keys.map((k) => k.name)
+  showDeleteGroupConfirm.value = false
+  deletingGroupLoading.value = true
+
+  try {
+    let totalDeleted = 0
+    const chunkSize = 2000
+    for (let i = 0; i < allKeys.length; i += chunkSize) {
+      const chunk = allKeys.slice(i, i + chunkSize)
+      const res = await axios.post('/api/portal/system/redis/delete-keys', { keys: chunk })
+      totalDeleted += res.data?.deleted_count ?? chunk.length
+    }
+
+    showToast(`已清空分组「${group.id}」，共删除 ${totalDeleted} 个 Key`, 'success')
+    appendLog(`>>> ✅ 已清空分组「${group.id}」，批量删除 ${totalDeleted} 个 Redis Key`)
+
+    if (selectedRedisKey.value && allKeys.includes(selectedRedisKey.value)) {
+      selectedRedisKey.value = null
+      redisKeyDetail.value = null
+    }
+
+    await fetchRedisKeys()
+  } catch (e: any) {
+    const msg = e.response?.data?.detail || e.message
+    showToast(`清空分组失败: ${msg}`, 'error')
+    appendLog(`>>> ❌ 清空分组「${group.id}」失败: ${msg}`)
+  } finally {
+    deletingGroupLoading.value = false
+    pendingDeleteGroup.value = null
   }
 }
 
@@ -2620,252 +3087,530 @@ onUnmounted(() => {
          </div>
        </div>
 
-       <!-- DIAGNOSTICS TAB -->
-       <div v-else-if="activeTab === 'diagnostics'" class="grid grid-cols-1 lg:grid-cols-3 gap-6 h-full overflow-y-auto pb-6">
-        <!-- Left Column: Connection Checks -->
-        <div class="space-y-6 lg:col-span-1">
-          <div class="bg-white shadow rounded-lg p-6">
-            <div class="flex items-center justify-between mb-4">
-              <div class="flex items-center space-x-3">
-                <div class="p-2 rounded-lg border border-primary/15 bg-primary/10">
-                  <CircleStackIcon class="h-6 w-6 text-primary" />
-                </div>
-                <div>
-                  <h3 class="text-lg font-medium text-gray-900">Redis</h3>
-                  <p class="text-sm text-gray-500">缓存与会话管理</p>
-                </div>
-              </div>
-              <div v-if="results.redis" class="flex items-center">
-                <CheckCircleIcon v-if="results.redis === 'success'" class="h-6 w-6 text-green-500" />
-                <XCircleIcon v-else class="h-6 w-6 text-red-500" />
-              </div>
-            </div>
-            <div class="border-t border-gray-100 pt-4 mt-2 flex flex-col gap-2">
-              <button @click="testConnection('redis')" :disabled="loading.redis || !canSave" class="w-full inline-flex justify-center items-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-primary hover:bg-primary/90 focus:outline-none disabled:opacity-50 whitespace-nowrap">
-                <PlayIcon v-if="!loading.redis" class="h-4 w-4 mr-2 shrink-0" />
-                <span v-else class="animate-spin h-4 w-4 mr-2 border-2 border-white border-t-transparent rounded-full shrink-0"></span>
-                {{ loading.redis ? '测试中...' : '测试连接' }}
-              </button>
-               <button @click="scanRedisKeys" :disabled="loading.redis_scan || !canSave" class="w-full inline-flex justify-center items-center py-2 px-4 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 disabled:opacity-50 whitespace-nowrap">
-                <MagnifyingGlassIcon v-if="!loading.redis_scan" class="h-4 w-4 mr-2 shrink-0" />
-                <span v-else class="animate-spin h-4 w-4 mr-2 border-2 border-gray-400 border-t-transparent rounded-full shrink-0"></span>
-                {{ loading.redis_scan ? '扫描中...' : '扫描 Keys' }}
-              </button>
-              <button @click="openClearConfirm" :disabled="!canSave" class="w-full inline-flex justify-center items-center py-2 px-4 border border-red-300 rounded-md shadow-sm text-sm font-medium text-red-700 bg-red-50 hover:bg-red-100 disabled:opacity-50 whitespace-nowrap">
-                <TrashIcon class="h-4 w-4 mr-2 shrink-0" />
-                清理 Keys
-              </button>
-            </div>
-          </div>
-
-          <div class="bg-white shadow rounded-lg p-6">
-            <div class="flex items-start justify-between mb-4">
-              <div class="flex items-center space-x-3">
-                <div class="p-2 rounded-lg border border-primary/15 bg-primary/10">
-                  <CpuChipIcon class="h-6 w-6 text-primary" />
-                </div>
-                <div>
-                  <h3 class="text-lg font-medium text-gray-900">Redis 向量搜索</h3>
-                  <p class="text-sm text-gray-500">检测 RediSearch 与会话摘要向量索引能力</p>
-                </div>
-              </div>
-              <div v-if="results.redis_vector" class="flex items-center">
-                <CheckCircleIcon v-if="results.redis_vector === 'success'" class="h-6 w-6 text-green-500" />
-                <XCircleIcon v-else class="h-6 w-6 text-red-500" />
-              </div>
-            </div>
-
+        <!-- DIAGNOSTICS TAB -->
+        <div v-else-if="activeTab === 'diagnostics'" class="flex flex-col gap-4 h-full min-h-0 pb-6 overflow-y-auto custom-scrollbar">
+          <!-- 顶部：连接与能力检查区域（支持智能 Mini 摘要条折叠/展开） -->
+          <div class="flex-shrink-0 transition-all duration-200">
+            <!-- 状态 1：折叠态 Mini 状态胶囊栏 -->
             <div
-              v-if="redisVectorHealth"
-              class="rounded-md border p-3 text-sm mb-4"
-              :class="redisVectorHealth.ok ? 'bg-green-50 border-green-200 text-green-800' : 'bg-amber-50 border-amber-200 text-amber-900'"
+              v-if="diagnosticsOverviewCollapsed"
+              class="rounded-xl border border-gray-200/80 bg-white shadow-xs px-4 py-2.5 flex items-center justify-between gap-3 flex-wrap transition-all duration-200"
             >
-              <div class="font-medium">{{ redisVectorHealth.message }}</div>
-              <div v-if="redisVectorHealth.redis_host" class="mt-1 text-xs opacity-80">
-                当前连接：{{ redisVectorHealth.redis_host }}:{{ redisVectorHealth.redis_port }} / db {{ redisVectorHealth.redis_db }}
-              </div>
-              <ul v-if="!redisVectorHealth.ok && redisVectorHealth.hints?.length" class="list-disc pl-5 mt-2 space-y-1 text-xs">
-                <li v-for="(hint, i) in redisVectorHealth.hints" :key="i">{{ hint }}</li>
-              </ul>
-            </div>
-
-            <div v-if="redisVectorHealth?.checks?.length" class="border border-gray-100 rounded-md overflow-hidden mb-4">
-              <div
-                v-for="check in redisVectorHealth.checks"
-                :key="check.name"
-                class="flex items-start justify-between gap-3 px-3 py-2 border-b border-gray-100 last:border-b-0 text-sm"
-              >
-                <div>
-                  <div class="font-medium text-gray-800">{{ check.name }}</div>
-                  <div class="text-xs text-gray-500 mt-0.5">{{ check.message }}</div>
+              <!-- 左侧：标题与服务状态胶囊 -->
+              <div class="flex items-center gap-3.5 flex-wrap min-w-0">
+                <div class="flex items-center gap-2 text-xs font-semibold text-gray-800">
+                  <div class="h-6 w-6 rounded-lg bg-primary/10 border border-primary/20 flex items-center justify-center text-primary shadow-xs">
+                    <BoltIcon class="h-3.5 w-3.5" />
+                  </div>
+                  <span>服务概览</span>
                 </div>
-                <span
-                  class="shrink-0 px-2 py-0.5 rounded-full text-xs font-medium"
-                  :class="check.passed ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'"
-                >
-                  {{ check.passed ? '通过' : '失败' }}
-                </span>
+
+                <div class="h-3.5 w-[1px] bg-gray-200 hidden sm:block"></div>
+
+                <!-- Redis 状态胶囊 -->
+                <div class="flex items-center gap-1.5 text-xs">
+                  <span class="text-gray-500 font-medium">Redis:</span>
+                  <span v-if="results.redis === 'success'" class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium bg-emerald-50 text-emerald-700 border border-emerald-200/80">
+                    <span class="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                    正常
+                  </span>
+                  <span v-else-if="results.redis === 'failed'" class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium bg-rose-50 text-rose-700 border border-rose-200/80">
+                    <span class="h-1.5 w-1.5 rounded-full bg-rose-500"></span>
+                    失败
+                  </span>
+                  <span v-else class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium bg-gray-50 text-gray-500 border border-gray-200/80">
+                    <span class="h-1.5 w-1.5 rounded-full bg-gray-400"></span>
+                    待检测
+                  </span>
+                </div>
+
+                <!-- 向量搜索状态胶囊 -->
+                <div class="flex items-center gap-1.5 text-xs">
+                  <span class="text-gray-500 font-medium">向量引擎:</span>
+                  <span v-if="results.redis_vector === 'success' || redisVectorHealth?.ok" class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium bg-emerald-50 text-emerald-700 border border-emerald-200/80">
+                    <span class="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                    就绪
+                  </span>
+                  <span v-else-if="results.redis_vector === 'failed' || (redisVectorHealth && !redisVectorHealth.ok)" class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium bg-rose-50 text-rose-700 border border-rose-200/80">
+                    <span class="h-1.5 w-1.5 rounded-full bg-rose-500"></span>
+                    异常
+                  </span>
+                  <span v-else class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium bg-gray-50 text-gray-500 border border-gray-200/80">
+                    <span class="h-1.5 w-1.5 rounded-full bg-gray-400"></span>
+                    待检测
+                  </span>
+                </div>
               </div>
-            </div>
 
-            <div class="flex flex-wrap gap-3">
-              <button
-                @click="testRedisVectorSearch(true)"
-                :disabled="loading.redis_vector || !canSave"
-                class="inline-flex justify-center items-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-primary hover:bg-primary/90 disabled:opacity-50"
-              >
-                <PlayIcon v-if="!loading.redis_vector" class="h-4 w-4 mr-2" />
-                <span v-else class="animate-spin h-4 w-4 mr-2 border-2 border-white border-t-transparent rounded-full"></span>
-                {{ loading.redis_vector ? '检测中...' : '重新检测' }}
-              </button>
-              <button
-                @click="openRebuildConfirm"
-                :disabled="loading.rebuild_vector || !canSave"
-                class="inline-flex justify-center items-center py-2 px-4 border border-red-300 rounded-md shadow-sm text-sm font-medium text-red-700 bg-red-50 hover:bg-red-100 disabled:opacity-50"
-              >
-                <ArrowPathIcon v-if="!loading.rebuild_vector" class="h-4 w-4 mr-2" />
-                <span v-else class="animate-spin h-4 w-4 mr-2 border-2 border-red-400 border-t-transparent rounded-full"></span>
-                {{ loading.rebuild_vector ? '重构中...' : '重构本地向量数据' }}
-              </button>
-            </div>
-          </div>
-        </div>
-        <!-- Right Column: Console Output / Redis Browser -->
-        <div class="lg:col-span-2 bg-white rounded-lg shadow flex flex-col h-[600px] border border-gray-100 overflow-hidden">
-          <div class="bg-gray-50 px-4 py-2.5 flex justify-between items-center border-b border-gray-200 flex-shrink-0">
-            <div class="flex space-x-2">
-              <button 
-                @click="diagSubTab = 'console'"
-                class="px-3 py-1.5 rounded-md text-xs font-semibold transition-all flex items-center"
-                :class="diagSubTab === 'console' ? 'bg-white shadow text-primary border border-gray-100' : 'text-gray-500 hover:text-gray-700'"
-              >
-                <CommandLineIcon class="w-3.5 h-3.5 mr-1.5" />
-                诊断控制台
-              </button>
-              <button 
-                @click="diagSubTab = 'redis'"
-                class="px-3 py-1.5 rounded-md text-xs font-semibold transition-all flex items-center"
-                :class="diagSubTab === 'redis' ? 'bg-white shadow text-primary border border-gray-100' : 'text-gray-500 hover:text-gray-700'"
-              >
-                <CircleStackIcon class="w-3.5 h-3.5 mr-1.5" />
-                Redis浏览器
-              </button>
-            </div>
-            <button v-if="diagSubTab === 'console'" @click="clearLogs" class="text-xs text-gray-400 hover:text-gray-600">清空</button>
-          </div>
-          
-          <!-- Tab: Console -->
-          <div v-if="diagSubTab === 'console'" class="flex-1 bg-gray-950 p-4 overflow-y-auto font-mono text-sm space-y-1 custom-scrollbar text-green-400">
-            <div v-if="logs.length === 0" class="text-gray-400 italic">等待执行测试...</div>
-            <div v-else v-for="(log, index) in logs" :key="index" class="text-green-400 break-all">
-              <span class="text-gray-500 mr-2">></span>{{ log }}
-            </div>
-          </div>
-
-          <!-- Tab: Redis Browser -->
-          <div v-else-if="diagSubTab === 'redis'" class="flex-1 flex space-x-4 overflow-hidden p-4 bg-gray-50">
-            <!-- Left Column: Keys list -->
-            <div class="w-2/5 bg-white border border-gray-200 rounded-lg p-3 flex flex-col h-full overflow-hidden">
-              <div class="mb-3 flex items-center space-x-2 flex-shrink-0">
-                <input
-                  type="text"
-                  v-model="redisPattern"
-                  placeholder="匹配模式 (例如 * 或 nanzi:*)"
-                  @keyup.enter="fetchRedisKeys"
-                  class="flex-1 min-w-0 shadow-sm focus:ring-primary focus:border-primary block w-full sm:text-sm border-gray-300 rounded-md bg-gray-50 p-2 border"
-                />
+              <!-- 右侧：快捷检测 + 展开按钮 -->
+              <div class="flex items-center gap-2 ml-auto">
                 <button
-                  @click="fetchRedisKeys"
-                  :disabled="redisKeysLoading"
-                  class="inline-flex items-center px-3 py-2 border border-transparent text-sm leading-4 font-medium rounded-md text-white bg-primary hover:bg-primary/90 disabled:opacity-50"
+                  @click="testConnection('redis')"
+                  :disabled="loading.redis || !canSave"
+                  class="inline-flex items-center py-1 px-2.5 rounded-lg text-xs font-medium text-white bg-primary hover:bg-primary/90 disabled:opacity-50 transition-all cursor-pointer shadow-xs"
+                  title="快速测试 Redis 连接"
                 >
-                  <span v-if="redisKeysLoading" class="animate-spin h-4 w-4 border-2 border-white border-t-transparent rounded-full mr-1"></span>
-                  搜索
+                  <PlayIcon v-if="!loading.redis" class="h-3 w-3 mr-1" />
+                  <span v-else class="animate-spin h-3 w-3 mr-1 border-2 border-white border-t-transparent rounded-full"></span>
+                  {{ loading.redis ? '测试中...' : '测试连接' }}
+                </button>
+
+                <button
+                  @click="toggleDiagnosticsOverview"
+                  type="button"
+                  class="inline-flex items-center gap-1 py-1 px-2 rounded-lg text-xs font-medium text-gray-600 hover:text-primary hover:bg-gray-100 transition-colors cursor-pointer"
+                >
+                  <span>展开卡片</span>
+                  <ChevronDownIcon class="h-3.5 w-3.5" />
                 </button>
               </div>
-              
-              <div class="flex-1 overflow-y-auto min-h-0 custom-scrollbar border border-gray-100 rounded-md">
-                <div v-if="redisKeys.length === 0 && !redisKeysLoading" class="p-6 text-center text-gray-400 italic text-sm">
-                  无匹配的 Redis Keys
-                </div>
-                <div v-else-if="redisKeysLoading" class="p-12 text-center text-gray-400 flex flex-col items-center">
-                  <span class="animate-spin h-8 w-8 border-2 border-primary border-t-transparent rounded-full mb-2"></span>
-                  正在扫描键名...
-                </div>
-                <div v-else class="divide-y divide-gray-100">
-                  <div
-                    v-for="key in redisKeys"
-                    :key="key.name"
-                    @click="fetchRedisKeyDetail(key.name)"
-                    class="px-2.5 py-2 hover:bg-gray-50 cursor-pointer flex items-center justify-between transition-colors duration-150"
-                    :class="selectedRedisKey === key.name ? 'bg-indigo-50/70 hover:bg-indigo-50' : ''"
-                  >
-                    <span class="text-xs font-mono break-all text-gray-700 font-medium select-all" :class="selectedRedisKey === key.name ? 'text-primary font-bold' : ''">
-                      {{ key.name }}
-                    </span>
-                    <span class="ml-2 shrink-0 px-2 py-0.5 rounded text-[10px] font-bold uppercase" :class="
-                      key.type === 'string' ? 'bg-green-50 text-green-700 border border-green-100' :
-                      key.type === 'hash' ? 'bg-blue-50 text-blue-700 border border-blue-100' :
-                      key.type === 'list' ? 'bg-yellow-50 text-yellow-700 border border-yellow-100' :
-                      'bg-gray-50 text-gray-600 border border-gray-100'
-                    ">
-                      {{ key.type }}
-                    </span>
-                  </div>
-                </div>
-              </div>
-              <div class="mt-2 text-[10px] text-gray-400 font-mono text-right flex-shrink-0">
-                显示最多 5000 条结果
-              </div>
             </div>
 
-            <!-- Right Column: Key detail -->
-            <div class="flex-1 bg-white border border-gray-200 rounded-lg p-4 flex flex-col h-full overflow-hidden">
-              <div v-if="redisDetailLoading" class="flex-1 flex flex-col items-center justify-center">
-                <span class="animate-spin h-8 w-8 border-2 border-primary border-t-transparent rounded-full mb-2"></span>
-                <p class="text-gray-400 text-xs">正在加载详情...</p>
+            <!-- 状态 2：展开态完整双卡片 -->
+            <div v-else class="space-y-2">
+              <!-- 卡片上方轻量操作栏（放收起按钮） -->
+              <div class="flex items-center justify-between px-1 text-xs text-gray-500">
+                <span class="font-medium text-gray-600 flex items-center gap-1.5">
+                  <span class="h-1.5 w-1.5 rounded-full bg-primary/80"></span>
+                  服务连接与组件能力概览
+                </span>
+                <button
+                  @click="toggleDiagnosticsOverview"
+                  type="button"
+                  class="inline-flex items-center gap-1 py-1 px-2 rounded-lg text-xs font-medium text-gray-500 hover:text-primary hover:bg-gray-100 transition-colors cursor-pointer"
+                >
+                  <span>收起概览</span>
+                  <ChevronUpIcon class="h-3.5 w-3.5" />
+                </button>
               </div>
-              <div v-else-if="redisKeyDetail" class="flex flex-col h-full min-h-0">
-                <!-- Header detail info -->
-                <div class="border-b border-gray-100 pb-3 mb-3 flex items-start justify-between flex-shrink-0">
-                  <div class="space-y-1 min-w-0 pr-2">
-                    <div class="flex items-center space-x-2">
-                      <h3 class="text-sm font-bold text-gray-900 break-all font-mono select-all">
-                        {{ redisKeyDetail.name }}
-                      </h3>
+
+              <!-- 双卡片 Grid -->
+              <div class="grid grid-cols-1 xl:grid-cols-2 gap-4">
+            <!-- Redis 连接卡片 -->
+            <div class="rounded-xl border border-gray-200/80 bg-white shadow-sm hover:shadow-md transition-all duration-200 p-4 sm:p-5 flex flex-col justify-between">
+              <div>
+                <!-- 卡片头部与状态徽章 -->
+                <div class="flex items-start justify-between gap-3">
+                  <div class="flex items-center gap-3 min-w-0">
+                    <div class="h-10 w-10 rounded-xl bg-primary/10 border border-primary/20 flex items-center justify-center flex-shrink-0 text-primary shadow-xs">
+                      <CircleStackIcon class="h-5 w-5" />
                     </div>
-                    <div class="flex items-center space-x-2 text-[10px]">
-                      <span class="px-1.5 py-0.5 rounded-full font-bold uppercase bg-indigo-50 text-indigo-700 border border-indigo-100">
-                        {{ redisKeyDetail.type }}
-                      </span>
-                      <span class="font-mono text-gray-500">
-                        TTL: {{ redisKeyDetail.ttl === -1 ? '永不过期 (-1)' : redisKeyDetail.ttl === -2 ? '已过期 (-2)' : `${redisKeyDetail.ttl} 秒` }}
-                      </span>
+                    <div class="min-w-0">
+                      <div class="flex items-center gap-2">
+                        <h3 class="text-base font-semibold text-gray-900 tracking-tight">Redis 服务</h3>
+                        <span class="text-[10px] font-mono text-gray-500 bg-gray-100/90 border border-gray-200/60 px-1.5 py-0.5 rounded">Core Cache</span>
+                      </div>
+                      <p class="text-xs text-gray-500 mt-0.5 truncate">缓存加速、会话维持与限流队列</p>
                     </div>
                   </div>
-                  
+
+                  <!-- 状态徽章 Badge -->
+                  <div class="flex-shrink-0">
+                    <span v-if="results.redis === 'success'" class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-emerald-50 text-emerald-700 border border-emerald-200/80">
+                      <span class="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                      连接正常
+                    </span>
+                    <span v-else-if="results.redis === 'failed'" class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-rose-50 text-rose-700 border border-rose-200/80">
+                      <span class="h-1.5 w-1.5 rounded-full bg-rose-500"></span>
+                      连接失败
+                    </span>
+                    <span v-else class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-gray-50 text-gray-500 border border-gray-200/80">
+                      <span class="h-1.5 w-1.5 rounded-full bg-gray-400"></span>
+                      待检测
+                    </span>
+                  </div>
+                </div>
+
+                <!-- 架构信息条 -->
+                <div class="mt-3.5 mb-3 py-1.5 px-3 rounded-lg bg-gray-50/80 border border-gray-100 text-xs text-gray-500 flex items-center justify-between">
+                  <span class="flex items-center gap-1.5 text-gray-600">
+                    <InformationCircleIcon class="h-3.5 w-3.5 text-gray-400 flex-shrink-0" />
+                    <span>核心组件：分布式缓存与热点数据读写</span>
+                  </span>
+                  <span class="text-[10px] text-gray-400 font-mono">STANDALONE</span>
+                </div>
+              </div>
+
+              <!-- 底部操作按钮组 -->
+              <div class="border-t border-gray-100 pt-3 flex items-center justify-between flex-wrap gap-2">
+                <div class="flex items-center gap-2">
+                  <!-- 主按钮：测试连接 -->
                   <button
-                    @click="confirmDeleteKey(redisKeyDetail.name)"
-                    title="删除此键"
-                    class="inline-flex items-center p-1.5 border border-red-200 rounded-md text-red-700 bg-red-50 hover:bg-red-100 transition-colors shadow-sm"
+                    @click="testConnection('redis')"
+                    :disabled="loading.redis || !canSave"
+                    class="inline-flex items-center py-1.5 px-3.5 rounded-lg text-xs font-medium text-white bg-primary hover:bg-primary/90 active:scale-[0.98] transition-all shadow-xs disabled:opacity-50 whitespace-nowrap cursor-pointer"
                   >
-                    <TrashIcon class="h-3.5 w-3.5" />
+                    <PlayIcon v-if="!loading.redis" class="h-3.5 w-3.5 mr-1.5 flex-shrink-0" />
+                    <span v-else class="animate-spin h-3.5 w-3.5 mr-1.5 border-2 border-white border-t-transparent rounded-full flex-shrink-0"></span>
+                    {{ loading.redis ? '测试中...' : '测试连接' }}
+                  </button>
+
+                  <!-- 辅助按钮：扫描 Keys -->
+                  <button
+                    @click="scanRedisKeys"
+                    :disabled="loading.redis_scan || !canSave"
+                    class="inline-flex items-center py-1.5 px-3 rounded-lg text-xs font-medium text-gray-700 bg-gray-100/80 hover:bg-gray-200/70 active:scale-[0.98] transition-all disabled:opacity-50 whitespace-nowrap cursor-pointer"
+                  >
+                    <MagnifyingGlassIcon v-if="!loading.redis_scan" class="h-3.5 w-3.5 mr-1.5 text-gray-500 flex-shrink-0" />
+                    <span v-else class="animate-spin h-3.5 w-3.5 mr-1.5 border-2 border-gray-400 border-t-transparent rounded-full flex-shrink-0"></span>
+                    {{ loading.redis_scan ? '扫描中...' : '扫描 Keys' }}
                   </button>
                 </div>
 
-                <!-- Value area -->
-                <div class="flex-1 min-h-0 overflow-y-auto bg-gray-950 rounded-lg p-3 font-mono text-[11px] text-green-400 custom-scrollbar border border-gray-950">
-                  <pre class="whitespace-pre-wrap break-all select-text selection:bg-indigo-500/30">{{ formatRedisValue(redisKeyDetail.value) }}</pre>
+                <!-- 风险维护操作：清理 Keys -->
+                <button
+                  @click="openClearConfirm"
+                  :disabled="!canSave"
+                  class="inline-flex items-center py-1.5 px-2.5 rounded-lg text-xs font-medium text-rose-600 hover:text-rose-700 hover:bg-rose-50 border border-transparent hover:border-rose-200/60 active:scale-[0.98] transition-all disabled:opacity-50 whitespace-nowrap cursor-pointer ml-auto"
+                  title="按业务分组或全局清理缓存 Key"
+                >
+                  <TrashIcon class="h-3.5 w-3.5 mr-1 text-rose-500 flex-shrink-0" />
+                  清理 Keys
+                </button>
+              </div>
+            </div>
+
+            <!-- Redis 向量搜索卡片 -->
+            <div class="rounded-xl border border-gray-200/80 bg-white shadow-sm hover:shadow-md transition-all duration-200 p-4 sm:p-5 flex flex-col justify-between">
+              <div>
+                <!-- 卡片头部与状态徽章 -->
+                <div class="flex items-start justify-between gap-3">
+                  <div class="flex items-center gap-3 min-w-0">
+                    <div class="h-10 w-10 rounded-xl bg-primary/10 border border-primary/20 flex items-center justify-center flex-shrink-0 text-primary shadow-xs">
+                      <CpuChipIcon class="h-5 w-5" />
+                    </div>
+                    <div class="min-w-0">
+                      <div class="flex items-center gap-2">
+                        <h3 class="text-base font-semibold text-gray-900 tracking-tight">Redis 向量搜索</h3>
+                        <span class="text-[10px] font-mono text-gray-500 bg-gray-100/90 border border-gray-200/60 px-1.5 py-0.5 rounded">RediSearch</span>
+                      </div>
+                      <p class="text-xs text-gray-500 mt-0.5 truncate">检测会话摘要、长期记忆与本地向量引擎能力</p>
+                    </div>
+                  </div>
+
+                  <!-- 状态徽章与详情切换 -->
+                  <div class="flex items-center gap-2 flex-shrink-0">
+                    <span v-if="results.redis_vector === 'success' || redisVectorHealth?.ok" class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-emerald-50 text-emerald-700 border border-emerald-200/80">
+                      <span class="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                      引擎就绪
+                    </span>
+                    <span v-else-if="results.redis_vector === 'failed' || (redisVectorHealth && !redisVectorHealth.ok)" class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-rose-50 text-rose-700 border border-rose-200/80">
+                      <span class="h-1.5 w-1.5 rounded-full bg-rose-500"></span>
+                      异常 / 未就绪
+                    </span>
+                    <span v-else class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-gray-50 text-gray-500 border border-gray-200/80">
+                      <span class="h-1.5 w-1.5 rounded-full bg-gray-400"></span>
+                      待检测
+                    </span>
+
+                    <button
+                      v-if="redisVectorHealth"
+                      @click="vectorHealthExpanded = !vectorHealthExpanded"
+                      class="inline-flex items-center text-xs font-medium text-gray-500 hover:text-primary transition-colors py-1 px-2 rounded-lg hover:bg-gray-100 whitespace-nowrap cursor-pointer"
+                    >
+                      {{ vectorHealthExpanded ? '收起详情' : '查看详情' }}
+                      <ChevronDownIcon class="h-3.5 w-3.5 ml-0.5 transition-transform duration-200" :class="vectorHealthExpanded ? 'rotate-180' : ''" />
+                    </button>
+                  </div>
+                </div>
+
+                <!-- 架构信息条 -->
+                <div class="mt-3.5 mb-3 py-1.5 px-3 rounded-lg bg-gray-50/80 border border-gray-100 text-xs text-gray-500 flex items-center justify-between">
+                  <span class="flex items-center gap-1.5 text-gray-600">
+                    <InformationCircleIcon class="h-3.5 w-3.5 text-gray-400 flex-shrink-0" />
+                    <span>检索算法：HNSW 向量近似邻近索引</span>
+                  </span>
+                  <span class="text-[10px] text-gray-400 font-mono">VECTOR EXTENSION</span>
                 </div>
               </div>
-              <div v-else class="flex-1 flex flex-col items-center justify-center text-gray-400">
-                <CircleStackIcon class="h-10 w-10 text-gray-200 mb-2" />
-                <p class="text-xs">请从左侧列表选择一个 Key 查看详细内容</p>
+
+              <!-- 底部操作按钮组 -->
+              <div class="border-t border-gray-100 pt-3 flex items-center justify-between flex-wrap gap-2">
+                <div class="flex items-center gap-2">
+                  <!-- 主按钮：重新检测 -->
+                  <button
+                    @click="testRedisVectorSearch(true)"
+                    :disabled="loading.redis_vector || !canSave"
+                    class="inline-flex items-center py-1.5 px-3.5 rounded-lg text-xs font-medium text-white bg-primary hover:bg-primary/90 active:scale-[0.98] transition-all shadow-xs disabled:opacity-50 whitespace-nowrap cursor-pointer"
+                  >
+                    <PlayIcon v-if="!loading.redis_vector" class="h-3.5 w-3.5 mr-1.5 flex-shrink-0" />
+                    <span v-else class="animate-spin h-3.5 w-3.5 mr-1.5 border-2 border-white border-t-transparent rounded-full flex-shrink-0"></span>
+                    {{ loading.redis_vector ? '检测中...' : '重新检测' }}
+                  </button>
+                </div>
+
+                <!-- 维护操作：重构本地向量数据 -->
+                <button
+                  @click="openRebuildConfirm"
+                  :disabled="loading.rebuild_vector || !canSave"
+                  class="inline-flex items-center py-1.5 px-3 rounded-lg text-xs font-medium text-amber-700 bg-amber-50 hover:bg-amber-100/80 border border-amber-200/70 active:scale-[0.98] transition-all disabled:opacity-50 whitespace-nowrap cursor-pointer ml-auto"
+                >
+                  <ArrowPathIcon v-if="!loading.rebuild_vector" class="h-3.5 w-3.5 mr-1.5 text-amber-600 flex-shrink-0" />
+                  <span v-else class="animate-spin h-3.5 w-3.5 mr-1.5 border-2 border-amber-500 border-t-transparent rounded-full flex-shrink-0"></span>
+                  {{ loading.rebuild_vector ? '重构中...' : '重构本地向量数据' }}
+                </button>
+              </div>
+
+              <!-- 检测详情（默认收起，点击右上「查看详情」展开） -->
+              <div v-if="vectorHealthExpanded && redisVectorHealth" class="mt-3.5 space-y-2.5 pt-3 border-t border-gray-100">
+                <div
+                  class="rounded-lg border p-3 text-xs"
+                  :class="redisVectorHealth.ok ? 'bg-emerald-50/80 border-emerald-200/70 text-emerald-900' : 'bg-amber-50/80 border-amber-200/70 text-amber-900'"
+                >
+                  <div class="font-semibold">{{ redisVectorHealth.message }}</div>
+                  <div v-if="redisVectorHealth.redis_host" class="mt-1 text-[11px] opacity-85">
+                    当前连接：{{ redisVectorHealth.redis_host }}:{{ redisVectorHealth.redis_port }} / db {{ redisVectorHealth.redis_db }}
+                  </div>
+                  <ul v-if="!redisVectorHealth.ok && redisVectorHealth.hints?.length" class="list-disc pl-4 mt-2 space-y-1 text-[11px]">
+                    <li v-for="(hint, i) in redisVectorHealth.hints" :key="i">{{ hint }}</li>
+                  </ul>
+                </div>
+
+                <div v-if="redisVectorHealth?.checks?.length" class="border border-gray-100 rounded-lg overflow-hidden divide-y divide-gray-100">
+                  <div
+                    v-for="check in redisVectorHealth.checks"
+                    :key="check.name"
+                    class="flex items-start justify-between gap-3 px-3 py-2 bg-gray-50/40 text-xs"
+                  >
+                    <div>
+                      <div class="font-medium text-gray-800">{{ check.name }}</div>
+                      <div class="text-[11px] text-gray-500 mt-0.5">{{ check.message }}</div>
+                    </div>
+                    <span
+                      class="flex-shrink-0 px-2 py-0.5 rounded-full text-[10px] font-semibold"
+                      :class="check.passed ? 'bg-emerald-100 text-emerald-700' : 'bg-rose-100 text-rose-700'"
+                    >
+                      {{ check.passed ? '通过' : '失败' }}
+                    </span>
+                  </div>
+                </div>
               </div>
             </div>
           </div>
         </div>
       </div>
+
+          <!-- 下方：诊断控制台 / Redis 浏览器（全宽一体化面板） -->
+          <div class="flex-1 min-h-[520px] bg-white rounded-xl shadow-sm border border-gray-200/80 flex flex-col overflow-hidden">
+            <div class="px-4 py-2.5 flex justify-between items-center border-b border-gray-100 bg-white/95 flex-shrink-0">
+              <!-- 分段控制器 Tab -->
+              <div class="inline-flex p-0.5 bg-gray-100/90 rounded-lg border border-gray-200/40">
+                <button
+                  @click="diagSubTab = 'console'"
+                  type="button"
+                  class="px-3.5 py-1.5 rounded-md text-xs transition-all duration-150 flex items-center cursor-pointer"
+                  :class="diagSubTab === 'console' ? 'bg-white text-gray-900 shadow-xs font-semibold' : 'text-gray-500 hover:text-gray-900 font-medium'"
+                >
+                  <CommandLineIcon class="w-3.5 h-3.5 mr-1.5" :class="diagSubTab === 'console' ? 'text-primary' : 'text-gray-400'" />
+                  诊断控制台
+                </button>
+                <button
+                  @click="diagSubTab = 'redis'"
+                  type="button"
+                  class="px-3.5 py-1.5 rounded-md text-xs transition-all duration-150 flex items-center cursor-pointer"
+                  :class="diagSubTab === 'redis' ? 'bg-white text-gray-900 shadow-xs font-semibold' : 'text-gray-500 hover:text-gray-900 font-medium'"
+                >
+                  <CircleStackIcon class="w-3.5 h-3.5 mr-1.5" :class="diagSubTab === 'redis' ? 'text-primary' : 'text-gray-400'" />
+                  Redis 浏览器
+                </button>
+              </div>
+
+              <!-- 右侧控制项 -->
+              <div class="flex items-center gap-2">
+                <button
+                  v-if="diagSubTab === 'console'"
+                  @click="clearLogs"
+                  type="button"
+                  class="inline-flex items-center text-xs text-gray-400 hover:text-gray-600 px-2 py-1 rounded hover:bg-gray-100 transition-colors cursor-pointer"
+                  title="清空控制台输出"
+                >
+                  <TrashIcon class="w-3 h-3 mr-1 text-gray-400" />
+                  清空日志
+                </button>
+              </div>
+            </div>
+
+            <!-- Tab: Console -->
+            <div v-if="diagSubTab === 'console'" class="flex-1 bg-gray-950 p-4 overflow-y-auto font-mono text-sm space-y-1 custom-scrollbar text-green-400">
+              <div v-if="logs.length === 0" class="text-gray-500 italic text-xs">等待执行测试... 点击上方「测试连接」或「重新检测」开始输出诊断日志。</div>
+              <div v-else v-for="(log, index) in logs" :key="index" class="text-green-400 break-all text-xs leading-relaxed">
+                <span class="text-gray-600 mr-2 select-none">></span>{{ log }}
+              </div>
+            </div>
+
+            <!-- Tab: Redis Browser -->
+            <div v-else-if="diagSubTab === 'redis'" class="flex-1 flex space-x-4 overflow-hidden p-4 bg-gray-50/60">
+              <!-- Left Column: Keys list -->
+              <div class="w-2/5 bg-white border border-gray-200/80 rounded-xl p-3 flex flex-col h-full overflow-hidden shadow-xs">
+                <!-- 一体化搜索栏 -->
+                <div class="mb-3 relative flex items-center flex-shrink-0">
+                  <div class="pointer-events-none absolute inset-y-0 left-0 pl-3 flex items-center">
+                    <MagnifyingGlassIcon class="h-4 w-4 text-gray-400" />
+                  </div>
+                  <input
+                    type="search"
+                    v-model="redisPattern"
+                    placeholder="匹配模式 (例如 * 或 nanzi:*)..."
+                    @keyup.enter="fetchRedisKeys"
+                    class="block w-full pl-9 pr-18 py-1.5 border border-gray-200 rounded-lg text-xs bg-gray-50/70 placeholder-gray-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all"
+                  />
+                  <div class="absolute inset-y-0 right-1 flex items-center pr-0.5">
+                    <button
+                      @click="fetchRedisKeys"
+                      :disabled="redisKeysLoading"
+                      type="button"
+                      class="inline-flex items-center px-2.5 py-1 rounded-md text-xs font-medium text-white bg-primary hover:bg-primary/90 active:scale-95 disabled:opacity-50 transition-all cursor-pointer shadow-xs"
+                    >
+                      <span v-if="redisKeysLoading" class="animate-spin h-3 w-3 border-2 border-white border-t-transparent rounded-full mr-1"></span>
+                      搜索
+                    </button>
+                  </div>
+                </div>
+
+                <div class="flex-1 overflow-y-auto min-h-0 custom-scrollbar border border-gray-100 rounded-lg">
+                  <div v-if="redisKeys.length === 0 && !redisKeysLoading" class="p-8 text-center text-gray-400 italic text-xs">
+                    无匹配的 Redis Keys
+                  </div>
+                  <div v-else-if="redisKeysLoading" class="p-12 text-center text-gray-400 flex flex-col items-center">
+                    <span class="animate-spin h-7 w-7 border-2 border-primary border-t-transparent rounded-full mb-2"></span>
+                    <span class="text-xs">正在扫描键名...</span>
+                  </div>
+                  <div v-else class="divide-y divide-gray-100">
+                    <!-- 分组工具条：分组数 > 1 时提供一键展开/收起 -->
+                    <div
+                      v-if="redisKeyGroups.length > 1"
+                      class="flex items-center justify-between px-3 py-1.5 bg-gray-50/90 backdrop-blur text-xs text-gray-500 sticky top-0 z-10 border-b border-gray-100"
+                    >
+                      <span class="font-medium text-gray-600 text-[11px]">
+                        <span class="text-gray-900 font-semibold">{{ redisKeyGroups.length }}</span> 个业务分组 · 共 <span class="text-primary font-semibold">{{ redisKeys.length }}</span> 个 Key
+                      </span>
+                      <button @click="toggleAllRedisGroups" class="text-[11px] text-primary hover:underline font-medium cursor-pointer">
+                        {{ allRedisGroupsExpanded ? '全部收起' : '全部展开' }}
+                      </button>
+                    </div>
+
+                    <div v-for="group in redisKeyGroups" :key="group.id">
+                      <!-- 组头：左侧折叠展开，右侧类型汇总与删除该组全部 key -->
+                      <div
+                        class="w-full flex items-center justify-between gap-1.5 px-2.5 py-1.5 transition-colors group hover:bg-gray-50/80"
+                        :class="redisKeyGroups.length > 1 ? 'cursor-pointer' : 'cursor-default'"
+                        :title="group.desc"
+                      >
+                        <!-- 折叠/展开触发区 -->
+                        <div
+                          @click="toggleRedisGroup(group.id)"
+                          class="flex items-center gap-1.5 min-w-0 flex-1 py-0.5 select-none"
+                        >
+                          <ChevronDownIcon
+                            class="h-3 w-3 flex-shrink-0 text-gray-400 transition-transform"
+                            :class="isRedisGroupExpanded(group.id) ? '' : '-rotate-90'"
+                          />
+                          <span class="text-xs font-semibold text-gray-800 truncate">{{ group.id }}</span>
+                          <span class="text-[10px] text-gray-400 flex-shrink-0 font-mono">{{ group.keys.length }}</span>
+                        </div>
+
+                        <!-- 右侧：类型汇总徽章 + 删除分组全部 Key 按钮 -->
+                        <div class="ml-auto flex items-center justify-end gap-1.5 flex-shrink-0">
+                          <span
+                            v-for="item in group.typeSummary"
+                            :key="item.type"
+                            class="px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase border"
+                            :class="group.chip"
+                          >
+                            {{ item.type }}×{{ item.count }}
+                          </span>
+
+                          <!-- 删除此分组全部 Key -->
+                          <button
+                            v-if="canSave && group.keys.length > 0"
+                            @click.stop="confirmDeleteGroup(group)"
+                            :disabled="deletingGroupLoading"
+                            type="button"
+                            class="p-1 rounded-md text-gray-400 hover:text-rose-600 hover:bg-rose-50 border border-transparent hover:border-rose-200/60 transition-all opacity-0 group-hover:opacity-100 focus:opacity-100 cursor-pointer"
+                            :title="`清空「${group.id}」分组下的全部 ${group.keys.length} 个 Key`"
+                          >
+                            <TrashIcon class="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      </div>
+
+                      <!-- 组内 Key -->
+                      <div v-if="isRedisGroupExpanded(group.id)" class="border-t border-gray-100">
+                        <div
+                          v-for="key in group.keys"
+                          :key="key.name"
+                          @click="fetchRedisKeyDetail(key.name)"
+                          class="pl-6 pr-2.5 py-2 hover:bg-gray-50 cursor-pointer flex items-center justify-between transition-colors duration-150"
+                          :class="selectedRedisKey === key.name ? 'bg-indigo-50/70 hover:bg-indigo-50' : ''"
+                        >
+                          <span class="text-xs font-mono break-all text-gray-700 font-medium select-all" :class="selectedRedisKey === key.name ? 'text-primary font-bold' : ''">
+                            {{ key.name }}
+                          </span>
+                          <span class="ml-2 flex-shrink-0 px-2 py-0.5 rounded text-[10px] font-bold uppercase" :class="
+                            key.type === 'string' ? 'bg-green-50 text-green-700 border border-green-100' :
+                            key.type === 'hash' ? 'bg-blue-50 text-blue-700 border border-blue-100' :
+                            key.type === 'list' ? 'bg-yellow-50 text-yellow-700 border border-yellow-100' :
+                            'bg-gray-50 text-gray-600 border border-gray-100'
+                          ">
+                            {{ key.type }}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <div class="mt-2 text-[10px] text-gray-400 font-mono text-right flex-shrink-0">
+                  显示最多 5000 条结果
+                </div>
+              </div>
+
+              <!-- Right Column: Key detail -->
+              <div class="flex-1 bg-white border border-gray-200 rounded-lg p-4 flex flex-col h-full overflow-hidden">
+                <div v-if="redisDetailLoading" class="flex-1 flex flex-col items-center justify-center">
+                  <span class="animate-spin h-8 w-8 border-2 border-primary border-t-transparent rounded-full mb-2"></span>
+                  <p class="text-gray-400 text-xs">正在加载详情...</p>
+                </div>
+                <div v-else-if="redisKeyDetail" class="flex flex-col h-full min-h-0">
+                  <!-- Header detail info -->
+                  <div class="border-b border-gray-100 pb-3 mb-3 flex items-start justify-between flex-shrink-0">
+                    <div class="space-y-1 min-w-0 pr-2">
+                      <div class="flex items-center space-x-2">
+                        <h3 class="text-sm font-bold text-gray-900 break-all font-mono select-all">
+                          {{ redisKeyDetail.name }}
+                        </h3>
+                      </div>
+                      <div class="flex items-center space-x-2 text-[10px]">
+                        <span class="px-1.5 py-0.5 rounded-full font-bold uppercase bg-indigo-50 text-indigo-700 border border-indigo-100">
+                          {{ redisKeyDetail.type }}
+                        </span>
+                        <span class="font-mono text-gray-500">
+                          TTL: {{ redisKeyDetail.ttl === -1 ? '永不过期 (-1)' : redisKeyDetail.ttl === -2 ? '已过期 (-2)' : `${redisKeyDetail.ttl} 秒` }}
+                        </span>
+                      </div>
+                    </div>
+
+                    <button
+                      @click="confirmDeleteKey(redisKeyDetail.name)"
+                      title="删除此键"
+                      class="inline-flex items-center p-1.5 border border-red-200 rounded-md text-red-700 bg-red-50 hover:bg-red-100 transition-colors shadow-sm"
+                    >
+                      <TrashIcon class="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+
+                  <!-- Value area -->
+                  <div class="flex-1 min-h-0 overflow-y-auto bg-gray-950 rounded-lg p-3 font-mono text-[11px] text-green-400 custom-scrollbar border border-gray-950">
+                    <pre class="whitespace-pre-wrap break-all select-text selection:bg-indigo-500/30">{{ formatRedisValue(redisKeyDetail.value) }}</pre>
+                  </div>
+                </div>
+                <div v-else class="flex-1 flex flex-col items-center justify-center text-gray-400">
+                  <CircleStackIcon class="h-10 w-10 text-gray-200 mb-2" />
+                  <p class="text-xs">请从左侧列表选择一个 Key 查看详细内容</p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
 
       <!-- BRANDING TAB -->
       <div v-else-if="activeTab === 'branding'" class="h-full overflow-y-auto pb-6 custom-scrollbar">
@@ -3556,19 +4301,305 @@ onUnmounted(() => {
                                <div class="mt-1">只填写协议、域名和必要的反向代理前缀，<strong>不要填写</strong> API 路径、文件名或 token。留空时回退到环境变量 <code class="font-mono text-blue-800">APP_PUBLIC_URL</code> 或相对地址。</div>
                              </div>
                           </div>
-                          <div v-else-if="item.key === 'sandbox_ssh_auth_type'">
-                             <select
-                               v-model="item.value"
-                               :disabled="isConfigItemDisabled(String(category), item)"
-                               class="shadow-sm focus:ring-primary focus:border-primary block w-full sm:text-sm border-gray-300 rounded-md bg-gray-100 p-2 disabled:opacity-70 disabled:cursor-not-allowed"
+                          <div v-else-if="item.key === 'sandbox_ssh_auth_type'" class="space-y-2">
+                             <div class="relative">
+                               <select
+                                 v-model="item.value"
+                                 :disabled="isConfigItemDisabled(String(category), item)"
+                                 class="shadow-sm focus:ring-primary focus:border-primary block w-full sm:text-sm border-gray-300 rounded-md bg-gray-100 p-2 disabled:opacity-70 disabled:cursor-not-allowed"
+                               >
+                                 <option value="password">
+                                   密码认证（{{ sandboxSshHasSshpass ? '依赖 sshpass · 已就绪' : '依赖 sshpass · 未安装' }}）
+                                 </option>
+                                 <option value="key">私钥认证（推荐 · 无需 sshpass）</option>
+                                 <option v-if="item.value === 'private_key'" value="private_key">私钥认证（历史配置值）</option>
+                               </select>
+                             </div>
+
+                             <!-- sshpass 就绪提示（密码认证且已安装） -->
+                             <div
+                               v-if="(item.value === 'password' || !item.value) && sandboxSshHasSshpass"
+                               class="flex items-center gap-2 rounded-lg border border-emerald-200/90 bg-emerald-50/80 px-3 py-2 text-xs text-emerald-900 shadow-xs"
                              >
-                               <option value="password">密码认证（需要 sshpass）</option>
-                               <option value="key">私钥认证（推荐）</option>
-                               <option v-if="item.value === 'private_key'" value="private_key">私钥认证（历史配置值）</option>
-                             </select>
-                             <p class="mt-1.5 text-[11px] text-gray-500 leading-relaxed">
+                               <CheckCircleIcon class="h-4 w-4 text-emerald-600 shrink-0" />
+                               <span class="font-semibold text-emerald-800">sshpass 已就绪</span>
+                               <span class="text-emerald-700 text-[11px]">平台后端已检测到该工具，密码认证可正常执行。</span>
+                             </div>
+
+                             <!-- sshpass 缺失警示（密码认证且未安装） -->
+                             <div
+                               v-else-if="(item.value === 'password' || !item.value) && !sandboxSshHasSshpass"
+                               class="flex items-start gap-2.5 rounded-lg border border-amber-300/90 bg-amber-50/90 p-3 text-xs text-amber-900 leading-relaxed shadow-xs"
+                             >
+                               <ExclamationTriangleIcon class="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
+                               <div class="space-y-1.5 flex-1">
+                                 <div class="font-semibold text-amber-900 flex items-center gap-1.5">
+                                   <span>平台后端环境尚未安装 sshpass 工具</span>
+                                   <span class="rounded bg-amber-200/80 px-1.5 py-0.2 text-[10px] text-amber-900 font-mono">密码认证受限</span>
+                                 </div>
+                                 <div class="text-amber-700 text-[11px] leading-relaxed">
+                                   SSH 密码认证方式必须依赖服务端系统的 <code class="bg-amber-100 px-1 py-0.5 rounded font-mono">sshpass</code> CLI 才能非交互传递密码。当前环境缺失该工具，密码连接测试与执行将失败。
+                                 </div>
+                                 <div class="rounded-md bg-amber-100/70 p-2 text-[11px] text-amber-900 space-y-1 border border-amber-200/60">
+                                   <div class="font-semibold">💡 建议解决方案：</div>
+                                   <div>1. <strong>改用私钥认证（推荐）</strong>：切换为上方「私钥认证」，免密码且无需安装 sshpass；</div>
+                                   <div>2. <strong>在服务端环境安装</strong>：
+                                     <div class="mt-1 space-y-0.5 font-mono text-[10px]">
+                                       <div>• Debian / Ubuntu: <code class="bg-white/80 px-1 py-0.5 rounded border border-amber-200">apt-get install -y sshpass</code></div>
+                                       <div>• macOS: <code class="bg-white/80 px-1 py-0.5 rounded border border-amber-200">brew install hudochenkov/sshpass/sshpass</code></div>
+                                     </div>
+                                   </div>
+                                 </div>
+                               </div>
+                             </div>
+
+                             <!-- 私钥认证友好提示 -->
+                             <div
+                               v-else
+                               class="flex items-center gap-2 rounded-lg border border-sky-100 bg-sky-50/70 px-3 py-2 text-xs text-sky-800"
+                             >
+                               <span class="text-sky-600 font-bold">ℹ️</span>
+                               <span class="text-sky-700 text-[11px]">
+                                 当前为私钥认证：依托下方私钥文本免密连接，无需依赖 sshpass 工具
+                                 <span v-if="sandboxSshHasSshCli" class="ml-1 text-emerald-700 font-medium">（OpenSSH 客户端已就绪）</span>
+                                 <span v-else class="ml-1 text-amber-700 font-medium">（未检测到 OpenSSH 客户端）</span>。
+                               </span>
+                             </div>
+
+                             <p class="text-[11px] text-gray-500 leading-relaxed">
                                密码认证使用 sshpass 连接；私钥认证使用下方私钥内容，切换方式只隐藏另一字段，不会自动清空已保存内容。
                              </p>
+                          </div>
+                          <!-- SSH 沙箱专用私钥多行文本域与格式实时校验 -->
+                          <div v-else-if="item.key === 'sandbox_ssh_private_key'" class="space-y-2.5">
+                            <div class="rounded-xl border border-gray-200/90 bg-white p-3.5 shadow-xs transition-all duration-150">
+                              <!-- 头部操作与状态工具条 -->
+                              <div class="flex flex-wrap items-center justify-between gap-2 border-b border-gray-100 pb-2.5 mb-2.5 text-xs">
+                                <div class="flex items-center gap-2">
+                                  <span class="font-semibold text-gray-800">SSH 私钥内容 (OpenSSH / PEM)</span>
+                                  <span
+                                    v-if="validateSshPrivateKey(item.value).status === 'masked'"
+                                    class="rounded bg-emerald-100/80 px-2 py-0.5 font-medium text-[11px] text-emerald-800"
+                                    title="服务端已加密存储，当前展示安全掩码"
+                                  >
+                                    已加密保存
+                                  </span>
+                                  <span
+                                    v-else-if="item.value && item.value.trim()"
+                                    class="rounded bg-gray-100 px-1.5 py-0.5 font-mono text-[11px] text-gray-600"
+                                    :title="`当前共 ${item.value.trim().split(/\r?\n/).filter(Boolean).length} 行`"
+                                  >
+                                    {{ item.value.trim().split(/\r?\n/).filter(Boolean).length }} 行
+                                  </span>
+                                  <span
+                                    v-if="validateSshPrivateKey(item.value).status === 'masked'"
+                                    class="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700 border border-emerald-200/80"
+                                  >
+                                    <CheckCircleIcon class="h-3.5 w-3.5 text-emerald-600" />
+                                    已脱敏保护
+                                  </span>
+                                  <span
+                                    v-else-if="validateSshPrivateKey(item.value).status === 'valid'"
+                                    class="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700 border border-emerald-200/80"
+                                  >
+                                    <CheckCircleIcon class="h-3.5 w-3.5 text-emerald-600" />
+                                    格式合法
+                                  </span>
+                                  <span
+                                    v-else-if="validateSshPrivateKey(item.value).status === 'public_key'"
+                                    class="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-700 border border-amber-200/80"
+                                  >
+                                    <ExclamationTriangleIcon class="h-3.5 w-3.5 text-amber-600" />
+                                    误填公钥
+                                  </span>
+                                  <span
+                                    v-else-if="validateSshPrivateKey(item.value).status === 'invalid'"
+                                    class="inline-flex items-center gap-1 rounded-full bg-rose-50 px-2 py-0.5 text-[11px] font-medium text-rose-700 border border-rose-200/80"
+                                  >
+                                    <XCircleIcon class="h-3.5 w-3.5 text-rose-600" />
+                                    格式异常
+                                  </span>
+                                </div>
+                                <div class="flex items-center gap-1.5">
+                                  <!-- 显示/隐藏明文 -->
+                                  <button
+                                    type="button"
+                                    @click="toggleSecret(item.key)"
+                                    class="inline-flex items-center gap-1 rounded-md border border-gray-200 bg-white px-2 py-1 text-[11px] font-medium text-gray-600 shadow-xs hover:bg-gray-50 hover:text-gray-900 transition-colors"
+                                    :title="showSecrets[item.key] ? '点击隐藏/开启脱敏遮罩' : '点击查看明文私钥'"
+                                  >
+                                    <EyeSlashIcon v-if="showSecrets[item.key]" class="h-3.5 w-3.5 text-gray-500" />
+                                    <EyeIcon v-else class="h-3.5 w-3.5 text-gray-500" />
+                                    <span>{{ showSecrets[item.key] ? '脱敏保护' : '查看明文' }}</span>
+                                  </button>
+                                  <!-- 规范格式 -->
+                                  <button
+                                    v-if="item.value && item.value.trim()"
+                                    type="button"
+                                    @click="normalizeSshPrivateKey(item)"
+                                    :disabled="isConfigItemDisabled(String(category), item)"
+                                    class="inline-flex items-center gap-1 rounded-md border border-gray-200 bg-white px-2 py-1 text-[11px] font-medium text-gray-600 shadow-xs hover:bg-gray-50 hover:text-gray-900 disabled:opacity-50 transition-colors"
+                                    title="去除首尾多余空白行并规范统一换行符"
+                                  >
+                                    <SparklesIcon class="h-3.5 w-3.5 text-primary" />
+                                    <span>规范换行</span>
+                                  </button>
+                                  <!-- 格式示例切换 -->
+                                  <button
+                                    type="button"
+                                    @click="sshPrivateKeyExampleExpanded = !sshPrivateKeyExampleExpanded"
+                                    class="inline-flex items-center gap-1 rounded-md border border-sky-200 bg-sky-50/80 px-2 py-1 text-[11px] font-medium text-sky-700 shadow-xs hover:bg-sky-100 transition-colors"
+                                  >
+                                    <InformationCircleIcon class="h-3.5 w-3.5 text-sky-600" />
+                                    <span>{{ sshPrivateKeyExampleExpanded ? '收起示例' : '格式示例' }}</span>
+                                    <ChevronUpIcon v-if="sshPrivateKeyExampleExpanded" class="h-3 w-3" />
+                                    <ChevronDownIcon v-else class="h-3 w-3" />
+                                  </button>
+                                  <!-- 清空 -->
+                                  <button
+                                    v-if="item.value && item.value.trim()"
+                                    type="button"
+                                    @click="item.value = ''"
+                                    :disabled="isConfigItemDisabled(String(category), item)"
+                                    class="inline-flex items-center gap-1 rounded-md border border-gray-200 bg-white px-2 py-1 text-[11px] font-medium text-rose-600 shadow-xs hover:bg-rose-50 disabled:opacity-50 transition-colors"
+                                    title="清空私钥输入框"
+                                  >
+                                    <TrashIcon class="h-3.5 w-3.5" />
+                                    <span>清空</span>
+                                  </button>
+                                </div>
+                              </div>
+
+                              <!-- 多行文本域主体 -->
+                              <div class="relative">
+                                <textarea
+                                  v-model="item.value"
+                                  :disabled="isConfigItemDisabled(String(category), item)"
+                                  rows="7"
+                                  @focus="sshPrivateKeyFocused = true"
+                                  @blur="() => {
+                                    sshPrivateKeyFocused = false
+                                    if (item.value && (item.value.includes('\\n') || !item.value.includes('\n'))) {
+                                      const cleaned = normalizeSshKeyString(item.value).trim()
+                                      if (cleaned) item.value = cleaned
+                                    }
+                                  }"
+                                  placeholder="-----BEGIN OPENSSH PRIVATE KEY-----&#10;b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAA...&#10;...在此完整粘贴包含首尾标记的私钥文本...&#10;-----END OPENSSH PRIVATE KEY-----"
+                                  class="shadow-inner focus:ring-2 focus:ring-primary/20 focus:border-primary block w-full text-xs font-mono border-gray-300 rounded-lg p-3 leading-relaxed transition-all duration-150 disabled:opacity-70 disabled:cursor-not-allowed resize-y"
+                                  :class="[
+                                    !showSecrets[item.key] && !sshPrivateKeyFocused && item.value
+                                      ? 'filter blur-[3.5px] select-none text-gray-500 bg-gray-50/90'
+                                      : 'bg-slate-900 text-slate-100 placeholder-slate-500 selection:bg-primary/40'
+                                  ]"
+                                ></textarea>
+                                <div
+                                  v-if="!showSecrets[item.key] && !sshPrivateKeyFocused && item.value"
+                                  @click="toggleSecret(item.key)"
+                                  class="absolute inset-0 flex flex-col items-center justify-center bg-gray-900/10 backdrop-blur-[1.5px] rounded-lg cursor-pointer select-none group"
+                                  title="点击解除遮罩查看完整明文"
+                                >
+                                  <span class="inline-flex items-center gap-1.5 rounded-full bg-white/95 px-3 py-1 text-xs font-medium text-gray-700 shadow-md border border-gray-200 group-hover:bg-white group-hover:scale-105 transition-all">
+                                    <EyeIcon class="h-4 w-4 text-gray-500" />
+                                    私钥已脱敏遮罩保护（点击查看明文）
+                                  </span>
+                                </div>
+                              </div>
+
+                              <!-- 实时状态校验与友好提示 -->
+                              <div class="mt-2.5">
+                                <!-- 公钥警告 -->
+                                <div
+                                  v-if="validateSshPrivateKey(item.value).status === 'public_key'"
+                                  class="flex items-start gap-2 rounded-lg border border-amber-300 bg-amber-50 p-2.5 text-xs text-amber-900 leading-relaxed"
+                                >
+                                  <ExclamationTriangleIcon class="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
+                                  <div>
+                                    <div class="font-semibold text-amber-800">⚠️ 格式严重警告：当前填入的是公钥（Public Key）！</div>
+                                    <div class="mt-0.5 text-amber-700">
+                                      此处必须填入用于 SSH 客户端登录的<strong>私钥（Private Key）</strong>文本。公钥（如 <code class="bg-amber-100/80 px-1 rounded font-mono">id_ed25519.pub</code>）应配置在远程主机的 <code class="bg-amber-100/80 px-1 rounded font-mono">~/.ssh/authorized_keys</code> 中，而非填在平台管理端。
+                                    </div>
+                                  </div>
+                                </div>
+
+                                <!-- 格式错误警告 -->
+                                <div
+                                  v-else-if="validateSshPrivateKey(item.value).status === 'invalid'"
+                                  class="flex items-start gap-2 rounded-lg border border-rose-200 bg-rose-50 p-2.5 text-xs text-rose-800 leading-relaxed"
+                                >
+                                  <XCircleIcon class="h-4 w-4 text-rose-600 shrink-0 mt-0.5" />
+                                  <div>
+                                    <div class="font-semibold text-rose-700">私钥格式不完整或缺少关键首尾标识</div>
+                                    <div class="mt-0.5 text-rose-600">
+                                      {{ validateSshPrivateKey(item.value).message }}
+                                    </div>
+                                  </div>
+                                </div>
+
+                                <!-- 已安全保存脱敏提示 -->
+                                <div
+                                  v-else-if="validateSshPrivateKey(item.value).status === 'masked'"
+                                  class="flex items-start gap-2.5 rounded-lg border border-emerald-200/90 bg-emerald-50/80 p-3 text-xs text-emerald-900 leading-relaxed shadow-xs"
+                                >
+                                  <CheckCircleIcon class="h-4 w-4 text-emerald-600 shrink-0 mt-0.5" />
+                                  <div class="space-y-1">
+                                    <div class="font-semibold text-emerald-900 flex items-center gap-1.5">
+                                      <span>私钥已安全保存到服务端数据库</span>
+                                      <span class="rounded bg-emerald-100 px-1.5 py-0.2 text-[10px] text-emerald-800 font-mono">已脱敏保护</span>
+                                    </div>
+                                    <div class="text-emerald-700">
+                                      为保障凭据安全，界面仅回显脱敏掩码（如 <code class="bg-emerald-100 px-1 py-0.5 rounded font-mono text-[11px]">---****----</code>）。若无需更换密钥，请<strong>保持当前内容不变</strong>；如需更换私钥，可点击右上角<strong>「清空」</strong>或直接全选粘贴新的完整私钥。
+                                    </div>
+                                  </div>
+                                </div>
+
+                                <!-- 校验通过提示 -->
+                                <div
+                                  v-else-if="validateSshPrivateKey(item.value).status === 'valid'"
+                                  class="flex items-start gap-2 rounded-lg border border-emerald-200 bg-emerald-50/70 p-2 text-xs text-emerald-800 leading-relaxed"
+                                >
+                                  <CheckCircleIcon class="h-4 w-4 text-emerald-600 shrink-0 mt-0.5" />
+                                  <div>
+                                    <span class="font-medium text-emerald-700">{{ validateSshPrivateKey(item.value).message }}</span>
+                                    <span class="ml-1 text-emerald-600 text-[11px]">平台将在执行时生成临时 0600 权限文件供 ssh -i 安全使用，任务完毕自动擦除。</span>
+                                  </div>
+                                </div>
+
+                                <!-- 留空引导提示 -->
+                                <div
+                                  v-else
+                                  class="text-[11px] text-gray-500 leading-relaxed space-y-0.5"
+                                >
+                                  <div>💡 <strong>填写指南：</strong>粘贴 OpenSSH 或 RSA PEM 格式的未加密私钥完整文本。平台会严格保护敏感内容，绝不在任何进程参数中暴露。</div>
+                                </div>
+                              </div>
+
+                              <!-- 可折叠展开的格式示例与生成指引卡片 -->
+                              <div
+                                v-if="sshPrivateKeyExampleExpanded"
+                                class="mt-3 rounded-lg border border-sky-100 bg-sky-50/60 p-3 text-xs text-sky-900 space-y-2.5"
+                              >
+                                <div class="flex items-center justify-between">
+                                  <span class="font-semibold text-sky-800">📖 SSH 私钥标准格式与生成指引</span>
+                                  <button
+                                    type="button"
+                                    @click="copySshPrivateKeyExample"
+                                    class="inline-flex items-center gap-1 rounded bg-white px-2 py-0.5 text-[11px] font-medium text-sky-700 border border-sky-200 shadow-xs hover:bg-sky-50 transition-colors"
+                                  >
+                                    <DocumentDuplicateIcon class="h-3.5 w-3.5" />
+                                    <span>{{ sshPrivateKeyCopied ? '已复制示例' : '复制标准格式模板' }}</span>
+                                  </button>
+                                </div>
+                                <div class="text-[11px] leading-relaxed text-sky-800">
+                                  沙箱自动化连接推荐使用 <strong>无密码保护（No Passphrase）</strong> 的 Ed25519 或 RSA 密钥对：
+                                  <code class="mt-1 block rounded bg-white/90 p-1.5 font-mono text-[11px] text-sky-900 border border-sky-100">
+                                    ssh-keygen -t ed25519 -N "" -f ~/.ssh/nanzi_sandbox_key
+                                  </code>
+                                </div>
+                                <div class="text-[11px] text-sky-700">
+                                  将生成的 <code class="font-mono bg-white/70 px-1 py-0.5 rounded border border-sky-100">nanzi_sandbox_key</code> 完整文本粘贴到上方输入框，并将对应的公钥 <code class="font-mono bg-white/70 px-1 py-0.5 rounded border border-sky-100">nanzi_sandbox_key.pub</code> 追加写入远端主机的 <code class="font-mono bg-white/70 px-1 py-0.5 rounded border border-sky-100">~/.ssh/authorized_keys</code>。
+                                </div>
+                              </div>
+                            </div>
                           </div>
                           <div v-else-if="item.is_secret && item.key !== 'embed_api_key'" class="relative">
                              <input :type="showSecrets[item.key] ? 'text' : 'password'" v-model="item.value" :disabled="isConfigItemDisabled(String(category), item)" class="shadow-sm focus:ring-primary focus:border-primary block w-full sm:text-sm border-gray-300 rounded-md pr-10 bg-gray-100 disabled:opacity-70 disabled:cursor-not-allowed" />
@@ -4878,7 +5909,7 @@ onUnmounted(() => {
 
     <!-- Generic Config Explanation Modal -->
     <div v-if="activeExplanationItem" class="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm" @click.self="activeExplanationItem = null">
-      <div class="bg-white rounded-2xl shadow-2xl max-w-md w-full max-h-[85vh] overflow-hidden scale-100 transition-all duration-200 border border-gray-100 flex flex-col">
+      <div class="bg-white rounded-2xl shadow-2xl max-w-lg w-full max-h-[85vh] overflow-hidden scale-100 transition-all duration-200 border border-gray-100 flex flex-col">
         <!-- Header -->
         <div class="px-6 py-4 border-b border-gray-100 flex justify-between items-center bg-gray-50/50 shrink-0">
           <div class="flex items-center space-x-2.5">
@@ -4889,7 +5920,7 @@ onUnmounted(() => {
             </div>
             <div>
               <h3 class="text-md font-bold text-gray-900">配置参数说明</h3>
-              <p class="text-xs text-gray-400 mt-0.5">{{ activeExplanationItem.key }}</p>
+              <p class="text-xs text-gray-400 mt-0.5 font-mono">{{ activeExplanationItem.key }}</p>
             </div>
           </div>
           <button @click="activeExplanationItem = null" class="text-gray-400 hover:text-gray-600 focus:outline-none transition-colors">
@@ -4909,10 +5940,48 @@ onUnmounted(() => {
           
           <!-- Category specific tips -->
           <div class="space-y-2" v-if="getCategoryTip(activeExplanationItem.key)">
-            <span class="text-xs font-bold text-gray-400 uppercase tracking-wider font-mono">使用建议</span>
+            <span class="text-xs font-bold text-gray-400 uppercase tracking-wider font-mono">使用建议与配置指引</span>
             <p class="text-xs text-gray-600 leading-relaxed bg-indigo-50/50 p-4 rounded-xl border border-indigo-100/50 text-indigo-950 whitespace-pre-wrap">
               {{ getCategoryTip(activeExplanationItem.key) }}
             </p>
+          </div>
+
+          <!-- SSH 私钥配置专属命令助手 -->
+          <div v-if="activeExplanationItem.key === 'sandbox_ssh_private_key'" class="space-y-3 rounded-xl border border-sky-200 bg-sky-50/80 p-4 text-xs text-sky-950">
+            <div class="font-bold text-sky-900 flex items-center justify-between">
+              <span>🚀 快速配置命令助手</span>
+              <span class="text-[11px] font-normal text-sky-600">已自动带入当前主机与端口</span>
+            </div>
+            
+            <div class="space-y-1">
+              <div class="flex items-center justify-between text-[11px] text-sky-800">
+                <span class="font-medium">① 本地终端生成免密私钥对：</span>
+                <button type="button" @click="copySshKeygenCommand" class="text-sky-600 hover:text-sky-800 font-medium underline inline-flex items-center gap-0.5">
+                  <DocumentDuplicateIcon class="h-3 w-3" />
+                  复制命令
+                </button>
+              </div>
+              <code class="block rounded bg-white p-2 font-mono text-[11px] text-slate-800 border border-sky-100 select-all break-all">
+                ssh-keygen -t ed25519 -N "" -f ~/.ssh/nanzi_sandbox_key
+              </code>
+            </div>
+
+            <div class="space-y-1">
+              <div class="flex items-center justify-between text-[11px] text-sky-800">
+                <span class="font-medium">② 将公钥一键追加到远程服务器：</span>
+                <button type="button" @click="copySshSetupCommand" class="text-sky-600 hover:text-sky-800 font-medium underline inline-flex items-center gap-0.5">
+                  <DocumentDuplicateIcon class="h-3 w-3" />
+                  复制命令
+                </button>
+              </div>
+              <code class="block rounded bg-white p-2 font-mono text-[11px] text-slate-800 border border-sky-100 select-all break-all">
+                {{ sshPrivateKeySetupCommand }}
+              </code>
+            </div>
+
+            <div class="text-[11px] text-sky-700 leading-relaxed">
+              ③ 查看私钥文本：<code class="font-mono bg-white px-1 py-0.5 rounded border border-sky-100">cat ~/.ssh/nanzi_sandbox_key</code>，粘贴到输入框后点击右上角【规范换行】保存即可。
+            </div>
           </div>
         </div>
         <!-- Footer -->
@@ -4946,6 +6015,16 @@ onUnmounted(() => {
       type="danger"
       @confirm="executeDeleteKey"
       @cancel="showDeleteKeyConfirm = false"
+    />
+    <ConfirmModal
+      v-if="showDeleteGroupConfirm"
+      :title="`确认清空分组「${pendingDeleteGroup?.id}」？`"
+      :message="`即将物理删除业务分组「${pendingDeleteGroup?.id}」下的全部 ${pendingDeleteGroup?.keys.length || 0} 个 Redis Key，此操作不可撤销并可能重置相关模块缓存或状态，是否确定继续清空？`"
+      confirm-text="确认清空分组"
+      cancel-text="取消"
+      type="danger"
+      @confirm="executeDeleteGroup"
+      @cancel="showDeleteGroupConfirm = false"
     />
 
     <!-- Image Cropper Modal -->

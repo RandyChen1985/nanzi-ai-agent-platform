@@ -311,6 +311,7 @@ async def resolve_runnable_delegable_system_agents(
     import json
     from app.services.ai.agent_readiness import evaluate_agent_readiness
     from app.services.ai.agent_types import resolve_agent_type
+    from app.services.ai.knowledge_utils import load_system_default_dataset_ids
 
     permitted = await filter_delegable_system_agents(
         session,
@@ -321,6 +322,10 @@ async def resolve_runnable_delegable_system_agents(
     )
     if not permitted:
         return []
+
+    # 系统级默认知识库数据集：KNOWLEDGE_BASE 类型智能体未显式绑定时的运行时兜底，
+    # 就绪判定必须认同一口径，否则内置「知识库助手」会出现"能用但不能委派"。
+    default_dataset_ids = await load_system_default_dataset_ids()
 
     # 批量读取本地专家的最新发布版本，消除 N 次串行 DB 查询
     local_agents = [
@@ -356,6 +361,7 @@ async def resolve_runnable_delegable_system_agents(
                 engine_config=getattr(agent, "engine_config", None) or {},
                 tools=[],
                 has_published_version=True,
+                default_dataset_ids=default_dataset_ids,
             )
             if readiness.ready:
                 runnable.append(agent)
@@ -374,10 +380,14 @@ async def resolve_runnable_delegable_system_agents(
                     tools_list = []
             readiness = evaluate_agent_readiness(
                 agent_type=agent_type,
-                capabilities=getattr(version, "capabilities", None) or [],
-                engine_config=getattr(version, "engine_config", None) or {},
+                # 关键：capabilities / engine_config 只存在于 ai_agents，版本表没有这两列。
+                # 早期实现从 version 上 getattr 取，恒为 {}，导致 KNOWLEDGE_BASE 类型
+                # 永远缺 knowledge_base_binding、永远无法被委派。
+                capabilities=getattr(agent, "capabilities", None) or [],
+                engine_config=getattr(agent, "engine_config", None) or {},
                 tools=tools_list or [],
                 has_published_version=True,
+                default_dataset_ids=default_dataset_ids,
             )
             if readiness.ready:
                 runnable.append(agent)
@@ -395,6 +405,7 @@ async def resolve_runnable_delegable_system_agents(
                 engine_config=config.engine_config,
                 tools=config.tools,
                 has_published_version=True,
+                default_dataset_ids=default_dataset_ids,
             )
             if readiness.ready:
                 runnable.append(agent)

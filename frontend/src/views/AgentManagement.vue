@@ -1451,6 +1451,116 @@ const handleDeleteAgent = (agent: AIAgent) => {
   };
 };
 
+// --- 复制智能体：元数据 + 已发布版本配置，副本创建后立即可用 ---
+const showDuplicateModal = ref(false);
+const duplicateSource = ref<AIAgent | null>(null);
+const duplicateForm = ref({ name: "", display_name: "" });
+const duplicating = ref(false);
+const duplicateError = ref("");
+
+// 物理标识符全局唯一：复制弹窗使用独立的一套预检状态（不复用新建/编辑表单那份，
+// 避免两个弹窗互相覆盖结论），判定口径仍由后端 name-availability 统一给出。
+const {
+  checking: duplicateNameChecking,
+  available: duplicateNameAvailable,
+  message: duplicateNameMessage,
+  check: checkDuplicateNameAvailability,
+  ensureAvailable: ensureDuplicateNameAvailable,
+  reset: resetDuplicateNameCheckState,
+} = useAgentNameAvailability();
+
+/** 服务端明确判定标识符不可用时禁止确认复制；未判定（null）时放行，由后端权威兜底。 */
+const duplicateNameBlocked = computed(() => duplicateNameAvailable.value === false);
+
+let duplicateNameTimer: ReturnType<typeof setTimeout> | null = null;
+
+const clearDuplicateNameTimer = () => {
+  if (duplicateNameTimer !== null) {
+    clearTimeout(duplicateNameTimer);
+    duplicateNameTimer = null;
+  }
+};
+
+/** 输入期延迟预检：用户填完直接点按钮不会触发失焦，因此不能只靠 blur 那一次。 */
+const scheduleDuplicateNameCheck = (name: string) => {
+  clearDuplicateNameTimer();
+  duplicateNameTimer = setTimeout(() => {
+    duplicateNameTimer = null;
+    void checkDuplicateNameAvailability(name);
+  }, 400);
+};
+
+const handleDuplicateNameInput = (name: string) => {
+  duplicateForm.value.name = name;
+  scheduleDuplicateNameCheck(name);
+};
+
+const handleDuplicateNameCheck = (name: string) => {
+  clearDuplicateNameTimer();
+  void checkDuplicateNameAvailability(name);
+};
+
+const closeDuplicateModal = () => {
+  if (duplicating.value) return;
+  clearDuplicateNameTimer();
+  resetDuplicateNameCheckState();
+  showDuplicateModal.value = false;
+  duplicateError.value = "";
+};
+
+const openDuplicateModal = (agent: AIAgent) => {
+  closeCardMenus();
+  clearDuplicateNameTimer();
+  duplicateSource.value = agent;
+  duplicateError.value = "";
+  duplicateForm.value = {
+    name: `${agent.name}-copy`,
+    display_name: `${agent.display_name}-副本`,
+  };
+  // 预填的 `-copy` 本身也可能已被占用（例如连续复制两次），打开就先查一次
+  void checkDuplicateNameAvailability(duplicateForm.value.name);
+  showDuplicateModal.value = true;
+};
+
+const submitDuplicate = async () => {
+  const source = duplicateSource.value;
+  if (!source || duplicating.value) return;
+
+  const name = duplicateForm.value.name.trim();
+  const displayName = duplicateForm.value.display_name.trim();
+  if (!name || !displayName) {
+    duplicateError.value = "物理标识符与显示名称都不能为空";
+    return;
+  }
+
+  duplicating.value = true;
+  duplicateError.value = "";
+  try {
+    // 提交前兜底：明确撞名则不发请求；接口异常时放行交由后端权威裁决
+    const { ok, message } = await ensureDuplicateNameAvailable(name);
+    if (!ok) {
+      duplicateError.value = message || "物理标识符已被占用，请换一个";
+      return;
+    }
+
+    const res = await agentApi.duplicateAgent(source.id, {
+      name,
+      display_name: displayName,
+    });
+    showToast(`已复制为「${res.data.display_name}」`, "success");
+    clearDuplicateNameTimer();
+    showDuplicateModal.value = false;
+    fetchAgents();
+  } catch (error: any) {
+    duplicateError.value =
+      error.response?.data?.message ||
+      error.response?.data?.detail ||
+      "复制失败，请稍后重试";
+  } finally {
+    duplicating.value = false;
+  }
+};
+
 const startAgentCreation = () => {
   isCreatingAgent.value = true;
   isOnboardingFlow.value = true;
@@ -2753,6 +2863,7 @@ onMounted(() => {
 onUnmounted(() => {
   window.removeEventListener('resize', handleResize);
   document.removeEventListener('click', closeCardMenus);
+  clearDuplicateNameTimer();
 });
 
 const formatDate = (dateStr: string) => {
@@ -3377,6 +3488,14 @@ const formatSkillCountLabel = (agent: AIAgent) => {
                 >
                   编辑智能体
                 </button>
+                <!-- 复制不修改源智能体，因此不受 is_editable 限制（系统智能体也可作为模板） -->
+                <button
+                  v-has-perm="'element:agent:create'"
+                  @click="openDuplicateModal(agent)"
+                  class="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 cursor-pointer"
+                >
+                  复制智能体
+                </button>
                 <button
                   v-if="!isMobile"
                   @click="closeCardMenus(); openHistoryModal(agent)"
@@ -3572,6 +3691,11 @@ const formatSkillCountLabel = (agent: AIAgent) => {
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
                       </svg>
                     </button>
+                    <button v-has-perm="'element:agent:create'" @click.stop="openDuplicateModal(agent)" class="p-1.5 text-gray-400 hover:text-emerald-600 hover:bg-white rounded-md transition-all shadow-sm border border-transparent hover:border-gray-100" title="复制智能体">
+                      <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                      </svg>
+                    </button>
                     <button @click.stop="openHistoryModal(agent)" class="p-1.5 text-gray-400 hover:text-indigo-600 hover:bg-white rounded-md transition-all shadow-sm border border-transparent hover:border-gray-100" title="历史记录">
                       <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
@@ -3607,6 +3731,77 @@ const formatSkillCountLabel = (agent: AIAgent) => {
       @publish-version="handleDrawerPublishVersion"
       ref="versionsDrawerRef"
     />
+
+    <!-- Duplicate Agent Modal -->
+    <Modal
+      v-if="showDuplicateModal"
+      title="复制智能体"
+      size="max-w-lg"
+      @close="closeDuplicateModal"
+    >
+      <template #footer>
+        <div class="flex items-center justify-end gap-3">
+          <button
+            type="button"
+            :disabled="duplicating"
+            class="px-4 py-2 text-sm font-medium text-gray-500 hover:text-gray-700 disabled:opacity-50"
+            @click="closeDuplicateModal"
+          >
+            取消
+          </button>
+          <button
+            type="button"
+            :disabled="duplicating || duplicateNameBlocked"
+            class="rounded-lg bg-primary px-6 py-2 text-sm font-medium text-white transition-colors hover:bg-primary-dark disabled:cursor-not-allowed disabled:opacity-50"
+            @click="submitDuplicate"
+          >
+            {{ duplicating ? "复制中..." : "确认复制" }}
+          </button>
+        </div>
+      </template>
+
+      <div class="space-y-4">
+        <div class="rounded-xl border border-blue-100 bg-blue-50/70 px-4 py-3 text-xs leading-relaxed text-blue-900">
+          将复制
+          <strong>{{ duplicateSource?.display_name }}</strong>
+          的元数据与<strong>已发布版本</strong>配置（提示词、模型、工具、技能、欢迎卡片）。
+          副本创建后<strong>立即可用</strong>，源智能体不受任何影响。
+        </div>
+
+        <AgentNameField
+          :model-value="duplicateForm.name"
+          required
+          :disabled="duplicating"
+          :checking="duplicateNameChecking"
+          :error-message="duplicateNameMessage"
+          hint="全局唯一，用于路由与集成引用。"
+          @update:model-value="handleDuplicateNameInput"
+          @check="handleDuplicateNameCheck"
+          @reset="resetDuplicateNameCheckState"
+        />
+
+        <div>
+          <label class="mb-1 block text-sm font-medium text-gray-700">
+            显示名称 <span class="text-red-500">*</span>
+          </label>
+          <input
+            v-model="duplicateForm.display_name"
+            type="text"
+            :disabled="duplicating"
+            placeholder="例如 数据智能助手-副本"
+            class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
+            @keyup.enter="submitDuplicate"
+          />
+        </div>
+
+        <p
+          v-if="duplicateError"
+          class="rounded-lg border border-red-100 bg-red-50 px-3 py-2 text-xs text-red-600"
+        >
+          {{ duplicateError }}
+        </p>
+      </div>
+    </Modal>
 
     <!-- Agent Modal -->
     <Modal

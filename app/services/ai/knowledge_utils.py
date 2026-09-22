@@ -22,6 +22,26 @@ _CITATION_MARKER_RE = re.compile(r"\[ID:(\d+)\]")
 # 兼容旧式 [1] 引用；负向前瞻避免把 [ID:1] 误判为 [1]
 _LEGACY_CITATION_MARKER_RE = re.compile(r"\[(?!ID:)\d+\]")
 
+#: 系统级默认知识库数据集配置键。智能体未显式绑定 dataset_ids 时，运行时回退到它
+#: （见 resolve_knowledge_dataset_ids），因此就绪判定也必须认同一口径。
+SYSTEM_DEFAULT_DATASET_IDS_CONFIG_KEY = "knowledge_ragflow_dataset_ids"
+
+
+async def load_system_default_dataset_ids() -> List[str]:
+    """读取系统级默认知识库数据集 id 列表（未配置/读取失败时返回空列表）。
+
+    与 ``resolve_knowledge_dataset_ids`` 的兜底口径保持一致，供就绪判定等
+    非检索场景复用；读取失败按"未配置"处理（保持严格，不放宽判定）。
+    """
+    from app.services.config_service import ConfigService
+
+    try:
+        raw = await ConfigService.get(SYSTEM_DEFAULT_DATASET_IDS_CONFIG_KEY)
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("[KnowledgeUtils] Load system default dataset ids failed: %s", exc)
+        return []
+    return normalize_dataset_ids(raw) if raw else []
+
 
 def normalize_dataset_ids(raw: Union[str, List[Any], None]) -> List[str]:
     """
@@ -508,8 +528,6 @@ async def resolve_knowledge_dataset_ids(
     Returns:
         (dataset_ids, error_message)。error_message 非空表示应阻断检索。
     """
-    from app.services.config_service import ConfigService
-
     bound_ids = resolve_bound_dataset_ids(
         explicit_tool_ids=explicit_tool_ids,
         query=query,
@@ -527,8 +545,7 @@ async def resolve_knowledge_dataset_ids(
     if ctx and ctx.require_explicit_dataset:
         return [], NO_KNOWLEDGE_DATASET_MESSAGE
 
-    default_ids_str = await ConfigService.get("knowledge_ragflow_dataset_ids")
-    fallback_ids = normalize_dataset_ids(default_ids_str) if default_ids_str else []
+    fallback_ids = await load_system_default_dataset_ids()
     if fallback_ids:
         alive_ids = await filter_alive_knowledge_dataset_ids(fallback_ids)
         if not alive_ids:

@@ -71,6 +71,12 @@ class AIAgentBase(BaseModel):
     engine_type: str = "LOCAL"
     engine_config: Optional[Dict[str, Any]] = None
 
+class AgentDuplicateRequest(BaseModel):
+    """复制智能体时的目标标识与显示名；其余配置一律从源智能体复制。"""
+
+    name: str = Field(..., min_length=1, max_length=100, description="新智能体的物理标识符（全局唯一）")
+    display_name: str = Field(..., min_length=1, max_length=100, description="新智能体的显示名称")
+
 class AIAgentReorderItem(BaseModel):
     id: str
     sort_order: int

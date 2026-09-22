@@ -419,6 +419,26 @@ class ConfigService:
             "is_secret": False,
             "readonly": True
         })
+
+        # 追加平台后端是否安装了 sshpass / ssh CLI 的只读探测结果（不落库）。
+        # ssh 沙箱策略在密码认证模式下依赖平台主机的 sshpass CLI 传递密码，私钥认证无需 sshpass。
+        import shutil
+        has_sshpass = shutil.which("sshpass") is not None
+        has_ssh_cli = shutil.which("ssh") is not None
+        grouped.setdefault("sandbox", []).append({
+            "key": "sandbox_ssh_has_sshpass",
+            "value": "true" if has_sshpass else "false",
+            "description": "平台后端环境 sshpass CLI 探测结果（只读）：true=已就绪，false=未安装（密码认证不可用）。",
+            "is_secret": False,
+            "readonly": True
+        })
+        grouped.setdefault("sandbox", []).append({
+            "key": "sandbox_ssh_has_ssh_cli",
+            "value": "true" if has_ssh_cli else "false",
+            "description": "平台后端环境 OpenSSH 客户端探测结果（只读）：true=已就绪，false=未安装。",
+            "is_secret": False,
+            "readonly": True
+        })
             
         return grouped
 
@@ -432,14 +452,20 @@ class ConfigService:
         old_value = None # Initialize old_value outside the session block
         async with AsyncSessionLocal() as session:
             try:
-                # 1. Fetch old value
+                # 1. Fetch old value and secret flag
                 result = await session.execute(
-                    select(_SYSTEM_CONFIGS_TABLE.c.value).where(
+                    select(_SYSTEM_CONFIGS_TABLE.c.value, _SYSTEM_CONFIGS_TABLE.c.is_secret).where(
                         _SYSTEM_CONFIGS_TABLE.c.key == key
                     )
                 )
                 row = result.fetchone()
                 old_value = row[0] if row else None
+                is_secret = bool(row[1]) if row and row[1] is not None else False
+
+                # 避免前端回显的脱敏掩码（如包含 ****）覆盖已存在的敏感配置
+                if is_secret and "****" in value:
+                    logger.info("配置项 %s 为敏感配置且包含脱敏掩码，跳过覆盖以保留原始有效密钥", key)
+                    return False
                 
                 if old_value is None:
                     # Key doesn't exist, we must use set_config but since we are in async context manager here,

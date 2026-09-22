@@ -625,6 +625,11 @@ class AgentManagerService:
         from app.services.ai.skill_resolver import count_enabled_global_skills
 
         enabled_global_skill_count = count_enabled_global_skills()
+        from app.services.ai.knowledge_utils import load_system_default_dataset_ids
+
+        # 系统级默认知识库数据集：KNOWLEDGE_BASE 智能体未显式绑定时的运行时兜底，
+        # 就绪角标必须与 runtime/委派判定同口径（整表只读一次配置）。
+        default_dataset_ids = await load_system_default_dataset_ids()
         for agent in visible_agents:
             engine_config = agent.engine_config if isinstance(agent.engine_config, dict) else None
             published_version = published_by_agent.get(agent.id)
@@ -658,6 +663,7 @@ class AgentManagerService:
                     published_version is not None
                     or (agent.engine_type or "LOCAL") != "LOCAL"
                 ),
+                default_dataset_ids=default_dataset_ids,
             )
             agent.readiness_ready = readiness.ready
             agent.readiness_missing = list(readiness.missing)
@@ -825,6 +831,125 @@ class AgentManagerService:
         router_service.invalidate_cache()
         
         return agent
+
+    @staticmethod
+    async def duplicate_agent(
+        session: AsyncSession,
+        agent_id: str,
+        data: Any,
+        user: Any = None,
+    ) -> Optional[AIAgent]:
+        """把源智能体复制为一个全新的、立即可用的智能体。
+
+        复制范围：
+        - 元数据整体复制，但 ``is_system`` 强制 False、``created_by`` 归当前操作人；
+        - 版本取源最新 PUBLISHED 版本（无已发布版本时退化为版本号最大的那个），
+          复制为新智能体的 1 号版本并 **直接置 PUBLISHED**，保证副本可立即对话；
+        - 源无任何版本记录时（RAGFLOW / OPENCLAW 引擎）只建元数据，不硬造版本。
+        """
+        import copy
+        from fastapi import HTTPException
+
+        source = await session.get(AIAgent, agent_id)
+        if not source:
+            return None
+
+        _, username = AgentManagerService._resolve_actor(user)
+
+        new_name = AgentManagerService.normalize_agent_name(getattr(data, "name", None))
+        if not new_name:
+            raise ValueError("物理标识符不能为空")
+
+        # 物理标识符在 ai_agents.name 上全局唯一，复用创建路径同一套判定与中文提示
+        conflict = await AgentManagerService.find_agent_name_conflict(session, new_name)
+        if conflict:
+            raise HTTPException(status_code=400, detail=_agent_name_conflict_detail(new_name))
+
+        new_display_name = str(getattr(data, "display_name", "") or "").strip() or new_name
+        new_agent_id = str(uuid.uuid4())
+
+        agent = AIAgent(
+            id=new_agent_id,
+            name=new_name,
+            display_name=new_display_name,
+            description=source.description,
+            # 直接复用同一头像 URL；此处不能走 adopt_pending_avatar，
+            # 否则会把源智能体正在使用的头像当作待绑定文件移走
+            avatar_url=source.avatar_url,
+            capabilities=(
+                list(source.capabilities)
+                if isinstance(source.capabilities, list)
+                else source.capabilities
+            ),
+            agent_type=source.agent_type,
+            onboarding_step="COMPLETE",
+            is_system=False,  # 复制品永远不是系统智能体
+            sort_order=(source.sort_order or 0) + 1,  # 紧邻源智能体而非沉到末尾
+            is_enabled=True,
+            created_by=username or None,
+            engine_type=source.engine_type,
+            engine_config=(
+                copy.deepcopy(source.engine_config)
+                if source.engine_config
+                else source.engine_config
+            ),
+            owner_group=source.owner_group,
+        )
+        session.add(agent)
+
+        source_version = await AgentManagerService._pick_duplicate_source_version(
+            session, source.id
+        )
+        if source_version:
+            session.add(
+                AIAgentVersion(
+                    id=str(uuid.uuid4()),
+                    agent_id=new_agent_id,
+                    version_number=1,
+                    model_name=source_version.model_name,
+                    temperature=source_version.temperature,
+                    synthesis_model_name=source_version.synthesis_model_name,
+                    synthesis_temperature=source_version.synthesis_temperature,
+                    system_prompt=source_version.system_prompt,
+                    # JSON 字段必须深拷贝，避免两个 ORM 实例共享同一可变对象
+                    tools=copy.deepcopy(source_version.tools),
+                    toolcall_timeout_seconds=source_version.toolcall_timeout_seconds,
+                    skills_custom=source_version.skills_custom,
+                    skills=copy.deepcopy(source_version.skills),
+                    welcome_config=copy.deepcopy(source_version.welcome_config),
+                    status="PUBLISHED",  # 复制的是"已发布的配置"，副本因此立即可用
+                    comment=(
+                        f"复制自 {source.display_name or source.name} "
+                        f"v{source_version.version_number}"
+                    ),
+                )
+            )
+
+        await session.commit()
+        await session.refresh(agent)
+
+        from app.services.ai.router_service import router_service
+
+        router_service.invalidate_cache()
+
+        return agent
+
+    @staticmethod
+    async def _pick_duplicate_source_version(
+        session: AsyncSession,
+        agent_id: str,
+    ) -> Optional[AIAgentVersion]:
+        """挑选复制来源版本：优先最新 PUBLISHED，其次版本号最大的任意版本。"""
+        result = await session.execute(
+            select(AIAgentVersion)
+            .where(AIAgentVersion.agent_id == agent_id)
+            .order_by(
+                case((AIAgentVersion.status == "PUBLISHED", 0), else_=1),
+                AIAgentVersion.version_number.desc(),
+            )
+            .limit(1)
+        )
+        return result.scalars().first()
 
     @staticmethod
     async def reorder_agents(session: AsyncSession, items: List[Any], user: Any = None) -> bool:
@@ -1218,6 +1343,7 @@ class AgentManagerService:
             return False
 
         from app.services.ai.agent_readiness import evaluate_agent_readiness
+        from app.services.ai.knowledge_utils import load_system_default_dataset_ids
 
         readiness = evaluate_agent_readiness(
             agent_type=agent.agent_type or "GENERAL",
@@ -1226,6 +1352,9 @@ class AgentManagerService:
             tools=version.tools,
             # The target version becomes the published version in this transaction.
             has_published_version=True,
+            # 内置知识库助手不绑定 per-agent 数据集，运行时回退系统级默认数据集；
+            # 发布校验必须认同一口径，否则它永远无法重新发布。
+            default_dataset_ids=await load_system_default_dataset_ids(),
         )
         if not readiness.ready:
             raise AgentNotReadyError(readiness.missing)

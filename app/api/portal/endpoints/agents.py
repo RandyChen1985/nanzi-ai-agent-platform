@@ -19,6 +19,7 @@ from app.schemas.agent import (
     AIAgentResponse, AIAgentBase,
     AIAgentReorderRequest,
     AIAgentVersionResponse, AIAgentVersionBase,
+    AgentDuplicateRequest,
     AgentExecutionHistoryResponse,
     AgentOnboardingCreateRequest,
     AgentOnboardingResponse,
@@ -181,6 +182,27 @@ async def create_agent(data: AIAgentBase, session: AsyncSession = Depends(get_db
         return await AgentManagerService.create_agent(session, data, user=user)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post(
+    "/{agent_id}/duplicate",
+    response_model=AIAgentResponse,
+    dependencies=[Depends(require_permission("element", "element:agent:create"))],
+)
+async def duplicate_agent(
+    agent_id: str,
+    data: AgentDuplicateRequest,
+    session: AsyncSession = Depends(get_db_session),
+    user: Dict[str, Any] = Depends(get_current_user),
+):
+    """复制一个智能体（元数据 + 已发布版本配置），副本创建后立即可用。"""
+    try:
+        agent = await AgentManagerService.duplicate_agent(session, agent_id, data, user=user)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if not agent:
+        raise HTTPException(status_code=404, detail="智能体不存在")
+    return agent
 
 
 @router.post(
