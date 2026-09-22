@@ -1,7 +1,8 @@
 """RediSearch-backed metadata index service for local vector search."""
 import logging
 import struct
-from typing import Any, Dict, List, Optional
+import time
+from typing import Any, Awaitable, Callable, Dict, List, Optional
 from app.core.redis import get_redis, get_redis_binary
 from app.services.ai.embedding_client import EmbeddingClient
 from app.services.ai.redis_index_utils import ensure_vector_index
@@ -421,9 +422,17 @@ class MetadataIndexService:
             logger.info("[MetadataIndex] Deleted %d keys for dataset_id %d", len(keys_to_delete), dataset_id)
 
     @staticmethod
-    async def sync_local_redis_vector(dataset_id: int) -> None:
-        """
-        Synchronize a dataset's metadata to local Redis vectors asynchronously.
+    async def sync_local_redis_vector(
+        dataset_id: int,
+        *,
+        progress_cb: Optional[Callable[[Dict[str, Any]], Awaitable[None]]] = None,
+        wait: bool = False,
+    ) -> bool:
+        """Synchronize a dataset's metadata to local Redis vectors.
+
+        ``wait=False``（默认）保持历史行为：把真正的同步甩到后台任务后立刻返回。
+        ``wait=True`` 则直接 await 完成并返回是否成功，供「重构本地向量数据」这类
+        需要真实进度与汇总的编排使用。``progress_cb`` 按文档级与数据集级回调。
         """
         from app.core.orm import AsyncSessionLocal
         from app.services.metadata_service import MetadataService
@@ -431,15 +440,37 @@ class MetadataIndexService:
         from app.services.metadata_rag_service import MetadataRagService
         import asyncio
 
-        async def _run_sync():
+        async def _notify(payload: Dict[str, Any]) -> None:
+            if progress_cb is None:
+                return
+            try:
+                await progress_cb(payload)
+            except Exception as cb_err:
+                logger.warning("[Local Redis Sync] progress callback failed: %s", cb_err)
+
+        async def _run_sync() -> bool:
+            dataset_name = f"#{dataset_id}"
+            table_count = 0
+            metric_count = 0
+            doc_failed = 0
+            started = time.monotonic()
             try:
                 async with AsyncSessionLocal() as db:
                     # 1. Load Dataset Detail (Admin mode)
                     dataset = await MetadataService.get_dataset_by_id(db, dataset_id, is_admin=True)
                     if not dataset:
                         logger.error(f"[Local Redis Sync] Dataset {dataset_id} not found.")
-                        return
+                        await _notify(
+                            {
+                                "phase": "dataset_failed",
+                                "dataset_id": dataset_id,
+                                "dataset_name": dataset_name,
+                                "error": "数据集不存在",
+                            }
+                        )
+                        return False
 
+                    dataset_name = dataset.display_name or dataset.name or dataset_name
                     logger.info(f"[Local Redis Sync] Starting sync for dataset: {dataset.name} (ID: {dataset_id})")
 
                     # Check prefix/index existence first
@@ -454,17 +485,27 @@ class MetadataIndexService:
                         file_name = f"{table.physical_name}.txt"
                         content = MetadataRagService.generate_table_content(dataset, table, relationships)
                         expected_docs[file_name] = content
+                    table_count = len(expected_docs)
 
                     if dataset.metrics:
                         metrics_content = MetadataRagService.generate_metrics_content(dataset)
                         if metrics_content:
                             expected_docs["_metrics.txt"] = metrics_content
+                            metric_count = 1
 
                     # 2. Get existing keys from Redis for this dataset
                     redis = await get_redis()
                     if not redis:
                         logger.warning("[Local Redis Sync] Redis not available, skipping.")
-                        return
+                        await _notify(
+                            {
+                                "phase": "dataset_failed",
+                                "dataset_id": dataset_id,
+                                "dataset_name": dataset_name,
+                                "error": "Redis 不可用",
+                            }
+                        )
+                        return False
                     
                     prefix = f"metadata:dataset:{dataset_id}:"
                     cursor = 0
@@ -489,7 +530,8 @@ class MetadataIndexService:
                         await redis.delete(*stale_keys)
 
                     # 4. Upsert/Update keys that are expected
-                    for doc_name, content in expected_docs.items():
+                    doc_total = len(expected_docs)
+                    for index, (doc_name, content) in enumerate(expected_docs.items(), start=1):
                         try:
                             embedding = await EmbeddingClient.embed_text(content, use_global=True)
                             await MetadataIndexService.upsert_vector(
@@ -499,7 +541,19 @@ class MetadataIndexService:
                                 embedding=embedding
                             )
                         except Exception as emb_err:
+                            doc_failed += 1
                             logger.error(f"[Local Redis Sync] Embedding failed for doc {doc_name}: {emb_err}")
+                        await _notify(
+                            {
+                                "phase": "doc",
+                                "dataset_id": dataset_id,
+                                "dataset_name": dataset_name,
+                                "doc_name": doc_name,
+                                "done": index,
+                                "total": doc_total,
+                                "failed": doc_failed,
+                            }
+                        )
 
                     logger.info(f"[Local Redis Sync] Completed sync for dataset: {dataset.name}")
 
@@ -517,13 +571,41 @@ class MetadataIndexService:
                         )
                     )
                     await db.commit()
+
+                await _notify(
+                    {
+                        "phase": "dataset_done",
+                        "dataset_id": dataset_id,
+                        "dataset_name": dataset_name,
+                        "tables": table_count,
+                        "metrics": metric_count,
+                        "failed": doc_failed,
+                        "elapsed_ms": int((time.monotonic() - started) * 1000),
+                    }
+                )
+                return True
             except Exception as e:
                 logger.error(f"[Local Redis Sync] Background task failed for dataset {dataset_id}: {e}", exc_info=True)
+                await _notify(
+                    {
+                        "phase": "dataset_failed",
+                        "dataset_id": dataset_id,
+                        "dataset_name": dataset_name,
+                        "elapsed_ms": int((time.monotonic() - started) * 1000),
+                        "error": str(e),
+                    }
+                )
+                return False
+
+        if wait:
+            return await _run_sync()
 
         try:
             asyncio.create_task(_run_sync())
+            return True
         except Exception as e:
             logger.warning(f"[Local Redis Sync] Failed to trigger background sync: {e}")
+            return False
 
     @staticmethod
     async def _execute_ft_search(
@@ -772,19 +854,48 @@ class MetadataIndexService:
         return str(value) if value is not None else ""
 
     @staticmethod
-    async def sync_all_datasets() -> None:
-        """
-        Synchronize all enabled datasets to Redis vectors.
+    async def sync_all_datasets(
+        *,
+        progress_cb: Optional[Callable[[Dict[str, Any]], Awaitable[None]]] = None,
+        wait: bool = False,
+    ) -> Dict[str, int]:
+        """Synchronize all enabled datasets to Redis vectors.
+
+        ``wait=False``（默认）沿用历史行为：逐个触发后台同步后立即返回。
+        ``wait=True`` 按顺序 await 每个数据集，返回 ``{total, success, failed}``，
+        供需要真实进度与汇总的「重构本地向量数据」编排使用。
         """
         from app.core.orm import AsyncSessionLocal
         from app.services.metadata_service import MetadataService
-        
+
         async with AsyncSessionLocal() as db:
             try:
                 datasets = await MetadataService.get_datasets(db)
                 logger.info("[MetadataIndex] Found %d total datasets for startup sync", len(datasets))
-                for ds in datasets:
-                    if ds.status == 1:
-                        await MetadataIndexService.sync_local_redis_vector(ds.id)
+                enabled = [
+                    (int(ds.id), ds.display_name or ds.name or f"#{ds.id}")
+                    for ds in datasets
+                    if ds.status == 1
+                ]
             except Exception as e:
                 logger.error("[MetadataIndex] Failed during sync_all_datasets: %s", e)
+                return {"total": 0, "success": 0, "failed": 0}
+
+        if not wait:
+            for dataset_id, _name in enabled:
+                await MetadataIndexService.sync_local_redis_vector(
+                    dataset_id, progress_cb=progress_cb
+                )
+            return {"total": len(enabled), "success": 0, "failed": 0}
+
+        success = 0
+        failed = 0
+        for dataset_id, _name in enabled:
+            ok = await MetadataIndexService.sync_local_redis_vector(
+                dataset_id, progress_cb=progress_cb, wait=True
+            )
+            if ok:
+                success += 1
+            else:
+                failed += 1
+        return {"total": len(enabled), "success": success, "failed": failed}

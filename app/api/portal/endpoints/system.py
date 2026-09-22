@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, Body, File, UploadFile
+from fastapi.responses import StreamingResponse
 from typing import List, Dict, Any, Optional
 from pydantic import BaseModel
 from app.core.dependencies import require_admin, require_permission
@@ -433,19 +434,35 @@ async def delete_redis_keys_batch(
 async def rebuild_vector_indexes(
     user: Dict = Depends(require_permission("element", "element:system:config_save"))
 ):
-    """
-    Drop existing vector search indexes and drop all vector docs,
-    then recreate indexes and trigger full background sync of embeddings.
+    """启动一次任务化的本地向量重构（删除旧索引 → 重建 → 全量重新向量化）。
+
+    立即返回 ``task_id``，进度与逐条日志通过
+    ``GET /redis/rebuild-vectors/{task_id}/events``（SSE）订阅。
     """
     try:
-        from app.services.ai.local_vector_rebuild import rebuild_local_vector_indexes
+        from app.services.ai.local_vector_rebuild import (
+            get_active_rebuild_task_id,
+            start_local_vector_rebuild,
+        )
+        from app.services.task_lock import describe_lock_owner
 
-        result = await rebuild_local_vector_indexes(trigger="manual")
+        task_id = await start_local_vector_rebuild(trigger="manual")
+        if not task_id:
+            running = await get_active_rebuild_task_id()
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"已有重构任务正在执行（{describe_lock_owner(running)}）。"
+                    "该锁带 30 分钟 TTL，会自动释放；若确认没有任务在跑，可稍后重试。"
+                ),
+            )
         return {
-            "status": result["status"],
-            "message": result["message"],
-            "logs": result["logs"],
+            "status": "success",
+            "task_id": task_id,
+            "message": "本地向量重构任务已启动，正在后台执行，可在进度抽屉中查看实时日志",
         }
+    except HTTPException:
+        raise
     except RuntimeError as e:
         detail = str(e)
         if "disabled" in detail.lower():
@@ -454,6 +471,49 @@ async def rebuild_vector_indexes(
     except Exception as e:
         logging.error(f"Failed to rebuild vector indexes: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/redis/rebuild-vectors/{task_id}/events")
+async def rebuild_vector_indexes_events(
+    task_id: str,
+    user: Dict = Depends(require_permission("element", "element:system:config_save")),
+):
+    """订阅本地向量重构任务的实时进度与日志（先回放历史事件，再阻塞推送新事件）。"""
+    from app.services.task_log_service import task_log_service
+
+    task = await task_log_service.get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="重构任务不存在或已过期")
+
+    async def event_stream():
+        last_id = "0-0"
+        try:
+            while True:
+                events = await task_log_service.read_events(task_id, after_id=last_id)
+                if not events:
+                    events = await task_log_service.read_new_events(
+                        task_id, after_id=last_id, block_ms=1000
+                    )
+                for item in events:
+                    event_id = item.pop("id", None)
+                    if event_id:
+                        last_id = event_id
+                    event_name = item.get("event", "progress")
+                    yield (
+                        f"id: {last_id}\nevent: {event_name}\n"
+                        f"data: {json.dumps(item, ensure_ascii=False)}\n\n"
+                    )
+                    if task_log_service.is_terminal(event_name):
+                        return
+                await asyncio.sleep(0)
+        except asyncio.CancelledError:
+            raise
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 # --- Redis Browser Endpoints ---
 

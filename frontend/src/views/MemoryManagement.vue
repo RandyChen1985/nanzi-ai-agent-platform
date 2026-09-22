@@ -3,6 +3,7 @@ import { computed, onMounted, ref } from 'vue'
 import axios from '../utils/axios'
 import ConfirmModal from '../components/ConfirmModal.vue'
 import Modal from '../components/Modal.vue'
+import TaskProgressDrawer from '../components/common/TaskProgressDrawer.vue'
 import { useToast } from '../composables/useToast'
 import { useUser } from '../composables/useUser'
 import { copyToClipboard as copyText } from '../utils/clipboard'
@@ -162,6 +163,12 @@ const CONFIG_GROUPS: {
 ]
 
 const showRebuildConfirm = ref(false)
+const showRebuildVectorsConfirm = ref(false)
+// 索引/向量后台任务实时进度抽屉（索引检查创建 与 记忆向量重构 共用）
+const taskDrawerOpen = ref(false)
+const taskDrawerTitle = ref('')
+const taskDrawerSubtitle = ref('')
+const taskDrawerStreamUrl = ref('')
 const showDeleteConfirm = ref(false)
 const rowToDelete = ref<SummaryRow | null>(null)
 
@@ -400,6 +407,16 @@ const confirmRebuildIndex = async () => {
   try {
     const res = await axios.post('/api/portal/memory/index/rebuild')
     const data = res.data?.data
+    const taskId = data?.task_id
+    if (taskId) {
+      // 后台任务已启动：打开实时进度抽屉，由 SSE 推送进度与日志
+      taskDrawerTitle.value = '索引检查/创建'
+      taskDrawerSubtitle.value = '检查 RediSearch 会话摘要向量索引；若索引维度与系统配置不一致则重建索引（保留已有记忆数据）。'
+      taskDrawerStreamUrl.value = `/api/portal/memory/index/rebuild/${taskId}/events`
+      taskDrawerOpen.value = true
+      return
+    }
+    // 兼容旧后端：未返回 task_id 时沿用原有 toast 行为
     if (data && data.ok === false) {
       showToast(data.message || '索引检查/创建失败', 'error')
     } else {
@@ -407,8 +424,46 @@ const confirmRebuildIndex = async () => {
     }
     await loadIndexStatus()
   } catch (e: any) {
+    if (e.response?.status === 409) {
+      showToast(e.response?.data?.detail || '已有索引任务正在运行，请稍后再试', 'warning')
+      return
+    }
     showToast(e.response?.data?.detail || '操作失败', 'error')
   }
+}
+
+const requestRebuildVectors = () => {
+  if (!memoryFeaturesEnabled.value || !canIndex.value || !summaryEnabled.value) return
+  showRebuildVectorsConfirm.value = true
+}
+
+const confirmRebuildVectors = async () => {
+  showRebuildVectorsConfirm.value = false
+  try {
+    const res = await axios.post('/api/portal/memory/vectors/rebuild')
+    const data = res.data?.data ?? res.data
+    const taskId = data?.task_id
+    if (taskId) {
+      taskDrawerTitle.value = '重构记忆向量'
+      taskDrawerSubtitle.value = '遍历全部记忆记录并重新调用 Embedding 写入 Redis 向量索引，耗时较长且会消耗额度。'
+      taskDrawerStreamUrl.value = `/api/portal/memory/vectors/rebuild/${taskId}/events`
+      taskDrawerOpen.value = true
+      return
+    }
+    showToast(data?.message || '重构任务已启动', 'success')
+  } catch (e: any) {
+    if (e.response?.status === 409) {
+      showToast(e.response?.data?.detail || '已有重构任务正在运行，请稍后再试', 'warning')
+      return
+    }
+    showToast(e.response?.data?.detail || '启动重构失败', 'error')
+  }
+}
+
+const handleTaskDrawerFinished = async (payload: { ok: boolean; message: string }) => {
+  showToast(payload.message || (payload.ok ? '任务完成' : '任务失败'), payload.ok ? 'success' : 'error')
+  // 任务结束后刷新索引状态徽标
+  await loadIndexStatus()
 }
 
 const fetchSummaries = async () => {
@@ -808,6 +863,15 @@ onMounted(async () => {
             @click="requestRebuildIndex"
           >
             检查/创建索引
+          </button>
+          <button
+            v-if="canIndex && summaryEnabled"
+            type="button"
+            class="rounded-lg border border-amber-300 bg-amber-50 px-2 py-2 text-center text-xs text-amber-900 shadow-sm hover:bg-amber-100 sm:px-3 sm:text-sm"
+            title="重构记忆向量"
+            @click="requestRebuildVectors"
+          >
+            重构记忆向量
           </button>
         </div>
       </div>
@@ -1496,6 +1560,25 @@ onMounted(async () => {
       type="warning"
       @confirm="confirmRebuildIndex"
       @cancel="showRebuildConfirm = false"
+    />
+    <ConfirmModal
+      v-if="showRebuildVectorsConfirm"
+      title="重构记忆向量？"
+      message="此操作会遍历全部记忆记录并重新调用 Embedding，耗时较长且消耗额度。执行期间记忆向量检索可能返回不完整结果，确定执行吗？"
+      confirm-text="确认重构"
+      type="warning"
+      @confirm="confirmRebuildVectors"
+      @cancel="showRebuildVectorsConfirm = false"
+    />
+
+    <!-- 索引检查/创建 与 记忆向量重构 的后台任务实时进度 -->
+    <TaskProgressDrawer
+      :open="taskDrawerOpen"
+      :title="taskDrawerTitle"
+      :subtitle="taskDrawerSubtitle"
+      :stream-url="taskDrawerStreamUrl"
+      @close="taskDrawerOpen = false"
+      @finished="handleTaskDrawerFinished"
     />
     <ConfirmModal
       v-if="showDeleteConfirm && rowToDelete"
