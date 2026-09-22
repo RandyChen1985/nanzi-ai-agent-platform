@@ -45,6 +45,8 @@ const canSave = hasPermission('element:system:config_save')
 
 const activeTab = ref<'diagnostics' | 'configs' | 'models' | 'tools' | 'logs' | 'branding'>('configs')
 const diagSubTab = ref<'console' | 'redis'>('console')
+// 「Redis 向量搜索」的检测详情默认收起，避免顶部操作区占用过多高度
+const vectorHealthExpanded = ref(false)
 
 // --- Diagnostics Logic ---
 const logs = ref<string[]>([])
@@ -2620,252 +2622,261 @@ onUnmounted(() => {
          </div>
        </div>
 
-       <!-- DIAGNOSTICS TAB -->
-       <div v-else-if="activeTab === 'diagnostics'" class="grid grid-cols-1 lg:grid-cols-3 gap-6 h-full overflow-y-auto pb-6">
-        <!-- Left Column: Connection Checks -->
-        <div class="space-y-6 lg:col-span-1">
-          <div class="bg-white shadow rounded-lg p-6">
-            <div class="flex items-center justify-between mb-4">
-              <div class="flex items-center space-x-3">
-                <div class="p-2 rounded-lg border border-primary/15 bg-primary/10">
-                  <CircleStackIcon class="h-6 w-6 text-primary" />
+        <!-- DIAGNOSTICS TAB -->
+        <div v-else-if="activeTab === 'diagnostics'" class="flex flex-col gap-4 h-full min-h-0 pb-6 overflow-y-auto custom-scrollbar">
+          <!-- 顶部：连接与能力检查（操作区置顶、横向排布，不再左右分栏） -->
+          <div class="grid grid-cols-1 xl:grid-cols-2 gap-4 flex-shrink-0">
+            <!-- Redis 连接 -->
+            <div class="bg-white shadow rounded-lg p-4">
+              <div class="flex items-center gap-3">
+                <div class="p-2 rounded-lg border border-primary/15 bg-primary/10 flex-shrink-0">
+                  <CircleStackIcon class="h-5 w-5 text-primary" />
                 </div>
-                <div>
-                  <h3 class="text-lg font-medium text-gray-900">Redis</h3>
-                  <p class="text-sm text-gray-500">缓存与会话管理</p>
+                <div class="min-w-0">
+                  <h3 class="text-base font-medium text-gray-900">Redis</h3>
+                  <p class="text-xs text-gray-500">缓存与会话管理</p>
                 </div>
-              </div>
-              <div v-if="results.redis" class="flex items-center">
-                <CheckCircleIcon v-if="results.redis === 'success'" class="h-6 w-6 text-green-500" />
-                <XCircleIcon v-else class="h-6 w-6 text-red-500" />
-              </div>
-            </div>
-            <div class="border-t border-gray-100 pt-4 mt-2 flex flex-col gap-2">
-              <button @click="testConnection('redis')" :disabled="loading.redis || !canSave" class="w-full inline-flex justify-center items-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-primary hover:bg-primary/90 focus:outline-none disabled:opacity-50 whitespace-nowrap">
-                <PlayIcon v-if="!loading.redis" class="h-4 w-4 mr-2 shrink-0" />
-                <span v-else class="animate-spin h-4 w-4 mr-2 border-2 border-white border-t-transparent rounded-full shrink-0"></span>
-                {{ loading.redis ? '测试中...' : '测试连接' }}
-              </button>
-               <button @click="scanRedisKeys" :disabled="loading.redis_scan || !canSave" class="w-full inline-flex justify-center items-center py-2 px-4 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 disabled:opacity-50 whitespace-nowrap">
-                <MagnifyingGlassIcon v-if="!loading.redis_scan" class="h-4 w-4 mr-2 shrink-0" />
-                <span v-else class="animate-spin h-4 w-4 mr-2 border-2 border-gray-400 border-t-transparent rounded-full shrink-0"></span>
-                {{ loading.redis_scan ? '扫描中...' : '扫描 Keys' }}
-              </button>
-              <button @click="openClearConfirm" :disabled="!canSave" class="w-full inline-flex justify-center items-center py-2 px-4 border border-red-300 rounded-md shadow-sm text-sm font-medium text-red-700 bg-red-50 hover:bg-red-100 disabled:opacity-50 whitespace-nowrap">
-                <TrashIcon class="h-4 w-4 mr-2 shrink-0" />
-                清理 Keys
-              </button>
-            </div>
-          </div>
-
-          <div class="bg-white shadow rounded-lg p-6">
-            <div class="flex items-start justify-between mb-4">
-              <div class="flex items-center space-x-3">
-                <div class="p-2 rounded-lg border border-primary/15 bg-primary/10">
-                  <CpuChipIcon class="h-6 w-6 text-primary" />
-                </div>
-                <div>
-                  <h3 class="text-lg font-medium text-gray-900">Redis 向量搜索</h3>
-                  <p class="text-sm text-gray-500">检测 RediSearch 与会话摘要向量索引能力</p>
+                <div v-if="results.redis" class="ml-auto flex-shrink-0">
+                  <CheckCircleIcon v-if="results.redis === 'success'" class="h-5 w-5 text-green-500" />
+                  <XCircleIcon v-else class="h-5 w-5 text-red-500" />
                 </div>
               </div>
-              <div v-if="results.redis_vector" class="flex items-center">
-                <CheckCircleIcon v-if="results.redis_vector === 'success'" class="h-6 w-6 text-green-500" />
-                <XCircleIcon v-else class="h-6 w-6 text-red-500" />
-              </div>
-            </div>
-
-            <div
-              v-if="redisVectorHealth"
-              class="rounded-md border p-3 text-sm mb-4"
-              :class="redisVectorHealth.ok ? 'bg-green-50 border-green-200 text-green-800' : 'bg-amber-50 border-amber-200 text-amber-900'"
-            >
-              <div class="font-medium">{{ redisVectorHealth.message }}</div>
-              <div v-if="redisVectorHealth.redis_host" class="mt-1 text-xs opacity-80">
-                当前连接：{{ redisVectorHealth.redis_host }}:{{ redisVectorHealth.redis_port }} / db {{ redisVectorHealth.redis_db }}
-              </div>
-              <ul v-if="!redisVectorHealth.ok && redisVectorHealth.hints?.length" class="list-disc pl-5 mt-2 space-y-1 text-xs">
-                <li v-for="(hint, i) in redisVectorHealth.hints" :key="i">{{ hint }}</li>
-              </ul>
-            </div>
-
-            <div v-if="redisVectorHealth?.checks?.length" class="border border-gray-100 rounded-md overflow-hidden mb-4">
-              <div
-                v-for="check in redisVectorHealth.checks"
-                :key="check.name"
-                class="flex items-start justify-between gap-3 px-3 py-2 border-b border-gray-100 last:border-b-0 text-sm"
-              >
-                <div>
-                  <div class="font-medium text-gray-800">{{ check.name }}</div>
-                  <div class="text-xs text-gray-500 mt-0.5">{{ check.message }}</div>
-                </div>
-                <span
-                  class="shrink-0 px-2 py-0.5 rounded-full text-xs font-medium"
-                  :class="check.passed ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'"
-                >
-                  {{ check.passed ? '通过' : '失败' }}
-                </span>
-              </div>
-            </div>
-
-            <div class="flex flex-wrap gap-3">
-              <button
-                @click="testRedisVectorSearch(true)"
-                :disabled="loading.redis_vector || !canSave"
-                class="inline-flex justify-center items-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-primary hover:bg-primary/90 disabled:opacity-50"
-              >
-                <PlayIcon v-if="!loading.redis_vector" class="h-4 w-4 mr-2" />
-                <span v-else class="animate-spin h-4 w-4 mr-2 border-2 border-white border-t-transparent rounded-full"></span>
-                {{ loading.redis_vector ? '检测中...' : '重新检测' }}
-              </button>
-              <button
-                @click="openRebuildConfirm"
-                :disabled="loading.rebuild_vector || !canSave"
-                class="inline-flex justify-center items-center py-2 px-4 border border-red-300 rounded-md shadow-sm text-sm font-medium text-red-700 bg-red-50 hover:bg-red-100 disabled:opacity-50"
-              >
-                <ArrowPathIcon v-if="!loading.rebuild_vector" class="h-4 w-4 mr-2" />
-                <span v-else class="animate-spin h-4 w-4 mr-2 border-2 border-red-400 border-t-transparent rounded-full"></span>
-                {{ loading.rebuild_vector ? '重构中...' : '重构本地向量数据' }}
-              </button>
-            </div>
-          </div>
-        </div>
-        <!-- Right Column: Console Output / Redis Browser -->
-        <div class="lg:col-span-2 bg-white rounded-lg shadow flex flex-col h-[600px] border border-gray-100 overflow-hidden">
-          <div class="bg-gray-50 px-4 py-2.5 flex justify-between items-center border-b border-gray-200 flex-shrink-0">
-            <div class="flex space-x-2">
-              <button 
-                @click="diagSubTab = 'console'"
-                class="px-3 py-1.5 rounded-md text-xs font-semibold transition-all flex items-center"
-                :class="diagSubTab === 'console' ? 'bg-white shadow text-primary border border-gray-100' : 'text-gray-500 hover:text-gray-700'"
-              >
-                <CommandLineIcon class="w-3.5 h-3.5 mr-1.5" />
-                诊断控制台
-              </button>
-              <button 
-                @click="diagSubTab = 'redis'"
-                class="px-3 py-1.5 rounded-md text-xs font-semibold transition-all flex items-center"
-                :class="diagSubTab === 'redis' ? 'bg-white shadow text-primary border border-gray-100' : 'text-gray-500 hover:text-gray-700'"
-              >
-                <CircleStackIcon class="w-3.5 h-3.5 mr-1.5" />
-                Redis浏览器
-              </button>
-            </div>
-            <button v-if="diagSubTab === 'console'" @click="clearLogs" class="text-xs text-gray-400 hover:text-gray-600">清空</button>
-          </div>
-          
-          <!-- Tab: Console -->
-          <div v-if="diagSubTab === 'console'" class="flex-1 bg-gray-950 p-4 overflow-y-auto font-mono text-sm space-y-1 custom-scrollbar text-green-400">
-            <div v-if="logs.length === 0" class="text-gray-400 italic">等待执行测试...</div>
-            <div v-else v-for="(log, index) in logs" :key="index" class="text-green-400 break-all">
-              <span class="text-gray-500 mr-2">></span>{{ log }}
-            </div>
-          </div>
-
-          <!-- Tab: Redis Browser -->
-          <div v-else-if="diagSubTab === 'redis'" class="flex-1 flex space-x-4 overflow-hidden p-4 bg-gray-50">
-            <!-- Left Column: Keys list -->
-            <div class="w-2/5 bg-white border border-gray-200 rounded-lg p-3 flex flex-col h-full overflow-hidden">
-              <div class="mb-3 flex items-center space-x-2 flex-shrink-0">
-                <input
-                  type="text"
-                  v-model="redisPattern"
-                  placeholder="匹配模式 (例如 * 或 nanzi:*)"
-                  @keyup.enter="fetchRedisKeys"
-                  class="flex-1 min-w-0 shadow-sm focus:ring-primary focus:border-primary block w-full sm:text-sm border-gray-300 rounded-md bg-gray-50 p-2 border"
-                />
-                <button
-                  @click="fetchRedisKeys"
-                  :disabled="redisKeysLoading"
-                  class="inline-flex items-center px-3 py-2 border border-transparent text-sm leading-4 font-medium rounded-md text-white bg-primary hover:bg-primary/90 disabled:opacity-50"
-                >
-                  <span v-if="redisKeysLoading" class="animate-spin h-4 w-4 border-2 border-white border-t-transparent rounded-full mr-1"></span>
-                  搜索
+              <div class="border-t border-gray-100 pt-3 mt-3 flex flex-wrap gap-2">
+                <button @click="testConnection('redis')" :disabled="loading.redis || !canSave" class="inline-flex items-center py-1.5 px-3 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-primary hover:bg-primary/90 focus:outline-none disabled:opacity-50 whitespace-nowrap">
+                  <PlayIcon v-if="!loading.redis" class="h-4 w-4 mr-1.5 flex-shrink-0" />
+                  <span v-else class="animate-spin h-4 w-4 mr-1.5 border-2 border-white border-t-transparent rounded-full flex-shrink-0"></span>
+                  {{ loading.redis ? '测试中...' : '测试连接' }}
+                </button>
+                <button @click="scanRedisKeys" :disabled="loading.redis_scan || !canSave" class="inline-flex items-center py-1.5 px-3 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 disabled:opacity-50 whitespace-nowrap">
+                  <MagnifyingGlassIcon v-if="!loading.redis_scan" class="h-4 w-4 mr-1.5 flex-shrink-0" />
+                  <span v-else class="animate-spin h-4 w-4 mr-1.5 border-2 border-gray-400 border-t-transparent rounded-full flex-shrink-0"></span>
+                  {{ loading.redis_scan ? '扫描中...' : '扫描 Keys' }}
+                </button>
+                <button @click="openClearConfirm" :disabled="!canSave" class="inline-flex items-center py-1.5 px-3 border border-red-300 rounded-md shadow-sm text-sm font-medium text-red-700 bg-red-50 hover:bg-red-100 disabled:opacity-50 whitespace-nowrap">
+                  <TrashIcon class="h-4 w-4 mr-1.5 flex-shrink-0" />
+                  清理 Keys
                 </button>
               </div>
-              
-              <div class="flex-1 overflow-y-auto min-h-0 custom-scrollbar border border-gray-100 rounded-md">
-                <div v-if="redisKeys.length === 0 && !redisKeysLoading" class="p-6 text-center text-gray-400 italic text-sm">
-                  无匹配的 Redis Keys
+            </div>
+
+            <!-- Redis 向量搜索 -->
+            <div class="bg-white shadow rounded-lg p-4">
+              <div class="flex items-center gap-3">
+                <div class="p-2 rounded-lg border border-primary/15 bg-primary/10 flex-shrink-0">
+                  <CpuChipIcon class="h-5 w-5 text-primary" />
                 </div>
-                <div v-else-if="redisKeysLoading" class="p-12 text-center text-gray-400 flex flex-col items-center">
-                  <span class="animate-spin h-8 w-8 border-2 border-primary border-t-transparent rounded-full mb-2"></span>
-                  正在扫描键名...
+                <div class="min-w-0">
+                  <h3 class="text-base font-medium text-gray-900">Redis 向量搜索</h3>
+                  <p class="text-xs text-gray-500">检测 RediSearch 与会话摘要向量索引能力</p>
                 </div>
-                <div v-else class="divide-y divide-gray-100">
-                  <div
-                    v-for="key in redisKeys"
-                    :key="key.name"
-                    @click="fetchRedisKeyDetail(key.name)"
-                    class="px-2.5 py-2 hover:bg-gray-50 cursor-pointer flex items-center justify-between transition-colors duration-150"
-                    :class="selectedRedisKey === key.name ? 'bg-indigo-50/70 hover:bg-indigo-50' : ''"
+                <div class="ml-auto flex items-center gap-2 flex-shrink-0">
+                  <CheckCircleIcon v-if="results.redis_vector === 'success'" class="h-5 w-5 text-green-500" />
+                  <XCircleIcon v-else-if="results.redis_vector" class="h-5 w-5 text-red-500" />
+                  <button
+                    v-if="redisVectorHealth"
+                    @click="vectorHealthExpanded = !vectorHealthExpanded"
+                    class="inline-flex items-center text-xs font-medium text-gray-500 hover:text-gray-800 whitespace-nowrap"
                   >
-                    <span class="text-xs font-mono break-all text-gray-700 font-medium select-all" :class="selectedRedisKey === key.name ? 'text-primary font-bold' : ''">
-                      {{ key.name }}
-                    </span>
-                    <span class="ml-2 shrink-0 px-2 py-0.5 rounded text-[10px] font-bold uppercase" :class="
-                      key.type === 'string' ? 'bg-green-50 text-green-700 border border-green-100' :
-                      key.type === 'hash' ? 'bg-blue-50 text-blue-700 border border-blue-100' :
-                      key.type === 'list' ? 'bg-yellow-50 text-yellow-700 border border-yellow-100' :
-                      'bg-gray-50 text-gray-600 border border-gray-100'
-                    ">
-                      {{ key.type }}
+                    {{ vectorHealthExpanded ? '收起详情' : '查看详情' }}
+                    <ChevronDownIcon class="h-3.5 w-3.5 ml-0.5 transition-transform" :class="vectorHealthExpanded ? 'rotate-180' : ''" />
+                  </button>
+                </div>
+              </div>
+
+              <div class="border-t border-gray-100 pt-3 mt-3 flex flex-wrap gap-2">
+                <button
+                  @click="testRedisVectorSearch(true)"
+                  :disabled="loading.redis_vector || !canSave"
+                  class="inline-flex items-center py-1.5 px-3 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-primary hover:bg-primary/90 disabled:opacity-50 whitespace-nowrap"
+                >
+                  <PlayIcon v-if="!loading.redis_vector" class="h-4 w-4 mr-1.5 flex-shrink-0" />
+                  <span v-else class="animate-spin h-4 w-4 mr-1.5 border-2 border-white border-t-transparent rounded-full flex-shrink-0"></span>
+                  {{ loading.redis_vector ? '检测中...' : '重新检测' }}
+                </button>
+                <button
+                  @click="openRebuildConfirm"
+                  :disabled="loading.rebuild_vector || !canSave"
+                  class="inline-flex items-center py-1.5 px-3 border border-red-300 rounded-md shadow-sm text-sm font-medium text-red-700 bg-red-50 hover:bg-red-100 disabled:opacity-50 whitespace-nowrap"
+                >
+                  <ArrowPathIcon v-if="!loading.rebuild_vector" class="h-4 w-4 mr-1.5 flex-shrink-0" />
+                  <span v-else class="animate-spin h-4 w-4 mr-1.5 border-2 border-red-400 border-t-transparent rounded-full flex-shrink-0"></span>
+                  {{ loading.rebuild_vector ? '重构中...' : '重构本地向量数据' }}
+                </button>
+              </div>
+
+              <!-- 检测详情（默认收起，点击右上「查看详情」展开） -->
+              <div v-if="vectorHealthExpanded && redisVectorHealth" class="mt-3 space-y-3">
+                <div
+                  class="rounded-md border p-3 text-sm"
+                  :class="redisVectorHealth.ok ? 'bg-green-50 border-green-200 text-green-800' : 'bg-amber-50 border-amber-200 text-amber-900'"
+                >
+                  <div class="font-medium">{{ redisVectorHealth.message }}</div>
+                  <div v-if="redisVectorHealth.redis_host" class="mt-1 text-xs opacity-80">
+                    当前连接：{{ redisVectorHealth.redis_host }}:{{ redisVectorHealth.redis_port }} / db {{ redisVectorHealth.redis_db }}
+                  </div>
+                  <ul v-if="!redisVectorHealth.ok && redisVectorHealth.hints?.length" class="list-disc pl-5 mt-2 space-y-1 text-xs">
+                    <li v-for="(hint, i) in redisVectorHealth.hints" :key="i">{{ hint }}</li>
+                  </ul>
+                </div>
+
+                <div v-if="redisVectorHealth?.checks?.length" class="border border-gray-100 rounded-md overflow-hidden">
+                  <div
+                    v-for="check in redisVectorHealth.checks"
+                    :key="check.name"
+                    class="flex items-start justify-between gap-3 px-3 py-2 border-b border-gray-100 last:border-b-0 text-sm"
+                  >
+                    <div>
+                      <div class="font-medium text-gray-800">{{ check.name }}</div>
+                      <div class="text-xs text-gray-500 mt-0.5">{{ check.message }}</div>
+                    </div>
+                    <span
+                      class="flex-shrink-0 px-2 py-0.5 rounded-full text-xs font-medium"
+                      :class="check.passed ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'"
+                    >
+                      {{ check.passed ? '通过' : '失败' }}
                     </span>
                   </div>
                 </div>
               </div>
-              <div class="mt-2 text-[10px] text-gray-400 font-mono text-right flex-shrink-0">
-                显示最多 5000 条结果
+            </div>
+          </div>
+
+          <!-- 下方：诊断控制台 / Redis 浏览器（全宽展示） -->
+          <div class="flex-1 min-h-[520px] bg-white rounded-lg shadow flex flex-col border border-gray-100 overflow-hidden">
+            <div class="bg-gray-50 px-4 py-2.5 flex justify-between items-center border-b border-gray-200 flex-shrink-0">
+              <div class="flex space-x-2">
+                <button
+                  @click="diagSubTab = 'console'"
+                  class="px-3 py-1.5 rounded-md text-xs font-semibold transition-all flex items-center"
+                  :class="diagSubTab === 'console' ? 'bg-white shadow text-primary border border-gray-100' : 'text-gray-500 hover:text-gray-700'"
+                >
+                  <CommandLineIcon class="w-3.5 h-3.5 mr-1.5" />
+                  诊断控制台
+                </button>
+                <button
+                  @click="diagSubTab = 'redis'"
+                  class="px-3 py-1.5 rounded-md text-xs font-semibold transition-all flex items-center"
+                  :class="diagSubTab === 'redis' ? 'bg-white shadow text-primary border border-gray-100' : 'text-gray-500 hover:text-gray-700'"
+                >
+                  <CircleStackIcon class="w-3.5 h-3.5 mr-1.5" />
+                  Redis浏览器
+                </button>
+              </div>
+              <button v-if="diagSubTab === 'console'" @click="clearLogs" class="text-xs text-gray-400 hover:text-gray-600">清空</button>
+            </div>
+
+            <!-- Tab: Console -->
+            <div v-if="diagSubTab === 'console'" class="flex-1 bg-gray-950 p-4 overflow-y-auto font-mono text-sm space-y-1 custom-scrollbar text-green-400">
+              <div v-if="logs.length === 0" class="text-gray-400 italic">等待执行测试...</div>
+              <div v-else v-for="(log, index) in logs" :key="index" class="text-green-400 break-all">
+                <span class="text-gray-500 mr-2">></span>{{ log }}
               </div>
             </div>
 
-            <!-- Right Column: Key detail -->
-            <div class="flex-1 bg-white border border-gray-200 rounded-lg p-4 flex flex-col h-full overflow-hidden">
-              <div v-if="redisDetailLoading" class="flex-1 flex flex-col items-center justify-center">
-                <span class="animate-spin h-8 w-8 border-2 border-primary border-t-transparent rounded-full mb-2"></span>
-                <p class="text-gray-400 text-xs">正在加载详情...</p>
-              </div>
-              <div v-else-if="redisKeyDetail" class="flex flex-col h-full min-h-0">
-                <!-- Header detail info -->
-                <div class="border-b border-gray-100 pb-3 mb-3 flex items-start justify-between flex-shrink-0">
-                  <div class="space-y-1 min-w-0 pr-2">
-                    <div class="flex items-center space-x-2">
-                      <h3 class="text-sm font-bold text-gray-900 break-all font-mono select-all">
-                        {{ redisKeyDetail.name }}
-                      </h3>
-                    </div>
-                    <div class="flex items-center space-x-2 text-[10px]">
-                      <span class="px-1.5 py-0.5 rounded-full font-bold uppercase bg-indigo-50 text-indigo-700 border border-indigo-100">
-                        {{ redisKeyDetail.type }}
-                      </span>
-                      <span class="font-mono text-gray-500">
-                        TTL: {{ redisKeyDetail.ttl === -1 ? '永不过期 (-1)' : redisKeyDetail.ttl === -2 ? '已过期 (-2)' : `${redisKeyDetail.ttl} 秒` }}
-                      </span>
-                    </div>
-                  </div>
-                  
+            <!-- Tab: Redis Browser -->
+            <div v-else-if="diagSubTab === 'redis'" class="flex-1 flex space-x-4 overflow-hidden p-4 bg-gray-50">
+              <!-- Left Column: Keys list -->
+              <div class="w-2/5 bg-white border border-gray-200 rounded-lg p-3 flex flex-col h-full overflow-hidden">
+                <div class="mb-3 flex items-center space-x-2 flex-shrink-0">
+                  <input
+                    type="search"
+                    v-model="redisPattern"
+                    placeholder="匹配模式 (例如 * 或 nanzi:*)"
+                    @keyup.enter="fetchRedisKeys"
+                    class="flex-1 min-w-0 shadow-sm focus:ring-primary focus:border-primary block w-full sm:text-sm border-gray-300 rounded-md bg-gray-50 p-2 border"
+                  />
                   <button
-                    @click="confirmDeleteKey(redisKeyDetail.name)"
-                    title="删除此键"
-                    class="inline-flex items-center p-1.5 border border-red-200 rounded-md text-red-700 bg-red-50 hover:bg-red-100 transition-colors shadow-sm"
+                    @click="fetchRedisKeys"
+                    :disabled="redisKeysLoading"
+                    class="inline-flex items-center px-3 py-2 border border-transparent text-sm leading-4 font-medium rounded-md text-white bg-primary hover:bg-primary/90 disabled:opacity-50"
                   >
-                    <TrashIcon class="h-3.5 w-3.5" />
+                    <span v-if="redisKeysLoading" class="animate-spin h-4 w-4 border-2 border-white border-t-transparent rounded-full mr-1"></span>
+                    搜索
                   </button>
                 </div>
 
-                <!-- Value area -->
-                <div class="flex-1 min-h-0 overflow-y-auto bg-gray-950 rounded-lg p-3 font-mono text-[11px] text-green-400 custom-scrollbar border border-gray-950">
-                  <pre class="whitespace-pre-wrap break-all select-text selection:bg-indigo-500/30">{{ formatRedisValue(redisKeyDetail.value) }}</pre>
+                <div class="flex-1 overflow-y-auto min-h-0 custom-scrollbar border border-gray-100 rounded-md">
+                  <div v-if="redisKeys.length === 0 && !redisKeysLoading" class="p-6 text-center text-gray-400 italic text-sm">
+                    无匹配的 Redis Keys
+                  </div>
+                  <div v-else-if="redisKeysLoading" class="p-12 text-center text-gray-400 flex flex-col items-center">
+                    <span class="animate-spin h-8 w-8 border-2 border-primary border-t-transparent rounded-full mb-2"></span>
+                    正在扫描键名...
+                  </div>
+                  <div v-else class="divide-y divide-gray-100">
+                    <div
+                      v-for="key in redisKeys"
+                      :key="key.name"
+                      @click="fetchRedisKeyDetail(key.name)"
+                      class="px-2.5 py-2 hover:bg-gray-50 cursor-pointer flex items-center justify-between transition-colors duration-150"
+                      :class="selectedRedisKey === key.name ? 'bg-indigo-50/70 hover:bg-indigo-50' : ''"
+                    >
+                      <span class="text-xs font-mono break-all text-gray-700 font-medium select-all" :class="selectedRedisKey === key.name ? 'text-primary font-bold' : ''">
+                        {{ key.name }}
+                      </span>
+                      <span class="ml-2 flex-shrink-0 px-2 py-0.5 rounded text-[10px] font-bold uppercase" :class="
+                        key.type === 'string' ? 'bg-green-50 text-green-700 border border-green-100' :
+                        key.type === 'hash' ? 'bg-blue-50 text-blue-700 border border-blue-100' :
+                        key.type === 'list' ? 'bg-yellow-50 text-yellow-700 border border-yellow-100' :
+                        'bg-gray-50 text-gray-600 border border-gray-100'
+                      ">
+                        {{ key.type }}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+                <div class="mt-2 text-[10px] text-gray-400 font-mono text-right flex-shrink-0">
+                  显示最多 5000 条结果
                 </div>
               </div>
-              <div v-else class="flex-1 flex flex-col items-center justify-center text-gray-400">
-                <CircleStackIcon class="h-10 w-10 text-gray-200 mb-2" />
-                <p class="text-xs">请从左侧列表选择一个 Key 查看详细内容</p>
+
+              <!-- Right Column: Key detail -->
+              <div class="flex-1 bg-white border border-gray-200 rounded-lg p-4 flex flex-col h-full overflow-hidden">
+                <div v-if="redisDetailLoading" class="flex-1 flex flex-col items-center justify-center">
+                  <span class="animate-spin h-8 w-8 border-2 border-primary border-t-transparent rounded-full mb-2"></span>
+                  <p class="text-gray-400 text-xs">正在加载详情...</p>
+                </div>
+                <div v-else-if="redisKeyDetail" class="flex flex-col h-full min-h-0">
+                  <!-- Header detail info -->
+                  <div class="border-b border-gray-100 pb-3 mb-3 flex items-start justify-between flex-shrink-0">
+                    <div class="space-y-1 min-w-0 pr-2">
+                      <div class="flex items-center space-x-2">
+                        <h3 class="text-sm font-bold text-gray-900 break-all font-mono select-all">
+                          {{ redisKeyDetail.name }}
+                        </h3>
+                      </div>
+                      <div class="flex items-center space-x-2 text-[10px]">
+                        <span class="px-1.5 py-0.5 rounded-full font-bold uppercase bg-indigo-50 text-indigo-700 border border-indigo-100">
+                          {{ redisKeyDetail.type }}
+                        </span>
+                        <span class="font-mono text-gray-500">
+                          TTL: {{ redisKeyDetail.ttl === -1 ? '永不过期 (-1)' : redisKeyDetail.ttl === -2 ? '已过期 (-2)' : `${redisKeyDetail.ttl} 秒` }}
+                        </span>
+                      </div>
+                    </div>
+
+                    <button
+                      @click="confirmDeleteKey(redisKeyDetail.name)"
+                      title="删除此键"
+                      class="inline-flex items-center p-1.5 border border-red-200 rounded-md text-red-700 bg-red-50 hover:bg-red-100 transition-colors shadow-sm"
+                    >
+                      <TrashIcon class="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+
+                  <!-- Value area -->
+                  <div class="flex-1 min-h-0 overflow-y-auto bg-gray-950 rounded-lg p-3 font-mono text-[11px] text-green-400 custom-scrollbar border border-gray-950">
+                    <pre class="whitespace-pre-wrap break-all select-text selection:bg-indigo-500/30">{{ formatRedisValue(redisKeyDetail.value) }}</pre>
+                  </div>
+                </div>
+                <div v-else class="flex-1 flex flex-col items-center justify-center text-gray-400">
+                  <CircleStackIcon class="h-10 w-10 text-gray-200 mb-2" />
+                  <p class="text-xs">请从左侧列表选择一个 Key 查看详细内容</p>
+                </div>
               </div>
             </div>
           </div>
         </div>
-      </div>
 
       <!-- BRANDING TAB -->
       <div v-else-if="activeTab === 'branding'" class="h-full overflow-y-auto pb-6 custom-scrollbar">

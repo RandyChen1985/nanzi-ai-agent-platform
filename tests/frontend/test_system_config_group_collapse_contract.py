@@ -35,14 +35,23 @@ def test_system_config_single_panel_always_expanded():
     assert "!isConfigGroupCollapsed" not in source
 
 
-def test_system_config_batch_expand_collapse_removed():
+def _configs_block() -> str:
+    """「参数配置」tab 的模板段——本文件的折叠契约只针对它。"""
     source = SYSTEM_CONFIG.read_text(encoding="utf-8")
+    start = source.index("<div v-else-if=\"activeTab === 'configs'\"")
+    return source[start:]
 
-    # 向左分组导航 + 单面板改造后，全部展开/折叠不再需要
-    assert "expandAllConfigGroups" not in source
-    assert "collapseAllConfigGroups" not in source
-    assert "全部展开" not in source
-    assert "全部折叠" not in source
+
+def test_system_config_batch_expand_collapse_removed():
+    block = _configs_block()
+
+    # 向左分组导航 + 单面板改造后，「参数配置」页不再需要全部展开/折叠。
+    # 作用域限定在参数配置 tab：「系统诊断」页的 Redis Key 业务分组另有一套
+    # 自己的「全部展开/收起」，属于不同功能，不应被这条契约误伤。
+    assert "expandAllConfigGroups" not in block
+    assert "collapseAllConfigGroups" not in block
+    assert "全部展开" not in block
+    assert "全部折叠" not in block
 
 
 def test_system_config_group_focus_rail_present():
