@@ -101,6 +101,8 @@ class MetadataRagService:
             "meta_name": dataset.display_name or dataset.name,
             "data_source": data_source if data_source is not None else dataset.data_source,
             "description": table.description or "",
+            "partition_fields": getattr(table, "partition_fields", None) or [],
+            "index_fields": getattr(table, "index_fields", None) or [],
             "columns": [],
             "relationships": [],
         }
@@ -118,6 +120,14 @@ class MetadataRagService:
                 col_data["examples"] = col.examples
             if hasattr(col, "is_primary") and col.is_primary == 1:
                 col_data["pk"] = True
+            # 维度角色与层级组标记：仅当字段被标记为维度时输出，供 ChatBI 下钻分析
+            dim_role = getattr(col, "dimension_role", None)
+            if dim_role and dim_role != "none":
+                col_data["dimension_role"] = dim_role
+                hier_group = getattr(col, "hierarchy_group", None)
+                if hier_group:
+                    col_data["hierarchy_group"] = hier_group
+                    col_data["hierarchy_order"] = getattr(col, "hierarchy_order", None)
             data["columns"].append(col_data)
 
         if table.synonyms:
@@ -182,6 +192,12 @@ class MetadataRagService:
             "不是物理数据库名；禁止写成 FROM dataset.table_name。\n"
             "# FROM/JOIN 只使用 table_name；连接目标看 data_source；"
             "meta_name / table_desc 为业务展示名，不可当表名。\n"
+            "# partition_fields 是必须优先用于时间/范围过滤的分区字段；index_fields 是应优先用于等值、范围和 JOIN 条件的索引字段。"
+            "查询必须尽量命中分区和索引，禁止无界全表扫描；若用户未提供范围，先收窄时间/数量或向用户确认。\n"
+            "# dimension_role 标识字段的分析维度角色（time/geo/category/identifier）；"
+            "hierarchy_group 相同的字段构成一条下钻路径，按 hierarchy_order 从小到大=从粗到细。"
+            "用户要求按维度看或下钻时，优先用 dimension_role != none 的字段做 GROUP BY，"
+            "下钻时沿同 hierarchy_group 的 hierarchy_order 递增方向切换更细粒度字段。\n"
         )
         return note + yaml.dump(data, allow_unicode=True, sort_keys=False)
 

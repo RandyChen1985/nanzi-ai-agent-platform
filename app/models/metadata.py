@@ -49,6 +49,8 @@ class MetaTable(Base):
     term = Column(String(255), nullable=False, comment='业务术语')
     description = Column(Text, comment='描述')
     synonyms = Column(JSON, comment='同义词列表')
+    partition_fields = Column(JSON, nullable=True, comment='分区字段物理名列表')
+    index_fields = Column(JSON, nullable=True, comment='索引字段物理名列表')
     status = Column(Integer, default=1, comment='1:启用, 0:禁用')
     
     created_at = Column(DateTime, default=datetime.now)
@@ -72,6 +74,9 @@ class MetaColumn(Base):
     examples = Column(JSON, comment='示例值')
     foreign_key = Column(String(255), comment='外键关联')
     is_primary = Column(Integer, default=0, comment='是否主键')
+    dimension_role = Column(String(20), default="none", comment='维度角色: none/time/geo/category/identifier')
+    hierarchy_group = Column(String(100), nullable=True, comment='层级组标识，同组字段构成下钻链')
+    hierarchy_order = Column(Integer, nullable=True, comment='组内层级序号，从小到大=从粗到细')
     
     created_at = Column(DateTime, default=datetime.now)
 
