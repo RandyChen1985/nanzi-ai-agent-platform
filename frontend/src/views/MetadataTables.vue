@@ -164,12 +164,25 @@ const setOptimizationFields = (table: Table, key: 'partition_fields' | 'index_fi
 
 const optimizationFieldsText = (fields?: string[]) => (fields || []).join(', ')
 
+// 「序号」输入框用了 v-model.number：用户把已填的数字删空时它给出的是空串而非数字，
+// 而后端 hierarchy_order 是 Optional[int]，空串会直接 422 让整张表保存失败。
+// 这里在提交前统一归一：空串 → null（清空即可取消层级序号）。
+const normalizeHierarchyOrder = (table: Table | null) => {
+  if (!table?.columns) return
+  table.columns.forEach((col) => {
+    if ((col.hierarchy_order as unknown) === '') {
+      col.hierarchy_order = null
+    }
+  })
+}
+
 const handleCreateTable = async () => {
   if (!newTable.value.physical_name || !newTable.value.term) {
     showToast('请填写表物理名和业务名', 'warning')
     return
   }
   try {
+    normalizeHierarchyOrder(newTable.value)
     await metadataApi.saveTable(datasetId, newTable.value)
     showCreateTableModal.value = false
     fetchDatasetInfo()
@@ -339,6 +352,7 @@ const openEditModal = (table: Table) => {
 const handleUpdateTable = async () => {
   if (!editingTable.value) return
   try {
+    normalizeHierarchyOrder(editingTable.value)
     await metadataApi.saveTable(datasetId, editingTable.value)
     showEditModal.value = false
     editingTable.value = null

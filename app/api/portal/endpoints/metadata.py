@@ -1359,7 +1359,11 @@ async def save_table(dataset_id: int, table: TableCreate, conn: AsyncSession = D
     return await MetadataService.save_table_metadata(
         conn, 
         dataset_id, 
-        table.model_dump(),
+        # exclude_unset：调用方没显式传的字段必须缺席，save_table_metadata 才会回落到
+        # 库中既有的值。否则 Pydantic 会把 ColumnSchema 的默认值（dimension_role='none'、
+        # hierarchy_group=None、hierarchy_order=None、enums=None）一并注入，重新导入一张
+        # 已有表时会把人工标注的维度角色与下钻层级静默清空。
+        table.model_dump(exclude_unset=True),
         user_id=int(user.get('user_id') or 0),
         user_name=user.get('user_name'),
         reason="保存表结构"

@@ -78,7 +78,7 @@ export interface Column {
   is_primary?: boolean;
   dimension_role?: string;  // none/time/geo/category/identifier
   hierarchy_group?: string;  // 同组字段构成下钻链
-  hierarchy_order?: number;  // 组内层级序号，从小到大=从粗到细
+  hierarchy_order?: number | null;  // 组内层级序号，从小到大=从粗到细
 }
 
 export interface Table {
