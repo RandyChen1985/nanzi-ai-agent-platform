@@ -76,7 +76,7 @@ const emit = defineEmits<{
             <label class="block text-xs font-black text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">日期范围</label>
             <select
               v-model="form.dateRange"
-              class="min-h-10 w-full rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-800 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20 dark:border-gray-700 dark:bg-gray-950 dark:text-gray-200"
+              class="min-h-10 w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm text-gray-800 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20 dark:border-gray-700 dark:bg-gray-950 dark:text-gray-200 disabled:bg-gray-100"
             >
               <option value="today">今天</option>
               <option value="yesterday">昨天</option>
@@ -89,18 +89,18 @@ const emit = defineEmits<{
           <div v-if="form.dateRange === 'custom_range'" class="grid grid-cols-2 gap-3">
             <div>
               <label class="block text-xs font-black text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">开始日期</label>
-              <input v-model="form.startDate" type="date" class="min-h-10 w-full rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-800 dark:border-gray-700 dark:bg-gray-950 dark:text-gray-200" />
+              <input v-model="form.startDate" type="date" class="min-h-10 w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm text-gray-800 dark:border-gray-700 dark:bg-gray-950 dark:text-gray-200 disabled:bg-gray-100" />
             </div>
             <div>
               <label class="block text-xs font-black text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">结束日期</label>
-              <input v-model="form.endDate" type="date" class="min-h-10 w-full rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-800 dark:border-gray-700 dark:bg-gray-950 dark:text-gray-200" />
+              <input v-model="form.endDate" type="date" class="min-h-10 w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm text-gray-800 dark:border-gray-700 dark:bg-gray-950 dark:text-gray-200 disabled:bg-gray-100" />
             </div>
           </div>
           <div v-if="usesMonthRange(pendingReport)">
             <label class="block text-xs font-black text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">月份范围</label>
             <select
               v-model="form.monthRange"
-              class="min-h-10 w-full rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-800 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20 dark:border-gray-700 dark:bg-gray-950 dark:text-gray-200"
+              class="min-h-10 w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm text-gray-800 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20 dark:border-gray-700 dark:bg-gray-950 dark:text-gray-200 disabled:bg-gray-100"
             >
               <option value="last_6_completed_months">最近 6 个完整月</option>
               <option value="year_start_to_current_month">本年截至本月</option>
@@ -110,11 +110,11 @@ const emit = defineEmits<{
           <div v-if="usesMonthRange(pendingReport) && form.monthRange === 'custom_month_range'" class="grid grid-cols-2 gap-3">
             <div>
               <label class="block text-xs font-black text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">开始月份</label>
-              <input v-model="form.startMonth" type="month" class="min-h-10 w-full rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-800 dark:border-gray-700 dark:bg-gray-950 dark:text-gray-200" />
+              <input v-model="form.startMonth" type="month" class="min-h-10 w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm text-gray-800 dark:border-gray-700 dark:bg-gray-950 dark:text-gray-200 disabled:bg-gray-100" />
             </div>
             <div>
               <label class="block text-xs font-black text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">结束月份</label>
-              <input v-model="form.endMonth" type="month" class="min-h-10 w-full rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-800 dark:border-gray-700 dark:bg-gray-950 dark:text-gray-200" />
+              <input v-model="form.endMonth" type="month" class="min-h-10 w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm text-gray-800 dark:border-gray-700 dark:bg-gray-950 dark:text-gray-200 disabled:bg-gray-100" />
             </div>
           </div>
           <div
@@ -129,7 +129,7 @@ const emit = defineEmits<{
             <select
               v-if="item.type === 'select'"
               v-model="form.customParams[item.name]"
-              class="min-h-10 w-full rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-800 focus:border-primary focus:outline-none dark:border-gray-700 dark:bg-gray-950 dark:text-gray-200"
+              class="min-h-10 w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm text-gray-800 focus:border-primary focus:outline-none dark:border-gray-700 dark:bg-gray-950 dark:text-gray-200 disabled:bg-gray-100"
             >
               <option v-for="option in (item.options || [])" :key="String(option)" :value="option">{{ option }}</option>
             </select>
@@ -137,7 +137,7 @@ const emit = defineEmits<{
               v-else
               v-model="form.customParams[item.name]"
               :type="item.type === 'number' ? 'number' : 'text'"
-              class="min-h-10 w-full rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-800 focus:border-primary focus:outline-none dark:border-gray-700 dark:bg-gray-950 dark:text-gray-200"
+              class="min-h-10 w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm text-gray-800 focus:border-primary focus:outline-none dark:border-gray-700 dark:bg-gray-950 dark:text-gray-200 disabled:bg-gray-100"
               :placeholder="item.type === 'number' ? '请输入数字' : `请输入${item.label || item.name}`"
             />
           </div>

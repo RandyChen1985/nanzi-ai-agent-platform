@@ -442,7 +442,7 @@
                           v-model.number="metadataTopK"
                           min="1"
                           max="50"
-                          class="w-full px-2 py-1 text-xs rounded border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900 text-gray-800 dark:text-gray-100 focus:outline-none focus:border-green-500 font-mono"
+                          class="w-full px-2 py-1 text-xs rounded border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-800 dark:text-gray-100 focus:outline-none focus:border-green-500 font-mono disabled:bg-gray-100"
                         />
                       </div>
                     </div>

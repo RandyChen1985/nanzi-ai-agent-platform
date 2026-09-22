@@ -965,7 +965,7 @@ onBeforeUnmount(destroySqlEditor)
               v-model="form.title"
               type="text"
               placeholder="例如：2026年各部门月度营收汇总"
-              class="w-full px-3.5 py-2 text-sm border border-gray-200 dark:border-gray-700 rounded-xl bg-gray-50 dark:bg-gray-950 focus:bg-white dark:focus:bg-gray-900 focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none transition-all text-gray-900 dark:text-gray-100"
+              class="w-full px-3.5 py-2 text-sm border border-gray-200 dark:border-gray-700 rounded-xl bg-white dark:bg-gray-950 focus:bg-white dark:focus:bg-gray-900 focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none transition-all text-gray-900 dark:text-gray-100 disabled:bg-gray-100"
             />
           </div>
 
@@ -977,7 +977,7 @@ onBeforeUnmount(destroySqlEditor)
               v-model="form.tags"
               type="text"
               placeholder="多个标签用逗号分隔，例如：财务, 订单, 月报"
-              class="w-full px-3.5 py-2 text-sm border border-gray-200 dark:border-gray-700 rounded-xl bg-gray-50 dark:bg-gray-950 focus:bg-white dark:focus:bg-gray-900 focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none transition-all text-gray-900 dark:text-gray-100"
+              class="w-full px-3.5 py-2 text-sm border border-gray-200 dark:border-gray-700 rounded-xl bg-white dark:bg-gray-950 focus:bg-white dark:focus:bg-gray-900 focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none transition-all text-gray-900 dark:text-gray-100 disabled:bg-gray-100"
             />
           </div>
         </div>
@@ -1066,7 +1066,7 @@ onBeforeUnmount(destroySqlEditor)
             v-model="form.description"
             rows="2"
             placeholder="说明本报表的统计维度、过滤条件及核心业务口径..."
-            class="w-full px-3.5 py-2 text-sm border border-gray-200 dark:border-gray-700 rounded-xl bg-gray-50 dark:bg-gray-950 focus:bg-white dark:focus:bg-gray-900 focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none transition-all text-gray-900 dark:text-gray-100 resize-none"
+            class="w-full px-3.5 py-2 text-sm border border-gray-200 dark:border-gray-700 rounded-xl bg-white dark:bg-gray-950 focus:bg-white dark:focus:bg-gray-900 focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none transition-all text-gray-900 dark:text-gray-100 resize-none disabled:bg-gray-100"
           ></textarea>
         </div>
 
@@ -1310,7 +1310,7 @@ onBeforeUnmount(destroySqlEditor)
           <label class="mb-2 block text-xs font-black uppercase tracking-wider text-gray-500 dark:text-gray-400">日期范围</label>
           <select
             v-model="testParameterForm.dateRange"
-            class="w-full rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-800 focus:border-primary focus:outline-none dark:border-gray-700 dark:bg-gray-950 dark:text-gray-200"
+            class="w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm text-gray-800 focus:border-primary focus:outline-none dark:border-gray-700 dark:bg-gray-950 dark:text-gray-200 disabled:bg-gray-100"
           >
             <option value="today">今天</option>
             <option value="yesterday">昨天</option>
@@ -1323,11 +1323,11 @@ onBeforeUnmount(destroySqlEditor)
         <div v-if="hasTestDateParameters && testParameterForm.dateRange === 'custom_range'" class="grid grid-cols-2 gap-3">
           <label class="text-xs text-gray-500 dark:text-gray-400">
             开始日期
-            <input v-model="testParameterForm.startDate" type="date" class="mt-1 w-full rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-800 dark:border-gray-700 dark:bg-gray-950 dark:text-gray-200" />
+            <input v-model="testParameterForm.startDate" type="date" class="mt-1 w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm text-gray-800 dark:border-gray-700 dark:bg-gray-950 dark:text-gray-200 disabled:bg-gray-100" />
           </label>
           <label class="text-xs text-gray-500 dark:text-gray-400">
             结束日期
-            <input v-model="testParameterForm.endDate" type="date" class="mt-1 w-full rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-800 dark:border-gray-700 dark:bg-gray-950 dark:text-gray-200" />
+            <input v-model="testParameterForm.endDate" type="date" class="mt-1 w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm text-gray-800 dark:border-gray-700 dark:bg-gray-950 dark:text-gray-200 disabled:bg-gray-100" />
           </label>
         </div>
 
@@ -1335,7 +1335,7 @@ onBeforeUnmount(destroySqlEditor)
           <label class="mb-2 block text-xs font-black uppercase tracking-wider text-gray-500 dark:text-gray-400">月份范围</label>
           <select
             v-model="testParameterForm.monthRange"
-            class="w-full rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-800 focus:border-primary focus:outline-none dark:border-gray-700 dark:bg-gray-950 dark:text-gray-200"
+            class="w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm text-gray-800 focus:border-primary focus:outline-none dark:border-gray-700 dark:bg-gray-950 dark:text-gray-200 disabled:bg-gray-100"
           >
             <option value="last_6_completed_months">最近 6 个完整月</option>
             <option value="year_start_to_current_month">本年截至本月</option>
@@ -1345,11 +1345,11 @@ onBeforeUnmount(destroySqlEditor)
         <div v-if="hasTestMonthParameters && testParameterForm.monthRange === 'custom_month_range'" class="grid grid-cols-2 gap-3">
           <label class="text-xs text-gray-500 dark:text-gray-400">
             开始月份
-            <input v-model="testParameterForm.startMonth" type="month" class="mt-1 w-full rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-800 dark:border-gray-700 dark:bg-gray-950 dark:text-gray-200" />
+            <input v-model="testParameterForm.startMonth" type="month" class="mt-1 w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm text-gray-800 dark:border-gray-700 dark:bg-gray-950 dark:text-gray-200 disabled:bg-gray-100" />
           </label>
           <label class="text-xs text-gray-500 dark:text-gray-400">
             结束月份
-            <input v-model="testParameterForm.endMonth" type="month" class="mt-1 w-full rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-800 dark:border-gray-700 dark:bg-gray-950 dark:text-gray-200" />
+            <input v-model="testParameterForm.endMonth" type="month" class="mt-1 w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm text-gray-800 dark:border-gray-700 dark:bg-gray-950 dark:text-gray-200 disabled:bg-gray-100" />
           </label>
         </div>
 
@@ -1365,7 +1365,7 @@ onBeforeUnmount(destroySqlEditor)
           <select
             v-if="config.type === 'select'"
             v-model="testParameterForm.customParams[config.name]"
-            class="w-full rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-800 focus:border-primary focus:outline-none dark:border-gray-700 dark:bg-gray-950 dark:text-gray-200"
+            class="w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm text-gray-800 focus:border-primary focus:outline-none dark:border-gray-700 dark:bg-gray-950 dark:text-gray-200 disabled:bg-gray-100"
           >
             <option v-for="option in customParameterOptions(config)" :key="option" :value="option">{{ option }}</option>
           </select>
@@ -1374,7 +1374,7 @@ onBeforeUnmount(destroySqlEditor)
             v-model="testParameterForm.customParams[config.name]"
             :type="config.type === 'number' ? 'number' : 'text'"
             :placeholder="config.type === 'number' ? '请输入数字' : `请输入${config.label || config.name}`"
-            class="w-full rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-800 focus:border-primary focus:outline-none dark:border-gray-700 dark:bg-gray-950 dark:text-gray-200"
+            class="w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm text-gray-800 focus:border-primary focus:outline-none dark:border-gray-700 dark:bg-gray-950 dark:text-gray-200 disabled:bg-gray-100"
           />
         </div>
 

@@ -1386,7 +1386,7 @@ const externalCreationMissingFields = computed(() => {
                 :disabled="!canEditVersion"
                 placeholder="说明此版本做了哪些优化或改动..."
                 rows="5"
-                class="w-full text-sm border border-gray-200 rounded-xl focus:border-primary focus:ring-2 focus:ring-primary/20 resize-none p-3 bg-gray-50 outline-none"
+                class="w-full text-sm border border-gray-200 rounded-xl focus:border-primary focus:ring-2 focus:ring-primary/20 resize-none p-3 bg-white outline-none disabled:bg-gray-100"
               ></textarea>
             </div>
           </div>

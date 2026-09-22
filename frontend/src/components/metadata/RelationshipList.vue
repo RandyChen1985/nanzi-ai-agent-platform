@@ -1011,7 +1011,7 @@ onUnmounted(() => {
                 <select
                   v-model="sourceField"
                   @change="applyJoinCondition"
-                  class="w-full border border-gray-200 rounded px-2 py-1 text-xs focus:ring-1 focus:ring-purple-400 outline-none bg-gray-50/50"
+                  class="w-full border border-gray-200 rounded px-2 py-1 text-xs focus:ring-1 focus:ring-purple-400 outline-none bg-white disabled:bg-gray-100"
                 >
                   <option value="">-- 选择字段 --</option>
                   <option
@@ -1065,7 +1065,7 @@ onUnmounted(() => {
                 <select
                   v-model="targetField"
                   @change="applyJoinCondition"
-                  class="w-full border border-gray-200 rounded px-2 py-1 text-xs focus:ring-1 focus:ring-purple-400 outline-none bg-gray-50/50"
+                  class="w-full border border-gray-200 rounded px-2 py-1 text-xs focus:ring-1 focus:ring-purple-400 outline-none bg-white disabled:bg-gray-100"
                 >
                   <option value="">-- 选择字段 --</option>
                   <option

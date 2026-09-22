@@ -1305,7 +1305,7 @@
               type="text"
               :value="viewedApiKey"
               readonly
-              class="flex-1 px-3 py-2 border border-gray-300 rounded bg-white text-xs font-mono"
+              class="flex-1 px-3 py-2 border border-gray-300 rounded bg-white text-xs font-mon read-only:bg-gray-100o"
             />
             <button
               @click="copyViewedApiKey"

@@ -931,7 +931,7 @@ onMounted(async () => {
                 :disabled="currentExample.status === 'rejected' || currentExample.status === 'deprecated'"
                 rows="3"
                 placeholder="输入原始用户问题..."
-                class="w-full text-sm text-gray-900 bg-gray-50 p-3 rounded-lg border border-gray-200 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none shadow-inner transition-all disabled:bg-gray-50 disabled:text-gray-500 disabled:border-gray-200"
+                class="w-full text-sm text-gray-900 bg-white p-3 rounded-lg border border-gray-200 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none shadow-inner transition-all disabled:bg-gray-50 disabled:text-gray-500 disabled:border-gray-200"
               ></textarea>
             </div>
             <div>

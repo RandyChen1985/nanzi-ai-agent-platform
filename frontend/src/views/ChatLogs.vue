@@ -658,7 +658,7 @@ onMounted(() => {
             <label class="text-[11px] font-semibold text-gray-400">智能体</label>
             <select
               v-model="filters.agent_id"
-              class="w-full text-sm border border-gray-200 rounded-lg bg-gray-50 p-2 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary"
+              class="w-full text-sm border border-gray-200 rounded-lg bg-white p-2 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary disabled:bg-gray-100"
             >
               <option value="">全部智能体</option>
               <option v-for="a in agents" :key="a.id" :value="a.id">{{ a.display_name }}</option>
@@ -670,14 +670,14 @@ onMounted(() => {
               v-model="filters.username"
               type="text"
               placeholder="用户名"
-              class="w-full text-sm border border-gray-200 rounded-lg bg-gray-50 p-2 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary"
+              class="w-full text-sm border border-gray-200 rounded-lg bg-white p-2 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary disabled:bg-gray-100"
             />
           </div>
           <div class="space-y-1">
             <label class="text-[11px] font-semibold text-gray-400">状态</label>
             <select
               v-model="filters.status"
-              class="w-full text-sm border border-gray-200 rounded-lg bg-gray-50 p-2 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary"
+              class="w-full text-sm border border-gray-200 rounded-lg bg-white p-2 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary disabled:bg-gray-100"
             >
               <option value="">全部状态</option>
               <option value="success">成功</option>
@@ -689,7 +689,7 @@ onMounted(() => {
             <input
               v-model="filters.start_date"
               type="date"
-              class="w-full text-sm border border-gray-200 rounded-lg bg-gray-50 p-2 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary"
+              class="w-full text-sm border border-gray-200 rounded-lg bg-white p-2 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary disabled:bg-gray-100"
             />
           </div>
           <div class="space-y-1">
@@ -697,7 +697,7 @@ onMounted(() => {
             <input
               v-model="filters.end_date"
               type="date"
-              class="w-full text-sm border border-gray-200 rounded-lg bg-gray-50 p-2 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary"
+              class="w-full text-sm border border-gray-200 rounded-lg bg-white p-2 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary disabled:bg-gray-100"
             />
           </div>
         </div>

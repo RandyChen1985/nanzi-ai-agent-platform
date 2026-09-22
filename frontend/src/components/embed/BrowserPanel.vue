@@ -377,7 +377,7 @@
 
             <input
               v-model="address"
-              class="min-w-0 flex-1 rounded-md border border-gray-200 bg-gray-50 px-2 py-1.5 text-[11px] text-gray-700 outline-none focus:border-blue-400 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200"
+              class="min-w-0 flex-1 rounded-md border border-gray-200 bg-white px-2 py-1.5 text-[11px] text-gray-700 outline-none focus:border-blue-400 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200 disabled:bg-gray-100"
               placeholder="输入网址，如 www.baidu.com"
               @keyup.enter="navigate"
             />

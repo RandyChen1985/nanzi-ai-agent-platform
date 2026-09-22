@@ -1480,11 +1480,11 @@ defineExpose({ fetchMetrics })
            <div class="grid grid-cols-2 gap-6">
               <div class="space-y-2">
                  <label class="text-sm font-bold text-gray-700">业务名称 (Term)</label>
-                 <input v-model="editingTable.term" class="w-full bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 outline-none" placeholder="例如：用户订单表">
+                 <input v-model="editingTable.term" class="w-full bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 outline-none disabled:bg-gray-100" placeholder="例如：用户订单表">
               </div>
               <div class="space-y-2">
                  <label class="text-sm font-bold text-gray-700">描述 (Description)</label>
-                 <input v-model="editingTable.description" class="w-full bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 outline-none" placeholder="简要描述表的用途...">
+                 <input v-model="editingTable.description" class="w-full bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 outline-none disabled:bg-gray-100" placeholder="简要描述表的用途...">
               </div>
            </div>
 
@@ -1588,16 +1588,16 @@ defineExpose({ fetchMetrics })
            <div class="grid grid-cols-2 gap-6">
               <div class="space-y-2">
                  <label class="text-sm font-bold text-gray-700">物理名称 (Physical Name) *</label>
-                 <input v-model="newTable.physical_name" class="w-full bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none font-mono" placeholder="例如：t_orders">
+                 <input v-model="newTable.physical_name" class="w-full bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none font-mono disabled:bg-gray-100" placeholder="例如：t_orders">
               </div>
               <div class="space-y-2">
                  <label class="text-sm font-bold text-gray-700">业务名称 (Term) *</label>
-                 <input v-model="newTable.term" class="w-full bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none" placeholder="例如：订单表">
+                 <input v-model="newTable.term" class="w-full bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none disabled:bg-gray-100" placeholder="例如：订单表">
               </div>
            </div>
            <div class="space-y-2">
               <label class="text-sm font-bold text-gray-700">描述 (Description)</label>
-              <input v-model="newTable.description" class="w-full bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none" placeholder="简要描述该表的作用...">
+              <input v-model="newTable.description" class="w-full bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none disabled:bg-gray-100" placeholder="简要描述该表的作用...">
            </div>
 
            <div class="border-t border-gray-100 pt-6">

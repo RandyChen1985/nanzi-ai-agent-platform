@@ -203,7 +203,7 @@ const skillsForActiveScope = computed(() => {
             id="resource-scope-project-name"
             ref="projectNameInput"
             v-model="draft.project_name"
-            class="mt-1.5 w-full rounded-xl border bg-gray-50/50 dark:bg-gray-900/30 px-3 py-2.5 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 transition-colors"
+            class="mt-1.5 w-full rounded-xl border bg-white dark:bg-gray-900/30 px-3 py-2.5 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 transition-colors disabled:bg-gray-100"
             :class="showProjectNameError
               ? 'border-red-400 focus:ring-red-200 focus:border-red-400'
               : 'border-gray-200 dark:border-gray-600 focus:ring-primary/30 focus:border-primary'"

@@ -221,7 +221,7 @@ onMounted(() => {
         <!-- 动作类型筛选 -->
         <select 
           v-model="selectedOperation"
-          class="border border-gray-200 rounded-lg px-2.5 py-1.5 text-xs bg-gray-50 text-gray-700 focus:outline-none focus:ring-1 focus:ring-primary"
+          class="border border-gray-200 rounded-lg px-2.5 py-1.5 text-xs bg-white text-gray-700 focus:outline-none focus:ring-1 focus:ring-primary disabled:bg-gray-100"
         >
           <option value="all">所有操作</option>
           <option value="create">🟢 新增 (Create)</option>
@@ -232,7 +232,7 @@ onMounted(() => {
         <!-- 资源类型筛选 -->
         <select 
           v-model="selectedResourceType"
-          class="border border-gray-200 rounded-lg px-2.5 py-1.5 text-xs bg-gray-50 text-gray-700 focus:outline-none focus:ring-1 focus:ring-primary hidden sm:block"
+          class="border border-gray-200 rounded-lg px-2.5 py-1.5 text-xs bg-white text-gray-700 focus:outline-none focus:ring-1 focus:ring-primary hidden sm:block disabled:bg-gray-100"
         >
           <option value="all">全部对象类型</option>
           <option value="table">数据表 (Table)</option>

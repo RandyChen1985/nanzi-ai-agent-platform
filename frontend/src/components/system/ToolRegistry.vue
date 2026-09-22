@@ -326,13 +326,13 @@ onMounted(() => {
                   
                   <div>
                      <label class="block text-sm font-medium text-gray-700">参数定义 (JSON Schema)</label>
-                     <textarea v-model="toolForm.parameter_schema_str" rows="5" class="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-primary focus:border-primary sm:text-sm font-mono text-xs bg-gray-50" placeholder='{ "city": { "type": "string", "description": "城市名" } }'></textarea>
+                     <textarea v-model="toolForm.parameter_schema_str" rows="5" class="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-primary focus:border-primary sm:text-sm font-mono text-xs bg-white disabled:bg-gray-100" placeholder='{ "city": { "type": "string", "description": "城市名" } }'></textarea>
                      <p class="text-xs text-gray-500 mt-1">定义参数类型和描述，用于 LLM 理解</p>
                   </div>
                   
                   <div>
                      <label class="block text-sm font-medium text-gray-700">Headers (JSON)</label>
-                     <textarea v-model="toolForm.headers_str" rows="3" class="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-primary focus:border-primary sm:text-sm font-mono text-xs bg-gray-50" placeholder='{ "Authorization": "Bearer token" }'></textarea>
+                     <textarea v-model="toolForm.headers_str" rows="3" class="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-primary focus:border-primary sm:text-sm font-mono text-xs bg-white disabled:bg-gray-100" placeholder='{ "Authorization": "Bearer token" }'></textarea>
                   </div>
 
                   <div class="flex items-center">

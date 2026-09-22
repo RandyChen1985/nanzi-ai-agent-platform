@@ -64,7 +64,7 @@ const handleSave = () => {
             <select
               v-model="localConfig.model_name"
               :disabled="readonly"
-              class="w-full px-3 py-2 border border-gray-300 rounded-lg outline-none focus:ring-2 focus:ring-primary bg-white text-sm disabled:bg-gray-50 disabled:text-gray-500"
+              class="w-full px-3 py-2 border border-gray-300 rounded-lg outline-none focus:ring-2 focus:ring-primary bg-white text-sm disabled:bg-gray-50 disabled:text-gray-50 read-only:bg-gray-1000"
             >
               <option value="">跟随智能体默认配置</option>
               <option
@@ -114,7 +114,7 @@ const handleSave = () => {
             :disabled="readonly"
             rows="3"
             placeholder="留空则使用工具默认描述。覆盖描述可以帮助智能体更精确地理解何时调用此工具。"
-            class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm outline-none focus:ring-2 focus:ring-primary disabled:bg-gray-50 disabled:text-gray-500"
+            class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm outline-none focus:ring-2 focus:ring-primary disabled:bg-gray-50 disabled:text-gray-50 read-only:bg-gray-1000"
           ></textarea>
         </div>
       </div>

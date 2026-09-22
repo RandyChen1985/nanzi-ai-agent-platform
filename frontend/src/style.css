@@ -2,6 +2,51 @@
 @tailwind components;
 @tailwind utilities;
 
+/* 表单控件兜底：边框 + 内边距。
+   Tailwind preflight 会同时把表单控件的 `border-width` 和 `padding` 归零，而项目里大量
+   输入框/下拉框/文本域只写了 `border-gray-300`（边框**颜色**）却漏了 `border`（边框**宽度**）、
+   也没有任何 `p-*`。结果是这些控件既没有边框、又只有一行文字高（≈22px），
+   看起来与只读文本没有区别——只有聚焦时 `focus:border-primary` 才让边框显形。
+
+   这里在 base 层统一补回 1px 边框与合理内边距。要点：
+   1. 放在 `@layer base`，且选择器只用到元素级特异性，因此**任何**工具类都仍然优先级更高
+      —— `border-0` / `border-none` / `p-0` / `p-2` / `py-1` 可显式退出或改写，
+      `border-2`、`border-<color>`、`bg-*`、`dark:border-*` 等也照常生效；
+   2. 外层容器已经画了边框/已经给了内边距的复合控件（前缀+输入框、行号+代码编辑器、
+      带边框的搜索栏），其内部控件需显式加 `border-0` / `p-0`，否则会出现双线或双层留白；
+   3. 原生外观控件（勾选框/单选/滑块/取色/文件）由浏览器自绘，既不加边框也不加内边距。 */
+@layer base {
+  input,
+  select,
+  textarea {
+    border-width: 1px;
+    border-style: solid;
+    border-color: theme('colors.gray.300');
+    padding: theme('spacing.2') theme('spacing.3');
+  }
+
+  /* darkMode: 'class' —— 暗色主题下换成深灰，避免浅色描边在深底上过亮 */
+  .dark input,
+  .dark select,
+  .dark textarea {
+    border-color: theme('colors.gray.700');
+  }
+
+  input[type='checkbox'],
+  input[type='radio'],
+  input[type='range'],
+  input[type='color'],
+  input[type='file'],
+  input[type='image'],
+  input[type='hidden'],
+  input[type='submit'],
+  input[type='button'],
+  input[type='reset'] {
+    border-width: 0;
+    padding: 0;
+  }
+}
+
 html,
 body,
 #app {

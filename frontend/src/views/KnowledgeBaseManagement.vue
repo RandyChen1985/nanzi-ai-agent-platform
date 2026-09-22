@@ -2693,7 +2693,7 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
         </div>
         <div>
           <label class="block text-xs font-semibold text-gray-400 mb-1.5">业务扩展配置 JSON</label>
-          <textarea v-model="form.extraConfigText" class="w-full border border-gray-200 rounded-xl px-3 py-2 font-mono text-xs focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary bg-gray-50/50" rows="3" placeholder="{}"></textarea>
+          <textarea v-model="form.extraConfigText" class="w-full border border-gray-200 rounded-xl px-3 py-2 font-mono text-xs focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary bg-white disabled:bg-gray-100" rows="3" placeholder="{}"></textarea>
         </div>
         <div class="flex justify-end gap-3 pt-2">
           <button class="px-4 py-2 rounded-xl border text-sm font-semibold hover:bg-gray-50 transition-all" @click="showCreateModal = false">取消</button>
@@ -2805,7 +2805,7 @@ const handleFlowGuideAction = (type: 'create' | 'sync') => {
 
         <div>
           <label class="block text-xs font-semibold text-gray-400 mb-1.5">额外扩展配置 JSON</label>
-          <textarea v-model="form.extraConfigText" class="w-full border border-gray-200 rounded-xl px-3 py-2 font-mono text-xs focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary bg-gray-50/50" rows="3" placeholder="扩展配置 JSON"></textarea>
+          <textarea v-model="form.extraConfigText" class="w-full border border-gray-200 rounded-xl px-3 py-2 font-mono text-xs focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary bg-white disabled:bg-gray-100" rows="3" placeholder="扩展配置 JSON"></textarea>
         </div>
         <div class="flex justify-end gap-3 pt-2">
           <button class="px-4 py-2 rounded-xl border text-sm font-semibold hover:bg-gray-50 transition-all" @click="showEditModal = false">取消</button>

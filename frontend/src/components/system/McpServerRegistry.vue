@@ -1651,7 +1651,7 @@ onMounted(fetchServers)
               v-model="mcpJsonPaste"
               rows="8"
               placeholder='{ "mcpServers": { "mcp-trends-hub": { "type": "streamable_http", "url": "https://..." } } }'
-              class="w-full px-3 py-2 text-xs border border-gray-200 rounded-lg focus:ring-2 focus:ring-primary outline-none font-mono bg-gray-50 text-gray-800"
+              class="w-full px-3 py-2 text-xs border border-gray-200 rounded-lg focus:ring-2 focus:ring-primary outline-none font-mono bg-white text-gray-800 disabled:bg-gray-100"
               @keydown.stop
             />
             <p v-if="mcpJsonPasteHint" class="text-[10px] text-indigo-700 leading-snug">{{ mcpJsonPasteHint }}</p>
@@ -1709,7 +1709,7 @@ onMounted(fetchServers)
                       :value="mcpAudienceValue"
                       readonly
                       aria-label="当前 MCP Audience"
-                      class="min-w-0 flex-1 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2.5 text-sm font-mono text-gray-600 outline-none"
+                      class="min-w-0 flex-1 rounded-lg border border-gray-200 bg-white px-3 py-2.5 text-sm font-mono text-gray-600 outline-none disabled:bg-gray-100 read-only:bg-gray-100"
                     />
                     <button
                       v-if="mcpAudienceValue !== '保存后由系统自动生成'"
@@ -1736,7 +1736,7 @@ onMounted(fetchServers)
                       :value="mcpIssuerValue"
                       readonly
                       aria-label="当前 MCP 签名 Issuer"
-                      class="min-w-0 flex-1 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2.5 text-sm font-mono text-gray-600 outline-none"
+                      class="min-w-0 flex-1 rounded-lg border border-gray-200 bg-white px-3 py-2.5 text-sm font-mono text-gray-600 outline-none disabled:bg-gray-100 read-only:bg-gray-100"
                     />
                     <button
                       type="button"
@@ -1775,7 +1775,7 @@ onMounted(fetchServers)
                       :value="mcpJwksUrl"
                       readonly
                       aria-label="当前 MCP 公钥获取地址"
-                      class="min-w-0 flex-1 rounded border border-gray-200 bg-gray-50 px-2 py-1.5 font-mono text-[10px] text-gray-600 outline-none"
+                      class="min-w-0 flex-1 rounded border border-gray-200 bg-white px-2 py-1.5 font-mono text-[10px] text-gray-600 outline-none disabled:bg-gray-100 read-only:bg-gray-100"
                     />
                     <button
                       type="button"
@@ -1823,7 +1823,7 @@ onMounted(fetchServers)
                   :readonly="isEditing && !authorizationEditing"
                   placeholder="请输入 Token"
                   aria-label="Authorization Token"
-                  class="min-w-0 flex-1 rounded-lg border border-gray-200 bg-white px-3 py-2 text-xs font-mono outline-none focus:ring-1 focus:ring-primary"
+                  class="min-w-0 flex-1 rounded-lg border border-gray-200 bg-white px-3 py-2 text-xs font-mono outline-none focus:ring-1 focus:ring-primar read-only:bg-gray-100y"
                   @input="handleAuthorizationInput"
                 />
                 <button
@@ -1859,8 +1859,8 @@ onMounted(fetchServers)
                 <div class="max-h-[180px] space-y-2 overflow-y-auto rounded-lg border border-gray-100 bg-gray-50 p-3 custom-scrollbar">
                   <div v-for="(pair, index) in headerPairs" :key="index" class="flex items-center gap-2">
                     <template v-if="pair.existing && !pair.editing && !pair.removed">
-                      <input :value="pair.key" readonly class="min-w-0 flex-1 rounded border bg-white px-3 py-1.5 text-xs text-gray-600 outline-none" />
-                      <input :value="pair.maskedValue || '********'" readonly type="password" class="min-w-0 flex-1 rounded border bg-white px-3 py-1.5 text-xs text-gray-600 outline-none" />
+                      <input :value="pair.key" readonly class="min-w-0 flex-1 rounded border bg-white px-3 py-1.5 text-xs text-gray-600 outline-non read-only:bg-gray-100e" />
+                      <input :value="pair.maskedValue || '********'" readonly type="password" class="min-w-0 flex-1 rounded border bg-white px-3 py-1.5 text-xs text-gray-600 outline-non read-only:bg-gray-100e" />
                       <button type="button" class="shrink-0 rounded border border-indigo-200 bg-white px-2 py-1.5 text-[10px] font-semibold text-indigo-700 hover:bg-indigo-50" @click="editHeaderPair(index)">编辑</button>
                       <button type="button" class="shrink-0 p-1.5 text-gray-400 hover:text-red-500" aria-label="删除 Header" @click="removeHeaderPair(index)">
                         <TrashIcon class="h-4 w-4" />
@@ -1872,7 +1872,7 @@ onMounted(fetchServers)
                       <button type="button" class="shrink-0 text-[10px] font-semibold text-indigo-700 hover:underline" @click="restoreHeaderPair(index)">撤销</button>
                     </template>
                     <template v-else>
-                      <input v-model="pair.key" :readonly="pair.existing" placeholder="名称（如 X-Tenant）" class="min-w-0 flex-1 rounded border px-3 py-1.5 text-xs outline-none focus:ring-1 focus:ring-primary" @input="pair.changed = true; authHeadersTouched = true" />
+                      <input v-model="pair.key" :readonly="pair.existing" placeholder="名称（如 X-Tenant）" class="min-w-0 flex-1 rounded border px-3 py-1.5 text-xs outline-none focus:ring-1 focus:ring-primar read-only:bg-gray-100y" @input="pair.changed = true; authHeadersTouched = true" />
                       <input v-model="pair.value" :type="pair.existing ? 'password' : 'text'" :placeholder="pair.existing ? '请输入新值' : '内容（Value）'" class="min-w-0 flex-1 rounded border px-3 py-1.5 text-xs outline-none focus:ring-1 focus:ring-primary" @input="pair.changed = true; authHeadersTouched = true" />
                       <button v-if="pair.existing" type="button" class="shrink-0 rounded border border-gray-200 bg-white px-2 py-1.5 text-[10px] font-semibold text-gray-600 hover:bg-gray-50" @click="cancelHeaderPairEdit(index)">取消</button>
                       <button v-else type="button" class="shrink-0 p-1.5 text-gray-400 hover:text-red-500" aria-label="删除 Header" @click="removeHeaderPair(index)">
@@ -1905,7 +1905,7 @@ onMounted(fetchServers)
                 v-model="serverNameSuffix"
                 type="text"
                 placeholder="自定义后缀，如 hcp"
-                class="flex-1 min-w-0 px-3 py-2 text-sm font-mono outline-none"
+                class="flex-1 min-w-0 border-0 px-3 py-2 text-sm font-mono outline-none focus:ring-0"
                 @keydown.stop
               />
             </div>

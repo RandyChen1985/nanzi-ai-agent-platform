@@ -629,7 +629,7 @@ onUnmounted(() => {
                     v-model="form.nameSuffix"
                     @input="sanitizeNameSuffix"
                     @paste="handleNamePaste"
-                    class="min-w-0 flex-1 px-3 py-2 focus:outline-none"
+                    class="min-w-0 flex-1 border-0 px-3 py-2 focus:outline-none focus:ring-0"
                     placeholder="如：ods、production、analytics"
                   >
                 </div>
@@ -960,7 +960,7 @@ onUnmounted(() => {
               <textarea
                 v-model="debugSql"
                 rows="5"
-                class="w-full border border-gray-200 rounded-xl px-4 py-3 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-primary/50 resize-y bg-gray-50/50"
+                class="w-full border border-gray-200 rounded-xl px-4 py-3 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-primary/50 resize-y bg-white disabled:bg-gray-100"
                 placeholder="SELECT * FROM table_name LIMIT 10"
               ></textarea>
             </div>

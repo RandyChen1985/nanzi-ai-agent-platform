@@ -558,7 +558,7 @@ const normalizeType = (rawType: string): string => {
              :disabled="analyzing"
              @dragover.prevent
              @drop.prevent="handleFileDrop"
-             class="w-full h-full bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 p-5 pr-52 font-mono text-sm text-gray-800 resize-none shadow-inner disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed transition-colors"
+             class="w-full h-full bg-white border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 p-5 pr-52 font-mono text-sm text-gray-800 resize-none shadow-inner disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed transition-colors"
              placeholder="请在此粘贴 SQL DDL (CREATE TABLE...)、导出的 YAML/Markdown 结构或业务需求文档... 也可直接点击右上角导入文件或拖拽文件至此。&#10;&#10;示例:&#10;CREATE TABLE orders (id int, user_id int); -- 订单表&#10;CREATE TABLE users (id int, name varchar); -- 用户表&#10;-- 用户表和订单表是一对多关系"
            ></textarea>
             <div class="absolute top-12 right-3.5 z-10 flex flex-col items-stretch gap-2 w-48">

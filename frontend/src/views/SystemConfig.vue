@@ -3002,9 +3002,9 @@ onUnmounted(() => {
                      min="1"
                      max="3650"
                      :disabled="!canSave"
-                     class="shadow-sm focus:ring-primary focus:border-primary block w-full sm:text-sm border-gray-300 rounded-l-md bg-gray-100 p-2 disabled:opacity-70 disabled:cursor-not-allowed"
+                     class="focus:ring-primary focus:border-primary block w-full min-w-0 border border-gray-300 rounded-l-md bg-white disabled:bg-gray-100 p-2 text-right tabular-nums sm:text-sm disabled:opacity-70 disabled:cursor-not-allowed"
                    />
-                   <span class="inline-flex items-center px-3 rounded-r-md border border-l-0 border-gray-300 bg-gray-50 text-gray-500 text-sm">
+                   <span class="inline-flex shrink-0 items-center px-3 rounded-r-md border border-l-0 border-gray-300 bg-gray-50 text-gray-500 text-sm">
                      天
                    </span>
                  </div>
@@ -3795,7 +3795,7 @@ onUnmounted(() => {
                            v-model="configSearchQuery"
                            type="search"
                            placeholder="搜索参数…（⌘K）"
-                           class="w-full bg-transparent text-sm text-gray-700 placeholder:text-gray-400 focus:outline-none"
+                           class="w-full border-0 bg-transparent p-0 text-sm text-gray-700 placeholder:text-gray-400 focus:outline-none focus:ring-0"
                            @focus="configSearchOpen = true"
                            @blur="setTimeout(() => (configSearchOpen = false), 150)"
                            @click="configSearchOpen = true"
@@ -4025,7 +4025,7 @@ onUnmounted(() => {
                        </div>
                         <div class="md:col-span-2 relative">
                           <div v-if="item.key === 'agent_prompt_layout_mode'">
-                              <select v-model="item.value" :disabled="isConfigItemDisabled(String(category), item)" class="shadow-sm focus:ring-primary focus:border-primary block w-full sm:text-sm border-gray-300 rounded-md bg-gray-100 p-2 disabled:opacity-70 disabled:cursor-not-allowed">
+                              <select v-model="item.value" :disabled="isConfigItemDisabled(String(category), item)" class="shadow-sm focus:ring-primary focus:border-primary block w-full sm:text-sm border-gray-300 rounded-md bg-white disabled:bg-gray-100 p-2 disabled:opacity-70 disabled:cursor-not-allowed">
                                  <option value="legacy">legacy (传统布局：动态内容前置，按原逻辑拼装)</option>
                                  <option value="observe">observe (仅观测：保持传统布局发送，仅统计供应商命中指标)</option>
                                  <option value="enabled">enabled (启用优化：按灰度比例启用稳定层前置缓存布局)</option>
@@ -4065,7 +4065,7 @@ onUnmounted(() => {
                               </div>
                           </div>
                           <div v-else-if="item.key === 'llm_model_name'">
-                              <select v-model="item.value" :disabled="isConfigItemDisabled(String(category), item)" class="shadow-sm focus:ring-primary focus:border-primary block w-full sm:text-sm border-gray-300 rounded-md bg-gray-100 p-2 disabled:opacity-70 disabled:cursor-not-allowed">
+                              <select v-model="item.value" :disabled="isConfigItemDisabled(String(category), item)" class="shadow-sm focus:ring-primary focus:border-primary block w-full sm:text-sm border-gray-300 rounded-md bg-white disabled:bg-gray-100 p-2 disabled:opacity-70 disabled:cursor-not-allowed">
                                  <option value="" disabled>选择默认模型...</option>
                                  <option v-for="m in llmModelsForConfig" :key="m.id" :value="m.model_id">
                                     {{ m.name }} ({{ m.model_id }})<template v-if="isMultimodalModel(m)"> · 多模态</template>
@@ -4076,7 +4076,7 @@ onUnmounted(() => {
                               </select>
                           </div>
                           <div v-else-if="item.key === 'multimodal_model_name'">
-                              <select v-model="item.value" :disabled="isConfigItemDisabled(String(category), item)" class="shadow-sm focus:ring-primary focus:border-primary block w-full sm:text-sm border-gray-300 rounded-md bg-gray-100 p-2 disabled:opacity-70 disabled:cursor-not-allowed">
+                              <select v-model="item.value" :disabled="isConfigItemDisabled(String(category), item)" class="shadow-sm focus:ring-primary focus:border-primary block w-full sm:text-sm border-gray-300 rounded-md bg-white disabled:bg-gray-100 p-2 disabled:opacity-70 disabled:cursor-not-allowed">
                                  <option value="">未配置（不支持识图时提示用户）</option>
                                  <option v-for="m in multimodalModelsForConfig" :key="m.id" :value="m.model_id">
                                     {{ m.name }} ({{ m.model_id }})
@@ -4088,7 +4088,7 @@ onUnmounted(() => {
                           </div>
                           <div v-else-if="item.key === 'metadata_provider'">
                               <div class="flex items-center gap-2">
-                                <select v-model="item.value" :disabled="isConfigItemDisabled(String(category), item)" class="shadow-sm focus:ring-primary focus:border-primary block flex-1 min-w-0 sm:text-sm border-gray-300 rounded-md bg-gray-100 p-2 disabled:opacity-70 disabled:cursor-not-allowed">
+                                <select v-model="item.value" :disabled="isConfigItemDisabled(String(category), item)" class="shadow-sm focus:ring-primary focus:border-primary block flex-1 min-w-0 sm:text-sm border-gray-300 rounded-md bg-white disabled:bg-gray-100 p-2 disabled:opacity-70 disabled:cursor-not-allowed">
                                    <option value="local">local (本地元数据)</option>
                                    <option value="ragflow">ragflow (语义检索 RAG)</option>
                                 </select>
@@ -4113,7 +4113,7 @@ onUnmounted(() => {
                               </div>
                           </div>
                           <div v-else-if="item.key === 'sql_execution_mode'">
-                             <select v-model="item.value" :disabled="isConfigItemDisabled(String(category), item)" class="shadow-sm focus:ring-primary focus:border-primary block w-full sm:text-sm border-gray-300 rounded-md bg-gray-100 p-2 disabled:opacity-70 disabled:cursor-not-allowed">
+                             <select v-model="item.value" :disabled="isConfigItemDisabled(String(category), item)" class="shadow-sm focus:ring-primary focus:border-primary block w-full sm:text-sm border-gray-300 rounded-md bg-white disabled:bg-gray-100 p-2 disabled:opacity-70 disabled:cursor-not-allowed">
                                 <option value="remote">remote（调用远程数据服务）</option>
                                 <option value="local">local（平台直连数据源）</option>
                              </select>
@@ -4273,7 +4273,7 @@ onUnmounted(() => {
                              <select
                                v-model="item.value"
                                :disabled="isConfigItemDisabled(String(category), item)"
-                               class="shadow-sm focus:ring-primary focus:border-primary block w-full sm:text-sm border-gray-300 rounded-md bg-gray-100 p-2 disabled:opacity-70 disabled:cursor-not-allowed"
+                               class="shadow-sm focus:ring-primary focus:border-primary block w-full sm:text-sm border-gray-300 rounded-md bg-white disabled:bg-gray-100 p-2 disabled:opacity-70 disabled:cursor-not-allowed"
                              >
                                 <option value="Asia/Shanghai">Asia/Shanghai（中国标准时间，推荐）</option>
                                 <option value="Asia/Hong_Kong">Asia/Hong_Kong</option>
@@ -4294,7 +4294,7 @@ onUnmounted(() => {
                                v-model="item.value"
                                :disabled="isConfigItemDisabled(String(category), item)"
                                placeholder="https://your-domain.example.com"
-                               class="shadow-sm focus:ring-primary focus:border-primary block w-full sm:text-sm border-gray-300 rounded-md bg-gray-100 p-2 disabled:opacity-70 disabled:cursor-not-allowed"
+                               class="shadow-sm focus:ring-primary focus:border-primary block w-full sm:text-sm border-gray-300 rounded-md bg-white disabled:bg-gray-100 p-2 disabled:opacity-70 disabled:cursor-not-allowed"
                              />
                              <div class="mt-2 text-xs text-blue-700 bg-blue-50/60 p-3 rounded-xl border border-blue-100/70 leading-relaxed">
                                <div>💡 <strong>设置示例：</strong>填写 <code class="font-mono text-blue-800">https://your-domain.example.com</code>，生成的下载地址会是 <code class="font-mono text-blue-800">https://your-domain.example.com/api/v1/chat/generated-files/...</code>。</div>
@@ -4306,7 +4306,7 @@ onUnmounted(() => {
                                <select
                                  v-model="item.value"
                                  :disabled="isConfigItemDisabled(String(category), item)"
-                                 class="shadow-sm focus:ring-primary focus:border-primary block w-full sm:text-sm border-gray-300 rounded-md bg-gray-100 p-2 disabled:opacity-70 disabled:cursor-not-allowed"
+                                 class="shadow-sm focus:ring-primary focus:border-primary block w-full sm:text-sm border-gray-300 rounded-md bg-white disabled:bg-gray-100 p-2 disabled:opacity-70 disabled:cursor-not-allowed"
                                >
                                  <option value="password">
                                    密码认证（{{ sandboxSshHasSshpass ? '依赖 sshpass · 已就绪' : '依赖 sshpass · 未安装' }}）
@@ -4602,7 +4602,7 @@ onUnmounted(() => {
                             </div>
                           </div>
                           <div v-else-if="item.is_secret && item.key !== 'embed_api_key'" class="relative">
-                             <input :type="showSecrets[item.key] ? 'text' : 'password'" v-model="item.value" :disabled="isConfigItemDisabled(String(category), item)" class="shadow-sm focus:ring-primary focus:border-primary block w-full sm:text-sm border-gray-300 rounded-md pr-10 bg-gray-100 disabled:opacity-70 disabled:cursor-not-allowed" />
+                             <input :type="showSecrets[item.key] ? 'text' : 'password'" v-model="item.value" :disabled="isConfigItemDisabled(String(category), item)" class="shadow-sm focus:ring-primary focus:border-primary block w-full sm:text-sm border-gray-300 rounded-md pr-10 bg-white disabled:bg-gray-100 disabled:opacity-70 disabled:cursor-not-allowed" />
                              <div @click="toggleSecret(item.key)" class="absolute inset-y-0 right-0 pr-3 flex items-center cursor-pointer text-gray-400">
                                 <EyeIcon v-if="!showSecrets[item.key]" class="h-5 w-5" />
                                 <EyeSlashIcon v-else class="h-5 w-5" />
@@ -4635,7 +4635,7 @@ onUnmounted(() => {
                               type="text"
                               v-model="item.value"
                               :disabled="isConfigItemDisabled(String(category), item)"
-                              class="shadow-sm focus:ring-primary focus:border-primary block w-full sm:text-sm border-gray-300 rounded-md bg-gray-100 disabled:opacity-70 disabled:cursor-not-allowed p-2"
+                              class="shadow-sm focus:ring-primary focus:border-primary block w-full sm:text-sm border-gray-300 rounded-md bg-white disabled:bg-gray-100 disabled:opacity-70 disabled:cursor-not-allowed p-2"
                               placeholder="如 default_clickhouse"
                             />
                             <div class="flex flex-wrap items-center gap-3">
@@ -4763,7 +4763,7 @@ onUnmounted(() => {
                                 v-model="item.value"
                                 :disabled="isConfigItemDisabled(String(category), item)"
                                 :placeholder="item.key === 'sandbox_k8s_existing_pvc' ? '留空自动共享平台数据卷；填 none 强制独立临时卷；也可填具体 PVC 名' : (item.key === 'sandbox_k8s_storage_class' ? '例如 local-path、gp3（可选，留空使用默认存储类）' : '')"
-                                class="shadow-sm focus:ring-primary focus:border-primary block w-full sm:text-sm border-gray-300 rounded-md bg-gray-100 disabled:opacity-70 disabled:cursor-not-allowed"
+                                class="shadow-sm focus:ring-primary focus:border-primary block w-full sm:text-sm border-gray-300 rounded-md bg-white disabled:bg-gray-100 disabled:opacity-70 disabled:cursor-not-allowed"
                               />
                                    <button
                                        v-if="canSave"
@@ -4782,7 +4782,7 @@ onUnmounted(() => {
                                    使用本地 Redis 向量存储 (HNSW)
                                </div>
                                <div v-else class="flex items-center space-x-2">
-                                   <input type="text" v-model="item.value" :disabled="true" class="shadow-sm focus:ring-primary focus:border-primary block w-full sm:text-sm border-gray-300 rounded-md bg-gray-100 disabled:opacity-70 disabled:cursor-not-allowed" />
+                                   <input type="text" v-model="item.value" :disabled="true" class="shadow-sm focus:ring-primary focus:border-primary block w-full sm:text-sm border-gray-300 rounded-md bg-white disabled:bg-gray-100 disabled:opacity-70 disabled:cursor-not-allowed" />
                                    <span class="inline-flex items-center px-3 py-1.5 rounded-full text-xs font-semibold bg-emerald-100 text-emerald-800 shrink-0 select-none border border-emerald-200">
                                        chatbi-example-meta
                                    </span>
@@ -4834,12 +4834,12 @@ onUnmounted(() => {
                                 快捷加载会填入 <strong>API 地址</strong>与<strong>模型名</strong>；Key 因脱敏无法自动填入（模型管理已有 Key 时可留空）；<strong>向量维度</strong>请自行核对后保存。
                               </p>
                               <div class="flex items-center space-x-2">
-                                  <input type="text" v-model="item.value" :disabled="isConfigItemDisabled(String(category), item)" class="shadow-sm focus:ring-primary focus:border-primary block w-full sm:text-sm border-gray-300 rounded-md bg-gray-100 disabled:opacity-70 disabled:cursor-not-allowed p-2" />
+                                  <input type="text" v-model="item.value" :disabled="isConfigItemDisabled(String(category), item)" class="shadow-sm focus:ring-primary focus:border-primary block w-full sm:text-sm border-gray-300 rounded-md bg-white disabled:bg-gray-100 disabled:opacity-70 disabled:cursor-not-allowed p-2" />
                               </div>
                           </div>
                           <div v-else-if="item.key === 'embed_api_key'">
                               <div class="relative">
-                                  <input :type="showSecrets[item.key] ? 'text' : 'password'" v-model="item.value" :disabled="isConfigItemDisabled(String(category), item)" class="shadow-sm focus:ring-primary focus:border-primary block w-full sm:text-sm border-gray-300 rounded-md pr-10 bg-gray-100 disabled:opacity-70 disabled:cursor-not-allowed" />
+                                  <input :type="showSecrets[item.key] ? 'text' : 'password'" v-model="item.value" :disabled="isConfigItemDisabled(String(category), item)" class="shadow-sm focus:ring-primary focus:border-primary block w-full sm:text-sm border-gray-300 rounded-md pr-10 bg-white disabled:bg-gray-100 disabled:opacity-70 disabled:cursor-not-allowed" />
                                   <div @click="toggleSecret(item.key)" class="absolute inset-y-0 right-0 pr-3 flex items-center cursor-pointer text-gray-400">
                                       <EyeIcon v-if="!showSecrets[item.key]" class="h-5 w-5" />
                                       <EyeSlashIcon v-else class="h-5 w-5" />
@@ -4848,10 +4848,10 @@ onUnmounted(() => {
                               <p class="mt-1.5 text-[11px] text-gray-500">API Key 可留空；若供应商需要鉴权，测试时会返回对应错误。</p>
                           </div>
                           <div v-else-if="item.key === 'embed_model_name'">
-                              <input type="text" v-model="item.value" :disabled="isConfigItemDisabled(String(category), item)" class="shadow-sm focus:ring-primary focus:border-primary block w-full sm:text-sm border-gray-300 rounded-md bg-gray-100 disabled:opacity-70 disabled:cursor-not-allowed p-2" />
+                              <input type="text" v-model="item.value" :disabled="isConfigItemDisabled(String(category), item)" class="shadow-sm focus:ring-primary focus:border-primary block w-full sm:text-sm border-gray-300 rounded-md bg-white disabled:bg-gray-100 disabled:opacity-70 disabled:cursor-not-allowed p-2" />
                           </div>
                           <div v-else-if="item.key === 'embed_dimensions'">
-                              <input type="text" v-model="item.value" @keypress="!/[0-9]/.test(($event as KeyboardEvent).key) && ($event as KeyboardEvent).preventDefault()" @input="item.value = item.value.replace(/\D/g, '')" :disabled="isConfigItemDisabled(String(category), item)" class="shadow-sm focus:ring-primary focus:border-primary block w-full sm:text-sm border-gray-300 rounded-md bg-gray-100 disabled:opacity-70 disabled:cursor-not-allowed p-2" />
+                              <input type="text" v-model="item.value" @keypress="!/[0-9]/.test(($event as KeyboardEvent).key) && ($event as KeyboardEvent).preventDefault()" @input="item.value = item.value.replace(/\D/g, '')" :disabled="isConfigItemDisabled(String(category), item)" class="shadow-sm focus:ring-primary focus:border-primary block w-full sm:text-sm border-gray-300 rounded-md bg-white disabled:bg-gray-100 disabled:opacity-70 disabled:cursor-not-allowed p-2" />
                               <button
                                   type="button"
                                   @click="testGlobalEmbed"
@@ -4956,7 +4956,7 @@ onUnmounted(() => {
                                      item.value = '30'
                                    }
                                  }"
-                                 class="w-28 px-3 py-1.5 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none transition-all disabled:bg-gray-100 disabled:cursor-not-allowed"
+                                 class="w-28 px-3 py-1.5 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none transition-all disabled:bg-white disabled:cursor-not-allowed"
                                  placeholder="30"
                                />
                                <span class="text-xs font-semibold text-gray-500">天</span>
@@ -5013,7 +5013,7 @@ onUnmounted(() => {
                                       item.value = '30'
                                     }
                                   }"
-                                  class="w-28 px-3 py-1.5 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none transition-all disabled:bg-gray-100 disabled:cursor-not-allowed"
+                                  class="w-28 px-3 py-1.5 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none transition-all disabled:bg-white disabled:cursor-not-allowed"
                                   placeholder="30"
                                 />
                                 <span class="text-xs font-semibold text-gray-500">分钟</span>
@@ -5081,19 +5081,19 @@ onUnmounted(() => {
                              >{{ item.description }}</p>
                           </div>
                           <div v-else-if="['agent_context_compaction_enabled', 'agent_context_llm_summary_enabled', 'sandbox_k8s_delete_pvc_on_close'].includes(item.key)">
-                             <select v-model="item.value" :disabled="isConfigItemDisabled(String(category), item)" class="shadow-sm focus:ring-primary focus:border-primary block w-full sm:text-sm border-gray-300 rounded-md bg-gray-100 p-2 disabled:opacity-70 disabled:cursor-not-allowed">
+                             <select v-model="item.value" :disabled="isConfigItemDisabled(String(category), item)" class="shadow-sm focus:ring-primary focus:border-primary block w-full sm:text-sm border-gray-300 rounded-md bg-white disabled:bg-gray-100 p-2 disabled:opacity-70 disabled:cursor-not-allowed">
                                 <option value="true">true (开启)</option>
                                 <option value="false">false (关闭)</option>
                              </select>
                           </div>
                           <div v-else-if="item.key === 'embedchat_watermark_style'">
-                             <select v-model="item.value" :disabled="isConfigItemDisabled(String(category), item)" class="shadow-sm focus:ring-primary focus:border-primary block w-full sm:text-sm border-gray-300 rounded-md bg-gray-100 p-2 disabled:opacity-70 disabled:cursor-not-allowed">
+                             <select v-model="item.value" :disabled="isConfigItemDisabled(String(category), item)" class="shadow-sm focus:ring-primary focus:border-primary block w-full sm:text-sm border-gray-300 rounded-md bg-white disabled:bg-gray-100 p-2 disabled:opacity-70 disabled:cursor-not-allowed">
                                 <option value="user_time">用户名 + 时间戳</option>
                                 <option value="custom">自定义文字</option>
                              </select>
                           </div>
                           <div v-else-if="isLongText(item)">
-                             <textarea v-model="item.value" :disabled="isConfigItemDisabled(String(category), item)" rows="10" class="shadow-sm focus:ring-primary focus:border-primary block w-full sm:text-sm border-gray-300 rounded-md font-mono text-xs bg-gray-100 p-3 disabled:opacity-70 disabled:cursor-not-allowed"></textarea>
+                             <textarea v-model="item.value" :disabled="isConfigItemDisabled(String(category), item)" rows="10" class="shadow-sm focus:ring-primary focus:border-primary block w-full sm:text-sm border-gray-300 rounded-md font-mono text-xs bg-white disabled:bg-gray-100 p-3 disabled:opacity-70 disabled:cursor-not-allowed"></textarea>
                              <p v-if="item.key === 'third_party_user_sync_config'" class="mt-2 text-xs text-blue-600 bg-blue-50/50 p-2.5 rounded-lg border border-blue-100 leading-normal select-none">
                                  💡 <strong>提示：</strong>该配置项为只读模式。如需配置或测试同步规则，请前往 <strong>【用户管理】</strong> 页面进行设置。
                              </p>
@@ -5105,7 +5105,7 @@ onUnmounted(() => {
                                @keypress="!/[0-9]/.test(($event as KeyboardEvent).key) && ($event as KeyboardEvent).preventDefault()"
                                @input="item.value = item.value.replace(/\D/g, '')"
                                :disabled="isConfigItemDisabled(String(category), item)"
-                               class="shadow-sm focus:ring-primary focus:border-primary block w-full sm:text-sm border-gray-300 rounded-md bg-gray-100 disabled:opacity-70 disabled:cursor-not-allowed p-2 font-mono"
+                               class="shadow-sm focus:ring-primary focus:border-primary block w-full sm:text-sm border-gray-300 rounded-md bg-white disabled:bg-gray-100 disabled:opacity-70 disabled:cursor-not-allowed p-2 font-mono"
                                placeholder="如 65536"
                              />
                              <div class="flex flex-wrap items-center gap-1.5 mt-2">
@@ -5141,7 +5141,7 @@ onUnmounted(() => {
                                @keypress="!/[0-9]/.test(($event as KeyboardEvent).key) && ($event as KeyboardEvent).preventDefault()"
                                @input="item.value = item.value.replace(/\D/g, '')"
                                :disabled="isConfigItemDisabled(String(category), item)"
-                               class="shadow-sm focus:ring-primary focus:border-primary block w-full sm:text-sm border-gray-300 rounded-md bg-gray-100 disabled:opacity-70 disabled:cursor-not-allowed p-2 font-mono"
+                               class="shadow-sm focus:ring-primary focus:border-primary block w-full sm:text-sm border-gray-300 rounded-md bg-white disabled:bg-gray-100 disabled:opacity-70 disabled:cursor-not-allowed p-2 font-mono"
                                placeholder="如 60"
                              />
                              <div class="flex flex-wrap items-center gap-1.5 mt-2">
@@ -5173,7 +5173,7 @@ onUnmounted(() => {
                                @keypress="!/[0-9]/.test(($event as KeyboardEvent).key) && ($event as KeyboardEvent).preventDefault()"
                                @input="item.value = item.value.replace(/\D/g, '')"
                                :disabled="isConfigItemDisabled(String(category), item)"
-                               class="shadow-sm focus:ring-primary focus:border-primary block w-full sm:text-sm border-gray-300 rounded-md bg-gray-100 disabled:opacity-70 disabled:cursor-not-allowed p-2 font-mono"
+                               class="shadow-sm focus:ring-primary focus:border-primary block w-full sm:text-sm border-gray-300 rounded-md bg-white disabled:bg-gray-100 disabled:opacity-70 disabled:cursor-not-allowed p-2 font-mono"
                                placeholder="如 1200"
                              />
                              <div class="flex flex-wrap items-center gap-1.5 mt-2">
@@ -5218,7 +5218,7 @@ onUnmounted(() => {
                                @input="handleAgentToolcallTimeoutInput(item, $event)"
                                @blur="normalizeAgentToolcallTimeoutInput(item)"
                                aria-label="Agent 工具调用最大超时时间（秒）"
-                               class="min-w-[5rem] rounded-md border border-gray-300 bg-gray-100 px-3 py-2 text-center font-mono text-sm text-gray-700 shadow-sm focus:border-primary focus:ring-primary disabled:cursor-not-allowed disabled:opacity-70"
+                               class="min-w-[5rem] rounded-md border border-gray-300 bg-white disabled:bg-gray-100 px-3 py-2 text-center font-mono text-sm text-gray-700 shadow-sm focus:border-primary focus:ring-primary disabled:cursor-not-allowed disabled:opacity-70"
                              />
                              <button
                                type="button"
@@ -5249,7 +5249,7 @@ onUnmounted(() => {
                                @input="handleAgentToolLoopGlobalLimitInput(item, $event)"
                                @blur="normalizeAgentToolLoopGlobalLimitInput(item)"
                                aria-label="Agent 工具调用总次数上限"
-                               class="min-w-[5rem] rounded-md border border-gray-300 bg-gray-100 px-3 py-2 text-center font-mono text-sm text-gray-700 shadow-sm focus:border-primary focus:ring-primary disabled:cursor-not-allowed disabled:opacity-70"
+                               class="min-w-[5rem] rounded-md border border-gray-300 bg-white disabled:bg-gray-100 px-3 py-2 text-center font-mono text-sm text-gray-700 shadow-sm focus:border-primary focus:ring-primary disabled:cursor-not-allowed disabled:opacity-70"
                              />
                              <button
                                type="button"
@@ -5261,7 +5261,7 @@ onUnmounted(() => {
                              <span class="text-xs text-gray-500">次</span>
                           </div>
                           <div v-else-if="['audit_log_retention_days', 'agent_max_iterations', 'agent_max_context_turns', 'data_api_timeout_seconds', 'schema_api_timeout_seconds', 'ragflow_metadata_top_k', 'knowledge_ragflow_metadata_top_k', 'chatbi_sample_top_k'].includes(item.key)">
-	                             <input type="text" v-model="item.value" @keypress="!/[0-9]/.test(($event as KeyboardEvent).key) && ($event as KeyboardEvent).preventDefault()" @input="item.value = item.value.replace(/\D/g, '')" :disabled="isConfigItemDisabled(String(category), item)" class="shadow-sm focus:ring-primary focus:border-primary block w-full sm:text-sm border-gray-300 rounded-md bg-gray-100 disabled:opacity-70 disabled:cursor-not-allowed p-2" />
+	                             <input type="text" v-model="item.value" @keypress="!/[0-9]/.test(($event as KeyboardEvent).key) && ($event as KeyboardEvent).preventDefault()" @input="item.value = item.value.replace(/\D/g, '')" :disabled="isConfigItemDisabled(String(category), item)" class="shadow-sm focus:ring-primary focus:border-primary block w-full sm:text-sm border-gray-300 rounded-md bg-white disabled:bg-gray-100 disabled:opacity-70 disabled:cursor-not-allowed p-2" />
                           </div>
                           <div v-else-if="item.key === 'sandbox_docker_base_image'" class="space-y-2.5">
                             <div class="relative">
@@ -5498,7 +5498,7 @@ onUnmounted(() => {
                             </div>
                           </div>
                           <div v-else>
-                             <input type="text" v-model="item.value" :disabled="isConfigItemDisabled(String(category), item)" class="shadow-sm focus:ring-primary focus:border-primary block w-full sm:text-sm border-gray-300 rounded-md bg-gray-100 disabled:opacity-70 disabled:cursor-not-allowed" />
+                             <input type="text" v-model="item.value" :disabled="isConfigItemDisabled(String(category), item)" class="shadow-sm focus:ring-primary focus:border-primary block w-full sm:text-sm border-gray-300 rounded-md bg-white disabled:bg-gray-100 disabled:opacity-70 disabled:cursor-not-allowed" />
                              <div v-if="canSave && item.key === 'sandbox_e2b_timeout_seconds'" class="mt-3">
                                <button
                                  type="button"

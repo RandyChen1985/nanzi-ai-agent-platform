@@ -3409,7 +3409,7 @@ onUnmounted(() => {
                   <div class="min-w-[240px] flex-1">
                     <select
                       v-model="playgroundToken"
-                      class="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-mono text-slate-700 outline-none transition focus:border-indigo-500 focus:bg-white focus:ring-1 focus:ring-indigo-500"
+                      class="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-mono text-slate-700 outline-none transition focus:border-indigo-500 focus:bg-white focus:ring-1 focus:ring-indigo-500 disabled:bg-gray-100"
                     >
                       <option value="">-- 选择有效状态的 Token 或下方手动粘贴 --</option>
                       <option

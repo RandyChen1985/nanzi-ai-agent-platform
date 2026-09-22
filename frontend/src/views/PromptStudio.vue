@@ -1159,7 +1159,7 @@ watch(
                       v-model="currentDetail.content"
                       :readonly="!canEdit"
                       @scroll="syncLineNumberScroll"
-                      class="flex-1 pl-4 pr-12 py-4 font-mono text-[13px] leading-6 text-gray-800 focus:outline-none resize-none bg-white overflow-y-auto custom-scrollbar"
+                      class="flex-1 border-0 pl-4 pr-12 py-4 font-mono text-[13px] leading-6 text-gray-800 focus:outline-none focus:ring-0 resize-none bg-white overflow-y-auto custom-scrollbar"
                       :class="{ 'cursor-not-allowed opacity-80': !canEdit }"
                       placeholder="在此输入提示词内容，支持 {variable} 占位符..."
                       spellcheck="false"
@@ -1264,7 +1264,7 @@ watch(
                       <textarea
                         v-model="testVariables[key]"
                         rows="2"
-                        class="w-full text-xs border-0 bg-gray-50 rounded-lg p-2 font-mono outline-none focus:ring-1 focus:ring-primary/20"
+                        class="w-full text-xs border-0 bg-white rounded-lg p-2 font-mono outline-none focus:ring-1 focus:ring-primary/20 disabled:bg-gray-100"
                         :placeholder="'输入 ' + key"
                       ></textarea>
                     </div>

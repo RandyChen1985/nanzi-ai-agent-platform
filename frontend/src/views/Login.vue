@@ -472,7 +472,7 @@ const handleLogin = async () => {
                             <input 
                                 v-model="username" 
                                 type="text" 
-                                class="w-full bg-slate-50 border border-slate-200 rounded-lg px-4 py-2.5 text-sm text-slate-900 outline-none focus:border-blue-500 focus:bg-white transition-all"
+                                class="w-full bg-white border border-slate-200 rounded-lg px-4 py-2.5 text-sm text-slate-900 outline-none focus:border-blue-500 focus:bg-white transition-all disabled:bg-gray-100"
                                 :placeholder="activeTab === 'sso' ? '请输入 YES 账号' : '请输入本地账号用户名'"
                             />
                         </div>
@@ -481,7 +481,7 @@ const handleLogin = async () => {
                             <input 
                                 v-model="password" 
                                 type="password" 
-                                class="w-full bg-slate-50 border border-slate-200 rounded-lg px-4 py-2.5 text-sm text-slate-900 outline-none focus:border-blue-500 focus:bg-white transition-all"
+                                class="w-full bg-white border border-slate-200 rounded-lg px-4 py-2.5 text-sm text-slate-900 outline-none focus:border-blue-500 focus:bg-white transition-all disabled:bg-gray-100"
                                 placeholder="••••••••"
                             />
                         </div>
@@ -497,7 +497,7 @@ const handleLogin = async () => {
                             <textarea 
                                 v-model="apiKey" 
                                 rows="3"
-                                class="w-full bg-slate-50 border border-slate-200 rounded-lg px-4 py-2.5 text-sm text-slate-900 outline-none focus:border-blue-500 focus:bg-white transition-all resize-none font-mono"
+                                class="w-full bg-white border border-slate-200 rounded-lg px-4 py-2.5 text-sm text-slate-900 outline-none focus:border-blue-500 focus:bg-white transition-all resize-none font-mono disabled:bg-gray-100"
                                 placeholder="ys_..."
                             ></textarea>
                         </div>
@@ -546,7 +546,7 @@ const handleLogin = async () => {
                         type="text" 
                         maxlength="6"
                         autofocus
-                        class="w-full bg-slate-50 border border-slate-200 rounded-lg py-3 text-center text-2xl font-mono tracking-[0.35em] text-slate-900 outline-none focus:border-blue-500 focus:bg-white focus:ring-2 focus:ring-blue-100 transition-all font-bold placeholder:text-slate-300 placeholder:tracking-widest"
+                        class="w-full bg-white border border-slate-200 rounded-lg py-3 text-center text-2xl font-mono tracking-[0.35em] text-slate-900 outline-none focus:border-blue-500 focus:bg-white focus:ring-2 focus:ring-blue-100 transition-all font-bold placeholder:text-slate-300 placeholder:tracking-widest disabled:bg-gray-100"
                         placeholder="000000"
                     />
                 </div>

@@ -1174,7 +1174,7 @@ const overlayBackdropClass = computed(() =>
               </div>
               <textarea
                 v-model="editorContent"
-                class="flex-1 min-h-[300px] p-4 pl-3 bg-transparent outline-none resize-y text-gray-800 dark:text-gray-100 leading-5 custom-scrollbar"
+                class="flex-1 min-h-[300px] p-4 pl-3 border-0 bg-transparent outline-none focus:ring-0 resize-y text-gray-800 dark:text-gray-100 leading-5 custom-scrollbar"
                 spellcheck="false"
               />
             </template>
@@ -1203,7 +1203,7 @@ const overlayBackdropClass = computed(() =>
               </div>
               <textarea
                 v-model="editorContent"
-                class="flex-1 min-h-[300px] p-4 pl-3 bg-transparent outline-none resize-y text-gray-800 dark:text-gray-100 leading-5 custom-scrollbar"
+                class="flex-1 min-h-[300px] p-4 pl-3 border-0 bg-transparent outline-none focus:ring-0 resize-y text-gray-800 dark:text-gray-100 leading-5 custom-scrollbar"
                 spellcheck="false"
               />
             </template>
@@ -1273,7 +1273,7 @@ const overlayBackdropClass = computed(() =>
               </div>
               <textarea
                 v-model="editorContent"
-                class="flex-1 min-h-[300px] p-4 pl-3 bg-transparent outline-none resize-y text-gray-800 dark:text-gray-100 leading-5 custom-scrollbar"
+                class="flex-1 min-h-[300px] p-4 pl-3 border-0 bg-transparent outline-none focus:ring-0 resize-y text-gray-800 dark:text-gray-100 leading-5 custom-scrollbar"
                 spellcheck="false"
               />
             </template>

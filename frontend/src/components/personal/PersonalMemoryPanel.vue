@@ -733,7 +733,7 @@ onActivated(() => {
                     <input
                         v-model="ltmForm.key"
                         type="text"
-                        class="block w-full px-3 py-2.5 bg-gray-50 border border-gray-300 rounded-lg shadow-sm focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none text-sm font-mono transition-all"
+                        class="block w-full px-3 py-2.5 bg-white border border-gray-300 rounded-lg shadow-sm focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none text-sm font-mono transition-all disabled:bg-gray-100"
                         placeholder="例如: language, user_role 等"
                         required
                     />
@@ -743,7 +743,7 @@ onActivated(() => {
                     <textarea
                         v-model="ltmForm.value"
                         rows="3"
-                        class="block w-full px-3 py-2.5 bg-gray-50 border border-gray-300 rounded-lg shadow-sm focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none text-sm transition-all"
+                        class="block w-full px-3 py-2.5 bg-white border border-gray-300 rounded-lg shadow-sm focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none text-sm transition-all disabled:bg-gray-100"
                         placeholder="输入具体的个性习惯或核心偏好值..."
                         required
                     ></textarea>

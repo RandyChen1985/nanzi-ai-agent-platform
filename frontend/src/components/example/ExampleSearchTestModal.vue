@@ -139,7 +139,7 @@ const isNeutralLog = (log: string): boolean =>
             <input
               v-model="testQuery"
               type="text"
-              class="flex-1 rounded-xl border border-gray-200 bg-gray-50 px-4 py-3 transition-all focus:outline-none focus:ring-2 focus:ring-amber-500"
+              class="flex-1 rounded-xl border border-gray-200 bg-white px-4 py-3 transition-all focus:outline-none focus:ring-2 focus:ring-amber-500 disabled:bg-gray-100"
               placeholder="输入用户问题，例如：'查询上海机房本月的 PUE'..."
               @keyup.enter="handleTestRetrieval"
             />

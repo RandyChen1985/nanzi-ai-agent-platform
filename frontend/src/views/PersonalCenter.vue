@@ -784,7 +784,7 @@ onMounted(() => {
                                 type="text"
                                 :value="apiKeyDisplay"
                                 readonly
-                                class="flex-1 px-3.5 py-2.5 border border-gray-300 rounded-lg bg-gray-50 text-xs sm:text-sm font-mono truncate shadow-inner"
+                                class="flex-1 px-3.5 py-2.5 border border-gray-300 rounded-lg bg-white text-xs sm:text-sm font-mono truncate shadow-inner disabled:bg-gray-100 read-only:bg-gray-100"
                                 :class="apiKeyRevealed ? 'tracking-normal' : 'tracking-widest'"
                             />
                             <button
@@ -870,7 +870,7 @@ onMounted(() => {
                                     <input 
                                         v-model="newPassword"
                                         type="password" 
-                                        class="block w-full px-3 py-2 bg-gray-50 border rounded-lg shadow-2xs focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none text-sm transition-all"
+                                        class="block w-full px-3 py-2 bg-white border rounded-lg shadow-2xs focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none text-sm transition-all disabled:bg-gray-100"
                                         :class="newPassword ? (passwordPolicyResult.valid ? 'border-emerald-400 bg-emerald-50/20' : 'border-amber-300 bg-amber-50/20') : 'border-gray-300'"
                                         placeholder="8-32位，含大/小写/数字/特殊符号中至少3种"
                                     />
@@ -880,7 +880,7 @@ onMounted(() => {
                                     <input 
                                         v-model="confirmPassword"
                                         type="password" 
-                                        class="block w-full px-3 py-2 bg-gray-50 border rounded-lg shadow-2xs focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none text-sm transition-all"
+                                        class="block w-full px-3 py-2 bg-white border rounded-lg shadow-2xs focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none text-sm transition-all disabled:bg-gray-100"
                                         :class="confirmPassword ? (confirmPassword === newPassword ? 'border-emerald-400 bg-emerald-50/20' : 'border-red-300 bg-red-50/20') : 'border-gray-300'"
                                         placeholder="再次输入新密码"
                                     />
@@ -1360,7 +1360,7 @@ onMounted(() => {
               type="text"
               maxlength="6"
               placeholder="000000"
-              class="w-full text-center text-2xl font-mono tracking-[0.3em] py-2.5 bg-gray-50 border border-gray-300 rounded-lg focus:bg-white focus:border-blue-500 focus:ring-2 focus:ring-blue-100 outline-none transition-all placeholder:text-gray-300 font-bold"
+              class="w-full text-center text-2xl font-mono tracking-[0.3em] py-2.5 bg-white border border-gray-300 rounded-lg focus:bg-white focus:border-blue-500 focus:ring-2 focus:ring-blue-100 outline-none transition-all placeholder:text-gray-300 font-bold disabled:bg-gray-100"
               @keyup.enter="handleEnable2FA"
             />
           </div>
@@ -1435,7 +1435,7 @@ onMounted(() => {
               type="text"
               maxlength="6"
               placeholder="000000"
-              class="w-full text-center text-xl font-mono tracking-[0.25em] py-2 bg-gray-50 border border-gray-300 rounded-lg focus:bg-white focus:border-rose-500 focus:ring-2 focus:ring-rose-100 outline-none transition-all placeholder:text-gray-300 font-bold"
+              class="w-full text-center text-xl font-mono tracking-[0.25em] py-2 bg-white border border-gray-300 rounded-lg focus:bg-white focus:border-rose-500 focus:ring-2 focus:ring-rose-100 outline-none transition-all placeholder:text-gray-300 font-bold disabled:bg-gray-100"
               @keyup.enter="handleDisable2FA"
             />
           </div>
@@ -1445,7 +1445,7 @@ onMounted(() => {
               v-model="disablePassword"
               type="password"
               placeholder="请输入当前密码"
-              class="w-full px-3 py-2 text-sm bg-gray-50 border border-gray-300 rounded-lg focus:bg-white focus:border-rose-500 focus:ring-2 focus:ring-rose-100 outline-none transition-all"
+              class="w-full px-3 py-2 text-sm bg-white border border-gray-300 rounded-lg focus:bg-white focus:border-rose-500 focus:ring-2 focus:ring-rose-100 outline-none transition-all disabled:bg-gray-100"
               @keyup.enter="handleDisable2FA"
             />
           </div>
@@ -1526,7 +1526,7 @@ onMounted(() => {
                 v-model="resetPassword"
                 type="password"
                 placeholder="请输入当前登录密码"
-                class="w-full px-3.5 py-2.5 text-sm bg-gray-50 border border-gray-300 rounded-lg focus:bg-white focus:border-rose-500 focus:ring-2 focus:ring-rose-100 outline-none transition-all"
+                class="w-full px-3.5 py-2.5 text-sm bg-white border border-gray-300 rounded-lg focus:bg-white focus:border-rose-500 focus:ring-2 focus:ring-rose-100 outline-none transition-all disabled:bg-gray-100"
                 @keyup.enter="handleResetApiKey"
               />
             </div>
@@ -1537,7 +1537,7 @@ onMounted(() => {
                 type="text"
                 maxlength="6"
                 placeholder="000000"
-                class="w-full text-center text-xl font-mono tracking-[0.25em] py-2 bg-gray-50 border border-gray-300 rounded-lg focus:bg-white focus:border-rose-500 focus:ring-2 focus:ring-rose-100 outline-none transition-all font-bold placeholder:text-gray-300"
+                class="w-full text-center text-xl font-mono tracking-[0.25em] py-2 bg-white border border-gray-300 rounded-lg focus:bg-white focus:border-rose-500 focus:ring-2 focus:ring-rose-100 outline-none transition-all font-bold placeholder:text-gray-300 disabled:bg-gray-100"
                 @keyup.enter="handleResetApiKey"
               />
             </div>
@@ -1550,7 +1550,7 @@ onMounted(() => {
               v-model="resetPassword"
               type="password"
               placeholder="请输入当前登录密码进行身份确认"
-              class="w-full px-3.5 py-2.5 text-sm bg-gray-50 border border-gray-300 rounded-lg focus:bg-white focus:border-rose-500 focus:ring-2 focus:ring-rose-100 outline-none transition-all"
+              class="w-full px-3.5 py-2.5 text-sm bg-white border border-gray-300 rounded-lg focus:bg-white focus:border-rose-500 focus:ring-2 focus:ring-rose-100 outline-none transition-all disabled:bg-gray-100"
               @keyup.enter="handleResetApiKey"
             />
           </div>
