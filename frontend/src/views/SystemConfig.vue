@@ -2338,6 +2338,136 @@ const redisDetailLoading = ref(false)
 const showDeleteKeyConfirm = ref(false)
 const pendingDeleteKey = ref<string | null>(null)
 
+// --- Redis Key 业务分组 ---
+// 规则按前缀长度降序排列并顺序匹配（长前缀优先），避免 `nanzi:` 抢走 `nanzi:agent:ltm:`。
+// label 面向运维阅读，用业务名而非原始前缀；chip 是完整的 Tailwind 类名（不可动态拼接）。
+const REDIS_KEY_GROUP_RULES: { prefix: string; label: string; desc: string; chip: string }[] = [
+  { prefix: 'agent:dataset_navigation_recent_questions:', label: '工作台偏好与菜单缓存', desc: '工作区最近文件、门户偏好、数据集导航与欢迎卡', chip: 'bg-cyan-50 text-cyan-700 border-cyan-200' },
+  { prefix: 'agent:dataset_navigation:cache_generation', label: '工作台偏好与菜单缓存', desc: '工作区最近文件、门户偏好、数据集导航与欢迎卡', chip: 'bg-cyan-50 text-cyan-700 border-cyan-200' },
+  { prefix: 'sys:meta:has_cross_dataset_relationship:', label: '元数据与向量索引', desc: '数据表/字段向量索引、推荐与跨集关系缓存', chip: 'bg-indigo-50 text-indigo-700 border-indigo-200' },
+  { prefix: 'agent:dataset_navigation_click_meta:', label: '工作台偏好与菜单缓存', desc: '工作区最近文件、门户偏好、数据集导航与欢迎卡', chip: 'bg-cyan-50 text-cyan-700 border-cyan-200' },
+  { prefix: 'agent:dataset_navigation_click_rank:', label: '工作台偏好与菜单缓存', desc: '工作区最近文件、门户偏好、数据集导航与欢迎卡', chip: 'bg-cyan-50 text-cyan-700 border-cyan-200' },
+  { prefix: 'agent:branding:default_agent_avatar', label: '工作台偏好与菜单缓存', desc: '工作区最近文件、门户偏好、数据集导航与欢迎卡', chip: 'bg-cyan-50 text-cyan-700 border-cyan-200' },
+  { prefix: 'knowledge:ragflow:alive_dataset_ids', label: '知识库检索与引用', desc: '知识库引用统计与 RAGFlow 推荐缓存', chip: 'bg-teal-50 text-teal-700 border-teal-200' },
+  { prefix: 'nanzi:lock:rebuild_local_vectors', label: '并发控制与后台任务', desc: '请求幂等、会话运行锁、任务互斥与限流', chip: 'bg-amber-50 text-amber-700 border-amber-200' },
+  { prefix: 'nanzi:chat_request_idempotency:', label: '并发控制与后台任务', desc: '请求幂等、会话运行锁、任务互斥与限流', chip: 'bg-amber-50 text-amber-700 border-amber-200' },
+  { prefix: 'agent:workspace_browser_prefs:', label: '工作台偏好与菜单缓存', desc: '工作区最近文件、门户偏好、数据集导航与欢迎卡', chip: 'bg-cyan-50 text-cyan-700 border-cyan-200' },
+  { prefix: 'agent:workspace_recent_files:', label: '工作台偏好与菜单缓存', desc: '工作区最近文件、门户偏好、数据集导航与欢迎卡', chip: 'bg-cyan-50 text-cyan-700 border-cyan-200' },
+  { prefix: 'sys:auth:permissions:v2:user:', label: '认证与会话令牌', desc: '登录会话、API Key、登录失败与 2FA 状态', chip: 'bg-rose-50 text-rose-700 border-rose-200' },
+  { prefix: 'sys:auth:permissions:v3:user:', label: '认证与会话令牌', desc: '登录会话、API Key、登录失败与 2FA 状态', chip: 'bg-rose-50 text-rose-700 border-rose-200' },
+  { prefix: 'memory:_vector_health_probe:', label: '长期记忆与摘要', desc: '长期记忆条目、会话/每日摘要与防抖标记', chip: 'bg-violet-50 text-violet-700 border-violet-200' },
+  { prefix: 'ragflow:doc_recommendations:', label: '知识库检索与引用', desc: '知识库引用统计与 RAGFlow 推荐缓存', chip: 'bg-teal-50 text-teal-700 border-teal-200' },
+  { prefix: 'metadata:metric_rec:recent:', label: '元数据与向量索引', desc: '数据表/字段向量索引、推荐与跨集关系缓存', chip: 'bg-indigo-50 text-indigo-700 border-indigo-200' },
+  { prefix: 'agent:dataset_navigation:', label: '工作台偏好与菜单缓存', desc: '工作区最近文件、门户偏好、数据集导航与欢迎卡', chip: 'bg-cyan-50 text-cyan-700 border-cyan-200' },
+  { prefix: 'nanzi:skills:stats:daily:', label: 'AI 交互态与工具缓存', desc: '问答暂存、SQL 结果、嵌入票据与技能统计', chip: 'bg-sky-50 text-sky-700 border-sky-200' },
+  { prefix: 'metadata:rel_rec:recent:', label: '元数据与向量索引', desc: '数据表/字段向量索引、推荐与跨集关系缓存', chip: 'bg-indigo-50 text-indigo-700 border-indigo-200' },
+  { prefix: 'nanzi:skills:stats:total', label: 'AI 交互态与工具缓存', desc: '问答暂存、SQL 结果、嵌入票据与技能统计', chip: 'bg-sky-50 text-sky-700 border-sky-200' },
+  { prefix: 'agent:welcome_cards:v1:', label: '工作台偏好与菜单缓存', desc: '工作区最近文件、门户偏好、数据集导航与欢迎卡', chip: 'bg-cyan-50 text-cyan-700 border-cyan-200' },
+  { prefix: 'memory:summary:daily:', label: '长期记忆与摘要', desc: '长期记忆条目、会话/每日摘要与防抖标记', chip: 'bg-violet-50 text-violet-700 border-violet-200' },
+  { prefix: 'metadata_sync:events:', label: '审计与元数据同步', desc: '审计日志队列与元数据同步任务/事件', chip: 'bg-zinc-50 text-zinc-600 border-zinc-200' },
+  { prefix: 'agent:portal_prefs:', label: '工作台偏好与菜单缓存', desc: '工作区最近文件、门户偏好、数据集导航与欢迎卡', chip: 'bg-cyan-50 text-cyan-700 border-cyan-200' },
+  { prefix: 'auth:user_sessions:', label: '认证与会话令牌', desc: '登录会话、API Key、登录失败与 2FA 状态', chip: 'bg-rose-50 text-rose-700 border-rose-200' },
+  { prefix: 'metadata_sync:task:', label: '审计与元数据同步', desc: '审计日志队列与元数据同步任务/事件', chip: 'bg-zinc-50 text-zinc-600 border-zinc-200' },
+  { prefix: 'agent:dataset_menu', label: '工作台偏好与菜单缓存', desc: '工作区最近文件、门户偏好、数据集导航与欢迎卡', chip: 'bg-cyan-50 text-cyan-700 border-cyan-200' },
+  { prefix: 'ai:user-question:', label: 'AI 交互态与工具缓存', desc: '问答暂存、SQL 结果、嵌入票据与技能统计', chip: 'bg-sky-50 text-sky-700 border-sky-200' },
+  { prefix: 'auth:2fa_pending:', label: '认证与会话令牌', desc: '登录会话、API Key、登录失败与 2FA 状态', chip: 'bg-rose-50 text-rose-700 border-rose-200' },
+  { prefix: 'metadata:dataset:', label: '元数据与向量索引', desc: '数据表/字段向量索引、推荐与跨集关系缓存', chip: 'bg-indigo-50 text-indigo-700 border-indigo-200' },
+  { prefix: 'sandbox:degraded:', label: '并发控制与后台任务', desc: '请求幂等、会话运行锁、任务互斥与限流', chip: 'bg-amber-50 text-amber-700 border-amber-200' },
+  { prefix: 'auth:login_fail:', label: '认证与会话令牌', desc: '登录会话、API Key、登录失败与 2FA 状态', chip: 'bg-rose-50 text-rose-700 border-rose-200' },
+  { prefix: 'memory:debounce:', label: '长期记忆与摘要', desc: '长期记忆条目、会话/每日摘要与防抖标记', chip: 'bg-violet-50 text-violet-700 border-violet-200' },
+  { prefix: 'nanzi:agent:ltm:', label: '长期记忆与摘要', desc: '长期记忆条目、会话/每日摘要与防抖标记', chip: 'bg-violet-50 text-violet-700 border-violet-200' },
+  { prefix: 'audit:log_queue', label: '审计与元数据同步', desc: '审计日志队列与元数据同步任务/事件', chip: 'bg-zinc-50 text-zinc-600 border-zinc-200' },
+  { prefix: 'auth:2fa_setup:', label: '认证与会话令牌', desc: '登录会话、API Key、登录失败与 2FA 状态', chip: 'bg-rose-50 text-rose-700 border-rose-200' },
+  { prefix: 'lock:task_exec:', label: '并发控制与后台任务', desc: '请求幂等、会话运行锁、任务互斥与限流', chip: 'bg-amber-50 text-amber-700 border-amber-200' },
+  { prefix: 'mcp_rate_limit:', label: '并发控制与后台任务', desc: '请求幂等、会话运行锁、任务互斥与限流', chip: 'bg-amber-50 text-amber-700 border-amber-200' },
+  { prefix: 'memory:summary:', label: '长期记忆与摘要', desc: '长期记忆条目、会话/每日摘要与防抖标记', chip: 'bg-violet-50 text-violet-700 border-violet-200' },
+  { prefix: 'nanzi:conv_run:', label: '并发控制与后台任务', desc: '请求幂等、会话运行锁、任务互斥与限流', chip: 'bg-amber-50 text-amber-700 border-amber-200' },
+  { prefix: 'presence:touch:', label: '在线状态', desc: '用户在线心跳与在线集合', chip: 'bg-emerald-50 text-emerald-700 border-emerald-200' },
+  { prefix: 'memory_config:', label: '配置缓存', desc: '平台与记忆相关配置项缓存', chip: 'bg-slate-50 text-slate-600 border-slate-200' },
+  { prefix: 'nanzi:example:', label: 'ChatBI 样例库', desc: '经验案例向量索引', chip: 'bg-orange-50 text-orange-700 border-orange-200' },
+  { prefix: 'presence:user:', label: '在线状态', desc: '用户在线心跳与在线集合', chip: 'bg-emerald-50 text-emerald-700 border-emerald-200' },
+  { prefix: 'presence:users', label: '在线状态', desc: '用户在线心跳与在线集合', chip: 'bg-emerald-50 text-emerald-700 border-emerald-200' },
+  { prefix: 'sql_result:v2:', label: 'AI 交互态与工具缓存', desc: '问答暂存、SQL 结果、嵌入票据与技能统计', chip: 'bg-sky-50 text-sky-700 border-sky-200' },
+  { prefix: 'auth:api_key:', label: '认证与会话令牌', desc: '登录会话、API Key、登录失败与 2FA 状态', chip: 'bg-rose-50 text-rose-700 border-rose-200' },
+  { prefix: 'conversation:', label: '会话记忆与上下文', desc: '会话历史、上下文快照、结果栈与调用统计', chip: 'bg-blue-50 text-blue-700 border-blue-200' },
+  { prefix: 'embed:ticket:', label: 'AI 交互态与工具缓存', desc: '问答暂存、SQL 结果、嵌入票据与技能统计', chip: 'bg-sky-50 text-sky-700 border-sky-200' },
+  { prefix: 'kb:citation:', label: '知识库检索与引用', desc: '知识库引用统计与 RAGFlow 推荐缓存', chip: 'bg-teal-50 text-teal-700 border-teal-200' },
+  { prefix: 'rate_limit:', label: '并发控制与后台任务', desc: '请求幂等、会话运行锁、任务互斥与限流', chip: 'bg-amber-50 text-amber-700 border-amber-200' },
+  { prefix: 'sys_config:', label: '配置缓存', desc: '平台与记忆相关配置项缓存', chip: 'bg-slate-50 text-slate-600 border-slate-200' },
+]
+
+interface RedisKeyGroup {
+  id: string
+  desc: string
+  chip: string
+  keys: { name: string; type: string }[]
+  typeSummary: { type: string; count: number }[]
+}
+
+const expandedRedisGroupIds = ref<string[]>([])
+
+const redisKeyGroups = computed<RedisKeyGroup[]>(() => {
+  const groups: RedisKeyGroup[] = []
+  const index = new Map<string, RedisKeyGroup>()
+
+  for (const key of redisKeys.value) {
+    const rule = REDIS_KEY_GROUP_RULES.find((item) => key.name.startsWith(item.prefix))
+    const id = rule ? rule.label : '其它 Key'
+    let group = index.get(id)
+    if (!group) {
+      group = {
+        id,
+        desc: rule ? rule.desc : '未归入已知业务命名空间',
+        chip: rule ? rule.chip : 'bg-gray-50 text-gray-600 border-gray-200',
+        keys: [],
+        typeSummary: [],
+      }
+      index.set(id, group)
+      groups.push(group)
+    }
+    group.keys.push(key)
+  }
+
+  for (const group of groups) {
+    const counter = new Map<string, number>()
+    for (const key of group.keys) counter.set(key.type, (counter.get(key.type) || 0) + 1)
+    group.typeSummary = Array.from(counter.entries())
+      .map(([type, count]) => ({ type, count }))
+      .sort((a, b) => b.count - a.count)
+  }
+
+  // 规则表顺序即业务优先级，「其它 Key」恒排最后
+  const order = REDIS_KEY_GROUP_RULES.map((item) => item.label)
+  return groups.sort((a, b) => {
+    const ai = order.indexOf(a.id)
+    const bi = order.indexOf(b.id)
+    return (ai === -1 ? Number.MAX_SAFE_INTEGER : ai) - (bi === -1 ? Number.MAX_SAFE_INTEGER : bi)
+  })
+})
+
+// 分组数 ≤ 1 时无需折叠，直接展示（避免「搜到一条还要再点一下」）
+const isRedisGroupExpanded = (id: string): boolean =>
+  expandedRedisGroupIds.value.includes(id) || redisKeyGroups.value.length <= 1
+
+const allRedisGroupsExpanded = computed(
+  () =>
+    redisKeyGroups.value.length > 1 &&
+    redisKeyGroups.value.every((group) => expandedRedisGroupIds.value.includes(group.id))
+)
+
+const toggleRedisGroup = (id: string) => {
+  if (redisKeyGroups.value.length <= 1) return
+  expandedRedisGroupIds.value = expandedRedisGroupIds.value.includes(id)
+    ? expandedRedisGroupIds.value.filter((item) => item !== id)
+    : [...expandedRedisGroupIds.value, id]
+}
+
+const toggleAllRedisGroups = () => {
+  expandedRedisGroupIds.value = allRedisGroupsExpanded.value
+    ? []
+    : redisKeyGroups.value.map((group) => group.id)
+}
+
 const fetchRedisKeys = async () => {
   redisKeysLoading.value = true
   redisKeys.value = []
@@ -2348,6 +2478,7 @@ const fetchRedisKeys = async () => {
       params: { pattern: redisPattern.value || '*' }
     })
     redisKeys.value = res.data.keys || []
+    expandedRedisGroupIds.value = []
   } catch (e: any) {
     showToast(`获取 Redis Keys 失败: ${e.response?.data?.detail || e.message}`, 'error')
   } finally {
@@ -2804,24 +2935,65 @@ onUnmounted(() => {
                     正在扫描键名...
                   </div>
                   <div v-else class="divide-y divide-gray-100">
+                    <!-- 分组工具条：分组数 > 1 时提供一键展开/收起 -->
                     <div
-                      v-for="key in redisKeys"
-                      :key="key.name"
-                      @click="fetchRedisKeyDetail(key.name)"
-                      class="px-2.5 py-2 hover:bg-gray-50 cursor-pointer flex items-center justify-between transition-colors duration-150"
-                      :class="selectedRedisKey === key.name ? 'bg-indigo-50/70 hover:bg-indigo-50' : ''"
+                      v-if="redisKeyGroups.length > 1"
+                      class="flex items-center justify-between px-2.5 py-1.5 bg-gray-50/80 text-[10px] text-gray-500 sticky top-0 z-10"
                     >
-                      <span class="text-xs font-mono break-all text-gray-700 font-medium select-all" :class="selectedRedisKey === key.name ? 'text-primary font-bold' : ''">
-                        {{ key.name }}
-                      </span>
-                      <span class="ml-2 flex-shrink-0 px-2 py-0.5 rounded text-[10px] font-bold uppercase" :class="
-                        key.type === 'string' ? 'bg-green-50 text-green-700 border border-green-100' :
-                        key.type === 'hash' ? 'bg-blue-50 text-blue-700 border border-blue-100' :
-                        key.type === 'list' ? 'bg-yellow-50 text-yellow-700 border border-yellow-100' :
-                        'bg-gray-50 text-gray-600 border border-gray-100'
-                      ">
-                        {{ key.type }}
-                      </span>
+                      <span>{{ redisKeyGroups.length }} 个业务分组 · 共 {{ redisKeys.length }} 个 Key</span>
+                      <button @click="toggleAllRedisGroups" class="text-primary hover:underline font-medium">
+                        {{ allRedisGroupsExpanded ? '全部收起' : '全部展开' }}
+                      </button>
+                    </div>
+
+                    <div v-for="group in redisKeyGroups" :key="group.id">
+                      <!-- 组头：点击折叠/展开，右侧是该组的类型汇总 -->
+                      <button
+                        @click="toggleRedisGroup(group.id)"
+                        class="w-full flex items-center gap-1.5 px-2.5 py-2 text-left transition-colors"
+                        :class="redisKeyGroups.length > 1 ? 'hover:bg-gray-50 cursor-pointer' : 'cursor-default'"
+                        :title="group.desc"
+                      >
+                        <ChevronDownIcon
+                          class="h-3 w-3 flex-shrink-0 text-gray-400 transition-transform"
+                          :class="isRedisGroupExpanded(group.id) ? '' : '-rotate-90'"
+                        />
+                        <span class="text-xs font-semibold text-gray-800 flex-shrink-0">{{ group.id }}</span>
+                        <span class="text-[10px] text-gray-400 flex-shrink-0">{{ group.keys.length }}</span>
+                        <span class="ml-auto flex items-center justify-end gap-1 flex-wrap">
+                          <span
+                            v-for="item in group.typeSummary"
+                            :key="item.type"
+                            class="px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase border"
+                            :class="group.chip"
+                          >
+                            {{ item.type }}×{{ item.count }}
+                          </span>
+                        </span>
+                      </button>
+
+                      <!-- 组内 Key -->
+                      <div v-if="isRedisGroupExpanded(group.id)" class="border-t border-gray-100">
+                        <div
+                          v-for="key in group.keys"
+                          :key="key.name"
+                          @click="fetchRedisKeyDetail(key.name)"
+                          class="pl-6 pr-2.5 py-2 hover:bg-gray-50 cursor-pointer flex items-center justify-between transition-colors duration-150"
+                          :class="selectedRedisKey === key.name ? 'bg-indigo-50/70 hover:bg-indigo-50' : ''"
+                        >
+                          <span class="text-xs font-mono break-all text-gray-700 font-medium select-all" :class="selectedRedisKey === key.name ? 'text-primary font-bold' : ''">
+                            {{ key.name }}
+                          </span>
+                          <span class="ml-2 flex-shrink-0 px-2 py-0.5 rounded text-[10px] font-bold uppercase" :class="
+                            key.type === 'string' ? 'bg-green-50 text-green-700 border border-green-100' :
+                            key.type === 'hash' ? 'bg-blue-50 text-blue-700 border border-blue-100' :
+                            key.type === 'list' ? 'bg-yellow-50 text-yellow-700 border border-yellow-100' :
+                            'bg-gray-50 text-gray-600 border border-gray-100'
+                          ">
+                            {{ key.type }}
+                          </span>
+                        </div>
+                      </div>
                     </div>
                   </div>
                 </div>
