@@ -747,6 +747,12 @@ const sandboxSshAuthType = computed(() => {
   const configured = configGroups.value?.sandbox?.find(item => item.key === 'sandbox_ssh_auth_type')?.value
   return configured === 'key' || configured === 'private_key' ? 'key' : 'password'
 })
+const sandboxSshHasSshpass = computed(() => {
+  return configGroups.value?.sandbox?.find(item => item.key === 'sandbox_ssh_has_sshpass')?.value === 'true'
+})
+const sandboxSshHasSshCli = computed(() => {
+  return configGroups.value?.sandbox?.find(item => item.key === 'sandbox_ssh_has_ssh_cli')?.value === 'true'
+})
 const orderedCategories = computed(() => {
   if (!configGroups.value) return []
   const order = ['general', 'agent_context', 'agent', 'metadata', 'data_api', 'knowledge', 'sandbox', 'other']
@@ -2122,7 +2128,16 @@ const testSandboxConnection = async (policy: 'e2b' | 'ssh') => {
 
   if (policy === 'ssh') {
     const authType = values.sandbox_ssh_auth_type || 'password'
-    if (authType === 'key' || authType === 'private_key') {
+    if (authType === 'password') {
+      if (!sandboxSshHasSshpass.value) {
+        showToast('无法发起测试：平台后端环境未安装 sshpass 工具，密码认证不可用。请在服务端安装或改用私钥认证。', 'error')
+        return
+      }
+      if (!values.sandbox_ssh_password || !values.sandbox_ssh_password.trim()) {
+        showToast('无法发起测试：当前为密码认证方式，但尚未填写 SSH 密码', 'error')
+        return
+      }
+    } else if (authType === 'key' || authType === 'private_key') {
       const rawKey = values.sandbox_ssh_private_key
       const normalizedKey = normalizeSshKeyString(rawKey)
       values.sandbox_ssh_private_key = normalizedKey
@@ -2438,8 +2453,8 @@ const getVisibleItems = (items: ConfigItem[] | undefined, category: string) => {
     })
   }
   if (category === 'sandbox') {
-    // 内部键不对用户展示：预构建标记 + 平台运行环境 + K8s in-cluster / Docker daemon 可用性探测标记（后者仅用于对应策略可用性判断）
-    list = list.filter(x => x.key !== 'sandbox_docker_prebuild_done' && x.key !== 'sandbox_runtime_env' && x.key !== 'sandbox_runtime_in_k8s' && x.key !== 'sandbox_docker_available')
+    // 内部键不对用户展示：预构建标记 + 平台运行环境 + K8s in-cluster / Docker daemon 可用性探测标记 + sshpass/ssh CLI 可用性标记（后者仅用于对应策略可用性判断）
+    list = list.filter(x => x.key !== 'sandbox_docker_prebuild_done' && x.key !== 'sandbox_runtime_env' && x.key !== 'sandbox_runtime_in_k8s' && x.key !== 'sandbox_docker_available' && x.key !== 'sandbox_ssh_has_sshpass' && x.key !== 'sandbox_ssh_has_ssh_cli')
     // 按当前 sandbox 策略动态过滤：仅展示与该策略相关的配置项
     const policy = targetSandboxPolicy()
     const policyKeySets: Record<string, string[]> = {
@@ -4286,17 +4301,72 @@ onUnmounted(() => {
                                <div class="mt-1">只填写协议、域名和必要的反向代理前缀，<strong>不要填写</strong> API 路径、文件名或 token。留空时回退到环境变量 <code class="font-mono text-blue-800">APP_PUBLIC_URL</code> 或相对地址。</div>
                              </div>
                           </div>
-                          <div v-else-if="item.key === 'sandbox_ssh_auth_type'">
-                             <select
-                               v-model="item.value"
-                               :disabled="isConfigItemDisabled(String(category), item)"
-                               class="shadow-sm focus:ring-primary focus:border-primary block w-full sm:text-sm border-gray-300 rounded-md bg-gray-100 p-2 disabled:opacity-70 disabled:cursor-not-allowed"
+                          <div v-else-if="item.key === 'sandbox_ssh_auth_type'" class="space-y-2">
+                             <div class="relative">
+                               <select
+                                 v-model="item.value"
+                                 :disabled="isConfigItemDisabled(String(category), item)"
+                                 class="shadow-sm focus:ring-primary focus:border-primary block w-full sm:text-sm border-gray-300 rounded-md bg-gray-100 p-2 disabled:opacity-70 disabled:cursor-not-allowed"
+                               >
+                                 <option value="password">
+                                   密码认证（{{ sandboxSshHasSshpass ? '依赖 sshpass · 已就绪' : '依赖 sshpass · 未安装' }}）
+                                 </option>
+                                 <option value="key">私钥认证（推荐 · 无需 sshpass）</option>
+                                 <option v-if="item.value === 'private_key'" value="private_key">私钥认证（历史配置值）</option>
+                               </select>
+                             </div>
+
+                             <!-- sshpass 就绪提示（密码认证且已安装） -->
+                             <div
+                               v-if="(item.value === 'password' || !item.value) && sandboxSshHasSshpass"
+                               class="flex items-center gap-2 rounded-lg border border-emerald-200/90 bg-emerald-50/80 px-3 py-2 text-xs text-emerald-900 shadow-xs"
                              >
-                               <option value="password">密码认证（需要 sshpass）</option>
-                               <option value="key">私钥认证（推荐）</option>
-                               <option v-if="item.value === 'private_key'" value="private_key">私钥认证（历史配置值）</option>
-                             </select>
-                             <p class="mt-1.5 text-[11px] text-gray-500 leading-relaxed">
+                               <CheckCircleIcon class="h-4 w-4 text-emerald-600 shrink-0" />
+                               <span class="font-semibold text-emerald-800">sshpass 已就绪</span>
+                               <span class="text-emerald-700 text-[11px]">平台后端已检测到该工具，密码认证可正常执行。</span>
+                             </div>
+
+                             <!-- sshpass 缺失警示（密码认证且未安装） -->
+                             <div
+                               v-else-if="(item.value === 'password' || !item.value) && !sandboxSshHasSshpass"
+                               class="flex items-start gap-2.5 rounded-lg border border-amber-300/90 bg-amber-50/90 p-3 text-xs text-amber-900 leading-relaxed shadow-xs"
+                             >
+                               <ExclamationTriangleIcon class="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
+                               <div class="space-y-1.5 flex-1">
+                                 <div class="font-semibold text-amber-900 flex items-center gap-1.5">
+                                   <span>平台后端环境尚未安装 sshpass 工具</span>
+                                   <span class="rounded bg-amber-200/80 px-1.5 py-0.2 text-[10px] text-amber-900 font-mono">密码认证受限</span>
+                                 </div>
+                                 <div class="text-amber-700 text-[11px] leading-relaxed">
+                                   SSH 密码认证方式必须依赖服务端系统的 <code class="bg-amber-100 px-1 py-0.5 rounded font-mono">sshpass</code> CLI 才能非交互传递密码。当前环境缺失该工具，密码连接测试与执行将失败。
+                                 </div>
+                                 <div class="rounded-md bg-amber-100/70 p-2 text-[11px] text-amber-900 space-y-1 border border-amber-200/60">
+                                   <div class="font-semibold">💡 建议解决方案：</div>
+                                   <div>1. <strong>改用私钥认证（推荐）</strong>：切换为上方「私钥认证」，免密码且无需安装 sshpass；</div>
+                                   <div>2. <strong>在服务端环境安装</strong>：
+                                     <div class="mt-1 space-y-0.5 font-mono text-[10px]">
+                                       <div>• Debian / Ubuntu: <code class="bg-white/80 px-1 py-0.5 rounded border border-amber-200">apt-get install -y sshpass</code></div>
+                                       <div>• macOS: <code class="bg-white/80 px-1 py-0.5 rounded border border-amber-200">brew install hudochenkov/sshpass/sshpass</code></div>
+                                     </div>
+                                   </div>
+                                 </div>
+                               </div>
+                             </div>
+
+                             <!-- 私钥认证友好提示 -->
+                             <div
+                               v-else
+                               class="flex items-center gap-2 rounded-lg border border-sky-100 bg-sky-50/70 px-3 py-2 text-xs text-sky-800"
+                             >
+                               <span class="text-sky-600 font-bold">ℹ️</span>
+                               <span class="text-sky-700 text-[11px]">
+                                 当前为私钥认证：依托下方私钥文本免密连接，无需依赖 sshpass 工具
+                                 <span v-if="sandboxSshHasSshCli" class="ml-1 text-emerald-700 font-medium">（OpenSSH 客户端已就绪）</span>
+                                 <span v-else class="ml-1 text-amber-700 font-medium">（未检测到 OpenSSH 客户端）</span>。
+                               </span>
+                             </div>
+
+                             <p class="text-[11px] text-gray-500 leading-relaxed">
                                密码认证使用 sshpass 连接；私钥认证使用下方私钥内容，切换方式只隐藏另一字段，不会自动清空已保存内容。
                              </p>
                           </div>

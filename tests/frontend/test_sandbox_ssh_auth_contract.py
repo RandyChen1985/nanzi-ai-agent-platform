@@ -13,13 +13,19 @@ def test_ssh_auth_type_is_a_two_option_select_with_dependent_credentials():
 
     assert "sandboxSshAuthType" in source
     assert "sandbox_ssh_auth_type" in source
-    assert '<option value="password">' in source
-    assert '<option value="key">' in source
+    assert 'value="password"' in source
+    assert 'value="key"' in source
     assert "sandbox_ssh_password" in source
     assert "sandbox_ssh_private_key" in source
     assert "private_key" in source
     assert "sandboxSshAuthType.value === 'key'" in source
     assert "sandboxSshAuthType.value !== 'key'" in source
+
+    # 验证对服务端环境 sshpass 的探测展示与就绪/缺失状态卡片
+    assert "sandboxSshHasSshpass" in source
+    assert "sandbox_ssh_has_sshpass" in source
+    assert "sshpass 已就绪" in source
+    assert "尚未安装 sshpass" in source
 
 
 def test_ssh_private_key_field_uses_textarea_with_validation_and_examples():

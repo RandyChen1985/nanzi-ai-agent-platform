@@ -419,6 +419,26 @@ class ConfigService:
             "is_secret": False,
             "readonly": True
         })
+
+        # 追加平台后端是否安装了 sshpass / ssh CLI 的只读探测结果（不落库）。
+        # ssh 沙箱策略在密码认证模式下依赖平台主机的 sshpass CLI 传递密码，私钥认证无需 sshpass。
+        import shutil
+        has_sshpass = shutil.which("sshpass") is not None
+        has_ssh_cli = shutil.which("ssh") is not None
+        grouped.setdefault("sandbox", []).append({
+            "key": "sandbox_ssh_has_sshpass",
+            "value": "true" if has_sshpass else "false",
+            "description": "平台后端环境 sshpass CLI 探测结果（只读）：true=已就绪，false=未安装（密码认证不可用）。",
+            "is_secret": False,
+            "readonly": True
+        })
+        grouped.setdefault("sandbox", []).append({
+            "key": "sandbox_ssh_has_ssh_cli",
+            "value": "true" if has_ssh_cli else "false",
+            "description": "平台后端环境 OpenSSH 客户端探测结果（只读）：true=已就绪，false=未安装。",
+            "is_secret": False,
+            "readonly": True
+        })
             
         return grouped
 

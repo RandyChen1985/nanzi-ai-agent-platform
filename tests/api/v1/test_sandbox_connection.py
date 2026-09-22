@@ -268,3 +268,23 @@ async def test_docker_workspace_status_returns_existing_container_metadata(monke
 
 async def _async_value(value):
     return value
+
+
+@pytest.mark.asyncio
+async def test_config_service_exposes_sshpass_and_ssh_cli_probe_keys(monkeypatch):
+    from app.services.config_service import ConfigService
+
+    monkeypatch.setattr(
+        ConfigService,
+        "get_all_from_db",
+        lambda: _async_value({}),
+    )
+
+    grouped = await ConfigService.get_all_configs_grouped()
+    sandbox_items = {item["key"]: item["value"] for item in grouped.get("sandbox", [])}
+
+    assert "sandbox_ssh_has_sshpass" in sandbox_items
+    assert sandbox_items["sandbox_ssh_has_sshpass"] in ("true", "false")
+    assert "sandbox_ssh_has_ssh_cli" in sandbox_items
+    assert sandbox_items["sandbox_ssh_has_ssh_cli"] in ("true", "false")
+
