@@ -2219,6 +2219,17 @@ import axios from "@/utils/axios";
 import { finalizeConversation } from "@/utils/conversationFinalize";
 import { cancelConversationRun } from "@/utils/cancelConversationRun";
 import { createConversationId } from "@/utils/conversationId";
+import { planHistorySync } from "@/utils/runRecoverySync";
+import {
+  planStreamReplay,
+  resetDraftForReplay,
+  shouldResetDraftBeforeReplay,
+} from "@/utils/conversationStreamReplay";
+import {
+  buildEmbedStreamSnapshot,
+  isEmbedStreamSnapshotUsable,
+  type EmbedStreamSnapshot,
+} from "@/utils/embedStreamSnapshot";
 import { useToast } from "../composables/useToast";
 import { useTokenQuota } from "../composables/useTokenQuota";
 import { useContextUsage } from "@/composables/useContextUsage";
@@ -3074,6 +3085,10 @@ const openEmbedTrace = (traceId: string) => {
   showEmbedTrace.value = true;
 };
 const isProcessing = ref(false);
+// 流式读取是否在途：用于区分「流仍在读」与「流已死但界面还挂着 busy」。
+let streamInFlight = false;
+// 组件是否已卸载：卸载后不再执行流收尾副作用（避免僵尸请求与会话轮询）。
+let embedUnmounted = false;
 const { locked: sendLocked, runExclusive: runSendExclusive } = createChatSendGate();
 const bashBannerEnv = ref<"host" | "docker" | "e2b" | "ssh" | "k8s" | null>(null);
 const bashBannerDismissed = ref(false);
@@ -4418,6 +4433,189 @@ const persistConversationId = (cid: string) => {
   if (cid) localStorage.setItem(conversationStorageKey(), cid);
 };
 
+/**
+ * 流式草稿快照：EmbedChat 因平台内路由切换被卸载重建时，本轮内容尚未落库，
+ * 重建后 messages 为空会退回欢迎页、已输出的思考随之消失。这里按「实例 + 会话」
+ * 把草稿写入 sessionStorage（与嵌入凭据同样的 tab 隔离口径），挂载后先还原，
+ * 等落库终态到达时由运行恢复器覆盖并清除。快照是尽力而为的体验兜底：任何存储
+ * 异常都不得影响主流程。
+ */
+const STREAM_SNAPSHOT_STORAGE_PREFIX = "nzi_embed_stream_snapshot:";
+const STREAM_SNAPSHOT_WRITE_INTERVAL_MS = 1500;
+
+const streamSnapshotStorageKey = (cid: string): string => {
+  const bucket = config.instanceId ? encodeURIComponent(config.instanceId) : "default";
+  return `${STREAM_SNAPSHOT_STORAGE_PREFIX}${bucket}:${encodeURIComponent(cid)}`;
+};
+
+const clearStreamSnapshot = (cid: string) => {
+  if (!cid) return;
+  try {
+    sessionStorage.removeItem(streamSnapshotStorageKey(cid));
+  } catch {
+    // 隐私模式或配额异常：忽略。
+  }
+};
+
+const STREAM_REPLAY_POLL_INTERVAL_MS = 1000;
+
+/** 事件续显游标：lastSeq 会随快照持久化，保证重复恢复不会叠加正文。 */
+const streamReplayCursor = ref<{ lastSeq: number; traceId: string }>({ lastSeq: 0, traceId: "" });
+let streamReplayTimer: ReturnType<typeof setTimeout> | null = null;
+let streamReplayInFlight = false;
+/** 续显接管时的提示只弹一次；任务结束（run-status 转 false）时重置，供下一轮再提示。 */
+let streamReplayNoticeShown = false;
+/** 本轮是否已完成首次游标对齐：对齐只做一次，避免历史事件被重放。 */
+let streamReplayPrimed = false;
+
+/** 停止续显轮询。游标是幂等依据，任何情况下都不在这里清空。 */
+const clearStreamReplayTimer = () => {
+  if (streamReplayTimer !== null) {
+    clearTimeout(streamReplayTimer);
+    streamReplayTimer = null;
+  }
+};
+
+const persistStreamSnapshot = (
+  cid: string,
+  draft: Message,
+  userMsg?: Message,
+  cursor?: { lastSeq?: number },
+) => {
+  if (!cid) return;
+  const snapshot = buildEmbedStreamSnapshot({
+    conversationId: cid,
+    traceId: draft.trace_id,
+    lastSeq: cursor?.lastSeq,
+    user: userMsg ? { content: userMsg.content, timestamp: userMsg.timestamp } : null,
+    draft: {
+      content: draft.content,
+      reasoningContent: draft.reasoningContent,
+      processTimeline: draft.processTimeline,
+      agentName: draft.agentName,
+      agentDisplayName: draft.agentDisplayName,
+      agentType: draft.agentType,
+      agentAvatarUrl: draft.agentAvatarUrl,
+    },
+  });
+  if (!snapshot) return;
+  try {
+    sessionStorage.setItem(streamSnapshotStorageKey(cid), JSON.stringify(snapshot));
+  } catch {
+    // 超配额或隐私模式：放弃本次快照，不影响对话本身。
+  }
+};
+
+const readStreamSnapshot = (cid: string): EmbedStreamSnapshot | null => {
+  try {
+    const raw = sessionStorage.getItem(streamSnapshotStorageKey(cid));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as EmbedStreamSnapshot;
+    if (!isEmbedStreamSnapshotUsable(parsed, cid)) {
+      clearStreamSnapshot(cid);
+      return null;
+    }
+    return parsed;
+  } catch {
+    return null;
+  }
+};
+
+/** 在途流式的草稿引用：供节流写入与卸载前强制落盘使用。 */
+let activeStreamDraft: { conversationId: string; msg: Message } | null = null;
+let lastStreamSnapshotAt = 0;
+
+const currentStreamUserMessage = (): Message | undefined => {
+  for (let index = messages.value.length - 1; index >= 0; index -= 1) {
+    if (messages.value[index].role === "user") return messages.value[index];
+  }
+  return undefined;
+};
+
+const maybePersistStreamSnapshot = (force = false) => {
+  const active = activeStreamDraft;
+  if (!active || !active.conversationId) return;
+  const now = Date.now();
+  if (!force && now - lastStreamSnapshotAt < STREAM_SNAPSHOT_WRITE_INTERVAL_MS) return;
+  lastStreamSnapshotAt = now;
+  persistStreamSnapshot(active.conversationId, active.msg, currentStreamUserMessage(), {
+    lastSeq: streamReplayCursor.value.lastSeq,
+  });
+};
+
+/**
+ * 挂载后还原草稿：草稿自带 trace_id，落库终态到达时会被 `planHistorySync` 精确命中
+ * 并覆盖，因此这里只需把它放回消息列表即可。
+ */
+const restoreEmbedStreamSnapshot = async (expectedGeneration?: number) => {
+  const cid = conversationId.value;
+  if (!cid) return;
+  const snapshot = readStreamSnapshot(cid);
+  if (!snapshot) return;
+  if (
+    (expectedGeneration !== undefined && expectedGeneration !== conversationInitializationGeneration) ||
+    conversationId.value !== cid
+  ) {
+    return;
+  }
+
+  const traceId = String(snapshot.traceId || "").trim();
+  const terminalAlreadyVisible = traceId
+    ? messages.value.some(message => message.role === "agent" && message.trace_id === traceId)
+    : false;
+  if (terminalAlreadyVisible) {
+    // 落库终态已经在界面上，草稿没有价值。
+    clearStreamSnapshot(cid);
+    return;
+  }
+
+  const restored: Message[] = [];
+  const userContent = String(snapshot.user?.content || "");
+  const userAlreadyVisible = userContent
+    ? messages.value.some(message => message.role === "user" && message.content === userContent)
+    : true;
+  if (userContent && !userAlreadyVisible) {
+    restored.push({
+      id: Date.now(),
+      trace_id: snapshot.traceId,
+      role: "user",
+      content: userContent,
+      logs: [],
+      isThinking: false,
+      feedback: null,
+      timestamp: snapshot.user?.timestamp,
+    });
+  }
+  restored.push({
+    id: Date.now() + 1,
+    trace_id: snapshot.traceId,
+    role: "agent",
+    content: snapshot.draft?.content || "",
+    reasoningContent: snapshot.draft?.reasoningContent,
+    processTimeline: snapshot.draft?.processTimeline as Message["processTimeline"],
+    logs: [],
+    isThinking: false,
+    feedback: null,
+    agentName: snapshot.draft?.agentName,
+    agentDisplayName: snapshot.draft?.agentDisplayName,
+    agentType: snapshot.draft?.agentType,
+    agentAvatarUrl: snapshot.draft?.agentAvatarUrl,
+    timestamp: snapshot.user?.timestamp,
+  });
+
+  messages.value = [...messages.value, ...restored];
+  const restoredAgent = restored[restored.length - 1];
+  // 登记续显目标：切回后事件要点进这条草稿，卸载前也要靠它强制落盘。
+  activeStreamDraft = { conversationId: cid, msg: restoredAgent };
+  // 游标随快照恢复：after_seq 从已渲染的进度续起，避免重复叠加正文。
+  streamReplayCursor.value = {
+    lastSeq: Number(snapshot.lastSeq || 0) || 0,
+    traceId: String(snapshot.traceId || ""),
+  };
+  await nextTick();
+  scrollToBottom(true);
+};
+
 const shouldUseServerActiveConversation = () => Boolean(config.token);
 const activeConversationRequestParams = () => (
   config.instanceId ? { instance_id: config.instanceId } : undefined
@@ -4470,6 +4668,92 @@ const embedAuthHeaders = (): Record<string, string> | undefined => {
     Authorization: `Bearer ${config.token}`,
     "X-API-Key": config.token,
   };
+};
+
+/**
+ * 切回页面 / 刷新后继续显示本轮正在产生的思考、工具时间线与正文。
+ * 事件日志只做过程可视化：终态仍由 syncLatestSessionHistory 以落库历史为准，
+ * 因此这里的 gap 只告警、不中断。
+ */
+const pollConversationStreamEvents = async () => {
+  const cid = conversationId.value;
+  if (!cid || streamReplayInFlight) return;
+  streamReplayInFlight = true;
+  try {
+    const response = await axios.get(
+      `/api/v1/chat/conversation/${encodeURIComponent(cid)}/stream-events`,
+      {
+        params: { after_seq: streamReplayCursor.value.lastSeq },
+        headers: embedAuthHeaders(),
+      },
+    );
+    const data = (response.data?.data || {}) as Record<string, any>;
+    const plan = planStreamReplay(data.events, streamReplayCursor.value);
+    if (plan.gap) {
+      console.warn("[EmbedChat] 事件日志出现断层，过程展示可能不完整，终态仍以历史为准");
+    }
+    const replayTarget = activeStreamDraft?.msg ?? null;
+    if (replayTarget) {
+      const replayEvents = plan.events as Record<string, any>[];
+      const isFirstPoll = shouldResetDraftBeforeReplay(
+        streamReplayCursor.value,
+        {
+          hasContent: Boolean(
+            String(replayTarget.content || "").trim() ||
+              (Array.isArray(replayTarget.processTimeline) && replayTarget.processTimeline.length > 0),
+          ),
+        },
+        streamReplayPrimed,
+      );
+      if (isFirstPoll && !plan.gap && replayEvents.length > 0) {
+        // 切回 / 刷新后的首次拉取：草稿只是「切走瞬间」的前缀，而日志含切走期间后台
+        // 新产出的全部事件。直接重放会把前缀叠加一遍（逐条 delta 达不到去重阈值），
+        // 只对齐游标又会让切走期间的内容永久缺失——所以先清空累加字段，再整体重建。
+        resetDraftForReplay(replayTarget);
+      }
+      // 首次但日志有断层（被 LTRIM 截断）时既不清空也不重放：保住快照里已有的内容，
+      // 缺口交给历史终态同步兜底，避免用残缺日志覆盖掉更完整的界面。
+      const shouldReplayEvents = !isFirstPoll || (!plan.gap && replayEvents.length > 0);
+      if (shouldReplayEvents) {
+        for (const event of replayEvents) {
+          applyPermissionStreamEvent(replayTarget, event);
+        }
+        if (replayEvents.length) {
+          await nextTick();
+          scrollToBottom();
+        }
+      }
+      streamReplayPrimed = true;
+      streamReplayCursor.value = { lastSeq: plan.lastSeq, traceId: String(replayTarget.trace_id || "") };
+      maybePersistStreamSnapshot(true);
+    } else {
+      streamReplayCursor.value = { ...streamReplayCursor.value, lastSeq: plan.lastSeq };
+    }
+    if (data.run_active === false) {
+      // 本轮已结束：停止续显，转交既有历史终态同步（syncLatestSessionHistory）。
+      clearStreamReplayTimer();
+    }
+  } catch (error) {
+    console.warn("[EmbedChat] 拉取会话流事件失败", error);
+  } finally {
+    streamReplayInFlight = false;
+  }
+};
+
+/** 只在页面可见时轮询；hidden 时仅暂停，游标保留在原处。 */
+const scheduleStreamReplay = () => {
+  clearStreamReplayTimer();
+  if (document.visibilityState !== "visible") return;
+  // 续显接管意味着 SSE 已不再推进（切页面回来 / 流已静默）。此时明确告知用户
+  // 任务仍在后台运行，避免切回后只看到界面在动、却不清楚任务是否还在跑。
+  if (!streamReplayNoticeShown) {
+    streamReplayNoticeShown = true;
+    showToast("会话仍在处理中，已恢复实时同步", "info");
+  }
+  streamReplayTimer = setTimeout(async () => {
+    await pollConversationStreamEvents();
+    if (streamReplayTimer !== null) scheduleStreamReplay();
+  }, STREAM_REPLAY_POLL_INTERVAL_MS);
 };
 
 const {
@@ -7012,7 +7296,10 @@ const initChat = async (options?: { skipAuth?: boolean }) => {
 
     // 7. Load history if exists
     if (conversationId.value) {
-      fetchConversationHistory(false, initGeneration).catch(e => console.error("[Init] History load failed:", e));
+      fetchConversationHistory(false, initGeneration)
+        // 历史加载完成后再还原流式草稿：已有落库终态时草稿会被丢弃，不会被重复注入。
+        .then(() => restoreEmbedStreamSnapshot(initGeneration))
+        .catch(e => console.error("[Init] History load failed:", e));
     }
   } catch (e) {
     console.error("Init chat failed", e);
@@ -8559,6 +8846,14 @@ const sendMessageInternal = async (snapshot: ChatSendSnapshot) => {
   // SSE 可能因切后台/网络变化提前结束；在状态接口确认释放前继续阻止新一轮发送。
   remoteRunActive.value = true;
   abortController = new AbortController();
+  streamInFlight = true;
+  // 新一轮开始：续显游标整体归零。后端在 producer 启动时会清空上一轮日志并让 _seq
+  // 从 1 重新计数，所以这里必须同步归零——保留 lastSeq 会让本轮事件全部落在
+  // after_seq 之内而被丢弃；保留 traceId 则会把上一轮的残留事件放行进来。
+  streamReplayCursor.value = { lastSeq: 0, traceId: "" };
+  streamReplayPrimed = false;
+  // 登记在途草稿：供节流写入与卸载前强制落盘使用（重建后据此还原已输出的思考）。
+  activeStreamDraft = { conversationId: conversationId.value, msg: agentMsg.value };
   // 首片正文立即显示，后续正文按帧合并更新。
   let pendingContentBuffer = "";
   let contentRafId: number | null = null;
@@ -8573,6 +8868,8 @@ const sendMessageInternal = async (snapshot: ChatSendSnapshot) => {
       cancelAnimationFrame(contentRafId);
       contentRafId = null;
     }
+    // 每个流事件都会走到这里：按节流频率把草稿落盘，保证切走/刷新后能还原。
+    maybePersistStreamSnapshot();
   };
 
   const queueContentDelta = (piece: string) => {
@@ -8882,32 +9179,42 @@ const sendMessageInternal = async (snapshot: ChatSendSnapshot) => {
       }
     }
     flushContentBuffer();
+    // 流已正常读完（收到 [DONE]）：本轮草稿不再是「在途」，清掉引用。
+    // 否则在「SSE 已结束、run-status 尚未翻回 false」的时间窗里，运行恢复器会把它
+    // 误判为断线在途——既误弹「会话仍在处理中，已恢复实时同步」提示，又白拉一次事件日志。
+    activeStreamDraft = null;
+    clearStreamReplayTimer();
   } catch (e: any) {
     flushContentBuffer();
     if (e.name === "AbortError") {
-      agentMsg.value.content += "\n[用户终止]";
+      if (!embedUnmounted) agentMsg.value.content += "\n[用户终止]";
     } else if (document.visibilityState === "hidden") {
       console.log("[Stream] Client disconnected in background; awaiting background producer sync on resume.");
-    } else {
+    } else if (!embedUnmounted) {
       agentMsg.value.content += `\n[错误: ${e.message}]`;
     }
   } finally {
-    flushContentBuffer();
-    isProcessing.value = agentMsg.value.pendingPermission?.status === "pending" || agentMsg.value.pendingExternalExecution?.status === "pending";
-    void refreshCurrentRunStatus();
-    agentMsg.value.isThinking = false;
-    void refreshQuota();
-    void loadReusableResultAvailability(); // 刷新会话可复用结果入口
-    void loadArtifactCounts(); // 刷新产物数量，新生成的产物即时显示角标与按钮
-    clearStallTimer();
-    clearStalePendingTimer();
-    showStalledPrompt.value = false;
-    void refreshEmbedContextUsage();
-    void refreshEmbedContextCompactions(true);
-    finishThoughtTimer(agentMsg.value);
-    // Final cleanup: stop any remaining log spinners
-    finalizeAllPendingStreamLogs(agentMsg.value);
-    scrollToBottom();
+    streamInFlight = false;
+    // 组件已卸载时不再执行收尾副作用：否则 abort 后的 refreshCurrentRunStatus 会在
+    // 已销毁的实例上重启会话轮询与网络请求。结果由下次挂载时的运行恢复器取回。
+    if (!embedUnmounted) {
+      flushContentBuffer();
+      isProcessing.value = agentMsg.value.pendingPermission?.status === "pending" || agentMsg.value.pendingExternalExecution?.status === "pending";
+      void refreshCurrentRunStatus();
+      agentMsg.value.isThinking = false;
+      void refreshQuota();
+      void loadReusableResultAvailability(); // 刷新会话可复用结果入口
+      void loadArtifactCounts(); // 刷新产物数量，新生成的产物即时显示角标与按钮
+      clearStallTimer();
+      clearStalePendingTimer();
+      showStalledPrompt.value = false;
+      void refreshEmbedContextUsage();
+      void refreshEmbedContextCompactions(true);
+      finishThoughtTimer(agentMsg.value);
+      // Final cleanup: stop any remaining log spinners
+      finalizeAllPendingStreamLogs(agentMsg.value);
+      scrollToBottom();
+    }
   }
 };
 
@@ -9138,54 +9445,73 @@ onMounted(() => {
       });
       if (res.data?.data && Array.isArray(res.data.data.items) && res.data.data.items.length > 0) {
         const latestServerItem = res.data.data.items[0];
-        if (latestServerItem && latestServerItem.summary) {
-          const matchedIndex = messages.value.findIndex(
-            m => m.trace_id && m.trace_id === latestServerItem.trace_id && m.role === 'agent'
-          );
-          if (matchedIndex !== -1) {
-            const currentMsg = messages.value[matchedIndex];
-            if (currentMsg && (!currentMsg.content || currentMsg.content.length < latestServerItem.summary.length || currentMsg.isThinking)) {
-              currentMsg.content = latestServerItem.summary;
-              currentMsg.reasoningContent = latestServerItem.reasoning_content ?? currentMsg.reasoningContent;
-              currentMsg.processTimeline = hydrateHistoryProcessTimeline(latestServerItem.process_timeline, latestServerItem.reasoning_content);
-              currentMsg.isThinking = false;
-              if (isProcessing.value) {
-                isProcessing.value = false;
-              }
-              clearVisibilitySyncTimer();
-              await nextTick();
-              scrollToBottom();
-              return;
-            }
-          } else {
-            const lastMsg = messages.value.length > 0 ? messages.value[messages.value.length - 1] : undefined;
-            if (isProcessing.value || (lastMsg && lastMsg.role === 'user')) {
-              messages.value.push({
-                id: Date.now(),
-                trace_id: latestServerItem.trace_id,
-                role: 'agent',
-                content: latestServerItem.summary,
-                reasoningContent: latestServerItem.reasoning_content ?? undefined,
-                processTimeline: hydrateHistoryProcessTimeline(latestServerItem.process_timeline, latestServerItem.reasoning_content),
-                logs: [],
-                isThinking: false,
-                feedback: null,
-                agentName: latestServerItem.agent_name ?? undefined,
-                agentDisplayName: latestServerItem.agent_display_name || (String(latestServerItem.agent_name || '').startsWith('sys_') ? '系统助手' : undefined),
-                agentType: latestServerItem.agent_type ?? undefined,
-                agentAvatarUrl: latestServerItem.agent_avatar_url ?? undefined,
-                prompt_tokens: latestServerItem.prompt_tokens ?? undefined,
-                completion_tokens: latestServerItem.completion_tokens ?? undefined,
-                total_tokens: latestServerItem.total_tokens ?? undefined,
-                timestamp: latestServerItem.created_at,
-              });
-              isProcessing.value = false;
-              clearVisibilitySyncTimer();
-              await nextTick();
-              scrollToBottom();
-              return;
+        // 合并决策交给纯函数：既要把后台落库的结果取回来，又不能产生重复气泡
+        // 或把更早轮次的陈留记录贴到新提问下面。
+        const action = planHistorySync(messages.value, {
+          trace_id: latestServerItem?.trace_id,
+          summary: latestServerItem?.summary,
+        });
+        if (action.kind === "reload") {
+          // 页面重建后消息列表为空、服务端已出现终态记录：重拉整段历史。
+          // 只补一条助手消息会丢掉对应的用户提问，直接忽略则回答永远不出现。
+          clearStreamSnapshot(conversationId.value);
+          await fetchConversationHistory(false);
+          if (isProcessing.value) {
+            isProcessing.value = false;
+          }
+          clearVisibilitySyncTimer();
+          return;
+        }
+        if (action.kind === "update" || action.kind === "fill") {
+          const currentMsg = messages.value[action.index];
+          if (currentMsg) {
+            currentMsg.trace_id = currentMsg.trace_id || latestServerItem.trace_id;
+            currentMsg.content = latestServerItem.summary;
+            currentMsg.reasoningContent = latestServerItem.reasoning_content ?? currentMsg.reasoningContent;
+            currentMsg.processTimeline = hydrateHistoryProcessTimeline(latestServerItem.process_timeline, latestServerItem.reasoning_content);
+            currentMsg.isThinking = false;
+            // 流中断时占位消息拿不到智能体元数据，恢复同步时补齐。
+            if (!currentMsg.agentName) {
+              currentMsg.agentName = latestServerItem.agent_name ?? undefined;
+              currentMsg.agentDisplayName = latestServerItem.agent_display_name || (String(latestServerItem.agent_name || '').startsWith('sys_') ? '系统助手' : undefined);
+              currentMsg.agentType = latestServerItem.agent_type ?? undefined;
+              currentMsg.agentAvatarUrl = latestServerItem.agent_avatar_url ?? undefined;
+              currentMsg.prompt_tokens = latestServerItem.prompt_tokens ?? undefined;
+              currentMsg.completion_tokens = latestServerItem.completion_tokens ?? undefined;
+              currentMsg.total_tokens = latestServerItem.total_tokens ?? undefined;
             }
           }
+        } else if (action.kind === "append") {
+          messages.value.push({
+            id: Date.now(),
+            trace_id: latestServerItem.trace_id,
+            role: 'agent',
+            content: latestServerItem.summary,
+            reasoningContent: latestServerItem.reasoning_content ?? undefined,
+            processTimeline: hydrateHistoryProcessTimeline(latestServerItem.process_timeline, latestServerItem.reasoning_content),
+            logs: [],
+            isThinking: false,
+            feedback: null,
+            agentName: latestServerItem.agent_name ?? undefined,
+            agentDisplayName: latestServerItem.agent_display_name || (String(latestServerItem.agent_name || '').startsWith('sys_') ? '系统助手' : undefined),
+            agentType: latestServerItem.agent_type ?? undefined,
+            agentAvatarUrl: latestServerItem.agent_avatar_url ?? undefined,
+            prompt_tokens: latestServerItem.prompt_tokens ?? undefined,
+            completion_tokens: latestServerItem.completion_tokens ?? undefined,
+            total_tokens: latestServerItem.total_tokens ?? undefined,
+            timestamp: latestServerItem.created_at,
+          });
+        }
+        if (action.kind !== "ignore") {
+          if (isProcessing.value) {
+            isProcessing.value = false;
+          }
+          // 终态已落到界面：草稿使命结束。
+          clearStreamSnapshot(conversationId.value);
+          clearVisibilitySyncTimer();
+          await nextTick();
+          scrollToBottom();
+          return;
         }
       }
     } catch (err) {
@@ -9208,23 +9534,100 @@ onMounted(() => {
     }
   };
 
+  // --- 运行恢复器（run-status 驱动的会话续订）---
+  // EmbedChat 是路由级页面：切到平台内其他页面再切回会卸载重建，切后台也可能让 SSE
+  // 静默失效。两种情况下 SSE 与页面的绑定都会丢失（visibilitychange 甚至不会触发），
+  // 而服务端 producer 仍会把任务跑完并落库。因此这里不以 SSE 为准，改以 run-status
+  // 为真相源：只要仍为 active 就周期把最新历史收敛到界面，转为 false 时补一次终态同步。
+  const RUN_RECOVERY_SYNC_INTERVAL_MS = 3000;
+  let runRecoveryTimer: any = null;
+  const clearRunRecoveryTimer = () => {
+    if (runRecoveryTimer) {
+      clearTimeout(runRecoveryTimer);
+      runRecoveryTimer = null;
+    }
+  };
+  const hasPendingConfirmation = () => {
+    const lastMsg = messages.value.length > 0 ? messages.value[messages.value.length - 1] : undefined;
+    return Boolean(
+      lastMsg?.pendingPermission?.status === "pending" ||
+      lastMsg?.pendingExternalExecution?.status === "pending",
+    );
+  };
+  const scheduleRunRecoverySync = () => {
+    clearRunRecoveryTimer();
+    if (!remoteRunActive.value || document.visibilityState !== "visible") return;
+    // 流仍在正常推进时由 SSE 自己收敛界面：既不必额外拉历史，也不必启动事件续显。
+    // `remoteRunActive` 在每次正常发送时同样为 true，若不设这道闸门，普通对话会多出
+    // 每 3s 一次的 history 请求，以及每 1s 一次的 stream-events 请求（后者还会把 SSE
+    // 已经渲染过的事件重放一遍）。只有流已静默（复用既有 Stall 信号）或根本没有流在途
+    // （页面卸载重建 / 切回）才需要恢复同步。
+    if (streamInFlight && !showStalledPrompt.value) {
+      runRecoveryTimer = setTimeout(scheduleRunRecoverySync, RUN_RECOVERY_SYNC_INTERVAL_MS);
+      return;
+    }
+    // 与历史收敛并行地把事件日志续显进本轮草稿：history 只给落库终态，事件日志给
+    // 过程（思考、工具时间线、正文增量）。它自带 lastSeq 游标，重复启动是幂等的。
+    if (activeStreamDraft) scheduleStreamReplay();
+    runRecoveryTimer = setTimeout(async () => {
+      runRecoveryTimer = null;
+      await syncLatestSessionHistory(1, 1);
+      if (remoteRunActive.value) scheduleRunRecoverySync();
+    }, RUN_RECOVERY_SYNC_INTERVAL_MS);
+  };
+  watch(remoteRunActive, (active) => {
+    if (active) {
+      scheduleRunRecoverySync();
+      return;
+    }
+    clearRunRecoveryTimer();
+    // 终态已到：停止事件续显，界面交由下面的历史同步按落库结果收敛。
+    clearStreamReplayTimer();
+    // 本轮提示已消费完毕，重置后下一轮任务切回仍会提示。
+    streamReplayNoticeShown = false;
+    streamReplayPrimed = false;
+    if (!streamInFlight && isProcessing.value && !hasPendingConfirmation()) {
+      // run-status 是权威真相源：流已死时不能把输入框永久锁在 busy。
+      isProcessing.value = false;
+    }
+    // 运行结束收敛：把后台 producer 已落库的最终回答取回界面。
+    void syncLatestSessionHistory(1, 5);
+  });
+  // 挂载竞态兜底：若 run-status 在本组件挂载前就已解析为 active，watch 不会再触发。
+  if (remoteRunActive.value) scheduleRunRecoverySync();
+
   const onVisibilityChange = () => {
     if (document.visibilityState === "visible") {
       clearVisibilitySyncTimer();
       void refreshCurrentRunStatus();
       syncLatestSessionHistory(1, 15);
+      scheduleRunRecoverySync();
     } else {
       stopRemoteRunPolling();
       clearVisibilitySyncTimer();
+      clearRunRecoveryTimer();
+      // hidden 只暂停续显轮询：游标保留，切回时从原处接着拉。
+      clearStreamReplayTimer();
+      // 切后台瞬间把草稿落盘：切回时若续显接管，首次会「只对齐游标、不重放」，
+      // 这里落盘保证快照覆盖到此刻，对齐跳过的历史事件不会造成内容缺口。
+      maybePersistStreamSnapshot(true);
     }
   };
 
   document.addEventListener("visibilitychange", onVisibilityChange);
 
   // Attach cleanup handlers to component instance scope
-  (onUnmountHandlers as any).value = { onMessage, onOnline, onOffline, onVisibilityChange, clearVisibilitySyncTimer };
+  (onUnmountHandlers as any).value = { onMessage, onOnline, onOffline, onVisibilityChange, clearVisibilitySyncTimer, clearRunRecoveryTimer, clearStreamReplayTimer };
 });
 onUnmounted(() => {
+  // 卸载前把在途草稿强制落盘：重建后先还原已输出的思考与正文，等落库终态再覆盖。
+  maybePersistStreamSnapshot(true);
+  // 组件已卸载：终止仍在读取的幽灵流（服务端 producer 不受影响，仍会跑完落库并
+  // 由运行恢复器在下次挂载时取回），并停止流收尾副作用。
+  embedUnmounted = true;
+  streamInFlight = false;
+  if (abortController) abortController.abort();
+  if (abortController) abortController = null;
   cancelPendingUrlTokenInitialization();
   window.removeEventListener("resize", updateWidth);
   window.removeEventListener("fullscreenchange", updateFullScreenStatus);
@@ -9235,6 +9638,8 @@ onUnmounted(() => {
   if (handlers?.onOffline) window.removeEventListener("offline", handlers.onOffline);
   if (handlers?.onVisibilityChange) document.removeEventListener("visibilitychange", handlers.onVisibilityChange);
   if (handlers?.clearVisibilitySyncTimer) handlers.clearVisibilitySyncTimer();
+  if (handlers?.clearRunRecoveryTimer) handlers.clearRunRecoveryTimer();
+  if (handlers?.clearStreamReplayTimer) handlers.clearStreamReplayTimer();
   disposePortalTimers();
   stopPortalLoadingTips();
   if (thoughtTimer) clearInterval(thoughtTimer);
