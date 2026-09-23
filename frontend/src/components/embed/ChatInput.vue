@@ -1948,7 +1948,7 @@ defineExpose({
                 <span class="ai-dot" style="animation-delay: 0ms"></span>
                 <span class="ai-dot" style="animation-delay: 150ms"></span>
                 <span class="ai-dot" style="animation-delay: 300ms"></span>
-                <span class="ml-1.5 text-[11px] font-medium text-primary/70 select-none">{{ isProcessing ? (enableGrounding ? 'AI 正在生成并严格核验证据…' : 'AI 正在生成回复…') : isSubmitting ? '准备发送…' : '' }}</span>
+                <span class="ml-1.5 text-[11px] font-medium text-primary/70 select-none">{{ isProcessing ? (enableGrounding ? 'AI 正在生成并严格核验证据…' : 'AI 正在努力生成回复中，请稍候…') : isSubmitting ? '准备发送…' : '' }}</span>
             </div>
 
             <div
