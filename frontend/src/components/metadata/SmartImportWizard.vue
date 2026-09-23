@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, watch } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import axios from '../../utils/axios'
 import { metadataApi } from '../../api/metadata'
 import { useToast } from '../../composables/useToast'
@@ -29,6 +29,36 @@ const datasetName = ref('')
 const datasetDisplayName = ref('')
 const importDataSourceName = ref('')
 const defaultDataSource = ref('')
+const existingDatasetNames = ref<Set<string>>(new Set())
+const fetchingDatasets = ref(false)
+
+const isDuplicateDatasetName = computed(() => {
+  if (props.datasetId) return false
+  const name = datasetName.value.trim().toLowerCase()
+  if (!name) return false
+  return existingDatasetNames.value.has(name)
+})
+
+const datasetNameError = computed(() => {
+  if (props.datasetId) return ''
+  const name = datasetName.value.trim()
+  if (!name) return '请输入数据集 ID'
+  if (isDuplicateDatasetName.value) {
+    return '该数据集 ID 已存在，请更换其他 ID'
+  }
+  return ''
+})
+
+const isSaveDisabled = computed(() => {
+  if (saving.value) return true
+  if (previewData.value.tables.length === 0) return true
+  if (!props.datasetId) {
+    if (!!datasetNameError.value || !datasetDisplayName.value.trim()) {
+      return true
+    }
+  }
+  return false
+})
 
 // Toast
 const { showToast } = useToast()
@@ -163,15 +193,33 @@ const fetchSystemDefaultDataSource = async () => {
   }
 }
 
+const fetchExistingDatasetNames = async () => {
+  if (props.datasetId) return
+  fetchingDatasets.value = true
+  try {
+    const res = await metadataApi.getDatasets()
+    const list = Array.isArray(res.data) ? res.data : ((res.data as any)?.data || [])
+    existingDatasetNames.value = new Set(
+      list.map((ds: any) => String(ds.name || '').trim().toLowerCase())
+    )
+  } catch (err) {
+    console.error('Failed to fetch existing dataset names:', err)
+  } finally {
+    fetchingDatasets.value = false
+  }
+}
+
 watch(() => props.show, (visible) => {
   if (visible && !props.datasetId) {
     fetchSystemDefaultDataSource()
+    fetchExistingDatasetNames()
   }
 })
 
 onMounted(() => {
   if (!props.datasetId) {
     fetchSystemDefaultDataSource()
+    fetchExistingDatasetNames()
   }
 })
 
@@ -253,10 +301,24 @@ const applyImportPreview = (data: any) => {
 
   if (previewData.value.tables.length > 0) {
     const firstTable = previewData.value.tables[0]
-    datasetName.value = firstTable.physical_name + '_ds'
+    const baseName = firstTable.physical_name + '_ds'
+    let candidate = baseName
+    let counter = 2
+    while (existingDatasetNames.value.has(candidate.trim().toLowerCase())) {
+      candidate = `${baseName}_${counter}`
+      counter++
+    }
+    datasetName.value = candidate
     datasetDisplayName.value = (firstTable.term || firstTable.physical_name) + '数据集'
   } else {
-    datasetName.value = `import_ds_${new Date().toISOString().slice(0, 10).replace(/-/g, '')}`
+    const baseName = `import_ds_${new Date().toISOString().slice(0, 10).replace(/-/g, '')}`
+    let candidate = baseName
+    let counter = 2
+    while (existingDatasetNames.value.has(candidate.trim().toLowerCase())) {
+      candidate = `${baseName}_${counter}`
+      counter++
+    }
+    datasetName.value = candidate
     datasetDisplayName.value = '新数据集_' + new Date().toISOString().slice(0, 10)
   }
 
@@ -364,6 +426,12 @@ const handleSave = async () => {
         return
       }
 
+      if (isDuplicateDatasetName.value) {
+        showToast('数据集 ID 已存在，请更换其他 ID', 'error')
+        saving.value = false
+        return
+      }
+
       const dataSource = importDataSourceName.value || defaultDataSource.value || undefined
       const dsRes = await metadataApi.createDataset({
         name: datasetName.value.trim(),
@@ -419,10 +487,11 @@ const handleSave = async () => {
     
   } catch (e: any) {
     console.error('Import failed', e)
-    if (e.response?.status === 400 && e.response?.data?.detail?.includes('存在')) {
+    const errorMsg = e.response?.data?.message || e.response?.data?.detail || ''
+    if (e.response?.status === 400 && (errorMsg.includes('存在') || errorMsg.includes('已存在'))) {
        showToast('数据集名称已存在，请修改名称后重试', 'error', 4000)
     } else {
-       showToast(e.response?.data?.detail || '保存失败，请重试', 'error')
+       showToast(errorMsg || '保存失败，请重试', 'error')
     }
   } finally {
     saving.value = false
@@ -644,15 +713,26 @@ const normalizeType = (rawType: string): string => {
                   <span><strong class="font-bold">虚线框</strong>可编辑</span>
                 </div>
                 <div>
-                  <label class="flex items-center gap-1 text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1">
-                    <span>数据集 ID</span>
-                    <span class="text-amber-600 normal-case tracking-normal font-semibold">可编辑</span>
-                  </label>
+                  <div class="flex items-center justify-between mb-1">
+                    <label class="flex items-center gap-1 text-[10px] font-bold text-gray-500 uppercase tracking-wider">
+                      <span>数据集 ID</span>
+                      <span class="text-amber-600 normal-case tracking-normal font-semibold">可编辑</span>
+                    </label>
+                    <span v-if="isDuplicateDatasetName" class="text-[10px] text-red-500 font-semibold">ID 已存在</span>
+                  </div>
                   <input
                     v-model="datasetName"
-                    :class="[EDITABLE_INPUT, 'font-mono text-xs']"
+                    :class="[
+                      EDITABLE_INPUT,
+                      'font-mono text-xs',
+                      isDuplicateDatasetName ? '!border-red-400 !bg-red-50/70 text-red-900 focus:!border-red-500 focus:!ring-red-200' : ''
+                    ]"
                     placeholder="e.g. user_orders_ds"
                   >
+                  <p v-if="isDuplicateDatasetName" class="mt-1 text-[11px] text-red-600 flex items-center gap-1">
+                    <svg class="w-3.5 h-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                    <span>该数据集 ID 已存在，请更换其他 ID</span>
+                  </p>
                 </div>
                 <div>
                   <label class="flex items-center gap-1 text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1">
@@ -939,8 +1019,9 @@ const normalizeType = (rawType: string): string => {
          <button @click="handleClose" class="px-4 py-1.5 text-sm border border-gray-300 rounded-lg text-gray-700 font-medium hover:bg-gray-50">取消</button>
          <button 
             @click="handleSave"
-            :disabled="saving || previewData.tables.length === 0"
-            class="px-5 py-1.5 text-sm bg-green-600 hover:bg-green-700 text-white rounded-lg font-bold shadow-sm transition-all flex items-center gap-1.5 disabled:opacity-50"
+            :disabled="isSaveDisabled"
+            :title="isDuplicateDatasetName ? '数据集 ID 已存在，请更换后再保存' : (!datasetDisplayName.trim() ? '请输入显示名称' : '')"
+            class="px-5 py-1.5 text-sm bg-green-600 hover:bg-green-700 text-white rounded-lg font-bold shadow-sm transition-all flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
          >
             <svg v-if="saving" class="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
             {{ saving ? '正在入库...' : '确认并保存' }}
