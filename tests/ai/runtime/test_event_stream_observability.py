@@ -455,3 +455,34 @@ def test_extract_latest_assistant_text_join_fallback_when_last_block_empty():
     )()
 
     assert extract_latest_assistant_text(agent) == "正文一"
+
+
+@pytest.mark.asyncio
+async def test_tool_call_start_exposes_arguments_for_timeline_card(monkeypatch):
+    """进行中的工具卡片要能显示真实参数（Bash 即命令原文），
+    而不是写死的 `参数: {}` 占位。"""
+    from unittest.mock import AsyncMock
+
+    import app.services.config_service as cfg
+
+    monkeypatch.setattr(
+        cfg.ConfigService, "get", AsyncMock(return_value="docker"),
+    )
+    state = new_native_stream_state()
+    event = SimpleNamespace(
+        type="TOOL_CALL_START",
+        tool_call_id="t1",
+        tool_call_name="Bash",
+        arguments={"command": "git status"},
+    )
+
+    logs = []
+    async for chunk in map_standard_agentscope_event(
+        event, state=state, emit_observability=False
+    ):
+        if chunk.get("type") == "log":
+            logs.append(chunk)
+
+    assert logs[0]["title"] == "调用工具: Bash"
+    assert logs[0]["tool_args"] == "git status"
+    assert logs[0]["details"] == ""

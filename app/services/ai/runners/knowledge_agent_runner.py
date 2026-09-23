@@ -442,7 +442,7 @@ class KnowledgeAgentRunner(AssistantAgentRunner):
         if observation.get("trace"):
             self.trace_buffer.append(observation["trace"])
         service_unavailable = self._is_knowledge_service_unavailable(output)
-        yield {
+        log_event = {
             "type": "log",
             "id": tool_id,
             "title": "工具完成: search_knowledge_base",
@@ -451,6 +451,10 @@ class KnowledgeAgentRunner(AssistantAgentRunner):
             "category": "tool",
             "execution_time_ms": duration_ms,
         }
+        display_args = observation.get("log", {}).get("tool_args")
+        if display_args:
+            log_event["tool_args"] = display_args
+        yield log_event
         if observation.get("citation"):
             yield observation["citation"]
         yield {

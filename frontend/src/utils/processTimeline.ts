@@ -51,6 +51,17 @@ export type ProcessTimelineLogItem = {
   error_reason?: string;
   category?: string;
   tool_name?: string;
+  /**
+   * 工具入参的展示文本（命令类工具即命令原文）。
+   * 与 details（工具输出）分开承载：工具完成事件只覆盖 details，
+   * 命令不能被输出冲掉，也不该占用输出的截断预算。
+   */
+  tool_args?: string;
+  /** 本次工具调用实际使用的模型与温度（后端工具事件携带，用于排查配置）。 */
+  model?: string;
+  temperature?: number;
+  /** AgentScope 归一化后的框架侧结果状态（success / error / timeout / denied / interrupted）。 */
+  tool_result_state?: string;
   file_metadata?: FileToolMetadata;
   /**
    * 主动提问（ask_user_question）卡片的持久化快照。
@@ -577,6 +588,10 @@ export function upsertTimelineLog(
     error_reason?: string;
     category?: string;
     tool_name?: string;
+    tool_args?: string;
+    model?: string;
+    temperature?: number;
+    tool_result_state?: string;
     file_metadata?: FileToolMetadata;
     resolution_status?: ToolResolutionStatus;
     execution_time_ms?: number | null;
@@ -599,6 +614,10 @@ export function upsertTimelineLog(
     if (data.error_reason !== undefined) existing.error_reason = data.error_reason;
     if (data.category !== undefined) existing.category = data.category;
     if (data.tool_name !== undefined) existing.tool_name = data.tool_name;
+    if (data.tool_args !== undefined) existing.tool_args = data.tool_args;
+    if (data.model !== undefined) existing.model = data.model;
+    if (data.temperature !== undefined) existing.temperature = data.temperature;
+    if (data.tool_result_state !== undefined) existing.tool_result_state = data.tool_result_state;
     if (data.file_metadata !== undefined) existing.file_metadata = data.file_metadata;
     if (data.resolution_status !== undefined) existing.resolution_status = data.resolution_status;
     if (data.execution_time_ms !== undefined) existing.execution_time_ms = data.execution_time_ms;
@@ -700,6 +719,10 @@ export function upsertTimelineLog(
     error_reason: data.error_reason,
     category: data.category,
     tool_name: data.tool_name,
+    tool_args: data.tool_args,
+    model: data.model,
+    temperature: data.temperature,
+    tool_result_state: data.tool_result_state,
     file_metadata: data.file_metadata,
     resolution_status: data.resolution_status,
     execution_time_ms: data.execution_time_ms,
@@ -768,6 +791,10 @@ export function mergeTimelineLogs(
     error_reason?: string;
     category?: string;
     tool_name?: string;
+    tool_args?: string;
+    model?: string;
+    temperature?: number;
+    tool_result_state?: string;
     file_metadata?: FileToolMetadata;
     resolution_status?: ToolResolutionStatus;
     execution_time_ms?: number | null;
@@ -798,6 +825,10 @@ export function mergeTimelineLogs(
         targetLog.error_reason = log.error_reason ?? targetLog.error_reason;
         targetLog.category = log.category ?? targetLog.category;
         targetLog.tool_name = log.tool_name ?? targetLog.tool_name;
+        targetLog.tool_args = log.tool_args ?? targetLog.tool_args;
+        targetLog.model = log.model ?? targetLog.model;
+        targetLog.temperature = log.temperature ?? targetLog.temperature;
+        targetLog.tool_result_state = log.tool_result_state ?? targetLog.tool_result_state;
         targetLog.file_metadata = log.file_metadata ?? targetLog.file_metadata;
         targetLog.resolution_status = log.resolution_status ?? targetLog.resolution_status;
         targetLog.execution_time_ms = log.execution_time_ms ?? targetLog.execution_time_ms;
@@ -900,6 +931,10 @@ export function buildLegacyProcessTimeline(input: {
     error_reason?: string;
     category?: string;
     tool_name?: string;
+    tool_args?: string;
+    model?: string;
+    temperature?: number;
+    tool_result_state?: string;
     file_metadata?: FileToolMetadata;
     resolution_status?: ToolResolutionStatus;
     execution_time_ms?: number | null;
@@ -985,6 +1020,7 @@ function reorganizeSubagentItems(items: ProcessTimelineItem[]): ProcessTimelineI
               subContainer.execution_time_ms = child.execution_time_ms || subContainer.execution_time_ms;
               subContainer.status = child.status || subContainer.status;
               if (child.details) subContainer.details = child.details;
+              if (child.tool_args) subContainer.tool_args = child.tool_args;
               if (child.subagent) subContainer.subagent = child.subagent;
               if (child.title.includes("调用子代理") || child.title.includes("委派智能体") || child.title.includes("sub_agent_call")) {
                 subContainer.title = child.title;
@@ -1028,6 +1064,7 @@ function reorganizeSubagentItems(items: ProcessTimelineItem[]): ProcessTimelineI
         activeContainer.execution_time_ms = item.execution_time_ms || activeContainer.execution_time_ms;
         activeContainer.status = item.status || activeContainer.status;
         if (item.details) activeContainer.details = item.details;
+        if (item.tool_args) activeContainer.tool_args = item.tool_args;
         if (item.subagent) activeContainer.subagent = item.subagent;
         if (item.title.includes("调用子代理") || item.title.includes("委派智能体")) {
           activeContainer.title = item.title;

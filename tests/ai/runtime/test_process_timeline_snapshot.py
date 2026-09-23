@@ -353,3 +353,84 @@ def test_user_question_without_usable_options_degrades_to_plain_log():
     assert items[0]["category"] == "user_question"
     assert "user_question" not in items[0]
     assert items[0]["details"] == "只有一个可选项"
+
+
+def test_tool_args_survive_process_timeline_persistence():
+    """命令（工具入参）必须随 process_timeline 定稿落库。
+
+    实时卡片靠 SSE 的 tool_args 字段；历史回放只能依赖快照，
+    且 finalize 的白名单压缩不能把命令洗掉，否则刷新后只剩工具输出。
+    """
+    items = _run(
+        [
+            {
+                "type": "log",
+                "id": "bash_1",
+                "title": "调用工具: Bash",
+                "details": "",
+                "tool_args": "npm run build",
+                "status": "pending",
+                "category": "tool",
+            },
+            {
+                "type": "log",
+                "id": "bash_1",
+                "title": "工具完成: Bash (1200ms)",
+                "details": "build ok",
+                "status": "success",
+                "category": "tool",
+            },
+        ]
+    )
+
+    assert items is not None and len(items) == 1
+    entry = items[0]
+    assert entry["kind"] == "log"
+    assert entry["tool_args"] == "npm run build"
+    assert entry["details"] == "build ok"
+
+
+def test_tool_args_are_truncated_on_persistence():
+    items = _run(
+        [
+            {
+                "type": "log",
+                "id": "bash_2",
+                "title": "工具完成: Bash (10ms)",
+                "details": "ok",
+                "tool_args": "echo " + "x" * 4000,
+                "status": "success",
+                "category": "tool",
+            },
+        ]
+    )
+
+    assert items is not None
+    stored = items[0]["tool_args"]
+    assert len(stored) < 4000
+    assert stored.startswith("echo ")
+
+
+def test_tool_call_metadata_survives_process_timeline_persistence():
+    """模型、温度与框架侧结果状态同样要随快照落库，否则刷新后排查线索就没了。"""
+    items = _run(
+        [
+            {
+                "type": "log",
+                "id": "bash_meta",
+                "title": "工具完成: Bash (10ms)",
+                "details": "ok",
+                "status": "error",
+                "category": "tool",
+                "model": "DeepSeek-V3.2",
+                "temperature": 0.2,
+                "tool_result_state": "timeout",
+            },
+        ]
+    )
+
+    assert items is not None and len(items) == 1
+    entry = items[0]
+    assert entry["model"] == "DeepSeek-V3.2"
+    assert entry["temperature"] == 0.2
+    assert entry["tool_result_state"] == "timeout"

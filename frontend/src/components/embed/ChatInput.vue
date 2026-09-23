@@ -1033,11 +1033,6 @@ const isFollowingModelEffort = computed(
   () => props.reasoningEffortOverride === null || props.reasoningEffortOverride === undefined,
 );
 
-const isSelectedModelMultimodal = computed(() => {
-  if (!props.selectedModel || !props.availableModels) return false;
-  const m = props.availableModels.find((item) => item.model_id === props.selectedModel);
-  return m?.type === 'multimodal';
-});
 
 const showModelDropdown = ref(false);
 const modelDropdownRef = ref<HTMLElement | null>(null);
@@ -1953,7 +1948,7 @@ defineExpose({
                 <span class="ai-dot" style="animation-delay: 0ms"></span>
                 <span class="ai-dot" style="animation-delay: 150ms"></span>
                 <span class="ai-dot" style="animation-delay: 300ms"></span>
-                <span class="ml-1.5 text-[11px] font-medium text-primary/70 select-none">{{ isProcessing ? (enableGrounding ? 'AI 正在生成并严格核验证据…' : 'AI 正在生成回复…') : isSubmitting ? '准备发送…' : '' }}</span>
+                <span class="ml-1.5 text-[11px] font-medium text-primary/70 select-none">{{ isProcessing ? (enableGrounding ? 'AI 正在生成并严格核验证据…' : 'AI 正在努力生成回复中，请稍候…') : isSubmitting ? '准备发送…' : '' }}</span>
             </div>
 
             <div
@@ -3092,14 +3087,6 @@ defineExpose({
                       :title="modelTriggerTooltip"
                     >
                         <span class="pointer-events-none truncate flex-1 min-w-0 text-left">{{ modelLabel }}</span>
-                        <span
-                          v-if="isSelectedModelMultimodal"
-                          class="pointer-events-none hidden shrink-0 rounded-full bg-gray-100 px-1.5 py-0.5 text-[8px] sm:text-[9px] font-semibold text-gray-600 dark:bg-gray-700/60 dark:text-gray-300 sm:inline-flex items-center gap-0.5"
-                          title="支持多模态视觉理解"
-                        >
-                          <PhotoIcon class="h-2.5 w-2.5 text-gray-500 dark:text-gray-400" aria-hidden="true" />
-                          <span>视觉</span>
-                        </span>
                         <span v-if="thinkingSummaryLabel" class="pointer-events-none flex-shrink-0 rounded-full bg-primary/10 px-1 py-0.5 text-[8px] sm:px-1.5 sm:text-[9px] font-semibold text-primary dark:bg-primary/20 dark:text-primary-hover">{{ thinkingSummaryLabel }}</span>
                         <span
                           v-if="temperatureSummaryLabel"

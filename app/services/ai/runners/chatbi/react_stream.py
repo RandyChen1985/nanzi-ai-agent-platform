@@ -18,7 +18,10 @@ from app.services.ai.runtime.agentscope.tool_result import (
     is_tool_result_error,
     normalize_tool_result_state,
 )
-from app.services.ai.runtime.agentscope.stream_reconcile import truncate_for_display
+from app.services.ai.runtime.agentscope.stream_reconcile import (
+    format_tool_args_for_display,
+    truncate_for_display,
+)
 from app.services.ai.runtime.agentscope.tools import RuntimeToolSpec
 from app.services.ai.runners.assistant_agent_runner import (
     _build_file_tool_metadata,
@@ -348,6 +351,10 @@ async def stream_agentscope_events(
             "status": "success" if not is_error else "error",
             "execution_time_ms": duration_ms,
         }
+        # 工具入参（如 SQL、数据源）单独透传，不占用 details 的输出预算。
+        display_args = format_tool_args_for_display(tool_args, tool_name=tool_name)
+        if display_args:
+            log_payload["tool_args"] = display_args
         normalized_result_state = normalize_tool_result_state(tool_result_state)
         if normalized_result_state:
             log_payload["tool_result_state"] = normalized_result_state

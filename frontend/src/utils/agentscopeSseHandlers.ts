@@ -100,6 +100,8 @@ export interface AgentStreamLog {
   isExpanded?: boolean;
   category?: string;
   tool_name?: string;
+  /** 工具入参展示文本（Bash 即命令原文），与 details（输出）独立。 */
+  tool_args?: string;
   file_metadata?: import("./processTimeline").FileToolMetadata;
   resolution_status?: "disabled" | "missing" | "filtered";
   execution_time_ms?: number | null;
@@ -759,6 +761,14 @@ export function syncProcessTimelineLog<T extends AgentStreamMessage>(
     error_reason: data.error_reason === undefined ? undefined : String(data.error_reason),
     category: category || (data.category ? String(data.category) : undefined),
     tool_name: data.tool_name === undefined ? undefined : String(data.tool_name),
+    tool_args: data.tool_args === undefined ? undefined : String(data.tool_args),
+    model: data.model === undefined ? undefined : String(data.model),
+    // 不能只判 undefined：Number(null) === 0 会把「未设置」显示成「温度 0」。
+    temperature:
+      data.temperature === undefined || data.temperature === null
+        ? undefined
+        : Number(data.temperature),
+    tool_result_state: data.tool_result_state === undefined ? undefined : String(data.tool_result_state),
     file_metadata: data.file_metadata as import("./processTimeline").FileToolMetadata | undefined,
     resolution_status: data.resolution_status as "disabled" | "missing" | "filtered" | undefined,
     execution_time_ms:

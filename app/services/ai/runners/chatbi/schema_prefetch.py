@@ -31,6 +31,7 @@ from app.services.ai.runners.chatbi.federated_upgrade import (
 from app.services.ai.runners.chatbi.run_state import DataRunState
 from app.services.ai.runners.chatbi import turn_handlers as chatbi_turn_handlers
 from app.services.ai.time_anchor import build_data_query_time_anchor_block
+from app.services.ai.runtime.agentscope.stream_reconcile import format_tool_args_for_display
 from app.services.ai.runtime.agentscope.tools import RuntimeToolSpec
 
 logger = logging.getLogger(__name__)
@@ -296,6 +297,9 @@ async def auto_invoke_get_dataset_schema(
         "status": "error" if runner._is_schema_fatal(preview_state) else "success",
         "category": "tool",
         "execution_time_ms": (time.time() - started_at) * 1000,
+        "tool_args": format_tool_args_for_display(
+            invoke_kwargs, tool_name="get_dataset_schema"
+        ),
     }
     runner._increment_step()
     runner.trace_buffer.append(

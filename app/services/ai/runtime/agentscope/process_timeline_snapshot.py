@@ -117,6 +117,16 @@ def _update_log(existing: Dict[str, Any], chunk: Dict[str, Any]) -> None:
         existing["title"] = str(chunk.get("title") or existing.get("title") or "处理步骤")
     if "details" in chunk:
         existing["details"] = str(chunk.get("details") or "")
+    # 入参（Bash 命令等）只在携带时写入：完成事件不重复带参数，别把已有命令洗成空。
+    if chunk.get("tool_args"):
+        existing["tool_args"] = str(chunk["tool_args"])
+    # 模型 / 温度 / 框架侧结果状态同样只在携带时写入，完成事件不重复上报。
+    if chunk.get("model"):
+        existing["model"] = str(chunk["model"])
+    if chunk.get("temperature") is not None:
+        existing["temperature"] = chunk["temperature"]
+    if chunk.get("tool_result_state"):
+        existing["tool_result_state"] = str(chunk["tool_result_state"])
     if chunk.get("status") is not None:
         existing["status"] = str(chunk.get("status") or existing.get("status") or "success")
     if chunk.get("category") is not None:
@@ -487,6 +497,14 @@ def apply_stream_chunk(state: List[Dict[str, Any]], chunk: Dict[str, Any]) -> No
         "isExpanded": False,
         "children": [],
     }
+    if chunk.get("tool_args"):
+        log["tool_args"] = str(chunk["tool_args"])
+    if chunk.get("model"):
+        log["model"] = str(chunk["model"])
+    if chunk.get("temperature") is not None:
+        log["temperature"] = chunk["temperature"]
+    if chunk.get("tool_result_state"):
+        log["tool_result_state"] = str(chunk["tool_result_state"])
 
     parent_id = chunk.get("parent_id")
     if parent_id is not None and parent_id != log_id:
@@ -548,6 +566,15 @@ def _finalize_log(item: Dict[str, Any]) -> Dict[str, Any]:
     # 提问卡快照必须随定稿一起落库，否则历史回放无从重建卡片。
     if item.get("user_question") is not None:
         copied["user_question"] = item.get("user_question")
+    # 命令同样要落库，否则刷新/回放后只剩工具输出。
+    if item.get("tool_args"):
+        copied["tool_args"] = _truncate_details(item.get("tool_args"))
+    if item.get("model") is not None:
+        copied["model"] = item.get("model")
+    if item.get("temperature") is not None:
+        copied["temperature"] = item.get("temperature")
+    if item.get("tool_result_state") is not None:
+        copied["tool_result_state"] = item.get("tool_result_state")
     if item.get("children"):
         copied["children"] = [_finalize_log(child) for child in item["children"]]
     return copied
