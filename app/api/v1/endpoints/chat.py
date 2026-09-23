@@ -942,6 +942,53 @@ async def get_conversation_run_status(
         status["sandbox_degraded_message"] = None
     return StandardResponse(data=ConversationRunStatusResponse(**status))
 
+
+class ConversationStreamEventsResponse(BaseModel):
+    events: List[Dict[str, Any]] = Field(default_factory=list)
+    next_seq: int = 0
+    run_active: bool = False
+
+
+@router.get(
+    "/conversation/{conversation_id}/stream-events",
+    response_model=StandardResponse[ConversationStreamEventsResponse],
+    summary="增量拉取会话正在运行的过程事件",
+    description=(
+        "读取 Redis 中的会话流事件日志，返回 seq 大于 after_seq 的事件，"
+        "供 EmbedChat 在切回页面后继续显示思考、工具时间线与正文推进。"
+        "事件日志只用于过程可视化，本轮最终内容仍以历史接口为准。"
+    ),
+)
+async def get_conversation_stream_events(
+    conversation_id: str,
+    after_seq: int = 0,
+    user_info: Dict[str, Any] = Depends(require_api_key),
+):
+    from app.services.ai.runtime.conversation_stream_journal import conversation_stream_journal
+    from app.services.ai.runtime.session_run_lane import conversation_run_lane
+
+    user_id = _require_chat_user_id(user_info)
+    batch = await conversation_stream_journal.read_after(
+        user_id=user_id,
+        conversation_id=conversation_id,
+        after_seq=after_seq,
+    )
+    try:
+        run_status = await conversation_run_lane.get_status(
+            user_id=user_id,
+            conversation_id=conversation_id,
+        )
+        run_active = bool(run_status.get("active"))
+    except Exception:
+        run_active = False
+    payload = {
+        "events": batch.get("events") or [],
+        "next_seq": int(batch.get("next_seq") or 0),
+        "run_active": run_active,
+    }
+    return StandardResponse(data=ConversationStreamEventsResponse(**payload))
+
+
 def _merge_latest_audit_assistant(
     history: list[dict[str, Any]],
     audit_messages: list[dict[str, Any]],
@@ -1626,10 +1673,79 @@ async def create_chat_completion(
         client_disconnected_event = asyncio.Event()
         queue: asyncio.Queue[tuple[str, Any]] = asyncio.Queue()
 
+        # ---- 流式事件日志（断线恢复期增量拉取）----
+        # 高频增量不逐条落 Redis：按时间窗口/长度阈值合并后再写，避免 token 级
+        # 事件把 Redis 压垮；其余事件立即写入。写入独立于 client_disconnected_event，
+        # 否则客户端断开后就没有日志可供切回时拉取。
+        STREAM_JOURNAL_COALESCED_TYPES = {
+            "answer",
+            "answer_delta",
+            "reasoning_content",
+            "thinking",
+            "process_narration",
+            "process_narration_commit",
+            "process_narration_promote",
+        }
+        STREAM_JOURNAL_COALESCE_INTERVAL_SECONDS = 0.3
+        STREAM_JOURNAL_COALESCE_MAX_CHARS = 2000
+        stream_journal_pending: list[dict[str, Any]] = []
+        stream_journal_chars = 0
+        stream_journal_last_flush = time.monotonic()
+
+        async def _flush_stream_journal(*, force: bool = False) -> None:
+            nonlocal stream_journal_chars, stream_journal_last_flush
+            if not stream_journal_pending:
+                return
+            now = time.monotonic()
+            if (
+                not force
+                and now - stream_journal_last_flush < STREAM_JOURNAL_COALESCE_INTERVAL_SECONDS
+                and stream_journal_chars < STREAM_JOURNAL_COALESCE_MAX_CHARS
+            ):
+                return
+            batch = list(stream_journal_pending)
+            stream_journal_pending.clear()
+            stream_journal_chars = 0
+            stream_journal_last_flush = now
+            from app.services.ai.runtime.conversation_stream_journal import (
+                conversation_stream_journal,
+            )
+
+            # 这里的 lane_user_id 就是 create_chat_completion 开头解析出的稳定用户 ID
+            # （lane_user_id = chat_user_id = _require_chat_user_id(user_info)），
+            # 与 journal 的 require_user_id 口径一致，避免匿名身份被 fail-closed 丢日志。
+            await conversation_stream_journal.append(lane_user_id, conversation_id, batch)
+
+        async def _record_stream_event(chunk: Any) -> None:
+            nonlocal stream_journal_chars
+            if not isinstance(chunk, dict):
+                return
+            event_type = str(chunk.get("type") or "")
+            if event_type in STREAM_JOURNAL_COALESCED_TYPES:
+                stream_journal_pending.append(chunk)
+                stream_journal_chars += len(str(chunk.get("content") or ""))
+                await _flush_stream_journal()
+                return
+            await _flush_stream_journal(force=True)
+            from app.services.ai.runtime.conversation_stream_journal import (
+                conversation_stream_journal,
+            )
+
+            await conversation_stream_journal.append(lane_user_id, conversation_id, [chunk])
+
         async def _producer_task() -> None:
             nonlocal claim_trace_id, claim_status
             terminal_enqueued = False
             try:
+                # 新一轮开始：清空上一轮的事件日志与序号计数器，使本轮 _seq 从 1 重新
+                # 计数、日志只含本轮事件。前端在新一轮会把续显游标整体归零，两边口径
+                # 一致——否则残留的上一轮事件会被续显当成「本轮过程」重放出来。
+                from app.services.ai.runtime.conversation_stream_journal import (
+                    conversation_stream_journal,
+                )
+
+                await conversation_stream_journal.clear(lane_user_id, conversation_id)
+
                 async for chunk in agent_service.chat_completion_stream(
                     history,
                     agent_id=completion_request.agent_id,
@@ -1651,6 +1767,9 @@ async def create_chat_completion(
                             claim_trace_id = str(chunk["trace_id"])
                         if chunk.get("type") == "error" or chunk.get("status") == "error":
                             claim_status = "failed"
+                    # 事件日志独立于连接状态：客户端断开后 producer 仍继续跑，
+                    # 这些事件是切回页面时"继续实时显示"的唯一来源。
+                    await _record_stream_event(chunk)
                     if not client_disconnected_event.is_set():
                         await queue.put(("chunk", chunk))
                     # run_status 表示模型输出已完成。提前结束 SSE 响应，producer
@@ -1665,6 +1784,7 @@ async def create_chat_completion(
                         terminal_enqueued = True
                 if not terminal_enqueued and not client_disconnected_event.is_set():
                     await queue.put(("done", None))
+                await _flush_stream_journal(force=True)
                 if request_claim is not None:
                     from app.services.ai.runtime.chat_request_idempotency import chat_request_idempotency
 
