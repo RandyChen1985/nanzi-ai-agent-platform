@@ -273,3 +273,94 @@ def test_word_and_excel_tools_expose_document_metadata(tool_name, tool_args, too
     for key, value in expected.items():
         assert metadata[key] == value
     assert "/app/data" not in str(metadata)
+
+
+def test_format_tool_args_for_display_renders_bash_command_verbatim():
+    from app.services.ai.runtime.agentscope.stream_reconcile import (
+        format_tool_args_for_display,
+    )
+
+    assert format_tool_args_for_display(
+        {"command": "git status --short"}, tool_name="Bash"
+    ) == "git status --short"
+    assert format_tool_args_for_display(
+        {"command": ["git", "status"]}, tool_name="Bash"
+    ) == "git status"
+    assert format_tool_args_for_display(
+        {"command": "ls -la"}, tool_name="bash"
+    ) == "ls -la"
+    assert format_tool_args_for_display(
+        {"command": "ls"}, tool_name="exec_command"
+    ) == "ls"
+
+
+def test_format_tool_args_for_display_falls_back_to_json_and_truncates():
+    from app.services.ai.runtime.agentscope.stream_reconcile import (
+        format_tool_args_for_display,
+    )
+
+    assert format_tool_args_for_display(
+        {"query": "营收"}, tool_name="search_knowledge_base"
+    ) == '{\n  "query": "营收"\n}'
+    # JSON 文本必须先还原成对象，才能和 dict 入参给出同样格式化的结果；
+    # 原断言要求原样返回，等于固化了「进行中的卡片显示整串 JSON」这个缺陷。
+    assert format_tool_args_for_display(
+        '{"query": "营收"}', tool_name="search_knowledge_base"
+    ) == '{\n  "query": "营收"\n}'
+
+    assert format_tool_args_for_display(None, tool_name="Bash") == ""
+    assert format_tool_args_for_display({}, tool_name="Bash") == ""
+
+    long_command = "echo " + "x" * 100
+    truncated = format_tool_args_for_display(
+        {"command": long_command}, tool_name="Bash", max_len=20
+    )
+    assert truncated.startswith("echo ")
+    assert len(truncated) < len(long_command)
+    assert "截断" in truncated
+
+
+def test_tool_observation_exposes_executed_command_for_timeline_card():
+    result = _runner_for_observation()._build_tool_observation(
+        tool_id="bash-cmd",
+        tool_name="Bash",
+        tool_args={"command": "npm run build"},
+        tool_output="build ok",
+        duration_tool=12,
+        target_tool=None,
+        tool_index=0,
+        tool_result_state="success",
+    )
+
+    # 命令进独立字段，不挤占 details 的工具输出截断预算
+    assert result["log"]["tool_args"] == "npm run build"
+    assert result["log"]["details"] == "build ok"
+
+
+def test_format_tool_args_for_display_decodes_json_string_arguments():
+    """TOOL_CALL_START 的 arguments 直取事件对象，收不到 dict 时会拿到 JSON 文本。
+
+    不还原就只能把整串 `{"command": "git status"}` 当成命令显示给用户。
+    """
+    from app.services.ai.runtime.agentscope.stream_reconcile import (
+        format_tool_args_for_display,
+    )
+
+    assert (
+        format_tool_args_for_display('{"command": "git status"}', tool_name="Bash")
+        == "git status"
+    )
+    assert (
+        format_tool_args_for_display('  {"command": "git status"}  ', tool_name="Bash")
+        == "git status"
+    )
+
+
+def test_format_tool_args_for_display_keeps_non_json_string_intact():
+    """纯命令文本或残缺 JSON 不能被反序列化改写。"""
+    from app.services.ai.runtime.agentscope.stream_reconcile import (
+        format_tool_args_for_display,
+    )
+
+    assert format_tool_args_for_display("npm run build", tool_name="Bash") == "npm run build"
+    assert format_tool_args_for_display("{not json", tool_name="Bash") == "{not json"

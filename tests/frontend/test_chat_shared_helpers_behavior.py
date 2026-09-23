@@ -1496,3 +1496,133 @@ def test_execution_timeline_renders_workspace_prewarm_progress():
     process = (ROOT / "frontend/src/utils/processTimeline.ts").read_text(encoding="utf-8")
     assert "WORKSPACE_PREWARM_LOG_ID" in process
     assert "workspace:sandbox" in process
+
+
+def test_process_timeline_keeps_tool_args_when_tool_output_overwrites_details():
+    """工具完成事件会覆盖 details（工具输出），但不能连带冲掉入参（Bash 命令）。"""
+    result = _run_typescript(
+        "frontend/src/utils/processTimeline.ts",
+        """
+const target = {};
+api.upsertTimelineLog(target, {
+  id: 'bash-1',
+  title: '调用工具: Bash',
+  details: '',
+  tool_args: 'npm run build',
+  status: 'pending',
+  category: 'tool',
+});
+api.upsertTimelineLog(target, {
+  id: 'bash-1',
+  title: '工具完成: Bash (1200ms)',
+  details: 'build ok',
+  status: 'success',
+  category: 'tool',
+});
+const item = target.processTimeline[0];
+return { toolArgs: item.tool_args, details: item.details, status: item.status };
+""",
+    )
+
+    assert result["toolArgs"] == "npm run build"
+    assert result["details"] == "build ok"
+    assert result["status"] == "success"
+
+
+def test_process_timeline_omits_tool_args_key_for_tools_without_arguments():
+    """没有入参的工具不应凭空多出 tool_args 字段，保持时间线项结构稳定。"""
+    result = _run_typescript(
+        "frontend/src/utils/processTimeline.ts",
+        """
+const target = {};
+api.upsertTimelineLog(target, {
+  id: 'tool-1',
+  title: '模型调用: DeepSeek',
+  details: '',
+  status: 'success',
+  category: 'model',
+});
+return target.processTimeline[0];
+""",
+    )
+
+    assert "tool_args" not in result
+
+
+def test_merge_timeline_logs_keeps_tool_args_from_live_logs():
+    """实时 logs 合并进 timeline 时，命令不能只留在 logs 一侧而丢失。"""
+    result = _run_typescript(
+        "frontend/src/utils/processTimeline.ts",
+        """
+const timeline = [
+  { kind: 'log', id: 'bash-1', title: '工具完成: Bash', details: '', status: 'success', category: 'tool' }
+];
+api.mergeTimelineLogs(timeline, [
+  { id: 'bash-1', title: '工具完成: Bash', details: 'ok', tool_args: 'npm run build', status: 'success', category: 'tool' }
+]);
+return timeline[0];
+""",
+    )
+
+    assert result["tool_args"] == "npm run build"
+    assert result["details"] == "ok"
+
+
+def test_hydrate_history_process_timeline_keeps_persisted_tool_args():
+    """历史回放要能看到当时跑的命令。"""
+    result = _run_typescript(
+        "frontend/src/utils/processTimeline.ts",
+        """
+return api.hydrateHistoryProcessTimeline([
+  { kind: 'log', id: 'bash-1', title: '工具完成: Bash (1200ms)', details: 'ok', tool_args: 'npm run build', status: 'success', category: 'tool' }
+]);
+""",
+    )
+
+    assert result[0]["tool_args"] == "npm run build"
+
+
+def test_process_timeline_keeps_tool_call_model_and_result_state():
+    """工具卡片要保留后端已上报的模型、温度与框架侧结果状态。"""
+    result = _run_typescript(
+        "frontend/src/utils/processTimeline.ts",
+        """
+const target = {};
+api.upsertTimelineLog(target, {
+  id: 'bash-1',
+  title: '工具完成: Bash (1200ms)',
+  details: 'ok',
+  status: 'success',
+  category: 'tool',
+  model: 'DeepSeek-V3.2',
+  temperature: 0.2,
+  tool_result_state: 'timeout',
+});
+const item = target.processTimeline[0];
+return { model: item.model, temperature: item.temperature, state: item.tool_result_state };
+""",
+    )
+
+    assert result["model"] == "DeepSeek-V3.2"
+    assert result["temperature"] == 0.2
+    assert result["state"] == "timeout"
+
+
+def test_merge_timeline_logs_keeps_tool_call_metadata():
+    result = _run_typescript(
+        "frontend/src/utils/processTimeline.ts",
+        """
+const timeline = [
+  { kind: 'log', id: 'bash-1', title: '工具完成: Bash', details: '', status: 'success', category: 'tool' }
+];
+api.mergeTimelineLogs(timeline, [
+  { id: 'bash-1', title: '工具完成: Bash', details: 'ok', status: 'success', category: 'tool',
+    model: 'Qwen3', temperature: 0.7, tool_result_state: 'denied' }
+]);
+return timeline[0];
+""",
+    )
+
+    assert result["model"] == "Qwen3"
+    assert result["temperature"] == 0.7
+    assert result["tool_result_state"] == "denied"

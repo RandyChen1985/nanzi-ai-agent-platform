@@ -89,6 +89,7 @@ from app.services.ai.runtime.agentscope.stream_reconcile import (
     build_tool_review_lines,
     GENERIC_SYNTHESIS_EMPTY_FALLBACK,
     compute_stream_reconcile_gap,
+    format_tool_args_for_display,
     needs_tool_synthesis_fallback,
     truncate_for_display,
 )
@@ -3555,6 +3556,10 @@ class AssistantAgentRunner(BaseExecutor):
             "model": t_model,
             "temperature": t_temp,
         }
+        # 工具入参单独承载（Bash 即命令原文），不占用 details 的输出截断预算。
+        display_args = format_tool_args_for_display(tool_args, tool_name=tool_name)
+        if display_args:
+            log_event["tool_args"] = display_args
         file_metadata = _build_file_tool_metadata(tool_name, tool_args, tool_output)
         if file_metadata:
             log_event["file_metadata"] = file_metadata

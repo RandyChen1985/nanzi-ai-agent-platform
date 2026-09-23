@@ -8,6 +8,7 @@ import uuid
 from typing import Any, AsyncGenerator, Callable, Dict, List, Protocol
 
 from app.services.ai.context_compaction_log_service import context_compaction_log_service
+from app.services.ai.runtime.agentscope.stream_reconcile import format_tool_args_for_display
 from app.services.ai.runtime.agentscope.tool_result import normalize_tool_result_state
 
 logger = logging.getLogger(__name__)
@@ -586,14 +587,20 @@ async def map_standard_agentscope_event(
                 }
                 return
 
-        yield {
+        # 进行中的工具卡片就要能显示真实入参（Bash 即命令原文）：
+        # 流式分片场景下参数可能尚未到达，此时仅有标题，参数由完成事件补齐。
+        start_log = {
             "type": "log",
             "id": tool_id,
             "title": f"调用工具: {tool_name}",
-            "details": "参数: {}",
+            "details": "",
             "status": "pending",
             "category": "tool",
         }
+        display_args = format_tool_args_for_display(inline_arguments, tool_name=tool_name)
+        if display_args:
+            start_log["tool_args"] = display_args
+        yield start_log
         if tool_name == "Bash" and not state.get("bash_env_emitted"):
             state["bash_env_emitted"] = True
             yield {"type": "bash_env", "env": await _sandbox_bash_env(state)}

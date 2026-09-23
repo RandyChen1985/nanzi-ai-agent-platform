@@ -1,13 +1,19 @@
 from __future__ import annotations
 
+import json
 import re
+from typing import Any
 
 # 流式 SSE 已发送正文 vs AgentState 最终 assistant 文本的对齐（通用，不依赖场景 if/else）
 
 DEFAULT_MIN_COMPLETE_CHARS = 32
 DEFAULT_TOOL_OUTPUT_MAX_LEN = 4000
 DEFAULT_TOOL_LOG_MAX_LEN = 500
+DEFAULT_TOOL_ARGS_MAX_LEN = 2000
 BOOKKEEPING_TOOL_NAMES = frozenset({"todo_write"})
+
+# 命令类工具：入参里的 command 就是用户最关心的「到底跑了什么」，直接展示命令原文。
+COMMAND_TOOL_NAMES = frozenset({"Bash", "bash", "exec_command", "shell", "run_command"})
 
 
 def truncate_for_context(text: str, *, max_len: int = DEFAULT_TOOL_OUTPUT_MAX_LEN) -> str:
@@ -25,6 +31,58 @@ def truncate_for_display(text: str, *, max_len: int = DEFAULT_TOOL_LOG_MAX_LEN) 
     if len(raw) <= max_len:
         return raw
     return raw[:max_len] + "\n… [日志预览已截断]"
+
+
+def format_tool_args_for_display(
+    tool_args: Any,
+    *,
+    tool_name: str = "",
+    max_len: int = DEFAULT_TOOL_ARGS_MAX_LEN,
+) -> str:
+    """把工具入参格式化为时间线卡片「参数」区块的展示文本。
+
+    命令类工具（Bash 等）直接给命令原文，回答用户「到底跑了什么命令」；
+    其余工具回退为缩进 JSON。该文本由独立字段承载，与 details（工具输出）
+    分开，避免命令挤占工具输出的截断预算。
+
+    流式事件（TOOL_CALL_START）里的 arguments 直取事件对象，可能仍是未反序列化
+    的 JSON 文本，因此字符串形态先尝试还原为对象，否则命令会整串带引号显示。
+    """
+
+    if tool_args is None:
+        return ""
+
+    payload: Any = tool_args
+    if isinstance(payload, str):
+        text = payload.strip()
+        if text.startswith("{"):
+            try:
+                decoded = json.loads(text)
+            except (TypeError, ValueError):
+                decoded = None
+            payload = decoded if isinstance(decoded, dict) else text
+        else:
+            payload = text
+
+    if isinstance(payload, dict):
+        command = payload.get("command") if tool_name in COMMAND_TOOL_NAMES else None
+        if isinstance(command, (list, tuple)):
+            raw = " ".join(str(part) for part in command).strip()
+        elif isinstance(command, str):
+            raw = command.strip()
+        else:
+            try:
+                raw = json.dumps(payload, ensure_ascii=False, indent=2)
+            except (TypeError, ValueError):
+                raw = str(payload)
+    elif isinstance(payload, str):
+        raw = payload
+    else:
+        raw = str(payload).strip()
+
+    if not raw or raw == "{}":
+        return ""
+    return truncate_for_display(raw, max_len=max_len)
 
 
 def build_tool_review_lines(

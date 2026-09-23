@@ -1277,12 +1277,14 @@ interface LogEntry {
   isRouter?: boolean;
   category?: 'router' | 'sql' | 'knowledge' | 'tool' | 'tool_resolution' | 'intent' | 'permission' | 'external' | 'model' | 'agent' | 'context' | 'default';
   tool_name?: string;
+  tool_args?: string;
   file_metadata?: import("@/utils/processTimeline").FileToolMetadata;
   resolution_status?: 'disabled' | 'missing' | 'filtered';
   execution_time_ms?: number | null;
   started_at?: number | null;
   model?: string;
   temperature?: number;
+  tool_result_state?: string;
   subagent?: SubagentTraceMeta;
   rowFilterApplied?: boolean;
 }
@@ -3620,6 +3622,10 @@ const addRealLog = (msg: Message, data: any) => {
     if (data.category !== undefined) existingLog.category = data.category as any;
     if (data.subagent !== undefined) existingLog.subagent = normalizeSubagentTraceMeta(data.subagent);
     if (data.tool_name !== undefined) existingLog.tool_name = data.tool_name;
+    if (data.tool_args !== undefined) existingLog.tool_args = data.tool_args;
+    if (data.model !== undefined) existingLog.model = data.model;
+    if (data.temperature !== undefined) existingLog.temperature = data.temperature;
+    if (data.tool_result_state !== undefined) existingLog.tool_result_state = data.tool_result_state;
     if (data.file_metadata !== undefined) existingLog.file_metadata = data.file_metadata;
     if (data.resolution_status !== undefined) existingLog.resolution_status = data.resolution_status;
     if (data.execution_time_ms !== undefined) existingLog.execution_time_ms = data.execution_time_ms;
@@ -3655,6 +3661,8 @@ const addRealLog = (msg: Message, data: any) => {
       temperature: data.temperature,
       subagent: normalizeSubagentTraceMeta(data.subagent),
       tool_name: data.tool_name,
+      tool_args: data.tool_args,
+      tool_result_state: data.tool_result_state,
       file_metadata: data.file_metadata,
       resolution_status: data.resolution_status,
       execution_time_ms: data.execution_time_ms ?? null,
