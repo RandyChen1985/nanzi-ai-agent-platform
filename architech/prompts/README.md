@@ -25,6 +25,7 @@
 | 知识库 | [system_agents/knowledge/knowledge_base.md](system_agents/knowledge/knowledge_base.md) | 知识库助手 |
 | 元数据 | [system_agents/metadata/metadata_specialist.md](system_agents/metadata/metadata_specialist.md) | 元数据专家 |
 | 元数据生成 | [meta/metadata_generator.md](meta/metadata_generator.md) | DDL/Markdown 解析 |
+| 查数底线分层 | [system_agents/chatbi/data_query_guardrails.md](system_agents/chatbi/data_query_guardrails.md) | `GLOBAL_GUARDRAILS` 规则 10.1/16 与 Schema chunk 的分层约定：字段语义随 Schema 走、行为规则只留代码 |
 
 ## 已归档（勿再作为线上依据）
 

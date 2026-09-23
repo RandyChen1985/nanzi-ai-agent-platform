@@ -192,12 +192,13 @@ class MetadataRagService:
             "不是物理数据库名；禁止写成 FROM dataset.table_name。\n"
             "# FROM/JOIN 只使用 table_name；连接目标看 data_source；"
             "meta_name / table_desc 为业务展示名，不可当表名。\n"
-            "# partition_fields 是必须优先用于时间/范围过滤的分区字段；index_fields 是应优先用于等值、范围和 JOIN 条件的索引字段。"
-            "查询必须尽量命中分区和索引，禁止无界全表扫描；若用户未提供范围，先收窄时间/数量或向用户确认。\n"
-            "# dimension_role 标识字段的分析维度角色（time/geo/category/identifier）；"
-            "hierarchy_group 相同的字段构成一条下钻路径，按 hierarchy_order 从小到大=从粗到细。"
-            "用户要求按维度看或下钻时，优先用 dimension_role != none 的字段做 GROUP BY，"
-            "下钻时沿同 hierarchy_group 的 hierarchy_order 递增方向切换更细粒度字段。\n"
+            # 这里只描述字段语义，不写行为规则（「怎么用」统一放在
+            # DataQueryPrompts.GLOBAL_GUARDRAILS）。原因：本 note 会进入向量索引正文，
+            # 把行为规则放这里会导致每次调整策略都要全量重建索引，且与代码侧规则
+            # 各自表述时容易出现口径冲突（曾出现「优先」与「不得」两种强度并存）。
+            "# 字段提示：partition_fields 标出表的分区字段，index_fields 标出表的索引字段；"
+            "dimension_role（time/geo/category/identifier）标出字段的分析维度角色，"
+            "hierarchy_group 相同的字段按 hierarchy_order 从小到大构成由粗到细的下钻链。\n"
         )
         return note + yaml.dump(data, allow_unicode=True, sort_keys=False)
 
