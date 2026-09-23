@@ -1,5 +1,6 @@
 import axios from '../utils/axios'
 import type { StandardResponse } from './common'
+import type { ProcessTimelineItem } from '../utils/processTimeline'
 
 export type AgentType = 'GENERAL' | 'CHATBI' | 'KNOWLEDGE_BASE'
 
@@ -188,6 +189,11 @@ export interface AgentExecutionHistory {
   created_at: string
   turn_count?: number
   agent_display_name?: string
+  /**
+   * 思考卡定稿快照（后端由 AgentExecutionHistoryResponse 自动带出）。
+   * 主动提问轮的 summary 为空，提问卡只能从这个快照回放。
+   */
+  process_timeline?: ProcessTimelineItem[] | null
 }
 
 export interface ContextCompactionRecord {

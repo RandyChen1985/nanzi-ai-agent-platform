@@ -824,14 +824,39 @@ async def test_finalize_completes_todo_and_retracts_untrusted_content_before_sta
 
 
 @pytest.mark.asyncio
-async def test_finalize_awaiting_user_skips_completed_audit():
-    """等待用户回答属于暂停态，不能记录成已完成事务。"""
+async def test_finalize_awaiting_user_records_audit_for_history_replay():
+    """主动提问轮必须落库，否则历史回放永久缺失该轮。
+
+    历史会话列表与历史消息都读 ai_agent_execution_history。awaiting_user 的恢复
+    方式是用户下一条消息开启新轮次，本轮不会再有收尾机会，因此必须在此落库；
+    status 保持暂停态本身，不得被记成已完成事务。
+    """
     context = PipelineContext(
         messages=[{"role": "user", "content": "需要确认"}],
         user_info={"user_id": 123},
     )
     context.execution_status = "awaiting_user"
     context.user_query = "需要确认"
+
+    with patch(
+        "app.services.ai.agent_service.AuditManager.log_transaction",
+        new_callable=AsyncMock,
+    ) as audit:
+        _ = [chunk async for chunk in FinalizeStep().run(context)]
+
+    audit.assert_awaited_once()
+    assert audit.await_args.args[5] == "awaiting_user", "暂停态必须如实落库，不能记成已完成"
+
+
+@pytest.mark.asyncio
+async def test_finalize_awaiting_permission_still_defers_audit():
+    """授权/外部执行仍是同轮可恢复暂停态，由恢复轮收尾，本轮不写审计。"""
+    context = PipelineContext(
+        messages=[{"role": "user", "content": "需要授权"}],
+        user_info={"user_id": 123},
+    )
+    context.execution_status = "awaiting_permission"
+    context.user_query = "需要授权"
 
     with patch(
         "app.services.ai.agent_service.AuditManager.log_transaction",

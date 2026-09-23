@@ -2446,7 +2446,12 @@ import {
   type BusinessConfirmationState,
 } from "@/utils/businessConfirmation";
 import {
+  applyUserQuestionReceipts,
   buildUserQuestionUserMessage,
+  markUserQuestionTimelineResolved,
+  parseUserQuestionReceipt,
+  userQuestionStatesFromTimeline,
+  type UserQuestionReceipt,
   type UserQuestionState,
 } from "@/utils/userQuestion";
 // --- Types ---
@@ -7373,13 +7378,18 @@ const fetchConversationHistory = async (
               });
           }
           if (item.summary || item.process_timeline || item.reasoning_content) {
+              const hydratedTimeline = hydrateHistoryProcessTimeline(item.process_timeline, item.reasoning_content);
+              // 提问卡实时渲染依赖消息对象上的 userQuestion（不落库），历史回放需从
+              // process_timeline 快照重建，否则卡片只剩一行「需要用户回答」。
+              const persistedQuestions = userQuestionStatesFromTimeline(hydratedTimeline);
               newHistoryBatch.push({
                   id: Date.now() + idx * 2 + 1 + offset,
                   trace_id: item.trace_id,
                   role: 'agent',
                   content: item.summary,
                   reasoningContent: item.reasoning_content ?? undefined,
-                  processTimeline: hydrateHistoryProcessTimeline(item.process_timeline, item.reasoning_content),
+                  processTimeline: hydratedTimeline,
+                  userQuestion: persistedQuestions[0],
                   logs: [],
                   isThinking: false,
                   feedback: null,
@@ -7451,6 +7461,13 @@ const fetchConversationHistory = async (
           messages.value = newHistoryBatch;
           nextTick(scrollToBottom);
         }
+        // 回答回执是后续轮次的用户消息，用它把重建出的卡片从 pending 回填为
+        // submitted/cancelled：否则历史卡片仍显示未作答，点击必然失败
+        //（Redis 中的待答记录早已随 TTL 过期）。
+        const historyReceipts = messages.value
+          .map((message) => (message.role === 'user' ? parseUserQuestionReceipt(message.content) : null))
+          .filter((receipt): receipt is UserQuestionReceipt => receipt !== null);
+        applyUserQuestionReceipts(messages.value, historyReceipts);
       }
     }
   } catch (e) {
@@ -8535,6 +8552,8 @@ const submitUserQuestion = async (
   card.selected_option_ids = [...payload.selectedOptionIds];
   card.custom_input = payload.customInput;
   card.status = payload.cancelled ? "cancelled" : "submitted";
+  // 同步收尾时间线步骤，否则提交后该步骤仍显示「进行中」呼吸灯
+  markUserQuestionTimelineResolved(msg.processTimeline, card.question_id);
   userInput.value = content;
   await sendMessage();
 };

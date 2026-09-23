@@ -242,6 +242,52 @@ def complete_todo_items(state: Optional[List[Dict[str, Any]]]) -> Optional[Dict[
     return None
 
 
+def _user_question_log_payload(chunk: Dict[str, Any]) -> Dict[str, Any] | None:
+    """Extract the replayable question card carried by a ``user_question`` chunk.
+
+    Only well-formed cards are persisted (stable ``question_id``, a question text
+    and at least two options); anything else returns ``None`` so the timeline
+    entry degrades to a plain log line and stays compatible with snapshots
+    written before the card itself was stored.
+    """
+    question_id = str(chunk.get("question_id") or "").strip()
+    question = str(chunk.get("question") or "").strip()
+    raw_options = chunk.get("options")
+    if not question_id or not question or not isinstance(raw_options, list):
+        return None
+
+    options: List[Dict[str, Any]] = []
+    for option in raw_options:
+        if not isinstance(option, dict):
+            continue
+        option_id = str(option.get("id") or "").strip()
+        if not option_id:
+            continue
+        label = str(option.get("label") or option_id).strip()
+        item: Dict[str, Any] = {"id": option_id, "label": label}
+        description = str(option.get("description") or "").strip()
+        if description:
+            item["description"] = description
+        options.append(item)
+
+    if len(options) < 2:
+        return None
+
+    payload: Dict[str, Any] = {
+        "question_id": question_id,
+        "question": question,
+        "options": options,
+        "is_multi_select": bool(chunk.get("is_multi_select", False)),
+        "allow_custom_input": bool(chunk.get("allow_custom_input", True)),
+        "context": str(chunk.get("context") or ""),
+        "purpose": str(chunk.get("purpose") or ""),
+    }
+    tool_call_id = str(chunk.get("tool_call_id") or "").strip()
+    if tool_call_id:
+        payload["tool_call_id"] = tool_call_id
+    return payload
+
+
 def apply_stream_chunk(state: List[Dict[str, Any]], chunk: Dict[str, Any]) -> None:
     """Mutate ``state`` with one user-visible thinking-card event."""
     if not isinstance(chunk, dict):
@@ -374,6 +420,10 @@ def apply_stream_chunk(state: List[Dict[str, Any]], chunk: Dict[str, Any]) -> No
             "details": str(chunk.get("question") or ""),
             "status": "pending",
             "category": "user_question",
+            # SSE 实时路径把完整卡片挂在消息对象上（msg.userQuestion），并不落库；
+            # 历史会话回放只能依赖 process_timeline，因此这里随日志一并持久化
+            # 选项与交互配置，否则历史里只剩一行标题、卡片无法重建。
+            "user_question": _user_question_log_payload(chunk),
         })
         return
 
@@ -431,6 +481,7 @@ def apply_stream_chunk(state: List[Dict[str, Any]], chunk: Dict[str, Any]) -> No
         "status": str(chunk.get("status") or "success"),
         "category": chunk.get("category"),
         "file_metadata": chunk.get("file_metadata"),
+        "user_question": chunk.get("user_question"),
         "execution_time_ms": chunk.get("execution_time_ms"),
         "subagent": chunk.get("subagent"),
         "isExpanded": False,
@@ -494,6 +545,9 @@ def _finalize_log(item: Dict[str, Any]) -> Dict[str, Any]:
         copied["subagent"] = item.get("subagent")
     if item.get("file_metadata") is not None:
         copied["file_metadata"] = item.get("file_metadata")
+    # 提问卡快照必须随定稿一起落库，否则历史回放无从重建卡片。
+    if item.get("user_question") is not None:
+        copied["user_question"] = item.get("user_question")
     if item.get("children"):
         copied["children"] = [_finalize_log(child) for child in item["children"]]
     return copied

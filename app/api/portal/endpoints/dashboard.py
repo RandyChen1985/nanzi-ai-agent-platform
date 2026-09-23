@@ -3,7 +3,7 @@ Dashboard API endpoints for statistics and overview data.
 """
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func, desc, case, text
+from sqlalchemy import select, func, desc, case, text, or_
 from app.core.dependencies import require_api_key, require_admin
 from app.core.orm import get_db_session
 from app.core.redis import get_redis
@@ -13,6 +13,15 @@ from app.models.agent import AIAgent
 from app.services.online_presence_service import OnlinePresenceService
 from datetime import datetime, timedelta
 from typing import Optional, List, Dict, Any
+
+# 暂停态轮次（等待用户回答/授权等）会写入历史表以便回放，但它们既不是成功也
+# 不是失败，不应计入 Agent 成功率的分母，否则主动提问会无端拉低成功率。
+SUSPENDED_HISTORY_STATUSES = (
+    "awaiting_user",
+    "awaiting_permission",
+    "awaiting_external_execution",
+    "interrupted",
+)
 
 router = APIRouter()
 
@@ -525,7 +534,11 @@ async def get_agent_stats(
         func.avg(AgentExecutionHistory.execution_time_ms).label("avg_lat"),
         func.sum(case((AgentExecutionHistory.status == 'success', 1), else_=0)).label("success")
     ).outerjoin(AIAgent, AgentExecutionHistory.agent_id == AIAgent.id).where(
-        AgentExecutionHistory.created_at >= start_time
+        AgentExecutionHistory.created_at >= start_time,
+        or_(
+            AgentExecutionHistory.status.is_(None),
+            AgentExecutionHistory.status.notin_(SUSPENDED_HISTORY_STATUSES),
+        ),
     )
     
     # For non-admin users, filter by user

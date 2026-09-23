@@ -77,7 +77,12 @@ import {
   type BusinessConfirmationState,
 } from "@/utils/businessConfirmation";
 import {
+  applyUserQuestionReceipts,
   buildUserQuestionUserMessage,
+  markUserQuestionTimelineResolved,
+  parseUserQuestionReceipt,
+  userQuestionStatesFromTimeline,
+  type UserQuestionReceipt,
   type UserQuestionState,
 } from "@/utils/userQuestion";
 import { useToast } from "../composables/useToast";
@@ -635,21 +640,27 @@ const loadSessionHistory = async (id: string) => {
       }
 
       const historyMsg: Message[] = validMessages.map(
-        (m: any, idx: number) => ({
-          id: Date.now() + idx,
-          trace_id: m.trace_id,
-          role: m.role === "assistant" ? "agent" : m.role,
-          content: m.content as string,
-          reasoningContent: m.reasoning_content || undefined,
-          processTimeline: hydrateHistoryProcessTimeline(m.process_timeline, m.reasoning_content),
-          logs: [],
-          isThinking: false,
-          isHistory: true, // Mark as history
-          feedback: m.feedback,
-          agentName: m.agent_name || undefined,
-          agentDisplayName: m.agent_display_name || (String(m.agent_name || '').startsWith('sys_') ? '系统助手' : undefined),
-          agentType: m.agent_type || undefined,
-        })
+        (m: any, idx: number) => {
+          const hydratedTimeline = hydrateHistoryProcessTimeline(m.process_timeline, m.reasoning_content);
+          return {
+            id: Date.now() + idx,
+            trace_id: m.trace_id,
+            role: m.role === "assistant" ? "agent" : m.role,
+            content: m.content as string,
+            reasoningContent: m.reasoning_content || undefined,
+            processTimeline: hydratedTimeline,
+            // 提问卡实时渲染依赖消息对象上的 userQuestion（不落库），历史回放需从
+            // process_timeline 快照重建，否则调试台只能看到一行「需要用户回答」。
+            userQuestion: userQuestionStatesFromTimeline(hydratedTimeline)[0],
+            logs: [],
+            isThinking: false,
+            isHistory: true, // Mark as history
+            feedback: m.feedback,
+            agentName: m.agent_name || undefined,
+            agentDisplayName: m.agent_display_name || (String(m.agent_name || '').startsWith('sys_') ? '系统助手' : undefined),
+            agentType: m.agent_type || undefined,
+          };
+        }
       );
       if (historyMsg.length > 0) {
         // Add Separator with Timestamp
@@ -675,6 +686,13 @@ const loadSessionHistory = async (id: string) => {
         });
 
         messages.value = historyMsg;
+        // 回答回执是后续轮次的用户消息，用它把重建出的卡片从 pending 回填为
+        // submitted/cancelled：否则历史卡片仍显示未作答，点击必然失败
+        //（Redis 中的待答记录早已随 TTL 过期）。
+        const historyReceipts = historyMsg
+          .map((message) => (message.role === 'user' ? parseUserQuestionReceipt(message.content) : null))
+          .filter((receipt): receipt is UserQuestionReceipt => receipt !== null);
+        applyUserQuestionReceipts(historyMsg, historyReceipts);
         nextTick(scrollToBottom);
         return;
       }
@@ -3900,6 +3918,8 @@ const submitUserQuestion = async (
   card.selected_option_ids = [...payload.selectedOptionIds];
   card.custom_input = payload.customInput;
   card.status = payload.cancelled ? "cancelled" : "submitted";
+  // 同步收尾时间线步骤，否则提交后该步骤仍显示「进行中」呼吸灯
+  markUserQuestionTimelineResolved(msg.processTimeline, card.question_id);
   userInput.value = content;
   await sendMessage();
 };

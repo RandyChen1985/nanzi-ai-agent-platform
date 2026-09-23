@@ -288,3 +288,68 @@ def test_history_persistence_contract_covers_redis_audit_and_api():
     assert "process_timeline" in audit
     assert '"process_timeline"' in chat or "process_timeline" in chat
     assert "process_timeline" in memory
+
+
+def test_user_question_card_is_persisted_with_options_for_history_replay():
+    """提问卡必须随 process_timeline 定稿落库。
+
+    实时卡片挂在消息对象的 userQuestion 上且不落库，历史会话只能依赖这里；
+    且 finalize 阶段的白名单压缩不能把卡片快照洗掉。
+    """
+    items = _run(
+        [
+            {
+                "type": "user_question",
+                "question_id": "uq_abc123",
+                "question": "请选择要分析的数据集",
+                "options": [
+                    {"id": "ds_1", "label": "销售数据集", "description": "近 30 天"},
+                    {"id": "ds_2", "label": "库存数据集"},
+                ],
+                "is_multi_select": False,
+                "allow_custom_input": True,
+                "context": "需要确定分析口径",
+                "purpose": "chatbi_dataset_selection",
+                "tool_call_id": "call_1",
+            }
+        ]
+    )
+
+    assert items is not None and len(items) == 1
+    entry = items[0]
+    assert entry["kind"] == "log"
+    assert entry["category"] == "user_question"
+    assert entry["id"] == "user_question_uq_abc123"
+    assert entry["details"] == "请选择要分析的数据集"
+    assert entry["user_question"] == {
+        "question_id": "uq_abc123",
+        "question": "请选择要分析的数据集",
+        "options": [
+            {"id": "ds_1", "label": "销售数据集", "description": "近 30 天"},
+            {"id": "ds_2", "label": "库存数据集"},
+        ],
+        "is_multi_select": False,
+        "allow_custom_input": True,
+        "context": "需要确定分析口径",
+        "purpose": "chatbi_dataset_selection",
+        "tool_call_id": "call_1",
+    }
+
+
+def test_user_question_without_usable_options_degrades_to_plain_log():
+    """结构不完整的卡片不落快照，退化为普通日志行，避免历史回放拿到残卡。"""
+    items = _run(
+        [
+            {
+                "type": "user_question",
+                "question_id": "uq_bad",
+                "question": "只有一个可选项",
+                "options": [{"id": "only", "label": "唯一"}],
+            }
+        ]
+    )
+
+    assert items is not None and len(items) == 1
+    assert items[0]["category"] == "user_question"
+    assert "user_question" not in items[0]
+    assert items[0]["details"] == "只有一个可选项"

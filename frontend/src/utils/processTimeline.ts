@@ -52,6 +52,12 @@ export type ProcessTimelineLogItem = {
   category?: string;
   tool_name?: string;
   file_metadata?: FileToolMetadata;
+  /**
+   * 主动提问（ask_user_question）卡片的持久化快照。
+   * 卡片实时渲染依赖消息对象上的 `userQuestion`，该字段不落库；历史回放时
+   * 只能从 process_timeline 的这个字段重建，缺失则只剩一行「需要用户回答」。
+   */
+  user_question?: PersistedUserQuestion | null;
   resolution_status?: ToolResolutionStatus;
   execution_time_ms?: number | null;
   started_at?: number | null;
@@ -59,6 +65,18 @@ export type ProcessTimelineLogItem = {
   isExpanded?: boolean;
   children?: ProcessTimelineLogItem[];
   childrenExpanded?: boolean;
+};
+
+/** 提问卡落库形态：只含稳定内容，回答状态由历史消息另行回填。 */
+export type PersistedUserQuestion = {
+  question_id: string;
+  question: string;
+  options: Array<{ id: string; label: string; description?: string }>;
+  is_multi_select?: boolean;
+  allow_custom_input?: boolean;
+  context?: string;
+  purpose?: string;
+  tool_call_id?: string;
 };
 
 export type ProcessTimelineTodo = {

@@ -32,6 +32,15 @@ import {
 } from '@/utils/chatSessionExport'
 import { copyToClipboard } from '@/utils/clipboard'
 import ContextCompactionTimeline from '@/components/chat/ContextCompactionTimeline.vue'
+import UserQuestionCard from '@/components/UserQuestionCard.vue'
+import {
+  applyUserQuestionReceipts,
+  parseUserQuestionReceipt,
+  userQuestionStatesFromTimeline,
+  userQuestionTextFromTimeline,
+  type UserQuestionReceipt,
+  type UserQuestionState,
+} from '@/utils/userQuestion'
 import {
   formatSubagentTraceSummary,
   normalizeSubagentTraceMeta,
@@ -79,7 +88,13 @@ let contextRequestVersion = 0
 const exporting = ref(false)
 
 // 多轮对话状态
-const conversationTurns = ref<AgentExecutionHistory[]>([])
+/** 日志轮次：附带从 process_timeline 快照重建的提问卡，用于只读回放 AI 的主动提问。 */
+type ConversationTurn = AgentExecutionHistory & {
+  userQuestion?: UserQuestionState
+  /** 修复前落库的轮次没有卡片快照，退化为只回放问题文本 */
+  userQuestionText?: string
+}
+const conversationTurns = ref<ConversationTurn[]>([])
 const turnsLoading = ref(false)
 const selectedTraceId = ref<string | null>(null)
 let turnsRequestVersion = 0
@@ -495,6 +510,30 @@ const exportSession = async (log: AgentExecutionHistory) => {
   }
 }
 
+/**
+ * 为日志轮次附加从 process_timeline 快照重建的提问卡，并按后续轮的「用户回答」回执回填状态。
+ *
+ * 主动提问轮的 summary 为空（模型只提了问题、没有正文），若不重建，聊天日志
+ * 只会显示「(无响应内容)」，看不到 AI 究竟问了什么、用户选了什么。
+ */
+const setConversationTurns = (turns: ConversationTurn[]) => {
+  for (const turn of turns) {
+    const states = userQuestionStatesFromTimeline(turn.process_timeline)
+    if (states.length > 0) {
+      turn.userQuestion = states[0]
+    } else {
+      // 修复前落库的轮次没有卡片快照，退化为回放问题文本
+      const legacyText = userQuestionTextFromTimeline(turn.process_timeline)
+      if (legacyText) turn.userQuestionText = legacyText
+    }
+  }
+  const receipts = turns
+    .map((turn) => parseUserQuestionReceipt(turn.query))
+    .filter((receipt): receipt is UserQuestionReceipt => receipt !== null)
+  applyUserQuestionReceipts(turns, receipts)
+  conversationTurns.value = turns
+}
+
 const loadConversationTurns = async (log: AgentExecutionHistory | null) => {
   const reqVer = ++turnsRequestVersion
   if (!log) {
@@ -506,7 +545,7 @@ const loadConversationTurns = async (log: AgentExecutionHistory | null) => {
 
   // 单调用模式或无 conversation_id，直接作为单轮展示
   if (viewMode.value === 'turn' || !log.conversation_id?.trim()) {
-    conversationTurns.value = [log]
+    setConversationTurns([log])
     selectedTraceId.value = log.trace_id
     void loadTrace(log.trace_id)
     return
@@ -525,7 +564,7 @@ const loadConversationTurns = async (log: AgentExecutionHistory | null) => {
       items.sort(
         (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime(),
       )
-      conversationTurns.value = items
+      setConversationTurns(items)
       // 默认聚焦最新的一轮
       const last = items[items.length - 1]
       if (last) {
@@ -536,14 +575,14 @@ const loadConversationTurns = async (log: AgentExecutionHistory | null) => {
         void loadTrace(log.trace_id)
       }
     } else {
-      conversationTurns.value = [log]
+      setConversationTurns([log])
       selectedTraceId.value = log.trace_id
       void loadTrace(log.trace_id)
     }
   } catch (e) {
     if (reqVer !== turnsRequestVersion) return
     console.error('Failed to load conversation turns', e)
-    conversationTurns.value = [log]
+    setConversationTurns([log])
     selectedTraceId.value = log.trace_id
     void loadTrace(log.trace_id)
   } finally {
@@ -1084,20 +1123,34 @@ onMounted(() => {
                     <button
                       type="button"
                       class="text-[11px] text-primary/50 hover:text-primary font-medium opacity-70 group-hover:opacity-100 shrink-0"
-                      @click="copyText(turn.summary || '', '回复内容')"
+                      @click="copyText(turn.summary || turn.userQuestion?.question || turn.userQuestionText || '', '回复内容')"
                     >
                       复制
                     </button>
                   </div>
                 </div>
-                <div v-if="!turn.summary" class="text-sm text-gray-500">(无响应内容)</div>
+                <div v-if="!turn.summary && !turn.userQuestion && !turn.userQuestionText" class="text-sm text-gray-500">(无响应内容)</div>
+                <!-- 主动提问轮没有正文（模型只提了问题），回放提问卡，否则日志里只剩「(无响应内容)」 -->
+                <UserQuestionCard
+                  v-if="turn.userQuestion"
+                  :payload="turn.userQuestion"
+                  disabled
+                  class="mb-2"
+                />
+                <!-- 修复前落库的轮次没有卡片快照，退化为只回放问题文本 -->
                 <div
-                  v-else-if="getTurnReplyMode(turn.id) === 'render'"
+                  v-else-if="turn.userQuestionText"
+                  class="mb-2 rounded-lg border border-violet-100 bg-violet-50/60 px-3 py-2 text-xs leading-relaxed text-violet-900"
+                >
+                  <span class="font-semibold">AI 提问：</span>{{ turn.userQuestionText }}
+                </div>
+                <div
+                  v-if="turn.summary && getTurnReplyMode(turn.id) === 'render'"
                   class="markdown-body prose prose-sm max-w-none text-gray-800 break-words"
                   v-html="renderTurnReply(turn.summary)"
                 />
                 <pre
-                  v-else
+                  v-else-if="turn.summary"
                   class="text-sm text-gray-800 whitespace-pre-wrap break-words leading-relaxed font-mono bg-white/60 border border-blue-100/80 rounded-lg p-3 overflow-x-auto"
                 >{{ turn.summary }}</pre>
 

@@ -13,12 +13,23 @@ from app.core.cancellation import await_unless_cancelling, current_task_cancelli
 
 logger = logging.getLogger(__name__)
 
-# 不需要在此刻做完结审计的状态（等待外部恢复）
+# 暂停态：本轮结束时等待外部恢复，正文不得覆盖该终态。
 AWAITING_RESUME_STATUSES = {
     "interrupted",
     "awaiting_permission",
     "awaiting_external_execution",
     "awaiting_user",
+}
+
+# 其中真正具备「同轮恢复」语义、由恢复轮补写审计的状态。
+# awaiting_user 刻意不在此列：主动提问（ask_user_question）的恢复方式是用户下一条
+# 消息开启全新轮次（新 trace_id），本轮永远不会再有收尾机会；若在此处跳过，
+# ai_agent_execution_traces / ai_agent_execution_history 将永久缺少这一轮，
+# 导致历史会话列表与历史消息都无法回放该提问。
+AUDIT_DEFERRED_STATUSES = {
+    "interrupted",
+    "awaiting_permission",
+    "awaiting_external_execution",
 }
 
 # 原版（重构前）在 chat_completion_stream 外层早退、根本没有任何终结产物的状态。
@@ -187,7 +198,7 @@ class FinalizeStep(BasePipelineStep):
 
             is_scheduled_task = bool(user_info and user_info.get("is_scheduled_task"))
             if (
-                context.execution_status not in AWAITING_RESUME_STATUSES
+                context.execution_status not in AUDIT_DEFERRED_STATUSES
                 and context.execution_status not in SHORT_CIRCUIT_NO_FINALIZE_STATUSES
             ) or is_scheduled_task:
                 end_time = asyncio.get_running_loop().time()
