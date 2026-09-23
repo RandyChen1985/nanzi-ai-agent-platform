@@ -917,12 +917,15 @@ onMounted(async () => {
       </div>
 
       <template v-else>
+        <!-- 注意：本卡片不能用 overflow-hidden —— 配置项的 tooltip 是向下弹出的 absolute
+             元素，祖先的 overflow 裁剪发生在绘制阶段、z-index 无法逃逸，会让提示框只剩一条
+             且右侧被切。圆角改由头部 rounded-t-lg 承担。 -->
         <section
           v-for="group in visibleConfigGroups"
           :key="group.id"
-          class="bg-white border border-gray-200 rounded-lg shadow-sm overflow-hidden dark:bg-gray-800 dark:border-gray-700"
+          class="bg-white border border-gray-200 rounded-lg shadow-sm dark:bg-gray-800 dark:border-gray-700"
         >
-          <div class="px-4 py-3 border-b border-gray-100 bg-gray-50/80 dark:bg-gray-900/40 dark:border-gray-700">
+          <div class="px-4 py-3 border-b border-gray-100 bg-gray-50/80 rounded-t-lg dark:bg-gray-900/40 dark:border-gray-700">
             <h3 class="text-sm font-semibold text-gray-900 dark:text-white">{{ group.title }}</h3>
             <p v-if="group.description" class="text-xs text-gray-500 mt-0.5">{{ group.description }}</p>
           </div>
