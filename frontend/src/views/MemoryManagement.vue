@@ -461,7 +461,9 @@ const confirmRebuildVectors = async () => {
 }
 
 const handleTaskDrawerFinished = async (payload: { ok: boolean; message: string }) => {
-  showToast(payload.message || (payload.ok ? '任务完成' : '任务失败'), payload.ok ? 'success' : 'error')
+  // 成功时抽屉已用「状态：已完成 + 进度条 + 全量日志」完整呈现结果，再弹 toast 属于重复提示；
+  // 仅在失败时补一条显眼的错误提醒。
+  if (!payload.ok) showToast(payload.message || '任务失败', 'error')
   // 任务结束后刷新索引状态徽标
   await loadIndexStatus()
 }
