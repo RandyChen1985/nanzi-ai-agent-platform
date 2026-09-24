@@ -3,6 +3,7 @@ import { ref, reactive, nextTick, computed, watch, onMounted, onUnmounted, type 
 import MentionList from "@/components/agent/MentionList.vue";
 import AttachmentImageThumb from "@/components/embed/AttachmentImageThumb.vue";
 import SkillCascadeMenu from "@/components/embed/SkillCascadeMenu.vue";
+import GeneratingWalker from "@/components/embed/GeneratingWalker.vue";
 import type { SkillItem } from "@/components/embed/SkillCascadeMenu.vue";
 import McpCascadeMenu from "@/components/embed/McpCascadeMenu.vue";
 import type { McpToolItem } from "@/components/embed/McpCascadeMenu.vue";
@@ -85,7 +86,7 @@ const REASONING_EFFORT_OPTIONS: Array<{ value: ReasoningEffort; label: string; d
   { value: "xhigh", label: "极高", description: "极难 Coding Agent、长任务" },
 ];
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   modelValue: string;
   isProcessing: boolean;
   /** 发送前置检查/历史同步阶段；此时不能显示“停止生成”。 */
@@ -141,7 +142,11 @@ const props = defineProps<{
   groundingBlockMode?: "strict_buffer" | "stream_with_retraction";
   /** 沙箱后端：docker | k8s（决定浮标术语与「操作」菜单项） */
   sandboxBackend?: "docker" | "k8s";
-}>();
+  /** 生成中是否展示输入框内的跑道动画（设置面板可关，默认开） */
+  showGeneratingAnimation?: boolean;
+}>(), {
+  showGeneratingAnimation: true,
+});
 
 const textareaPaddingRightClass = computed(() => {
   const hasContext = Boolean(props.contextUsage && props.contextUsage.physical_window);
@@ -1938,17 +1943,21 @@ defineExpose({
         <div
           @dragover.prevent
           @drop="handleDropFile"
-          class="relative flex flex-col rounded-2xl border bg-white px-3 py-2.5 transition-all duration-300 focus-within:border-primary focus-within:ring-2 focus-within:ring-primary/25 dark:bg-gray-800 dark:focus-within:ring-primary/30"
+          class="relative flex flex-col rounded-2xl border bg-white px-3 py-2.5 transition-all duration-300 dark:bg-gray-800"
           :class="isProcessing
-            ? 'border-primary/60 bg-blue-50/30 dark:bg-blue-950/20 dark:border-primary/50 input-glow-processing'
-            : 'border-gray-200 dark:border-gray-700'"
+            ? 'border-gray-300 dark:border-gray-600'
+            : 'border-gray-200 dark:border-gray-700 focus-within:border-gray-400 focus-within:ring-2 focus-within:ring-gray-900/5 dark:focus-within:border-gray-500 dark:focus-within:ring-gray-100/10'"
         >
-            <!-- 三点跳动 Loading 指示器 -->
-            <div v-if="isInteractionLocked" class="absolute top-3 left-3 flex items-center space-x-1.5 pointer-events-none z-20">
-                <span class="ai-dot" style="animation-delay: 0ms"></span>
-                <span class="ai-dot" style="animation-delay: 150ms"></span>
-                <span class="ai-dot" style="animation-delay: 300ms"></span>
-                <span class="ml-1.5 text-[11px] font-medium text-primary/70 select-none">{{ isProcessing ? (enableGrounding ? 'AI 正在生成并严格核验证据…' : 'AI 正在努力生成回复中，请稍候…') : isSubmitting ? '准备发送…' : '' }}</span>
+            <!-- 三点跳动 Loading 指示器 + 生成中跑道动画 -->
+            <div v-if="isInteractionLocked" class="absolute top-3 left-3 right-3 pointer-events-none z-20">
+                <div class="flex items-center space-x-1.5">
+                    <span class="ai-dot" style="animation-delay: 0ms"></span>
+                    <span class="ai-dot" style="animation-delay: 150ms"></span>
+                    <span class="ai-dot" style="animation-delay: 300ms"></span>
+                    <span class="ml-1.5 text-[11px] font-medium text-gray-500 dark:text-gray-400 select-none">{{ isProcessing ? (enableGrounding ? 'AI 正在生成并严格核验证据…' : 'AI 正在努力生成回复中，请稍候。') : isSubmitting ? '准备发送…' : '' }}</span>
+                </div>
+                <!-- 跑道独立成行：小人不能在文案那一行里横穿过去；设置面板可关闭 -->
+                <GeneratingWalker v-if="showGeneratingAnimation" class="mt-1" />
             </div>
 
             <div
@@ -3624,17 +3633,8 @@ defineExpose({
   width: 5px;
   height: 5px;
   border-radius: 50%;
-  background-color: var(--primary-color, #1677ff);
+  background-color: #9ca3af;
   animation: ai-bounce 1.2s ease-in-out infinite;
-}
-
-/* ── AI 生成中：边框呼吸光晕 ── */
-@keyframes glow-pulse {
-  0%, 100% { box-shadow: 0 0 0 0 rgba(22, 119, 255, 0); }
-  50%       { box-shadow: 0 0 0 4px rgba(22, 119, 255, 0.15), 0 0 16px 2px rgba(22, 119, 255, 0.10); }
-}
-.input-glow-processing {
-  animation: glow-pulse 2s ease-in-out infinite;
 }
 
 /* ── 滚动条 ── */

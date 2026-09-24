@@ -1626,3 +1626,45 @@ return timeline[0];
     assert result["model"] == "Qwen3"
     assert result["temperature"] == 0.7
     assert result["tool_result_state"] == "denied"
+
+
+def test_walker_duration_holds_a_constant_speed_across_lane_widths():
+    """小人速度必须与跑道宽度无关：宽度翻倍，时长也翻倍。
+
+    用户实测反馈「移动端还行，电脑端跑太快」——根因是时长写死 9s，速度随
+    宽度线性放大（375px 时约 42px/s，1100px 时约 122px/s，快了近 3 倍）。
+    """
+    result = _run_typescript(
+        "frontend/src/utils/generatingWalkerSpeed.ts",
+        """
+return {
+  mobile: api.walkerDurationSeconds(375),
+  desktop: api.walkerDurationSeconds(1100),
+  speed: api.WALKER_PIXELS_PER_SECOND
+};
+""",
+    )
+
+    assert result["speed"] == 45
+    assert result["mobile"] == pytest.approx(375 / 45, abs=0.01)
+    assert result["desktop"] == pytest.approx(1100 / 45, abs=0.01)
+    # 两档的隐含速度必须一致，这才是「自适应」的定义。
+    assert result["mobile"] / 375 == pytest.approx(result["desktop"] / 1100, rel=1e-6)
+
+
+def test_walker_duration_clamps_degenerate_widths():
+    """宽度为 0 / 负数 / 超大时必须落在可用区间，不能算出 0 或无穷时长。"""
+    result = _run_typescript(
+        "frontend/src/utils/generatingWalkerSpeed.ts",
+        """
+return {
+  zero: api.walkerDurationSeconds(0),
+  negative: api.walkerDurationSeconds(-500),
+  huge: api.walkerDurationSeconds(99999)
+};
+""",
+    )
+
+    assert result["zero"] == 3
+    assert result["negative"] == 3
+    assert result["huge"] == 30

@@ -1278,6 +1278,7 @@
         :sandbox-workspace-error="sandboxWorkspaceError"
         :sandbox-backend="sandboxBackend"
         :enable-grounding="config.enableGrounding"
+        :show-generating-animation="config.showGeneratingAnimation"
         :grounding-block-mode="config.groundingBlockMode"
         @start-sandbox-workspace="ensureSandboxWorkspace"
         @refresh-sandbox-workspace="refreshSandboxWorkspaceStatus"
@@ -3349,6 +3350,8 @@ const config = reactive({
   hideMessageBorder: true,
   /** Bash 运行环境横幅提示开关（可在设置面板中切换，localStorage 持久化） */
   showBashBanner: localStorage.getItem("bash_env_banner_ignored") !== "1",
+  /** 生成中跑道动画开关（可在设置面板中切换，localStorage 持久化） */
+  showGeneratingAnimation: true,
 });
 type BrowserApprovalMode = "guarded" | "autopilot";
 const browserPanelVisible = ref(false);
@@ -3734,6 +3737,7 @@ const saveRoutingSettings = () => {
     localStorage.setItem("yovole_grounding_block_mode", config.groundingBlockMode || "strict_buffer");
     localStorage.setItem("yovole_markdown_theme", config.markdownTheme || "default");
     localStorage.setItem("yovole_hide_message_border", config.hideMessageBorder ? "1" : "0");
+    localStorage.setItem("yovole_show_generating_animation", config.showGeneratingAnimation ? "1" : "0");
 };
 const saveRoutingPreference = async (mode: "auto" | "expert", agentId = "") => {
     if (isRoutingSettingsLocked.value) return;
@@ -9389,6 +9393,10 @@ onMounted(() => {
   const savedHideMessageBorder = localStorage.getItem("yovole_hide_message_border");
   if (savedHideMessageBorder !== null) {
     config.hideMessageBorder = savedHideMessageBorder === "1";
+  }
+  const savedShowGeneratingAnimation = localStorage.getItem("yovole_show_generating_animation");
+  if (savedShowGeneratingAnimation !== null) {
+    config.showGeneratingAnimation = savedShowGeneratingAnimation === "1";
   }
   // 清理可能残留的陈旧本地头像缓存，AI 头像始终以服务端 Redis 全局配置为准
   localStorage.removeItem("yovole_embed_agent_avatar");
