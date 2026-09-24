@@ -153,6 +153,19 @@ async def test_agent_runtime_config_batch_loads(monkeypatch):
     assert get_many_mock.await_count == 2
 
 
+@pytest.mark.asyncio
+async def test_agent_runtime_tool_result_limit_defaults_to_64k(monkeypatch):
+    """未配置该项时，工具结果上限必须是 64Ki token（与平台侧 64Ki 字符对齐）。"""
+    from app.services.ai.runtime.agentscope import agent_runtime as module
+
+    get_many_mock = AsyncMock(return_value={})
+    monkeypatch.setattr("app.services.config_service.ConfigService.get_many", get_many_mock)
+
+    context_cfg = await module.load_context_config()
+
+    assert context_cfg.tool_result_limit == 65536
+
+
 def test_workspace_sandbox_log_build():
     from app.services.ai.agent_service import _build_workspace_sandbox_log
 

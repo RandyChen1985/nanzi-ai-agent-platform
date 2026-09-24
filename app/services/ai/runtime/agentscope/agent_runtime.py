@@ -126,7 +126,11 @@ async def load_context_config() -> Any:
     configs = await ConfigService.get_many({
         "agentscope_context_trigger_ratio": "0.8",
         "agentscope_context_reserve_ratio": "0.1",
-        "agentscope_tool_result_limit": "2000",
+        # 单条工具结果的 token 上限（AgentScope 单位是 token），64Ki 与平台侧
+        # DEFAULT_TOOL_OUTPUT_MAX_LEN（64Ki 字符）对齐。原值 2000 会让中等规模的
+        # MCP 查询结果被拆成「上下文 + 落盘文件」两段，且落盘文件只含被省略的
+        # 尾部，模型据此无法还原完整结果。
+        "agentscope_tool_result_limit": "65536",
     })
 
     def _float(val: Any, default: float) -> float:
@@ -143,7 +147,7 @@ async def load_context_config() -> Any:
 
     trigger_ratio = _float(configs.get("agentscope_context_trigger_ratio"), 0.8)
     reserve_ratio = _float(configs.get("agentscope_context_reserve_ratio"), 0.1)
-    tool_result_limit = _int(configs.get("agentscope_tool_result_limit"), 2000)
+    tool_result_limit = _int(configs.get("agentscope_tool_result_limit"), 65536)
 
     trigger_ratio = min(max(trigger_ratio, 0.5), 0.89)
     reserve_ratio = min(max(reserve_ratio, 0.05), trigger_ratio - 0.05)

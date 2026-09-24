@@ -255,8 +255,12 @@ async def test_runtime_tool_serializes_structured_result_as_json():
 
 @pytest.mark.asyncio
 async def test_runtime_tool_truncates_oversized_result_with_marker():
+    from app.services.ai.runtime.agentscope.stream_reconcile import (
+        DEFAULT_TOOL_OUTPUT_MAX_LEN,
+    )
+
     async def invoke(**_kwargs):
-        return {"payload": "x" * 5000}
+        return {"payload": "x" * (DEFAULT_TOOL_OUTPUT_MAX_LEN + 1000)}
 
     spec = RuntimeToolSpec(
         name="mcp-large-result",
@@ -270,7 +274,34 @@ async def test_runtime_tool_truncates_oversized_result_with_marker():
     text = result.content[0].text
 
     assert "… [输出已截断]" in text
-    assert len(text) <= 4000 + len("\n… [输出已截断]")
+    assert len(text) <= DEFAULT_TOOL_OUTPUT_MAX_LEN + len("\n… [输出已截断]")
+
+
+@pytest.mark.asyncio
+async def test_runtime_tool_keeps_result_at_upper_bound_intact():
+    """上限之内的中等规模结果不得被平台侧提前截断。"""
+    from app.services.ai.runtime.agentscope.stream_reconcile import (
+        DEFAULT_TOOL_OUTPUT_MAX_LEN,
+    )
+
+    payload = "x" * DEFAULT_TOOL_OUTPUT_MAX_LEN
+
+    async def invoke(**_kwargs):
+        return payload
+
+    spec = RuntimeToolSpec(
+        name="mcp-medium-result",
+        description="medium result",
+        parameters_schema={"type": "object", "properties": {}},
+        source_type="mcp",
+        callable=invoke,
+    )
+
+    result = await AgentScopeRuntimeTool(spec)()
+    text = result.content[0].text
+
+    assert "… [输出已截断]" not in text
+    assert text == payload
 
 
 @pytest.mark.asyncio

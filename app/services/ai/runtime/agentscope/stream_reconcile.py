@@ -7,7 +7,11 @@ from typing import Any
 # 流式 SSE 已发送正文 vs AgentState 最终 assistant 文本的对齐（通用，不依赖场景 if/else）
 
 DEFAULT_MIN_COMPLETE_CHARS = 32
-DEFAULT_TOOL_OUTPUT_MAX_LEN = 4000
+# 工具结果进入模型上下文前的上限，单位是字符（非 token）。取 64Ki 字符与
+# AgentScope 侧 tool_result_limit（64Ki token）对齐，避免平台侧先于框架的
+# 上下文保护提前截断：MCP/查数类工具的中等规模结果应完整进上下文，超大结果
+# 交给 AgentScope 的卸载机制处理。
+DEFAULT_TOOL_OUTPUT_MAX_LEN = 64 * 1024
 DEFAULT_TOOL_LOG_MAX_LEN = 500
 DEFAULT_TOOL_ARGS_MAX_LEN = 2000
 BOOKKEEPING_TOOL_NAMES = frozenset({"todo_write"})
