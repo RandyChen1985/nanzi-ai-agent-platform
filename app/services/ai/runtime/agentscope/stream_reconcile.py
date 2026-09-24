@@ -15,6 +15,59 @@ BOOKKEEPING_TOOL_NAMES = frozenset({"todo_write"})
 # 命令类工具：入参里的 command 就是用户最关心的「到底跑了什么」，直接展示命令原文。
 COMMAND_TOOL_NAMES = frozenset({"Bash", "bash", "exec_command", "shell", "run_command"})
 
+# 只有 AgentScope 内置 Bash 的 description 含义是「这条命令在解决什么」；自有工具的同名
+# 字段语义完全不同（如 Jira 工具的 description 是工单正文），故按工具白名单收口。
+INTENT_SUMMARY_TOOL_NAMES = frozenset({"Bash", "bash"})
+DEFAULT_TOOL_SUMMARY_MAX_LEN = 60
+
+
+def _coerce_tool_args_payload(tool_args: Any) -> Any:
+    """把工具入参归一到 dict / str。
+
+    流式事件里的 arguments 直取事件对象，可能仍是未反序列化的 JSON 文本，
+    因此字符串形态先尝试还原为对象。
+    """
+
+    if not isinstance(tool_args, str):
+        return tool_args
+    text = tool_args.strip()
+    if not text.startswith("{"):
+        return text
+    try:
+        decoded = json.loads(text)
+    except (TypeError, ValueError):
+        return text
+    return decoded if isinstance(decoded, dict) else text
+
+
+def extract_tool_summary(
+    tool_args: Any,
+    *,
+    tool_name: str = "",
+    max_len: int = DEFAULT_TOOL_SUMMARY_MAX_LEN,
+) -> str:
+    """提取模型为本次工具调用写下的意图摘要（AgentScope 内置 Bash 的 description）。
+
+    用于在时间线行标题旁回答「这条命令在干什么」（如 `Bash · 前端契约全量回归`），
+    比长命令原文直观。模型未填时返回空串，由调用方决定不追加后缀——不伪造摘要。
+    """
+
+    if str(tool_name or "").strip() not in INTENT_SUMMARY_TOOL_NAMES:
+        return ""
+    payload = _coerce_tool_args_payload(tool_args)
+    if not isinstance(payload, dict):
+        return ""
+    raw = payload.get("description")
+    if not isinstance(raw, str):
+        return ""
+    # 描述可能带换行或连续空格，压成单行再限长，避免撑破时间线一行。
+    text = " ".join(raw.split())
+    if not text:
+        return ""
+    if len(text) <= max_len:
+        return text
+    return text[: max_len - 1] + "…"
+
 
 def truncate_for_context(text: str, *, max_len: int = DEFAULT_TOOL_OUTPUT_MAX_LEN) -> str:
     """工具结果写入 synthesis / 历史摘要时的通用截断。"""
@@ -52,17 +105,7 @@ def format_tool_args_for_display(
     if tool_args is None:
         return ""
 
-    payload: Any = tool_args
-    if isinstance(payload, str):
-        text = payload.strip()
-        if text.startswith("{"):
-            try:
-                decoded = json.loads(text)
-            except (TypeError, ValueError):
-                decoded = None
-            payload = decoded if isinstance(decoded, dict) else text
-        else:
-            payload = text
+    payload: Any = _coerce_tool_args_payload(tool_args)
 
     if isinstance(payload, dict):
         command = payload.get("command") if tool_name in COMMAND_TOOL_NAMES else None

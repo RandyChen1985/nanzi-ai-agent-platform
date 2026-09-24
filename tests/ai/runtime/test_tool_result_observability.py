@@ -364,3 +364,112 @@ def test_format_tool_args_for_display_keeps_non_json_string_intact():
 
     assert format_tool_args_for_display("npm run build", tool_name="Bash") == "npm run build"
     assert format_tool_args_for_display("{not json", tool_name="Bash") == "{not json"
+
+
+def test_tool_observation_title_does_not_repeat_the_duration():
+    """耗时只由 execution_time_ms 承载。
+
+    标题里再写一遍会和时间线右侧的耗时并排显示，且两者口径不同
+    （标题是后端精确值，右侧在缺少 execution_time_ms 时只能按 started_at 反算），
+    同一行会出现两个对不上的数字。
+    """
+    result = _runner_for_observation()._build_tool_observation(
+        tool_id="read-1",
+        tool_name="Read",
+        tool_args={"path": "README.md"},
+        tool_output="ok",
+        duration_tool=121,
+        target_tool=None,
+        tool_index=0,
+        tool_result_state="success",
+    )
+
+    log = result["log"]
+    assert log["title"] == "工具完成: Read"
+    assert log["execution_time_ms"] == 121
+
+
+def test_bash_tool_summary_uses_model_description():
+    """模型为 Bash 写的 description 要作为「这条命令在解决什么」透出。
+
+    模型在图 2 那种平台上看到的 `Bash · 前端契约全量回归` 就是它自己填的
+    description（AgentScope Bash schema 里的可选字段，5-10 词）。
+    """
+    result = _runner_for_observation()._build_tool_observation(
+        tool_id="bash-1",
+        tool_name="Bash",
+        tool_args={
+            "command": "pytest --confcutdir=tests/frontend tests/frontend -q",
+            "description": "前端契约全量回归",
+        },
+        tool_output="1227 passed",
+        duration_tool=1500,
+        target_tool=None,
+        tool_index=0,
+        tool_result_state="success",
+    )
+
+    log = result["log"]
+    assert log["tool_summary"] == "前端契约全量回归"
+    # 命令原文仍由 tool_args 单独承载，不被摘要顶掉
+    assert "pytest" in log["tool_args"]
+
+
+def test_non_bash_description_is_not_used_as_summary():
+    """自有工具的 description 含义不同（如 Jira 是工单正文），不能当成命令意图。"""
+    result = _runner_for_observation()._build_tool_observation(
+        tool_id="jira-1",
+        tool_name="jira_create_issue",
+        tool_args={
+            "project_key": "OPS",
+            "summary": "磁盘告警",
+            "description": "## 背景\n磁盘使用率已达 95%",
+        },
+        tool_output="OPS-1",
+        duration_tool=120,
+        target_tool=None,
+        tool_index=0,
+        tool_result_state="success",
+    )
+
+    assert "tool_summary" not in result["log"]
+
+
+def test_bash_without_description_has_no_summary():
+    """description 是可选参数：模型没填时退化成现状，不伪造摘要。"""
+    result = _runner_for_observation()._build_tool_observation(
+        tool_id="bash-2",
+        tool_name="Bash",
+        tool_args={"command": "docker ps", "description": "   "},
+        tool_output="",
+        duration_tool=80,
+        target_tool=None,
+        tool_index=0,
+        tool_result_state="success",
+    )
+
+    assert "tool_summary" not in result["log"]
+
+
+def test_bash_tool_summary_is_normalized_and_capped():
+    """多行/多空格的描述要压成单行，超长要截断，避免撑爆时间线行。"""
+    result = _runner_for_observation()._build_tool_observation(
+        tool_id="bash-3",
+        tool_name="Bash",
+        tool_args={
+            "command": "ls",
+            "description": "把\n  前端   每个契约用例都跑一遍，并核对失败的用例是不是本次改动引起的" + "补充说明" * 30,
+        },
+        tool_output="",
+        duration_tool=90,
+        target_tool=None,
+        tool_index=0,
+        tool_result_state="success",
+    )
+
+    summary = result["log"]["tool_summary"]
+    assert "\n" not in summary
+    assert "  " not in summary
+    assert len(summary) <= 60
+    assert summary.startswith("把 前端 每个契约用例都跑一遍")
+    assert summary.endswith("…")

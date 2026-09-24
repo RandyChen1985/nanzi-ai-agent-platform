@@ -39,3 +39,18 @@ def test_timeline_component_renders_tool_call_metadata():
     assert "模型" in component
     assert "温度" in component
     assert "工具状态" in component
+
+
+def test_bash_intent_summary_is_wired_from_sse_to_timeline_row():
+    """模型写的 Bash description 要从 SSE 一路透传到行标题（图 2 那种 `Bash · 意图`）。"""
+    handlers = _read("frontend/src/utils/agentscopeSseHandlers.ts")
+    assert "tool_summary" in handlers
+    assert "data.tool_summary" in handlers
+
+    timeline = _read("frontend/src/utils/processTimeline.ts")
+    assert "tool_summary?: string;" in timeline
+    assert "export function appendToolSummary" in timeline
+
+    component = _read("frontend/src/components/chat/ChatExecutionTimeline.vue")
+    assert "appendToolSummary" in component
+    assert "item.tool_summary" in component

@@ -104,7 +104,11 @@ def test_file_tool_metadata_is_available_for_timeline_display():
     assert "metadata.path" in timeline
     assert "metadata.operation" in timeline
     assert "metadata.pattern" in timeline
-    assert "const baseTitle = formatTimelineTitle(item.title || item.tool_name || \"执行步骤\")" in timeline
+    # 标题由 formatTimelineTitle 产出，并可在其后追加模型写的意图摘要；
+    # 这里只锁语义（两个环节都在），不锁 `const baseTitle = ...` 的原始排版。
+    assert 'formatTimelineTitle(item.title || item.tool_name || "执行步骤")' in timeline
+    assert "appendToolSummary(" in timeline
+    assert "item.tool_summary" in timeline
     assert "operationLabels" in timeline
     assert "路径：" in timeline
     assert "关键词：" in timeline

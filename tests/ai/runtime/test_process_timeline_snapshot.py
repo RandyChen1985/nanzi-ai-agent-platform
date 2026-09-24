@@ -434,3 +434,50 @@ def test_tool_call_metadata_survives_process_timeline_persistence():
     assert entry["model"] == "DeepSeek-V3.2"
     assert entry["temperature"] == 0.2
     assert entry["tool_result_state"] == "timeout"
+
+
+def test_tool_summary_survives_process_timeline_persistence():
+    """命令意图摘要要随快照落库，否则刷新或历史回放就只剩「工具完成 · Bash」。"""
+    items = _run(
+        [
+            {
+                "type": "log",
+                "id": "bash_summary",
+                "title": "调用工具: Bash",
+                "details": "",
+                "tool_args": "pytest tests/frontend -q",
+                "tool_summary": "前端契约全量回归",
+                "status": "pending",
+                "category": "tool",
+            },
+            {
+                "type": "log",
+                "id": "bash_summary",
+                "title": "工具完成: Bash",
+                "details": "1227 passed",
+                "status": "success",
+                "category": "tool",
+            },
+        ]
+    )
+
+    assert items is not None and len(items) == 1
+    assert items[0]["tool_summary"] == "前端契约全量回归"
+
+    # 创建路径（单条完成事件）同样要落库
+    direct = _run(
+        [
+            {
+                "type": "log",
+                "id": "bash_summary_2",
+                "title": "工具完成: Bash",
+                "details": "ok",
+                "tool_summary": "查看容器状态",
+                "status": "success",
+                "category": "tool",
+            },
+        ]
+    )
+
+    assert direct is not None and len(direct) == 1
+    assert direct[0]["tool_summary"] == "查看容器状态"

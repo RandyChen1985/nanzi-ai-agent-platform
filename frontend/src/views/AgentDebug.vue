@@ -1278,6 +1278,7 @@ interface LogEntry {
   category?: 'router' | 'sql' | 'knowledge' | 'tool' | 'tool_resolution' | 'intent' | 'permission' | 'external' | 'model' | 'agent' | 'context' | 'default';
   tool_name?: string;
   tool_args?: string;
+  tool_summary?: string;
   file_metadata?: import("@/utils/processTimeline").FileToolMetadata;
   resolution_status?: 'disabled' | 'missing' | 'filtered';
   execution_time_ms?: number | null;
@@ -3623,6 +3624,7 @@ const addRealLog = (msg: Message, data: any) => {
     if (data.subagent !== undefined) existingLog.subagent = normalizeSubagentTraceMeta(data.subagent);
     if (data.tool_name !== undefined) existingLog.tool_name = data.tool_name;
     if (data.tool_args !== undefined) existingLog.tool_args = data.tool_args;
+    if (data.tool_summary !== undefined) existingLog.tool_summary = data.tool_summary;
     if (data.model !== undefined) existingLog.model = data.model;
     if (data.temperature !== undefined) existingLog.temperature = data.temperature;
     if (data.tool_result_state !== undefined) existingLog.tool_result_state = data.tool_result_state;
@@ -3662,6 +3664,7 @@ const addRealLog = (msg: Message, data: any) => {
       subagent: normalizeSubagentTraceMeta(data.subagent),
       tool_name: data.tool_name,
       tool_args: data.tool_args,
+      tool_summary: data.tool_summary,
       tool_result_state: data.tool_result_state,
       file_metadata: data.file_metadata,
       resolution_status: data.resolution_status,

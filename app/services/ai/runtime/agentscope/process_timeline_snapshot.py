@@ -120,6 +120,9 @@ def _update_log(existing: Dict[str, Any], chunk: Dict[str, Any]) -> None:
     # 入参（Bash 命令等）只在携带时写入：完成事件不重复带参数，别把已有命令洗成空。
     if chunk.get("tool_args"):
         existing["tool_args"] = str(chunk["tool_args"])
+    # 意图摘要同理：起始事件带上后就一直保留（刷新/历史回放仍能看到这条命令在干什么）。
+    if chunk.get("tool_summary"):
+        existing["tool_summary"] = str(chunk["tool_summary"])
     # 模型 / 温度 / 框架侧结果状态同样只在携带时写入，完成事件不重复上报。
     if chunk.get("model"):
         existing["model"] = str(chunk["model"])
@@ -499,6 +502,8 @@ def apply_stream_chunk(state: List[Dict[str, Any]], chunk: Dict[str, Any]) -> No
     }
     if chunk.get("tool_args"):
         log["tool_args"] = str(chunk["tool_args"])
+    if chunk.get("tool_summary"):
+        log["tool_summary"] = str(chunk["tool_summary"])
     if chunk.get("model"):
         log["model"] = str(chunk["model"])
     if chunk.get("temperature") is not None:
@@ -569,6 +574,9 @@ def _finalize_log(item: Dict[str, Any]) -> Dict[str, Any]:
     # 命令同样要落库，否则刷新/回放后只剩工具输出。
     if item.get("tool_args"):
         copied["tool_args"] = _truncate_details(item.get("tool_args"))
+    # 意图摘要与命令同进退：定稿时丢掉就等于回放时又变成「工具完成 · Bash」。
+    if item.get("tool_summary"):
+        copied["tool_summary"] = _truncate_details(item.get("tool_summary"))
     if item.get("model") is not None:
         copied["model"] = item.get("model")
     if item.get("temperature") is not None:

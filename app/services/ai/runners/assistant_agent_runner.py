@@ -89,6 +89,7 @@ from app.services.ai.runtime.agentscope.stream_reconcile import (
     build_tool_review_lines,
     GENERIC_SYNTHESIS_EMPTY_FALLBACK,
     compute_stream_reconcile_gap,
+    extract_tool_summary,
     format_tool_args_for_display,
     needs_tool_synthesis_fallback,
     truncate_for_display,
@@ -3549,10 +3550,14 @@ class AssistantAgentRunner(BaseExecutor):
         log_event = {
             "type": "log",
             "id": tool_id,
-            "title": f"工具完成: {tool_name} ({duration_tool:.0f}ms)",
+            # 耗时只由 execution_time_ms 承载：标题里再写一遍会与时间线右侧的耗时
+            # 并排成两个口径不同的数字（这里是后端精确值，右侧在缺少该字段时只能
+            # 按 started_at 反算），且其它 runner 的标题本就不带耗时。
+            "title": f"工具完成: {tool_name}",
             "details": display_output,
             "status": "success" if not is_error else "error",
             "category": "tool",
+            "execution_time_ms": duration_tool,
             "model": t_model,
             "temperature": t_temp,
         }
@@ -3560,6 +3565,11 @@ class AssistantAgentRunner(BaseExecutor):
         display_args = format_tool_args_for_display(tool_args, tool_name=tool_name)
         if display_args:
             log_event["tool_args"] = display_args
+        # 模型为 Bash 写的意图摘要（AgentScope Bash schema 的 description）：
+        # 让时间线行显示「这条命令在干什么」，而不是只有一句「工具完成 · Bash」。
+        tool_summary = extract_tool_summary(tool_args, tool_name=tool_name)
+        if tool_summary:
+            log_event["tool_summary"] = tool_summary
         file_metadata = _build_file_tool_metadata(tool_name, tool_args, tool_output)
         if file_metadata:
             log_event["file_metadata"] = file_metadata

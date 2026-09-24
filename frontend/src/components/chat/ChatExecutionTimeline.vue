@@ -591,12 +591,15 @@ import {
   type SkillFlowBadge,
 } from "@/utils/skillFlowBadges";
 import {
+  appendToolSummary,
   buildLegacyProcessTimeline,
   countTimelineSteps,
   formatTimelineTitle,
   groupRouteTimelineItems,
   isReasoningContentExpanded,
   mergeTimelineLogs,
+  resolveLiveTimerDurationMs,
+  resolveLiveTimerLogId,
   resolveTimelineCurrentStep,
   timelineHasPending,
   PREPARATION_TIMELINE_PARENT_ID,
@@ -802,15 +805,35 @@ const isWorkspacePrewarming = computed(() => findWorkspacePrewarmPending(items.v
 watch(
   () => isWorkspacePrewarming.value,
   (prewarming) => {
-    if (prewarming) {
-      if (prewarmStartedAtMs.value === null) prewarmStartedAtMs.value = Date.now();
+    prewarmStartedAtMs.value = prewarming
+      ? (prewarmStartedAtMs.value ?? Date.now())
+      : null;
+  },
+  { immediate: true },
+);
+
+/** 当前该走实时秒表的那条步骤：只有最后一条挂起项、且不是在等用户操作。 */
+const liveTimerLogId = computed(() => {
+  // 依赖 tickNow 让秒表每 500ms 推进一次（同时承担 render 触发）
+  void tickNow.value;
+  return resolveLiveTimerLogId(items.value);
+});
+
+/** 工作区预热文案与单卡实时秒表共用同一个 500ms ticker；都不需要时自动停表。 */
+const needsLiveTick = computed(
+  () => isWorkspacePrewarming.value || liveTimerLogId.value !== null,
+);
+
+watch(
+  needsLiveTick,
+  (needs) => {
+    if (needs) {
       if (!tickTimer) {
         tickTimer = setInterval(() => { tickNow.value += 1; }, 500);
       }
     } else if (tickTimer) {
       clearInterval(tickTimer);
       tickTimer = null;
-      prewarmStartedAtMs.value = null;
     }
   },
   { immediate: true },
@@ -851,8 +874,11 @@ function preparationStatusLabel(item: ProcessTimelineLogItem): string {
 }
 
 function displayTimelineTitle(item: ProcessTimelineLogItem): string {
-  const baseTitle = formatTimelineTitle(item.title || item.tool_name || "执行步骤")
-    .replace(/^[\p{Extended_Pictographic}✨📝]\s*/u, "");
+  const baseTitle = appendToolSummary(
+    formatTimelineTitle(item.title || item.tool_name || "执行步骤")
+      .replace(/^[\p{Extended_Pictographic}✨📝]\s*/u, ""),
+    item.tool_summary,
+  );
   const metadata = item.file_metadata;
   if (!metadata) return baseTitle;
   if (metadata.document_type) {
@@ -974,7 +1000,15 @@ function formatDuration(duration?: number | null): string {
   return duration < 1000 ? `${Math.max(1, Math.round(duration))}ms` : `${(duration / 1000).toFixed(1)}s`;
 }
 
+/** 命中实时秒表的那一条返回已执行时长；其余维持冻结耗时。 */
+function liveTimerDuration(item: ProcessTimelineLogItem): string {
+  const liveMs = resolveLiveTimerDurationMs(item, liveTimerLogId.value, Date.now());
+  return liveMs === null ? "" : formatDuration(liveMs);
+}
+
 function formatTimelineDuration(item: ProcessTimelineLogItem): string {
+  const live = liveTimerDuration(item);
+  if (live) return live;
   const duration = formatDuration(item.execution_time_ms);
   return isRouteGroup(item) && duration ? `总计 ${duration}` : duration;
 }

@@ -486,3 +486,38 @@ async def test_tool_call_start_exposes_arguments_for_timeline_card(monkeypatch):
     assert logs[0]["title"] == "调用工具: Bash"
     assert logs[0]["tool_args"] == "git status"
     assert logs[0]["details"] == ""
+
+
+@pytest.mark.asyncio
+async def test_tool_call_start_carries_bash_intent_summary(monkeypatch):
+    """进行中的 Bash 卡片也要能显示「这条命令在干什么」：起始事件即带上摘要。"""
+    from unittest.mock import AsyncMock
+
+    import app.services.config_service as cfg
+
+    monkeypatch.setattr(
+        cfg.ConfigService, "get", AsyncMock(return_value="docker"),
+    )
+    state = new_native_stream_state()
+    event = SimpleNamespace(
+        type="TOOL_CALL_START",
+        tool_call_id="bash-1",
+        tool_call_name="Bash",
+        arguments={
+            "command": "dig +short example.com",
+            "description": "解析 example.com 的 DNS 记录",
+        },
+    )
+
+    chunks = [
+        chunk
+        async for chunk in map_standard_agentscope_event(
+            event, state=state, emit_observability=False
+        )
+    ]
+
+    logs = [chunk for chunk in chunks if chunk.get("type") == "log"]
+    assert logs and logs[0]["status"] == "pending"
+    assert logs[0]["tool_summary"] == "解析 example.com 的 DNS 记录"
+    # 命令原文照旧单独承载
+    assert logs[0]["tool_args"] == "dig +short example.com"

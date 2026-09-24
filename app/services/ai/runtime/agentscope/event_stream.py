@@ -8,7 +8,10 @@ import uuid
 from typing import Any, AsyncGenerator, Callable, Dict, List, Protocol
 
 from app.services.ai.context_compaction_log_service import context_compaction_log_service
-from app.services.ai.runtime.agentscope.stream_reconcile import format_tool_args_for_display
+from app.services.ai.runtime.agentscope.stream_reconcile import (
+    extract_tool_summary,
+    format_tool_args_for_display,
+)
 from app.services.ai.runtime.agentscope.tool_result import normalize_tool_result_state
 
 logger = logging.getLogger(__name__)
@@ -600,6 +603,10 @@ async def map_standard_agentscope_event(
         display_args = format_tool_args_for_display(inline_arguments, tool_name=tool_name)
         if display_args:
             start_log["tool_args"] = display_args
+        # 进行中的卡片也要能看出这条命令在干什么（模型写的 description）
+        tool_summary = extract_tool_summary(inline_arguments, tool_name=tool_name)
+        if tool_summary:
+            start_log["tool_summary"] = tool_summary
         yield start_log
         if tool_name == "Bash" and not state.get("bash_env_emitted"):
             state["bash_env_emitted"] = True

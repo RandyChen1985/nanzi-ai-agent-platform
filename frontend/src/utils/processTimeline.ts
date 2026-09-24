@@ -64,6 +64,11 @@ export type ProcessTimelineLogItem = {
   tool_result_state?: string;
   file_metadata?: FileToolMetadata;
   /**
+   * 模型为本次工具调用写的意图摘要（AgentScope 内置 Bash 的 description），
+   * 用于行标题旁回答「这条命令在干什么」。
+   */
+  tool_summary?: string;
+  /**
    * 主动提问（ask_user_question）卡片的持久化快照。
    * 卡片实时渲染依赖消息对象上的 `userQuestion`，该字段不落库；历史回放时
    * 只能从 process_timeline 的这个字段重建，缺失则只剩一行「需要用户回答」。
@@ -156,7 +161,14 @@ export function formatTimelineTitle(title: unknown): string {
   if (value.startsWith("工具预检：")) return "工具可用性检查";
   if (value === "智能体配置变更：历史会话状态已重置") return "会话状态已更新";
   if (value.startsWith("模型调用: ")) return `模型调用 · ${value.slice("模型调用: ".length)}`;
-  if (value.startsWith("工具完成: ")) return `工具完成 · ${value.slice("工具完成: ".length)}`;
+  if (value.startsWith("工具完成: ")) {
+    // 耗时统一由右侧承载（execution_time_ms / 实时秒表）。老会话的标题里
+    // 已存有后端写死的 `(NNNNms)`，渲染时剥掉，免得同一行并排两个对不上的数字。
+    const toolName = value
+      .slice("工具完成: ".length)
+      .replace(/\s*\(\d+(?:\.\d+)?ms\)\s*$/, "");
+    return `工具完成 · ${toolName}`;
+  }
   if (value.startsWith("调用子代理: ")) return `委派智能体 · ${value.slice("调用子代理: ".length)}`;
   if (value.startsWith("调用子代理：")) return `委派智能体 · ${value.slice("调用子代理：".length)}`;
   if (value.startsWith("调用工具: ")) {
@@ -166,6 +178,17 @@ export function formatTimelineTitle(title: unknown): string {
     return `调用工具 · ${toolName}`;
   }
   return value;
+}
+
+/**
+ * 把模型为工具调用写的意图摘要追加到行标题后（如 `工具完成 · Bash · 前端契约全量回归`）。
+ *
+ * 摘要缺失或全空白时原样返回，避免行尾多出一个孤零零的「·」。
+ */
+export function appendToolSummary(baseTitle: string, summary?: string): string {
+  const text = String(summary ?? "").trim();
+  if (!text) return baseTitle;
+  return `${baseTitle} · ${text}`;
 }
 
 export function timelineHasPending(items: ProcessTimelineItem[] | undefined): boolean {
@@ -577,6 +600,66 @@ export function isReasoningContentExpanded(item: ProcessTimelineTextItem): boole
   return item.pending;
 }
 
+/** 等待用户操作的挂起类别：机器没在跑，不该展示实时秒表。 */
+export const NON_LIVE_TIMER_CATEGORIES: ReadonlySet<string> = new Set([
+  "permission",
+  "external",
+]);
+
+function isEligibleLiveTimerLog(item: ProcessTimelineLogItem): boolean {
+  if (item.status !== "pending") return false;
+  if (item.category && NON_LIVE_TIMER_CATEGORIES.has(item.category)) return false;
+  return typeof item.started_at === "number" && Number.isFinite(item.started_at);
+}
+
+/**
+ * 返回当前应当在时间线上走实时秒表的那条 log id（深度优先、按视觉顺序取最后一条挂起项）。
+ *
+ * 只有最后一条挂起项走秒表：历史遗留的 pending 若也计时，会出现多个秒表同时跑。
+ * 最后一条挂起项是「等待用户确认/外部执行」时返回 null —— 那时机器并没有在执行。
+ */
+export function resolveLiveTimerLogId(
+  items: ProcessTimelineItem[] | undefined,
+): string | null {
+  let lastPending: ProcessTimelineLogItem | null = null;
+
+  const walk = (list: ProcessTimelineItem[] | undefined) => {
+    for (const item of list || []) {
+      if (!item) continue;
+      if (item.kind === "log" && item.status === "pending") {
+        lastPending = item;
+      }
+      walk(item.children as ProcessTimelineItem[] | undefined);
+    }
+  };
+
+  walk(items);
+
+  if (!lastPending) return null;
+  if (!isEligibleLiveTimerLog(lastPending)) return null;
+  return String(lastPending.id);
+}
+
+/**
+ * 计算某条 log 此刻应展示的实时耗时（毫秒）。
+ *
+ * 返回 null 表示这条不该走秒表（已完成 / 不是当前 live 项 / 没有基准），
+ * 由调用方回退到冻结的 execution_time_ms。时钟回拨时下限兜到 1ms，
+ * 避免出现负数或 0ms。
+ */
+export function resolveLiveTimerDurationMs(
+  item: ProcessTimelineLogItem,
+  liveTimerLogId: string | null,
+  now: number,
+): number | null {
+  if (!liveTimerLogId) return null;
+  if (item.status !== "pending") return null;
+  if (String(item.id) !== liveTimerLogId) return null;
+  const startedAt = item.started_at;
+  if (typeof startedAt !== "number" || !Number.isFinite(startedAt)) return null;
+  return Math.max(1, now - startedAt);
+}
+
 export function upsertTimelineLog(
   target: ProcessTimelineTarget,
   data: {
@@ -589,6 +672,7 @@ export function upsertTimelineLog(
     category?: string;
     tool_name?: string;
     tool_args?: string;
+    tool_summary?: string;
     model?: string;
     temperature?: number;
     tool_result_state?: string;
@@ -615,6 +699,7 @@ export function upsertTimelineLog(
     if (data.category !== undefined) existing.category = data.category;
     if (data.tool_name !== undefined) existing.tool_name = data.tool_name;
     if (data.tool_args !== undefined) existing.tool_args = data.tool_args;
+    if (data.tool_summary !== undefined) existing.tool_summary = data.tool_summary;
     if (data.model !== undefined) existing.model = data.model;
     if (data.temperature !== undefined) existing.temperature = data.temperature;
     if (data.tool_result_state !== undefined) existing.tool_result_state = data.tool_result_state;
@@ -720,13 +805,16 @@ export function upsertTimelineLog(
     category: data.category,
     tool_name: data.tool_name,
     tool_args: data.tool_args,
+    tool_summary: data.tool_summary,
     model: data.model,
     temperature: data.temperature,
     tool_result_state: data.tool_result_state,
     file_metadata: data.file_metadata,
     resolution_status: data.resolution_status,
     execution_time_ms: data.execution_time_ms,
-    started_at: data.started_at,
+    // pending 卡必须在创建时刻留下基准，否则「执行中实时秒表」无从计算：
+    // msg.logs 侧已在 EmbedChat 里这么做，processTimeline 侧此前一直缺失。
+    started_at: data.started_at ?? (data.status === "pending" ? Date.now() : undefined),
     subagent: data.subagent,
     isExpanded: false,
     children: [],

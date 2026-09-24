@@ -2470,6 +2470,7 @@ interface LogEntry {
   category?: 'router' | 'sql' | 'knowledge' | 'tool' | 'tool_resolution' | 'intent' | 'permission' | 'external' | 'model' | 'agent' | 'context' | 'business_confirmation' | 'user_question' | 'system' | 'default';
   tool_name?: string;
   tool_args?: string;
+  tool_summary?: string;
   model?: string;
   temperature?: number;
   tool_result_state?: string;
@@ -8326,6 +8327,7 @@ const addEmbedLogFromStream = (msg: Message, data: any) => {
         : currentLog.subagent,
       tool_name: data.tool_name ?? currentLog.tool_name,
       tool_args: data.tool_args ?? currentLog.tool_args,
+      tool_summary: data.tool_summary ?? currentLog.tool_summary,
       model: data.model ?? currentLog.model,
       temperature: data.temperature ?? currentLog.temperature,
       tool_result_state: data.tool_result_state ?? currentLog.tool_result_state,
@@ -8367,6 +8369,7 @@ const addEmbedLogFromStream = (msg: Message, data: any) => {
     subagent: normalizeSubagentTraceMeta(data.subagent),
     tool_name: data.tool_name,
     tool_args: data.tool_args,
+    tool_summary: data.tool_summary,
     model: data.model,
     temperature: data.temperature,
     tool_result_state: data.tool_result_state,

@@ -16,6 +16,7 @@ import {
   commitTimelineNarration,
   discardPendingTimelineNarration,
   finishTimelineReasoning,
+  NON_LIVE_TIMER_CATEGORIES,
   normalizeProcessNarrationText,
   promoteTimelineNarration,
   timelineHasPending,
@@ -349,8 +350,6 @@ export function finalizePendingStreamLogs(
     }
   }
 }
-
-const NON_LIVE_TIMER_CATEGORIES = new Set(["permission", "external"]);
 
 /** 仅最后一条挂起步骤展示实时计时，避免历史 pending 泄漏导致秒表一直跑 */
 export function isLiveThoughtStepTimer(
@@ -762,6 +761,8 @@ export function syncProcessTimelineLog<T extends AgentStreamMessage>(
     category: category || (data.category ? String(data.category) : undefined),
     tool_name: data.tool_name === undefined ? undefined : String(data.tool_name),
     tool_args: data.tool_args === undefined ? undefined : String(data.tool_args),
+    tool_summary:
+      data.tool_summary === undefined ? undefined : String(data.tool_summary),
     model: data.model === undefined ? undefined : String(data.model),
     // 不能只判 undefined：Number(null) === 0 会把「未设置」显示成「温度 0」。
     temperature:

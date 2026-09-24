@@ -1668,3 +1668,79 @@ return {
     assert result["zero"] == 3
     assert result["negative"] == 3
     assert result["huge"] == 30
+
+
+def test_format_timeline_title_drops_legacy_tool_duration():
+    """工具完成标题不再自带耗时；老会话里已存的 `(NNNNms)` 也要在渲染时剥掉。
+
+    耗时统一由右侧的 execution_time_ms / 实时秒表承载，标题里再显示一遍会与它
+    并排成两个口径不同的数字（后端精确值 vs 前端按 started_at 反算）。
+    """
+    result = _run_typescript(
+        "frontend/src/utils/processTimeline.ts",
+        """
+return {
+  legacy: api.formatTimelineTitle('工具完成: Read (490ms)'),
+  clean: api.formatTimelineTitle('工具完成: Read'),
+  spaced: api.formatTimelineTitle('工具完成: Bash (16571ms)'),
+  untouched: api.formatTimelineTitle('模型调用: DeepSeek (1234ms)'),
+};
+""",
+    )
+
+    assert result["legacy"] == "工具完成 · Read"
+    assert result["clean"] == "工具完成 · Read"
+    assert result["spaced"] == "工具完成 · Bash"
+    # 只清理工具完成标题，不误伤其它标题里合法的括号内容
+    assert result["untouched"] == "模型调用 · DeepSeek (1234ms)"
+
+
+def test_timeline_log_keeps_tool_summary_from_model_description():
+    """模型给 Bash 写的意图摘要要能落到时间线项上，并在完成事件里不被抹掉。"""
+    result = _run_typescript(
+        "frontend/src/utils/processTimeline.ts",
+        """
+const target = {};
+api.upsertTimelineLog(target, {
+  id: 'bash-1',
+  title: '调用工具: Bash',
+  details: '',
+  tool_args: 'pytest tests/frontend -q',
+  tool_summary: '前端契约全量回归',
+  status: 'pending',
+  category: 'tool',
+});
+api.upsertTimelineLog(target, {
+  id: 'bash-1',
+  title: '工具完成: Bash',
+  details: '1227 passed',
+  status: 'success',
+});
+const item = target.processTimeline[0];
+return { summary: item.tool_summary ?? null, status: item.status, args: item.tool_args ?? null };
+""",
+    )
+
+    assert result["summary"] == "前端契约全量回归"
+    assert result["status"] == "success"
+    assert result["args"] == "pytest tests/frontend -q"
+
+
+def test_timeline_title_appends_tool_summary_only_when_present():
+    """摘要缺失时不能凭空多出一个「·」，行标题要保持原文。"""
+    result = _run_typescript(
+        "frontend/src/utils/processTimeline.ts",
+        """
+return {
+  withSummary: api.appendToolSummary('工具完成 · Bash', '前端契约全量回归'),
+  trimmed: api.appendToolSummary('工具完成 · Bash', '  查看容器状态  '),
+  blank: api.appendToolSummary('工具完成 · Bash', '   '),
+  missing: api.appendToolSummary('工具完成 · Bash', undefined),
+};
+""",
+    )
+
+    assert result["withSummary"] == "工具完成 · Bash · 前端契约全量回归"
+    assert result["trimmed"] == "工具完成 · Bash · 查看容器状态"
+    assert result["blank"] == "工具完成 · Bash"
+    assert result["missing"] == "工具完成 · Bash"

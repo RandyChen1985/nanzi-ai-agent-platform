@@ -352,6 +352,13 @@ def test_thought_step_timer_contract():
     timeline = _source("frontend/src/components/chat/ChatExecutionTimeline.vue")
     assert "finalizeAllPendingStreamLogs(agentMsg.value)" in embed
     assert "function formatDuration(duration?: number | null)" in timeline
+    # 单卡实时秒表必须真的接线：此前 isLiveThoughtStepTimer 只被定义、无人引用，
+    # 导致长耗时工具调用在执行期间那一行完全不显示耗时。
+    assert "resolveLiveTimerLogId" in timeline
+    assert "resolveLiveTimerDurationMs" in timeline
+    assert "liveTimerLogId" in timeline
+    assert "needsLiveTick" in timeline
+    assert "tickNow.value" in timeline
 
 
 def test_dataset_portal_drawer_pin_contract():
