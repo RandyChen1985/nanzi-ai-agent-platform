@@ -2417,6 +2417,10 @@ import {
 import { useWorkspaceCanvas } from "@/composables/chat/useWorkspaceCanvas";
 import { createChatSendGate } from "@/composables/chat/useChatSendGate";
 import { useConversationRunStatus } from "@/composables/chat/useConversationRunStatus";
+import {
+  RUN_STATUS_NUDGE_INTERVAL_MS,
+  shouldContinueRunStatusNudge,
+} from "@/utils/runStatusConvergence";
 import { createClientRequestId } from "@/utils/clientRequestId";
 import {
   USER_MESSAGE_CONTEXT_DIVIDER,
@@ -4796,6 +4800,41 @@ const refreshCurrentRunStatus = () => (
     ? refreshRemoteRunStatus(conversationId.value)
     : Promise.resolve(false)
 );
+
+/**
+ * 流刚结束时加速 run-status 收敛。
+ *
+ * 正常情况下 SSE 的 `run_status` 终态事件会把 `remoteRunActive` 立即翻回 false；但切
+ * 后台、代理缓冲或异常中断会让这一帧丢失，此后只能等 1.5s 轮询。这里在流结束后补做
+ * 一次带退避的核验，把「界面已输出完、快捷按钮却点不动」的窗口压到最小。
+ *
+ * 刻意不清零 `remoteRunActive`：流被中断时后台 producer 可能仍在运行，直接放开会与
+ * 服务端会话锁冲突。是否真的空闲，一律以后端 run-status 为准。
+ */
+let runStatusNudgeTimer: ReturnType<typeof setTimeout> | null = null;
+const nudgeRunStatusConvergence = async (attempt = 0) => {
+  if (runStatusNudgeTimer) {
+    clearTimeout(runStatusNudgeTimer);
+    runStatusNudgeTimer = null;
+  }
+  if (embedUnmounted || !conversationId.value) return;
+  // 必须 await：否则下面读到的还是请求发出前的旧值（仍是 true），会无条件多排一次
+  // 定时器，导致每轮正常结束的对话都白白多发一次 run-status 请求。
+  await refreshCurrentRunStatus();
+  if (embedUnmounted || !conversationId.value) return;
+  // 网络已返回，此时读到的才是真实状态；已空闲或重试次数用尽就不再打扰后端。
+  if (!shouldContinueRunStatusNudge(remoteRunActive.value, attempt)) return;
+  runStatusNudgeTimer = setTimeout(() => {
+    runStatusNudgeTimer = null;
+    void nudgeRunStatusConvergence(attempt + 1);
+  }, RUN_STATUS_NUDGE_INTERVAL_MS);
+};
+const clearRunStatusNudge = () => {
+  if (runStatusNudgeTimer) {
+    clearTimeout(runStatusNudgeTimer);
+    runStatusNudgeTimer = null;
+  }
+};
 
 const focusChatInputWhenReady = () => {
   if (isMobile.value || isProcessing.value || remoteRunActive.value || sendLocked.value) return;
@@ -7751,6 +7790,10 @@ const openModelCallStats = async (msg: any) => {
 };
 
 const stopGeneration = () => {
+  // 用户主动叫停：此时排队中的快捷提问必须一并作废。否则取消完成后会话锁释放，
+  // watch 会把刚才排队的提问发出去——用户明明按了停止，系统却反向发出一条新提问。
+  dropPendingQuickSend();
+  clearRunStatusNudge();
   const lastMsg = messages.value.length > 0 ? messages.value[messages.value.length - 1] : null;
   if (conversationId.value) {
     void cancelConversationRun(conversationId.value, {
@@ -7954,6 +7997,108 @@ const quickContextForMessage = (msg: Message): QuickQuestionContext | undefined 
   };
 };
 
+/**
+ * 快捷按钮（quick button）的待补发队列。
+ *
+ * `remoteRunActive` 由 run-status 轮询驱动，最长有 1.5s 滞后；SSE 的 `run_status` 终态
+ * 事件在切后台/代理缓冲时可能丢失。此前被锁时直接 `return` 静默丢弃，用户体感就是
+ * 「已经输出完了，第一次点快捷按钮没反应，得再点一次」。改为：点击即核验后端真相，
+ * 确实仍在处理则记下这次点击，锁释放后自动补发，绝不静默吞掉。
+ *
+ * 自动补发带三道保护，避免「替用户发送」反过来造成破坏：
+ *  - 超过 PENDING_QUICK_SEND_TTL_MS 未补发就放弃自动发送（后端会话锁 TTL 可达 600s，
+ *    任务跑很久后突然冒出一条消息比丢失点击更糟）；
+ *  - 用户已开始新一轮输入（有文字或附件）时不代发，且绝不清空其草稿；
+ *  - 只补发到「点击时所在的那个会话」：切换会话后必须丢弃，否则会把 A 会话的提问
+ *    发到 B 会话里。
+ */
+const PENDING_QUICK_SEND_TTL_MS = 15000;
+let pendingQuickSend: {
+  content: string;
+  quickContext?: QuickQuestionContext;
+  at: number;
+  /** 产生这次排队的会话；切换会话后该排队即失效。 */
+  conversationId: string;
+  /** 点击时已就绪的「本轮强制走查数智能体」意图，随补发一起生效。 */
+  forceDataQueryAgent: boolean;
+} | null = null;
+const quickSendBlocked = () => isProcessing.value || remoteRunActive.value || sendLocked.value;
+/** 输入框里是否已有用户自己的内容（文字或附件）。 */
+const hasUserComposerDraft = () =>
+  Boolean(userInput.value.trim()) || Boolean(chatInputRef.value?.uploadedFiles?.length);
+/** 丢弃排队项，并撤销它携带的一次性「强制走查数」意图（撤销由调用方决定是否跳过）。 */
+const dropPendingQuickSend = ({ keepForceIntent = false } = {}) => {
+  if (!pendingQuickSend) return;
+  if (pendingQuickSend.forceDataQueryAgent && !keepForceIntent) {
+    forceDataQueryAgentOnce.value = false;
+  }
+  pendingQuickSend = null;
+};
+/**
+ * 核验后端真相的在途请求。
+ *
+ * 锁阻塞时用户可能连点（移动端尤其容易），若每次都单独发请求会重复打后端、也会连弹
+ * 两条一模一样的提示。并发点击共用同一次核验；**不丢弃点击**——各次点击仍会各自走到
+ * 「取代排队项」的逻辑，用户最后一次的意图始终生效。
+ */
+let quickSendVerifyInFlight: Promise<unknown> | null = null;
+const verifyRunStatusOnce = () => {
+  if (!quickSendVerifyInFlight) {
+    quickSendVerifyInFlight = Promise.resolve(refreshCurrentRunStatus())
+      .finally(() => { quickSendVerifyInFlight = null; });
+  }
+  return quickSendVerifyInFlight;
+};
+const flushPendingQuickSend = async () => {
+  const pending = pendingQuickSend;
+  if (!pending || quickSendBlocked()) return;
+  pendingQuickSend = null;
+
+  // 会话已切换（或已新建/清空）：这次点击属于旧会话，绝不能落到当前会话里。
+  if (pending.conversationId !== conversationId.value) {
+    if (pending.forceDataQueryAgent) forceDataQueryAgentOnce.value = false;
+    return;
+  }
+
+  if (Date.now() - pending.at > PENDING_QUICK_SEND_TTL_MS) {
+    // 已经等太久：不替用户发送，把问题交回输入框（仅在输入框为空时写入，不覆盖草稿）。
+    if (!hasUserComposerDraft()) userInput.value = pending.content;
+    // 放弃代发即放弃这次「强制走查数」意图，否则会劫持用户之后的普通提问。
+    if (pending.forceDataQueryAgent) forceDataQueryAgentOnce.value = false;
+    showToast("稍早记下的提问已放入输入框，请确认后发送", "info");
+    return;
+  }
+  if (hasUserComposerDraft()) {
+    // 用户已经在写别的内容：不代发，也不动他的输入框。
+    if (pending.forceDataQueryAgent) forceDataQueryAgentOnce.value = false;
+    showToast("检测到新的输入内容，未自动发送稍早记录的提问", "info");
+    return;
+  }
+
+  // 「强制走查数智能体」是一次性意图，必须与补发配对：点击时若已被 arm，而这里不带上，
+  // 补发就会退化成普通路由；同理若不在此处消费，标记会滞留并劫持用户的下一次手动发送。
+  if (pending.forceDataQueryAgent) forceDataQueryAgentOnce.value = true;
+
+  // 用固定快照发送：补发发生在点击之后，若期间用户在输入框敲了字或加了附件，
+  // `sendMessage` 会重新抓取 `userInput`/`uploadedFiles`，把这些残留一起发出去。
+  await sendPreparedMessage(async () => captureSendSnapshot({
+    content: pending.content,
+    quickContext: pending.quickContext,
+    files: [],
+  }));
+};
+// 锁一释放立即补发；这里不依赖用户再点一次。
+watch([isProcessing, remoteRunActive, sendLocked], () => {
+  void flushPendingQuickSend();
+});
+// 切换 / 新建 / 清空会话后，属于旧会话的排队项立即作废：否则旧会话的提问会被补发到
+// 新会话里（组件在会话切换时并不销毁，队列会跨会话残留）。此处刻意不做 immediate，
+// 以免 setup 期就触碰尚未初始化的状态。
+watch(conversationId, () => {
+  dropPendingQuickSend();
+  clearRunStatusNudge();
+});
+
 const handleQuickQuestion = async (
   content: string | QuickQuestionPayload,
   action: "send" | "fill" = "send",
@@ -7964,12 +8109,33 @@ const handleQuickQuestion = async (
     ? content.quick_context
     : undefined;
   if (!question) return;
-  if (action === "send" && (isProcessing.value || remoteRunActive.value || sendLocked.value)) return;
   const selectedSource = sourceContent?.trim();
   const nextContent = selectedSource
     ? `${question}${USER_MESSAGE_CONTEXT_DIVIDER}【被点击的 AI 回复】\n${selectedSource}`
     : question;
   if (action === "send") {
+    // 新的点击取代此前排队的那一次：否则核验后直接发送本轮的同时，旧的排队项还会被
+    // watch 补发，用户一次点击就发出两条不同提问。
+    dropPendingQuickSend();
+    // 先核验后端真相：后端其实已收尾、只是前端锁尚未收敛时，这一次点击直接生效。
+    if (quickSendBlocked()) await verifyRunStatusOnce();
+    if (quickSendBlocked()) {
+      // 同一会话下连点同一个胶囊时不重复提示，避免叠出两条一模一样的 toast。
+      const alreadyQueuedSame =
+        pendingQuickSend?.content === nextContent &&
+        pendingQuickSend?.conversationId === conversationId.value;
+      pendingQuickSend = {
+        content: nextContent,
+        quickContext,
+        at: Date.now(),
+        conversationId: conversationId.value,
+        forceDataQueryAgent: forceDataQueryAgentOnce.value,
+      };
+      if (!alreadyQueuedSame) {
+        showToast("AI 正在收尾，已记下这条提问，就绪后自动发送", "info");
+      }
+      return;
+    }
     await sendMessage({ content: nextContent, quickContext });
   } else {
     userInput.value = nextContent;
@@ -8825,6 +8991,12 @@ const sendMessageInternal = async (snapshot: ChatSendSnapshot) => {
   const { content, files } = snapshot;
   if ((!content && files.length === 0) || isProcessing.value || remoteRunActive.value) return;
 
+  // 一旦有真正的发送落地，排队的快捷提问即视为已被用户后续操作取代，避免重复发送。
+  // 若这次落地并非那次排队补发本身（补发会先自行取走队列），则连同它 arm 的
+  // 「强制走查数」意图一起撤销，避免劫持用户的手动提问。
+  dropPendingQuickSend();
+  clearRunStatusNudge();
+
   // 尽早消费「强制查数智能体」标记，避免中途 return 后泄漏到下一轮普通提问
   const forcedDataAgentIdForTurn = forceDataQueryAgentOnce.value ? resolvePreferredDataQueryAgentId() : "";
   forceDataQueryAgentOnce.value = false;
@@ -9257,7 +9429,9 @@ const sendMessageInternal = async (snapshot: ChatSendSnapshot) => {
     if (!embedUnmounted) {
       flushContentBuffer();
       isProcessing.value = agentMsg.value.pendingPermission?.status === "pending" || agentMsg.value.pendingExternalExecution?.status === "pending";
-      void refreshCurrentRunStatus();
+      // 流刚结束：立刻核验一次后端真相，并短时重试，把「后端已收尾、前端锁尚未收敛」
+      // 的窗口从最长 1.5s 压到近乎瞬时（不能直接清锁：流被中断时后端可能仍在跑）。
+      nudgeRunStatusConvergence();
       agentMsg.value.isThinking = false;
       void refreshQuota();
       void loadReusableResultAvailability(); // 刷新会话可复用结果入口
@@ -9592,6 +9766,12 @@ onMounted(() => {
       if (isProcessing.value) {
         isProcessing.value = false;
       }
+      // 历史同步重试已耗尽，说明前端再也拿不到更权威的进展信号。此时若界面已无待确认
+      // 卡片、流也已结束，就一并释放运行锁——否则 `remoteRunActive` 会一直把快捷按钮
+      // 拦在 `handleQuickQuestion` 的守卫里，表现为「输出完了却点不动」。
+      if (remoteRunActive.value && !streamInFlight && !hasPendingConfirmation()) {
+        markOutputCompleted();
+      }
     }
   };
 
@@ -9644,6 +9824,8 @@ onMounted(() => {
     clearRunRecoveryTimer();
     // 终态已到：停止事件续显，界面交由下面的历史同步按落库结果收敛。
     clearStreamReplayTimer();
+    // 锁已释放，收敛助推与排队补发都不必再等；补发由 quickSendBlocked 的 watch 立即接手。
+    clearRunStatusNudge();
     // 本轮提示已消费完毕，重置后下一轮任务切回仍会提示。
     streamReplayNoticeShown = false;
     streamReplayPrimed = false;
@@ -9701,6 +9883,9 @@ onUnmounted(() => {
   if (handlers?.clearVisibilitySyncTimer) handlers.clearVisibilitySyncTimer();
   if (handlers?.clearRunRecoveryTimer) handlers.clearRunRecoveryTimer();
   if (handlers?.clearStreamReplayTimer) handlers.clearStreamReplayTimer();
+  clearRunStatusNudge();
+  // 卸载后不再补发排队的快捷提问：会话已切走，也不该再触发一次发送。
+  dropPendingQuickSend();
   disposePortalTimers();
   stopPortalLoadingTips();
   if (thoughtTimer) clearInterval(thoughtTimer);

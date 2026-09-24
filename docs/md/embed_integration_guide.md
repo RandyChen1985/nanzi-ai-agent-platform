@@ -1,6 +1,17 @@
-# NanZi智能体平台嵌入式组件集成指南 (EmbedChat Integration Guide)
+# NanZi智能体平台嵌入式组件集成指南 (Embed Integration Guide)
 
-本文档旨在指导第三方业务系统（如 OA 协同、CRM 客户管理、ERP 系统、运维监控、数据门户等）如何安全、高效、深度地集成南孜 AI Agent 对话组件（EmbedChat）。
+本文档旨在指导第三方业务系统（如 OA 协同、CRM 客户管理、ERP 系统、运维监控、数据门户等）如何安全、高效、深度地集成南孜 AI Agent 平台的嵌入式组件。
+
+平台的嵌入能力按路由划分，**各路由的凭据要求不同，请勿混用**：
+
+| 嵌入路由            | 组件          | 内容                                     | 凭据要求                                     |
+| ------------------- | ------------- | ---------------------------------------- | -------------------------------------------- |
+| `/embed/chat`     | EmbedChat     | AI 对话主界面                            | Ticket 或 API Key，**由本页自行兑换**  |
+| `/embed/personal` | EmbedPersonal | 个人中心（与 `/dashboard/personal` 一致） | **无独立凭据入口**，依赖 Cookie 已就绪 |
+
+> ⚠️ **重要**：`/embed/personal` **不接受** `?ticket=` 与 `?token=` 参数。它必须在嵌入会话
+> 已经建立之后才可访问，详见[第十章](#十嵌入式个人中心-embedpersonal)。这是当前版本最容易被
+> 集成方踩空的限制——**跨站第三方 iframe 环境暂不可用**。
 
 ---
 
@@ -15,6 +26,7 @@
 7. [会话生命周期与滑动续期机制](#七会话生命周期与滑动续期机制)
 8. [样式、主题与品牌定制 (Theming)](#八样式主题与品牌定制)
 9. [常见问题与排错指南 (FAQ &amp; Troubleshooting)](#九常见问题与排错指南)
+10. [嵌入式个人中心 (EmbedPersonal)](#十嵌入式个人中心-embedpersonal)
 
 ---
 
@@ -549,3 +561,117 @@ frame.contentWindow.postMessage({
     <iframe src="..." style="width: 100%; height: 100%; border: none;"></iframe>
   </div>
   ```
+
+### Q5: 嵌入 `/embed/personal` 后一直显示「无法访问个人中心」？
+
+- **解答**：该页不接受 `?ticket=` / `?token=` 参数，页面加载后会用 `GET /api/portal/auth/me`
+  核验身份，核验失败即拒绝渲染，因此**直接打开它、或与 `/embed/chat` 并列放在同一页面里同时加载，
+  都会命中这一页**。
+- **解决方案**：先让 `/embed/chat` 完成 Ticket 兑换（这一步才会种下嵌入会话 Cookie），
+  再加载 `/embed/personal`。若宿主与平台**不同站**，浏览器不会携带 `SameSite=Lax` 的 Cookie，
+  该页当前不可用，请改用同源部署或等待后续版本。详见[第十章](#十嵌入式个人中心-embedpersonal)。
+
+### Q6: 嵌入页面报 `Refused to display ... in a frame` 被拒绝？
+
+- **解答**：平台对所有 `/embed/` 前缀（含 `/embed/chat` 与 `/embed/personal`）统一下发
+  `Content-Security-Policy: frame-ancestors *`，且不发送 `X-Frame-Options`，**本身允许被任意站点嵌入**。
+  出现该报错通常说明访问的不是 `/embed/` 路由（例如误嵌了 `/dashboard/personal`），
+  而后者的响应头没有放开嵌入限制。
+- **解决方案**：确认 iframe `src` 使用 `/embed/` 前缀路径，不要直接嵌入 `/dashboard/` 下的页面。
+
+---
+
+## 十、嵌入式个人中心 (EmbedPersonal)
+
+### 1. 能力与定位
+
+`/embed/personal` 供第三方页面以 iframe 方式嵌入**个人中心**，内容与平台内的
+`/dashboard/personal` 完全一致（同一个 `PersonalCenter` 组件，九个 Tab 自动同步），
+区别仅在于**不渲染平台自身的框架**——没有顶部面包屑与左侧主导航，嵌入方页面里只出现个人中心本身。
+
+| 项目           | 说明                                                              |
+| -------------- | ----------------------------------------------------------------- |
+| 路由           | `/embed/personal`                                               |
+| 对应平台内页面 | `/dashboard/personal`                                           |
+| 可嵌入性       | ✅ 允许被任意站点 iframe（与 `/embed/chat` 同口径）              |
+| 接受 URL 参数  | ❌ **无**。不接受 `ticket` / `token` / `theme` 等参数      |
+| 身份来源       | 已有会话 Cookie（`portal_session` 或 `embed_session`）          |
+| 拒绝访问时     | 渲染「未授权访问」提示页，**不会**渲染出空壳个人中心        |
+
+### 2. 前提条件（重要）
+
+该页面的凭据**只能来自已建立的会话 Cookie**，没有自己的 Ticket 兑换入口。正确的使用顺序是：
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant H as 宿主页面
+    participant C as /embed/chat (Iframe)
+    participant P as /embed/personal (Iframe)
+    participant A as 南孜平台 API
+
+    Note over H, A: 第一步：先建立嵌入会话
+    H->>C: 加载 /embed/chat?ticket=emt_...
+    C->>A: POST /api/v1/embed/tickets/exchange
+    A-->>C: 签发 embed_session Cookie（SameSite=Lax）
+    Note over H: 此时浏览器已持有会话 Cookie
+
+    Note over H, A: 第二步：再加载个人中心
+    H->>P: 加载 /embed/personal（不带任何参数）
+    P->>A: GET /api/portal/auth/me（自动携带 Cookie）
+    A-->>P: 200 + 用户身份
+    P-->>H: 渲染 PersonalCenter
+```
+
+### 3. 接入示例
+
+```html
+<!-- 第一步：建立嵌入会话（可隐藏，仅用于换取 Cookie） -->
+<iframe id="nanzi-session" src="https://nanzi-ai.yourcompany.com/embed/chat?ticket=emt_xxx"
+        style="width:0;height:0;border:0;position:absolute;" aria-hidden="true"></iframe>
+
+<!-- 第二步：会话就绪后再加载个人中心 -->
+<iframe id="nanzi-personal" src="about:blank"
+        style="width:100%;height:100%;border:none;"></iframe>
+
+<script>
+const personal = document.getElementById('nanzi-personal');
+
+// 等 /embed/chat 初始化完成（此时 Cookie 已种下）再挂载个人中心
+window.addEventListener('message', (event) => {
+  if (event.data?.source === 'nanzi-agent-embed' && event.data?.type === 'INIT_SUCCESS') {
+    personal.src = 'https://nanzi-ai.yourcompany.com/embed/personal';
+  }
+});
+</script>
+```
+
+> 若宿主与平台**同源**（同一主域、同协议同端口，或平台作为宿主的反代路径），
+> 可以跳过第一步——门户会话本身即可通过核验，直接渲染 `/embed/personal`。
+
+### 4. 访问门禁的三态行为
+
+页面加载后先核验身份，通过才挂载个人中心。这样设计是因为未登录状态下直接渲染
+`PersonalCenter` 会呈现成「一个还没设密码的普通用户」的空壳（头像占位、角色显示「普通用户」、
+密码卡片提示「尚未设置登录密码」），对第三方最终用户是严重误导。三态如下：
+
+| 核验结果                        | 页面表现                                                         | 用户可执行动作                     |
+| ------------------------------- | ---------------------------------------------------------------- | ---------------------------------- |
+| `200` 且身份有效              | 正常渲染个人中心                                                 | —                                 |
+| `401` / `403`（未登录或已失效） | 「未授权访问」拒绝页，主文案说明需登录平台账号                   | 「我已登录，重新核验」按钮         |
+| 断网 / 服务重启 / 上游 `5xx`  | **独立的**「暂时无法确认访问权限」重试页，不误判为未登录   | 重试按钮                           |
+| `200` 但身份结构异常          | 同样拒绝渲染，不展示空壳                                         | 重新核验                           |
+
+### 5. 当前版本的已知限制
+
+> 集成前请务必确认以下边界，其中第 1 条会影响方案可行性。
+
+1. **跨站第三方 iframe 暂不可用**：`portal_session` 与 `embed_session` 均为 `SameSite=Lax`，
+   浏览器在跨站 iframe 中不会携带它们，`/embed/personal` 必然落到「未授权访问」页。
+   当前仅**同源**（或同站）嵌入可用。若需跨站，需由平台侧为该路由增加 ticket / 显式 header
+   注入能力，或改 `SameSite=None` 并全站 HTTPS——**当前版本尚未提供**。
+2. **嵌入会话中途过期不会自动回到门禁**：页面通过核验后若会话失效，各 Tab 内的 `401`
+   会静默失败，需刷新页面才会重新回到「未授权访问」页。
+3. **与 `/embed/chat` 并列同时加载不可行**：个人中心的核验可能早于 Ticket 兑换完成，
+   从而误判为未登录。请务必按第 2 节的顺序串行加载。
+
