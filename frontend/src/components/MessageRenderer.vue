@@ -5,7 +5,8 @@ import { appendBrowserOpenActions, appendBrowserOpenActionsToCode, isBrowserOpen
 import { renderMarkdown } from '@/utils/markdown';
 import { enhanceMarkdownTablesForMobile } from '@/utils/markdownTableResponsive';
 import { parseQuickButtons, postProcessQuickButtonHtml, stripQuickButtons } from '@/utils/quickButtons';
-import { applyChartViewMode, buildChartTableRows, getAvailableChartViewModes, getChartViewModeLabel, mergeChartDefaults, parseChartOptions, resolveActiveChartViewMode, type ChartViewMode } from '@/utils/chartRenderer';
+import { applyChartDarkTheme, applyChartViewMode, buildChartTableRows, getAvailableChartViewModes, getChartViewModeLabel, mergeChartDefaults, parseChartOptions, resolveActiveChartViewMode, type ChartViewMode } from '@/utils/chartRenderer';
+import { useDarkThemeFlag } from '@/composables/useDarkThemeFlag';
 import { dedupeSqlPlanPayload, parseSqlPlan, type SqlPlanData } from '@/utils/sqlPlan';
 import { copyToClipboard } from '@/utils/clipboard';
 import type { MarkdownTheme } from '@/types/markdownTheme';
@@ -93,10 +94,15 @@ const RUNNABLE_CODE_LANGUAGES = new Set(['python', 'python3', 'shell', 'sh', 'ba
 
 const localChartTypes = ref<Record<number, string>>({});
 
+/** 主题是直接改 `<html>` 的 class，Vue 感知不到；图表必须显式跟随。 */
+const isDarkTheme = useDarkThemeFlag();
+
 const getChartOption = (segment: ContentSegment, idx: number) => {
   const mode = resolveActiveChartViewMode(segment.chartData || {}, localChartTypes.value[idx]);
-  if (mode === 'table') return segment.chartData || {};
-  return applyChartViewMode(segment.chartData || {}, mode);
+  const base = mode === 'table' ? (segment.chartData || {}) : applyChartViewMode(segment.chartData || {}, mode);
+  // ECharts 画在 canvas 上，Tailwind 的 dark: 变体管不到它：深色下必须换一套
+  // 文字/轴线配色，否则「深底 + 深字」等于什么都看不见。
+  return isDarkTheme.value ? applyChartDarkTheme(base) : base;
 };
 
 const getChartTable = (segment: ContentSegment) => buildChartTableRows(segment.chartData || {});
@@ -540,7 +546,7 @@ const segments = computed<ContentSegment[]>(() => {
         </button>
         <MermaidRenderer :content="segment.content" />
       </div>
-      <div v-else-if="segment.type === 'chart'" class="w-full h-64 bg-white rounded-lg border border-gray-100 p-2 shadow-sm relative group/chart">
+      <div v-else-if="segment.type === 'chart'" class="w-full h-64 bg-white dark:bg-gray-800 rounded-lg border border-gray-100 dark:border-gray-700 p-2 shadow-sm relative group/chart">
         <!-- Chart type switcher buttons overlay -->
         <div class="absolute top-2 right-2 flex items-center space-x-1 bg-white/90 dark:bg-gray-800/90 shadow-sm border border-gray-100 dark:border-gray-700 rounded-lg p-1 z-10 opacity-0 group-hover/chart:opacity-100 transition-opacity">
           <button
@@ -590,7 +596,14 @@ const segments = computed<ContentSegment[]>(() => {
             暂无可展示的表格数据
           </div>
         </div>
-        <v-chart v-else class="chart" :option="getChartOption(segment, idx)" autoresize />
+        <!-- notMerge：切换主题时颜色是整组替换的，默认 merge 会让旧主题的颜色残留 -->
+        <v-chart
+          v-else
+          class="chart"
+          :option="getChartOption(segment, idx)"
+          :update-options="{ notMerge: true }"
+          autoresize
+        />
       </div>
 
       <!-- Canvas HTML 激活卡片 -->

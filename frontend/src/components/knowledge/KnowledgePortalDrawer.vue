@@ -1279,7 +1279,9 @@ onUnmounted(() => {
   animation: kp-shimmer 1.5s ease-in-out infinite;
 }
 
-:global(.dark) .kp-skeleton-shimmer {
+/* scoped 的 `.dark X`（不要用 `:global(.dark) X`：它会编译成全局 `.dark{...}`，
+   污染所有带 .dark 的元素，见 GeneratingWalker.vue 同名注释）。 */
+.dark .kp-skeleton-shimmer {
   background: linear-gradient(90deg, rgb(31 41 55) 20%, rgb(6 78 59 / 0.45) 45%, rgb(31 41 55) 80%);
   background-size: 200% 100%;
 }

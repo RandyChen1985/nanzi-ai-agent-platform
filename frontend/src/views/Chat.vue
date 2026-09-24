@@ -72,6 +72,11 @@ const initChat = () => {
     timeoutTimer = setTimeout(() => {
         if (loading.value) {
             isInitTimedOut.value = true;
+            // 超时后必须把遮罩本身撤掉：它是 `bg-gray-50/50 + backdrop-blur-sm + z-20`，
+            // 永久压在 iframe 之上会把挂件里已经正确渲染的画面糊成一片白雾
+            // （用户反馈「dark 啥也看不清、内容隐约可见」）。撤掉后即使挂件真的没就绪，
+            // 用户看到的是真实状态而不是一层蒙版。
+            loading.value = false;
         }
     }, 5000);
 };

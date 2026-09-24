@@ -1,6 +1,7 @@
 <template>
   <div
-    class="flex h-full w-full max-w-full bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 font-sans overflow-hidden relative min-w-0"
+    class="flex h-full w-full max-w-full font-sans overflow-hidden relative min-w-0"
+    :class="config.theme === 'dark' ? 'dark bg-gray-900 text-gray-100' : 'bg-white text-gray-900'"
   >
     <!-- Sidebar (Desktop/Mobile) -->
     <ChatHistorySidebar
@@ -1278,6 +1279,7 @@
         :sandbox-workspace-error="sandboxWorkspaceError"
         :sandbox-backend="sandboxBackend"
         :enable-grounding="config.enableGrounding"
+        :show-generating-animation="config.showGeneratingAnimation"
         :grounding-block-mode="config.groundingBlockMode"
         @start-sandbox-workspace="ensureSandboxWorkspace"
         @refresh-sandbox-workspace="refreshSandboxWorkspaceStatus"
@@ -3349,6 +3351,8 @@ const config = reactive({
   hideMessageBorder: true,
   /** Bash 运行环境横幅提示开关（可在设置面板中切换，localStorage 持久化） */
   showBashBanner: localStorage.getItem("bash_env_banner_ignored") !== "1",
+  /** 生成中跑道动画开关（可在设置面板中切换，localStorage 持久化） */
+  showGeneratingAnimation: true,
 });
 type BrowserApprovalMode = "guarded" | "autopilot";
 const browserPanelVisible = ref(false);
@@ -3734,6 +3738,7 @@ const saveRoutingSettings = () => {
     localStorage.setItem("yovole_grounding_block_mode", config.groundingBlockMode || "strict_buffer");
     localStorage.setItem("yovole_markdown_theme", config.markdownTheme || "default");
     localStorage.setItem("yovole_hide_message_border", config.hideMessageBorder ? "1" : "0");
+    localStorage.setItem("yovole_show_generating_animation", config.showGeneratingAnimation ? "1" : "0");
 };
 const saveRoutingPreference = async (mode: "auto" | "expert", agentId = "") => {
     if (isRoutingSettingsLocked.value) return;
@@ -6860,6 +6865,10 @@ const handlePostMessage = (event: MessageEvent) => {
 };
 const applyTheme = (theme: string, styleVars?: Record<string, string>) => {
   const root = document.documentElement;
+  // 状态与 class 必须同源：宿主 postMessage（SET_THEME）和服务端配置都会直接调
+  // 这里、绕过 setTheme。不同步 config.theme 的话，设置面板的选中态会和页面实际
+  // 渲染的主题脱钩——显示「深色」高亮、页面却按浅色渲染。
+  config.theme = theme;
   if (theme === "dark") {
     root.classList.add("dark");
   } else {
@@ -6871,6 +6880,20 @@ const applyTheme = (theme: string, styleVars?: Record<string, string>) => {
     });
   }
 };
+// 「状态 → class」的声明式兜底。
+// applyTheme 是命令式入口，而它历史上有多条调用路径（宿主 postMessage、服务端配置、
+// URL query）；只要有一条路径只改了状态、或 class 被别处覆盖，页面就会停在「深色状态
+// + 浅色底」的错位画面——Tailwind 的 dark: 变体是 `:is(.dark *)` **后代**选择器，根
+// 容器自己的深色背景恰恰依赖 <html> 上有 .dark 祖先，没有它就只有子元素变浅、底色仍白，
+// 也就是用户看到的「一片白雾、内容隐约可见」。这里把映射钉成单向：config.theme 是唯一
+// 事实源，<html>.dark 永远跟随，任何路径改了状态都会重新对齐。
+watch(
+  () => config.theme,
+  (theme) => {
+    document.documentElement.classList.toggle("dark", theme === "dark");
+  },
+  { immediate: true },
+);
 const resetSession = async (newToken?: string, ticket?: string) => {
   messages.value = [];
   config.enableGrounding = false; // 新会话恢复默认关闭
@@ -9390,6 +9413,10 @@ onMounted(() => {
   if (savedHideMessageBorder !== null) {
     config.hideMessageBorder = savedHideMessageBorder === "1";
   }
+  const savedShowGeneratingAnimation = localStorage.getItem("yovole_show_generating_animation");
+  if (savedShowGeneratingAnimation !== null) {
+    config.showGeneratingAnimation = savedShowGeneratingAnimation === "1";
+  }
   // 清理可能残留的陈旧本地头像缓存，AI 头像始终以服务端 Redis 全局配置为准
   localStorage.removeItem("yovole_embed_agent_avatar");
   void fetchUserPortalPreferences();
@@ -10187,6 +10214,17 @@ onUnmounted(() => {
 }
 :deep(.markdown-body tbody tr:hover) {
   background-color: #f1f5f9;
+}
+/* 深色下斑马纹必须换一套色。
+   表格底色走的是 `--md-table-background`（深色下 #1f2937），而文字色也已被
+   `--md-table-text` 抬成 #e5e7eb；若斑马纹仍沿用亮色的 #fafbfd，偶数行就成了
+   「白底 + 浅色字」——用户截图里那几行数字几乎看不见，正是这条导致的。
+   这里改用半透明白叠加，斑马纹在深底上自然浮起一层，且与任意气泡底色都能相容。 */
+.dark :deep(.markdown-body tbody tr:nth-child(even)) {
+  background-color: rgba(255, 255, 255, 0.04);
+}
+.dark :deep(.markdown-body tbody tr:hover) {
+  background-color: rgba(255, 255, 255, 0.09);
 }
 :deep(.markdown-body tbody tr:last-child td) {
   border-bottom: 0;

@@ -48,6 +48,7 @@ def test_chat_input_does_not_treat_submission_lock_as_a_cancelable_generation():
     assert "isProcessing ? emit('stop') : isSubmitting ? null : emit('send')" in source
     assert ':disabled="!isProcessing && (isSubmitting || !canSend)"' in source
     # 生成中与提交中的提示必须分属不同状态分支（生成分支新增了 grounding 严格核验文案）。
-    assert "'AI 正在努力生成回复中，请稍候…'" in source
+    # 生成中提示按用户要求以句号收尾，不再用省略号。
+    assert "'AI 正在努力生成回复中，请稍候。'" in source
     assert "isProcessing ? (enableGrounding ?" in source
     assert ") : isSubmitting ? '准备发送…'" in source

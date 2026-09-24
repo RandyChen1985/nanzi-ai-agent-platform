@@ -60,6 +60,13 @@ const axisLabelReadableColor = "#6b7280";
 const axisNameReadableColor = "#374151";
 const titleReadableColor = "#111827";
 
+/* 深色底对应的一组可读色（与 .dark 下的 gray-300/400/100、gray-600/700 对齐） */
+const darkAxisLabelColor = "#9ca3af";
+const darkAxisNameColor = "#d1d5db";
+const darkTitleColor = "#f3f4f6";
+const darkAxisLineColor = "#4b5563";
+const darkSplitLineColor = "#374151";
+
 /** 过浅的颜色在白底图表上几乎不可见，强制替换为可读灰 */
 function normalizeReadableTextColor(color: unknown, fallback = axisLabelReadableColor): string {
   if (typeof color !== "string" || !color.trim()) return fallback;
@@ -329,6 +336,146 @@ export function mergeChartDefaults(options: Record<string, any>): Record<string,
   }
 
   return merged;
+}
+
+/** 深色底上过暗的文字/线条几乎不可见，强制替换为可读浅色。 */
+function normalizeDarkReadableTextColor(color: unknown, fallback: string): string {
+  if (typeof color !== "string" || !color.trim()) return fallback;
+  const value = color.trim().toLowerCase();
+  if (value === "transparent" || value === "inherit" || value === "currentcolor") return fallback;
+
+  // 亮色主题填进来的三个默认灰（轴标签/轴名/标题）在深色底上分别只有 ~3:1、~1.6:1、
+  // ~1.2:1 对比度，靠亮度阈值判不出来（#6b7280 的亮度高达 0.45），因此按值精确抬亮。
+  if (
+    value === axisLabelReadableColor
+    || value === axisNameReadableColor
+    || value === titleReadableColor
+  ) {
+    return fallback;
+  }
+
+  const hexMatch = value.match(/^#([0-9a-f]{3,8})$/i);
+  if (hexMatch) {
+    let hex = hexMatch[1] || "";
+    if (hex.length === 3) hex = hex.split("").map((c) => c + c).join("");
+    if (hex.length === 8) hex = hex.slice(0, 6);
+    if (hex.length < 6) return fallback;
+    const r = parseInt(hex.slice(0, 2), 16);
+    const g = parseInt(hex.slice(2, 4), 16);
+    const b = parseInt(hex.slice(4, 6), 16);
+    const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+    return luminance < 0.35 ? fallback : color;
+  }
+
+  const rgbMatch = value.match(/^rgba?\(([^)]+)\)$/);
+  if (rgbMatch) {
+    const parts = (rgbMatch[1] || "").split(",").map((part) => Number(part.trim()));
+    const [r = 0, g = 0, b = 0] = parts;
+    const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+    return luminance < 0.35 ? fallback : color;
+  }
+
+  return color;
+}
+
+function darkenSingleAxis(axis: any): any {
+  const next: Record<string, any> = { ...axis };
+
+  if (next.axisLabel && typeof next.axisLabel === "object") {
+    next.axisLabel = {
+      ...next.axisLabel,
+      color: normalizeDarkReadableTextColor(next.axisLabel.color, darkAxisLabelColor),
+    };
+  } else if (next.axisLabel !== undefined) {
+    next.axisLabel = { color: darkAxisLabelColor };
+  }
+
+  if (next.nameTextStyle && typeof next.nameTextStyle === "object") {
+    next.nameTextStyle = {
+      ...next.nameTextStyle,
+      color: normalizeDarkReadableTextColor(next.nameTextStyle.color, darkAxisNameColor),
+    };
+  }
+
+  if (next.axisLine && typeof next.axisLine === "object") {
+    next.axisLine = {
+      ...next.axisLine,
+      lineStyle: { ...(next.axisLine.lineStyle || {}), color: darkAxisLineColor },
+    };
+  }
+
+  if (next.splitLine && typeof next.splitLine === "object" && next.splitLine.lineStyle) {
+    next.splitLine = {
+      ...next.splitLine,
+      lineStyle: { ...next.splitLine.lineStyle, color: darkSplitLineColor },
+    };
+  }
+
+  return next;
+}
+
+/** 保持上游结构：数组进数组出、单对象进单对象出，避免改变 ECharts 的轴语义。 */
+function darkenAxis(axis: any): any {
+  if (Array.isArray(axis)) return axis.map(darkenSingleAxis);
+  if (axis && typeof axis === "object") return darkenSingleAxis(axis);
+  return axis;
+}
+
+/**
+ * 把 `mergeChartDefaults` 的产物投影成「深色底可读」的版本。
+ *
+ * 只覆盖在深色底上会消失或刺眼的视觉字段（标题、图例、轴标签、轴线、分隔线、
+ * tooltip 底色），并且对文字色做亮度判定：AI 显式指定的红/蓝等品牌色会被保留，
+ * 只有默认的深色字（`#111827` / `#334155` 一类）才被抬成浅色。
+ * 该函数是纯函数，便于行为测试。
+ */
+export function applyChartDarkTheme(option: Record<string, any> | null | undefined): Record<string, any> {
+  if (!option || typeof option !== "object") return {};
+
+  const next: Record<string, any> = { ...option };
+
+  next.tooltip = {
+    ...(option.tooltip || {}),
+    backgroundColor: "rgba(31, 41, 55, 0.95)",
+    borderColor: darkAxisLineColor,
+    textStyle: {
+      ...((option.tooltip || {}).textStyle || {}),
+      color: darkTitleColor,
+    },
+  };
+
+  if (option.legend && typeof option.legend === "object") {
+    next.legend = {
+      ...option.legend,
+      textStyle: {
+        ...(option.legend.textStyle || {}),
+        color: normalizeDarkReadableTextColor(option.legend.textStyle?.color, darkAxisNameColor),
+      },
+    };
+  }
+
+  if (option.title) {
+    next.title = Array.isArray(option.title)
+      ? option.title.map((item: any) => ({
+          ...item,
+          textStyle: {
+            ...(item?.textStyle || {}),
+            color: normalizeDarkReadableTextColor(item?.textStyle?.color, darkTitleColor),
+          },
+        }))
+      : {
+          ...option.title,
+          textStyle: {
+            ...(option.title?.textStyle || {}),
+            color: normalizeDarkReadableTextColor(option.title?.textStyle?.color, darkTitleColor),
+          },
+        };
+  }
+
+  if (option.xAxis) next.xAxis = darkenAxis(option.xAxis);
+  if (option.yAxis) next.yAxis = darkenAxis(option.yAxis);
+
+  return next;
 }
 
 function isOhlcPoint(point: any): boolean {

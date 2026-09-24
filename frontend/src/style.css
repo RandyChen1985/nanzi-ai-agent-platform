@@ -55,6 +55,15 @@ body,
   overflow-x: hidden;
 }
 
+/* 这里刻意**不**给 `<html>.dark` 设兜底背景。
+   曾有过 `html.dark { background-color: #111827 }`，理由是「EmbedChat 根容器用
+   h-full，而 html/body/#app 没设高度，高度链一旦断开就会露出 body 的浅色底」。
+   该前提不成立：高度来自 EmbedLayout 的 `position: fixed; inset: 0`——fixed 定位
+   脱离文档流、直接由视口定高，与父级有没有高度无关。实测 html/body/#app 高度
+   全为 0 时根容器仍正好铺满视口，`<html>` 的背景永远被它遮住，这条规则不会产生
+   任何视觉效果（挂载前的白屏它也救不了：那时 `<html>` 上还没有 `.dark`）。
+   深色底由 EmbedChat 根容器自己的 `dark:bg-gray-900` 负责。 */
+
 /* 原生清空按钮会占用输入框内部右侧空间（width 18px + margin-left 8px）。
    仅在「有内容」（按钮真正出现）时为它兜底预留空间，空态视觉零变化；
    特异性高于 Tailwind 的 pr-* 工具类，因此可为全项目搜索框统一兜底。
