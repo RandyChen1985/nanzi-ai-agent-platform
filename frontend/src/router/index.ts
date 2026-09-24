@@ -41,6 +41,17 @@ const router = createRouter({
           name: 'EmbedChat',
           component: () => import('../views/EmbedChat.vue'),
           meta: { public: true, title: '嵌入式对话' } 
+        },
+        {
+          // 供第三方 iframe 嵌入的个人中心，内容与 /dashboard/personal 一致，
+          // 仅去掉 Dashboard 的顶部 header（面包屑）与左侧边栏。
+          // public: 与 /embed/chat 同口径——凭据由 iframe 自行携带
+          //（先走 /embed/chat 兑换 ticket 拿到 embed_session Cookie，再打开本页），
+          // 因此不能依赖门户 localStorage 快照，否则第三方场景会被守卫弹到登录页。
+          path: 'personal',
+          name: 'EmbedPersonal',
+          component: () => import('../views/EmbedPersonal.vue'),
+          meta: { public: true, title: '嵌入式个人中心' }
         }
       ]
     },
