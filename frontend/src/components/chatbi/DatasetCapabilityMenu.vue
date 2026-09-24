@@ -3546,19 +3546,23 @@ const handleRecommendedQuestionClick = (
   white-space: nowrap;
 }
 
-:global(.dark) .saved-report-delivery-markdown :deep(h1),
-:global(.dark) .saved-report-delivery-markdown :deep(h2),
-:global(.dark) .saved-report-delivery-markdown :deep(h3),
-:global(.dark) .saved-report-delivery-markdown :deep(h4) {
+/* 以下深色规则一律用 scoped 的 `.dark X`，不要用 `:global(.dark) X`：后者会让整个
+   选择器脱出作用域，编译后只剩一条全局 `.dark{...}`（连 X 都丢了），既让本组件的
+   深色样式彻底失效，又会污染所有带 .dark 的元素（EmbedChat 根容器、`<html>`）。
+   详见 GeneratingWalker.vue 同名注释。 */
+.dark .saved-report-delivery-markdown :deep(h1),
+.dark .saved-report-delivery-markdown :deep(h2),
+.dark .saved-report-delivery-markdown :deep(h3),
+.dark .saved-report-delivery-markdown :deep(h4) {
   color: rgb(229 231 235);
 }
 
-:global(.dark) .saved-report-delivery-markdown :deep(code) {
+.dark .saved-report-delivery-markdown :deep(code) {
   background: rgb(55 65 81 / 0.8);
 }
 
-:global(.dark) .saved-report-delivery-markdown :deep(th),
-:global(.dark) .saved-report-delivery-markdown :deep(td) {
+.dark .saved-report-delivery-markdown :deep(th),
+.dark .saved-report-delivery-markdown :deep(td) {
   border-color: rgb(55 65 81);
 }
 
@@ -3598,7 +3602,7 @@ const handleRecommendedQuestionClick = (
   color: var(--summary-strong, rgb(55 65 81));
 }
 
-:global(.dark) .portal-card-summary :deep(strong) {
+.dark .portal-card-summary :deep(strong) {
   filter: brightness(1.35);
 }
 
@@ -3613,7 +3617,7 @@ const handleRecommendedQuestionClick = (
   animation: portal-shimmer 1.4s ease-in-out infinite;
 }
 
-:global(.dark) .portal-skeleton-shimmer {
+.dark .portal-skeleton-shimmer {
   background: linear-gradient(90deg, rgb(31 41 55) 25%, rgb(55 65 81) 50%, rgb(31 41 55) 75%);
   background-size: 200% 100%;
 }

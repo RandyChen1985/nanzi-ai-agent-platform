@@ -2,7 +2,8 @@
 import { computed } from 'vue';
 import MermaidRenderer from '@/components/MermaidRenderer.vue';
 import { renderMarkdownPreview } from '@/utils/markdown';
-import { mergeChartDefaults, parseChartOptions } from '@/utils/chartRenderer';
+import { applyChartDarkTheme, mergeChartDefaults, parseChartOptions } from '@/utils/chartRenderer';
+import { useDarkThemeFlag } from '@/composables/useDarkThemeFlag';
 import VChart from 'vue-echarts';
 import { use } from 'echarts/core';
 import { CanvasRenderer } from 'echarts/renderers';
@@ -140,6 +141,13 @@ const props = defineProps<{
 }>();
 
 const segments = computed(() => parseSegments(props.content || ''));
+
+/** 主题是直接改 `<html>` 的 class，Vue 感知不到；图表必须显式跟随。 */
+const isDarkTheme = useDarkThemeFlag();
+
+/** 深色下换一套 ECharts 文字/轴线配色（canvas 吃不到 Tailwind 的 dark: 变体）。 */
+const chartOption = (option: Record<string, any>) =>
+  isDarkTheme.value ? applyChartDarkTheme(option) : option;
 </script>
 
 <template>
@@ -153,9 +161,15 @@ const segments = computed(() => parseSegments(props.content || ''));
       />
       <div
         v-else
-        class="canvas-markdown-chart my-4 w-full rounded-xl border border-gray-100 bg-white p-2 shadow-sm"
+        class="canvas-markdown-chart my-4 w-full rounded-xl border border-gray-100 dark:border-gray-700 bg-white dark:bg-gray-800 p-2 shadow-sm"
       >
-        <VChart class="h-[360px] w-full" :option="segment.option" autoresize />
+        <!-- notMerge：切换主题时配色是整组替换的，默认 merge 会让旧主题的颜色残留 -->
+        <VChart
+          class="h-[360px] w-full"
+          :option="chartOption(segment.option)"
+          :update-options="{ notMerge: true }"
+          autoresize
+        />
       </div>
     </template>
   </div>

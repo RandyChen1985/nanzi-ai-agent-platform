@@ -226,6 +226,8 @@ onUnmounted(() => {
   .desktop-export-item { display: flex; }
 }
 .menu-item:hover { background: rgb(249 250 251); }
-:global(.dark) .menu-item { color: rgb(209 213 219); }
-:global(.dark) .menu-item:hover { background: rgb(31 41 55); }
+/* 用 scoped 的 `.dark X`，不要用 `:global(.dark) X`：后者编译后只剩全局 `.dark{...}`，
+   会污染所有带 .dark 的元素（根容器、`<html>`）。详见 GeneratingWalker.vue 同名注释。 */
+.dark .menu-item { color: rgb(209 213 219); }
+.dark .menu-item:hover { background: rgb(31 41 55); }
 </style>
