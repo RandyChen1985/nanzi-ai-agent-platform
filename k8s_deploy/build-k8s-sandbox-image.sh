@@ -19,6 +19,7 @@
 #   ./build-k8s-sandbox-image.sh --version 1.0.0          # 指定产物版本 tag
 #   ./build-k8s-sandbox-image.sh --base-image python:3.11-slim
 #   ./build-k8s-sandbox-image.sh --proxy http://127.0.0.1:7890   # 构建机走代理
+#   ./build-k8s-sandbox-image.sh --pip-index https://pypi.org/simple   # 覆盖镜像内 pip 源（默认清华镜像）
 #   ./build-k8s-sandbox-image.sh --dry-run                # 只生成 Dockerfile/命令，不实际构建
 #   ./build-k8s-sandbox-image.sh --no-import              # 构建+save 后不自动导入，打印导入命令
 #   ./build-k8s-sandbox-image.sh --sync-template          # 从本机 agentscope 刷新 gateway 模板副本
@@ -55,6 +56,9 @@ GATEWAY_SCRIPT_NAME="_mcp_gateway_app.py"
 #   import agentscope.mcp + agentscope.tool 全部通过）。
 BASE_REQS=("mcp<2.0.0" "uvicorn" "fastapi" "httpx" "docstring_parser" "jinja2" "aiofiles" "tree_sitter" "tree_sitter_bash" "python-frontmatter")
 
+# 镜像内 pip 源：默认清华镜像（与 dev.sh 的 PYPI_INDEX_URL 约定保持一致）
+DEFAULT_PIP_INDEX="https://pypi.tuna.tsinghua.edu.cn/simple"
+
 # ---- 参数 ----
 BASE_IMAGE="python:3.11-slim"
 IMAGE_NAME="nanzi-sandbox-k8s"
@@ -66,6 +70,50 @@ SYNC_TEMPLATE=false
 AGENTSCOPE_VERSION=""
 AUTO_CONFIRM=false
 LIST_MODE=false
+PIP_INDEX="${PYPI_INDEX_URL:-$DEFAULT_PIP_INDEX}"
+PIP_INDEX_SCHEME=""
+PIP_INDEX_HOST=""
+PIP_INSECURE_ARG=""
+
+# ---- pip 源校验与参数拼装 ----
+# PIP_INDEX 会被展开进 Dockerfile 文本，必须先白名单校验，防止命令注入。
+validate_pip_index() {
+  local url="$1"
+
+  if [ -z "$url" ]; then
+    log_error "pip 源不能为空。请传 --pip-index <URL>，例如 https://pypi.org/simple"
+    exit 1
+  fi
+
+  case "$url" in
+    http://*|https://*) ;;
+    *)
+      log_error "pip 源必须以 http:// 或 https:// 开头：${url}"
+      exit 1
+      ;;
+  esac
+
+  # 单独拦换行：grep 按行匹配，换行本身不会命中 [:space:]
+  case "$url" in
+    *$'\n'*|*$'\r'*)
+      log_error "pip 源不得包含换行符：${url}"
+      exit 1
+      ;;
+  esac
+
+  if printf '%s' "$url" | grep -q "[[:space:]\"'\`\$;\\\\&|<>(){}]"; then
+    log_error "pip 源包含非法字符（不得含空白、引号、&、;、| 等）：${url}"
+    exit 1
+  fi
+
+  PIP_INDEX_SCHEME="$(printf '%s' "$url" | sed -E 's#^(https?)://.*#\1#')"
+  PIP_INDEX_HOST="$(printf '%s' "$url" | sed -E 's#^https?://([^/]+).*#\1#')"
+
+  if [ "$PIP_INDEX_SCHEME" = "http" ]; then
+    # uv 对 http 源要求显式放行（pip 对应参数是 --trusted-host）
+    PIP_INSECURE_ARG="--allow-insecure-host ${PIP_INDEX_HOST}"
+  fi
+}
 
 # ---- 探测节点容器运行时命令（支持 K3s / 标准 containerd / crictl）----
 resolve_node_container_tool() {
@@ -273,6 +321,8 @@ usage() {
   printf "  %b--image-name%b %b<name>%b     产物镜像名，默认 %bnanzi-sandbox-k8s%b\n" "${C_CYAN}" "${C_RESET}" "${C_YELLOW}" "${C_RESET}" "${C_BOLD}" "${C_RESET}"
   printf "  %b--version%b %b<ver>%b         产物 Tag，默认 %blatest%b\n" "${C_CYAN}" "${C_RESET}" "${C_YELLOW}" "${C_RESET}" "${C_BOLD}" "${C_RESET}"
   printf "  %b--proxy%b %b<url>%b           构建网络代理，如 %bhttp://127.0.0.1:7890%b\n" "${C_CYAN}" "${C_RESET}" "${C_YELLOW}" "${C_RESET}" "${C_CYAN}" "${C_RESET}"
+  printf "  %b--pip-index%b %b<url>%b       镜像内依赖安装使用的 pip 源，默认 %b%s%b\n" "${C_CYAN}" "${C_RESET}" "${C_YELLOW}" "${C_RESET}" "${C_BOLD}" "$DEFAULT_PIP_INDEX" "${C_RESET}"
+  printf "                            （也可用环境变量 %bPYPI_INDEX_URL%b 提供；还原官方源传 %bhttps://pypi.org/simple%b）\n" "${C_CYAN}" "${C_RESET}" "${C_CYAN}" "${C_RESET}"
   printf "  %b--agentscope-version%b    覆盖安装的 agentscope 版本（默认跟随本机平台版本，无则最新）\n" "${C_CYAN}" "${C_RESET}"
   printf "  %b--no-import%b             构建+save 后不自动导入节点（导出 tar 包供手工拷贝）\n" "${C_CYAN}" "${C_RESET}"
   printf "  %b--dry-run%b               演练模式：仅生成 Dockerfile 与命令清单，不实际构建/导入\n" "${C_CYAN}" "${C_RESET}"
@@ -297,6 +347,7 @@ while [ $# -gt 0 ]; do
     --image-name) IMAGE_NAME="$2"; shift 2 ;;
     --version)    IMAGE_TAG="$2"; shift 2 ;;
     --proxy)      PROXY_URL="$2"; shift 2 ;;
+    --pip-index)  PIP_INDEX="$2"; shift 2 ;;
     --agentscope-version) AGENTSCOPE_VERSION="$2"; shift 2 ;;
     --no-import)  DO_IMPORT=false; shift ;;
     --dry-run)    DRY_RUN=true; shift ;;
@@ -305,6 +356,11 @@ while [ $# -gt 0 ]; do
     *) log_error "未知参数: $1（-h 查看帮助）"; exit 1 ;;
   esac
 done
+
+# --list / --sync-template 不构建镜像，无需校验 pip 源
+if [ "$LIST_MODE" != "true" ] && [ "$SYNC_TEMPLATE" != "true" ]; then
+  validate_pip_index "$PIP_INDEX"
+fi
 
 if [ "$LIST_MODE" = "true" ]; then
   run_list_sandbox_images
@@ -322,6 +378,7 @@ if [ "$ORIGINAL_ARGC" -eq 0 ] && [ "$AUTO_CONFIRM" != "true" ]; then
   printf "  • 产物镜像:     %b%s:%s%b\n" "${C_BOLD}" "$IMAGE_NAME" "$IMAGE_TAG" "${C_RESET}"
   printf "  • 自动导入节点: %b%s%b\n" "${C_BOLD}" "$DO_IMPORT" "${C_RESET}"
   printf "  • 平台配置路径: %b系统设置 → 参数配置 → 沙箱配置 → sandbox_k8s_image%b\n" "${C_CYAN}" "${C_RESET}"
+  printf "  • Pip 源:       %b%s%b\n" "${C_CYAN}" "$PIP_INDEX" "${C_RESET}"
   printf "\n"
   if [ -t 0 ] && [ -t 1 ]; then
     printf "%b💡 未指定参数，是否以默认配置 [%s:%s] 立即开始构建？[y/N]: %b" "${C_YELLOW}" "$IMAGE_NAME" "$IMAGE_TAG" "${C_RESET}"
@@ -418,8 +475,10 @@ ENV UV_VENV_CLEAR=1
 # 预置网关 venv（agentscope _GATEWAY_BASE_REQUIREMENTS + 工具链所需核心依赖，见 BASE_REQS 注释）
 RUN uv venv $GATEWAY_VENV \\
  && uv pip install --python $GATEWAY_VENV/bin/python \\
+      --default-index $PIP_INDEX $PIP_INSECURE_ARG \\
       "mcp<2.0.0" uvicorn fastapi httpx docstring_parser jinja2 aiofiles tree_sitter tree_sitter_bash python-frontmatter \\
- && uv pip install --python $GATEWAY_VENV/bin/python --no-deps "$AP" \\
+ && uv pip install --python $GATEWAY_VENV/bin/python --no-deps \\
+      --default-index $PIP_INDEX $PIP_INSECURE_ARG "$AP" \\
  && $GATEWAY_VENV/bin/python -c "import docstring_parser; import agentscope.mcp; import agentscope.tool"
 
 # 预置 gateway 脚本 → AgentScope 判定已初始化，新 Pod 冷启动跳过整个 bootstrap
@@ -427,6 +486,7 @@ COPY _mcp_gateway_app.py $GATEWAY_HOME/_mcp_gateway_app.py
 EOF
 
 if [ "$DRY_RUN" = "true" ]; then
+  log_info "镜像内 pip 源：$PIP_INDEX"
   log_info "【演练模式】已生成构建上下文：$BUILD_DIR"
   log_info "Dockerfile:"
   sed 's/^/    /' "$BUILD_DIR/Dockerfile"
@@ -458,6 +518,10 @@ if [ -f "/.dockerenv" ] || [ -n "${KUBERNETES_SERVICE_HOST:-}" ]; then
 fi
 
 log_info "开始构建 K8s 沙箱网关预置镜像：${C_BOLD}${FULL_IMAGE}${C_RESET}（基础镜像 ${BASE_IMAGE}）"
+log_info "镜像内 pip 源：${C_BOLD}${PIP_INDEX}${C_RESET}"
+if [ -n "$PIP_INSECURE_ARG" ]; then
+  log_info "检测到 http 源，已自动放行：--allow-insecure-host ${PIP_INDEX_HOST}"
+fi
 docker build -t "$FULL_IMAGE" "$BUILD_DIR"
 log_success "镜像构建完成：$FULL_IMAGE"
 

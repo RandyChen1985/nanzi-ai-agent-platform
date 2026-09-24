@@ -146,7 +146,7 @@ K8s 沙箱（`sandbox_policy = k8s`）的网关环境放在 Pod 内的 `/root/.a
 ### 一、前置条件
 
 - 一台**能访问 Docker daemon** 的构建机（节点宿主机或开发机均可，**不要在 NanZi 平台 Pod 内执行**，脚本会自检拦截）；
-- 构建机可访问 PyPI（拉取 `mcp/uvicorn/fastapi/httpx` 网关基础依赖与 agentscope 工具链依赖 `docstring_parser/jinja2/aiofiles/tree_sitter/tree_sitter_bash/python-frontmatter`，清单见 `build-k8s-sandbox-image.sh` 的 `BASE_REQS`），网络受限请加 `--proxy`；
+- 构建机可访问 PyPI（拉取 `mcp/uvicorn/fastapi/httpx` 网关基础依赖与 agentscope 工具链依赖 `docstring_parser/jinja2/aiofiles/tree_sitter/tree_sitter_bash/python-frontmatter`，清单见 `build-k8s-sandbox-image.sh` 的 `BASE_REQS`）。镜像内依赖安装默认使用清华镜像 `https://pypi.tuna.tsinghua.edu.cn/simple`，需要官方源时传 `--pip-index https://pypi.org/simple`；网络受限请加 `--proxy`；
 - 需要访问本仓库 `k8s_deploy/`（内含 `build-k8s-sandbox-image.sh` 与 `sandbox-image/_mcp_gateway_app.py` 模板）。
 
 ### 二、构建并导入
@@ -209,7 +209,10 @@ cd k8s_deploy
 > ```
 
 常用参数：`-l`/`--list` 查验已有镜像、`-y`/`--yes` 免确认、`--base-image python:3.11-slim`、`--image-name nanzi-sandbox-k8s`、
-`--version <标签>`、`--proxy http://<代理>`、`--agentscope-version <版本>`（默认跟随平台
+`--version <标签>`、`--proxy http://<代理>`、`--pip-index <URL>`（镜像内依赖安装使用的 pip 源，默认清华镜像
+`https://pypi.tuna.tsinghua.edu.cn/simple`，也可用环境变量 `PYPI_INDEX_URL` 提供；还原官方源传
+`--pip-index https://pypi.org/simple`；`http://` 内网源会自动追加 uv 的 `--allow-insecure-host`）、
+`--agentscope-version <版本>`（默认跟随平台
 venv 的 agentscope 版本，建议保持平台一致）、`--dry-run` 演练、`--no-import`。
 
 ### 三、确认节点已导入

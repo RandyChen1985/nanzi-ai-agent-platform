@@ -98,7 +98,10 @@ sequenceDiagram
 # 6. 带网络代理构建（解决外网访问受限问题）
 ./sandbox/k8s/build-k8s-sandbox-image.sh --proxy http://127.0.0.1:7890
 
-# 7. 仅构建生成 tar 包，不自动导入节点（适合异地构建后再拷贝导入）
+# 7. 指定镜像内依赖安装使用的 pip 源（默认清华镜像；还原官方源传 https://pypi.org/simple）
+./sandbox/k8s/build-k8s-sandbox-image.sh --pip-index https://pypi.org/simple
+
+# 8. 仅构建生成 tar 包，不自动导入节点（适合异地构建后再拷贝导入）
 ./sandbox/k8s/build-k8s-sandbox-image.sh --no-import
 ```
 
