@@ -297,12 +297,11 @@ const confirmDelete = (item: any) => {
           <button
             @click="emit('update:visible', false)"
             class="p-1.5 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-colors text-gray-400 hover:text-gray-700 dark:hover:text-gray-200"
-            title="收起侧边栏"
+            title="关闭侧边栏"
+            aria-label="关闭侧边栏"
           >
             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <rect x="3" y="3" width="18" height="18" rx="3" stroke-width="1.8" />
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M9 3v18" />
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M15 9l-3 3 3 3" />
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
             </svg>
           </button>
           <div class="flex items-center gap-1.5">
