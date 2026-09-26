@@ -5,6 +5,11 @@ import { useRoute, useRouter } from "vue-router";
 import TraceLogViewer from "@/components/TraceLogViewer.vue";
 import DebugConfigPanel from "@/components/DebugConfigPanel.vue";
 import ChatHistorySidebar from "@/components/ChatHistorySidebar.vue";
+import {
+  DEFAULT_HISTORY_FILTERS,
+  buildHistoryFilterParams,
+  type ChatHistoryFilters,
+} from "@/composables/chat/useHistoryFilters";
 import MessageRenderer from "@/components/MessageRenderer.vue";
 import ToolPermissionCard from "@/components/chat/ToolPermissionCard.vue";
 import GroundingBlockedCard from "@/components/GroundingBlockedCard.vue";
@@ -344,11 +349,13 @@ const fetchHistory = async () => {
   loadingHistory.value = true;
   try {
     const params: any = { page: 1, page_size: 50, group_by_conversation: true };
-    if (agentParams.agent_id) {
-      params.agent_id = agentParams.agent_id;
-    }
     if (historyKeyword.value) {
       params.keyword = historyKeyword.value;
+    }
+    Object.assign(params, buildHistoryFilterParams(historyFilters.value));
+    // 当前调试上下文的优先级最高，必须最后覆盖
+    if (agentParams.agent_id) {
+      params.agent_id = agentParams.agent_id;
     }
     const res = await axios.get("/api/v1/chat/history", { params });
     if (res.data?.data) historyList.value = res.data.data.items || [];
@@ -375,6 +382,31 @@ watch(
 
 // Agents State for Dropdown
 const agents = ref<any[]>([]);
+const historyFilters = ref<ChatHistoryFilters>({ ...DEFAULT_HISTORY_FILTERS });
+
+const resetHistoryFilters = () => {
+  historyFilters.value = { ...DEFAULT_HISTORY_FILTERS };
+};
+
+// 当前调试上下文已锁定智能体时，历史只能是该智能体的会话，筛选无意义
+const showAgentFilter = computed(() => !agentParams.agent_id);
+
+const historyAgentOptions = computed(() =>
+  (agents.value || []).map((agent: any) => ({
+    id: String(agent.id),
+    display_name: agent.display_name || agent.name || "未命名智能体",
+    avatar_url: agent.avatar_url || "",
+  }))
+);
+
+watch(
+  historyFilters,
+  () => {
+    fetchHistory();
+  },
+  { deep: true }
+);
+
 const debugMode = ref<"auto" | "specific">("auto");
 const isGeneralAgentMessage = (msg: Message): boolean => {
   if (msg.agentType) return msg.agentType === "GENERAL";
@@ -4124,6 +4156,11 @@ onUnmounted(() => {
       :loading="loadingHistory"
       :history-list="groupedHistoryList"
       :active-trace-id="activeTraceId"
+      :filters="historyFilters"
+      :available-agents="historyAgentOptions"
+      :show-agent-filter="showAgentFilter"
+      @update:filters="historyFilters = $event"
+      @reset-filters="resetHistoryFilters"
       @fetch-history="fetchHistory"
       @load-chat="openSessionPreview"
       @open-full-logs="openSessionPreview"

@@ -1,5 +1,9 @@
 <script setup lang="ts">
 import { ref, watch, onMounted, onUnmounted, computed } from "vue";
+import type {
+  AgentOption,
+  ChatHistoryFilters,
+} from "@/composables/chat/useHistoryFilters";
 
 const props = withDefaults(
   defineProps<{
@@ -11,18 +15,33 @@ const props = withDefaults(
     activeTraceId?: string;
     activeConversationId?: string;
     modelValue: string; // keyword
+    filters?: ChatHistoryFilters;
+    availableAgents?: AgentOption[];
+    showAgentFilter?: boolean;
   }>(),
   {
     loadingMore: false,
     hasMore: false,
     activeTraceId: "",
     activeConversationId: "",
+    availableAgents: () => [],
+    showAgentFilter: false,
+    filters: () => ({
+      scope: "all",
+      agentId: "",
+      status: "",
+      timeRange: "",
+      startDate: "",
+      endDate: "",
+    }),
   }
 );
 
 const emit = defineEmits<{
   (e: "update:visible", value: boolean): void;
   (e: "update:modelValue", value: string): void;
+  (e: "update:filters", value: ChatHistoryFilters): void;
+  (e: "reset-filters"): void;
   (e: "fetch-history"): void;
   (e: "load-more"): void;
   (e: "load-chat", item: any): void;
@@ -42,11 +61,114 @@ const handleResize = () => {
 
 onMounted(() => {
   window.addEventListener("resize", handleResize);
+  document.addEventListener("click", handleDocumentClick);
+  document.addEventListener("keydown", handleEscape);
 });
 
 onUnmounted(() => {
   window.removeEventListener("resize", handleResize);
+  document.removeEventListener("click", handleDocumentClick);
+  document.removeEventListener("keydown", handleEscape);
 });
+
+// --- Filter Panel State ---
+const filterPanelOpen = ref(false);
+const filterPanelRef = ref<HTMLElement | null>(null);
+const filterButtonRef = ref<HTMLElement | null>(null);
+
+const scopeOptions: Array<{ value: ChatHistoryFilters["scope"]; label: string }> = [
+  { value: "all", label: "全部" },
+  { value: "task", label: "任务会话" },
+  { value: "chat", label: "普通对话" },
+];
+
+const statusOptions: Array<{ value: ChatHistoryFilters["status"]; label: string }> = [
+  { value: "", label: "全部" },
+  { value: "success", label: "成功" },
+  { value: "failed", label: "失败" },
+];
+
+const timeOptions: Array<{ value: ChatHistoryFilters["timeRange"]; label: string }> = [
+  { value: "", label: "全部" },
+  { value: "today", label: "今天" },
+  { value: "7d", label: "近 7 天" },
+  { value: "30d", label: "近 30 天" },
+  { value: "custom", label: "自定义" },
+];
+
+const currentFilters = computed<ChatHistoryFilters>(() => ({
+  scope: props.filters?.scope ?? "all",
+  agentId: props.filters?.agentId ?? "",
+  status: props.filters?.status ?? "",
+  timeRange: props.filters?.timeRange ?? "",
+  startDate: props.filters?.startDate ?? "",
+  endDate: props.filters?.endDate ?? "",
+}));
+
+const activeFilterChips = computed(() => {
+  const f = currentFilters.value;
+  const chips: Array<{ key: keyof ChatHistoryFilters; label: string }> = [];
+  if (f.scope === "task") chips.push({ key: "scope", label: "任务会话" });
+  if (f.scope === "chat") chips.push({ key: "scope", label: "普通对话" });
+  if (f.agentId) {
+    const matched = props.availableAgents.find((a) => a.id === f.agentId);
+    chips.push({ key: "agentId", label: matched?.display_name || "指定智能体" });
+  }
+  if (f.status === "success") chips.push({ key: "status", label: "成功" });
+  if (f.status === "failed") chips.push({ key: "status", label: "失败" });
+  if (f.timeRange === "today") chips.push({ key: "timeRange", label: "今天" });
+  if (f.timeRange === "7d") chips.push({ key: "timeRange", label: "近 7 天" });
+  if (f.timeRange === "30d") chips.push({ key: "timeRange", label: "近 30 天" });
+  if (f.timeRange === "custom") chips.push({ key: "timeRange", label: "自定义时间" });
+  return chips;
+});
+
+const activeFilterCount = computed(() => activeFilterChips.value.length);
+
+const emitFilters = (patch: Partial<ChatHistoryFilters>) => {
+  emit("update:filters", { ...currentFilters.value, ...patch });
+};
+
+const removeFilter = (key: keyof ChatHistoryFilters) => {
+  if (key === "scope") {
+    emitFilters({ scope: "all" });
+  } else if (key === "agentId") {
+    emitFilters({ agentId: "" });
+  } else if (key === "status") {
+    emitFilters({ status: "" });
+  } else if (key === "timeRange") {
+    emitFilters({ timeRange: "", startDate: "", endDate: "" });
+  }
+};
+
+const resetFilters = () => {
+  emit("reset-filters");
+};
+
+const toggleFilterPanel = () => {
+  filterPanelOpen.value = !filterPanelOpen.value;
+};
+
+const handleDocumentClick = (event: MouseEvent) => {
+  if (!filterPanelOpen.value) return;
+  const target = event.target as Node;
+  if (filterPanelRef.value?.contains(target)) return;
+  if (filterButtonRef.value?.contains(target)) return;
+  filterPanelOpen.value = false;
+};
+
+const handleEscape = (event: KeyboardEvent) => {
+  if (event.key === "Escape") filterPanelOpen.value = false;
+};
+
+// 筛选变化时展开全部分组，避免默认折叠的「更早」组隐藏筛选结果
+watch(
+  () => props.filters,
+  () => {
+    collapsedGroups.value = { older: false };
+  },
+  { deep: true }
+);
 
 // Search keyword with Debounce
 const keyword = ref(props.modelValue);
@@ -175,12 +297,11 @@ const confirmDelete = (item: any) => {
           <button
             @click="emit('update:visible', false)"
             class="p-1.5 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-colors text-gray-400 hover:text-gray-700 dark:hover:text-gray-200"
-            title="收起侧边栏"
+            title="关闭侧边栏"
+            aria-label="关闭侧边栏"
           >
             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <rect x="3" y="3" width="18" height="18" rx="3" stroke-width="1.8" />
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M9 3v18" />
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M15 9l-3 3 3 3" />
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
             </svg>
           </button>
           <div class="flex items-center gap-1.5">
@@ -215,40 +336,193 @@ const confirmDelete = (item: any) => {
         </button>
       </div>
 
-      <!-- Search Bar with Debounce & Clear -->
-      <div class="px-3 py-2.5 border-b border-gray-100 dark:border-gray-800 bg-white dark:bg-gray-900 flex-shrink-0">
-        <div class="relative flex items-center">
-          <svg
-            class="w-3.5 h-3.5 text-gray-400 absolute left-3 pointer-events-none"
-            fill="none"
-            stroke="currentColor"
-            viewBox="0 0 24 24"
-          >
-            <path
-              stroke-linecap="round"
-              stroke-linejoin="round"
-              stroke-width="2"
-              d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
+      <!-- Search Bar with Debounce & Clear + Filter Entry -->
+      <div class="px-3 py-2.5 border-b border-gray-100 dark:border-gray-800 bg-white dark:bg-gray-900 flex-shrink-0 relative">
+        <div class="flex items-center gap-1.5">
+          <div class="relative flex items-center flex-1 min-w-0">
+            <svg
+              class="w-3.5 h-3.5 text-gray-400 absolute left-3 pointer-events-none"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                stroke-width="2"
+                d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
+              />
+            </svg>
+            <input
+              v-model="keyword"
+              @input="handleSearchInput"
+              type="search"
+              placeholder="搜索历史记录..."
+              class="w-full pl-8 pr-7 py-1.5 text-xs bg-gray-50/80 dark:bg-gray-800/80 border border-gray-200/80 dark:border-gray-700/80 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all placeholder-gray-400 text-gray-700 dark:text-gray-200"
             />
-          </svg>
-          <input
-            v-model="keyword"
-            @input="handleSearchInput"
-            type="search"
-            placeholder="搜索历史记录..."
-            class="w-full pl-8 pr-7 py-1.5 text-xs bg-gray-50/80 dark:bg-gray-800/80 border border-gray-200/80 dark:border-gray-700/80 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all placeholder-gray-400 text-gray-700 dark:text-gray-200"
-          />
+            <button
+              v-if="keyword"
+              @click="clearSearch"
+              type="button"
+              class="absolute right-2.5 p-0.5 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 rounded-full transition-colors"
+              title="清空搜索"
+            >
+              <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
+
+          <!-- 漏斗入口：置于输入框外部，避免与内嵌清空按钮挤压 -->
           <button
-            v-if="keyword"
-            @click="clearSearch"
+            ref="filterButtonRef"
             type="button"
-            class="absolute right-2.5 p-0.5 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 rounded-full transition-colors"
-            title="清空搜索"
+            @click.stop="toggleFilterPanel"
+            class="relative p-1.5 rounded-xl border transition-colors flex-shrink-0"
+            :class="
+              activeFilterCount > 0
+                ? 'border-primary/40 text-primary bg-primary/5'
+                : 'border-gray-200/80 dark:border-gray-700/80 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200'
+            "
+            title="筛选历史会话"
           >
-            <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                stroke-width="1.8"
+                d="M4 6h16M7 12h10M10 18h4"
+              />
+            </svg>
+            <span
+              v-if="activeFilterCount > 0"
+              class="absolute -top-1 -right-1 min-w-[14px] h-[14px] px-0.5 rounded-full bg-primary text-white text-[9px] font-bold flex items-center justify-center"
+            >
+              {{ activeFilterCount }}
+            </span>
+          </button>
+        </div>
+
+        <!-- 激活筛选回显 -->
+        <div v-if="activeFilterCount > 0" class="mt-2 flex items-center gap-1.5 overflow-x-auto custom-scrollbar">
+          <button
+            v-for="chip in activeFilterChips"
+            :key="chip.key"
+            type="button"
+            @click="removeFilter(chip.key)"
+            class="flex items-center gap-1 px-2 py-0.5 rounded-lg bg-primary/10 text-primary text-[10px] font-semibold whitespace-nowrap hover:bg-primary/20 transition-colors"
+          >
+            {{ chip.label }}
+            <svg class="w-2.5 h-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M6 18L18 6M6 6l12 12" />
             </svg>
           </button>
+        </div>
+
+        <!-- 筛选面板：桌面端浮层，移动端内联展开 -->
+        <div
+          v-if="filterPanelOpen"
+          ref="filterPanelRef"
+          class="rounded-2xl border border-gray-200/80 dark:border-gray-700/80 bg-white dark:bg-gray-900 shadow-lg p-3 space-y-3 z-30"
+          :class="isMobile ? 'mt-2' : 'absolute left-3 right-3 top-full mt-1'"
+        >
+          <div>
+            <div class="text-[10px] font-bold text-gray-400 mb-1.5">会话来源</div>
+            <div class="grid grid-cols-3 gap-1">
+              <button
+                v-for="opt in scopeOptions"
+                :key="opt.value"
+                type="button"
+                @click="emitFilters({ scope: opt.value })"
+                class="px-2 py-1 rounded-lg text-[11px] font-semibold transition-colors border"
+                :class="
+                  currentFilters.scope === opt.value
+                    ? 'bg-primary/10 text-primary border-primary/30'
+                    : 'text-gray-500 dark:text-gray-400 border-transparent hover:bg-gray-100 dark:hover:bg-gray-800'
+                "
+              >
+                {{ opt.label }}
+              </button>
+            </div>
+          </div>
+
+          <div v-if="showAgentFilter">
+            <div class="text-[10px] font-bold text-gray-400 mb-1.5">智能体</div>
+            <select
+              :value="currentFilters.agentId"
+              @change="emitFilters({ agentId: ($event.target as HTMLSelectElement).value })"
+              class="w-full px-2 py-1 text-[11px] bg-gray-50/80 dark:bg-gray-800/80 border border-gray-200/80 dark:border-gray-700/80 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/20 text-gray-700 dark:text-gray-200"
+            >
+              <option value="">全部智能体</option>
+              <option v-for="agent in availableAgents" :key="agent.id" :value="agent.id">
+                {{ agent.display_name }}
+              </option>
+            </select>
+          </div>
+
+          <div>
+            <div class="text-[10px] font-bold text-gray-400 mb-1.5">执行状态</div>
+            <div class="grid grid-cols-3 gap-1">
+              <button
+                v-for="opt in statusOptions"
+                :key="opt.value"
+                type="button"
+                @click="emitFilters({ status: opt.value })"
+                class="px-2 py-1 rounded-lg text-[11px] font-semibold transition-colors border"
+                :class="
+                  currentFilters.status === opt.value
+                    ? 'bg-primary/10 text-primary border-primary/30'
+                    : 'text-gray-500 dark:text-gray-400 border-transparent hover:bg-gray-100 dark:hover:bg-gray-800'
+                "
+              >
+                {{ opt.label }}
+              </button>
+            </div>
+          </div>
+
+          <div>
+            <div class="text-[10px] font-bold text-gray-400 mb-1.5">时间范围</div>
+            <div class="grid grid-cols-3 gap-1">
+              <button
+                v-for="opt in timeOptions"
+                :key="opt.value"
+                type="button"
+                @click="emitFilters({ timeRange: opt.value })"
+                class="px-2 py-1 rounded-lg text-[11px] font-semibold transition-colors border"
+                :class="
+                  currentFilters.timeRange === opt.value
+                    ? 'bg-primary/10 text-primary border-primary/30'
+                    : 'text-gray-500 dark:text-gray-400 border-transparent hover:bg-gray-100 dark:hover:bg-gray-800'
+                "
+              >
+                {{ opt.label }}
+              </button>
+            </div>
+            <div v-if="currentFilters.timeRange === 'custom'" class="mt-2 grid grid-cols-2 gap-1.5">
+              <input
+                type="date"
+                :value="currentFilters.startDate"
+                @change="emitFilters({ startDate: ($event.target as HTMLInputElement).value })"
+                class="px-2 py-1 text-[11px] bg-gray-50/80 dark:bg-gray-800/80 border border-gray-200/80 dark:border-gray-700/80 rounded-lg text-gray-700 dark:text-gray-200 focus:outline-none focus:ring-2 focus:ring-primary/20"
+              />
+              <input
+                type="date"
+                :value="currentFilters.endDate"
+                @change="emitFilters({ endDate: ($event.target as HTMLInputElement).value })"
+                class="px-2 py-1 text-[11px] bg-gray-50/80 dark:bg-gray-800/80 border border-gray-200/80 dark:border-gray-700/80 rounded-lg text-gray-700 dark:text-gray-200 focus:outline-none focus:ring-2 focus:ring-primary/20"
+              />
+            </div>
+          </div>
+
+          <div class="pt-1 border-t border-gray-100 dark:border-gray-800 flex justify-end">
+            <button
+              type="button"
+              @click="resetFilters"
+              class="px-2.5 py-1 rounded-lg text-[11px] font-semibold text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 transition-colors"
+            >
+              重置筛选
+            </button>
+          </div>
         </div>
       </div>
 
@@ -287,11 +561,25 @@ const confirmDelete = (item: any) => {
               />
             </svg>
           </div>
-          <p class="text-xs font-bold text-gray-600 dark:text-gray-300 mb-1">暂无会话历史</p>
+          <p class="text-xs font-bold text-gray-600 dark:text-gray-300 mb-1">
+            {{ activeFilterCount > 0 || keyword ? '无匹配筛选结果' : '暂无会话历史' }}
+          </p>
           <p class="text-[11px] text-gray-400 dark:text-gray-500 mb-4 max-w-[180px]">
-            开启新对话，即可记录您的灵感与工作流
+            {{
+              activeFilterCount > 0 || keyword
+                ? '试试放宽筛选条件或更换关键词'
+                : '开启新对话，即可记录您的灵感与工作流'
+            }}
           </p>
           <button
+            v-if="activeFilterCount > 0"
+            @click="resetFilters"
+            class="px-3.5 py-1.5 rounded-lg border border-primary/30 text-primary text-xs font-semibold hover:bg-primary/5 transition-colors"
+          >
+            重置筛选
+          </button>
+          <button
+            v-else
             @click="emit('new-chat')"
             class="px-3.5 py-1.5 rounded-lg border border-primary/30 text-primary text-xs font-semibold hover:bg-primary/5 transition-colors"
           >

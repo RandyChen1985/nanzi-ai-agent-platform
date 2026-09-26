@@ -12,6 +12,11 @@
       :has-more="historyHasMore"
       :history-list="groupedHistoryList"
       :active-conversation-id="conversationId"
+      :filters="historyFilters"
+      :available-agents="historyAgentOptions"
+      :show-agent-filter="showAgentFilter"
+      @update:filters="historyFilters = $event"
+      @reset-filters="resetHistoryFilters"
       @fetch-history="fetchHistory()"
       @load-more="fetchHistory(true)"
       @load-chat="handleHistoryClick"
@@ -2340,6 +2345,11 @@ import {
 } from "@/utils/streamErrorPresentation";
 import RagPreviewDrawer from "@/components/RagPreviewDrawer.vue";
 import ChatHistorySidebar from "@/components/ChatHistorySidebar.vue";
+import {
+  DEFAULT_HISTORY_FILTERS,
+  buildHistoryFilterParams,
+  type ChatHistoryFilters,
+} from "@/composables/chat/useHistoryFilters";
 import { downloadMarkdownFile } from "@/utils/chatSessionExport";
 import ConfirmModal from "@/components/ConfirmModal.vue";
 import ChatSettings from "@/components/embed/ChatSettings.vue";
@@ -5378,6 +5388,32 @@ const loadingHistory = ref(false);
 const loadingMoreHistory = ref(false);
 const historyKeyword = ref("");
 
+// --- History Filters ---
+const historyFilters = ref<ChatHistoryFilters>({ ...DEFAULT_HISTORY_FILTERS });
+
+const resetHistoryFilters = () => {
+  historyFilters.value = { ...DEFAULT_HISTORY_FILTERS };
+};
+
+// 集成锁定场景下历史已被限定为单一智能体，智能体筛选无意义
+const showAgentFilter = computed(() => !config.agentId);
+
+const historyAgentOptions = computed(() =>
+  (allowedAgents.value || []).map((agent: any) => ({
+    id: String(agent.id),
+    display_name: agent.display_name || agent.name || "未命名智能体",
+    avatar_url: agent.avatar_url || "",
+  }))
+);
+
+watch(
+  historyFilters,
+  () => {
+    fetchHistory();
+  },
+  { deep: true }
+);
+
 // --- Aggregated History Logic ---
 const aggregatedHistoryList = computed(() => {
   if (!historyList.value.length) return [];
@@ -5435,6 +5471,8 @@ const fetchHistory = async (isLoadMore = false) => {
       group_by_conversation: true
     };
     if (historyKeyword.value) params.keyword = historyKeyword.value;
+    Object.assign(params, buildHistoryFilterParams(historyFilters.value));
+    // 集成锁定的优先级最高，必须最后覆盖
     if (config.agentId) params.agent_id = config.agentId;
 
     const res = await axios.get("/api/v1/chat/history", { params });
