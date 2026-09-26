@@ -26,6 +26,7 @@ from app.services.resource_scope_normalizer import normalize_resource_scope_for_
 from app.services.ai.business_context import sanitize_injected_context
 from app.services.ai.conversation_identity import MissingUserIdentityError, require_user_id
 from app.services.ai.memory_service import memory_service
+from app.services.ai.history_query import build_history_query
 from app.services.ai.reusable_result import (
     build_reusable_result_client_summary,
     normalize_legacy_data_result,
@@ -2091,14 +2092,14 @@ async def get_history(
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
     group_by_conversation: bool = False,
+    scope: Optional[str] = None,
     request: Request = None,
     db: AsyncSession = Depends(get_db_session)
 ):
     """
     Get dialogue history with filtering and pagination.
     """
-    from app.models.audit import AgentExecutionHistory
-    from sqlalchemy import select, or_, desc, func
+    from sqlalchemy import select
     from datetime import datetime
     from app.schemas.agent import AgentExecutionHistoryResponse
 
@@ -2121,62 +2122,30 @@ async def get_history(
         raise HTTPException(status_code=401, detail="缺少用户身份")
     is_admin = user_info.get("role") == "admin"
     history_user_id = None if is_admin else _require_chat_user_id(user_info)
-    scope_filters = []
-    if history_user_id is not None:
-        scope_filters.append(AgentExecutionHistory.user_id == history_user_id)
-    elif username:
-        scope_filters.append(AgentExecutionHistory.username == username)
+    # 用户范围由 history_query 内部重建（user_id 优先，其次 username）；
+    # 这里解析出的 history_user_id 继续供后续资源范围查询使用。
 
-    # 1. Base Query
-    if group_by_conversation:
-        # Aggregation Logic: Get latest record AND total count per conversation
-        subquery = (
-            select(
-                func.max(AgentExecutionHistory.id).label("max_id"),
-                func.count(AgentExecutionHistory.id).label("turn_count")
-            )
-            .where(*scope_filters)
-            .group_by(func.coalesce(AgentExecutionHistory.conversation_id, AgentExecutionHistory.trace_id))
-            .subquery()
-        )
-        query = (
-            select(AgentExecutionHistory, subquery.c.turn_count)
-            .join(subquery, AgentExecutionHistory.id == subquery.c.max_id)
-        )
-    else:
-        query = select(AgentExecutionHistory)
+    # 查询构建收敛到 app/services/ai/history_query.py：
+    # 会话级属性（来源 / 智能体 / 时间）过滤分组代表行，
+    # 轮次级属性（关键词 / 状态）以会话键 IN 子查询判定会话内存在性。
+    query, count_query = build_history_query(
+        page=page,
+        page_size=page_size,
+        user_id=history_user_id,
+        username=username,
+        agent_id=agent_id,
+        conversation_id=conversation_id,
+        keyword=keyword,
+        status=status,
+        start_dt=start_dt,
+        end_dt=end_dt,
+        scope=scope,
+        group_by_conversation=group_by_conversation,
+    )
 
-    # 2. User Filter (Security)
-    if scope_filters:
-        query = query.where(*scope_filters)
-
-    # 3. Apply Filters
-    if agent_id:
-        query = query.where(AgentExecutionHistory.agent_id == agent_id)
-    if conversation_id: # 应用会话过滤
-        query = query.where(AgentExecutionHistory.conversation_id == conversation_id)
-    if status:
-        query = query.where(AgentExecutionHistory.status == status)
-    if keyword:
-        search_pattern = f"%{keyword}%"
-        query = query.where(or_(AgentExecutionHistory.query.like(search_pattern), AgentExecutionHistory.summary.like(search_pattern)))
-    if start_dt:
-        query = query.where(AgentExecutionHistory.created_at >= start_dt)
-    if end_dt:
-        query = query.where(AgentExecutionHistory.created_at <= end_dt)
-
-    # 4. Get Total Count
-    count_query = select(func.count()).select_from(query.subquery())
+    # Get Total Count
     total_result = await db.execute(count_query)
     total = total_result.scalar() or 0
-
-    # 5. Pagination & Ordering
-    if group_by_conversation:
-        query = query.order_by(desc(AgentExecutionHistory.id))
-    else:
-        query = query.order_by(desc(AgentExecutionHistory.id))
-        
-    query = query.offset((page - 1) * page_size).limit(page_size)
 
     result = await db.execute(query)
     
