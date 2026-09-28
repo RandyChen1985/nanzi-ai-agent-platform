@@ -8,6 +8,14 @@ from app.services.ai.runtime.agentscope.tools import RuntimeToolSpec
 
 logger = logging.getLogger(__name__)
 
+# 上下文中保留的图片数量上限。按产品要求写死，不走 ConfigService。
+# AgentScope 2.0.9 新增 ContextConfig.max_image_num（上游默认 5）；平台显式取 5
+# 与之对齐并固化，避免上游日后调整该默认值时平台行为被静默改变。
+# 超限时最旧的图片会在上下文压缩阶段被卸载到 workspace 并替换为记录路径的
+# hint——平台已通过 get_workspace_offloader 提供 offloader，故被移出的图片仍可
+# 按路径找回，不是丢弃。
+MAX_CONTEXT_IMAGE_NUM = 5
+
 
 def _config_flag_enabled(raw: Any, *, default: bool = True) -> bool:
     if raw is None or str(raw).strip() == "":
@@ -119,7 +127,11 @@ def build_runtime_middlewares(
 
 
 async def load_context_config() -> Any:
-    """Build AgentScope ContextConfig from platform settings."""
+    """Build AgentScope ContextConfig from platform settings.
+
+    ``max_image_num`` 例外：按产品要求写死为 :data:`MAX_CONTEXT_IMAGE_NUM`，
+    不读系统配置。
+    """
     from agentscope.agent import ContextConfig
     from app.services.config_service import ConfigService
 
@@ -156,6 +168,7 @@ async def load_context_config() -> Any:
         trigger_ratio=trigger_ratio,
         reserve_ratio=reserve_ratio,
         tool_result_limit=tool_result_limit,
+        max_image_num=MAX_CONTEXT_IMAGE_NUM,
     )
 
 
