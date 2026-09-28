@@ -950,14 +950,16 @@ async def test_model_connection_test_prefers_model_temperature_over_global(monke
 async def test_get_llm_async_uses_config_service_fallbacks(monkeypatch):
     from app.core.llm import client
 
-    async def fake_config_get(key):
+    async def fake_config_get(key, default=None):
         values = {
             "llm_model_name": "configured-model",
             "llm_api_key": "configured-key",
             "llm_base_url": "https://configured.example/v1",
             "llm_temperature": "0.3",
+            "llm_request_read_timeout": "120",
         }
-        return values.get(key)
+        value = values.get(key)
+        return default if value is None else value
 
     captured = {}
 
@@ -978,6 +980,7 @@ async def test_get_llm_async_uses_config_service_fallbacks(monkeypatch):
         "base_url": "https://configured.example/v1",
         "model": "configured-model",
         "temperature": 0.3,
+        "read_timeout": 120.0,
     }
 
 

@@ -3,6 +3,10 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from app.services.ai.runtime.agentscope.request_timeout import (
+    DEFAULT_LLM_REQUEST_READ_TIMEOUT,
+)
+
 
 pytestmark = pytest.mark.no_infrastructure
 
@@ -134,10 +138,17 @@ def test_azure_chat_model_uses_deployment_endpoint_and_api_version():
     )
 
     assert model.credential.base_url.endswith("/openai/deployments/gpt-4o-prod")
-    assert model.client_kwargs == {
+    # timeout 由平台统一注入（四字段显式给全），单独取出后校验，
+    # 其余键保持全等比较以确保 azure 分支没有多写参数。
+    client_kwargs = dict(model.client_kwargs)
+    timeout = client_kwargs.pop("timeout", None)
+    assert client_kwargs == {
+        "max_retries": 0,
         "default_headers": {"api-key": "azure-key"},
         "default_query": {"api-version": "2025-01-01"},
     }
+    assert timeout is not None
+    assert timeout.read == DEFAULT_LLM_REQUEST_READ_TIMEOUT
 
 
 @pytest.mark.asyncio

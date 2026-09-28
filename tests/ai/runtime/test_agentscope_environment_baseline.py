@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 
 import pytest
@@ -18,7 +19,13 @@ def test_dockerfile_uses_python_311_or_newer_for_agentscope():
 def test_requirements_declares_agentscope_runtime_extras():
     requirements = (ROOT / "requirements.txt").read_text(encoding="utf-8")
 
-    assert "agentscope[service,storage,workspace]>=2.0.6" in requirements
+    # 保留 runtime extras，且必须精确锁定版本：无上限会导致镜像重建时静默拉取
+    # 当时的最新正式版，造成本地 .venv 与生产镜像版本漂移
+    assert re.search(
+        r"^agentscope\[service,storage,workspace\]==\d+\.\d+\.\d+$",
+        requirements,
+        re.MULTILINE,
+    ), "requirements.txt 必须声明 agentscope runtime extras 并精确锁定版本"
 
 
 def test_checklist_tracks_agentscope_runtime_replacement():

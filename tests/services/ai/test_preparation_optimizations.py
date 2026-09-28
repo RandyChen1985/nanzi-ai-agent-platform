@@ -166,6 +166,31 @@ async def test_agent_runtime_tool_result_limit_defaults_to_64k(monkeypatch):
     assert context_cfg.tool_result_limit == 65536
 
 
+@pytest.mark.asyncio
+async def test_agent_runtime_max_image_num_is_hardcoded_to_5(monkeypatch):
+    """上下文中保留的图片上限写死为 5，不读系统配置。
+
+    AgentScope 2.0.9 新增 ContextConfig.max_image_num，上游默认亦为 5。平台显式
+    取 5 并固化，用意是上游日后调整该默认值时平台行为不被静默改变；即便系统
+    配置里存在同名键、或给出其它取值，也必须无效——这正是「写死」的语义。
+    超限图片会在上下文压缩阶段被卸载到 workspace 并替换为记录路径的 hint
+    （平台已通过 get_workspace_offloader 提供 offloader）。
+    """
+    from app.services.ai.runtime.agentscope import agent_runtime as module
+
+    get_many_mock = AsyncMock(return_value={
+        "agentscope_max_image_num": "99",
+        "agentscope_context_trigger_ratio": "0.75",
+        "agentscope_context_reserve_ratio": "0.15",
+    })
+    monkeypatch.setattr("app.services.config_service.ConfigService.get_many", get_many_mock)
+
+    context_cfg = await module.load_context_config()
+
+    assert module.MAX_CONTEXT_IMAGE_NUM == 5
+    assert context_cfg.max_image_num == 5
+
+
 def test_workspace_sandbox_log_build():
     from app.services.ai.agent_service import _build_workspace_sandbox_log
 

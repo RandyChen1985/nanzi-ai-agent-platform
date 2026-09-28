@@ -749,6 +749,7 @@ async def _policy_docker_workspace(
     """
     from app.services.config_service import ConfigService
     from app.services.ai.runtime.agentscope.workspace_container_mcp import (
+        GATEWAY_EXTRA_PIP,
         build_container_tool_mcp,
     )
     from agentscope.workspace import DockerWorkspace
@@ -784,6 +785,13 @@ async def _policy_docker_workspace(
     kwargs: dict[str, Any] = {
         "host_workdir": host_workdir,  # None => ephemeral container
         "default_mcps": [default_mcp],
+        # AgentScope 2.0.9 起网关镜像以 ``--no-deps`` 安装 agentscope，容器内跑
+        # 内置 Bash/Read/Write 工具所需的依赖不再被自动带入，须显式补齐（否则
+        # 沙箱 Bash 报 "HTTP 500: No module named 'docstring_parser'"）。此处的
+        # 取值必须与 docker_prebuild._prepare_context 完全一致：extra_pip 会写入
+        # requirements.txt 并参与镜像 tag 的 SHA256 计算，不一致会导致预构建的
+        # 镜像无法被运行时命中，退化为每次现场构建。
+        "extra_pip": list(GATEWAY_EXTRA_PIP),
         "skill_paths": skill_paths,
         "base_image": base_image,
     }
@@ -1440,7 +1448,7 @@ async def _policy_k8s_workspace(
         resolve_shared_pvc,
     )
     from app.services.ai.runtime.agentscope.workspace_container_mcp import (
-        K8S_GATEWAY_EXTRA_PIP,
+        GATEWAY_EXTRA_PIP,
         K8S_GATEWAY_VENV_PYTHON,
         build_container_tool_mcp,
     )
@@ -1573,7 +1581,7 @@ async def _policy_k8s_workspace(
         # K8s 冷启动 bootstrap 只装 _GATEWAY_BASE_REQUIREMENTS + extra_pip：
         # 补上 agentscope 工具链核心依赖，避免网关加载 Bash/MCP 工具时报
         # "HTTP 500: No module named 'xxx'"（预置镜像另由 BASE_REQS 保证）。
-        "extra_pip": list(K8S_GATEWAY_EXTRA_PIP),
+        "extra_pip": list(GATEWAY_EXTRA_PIP),
         "skill_paths": skill_paths,
     }
     if effective_workspace_id:

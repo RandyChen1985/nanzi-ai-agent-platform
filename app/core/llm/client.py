@@ -8,6 +8,10 @@ from app.services.ai.runtime.agentscope.models import (
     AgentScopeModelConfig,
     create_openai_chat_model,
 )
+from app.services.ai.runtime.agentscope.request_timeout import (
+    LLM_REQUEST_READ_TIMEOUT_KEY,
+    parse_llm_request_read_timeout,
+)
 from app.utils.model_credentials import decrypt_model_api_key
 from app.core.context import get_debug_option
 from app.services.ai.reasoning import UNSET, resolve_reasoning_settings
@@ -114,6 +118,7 @@ class LLMFactory:
         thinking_enable: bool = False,
         thinking_capable: bool = False,
         reasoning_effort: str | None = None,
+        read_timeout: float | None = None,
     ) -> AgentScopeLLMHandle:
         final_api_key = api_key or (settings.LLM_API_KEY if settings.LLM_API_KEY else None)
         final_base_url = base_url or (settings.LLM_BASE_URL if settings.LLM_BASE_URL else None)
@@ -149,6 +154,7 @@ class LLMFactory:
                 thinking_enable=thinking_enable,
                 thinking_capable=thinking_capable,
                 reasoning_effort=reasoning_effort,
+                read_timeout=read_timeout,
             )
         )
 
@@ -254,6 +260,12 @@ async def get_llm_async(streaming: bool = False, **kwargs) -> Optional[AgentScop
         logger.error("LLM API Key is missing for model '%s'. Cannot create LLM instance.", model)
         return None
 
+    read_timeout = kwargs.get("read_timeout")
+    if read_timeout is None:
+        read_timeout = parse_llm_request_read_timeout(
+            await ConfigServiceProxy.get(LLM_REQUEST_READ_TIMEOUT_KEY)
+        )
+
     factory_kwargs = {
         "streaming": streaming,
         "api_key": api_key,
@@ -261,6 +273,7 @@ async def get_llm_async(streaming: bool = False, **kwargs) -> Optional[AgentScop
         "model": model,
         "provider": provider,
         "temperature": temperature,
+        "read_timeout": read_timeout,
     }
     if provider is None:
         factory_kwargs.pop("provider")

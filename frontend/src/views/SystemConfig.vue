@@ -959,6 +959,34 @@ const isConfigItemDisabled = (_category: string, item: ConfigItem) => {
   if (item.key === 'third_party_user_sync_config') return true
   return !canSave
 }
+// 大模型请求读取超时（秒）：范围与后端 app/services/ai/runtime/agentscope/request_timeout.py
+// 的校验保持一致，滑块直接受 min/max 约束，不给用户填出非法值的机会。
+const LLM_READ_TIMEOUT_MIN = 30
+const LLM_READ_TIMEOUT_MAX = 300
+const LLM_READ_TIMEOUT_STEP = 10
+const LLM_READ_TIMEOUT_DEFAULT = 180
+/** 归一化到可选范围：非法值回退默认，越界值收敛到边界。 */
+const getLlmReadTimeoutValue = (item: ConfigItem) => {
+  // 数字输入框清空后是 ''，而 Number('') === 0 会被误判成合法值，需先挡掉空串
+  const raw = String(item.value ?? '').trim()
+  if (!raw) return LLM_READ_TIMEOUT_DEFAULT
+  const value = Number(raw)
+  if (!Number.isFinite(value)) return LLM_READ_TIMEOUT_DEFAULT
+  return Math.min(LLM_READ_TIMEOUT_MAX, Math.max(LLM_READ_TIMEOUT_MIN, Math.round(value)))
+}
+const handleLlmReadTimeoutInput = (item: ConfigItem, event: Event) => {
+  if (isConfigItemDisabled('agent', item)) return
+  const value = Number((event.target as HTMLInputElement).value)
+  const normalized = Number.isFinite(value)
+    ? Math.min(LLM_READ_TIMEOUT_MAX, Math.max(LLM_READ_TIMEOUT_MIN, Math.round(value)))
+    : LLM_READ_TIMEOUT_DEFAULT
+  item.value = String(normalized)
+}
+/** 数值框失焦时归一化：手输可能为空或越界，统一收敛回合法区间。 */
+const normalizeLlmReadTimeoutInput = (item: ConfigItem) => {
+  if (isConfigItemDisabled('agent', item)) return
+  item.value = String(getLlmReadTimeoutValue(item))
+}
 const getAgentToolcallTimeoutValue = (item: ConfigItem) => {
   const value = Number(item.value)
   if (Number.isInteger(value) && value >= 1 && value <= 3600) return value
@@ -1263,6 +1291,9 @@ const fetchConfigs = async () => {
             if (item.key === 'agent_tool_loop_global_limit') {
               item.value = String(getAgentToolLoopGlobalLimitValue(item))
             }
+            if (item.key === 'llm_request_read_timeout') {
+              item.value = String(getLlmReadTimeoutValue(item))
+            }
             originalConfigs.value[item.key] = item.value
             if (item.key === 'third_party_user_sync_config' && !item.description) {
               item.description = '第三方用户同步配置（数据源、表、字段映射、定时周期）'
@@ -1492,6 +1523,18 @@ OpenAI、DeepSeek、Claude 等大模型具备 KV 提示词缓存（Prompt Cache�
 【特别安心机制：同一会话绝不来回跳变】
 系统是根据每个对话窗口的唯一 ID 进行锁定的。比如用户张三开了一个窗口正在聊天，如果他的这个窗口命中了 20% 的新优化，那么无论他聊 5 轮还是 10 轮，这个窗口里的所有问答都会稳定走新优化，绝不会第 1 句走新、第 2 句突然跳回老逻辑。`,
     'llm_temperature': '大模型温度系数，范围为 0.0 至 1.0。趋近于 0.0 表示回答更加确定、严谨和精准（适合数据查询与逻辑推理）；趋近于 1.0 表示回答更具创造力、发散性和随机性。',
+    'llm_request_read_timeout': `【这个超时到底在管什么】
+它限制的是「相邻两次收到数据之间的最大间隔」，而**不是**整个请求的总耗时。
+
+举例：模型正在流式输出答案，只要 token 持续在到达，哪怕整段回答生成了 5 分钟也不会触发；但如果服务端建立连接后彻底静默（实例僵死、网关卡住），超过这个秒数就会中断并触发重试。
+
+【为什么默认 180 秒】
+改造前用的是 SDK 默认的 600 秒：单次等待 600 秒已等于后端「请求看门狗」的上限，导致模型重试根本没有机会执行，用户只能干等到超时。
+默认 180 秒可保证「重试 2 次共 360 秒」落在 600 秒看门狗预算内，让重试真正生效，同时把卡死等待时间缩短到原来的三分之一。
+
+【什么情况需要调大】
+若接入的网关会「缓冲整个响应后再一次性下发」，静默间隔可能等于完整生成时长，此时需要适当调大（上限 300 秒，再大则重试来不及执行）。
+若模型在思考阶段不输出任何中间内容（部分推理模型），也需要相应调大。`,
     'multimodal_model_name': '会话当前模型不支持识图时，用该默认多模态模型解析本轮图片为文字，再交给原模型继续回答。留空则直接提示用户当前模型不支持图片理解。',
     'agent_max_iterations': 'ReAct 智能体单次对话的最大思考与工具调用轮数限制。建议设定在 10-20 之间，过小可能导致任务未完成便终止，过大可能因死循环消耗过多 Token。',
     'agent_max_toolcall_timeout': '单次 Agent 工具调用的全局超时时间（秒），默认 180 秒，范围 1-3600；版本级配置优先于全局配置。',
@@ -2335,6 +2378,7 @@ const configShortDescriptions: Record<string, string> = {
   agentscope_inject_time_interval_hours: '运行时时间字段重复注入的最小间隔（小时）。',
   download_url_prefix: '生成文件下载链接时使用的公网地址前缀。',
   multimodal_model_name: '当前对话模型不支持识图时，用此模型解析图片为文字。',
+  llm_request_read_timeout: '大模型请求的读取超时（秒），指相邻两次数据到达的最大间隔，默认 180，范围 30-300。',
   agent_max_toolcall_timeout: '单次 Agent 工具调用的全局超时时间（秒），默认 180 秒，范围 1-3600；版本级配置优先于全局配置。',
   sql_execution_mode: 'remote 调用独立数据服务，local 由平台直连数据源。',
   external_sql_data_source: '远程 SQL 的默认数据源 ID；AI 调用工具时传入的实际 data_source 优先于此配置。',
@@ -2387,6 +2431,7 @@ const getVisibleItems = (items: ConfigItem[] | undefined, category: string) => {
       'llm_model_name',
       'multimodal_model_name',
       'llm_temperature',
+      'llm_request_read_timeout',
       'embed_api_url',
       'embed_api_key',
       'embed_model_name',
@@ -4061,8 +4106,9 @@ onUnmounted(() => {
                               </select>
                           </div>
                           <div v-else-if="item.key === 'agent_prompt_cache_rollout_percent'">
-                              <div class="flex items-center space-x-4">
-                                  <div class="flex-1">
+                              <!-- 与 0.0-1.0 那组共用同一套对齐：数值框与滑块行等高居中 -->
+                              <div class="flex items-start space-x-4">
+                                  <div class="min-w-0 flex-1">
                                       <input
                                         type="range"
                                         min="0"
@@ -4071,7 +4117,7 @@ onUnmounted(() => {
                                         :value="Number(item.value) || 0"
                                         :disabled="isConfigItemDisabled(String(category), item)"
                                         @input="(e) => item.value = String(Math.min(100, Math.max(0, parseInt((e.target as HTMLInputElement).value) || 0)))"
-                                        class="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-primary disabled:opacity-50"
+                                        class="w-full h-2 my-3.5 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-primary disabled:opacity-50"
                                       />
                                       <div class="flex justify-between text-xs text-gray-400 mt-1 font-mono">
                                           <span>0% (全走传统布局)</span>
@@ -4079,7 +4125,7 @@ onUnmounted(() => {
                                           <span>100% (全量生效)</span>
                                       </div>
                                   </div>
-                                  <div class="w-20 flex items-center gap-1">
+                                  <div class="flex h-9 w-20 shrink-0 items-center gap-1">
                                       <input
                                         type="number"
                                         v-model="item.value"
@@ -4087,7 +4133,7 @@ onUnmounted(() => {
                                         min="0"
                                         max="100"
                                         step="1"
-                                        class="block w-full sm:text-sm border-gray-300 rounded-md bg-white text-center focus:ring-primary focus:border-primary disabled:opacity-70"
+                                        class="block h-9 w-full rounded-md border-gray-300 bg-white text-center font-mono text-sm shadow-sm focus:border-primary focus:ring-primary disabled:bg-gray-100 disabled:opacity-70"
                                       />
                                       <span class="text-xs text-gray-500 font-medium">%</span>
                                   </div>
@@ -4893,8 +4939,10 @@ onUnmounted(() => {
                               </button>
                           </div>
                           <div v-else-if="['ragflow_similarity_threshold', 'ragflow_vector_weight', 'chatbi_sample_similarity_threshold', 'chatbi_sample_vector_similarity_weight', 'knowledge_ragflow_similarity_threshold', 'knowledge_ragflow_vector_weight', 'llm_temperature'].includes(item.key)">
-                              <div class="flex items-center space-x-4">
-                                  <div class="flex-1">
+                              <!-- items-start + 数值框等高（h-9）：让数值框与「滑块行」中心对齐，
+                                   而不是在整个「滑块 + 刻度 + 温度引导」区域里居中导致视觉下坠。 -->
+                              <div class="flex items-start space-x-4">
+                                  <div class="min-w-0 flex-1">
                                       <input
                                         type="range"
                                         min="0"
@@ -4903,7 +4951,7 @@ onUnmounted(() => {
                                         :value="Number(item.value)"
                                         :disabled="isConfigItemDisabled(String(category), item)"
                                         @input="(e) => item.value = (e.target as HTMLInputElement).value"
-                                        class="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-primary disabled:opacity-50"
+                                        class="w-full h-2 my-3.5 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-primary disabled:opacity-50"
                                       />
                                       <div class="flex justify-between text-xs text-gray-400 mt-1 font-mono">
                                           <span class="flex items-center">
@@ -4929,7 +4977,7 @@ onUnmounted(() => {
                                           </p>
                                       </div>
                                   </div>
-                                  <div class="w-16">
+                                  <div class="w-20 shrink-0">
                                       <input
                                         type="number"
                                         v-model="item.value"
@@ -4937,7 +4985,7 @@ onUnmounted(() => {
                                         min="0"
                                         max="1"
                                         step="0.05"
-                                        class="block w-full sm:text-sm border-gray-300 rounded-md bg-white text-center focus:ring-primary focus:border-primary disabled:opacity-70"
+                                        class="block h-9 w-full rounded-md border-gray-300 bg-white text-center font-mono text-sm shadow-sm focus:border-primary focus:ring-primary disabled:bg-gray-100 disabled:opacity-70"
                                       />
                                   </div>
                               </div>
@@ -5257,6 +5305,44 @@ onUnmounted(() => {
                                class="inline-flex h-9 w-9 items-center justify-center rounded-md border border-gray-300 bg-white text-lg leading-none text-gray-600 shadow-sm hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
                              >+</button>
                              <span class="text-xs text-gray-500">秒</span>
+                          </div>
+                          <div v-else-if="item.key === 'llm_request_read_timeout'">
+                             <!-- 与 0.0-1.0、0-100% 两组共用同一套排版：数值框与滑块行等高居中对齐 -->
+                             <div class="flex items-start space-x-4">
+                                <div class="min-w-0 flex-1">
+                                   <input
+                                     type="range"
+                                     :min="LLM_READ_TIMEOUT_MIN"
+                                     :max="LLM_READ_TIMEOUT_MAX"
+                                     :step="LLM_READ_TIMEOUT_STEP"
+                                     :value="getLlmReadTimeoutValue(item)"
+                                     :disabled="isConfigItemDisabled(String(category), item)"
+                                     @input="handleLlmReadTimeoutInput(item, $event)"
+                                     aria-label="大模型请求读取超时时间（秒）"
+                                     class="w-full h-2 my-3.5 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-primary disabled:opacity-50"
+                                   />
+                                   <div class="flex justify-between font-mono text-xs text-gray-400 mt-1">
+                                      <span>{{ LLM_READ_TIMEOUT_MIN }}</span>
+                                      <span class="font-sans text-gray-500">默认 {{ LLM_READ_TIMEOUT_DEFAULT }} 秒，上限 {{ LLM_READ_TIMEOUT_MAX }} 秒（再大则重试来不及执行）</span>
+                                      <span>{{ LLM_READ_TIMEOUT_MAX }}</span>
+                                   </div>
+                                </div>
+                                <div class="flex h-9 w-20 shrink-0 items-center gap-1">
+                                   <input
+                                     type="number"
+                                     inputmode="numeric"
+                                     v-model="item.value"
+                                     :disabled="isConfigItemDisabled(String(category), item)"
+                                     :min="LLM_READ_TIMEOUT_MIN"
+                                     :max="LLM_READ_TIMEOUT_MAX"
+                                     :step="LLM_READ_TIMEOUT_STEP"
+                                     @blur="normalizeLlmReadTimeoutInput(item)"
+                                     aria-label="大模型请求读取超时时间输入（秒）"
+                                     class="block h-9 w-full rounded-md border-gray-300 bg-white text-center font-mono text-sm shadow-sm focus:border-primary focus:ring-primary disabled:bg-gray-100 disabled:opacity-70"
+                                   />
+                                   <span class="text-xs text-gray-500 font-medium">秒</span>
+                                </div>
+                             </div>
                           </div>
                           <div v-else-if="item.key === 'agent_tool_loop_global_limit'" class="flex items-center gap-2 max-w-xs">
                              <button

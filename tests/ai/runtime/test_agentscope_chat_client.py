@@ -343,3 +343,39 @@ async def test_chat_client_records_structured_output_status_without_falling_back
         "confidence": 0.9,
     }
     assert json_text.last_structured_output_status == "success"
+
+
+@pytest.mark.asyncio
+async def test_chat_client_classifies_structured_output_error_separately():
+    # StructuredOutputError 表示 AgentScope 已试遍 forced/auto/no_think/none
+    # 四种降级策略仍拿不到合法结构，属确定性失败（换提示词或模型才有意义）；
+    # 认证失败/限流/超时等基础设施类错误重试无用、应当告警。两者必须区分开，
+    # 且都要保持 fail-open（返回 None、不向上抛），否则会打断调用方的降级流程。
+    from agentscope.exception import DeveloperOrientedException, StructuredOutputError
+
+    from app.services.ai.runtime.agentscope.chat import AgentScopeChatClient
+
+    class StructuredOutputFailureNative:
+        async def generate_structured_output(self, **kwargs):
+            raise StructuredOutputError("Invalid structured output from model X")
+
+    structured = AgentScopeChatClient(StructuredOutputFailureNative())
+    assert await structured.generate_structured_dict([], object()) is None
+    assert structured.last_structured_output_status == "structured_output_error"
+
+    class InfraFailureNative:
+        async def generate_structured_output(self, **kwargs):
+            raise RuntimeError("connection reset by peer")
+
+    infra = AgentScopeChatClient(InfraFailureNative())
+    assert await infra.generate_structured_dict([], object()) is None
+    assert infra.last_structured_output_status == "error"
+
+    # 分类必须精确：父类 DeveloperOrientedException 的其它子类不得被误判。
+    class OtherDeveloperFailureNative:
+        async def generate_structured_output(self, **kwargs):
+            raise DeveloperOrientedException("unrelated developer-facing failure")
+
+    other = AgentScopeChatClient(OtherDeveloperFailureNative())
+    assert await other.generate_structured_dict([], object()) is None
+    assert other.last_structured_output_status == "error"

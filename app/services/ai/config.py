@@ -9,6 +9,10 @@ from app.utils.model_credentials import decrypt_model_api_key
 from app.schemas.ai_model import normalize_legacy_supported_reasoning_efforts
 from app.services.ai.model_registry import ModelRegistryError, lookup_registered_model
 from app.services.ai.reasoning import UNSET, resolve_reasoning_settings
+from app.services.ai.runtime.agentscope.request_timeout import (
+    LLM_REQUEST_READ_TIMEOUT_KEY,
+    parse_llm_request_read_timeout,
+)
 from app.core.context import get_debug_option
 
 logger = logging.getLogger(__name__)
@@ -256,6 +260,10 @@ class AgentConfigProvider:
         llm_kwargs["thinking_enable"] = runtime_model_info.thinking_enable
         llm_kwargs["thinking_capable"] = runtime_model_info.thinking_capable
         llm_kwargs["reasoning_effort"] = runtime_model_info.reasoning_effort
+        # 复用上面已加载的 llm_config，避免每轮为超时单独再查一次配置。
+        llm_kwargs["read_timeout"] = parse_llm_request_read_timeout(
+            get_val(LLM_REQUEST_READ_TIMEOUT_KEY, None)
+        )
 
         return get_llm(**llm_kwargs)
 

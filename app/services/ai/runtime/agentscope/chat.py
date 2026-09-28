@@ -143,6 +143,23 @@ def _safe_getattr(obj: Any, name: str, default: Any = None) -> Any:
         return default
 
 
+def _is_structured_output_error(exc: BaseException) -> bool:
+    """判断是否为 AgentScope 的结构化输出失败（``StructuredOutputError``）。
+
+    AgentScope 只在内部集齐 forced / auto / no_think / none 四种降级策略之后
+    才抛出该异常，所以它是**确定性失败**（模型确实产不出合法结构），与认证
+    失败、限流、超时等基础设施类错误性质不同：前者换提示词或换模型才有意义，
+    后者重试无用、应当告警。两者此前都被归入 ``"error"``，调用方无从区分。
+
+    延迟导入以兼容不含该异常的旧版 AgentScope。
+    """
+    try:
+        from agentscope.exception import StructuredOutputError
+    except ImportError:  # pragma: no cover - 旧版 AgentScope 无此异常
+        return False
+    return isinstance(exc, StructuredOutputError)
+
+
 class AgentScopeChatClient:
     def __init__(self, native_model: Any):
         self.native_model = native_model
@@ -189,8 +206,14 @@ class AgentScopeChatClient:
                     self.last_structured_output_status = "success"
                     return parsed
             self.last_structured_output_status = "invalid"
-        except Exception:
-            self.last_structured_output_status = "error"
+        except Exception as exc:
+            # 保持 fail-open：仍然返回 None、不向上抛。这里只细化状态分类，
+            # 调用方的控制流不受影响；若将来要改为向上抛出，需先评估两个调用
+            # 点对降级行为的依赖（它们都依赖 fail-open 继续后续流程）。
+            if _is_structured_output_error(exc):
+                self.last_structured_output_status = "structured_output_error"
+            else:
+                self.last_structured_output_status = "error"
             return None
         return None
 

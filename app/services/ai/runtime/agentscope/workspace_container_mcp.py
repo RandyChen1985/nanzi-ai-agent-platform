@@ -64,13 +64,24 @@ K8S_GATEWAY_VENV_PYTHON = "/root/.agentscope/.venv/bin/python"
 # import agentscope.tool：tool/_types→_utils 需 docstring_parser；_toolkit 需
 # jinja2；_builtin 需 aiofiles/tree_sitter/tree_sitter_bash/python-frontmatter）。
 # 缺失表现为沙箱 Bash 报 "HTTP 500: No module named 'xxx'"。
-# 清单用于两处：① K8sWorkspace 的 ``extra_pip`` —— K8s 冷启动 bootstrap 的
-# ``uv pip install <_GATEWAY_BASE_REQUIREMENTS + extra_pip>`` 一并安装（未配
-# 预置镜像的 Pod 也覆盖）；② k8s_deploy/build-k8s-sandbox-image.sh 的 BASE_REQS
-# （预置镜像）。已按干净 venv 实测：装齐后 import agentscope.mcp + agentscope.tool
-# （含 Bash/Read/Write/Edit/Glob/Grep 等内置工具）全部通过；docker 预构建镜像因
-# ``uv pip install agentscope`` 不带 --no-deps 天然完整，不受影响。
-K8S_GATEWAY_EXTRA_PIP: tuple[str, ...] = (
+# 清单用于三处，且三处的 extra_pip 必须完全一致——它会写进 requirements.txt 并
+# 参与镜像 tag 的 SHA256 计算，任何一处不一致都会让预构建镜像无法命中：
+# ① K8sWorkspace 的 ``extra_pip``：K8s 冷启动 bootstrap 的
+#    ``uv pip install <_GATEWAY_BASE_REQUIREMENTS + extra_pip>`` 一并安装
+#    （未配预置镜像的 Pod 也覆盖）；② k8s_deploy/build-k8s-sandbox-image.sh 的
+#    BASE_REQS（预置镜像）；③ DockerWorkspace 的 ``extra_pip``：运行时构造与
+#    docker_prebuild 预构建两处。
+# 已按干净 venv 实测：装齐后 import agentscope.mcp + agentscope.tool
+# （含 Bash/Read/Write/Edit/Glob/Grep 等内置工具）全部通过。
+#
+# ③ 是 AgentScope 2.0.9 带来的回归修复。2.0.9 的 feee4634（#2803）把沙箱镜像里
+# agentscope 的安装从 ``uv pip install "agentscope"`` 改成 ``--no-deps``，前提是
+# "requirements.txt 已覆盖 gateway 的 import"。但平台在容器内跑的是内置 Bash /
+# Read / Write 等工具，会 import ``agentscope.tool``，远超 gateway 自身的 import
+# 面，于是 2.0.7 及以前"Docker 镜像天然完整、不受影响"的假设失效，Bash 直接报
+# "HTTP 500: No module named 'docstring_parser'"。上游 2.0.10dev 尚未修复，
+# 故由平台侧统一以 extra_pip 补齐。
+GATEWAY_EXTRA_PIP: tuple[str, ...] = (
     "docstring_parser",
     "jinja2",
     "aiofiles",

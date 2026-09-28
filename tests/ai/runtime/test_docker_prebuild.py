@@ -271,3 +271,63 @@ async def test_prebuild_with_custom_base_image(monkeypatch, tmp_path):
     assert called_images == ["python:3.11"]
     assert saved_base_images == ["python:3.11"]
 
+
+@pytest.mark.asyncio
+async def test_prepare_context_installs_gateway_tool_dependencies(monkeypatch):
+    """网关镜像以 ``--no-deps`` 装 agentscope 后，工具链依赖必须由
+    requirements.txt 补齐。
+
+    AgentScope 2.0.9 的 feee4634（#2803）把镜像里 agentscope 的安装改成了
+    ``--no-deps``，其前提是 requirements.txt 已覆盖 gateway 的 import。但平台在
+    容器内跑的是内置 Bash/Read/Write 等工具，会 import ``agentscope.tool``，远超
+    gateway 自身的 import 面，缺少 docstring_parser 等依赖时表现为沙箱 Bash 报
+    "HTTP 500: No module named 'docstring_parser'"。
+
+    同时校验预构建与运行时取用同一份 extra_pip —— 它会写进 requirements.txt 并
+    参与镜像 tag 的 SHA256 计算，错位会让预构建的镜像对运行时不可见。
+    """
+    import shutil
+    from pathlib import Path
+
+    from app.services.ai.runtime.agentscope import docker_prebuild
+    from app.services.ai.runtime.agentscope.workspace_container_mcp import (
+        GATEWAY_EXTRA_PIP,
+    )
+    from app.services.config_service import ConfigService
+
+    async def fake_get(key, default=None):
+        return "python:3.11-slim"
+
+    monkeypatch.setattr(ConfigService, "get", staticmethod(fake_get))
+
+    ctx_dir, tag = await docker_prebuild._prepare_context()
+    try:
+        requirements = (Path(ctx_dir) / "requirements.txt").read_text(
+            encoding="utf-8"
+        )
+    finally:
+        shutil.rmtree(ctx_dir, ignore_errors=True)
+
+    for package in GATEWAY_EXTRA_PIP:
+        assert package in requirements, f"{package} 未进入沙箱镜像依赖"
+    # 最早暴露、也是 agentscope.tool._utils 直接 import 的那个包
+    assert "docstring_parser" in GATEWAY_EXTRA_PIP
+
+    # 相同参数必然得到相同 tag；运行时构造 DockerWorkspace 用的就是这份清单。
+    from agentscope.workspace._docker._make_dockerfile import (
+        CONTAINER_WORKDIR,
+        GATEWAY_HOME,
+        prepare_build_context,
+    )
+
+    other_ctx, expected_tag, _ = prepare_build_context(
+        base_image="python:3.11-slim",
+        gateway_home=GATEWAY_HOME,
+        container_workdir=CONTAINER_WORKDIR,
+        node_version=None,
+        extra_pip=list(GATEWAY_EXTRA_PIP),
+    )
+    shutil.rmtree(other_ctx, ignore_errors=True)
+
+    assert tag == expected_tag
+

@@ -20,7 +20,11 @@ greenlet>=3.0.0
 sqlglot>=11.0.0
 passlib[bcrypt]>=1.7.4
 bcrypt==4.0.1
-agentscope[service,storage,workspace]>=2.0.6
+# AgentScope 锁定精确版本：原先的 ">=2.0.6" 无上限，每次镜像重建（docker/Dockerfile
+# 里 pip install -r requirements.txt）都会静默拉到 PyPI 当时的最新正式版，导致本地
+# .venv 与生产镜像版本漂移、故障无法复现。升级前请先阅读
+# docs/md/agentscope_2.0.9_upgrade_guide.md 的验证清单，改版本号时同步更新该文档。
+agentscope[service,storage,workspace]==2.0.9
 openai>=1.0.0
 atlassian-python-api>=3.41.11
 oracledb>=2.0.0
