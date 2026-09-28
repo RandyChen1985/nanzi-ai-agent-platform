@@ -18,9 +18,14 @@ B 方案（docker 策略提速）的核心：docker 沙箱的镜像 tag 是内�
 用 ``prepare_build_context(base_image=base_image, gateway_home=GATEWAY_HOME,
 container_workdir=CONTAINER_WORKDIR, node_version=self.node_version,
 extra_pip=self.extra_pip)`` 生成 ``(ctx_dir, tag, copy_files)``，其中平台
-docker 策略只配置了 ``base_image``（其余 4 项均为框架默认值：GATEWAY_HOME、
-CONTAINER_WORKDIR、node_version=None、extra_pip=None）。因此本模块也以同样
-参数调用 ``prepare_build_context``，得到完全相同的 tag 与构建上下文。
+docker 策略只配置了 ``base_image``，其余 4 项为 GATEWAY_HOME、
+CONTAINER_WORKDIR、node_version=None 与 extra_pip（取值见
+``workspace_container_mcp.GATEWAY_EXTRA_PIP``）。因此本模块也以同样参数调用
+``prepare_build_context``，得到完全相同的 tag 与构建上下文。
+
+注意 ``extra_pip`` 必须与运行时构造 DockerWorkspace 时传入的值逐项一致：它会被
+渲染进 requirements.txt 并参与 tag 的 SHA256 计算，任何偏差都会让预构建的镜像
+对运行时不可见（退化为每次现场构建）。
 """
 
 from __future__ import annotations
@@ -65,6 +70,9 @@ async def _prepare_context(base_image_override: str | None = None) -> tuple[str,
     ``ctx_dir`` 由调用方负责在 finally 中清理。
     """
     from app.services.config_service import ConfigService
+    from app.services.ai.runtime.agentscope.workspace_container_mcp import (
+        GATEWAY_EXTRA_PIP,
+    )
     from agentscope.workspace._docker._make_dockerfile import (
         CONTAINER_WORKDIR,
         GATEWAY_HOME,
@@ -82,7 +90,8 @@ async def _prepare_context(base_image_override: str | None = None) -> tuple[str,
         "gateway_home": GATEWAY_HOME,
         "container_workdir": CONTAINER_WORKDIR,
         "node_version": None,
-        "extra_pip": None,
+        # 必须与运行时 DockerWorkspace 的 extra_pip 完全一致（见模块 docstring）。
+        "extra_pip": list(GATEWAY_EXTRA_PIP),
     }
     if base_image:
         ctx_args["base_image"] = base_image
