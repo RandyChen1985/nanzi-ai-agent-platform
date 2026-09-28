@@ -13,6 +13,10 @@ from app.services.ai.runtime.agentscope.tool_timeout import (
     AGENT_MAX_TOOLCALL_TIMEOUT_KEY,
     validate_agent_max_toolcall_timeout,
 )
+from app.services.ai.runtime.agentscope.request_timeout import (
+    LLM_REQUEST_READ_TIMEOUT_KEY,
+    validate_llm_request_read_timeout,
+)
 from app.services.ai.runtime.tool_loop_detector import (
     AGENT_TOOL_LOOP_GLOBAL_LIMIT_KEY,
     validate_agent_tool_loop_global_limit,
@@ -58,6 +62,8 @@ def validate_config_update(key: str, value: str) -> None:
     """校验系统配置更新是否合法。"""
     if key == AGENT_MAX_TOOLCALL_TIMEOUT_KEY:
         validate_agent_max_toolcall_timeout(value)
+    elif key == LLM_REQUEST_READ_TIMEOUT_KEY:
+        validate_llm_request_read_timeout(value)
     elif key == AGENT_TOOL_LOOP_GLOBAL_LIMIT_KEY:
         validate_agent_tool_loop_global_limit(value)
     elif key == AGENTSCOPE_PARALLEL_TOOL_EXECUTION_KEY:

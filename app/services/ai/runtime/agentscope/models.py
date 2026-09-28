@@ -5,6 +5,10 @@ import logging
 from dataclasses import dataclass
 from typing import Any
 
+from app.services.ai.runtime.agentscope.request_timeout import (
+    build_llm_request_timeout,
+)
+
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +52,8 @@ class AgentScopeModelConfig:
     thinking_enable: bool = False
     thinking_capable: bool = False
     reasoning_effort: str | None = None
+    #: HTTP read timeout（chunk 间隔）秒数；None 表示使用平台默认值。
+    read_timeout: float | None = None
 
 
 def _chat_template_kwargs(config: AgentScopeModelConfig) -> dict[str, Any] | None:
@@ -261,6 +267,14 @@ def create_openai_chat_model(config: AgentScopeModelConfig):
         thinking_enable=config.thinking_enable,
         reasoning_effort=config.reasoning_effort,
     )
+    # AgentScope 拥有重试预算，SDK 自身重试会与之相乘，因此关闭。
+    # timeout 必须显式给全四项：httpx 的 Timeout 在「无默认值且未给全」时会抛
+    # ValueError，而 SDK 默认的 600s read timeout 会让业务层重试来不及执行。
+    client_kwargs: dict[str, Any] = {"max_retries": 0}
+    request_timeout = build_llm_request_timeout(config.read_timeout)
+    if request_timeout is not None:
+        client_kwargs["timeout"] = request_timeout
+
     model_kwargs = {
         "credential": OpenAICredential(
             api_key=config.api_key,
@@ -270,8 +284,7 @@ def create_openai_chat_model(config: AgentScopeModelConfig):
         "stream": config.streaming,
         "parameters": parameters,
         "max_retries": config.max_retries,
-        # AgentScope owns the retry budget; SDK retries would multiply it.
-        "client_kwargs": {"max_retries": 0},
+        "client_kwargs": client_kwargs,
     }
     if config.provider == "azure":
         from app.utils.model_providers import azure_openai_request_config
