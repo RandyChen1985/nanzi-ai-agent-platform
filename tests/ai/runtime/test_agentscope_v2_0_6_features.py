@@ -322,10 +322,17 @@ async def test_try_generate_semantic_intent_structured_success():
     assert response.usage.input_tokens == 10
 
 
-def test_requirements_pins_agentscope_2_0_6():
+def test_requirements_pins_agentscope_exact_version():
+    import re
     from pathlib import Path
 
     text = (Path(__file__).resolve().parents[3] / "requirements.txt").read_text(
         encoding="utf-8"
     )
-    assert "agentscope[service,storage,workspace]>=2.0.6" in text
+    # 必须精确锁定版本：无上限会让镜像重建时静默拉到当时的最新正式版，造成本地
+    # .venv 与生产镜像版本漂移（升级说明见 docs/md/agentscope_2.0.9_upgrade_guide.md）
+    assert re.search(
+        r"^agentscope\[service,storage,workspace\]==\d+\.\d+\.\d+$",
+        text,
+        re.MULTILINE,
+    ), "requirements.txt 必须精确锁定 agentscope 版本（含 runtime extras）"
