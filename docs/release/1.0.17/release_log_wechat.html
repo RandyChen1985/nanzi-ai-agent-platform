@@ -1,0 +1,428 @@
+<!--
+  微信公众号排版 HTML — NanZi AI 智能体平台 v1.0.17.0
+  风格：深蓝渐变科技风 / 现代化精编版（卡片式阴影、微渐变、导读浅析）
+  使用说明：
+  1. 复制下方 <section> 内全部内容，粘贴到微信公众平台编辑器「HTML」模式（或 135/秀米 等排版工具）
+  2. 封面图可在微信公众号后台直接使用 docs/release/1.0.17/release-cover-info.md 中的素材生成
+  3. 全部采用内联 style 样式，兼容微信图文防洗稿规范
+-->
+
+<section style="box-sizing:border-box;max-width:760px;margin:0 auto;padding:0 2px;font-size:16px;color:#3f3f3f;line-height:1.8;letter-spacing:0.5px;text-align:justify;font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue','PingFang SC','Hiragino Sans GB','Microsoft YaHei',Arial,sans-serif;word-break:break-word;overflow-wrap:break-word;">
+
+  <!-- 标题区：科技感深蓝微渐变 -->
+  <section style="margin:0 0 28px 0;padding:28px 18px 24px 18px;background:linear-gradient(135deg,#060c1f 0%,#0a1628 48%,#0d2040 100%);box-shadow:0 4px 24px rgba(56,189,248,0.15);border-radius:4px;text-align:left;">
+    <p style="margin:0 0 6px 0;font-size:12px;font-weight:normal;color:#93c5fd;line-height:1.4;letter-spacing:2px;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">NANZI · RELEASE NOTES</p>
+    <p style="margin:0 0 10px 0;font-size:22px;font-weight:bold;color:#fafaf9;line-height:1.45;letter-spacing:0.5px;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">NanZi 开源智能体平台 v1.0.17.0</p>
+    <p style="margin:0;font-size:14px;font-weight:normal;color:#cbd5e1;line-height:1.7;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">AgentScope 2.0.9 精确锁定 · 执行时间线全链路可观测 · 向量索引维度守卫 · Doris 与维度下钻元数据 · 智能体一键复制 · 系统配置与诊断页重构</p>
+  </section>
+
+  <!-- 项目声明 -->
+  <section style="margin:0 0 22px 0;padding:0 0 18px 0;border-bottom:1px solid #e2e8f0;">
+    <p style="margin:0 0 10px 0;font-size:13px;font-weight:bold;color:#0f172a;line-height:1.5;letter-spacing:1px;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">项目声明</p>
+    <p style="margin:0 0 8px 0;font-size:14px;color:#475569;line-height:1.85;text-align:justify;">
+      本项目为<strong style="color:#0f172a;">个人开源</strong>，供自由学习交流，遵循 MIT 开源协议，可自由分发与商用。
+    </p>
+    <p style="margin:0;font-size:14px;color:#475569;line-height:1.85;text-align:justify;">
+      「NanZi」取自我常用的网名「南孜」，寓「孜孜不倦」——持续学习、持续打磨生产级 AI 智能体技术栈。
+    </p>
+  </section>
+
+  <!-- 仓库链接 -->
+  <section style="margin:0 0 22px 0;padding:12px 0 12px 14px;border-left:3px solid #0284c7;background:#f0f9ff;border-radius:0 4px 4px 0;">
+    <p style="margin:0;font-size:14px;color:#0369a1;line-height:1.7;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+      <strong style="color:#0c4a6e;">GitHub：</strong>
+      <a href="https://github.com/RandyChen1985/nanzi-ai-agent-platform" style="color:#0284c7;text-decoration:underline;word-break:break-all;">RandyChen1985/nanzi-ai-agent-platform</a>
+    </p>
+  </section>
+
+  <!-- 导语 -->
+  <section style="margin:0 0 24px 0;">
+    <p style="margin:0 0 14px 0;font-size:15px;color:#1e293b;line-height:1.9;">
+      NanZi 开源智能体平台正式发布 <strong style="color:#0f172a;">v1.0.17.0</strong> 版本！这是一次以<strong>AgentScope 2.0.9 精确版本锁定与运行时升级评估、执行时间线全链路可观测、向量索引维度守卫与重构进度抽屉、Doris 数据源与字段维度下钻元数据、智能体一键复制与三层继承专属头像</strong>为核心驱动，并全面推进<strong>工具结果上限放宽至 64Ki、大模型请求读取超时可配置、Redis 浏览器业务分组、系统配置与系统诊断页信息架构重构、全站表单控件与 Toast 视觉基础设施统一</strong>的重量级可观测性与工程治理版本。
+    </p>
+    <p style="margin:0 0 14px 0;font-size:15px;color:#1e293b;line-height:1.9;">
+      AI 运行时首次做到<strong>版本可控</strong>：<code style="font-size:12px;background:#f1f5f9;padding:2px 6px;border-radius:3px;color:#334155;">agentscope</code> 由无上限的 <code style="font-size:12px;background:#f1f5f9;padding:2px 6px;border-radius:3px;color:#334155;">&gt;=2.0.6</code> 锁定为 <code style="font-size:12px;background:#f1f5f9;padding:2px 6px;border-radius:3px;color:#334155;">==2.0.9</code>，结束「镜像重建时间不同即装到不同版本、本地与线上静默漂移、故障无法复现」的历史。执行时间线升级为<strong>命令原文 + 意图摘要 + 调用元信息</strong>；工具结果上限统一放宽到 <strong>64Ki</strong>，MCP 结果不再被平台侧提前截断。
+    </p>
+    <p style="margin:0 0 14px 0;font-size:15px;color:#1e293b;line-height:1.9;">
+      数据侧交付 Doris 数据源适配器、字段维度角色与下钻层级组，以及物理表分区与索引字段元数据，让 ChatBI 生成的 SQL 可裁剪、可命中索引，并让 AI 能识别可分组字段与下钻链。
+    </p>
+    <p style="margin:0 0 14px 0;font-size:15px;color:#1e293b;line-height:1.9;">
+      平台侧补齐智能体一键复制、物理标识符重名预检、专属头像三层继承、用户批量启停与角色双列穿梭框；同时完成系统配置页与系统诊断页的信息架构重构、K8s 沙箱镜像源与升级向导治理。
+    </p>
+    <p style="margin:0;font-size:14px;color:#64748b;line-height:1.75;">
+      本次变更自 <code style="font-size:12px;background:#f1f5f9;padding:2px 6px;border-radius:3px;color:#334155;">832351c4</code> 至 <code style="font-size:12px;background:#f1f5f9;padding:2px 6px;border-radius:3px;color:#334155;">3f2063d8</code>，共 <strong>89 个提交</strong>（74 个非 Merge 提交），变更 <strong>311 个文件</strong>，<strong>35,653 行新增</strong>、<strong>2,703 行删除</strong>。
+    </p>
+  </section>
+
+  <!-- 破坏性变更提示 -->
+  <section style="margin:0 0 28px 0;padding:14px 16px;background:#fffbeb;border-left:4px solid #f59e0b;border-radius:0 4px 4px 0;">
+    <p style="margin:0 0 10px 0;font-size:14px;font-weight:bold;color:#92400e;line-height:1.6;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+      ⚠️ 升级注意 (Upgrade Notes)
+    </p>
+    <p style="margin:0 0 8px 0;font-size:13px;color:#78350f;line-height:1.8;">
+      · <strong style="color:#92400e;">本版本无强制重新登录、无权限码变更</strong>：1.0.16 建立的门户会话令牌化体系（<code style="font-size:12px;background:#fef3c7;padding:2px 4px;border-radius:2px;color:#92400e;">portal_session</code> Cookie、<code style="font-size:12px;background:#fef3c7;padding:2px 4px;border-radius:2px;color:#92400e;">sess_</code> 不透明令牌）与 API 权限码保持不变，已登录用户无需重新登录，角色权限也无需重新分配。
+    </p>
+    <p style="margin:0 0 8px 0;font-size:13px;color:#78350f;line-height:1.8;">
+      · <strong style="color:#92400e;">Docker 沙箱镜像必须重建（必须执行）</strong>：AgentScope 已锁定 <code style="font-size:12px;background:#fef3c7;padding:2px 4px;border-radius:2px;color:#92400e;">==2.0.9</code>，且沙箱运行时依赖清单由 K8s 专属泛化为 Docker / K8s 共用的 <code style="font-size:12px;background:#fef3c7;padding:2px 4px;border-radius:2px;color:#92400e;">GATEWAY_EXTRA_PIP</code>（新增 6 个包），两者都参与镜像 tag 的 SHA256 计算，镜像标识已变化。<strong>若不重建，Bash 工具会直接返回 <code style="font-size:12px;background:#fef3c7;padding:2px 4px;border-radius:2px;color:#92400e;">HTTP 500: No module named 'docstring_parser'</code>。</strong>
+    </p>
+    <p style="margin:0;font-size:13px;color:#78350f;line-height:1.8;">
+      · <strong style="color:#92400e;">手工写入过 <code style="font-size:12px;background:#fef3c7;padding:2px 4px;border-radius:2px;color:#92400e;">agentscope_tool_result_limit</code> 需自行调整</strong>：默认值与兜底值已由 2000 改为 <strong>65536</strong>（单位 token）。仓库内既无该键的迁移种子、也无前端配置页，默认值即生效值；若你曾手工写入过该键，请改为 65536 后重启服务。
+    </p>
+  </section>
+
+  <!-- 章节一：核心更新亮点 -->
+  <section style="margin:0 0 32px 0;">
+    <p style="margin:0 0 16px 0;padding:0 0 7px 12px;border-left:4px solid #0284c7;border-bottom:1px solid #e0f2fe;font-size:18px;font-weight:bold;color:#0f172a;line-height:1.4;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+      🚀 核心更新亮点 (Key Features)
+    </p>
+
+    <!-- 1. AI 运行时可观测性 -->
+    <section style="margin:0 0 20px 0;padding:18px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:4px;">
+      <p style="margin:0 0 10px 0;font-size:16px;font-weight:bold;color:#0f172a;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        1. 🔗 AI 运行时精确锁定与执行时间线全链路可观测
+      </p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">AI 框架版本不再「悄悄换掉」</strong>：以前依赖写的是「不低于某版本」且没有锁文件，镜像哪天重建就装哪天的最新版，本地与线上静默漂移、线上出故障无法复现；现已精确锁定 AgentScope <code style="font-size:12px;background:#e2e8f0;padding:2px 4px;border-radius:2px;">2.0.9</code>。</p>
+            <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">终于能看到 bash 到底执行了什么命令</strong>：命令全程都在数据里、却在三处被丢掉；现在时间线卡片直接展示命令原文、模型写的意图摘要（如「Bash · 前端契约全量回归」）与调用元信息，刷新与历史回放都还在。</p>
+      <p style="margin:0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">工具结果不再被两把闸门连截两次</strong>：模型明明收到 20 条记录只看得到 7 条，反复说「要去 sessions 读完整结果」却读到别轮内容——根因是平台先截到 4000 字符、框架再按 2000 token 拆分，两道叠加后超出的内容在任何地方都不再存在；现两层统一放宽到 <strong>64Ki</strong>。模型请求超时也从「与看门狗同时到点、重试来不及执行」改为默认 180 秒且可配置。</p>
+      <section style="margin:10px 0 0 0;padding:10px 12px;background:#eff6ff;border-left:3px solid #3b82f6;color:#1e40af;font-size:13px;line-height:1.8;">
+        <strong>简单说</strong>：以前「AI 用什么版本」取决于哪天重建的镜像，「AI 看到了什么」取决于两道截断闸门，出了问题只能靠猜；现在版本钉死、过程全程可回溯、结果不再被中途砍掉。
+      </section>
+    </section>
+
+    <!-- 2. 向量索引与任务可观测 -->
+    <section style="margin:0 0 20px 0;padding:18px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:4px;">
+      <p style="margin:0 0 10px 0;font-size:16px;font-weight:bold;color:#0f172a;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        2. 🧠 向量索引维度守卫与重构进度抽屉
+      </p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">改了向量维度后检索不再「静默失效」</strong>：以前索引检查只看「有没有」，维度对不上时既不报错也不重建；现在校验升级为「存在<strong>且维度一致</strong>」，不一致自动重建，重建保留已有文档数据、<strong>不会因为重建索引而丢记忆</strong>，记忆工作台会给出黄色警示与修复引导。</p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">重构不再只能去后台看日志</strong>：系统配置与记忆工作台的向量重构统一改为右侧进度抽屉，实时展示状态、当前阶段、已完成/总数、进度条、耗时、逐条日志与失败明细，<strong>关闭抽屉不会取消后台任务</strong>；单条失败不中断整批，重复触发直接返回 409 并说明是谁在占用。</p>
+      <p style="margin:0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">修掉「重构被误挡 30 分钟」与「Redis 里残留永久垃圾键」</strong>：启动锁与手动锁共用同一个键，导致每次重启后 30 分钟内手动重构都被误挡（现改为短锁 + 续期）；任务状态与过期时间分两次提交，进程若在中间被杀就会留下一个永不过期的 Redis 键（现场实测抓到过），现已改为原子提交。</p>
+      <section style="margin:10px 0 0 0;padding:16px;background:#ffffff;border:1px dashed #cbd5e1;border-radius:4px;text-align:center;color:#64748b;font-size:13px;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        <p style="margin:0 0 4px 0;font-size:18px;">📷</p>
+        <p style="margin:0;">【示例截图占位】：向量重构进度抽屉与「维度不匹配」警示徽标</p>
+      </section>
+    </section>
+
+    <!-- 3. 数据与元数据 -->
+    <section style="margin:0 0 20px 0;padding:18px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:4px;">
+      <p style="margin:0 0 10px 0;font-size:16px;font-weight:bold;color:#0f172a;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        3. 🏢 Doris 数据源与字段维度下钻元数据
+      </p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">新增 Doris 数据源支持</strong>：Doris 兼容 MySQL 协议，直接复用既有驱动与适配逻辑，连接测试、表列表、DDL 获取、采样与 SQL 执行全链路打通，前端同步新增选项与图标。</p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">让 AI 下钻不再「靠猜」</strong>：字段新增<strong>维度角色</strong>与<strong>层级组 + 序号</strong>，标记出「哪些字段可以分组」「哪几个字段构成从粗到细的下钻链」；同时记录物理表的<strong>分区字段与索引字段</strong>，让生成的 SQL 可裁剪、可命中索引。</p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">修掉 3 处列保存缺陷</strong>：改字段类型保存不上（不报错、刷新即回退）；<strong>不带字段列表的保存会把整张表的字段元数据删光</strong>（属数据丢失隐患，已加非空守卫）；新的维度字段没有长度与取值校验，超长值会绕到数据库层才报错、表现为整张表保存 500。</p>
+      <p style="margin:0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">重新导入不再抹掉人工标注</strong>：走一次「智能导入」会把人工标注的维度角色全部清空（默认值被一并注入，使「保留既有值」的逻辑失效）；同时补齐了 PostgreSQL 侧遗漏的维度迁移——<strong>否则 PG 主库一部署就会报列不存在</strong>。</p>
+      <section style="margin:10px 0 0 0;padding:16px;background:#ffffff;border:1px dashed #cbd5e1;border-radius:4px;text-align:center;color:#64748b;font-size:13px;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        <p style="margin:0 0 4px 0;font-size:18px;">📷</p>
+        <p style="margin:0;">【示例截图占位】：字段维度角色与下钻层级组编辑表单、Doris 数据源接入</p>
+      </section>
+    </section>
+
+    <!-- 4. 平台治理 -->
+    <section style="margin:0 0 20px 0;padding:18px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:4px;">
+      <p style="margin:0 0 10px 0;font-size:16px;font-weight:bold;color:#0f172a;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        4. 🤖 智能体一键复制、专属头像与用户权限治理
+      </p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">一键复制智能体（含最新已发布版本）</strong>：单事务复制元数据与最新已发布版本，副本<strong>直接可用</strong>、排序紧邻源而不是沉到末尾、字段一律深拷贝；系统智能体也能当模板（复制不改源），无需新增权限点。</p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">标识符重名「边输边提醒」</strong>：预检接口<strong>与创建路径共用同一查询</strong>，杜绝「预检说可用、创建却失败」；失焦 + 输入期双时机校验（仅靠失焦会漏：填完名字直接点按钮不触发失焦），撞名时禁用确认按钮，改名撞唯一索引也由 500 变成可读提示。</p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">智能体专属头像：三层继承</strong>：消息自带 → 智能体专属 → 全局官方形象 → 内置默认，并防止两层兜底互相触发死循环；完整头像控件补进用户真正能打开的新建·编辑弹窗（原先只放在一个<strong>仅新建时才存在</strong>的步骤里，等于找不到入口）。AI 聊天头像「旧页面倒灌」也做了四层治理。</p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">用户批量启用 / 禁用（禁用即踢下线）</strong>：表格与移动端卡片支持多选、浮出批量操作条并二次确认；<strong>自动跳过当前登录账号</strong>、未知 ID 单独计数；提交后按快照逐个失效会话缓存，确保禁用立即生效。</p>
+      <p style="margin:0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">角色「分配用户」重构为标准双列穿梭框 + 修掉「能用的智能体不能被委派」</strong>：前者修掉「徽标人数 ≠ 列表条数」（候选池被静默截断，实测默认角色 6 名成员只渲染出 2 名），并锁定「全量成员 ID 不受分页影响」的契约；后者根因是就绪判定从一个根本没有对应字段的对象上取值、恒为空，导致「直接选中能用、一委派就说尚未就绪」。</p>
+      <section style="margin:10px 0 0 0;padding:16px;background:#ffffff;border:1px dashed #cbd5e1;border-radius:4px;text-align:center;color:#64748b;font-size:13px;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        <p style="margin:0 0 4px 0;font-size:18px;">📷</p>
+        <p style="margin:0;">【示例截图占位】：一键复制智能体表单、专属头像控件与角色双列穿梭框</p>
+      </section>
+    </section>
+
+    <!-- 5. 平台运维与前端体验 -->
+    <section style="margin:0 0 20px 0;padding:18px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:4px;">
+      <p style="margin:0 0 10px 0;font-size:16px;font-weight:bold;color:#0f172a;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        5. 🖥️ 平台运维与全站前端体验统一
+      </p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">系统配置页与系统诊断页重构</strong>：诊断页由三列分栏改为上下结构、操作卡片置顶并排、控制台占满整行；配置页改为「分组图标只管形状、颜色只表达状态」，并修掉「切换分组时滚动位置不动」与「分组超过一屏时底部永远滚不到」；SSH 沙箱补齐 <code style="font-size:12px;background:#e2e8f0;padding:2px 4px;border-radius:2px;">sshpass</code> 环境探测与私钥独立文本域（脱敏遮罩、格式校验、公钥拦截）。</p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">Redis 浏览器按业务分组</strong>：由最多 5000 条键平铺改为 <strong>12 个业务分组</strong>，组头显示业务名、数量与类型汇总，支持一键全部展开，识别不出的键落到「其它 Key」兜底——此前完全看不出某个键属于哪个业务。</p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">沙箱与 K8s 升级运维</strong>：沙箱镜像构建新增 <code style="font-size:12px;background:#e2e8f0;padding:2px 4px;border-radius:2px;">--pip-index</code>（默认清华源，解决国内构建机超时或依赖装不齐；<strong>仅对 K8s 生效</strong>——Docker 镜像 tag 是内容哈希，只在脚本侧拼参数会造成预构建产物与运行时不匹配）；升级向导候选版本改为按<strong>版本号数值比较</strong>，此前实测运行 1.0.16.0 时<strong>默认推荐了 1.0.15.0（一次降级）</strong>。</p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">全站前端基础设施统一</strong>：根因是 CSS 预置样式会把边框宽度与内边距一并归零，而大量老代码只写了边框<strong>颜色</strong>——审计出 <strong>137 个元素有边框颜色无边框宽度、44 个元素缺内边距</strong>；现全局兜底（优先级最低，任何工具类都能照常覆盖），搜索框清空按钮留白一并兜底；<strong>Toast</strong> 改为毛玻璃、鼠标移入暂停倒计时、每屏最多 4 条，全平台 990 处既有调用无需改动；登录页新增放大镜探索效果与低版本浏览器引导。</p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">对话体验与历史治理</strong>：会话历史新增来源 / 智能体 / 状态 / 时间范围筛选，并修复分组模式下关键词与状态<strong>只匹配每个会话最新一轮</strong>、更早轮次命中会让整个会话被漏掉的缺陷；「AI 主动提问」那轮在历史里整体消失的问题一并修复；新增 <code style="font-size:12px;background:#e2e8f0;padding:2px 4px;border-radius:2px;">/embed/personal</code> 第三方嵌入个人中心，自带凭据门禁，未授权展示明确拒绝页而非「还没设密码的普通用户」空壳。</p>
+      <p style="margin:0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">技能工作台与测试债务</strong>：修复快速切换技能时「显示 A 的内容却保存进 B」；卡片视图支持键盘打开、新建与上传补常显入口（此前只有右键菜单）、7 个弹层补齐 dialog 语义；修正契约测试 <strong>52 个长期失败用例</strong>（测试过期 45、辅助脚本从未入库 6、规范断层 1、环境依赖 1）。</p>
+      <section style="margin:10px 0 0 0;padding:16px;background:#ffffff;border:1px dashed #cbd5e1;border-radius:4px;text-align:center;color:#64748b;font-size:13px;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        <p style="margin:0 0 4px 0;font-size:18px;">📷</p>
+        <p style="margin:0;">【示例截图占位】：Redis 浏览器 12 业务分组、系统诊断页改版、统一后的输入框与 Toast</p>
+      </section>
+    </section>
+  </section>
+
+  <!-- 章节二：Bug Fixes -->
+  <section style="margin:0 0 32px 0;">
+    <p style="margin:0 0 16px 0;padding:0 0 7px 12px;border-left:4px solid #0284c7;border-bottom:1px solid #e0f2fe;font-size:18px;font-weight:bold;color:#0f172a;line-height:1.4;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+      🐛 缺陷修复 (Bug Fixes)
+    </p>
+
+    <section style="margin:0 0 18px 0;padding:16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:4px;">
+      <p style="margin:0 0 10px 0;font-size:15px;font-weight:bold;color:#0f172a;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        🧠 AI 运行时 / 工具链 / 提示词
+      </p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">沙箱内 Bash 工具 HTTP 500</strong>：上游把沙箱镜像内 AI 框架改为「不装依赖」安装，而平台在容器内运行内置工具需要完整依赖；已用 Docker / K8s 共用清单补齐 6 个包。</p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">MCP 工具结果被平台侧提前截断</strong>：平台 4000 字符 + 框架 2000 token 双闸门叠加，4000 字符以外内容在任何地方都不复存在；已两层对齐 64Ki，并修掉「框架默认值被平台静默覆盖为 2000」。</p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">结构化输出失败无法与基础设施错误区分</strong>：两类失败以前都归入同一个错误值，调用方无从判断该重试还是该换提示词 / 换模型；已新增精确分类与误判护栏。</p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">模型请求超时与看门狗同时到点</strong>：上游卡住时业务层重试实际上没有触发窗口；已将读取超时默认压到 180 秒并做成可配置。</p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">元数据解析提示词从未生效</strong>：目标智能体在种子数据中被禁用且此后未重新启用，一直落在只有 3 行的兜底分支，详尽版 8 条要求一条都没跑；已把兜底确立为正式提示词。</p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">ChatBI 查数底线 3 处指令互相冲突</strong>：会凭空生成过滤条件、字面执行等于「没有任何字段可以分组」、静默收窄范围与「禁止停轮」冲突；且行为规则被写进向量索引正文，导致每次调整策略都要全量重建索引。已全部收敛到代码层，并把「行为规则只留代码」固化为契约。</p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">Redis 里残留永不过期的任务键</strong>：任务状态与过期时间分两次提交，进程在中间被杀就留下一个永不过期的键（现场实测抓到 <code style="font-size:12px;background:#e2e8f0;padding:2px 4px;border-radius:2px;">TTL=-1</code> 的残留）；已改为原子提交。</p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">向量索引维度变更后静默空转</strong>：校验只看存在性，维度不匹配时既不报错也不重建，检索静默失效；已升级为「存在且维度一致」，并让删除索引默认保留文档数据。</p>
+      <p style="margin:0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">时间线「复制命令」实际复制的是工具输出（点击劫持）</strong>：入参区块与复制按钮和外层按钮几何重叠，仅有入参时还会渲染一个静默失败的空按钮；已拆为独立容器并加结构契约锁定。</p>
+    </section>
+
+    <section style="margin:0 0 18px 0;padding:16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:4px;">
+      <p style="margin:0 0 10px 0;font-size:15px;font-weight:bold;color:#0f172a;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        🏢 元数据 / 数据治理
+      </p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">字段类型改了保存不上（静默失效）</strong>：更新分支漏写类型字段，而编辑弹窗里字段类型是可改的下拉；保存不报错、刷新即回退。</p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">不带字段列表的保存会删光整张表字段（数据丢失隐患）</strong>：过滤条件被渲染成恒真，任何不带字段列表的保存都会物理删除该表全部字段元数据；已加非空守卫与告警。</p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">PostgreSQL 主库部署即报错</strong>：字段维度三列只提供了 MySQL 脚本，而 ORM 已带这三列，PG 主库一部署就报列不存在。</p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">重新导入静默清空人工标注的维度角色（数据损失）</strong>：默认值被一并注入使「保留既有值」全部失效，走一次智能导入就会抹掉全部人工标注；已改为只提交用户真正设置过的字段。</p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">清空「序号」输入框导致整张表保存失败</strong>：数字输入框删空时给出空串而非数字，与可选整数类型冲突；已在提交前归一。</p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">新维度字段无取值边界</strong>：超长值绕到数据库层才报错，表现为整张表保存 500；已收敛为枚举 + 长度上限并在前端补校验。</p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">智能导入数据源回归</strong>：改为「裸数据库类型优先」导致既有契约测试失败，且适配器按数据源名精确匹配、传裸类型会抛异常使关系探测降级；已恢复数据源名优先。</p>
+      <p style="margin:0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">智能导入向导无重名检测</strong>：填入已存在的数据集 ID 时无任何提示、保存按钮照常可点，只能在提交后才失败；已加红色警告与保存按钮联动禁用。</p>
+    </section>
+
+    <section style="margin:0 0 18px 0;padding:16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:4px;">
+      <p style="margin:0 0 10px 0;font-size:15px;font-weight:bold;color:#0f172a;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        📚 知识库
+      </p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">文档列表被静默截断</strong>：未传分页参数，后端默认 100 条，超过即被截断且文档数被写成 100。</p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">上传中途切换知识库会把文件传错库</strong>：上传循环内重复读取当前选中的知识库，且上传期间左侧树仍可点击。</p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">失败被伪装成成功 / 空数据 / 无人授权</strong>：解析触发失败被计入上传成功数；权限读取失败显示为「未分配权限」，还静默吞掉删除确认框里的授权风险警告；列表与分块加载失败显示为「暂无数据」且无重试入口。</p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">双击创建两个同名知识库 / 请求竞态</strong>：创建无提交锁；文档列表与分块请求并发互相覆盖、快速切换串台、翻页失败但页码前进；组件卸载后在途轮询重新挂上定时器。</p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">按钮权限判定不一致</strong>：文件夹重命名 / 删除、文档移动、重新解析等按钮缺少与同区块一致的权限判定，点击只得 403。</p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">召回测试页存在脚本注入风险</strong>：分块原文渲染时完全不做 HTML 转义，文档里的脚本或事件属性会在页面上执行；已按白名单清洗。</p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">召回测试页错误归因错误 / 失败伪装成 0 命中</strong>：参数校验的内部表示直接展示给用户，403 与 400 都被归因为「RAGFlow 不可用」；对照模式失败时仍渲染「暂无召回数据」，单模式下「0 命中」与「尚未检索」提示相同。</p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">召回测试无法取消检索</strong>：单次最坏约 40 秒且按钮锁死，用户只能刷新整页；组件卸载后还会在别的页面弹出「检索完成」。另修复移动端结果面板被压到 0 宽、无法横滚。</p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">运营看板必须先刷两次才看到最新数据</strong>：归并在后台任务中执行，本次响应读到的是归并前的旧值。</p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">检索量被重复累加、引用率被系统性压低</strong>：执行器自动预取本身就是调用检索工具，runner 侧再记一次；引用量埋点又被放在事实一致性网关之后，导致「有检索、零引用」甚至引用率恒为 0。</p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">引用编号错位</strong>：工具每次调用都从 1 重新编号，一轮内多次检索会让模型看到重复编号，引用被错配到错误文档；已改为整轮唯一编号。</p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">运营看板向普通用户暴露全平台数据</strong>：指标汇总接口原先只校验登录，未做管理员权限判定。</p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">文档详情编译错误</strong>：新增按钮容器后条件分支不再相邻，前端直接编译报错。</p>
+      <p style="margin:0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">门户抽屉与流程横幅 11 种无效样式类</strong>：经编译产物核实这些类不生成任何 CSS，导致浅色模式提示框失去背景、竖分隔线消失、暗色模式多处缺底色与边框，另有尺寸类渲染偏差与笔误色阶。</p>
+    </section>
+
+    <section style="margin:0 0 18px 0;padding:16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:4px;">
+      <p style="margin:0 0 10px 0;font-size:15px;font-weight:bold;color:#0f172a;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        🤖 智能体 / 门户 / 权限
+      </p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">知识库类型智能体无法被委派</strong>：就绪判定从「发布版本对象」上取两个字段，而该表根本没有这两列，取值恒为空，任何该类型智能体无论怎样配置都判未就绪——表现为「直接选中能用、一委派就说尚未就绪」；且判定比运行时更严。</p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">复制智能体弹窗无标识符预检</strong>：手写裸输入框未接入已有名称预检设施，撞名既无内联提示、确认按钮也照常可点，只能提交后拿到 400。另修「仅失焦触发会漏检」（填完名字直接点按钮不触发失焦）。</p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">改智能体名撞唯一索引抛 500</strong>：改名前未做唯一性校验，原先直接抛数据库异常。</p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">部分预设 AI 头像点击报 422</strong>：内联图地址长达 2197 字符，超过后端 2048 上限；已改为 public 静态短路径并提前拦截超长地址。</p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">AI 头像「旧页面倒灌」覆盖企业形象</strong>：本地缓存与服务端偏好中的陈旧头像会覆盖全员权威形象；已用显式编辑闸门 + 乐观并发冲突护栏 + 拔除本地缓存 + 动态时间戳文件名（消除浏览器强缓存）四层治理。</p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">找不到智能体头像设置入口</strong>：完整控件原先只放在一个「仅新建时才存在」的步骤里。</p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">待绑定头像被过期清理回收</strong>：上传的临时文件未被转正即被清理；三处写入点已接入转正逻辑。</p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">角色成员徽标人数与列表条数对不上</strong>：用户列表一次性拉取上限 1000，超过时候选池被静默截断，已选成员详情又从被截断的候选池反查（实测默认角色 6 名成员只渲染出 2 名）。</p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">搜索图标渲染为 0×0、蓝色竖线消失</strong>：无效样式类不产生任何 CSS。</p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">用户批量禁用可能把自己也禁用</strong>：批量接口现自动跳过当前登录账号并如实回报，不中断整批。</p>
+      <p style="margin:0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">复制智能体后副本沉到列表末尾</strong>：排序号改为取源 +1，让副本紧邻源。</p>
+    </section>
+
+    <section style="margin:0 0 18px 0;padding:16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:4px;">
+      <p style="margin:0 0 10px 0;font-size:15px;font-weight:bold;color:#0f172a;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        ☸️ 沙箱 / K8s 运维
+      </p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">K8s 升级向导默认推荐一次降级</strong>：候选识别把「任意非当前 Tag」都当作新版本并最终取字典序末位；实测运行 1.0.16.0 时默认值被推荐为 1.0.15.0。现改为按版本号数值比较，只推荐严格更高的最高版本，并对旧版本二次确认。</p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">带端口仓库的镜像地址解析错误</strong>：按冒号切分会把 <code style="font-size:12px;background:#e2e8f0;padding:2px 4px;border-radius:2px;">registry:5000/...:1.0.16.0</code> 切错，导致「当前运行中」判定与版本比较全部失效；已改为按最后一个冒号切分并兼容 digest。</p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">升级向导基准取错</strong>：原先以本地配置文件为基准，二次执行时会拿本地文件版本与节点镜像比较；已改为优先以集群实际运行镜像为基准。</p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">升级与安装两处探测逻辑重复</strong>：改一处必漏一处；已合并为单一入口与共用比较函数（刻意不用 <code style="font-size:12px;background:#e2e8f0;padding:2px 4px;border-radius:2px;">sort -V</code> 以兼容 BusyBox）。</p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">沙箱构建缺 pip 源</strong>：Docker 与 K8s 沙箱都没配置镜像源，国内构建机直连官方源经常超时或依赖装不齐；现有代理参数只覆盖「安装包管理器」那一步，管不到装依赖。</p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">镜像源参数会直接展开进构建文件</strong>：存在命令注入面；已加白名单校验并单独拦截换行（按行匹配不会命中空白字符类）。</p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">SSH 沙箱缺少环境提示</strong>：密码认证依赖 <code style="font-size:12px;background:#e2e8f0;padding:2px 4px;border-radius:2px;">sshpass</code>，未安装时用户只看到 502 报错；已补动态探测与双重解决指引，并在测试连接前前置拦截。</p>
+      <p style="margin:0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">私钥被脱敏掩码覆盖</strong>：服务端回显的脱敏占位符可能被当作新值写回覆盖真实私钥；已加掩码防覆盖机制，并自动解析转义换行符与单行私钥解决 OpenSSH 格式错误。</p>
+    </section>
+
+    <section style="margin:0;padding:16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:4px;">
+      <p style="margin:0 0 10px 0;font-size:15px;font-weight:bold;color:#0f172a;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        💻 前端交互 / 视觉 / 测试基础设施
+      </p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">输入框「看起来不像输入框」</strong>：预置样式归零边框宽度与内边距，而大量老代码只写了边框颜色；审计出 137 个元素有边框颜色无边框宽度、44 个元素缺内边距。</p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">系统配置页两套底色、输入框高度不一致</strong>：同页品牌个性化字段是白底、参数配置与日志字段是灰底；渲染实测 20px vs 38px。</p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">只读态底色类名写错导致静默失效</strong>：编译产出 0 条规则等于没写，已更名并覆盖全部只读值字段。</p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">搜索框原生清空按钮与文字拥挤</strong>：64 个搜索框中 52 处右侧留白仅 8～12px，而按钮约需 28px。</p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">宿主初始化遮罩永久糊住挂件</strong>：超时分支只标记状态而从不关闭遮罩。</p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">嵌入会话切走页面后无法续显（卡死丢内容）</strong>：执行任务时切到平台其它页面再切回会卡死、已输出的思考丢失且不再实时推进；现新增会话事件日志与增量拉取端点，切回后按日志整体重建并增量续显，过程日志只作可视化旁路、终态仍以历史落库为准。</p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">输出完成后首次点快捷按钮被静默吞掉</strong>：发送守卫在「运行中」标记未清时直接返回、零用户反馈，而该标记只靠流式终态事件释放、丢失后只能等 1.5 秒轮询；现点击即核验后端真相，确实仍忙则排队并自动补发。</p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">技能工作台「显示 A 的内容却保存进 B」</strong>：快速切换技能时慢响应覆盖当前内容并污染作用域标记；另修复未保存内容被静默覆盖、批量上传单个失败中断整批、同一文件重复点击误弹「切换将丢失修改」并真的重载。</p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">技能工作台键盘 / 触屏不可达</strong>：卡片视图仅支持点击（键盘用户无法进入详情）、新建与上传只有右键菜单入口；已补 dialog 语义、键盘打开与常显入口，并修正 25 处无效样式类。</p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">记忆工作台提示框被裁剪</strong>：卡片设置了裁剪，而提示框是向下弹出的绝对定位层——裁剪发生在绘制阶段，层级再高也无法逃逸，导致提示框只显示一行且右侧文字被截断。</p>
+      <p style="margin:0 0 6px 0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">契约测试 52 个用例长期失败</strong>：其中 6 个调用的测试辅助脚本<strong>从未进入版本库</strong>（查遍全部历史为空），一直无法执行；另有 1 个因缺少可选依赖以收集错误形式中断整套测试。已按成因分四类修复（测试过期 45 个、脚本缺失 6 个、规范断层 1 个、环境依赖 1 个），断言条数整体净增，无 <code style="font-size:12px;background:#e2e8f0;padding:2px 4px;border-radius:2px;">assert True</code> / <code style="font-size:12px;background:#e2e8f0;padding:2px 4px;border-radius:2px;">skip</code> / <code style="font-size:12px;background:#e2e8f0;padding:2px 4px;border-radius:2px;">xfail</code> / 注释断言。</p>
+      <p style="margin:0;font-size:14px;color:#334155;line-height:1.8;">· <strong style="color:#0f172a;">一处契约断言范围过宽</strong>：原扫描整个文件，会被诊断页后续新增的分组按钮误伤；已收窄到「参数配置」作用域。</p>
+    </section>
+  </section>
+
+  <!-- 章节三：数据库迁移 -->
+  <section style="margin:0 0 32px 0;">
+    <p style="margin:0 0 16px 0;padding:0 0 7px 12px;border-left:4px solid #0284c7;border-bottom:1px solid #e0f2fe;font-size:18px;font-weight:bold;color:#0f172a;line-height:1.4;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+      🗄️ 数据库表结构变更说明 (Database Migrations)
+    </p>
+    <p style="margin:0 0 10px 0;font-size:14px;color:#475569;line-height:1.8;">
+      本版本包含 <strong style="color:#0f172a;">3 组双数据库（MySQL / PostgreSQL）同步迁移脚本</strong>，全部为「仅新增列 / 新增配置」的向后兼容变更，均支持幂等安全执行。
+    </p>
+    <p style="margin:0 0 10px 0;font-size:12px;color:#94a3b8;line-height:1.6;">📱 下方表格较宽，移动端可<b>左右滑动</b>查看完整内容</p>
+
+    <!-- 迁移清单表：外层容器 overflow-x:auto，移动端可横向滑动 -->
+    <section style="margin:0 0 18px 0;overflow-x:auto;-webkit-overflow-scrolling:touch;">
+      <table style="width:100%;min-width:680px;border-collapse:collapse;font-size:13px;line-height:1.7;color:#334155;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        <thead>
+          <tr style="background:#f1f5f9;">
+            <th style="padding:8px 10px;border:1px solid #e2e8f0;text-align:left;font-weight:bold;color:#0f172a;white-space:nowrap;width:118px;">版本号 (MySQL / PG)</th>
+            <th style="padding:8px 10px;border:1px solid #e2e8f0;text-align:left;font-weight:bold;color:#0f172a;">变更说明</th>
+            <th style="padding:8px 10px;border:1px solid #e2e8f0;text-align:left;font-weight:bold;color:#0f172a;">涉及数据表 / 配置项</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td style="padding:8px 10px;border:1px solid #e2e8f0;white-space:nowrap;font-family:Consolas,Monaco,monospace;font-weight:bold;color:#0284c7;">V158 / V59</td>
+            <td style="padding:8px 10px;border:1px solid #e2e8f0;">记录物理表分区字段与索引字段，供 ChatBI 生成可裁剪、可命中索引的 SQL（<strong style="color:#0f172a;">仅新增列，不改动既有数据</strong>）</td>
+            <td style="padding:8px 10px;border:1px solid #e2e8f0;"><code style="font-size:12px;background:#e2e8f0;padding:1px 4px;border-radius:2px;">meta_tables.partition_fields</code>、<code style="font-size:12px;background:#e2e8f0;padding:1px 4px;border-radius:2px;">meta_tables.index_fields</code></td>
+          </tr>
+          <tr style="background:#fbfdff;">
+            <td style="padding:8px 10px;border:1px solid #e2e8f0;white-space:nowrap;font-family:Consolas,Monaco,monospace;font-weight:bold;color:#0284c7;">V159 / V60</td>
+            <td style="padding:8px 10px;border:1px solid #e2e8f0;">为元数据字段增加维度角色与层级组标记，供 ChatBI 下钻分析识别可分组字段与下钻路径（<strong style="color:#b91c1c;">PG 侧 V60 为补齐遗漏，务必执行——否则 PG 主库会报列不存在</strong>）</td>
+            <td style="padding:8px 10px;border:1px solid #e2e8f0;"><code style="font-size:12px;background:#e2e8f0;padding:1px 4px;border-radius:2px;">meta_columns.dimension_role</code>、<code style="font-size:12px;background:#e2e8f0;padding:1px 4px;border-radius:2px;">meta_columns.hierarchy_group</code>、<code style="font-size:12px;background:#e2e8f0;padding:1px 4px;border-radius:2px;">meta_columns.hierarchy_order</code></td>
+          </tr>
+          <tr>
+            <td style="padding:8px 10px;border:1px solid #e2e8f0;white-space:nowrap;font-family:Consolas,Monaco,monospace;font-weight:bold;color:#0284c7;">V160 / V61</td>
+            <td style="padding:8px 10px;border:1px solid #e2e8f0;">新增大模型 HTTP 请求读取超时（默认 180 秒，范围 30-300）。采用「已存在则更新描述与分组」写法保证可重跑，但 <strong style="color:#0f172a;">不改动 <code style="font-size:12px;background:#e2e8f0;padding:1px 4px;border-radius:2px;">value</code></strong>，避免覆盖运维已调整过的值</td>
+            <td style="padding:8px 10px;border:1px solid #e2e8f0;"><code style="font-size:12px;background:#e2e8f0;padding:1px 4px;border-radius:2px;">system_configs</code> 新增 <code style="font-size:12px;background:#e2e8f0;padding:1px 4px;border-radius:2px;">llm_request_read_timeout</code>（分类 <code style="font-size:12px;background:#e2e8f0;padding:1px 4px;border-radius:2px;">agent</code>）</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <p style="margin:0 0 8px 0;font-size:14px;font-weight:bold;color:#0f172a;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">🆕 环境变量与依赖变更</p>
+
+    <p style="margin:0 0 10px 0;font-size:13px;color:#475569;line-height:1.8;">
+      本次版本<strong style="color:#0f172a;">未新增任何环境变量</strong>，<code style="font-size:12px;background:#f1f5f9;padding:2px 4px;border-radius:2px;">env.example</code> 无变更（新增的读取超时项是系统配置，可在「系统配置 → 智能体设置」分组内以滑块调整，不是环境变量）。唯一的依赖变更是 AI 框架版本锁定：
+    </p>
+
+    <section style="margin:0 0 16px 0;overflow-x:auto;-webkit-overflow-scrolling:touch;">
+      <table style="width:100%;min-width:560px;border-collapse:collapse;font-size:13px;line-height:1.7;color:#334155;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        <thead>
+          <tr style="background:#f1f5f9;">
+            <th style="padding:8px 10px;border:1px solid #e2e8f0;text-align:left;font-weight:bold;color:#0f172a;white-space:nowrap;">依赖项</th>
+            <th style="padding:8px 10px;border:1px solid #e2e8f0;text-align:left;font-weight:bold;color:#0f172a;white-space:nowrap;">变更前</th>
+            <th style="padding:8px 10px;border:1px solid #e2e8f0;text-align:left;font-weight:bold;color:#0f172a;white-space:nowrap;">变更后</th>
+            <th style="padding:8px 10px;border:1px solid #e2e8f0;text-align:left;font-weight:bold;color:#0f172a;">说明</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td style="padding:8px 10px;border:1px solid #e2e8f0;white-space:nowrap;font-family:Consolas,Monaco,monospace;font-weight:bold;color:#0284c7;">agentscope</td>
+            <td style="padding:8px 10px;border:1px solid #e2e8f0;white-space:nowrap;"><code style="font-size:12px;background:#e2e8f0;padding:1px 4px;border-radius:2px;">&gt;=2.0.6</code></td>
+            <td style="padding:8px 10px;border:1px solid #e2e8f0;white-space:nowrap;"><code style="font-size:12px;background:#e2e8f0;padding:1px 4px;border-radius:2px;">==2.0.9</code></td>
+            <td style="padding:8px 10px;border:1px solid #e2e8f0;">从无上限改为精确锁定，杜绝镜像重建时间不同即装到不同版本；升级前建议先阅读 <code style="font-size:12px;background:#e2e8f0;padding:1px 4px;border-radius:2px;">docs/md/agentscope_2.0.9_upgrade_guide.md</code> 的验证清单</td>
+          </tr>
+          <tr style="background:#fbfdff;">
+            <td style="padding:8px 10px;border:1px solid #e2e8f0;white-space:nowrap;font-family:Consolas,Monaco,monospace;font-weight:bold;color:#0284c7;">沙箱运行时依赖</td>
+            <td style="padding:8px 10px;border:1px solid #e2e8f0;white-space:nowrap;">K8s 专属清单</td>
+            <td style="padding:8px 10px;border:1px solid #e2e8f0;white-space:nowrap;">Docker / K8s 共用清单（+6 包）</td>
+            <td style="padding:8px 10px;border:1px solid #e2e8f0;">修复升级后 Bash 工具 <code style="font-size:12px;background:#e2e8f0;padding:1px 4px;border-radius:2px;">HTTP 500</code>；依赖清单参与镜像内容哈希，<strong style="color:#0f172a;">Docker 沙箱镜像必须重建</strong></td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <p style="margin:0;font-size:13px;color:#64748b;line-height:1.7;">
+      💡 升级提示：MySQL 执行 <code style="font-size:12px;background:#f1f5f9;padding:2px 4px;border-radius:2px;">bash db-prod/apply-sql.sh</code>，PostgreSQL 执行 <code style="font-size:12px;background:#f1f5f9;padding:2px 4px;border-radius:2px;">bash db-prod-pg/apply-sql.sh</code>（或免 Python 依赖的 <code style="font-size:12px;background:#f1f5f9;padding:2px 4px;border-radius:2px;">bash db-prod-pg/apply-sql-native.sh</code>），脚本具备完整的幂等性检查、断点续跑与优雅日志格式化。
+    </p>
+  </section>
+
+  <!-- 章节四：平滑升级指南 -->
+  <section style="margin:0 0 32px 0;">
+    <p style="margin:0 0 16px 0;padding:0 0 7px 12px;border-left:4px solid #0284c7;border-bottom:1px solid #e0f2fe;font-size:18px;font-weight:bold;color:#0f172a;line-height:1.4;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+      📖 平滑升级指南 (Upgrade Guide)
+    </p>
+    <p style="margin:0 0 14px 0;font-size:14px;color:#334155;line-height:1.8;">
+      遵循以下标准步骤即可平滑无缝升级至 <strong style="color:#0f172a;">v1.0.17.0</strong>。本版本<strong>无强制重新登录、无权限码变更</strong>，但请务必确认三点：AgentScope 已锁定精确版本需重装依赖、<strong>Docker 沙箱镜像必须重建</strong>、若曾手工写入过 <code style="font-size:12px;background:#f1f5f9;padding:2px 4px;border-radius:2px;">agentscope_tool_result_limit</code> 需改为 65536。
+    </p>
+
+    <!-- 方式一：源码拉取升级 -->
+    <section style="margin:0 0 18px 0;padding:16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:4px;">
+      <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#0f172a;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        方式一：源码拉取升级（开发与虚机部署）
+      </p>
+      <section style="margin:0;padding:12px;background:#0f172a;border-radius:4px;color:#e2e8f0;font-family:Consolas,Monaco,monospace;font-size:12px;line-height:1.7;overflow-x:auto;-webkit-overflow-scrolling:touch;">
+        <p style="margin:0 0 4px 0;color:#94a3b8;"># 1. 同步拉取主分支最新代码</p>
+        <p style="margin:0 0 8px 0;color:#38bdf8;">git fetch origin &amp;&amp; git checkout main &amp;&amp; git pull origin main</p>
+        <p style="margin:0 0 4px 0;color:#94a3b8;"># 2. 执行数据库结构平滑迁移 (MySQL / PG)</p>
+        <p style="margin:0 0 8px 0;color:#38bdf8;">bash db-prod/apply-sql.sh  # PG: bash db-prod-pg/apply-sql.sh</p>
+        <p style="margin:0 0 4px 0;color:#94a3b8;"># 3. 重装后端依赖（AgentScope 已锁定 ==2.0.9，必须重装）</p>
+        <p style="margin:0 0 8px 0;color:#38bdf8;">poetry install --no-root</p>
+        <p style="margin:0 0 4px 0;color:#94a3b8;"># 4. 前端构建与启动本地服务</p>
+        <p style="margin:0;color:#38bdf8;">./dev.sh</p>
+      </section>
+      <p style="margin:10px 0 0 0;font-size:13px;color:#64748b;line-height:1.75;">
+        📌 检查项：本版本 <code style="font-size:12px;background:#f1f5f9;padding:2px 4px;border-radius:2px;">env.example</code> 无变更，无需新增环境变量；若你曾手工在 <code style="font-size:12px;background:#f1f5f9;padding:2px 4px;border-radius:2px;">system_configs</code> 中写入 <code style="font-size:12px;background:#f1f5f9;padding:2px 4px;border-radius:2px;">agentscope_tool_result_limit</code>，请改为 <code style="font-size:12px;background:#f1f5f9;padding:2px 4px;border-radius:2px;">65536</code> 后重启服务。
+      </p>
+    </section>
+
+    <!-- 方式二：Docker 容器化升级 -->
+    <section style="margin:0 0 18px 0;padding:16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:4px;">
+      <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#0f172a;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        方式二：Docker 容器化升级（生产环境推荐）
+      </p>
+      <section style="margin:0;padding:12px;background:#0f172a;border-radius:4px;color:#e2e8f0;font-family:Consolas,Monaco,monospace;font-size:12px;line-height:1.7;overflow-x:auto;-webkit-overflow-scrolling:touch;">
+        <p style="margin:0 0 4px 0;color:#94a3b8;"># 1. 执行数据库增量升级 (宿主或临时容器)</p>
+        <p style="margin:0 0 8px 0;color:#38bdf8;">bash db-prod/apply-sql.sh  # PG: bash db-prod-pg/apply-sql.sh</p>
+        <p style="margin:0 0 4px 0;color:#94a3b8;"># 2. 导入官方 Release 镜像归档（x86_64 / ARM64 按架构选择）</p>
+        <p style="margin:0 0 8px 0;color:#38bdf8;">docker load -i nanzi-ai-agent_1.0.17.0_linux-amd64_*.tar</p>
+        <p style="margin:0 0 8px 0;color:#38bdf8;">docker load -i nanzi-ai-agent_1.0.17.0_linux-arm64_*.tar</p>
+        <p style="margin:0 0 4px 0;color:#94a3b8;"># （或在本地自主构建：cd docker &amp;&amp; ./build_linux_x86.sh 1.0.17.0）</p>
+        <p style="margin:0 0 4px 0;color:#94a3b8;"># 3. 重启容器服务</p>
+        <p style="margin:0;color:#38bdf8;">cd docker &amp;&amp; ./start-nanzi-ai-agent.sh</p>
+      </section>
+    </section>
+
+    <!-- 方式三：沙箱构建与运维 CLI -->
+    <section style="margin:0 0 12px 0;padding:16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:4px;">
+      <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#0f172a;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;">
+        方式三：沙箱构建与运维 CLI（若启用 Docker / K8s 沙箱策略）
+      </p>
+      <section style="margin:0;padding:12px;background:#0f172a;border-radius:4px;color:#e2e8f0;font-family:Consolas,Monaco,monospace;font-size:12px;line-height:1.7;overflow-x:auto;-webkit-overflow-scrolling:touch;">
+        <p style="margin:0 0 4px 0;color:#94a3b8;"># Docker 沙箱：本版本必须重建（依赖清单已变化，旧镜像会让 Bash 工具 500）</p>
+        <p style="margin:0 0 8px 0;color:#38bdf8;">bash sandbox/docker/build-docker-sandbox-image.sh</p>
+        <p style="margin:0 0 4px 0;color:#94a3b8;"># K8s 沙箱：集群就绪与 RBAC 权限体检</p>
+        <p style="margin:0 0 8px 0;color:#38bdf8;">bash k8s_deploy/nanzi-k8s.sh health</p>
+        <p style="margin:0 0 4px 0;color:#94a3b8;"># K8s 沙箱：构建沙箱网关镜像（--pip-index 新增，默认已内置清华源）</p>
+        <p style="margin:0 0 8px 0;color:#38bdf8;">bash k8s_deploy/build-k8s-sandbox-image.sh --pip-index https://pypi.tuna.tsinghua.edu.cn/simple</p>
+        <p style="margin:0 0 4px 0;color:#94a3b8;"># K8s 沙箱：双层探测本地与节点运行时中已就绪的镜像清单</p>
+        <p style="margin:0;color:#38bdf8;">bash k8s_deploy/build-k8s-sandbox-image.sh --list</p>
+      </section>
+      <p style="margin:10px 0 0 0;font-size:13px;color:#64748b;line-height:1.75;">
+        ☸️ 镜像源优先级：<code style="font-size:12px;background:#f1f5f9;padding:2px 4px;border-radius:2px;">--pip-index</code> &gt; 环境变量 <code style="font-size:12px;background:#f1f5f9;padding:2px 4px;border-radius:2px;">PYPI_INDEX_URL</code> &gt; 内置默认清华源；<code style="font-size:12px;background:#f1f5f9;padding:2px 4px;border-radius:2px;">http://</code> 内网源会自动放行。<strong style="color:#0f172a;">注意该选项仅对 K8s 沙箱生效</strong>——Docker 沙箱镜像标签是内容哈希，脚本侧临时拼参数会造成预构建产物与运行时不匹配。另：K8s 升级向导的候选版本已改为按版本号数值比较，只会推荐严格高于当前运行版本的最高版本，选择旧版本会触发回退二次确认。
+      </p>
+    </section>
+  </section>
+
+  <!-- 尾部寄语 -->
+  <section style="margin:0 0 28px 0;padding:20px;background:#f8fafc;border-left:4px solid #0284c7;border-radius:0 4px 4px 0;">
+    <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#0f172a;line-height:1.6;">
+      版本可控、过程可见、数据可信、体验一致
+    </p>
+    <p style="margin:0 0 10px 0;font-size:14px;color:#475569;line-height:1.85;">
+      本次版本围绕上述五条主线，完成了对 AI 运行时版本治理、执行过程可观测性、向量与元数据正确性、平台与权限治理以及全站前端与运维体验的一次系统性加固。本项目为<strong style="color:#0f172a;">个人开源</strong>，遵循 MIT 开源协议，可自由分发与商用；「NanZi」取自我常用的网名「南孜」，寓「孜孜不倦」——持续学习、持续打磨生产级 AI 智能体技术栈。
+    </p>
+    <p style="margin:0;font-size:14px;color:#475569;line-height:1.85;">
+      特别鸣谢所有参与本版本需求讨论、代码贡献、架构演进及线上验证的团队成员与社区开发者！平台将持续践行极客、稳定、高性能的架构演进，助力企业打造最值得信赖的自主智能体生产力中枢。诚邀各位开发者星标 Star 支持我们，一同构建更强大的自主智能体生态！
+    </p>
+  </section>
+
+  <!-- 二维码 / 链接区 -->
+  <section style="margin:0 0 12px 0;text-align:center;">
+    <p style="margin:0 0 6px 0;font-size:13px;color:#64748b;">
+      欢迎访问 GitHub 仓库获取完整源码与文档：
+    </p>
+    <p style="margin:0;font-size:14px;font-weight:bold;">
+      <a href="https://github.com/RandyChen1985/nanzi-ai-agent-platform" style="color:#0284c7;text-decoration:none;">github.com/RandyChen1985/nanzi-ai-agent-platform</a>
+    </p>
+  </section>
+
+</section>
