@@ -7,6 +7,7 @@ from typing import List, Dict, Any, Optional, AsyncGenerator
 from app.services.ai.executors.base import BaseExecutor
 from app.services.ai.ragflow_client import RagFlowClient
 from app.schemas.agent import AgentExecutionStep, ChatConfig
+from app.services.ai.temperature import resolve_config_temperature
 from app.services.ai.executors.common import (
     MODEL_STREAM_MAX_RETRIES,
     build_stream_retry_log,
@@ -124,7 +125,7 @@ class RAGExecutor(BaseExecutor):
                             event_type="tool_call",
                             agent_name=self.config.agent_name,
                             model="RAGFlow-Remote",
-                            temperature=self.config.temperature,
+                            temperature=resolve_config_temperature(self.config),
                             tool_name="rag_retrieval",
                             tool_output={"citations": chunk["data"]},
                             status="success",
@@ -154,7 +155,7 @@ class RAGExecutor(BaseExecutor):
                     event_type="thought",
                     agent_name=self.config.agent_name,
                     model="RAGFlow-Remote",
-                    temperature=self.config.temperature,
+                    temperature=resolve_config_temperature(self.config),
                     tool_output={"content": full_content},
                     execution_time_ms=(time.time() - start_time) * 1000,
                     status="success",

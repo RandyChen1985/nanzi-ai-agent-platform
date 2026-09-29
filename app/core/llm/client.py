@@ -15,6 +15,7 @@ from app.services.ai.runtime.agentscope.request_timeout import (
 from app.utils.model_credentials import decrypt_model_api_key
 from app.core.context import get_debug_option
 from app.services.ai.reasoning import UNSET, resolve_reasoning_settings
+from app.services.ai.temperature import session_temperature_override
 
 logger = logging.getLogger(__name__)
 
@@ -183,6 +184,10 @@ async def get_llm_async(streaming: bool = False, **kwargs) -> Optional[AgentScop
     ignore_session_reasoning_overrides = bool(
         kwargs.pop("ignore_session_reasoning_overrides", False)
     )
+    # 内部链路（意图识别等）用这个开关声明「不要跟随用户的采样温度」。
+    ignore_session_temperature = bool(
+        kwargs.pop("ignore_session_temperature", False)
+    )
     db_model_name = await ConfigServiceProxy.get("llm_model_name")
     model = kwargs.get("model") or db_model_name or settings.LLM_MODEL_NAME or "default-model"
 
@@ -251,8 +256,15 @@ async def get_llm_async(streaming: bool = False, **kwargs) -> Optional[AgentScop
         base_url = await ConfigServiceProxy.get("llm_base_url") or settings.LLM_BASE_URL
 
     db_temp = await ConfigServiceProxy.get("llm_temperature")
+    # 显式入参 > 会话级覆盖 > 系统全局：会话覆盖此前在这条通道上被完全忽略，
+    # 导致同一个输入框温度开关在不同链路行为不一致。
+    requested_temp = kwargs.get("temperature")
+    if requested_temp is None and not ignore_session_temperature:
+        requested_temp = session_temperature_override()
+    if requested_temp is None:
+        requested_temp = db_temp
     temperature = _parse_temperature(
-        kwargs.get("temperature") if kwargs.get("temperature") is not None else db_temp,
+        requested_temp,
         default=_parse_temperature(settings.LLM_TEMPERATURE, default=0.7),
     )
 

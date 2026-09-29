@@ -4,6 +4,7 @@ from datetime import datetime
 from typing import Any, AsyncGenerator, Dict, List, Optional
 
 from app.schemas.agent import AgentExecutionStep, ChatConfig
+from app.services.ai.temperature import resolve_config_temperature
 
 class BaseExecutor(ABC):
     """
@@ -206,7 +207,7 @@ class BaseExecutor(ABC):
                 event_type=event_type,
                 agent_name=self.config.agent_name,
                 model=model,
-                temperature=float(self.config.temperature or 0),
+                temperature=resolve_config_temperature(self.config),
                 tool_name=tool_name,
                 prompt_tokens=prompt_tokens,
                 completion_tokens=completion_tokens,

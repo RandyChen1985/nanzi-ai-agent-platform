@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { computed } from "vue";
 import GroundingHelpPopover from "@/components/GroundingHelpPopover.vue";
 import { useToast } from "@/composables/useToast";
 
@@ -7,6 +8,8 @@ const { showToast } = useToast();
 interface DebugConfig {
   model: string;
   temperature: number;
+  /** 本次调试显式下发的温度；null 表示跟随智能体版本温度。0 是合法覆盖值。 */
+  temperatureOverride?: number | null;
   dryRun: boolean;
   returnRawPrompt: boolean;
   enableMultiAgent: boolean;
@@ -42,6 +45,14 @@ const emit = defineEmits<{
   (e: "load-config"): void;
   (e: "clear-context", key?: string): void;
 }>();
+
+/** 滑块显示的是「本次真正会下发的温度」：显式覆盖优先，否则回退版本温度。 */
+const temperatureValue = computed({
+  get: () => props.config.temperatureOverride ?? props.config.temperature,
+  set: (value: number) => {
+    props.config.temperatureOverride = value;
+  },
+});
 
 const addContextItem = () => {
   props.config.injectedContext.push({ key: "", value: "" });
@@ -205,11 +216,11 @@ const handleGroundingChange = () => {
 
         <div class="space-y-3">
           <label class="block text-sm font-medium text-gray-700"
-            >温度 (Temperature): {{ config.temperature }}</label
+            >温度 (Temperature): {{ temperatureValue }}</label
           >
           <input
             type="range"
-            v-model.number="config.temperature"
+            v-model.number="temperatureValue"
             min="0"
             max="1"
             step="0.1"

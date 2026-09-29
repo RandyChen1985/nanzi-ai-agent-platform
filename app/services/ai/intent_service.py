@@ -1096,6 +1096,8 @@ class IntentService:
                 active_llm = await get_llm_async(
                     streaming=False,
                     ignore_session_reasoning_overrides=ignore_session_reasoning_overrides,
+                    # 意图识别是内部链路：用户调「回答采样温度」不应该改变分类稳定性。
+                    ignore_session_temperature=True,
                 )
                 if not ignore_session_reasoning_overrides:
                     self._llm = active_llm

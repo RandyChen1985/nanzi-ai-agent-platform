@@ -9,6 +9,10 @@ from datetime import datetime
 from typing import Any, AsyncGenerator, Dict, List
 
 from app.schemas.agent import AgentExecutionStep
+from app.services.ai.temperature import (
+    coerce_temperature,
+    resolve_config_temperature,
+)
 from app.services.ai.executors.prompts import DataQueryPrompts
 from app.services.ai.runtime.agentscope.compat import HumanMessage, SystemMessage
 from app.services.ai.runners.chatbi.run_state import DataRunState
@@ -85,8 +89,10 @@ def _append_synthesis_trace(
                     runner.config.synthesis_model_name or runner.config.model_name,
                 )
             ),
-            temperature=float(
-                runner.config.synthesis_temperature or runner.config.temperature or 0
+            temperature=(
+                coerce_temperature(runner.config.synthesis_temperature)
+                if coerce_temperature(runner.config.synthesis_temperature) is not None
+                else resolve_config_temperature(runner.config)
             ),
             tool_output=tool_output,
             raw_log=stream_state.full_content,

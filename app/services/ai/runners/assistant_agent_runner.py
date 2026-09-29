@@ -21,6 +21,11 @@ from app.schemas.agent import ChatConfig, AgentExecutionStep
 from app.core.orm import AsyncSessionLocal
 from app.services.ai.tools.registry import ToolRegistry
 from app.services.ai.config import AgentConfigProvider
+from app.services.ai.temperature import (
+    coerce_temperature,
+    resolve_effective_temperature,
+    session_temperature_override,
+)
 from app.services.ai.agent_manager import AgentManagerService
 from app.services.ai.executors.base import BaseExecutor
 from app.services.ai.grounding.ledger import EvidenceLedger
@@ -1651,6 +1656,7 @@ class AssistantAgentRunner(BaseExecutor):
 
             # Use Synthesizer for simple mode
             llm = await AgentConfigProvider.get_synthesis_llm(streaming=True, config=self.config)
+            self._record_effective_temperature(llm)
 
             full_content = ""
             content_emitted = False
@@ -1703,7 +1709,7 @@ class AssistantAgentRunner(BaseExecutor):
                 event_type="synthesis",
                 agent_name=self.config.agent_name,
                 model=self.config.model_name,
-                temperature=self.config.temperature,
+                temperature=self._effective_temperature_for_trace(),
                 tool_output={"content": full_content},
                 raw_log=full_content,
                 execution_time_ms=(time.time() - start_synthesis) * 1000,
@@ -2049,6 +2055,7 @@ class AssistantAgentRunner(BaseExecutor):
             and all(isinstance(t, RuntimeToolSpec) for t in tools)
         ):
             native_model_handle = await AgentConfigProvider.get_configured_llm(streaming=True, config=self.config)
+            self._record_effective_temperature(native_model_handle)
             native_model = getattr(native_model_handle, "native_model", None)
             if native_model is not None:
                 async for chunk in self._execute_with_agentscope_native_agent(
@@ -2613,7 +2620,9 @@ class AssistantAgentRunner(BaseExecutor):
                 event_type="synthesis",
                 agent_name=self.config.agent_name,
                 model=getattr(native_model, "model", self.config.model_name),
-                temperature=self.config.synthesis_temperature or self.config.temperature,
+                temperature=self._effective_temperature_for_trace(
+                    self.config.synthesis_temperature or self.config.temperature
+                ),
                 tool_output={"content": state["full_content"]},
                 raw_log=state["full_content"],
                 execution_time_ms=(time.time() - state["start_synthesis"]) * 1000,
@@ -2825,6 +2834,7 @@ class AssistantAgentRunner(BaseExecutor):
         emitted_any = False
         try:
             llm = await AgentConfigProvider.get_synthesis_llm(streaming=True, config=self.config)
+            self._record_effective_temperature(llm)
             messages = normalize_messages_for_llm([
                 SystemMessage(content=str(state.get("system_content") or self.config.system_prompt or "")),
                 HumanMessage(
@@ -2913,6 +2923,7 @@ class AssistantAgentRunner(BaseExecutor):
         last_synthesis_chunk = None
         try:
             llm = await AgentConfigProvider.get_synthesis_llm(streaming=True, config=self.config)
+            self._record_effective_temperature(llm)
             messages = normalize_messages_for_llm([
                 SystemMessage(content=str(state.get("system_content") or self.config.system_prompt or "")),
                 HumanMessage(
@@ -2961,7 +2972,9 @@ class AssistantAgentRunner(BaseExecutor):
                     event_type="synthesis",
                     agent_name=self.config.agent_name,
                     model=str(getattr(llm, "model_name", self.config.synthesis_model_name or self.config.model_name) or ""),
-                    temperature=float(self.config.synthesis_temperature or self.config.temperature or 0),
+                    temperature=self._effective_temperature_for_trace(
+                        self.config.synthesis_temperature or self.config.temperature
+                    ),
                     tool_name="synthesis_fallback",
                     tool_output={"content": state.get("full_content") or ""},
                     prompt_tokens=synthesis_tokens["prompt_tokens"],
@@ -2987,6 +3000,7 @@ class AssistantAgentRunner(BaseExecutor):
             streaming=True,
             config=self.config,
         )
+        self._record_effective_temperature(native_model_handle)
         native_model = getattr(native_model_handle, "native_model", None)
         if native_model is None:
             raise RuntimeError("当前模型适配器未提供 AgentScope native_model，无法恢复挂起执行。")
@@ -3490,6 +3504,31 @@ class AssistantAgentRunner(BaseExecutor):
         ):
             yield chunk
 
+    def _record_effective_temperature(self, handle: Any) -> None:
+        """记住主模型本轮真正下发的温度，供工具卡片与审计轨迹复用。
+
+        `get_configured_llm` / `get_synthesis_llm` 已经解析完工具级、会话级与
+        全局优先级，句柄上的 temperature 就是这次请求的真实采样温度；不记下来，
+        卡片就只能回退到版本温度，和实际下发的数字对不上。
+        """
+        recorded = coerce_temperature(getattr(handle, "temperature", None))
+        if recorded is not None:
+            self._session_effective_temperature = recorded
+
+    def _effective_temperature_for_trace(self, fallback: Any = None) -> float:
+        """审计轨迹用的生效温度：真实下发值 > 会话覆盖 > 该阶段的配置温度。"""
+        recorded = coerce_temperature(
+            getattr(self, "_session_effective_temperature", None)
+        )
+        if recorded is not None:
+            return recorded
+        return resolve_effective_temperature(
+            session_temperature=session_temperature_override(),
+            config_temperature=(
+                fallback if fallback is not None else getattr(self.config, "temperature", None)
+            ),
+        )
+
     def _build_tool_observation(
         self,
         *,
@@ -3527,11 +3566,22 @@ class AssistantAgentRunner(BaseExecutor):
 
         runtime_cfg = getattr(target_tool, "_runtime_config", None)
         t_model = getattr(runtime_cfg, "model_name", self.config.model_name)
-        t_temp = getattr(runtime_cfg, "temperature", self.config.temperature)
+        # 卡片与审计轨迹必须报「真实下发」的温度：工具级覆盖 > 会话覆盖 > 版本温度。
+        recorded_session_temp = coerce_temperature(
+            getattr(self, "_session_effective_temperature", None)
+        )
+        t_temp = resolve_effective_temperature(
+            tool_temperature=getattr(runtime_cfg, "temperature", None),
+            session_temperature=(
+                recorded_session_temp
+                if recorded_session_temp is not None
+                else session_temperature_override()
+            ),
+            config_temperature=getattr(self.config, "temperature", None),
+        )
 
         # Ensure types for AgentExecutionStep validation (especially when using Mocks in tests)
         if not isinstance(t_model, str): t_model = str(self.config.model_name)
-        if not isinstance(t_temp, (int, float)): t_temp = float(self.config.temperature or 0)
 
         trace_step = AgentExecutionStep(
             step_number=self._increment_step(), event_type="tool_call", agent_name=self.config.agent_name,
