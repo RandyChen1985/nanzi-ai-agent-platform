@@ -297,3 +297,25 @@ async def test_get_dataset_schema_tool_reports_service_unavailable():
     assert "元数据服务不可用" in result
     assert "No relevant schema info found" not in result
     assert mock_retrieve.call_count == 1
+
+
+def test_is_service_unavailable_recognizes_wrapped_ragflow_error():
+    """RagFlowClient 包装后的网络异常必须被识别为「服务不可用」。
+
+    否则它会被当成「坏数据集 ID」而剔除并重试，既掩盖真实故障又拉长耗时。
+    这里刻意用不含任何可疑关键词的消息，确保走的是强类型判定而非字符串兜底。
+    """
+    from app.core.errors import RagFlowUnavailableError
+
+    err = RagFlowUnavailableError("RAGFlow Delete Documents 网络异常（RemoteProtocolError）：''")
+
+    assert MetadataRagService._is_service_unavailable(err) is True
+
+
+def test_is_service_unavailable_keeps_business_error_retryable():
+    """RAGFlow 明确的业务错误（如数据集不存在）不属于服务不可用，仍需走剔除坏 ID 的逻辑。"""
+    from app.core.errors import RagFlowServiceError
+
+    err = RagFlowServiceError("RAGFlow 侧未找到该知识库，可能已被物理删除。")
+
+    assert MetadataRagService._is_service_unavailable(err) is False

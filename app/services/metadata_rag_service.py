@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update
 
 from app.models.metadata import MetaDataset, MetaTable, MetaMetric
+from app.core.errors import RagFlowUnavailableError
 from app.services.ai.ragflow_client import RagFlowClient
 from app.services.metadata_service import MetadataService
 from app.services.metadata_sync_log_service import metadata_sync_log_service
@@ -48,7 +49,10 @@ class MetadataRagService:
         """
         # 1. 强类型判定（仅对异常实例有效）
         if isinstance(e, Exception):
-            if isinstance(e, (httpx.TimeoutException, httpx.NetworkError)):
+            # RagFlowClient 已把 httpx 的网络异常包装成 RagFlowUnavailableError，
+            # 这里必须一并识别：否则包装后的超时会被后面的字符串匹配漏掉，
+            # 进而被误判成「坏数据集 ID」而被剔除重试。
+            if isinstance(e, (RagFlowUnavailableError, httpx.TimeoutException, httpx.NetworkError)):
                 return True
 
             if isinstance(e, httpx.HTTPStatusError):

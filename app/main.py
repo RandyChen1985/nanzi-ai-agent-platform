@@ -25,7 +25,7 @@ from app.core.middleware import AccessLogMiddleware, SecurityHeadersMiddleware
 from app.core.logging_filters import install_cancellation_log_filters
 from app.services.audit_service import AuditService
 from app.services.auth_service import AuthService
-from app.core.errors import ErrorCode
+from app.core.errors import ErrorCode, RagFlowError
 from app.core.openapi import custom_openapi, tags_metadata # Import OpenAPI Logic
 from asynch.errors import InterfaceError
 from aiomysql import OperationalError
@@ -258,6 +258,36 @@ async def database_connection_exception_handler(request: Request, exc: Exception
             "execution_mode": execution_mode
         },
         headers={"Retry-After": "30"}
+    )
+
+@app.exception_handler(RagFlowError)
+async def ragflow_exception_handler(request: Request, exc: RagFlowError):
+    """
+    Handle RAGFlow failures (upstream knowledge service).
+
+    - timeout / connection failure -> 503 with Retry-After, so the frontend can
+      tell the user "knowledge base temporarily unavailable";
+    - business error returned by RAGFlow -> 502, surfacing the reason.
+
+    Without this handler an httpx timeout reaches the generic 500 handler, whose
+    ``str(exc)`` is empty, leaving the user with an unexplained error.
+    """
+    trace_id = getattr(request.state, "trace_id", str(uuid.uuid4()))
+    execution_mode = await _get_execution_mode()
+    status_code = getattr(exc, "status_code", None) or 502
+    business_code = int(ErrorCode.SERVICE_UNAVAILABLE) if status_code == 503 else status_code
+    return JSONResponse(
+        status_code=status_code,
+        content={
+            "code": business_code,
+            "message": str(exc) or "RAGFlow 调用失败",
+            "detail": None,
+            "data": None,
+            "timestamp": datetime.datetime.now().isoformat(),
+            "trace_id": trace_id,
+            "execution_mode": execution_mode
+        },
+        headers={"Retry-After": "15"} if status_code == 503 else None
     )
 
 @app.exception_handler(RequestValidationError)

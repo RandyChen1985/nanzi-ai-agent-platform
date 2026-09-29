@@ -1,5 +1,44 @@
 from enum import IntEnum
 
+class RagFlowError(Exception):
+    """RAGFlow 调用失败基类。
+
+    ``status_code`` 供接口层 / 全局异常处理器映射 HTTP 状态码；
+    ``retryable`` 表示这次失败是否值得原样重试。
+    """
+
+    status_code: int = 502
+    retryable: bool = False
+
+
+class RagFlowServiceError(RagFlowError):
+    """RAGFlow 明确返回了业务错误（HTTP 非 200 或 ``code != 0``）。
+
+    这类错误说明 RAGFlow 已经处理完请求并给出了原因（权限、数据集不存在、
+    embedding 模型连不上等），重试通常没有意义。
+    """
+
+    status_code: int = 502
+    retryable: bool = False
+
+
+class RagFlowUnavailableError(RagFlowError):
+    """无法确认 RAGFlow 是否处理了请求：超时、连接中断、服务不可用。
+
+    ``httpx`` 的超时异常 ``str()`` 为空字符串，直接记录会得到没有任何信息的
+    日志，因此统一包装成本异常并带上排查线索。
+    """
+
+    status_code: int = 503
+    retryable: bool = False
+
+
+class RagFlowTransientError(RagFlowUnavailableError):
+    """连接阶段失败或 RAGFlow 返回 5xx，值得重试。"""
+
+    retryable: bool = True
+
+
 class ErrorCode(IntEnum):
     """
     标准化业务错误码。
