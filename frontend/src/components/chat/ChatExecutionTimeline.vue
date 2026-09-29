@@ -9,11 +9,12 @@
       :title="headerTitle"
       :step-count="countTimelineSteps(items)"
       :skill-summary="headerSkillSummary"
+      :action-summary="actionSummary"
       :current-step="currentStep"
       :duration="duration"
       :bordered="bordered"
       :dark-mode="darkMode"
-      :show-copy="Boolean(fullTimelineText)"
+      :show-copy="false"
       :is-copied="copiedKey === 'full-timeline'"
       @copy="handleCopyAll"
     />
@@ -30,6 +31,23 @@
         v-show="expanded"
         class="mt-0.5 space-y-0.5 px-1 py-0.5"
       >
+        <!-- 一键全部展开 / 全部收起操作条 -->
+        <div
+          v-if="hasExpandableItems"
+          class="flex items-center justify-between px-1 py-0.5 mb-0.5 text-[10px] text-gray-400 dark:text-gray-500 select-none"
+        >
+          <span>执行明细链路</span>
+          <button
+            type="button"
+            class="inline-flex items-center gap-1 font-medium text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200 transition-colors"
+            @click="toggleAllDetails"
+          >
+            <svg class="h-3 w-3 transition-transform" :class="{ 'rotate-180': isAllDetailsExpanded }" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m19 9-7 7-7-7" />
+            </svg>
+            <span>{{ isAllDetailsExpanded ? '全部收起明细' : '全部展开明细' }}</span>
+          </button>
+        </div>
         <div
           v-if="skillBadges.length"
           class="flex flex-wrap items-center gap-1 rounded-md border border-purple-100/70 bg-purple-50/70 px-1.5 py-1 text-[11px] font-semibold text-purple-700 dark:border-purple-900/30 dark:bg-purple-950/20 dark:text-purple-300"
@@ -701,6 +719,69 @@ const skillNoticeLabel = computed(() => skillFlowNoticeLabel(props.skillBadges))
 const headerSkillSummary = computed(() =>
   props.skillSummary || summarizeSkillFlowBadges(props.skillBadges)
 );
+
+/** 关键动作摘要：提炼出工具调用与深度思考动作，供 Header 直观展示 */
+const actionSummary = computed(() => {
+  if (props.isThinking && !props.hasAnswer) return "";
+  const toolCounts: Record<string, number> = {};
+  let hasReasoning = false;
+
+  function collectSummary(it: any) {
+    if (it.kind === "text" && it.textKind === "reasoning") {
+      hasReasoning = true;
+    }
+    if (it.kind === "log") {
+      if (it.tool_name) {
+        const name = String(it.tool_name).trim();
+        toolCounts[name] = (toolCounts[name] || 0) + 1;
+      } else if (it.title?.includes("Bash")) {
+        toolCounts["Bash"] = (toolCounts["Bash"] || 0) + 1;
+      }
+    }
+    if (it.children?.length) {
+      it.children.forEach(collectSummary);
+    }
+  }
+  items.value.forEach(collectSummary);
+
+  const parts: string[] = [];
+  if (hasReasoning) parts.push("深度思考");
+  const toolEntries = Object.entries(toolCounts);
+  if (toolEntries.length > 0) {
+    const toolDesc = toolEntries.map(([name, count]) => `${count} 项 ${name}`).join("、");
+    parts.push(toolDesc);
+  }
+  return parts.join(" · ");
+});
+
+/** 一键全部展开 / 全部收起明细 */
+const isAllDetailsExpanded = ref(false);
+
+const hasExpandableItems = computed(() => {
+  return items.value.some((it: any) => {
+    if (it.kind === "text") return it.textKind === "reasoning" || it.children?.length;
+    if (it.kind === "log") return hasVisibleTimelineText(it.details) || hasTimelineArgs(it) || it.children?.length;
+    return false;
+  });
+});
+
+function toggleAllDetails() {
+  isAllDetailsExpanded.value = !isAllDetailsExpanded.value;
+  const target = isAllDetailsExpanded.value;
+  function setExpand(it: any) {
+    if (it.kind === "text") {
+      if (it.textKind === "reasoning") it.contentExpanded = target;
+      if (it.children?.length) it.childrenExpanded = target;
+    } else if (it.kind === "log") {
+      it.isExpanded = target;
+      if (it.children?.length) it.childrenExpanded = target;
+    }
+    if (it.children?.length) {
+      it.children.forEach(setExpand);
+    }
+  }
+  items.value.forEach(setExpand);
+}
 
 function visibleTimelineText(text?: string | null): string {
   return stripInternalContextBlocks(text ?? "");

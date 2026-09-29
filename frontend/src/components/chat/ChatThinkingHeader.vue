@@ -47,6 +47,21 @@
         </span>
       </span>
       <span
+        v-if="duration"
+        class="flex-shrink-0 rounded-full bg-gray-100 px-1.5 py-0.5 font-mono text-[10px] text-gray-500"
+        :class="{ 'dark:bg-gray-700': darkMode }"
+        :title="'总耗时 ' + duration + 's'"
+      >
+        耗时 {{ duration }}s
+      </span>
+      <span
+        v-if="actionSummary"
+        class="hidden sm:inline-flex items-center text-[10px] text-gray-500 dark:text-gray-400 font-normal truncate max-w-[18rem]"
+        :title="actionSummary"
+      >
+        · {{ actionSummary }}
+      </span>
+      <span
         v-if="skillSummary"
         class="hidden max-w-[9rem] shrink-0 truncate rounded-full border border-purple-100 bg-purple-50 px-1.5 py-0.5 text-[10px] font-semibold text-purple-600 sm:inline-flex sm:items-center sm:gap-0.5"
         :class="{ 'dark:border-purple-900/30 dark:bg-purple-950/40 dark:text-purple-400': darkMode }"
@@ -67,7 +82,6 @@
       class="flex shrink-0 items-center gap-1.5 text-gray-400"
       :class="expanded ? 'ml-auto sm:gap-2' : 'gap-1.5'"
     >
-      <span v-if="duration" class="font-mono text-[10px]">{{ `${duration}s` }}</span>
       <svg
         class="h-4 w-4 shrink-0 transform transition-transform duration-200"
         :class="{ 'rotate-180': expanded }"
@@ -90,6 +104,7 @@ const props = withDefaults(defineProps<{
   stepCount?: number;
   hiddenStepCount?: number;
   skillSummary?: string;
+  actionSummary?: string;
   currentStep?: string;
   duration?: string;
   bordered?: boolean;
@@ -101,6 +116,7 @@ const props = withDefaults(defineProps<{
   stepCount: 0,
   hiddenStepCount: 0,
   skillSummary: "",
+  actionSummary: "",
   currentStep: "",
   duration: "",
   bordered: false,
