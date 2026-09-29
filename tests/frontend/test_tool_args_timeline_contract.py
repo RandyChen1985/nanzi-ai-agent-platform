@@ -89,3 +89,13 @@ def test_secondary_tool_emitters_forward_tool_args_too():
         source = _read(path)
         assert "format_tool_args_for_display" in source, path
         assert "tool_args" in source, path
+
+
+def test_child_tool_with_children_substeps_renders_own_args_and_details():
+    """当工具节点（如 Bash）下方挂载子步骤（如沙箱工作区准备）时，其自身的入参和输出不得被互斥条件吞掉。"""
+    timeline = _read("frontend/src/components/chat/ChatExecutionTimeline.vue")
+    assert "child.isExpanded && !child.children?.length" not in timeline, "不得使用 !child.children?.length 拦截子卡片自身的入参与详情渲染"
+    assert "item.isExpanded && !item.children?.length" not in timeline, "不得使用 !item.children?.length 拦截顶级项自身的入参与详情渲染"
+    assert "isChildDetailsOpen" in timeline
+    assert "toggleChildItem" in timeline
+

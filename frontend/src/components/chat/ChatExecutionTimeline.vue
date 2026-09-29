@@ -9,11 +9,12 @@
       :title="headerTitle"
       :step-count="countTimelineSteps(items)"
       :skill-summary="headerSkillSummary"
+      :action-summary="actionSummary"
       :current-step="currentStep"
       :duration="duration"
       :bordered="bordered"
       :dark-mode="darkMode"
-      :show-copy="Boolean(fullTimelineText)"
+      :show-copy="false"
       :is-copied="copiedKey === 'full-timeline'"
       @copy="handleCopyAll"
     />
@@ -30,6 +31,23 @@
         v-show="expanded"
         class="mt-0.5 space-y-0.5 px-1 py-0.5"
       >
+        <!-- 一键全部展开 / 全部收起操作条 -->
+        <div
+          v-if="hasExpandableItems"
+          class="flex items-center justify-between px-1 py-0.5 mb-0.5 text-[10px] text-gray-400 dark:text-gray-500 select-none"
+        >
+          <span>执行明细链路</span>
+          <button
+            type="button"
+            class="inline-flex items-center gap-1 font-medium text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200 transition-colors"
+            @click="toggleAllDetails"
+          >
+            <svg class="h-3 w-3 transition-transform" :class="{ 'rotate-180': isAllDetailsExpanded }" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m19 9-7 7-7-7" />
+            </svg>
+            <span>{{ isAllDetailsExpanded ? '全部收起明细' : '全部展开明细' }}</span>
+          </button>
+        </div>
         <div
           v-if="skillBadges.length"
           class="flex flex-wrap items-center gap-1 rounded-md border border-purple-100/70 bg-purple-50/70 px-1.5 py-1 text-[11px] font-semibold text-purple-700 dark:border-purple-900/30 dark:bg-purple-950/20 dark:text-purple-300"
@@ -129,8 +147,8 @@
                   <button
                     type="button"
                     class="flex w-full items-center gap-2 text-left"
-                    :aria-expanded="child.children?.length ? child.childrenExpanded !== false : child.isExpanded === true"
-                    @click="child.children?.length ? (child.childrenExpanded = child.childrenExpanded === false) : (hasVisibleTimelineText(child.details) || hasTimelineArgs(child) ? child.isExpanded = !child.isExpanded : undefined)"
+                    :aria-expanded="isChildDetailsOpen(child)"
+                    @click="toggleChildItem(child)"
                   >
                     <span v-if="child.status === 'pending'" class="thought-status-dot shrink-0" aria-label="进行中" title="进行中" />
                     <WrenchScrewdriverIcon
@@ -168,7 +186,7 @@
                     </span>
                     <span v-if="child.status === 'error' && !child.subagent" class="shrink-0 text-[10px]">失败</span>
                     <span v-if="formatTimelineDuration(child)" class="shrink-0 font-mono text-[10px] text-gray-400" :title="timelineDurationTitle(child)">{{ formatTimelineDuration(child) }}</span>
-                    <svg v-if="hasVisibleTimelineText(child.details) || hasTimelineArgs(child) || child.children?.length" class="h-3 w-3 shrink-0 text-gray-400 transition-transform" :class="{ 'rotate-180': child.children?.length ? (child.childrenExpanded !== false) : child.isExpanded }" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <svg v-if="hasVisibleTimelineText(child.details) || hasTimelineArgs(child) || child.children?.length" class="h-3 w-3 shrink-0 text-gray-400 transition-transform" :class="{ 'rotate-180': isChildDetailsOpen(child) }" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m19 9-7 7-7-7" />
                     </svg>
                   </button>
@@ -178,40 +196,8 @@
                   <div v-if="fileMetadataSummary(child.file_metadata)" class="ml-5 truncate text-[10px] text-gray-400 dark:text-gray-500">
                     {{ fileMetadataSummary(child.file_metadata) }}
                   </div>
-                  <!-- 入参区块与输出区块必须各自独立定位：两者同容器时，输出的绝对定位
-                       复制按钮（z-10）会盖住入参区块自己的复制按钮。 -->
-                  <div v-if="(hasVisibleTimelineText(child.details) || hasTimelineArgs(child)) && child.isExpanded && !child.children?.length" class="mt-1">
-                    <TimelineToolArgsBlock
-                      v-if="timelineArgsText(child)"
-                      :text="timelineArgsText(child)"
-                      :tool-name="child.tool_name || child.title"
-                      :copy-key="`child-args-${child.id}`"
-                      :copied-key="copiedKey"
-                      @copy="handleCopy"
-                    />
-                    <div v-if="timelineMetaText(child)" class="mt-1 break-words text-[10px] text-gray-400 dark:text-gray-500">
-                      {{ timelineMetaText(child) }}
-                    </div>
-                    <div v-if="hasVisibleTimelineText(child.details)" class="group/details relative border-t border-gray-200/70 pt-1 dark:border-gray-700/70">
-                      <button
-                        type="button"
-                        class="absolute right-1 top-1.5 z-10 flex h-5 w-5 items-center justify-center rounded text-gray-400 opacity-60 transition-all hover:bg-gray-200/70 hover:text-gray-700 hover:opacity-100 dark:hover:bg-gray-700/70 dark:hover:text-gray-200 group-hover/details:opacity-100"
-                        :class="{ 'text-emerald-500 hover:text-emerald-600 dark:text-emerald-400': copiedKey === `child-${child.id}` }"
-                        :title="copiedKey === `child-${child.id}` ? '已复制' : '复制内容'"
-                        @click.stop="handleCopy(`child-${child.id}`, visibleTimelineText(child.details))"
-                      >
-                        <svg v-if="copiedKey === `child-${child.id}`" class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="m5 13 4 4L19 7" />
-                        </svg>
-                        <svg v-else class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v2m-6 12h8a2 2 0 0 0 2-2v-8a2 2 0 0 0-2-2h-8a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2z" />
-                        </svg>
-                      </button>
-                      <pre class="whitespace-pre-wrap break-words pr-6 font-mono text-[10px] leading-relaxed text-gray-500 dark:text-gray-400">{{ visibleTimelineText(child.details) }}</pre>
-                    </div>
-                  </div>
 
-                  <!-- 嵌套展示子代理内部步骤 -->
+                  <!-- 嵌套展示子代理/沙箱准备等内部前置步骤 -->
                   <div v-if="child.children?.length && child.childrenExpanded !== false" class="ml-4 mt-0.5 space-y-0 border-l border-indigo-200/70 pl-2 dark:border-indigo-800/50">
                     <div
                       v-for="subStep in child.children"
@@ -291,6 +277,38 @@
                       </div>
                     </div>
                   </div>
+
+                  <!-- 节点自身的入参区块与输出区块（哪怕挂有子步骤如沙箱准备，自身执行日志与命令也不被吞） -->
+                  <div v-if="(hasVisibleTimelineText(child.details) || hasTimelineArgs(child)) && isChildDetailsOpen(child)" class="mt-1">
+                    <TimelineToolArgsBlock
+                      v-if="timelineArgsText(child)"
+                      :text="timelineArgsText(child)"
+                      :tool-name="child.tool_name || child.title"
+                      :copy-key="`child-args-${child.id}`"
+                      :copied-key="copiedKey"
+                      @copy="handleCopy"
+                    />
+                    <div v-if="timelineMetaText(child)" class="mt-1 break-words text-[10px] text-gray-400 dark:text-gray-500">
+                      {{ timelineMetaText(child) }}
+                    </div>
+                    <div v-if="hasVisibleTimelineText(child.details)" class="group/details relative border-t border-gray-200/70 pt-1 dark:border-gray-700/70">
+                      <button
+                        type="button"
+                        class="absolute right-1 top-1.5 z-10 flex h-5 w-5 items-center justify-center rounded text-gray-400 opacity-60 transition-all hover:bg-gray-200/70 hover:text-gray-700 hover:opacity-100 dark:hover:bg-gray-700/70 dark:hover:text-gray-200 group-hover/details:opacity-100"
+                        :class="{ 'text-emerald-500 hover:text-emerald-600 dark:text-emerald-400': copiedKey === `child-${child.id}` }"
+                        :title="copiedKey === `child-${child.id}` ? '已复制' : '复制内容'"
+                        @click.stop="handleCopy(`child-${child.id}`, visibleTimelineText(child.details))"
+                      >
+                        <svg v-if="copiedKey === `child-${child.id}`" class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="m5 13 4 4L19 7" />
+                        </svg>
+                        <svg v-else class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v2m-6 12h8a2 2 0 0 0 2-2v-8a2 2 0 0 0-2-2h-8a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2z" />
+                        </svg>
+                      </button>
+                      <pre class="whitespace-pre-wrap break-words pr-6 font-mono text-[10px] leading-relaxed text-gray-500 dark:text-gray-400">{{ visibleTimelineText(child.details) }}</pre>
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>
@@ -308,8 +326,8 @@
             <button
               type="button"
               class="flex w-full items-center gap-2 text-left"
-              :aria-expanded="item.children?.length ? isTimelineItemExpanded(item) : item.isExpanded === true"
-              @click="item.children?.length ? toggleTimelineItem(item) : (hasVisibleTimelineText(item.details) || hasTimelineArgs(item) ? item.isExpanded = !item.isExpanded : undefined)"
+              :aria-expanded="isTimelineItemExpanded(item)"
+              @click="toggleTimelineItem(item)"
             >
               <span v-if="item.status === 'pending'" class="thought-status-dot shrink-0" aria-label="进行中" title="进行中" />
               <WrenchScrewdriverIcon
@@ -365,7 +383,7 @@
               <svg
                 v-if="hasVisibleTimelineText(item.details) || hasTimelineArgs(item) || item.children?.length"
                 class="h-3 w-3 shrink-0 text-gray-400 transition-transform"
-                :class="{ 'rotate-180': item.children?.length ? isTimelineItemExpanded(item) : item.isExpanded }"
+                :class="{ 'rotate-180': isTimelineItemExpanded(item) }"
                 fill="none"
                 stroke="currentColor"
                 viewBox="0 0 24 24"
@@ -379,38 +397,8 @@
             <div v-if="fileMetadataSummary(item.file_metadata)" class="ml-5 truncate text-[10px] text-gray-400 dark:text-gray-500">
               {{ fileMetadataSummary(item.file_metadata) }}
             </div>
-            <div v-if="(hasVisibleTimelineText(item.details) || hasTimelineArgs(item)) && item.isExpanded && !item.children?.length" class="mt-1">
-              <TimelineToolArgsBlock
-                v-if="timelineArgsText(item)"
-                :text="timelineArgsText(item)"
-                :tool-name="item.tool_name || item.title"
-                :copy-key="`item-args-${item.id}`"
-                :copied-key="copiedKey"
-                @copy="handleCopy"
-              />
-              <div v-if="timelineMetaText(item)" class="mt-1 break-words text-[10px] text-gray-400 dark:text-gray-500">
-                {{ timelineMetaText(item) }}
-              </div>
-              <div v-if="hasVisibleTimelineText(item.details)" class="group/details relative border-t border-gray-200/70 pt-1 dark:border-gray-700/70">
-                <button
-                  type="button"
-                  class="absolute right-1 top-1.5 z-10 flex h-5 w-5 items-center justify-center rounded text-gray-400 opacity-60 transition-all hover:bg-gray-200/70 hover:text-gray-700 hover:opacity-100 dark:hover:bg-gray-700/70 dark:hover:text-gray-200 group-hover/details:opacity-100"
-                  :class="{ 'text-emerald-500 hover:text-emerald-600 dark:text-emerald-400': copiedKey === `item-${item.id}` }"
-                  :title="copiedKey === `item-${item.id}` ? '已复制' : '复制内容'"
-                  @click.stop="handleCopy(`item-${item.id}`, visibleTimelineText(item.details))"
-                >
-                  <svg v-if="copiedKey === `item-${item.id}`" class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="m5 13 4 4L19 7" />
-                  </svg>
-                  <svg v-else class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v2m-6 12h8a2 2 0 0 0 2-2v-8a2 2 0 0 0-2-2h-8a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2z" />
-                  </svg>
-                </button>
-                <pre class="whitespace-pre-wrap break-words pr-6 font-mono text-[10px] leading-relaxed text-gray-500 dark:text-gray-400">{{ visibleTimelineText(item.details) }}</pre>
-              </div>
-            </div>
 
-            <!-- 嵌套展示根级别子代理内部步骤 -->
+            <!-- 嵌套展示根级别子代理内部步骤 / 子步骤 -->
             <div v-if="item.children?.length && item.childrenExpanded !== false" class="ml-4 mt-0.5 space-y-0 border-l border-indigo-200/70 pl-2 dark:border-indigo-800/50">
               <div
                 v-for="subStep in item.children"
@@ -547,6 +535,38 @@
                     <pre v-if="hasVisibleTimelineText(nestedStep.details) && nestedStep.isExpanded" class="mt-1 whitespace-pre-wrap break-words border-t border-gray-200/70 pt-1 pr-6 font-mono text-[10px] leading-relaxed text-gray-500 dark:border-gray-700/70 dark:text-gray-400">{{ visibleTimelineText(nestedStep.details) }}</pre>
                   </div>
                 </div>
+              </div>
+            </div>
+
+            <!-- 顶级项自身入参及详情（哪怕挂有子步骤，自身详情也不被吞） -->
+            <div v-if="(hasVisibleTimelineText(item.details) || hasTimelineArgs(item)) && isTimelineItemDetailsOpen(item)" class="mt-1">
+              <TimelineToolArgsBlock
+                v-if="timelineArgsText(item)"
+                :text="timelineArgsText(item)"
+                :tool-name="item.tool_name || item.title"
+                :copy-key="`item-args-${item.id}`"
+                :copied-key="copiedKey"
+                @copy="handleCopy"
+              />
+              <div v-if="timelineMetaText(item)" class="mt-1 break-words text-[10px] text-gray-400 dark:text-gray-500">
+                {{ timelineMetaText(item) }}
+              </div>
+              <div v-if="hasVisibleTimelineText(item.details)" class="group/details relative border-t border-gray-200/70 pt-1 dark:border-gray-700/70">
+                <button
+                  type="button"
+                  class="absolute right-1 top-1.5 z-10 flex h-5 w-5 items-center justify-center rounded text-gray-400 opacity-60 transition-all hover:bg-gray-200/70 hover:text-gray-700 hover:opacity-100 dark:hover:bg-gray-700/70 dark:hover:text-gray-200 group-hover/details:opacity-100"
+                  :class="{ 'text-emerald-500 hover:text-emerald-600 dark:text-emerald-400': copiedKey === `item-${item.id}` }"
+                  :title="copiedKey === `item-${item.id}` ? '已复制' : '复制内容'"
+                  @click.stop="handleCopy(`item-${item.id}`, visibleTimelineText(item.details))"
+                >
+                  <svg v-if="copiedKey === `item-${item.id}`" class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="m5 13 4 4L19 7" />
+                  </svg>
+                  <svg v-else class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v2m-6 12h8a2 2 0 0 0 2-2v-8a2 2 0 0 0-2-2h-8a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2z" />
+                  </svg>
+                </button>
+                <pre class="whitespace-pre-wrap break-words pr-6 font-mono text-[10px] leading-relaxed text-gray-500 dark:text-gray-400">{{ visibleTimelineText(item.details) }}</pre>
               </div>
             </div>
           </div>
@@ -701,6 +721,69 @@ const skillNoticeLabel = computed(() => skillFlowNoticeLabel(props.skillBadges))
 const headerSkillSummary = computed(() =>
   props.skillSummary || summarizeSkillFlowBadges(props.skillBadges)
 );
+
+/** 关键动作摘要：提炼出工具调用与深度思考动作，供 Header 直观展示 */
+const actionSummary = computed(() => {
+  if (props.isThinking && !props.hasAnswer) return "";
+  const toolCounts: Record<string, number> = {};
+  let hasReasoning = false;
+
+  function collectSummary(it: any) {
+    if (it.kind === "text" && it.textKind === "reasoning") {
+      hasReasoning = true;
+    }
+    if (it.kind === "log") {
+      if (it.tool_name) {
+        const name = String(it.tool_name).trim();
+        toolCounts[name] = (toolCounts[name] || 0) + 1;
+      } else if (it.title?.includes("Bash")) {
+        toolCounts["Bash"] = (toolCounts["Bash"] || 0) + 1;
+      }
+    }
+    if (it.children?.length) {
+      it.children.forEach(collectSummary);
+    }
+  }
+  items.value.forEach(collectSummary);
+
+  const parts: string[] = [];
+  if (hasReasoning) parts.push("深度思考");
+  const toolEntries = Object.entries(toolCounts);
+  if (toolEntries.length > 0) {
+    const toolDesc = toolEntries.map(([name, count]) => `${count} 项 ${name}`).join("、");
+    parts.push(toolDesc);
+  }
+  return parts.join(" · ");
+});
+
+/** 一键全部展开 / 全部收起明细 */
+const isAllDetailsExpanded = ref(false);
+
+const hasExpandableItems = computed(() => {
+  return items.value.some((it: any) => {
+    if (it.kind === "text") return it.textKind === "reasoning" || it.children?.length;
+    if (it.kind === "log") return hasVisibleTimelineText(it.details) || hasTimelineArgs(it) || it.children?.length;
+    return false;
+  });
+});
+
+function toggleAllDetails() {
+  isAllDetailsExpanded.value = !isAllDetailsExpanded.value;
+  const target = isAllDetailsExpanded.value;
+  function setExpand(it: any) {
+    if (it.kind === "text") {
+      if (it.textKind === "reasoning") it.contentExpanded = target;
+      if (it.children?.length) it.childrenExpanded = target;
+    } else if (it.kind === "log") {
+      it.isExpanded = target;
+      if (it.children?.length) it.childrenExpanded = target;
+    }
+    if (it.children?.length) {
+      it.children.forEach(setExpand);
+    }
+  }
+  items.value.forEach(setExpand);
+}
 
 function visibleTimelineText(text?: string | null): string {
   return stripInternalContextBlocks(text ?? "");
@@ -927,16 +1010,58 @@ function isTimelineItemExpanded(item: ProcessTimelineLogItem): boolean {
   return item.children?.length ? item.childrenExpanded !== false : item.isExpanded === true;
 }
 
+function isTimelineItemDetailsOpen(item: ProcessTimelineLogItem): boolean {
+  if (item.children?.length) {
+    return item.isExpanded === true || item.childrenExpanded !== false;
+  }
+  return item.isExpanded === true;
+}
+
 function toggleTimelineItem(item: ProcessTimelineLogItem): void {
   if (isRouteGroup(item)) {
     routeGroupExpanded.value = !routeGroupExpanded.value;
     return;
   }
-  if (item.children?.length) {
-    item.childrenExpanded = item.childrenExpanded === false;
-    return;
+  const hasKids = Boolean(item.children?.length);
+  const hasSelf = Boolean(hasVisibleTimelineText(item.details) || hasTimelineArgs(item));
+  if (!hasKids && !hasSelf) return;
+
+  const currentOpen = hasKids
+    ? item.childrenExpanded !== false
+    : item.isExpanded === true;
+  const nextOpen = !currentOpen;
+
+  if (hasKids) {
+    item.childrenExpanded = nextOpen;
   }
-  if (item.details || item.tool_args) item.isExpanded = !item.isExpanded;
+  if (hasSelf) {
+    item.isExpanded = nextOpen;
+  }
+}
+
+function isChildDetailsOpen(child: ProcessTimelineLogItem): boolean {
+  if (child.children?.length) {
+    return child.isExpanded === true || child.childrenExpanded !== false;
+  }
+  return child.isExpanded === true;
+}
+
+function toggleChildItem(child: ProcessTimelineLogItem): void {
+  const hasKids = Boolean(child.children?.length);
+  const hasSelf = Boolean(hasVisibleTimelineText(child.details) || hasTimelineArgs(child));
+  if (!hasKids && !hasSelf) return;
+
+  const currentOpen = hasKids
+    ? child.childrenExpanded !== false
+    : child.isExpanded === true;
+  const nextOpen = !currentOpen;
+
+  if (hasKids) {
+    child.childrenExpanded = nextOpen;
+  }
+  if (hasSelf) {
+    child.isExpanded = nextOpen;
+  }
 }
 
 function iconFor(item: ProcessTimelineLogItem): string {

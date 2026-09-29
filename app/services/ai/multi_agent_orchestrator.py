@@ -19,6 +19,10 @@ from app.services.ai.dispatcher import AgentDispatcher
 from app.services.ai.agent_prompts import AgentServicePrompts
 from app.services.ai.error_response_service import sanitize_error_text
 from app.services.ai.executors.common import extract_tokens_from_message
+from app.services.ai.temperature import (
+    coerce_temperature,
+    resolve_config_temperature,
+)
 from app.services.ai.runtime.agentscope.text_sanitize import sanitize_assistant_stream_text
 from app.services.ai.runtime.agentscope.compat import HumanMessage, SystemMessage
 from app.core.orm import AsyncSessionLocal
@@ -327,14 +331,17 @@ async def _synthesize_multi_agent_results_impl(
     tokens = extract_tokens_from_message(accumulated_msg)
     step_number = max((s.step_number for s in trace_buffer), default=0) + 1
     s_model = getattr(llm, "model_name", config.synthesis_model_name or config.model_name)
-    s_temp = config.synthesis_temperature or config.temperature
+    # 合成模型配了自己的温度就用它，否则跟随本次会话的生效温度。
+    s_temp = coerce_temperature(config.synthesis_temperature)
+    if s_temp is None:
+        s_temp = resolve_config_temperature(config)
     trace_buffer.append(
         AgentExecutionStep(
             step_number=step_number,
             event_type="synthesis",
             agent_name=config.agent_name,
             model=str(s_model),
-            temperature=float(s_temp or 0),
+            temperature=s_temp,
             tool_output={"content": full_content, "multi_agent_synthesis": True},
             raw_log=full_content,
             execution_time_ms=(time.time() - start_synthesis) * 1000,

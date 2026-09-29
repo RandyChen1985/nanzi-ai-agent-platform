@@ -896,6 +896,7 @@ class KnowledgeAgentRunner(AssistantAgentRunner):
             streaming=True,
             config=self.config,
         )
+        self._record_effective_temperature(native_model_handle)
         native_model = getattr(native_model_handle, "native_model", None)
         if native_model is None:
             yield {

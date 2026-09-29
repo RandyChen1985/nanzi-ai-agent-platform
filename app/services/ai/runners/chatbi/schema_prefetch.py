@@ -12,6 +12,7 @@ from typing import Any, AsyncGenerator, Dict, List, Optional
 
 from app.schemas.agent import AgentExecutionStep
 from app.services.ai.config import AgentConfigProvider
+from app.services.ai.temperature import resolve_config_temperature
 from app.services.ai.data_query_semantic_intent import (
     build_semantic_intent_prompt,
     derive_keywords_from_semantic_intent,
@@ -308,7 +309,7 @@ async def auto_invoke_get_dataset_schema(
             event_type="tool_call",
             agent_name=runner.config.agent_name,
             model=runner.config.model_name,
-            temperature=float(runner.config.temperature or 0),
+            temperature=resolve_config_temperature(runner.config),
             tool_name="get_dataset_schema",
             tool_input=invoke_kwargs,
             tool_output=output,

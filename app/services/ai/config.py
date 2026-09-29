@@ -9,6 +9,7 @@ from app.utils.model_credentials import decrypt_model_api_key
 from app.schemas.ai_model import normalize_legacy_supported_reasoning_efforts
 from app.services.ai.model_registry import ModelRegistryError, lookup_registered_model
 from app.services.ai.reasoning import UNSET, resolve_reasoning_settings
+from app.services.ai.temperature import resolve_effective_temperature
 from app.services.ai.runtime.agentscope.request_timeout import (
     LLM_REQUEST_READ_TIMEOUT_KEY,
     parse_llm_request_read_timeout,
@@ -222,19 +223,14 @@ class AgentConfigProvider:
         # 1. Model Name Priority (centralized in resolve_runtime_model_info)
         model = runtime_model_info.effective_model_id
 
-        # 2. Temperature Priority
-        debug_temp = get_debug_option("temperature")
-        
-        if temp_override is not None:
-            temperature = float(temp_override)
-        elif debug_temp is not None:
-             temperature = float(debug_temp)
-        elif config and config.temperature is not None:
-             temperature = float(config.temperature)
-        else:
-             temp_str = get_val("llm_temperature", None)
-             temperature = float(temp_str) if temp_str is not None else 0.0
-             
+        # 2. Temperature Priority：与工具卡片/审计轨迹共用同一套解析口径。
+        temperature = resolve_effective_temperature(
+            tool_temperature=temp_override,
+            session_temperature=get_debug_option("temperature"),
+            config_temperature=getattr(config, "temperature", None) if config else None,
+            global_temperature=get_val("llm_temperature", None),
+        )
+
         api_key = get_val("llm_api_key", None)
         base_url = get_val("llm_base_url", None)
 

@@ -595,61 +595,70 @@ const filteredMenuGroups = computed(() => {
     <!-- Sidebar -->
     <aside
       aria-label="主导航"
-      class="bg-sidebar text-white shadow-xl flex flex-col z-50 transition-all duration-300 ease-in-out flex-shrink-0"
+      class="bg-sidebar text-white flex flex-col z-50 transition-all duration-300 ease-in-out flex-shrink-0 border-r"
       :class="[
-        theme === 'light' ? '!bg-white !text-gray-700 border-r border-gray-200' : '',
+        theme === 'light' 
+          ? '!bg-white !text-gray-700 !border-gray-200/80' 
+          : 'border-white/[0.06]',
         isMobile ? 'fixed inset-y-0 left-0 h-full' : 'relative',
         isMobile 
-            ? (showMobileSidebar ? 'translate-x-0 w-[220px]' : '-translate-x-full w-[220px]') 
-            : (isCollapsed ? 'w-20' : 'w-[220px]')
+            ? (showMobileSidebar ? 'translate-x-0 w-[226px]' : '-translate-x-full w-[226px]') 
+            : (isCollapsed ? 'w-20' : 'w-[226px]')
       ]"
     >
       <!-- Brand Header -->
       <div
-        class="h-16 flex items-center bg-sidebar border-b border-gray-700 overflow-hidden whitespace-nowrap"
+        class="h-16 flex items-center border-b transition-colors overflow-hidden whitespace-nowrap"
         :class="[
           isCollapsed ? 'justify-center px-0' : 'px-4',
-          theme === 'light' ? '!bg-white !border-gray-200' : '',
+          theme === 'light' ? 'bg-white border-gray-200/80' : 'bg-sidebar border-white/[0.06]',
         ]"
       >
         <img
           :src="branding.icon_url"
-          class="w-8 h-8 flex-shrink-0 rounded-lg object-cover"
+          class="w-8 h-8 flex-shrink-0 rounded-lg object-cover ring-1 ring-white/10 dark:ring-white/10 shadow-sm"
           alt="Logo"
         />
         <transition name="fade">
-          <div v-if="!isCollapsed" class="ml-2.5 flex flex-col justify-center">
+          <div v-if="!isCollapsed" class="ml-2.5 flex flex-col justify-center min-w-0">
             <span
-              class="text-[13px] font-semibold leading-tight"
+              class="text-[13px] font-semibold leading-tight truncate"
               :class="theme === 'light' ? 'text-gray-900' : 'text-white'"
             >{{ branding.product_name }}</span>
-            <component
-              :is="repoUrl ? 'a' : 'span'"
-              :href="repoUrl || undefined"
-              :target="repoUrl ? '_blank' : undefined"
-              :rel="repoUrl ? 'noopener noreferrer' : undefined"
-              class="group flex items-center text-[10px] text-gray-500 font-medium tracking-wider leading-none mt-0.5 transition-colors"
-              :class="repoUrl ? 'hover:text-white' : ''"
-              :title="repoUrl ? 'View on GitHub' : undefined"
-            >
-              <svg
-                v-if="repoUrl"
-                class="w-3 h-3 mr-1 opacity-80 group-hover:opacity-100 transition-opacity"
-                fill="currentColor"
-                viewBox="0 0 24 24"
-                aria-hidden="true"
+            <div class="flex items-center gap-1.5 mt-1">
+              <component
+                :is="repoUrl ? 'a' : 'span'"
+                :href="repoUrl || undefined"
+                :target="repoUrl ? '_blank' : undefined"
+                :rel="repoUrl ? 'noopener noreferrer' : undefined"
+                class="group inline-flex items-center text-[10px] font-mono font-medium rounded-full px-1.5 py-0.5 transition-all border leading-none"
+                :class="[
+                  theme === 'light'
+                    ? 'bg-gray-100 text-gray-500 border-gray-200/70 hover:text-gray-900 hover:border-gray-300'
+                    : 'bg-white/[0.04] text-slate-400 border-white/[0.06] hover:text-white hover:bg-white/[0.08] hover:border-white/15',
+                  repoUrl ? 'cursor-pointer' : 'cursor-default'
+                ]"
+                :title="repoUrl ? 'View on GitHub' : undefined"
               >
-                <path fill-rule="evenodd" d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.531 1.032 1.531 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z" clip-rule="evenodd" />
-              </svg>
-              <span>v{{ appVersion }}</span>
-            </component>
+                <svg
+                  v-if="repoUrl"
+                  class="w-2.5 h-2.5 mr-1 opacity-70 group-hover:opacity-100 transition-opacity flex-shrink-0"
+                  fill="currentColor"
+                  viewBox="0 0 24 24"
+                  aria-hidden="true"
+                >
+                  <path fill-rule="evenodd" d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.531 1.032 1.531 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z" clip-rule="evenodd" />
+                </svg>
+                <span>v{{ appVersion }}</span>
+              </component>
+            </div>
           </div>
         </transition>
       </div>
 
       <!-- Navigation (Scrollable internally) -->
       <nav
-        class="flex-1 py-4 space-y-4 overflow-y-auto overflow-x-hidden custom-scrollbar"
+        class="flex-1 py-3 px-2 space-y-3 overflow-y-auto overflow-x-hidden custom-scrollbar"
         @click="isMobile ? showMobileSidebar = false : null"
       >
         <div v-for="group in filteredMenuGroups" :key="group.title" class="space-y-1">
@@ -657,10 +666,10 @@ const filteredMenuGroups = computed(() => {
           <button 
             v-if="!isCollapsed && group.title" 
             type="button"
-            class="py-2 flex items-center justify-between gap-2 text-left text-[10px] font-black text-gray-500 uppercase tracking-[0.15em] select-none transition-colors"
+            class="py-1.5 flex items-center justify-between gap-1.5 text-left text-[11px] font-medium tracking-wider select-none transition-colors group/header"
             :class="[
-              isCollapsed ? 'w-full justify-center px-0 mx-0' : 'w-[calc(100%-1.5rem)] mx-3 px-3',
-              theme === 'light' ? 'hover:text-gray-900' : 'hover:text-gray-300',
+              'w-[calc(100%-1rem)] mx-2 px-2',
+              theme === 'light' ? 'text-gray-400 hover:text-gray-700' : 'text-slate-400 hover:text-slate-200',
             ]"
             :aria-expanded="!isGroupCollapsed(group)"
             :aria-controls="`menu-group-${group.title}`"
@@ -668,19 +677,19 @@ const filteredMenuGroups = computed(() => {
           >
             <span class="truncate">{{ group.title }}</span>
             <svg 
-              class="w-3 h-3 flex-shrink-0 transition-transform duration-200"
+              class="w-3 h-3 flex-shrink-0 opacity-60 group-hover/header:opacity-100 transition-all duration-200"
               :class="isGroupCollapsed(group) ? '-rotate-90' : 'rotate-0'"
               fill="none" 
               stroke="currentColor" 
               viewBox="0 0 24 24"
             >
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M19 9l-7 7-7-7" />
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
             </svg>
           </button>
           <div
             v-else-if="isCollapsed && group.title"
-            class="h-px mx-4 my-2"
-            :class="theme === 'light' ? 'bg-gray-200' : 'bg-gray-700/50'"
+            class="h-px mx-3 my-2"
+            :class="theme === 'light' ? 'bg-gray-200/80' : 'bg-white/[0.06]'"
           ></div>
 
           <!-- Group Items -->
@@ -694,44 +703,149 @@ const filteredMenuGroups = computed(() => {
                 v-for="item in group.items"
                 :key="item.to"
                 :to="item.to"
-                class="group flex items-center py-2 text-sm font-medium transition-all duration-200 whitespace-nowrap"
+                :title="isCollapsed ? item.name : undefined"
+                class="group relative flex items-center text-sm font-medium transition-all duration-150 whitespace-nowrap"
                 :class="[
                   isItemActive(item)
                     ? theme === 'light'
-                      ? 'bg-blue-50 text-primary border border-blue-100 shadow-sm'
-                      : 'bg-primary text-white shadow-md'
+                      ? 'bg-black/[0.05] text-gray-900 font-medium border border-black/[0.05]'
+                      : 'bg-white/[0.08] text-white font-medium border border-white/[0.08]'
                     : theme === 'light'
-                      ? 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'
-                      : 'text-gray-300 hover:bg-gray-800 hover:text-white',
-                  isCollapsed ? 'justify-center px-0 mx-0 rounded-none' : 'px-4 mx-3 rounded-xl',
+                      ? 'text-gray-500 hover:bg-black/[0.03] hover:text-gray-900 border border-transparent'
+                      : 'text-slate-400 hover:bg-white/[0.04] hover:text-slate-200 border border-transparent',
+                  isCollapsed ? 'justify-center p-2.5 mx-auto w-10 h-10 rounded-lg' : 'py-2 px-3 mx-1 rounded-lg',
                 ]"
               >
-                <!-- Icons -->
-                <svg v-if="item.icon === 'dashboard'" class="flex-shrink-0 h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" /></svg>
-                <svg v-else-if="item.icon === 'chat'" class="flex-shrink-0 h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" /></svg>
-                <svg v-else-if="item.icon === 'playground'" class="flex-shrink-0 h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" /></svg>
-                <svg v-else-if="item.icon === 'widget'" class="flex-shrink-0 h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 4a2 2 0 114 0v1a1 1 0 001 1h3a1 1 0 011 1v3a1 1 0 01-1 1h-1a2 2 0 100 4h1a1 1 0 011 1v3a1 1 0 01-1 1h-3a1 1 0 01-1-1v-1a2 2 0 10-4 0v1a1 1 0 01-1 1H7a1 1 0 01-1-1v-3a1 1 0 00-1-1H4a2 2 0 110-4h1a1 1 0 001-1V7a1 1 0 011-1h3a1 1 0 001-1V4z" /></svg>
-                <svg v-else-if="item.icon === 'agent_debug'" class="flex-shrink-0 h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19.428 15.428a2 2 0 00-1.022-.547l-2.384-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z" /></svg>
-                <svg v-else-if="item.icon === 'data_source'" class="flex-shrink-0 h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7c0 1.657 3.582 3 8 3s8-1.343 8-3-3.582-3-8-3-8 1.343-8 3zm0 0v5c0 1.657 3.582 3 8 3s8-1.343 8-3V7M4 12v5c0 1.657 3.582 3 8 3s8-1.343 8-3v-5" /></svg>
-                <svg v-else-if="item.icon === 'metadata'" class="flex-shrink-0 h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 10h18M3 14h18m-9-4v8m-7 0h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
-                <svg v-else-if="item.icon === 'knowledge_base'" class="flex-shrink-0 h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 14l9-5-9-5-9 5 9 5zm0 0l6.16-3.422a12.083 12.083 0 01.665 6.479A11.952 11.952 0 0012 20.055a11.952 11.952 0 00-6.824-2.998 12.078 12.078 0 01.665-6.479L12 14z" /></svg>
-                <svg v-else-if="item.icon === 'agent_mgmt'" class="flex-shrink-0 h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" /></svg>
-                <svg v-else-if="item.icon === 'chat_bubble_left_right'" class="flex-shrink-0 h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 8h10M7 12h4m1 8l-4-4H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-3l-4 4z" /></svg>
-                <svg v-else-if="item.icon === 'prompts'" class="flex-shrink-0 h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>
-                <svg v-else-if="item.icon === 'skills'" class="flex-shrink-0 h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5S19.832 5.477 21 6.253v13C19.832 18.477 18.246 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" /></svg>
-                <svg v-else-if="item.icon === 'mcp'" class="flex-shrink-0 h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2m-2-4h.01M17 16h.01" /></svg>
-                <svg v-else-if="item.icon === 'memory'" class="flex-shrink-0 h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 5c0 2.21-3.582 4-8 4s-8-1.79-8-4" /></svg>
-
-                <svg v-else-if="item.icon === 'tasks'" class="flex-shrink-0 h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-                <svg v-else-if="item.icon === 'audit'" class="flex-shrink-0 h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
-                <svg v-else-if="item.icon === 'token_stats'" class="flex-shrink-0 h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 7h6m0 10v-3m-3 3h.01M9 17h.01M9 14h.01M12 14h.01M15 11h.01M12 11h.01M9 11h.01M7 21h10a2 2 0 002-2V5a2 2 0 00-2-2H7a2 2 0 00-2 2v14a2 2 0 002 2z" /></svg>
-                <svg v-else-if="item.icon === 'chat_logs'" class="flex-shrink-0 h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" /></svg>
-                <svg v-else-if="item.icon === 'users'" class="flex-shrink-0 h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" /></svg>
-                <svg v-else-if="item.icon === 'roles'" class="flex-shrink-0 h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" /></svg>
-                <svg v-else-if="item.icon === 'system'" class="flex-shrink-0 h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" /><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
+                <!-- Icons (Crisp 18px line icons) -->
+                <svg
+                  v-if="item.icon === 'dashboard'"
+                  class="flex-shrink-0 h-[18px] w-[18px] transition-colors"
+                  :class="isItemActive(item) ? (theme === 'light' ? 'text-gray-900' : 'text-white') : (theme === 'light' ? 'text-gray-400 group-hover:text-gray-600' : 'text-slate-400 group-hover:text-slate-200')"
+                  fill="none" stroke="currentColor" viewBox="0 0 24 24"
+                ><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" /></svg>
+                <svg
+                  v-else-if="item.icon === 'chat'"
+                  class="flex-shrink-0 h-[18px] w-[18px] transition-colors"
+                  :class="isItemActive(item) ? (theme === 'light' ? 'text-gray-900' : 'text-white') : (theme === 'light' ? 'text-gray-400 group-hover:text-gray-600' : 'text-slate-400 group-hover:text-slate-200')"
+                  fill="none" stroke="currentColor" viewBox="0 0 24 24"
+                ><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" /></svg>
+                <svg
+                  v-else-if="item.icon === 'playground'"
+                  class="flex-shrink-0 h-[18px] w-[18px] transition-colors"
+                  :class="isItemActive(item) ? (theme === 'light' ? 'text-gray-900' : 'text-white') : (theme === 'light' ? 'text-gray-400 group-hover:text-gray-600' : 'text-slate-400 group-hover:text-slate-200')"
+                  fill="none" stroke="currentColor" viewBox="0 0 24 24"
+                ><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" /></svg>
+                <svg
+                  v-else-if="item.icon === 'widget'"
+                  class="flex-shrink-0 h-[18px] w-[18px] transition-colors"
+                  :class="isItemActive(item) ? (theme === 'light' ? 'text-gray-900' : 'text-white') : (theme === 'light' ? 'text-gray-400 group-hover:text-gray-600' : 'text-slate-400 group-hover:text-slate-200')"
+                  fill="none" stroke="currentColor" viewBox="0 0 24 24"
+                ><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75" d="M11 4a2 2 0 114 0v1a1 1 0 001 1h3a1 1 0 011 1v3a1 1 0 01-1 1h-1a2 2 0 100 4h1a1 1 0 011 1v3a1 1 0 01-1 1h-3a1 1 0 01-1-1v-1a2 2 0 10-4 0v1a1 1 0 01-1 1H7a1 1 0 01-1-1v-3a1 1 0 00-1-1H4a2 2 0 110-4h1a1 1 0 001-1V7a1 1 0 011-1h3a1 1 0 001-1V4z" /></svg>
+                <svg
+                  v-else-if="item.icon === 'agent_debug'"
+                  class="flex-shrink-0 h-[18px] w-[18px] transition-colors"
+                  :class="isItemActive(item) ? (theme === 'light' ? 'text-gray-900' : 'text-white') : (theme === 'light' ? 'text-gray-400 group-hover:text-gray-600' : 'text-slate-400 group-hover:text-slate-200')"
+                  fill="none" stroke="currentColor" viewBox="0 0 24 24"
+                ><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75" d="M19.428 15.428a2 2 0 00-1.022-.547l-2.384-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z" /></svg>
+                <svg
+                  v-else-if="item.icon === 'data_source'"
+                  class="flex-shrink-0 h-[18px] w-[18px] transition-colors"
+                  :class="isItemActive(item) ? (theme === 'light' ? 'text-gray-900' : 'text-white') : (theme === 'light' ? 'text-gray-400 group-hover:text-gray-600' : 'text-slate-400 group-hover:text-slate-200')"
+                  fill="none" stroke="currentColor" viewBox="0 0 24 24"
+                ><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75" d="M4 7c0 1.657 3.582 3 8 3s8-1.343 8-3-3.582-3-8-3-8 1.343-8 3zm0 0v5c0 1.657 3.582 3 8 3s8-1.343 8-3V7M4 12v5c0 1.657 3.582 3 8 3s8-1.343 8-3v-5" /></svg>
+                <svg
+                  v-else-if="item.icon === 'metadata'"
+                  class="flex-shrink-0 h-[18px] w-[18px] transition-colors"
+                  :class="isItemActive(item) ? (theme === 'light' ? 'text-gray-900' : 'text-white') : (theme === 'light' ? 'text-gray-400 group-hover:text-gray-600' : 'text-slate-400 group-hover:text-slate-200')"
+                  fill="none" stroke="currentColor" viewBox="0 0 24 24"
+                ><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75" d="M3 10h18M3 14h18m-9-4v8m-7 0h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
+                <svg
+                  v-else-if="item.icon === 'knowledge_base'"
+                  class="flex-shrink-0 h-[18px] w-[18px] transition-colors"
+                  :class="isItemActive(item) ? (theme === 'light' ? 'text-gray-900' : 'text-white') : (theme === 'light' ? 'text-gray-400 group-hover:text-gray-600' : 'text-slate-400 group-hover:text-slate-200')"
+                  fill="none" stroke="currentColor" viewBox="0 0 24 24"
+                ><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75" d="M12 14l9-5-9-5-9 5 9 5zm0 0l6.16-3.422a12.083 12.083 0 01.665 6.479A11.952 11.952 0 0012 20.055a11.952 11.952 0 00-6.824-2.998 12.078 12.078 0 01.665-6.479L12 14z" /></svg>
+                <svg
+                  v-else-if="item.icon === 'agent_mgmt'"
+                  class="flex-shrink-0 h-[18px] w-[18px] transition-colors"
+                  :class="isItemActive(item) ? (theme === 'light' ? 'text-gray-900' : 'text-white') : (theme === 'light' ? 'text-gray-400 group-hover:text-gray-600' : 'text-slate-400 group-hover:text-slate-200')"
+                  fill="none" stroke="currentColor" viewBox="0 0 24 24"
+                ><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" /></svg>
+                <svg
+                  v-else-if="item.icon === 'chat_bubble_left_right'"
+                  class="flex-shrink-0 h-[18px] w-[18px] transition-colors"
+                  :class="isItemActive(item) ? (theme === 'light' ? 'text-gray-900' : 'text-white') : (theme === 'light' ? 'text-gray-400 group-hover:text-gray-600' : 'text-slate-400 group-hover:text-slate-200')"
+                  fill="none" stroke="currentColor" viewBox="0 0 24 24"
+                ><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75" d="M7 8h10M7 12h4m1 8l-4-4H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-3l-4 4z" /></svg>
+                <svg
+                  v-else-if="item.icon === 'prompts'"
+                  class="flex-shrink-0 h-[18px] w-[18px] transition-colors"
+                  :class="isItemActive(item) ? (theme === 'light' ? 'text-gray-900' : 'text-white') : (theme === 'light' ? 'text-gray-400 group-hover:text-gray-600' : 'text-slate-400 group-hover:text-slate-200')"
+                  fill="none" stroke="currentColor" viewBox="0 0 24 24"
+                ><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>
+                <svg
+                  v-else-if="item.icon === 'skills'"
+                  class="flex-shrink-0 h-[18px] w-[18px] transition-colors"
+                  :class="isItemActive(item) ? (theme === 'light' ? 'text-gray-900' : 'text-white') : (theme === 'light' ? 'text-gray-400 group-hover:text-gray-600' : 'text-slate-400 group-hover:text-slate-200')"
+                  fill="none" stroke="currentColor" viewBox="0 0 24 24"
+                ><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5S19.832 5.477 21 6.253v13C19.832 18.477 18.246 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" /></svg>
+                <svg
+                  v-else-if="item.icon === 'mcp'"
+                  class="flex-shrink-0 h-[18px] w-[18px] transition-colors"
+                  :class="isItemActive(item) ? (theme === 'light' ? 'text-gray-900' : 'text-white') : (theme === 'light' ? 'text-gray-400 group-hover:text-gray-600' : 'text-slate-400 group-hover:text-slate-200')"
+                  fill="none" stroke="currentColor" viewBox="0 0 24 24"
+                ><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75" d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2m-2-4h.01M17 16h.01" /></svg>
+                <svg
+                  v-else-if="item.icon === 'memory'"
+                  class="flex-shrink-0 h-[18px] w-[18px] transition-colors"
+                  :class="isItemActive(item) ? (theme === 'light' ? 'text-gray-900' : 'text-white') : (theme === 'light' ? 'text-gray-400 group-hover:text-gray-600' : 'text-slate-400 group-hover:text-slate-200')"
+                  fill="none" stroke="currentColor" viewBox="0 0 24 24"
+                ><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 5c0 2.21-3.582 4-8 4s-8-1.79-8-4" /></svg>
+                <svg
+                  v-else-if="item.icon === 'tasks'"
+                  class="flex-shrink-0 h-[18px] w-[18px] transition-colors"
+                  :class="isItemActive(item) ? (theme === 'light' ? 'text-gray-900' : 'text-white') : (theme === 'light' ? 'text-gray-400 group-hover:text-gray-600' : 'text-slate-400 group-hover:text-slate-200')"
+                  fill="none" stroke="currentColor" viewBox="0 0 24 24"
+                ><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                <svg
+                  v-else-if="item.icon === 'audit'"
+                  class="flex-shrink-0 h-[18px] w-[18px] transition-colors"
+                  :class="isItemActive(item) ? (theme === 'light' ? 'text-gray-900' : 'text-white') : (theme === 'light' ? 'text-gray-400 group-hover:text-gray-600' : 'text-slate-400 group-hover:text-slate-200')"
+                  fill="none" stroke="currentColor" viewBox="0 0 24 24"
+                ><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
+                <svg
+                  v-else-if="item.icon === 'token_stats'"
+                  class="flex-shrink-0 h-[18px] w-[18px] transition-colors"
+                  :class="isItemActive(item) ? (theme === 'light' ? 'text-gray-900' : 'text-white') : (theme === 'light' ? 'text-gray-400 group-hover:text-gray-600' : 'text-slate-400 group-hover:text-slate-200')"
+                  fill="none" stroke="currentColor" viewBox="0 0 24 24"
+                ><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75" d="M9 7h6m0 10v-3m-3 3h.01M9 17h.01M9 14h.01M12 14h.01M15 11h.01M12 11h.01M9 11h.01M7 21h10a2 2 0 002-2V5a2 2 0 00-2-2H7a2 2 0 00-2 2v14a2 2 0 002 2z" /></svg>
+                <svg
+                  v-else-if="item.icon === 'chat_logs'"
+                  class="flex-shrink-0 h-[18px] w-[18px] transition-colors"
+                  :class="isItemActive(item) ? (theme === 'light' ? 'text-gray-900' : 'text-white') : (theme === 'light' ? 'text-gray-400 group-hover:text-gray-600' : 'text-slate-400 group-hover:text-slate-200')"
+                  fill="none" stroke="currentColor" viewBox="0 0 24 24"
+                ><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" /></svg>
+                <svg
+                  v-else-if="item.icon === 'users'"
+                  class="flex-shrink-0 h-[18px] w-[18px] transition-colors"
+                  :class="isItemActive(item) ? (theme === 'light' ? 'text-gray-900' : 'text-white') : (theme === 'light' ? 'text-gray-400 group-hover:text-gray-600' : 'text-slate-400 group-hover:text-slate-200')"
+                  fill="none" stroke="currentColor" viewBox="0 0 24 24"
+                ><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" /></svg>
+                <svg
+                  v-else-if="item.icon === 'roles'"
+                  class="flex-shrink-0 h-[18px] w-[18px] transition-colors"
+                  :class="isItemActive(item) ? (theme === 'light' ? 'text-gray-900' : 'text-white') : (theme === 'light' ? 'text-gray-400 group-hover:text-gray-600' : 'text-slate-400 group-hover:text-slate-200')"
+                  fill="none" stroke="currentColor" viewBox="0 0 24 24"
+                ><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" /></svg>
+                <svg
+                  v-else-if="item.icon === 'system'"
+                  class="flex-shrink-0 h-[18px] w-[18px] transition-colors"
+                  :class="isItemActive(item) ? (theme === 'light' ? 'text-gray-900' : 'text-white') : (theme === 'light' ? 'text-gray-400 group-hover:text-gray-600' : 'text-slate-400 group-hover:text-slate-200')"
+                  fill="none" stroke="currentColor" viewBox="0 0 24 24"
+                ><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" /><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
 
                 <transition name="fade">
-                  <span v-if="!isCollapsed" class="ml-3">{{ item.name }}</span>
+                  <span v-if="!isCollapsed" class="ml-2.5 truncate leading-tight">{{ item.name }}</span>
                 </transition>
               </router-link>
             </div>
@@ -739,49 +853,49 @@ const filteredMenuGroups = computed(() => {
         </div>
       </nav>
 
-      <!-- User Profile (Clickable) -->
-      <button
-        @click="openUserInfo"
-        class="py-4 border-t flex items-center overflow-hidden whitespace-nowrap transition-colors w-full text-left focus:outline-none focus:ring-2 focus:ring-primary"
-        :class="[
-          isCollapsed ? 'justify-center px-0' : 'px-4',
-          theme === 'light' ? 'bg-white border-gray-200 hover:bg-gray-50' : 'bg-sidebar border-gray-700 hover:bg-gray-800',
-        ]"
-        title="查看个人信息"
+      <!-- User Profile (Clickable Card) -->
+      <div
+        class="p-2 border-t transition-colors"
+        :class="theme === 'light' ? 'border-gray-200/80 bg-white' : 'border-white/[0.06] bg-sidebar'"
       >
-        <div
-          class="h-8 w-8 rounded-full bg-gray-500 flex flex-shrink-0 items-center justify-center text-xs font-bold text-white uppercase"
+        <button
+          @click="openUserInfo"
+          class="w-full flex items-center overflow-hidden whitespace-nowrap transition-all rounded-lg text-left focus:outline-none focus:ring-2 focus:ring-primary/40 group/user"
+          :class="[
+            isCollapsed ? 'justify-center p-1.5' : 'p-2',
+            theme === 'light' ? 'hover:bg-gray-100/80' : 'hover:bg-white/[0.06]',
+          ]"
+          title="查看个人信息"
         >
-          {{ userInfo.user_name ? userInfo.user_name.substring(0, 2) : "USER" }}
-        </div>
-        <transition name="fade">
-          <div v-if="!isCollapsed" class="ml-3 flex-1">
-            <p class="text-sm font-medium" :class="theme === 'light' ? 'text-gray-900' : 'text-white'">
-              {{ userInfo.user_name || "Loading..." }}
-            </p>
-            <p class="text-xs" :class="theme === 'light' ? 'text-gray-500' : 'text-gray-400'">
-              {{ userInfo.role === "admin" ? "管理员" : "普通用户" }}
-            </p>
-          </div>
-        </transition>
-        <transition name="fade">
-          <svg
-            v-if="!isCollapsed"
-            class="h-4 w-4"
-            :class="theme === 'light' ? 'text-gray-400' : 'text-gray-400'"
-            fill="none"
-            stroke="currentColor"
-            viewBox="0 0 24 24"
+          <div
+            class="h-7 w-7 rounded-lg bg-gradient-to-br from-slate-700 to-slate-800 border border-white/10 flex flex-shrink-0 items-center justify-center text-xs font-semibold text-white uppercase shadow-sm"
           >
-            <path
-              stroke-linecap="round"
-              stroke-linejoin="round"
-              stroke-width="2"
-              d="M9 5l7 7-7 7"
-            />
-          </svg>
-        </transition>
-      </button>
+            {{ userInfo.user_name ? userInfo.user_name.substring(0, 2) : "US" }}
+          </div>
+          <transition name="fade">
+            <div v-if="!isCollapsed" class="ml-2.5 flex-1 min-w-0">
+              <p class="text-sm font-medium truncate leading-tight" :class="theme === 'light' ? 'text-gray-900' : 'text-slate-200'">
+                {{ userInfo.user_name || "Loading..." }}
+              </p>
+              <p class="text-[11px] truncate mt-0.5 leading-none" :class="theme === 'light' ? 'text-gray-400' : 'text-slate-400'">
+                {{ userInfo.role === "admin" ? "管理员" : "普通用户" }}
+              </p>
+            </div>
+          </transition>
+          <transition name="fade">
+            <svg
+              v-if="!isCollapsed"
+              class="h-3.5 w-3.5 opacity-40 group-hover/user:opacity-80 transition-opacity ml-1 flex-shrink-0"
+              :class="theme === 'light' ? 'text-gray-400' : 'text-slate-400'"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
+            </svg>
+          </transition>
+        </button>
+      </div>
     </aside>
 
     <!-- Main Content Area -->

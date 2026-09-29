@@ -10,6 +10,7 @@ from datetime import datetime
 from typing import Any, AsyncGenerator, Dict
 
 from app.schemas.agent import AgentExecutionStep
+from app.services.ai.temperature import resolve_config_temperature
 from app.services.ai.chatbi_sql_user_messages import format_empty_filter_result_content, map_sql_tool_error_for_user
 from app.services.ai.executors.prompts import DataQueryPrompts
 from app.services.ai.runtime.agentscope.event_stream import is_interrupt_sse_chunk, map_standard_agentscope_event
@@ -263,7 +264,7 @@ async def stream_agentscope_events(
                             event_type="tool_call",
                             agent_name=runner.config.agent_name,
                             model=getattr(native_model, "model", runner.config.model_name),
-                            temperature=float(runner.config.temperature or 0),
+                            temperature=resolve_config_temperature(runner.config),
                             tool_name="dimension_enrichment",
                             tool_input={"dataset_name": tool_args.get("dataset_name")},
                             tool_output={"logs": getattr(enrichment_result, "logs", [])},
@@ -318,7 +319,7 @@ async def stream_agentscope_events(
                 event_type="tool_call",
                 agent_name=runner.config.agent_name,
                 model=getattr(native_model, "model", runner.config.model_name),
-                temperature=float(runner.config.temperature or 0),
+                temperature=resolve_config_temperature(runner.config),
                 tool_name=tool_name,
                 tool_input=tool_args,
                 tool_output=output,
@@ -548,7 +549,7 @@ async def stream_agentscope_events(
                 event_type="synthesis",
                 agent_name=runner.config.agent_name,
                 model=getattr(native_model, "model", runner.config.model_name),
-                temperature=float(runner.config.temperature or 0),
+                temperature=resolve_config_temperature(runner.config),
                 tool_output={"content": state.full_content},
                 raw_log=state.full_content,
                 execution_time_ms=(time.time() - state.start_synthesis) * 1000,

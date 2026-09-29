@@ -15,8 +15,9 @@ export default {
           dark: '#0958d9', // 添加dark变体，与active相同
         },
         sidebar: {
-          DEFAULT: '#001529', // Dark Navy
-          light: '#002140',
+          DEFAULT: '#0b0f19', // Modern Slate Navy
+          light: '#131b2e',
+          border: 'rgba(255, 255, 255, 0.06)',
         }
       }
     },

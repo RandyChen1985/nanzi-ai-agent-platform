@@ -9,6 +9,7 @@ from datetime import datetime
 from typing import Any, Dict, List
 
 from app.schemas.agent import AgentExecutionStep
+from app.services.ai.temperature import resolve_config_temperature
 
 logger = logging.getLogger(__name__)
 
@@ -95,7 +96,7 @@ async def inject_few_shot_examples(
                     event_type="few_shot",
                     agent_name=runner.config.agent_name,
                     model=str(runner.config.model_name),
-                    temperature=float(runner.config.temperature or 0),
+                    temperature=resolve_config_temperature(runner.config),
                     tool_output={"examples": []},
                     raw_log=f"未命中经验库案例，检索问题：{user_question}",
                     execution_time_ms=elapsed_ms,
@@ -129,7 +130,7 @@ async def inject_few_shot_examples(
                 event_type="few_shot",
                 agent_name=runner.config.agent_name,
                 model=str(runner.config.model_name),
-                temperature=float(runner.config.temperature or 0),
+                temperature=resolve_config_temperature(runner.config),
                 tool_output={"examples": examples},
                 raw_log="\n".join(hit_titles),
                 execution_time_ms=0,
@@ -178,7 +179,7 @@ async def inject_few_shot_examples(
                 event_type="few_shot",
                 agent_name=runner.config.agent_name,
                 model=str(runner.config.model_name),
-                temperature=float(runner.config.temperature or 0),
+                temperature=resolve_config_temperature(runner.config),
                 tool_output={"examples": []},
                 raw_log=f"经验库检索不可用，已跳过案例注入：{e}",
                 execution_time_ms=elapsed_ms,

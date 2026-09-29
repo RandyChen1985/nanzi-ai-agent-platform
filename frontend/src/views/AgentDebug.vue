@@ -591,6 +591,7 @@ const finalizeConversationInBackground = (cid: string) => {
 const resetDebugThinkingOverrides = () => {
   debugConfig.thinkingEnableOverride = null;
   debugConfig.reasoningEffortOverride = null;
+  debugConfig.temperatureOverride = null;
 };
 
 const loadGreeting = async () => {
@@ -1481,7 +1482,8 @@ const debugConfig = reactive({
   thinkingEnableOverride: null as boolean | null,
   reasoningEffortOverride: null as ReasoningEffort | null,
   approvalMode: "ask" as "ask" | "allow" | "deny",
-  temperature: 0.0,
+  temperature: 0.0, // 智能体版本温度（滑块未显式调整时的回退显示值）
+  temperatureOverride: null as number | null, // 本次调试显式下发的温度，0 也是有效覆盖
   dryRun: false, // SQL Review Mode
   returnRawPrompt: true, // Always verify context
   enableMultiAgent: true, // Multi-agent collaboration
@@ -3345,8 +3347,10 @@ const sendMessageInternal = async (snapshot: ChatSendSnapshot) => {
     if (debugConfig.reasoningEffortOverride !== null) {
       debugOptions.reasoning_effort = debugConfig.reasoningEffortOverride;
     }
-    if (debugConfig.temperature > 0)
-      debugOptions.temperature = debugConfig.temperature;
+    if (debugConfig.temperatureOverride !== null) {
+      // 0 是合法温度：不能用 > 0 判断，否则「强制 0」会被当成没设置。
+      debugOptions.temperature = debugConfig.temperatureOverride;
+    }
 
     // Add Prompt Override
     if (debugConfig.systemPromptOverride.trim()) {
