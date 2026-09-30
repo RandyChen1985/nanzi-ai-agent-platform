@@ -510,3 +510,42 @@ def test_browser_panel_allows_dismissing_captcha_hud():
     assert '@click.stop="captchaHudDismissed = true"' in source
     # 人工接管阶段不再重复长文案（原因已由失败卡片给过），避免底部条遮挡
     assert 'v-if="!captchaAwaitingHuman"' in source
+
+
+def test_browser_panel_renders_captcha_trace_timeline():
+    """解算过程必须在面板里可见：过程时间线 + 随阶段变化的 HUD 文案。"""
+    source = (ROOT / "frontend/src/components/embed/BrowserPanel.vue").read_text(encoding="utf-8")
+
+    assert "captchaTrace" in source
+    assert "'captcha_trace'" in source
+    assert "AI 过程" in source
+    assert "captchaStageLabel" in source
+
+
+def test_browser_panel_draws_horizontal_drag_line_not_diagonal_to_target():
+    """拖动示线必须是水平的：斜着连到缺口坐标会让人误以为 AI 在斜着拖。"""
+    source = (ROOT / "frontend/src/components/embed/BrowserPanel.vue").read_text(encoding="utf-8")
+    assert "captchaDragEndPct" in source
+    assert ':x2="captchaDragEndPct.x"' in source
+    assert ':y2="captchaDragEndPct.y"' in source
+    assert ':y2="captchaTargetPct.y"' not in source, "不得再把拖动示线直接连到缺口坐标"
+
+
+def test_browser_panel_hides_pointless_attempt_counter_when_single_attempt():
+    """收手策略下只自动尝试一次：不能给用户显示「1/1」这种没有信息量的计数。"""
+    source = (ROOT / "frontend/src/components/embed/BrowserPanel.vue").read_text(encoding="utf-8")
+    assert "Number(extra.max_attempts) > 1" in source
+
+
+def test_browser_open_conflict_message_is_not_duplicated():
+    """409 文案不得重复「请稍等几秒」：异常消息本身已是完整的用户引导。"""
+    source = (ROOT / "app/api/v1/endpoints/browser.py").read_text(encoding="utf-8")
+    assert "验证码识别完成后会自动恢复，请稍等几秒再试" not in source
+    assert "detail=str(exc)" in source
+
+
+def test_embed_chat_auto_retries_browser_open_on_conflict():
+    """409 是「几秒后自愈」的忙碌冲突：前端应自动重开面板，而不是让用户手动再点一次。"""
+    source = (ROOT / "frontend/src/views/EmbedChat.vue").read_text(encoding="utf-8")
+    assert "browserOpenConflictRetries" in source
+    assert "status === 409" in source

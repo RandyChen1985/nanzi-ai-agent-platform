@@ -373,7 +373,7 @@
               </button>
               <template v-else>
                 <span class="text-sky-600 dark:text-sky-300">
-                  {{ controlOwner === 'human' ? '人工接管中，刷新已暂停' : captchaDetected ? (currentAiAction?.action === 'solving_captcha' ? 'AI 正在识别验证码…' : '验证码中，刷新继续') : interactionInProgress ? '操作中…' : autoRefreshPaused ? '自动刷新已暂停' : '每 5 秒自动刷新' }}
+                  {{ controlOwner === 'human' ? '人工接管中，刷新已暂停' : captchaDetected ? (currentAiAction?.action === 'solving_captcha' ? captchaStageLabel : '验证码中，刷新继续') : interactionInProgress ? '操作中…' : autoRefreshPaused ? '自动刷新已暂停' : '每 5 秒自动刷新' }}
                 </span>
                 <button
                   v-if="controlOwner !== 'human' && !captchaDetected && !interactionInProgress"
@@ -392,6 +392,16 @@
                   @click="requestSnapshot"
                 >
                   ⟳ 刷新画面
+                </button>
+                <button
+                  v-if="captchaTrace.length"
+                  type="button"
+                  class="rounded border px-1.5 py-0.5 text-[10px] font-semibold"
+                  :class="captchaTraceOpen ? 'border-indigo-400 bg-indigo-50 text-indigo-700 dark:border-indigo-600 dark:bg-indigo-950/60 dark:text-indigo-200' : 'border-indigo-200 bg-white/80 text-indigo-700 hover:bg-white dark:border-indigo-800 dark:bg-indigo-950/40 dark:text-indigo-200'"
+                  title="查看 AI 识别验证码的每一步（截图 / 识别 / 执行 / 校验 / 重试）"
+                  @click="captchaTraceOpen = !captchaTraceOpen"
+                >
+                  🧭 AI 过程 {{ captchaTrace.length }}
                 </button>
               </template>
             </div>
@@ -786,7 +796,7 @@
                     <span class="absolute inline-flex h-full w-full animate-ping rounded-full bg-white/80" />
                     <span class="relative inline-flex h-2 w-2 rounded-full bg-white" />
                   </span>
-                  <span>{{ isSolvingCaptcha ? '🛡️ AI 正在识别验证码' : (captchaAwaitingHuman ? '🙋 请人工完成验证' : '⚠️ AI 未能完成验证码') }}</span>
+                  <span>{{ isSolvingCaptcha ? captchaStageLabel : (captchaAwaitingHuman ? '🙋 请人工完成验证' : '⚠️ AI 未能完成验证码') }}</span>
                   <span
                     v-if="captchaAttemptLabel"
                     class="rounded bg-white/25 px-1.5 py-0.5 font-mono text-[10px] tracking-wide"
@@ -812,15 +822,47 @@
                   {{ currentAiAction?.detail || (isSolvingCaptcha ? '正在分析验证码画面…' : '请人工完成验证') }}
                 </div>
               </div>
+              <!-- AI 过程抽屉：把"截图 → 识别 → 执行 → 校验 → 重试"逐步摊开，解算不再黑盒 -->
+              <div
+                v-if="captchaTraceOpen && captchaTrace.length"
+                class="absolute right-3 top-3 z-30 flex max-h-[70%] w-[min(440px,85%)] flex-col overflow-hidden rounded-lg border border-slate-200 bg-white/95 text-[11px] shadow-xl backdrop-blur dark:border-slate-700 dark:bg-slate-900/95"
+              >
+                <div class="flex items-center justify-between border-b border-slate-100 px-2 py-1 font-bold text-slate-600 dark:border-slate-800 dark:text-slate-200">
+                  <span>🧭 AI 过程（最近 {{ captchaTrace.length }} 步）</span>
+                  <span class="flex items-center gap-1">
+                    <button
+                      type="button"
+                      class="rounded px-1 font-semibold text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800"
+                      @click="captchaTrace = []"
+                    >清空</button>
+                    <button
+                      type="button"
+                      class="rounded px-1 font-semibold text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800"
+                      @click="captchaTraceOpen = false"
+                    >✕</button>
+                  </span>
+                </div>
+                <ol class="flex-1 overflow-auto px-2 py-1">
+                  <li
+                    v-for="(entry, index) in captchaTrace"
+                    :key="`${entry.at}-${index}`"
+                    class="flex gap-2 border-t border-slate-100 py-0.5 first:border-t-0 dark:border-slate-800"
+                  >
+                    <span class="shrink-0 font-mono text-[10px] text-slate-400">{{ entry.at }}</span>
+                    <span class="shrink-0">{{ CAPTCHA_STAGE_LABELS[entry.phase] || '•' }}</span>
+                    <span class="text-slate-700 dark:text-slate-200">{{ entry.detail }}</span>
+                  </li>
+                </ol>
+              </div>
               <!-- AI 解算计划与轨迹回放：目标准星 + 需拖动距离 + 实际划过的路径 -->
               <template v-if="captchaPlanVisible">
                 <svg class="pointer-events-none absolute inset-0 z-20 h-full w-full" viewBox="0 0 100 100" preserveAspectRatio="none">
                   <line
-                    v-if="captchaSliderPct && captchaTargetPct"
+                    v-if="captchaSliderPct && captchaDragEndPct"
                     :x1="captchaSliderPct.x"
                     :y1="captchaSliderPct.y"
-                    :x2="captchaTargetPct.x"
-                    :y2="captchaTargetPct.y"
+                    :x2="captchaDragEndPct.x"
+                    :y2="captchaDragEndPct.y"
                     stroke="#f97316"
                     stroke-width="2"
                     stroke-dasharray="6 4"
@@ -1375,14 +1417,57 @@ const isSolvingCaptcha = computed(() => currentAiAction.value?.action === 'solvi
 const captchaFailed = computed(() => currentAiAction.value?.action === 'captcha_human_required');
 const isCaptchaAction = computed(() => isSolvingCaptcha.value || captchaFailed.value);
 
+// --- AI 过程时间线：把「截图 → 识别 → 执行 → 校验 → 重试」摊开，避免解算成为黑盒 ---
+type CaptchaTraceEntry = {
+  at: string;
+  phase: string;
+  detail: string;
+  attempt: number;
+  maxAttempts: number;
+};
+const CAPTCHA_TRACE_LIMIT = 60;
+const captchaTrace = ref<CaptchaTraceEntry[]>([]);
+const captchaTraceOpen = ref(false);
+const pushCaptchaTrace = (payload: Record<string, any>) => {
+  const entry: CaptchaTraceEntry = {
+    at: String(payload.at || ''),
+    phase: String(payload.phase || ''),
+    detail: String(payload.detail || ''),
+    attempt: Number(payload.attempt || 0),
+    maxAttempts: Number(payload.max_attempts || 0),
+  };
+  captchaTrace.value = [...captchaTrace.value.slice(-(CAPTCHA_TRACE_LIMIT - 1)), entry];
+};
+const CAPTCHA_STAGE_LABELS: Record<string, string> = {
+  screenshot: '📸 正在截图',
+  analyzing: '🧠 正在识别',
+  trigger: '👆 正在展开验证',
+  recognized: '🎯 已识别目标',
+  acting: '🖱️ 正在执行动作',
+  dragged: '✅ 动作已执行',
+  verifying: '⏳ 正在校验',
+  still_captcha: '↻ 本轮未通过',
+  retry: '🔁 准备重试',
+  unrecognized: '❓ 识别失败',
+  unsupported: '🚫 类型不支持',
+  solved: '🎉 验证通过',
+  give_up: '🙋 转人工处理',
+};
+// HUD 徽标随阶段变化，而不是从头到尾只写"正在识别"
+const captchaStageLabel = computed(() => {
+  const phase = String((currentAiAction.value?.extra as Record<string, any> | null)?.phase || '');
+  return CAPTCHA_STAGE_LABELS[phase] || '🛡️ AI 正在识别验证码';
+});
+
 const captchaAttemptLabel = computed(() => {
   const extra = currentAiAction.value?.extra as Record<string, any> | undefined | null;
-  if (extra?.attempt && extra?.max_attempts) {
+  // 收手策略下只自动尝试一次：显示「1/1」没有信息量，反而让人以为后面还会重试
+  if (extra?.attempt && extra?.max_attempts && Number(extra.max_attempts) > 1) {
     return `${extra.attempt}/${extra.max_attempts}`;
   }
   const detail = currentAiAction.value?.detail || '';
   const match = detail.match(/第\s*(\d+)\s*\/\s*(\d+)\s*次/);
-  return match ? `${match[1]}/${match[2]}` : '';
+  return match && match[2] !== '1' ? `${match[1]}/${match[2]}` : '';
 });
 
 // --- 解算过程可视化：把后端广播的几何信息换算成画面百分比坐标 ---
@@ -1408,6 +1493,17 @@ const captchaTargetPct = computed(() =>
 const captchaDistancePx = computed(() => {
   const value = captchaProgress.value?.distance_px;
   return typeof value === 'number' && Number.isFinite(value) ? Math.round(value) : null;
+});
+// 拖动示线必须水平：真实鼠标只沿 x 轴移动（y 仅在起点上下抖动 ±1.6px），
+// 若把示线直接连到缺口坐标就会画出一条斜线，让人误以为 AI 在斜着拖。
+const captchaDragEndPct = computed(() => {
+  const start = captchaSliderPct.value;
+  const distance = captchaProgress.value?.distance_px;
+  const { width } = captchaViewportSize.value;
+  if (!start || typeof distance !== 'number' || !Number.isFinite(distance) || !width) {
+    return null;
+  }
+  return { x: start.x + (distance / width) * 100, y: start.y };
 });
 const captchaTrajectoryPct = computed(() => {
   const points = captchaProgress.value?.trajectory;
@@ -2254,6 +2350,9 @@ const connect = async () => {
           startPolling();
         }
       }
+    } else if (payload.type === 'captcha_trace') {
+      // AI 解算过程：前端时间线逐条累积，用户可随时点「🧭 AI 过程」展开查看每一步
+      pushCaptchaTrace(payload);
     } else if (payload.type === 'captcha') {
       captchaDetected.value = Boolean(payload.detected);
       if (captchaDetected.value) {

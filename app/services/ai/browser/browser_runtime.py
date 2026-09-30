@@ -29,10 +29,25 @@ HUMAN_CONTROL_TIMEOUT_SECONDS = float(
 )
 
 # 验证码自动解算：一轮内的最大尝试次数与指数退避（按需求写死常量，不做配置化）
-CAPTCHA_MAX_ATTEMPTS = 3
+#
+# 自动尝试 2 次：几何链路（模型定位拼图块与缺口 → 距离计算 → 拖动）已验证正确，
+# 但极验还会判定「输入来源是否自动化」——Playwright 的鼠标事件走 CDP
+# Input.dispatchMouseEvent，不经过系统输入管线，所以存在「距离算对也未必通过」的情况，
+# 留第 2 次机会；但上限不宜再高：极验失败 3 次会升级验证难度，硬刷得不偿失。
+CAPTCHA_MAX_ATTEMPTS = 2
 CAPTCHA_RETRY_BACKOFF_BASE_SECONDS = 1.5
 CAPTCHA_RETRY_BACKOFF_MAX_SECONDS = 4.0
 CAPTCHA_REASON_ATTEMPTS_EXHAUSTED = "attempts_exhausted"
+# 降级到人工时统一使用的说明：要让用户知道"为什么必须手动"，而不是以为 AI 只是没调好
+CAPTCHA_MANUAL_FALLBACK_MESSAGE = (
+    "AI 自动拖动会被验证码判定为自动化操作，请手动拖动一次完成验证"
+)
+
+# 自动解算期间其他浏览器动作的让行时间：只需避让正在进行的动作，
+# 不必按人工接管有效期（45s）硬等，否则 AI 的工具调用会整段卡住
+CAPTCHA_SOLVE_WAIT_SECONDS = float(
+    os.environ.get("BROWSER_CAPTCHA_SOLVE_WAIT_SECONDS", "5")
+)
 
 logger = logging.getLogger(__name__)
 
@@ -130,6 +145,7 @@ class BrowserRuntime:
             self._snapshots.pop(session_id, None)
             self._session_locks.pop(session_id, None)
             self._captcha_gave_up.discard(session_id)
+            self.captcha_solver.reset_trigger_guard(session_id)
             state = self._human_controls.pop(session_id, None)
             if state is not None:
                 state.released.set()
@@ -189,17 +205,17 @@ class BrowserRuntime:
         while True:
             solving = self._captcha_round_events.get(session_id)
             if solving is not None and not solving.is_set():
-                # 自动解算正在操作页面，AI 的其他动作必须让行，避免双方并发操作同一浏览器
+                # 自动解算正在操作页面，AI 的其他动作必须让行，避免双方并发操作同一浏览器。
+                # 但让行只需很短时间：按人工接管有效期（45s）硬等会让 AI 工具调用整段卡死
+                # （线上表现：browser_click 报"45 秒内未取得控制权"失败）。
                 try:
                     await asyncio.wait_for(
                         solving.wait(),
-                        timeout=None if timeout_s <= 0 else timeout_s,
+                        timeout=None if CAPTCHA_SOLVE_WAIT_SECONDS <= 0 else CAPTCHA_SOLVE_WAIT_SECONDS,
                     )
                 except asyncio.TimeoutError:
                     raise BrowserHumanControlRequired(
-                        "AI 正在自动识别验证码，其他浏览器操作在 {} 秒内未取得控制权。".format(
-                            int(timeout_s)
-                        )
+                        "AI 正在自动识别验证码，其他浏览器操作暂不可用，请稍等几秒后重试。"
                     )
                 continue
             async with self._session_lock(session_id):
@@ -273,6 +289,7 @@ class BrowserRuntime:
             # （控制权没释放、额度没重置，AI 也不会重新尝试）。
             self._captcha_attempts.pop(session_id, None)
             self._captcha_gave_up.discard(session_id)
+            self.captcha_solver.reset_trigger_guard(session_id)
             return self.control_state(session_id)
 
     async def _release_human_control_state(self, session_id: str) -> bool:
@@ -289,11 +306,51 @@ class BrowserRuntime:
         )
         return True
 
+    async def _reusable_page_info(
+        self, session_id: str, target_url: str
+    ) -> Optional[BrowserPageInfo]:
+        """页面已在目标 URL 上时返回其信息——此时"打开会话"不需要任何页面动作。
+
+        重复打开/查看面板是高频轻量操作；如果让它先去排解算让行闸门，用户只会在
+        验证码识别期间平白吃到 409。命中复用即无需页面控制权，可直接返回。
+        """
+        if not self.worker.has_session(session_id):
+            return None
+        current_page_info = getattr(self.worker, "current_page_info", None)
+        if not callable(current_page_info):
+            return None
+        try:
+            current_info = await current_page_info(session_id)
+        except Exception:
+            return None
+        if current_info is not None and _same_browser_url(current_info.url, target_url):
+            return current_info
+        return None
+
+    def _touch_session(
+        self, db: AsyncSession, session: BrowserSession, info: BrowserPageInfo
+    ) -> None:
+        session.current_url = info.url
+        session.page_title = info.title
+        session.last_seen_at = datetime.now()
+        session.updated_at = datetime.now()
+        db.add(session)
+
     async def open_session(self, db: AsyncSession, session: BrowserSession) -> BrowserPageInfo:
         # 重新打开/恢复会话意味着用户开始新一轮操作：先清掉上一轮遗留的人工接管标记。
         # 否则复用同一 Chromium 会话时，残留状态会让 _wait_for_ai_control 判定
         # "人工在 N 秒内未持续操作"，把打开面板的请求直接打成 503。
         await self._release_human_control_state(session.id)
+        target_url = session.current_url or "https://www.baidu.com/"
+
+        # 页面已在目标 URL 上：本次打开不需要任何页面动作，因此无需页面控制权，
+        # 也就不必去排解算让行闸门（否则验证码识别期间重复打开会被无谓地打成 409）。
+        reused_info = await self._reusable_page_info(session.id, target_url)
+        if reused_info is not None:
+            self._touch_session(db, session, reused_info)
+            await db.commit()
+            return reused_info
+
         # 打开会话只需短暂避让正在进行的自动解算，不该让用户等满整个人工接管有效期
         await self._wait_for_ai_control(session.id, timeout_ms=8000)
         async with self._session_lock(session.id):
@@ -301,7 +358,6 @@ class BrowserRuntime:
                 user_id=int(session.user_id), profile_id=session.profile_id
             )
             profile_path = await BrowserProfileService(db).profile_path(profile)
-            target_url = session.current_url or "https://www.baidu.com/"
             await db.commit()
 
             if self.worker.has_session(session.id):
@@ -320,11 +376,7 @@ class BrowserRuntime:
                     profile_path=profile_path,
                     url=target_url,
                 )
-            session.current_url = info.url
-            session.page_title = info.title
-            session.last_seen_at = datetime.now()
-            session.updated_at = datetime.now()
-            db.add(session)
+            self._touch_session(db, session, info)
             await db.commit()
             return info
 
@@ -359,8 +411,9 @@ class BrowserRuntime:
             current_map.pop(oldest_key, None)
         if snapshot.page_state != "captcha":
             self._captcha_attempts.pop(session_id, None)
-            # 页面已恢复：解除"已放弃自动解算"，下次再遇到验证码可重新尝试
+            # 页面已恢复：解除"已放弃自动解算"与"入口按钮已点击"，下次遇到验证码可重新尝试
             self._captcha_gave_up.discard(session_id)
+            self.captcha_solver.reset_trigger_guard(session_id)
             state = self._human_controls.get(session_id)
             if state is not None:
                 state.captcha = False
@@ -412,6 +465,12 @@ class BrowserRuntime:
                 "max_attempts": CAPTCHA_MAX_ATTEMPTS,
             },
         )
+        # 过程时间线也要有一条收尾：用户翻日志时能看到"AI 为什么交给人"
+        await self._broadcast_captcha_trace(
+            session_id,
+            {"phase": "give_up", "message": message, "reason_code": reason_code},
+            attempt=self._captcha_attempts.get(session_id, 0),
+        )
 
     async def _broadcast_captcha_progress(
         self, session_id: str, attempt: int, payload: dict[str, Any]
@@ -431,22 +490,83 @@ class BrowserRuntime:
                 "max_attempts": CAPTCHA_MAX_ATTEMPTS,
             },
         )
+        await self._broadcast_captcha_trace(session_id, payload, attempt=attempt)
+
+    async def _broadcast_captcha_trace(
+        self,
+        session_id: str,
+        payload: dict[str, Any],
+        *,
+        attempt: int | None = None,
+    ) -> None:
+        """把解算阶段推给前端的「AI 过程」时间线，避免识别过程成为黑盒。"""
+        await self.broadcast_event(
+            session_id,
+            {
+                "type": "captcha_trace",
+                "phase": str(payload.get("phase") or ""),
+                "detail": self._captcha_progress_detail(payload, attempt or 0),
+                "attempt": attempt or 0,
+                "max_attempts": CAPTCHA_MAX_ATTEMPTS,
+                "at": datetime.now().strftime("%H:%M:%S"),
+                **payload,
+            },
+        )
 
     @staticmethod
     def _captcha_progress_detail(payload: dict[str, Any], attempt: int) -> str:
         """把阶段化进度翻译成用户可读的一行文案。"""
         phase = str(payload.get("phase") or "")
+        # 上限为 1 时"第 1/1 次"没有信息量，反倒让用户以为后面还会重试
+        stage = (
+            f"（第 {attempt}/{CAPTCHA_MAX_ATTEMPTS} 次）" if CAPTCHA_MAX_ATTEMPTS > 1 else ""
+        )
+        if phase == "screenshot":
+            return f"正在截取页面画面{stage}…"
+        if phase == "analyzing":
+            model = payload.get("model")
+            hint = f"，交给视觉模型 {model}" if model else "，交给视觉模型"
+            return f"画面已就绪{hint}识别{stage}…"
+        if phase == "unrecognized":
+            return f"视觉模型未返回可用坐标，本次识别失败{stage}"
+        if phase == "unsupported":
+            reason = str(payload.get("reason") or "").strip()
+            return "模型判定该验证码无法自动处理" + (f"：{reason}" if reason else "")
+        if phase == "trigger":
+            reason = str(payload.get("reason") or "").strip()
+            return "发现验证入口按钮" + (f"（{reason}）" if reason else "") + "，正在点击展开…"
         if phase == "recognized":
             distance = payload.get("distance_px")
             if payload.get("kind") == "slider" and distance:
-                return (
-                    f"已识别缺口（第 {attempt}/{CAPTCHA_MAX_ATTEMPTS} 次），"
-                    f"需拖动 {int(distance)}px，正在执行…"
-                )
-            return f"已识别验证目标（第 {attempt}/{CAPTCHA_MAX_ATTEMPTS} 次），正在执行…"
+                return f"已识别缺口{stage}，需拖动 {int(distance)}px，正在执行…"
+            return f"已识别验证目标{stage}，正在执行…"
+        if phase == "acting":
+            kind = str(payload.get("kind") or "")
+            if kind == "slider":
+                return "正在拖动滑块…"
+            if kind == "click_sequence":
+                return "正在按顺序点击验证目标…"
+            return "正在执行验证动作…"
         if phase == "dragged":
-            return f"动作已执行（第 {attempt}/{CAPTCHA_MAX_ATTEMPTS} 次），正在校验结果…"
-        return f"AI 正在尝试自动识别（第 {attempt}/{CAPTCHA_MAX_ATTEMPTS} 次）…"
+            return f"动作已执行{stage}，正在校验结果…"
+        if phase == "verifying":
+            return "动作已发出，正在等待页面校验…"
+        if phase == "solved":
+            return "验证已通过，页面恢复正常"
+        if phase == "still_captcha":
+            return f"动作已执行但页面仍是验证码{stage}"
+        if phase == "retry":
+            message = str(payload.get("message") or "自动识别未通过")
+            backoff = payload.get("backoff_s")
+            wait = (
+                f"，{float(backoff):g} 秒后重试"
+                if isinstance(backoff, (int, float))
+                else "，即将重试"
+            )
+            return f"第 {attempt} 次未通过（{message}）{wait}…"
+        if phase == "give_up":
+            return str(payload.get("message") or "AI 已放弃自动识别，请人工完成验证")
+        return f"AI 正在尝试自动识别{stage}…"
 
     async def try_auto_solve_captcha(
         self, session_id: str, snapshot: BrowserSnapshot
@@ -477,7 +597,7 @@ class BrowserRuntime:
             await self._enter_captcha_human_control(
                 session_id,
                 reason_code=CAPTCHA_REASON_ATTEMPTS_EXHAUSTED,
-                message="自动识别重试次数已用尽，请人工完成验证",
+                message=CAPTCHA_MANUAL_FALLBACK_MESSAGE,
             )
             return snapshot
 
@@ -553,7 +673,19 @@ class BrowserRuntime:
                 break
 
             if index < CAPTCHA_MAX_ATTEMPTS:
-                await asyncio.sleep(self._captcha_retry_backoff(index))
+                backoff_s = self._captcha_retry_backoff(index)
+                # 退避必须可见：否则用户无法分辨时间花在模型调用还是纯等待上
+                await self._broadcast_captcha_progress(
+                    session_id,
+                    index,
+                    {
+                        "phase": "retry",
+                        "reason": outcome.reason_code,
+                        "message": outcome.message,
+                        "backoff_s": backoff_s,
+                    },
+                )
+                await asyncio.sleep(backoff_s)
                 if self._human_takeover_active(session_id):
                     await self.clear_ai_action(session_id)
                     return snapshot
@@ -566,16 +698,12 @@ class BrowserRuntime:
                     session_id, await self.worker.snapshot(session_id)
                 )
 
-        attempt_count = self._captcha_attempts.get(session_id, 0)
-        # 一轮尝试全部失败 = AI 已尽力：标记为放弃，避免超时释放后又立刻重新降级刷屏
+        # 尝试已失败 = AI 已尽力：标记为放弃，避免超时释放后又立刻重新降级刷屏
         self._captcha_gave_up.add(session_id)
         await self._enter_captcha_human_control(
             session_id,
             reason_code=last_reason_code or "unknown",
-            message=(
-                f"AI 已自动尝试 {attempt_count} 次未通过"
-                f"（{last_message or '自动识别未通过'}），请人工完成验证"
-            ),
+            message=f"{CAPTCHA_MANUAL_FALLBACK_MESSAGE}（{last_message or '自动识别未通过'}）",
         )
         return snapshot
 

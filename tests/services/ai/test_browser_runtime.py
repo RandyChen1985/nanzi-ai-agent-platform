@@ -9,6 +9,7 @@ import pytest
 
 from app.schemas.browser import BrowserSnapshot, BrowserToolResult
 from app.services.ai.browser.browser_runtime import BrowserControlConflict
+from app.services.ai.browser.browser_runtime import BrowserHumanControlRequired
 from app.services.ai.browser.browser_runtime import BrowserRuntime
 from app.services.ai.browser.browser_runtime import (
     CAPTCHA_MAX_ATTEMPTS,
@@ -18,6 +19,7 @@ from app.services.ai.browser.browser_worker import BrowserPageInfo
 from app.services.ai.browser.captcha_solver import (
     CAPTCHA_REASON_HUMAN_TAKEOVER,
     CAPTCHA_REASON_NO_VISION_MODEL,
+    CAPTCHA_REASON_STILL_CAPTCHA,
     CAPTCHA_REASON_UNSUPPORTED_TYPE,
     CaptchaSolveOutcome,
 )
@@ -474,9 +476,9 @@ async def test_browser_runtime_broadcasts_captcha_geometry_progress():
     assert extra["target_y"] == 220.0
     assert extra["distance_px"] == 200
     assert extra["kind"] == "slider"
-    # 次数信息随进度一起下发，前端据此显示「第 N/3 次」
+    # 次数信息随进度一起下发，前端据此显示尝试进度
     assert extra["attempt"] == 1
-    assert extra["max_attempts"] == 3
+    assert extra["max_attempts"] == CAPTCHA_MAX_ATTEMPTS
 
 
 @pytest.mark.asyncio
@@ -742,3 +744,190 @@ async def test_browser_runtime_retries_captcha_after_human_returns_control():
     await runtime.snapshot("session-1")
 
     assert len(attempts) == 1, "交还 AI 后必须重新尝试解算"
+
+
+@pytest.mark.asyncio
+async def test_browser_runtime_broadcasts_captcha_trace_events():
+    """前端「AI 过程」时间线依赖 captcha_trace：阶段、尝试次数与中文文案都要带全。"""
+    worker = ControlProbeWorker()
+    runtime = BrowserRuntime(worker=worker)
+    runtime.broadcast_event = AsyncMock()
+
+    await runtime._broadcast_captcha_progress(
+        "session-1", 2, {"phase": "analyzing", "model": "vision-x"}
+    )
+
+    traces = [
+        call.args[1]
+        for call in runtime.broadcast_event.await_args_list
+        if call.args[1].get("type") == "captcha_trace"
+    ]
+    assert traces, "必须广播 captcha_trace 供前端渲染过程时间线"
+    trace = traces[-1]
+    assert trace["phase"] == "analyzing"
+    assert trace["attempt"] == 2
+    assert trace["max_attempts"] == CAPTCHA_MAX_ATTEMPTS
+    assert trace["detail"]
+    assert trace["at"]
+
+
+@pytest.mark.asyncio
+async def test_browser_runtime_never_exceeds_captcha_attempt_budget(monkeypatch):
+    """尝试次数必须严格等于 CAPTCHA_MAX_ATTEMPTS，绝不能超出。
+
+    几何链路已验证正确，但极验还会判定「输入来源是否自动化」（Playwright 走 CDP
+    注入鼠标事件），因此保留有限重试；而极验失败 3 次会升级验证难度，所以预算
+    必须封顶——这条断言就是为了防止以后有人把它调大，把「够用就好」变成「硬刷」。
+    """
+    monkeypatch.setattr("app.services.ai.browser.browser_runtime.CAPTCHA_RETRY_BACKOFF_BASE_SECONDS", 0.0)
+    monkeypatch.setattr("app.services.ai.browser.browser_runtime.CAPTCHA_RETRY_BACKOFF_MAX_SECONDS", 0.0)
+    worker = ControlProbeWorker()
+    worker.snapshot = AsyncMock(
+        return_value=BrowserSnapshot(
+            session_id="session-1",
+            snapshot_id="captcha-1",
+            url="https://example.com/verify",
+            title="Verify",
+            page_state="captcha",
+        )
+    )
+    runtime = BrowserRuntime(worker=worker)
+    runtime.broadcast_event = AsyncMock()
+    calls: list[int] = []
+
+    async def fake_solve(session_id, snapshot, *, on_progress=None, should_abort=None, **_kwargs):
+        calls.append(1)
+        return CaptchaSolveOutcome(
+            solved=False,
+            retryable=True,
+            reason_code=CAPTCHA_REASON_STILL_CAPTCHA,
+            message="仍处于验证码状态",
+        )
+
+    runtime.captcha_solver.solve_captcha_detailed = fake_solve
+
+    await runtime.snapshot("session-1")
+
+    traces = [
+        call.args[1]
+        for call in runtime.broadcast_event.await_args_list
+        if call.args[1].get("type") == "captcha_trace"
+    ]
+    assert len(calls) == CAPTCHA_MAX_ATTEMPTS, "尝试次数必须恰好用满预算，不得少也不得多"
+    retry_traces = [t for t in traces if t["phase"] == "retry"]
+    assert len(retry_traces) == CAPTCHA_MAX_ATTEMPTS - 1, "退避重试次数必须等于预算减一"
+
+
+@pytest.mark.asyncio
+async def test_browser_runtime_does_not_block_ai_tools_for_full_timeout_during_solve(monkeypatch):
+    """解算期间 AI 的其他浏览器动作只需短暂让行，不能硬等 45 秒。"""
+    monkeypatch.setattr(
+        "app.services.ai.browser.browser_runtime.CAPTCHA_SOLVE_WAIT_SECONDS", 0.05
+    )
+    worker = ControlProbeWorker()
+    runtime = BrowserRuntime(worker=worker)
+    runtime._captcha_round_events["session-1"] = asyncio.Event()  # 未 set = 解算进行中
+
+    started = time.monotonic()
+    with pytest.raises(BrowserHumanControlRequired) as excinfo:
+        await runtime._wait_for_ai_control("session-1", timeout_ms=45000)
+    elapsed = time.monotonic() - started
+
+    assert elapsed < 2, "不得按 45 秒的有效期硬等"
+    assert "自动识别验证码" in str(excinfo.value)
+
+
+@pytest.mark.asyncio
+async def test_browser_runtime_reuses_page_without_waiting_for_captcha_solve(monkeypatch):
+    """页面已在目标 URL 上 = 打开会话无需任何页面动作，不该被解算让行闸门打成 409。"""
+    monkeypatch.setattr(
+        "app.services.ai.browser.browser_runtime.CAPTCHA_SOLVE_WAIT_SECONDS", 0.05
+    )
+    worker = ControlProbeWorker()
+    worker.current_page_info = AsyncMock(
+        return_value=BrowserPageInfo(url="https://example.com/", title="Example")
+    )
+    runtime = BrowserRuntime(worker=worker)
+    runtime._captcha_round_events["session-1"] = asyncio.Event()  # 未 set = 解算进行中
+
+    session = SimpleNamespace(
+        id="session-1",
+        user_id=1,
+        profile_id="profile-1",
+        current_url="https://example.com/",
+        page_title=None,
+        last_seen_at=None,
+        updated_at=None,
+    )
+    db = SimpleNamespace(add=lambda *_args: None, commit=AsyncMock())
+
+    started = time.monotonic()
+    info = await runtime.open_session(db, session)
+    elapsed = time.monotonic() - started
+
+    assert info.url == "https://example.com/"
+    assert elapsed < 1, "同 URL 复用不得去排解算让行闸门"
+    assert session.page_title == "Example", "复用路径也要回写会话状态"
+
+
+@pytest.mark.asyncio
+async def test_browser_runtime_auto_solves_captcha_up_to_budget_then_hands_over(monkeypatch):
+    """用满自动尝试预算后即交人工，且不再重复消耗模型调用。
+
+    线上对照实验已确认：同样距离人工手动拖一次即可通过、AI 拖动失败——极验识别的是
+    「输入来源是自动化」而非距离。因此保留有限重试，但用完即止、绝不硬刷。
+    """
+    monkeypatch.setattr("app.services.ai.browser.browser_runtime.CAPTCHA_RETRY_BACKOFF_BASE_SECONDS", 0.0)
+    monkeypatch.setattr("app.services.ai.browser.browser_runtime.CAPTCHA_RETRY_BACKOFF_MAX_SECONDS", 0.0)
+    worker = ControlProbeWorker()
+    worker.snapshot = AsyncMock(
+        return_value=BrowserSnapshot(
+            session_id="session-1",
+            snapshot_id="captcha-1",
+            url="https://example.com/verify",
+            title="Verify",
+            page_state="captcha",
+        )
+    )
+    runtime = BrowserRuntime(worker=worker)
+    solver = AsyncMock(
+        return_value=CaptchaSolveOutcome(
+            solved=False,
+            retryable=True,
+            reason_code="still_captcha",
+            message="已执行拖动/点击，页面仍处于验证状态",
+        )
+    )
+    runtime.captcha_solver.solve_captcha_detailed = solver
+
+    await runtime.snapshot("session-1")
+
+    assert solver.await_count == CAPTCHA_MAX_ATTEMPTS, "必须恰好用满自动尝试预算"
+    assert "session-1" in runtime._captcha_gave_up
+
+    # 再来一张新快照：不得再消耗模型调用
+    await runtime.snapshot("session-1")
+    assert solver.await_count == CAPTCHA_MAX_ATTEMPTS, "已交人工后不得再次自动尝试"
+
+
+@pytest.mark.asyncio
+async def test_browser_runtime_restores_auto_solve_budget_after_manual_pass():
+    """人工拖过之后页面不再是验证码：额度必须重置，下一个新验证码仍可让 AI 试一次。"""
+    worker = ControlProbeWorker()
+    runtime = BrowserRuntime(worker=worker)
+    runtime._captcha_attempts["session-1"] = CAPTCHA_MAX_ATTEMPTS
+    runtime._captcha_gave_up.add("session-1")
+    worker.snapshot = AsyncMock(
+        return_value=BrowserSnapshot(
+            session_id="session-1",
+            snapshot_id="page-2",
+            url="https://example.com/",
+            title="OK",
+            page_state="ready",
+        )
+    )
+
+    await runtime.snapshot("session-1")
+
+    assert "session-1" not in runtime._captcha_gave_up, "人工过了之后必须重置放弃标记"
+    assert "session-1" not in runtime._captcha_attempts

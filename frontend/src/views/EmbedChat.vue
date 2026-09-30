@@ -3428,6 +3428,12 @@ const attachBrowserSession = async (
   }
 };
 
+// 409（AI 正在自动解算验证码）属于「几秒后自愈」的忙碌冲突：自动重开面板，不必让用户
+// 手动再点一次。重试上限用尽后清零计数，保证用户下次手动点击仍能获得完整重试机会。
+const BROWSER_OPEN_CONFLICT_MAX_RETRIES = 2;
+const BROWSER_OPEN_CONFLICT_RETRY_DELAY_MS = 3000;
+let browserOpenConflictRetries = 0;
+
 const openBrowserPanel = async () => {
   if (browserPanelOpening.value) return;
   if (browserSessionId.value && browserViewerToken.value) {
@@ -3451,11 +3457,30 @@ const openBrowserPanel = async () => {
     if (generation !== browserOpenGeneration) return;
     const session = sessionResponse.data;
     browserEnvironmentError.value = null;
+    browserOpenConflictRetries = 0;
     const attached = await attachBrowserSession(session.id, session.approval_mode, generation);
     if (!attached && generation === browserOpenGeneration) browserPanelVisible.value = false;
   } catch (error: any) {
     if (generation !== browserOpenGeneration) return;
     const detail = String(error?.response?.data?.detail || "");
+    const status = Number(error?.response?.status || 0);
+    // 409 = AI 正在解算验证码、其他操作短暂让行（唯一来源，见后端注释）。它属于
+    // 「几秒后自愈」的忙碌冲突，且此时面板没打开、用户也没有可点的释放按钮，
+    // 所以自动等几秒重开；超过重试上限才按普通失败提示。
+    if (status === 409 && browserOpenConflictRetries < BROWSER_OPEN_CONFLICT_MAX_RETRIES) {
+      browserOpenConflictRetries += 1;
+      browserPanelOpening.value = false;
+      showToast(
+        detail || `AI 正在识别验证码，${BROWSER_OPEN_CONFLICT_RETRY_DELAY_MS / 1000} 秒后自动重试…`,
+        "warning",
+      );
+      window.setTimeout(() => {
+        void openBrowserPanel();
+      }, BROWSER_OPEN_CONFLICT_RETRY_DELAY_MS);
+      return;
+    }
+    // 重试用尽：清零计数，保证用户下次手动打开仍有完整的自动重试机会
+    browserOpenConflictRetries = 0;
     // 只有后端显式标记"环境未就绪"（或详情里明确是 Playwright/Chromium 缺失）才展示安装引导：
     // 普通 503（启动失败、人工接管冲突等）必须按真实原因提示，不能一律甩安装步骤
     const isEnvironmentFailure =

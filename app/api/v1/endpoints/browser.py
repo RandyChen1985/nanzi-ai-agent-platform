@@ -181,11 +181,15 @@ async def open_browser_session(
     except BrowserProfileAccessDenied as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
     except BrowserHumanControlRequired as exc:
-        # 人工接管冲突不是环境故障：必须回 409，否则前端会误报"运行环境未就绪"
-        logger.info("Browser session still under human control: %s", exc)
+        # 忙碌冲突不是环境故障：必须回 409，否则前端会误报"运行环境未就绪"。
+        # 该异常当前只有一个来源——AI 正在自动解算验证码、其他操作让行超时（人工接管
+        # 超时会自动释放控制权，不会走到这里），所以提示要引导"稍等"，而不是去点「交还 AI」。
+        logger.info("Browser session is busy while solving captcha: %s", exc)
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail=f"{exc} 可点「交还 AI」或结束会话后重试",
+            # 异常消息本身已含完整引导（"…请稍等几秒后重试"），此处不再追加同类文案，
+            # 否则用户会连续读到两遍"请稍等几秒"。
+            detail=str(exc),
         ) from exc
     except BrowserEnvironmentError as exc:
         logger.warning("Browser environment missing: %s", exc)
