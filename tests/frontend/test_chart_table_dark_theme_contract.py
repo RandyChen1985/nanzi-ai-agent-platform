@@ -42,7 +42,7 @@ def test_embedded_markdown_zebra_stripe_has_dark_variant():
     ("path", "fragment"),
     [
         # 图表卡片本身（注意别被右上角切换按钮的 bg-white/90 蒙混过去）
-        (MESSAGE_RENDERER, "h-64 bg-white dark:bg-gray-800 rounded-lg border border-gray-100 dark:border-gray-700"),
+        (MESSAGE_RENDERER, "h-72 bg-white dark:bg-gray-800 rounded-lg border border-gray-100 dark:border-gray-700"),
         (CANVAS_RENDERER, "canvas-markdown-chart my-4 w-full rounded-xl border border-gray-100 dark:border-gray-700 bg-white dark:bg-gray-800"),
     ],
 )
