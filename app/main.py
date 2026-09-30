@@ -100,7 +100,8 @@ async def lifespan(app: FastAPI):
     apply_agentscope_docker_patches()
     start_docker_workspace_reaper()
     start_k8s_workspace_reaper()
-    asyncio.create_task(maybe_rebuild_local_vectors_on_startup())
+    # 启动时跳过自动全量同步本地向量（避免服务启动时大量调用 Embedding 接口与重度扫库），改由管理台按需手动触发
+    # asyncio.create_task(maybe_rebuild_local_vectors_on_startup())
     # 记忆摘要索引：Redis 重启后易丢失，启动时自动 ensure（设计文档约定）
     asyncio.create_task(maybe_ensure_memory_index_on_startup())
 
