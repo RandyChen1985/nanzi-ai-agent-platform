@@ -14,6 +14,7 @@ from app.services.ai.browser.browser_runtime import (
     BrowserRuntime,
 )
 from app.services.ai.browser.captcha_solver import (
+    CAPTCHA_REASON_HUMAN_TAKEOVER,
     CAPTCHA_REASON_NO_VISION_MODEL,
     CAPTCHA_REASON_RECOGNITION_FAILED,
     CAPTCHA_REASON_UNSUPPORTED_TYPE,
@@ -192,7 +193,7 @@ async def test_runtime_auto_solves_captcha_successfully():
     runtime = BrowserRuntime(worker=worker)
 
     # 首次触发自解算成功，worker 下一次 snapshot 变为 ready
-    async def fake_detailed(session_id, snapshot, *, model_name=None, on_progress=None):
+    async def fake_detailed(session_id, snapshot, *, model_name=None, on_progress=None, should_abort=None):
         worker._page_state = "ready"
         return CaptchaSolveOutcome(solved=True, retryable=False, message="验证码自动解算成功")
 
@@ -363,7 +364,7 @@ async def test_runtime_stops_retrying_when_captcha_is_solved(monkeypatch):
     runtime = BrowserRuntime(worker=worker)
     calls: list[int] = []
 
-    async def fake_detailed(session_id, snapshot, *, model_name=None, on_progress=None):
+    async def fake_detailed(session_id, snapshot, *, model_name=None, on_progress=None, should_abort=None):
         calls.append(1)
         if len(calls) < 2:
             return _retryable_failure()
@@ -434,7 +435,7 @@ async def test_runtime_aborts_retry_when_human_takes_over(monkeypatch):
     runtime = BrowserRuntime(worker=worker)
     calls: list[int] = []
 
-    async def fake_detailed(session_id, snapshot, *, model_name=None, on_progress=None):
+    async def fake_detailed(session_id, snapshot, *, model_name=None, on_progress=None, should_abort=None):
         calls.append(1)
         await runtime.acquire_human_control(session_id, reason="click", owner_id="viewer-1")
         return _retryable_failure()
@@ -488,7 +489,7 @@ async def test_runtime_blocks_ai_action_while_captcha_round_runs(monkeypatch):
     started = asyncio.Event()
     release = asyncio.Event()
 
-    async def fake_detailed(session_id, snapshot, *, model_name=None, on_progress=None):
+    async def fake_detailed(session_id, snapshot, *, model_name=None, on_progress=None, should_abort=None):
         started.set()
         await release.wait()
         return _retryable_failure()
@@ -703,3 +704,33 @@ async def test_solver_progress_callback_is_optional():
 
     assert outcome.solved is True
     assert outcome.distance_px == 200
+
+
+@pytest.mark.asyncio
+async def test_solver_aborts_before_dragging_when_human_took_over():
+    """识别完成后若用户已接管，必须放弃执行拖拽动作，不能和用户抢滑块。"""
+    worker = DummyWorker(page_state="captcha")
+    solver = BrowserCaptchaSolver(worker)
+    solver._get_screenshot_base64 = AsyncMock(return_value="fake_b64")
+    solver._query_vision_model = AsyncMock(
+        return_value={
+            "type": "slider",
+            "slider_x": 120,
+            "slider_y": 220,
+            "target_x": 320,
+            "target_y": 220,
+            "distance_px": 200,
+        }
+    )
+
+    outcome = await solver.solve_captcha_detailed(
+        "session-1",
+        await worker.snapshot("session-1"),
+        model_name="vision-model",
+        should_abort=lambda: True,
+    )
+
+    assert outcome.solved is False
+    assert outcome.reason_code == CAPTCHA_REASON_HUMAN_TAKEOVER
+    assert worker.page.mouse.move.await_count == 0, "用户已接管时不得再移动鼠标"
+    assert worker.page.mouse.up.await_count == 0, "用户已接管时不得松手拖拽"

@@ -2443,6 +2443,11 @@ const pauseForInteraction = () => {
   interactionInProgress.value = true;
   controlOwner.value = 'human';
   stopPolling();
+  // 用户已接管：立刻收起「AI 正在识别验证码」的提示，不必等后端把解算停掉再广播；
+  // 后端收到人工输入后也会随即中止解算并清空该动作。
+  if (isSolvingCaptcha.value) {
+    currentAiAction.value = null;
+  }
 };
 
 const finishInteraction = () => {

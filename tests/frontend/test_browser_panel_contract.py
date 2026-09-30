@@ -479,3 +479,11 @@ def test_browser_panel_probes_captcha_result_after_human_action():
     assert "startCaptchaResultProbe" in source
     assert "stopCaptchaResultProbe" in source
     assert "CAPTCHA_RESULT_PROBE_MAX_ATTEMPTS" in source
+
+
+def test_browser_panel_hides_solving_hud_when_human_takes_over():
+    """用户一旦接管，界面必须立刻收起「AI 正在识别验证码」，不等后端往返。"""
+    source = (ROOT / "frontend/src/components/embed/BrowserPanel.vue").read_text(encoding="utf-8")
+
+    assert "用户已接管：立刻收起" in source
+    assert "const pauseForInteraction" in source

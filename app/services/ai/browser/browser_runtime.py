@@ -16,6 +16,7 @@ from app.services.ai.browser.browser_profile_service import BrowserProfileServic
 from app.services.ai.browser.browser_session_service import BrowserSessionService
 from app.services.ai.browser.browser_worker import BrowserPageInfo, BrowserWorker
 from app.services.ai.browser.captcha_solver import (
+    CAPTCHA_REASON_HUMAN_TAKEOVER,
     CAPTCHA_REASON_NO_VISION_MODEL,
     BrowserCaptchaSolver,
 )
@@ -440,6 +441,12 @@ class BrowserRuntime:
         solved = False
 
         for index in range(attempts_done + 1, CAPTCHA_MAX_ATTEMPTS + 1):
+            if self._human_takeover_active(session_id):
+                # 用户已经接管：立刻收手、清掉"AI 正在识别"的提示，也不再弹 AI 失败警示
+                self._captcha_attempts.pop(session_id, None)
+                await self.clear_ai_action(session_id)
+                return snapshot
+
             await self.set_ai_action(
                 session_id,
                 "solving_captcha",
@@ -468,10 +475,17 @@ class BrowserRuntime:
                 on_progress=lambda payload, current=index: self._broadcast_captcha_progress(
                     session_id, current, payload
                 ),
+                should_abort=lambda: self._human_takeover_active(session_id),
             )
             if outcome.solved:
                 solved = True
                 break
+
+            if outcome.reason_code == CAPTCHA_REASON_HUMAN_TAKEOVER:
+                # 用户接管导致的中止：静默退出，不消耗额度、不再提示 AI 失败
+                self._captcha_attempts.pop(session_id, None)
+                await self.clear_ai_action(session_id)
+                return snapshot
 
             last_reason_code = outcome.reason_code
             last_message = outcome.message

@@ -10,6 +10,7 @@ from app.services.ai.browser.browser_runtime import BrowserControlConflict
 from app.services.ai.browser.browser_runtime import BrowserRuntime
 from app.services.ai.browser.browser_worker import BrowserPageInfo
 from app.services.ai.browser.captcha_solver import (
+    CAPTCHA_REASON_HUMAN_TAKEOVER,
     CAPTCHA_REASON_NO_VISION_MODEL,
     CaptchaSolveOutcome,
 )
@@ -430,7 +431,7 @@ async def test_browser_runtime_broadcasts_captcha_geometry_progress():
     )
     runtime = BrowserRuntime(worker=worker)
 
-    async def fake_solve(session_id, snapshot, *, model_name=None, on_progress=None):
+    async def fake_solve(session_id, snapshot, *, model_name=None, on_progress=None, should_abort=None):
         assert on_progress is not None, "运行时必须向解算器传入进度回调"
         await on_progress({
             "phase": "recognized",
@@ -511,3 +512,48 @@ async def test_browser_runtime_marks_captcha_human_required_with_reason():
     extra = human_events[-1].get("extra") or {}
     assert extra.get("reason_code") == CAPTCHA_REASON_NO_VISION_MODEL
     assert extra.get("requires_human") is True
+
+
+@pytest.mark.asyncio
+async def test_browser_runtime_stops_solving_when_human_takes_over_midway():
+    """用户在一轮解算期间接管：立即停止后续尝试，且不再弹"AI 无法完成"的降级提示。"""
+    worker = ControlProbeWorker()
+    worker.snapshot = AsyncMock(
+        return_value=BrowserSnapshot(
+            session_id="session-1",
+            snapshot_id="captcha-1",
+            url="https://example.com/verify",
+            title="Verify",
+            page_state="captcha",
+        )
+    )
+    runtime = BrowserRuntime(worker=worker)
+    runtime.broadcast_event = AsyncMock()
+
+    calls: list[int] = []
+
+    async def fake_solve(session_id, snapshot, *, model_name=None, on_progress=None, should_abort=None):
+        calls.append(1)
+        # 模拟"识别期间用户点击画面接管"
+        runtime._set_human_control_locked(session_id, reason="click", owner_id="viewer-1")
+        assert should_abort is not None, "运行时必须把接管判定传给解算器"
+        assert should_abort() is True
+        return CaptchaSolveOutcome(
+            solved=False,
+            retryable=True,
+            reason_code=CAPTCHA_REASON_HUMAN_TAKEOVER,
+            message="用户已接管操作，已停止自动解算",
+        )
+
+    runtime.captcha_solver.solve_captcha_detailed = fake_solve
+
+    await runtime.snapshot("session-1")
+
+    assert len(calls) == 1, "用户接管后不得再发起第 2 次尝试"
+    actions = [
+        call.args[1]["action"]
+        for call in runtime.broadcast_event.await_args_list
+        if call.args[1].get("type") == "ai_action"
+    ]
+    assert "captcha_human_required" not in actions, "已由用户接管时不应再提示 AI 失败"
+    assert actions[-1] == "", "接管后必须清空 AI 动作，前端 HUD 才会消失"

@@ -63,6 +63,8 @@ CAPTCHA_REASON_RECOGNITION_FAILED = "recognition_failed"
 CAPTCHA_REASON_ACTION_FAILED = "action_failed"
 CAPTCHA_REASON_STILL_CAPTCHA = "still_captcha"
 CAPTCHA_REASON_ERROR = "error"
+# 解算过程中用户接管了操作：立刻放弃本次尝试（不是失败，不消耗重试额度）
+CAPTCHA_REASON_HUMAN_TAKEOVER = "human_takeover"
 
 # 页面上只有“点击按钮进行验证”这类触发控件、真实挑战尚未展开时的动作类型
 CAPTCHA_ACTION_TRIGGER = "trigger"
@@ -77,6 +79,7 @@ CAPTCHA_REASON_MESSAGES = {
     CAPTCHA_REASON_ACTION_FAILED: "验证码目标已识别，但操作执行失败",
     CAPTCHA_REASON_STILL_CAPTCHA: "已执行拖动/点击，页面仍处于验证状态",
     CAPTCHA_REASON_ERROR: "自动解算过程发生异常",
+    CAPTCHA_REASON_HUMAN_TAKEOVER: "用户已接管操作，已停止自动解算",
 }
 
 
@@ -148,6 +151,7 @@ class BrowserCaptchaSolver:
         *,
         model_name: Optional[str] = None,
         on_progress: Optional[Callable[[Dict[str, Any]], Awaitable[None]]] = None,
+        should_abort: Optional[Callable[[], bool]] = None,
     ) -> CaptchaSolveOutcome:
         """执行一次自动解算尝试，返回可判定的结构化结果。
 
@@ -195,6 +199,17 @@ class BrowserCaptchaSolver:
                         retryable=True,
                         reason_code=CAPTCHA_REASON_RECOGNITION_FAILED,
                         message=CAPTCHA_REASON_MESSAGES[CAPTCHA_REASON_RECOGNITION_FAILED],
+                    )
+
+                if should_abort is not None and should_abort():
+                    # 用户在识别期间接管了操作：立刻收手，绝不执行拖拽/点击去和用户抢滑块
+                    logger.info("[CaptchaSolver] 用户已接管操作，放弃本次自动解算动作")
+                    return CaptchaSolveOutcome(
+                        solved=False,
+                        retryable=False,
+                        reason_code=CAPTCHA_REASON_HUMAN_TAKEOVER,
+                        message=CAPTCHA_REASON_MESSAGES[CAPTCHA_REASON_HUMAN_TAKEOVER],
+                        **_geometry_from(captured),
                     )
 
                 action_type = str(parsed_data.get("type") or "")
