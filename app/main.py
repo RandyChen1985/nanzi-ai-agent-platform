@@ -352,12 +352,20 @@ async def http_exception_handler(request: Request, exc: HTTPException):
         data = None
     
     execution_mode = await _get_execution_mode()
+    # HTTPException 自带的响应头必须透传：浏览器环境用 X-Browser-Error:
+    # environment_not_ready 让前端区分"环境未就绪"与其他 503，丢掉它会让
+    # Playwright/Chromium 安装引导面板无法弹出，只剩一句通用失败提示。
+    headers = dict(exc.headers or {})
     return JSONResponse(
         status_code=exc.status_code,
+        headers=headers,
         content={
             "code": code,
             "message": message,
-            "detail": None,
+            # detail 必须与 message 同步：前端有大量调用点读的是
+            # response.data.detail，置为 None 会让它们全部退化成默认文案。
+            # dict 形式的结构化 detail 原样保留在 data 中，信息不会丢失。
+            "detail": message,
             "data": data,
             "timestamp": datetime.datetime.now().isoformat(),
             "trace_id": trace_id,
