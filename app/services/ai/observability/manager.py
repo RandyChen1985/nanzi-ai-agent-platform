@@ -181,6 +181,35 @@ def _teardown_client(client: Any) -> None:
         logger.warning("Langfuse shutdown 失败（忽略）: %s", exc)
 
 
+def _teardown_client_in_background(client: Any) -> None:
+    """在后台线程里关闭被替换掉的旧 client。
+
+    为什么必须异步——这是个真实踩过的坑：``client.flush()`` 内部是**同步**的
+    ``tracer_provider.force_flush()``，它会等导出线程把队列发完。Langfuse 不可达时，
+    这一等就是最长一个 ``timeout_seconds``（默认 5s）。而重建 client 的调用链是
+    「配置刷新 → 快照监听器 → ``_ensure_client``」，整条链**跑在事件循环线程里**，
+    一旦在这里同步 flush，事件循环会被卡住，**所有并发请求（包括正在流式输出的对话）
+    都会一起停顿**——这违背了「追踪只是旁路」的前提。
+
+    ``daemon=True`` 的取舍：进程被强杀时这个后台线程可能来不及 flush（丢最后一批
+    span）。但正常关闭走的是 :func:`shutdown_observability`，那里会 ``await`` 完成，
+    不丢数据。宁可丢几个 span，也不能让对话卡住。
+    """
+    if client is None:
+        return
+    try:
+        thread = threading.Thread(
+            target=_teardown_client,
+            args=(client,),
+            name="langfuse-teardown",
+            daemon=True,
+        )
+        thread.start()
+    except Exception as exc:  # pragma: no cover - 极端情况下退化为同步关闭
+        logger.warning("Langfuse 旧 client 后台关闭线程启动失败，改为同步关闭: %s", exc)
+        _teardown_client(client)
+
+
 def _ensure_client() -> None:
     """按当前快照保证 client 与连接参数一致（同步，可被刷新协程与启动路径调用）。"""
     global _client, _client_fingerprint
@@ -210,7 +239,8 @@ def _ensure_client() -> None:
         _last_error = None
 
     if old_client is not None and old_client is not new_client:
-        _teardown_client(old_client)
+        # 必须走后台上线程：这里可能正跑在事件循环里，而关闭旧 client 会同步 flush。
+        _teardown_client_in_background(old_client)
     logger.info("Langfuse client 就绪: host=%s", snapshot.host)
 
 

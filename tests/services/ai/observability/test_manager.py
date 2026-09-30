@@ -8,6 +8,8 @@
 4. 连接参数变化时旧 client 被 shutdown 且不会重复上报。
 """
 
+import threading
+import time
 import types
 
 import httpx
@@ -63,6 +65,20 @@ def _install_fake_client(monkeypatch, captured, fail: bool = False):
 
     monkeypatch.setattr("langfuse.Langfuse", FakeClient)
     return FakeClient
+
+
+def _wait_until(predicate, timeout=2.0):
+    """等后台线程跑完。
+
+    重建 client 时旧 client 的关闭已挪到后台线程（避免阻塞事件循环），
+    因此断言「旧 client 被关闭」不能假设同步完成。
+    """
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if predicate():
+            return True
+        time.sleep(0.01)
+    return predicate()
 
 
 async def _refresh(monkeypatch, **overrides):
@@ -384,7 +400,7 @@ async def test_connection_change_rebuilds_client(monkeypatch):
     # 主机变化必须重建，且旧 client 被 shutdown（避免重复上报）。
     await _refresh(monkeypatch, host="http://other:3000")
     assert len(captured["init_kwargs"]) == 2
-    assert captured["shutdown"] == 1
+    assert _wait_until(lambda: captured.get("shutdown") == 1), "旧 client 未被关闭"
     assert manager.current_fingerprint() != first_fingerprint
 
 
@@ -644,3 +660,54 @@ async def test_probe_without_overrides_keeps_old_behaviour(monkeypatch):
 
     assert ok is True
     assert captured["url"].startswith("http://lf:3000")
+
+
+# ------------------------------------------------- 重建 client 不得阻塞事件循环
+
+
+async def test_rebuild_does_not_block_event_loop_when_teardown_is_slow(monkeypatch):
+    """回归：旧 client 的关闭会同步 flush（``force_flush`` 要等导出线程把队列发完），
+    Langfuse 不可达时最长要等一个 timeout。这**绝不能在事件循环线程里做**——
+    否则管理员一改配置，正在流式输出的对话就会被一起卡住。
+
+    约束：重建必须立刻返回（不阻塞事件循环），但旧 client 仍须确实被关闭。
+    """
+    captured = {}
+    _install_fake_client(monkeypatch, captured)
+    await _refresh(monkeypatch)
+    await manager.init_observability()
+    assert manager.current_client() is not None
+
+    started = threading.Event()
+
+    def slow_teardown(client):
+        started.set()
+        time.sleep(1.0)
+
+    monkeypatch.setattr(manager, "_teardown_client", slow_teardown)
+
+    t0 = time.perf_counter()
+    await _refresh(monkeypatch, host="http://other:3000")  # 指纹变化 -> 重建
+    elapsed = time.perf_counter() - t0
+
+    assert elapsed < 0.5, (
+        f"重建 client 阻塞了事件循环 {elapsed:.2f}s；"
+        "旧 client 的 flush 必须挪出事件循环线程"
+    )
+    assert started.wait(2.0), "旧 client 仍必须被关闭（只是不能在事件循环里同步做）"
+
+
+async def test_rebuild_closes_every_replaced_client(monkeypatch):
+    """后台关闭不能变成「不关闭」：被换下的 client 仍要 flush + shutdown。"""
+    captured = {}
+    _install_fake_client(monkeypatch, captured)
+    await _refresh(monkeypatch)
+    await manager.init_observability()
+    first = manager.current_client()
+
+    await _refresh(monkeypatch, host="http://other:3000")
+    second = manager.current_client()
+
+    assert second is not first
+    assert _wait_until(lambda: captured.get("shutdown") == 1), "旧 client 未被关闭"
+    assert captured.get("flush") == 1, "关闭前应尽力 flush，避免丢最后一批 span"

@@ -455,8 +455,10 @@ Tab 的可见性与「参数配置」一致（同属 `menu:system:config` 页面
 2. **跨任务父子关系**：SSE producer task 与 pipeline 内的 `asyncio.create_task` 之间，
    OTel 上下文能否稳定传递需以真实 trace 验证；若断裂，则在任务创建处显式传
    `otel_context`，`LangfuseContextMiddleware` 作为身份兜底。
-3. **client 热重建**：旧 processor `shutdown()` 后不再接收 span 已由源码确认，
-   但线程与内存是否干净释放需实测；不可靠则降级为重启生效。
+3. **client 热重建**：旧 processor `shutdown()` 后不再接收 span 已由源码确认。
+   **实测补充**：重建本身约 6ms，线程与内存无异常。但实测同时发现一个更严重的隐患——
+   `flush()` 是同步的 `force_flush()`，而重建链路跑在事件循环线程里，会阻塞整个
+   事件循环，详见第 9 条（已修复）。
 4. **trace 级属性来源**：`user.id` / `session.id` 由 SDK 从根 span（app root）推导，
    非根 span 上的同名属性是否会被合并需实测确认。
 5. **Langfuse 版本漂移**：`requirements.txt` 锁精确版本并在注释中写明升级前需核对
@@ -470,3 +472,18 @@ Tab 的可见性与「参数配置」一致（同属 `menu:system:config` 页面
    `langfuse_config.updated_by` / `updated_at` 与 HTTP 层已有的访问审计日志
    （`AccessLogMiddleware` 会记录 PUT 的请求体与响应）。若后续要求完整字段级历史，
    再补一张 `langfuse_config_history` 表即可，属增量改动。
+9. **重建 client 时的同步 flush 会阻塞事件循环（已修复）**：`client.flush()` 内部是同步的
+   `tracer_provider.force_flush()`，会等导出线程把队列发完；Langfuse 不可达时最长等一个
+   `timeout_seconds`（默认 5s）。而重建链路「配置刷新 → 快照监听器 → `_ensure_client`」
+   整条跑在**事件循环线程**里，所以「Langfuse 挂掉 + 有人改配置」（或 30s 刷新循环发现
+   指纹变化）会让事件循环停顿，**连带卡住正在流式输出的对话**——这违背「追踪只是旁路」。
+   修复：`_teardown_client_in_background` 用 daemon 线程关闭被替换的 client。取舍是进程被
+   强杀时可能丢最后一批 span，但正常关闭路径（`shutdown_observability` 的 `to_thread`）
+   仍会 `await` 完成，不丢数据。回归测试以「模拟 flush 慢 1s，断言重建 <0.5s 返回、
+   且旧 client 确实被关闭」锁定该约束。
+10. **不可达场景实测数据（供容量与部署参考）**：host 指向必定连不上的地址
+   （`timeout_seconds=2`）时——关闭追踪 300 轮「建根 span + 结束」共 0.1ms；开启追踪
+   300 轮共 7.9ms，即**每轮对话额外约 26.5 微秒**；配置变更触发重建 5.9ms；进程关闭时
+   flush 约 1.0s（在等导出超时，属预期，K8s 需留足 grace period）。此外 `should_export_span`
+   经 `inspect` 确认由 SDK 在 `on_end` 中**于请求线程上同步调用**，因此它必须无 IO——
+   现实现只读内存快照 + sha256 采样，其开销已包含在上述 26.5 微秒内。
