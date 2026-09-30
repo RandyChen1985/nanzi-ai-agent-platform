@@ -104,11 +104,28 @@ async def lifespan(app: FastAPI):
     # 记忆摘要索引：Redis 重启后易丢失，启动时自动 ensure（设计文档约定）
     asyncio.create_task(maybe_ensure_memory_index_on_startup())
 
+    # LLM 链路追踪（Langfuse）：配置来自数据库，冷启动读不到时由后台刷新协程在
+    # 读到有效配置后自动补建 client。任何异常都只降级，绝不阻塞启动。
+    try:
+        from app.services.ai.observability.manager import init_observability
+
+        await init_observability()
+    except Exception as exc:
+        logging.warning("Failed to initialize Langfuse observability: %s", exc)
+
     # Mounted Starlette 子应用不会自动执行自己的 lifespan；显式托管
     # FastMCP 的 session manager，否则首次请求会报 Task group 未初始化。
     async with echo_mcp_lifespan(), platform_mcp_lifespan():
         yield
     # Shutdown
+    # 先 flush 追踪（此时数据库/Redis 连接仍在），避免进程退出丢最后一批 span。
+    try:
+        from app.services.ai.observability.manager import shutdown_observability
+
+        await shutdown_observability()
+    except Exception as exc:
+        logging.warning("Failed to shutdown Langfuse observability: %s", exc)
+
     from app.services.ai.runtime.agentscope.workspace import (
         stop_docker_workspace_reaper,
         stop_k8s_workspace_reaper,

@@ -143,6 +143,7 @@ export const MENU_TREE = [
             { id: 'element:role:delete', label: '删除角色' },
             { id: 'menu:system:config', label: '系统配置' },
             { id: 'element:system:config_save', label: '保存系统配置' },
+            { id: 'element:system:langfuse_save', label: '保存 Langfuse 链路追踪配置' },
             { id: 'menu:system:audit', label: '审计日志' }
         ]
     },

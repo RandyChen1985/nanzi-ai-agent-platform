@@ -25,6 +25,11 @@ bcrypt==4.0.1
 # .venv 与生产镜像版本漂移、故障无法复现。升级前请先阅读
 # docs/md/agentscope_2.0.9_upgrade_guide.md 的验证清单，改版本号时同步更新该文档。
 agentscope[service,storage,workspace]==2.0.9
+# Langfuse 同样锁定精确版本：本平台把 Langfuse Python SDK 当作 OpenTelemetry 的后端
+# （靠它注册全局 TracerProvider，并依赖 should_export_span / mask_otel_spans 两个钩子）。
+# 升级前请先阅读 docs/superpowers/specs/2026-09-30-langfuse-llm-tracing-design.md，
+# 并重新核对 langfuse/_client/attributes.py、span_filter.py、span_exporter.py 的属性名与钩子行为。
+langfuse==4.15.6
 openai>=1.0.0
 atlassian-python-api>=3.41.11
 oracledb>=2.0.0
