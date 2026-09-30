@@ -2,7 +2,7 @@ from typing import Any, Dict, Optional
 
 from app.services.config_service import ConfigService
 
-DEFAULT_PRODUCT_NAME = "NanZi Agent"
+DEFAULT_PRODUCT_NAME = "NanZi AI Agent"
 DEFAULT_LOGIN_SUBTITLE = "Your Intelligent Agent Platform"
 DEFAULT_ICON_URL = "/favicon.svg"
 DEFAULT_AGENT_NAME = "NanZi · AI"
