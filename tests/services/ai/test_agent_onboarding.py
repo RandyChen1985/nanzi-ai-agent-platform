@@ -16,6 +16,8 @@ async def test_onboarding_creates_agent_and_v1_draft_in_one_commit():
     session = AsyncMock(spec=AsyncSession)
     no_existing = MagicMock()
     no_existing.scalar_one_or_none.return_value = None
+    # find_agent_name_conflict 走 scalars().first()，必须一并 mock 掉
+    no_existing.scalars.return_value.first.return_value = None
     session.execute.return_value = no_existing
     session.flush.side_effect = lambda: None
     data = AIAgentBase(
@@ -106,6 +108,8 @@ async def test_concurrent_onboarding_insert_returns_winning_agent():
     session = AsyncMock(spec=AsyncSession)
     no_existing = MagicMock()
     no_existing.scalar_one_or_none.return_value = None
+    # find_agent_name_conflict 走 scalars().first()，必须一并 mock 掉
+    no_existing.scalars.return_value.first.return_value = None
     winner_agent = AIAgent(id="winner", name="winner", display_name="Winner", onboarding_step="VERSION")
     winner_version = AIAgentVersion(id="winner-v1", agent_id="winner", version_number=1, status="DRAFT", system_prompt="winner", tools=[])
     winner_agent_result = MagicMock()

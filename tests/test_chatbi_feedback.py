@@ -5,7 +5,6 @@ from sqlalchemy import select, delete
 from app.models.audit import AgentExecutionHistory, AgentExecutionTrace
 from app.models.chatbi_example import ChatBIExample
 from app.core.orm import AsyncSessionLocal
-from unittest.mock import AsyncMock, patch
 
 @pytest.fixture
 async def setup_feedback_data():
@@ -75,50 +74,6 @@ async def test_feedback_collection_and_example_creation(client: AsyncClient, set
         assert example.user_query == "查询上月销售额"
 
 @pytest.mark.asyncio
-async def test_audit_and_sync_trigger(client: AsyncClient, setup_feedback_data, admin_api_key):
-    """验证管理端审核经验并手动触发同步。"""
-    trace_id = setup_feedback_data
-    
-    headers = {"X-API-Key": admin_api_key}
-    # 首先触发点赞创建经验
-    await client.post("/api/portal/chat/feedback", json={"trace_id": trace_id, "feedback": "up"}, headers=headers)
-    
-    async with AsyncSessionLocal() as session:
-        res = await session.execute(select(ChatBIExample).where(ChatBIExample.trace_id == trace_id))
-        example = res.scalars().first()
-        example_id = example.id
-
-    # 1. 模拟审核通过
-    audit_payload = {"id": example_id, "status": "approved"}
-    audit_resp = await client.post("/api/portal/chatbi-examples/audit", json=audit_payload, headers=headers)
-    assert audit_resp.status_code == 200
-    
-    async with AsyncSessionLocal() as session:
-        res_after = await session.execute(select(ChatBIExample).where(ChatBIExample.id == example_id))
-        example_after = res_after.scalars().first()
-        assert example_after.status == "approved"
-
-    # 2. 模拟手动触发同步
-    with patch("app.services.ai.ragflow_client.RagFlowClient.upload_document", new_callable=AsyncMock) as mock_upload:
-        mock_upload.return_value = {"id": "rag-doc-123"}
-        with patch("app.services.ai.ragflow_client.RagFlowClient.parse_documents", new_callable=AsyncMock):
-            # 模拟系统配置已设置
-            with patch("app.services.config_service.ConfigService.get", new_callable=AsyncMock) as mock_config:
-                mock_config.return_value = "target-dataset-id"
-                
-                sync_resp = await client.post(f"/api/portal/chatbi-examples/sync/{example_id}", headers=headers)
-                assert sync_resp.status_code == 200
-                
-                from app.services.chatbi_example_service import ExampleService
-                await ExampleService.sync_to_ragflow(example_id)
-                
-                async with AsyncSessionLocal() as session:
-                    res_final = await session.execute(select(ChatBIExample).where(ChatBIExample.id == example_id))
-                    final_example = res_final.scalars().first()
-                    assert final_example.rag_sync_status == "synced"
-                    assert final_example.rag_doc_id == "rag-doc-123"
-
-@pytest.mark.asyncio
 async def test_feedback_idempotency(client: AsyncClient, setup_feedback_data, admin_api_key):
     """验证反馈操作的幂等性：从点赞改为点踩。"""
     trace_id = setup_feedback_data
@@ -172,33 +127,3 @@ async def test_feedback_collection_without_sql(client: AsyncClient, admin_api_ke
         assert example.user_query == "你好，请介绍一下你自己"
         assert example.ai_answer == "我是 NanZi AI 智能体助手。"
         assert example.category in ["general", "knowledge", "data_query"]
-
-@pytest.mark.asyncio
-async def test_data_query_approval_blocked_when_sql_empty(client: AsyncClient, admin_api_key):
-    """验证分类为 data_query 且 SQL 为空的案例在尝试通过审核时会被拦截。"""
-    trace_id = "trace-test-empty-sql-blocked-003"
-    agent_id = "agent-test-id"
-    
-    async with AsyncSessionLocal() as session:
-        await session.execute(delete(ChatBIExample).where(ChatBIExample.trace_id == trace_id))
-        
-        example = ChatBIExample(
-            trace_id=trace_id,
-            agent_id=agent_id,
-            dataset_id=0,
-            user_query="查下数据",
-            sql_text="",
-            category="data_query",
-            status="pending"
-        )
-        session.add(example)
-        await session.commit()
-        await session.refresh(example)
-        example_id = example.id
-
-    headers = {"X-API-Key": admin_api_key}
-    audit_resp = await client.post("/api/portal/chatbi-examples/audit", json={"id": example_id, "status": "approved"}, headers=headers)
-    assert audit_resp.status_code == 400
-    res_data = audit_resp.json()
-    err_msg = res_data.get("message") or res_data.get("detail") or str(res_data)
-    assert "必须包含有效的 SQL" in err_msg

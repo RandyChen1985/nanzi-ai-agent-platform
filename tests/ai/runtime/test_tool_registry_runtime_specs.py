@@ -270,6 +270,9 @@ async def test_tool_registry_marks_db_generic_api_runtime_tool_source():
     legacy_tool.name = "weather_api"
     legacy_tool.description = "Weather API"
     legacy_tool.args_schema = None
+    # runtime_tool_spec_from_legacy_tool 按 permission_scope or tool_scope or infer(...)
+    # 解析权限，MagicMock 属性恒为真值会直接顶掉推断结果，必须显式给出。
+    legacy_tool.permission_scope = "ask"
     legacy_tool.ainvoke = AsyncMock(return_value='{"temp": 20}')
 
     mock_session = AsyncMock()
@@ -313,6 +316,8 @@ async def test_tool_registry_marks_db_mcp_runtime_tool_source():
     legacy_tool.name = "jira:search"
     legacy_tool.description = "Search Jira"
     legacy_tool.args_schema = None
+    # 同上：显式给出权限，否则 MagicMock 属性会顶掉推断结果
+    legacy_tool.permission_scope = "ask"
     legacy_tool.ainvoke = AsyncMock(return_value="mcp result")
 
     mock_session = AsyncMock()

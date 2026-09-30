@@ -193,9 +193,13 @@ async def test_create_agent_success(mock_session, mock_user_normal):
     """测试创建 Agent"""
     data = AIAgentBase(name="new-agent", display_name="New Agent")
     
-    # Check existing name -> None (Mock empty result)
+    # Check existing name -> None。
+    # 注意 find_agent_name_conflict 走的是 result.scalars().first()，
+    # 若只 mock scalar_one_or_none，scalars() 会返回 MagicMock、first() 为真值，
+    # 直接被判成「标识符已被占用」。
     mock_empty_result = MagicMock()
     mock_empty_result.scalar_one_or_none.return_value = None
+    mock_empty_result.scalars.return_value.first.return_value = None
     mock_session.execute.return_value = mock_empty_result
     
     # Mock router service invalidate

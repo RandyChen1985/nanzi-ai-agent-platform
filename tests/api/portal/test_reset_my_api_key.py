@@ -19,10 +19,17 @@ async def test_reset_my_api_key_without_2fa():
     mock_user.two_factor_enabled = 0
     mock_user.password_hash = "$2b$12$fakehash"
     mock_db.get.return_value = mock_user
+    # 成功分支会走 _issue_portal_session_cookie -> AuthService.create_portal_session，
+    # 那里用 session.execute(...).scalar_one_or_none() 再取一次用户。AsyncMock 的
+    # execute 返回的是协程，.scalar_one_or_none() 拿不到 User，故显式给出结果对象。
+    _session_result = MagicMock()
+    _session_result.scalar_one_or_none.return_value = mock_user
+    mock_db.execute = AsyncMock(return_value=_session_result)
 
     # 1. 未传密码 -> 400
     with pytest.raises(HTTPException) as exc_info:
         await reset_my_api_key(
+            http_request=MagicMock(),
             request=ResetMyApiKeyRequest(),
             response=response,
             user=user_info,
@@ -35,6 +42,7 @@ async def test_reset_my_api_key_without_2fa():
     with patch.object(AuthService, "verify_password_hash", return_value=False):
         with pytest.raises(HTTPException) as exc_info:
             await reset_my_api_key(
+                http_request=MagicMock(),
                 request=ResetMyApiKeyRequest(password="WrongPass123!"),
                 response=response,
                 user=user_info,
@@ -48,6 +56,7 @@ async def test_reset_my_api_key_without_2fa():
         with patch.object(AuthService, "reset_api_key", new_callable=AsyncMock, return_value="NEW_API_KEY_123"):
             with patch.object(AuthService, "register_online_state", new_callable=AsyncMock):
                 res = await reset_my_api_key(
+                    http_request=MagicMock(),
                     request=ResetMyApiKeyRequest(password="CorrectPass123!"),
                     response=response,
                     user=user_info,
@@ -68,6 +77,12 @@ async def test_reset_my_api_key_with_2fa():
     mock_user.two_factor_enabled = 1
     mock_user.password_hash = "$2b$12$fakehash"
     mock_db.get.return_value = mock_user
+    # 成功分支会走 _issue_portal_session_cookie -> AuthService.create_portal_session，
+    # 那里用 session.execute(...).scalar_one_or_none() 再取一次用户。AsyncMock 的
+    # execute 返回的是协程，.scalar_one_or_none() 拿不到 User，故显式给出结果对象。
+    _session_result = MagicMock()
+    _session_result.scalar_one_or_none.return_value = mock_user
+    mock_db.execute = AsyncMock(return_value=_session_result)
 
     # 1. 使用动态码验证成功
     with patch.object(AuthService, "get_user_2fa_secret", new_callable=AsyncMock, return_value="JBSWY3DPEHPK3PXP"):
@@ -75,6 +90,7 @@ async def test_reset_my_api_key_with_2fa():
             with patch.object(AuthService, "reset_api_key", new_callable=AsyncMock, return_value="NEW_KEY_BY_2FA"):
                 with patch.object(AuthService, "register_online_state", new_callable=AsyncMock):
                     res = await reset_my_api_key(
+                        http_request=MagicMock(),
                         request=ResetMyApiKeyRequest(code="123456"),
                         response=response,
                         user=user_info,
@@ -88,6 +104,7 @@ async def test_reset_my_api_key_with_2fa():
         with patch.object(TotpService, "verify_code", return_value=False):
             with pytest.raises(HTTPException) as exc_info:
                 await reset_my_api_key(
+                    http_request=MagicMock(),
                     request=ResetMyApiKeyRequest(code="000000"),
                     response=response,
                     user=user_info,
@@ -101,6 +118,7 @@ async def test_reset_my_api_key_with_2fa():
         with patch.object(AuthService, "reset_api_key", new_callable=AsyncMock, return_value="NEW_KEY_BY_PWD"):
             with patch.object(AuthService, "register_online_state", new_callable=AsyncMock):
                 res = await reset_my_api_key(
+                    http_request=MagicMock(),
                     request=ResetMyApiKeyRequest(password="CorrectPass123!"),
                     response=response,
                     user=user_info,

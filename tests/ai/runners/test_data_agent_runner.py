@@ -12,6 +12,13 @@ from app.services.ai.intent_service import IntentType
 from app.services.ai.grounding.models import EvidenceType
 
 
+# AgentScope 2.0.9 会读取 model.formatter.supported_input_media_types，
+# 用 SimpleNamespace 伪造 native_model 时必须一并给出 formatter。
+from agentscope.formatter import OpenAIChatFormatter as _OpenAIChatFormatter
+
+_FAKE_FORMATTER = _OpenAIChatFormatter()
+
+
 pytestmark = pytest.mark.no_infrastructure
 
 
@@ -91,7 +98,7 @@ def isolate_data_agent_runtime(monkeypatch):
         return default
 
     fake_llm_handle = SimpleNamespace(
-        native_model=SimpleNamespace(model="fake-native-data"),
+        native_model=SimpleNamespace(model="fake-native-data", formatter=_FAKE_FORMATTER),
         model_name="fake-native-data",
         temperature=0.0,
         streaming=True,
@@ -465,9 +472,11 @@ async def test_data_agent_runner_builds_chatbi_toolkit_without_workspace_file_to
     )
 
     build_chatbi.assert_awaited_once()
+    # 调用签名新增了 user_id（用于用户维度工具过滤）
     build_toolkit.assert_called_once_with(
         tools,
         approval_mode=runner.permission_options.get("approval_mode"),
+        user_id=None,
     )
     assert captured_agent_kwargs["toolkit"] is fake_toolkit
     assert captured_agent_kwargs["offloader"] is fake_workspace
@@ -2285,7 +2294,7 @@ async def test_data_agent_runner_blocks_final_answer_before_required_sql(data_co
     async for chunk in runner._stream_agentscope_events(
         event_stream=fake_events(),
         tools=[],
-        native_model=SimpleNamespace(model="fake-native-data"),
+        native_model=SimpleNamespace(model="fake-native-data", formatter=_FAKE_FORMATTER),
     ):
         events.append(chunk)
 
@@ -2579,7 +2588,9 @@ def test_schema_binding_summary_lists_physical_tables_and_columns(data_config):
     assert "Schema Binding 摘要" in summary
     assert "HRMRESOURCE" in summary
     assert "SUPDEPID" in summary
-    assert "禁止使用未列出的字段" in summary
+    # 实现文案已细化为「禁止使用 term 或臆造 … 等未列出的列名」
+    assert "禁止使用 term" in summary
+    assert "未列出的列名" in summary
     assert "字段后括号内为类型/样例值" in summary
 
 
@@ -3363,7 +3374,7 @@ async def test_data_agent_runner_rejects_sql_before_schema(data_config):
     async for chunk in runner._stream_agentscope_events(
         event_stream=fake_events(),
         tools=[],
-        native_model=SimpleNamespace(model="fake-native-data"),
+        native_model=SimpleNamespace(model="fake-native-data", formatter=_FAKE_FORMATTER),
     ):
         events.append(chunk)
 
@@ -4595,7 +4606,7 @@ async def test_data_agent_runner_syncs_data_run_state_before_interrupt(data_conf
         event_stream=fake_events(),
         agent=FakeAgent(),
         tools=[],
-        native_model=SimpleNamespace(model="fake-native-data"),
+        native_model=SimpleNamespace(model="fake-native-data", formatter=_FAKE_FORMATTER),
         state=state,
     ):
         pass
@@ -4652,7 +4663,7 @@ async def test_data_agent_runner_repair_after_sql_before_schema(data_config):
     async for chunk in runner._stream_agentscope_events(
         event_stream=fake_events(),
         tools=[],
-        native_model=SimpleNamespace(model="fake-native-data"),
+        native_model=SimpleNamespace(model="fake-native-data", formatter=_FAKE_FORMATTER),
         state=state,
     ):
         pass
@@ -4690,7 +4701,7 @@ async def test_data_agent_runner_marks_schema_miss_and_blocks_sql_before_schema(
     async for chunk in runner._stream_agentscope_events(
         event_stream=fake_events(),
         tools=[],
-        native_model=SimpleNamespace(model="fake-native-data"),
+        native_model=SimpleNamespace(model="fake-native-data", formatter=_FAKE_FORMATTER),
     ):
         events.append(chunk)
 
@@ -4724,7 +4735,7 @@ async def test_data_agent_runner_marks_no_authorized_schema_and_blocks_sql_befor
     async for _ in runner._stream_agentscope_events(
         event_stream=fake_events(),
         tools=[],
-        native_model=SimpleNamespace(model="fake-native-data"),
+        native_model=SimpleNamespace(model="fake-native-data", formatter=_FAKE_FORMATTER),
     ):
         pass
 
@@ -4740,7 +4751,7 @@ def test_format_tool_details_truncates_long_output(data_config):
 
     runner = DataAgentRunner(config=data_config, trace_id="trace-trunc", trace_buffer=[])
     details = runner._format_tool_details("execute_sql_query", "x" * 2000, _DataRunState())
-    assert details == "x" * 1000 + "\n… [输出已截断]"
+    assert details == "x" * 1000 + "\n… [日志预览已截断]"
 
 
 def test_format_tool_details_appends_detection_after_truncation(data_config):
@@ -4751,7 +4762,7 @@ def test_format_tool_details_appends_detection_after_truncation(data_config):
     tool_args = {"sql": "SELECT 1", "data_source": "mysql_aiagent", "dataset_name": "demo"}
     details = runner._format_tool_details("execute_sql_query", "y" * 2000, state, tool_args)
     assert details.startswith("[Executed SQL]:\nSELECT 1\n\n--- 结果 ---\n")
-    assert "y" * 1000 + "\n… [输出已截断]" in details
+    assert "y" * 1000 + "\n… [日志预览已截断]" in details
     assert details.endswith("\n\n[系统检测] SQL 返回的行容器为空，未命中任何数据行")
 
 
@@ -4915,7 +4926,7 @@ async def test_data_agent_runner_blocks_final_answer_after_sql_error(data_config
     async for chunk in runner._stream_agentscope_events(
         event_stream=fake_events(),
         tools=[],
-        native_model=SimpleNamespace(model="fake-native-data"),
+        native_model=SimpleNamespace(model="fake-native-data", formatter=_FAKE_FORMATTER),
     ):
         events.append(chunk)
 
@@ -4954,7 +4965,7 @@ async def test_data_agent_runner_allows_final_answer_after_trusted_empty_sql_res
     async for chunk in runner._stream_agentscope_events(
         event_stream=fake_events(),
         tools=[],
-        native_model=SimpleNamespace(model="fake-native-data"),
+        native_model=SimpleNamespace(model="fake-native-data", formatter=_FAKE_FORMATTER),
     ):
         events.append(chunk)
 
@@ -4996,7 +5007,7 @@ async def test_data_agent_runner_blocks_string_filter_empty_sql_result_for_reche
         async for chunk in runner._stream_agentscope_events(
             event_stream=fake_events(),
             tools=[],
-            native_model=SimpleNamespace(model="fake-native-data"),
+            native_model=SimpleNamespace(model="fake-native-data", formatter=_FAKE_FORMATTER),
             emit_final_guard=False,
         ):
             events.append(chunk)
@@ -5072,7 +5083,7 @@ async def test_data_agent_runner_blocks_complex_empty_sql_result_for_recheck(dat
     async for chunk in runner._stream_agentscope_events(
         event_stream=fake_events(),
         tools=[],
-        native_model=SimpleNamespace(model="fake-native-data"),
+        native_model=SimpleNamespace(model="fake-native-data", formatter=_FAKE_FORMATTER),
     ):
         events.append(chunk)
 
@@ -5117,7 +5128,7 @@ async def test_data_agent_runner_stops_current_react_after_empty_sql_result(data
     async for chunk in runner._stream_agentscope_events(
         event_stream=fake_events(),
         tools=[],
-        native_model=SimpleNamespace(model="fake-native-data"),
+        native_model=SimpleNamespace(model="fake-native-data", formatter=_FAKE_FORMATTER),
         emit_final_guard=False,
     ):
         events.append(chunk)
@@ -5156,7 +5167,7 @@ async def test_data_agent_runner_detects_split_sql_plan_before_sql(data_config):
     async for chunk in runner._stream_agentscope_events(
         event_stream=fake_events(),
         tools=[],
-        native_model=SimpleNamespace(model="fake-native-data"),
+        native_model=SimpleNamespace(model="fake-native-data", formatter=_FAKE_FORMATTER),
         state=state,
     ):
         events.append(chunk)
@@ -5191,7 +5202,7 @@ async def test_data_agent_runner_tracks_sql_plan_in_thinking_and_forces_sql(data
     async for _chunk in runner._stream_agentscope_events(
         event_stream=fake_events(),
         tools=[],
-        native_model=SimpleNamespace(model="fake-native-data"),
+        native_model=SimpleNamespace(model="fake-native-data", formatter=_FAKE_FORMATTER),
         state=state,
         emit_final_guard=False,
     ):
@@ -5236,7 +5247,7 @@ async def test_data_agent_runner_suppresses_duplicate_final_answer_text_blocks(d
     async for chunk in runner._stream_agentscope_events(
         event_stream=fake_events(),
         tools=[],
-        native_model=SimpleNamespace(model="fake-native-data"),
+        native_model=SimpleNamespace(model="fake-native-data", formatter=_FAKE_FORMATTER),
     ):
         events.append(chunk)
 
@@ -5288,7 +5299,7 @@ async def test_data_agent_runner_allows_final_answer_after_tool_calls_following_
     async for chunk in runner._stream_agentscope_events(
         event_stream=fake_events(),
         tools=[],
-        native_model=SimpleNamespace(model="fake-native-data"),
+        native_model=SimpleNamespace(model="fake-native-data", formatter=_FAKE_FORMATTER),
     ):
         events.append(chunk)
 
@@ -6035,7 +6046,7 @@ def test_format_tool_details_shows_schema_hit_summary(data_config):
     assert "[命中摘要] 共命中 1 条元数据记录，占用约" in details
     assert "token" in details
     assert details.index("[命中摘要]") < details.index("--- [Schema:1]")
-    assert "… [输出已截断]" in details
+    assert "… [日志预览已截断]" in details
 
 
 @pytest.mark.asyncio

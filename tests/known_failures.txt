@@ -27,7 +27,6 @@
 # --- A-断言过时 ---
 tests/ai/runners/test_auto_upgrade_federated.py::test_federated_graceful_degradation  # A-断言过时: 断言与当前实现漂移，待逐项复核
 tests/ai/runners/test_auto_upgrade_federated.py::test_federated_turn_type_enters_federated_executor_without_cross_wording  # A-断言过时: 断言与当前实现漂移，待逐项复核
-tests/ai/runners/test_data_agent_runner.py::test_data_agent_runner_builds_chatbi_toolkit_without_workspace_file_tools  # A-断言过时: 断言与当前实现漂移，待逐项复核
 tests/ai/runners/test_data_agent_runner.py::test_data_agent_runner_context_action_can_answer_without_sql  # A-断言过时: 断言与当前实现漂移，待逐项复核
 tests/ai/runners/test_data_agent_runner.py::test_data_agent_runner_does_not_issue_derived_evidence_for_history_only_reuse  # A-断言过时: 断言与当前实现漂移，待逐项复核
 tests/ai/runners/test_data_agent_runner.py::test_data_agent_runner_execute_rechecks_empty_sql_before_final_answer  # A-断言过时: 断言与当前实现漂移，待逐项复核
@@ -38,10 +37,6 @@ tests/ai/runners/test_data_agent_runner.py::test_data_agent_runner_reports_missi
 tests/ai/runners/test_data_agent_runner.py::test_data_agent_runner_synthesizes_after_repeated_sql_gate  # A-断言过时: 断言与当前实现漂移，待逐项复核
 tests/ai/runners/test_data_agent_runner.py::test_data_agent_runner_tool_loop_fuse_triggers_on_global_limit  # A-断言过时: 断言与当前实现漂移，待逐项复核
 tests/ai/runners/test_data_agent_runner.py::test_empty_diagnostic_sql_does_not_mark_business_sql_complete  # A-断言过时: 断言与当前实现漂移，待逐项复核
-tests/ai/runners/test_data_agent_runner.py::test_format_tool_details_appends_detection_after_truncation  # A-断言过时: 断言与当前实现漂移，待逐项复核
-tests/ai/runners/test_data_agent_runner.py::test_format_tool_details_shows_schema_hit_summary  # A-断言过时: 断言与当前实现漂移，待逐项复核
-tests/ai/runners/test_data_agent_runner.py::test_format_tool_details_truncates_long_output  # A-断言过时: 断言与当前实现漂移，待逐项复核
-tests/ai/runners/test_data_agent_runner.py::test_schema_binding_summary_lists_physical_tables_and_columns  # A-断言过时: 断言与当前实现漂移，待逐项复核
 tests/ai/runners/test_data_agent_runner.py::test_schema_keyword_planner_derives_keywords_from_intent_when_llm_keywords_invalid  # A-断言过时: 断言与当前实现漂移，待逐项复核
 tests/ai/runners/test_data_agent_runner.py::test_sql_preflight_allows_table_in_user_permission_set  # A-断言过时: 断言与当前实现漂移，待逐项复核
 tests/ai/runners/test_data_agent_runner.py::test_sql_preflight_allows_unqualified_columns_for_single_table_to_avoid_dialect_false_positives  # A-断言过时: 断言与当前实现漂移，待逐项复核
@@ -106,23 +101,13 @@ tests/ai/executors/test_chat_executor.py::test_general_runner_emits_permission_r
 tests/ai/executors/test_chat_executor.py::test_general_runner_keeps_tool_preamble_as_process_narration  # B-依赖升级适配: AgentScope 2.0.9 后 FakeModel 缺属性（如 formatter）
 tests/ai/executors/test_chat_executor.py::test_knowledge_runner_with_rag_but_no_citations_intercepts_hallucination  # B-依赖升级适配: AgentScope 2.0.9 后 FakeModel 缺属性（如 formatter）
 tests/ai/executors/test_chat_executor.py::test_permission_resume_restores_user_context_for_user_scoped_tools  # B-依赖升级适配: AgentScope 2.0.9 后 FakeModel 缺属性（如 formatter）
-tests/ai/runtime/test_agentscope_environment_baseline.py::test_checklist_tracks_agentscope_runtime_replacement  # B-依赖升级适配: AgentScope 运行时特性断言与 2.0.9 不一致
 tests/ai/runtime/test_agentscope_tool_evidence.py::test_mcp_tool_factory_uses_model_safe_name_and_preserves_remote_tool_name  # B-依赖升级适配: AgentScope 运行时特性断言与 2.0.9 不一致
 tests/ai/runtime/test_agentscope_v2_0_6_features.py::test_build_runtime_middlewares_includes_permission_and_stats  # B-依赖升级适配: AgentScope 运行时特性断言与 2.0.9 不一致
 tests/ai/runtime/test_agentscope_v2_0_6_features.py::test_load_injection_config_respects_system_flag  # B-依赖升级适配: AgentScope 运行时特性断言与 2.0.9 不一致
-tests/ai/runtime/test_tool_registry_runtime_specs.py::test_tool_registry_marks_db_generic_api_runtime_tool_source  # B-依赖升级适配: Mock 未提供 permission_scope 等新字段
-tests/ai/runtime/test_tool_registry_runtime_specs.py::test_tool_registry_marks_db_mcp_runtime_tool_source  # B-依赖升级适配: Mock 未提供 permission_scope 等新字段
 
 # --- C-环境与配置 ---
 
 # --- D-测试状态污染 ---
-tests/api/portal/test_reset_my_api_key.py::test_reset_my_api_key_with_2fa  # D-测试状态污染: API key 状态残留
-tests/api/portal/test_reset_my_api_key.py::test_reset_my_api_key_without_2fa  # D-测试状态污染: API key 状态残留
 tests/api/portal/test_skill_publication_routes.py::test_admin_publication_review_routes_exist  # D-测试状态污染: 技能发布状态残留
 tests/api/portal/test_skill_publication_routes.py::test_personal_publication_submit_route_exists  # D-测试状态污染: 技能发布状态残留
-tests/services/ai/test_agent_manager.py::test_create_agent_success  # D-测试状态污染: 智能体标识符在共享库中已被占用，缺清理
-tests/services/ai/test_agent_onboarding.py::test_concurrent_onboarding_insert_returns_winning_agent  # D-测试状态污染: 并发 onboarding 依赖干净库状态，残留数据导致失败
-tests/services/ai/test_agent_onboarding.py::test_onboarding_creates_agent_and_v1_draft_in_one_commit  # D-测试状态污染: 并发 onboarding 依赖干净库状态，残留数据导致失败
-tests/test_chatbi_feedback.py::test_audit_and_sync_trigger  # D-测试状态污染: 反馈记录残留
-tests/test_chatbi_feedback.py::test_data_query_approval_blocked_when_sql_empty  # D-测试状态污染: 反馈记录残留
 
