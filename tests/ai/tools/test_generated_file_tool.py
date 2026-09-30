@@ -54,7 +54,14 @@ def publish_env(tmp_path, monkeypatch):
             trace_id="trace-1",
         )
     )
-    return root, docs_dir
+    try:
+        yield root, docs_dir
+    finally:
+        # 请求上下文是跨用例共享的 ContextVar，必须清理。否则后续用例会带着
+        # user_id=7、is_admin=False 进入权限分支：例如 search_knowledge_base
+        # 会把显式传入的 dataset_id 当作「无权限的受限数据集」移除，导致
+        # test_knowledge_tool.py 全量运行时失败、单跑却通过。
+        set_agent_context(None)
 
 
 @pytest.mark.asyncio
@@ -72,7 +79,9 @@ async def test_publish_generated_file_returns_download_url_for_docker_path(publi
     assert result["status"] == "ok"
     assert result["filename"] == "report.md"
     assert result["artifact_type"] == "markdown"
-    assert result["download_url"].startswith("/api/v1/chat/generated-files/")
+    # download_url 可能是相对路径，也可能被拼成绝对地址（取决于进程内 base URL
+    # 配置是否已被其它测试/初始化装载），断言只关心路径本身，不绑定这个差异。
+    assert "/api/v1/chat/generated-files/" in result["download_url"]
     assert "token=" in result["download_url"]
     assert result["expires_at"]
     assert result["download_url"] in get_current_agent_context().published_download_urls

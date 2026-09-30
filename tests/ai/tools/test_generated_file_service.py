@@ -49,7 +49,12 @@ def unified_publish_env(tmp_path, monkeypatch):
     monkeypatch.setattr(generated_file_service, "AsyncSessionLocal", lambda: session)
     monkeypatch.setattr(generated_file_service.ConfigService, "get", fake_config_get)
     set_agent_context(AgentContext(agent_id="agent", agent_name="Agent", user_id=7))
-    return workspace_root, session
+    try:
+        yield workspace_root, session
+    finally:
+        # 请求上下文是跨用例共享的 ContextVar，fixture 里设置就必须在退出时清理，
+        # 否则后续用例会带着 user_id=7、is_admin=False 进入权限分支。
+        set_agent_context(None)
 
 
 def test_generated_file_default_ttl_is_thirty_days():
@@ -263,6 +268,8 @@ async def test_publish_unifies_external_file_into_workspace_artifact(tmp_path, m
     assert Path(session.added[0].storage_path).read_bytes() == b"pdf"
     assert not list(workspace_root.rglob("manifest.json"))
     assert artifact.download_url in get_current_agent_context().published_download_urls
+    # 本用例自行设置过请求上下文，收尾时清理，避免泄漏给后续用例
+    set_agent_context(None)
 
 
 @pytest.mark.asyncio
@@ -294,6 +301,8 @@ def test_record_published_download_url_deduplicates_current_context():
     assert context.published_download_urls == [
         "/api/v1/chat/generated-files/0123456789abcdef0123456789abcdef?token=token_1"
     ]
+    # 同上：显式清理，避免污染后续用例
+    set_agent_context(None)
 
 
 def test_filter_untrusted_generated_download_urls_preserves_only_allowlisted_links():
