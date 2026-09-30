@@ -37,7 +37,7 @@ def test_sidebar_brand_text_stays_vertically_centered_with_logo():
     brand_text = [
         value
         for value in class_attrs
-        if re.search(r"\bml-2\.5\b", value)
+        if re.search(r"\bml-(?:2|2\.5)\b", value)
         and (
             re.search(r"\bitems-center\b", value)
             or (re.search(r"\bflex-col\b", value) and re.search(r"\bjustify-center\b", value))
