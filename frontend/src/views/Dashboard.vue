@@ -509,8 +509,8 @@ const menuGroups: MenuGroup[] = [
     items: [
       { name: '智能体中心', to: '/dashboard/agent-management', icon: 'agent_mgmt', perm: 'menu:agent_management', activeNames: ['AgentManagement'] },
       { name: '技能工作台', to: '/dashboard/skills', icon: 'skills', perm: 'menu:skills_management', activeNames: ['SkillsManagement'] },
-      { name: 'MCP 工具集', to: '/dashboard/mcp', icon: 'mcp', perm: 'menu:mcp_management', activeNames: ['McpManagement'] },
-      { name: 'MCP 服务台', to: '/dashboard/mcp-service', icon: 'mcp', perm: 'menu:mcp_service', activeNames: ['McpServiceDesk'] },
+      { name: 'MCP 工具集', to: '/dashboard/mcp', icon: 'mcp_tools', perm: 'menu:mcp_management', activeNames: ['McpManagement'] },
+      { name: 'MCP 服务台', to: '/dashboard/mcp-service', icon: 'mcp_service', perm: 'menu:mcp_service', activeNames: ['McpServiceDesk'] },
       { name: '记忆工作台', to: '/dashboard/memory', icon: 'memory', perm: 'menu:memory_management', activeNames: ['MemoryManagement'] },
       { name: '提示词工坊', to: '/dashboard/prompts', icon: 'prompts', perm: 'menu:prompts', desktopOnly: true, activeNames: ['PromptStudio'] },
 
@@ -798,7 +798,13 @@ const filteredMenuGroups = computed(() => {
                   fill="none" stroke="currentColor" viewBox="0 0 24 24"
                 ><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5S19.832 5.477 21 6.253v13C19.832 18.477 18.246 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" /></svg>
                 <svg
-                  v-else-if="item.icon === 'mcp'"
+                  v-else-if="item.icon === 'mcp_tools'"
+                  class="flex-shrink-0 h-[18px] w-[18px] transition-colors"
+                  :class="isItemActive(item) ? (theme === 'light' ? 'text-gray-900' : 'text-white') : (theme === 'light' ? 'text-gray-400 group-hover:text-gray-600' : 'text-slate-400 group-hover:text-slate-200')"
+                  fill="none" stroke="currentColor" viewBox="0 0 24 24"
+                ><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75" d="M20 7H4a2 2 0 00-2 2v10a2 2 0 002 2h16a2 2 0 002-2V9a2 2 0 00-2-2zM9 7V5a2 2 0 012-2h2a2 2 0 012 2v2M3 13h18M10 13v2a1 1 0 001 1h2a1 1 0 001-1v-2" /></svg>
+                <svg
+                  v-else-if="item.icon === 'mcp_service' || item.icon === 'mcp'"
                   class="flex-shrink-0 h-[18px] w-[18px] transition-colors"
                   :class="isItemActive(item) ? (theme === 'light' ? 'text-gray-900' : 'text-white') : (theme === 'light' ? 'text-gray-400 group-hover:text-gray-600' : 'text-slate-400 group-hover:text-slate-200')"
                   fill="none" stroke="currentColor" viewBox="0 0 24 24"
