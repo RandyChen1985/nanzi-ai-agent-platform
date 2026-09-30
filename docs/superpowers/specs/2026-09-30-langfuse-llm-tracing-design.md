@@ -28,7 +28,7 @@
 
 1. 让完整 LLM 链路可追踪：轮次 → agent → LLM 调用 → 工具调用，四层 span 可在 Langfuse 中查阅。
 2. Agent 链路与直调链路都要覆盖；直调链路的埋点必须落在**唯一出口**，不改 20+ 个业务调用点。
-3. trace 携带平台身份（用户、会话、trace_id、智能体），平台侧可据此跳转 Langfuse。
+3. trace 携带平台身份（用户、会话、trace_id、智能体），便于在 Langfuse 中定位到具体用户与会话。
 4. 提供全局开关、内容开关与采样率，三者可热改；多节点部署下配置可收敛。
 5. 追踪必须严格旁路：不改变任何业务返回值与事件流，不写平台库与 Redis，异常不上抛。
 6. Langfuse 不可用、配置非法、SDK 异常时整体降级为 no-op，不影响对话。
@@ -38,7 +38,8 @@
 - **不做** Embedding 调用追踪（`app/services/ai/embedding_client.py:35` 直连 httpx，语义是向量化而非生成）。
 - **不做** Langfuse 的 prompt 管理、人工评分、数据集与实验功能。
 - **不做** 平台内 Langfuse 数据阅读页（即不在平台里代理 Langfuse REST API 渲染 trace 详情）；
-  平台既有轨迹视图保持不变，跳转入口属于二期。
+  平台既有轨迹视图保持不变。**跳转入口已明确不做**（2026-09-30 决定）：Langfuse 只有管理员能登录，
+  给普通用户加「在 Langfuse 查看」跳转没有实际意义。
 - **不替换** 平台自研时间线：`trace_buffer` / `AgentExecutionStep` / `ai_agent_execution_traces`
   表结构与写入路径一律不动。
 - **不落库** 完整 prompt 到平台数据库（避免敏感数据二份落库与保留期管理）。
@@ -244,7 +245,7 @@ sha256(f"{trace_id}:{sample_rate}") 的前 8 字节折算为 [0,1) 的稳定值 
 | `environment` | `VARCHAR(64)` | `VARCHAR(64)` | NULL | 空则不写该属性 |
 | `release` | `VARCHAR(64)` | `VARCHAR(64)` | NULL | 版本对比用 |
 | `timeout_seconds` | `INT` | `INTEGER` | 5 | 导出超时 |
-| `trace_url_template` | `VARCHAR(512)` | `VARCHAR(512)` | NULL | 二期跳转用，含 `{trace_id}` |
+| `trace_url_template` | `VARCHAR(512)` | `VARCHAR(512)` | NULL | **已废弃**：跳转入口取消，代码不再读写该列（迁移不可变，故列保留） |
 | `updated_by` | `VARCHAR(64)` | `VARCHAR(64)` | NULL | 最后修改人 |
 | `created_at` | `DATETIME` | `TIMESTAMP` | 当前时间 | |
 | `updated_at` | `DATETIME` | `TIMESTAMP` | 当前时间（MySQL 自动更新） | |
@@ -340,8 +341,12 @@ sha256(f"{trace_id}:{sample_rate}") 的前 8 字节折算为 [0,1) 的稳定值 
 
 Tab 的可见性与「参数配置」一致（同属 `menu:system:config` 页面），不做额外菜单权限。
 
-二期动作：对话「执行过程」面板加「在 Langfuse 查看」，URL 由 `trace_url_template` 渲染
-（占位 `{trace_id}`），未配置时不显示入口。
+**跳转入口已取消**（2026-09-30）：原计划在对话「执行过程」面板加「在 Langfuse 查看」并由
+`trace_url_template` 渲染 URL，但 Langfuse 仅管理员可登录，普通用户拿到链接也进不去，故不做；
+对应配置项 `trace_url_template` 随之废弃（DB 列保留，代码不再读写）。
+
+替代能力：链路自检（见 `2026-09-30-langfuse-selfcheck-design.md`）——管理员在配置页一键发测试
+trace 并确认是否真的到达 Langfuse。
 
 ## 错误处理与降级
 
@@ -441,8 +446,11 @@ Tab 的可见性与「参数配置」一致（同属 `menu:system:config` 页面
 一期：observability 模块、启动初始化、Agent 链路接入、轮次根 span、独立表与接口、独立 Tab
 （表单 + 状态卡片 + 测试连接）、全套测试。一期单独出一份实施计划。
 
-二期：直调链路统一出口埋点（覆盖 20+ 调用点）、对话页 Langfuse 跳转入口。二期在一期验收
-通过后另出一份实施计划。
+二期：直调链路统一出口埋点（覆盖 20+ 调用点）。**对话页 Langfuse 跳转入口已明确不做**
+（2026-09-30 决定）。二期在一期验收通过后另出一份实施计划。
+
+补充实施（2026-09-30）：链路端到端自检（导出健康度 + 走真实 OTel 管线的自检 + 反查），
+见 `2026-09-30-langfuse-selfcheck-design.md`。
 
 回滚：把总开关（`langfuse_config.enabled`）置 `false` 即刻停止导出（根 span 也不再创建）；
 彻底回滚只需回退代码，数据库侧只多了一张 `langfuse_config` 表与一行默认配置，

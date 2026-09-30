@@ -1,6 +1,6 @@
 # Langfuse 链路自检与导出健康度：设计文档
 
-- 状态：待实施
+- 状态：✅ 已实施（2026-09-30，含 trace_url_template 清理）
 - 创建时间：2026-09-30
 - 前置：一期《Langfuse LLM 链路追踪接入》已交付（提交 `71011496`）
 - 相关文档：`docs/superpowers/specs/2026-09-30-langfuse-llm-tracing-design.md`
